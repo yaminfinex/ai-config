@@ -2,6 +2,7 @@
 
 Date: 2026-05-22
 Status: Working design
+Last updated: 2026-05-23 after design review
 
 ## Goal
 
@@ -72,7 +73,12 @@ ai-config/
 
 ## Live Machine Layout
 
-Prefer explicit links over replacing whole mixed-use directories.
+Use a hybrid linking strategy:
+
+- Whole-directory links are acceptable for directories that are clearly user-owned.
+- Per-item links are required inside mixed agent-owned directories where personal files would collide with built-in or generated siblings.
+
+This keeps new-skill ceremony low for agents whose skills directory is all yours, while avoiding accidental masking of agent-owned content.
 
 Example intended links:
 
@@ -80,8 +86,7 @@ Example intended links:
 ~/.claude/CLAUDE.md          -> ~/Coding/ai-config/claude/CLAUDE.md
 ~/.claude/hooks              -> ~/Coding/ai-config/claude/hooks
 ~/.claude/commands           -> ~/Coding/ai-config/claude/commands
-~/.claude/skills/ai-config   -> ~/Coding/ai-config/skills/ai-config
-~/.claude/skills/tdd         -> ~/Coding/ai-config/skills/tdd
+~/.claude/skills             -> ~/Coding/ai-config/skills
 
 ~/.codex/AGENTS.md           -> ~/Coding/ai-config/codex/AGENTS.md
 ~/.codex/skills/ai-config    -> ~/Coding/ai-config/skills/ai-config
@@ -90,9 +95,11 @@ Example intended links:
 ~/.cursor/rules              -> ~/Coding/ai-config/cursor/rules
 ```
 
-Avoid replacing `~/.codex/skills` wholesale because Codex may keep system skills under `~/.codex/skills/.system`. Replacing the whole directory with a symlink can mask built-in skills.
+Claude Code's `~/.claude/skills` is treated as user-owned for the initial design, so whole-directory linking is appropriate there. Adding a new skill under `skills/` then automatically exposes it to Claude Code without editing `ai-setup`.
 
-This rule generalizes: whole-directory symlinks are acceptable only when the target directory is clearly user-owned. For mixed agent-owned directories, link the personal children.
+Avoid replacing `~/.codex/skills` wholesale because Codex may keep system skills under `~/.codex/skills/.system`. Replacing the whole directory with a symlink can mask built-in skills. For Codex, link personal skill children individually or under an agreed personal namespace if Codex supports it.
+
+This rule generalizes: whole-directory symlinks are acceptable only when the target directory is clearly user-owned. For mixed agent-owned directories, link personal children.
 
 ## Commands
 
@@ -113,10 +120,39 @@ Responsibilities:
   - ahead or behind upstream
   - missing remote
   - current branch
-- Scan tracked and staged files for obvious secret patterns.
+- Run a concrete secret scan:
+  - if `gitleaks` is installed, run `gitleaks detect --staged` for staged changes and an equivalent working-tree scan for allowlisted files
+  - otherwise fall back to the regex scan below
+- Warn on absolute home paths in portable tracked files.
 - Print concrete remediation steps.
 
 `ai-doctor` should come first in implementation because it gives humans and agents a shared, non-mutating view of the current state.
+
+Minimum fallback secret regex:
+
+```text
+(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|-----BEGIN [A-Z ]+PRIVATE KEY-----)
+```
+
+Minimum portability regex for tracked portable files:
+
+```text
+/(Users|home)/[A-Za-z0-9._-]+/
+```
+
+The portability scan should target files that are meant to work across machines, especially:
+
+```text
+claude/hooks/
+claude/commands/
+codex/AGENTS.md
+cursor/rules/
+skills/
+bin/
+lib/
+```
+
+Absolute home paths are forbidden in synced portable files. Use `$HOME`, `$PATH`, repo-relative paths, or command discovery instead.
 
 ### `ai-setup`
 
@@ -132,11 +168,15 @@ Responsibilities:
 - Never delete user data.
 - Be idempotent and safe to re-run.
 
-Backup naming should include a timestamp, for example:
+Backups should live next to the agent config root in an `.ai-config-backup` directory so recovery is predictable.
+
+For a collision at `~/.claude/CLAUDE.md`, use:
 
 ```text
-~/.claude/CLAUDE.md.backup.20260522T171500
+~/.claude/.ai-config-backup/20260522T171500/CLAUDE.md
 ```
+
+For nested paths, preserve the relative path under the timestamped backup directory.
 
 ### `ai-sync`
 
@@ -147,10 +187,12 @@ Responsibilities:
 - Run `ai-doctor --quick`.
 - Refuse to pull with uncommitted changes unless passed an explicit `--autostash`.
 - Run `git pull --rebase`.
-- Re-run link verification or invoke `ai-setup` in repair mode.
+- Run narrow link verification and heal only safe symlink drift.
 - Print a concise summary of changed files.
 
 Default behavior should prioritize predictability over cleverness. It is acceptable for `ai-sync` to stop and tell the user to harvest or stash local changes first.
+
+`ai-sync` should not run the full `ai-setup` by default. Full setup is an explicit command because it may back up collisions or install new categories of links. Sync should only repair expected symlinks that are missing, broken, or pointed at the wrong repo path and have no real file or directory collision.
 
 ### `ai-harvest`
 
@@ -214,6 +256,8 @@ The skill should instruct agents to:
 
 The scripts are the stable mechanical API. The skill is the operating manual that lets agents maintain the repo consistently.
 
+The skill is a nudge, not the enforcement boundary. Whether an agent invokes `skills/ai-config/SKILL.md` depends on that agent's skill-selection behavior and the wording of the task. `ai-doctor` is the primary gate because it is executable and can be called directly by humans, hooks, and agents.
+
 ## Auto-Harvest Decision
 
 Do not auto-commit.
@@ -265,6 +309,36 @@ If an agent does not support settings overlays, keep that agent's live settings 
 
 Chezmoi plus age remains a possible later upgrade if encrypted portable secrets or per-machine templating become necessary. It is not part of the initial design.
 
+Secret detection must be concrete from the first implementation. The initial implementation should:
+
+- prefer `gitleaks` when installed
+- fall back to the regex in the `ai-doctor` section
+- scan staged files before commit
+- scan allowlisted portable files during `ai-doctor`
+- fail closed for `ai-harvest` when a likely secret is detected
+
+## Machine-Portability Rule
+
+Tracked portable files must not contain absolute user-home paths such as `/Users/yamen/...` or `/home/yamen/...`.
+
+This applies to:
+
+- hooks
+- commands
+- skills
+- agent instructions
+- scripts
+- shared settings
+
+Portable files should use:
+
+- `$HOME` for home-relative paths
+- `$PATH` command lookup where possible
+- repo-relative paths resolved from the script location
+- explicit environment variables for machine-specific tools
+
+`ai-doctor` should enforce this with the portability regex above and print the offending file and line. Without this rule, the second machine can fail in subtle ways that look like symlink or setup problems.
+
 ## Conflict Handling
 
 Use normal Git conflict handling initially.
@@ -279,15 +353,17 @@ If conflicts become frequent, revisit:
 
 ## Drift Handling
 
-`ai-sync` and `ai-setup` should heal safe drift automatically and warn on unsafe drift.
+`ai-sync` and `ai-setup` have different drift behavior.
 
-Safe to heal:
+`ai-sync` should heal only narrow symlink drift after a pull. `ai-setup` is the explicit command for installing or repairing the full link set.
+
+Safe for `ai-sync` to heal:
 
 - expected symlink is missing and parent directory is user-owned
 - expected symlink points to the wrong repo path
 - expected symlink is broken
 
-Warn and back up before changing:
+Warn and stop during `ai-sync`, but allow `ai-setup` to back up before changing:
 
 - a real file exists where a symlink is expected
 - a real directory exists where a symlink is expected
@@ -309,10 +385,10 @@ Adding marketplace registration now would duplicate the initial mechanism and ad
 1. Initialize the repo and commit this design.
 2. Add `.gitignore` with local-state and secret exclusions.
 3. Add `lib/common.sh`.
-4. Implement `ai-doctor`.
-5. Implement `ai-setup`.
-6. Implement `ai-sync`.
-7. Implement `ai-harvest`.
+4. Implement `ai-doctor`, including secret and absolute-home-path scans.
+5. Implement `ai-setup`, including predictable backup directories.
+6. Implement `ai-sync`, with narrow safe link healing only.
+7. Implement `ai-harvest`, using the allowlist and `ai-doctor` gate.
 8. Add `skills/ai-config/SKILL.md`.
 9. Run `ai-doctor`.
 10. Adopt existing local config incrementally.
@@ -322,5 +398,4 @@ Adding marketplace registration now would duplicate the initial mechanism and ad
 - Which exact paths should be linked for Claude Code, Codex, and Cursor in the first implementation?
 - Should `ai-setup` default to backing up collisions automatically, or require an explicit `--adopt` / `--force-backup` flag?
 - Should `ai-harvest` require a custom message, or is the default timestamped message acceptable for low-friction usage?
-- Should `ai-doctor` scan only tracked and staged files for secrets, or all allowlisted files?
 - Should settings overlays be implemented now, or deferred until a specific agent requires them?
