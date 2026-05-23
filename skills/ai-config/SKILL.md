@@ -19,7 +19,8 @@ Operational rules:
 - Do not add sessions, histories, caches, auth files, telemetry, SQLite databases, generated plugin caches, or local overlays.
 - Do not add absolute home paths to portable files. Use `$HOME`, `$PATH`, repo-relative paths, or explicit environment variables.
 - New repo skills belong at `skills/<name>/SKILL.md`. `ai-setup` generates per-skill links into live agent skill roots.
-- Existing local-only skills should be adopted with `bin/ai-adopt <live-skill-path|skill-name>`.
+- Existing local-only skills should be adopted with `bin/ai-adopt <skill-path|skill-name>`.
+- `bin/ai-adopt <name>` searches global skill roots and project-local `.claude/skills`, `.agents/skills`, and `.codex/skills` roots from the current directory upward.
 - If a live skill exists outside the repo, surface it as unharvested instead of overwriting it.
 - Use `bin/ai-setup --dry-run` before installing or repairing links when the effect is not obvious.
 

@@ -142,6 +142,21 @@ skill_root_specs() {
   fi
 }
 
+project_skill_root_specs() {
+  local dir
+
+  dir="$(pwd -P)"
+  while [ "$dir" != "/" ]; do
+    [ "$dir" = "$HOME" ] && break
+
+    [ -d "$dir/.claude/skills" ] && printf '%s\n' "project-claude|$dir|$dir/.claude/skills"
+    [ -d "$dir/.agents/skills" ] && printf '%s\n' "project-agents|$dir|$dir/.agents/skills"
+    [ -d "$dir/.codex/skills" ] && printf '%s\n' "project-codex|$dir|$dir/.codex/skills"
+
+    dir="$(dirname "$dir")"
+  done
+}
+
 tracked_or_existing_path() {
   local path="$1"
 

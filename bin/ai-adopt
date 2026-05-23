@@ -6,14 +6,19 @@ source "$ROOT/lib/common.sh"
 
 usage() {
   cat <<'USAGE'
-Usage: ai-adopt <live-skill-path|skill-name> [repo-skill-name]
+Usage: ai-adopt <skill-path|skill-name> [repo-skill-name]
 
 Copies a local skill into skills/<name>, then runs ai-setup so live agent
 skill roots point at the repo copy.
 
+When passed a name, ai-adopt searches global skill roots and project-local
+.claude/skills, .agents/skills, and .codex/skills directories from the current
+directory upward.
+
 Examples:
   ai-adopt ~/.agents/skills/review
   ai-adopt review
+  ai-adopt .claude/skills/project-skill
   ai-adopt ~/.claude/skills/foo better-name
 USAGE
 }
@@ -38,23 +43,31 @@ find_live_skill_by_name() {
   local config_home
   local root
   local candidate
-  local found=""
+  local matches=()
+  local match
 
   while IFS='|' read -r agent config_home root; do
     candidate="$root/$wanted"
     [ -f "$candidate/SKILL.md" ] || continue
+    matches+=("$candidate")
+  done < <(
+    skill_root_specs
+    project_skill_root_specs
+  )
 
-    if [ -n "$found" ]; then
-      log_error "skill name '$wanted' exists in multiple live roots; pass a full path"
-      printf '%s\n%s\n' "$found" "$candidate" >&2
-      exit 1
-    fi
+  if [ "${#matches[@]}" -eq 0 ]; then
+    return 1
+  fi
 
-    found="$candidate"
-  done < <(skill_root_specs)
+  if [ "${#matches[@]}" -gt 1 ]; then
+    log_error "skill name '$wanted' exists in multiple roots; pass a full path"
+    for match in "${matches[@]}"; do
+      printf '%s\n' "$match" >&2
+    done
+    return 2
+  fi
 
-  [ -n "$found" ] || return 1
-  printf '%s\n' "$found"
+  printf '%s\n' "${matches[0]}"
 }
 
 if [ -e "$source_arg" ]; then
@@ -63,8 +76,12 @@ if [ -e "$source_arg" ]; then
     *) source_path="$(pwd -P)/${source_arg%/}" ;;
   esac
 else
-  if ! source_path="$(find_live_skill_by_name "$source_arg")"; then
-    log_error "could not find live skill: $source_arg"
+  lookup_status=0
+  source_path="$(find_live_skill_by_name "$source_arg")" || lookup_status=$?
+  if [ "$lookup_status" -ne 0 ]; then
+    if [ "$lookup_status" -eq 1 ]; then
+      log_error "could not find live skill: $source_arg"
+    fi
     exit 1
   fi
 fi

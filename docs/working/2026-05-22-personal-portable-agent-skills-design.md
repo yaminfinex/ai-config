@@ -67,7 +67,6 @@ ai-config/
     ai-sync
     ai-adopt
     ai-push
-    ai-harvest   # deprecated compatibility alias for ai-push
 
   lib/
     common.sh
@@ -101,7 +100,7 @@ Example intended links:
 
 Avoid replacing skill roots wholesale because agents may keep system, vendor, marketplace, or generated skills under the same directory. For example, Codex may keep system skills under `~/.codex/skills/.system`. Replacing the whole directory with a symlink can mask built-in skills.
 
-`ai-doctor` should also inspect live skill roots for skills that exist locally but not in `skills/`. Those should be reported as unharvested local skills so they can be adopted intentionally or ignored explicitly.
+`ai-doctor` should also inspect global and project-local skill roots for skills that exist locally but not in `skills/`. Those should be reported as unharvested local skills so they can be adopted intentionally or ignored explicitly.
 
 ## Commands
 
@@ -208,7 +207,8 @@ Purpose: copy an existing local-only skill into the repo, then relink live agent
 
 Responsibilities:
 
-- Accept either a live skill path or a skill name found in a supported live skill root.
+- Accept either a skill path or a skill name.
+- When passed a name, search global skill roots and project-local skill roots from the current directory upward.
 - Require the source to be a directory containing `SKILL.md`.
 - Refuse to overwrite an existing repo skill.
 - Copy into `skills/<name>`.
@@ -220,7 +220,16 @@ Examples:
 ```text
 ai-adopt ~/.agents/skills/review
 ai-adopt review
+ai-adopt .claude/skills/project-skill
 ai-adopt ~/.claude/skills/foo better-name
+```
+
+Project-local lookup should include:
+
+```text
+<cwd-or-parent>/.claude/skills/<name>
+<cwd-or-parent>/.agents/skills/<name>
+<cwd-or-parent>/.codex/skills/<name>
 ```
 
 ### `ai-push`
@@ -268,7 +277,7 @@ Allow a custom message:
 ai-push "improve debugging skill"
 ```
 
-`ai-harvest` remains as a deprecated compatibility alias for `ai-push`. The naming split is:
+The naming split is:
 
 - `ai-adopt`: gather a local-only skill into the corpus
 - `ai-push`: publish the current corpus
@@ -425,10 +434,9 @@ Adding marketplace registration now would duplicate the initial mechanism and ad
 6. Implement `ai-sync`, with narrow safe link healing only.
 7. Implement `ai-adopt` for local-only skills.
 8. Implement `ai-push`, using the allowlist and `ai-doctor` gate.
-9. Keep `ai-harvest` as a deprecated compatibility alias.
-10. Add `skills/ai-config/SKILL.md`.
-11. Run `ai-doctor`.
-12. Adopt existing local config incrementally.
+9. Add `skills/ai-config/SKILL.md`.
+10. Run `ai-doctor`.
+11. Adopt existing local config incrementally.
 
 ## Open Questions for Review
 

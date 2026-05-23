@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-source "$ROOT/lib/common.sh"
-
-log_warn "ai-harvest is deprecated; use ai-adopt for local skills and ai-push for commit/push"
-exec "$ROOT/bin/ai-push" "$@"

@@ -139,7 +139,10 @@ check_unharvested_live_skills() {
 
       warn "unharvested local skill in $agent: $child"
     done < <(find "$root" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -print 2>/dev/null)
-  done < <(skill_root_specs)
+  done < <(
+    skill_root_specs
+    project_skill_root_specs
+  )
 }
 
 check_secret_scan() {
