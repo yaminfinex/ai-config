@@ -168,6 +168,7 @@ Responsibilities:
 - If the target path is a real file or directory, back it up before linking.
 - Never delete user data.
 - Be idempotent and safe to re-run.
+- Optionally install the repo `bin/` directory into shell startup files with `--shell-path`.
 
 Backups should live in a central local state directory, not inside agent-owned config directories.
 
@@ -184,6 +185,20 @@ For a collision at `~/.claude/CLAUDE.md`, use:
 ```
 
 For nested paths, preserve the path relative to `$HOME` under the timestamped backup directory. This keeps backups local-only, predictable, and separate from agent-owned directories.
+
+Shell PATH modification should be opt-in. By default, `ai-setup` should print a reminder instead of editing shell startup files. With `ai-setup --shell-path`, append a managed block to `~/.zshrc` or `~/.bashrc`:
+
+```sh
+# >>> ai-config >>>
+AI_CONFIG_HOME="/path/to/ai-config"
+case ":$PATH:" in
+  *":$AI_CONFIG_HOME/bin:"*) ;;
+  *) export PATH="$AI_CONFIG_HOME/bin:$PATH" ;;
+esac
+# <<< ai-config <<<
+```
+
+The block must be idempotent. If a managed block already exists, leave it alone. This keeps shell setup safe while making new-machine installation one command when desired.
 
 ### `ai-sync`
 
