@@ -146,7 +146,7 @@ mkdir -p "$dest"
 
 log_info "adopted $source_path -> $dest"
 
-"$ROOT/bin/ai-setup"
-"$ROOT/bin/ai-doctor" --quick
+"$ROOT/bin/ai-setup" --heal-only >/dev/null
 
 git -C "$ROOT" status --short -- "$dest"
+log_info "run ai-push \"adopt $skill_name skill\" when ready to publish"
