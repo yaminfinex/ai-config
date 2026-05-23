@@ -304,6 +304,8 @@ Create `skills/ai-config/SKILL.md` to make the repository self-describing for ag
 The skill should instruct agents to:
 
 - Treat this repo as the canonical personal agent config corpus.
+- For "set me up on this machine", run `bin/ai-doctor --quick`, `bin/ai-setup --dry-run`, then `bin/ai-setup` when the dry run is acceptable.
+- Use `bin/ai-setup --shell-path` for PATH setup only after dry-run and explicit user approval for shell startup changes.
 - Run `bin/ai-doctor` before edits.
 - Prefer edits under `skills/`, `claude/`, `codex/`, `cursor/`, `bin/`, `lib/`, and `docs/`.
 - Avoid committing sessions, histories, caches, auth files, telemetry, SQLite databases, generated plugin caches, and machine-local overlays.
