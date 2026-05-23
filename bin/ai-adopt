@@ -44,12 +44,29 @@ find_live_skill_by_name() {
   local root
   local candidate
   local matches=()
+  local real_matches=()
   local match
+  local real_match
+  local seen
 
   while IFS='|' read -r agent config_home root; do
     candidate="$root/$wanted"
     [ -f "$candidate/SKILL.md" ] || continue
+
+    real_match="$(abs_path "$candidate")"
+    seen=0
+    if [ "${#real_matches[@]}" -gt 0 ]; then
+      for match in "${real_matches[@]}"; do
+        if [ "$match" = "$real_match" ]; then
+          seen=1
+          break
+        fi
+      done
+    fi
+
+    [ "$seen" -eq 1 ] && continue
     matches+=("$candidate")
+    real_matches+=("$real_match")
   done < <(
     skill_root_specs
     project_skill_root_specs

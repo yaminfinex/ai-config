@@ -127,11 +127,29 @@ check_unharvested_live_skills() {
   local root
   local child
   local name
+  local real_child
+  local seen_children=()
+  local seen_child
+  local already_seen
 
   while IFS='|' read -r agent config_home root; do
     [ -d "$root" ] || continue
 
     while IFS= read -r child; do
+      real_child="$(abs_path "$child")"
+      already_seen=0
+      if [ "${#seen_children[@]}" -gt 0 ]; then
+        for seen_child in "${seen_children[@]}"; do
+          if [ "$seen_child" = "$real_child" ]; then
+            already_seen=1
+            break
+          fi
+        done
+      fi
+
+      [ "$already_seen" -eq 1 ] && continue
+      seen_children+=("$real_child")
+
       name="$(basename "$child")"
       case "$agent:$name" in
         project-*:ai-config-bootstrap) continue ;;
