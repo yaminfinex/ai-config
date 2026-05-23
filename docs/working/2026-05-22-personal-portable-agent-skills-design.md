@@ -45,10 +45,7 @@ ai-config/
       ai-config-bootstrap/
         SKILL.md
 
-  .claude/
-    skills/
-      ai-config-bootstrap/
-        SKILL.md
+  .claude                           -> .agents
 
   skills/
     ai-config/
@@ -276,7 +273,7 @@ Initial allowlist:
 
 ```text
 .agents/skills/
-.claude/skills/
+.claude
 skills/
 claude/CLAUDE.md
 claude/hooks/
@@ -313,13 +310,13 @@ The naming split is:
 
 Create `skills/ai-config/SKILL.md` to make the repository self-describing for agents.
 
-Create project-local `ai-config-bootstrap` skills under `.agents/skills/` and `.claude/skills/` for first-machine setup. They are intentionally outside `skills/` because `ai-setup` links `skills/*/SKILL.md` into global home skill roots. Bootstrap should be available when an agent opens this repo, but should not be copied across to `~/.claude/skills`, `~/.codex/skills`, or `~/.agents/skills`.
+Create project-local `ai-config-bootstrap` under `.agents/skills/` for first-machine setup. `.agents` is canonical; repo-local `.claude` is a symlink to `.agents` so Claude sees the same project-local skills without duplicate files. Bootstrap is intentionally outside `skills/` because `ai-setup` links `skills/*/SKILL.md` into global home skill roots. Bootstrap should be available when an agent opens this repo, but should not be copied across to `~/.claude/skills`, `~/.codex/skills`, or `~/.agents/skills`.
 
 The skill should instruct agents to:
 
 - Treat this repo as the canonical personal agent config corpus.
 - Run `bin/ai-doctor` before edits.
-- Prefer edits under `skills/`, `.agents/skills/`, `.claude/skills/`, `claude/`, `codex/`, `cursor/`, `bin/`, `lib/`, and `docs/`.
+- Prefer edits under `skills/`, `.agents/skills/`, `claude/`, `codex/`, `cursor/`, `bin/`, `lib/`, and `docs/`.
 - Avoid committing sessions, histories, caches, auth files, telemetry, SQLite databases, generated plugin caches, and machine-local overlays.
 - Run `bin/ai-doctor` after edits.
 - Suggest `bin/ai-adopt` when `ai-doctor` reports a local-only skill that should enter the repo.

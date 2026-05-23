@@ -13,8 +13,8 @@ SECRET_REGEX='(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|-----BEG
 HOME_PATH_REGEX='/(Users|home)/[A-Za-z0-9._-]+/'
 
 PUSH_PATHS=(
+  ".claude"
   ".agents/skills"
-  ".claude/skills"
   "skills"
   "claude/CLAUDE.md"
   "claude/hooks"
@@ -32,7 +32,6 @@ PUSH_PATHS=(
 
 PORTABLE_SCAN_PATHS=(
   ".agents/skills"
-  ".claude/skills"
   "skills"
   "claude/hooks"
   "claude/commands"
