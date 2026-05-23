@@ -7,25 +7,13 @@ description: Use when working in the ai-config repo, editing portable agent skil
 
 This repo is the canonical personal corpus for portable agent skills and selected agent configuration.
 
-## Machine Setup
-
-When the user asks to "set me up on this machine", "install this repo", or similar:
-
-1. Run `bin/ai-doctor --quick` to inspect the current machine.
-2. Run `bin/ai-setup --dry-run` and read the output.
-3. If the dry run would only create expected links or back up clear collisions, run `bin/ai-setup`.
-4. If the user also wants command names available globally, run `bin/ai-setup --dry-run --shell-path` first, then `bin/ai-setup --shell-path` only if the user asked for shell PATH setup or clearly approved shell startup changes.
-5. Run `bin/ai-doctor --quick` again and report remaining warnings.
-
-Do not edit `.zshrc`, `.bashrc`, or other shell startup files manually. Use `bin/ai-setup --shell-path` so the managed block stays idempotent.
-
-If `ai-doctor` reports existing local-only skills, do not adopt them automatically. Ask or name the exact candidates and use `bin/ai-adopt <skill-path|skill-name>` only when the user wants those skills moved into the repo corpus.
+First-time machine setup lives in the project-local `ai-config-bootstrap` skill. Keep bootstrap instructions out of this global skill so normal `ai-setup` does not copy them into home skill roots.
 
 Before making changes:
 
 1. Run `bin/ai-doctor`.
 2. Treat warnings about local-only skills, broken links, likely secrets, and absolute home paths as real review findings.
-3. Prefer edits under `skills/`, `claude/`, `codex/`, `cursor/`, `bin/`, `lib/`, and `docs/`.
+3. Prefer edits under `skills/`, `.agents/skills/`, `.claude/skills/`, `claude/`, `codex/`, `cursor/`, `bin/`, `lib/`, and `docs/`.
 
 Operational rules:
 

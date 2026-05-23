@@ -133,6 +133,10 @@ check_unharvested_live_skills() {
 
     while IFS= read -r child; do
       name="$(basename "$child")"
+      case "$agent:$name" in
+        project-*:ai-config-bootstrap) continue ;;
+      esac
+
       is_ignored_live_skill_name "$name" && continue
       repo_skill_exists "$name" && continue
       [ -f "$child/SKILL.md" ] || continue

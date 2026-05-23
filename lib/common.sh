@@ -13,6 +13,8 @@ SECRET_REGEX='(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|-----BEG
 HOME_PATH_REGEX='/(Users|home)/[A-Za-z0-9._-]+/'
 
 PUSH_PATHS=(
+  ".agents/skills"
+  ".claude/skills"
   "skills"
   "claude/CLAUDE.md"
   "claude/hooks"
@@ -29,6 +31,8 @@ PUSH_PATHS=(
 )
 
 PORTABLE_SCAN_PATHS=(
+  ".agents/skills"
+  ".claude/skills"
   "skills"
   "claude/hooks"
   "claude/commands"
@@ -203,7 +207,7 @@ portable_staged_files() {
 
   staged_files | while IFS= read -r file; do
     case "$file" in
-      skills/*|claude/hooks/*|claude/commands/*|claude/settings.shared.json|claude/settings.local.example.json|codex/AGENTS.md|cursor/rules/*|bin/*|lib/*)
+      .agents/skills/*|.claude/skills/*|skills/*|claude/hooks/*|claude/commands/*|claude/settings.shared.json|claude/settings.local.example.json|codex/AGENTS.md|cursor/rules/*|bin/*|lib/*)
         printf '%s/%s\n' "$AI_CONFIG_ROOT" "$file"
         ;;
     esac
