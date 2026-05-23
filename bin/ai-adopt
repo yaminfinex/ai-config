@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$ROOT/lib/common.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: ai-adopt <live-skill-path|skill-name> [repo-skill-name]
+
+Copies a local skill into skills/<name>, then runs ai-setup so live agent
+skill roots point at the repo copy.
+
+Examples:
+  ai-adopt ~/.agents/skills/review
+  ai-adopt review
+  ai-adopt ~/.claude/skills/foo better-name
+USAGE
+}
+
+source_arg="${1:-}"
+name_arg="${2:-}"
+
+if [ -z "$source_arg" ] || [ "${3:-}" != "" ]; then
+  usage
+  exit 2
+fi
+
+if [ "$source_arg" = "-h" ] || [ "$source_arg" = "--help" ]; then
+  usage
+  exit 0
+fi
+
+find_live_skill_by_name() {
+  local wanted="$1"
+  local spec
+  local agent
+  local config_home
+  local root
+  local candidate
+  local found=""
+
+  while IFS='|' read -r agent config_home root; do
+    candidate="$root/$wanted"
+    [ -f "$candidate/SKILL.md" ] || continue
+
+    if [ -n "$found" ]; then
+      log_error "skill name '$wanted' exists in multiple live roots; pass a full path"
+      printf '%s\n%s\n' "$found" "$candidate" >&2
+      exit 1
+    fi
+
+    found="$candidate"
+  done < <(skill_root_specs)
+
+  [ -n "$found" ] || return 1
+  printf '%s\n' "$found"
+}
+
+if [ -e "$source_arg" ]; then
+  case "$source_arg" in
+    /*) source_path="${source_arg%/}" ;;
+    *) source_path="$(pwd -P)/${source_arg%/}" ;;
+  esac
+else
+  if ! source_path="$(find_live_skill_by_name "$source_arg")"; then
+    log_error "could not find live skill: $source_arg"
+    exit 1
+  fi
+fi
+
+if [ ! -d "$source_path" ] || [ ! -f "$source_path/SKILL.md" ]; then
+  log_error "not a skill directory: $source_path"
+  exit 1
+fi
+
+if [ -L "$source_path" ]; then
+  resolved_source="$(resolve_link_target "$source_path")"
+  case "$resolved_source" in
+    "$ROOT"/skills/*)
+      log_info "already adopted: $source_path -> $resolved_source"
+      exit 0
+      ;;
+  esac
+fi
+
+skill_name="${name_arg:-$(basename "$source_path")}"
+
+case "$skill_name" in
+  ""|.*|*/*|*[^a-z0-9-]*)
+    log_error "invalid repo skill name: $skill_name"
+    log_error "use lowercase letters, digits, and hyphens only"
+    exit 1
+    ;;
+esac
+
+dest="$ROOT/skills/$skill_name"
+
+if [ -e "$dest" ]; then
+  log_error "repo skill already exists: $dest"
+  exit 1
+fi
+
+mkdir -p "$dest"
+(
+  cd "$source_path"
+  tar -cf - .
+) | (
+  cd "$dest"
+  tar -xf -
+)
+
+log_info "adopted $source_path -> $dest"
+
+"$ROOT/bin/ai-setup"
+"$ROOT/bin/ai-doctor" --quick
+
+git -C "$ROOT" status --short -- "$dest"

@@ -65,7 +65,9 @@ ai-config/
     ai-setup
     ai-doctor
     ai-sync
-    ai-harvest
+    ai-adopt
+    ai-push
+    ai-harvest   # deprecated compatibility alias for ai-push
 
   lib/
     common.sh
@@ -196,11 +198,32 @@ Responsibilities:
 - Run narrow link verification and heal only safe symlink drift.
 - Print a concise summary of changed files.
 
-Default behavior should prioritize predictability over cleverness. It is acceptable for `ai-sync` to stop and tell the user to harvest or stash local changes first.
+Default behavior should prioritize predictability over cleverness. It is acceptable for `ai-sync` to stop and tell the user to push or stash local changes first.
 
 `ai-sync` should not run the full `ai-setup` by default. Full setup is an explicit command because it may back up collisions or install new categories of links. Sync should only repair expected symlinks that are missing, broken, or pointed at the wrong repo path and have no real file or directory collision.
 
-### `ai-harvest`
+### `ai-adopt`
+
+Purpose: copy an existing local-only skill into the repo, then relink live agent skill roots to the repo copy.
+
+Responsibilities:
+
+- Accept either a live skill path or a skill name found in a supported live skill root.
+- Require the source to be a directory containing `SKILL.md`.
+- Refuse to overwrite an existing repo skill.
+- Copy into `skills/<name>`.
+- Run `ai-setup` so the previous live skill path is backed up and replaced with a symlink to the repo copy.
+- Run `ai-doctor --quick` and print the adopted repo path status.
+
+Examples:
+
+```text
+ai-adopt ~/.agents/skills/review
+ai-adopt review
+ai-adopt ~/.claude/skills/foo better-name
+```
+
+### `ai-push`
 
 Purpose: commit and push intentional local changes.
 
@@ -236,14 +259,19 @@ README.md
 Default commit message:
 
 ```text
-harvest: <hostname> <iso-8601 timestamp>
+push: <hostname> <iso-8601 timestamp>
 ```
 
 Allow a custom message:
 
 ```text
-ai-harvest "improve debugging skill"
+ai-push "improve debugging skill"
 ```
+
+`ai-harvest` remains as a deprecated compatibility alias for `ai-push`. The naming split is:
+
+- `ai-adopt`: gather a local-only skill into the corpus
+- `ai-push`: publish the current corpus
 
 ## Agent-Facing Meta Skill
 
@@ -256,7 +284,8 @@ The skill should instruct agents to:
 - Prefer edits under `skills/`, `claude/`, `codex/`, `cursor/`, `bin/`, `lib/`, and `docs/`.
 - Avoid committing sessions, histories, caches, auth files, telemetry, SQLite databases, generated plugin caches, and machine-local overlays.
 - Run `bin/ai-doctor` after edits.
-- Suggest `bin/ai-harvest` when the user appears ready to publish changes.
+- Suggest `bin/ai-adopt` when `ai-doctor` reports a local-only skill that should enter the repo.
+- Suggest `bin/ai-push` when the user appears ready to publish repo changes.
 - Use `bin/ai-sync` before major edits if the repo is behind upstream.
 - Never auto-commit unless explicitly asked.
 
@@ -273,8 +302,8 @@ Use hooks for visibility, not mutation.
 Recommended behavior:
 
 - Session start hook: run `ai-doctor --quick` and warn if the repo is dirty, ahead, behind, or has broken links.
-- Session stop hook: print a concise dirty-state summary and suggest `ai-harvest` when appropriate.
-- Commit boundary remains explicit via manual `ai-harvest`.
+- Session stop hook: print a concise dirty-state summary and suggest `ai-push` when appropriate.
+- Commit boundary remains explicit via manual `ai-push`.
 
 Rationale:
 
@@ -283,7 +312,7 @@ Rationale:
 - Session boundaries are not semantic completion boundaries.
 - Dirty-state reminders reduce drift without creating noisy or bad commits.
 
-If this proves too manual, improve `ai-harvest` ergonomics before adding automation.
+If this proves too manual, improve `ai-push` ergonomics before adding automation.
 
 ## Secrets and Local State
 
@@ -321,7 +350,7 @@ Secret detection must be concrete from the first implementation. The initial imp
 - fall back to the regex in the `ai-doctor` section
 - scan staged files before commit
 - scan allowlisted portable files during `ai-doctor`
-- fail closed for `ai-harvest` when a likely secret is detected
+- fail closed for `ai-push` when a likely secret is detected
 
 ## Machine-Portability Rule
 
@@ -394,14 +423,16 @@ Adding marketplace registration now would duplicate the initial mechanism and ad
 4. Implement `ai-doctor`, including secret and absolute-home-path scans.
 5. Implement `ai-setup`, including predictable backup directories.
 6. Implement `ai-sync`, with narrow safe link healing only.
-7. Implement `ai-harvest`, using the allowlist and `ai-doctor` gate.
-8. Add `skills/ai-config/SKILL.md`.
-9. Run `ai-doctor`.
-10. Adopt existing local config incrementally.
+7. Implement `ai-adopt` for local-only skills.
+8. Implement `ai-push`, using the allowlist and `ai-doctor` gate.
+9. Keep `ai-harvest` as a deprecated compatibility alias.
+10. Add `skills/ai-config/SKILL.md`.
+11. Run `ai-doctor`.
+12. Adopt existing local config incrementally.
 
 ## Open Questions for Review
 
 - Which exact paths should be linked for Claude Code, Codex, and Cursor in the first implementation?
 - Should `ai-setup` default to backing up collisions automatically, or require an explicit `--adopt` / `--force-backup` flag?
-- Should `ai-harvest` require a custom message, or is the default timestamped message acceptable for low-friction usage?
+- Should `ai-push` require a custom message, or is the default timestamped message acceptable for low-friction usage?
 - Should settings overlays be implemented now, or deferred until a specific agent requires them?

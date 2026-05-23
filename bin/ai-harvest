@@ -4,47 +4,5 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$ROOT/lib/common.sh"
 
-message="${*:-harvest: $(hostname) $(date -Iseconds)}"
-
-"$ROOT/bin/ai-doctor" --quick
-
-for path in "${HARVEST_PATHS[@]}"; do
-  if tracked_or_existing_path "$path"; then
-    git -C "$ROOT" add -A -- "$path"
-  fi
-done
-
-if git -C "$ROOT" diff --cached --quiet; then
-  log_info "nothing to harvest"
-  exit 0
-fi
-
-if ! git -C "$ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
-  log_error "current branch has no upstream remote; set one before running ai-harvest"
-  exit 1
-fi
-
-if command -v gitleaks >/dev/null 2>&1; then
-  if ! gitleaks protect --staged --redact; then
-    log_error "gitleaks found a possible secret in staged changes"
-    exit 1
-  fi
-fi
-
-secret_findings="$(scan_staged_secret_regex)"
-if [ -n "$secret_findings" ]; then
-  log_error "possible secret found in staged changes:"
-  printf '%s\n' "$secret_findings" >&2
-  exit 1
-fi
-
-path_findings="$(scan_staged_portability)"
-if [ -n "$path_findings" ]; then
-  log_error "absolute home path found in staged portable files:"
-  printf '%s\n' "$path_findings" >&2
-  exit 1
-fi
-
-git -C "$ROOT" diff --cached --stat
-git -C "$ROOT" commit -m "$message"
-git -C "$ROOT" push
+log_warn "ai-harvest is deprecated; use ai-adopt for local skills and ai-push for commit/push"
+exec "$ROOT/bin/ai-push" "$@"

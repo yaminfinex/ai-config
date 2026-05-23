@@ -27,7 +27,7 @@ done
 "$ROOT/bin/ai-doctor" --quick
 
 if git_dirty && [ "$autostash" -eq 0 ]; then
-  log_error "working tree is dirty; run ai-harvest, stash manually, or retry with --autostash"
+  log_error "working tree is dirty; run ai-push, stash manually, or retry with --autostash"
   exit 1
 fi
 

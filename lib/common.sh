@@ -12,7 +12,7 @@ AI_CONFIG_BACKUP_DIR="${AI_CONFIG_BACKUP_DIR:-${XDG_STATE_HOME:-$HOME/.local/sta
 SECRET_REGEX='(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|-----BEGIN [A-Z ]+PRIVATE KEY-----)'
 HOME_PATH_REGEX='/(Users|home)/[A-Za-z0-9._-]+/'
 
-HARVEST_PATHS=(
+PUSH_PATHS=(
   "skills"
   "claude/CLAUDE.md"
   "claude/hooks"
