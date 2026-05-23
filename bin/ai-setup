@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/common.sh"
+
+dry_run=0
+heal_only=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) dry_run=1 ;;
+    --heal-only) heal_only=1 ;;
+    -h|--help)
+      cat <<'USAGE'
+Usage: ai-setup [--dry-run] [--heal-only]
+
+Installs symlinks from live agent config paths into this repo.
+--heal-only only repairs missing, broken, or wrong symlinks and never backs up
+real files or directories.
+USAGE
+      exit 0
+      ;;
+    *)
+      log_error "unknown argument: $arg"
+      exit 2
+      ;;
+  esac
+done
+
+run() {
+  if [ "$dry_run" -eq 1 ]; then
+    printf 'DRY %s\n' "$*"
+  else
+    "$@"
+  fi
+}
+
+install_link() {
+  local src="$1"
+  local dst="$2"
+  local parent
+  local backup
+
+  [ -e "$src" ] || {
+    log_info "skip missing source: $src"
+    return
+  }
+
+  parent="$(dirname "$dst")"
+
+  if [ ! -d "$parent" ]; then
+    if [ "$heal_only" -eq 1 ]; then
+      log_warn "skip missing parent in heal mode: $parent"
+      return
+    fi
+    run mkdir -p "$parent"
+  fi
+
+  if [ -L "$dst" ]; then
+    if symlink_points_to "$dst" "$src"; then
+      log_info "link already ok: $dst"
+      return
+    fi
+
+    log_info "replace symlink: $dst"
+    run rm "$dst"
+    run ln -s "$(abs_path "$src")" "$dst"
+    return
+  fi
+
+  if [ -e "$dst" ]; then
+    if [ "$heal_only" -eq 1 ]; then
+      log_warn "collision in heal mode, leaving untouched: $dst"
+      return
+    fi
+
+    if [ "$dry_run" -eq 1 ]; then
+      log_info "would back up collision: $dst"
+    else
+      backup="$(backup_target "$dst")"
+      log_info "backed up $dst -> $backup"
+    fi
+    run ln -s "$(abs_path "$src")" "$dst"
+    return
+  fi
+
+  log_info "create link: $dst -> $src"
+  run ln -s "$(abs_path "$src")" "$dst"
+}
+
+install_portable_links() {
+  local spec
+  local src_rel
+  local dst
+
+  while IFS= read -r spec; do
+    src_rel="${spec%%|*}"
+    dst="${spec#*|}"
+    install_link "$AI_CONFIG_ROOT/$src_rel" "$dst"
+  done < <(portable_link_specs)
+}
+
+install_skill_links() {
+  local spec
+  local agent
+  local config_home
+  local root
+  local skill
+
+  while IFS='|' read -r agent config_home root; do
+    if [ ! -d "$config_home" ]; then
+      case "$agent" in
+        claude|codex)
+          [ "$heal_only" -eq 1 ] && continue
+          run mkdir -p "$config_home"
+          ;;
+        *)
+          continue
+          ;;
+      esac
+    fi
+
+    if [ ! -d "$root" ]; then
+      [ "$heal_only" -eq 1 ] && continue
+      run mkdir -p "$root"
+    fi
+
+    while IFS= read -r skill; do
+      install_link "$AI_CONFIG_ROOT/skills/$skill" "$root/$skill"
+    done < <(repo_skill_names)
+  done < <(skill_root_specs)
+}
+
+install_portable_links
+install_skill_links
+
+log_info "ai-setup complete"

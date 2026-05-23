@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "$ROOT/lib/common.sh"
+
+autostash=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --autostash) autostash=1 ;;
+    -h|--help)
+      cat <<'USAGE'
+Usage: ai-sync [--autostash]
+
+Pulls latest repo changes and repairs only safe symlink drift.
+USAGE
+      exit 0
+      ;;
+    *)
+      log_error "unknown argument: $arg"
+      exit 2
+      ;;
+  esac
+done
+
+"$ROOT/bin/ai-doctor" --quick
+
+if git_dirty && [ "$autostash" -eq 0 ]; then
+  log_error "working tree is dirty; run ai-harvest, stash manually, or retry with --autostash"
+  exit 1
+fi
+
+before="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+
+if [ "$autostash" -eq 1 ]; then
+  git -C "$ROOT" pull --rebase --autostash
+else
+  git -C "$ROOT" pull --rebase
+fi
+
+after="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+
+if [ -n "$before" ] && [ -n "$after" ] && [ "$before" != "$after" ]; then
+  git -C "$ROOT" diff --name-status "$before" "$after"
+else
+  log_info "already up to date"
+fi
+
+"$ROOT/bin/ai-setup" --heal-only

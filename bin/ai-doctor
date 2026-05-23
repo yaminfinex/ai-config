@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/common.sh"
+
+quick=0
+strict=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --quick) quick=1 ;;
+    --strict) strict=1 ;;
+    -h|--help)
+      cat <<'USAGE'
+Usage: ai-doctor [--quick] [--strict]
+
+Checks ai-config repository health, link drift, local-only skills, secrets,
+and machine-specific absolute home paths.
+USAGE
+      exit 0
+      ;;
+    *)
+      log_error "unknown argument: $arg"
+      exit 2
+      ;;
+  esac
+done
+
+errors=0
+warnings=0
+
+warn() {
+  warnings=$((warnings + 1))
+  log_warn "$*"
+}
+
+err() {
+  errors=$((errors + 1))
+  log_error "$*"
+}
+
+check_git() {
+  local branch_status
+  local upstream
+
+  if ! git -C "$AI_CONFIG_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    err "$AI_CONFIG_ROOT is not a Git repository"
+    return
+  fi
+
+  branch_status="$(git -C "$AI_CONFIG_ROOT" status --short --branch)"
+  printf '%s\n' "$branch_status"
+
+  if git_dirty; then
+    warn "working tree has uncommitted changes"
+  fi
+
+  if ! upstream="$(git -C "$AI_CONFIG_ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)"; then
+    warn "current branch has no upstream remote"
+  else
+    log_info "upstream: $upstream"
+  fi
+}
+
+check_portable_links() {
+  local spec
+  local src_rel
+  local dst
+  local src
+
+  while IFS= read -r spec; do
+    src_rel="${spec%%|*}"
+    dst="${spec#*|}"
+    src="$AI_CONFIG_ROOT/$src_rel"
+
+    [ -e "$src" ] || continue
+
+    if [ -L "$dst" ]; then
+      if symlink_points_to "$dst" "$src"; then
+        [ "$quick" -eq 1 ] || log_info "link ok: $dst"
+      else
+        warn "link points elsewhere: $dst -> $(readlink "$dst")"
+      fi
+    elif [ -e "$dst" ]; then
+      warn "collision: $dst exists and is not a symlink"
+    else
+      warn "missing link: $dst -> $src"
+    fi
+  done < <(portable_link_specs)
+}
+
+check_skill_links() {
+  local spec
+  local agent
+  local config_home
+  local root
+  local skill
+  local src
+  local dst
+
+  while IFS='|' read -r agent config_home root; do
+    [ -d "$config_home" ] || continue
+
+    while IFS= read -r skill; do
+      src="$AI_CONFIG_ROOT/skills/$skill"
+      dst="$root/$skill"
+
+      if [ -L "$dst" ]; then
+        if symlink_points_to "$dst" "$src"; then
+          [ "$quick" -eq 1 ] || log_info "skill link ok: $agent:$skill"
+        else
+          warn "skill link points elsewhere: $dst -> $(readlink "$dst")"
+        fi
+      elif [ -e "$dst" ]; then
+        warn "skill collision: $dst exists and is not a symlink"
+      else
+        warn "missing skill link: $dst -> $src"
+      fi
+    done < <(repo_skill_names)
+  done < <(skill_root_specs)
+}
+
+check_unharvested_live_skills() {
+  local spec
+  local agent
+  local config_home
+  local root
+  local child
+  local name
+
+  while IFS='|' read -r agent config_home root; do
+    [ -d "$root" ] || continue
+
+    while IFS= read -r child; do
+      name="$(basename "$child")"
+      is_ignored_live_skill_name "$name" && continue
+      repo_skill_exists "$name" && continue
+      [ -f "$child/SKILL.md" ] || continue
+
+      warn "unharvested local skill in $agent: $child"
+    done < <(find "$root" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -print 2>/dev/null)
+  done < <(skill_root_specs)
+}
+
+check_secret_scan() {
+  local paths=()
+  local findings
+
+  while IFS= read -r path; do
+    paths+=("$path")
+  done < <(existing_scan_paths "${PORTABLE_SCAN_PATHS[@]}")
+
+  findings="$(scan_secret_regex_paths "${paths[@]}")"
+  if [ -n "$findings" ]; then
+    err "possible secret found:"
+    printf '%s\n' "$findings" >&2
+  fi
+}
+
+check_portability_scan() {
+  local paths=()
+  local findings
+
+  while IFS= read -r path; do
+    paths+=("$path")
+  done < <(existing_scan_paths "${PORTABLE_SCAN_PATHS[@]}")
+
+  findings="$(scan_portability_paths "${paths[@]}")"
+  if [ -n "$findings" ]; then
+    err "absolute home path found in portable file:"
+    printf '%s\n' "$findings" >&2
+  fi
+}
+
+check_git
+check_portable_links
+check_skill_links
+check_unharvested_live_skills
+check_secret_scan
+check_portability_scan
+
+if [ "$errors" -gt 0 ]; then
+  log_error "ai-doctor found $errors error(s) and $warnings warning(s)"
+  exit 1
+fi
+
+if [ "$warnings" -gt 0 ]; then
+  log_warn "ai-doctor found $warnings warning(s)"
+  [ "$strict" -eq 1 ] && exit 1
+  exit 0
+fi
+
+log_info "ai-doctor ok"

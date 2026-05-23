@@ -1,0 +1,23 @@
+# Machine-local secrets and auth
+*.local.json
+.credentials.json
+auth.json
+
+# Agent runtime state
+history.jsonl
+sessions/
+cache/
+telemetry/
+logs/
+*.log
+
+# Databases and transient state
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# Local backups and generated files
+backups/
+.ai-config-backup/
+.DS_Store

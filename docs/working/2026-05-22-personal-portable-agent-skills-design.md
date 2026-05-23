@@ -73,12 +73,13 @@ ai-config/
 
 ## Live Machine Layout
 
-Use a hybrid linking strategy:
+Use generated per-skill links for live skill roots:
 
-- Whole-directory links are acceptable for directories that are clearly user-owned.
-- Per-item links are required inside mixed agent-owned directories where personal files would collide with built-in or generated siblings.
+- `ai-setup` scans `skills/*/SKILL.md`.
+- For each repo skill, it creates a symlink at each supported live agent skill root.
+- New skills do not require editing `ai-setup`; re-running `ai-setup` is enough.
 
-This keeps new-skill ceremony low for agents whose skills directory is all yours, while avoiding accidental masking of agent-owned content.
+Do not rely on recursive skill discovery or wholesale replacement of an agent's skill root. The portable assumption is that agents discover direct child directories containing `SKILL.md`.
 
 Example intended links:
 
@@ -86,7 +87,8 @@ Example intended links:
 ~/.claude/CLAUDE.md          -> ~/Coding/ai-config/claude/CLAUDE.md
 ~/.claude/hooks              -> ~/Coding/ai-config/claude/hooks
 ~/.claude/commands           -> ~/Coding/ai-config/claude/commands
-~/.claude/skills             -> ~/Coding/ai-config/skills
+~/.claude/skills/ai-config   -> ~/Coding/ai-config/skills/ai-config
+~/.claude/skills/tdd         -> ~/Coding/ai-config/skills/tdd
 
 ~/.codex/AGENTS.md           -> ~/Coding/ai-config/codex/AGENTS.md
 ~/.codex/skills/ai-config    -> ~/Coding/ai-config/skills/ai-config
@@ -95,11 +97,9 @@ Example intended links:
 ~/.cursor/rules              -> ~/Coding/ai-config/cursor/rules
 ```
 
-Claude Code's `~/.claude/skills` is treated as user-owned for the initial design, so whole-directory linking is appropriate there. Adding a new skill under `skills/` then automatically exposes it to Claude Code without editing `ai-setup`.
+Avoid replacing skill roots wholesale because agents may keep system, vendor, marketplace, or generated skills under the same directory. For example, Codex may keep system skills under `~/.codex/skills/.system`. Replacing the whole directory with a symlink can mask built-in skills.
 
-Avoid replacing `~/.codex/skills` wholesale because Codex may keep system skills under `~/.codex/skills/.system`. Replacing the whole directory with a symlink can mask built-in skills. For Codex, link personal skill children individually or under an agreed personal namespace if Codex supports it.
-
-This rule generalizes: whole-directory symlinks are acceptable only when the target directory is clearly user-owned. For mixed agent-owned directories, link personal children.
+`ai-doctor` should also inspect live skill roots for skills that exist locally but not in `skills/`. Those should be reported as unharvested local skills so they can be adopted intentionally or ignored explicitly.
 
 ## Commands
 
@@ -168,15 +168,21 @@ Responsibilities:
 - Never delete user data.
 - Be idempotent and safe to re-run.
 
-Backups should live next to the agent config root in an `.ai-config-backup` directory so recovery is predictable.
+Backups should live in a central local state directory, not inside agent-owned config directories.
+
+Default backup root:
+
+```text
+${AI_CONFIG_BACKUP_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/ai-config/backups}
+```
 
 For a collision at `~/.claude/CLAUDE.md`, use:
 
 ```text
-~/.claude/.ai-config-backup/20260522T171500/CLAUDE.md
+~/.local/state/ai-config/backups/20260522T171500/.claude/CLAUDE.md
 ```
 
-For nested paths, preserve the relative path under the timestamped backup directory.
+For nested paths, preserve the path relative to `$HOME` under the timestamped backup directory. This keeps backups local-only, predictable, and separate from agent-owned directories.
 
 ### `ai-sync`
 
