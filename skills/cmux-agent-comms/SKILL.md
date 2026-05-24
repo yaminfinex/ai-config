@@ -1,6 +1,6 @@
 ---
 name: cmux-agent-comms
-description: Establish structured communication between multiple AI agents running in cmux panes or surfaces. Use when Codex needs to identify its own cmux surface, connect to an existing peer agent mid-session, spawn a peer Codex/Claude/terminal agent in a split pane, bootstrap role-agnostic XML message routing, pass artifact references by path/URL/git commit/diff, or run multi-pass agent conversations that the user can watch and interrupt.
+description: Establish structured communication between multiple AI agents running in cmux panes or surfaces. Use when Codex needs to identify its own cmux surface, connect to an existing peer agent mid-session, spawn a peer Codex/Claude/terminal agent in a split pane, bootstrap role-agnostic tagged-envelope message routing, pass artifact references by path/URL/git commit/diff, or run multi-pass agent conversations that the user can watch and interrupt.
 ---
 
 # cmux Agent Comms
@@ -11,7 +11,7 @@ Use this skill to create role-agnostic communication between agents in cmux. Kee
 
 Address agents by `surface:N`. Treat `window:N`, `workspace:N`, and `pane:N` as placement metadata, not message endpoints.
 
-Use cmux for visible prompt delivery and wakeups. Use durable artifact references for work products:
+Use cmux for visible prompt delivery and wakeups. Use a tolerant tagged envelope for routing and intent; do not get stuck trying to produce or parse strict XML. Use durable artifact references for work products:
 
 ```xml
 <artifact kind="file" path="/absolute/or/repo-relative/path.md"/>
@@ -23,12 +23,14 @@ Use cmux for visible prompt delivery and wakeups. Use durable artifact reference
 ## Safety Rules
 
 - Run `cmux identify --json` first and record your own `surface_ref`.
+- Prefer clear routing and useful artifact refs over perfect envelope syntax.
+- Treat message envelopes as LLM-readable prompts, not strict XML documents.
 - Do not press Enter in the user's active surface unless explicitly asked.
 - Default replies to the user or orchestrator are noninterrupting: send text to their prompt but do not submit it.
 - It is acceptable to submit prompts to peer agents when the task is to spawn, bootstrap, or continue that peer.
 - Do not close panes, surfaces, windows, or workspaces unless explicitly asked.
 - Prefer `cmux read-screen` before sending follow-up prompts so you do not interrupt a peer that is still working.
-- If a message contains substantial XML or multiline text, prefer `scripts/cmux-agent-send` to avoid shell quoting mistakes.
+- If a message contains substantial tagged-envelope or multiline text, prefer `scripts/cmux-agent-send` to avoid shell quoting mistakes.
 
 ## Quick Runbook
 
@@ -58,7 +60,7 @@ cmux read-screen --workspace workspace:1 --surface surface:NEW --lines 120
 
 Use `claude` instead of `codex` when the requested peer is Claude. If the command is unknown, report that the agent binary is unavailable instead of guessing.
 
-5. Bootstrap the peer with an XML envelope. Include both surfaces, roles only if the user gave them, reply mode, and artifact refs. See `references/protocol.md`.
+5. Bootstrap the peer with a tagged envelope. Include both surfaces, roles only if the user gave them, reply mode, and artifact refs. See `references/protocol.md`.
 
 6. For multi-pass work, route each turn explicitly:
 
@@ -69,7 +71,7 @@ Use `claude` instead of `codex` when the requested peer is Claude. If the comman
     <to agent="author" surface="surface:1"/>
   </route>
   <kind>review</kind>
-  <body>...</body>
+  <payload format="markdown">...</payload>
 </cmux-message>
 ```
 
@@ -78,8 +80,8 @@ Use `claude` instead of `codex` when the requested peer is Claude. If the comman
 Use the bundled helper when available:
 
 ```bash
-skills/cmux-agent-comms/scripts/cmux-agent-send --workspace workspace:1 --to surface:4 --file message.xml --submit
-skills/cmux-agent-comms/scripts/cmux-agent-send --workspace workspace:1 --to surface:1 --file reply.xml
+skills/cmux-agent-comms/scripts/cmux-agent-send --workspace workspace:1 --to surface:4 --file message.env --submit
+skills/cmux-agent-comms/scripts/cmux-agent-send --workspace workspace:1 --to surface:1 --file reply.env
 ```
 
 The helper sends the payload with `cmux send`; `--submit` also sends Enter. Omit `--submit` for noninterrupting replies.
@@ -87,4 +89,4 @@ The helper sends the payload with `cmux send`; `--submit` also sends Enter. Omit
 ## Detailed References
 
 - `references/runbook.md`: mid-session connection, spawning Codex/Claude peers, and multi-pass operation.
-- `references/protocol.md`: XML envelope fields, artifact references, acknowledgements, and examples.
+- `references/protocol.md`: tagged envelope fields, artifact references, acknowledgements, and examples.

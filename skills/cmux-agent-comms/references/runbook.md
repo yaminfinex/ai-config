@@ -21,7 +21,7 @@ cmux tree --workspace workspace:CURRENT
 4. Send a bootstrap envelope to the peer surface and submit it:
 
 ```bash
-skills/cmux-agent-comms/scripts/cmux-agent-send --workspace workspace:CURRENT --to surface:PEER --file bootstrap.xml --submit
+skills/cmux-agent-comms/scripts/cmux-agent-send --workspace workspace:CURRENT --to surface:PEER --file bootstrap.env --submit
 ```
 
 5. Poll the peer, then your own surface:
@@ -63,14 +63,14 @@ cmux send-key --workspace workspace:CURRENT --surface surface:PEER Enter
 cmux read-screen --workspace workspace:CURRENT --surface surface:PEER --lines 160
 ```
 
-4. Send bootstrap XML with `--submit`.
+4. Send the bootstrap envelope with `--submit`.
 
 ## Multi-Pass Conversation Loop
 
 Use this loop for document production, review cycles, implementation/review, or any other role-specific workflow:
 
 1. Orchestrator sends a task with artifact refs.
-2. Peer replies with an XML envelope and any artifact refs it produced.
+2. Peer replies with a tagged envelope and any artifact refs it produced.
 3. Orchestrator reads the reply, decides the next recipient, and sends the next turn.
 4. Stop when a `kind="done"` message arrives, the user interrupts, or the round budget is reached.
 
@@ -83,6 +83,7 @@ Set an explicit round budget when the user has not provided one:
 ## Practical Notes
 
 - `surface:N` is the address. `pane:N` is only where the surface is displayed.
+- The envelope is a prompt convention, not strict XML. Preserve route, kind, artifacts, and payload; do not stall on escaping or parser-perfect output.
 - Use `cmux send` without Enter for noninterrupting messages to the user-facing agent.
 - Use `cmux send-key ... Enter` only after confirming the destination should start processing.
 - For large artifacts, send references rather than content.

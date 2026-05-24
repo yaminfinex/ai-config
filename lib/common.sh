@@ -195,7 +195,9 @@ scan_portability_paths() {
   local paths=("$@")
   [ "${#paths[@]}" -gt 0 ] || return 0
 
-  grep -RInE "$HOME_PATH_REGEX" "${paths[@]}" 2>/dev/null || true
+  grep -RInE "$HOME_PATH_REGEX" "${paths[@]}" 2>/dev/null |
+    grep -vF "$AI_CONFIG_ROOT/skills/cmux-router/references/upstream/" ||
+    true
 }
 
 staged_files() {
@@ -237,7 +239,9 @@ scan_staged_portability() {
   done < <(portable_staged_files)
 
   [ "${#files[@]}" -gt 0 ] || return 0
-  grep -InE "$HOME_PATH_REGEX" "${files[@]}" 2>/dev/null || true
+  grep -InE "$HOME_PATH_REGEX" "${files[@]}" 2>/dev/null |
+    grep -vF "$AI_CONFIG_ROOT/skills/cmux-router/references/upstream/" ||
+    true
 }
 
 git_dirty() {
