@@ -40,6 +40,12 @@ ai-config/
     working/
       2026-05-22-personal-portable-agent-skills-design.md
 
+  references/
+    external/
+      cmux/
+        SOURCE.md
+        skills/
+
   .agents/
     skills/
       ai-config-bootstrap/
@@ -285,6 +291,7 @@ cursor/rules/
 bin/
 lib/
 docs/
+references/
 README.md
 .gitignore
 ```
@@ -316,7 +323,7 @@ The skill should instruct agents to:
 
 - Treat this repo as the canonical personal agent config corpus.
 - Run `bin/ai-doctor` before edits.
-- Prefer edits under `skills/`, `.agents/skills/`, `claude/`, `codex/`, `cursor/`, `bin/`, `lib/`, and `docs/`.
+- Prefer edits under `skills/`, `.agents/skills/`, `references/`, `claude/`, `codex/`, `cursor/`, `bin/`, `lib/`, and `docs/`.
 - Avoid committing sessions, histories, caches, auth files, telemetry, SQLite databases, generated plugin caches, and machine-local overlays.
 - Run `bin/ai-doctor` after edits.
 - Suggest `bin/ai-adopt` when `ai-doctor` reports a local-only skill that should enter the repo.

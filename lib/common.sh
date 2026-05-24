@@ -26,6 +26,7 @@ PUSH_PATHS=(
   "bin"
   "lib"
   "docs"
+  "references"
   "README.md"
   ".gitignore"
 )

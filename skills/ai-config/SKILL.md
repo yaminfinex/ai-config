@@ -13,7 +13,7 @@ Before making changes:
 
 1. Run `bin/ai-doctor`.
 2. Treat warnings about local-only skills, broken links, likely secrets, and absolute home paths as real review findings.
-3. Prefer edits under `skills/`, `.agents/skills/`, `claude/`, `codex/`, `cursor/`, `bin/`, `lib/`, and `docs/`. Repo-local `.claude` is a symlink to `.agents`; edit `.agents`.
+3. Prefer edits under `skills/`, `.agents/skills/`, `references/`, `claude/`, `codex/`, `cursor/`, `bin/`, `lib/`, and `docs/`. Repo-local `.claude` is a symlink to `.agents`; edit `.agents`.
 
 Operational rules:
 
