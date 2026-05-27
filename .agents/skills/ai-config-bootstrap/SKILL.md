@@ -17,6 +17,7 @@ When the user asks to "set me up on this machine", "install this repo", or simil
 4. If the user wants command names available globally, run `bin/ai-setup --dry-run --shell-path` first.
 5. Run `bin/ai-setup --shell-path` only after explicit approval for shell startup changes.
 6. Run `bin/ai-doctor --quick` again and report remaining warnings.
+7. If `ai-doctor` warns that `statusLine.command` is missing from `~/.claude/settings.json`, merge the `statusLine` block from `claude/settings.local.example.json` into `~/.claude/settings.json`. `settings.json` is local-only and never symlinked.
 
 Do not manually edit `.zshrc`, `.bashrc`, or other shell startup files. Use `bin/ai-setup --shell-path`.
 

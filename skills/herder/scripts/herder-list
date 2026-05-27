@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# herder-list — show spawned agents, optionally reconciled with live herdr state.
+#
+# Usage:
+#   herder-list                       # table of active records, reconciled with live agents
+#   herder-list --all                 # include records with status != active
+#   herder-list --json                # raw JSONL of reconciled records to stdout
+#   herder-list --raw                 # raw registry JSONL without reconciliation
+#   herder-list --guid GUID           # single record (full JSON), exit 1 if missing
+
+set -euo pipefail
+
+die() { printf 'herder-list: %s\n' "$*" >&2; exit 1; }
+command -v herdr >/dev/null 2>&1 || die "herdr not on PATH"
+command -v jq >/dev/null 2>&1 || die "jq not on PATH"
+
+STATE_DIR="${HERDER_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herder}"
+REGISTRY="$STATE_DIR/registry.jsonl"
+[[ -f "$REGISTRY" ]] || { printf 'no registry at %s\n' "$REGISTRY" >&2; exit 0; }
+
+MODE="table"
+INCLUDE_ALL=0
+TARGET_GUID=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --all) INCLUDE_ALL=1; shift;;
+    --json) MODE="json"; shift;;
+    --raw) MODE="raw"; shift;;
+    --guid) MODE="one"; TARGET_GUID="$2"; shift 2;;
+    -h|--help) sed -n '1,12p' "$0"; exit 0;;
+    *) die "unknown arg: $1";;
+  esac
+done
+
+if [[ "$MODE" == "raw" ]]; then
+  cat "$REGISTRY"
+  exit 0
+fi
+
+LIVE_JSON="$(herdr agent list 2>/dev/null || printf '{"result":{"agents":[]}}')"
+LIVE_PANES="$(printf '%s' "$LIVE_JSON" | jq -c '[.result.agents[]?.pane_id]')"
+LIVE_BY_PANE="$(printf '%s' "$LIVE_JSON" | jq -c '[.result.agents[]?] | map({(.pane_id): .}) | add // {}')"
+
+reconcile() {
+  jq -c --argjson live "$LIVE_BY_PANE" \
+    '. + {live: ($live[.pane_id] // null),
+          live_status: ((($live[.pane_id] // {}).agent_status) // "gone")}'
+}
+
+if [[ "$MODE" == "one" ]]; then
+  [[ -n "$TARGET_GUID" ]] || die "--guid requires a value"
+  REC="$(grep -F "\"$TARGET_GUID\"" "$REGISTRY" | tail -n1 || true)"
+  [[ -n "$REC" ]] || { printf 'no record for guid %s\n' "$TARGET_GUID" >&2; exit 1; }
+  printf '%s' "$REC" | reconcile | jq .
+  exit 0
+fi
+
+# Collapse to latest record per guid so closed/updated entries override earlier ones.
+if [[ "$INCLUDE_ALL" -eq 1 ]]; then
+  COLLAPSED="$(jq -sc 'group_by(.guid) | map(.[-1]) | .[]' "$REGISTRY")"
+else
+  COLLAPSED="$(jq -sc 'group_by(.guid) | map(.[-1]) | map(select(.status=="active")) | .[]' "$REGISTRY")"
+fi
+
+if [[ "$MODE" == "json" ]]; then
+  printf '%s\n' "$COLLAPSED" | while IFS= read -r rec; do
+    [[ -n "$rec" ]] || continue
+    printf '%s' "$rec" | reconcile
+  done
+  exit 0
+fi
+
+# Table mode.
+printf '%-10s %-22s %-8s %-22s %-10s %s\n' "GUID" "LABEL" "AGENT" "PANE" "LIVE" "ROLE"
+printf '%s\n' "$COLLAPSED" | while IFS= read -r rec; do
+  [[ -n "$rec" ]] || continue
+  reconciled="$(printf '%s' "$rec" | reconcile)"
+  printf '%-10s %-22s %-8s %-22s %-10s %s\n' \
+    "$(printf '%s' "$reconciled" | jq -r .short_guid)" \
+    "$(printf '%s' "$reconciled" | jq -r .label)" \
+    "$(printf '%s' "$reconciled" | jq -r .agent)" \
+    "$(printf '%s' "$reconciled" | jq -r .pane_id)" \
+    "$(printf '%s' "$reconciled" | jq -r .live_status)" \
+    "$(printf '%s' "$reconciled" | jq -r .role)"
+done

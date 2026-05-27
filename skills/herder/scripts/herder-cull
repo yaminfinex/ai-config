@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# herder-cull — close a spawned agent's pane and mark its registry record closed.
+#
+# Usage:
+#   herder-cull --guid GUID                 # match by short or full guid
+#   herder-cull --label LABEL                # match by label
+#   herder-cull --pane PANE_ID               # match by pane id
+#   herder-cull --gone                       # close registry entries whose pane is no longer live
+#   add --dry-run to print what would happen without acting.
+#
+# Updates the registry by appending a new closed record (registry is append-only JSONL).
+
+set -euo pipefail
+
+die() { printf 'herder-cull: %s\n' "$*" >&2; exit 1; }
+[[ "${HERDR_ENV:-}" = "1" ]] || die "not running inside a herdr pane (HERDR_ENV != 1)"
+command -v herdr >/dev/null 2>&1 || die "herdr not on PATH"
+command -v jq >/dev/null 2>&1 || die "jq not on PATH"
+
+STATE_DIR="${HERDER_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herder}"
+REGISTRY="$STATE_DIR/registry.jsonl"
+[[ -f "$REGISTRY" ]] || die "no registry at $REGISTRY"
+
+SELECTOR=""
+SELECTOR_VAL=""
+GONE_ONLY=0
+DRY=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --guid) SELECTOR="guid"; SELECTOR_VAL="$2"; shift 2;;
+    --label) SELECTOR="label"; SELECTOR_VAL="$2"; shift 2;;
+    --pane) SELECTOR="pane"; SELECTOR_VAL="$2"; shift 2;;
+    --gone) GONE_ONLY=1; shift;;
+    --dry-run) DRY=1; shift;;
+    -h|--help) sed -n '1,12p' "$0"; exit 0;;
+    *) die "unknown arg: $1";;
+  esac
+done
+
+# Build the latest-by-guid view: last record wins.
+LATEST="$(jq -sc 'group_by(.guid) | map(.[-1]) | .[] | select(.status=="active")' "$REGISTRY")"
+
+select_targets() {
+  if [[ "$GONE_ONLY" -eq 1 ]]; then
+    LIVE_PANES="$(herdr agent list 2>/dev/null | jq -c '[.result.agents[]?.pane_id]' || echo '[]')"
+    printf '%s\n' "$LATEST" | jq -c --argjson live "$LIVE_PANES" 'select((.pane_id|IN($live[]))|not)'
+    return
+  fi
+  case "$SELECTOR" in
+    guid)  printf '%s\n' "$LATEST" | jq -c --arg v "$SELECTOR_VAL" 'select(.guid==$v or .short_guid==$v)';;
+    label) printf '%s\n' "$LATEST" | jq -c --arg v "$SELECTOR_VAL" 'select(.label==$v)';;
+    pane)  printf '%s\n' "$LATEST" | jq -c --arg v "$SELECTOR_VAL" 'select(.pane_id==$v)';;
+    "")    die "selector required (--guid, --label, --pane, or --gone)";;
+  esac
+}
+
+TARGETS="$(select_targets)"
+[[ -n "$TARGETS" ]] || { printf 'no matching active records\n' >&2; exit 1; }
+
+NOW_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+CULLER="${HERDR_PANE_ID:-unknown}"
+
+printf '%s\n' "$TARGETS" | while IFS= read -r rec; do
+  GUID="$(printf '%s' "$rec" | jq -r .guid)"
+  LABEL="$(printf '%s' "$rec" | jq -r .label)"
+  PANE="$(printf '%s' "$rec" | jq -r .pane_id)"
+
+  if [[ "$DRY" -eq 1 ]]; then
+    printf 'would cull %s (%s) pane=%s\n' "$LABEL" "$GUID" "$PANE"
+    continue
+  fi
+
+  RESULT="$(herdr pane close "$PANE" 2>&1 || true)"
+  CLOSED_OK=$(printf '%s' "$RESULT" | jq -r '.result.type // "error"' 2>/dev/null || echo error)
+
+  CLOSED_REC="$(printf '%s' "$rec" | jq -c \
+    --arg now "$NOW_ISO" --arg by "$CULLER" --arg result "$CLOSED_OK" \
+    '. + {status:"closed", closed_at:$now, closed_by_pane:$by, close_result:$result}')"
+  printf '%s\n' "$CLOSED_REC" >>"$REGISTRY"
+
+  printf 'culled %s (%s) pane=%s → %s\n' "$LABEL" "$GUID" "$PANE" "$CLOSED_OK"
+done

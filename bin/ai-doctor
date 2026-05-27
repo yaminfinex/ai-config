@@ -236,6 +236,49 @@ check_secret_scan() {
   fi
 }
 
+print_statusline_snippet() {
+  cat >&2 <<'SNIPPET'
+  merge this into ~/.claude/settings.json:
+    "statusLine": {
+      "command": "$HOME/.claude/statusline.sh",
+      "type": "command"
+    }
+SNIPPET
+}
+
+check_claude_statusline_settings() {
+  local settings="$HOME/.claude/settings.json"
+  local expected="$HOME/.claude/statusline.sh"
+  local command
+
+  [ -f "$settings" ] || {
+    warn "claude settings missing: $settings"
+    print_statusline_snippet
+    return
+  }
+
+  if ! command -v jq >/dev/null 2>&1; then
+    warn "jq not installed; skipping statusLine check in $settings"
+    return
+  fi
+
+  command="$(jq -r '.statusLine.command // ""' "$settings" 2>/dev/null)"
+
+  case "$command" in
+    "")
+      warn "statusLine.command not set in $settings"
+      print_statusline_snippet
+      ;;
+    "$expected"|'$HOME/.claude/statusline.sh'|"~/.claude/statusline.sh")
+      [ "$quick" -eq 1 ] || log_info "statusLine ok: $command"
+      ;;
+    *)
+      warn "statusLine.command in $settings points elsewhere: $command (expected $expected)"
+      print_statusline_snippet
+      ;;
+  esac
+}
+
 check_portability_scan() {
   local paths=()
   local findings
@@ -256,6 +299,7 @@ check_portable_links
 check_skill_links
 check_unharvested_live_skills
 check_cmux_reference_freshness
+check_claude_statusline_settings
 check_secret_scan
 check_portability_scan
 

@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# herder-spawn — spawn a named, GUID-tagged agent in a herdr pane and register it.
+#
+# Usage:
+#   herder-spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]
+#                [--split right|down] [--workspace ID] [--tab ID] [--cwd PATH]
+#                [--no-focus] [--label-prefix STR] [--extra-arg ARG]... [--json]
+#
+# Behavior:
+#   1. Generates a short GUID and a label "<role>-<shortguid>".
+#   2. Calls `herdr agent start <label> ...` with `env HERDER_GUID=... HERDER_ROLE=... <agent> [extra-args]`.
+#   3. Appends a JSONL record to $HERDER_STATE_DIR/registry.jsonl.
+#   4. If --prompt/--prompt-file is given, waits for the agent to report idle then sends the prompt + Enter.
+#   5. Prints a human summary to stderr and a JSON record to stdout when --json is set.
+#
+# Notes:
+#   * The agent binary must accept being invoked plainly (e.g. `codex`, `claude`). For wrappers, use --extra-arg.
+#   * If the agent never reports idle, the prompt send falls back after the wait timeout (10s by default).
+#   * Sending the prompt uses `herdr agent send` (literal) then `herdr pane send-keys Enter` to submit.
+
+set -euo pipefail
+
+die() { printf 'herder-spawn: %s\n' "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+[[ "${HERDR_ENV:-}" = "1" ]] || die "not running inside a herdr pane (HERDR_ENV != 1)"
+have herdr || die "herdr not on PATH"
+have jq || die "jq not on PATH"
+have uuidgen || die "uuidgen not on PATH"
+
+ROLE=""
+AGENT=""
+PROMPT=""
+PROMPT_FILE=""
+SPLIT="right"
+WORKSPACE=""
+TAB=""
+CWD=""
+FOCUS_FLAG="--no-focus"
+LABEL_PREFIX=""
+EXTRA_ARGS=()
+JSON_OUT=0
+WAIT_TIMEOUT_MS="${HERDER_SPAWN_WAIT_MS:-10000}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --role) ROLE="$2"; shift 2;;
+    --agent) AGENT="$2"; shift 2;;
+    --prompt) PROMPT="$2"; shift 2;;
+    --prompt-file) PROMPT_FILE="$2"; shift 2;;
+    --split) SPLIT="$2"; shift 2;;
+    --workspace) WORKSPACE="$2"; shift 2;;
+    --tab) TAB="$2"; shift 2;;
+    --cwd) CWD="$2"; shift 2;;
+    --focus) FOCUS_FLAG="--focus"; shift;;
+    --no-focus) FOCUS_FLAG="--no-focus"; shift;;
+    --label-prefix) LABEL_PREFIX="$2"; shift 2;;
+    --extra-arg) EXTRA_ARGS+=("$2"); shift 2;;
+    --json) JSON_OUT=1; shift;;
+    --wait-timeout-ms) WAIT_TIMEOUT_MS="$2"; shift 2;;
+    -h|--help) sed -n '1,30p' "$0"; exit 0;;
+    *) die "unknown arg: $1";;
+  esac
+done
+
+[[ -n "$ROLE" ]] || die "--role required"
+[[ -n "$AGENT" ]] || die "--agent required"
+[[ -z "$PROMPT" || -z "$PROMPT_FILE" ]] || die "use --prompt or --prompt-file, not both"
+
+if [[ -n "$PROMPT_FILE" ]]; then
+  [[ -r "$PROMPT_FILE" ]] || die "prompt file not readable: $PROMPT_FILE"
+  PROMPT="$(cat "$PROMPT_FILE")"
+fi
+
+STATE_DIR="${HERDER_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herder}"
+mkdir -p "$STATE_DIR"
+REGISTRY="$STATE_DIR/registry.jsonl"
+
+# Generate IDs. Full UUID is the canonical handle; short form is for human labels.
+GUID="$(uuidgen | tr 'A-Z' 'a-z')"
+SHORT="${GUID%%-*}"
+LABEL="${LABEL_PREFIX}${ROLE}-${SHORT}"
+
+# Build herdr agent start arg list.
+start_args=("agent" "start" "$LABEL" "$FOCUS_FLAG" "--split" "$SPLIT")
+[[ -n "$WORKSPACE" ]] && start_args+=("--workspace" "$WORKSPACE")
+[[ -n "$TAB" ]]       && start_args+=("--tab" "$TAB")
+[[ -n "$CWD" ]]       && start_args+=("--cwd" "$CWD")
+
+# argv: env wrapper injects HERDER_GUID/HERDER_ROLE for the child, then the agent + extras.
+argv=(env "HERDER_GUID=$GUID" "HERDER_ROLE=$ROLE" "HERDER_LABEL=$LABEL" "$AGENT" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"})
+
+set +e
+START_JSON="$(herdr "${start_args[@]}" -- "${argv[@]}" 2>&1)"
+START_RC=$?
+set -e
+
+if [[ $START_RC -ne 0 ]]; then
+  printf 'herdr agent start failed:\n%s\n' "$START_JSON" >&2
+  exit "$START_RC"
+fi
+
+# herdr returns: {"id":...,"result":{"agent":{...},"argv":[...],"type":"agent_started"}}
+PANE_ID="$(printf '%s' "$START_JSON" | jq -r '.result.agent.pane_id // empty')"
+WS_ID="$(printf '%s' "$START_JSON" | jq -r '.result.agent.workspace_id // empty')"
+TAB_ID="$(printf '%s' "$START_JSON" | jq -r '.result.agent.tab_id // empty')"
+TERM_ID="$(printf '%s' "$START_JSON" | jq -r '.result.agent.terminal_id // empty')"
+RESOLVED_CWD="$(printf '%s' "$START_JSON" | jq -r '.result.agent.cwd // empty')"
+
+[[ -n "$PANE_ID" ]] || { printf 'unexpected start payload: %s\n' "$START_JSON" >&2; exit 1; }
+
+# Append registry record.
+NOW_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+STARTED_BY="${HERDR_PANE_ID:-unknown}"
+PROMPT_PRESENT=$([[ -n "$PROMPT" ]] && echo true || echo false)
+
+# Construct argv JSON array carefully.
+ARGV_JSON="$(printf '%s\n' "${argv[@]}" | jq -R . | jq -sc .)"
+EXTRA_JSON="$(printf '%s\n' "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" | jq -R . | jq -sc .)"
+
+RECORD="$(jq -nc \
+  --arg guid "$GUID" \
+  --arg short "$SHORT" \
+  --arg label "$LABEL" \
+  --arg role "$ROLE" \
+  --arg agent "$AGENT" \
+  --argjson extra "$EXTRA_JSON" \
+  --argjson argv "$ARGV_JSON" \
+  --arg pane "$PANE_ID" \
+  --arg ws "$WS_ID" \
+  --arg tab "$TAB_ID" \
+  --arg term "$TERM_ID" \
+  --arg cwd "$RESOLVED_CWD" \
+  --arg started_at "$NOW_ISO" \
+  --arg started_by "$STARTED_BY" \
+  --argjson prompt_present "$PROMPT_PRESENT" \
+  '{guid:$guid, short_guid:$short, label:$label, role:$role, agent:$agent,
+    extra_args:$extra, argv:$argv, pane_id:$pane, workspace_id:$ws, tab_id:$tab,
+    terminal_id:$term, cwd:$cwd, started_at:$started_at, started_by_pane:$started_by,
+    initial_prompt_present:$prompt_present, status:"active"}')"
+
+printf '%s\n' "$RECORD" >>"$REGISTRY"
+
+# Send initial prompt if requested.
+PROMPT_SENT=false
+if [[ -n "$PROMPT" ]]; then
+  # Best-effort: wait for the agent to settle into idle. Falls through on timeout.
+  herdr agent wait "$PANE_ID" --status idle --timeout "$WAIT_TIMEOUT_MS" >/dev/null 2>&1 || true
+  if herdr agent send "$PANE_ID" "$PROMPT" >/dev/null 2>&1; then
+    sleep 0.2
+    herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
+    PROMPT_SENT=true
+  fi
+fi
+
+# Human summary to stderr.
+{
+  printf 'spawned %s (%s) in pane %s (workspace %s)\n' "$LABEL" "$AGENT" "$PANE_ID" "$WS_ID"
+  printf '  guid:   %s\n' "$GUID"
+  printf '  cwd:    %s\n' "$RESOLVED_CWD"
+  if [[ -n "$PROMPT" ]]; then
+    if $PROMPT_SENT; then
+      printf '  prompt: sent (%d chars)\n' "${#PROMPT}"
+    else
+      printf '  prompt: NOT sent (agent send failed)\n'
+    fi
+  fi
+} >&2
+
+if [[ "$JSON_OUT" -eq 1 ]]; then
+  printf '%s\n' "$RECORD"
+fi

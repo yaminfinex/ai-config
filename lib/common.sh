@@ -19,6 +19,7 @@ PUSH_PATHS=(
   "claude/CLAUDE.md"
   "claude/hooks"
   "claude/commands"
+  "claude/statusline.sh"
   "claude/settings.shared.json"
   "claude/settings.local.example.json"
   "codex/AGENTS.md"
@@ -37,6 +38,7 @@ PORTABLE_SCAN_PATHS=(
   "skills"
   "claude/hooks"
   "claude/commands"
+  "claude/statusline.sh"
   "claude/settings.shared.json"
   "claude/settings.local.example.json"
   "codex/AGENTS.md"
@@ -134,6 +136,7 @@ portable_link_specs() {
     "claude/CLAUDE.md|$HOME/.claude/CLAUDE.md" \
     "claude/hooks|$HOME/.claude/hooks" \
     "claude/commands|$HOME/.claude/commands" \
+    "claude/statusline.sh|$HOME/.claude/statusline.sh" \
     "codex/AGENTS.md|$HOME/.codex/AGENTS.md" \
     "cursor/rules|$HOME/.cursor/rules"
 }
@@ -210,7 +213,7 @@ portable_staged_files() {
 
   staged_files | while IFS= read -r file; do
     case "$file" in
-      .agents/skills/*|.claude/skills/*|skills/*|claude/hooks/*|claude/commands/*|claude/settings.shared.json|claude/settings.local.example.json|codex/AGENTS.md|cursor/rules/*|bin/*|lib/*)
+      .agents/skills/*|.claude/skills/*|skills/*|claude/hooks/*|claude/commands/*|claude/statusline.sh|claude/settings.shared.json|claude/settings.local.example.json|codex/AGENTS.md|cursor/rules/*|bin/*|lib/*)
         printf '%s/%s\n' "$AI_CONFIG_ROOT" "$file"
         ;;
     esac
