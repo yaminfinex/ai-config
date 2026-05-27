@@ -27,6 +27,7 @@ PUSH_PATHS=(
   "lib"
   "docs"
   "references"
+  "vendor"
   "README.md"
   ".gitignore"
 )

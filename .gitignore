@@ -21,3 +21,8 @@ logs/
 backups/
 .ai-config-backup/
 .DS_Store
+
+# Vendored project build artifacts
+vendor/*/node_modules/
+vendor/*/dist/
+vendor/*/coverage/
