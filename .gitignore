@@ -17,6 +17,9 @@ logs/
 *.db
 *.db-*
 
+# Per-branch working memory (see skills/using-napkins/SKILL.md)
+napkins/
+
 # Local backups and generated files
 backups/
 .ai-config-backup/

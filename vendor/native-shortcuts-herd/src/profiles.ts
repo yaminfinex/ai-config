@@ -173,13 +173,25 @@ function addPrefixActionBindings(lines: string[]): void {
     "keybind = cmd+t=unbind",
     "keybind = cmd+KeyN=text:\\x02n",
     "keybind = cmd+n=unbind",
-    "keybind = cmd+KeyW=text:\\x02W",
+    // local patch: route cmd+w to close_pane (prefix+x), not close_tab
+    // (prefix+shift+W). Browser/editor muscle memory expects cmd+w to
+    // kill the focused thing, not the whole tab — and on a one-tab
+    // workspace, close_tab triggers a workspace auto-close.
+    "keybind = cmd+KeyW=text:\\x02x",
     "keybind = cmd+w=unbind",
     "keybind = cmd+KeyK=text:\\x02N",
     "keybind = cmd+k=unbind",
     "keybind = cmd+KeyL=text:\\x02T",
     "keybind = cmd+l=unbind",
     "keybind = alt+t=text:\\x02t",
+    // local patch: pane splits. Route ghostty's default split keys to
+    // herdr's split actions so cmd+d / cmd+shift+d behave naturally for
+    // macOS terminal users instead of being eaten by ghostty's own
+    // (now disabled) split implementation.
+    "keybind = cmd+KeyD=text:\\x02v",
+    "keybind = cmd+d=unbind",
+    "keybind = cmd+shift+KeyD=text:\\x02-",
+    "keybind = cmd+shift+d=unbind",
     ""
   );
 }

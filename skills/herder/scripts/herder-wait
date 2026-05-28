@@ -2,11 +2,15 @@
 # herder-wait — block until a spawned agent reaches a status, optionally read its screen.
 #
 # Usage:
-#   herder-wait <target> [--status done|idle|working|blocked|unknown] [--timeout MS]
+#   herder-wait <target> [--status idle|working|blocked|done|unknown] [--timeout MS]
 #                        [--read] [--lines N] [--source visible|recent|recent-unwrapped]
 #
 # <target> is one of: short guid, full guid, label, or pane id.
-# Default status is `done` (agent finished, output not yet read).
+# Default status is `idle` (works for the claude/codex integrations, which
+# never emit `done`). Pair with the small post-send sleep in herder-spawn so
+# the integration has had time to flip to `working` before you wait on idle.
+# If the wait returns sooner than expected, read the pane and call again — the
+# caller is expected to be smart enough to decide whether to keep waiting.
 # Default timeout is 60000ms. Exit code 1 on timeout, matching `herdr wait`.
 #
 # With --read, prints the pane's recent transcript after the wait returns.
@@ -21,7 +25,7 @@ command -v jq >/dev/null 2>&1 || die "jq not on PATH"
 STATE_DIR="${HERDER_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herder}"
 REGISTRY="$STATE_DIR/registry.jsonl"
 
-STATUS="done"
+STATUS="idle"
 TIMEOUT_MS="60000"
 DO_READ=0
 LINES="30"

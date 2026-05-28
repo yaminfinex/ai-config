@@ -63,6 +63,20 @@ Always:
 
 See `references/spawn-patterns.md` for worktree-spawned agents, follow-ups, and culling.
 
+## Waiting on a spawned agent
+
+Use `scripts/herder-wait` instead of `sleep` when you need to block until a spawned agent finishes:
+
+```bash
+herder-wait <guid|short-guid|label|pane_id> [--status done|idle|...] [--timeout 60000] [--read] [--lines 30]
+```
+
+Default status is `idle` — the claude/codex integration hooks only emit `working|idle|blocked`, so `done` waits would never resolve. `herder-spawn` adds a small post-send sleep so the integration has time to flip to `working` before `herder-wait --status idle` is called; otherwise the wait would return immediately on the pre-prompt idle state.
+
+If `herder-wait` returns sooner than expected, the agent should `herdr pane read` (or `--read` on the wait), check whether the answer is actually there, and call `herder-wait` again if not. Exit code 1 on timeout, matching `herdr wait` semantics.
+
+This is a thin wrapper over `herdr wait agent-status` with target resolution through the registry — `send` stays a separate verb.
+
 ## Tracking and reporting
 
 - `herder-list` — table of active spawned agents reconciled with `herdr agent list` (shows `LIVE` = `idle`/`working`/`gone`).

@@ -40,7 +40,20 @@ FOCUS_FLAG="--no-focus"
 LABEL_PREFIX=""
 EXTRA_ARGS=()
 JSON_OUT=0
-WAIT_TIMEOUT_MS="${HERDER_SPAWN_WAIT_MS:-10000}"
+WAIT_TIMEOUT_MS="${HERDER_SPAWN_WAIT_MS:-15000}"
+READY_MATCH=""
+NO_READY_WAIT=0
+
+# Per-agent default ready-pattern (substring to look for in the pane before we
+# trust the agent UI to accept input). Picked these by eyeballing the boot
+# transcripts: claude shows "❯ " for the input chevron, codex shows "› ".
+default_ready_match() {
+  case "$1" in
+    claude) printf '%s' '❯ ';;
+    codex)  printf '%s' '› ';;
+    *) printf '';;
+  esac
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -58,6 +71,8 @@ while [[ $# -gt 0 ]]; do
     --extra-arg) EXTRA_ARGS+=("$2"); shift 2;;
     --json) JSON_OUT=1; shift;;
     --wait-timeout-ms) WAIT_TIMEOUT_MS="$2"; shift 2;;
+    --ready-match) READY_MATCH="$2"; shift 2;;
+    --no-ready-wait) NO_READY_WAIT=1; shift;;
     -h|--help) sed -n '1,30p' "$0"; exit 0;;
     *) die "unknown arg: $1";;
   esac
@@ -143,12 +158,39 @@ printf '%s\n' "$RECORD" >>"$REGISTRY"
 
 # Send initial prompt if requested.
 PROMPT_SENT=false
+READY_REASON=""
 if [[ -n "$PROMPT" ]]; then
-  # Best-effort: wait for the agent to settle into idle. Falls through on timeout.
-  herdr agent wait "$PANE_ID" --status idle --timeout "$WAIT_TIMEOUT_MS" >/dev/null 2>&1 || true
+  # Wait for the agent UI to actually be receptive. The integration `idle`
+  # state fires from boot before the input prompt has rendered, so we look
+  # for a known prompt indicator string in the pane transcript first. Fall
+  # back to `agent wait --status idle` when no pattern is known.
+  EFFECTIVE_MATCH="$READY_MATCH"
+  if [[ -z "$EFFECTIVE_MATCH" && "$NO_READY_WAIT" -eq 0 ]]; then
+    EFFECTIVE_MATCH="$(default_ready_match "$AGENT")"
+  fi
+
+  if [[ "$NO_READY_WAIT" -eq 1 ]]; then
+    READY_REASON="skipped (--no-ready-wait)"
+  elif [[ -n "$EFFECTIVE_MATCH" ]]; then
+    if herdr wait output "$PANE_ID" --match "$EFFECTIVE_MATCH" \
+         --source recent-unwrapped --timeout "$WAIT_TIMEOUT_MS" --raw \
+         >/dev/null 2>&1; then
+      READY_REASON="matched '$EFFECTIVE_MATCH'"
+    else
+      READY_REASON="timeout waiting for '$EFFECTIVE_MATCH'"
+    fi
+  else
+    herdr agent wait "$PANE_ID" --status idle --timeout "$WAIT_TIMEOUT_MS" >/dev/null 2>&1 || true
+    READY_REASON="agent reported idle"
+  fi
+
   if herdr agent send "$PANE_ID" "$PROMPT" >/dev/null 2>&1; then
     sleep 0.2
     herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
+    # Give the agent integration a beat to flip from idle to working, so a
+    # subsequent `herder-wait --status idle` blocks on real completion rather
+    # than returning immediately on the pre-prompt idle state.
+    sleep "${HERDER_POST_SEND_SLEEP:-1.5}"
     PROMPT_SENT=true
   fi
 fi
@@ -160,7 +202,7 @@ fi
   printf '  cwd:    %s\n' "$RESOLVED_CWD"
   if [[ -n "$PROMPT" ]]; then
     if $PROMPT_SENT; then
-      printf '  prompt: sent (%d chars)\n' "${#PROMPT}"
+      printf '  prompt: sent (%d chars), ready: %s\n' "${#PROMPT}" "$READY_REASON"
     else
       printf '  prompt: NOT sent (agent send failed)\n'
     fi
