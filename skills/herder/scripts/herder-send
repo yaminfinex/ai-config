@@ -1,0 +1,299 @@
+#!/usr/bin/env bash
+# herder-send — send a message to an already-spawned peer agent, safely.
+#
+# Usage:
+#   herder-send <target> <message> [opts]
+#
+# <target>: short-guid, full guid, label, or pane_id (resolved via registry,
+# falls back to verbatim if no match).
+#
+# Options:
+#   --no-enter           place text into the prompt but don't submit
+#   --no-verify          skip post-send delivery verification
+#   --force              skip pre-flight state check (still verifies delivery)
+#   --timeout MS         max time to wait for the prompt buffer to clear (default 3000)
+#   --json               emit a JSON record on stdout describing the send
+#
+# Behavior, in order:
+#
+#   1. Resolve <target> to a pane_id.
+#   2. Read the pane (recent-unwrapped) and run a pre-flight state check.
+#      Refuses (exit 2) if the agent is in an unsafe state — "Conversation
+#      interrupted", a sandbox/trust modal, etc. --force bypasses.
+#   3. Detect agent kind (codex / claude / other) to pick the prompt sigil for
+#      delivery verification (codex: "›", claude: "❯").
+#   4. `herdr agent send` writes the literal message text into the prompt.
+#   5. Unless --no-enter, `herdr pane send-keys ... Enter` submits.
+#   6. Verify delivery: re-read the pane and confirm the prompt sigil line is
+#      back to its empty/placeholder shape (the message text we just sent is no
+#      longer trailing the sigil). If verification fails, send one more Enter —
+#      codex specifically absorbs the first Enter when transitioning out of
+#      "Conversation interrupted" — then re-verify. Exit 1 on persistent failure.
+#
+# Exit codes:
+#   0  — sent + (if applicable) verified
+#   1  — send or verification failed
+#   2  — pre-flight refused (target in interrupted/modal state)
+#   64 — usage error
+
+set -euo pipefail
+
+die() { printf 'herder-send: %s\n' "$*" >&2; exit 64; }
+[[ "${HERDR_ENV:-}" = "1" ]] || die "not running inside a herdr pane (HERDR_ENV != 1)"
+command -v herdr >/dev/null 2>&1 || die "herdr not on PATH"
+command -v jq >/dev/null 2>&1 || die "jq not on PATH"
+
+STATE_DIR="${HERDER_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herder}"
+REGISTRY="$STATE_DIR/registry.jsonl"
+
+TARGET=""
+MESSAGE=""
+NO_ENTER=0
+NO_VERIFY=0
+FORCE=0
+TIMEOUT_MS=3000
+JSON_OUT=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-enter)  NO_ENTER=1; shift;;
+    --no-verify) NO_VERIFY=1; shift;;
+    --force)     FORCE=1; shift;;
+    --timeout)   TIMEOUT_MS="$2"; shift 2;;
+    --json)      JSON_OUT=1; shift;;
+    -h|--help)   sed -n '1,40p' "$0"; exit 0;;
+    --*)         die "unknown flag: $1";;
+    *)
+      if   [[ -z "$TARGET"  ]]; then TARGET="$1"
+      elif [[ -z "$MESSAGE" ]]; then MESSAGE="$1"
+      else die "extra positional arg: $1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+[[ -n "$TARGET"  ]] || die "target required (guid, label, or pane id)"
+[[ -n "$MESSAGE" ]] || die "message required"
+
+# ---- resolve target → pane_id (via registry, falls back to verbatim) -----------
+
+resolve_pane_id() {
+  local v="$1" pid=""
+  if [[ -f "$REGISTRY" ]]; then
+    pid="$(jq -sr --arg v "$v" '
+      group_by(.guid) | map(.[-1])
+      | map(select(.guid==$v or .short_guid==$v or .label==$v or .pane_id==$v))
+      | last | .pane_id // empty
+    ' "$REGISTRY")"
+  fi
+  [[ -n "$pid" ]] || pid="$v"
+  printf '%s' "$pid"
+}
+
+PANE_ID="$(resolve_pane_id "$TARGET")"
+
+# ---- read pane + detect agent kind --------------------------------------------
+
+read_pane() {
+  herdr agent read "$PANE_ID" --source recent-unwrapped --lines 80 2>&1 \
+    | jq -r '.result.read.text // empty' 2>/dev/null || true
+}
+
+# Identify the agent kind from the live agent list so we can match the right
+# prompt sigil. Fall back to "other" if not recognized.
+detect_kind() {
+  herdr agent list 2>/dev/null \
+    | jq -r --arg pid "$PANE_ID" \
+        '.result.agents[]? | select(.pane_id==$pid) | .agent // empty' \
+    | head -n1
+}
+
+KIND="$(detect_kind || true)"
+case "$KIND" in
+  codex)  SIGIL='›';;
+  claude) SIGIL='❯';;
+  *)      SIGIL='';;
+esac
+
+# ---- pre-flight state check ----------------------------------------------------
+# Refuses to send if the pane is in a state where input would be unsafe.
+# Patterns are deliberately narrow — false positives block legitimate sends, so
+# we only block on states we know are dangerous.
+
+preflight_blocked_reason() {
+  local text="$1"
+  # Codex / claude shared: explicit interrupt banner
+  if grep -qE '(Conversation interrupted|Interrupted by user)' <<<"$text"; then
+    printf 'agent is in "Conversation interrupted" state; recover it first (focus pane and press Enter, or --force)'
+    return 0
+  fi
+  # Codex: trust prompt on first run in a directory
+  if grep -qE 'Do you trust the files in this folder' <<<"$text"; then
+    printf 'codex trust prompt is open; dismiss it manually before sending'
+    return 0
+  fi
+  # Codex: sandbox approval / command approval modal
+  if grep -qE '(Sandbox approval|Approve command\?|Allow this command\?)' <<<"$text"; then
+    printf 'codex approval modal is open; resolve it manually before sending'
+    return 0
+  fi
+  # Claude: permission prompt
+  if grep -qE '(Do you want to allow|Permission required)' <<<"$text"; then
+    printf 'claude permission prompt is open; resolve it manually before sending'
+    return 0
+  fi
+  return 1
+}
+
+# Strip ANSI escape sequences and zero-width chars before pattern matching.
+strip_chrome() {
+  python3 -c '
+import re, sys
+t = sys.stdin.read()
+t = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", t)
+t = re.sub(r"\x1b\][^\x07]*\x07", "", t)
+sys.stdout.write(t)
+' 2>/dev/null || cat
+}
+
+PRE_TEXT_RAW="$(read_pane)"
+PRE_TEXT="$(printf '%s' "$PRE_TEXT_RAW" | strip_chrome)"
+
+if [[ "$FORCE" -ne 1 ]]; then
+  if REASON="$(preflight_blocked_reason "$PRE_TEXT")"; then
+    printf 'herder-send: refusing to send to %s: %s\n' "$PANE_ID" "$REASON" >&2
+    exit 2
+  fi
+fi
+
+# ---- send + (optionally) submit ------------------------------------------------
+
+if ! herdr agent send "$PANE_ID" "$MESSAGE" >/dev/null 2>&1; then
+  printf 'herder-send: herdr agent send failed for %s\n' "$PANE_ID" >&2
+  exit 1
+fi
+
+SUBMITTED=false
+if [[ "$NO_ENTER" -eq 0 ]]; then
+  sleep 0.2
+  if ! herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1; then
+    printf 'herder-send: pane send-keys Enter failed for %s\n' "$PANE_ID" >&2
+    exit 1
+  fi
+  SUBMITTED=true
+fi
+
+# ---- verify delivery -----------------------------------------------------------
+# We claim delivery when, after our send + Enter, the message text we wrote is
+# no longer trailing the prompt sigil. If we don't know the sigil (other agent
+# kinds), we fall back to a looser "MESSAGE no longer on the last non-empty
+# line" check.
+#
+# Codex specifically absorbs the first Enter when transitioning out of
+# "Conversation interrupted", so we try one extra Enter on first miss before
+# giving up.
+
+verify_cleared() {
+  local text="$1" msg_first_line
+  # Compare the first ~80 chars of the user's message against the prompt line.
+  # If the message contained newlines, only the first chunk lands on the sigil
+  # line; comparing the rest doesn't help.
+  msg_first_line="$(printf '%s' "$MESSAGE" | head -n1 | cut -c1-80)"
+  # Empty messages — nothing to verify.
+  [[ -n "$msg_first_line" ]] || return 0
+
+  if [[ -n "$SIGIL" ]]; then
+    # Find the last line containing the sigil; check whether our msg follows it.
+    local last_sigil
+    last_sigil="$(grep -F "$SIGIL " <<<"$text" | tail -n1 || true)"
+    [[ -n "$last_sigil" ]] || return 0  # no sigil visible → assume we scrolled off, treat as delivered
+    if grep -qF -- "$msg_first_line" <<<"$last_sigil"; then
+      return 1  # still trailing the sigil → not submitted
+    fi
+    return 0
+  fi
+  # Unknown kind: check the last non-empty line.
+  local last_line
+  last_line="$(printf '%s\n' "$text" | awk 'NF{l=$0} END{print l}')"
+  if grep -qF -- "$msg_first_line" <<<"$last_line"; then
+    return 1
+  fi
+  return 0
+}
+
+VERIFY_RESULT="not_attempted"
+EXTRA_ENTER_SENT=false
+
+if [[ "$NO_VERIFY" -eq 0 && "$SUBMITTED" == "true" ]]; then
+  # Wait for the UI to update; poll until cleared or timeout.
+  ELAPSED=0
+  STEP_MS=250
+  CLEARED=0
+  while [[ $ELAPSED -lt $TIMEOUT_MS ]]; do
+    sleep "$(awk -v ms="$STEP_MS" 'BEGIN{printf "%.3f", ms/1000}')"
+    POST_TEXT="$(read_pane | strip_chrome)"
+    if verify_cleared "$POST_TEXT"; then
+      CLEARED=1
+      break
+    fi
+    ELAPSED=$((ELAPSED + STEP_MS))
+  done
+
+  # First-Enter-absorbed recovery: send one more Enter and re-poll.
+  if [[ $CLEARED -eq 0 ]]; then
+    herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
+    EXTRA_ENTER_SENT=true
+    ELAPSED=0
+    while [[ $ELAPSED -lt $TIMEOUT_MS ]]; do
+      sleep "$(awk -v ms="$STEP_MS" 'BEGIN{printf "%.3f", ms/1000}')"
+      POST_TEXT="$(read_pane | strip_chrome)"
+      if verify_cleared "$POST_TEXT"; then
+        CLEARED=1
+        break
+      fi
+      ELAPSED=$((ELAPSED + STEP_MS))
+    done
+  fi
+
+  if [[ $CLEARED -eq 1 ]]; then
+    VERIFY_RESULT="cleared"
+  else
+    VERIFY_RESULT="not_cleared"
+  fi
+fi
+
+# ---- report --------------------------------------------------------------------
+
+{
+  printf 'sent %d chars to %s' "${#MESSAGE}" "$PANE_ID"
+  [[ -n "$KIND" ]] && printf ' (%s)' "$KIND"
+  if [[ "$SUBMITTED" == "true" ]]; then
+    printf ', submitted'
+  else
+    printf ', not submitted (--no-enter)'
+  fi
+  if [[ "$NO_VERIFY" -eq 0 && "$SUBMITTED" == "true" ]]; then
+    printf ', verify=%s' "$VERIFY_RESULT"
+    [[ "$EXTRA_ENTER_SENT" == "true" ]] && printf ' (extra Enter recovered)'
+  fi
+  printf '\n'
+} >&2
+
+if [[ "$JSON_OUT" -eq 1 ]]; then
+  jq -nc \
+    --arg pane "$PANE_ID" \
+    --arg kind "$KIND" \
+    --arg target "$TARGET" \
+    --argjson submitted "$SUBMITTED" \
+    --arg verify "$VERIFY_RESULT" \
+    --argjson extra_enter "$EXTRA_ENTER_SENT" \
+    --arg msg_preview "$(printf '%s' "$MESSAGE" | head -c 120)" \
+    '{pane_id:$pane, agent:$kind, target:$target, submitted:$submitted,
+      verify:$verify, extra_enter_sent:$extra_enter, message_preview:$msg_preview}'
+fi
+
+if [[ "$NO_VERIFY" -eq 0 && "$SUBMITTED" == "true" && "$VERIFY_RESULT" == "not_cleared" ]]; then
+  exit 1
+fi
+exit 0

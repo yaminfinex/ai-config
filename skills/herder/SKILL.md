@@ -77,6 +77,16 @@ If `herder-wait` returns sooner than expected, the agent should `herdr pane read
 
 This is a thin wrapper over `herdr wait agent-status` with target resolution through the registry — `send` stays a separate verb.
 
+## Sending messages to a running peer
+
+When the target agent is already spawned and the user wants you to flag something to it mid-session, use `scripts/herder-send` rather than `herdr agent send` + raw Enter:
+
+```bash
+herder-send <guid|short-guid|label|pane_id> "Message to deliver"
+```
+
+It preflights the target's state (refuses to send into an interrupted / modal session unless `--force`), writes the text via `herdr agent send`, submits with `pane send-keys Enter`, and verifies the prompt buffer cleared before claiming delivery. See `references/herder-delta.md` → *Driving peer agents safely* for the rationale.
+
 ## Tracking and reporting
 
 - `herder-list` — table of active spawned agents reconciled with `herdr agent list` (shows `LIVE` = `idle`/`working`/`gone`).
@@ -106,10 +116,13 @@ Confirm before culling unless the user gave explicit consent for this specific c
 
 - Never close `$HERDR_PANE_ID` (your own pane).
 - Never close panes outside the registry without explicit user confirmation — they may be the user's own work.
+- **Never call `herdr workspace close` or `herdr tab close`.** Workspace and tab lifecycle belong to the user. Closing the last tab in a workspace implicitly closes the workspace too, and herdr emits no `api.request.start` log line for the implicit close — there is no clean post-mortem. If a user asks to "close that workspace", confirm explicitly and then have *them* press the keybinding; do not call the API yourself.
+- The `close_workspace` keybinding (Cmd/Ctrl+Shift+W on default herdr config) is reachable by accident from the user's keyboard. If you notice the user is at risk of triggering it during a long-running session, mention it — but do not modify their `~/.config/herdr/config.toml` without consent.
 - Never `herdr session stop` / `session delete` without explicit confirmation.
 - Default to `--no-focus` so the user keeps their current context.
 - Use `herdr pane read` / `agent read` before sending follow-ups, to avoid interrupting a working agent.
 - `herdr agent send` writes literal text without Enter. Only submit (with `pane send-keys Enter`) when you mean to submit.
+- **Never send `esc` to a running peer agent as a buffer-clear gambit.** `esc` is the only input-shaped key `pane send-keys` accepts, but it doubles as **interrupt** for codex and claude — sending it to "clear stray text" will kill the agent's in-flight turn. See `references/herder-delta.md` → *Driving peer agents safely* for the full rules and use `scripts/herder-send` for mid-session messaging.
 - When in doubt about a herdr field name, run `herdr <cmd> -h` or `--json` interactively first — do not guess.
 
 ## When to load references

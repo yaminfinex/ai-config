@@ -115,16 +115,30 @@ integration auto-links the resulting PR by detecting `STV-N` in branch/title/bod
 
 1. **Survey.** Read `napkins/captures.md` and every file listed in `napkins/index.md`. Group capture entries by
    category.
-2. **Walk captures and route.** For each entry, propose a destination and prompt the user `y / edit / skip`. Routing
+2. **Cluster by root cause.** Before walking entries linearly, do one pass to **group entries by underlying cause**, not
+   by capture category or chronology. Long-running branches often accumulate several entries that collapse to the same
+   root: "ids aren't durable", "input modes aren't uniform", "server env != caller env", "this API has a silent
+   failure mode", etc. A linear walk produces duplicate destinations and contradictory routing decisions for siblings of
+   the same cause. The cluster pass surfaces the right *unit of work* — usually one doc edit, one issue, or one rule —
+   that resolves the whole cluster at once.
+
+   Present the clusters back to the user before routing (one line per cluster, listing the constituent capture entries),
+   so they can confirm the grouping or split a cluster that's been over-merged. Single-entry "clusters" are fine and
+   stay as-is.
+3. **Walk clusters and route.** For each cluster, propose a destination and prompt the user `y / edit / skip`. Routing
    hints (not strict — agent uses judgment):
    - `todo` → delegate to `issue-capture` (creates a Linear issue), or skip if stale
    - `decision` → `docs/work/<topic>/...`, an ADR, the PR body, or a commit message
    - `question` → `docs/work/<topic>/...` if still open; drop if resolved
    - `lesson` / `gotcha` → `.agents/rules/<rule>.md` or `CONTEXT.md`
    - `meta` → suggested edit to this `SKILL.md`, or append to a backlog file inside this skill directory
-3. **Walk hand-written napkins.** For each file in `index.md`, ask: promote to `docs/work/<topic>/...`, fold findings
+
+   Mixed-category clusters are common (one lesson + one todo + one decision all rooted in the same cause). Route the
+   *cluster*, not the individual entries — the destination doc/issue/rule should reflect the root cause, with the
+   per-entry detail folded into it.
+4. **Walk hand-written napkins.** For each file in `index.md`, ask: promote to `docs/work/<topic>/...`, fold findings
    into another doc, or drop?
-4. **Prune.** Once the walk completes, delete the whole directory:
+5. **Prune.** Once the walk completes, delete the whole directory:
 
    ```sh
    rm -rf napkins/
@@ -132,7 +146,7 @@ integration auto-links the resulting PR by detecting `STV-N` in branch/title/bod
 
    It is gitignored, so this is a working-tree-only delete with no commit needed.
 
-5. **Verify.** `git status` shows no `napkins/` paths.
+6. **Verify.** `git status` shows no `napkins/` paths.
 
 ## Self-iteration via `meta` captures
 

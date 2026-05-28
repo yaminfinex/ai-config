@@ -127,3 +127,25 @@ This is the herdr server-level session (the named tmux-like persistence layer). 
 ## Why we mint our own GUID
 
 Upstream's own doc says ids can compact across close events: *"ids can compact when tabs, panes, or workspaces are closed. do not treat them as durable ids."* So `pane_id` and the compact workspace/tab ids are session-live, not history-durable. The HERDER_GUID we inject is the durable handle the registry pivots on; herdr-side ids and the agent-reported session id are correlated to it.
+
+## Known sharp edges
+
+The herdr + agent stack has a few rough corners the herder needs to navigate around. These are observed behaviours, not theoretical risks.
+
+- **`pane_id` compaction.** Pane / workspace / tab ids are session-live; after a herdr restart or pane churn they can be reassigned to different live panes. Any id captured earlier in a session may now point to something else. `herder-cull` re-verifies `terminal_id` before closing; the herder should do the same in any ad-hoc close path.
+- **Cull-after-compaction race.** Before id compaction handling was added, `herder-cull --pane <id>` could close the wrong pane if `pane_id` had been reassigned. Still possible if you bypass `herder-cull` and call `herdr pane close` directly with a stale id. Always go through `herder-cull`.
+- **Workspace auto-close on last-tab-close emits no server log.** When the final tab in a workspace is closed, herdr implicitly closes the workspace, but no `api.request.start` line is emitted in `~/.config/herdr/herdr-server.log` for the implicit close. Post-mortems on "where did my workspace go" require correlating against the *explicit* tab close.
+- **Codex first-run trust prompt absorbs sent text.** On its first start in a new directory codex shows a modal trust prompt. Any `herdr agent send` issued before the prompt is dismissed gets fed *into* the modal (often clipped at the leading chars) instead of into the chat input. Wait for the prompt to clear before relying on `agent send`, or send a deliberate dismissal keystroke first.
+- **`herdr pane send-keys` has a small, undocumented key vocabulary.** Most modifier-combo names are rejected (`Ctrl-u`, `^U`, `Escape` with capital E, etc.). `esc`, `Enter`, and a handful of others work. `herdr pane send-keys -h` does not list the accepted set. Do not experiment by sending keys to a *running* peer agent — see "Driving peer agents safely" below.
+- **Server PATH ≠ caller PATH.** The herdr server runs with a restricted PATH that lacks mise/asdf shims. `herder-spawn`'s default `--login-shell` wrapper papers over this by sourcing the user's interactive shell init; agents spawned without that wrapper will silently fail with exit 127 on shebang resolution.
+
+## Driving peer agents safely
+
+When the herder needs to *send a message* to an already-spawned peer agent (vs. spawning a new one), the rules are tighter than they look — the failure modes are silent.
+
+1. **Preflight orchestrator state.** Call `herdr agent read` (or use `herder-send`, which does this for you) and check whether the target is in a normal idle / working state vs. an interrupted or modal state. If interrupted / modal, **stop** — don't stack new input on top of state the operator can't see. Either send a benign recovery first or wait for the user.
+2. **Don't send `esc` to a working peer agent.** `esc` is the *only* input-mode-shaped key `herdr pane send-keys` accepts, but for both codex and claude it doubles as **interrupt**. Sending it to clear what looks like buffered input will instead kill the agent's in-flight turn. There is no safe clear-buffer key in the current `pane send-keys` vocabulary. If the buffer has stray text, send your real message anyway and let it append, or use `herdr agent send` (which writes literal text into the prompt without submitting) and ignore the surrounding chrome.
+3. **Codex's empty-prompt placeholder mimics buffered input.** Lines like `› Run /review on my current changes` (the last completed prompt or a hint string) are codex's **placeholder hint**, not real text. Reading the pane and seeing text after `›` is *not* evidence the user has typed something. If you must confirm, send a non-destructive keystroke (or `agent read --source recent-unwrapped`) and look for behaviour change.
+4. **`pane send-keys Enter` is not a delivery receipt.** After sending Enter, do one more `agent read` and confirm the `›` line has returned to empty / placeholder. If your message text is still visible *after* the `›`, the buffer didn't submit. Codex specifically absorbs the first Enter when transitioning out of `Conversation interrupted` — a second Enter is required. The general rule: read once post-send, look at the `›` line, then claim delivery.
+
+`scripts/herder-send` encodes these checks. Prefer it over hand-rolling `agent send` + `pane send-keys Enter` when sending mid-session messages to a running agent.

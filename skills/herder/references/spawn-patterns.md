@@ -75,15 +75,36 @@ Use this before sending a follow-up so you don't interrupt working state.
 
 ## F. Send a follow-up to a spawned agent
 
-```bash
-# Literal text, no submit
-herdr agent send <label> "Quick clarification: focus only on auth.ts changes."
+For mid-session messages to a running peer, prefer the wrapper:
 
-# Submit
-herdr pane send-keys <pane_id> Enter
+```bash
+herder-send <guid|short-guid|label|pane_id> "Quick clarification: focus only on auth.ts changes."
 ```
 
-For most LLM agents, the user expects submit. For raw shells, you may prefer to leave the text un-submitted.
+It preflights state (refuses to send into interrupted / modal panes unless `--force`), writes the text, submits Enter, and verifies the prompt buffer cleared. See `references/herder-delta.md` → *Driving peer agents safely* for the rationale.
+
+For raw shells where you don't want submission, drop to the primitives:
+
+```bash
+herdr agent send <label> "echo 'still here'"      # literal text, no Enter
+herdr pane send-keys <pane_id> Enter              # submit when ready
+```
+
+## G. Spawn off a specific parent pane (not the focused one)
+
+When the herder is running in one workspace but the user wants the new agent to join a *different* pane's workspace (e.g. spawn a reviewer next to a long-running implementer), use `--from-pane` to bind to that parent's workspace:
+
+```bash
+herder-spawn \
+  --role review \
+  --agent codex \
+  --from-pane w652d833fd5cdcd-1 \
+  --split right \
+  --no-focus \
+  --prompt 'Review the diff.'
+```
+
+`--from-pane` and `--workspace` are mutually exclusive. `herder-spawn` resolves `--from-pane` to its `workspace_id` and validates it against the live workspace list before calling `agent start`, so a stale id fails fast with a clear error instead of the upstream `agent_placement_not_found` JSON.
 
 ## Initial-prompt delivery caveats
 

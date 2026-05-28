@@ -3,7 +3,7 @@
 #
 # Usage:
 #   herder-spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]
-#                [--split right|down] [--workspace ID] [--tab ID] [--cwd PATH]
+#                [--split right|down] [--workspace ID | --from-pane PANE_ID] [--tab ID] [--cwd PATH]
 #                [--no-focus] [--label-prefix STR] [--extra-arg ARG]... [--json]
 #
 # Behavior:
@@ -34,6 +34,7 @@ PROMPT=""
 PROMPT_FILE=""
 SPLIT="right"
 WORKSPACE=""
+FROM_PANE=""
 TAB=""
 CWD=""
 FOCUS_FLAG="--no-focus"
@@ -43,6 +44,8 @@ JSON_OUT=0
 WAIT_TIMEOUT_MS="${HERDER_SPAWN_WAIT_MS:-15000}"
 READY_MATCH=""
 NO_READY_WAIT=0
+LOGIN_SHELL=1
+LOGIN_SHELL_BIN="${HERDER_SPAWN_SHELL:-${SHELL:-/bin/bash}}"
 
 # Per-agent default ready-pattern (substring to look for in the pane before we
 # trust the agent UI to accept input). Picked these by eyeballing the boot
@@ -63,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     --prompt-file) PROMPT_FILE="$2"; shift 2;;
     --split) SPLIT="$2"; shift 2;;
     --workspace) WORKSPACE="$2"; shift 2;;
+    --from-pane) FROM_PANE="$2"; shift 2;;
     --tab) TAB="$2"; shift 2;;
     --cwd) CWD="$2"; shift 2;;
     --focus) FOCUS_FLAG="--focus"; shift;;
@@ -73,7 +77,9 @@ while [[ $# -gt 0 ]]; do
     --wait-timeout-ms) WAIT_TIMEOUT_MS="$2"; shift 2;;
     --ready-match) READY_MATCH="$2"; shift 2;;
     --no-ready-wait) NO_READY_WAIT=1; shift;;
-    -h|--help) sed -n '1,30p' "$0"; exit 0;;
+    --no-login-shell) LOGIN_SHELL=0; shift;;
+    --login-shell) LOGIN_SHELL_BIN="$2"; shift 2;;
+    -h|--help) sed -n '1,32p' "$0"; exit 0;;
     *) die "unknown arg: $1";;
   esac
 done
@@ -81,6 +87,34 @@ done
 [[ -n "$ROLE" ]] || die "--role required"
 [[ -n "$AGENT" ]] || die "--agent required"
 [[ -z "$PROMPT" || -z "$PROMPT_FILE" ]] || die "use --prompt or --prompt-file, not both"
+[[ -z "$WORKSPACE" || -z "$FROM_PANE" ]] || die "use --workspace or --from-pane, not both"
+
+# Resolve --from-pane → its workspace_id, so the new pane lands in the same
+# workspace as the named parent (not wherever focus happens to be).
+if [[ -n "$FROM_PANE" ]]; then
+  FROM_PANE_JSON="$(herdr pane get "$FROM_PANE" 2>&1 || true)"
+  WORKSPACE="$(printf '%s' "$FROM_PANE_JSON" | jq -r '.result.pane.workspace_id // empty' 2>/dev/null || true)"
+  [[ -n "$WORKSPACE" ]] || die "--from-pane $FROM_PANE: pane not found (herdr pane get returned: $FROM_PANE_JSON)"
+fi
+
+# Validate --workspace against the live workspace list before calling agent start.
+# Herdr workspace ids are session-live; after a herdr restart they all change, and
+# a stale id surfaces as a cryptic `agent_placement_not_found` JSON error. Fail
+# early with a clear message instead.
+if [[ -n "$WORKSPACE" ]]; then
+  WS_LIST_JSON="$(herdr workspace list 2>&1 || true)"
+  WS_HIT="$(printf '%s' "$WS_LIST_JSON" | jq -r --arg ws "$WORKSPACE" \
+    '.result.workspaces[]? | select(.workspace_id==$ws) | .workspace_id' 2>/dev/null || true)"
+  if [[ -z "$WS_HIT" ]]; then
+    {
+      printf 'herder-spawn: --workspace %s not found in live workspace list.\n' "$WORKSPACE"
+      printf 'Herdr workspace ids are session-live; they change after a herdr restart.\n'
+      printf 'Live workspaces:\n'
+      printf '%s' "$WS_LIST_JSON" | jq -r '.result.workspaces[]? | "  \(.workspace_id)  \(.label // "(no label)")  \(.worktree.checkout_path // .worktree.repo_root // "")"' 2>/dev/null || true
+    } >&2
+    exit 2
+  fi
+fi
 
 if [[ -n "$PROMPT_FILE" ]]; then
   [[ -r "$PROMPT_FILE" ]] || die "prompt file not readable: $PROMPT_FILE"
@@ -102,8 +136,26 @@ start_args=("agent" "start" "$LABEL" "$FOCUS_FLAG" "--split" "$SPLIT")
 [[ -n "$TAB" ]]       && start_args+=("--tab" "$TAB")
 [[ -n "$CWD" ]]       && start_args+=("--cwd" "$CWD")
 
-# argv: env wrapper injects HERDER_GUID/HERDER_ROLE for the child, then the agent + extras.
-argv=(env "HERDER_GUID=$GUID" "HERDER_ROLE=$ROLE" "HERDER_LABEL=$LABEL" "$AGENT" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"})
+# argv: how we invoke the agent in the new pane.
+#
+# Default path: wrap in the user's login+interactive shell so PATH, mise activation, auth env,
+# etc. are sourced from .zshrc/.bashrc/.zprofile the same way Cmd+D-style panes are. The herdr
+# server otherwise execs argv directly against its own restricted environment, which loses
+# mise PATH and breaks shebangs like `#!/usr/bin/env node` (kills `codex` with exit 127).
+#
+# Opt out via --no-login-shell for cases where you want the raw exec (e.g. spawning `bash`
+# itself, or debugging the spawn path). Override the shell binary via --login-shell or
+# HERDER_SPAWN_SHELL when $SHELL is wrong (e.g. testing zsh on a bash box).
+if [[ "$LOGIN_SHELL" -eq 1 ]]; then
+  inner_cmd=""
+  for arg in "$AGENT" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}; do
+    inner_cmd+="$(printf '%q ' "$arg")"
+  done
+  inner="export HERDER_GUID=$(printf '%q' "$GUID") HERDER_ROLE=$(printf '%q' "$ROLE") HERDER_LABEL=$(printf '%q' "$LABEL"); exec ${inner_cmd}"
+  argv=("$LOGIN_SHELL_BIN" -lic "$inner")
+else
+  argv=(env "HERDER_GUID=$GUID" "HERDER_ROLE=$ROLE" "HERDER_LABEL=$LABEL" "$AGENT" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"})
+fi
 
 set +e
 START_JSON="$(herdr "${start_args[@]}" -- "${argv[@]}" 2>&1)"
