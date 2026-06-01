@@ -199,9 +199,7 @@ scan_portability_paths() {
   local paths=("$@")
   [ "${#paths[@]}" -gt 0 ] || return 0
 
-  grep -RInE "$HOME_PATH_REGEX" "${paths[@]}" 2>/dev/null |
-    grep -vF "$AI_CONFIG_ROOT/skills/cmux-router/references/upstream/" ||
-    true
+  grep -RInE "$HOME_PATH_REGEX" "${paths[@]}" 2>/dev/null || true
 }
 
 staged_files() {

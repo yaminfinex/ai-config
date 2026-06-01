@@ -1,4 +1,0 @@
-interface:
-  display_name: "cmux Agent Comms"
-  short_description: "Route tagged messages between cmux agents."
-  default_prompt: "Use $cmux-agent-comms to identify surfaces, spawn or connect to peer agents, and exchange tagged-envelope messages."

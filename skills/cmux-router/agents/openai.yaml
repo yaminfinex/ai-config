@@ -1,4 +1,0 @@
-interface:
-  display_name: "cmux Router"
-  short_description: "Find the right cmux reference docs."
-  default_prompt: "Use $cmux-router to find the relevant cmux references before changing or automating cmux components."

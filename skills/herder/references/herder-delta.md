@@ -51,7 +51,7 @@ Response shape (JSON, single line):
   "argv":[…],"type":"agent_started"}}
 ```
 
-The herder's `scripts/herder-spawn` wraps this: it mints a HERDER_GUID, prepends `env HERDER_GUID=… HERDER_ROLE=… HERDER_LABEL=… <agent>` to argv, and records the response in the registry.
+The herder's `scripts/herder-spawn` wraps this: it mints a HERDER_GUID and, by default, launches the agent inside a login+interactive shell — `$SHELL -lic 'export HERDER_GUID=… HERDER_ROLE=… HERDER_LABEL=…; exec <agent> [extra-args]'` — so PATH, mise activation, and auth env are sourced the way an interactive pane is (this is why spawned agents get `mise`-managed tools like `agent-browser`, and why shebangs like `#!/usr/bin/env node` resolve). Opt out with `--no-login-shell` for a raw `env … <agent>` exec (e.g. when spawning `bash` itself). It records the response in the registry.
 
 ## Agent control (beyond what upstream documents)
 

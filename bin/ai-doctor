@@ -15,7 +15,7 @@ for arg in "$@"; do
 Usage: ai-doctor [--quick] [--strict]
 
 Checks ai-config repository health, link drift, local-only skills, secrets,
-machine-specific absolute home paths, and vendored cmux reference freshness.
+and machine-specific absolute home paths.
 
 --quick skips network freshness checks.
 USAGE
@@ -169,58 +169,6 @@ check_unharvested_live_skills() {
   )
 }
 
-check_cmux_reference_freshness() {
-  local source_file="$AI_CONFIG_ROOT/skills/cmux-router/references/upstream/SOURCE.md"
-  local source_url
-  local imported
-  local repo_url
-  local branch_path
-  local branch
-  local remote
-
-  [ -f "$source_file" ] || return 0
-
-  if [ "$quick" -eq 1 ]; then
-    return 0
-  fi
-
-  source_url="$(sed -n 's/^Source: //p' "$source_file" | head -n 1)"
-  imported="$(sed -n 's/^Imported from commit: //p' "$source_file" | head -n 1)"
-
-  if [ -z "$source_url" ] || [ -z "$imported" ]; then
-    warn "cmux reference freshness marker is incomplete: $source_file"
-    return 0
-  fi
-
-  case "$source_url" in
-    https://github.com/*/tree/*)
-      repo_url="${source_url%%/tree/*}"
-      branch_path="${source_url#*/tree/}"
-      branch="${branch_path%%/*}"
-      ;;
-    *)
-      warn "cmux reference source URL is not understood: $source_url"
-      return 0
-      ;;
-  esac
-
-  remote="$(
-    GIT_TERMINAL_PROMPT=0 git ls-remote "$repo_url" "refs/heads/$branch" 2>/dev/null |
-      awk 'NR == 1 { print $1 }'
-  )"
-
-  if [ -z "$remote" ]; then
-    log_info "could not check cmux reference freshness for $repo_url $branch"
-    return 0
-  fi
-
-  if [ "$imported" != "$remote" ]; then
-    warn "cmux reference skills out of date: imported $imported, upstream $branch is $remote ($source_url)"
-  else
-    log_info "cmux reference skills up to date: $imported"
-  fi
-}
-
 check_secret_scan() {
   local paths=()
   local findings
@@ -298,7 +246,6 @@ check_git
 check_portable_links
 check_skill_links
 check_unharvested_live_skills
-check_cmux_reference_freshness
 check_claude_statusline_settings
 check_secret_scan
 check_portability_scan

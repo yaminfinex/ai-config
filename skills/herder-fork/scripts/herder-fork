@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# herder-fork — fork the current claude/codex session into a new herdr pane.
+#
+# Usage:
+#   herder-fork [--right|--below] [--agent claude|codex] [--session-id UUID]
+#               [--prompt TEXT] [--focus] [-- EXTRA_AGENT_ARGS...]
+#
+# Detects the running agent from env (CLAUDECODE / CLAUDE_CODE_SESSION_ID / CODEX_HOME),
+# then calls `herder-spawn` to launch a forked session next to the current pane.
+#
+# For claude: invokes `claude --resume <id> --fork-session` (propagates $CLAUDE_EFFORT).
+# For codex : invokes `codex fork <id>` or `codex fork --last`.
+
+set -euo pipefail
+
+die() { printf 'herder-fork: %s\n' "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Resolve herder-spawn: prefer $PATH, else fall back to the sibling skill's
+# script via this script's real location (resilient to being run through a
+# symlink in $HOME/.claude/skills/, $HOME/.codex/skills/, etc).
+resolve_herder_spawn() {
+  if have herder-spawn; then
+    printf 'herder-spawn'
+    return
+  fi
+
+  local self
+  self="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
+  local skills_dir
+  skills_dir="$(dirname "$(dirname "$(dirname "$self")")")"
+  local sibling="$skills_dir/herder/scripts/herder-spawn"
+  [[ -x "$sibling" ]] || die "herder-spawn not found on PATH or at $sibling"
+  printf '%s' "$sibling"
+}
+
+[[ "${HERDR_ENV:-}" = "1" ]] || die "not running inside a herdr pane (HERDR_ENV != 1)"
+HERDER_SPAWN="$(resolve_herder_spawn)"
+[[ -n "${HERDR_PANE_ID:-}" ]] || die "HERDR_PANE_ID not set; cannot anchor fork to current pane"
+
+SPLIT="right"
+AGENT=""
+SESSION_ID=""
+PROMPT=""
+FOCUS_FLAG="--no-focus"
+PASSTHROUGH=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --right) SPLIT="right"; shift;;
+    --below|--down) SPLIT="down"; shift;;
+    --agent) AGENT="$2"; shift 2;;
+    --session-id) SESSION_ID="$2"; shift 2;;
+    --prompt) PROMPT="$2"; shift 2;;
+    --focus) FOCUS_FLAG="--focus"; shift;;
+    --no-focus) FOCUS_FLAG="--no-focus"; shift;;
+    --) shift; PASSTHROUGH+=("$@"); break;;
+    -h|--help) sed -n '1,14p' "$0"; exit 0;;
+    *) die "unknown arg: $1";;
+  esac
+done
+
+if [[ -z "$AGENT" ]]; then
+  if [[ "${CLAUDECODE:-0}" = "1" || -n "${CLAUDE_CODE_SESSION_ID:-}" ]]; then
+    AGENT="claude"
+  elif [[ "${AI_AGENT:-}" == claude-code* ]]; then
+    AGENT="claude"
+  elif [[ -n "${CODEX_HOME:-}" ]]; then
+    AGENT="codex"
+  else
+    die "could not detect agent; pass --agent claude|codex"
+  fi
+fi
+
+agent_args=()
+case "$AGENT" in
+  claude)
+    [[ -n "$SESSION_ID" ]] || SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
+    [[ -n "$SESSION_ID" ]] || die "no claude session id (set --session-id or run inside a claude session)"
+    agent_args=(--resume "$SESSION_ID" --fork-session)
+    [[ -n "${CLAUDE_EFFORT:-}" ]] && agent_args+=(--effort "$CLAUDE_EFFORT")
+    ;;
+  codex)
+    if [[ -n "$SESSION_ID" ]]; then
+      agent_args=(fork "$SESSION_ID")
+    else
+      agent_args=(fork --last)
+    fi
+    ;;
+  *) die "unknown agent: $AGENT (use claude or codex)";;
+esac
+
+[[ "${#PASSTHROUGH[@]}" -eq 0 ]] || agent_args+=("${PASSTHROUGH[@]}")
+
+spawn_args=(
+  --role "fork-${AGENT}"
+  --agent "$AGENT"
+  --from-pane "$HERDR_PANE_ID"
+  --split "$SPLIT"
+  "$FOCUS_FLAG"
+)
+
+for arg in "${agent_args[@]}"; do
+  spawn_args+=(--extra-arg "$arg")
+done
+
+[[ -z "$PROMPT" ]] || spawn_args+=(--prompt "$PROMPT")
+
+exec "$HERDER_SPAWN" "${spawn_args[@]}"
