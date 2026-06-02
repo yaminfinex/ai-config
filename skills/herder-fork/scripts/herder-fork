@@ -3,13 +3,23 @@
 #
 # Usage:
 #   herder-fork [--right|--below] [--agent claude|codex] [--session-id UUID]
+#               [--cwd PATH] [--skip-perms|--yolo]
 #               [--prompt TEXT] [--focus] [-- EXTRA_AGENT_ARGS...]
 #
 # Detects the running agent from env (CLAUDECODE / CLAUDE_CODE_SESSION_ID / CODEX_HOME),
 # then calls `herder-spawn` to launch a forked session next to the current pane.
 #
+# Auto-resolves the forked pane's cwd to the current pane's workspace checkout path,
+# so `claude --resume` finds the original session (Claude Code stores sessions
+# per-project-directory; spawning in the wrong cwd causes the resume to fail and
+# the pane to die within seconds). Override with --cwd if you really need to.
+#
 # For claude: invokes `claude --resume <id> --fork-session` (propagates $CLAUDE_EFFORT).
+#             --skip-perms (alias --yolo) appends --dangerously-skip-permissions.
 # For codex : invokes `codex fork <id>` or `codex fork --last`.
+#
+# Any args after `--` are appended AFTER --resume/--fork-session, so they reach the
+# forked agent unchanged (e.g. `-- --model claude-sonnet-4-6`).
 
 set -euo pipefail
 
@@ -43,6 +53,8 @@ AGENT=""
 SESSION_ID=""
 PROMPT=""
 FOCUS_FLAG="--no-focus"
+CWD=""
+SKIP_PERMS=0
 PASSTHROUGH=()
 
 while [[ $# -gt 0 ]]; do
@@ -52,10 +64,12 @@ while [[ $# -gt 0 ]]; do
     --agent) AGENT="$2"; shift 2;;
     --session-id) SESSION_ID="$2"; shift 2;;
     --prompt) PROMPT="$2"; shift 2;;
+    --cwd) CWD="$2"; shift 2;;
+    --skip-perms|--yolo) SKIP_PERMS=1; shift;;
     --focus) FOCUS_FLAG="--focus"; shift;;
     --no-focus) FOCUS_FLAG="--no-focus"; shift;;
     --) shift; PASSTHROUGH+=("$@"); break;;
-    -h|--help) sed -n '1,14p' "$0"; exit 0;;
+    -h|--help) sed -n '1,22p' "$0"; exit 0;;
     *) die "unknown arg: $1";;
   esac
 done
@@ -79,6 +93,7 @@ case "$AGENT" in
     [[ -n "$SESSION_ID" ]] || die "no claude session id (set --session-id or run inside a claude session)"
     agent_args=(--resume "$SESSION_ID" --fork-session)
     [[ -n "${CLAUDE_EFFORT:-}" ]] && agent_args+=(--effort "$CLAUDE_EFFORT")
+    [[ "$SKIP_PERMS" -eq 1 ]] && agent_args+=(--dangerously-skip-permissions)
     ;;
   codex)
     if [[ -n "$SESSION_ID" ]]; then
@@ -86,16 +101,41 @@ case "$AGENT" in
     else
       agent_args=(fork --last)
     fi
+    [[ "$SKIP_PERMS" -eq 1 ]] && \
+      printf 'herder-fork: --skip-perms is claude-only; ignoring for codex\n' >&2
     ;;
   *) die "unknown agent: $AGENT (use claude or codex)";;
 esac
 
+# PASSTHROUGH lands AFTER --resume/--fork-session so user-supplied flags
+# reach claude/codex unchanged (e.g. -- --model claude-sonnet-4-6).
 [[ "${#PASSTHROUGH[@]}" -eq 0 ]] || agent_args+=("${PASSTHROUGH[@]}")
+
+# Resolve the cwd of the current pane's workspace. Claude Code stores
+# sessions per project directory, so `claude --resume <id> --fork-session`
+# launched in the wrong cwd silently finds no matching session and exits
+# within seconds — the forked pane dies. We anchor the new pane to the
+# original session's project root by reading the workspace's worktree path.
+if [[ -z "$CWD" ]]; then
+  FROM_PANE_JSON="$(herdr pane get "$HERDR_PANE_ID" 2>&1 || true)"
+  WS_ID="$(printf '%s' "$FROM_PANE_JSON" | jq -r '.result.pane.workspace_id // empty' 2>/dev/null || true)"
+  if [[ -n "$WS_ID" ]]; then
+    WS_LIST_JSON="$(herdr workspace list 2>&1 || true)"
+    CWD="$(printf '%s' "$WS_LIST_JSON" | jq -r --arg ws "$WS_ID" '
+      .result.workspaces[]? | select(.workspace_id==$ws)
+      | (.worktree.checkout_path // .worktree.repo_root // .cwd // empty)
+    ' 2>/dev/null || true)"
+  fi
+  # Last-resort fallback: current pwd. Better than letting herder-spawn
+  # default to whichever workspace happened to be created first.
+  [[ -n "$CWD" ]] || CWD="$PWD"
+fi
 
 spawn_args=(
   --role "fork-${AGENT}"
   --agent "$AGENT"
   --from-pane "$HERDR_PANE_ID"
+  --cwd "$CWD"
   --split "$SPLIT"
   "$FOCUS_FLAG"
 )

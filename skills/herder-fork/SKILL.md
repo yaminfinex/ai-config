@@ -32,16 +32,21 @@ Override either with `--agent <name>` and `--session-id <uuid>`.
 herder-fork                        # right split, auto-detect agent + session
 herder-fork --right                # explicit right (default)
 herder-fork --below                # split down instead
+herder-fork --skip-perms           # claude only: --dangerously-skip-permissions
+herder-fork --yolo                 # alias for --skip-perms
 herder-fork --prompt 'continue with the auth changes only'
 herder-fork --agent codex --session-id <uuid>
+herder-fork --cwd /path/to/repo    # override auto-resolved cwd (rare)
 ```
 
 Behind the scenes:
 
-- **claude** → `claude --resume <id> --fork-session [--effort $CLAUDE_EFFORT]`
+- **claude** → `claude --resume <id> --fork-session [--effort $CLAUDE_EFFORT] [--dangerously-skip-permissions]`
 - **codex**  → `codex fork <id>` (or `codex fork --last` if no id)
 
-The fork is spawned by `herder-spawn` with `--from-pane $HERDR_PANE_ID` so it lands in the current pane's workspace. Role label is `fork-claude-<short>` or `fork-codex-<short>` so the registry stays scannable alongside other herder-spawned agents.
+The fork is spawned by `herder-spawn` with `--from-pane $HERDR_PANE_ID` (anchors workspace) **and** `--cwd <resolved>` (anchors process cwd). The cwd is auto-resolved by reading the current pane's workspace from `herdr workspace list` and using its `worktree.checkout_path` (falling back to `worktree.repo_root`, then workspace `cwd`, then `$PWD`). This is mandatory: Claude Code stores sessions per project directory, so `claude --resume <id> --fork-session` launched from the wrong cwd silently finds no matching session and the forked pane dies within seconds. Pass `--cwd PATH` to override for cross-dir cases.
+
+Role label is `fork-claude-<short>` or `fork-codex-<short>` so the registry stays scannable alongside other herder-spawned agents.
 
 ## Safety / pane lifecycle
 
@@ -53,8 +58,9 @@ The fork is spawned by `herder-spawn` with `--from-pane $HERDR_PANE_ID` so it la
 
 - `claude --fork-session` requires a current session id. If you're not actually in a claude session (e.g. running herder-fork from a bash pane), pass `--agent codex` or `--session-id` explicitly.
 - codex has no env-exposed session id today, so the default codex fork picks the most recent session in this cwd. If multiple sessions share the cwd, pass `--session-id` to disambiguate.
-- `CLAUDE_EFFORT` is propagated when set, since claude reads it from env at start. Other args (--model, --agent) are not auto-forwarded — pass them via `--`:
+- `CLAUDE_EFFORT` is propagated when set, since claude reads it from env at start. Other args (--model, --agent) are not auto-forwarded — pass them via `--`. Anything after `--` lands AFTER `--resume <id> --fork-session` on the forked agent's argv:
 
   ```bash
   herder-fork -- --model claude-sonnet-4-6
+  herder-fork --yolo -- --model claude-sonnet-4-6
   ```
