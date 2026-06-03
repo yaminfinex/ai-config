@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# Install the vsc-opener + reverse-tunnel pair on this laptop, and (unless
+# --laptop-only) deploy the matching config + wrapper to the remote.
+#
+# Idempotent. Re-run after editing templates or to re-deploy to the remote.
+
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/common.sh"
+
+laptop_only=0
+remote_only=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --laptop-only) laptop_only=1 ;;
+    --remote-only) remote_only=1 ;;
+    -h|--help)
+      cat <<'USAGE'
+Usage: vsc-install [--laptop-only|--remote-only]
+
+  --laptop-only   set up local services only, skip scp to remote
+  --remote-only   skip local services, only scp config + wrapper to remote
+
+Reads VSC_REMOTE_HOST from ~/.config/vsc-opener/config (which this script
+creates on first run with a random token if missing). Edit that file to
+change the host or token, then re-run.
+USAGE
+      exit 0
+      ;;
+    *)
+      log_error "unknown argument: $arg"
+      exit 2
+      ;;
+  esac
+done
+
+config_dir="$HOME/.config/vsc-opener"
+config_file="$config_dir/config"
+launch_agents_dir="$HOME/Library/LaunchAgents"
+labels=(dev.yamen.vsc-opener dev.yamen.vsc-tunnel)
+
+ensure_config() {
+  if [ -f "$config_file" ]; then
+    log_info "config exists: $config_file"
+    return
+  fi
+
+  log_info "generating fresh config: $config_file"
+  mkdir -p "$config_dir"
+  chmod 700 "$config_dir"
+
+  local token
+  token="$(/usr/bin/python3 -c 'import secrets;print(secrets.token_hex(32))')"
+
+  cat > "$config_file" <<EOF
+# vsc-opener config — sourced as POSIX shell on both laptop and remote.
+# The remote copy only needs VSC_OPEN_TOKEN and VSC_OPEN_PORT.
+
+VSC_OPEN_TOKEN="$token"
+VSC_OPEN_PORT=36221
+
+# Laptop-only:
+VSC_REMOTE_HOST="superset"
+VSC_CODE_BIN="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+
+# Optional path-prefix allowlist (rejects paths outside this prefix). Empty = allow any absolute path.
+VSC_ALLOWED_PREFIX="/home/ubuntu"
+EOF
+  chmod 600 "$config_file"
+}
+
+render_plist() {
+  local tmpl="$1"
+  local dst="$2"
+
+  sed \
+    -e "s|@AI_CONFIG_ROOT@|$AI_CONFIG_ROOT|g" \
+    -e "s|@HOME@|$HOME|g" \
+    "$tmpl" > "$dst.tmp"
+  mv "$dst.tmp" "$dst"
+}
+
+install_laptop() {
+  log_info "making scripts executable"
+  chmod +x "$AI_CONFIG_ROOT/bin/vsc-opener" "$AI_CONFIG_ROOT/bin/vsc-tunnel" "$AI_CONFIG_ROOT/lib/vsc-open"
+
+  log_info "ensuring log dir"
+  mkdir -p "$HOME/Library/Logs"
+
+  log_info "rendering plists into $launch_agents_dir"
+  mkdir -p "$launch_agents_dir"
+  for label in "${labels[@]}"; do
+    render_plist \
+      "$AI_CONFIG_ROOT/etc/launchd/$label.plist.tmpl" \
+      "$launch_agents_dir/$label.plist"
+  done
+
+  log_info "bootstrapping launchd services"
+  for label in "${labels[@]}"; do
+    launchctl bootout "gui/$UID/$label" 2>/dev/null || true
+    launchctl bootstrap "gui/$UID" "$launch_agents_dir/$label.plist"
+  done
+
+  log_info "laptop services loaded — check ~/Library/Logs/vsc-opener.log and ~/Library/Logs/vsc-tunnel.log"
+}
+
+install_remote() {
+  # shellcheck disable=SC1090
+  . "$config_file"
+  : "${VSC_REMOTE_HOST:?VSC_REMOTE_HOST missing in $config_file}"
+  : "${VSC_OPEN_TOKEN:?VSC_OPEN_TOKEN missing in $config_file}"
+  : "${VSC_OPEN_PORT:=36221}"
+
+  log_info "deploying to $VSC_REMOTE_HOST"
+
+  # Slim remote config — only what the wrapper needs.
+  local remote_config
+  remote_config="$(mktemp)"
+  cat > "$remote_config" <<EOF
+# vsc-opener (remote side) — managed by vsc-install on the laptop.
+VSC_OPEN_TOKEN="$VSC_OPEN_TOKEN"
+VSC_OPEN_PORT=$VSC_OPEN_PORT
+EOF
+
+  ssh "$VSC_REMOTE_HOST" 'mkdir -p ~/.config/vsc-opener ~/.local/bin && chmod 700 ~/.config/vsc-opener'
+  scp -q "$remote_config" "$VSC_REMOTE_HOST":.config/vsc-opener/config
+  ssh "$VSC_REMOTE_HOST" 'chmod 600 ~/.config/vsc-opener/config'
+  scp -q "$AI_CONFIG_ROOT/lib/vsc-open" "$VSC_REMOTE_HOST":.local/bin/vsc-open
+  ssh "$VSC_REMOTE_HOST" 'chmod +x ~/.local/bin/vsc-open'
+  rm -f "$remote_config"
+
+  log_info "remote deploy complete"
+  print_herdr_snippet
+}
+
+print_herdr_snippet() {
+  cat <<'EOF'
+
+Add this to your remote ~/.config/herdr/config.toml (then `herdr server reload-config`):
+
+  [[keys.command]]
+  key = "prefix+shift+v"
+  type = "shell"
+  command = "$HOME/.local/bin/vsc-open"
+
+Then `ctrl+b shift+v` from any herdr pane will open VS Code on this laptop at that pane's cwd.
+Note: prefix+v (lowercase) is taken by split_vertical, hence shift+v.
+EOF
+}
+
+ensure_config
+
+if [ "$remote_only" -eq 0 ]; then
+  install_laptop
+fi
+
+if [ "$laptop_only" -eq 0 ]; then
+  install_remote
+fi
+
+log_info "vsc-install done"

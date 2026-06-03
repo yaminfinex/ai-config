@@ -1,0 +1,32 @@
+#!/bin/sh
+# Remote-side trigger: tell the laptop's vsc-opener to open VS Code at the
+# focused herdr pane's cwd. Wired up via a herdr [[keys.command]] binding;
+# $HERDR_ACTIVE_PANE_CWD is provided by herdr. Falls back to $PWD outside herdr.
+
+set -eu
+
+config="${VSC_OPENER_CONFIG:-$HOME/.config/vsc-opener/config}"
+
+if [ ! -f "$config" ]; then
+  echo "vsc-open: config not found: $config" >&2
+  exit 1
+fi
+
+# shellcheck disable=SC1090
+. "$config"
+
+: "${VSC_OPEN_TOKEN:?VSC_OPEN_TOKEN missing in config}"
+: "${VSC_OPEN_PORT:=36221}"
+
+path="${1:-${HERDR_ACTIVE_PANE_CWD:-${PWD:-}}}"
+
+if [ -z "$path" ]; then
+  echo "vsc-open: no path (pass an arg, or set HERDR_ACTIVE_PANE_CWD)" >&2
+  exit 1
+fi
+
+curl -fsS -G \
+  --max-time 5 \
+  --data-urlencode "token=$VSC_OPEN_TOKEN" \
+  --data-urlencode "path=$path" \
+  "http://127.0.0.1:${VSC_OPEN_PORT}/open" >/dev/null

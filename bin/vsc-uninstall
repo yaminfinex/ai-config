@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Tear down the vsc-opener + tunnel pair. Use --remote to also clean the
+# remote files. Leaves your ~/.config/vsc-opener/config alone unless --purge.
+
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/common.sh"
+
+clean_remote=0
+purge=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --remote) clean_remote=1 ;;
+    --purge) purge=1 ;;
+    -h|--help)
+      cat <<'USAGE'
+Usage: vsc-uninstall [--remote] [--purge]
+
+  --remote   also remove ~/.config/vsc-opener/config and ~/.local/bin/vsc-open on the remote
+  --purge    also remove the local ~/.config/vsc-opener/config (you lose the shared token)
+USAGE
+      exit 0
+      ;;
+    *)
+      log_error "unknown argument: $arg"
+      exit 2
+      ;;
+  esac
+done
+
+config_file="$HOME/.config/vsc-opener/config"
+launch_agents_dir="$HOME/Library/LaunchAgents"
+labels=(dev.yamen.vsc-opener dev.yamen.vsc-tunnel)
+
+log_info "booting out launchd services"
+for label in "${labels[@]}"; do
+  launchctl bootout "gui/$UID/$label" 2>/dev/null || true
+done
+
+log_info "removing rendered plists"
+for label in "${labels[@]}"; do
+  rm -f "$launch_agents_dir/$label.plist"
+done
+
+if [ "$clean_remote" -eq 1 ] && [ -f "$config_file" ]; then
+  # shellcheck disable=SC1090
+  . "$config_file"
+  if [ -n "${VSC_REMOTE_HOST:-}" ]; then
+    log_info "cleaning remote $VSC_REMOTE_HOST"
+    ssh "$VSC_REMOTE_HOST" 'rm -f ~/.config/vsc-opener/config ~/.local/bin/vsc-open; rmdir ~/.config/vsc-opener 2>/dev/null || true' || \
+      log_warn "remote cleanup failed (host unreachable?)"
+  else
+    log_warn "VSC_REMOTE_HOST missing in $config_file, skipping remote cleanup"
+  fi
+fi
+
+if [ "$purge" -eq 1 ]; then
+  log_info "purging $config_file"
+  rm -f "$config_file"
+  rmdir "$HOME/.config/vsc-opener" 2>/dev/null || true
+fi
+
+log_info "vsc-uninstall done — herdr [[keys.command]] block in config.toml left untouched"

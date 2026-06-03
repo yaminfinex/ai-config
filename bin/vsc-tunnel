@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Reverse SSH tunnel so the remote can reach the laptop's vsc-opener.
+# Exits on tunnel failure or stale connection (~90s); launchd restarts us.
+
+set -euo pipefail
+
+config="${VSC_OPENER_CONFIG:-$HOME/.config/vsc-opener/config}"
+
+if [ ! -f "$config" ]; then
+  echo "vsc-tunnel: config not found: $config" >&2
+  exit 1
+fi
+
+# shellcheck disable=SC1090
+. "$config"
+
+: "${VSC_REMOTE_HOST:?VSC_REMOTE_HOST missing in config}"
+: "${VSC_OPEN_PORT:=36221}"
+
+echo "vsc-tunnel: -R ${VSC_OPEN_PORT}:127.0.0.1:${VSC_OPEN_PORT} ${VSC_REMOTE_HOST}" >&2
+
+exec ssh -N \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -o StreamLocalBindUnlink=yes \
+  -R "${VSC_OPEN_PORT}:127.0.0.1:${VSC_OPEN_PORT}" \
+  "$VSC_REMOTE_HOST"
