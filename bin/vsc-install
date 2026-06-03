@@ -135,16 +135,26 @@ EOF
 }
 
 print_herdr_snippet() {
-  cat <<'EOF'
+  cat <<EOF
 
-Add this to your remote ~/.config/herdr/config.toml (then `herdr server reload-config`):
+Add this to your REMOTE ~/.config/herdr/config.toml on $VSC_REMOTE_HOST
+(then \`herdr server reload-config\`):
 
   [[keys.command]]
   key = "prefix+shift+v"
   type = "shell"
-  command = "$HOME/.local/bin/vsc-open"
+  command = "\$HOME/.local/bin/vsc-open"
 
-Then `ctrl+b shift+v` from any herdr pane will open VS Code on this laptop at that pane's cwd.
+And this to your LAPTOP ~/.config/herdr/config.toml (so the same shortcut
+works when running herdr locally):
+
+  [[keys.command]]
+  key = "prefix+shift+v"
+  type = "shell"
+  command = "$AI_CONFIG_ROOT/bin/vsc-open"
+
+Then \`ctrl+b shift+v\` from any herdr pane opens VS Code at that pane's cwd —
+locally if the pane is on this laptop, via Remote-SSH if it's on $VSC_REMOTE_HOST.
 Note: prefix+v (lowercase) is taken by split_vertical, hence shift+v.
 EOF
 }

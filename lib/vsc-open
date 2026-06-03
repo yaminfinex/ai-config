@@ -1,7 +1,12 @@
 #!/bin/sh
-# Remote-side trigger: tell the laptop's vsc-opener to open VS Code at the
-# focused herdr pane's cwd. Wired up via a herdr [[keys.command]] binding;
-# $HERDR_ACTIVE_PANE_CWD is provided by herdr. Falls back to $PWD outside herdr.
+# Open VS Code at a path (default: focused herdr pane's cwd). Dual-mode:
+#
+#   - laptop: config sets VSC_CODE_BIN -> exec that binary directly.
+#   - remote: config has no VSC_CODE_BIN -> curl the tunneled laptop opener,
+#     which then runs `code --remote ssh-remote+<host> <path>` locally.
+#
+# Wired up via herdr [[keys.command]] on either side; $HERDR_ACTIVE_PANE_CWD
+# is set by herdr for custom-command shells.
 
 set -eu
 
@@ -15,15 +20,21 @@ fi
 # shellcheck disable=SC1090
 . "$config"
 
-: "${VSC_OPEN_TOKEN:?VSC_OPEN_TOKEN missing in config}"
-: "${VSC_OPEN_PORT:=36221}"
-
 path="${1:-${HERDR_ACTIVE_PANE_CWD:-${PWD:-}}}"
 
 if [ -z "$path" ]; then
   echo "vsc-open: no path (pass an arg, or set HERDR_ACTIVE_PANE_CWD)" >&2
   exit 1
 fi
+
+# Laptop mode: VSC_CODE_BIN means VS Code lives on this box.
+if [ -n "${VSC_CODE_BIN:-}" ]; then
+  exec "$VSC_CODE_BIN" "$path"
+fi
+
+# Remote mode: hand off to the laptop via the reverse-tunneled opener.
+: "${VSC_OPEN_TOKEN:?VSC_OPEN_TOKEN missing in config}"
+: "${VSC_OPEN_PORT:=36221}"
 
 curl -fsS -G \
   --max-time 5 \
