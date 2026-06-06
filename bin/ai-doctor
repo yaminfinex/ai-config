@@ -225,6 +225,11 @@ check_claude_statusline_settings() {
       print_statusline_snippet
       ;;
   esac
+
+  local shim_path="$HOME/.local/share/mise/shims:$HOME/.bun/bin:$PATH"
+  if ! PATH="$shim_path" command -v bunx >/dev/null 2>&1; then
+    warn "bunx not found (needed for ccusage statusline); run 'mise install' in the repo root"
+  fi
 }
 
 check_portability_scan() {
