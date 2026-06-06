@@ -17,16 +17,10 @@ This repo is the canonical corpus. Live agent config paths are symlinked into it
 After cloning, open an agent inside this repo and ask it to set the repo up, or run:
 
 ```sh
-mise install            # provisions bun for the Claude statusline
 bin/ai-doctor --quick
 bin/ai-setup --dry-run
 bin/ai-setup
 ```
-
-Tool versions for this repo live in `.mise.toml`. The Claude status line
-shells out to `bunx ccusage statusline` for richer cost/burn/context info, so
-`bun` must be on `PATH` — mise shims handle this and `claude/statusline.sh`
-prepends them defensively.
 
 To add `bin/` to your shell PATH:
 
