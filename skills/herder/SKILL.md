@@ -27,6 +27,7 @@ Record `$HERDR_PANE_ID`. Never close it, never cull yourself.
 | `herder-wait` | Block until a target agent reaches a status. |
 | `herder-list` | Reconciled view of registry vs `herdr agent list`. |
 | `herder-cull` | Close a pane and mark registry row closed, with `terminal_id` identity check. |
+| `herder-smoke` | Live smoke test: spawn a disposable bash pane, send/read/wait, cull it, and save a transcript. |
 
 Each script's `--help` is the source of truth for flags. The herder *uses* these; it does not reimplement them.
 
@@ -67,6 +68,17 @@ herder-cull --gone [--dry-run]  # records whose terminal_id is no longer live
 ```
 
 `herder-cull` verifies `terminal_id` before closing — herdr `pane_id`s can compact and reassign, so a stale id may point to someone else's work. Refuses on mismatch; `--force` bypasses. Confirm before culling unless the user gave explicit consent for *this* cull.
+
+## Smoke Testing
+
+```bash
+herder-smoke [--transcript /tmp/herder-smoke.log] [--timeout 10000] [--keep-state]
+herder-smoke --agents [--timeout 120000]
+```
+
+Runs against the live Herdr session with a temporary `HERDER_STATE_DIR`. The default fast tier spawns a disposable `bash` pane next to the current pane, sends a marker command through `herder-send`, waits for the marker in recent scrollback, verifies `herder-list`, culls via `herder-cull`, and writes an agent-run transcript. Use this after Herdr upgrades or wrapper changes.
+
+`--agents` adds a slower, opt-in Codex tier. It spawns two disposable Codex panes, gives them a temporary shared directory, has agent A write a marker file, has agent B read it and write a reply, waits for both files, reads both panes, then culls both agents. This consumes model time and is intentionally not part of the default smoke test.
 
 ## Safety rules
 

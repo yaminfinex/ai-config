@@ -6,13 +6,15 @@
 #               [--cwd PATH] [--skip-perms|--yolo]
 #               [--prompt TEXT] [--focus] [-- EXTRA_AGENT_ARGS...]
 #
-# Detects the running agent from env (CLAUDECODE / CLAUDE_CODE_SESSION_ID / CODEX_HOME),
-# then calls `herder-spawn` to launch a forked session next to the current pane.
+# Detects the running agent from env (CLAUDECODE / CLAUDE_CODE_SESSION_ID / CODEX_HOME)
+# or Herdr's pane metadata, then calls `herder-spawn` to launch a forked session
+# next to the current pane.
 #
-# Auto-resolves the forked pane's cwd to the current pane's workspace checkout path,
-# so `claude --resume` finds the original session (Claude Code stores sessions
-# per-project-directory; spawning in the wrong cwd causes the resume to fail and
-# the pane to die within seconds). Override with --cwd if you really need to.
+# Auto-resolves the forked pane's cwd from the current pane's foreground_cwd/cwd,
+# then falls back to the workspace checkout path, so `claude --resume` finds the
+# original session (Claude Code stores sessions per-project-directory; spawning
+# in the wrong cwd causes the resume to fail and the pane to die within seconds).
+# Override with --cwd if you really need to.
 #
 # For claude: invokes `claude --resume <id> --fork-session` (propagates $CLAUDE_EFFORT).
 #             --skip-perms (alias --yolo) appends --dangerously-skip-permissions.
@@ -45,8 +47,28 @@ resolve_herder_spawn() {
 }
 
 [[ "${HERDR_ENV:-}" = "1" ]] || die "not running inside a herdr pane (HERDR_ENV != 1)"
+have herdr || die "herdr not on PATH"
+have jq || die "jq not on PATH"
 HERDER_SPAWN="$(resolve_herder_spawn)"
 [[ -n "${HERDR_PANE_ID:-}" ]] || die "HERDR_PANE_ID not set; cannot anchor fork to current pane"
+
+SELF_PANE_JSON="$(herdr pane get "$HERDR_PANE_ID" 2>/dev/null || true)"
+
+reported_self_agent() {
+  printf '%s' "$SELF_PANE_JSON" | jq -r '.result.pane.agent // empty' 2>/dev/null || true
+}
+
+reported_session_id_for() {
+  local want_agent="$1"
+  printf '%s' "$SELF_PANE_JSON" | jq -r --arg want "$want_agent" '
+    .result.pane.agent_session as $session
+    | if ($session != null and (($session.agent // "") == $want)) then
+        ($session.value // "")
+      else
+        ""
+      end
+  ' 2>/dev/null || true
+}
 
 SPLIT="right"
 AGENT=""
@@ -81,6 +103,8 @@ if [[ -z "$AGENT" ]]; then
     AGENT="claude"
   elif [[ -n "${CODEX_HOME:-}" ]]; then
     AGENT="codex"
+  elif [[ "$(reported_self_agent)" =~ ^(claude|codex)$ ]]; then
+    AGENT="$(reported_self_agent)"
   else
     die "could not detect agent; pass --agent claude|codex"
   fi
@@ -90,12 +114,14 @@ agent_args=()
 case "$AGENT" in
   claude)
     [[ -n "$SESSION_ID" ]] || SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
+    [[ -n "$SESSION_ID" ]] || SESSION_ID="$(reported_session_id_for claude)"
     [[ -n "$SESSION_ID" ]] || die "no claude session id (set --session-id or run inside a claude session)"
     agent_args=(--resume "$SESSION_ID" --fork-session)
     [[ -n "${CLAUDE_EFFORT:-}" ]] && agent_args+=(--effort "$CLAUDE_EFFORT")
     [[ "$SKIP_PERMS" -eq 1 ]] && agent_args+=(--dangerously-skip-permissions)
     ;;
   codex)
+    [[ -n "$SESSION_ID" ]] || SESSION_ID="$(reported_session_id_for codex)"
     if [[ -n "$SESSION_ID" ]]; then
       agent_args=(fork "$SESSION_ID")
     else
@@ -111,15 +137,19 @@ esac
 # reach claude/codex unchanged (e.g. -- --model claude-sonnet-4-6).
 [[ "${#PASSTHROUGH[@]}" -eq 0 ]] || agent_args+=("${PASSTHROUGH[@]}")
 
-# Resolve the cwd of the current pane's workspace. Claude Code stores
+# Resolve the cwd of the current pane. Claude Code stores
 # sessions per project directory, so `claude --resume <id> --fork-session`
 # launched in the wrong cwd silently finds no matching session and exits
 # within seconds — the forked pane dies. We anchor the new pane to the
-# original session's project root by reading the workspace's worktree path.
+# original session's project root from Herdr pane metadata first, then the
+# workspace's worktree path.
 if [[ -z "$CWD" ]]; then
-  FROM_PANE_JSON="$(herdr pane get "$HERDR_PANE_ID" 2>&1 || true)"
+  FROM_PANE_JSON="$SELF_PANE_JSON"
+  CWD="$(printf '%s' "$FROM_PANE_JSON" | jq -r '
+    .result.pane.foreground_cwd // .result.pane.cwd // empty
+  ' 2>/dev/null || true)"
   WS_ID="$(printf '%s' "$FROM_PANE_JSON" | jq -r '.result.pane.workspace_id // empty' 2>/dev/null || true)"
-  if [[ -n "$WS_ID" ]]; then
+  if [[ -z "$CWD" && -n "$WS_ID" ]]; then
     WS_LIST_JSON="$(herdr workspace list 2>&1 || true)"
     CWD="$(printf '%s' "$WS_LIST_JSON" | jq -r --arg ws "$WS_ID" '
       .result.workspaces[]? | select(.workspace_id==$ws)

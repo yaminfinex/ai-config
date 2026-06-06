@@ -185,7 +185,11 @@ PROMPT_PRESENT=$([[ -n "$PROMPT" ]] && echo true || echo false)
 
 # Construct argv JSON array carefully.
 ARGV_JSON="$(printf '%s\n' "${argv[@]}" | jq -R . | jq -sc .)"
-EXTRA_JSON="$(printf '%s\n' "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" | jq -R . | jq -sc .)"
+if [[ "${#EXTRA_ARGS[@]}" -eq 0 ]]; then
+  EXTRA_JSON="[]"
+else
+  EXTRA_JSON="$(printf '%s\n' "${EXTRA_ARGS[@]}" | jq -R . | jq -sc .)"
+fi
 
 RECORD="$(jq -nc \
   --arg guid "$GUID" \

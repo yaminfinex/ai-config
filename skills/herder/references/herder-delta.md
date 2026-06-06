@@ -47,9 +47,13 @@ Response shape (JSON, single line):
 ```json
 {"id":"cli:agent:start","result":{
   "agent":{"pane_id":"…","workspace_id":"…","tab_id":"…","terminal_id":"…",
-            "agent_status":"unknown","cwd":"…","name":"…","focused":false},
+            "agent_status":"unknown","cwd":"…","foreground_cwd":"…",
+            "agent_session":{"agent":"codex","kind":"id","source":"herdr:codex","value":"…"},
+            "name":"…","focused":false},
   "argv":[…],"type":"agent_started"}}
 ```
+
+`foreground_cwd` and `agent_session` are optional on older binaries and early pane startup. Treat them as best-effort metadata, not as required fields. When present, `agent_session.value` is the native Claude/Codex/etc. session id reported by the official integration.
 
 The herder's `scripts/herder-spawn` wraps this: it mints a HERDER_GUID and, by default, launches the agent inside a login+interactive shell — `$SHELL -lic 'export HERDER_GUID=… HERDER_ROLE=… HERDER_LABEL=…; exec <agent> [extra-args]'` — so PATH, mise activation, and auth env are sourced the way an interactive pane is (this is why spawned agents get `mise`-managed tools like `agent-browser`, and why shebangs like `#!/usr/bin/env node` resolve). Opt out with `--no-login-shell` for a raw `env … <agent>` exec (e.g. when spawning `bash` itself). It records the response in the registry.
 
@@ -61,7 +65,7 @@ herdr agent focus  <target>
 herdr agent attach <target> [--takeover]
 herdr agent send   <target> <text>             # literal text, no Enter (alias of pane send-text)
 herdr agent read   <target> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi]
-herdr agent wait   <target> --status idle|working|blocked|unknown [--timeout MS]
+herdr wait agent-status <target> --status idle|working|blocked|unknown [--timeout MS]
 ```
 
 `<target>` accepts: terminal id (`term_…`), unique agent name, detected/reported label, or pane id. Prefer pane id from the spawn response when there's any ambiguity.
@@ -104,15 +108,15 @@ Run `herdr worktree create … --json | jq` once interactively to confirm the re
 
 ## Integrations
 
-Installs the agent-side hook scripts that push state and `agent-session-id` into herdr.
+Installs the agent-side hook scripts that report native session identity and, for some agents, state into herdr.
 
 ```bash
 herdr integration status [--outdated-only]
-herdr integration install claude|codex|opencode|hermes|qodercli|pi|omp
+herdr integration install claude|codex|copilot|opencode|hermes|qodercli|pi|omp
 herdr integration uninstall <same names>
 ```
 
-Without the right integration installed, an agent's `agent_status` may stay `unknown` and no `agent-session-id` will be reported. `herder-spawn`'s wait-for-idle step depends on this, so install the integration for any agent you intend to drive with initial prompts.
+Current Claude Code, Codex, and OpenCode integrations report session identity only; Herdr derives their `agent_status` from native screen detection. Pi, OMP, GitHub Copilot CLI, Hermes Agent, Qoder CLI, and custom socket integrations can still report state. Without the right integration installed, no `agent_session.value` will be reported, so native restore and exact-session helpers such as `herder-fork` may fall back to agent-specific heuristics.
 
 ## Persistent herdr sessions (not agent sessions)
 
@@ -123,6 +127,8 @@ herdr session stop|delete <name>
 ```
 
 This is the herdr server-level session (the named tmux-like persistence layer). Do not confuse with `agent_session_id` above.
+
+Native AI-agent restore is enabled by default on current Herdr when official integrations report session refs. Disable it with `[session] resume_agents_on_restore = false` if pane restoration should start shells instead of resuming agent conversations.
 
 ## Why we mint our own GUID
 

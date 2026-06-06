@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+# herder-smoke - live smoke test for the herder wrappers.
+#
+# Usage:
+#   herder-smoke [--agents] [--agent codex] [--transcript PATH] [--timeout MS] [--keep-state]
+#
+# Runs inside an existing Herdr pane. It creates a temporary herder registry,
+# spawns one disposable bash pane, sends it a command, waits for the output,
+# records a transcript, then culls the pane through herder-cull. With
+# --agents, it also spawns two disposable Codex panes and verifies they exchange
+# marker files through a temporary shared directory.
+
+set -euo pipefail
+
+die() { printf 'herder-smoke: %s\n' "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+[[ "${HERDR_ENV:-}" = "1" ]] || die "not running inside a herdr pane (HERDR_ENV != 1)"
+[[ -n "${HERDR_PANE_ID:-}" ]] || die "HERDR_PANE_ID not set"
+have herdr || die "herdr not on PATH"
+have jq || die "jq not on PATH"
+have mktemp || die "mktemp not on PATH"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SPAWN="$SCRIPT_DIR/herder-spawn"
+SEND="$SCRIPT_DIR/herder-send"
+LIST="$SCRIPT_DIR/herder-list"
+CULL="$SCRIPT_DIR/herder-cull"
+
+[[ -x "$SPAWN" ]] || die "missing executable: $SPAWN"
+[[ -x "$SEND" ]] || die "missing executable: $SEND"
+[[ -x "$LIST" ]] || die "missing executable: $LIST"
+[[ -x "$CULL" ]] || die "missing executable: $CULL"
+
+TIMEOUT_MS="${HERDER_SMOKE_TIMEOUT_MS:-}"
+KEEP_STATE=0
+TRANSCRIPT=""
+RUN_AGENTS=0
+SMOKE_AGENT="codex"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agents) RUN_AGENTS=1; shift;;
+    --agent) SMOKE_AGENT="$2"; shift 2;;
+    --transcript) TRANSCRIPT="$2"; shift 2;;
+    --timeout) TIMEOUT_MS="$2"; shift 2;;
+    --keep-state) KEEP_STATE=1; shift;;
+    -h|--help) sed -n '1,10p' "$0"; exit 0;;
+    *) die "unknown arg: $1";;
+  esac
+done
+
+if [[ -z "$TIMEOUT_MS" ]]; then
+  if [[ "$RUN_AGENTS" -eq 1 ]]; then
+    TIMEOUT_MS="120000"
+  else
+    TIMEOUT_MS="10000"
+  fi
+fi
+
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/herder-smoke-state.XXXXXX")"
+if [[ -z "$TRANSCRIPT" ]]; then
+  TRANSCRIPT="${TMPDIR:-/tmp}/herder-smoke-$RUN_ID.log"
+fi
+mkdir -p "$(dirname "$TRANSCRIPT")"
+: >"$TRANSCRIPT"
+
+export HERDER_STATE_DIR="$STATE_DIR"
+SPAWNED_GUIDS=()
+
+log() {
+  printf '%s\n' "$*" | tee -a "$TRANSCRIPT"
+}
+
+record_block() {
+  local title="$1"
+  log ""
+  log "## $title"
+}
+
+cleanup() {
+  local rc=$?
+  if [[ ${#SPAWNED_GUIDS[@]} -gt 0 ]]; then
+    record_block "cleanup"
+    for guid in "${SPAWNED_GUIDS[@]}"; do
+      log "$ $CULL --guid $guid"
+      "$CULL" --guid "$guid" 2>&1 | tee -a "$TRANSCRIPT" || true
+    done
+  fi
+  if [[ "$KEEP_STATE" -eq 0 ]]; then
+    rm -rf "$STATE_DIR"
+  else
+    log "kept state: $STATE_DIR"
+  fi
+  if [[ $rc -eq 0 ]]; then
+    log ""
+    log "PASS herder-smoke"
+  else
+    log ""
+    log "FAIL herder-smoke rc=$rc"
+  fi
+  log "transcript: $TRANSCRIPT"
+}
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap cleanup EXIT
+
+assert_json_field() {
+  local json="$1" filter="$2" label="$3" value
+  value="$(printf '%s' "$json" | jq -r "$filter" 2>/dev/null || true)"
+  [[ -n "$value" && "$value" != "null" ]] || die "$label missing"
+  printf '%s' "$value"
+}
+
+spawned_field() {
+  local json="$1" filter="$2"
+  printf '%s' "$json" | jq -r "$filter"
+}
+
+wait_file_contains() {
+  local path="$1" needle="$2" timeout_ms="$3" elapsed=0 step_ms=500
+  while [[ $elapsed -lt $timeout_ms ]]; do
+    if [[ -f "$path" ]] && grep -Fq "$needle" "$path"; then
+      return 0
+    fi
+    sleep 0.5
+    elapsed=$((elapsed + step_ms))
+  done
+  return 1
+}
+
+cull_spawned() {
+  local guid="$1"
+  log "$ $CULL --guid $guid"
+  "$CULL" --guid "$guid" 2>&1 | tee -a "$TRANSCRIPT"
+}
+
+read_pane_if_live() {
+  local label="$1" pane="$2"
+  log "$ herdr pane read $pane --source recent-unwrapped --lines 120"
+  if herdr pane get "$pane" >/dev/null 2>&1; then
+    herdr pane read "$pane" --source recent-unwrapped --lines 120 2>&1 | tee -a "$TRANSCRIPT"
+  else
+    log "$label pane already exited"
+  fi
+}
+
+record_block "environment"
+log "run_id=$RUN_ID"
+log "herdr=$(command -v herdr)"
+log "version=$(herdr --version 2>&1)"
+log "self_pane=$HERDR_PANE_ID"
+log "state=$STATE_DIR"
+log "cwd=$PWD"
+log "agents=$RUN_AGENTS"
+
+record_block "preflight: current pane"
+log "$ herdr pane get $HERDR_PANE_ID"
+herdr pane get "$HERDR_PANE_ID" 2>&1 | tee -a "$TRANSCRIPT"
+
+record_block "spawn: bash via herder-spawn"
+log "$ $SPAWN --role smoke --agent bash --from-pane $HERDR_PANE_ID --cwd $PWD --split right --no-focus --no-login-shell --json"
+SPAWN_JSON="$("$SPAWN" \
+  --role smoke \
+  --agent bash \
+  --from-pane "$HERDR_PANE_ID" \
+  --cwd "$PWD" \
+  --split right \
+  --no-focus \
+  --no-login-shell \
+  --json 2> >(tee -a "$TRANSCRIPT" >&2))"
+printf '%s\n' "$SPAWN_JSON" | tee -a "$TRANSCRIPT"
+
+GUID="$(assert_json_field "$SPAWN_JSON" '.guid' "spawn guid")"
+SHORT="$(assert_json_field "$SPAWN_JSON" '.short_guid' "spawn short guid")"
+PANE="$(assert_json_field "$SPAWN_JSON" '.pane_id' "spawn pane id")"
+TERM="$(assert_json_field "$SPAWN_JSON" '.terminal_id' "spawn terminal id")"
+SPAWNED_GUIDS+=("$GUID")
+log "spawned guid=$GUID short=$SHORT pane=$PANE term=$TERM"
+printf '%s' "$SPAWN_JSON" | jq -e '.extra_args == []' >/dev/null \
+  || die "spawn extra_args should be empty array when no --extra-arg is passed"
+
+record_block "assert: pane identity"
+PANE_JSON="$(herdr pane get "$PANE")"
+printf '%s\n' "$PANE_JSON" | tee -a "$TRANSCRIPT"
+GOT_TERM="$(printf '%s' "$PANE_JSON" | jq -r '.result.pane.terminal_id // empty')"
+[[ "$GOT_TERM" == "$TERM" ]] || die "terminal_id mismatch: want $TERM got $GOT_TERM"
+
+record_block "list: registry reconciliation"
+log "$ $LIST --json"
+LIST_JSON="$("$LIST" --json 2> >(tee -a "$TRANSCRIPT" >&2))"
+printf '%s\n' "$LIST_JSON" | tee -a "$TRANSCRIPT"
+LIST_HIT="$(printf '%s\n' "$LIST_JSON" | jq -r --arg guid "$GUID" 'select(.guid==$guid) | .live_status // empty')"
+[[ -n "$LIST_HIT" && "$LIST_HIT" != "gone" ]] || die "list did not reconcile spawned pane as live"
+
+record_block "send: command into spawned bash"
+MARKER="HERDER_SMOKE_${SHORT}"
+MESSAGE="printf '$MARKER\n'"
+log "$ $SEND $SHORT \"$MESSAGE\" --timeout $TIMEOUT_MS --json"
+SEND_JSON="$("$SEND" "$SHORT" "$MESSAGE" --timeout "$TIMEOUT_MS" --json 2> >(tee -a "$TRANSCRIPT" >&2))"
+printf '%s\n' "$SEND_JSON" | tee -a "$TRANSCRIPT"
+VERIFY="$(printf '%s' "$SEND_JSON" | jq -r '.verify // empty')"
+[[ "$VERIFY" == "cleared" ]] || die "send did not verify delivery: $VERIFY"
+
+record_block "wait: marker output"
+log "$ herdr wait output $PANE --match $MARKER --source recent-unwrapped --timeout $TIMEOUT_MS --raw"
+herdr wait output "$PANE" --match "$MARKER" --source recent-unwrapped --timeout "$TIMEOUT_MS" --raw 2>&1 | tee -a "$TRANSCRIPT"
+
+record_block "read: recent transcript"
+log "$ herdr pane read $PANE --source recent-unwrapped --lines 80"
+READ_TEXT="$(herdr pane read "$PANE" --source recent-unwrapped --lines 80)"
+printf '%s\n' "$READ_TEXT" | tee -a "$TRANSCRIPT"
+grep -Fxq "$MARKER" <<<"$READ_TEXT" || die "read transcript did not contain marker as its own line"
+
+record_block "cull: close spawned pane"
+cull_spawned "$SHORT"
+SPAWNED_GUIDS=()
+
+record_block "assert: registry closed"
+log "$ $LIST --all --json"
+ALL_JSON="$("$LIST" --all --json 2> >(tee -a "$TRANSCRIPT" >&2))"
+printf '%s\n' "$ALL_JSON" | tee -a "$TRANSCRIPT"
+STATUS="$(printf '%s\n' "$ALL_JSON" | jq -r --arg guid "$GUID" 'select(.guid==$guid) | .status // empty')"
+[[ "$STATUS" == "closed" ]] || die "registry status after cull is $STATUS"
+
+if [[ "$RUN_AGENTS" -eq 1 ]]; then
+  case "$SMOKE_AGENT" in
+    codex) have codex || die "codex not on PATH";;
+    *) die "--agent currently supports only codex";;
+  esac
+
+  record_block "agents: shared mailbox"
+  AGENT_DIR="$STATE_DIR/agent-comm"
+  mkdir -p "$AGENT_DIR"
+  TOKEN="HERDER_AGENT_SMOKE_${RUN_ID//[^A-Za-z0-9]/_}_${RANDOM}"
+  A_FILE="$AGENT_DIR/a-message.txt"
+  B_FILE="$AGENT_DIR/b-reply.txt"
+  log "agent=$SMOKE_AGENT"
+  log "agent_dir=$AGENT_DIR"
+  log "token=$TOKEN"
+
+  PROMPT_B="$(cat <<EOF
+You are agent B in an automated Herdr smoke test.
+Do not modify files outside this directory: $AGENT_DIR
+Wait up to 60 seconds for this file to exist: $A_FILE
+Read it. Then write exactly this single line to $B_FILE:
+B_RECEIVED $TOKEN A_MESSAGE $TOKEN
+After writing the file, respond in chat with exactly:
+B_DONE $TOKEN
+Do not ask questions.
+EOF
+)"
+
+  PROMPT_A="$(cat <<EOF
+You are agent A in an automated Herdr smoke test.
+Do not modify files outside this directory: $AGENT_DIR
+Write exactly this single line to $A_FILE:
+A_MESSAGE $TOKEN
+After writing the file, respond in chat with exactly:
+A_DONE $TOKEN
+Do not ask questions.
+EOF
+)"
+
+  record_block "agents: spawn B"
+  log "$ $SPAWN --role smoke-b --agent codex --from-pane $HERDR_PANE_ID --cwd $PWD --split right --no-focus --extra-arg exec --extra-arg --sandbox --extra-arg workspace-write --extra-arg --add-dir --extra-arg $AGENT_DIR --extra-arg <agent-b-prompt> --json"
+  B_JSON="$("$SPAWN" \
+    --role smoke-b \
+    --agent codex \
+    --from-pane "$HERDR_PANE_ID" \
+    --cwd "$PWD" \
+    --split right \
+    --no-focus \
+    --extra-arg exec \
+    --extra-arg --sandbox \
+    --extra-arg workspace-write \
+    --extra-arg --add-dir \
+    --extra-arg "$AGENT_DIR" \
+    --extra-arg "$PROMPT_B" \
+    --json 2> >(tee -a "$TRANSCRIPT" >&2))"
+  printf '%s\n' "$B_JSON" | tee -a "$TRANSCRIPT"
+  B_GUID="$(spawned_field "$B_JSON" '.guid')"
+  B_SHORT="$(spawned_field "$B_JSON" '.short_guid')"
+  B_PANE="$(spawned_field "$B_JSON" '.pane_id')"
+  SPAWNED_GUIDS+=("$B_GUID")
+
+  record_block "agents: spawn A"
+  log "$ $SPAWN --role smoke-a --agent codex --from-pane $HERDR_PANE_ID --cwd $PWD --split right --no-focus --extra-arg exec --extra-arg --sandbox --extra-arg workspace-write --extra-arg --add-dir --extra-arg $AGENT_DIR --extra-arg <agent-a-prompt> --json"
+  A_JSON="$("$SPAWN" \
+    --role smoke-a \
+    --agent codex \
+    --from-pane "$HERDR_PANE_ID" \
+    --cwd "$PWD" \
+    --split right \
+    --no-focus \
+    --extra-arg exec \
+    --extra-arg --sandbox \
+    --extra-arg workspace-write \
+    --extra-arg --add-dir \
+    --extra-arg "$AGENT_DIR" \
+    --extra-arg "$PROMPT_A" \
+    --json 2> >(tee -a "$TRANSCRIPT" >&2))"
+  printf '%s\n' "$A_JSON" | tee -a "$TRANSCRIPT"
+  A_GUID="$(spawned_field "$A_JSON" '.guid')"
+  A_SHORT="$(spawned_field "$A_JSON" '.short_guid')"
+  A_PANE="$(spawned_field "$A_JSON" '.pane_id')"
+  SPAWNED_GUIDS+=("$A_GUID")
+
+  record_block "agents: wait for communication files"
+  log "waiting for $A_FILE to contain A_MESSAGE $TOKEN"
+  wait_file_contains "$A_FILE" "A_MESSAGE $TOKEN" "$TIMEOUT_MS" \
+    || die "agent A did not write expected message file"
+  log "waiting for $B_FILE to contain B_RECEIVED $TOKEN A_MESSAGE $TOKEN"
+  wait_file_contains "$B_FILE" "B_RECEIVED $TOKEN A_MESSAGE $TOKEN" "$TIMEOUT_MS" \
+    || die "agent B did not write expected reply file"
+  log "A file: $(cat "$A_FILE")"
+  log "B file: $(cat "$B_FILE")"
+
+  record_block "agents: pane transcripts"
+  sleep 1
+  read_pane_if_live "agent A" "$A_PANE"
+  read_pane_if_live "agent B" "$B_PANE"
+
+  record_block "agents: list reconciliation"
+  log "$ $LIST --json"
+  "$LIST" --json 2>&1 | tee -a "$TRANSCRIPT"
+
+  record_block "agents: cull"
+  cull_spawned "$A_SHORT"
+  cull_spawned "$B_SHORT"
+  SPAWNED_GUIDS=()
+
+  record_block "agents: registry closed"
+  log "$ $LIST --all --json"
+  "$LIST" --all --json 2>&1 | tee -a "$TRANSCRIPT"
+fi

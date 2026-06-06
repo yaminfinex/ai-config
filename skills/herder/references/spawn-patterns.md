@@ -108,9 +108,9 @@ herder-spawn \
 
 ## Initial-prompt delivery caveats
 
-`herder-spawn` waits up to 10s (override with `--wait-timeout-ms`) for the agent to report `idle` before sending the prompt. If the agent has no herdr integration installed, `wait --status idle` may never resolve and we fall through to the send anyway. If you see prompts landing before the agent prompt is ready, either:
+`herder-spawn` waits up to 10s (override with `--wait-timeout-ms`) before sending the prompt. For Claude and Codex it waits for the visible prompt marker in recent scrollback; for other agents it falls back to `idle` status. If you see prompts landing before the agent prompt is ready, either:
 
-- Install the matching integration (`herdr integration install claude|codex|…`).
+- Install the matching integration (`herdr integration install claude|codex|copilot|…`) so Herdr has the best session/state metadata available.
 - Increase `--wait-timeout-ms`.
 - Skip `--prompt` and send manually after the agent is visibly ready.
 
