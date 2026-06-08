@@ -57,6 +57,8 @@ herder-send <guid|short-guid|label|pane_id> "message"
 
 Refuses to send into interrupted / modal panes unless `--force`. Verifies the prompt buffer cleared before claiming delivery. Use this instead of hand-rolling `herdr agent send` + `pane send-keys Enter`. Rationale: `references/herder-delta.md` → *Driving peer agents safely*.
 
+**Long briefs to codex go through a file, not the wire.** Codex collapses any paste over ~1k chars into a `[Pasted Content N chars]` blob, and a multi-line brief can trip its "Create a plan?" overlay — both make codex act on only the tail. Keep codex sends **short and single-line**: stage the full brief in a file (e.g. `napkins/<task>-brief.md`, gitignored) and `herder-send` a one-line pointer that tells codex to read the file and plan. Recipe: `references/spawn-patterns.md` → *Send a long brief to codex*.
+
 ## Waiting
 
 ```bash

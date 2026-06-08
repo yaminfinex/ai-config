@@ -30,6 +30,13 @@
 #      codex specifically absorbs the first Enter when transitioning out of
 #      "Conversation interrupted" — then re-verify. Exit 1 on persistent failure.
 #
+#   Codex large-paste note: codex collapses a paste over ~1k chars into a
+#   "[Pasted Content N chars]" blob (the literal text disappears from view). A
+#   fresh blob is treated as positive landing evidence so we never re-paste and
+#   double the composer, and a second Enter is sent to expand-then-submit it.
+#   For long briefs prefer staging a file and sending a SHORT single-line pointer
+#   — see skills/herder/references/spawn-patterns.md → "Send a long brief to codex".
+#
 # Exit codes:
 #   0  — sent + (if applicable) verified
 #   1  — send or verification failed
@@ -202,6 +209,23 @@ fi
 MSG_PROBE="$(printf '%s' "$MESSAGE" | grep -v '^[[:space:]]*$' | tail -n1)"
 MSG_PROBE="${MSG_PROBE: -45}"
 
+# Codex collapses a large paste (>~1k chars) into a "[Pasted Content N chars]"
+# placeholder (claude uses "[Pasted text …]") instead of echoing the literal
+# text — so the tail probe above can't see it and msg_present false-negatives.
+# Left unhandled, the send loop below would re-paste and DOUBLE the composer.
+# Baseline the pre-send blob count so a NEW blob can be read as positive landing
+# evidence without tripping on a stale one already in scrollback.
+pasted_blob_count() {  # count of paste-collapse placeholders in the given text
+  local n
+  n="$(grep -cE '\[Pasted (Content|text)' <<<"$1" 2>/dev/null)" || n=0
+  printf '%s' "${n:-0}"
+}
+PRE_BLOBS="$(pasted_blob_count "$PRE_TEXT")"
+
+new_paste_blob() {  # a fresh paste-collapse placeholder appeared since we started
+  [[ "$(pasted_blob_count "$1")" -gt "$PRE_BLOBS" ]]
+}
+
 msg_present() {   # message text is visible anywhere in the pane (input or transcript)
   local text="$1"
   [[ -n "$MSG_PROBE" ]] || return 0
@@ -228,6 +252,7 @@ msg_trailing_sigil() {  # message text is sitting in the input buffer, not yet s
 # because each extra paste that DID land just concatenates into the buffer; the
 # tail-probe detection makes a spurious second paste unlikely.
 LANDED=0
+PASTE_COLLAPSED=0
 SEND_ATTEMPTS=0
 if [[ -z "$MSG_PROBE" ]]; then LANDED=1; fi  # empty message: nothing to land
 while [[ $LANDED -eq 0 && $SEND_ATTEMPTS -lt 2 ]]; do
@@ -239,7 +264,12 @@ while [[ $LANDED -eq 0 && $SEND_ATTEMPTS -lt 2 ]]; do
   while [[ $W -lt 2500 ]]; do
     sleep 0.25
     if status_confirms_delivery; then LANDED=1; break; fi
-    if msg_present "$(read_pane | strip_chrome)"; then LANDED=1; break; fi
+    POST="$(read_pane | strip_chrome)"
+    if msg_present "$POST"; then LANDED=1; break; fi
+    # Paste collapsed into a "[Pasted Content N chars]" blob: the text DID land,
+    # it's just rendered as a placeholder. Treat the new blob as landed so we
+    # don't re-paste and double the composer.
+    if new_paste_blob "$POST"; then LANDED=1; PASTE_COLLAPSED=1; break; fi
     W=$((W + 250))
   done
 done
@@ -289,6 +319,7 @@ elif [[ "$NO_VERIFY" -eq 1 ]]; then
 elif [[ "$SUBMITTED" == "true" ]]; then
   STEP_MS=250
   DELIVERED=0
+
   poll_delivered() {  # poll up to $TIMEOUT_MS for positive delivery evidence
     local elapsed=0 post
     while [[ $elapsed -lt $TIMEOUT_MS ]]; do
@@ -301,11 +332,42 @@ elif [[ "$SUBMITTED" == "true" ]]; then
     return 1
   }
 
-  if poll_delivered; then
+  # For a collapsed paste, submission is proven by the "[Pasted Content]" blob
+  # LEAVING the composer — not by the sigil line and not by status. Two live
+  # failure modes ruled those out: (a) codex wraps a big blob across continuation
+  # lines with no "›" prefix, so a tail-on-the-input-line check false-negatives;
+  # (b) codex flips to `working` while merely EXPANDING the blob, so a status
+  # flip is not proof of submission. On a real submit the blob marker expands
+  # into the transcript and the marker count drops back to its pre-send baseline.
+  blob_submitted() { [[ "$(pasted_blob_count "$(read_pane | strip_chrome)")" -le "$PRE_BLOBS" ]]; }
+  wait_blob_submitted() {  # poll ~2.4s for the blob to leave the composer
+    local i
+    for i in 1 2 3 4 5 6 7 8; do blob_submitted && return 0; sleep 0.3; done
+    return 1
+  }
+
+  if [[ "$PASTE_COLLAPSED" -eq 1 ]]; then
+    # The first Enter (already sent above) does not submit a collapsed blob;
+    # codex needs another. Drive up to two more, confirming via blob-disappearance.
+    # (Observed live: without this, verification declared "delivered" while the
+    # blob sat unsubmitted in the composer.)
+    if wait_blob_submitted; then
+      DELIVERED=1
+    else
+      herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
+      EXTRA_ENTER_SENT=true
+      if wait_blob_submitted; then
+        DELIVERED=1
+      else
+        herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
+        wait_blob_submitted && DELIVERED=1
+      fi
+    fi
+  elif poll_delivered; then
     DELIVERED=1
   else
-    # Absorbed-first-Enter recovery — only meaningful if the text is still sitting
-    # in the buffer (codex leaving "Conversation interrupted" eats one Enter).
+    # Recovery for the non-collapsed case: codex absorbs the first Enter when
+    # leaving "Conversation interrupted" — send one more if text is still buffered.
     if msg_trailing_sigil "$(read_pane | strip_chrome)"; then
       herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
       EXTRA_ENTER_SENT=true
@@ -327,6 +389,7 @@ fi
     printf ', not submitted (--no-enter)'
   fi
   printf ', verify=%s' "$VERIFY_RESULT"
+  [[ "$PASTE_COLLAPSED" -eq 1 ]] && printf ' (codex collapsed paste to blob)'
   [[ "$EXTRA_ENTER_SENT" == "true" ]] && printf ' (extra Enter sent)'
   [[ "$SEND_ATTEMPTS" -gt 1 ]] && printf ' (re-pasted x%d)' "$SEND_ATTEMPTS"
   printf '\n'
@@ -340,9 +403,11 @@ if [[ "$JSON_OUT" -eq 1 ]]; then
     --argjson submitted "$SUBMITTED" \
     --arg verify "$VERIFY_RESULT" \
     --argjson extra_enter "$EXTRA_ENTER_SENT" \
+    --argjson paste_collapsed "$PASTE_COLLAPSED" \
     --arg msg_preview "$(printf '%s' "$MESSAGE" | head -c 120)" \
     '{pane_id:$pane, agent:$kind, target:$target, submitted:$submitted,
-      verify:$verify, extra_enter_sent:$extra_enter, message_preview:$msg_preview}'
+      verify:$verify, extra_enter_sent:$extra_enter, paste_collapsed:($paste_collapsed==1),
+      message_preview:$msg_preview}'
 fi
 
 # Non-zero when we could not positively confirm the outcome the caller asked for.
