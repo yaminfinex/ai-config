@@ -2,6 +2,15 @@
 
 Concrete recipes for common herder requests. All examples assume `scripts/herder-spawn` is on $PATH (or invoked by absolute path from the skill).
 
+## Permissions & trust (read first)
+
+`herder-spawn` spawns agents in **autonomous mode by default** — it injects `--dangerously-skip-permissions` (claude) / `--dangerously-bypass-approvals-and-sandbox` (codex) and auto-accepts the first-run directory-trust modal (reported as `trust-accepted`). You therefore do **not** pass permission flags in the examples below. To override:
+
+- `--safe` — spawn a default ask-mode agent and refuse to auto-accept the trust modal (it's surfaced for you to accept manually). Use when spawning into a directory you don't fully trust.
+- `--extra-arg <flag>` — pass your own permission flag; any recognised one suppresses the injected default.
+
+Check the summary line / `--json` `delivery_result` to confirm the initial prompt was actually delivered (`delivered`), not dropped (`not_landed`) or blocked (`blocked_trust_modal`).
+
 ## A. Spawn a Codex review agent in a split
 
 User: "spawn a review agent (codex) to review the current diff"

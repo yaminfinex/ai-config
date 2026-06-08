@@ -55,6 +55,16 @@ LATEST="$(jq -sc 'group_by(.guid) | map(.[-1]) | .[] | select(.status=="active")
 LIVE_JSON="$(herdr agent list 2>/dev/null || printf '{"result":{"agents":[]}}')"
 LIVE_TERMS="$(printf '%s' "$LIVE_JSON" | jq -c '[.result.agents[]?.terminal_id]')"
 
+# Where does a terminal_id live *right now*? pane_ids compact when sibling panes
+# close, so an agent's recorded pane_id can go stale while the agent is still
+# alive at a renumbered pane. Resolving by terminal_id finds its current home.
+live_pane_for_term() {
+  local term="$1"
+  [[ -n "$term" ]] || return 0
+  printf '%s' "$LIVE_JSON" | jq -r --arg t "$term" \
+    '.result.agents[]? | select(.terminal_id==$t) | .pane_id' 2>/dev/null | head -n1
+}
+
 select_targets() {
   if [[ "$GONE_ONLY" -eq 1 ]]; then
     # Truly-gone = registry terminal_id is not present in the live agent list.
@@ -124,24 +134,36 @@ printf '%s\n' "$TARGETS" | while IFS= read -r rec; do
   fi
 
   # For explicit-target culls: verify the pane still maps to the same agent
-  # before closing. Pane ids compact across session events.
+  # before closing. Pane ids compact across session events, so when the recorded
+  # pane id is stale (gone, or now belongs to a different terminal) we re-resolve
+  # the agent by its durable terminal_id and retarget the close to wherever it
+  # lives now. We only declare it gone when the terminal_id isn't live anywhere —
+  # which fixes the bug where culling a sibling renumbered an agent's pane and
+  # left the still-running agent falsely marked closed.
   if [[ "$FORCE" -ne 1 && -n "$TERM" ]]; then
     set +e
     verify_pane_identity "$PANE" "$TERM"
     VRC=$?
     set -e
     case "$VRC" in
-      0) ;;  # OK to close
-      1)
-        printf 'pane %s no longer exists (terminal_id %s gone); recording closed without API call\n' \
-          "$PANE" "$TERM" >&2
-        append_closed "$rec" "already_gone" "pane_get returned no terminal_id"
-        continue
-        ;;
-      2)
-        printf 'REFUSING to close %s (%s): pane %s now belongs to a different terminal — herdr id compaction. Use --force if you really mean to close whatever is there now.\n' \
-          "$LABEL" "$GUID" "$PANE" >&2
-        continue
+      0) ;;  # recorded pane still holds this terminal — close as-is
+      1|2)
+        LIVE_PANE="$(live_pane_for_term "$TERM")"
+        if [[ -n "$LIVE_PANE" ]]; then
+          printf 'pane id drifted for %s (%s): registry=%s, terminal %s now live at %s — retargeting\n' \
+            "$LABEL" "$GUID" "$PANE" "$TERM" "$LIVE_PANE" >&2
+          PANE="$LIVE_PANE"
+        else
+          if [[ "$VRC" -eq 1 ]]; then
+            printf 'pane %s gone and terminal %s not live anywhere; recording closed without API call\n' \
+              "$PANE" "$TERM" >&2
+          else
+            printf 'pane %s reassigned to another terminal and %s not live anywhere; recording closed\n' \
+              "$PANE" "$TERM" >&2
+          fi
+          append_closed "$rec" "already_gone" "terminal_id not in live agent list"
+          continue
+        fi
         ;;
     esac
   fi

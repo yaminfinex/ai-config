@@ -4,21 +4,28 @@
 # Usage:
 #   herder-spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]
 #                [--split right|down] [--workspace ID | --from-pane PANE_ID] [--tab ID] [--cwd PATH]
-#                [--no-focus] [--label-prefix STR] [--extra-arg ARG]... [--json]
+#                [--no-focus] [--safe] [--label-prefix STR] [--extra-arg ARG]... [--json]
 #
 # Behavior:
 #   1. Generates a short GUID and a label "<role>-<shortguid>".
-#   2. Calls `herdr agent start <label> ...`, launching the agent inside a login+interactive shell —
+#   2. PERMISSIONS: by default spawns agents in autonomous ("YOLO") mode so they don't stall on
+#      approval prompts the herder can't see — claude gets --dangerously-skip-permissions, codex gets
+#      --dangerously-bypass-approvals-and-sandbox. This is injected because `exec claude` bypasses the
+#      user's shell alias (which is where skip-permissions usually lives), so spawned agents would
+#      otherwise come up in ask-mode. Pass --safe to opt out, or pass your own permission flag via
+#      --extra-arg (any recognised one suppresses the default).
+#   3. Calls `herdr agent start <label> ...`, launching the agent inside a login+interactive shell —
 #      `$SHELL -lic 'export HERDER_GUID=... HERDER_ROLE=... HERDER_LABEL=...; exec <agent> [extra-args]'` —
 #      so PATH / mise activation / auth env are sourced like a normal pane. Opt out with --no-login-shell.
-#   3. Appends a JSONL record to $HERDER_STATE_DIR/registry.jsonl.
-#   4. If --prompt/--prompt-file is given, waits for the agent to report idle then sends the prompt + Enter.
-#   5. Prints a human summary to stderr and a JSON record to stdout when --json is set.
+#   4. Appends a JSONL record to $HERDER_STATE_DIR/registry.jsonl.
+#   5. If --prompt/--prompt-file is given, waits for the agent to become truly ready (sigil + idle +
+#      settle) then delegates delivery to `herder-send` (verified, with double-Enter recovery).
+#   6. Prints a human summary to stderr and a JSON record to stdout when --json is set.
 #
 # Notes:
 #   * The agent binary must accept being invoked plainly (e.g. `codex`, `claude`). For wrappers, use --extra-arg.
-#   * If the agent never reports idle, the prompt send falls back after the wait timeout (10s by default).
-#   * Sending the prompt uses `herdr agent send` (literal) then `herdr pane send-keys Enter` to submit.
+#   * Initial-prompt delivery is verified by `herder-send`; if it can't confirm submission it reports
+#     prompt: NOT confirmed rather than silently claiming success.
 
 set -euo pipefail
 
@@ -48,17 +55,41 @@ READY_MATCH=""
 NO_READY_WAIT=0
 LOGIN_SHELL=1
 LOGIN_SHELL_BIN="${HERDER_SPAWN_SHELL:-${SHELL:-/bin/bash}}"
+SAFE=0
+SETTLE_MS="${HERDER_SPAWN_SETTLE_MS:-1500}"
 
-# Per-agent default ready-pattern (substring to look for in the pane before we
-# trust the agent UI to accept input). Picked these by eyeballing the boot
-# transcripts: claude shows "❯ " for the input chevron, codex shows "› ".
-default_ready_match() {
+# Sibling scripts live next to this one; resolve their dir so we can delegate
+# initial-prompt delivery to herder-send (verified send) regardless of $PATH.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Per-agent default permission flag. We inject this so spawned agents come up in
+# autonomous mode (the herder can't see or answer an approval modal in a child
+# pane). `exec <agent>` bypasses the user's shell alias, so without this claude
+# spawns in ask-mode even when the user's interactive `claude` is aliased to
+# --dangerously-skip-permissions.
+default_perm_flag() {
   case "$1" in
-    claude) printf '%s' '❯ ';;
-    codex)  printf '%s' '› ';;
-    *) printf '';;
+    claude) printf '%s' '--dangerously-skip-permissions';;
+    codex)  printf '%s' '--dangerously-bypass-approvals-and-sandbox';;
+    *)      printf '';;
   esac
 }
+
+# Does the caller's --extra-arg list already carry a permission-shaping flag? If
+# so, respect it and don't inject our default.
+has_explicit_perm_flag() {
+  local a
+  for a in ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}; do
+    case "$a" in
+      # claude
+      --dangerously-skip-permissions|--permission-mode|--permission-prompt-tool) return 0;;
+      # codex
+      --dangerously-bypass-approvals-and-sandbox|--full-auto|-a|--ask-for-approval|-s|--sandbox) return 0;;
+    esac
+  done
+  return 1
+}
+
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -81,7 +112,8 @@ while [[ $# -gt 0 ]]; do
     --no-ready-wait) NO_READY_WAIT=1; shift;;
     --no-login-shell) LOGIN_SHELL=0; shift;;
     --login-shell) LOGIN_SHELL_BIN="$2"; shift 2;;
-    -h|--help) sed -n '1,32p' "$0"; exit 0;;
+    --safe) SAFE=1; shift;;
+    -h|--help) sed -n '1,38p' "$0"; exit 0;;
     *) die "unknown arg: $1";;
   esac
 done
@@ -121,6 +153,17 @@ fi
 if [[ -n "$PROMPT_FILE" ]]; then
   [[ -r "$PROMPT_FILE" ]] || die "prompt file not readable: $PROMPT_FILE"
   PROMPT="$(cat "$PROMPT_FILE")"
+fi
+
+# Inject the autonomous-mode permission flag unless --safe or the caller already
+# passed one. Prepend so an explicit later --extra-arg still wins if it conflicts.
+PERM_INJECTED=""
+if [[ "$SAFE" -eq 0 ]]; then
+  PERM_FLAG="$(default_perm_flag "$AGENT")"
+  if [[ -n "$PERM_FLAG" ]] && ! has_explicit_perm_flag; then
+    EXTRA_ARGS=("$PERM_FLAG" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"})
+    PERM_INJECTED="$PERM_FLAG"
+  fi
 fi
 
 STATE_DIR="${HERDER_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herder}"
@@ -210,43 +253,111 @@ RECORD="$(jq -nc \
 
 printf '%s\n' "$RECORD" >>"$REGISTRY"
 
-# Send initial prompt if requested.
-PROMPT_SENT=false
-READY_REASON=""
-if [[ -n "$PROMPT" ]]; then
-  # Wait for the agent UI to actually be receptive. The integration `idle`
-  # state fires from boot before the input prompt has rendered, so we look
-  # for a known prompt indicator string in the pane transcript first. Fall
-  # back to `agent wait --status idle` when no pattern is known.
-  EFFECTIVE_MATCH="$READY_MATCH"
-  if [[ -z "$EFFECTIVE_MATCH" && "$NO_READY_WAIT" -eq 0 ]]; then
-    EFFECTIVE_MATCH="$(default_ready_match "$AGENT")"
-  fi
+# --- readiness, including first-run modal clearing ------------------------------
+# Two things make a freshly-spawned agent un-receptive in ways that silently eat
+# an initial prompt:
+#   * First-run trust/onboarding modals. claude shows "Is this a project you
+#     created or one you trust?" on first run in an untrusted dir (every fresh
+#     worktree counts) and --dangerously-skip-permissions does NOT dismiss it.
+#     The modal's selector arrow ("❯ 1. Yes…") even spoofs the input sigil, so a
+#     naive sigil match reports ready and the prompt is pasted into the modal.
+#   * The integration reports idle/working before the input is truly receptive
+#     (codex during MCP startup).
+# await_ready clears the modals (accepting trust — we're spawning into the user's
+# own dirs in autonomous mode at their request) and waits for a settled state
+# with the real input sigil showing.
 
-  if [[ "$NO_READY_WAIT" -eq 1 ]]; then
-    READY_REASON="skipped (--no-ready-wait)"
-  elif [[ -n "$EFFECTIVE_MATCH" ]]; then
-    if herdr wait output "$PANE_ID" --match "$EFFECTIVE_MATCH" \
-         --source recent-unwrapped --timeout "$WAIT_TIMEOUT_MS" --raw \
-         >/dev/null 2>&1; then
-      READY_REASON="matched '$EFFECTIVE_MATCH'"
-    else
-      READY_REASON="timeout waiting for '$EFFECTIVE_MATCH'"
+pane_text() {
+  herdr agent read "$PANE_ID" --source recent-unwrapped --lines 40 2>/dev/null \
+    | jq -r '.result.read.text // empty' 2>/dev/null || true
+}
+pane_status() {
+  herdr agent list 2>/dev/null \
+    | jq -r --arg p "$PANE_ID" '.result.agents[]? | select(.pane_id==$p) | .agent_status // empty' \
+    | head -n1
+}
+# Match the first-run directory-trust / onboarding modals across agent versions.
+# Anchored on the distinctive question phrasings (codex changed wording from
+# "files in this folder" to "contents of this directory"; claude uses its own).
+# These modals sit at status=idle, so detecting them by text is the only signal.
+is_trust_modal() {
+  grep -qE 'Do you trust the contents of this directory|Do you trust the files in this folder|Is this a project you created or one you trust|Yes, I trust this folder' <<<"$1"
+}
+
+MODAL_CLEARED=0
+await_ready() {
+  local text status prev="" waited=0
+  while [[ $waited -lt $WAIT_TIMEOUT_MS ]]; do
+    text="$(pane_text)"
+    status="$(pane_status)"
+    if is_trust_modal "$text"; then
+      # A directory-trust modal is open. Accepting it is a real decision (codex
+      # warns it raises prompt-injection risk), so we only auto-accept in
+      # autonomous mode — the user pointed the agent at this dir and asked for a
+      # hands-off agent. Under --safe we refuse to touch it and surface it (the
+      # parent keys off this 'trust-modal-open' marker), so a stray character can
+      # never silently confirm trust.
+      if [[ "$SAFE" -eq 1 ]]; then
+        printf 'trust-modal-open (blocked by --safe; accept it in the pane)'
+        return 0
+      fi
+      herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
+      MODAL_CLEARED=1; prev=""
+      sleep 0.8; waited=$((waited + 800)); continue
     fi
-  else
-    herdr agent wait "$PANE_ID" --status idle --timeout "$WAIT_TIMEOUT_MS" >/dev/null 2>&1 || true
-    READY_REASON="agent reported idle"
-  fi
+    # Receptive once there's no modal, the integration reports a settled
+    # (non-busy) state, AND the pane output has stopped changing between reads.
+    # The output-stability check matters: codex keeps printing boot chrome (MCP
+    # warnings, tips) after it first reports idle, and pasting into that window
+    # makes it clip the leading characters of the message. Waiting for two
+    # identical reads means boot has quiesced and the input handler is attached.
+    # An explicit --ready-match, if given, must also be present.
+    if [[ "$status" == "idle" || "$status" == "done" ]] \
+       && { [[ -z "$READY_MATCH" ]] || grep -qF -- "$READY_MATCH" <<<"$text"; }; then
+      if [[ -n "$prev" && "$text" == "$prev" ]]; then
+        printf 'status=%s,stable%s' "$status" "$([[ $MODAL_CLEARED -eq 1 ]] && printf ',trust-accepted')"
+        return 0
+      fi
+      prev="$text"
+    fi
+    sleep 0.5; waited=$((waited + 500))
+  done
+  printf 'timeout(status=%s%s)' "${status:-unknown}" "$([[ $MODAL_CLEARED -eq 1 ]] && printf ',trust-accepted')"
+  return 0
+}
 
-  if herdr agent send "$PANE_ID" "$PROMPT" >/dev/null 2>&1; then
-    sleep 0.2
-    herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
-    # Give the agent integration a beat to flip from idle to working, so a
-    # subsequent `herder-wait --status idle` blocks on real completion rather
-    # than returning immediately on the pre-prompt idle state.
-    sleep "${HERDER_POST_SEND_SLEEP:-1.5}"
-    PROMPT_SENT=true
+# Always settle the agent (accept trust modals etc.) so even prompt-less spawns
+# are usable; skip only with --no-ready-wait. await_ready runs in a subshell, so
+# we read its trust-blocked outcome back from the reason string.
+READY_REASON=""
+TRUST_BLOCKED=0
+if [[ "$NO_READY_WAIT" -eq 1 ]]; then
+  READY_REASON="ready-wait skipped (--no-ready-wait)"
+else
+  READY_REASON="$(await_ready)"
+  [[ "$READY_REASON" == *trust-modal-open* ]] && TRUST_BLOCKED=1
+  sleep "$(awk -v ms="$SETTLE_MS" 'BEGIN{printf "%.3f", ms/1000}')"
+fi
+
+# Send initial prompt if requested. Delivery is delegated to herder-send, which
+# confirms the text actually landed (re-pasting if dropped), submits, and
+# verifies via the agent's working-state — so a dropped prompt is reported as
+# not-landed instead of being silently lost. If a trust modal is blocking
+# (--safe), we refuse to send: pasting now would let stray characters confirm the
+# trust prompt.
+PROMPT_SENT=false
+DELIVERY_RESULT="not_attempted"
+if [[ -n "$PROMPT" && "$TRUST_BLOCKED" -eq 1 ]]; then
+  DELIVERY_RESULT="blocked_trust_modal"
+elif [[ -n "$PROMPT" ]]; then
+  set +e
+  SEND_JSON="$("$SCRIPT_DIR/herder-send" "$PANE_ID" "$PROMPT" --json 2>/dev/null)"
+  SEND_RC=$?
+  set -e
+  if [[ -n "$SEND_JSON" ]]; then
+    DELIVERY_RESULT="$(printf '%s' "$SEND_JSON" | jq -r '.verify // "unknown"' 2>/dev/null || echo unknown)"
   fi
+  [[ "$SEND_RC" -eq 0 ]] && PROMPT_SENT=true
 fi
 
 # Human summary to stderr.
@@ -254,15 +365,30 @@ fi
   printf 'spawned %s (%s) in pane %s (workspace %s)\n' "$LABEL" "$AGENT" "$PANE_ID" "$WS_ID"
   printf '  guid:   %s\n' "$GUID"
   printf '  cwd:    %s\n' "$RESOLVED_CWD"
+  if [[ -n "$PERM_INJECTED" ]]; then
+    printf '  perms:  %s (autonomous; pass --safe to opt out)\n' "$PERM_INJECTED"
+  elif [[ "$SAFE" -eq 1 ]]; then
+    printf '  perms:  --safe (agent default ask-mode)\n'
+  fi
   if [[ -n "$PROMPT" ]]; then
     if $PROMPT_SENT; then
-      printf '  prompt: sent (%d chars), ready: %s\n' "${#PROMPT}" "$READY_REASON"
+      printf '  prompt: sent (%d chars), ready: %s, verify: %s\n' "${#PROMPT}" "$READY_REASON" "$DELIVERY_RESULT"
+    elif [[ "$DELIVERY_RESULT" == "blocked_trust_modal" ]]; then
+      printf '  prompt: NOT sent — a directory-trust modal is open and --safe forbids auto-accepting it.\n'
+      printf '          Accept it in the pane (focus + Enter), then: herder-send %s "<prompt>"\n' "$LABEL"
     else
-      printf '  prompt: NOT sent (agent send failed)\n'
+      printf '  prompt: NOT confirmed (verify: %s, ready: %s) — read the pane before assuming it landed\n' "$DELIVERY_RESULT" "$READY_REASON"
     fi
+  elif [[ "$TRUST_BLOCKED" -eq 1 ]]; then
+    printf '  note:   directory-trust modal is open (--safe); accept it in the pane to use the agent\n'
   fi
 } >&2
 
 if [[ "$JSON_OUT" -eq 1 ]]; then
-  printf '%s\n' "$RECORD"
+  # Enrich the registry record with delivery + permission outcome for the caller.
+  printf '%s\n' "$RECORD" | jq -c \
+    --argjson sent "$PROMPT_SENT" \
+    --arg delivery "$DELIVERY_RESULT" \
+    --arg perm "$PERM_INJECTED" \
+    '. + {prompt_sent:$sent, delivery_result:$delivery, perm_injected:$perm}'
 fi

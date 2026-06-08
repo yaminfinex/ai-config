@@ -39,6 +39,12 @@ herder-spawn --role review --agent codex --split right --no-focus \
 
 Defaults: `--no-focus`, `--split right` for review/research/QA, `--split down` for implementers or long log output. To target a specific parent workspace, use `--from-pane <pane_id>` (resolves to its workspace_id); to target an explicit workspace use `--workspace`. Both are validated against the live workspace list — stale ids fail fast.
 
+**Permissions are autonomous by default.** `herder-spawn` injects `--dangerously-skip-permissions` (claude) / `--dangerously-bypass-approvals-and-sandbox` (codex) so spawned agents don't stall on tool-approval prompts you can't see in their pane. This is needed because `exec claude` bypasses your shell alias (where skip-permissions usually lives). Pass `--safe` for a default ask-mode agent, or pass your own permission flag via `--extra-arg` (any recognised one suppresses the default). The summary line shows which flag was applied.
+
+**First-run directory-trust modals are handled.** Both claude ("Is this a project you created or one you trust?") and codex ("Do you trust the contents of this directory?") show a trust modal on first run in an untrusted dir — every fresh worktree counts, and the tool-permission flags above do **not** dismiss it. The modal sits at `status=idle` and its selector arrow spoofs the input sigil, so a naive send pastes the prompt *into* the modal and stray characters silently confirm trust. `herder-spawn` detects it and, in autonomous mode, accepts it deliberately (reported as `trust-accepted`). Under `--safe` it refuses and surfaces it instead — you accept it in the pane, then `herder-send` the prompt.
+
+**Initial-prompt delivery is verified, not fire-and-forget.** After the agent settles (output stable, modals cleared), `herder-spawn` delegates the send to `herder-send`, which confirms the text landed (re-pasting if dropped) and submitted. A prompt that can't be confirmed is reported `prompt: NOT confirmed` / `delivery_result` (in `--json`) rather than silently lost — read the pane before assuming it landed.
+
 After spawning, echo `<label>`, short GUID, and pane id back to the user.
 
 Recipes (worktrees, follow-ups, culling): `references/spawn-patterns.md`.

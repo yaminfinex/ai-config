@@ -109,6 +109,18 @@ detect_kind() {
     | head -n1
 }
 
+# Read the agent's integration status (idle/working/done/blocked/unknown). This
+# is a far more reliable delivery signal than scraping the prompt sigil: when a
+# submit lands, the agent flips to `working`. The sigil heuristic alone
+# false-negatives on placeholder hints (e.g. claude's "❯ run the full smoke
+# test suite") and on slow submits that clear the buffer after our poll window.
+detect_status() {
+  herdr agent list 2>/dev/null \
+    | jq -r --arg pid "$PANE_ID" \
+        '.result.agents[]? | select(.pane_id==$pid) | .agent_status // empty' \
+    | head -n1
+}
+
 KIND="$(detect_kind || true)"
 case "$KIND" in
   codex)  SIGIL='›';;
@@ -128,9 +140,11 @@ preflight_blocked_reason() {
     printf 'agent is in "Conversation interrupted" state; recover it first (focus pane and press Enter, or --force)'
     return 0
   fi
-  # Codex: trust prompt on first run in a directory
-  if grep -qE 'Do you trust the files in this folder' <<<"$text"; then
-    printf 'codex trust prompt is open; dismiss it manually before sending'
+  # Codex / claude: first-run directory-trust prompt. Refusing here is the last
+  # line of defense against a pasted message's characters silently confirming
+  # trust (codex shows "1. Yes, continue" + "Press enter to continue").
+  if grep -qE 'Do you trust the contents of this directory|Do you trust the files in this folder|Is this a project you created or one you trust|Yes, I trust this folder' <<<"$text"; then
+    printf 'first-run directory-trust prompt is open; accept it (focus pane + Enter) before sending'
     return 0
   fi
   # Codex: sandbox approval / command approval modal
@@ -159,6 +173,17 @@ sys.stdout.write(t)
 
 PRE_TEXT_RAW="$(read_pane)"
 PRE_TEXT="$(printf '%s' "$PRE_TEXT_RAW" | strip_chrome)"
+# Snapshot status before sending so a later transition into `working` can be read
+# as positive proof the submit landed (only meaningful if we weren't already
+# working).
+PRE_STATUS="$(detect_status || true)"
+
+# Delivery is confirmed if the agent moved into `working` from a non-working
+# pre-state — i.e. our submit kicked off a turn.
+status_confirms_delivery() {
+  local now; now="$(detect_status || true)"
+  [[ "$now" == "working" && "$PRE_STATUS" != "working" ]]
+}
 
 if [[ "$FORCE" -ne 1 ]]; then
   if REASON="$(preflight_blocked_reason "$PRE_TEXT")"; then
@@ -167,100 +192,128 @@ if [[ "$FORCE" -ne 1 ]]; then
   fi
 fi
 
-# ---- send + (optionally) submit ------------------------------------------------
+# ---- text-presence helpers -----------------------------------------------------
+# A not-yet-ready TUI silently DROPS a pasted message, which then looks identical
+# to an empty (submitted) prompt — so we reason about presence positively, not by
+# the absence of text. We key off the message TAIL rather than its head: codex
+# clips the LEADING characters of a paste while still booting, but never the end,
+# so the tail is the reliable fingerprint. (read_pane uses recent-unwrapped, so
+# even a wrapped multi-line input is one logical sigil line carrying the tail.)
+MSG_PROBE="$(printf '%s' "$MESSAGE" | grep -v '^[[:space:]]*$' | tail -n1)"
+MSG_PROBE="${MSG_PROBE: -45}"
 
-if ! herdr agent send "$PANE_ID" "$MESSAGE" >/dev/null 2>&1; then
-  printf 'herder-send: herdr agent send failed for %s\n' "$PANE_ID" >&2
-  exit 1
+msg_present() {   # message text is visible anywhere in the pane (input or transcript)
+  local text="$1"
+  [[ -n "$MSG_PROBE" ]] || return 0
+  grep -qF -- "$MSG_PROBE" <<<"$text"
+}
+
+msg_trailing_sigil() {  # message text is sitting in the input buffer, not yet submitted
+  local text="$1" last_sigil last_line
+  [[ -n "$MSG_PROBE" ]] || return 1
+  if [[ -n "$SIGIL" ]]; then
+    last_sigil="$(grep -F "$SIGIL " <<<"$text" | tail -n1 || true)"
+    [[ -n "$last_sigil" ]] || return 1
+    grep -qF -- "$MSG_PROBE" <<<"$last_sigil"
+  else
+    last_line="$(printf '%s\n' "$text" | awk 'NF{l=$0} END{print l}')"
+    grep -qF -- "$MSG_PROBE" <<<"$last_line"
+  fi
+}
+
+# ---- send (ensure it lands) ----------------------------------------------------
+# Paste the message and confirm it actually entered the buffer (or already kicked
+# off a turn). Re-paste once if the agent wasn't ready — this stops a dropped
+# paste from being mis-reported as a successful empty submit. Capped at 2 attempts
+# because each extra paste that DID land just concatenates into the buffer; the
+# tail-probe detection makes a spurious second paste unlikely.
+LANDED=0
+SEND_ATTEMPTS=0
+if [[ -z "$MSG_PROBE" ]]; then LANDED=1; fi  # empty message: nothing to land
+while [[ $LANDED -eq 0 && $SEND_ATTEMPTS -lt 2 ]]; do
+  SEND_ATTEMPTS=$((SEND_ATTEMPTS + 1))
+  if ! herdr agent send "$PANE_ID" "$MESSAGE" >/dev/null 2>&1; then
+    sleep 0.4; continue
+  fi
+  W=0
+  while [[ $W -lt 2500 ]]; do
+    sleep 0.25
+    if status_confirms_delivery; then LANDED=1; break; fi
+    if msg_present "$(read_pane | strip_chrome)"; then LANDED=1; break; fi
+    W=$((W + 250))
+  done
+done
+
+if [[ $LANDED -eq 0 ]]; then
+  printf 'herder-send: message never landed in %s after %d paste attempts (agent not accepting input?)\n' \
+    "$PANE_ID" "$SEND_ATTEMPTS" >&2
 fi
 
 SUBMITTED=false
-if [[ "$NO_ENTER" -eq 0 ]]; then
+if [[ "$NO_ENTER" -eq 0 && $LANDED -eq 1 && -n "$MSG_PROBE" ]]; then
   sleep 0.2
-  if ! herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1; then
-    printf 'herder-send: pane send-keys Enter failed for %s\n' "$PANE_ID" >&2
-    exit 1
-  fi
+  herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
   SUBMITTED=true
 fi
 
 # ---- verify delivery -----------------------------------------------------------
-# We claim delivery when, after our send + Enter, the message text we wrote is
-# no longer trailing the prompt sigil. If we don't know the sigil (other agent
-# kinds), we fall back to a looser "MESSAGE no longer on the last non-empty
-# line" check.
-#
-# Codex specifically absorbs the first Enter when transitioning out of
-# "Conversation interrupted", so we try one extra Enter on first miss before
-# giving up.
+# Delivery requires POSITIVE evidence, not the absence of text (an agent that
+# dropped our paste also shows an empty sigil line). We claim delivery when:
+#   * the agent transitioned into `working` (a turn started), OR
+#   * the message text is present in the pane but no longer sitting in the input
+#     buffer (it moved into the transcript = submitted).
+# It is NOT delivered when the text is absent (paste lost) or still in the buffer
+# (not submitted). Codex absorbs the first Enter when leaving "Conversation
+# interrupted", so a single extra Enter is tried when the text is still buffered.
 
-verify_cleared() {
-  local text="$1" msg_first_line
-  # Compare the first ~80 chars of the user's message against the prompt line.
-  # If the message contained newlines, only the first chunk lands on the sigil
-  # line; comparing the rest doesn't help.
-  msg_first_line="$(printf '%s' "$MESSAGE" | head -n1 | cut -c1-80)"
-  # Empty messages — nothing to verify.
-  [[ -n "$msg_first_line" ]] || return 0
-
-  if [[ -n "$SIGIL" ]]; then
-    # Find the last line containing the sigil; check whether our msg follows it.
-    local last_sigil
-    last_sigil="$(grep -F "$SIGIL " <<<"$text" | tail -n1 || true)"
-    [[ -n "$last_sigil" ]] || return 0  # no sigil visible → assume we scrolled off, treat as delivered
-    if grep -qF -- "$msg_first_line" <<<"$last_sigil"; then
-      return 1  # still trailing the sigil → not submitted
-    fi
-    return 0
+verify_delivered() {
+  local text="$1"
+  [[ -n "$MSG_PROBE" ]] || return 0               # empty message: nothing to verify
+  if msg_present "$text" && ! msg_trailing_sigil "$text"; then
+    return 0                                       # text moved out of the buffer → submitted
   fi
-  # Unknown kind: check the last non-empty line.
-  local last_line
-  last_line="$(printf '%s\n' "$text" | awk 'NF{l=$0} END{print l}')"
-  if grep -qF -- "$msg_first_line" <<<"$last_line"; then
-    return 1
-  fi
-  return 0
+  return 1
 }
 
 VERIFY_RESULT="not_attempted"
 EXTRA_ENTER_SENT=false
 
-if [[ "$NO_VERIFY" -eq 0 && "$SUBMITTED" == "true" ]]; then
-  # Wait for the UI to update; poll until cleared or timeout.
-  ELAPSED=0
+if [[ $LANDED -eq 0 ]]; then
+  # Paste never landed — do not claim anything was delivered.
+  VERIFY_RESULT="not_landed"
+elif [[ "$NO_ENTER" -eq 1 ]]; then
+  # Caller only wanted the text placed in the buffer; landing is success.
+  VERIFY_RESULT="placed"
+elif [[ "$NO_VERIFY" -eq 1 ]]; then
+  VERIFY_RESULT="not_verified"
+elif [[ "$SUBMITTED" == "true" ]]; then
   STEP_MS=250
-  CLEARED=0
-  while [[ $ELAPSED -lt $TIMEOUT_MS ]]; do
-    sleep "$(awk -v ms="$STEP_MS" 'BEGIN{printf "%.3f", ms/1000}')"
-    POST_TEXT="$(read_pane | strip_chrome)"
-    if verify_cleared "$POST_TEXT"; then
-      CLEARED=1
-      break
-    fi
-    ELAPSED=$((ELAPSED + STEP_MS))
-  done
-
-  # First-Enter-absorbed recovery: send one more Enter and re-poll.
-  if [[ $CLEARED -eq 0 ]]; then
-    herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
-    EXTRA_ENTER_SENT=true
-    ELAPSED=0
-    while [[ $ELAPSED -lt $TIMEOUT_MS ]]; do
+  DELIVERED=0
+  poll_delivered() {  # poll up to $TIMEOUT_MS for positive delivery evidence
+    local elapsed=0 post
+    while [[ $elapsed -lt $TIMEOUT_MS ]]; do
       sleep "$(awk -v ms="$STEP_MS" 'BEGIN{printf "%.3f", ms/1000}')"
-      POST_TEXT="$(read_pane | strip_chrome)"
-      if verify_cleared "$POST_TEXT"; then
-        CLEARED=1
-        break
-      fi
-      ELAPSED=$((ELAPSED + STEP_MS))
+      status_confirms_delivery && return 0
+      post="$(read_pane | strip_chrome)"
+      verify_delivered "$post" && return 0
+      elapsed=$((elapsed + STEP_MS))
     done
+    return 1
+  }
+
+  if poll_delivered; then
+    DELIVERED=1
+  else
+    # Absorbed-first-Enter recovery — only meaningful if the text is still sitting
+    # in the buffer (codex leaving "Conversation interrupted" eats one Enter).
+    if msg_trailing_sigil "$(read_pane | strip_chrome)"; then
+      herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
+      EXTRA_ENTER_SENT=true
+      poll_delivered && DELIVERED=1
+    fi
   fi
 
-  if [[ $CLEARED -eq 1 ]]; then
-    VERIFY_RESULT="cleared"
-  else
-    VERIFY_RESULT="not_cleared"
-  fi
+  if [[ $DELIVERED -eq 1 ]]; then VERIFY_RESULT="delivered"; else VERIFY_RESULT="not_delivered"; fi
 fi
 
 # ---- report --------------------------------------------------------------------
@@ -270,13 +323,12 @@ fi
   [[ -n "$KIND" ]] && printf ' (%s)' "$KIND"
   if [[ "$SUBMITTED" == "true" ]]; then
     printf ', submitted'
-  else
+  elif [[ "$NO_ENTER" -eq 1 ]]; then
     printf ', not submitted (--no-enter)'
   fi
-  if [[ "$NO_VERIFY" -eq 0 && "$SUBMITTED" == "true" ]]; then
-    printf ', verify=%s' "$VERIFY_RESULT"
-    [[ "$EXTRA_ENTER_SENT" == "true" ]] && printf ' (extra Enter recovered)'
-  fi
+  printf ', verify=%s' "$VERIFY_RESULT"
+  [[ "$EXTRA_ENTER_SENT" == "true" ]] && printf ' (extra Enter sent)'
+  [[ "$SEND_ATTEMPTS" -gt 1 ]] && printf ' (re-pasted x%d)' "$SEND_ATTEMPTS"
   printf '\n'
 } >&2
 
@@ -293,7 +345,8 @@ if [[ "$JSON_OUT" -eq 1 ]]; then
       verify:$verify, extra_enter_sent:$extra_enter, message_preview:$msg_preview}'
 fi
 
-if [[ "$NO_VERIFY" -eq 0 && "$SUBMITTED" == "true" && "$VERIFY_RESULT" == "not_cleared" ]]; then
-  exit 1
-fi
+# Non-zero when we could not positively confirm the outcome the caller asked for.
+case "$VERIFY_RESULT" in
+  not_landed|not_delivered) exit 1;;
+esac
 exit 0
