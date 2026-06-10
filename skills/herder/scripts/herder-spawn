@@ -3,8 +3,18 @@
 #
 # Usage:
 #   herder-spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]
-#                [--split right|down] [--workspace ID | --from-pane PANE_ID] [--tab ID] [--cwd PATH]
+#                [--split right|down] [--workspace ID | --from-pane PANE_ID] [--tab ID | --new-tab] [--cwd PATH]
 #                [--no-focus] [--safe] [--label-prefix STR] [--extra-arg ARG]... [--json]
+#
+# Tab placement:
+#   * --tab <id>  places the agent in an existing tab (as a split alongside whatever is there).
+#   * --new-tab   gives the agent its own fresh tab with NO spare shell. `herdr tab create` always
+#                 seeds a tab with a default shell (root) pane, and `herdr agent start` always opens
+#                 a NEW pane (even without --split), so a naive "tab create + agent start --tab"
+#                 leaves the root shell behind. --new-tab creates the tab, spawns the agent into it,
+#                 then closes the root shell (verifying its terminal_id first so it never closes the
+#                 agent) and re-resolves the agent's pane_id by terminal_id after the close compacts
+#                 ids. The tab is labelled with the agent's label. --new-tab and --tab are exclusive.
 #
 # Behavior:
 #   1. Generates a short GUID and a label "<role>-<shortguid>".
@@ -45,6 +55,7 @@ SPLIT="right"
 WORKSPACE=""
 FROM_PANE=""
 TAB=""
+NEW_TAB=0
 CWD=""
 FOCUS_FLAG="--no-focus"
 LABEL_PREFIX=""
@@ -101,6 +112,7 @@ while [[ $# -gt 0 ]]; do
     --workspace) WORKSPACE="$2"; shift 2;;
     --from-pane) FROM_PANE="$2"; shift 2;;
     --tab) TAB="$2"; shift 2;;
+    --new-tab) NEW_TAB=1; shift;;
     --cwd) CWD="$2"; shift 2;;
     --focus) FOCUS_FLAG="--focus"; shift;;
     --no-focus) FOCUS_FLAG="--no-focus"; shift;;
@@ -113,7 +125,7 @@ while [[ $# -gt 0 ]]; do
     --no-login-shell) LOGIN_SHELL=0; shift;;
     --login-shell) LOGIN_SHELL_BIN="$2"; shift 2;;
     --safe) SAFE=1; shift;;
-    -h|--help) sed -n '1,38p' "$0"; exit 0;;
+    -h|--help) sed -n '2,38p' "$0"; exit 0;;
     *) die "unknown arg: $1";;
   esac
 done
@@ -122,6 +134,7 @@ done
 [[ -n "$AGENT" ]] || die "--agent required"
 [[ -z "$PROMPT" || -z "$PROMPT_FILE" ]] || die "use --prompt or --prompt-file, not both"
 [[ -z "$WORKSPACE" || -z "$FROM_PANE" ]] || die "use --workspace or --from-pane, not both"
+[[ "$NEW_TAB" -eq 0 || -z "$TAB" ]] || die "use --new-tab or --tab, not both"
 
 # Resolve --from-pane → its workspace_id, so the new pane lands in the same
 # workspace as the named parent (not wherever focus happens to be).
@@ -175,6 +188,30 @@ GUID="$(uuidgen | tr 'A-Z' 'a-z')"
 SHORT="${GUID%%-*}"
 LABEL="${LABEL_PREFIX}${ROLE}-${SHORT}"
 
+# --new-tab: create a dedicated tab for this agent with no spare shell. `tab create`
+# seeds the tab with a root shell pane; we capture its pane_id + terminal_id so we
+# can close it after the agent lands (see post-start cleanup below). Set TAB so the
+# normal `agent start --tab` path places the agent in this tab.
+ROOT_PANE_ID=""
+ROOT_TERM=""
+if [[ "$NEW_TAB" -eq 1 ]]; then
+  tab_args=("tab" "create" "--no-focus" "--label" "$LABEL")
+  [[ -n "$WORKSPACE" ]] && tab_args+=("--workspace" "$WORKSPACE")
+  [[ -n "$CWD" ]]       && tab_args+=("--cwd" "$CWD")
+  set +e
+  TAB_CREATE_JSON="$(herdr "${tab_args[@]}" 2>&1)"
+  TAB_CREATE_RC=$?
+  set -e
+  if [[ $TAB_CREATE_RC -ne 0 ]]; then
+    printf 'herdr tab create failed:\n%s\n' "$TAB_CREATE_JSON" >&2
+    exit "$TAB_CREATE_RC"
+  fi
+  TAB="$(printf '%s' "$TAB_CREATE_JSON" | jq -r '.result.tab.tab_id // empty')"
+  ROOT_PANE_ID="$(printf '%s' "$TAB_CREATE_JSON" | jq -r '.result.root_pane.pane_id // empty')"
+  ROOT_TERM="$(printf '%s' "$TAB_CREATE_JSON" | jq -r '.result.root_pane.terminal_id // empty')"
+  [[ -n "$TAB" && -n "$ROOT_PANE_ID" ]] || { printf 'unexpected tab create payload: %s\n' "$TAB_CREATE_JSON" >&2; exit 1; }
+fi
+
 # Build herdr agent start arg list.
 start_args=("agent" "start" "$LABEL" "$FOCUS_FLAG" "--split" "$SPLIT")
 [[ -n "$WORKSPACE" ]] && start_args+=("--workspace" "$WORKSPACE")
@@ -220,6 +257,32 @@ TERM_ID="$(printf '%s' "$START_JSON" | jq -r '.result.agent.terminal_id // empty
 RESOLVED_CWD="$(printf '%s' "$START_JSON" | jq -r '.result.agent.cwd // empty')"
 
 [[ -n "$PANE_ID" ]] || { printf 'unexpected start payload: %s\n' "$START_JSON" >&2; exit 1; }
+
+# --new-tab cleanup: close the tab's seed (root) shell so the agent is the tab's
+# only pane. Identity-check the root pane by terminal_id before closing — pane ids
+# can compact, so a bare pane-id close could hit the agent. After the close, ids in
+# the tab compact, which may renumber the agent's pane, so re-resolve PANE_ID by the
+# agent's durable terminal_id before it's used for the registry / prompt delivery.
+ROOT_CLOSED=0
+if [[ "$NEW_TAB" -eq 1 && -n "$ROOT_PANE_ID" && -n "$ROOT_TERM" ]]; then
+  if [[ "$ROOT_TERM" == "$TERM_ID" ]]; then
+    printf 'herder-spawn: refusing to close root pane — terminal_id matches the agent (%s)\n' "$TERM_ID" >&2
+  else
+    LIVE_ROOT_TERM="$(herdr pane get "$ROOT_PANE_ID" 2>/dev/null | jq -r '.result.pane.terminal_id // empty' 2>/dev/null || true)"
+    if [[ "$LIVE_ROOT_TERM" == "$ROOT_TERM" ]]; then
+      herdr pane close "$ROOT_PANE_ID" >/dev/null 2>&1 && ROOT_CLOSED=1
+    else
+      printf 'herder-spawn: skipped root-pane close — %s no longer holds terminal %s (now %s)\n' \
+        "$ROOT_PANE_ID" "$ROOT_TERM" "${LIVE_ROOT_TERM:-gone}" >&2
+    fi
+  fi
+  if [[ "$ROOT_CLOSED" -eq 1 ]]; then
+    # Re-resolve the agent's pane_id by terminal_id after compaction.
+    RERESOLVED="$(herdr pane list 2>/dev/null \
+      | jq -r --arg t "$TERM_ID" '.result.panes[]? | select(.terminal_id==$t) | .pane_id' 2>/dev/null | head -n1)"
+    [[ -n "$RERESOLVED" ]] && PANE_ID="$RERESOLVED"
+  fi
+fi
 
 # Append registry record.
 NOW_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -365,6 +428,13 @@ fi
   printf 'spawned %s (%s) in pane %s (workspace %s)\n' "$LABEL" "$AGENT" "$PANE_ID" "$WS_ID"
   printf '  guid:   %s\n' "$GUID"
   printf '  cwd:    %s\n' "$RESOLVED_CWD"
+  if [[ "$NEW_TAB" -eq 1 ]]; then
+    if [[ "$ROOT_CLOSED" -eq 1 ]]; then
+      printf '  tab:    %s (new, root shell closed; agent is sole pane)\n' "$TAB"
+    else
+      printf '  tab:    %s (new; WARNING: root shell NOT closed — spare pane may remain)\n' "$TAB"
+    fi
+  fi
   if [[ -n "$PERM_INJECTED" ]]; then
     printf '  perms:  %s (autonomous; pass --safe to opt out)\n' "$PERM_INJECTED"
   elif [[ "$SAFE" -eq 1 ]]; then
@@ -390,5 +460,7 @@ if [[ "$JSON_OUT" -eq 1 ]]; then
     --argjson sent "$PROMPT_SENT" \
     --arg delivery "$DELIVERY_RESULT" \
     --arg perm "$PERM_INJECTED" \
-    '. + {prompt_sent:$sent, delivery_result:$delivery, perm_injected:$perm}'
+    --argjson new_tab "$([[ "$NEW_TAB" -eq 1 ]] && echo true || echo false)" \
+    --argjson root_closed "$([[ "$ROOT_CLOSED" -eq 1 ]] && echo true || echo false)" \
+    '. + {prompt_sent:$sent, delivery_result:$delivery, perm_injected:$perm, new_tab:$new_tab, root_pane_closed:$root_closed}'
 fi

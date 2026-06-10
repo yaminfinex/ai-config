@@ -55,6 +55,24 @@ herder-spawn --role scratch --agent bash --split right --no-focus
 
 `HERDER_GUID` and `HERDER_LABEL` are still injected into the shell env so the user can interact with the pane and the herder still owns the registry record.
 
+## C2. Give each agent its own tab (no spare shell) — `--new-tab`
+
+User: "spawn these in separate tabs" / "one tab per agent".
+
+```bash
+herder-spawn --role impl --agent claude --new-tab --no-focus \
+  --prompt 'Implement <task> …'
+```
+
+Do **not** hand-roll `herdr tab create` then `herder-spawn --tab <id>`: `tab create` seeds the tab with a default (root) shell pane, and `herdr agent start --tab` *always* opens a new pane (even with no `--split`), so you end up with **agent + spare shell** in every tab. `--new-tab` does the whole dance and closes the seed shell:
+
+1. `herdr tab create --label <agent-label> [--workspace …] [--cwd …]` → captures the root pane's `pane_id` + `terminal_id`.
+2. `herdr agent start --tab <new-tab>` → the agent lands as a second pane.
+3. Closes the root pane — but only after confirming via `herdr pane get` that it still holds the root `terminal_id` (never the agent's). pane ids compact, so a bare-id close could otherwise hit the agent.
+4. Re-resolves the agent's `pane_id` by its durable `terminal_id` (the close renumbers panes in the tab).
+
+The summary prints `tab: <id> (new, root shell closed; agent is sole pane)`; `--json` adds `new_tab` / `root_pane_closed`. If the close is skipped (identity check fails), the summary warns `root shell NOT closed` so you can clean it up by hand. Culling the agent later closes its last pane, which auto-closes the tab — no `tab close` call needed.
+
 ## D. Cull a spawned agent
 
 ```bash
