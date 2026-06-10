@@ -142,16 +142,19 @@ Pitfalls:
 `
 
 const syncHelp = `Examples:
-  bottle sync --remote git@github.com:me/bottles.git   # first run: configure origin, then sync
+  bottle sync --remote git@github.com:me/bottles.git   # first run (or switching remotes): set origin, then sync
   bottle sync                                          # thereafter: fetch, merge, push
+
+Failures abort the in-progress merge and leave the store as it was — a failed
+sync is always safe to re-run.
 
 Pitfalls:
   - The remote must be PRIVATE. Bottles carry full transcripts — keys, file
     contents, anything said in session — and sync pushes every one of them.
   - Name collisions auto-rename the newer bottle: when both machines created the
-    same name, the older ` + "`created`" + ` keeps it and the newer bottle (with its
-    descendant versions) moves to the first free suffix (auth-expert-2). Each
-    move prints as ` + "`renamed: old → new (name collision)`" + `.
+    same name, the bottle created first keeps it and the newer one (with its
+    descendant versions) moves to the first free suffix (e.g. auth-expert →
+    auth-expert-2). Each move prints as ` + "`renamed: old → new (name collision)`" + `.
   - ` + "`bottle rm`" + ` does not expunge git history: a removed bottle's transcript
     survives in the remote's history until that history is rewritten and
     force-pushed.
