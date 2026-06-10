@@ -3,7 +3,6 @@ package cli
 import (
 	"flag"
 	"fmt"
-	"io"
 )
 
 // cmdSync is a thin wrapper over Store.Sync: parse --remote, run the sync,
@@ -13,10 +12,10 @@ import (
 // confirm: sync is additive and abort-safe, so no prompts and no --force.
 func cmdSync(d *deps, args []string) int {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(d.stderr)
 	remote := fs.String("remote", "", "configure (or replace) the store's git remote, then sync")
-	positional, err := parseFlexible(fs, args)
-	if err != nil || len(positional) != 0 {
+	pos, err := parseFlexible(fs, args)
+	if err != nil || len(pos) != 0 {
 		fmt.Fprintln(d.stderr, "Usage: bottle sync [--remote <url>]")
 		return 2
 	}
