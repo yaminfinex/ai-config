@@ -40,3 +40,8 @@ Any agent (codex included) can `bottle list`, `bottle show`, `bottle log`, and
 `bottle decant ... --pane` to inspect bottles and open them into a herdr split.
 But self-bottling needs a Claude session id; from another harness pass
 `--session ID` or `--last` to `bottle create` instead.
+
+## Syncing across machines
+
+`bottle sync` converges the store with a **private** git remote (first run:
+`bottle sync --remote <url>`) — see `bottle sync --help` for the pitfalls.

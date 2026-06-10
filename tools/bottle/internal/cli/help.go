@@ -141,12 +141,18 @@ Pitfalls:
   - With --extract and no DIR, files land under ./bottle-artifacts/<name>@<v>/.
 `
 
-// syncHelp is a minimal placeholder — U5 writes the full agent-first body
-// (examples + pitfalls) and the goldens that pin it.
 const syncHelp = `Examples:
-  bottle sync --remote <url>   # first run: configure origin, then sync
-  bottle sync                  # thereafter
+  bottle sync --remote git@github.com:me/bottles.git   # first run: configure origin, then sync
+  bottle sync                                          # thereafter: fetch, merge, push
 
 Pitfalls:
-  - The remote must be private: bottles can carry keys and other sensitive context.
+  - The remote must be PRIVATE. Bottles carry full transcripts — keys, file
+    contents, anything said in session — and sync pushes every one of them.
+  - Name collisions auto-rename the newer bottle: when both machines created the
+    same name, the older ` + "`created`" + ` keeps it and the newer bottle (with its
+    descendant versions) moves to the first free suffix (auth-expert-2). Each
+    move prints as ` + "`renamed: old → new (name collision)`" + `.
+  - ` + "`bottle rm`" + ` does not expunge git history: a removed bottle's transcript
+    survives in the remote's history until that history is rewritten and
+    force-pushed.
 `
