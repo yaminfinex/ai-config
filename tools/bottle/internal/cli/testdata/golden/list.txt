@@ -1,0 +1,11 @@
+Usage: bottle list
+
+Table of bottles: name, latest version, count, age, note.
+
+Examples:
+  bottle list
+
+Pitfalls:
+  - An empty store is not an error: it prints a one-line hint and exits 0.
+  - Columns are NAME / LATEST / VERSIONS / AGE / NOTE; AGE is the latest
+    version's age, humanized (5s, 3m, 2h, 4d).

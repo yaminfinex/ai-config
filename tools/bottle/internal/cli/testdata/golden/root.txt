@@ -1,0 +1,36 @@
+bottle — pin, name, and re-enter agent contexts
+
+A bottle is an immutable snapshot of an agent conversation at a chosen
+point: a frozen transcript plus its provenance. The workflow is three verbs:
+
+  create    freeze the current (or a named) session into a new bottle
+  decant    materialize a fresh, resumable session seeded from a bottle
+  rebottle  freeze a decanted session back into a bottle, bumping its version
+
+Names carry versions: `auth-expert` is the latest, `auth-expert@2` a fixed
+snapshot. Rebottling records lineage (the parent bottle and the decant
+session between them), so `log` shows the full provenance chain. Decanting
+never mutates a bottle — each decant spawns a fresh conversation and runs
+against the repo as it is today (branch and sha are recorded, not restored).
+
+Self-bottling trims the in-flight turn: a bottle of your own live session is
+cut at the last completed turn, dropping the running `bottle create` call.
+
+v1 is Claude-only. Any agent can inspect bottles and decant into a pane, but
+self-bottling needs a Claude session id ($CLAUDE_CODE_SESSION_ID); from
+another harness pass `--session ID` or `--last`.
+
+Commands:
+  create     Snapshot a session into a new bottle
+  decant     Materialize a fresh session from a bottle and resume it
+  rebottle   Re-bottle a decanted session, bumping the version
+  list       Table of bottles: name, latest version, count, age, note
+  log        Version chain with provenance
+  show       Full metadata plus a transcript preview
+  rename     Move all versions to a new name
+  note       Set or replace the free-text note
+  prune      Drop decant entries whose session files are gone
+  rm         Delete one version, or the whole name
+  artifacts  List or extract attached artifacts
+
+Run `bottle <command> --help` for usage, examples, and pitfalls.

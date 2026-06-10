@@ -1,0 +1,14 @@
+Usage: bottle rm <name>[@v]
+
+Delete one version, or the whole name.
+
+Examples:
+  bottle rm old-expert@1                           # one version (interactive y/N)
+  bottle rm old-expert --force                      # whole name, no prompt
+
+Pitfalls:
+  - rm always prints the git-history retention warning: the bottle leaves the
+    registry and live store, but its transcript survives in ~/.bottles git
+    history until you rewrite it (e.g. git -C ~/.bottles with git filter-repo).
+  - Without --force, a non-interactive stdin is refused — agents and scripts
+    must pass --force. A bare name removes every version; name@v removes one.

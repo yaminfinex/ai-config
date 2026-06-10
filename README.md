@@ -11,6 +11,7 @@ This repo is the canonical corpus. Live agent config paths are symlinked into it
 - `bin/ai-sync`: pull remote changes and heal safe symlink drift.
 - `bin/ai-adopt <skill-path|skill-name>`: copy a local-only skill into `skills/<name>` and relink live roots.
 - `bin/ai-push "message"`: stage allowlisted repo files, validate them, commit, and push.
+- `bin/bottle`: pin, name, and re-enter agent contexts; run `bin/bottle` (no args) for the agent-first help.
 
 ## First Machine Setup
 

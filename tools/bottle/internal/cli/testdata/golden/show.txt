@@ -1,0 +1,13 @@
+Usage: bottle show <name>[@v] [--turns N]
+
+Full metadata plus a transcript preview.
+
+Examples:
+  bottle show auth-expert                          # metadata + last 5 turns
+  bottle show auth-expert@2 --turns 20
+
+Pitfalls:
+  - --turns N previews the last N turns of the frozen transcript (default 5);
+    it does not change the bottle.
+  - "cut at X of Y" reports where the snapshot was taken — Y is the source's
+    total turns, X the turn it was frozen at.

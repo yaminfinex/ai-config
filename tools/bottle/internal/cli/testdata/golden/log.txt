@@ -1,0 +1,12 @@
+Usage: bottle log <name>
+
+Version chain with provenance.
+
+Examples:
+  bottle log auth-expert
+
+Pitfalls:
+  - Output is newest-first. A rebottled version renders its provenance, e.g.
+    `@2 ← decant of auth-expert@1 (session 9f2c…), 2026-06-10`.
+  - Bracketed tags ([compacted], [rewound-into-parent], …) come from the frozen
+    transcript; a parent removed since is shown as (deleted).

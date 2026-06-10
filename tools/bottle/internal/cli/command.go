@@ -55,20 +55,21 @@ type deps struct {
 	gitInfo func(cwd string) (branch, sha string)
 }
 
-// live builds a real (non-stub) command. `--help`/`-h` prints the one-line
-// usage and exits 0 without opening the store (matching stub's contract and
-// keeping help cheap); any real invocation opens the default ~/.bottles store
-// and dispatches to fn with production deps. Tests bypass this and call the
-// cmd* funcs directly with a temp-store *deps.
-func live(name, usage, summary string, fn func(d *deps, args []string) int) command {
+// live builds a real (non-stub) command. `--help`/`-h` prints the agent-tuned
+// help (usage + summary + examples + pitfalls) and exits 0 without opening the
+// store, keeping help cheap; any real invocation opens the default ~/.bottles
+// store and dispatches to fn with production deps. Tests bypass this and call
+// the cmd* funcs directly with a temp-store *deps.
+func live(name, usage, summary, help string, fn func(d *deps, args []string) int) command {
 	return command{
 		name:    name,
 		usage:   usage,
 		summary: summary,
+		help:    help,
 		run: func(args []string, stdout, stderr io.Writer) int {
 			for _, arg := range args {
 				if arg == "-h" || arg == "--help" {
-					fmt.Fprintf(stdout, "Usage: %s\n\n%s.\n", usage, summary)
+					fmt.Fprint(stdout, renderHelp(usage, summary, help))
 					return 0
 				}
 			}

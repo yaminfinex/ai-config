@@ -1,0 +1,17 @@
+Usage: bottle rebottle [<name>] [--session ID] [--note ...]
+
+Re-bottle a decanted session, bumping the version.
+
+Examples:
+  bottle rebottle                                 # re-bottle the live session under its parent's name
+  bottle rebottle auth-expert-v2                  # ... under a new name (new lineage, parent still recorded)
+  bottle rebottle --session <id> --note "after fixing the deadlock"
+
+Pitfalls:
+  - rebottle only works on a *decanted* session — one this tool produced and
+    recorded. A session that was never decanted has no parent to inherit; it is
+    refused with a pointer to `bottle create` for a fresh root bottle.
+  - Re-bottling the live session self-trims the in-flight turn, exactly like a
+    self-bottle (`bottle create`).
+  - There is no --at; rebottle freezes the whole decanted session (self-trim
+    aside). Rewind at create time instead.

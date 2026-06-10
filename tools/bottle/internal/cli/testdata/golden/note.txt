@@ -1,0 +1,12 @@
+Usage: bottle note <name>[@v] <text>
+
+Set or replace the free-text note.
+
+Examples:
+  bottle note auth-expert "trusted baseline — resume here"
+  bottle note auth-expert@2 "pinned snapshot"
+
+Pitfalls:
+  - The note is the only sanctioned mutation of an otherwise-immutable bottle.
+  - An unpinned name edits the *latest* version; pin with name@v to annotate an
+    older one. Multi-word notes need not be quoted (trailing args are joined).

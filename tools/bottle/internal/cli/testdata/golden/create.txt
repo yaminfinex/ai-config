@@ -1,0 +1,20 @@
+Usage: bottle create <name> [--session ID | --last] [--at [N]] [--note ...] [--attach PATH...] [--force]
+
+Snapshot a session into a new bottle.
+
+Examples:
+  bottle create auth-expert                       # snapshot the current session
+  bottle create auth-expert --at 12               # rewind: freeze through turn 12
+  bottle create review --last --note "post-review baseline"
+
+Pitfalls:
+  - Self-bottle trims the in-flight turn. Bottling your own live session cuts at
+    the last *completed* turn, so the running `bottle create` call (and any
+    trailing unfinished turn) is dropped — an honest snapshot, by design.
+  - Put <name> before --at N. A bare --at opens an interactive turn picker; a
+    number right after it is read as the turn, so write
+    `bottle create foo --at 3`, not `bottle create --at 3 foo`. The picker
+    needs a TTY — pass --at N to rewind non-interactively.
+  - --attach refuses sensitive-looking names (.env*, *secret*, *credential*,
+    id_rsa*, *.pem) and files outside the cwd without --force; attachments enter
+    the store's permanent git history.

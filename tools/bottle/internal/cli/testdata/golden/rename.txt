@@ -1,0 +1,11 @@
+Usage: bottle rename <old> <new>
+
+Move all versions to a new name.
+
+Examples:
+  bottle rename auth auth-expert
+
+Pitfalls:
+  - Renames every version of the name at once. It is a registry-only move —
+    bottle directories do not move and lineage (parent links) survives.
+  - Refused if the target name already exists.

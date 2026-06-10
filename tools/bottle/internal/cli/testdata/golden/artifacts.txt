@@ -1,0 +1,12 @@
+Usage: bottle artifacts <name>[@v] [--extract DIR]
+
+List or extract attached artifacts.
+
+Examples:
+  bottle artifacts auth-expert                      # list attached files
+  bottle artifacts auth-expert --extract ./out      # extract into ./out
+
+Pitfalls:
+  - Extraction never overwrites: if any target path already exists it refuses up
+    front, names the collision, and writes nothing.
+  - With --extract and no DIR, files land under ./bottle-artifacts/<name>@<v>/.

@@ -1,0 +1,11 @@
+Usage: bottle prune
+
+Drop decant entries whose session files are gone.
+
+Examples:
+  bottle prune
+
+Pitfalls:
+  - Prune only drops decant-map entries whose seeded session files are gone
+    (Claude garbage-collected them). Bottles themselves are never touched.
+  - It reports the count removed; zero dead decants is a normal, successful run.
