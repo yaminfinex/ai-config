@@ -140,3 +140,13 @@ Pitfalls:
     front, names the collision, and writes nothing.
   - With --extract and no DIR, files land under ./bottle-artifacts/<name>@<v>/.
 `
+
+// syncHelp is a minimal placeholder — U5 writes the full agent-first body
+// (examples + pitfalls) and the goldens that pin it.
+const syncHelp = `Examples:
+  bottle sync --remote <url>   # first run: configure origin, then sync
+  bottle sync                  # thereafter
+
+Pitfalls:
+  - The remote must be private: bottles can carry keys and other sensitive context.
+`

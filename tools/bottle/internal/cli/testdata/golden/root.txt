@@ -32,5 +32,6 @@ Commands:
   prune      Drop decant entries whose session files are gone
   rm         Delete one version, or the whole name
   artifacts  List or extract attached artifacts
+  sync       Converge this store with its git remote
 
 Run `bottle <command> --help` for usage, examples, and pitfalls.
