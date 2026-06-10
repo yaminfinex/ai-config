@@ -40,6 +40,13 @@ func (s *Store) loadConfig() error {
 	return json.Unmarshal(raw, &s.config)
 }
 
+// gitIdentity pins the commit identity on every store commit, so commits
+// succeed on machines without user-level git config and never try to sign.
+var gitIdentity = []string{
+	"-c", "user.name=bottle", "-c", "user.email=bottle@localhost",
+	"-c", "commit.gpgsign=false",
+}
+
 // autoCommit commits the whole store after a mutation. Best-effort by
 // design: failures degrade to a warning, never to a failed operation. It
 // runs under the mutation flock, so commits serialize with the writes they
@@ -57,16 +64,9 @@ func (s *Store) autoCommit(msg string) {
 		})
 		return
 	}
-	if _, err := os.Stat(filepath.Join(s.root, ".git")); os.IsNotExist(err) {
-		// The flock is transient noise; keep it out of the history.
-		if err := s.backend.Write(".gitignore", []byte(lockFile+"\n")); err != nil {
-			s.warnf("git substrate: %v", err)
-			return
-		}
-		if out, err := s.git(gitPath, "-c", "init.defaultBranch=main", "init", "-q"); err != nil {
-			s.warnf("git init failed: %v: %s", err, out)
-			return
-		}
+	if err := s.initRepoIfNeeded(gitPath); err != nil {
+		s.warnf("%v", err)
+		return
 	}
 	if out, err := s.git(gitPath, "add", "-A"); err != nil {
 		s.warnf("git add failed: %v: %s", err, out)
@@ -75,13 +75,56 @@ func (s *Store) autoCommit(msg string) {
 	if _, err := s.git(gitPath, "diff", "--cached", "--quiet"); err == nil {
 		return // nothing staged, nothing to commit
 	}
-	out, err := s.git(gitPath,
-		"-c", "user.name=bottle", "-c", "user.email=bottle@localhost",
-		"-c", "commit.gpgsign=false",
-		"commit", "-q", "-m", msg)
-	if err != nil {
+	args := append(append([]string{}, gitIdentity...), "commit", "-q", "-m", msg)
+	if out, err := s.git(gitPath, args...); err != nil {
 		s.warnf("git commit failed: %v: %s", err, out)
 	}
+}
+
+// initRepoIfNeeded lazily initializes the store's git repo (with the lock
+// file gitignored) — shared by autoCommit (which downgrades the error to a
+// warning) and sync (which hard-fails).
+func (s *Store) initRepoIfNeeded(gitPath string) error {
+	if _, err := os.Stat(filepath.Join(s.root, ".git")); err == nil {
+		return nil
+	}
+	// The flock is transient noise; keep it out of the history.
+	if err := s.backend.Write(".gitignore", []byte(lockFile+"\n")); err != nil {
+		return fmt.Errorf("git substrate: %w", err)
+	}
+	if out, err := s.git(gitPath, "-c", "init.defaultBranch=main", "init", "-q"); err != nil {
+		return fmt.Errorf("git init failed: %v: %s", err, firstLine(out))
+	}
+	return nil
+}
+
+// currentBranch reads the checked-out branch name; works on an unborn HEAD.
+func (s *Store) currentBranch(gitPath string) (string, error) {
+	out, err := s.git(gitPath, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("cannot determine the store's git branch: %s", firstLine(out))
+	}
+	return out, nil
+}
+
+// originURL reports the configured origin remote, if any.
+func (s *Store) originURL(gitPath string) (string, bool) {
+	out, err := s.git(gitPath, "remote", "get-url", "origin")
+	if err != nil {
+		return "", false
+	}
+	return out, true
+}
+
+// firstLine reduces multi-line git output to its first non-empty line, for
+// the single-line error convention.
+func firstLine(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if l := strings.TrimSpace(line); l != "" {
+			return l
+		}
+	}
+	return "(no output)"
 }
 
 func (s *Store) git(gitPath string, args ...string) (string, error) {
