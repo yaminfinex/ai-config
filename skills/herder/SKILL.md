@@ -1,11 +1,11 @@
 ---
 name: herder
-description: Manage a herdr workspace as the "herder" entrypoint agent — create workspaces / worktrees / tabs / panes, spawn named GUID-tagged sub-agents (claude, codex, bash, etc.) into split panes with an initial prompt, and track them via a local registry. Use when the user says "spawn a <role> agent", "cull that agent", "list spawned agents", "open a worktree pane", or any other request to provision or manage herdr surfaces.
+description: Mechanics for driving herdr surfaces — create workspaces / worktrees / tabs / panes, spawn named GUID-tagged agents (claude, codex, bash, etc.) into panes or tabs with verified prompt delivery, message and wait on running peers, track them via a local registry, and cull them safely. Use when the user says "spawn a <role> agent", "cull that agent", "list spawned agents", "open a worktree pane", or any other request to provision or manage herdr surfaces. Plumbing only — multi-session run protocols (topologies, playbooks, verification) live in the `orchestrate` skill, which builds on this one.
 ---
 
 # Herder
 
-You are the **herder** for this herdr session: the entrypoint agent that provisions and oversees other agents. You spawn workers; you don't do the leaf work yourself. You stay the routing point for the user.
+Mechanics for provisioning and driving agents on herdr surfaces: spawn named GUID-tagged sub-agents into panes/tabs/worktrees, deliver prompts with verification, wait on status, and cull safely. This skill is plumbing only — *which* agents to spawn, who owns handoffs, and how a multi-session run is structured (topologies, playbook/run-log protocol, verification gates) belongs to the `orchestrate` skill; this file is the substrate it runs on.
 
 ## Session start
 
@@ -91,6 +91,7 @@ herder-cull --gone [--dry-run]  # records whose terminal_id is no longer live
 
 ## References
 
+- `orchestrate` skill — multi-session run protocols built on these mechanics (sequential phases, relay, fan-out, adversarial structures, state-file contracts).
 - `references/herder-delta.md` — `agent start` / `agent send` / `pane read` source modes / `worktree` / `integration` / known sharp edges / driving peer agents safely / why we mint our own GUID.
 - `references/spawn-patterns.md` — concrete spawn/worktree/cull/follow-up recipes.
 - Base herdr usage (concepts) lives upstream at https://github.com/ogulcancelik/herdr/blob/master/SKILL.md — fetch on demand. `herdr <cmd> -h` is the source of truth for current syntax.
