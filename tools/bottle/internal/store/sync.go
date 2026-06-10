@@ -211,7 +211,9 @@ func (s *Store) applyProjection(reg *registry, names map[string][]versionEntry, 
 
 // SyncReport is what one Sync run did, shaped for the CLI to render: bottle
 // counts each way, the collision renames applied locally (deduped to one
-// entry per old→new name move), and the remote in effect.
+// entry per old→new name move), and the remote in effect. The report covers
+// this run only — renames committed by a previously-interrupted sync are not
+// re-reported by the run that heals it.
 type SyncReport struct {
 	Received         int          // bottles that arrived from the remote
 	Sent             int          // bottles the remote lacked before this sync
@@ -257,6 +259,11 @@ func (s *Store) Sync(remoteURL string) (SyncReport, error) {
 	}
 	rep.RemoteURL = url
 
+	// A prior process may have died between merge --no-commit and its commit
+	// or abort, leaving MERGE_HEAD behind; abort it (best-effort, a no-op
+	// when no merge is in progress) so the sweep below never concludes a
+	// stale merge with conflict markers still in the worktree.
+	s.git(gitPath, "merge", "--abort")
 	// Sweep anything a crashed or git-less mutation left uncommitted, so the
 	// merge starts from a clean worktree.
 	if err := s.commitAll(gitPath, "sync: sweep local state"); err != nil {
@@ -266,7 +273,10 @@ func (s *Store) Sync(remoteURL string) (SyncReport, error) {
 	if err != nil {
 		return rep, err
 	}
-	if out, err := s.git(gitPath, "fetch", "origin"); err != nil {
+	// --prune drops remote-tracking refs the new origin no longer has, so a
+	// --remote re-pointing never fast-paths or merges against the old
+	// remote's stale refs.
+	if out, err := s.git(gitPath, "fetch", "--prune", "origin"); err != nil {
 		return rep, fmt.Errorf("fetch from %s failed: %s", url, firstLine(out))
 	}
 	remoteRef := "origin/" + branch
@@ -309,7 +319,12 @@ func (s *Store) Sync(remoteURL string) (SyncReport, error) {
 		return rep, err
 	}
 
-	if out, mergeErr := s.git(gitPath, "merge", "--no-commit", "--allow-unrelated-histories", remoteRef); mergeErr != nil {
+	// merge.ff=true pins the merge behavior against user config (merge.ff=only
+	// would refuse the non-ff merges sync exists to make); the identity is
+	// pinned too, since git refuses to merge without one.
+	mergeArgs := append(append([]string{}, gitIdentity...),
+		"-c", "merge.ff=true", "merge", "--no-commit", "--allow-unrelated-histories", remoteRef)
+	if out, mergeErr := s.git(gitPath, mergeArgs...); mergeErr != nil {
 		unmerged, _ := s.git(gitPath, "ls-files", "-u")
 		if cErr := mergeConflictError(unmerged, out); cErr != nil {
 			return rep, s.abortMerge(gitPath, cErr)

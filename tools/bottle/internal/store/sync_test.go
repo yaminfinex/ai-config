@@ -355,10 +355,20 @@ func TestScanProjectApply(t *testing.T) {
 // substrate-disabled error tests.
 // ---------------------------------------------------------------------------
 
+// hermeticGit blanks the developer's global and system git config for the
+// duration of a test, so sync behavior cannot be skewed by settings like
+// merge.ff=only, fetch.prune, or a hooks path. Also skips when git is absent.
+func hermeticGit(t *testing.T) {
+	t.Helper()
+	requireGit(t)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+}
+
 // newBareRemote creates a bare git repo to act as the sync remote.
 func newBareRemote(t *testing.T) string {
 	t.Helper()
-	requireGit(t)
+	hermeticGit(t)
 	parent := t.TempDir()
 	dir := filepath.Join(parent, "remote.git")
 	if out, err := gitOut(t, parent, "init", "--bare", "-q", dir); err != nil {
@@ -581,7 +591,7 @@ func TestSyncSubstrateDisabled(t *testing.T) {
 }
 
 func TestSyncNoRemoteConfigured(t *testing.T) {
-	requireGit(t)
+	hermeticGit(t)
 	s, _ := newStore(t)
 	mustCreate(t, s, "x", "s1")
 	_, err := s.Sync("")
@@ -591,7 +601,7 @@ func TestSyncNoRemoteConfigured(t *testing.T) {
 }
 
 func TestSyncUnreachableRemote(t *testing.T) {
-	requireGit(t)
+	hermeticGit(t)
 	s, _ := newStore(t)
 	mustCreate(t, s, "x", "s1")
 	before := registryBytes(t, s)
@@ -758,6 +768,11 @@ func TestSyncRemoteReplacement(t *testing.T) {
 	rep := mustSync(t, s, second)
 	if !rep.RemoteConfigured || rep.RemoteURL != second {
 		t.Errorf("report remote = (%q, configured=%v), want (%q, true)", rep.RemoteURL, rep.RemoteConfigured, second)
+	}
+	// The fetch must prune the first remote's stale tracking refs, or the
+	// already-merged fast path counts against the old remote's tree.
+	if rep.Sent != 1 || rep.Received != 0 {
+		t.Errorf("report = %+v, want 1 sent, 0 received against the fresh remote", rep)
 	}
 	url, err := gitOut(t, s.Root(), "remote", "get-url", "origin")
 	if err != nil || url != second {
