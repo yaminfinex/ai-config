@@ -12,11 +12,6 @@ var speccedVerbs = []string{
 	"rename", "note", "prune", "rm", "artifacts",
 }
 
-// stubVerbs are the verbs still wired as stubs. U7 turned list/log/show/
-// rename/note/prune/rm/artifacts into real commands, so only U6's core verbs
-// remain "not implemented yet".
-var stubVerbs = []string{"create", "decant", "rebottle"}
-
 func runCLI(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -79,20 +74,6 @@ func TestEverySpeccedVerbResolves(t *testing.T) {
 			}
 			if !strings.Contains(stdout, "bottle "+verb) {
 				t.Errorf("%s --help: usage line missing %q", verb, "bottle "+verb)
-			}
-		})
-	}
-}
-
-func TestStubVerbsExitNonZeroSayingNotImplemented(t *testing.T) {
-	for _, verb := range stubVerbs {
-		t.Run(verb, func(t *testing.T) {
-			code, _, stderr := runCLI(t, verb)
-			if code == 0 {
-				t.Errorf("%s: exit code = 0, want non-zero from stub", verb)
-			}
-			if !strings.Contains(stderr, "not implemented yet") {
-				t.Errorf("%s: stderr missing %q: %s", verb, "not implemented yet", stderr)
 			}
 		})
 	}

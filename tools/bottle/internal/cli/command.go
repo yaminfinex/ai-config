@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
+	"ai-config/tools/bottle/internal/harness/claude"
 	"ai-config/tools/bottle/internal/store"
 )
 
@@ -29,6 +33,26 @@ type deps struct {
 	// session id, does the underlying harness session file still exist? U5
 	// owns the real locator (see defaultSessionExists).
 	sessionExists func(meta *store.Meta, sessionID string) bool
+
+	// The remaining fields drive the U6 core verbs (create/decant/rebottle).
+
+	// cwd is the directory bottle runs in — where the live session file lives
+	// (create/rebottle locate <session>.jsonl under its encoded project dir).
+	cwd string
+	// projectsRoot is Claude's session store root ($HOME/.claude/projects);
+	// tests point it at a temp dir.
+	projectsRoot string
+	// selfSession is the live session's id ($CLAUDE_CODE_SESSION_ID): bottling
+	// it triggers the self-bottle trim, and rebottle defaults to it.
+	selfSession string
+	// launch executes a decant's LaunchPlan (chdir + exec). Injected so decant
+	// tests assert the plan without spawning a harness; a nil error from the
+	// production impl never returns (exec replaces the process).
+	launch func(plan claude.LaunchPlan) error
+	// gitInfo reads the branch and short sha of cwd for create-time provenance
+	// (best-effort, both "" outside a repo). A seam so create tests stay fast
+	// and deterministic without spawning git.
+	gitInfo func(cwd string) (branch, sha string)
 }
 
 // live builds a real (non-stub) command. `--help`/`-h` prints the one-line
@@ -58,6 +82,7 @@ func live(name, usage, summary string, fn func(d *deps, args []string) int) comm
 				fmt.Fprintf(stderr, "bottle %s: %v\n", name, err)
 				return 1
 			}
+			cwd, _ := os.Getwd()
 			d := &deps{
 				store:         st,
 				stdin:         os.Stdin,
@@ -66,21 +91,75 @@ func live(name, usage, summary string, fn func(d *deps, args []string) int) comm
 				now:           time.Now,
 				isTTY:         stdinIsTTY(os.Stdin),
 				sessionExists: defaultSessionExists,
+				cwd:           cwd,
+				projectsRoot:  defaultProjectsRoot(),
+				selfSession:   claude.SelfSessionID(),
+				launch:        execLaunch,
+				gitInfo:       realGitInfo,
 			}
 			return fn(d, args)
 		},
 	}
 }
 
-// defaultSessionExists is the prune seam's production stand-in. U5
-// (harness/claude) owns the real locator — cwd (from meta.Source.CWD) →
-// encoded project dir → <session>.jsonl — and is being built in parallel.
-// Until it lands, prune treats every decant as live so it never deletes a
-// registry entry on a guess.
-//
-// TODO(U6/U8): wire the harness/claude session-file locator here so prune can
-// detect GC'd decant seeds.
-func defaultSessionExists(meta *store.Meta, sessionID string) bool { return true }
+// defaultSessionExists is the prune seam's production locator: a decant's seed
+// lives at <projectsRoot>/<encoded meta.Source.CWD>/<session>.jsonl (the same
+// place Materialize wrote it). When the projects root can't be resolved, prune
+// treats the decant as live rather than deleting a registry entry on a guess.
+func defaultSessionExists(meta *store.Meta, sessionID string) bool {
+	root := defaultProjectsRoot()
+	if root == "" {
+		return true
+	}
+	seed := filepath.Join(claude.ProjectDir(root, meta.Source.CWD), sessionID+".jsonl")
+	_, err := os.Stat(seed)
+	return err == nil
+}
+
+// defaultProjectsRoot is Claude's session store, $HOME/.claude/projects. It
+// returns "" when the home directory can't be located, leaving callers to
+// degrade gracefully.
+func defaultProjectsRoot() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".claude", "projects")
+}
+
+// realGitInfo reads cwd's current branch and HEAD sha (best-effort). Any error
+// — not a repo, git absent, detached weirdness — yields empty strings; git
+// state is recorded for display/provenance only, never load-bearing.
+func realGitInfo(cwd string) (branch, sha string) {
+	if cwd == "" {
+		return "", ""
+	}
+	run := func(args ...string) string {
+		out, err := exec.Command("git", append([]string{"-C", cwd}, args...)...).Output()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(out))
+	}
+	return run("rev-parse", "--abbrev-ref", "HEAD"), run("rev-parse", "--short", "HEAD")
+}
+
+// execLaunch is the production decant launcher: chdir to the plan's run cwd
+// (resume is cwd-scoped, so the chdir is mandatory) then exec the argv,
+// replacing this process. It returns only on failure before the exec.
+func execLaunch(plan claude.LaunchPlan) error {
+	if len(plan.Argv) == 0 {
+		return fmt.Errorf("launch: empty argv")
+	}
+	if err := os.Chdir(plan.RunCwd); err != nil {
+		return fmt.Errorf("chdir %s: %w", plan.RunCwd, err)
+	}
+	bin, err := exec.LookPath(plan.Argv[0])
+	if err != nil {
+		return fmt.Errorf("locate %s: %w", plan.Argv[0], err)
+	}
+	return syscall.Exec(bin, plan.Argv, os.Environ())
+}
 
 // stdinIsTTY reports whether stdin is a character device (an interactive
 // terminal). Stdlib-only: no golang.org/x/term dependency.

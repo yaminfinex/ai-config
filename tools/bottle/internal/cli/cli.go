@@ -22,12 +22,12 @@ type command struct {
 // help can never drift from what is wired. Order matches the spec's CLI
 // surface table.
 var commands = []command{
-	stub("create", "bottle create <name> [--session ID | --last] [--at] [--note ...] [--attach PATH...]",
-		"Snapshot a session into a new bottle"),
-	stub("decant", "bottle decant <name>[@v] [--pane right|below] [--prompt ...] [--yolo] [--cwd PATH]",
-		"Materialize a fresh session from a bottle and resume it"),
-	stub("rebottle", "bottle rebottle [<name>] [--session ID] [--note ...]",
-		"Re-bottle a decanted session, bumping the version"),
+	live("create", "bottle create <name> [--session ID | --last] [--at [N]] [--note ...] [--attach PATH...] [--force]",
+		"Snapshot a session into a new bottle", cmdCreate),
+	live("decant", "bottle decant <name>[@v] [--pane right|below] [--prompt ...] [--yolo] [--cwd PATH]",
+		"Materialize a fresh session from a bottle and resume it", cmdDecant),
+	live("rebottle", "bottle rebottle [<name>] [--session ID] [--note ...]",
+		"Re-bottle a decanted session, bumping the version", cmdRebottle),
 	live("list", "bottle list",
 		"Table of bottles: name, latest version, count, age, note", cmdList),
 	live("log", "bottle log <name>",
@@ -44,27 +44,6 @@ var commands = []command{
 		"Delete one version, or the whole name", cmdRm),
 	live("artifacts", "bottle artifacts <name>[@v] [--extract DIR]",
 		"List or extract attached artifacts", cmdArtifacts),
-}
-
-// stub builds a placeholder command: `--help` prints the synopsis and exits 0;
-// any real invocation reports "not implemented yet" and exits non-zero. Real
-// behavior lands in U6/U7.
-func stub(name, usage, summary string) command {
-	return command{
-		name:    name,
-		usage:   usage,
-		summary: summary,
-		run: func(args []string, stdout, stderr io.Writer) int {
-			for _, arg := range args {
-				if arg == "-h" || arg == "--help" {
-					fmt.Fprintf(stdout, "Usage: %s\n\n%s.\n\nNot implemented yet — lands in a later unit.\n", usage, summary)
-					return 0
-				}
-			}
-			fmt.Fprintf(stderr, "bottle %s: not implemented yet\n", name)
-			return 1
-		},
-	}
 }
 
 // RootHelp is the single source of truth for the no-arg `bottle` output. The
