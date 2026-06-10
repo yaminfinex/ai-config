@@ -53,6 +53,9 @@ Intended workflows:
 - **Rewind-then-pin** — the conversation was great through turn 12, then went
   off the rails: `bottle create good-state --at 12` freezes the good prefix
   retroactively (bare `--at` opens an interactive turn picker).
+- **Multi-machine** — `bottle sync --remote <private repo>` once, bare
+  `bottle sync` thereafter; bottles created on either machine converge
+  everywhere.
 
 ## How it works
 
@@ -73,10 +76,10 @@ transcripts can contain keys, PII, and proprietary code):
 
 The store root is a git repository and every mutation auto-commits. This
 gives the store history/undo (the registry, accidental `rm`), delta
-compression across versions (`@3` is `@2` plus appended lines), and a sharing
-path later (add a remote, push/pull). Provenance lives in `meta.json` and
-resolution in the registry — not in git; with git absent everything still
-works, minus history (a one-time warning is printed).
+compression across versions (`@3` is `@2` plus appended lines), and the
+substrate `bottle sync` rides (see below). Provenance lives in `meta.json`
+and resolution in the registry — not in git; with git absent everything still
+works, minus history and sync (a one-time warning is printed).
 
 **Create.** `bottle create` resolves a source session (explicit `--session`,
 the live session via `$CLAUDE_CODE_SESSION_ID`, or `--last` for the newest
@@ -106,6 +109,22 @@ snapshot, but pre-compaction nuance is gone; `create` warns, and the bottle
 carries annotations (`compacted`, `rewound-into-parent`, …) that `log` and
 `show` surface as bracketed tags.
 
+**Sync.** `bottle sync --remote <url>` wires a **private** git remote onto
+the store; bare `bottle sync` thereafter converges machines: fetch, merge the
+store's own branch, regenerate the registry, push. The registry is never
+3-way merged — after the merge unions the bottle dirs, `registry.json` is
+rebuilt from every `meta.json` with a deterministic collision policy: when
+two machines independently claimed the same `name@version`, the bottle
+created first keeps the name and the newer one (with its descendant versions)
+is renamed to the first free `name-2`-style suffix, printed as
+`renamed: old → new (name collision)`. Both machines converge on
+byte-identical registries regardless of sync order. Sync is the only
+networked command and the only one that hard-fails without git; any failure
+aborts the in-progress merge and leaves the store as it was, so a failed sync
+is always safe to re-run. With a remote configured, `bottle list` appends a
+quiet `· N commits unsynced — bottle sync` hint, computed from local refs
+only.
+
 ## What bottle is NOT, and sharp edges
 
 - **Not a time machine for your repo.** Only the transcript freezes. Decants
@@ -113,12 +132,16 @@ carries annotations (`compacted`, `rewound-into-parent`, …) that `log` and
   are provenance metadata, never restored. The decanted agent's memory of
   files may be stale.
 - **`bottle rm` does not erase history.** The transcript leaves the registry
-  and live store but survives in `~/.bottles` git history until you rewrite
-  it (e.g. `git filter-repo`). The same applies to attachments — which is why
-  `--attach` refuses sensitive-looking filenames (`.env*`, `*secret*`,
-  `*credential*`, `id_rsa*`, `*.pem`) without `--force`.
-- **Transcripts contain secrets.** Treat `~/.bottles` like `~/.claude`. Never
-  push it anywhere without a secret-scan gate.
+  and live store but survives in `~/.bottles` git history — and, once synced,
+  in the remote's history — until that history is rewritten (e.g.
+  `git filter-repo`) and force-pushed. The same applies to attachments —
+  which is why `--attach` refuses sensitive-looking filenames (`.env*`,
+  `*secret*`, `*credential*`, `id_rsa*`, `*.pem`) without `--force`.
+- **Transcripts contain secrets.** Treat `~/.bottles` like `~/.claude`.
+  `bottle sync` pushes every bottle in the store, so the remote must be
+  private; v1 consciously ships without a secret-scan gate before push (the
+  first-run privacy reminder is the posture — revisit if the remote is ever
+  shared beyond your own machines).
 - **Decant seeds are disposable.** They land in Claude's resume picker and
   are subject to its GC; the bottle is the durable thing. `bottle prune`
   drops decants-map entries whose seed files are gone.
@@ -175,6 +198,30 @@ remote backend can slot in later; v1 is the local filesystem. Bottles were
 deliberately *not* modeled as git commits/refs — that couples everything to
 plumbing and turns `rm` into ref surgery; git stays underneath as plain
 auto-commits over ordinary files.
+
+### Sync mechanics
+
+Sync treats the registry as a **projection**: names and versions are fully
+derivable from the `meta.json`s, so the store dirs union through an ordinary
+git merge and the registry is rebuilt rather than 3-way merged. The rebuild
+is a pure function (`projectNames`) whose determinism — same input set, same
+output bytes, regardless of input order — is the convergence proof, asserted
+by a `project(A∪B) == project(B∪A)` property test. The one registry input
+that isn't meta-derivable, the decants map, is unioned ours-wins. Collision
+renames reuse the `rename` meta idiom (append `previous_names`, set `name`),
+so lineage — linked by bottle id, not name — never breaks.
+
+The orchestration holds the store flock across the whole
+fetch→merge→regenerate→commit→push sequence, so local mutations serialize
+against sync. The merge runs `--no-ff --no-commit` so there is always a real
+merge state to abort — every post-merge failure path aborts back to the
+pre-sync worktree. A conflict on the same bottle id (same dir, different
+content on both machines) aborts with an error naming the id; transcript
+content is never auto-resolved. Commit-then-push ordering means a sync
+interrupted between the two self-heals on the next run (the merge commit is
+already an ancestor; only the push remains). Sync's git calls are
+error-returning — deliberately the opposite posture from `autoCommit`'s
+warn-and-continue, scoped to sync alone, because here git is load-bearing.
 
 ### Transcript surgery
 
