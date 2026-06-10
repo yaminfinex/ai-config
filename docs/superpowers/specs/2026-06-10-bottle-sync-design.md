@@ -142,6 +142,12 @@ No remote configured → no hint, no change to current output.
 
 ## Out of scope
 
+- **Secret-scan gate before push.** The parent design
+  (`2026-06-10-bottle-design.md`, "Central store later") called a
+  gitleaks-style scan gate a blocking requirement for any push phase. That
+  requirement is **consciously relaxed for v1** (user decision, 2026-06-10):
+  a private remote plus the first-run privacy reminder is the v1 posture.
+  Revisit if/when the remote is shared beyond the user's own machines.
 - Auto-sync, background sync, or sync-on-mutation.
 - Any shared database backend (explicitly deferred by the user).
 - Partial sync / per-bottle push.
