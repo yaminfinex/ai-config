@@ -46,6 +46,8 @@ var commands = []command{
 		"Delete one version, or the whole name", rmHelp, cmdRm),
 	live("artifacts", "bottle artifacts <name>[@v] [--extract DIR]",
 		"List or extract attached artifacts", artifactsHelp, cmdArtifacts),
+	live("sync", "bottle sync [--remote <url>]",
+		"Converge this store with its git remote", syncHelp, cmdSync),
 }
 
 // RootHelp is the single source of truth for the no-arg `bottle` output: a

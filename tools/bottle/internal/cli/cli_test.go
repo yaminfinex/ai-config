@@ -9,7 +9,7 @@ import (
 // The full verb set from the design spec's CLI surface table.
 var speccedVerbs = []string{
 	"create", "decant", "rebottle", "list", "log", "show",
-	"rename", "note", "prune", "rm", "artifacts",
+	"rename", "note", "prune", "rm", "artifacts", "sync",
 }
 
 func runCLI(t *testing.T, args ...string) (code int, stdout, stderr string) {
