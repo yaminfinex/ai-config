@@ -801,3 +801,113 @@ func TestSyncSweepsDirtyState(t *testing.T) {
 		t.Errorf("stray file not swept into a commit: %q (err=%v)", tracked, err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// SyncStatus — local-ref ahead/behind for the list hint. Always silent and
+// network-free; ok=false collapses every failure to "no hint".
+// ---------------------------------------------------------------------------
+
+func wantStatus(t *testing.T, s *Store, ahead, behind int, ok bool) {
+	t.Helper()
+	a, b, o := s.SyncStatus()
+	if a != ahead || b != behind || o != ok {
+		t.Errorf("SyncStatus() = (%d, %d, %v), want (%d, %d, %v)", a, b, o, ahead, behind, ok)
+	}
+}
+
+// TestSyncStatusNoRemote: a store with commits but no origin reads not-ok —
+// list must stay byte-identical without a remote.
+func TestSyncStatusNoRemote(t *testing.T) {
+	hermeticGit(t)
+	s, _ := newStore(t)
+	mustCreate(t, s, "x", "s1")
+	wantStatus(t, s, 0, 0, false)
+}
+
+// TestSyncStatusNeverPushed: origin configured but never fetched or pushed —
+// no remote-tracking ref — counts every local commit as ahead.
+func TestSyncStatusNeverPushed(t *testing.T) {
+	hermeticGit(t)
+	remote := newBareRemote(t)
+	s, _ := newStore(t)
+	mustCreate(t, s, "x", "s1")
+	mustCreate(t, s, "y", "s2") // two commits, one per create
+	if out, err := gitOut(t, s.Root(), "remote", "add", "origin", remote); err != nil {
+		t.Fatalf("git remote add: %v: %s", err, out)
+	}
+	wantStatus(t, s, 2, 0, true)
+}
+
+// TestSyncStatusSyncedThenAhead: right after a sync the store reads (0,0,ok);
+// one more local mutation reads ahead by exactly its auto-commit.
+func TestSyncStatusSyncedThenAhead(t *testing.T) {
+	remote := newBareRemote(t)
+	s, _ := newStore(t)
+	mustCreate(t, s, "x", "s1")
+	mustSync(t, s, remote)
+	wantStatus(t, s, 0, 0, true)
+
+	mustCreate(t, s, "y", "s2")
+	wantStatus(t, s, 1, 0, true)
+}
+
+// TestSyncStatusBehindAfterFetch: another machine pushes, this one fetches —
+// the remote-tracking ref moves ahead of HEAD and behind goes positive with
+// no network call from SyncStatus itself. A local commit then mixes in ahead.
+func TestSyncStatusBehindAfterFetch(t *testing.T) {
+	remote := newBareRemote(t)
+	a, _ := newStore(t)
+	mustCreate(t, a, "alpha", "s1")
+	mustSync(t, a, remote)
+
+	b, _ := newStore(t)
+	mustCreate(t, b, "beta", "s2")
+	mustSync(t, b, remote) // merges a's history, pushes — a is now behind
+
+	if out, err := gitOut(t, a.Root(), "fetch", "origin"); err != nil {
+		t.Fatalf("git fetch: %v: %s", err, out)
+	}
+	ahead, behind, ok := a.SyncStatus()
+	if !ok || ahead != 0 || behind == 0 {
+		t.Errorf("SyncStatus() = (%d, %d, %v), want (0, >0, true) after fetching the other machine's push", ahead, behind, ok)
+	}
+
+	mustCreate(t, a, "gamma", "s3")
+	ahead, behind, ok = a.SyncStatus()
+	if !ok || ahead != 1 || behind == 0 {
+		t.Errorf("SyncStatus() = (%d, %d, %v), want (1, >0, true) with a local commit on top", ahead, behind, ok)
+	}
+}
+
+// TestSyncStatusGitAbsent: a previously-configured remote with git gone from
+// PATH reads not-ok — never an error, never a warning.
+func TestSyncStatusGitAbsent(t *testing.T) {
+	remote := newBareRemote(t)
+	s, warn := newStore(t)
+	mustCreate(t, s, "x", "s1")
+	mustSync(t, s, remote)
+
+	t.Setenv("PATH", t.TempDir()) // git unfindable from here on
+	wantStatus(t, s, 0, 0, false)
+	if warn.Len() != 0 {
+		t.Errorf("SyncStatus warned: %s", warn)
+	}
+}
+
+// TestSyncStatusSubstrateDisabled: git_auto_commit:false stores never report
+// a status, even when the directory happens to be a repo with a remote.
+func TestSyncStatusSubstrateDisabled(t *testing.T) {
+	hermeticGit(t)
+	root := filepath.Join(t.TempDir(), "bottles")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "config.json"), []byte(`{"git_auto_commit": false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(root, WithWarnWriter(&bytes.Buffer{}))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	wantStatus(t, s, 0, 0, false)
+}

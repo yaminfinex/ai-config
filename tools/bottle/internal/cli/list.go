@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 	"text/tabwriter"
 )
 
@@ -25,5 +26,34 @@ func cmdList(d *deps, args []string) int {
 			in.Name, in.Latest, in.Versions, humanizeAge(now.Sub(in.Created)), in.Note)
 	}
 	tw.Flush()
+	if hint := syncHint(d.store.SyncStatus()); hint != "" {
+		fmt.Fprintln(d.stdout, hint)
+	}
 	return 0
+}
+
+// syncHint renders the one quiet unsynced line list appends when a remote is
+// configured and the local refs say there is something to sync; "" otherwise
+// (no remote, fully synced, or status unreadable — list never gets noisier).
+// Local-only commits read as "unsynced"; remote-only commits already seen by
+// a fetch read as "to pull".
+func syncHint(ahead, behind int, ok bool) string {
+	if !ok || ahead+behind == 0 {
+		return ""
+	}
+	var parts []string
+	if ahead > 0 {
+		parts = append(parts, fmt.Sprintf("%s unsynced", pluralCommits(ahead)))
+	}
+	if behind > 0 {
+		parts = append(parts, fmt.Sprintf("%s to pull", pluralCommits(behind)))
+	}
+	return "· " + strings.Join(parts, ", ") + " — bottle sync"
+}
+
+func pluralCommits(n int) string {
+	if n == 1 {
+		return "1 commit"
+	}
+	return fmt.Sprintf("%d commits", n)
 }

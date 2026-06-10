@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"ai-config/tools/bottle/internal/refs"
@@ -361,6 +362,60 @@ func (s *Store) Sync(remoteURL string) (SyncReport, error) {
 	rep.Sent = countMissing(postIDs, theirIDs)
 	rep.Renames = dedupeRenames(renames)
 	return rep, nil
+}
+
+// SyncStatus compares HEAD against origin's last-fetched remote-tracking ref
+// for the store's branch, from local refs only — never the network, never the
+// lock. ok is false on any failure (substrate disabled, git absent, no repo,
+// no remote, unborn HEAD): callers render nothing in that case, so the status
+// can never make a remote-less store noisier. With a remote configured but no
+// remote-tracking ref yet, the store was never pushed: every local commit
+// counts as ahead, so the unsynced hint still shows.
+func (s *Store) SyncStatus() (ahead, behind int, ok bool) {
+	if !s.config.gitEnabled() {
+		return 0, 0, false
+	}
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		return 0, 0, false
+	}
+	if _, err := os.Stat(filepath.Join(s.root, ".git")); err != nil {
+		return 0, 0, false
+	}
+	if _, hasOrigin := s.originURL(gitPath); !hasOrigin {
+		return 0, 0, false
+	}
+	branch, err := s.currentBranch(gitPath)
+	if err != nil {
+		return 0, 0, false
+	}
+	remoteRef := "refs/remotes/origin/" + branch
+	if _, err := s.git(gitPath, "rev-parse", "--verify", "--quiet", remoteRef); err != nil {
+		// Never pushed: everything local is unsynced.
+		out, err := s.git(gitPath, "rev-list", "--count", "HEAD")
+		if err != nil {
+			return 0, 0, false
+		}
+		n, err := strconv.Atoi(out)
+		if err != nil {
+			return 0, 0, false
+		}
+		return n, 0, true
+	}
+	out, err := s.git(gitPath, "rev-list", "--left-right", "--count", "HEAD..."+remoteRef)
+	if err != nil {
+		return 0, 0, false
+	}
+	left, right, found := strings.Cut(out, "\t")
+	if !found {
+		return 0, 0, false
+	}
+	a, errA := strconv.Atoi(strings.TrimSpace(left))
+	b, errB := strconv.Atoi(strings.TrimSpace(right))
+	if errA != nil || errB != nil {
+		return 0, 0, false
+	}
+	return a, b, true
 }
 
 // setOrigin adds or replaces the origin remote.
