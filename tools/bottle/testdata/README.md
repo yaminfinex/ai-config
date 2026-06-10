@@ -127,7 +127,35 @@ through" default):
 ## Running the smoke test
 
 ```sh
-tools/bottle/scripts/smoke-decant.sh   # costs a few small API calls
+tools/bottle/scripts/smoke-decant.sh   # costs a handful of small API calls
 ```
 
 Re-run after Claude Code version bumps; these findings are pinned to 2.1.170.
+
+### Drift coverage — which case catches which harness behaviour change
+
+The script has two layers. Acceptance cases catch a release that *rejects*
+what we write; characterisation cases re-assert the empirical answers above,
+so a release that silently changes *mechanism* fails the run instead of
+surprising U3/U6 later.
+
+| Behaviour we depend on | Consumer | Case that catches drift |
+|---|---|---|
+| Foreign-written/truncated/boundary-cut/dangling files resume | decant core | `baseline`, `truncated`, `at-compact-boundary`, `dangling-tool-use` |
+| Project-dir encoding (non-alnum → `-`) | materializer | `baseline` (wrong dir ⇒ "No conversation found") |
+| Leaf = last tree entry, trailer ignored | U3 truncation contract | `divert-trailer` |
+| Stale `leafUuid` tolerated (no validation) | U3 trailer repair | `stale-trailer` |
+| Resume appends to the **same** session file, no fork | decants-map key → rebottle parent resolution | post-check on `baseline` |
+| Dangling tool_use branched around, no synthetic tool_result | U6 self-bottle trim severity | post-check on `dangling-tool-use` |
+| Resume is cwd-scoped (chdir mandatory) | decant launch flow | `cwd-scope` (asserts the refusal) |
+
+A characterisation FAIL means harness drift, not necessarily breakage:
+re-derive the finding (the experiment recipes are all above) and update both
+this README and the affected package contracts.
+
+Not covered (accepted gaps): JSONL schema additions (unknown entry types pass
+through by design and structure has been stable), auto-compaction trigger
+behaviour (only explicit `/compact` was exercised), interactive-mode resume
+differences (`-p` print mode stands in for the interactive path), and `-p`
+output formatting itself (implicitly covered — every assertion greps the
+reply).
