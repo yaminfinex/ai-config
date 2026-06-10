@@ -195,8 +195,12 @@ func TestProjectStackedBothSides(t *testing.T) {
 	if !reflect.DeepEqual(names, want) {
 		t.Errorf("names = %v, want %v", names, want)
 	}
-	if len(renames) != 2 {
-		t.Errorf("renames = %v, want exactly the two bbbb bottles", renames)
+	wantRenames := []SyncRename{
+		{BottleID: "bbbb3333", OldName: "auth-expert", NewName: "auth-expert-2"},
+		{BottleID: "bbbb4444", OldName: "auth-expert", NewName: "auth-expert-2"},
+	}
+	if !reflect.DeepEqual(renames, wantRenames) {
+		t.Errorf("renames = %v, want %v", renames, wantRenames)
 	}
 }
 
