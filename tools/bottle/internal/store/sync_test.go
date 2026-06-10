@@ -662,6 +662,72 @@ func TestSyncConflictAborts(t *testing.T) {
 	}
 }
 
+// TestSyncBehindOnlyPostMergeFailureAborts: B is strictly behind origin (A
+// pushed extra bottles, B committed nothing since its last sync). The merge
+// must not fast-forward — --no-commit cannot stop a fast-forward, which would
+// move HEAD before re-projection and leave abortMerge nothing to abort — so
+// when a post-merge step fails (a corrupt meta.json arriving from the remote
+// makes scanMetas fail), the abort restores HEAD, worktree, and registry.
+func TestSyncBehindOnlyPostMergeFailureAborts(t *testing.T) {
+	remote := newBareRemote(t)
+	a, _ := newStore(t)
+	b, _ := newStore(t)
+	mustCreate(t, a, "alpha", "s1")
+	mustSync(t, a, remote)
+	mustSync(t, b, remote)
+	mustSync(t, a, "") // converge A on B's merge commit so A is ahead-only next
+
+	// A ships a bottle whose meta is corrupt: A's own sync sweeps and pushes
+	// it via the ahead-only fast path (no scanMetas on that path), so the
+	// corruption is only ever read on B, after B's merge.
+	bad := mustCreate(t, a, "beta", "s2")
+	metaPath := filepath.Join(a.Root(), "store", bad.ID, "meta.json")
+	goodMeta, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metaPath, []byte("{not json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustSync(t, a, "")
+
+	preHead, err := gitOut(t, b.Root(), "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v: %s", err, preHead)
+	}
+	preReg := registryBytes(t, b)
+
+	if _, err := b.Sync(""); err == nil {
+		t.Fatal("sync with a corrupt remote meta: expected error")
+	}
+	// Confirm the scenario: B fetched during the sync, and its HEAD is a
+	// strict ancestor of origin — the case a fast-forward would have eaten.
+	if out, err := gitOut(t, b.Root(), "merge-base", "--is-ancestor", "HEAD", "refs/remotes/origin/main"); err != nil {
+		t.Fatalf("B's HEAD is not behind origin — scenario broken: %v: %s", err, out)
+	}
+	if remoteTip, _ := gitOut(t, b.Root(), "rev-parse", "refs/remotes/origin/main"); remoteTip == preHead {
+		t.Fatal("B was not strictly behind origin — scenario broken")
+	}
+	assertClean(t, b.Root())
+	if head, _ := gitOut(t, b.Root(), "rev-parse", "HEAD"); head != preHead {
+		t.Errorf("HEAD moved across a failed sync: %s → %s", preHead, head)
+	}
+	if !bytes.Equal(preReg, registryBytes(t, b)) {
+		t.Error("registry changed by a failed sync")
+	}
+
+	// Repair the meta on A; the next round-trip must succeed end to end.
+	if err := os.WriteFile(metaPath, goodMeta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustSync(t, a, "")
+	mustSync(t, b, "")
+	if _, err := b.Resolve(refs.Ref{Name: "beta"}); err != nil {
+		t.Errorf("B cannot resolve beta after the repaired sync: %v", err)
+	}
+	assertClean(t, b.Root())
+}
+
 // TestSyncInterruptedPushSelfHeals: a push rejected after the merge commit
 // leaves a committed merge; the next sync pushes it without re-merging.
 func TestSyncInterruptedPushSelfHeals(t *testing.T) {

@@ -320,11 +320,14 @@ func (s *Store) Sync(remoteURL string) (SyncReport, error) {
 		return rep, err
 	}
 
-	// merge.ff=true pins the merge behavior against user config (merge.ff=only
-	// would refuse the non-ff merges sync exists to make); the identity is
-	// pinned too, since git refuses to merge without one.
+	// --no-ff forces a real merge state even when HEAD is strictly behind:
+	// --no-commit cannot stop a fast-forward, which would move HEAD before
+	// the re-projection below runs and leave abortMerge nothing to abort if
+	// a post-merge step failed. It also overrides user config like
+	// merge.ff=only. The identity is pinned since git refuses to create a
+	// merge commit without one.
 	mergeArgs := append(append([]string{}, gitIdentity...),
-		"-c", "merge.ff=true", "merge", "--no-commit", "--allow-unrelated-histories", remoteRef)
+		"merge", "--no-ff", "--no-commit", "--allow-unrelated-histories", remoteRef)
 	if out, mergeErr := s.git(gitPath, mergeArgs...); mergeErr != nil {
 		unmerged, _ := s.git(gitPath, "ls-files", "-u")
 		if cErr := mergeConflictError(unmerged, out); cErr != nil {
