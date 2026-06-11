@@ -361,9 +361,6 @@ func TestBuildLaunchRefusesMissingCwd(t *testing.T) {
 	if !strings.Contains(err.Error(), missing) {
 		t.Errorf("error must name the path %q: %v", missing, err)
 	}
-	if !strings.Contains(err.Error(), "--cwd") {
-		t.Errorf("error must suggest --cwd: %v", err)
-	}
 }
 
 func TestBuildLaunchRejectsBadPane(t *testing.T) {

@@ -18,7 +18,14 @@ import (
 func newU6Deps(t *testing.T, st *store.Store) (d *deps, stdout, stderr *bytes.Buffer) {
 	t.Helper()
 	d, stdout, stderr = newDeps(t, st)
-	d.cwd = t.TempDir()
+	// Canonicalize like a real os.Getwd would (t.TempDir can sit behind a
+	// symlink, e.g. /var → /private/var on macOS) so project-dir assertions
+	// match decant's canonicalized run cwd.
+	cwd, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("eval test cwd: %v", err)
+	}
+	d.cwd = cwd
 	d.projectsRoot = t.TempDir()
 	d.selfSession = ""
 	d.gitInfo = func(string) (string, string) { return "", "" }

@@ -19,7 +19,7 @@ const defaultRole = "bottle"
 // LaunchRequest describes how to re-enter a materialized seed.
 type LaunchRequest struct {
 	SessionID string // the materialized seed's session id
-	Cwd       string // resolved run cwd (bottle's recorded cwd or --cwd override)
+	Cwd       string // resolved run cwd (caller's current dir or --cwd override)
 	Pane      string // PaneNone (interactive), PaneRight, or PaneBelow
 	Prompt    string // optional initial prompt
 	Yolo      bool   // skip permission prompts (--dangerously-skip-permissions)
@@ -36,10 +36,9 @@ type LaunchPlan struct {
 // BuildLaunch builds the launch command for a decant. It never spawns anything
 // — it returns the argv and the run cwd for the cli layer to exec.
 //
-// The run cwd is mandatory and is validated to still exist: a bottle whose
-// recorded cwd is gone is refused with the path named and a --cwd suggestion
-// (resume is cwd-scoped, so a stale cwd would fail with an opaque harness
-// error otherwise).
+// The run cwd is mandatory and is validated to still exist (resume is
+// cwd-scoped, so a dead cwd would fail with an opaque harness error
+// otherwise).
 //
 // Permission semantics are kept identical to interactive across both paths:
 //   - interactive: plain claude --resume (safe) unless Yolo adds
@@ -55,7 +54,7 @@ func BuildLaunch(req LaunchRequest) (LaunchPlan, error) {
 		return LaunchPlan{}, fmt.Errorf("launch: empty run cwd")
 	}
 	if fi, err := os.Stat(req.Cwd); err != nil || !fi.IsDir() {
-		return LaunchPlan{}, fmt.Errorf("recorded cwd %s no longer exists; pass --cwd to decant elsewhere", req.Cwd)
+		return LaunchPlan{}, fmt.Errorf("run cwd %s does not exist", req.Cwd)
 	}
 
 	switch req.Pane {

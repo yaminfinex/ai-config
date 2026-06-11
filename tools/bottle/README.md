@@ -90,7 +90,10 @@ cut point.
 **Decant.** `bottle decant` copies the frozen transcript under a **fresh
 session id** into Claude's own session store
 (`~/.claude/projects/<encoded-cwd>/<new-id>.jsonl`) and runs
-`claude --resume <new-id>` from the bottle's recorded cwd. The copy *is* the
+`claude --resume <new-id>` in the **current directory** (or `--cwd`) — the
+bottle's recorded cwd is provenance, shown as a note when it differs, not a
+destination (recorded paths rarely survive `bottle sync` across machines
+anyway). The copy *is* the
 fork: Claude sees an ordinary independent session, the bottle is untouched,
 and the seed file is disposable (the bottle is the durable thing). Each
 decant is recorded in the registry's decants map — that record is how
@@ -266,10 +269,13 @@ No delta scheme between versions, by design — versions are logical full
 copies, and physical dedup is delegated to git packfiles.
 
 The launch order in `decant` is load-bearing: validate the run cwd *before*
-materializing (so a dead cwd never leaves an orphan seed), materialize (temp
-file, linted, atomically renamed), record the decant in the registry, then
-chdir and exec. **The chdir is mandatory**, not incidental: `claude --resume`
-is cwd-scoped, and resuming the right id from the wrong directory fails.
+materializing (so a bad `--cwd` never leaves an orphan seed), canonicalize it
+(absolute, symlinks resolved — the seed's project dir must encode the same
+physical path Claude derives from getcwd, or resume reports "No conversation
+found"), materialize (temp file, linted, atomically renamed), record the
+decant in the registry, then chdir and exec. **The chdir is mandatory**, not
+incidental: `claude --resume` is cwd-scoped, and resuming the right id from
+the wrong directory fails.
 `--pane right|below` launches into a herdr split via `herder-spawn` instead
 of exec-ing in place; permission semantics are kept identical across both
 paths (safe by default, `--yolo` for `--dangerously-skip-permissions`).
