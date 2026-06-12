@@ -24,7 +24,7 @@ type command struct {
 // help can never drift from what is wired. Order matches the spec's CLI
 // surface table.
 var commands = []command{
-	live("create", "bottle create <name> [--session ID | --last] [--at [N]] [--note ...] [--attach PATH...] [--force]",
+	live("create", "bottle create <name> [--session ID | --last] [--at [N]] [--note ...] [--attach PATH]... [--force]",
 		"Snapshot a session into a new bottle", createHelp, cmdCreate),
 	live("decant", "bottle decant <name>[@v] [--pane right|below] [--prompt ...] [--yolo] [--cwd PATH]",
 		"Materialize a fresh session from a bottle and resume it", decantHelp, cmdDecant),

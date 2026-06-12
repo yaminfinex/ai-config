@@ -45,7 +45,11 @@ func cmdCreate(d *deps, args []string) int {
 		return 2
 	}
 	if len(pos) < 1 {
-		fmt.Fprintln(d.stderr, "Usage: bottle create <name> [--session ID | --last] [--at [N]] [--note ...] [--attach PATH...]")
+		fmt.Fprintln(d.stderr, "Usage: bottle create <name> [--session ID | --last] [--at [N]] [--note ...] [--attach PATH]...")
+		return 2
+	}
+	if len(pos) > 1 {
+		fmt.Fprintf(d.stderr, "bottle create: unexpected argument %q — --attach takes one path per flag (write --attach a.md --attach b.md)\n", pos[1])
 		return 2
 	}
 	name := pos[0]

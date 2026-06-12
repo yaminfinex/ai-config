@@ -237,6 +237,30 @@ func TestCreateAttachWithForceStoresAndPrintsPath(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsExtraPositionals(t *testing.T) {
+	st := openTestStore(t)
+	d, _, stderr := newU6Deps(t, st)
+	plantSession(t, d, "sess-A", "plain")
+	for _, name := range []string{"a.md", "b.md"} {
+		if err := os.WriteFile(filepath.Join(d.cwd, name), []byte("x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// `--attach a.md b.md` reads as one attach plus a stray positional; it must
+	// be rejected loudly, not silently drop b.md from the permanent snapshot.
+	args := []string{"core", "--session", "sess-A", "--attach", "a.md", "b.md"}
+	if code := cmdCreate(d, args); code == 0 {
+		t.Fatalf("exit = 0, want non-zero (stray positional after --attach)")
+	}
+	if !strings.Contains(stderr.String(), `unexpected argument "b.md"`) {
+		t.Errorf("stderr missing the stray-positional rejection: %s", stderr)
+	}
+	if _, err := st.Resolve(refs.Ref{Name: "core"}); err == nil {
+		t.Errorf("a bottle was created despite the stray positional")
+	}
+}
+
 func TestCreateNameCollisionAlwaysBumps(t *testing.T) {
 	st := openTestStore(t)
 	d, _, stderr := newU6Deps(t, st)

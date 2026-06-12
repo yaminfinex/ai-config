@@ -26,9 +26,11 @@ Pitfalls:
     number right after it is read as the turn, so write
     ` + "`bottle create foo --at 3`" + `, not ` + "`bottle create --at 3 foo`" + `. The picker
     needs a TTY — pass --at N to rewind non-interactively.
-  - --attach refuses sensitive-looking names (.env*, *secret*, *credential*,
-    id_rsa*, *.pem) and files outside the cwd without --force; attachments enter
-    the store's permanent git history.
+  - --attach takes ONE path per flag — repeat it for several files
+    (` + "`--attach a.md --attach b.md`" + `); extra bare paths are rejected. It refuses
+    sensitive-looking names (.env*, *secret*, *credential*, id_rsa*, *.pem) and
+    files outside the cwd without --force; attachments enter the store's
+    permanent git history.
 `
 
 const decantHelp = `Examples:
