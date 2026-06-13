@@ -37,9 +37,22 @@ Shell PATH setup is opt-in and uses a managed block in `~/.zshrc` or `~/.bashrc`
 - `skills/`: globally portable skills. `ai-setup` links each `skills/*/SKILL.md` directory into supported home skill roots.
 - `.agents/skills/`: project-local skills for this repo. This is canonical for repo-local skill instructions.
 - `.claude`: symlink to `.agents`, so Claude sees the same project-local skills without duplicate files.
-- `references/external/`: upstream reference material used to design personal skills. Nothing here is installed by `ai-setup`.
+- Skill `references/` subdirs (e.g. `skills/herder/references/`): supporting material a skill loads on demand. Nothing here is linked into home skill roots by `ai-setup`.
 
 `ai-config-bootstrap` lives under `.agents/skills/` only and is intentionally not copied into global home skill roots.
+
+## Repository Layout
+
+Beyond skills and agent config, the repo also tracks:
+
+- `bin/`, `lib/`: the `ai-*` and `bottle` commands and their shared shell library.
+- `tools/bottle/`: the Go implementation behind `bin/bottle` (see `tools/bottle/README.md`).
+- `vendor/`: vendored upstream projects some skills build on (e.g. `native-shortcuts-herd`).
+- `docs/`: design notes and plans.
+
+## Optional: herdr
+
+The `herder`, `herder-fork`, and `orchestrate` skills drive herdr surfaces and only activate inside a herdr pane (`HERDR_ENV=1`); without herdr they stay dormant and the rest of the repo works normally. `ai-setup` never installs herdr or its shortcuts, and the `bin/vsc-*` / `etc/launchd` editor helpers are opt-in — none of it is required to use the portable skills, `bottle`, or config linking.
 
 ## Current Caveats
 

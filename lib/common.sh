@@ -241,9 +241,7 @@ scan_staged_portability() {
   done < <(portable_staged_files)
 
   [ "${#files[@]}" -gt 0 ] || return 0
-  grep -InE "$HOME_PATH_REGEX" "${files[@]}" 2>/dev/null |
-    grep -vF "$AI_CONFIG_ROOT/skills/cmux-router/references/upstream/" ||
-    true
+  grep -InE "$HOME_PATH_REGEX" "${files[@]}" 2>/dev/null || true
 }
 
 git_dirty() {
