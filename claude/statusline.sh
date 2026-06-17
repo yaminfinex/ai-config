@@ -26,6 +26,7 @@ RED='\033[31m'
 YELLOW='\033[33m'
 GREEN='\033[32m'
 MAGENTA='\033[35m'
+BLUE='\033[34m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
@@ -34,6 +35,16 @@ line1="${CYAN}${project_dir}${RESET}"
 
 if [ -n "$branch" ]; then
   line1="${line1} ・ ${BOLD}${RED}git:(${branch})${RESET}"
+fi
+
+# herder/herdr identity — pure env, no `herdr` call (statusline renders often).
+# HERDR_PANE_ID is set in every herdr pane; HERDER_ROLE only on spawned agents.
+if [ "${HERDR_ENV:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
+  herder_seg="${BLUE}⬡ ${HERDR_PANE_ID}${RESET}"
+  if [ -n "${HERDER_ROLE:-}" ]; then
+    herder_seg="${herder_seg} ${BLUE}[${HERDER_ROLE}]${RESET}"
+  fi
+  line1="${line1} ・ ${herder_seg}"
 fi
 
 line2=""
