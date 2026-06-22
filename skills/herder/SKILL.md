@@ -69,6 +69,8 @@ herder-wait <target> [--status idle|working|blocked] [--timeout MS] [--read]
 
 Default status `idle`. The claude/codex integration hooks never emit `done`, so don't wait for it. If `herder-wait` returns sooner than expected, read the pane and call again.
 
+Prefer being *rung* over blocking here: a spawned agent that finishes can `herder-send` its orchestrator a one-line doorbell, so the orchestrator idles and wakes on the message instead of burning a turn in `herder-wait`. The `orchestrate` skill owns that protocol (invariant 9); `herder-wait` is then the **backstop** for a dropped ring — a busy orchestrator only queues a send and one at a modal refuses it (`herder-send` exit 2) — not the primary signal. Keep backstop waits bounded so an incoming ring isn't blocked behind a long `herder-wait` loop.
+
 ## Culling
 
 ```bash

@@ -18,8 +18,12 @@ serialize them instead of discovering the interaction as a merge conflict.
    prompt). Read-only workers may share the main worktree — then they write nothing, scratch
    included.
 2. **Cap the fleet at what you can supervise**; batch beyond that.
-3. **Results land as files** (e.g. `napkins/<run>/results/<unit>.md`) + a `DONE` block — pane
-   reads are for diagnosing stuck workers, not collecting output.
+3. **Results land as files** (e.g. `napkins/<run>/results/<unit>.md`) + a `DONE` block; then the
+   worker rings the orchestrator (`herder-send <orchestrator pane> 'Unit X DONE'`). Pane reads are
+   for diagnosing stuck workers, not collecting output. The orchestrator idles and integrates **in
+   completion order as rings arrive** — not by waiting on workers one at a time, which stalls on
+   whichever you picked and is blind to whoever finished first. Keep a backstop sweep
+   (`herder-list` + run-log) so a dropped ring from a busy orchestrator doesn't strand a worker.
 4. **Integrate serially.** Workers never merge their own branches; the orchestrator (or an
    integration agent) lands them one at a time, re-running the gate after each — the
    post-integration gate is the one that matters.

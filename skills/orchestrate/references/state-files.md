@@ -21,6 +21,7 @@ not the whole doc>.
 - Autonomy: <autonomous — sliding-door capture mandatory | interactive — gates at: ...>
 - Topology: <per stage>
 - Liveness: <per role — cull-on-done / keep-open for interrogation>
+- Notify-back address: <orchestrator pane_id agents `herder-send` on done | none — relay/soloist self-spawn>
 - Golden agent: <bottle name + what it holds | none>
 - Worktree(s) / branch / workspace: <...>
 
@@ -38,9 +39,13 @@ not the whole doc>.
 4. **Gate:** <pinned verification commands>. Cached greens are not evidence — run directly.
    Red and out of scope → `BLOCKED` block + WIP commit + stop.
 5. Commit (no push/PR): `<message convention + trailer>`.
-6. Append `## Unit N — DONE` (see block formats).
-7. <Handoff per topology: self-spawn --new-tab + verify delivery | idle for orchestrator |
-   final unit spawns nothing.>
+6. Append `## Unit N — DONE` (see block formats). This block is the truth; the ring below is only
+   a doorbell.
+7. **Ring, then hand off.** Ring the orchestrator — `herder-send <notify-back address> 'Unit N
+   DONE — run-log updated'` (best-effort; don't block the run on it). Then per topology: relay
+   self-spawns the successor `--new-tab` + verifies delivery (the successor is its own ring);
+   orchestrator-driven units idle (kept open / culled per liveness); the final unit spawns
+   nothing.
 
 ## Context discipline (≤<budget>)
 

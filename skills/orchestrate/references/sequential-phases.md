@@ -17,13 +17,17 @@ orchestrator itself replaceable.
 
    ```bash
    herder-spawn --role phase-N --agent claude --new-tab --from-pane "$HERDR_PANE_ID" \
-     --prompt 'Read <orchestration file> and <design doc> fully, then execute Phase N exactly as specified, commit when green, and update the phase-status table.'
+     --prompt 'Read <orchestration file> and <design doc> fully, then execute Phase N exactly as specified, commit when green, update the phase-status table, and ring the orchestrator (notify-back address in the state file) when done.'
    ```
 
-   The playbook may pin a different agent/model per phase.
-3. **Wait** (`herder-wait <guid> --timeout <generous>`). Idle means done *or* stuck — read the
-   pane. For long phases, poll the run-log instead:
-   `grep -qE '^## Phase N — (DONE|BLOCKED|HANDOFF)' <run-log>` in a loop.
+   The playbook may pin a different agent/model per phase. Record your own `$HERDR_PANE_ID` as the
+   notify-back address in the state-file header so the phase agent knows whom to ring.
+3. **Idle for the ring — don't poll.** End your turn after spawning; the phase agent rings you
+   (`herder-send`) when it writes its DONE/BLOCKED block. Wake on the ring, read the run-log,
+   verify. Keep a backstop for a dropped ring (a busy/modal orchestrator queues or refuses it, or
+   the agent died before ringing): a bounded `herder-wait <guid> --timeout <generous>` heartbeat
+   or a run-log sweep `grep -qE '^## Phase N — (DONE|BLOCKED|HANDOFF)' <run-log>`. Idle there means
+   done *or* stuck — read the pane.
 4. **Verify before advancing — don't take the agent's word:** phase commits present, tree clean;
    typecheck/lint green; targeted suites green **uncached**; this phase's acceptance criteria.
 5. **Record** in the state file; reconcile the agents' own appends.

@@ -74,6 +74,16 @@ Pick by **who verifies a unit of work**, then parallelism — not task size.
 8. **Delivery verified, not assumed.** Own tab per agent (`herder-spawn --new-tab`), confirm
    `delivered` — delivery into a non-active pane in a crowded tab silently fails (this killed
    relay v1).
-9. **End-of-run tail:** fresh-context deep review against the acceptance criteria + remnant
+9. **Completion is a doorbell, not a poll.** A finished agent writes its DONE/BLOCKED block (the
+   run-log stays the source of truth and the only carrier of evidence), then rings the
+   orchestrator: one line, `herder-send <orchestrator pane> 'Unit N DONE — run-log updated'` (the
+   run-shape header records that address). The orchestrator idles between units and wakes on the
+   ring instead of burning a turn blocking in `herder-wait`; it reads the run-log and verifies
+   there (invariant 4), never trusting the ring's word. The ring is best-effort — a working
+   orchestrator only queues it, one at a modal refuses it (`herder-send` exit 2) — so it carries
+   no evidence and must never be load-bearing: keep a coarse backstop (a bounded `herder-wait`
+   heartbeat or a run-log sweep) so a dropped ring degrades to polling latency, not a deadlock.
+   Relays need no ring — the spawned successor *is* the signal (`relay.md`).
+10. **End-of-run tail:** fresh-context deep review against the acceptance criteria + remnant
    sweep + golden-agent check if bottled (`references/adversarial.md`), then harvest before the
    PR.
