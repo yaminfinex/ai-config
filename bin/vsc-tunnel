@@ -16,13 +16,22 @@ fi
 
 : "${VSC_REMOTE_HOST:?VSC_REMOTE_HOST missing in config}"
 : "${VSC_OPEN_PORT:=36221}"
+: "${PLANNOTATOR_PORT:=19432}"
 
-echo "vsc-tunnel: -R ${VSC_OPEN_PORT}:127.0.0.1:${VSC_OPEN_PORT} ${VSC_REMOTE_HOST}" >&2
+# -R lets the remote reach the laptop's vsc-opener.
+# -L (optional) lets the laptop reach plannotator's review server on the remote,
+# so its localhost URL resolves through this same tunnel. Set VSC_FORWARD_PLANNOTATOR=0 to skip.
+forwards=( -R "${VSC_OPEN_PORT}:127.0.0.1:${VSC_OPEN_PORT}" )
+if [ "${VSC_FORWARD_PLANNOTATOR:-1}" != "0" ]; then
+  forwards+=( -L "${PLANNOTATOR_PORT}:127.0.0.1:${PLANNOTATOR_PORT}" )
+fi
+
+echo "vsc-tunnel: ${forwards[*]} ${VSC_REMOTE_HOST}" >&2
 
 exec ssh -N \
   -o ExitOnForwardFailure=yes \
   -o ServerAliveInterval=30 \
   -o ServerAliveCountMax=3 \
   -o StreamLocalBindUnlink=yes \
-  -R "${VSC_OPEN_PORT}:127.0.0.1:${VSC_OPEN_PORT}" \
+  "${forwards[@]}" \
   "$VSC_REMOTE_HOST"
