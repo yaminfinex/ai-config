@@ -77,7 +77,9 @@ Pick by **who verifies a unit of work**, then parallelism — not task size.
 9. **Completion is a doorbell, not a poll.** A finished agent writes its DONE/BLOCKED block (the
    run-log stays the source of truth and the only carrier of evidence), then rings the
    orchestrator: one line, `herder-send <orchestrator pane> 'Unit N DONE — run-log updated'` (the
-   run-shape header records that address). The orchestrator idles between units and wakes on the
+   run-shape header records that address — or just spawn with `herder-spawn --notify`, which
+   injects the exact ring command plus `$HERDER_SEND`/`$HERDER_NOTIFY_TO` into the child so it can
+   ring without finding the helper on PATH). The orchestrator idles between units and wakes on the
    ring instead of burning a turn blocking in `herder-wait`; it reads the run-log and verifies
    there (invariant 4), never trusting the ring's word. The ring is best-effort — a working
    orchestrator only queues it, one at a modal refuses it (`herder-send` exit 2) — so it carries

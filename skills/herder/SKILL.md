@@ -30,6 +30,8 @@ Record `$HERDR_PANE_ID`. Never close it, never cull yourself.
 
 Each script's `--help` is the source of truth for flags. The herder *uses* these; it does not reimplement them.
 
+The `herder-*` scripts are symlinked into `bin/` (on PATH via the managed shell block), so they're callable bare from any pane — **including freshly spawned ones**, which is what makes notify-back work. A spawned agent that never loaded this skill still gets `$HERDER_SEND` (the absolute path to `herder-send`) exported into its shell by `herder-spawn`, so it can ring a peer even if PATH is misconfigured. This closes the gap where agents couldn't find `herder-send` and fell back to raw `herdr agent send` — which writes the text **without** an Enter, so the ring silently never submits.
+
 ## Spawning
 
 ```bash
@@ -46,6 +48,8 @@ Defaults: `--no-focus`, `--split right` for review/research/QA, `--split down` f
 **First-run directory-trust modals are handled.** Both claude ("Is this a project you created or one you trust?") and codex ("Do you trust the contents of this directory?") show a trust modal on first run in an untrusted dir — every fresh worktree counts, and the tool-permission flags above do **not** dismiss it. The modal sits at `status=idle` and its selector arrow spoofs the input sigil, so a naive send pastes the prompt *into* the modal and stray characters silently confirm trust. `herder-spawn` detects it and, in autonomous mode, accepts it deliberately (reported as `trust-accepted`). Under `--safe` it refuses and surfaces it instead — you accept it in the pane, then `herder-send` the prompt.
 
 **Initial-prompt delivery is verified, not fire-and-forget.** After the agent settles (output stable, modals cleared), `herder-spawn` delegates the send to `herder-send`, which confirms the text landed (re-pasting if dropped) and submitted. A prompt that can't be confirmed is reported `prompt: NOT confirmed` / `delivery_result` (in `--json`) rather than silently lost — read the pane before assuming it landed.
+
+**Notify-back (`--notify`).** Pass `--notify` so the spawned agent rings *you* when its unit is done, instead of you polling it. `herder-spawn` then exports `HERDER_NOTIFY_TO` (your pane, or `--notify-to <pane>` for another target) alongside `HERDER_SEND`, and appends a concrete ring command to the prompt — so the worker runs exactly what it was handed, no PATH or skill-load needed. The run-log block stays the record; the ring is only a doorbell (`orchestrate` skill, invariant 9). Don't hand-roll the ring with `herdr agent send` — no Enter, no submit.
 
 After spawning, echo `<label>`, short GUID, and pane id back to the user.
 

@@ -4,7 +4,7 @@
 # Usage:
 #   herder-spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]
 #                [--split right|down] [--workspace ID | --from-pane PANE_ID] [--tab ID | --new-tab] [--cwd PATH]
-#                [--no-focus] [--safe] [--label-prefix STR] [--extra-arg ARG]... [--json]
+#                [--no-focus] [--safe] [--notify | --notify-to PANE] [--label-prefix STR] [--extra-arg ARG]... [--json]
 #
 # Tab placement:
 #   * --tab <id>  places the agent in an existing tab (as a split alongside whatever is there).
@@ -36,6 +36,13 @@
 #   * The agent binary must accept being invoked plainly (e.g. `codex`, `claude`). For wrappers, use --extra-arg.
 #   * Initial-prompt delivery is verified by `herder-send`; if it can't confirm submission it reports
 #     prompt: NOT confirmed rather than silently claiming success.
+#   * NOTIFY-BACK: every spawned agent gets HERDER_SEND (absolute path to herder-send) exported into
+#     its shell, so it can ring a peer regardless of $PATH or whether it loaded the herder skill —
+#     the gap that made agents fall back to raw `herdr agent send` (which writes text WITHOUT
+#     submitting it, so the ring silently never lands). --notify also exports HERDER_NOTIFY_TO (the
+#     spawner's pane, or --notify-to PANE) AND appends a concrete ring command to the prompt, so a
+#     finished worker rings the orchestrator instead of the orchestrator polling. The run-log block
+#     stays the record; the ring is only a doorbell.
 
 set -euo pipefail
 
@@ -67,6 +74,8 @@ NO_READY_WAIT=0
 LOGIN_SHELL=1
 LOGIN_SHELL_BIN="${HERDER_SPAWN_SHELL:-${SHELL:-/bin/bash}}"
 SAFE=0
+NOTIFY=0
+NOTIFY_TO=""
 SETTLE_MS="${HERDER_SPAWN_SETTLE_MS:-1500}"
 
 # Sibling scripts live next to this one; resolve their dir so we can delegate
@@ -125,7 +134,9 @@ while [[ $# -gt 0 ]]; do
     --no-login-shell) LOGIN_SHELL=0; shift;;
     --login-shell) LOGIN_SHELL_BIN="$2"; shift 2;;
     --safe) SAFE=1; shift;;
-    -h|--help) sed -n '2,38p' "$0"; exit 0;;
+    --notify) NOTIFY=1; shift;;
+    --notify-to) NOTIFY=1; NOTIFY_TO="$2"; shift 2;;
+    -h|--help) sed -n '2,46p' "$0"; exit 0;;
     *) die "unknown arg: $1";;
   esac
 done
@@ -166,6 +177,25 @@ fi
 if [[ -n "$PROMPT_FILE" ]]; then
   [[ -r "$PROMPT_FILE" ]] || die "prompt file not readable: $PROMPT_FILE"
   PROMPT="$(cat "$PROMPT_FILE")"
+fi
+
+# Notify-back wiring. HERDER_SEND (absolute path to the verified-send helper) is
+# exported into every child regardless of --notify, so any agent can ring a peer
+# without the helper being on its $PATH or having loaded the herder skill — the
+# discoverability gap that drove agents to raw `herdr agent send` (no Enter → the
+# ring silently never submits). --notify additionally resolves a ring target
+# (default: the spawner's pane) and appends a concrete ring command to the prompt.
+HERDER_SEND_ABS="$SCRIPT_DIR/herder-send"
+if [[ "$NOTIFY" -eq 1 && -z "$NOTIFY_TO" ]]; then
+  NOTIFY_TO="${HERDR_PANE_ID:-}"
+  [[ -n "$NOTIFY_TO" ]] || printf 'herder-spawn: --notify set but HERDR_PANE_ID is empty; no ring target injected\n' >&2
+fi
+if [[ "$NOTIFY" -eq 1 && -n "$PROMPT" && -n "$NOTIFY_TO" ]]; then
+  PROMPT="$PROMPT
+
+When your unit is finished and your run-log DONE/BLOCKED block is written, ring the orchestrator so it does not have to poll (the run-log block is the record — this is only a doorbell):
+  $HERDER_SEND_ABS $NOTIFY_TO 'Unit DONE — run-log updated'
+Do NOT ring with raw 'herdr agent send' — it writes the text without submitting it, so the ring never lands. Use the command above (also available as \"\$HERDER_SEND\" \"\$HERDER_NOTIFY_TO\")."
 fi
 
 # Inject the autonomous-mode permission flag unless --safe or the caller already
@@ -228,15 +258,19 @@ start_args=("agent" "start" "$LABEL" "$FOCUS_FLAG" "--split" "$SPLIT")
 # Opt out via --no-login-shell for cases where you want the raw exec (e.g. spawning `bash`
 # itself, or debugging the spawn path). Override the shell binary via --login-shell or
 # HERDER_SPAWN_SHELL when $SHELL is wrong (e.g. testing zsh on a bash box).
+NOTIFY_TO_EXPORT=""
+[[ -n "$NOTIFY_TO" ]] && NOTIFY_TO_EXPORT=" HERDER_NOTIFY_TO=$(printf '%q' "$NOTIFY_TO")"
 if [[ "$LOGIN_SHELL" -eq 1 ]]; then
   inner_cmd=""
   for arg in "$AGENT" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}; do
     inner_cmd+="$(printf '%q ' "$arg")"
   done
-  inner="export HERDER_GUID=$(printf '%q' "$GUID") HERDER_ROLE=$(printf '%q' "$ROLE") HERDER_LABEL=$(printf '%q' "$LABEL"); exec ${inner_cmd}"
+  inner="export HERDER_GUID=$(printf '%q' "$GUID") HERDER_ROLE=$(printf '%q' "$ROLE") HERDER_LABEL=$(printf '%q' "$LABEL") HERDER_SEND=$(printf '%q' "$HERDER_SEND_ABS")${NOTIFY_TO_EXPORT}; exec ${inner_cmd}"
   argv=("$LOGIN_SHELL_BIN" -lic "$inner")
 else
-  argv=(env "HERDER_GUID=$GUID" "HERDER_ROLE=$ROLE" "HERDER_LABEL=$LABEL" "$AGENT" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"})
+  argv=(env "HERDER_GUID=$GUID" "HERDER_ROLE=$ROLE" "HERDER_LABEL=$LABEL" "HERDER_SEND=$HERDER_SEND_ABS")
+  [[ -n "$NOTIFY_TO" ]] && argv+=("HERDER_NOTIFY_TO=$NOTIFY_TO")
+  argv+=("$AGENT" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"})
 fi
 
 set +e
@@ -439,6 +473,9 @@ fi
     printf '  perms:  %s (autonomous; pass --safe to opt out)\n' "$PERM_INJECTED"
   elif [[ "$SAFE" -eq 1 ]]; then
     printf '  perms:  --safe (agent default ask-mode)\n'
+  fi
+  if [[ "$NOTIFY" -eq 1 && -n "$NOTIFY_TO" ]]; then
+    printf '  notify: rings %s on done (HERDER_SEND + HERDER_NOTIFY_TO injected)\n' "$NOTIFY_TO"
   fi
   if [[ -n "$PROMPT" ]]; then
     if $PROMPT_SENT; then

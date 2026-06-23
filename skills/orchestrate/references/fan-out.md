@@ -14,9 +14,9 @@ serialize them instead of discovering the interaction as a merge conflict.
 ## Rules
 
 1. **One worktree per writer**, own branch each (`herdr worktree create --branch <unit> --base
-   <run-branch> ... --json`, then `herder-spawn --new-tab --cwd <path>` with the one-line
-   prompt). Read-only workers may share the main worktree — then they write nothing, scratch
-   included.
+   <run-branch> ... --json`, then `herder-spawn --new-tab --notify --cwd <path>` with the one-line
+   prompt — `--notify` makes each worker ring you on done). Read-only workers may share the main
+   worktree — then they write nothing, scratch included.
 2. **Cap the fleet at what you can supervise**; batch beyond that.
 3. **Results land as files** (e.g. `napkins/<run>/results/<unit>.md`) + a `DONE` block; then the
    worker rings the orchestrator (`herder-send <orchestrator pane> 'Unit X DONE'`). Pane reads are
