@@ -207,7 +207,13 @@ fi
 # so the tail is the reliable fingerprint. (read_pane uses recent-unwrapped, so
 # even a wrapped multi-line input is one logical sigil line carrying the tail.)
 MSG_PROBE="$(printf '%s' "$MESSAGE" | grep -v '^[[:space:]]*$' | tail -n1)"
-MSG_PROBE="${MSG_PROBE: -45}"
+# Probe on the tail (codex clips a paste's LEADING chars while booting, never the
+# end). Only trim when the line is actually longer than the window: `${v: -45}`
+# returns the EMPTY string for any value shorter than 45 chars, which made a short
+# message look empty, take the empty-message shortcut, and skip the Enter entirely
+# — so every sub-45-char send (notably every notify-back doorbell) silently never
+# submitted. Guard the trim so short messages keep their full probe.
+[[ "${#MSG_PROBE}" -gt 45 ]] && MSG_PROBE="${MSG_PROBE: -45}"
 
 # Codex collapses a large paste (>~1k chars) into a "[Pasted Content N chars]"
 # placeholder (claude uses "[Pasted text …]") instead of echoing the literal
