@@ -5,7 +5,9 @@
 #   herder-wait <target> [--status idle|working|blocked|done|unknown] [--timeout MS]
 #                        [--read] [--lines N] [--source visible|recent|recent-unwrapped]
 #
-# <target> is one of: short guid, full guid, label, or pane id.
+# <target> is one of: short guid, full guid, label, or pane id. A guid/label is
+# resolved to the agent's CURRENT pane via its durable terminal_id (registry
+# pane_ids go stale as herdr compacts ids); a raw pane id is used verbatim.
 # Default status is `idle` (works for the claude/codex integrations, which
 # never emit `done`). Pair with the small post-send sleep in herder-spawn so
 # the integration has had time to flip to `working` before you wait on idle.
@@ -47,16 +49,39 @@ done
 
 [[ -n "$TARGET" ]] || die "target required (guid, label, or pane id)"
 
-# Resolve target → pane_id via registry, falling back to using it verbatim.
-PANE_ID=""
-if [[ -f "$REGISTRY" ]]; then
-  PANE_ID="$(jq -sr --arg v "$TARGET" '
-    group_by(.guid) | map(.[-1])
-    | map(select(.guid==$v or .short_guid==$v or .label==$v or .pane_id==$v))
-    | last
-    | .pane_id // empty
-  ' "$REGISTRY")"
-fi
+# Resolve target → LIVE pane_id (drift-proof). The registry pane_id is captured at
+# spawn and goes stale as herdr compacts pane_ids; terminal_id is the durable
+# identity, so re-resolve a guid/label to where its terminal lives now. A raw
+# pane_id is used verbatim. Same resolution as herder-send / herder-cull.
+PANE_LIST_JSON="$(herdr pane list 2>/dev/null || true)"
+resolve_pane() {
+  local v="$1" rec term stored live npanes
+  if [[ -f "$REGISTRY" ]]; then
+    rec="$(jq -sc --arg v "$v" '
+      group_by(.guid) | map(.[-1])
+      | map(select(.guid==$v or .short_guid==$v or .label==$v))
+      | last // empty' "$REGISTRY")"
+  fi
+  if [[ -z "${rec:-}" ]]; then printf '%s' "$v"; return 0; fi
+  term="$(printf '%s' "$rec" | jq -r '.terminal_id // empty')"
+  stored="$(printf '%s' "$rec" | jq -r '.pane_id // empty')"
+  if [[ -z "$term" ]]; then printf '%s' "$stored"; return 0; fi
+  live="$(printf '%s' "$PANE_LIST_JSON" | jq -r --arg t "$term" \
+    '.result.panes[]? | select(.terminal_id==$t) | .pane_id' 2>/dev/null | head -n1)"
+  if [[ -n "$live" ]]; then printf '%s' "$live"; return 0; fi
+  npanes="$(printf '%s' "$PANE_LIST_JSON" | jq '[.result.panes[]?] | length' 2>/dev/null || echo 0)"
+  if [[ "${npanes:-0}" -eq 0 ]]; then
+    printf 'herder-wait: could not read live pane list; cannot resolve %s\n' "$v" >&2
+  else
+    printf 'herder-wait: %s (terminal %s) is not live anywhere — agent gone or culled\n' "$v" "$term" >&2
+  fi
+  return 1
+}
+set +e
+PANE_ID="$(resolve_pane "$TARGET")"
+RESOLVE_RC=$?
+set -e
+[[ $RESOLVE_RC -eq 0 ]] || exit 1
 [[ -n "$PANE_ID" ]] || PANE_ID="$TARGET"
 
 set +e

@@ -38,14 +38,20 @@ if [[ "$MODE" == "raw" ]]; then
   exit 0
 fi
 
+# Reconcile by terminal_id, NOT the stored pane_id. herdr compacts/reassigns
+# pane_ids as panes close, so a record's spawn-time pane_id can now point at a
+# different agent — keying the live lookup by pane_id would report that other
+# agent's status. terminal_id is durable, so it both reports the right status and
+# surfaces the agent's CURRENT pane (live_pane) vs. where it spawned (pane_id).
 LIVE_JSON="$(herdr agent list 2>/dev/null || printf '{"result":{"agents":[]}}')"
-LIVE_PANES="$(printf '%s' "$LIVE_JSON" | jq -c '[.result.agents[]?.pane_id]')"
-LIVE_BY_PANE="$(printf '%s' "$LIVE_JSON" | jq -c '[.result.agents[]?] | map({(.pane_id): .}) | add // {}')"
+LIVE_BY_TERM="$(printf '%s' "$LIVE_JSON" | jq -c '[.result.agents[]? | select(.terminal_id != null) | {(.terminal_id): .}] | add // {}')"
 
 reconcile() {
-  jq -c --argjson live "$LIVE_BY_PANE" \
-    '. + {live: ($live[.pane_id] // null),
-          live_status: ((($live[.pane_id] // {}).agent_status) // "gone")}'
+  jq -c --argjson live "$LIVE_BY_TERM" \
+    '($live[.terminal_id] // null) as $l
+     | . + {live: $l,
+            live_pane: ($l.pane_id // null),
+            live_status: (($l.agent_status) // "gone")}'
 }
 
 if [[ "$MODE" == "one" ]]; then
@@ -80,7 +86,7 @@ printf '%s\n' "$COLLAPSED" | while IFS= read -r rec; do
     "$(printf '%s' "$reconciled" | jq -r .short_guid)" \
     "$(printf '%s' "$reconciled" | jq -r .label)" \
     "$(printf '%s' "$reconciled" | jq -r .agent)" \
-    "$(printf '%s' "$reconciled" | jq -r .pane_id)" \
+    "$(printf '%s' "$reconciled" | jq -r '.live_pane // .pane_id')" \
     "$(printf '%s' "$reconciled" | jq -r .live_status)" \
     "$(printf '%s' "$reconciled" | jq -r .role)"
 done

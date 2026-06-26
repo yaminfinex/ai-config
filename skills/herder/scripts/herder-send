@@ -4,10 +4,13 @@
 # Usage:
 #   herder-send <target> <message> [opts]
 #
-# <target>: short-guid, full guid, label, or pane_id (resolved via registry,
-# falls back to verbatim if no match).
+# <target>: short-guid, full guid, label, or pane_id. A guid/label is resolved to
+# the agent's CURRENT pane via its durable terminal_id (registry pane_ids go stale
+# as herdr compacts ids — see "resolve" below). A raw pane_id is used verbatim.
 #
 # Options:
+#   --dry-run            resolve the target and report where it would send, then
+#                        exit WITHOUT pasting anything (debug a mis-send safely)
 #   --no-enter           place text into the prompt but don't submit
 #   --no-verify          skip post-send delivery verification
 #   --force              skip pre-flight state check (still verifies delivery)
@@ -40,7 +43,7 @@
 # Exit codes:
 #   0  — sent + (if applicable) verified
 #   1  — send or verification failed
-#   2  — pre-flight refused (target in interrupted/modal state)
+#   2  — refused: target gone (terminal not live) or in interrupted/modal state
 #   64 — usage error
 
 set -euo pipefail
@@ -60,9 +63,11 @@ NO_VERIFY=0
 FORCE=0
 TIMEOUT_MS=3000
 JSON_OUT=0
+DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --dry-run)   DRY_RUN=1; shift;;
     --no-enter)  NO_ENTER=1; shift;;
     --no-verify) NO_VERIFY=1; shift;;
     --force)     FORCE=1; shift;;
@@ -81,24 +86,75 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$TARGET"  ]] || die "target required (guid, label, or pane id)"
-[[ -n "$MESSAGE" ]] || die "message required"
+[[ -n "$MESSAGE" || "$DRY_RUN" -eq 1 ]] || die "message required"
 
-# ---- resolve target → pane_id (via registry, falls back to verbatim) -----------
+# ---- resolve target → LIVE pane_id (drift-proof, via terminal_id) --------------
+# The registry's pane_id is captured at spawn time and goes STALE: herdr compacts
+# and reassigns pane_ids whenever sibling panes close, so a label that spawned at
+# pane X can later resolve to a *different* agent now sitting at X — the classic
+# mis-send. terminal_id is the durable per-pane identity, so we look a
+# guid/short-guid/label up to its registry record, take its terminal_id, and ask
+# where that terminal lives RIGHT NOW. Same resolution herder-cull and herder-spawn
+# (--new-tab) already use. A raw pane_id is honoured verbatim (you asked for that
+# live pane); only registry handles get the terminal redirect.
 
-resolve_pane_id() {
-  local v="$1" pid=""
+# Snapshot the live pane→terminal map once. pane list covers every pane kind (not
+# just agents), so it resolves bash panes too.
+PANE_LIST_JSON="$(herdr pane list 2>/dev/null || true)"
+RESOLVED_VIA="verbatim"
+DRIFT_NOTE=""
+
+resolve_target() {  # sets PANE_ID / RESOLVED_VIA / DRIFT_NOTE; exits on a gone target
+  local v="$1" rec term stored label live npanes
   if [[ -f "$REGISTRY" ]]; then
-    pid="$(jq -sr --arg v "$v" '
+    rec="$(jq -sc --arg v "$v" '
       group_by(.guid) | map(.[-1])
-      | map(select(.guid==$v or .short_guid==$v or .label==$v or .pane_id==$v))
-      | last | .pane_id // empty
-    ' "$REGISTRY")"
+      | map(select(.guid==$v or .short_guid==$v or .label==$v))
+      | last // empty' "$REGISTRY")"
   fi
-  [[ -n "$pid" ]] || pid="$v"
-  printf '%s' "$pid"
+  if [[ -z "${rec:-}" ]]; then PANE_ID="$v"; RESOLVED_VIA="verbatim"; return 0; fi
+  term="$(printf '%s' "$rec" | jq -r '.terminal_id // empty')"
+  stored="$(printf '%s' "$rec" | jq -r '.pane_id // empty')"
+  label="$(printf '%s' "$rec" | jq -r '.label // empty')"
+  if [[ -z "$term" ]]; then
+    # Legacy record without a terminal_id — best effort with the stored pane.
+    PANE_ID="$stored"; RESOLVED_VIA="stored_pane(no terminal_id)"; return 0
+  fi
+  live="$(printf '%s' "$PANE_LIST_JSON" | jq -r --arg t "$term" \
+    '.result.panes[]? | select(.terminal_id==$t) | .pane_id' 2>/dev/null | head -n1)"
+  if [[ -n "$live" ]]; then
+    PANE_ID="$live"; RESOLVED_VIA="terminal_id"
+    [[ -n "$stored" && "$live" != "$stored" ]] && \
+      DRIFT_NOTE="pane drifted — ${label:-$v} spawned at $stored, terminal $term now at $live"
+    return 0
+  fi
+  # terminal_id is not live anywhere. Distinguish a genuinely-gone agent from a
+  # transient herdr read failure: if pane list came back empty we can't tell, so
+  # don't claim gone.
+  npanes="$(printf '%s' "$PANE_LIST_JSON" | jq '[.result.panes[]?] | length' 2>/dev/null || echo 0)"
+  if [[ "${npanes:-0}" -eq 0 ]]; then
+    printf 'herder-send: could not read live pane list from herdr; not resolving %s (retry, or pass an explicit pane_id).\n' "$v" >&2
+    exit 1
+  fi
+  printf 'herder-send: %s (terminal %s) is not live anywhere — agent gone or culled.\n' "${label:-$v}" "$term" >&2
+  printf '            Refusing to send to its spawn-time pane %s — it now belongs to a different agent. Pass an explicit live pane_id to override.\n' "$stored" >&2
+  exit 2
 }
 
-PANE_ID="$(resolve_pane_id "$TARGET")"
+resolve_target "$TARGET"
+[[ -n "$DRIFT_NOTE" ]] && printf 'herder-send: %s\n' "$DRIFT_NOTE" >&2
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  printf 'herder-send --dry-run: %s -> pane %s (via %s)%s\n' \
+    "$TARGET" "$PANE_ID" "$RESOLVED_VIA" \
+    "$([[ -n "$DRIFT_NOTE" ]] && printf ' [DRIFTED]')" >&2
+  if [[ "$JSON_OUT" -eq 1 ]]; then
+    jq -nc --arg pane "$PANE_ID" --arg target "$TARGET" --arg via "$RESOLVED_VIA" \
+      --argjson drifted "$([[ -n "$DRIFT_NOTE" ]] && echo true || echo false)" \
+      '{pane_id:$pane, target:$target, resolved_via:$via, drifted:$drifted, dry_run:true}'
+  fi
+  exit 0
+fi
 
 # ---- read pane + detect agent kind --------------------------------------------
 
@@ -406,12 +462,13 @@ if [[ "$JSON_OUT" -eq 1 ]]; then
     --arg pane "$PANE_ID" \
     --arg kind "$KIND" \
     --arg target "$TARGET" \
+    --arg resolved_via "$RESOLVED_VIA" \
     --argjson submitted "$SUBMITTED" \
     --arg verify "$VERIFY_RESULT" \
     --argjson extra_enter "$EXTRA_ENTER_SENT" \
     --argjson paste_collapsed "$PASTE_COLLAPSED" \
     --arg msg_preview "$(printf '%s' "$MESSAGE" | head -c 120)" \
-    '{pane_id:$pane, agent:$kind, target:$target, submitted:$submitted,
+    '{pane_id:$pane, agent:$kind, target:$target, resolved_via:$resolved_via, submitted:$submitted,
       verify:$verify, extra_enter_sent:$extra_enter, paste_collapsed:($paste_collapsed==1),
       message_preview:$msg_preview}'
 fi

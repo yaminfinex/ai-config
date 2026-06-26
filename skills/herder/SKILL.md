@@ -63,6 +63,8 @@ herder-send <guid|short-guid|label|pane_id> "message"
 
 Refuses to send into interrupted / modal panes unless `--force`. Verifies the prompt buffer cleared before claiming delivery. Use this instead of hand-rolling `herdr agent send` + `pane send-keys Enter`. Rationale: `references/herder-delta.md` → *Driving peer agents safely*.
 
+**Targets resolve by `terminal_id`, not the stored pane number — so sends don't drift.** A guid/short-guid/label is looked up in the registry, then re-resolved to the agent's *current* pane via its durable `terminal_id` (herdr compacts/reassigns `pane_id`s as panes close, so the spawn-time pane in the registry goes stale and would mis-send to whoever sits there now). A raw `pane_id` argument is used verbatim. If the target's terminal isn't live anywhere (agent gone/culled) `herder-send` **refuses** (exit 2) rather than firing into a recycled pane — pass an explicit live `pane_id` to override. Use `herder-send --dry-run <target>` to print where a target resolves (and whether it has drifted) without sending. `herder-wait` and `herder-list` resolve the same way. Background: `references/herder-delta.md` → *Known sharp edges* (pane-id compaction).
+
 **Long briefs to codex go through a file, not the wire.** Codex collapses any paste over ~1k chars into a `[Pasted Content N chars]` blob, and a multi-line brief can trip its "Create a plan?" overlay — both make codex act on only the tail. Keep codex sends **short and single-line**: stage the full brief in a file (e.g. `napkins/<task>-brief.md`, gitignored) and `herder-send` a one-line pointer that tells codex to read the file and plan. Recipe: `references/spawn-patterns.md` → *Send a long brief to codex*.
 
 ## Waiting
