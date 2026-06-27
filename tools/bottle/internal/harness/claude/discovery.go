@@ -25,6 +25,38 @@ func SelfSessionID() string {
 	return os.Getenv(SessionEnvVar)
 }
 
+// FindSessionPath locates a session's transcript by id. Claude stores a session
+// under the project dir encoded from the cwd where it was *launched* (the
+// workspace root), so a bottle invoked from a subdirectory cannot assume the
+// file sits under the current cwd's encoded dir. preferCwd is tried first — the
+// common case, and a tie-breaker if the same id somehow appears twice — then
+// every project directory under projectsRoot is searched for <id>.jsonl.
+// Session ids are UUIDs (globally unique), so a cross-dir match is unambiguous.
+// ErrNoSessions when no project dir holds the file.
+func FindSessionPath(projectsRoot, preferCwd, sessionID string) (string, error) {
+	if preferCwd != "" {
+		p := filepath.Join(ProjectDir(projectsRoot, preferCwd), sessionID+".jsonl")
+		if isFile(p) {
+			return p, nil
+		}
+	}
+	matches, err := filepath.Glob(filepath.Join(projectsRoot, "*", sessionID+".jsonl"))
+	if err != nil {
+		return "", err
+	}
+	for _, m := range matches {
+		if isFile(m) {
+			return m, nil
+		}
+	}
+	return "", ErrNoSessions
+}
+
+func isFile(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
 // SessionPreview describes the session LastSession chose, so the cli can show a
 // confirmation before bottling — concurrent same-cwd sessions make a silent
 // --last dangerous, so the user/agent gets to see what it picked.

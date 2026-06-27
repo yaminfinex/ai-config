@@ -12,7 +12,10 @@ Pitfalls:
     bottle was created. The recorded cwd is provenance (see bottle show); a note
     prints when it differs. Stand in a tree the conversation makes sense in
     before decanting.
-  - Permissions are safe-by-default: the seeded agent still prompts. --yolo opts
-    out (--dangerously-skip-permissions), matching interactive decant even though
-    herder-spawn's own default differs.
+  - Permission mode is restored from the bottle: a session bottled in
+    acceptEdits/plan/bypassPermissions decants back into that mode (resume does
+    not carry the mode forward, so decant re-imposes it via --permission-mode).
+    A default-mode bottle stays safe-by-default — the seeded agent prompts.
+    --yolo overrides any restored mode with full bypass
+    (--dangerously-skip-permissions).
   - --pane right|below needs a herdr environment (it shells out to herder-spawn).

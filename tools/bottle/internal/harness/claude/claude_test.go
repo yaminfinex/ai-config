@@ -119,6 +119,48 @@ func TestLastSessionNewestWinsWithPreview(t *testing.T) {
 	}
 }
 
+func TestFindSessionPath(t *testing.T) {
+	root := t.TempDir()
+	when := time.Date(2026, 6, 10, 1, 0, 0, 0, time.UTC)
+
+	// The session was launched at the workspace root and filed under its dir.
+	rootCwd := "/work/project"
+	rootDir := ProjectDir(root, rootCwd)
+	if err := os.MkdirAll(rootDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	id := "22222222-2222-4222-8222-222222222222"
+	writeFixtureCopy(t, rootDir, id+".jsonl", "plain.jsonl", when)
+
+	// Found when the cwd matches (prefer-cwd branch).
+	got, err := FindSessionPath(root, rootCwd, id)
+	if err != nil {
+		t.Fatalf("FindSessionPath(root cwd): %v", err)
+	}
+	if got != filepath.Join(rootDir, id+".jsonl") {
+		t.Errorf("path = %q, want under %q", got, rootDir)
+	}
+
+	// Found even when invoked from a subdirectory whose encoded dir differs and
+	// holds no session file — the cross-dir search locates it by id.
+	subCwd := "/work/project/tools/bottle"
+	if d := ProjectDir(root, subCwd); d == rootDir {
+		t.Fatalf("test setup: subdir encodes to the same project dir as root")
+	}
+	got, err = FindSessionPath(root, subCwd, id)
+	if err != nil {
+		t.Fatalf("FindSessionPath(subdir cwd): %v", err)
+	}
+	if got != filepath.Join(rootDir, id+".jsonl") {
+		t.Errorf("subdir path = %q, want under %q", got, rootDir)
+	}
+
+	// Absent id is ErrNoSessions, not a misleading cwd-relative path.
+	if _, err := FindSessionPath(root, subCwd, "00000000-0000-4000-8000-000000000000"); err != ErrNoSessions {
+		t.Errorf("missing id: err = %v, want ErrNoSessions", err)
+	}
+}
+
 func TestLastSessionNoSessions(t *testing.T) {
 	root := t.TempDir()
 	// Absent project dir.
@@ -349,6 +391,83 @@ func TestBuildLaunchPaneYolo(t *testing.T) {
 	}
 	if !contains(plan.Argv, "--dangerously-skip-permissions") {
 		t.Errorf("yolo pane must pass --dangerously-skip-permissions: %v", plan.Argv)
+	}
+}
+
+func TestBuildLaunchInteractiveRestoresPermissionMode(t *testing.T) {
+	cwd := t.TempDir()
+	plan, err := BuildLaunch(LaunchRequest{
+		SessionID:      "sid-pm",
+		Cwd:            cwd,
+		PermissionMode: "acceptEdits",
+	})
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	want := []string{"claude", "--resume", "sid-pm", "--permission-mode", "acceptEdits"}
+	if strings.Join(plan.Argv, " ") != strings.Join(want, " ") {
+		t.Errorf("Argv = %v, want %v", plan.Argv, want)
+	}
+}
+
+func TestBuildLaunchDefaultModeStaysImplicit(t *testing.T) {
+	cwd := t.TempDir()
+	// A recorded "default" mode is the launch default already — it must not add
+	// a --permission-mode flag, and on the pane path it must keep --safe.
+	interactive, err := BuildLaunch(LaunchRequest{SessionID: "sid", Cwd: cwd, PermissionMode: "default"})
+	if err != nil {
+		t.Fatalf("BuildLaunch interactive: %v", err)
+	}
+	if contains(interactive.Argv, "--permission-mode") {
+		t.Errorf("default mode must not emit --permission-mode: %v", interactive.Argv)
+	}
+	pane, err := BuildLaunch(LaunchRequest{SessionID: "sid", Cwd: cwd, Pane: PaneRight, PermissionMode: "default"})
+	if err != nil {
+		t.Fatalf("BuildLaunch pane: %v", err)
+	}
+	if !contains(pane.Argv, "--safe") {
+		t.Errorf("default-mode pane must keep --safe: %v", pane.Argv)
+	}
+}
+
+func TestBuildLaunchYoloOverridesPermissionMode(t *testing.T) {
+	cwd := t.TempDir()
+	plan, err := BuildLaunch(LaunchRequest{
+		SessionID:      "sid",
+		Cwd:            cwd,
+		Yolo:           true,
+		PermissionMode: "acceptEdits",
+	})
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	if contains(plan.Argv, "--permission-mode") {
+		t.Errorf("yolo must win over restored mode (no --permission-mode): %v", plan.Argv)
+	}
+	if !contains(plan.Argv, "--dangerously-skip-permissions") {
+		t.Errorf("yolo must skip permissions: %v", plan.Argv)
+	}
+}
+
+func TestBuildLaunchPaneRestoresPermissionMode(t *testing.T) {
+	cwd := t.TempDir()
+	plan, err := BuildLaunch(LaunchRequest{
+		SessionID:      "sid-pm",
+		Cwd:            cwd,
+		Pane:           PaneRight,
+		PermissionMode: "plan",
+	})
+	if err != nil {
+		t.Fatalf("BuildLaunch: %v", err)
+	}
+	// The mode rides through as --extra-arg, which herder-spawn recognises and
+	// so suppresses its autonomous default — making --safe redundant.
+	if contains(plan.Argv, "--safe") {
+		t.Errorf("restored-mode pane must not pass --safe: %v", plan.Argv)
+	}
+	joined := strings.Join(plan.Argv, " ")
+	if !strings.Contains(joined, "--extra-arg --permission-mode --extra-arg plan") {
+		t.Errorf("pane argv missing restored mode wiring: %v", plan.Argv)
 	}
 }
 

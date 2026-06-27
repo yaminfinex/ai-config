@@ -285,3 +285,22 @@ func TestInfoHelpers(t *testing.T) {
 		t.Errorf("branched LastLeaf() = %q", got)
 	}
 }
+
+func TestEffectivePermissionMode(t *testing.T) {
+	// queued.jsonl carries permission-mode trailers and user entries all stamped
+	// bypassPermissions; multi-compact runs entirely in default.
+	if got := indexFixture(t, "queued.jsonl").EffectivePermissionMode(); got != "bypassPermissions" {
+		t.Errorf("queued EffectivePermissionMode() = %q, want bypassPermissions", got)
+	}
+	if got := indexFixture(t, "multi-compact.jsonl").EffectivePermissionMode(); got != "default" {
+		t.Errorf("multi-compact EffectivePermissionMode() = %q, want default", got)
+	}
+	// A transcript that records no permissionMode at all yields "".
+	info := indexFixture(t, "plain.jsonl")
+	for i := range info.Entries {
+		info.Entries[i].PermissionMode = ""
+	}
+	if got := info.EffectivePermissionMode(); got != "" {
+		t.Errorf("stripped EffectivePermissionMode() = %q, want empty", got)
+	}
+}

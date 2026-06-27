@@ -97,11 +97,12 @@ func cmdDecant(d *deps, args []string) int {
 	}
 
 	plan, err := claude.BuildLaunch(claude.LaunchRequest{
-		SessionID: res.SessionID,
-		Cwd:       runCwd,
-		Pane:      paneMode,
-		Prompt:    *prompt,
-		Yolo:      *yolo,
+		SessionID:      res.SessionID,
+		Cwd:            runCwd,
+		Pane:           paneMode,
+		Prompt:         *prompt,
+		Yolo:           *yolo,
+		PermissionMode: res.PermissionMode,
 	})
 	if err != nil {
 		fmt.Fprintf(d.stderr, "bottle decant: %v\n", err)

@@ -21,6 +21,7 @@ type MaterializeResult struct {
 	SeedPath          string // absolute path of the written seed file
 	ProjectDir        string // the encoded project directory it lives in
 	CompactBoundaries int    // compact_boundary count (for create-time warnings)
+	PermissionMode    string // the source session's last recorded permission mode ("" if none)
 }
 
 // Materialize writes a fresh, resumable seed session from a bottle transcript:
@@ -61,6 +62,7 @@ func Materialize(req MaterializeRequest) (MaterializeResult, error) {
 		SeedPath:          seed,
 		ProjectDir:        dir,
 		CompactBoundaries: info.CompactBoundaries(),
+		PermissionMode:    info.EffectivePermissionMode(),
 	}, nil
 }
 

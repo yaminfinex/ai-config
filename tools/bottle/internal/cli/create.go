@@ -231,9 +231,17 @@ func (d *deps) resolveCreateSource(session string, last bool) (sessionID, source
 		d.printPreview(preview)
 		return preview.SessionID, preview.Path, false, nil
 	case session != "":
-		return session, d.sessionSourcePath(session), session == d.selfSession && d.selfSession != "", nil
+		path, e := d.sessionSourcePath(session)
+		if e != nil {
+			return "", "", false, e
+		}
+		return session, path, session == d.selfSession && d.selfSession != "", nil
 	case d.selfSession != "":
-		return d.selfSession, d.sessionSourcePath(d.selfSession), true, nil
+		path, e := d.sessionSourcePath(d.selfSession)
+		if e != nil {
+			return "", "", false, e
+		}
+		return d.selfSession, path, true, nil
 	default:
 		preview, e := claude.LastSession(d.projectsRoot, d.cwd)
 		if e != nil {
@@ -254,10 +262,17 @@ func (d *deps) printPreview(p claude.SessionPreview) {
 		shortSession(p.SessionID), humanizeAge(p.Age(d.now())), oneLine(p.FirstUserText, 80))
 }
 
-// sessionSourcePath is where a session's transcript lives on disk: under the
-// cwd's encoded project directory in the Claude projects root.
-func (d *deps) sessionSourcePath(sessionID string) string {
-	return filepath.Join(claude.ProjectDir(d.projectsRoot, d.cwd), sessionID+".jsonl")
+// sessionSourcePath locates a session's transcript on disk. It prefers the
+// current cwd's encoded project dir but falls back to searching every project
+// dir under the projects root, because Claude files a session under the dir it
+// was *launched* from — so bottling from a subdirectory of the workspace must
+// not assume the file lives under the current cwd (the U: subdir-cwd rule).
+func (d *deps) sessionSourcePath(sessionID string) (string, error) {
+	path, err := claude.FindSessionPath(d.projectsRoot, d.cwd, sessionID)
+	if err != nil {
+		return "", fmt.Errorf("session %s: transcript not found in any project dir under %s", shortSession(sessionID), d.projectsRoot)
+	}
+	return path, nil
 }
 
 // cutTranscript produces the bytes to freeze for a given cut mode, along with

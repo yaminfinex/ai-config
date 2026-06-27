@@ -60,7 +60,11 @@ func cmdRebottle(d *deps, args []string) int {
 		return 1
 	}
 
-	sourcePath := d.sessionSourcePath(sessionID)
+	sourcePath, err := d.sessionSourcePath(sessionID)
+	if err != nil {
+		fmt.Fprintf(d.stderr, "bottle rebottle: %v\n", err)
+		return 1
+	}
 	info, err := transcript.IndexFile(sourcePath)
 	if err != nil {
 		fmt.Fprintf(d.stderr, "bottle rebottle: %v\n", err)

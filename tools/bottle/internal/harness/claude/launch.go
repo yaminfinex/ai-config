@@ -24,6 +24,13 @@ type LaunchRequest struct {
 	Prompt    string // optional initial prompt
 	Yolo      bool   // skip permission prompts (--dangerously-skip-permissions)
 	Role      string // herder-spawn role label; defaults to "bottle"
+
+	// PermissionMode restores the source session's permission mode on the
+	// decant (--permission-mode <mode>). Resume does NOT carry the mode forward
+	// — it is launch state — so decant reads the recorded mode and re-imposes
+	// it. Empty means "no recorded mode": fall back to the launch default.
+	// Yolo wins over it: full bypass regardless of the restored mode.
+	PermissionMode string
 }
 
 // LaunchPlan is the command the cli layer should run to re-enter the seed.
@@ -40,12 +47,16 @@ type LaunchPlan struct {
 // cwd-scoped, so a dead cwd would fail with an opaque harness error
 // otherwise).
 //
-// Permission semantics are kept identical to interactive across both paths:
-//   - interactive: plain claude --resume (safe) unless Yolo adds
-//     --dangerously-skip-permissions.
-//   - pane: herder-spawn defaults claude to skip-permissions, so --safe is
-//     passed to opt back into the interactive default; under Yolo, --safe is
-//     dropped and --dangerously-skip-permissions is passed through explicitly.
+// Permission semantics are kept identical across both paths, in precedence
+// order Yolo > restored mode > launch default:
+//   - Yolo: full bypass (--dangerously-skip-permissions), ignoring any
+//     recorded mode.
+//   - PermissionMode set: restore it verbatim (--permission-mode <mode>). On
+//     the pane path this rides through as an --extra-arg, which herder-spawn
+//     recognises and so suppresses its own autonomous skip-permissions default
+//     — no --safe needed.
+//   - neither: interactive falls back to plain claude --resume (ask-mode);
+//     the pane path passes --safe to opt out of herder's autonomous default.
 func BuildLaunch(req LaunchRequest) (LaunchPlan, error) {
 	if req.SessionID == "" {
 		return LaunchPlan{}, fmt.Errorf("launch: empty session id")
@@ -69,13 +80,31 @@ func BuildLaunch(req LaunchRequest) (LaunchPlan, error) {
 
 func interactiveLaunch(req LaunchRequest) LaunchPlan {
 	argv := []string{"claude", "--resume", req.SessionID}
-	if req.Yolo {
-		argv = append(argv, "--dangerously-skip-permissions")
-	}
+	argv = append(argv, permissionFlags(req)...)
 	if req.Prompt != "" {
 		argv = append(argv, req.Prompt)
 	}
 	return LaunchPlan{Argv: argv, RunCwd: req.Cwd, Pane: false}
+}
+
+// permissionFlags returns the claude permission flags for a launch, in
+// precedence order Yolo > restored mode > none. Returned as a slice so the
+// pane path can fan each token out through --extra-arg.
+//
+// A recorded mode of "default" (or none) is left implicit: "default" IS the
+// launch default, so the existing safe path already restores it faithfully —
+// emitting --permission-mode default would only buy a redundant flag and, on
+// the pane path, needlessly drop the protective --safe. Only a non-default
+// recorded mode is worth re-imposing.
+func permissionFlags(req LaunchRequest) []string {
+	switch {
+	case req.Yolo:
+		return []string{"--dangerously-skip-permissions"}
+	case req.PermissionMode != "" && req.PermissionMode != "default":
+		return []string{"--permission-mode", req.PermissionMode}
+	default:
+		return nil
+	}
 }
 
 func paneLaunch(req LaunchRequest) LaunchPlan {
@@ -88,6 +117,8 @@ func paneLaunch(req LaunchRequest) LaunchPlan {
 		role = defaultRole
 	}
 
+	perm := permissionFlags(req)
+
 	argv := []string{
 		"herder-spawn",
 		"--role", role,
@@ -95,7 +126,11 @@ func paneLaunch(req LaunchRequest) LaunchPlan {
 		"--split", split,
 		"--cwd", req.Cwd,
 	}
-	if !req.Yolo {
+	// With no permission flag to impose, --safe opts out of herder-spawn's
+	// autonomous skip-permissions default. When we do pass one (Yolo or a
+	// restored mode), it rides through as --extra-arg below — herder-spawn
+	// recognises it and suppresses its default, so --safe would be redundant.
+	if len(perm) == 0 {
 		argv = append(argv, "--safe")
 	}
 	if req.Prompt != "" {
@@ -103,8 +138,8 @@ func paneLaunch(req LaunchRequest) LaunchPlan {
 	}
 	// claude's own flags ride through herder-spawn via --extra-arg.
 	argv = append(argv, "--extra-arg", "--resume", "--extra-arg", req.SessionID)
-	if req.Yolo {
-		argv = append(argv, "--extra-arg", "--dangerously-skip-permissions")
+	for _, f := range perm {
+		argv = append(argv, "--extra-arg", f)
 	}
 	return LaunchPlan{Argv: argv, RunCwd: req.Cwd, Pane: true}
 }

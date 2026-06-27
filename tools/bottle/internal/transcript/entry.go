@@ -58,6 +58,12 @@ type Entry struct {
 	IsMeta           bool
 	IsSidechain      bool
 
+	// PermissionMode is the session permission mode stamped on this entry:
+	// "default", "acceptEdits", "plan", "bypassPermissions", etc. It rides on
+	// every user entry and on dedicated permission-mode trailer lines (emitted
+	// when the mode is switched mid-session). Empty when the line records none.
+	PermissionMode string
+
 	// ToolUseIDs are the tool_use block ids of an assistant entry;
 	// ToolResultIDs are the tool_use_ids a user entry carries results for.
 	// Exported so U6's self-bottle trim can find unmatched dispatches.
@@ -87,6 +93,7 @@ type wireEntry struct {
 	IsCompactSummary  bool         `json:"isCompactSummary"`
 	IsMeta            bool         `json:"isMeta"`
 	IsSidechain       bool         `json:"isSidechain"`
+	PermissionMode    string       `json:"permissionMode"`
 	Message           *wireMessage `json:"message"`
 }
 
@@ -123,6 +130,7 @@ func ParseEntry(line []byte, lineNum int) (Entry, error) {
 		IsCompactSummary:  w.IsCompactSummary,
 		IsMeta:            w.IsMeta,
 		IsSidechain:       w.IsSidechain,
+		PermissionMode:    w.PermissionMode,
 	}
 
 	if w.Message != nil && len(w.Message.Content) > 0 {

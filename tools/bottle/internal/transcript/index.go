@@ -98,6 +98,21 @@ func (in *Info) LastLeaf() string {
 	return ""
 }
 
+// EffectivePermissionMode returns the permission mode the session was in at
+// its last recorded point: the last non-empty permissionMode in file order,
+// whether from a permission-mode trailer (emitted on a mode switch) or a user
+// entry (which stamps the live mode at prompt time). Empty when the transcript
+// records none — older sessions or SDK runs that omit the field — in which
+// case the caller falls back to the launch default.
+func (in *Info) EffectivePermissionMode() string {
+	for i := len(in.Entries) - 1; i >= 0; i-- {
+		if in.Entries[i].PermissionMode != "" {
+			return in.Entries[i].PermissionMode
+		}
+	}
+	return ""
+}
+
 // CompactBoundaries counts compact_boundary entries — create-time compaction
 // warnings (U5/U6) key off this.
 func (in *Info) CompactBoundaries() int {
