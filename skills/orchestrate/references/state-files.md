@@ -21,7 +21,7 @@ not the whole doc>.
 - Autonomy: <autonomous — sliding-door capture mandatory | interactive — gates at: ...>
 - Topology: <per stage>
 - Liveness: <per role — cull-on-done / keep-open for interrogation>
-- Notify-back address: <orchestrator pane_id agents `herder-send` on done | none — relay/soloist self-spawn>
+- Notify-back address: <orchestrator `terminal_id` (durable; `herdr pane get $HERDR_PANE_ID`) agents `herder-send` on done | none — relay/soloist self-spawn>
 - Golden agent: <bottle name + what it holds | none>
 - Worktree(s) / branch / workspace: <...>
 

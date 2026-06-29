@@ -19,7 +19,7 @@ serialize them instead of discovering the interaction as a merge conflict.
    worktree — then they write nothing, scratch included.
 2. **Cap the fleet at what you can supervise**; batch beyond that.
 3. **Results land as files** (e.g. `napkins/<run>/results/<unit>.md`) + a `DONE` block; then the
-   worker rings the orchestrator (`herder-send <orchestrator pane> 'Unit X DONE'`). Pane reads are
+   worker rings the orchestrator (`herder-send <orchestrator terminal_id> 'Unit X DONE'`). Pane reads are
    for diagnosing stuck workers, not collecting output. The orchestrator idles and integrates **in
    completion order as rings arrive** — not by waiting on workers one at a time, which stalls on
    whichever you picked and is blind to whoever finished first. Keep a backstop sweep

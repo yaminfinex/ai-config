@@ -76,15 +76,20 @@ Pick by **who verifies a unit of work**, then parallelism — not task size.
    relay v1).
 9. **Completion is a doorbell, not a poll.** A finished agent writes its DONE/BLOCKED block (the
    run-log stays the source of truth and the only carrier of evidence), then rings the
-   orchestrator: one line, `herder-send <orchestrator pane> 'Unit N DONE — run-log updated'` (the
-   run-shape header records that address — or just spawn with `herder-spawn --notify`, which
-   injects the exact ring command plus `$HERDER_SEND`/`$HERDER_NOTIFY_TO` into the child so it can
-   ring without finding the helper on PATH). The orchestrator idles between units and wakes on the
+   orchestrator: one line, `herder-send <orchestrator terminal_id> 'Unit N DONE — run-log updated'`
+   (record the orchestrator's durable `terminal_id`, not a bare `pane_id`, in the run-shape header —
+   a `pane_id` drifts when herdr compacts ids — or just spawn with `herder-spawn --notify`, which
+   resolves your terminal_id automatically and injects the exact ring command plus
+   `$HERDER_SEND`/`$HERDER_NOTIFY_TO` into the child so it can ring without finding the helper on
+   PATH). The orchestrator idles between units and wakes on the
    ring instead of burning a turn blocking in `herder-wait`; it reads the run-log and verifies
-   there (invariant 4), never trusting the ring's word. The ring is best-effort — a working
-   orchestrator only queues it, one at a modal refuses it (`herder-send` exit 2) — so it carries
-   no evidence and must never be load-bearing: keep a coarse backstop (a bounded `herder-wait`
-   heartbeat or a run-log sweep) so a dropped ring degrades to polling latency, not a deadlock.
+   there (invariant 4), never trusting the ring's word. The ring is best-effort and the worker
+   rings **exactly once, whatever it reports**: a working orchestrator only *queues* the message
+   (`herder-send` reports `verify=queued`, exit 0 — that is success, not a failure to retry), and
+   one at a modal refuses it (exit 2). A worker that resends on a `queued`/`not_delivered` result
+   just stacks duplicate messages in the orchestrator's queue. Because the ring carries no evidence
+   and must never be load-bearing, keep a coarse backstop (a bounded `herder-wait` heartbeat or a
+   run-log sweep) so a dropped ring degrades to polling latency, not a deadlock.
    Relays need no ring — the spawned successor *is* the signal (`relay.md`).
 10. **End-of-run tail:** fresh-context deep review against the acceptance criteria + remnant
    sweep + golden-agent check if bottled (`references/adversarial.md`), then harvest before the

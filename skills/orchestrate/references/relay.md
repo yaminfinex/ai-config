@@ -34,7 +34,7 @@ failure was delivery, not self-spawning. Two variants:
 - **Self-spawn** (true relay, default): each leg spawns its successor with `--new-tab` and
   verifies delivery before idling. No separate ring — the spawned successor *is* the signal.
 - **Herder-owned handoff:** when a herder pane exists anyway, legs end with a DONE block, ring the
-  herder (`herder-send <herder pane> 'Leg N DONE — run-log updated'`), and idle; the herder spawns
+  herder (`herder-send <herder terminal_id> 'Leg N DONE — run-log updated'`), and idle; the herder spawns
   the successor on the ring, with a run-log sweep as the backstop for a dropped ring.
 
 ## Mid-leg handoff (context budget)

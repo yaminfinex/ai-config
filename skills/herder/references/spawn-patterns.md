@@ -137,7 +137,9 @@ herder-spawn \
 
 ## H. Send a long brief to codex (stage a file, send a one-line pointer)
 
-Codex collapses any paste over ~1k chars into a `[Pasted Content N chars]` blob, and a multi-line brief can trip its "Create a plan?" overlay — in both cases codex parses only the tail and builds the wrong thing. Never push a long brief to codex over the wire. Stage it and point at it:
+Codex collapses any paste over ~1k chars into a `[Pasted Content N chars]` blob, and a multi-line brief can trip its "Create a plan?" overlay — in both cases codex parses only the tail and builds the wrong thing. Never push a long brief to codex over the wire. Stage it and point at it.
+
+> **At spawn time this is automatic.** `herder-spawn --agent codex` already stages a long or multi-line `--prompt`/`--prompt-file` to `$HERDER_STATE_DIR/briefs/<guid>.md` and sends only a one-line pointer (reported as `brief: staged to …`). The recipe below is for **mid-session** `herder-send` to an already-running codex, where staging is still your responsibility.
 
 ```bash
 # 1. Write the full brief to a gitignored scratch file (napkins/ is gitignored;

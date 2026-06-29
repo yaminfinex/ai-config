@@ -4,9 +4,12 @@
 # Usage:
 #   herder-send <target> <message> [opts]
 #
-# <target>: short-guid, full guid, label, or pane_id. A guid/label is resolved to
-# the agent's CURRENT pane via its durable terminal_id (registry pane_ids go stale
-# as herdr compacts ids — see "resolve" below). A raw pane_id is used verbatim.
+# <target>: short-guid, full guid, label, terminal_id (term_*), or pane_id. A
+# guid/label is resolved to the agent's CURRENT pane via its durable terminal_id
+# (registry pane_ids go stale as herdr compacts ids — see "resolve" below); a bare
+# term_* is resolved the same drift-proof way without needing a registry record
+# (this is what `herder-spawn --notify` injects for the orchestrator ring). A raw
+# pane_id is used verbatim.
 #
 # Options:
 #   --dry-run            resolve the target and report where it would send, then
@@ -41,10 +44,17 @@
 #   — see skills/herder/references/spawn-patterns.md → "Send a long brief to codex".
 #
 # Exit codes:
-#   0  — sent + (if applicable) verified
+#   0  — sent + verified, OR queued (target was busy; message accepted to run next)
 #   1  — send or verification failed
 #   2  — refused: target gone (terminal not live) or in interrupted/modal state
 #   64 — usage error
+#
+# Busy target: if the target is ALREADY mid-turn when we send, it can't process the
+# message now — claude/codex queues it to run after the current turn. That queued
+# state is indistinguishable from an unsubmitted buffer via the sigil heuristic, so
+# we report verify=queued (exit 0) rather than not_delivered, and we do NOT fire the
+# extra-Enter recovery (which would stack duplicate queued messages). The doorbell
+# is best-effort; the run-log is the source of truth.
 
 set -euo pipefail
 
@@ -106,6 +116,24 @@ DRIFT_NOTE=""
 
 resolve_target() {  # sets PANE_ID / RESOLVED_VIA / DRIFT_NOTE; exits on a gone target
   local v="$1" rec term stored label live npanes
+  # A bare terminal_id (term_*) resolves DIRECTLY to its current pane — no registry
+  # record needed. This is the drift-proof handle `herder-spawn --notify` injects
+  # for the orchestrator ring: the terminal is stable while pane_ids compact, and a
+  # gone terminal is refused (exit 2) exactly like the guid/label path, instead of
+  # firing into whoever now sits at the spawn-time pane.
+  if [[ "$v" == term_* ]]; then
+    live="$(printf '%s' "$PANE_LIST_JSON" | jq -r --arg t "$v" \
+      '.result.panes[]? | select(.terminal_id==$t) | .pane_id' 2>/dev/null | head -n1)"
+    if [[ -n "$live" ]]; then PANE_ID="$live"; RESOLVED_VIA="terminal_id(direct)"; return 0; fi
+    npanes="$(printf '%s' "$PANE_LIST_JSON" | jq '[.result.panes[]?] | length' 2>/dev/null || echo 0)"
+    if [[ "${npanes:-0}" -eq 0 ]]; then
+      printf 'herder-send: could not read live pane list from herdr; not resolving %s (retry, or pass an explicit pane_id).\n' "$v" >&2
+      exit 1
+    fi
+    printf 'herder-send: terminal %s is not live anywhere — agent gone or culled.\n' "$v" >&2
+    printf '            Refusing to send — pass an explicit live pane_id to override.\n' >&2
+    exit 2
+  fi
   if [[ -f "$REGISTRY" ]]; then
     rec="$(jq -sc --arg v "$v" '
       group_by(.guid) | map(.[-1])
@@ -381,6 +409,7 @@ elif [[ "$NO_VERIFY" -eq 1 ]]; then
 elif [[ "$SUBMITTED" == "true" ]]; then
   STEP_MS=250
   DELIVERED=0
+  QUEUED=0
 
   poll_delivered() {  # poll up to $TIMEOUT_MS for positive delivery evidence
     local elapsed=0 post
@@ -427,9 +456,19 @@ elif [[ "$SUBMITTED" == "true" ]]; then
     fi
   elif poll_delivered; then
     DELIVERED=1
+  elif [[ "$PRE_STATUS" == "working" ]]; then
+    # The target was ALREADY mid-turn when we sent, so it can't process the message
+    # now — claude/codex QUEUES it (it runs after the current turn) and renders the
+    # queued text right on the input/sigil line, where the heuristic above can't
+    # tell "queued (submitted, will run next)" from "still buffered (not yet sent)".
+    # Since it LANDED (entered the composer) and we pressed Enter once, treat it as
+    # queued = success. Crucially do NOT run the extra-Enter recovery below: on a
+    # busy agent each extra Enter stacks ANOTHER duplicate queued message. The
+    # run-log stays the source of truth — this send is only a best-effort doorbell.
+    QUEUED=1; DELIVERED=1
   else
-    # Recovery for the non-collapsed case: codex absorbs the first Enter when
-    # leaving "Conversation interrupted" — send one more if text is still buffered.
+    # Recovery for the non-collapsed, idle-agent case: codex absorbs the first Enter
+    # when leaving "Conversation interrupted" — send one more if text is still buffered.
     if msg_trailing_sigil "$(read_pane | strip_chrome)"; then
       herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
       EXTRA_ENTER_SENT=true
@@ -437,7 +476,9 @@ elif [[ "$SUBMITTED" == "true" ]]; then
     fi
   fi
 
-  if [[ $DELIVERED -eq 1 ]]; then VERIFY_RESULT="delivered"; else VERIFY_RESULT="not_delivered"; fi
+  if [[ "$QUEUED" -eq 1 ]]; then VERIFY_RESULT="queued"
+  elif [[ $DELIVERED -eq 1 ]]; then VERIFY_RESULT="delivered"
+  else VERIFY_RESULT="not_delivered"; fi
 fi
 
 # ---- report --------------------------------------------------------------------
@@ -451,6 +492,7 @@ fi
     printf ', not submitted (--no-enter)'
   fi
   printf ', verify=%s' "$VERIFY_RESULT"
+  [[ "$VERIFY_RESULT" == "queued" ]] && printf ' (target was busy; message queued to run next — do NOT resend)'
   [[ "$PASTE_COLLAPSED" -eq 1 ]] && printf ' (codex collapsed paste to blob)'
   [[ "$EXTRA_ENTER_SENT" == "true" ]] && printf ' (extra Enter sent)'
   [[ "$SEND_ATTEMPTS" -gt 1 ]] && printf ' (re-pasted x%d)' "$SEND_ATTEMPTS"
