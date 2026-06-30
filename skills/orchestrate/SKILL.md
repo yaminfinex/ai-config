@@ -35,6 +35,9 @@ Record in the playbook's run-shape header (`references/state-files.md`):
 4. **Golden agent.** Consider bottling (`bottling` skill) the agent holding the original intent
    before the run consumes it; decant later as the user's proxy
    (`references/adversarial.md`).
+5. **Backlog (if present).** If the project uses Backlog.md
+   (`command -v backlog` + a `backlog/` dir), let the run lean on it as the durable unit ledger —
+   `references/backlog-integration.md`. Absent → skip; the run-log alone carries the mission.
 
 ## Topologies
 
@@ -56,7 +59,8 @@ Pick by **who verifies a unit of work**, then parallelism — not task size.
    design-time judgment crosses agent boundaries) and a **run-log** (append-only
    START/DONE/BLOCKED/HANDOFF/SLIDING-DOOR blocks with evidence). The branch carries the code:
    agents commit; the user ships. Both files live in the branch's gitignored scratch dir (e.g.
-   `napkins/`).
+   `napkins/`). Backlog-backed runs add a durable unit ledger alongside (not replacing) these —
+   `references/backlog-integration.md`.
 2. **Spawn prompts are one line** — "read <playbook> in full, then execute <unit>". Context
    travels through the files + branch, never the prompt.
 3. **Context discipline.** One unit per agent; wide reading goes to subagents. If a unit
