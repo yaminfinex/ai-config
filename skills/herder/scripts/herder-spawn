@@ -150,6 +150,18 @@ done
 [[ -z "$WORKSPACE" || -z "$FROM_PANE" ]] || die "use --workspace or --from-pane, not both"
 [[ "$NEW_TAB" -eq 0 || -z "$TAB" ]] || die "use --new-tab or --tab, not both"
 
+# Default the target to the CALLER's own pane when neither --workspace nor
+# --from-pane was given. Without this, WORKSPACE stays empty and falls through to
+# `herdr tab create` / `herdr agent start` with no --workspace — which place the
+# new tab/pane in whatever workspace currently has FOCUS (wherever the human
+# driver is looking), not where the spawn was aimed. Anchoring to $HERDR_PANE_ID
+# makes placement deterministic: children land in the spawner's workspace.
+# Explicit --workspace / --from-pane still override; outside a herdr pane
+# ($HERDR_PANE_ID unset) we leave it empty and keep the legacy focus behavior.
+if [[ -z "$WORKSPACE" && -z "$FROM_PANE" && -n "${HERDR_PANE_ID:-}" ]]; then
+  FROM_PANE="$HERDR_PANE_ID"
+fi
+
 # Resolve --from-pane → its workspace_id, so the new pane lands in the same
 # workspace as the named parent (not wherever focus happens to be).
 if [[ -n "$FROM_PANE" ]]; then

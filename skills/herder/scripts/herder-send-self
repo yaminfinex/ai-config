@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# herder-send-self — send an input line to YOUR OWN herdr pane.
+#
+# Usage:
+#   herder-send-self <message...>
+#
+# A thin wrapper over `herder-send` targeting $HERDR_PANE_ID (the caller's own
+# pane). All args are joined into a single message, exactly as if you ran
+# `herder-send "$HERDR_PANE_ID" "<message>"`. Generic and agent-agnostic — the
+# message is whatever you want your own session to receive as its next input
+# (any slash command or text; works for claude or codex, since herder-send
+# handles agent-kind delivery).
+#
+# Run MID-TURN, the text is submitted to your own prompt and the harness queues
+# it to fire the moment the current turn ends. The headline use is self-driven,
+# in-place compaction / handoff at a boundary the agent chooses:
+#
+#   herder-send-self /compact
+#   herder-send-self /compact focus on run-log state, open units, and the next gate
+#
+# `/compact <instructions>` lets a long-running agent steer its own summary
+# toward what the continuation needs, instead of waiting for auto-compaction to
+# fire mid-unit with a default summary.
+#
+# DANGER — this messages/compacts the CALLER. Only invoke from an agent that is
+# about to end its turn as part of a real handoff; never as a casual test in a
+# session you want to keep (it will queue a real /compact against you). Write
+# durable state first (commit + run-log DONE/HANDOFF block) BEFORE compacting
+# yourself — everything not persisted is at the mercy of the summary.
+
+set -euo pipefail
+die() { printf 'herder-send-self: %s\n' "$*" >&2; exit 1; }
+
+[[ -n "${HERDR_PANE_ID:-}" ]] || die "not in a herdr pane (\$HERDR_PANE_ID unset) — nothing to self-send to"
+[[ "$#" -gt 0 ]] || die "usage: herder-send-self <message...>"
+
+# Locate herder-send next to this script (bin/ symlink or direct invocation),
+# then the exported $HERDER_SEND handle, then PATH.
+SELF_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+if [[ -x "$SELF_DIR/herder-send" ]]; then
+  SEND="$SELF_DIR/herder-send"
+elif [[ -n "${HERDER_SEND:-}" && -x "${HERDER_SEND}" ]]; then
+  SEND="$HERDER_SEND"
+elif command -v herder-send >/dev/null 2>&1; then
+  SEND="herder-send"
+else
+  die "cannot locate herder-send (looked next to this script, \$HERDER_SEND, and PATH)"
+fi
+
+exec "$SEND" "$HERDR_PANE_ID" "$*"

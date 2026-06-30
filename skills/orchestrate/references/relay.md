@@ -39,12 +39,24 @@ failure was delivery, not self-spawning. Two variants:
 
 ## Mid-leg handoff (context budget)
 
-If a leg balloons: commit WIP, append `## Leg N — HANDOFF (continue)` with exact remaining steps
-+ current state, spawn the continuation (same leg, prompt notes "continue from the HANDOFF
-block"). This escape hatch is what lets legs be sized optimistically.
+If a leg balloons, commit WIP and append `## Leg N — HANDOFF (continue)` with exact remaining steps
++ current state, then either:
+
+- **Compact in place** — `herder-send-self /compact <steer: HANDOFF block, remaining steps, gate>`
+  as the last act before the turn ends (`herder` skill → *Self-send*). The same session continues
+  its own leg post-compaction; no respawn, and the relay's notify-back/self-spawn wiring is
+  untouched. Default when the context is coherent and only heavy.
+- **Spawn the continuation** — same leg, prompt notes "continue from the HANDOFF block". Prefer when
+  the context is degraded or a different agent/model should take the leg.
+
+Either escape hatch is what lets legs be sized optimistically.
 
 ## The soloist
 
 Degenerate relay: one role, no leg boundaries. A single agent works a runbook until context
-approaches budget, then mid-leg-handoffs to a fresh copy of itself. Same state files, gate, and
-mechanics; the HANDOFF blocks become the runbook's progress marks.
+approaches budget. Its cheapest budget reset is **compact in place** — bring the run-log current,
+then `herder-send-self /compact <steer toward the runbook position + next steps>` and continue as
+the same session — so the soloist stays one continuous agent across many compactions instead of a
+chain of respawns. Fall back to a fresh-copy mid-leg handoff when a compaction would only preserve a
+muddled context. Same state files, gate, and mechanics either way; the HANDOFF blocks (and the
+steered summaries) become the runbook's progress marks.

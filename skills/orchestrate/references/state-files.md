@@ -49,7 +49,10 @@ not the whole doc>.
 
 ## Context discipline (≤<budget>)
 
-Own ONE unit. If it balloons: WIP commit, `HANDOFF (continue)` block, stop.
+Own ONE unit. If it balloons: WIP commit + `HANDOFF (continue)` block, then either compact in place
+(`herder-send-self /compact <steer>` — same session continues) or stop and let a fresh copy pick up
+the block. Compact in place when the context is coherent and only heavy; spawn fresh when it's
+degraded or should switch agent/model.
 
 ## Decisions already made — do not re-litigate
 

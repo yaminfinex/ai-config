@@ -24,6 +24,7 @@ Record `$HERDR_PANE_ID`. Never close it, never cull yourself.
 |--------|---------|
 | `herder-spawn` | Mint GUID, `herdr agent start` a child, register it, deliver an initial prompt. |
 | `herder-send` | Mid-session message to an already-spawned peer, with state preflight + delivery verification. |
+| `herder-send-self` | Send an input line to your OWN pane (`$HERDR_PANE_ID`) — the basis for self-driven in-place `/compact`. |
 | `herder-wait` | Block until a target agent reaches a status. |
 | `herder-list` | Reconciled view of registry vs `herdr agent list`. |
 | `herder-cull` | Close a pane and mark registry row closed, with `terminal_id` identity check. |
@@ -68,6 +69,22 @@ Refuses to send into interrupted / modal panes unless `--force`. Verifies the pr
 **Targets resolve by `terminal_id`, not the stored pane number — so sends don't drift.** A guid/short-guid/label is looked up in the registry, then re-resolved to the agent's *current* pane via its durable `terminal_id` (herdr compacts/reassigns `pane_id`s as panes close, so the spawn-time pane in the registry goes stale and would mis-send to whoever sits there now). A bare `terminal_id` (`term_*`) resolves the same drift-proof way without a registry record — this is the handle `herder-spawn --notify` injects for the orchestrator ring, so the notify-back doorbell follows the orchestrator across pane-id compaction instead of firing into a recycled pane. A raw `pane_id` argument is used verbatim. If the target's terminal isn't live anywhere (agent gone/culled) `herder-send` **refuses** (exit 2) rather than firing into a recycled pane — pass an explicit live `pane_id` to override. Use `herder-send --dry-run <target>` to print where a target resolves (and whether it has drifted) without sending. `herder-wait` and `herder-list` resolve the same way. Background: `references/herder-delta.md` → *Known sharp edges* (pane-id compaction).
 
 **Long briefs to codex go through a file, not the wire.** Codex collapses any paste over ~1k chars into a `[Pasted Content N chars]` blob (which then needs a fragile, codex-version-specific double-Enter to submit), a multi-line brief trips its "Create a plan?" overlay, and leading characters clip during boot — all three make codex act on only the tail. A short single-line pointer dodges all three at once, so it is the *durable* fix, not patching the Enter dance. **`herder-spawn` now does this automatically for codex**: a long or multi-line initial prompt (incl. anything made multi-line by the `--notify` appendix) is staged to `$HERDER_STATE_DIR/briefs/<guid>.md` and only a one-line `Read <file> …, then plan` pointer is sent (reported as `brief: staged to …` / `brief_file` in `--json`). Claude has none of these pathologies and always gets the inline prompt. For **mid-session** `herder-send` to codex the same discipline is still manual: stage the brief in a file and send a one-line pointer yourself. Recipe: `references/spawn-patterns.md` → *Send a long brief to codex*.
+
+## Self-send (in-place compaction)
+
+```bash
+herder-send-self <message...>          # → herder-send "$HERDR_PANE_ID" "<message>"
+```
+
+A thin wrapper that targets your **own** pane. Issued mid-turn, the input is submitted to your own prompt and the harness queues it to fire the moment the current turn ends — so the headline use is a long-running agent compacting itself at a boundary it chooses, instead of waiting for auto-compaction to fire mid-unit:
+
+```bash
+herder-send-self /compact focus on run-log state, open units, and the next gate
+```
+
+A queued `/compact` delivered this way is parsed as a real slash command (verified: in-place compaction runs and in-context working memory survives into the summary), and `/compact <instructions>` lets the agent **steer its own summary** toward what the continuation needs. Generic and agent-agnostic — any slash command or text works, claude or codex.
+
+**Only call this from an agent about to end its turn as part of a real handoff** — it queues a real `/compact` against the caller, so it is never a "test" you run in a session you want to keep. Write durable state first (commit + run-log block) **before** compacting yourself; anything not persisted is at the mercy of the summary. The `orchestrate` skill's context-management notes own when to compact-in-place vs. spawn a fresh continuation.
 
 ## Waiting
 

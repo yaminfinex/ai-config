@@ -63,9 +63,17 @@ Pick by **who verifies a unit of work**, then parallelism — not task size.
    `references/backlog-integration.md`.
 2. **Spawn prompts are one line** — "read <playbook> in full, then execute <unit>". Context
    travels through the files + branch, never the prompt.
-3. **Context discipline.** One unit per agent; wide reading goes to subagents. If a unit
-   balloons: commit WIP, append `HANDOFF (continue)`, stop. A clean continuation beats a degraded
-   context.
+3. **Context discipline.** One unit per agent; wide reading goes to subagents. A ballooning unit
+   has two recoveries — both write durable state first (commit WIP + `HANDOFF (continue)` in the
+   run-log), since whatever isn't persisted is lost either way. **Compact in place:**
+   `herder-send-self /compact <steer: run-log state, open units, next gate>` as the last act before
+   the turn ends (`herder` skill → *Self-send*) — keeps the same pane, session identity, and
+   notify-back address; the agent wakes post-compaction and continues its own leg with a summary it
+   steered. **Spawn a fresh continuation:** stop and let a clean copy pick up from the HANDOFF block.
+   Compact in place when the context is still coherent and only heavy (cheapest; the soloist/relay
+   default for a long-but-unfinished leg); spawn fresh when the context is already degraded (a
+   steered compaction of muddled context just preserves the muddle) or the continuation should
+   switch agent/model.
 4. **Verification before done.** Playbook-pinned commands green, evidence pasted into the
    run-log. A build-cached green is not independent evidence — re-run directly. Red and out of
    scope → `BLOCKED`, stop. Never advance past red.
