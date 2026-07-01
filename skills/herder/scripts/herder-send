@@ -20,28 +20,8 @@
 #   --timeout MS         max time to wait for the prompt buffer to clear (default 3000)
 #   --json               emit a JSON record on stdout describing the send
 #
-# Behavior, in order:
-#
-#   1. Resolve <target> to a pane_id.
-#   2. Read the pane (recent-unwrapped) and run a pre-flight state check.
-#      Refuses (exit 2) if the agent is in an unsafe state — "Conversation
-#      interrupted", a sandbox/trust modal, etc. --force bypasses.
-#   3. Detect agent kind (codex / claude / other) to pick the prompt sigil for
-#      delivery verification (codex: "›", claude: "❯").
-#   4. `herdr agent send` writes the literal message text into the prompt.
-#   5. Unless --no-enter, `herdr pane send-keys ... Enter` submits.
-#   6. Verify delivery: re-read the pane and confirm the prompt sigil line is
-#      back to its empty/placeholder shape (the message text we just sent is no
-#      longer trailing the sigil). If verification fails, send one more Enter —
-#      codex specifically absorbs the first Enter when transitioning out of
-#      "Conversation interrupted" — then re-verify. Exit 1 on persistent failure.
-#
-#   Codex large-paste note: codex collapses a paste over ~1k chars into a
-#   "[Pasted Content N chars]" blob (the literal text disappears from view). A
-#   fresh blob is treated as positive landing evidence so we never re-paste and
-#   double the composer, and a second Enter is sent to expand-then-submit it.
-#   For long briefs prefer staging a file and sending a SHORT single-line pointer
-#   — see skills/herder/references/spawn-patterns.md → "Send a long brief to codex".
+# The send is dispatched through the delivery-driver interface, which selects
+# a transport (herdr keystroke, hcom hooks, etc.) automatically.
 #
 # Exit codes:
 #   0  — sent + verified, OR queued (target was busy; message accepted to run next)
@@ -49,12 +29,6 @@
 #   2  — refused: target gone (terminal not live) or in interrupted/modal state
 #   64 — usage error
 #
-# Busy target: if the target is ALREADY mid-turn when we send, it can't process the
-# message now — claude/codex queues it to run after the current turn. That queued
-# state is indistinguishable from an unsubmitted buffer via the sigil heuristic, so
-# we report verify=queued (exit 0) rather than not_delivered, and we do NOT fire the
-# extra-Enter recovery (which would stack duplicate queued messages). The doorbell
-# is best-effort; the run-log is the source of truth.
 
 set -euo pipefail
 
@@ -63,26 +37,20 @@ die() { printf 'herder-send: %s\n' "$*" >&2; exit 64; }
 command -v herdr >/dev/null 2>&1 || die "herdr not on PATH"
 command -v jq >/dev/null 2>&1 || die "jq not on PATH"
 
-STATE_DIR="${HERDER_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herder}"
-REGISTRY="$STATE_DIR/registry.jsonl"
-
 TARGET=""
 MESSAGE=""
-NO_ENTER=0
-NO_VERIFY=0
-FORCE=0
-TIMEOUT_MS=3000
-JSON_OUT=0
 DRY_RUN=0
+JSON_OUT=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)   DRY_RUN=1; shift;;
-    --no-enter)  NO_ENTER=1; shift;;
-    --no-verify) NO_VERIFY=1; shift;;
-    --force)     FORCE=1; shift;;
-    --timeout)   TIMEOUT_MS="$2"; shift 2;;
     --json)      JSON_OUT=1; shift;;
+    --no-enter|--no-verify|--force|--timeout)
+      # These flags are passed through to the driver but don't affect top-level logic
+      shift
+      [[ "$1" == "--timeout" ]] && shift
+      ;;
     -h|--help)   sed -n '1,40p' "$0"; exit 0;;
     --*)         die "unknown flag: $1";;
     *)
@@ -98,425 +66,41 @@ done
 [[ -n "$TARGET"  ]] || die "target required (guid, label, or pane id)"
 [[ -n "$MESSAGE" || "$DRY_RUN" -eq 1 ]] || die "message required"
 
-# ---- resolve target → LIVE pane_id (drift-proof, via terminal_id) --------------
-# The registry's pane_id is captured at spawn time and goes STALE: herdr compacts
-# and reassigns pane_ids whenever sibling panes close, so a label that spawned at
-# pane X can later resolve to a *different* agent now sitting at X — the classic
-# mis-send. terminal_id is the durable per-pane identity, so we look a
-# guid/short-guid/label up to its registry record, take its terminal_id, and ask
-# where that terminal lives RIGHT NOW. Same resolution herder-cull and herder-spawn
-# (--new-tab) already use. A raw pane_id is honoured verbatim (you asked for that
-# live pane); only registry handles get the terminal redirect.
+# ---- dispatch through delivery-driver interface ----
 
-# Snapshot the live pane→terminal map once. pane list covers every pane kind (not
-# just agents), so it resolves bash panes too.
-PANE_LIST_JSON="$(herdr pane list 2>/dev/null || true)"
-RESOLVED_VIA="verbatim"
-DRIFT_NOTE=""
-
-resolve_target() {  # sets PANE_ID / RESOLVED_VIA / DRIFT_NOTE; exits on a gone target
-  local v="$1" rec term stored label live npanes
-  # A bare terminal_id (term_*) resolves DIRECTLY to its current pane — no registry
-  # record needed. This is the drift-proof handle `herder-spawn --notify` injects
-  # for the orchestrator ring: the terminal is stable while pane_ids compact, and a
-  # gone terminal is refused (exit 2) exactly like the guid/label path, instead of
-  # firing into whoever now sits at the spawn-time pane.
-  if [[ "$v" == term_* ]]; then
-    live="$(printf '%s' "$PANE_LIST_JSON" | jq -r --arg t "$v" \
-      '.result.panes[]? | select(.terminal_id==$t) | .pane_id' 2>/dev/null | head -n1)"
-    if [[ -n "$live" ]]; then PANE_ID="$live"; RESOLVED_VIA="terminal_id(direct)"; return 0; fi
-    npanes="$(printf '%s' "$PANE_LIST_JSON" | jq '[.result.panes[]?] | length' 2>/dev/null || echo 0)"
-    if [[ "${npanes:-0}" -eq 0 ]]; then
-      printf 'herder-send: could not read live pane list from herdr; not resolving %s (retry, or pass an explicit pane_id).\n' "$v" >&2
-      exit 1
-    fi
-    printf 'herder-send: terminal %s is not live anywhere — agent gone or culled.\n' "$v" >&2
-    printf '            Refusing to send — pass an explicit live pane_id to override.\n' >&2
-    exit 2
-  fi
-  if [[ -f "$REGISTRY" ]]; then
-    rec="$(jq -sc --arg v "$v" '
-      group_by(.guid) | map(.[-1])
-      | map(select(.guid==$v or .short_guid==$v or .label==$v))
-      | last // empty' "$REGISTRY")"
-  fi
-  if [[ -z "${rec:-}" ]]; then PANE_ID="$v"; RESOLVED_VIA="verbatim"; return 0; fi
-  term="$(printf '%s' "$rec" | jq -r '.terminal_id // empty')"
-  stored="$(printf '%s' "$rec" | jq -r '.pane_id // empty')"
-  label="$(printf '%s' "$rec" | jq -r '.label // empty')"
-  if [[ -z "$term" ]]; then
-    # Legacy record without a terminal_id — best effort with the stored pane.
-    PANE_ID="$stored"; RESOLVED_VIA="stored_pane(no terminal_id)"; return 0
-  fi
-  live="$(printf '%s' "$PANE_LIST_JSON" | jq -r --arg t "$term" \
-    '.result.panes[]? | select(.terminal_id==$t) | .pane_id' 2>/dev/null | head -n1)"
-  if [[ -n "$live" ]]; then
-    PANE_ID="$live"; RESOLVED_VIA="terminal_id"
-    [[ -n "$stored" && "$live" != "$stored" ]] && \
-      DRIFT_NOTE="pane drifted — ${label:-$v} spawned at $stored, terminal $term now at $live"
-    return 0
-  fi
-  # terminal_id is not live anywhere. Distinguish a genuinely-gone agent from a
-  # transient herdr read failure: if pane list came back empty we can't tell, so
-  # don't claim gone.
-  npanes="$(printf '%s' "$PANE_LIST_JSON" | jq '[.result.panes[]?] | length' 2>/dev/null || echo 0)"
-  if [[ "${npanes:-0}" -eq 0 ]]; then
-    printf 'herder-send: could not read live pane list from herdr; not resolving %s (retry, or pass an explicit pane_id).\n' "$v" >&2
-    exit 1
-  fi
-  printf 'herder-send: %s (terminal %s) is not live anywhere — agent gone or culled.\n' "${label:-$v}" "$term" >&2
-  printf '            Refusing to send to its spawn-time pane %s — it now belongs to a different agent. Pass an explicit live pane_id to override.\n' "$stored" >&2
-  exit 2
-}
-
-resolve_target "$TARGET"
-[[ -n "$DRIFT_NOTE" ]] && printf 'herder-send: %s\n' "$DRIFT_NOTE" >&2
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/delivery-driver.sh"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
+  # Resolve via the herdr driver for --dry-run
+  # Call _herdr_resolve_internal to get "pane_id|resolved_via|drifted|drift_note" format
+  resolve_output="$(_herdr_resolve_internal "$TARGET" 2>/dev/null)" || {
+    rc=$?
+    [[ $rc -eq 2 ]] && exit 2 || exit 1
+  }
+
+  # Parse: pane_id|resolved_via|drifted|drift_note
+  # Use IFS to split on |, but drift_note may contain |, so split manually
+  pane_id="$(printf '%s' "$resolve_output" | cut -d'|' -f1)"
+  resolved_via="$(printf '%s' "$resolve_output" | cut -d'|' -f2)"
+  drifted="$(printf '%s' "$resolve_output" | cut -d'|' -f3)"
+  drift_note="$(printf '%s' "$resolve_output" | cut -d'|' -f4-)"
+
+  # Emit drift warning if applicable
+  [[ "$drift_note" != "" ]] && printf 'herder-send: %s\n' "$drift_note" >&2
+
   printf 'herder-send --dry-run: %s -> pane %s (via %s)%s\n' \
-    "$TARGET" "$PANE_ID" "$RESOLVED_VIA" \
-    "$([[ -n "$DRIFT_NOTE" ]] && printf ' [DRIFTED]')" >&2
+    "$TARGET" "$pane_id" "$resolved_via" \
+    "$([[ "$drifted" == "true" ]] && printf ' [DRIFTED]')" >&2
+
   if [[ "$JSON_OUT" -eq 1 ]]; then
-    jq -nc --arg pane "$PANE_ID" --arg target "$TARGET" --arg via "$RESOLVED_VIA" \
-      --argjson drifted "$([[ -n "$DRIFT_NOTE" ]] && echo true || echo false)" \
+    jq -nc --arg pane "$pane_id" --arg target "$TARGET" --arg via "$resolved_via" \
+      --argjson drifted "$([[ "$drifted" == "true" ]] && echo true || echo false)" \
       '{pane_id:$pane, target:$target, resolved_via:$via, drifted:$drifted, dry_run:true}'
   fi
   exit 0
 fi
 
-# ---- read pane + detect agent kind --------------------------------------------
-
-read_pane() {
-  herdr agent read "$PANE_ID" --source recent-unwrapped --lines 80 2>&1 \
-    | jq -r '.result.read.text // empty' 2>/dev/null || true
-}
-
-# Identify the agent kind from the live agent list so we can match the right
-# prompt sigil. Fall back to "other" if not recognized.
-detect_kind() {
-  herdr agent list 2>/dev/null \
-    | jq -r --arg pid "$PANE_ID" \
-        '.result.agents[]? | select(.pane_id==$pid) | .agent // empty' \
-    | head -n1
-}
-
-# Read the agent's integration status (idle/working/done/blocked/unknown). This
-# is a far more reliable delivery signal than scraping the prompt sigil: when a
-# submit lands, the agent flips to `working`. The sigil heuristic alone
-# false-negatives on placeholder hints (e.g. claude's "❯ run the full smoke
-# test suite") and on slow submits that clear the buffer after our poll window.
-detect_status() {
-  herdr agent list 2>/dev/null \
-    | jq -r --arg pid "$PANE_ID" \
-        '.result.agents[]? | select(.pane_id==$pid) | .agent_status // empty' \
-    | head -n1
-}
-
-KIND="$(detect_kind || true)"
-case "$KIND" in
-  codex)  SIGIL='›';;
-  claude) SIGIL='❯';;
-  *)      SIGIL='';;
-esac
-
-# ---- pre-flight state check ----------------------------------------------------
-# Refuses to send if the pane is in a state where input would be unsafe.
-# Patterns are deliberately narrow — false positives block legitimate sends, so
-# we only block on states we know are dangerous.
-
-preflight_blocked_reason() {
-  local text="$1"
-  # Codex / claude shared: explicit interrupt banner
-  if grep -qE '(Conversation interrupted|Interrupted by user)' <<<"$text"; then
-    printf 'agent is in "Conversation interrupted" state; recover it first (focus pane and press Enter, or --force)'
-    return 0
-  fi
-  # Codex / claude: first-run directory-trust prompt. Refusing here is the last
-  # line of defense against a pasted message's characters silently confirming
-  # trust (codex shows "1. Yes, continue" + "Press enter to continue").
-  if grep -qE 'Do you trust the contents of this directory|Do you trust the files in this folder|Is this a project you created or one you trust|Yes, I trust this folder' <<<"$text"; then
-    printf 'first-run directory-trust prompt is open; accept it (focus pane + Enter) before sending'
-    return 0
-  fi
-  # Codex: sandbox approval / command approval modal
-  if grep -qE '(Sandbox approval|Approve command\?|Allow this command\?)' <<<"$text"; then
-    printf 'codex approval modal is open; resolve it manually before sending'
-    return 0
-  fi
-  # Claude: permission prompt
-  if grep -qE '(Do you want to allow|Permission required)' <<<"$text"; then
-    printf 'claude permission prompt is open; resolve it manually before sending'
-    return 0
-  fi
-  return 1
-}
-
-# Strip ANSI escape sequences and zero-width chars before pattern matching.
-strip_chrome() {
-  python3 -c '
-import re, sys
-t = sys.stdin.read()
-t = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", t)
-t = re.sub(r"\x1b\][^\x07]*\x07", "", t)
-sys.stdout.write(t)
-' 2>/dev/null || cat
-}
-
-PRE_TEXT_RAW="$(read_pane)"
-PRE_TEXT="$(printf '%s' "$PRE_TEXT_RAW" | strip_chrome)"
-# Snapshot status before sending so a later transition into `working` can be read
-# as positive proof the submit landed (only meaningful if we weren't already
-# working).
-PRE_STATUS="$(detect_status || true)"
-
-# Delivery is confirmed if the agent moved into `working` from a non-working
-# pre-state — i.e. our submit kicked off a turn.
-status_confirms_delivery() {
-  local now; now="$(detect_status || true)"
-  [[ "$now" == "working" && "$PRE_STATUS" != "working" ]]
-}
-
-if [[ "$FORCE" -ne 1 ]]; then
-  if REASON="$(preflight_blocked_reason "$PRE_TEXT")"; then
-    printf 'herder-send: refusing to send to %s: %s\n' "$PANE_ID" "$REASON" >&2
-    exit 2
-  fi
-fi
-
-# ---- text-presence helpers -----------------------------------------------------
-# A not-yet-ready TUI silently DROPS a pasted message, which then looks identical
-# to an empty (submitted) prompt — so we reason about presence positively, not by
-# the absence of text. We key off the message TAIL rather than its head: codex
-# clips the LEADING characters of a paste while still booting, but never the end,
-# so the tail is the reliable fingerprint. (read_pane uses recent-unwrapped, so
-# even a wrapped multi-line input is one logical sigil line carrying the tail.)
-MSG_PROBE="$(printf '%s' "$MESSAGE" | grep -v '^[[:space:]]*$' | tail -n1)"
-# Probe on the tail (codex clips a paste's LEADING chars while booting, never the
-# end). Only trim when the line is actually longer than the window: `${v: -45}`
-# returns the EMPTY string for any value shorter than 45 chars, which made a short
-# message look empty, take the empty-message shortcut, and skip the Enter entirely
-# — so every sub-45-char send (notably every notify-back doorbell) silently never
-# submitted. Guard the trim so short messages keep their full probe.
-[[ "${#MSG_PROBE}" -gt 45 ]] && MSG_PROBE="${MSG_PROBE: -45}"
-
-# Codex collapses a large paste (>~1k chars) into a "[Pasted Content N chars]"
-# placeholder (claude uses "[Pasted text …]") instead of echoing the literal
-# text — so the tail probe above can't see it and msg_present false-negatives.
-# Left unhandled, the send loop below would re-paste and DOUBLE the composer.
-# Baseline the pre-send blob count so a NEW blob can be read as positive landing
-# evidence without tripping on a stale one already in scrollback.
-pasted_blob_count() {  # count of paste-collapse placeholders in the given text
-  local n
-  n="$(grep -cE '\[Pasted (Content|text)' <<<"$1" 2>/dev/null)" || n=0
-  printf '%s' "${n:-0}"
-}
-PRE_BLOBS="$(pasted_blob_count "$PRE_TEXT")"
-
-new_paste_blob() {  # a fresh paste-collapse placeholder appeared since we started
-  [[ "$(pasted_blob_count "$1")" -gt "$PRE_BLOBS" ]]
-}
-
-msg_present() {   # message text is visible anywhere in the pane (input or transcript)
-  local text="$1"
-  [[ -n "$MSG_PROBE" ]] || return 0
-  grep -qF -- "$MSG_PROBE" <<<"$text"
-}
-
-msg_trailing_sigil() {  # message text is sitting in the input buffer, not yet submitted
-  local text="$1" last_sigil last_line
-  [[ -n "$MSG_PROBE" ]] || return 1
-  if [[ -n "$SIGIL" ]]; then
-    last_sigil="$(grep -F "$SIGIL " <<<"$text" | tail -n1 || true)"
-    [[ -n "$last_sigil" ]] || return 1
-    grep -qF -- "$MSG_PROBE" <<<"$last_sigil"
-  else
-    last_line="$(printf '%s\n' "$text" | awk 'NF{l=$0} END{print l}')"
-    grep -qF -- "$MSG_PROBE" <<<"$last_line"
-  fi
-}
-
-# ---- send (ensure it lands) ----------------------------------------------------
-# Paste the message and confirm it actually entered the buffer (or already kicked
-# off a turn). Re-paste once if the agent wasn't ready — this stops a dropped
-# paste from being mis-reported as a successful empty submit. Capped at 2 attempts
-# because each extra paste that DID land just concatenates into the buffer; the
-# tail-probe detection makes a spurious second paste unlikely.
-LANDED=0
-PASTE_COLLAPSED=0
-SEND_ATTEMPTS=0
-if [[ -z "$MSG_PROBE" ]]; then LANDED=1; fi  # empty message: nothing to land
-while [[ $LANDED -eq 0 && $SEND_ATTEMPTS -lt 2 ]]; do
-  SEND_ATTEMPTS=$((SEND_ATTEMPTS + 1))
-  if ! herdr agent send "$PANE_ID" "$MESSAGE" >/dev/null 2>&1; then
-    sleep 0.4; continue
-  fi
-  W=0
-  while [[ $W -lt 2500 ]]; do
-    sleep 0.25
-    if status_confirms_delivery; then LANDED=1; break; fi
-    POST="$(read_pane | strip_chrome)"
-    if msg_present "$POST"; then LANDED=1; break; fi
-    # Paste collapsed into a "[Pasted Content N chars]" blob: the text DID land,
-    # it's just rendered as a placeholder. Treat the new blob as landed so we
-    # don't re-paste and double the composer.
-    if new_paste_blob "$POST"; then LANDED=1; PASTE_COLLAPSED=1; break; fi
-    W=$((W + 250))
-  done
-done
-
-if [[ $LANDED -eq 0 ]]; then
-  printf 'herder-send: message never landed in %s after %d paste attempts (agent not accepting input?)\n' \
-    "$PANE_ID" "$SEND_ATTEMPTS" >&2
-fi
-
-SUBMITTED=false
-if [[ "$NO_ENTER" -eq 0 && $LANDED -eq 1 && -n "$MSG_PROBE" ]]; then
-  sleep 0.2
-  herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
-  SUBMITTED=true
-fi
-
-# ---- verify delivery -----------------------------------------------------------
-# Delivery requires POSITIVE evidence, not the absence of text (an agent that
-# dropped our paste also shows an empty sigil line). We claim delivery when:
-#   * the agent transitioned into `working` (a turn started), OR
-#   * the message text is present in the pane but no longer sitting in the input
-#     buffer (it moved into the transcript = submitted).
-# It is NOT delivered when the text is absent (paste lost) or still in the buffer
-# (not submitted). Codex absorbs the first Enter when leaving "Conversation
-# interrupted", so a single extra Enter is tried when the text is still buffered.
-
-verify_delivered() {
-  local text="$1"
-  [[ -n "$MSG_PROBE" ]] || return 0               # empty message: nothing to verify
-  if msg_present "$text" && ! msg_trailing_sigil "$text"; then
-    return 0                                       # text moved out of the buffer → submitted
-  fi
-  return 1
-}
-
-VERIFY_RESULT="not_attempted"
-EXTRA_ENTER_SENT=false
-
-if [[ $LANDED -eq 0 ]]; then
-  # Paste never landed — do not claim anything was delivered.
-  VERIFY_RESULT="not_landed"
-elif [[ "$NO_ENTER" -eq 1 ]]; then
-  # Caller only wanted the text placed in the buffer; landing is success.
-  VERIFY_RESULT="placed"
-elif [[ "$NO_VERIFY" -eq 1 ]]; then
-  VERIFY_RESULT="not_verified"
-elif [[ "$SUBMITTED" == "true" ]]; then
-  STEP_MS=250
-  DELIVERED=0
-  QUEUED=0
-
-  poll_delivered() {  # poll up to $TIMEOUT_MS for positive delivery evidence
-    local elapsed=0 post
-    while [[ $elapsed -lt $TIMEOUT_MS ]]; do
-      sleep "$(awk -v ms="$STEP_MS" 'BEGIN{printf "%.3f", ms/1000}')"
-      status_confirms_delivery && return 0
-      post="$(read_pane | strip_chrome)"
-      verify_delivered "$post" && return 0
-      elapsed=$((elapsed + STEP_MS))
-    done
-    return 1
-  }
-
-  # For a collapsed paste, submission is proven by the "[Pasted Content]" blob
-  # LEAVING the composer — not by the sigil line and not by status. Two live
-  # failure modes ruled those out: (a) codex wraps a big blob across continuation
-  # lines with no "›" prefix, so a tail-on-the-input-line check false-negatives;
-  # (b) codex flips to `working` while merely EXPANDING the blob, so a status
-  # flip is not proof of submission. On a real submit the blob marker expands
-  # into the transcript and the marker count drops back to its pre-send baseline.
-  blob_submitted() { [[ "$(pasted_blob_count "$(read_pane | strip_chrome)")" -le "$PRE_BLOBS" ]]; }
-  wait_blob_submitted() {  # poll ~2.4s for the blob to leave the composer
-    local i
-    for i in 1 2 3 4 5 6 7 8; do blob_submitted && return 0; sleep 0.3; done
-    return 1
-  }
-
-  if [[ "$PASTE_COLLAPSED" -eq 1 ]]; then
-    # The first Enter (already sent above) does not submit a collapsed blob;
-    # codex needs another. Drive up to two more, confirming via blob-disappearance.
-    # (Observed live: without this, verification declared "delivered" while the
-    # blob sat unsubmitted in the composer.)
-    if wait_blob_submitted; then
-      DELIVERED=1
-    else
-      herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
-      EXTRA_ENTER_SENT=true
-      if wait_blob_submitted; then
-        DELIVERED=1
-      else
-        herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
-        wait_blob_submitted && DELIVERED=1
-      fi
-    fi
-  elif poll_delivered; then
-    DELIVERED=1
-  elif [[ "$PRE_STATUS" == "working" ]]; then
-    # The target was ALREADY mid-turn when we sent, so it can't process the message
-    # now — claude/codex QUEUES it (it runs after the current turn) and renders the
-    # queued text right on the input/sigil line, where the heuristic above can't
-    # tell "queued (submitted, will run next)" from "still buffered (not yet sent)".
-    # Since it LANDED (entered the composer) and we pressed Enter once, treat it as
-    # queued = success. Crucially do NOT run the extra-Enter recovery below: on a
-    # busy agent each extra Enter stacks ANOTHER duplicate queued message. The
-    # run-log stays the source of truth — this send is only a best-effort doorbell.
-    QUEUED=1; DELIVERED=1
-  else
-    # Recovery for the non-collapsed, idle-agent case: codex absorbs the first Enter
-    # when leaving "Conversation interrupted" — send one more if text is still buffered.
-    if msg_trailing_sigil "$(read_pane | strip_chrome)"; then
-      herdr pane send-keys "$PANE_ID" Enter >/dev/null 2>&1 || true
-      EXTRA_ENTER_SENT=true
-      poll_delivered && DELIVERED=1
-    fi
-  fi
-
-  if [[ "$QUEUED" -eq 1 ]]; then VERIFY_RESULT="queued"
-  elif [[ $DELIVERED -eq 1 ]]; then VERIFY_RESULT="delivered"
-  else VERIFY_RESULT="not_delivered"; fi
-fi
-
-# ---- report --------------------------------------------------------------------
-
-{
-  printf 'sent %d chars to %s' "${#MESSAGE}" "$PANE_ID"
-  [[ -n "$KIND" ]] && printf ' (%s)' "$KIND"
-  if [[ "$SUBMITTED" == "true" ]]; then
-    printf ', submitted'
-  elif [[ "$NO_ENTER" -eq 1 ]]; then
-    printf ', not submitted (--no-enter)'
-  fi
-  printf ', verify=%s' "$VERIFY_RESULT"
-  [[ "$VERIFY_RESULT" == "queued" ]] && printf ' (target was busy; message queued to run next — do NOT resend)'
-  [[ "$PASTE_COLLAPSED" -eq 1 ]] && printf ' (codex collapsed paste to blob)'
-  [[ "$EXTRA_ENTER_SENT" == "true" ]] && printf ' (extra Enter sent)'
-  [[ "$SEND_ATTEMPTS" -gt 1 ]] && printf ' (re-pasted x%d)' "$SEND_ATTEMPTS"
-  printf '\n'
-} >&2
-
-if [[ "$JSON_OUT" -eq 1 ]]; then
-  jq -nc \
-    --arg pane "$PANE_ID" \
-    --arg kind "$KIND" \
-    --arg target "$TARGET" \
-    --arg resolved_via "$RESOLVED_VIA" \
-    --argjson submitted "$SUBMITTED" \
-    --arg verify "$VERIFY_RESULT" \
-    --argjson extra_enter "$EXTRA_ENTER_SENT" \
-    --argjson paste_collapsed "$PASTE_COLLAPSED" \
-    --arg msg_preview "$(printf '%s' "$MESSAGE" | head -c 120)" \
-    '{pane_id:$pane, agent:$kind, target:$target, resolved_via:$resolved_via, submitted:$submitted,
-      verify:$verify, extra_enter_sent:$extra_enter, paste_collapsed:($paste_collapsed==1),
-      message_preview:$msg_preview}'
-fi
-
-# Non-zero when we could not positively confirm the outcome the caller asked for.
-case "$VERIFY_RESULT" in
-  not_landed|not_delivered) exit 1;;
-esac
-exit 0
+# Dispatch the send through the driver
+driver_dispatch send "$TARGET" "$MESSAGE"
+exit $?
