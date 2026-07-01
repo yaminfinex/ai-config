@@ -32,3 +32,8 @@ vendor/*/coverage/
 
 # hcom worktree-local bus state
 .hcom/
+
+# claude runtime cruft from hcom-launch spikes (isolated CLAUDE_CONFIG_DIR)
+.agents/plugins/
+.agents/projects/
+.agents/*.json
