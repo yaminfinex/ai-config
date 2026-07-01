@@ -29,3 +29,6 @@ backups/
 vendor/*/node_modules/
 vendor/*/dist/
 vendor/*/coverage/
+
+# hcom worktree-local bus state
+.hcom/
