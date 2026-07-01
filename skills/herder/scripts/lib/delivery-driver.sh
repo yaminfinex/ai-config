@@ -51,9 +51,13 @@ fi
 select_driver() {
   local target="$1" bus="${HERDER_BUS:-auto}"
 
-  # Explicit override takes priority
-  if [[ "$bus" != "auto" ]]; then
-    printf '%s' "$bus"
+  # Explicit override takes priority (herdr or hcom)
+  if [[ "$bus" == "herdr" ]]; then
+    printf '%s' "herdr"
+    return 0
+  fi
+  if [[ "$bus" == "hcom" ]]; then
+    printf '%s' "hcom"
     return 0
   fi
 
