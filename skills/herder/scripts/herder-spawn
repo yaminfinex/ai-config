@@ -4,7 +4,24 @@
 # Usage:
 #   herder-spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]
 #                [--split right|down] [--workspace ID | --from-pane PANE_ID] [--tab ID | --new-tab] [--cwd PATH]
-#                [--no-focus] [--safe] [--notify | --notify-to PANE] [--label-prefix STR] [--extra-arg ARG]... [--json]
+#                [--bus auto|off] [--no-focus] [--safe] [--notify | --notify-to PANE] [--label-prefix STR] [--extra-arg ARG]... [--json]
+#
+# Bus join (transport-neutral):
+#   * --bus auto (default) has the spawned agent join the delivery bus in its worktree after it
+#     settles, so a peer can reach it via the richest transport available (currently the hcom
+#     message bus for claude/codex; keystroke herdr otherwise). Join is TRANSPORT-NEUTRAL: this
+#     flag never names a concrete transport (KTD1) — driver selection picks it. --bus off skips the
+#     join entirely (spawn is byte-for-byte the pre-U10 behavior).
+#   * For an hcom-capable child (claude/codex) with hcom installed, --bus auto: (1) injects
+#     HCOM_DIR=<child-cwd>/.hcom into the child's PROCESS env at launch (an `export` in a Bash tool
+#     runs in a subshell and never reaches the harness hooks, so it must be baked into argv here),
+#     plus HCOM_INSTANCE_NAME=<label> so the instance name aligns with the herder label; (2) runs
+#     `hcom hooks add <tool>` scoped to that HCOM_DIR so the child's hooks are present; (3) after the
+#     child settles, dispatches `join` through the delivery-driver, which runs `hcom start --as
+#     <label>` (a bare `hcom start` auto-names, e.g. `tuna`, so the name must be pinned).
+#   * Join is BEST-EFFORT and NON-FATAL: if it fails (or hcom is absent, or the agent isn't an
+#     hcom target) the spawn still succeeds and the agent stays reachable over herdr keystrokes; the
+#     outcome is reported in the human summary and the --json `bus_join` field.
 #
 # Tab placement:
 #   * --tab <id>  places the agent in an existing tab (as a split alongside whatever is there).
@@ -80,6 +97,7 @@ SAFE=0
 NOTIFY=0
 NOTIFY_TO=""
 SETTLE_MS="${HERDER_SPAWN_SETTLE_MS:-1500}"
+BUS_MODE="auto"   # auto|off — transport-neutral bus join (KTD1: never names a transport)
 
 # Sibling scripts live next to this one; resolve their dir so we can delegate
 # initial-prompt delivery to herder-send (verified send) regardless of $PATH.
@@ -137,15 +155,17 @@ while [[ $# -gt 0 ]]; do
     --no-login-shell) LOGIN_SHELL=0; shift;;
     --login-shell) LOGIN_SHELL_BIN="$2"; shift 2;;
     --safe) SAFE=1; shift;;
+    --bus) BUS_MODE="$2"; shift 2;;
     --notify) NOTIFY=1; shift;;
     --notify-to) NOTIFY=1; NOTIFY_TO="$2"; shift 2;;
-    -h|--help) sed -n '2,46p' "$0"; exit 0;;
+    -h|--help) sed -n '2,62p' "$0"; exit 0;;
     *) die "unknown arg: $1";;
   esac
 done
 
 [[ -n "$ROLE" ]] || die "--role required"
 [[ -n "$AGENT" ]] || die "--agent required"
+[[ "$BUS_MODE" == "auto" || "$BUS_MODE" == "off" ]] || die "--bus must be auto or off (never a transport name — driver selection picks it)"
 [[ -z "$PROMPT" || -z "$PROMPT_FILE" ]] || die "use --prompt or --prompt-file, not both"
 [[ -z "$WORKSPACE" || -z "$FROM_PANE" ]] || die "use --workspace or --from-pane, not both"
 [[ "$NEW_TAB" -eq 0 || -z "$TAB" ]] || die "use --new-tab or --tab, not both"
@@ -240,6 +260,61 @@ GUID="$(uuidgen | tr 'A-Z' 'a-z')"
 SHORT="${GUID%%-*}"
 LABEL="${LABEL_PREFIX}${ROLE}-${SHORT}"
 
+# --- transport-neutral bus join setup (U10) ------------------------------------
+# Decide whether this spawn will attempt a bus join, and if so prepare the child's
+# env + hooks BEFORE launch. This is deliberately transport-neutral at the flag
+# level (KTD1): we only ever compute "is a real hcom join possible" here; the
+# post-settle `driver_dispatch join` is what actually picks a transport. The join
+# is best-effort — a failure never fails the spawn (reported in summary + --json).
+#
+# hcom is the only bus that needs pre-launch wiring: the child harness reads
+# HCOM_DIR from its PROCESS env (a hook cannot see an `export` done in a Bash tool
+# subshell — U3 finding), and its hooks must already be installed when it boots.
+# Map the agent to its hcom tool name; a non-hcom agent (bash, etc.) never joins.
+hcom_tool_for_agent() {
+  case "$1" in
+    claude|codex|gemini|opencode) printf '%s' "$1";;
+    *) printf '';;
+  esac
+}
+
+# Resolve the child's cwd up front so HCOM_DIR (hooks location + bus DB) matches
+# between the pre-launch `hooks add`, the injected child env, and the post-settle
+# join. Order mirrors how herdr resolves the pane cwd: explicit --cwd, else the
+# target workspace's checkout, else this (spawner's) cwd.
+CHILD_CWD="$CWD"
+if [[ -z "$CHILD_CWD" && -n "$WORKSPACE" && -n "${WS_LIST_JSON:-}" ]]; then
+  CHILD_CWD="$(printf '%s' "$WS_LIST_JSON" | jq -r --arg ws "$WORKSPACE" \
+    '.result.workspaces[]? | select(.workspace_id==$ws) | (.worktree.checkout_path // .worktree.repo_root // "")' 2>/dev/null || true)"
+fi
+[[ -n "$CHILD_CWD" ]] || CHILD_CWD="$PWD"
+HCOM_DIR_VAL="$CHILD_CWD/.hcom"
+HCOM_TOOL_NAME="$(hcom_tool_for_agent "$AGENT")"
+
+# BUS_ACTIVE=1 means we will inject hcom env + install hooks and force the hcom
+# transport for the join. It requires: --bus auto, hcom on PATH, and an hcom-capable
+# agent. Otherwise the join (if attempted) resolves to the herdr no-op.
+BUS_ACTIVE=0
+HOOKS_RESULT="not_attempted"
+if [[ "$BUS_MODE" == "auto" ]] && have hcom && [[ -n "$HCOM_TOOL_NAME" ]]; then
+  BUS_ACTIVE=1
+  # Install the child's hooks scoped to its worktree bus, BEFORE it boots (hooks
+  # activate at harness start). A trust warning here is non-fatal (rc stays 0);
+  # the whole join is best-effort, so a hooks failure only downgrades reachability
+  # to herdr, never fails the spawn.
+  set +e
+  HOOKS_ADD_OUT="$(HCOM_DIR="$HCOM_DIR_VAL" hcom hooks add "$HCOM_TOOL_NAME" 2>&1)"
+  HOOKS_ADD_RC=$?
+  set -e
+  if [[ "$HOOKS_ADD_RC" -eq 0 ]]; then
+    HOOKS_RESULT="added:$HCOM_TOOL_NAME"
+  else
+    HOOKS_RESULT="add-failed"
+    printf 'herder-spawn: hcom hooks add %s failed (rc=%s); bus join will degrade to herdr\n  %s\n' \
+      "$HCOM_TOOL_NAME" "$HOOKS_ADD_RC" "$HOOKS_ADD_OUT" >&2
+  fi
+fi
+
 # --new-tab: create a dedicated tab for this agent with no spare shell. `tab create`
 # seeds the tab with a root shell pane; we capture its pane_id + terminal_id so we
 # can close it after the agent lands (see post-start cleanup below). Set TAB so the
@@ -282,16 +357,29 @@ start_args=("agent" "start" "$LABEL" "$FOCUS_FLAG" "--split" "$SPLIT")
 # HERDER_SPAWN_SHELL when $SHELL is wrong (e.g. testing zsh on a bash box).
 NOTIFY_TO_EXPORT=""
 [[ -n "$NOTIFY_TO" ]] && NOTIFY_TO_EXPORT=" HERDER_NOTIFY_TO=$(printf '%q' "$NOTIFY_TO")"
+
+# Bus env baked into the child's PROCESS env (not just a Bash-tool `export`, which
+# a hook cannot see — U3). HCOM_DIR binds the child to its worktree bus;
+# HCOM_INSTANCE_NAME pins the joined instance name to the herder label so a peer's
+# `hcom send @<label>` resolves (a bare `hcom start` otherwise auto-names, e.g.
+# `tuna`); HCOM_TOOL names the harness for the hooks.
+BUS_EXPORT=""
+if [[ "$BUS_ACTIVE" -eq 1 ]]; then
+  BUS_EXPORT=" HCOM_DIR=$(printf '%q' "$HCOM_DIR_VAL") HCOM_INSTANCE_NAME=$(printf '%q' "$LABEL") HCOM_TOOL=$(printf '%q' "$HCOM_TOOL_NAME")"
+fi
 if [[ "$LOGIN_SHELL" -eq 1 ]]; then
   inner_cmd=""
   for arg in "$AGENT" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}; do
     inner_cmd+="$(printf '%q ' "$arg")"
   done
-  inner="export HERDER_GUID=$(printf '%q' "$GUID") HERDER_ROLE=$(printf '%q' "$ROLE") HERDER_LABEL=$(printf '%q' "$LABEL") HERDER_SEND=$(printf '%q' "$HERDER_SEND_ABS")${NOTIFY_TO_EXPORT}; exec ${inner_cmd}"
+  inner="export HERDER_GUID=$(printf '%q' "$GUID") HERDER_ROLE=$(printf '%q' "$ROLE") HERDER_LABEL=$(printf '%q' "$LABEL") HERDER_SEND=$(printf '%q' "$HERDER_SEND_ABS")${NOTIFY_TO_EXPORT}${BUS_EXPORT}; exec ${inner_cmd}"
   argv=("$LOGIN_SHELL_BIN" -lic "$inner")
 else
   argv=(env "HERDER_GUID=$GUID" "HERDER_ROLE=$ROLE" "HERDER_LABEL=$LABEL" "HERDER_SEND=$HERDER_SEND_ABS")
   [[ -n "$NOTIFY_TO" ]] && argv+=("HERDER_NOTIFY_TO=$NOTIFY_TO")
+  if [[ "$BUS_ACTIVE" -eq 1 ]]; then
+    argv+=("HCOM_DIR=$HCOM_DIR_VAL" "HCOM_INSTANCE_NAME=$LABEL" "HCOM_TOOL=$HCOM_TOOL_NAME")
+  fi
   argv+=("$AGENT" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"})
 fi
 
@@ -502,6 +590,46 @@ elif [[ -n "$PROMPT" ]]; then
   [[ "$SEND_RC" -eq 0 ]] && PROMPT_SENT=true
 fi
 
+# --- transport-neutral bus join (post-settle, U10) -----------------------------
+# Now that the child has settled (and any initial prompt is delivered), join it to
+# the delivery bus. This dispatches through the delivery-driver `join` op so the
+# flag stays transport-neutral (KTD1). The driver's join functions end with an
+# `exit`, so we run the dispatch in a SUBSHELL — otherwise it would terminate this
+# process before the summary/--json is emitted. The join is BEST-EFFORT: its exit
+# code only sets the reported status; it NEVER fails the spawn (the agent is always
+# reachable over herdr keystrokes regardless — KTD3 hard fallback).
+#
+# Driver choice for the join can't go through the usual auto capability-detect:
+# select_driver keys on "is the target already joined", but join is what makes it
+# joined (circular). So we force the transport we prepared for: hcom when
+# BUS_ACTIVE, else the herdr no-op.
+BUS_JOIN_RESULT="off"
+if [[ "$BUS_MODE" != "off" ]]; then
+  if [[ "$BUS_ACTIVE" -eq 1 ]]; then
+    set +e
+    ( export HERDER_BUS=hcom HCOM_DIR="$HCOM_DIR_VAL"
+      source "$SCRIPT_DIR/lib/delivery-driver.sh"
+      driver_dispatch join "$LABEL" ) >/dev/null 2>&1
+    JOIN_RC=$?
+    set -e
+    if [[ "$JOIN_RC" -eq 0 ]]; then
+      BUS_JOIN_RESULT="joined:hcom"
+    else
+      BUS_JOIN_RESULT="join-failed (rc=$JOIN_RC; agent still reachable via herdr)"
+    fi
+  else
+    # auto but no real bus available (hcom absent or agent isn't an hcom target):
+    # the join resolves to the herdr no-op — nothing to do, spawn is unchanged.
+    if ! have hcom; then
+      BUS_JOIN_RESULT="skipped (herdr no-op: hcom not installed)"
+    elif [[ -z "$HCOM_TOOL_NAME" ]]; then
+      BUS_JOIN_RESULT="skipped (herdr no-op: $AGENT is not an hcom target)"
+    else
+      BUS_JOIN_RESULT="skipped (herdr no-op)"
+    fi
+  fi
+fi
+
 # Human summary to stderr.
 {
   printf 'spawned %s (%s) in pane %s (workspace %s)\n' "$LABEL" "$AGENT" "$PANE_ID" "$WS_ID"
@@ -522,6 +650,12 @@ fi
   if [[ "$NOTIFY" -eq 1 && -n "$NOTIFY_TO" ]]; then
     printf '  notify: rings %s on done (HERDER_SEND + HERDER_NOTIFY_TO injected)\n' "$NOTIFY_TO"
   fi
+  if [[ "$BUS_MODE" == "off" ]]; then
+    printf '  bus:    off (no join attempted)\n'
+  else
+    printf '  bus:    %s\n' "$BUS_JOIN_RESULT"
+    [[ "$BUS_ACTIVE" -eq 1 ]] && printf '          hooks: %s, HCOM_DIR=%s\n' "$HOOKS_RESULT" "$HCOM_DIR_VAL"
+  fi
   if [[ -n "$BRIEF_FILE" ]]; then
     printf '  brief:  staged to %s (codex; sent a one-line pointer to dodge paste-blob/plan-overlay)\n' "$BRIEF_FILE"
   fi
@@ -540,7 +674,12 @@ fi
 } >&2
 
 if [[ "$JSON_OUT" -eq 1 ]]; then
-  # Enrich the registry record with delivery + permission outcome for the caller.
+  # Enrich the registry record with delivery + permission + bus-join outcome for the
+  # caller. Conditional keys (brief_file, hcom_dir, hcom_hooks) are merged via
+  # `+ (if empty then {} else {...})` rather than `{k:($x|select(.!=""))}`: an empty
+  # `select` yields an empty STREAM, which collapses the ENTIRE object construction to
+  # no output (a latent bug in the prior `brief_file:(…|select…)` form — it silently
+  # emitted nothing for every brief-less spawn). The merge form keeps the object.
   printf '%s\n' "$RECORD" | jq -c \
     --argjson sent "$PROMPT_SENT" \
     --arg delivery "$DELIVERY_RESULT" \
@@ -548,5 +687,15 @@ if [[ "$JSON_OUT" -eq 1 ]]; then
     --argjson new_tab "$([[ "$NEW_TAB" -eq 1 ]] && echo true || echo false)" \
     --argjson root_closed "$([[ "$ROOT_CLOSED" -eq 1 ]] && echo true || echo false)" \
     --arg brief_file "$BRIEF_FILE" \
-    '. + {prompt_sent:$sent, delivery_result:$delivery, perm_injected:$perm, new_tab:$new_tab, root_pane_closed:$root_closed, brief_file:($brief_file|select(.!=""))}'
+    --arg bus_mode "$BUS_MODE" \
+    --arg bus_join "$BUS_JOIN_RESULT" \
+    --argjson bus_active "$([[ "$BUS_ACTIVE" -eq 1 ]] && echo true || echo false)" \
+    --arg hcom_dir "$([[ "$BUS_ACTIVE" -eq 1 ]] && printf '%s' "$HCOM_DIR_VAL" || true)" \
+    --arg hooks "$([[ "$BUS_ACTIVE" -eq 1 ]] && printf '%s' "$HOOKS_RESULT" || true)" \
+    '. + {prompt_sent:$sent, delivery_result:$delivery, perm_injected:$perm,
+          new_tab:$new_tab, root_pane_closed:$root_closed,
+          bus_mode:$bus_mode, bus_join:$bus_join, bus_active:$bus_active}
+       + (if $brief_file == "" then {} else {brief_file:$brief_file} end)
+       + (if $hcom_dir   == "" then {} else {hcom_dir:$hcom_dir}     end)
+       + (if $hooks      == "" then {} else {hcom_hooks:$hooks}      end)'
 fi
