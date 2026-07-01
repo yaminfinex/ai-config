@@ -75,9 +75,17 @@ Pick by **who verifies a unit of work**, then parallelism — not task size.
    decision: the fork, the choice and why, what the other door looked like
    (`references/sliding-doors.md`).
 7. **One writer per worktree at a time.**
-8. **Delivery verified, not assumed.** Own tab per agent (`herder-spawn --new-tab`), confirm
-   `delivered` — delivery into a non-active pane in a crowded tab silently fails (this killed
-   relay v1).
+8. **Delivery verified, not assumed** — by the *active delivery driver*, not the orchestrator
+   eyeballing panes (`herder` skill → *Delivery drivers*). Commands stay transport-agnostic; how
+   delivery is confirmed depends on which driver serves the target. Under the **hcom** driver,
+   delivery is a recorded `deliver:` ack on the bus — the message injects at the peer's next hook
+   boundary (Claude and Codex both proven), so there is **no silent pane-drop** and no crowded-tab
+   failure mode. Under the **herdr** keystroke driver, delivery is confirmed by sigil + status
+   heuristics, and its caveat still holds: give each agent its **own tab** (`herder-spawn
+   --new-tab`) and confirm `delivered`, because a keystroke into a non-active pane in a crowded tab
+   silently fails (this killed relay v1). That caveat is a *herdr-driver* limitation the hcom driver
+   removes — when a peer is a joined hcom instance, own-tab-per-agent is a convenience, not a
+   delivery requirement.
 9. **Completion is a doorbell, not a poll.** A finished agent writes its DONE/BLOCKED block (the
    run-log stays the source of truth and the only carrier of evidence), then rings the
    orchestrator: one line, `herder-send <orchestrator terminal_id> 'Unit N DONE — run-log updated'`
@@ -85,16 +93,24 @@ Pick by **who verifies a unit of work**, then parallelism — not task size.
    a `pane_id` drifts when herdr compacts ids — or just spawn with `herder-spawn --notify`, which
    resolves your terminal_id automatically and injects the exact ring command plus
    `$HERDER_SEND`/`$HERDER_NOTIFY_TO` into the child so it can ring without finding the helper on
-   PATH). The orchestrator idles between units and wakes on the
+   PATH). The ring goes through `herder-send` and thus the **active delivery driver** (hcom bus when
+   the orchestrator is a joined instance, herdr keystrokes otherwise) — transport-neutral; the worker
+   never picks one. The orchestrator idles between units and wakes on the
    ring instead of burning a turn blocking in `herder-wait`; it reads the run-log and verifies
    there (invariant 4), never trusting the ring's word. The ring is best-effort and the worker
    rings **exactly once, whatever it reports**: a working orchestrator only *queues* the message
    (`herder-send` reports `verify=queued`, exit 0 — that is success, not a failure to retry), and
-   one at a modal refuses it (exit 2). A worker that resends on a `queued`/`not_delivered` result
+   one at a modal refuses it (exit 2). This `queued` backstop is **driver-agnostic** — it holds
+   whether the ring went over the hcom bus (accepted, injects at the next hook boundary) or herdr
+   keystrokes (left on the input line). A worker that resends on a `queued`/`not_delivered` result
    just stacks duplicate messages in the orchestrator's queue. Because the ring carries no evidence
    and must never be load-bearing, keep a coarse backstop (a bounded `herder-wait` heartbeat or a
    run-log sweep) so a dropped ring degrades to polling latency, not a deadlock.
    Relays need no ring — the spawned successor *is* the signal (`relay.md`).
+   **Delivery drivers do not arbitrate turns or serialize writes.** A driver only moves a message
+   and confirms it landed; ordering of who-writes-when (turn arbitration) and one-writer-per-worktree
+   (invariant 7) stay **orchestrate-owned** and are provided by no transport (R9) — an hcom
+   collision ping is advisory, never a lock.
 10. **End-of-run tail:** fresh-context deep review against the acceptance criteria + remnant
    sweep + golden-agent check if bottled (`references/adversarial.md`), then harvest before the
    PR.

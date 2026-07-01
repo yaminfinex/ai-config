@@ -70,23 +70,23 @@ Moves the current `herder-send` keystroke logic into the driver interface. This 
 
 **Supported on:** any system with herdr installed.
 
-### `hcom` — Hook-based SQLite driver (v1: Claude-only)
+### `hcom` — Hook-based SQLite driver
 
 **Location:** `skills/herder/scripts/lib/driver-hcom.sh`
 
-Delivers messages via hcom's hook-injection and SQLite backend. Removes the silent pane-drop failure mode and enables mid-turn injection / idle-wake without keystroke brittleness.
+Delivers messages via hcom's hook-injection and SQLite backend. Removes the silent pane-drop failure mode and enables mid-turn injection / idle-wake without keystroke brittleness. **Both Claude and Codex are first-class hcom targets** — the live U5 probe proved Codex hook delivery reliable (mid-turn injection ~8.4s, a burst of sends coalesced into a single atomic injection, ordered, zero drops), so Codex is not special-cased to herdr.
 
-**Resolution:** target label → hcom instance name (via `hcom list` or instance registry). If U5 verdict scopes hcom to Claude only, `hcom_resolve` returns "unusable" for Codex targets, forcing fallback to herdr.
+**Resolution:** target label → hcom instance name via `hcom list <label>`. Present ⇒ usable (joined) → exit 0; `Not found` ⇒ not joined → exit 2, forcing herdr fallback. This clean "not usable → fall back" signal is what `select_driver`/`hcom_resolve` key on.
 
-**Send:** `hcom send @<instance> -- <msg>`. Returns `delivered` (hook path) or `queued` (idle-wake) semantically matching herdr's contract.
+**Send:** `hcom send --from <sender> @<instance> -- <msg>` (the sender is an external identity and need not itself be joined). The driver polls the event stream for a `deliver:` ack — a recorded delivery receipt — mapping it to `delivered`; batched/idle sends keep `queued` semantics. Matches herdr's exit-code contract (0 delivered/queued, 1 transient, 2 refused).
 
-**Ring:** `hcom send` for the doorbell.
+**Ring:** `hcom send` for the doorbell (best-effort; falls back on not-found).
 
-**Join:** runs `hcom start <instance_name>` in the child process (non-blocking; join failure is non-fatal).
+**Join:** attaches a spawned child to the worktree bus with its **name pinned to the herder label** — a bare `hcom start` auto-assigns a random name (e.g. `tuna`), which `hcom_resolve(label)` could never find. `herder-spawn --bus auto` pins it by injecting `HCOM_INSTANCE_NAME=<label>` (and `HCOM_DIR`, `HCOM_TOOL`) into the child's **process env at launch** (a Bash-tool `export` can't reach the hooks); the post-settle `join` registers the instance under the label. Non-blocking; join failure is non-fatal (agent stays reachable via herdr).
 
-**Supported on:** systems with hcom installed; must be on PATH and the target must have joined the bus (e.g., via `hcom start`).
+**Bus isolation:** `HCOM_DIR=<worktree>/.hcom` scopes the entire bus (DB + hooks + logs) to a worktree, so the bus boundary == the worktree boundary — this is how one hcom transport composes with orchestrate Inv 7 (one writer per worktree). `.hcom/` is gitignored.
 
-**Status:** Codex hcom delivery is deferred to U5 findings; v1 uses Claude-only hcom with Codex falling back to herdr driver.
+**Supported on:** systems with hcom installed and on PATH; the target must have joined the bus (via `herder-spawn --bus auto`, or its own `hcom start`).
 
 ---
 
