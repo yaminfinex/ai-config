@@ -27,9 +27,24 @@ hcom_resolve() {
 }
 
 # ---- send (via hcom with delivery verification) ----
+# Opts (forwarded through driver_dispatch) are accepted for interface symmetry with
+# the herdr driver; only --json affects hcom output (keystroke-only flags like
+# --no-enter/--force/--timeout have no meaning on a message bus and are ignored).
+# Return contract (NOT exit — so hcom_ring's degrade branch stays live, S3):
+#   0 = delivered / queued (busy → runs next),  1 = real delivery failure,
+#   2 = target not joined on the bus (→ selection would have fallen back to herdr).
 
 hcom_send() {
-  local target="$1" message="$2"
+  local target="$1" message="$2"; shift 2 || shift $#
+  local json_out=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json)      json_out="${2:-1}"; shift 2;;
+      --no-enter|--no-verify|--force|--timeout) shift 2;;
+      *)           shift;;
+    esac
+  done
+
   local verify_result="not_attempted" submitted=false pane_id=""
 
   # Pre-flight: check if target is joined and usable
@@ -41,61 +56,66 @@ hcom_send() {
   # Orchestrator is the implicit sender (external identity; need not be joined)
   local sender="${HERDER_AGENT_LABEL:-orchestrator}"
 
-  # Send the message via hcom
-  # Exit 0 = delivered/queued, exit 2 = not found
+  # Baseline timestamp BEFORE the send so the delivery probe only counts an ack
+  # correlated to THIS send (S1: no crediting a stale deliver: from a prior send).
+  local start_iso
+  start_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  # Send the message via hcom. The target was confirmed joined above, so a non-zero
+  # here is a REAL delivery failure (not a "not joined" fallback case) → exit 1.
   if ! hcom send --from "$sender" "@$target" -- "$message" >/dev/null 2>&1; then
-    printf 'hcom_send: failed to send message to %s\n' "$target" >&2
-    return 2
+    verify_result="not_delivered"
+  else
+    submitted=true
+
+    # Verify delivery by polling hcom's event stream for a `deliver:` ack addressed
+    # to THIS target and emitted AFTER our send timestamp. `--context`/`--after` are
+    # passed as hcom filter VALUES (no shell-interpolated ERE — S1 regex-injection
+    # fixed) and `--after` correlates the ack to this send, not any earlier one.
+    # hcom coalesces bursts into one ordered, lossless injection; the deliver: event
+    # is the receipt. No ack within the window ⇒ queued (mid-turn inject next boundary).
+    local start_time elapsed acked=0
+    start_time=$(date +%s)
+    while true; do
+      elapsed=$(( $(date +%s) - start_time ))
+      [[ $elapsed -ge 3 ]] && break
+      if [[ "$(hcom events --last 50 --context "deliver:$target" --after "$start_iso" 2>/dev/null \
+                | jq 'length' 2>/dev/null || echo 0)" -gt 0 ]]; then
+        acked=1; break
+      fi
+      sleep 0.25
+    done
+    if [[ "$acked" -eq 1 ]]; then verify_result="delivered"; else verify_result="queued"; fi
   fi
 
-  submitted=true
+  # ---- report: human summary to STDERR always (matches herdr driver contract) ----
+  {
+    printf 'sent %d chars to %s (hcom)' "${#message}" "$target"
+    [[ "$submitted" == "true" ]] && printf ', submitted'
+    printf ', verify=%s' "$verify_result"
+    [[ "$verify_result" == "queued" ]] && printf ' (target was busy; message queued to run next — do NOT resend)'
+    printf '\n'
+  } >&2
 
-  # Verify delivery by polling hcom events for a deliver: ack from the target.
-  # hcom coalesces burst sends into a single atomic injection, ordered, zero drops.
-  # The `deliver:` event is an ack = real delivery semantics.
-  local start_time events_output delivery_acked=0
-  start_time=$(date +%s)
+  # ---- JSON record to STDOUT only under --json (preserve herder-send shape) ----
+  if [[ "$json_out" -eq 1 ]]; then
+    jq -nc \
+      --arg pane "$pane_id" \
+      --arg kind "agent" \
+      --arg target "$target" \
+      --arg resolved_via "hcom_list" \
+      --argjson submitted "$submitted" \
+      --arg verify "$verify_result" \
+      --arg preview "$(printf '%s' "$message" | head -c 120)" \
+      '{pane_id:$pane, agent:$kind, target:$target, resolved_via:$resolved_via, submitted:$submitted,
+        verify:$verify, message_preview:$preview}'
+  fi
 
-  while true; do
-    local now_time elapsed
-    now_time=$(date +%s)
-    elapsed=$((now_time - start_time))
-
-    # Timeout at 3 seconds (herder standard)
-    if [[ $elapsed -ge 3 ]]; then
-      # Timeout: assume queued (mid-turn injection will happen at next boundary)
-      verify_result="queued"
-      break
-    fi
-
-    # Poll recent events for this target
-    if events_output=$(hcom events --tail 10 2>/dev/null); then
-      # Check for `deliver:` ack from target in the events
-      if printf '%s' "$events_output" | grep -qE "deliver:.*$target"; then
-        delivery_acked=1
-        verify_result="delivered"
-        break
-      fi
-    fi
-
-    sleep 0.25
-  done
-
-  # Emit JSON record (preserve herder-send shape)
-  jq -nc \
-    --arg pane "$pane_id" \
-    --arg kind "agent" \
-    --arg target "$target" \
-    --arg resolved_via "hcom_list" \
-    --argjson submitted "$submitted" \
-    --arg verify "$verify_result" \
-    --arg preview "$(printf '%s' "$message" | head -c 120)" \
-    '{pane_id:$pane, agent:$kind, target:$target, resolved_via:$resolved_via, submitted:$submitted,
-      verify:$verify, message_preview:$preview}'
-
-  # Exit codes: 0 = success (delivered/queued), 1 = delivery failure, 2 = not found
-  [[ "$verify_result" == "delivered" || "$verify_result" == "queued" ]] && exit 0
-  exit 1
+  # Return codes: 0 = delivered/queued, 1 = real delivery failure, 2 = not joined.
+  case "$verify_result" in
+    delivered|queued) return 0;;
+    *)                return 1;;
+  esac
 }
 
 # ---- ring (best-effort doorbell via hcom) ----
@@ -103,12 +123,14 @@ hcom_send() {
 hcom_ring() {
   local target="$1" message="$2"
 
-  # Ring is just a send through hcom; queue if busy (exit 0)
+  # Ring is a best-effort send through hcom: refuse (2) on a target that isn't on
+  # the bus, otherwise queue (0). hcom_send RETURNS its code (not exit), so this
+  # degrade branch is live (S3).
   hcom_send "$target" "$message" || {
     local rc=$?
-    [[ $rc -eq 2 ]] && exit 2 || exit 0  # refuse on not found, queue on failure
+    [[ $rc -eq 2 ]] && return 2 || return 0
   }
-  exit 0
+  return 0
 }
 
 # ---- join (start hcom with the given label in child) ----

@@ -39,18 +39,21 @@ command -v jq >/dev/null 2>&1 || die "jq not on PATH"
 
 TARGET=""
 MESSAGE=""
-DRY_RUN=0
+NO_ENTER=0
+NO_VERIFY=0
+FORCE=0
+TIMEOUT_MS=3000
 JSON_OUT=0
+DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)   DRY_RUN=1; shift;;
+    --no-enter)  NO_ENTER=1; shift;;
+    --no-verify) NO_VERIFY=1; shift;;
+    --force)     FORCE=1; shift;;
+    --timeout)   TIMEOUT_MS="$2"; shift 2;;
     --json)      JSON_OUT=1; shift;;
-    --no-enter|--no-verify|--force|--timeout)
-      # These flags are passed through to the driver but don't affect top-level logic
-      shift
-      [[ "$1" == "--timeout" ]] && shift
-      ;;
     -h|--help)   sed -n '1,40p' "$0"; exit 0;;
     --*)         die "unknown flag: $1";;
     *)
@@ -101,6 +104,14 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
-# Dispatch the send through the driver
-driver_dispatch send "$TARGET" "$MESSAGE"
-exit $?
+# Dispatch the send through the driver, forwarding the send options so the driver
+# honours --no-enter (place, don't submit), --no-verify (skip poll), --force (skip
+# pre-flight), --timeout (wait budget), and --json (emit the record on stdout).
+rc=0
+driver_dispatch send "$TARGET" "$MESSAGE" \
+  --no-enter "$NO_ENTER" \
+  --no-verify "$NO_VERIFY" \
+  --force "$FORCE" \
+  --timeout "$TIMEOUT_MS" \
+  --json "$JSON_OUT" || rc=$?
+exit "$rc"

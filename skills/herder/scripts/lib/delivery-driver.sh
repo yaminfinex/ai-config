@@ -78,13 +78,19 @@ select_driver() {
 # ---- driver dispatch -----
 
 driver_dispatch() {
-  local op="$1" target="${2:-}" msg="${3:-}" driver
+  local op="${1:-}" driver
   local exit_code=0
 
   if [[ -z "$op" ]]; then
     printf 'delivery-driver: op required\n' >&2
     return 64
   fi
+  shift
+
+  # Remaining args are: <target> [msg] [opts...]. Forward ALL of them verbatim to
+  # the driver so send-path flags (--no-enter/--no-verify/--force/--timeout/--json)
+  # reach the driver function unmodified.
+  local target="${1:-}"
 
   # Select the driver for this target
   driver="$(select_driver "$target")"
@@ -96,12 +102,8 @@ driver_dispatch() {
     return 64
   fi
 
-  # Call the driver function; capture its exit code
-  if [[ -n "$msg" ]]; then
-    "$func_name" "$target" "$msg" || exit_code=$?
-  else
-    "$func_name" "$target" || exit_code=$?
-  fi
+  # Call the driver function with the full remaining arg vector; capture its code.
+  "$func_name" "$@" || exit_code=$?
 
   return "$exit_code"
 }
