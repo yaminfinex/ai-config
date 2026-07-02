@@ -1,35 +1,37 @@
 #!/usr/bin/env bash
 # delivery-driver.sh — pluggable driver interface for herder message delivery
 #
-# The driver abstraction maps herder's delivery intent (send, ring, resolve, join)
-# to a selected transport. `herder-send` and `herder-spawn` dispatch through this
+# The driver abstraction maps herder's delivery intent (resolve, send) to a
+# selected transport. `herder-send` and `herder-spawn` dispatch through this
 # interface; callers remain transport-agnostic.
 #
 # Public interface:
 #   driver_dispatch <op> <target> [msg] [opts...]
-#   - op: resolve|send|ring|join
+#   - op: resolve|send
 #   - returns exit code per the contract: 0/1/2/64
 #   - stdout: --json output on success, error message on stderr
 #
 # Driver protocol:
-#   Each driver (herdr, hcom, etc.) implements these functions:
+#   Each driver (herdr, hcom, etc.) implements two functions:
 #   - herdr_resolve <target> → PANE_ID (exit 0/2)
 #   - herdr_send <target> <msg> [opts...] → JSON record (exit 0/1/2)
-#   - herdr_ring <target> <msg> → exit 0/2
-#   - herdr_join <agent> → exit 0
 #   - (similar for hcom_*, etc.)
 #
-# Selection:
+# Selection (W3 — registry-driven):
 #   - HERDER_BUS env (auto|herdr|hcom) selects driver
-#   - default: auto (capability detection)
-#   - auto: pick hcom if available and target usable, else herdr
-#   - herdr is always available (fallback)
+#   - default: auto — resolve <target> against the spawn registry; a recorded
+#     hcom_name (the peer was launched through hcom into a team bus) ⇒ hcom
+#     transport, else herdr keystrokes. This REPLACES the old `hcom list <target>`
+#     capability probe: the registry record already knows the transport AND its bus
+#     coordinate (hcom_dir), so there is no second namespace to disambiguate.
+#   - herdr is always available (fallback for non-bus peers / no record).
 
 set -euo pipefail
 
 # Source all available driver implementations. Each driver file defines its
-# driver_<op> functions (e.g. herdr_resolve, herdr_send, herdr_ring, herdr_join).
-# Driver files are sourced in priority order; first to define a function wins.
+# <driver>_<op> functions (e.g. herdr_resolve, herdr_send, hcom_resolve, hcom_send).
+# Function names are driver-prefixed, so sourcing order never causes a collision;
+# select_driver() picks the prefix and driver_dispatch calls "<driver>_<op>".
 # (In v1, only herdr and conditionally hcom are available.)
 
 _driver_dir="$(dirname "${BASH_SOURCE[0]}")"
@@ -46,7 +48,21 @@ if [[ -f "$_driver_dir/driver-hcom.sh" ]]; then
   source "$_driver_dir/driver-hcom.sh"
 fi
 
-# ---- driver selection (KTD3: capability detection + fallback) -----
+# ---- registry lookup (shared by selection + the hcom driver) -----
+# Resolve a user-facing target (guid | short_guid | label) to its latest registry
+# record. Prints the record JSON on stdout (empty if none). term_*/raw pane ids never
+# match a guid/short_guid/label field, so they return empty here → herdr verbatim path.
+_registry_record_for() {
+  local target="$1"
+  local reg="${HERDER_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herder}/registry.jsonl"
+  [[ -f "$reg" ]] || return 0
+  jq -sc --arg v "$target" '
+    group_by(.guid) | map(.[-1])
+    | map(select(.guid==$v or .short_guid==$v or .label==$v))
+    | last // empty' "$reg" 2>/dev/null || true
+}
+
+# ---- driver selection (KTD3: registry-driven + hard herdr fallback) -----
 
 select_driver() {
   local target="$1" bus="${HERDER_BUS:-auto}"
@@ -61,10 +77,16 @@ select_driver() {
     return 0
   fi
 
-  # Auto-detection: hcom if available and target resolves as usable, else herdr
-  if command -v hcom >/dev/null 2>&1 && declare -f hcom_resolve >/dev/null 2>&1; then
-    # Try to resolve via hcom; if it succeeds, use hcom driver
-    if hcom_resolve "$target" >/dev/null 2>&1; then
+  # Auto: the registry record decides. A recorded, non-empty hcom_name means the peer
+  # is bus-bound (launched through hcom); route to the hcom driver iff the hcom CLI +
+  # driver are actually present. Anything without a bus name (bash panes, term_*/pane
+  # targets, records predating W2, unknown peers) stays on herdr keystrokes.
+  local rec hcom_name
+  rec="$(_registry_record_for "$target")"
+  if [[ -n "$rec" ]]; then
+    hcom_name="$(printf '%s' "$rec" | jq -r '.hcom_name // ""' 2>/dev/null || printf '')"
+    if [[ -n "$hcom_name" && "$hcom_name" != "null" ]] \
+        && command -v hcom >/dev/null 2>&1 && declare -f hcom_send >/dev/null 2>&1; then
       printf 'hcom'
       return 0
     fi
@@ -106,31 +128,4 @@ driver_dispatch() {
   "$func_name" "$@" || exit_code=$?
 
   return "$exit_code"
-}
-
-# ---- helpers (used by driver implementations) -----
-
-# Return JSON string suitable for --json output, preserving the contract shape
-driver_json_resolve() {
-  local pane="$1" target="$2" via="$3" drifted="${4:-false}"
-  jq -nc \
-    --arg pane "$pane" \
-    --arg target "$target" \
-    --arg via "$via" \
-    --argjson drifted "$drifted" \
-    '{pane_id:$pane, target:$target, resolved_via:$via, drifted:$drifted, dry_run:true}'
-}
-
-driver_json_send() {
-  local pane="$1" kind="$2" target="$3" via="$4" submitted="$5" verify="$6" preview="$7"
-  jq -nc \
-    --arg pane "$pane" \
-    --arg kind "$kind" \
-    --arg target "$target" \
-    --arg via "$via" \
-    --argjson submitted "$submitted" \
-    --arg verify "$verify" \
-    --arg preview "$preview" \
-    '{pane_id:$pane, agent:$kind, target:$target, resolved_via:$via, submitted:$submitted,
-      verify:$verify, message_preview:$preview}'
 }

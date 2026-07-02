@@ -7,6 +7,7 @@
 #   herder-list --json                # raw JSONL of reconciled records to stdout
 #   herder-list --raw                 # raw registry JSONL without reconciliation
 #   herder-list --guid GUID           # single record (full JSON), exit 1 if missing
+#   herder-list --teams               # enumerate team buses under $HERDER_TEAMS_ROOT
 
 set -euo pipefail
 
@@ -16,7 +17,7 @@ command -v jq >/dev/null 2>&1 || die "jq not on PATH"
 
 STATE_DIR="${HERDER_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herder}"
 REGISTRY="$STATE_DIR/registry.jsonl"
-[[ -f "$REGISTRY" ]] || { printf 'no registry at %s\n' "$REGISTRY" >&2; exit 0; }
+TEAMS_ROOT="${HERDER_TEAMS_ROOT:-$HOME/.hcom/teams}"
 
 MODE="table"
 INCLUDE_ALL=0
@@ -28,10 +29,29 @@ while [[ $# -gt 0 ]]; do
     --json) MODE="json"; shift;;
     --raw) MODE="raw"; shift;;
     --guid) MODE="one"; TARGET_GUID="$2"; shift 2;;
-    -h|--help) sed -n '1,12p' "$0"; exit 0;;
+    --teams) MODE="teams"; shift;;
+    -h|--help) sed -n '1,13p' "$0"; exit 0;;
     *) die "unknown arg: $1";;
   esac
 done
+
+# --teams: enumerate team buses (D7). Each immediate subdir of $HERDER_TEAMS_ROOT is
+# a team's HCOM_DIR. The global bus (~/.hcom, no team) is always listed first. This
+# reads the filesystem, not the registry, so it surfaces teams even with no live agent.
+if [[ "$MODE" == "teams" ]]; then
+  printf '%-20s %s\n' "TEAM" "HCOM_DIR"
+  printf '%-20s %s\n' "global" "$HOME/.hcom"
+  if [[ -d "$TEAMS_ROOT" ]]; then
+    for d in "$TEAMS_ROOT"/*/; do
+      [[ -d "$d" ]] || continue
+      name="$(basename "$d")"
+      printf '%-20s %s\n' "$name" "${d%/}"
+    done
+  fi
+  exit 0
+fi
+
+[[ -f "$REGISTRY" ]] || { printf 'no registry at %s\n' "$REGISTRY" >&2; exit 0; }
 
 if [[ "$MODE" == "raw" ]]; then
   cat "$REGISTRY"
@@ -77,16 +97,20 @@ if [[ "$MODE" == "json" ]]; then
   exit 0
 fi
 
-# Table mode.
-printf '%-10s %-22s %-8s %-22s %-10s %s\n' "GUID" "LABEL" "AGENT" "PANE" "LIVE" "ROLE"
+# Table mode. TEAM = the peer's team bus (empty → global); BUS = its hcom bus name
+# (@name) or '-' for non-bus (herdr keystroke) peers.
+printf '%-10s %-20s %-7s %-18s %-9s %-12s %-16s %s\n' \
+  "GUID" "LABEL" "AGENT" "PANE" "LIVE" "TEAM" "BUS" "ROLE"
 printf '%s\n' "$COLLAPSED" | while IFS= read -r rec; do
   [[ -n "$rec" ]] || continue
   reconciled="$(printf '%s' "$rec" | reconcile)"
-  printf '%-10s %-22s %-8s %-22s %-10s %s\n' \
+  printf '%-10s %-20s %-7s %-18s %-9s %-12s %-16s %s\n' \
     "$(printf '%s' "$reconciled" | jq -r .short_guid)" \
     "$(printf '%s' "$reconciled" | jq -r .label)" \
     "$(printf '%s' "$reconciled" | jq -r .agent)" \
     "$(printf '%s' "$reconciled" | jq -r '.live_pane // .pane_id')" \
     "$(printf '%s' "$reconciled" | jq -r .live_status)" \
+    "$(printf '%s' "$reconciled" | jq -r '(.team // "") | if . == "" then "global" else . end')" \
+    "$(printf '%s' "$reconciled" | jq -r '(.hcom_name // "") | if . == "" or . == null then "-" else "@" + . end')" \
     "$(printf '%s' "$reconciled" | jq -r .role)"
 done

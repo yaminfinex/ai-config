@@ -98,6 +98,34 @@ append_closed() {
     >>"$REGISTRY"
 }
 
+drop_bus_entry() {
+  # Best-effort companion cleanup for hcom-bound agents. The pane close remains
+  # authoritative; bus cleanup must never affect cull success.
+  local rec="$1" hcom_name hcom_dir result rc reason
+  hcom_name="$(printf '%s' "$rec" | jq -r '.hcom_name // empty')"
+  [[ -n "$hcom_name" ]] || return 0
+  command -v hcom >/dev/null 2>&1 || return 0
+
+  hcom_dir="$(printf '%s' "$rec" | jq -r '.hcom_dir // empty')"
+  set +e
+  if [[ -n "$hcom_dir" ]]; then
+    result="$(HCOM_DIR="$hcom_dir" hcom kill "$hcom_name" 2>&1)"
+  else
+    result="$(hcom kill "$hcom_name" 2>&1)"
+  fi
+  rc=$?
+  set -e
+
+  if [[ "$rc" -eq 0 ]]; then
+    printf 'bus: dropped @%s\n' "$hcom_name"
+    return 0
+  fi
+
+  reason="$(printf '%s' "$result" | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//')"
+  [[ -n "$reason" ]] || reason="exit $rc"
+  printf 'bus: drop failed (%s) — pane closed anyway\n' "$reason"
+}
+
 verify_pane_identity() {
   # $1 = stored pane_id, $2 = stored terminal_id
   # Returns 0 if pane still resolves to the same terminal_id; 1 if gone; 2 if reassigned.
@@ -130,6 +158,7 @@ printf '%s\n' "$TARGETS" | while IFS= read -r rec; do
   if [[ "$GONE_ONLY" -eq 1 ]]; then
     append_closed "$rec" "already_gone" "terminal_id not in live agent list"
     printf 'recorded closed %s (%s) pane=%s → already_gone\n' "$LABEL" "$GUID" "$PANE"
+    drop_bus_entry "$rec"
     continue
   fi
 
@@ -162,6 +191,7 @@ printf '%s\n' "$TARGETS" | while IFS= read -r rec; do
               "$PANE" "$TERM" >&2
           fi
           append_closed "$rec" "already_gone" "terminal_id not in live agent list"
+          drop_bus_entry "$rec"
           continue
         fi
         ;;
@@ -178,8 +208,10 @@ printf '%s\n' "$TARGETS" | while IFS= read -r rec; do
     append_closed "$rec" "error" "$REASON"
     printf 'cull errored %s (%s) pane=%s → %s (still marked closed in registry)\n' \
       "$LABEL" "$GUID" "$PANE" "$REASON"
+    drop_bus_entry "$rec"
   else
     append_closed "$rec" "$CLOSED_OK" ""
     printf 'culled %s (%s) pane=%s → %s\n' "$LABEL" "$GUID" "$PANE" "$CLOSED_OK"
+    drop_bus_entry "$rec"
   fi
 done

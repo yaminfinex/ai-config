@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# hcom-launch — launch an AI tool bound to the hcom bus, in-place in the current (login) shell.
+#
+# Usage:
+#   hcom-launch <tool> [--tag TAG] [tool-args...]
+#
+# Plan 002 unit W1. Contract (D6/R4 + validated architecture):
+#   * hcom is a HARD DEPENDENCY. If hcom is not on PATH, ERROR (exit 1) — never degrade to the raw
+#     tool. (Degraded/keystroke behavior lives at the send layer for non-bus targets, not here.)
+#   * Launches `hcom <tool> --run-here [--tag TAG] [tool-args...]`:
+#       --run-here  → in-place in THIS terminal (hcom binds hooks+pty; validated for claude+codex).
+#       real config dir → we NEVER pass hcom's --dir (that isolates CLAUDE_CONFIG_DIR/CODEX_HOME and
+#                         drops the global bypass-permissions acceptance → a blocking modal). Real dir
+#                         + global hcom hooks = auth + acceptance + hooks all present, no modal.
+#   * LOGIN SHELL is the CALLER's job: herder-spawn wraps its pane in `$SHELL -lic`, and the W4 PATH
+#     shims run from interactive login shells. This wrapper does NOT re-nest a shell (would break the
+#     pty/foreground ownership herdr keystrokes depend on).
+#   * BUS SCOPE (D7): HCOM_DIR is inherited from the environment untouched — hcom-launch never sets
+#     it. Team resolution lives UPSTREAM in herder-spawn: it resolves a team (--team → $HERDER_TEAM
+#     → global) and PINS HCOM_DIR=$HERDER_TEAMS_ROOT/<team> into the child's env at launch. A worktree
+#     that wants a ringfenced bus sets HERDER_TEAM (e.g. via mise `[env]`), NOT raw HCOM_DIR. Whatever
+#     HCOM_DIR arrives in our env, we honor as-is.
+#   * RECURSION GUARD: exports HCOM_LAUNCH_INFLIGHT=1 so if hcom re-resolves `<tool>` through PATH and
+#     hits a W4 shim of the same name, that shim execs the REAL binary instead of looping back here.
+#   * Forwards tool-args verbatim (e.g. --dangerously-skip-permissions / codex bypass flags, D5).
+#
+# Exit codes are hcom's (0 ready / 1 spawn error / 2 still launching|blocked); we exec so they pass
+# through. A missing tool name or a missing hcom binary is our own exit 1 (before exec).
+
+set -euo pipefail
+
+die() { printf 'hcom-launch: %s\n' "$*" >&2; exit 1; }
+
+# Config-dir pin table lives in the shared lib (single source of truth with herder-spawn's
+# hcom-capable list). hcom_pin_config_dir "$TOOL" is called just before exec.
+LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/hcom-tools.sh"
+# shellcheck source=lib/hcom-tools.sh
+. "$LIB" || die "cannot source $LIB"
+
+TOOL="${1:-}"
+[[ -n "$TOOL" && "$TOOL" != -* ]] || die "usage: hcom-launch <tool> [--tag TAG] [tool-args...]"
+shift
+
+# D6/R4: hcom is required — hard error, no raw-tool fallback.
+command -v hcom >/dev/null 2>&1 || \
+  die "hcom not on PATH — hcom is a hard dependency (plan 002 R4); install hcom or fix PATH. Not launching '$TOOL' raw."
+
+# Separate an optional --tag (an hcom flag, must precede tool-args) from the tool-args tail so the
+# forwarded command is well-formed: `hcom <tool> --run-here [--tag T] <tool-args>`.
+TAG=""
+REST=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tag)
+      [[ $# -ge 2 ]] || die "--tag needs a value"
+      TAG="$2"; shift 2 ;;
+    --tag=*)
+      TAG="${1#--tag=}"; shift ;;
+    --)
+      shift; REST+=("$@"); break ;;
+    *)
+      REST+=("$1"); shift ;;
+  esac
+done
+
+HCOM_ARGS=(--run-here)
+[[ -n "$TAG" ]] && HCOM_ARGS+=(--tag "$TAG")
+
+# Pin the real per-tool config dir so AUTH + hooks stay put even when HCOM_DIR points at an isolated
+# bus. hcom-launch stays PERMISSIVE (it launches any tool hcom supports — pi, kimi, ...); this pins
+# only tools with a known real config dir and is a no-op for the rest. Full rationale (hcom local
+# mode, the login wall, the pass-through, the independent-axes effect) lives in lib/hcom-tools.sh.
+hcom_pin_config_dir "$TOOL"
+
+# Recursion guard for the W4 PATH shim; exec so the tool becomes the pane's foreground process.
+export HCOM_LAUNCH_INFLIGHT=1
+exec hcom "$TOOL" "${HCOM_ARGS[@]}" ${REST[@]+"${REST[@]}"}

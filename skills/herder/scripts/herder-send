@@ -75,7 +75,45 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/delivery-driver.sh"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  # Resolve via the herdr driver for --dry-run
+  # Report the transport that a real send WOULD take (W3: registry-driven selection).
+  dry_driver="$(select_driver "$TARGET")"
+
+  if [[ "$dry_driver" == "hcom" ]]; then
+    # Mirror hcom_send's registry resolution: row+name -> recorded bus coord;
+    # row+empty-name -> refuse; no row -> literal target on the ambient bus.
+    coord="$(_hcom_coord_for "$TARGET" 2>/dev/null || true)"
+    if [[ -n "$coord" ]]; then
+      hcom_name="${coord%%$'\t'*}"
+      hcom_dir="${coord#*$'\t'}"
+      if [[ -z "$hcom_name" || "$hcom_name" == "null" ]]; then
+        printf 'herder-send --dry-run: would REFUSE (exit 2): %s has no recorded bus name — not bus-bound\n' \
+          "$TARGET" >&2
+        if [[ "$JSON_OUT" -eq 1 ]]; then
+          jq -nc --arg target "$TARGET" \
+            '{target:$target, transport:"hcom", would:"refuse", dry_run:true}'
+        fi
+        exit 2
+      fi
+
+      rec="$(_registry_record_for "$TARGET" 2>/dev/null || true)"
+      team="$(printf '%s' "$rec" | jq -r '.team // ""' 2>/dev/null || printf '')"
+    else
+      hcom_name="$TARGET"
+      hcom_dir="${HCOM_DIR:-$HOME/.hcom}"
+      team="global"
+    fi
+
+    printf 'herder-send --dry-run: %s -> hcom bus @%s (team: %s, HCOM_DIR=%s)\n' \
+      "$TARGET" "$hcom_name" "${team:-global}" "${hcom_dir:-${HCOM_DIR:-$HOME/.hcom}}" >&2
+
+    if [[ "$JSON_OUT" -eq 1 ]]; then
+      jq -nc --arg target "$TARGET" --arg name "$hcom_name" --arg dir "$hcom_dir" --arg team "$team" \
+        '{target:$target, transport:"hcom", hcom_name:$name, hcom_dir:$dir, team:$team, dry_run:true}'
+    fi
+    exit 0
+  fi
+
+  # herdr transport: resolve via the herdr driver for --dry-run.
   # Call _herdr_resolve_internal to get "pane_id|resolved_via|drifted|drift_note" format
   resolve_output="$(_herdr_resolve_internal "$TARGET" 2>/dev/null)" || {
     rc=$?

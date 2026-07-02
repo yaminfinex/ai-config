@@ -9,6 +9,10 @@
 
 set -euo pipefail
 
+# Shared trust-modal patterns (single source of truth; see trust-modals.sh).
+# Used by _hd_preflight_blocked_reason below and by herder-spawn's modal clearing.
+source "$(dirname "${BASH_SOURCE[0]}")/trust-modals.sh"
+
 # Shared state and config
 HERDR_STATE_DIR="${HERDER_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herder}"
 HERDR_REGISTRY="$HERDR_STATE_DIR/registry.jsonl"
@@ -146,7 +150,7 @@ _hd_preflight_blocked_reason() {
     printf 'agent is in "Conversation interrupted" state; recover it first (focus pane and press Enter, or --force)'
     return 0
   fi
-  if grep -qE 'Do you trust the contents of this directory|Do you trust the files in this folder|Is this a project you created or one you trust|Yes, I trust this folder' <<<"$text"; then
+  if grep -qE "$HERDER_TRUST_MODAL_ERE" <<<"$text"; then
     printf 'first-run directory-trust prompt is open; accept it (focus pane + Enter) before sending'
     return 0
   fi
@@ -401,25 +405,4 @@ herdr_send() {
     not_landed|not_delivered) return 1;;
   esac
   return 0
-}
-
-# ---- ring (best-effort doorbell) ----
-
-herdr_ring() {
-  local target="$1" message="$2"
-  # Ring is just a send through herdr; refuse on gone target, queue on failure.
-  herdr_send "$target" "$message" || {
-    local rc=$?
-    [[ $rc -eq 2 ]] && return 2 || return 0
-  }
-  return 0
-}
-
-# ---- join (no-op for herdr) ----
-
-herdr_join() {
-  # Keystroke transport has no per-agent bus membership; this is a no-op.
-  # Ends with `exit` because herder-spawn runs the join in a subshell (its comment
-  # documents that join fns exit) — the subshell exit code becomes the join status.
-  exit 0
 }
