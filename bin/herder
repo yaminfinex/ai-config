@@ -5,7 +5,45 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/common.sh"
 export AI_CONFIG_ROOT
 
 src_dir="$AI_CONFIG_ROOT/tools/herder"
-cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/herder"
+
+hash_cmd=()
+if command -v sha256sum >/dev/null 2>&1; then
+  hash_cmd=(sha256sum)
+elif [ -x /sbin/sha256sum ]; then
+  hash_cmd=(/sbin/sha256sum)
+elif command -v shasum >/dev/null 2>&1; then
+  hash_cmd=(shasum -a 256)
+else
+  log_error "herder: no sha256 tool found"
+  exit 1
+fi
+
+cache_candidates=()
+if [ -n "${XDG_CACHE_HOME:-}" ]; then
+  cache_candidates+=("$XDG_CACHE_HOME/herder")
+fi
+if [ -n "${HOME:-}" ]; then
+  cache_candidates+=("$HOME/.cache/herder")
+fi
+cache_candidates+=("${TMPDIR:-/tmp}/herder-cache-${UID:-$(id -u 2>/dev/null || printf unknown)}/herder")
+
+cache_dir=""
+for candidate in "${cache_candidates[@]}"; do
+  if mkdir -p "$candidate" 2>/dev/null && [ -w "$candidate" ]; then
+    cache_dir="$candidate"
+    break
+  fi
+done
+
+if [ -z "$cache_dir" ]; then
+  log_error "herder: no writable cache directory found"
+  exit 1
+fi
+
+if [ -z "${GOCACHE:-}" ] || ! mkdir -p "$GOCACHE" 2>/dev/null || [ ! -w "$GOCACHE" ]; then
+  export GOCACHE="$cache_dir/go-build"
+  mkdir -p "$GOCACHE"
+fi
 
 # Key the cached binary on a hash of the module sources so a source change
 # triggers a rebuild and an unchanged tree reuses the cache.
@@ -13,8 +51,8 @@ src_hash="$(
   cd "$src_dir" &&
     find go.mod cmd internal -type f \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' \) -print0 |
     sort -z |
-    xargs -0 sha256sum |
-    sha256sum |
+    xargs -0 "${hash_cmd[@]}" |
+    "${hash_cmd[@]}" |
     cut -c1-16
 )"
 
