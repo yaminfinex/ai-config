@@ -85,3 +85,38 @@ porting more.
    run's SMOKE-OK gate; ~2 short-lived workers per smoke).
 3. **wait suite depth**: shallow (resolution/args/output via mock-herdr, no real-sleep
    timeout paths); live smoke covers actual waiting.
+
+## SHIPPED — P7 addendum (2026-07-02, post-run)
+
+The port shipped on `feat/herder-go-port`: P0 9db5e3c → P6 fd448d6. All 8 hermetic suites
+green on **default paths** (i.e. Go, through the flipped script shims); zero golden edits
+across P2–P6; P2's byte-parity risk spike passed; full-chain live smoke (claude + codex,
+duplex bus messaging, completing wait leg, cull, zero smoke residue) passed on the global bus.
+`skills/herder/scripts/herder-*` are 2-line exec shims to `bin/herder <sub>`;
+`lib/{delivery-driver,driver-herdr,driver-hcom}.sh` deleted (−2028 lines); `hcom-launch`,
+`lib/hcom-tools.sh`, `lib/trust-modals.sh`, and the PATH shims stay bash per D4/D5.
+(Note: the trust-modal ERE now lives as a Go const in `spawncmd`; nothing sources
+`trust-modals.sh` any more — deleting it is post-flip backlog, kept at P6 per playbook.
+Likewise `is_hcom_capable` in `hcom-tools.sh` is mirrored by Go `spawncmd.isHcomCapable`;
+the two lists must be kept in sync until unified.)
+
+Deviations from plan, all recorded in the run-log:
+
+- **P3/P4 serialized** (plan allowed parallel): one worktree, one writer.
+- **D3 indirection landed per-tool**: `HERDER_{SEND,LIST,WAIT,CULL,SPAWN}_BIN` (P0 decision),
+  not a single `HERDER_BIN_DIR`.
+- **Launcher grew portability beyond the bottle clone** (`bin/herder`): hash tool fallback
+  `sha256sum` → `/sbin/sha256sum` → `shasum -a 256`; writable-cache candidates
+  `$XDG_CACHE_HOME` → `$HOME/.cache` → `$TMPDIR`, with `GOCACHE` exported under the selected
+  cache when absent/unwritable; exports `AI_CONFIG_ROOT` so the cached binary resolves
+  `skills/herder/scripts` sibling helpers from any cwd.
+- **Teams demoted to optional coded capability** (USER decision, P6 sliding door): the global
+  bus is the default operating posture; `--team` stays ported + golden-locked
+  (zero-behavior-change holds) but no protocol may require it. Cause: the documented
+  one-time claude onboarding on first team-bus launch per machine (`lib/hcom-tools.sh`
+  KNOWN CAVEAT; W5 state-file seeding would lift it).
+- **Substrate backlog, not port scope**: herdr reports hcom-launched panes as
+  `agent_status=unknown` (bash and Go alike — parity holds), so `herder-wait --status idle`
+  can time out on an idle peer; hcom `listening` / `--status unknown` are the workarounds.
+
+Post-flip improvement backlog (out of port scope, per Non-goals) starts from this baseline.
