@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"ai-config/tools/herder/internal/send"
 )
 
 // command is one herder subcommand. summary is the one-line description in
@@ -26,7 +28,7 @@ type command struct {
 // implementation so the binary never silently half-works.
 var commands = []command{
 	{"spawn", "Spawn a named, GUID-tagged agent in a herdr pane", notPorted("spawn", "P5")},
-	{"send", "Deliver a message to a spawned agent (herdr or hcom bus)", notPorted("send", "P2")},
+	{"send", "Deliver a message to a spawned agent (herdr or hcom bus)", send.Run},
 	{"list", "Show spawned agents, reconciled with live herdr state", notPorted("list", "P4")},
 	{"wait", "Block until an agent reaches a status, optionally read its screen", notPorted("wait", "P4")},
 	{"cull", "Close spawned agents and mark them closed in the registry", notPorted("cull", "P4")},

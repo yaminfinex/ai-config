@@ -94,6 +94,7 @@ func (c *Client) Run(args ...string) (exitCode int, err error) {
 type Agent struct {
 	TerminalID *string `json:"terminal_id"`
 	PaneID     string  `json:"pane_id"`
+	Agent      string  `json:"agent"`
 	Status     string  `json:"agent_status"`
 
 	Raw json.RawMessage `json:"-"`
