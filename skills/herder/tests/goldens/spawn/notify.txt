@@ -1,0 +1,38 @@
+=== STDERR ===
+spawned worker-<SHORT> (claude) in pane p_50 (workspace ws_1)
+  guid:   <GUID>
+  cwd:    /mock/cwd
+  perms:  --dangerously-skip-permissions (autonomous; pass --safe to opt out)
+  notify: rings term_ORCH on done (HERDER_SEND + HERDER_NOTIFY_TO injected)
+  bus:    global @worker-rive  (team: global (~/.hcom))
+          HCOM_DIR=<CASE>/home/.hcom
+  prompt: sent (910 chars), ready: status=idle,stable, verify: delivered
+=== STDOUT ===
+{"guid":"<GUID>","short_guid":"<SHORT>","label":"worker-<SHORT>","role":"worker","agent":"claude","extra_args":["--dangerously-skip-permissions"],"argv":["/bin/zsh","-lic","export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SEND=<REPO>/skills/herder/scripts/herder-send HERDER_NOTIFY_TO=term_ORCH HCOM_DIR=<CASE>/home/.hcom; exec <REPO>/skills/herder/scripts/hcom-launch claude --tag worker --dangerously-skip-permissions "],"pane_id":"p_50","workspace_id":"ws_1","tab_id":"tab_1","terminal_id":"term_AGENT","cwd":"/mock/cwd","started_at":"<TS>","started_by_pane":"p_orch","initial_prompt_present":true,"team":"","hcom_dir":"<CASE>/home/.hcom","hcom_name":"worker-rive","hcom_tag":"worker","status":"active","prompt_sent":true,"delivery_result":"delivered","perm_injected":"--dangerously-skip-permissions","new_tab":false,"root_pane_closed":false,"hcom_capture":"captured"}
+=== EXIT ===
+0
+=== AGENT START ARGV ===
+agent
+start
+worker-<SHORT>
+--no-focus
+--split
+right
+--
+/bin/zsh
+-lic
+export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SEND=<REPO>/skills/herder/scripts/herder-send HERDER_NOTIFY_TO=term_ORCH HCOM_DIR=<CASE>/home/.hcom; exec <REPO>/skills/herder/scripts/hcom-launch claude --tag worker --dangerously-skip-permissions 
+=== HERDR MUTATING CALLS ===
+agent start worker-<SHORT>
+agent send p_50 do the thing
+
+When your unit is finished and your run-log DONE/BLOCKED block is written, ring the orchestrator so it does not have to poll (the run-log block is the record — this is only a doorbell):
+  <REPO>/skills/herder/scripts/herder-send term_ORCH 'Unit DONE — run-log updated'
+Ring exactly ONCE and then stop, whatever it reports. The orchestrator is usually mid-turn when you ring, so the helper will say verify=queued (or even verify=not_delivered) — that is EXPECTED and is NOT a failure: your message is queued and the run-log is the real record. Do NOT resend on a queued/not_delivered result; resending just stacks duplicate messages in the orchestrator's queue.
+Do NOT ring with raw 'herdr agent send' — it writes the text without submitting it, so the ring never lands. Use the command above (also available as "$HERDER_SEND" "$HERDER_NOTIFY_TO").
+pane send-keys p_50 Enter
+=== HCOM DIR ===
+<CASE>/home/.hcom
+=== REGISTRY ===
+{"guid":"<GUID>","short_guid":"<SHORT>","label":"worker-<SHORT>","role":"worker","agent":"claude","extra_args":["--dangerously-skip-permissions"],"argv":["/bin/zsh","-lic","export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SEND=<REPO>/skills/herder/scripts/herder-send HERDER_NOTIFY_TO=term_ORCH HCOM_DIR=<CASE>/home/.hcom; exec <REPO>/skills/herder/scripts/hcom-launch claude --tag worker --dangerously-skip-permissions "],"pane_id":"p_50","workspace_id":"ws_1","tab_id":"tab_1","terminal_id":"term_AGENT","cwd":"/mock/cwd","started_at":"<TS>","started_by_pane":"p_orch","initial_prompt_present":true,"team":"","hcom_dir":"<CASE>/home/.hcom","hcom_name":"worker-rive","hcom_tag":"worker","status":"active"}
+=== BRIEF ===

@@ -1,0 +1,8 @@
+=== STDERR ===
+
+=== STDOUT ===
+
+=== EXIT ===
+0
+=== HERDR CALLS ===
+wait agent-status p_5 --status idle --timeout 60000

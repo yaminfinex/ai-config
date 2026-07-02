@@ -1,0 +1,23 @@
+=== STDERR ===
+
+=== STDOUT ===
+{
+  "guid": "guid-dupe-0000",
+  "short_guid": "dupe",
+  "label": "dupe",
+  "role": "scout",
+  "agent": "claude",
+  "terminal_id": "term_DDD",
+  "pane_id": "p_40",
+  "team": "",
+  "hcom_dir": "",
+  "hcom_name": "",
+  "hcom_tag": "",
+  "status": "closed",
+  "close_result": "closed",
+  "live": null,
+  "live_pane": null,
+  "live_status": "gone"
+}
+=== EXIT ===
+0

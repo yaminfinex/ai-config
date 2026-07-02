@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# mock-hcom-spawn — a deterministic, hermetic stand-in for the `hcom` CLI, used
+# by check-spawn-contract.sh to exercise herder-spawn's hcom NAME CAPTURE
+# (correlating the child's frozen launch pane_id to the bus entry) without a
+# live bus. herder-spawn only needs `hcom list --json` from it; it also
+# satisfies `command -v hcom` (hcom is a hard dependency for hcom-capable
+# agents).
+#
+# Behaviour is driven by env vars (set by the harness):
+#   MOCK_HCOM_SPAWN_SCENARIO
+#       launchctx (default) — an entry whose launch_context.pane_id is p_50
+#                             (the frozen launch pane) exists → primary capture
+#       fallback            — no launch_context match; an entry with the spawn
+#                             tag ("worker") and directory /mock/cwd exists
+#                             (plus an OLDER decoy with the same tag+dir, to
+#                             prove newest-by-created_at wins)
+#       fail                — empty bus → capture fails (best-effort: spawn
+#                             still succeeds, keystroke-only)
+#   MOCK_PROBE_DIR   probe dir; every invocation records the effective
+#                    HCOM_DIR to hcom_dir (proves the capture is scoped to the
+#                    resolved team bus)
+
+set -euo pipefail
+
+SCEN="${MOCK_HCOM_SPAWN_SCENARIO:-launchctx}"
+PROBE="${MOCK_PROBE_DIR:?}"
+mkdir -p "$PROBE"
+
+printf '%s' "${HCOM_DIR:-<unset>}" >"$PROBE/hcom_dir"
+
+case "${1:-} ${2:-}" in
+  "list --json")
+    case "$SCEN" in
+      launchctx)
+        jq -n '[
+          {name:"decoy-yolo",  tag:"other",  directory:"/elsewhere",
+           created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_99"}},
+          {name:"worker-rive", tag:"worker", directory:"/elsewhere",
+           created_at:"2026-01-01T00:00:01Z", launch_context:{pane_id:"p_50"}}
+        ]';;
+      fallback)
+        jq -n '[
+          {name:"worker-old",  tag:"worker", directory:"/mock/cwd",
+           created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_98"}},
+          {name:"worker-nova", tag:"worker", directory:"/mock/cwd",
+           created_at:"2026-01-01T00:00:01Z", launch_context:{pane_id:"p_99"}}
+        ]';;
+      *)
+        jq -n '[]';;
+    esac;;
+  *)
+    printf 'mock-hcom-spawn: unhandled: %s\n' "$*" >&2
+    exit 1;;
+esac

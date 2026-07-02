@@ -3,11 +3,15 @@
 # cleanup. It proves culling hcom-bound registry rows runs `hcom kill <name>`
 # with the recorded HCOM_DIR, bus-less rows never call hcom, and hcom failure
 # never makes cull fail or skip pane closure.
+#
+# HERDER_CULL_BIN may point at ANY executable honouring the herder-cull CLI
+# (the bash script or the Go `bin/herder cull` shim); it is exec'd directly,
+# not via `bash`, so the same suite gates either implementation.
 
 set -uo pipefail
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CULL="$TESTS_DIR/../scripts/herder-cull"
+CULL="${HERDER_CULL_BIN:-$TESTS_DIR/../scripts/herder-cull}"
 
 ROOT="$(mktemp -d)"
 MOCKBIN="$ROOT/bin"
@@ -144,7 +148,7 @@ run_cull() {
     PATH="$PATH_HERMETIC" HOME="$HOME" \
     HERDR_ENV=1 HERDER_STATE_DIR="$REG_DIR" HERDR_PANE_ID="p_test" \
     MOCK_PROBE_DIR="$PROBE" MOCK_HCOM_KILL_FAIL="$kill_fail" MOCK_CULL_LIVE="$live" \
-    bash "$CULL" "$@" 2>&1)"
+    "$CULL" "$@" 2>&1)"
   RUN_RC=$?
 }
 

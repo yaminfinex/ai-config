@@ -14,6 +14,10 @@
 #   check-send-contract.sh --write    # (re)generate goldens from $HERDER_SEND_BIN
 #   HERDER_SEND_BIN=/path/to/herder-send check-send-contract.sh [--write]
 #
+# HERDER_SEND_BIN may point at ANY executable honouring the herder-send CLI
+# (the bash script or the Go `bin/herder send` shim); it is exec'd directly,
+# not via `bash`, so the same suite gates either implementation.
+#
 # Output is fully deterministic (fixed panes, char counts, message, no timestamps),
 # so no normalization is needed.
 
@@ -57,7 +61,7 @@ run_one() {  # $1=mock scenario, rest=args → prints normalized block, sets no 
     HERDR_ENV=1 HERDER_BUS=herdr \
     HERDER_STATE_DIR="$FIX" \
     MOCK_HERDR_SCENARIO="$scen" MOCK_HERDR_STATE="$state" \
-    bash "$HS" "$@" 2>"$err")"
+    "$HS" "$@" 2>"$err")"
   code=$?
   printf '=== STDERR ===\n%s\n=== STDOUT ===\n%s\n=== EXIT ===\n%s\n' \
     "$(cat "$err")" "$out" "$code"

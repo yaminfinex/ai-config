@@ -1,0 +1,9 @@
+=== STDERR ===
+
+=== STDOUT ===
+GUID       LABEL                AGENT   PANE               LIVE      TEAM         BUS              ROLE
+alpha      alpha                claude  p_10               idle      global       -                worker
+beta       beta                 codex   p_99               working   blue         @beta-rive       reviewer
+gone       gone                 claude  p_30               gone      global       -                scout
+=== EXIT ===
+0

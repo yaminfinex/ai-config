@@ -1,0 +1,7 @@
+=== STDERR ===
+herder-wait: could not read live pane list; cannot resolve beta
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== HERDR CALLS ===

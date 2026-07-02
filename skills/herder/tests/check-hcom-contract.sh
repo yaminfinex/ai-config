@@ -3,7 +3,8 @@
 # resolution) against a hermetic mock `hcom`. This is the durable guard that the
 # registry-driven transport selection + bus-scoped send behave to contract without
 # a live bus. Complements check-send-contract.sh (which locks the herdr keystroke
-# path). Asserts, driving the REAL delivery-driver library:
+# path). Asserts, driving the REAL herder-send CLI (the driver library's only
+# public entry point — so the same suite gates the bash and Go implementations):
 #
 #   selection  — a registry row with a non-empty hcom_name routes to the hcom
 #                driver; a bus-less row (and unknown/term_* targets) route to herdr.
@@ -15,12 +16,15 @@
 #                queued/exit 0; not joined ⇒ exit 2; send failure ⇒ exit 1.
 #
 # Usage: check-hcom-contract.sh        # all assertions; nonzero exit on any failure
+#
+# HERDER_SEND_BIN may point at ANY executable honouring the herder-send CLI
+# (the bash script or the Go `bin/herder send` shim); it is exec'd directly,
+# not via `bash`, so the same suite gates either implementation.
 
 set -uo pipefail
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LIB="$TESTS_DIR/../scripts/lib"
-HS="$TESTS_DIR/../scripts/herder-send"
+HS="${HERDER_SEND_BIN:-$TESTS_DIR/../scripts/herder-send}"
 
 # Hermetic bin: mock `hcom`/`herdr` first on PATH, real jq/date/bash behind it.
 MOCKBIN="$(mktemp -d)"
@@ -28,6 +32,9 @@ ln -s "$TESTS_DIR/mock-hcom" "$MOCKBIN/hcom"
 ln -s "$TESTS_DIR/mock-herdr" "$MOCKBIN/herdr"
 
 # Registry with a bus-bound peer (alpha team) and a bus-less peer (bash pane).
+# The bus-less peer's terminal_id is term_AAA — live at p_10 in mock-herdr's pane
+# list — so the auto-selection test can positively prove it resolves down the
+# herdr keystroke path (not just that hcom refused it).
 REG_DIR="$(mktemp -d)"
 BUS_DIR="$(mktemp -d)"   # stands in for the team's HCOM_DIR
 {
@@ -37,7 +44,7 @@ BUS_DIR="$(mktemp -d)"   # stands in for the team's HCOM_DIR
       team:"alpha", hcom_dir:$dir, hcom_name:"busagent-rive", hcom_tag:"reviewer", status:"active"}'
   jq -nc \
     '{guid:"g-plain", short_guid:"plain", label:"plain", role:"worker", agent:"bash",
-      terminal_id:"term_PLAIN", pane_id:"p_20",
+      terminal_id:"term_AAA", pane_id:"p_10",
       team:"", hcom_dir:"", hcom_name:"", hcom_tag:"", status:"active"}'
 } > "$REG_DIR/registry.jsonl"
 
@@ -50,24 +57,7 @@ fail=0
 ok()   { printf 'PASS  %s\n' "$1"; }
 bad()  { printf 'FAIL  %s — %s\n' "$1" "$2"; fail=1; }
 
-# Run a snippet against the sourced delivery-driver library in a hermetic env.
-# $1=HERDER_BUS $2=MOCK_HCOM_SCENARIO $3=MOCK_HCOM_PROBE $4=snippet. Echoes the
-# snippet's stdout; exports RC (its exit) and ERRTXT (its stderr) to the caller
-# via temp files referenced by the caller. Kept simple: returns via globals.
-run_lib() {
-  local bus="$1" scen="$2" probe="$3" snippet="$4"
-  local errf; errf="$(mktemp)"
-  RUN_OUT="$(env -i \
-    PATH="$PATH_HERMETIC" HOME="$HOME" \
-    HERDER_STATE_DIR="$REG_DIR" HERDER_BUS="$bus" HERDER_LABEL="orchestrator" \
-    MOCK_HCOM_SCENARIO="$scen" MOCK_HCOM_PROBE="$probe" \
-    bash -c "source '$LIB/delivery-driver.sh'; $snippet" 2>"$errf")"
-  RUN_RC=$?
-  RUN_ERR="$(cat "$errf")"
-  rm -f "$errf"
-}
-
-# Drive the REAL worktree herder-send for dry-run contract coverage. $1=HERDER_BUS
+# Drive the herder-send CLI under test. $1=HERDER_BUS
 # $2=MOCK_HCOM_SCENARIO $3=MOCK_HCOM_PROBE $4=ambient HCOM_DIR or empty; rest=args.
 run_send() {
   local bus="$1" scen="$2" probe="$3" ambient_dir="$4" errf
@@ -78,32 +68,40 @@ run_send() {
       PATH="$PATH_HERMETIC" HOME="$HOME" HCOM_DIR="$ambient_dir" \
       HERDR_ENV=1 HERDER_STATE_DIR="$REG_DIR" HERDER_BUS="$bus" HERDER_LABEL="orchestrator" \
       MOCK_HCOM_SCENARIO="$scen" MOCK_HCOM_PROBE="$probe" \
-      bash "$HS" "$@" 2>"$errf")"
+      "$HS" "$@" 2>"$errf")"
   else
     RUN_OUT="$(env -i \
       PATH="$PATH_HERMETIC" HOME="$HOME" \
       HERDR_ENV=1 HERDER_STATE_DIR="$REG_DIR" HERDER_BUS="$bus" HERDER_LABEL="orchestrator" \
       MOCK_HCOM_SCENARIO="$scen" MOCK_HCOM_PROBE="$probe" \
-      bash "$HS" "$@" 2>"$errf")"
+      "$HS" "$@" 2>"$errf")"
   fi
   RUN_RC=$?
   RUN_ERR="$(cat "$errf")"
   rm -f "$errf"
 }
 
-# ---- 1. selection (registry-driven, HERDER_BUS=auto) ----
-run_lib auto delivered "$(mktemp -d)" 'select_driver busagent'
-[[ "$RUN_OUT" == "hcom" ]] && ok "select: bus row → hcom" || bad "select: bus row → hcom" "got '$RUN_OUT'"
+# ---- 1. selection (registry-driven, HERDER_BUS=auto), proven end-to-end ----
+# A bus row routes to the hcom driver (dry-run reports the hcom transport); a
+# bus-less row and a term_* target route down the herdr keystroke path (dry-run
+# resolves them to a live pane via mock-herdr's pane list).
+run_send auto delivered "$(mktemp -d)" "" --dry-run --json busagent
+[[ "$RUN_RC" -eq 0 ]] && grep -q '"transport":"hcom"' <<<"$RUN_OUT" \
+  && ok "select: bus row → hcom" || bad "select: bus row → hcom" "rc=$RUN_RC out='$RUN_OUT'"
 
-run_lib auto delivered "$(mktemp -d)" 'select_driver plain'
-[[ "$RUN_OUT" == "herdr" ]] && ok "select: bus-less row → herdr" || bad "select: bus-less row → herdr" "got '$RUN_OUT'"
+run_send auto delivered "$(mktemp -d)" "" --dry-run --json plain
+[[ "$RUN_RC" -eq 0 ]] && grep -q '"pane_id":"p_10"' <<<"$RUN_OUT" && grep -q '"resolved_via":"terminal_id"' <<<"$RUN_OUT" \
+  && ok "select: bus-less row → herdr" || bad "select: bus-less row → herdr" "rc=$RUN_RC out='$RUN_OUT' err=$RUN_ERR"
+grep -q -- '-> pane p_10 (via terminal_id)' <<<"$RUN_ERR" \
+  && ok "select: bus-less row resolves via herdr pane path" || bad "select: bus-less row resolves via herdr pane path" "err=$RUN_ERR"
 
-run_lib auto delivered "$(mktemp -d)" 'select_driver term_UNKNOWN'
-[[ "$RUN_OUT" == "herdr" ]] && ok "select: unknown/term_* → herdr" || bad "select: unknown → herdr" "got '$RUN_OUT'"
+run_send auto delivered "$(mktemp -d)" "" --dry-run --json term_AAA
+[[ "$RUN_RC" -eq 0 ]] && grep -q '"resolved_via":"terminal_id(direct)"' <<<"$RUN_OUT" \
+  && ok "select: term_* → herdr" || bad "select: term_* → herdr" "rc=$RUN_RC out='$RUN_OUT' err=$RUN_ERR"
 
 # ---- 2. delivered: scoping + addressing + verify=delivered/exit 0 ----
 P="$(mktemp -d)"
-run_lib hcom delivered "$P" 'driver_dispatch send busagent "hello world" --json 1 || exit $?'
+run_send hcom delivered "$P" "" --json busagent "hello world"
 [[ "$RUN_RC" -eq 0 ]] && ok "delivered: exit 0" || bad "delivered: exit 0" "rc=$RUN_RC err=$RUN_ERR"
 grep -q 'verify=delivered' <<<"$RUN_ERR" && ok "delivered: verify=delivered" || bad "delivered: verify=delivered" "err=$RUN_ERR"
 grep -q '@busagent-rive'   <<<"$RUN_ERR" && ok "delivered: reports bus name" || bad "delivered: reports bus name" "err=$RUN_ERR"
@@ -120,20 +118,20 @@ grep -q 'deliver:busagent-rive' "$P/events_argv" 2>/dev/null && ok "verify: ack 
 grep -q '"hcom_name":"busagent-rive"' <<<"$RUN_OUT" && ok "json: hcom_name field" || bad "json: hcom_name field" "out='$RUN_OUT'"
 
 # ---- 3. queued: no ack in window ⇒ queued/exit 0 ----
-run_lib hcom queued "$(mktemp -d)" 'driver_dispatch send busagent "hi" --timeout 1000 || exit $?'
+run_send hcom queued "$(mktemp -d)" "" --timeout 1000 busagent "hi"
 [[ "$RUN_RC" -eq 0 ]] && grep -q 'verify=queued' <<<"$RUN_ERR" \
   && ok "queued: exit 0 + verify=queued" || bad "queued" "rc=$RUN_RC err=$RUN_ERR"
 
 # ---- 4. notjoined: list fails ⇒ exit 2 ----
-run_lib hcom notjoined "$(mktemp -d)" 'driver_dispatch send busagent "hi" || exit $?'
+run_send hcom notjoined "$(mktemp -d)" "" busagent "hi"
 [[ "$RUN_RC" -eq 2 ]] && ok "notjoined: exit 2" || bad "notjoined: exit 2" "rc=$RUN_RC err=$RUN_ERR"
 
 # ---- 5. sendfail: send returns nonzero ⇒ exit 1 ----
-run_lib hcom sendfail "$(mktemp -d)" 'driver_dispatch send busagent "hi" || exit $?'
+run_send hcom sendfail "$(mktemp -d)" "" busagent "hi"
 [[ "$RUN_RC" -eq 1 ]] && ok "sendfail: exit 1" || bad "sendfail: exit 1" "rc=$RUN_RC err=$RUN_ERR"
 
 # ---- 6. bus-less peer forced through hcom driver ⇒ exit 2 (won't send blind) ----
-run_lib hcom delivered "$(mktemp -d)" 'driver_dispatch send plain "hi" || exit $?'
+run_send hcom delivered "$(mktemp -d)" "" plain "hi"
 [[ "$RUN_RC" -eq 2 ]] && ok "bus-less via hcom: exit 2" || bad "bus-less via hcom: exit 2" "rc=$RUN_RC err=$RUN_ERR"
 
 # ---- 7. unregistered target forced through hcom ⇒ literal bus name on ambient bus ----

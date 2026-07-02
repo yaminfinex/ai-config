@@ -1,0 +1,7 @@
+=== STDERR ===
+herder-wait: gone (terminal term_CCC) is not live anywhere — agent gone or culled
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== HERDR CALLS ===

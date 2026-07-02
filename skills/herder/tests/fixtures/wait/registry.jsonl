@@ -1,0 +1,3 @@
+{"guid":"guid-alpha-0000","short_guid":"alpha","label":"alpha","role":"worker","agent":"claude","terminal_id":"term_AAA","pane_id":"p_10","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}
+{"guid":"guid-beta-0000","short_guid":"beta","label":"beta","role":"reviewer","agent":"codex","terminal_id":"term_BBB","pane_id":"p_20","team":"blue","hcom_dir":"/hfake/.hcom/teams/blue","hcom_name":"beta-rive","hcom_tag":"reviewer","status":"active"}
+{"guid":"guid-gone-0000","short_guid":"gone","label":"gone","role":"scout","agent":"claude","terminal_id":"term_CCC","pane_id":"p_30","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}

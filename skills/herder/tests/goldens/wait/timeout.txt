@@ -1,0 +1,8 @@
+=== STDERR ===
+herder-wait: timeout waiting for p_10 to reach status=idle
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== HERDR CALLS ===
+wait agent-status p_10 --status idle --timeout 60000
