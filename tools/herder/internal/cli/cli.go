@@ -15,6 +15,7 @@ import (
 	"ai-config/tools/herder/internal/cullcmd"
 	"ai-config/tools/herder/internal/listcmd"
 	"ai-config/tools/herder/internal/send"
+	"ai-config/tools/herder/internal/spawncmd"
 	"ai-config/tools/herder/internal/waitcmd"
 )
 
@@ -30,7 +31,7 @@ type command struct {
 // Ports land here phase by phase; until then a stub points at the bash
 // implementation so the binary never silently half-works.
 var commands = []command{
-	{"spawn", "Spawn a named, GUID-tagged agent in a herdr pane", notPorted("spawn", "P5")},
+	{"spawn", "Spawn a named, GUID-tagged agent in a herdr pane", spawncmd.Run},
 	{"send", "Deliver a message to a spawned agent (herdr or hcom bus)", send.Run},
 	{"list", "Show spawned agents, reconciled with live herdr state", listcmd.Run},
 	{"wait", "Block until an agent reaches a status, optionally read its screen", waitcmd.Run},

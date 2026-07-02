@@ -2,6 +2,7 @@
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/common.sh"
+export AI_CONFIG_ROOT
 
 src_dir="$AI_CONFIG_ROOT/tools/herder"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/herder"

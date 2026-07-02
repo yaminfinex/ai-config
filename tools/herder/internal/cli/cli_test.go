@@ -43,24 +43,10 @@ func TestUnknownCommand(t *testing.T) {
 	}
 }
 
-// Until a subcommand's port lands, its stub must fail loudly and name the
-// still-authoritative bash script — a shim flip before the port would
-// otherwise silently no-op.
-func TestStubsFailLoudAndNameBashScript(t *testing.T) {
+func TestEverySubcommandHasHandler(t *testing.T) {
 	for _, cmd := range commands {
-		if cmd.name != "spawn" {
-			continue
-		}
-		code, stdout, stderr := runCLI(t, cmd.name, "--whatever")
-		if code != 1 {
-			t.Errorf("Run(%s) = %d, want 1", cmd.name, code)
-		}
-		if stdout != "" {
-			t.Errorf("Run(%s) wrote to stdout: %q", cmd.name, stdout)
-		}
-		want := "skills/herder/scripts/herder-" + cmd.name
-		if !strings.Contains(stderr, want) {
-			t.Errorf("Run(%s) stderr = %q, want mention of %q", cmd.name, stderr, want)
+		if cmd.run == nil {
+			t.Fatalf("subcommand %s has no handler", cmd.name)
 		}
 	}
 }
