@@ -1,0 +1,192 @@
+// Package registry reads and appends the herder agent registry: an
+// append-only JSONL file at $HERDER_STATE_DIR/registry.jsonl (default
+// ${XDG_STATE_HOME:-~/.local/state}/herder). Later rows for the same guid
+// supersede earlier ones (status updates, cull close records).
+//
+// Every bash reader collapses the file through one jq idiom —
+//
+//	group_by(.guid) | map(.[-1])
+//
+// — whose exact semantics are load-bearing for the characterization goldens:
+// output is sorted by guid ascending (jq value order: null before any
+// string, strings by codepoint), the sort is stable so the LAST file row of
+// each guid wins, and target resolution then takes `last // empty` of the
+// guid/short_guid/label matches. LatestByGUID and Resolve reproduce that
+// contract exactly; treat any divergence from jq as a bug here.
+package registry
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+)
+
+// Record is one registry row. The typed fields are the ones the bash
+// substrate reads back (resolution keys, routing coordinates, status); Raw
+// preserves the row byte-faithfully for re-emit paths (`herder list --json`
+// re-serializes the original object plus reconcile fields, keeping the
+// writer's key order — jq object semantics a map round-trip would destroy).
+//
+// GUID, ShortGUID, and Label are pointers because jq distinguishes a missing
+// field (null) from an empty string when sorting and when matching
+// `select(.guid==$v ...)`; the other fields are only ever read through
+// `// empty`-style fallbacks, where null and "" collapse to the same thing.
+type Record struct {
+	GUID      *string `json:"guid"`
+	ShortGUID *string `json:"short_guid"`
+	Label     *string `json:"label"`
+
+	Role       string `json:"role"`
+	Agent      string `json:"agent"`
+	PaneID     string `json:"pane_id"`
+	TerminalID string `json:"terminal_id"`
+	Team       string `json:"team"`
+	HcomDir    string `json:"hcom_dir"`
+	HcomName   string `json:"hcom_name"`
+	HcomTag    string `json:"hcom_tag"`
+	Status     string `json:"status"`
+
+	Raw json.RawMessage `json:"-"`
+}
+
+// DefaultPath resolves the registry location exactly like the bash scripts:
+// ${HERDER_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herder}/registry.jsonl
+// (empty env vars count as unset, matching bash `:-`).
+func DefaultPath() string {
+	stateDir := os.Getenv("HERDER_STATE_DIR")
+	if stateDir == "" {
+		xdg := os.Getenv("XDG_STATE_HOME")
+		if xdg == "" {
+			home, _ := os.UserHomeDir()
+			xdg = filepath.Join(home, ".local", "state")
+		}
+		stateDir = filepath.Join(xdg, "herder")
+	}
+	return filepath.Join(stateDir, "registry.jsonl")
+}
+
+// Load reads every row of the registry at path. A missing file returns
+// (nil, fs.ErrNotExist)-wrapped error — callers mirror the bash scripts'
+// `[[ -f $REGISTRY ]]` guards and decide what "no registry" means for them.
+// The file is parsed as a stream of JSON values (what `jq -s` sees), so
+// blank lines and inter-row whitespace are irrelevant; a malformed or
+// non-object value is an error, matching jq aborting the whole pipeline.
+func Load(path string) ([]Record, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return decode(f, path)
+}
+
+func decode(r io.Reader, path string) ([]Record, error) {
+	var recs []Record
+	dec := json.NewDecoder(r)
+	for {
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			if errors.Is(err, io.EOF) {
+				return recs, nil
+			}
+			return nil, fmt.Errorf("registry %s: row %d: %w", path, len(recs)+1, err)
+		}
+		var rec Record
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			return nil, fmt.Errorf("registry %s: row %d: %w", path, len(recs)+1, err)
+		}
+		rec.Raw = bytes.Clone(raw)
+		recs = append(recs, rec)
+	}
+}
+
+// LatestByGUID collapses rows to the latest record per guid, reproducing
+// `group_by(.guid) | map(.[-1])`: stable-sort by guid (null first, then
+// codepoint order), keep the last row of each equal-guid run. The result is
+// guid-sorted, NOT file-ordered — herder-list's output order depends on this.
+func LatestByGUID(recs []Record) []Record {
+	sorted := make([]Record, len(recs))
+	copy(sorted, recs)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return guidLess(sorted[i].GUID, sorted[j].GUID)
+	})
+	var out []Record
+	for i, rec := range sorted {
+		if i+1 < len(sorted) && guidEqual(rec.GUID, sorted[i+1].GUID) {
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+// Resolve maps a user-facing target (guid | short_guid | label) to its
+// latest registry record, reproducing the shared bash lookup:
+//
+//	group_by(.guid) | map(.[-1])
+//	| map(select(.guid==$v or .short_guid==$v or .label==$v))
+//	| last // empty
+//
+// It returns nil when nothing matches (term_*/raw pane ids never match a
+// registry field, which is what routes them to the herdr-verbatim path).
+// `last` on the guid-sorted collapse means ties resolve to the greatest guid.
+func Resolve(recs []Record, target string) *Record {
+	collapsed := LatestByGUID(recs)
+	var hit *Record
+	for i := range collapsed {
+		rec := &collapsed[i]
+		if strEqual(rec.GUID, target) || strEqual(rec.ShortGUID, target) || strEqual(rec.Label, target) {
+			hit = rec
+		}
+	}
+	return hit
+}
+
+// Append writes one raw JSON row to the registry, creating the state dir on
+// first use (herder-spawn's `mkdir -p $STATE_DIR` + `printf '%s\n' >>`).
+// The caller owns the row's serialization; Append only guarantees the
+// trailing newline that keeps the file valid JSONL.
+func Append(path string, row []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(append(bytes.TrimRight(row, "\n"), '\n')); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// guidLess orders guids the way jq sorts them: null before any string,
+// strings by unicode codepoint (byte order for valid UTF-8).
+func guidLess(a, b *string) bool {
+	if a == nil {
+		return b != nil
+	}
+	if b == nil {
+		return false
+	}
+	return *a < *b
+}
+
+func guidEqual(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+// strEqual is jq `.field == $v` for a string $v: a missing field is null and
+// never equal to a string (even the empty one), so nil never matches.
+func strEqual(field *string, v string) bool {
+	return field != nil && *field == v
+}

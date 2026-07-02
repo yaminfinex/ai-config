@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/common.sh"
+
+src_dir="$AI_CONFIG_ROOT/tools/herder"
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/herder"
+
+# Key the cached binary on a hash of the module sources so a source change
+# triggers a rebuild and an unchanged tree reuses the cache.
+src_hash="$(
+  cd "$src_dir" &&
+    find go.mod cmd internal -type f \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' \) -print0 |
+    sort -z |
+    xargs -0 sha256sum |
+    sha256sum |
+    cut -c1-16
+)"
+
+herder_bin="$cache_dir/herder-$src_hash"
+
+if [ ! -x "$herder_bin" ]; then
+  if command -v go >/dev/null 2>&1; then
+    go_cmd=(go)
+  elif command -v mise >/dev/null 2>&1; then
+    go_cmd=(mise x go -- go)
+  else
+    log_error "herder: no go toolchain found — install one with: mise use -g go"
+    exit 1
+  fi
+
+  mkdir -p "$cache_dir"
+  rm -f "$cache_dir"/herder-*
+  (cd "$src_dir" && "${go_cmd[@]}" build -o "$herder_bin.tmp.$$" ./cmd/herder)
+  mv "$herder_bin.tmp.$$" "$herder_bin"
+fi
+
+exec "$herder_bin" "$@"
