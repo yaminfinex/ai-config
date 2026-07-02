@@ -78,24 +78,23 @@ Pick by **who verifies a unit of work**, then parallelism — not task size.
 8. **Delivery verified, not assumed** — by the *active delivery driver*, not the orchestrator
    eyeballing panes (`herder` skill → *Delivery drivers*). Commands stay transport-agnostic; how
    delivery is confirmed depends on which driver serves the target. Under the **hcom** driver,
-   delivery is a recorded `deliver:` ack on the bus — the message injects at the peer's next hook
-   boundary (Claude and Codex both proven), so there is **no silent pane-drop** and no crowded-tab
-   failure mode. Under the **herdr** keystroke driver, delivery is confirmed by sigil + status
-   heuristics, and its caveat still holds: give each agent its **own tab** (`herder-spawn
-   --new-tab`) and confirm `delivered`, because a keystroke into a non-active pane in a crowded tab
-   silently fails (this killed relay v1). That caveat is a *herdr-driver* limitation the hcom driver
-   removes — when a peer is a joined hcom instance, own-tab-per-agent is a convenience, not a
-   delivery requirement.
+   delivery is a recorded `deliver:` ack on the scoped bus; no ack inside the window reports
+   `verify=queued` because the message was accepted but will inject at a later hook boundary. Under
+   the **herdr** keystroke driver, delivery is confirmed by sigil + status heuristics, with
+   `verify=queued` for a busy target whose input line accepted the message for the next turn. The
+   old herdr caveat still holds: give each agent its **own tab** (`herder-spawn --new-tab`) and
+   confirm the driver result, because keystroke delivery into crowded/non-active panes is the failure
+   mode the hcom bus removes.
 9. **Completion is a doorbell, not a poll.** A finished agent writes its DONE/BLOCKED block (the
-   run-log stays the source of truth and the only carrier of evidence), then rings the
+   run-log stays the source of truth and the only carrier of evidence regardless of transport), then rings the
    orchestrator: one line, `herder-send <orchestrator terminal_id> 'Unit N DONE — run-log updated'`
    (record the orchestrator's durable `terminal_id`, not a bare `pane_id`, in the run-shape header —
    a `pane_id` drifts when herdr compacts ids — or just spawn with `herder-spawn --notify`, which
    resolves your terminal_id automatically and injects the exact ring command plus
    `$HERDER_SEND`/`$HERDER_NOTIFY_TO` into the child so it can ring without finding the helper on
-   PATH). The ring goes through `herder-send` and thus the **active delivery driver** (hcom bus when
-   the orchestrator is a joined instance, herdr keystrokes otherwise) — transport-neutral; the worker
-   never picks one. The orchestrator idles between units and wakes on the
+   PATH). The ring goes through `herder-send` and thus the **active delivery driver** selected for the
+   orchestrator target — hcom bus for a recorded bus-bound orchestrator, herdr keystrokes otherwise.
+   The worker never picks a transport. The orchestrator idles between units and wakes on the
    ring instead of burning a turn blocking in `herder-wait`; it reads the run-log and verifies
    there (invariant 4), never trusting the ring's word. The ring is best-effort and the worker
    rings **exactly once, whatever it reports**: a working orchestrator only *queues* the message
