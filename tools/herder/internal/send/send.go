@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"ai-config/tools/herder/internal/driver"
 )
@@ -19,12 +20,28 @@ type dryRunRecord struct {
 	DryRun      bool   `json:"dry_run"`
 }
 
+type hcomDryRunRecord struct {
+	Target    string `json:"target"`
+	Transport string `json:"transport"`
+	HcomName  string `json:"hcom_name"`
+	HcomDir   string `json:"hcom_dir"`
+	Team      string `json:"team"`
+	DryRun    bool   `json:"dry_run"`
+}
+
+type hcomDryRunRefuseRecord struct {
+	Target    string `json:"target"`
+	Transport string `json:"transport"`
+	Would     string `json:"would"`
+	DryRun    bool   `json:"dry_run"`
+}
+
 func Run(args []string, stdout, stderr io.Writer) int {
 	if os.Getenv("HERDR_ENV") != "1" {
 		die(stderr, "not running inside a herdr pane (HERDR_ENV != 1)")
 		return 64
 	}
-	h := &driver.Herdr{}
+	selection := driver.NewSelection()
 	if _, err := exec.LookPath("herdr"); err != nil {
 		die(stderr, "herdr not on PATH")
 		return 64
@@ -40,15 +57,21 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if opts.DryRun {
-		return dryRun(h, target, opts.JSONOutput, stdout, stderr)
+		return dryRun(selection, target, opts.JSONOutput, stdout, stderr)
 	}
-	return h.Send(target, message, driver.SendOptions{
+	sendOpts := driver.SendOptions{
 		NoEnter:    opts.NoEnter,
 		NoVerify:   opts.NoVerify,
 		Force:      opts.Force,
 		TimeoutMS:  opts.TimeoutMS,
 		JSONOutput: opts.JSONOutput,
-	}, stdout, stderr)
+	}
+	switch selection.Select(target) {
+	case driver.TransportHcom:
+		return selection.Hcom.Send(target, message, sendOpts, stdout, stderr)
+	default:
+		return selection.Herdr.Send(target, message, sendOpts, stdout, stderr)
+	}
 }
 
 type options struct {
@@ -124,7 +147,16 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, string, string
 	return opts, target, message, 0
 }
 
-func dryRun(h *driver.Herdr, target string, jsonOut bool, stdout, stderr io.Writer) int {
+func dryRun(selection *driver.Selection, target string, jsonOut bool, stdout, stderr io.Writer) int {
+	switch selection.Select(target) {
+	case driver.TransportHcom:
+		return dryRunHcom(selection.Hcom, target, jsonOut, stdout, stderr)
+	default:
+		return dryRunHerdr(selection.Herdr, target, jsonOut, stdout, stderr)
+	}
+}
+
+func dryRunHerdr(h *driver.Herdr, target string, jsonOut bool, stdout, stderr io.Writer) int {
 	res, err := h.Resolve(target)
 	if err != nil {
 		var resolveErr *driver.ResolveError
@@ -158,6 +190,61 @@ func dryRun(h *driver.Herdr, target string, jsonOut bool, stdout, stderr io.Writ
 	return 0
 }
 
+func dryRunHcom(h *driver.Hcom, target string, jsonOut bool, stdout, stderr io.Writer) int {
+	res, err := h.Resolve(target)
+	if err != nil {
+		var resolveErr *driver.ResolveError
+		if errors.As(err, &resolveErr) && resolveErr.Code == 2 {
+			fmt.Fprintf(stderr, "herder-send --dry-run: would REFUSE (exit 2): %s has no recorded bus name — not bus-bound\n", target)
+			if jsonOut {
+				writeJSON(stdout, hcomDryRunRefuseRecord{
+					Target:    target,
+					Transport: "hcom",
+					Would:     "refuse",
+					DryRun:    true,
+				})
+			}
+			return 2
+		}
+		return 1
+	}
+
+	hcomDir := res.Dir
+	team := res.Team
+	if !res.Found {
+		hcomDir = os.Getenv("HCOM_DIR")
+		if hcomDir == "" {
+			home, _ := os.UserHomeDir()
+			hcomDir = filepath.Join(home, ".hcom")
+		}
+		team = "global"
+	}
+	displayTeam := team
+	if displayTeam == "" {
+		displayTeam = "global"
+	}
+	displayDir := hcomDir
+	if displayDir == "" {
+		displayDir = os.Getenv("HCOM_DIR")
+		if displayDir == "" {
+			home, _ := os.UserHomeDir()
+			displayDir = filepath.Join(home, ".hcom")
+		}
+	}
+	fmt.Fprintf(stderr, "herder-send --dry-run: %s -> hcom bus @%s (team: %s, HCOM_DIR=%s)\n", target, res.Name, displayTeam, displayDir)
+	if jsonOut {
+		writeJSON(stdout, hcomDryRunRecord{
+			Target:    target,
+			Transport: "hcom",
+			HcomName:  res.Name,
+			HcomDir:   hcomDir,
+			Team:      team,
+			DryRun:    true,
+		})
+	}
+	return 0
+}
+
 func die(stderr io.Writer, msg string) {
 	fmt.Fprintf(stderr, "herder-send: %s\n", msg)
 }
@@ -166,4 +253,9 @@ func printHelp(stdout io.Writer) {
 	fmt.Fprint(stdout, `Usage:
   herder-send <target> <message> [opts]
 `)
+}
+
+func writeJSON(stdout io.Writer, record any) {
+	b, _ := json.Marshal(record)
+	fmt.Fprintln(stdout, string(b))
 }
