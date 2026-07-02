@@ -12,7 +12,10 @@ import (
 	"io"
 	"strings"
 
+	"ai-config/tools/herder/internal/cullcmd"
+	"ai-config/tools/herder/internal/listcmd"
 	"ai-config/tools/herder/internal/send"
+	"ai-config/tools/herder/internal/waitcmd"
 )
 
 // command is one herder subcommand. summary is the one-line description in
@@ -29,9 +32,9 @@ type command struct {
 var commands = []command{
 	{"spawn", "Spawn a named, GUID-tagged agent in a herdr pane", notPorted("spawn", "P5")},
 	{"send", "Deliver a message to a spawned agent (herdr or hcom bus)", send.Run},
-	{"list", "Show spawned agents, reconciled with live herdr state", notPorted("list", "P4")},
-	{"wait", "Block until an agent reaches a status, optionally read its screen", notPorted("wait", "P4")},
-	{"cull", "Close spawned agents and mark them closed in the registry", notPorted("cull", "P4")},
+	{"list", "Show spawned agents, reconciled with live herdr state", listcmd.Run},
+	{"wait", "Block until an agent reaches a status, optionally read its screen", waitcmd.Run},
+	{"cull", "Close spawned agents and mark them closed in the registry", cullcmd.Run},
 }
 
 // notPorted builds the stub for a subcommand whose port has not landed yet:

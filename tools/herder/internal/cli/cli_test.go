@@ -48,7 +48,7 @@ func TestUnknownCommand(t *testing.T) {
 // otherwise silently no-op.
 func TestStubsFailLoudAndNameBashScript(t *testing.T) {
 	for _, cmd := range commands {
-		if cmd.name == "send" {
+		if cmd.name != "spawn" {
 			continue
 		}
 		code, stdout, stderr := runCLI(t, cmd.name, "--whatever")
