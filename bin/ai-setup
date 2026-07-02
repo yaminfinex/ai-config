@@ -6,28 +6,48 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/common.sh"
 dry_run=0
 heal_only=0
 install_shell_path=0
+hcom_hooks_action=""
 
-for arg in "$@"; do
-  case "$arg" in
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --dry-run) dry_run=1 ;;
     --heal-only) heal_only=1 ;;
     --shell-path) install_shell_path=1 ;;
+    --hcom-hooks)
+      shift
+      case "${1:-}" in
+        install|remove|status) hcom_hooks_action="$1" ;;
+        "")
+          log_error "--hcom-hooks requires one of: install, remove, status"
+          exit 2
+          ;;
+        *)
+          log_error "unknown --hcom-hooks action: $1"
+          exit 2
+          ;;
+      esac
+      ;;
     -h|--help)
       cat <<'USAGE'
 Usage: ai-setup [--dry-run] [--heal-only] [--shell-path]
+       ai-setup [--dry-run] --hcom-hooks install|remove|status
 
 Installs symlinks from live agent config paths into this repo.
 --heal-only only repairs missing, broken, or wrong symlinks and never backs up
 real files or directories.
 --shell-path installs a managed PATH block into ~/.zshrc or ~/.bashrc.
+--hcom-hooks manages global hcom hooks for Claude and Codex only when explicitly
+requested. Hooks are launch-managed by hcom itself; ai-setup is the durable/manual
+install, remove, and status layer rather than a default setup side effect.
 USAGE
       exit 0
       ;;
     *)
-      log_error "unknown argument: $arg"
+      log_error "unknown argument: $1"
       exit 2
       ;;
   esac
+  shift
 done
 
 run() {
@@ -189,6 +209,13 @@ install_shell_path_block() {
   mv "$tmp" "$rc"
   log_info "installed ai-config PATH block in $rc"
 }
+
+if [ -n "$hcom_hooks_action" ]; then
+  source "$AI_CONFIG_ROOT/lib/hcom-hooks.sh"
+  hcom_hooks_main "$hcom_hooks_action"
+  log_info "ai-setup hcom hooks $hcom_hooks_action complete"
+  exit 0
+fi
 
 install_portable_links
 install_skill_links

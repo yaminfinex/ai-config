@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Sibling relay for the claude/codex PATH shims. The implementation lives in
+# ../scripts/hcom-launch; this file keeps the shim directory self-contained for
+# PATH activation while avoiding a second copy of the W1 wrapper.
+
+set -euo pipefail
+
+canonical_dir() {
+  local path="$1" dir
+  dir="$(dirname "$path")"
+  [[ "$dir" = /* ]] || dir="$PWD/$dir"
+  cd "$dir" 2>/dev/null && pwd -P
+}
+
+shim_dir="$(canonical_dir "${BASH_SOURCE[0]}")" || {
+  printf 'hcom-launch shim: cannot resolve shim directory\n' >&2
+  exit 1
+}
+
+exec "$shim_dir/../scripts/hcom-launch" "$@"
