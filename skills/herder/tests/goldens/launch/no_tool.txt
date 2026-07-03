@@ -1,0 +1,9 @@
+=== STDERR ===
+hcom-launch: usage: hcom-launch <tool> [--tag TAG] [tool-args...]
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== HCOM ARGV ===
+
+=== ENV PROBES ===

@@ -1,0 +1,9 @@
+=== STDERR ===
+hcom-launch: --tag needs a value
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== HCOM ARGV ===
+
+=== ENV PROBES ===

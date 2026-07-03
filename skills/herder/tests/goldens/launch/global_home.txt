@@ -1,0 +1,15 @@
+=== STDERR ===
+
+=== STDOUT ===
+
+=== EXIT ===
+0
+=== HCOM ARGV ===
+claude
+--run-here
+=== ENV PROBES ===
+HCOM_LAUNCH_INFLIGHT=1
+CLAUDE_CONFIG_DIR=
+CODEX_HOME=
+GEMINI_CLI_HOME=
+HCOM_DIR=<CASE>/home/.hcom
