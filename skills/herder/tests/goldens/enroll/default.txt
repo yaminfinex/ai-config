@@ -1,0 +1,8 @@
+=== STDERR ===
+enrolled manual-<SHORT> (<GUID>) pane=p_self terminal=term_SELF
+=== STDOUT ===
+{"agent":"manual","cwd":"/mock/cwd","guid":"<GUID>","hcom_dir":"","hcom_name":"","hcom_tag":"","label":"manual-<SHORT>","pane_id":"p_self","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"},"role":"manual","short_guid":"<SHORT>","status":"active","terminal_id":"term_SELF","workspace_id":"ws_self"}
+=== EXIT ===
+0
+=== REGISTRY ===
+{"agent":"manual","cwd":"/mock/cwd","guid":"<GUID>","hcom_dir":"","hcom_name":"","hcom_tag":"","label":"manual-<SHORT>","pane_id":"p_self","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"},"role":"manual","short_guid":"<SHORT>","status":"active","terminal_id":"term_SELF","workspace_id":"ws_self"}

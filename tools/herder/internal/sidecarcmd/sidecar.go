@@ -10,6 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"time"
+
+	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/registry"
 )
 
 type options struct {
@@ -59,6 +62,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		tag:        os.Getenv("HERDER_ROLE"),
 		cwd:        currentCWD(),
 		ppid0:      os.Getppid(),
+		registry:   registry.DefaultPath(),
 	}
 	return sidecar.run()
 }
@@ -81,14 +85,16 @@ func parseArgs(args []string) (options, bool) {
 }
 
 type sidecar struct {
-	tool       string
-	paneID     string
-	socketPath string
-	tag        string
-	cwd        string
-	ppid0      int
-	lastState  string
-	missing    int
+	tool              string
+	paneID            string
+	socketPath        string
+	tag               string
+	cwd               string
+	ppid0             int
+	registry          string
+	lastState         string
+	missing           int
+	enrichedSessionID string
 }
 
 func (s *sidecar) run() int {
@@ -96,6 +102,10 @@ func (s *sidecar) run() int {
 	s.lastState = "working"
 
 	row := s.discoverRow()
+	if row != nil {
+		s.appendEnrichment(row)
+		s.enrichedSessionID = row.SessionID
+	}
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -108,6 +118,10 @@ func (s *sidecar) run() int {
 			s.missing++
 		} else {
 			s.missing = 0
+			if row.SessionID != "" && row.SessionID != s.enrichedSessionID {
+				s.appendEnrichment(row)
+				s.enrichedSessionID = row.SessionID
+			}
 			if state, ok := mapStatus(row.Status); ok && state != s.lastState {
 				s.report(state)
 				s.lastState = state
@@ -165,6 +179,115 @@ func (s *sidecar) findRow(rows []hcomRow) *hcomRow {
 	return findRowForLaunchFallback(rows, s.tool, s.tag, s.cwd)
 }
 
+func (s *sidecar) appendEnrichment(row *hcomRow) {
+	guid, hadGUID := os.LookupEnv("HERDER_GUID")
+	if guid == "" {
+		var err error
+		guid, err = registry.NewGUID()
+		if err != nil {
+			return
+		}
+	}
+	short := registry.ShortGUID(guid)
+	coords := s.paneCoordinates()
+	if coords.PaneID == "" {
+		coords.PaneID = s.paneID
+	}
+	if coords.CWD == "" {
+		coords.CWD = firstNonEmpty(row.Directory, s.cwd)
+	}
+
+	latest := s.latest(guid)
+	label := os.Getenv("HERDER_LABEL")
+	role := os.Getenv("HERDER_ROLE")
+	agent := s.tool
+	if latest != nil {
+		label = firstNonEmpty(ptrString(latest.Label), label)
+		role = firstNonEmpty(latest.Role, role)
+		agent = firstNonEmpty(latest.Agent, agent)
+		coords.TerminalID = firstNonEmpty(latest.TerminalID, coords.TerminalID)
+		coords.PaneID = firstNonEmpty(latest.PaneID, coords.PaneID)
+	}
+	if label == "" {
+		label = "manual-" + short
+	}
+	if role == "" {
+		role = "manual"
+	}
+
+	mechanism := "enroll"
+	switch {
+	case os.Getenv("HERDER_SHIM") == "1":
+		mechanism = "shim"
+	case hadGUID:
+		mechanism = "spawn"
+	}
+	prov := registry.BuildProvenance(mechanism, row.Tag, coords.CWD, coords.WorkspaceID)
+	prov.ToolSessionID = row.SessionID
+
+	base := []byte(`{}`)
+	if latest != nil && len(bytes.TrimSpace(latest.Raw)) > 0 {
+		base = latest.Raw
+	}
+	out, err := registry.UpdateRawObject(base, map[string]any{
+		"guid":         guid,
+		"short_guid":   short,
+		"label":        label,
+		"role":         role,
+		"agent":        agent,
+		"pane_id":      coords.PaneID,
+		"terminal_id":  coords.TerminalID,
+		"workspace_id": coords.WorkspaceID,
+		"cwd":          coords.CWD,
+		"hcom_dir":     os.Getenv("HCOM_DIR"),
+		"hcom_name":    row.Name,
+		"hcom_tag":     row.Tag,
+		"status":       "active",
+		"provenance":   prov,
+	})
+	if err == nil {
+		_ = registry.Append(s.registry, out)
+	}
+}
+
+type paneCoordinates struct {
+	PaneID      string
+	TerminalID  string
+	WorkspaceID string
+	CWD         string
+}
+
+func (s *sidecar) paneCoordinates() paneCoordinates {
+	out, err := (&herdrcli.Client{}).Output("pane", "get", s.paneID)
+	if err != nil {
+		return paneCoordinates{PaneID: s.paneID}
+	}
+	pane, err := herdrcli.ParsePaneGet(out)
+	if err != nil {
+		return paneCoordinates{PaneID: s.paneID}
+	}
+	return paneCoordinates{
+		PaneID:      firstNonEmpty(pane.PaneID, s.paneID),
+		TerminalID:  pane.TerminalID,
+		WorkspaceID: pane.WorkspaceID,
+		CWD:         pane.CWD,
+	}
+}
+
+func (s *sidecar) latest(guid string) *registry.Record {
+	recs, err := registry.Load(s.registry)
+	if err != nil {
+		return nil
+	}
+	for _, rec := range registry.LatestByGUID(recs) {
+		if ptrString(rec.GUID) == guid {
+			cp := rec
+			return &cp
+		}
+	}
+	return nil
+}
+
 func findRowForLaunchFallback(rows []hcomRow, tool, tag, cwd string) *hcomRow {
 	if tool == "" || tag == "" || cwd == "" {
 		return nil
@@ -184,6 +307,22 @@ func currentCWD() string {
 		return ""
 	}
 	return cwd
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func ptrString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func hcomList() []hcomRow {

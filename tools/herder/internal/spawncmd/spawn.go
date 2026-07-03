@@ -2,7 +2,6 @@ package spawncmd
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
+	"ai-config/tools/herder/internal/registry"
 )
 
 const trustModalPattern = `Do you trust the contents of this directory|Do you trust the files in this folder|Is this a project you created or one you trust|Yes, I trust this folder`
@@ -52,56 +52,58 @@ type options struct {
 }
 
 type spawnRecord struct {
-	GUID                 string   `json:"guid"`
-	ShortGUID            string   `json:"short_guid"`
-	Label                string   `json:"label"`
-	Role                 string   `json:"role"`
-	Agent                string   `json:"agent"`
-	ExtraArgs            []string `json:"extra_args"`
-	Argv                 []string `json:"argv"`
-	PaneID               string   `json:"pane_id"`
-	WorkspaceID          string   `json:"workspace_id"`
-	TabID                string   `json:"tab_id"`
-	TerminalID           string   `json:"terminal_id"`
-	CWD                  string   `json:"cwd"`
-	StartedAt            string   `json:"started_at"`
-	StartedByPane        string   `json:"started_by_pane"`
-	InitialPromptPresent bool     `json:"initial_prompt_present"`
-	Team                 string   `json:"team"`
-	HcomDir              string   `json:"hcom_dir"`
-	HcomName             string   `json:"hcom_name"`
-	HcomTag              string   `json:"hcom_tag"`
-	Status               string   `json:"status"`
+	GUID                 string              `json:"guid"`
+	ShortGUID            string              `json:"short_guid"`
+	Label                string              `json:"label"`
+	Role                 string              `json:"role"`
+	Agent                string              `json:"agent"`
+	ExtraArgs            []string            `json:"extra_args"`
+	Argv                 []string            `json:"argv"`
+	PaneID               string              `json:"pane_id"`
+	WorkspaceID          string              `json:"workspace_id"`
+	TabID                string              `json:"tab_id"`
+	TerminalID           string              `json:"terminal_id"`
+	CWD                  string              `json:"cwd"`
+	StartedAt            string              `json:"started_at"`
+	StartedByPane        string              `json:"started_by_pane"`
+	InitialPromptPresent bool                `json:"initial_prompt_present"`
+	Team                 string              `json:"team"`
+	HcomDir              string              `json:"hcom_dir"`
+	HcomName             string              `json:"hcom_name"`
+	HcomTag              string              `json:"hcom_tag"`
+	Status               string              `json:"status"`
+	Provenance           registry.Provenance `json:"provenance"`
 }
 
 type spawnJSONRecord struct {
-	GUID                 string   `json:"guid"`
-	ShortGUID            string   `json:"short_guid"`
-	Label                string   `json:"label"`
-	Role                 string   `json:"role"`
-	Agent                string   `json:"agent"`
-	ExtraArgs            []string `json:"extra_args"`
-	Argv                 []string `json:"argv"`
-	PaneID               string   `json:"pane_id"`
-	WorkspaceID          string   `json:"workspace_id"`
-	TabID                string   `json:"tab_id"`
-	TerminalID           string   `json:"terminal_id"`
-	CWD                  string   `json:"cwd"`
-	StartedAt            string   `json:"started_at"`
-	StartedByPane        string   `json:"started_by_pane"`
-	InitialPromptPresent bool     `json:"initial_prompt_present"`
-	Team                 string   `json:"team"`
-	HcomDir              string   `json:"hcom_dir"`
-	HcomName             string   `json:"hcom_name"`
-	HcomTag              string   `json:"hcom_tag"`
-	Status               string   `json:"status"`
-	PromptSent           bool     `json:"prompt_sent"`
-	DeliveryResult       string   `json:"delivery_result"`
-	PermInjected         string   `json:"perm_injected"`
-	NewTab               bool     `json:"new_tab"`
-	RootPaneClosed       bool     `json:"root_pane_closed"`
-	HcomCapture          string   `json:"hcom_capture"`
-	BriefFile            string   `json:"brief_file,omitempty"`
+	GUID                 string              `json:"guid"`
+	ShortGUID            string              `json:"short_guid"`
+	Label                string              `json:"label"`
+	Role                 string              `json:"role"`
+	Agent                string              `json:"agent"`
+	ExtraArgs            []string            `json:"extra_args"`
+	Argv                 []string            `json:"argv"`
+	PaneID               string              `json:"pane_id"`
+	WorkspaceID          string              `json:"workspace_id"`
+	TabID                string              `json:"tab_id"`
+	TerminalID           string              `json:"terminal_id"`
+	CWD                  string              `json:"cwd"`
+	StartedAt            string              `json:"started_at"`
+	StartedByPane        string              `json:"started_by_pane"`
+	InitialPromptPresent bool                `json:"initial_prompt_present"`
+	Team                 string              `json:"team"`
+	HcomDir              string              `json:"hcom_dir"`
+	HcomName             string              `json:"hcom_name"`
+	HcomTag              string              `json:"hcom_tag"`
+	Status               string              `json:"status"`
+	Provenance           registry.Provenance `json:"provenance"`
+	PromptSent           bool                `json:"prompt_sent"`
+	DeliveryResult       string              `json:"delivery_result"`
+	PermInjected         string              `json:"perm_injected"`
+	NewTab               bool                `json:"new_tab"`
+	RootPaneClosed       bool                `json:"root_pane_closed"`
+	HcomCapture          string              `json:"hcom_capture"`
+	BriefFile            string              `json:"brief_file,omitempty"`
 }
 
 type workspace struct {
@@ -418,12 +420,12 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 	}
 	registryPath := filepath.Join(stateDir, "registry.jsonl")
 
-	guid, err := newUUID()
+	guid, err := registry.NewGUID()
 	if err != nil {
 		die(r.stderr, err.Error())
 		return 1
 	}
-	short := strings.SplitN(guid, "-", 2)[0]
+	short := registry.ShortGUID(guid)
 	label := opts.LabelPrefix + opts.Role + "-" + short
 
 	isHcomAgent := launchcmd.IsHcomCapable(opts.Agent)
@@ -500,6 +502,10 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 	if opts.NotifyTo != "" {
 		notifyExport = " HERDER_NOTIFY_TO=" + shellQuote(opts.NotifyTo)
 	}
+	spawnedBy := os.Getenv("HERDER_GUID")
+	if spawnedBy == "" {
+		spawnedBy = "user"
+	}
 	hcomEnv := ""
 	if isHcomAgent {
 		hcomEnv = " HCOM_DIR=" + shellQuote(hcomDirEff)
@@ -511,11 +517,11 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 			innerCmd.WriteString(shellQuote(arg))
 			innerCmd.WriteByte(' ')
 		}
-		inner := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SEND=%s%s%s; exec %s",
-			shellQuote(guid), shellQuote(opts.Role), shellQuote(label), shellQuote(sendAbs), notifyExport, hcomEnv, innerCmd.String())
+		inner := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_SEND=%s%s%s; exec %s",
+			shellQuote(guid), shellQuote(opts.Role), shellQuote(label), shellQuote(spawnedBy), shellQuote(sendAbs), notifyExport, hcomEnv, innerCmd.String())
 		argv = []string{opts.LoginShellBin, "-lic", inner}
 	} else {
-		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SEND=" + sendAbs}
+		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SPAWNED_BY=" + spawnedBy, "HERDER_SEND=" + sendAbs}
 		if opts.NotifyTo != "" {
 			argv = append(argv, "HERDER_NOTIFY_TO="+opts.NotifyTo)
 		}
@@ -639,46 +645,11 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 		}
 	}
 
-	hcomName := ""
-	hcomCapture := "not_hcom_agent"
-	if isHcomAgent {
-		hcomCapture = "not_found"
-		for i := 0; i < 6; i++ {
-			entries := hcomList(hcomDirEff)
-			if len(entries) > 0 {
-				for _, entry := range entries {
-					if entry.LaunchContext.PaneID == launchPaneID {
-						hcomName = entry.Name
-						break
-					}
-				}
-				if hcomName == "" {
-					var matches []hcomEntry
-					for _, entry := range entries {
-						if entry.Tag == opts.Role && (entry.Directory == resolvedCWD || entry.Directory == resolvedCWDPhys) {
-							matches = append(matches, entry)
-						}
-					}
-					sort.Slice(matches, func(i, j int) bool { return matches[i].CreatedAt < matches[j].CreatedAt })
-					if len(matches) > 0 {
-						hcomName = matches[len(matches)-1].Name
-					}
-				}
-				if hcomName != "" {
-					hcomCapture = "captured"
-					break
-				}
-			}
-			sleepMS(700)
-		}
-	}
-
 	hcomDirRec, hcomTagRec := "", ""
 	if isHcomAgent {
 		hcomDirRec = hcomDirEff
 		hcomTagRec = opts.Role
 	}
-
 	record := spawnRecord{
 		GUID:                 guid,
 		ShortGUID:            short,
@@ -697,14 +668,58 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 		InitialPromptPresent: opts.Prompt != "",
 		Team:                 opts.Team,
 		HcomDir:              hcomDirRec,
-		HcomName:             hcomName,
+		HcomName:             "",
 		HcomTag:              hcomTagRec,
 		Status:               "active",
+		Provenance:           registry.BuildProvenance("spawn", opts.Role, resolvedCWD, wsID),
 	}
 	registryLine, _ := json.Marshal(record)
 	if err := appendLine(registryPath, registryLine); err != nil {
 		die(r.stderr, err.Error())
 		return 1
+	}
+
+	hcomCapture := "not_hcom_agent"
+	if isHcomAgent {
+		hcomCapture = "not_found"
+		if name := registryCapturedName(registryPath, guid); name != "" {
+			record.HcomName = name
+			hcomCapture = "captured"
+		} else {
+			for i := 0; i < 6; i++ {
+				entries := hcomList(hcomDirEff)
+				if len(entries) > 0 {
+					for _, entry := range entries {
+						if entry.LaunchContext.PaneID == launchPaneID {
+							record.HcomName = entry.Name
+							break
+						}
+					}
+					if record.HcomName == "" {
+						var matches []hcomEntry
+						for _, entry := range entries {
+							if entry.Tag == opts.Role && (entry.Directory == resolvedCWD || entry.Directory == resolvedCWDPhys) {
+								matches = append(matches, entry)
+							}
+						}
+						sort.Slice(matches, func(i, j int) bool { return matches[i].CreatedAt < matches[j].CreatedAt })
+						if len(matches) > 0 {
+							record.HcomName = matches[len(matches)-1].Name
+						}
+					}
+					if record.HcomName != "" {
+						hcomCapture = "captured"
+						updated, _ := json.Marshal(record)
+						if err := appendLine(registryPath, updated); err != nil {
+							die(r.stderr, err.Error())
+							return 1
+						}
+						break
+					}
+				}
+				sleepMS(700)
+			}
+		}
 	}
 
 	r.writeSummary(record, isHcomAgent, rootClosed, permInjected, hcomCapture, briefFile, promptSent, deliveryResult, readyReason, trustBlocked)
@@ -730,6 +745,7 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 			HcomName:             record.HcomName,
 			HcomTag:              record.HcomTag,
 			Status:               record.Status,
+			Provenance:           record.Provenance,
 			PromptSent:           promptSent,
 			DeliveryResult:       deliveryResult,
 			PermInjected:         permInjected,
@@ -1091,6 +1107,21 @@ func appendLine(path string, line []byte) error {
 	return err
 }
 
+func registryCapturedName(path, guid string) string {
+	for i := 0; i < 6; i++ {
+		recs, err := registry.Load(path)
+		if err == nil {
+			for _, rec := range registry.LatestByGUID(recs) {
+				if rec.GUID != nil && *rec.GUID == guid && rec.HcomName != "" {
+					return rec.HcomName
+				}
+			}
+		}
+		sleepMS(700)
+	}
+	return ""
+}
+
 func findScriptDir() (string, error) {
 	if root := os.Getenv("AI_CONFIG_ROOT"); root != "" {
 		dir := filepath.Join(root, "skills", "herder", "scripts")
@@ -1147,17 +1178,6 @@ func shellQuote(s string) string {
 		}
 	}
 	return b.String()
-}
-
-func newUUID() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
 func envInt(name string, fallback int) int {

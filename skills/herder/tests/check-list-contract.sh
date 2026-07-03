@@ -11,6 +11,7 @@
 #                    non-active latest rows are hidden unless --all.
 #   modes          — table (default), --all, --json, --raw, --guid (found +
 #                    missing), --teams, missing registry, herdr-list failure.
+#   provenance     — raw/json modes pass provenance-bearing rows through.
 #
 # Usage:
 #   check-list-contract.sh            # verify current worktree herder-list vs goldens
@@ -85,6 +86,8 @@ SCENARIOS=(
   "teams|normal|$FIX|--teams"
   "noregistry|normal|/hfake/absent-state|"
   "livefail|fail|$FIX|"
+  "provenance_raw|normal|$TESTS_DIR/fixtures/list-provenance|--raw"
+  "provenance_json|normal|$TESTS_DIR/fixtures/list-provenance|--json"
 )
 
 normalize() {  # make tempdir paths deterministic before diffing

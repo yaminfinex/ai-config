@@ -13,8 +13,10 @@ import (
 	"strings"
 
 	"ai-config/tools/herder/internal/cullcmd"
+	"ai-config/tools/herder/internal/enrollcmd"
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/listcmd"
+	"ai-config/tools/herder/internal/renamecmd"
 	"ai-config/tools/herder/internal/send"
 	"ai-config/tools/herder/internal/sidecarcmd"
 	"ai-config/tools/herder/internal/spawncmd"
@@ -38,6 +40,8 @@ var commands = []command{
 	{"list", "Show spawned agents, reconciled with live herdr state", listcmd.Run},
 	{"wait", "Block until an agent reaches a status, optionally read its screen", waitcmd.Run},
 	{"cull", "Close spawned agents and mark them closed in the registry", cullcmd.Run},
+	{"enroll", "Register the current herdr pane in the registry", enrollcmd.Run},
+	{"rename", "Rename an enrolled agent label and sync herdr best-effort", renamecmd.Run},
 	{"launch", "Launch an hcom-bound tool in the current pane", launchcmd.Run},
 	{"sidecar", "(internal) Bridge hcom status to herdr pane status", sidecarcmd.Run},
 }

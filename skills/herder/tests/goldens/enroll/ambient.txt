@@ -1,0 +1,8 @@
+=== STDERR ===
+enrolled cli-label (guid-existing-0000) pane=p_self terminal=term_SELF
+=== STDOUT ===
+{"agent":"manual","cwd":"/mock/cwd","guid":"guid-existing-0000","hcom_dir":"/hfake/.hcom","hcom_name":"bus-ambient","hcom_tag":"env-role","label":"cli-label","pane_id":"p_self","provenance":{"mechanism":"enroll","spawned_by":"guid-existing-0000","tool_session_id":"","tag":"env-role","batch_id":"batch-9","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"},"role":"cli-role","short_guid":"guid","status":"active","terminal_id":"term_SELF","workspace_id":"ws_self"}
+=== EXIT ===
+0
+=== REGISTRY ===
+{"agent":"manual","cwd":"/mock/cwd","guid":"guid-existing-0000","hcom_dir":"/hfake/.hcom","hcom_name":"bus-ambient","hcom_tag":"env-role","label":"cli-label","pane_id":"p_self","provenance":{"mechanism":"enroll","spawned_by":"guid-existing-0000","tool_session_id":"","tag":"env-role","batch_id":"batch-9","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"},"role":"cli-role","short_guid":"guid","status":"active","terminal_id":"term_SELF","workspace_id":"ws_self"}

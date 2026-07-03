@@ -1,0 +1,6 @@
+=== STDERR ===
+
+=== STDOUT ===
+{"guid":"guid-prov-0000","short_guid":"prov","label":"prov","role":"worker","agent":"codex","terminal_id":"term_AAA","pane_id":"p_10","team":"","hcom_dir":"/hfake/.hcom","hcom_name":"prov-rive","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-123","tag":"worker","batch_id":"batch-1","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"},"live":{"pane_id":"p_10","terminal_id":"term_AAA","agent":"claude","agent_status":"idle"},"live_pane":"p_10","live_status":"idle"}
+=== EXIT ===
+0

@@ -17,13 +17,16 @@ package registry
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"time"
 )
 
 // Record is one registry row. The typed fields are the ones the bash
@@ -41,17 +44,33 @@ type Record struct {
 	ShortGUID *string `json:"short_guid"`
 	Label     *string `json:"label"`
 
-	Role       string `json:"role"`
-	Agent      string `json:"agent"`
-	PaneID     string `json:"pane_id"`
-	TerminalID string `json:"terminal_id"`
-	Team       string `json:"team"`
-	HcomDir    string `json:"hcom_dir"`
-	HcomName   string `json:"hcom_name"`
-	HcomTag    string `json:"hcom_tag"`
-	Status     string `json:"status"`
+	Role       string      `json:"role"`
+	Agent      string      `json:"agent"`
+	PaneID     string      `json:"pane_id"`
+	TerminalID string      `json:"terminal_id"`
+	Team       string      `json:"team"`
+	HcomDir    string      `json:"hcom_dir"`
+	HcomName   string      `json:"hcom_name"`
+	HcomTag    string      `json:"hcom_tag"`
+	Status     string      `json:"status"`
+	Provenance *Provenance `json:"provenance,omitempty"`
 
 	Raw json.RawMessage `json:"-"`
+}
+
+// Provenance records how an identity row entered the registry. It is optional
+// so old rows remain valid and raw-list output can continue to pass them
+// through without synthetic fields.
+type Provenance struct {
+	Mechanism     string `json:"mechanism"`
+	SpawnedBy     string `json:"spawned_by"`
+	ToolSessionID string `json:"tool_session_id"`
+	Tag           string `json:"tag"`
+	BatchID       string `json:"batch_id"`
+	CWD           string `json:"cwd"`
+	WorkspaceID   string `json:"workspace_id"`
+	Branch        string `json:"branch"`
+	TS            string `json:"ts"`
 }
 
 // DefaultPath resolves the registry location exactly like the bash scripts:
@@ -164,6 +183,91 @@ func Append(path string, row []byte) error {
 		return err
 	}
 	return f.Close()
+}
+
+func NewGUID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+}
+
+func ShortGUID(guid string) string {
+	for i, r := range guid {
+		if r == '-' {
+			return guid[:i]
+		}
+	}
+	if len(guid) > 8 {
+		return guid[:8]
+	}
+	return guid
+}
+
+// BuildProvenance harvests the ambient lineage and workspace fields common to
+// spawn, sidecar, and in-session enroll flows. Explicit arguments win over
+// ambient values for fields the caller just resolved.
+func BuildProvenance(mechanism, tag, cwd, workspaceID string) Provenance {
+	spawnedBy := os.Getenv("HERDER_SPAWNED_BY")
+	if spawnedBy == "" {
+		spawnedBy = os.Getenv("HERDER_GUID")
+	}
+	if spawnedBy == "" {
+		spawnedBy = "user"
+	}
+	if tag == "" {
+		tag = os.Getenv("HCOM_TAG")
+	}
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	return Provenance{
+		Mechanism:     mechanism,
+		SpawnedBy:     spawnedBy,
+		ToolSessionID: os.Getenv("HCOM_SESSION_ID"),
+		Tag:           tag,
+		BatchID:       os.Getenv("HCOM_LAUNCH_BATCH_ID"),
+		CWD:           cwd,
+		WorkspaceID:   workspaceID,
+		Branch:        branchName(cwd),
+		TS:            time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+	}
+}
+
+// UpdateRawObject returns a full JSON object row containing every field from
+// raw plus the supplied replacements. It is used for append-only enrich/rename
+// rows where latest-wins replaces entire rows rather than merging them.
+func UpdateRawObject(raw []byte, updates map[string]any) ([]byte, error) {
+	obj := make(map[string]json.RawMessage)
+	if len(bytes.TrimSpace(raw)) > 0 {
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			return nil, err
+		}
+	}
+	for key, value := range updates {
+		b, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		obj[key] = b
+	}
+	return json.Marshal(obj)
+}
+
+func branchName(cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	cmd := exec.Command("git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return string(bytes.TrimSpace(out))
 }
 
 // guidLess orders guids the way jq sorts them: null before any string,

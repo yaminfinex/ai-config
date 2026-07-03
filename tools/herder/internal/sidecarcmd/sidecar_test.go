@@ -2,7 +2,11 @@ package sidecarcmd
 
 import (
 	"encoding/json"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"ai-config/tools/herder/internal/registry"
 )
 
 func TestMapStatus(t *testing.T) {
@@ -64,5 +68,74 @@ func TestFindRowForLaunchFallbackUsesLatestMatchingRow(t *testing.T) {
 	}
 	if got := findRowForLaunchFallback(rows, "codex", "", "/work"); got != nil {
 		t.Fatalf("empty tag matched %+v, want nil", *got)
+	}
+}
+
+func TestAppendEnrichmentCarriesPriorRowAndSessionID(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	prior := `{"guid":"guid-spawned-0000","short_guid":"guid","label":"worker-guid","role":"worker","agent":"codex","terminal_id":"term_OLD","pane_id":"p_old","status":"active","extra_field":"keep","provenance":{"mechanism":"spawn","spawned_by":"parent-guid","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/old","workspace_id":"ws_old","branch":"","ts":"2026-07-03T00:00:00Z"}}`
+	if err := registry.Append(registryPath, []byte(prior)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_GUID", "guid-spawned-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_SPAWNED_BY", "parent-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{tool: "codex", paneID: "p_new", cwd: "/repo", registry: registryPath}
+	s.appendEnrichment(&hcomRow{Name: "worker-rive", Tag: "worker", SessionID: "sess-123", Directory: "/repo"})
+
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("rows = %d, want 2", len(recs))
+	}
+	latest := registry.Resolve(recs, "guid-spawned-0000")
+	if latest == nil {
+		t.Fatal("latest row not found")
+	}
+	if latest.HcomName != "worker-rive" {
+		t.Fatalf("HcomName = %q, want worker-rive", latest.HcomName)
+	}
+	if latest.Provenance == nil || latest.Provenance.ToolSessionID != "sess-123" || latest.Provenance.Mechanism != "spawn" {
+		t.Fatalf("Provenance = %+v, want spawn with sess-123", latest.Provenance)
+	}
+	if !strings.Contains(string(latest.Raw), `"extra_field":"keep"`) {
+		t.Fatalf("enrichment row did not carry prior extra field: %s", latest.Raw)
+	}
+}
+
+func TestAppendEnrichmentGeneratesManualShimIdentity(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	t.Setenv("HERDER_GUID", "")
+	t.Setenv("HERDER_LABEL", "")
+	t.Setenv("HERDER_ROLE", "")
+	t.Setenv("HERDER_SPAWNED_BY", "")
+	t.Setenv("HERDER_SHIM", "1")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{tool: "claude", paneID: "p_manual", cwd: "/repo", registry: registryPath}
+	s.appendEnrichment(&hcomRow{Name: "manual-rive", Tag: "manual", SessionID: "sess-manual", Directory: "/repo"})
+
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("rows = %d, want 1", len(recs))
+	}
+	rec := recs[0]
+	if ptrString(rec.Label) == "" || !strings.HasPrefix(ptrString(rec.Label), "manual-") {
+		t.Fatalf("label = %q, want manual-<short>", ptrString(rec.Label))
+	}
+	if rec.Role != "manual" || rec.Agent != "claude" || rec.HcomName != "manual-rive" {
+		t.Fatalf("record = %+v, want manual claude with hcom name", rec)
+	}
+	if rec.Provenance == nil || rec.Provenance.Mechanism != "shim" || rec.Provenance.SpawnedBy != "user" {
+		t.Fatalf("Provenance = %+v, want shim/user", rec.Provenance)
 	}
 }

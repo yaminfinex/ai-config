@@ -57,6 +57,7 @@ fi
 [[ -x "$hcom_launch" && ! -d "$hcom_launch" ]] || \
   die "missing executable sibling hcom-launch at $hcom_launch"
 
+export HERDER_SHIM=1
 default_args="${!DEFAULT_ARGS_VAR:-}"
 if [[ -n "$default_args" ]]; then
   # Intentional whitespace splitting: HERDER_SHIM_ARGS_CODEX is a simple mise/env default string.
