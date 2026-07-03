@@ -1,11 +1,13 @@
 package waitcmd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
@@ -58,7 +60,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		waitRC = 1
 	}
 	if waitRC != 0 {
-		fmt.Fprintf(stderr, "herder-wait: timeout waiting for %s to reach status=%s\n", paneID, opts.status)
+		if opts.status == "idle" && doneIsIdleEquivalent(paneID) {
+			waitRC = 0
+		} else {
+			fmt.Fprintf(stderr, "herder-wait: timeout waiting for %s to reach status=%s\n", paneID, opts.status)
+		}
 	}
 
 	if opts.read {
@@ -120,13 +126,23 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 }
 
 func printHelp(stdout io.Writer) {
-	fmt.Fprint(stdout, `#!/usr/bin/env bash
-# herder-wait — block until a spawned agent reaches a status, optionally read its screen.
-#
-# Usage:
-#   herder-wait <target> [--status idle|working|blocked|done|unknown] [--timeout MS]
-#                        [--read] [--lines N] [--source visible|recent|recent-unwrapped]
-`)
+	lines := []string{
+		"#!/usr/bin/env bash",
+		"# herder-wait — block until a spawned agent reaches a status, optionally read its screen.",
+		"#",
+		"# Usage:",
+		"#   herder-wait <target> [--status idle|working|blocked|done|unknown] [--timeout MS]",
+		"#                        [--read] [--lines N] [--source visible|recent|recent-unwrapped]",
+		"#",
+		"# <target> is one of: short guid, full guid, label, or pane id. A guid/label is",
+		"# resolved to the agent's CURRENT pane via its durable terminal_id (registry",
+		"# pane_ids go stale as herdr compacts ids); a raw pane id is used verbatim.",
+		"# Default status is `idle` (works for the claude/codex integrations, which",
+		"# never emit `done`). Pair with the small post-send sleep in herder-spawn so",
+		"# the integration has had time to flip to `working` before you wait on idle.",
+		"# If the wait returns sooner than expected, read the pane and call again — the",
+	}
+	fmt.Fprint(stdout, strings.Join(lines, "\n")+"\n")
 }
 
 func resolvePane(target string, paneOut []byte, stderr io.Writer) (string, bool) {
@@ -164,6 +180,25 @@ func runPaneRead(paneID, source, lines string, stdout, stderr io.Writer) {
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	_ = cmd.Run()
+}
+
+func doneIsIdleEquivalent(paneID string) bool {
+	out, err := exec.Command("herdr", "agent", "get", paneID).Output()
+	if err != nil {
+		return false
+	}
+	var envelope struct {
+		Result struct {
+			Agent struct {
+				Agent       string `json:"agent"`
+				AgentStatus string `json:"agent_status"`
+			} `json:"agent"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(out, &envelope) != nil {
+		return false
+	}
+	return envelope.Result.Agent.Agent == "codex" && envelope.Result.Agent.AgentStatus == "done"
 }
 
 func displayName(rec *registry.Record, fallback string) string {

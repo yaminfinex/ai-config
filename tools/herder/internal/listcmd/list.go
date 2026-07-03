@@ -179,6 +179,8 @@ func printHelp(stdout io.Writer) {
 #   herder-list --raw                 # raw registry JSONL without reconciliation
 #   herder-list --guid GUID           # single record (full JSON), exit 1 if missing
 #   herder-list --teams               # enumerate team buses under $HERDER_TEAMS_ROOT
+
+set -euo pipefail
 `)
 }
 

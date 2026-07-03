@@ -60,7 +60,7 @@ herder_bin="$cache_dir/herder-$src_hash"
 
 if [ ! -x "$herder_bin" ]; then
   if command -v go >/dev/null 2>&1; then
-    go_cmd=(go)
+    go_cmd=(env -u GOROOT go)
   elif command -v mise >/dev/null 2>&1; then
     go_cmd=(mise x go -- go)
   else
