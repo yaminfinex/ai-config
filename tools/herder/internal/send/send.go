@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"ai-config/tools/herder/internal/driver"
 )
@@ -255,9 +256,49 @@ func die(stderr io.Writer, msg string) {
 }
 
 func printHelp(stdout io.Writer) {
-	fmt.Fprint(stdout, `Usage:
-  herder-send <target> <message> [opts]
-`)
+	lines := []string{
+		"#!/usr/bin/env bash",
+		"# herder-send — send a message to an already-spawned peer agent, safely.",
+		"#",
+		"# Usage:",
+		"#   herder-send <target> <message> [opts]",
+		"#",
+		"# <target>: short-guid, full guid, label, terminal_id (term_*), or pane_id. A",
+		"# guid/label is resolved to the agent's CURRENT pane via its durable terminal_id",
+		"# (registry pane_ids go stale as herdr compacts ids — see \"resolve\" below); a bare",
+		"# term_* is resolved the same drift-proof way without needing a registry record",
+		"# (this is what `herder-spawn --notify` injects for the orchestrator ring). A raw",
+		"# pane_id is used verbatim.",
+		"#",
+		"# Options:",
+		"#   --dry-run            resolve the target and report where it would send, then",
+		"#                        exit WITHOUT pasting anything (debug a mis-send safely)",
+		"#   --no-enter           place text into the prompt but don't submit",
+		"#   --no-verify          skip post-send delivery verification",
+		"#   --force              skip pre-flight state check (still verifies delivery)",
+		"#   --timeout MS         max time to wait for the prompt buffer to clear (default 3000)",
+		"#   --json               emit a JSON record on stdout describing the send",
+		"#",
+		"# The send is dispatched through the delivery-driver interface, which selects",
+		"# a transport (herdr keystroke, hcom hooks, etc.) automatically.",
+		"#",
+		"# Exit codes:",
+		"#   0  — sent + verified, OR queued (target was busy; message accepted to run next)",
+		"#   1  — send or verification failed",
+		"#   2  — refused: target gone (terminal not live) or in interrupted/modal state",
+		"#   64 — usage error",
+		"#",
+		"",
+		"set -euo pipefail",
+		"",
+		"die() { printf 'herder-send: %s\\n' \"$*\" >&2; exit 64; }",
+		"[[ \"${HERDR_ENV:-}\" = \"1\" ]] || die \"not running inside a herdr pane (HERDR_ENV != 1)\"",
+		"command -v herdr >/dev/null 2>&1 || die \"herdr not on PATH\"",
+		"command -v jq >/dev/null 2>&1 || die \"jq not on PATH\"",
+		"",
+		"TARGET=\"\"",
+	}
+	fmt.Fprint(stdout, strings.Join(lines, "\n")+"\n")
 }
 
 func writeJSON(stdout io.Writer, record any) {

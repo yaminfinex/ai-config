@@ -54,6 +54,7 @@ bin_for() {
     return
   fi
   case "$cmd" in
+    send)  printf '%s' "${HERDER_SEND_BIN:-$TESTS_DIR/../scripts/herder-send}" ;;
     spawn) printf '%s' "${HERDER_SPAWN_BIN:-$TESTS_DIR/../scripts/herder-spawn}" ;;
     list)  printf '%s' "${HERDER_LIST_BIN:-$TESTS_DIR/../scripts/herder-list}" ;;
     wait)  printf '%s' "${HERDER_WAIT_BIN:-$TESTS_DIR/../scripts/herder-wait}" ;;
@@ -81,7 +82,7 @@ run_help() {
 }
 
 fail=0
-for cmd in spawn list wait cull; do
+for cmd in send spawn list wait cull; do
   bin="$(bin_for "$cmd")"
   block="$(run_help "$bin")"
   gold="$GOLDENS/$cmd.txt"
