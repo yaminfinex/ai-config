@@ -56,13 +56,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	sidecar := &sidecar{
-		tool:       opts.tool,
-		paneID:     os.Getenv("HERDR_PANE_ID"),
-		socketPath: os.Getenv("HERDR_SOCKET_PATH"),
-		tag:        os.Getenv("HERDER_ROLE"),
-		cwd:        currentCWD(),
-		ppid0:      os.Getppid(),
-		registry:   registry.DefaultPath(),
+		tool:            opts.tool,
+		paneID:          os.Getenv("HERDR_PANE_ID"),
+		socketPath:      os.Getenv("HERDR_SOCKET_PATH"),
+		tag:             os.Getenv("HERDER_ROLE"),
+		cwd:             currentCWD(),
+		ppid0:           os.Getppid(),
+		registry:        registry.DefaultPath(),
+		lifecycleMode:   os.Getenv("HERDER_LIFECYCLE_MODE"),
+		parentSessionID: os.Getenv("HERDER_PARENT_SESSION_ID"),
 	}
 	return sidecar.run()
 }
@@ -95,6 +97,8 @@ type sidecar struct {
 	lastState         string
 	missing           int
 	enrichedSessionID string
+	lifecycleMode     string
+	parentSessionID   string
 }
 
 func (s *sidecar) run() int {
@@ -118,7 +122,7 @@ func (s *sidecar) run() int {
 			s.missing++
 		} else {
 			s.missing = 0
-			if row.SessionID != "" && row.SessionID != s.enrichedSessionID {
+			if row.SessionID != "" && (row.SessionID != s.enrichedSessionID || s.latestSessionMissing(row.SessionID)) {
 				s.appendEnrichment(row)
 				s.enrichedSessionID = row.SessionID
 			}
@@ -176,16 +180,28 @@ func (s *sidecar) findRow(rows []hcomRow) *hcomRow {
 	if row := findRowForPane(rows, s.paneID); row != nil {
 		return row
 	}
-	return findRowForLaunchFallback(rows, s.tool, s.tag, s.cwd)
+	return findRowForLaunchFallback(rows, s.tool, s.tag, s.cwd, s.lifecycleMode, s.parentSessionID)
 }
 
 func (s *sidecar) appendEnrichment(row *hcomRow) {
 	guid, hadGUID := os.LookupEnv("HERDER_GUID")
+	recs, _ := registry.Load(s.registry)
+	resumed := false
+	var latest *registry.Record
 	if guid == "" {
-		var err error
-		guid, err = registry.NewGUID()
-		if err != nil {
-			return
+		if row.SessionID != "" {
+			latest = registry.ResolveByToolSessionID(recs, row.SessionID)
+			if latest != nil {
+				guid = ptrString(latest.GUID)
+				resumed = guid != ""
+			}
+		}
+		if guid == "" {
+			var err error
+			guid, err = registry.NewGUID()
+			if err != nil {
+				return
+			}
 		}
 	}
 	short := registry.ShortGUID(guid)
@@ -197,7 +213,9 @@ func (s *sidecar) appendEnrichment(row *hcomRow) {
 		coords.CWD = firstNonEmpty(row.Directory, s.cwd)
 	}
 
-	latest := s.latest(guid)
+	if latest == nil {
+		latest = s.latestFromRecords(recs, guid)
+	}
 	label := os.Getenv("HERDER_LABEL")
 	role := os.Getenv("HERDER_ROLE")
 	agent := s.tool
@@ -205,8 +223,8 @@ func (s *sidecar) appendEnrichment(row *hcomRow) {
 		label = firstNonEmpty(ptrString(latest.Label), label)
 		role = firstNonEmpty(latest.Role, role)
 		agent = firstNonEmpty(latest.Agent, agent)
-		coords.TerminalID = firstNonEmpty(latest.TerminalID, coords.TerminalID)
-		coords.PaneID = firstNonEmpty(latest.PaneID, coords.PaneID)
+		coords.TerminalID = firstNonEmpty(coords.TerminalID, latest.TerminalID)
+		coords.PaneID = firstNonEmpty(coords.PaneID, latest.PaneID)
 	}
 	if label == "" {
 		label = "manual-" + short
@@ -222,12 +240,32 @@ func (s *sidecar) appendEnrichment(row *hcomRow) {
 	case hadGUID:
 		mechanism = "spawn"
 	}
+	if latest != nil && latest.Provenance != nil && latest.Provenance.Mechanism != "" {
+		mechanism = latest.Provenance.Mechanism
+	}
 	prov := registry.BuildProvenance(mechanism, row.Tag, coords.CWD, coords.WorkspaceID)
+	if latest != nil && latest.Provenance != nil {
+		carried := *latest.Provenance
+		carried.CWD = prov.CWD
+		carried.WorkspaceID = prov.WorkspaceID
+		carried.Branch = prov.Branch
+		carried.TS = prov.TS
+		prov = carried
+	}
 	prov.ToolSessionID = row.SessionID
+	if prov.ToolSessionID == "" {
+		prov = registry.PreserveToolSessionID(prov, recs, guid)
+	}
+	if resumed {
+		prov.ResumedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	}
 
 	base := []byte(`{}`)
 	if latest != nil && len(bytes.TrimSpace(latest.Raw)) > 0 {
 		base = latest.Raw
+	}
+	if resumed {
+		base = registry.DropRawFields(base, "closed_at", "closed_by_pane", "close_result", "close_reason")
 	}
 	out, err := registry.UpdateRawObject(base, map[string]any{
 		"guid":         guid,
@@ -279,6 +317,10 @@ func (s *sidecar) latest(guid string) *registry.Record {
 	if err != nil {
 		return nil
 	}
+	return s.latestFromRecords(recs, guid)
+}
+
+func (s *sidecar) latestFromRecords(recs []registry.Record, guid string) *registry.Record {
 	for _, rec := range registry.LatestByGUID(recs) {
 		if ptrString(rec.GUID) == guid {
 			cp := rec
@@ -288,12 +330,33 @@ func (s *sidecar) latest(guid string) *registry.Record {
 	return nil
 }
 
-func findRowForLaunchFallback(rows []hcomRow, tool, tag, cwd string) *hcomRow {
+func (s *sidecar) latestSessionMissing(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	recs, err := registry.Load(s.registry)
+	if err != nil {
+		return false
+	}
+	rec := registry.ResolveByToolSessionID(recs, sessionID)
+	if rec == nil || rec.Provenance == nil {
+		return false
+	}
+	return rec.Provenance.ToolSessionID != sessionID
+}
+
+func findRowForLaunchFallback(rows []hcomRow, tool, tag, cwd, lifecycleMode, parentSessionID string) *hcomRow {
 	if tool == "" || tag == "" || cwd == "" {
 		return nil
 	}
 	var hit *hcomRow
 	for i := range rows {
+		if rows[i].Status == "inactive" {
+			continue
+		}
+		if lifecycleMode == "fork" && parentSessionID != "" && rows[i].SessionID == parentSessionID {
+			continue
+		}
 		if rows[i].Tool == tool && rows[i].Tag == tag && rows[i].Directory == cwd {
 			hit = &rows[i]
 		}

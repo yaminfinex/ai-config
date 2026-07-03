@@ -32,6 +32,13 @@ func guids(recs []Record) []string {
 	return out
 }
 
+func ptrString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func TestLoadParsesRowsAndKeepsRaw(t *testing.T) {
 	row := `{"guid":"g-1","short_guid":"s1","label":"alpha","role":"worker","agent":"claude","terminal_id":"term_A","pane_id":"p_1","team":"blue","hcom_dir":"/x/.hcom","hcom_name":"alpha-rive","hcom_tag":"worker","status":"active"}`
 	path := writeRegistry(t, row)
@@ -140,6 +147,35 @@ func TestResolve(t *testing.T) {
 	// jq: null == "" is false — a record without a label never matches "".
 	if hit := Resolve([]Record{{}}, ""); hit != nil {
 		t.Errorf("Resolve(\"\") on fieldless record = %+v, want nil", hit)
+	}
+}
+
+func TestResolveByToolSessionIDScansClosedAndOlderRows(t *testing.T) {
+	path := writeRegistry(t,
+		`{"guid":"guid-alpha-0000","short_guid":"alpha","label":"alpha-old","status":"active","provenance":{"mechanism":"spawn","tool_session_id":"sess-alpha","tag":"worker"}}`,
+		`{"guid":"guid-alpha-0000","short_guid":"alpha","label":"alpha-latest","status":"closed","provenance":{"mechanism":"spawn","tool_session_id":"","tag":"worker"}}`,
+		`{"guid":"guid-beta-0000","short_guid":"beta","label":"beta","status":"active","provenance":{"mechanism":"spawn","tool_session_id":"sess-beta","tag":"worker"}}`,
+	)
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hit := ResolveByToolSessionID(recs, "sess-alpha")
+	if hit == nil {
+		t.Fatal("ResolveByToolSessionID returned nil")
+	}
+	if ptrString(hit.Label) != "alpha-latest" || hit.Status != "closed" {
+		t.Fatalf("hit = label %q status %q, want latest closed alpha row", ptrString(hit.Label), hit.Status)
+	}
+	if got := ToolSessionIDForGUID(recs, "guid-alpha-0000"); got != "sess-alpha" {
+		t.Fatalf("ToolSessionIDForGUID = %q, want sess-alpha", got)
+	}
+	prov := PreserveToolSessionID(Provenance{Mechanism: "spawn"}, recs, "guid-alpha-0000")
+	if prov.ToolSessionID != "sess-alpha" {
+		t.Fatalf("PreserveToolSessionID = %q, want sess-alpha", prov.ToolSessionID)
+	}
+	if hit := ResolveByToolSessionID(recs, ""); hit != nil {
+		t.Fatalf("empty session resolved %+v, want nil", hit)
 	}
 }
 

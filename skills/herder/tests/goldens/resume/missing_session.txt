@@ -1,0 +1,15 @@
+=== STDERR ===
+herder-lifecycle: cannot resume nosess: missing provenance.tool_session_id
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== HERDR START ARGV ===
+
+=== REGISTRY ===
+{"guid":"guid-resume-0000","short_guid":"resume","label":"resume-me","role":"worker","agent":"claude","terminal_id":"term_OLD","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"resume-rive","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-resume","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
+{"guid":"guid-resume-0000","short_guid":"resume","label":"resume-me","role":"worker","agent":"claude","terminal_id":"term_OLD","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"resume-rive","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
+{"guid":"guid-active-0000","short_guid":"active","label":"active-live","role":"worker","agent":"claude","terminal_id":"term_ACTIVE","pane_id":"p_active","hcom_dir":"/hcom","hcom_name":"active-rive","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-active","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
+{"guid":"guid-nosess-0000","short_guid":"nosess","label":"no-session","role":"worker","agent":"codex","terminal_id":"term_NOSESS","pane_id":"p_nosess","hcom_dir":"/hcom","hcom_name":"","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
+{"guid":"guid-collide-0000","short_guid":"collide","label":"taken","role":"worker","agent":"claude","terminal_id":"term_COLLIDE","pane_id":"p_collide","hcom_dir":"/hcom","hcom_name":"collide-rive","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-collide","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
+{"guid":"guid-other-0000","short_guid":"other","label":"taken","role":"worker","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","status":"active"}

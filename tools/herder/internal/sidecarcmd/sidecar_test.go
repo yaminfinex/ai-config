@@ -59,15 +59,34 @@ func TestFindRowForLaunchFallbackUsesLatestMatchingRow(t *testing.T) {
 		{Name: "wrong-dir", Tool: "codex", Tag: "smoke", Directory: "/other", Status: "listening"},
 		{Name: "latest", Tool: "codex", Tag: "smoke", Directory: "/work", Status: "listening"},
 	}
-	row := findRowForLaunchFallback(rows, "codex", "smoke", "/work")
+	row := findRowForLaunchFallback(rows, "codex", "smoke", "/work", "", "")
 	if row == nil {
 		t.Fatal("findRowForLaunchFallback returned nil")
 	}
 	if row.Name != "latest" || row.Status != "listening" {
 		t.Fatalf("row = %+v, want latest/listening", *row)
 	}
-	if got := findRowForLaunchFallback(rows, "codex", "", "/work"); got != nil {
+	if got := findRowForLaunchFallback(rows, "codex", "", "/work", "", ""); got != nil {
 		t.Fatalf("empty tag matched %+v, want nil", *got)
+	}
+}
+
+func TestFindRowForLaunchFallbackSkipsInactiveAndForkParentSession(t *testing.T) {
+	rows := []hcomRow{
+		{Name: "inactive-child", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "inactive"},
+		{Name: "parent", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening", SessionID: "sess-parent"},
+		{Name: "child", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening", SessionID: "sess-child"},
+	}
+	row := findRowForLaunchFallback(rows, "codex", "worker", "/repo", "fork", "sess-parent")
+	if row == nil {
+		t.Fatal("findRowForLaunchFallback returned nil")
+	}
+	if row.Name != "child" {
+		t.Fatalf("row = %s, want child", row.Name)
+	}
+	onlyParent := rows[:2]
+	if got := findRowForLaunchFallback(onlyParent, "codex", "worker", "/repo", "fork", "sess-parent"); got != nil {
+		t.Fatalf("parent session fallback matched %+v, want nil", *got)
 	}
 }
 
@@ -137,5 +156,52 @@ func TestAppendEnrichmentGeneratesManualShimIdentity(t *testing.T) {
 	}
 	if rec.Provenance == nil || rec.Provenance.Mechanism != "shim" || rec.Provenance.SpawnedBy != "user" {
 		t.Fatalf("Provenance = %+v, want shim/user", rec.Provenance)
+	}
+}
+
+func TestAppendEnrichmentRecognizesResumeBySessionID(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	rows := []string{
+		`{"guid":"guid-resume-0000","short_guid":"guid","label":"resume-old","role":"worker","agent":"claude","terminal_id":"term_OLD","pane_id":"p_old","status":"active","provenance":{"mechanism":"spawn","spawned_by":"parent-guid","tool_session_id":"sess-resume","tag":"worker","batch_id":"","cwd":"/old","workspace_id":"ws_old","branch":"old-branch","ts":"2026-07-03T00:00:00Z"}}`,
+		`{"guid":"guid-resume-0000","short_guid":"guid","label":"resume-latest","role":"worker","agent":"claude","terminal_id":"term_OLD","pane_id":"p_old","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"parent-guid","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/old","workspace_id":"ws_old","branch":"old-branch","ts":"2026-07-03T00:01:00Z"}}`,
+	}
+	for _, row := range rows {
+		if err := registry.Append(registryPath, []byte(row)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HERDER_GUID", "")
+	t.Setenv("HERDER_LABEL", "")
+	t.Setenv("HERDER_ROLE", "")
+	t.Setenv("HERDER_SPAWNED_BY", "")
+	t.Setenv("HERDER_SHIM", "")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{tool: "claude", paneID: "p_new", cwd: "/repo", registry: registryPath}
+	s.appendEnrichment(&hcomRow{Name: "resume-vire", Tag: "worker", SessionID: "sess-resume", Directory: "/repo"})
+
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 3 {
+		t.Fatalf("rows = %d, want 3", len(recs))
+	}
+	latest := registry.Resolve(recs, "guid-resume-0000")
+	if latest == nil {
+		t.Fatal("latest resumed row not found")
+	}
+	if ptrString(latest.Label) != "resume-latest" || latest.Status != "active" || latest.HcomName != "resume-vire" {
+		t.Fatalf("latest = label %q status %q hcom %q, want carried active resume-vire", ptrString(latest.Label), latest.Status, latest.HcomName)
+	}
+	if latest.Provenance == nil {
+		t.Fatal("provenance missing")
+	}
+	if latest.Provenance.Mechanism != "spawn" || latest.Provenance.ToolSessionID != "sess-resume" || latest.Provenance.ResumedAt == "" {
+		t.Fatalf("Provenance = %+v, want spawn sess-resume with resumed_at", latest.Provenance)
+	}
+	if latest.Provenance.ForkedFrom != "" {
+		t.Fatalf("ForkedFrom = %q, want empty", latest.Provenance.ForkedFrom)
 	}
 }

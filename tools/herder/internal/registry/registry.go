@@ -71,6 +71,8 @@ type Provenance struct {
 	WorkspaceID   string `json:"workspace_id"`
 	Branch        string `json:"branch"`
 	TS            string `json:"ts"`
+	ForkedFrom    string `json:"forked_from,omitempty"`
+	ResumedAt     string `json:"resumed_at,omitempty"`
 }
 
 // DefaultPath resolves the registry location exactly like the bash scripts:
@@ -166,6 +168,71 @@ func Resolve(recs []Record, target string) *Record {
 	return hit
 }
 
+// ResolveByToolSessionID finds any row carrying provenance.tool_session_id and
+// returns the latest row for that guid. It intentionally scans all rows, not
+// only LatestByGUID, because later append-only rows can temporarily or
+// permanently lose the session id while the older session-bearing row remains
+// the durable resume/fork key.
+func ResolveByToolSessionID(recs []Record, sessionID string) *Record {
+	if sessionID == "" {
+		return nil
+	}
+	var matchedGUID string
+	var matched *Record
+	for i := range recs {
+		rec := &recs[i]
+		if rec.Provenance == nil || rec.Provenance.ToolSessionID != sessionID {
+			continue
+		}
+		if rec.GUID != nil && *rec.GUID != "" {
+			matchedGUID = *rec.GUID
+		}
+		matched = rec
+	}
+	if matchedGUID == "" {
+		if matched == nil {
+			return nil
+		}
+		cp := *matched
+		return &cp
+	}
+	for _, rec := range LatestByGUID(recs) {
+		if strEqual(rec.GUID, matchedGUID) {
+			cp := rec
+			return &cp
+		}
+	}
+	cp := *matched
+	return &cp
+}
+
+// ToolSessionIDForGUID returns the last non-empty session id recorded for a
+// guid anywhere in the append-only log.
+func ToolSessionIDForGUID(recs []Record, guid string) string {
+	if guid == "" {
+		return ""
+	}
+	sessionID := ""
+	for _, rec := range recs {
+		if rec.GUID == nil || *rec.GUID != guid || rec.Provenance == nil {
+			continue
+		}
+		if rec.Provenance.ToolSessionID != "" {
+			sessionID = rec.Provenance.ToolSessionID
+		}
+	}
+	return sessionID
+}
+
+// PreserveToolSessionID carries a prior durable session id into a new
+// provenance value when the current writer did not just observe one.
+func PreserveToolSessionID(prov Provenance, recs []Record, guid string) Provenance {
+	if prov.ToolSessionID == "" {
+		prov.ToolSessionID = ToolSessionIDForGUID(recs, guid)
+	}
+	return prov
+}
+
 // Append writes one raw JSON row to the registry, creating the state dir on
 // first use (herder-spawn's `mkdir -p $STATE_DIR` + `printf '%s\n' >>`).
 // The caller owns the row's serialization; Append only guarantees the
@@ -256,6 +323,24 @@ func UpdateRawObject(raw []byte, updates map[string]any) ([]byte, error) {
 		obj[key] = b
 	}
 	return json.Marshal(obj)
+}
+
+func DropRawFields(raw []byte, fields ...string) []byte {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return raw
+	}
+	obj := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return raw
+	}
+	for _, field := range fields {
+		delete(obj, field)
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 func branchName(cwd string) string {

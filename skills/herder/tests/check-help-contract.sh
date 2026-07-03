@@ -50,6 +50,9 @@ extract_reference() {
 bin_for() {
   local cmd="$1"
   if [[ "$WRITE" -eq 1 ]]; then
+    case "$cmd" in
+      fork|resume) printf '%s' "$TESTS_DIR/../scripts/herder-$cmd"; return ;;
+    esac
     extract_reference "$cmd"
     return
   fi
@@ -59,6 +62,8 @@ bin_for() {
     list)  printf '%s' "${HERDER_LIST_BIN:-$TESTS_DIR/../scripts/herder-list}" ;;
     wait)  printf '%s' "${HERDER_WAIT_BIN:-$TESTS_DIR/../scripts/herder-wait}" ;;
     cull)  printf '%s' "${HERDER_CULL_BIN:-$TESTS_DIR/../scripts/herder-cull}" ;;
+    fork)  printf '%s' "${HERDER_FORK_BIN:-$TESTS_DIR/../scripts/herder-fork}" ;;
+    resume) printf '%s' "${HERDER_RESUME_BIN:-$TESTS_DIR/../scripts/herder-resume}" ;;
   esac
 }
 
@@ -82,7 +87,7 @@ run_help() {
 }
 
 fail=0
-for cmd in send spawn list wait cull; do
+for cmd in send spawn list wait cull fork resume; do
   bin="$(bin_for "$cmd")"
   block="$(run_help "$bin")"
   gold="$GOLDENS/$cmd.txt"
@@ -107,7 +112,7 @@ for cmd in send spawn list wait cull; do
 done
 
 if [[ "$WRITE" -eq 1 ]]; then
-  printf '\nGoldens written from bash reference d4ca54c.\n'
+  printf '\nGoldens written from bash reference d4ca54c (legacy) and current N4 commands (fork/resume).\n'
   exit 0
 fi
 if [[ "$fail" -eq 0 ]]; then

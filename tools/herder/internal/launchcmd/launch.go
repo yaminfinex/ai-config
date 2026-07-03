@@ -53,11 +53,29 @@ func setEnvDefault(key, value string) {
 func Run(args []string, stdout, stderr io.Writer) int {
 	_ = stdout
 	if len(args) == 0 || args[0] == "" || args[0][0] == '-' {
-		die(stderr, "usage: hcom-launch <tool> [--tag TAG] [tool-args...]")
-		return 1
+		if len(args) == 0 || args[0] != "--resume" && args[0] != "--fork" {
+			die(stderr, "usage: hcom-launch <tool> [--tag TAG] [tool-args...]")
+			return 1
+		}
 	}
+	mode := "launch"
 	tool := args[0]
+	target := ""
 	args = args[1:]
+	if tool == "--resume" || tool == "--fork" {
+		if len(args) < 2 || args[0] == "" || args[1] == "" {
+			die(stderr, "usage: hcom-launch --resume <tool> <target> [--tag TAG] [tool-args...]")
+			return 1
+		}
+		if tool == "--fork" {
+			mode = "fork"
+		} else {
+			mode = "resume"
+		}
+		tool = args[0]
+		target = args[1]
+		args = args[2:]
+	}
 
 	hcomPath, err := exec.LookPath("hcom")
 	if err != nil {
@@ -90,6 +108,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	hcomArgs := []string{tool, "--run-here"}
+	if mode == "resume" {
+		hcomArgs = []string{"r", target, "--run-here"}
+	} else if mode == "fork" {
+		hcomArgs = []string{"f", target, "--run-here"}
+	}
 	if tag != "" {
 		hcomArgs = append(hcomArgs, "--tag", tag)
 	}

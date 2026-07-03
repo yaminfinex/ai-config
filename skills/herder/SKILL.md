@@ -29,6 +29,8 @@ Record `$HERDR_PANE_ID`. Never close it, never cull yourself.
 | `herder-cull` | Close a pane and mark registry row closed, with `terminal_id` identity check and advisory bus cleanup. |
 | `herder-enroll` | Register the current pane in-session, with optional `--label`, `--role`, and `--json`. |
 | `herder-rename` | Append a new label for a registry target and best-effort sync the herdr pane name. |
+| `herder-fork` | Branch an enrolled agent session into a new guid with `provenance.forked_from`. |
+| `herder-resume` | Reopen an enrolled closed session with the same guid and `provenance.resumed_at`. |
 
 **The scripts are 2-line shims into one Go binary.** Each `herder-*` script `exec`s `bin/herder <subcommand>`; the implementation lives in `tools/herder` (module `ai-config/tools/herder`), and the CLI contract — flags, stderr summaries, `--json` shapes, exit codes — is pinned byte-for-byte to the original bash scripts by the golden suites in `skills/herder/tests/`. `bin/herder` is a hash-keyed build-cache launcher (bottle pattern): the cached binary is keyed on a hash of the Go sources, so editing a `.go` file rebuilds on the next invocation — agent-patchable, no install step. The launcher degrades portably: `sha256sum` → `/sbin/sha256sum` → `shasum -a 256` for hashing; `$XDG_CACHE_HOME/herder` → `$HOME/.cache/herder` → `$TMPDIR/herder-cache-<uid>/herder` for a writable cache (exporting `GOCACHE` under it when absent/unwritable); `go` on PATH → `mise x go -- go` for the toolchain. The old bash bodies and `lib/driver-*.sh` were deleted at the flip — git history @ d4ca54c is the bash reference.
 
@@ -86,7 +88,7 @@ Refuses to send into interrupted / modal panes unless `--force`. Verifies the pr
 
 The role becomes the hcom `--tag`, hcom assigns a `<role>-<random>` name, and `herder-spawn` captures that name by launch-pane correlation (`launch_context.pane_id`), falling back to tag+cwd+recency. The registry stores `team`, `hcom_dir`, `hcom_name`, and `hcom_tag`; an empty `hcom_name` means the peer stays reachable by herdr keystrokes only.
 
-Registry rows also carry optional `provenance` (`mechanism`, `spawned_by`, hcom `tool_session_id`, tag/batch, cwd/workspace/branch, timestamp). Spawned agents export `HERDER_SPAWNED_BY` into their child env, so lineage is derivable from the append-only registry. Manual/shim launches use `manual-<short>` by default (or `HERDER_LABEL` / `herder-enroll --label`) and record `mechanism:"shim"` when launched through the PATH shim, otherwise `mechanism:"enroll"`.
+Registry rows also carry optional `provenance` (`mechanism`, `spawned_by`, hcom `tool_session_id`, tag/batch, cwd/workspace/branch, timestamp, plus lifecycle fields `forked_from` and `resumed_at`). Spawned agents export `HERDER_SPAWNED_BY` into their child env, so lineage is derivable from the append-only registry. Manual/shim launches use `manual-<short>` by default (or `HERDER_LABEL` / `herder-enroll --label`) and record `mechanism:"shim"` when launched through the PATH shim, otherwise `mechanism:"enroll"`. Sidecar resume-recognition matches discovered `tool_session_id` against all registry rows, including closed and older session-bearing rows, so raw hcom/PATH-shim resumes can reattach to the existing guid when the tool preserves its session id.
 
 ## Enroll / Rename
 
@@ -98,6 +100,17 @@ herder-rename reviewer-1 reviewer-lead
 Use `herder-enroll` from inside a pane that should become addressable by guid/label/hcom. It requires `HERDR_ENV=1` and `HERDR_PANE_ID`, resolves its own `terminal_id`, `pane_id`, `workspace_id`, and cwd through `herdr pane get`, then appends a full registry row. Re-running it is idempotent in the append-only sense: latest row wins.
 
 Use `herder-rename` to change labels. It refuses unknown targets and refuses a label already owned by a different active guid; on success it appends a full latest-wins row carrying the prior fields forward, then runs `herdr agent rename <terminal_id> <label>` best-effort. A herdr rename failure is advisory only; the registry update is the source of truth.
+
+## Fork / Resume
+
+```bash
+herder-fork <guid|short-guid|label> [--label L] [--role R] [--prompt P] [--json]
+herder-resume <guid|short-guid|label> [--json]
+```
+
+Use `herder-fork` when a session should branch. The child gets a new guid and a `provenance` row with `mechanism:"fork"` and `forked_from:<parent-guid>`. If the parent is live and has an hcom name, fork targets that live hcom row; otherwise it targets the stored `provenance.tool_session_id` from any registry row for the parent, including closed rows. If neither coordinate exists, it fails clearly. The default label is `<parent-label>-fork-<new-short>`, and labels cannot collide with another active guid. If the underlying hcom launch exits before binding a pane, the command appends a closed `launch_failed` row and exits nonzero instead of leaving a fake active agent.
+
+Use `herder-resume` when a session should continue. It refuses a target that is already active and live; otherwise it reopens the same guid via the stored `tool_session_id`, appends an active row with fresh pane coordinates, and sets `provenance.resumed_at`. This depends on tools preserving/resolving session ids; Codex rows can currently have an empty hcom `session_id`, so fork/resume fails until a real `tool_session_id` has been recorded. Raw hcom/PATH-shim resumes still work as muscle memory: when sidecar sees a known `tool_session_id` without `HERDER_GUID`, it reattaches to the existing guid instead of minting a `manual-*` identity.
 
 **Teams are an optional ringfence — the global bus is the default posture.** Spawns without `--team` land on the global `~/.hcom` bus, and that is the normal operating mode: addressing and filtering ride the registry (every command dereferences guid/short-guid/label to the recorded `hcom_name`/`hcom_dir`), so per-agent targeting needs no team. When you do want bus isolation: `--team <name>` wins, else `$HERDER_TEAM`, else global. A named team pins the child's `HCOM_DIR` to `$HERDER_TEAMS_ROOT/<team>` (default root `~/.hcom/teams`). `herder-list` shows `TEAM` and `BUS`, and `herder-list --teams` enumerates the global bus plus team dirs. The config-dir pin table now lives in `tools/herder/internal/launchcmd`. **Known caveat (team buses only):** the config-dir pin makes claude read its JSON state from `~/.claude/.claude.json`, which starts fresh — the *first* team-bus claude launch per machine hits one-time onboarding (login/theme picker) in the pane. Complete it once and the state persists machine-wide; codex is unaffected, and the global bus pins nothing so it has no such wall. Do not build protocols that *require* teams.
 
