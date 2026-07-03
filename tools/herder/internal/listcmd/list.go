@@ -16,6 +16,7 @@ import (
 )
 
 type options struct {
+	help       bool
 	mode       string
 	includeAll bool
 	targetGUID string
@@ -34,6 +35,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	opts, code := parseArgs(args, stdout, stderr)
 	if code != 0 {
 		return code
+	}
+	if opts.help {
+		return 0
 	}
 
 	if opts.mode == "teams" {
@@ -154,6 +158,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			i++
 		case "-h", "--help":
 			printHelp(stdout)
+			opts.help = true
 			return opts, 0
 		default:
 			die(stderr, "unknown arg: "+args[i])

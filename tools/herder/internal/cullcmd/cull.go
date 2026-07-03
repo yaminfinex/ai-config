@@ -16,6 +16,7 @@ import (
 )
 
 type options struct {
+	help     bool
 	selector string
 	value    string
 	goneOnly bool
@@ -40,6 +41,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	opts, code := parseArgs(args, stdout, stderr)
 	if code != 0 {
 		return code
+	}
+	if opts.help {
+		return 0
 	}
 
 	registryPath := registry.DefaultPath()
@@ -103,6 +107,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			i++
 		case "-h", "--help":
 			printHelp(stdout)
+			opts.help = true
 			return opts, 0
 		default:
 			die(stderr, "unknown arg: "+args[i])

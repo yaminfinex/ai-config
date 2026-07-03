@@ -12,6 +12,7 @@ import (
 )
 
 type options struct {
+	help      bool
 	status    string
 	timeoutMS string
 	read      bool
@@ -37,6 +38,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	opts, code := parseArgs(args, stdout, stderr)
 	if code != 0 {
 		return code
+	}
+	if opts.help {
+		return 0
 	}
 
 	client := &herdrcli.Client{}
@@ -93,6 +97,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			i += 2
 		case "-h", "--help":
 			printHelp(stdout)
+			opts.help = true
 			return opts, 0
 		default:
 			if len(arg) >= 2 && arg[:2] == "--" {

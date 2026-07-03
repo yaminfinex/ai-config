@@ -23,6 +23,7 @@ const trustModalPattern = `Do you trust the contents of this directory|Do you tr
 var trustModalRE = regexp.MustCompile(trustModalPattern)
 
 type options struct {
+	Help          bool
 	Role          string
 	Agent         string
 	Prompt        string
@@ -151,6 +152,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
+	if opts.Help {
+		return 0
+	}
 
 	runner := &runner{
 		opts:   opts,
@@ -273,6 +277,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			i += 2
 		case "-h", "--help":
 			printHelp(stdout)
+			opts.Help = true
 			return opts, 0
 		default:
 			die(stderr, "unknown arg: "+arg)

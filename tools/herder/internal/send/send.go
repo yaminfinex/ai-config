@@ -55,6 +55,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
+	if opts.Help {
+		return 0
+	}
 
 	if opts.DryRun {
 		return dryRun(selection, target, opts.JSONOutput, stdout, stderr)
@@ -75,6 +78,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 type options struct {
+	Help       bool
 	NoEnter    bool
 	NoVerify   bool
 	Force      bool
@@ -118,6 +122,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, string, string
 			i++
 		case "-h", "--help":
 			printHelp(stdout)
+			opts.Help = true
 			return opts, "", "", 0
 		default:
 			if len(arg) >= 2 && arg[:2] == "--" {
