@@ -31,7 +31,8 @@ Record in the playbook's run-shape header (`references/state-files.md`):
    contested decision, a deep-review tail.
 3. **Liveness per role.** Cull-on-done after verification (default) vs keep-open for
    interrogation — any agent whose reasoning the user may want to question idles in its tab until
-   released.
+   released. A culled registered agent can be reopened later with `herder resume <guid>` when its
+   tool session id was recorded, so "cull" is no longer always "discard the conversation".
 4. **Golden agent.** Consider bottling (`bottling` skill) the agent holding the original intent
    before the run consumes it; decant later as the user's proxy
    (`references/adversarial.md`).
@@ -113,3 +114,13 @@ Pick by **who verifies a unit of work**, then parallelism — not task size.
 10. **End-of-run tail:** fresh-context deep review against the acceptance criteria + remnant
    sweep + golden-agent check if bottled (`references/adversarial.md`), then harvest before the
    PR.
+
+## Lifecycle Helpers
+
+- `herder enroll` adopts a hand-launched or shim-launched pane into the registry so later messages,
+  culls, forks, and resumes have a durable guid/label.
+- `herder fork <guid>` branches a registered session with `provenance.forked_from`; use it when a
+  sliding-door branch should preserve bus binding and lineage instead of spawning a fresh context.
+- `herder resume <guid>` reopens a previously culled registered session when the tool session id is
+  available. It is a liveness option, not a replacement for keeping a judgment-heavy agent open when
+  immediate interrogation is expected.

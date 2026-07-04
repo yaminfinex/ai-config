@@ -4,7 +4,7 @@
 
 Herder's message delivery and doorbell mechanics are abstracted behind a **driver interface**. Commands like `herder-send` and `herder-spawn --notify` express delivery *intent* without naming a specific transport; the driver implementation is selected automatically at runtime. This keeps `herdr` (the keystroke-based fallback) always available while allowing a second driver like `hcom` to be adopted when present and capable.
 
-**Implementation:** the drivers live in Go inside the `herder` binary — `tools/herder/internal/driver/` (`herdr.go`, `hcom.go`, selection in `selection.go`), invoked through the `herder-send` shim → `bin/herder send`. The original bash drivers (`lib/driver-herdr.sh`, `lib/driver-hcom.sh`, `lib/delivery-driver.sh`) were deleted when the scripts flipped to Go shims; git history @ d4ca54c is the bash reference. The behavior contract carried over byte-for-byte and is pinned by the golden suites (`skills/herder/tests/check-send-contract.sh`, `check-hcom-contract.sh`).
+**Implementation:** the drivers live in Go inside the `herder` binary — `tools/herder/internal/driver/` (`herdr.go`, `hcom.go`, selection in `selection.go`), invoked through the `herder-send` shim → `bin/herder send`. The original bash drivers (`lib/driver-herdr.sh`, `lib/driver-hcom.sh`, `lib/delivery-driver.sh`) were deleted at the flip; git history @ d4ca54c is the bash reference. The behavior contract carried over byte-for-byte and is pinned by the golden suites (`skills/herder/tests/check-send-contract.sh`, `check-hcom-contract.sh`).
 
 **Why drivers?** The current keystroke transport (`herdr agent send` + `Enter` + sigil-verify) is brittle: delivery into a non-active pane silently fails, and "did it submit?" is inferred from screen-scraping. Drivers let a second transport (`hcom`: hooks + SQLite) remove those failure modes without requiring code coupling to either transport.
 
@@ -59,7 +59,7 @@ All exit codes, `--json` shapes, `--dry-run` output, and flag behavior remain by
 
 ### `herdr` — Keystroke driver (always available)
 
-**Location:** `tools/herder/internal/driver/herdr.go` (bash original `lib/driver-herdr.sh`, deleted at the flip; reference @ d4ca54c)
+**Location:** `tools/herder/internal/driver/herdr.go` (bash original deleted at the flip; reference @ d4ca54c)
 
 Carries the `herder-send` keystroke logic behind the driver interface. This is the fallback and the baseline implementation.
 
@@ -71,7 +71,7 @@ Carries the `herder-send` keystroke logic behind the driver interface. This is t
 
 ### `hcom` — Hook-based SQLite driver
 
-**Location:** `tools/herder/internal/driver/hcom.go` (bash original `lib/driver-hcom.sh`, deleted at the flip; reference @ d4ca54c)
+**Location:** `tools/herder/internal/driver/hcom.go` (bash original deleted at the flip; reference @ d4ca54c)
 
 Delivers messages via hcom's hook-injection and SQLite backend. Removes the silent pane-drop failure mode and enables mid-turn injection / idle-wake without keystroke brittleness. **Both Claude and Codex are first-class hcom targets** — the live U5 probe proved Codex hook delivery reliable (mid-turn injection ~8.4s, a burst of sends coalesced into a single atomic injection, ordered, zero drops), so Codex is not special-cased to herdr.
 
@@ -88,10 +88,11 @@ Delivers messages via hcom's hook-injection and SQLite backend. Removes the sile
 **Shell shims (W4):** interactive and herder-spawn launches reach hcom through PATH shims:
 `claude`/`codex` → `skills/herder/shims/<tool>` → `bin/herder launch` → `hcom <tool> --run-here`.
 `herder launch` exports `HCOM_LAUNCH_INFLIGHT=1` before execing hcom; if hcom resolves the tool name
-through PATH and lands back on the shim, the shim skips itself and execs the real binary. Optional
-static tool defaults live in mise env (`HERDER_SHIM_ARGS_CLAUDE` / `HERDER_SHIM_ARGS_CODEX`) rather
-than in aliases or shell functions. The shims are repo-prepared; machine PATH activation is deferred
-post-merge and documented in `napkins/hcom-substrate/w4-machine-changes.md`.
+through PATH and lands back on the shim, the shim skips itself and execs the real binary. The shims
+honor optional `HERDER_SHIM_ARGS_<TOOL>` env vars when a user deliberately sets them, but installer
+activation only puts the shim directory on PATH; permission defaults such as Claude skip-permissions
+stay a manual machine choice rather than repo-written config. The shims are repo-prepared; machine
+PATH activation is handled by the N3 shim installer.
 
 **Supported on:** systems with hcom installed and on PATH; the target must be a bus-bound hcom instance (herder-spawn does this automatically for hcom-capable agents).
 
@@ -165,4 +166,3 @@ To add a third driver (e.g., agmsg SQLite or h5i git-log):
 - `herder-send --help` + the send goldens (`skills/herder/tests/goldens/`): public contract (target forms, options, exit codes, `--json`)
 - `orchestrate/SKILL.md` Invariants 8–9: how delivery drivers fulfill the invariants
 - `herder/SKILL.md`: user-facing command docs (transport-agnostic)
-- `skills/herder/references/spike-findings-hcom.md`: Phase 0 findings (hcom capability / reliability verdict)

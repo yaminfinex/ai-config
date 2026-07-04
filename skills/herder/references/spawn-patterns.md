@@ -1,6 +1,7 @@
 # Spawn patterns
 
-Concrete recipes for common herder requests. All examples assume `scripts/herder-spawn` is on $PATH (or invoked by absolute path from the skill).
+Concrete recipes for common herder requests. All examples assume `herder-spawn` is on `$PATH`
+or invoked by absolute path from `skills/herder/scripts/herder-spawn`.
 
 ## Permissions & trust (read first)
 
@@ -162,7 +163,7 @@ This is the same file-staging idea as `--prompt-file` for initial prompts (recip
 
 ## Initial-prompt delivery caveats
 
-`herder-spawn` waits up to 10s (override with `--wait-timeout-ms`) for the agent to report `idle` before sending the prompt. If the agent has no herdr integration installed, `wait --status idle` may never resolve and we fall through to the send anyway. If you see prompts landing before the agent prompt is ready, either:
+`herder-spawn` waits up to 15s (override with `--wait-timeout-ms`) for the agent to report `idle` before sending the prompt. If the agent has no herdr integration installed, `wait --status idle` may never resolve and we fall through to the send anyway. If you see prompts landing before the agent prompt is ready, either:
 
 - Install the matching integration (`herdr integration install claude|codex|…`).
 - Increase `--wait-timeout-ms`.

@@ -36,7 +36,9 @@ orchestrator itself replaceable.
    scope, scope drift. Record initial proposals for known open questions so agents can
    proceed-and-flag rather than stall.
 7. **Cull per the liveness policy** — default cull-on-done after verification (ask first); keep
-   open a phase whose judgment calls the user may want to interrogate. Never close your own pane.
+   open a phase whose judgment calls the user may want to interrogate. A registered culled agent can
+   be reopened later with `herder resume <guid>` if its tool session id was recorded, but immediate
+   interrogation still argues for keeping it open. Never close your own pane.
 8. **Nobody pushes or opens PRs** — the user ships.
 9. **Tail:** deep review + remnant sweep (`adversarial.md`).
 10. **Remediations:** mechanical → one direct agent, one commit; contested → jury first. Each

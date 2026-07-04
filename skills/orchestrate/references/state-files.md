@@ -24,6 +24,7 @@ not the whole doc>.
 - Notify-back address: <orchestrator `terminal_id` (durable; `herdr pane get $HERDR_PANE_ID`) agents `herder-send` on done | none — relay/soloist self-spawn>
 - Golden agent: <bottle name + what it holds | none>
 - Worktree(s) / branch / workspace: <...>
+- Registered panes: <whether hand-launched panes should run `herder-enroll`; whether culled panes may be reopened with `herder resume <guid>`>
 
 ## Units — one agent each. Do ONLY your unit.
 

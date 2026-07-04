@@ -238,7 +238,9 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		return nil, 1
 	}
 	sendAbs := paths.HerderSend
-	cwd := currentCWD()
+	cwd := firstNonEmpty(os.Getenv("HERDER_LIFECYCLE_CWD"), currentCWD())
+	split := firstNonEmpty(os.Getenv("HERDER_LIFECYCLE_SPLIT"), "right")
+	focusFlag := firstNonEmpty(os.Getenv("HERDER_LIFECYCLE_FOCUS"), "--no-focus")
 	extra := permissionArgs(spec.Agent)
 	extra = append(extra, "--go")
 	if spec.Prompt != "" {
@@ -260,7 +262,7 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	innerCmd := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_SEND=%s HCOM_DIR=%s; exec %s",
 		shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(sendAbs), shellquote.Quote(spec.HcomDir), inner.String())
 	argv := []string{shell, "-lic", innerCmd}
-	startArgs := []string{"agent", "start", spec.Label, "--no-focus", "--split", "right", "--cwd", cwd, "--", shell, "-lic", innerCmd}
+	startArgs := []string{"agent", "start", spec.Label, focusFlag, "--split", split, "--cwd", cwd, "--", shell, "-lic", innerCmd}
 	out, rc, _ := r.client().Combined(startArgs...)
 	if rc != 0 {
 		fmt.Fprintf(r.stderr, "herdr agent start failed:\n%s\n", strings.TrimRight(string(out), "\n"))
