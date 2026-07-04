@@ -61,6 +61,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	mode := "launch"
 	tool := args[0]
 	target := ""
+	parentSessionID := ""
 	args = args[1:]
 	if tool == "--resume" || tool == "--fork" {
 		if len(args) < 2 || args[0] == "" || args[1] == "" {
@@ -74,6 +75,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		}
 		tool = args[0]
 		target = args[1]
+		if mode == "fork" {
+			parentSessionID = target
+		}
 		args = args[2:]
 	}
 
@@ -95,8 +99,18 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			}
 			tag = args[i+1]
 			i += 2
+		case arg == "--parent-session":
+			if i+1 >= len(args) {
+				die(stderr, "--parent-session needs a value")
+				return 1
+			}
+			parentSessionID = args[i+1]
+			i += 2
 		case len(arg) >= len("--tag=") && arg[:len("--tag=")] == "--tag=":
 			tag = arg[len("--tag="):]
+			i++
+		case len(arg) >= len("--parent-session=") && arg[:len("--parent-session=")] == "--parent-session=":
+			parentSessionID = arg[len("--parent-session="):]
 			i++
 		case arg == "--":
 			rest = append(rest, args[i+1:]...)
@@ -120,6 +134,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 	PinConfigDir(tool)
 	_ = os.Setenv("HCOM_LAUNCH_INFLIGHT", "1")
+	if mode == "fork" || mode == "resume" {
+		_ = os.Setenv("HERDER_LIFECYCLE_MODE", mode)
+		_ = os.Setenv("HERDER_PARENT_SESSION_ID", parentSessionID)
+	}
 	startSidecar(tool)
 
 	argv := append([]string{"hcom"}, hcomArgs...)

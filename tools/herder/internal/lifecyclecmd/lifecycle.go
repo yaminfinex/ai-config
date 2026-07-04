@@ -109,8 +109,8 @@ func (r *runner) fork(opts forkOptions) int {
 	if label == "" {
 		label = fmt.Sprintf("%s-fork-%s", firstNonEmpty(ptrString(parent.Label), "agent"), short)
 	}
-	if collision := activeLabelCollision(recs, label, guid); collision != "" {
-		die(r.stderr, collision)
+	if owner := registry.ActiveLabelOwner(recs, label, guid); owner != nil {
+		die(r.stderr, fmt.Sprintf("label %q already belongs to active guid %s", label, ptrString(owner.GUID)))
 		return 1
 	}
 	role := firstNonEmpty(opts.role, parent.Role, "worker")
@@ -172,8 +172,8 @@ func (r *runner) resume(opts resumeOptions) int {
 		return 1
 	}
 	label := firstNonEmpty(ptrString(rec.Label), "resumed-"+registry.ShortGUID(guid))
-	if collision := activeLabelCollision(recs, label, guid); collision != "" {
-		die(r.stderr, collision)
+	if owner := registry.ActiveLabelOwner(recs, label, guid); owner != nil {
+		die(r.stderr, fmt.Sprintf("label %q already belongs to active guid %s", label, ptrString(owner.GUID)))
 		return 1
 	}
 	prov := registry.BuildProvenance("resume", rec.HcomTag, currentCWD(), "")
@@ -245,6 +245,9 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		extra = append(extra, "--hcom-prompt", spec.Prompt)
 	}
 	launchTokens := []string{hcomLaunch, "--" + spec.Mode, spec.Agent, spec.VehicleTarget, "--tag", spec.Role}
+	if spec.Mode == "fork" && spec.ParentSession != "" {
+		launchTokens = append(launchTokens, "--parent-session", spec.ParentSession)
+	}
 	launchTokens = append(launchTokens, extra...)
 
 	var inner strings.Builder
@@ -256,10 +259,6 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	shell := firstNonEmpty(os.Getenv("SHELL"), "/bin/zsh")
 	innerCmd := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_SEND=%s HCOM_DIR=%s; exec %s",
 		shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(sendAbs), shellquote.Quote(spec.HcomDir), inner.String())
-	if spec.Mode == "fork" || spec.Mode == "resume" {
-		innerCmd = fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_SEND=%s HCOM_DIR=%s HERDER_LIFECYCLE_MODE=%s HERDER_PARENT_SESSION_ID=%s; exec %s",
-			shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(sendAbs), shellquote.Quote(spec.HcomDir), shellquote.Quote(spec.Mode), shellquote.Quote(spec.ParentSession), inner.String())
-	}
 	argv := []string{shell, "-lic", innerCmd}
 	startArgs := []string{"agent", "start", spec.Label, "--no-focus", "--split", "right", "--cwd", cwd, "--", shell, "-lic", innerCmd}
 	out, rc, _ := r.client().Combined(startArgs...)
@@ -468,15 +467,6 @@ func loadRegistry(stderr io.Writer) ([]registry.Record, string, int) {
 		return nil, path, 1
 	}
 	return recs, path, 0
-}
-
-func activeLabelCollision(recs []registry.Record, label, guid string) string {
-	for _, other := range registry.LatestByGUID(recs) {
-		if ptrString(other.Label) == label && ptrString(other.GUID) != guid && other.Status == "active" {
-			return fmt.Sprintf("label %q already belongs to active guid %s", label, ptrString(other.GUID))
-		}
-	}
-	return ""
 }
 
 func liveAgents(client herdrClient) map[string]herdrcli.Agent {

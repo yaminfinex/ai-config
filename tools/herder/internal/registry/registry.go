@@ -168,6 +168,22 @@ func Resolve(recs []Record, target string) *Record {
 	return hit
 }
 
+// ActiveLabelOwner returns the active latest row that owns label, excluding
+// exceptGUID. Label writers use this as the registry-level uniqueness
+// invariant for rename, enroll, fork, and sidecar manual identity rows.
+func ActiveLabelOwner(recs []Record, label, exceptGUID string) *Record {
+	if label == "" {
+		return nil
+	}
+	for _, rec := range LatestByGUID(recs) {
+		if strEqual(rec.Label, label) && !strEqual(rec.GUID, exceptGUID) && rec.Status == "active" {
+			cp := rec
+			return &cp
+		}
+	}
+	return nil
+}
+
 // ResolveByToolSessionID finds any row carrying provenance.tool_session_id and
 // returns the latest row for that guid. It intentionally scans all rows, not
 // only LatestByGUID, because later append-only rows can temporarily or

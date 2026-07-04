@@ -123,6 +123,25 @@ if [[ "$WRITE" -eq 0 ]]; then
   else
     printf 'FAIL  guard: requires herdr pane — rc=%s err=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")"; fail=1
   fi
+
+  CASE="$ROOT/collision"
+  mkdir -p "$CASE/home" "$CASE/state"
+  cat >"$CASE/state/registry.jsonl" <<'JSONL'
+{"guid":"guid-other-0000","short_guid":"other","label":"taken","role":"worker","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","status":"active"}
+JSONL
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i \
+    PATH="$PATH_HERMETIC" \
+    HOME="$CASE/home" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self \
+    HERDER_STATE_DIR="$CASE/state" \
+    "$HEN" --label taken 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+  if [[ "$RUN_RC" -eq 1 ]] && grep -q 'label "taken" already belongs to active guid guid-other-0000' "$RUN_ERR_F"; then
+    printf 'PASS  guard: active label collision refused\n'
+  else
+    printf 'FAIL  guard: active label collision refused — rc=%s err=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")"; fail=1
+  fi
 fi
 
 if [[ "$WRITE" -eq 1 ]]; then

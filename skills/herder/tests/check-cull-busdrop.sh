@@ -72,6 +72,12 @@ case "\${1:-} \${2:-}" in
     ;;
   "pane close")
     printf '%s\n' "\${3:-}" >>"\$MOCK_PROBE_DIR/closed_panes"
+    if [[ "\${MOCK_CULL_APPEND_ENRICHED:-0}" = "1" ]]; then
+      jq -nc --arg dir "\${MOCK_CULL_APPEND_HCOM_DIR:-}" \
+        '{guid:"guid-race", short_guid:"race", label:"race", terminal_id:"term_BUS", pane_id:"p_bus",
+          agent:"claude", team:"alpha", hcom_dir:\$dir, hcom_name:"bus-race", status:"active"}' \
+        >>"\${HERDER_STATE_DIR:?}/registry.jsonl"
+    fi
     jq -n --arg pane "\${3:-}" '{result:{type:"closed", pane_id:\$pane}}'
     ;;
   *)
@@ -148,6 +154,7 @@ run_cull() {
     PATH="$PATH_HERMETIC" HOME="$HOME" \
     HERDR_ENV=1 HERDER_STATE_DIR="$REG_DIR" HERDR_PANE_ID="p_test" \
     MOCK_PROBE_DIR="$PROBE" MOCK_HCOM_KILL_FAIL="$kill_fail" MOCK_CULL_LIVE="$live" \
+    MOCK_CULL_APPEND_ENRICHED="${MOCK_CULL_APPEND_ENRICHED:-0}" MOCK_CULL_APPEND_HCOM_DIR="${MOCK_CULL_APPEND_HCOM_DIR:-}" \
     "$CULL" "$@" 2>&1)"
   RUN_RC=$?
 }
@@ -168,6 +175,18 @@ run_cull 0 all --label plain
 [[ "$RUN_RC" -eq 0 ]] && ok "plain cull: exit 0" || bad "plain cull: exit 0" "rc=$RUN_RC out=$RUN_OUT"
 [[ "$(line_count "$PROBE/hcom_kill_argv")" = "0" ]] && ok "plain cull: no hcom invocation" || bad "plain cull: no hcom invocation" "count=$(line_count "$PROBE/hcom_kill_argv")"
 [[ "$(cat "$PROBE/closed_panes" 2>/dev/null)" = "p_plain" ]] && ok "plain cull: pane closed" || bad "plain cull: pane closed" "closed=$(cat "$PROBE/closed_panes" 2>/dev/null)"
+
+# 2b. Sidecar enrichment between cull's initial load and close result is preserved for close + bus drop.
+make_case race plain
+jq -nc '{guid:"guid-race", short_guid:"race", label:"race", terminal_id:"term_BUS", pane_id:"p_bus",
+  agent:"claude", team:"alpha", hcom_dir:"", hcom_name:"", status:"active"}' >"$REG_DIR/registry.jsonl"
+MOCK_CULL_APPEND_ENRICHED=1 MOCK_CULL_APPEND_HCOM_DIR="$BUS_DIR" run_cull 0 all --label race
+unset MOCK_CULL_APPEND_ENRICHED MOCK_CULL_APPEND_HCOM_DIR
+[[ "$RUN_RC" -eq 0 ]] && ok "race cull: exit 0" || bad "race cull: exit 0" "rc=$RUN_RC out=$RUN_OUT"
+[[ "$(cat "$PROBE/hcom_kill_argv" 2>/dev/null)" = "bus-race" ]] && ok "race cull: refreshed hcom_name dropped" || bad "race cull: refreshed hcom_name dropped" "argv=$(cat "$PROBE/hcom_kill_argv" 2>/dev/null)"
+[[ "$(cat "$PROBE/hcom_dirs" 2>/dev/null)" = "$BUS_DIR" ]] && ok "race cull: refreshed hcom_dir used" || bad "race cull: refreshed hcom_dir used" "got=$(cat "$PROBE/hcom_dirs" 2>/dev/null) want=$BUS_DIR"
+tail -n1 "$REG_DIR/registry.jsonl" | jq -e '.guid=="guid-race" and .status=="closed" and .hcom_name=="bus-race" and .hcom_dir=="'"$BUS_DIR"'"' >/dev/null \
+  && ok "race cull: closed row carries enrichment" || bad "race cull: closed row carries enrichment" "latest=$(tail -n1 "$REG_DIR/registry.jsonl")"
 
 # 3. Failed hcom kill is advisory; cull still succeeds and closes the pane.
 make_case fail failbus

@@ -37,7 +37,7 @@ func TestFindRowForPaneWithFlexibleCreatedAt(t *testing.T) {
 	if err := json.Unmarshal(fixture, &rows); err != nil {
 		t.Fatalf("unmarshal fixture: %v", err)
 	}
-	row := findRowForPane(rows, "p_target")
+	row := findRowForPane(rows, "p_target", "", "")
 	if row == nil {
 		t.Fatal("findRowForPane returned nil")
 	}
@@ -47,8 +47,29 @@ func TestFindRowForPaneWithFlexibleCreatedAt(t *testing.T) {
 	if row.CreatedAt == "" {
 		t.Fatal("created_at was not retained")
 	}
-	if got := findRowForPane(rows, "missing"); got != nil {
+	if got := findRowForPane(rows, "missing", "", ""); got != nil {
 		t.Fatalf("findRowForPane(missing) = %+v, want nil", *got)
+	}
+}
+
+func TestFindRowForPaneSkipsForkParentSession(t *testing.T) {
+	rows := []hcomRow{
+		{Name: "parent", SessionID: "sess-parent", LaunchContext: struct {
+			PaneID string `json:"pane_id"`
+		}{PaneID: "p_target"}},
+		{Name: "child", SessionID: "sess-child", LaunchContext: struct {
+			PaneID string `json:"pane_id"`
+		}{PaneID: "p_target"}},
+	}
+	row := findRowForPane(rows, "p_target", "fork", "sess-parent")
+	if row == nil {
+		t.Fatal("findRowForPane returned nil")
+	}
+	if row.Name != "child" {
+		t.Fatalf("row = %s, want child", row.Name)
+	}
+	if got := findRowForPane(rows[:1], "p_target", "fork", "sess-parent"); got != nil {
+		t.Fatalf("parent session pane match returned %+v, want nil", *got)
 	}
 }
 
@@ -203,5 +224,61 @@ func TestAppendEnrichmentRecognizesResumeBySessionID(t *testing.T) {
 	}
 	if latest.Provenance.ForkedFrom != "" {
 		t.Fatalf("ForkedFrom = %q, want empty", latest.Provenance.ForkedFrom)
+	}
+}
+
+func TestAppendEnrichmentDoesNotResurrectClosedGUID(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	prior := `{"guid":"guid-closed-0000","short_guid":"closed","label":"closed-worker","role":"worker","agent":"codex","terminal_id":"term_OLD","pane_id":"p_old","status":"closed","hcom_name":"worker-rive","provenance":{"mechanism":"spawn","spawned_by":"parent-guid","tool_session_id":"sess-123","tag":"worker","batch_id":"","cwd":"/old","workspace_id":"ws_old","branch":"","ts":"2026-07-03T00:00:00Z"}}`
+	if err := registry.Append(registryPath, []byte(prior)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_GUID", "guid-closed-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "closed-worker")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{tool: "codex", paneID: "p_new", cwd: "/repo", registry: registryPath}
+	s.appendEnrichment(&hcomRow{Name: "worker-rive", Tag: "worker", SessionID: "sess-123", Directory: "/repo"})
+
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("rows = %d, want 1 closed row only", len(recs))
+	}
+	latest := registry.Resolve(recs, "guid-closed-0000")
+	if latest == nil || latest.Status != "closed" {
+		t.Fatalf("latest = %+v, want closed", latest)
+	}
+}
+
+func TestAppendEnrichmentRefusesActiveLabelCollision(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	prior := `{"guid":"guid-other-0000","short_guid":"other","label":"taken","role":"worker","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","status":"active"}`
+	if err := registry.Append(registryPath, []byte(prior)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_GUID", "")
+	t.Setenv("HERDER_LABEL", "taken")
+	t.Setenv("HERDER_ROLE", "manual")
+	t.Setenv("HERDER_SPAWNED_BY", "")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{tool: "claude", paneID: "p_manual", cwd: "/repo", registry: registryPath}
+	s.appendEnrichment(&hcomRow{Name: "manual-rive", Tag: "manual", SessionID: "sess-manual", Directory: "/repo"})
+
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("rows = %d, want collision to skip append", len(recs))
+	}
+	if latest := registry.Resolve(recs, "taken"); latest == nil || ptrString(latest.GUID) != "guid-other-0000" {
+		t.Fatalf("latest taken = %+v, want existing owner", latest)
 	}
 }

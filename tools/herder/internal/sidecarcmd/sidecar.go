@@ -167,8 +167,11 @@ func mapStatus(status string) (string, bool) {
 	}
 }
 
-func findRowForPane(rows []hcomRow, paneID string) *hcomRow {
+func findRowForPane(rows []hcomRow, paneID, lifecycleMode, parentSessionID string) *hcomRow {
 	for i := range rows {
+		if lifecycleMode == "fork" && parentSessionID != "" && rows[i].SessionID == parentSessionID {
+			continue
+		}
 		if rows[i].LaunchContext.PaneID == paneID {
 			return &rows[i]
 		}
@@ -177,7 +180,7 @@ func findRowForPane(rows []hcomRow, paneID string) *hcomRow {
 }
 
 func (s *sidecar) findRow(rows []hcomRow) *hcomRow {
-	if row := findRowForPane(rows, s.paneID); row != nil {
+	if row := findRowForPane(rows, s.paneID, s.lifecycleMode, s.parentSessionID); row != nil {
 		return row
 	}
 	return findRowForLaunchFallback(rows, s.tool, s.tag, s.cwd, s.lifecycleMode, s.parentSessionID)
@@ -216,6 +219,9 @@ func (s *sidecar) appendEnrichment(row *hcomRow) {
 	if latest == nil {
 		latest = s.latestFromRecords(recs, guid)
 	}
+	if latest != nil && latest.Status == "closed" && !resumed {
+		return
+	}
 	label := os.Getenv("HERDER_LABEL")
 	role := os.Getenv("HERDER_ROLE")
 	agent := s.tool
@@ -231,6 +237,9 @@ func (s *sidecar) appendEnrichment(row *hcomRow) {
 	}
 	if role == "" {
 		role = "manual"
+	}
+	if owner := registry.ActiveLabelOwner(recs, label, guid); owner != nil {
+		return
 	}
 
 	mechanism := "enroll"

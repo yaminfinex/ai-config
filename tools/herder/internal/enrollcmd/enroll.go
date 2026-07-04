@@ -71,8 +71,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	role := firstNonEmpty(opts.role, os.Getenv("HERDER_ROLE"), "manual")
 
 	registryPath := registry.DefaultPath()
+	var recs []registry.Record
 	var latest *registry.Record
-	if recs, err := registry.Load(registryPath); err == nil {
+	if loaded, err := registry.Load(registryPath); err == nil {
+		recs = loaded
 		for _, rec := range registry.LatestByGUID(recs) {
 			if ptrString(rec.GUID) == guid {
 				cp := rec
@@ -82,6 +84,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		die(stderr, err.Error())
+		return 1
+	}
+	if owner := registry.ActiveLabelOwner(recs, label, guid); owner != nil {
+		die(stderr, fmt.Sprintf("label %q already belongs to active guid %s", label, ptrString(owner.GUID)))
 		return 1
 	}
 

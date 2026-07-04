@@ -43,11 +43,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	guid := ptrString(rec.GUID)
-	for _, other := range registry.LatestByGUID(recs) {
-		if ptrString(other.Label) == newLabel && ptrString(other.GUID) != guid && other.Status == "active" {
-			die(stderr, fmt.Sprintf("label %q already belongs to active guid %s", newLabel, ptrString(other.GUID)))
-			return 1
-		}
+	if owner := registry.ActiveLabelOwner(recs, newLabel, guid); owner != nil {
+		die(stderr, fmt.Sprintf("label %q already belongs to active guid %s", newLabel, ptrString(owner.GUID)))
+		return 1
 	}
 
 	base := rec.Raw

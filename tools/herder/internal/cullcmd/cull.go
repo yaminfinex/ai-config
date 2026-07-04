@@ -206,9 +206,9 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 	}
 
 	if opts.goneOnly {
-		appendClosed(registryPath, rec, nowISO, culler, "already_gone", "terminal_id not in live agent list")
+		closed := appendClosed(registryPath, rec, nowISO, culler, "already_gone", "terminal_id not in live agent list")
 		fmt.Fprintf(stdout, "recorded closed %s (%s) pane=%s → already_gone\n", label, guid, pane)
-		dropBusEntry(rec, stdout)
+		dropBusEntry(closed, stdout)
 		return
 	}
 
@@ -226,8 +226,8 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 				} else {
 					fmt.Fprintf(stderr, "pane %s reassigned to another terminal and %s not live anywhere; recording closed\n", pane, term)
 				}
-				appendClosed(registryPath, rec, nowISO, culler, "already_gone", "terminal_id not in live agent list")
-				dropBusEntry(rec, stdout)
+				closed := appendClosed(registryPath, rec, nowISO, culler, "already_gone", "terminal_id not in live agent list")
+				dropBusEntry(closed, stdout)
 				return
 			}
 		}
@@ -237,14 +237,14 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 	closedOK := closeResultType(result)
 	if closedOK == "error" {
 		reason := closeErrorReason(result)
-		appendClosed(registryPath, rec, nowISO, culler, "error", reason)
+		closed := appendClosed(registryPath, rec, nowISO, culler, "error", reason)
 		fmt.Fprintf(stdout, "cull errored %s (%s) pane=%s → %s (still marked closed in registry)\n", label, guid, pane, reason)
-		dropBusEntry(rec, stdout)
+		dropBusEntry(closed, stdout)
 		return
 	}
-	appendClosed(registryPath, rec, nowISO, culler, closedOK, "")
+	closed := appendClosed(registryPath, rec, nowISO, culler, closedOK, "")
 	fmt.Fprintf(stdout, "culled %s (%s) pane=%s → %s\n", label, guid, pane, closedOK)
-	dropBusEntry(rec, stdout)
+	dropBusEntry(closed, stdout)
 }
 
 func verifyPaneIdentity(pane, wantTerm string) int {
@@ -298,21 +298,45 @@ func closeErrorReason(out []byte) string {
 	return "unknown_error"
 }
 
-func appendClosed(path string, rec registry.Record, nowISO, culler, result, reason string) {
-	row := bytes.TrimSpace(rec.Raw)
-	replacement := []byte(`"status":"closed"`)
-	if bytes.Contains(row, []byte(`"status"`)) {
-		row = bytes.Replace(row, []byte(`"status":"`+rec.Status+`"`), replacement, 1)
-	} else {
-		row = appendJSONFields(row, string(replacement))
+func appendClosed(path string, rec registry.Record, nowISO, culler, result, reason string) registry.Record {
+	rec = latestForGUID(path, rec)
+	row, err := registry.UpdateRawObject(rec.Raw, map[string]any{
+		"status":         "closed",
+		"closed_at":      nowISO,
+		"closed_by_pane": culler,
+		"close_result":   result,
+		"close_reason":   reason,
+	})
+	if err != nil {
+		row = appendJSONFields(bytes.TrimSpace(rec.Raw),
+			`"status":"closed"`,
+			`"closed_at":`+jsonString(nowISO),
+			`"closed_by_pane":`+jsonString(culler),
+			`"close_result":`+jsonString(result),
+			`"close_reason":`+jsonString(reason),
+		)
 	}
-	row = appendJSONFields(row,
-		`"closed_at":`+jsonString(nowISO),
-		`"closed_by_pane":`+jsonString(culler),
-		`"close_result":`+jsonString(result),
-		`"close_reason":`+jsonString(reason),
-	)
 	_ = registry.Append(path, row)
+	rec.Status = "closed"
+	rec.Raw = bytes.TrimSpace(row)
+	return rec
+}
+
+func latestForGUID(path string, rec registry.Record) registry.Record {
+	guid := ptrString(rec.GUID)
+	if guid == "" {
+		return rec
+	}
+	recs, err := registry.Load(path)
+	if err != nil {
+		return rec
+	}
+	for _, latest := range registry.LatestByGUID(recs) {
+		if ptrString(latest.GUID) == guid {
+			return latest
+		}
+	}
+	return rec
 }
 
 func dropBusEntry(rec registry.Record, stdout io.Writer) {

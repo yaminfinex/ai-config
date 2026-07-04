@@ -150,6 +150,32 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+func TestActiveLabelOwnerUsesLatestActiveRows(t *testing.T) {
+	path := writeRegistry(t,
+		`{"guid":"guid-alpha-0000","short_guid":"alpha","label":"shared","status":"active"}`,
+		`{"guid":"guid-beta-0000","short_guid":"beta","label":"closed-label","status":"active"}`,
+		`{"guid":"guid-beta-0000","short_guid":"beta","label":"closed-label","status":"closed"}`,
+		`{"guid":"guid-gamma-0000","short_guid":"gamma","label":"shared","status":"active"}`,
+	)
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := ActiveLabelOwner(recs, "shared", "guid-alpha-0000")
+	if owner == nil || ptrString(owner.GUID) != "guid-gamma-0000" {
+		t.Fatalf("ActiveLabelOwner(shared, except alpha) = %+v, want gamma", owner)
+	}
+	if owner := ActiveLabelOwner(recs, "shared", "guid-gamma-0000"); owner == nil || ptrString(owner.GUID) != "guid-alpha-0000" {
+		t.Fatalf("ActiveLabelOwner(shared, except gamma) = %+v, want alpha", owner)
+	}
+	if owner := ActiveLabelOwner(recs, "closed-label", ""); owner != nil {
+		t.Fatalf("closed latest row owns label: %+v, want nil", owner)
+	}
+	if owner := ActiveLabelOwner(recs, "", ""); owner != nil {
+		t.Fatalf("empty label owner = %+v, want nil", owner)
+	}
+}
+
 func TestResolveByToolSessionIDScansClosedAndOlderRows(t *testing.T) {
 	path := writeRegistry(t,
 		`{"guid":"guid-alpha-0000","short_guid":"alpha","label":"alpha-old","status":"active","provenance":{"mechanism":"spawn","tool_session_id":"sess-alpha","tag":"worker"}}`,
