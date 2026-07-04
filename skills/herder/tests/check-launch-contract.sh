@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# check-launch-contract.sh — lock hcom-launch behavior with committed goldens.
+# check-launch-contract.sh — lock herder launch behavior with committed goldens.
 #
-# The --write pass runs the live bash hcom-launch wrapper. After the Go port and
-# shim flip, the same suite verifies scripts/hcom-launch by default, with
-# HERDER_LAUNCH_BIN available for explicit binary/shim checks.
+# The --write pass verifies `bin/herder launch` by default, with
+# HERDER_LAUNCH_BIN available for explicit launcher checks.
 
 set -uo pipefail
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$TESTS_DIR/../../.." && pwd)"
 GOLDENS="$TESTS_DIR/goldens/launch"
-HL="${HERDER_LAUNCH_BIN:-$TESTS_DIR/../scripts/hcom-launch}"
+HL="${HERDER_LAUNCH_BIN:-$REPO_ROOT/bin/herder}"
 
 WRITE=0
 [[ "${1:-}" == "--write" ]] && WRITE=1
@@ -62,7 +62,7 @@ run_case() {
     PROBE="$case_dir/probe" \
     HCOM_DIR="$hcom_dir" \
     $extra_env \
-    "$HL" "$@" 2>"$err")"
+    "$HL" launch "$@" 2>"$err")"
   code=$?
 
   {

@@ -1,5 +1,5 @@
 === STDERR ===
-hcom-launch: hcom not on PATH — hcom is a hard dependency (plan 002 R4); install hcom or fix PATH. Not launching 'claude' raw.
+herder launch: hcom not on PATH — hcom is a hard dependency (plan 002 R4); install hcom or fix PATH. Not launching 'claude' raw.
 === STDOUT ===
 
 === EXIT ===

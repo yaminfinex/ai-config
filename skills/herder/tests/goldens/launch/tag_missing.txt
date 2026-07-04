@@ -1,5 +1,5 @@
 === STDERR ===
-hcom-launch: --tag needs a value
+herder launch: --tag needs a value
 === STDOUT ===
 
 === EXIT ===

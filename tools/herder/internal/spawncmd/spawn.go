@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/herderpaths"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/registry"
@@ -170,11 +171,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 type runner struct {
-	opts      options
-	stdout    io.Writer
-	stderr    io.Writer
-	herdr     *herdrcli.Client
-	scriptDir string
+	opts   options
+	stdout io.Writer
+	stderr io.Writer
+	herdr  *herdrcli.Client
+	paths  herderpaths.Paths
 }
 
 func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
@@ -382,7 +383,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 
 func (r *runner) run() int {
 	var err error
-	r.scriptDir, err = findScriptDir()
+	r.paths, err = herderpaths.Resolve()
 	if err != nil {
 		die(r.stderr, err.Error())
 		return 1
@@ -432,7 +433,7 @@ func (r *runner) run() int {
 		opts.Prompt = strings.TrimRight(string(b), "\n")
 	}
 
-	sendAbs := filepath.Join(r.scriptDir, "herder-send")
+	sendAbs := r.paths.HerderSend
 	if opts.Notify && opts.NotifyTo == "" {
 		if paneID := os.Getenv("HERDR_PANE_ID"); paneID != "" {
 			out, err := r.herdr.Output("pane", "get", paneID)
@@ -490,14 +491,9 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 	label := opts.LabelPrefix + opts.Role + "-" + short
 
 	isHcomAgent := launchcmd.IsHcomCapable(opts.Agent)
-	hcomLaunch := filepath.Join(r.scriptDir, "hcom-launch")
 	if isHcomAgent {
 		if _, err := exec.LookPath("hcom"); err != nil {
 			die(r.stderr, "hcom is required to spawn '"+opts.Agent+"' (launch-through-hcom); install hcom or spawn --agent bash")
-			return 1
-		}
-		if st, err := os.Stat(hcomLaunch); err != nil || st.IsDir() || st.Mode()&0o111 == 0 {
-			die(r.stderr, "hcom-launch wrapper missing/not executable: "+hcomLaunch)
 			return 1
 		}
 	}
@@ -552,7 +548,7 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 
 	launchTokens := []string{}
 	if isHcomAgent {
-		launchTokens = append(launchTokens, hcomLaunch, opts.Agent, "--tag", opts.Role)
+		launchTokens = append(launchTokens, r.paths.BinHerder, "launch", opts.Agent, "--tag", opts.Role)
 		launchTokens = append(launchTokens, opts.ExtraArgs...)
 	} else {
 		launchTokens = append(launchTokens, opts.Agent)
@@ -959,14 +955,14 @@ func printHelp(stdout io.Writer) {
 		"#",
 		"# Launch-through-hcom + teams:",
 		"#   * hcom-capable agents (claude/codex/gemini) are launched THROUGH hcom via the",
-		"#     `hcom-launch` wrapper (`hcom <tool> --run-here --tag <role> ...`), so they bind to the message",
+		"#     `herder launch` wrapper (`hcom <tool> --run-here --tag <role> ...`), so they bind to the message",
 		"#     bus from birth (hooks + pty). hcom is a HARD dependency for these agents (fails early if",
 		"#     absent). Non-hcom agents (bash, ...) exec raw and stay reachable over herdr keystrokes only.",
 		"#   * TEAM = a named bus (ringfencing). HCOM_DIR = $HERDER_TEAMS_ROOT/<team> (default root",
 		"#     ~/.hcom/teams); no --team = the global ~/.hcom bus (frictionless default for standing agents).",
 		"#     Team resolves from --team, else $HERDER_TEAM (the orchestrator's team), else global. The",
 		"#     resolved HCOM_DIR is PINNED into the child's PROCESS env at launch so it joins exactly this bus;",
-		"#     the wrapper's config-dir passthrough keeps auth on the REAL config dir even for an isolated team.",
+		"#     the launch wrapper's config-dir passthrough keeps auth on the REAL config dir even for an isolated team.",
 		"#   * The role is passed as the hcom `--tag`, so hcom names the instance `<role>-<random>` and",
 		"#     `@<role>-` fan-out addressing works. herder-spawn CAPTURES the assigned name (by correlating the",
 		"#     child's herdr pane_id to the hcom entry) and records `team`/`hcom_dir`/`hcom_name`/`hcom_tag` in",
@@ -995,7 +991,7 @@ func printHelp(stdout io.Writer) {
 		"#   3. Calls `herdr agent start <label> ...`, launching the agent inside a login+interactive shell —",
 		"#      `$SHELL -lic 'export HERDER_*...; exec <launch>'` — so PATH / mise activation / auth env are",
 		"#      sourced like a normal pane (opt out with --no-login-shell). <launch> for an hcom agent is",
-		"#      `hcom-launch <agent> --tag <role> [extra-args]` with HCOM_DIR pinned to the team bus; for a",
+		"#      `herder launch <agent> --tag <role> [extra-args]` with HCOM_DIR pinned to the team bus; for a",
 		"#      non-hcom agent it is the raw `<agent> [extra-args]`.",
 		"#   4. After the agent settles, captures its hcom-assigned name and appends a JSONL record",
 		"#      (incl. team/hcom_dir/hcom_name/hcom_tag) to $HERDER_STATE_DIR/registry.jsonl.",
@@ -1181,31 +1177,6 @@ func registryCapturedName(path, guid string) string {
 		sleepMS(700)
 	}
 	return ""
-}
-
-func findScriptDir() (string, error) {
-	if root := os.Getenv("AI_CONFIG_ROOT"); root != "" {
-		dir := filepath.Join(root, "skills", "herder", "scripts")
-		if _, err := os.Stat(dir); err == nil {
-			return dir, nil
-		}
-	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	for {
-		dir := filepath.Join(wd, "skills", "herder", "scripts")
-		if _, err := os.Stat(dir); err == nil {
-			return dir, nil
-		}
-		next := filepath.Dir(wd)
-		if next == wd {
-			break
-		}
-		wd = next
-	}
-	return "", fmt.Errorf("could not locate skills/herder/scripts from current directory")
 }
 
 func envInt(name string, fallback int) int {

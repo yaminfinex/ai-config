@@ -48,13 +48,13 @@ func setEnvDefault(key, value string) {
 	}
 }
 
-// Run executes the hcom-launch contract: parse hcom-owned flags, pin real
+// Run executes the herder launch contract: parse hcom-owned flags, pin real
 // config dirs when needed, optionally fork the status sidecar, then exec hcom.
 func Run(args []string, stdout, stderr io.Writer) int {
 	_ = stdout
 	if len(args) == 0 || args[0] == "" || args[0][0] == '-' {
 		if len(args) == 0 || args[0] != "--resume" && args[0] != "--fork" {
-			die(stderr, "usage: hcom-launch <tool> [--tag TAG] [tool-args...]")
+			die(stderr, "usage: herder launch <tool> [--tag TAG] [tool-args...]")
 			return 1
 		}
 	}
@@ -65,7 +65,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	args = args[1:]
 	if tool == "--resume" || tool == "--fork" {
 		if len(args) < 2 || args[0] == "" || args[1] == "" {
-			die(stderr, "usage: hcom-launch --resume <tool> <target> [--tag TAG] [tool-args...]")
+			die(stderr, "usage: herder launch --resume <tool> <target> [--tag TAG] [tool-args...]")
 			return 1
 		}
 		if tool == "--fork" {
@@ -181,5 +181,5 @@ func sidecarLogFile() (*os.File, error) {
 }
 
 func die(stderr io.Writer, msg string) {
-	fmt.Fprintf(stderr, "hcom-launch: %s\n", msg)
+	fmt.Fprintf(stderr, "herder launch: %s\n", msg)
 }

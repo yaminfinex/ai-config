@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # check-shims.sh - hermetic contract tests for the W4 claude/codex PATH shims.
 #
-# No live hcom, claude, or codex calls. Each scenario copies the real shim scripts
-# into a temp shim dir, installs mock sibling/real binaries, then drives the shim
+# No live hcom, claude, codex, or herder calls. Each scenario copies the real shim scripts
+# into a temp repo layout, installs mock bin/herder and real binaries, then drives the shim
 # through env -i.
 
 set -uo pipefail
@@ -47,20 +47,22 @@ assert_file_missing() {
 make_case() {
   local name="$1"
   CASE_DIR="$ROOT/$name"
-  SHIM_CASE="$CASE_DIR/shims"
+  REPO_CASE="$CASE_DIR/repo"
+  SHIM_CASE="$REPO_CASE/skills/herder/shims"
+  HERDER_BIN="$REPO_CASE/bin"
   REALBIN="$CASE_DIR/realbin"
   OTHERBIN="$CASE_DIR/otherbin"
   PROBE="$CASE_DIR/probe"
-  mkdir -p "$SHIM_CASE" "$REALBIN" "$OTHERBIN" "$PROBE"
+  mkdir -p "$SHIM_CASE" "$HERDER_BIN" "$REALBIN" "$OTHERBIN" "$PROBE"
   cp "$SHIMS_DIR/claude" "$SHIM_CASE/claude"
   cp "$SHIMS_DIR/codex" "$SHIM_CASE/codex"
 
-  cat > "$SHIM_CASE/hcom-launch" <<'MOCK_HCOM_LAUNCH'
+  cat > "$HERDER_BIN/herder" <<'MOCK_HERDER_LAUNCH'
 #!/usr/bin/env bash
 set -euo pipefail
 : "${PROBE:?}"
-printf '%s\n' "$@" >"$PROBE/hcom_launch_argv"
-MOCK_HCOM_LAUNCH
+printf '%s\n' "$@" >"$PROBE/herder_argv"
+MOCK_HERDER_LAUNCH
 
   cat > "$REALBIN/claude" <<'MOCK_REAL_CLAUDE'
 #!/usr/bin/env bash
@@ -82,7 +84,7 @@ printf '%s\n' "$count" >"$PROBE/real_codex_count"
 printf '%s\n' "$@" >"$PROBE/real_codex_argv"
 MOCK_REAL_CODEX
 
-  chmod +x "$SHIM_CASE/claude" "$SHIM_CASE/codex" "$SHIM_CASE/hcom-launch" \
+  chmod +x "$SHIM_CASE/claude" "$SHIM_CASE/codex" "$HERDER_BIN/herder" \
     "$REALBIN/claude" "$REALBIN/codex"
 }
 
@@ -105,14 +107,14 @@ run_with_timeout() {
   return "$rc"
 }
 
-# 1. Plain invocation execs sibling hcom-launch with tool name + user args.
+# 1. Plain invocation execs bin/herder launch with tool name + user args.
 make_case plain
 env -i PATH="$SHIM_CASE:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
   "$SHIM_CASE/claude" --model opus "two words"
 rc=$?
 assert_eq "plain claude: exit 0" "$rc" "0"
-assert_file_eq "plain claude: hcom-launch argv order" "$PROBE/hcom_launch_argv" \
-  "$(printf '%s\n' claude --model opus "two words")"
+assert_file_eq "plain claude: herder launch argv order" "$PROBE/herder_argv" \
+  "$(printf '%s\n' launch claude --model opus "two words")"
 
 # 2. Per-tool default args are deliberately whitespace-split and prepended.
 make_case defaults_claude
@@ -121,8 +123,8 @@ env -i PATH="$SHIM_CASE:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
   "$SHIM_CASE/claude" user-arg
 rc=$?
 assert_eq "defaults claude: exit 0" "$rc" "0"
-assert_file_eq "defaults claude: prepended before user args" "$PROBE/hcom_launch_argv" \
-  "$(printf '%s\n' claude --dangerously-skip-permissions --print user-arg)"
+assert_file_eq "defaults claude: prepended before user args" "$PROBE/herder_argv" \
+  "$(printf '%s\n' launch claude --dangerously-skip-permissions --print user-arg)"
 
 make_case defaults_codex
 env -i PATH="$SHIM_CASE:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
@@ -130,8 +132,8 @@ env -i PATH="$SHIM_CASE:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
   "$SHIM_CASE/codex" --ask-for-approval never
 rc=$?
 assert_eq "defaults codex: exit 0" "$rc" "0"
-assert_file_eq "defaults codex: prepended before user args" "$PROBE/hcom_launch_argv" \
-  "$(printf '%s\n' codex --dangerously-bypass-approvals-and-sandbox --ask-for-approval never)"
+assert_file_eq "defaults codex: prepended before user args" "$PROBE/herder_argv" \
+  "$(printf '%s\n' launch codex --dangerously-bypass-approvals-and-sandbox --ask-for-approval never)"
 
 # 3. Recursion guard skips the shim even when PATH names it through a symlink.
 make_case recursion
@@ -144,35 +146,35 @@ assert_eq "recursion guard: exits through real binary" "$rc" "0"
 assert_file_eq "recursion guard: real binary called once" "$PROBE/real_claude_count" "1"
 assert_file_eq "recursion guard: real argv preserved" "$PROBE/real_claude_argv" \
   "$(printf '%s\n' --real)"
-assert_file_missing "recursion guard: hcom-launch not called" "$PROBE/hcom_launch_argv"
+assert_file_missing "recursion guard: herder launch not called" "$PROBE/herder_argv"
 
-# 4. Absolute invocation still uses sibling hcom-launch when shim dir is not first on PATH.
+# 4. Absolute invocation still uses repo-local bin/herder when shim dir is not first on PATH.
 make_case not_first
 env -i PATH="$OTHERBIN:$SHIM_CASE:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
   "$SHIM_CASE/codex" run-here
 rc=$?
 assert_eq "not first on PATH: exit 0" "$rc" "0"
-assert_file_eq "not first on PATH: sibling launch used" "$PROBE/hcom_launch_argv" \
-  "$(printf '%s\n' codex run-here)"
+assert_file_eq "not first on PATH: repo launch used" "$PROBE/herder_argv" \
+  "$(printf '%s\n' launch codex run-here)"
 
-# 5. Missing sibling hcom-launch is a loud error, not silent fallthrough.
+# 5. Missing bin/herder is a loud error, not silent fallthrough.
 make_case missing_sibling
-rm -f "$SHIM_CASE/hcom-launch"
+rm -f "$HERDER_BIN/herder"
 err="$PROBE/stderr"
 env -i PATH="$SHIM_CASE:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
   "$SHIM_CASE/claude" hello 2>"$err"
 rc=$?
 if [[ "$rc" -ne 0 ]]; then
-  ok "missing sibling: nonzero exit"
+  ok "missing bin/herder: nonzero exit"
 else
-  bad "missing sibling: nonzero exit" "rc=0"
+  bad "missing bin/herder: nonzero exit" "rc=0"
 fi
-if grep -q 'missing executable sibling hcom-launch' "$err"; then
-  ok "missing sibling: loud diagnostic"
+if grep -q 'missing executable bin/herder' "$err"; then
+  ok "missing bin/herder: loud diagnostic"
 else
-  bad "missing sibling: loud diagnostic" "stderr=$(cat "$err" 2>/dev/null)"
+  bad "missing bin/herder: loud diagnostic" "stderr=$(cat "$err" 2>/dev/null)"
 fi
-assert_file_missing "missing sibling: no real binary fallback" "$PROBE/real_claude_count"
+assert_file_missing "missing bin/herder: no real binary fallback" "$PROBE/real_claude_count"
 
 echo
 if [[ "$fail" -eq 0 ]]; then

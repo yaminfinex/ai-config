@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/herderpaths"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
 	"ai-config/tools/herder/internal/shellquote"
@@ -231,20 +232,19 @@ type startSpec struct {
 }
 
 func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
-	scripts, err := scriptDir()
+	paths, err := herderpaths.Resolve()
 	if err != nil {
 		die(r.stderr, err.Error())
 		return nil, 1
 	}
-	hcomLaunch := filepath.Join(scripts, "hcom-launch")
-	sendAbs := filepath.Join(scripts, "herder-send")
+	sendAbs := paths.HerderSend
 	cwd := currentCWD()
 	extra := permissionArgs(spec.Agent)
 	extra = append(extra, "--go")
 	if spec.Prompt != "" {
 		extra = append(extra, "--hcom-prompt", spec.Prompt)
 	}
-	launchTokens := []string{hcomLaunch, "--" + spec.Mode, spec.Agent, spec.VehicleTarget, "--tag", spec.Role}
+	launchTokens := []string{paths.BinHerder, "launch", "--" + spec.Mode, spec.Agent, spec.VehicleTarget, "--tag", spec.Role}
 	if spec.Mode == "fork" && spec.ParentSession != "" {
 		launchTokens = append(launchTokens, "--parent-session", spec.ParentSession)
 	}
@@ -485,23 +485,6 @@ func liveAgents(client herdrClient) map[string]herdrcli.Agent {
 		}
 	}
 	return live
-}
-
-func scriptDir() (string, error) {
-	if root := os.Getenv("AI_CONFIG_ROOT"); root != "" {
-		dir := filepath.Join(root, "skills", "herder", "scripts")
-		if _, err := os.Stat(filepath.Join(dir, "hcom-launch")); err == nil {
-			return dir, nil
-		}
-	}
-	cwd, _ := os.Getwd()
-	for dir := cwd; dir != "" && dir != string(filepath.Separator); dir = filepath.Dir(dir) {
-		candidate := filepath.Join(dir, "skills", "herder", "scripts")
-		if _, err := os.Stat(filepath.Join(candidate, "hcom-launch")); err == nil {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("could not locate skills/herder/scripts")
 }
 
 func permissionArgs(agent string) []string {

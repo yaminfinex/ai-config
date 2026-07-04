@@ -1,5 +1,5 @@
 === STDERR ===
-hcom-launch: usage: hcom-launch <tool> [--tag TAG] [tool-args...]
+herder launch: usage: herder launch <tool> [--tag TAG] [tool-args...]
 === STDOUT ===
 
 === EXIT ===

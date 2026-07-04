@@ -10,14 +10,14 @@
 #
 # Launch-through-hcom + teams:
 #   * hcom-capable agents (claude/codex/gemini) are launched THROUGH hcom via the
-#     `hcom-launch` wrapper (`hcom <tool> --run-here --tag <role> ...`), so they bind to the message
+#     `herder launch` wrapper (`hcom <tool> --run-here --tag <role> ...`), so they bind to the message
 #     bus from birth (hooks + pty). hcom is a HARD dependency for these agents (fails early if
 #     absent). Non-hcom agents (bash, ...) exec raw and stay reachable over herdr keystrokes only.
 #   * TEAM = a named bus (ringfencing). HCOM_DIR = $HERDER_TEAMS_ROOT/<team> (default root
 #     ~/.hcom/teams); no --team = the global ~/.hcom bus (frictionless default for standing agents).
 #     Team resolves from --team, else $HERDER_TEAM (the orchestrator's team), else global. The
 #     resolved HCOM_DIR is PINNED into the child's PROCESS env at launch so it joins exactly this bus;
-#     the wrapper's config-dir passthrough keeps auth on the REAL config dir even for an isolated team.
+#     the launch wrapper's config-dir passthrough keeps auth on the REAL config dir even for an isolated team.
 #   * The role is passed as the hcom `--tag`, so hcom names the instance `<role>-<random>` and
 #     `@<role>-` fan-out addressing works. herder-spawn CAPTURES the assigned name (by correlating the
 #     child's herdr pane_id to the hcom entry) and records `team`/`hcom_dir`/`hcom_name`/`hcom_tag` in
@@ -46,7 +46,7 @@
 #   3. Calls `herdr agent start <label> ...`, launching the agent inside a login+interactive shell —
 #      `$SHELL -lic 'export HERDER_*...; exec <launch>'` — so PATH / mise activation / auth env are
 #      sourced like a normal pane (opt out with --no-login-shell). <launch> for an hcom agent is
-#      `hcom-launch <agent> --tag <role> [extra-args]` with HCOM_DIR pinned to the team bus; for a
+#      `herder launch <agent> --tag <role> [extra-args]` with HCOM_DIR pinned to the team bus; for a
 #      non-hcom agent it is the raw `<agent> [extra-args]`.
 #   4. After the agent settles, captures its hcom-assigned name and appends a JSONL record
 #      (incl. team/hcom_dir/hcom_name/hcom_tag) to $HERDER_STATE_DIR/registry.jsonl.

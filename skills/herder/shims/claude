@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # claude shim - daily entry point for hcom-bound launches.
 #
-# Normal path: claude [args...] -> sibling hcom-launch claude [default args] [args...].
-# Recursion path: hcom-launch exports HCOM_LAUNCH_INFLIGHT=1 before `hcom claude`; if
+# Normal path: claude [args...] -> bin/herder launch claude [default args] [args...].
+# Recursion path: herder launch exports HCOM_LAUNCH_INFLIGHT=1 before `hcom claude`; if
 # hcom resolves `claude` through PATH and lands back here, this shim skips itself and
 # execs the real binary. HERDER_SHIM_ARGS_CLAUDE is deliberately whitespace-split and
 # prepended before user args, so today's alias default can move to mise [env] instead
@@ -31,7 +31,8 @@ canonical_path() {
 
 shim_path="$(canonical_path "${BASH_SOURCE[0]}")" || die "cannot resolve shim path"
 shim_dir="$(dirname "$shim_path")"
-hcom_launch="$shim_dir/hcom-launch"
+repo_root="$(cd "$shim_dir/../../.." 2>/dev/null && pwd -P)" || die "cannot resolve repo root"
+herder_launch="$repo_root/bin/herder"
 
 find_real_tool() {
   local entry candidate
@@ -54,14 +55,14 @@ if [[ "${HCOM_LAUNCH_INFLIGHT:-}" == "1" ]]; then
   exec "$real_tool" "$@"
 fi
 
-[[ -x "$hcom_launch" && ! -d "$hcom_launch" ]] || \
-  die "missing executable sibling hcom-launch at $hcom_launch"
+[[ -x "$herder_launch" && ! -d "$herder_launch" ]] || \
+  die "missing executable bin/herder at $herder_launch"
 
 export HERDER_SHIM=1
 default_args="${!DEFAULT_ARGS_VAR:-}"
 if [[ -n "$default_args" ]]; then
   # Intentional whitespace splitting: HERDER_SHIM_ARGS_CLAUDE is a simple mise/env default string.
-  exec "$hcom_launch" "$TOOL" $default_args "$@"
+  exec "$herder_launch" launch "$TOOL" $default_args "$@"
 else
-  exec "$hcom_launch" "$TOOL" "$@"
+  exec "$herder_launch" launch "$TOOL" "$@"
 fi

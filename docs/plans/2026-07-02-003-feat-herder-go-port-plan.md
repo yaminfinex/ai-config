@@ -36,9 +36,10 @@ No new features, no locking improvements, no opencode. Improvements come AFTER f
 - **D4** Drivers become a Go interface (`Resolve`, `Send`) with herdr + hcom impls;
   registry-driven auto-selection ported as-is. Trust-modal ERE becomes a shared Go
   const (keep `trust-modals.sh` until bash deleted).
-- **D5** Historical port boundary: `hcom-launch` and PATH shims originally stayed bash as
-  exec-into-hcom env wrappers. Post-port substrate work moved `hcom-launch` to the Go
-  `herder launch` path with sidecar startup; PATH shims still remain shell wrappers.
+- **D5** Historical port boundary: the old hcom launch relay and PATH shims originally stayed bash as
+  exec-into-hcom env wrappers. Post-port cleanup removed the vestigial relay
+  relays; spawn, lifecycle, and PATH shims now exec the Go `herder launch` path with
+  sidecar startup directly. PATH shims still remain shell wrappers.
   `lib/hcom-hooks.sh`/ai-setup remain out of scope.
 - **D6** Path compatibility on flip: `skills/herder/scripts/herder-*` become 2-line
   exec shims to `bin/herder <subcommand>` — SKILL.md paths and agent muscle memory
@@ -95,9 +96,9 @@ across P2–P6; P2's byte-parity risk spike passed; full-chain live smoke (claud
 duplex bus messaging, completing wait leg, cull, zero smoke residue) passed on the global bus.
 `skills/herder/scripts/herder-*` are 2-line exec shims to `bin/herder <sub>`;
 `lib/{delivery-driver,driver-herdr,driver-hcom}.sh` deleted (−2028 lines). Later substrate
-work moved `skills/herder/scripts/hcom-launch` to a shim for `bin/herder launch`, single-sourced
-hcom-capability/config pinning in `launchcmd`, and deleted the remaining `skills/herder/scripts/lib/`
-helpers. PATH shims remain shell wrappers.
+work removed the vestigial hcom launch relays, routed spawn/lifecycle/PATH shims directly
+through `bin/herder launch`, single-sourced hcom-capability/config pinning in `launchcmd`,
+and deleted the remaining `skills/herder/scripts/lib/` helpers. PATH shims remain shell wrappers.
 
 Deviations from plan, all recorded in the run-log:
 
@@ -114,7 +115,7 @@ Deviations from plan, all recorded in the run-log:
   (zero-behavior-change holds) but no protocol may require it. Cause: the documented
   one-time claude onboarding on first team-bus launch per machine (`lib/hcom-tools.sh`
   KNOWN CAVEAT; W5 state-file seeding would lift it).
-- **Substrate backlog, not port scope**: herdr reports hcom-launched panes as
+- **Substrate backlog, not port scope**: herdr reports hcom-backed panes as
   `agent_status=unknown` (bash and Go alike — parity holds), so `herder-wait --status idle`
   can time out on an idle peer; hcom `listening` / `--status unknown` are the workarounds.
 

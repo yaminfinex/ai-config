@@ -9,7 +9,7 @@ func TestQuoteMatchesRepresentativeBashPrintfQ(t *testing.T) {
 	tests := []string{
 		"",
 		"worker",
-		"/tmp/repo/skills/herder/scripts/hcom-launch",
+		"/tmp/repo/bin/herder",
 		"hello world",
 		"a$b",
 		"a`b",

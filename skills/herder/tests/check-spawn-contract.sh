@@ -7,7 +7,7 @@
 # mock-hcom-spawn; no live session, no live bus), covering:
 #   argv        — the exact `herdr agent start` argv: login-shell wrapping
 #                 ($SHELL -lic 'export HERDER_*…; exec …'), --no-login-shell env
-#                 form, hcom-launch routing with the role as --tag, HCOM_DIR
+#                 form, herder launch routing with the role as --tag, HCOM_DIR
 #                 team-bus pinning, HERDER_SEND/HERDER_NOTIFY_TO exports.
 #   permissions — per-agent autonomous-mode flag injection (claude/codex),
 #                 suppression under --safe or an explicit caller perm flag.
@@ -30,9 +30,8 @@
 # HERDER_SPAWN_BIN may point at ANY executable honouring the herder-spawn CLI
 # (the bash script or the Go `bin/herder spawn` shim); it is exec'd directly,
 # not via `bash`. The bin under test must resolve its sibling helper paths
-# (herder-send, hcom-launch) to THIS repo's skills/herder/scripts dir — the
-# goldens pin those paths (as <REPO>-relative) deliberately: D6 keeps them
-# stable across the flip.
+# (herder-send plus bin/herder launch) to THIS repo — the goldens pin those
+# paths (as <REPO>-relative) deliberately: D6 keeps them stable across the flip.
 #
 # Determinism: HOME/state are per-case tempdirs normalized to <CASE>, repo paths
 # to <REPO>, the generated uuid/short-guid to <GUID>/<SHORT>, and the started_at

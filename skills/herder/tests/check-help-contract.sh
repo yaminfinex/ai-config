@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # check-help-contract.sh — lock command --help text against the bash reference.
 #
-# Goldens are generated FROM the historical bash scripts at d4ca54c, because the
-# live scripts have already flipped to Go shims. Normal verification drives the
+# Most goldens are generated FROM the historical bash scripts at d4ca54c, because the
+# live scripts have already flipped to Go shims. Spawn/fork/resume goldens are generated
+# from current commands for post-port contract updates. Normal verification drives the
 # current executable paths (or HERDER_*_BIN overrides) through the same guarded
 # environment and compares stdout/stderr/exit byte-for-byte.
 
@@ -51,7 +52,7 @@ bin_for() {
   local cmd="$1"
   if [[ "$WRITE" -eq 1 ]]; then
     case "$cmd" in
-      fork|resume) printf '%s' "$TESTS_DIR/../scripts/herder-$cmd"; return ;;
+      spawn|fork|resume) printf '%s' "$TESTS_DIR/../scripts/herder-$cmd"; return ;;
     esac
     extract_reference "$cmd"
     return
@@ -112,7 +113,7 @@ for cmd in send spawn list wait cull fork resume; do
 done
 
 if [[ "$WRITE" -eq 1 ]]; then
-  printf '\nGoldens written from bash reference d4ca54c (legacy) and current N4 commands (fork/resume).\n'
+  printf '\nGoldens written from bash reference d4ca54c (legacy) and current post-port commands (spawn/fork/resume).\n'
   exit 0
 fi
 if [[ "$fail" -eq 0 ]]; then
