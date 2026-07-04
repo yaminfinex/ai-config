@@ -92,7 +92,7 @@ through PATH and lands back on the shim, the shim skips itself and execs the rea
 honor optional `HERDER_SHIM_ARGS_<TOOL>` env vars when a user deliberately sets them, but installer
 activation only puts the shim directory on PATH; permission defaults such as Claude skip-permissions
 stay a manual machine choice rather than repo-written config. The shims are repo-prepared; machine
-PATH activation is handled by the N3 shim installer.
+PATH activation is handled by `ai-setup --shims install`.
 
 **Supported on:** systems with hcom installed and on PATH; the target must be a bus-bound hcom instance (herder-spawn does this automatically for hcom-capable agents).
 

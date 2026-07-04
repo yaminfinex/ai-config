@@ -114,8 +114,8 @@ Use `herder-resume` when a session should continue. It refuses a target that is 
 
 **Teams are an optional ringfence — the global bus is the default posture.** Spawns without `--team` land on the global `~/.hcom` bus, and that is the normal operating mode: addressing and filtering ride the registry (every command dereferences guid/short-guid/label to the recorded `hcom_name`/`hcom_dir`), so per-agent targeting needs no team. When you do want bus isolation: `--team <name>` wins, else `$HERDER_TEAM`, else global. A named team pins the child's `HCOM_DIR` to `$HERDER_TEAMS_ROOT/<team>` (default root `~/.hcom/teams`). `herder-list` shows `TEAM` and `BUS`, and `herder-list --teams` enumerates the global bus plus team dirs. The config-dir pin table now lives in `tools/herder/internal/launchcmd`. **Known caveat (team buses only):** the config-dir pin makes claude read its JSON state from `~/.claude/.claude.json`, which starts fresh — the *first* team-bus claude launch per machine hits one-time onboarding (login/theme picker) in the pane. Complete it once and the state persists machine-wide; codex is unaffected, and the global bus pins nothing so it has no such wall. Do not build protocols that *require* teams.
 
-Machine activation is prepared but deferred to the N3 shim installer: repo shims exist in
-`skills/herder/shims/`, while machine PATH/mise activation is an explicit opt-in setup step.
+Machine activation is explicit: repo shims exist in `skills/herder/shims/`, and
+`ai-setup --shims install` writes the mise `conf.d` PATH drop-in for this checkout.
 
 Full contract, selection logic, and the guide for adding a third driver: `references/delivery-drivers.md`.
 

@@ -242,11 +242,54 @@ check_portability_scan() {
   fi
 }
 
+check_herder_shims() {
+  source "$AI_CONFIG_ROOT/lib/shims-install.sh"
+
+  local file
+  local dir
+  local configured
+  local count
+  local tool
+  local shadow
+
+  file="$(shims_config_file)"
+  dir="$(shims_dir)"
+
+  if [ ! -e "$file" ]; then
+    log_info "herder shims not activated; run bin/ai-setup --shims install to add the mise conf.d PATH file"
+    return
+  fi
+
+  if ! shims_file_is_ours "$file"; then
+    warn "herder shims config exists but is not managed by ai-config: $file"
+    return
+  fi
+
+  configured="$(shims_configured_path "$file" || true)"
+  if [ "$configured" != "$dir" ]; then
+    warn "herder shims config points elsewhere: ${configured:-n/a} (expected $dir)"
+  fi
+
+  count="$(shims_path_count "$dir")"
+  if [ "$count" != "1" ]; then
+    warn "herder shim dir should appear on PATH exactly once; found $count: $dir"
+  fi
+
+  for tool in claude codex; do
+    shadow="$(shims_tool_shadow_message "$tool" "$dir")"
+    case "$shadow" in
+      "$tool: shim first") [ "$quick" -eq 1 ] || log_info "$shadow" ;;
+      *) warn "$shadow" ;;
+    esac
+  done
+}
+
 check_git
 check_portable_links
 check_skill_links
 check_unharvested_live_skills
 check_claude_statusline_settings
+check_herder_shims
 check_secret_scan
 check_portability_scan
 

@@ -15,6 +15,8 @@ This repo is the canonical corpus. Live agent config paths are symlinked into it
 
 ## First Machine Setup
 
+Canonical new-machine instructions live in [docs/machine-setup.md](docs/machine-setup.md).
+
 After cloning, open an agent inside this repo and ask it to set the repo up, or run:
 
 ```sh

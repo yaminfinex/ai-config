@@ -7,6 +7,7 @@ dry_run=0
 heal_only=0
 install_shell_path=0
 hcom_hooks_action=""
+shims_action=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -27,10 +28,25 @@ while [ "$#" -gt 0 ]; do
           ;;
       esac
       ;;
+    --shims)
+      shift
+      case "${1:-}" in
+        install|remove|status) shims_action="$1" ;;
+        "")
+          log_error "--shims requires one of: install, remove, status"
+          exit 2
+          ;;
+        *)
+          log_error "unknown --shims action: $1"
+          exit 2
+          ;;
+      esac
+      ;;
     -h|--help)
       cat <<'USAGE'
 Usage: ai-setup [--dry-run] [--heal-only] [--shell-path]
        ai-setup [--dry-run] --hcom-hooks install|remove|status
+       ai-setup [--dry-run] --shims install|remove|status
 
 Installs symlinks from live agent config paths into this repo.
 --heal-only only repairs missing, broken, or wrong symlinks and never backs up
@@ -39,6 +55,9 @@ real files or directories.
 --hcom-hooks manages global hcom hooks for Claude and Codex only when explicitly
 requested. Hooks are launch-managed by hcom itself; ai-setup is the durable/manual
 install, remove, and status layer rather than a default setup side effect.
+--shims manages the mise conf.d PATH activation file for herder's claude/codex
+PATH shims. It only puts the shim directory on PATH; tool permission defaults
+remain a manual user choice.
 USAGE
       exit 0
       ;;
@@ -214,6 +233,13 @@ if [ -n "$hcom_hooks_action" ]; then
   source "$AI_CONFIG_ROOT/lib/hcom-hooks.sh"
   hcom_hooks_main "$hcom_hooks_action"
   log_info "ai-setup hcom hooks $hcom_hooks_action complete"
+  exit 0
+fi
+
+if [ -n "$shims_action" ]; then
+  source "$AI_CONFIG_ROOT/lib/shims-install.sh"
+  shims_main "$shims_action"
+  log_info "ai-setup shims $shims_action complete"
   exit 0
 fi
 
