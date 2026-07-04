@@ -126,7 +126,7 @@ herder-wait <target> [--status idle|working|blocked] [--timeout MS] [--read]
 
 Default status `idle`. The claude/codex integration hooks never emit `done`, so don't wait for it. If `herder-wait` returns sooner than expected, read the pane and call again.
 
-**Known caveat (substrate): hcom-launched panes can report `agent_status=unknown`.** herdr's status detection may not classify agents launched through the `hcom-launch` wrapper — this herdr instance reports them `unknown` even while hcom shows them `listening` (idle). So `herder-wait --status idle` can time out on a peer that is actually done. Treat a wait timeout as *inconclusive*, not failure: check `hcom list` for `listening`, read the pane, or wait on `--status unknown` when you know the pane is hcom-launched. Fix belongs in the herdr/hcom integration (tracked as substrate backlog), not here.
+The `herder launch` wrapper starts a sidecar for hcom-backed panes. The sidecar listens to hcom lifecycle events and reports `working`, `idle`, and `blocked` back to herdr with `pane.report_agent`, so `herder-wait --status idle` follows hcom `listening` instead of relying on herdr's process classifier.
 
 Prefer being *rung* over blocking here: a spawned agent that finishes can `herder-send` its orchestrator a one-line doorbell, so the orchestrator idles and wakes on the message instead of burning a turn in `herder-wait`. The `orchestrate` skill owns that protocol (invariant 9); `herder-wait` is then the **backstop** for a dropped ring — a busy orchestrator only queues a send and one at a modal refuses it (`herder-send` exit 2) — not the primary signal. Keep backstop waits bounded so an incoming ring isn't blocked behind a long `herder-wait` loop.
 

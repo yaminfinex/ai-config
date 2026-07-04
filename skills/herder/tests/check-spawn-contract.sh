@@ -139,9 +139,13 @@ scenario() {  # scenario <name> <herdr scen> <agent> <hcom scen> <args...>
 }
 
 MULTILINE_BRIEF=$'You are the reviewer for unit X.\nRead the plan, then the diff.\nReport findings in the run-log.'
+METACHAR_LABEL_PREFIX='quote;$`&<>("* )'
+METACHAR_EXTRA_ARG='arg with $dollar `tick` ; | & < > ( ) " * newline
+end'
 
 scenario bash_basic        ready claude launchctx --role worker --agent bash --json
 scenario bash_nologin      ready claude launchctx --role worker --agent bash --no-login-shell --json
+scenario bash_metachar     ready claude launchctx --role worker --agent bash --label-prefix "$METACHAR_LABEL_PREFIX" --extra-arg "$METACHAR_EXTRA_ARG" --json
 scenario claude_prompt     ready claude launchctx --role worker --agent claude --prompt "do the thing" --json
 scenario claude_modal      modal claude launchctx --role worker --agent claude --prompt "do the thing" --json
 scenario claude_modal_safe modal claude launchctx --role worker --agent claude --safe --prompt "do the thing" --json
@@ -179,6 +183,24 @@ if [[ "$WRITE" -eq 0 ]]; then
   run_spawn ready claude launchctx --role worker --agent bash --new-tab --tab tab_3
   [[ "$RUN_RC" -eq 1 ]] && grep -q 'use --new-tab or --tab, not both' "$RUN_ERR_F" \
     && ok "usage: --new-tab/--tab exclusive" || bad "usage: --new-tab/--tab exclusive" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+
+  trailing_value_flags=(--split --workspace --from-pane --tab --cwd --label-prefix --extra-arg --wait-timeout-ms --ready-match --login-shell --team --notify-to)
+  trailing_ok=1
+  trailing_detail=""
+  for flag in "${trailing_value_flags[@]}"; do
+    CASE="$ROOT/usage_trailing_${flag#--}"
+    run_spawn ready claude launchctx --role worker --agent bash "$flag"
+    if [[ "$RUN_RC" -ne 1 ]] || ! grep -q "unknown arg: $flag" "$RUN_ERR_F" || grep -q 'panic:' "$RUN_ERR_F"; then
+      trailing_ok=0
+      trailing_detail+="$flag rc=$RUN_RC err=$(cat "$RUN_ERR_F")"$'\n'
+    fi
+  done
+  [[ "$trailing_ok" -eq 1 ]] && ok "usage: trailing value flags refused" || bad "usage: trailing value flags refused" "$trailing_detail"
+
+  CASE="$ROOT/usage_wait_timeout"
+  run_spawn ready claude launchctx --role worker --agent bash --wait-timeout-ms 15s
+  [[ "$RUN_RC" -eq 1 ]] && grep -q -- '--wait-timeout-ms must be numeric' "$RUN_ERR_F" \
+    && ok "usage: --wait-timeout-ms numeric" || bad "usage: --wait-timeout-ms numeric" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
 fi
 
 if [[ "$WRITE" -eq 1 ]]; then

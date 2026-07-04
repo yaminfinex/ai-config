@@ -69,13 +69,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			die(stderr, "--guid requires a value")
 			return 1
 		}
-		line, ok := grepLastQuoted(registryPath, opts.targetGUID)
+		rec, ok := lastOwnGUIDRecord(registryPath, opts.targetGUID)
 		if !ok {
 			fmt.Fprintf(stderr, "no record for guid %s\n", opts.targetGUID)
-			return 1
-		}
-		rec, err := decodeRecord(line)
-		if err != nil {
 			return 1
 		}
 		out := reconciledJSON(rec, liveByTerm)
@@ -228,19 +224,27 @@ func liveAgentsByTerminal() map[string]*herdrcli.Agent {
 	return live
 }
 
-func grepLastQuoted(path, target string) (string, bool) {
+func lastOwnGUIDRecord(path, target string) (registry.Record, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", false
+		return registry.Record{}, false
 	}
-	needle := `"` + target + `"`
-	var hit string
+	var hit registry.Record
+	ok := false
 	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-		if strings.Contains(line, needle) {
-			hit = line
+		if line == "" {
+			continue
+		}
+		rec, err := decodeRecord(line)
+		if err != nil {
+			continue
+		}
+		if ptrString(rec.GUID) == target || ptrString(rec.ShortGUID) == target {
+			hit = rec
+			ok = true
 		}
 	}
-	return hit, hit != ""
+	return hit, ok
 }
 
 func decodeRecord(line string) (registry.Record, error) {

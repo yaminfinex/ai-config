@@ -14,6 +14,7 @@ import (
 
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
+	"ai-config/tools/herder/internal/shellquote"
 )
 
 type forkOptions struct {
@@ -248,16 +249,16 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 
 	var inner strings.Builder
 	for _, arg := range launchTokens {
-		inner.WriteString(shellQuote(arg))
+		inner.WriteString(shellquote.Quote(arg))
 		inner.WriteByte(' ')
 	}
 	spawnedBy := firstNonEmpty(os.Getenv("HERDER_GUID"), "user")
 	shell := firstNonEmpty(os.Getenv("SHELL"), "/bin/zsh")
 	innerCmd := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_SEND=%s HCOM_DIR=%s; exec %s",
-		shellQuote(spec.GUID), shellQuote(spec.Role), shellQuote(spec.Label), shellQuote(spawnedBy), shellQuote(sendAbs), shellQuote(spec.HcomDir), inner.String())
+		shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(sendAbs), shellquote.Quote(spec.HcomDir), inner.String())
 	if spec.Mode == "fork" || spec.Mode == "resume" {
 		innerCmd = fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_SEND=%s HCOM_DIR=%s HERDER_LIFECYCLE_MODE=%s HERDER_PARENT_SESSION_ID=%s; exec %s",
-			shellQuote(spec.GUID), shellQuote(spec.Role), shellQuote(spec.Label), shellQuote(spawnedBy), shellQuote(sendAbs), shellQuote(spec.HcomDir), shellQuote(spec.Mode), shellQuote(spec.ParentSession), inner.String())
+			shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(sendAbs), shellquote.Quote(spec.HcomDir), shellquote.Quote(spec.Mode), shellquote.Quote(spec.ParentSession), inner.String())
 	}
 	argv := []string{shell, "-lic", innerCmd}
 	startArgs := []string{"agent", "start", spec.Label, "--no-focus", "--split", "right", "--cwd", cwd, "--", shell, "-lic", innerCmd}
@@ -552,13 +553,6 @@ func currentCWD() string {
 		return ""
 	}
 	return cwd
-}
-
-func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 func firstNonEmpty(values ...string) string {

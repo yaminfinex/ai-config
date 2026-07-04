@@ -36,9 +36,10 @@ No new features, no locking improvements, no opencode. Improvements come AFTER f
 - **D4** Drivers become a Go interface (`Resolve`, `Send`) with herdr + hcom impls;
   registry-driven auto-selection ported as-is. Trust-modal ERE becomes a shared Go
   const (keep `trust-modals.sh` until bash deleted).
-- **D5** `hcom-launch` + PATH shims (`shims/claude|codex|hcom-launch`) STAY bash — they
-  are exec-into-hcom env wrappers; Go adds nothing. `lib/hcom-hooks.sh`/ai-setup out of
-  scope.
+- **D5** Historical port boundary: `hcom-launch` and PATH shims originally stayed bash as
+  exec-into-hcom env wrappers. Post-port substrate work moved `hcom-launch` to the Go
+  `herder launch` path with sidecar startup; PATH shims still remain shell wrappers.
+  `lib/hcom-hooks.sh`/ai-setup remain out of scope.
 - **D6** Path compatibility on flip: `skills/herder/scripts/herder-*` become 2-line
   exec shims to `bin/herder <subcommand>` — SKILL.md paths and agent muscle memory
   survive; bash implementations (scripts bodies + lib/driver-*.sh etc.) deleted same
@@ -93,12 +94,10 @@ green on **default paths** (i.e. Go, through the flipped script shims); zero gol
 across P2–P6; P2's byte-parity risk spike passed; full-chain live smoke (claude + codex,
 duplex bus messaging, completing wait leg, cull, zero smoke residue) passed on the global bus.
 `skills/herder/scripts/herder-*` are 2-line exec shims to `bin/herder <sub>`;
-`lib/{delivery-driver,driver-herdr,driver-hcom}.sh` deleted (−2028 lines); `hcom-launch`,
-`lib/hcom-tools.sh`, `lib/trust-modals.sh`, and the PATH shims stay bash per D4/D5.
-(Note: the trust-modal ERE now lives as a Go const in `spawncmd`; nothing sources
-`trust-modals.sh` any more — deleting it is post-flip backlog, kept at P6 per playbook.
-Likewise `is_hcom_capable` in `hcom-tools.sh` is mirrored by Go `spawncmd.isHcomCapable`;
-the two lists must be kept in sync until unified.)
+`lib/{delivery-driver,driver-herdr,driver-hcom}.sh` deleted (−2028 lines). Later substrate
+work moved `skills/herder/scripts/hcom-launch` to a shim for `bin/herder launch`, single-sourced
+hcom-capability/config pinning in `launchcmd`, and deleted the remaining `skills/herder/scripts/lib/`
+helpers. PATH shims remain shell wrappers.
 
 Deviations from plan, all recorded in the run-log:
 

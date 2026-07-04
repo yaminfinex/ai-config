@@ -88,6 +88,7 @@ SCENARIOS=(
   "livefail|fail|$FIX|"
   "provenance_raw|normal|$TESTS_DIR/fixtures/list-provenance|--raw"
   "provenance_json|normal|$TESTS_DIR/fixtures/list-provenance|--json"
+  "guid_fork_shadow|normal|$TESTS_DIR/fixtures/list-guid-fork-shadow|--guid guid-parent-0000"
 )
 
 normalize() {  # make tempdir paths deterministic before diffing

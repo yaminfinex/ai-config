@@ -1,0 +1,29 @@
+=== STDERR ===
+
+=== STDOUT ===
+{
+  "guid": "guid-parent-0000",
+  "short_guid": "parent",
+  "label": "parent",
+  "role": "worker",
+  "agent": "claude",
+  "terminal_id": "term_PARENT",
+  "pane_id": "p_parent",
+  "status": "active",
+  "provenance": {
+    "mechanism": "spawn",
+    "spawned_by": "user",
+    "tool_session_id": "sess-parent",
+    "tag": "worker",
+    "batch_id": "",
+    "cwd": "/repo",
+    "workspace_id": "ws_1",
+    "branch": "feat/herder-go-port",
+    "ts": "2026-07-03T00:00:00Z"
+  },
+  "live": null,
+  "live_pane": null,
+  "live_status": "gone"
+}
+=== EXIT ===
+0

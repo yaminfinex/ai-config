@@ -17,6 +17,7 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/registry"
+	"ai-config/tools/herder/internal/shellquote"
 )
 
 const trustModalPattern = `Do you trust the contents of this directory|Do you trust the files in this folder|Is this a project you created or one you trust|Yes, I trust this folder`
@@ -188,52 +189,79 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 	}
 	for i := 0; i < len(args); {
 		arg := args[i]
+		value := func() (string, bool) {
+			if i+1 >= len(args) {
+				die(stderr, "unknown arg: "+arg)
+				return "", false
+			}
+			return args[i+1], true
+		}
 		switch arg {
 		case "--role":
-			if i+1 >= len(args) {
-				die(stderr, "unknown arg: "+arg)
+			v, ok := value()
+			if !ok {
 				return opts, 1
 			}
-			opts.Role = args[i+1]
+			opts.Role = v
 			i += 2
 		case "--agent":
-			if i+1 >= len(args) {
-				die(stderr, "unknown arg: "+arg)
+			v, ok := value()
+			if !ok {
 				return opts, 1
 			}
-			opts.Agent = args[i+1]
+			opts.Agent = v
 			i += 2
 		case "--prompt":
-			if i+1 >= len(args) {
-				die(stderr, "unknown arg: "+arg)
+			v, ok := value()
+			if !ok {
 				return opts, 1
 			}
-			opts.Prompt = args[i+1]
+			opts.Prompt = v
 			i += 2
 		case "--prompt-file":
-			if i+1 >= len(args) {
-				die(stderr, "unknown arg: "+arg)
+			v, ok := value()
+			if !ok {
 				return opts, 1
 			}
-			opts.PromptFile = args[i+1]
+			opts.PromptFile = v
 			i += 2
 		case "--split":
-			opts.Split = args[i+1]
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			opts.Split = v
 			i += 2
 		case "--workspace":
-			opts.Workspace = args[i+1]
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			opts.Workspace = v
 			i += 2
 		case "--from-pane":
-			opts.FromPane = args[i+1]
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			opts.FromPane = v
 			i += 2
 		case "--tab":
-			opts.Tab = args[i+1]
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			opts.Tab = v
 			i += 2
 		case "--new-tab":
 			opts.NewTab = true
 			i++
 		case "--cwd":
-			opts.CWD = args[i+1]
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			opts.CWD = v
 			i += 2
 		case "--focus":
 			opts.FocusFlag = "--focus"
@@ -242,19 +270,40 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			opts.FocusFlag = "--no-focus"
 			i++
 		case "--label-prefix":
-			opts.LabelPrefix = args[i+1]
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			opts.LabelPrefix = v
 			i += 2
 		case "--extra-arg":
-			opts.ExtraArgs = append(opts.ExtraArgs, args[i+1])
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			opts.ExtraArgs = append(opts.ExtraArgs, v)
 			i += 2
 		case "--json":
 			opts.JSONOutput = true
 			i++
 		case "--wait-timeout-ms":
-			opts.WaitTimeoutMS, _ = strconv.Atoi(args[i+1])
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				die(stderr, "--wait-timeout-ms must be numeric: "+v)
+				return opts, 1
+			}
+			opts.WaitTimeoutMS = n
 			i += 2
 		case "--ready-match":
-			opts.ReadyMatch = args[i+1]
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			opts.ReadyMatch = v
 			i += 2
 		case "--no-ready-wait":
 			opts.NoReadyWait = true
@@ -263,20 +312,32 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			opts.LoginShell = false
 			i++
 		case "--login-shell":
-			opts.LoginShellBin = args[i+1]
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			opts.LoginShellBin = v
 			i += 2
 		case "--safe":
 			opts.Safe = true
 			i++
 		case "--team":
-			opts.Team = args[i+1]
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			opts.Team = v
 			i += 2
 		case "--notify":
 			opts.Notify = true
 			i++
 		case "--notify-to":
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
 			opts.Notify = true
-			opts.NotifyTo = args[i+1]
+			opts.NotifyTo = v
 			i += 2
 		case "-h", "--help":
 			printHelp(stdout)
@@ -500,7 +561,7 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 
 	notifyExport := ""
 	if opts.NotifyTo != "" {
-		notifyExport = " HERDER_NOTIFY_TO=" + shellQuote(opts.NotifyTo)
+		notifyExport = " HERDER_NOTIFY_TO=" + shellquote.Quote(opts.NotifyTo)
 	}
 	spawnedBy := os.Getenv("HERDER_GUID")
 	if spawnedBy == "" {
@@ -508,17 +569,17 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 	}
 	hcomEnv := ""
 	if isHcomAgent {
-		hcomEnv = " HCOM_DIR=" + shellQuote(hcomDirEff)
+		hcomEnv = " HCOM_DIR=" + shellquote.Quote(hcomDirEff)
 	}
 	argv := []string{}
 	if opts.LoginShell {
 		var innerCmd strings.Builder
 		for _, arg := range launchTokens {
-			innerCmd.WriteString(shellQuote(arg))
+			innerCmd.WriteString(shellquote.Quote(arg))
 			innerCmd.WriteByte(' ')
 		}
 		inner := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_SEND=%s%s%s; exec %s",
-			shellQuote(guid), shellQuote(opts.Role), shellQuote(label), shellQuote(spawnedBy), shellQuote(sendAbs), notifyExport, hcomEnv, innerCmd.String())
+			shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(sendAbs), notifyExport, hcomEnv, innerCmd.String())
 		argv = []string{opts.LoginShellBin, "-lic", inner}
 	} else {
 		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SPAWNED_BY=" + spawnedBy, "HERDER_SEND=" + sendAbs}
@@ -1145,39 +1206,6 @@ func findScriptDir() (string, error) {
 		wd = next
 	}
 	return "", fmt.Errorf("could not locate skills/herder/scripts from current directory")
-}
-
-func shellQuote(s string) string {
-	if s == "" {
-		return "''"
-	}
-	safe := true
-	for _, r := range s {
-		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' ||
-			strings.ContainsRune("@%_+=:,./-", r)) {
-			safe = false
-			break
-		}
-	}
-	if safe {
-		return s
-	}
-	var b strings.Builder
-	for _, r := range s {
-		switch r {
-		case ' ':
-			b.WriteString(`\ `)
-		case '\n':
-			b.WriteString(`\n`)
-		case '\'':
-			b.WriteString(`\'`)
-		case '\\':
-			b.WriteString(`\\`)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 func envInt(name string, fallback int) int {
