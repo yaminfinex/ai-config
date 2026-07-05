@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-shims-install.sh - hermetic tests for ai-setup --shims.
+# check-shims-install.sh - hermetic tests for ai-setup's managed mise PATH file.
 #
 # Uses fake HOME/XDG_CONFIG_HOME. Never touches real ~/.config/mise.
 
@@ -8,6 +8,7 @@ set -uo pipefail
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$TESTS_DIR/../../.." && pwd -P)"
 AI_SETUP="$REPO/bin/ai-setup"
+BIN_DIR="$REPO/bin"
 SHIM_DIR="$REPO/tools/herder/shims"
 
 ROOT="$(mktemp -d)"
@@ -37,14 +38,6 @@ assert_contains() {
   esac
 }
 
-assert_not_contains() {
-  local name="$1" haystack="$2" needle="$3"
-  case "$haystack" in
-    *"$needle"*) bad "$name" "unexpected [$needle] in [$haystack]" ;;
-    *) ok "$name" ;;
-  esac
-}
-
 assert_absent() {
   local name="$1" path="$2"
   [ ! -e "$path" ] && ok "$name" || bad "$name" "still exists: $path"
@@ -55,9 +48,9 @@ make_case() {
   CASE_DIR="$ROOT/$name"
   HOME_DIR="$CASE_DIR/home"
   XDG_DIR="$CASE_DIR/xdg"
-  CONF_FILE="$XDG_DIR/mise/conf.d/ai-config-shims.toml"
+  CONF_FILE="$XDG_DIR/mise/conf.d/ai-config.toml"
   PATH_VALUE="$PATH_BASE"
-  mkdir -p "$HOME_DIR" "$XDG_DIR"
+  mkdir -p "$HOME_DIR" "$XDG_DIR/mise"
 }
 
 run_setup() {
@@ -69,49 +62,57 @@ run_setup() {
 
 expected_config() {
   cat <<EOF
-# Managed by ai-config --shims. Remove with: bin/ai-setup --shims remove
+# Managed by ai-config. Remove with: bin/ai-setup --shims remove
 [env]
-_.path = ["$SHIM_DIR"]
+_.path = ["$BIN_DIR", "$SHIM_DIR"]
 EOF
 }
 
-# 1. install writes the managed mise conf.d file under XDG_CONFIG_HOME.
+# 1. Default setup writes the managed mise conf.d file under XDG_CONFIG_HOME.
+make_case default
+run_setup
+assert_eq "default setup: exit 0" "$RUN_RC" "0"
+assert_eq "default setup: exact config" "$(cat "$CONF_FILE")" "$(expected_config)"
+
+# 2. --shims install is a compatibility alias for the same file.
 make_case install
 run_setup --shims install
-assert_eq "install: exit 0" "$RUN_RC" "0"
-assert_eq "install: exact config" "$(cat "$CONF_FILE")" "$(expected_config)"
-assert_not_contains "install: no shim args env written" "$(cat "$CONF_FILE")" "HERDER_SHIM_ARGS_CLAUDE"
+assert_eq "install alias: exit 0" "$RUN_RC" "0"
+assert_eq "install alias: exact config" "$(cat "$CONF_FILE")" "$(expected_config)"
 
-# 2. status reports installed, path match, PATH count, and type-a ordering.
-PATH_VALUE="$SHIM_DIR:$PATH_BASE"
+# 3. status reports installed, both path matches, PATH counts, and type-a ordering.
+PATH_VALUE="$BIN_DIR:$SHIM_DIR:$PATH_BASE"
 run_setup --shims status
 assert_eq "status installed: exit 0" "$RUN_RC" "0"
-assert_contains "status installed: overall" "$RUN_OUT" "herder shims: installed"
-assert_contains "status installed: path match" "$RUN_OUT" "matches this checkout: yes"
-assert_contains "status installed: path count" "$RUN_OUT" "PATH entries for shim dir: 1"
-assert_contains "status installed: claude first" "$RUN_OUT" "claude: shim first"
-assert_contains "status installed: codex first" "$RUN_OUT" "codex: shim first"
+assert_contains "status installed: overall" "$RUN_OUT" "ai-config mise PATH: installed"
+assert_contains "status installed: bin configured" "$RUN_OUT" "bin path configured: yes"
+assert_contains "status installed: shim configured" "$RUN_OUT" "shim path configured: yes"
+assert_contains "status installed: bin path count" "$RUN_OUT" "PATH entries for bin dir: 1"
+assert_contains "status installed: shim path count" "$RUN_OUT" "PATH entries for shim dir: 1"
+assert_contains "status installed: herder first" "$RUN_OUT" "herder: expected first"
+assert_contains "status installed: claude first" "$RUN_OUT" "claude: expected first"
+assert_contains "status installed: codex first" "$RUN_OUT" "codex: expected first"
 
-# 3. status warns when another executable shadows the shim.
+# 4. status warns when another executable shadows a managed path entry.
 OTHERBIN="$CASE_DIR/otherbin"
 mkdir -p "$OTHERBIN"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$OTHERBIN/claude"
-chmod +x "$OTHERBIN/claude"
-PATH_VALUE="$OTHERBIN:$SHIM_DIR:$PATH_BASE"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$OTHERBIN/herder"
+chmod +x "$OTHERBIN/herder"
+PATH_VALUE="$OTHERBIN:$BIN_DIR:$SHIM_DIR:$PATH_BASE"
 run_setup --shims status
 assert_eq "status shadow: exit 0" "$RUN_RC" "0"
-assert_contains "status shadow: claude shadowed" "$RUN_OUT" "claude: shadowed before shim ($OTHERBIN/claude)"
+assert_contains "status shadow: herder shadowed" "$RUN_OUT" "herder: shadowed before expected ($OTHERBIN/herder)"
 
-# 4. remove deletes only our managed file and is idempotent.
+# 5. remove deletes only our managed file and is idempotent.
 PATH_VALUE="$PATH_BASE"
 run_setup --shims remove
 assert_eq "remove: exit 0" "$RUN_RC" "0"
 assert_absent "remove: file gone" "$CONF_FILE"
 run_setup --shims remove
 assert_eq "remove absent: exit 0" "$RUN_RC" "0"
-assert_contains "remove absent: reports absent" "$RUN_OUT" "herder shims already absent"
+assert_contains "remove absent: reports absent" "$RUN_OUT" "ai-config mise PATH config already absent"
 
-# 5. install refuses to overwrite an unmanaged file.
+# 6. install refuses to overwrite an unmanaged file.
 make_case foreign
 mkdir -p "$(dirname "$CONF_FILE")"
 printf '# user file\n[env]\n_.path = ["/tmp/user"]\n' > "$CONF_FILE"
@@ -123,22 +124,33 @@ run_setup --shims remove
 assert_eq "foreign remove: exit 1" "$RUN_RC" "1"
 assert_contains "foreign remove: refuses" "$RUN_OUT" "refusing to remove unmanaged mise config"
 
-# 6. dry-run install reports without writing.
+# 7. dry-run install reports without writing.
 make_case dryrun
 run_setup --dry-run --shims install
 assert_eq "dry-run install: exit 0" "$RUN_RC" "0"
 assert_contains "dry-run install: reports file" "$RUN_OUT" "would write $CONF_FILE"
-assert_contains "dry-run install: prints config" "$RUN_OUT" "_.path = [\"$SHIM_DIR\"]"
+assert_contains "dry-run install: prints config" "$RUN_OUT" "_.path = [\"$BIN_DIR\", \"$SHIM_DIR\"]"
 assert_absent "dry-run install: no file" "$CONF_FILE"
 
-# 7. absent status is explicit.
+# 8. absent status is explicit.
 run_setup --shims status
 assert_eq "status absent: exit 0" "$RUN_RC" "0"
-assert_contains "status absent: overall" "$RUN_OUT" "herder shims: absent"
+assert_contains "status absent: overall" "$RUN_OUT" "ai-config mise PATH: absent"
+
+# 9. no mise on PATH and no mise config dir is a hard failure for install/default.
+make_case no_mise
+rmdir "$XDG_DIR/mise"
+PATH_VALUE="/usr/bin:/bin"
+run_setup --shims install
+assert_eq "missing mise install: exit 1" "$RUN_RC" "1"
+assert_contains "missing mise install: explains prerequisite" "$RUN_OUT" "mise is required for ai-config PATH setup"
+run_setup
+assert_eq "missing mise default: exit 1" "$RUN_RC" "1"
+assert_contains "missing mise default: explains prerequisite" "$RUN_OUT" "mise is required for ai-config PATH setup"
 
 echo
 if [ "$fail" -eq 0 ]; then
-  printf 'ALL GREEN - ai-setup shim installer holds.\n'
+  printf 'ALL GREEN - ai-setup mise PATH management holds.\n'
   exit 0
 else
   printf 'CONTRACT DRIFT - see failures above.\n'

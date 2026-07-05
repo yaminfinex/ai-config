@@ -242,44 +242,65 @@ check_portability_scan() {
   fi
 }
 
-check_herder_shims() {
-  source "$AI_CONFIG_ROOT/lib/shims-install.sh"
+check_mise_path() {
+  source "$AI_CONFIG_ROOT/lib/mise-path.sh"
 
   local file
-  local dir
+  local bin_dir
+  local shims_dir
   local configured
   local count
   local tool
-  local shadow
+  local expected
+  local resolution
 
-  file="$(shims_config_file)"
-  dir="$(shims_dir)"
+  if mise_available; then
+    [ "$quick" -eq 1 ] || log_info "mise present"
+  else
+    err "mise is required; install mise, then run bin/ai-setup"
+    return
+  fi
+
+  file="$(mise_path_config_file)"
+  bin_dir="$(mise_bin_dir)"
+  shims_dir="$(mise_shims_dir)"
 
   if [ ! -e "$file" ]; then
-    log_info "herder shims not activated; run bin/ai-setup --shims install to add the mise conf.d PATH file"
+    warn "ai-config mise PATH config missing; run bin/ai-setup"
     return
   fi
 
-  if ! shims_file_is_ours "$file"; then
-    warn "herder shims config exists but is not managed by ai-config: $file"
+  if ! mise_file_is_ours "$file"; then
+    warn "ai-config mise PATH config exists but is not managed by ai-config: $file"
     return
   fi
 
-  configured="$(shims_configured_path "$file" || true)"
-  if [ "$configured" != "$dir" ]; then
-    warn "herder shims config points elsewhere: ${configured:-n/a} (expected $dir)"
+  configured="$(mise_configured_paths "$file" || true)"
+  if ! printf '%s\n' "$configured" | grep -Fqx "$bin_dir"; then
+    warn "ai-config mise PATH config missing bin dir: $bin_dir"
+  fi
+  if ! printf '%s\n' "$configured" | grep -Fqx "$shims_dir"; then
+    warn "ai-config mise PATH config missing herder shim dir: $shims_dir"
   fi
 
-  count="$(shims_path_count "$dir")"
+  count="$(mise_path_count "$bin_dir")"
   if [ "$count" != "1" ]; then
-    warn "herder shim dir should appear on PATH exactly once; found $count: $dir"
+    warn "ai-config bin dir should appear on PATH exactly once; found $count: $bin_dir"
+  fi
+  count="$(mise_path_count "$shims_dir")"
+  if [ "$count" != "1" ]; then
+    warn "herder shim dir should appear on PATH exactly once; found $count: $shims_dir"
   fi
 
-  for tool in claude codex; do
-    shadow="$(shims_tool_shadow_message "$tool" "$dir")"
-    case "$shadow" in
-      "$tool: shim first") [ "$quick" -eq 1 ] || log_info "$shadow" ;;
-      *) warn "$shadow" ;;
+  for tool in herder claude codex; do
+    case "$tool" in
+      herder) expected="$bin_dir/herder" ;;
+      claude|codex) expected="$shims_dir/$tool" ;;
+    esac
+    resolution="$(mise_tool_resolution_message "$tool" "$expected")"
+    case "$resolution" in
+      "$tool: expected first") [ "$quick" -eq 1 ] || log_info "$resolution" ;;
+      *) warn "$resolution" ;;
     esac
   done
 }
@@ -289,7 +310,7 @@ check_portable_links
 check_skill_links
 check_unharvested_live_skills
 check_claude_statusline_settings
-check_herder_shims
+check_mise_path
 check_secret_scan
 check_portability_scan
 

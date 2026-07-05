@@ -20,19 +20,13 @@ Canonical new-machine instructions live in [docs/machine-setup.md](docs/machine-
 After cloning, open an agent inside this repo and ask it to set the repo up, or run:
 
 ```sh
-bin/ai-doctor --quick
 bin/ai-setup --dry-run
 bin/ai-setup
+bin/ai-doctor --quick
 ```
 
-To add `bin/` to your shell PATH:
-
-```sh
-bin/ai-setup --dry-run --shell-path
-bin/ai-setup --shell-path
-```
-
-Shell PATH setup is opt-in and uses a managed block in `~/.zshrc` or `~/.bashrc`.
+`ai-setup` requires mise and writes the managed mise PATH config for `bin/` and
+`tools/herder/shims/`. Restart the shell after setup.
 
 ## Skill Layout
 

@@ -218,10 +218,11 @@ make_case() {
   local name="$1"
   CASE_DIR="$ROOT/$name"
   HOME_DIR="$CASE_DIR/home"
+  XDG_DIR="$CASE_DIR/xdg"
   MOCKBIN="$CASE_DIR/bin"
   BACKUPS="$CASE_DIR/backups"
   MOCK_LOG="$CASE_DIR/hcom.log"
-  mkdir -p "$HOME_DIR/.claude" "$HOME_DIR/.codex/rules" "$MOCKBIN" "$BACKUPS"
+  mkdir -p "$HOME_DIR/.claude" "$HOME_DIR/.codex/rules" "$MOCKBIN" "$BACKUPS" "$XDG_DIR/mise"
   : > "$MOCK_LOG"
   write_mock_hcom "$MOCKBIN"
 }
@@ -295,6 +296,7 @@ JSON
 run_setup() {
   RUN_OUT="$(env -i \
     PATH="$MOCKBIN:$PATH_BASE" HOME="$HOME_DIR" SHELL=/bin/zsh \
+    XDG_CONFIG_HOME="$XDG_DIR" \
     AI_CONFIG_BACKUP_DIR="$BACKUPS" AI_CONFIG_TIMESTAMP=20260702T000000 \
     MOCK_HCOM_LOG="$MOCK_LOG" HCOM_DIR="$CASE_DIR/local-bus" \
     bash "$AI_SETUP" "$@" 2>&1)"
