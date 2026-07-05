@@ -11,7 +11,7 @@ comes after — architecture seams, approach/library choices, scope calls on ope
 design to land. Mechanical consequences of already-made decisions don't count; don't dilute the
 signal.
 
-Run-log block, written at the moment the door is taken:
+Journal entry, written when the door is taken — workers report theirs on the unit thread:
 
 ```markdown
 ## SLIDING DOOR — <short name> (Unit N)
