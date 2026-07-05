@@ -155,53 +155,20 @@ func execLaunch(plan claude.LaunchPlan) error {
 	if err := os.Chdir(plan.RunCwd); err != nil {
 		return fmt.Errorf("chdir %s: %w", plan.RunCwd, err)
 	}
-	bin, note, err := resolveLaunchBin(plan.Argv[0], herderScriptDirs())
+	bin, err := resolveLaunchBin(plan.Argv[0])
 	if err != nil {
 		return err
-	}
-	if note != "" {
-		fmt.Fprintln(os.Stdout, note)
 	}
 	return syscall.Exec(bin, plan.Argv, os.Environ())
 }
 
-// herderScriptDirs returns the ordered fallback locations for herdr helper
-// scripts (herder-spawn et al.), searched when the binary is not on $PATH. The
-// scripts canonically live in the deployed herder skill; an installed bottle
-// may run with no ai-config/bin on $PATH (PATH wiring is opt-in), so it falls
-// back to the skill's scripts dir under each agent config home. Returns nil if
-// $HOME is unknown — the caller then reports a plain not-on-$PATH error.
-func herderScriptDirs() []string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return nil
-	}
-	return []string{
-		filepath.Join(home, ".claude", "skills", "herder", "scripts"),
-		filepath.Join(home, ".codex", "skills", "herder", "scripts"),
-	}
-}
-
-// resolveLaunchBin locates argv0: first via $PATH, then by falling back to the
-// given herder skill scripts dirs. It returns the resolved path and, when the
-// hit came from a fallback dir rather than $PATH, a human-facing note naming
-// where it was found (empty for a plain $PATH hit). The caller surfaces the
-// note so the chosen path is visible and manual recovery stays trivial.
-func resolveLaunchBin(argv0 string, fallbackDirs []string) (path, note string, err error) {
+// resolveLaunchBin locates argv0 via $PATH. Pane decants rely on the same
+// ai-setup/mise PATH contract as the herder CLI itself.
+func resolveLaunchBin(argv0 string) (string, error) {
 	if p, lookErr := exec.LookPath(argv0); lookErr == nil {
-		return p, "", nil
+		return p, nil
 	}
-	for _, dir := range fallbackDirs {
-		cand := filepath.Join(dir, argv0)
-		if fi, statErr := os.Stat(cand); statErr == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
-			return cand, fmt.Sprintf("%s not on $PATH; using %s", argv0, cand), nil
-		}
-	}
-	if len(fallbackDirs) == 0 {
-		return "", "", fmt.Errorf("locate %s: not on $PATH", argv0)
-	}
-	return "", "", fmt.Errorf("locate %s: not on $PATH and not found in %s",
-		argv0, strings.Join(fallbackDirs, ", "))
+	return "", fmt.Errorf("locate %s: not on $PATH", argv0)
 }
 
 // stdinIsTTY reports whether stdin is a character device (an interactive

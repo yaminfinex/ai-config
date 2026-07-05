@@ -10,7 +10,7 @@
 //   - Materialize — turn a frozen bottle transcript into a fresh, resumable
 //     seed session file under ~/.claude/projects/<encoded-cwd>/ (Materialize).
 //   - Launch — build the argv that re-enters a materialized seed, either
-//     interactively (claude --resume) or in a herdr pane via herder-spawn
+//     interactively (claude --resume) or in a herdr pane via herder spawn
 //     (BuildLaunch). The package only *builds* commands; the cli layer execs
 //     them, which keeps launch logic unit-testable with no live spawns.
 //

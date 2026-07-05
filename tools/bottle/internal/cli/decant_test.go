@@ -92,7 +92,7 @@ func TestDecantPaneBuildsHerderSpawnPlan(t *testing.T) {
 		t.Fatalf("plan.Pane = false, want true")
 	}
 	argv := strings.Join(captured.Argv, " ")
-	for _, want := range []string{"herder-spawn", "--split right", "--safe", "--resume"} {
+	for _, want := range []string{"herder spawn", "--split right", "--safe", "--resume"} {
 		if !strings.Contains(argv, want) {
 			t.Errorf("pane argv missing %q: %s", want, argv)
 		}

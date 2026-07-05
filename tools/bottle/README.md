@@ -276,7 +276,7 @@ found"), materialize (temp file, linted, atomically renamed), record the
 decant in the registry, then chdir and exec. **The chdir is mandatory**, not
 incidental: `claude --resume` is cwd-scoped, and resuming the right id from
 the wrong directory fails.
-`--pane right|below` launches into a herdr split via `herder-spawn` instead
+`--pane right|below` launches into a herdr split via `herder spawn` instead
 of exec-ing in place; permission semantics are kept identical across both
 paths (safe by default, `--yolo` for `--dangerously-skip-permissions`).
 
