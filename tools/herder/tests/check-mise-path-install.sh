@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-shims-install.sh - hermetic tests for ai-setup's managed mise PATH file.
+# check-mise-path-install.sh - hermetic tests for ai-setup's managed mise PATH file.
 #
 # Uses fake HOME/XDG_CONFIG_HOME. Never touches real ~/.config/mise.
 
