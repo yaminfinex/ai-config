@@ -16,17 +16,17 @@ orchestrator itself replaceable.
 2. **Spawn** one tab per phase, one-line prompt:
 
    ```bash
-   herder-spawn --role phase-N --agent claude --new-tab --from-pane "$HERDR_PANE_ID" --notify \
+   herder spawn --role phase-N --agent claude --new-tab --from-pane "$HERDR_PANE_ID" --notify \
      --prompt 'Read <orchestration file> and <design doc> fully, then execute Phase N exactly as specified, commit when green, and update the phase-status table.'
    ```
 
    The playbook may pin a different agent/model per phase. `--notify` wires the ring automatically —
-   it injects the ring command (targeting your pane) plus `$HERDER_SEND` into the phase agent, so
+   it injects the ring command (targeting your pane) plus `$HERDER_BIN` into the phase agent, so
    you don't hand-write notify instructions into the prompt.
 3. **Idle for the ring — don't poll.** End your turn after spawning; the phase agent rings you
-   (`herder-send`) when it writes its DONE/BLOCKED block. Wake on the ring, read the run-log,
+   (`herder send`) when it writes its DONE/BLOCKED block. Wake on the ring, read the run-log,
    verify. Keep a backstop for a dropped ring (a busy/modal orchestrator queues or refuses it, or
-   the agent died before ringing): a bounded `herder-wait <guid> --timeout <generous>` heartbeat
+   the agent died before ringing): a bounded `herder wait <guid> --timeout <generous>` heartbeat
    or a run-log sweep `grep -qE '^## Phase N — (DONE|BLOCKED|HANDOFF)' <run-log>`. Idle there means
    done *or* stuck — read the pane.
 4. **Verify before advancing — don't take the agent's word:** phase commits present, tree clean;

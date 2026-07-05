@@ -124,13 +124,13 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 func printHelp(stdout io.Writer) {
 	lines := []string{
 		"#!/usr/bin/env bash",
-		"# herder-cull — close a spawned agent's pane and mark its registry record closed.",
+		"# herder cull — close a spawned agent's pane and mark its registry record closed.",
 		"#",
 		"# Usage:",
-		"#   herder-cull --guid GUID                 # match by short or full guid",
-		"#   herder-cull --label LABEL                # match by label",
-		"#   herder-cull --pane PANE_ID               # match by pane id",
-		"#   herder-cull --gone                       # close registry entries whose pane is no longer live",
+		"#   herder cull --guid GUID                 # match by short or full guid",
+		"#   herder cull --label LABEL                # match by label",
+		"#   herder cull --pane PANE_ID               # match by pane id",
+		"#   herder cull --gone                       # close registry entries whose pane is no longer live",
 		"#   add --dry-run to print what would happen without acting.",
 		"#   add --force to skip terminal_id verification (use only when you've confirmed",
 		"#       the agent is dead and you need to mark the registry row closed).",
@@ -411,5 +411,5 @@ func ptrString(s *string) string {
 }
 
 func die(stderr io.Writer, msg string) {
-	fmt.Fprintf(stderr, "herder-cull: %s\n", msg)
+	fmt.Fprintf(stderr, "herder cull: %s\n", msg)
 }

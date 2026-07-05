@@ -6,54 +6,22 @@
 #               [--cwd PATH] [--skip-perms|--yolo]
 #               [--prompt TEXT] [--focus] [-- EXTRA_AGENT_ARGS...]
 #
-# Registered Claude sessions use `bin/herder fork <guid>` so the child is
+# Registered Claude sessions use `herder fork <guid>` so the child is
 # bus-bound from birth and carries provenance.forked_from. Codex self-fork and
 # unregistered Claude sessions fall back to raw tool fork/resume through
-# `herder-spawn`.
+# `herder spawn`.
 
 set -euo pipefail
 
 die() { printf 'herder-fork: %s\n' "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-script_realpath() {
-  python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null ||
-    readlink -f "$0" 2>/dev/null ||
-    printf '%s\n' "$0"
-}
-
-repo_root_from_self() {
-  local self
-  self="$(script_realpath)"
-  dirname "$(dirname "$(dirname "$self")")"
-}
-
 resolve_herder_bin() {
-  local repo
-  repo="$(repo_root_from_self)"
-  if [[ -x "$repo/bin/herder" ]]; then
-    printf '%s\n' "$repo/bin/herder"
-    return
-  fi
   if have herder; then
     printf 'herder'
     return
   fi
-  die "bin/herder not found at $repo/bin/herder or on PATH"
-}
-
-resolve_herder_spawn() {
-  if have herder-spawn; then
-    printf 'herder-spawn'
-    return
-  fi
-
-  local self skills_dir sibling
-  self="$(script_realpath)"
-  skills_dir="$(dirname "$(dirname "$(dirname "$self")")")"
-  sibling="$skills_dir/herder/scripts/herder-spawn"
-  [[ -x "$sibling" ]] || die "herder-spawn not found on PATH or at $sibling"
-  printf '%s\n' "$sibling"
+  die "herder not found on PATH; run bin/ai-setup from the ai-config checkout and restart your shell"
 }
 
 registry_path() {
@@ -179,7 +147,7 @@ agent_args=()
 case "$AGENT" in
   claude)
     [[ -n "$SESSION_ID" ]] || SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
-    [[ -n "$SESSION_ID" ]] || die "no registered herder guid or claude session id (set --session-id, run inside claude, or herder-enroll first)"
+    [[ -n "$SESSION_ID" ]] || die "no registered herder guid or claude session id (set --session-id, run inside claude, or herder enroll first)"
     agent_args=(--resume "$SESSION_ID" --fork-session)
     [[ -n "${CLAUDE_EFFORT:-}" ]] && agent_args+=(--effort "$CLAUDE_EFFORT")
     [[ "$SKIP_PERMS" -eq 1 ]] && agent_args+=(--dangerously-skip-permissions)
@@ -198,8 +166,8 @@ esac
 
 [[ "${#PASSTHROUGH[@]}" -eq 0 ]] || agent_args+=("${PASSTHROUGH[@]}")
 
-HERDER_SPAWN="$(resolve_herder_spawn)"
 spawn_args=(
+  spawn
   --role "fork-${AGENT}"
   --agent "$AGENT"
   --from-pane "$HERDR_PANE_ID"
@@ -214,4 +182,4 @@ done
 
 [[ -z "$PROMPT" ]] || spawn_args+=(--prompt "$PROMPT")
 
-exec "$HERDER_SPAWN" "${spawn_args[@]}"
+exec "$HERDER_BIN" "${spawn_args[@]}"

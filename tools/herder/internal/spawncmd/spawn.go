@@ -400,7 +400,7 @@ func (r *runner) run() int {
 			opts.Workspace = pane.WorkspaceID
 		}
 		if opts.Workspace == "" {
-			fmt.Fprintf(r.stderr, "herder-spawn: --from-pane %s: pane not found (herdr pane get returned: %s)\n", opts.FromPane, strings.TrimRight(string(out), "\n"))
+			fmt.Fprintf(r.stderr, "herder spawn: --from-pane %s: pane not found (herdr pane get returned: %s)\n", opts.FromPane, strings.TrimRight(string(out), "\n"))
 			return 1
 		}
 	}
@@ -409,7 +409,7 @@ func (r *runner) run() int {
 		wsListOut, _, _ = r.herdr.Combined("workspace", "list")
 		workspaces = parseWorkspaces(wsListOut)
 		if !workspaceExists(workspaces, opts.Workspace) {
-			fmt.Fprintf(r.stderr, "herder-spawn: --workspace %s not found in live workspace list.\n", opts.Workspace)
+			fmt.Fprintf(r.stderr, "herder spawn: --workspace %s not found in live workspace list.\n", opts.Workspace)
 			fmt.Fprintln(r.stderr, "Herdr workspace ids are session-live; they change after a herdr restart.")
 			fmt.Fprintln(r.stderr, "Live workspaces:")
 			for _, ws := range workspaces {
@@ -433,7 +433,7 @@ func (r *runner) run() int {
 		opts.Prompt = strings.TrimRight(string(b), "\n")
 	}
 
-	sendAbs := r.paths.HerderSend
+	herderBin := r.paths.BinHerder
 	if opts.Notify && opts.NotifyTo == "" {
 		if paneID := os.Getenv("HERDR_PANE_ID"); paneID != "" {
 			out, err := r.herdr.Output("pane", "get", paneID)
@@ -445,19 +445,19 @@ func (r *runner) run() int {
 			}
 			if opts.NotifyTo == "" {
 				opts.NotifyTo = paneID
-				fmt.Fprintf(r.stderr, "herder-spawn: could not resolve spawner terminal_id; ring target falls back to raw pane %s (drift-prone)\n", paneID)
+				fmt.Fprintf(r.stderr, "herder spawn: could not resolve spawner terminal_id; ring target falls back to raw pane %s (drift-prone)\n", paneID)
 			}
 		} else {
-			fmt.Fprintln(r.stderr, "herder-spawn: --notify set but HERDR_PANE_ID is empty; no ring target injected")
+			fmt.Fprintln(r.stderr, "herder spawn: --notify set but HERDR_PANE_ID is empty; no ring target injected")
 		}
 	}
 	if opts.Notify && opts.Prompt != "" && opts.NotifyTo != "" {
 		opts.Prompt += fmt.Sprintf(`
 
 When your unit is finished and your run-log DONE/BLOCKED block is written, ring the orchestrator so it does not have to poll (the run-log block is the record — this is only a doorbell):
-  %s %s 'Unit DONE — run-log updated'
+  "$HERDER_BIN" send %s 'Unit DONE — run-log updated'
 Ring exactly ONCE and then stop, whatever it reports. The orchestrator is usually mid-turn when you ring, so the helper will say verify=queued (or even verify=not_delivered) — that is EXPECTED and is NOT a failure: your message is queued and the run-log is the real record. Do NOT resend on a queued/not_delivered result; resending just stacks duplicate messages in the orchestrator's queue.
-Do NOT ring with raw 'herdr agent send' — it writes the text without submitting it, so the ring never lands. Use the command above (also available as "$HERDER_SEND" "$HERDER_NOTIFY_TO").`, sendAbs, opts.NotifyTo)
+Do NOT ring with raw 'herdr agent send' — it writes the text without submitting it, so the ring never lands. Use the command above (also available as "$HERDER_BIN" send "$HERDER_NOTIFY_TO").`, opts.NotifyTo)
 	}
 
 	permInjected := ""
@@ -569,16 +569,12 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 	}
 	argv := []string{}
 	if opts.LoginShell {
-		var innerCmd strings.Builder
-		for _, arg := range launchTokens {
-			innerCmd.WriteString(shellquote.Quote(arg))
-			innerCmd.WriteByte(' ')
-		}
-		inner := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_SEND=%s%s%s; exec %s",
-			shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(sendAbs), notifyExport, hcomEnv, innerCmd.String())
+		innerCmd := shellCommand(launchTokens)
+		inner := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s%s%s; exec %s",
+			shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(herderBin), notifyExport, hcomEnv, innerCmd)
 		argv = []string{opts.LoginShellBin, "-lic", inner}
 	} else {
-		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SPAWNED_BY=" + spawnedBy, "HERDER_SEND=" + sendAbs}
+		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SPAWNED_BY=" + spawnedBy, "HERDER_BIN=" + herderBin}
 		if opts.NotifyTo != "" {
 			argv = append(argv, "HERDER_NOTIFY_TO="+opts.NotifyTo)
 		}
@@ -625,7 +621,7 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 	rootClosed := false
 	if opts.NewTab && rootPaneID != "" && rootTerm != "" {
 		if rootTerm == termID {
-			fmt.Fprintf(r.stderr, "herder-spawn: refusing to close root pane — terminal_id matches the agent (%s)\n", termID)
+			fmt.Fprintf(r.stderr, "herder spawn: refusing to close root pane — terminal_id matches the agent (%s)\n", termID)
 		} else {
 			out, err := r.herdr.Output("pane", "get", rootPaneID)
 			liveRootTerm := ""
@@ -644,7 +640,7 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 				if now == "" {
 					now = "gone"
 				}
-				fmt.Fprintf(r.stderr, "herder-spawn: skipped root-pane close — %s no longer holds terminal %s (now %s)\n", rootPaneID, rootTerm, now)
+				fmt.Fprintf(r.stderr, "herder spawn: skipped root-pane close — %s no longer holds terminal %s (now %s)\n", rootPaneID, rootTerm, now)
 			}
 		}
 		if rootClosed {
@@ -693,7 +689,7 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 	if opts.Prompt != "" && trustBlocked {
 		deliveryResult = "blocked_trust_modal"
 	} else if opts.Prompt != "" {
-		out, rc := runSend(sendAbs, paneID, wirePayload)
+		out, rc := runSend(herderBin, paneID, wirePayload)
 		if len(out) > 0 {
 			deliveryResult = parseVerify(out)
 		}
@@ -910,7 +906,7 @@ func (r *runner) writeSummary(record spawnRecord, isHcomAgent, rootClosed bool, 
 		fmt.Fprintln(r.stderr, "  perms:  --safe (agent default ask-mode)")
 	}
 	if r.opts.Notify && r.opts.NotifyTo != "" {
-		fmt.Fprintf(r.stderr, "  notify: rings %s on done (HERDER_SEND + HERDER_NOTIFY_TO injected)\n", r.opts.NotifyTo)
+		fmt.Fprintf(r.stderr, "  notify: rings %s on done (HERDER_BIN + HERDER_NOTIFY_TO injected)\n", r.opts.NotifyTo)
 	}
 	if isHcomAgent {
 		if hcomCapture == "captured" {
@@ -931,7 +927,7 @@ func (r *runner) writeSummary(record spawnRecord, isHcomAgent, rootClosed bool, 
 			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars), ready: %s, verify: %s\n", len(r.opts.Prompt), readyReason, deliveryResult)
 		} else if deliveryResult == "blocked_trust_modal" {
 			fmt.Fprintln(r.stderr, "  prompt: NOT sent — a directory-trust modal is open and --safe forbids auto-accepting it.")
-			fmt.Fprintf(r.stderr, "          Accept it in the pane (focus + Enter), then: herder-send %s \"<prompt>\"\n", record.Label)
+			fmt.Fprintf(r.stderr, "          Accept it in the pane (focus + Enter), then: herder send %s \"<prompt>\"\n", record.Label)
 		} else {
 			fmt.Fprintf(r.stderr, "  prompt: NOT confirmed (verify: %s, ready: %s) — read the pane before assuming it landed\n", deliveryResult, readyReason)
 		}
@@ -941,15 +937,15 @@ func (r *runner) writeSummary(record spawnRecord, isHcomAgent, rootClosed bool, 
 }
 
 func die(stderr io.Writer, msg string) {
-	fmt.Fprintf(stderr, "herder-spawn: %s\n", msg)
+	fmt.Fprintf(stderr, "herder spawn: %s\n", msg)
 }
 
 func printHelp(stdout io.Writer) {
 	lines := []string{
-		"# herder-spawn — spawn a named, GUID-tagged agent in a herdr pane and register it.",
+		"# herder spawn — spawn a named, GUID-tagged agent in a herdr pane and register it.",
 		"#",
 		"# Usage:",
-		"#   herder-spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]",
+		"#   herder spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]",
 		"#                [--split right|down] [--workspace ID | --from-pane PANE_ID] [--tab ID | --new-tab] [--cwd PATH]",
 		"#                [--team NAME] [--no-focus] [--safe] [--notify | --notify-to PANE] [--label-prefix STR] [--extra-arg ARG]... [--json]",
 		"#",
@@ -964,9 +960,9 @@ func printHelp(stdout io.Writer) {
 		"#     resolved HCOM_DIR is PINNED into the child's PROCESS env at launch so it joins exactly this bus;",
 		"#     the launch wrapper's config-dir passthrough keeps auth on the REAL config dir even for an isolated team.",
 		"#   * The role is passed as the hcom `--tag`, so hcom names the instance `<role>-<random>` and",
-		"#     `@<role>-` fan-out addressing works. herder-spawn CAPTURES the assigned name (by correlating the",
+		"#     `@<role>-` fan-out addressing works. herder spawn CAPTURES the assigned name (by correlating the",
 		"#     child's herdr pane_id to the hcom entry) and records `team`/`hcom_dir`/`hcom_name`/`hcom_tag` in",
-		"#     the registry — herder-send/list/wait/cull resolve GUID/label to that bus coordinate.",
+		"#     the registry — herder send/list/wait/cull resolve GUID/label to that bus coordinate.",
 		"#   * Name capture is BEST-EFFORT: if it fails the spawn still succeeds and the agent stays reachable",
 		"#     over herdr keystrokes; the outcome is reported in the summary and the --json `hcom_capture` field.",
 		"#",
@@ -996,7 +992,7 @@ func printHelp(stdout io.Writer) {
 		"#   4. After the agent settles, captures its hcom-assigned name and appends a JSONL record",
 		"#      (incl. team/hcom_dir/hcom_name/hcom_tag) to $HERDER_STATE_DIR/registry.jsonl.",
 		"#   5. If --prompt/--prompt-file is given, waits for the agent to become truly ready (sigil + idle +",
-		"#      settle) then delegates delivery to `herder-send` (verified). For CODEX, a long or multi-line",
+		"#      settle) then delegates delivery to `herder send` (verified). For CODEX, a long or multi-line",
 		"#      brief is staged to a file ($HERDER_STATE_DIR/briefs/<guid>.md) and only a one-line \"read it\"",
 		"#      pointer is sent over the wire — this dodges codex's paste-blob / \"Create a plan?\" overlay /",
 		"#      boot-clip pathologies entirely (see the staging block below). Claude gets the inline prompt.",
@@ -1004,10 +1000,10 @@ func printHelp(stdout io.Writer) {
 		"#",
 		"# Notes:",
 		"#   * The agent binary must accept being invoked plainly (e.g. `codex`, `claude`). For wrappers, use --extra-arg.",
-		"#   * Initial-prompt delivery is verified by `herder-send`; if it can't confirm submission it reports",
+		"#   * Initial-prompt delivery is verified by `herder send`; if it can't confirm submission it reports",
 		"#     prompt: NOT confirmed rather than silently claiming success.",
-		"#   * NOTIFY-BACK: every spawned agent gets HERDER_SEND (absolute path to herder-send) exported into",
-		"#     its shell, so it can ring a peer regardless of $PATH or whether it loaded the herder skill —",
+		"#   * NOTIFY-BACK: every spawned agent gets HERDER_BIN (absolute path to bin/herder) exported into",
+		"#     its shell, so it can ring a peer with `herder send` regardless of $PATH or whether it loaded the herder skill —",
 		"#     the gap that made agents fall back to raw `herdr agent send` (which writes text WITHOUT",
 		"#     submitting it, so the ring silently never lands). --notify also exports HERDER_NOTIFY_TO (the",
 		"#     spawner's pane, or --notify-to PANE) AND appends a concrete ring command to the prompt, so a",
@@ -1063,8 +1059,8 @@ func parseVerify(out []byte) string {
 	return record.Verify
 }
 
-func runSend(sendAbs, paneID, payload string) ([]byte, int) {
-	cmd := exec.Command(sendAbs, paneID, payload, "--json")
+func runSend(herderBin, paneID, payload string) ([]byte, int) {
+	cmd := exec.Command(herderBin, "send", paneID, payload, "--json")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	err := cmd.Run()
@@ -1076,6 +1072,14 @@ func runSend(sendAbs, paneID, payload string) ([]byte, int) {
 		return stdout.Bytes(), exitErr.ExitCode()
 	}
 	return stdout.Bytes(), 1
+}
+
+func shellCommand(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellquote.Quote(arg))
+	}
+	return strings.Join(quoted, " ")
 }
 
 func hcomList(hcomDir string) []hcomEntry {

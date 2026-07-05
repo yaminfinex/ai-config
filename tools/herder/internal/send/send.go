@@ -175,9 +175,9 @@ func dryRunHerdr(h *driver.Herdr, target string, jsonOut bool, stdout, stderr io
 		return 1
 	}
 	if res.DriftNote != "" {
-		fmt.Fprintf(stderr, "herder-send: %s\n", res.DriftNote)
+		fmt.Fprintf(stderr, "herder send: %s\n", res.DriftNote)
 	}
-	fmt.Fprintf(stderr, "herder-send --dry-run: %s -> pane %s (via %s)", target, res.PaneID, res.ResolvedVia)
+	fmt.Fprintf(stderr, "herder send --dry-run: %s -> pane %s (via %s)", target, res.PaneID, res.ResolvedVia)
 	if res.Drifted {
 		fmt.Fprint(stderr, " [DRIFTED]")
 	}
@@ -201,7 +201,7 @@ func dryRunHcom(h *driver.Hcom, target string, jsonOut bool, stdout, stderr io.W
 	if err != nil {
 		var resolveErr *driver.ResolveError
 		if errors.As(err, &resolveErr) && resolveErr.Code == 2 {
-			fmt.Fprintf(stderr, "herder-send --dry-run: would REFUSE (exit 2): %s has no recorded bus name — not bus-bound\n", target)
+			fmt.Fprintf(stderr, "herder send --dry-run: would REFUSE (exit 2): %s has no recorded bus name — not bus-bound\n", target)
 			if jsonOut {
 				writeJSON(stdout, hcomDryRunRefuseRecord{
 					Target:    target,
@@ -237,7 +237,7 @@ func dryRunHcom(h *driver.Hcom, target string, jsonOut bool, stdout, stderr io.W
 			displayDir = filepath.Join(home, ".hcom")
 		}
 	}
-	fmt.Fprintf(stderr, "herder-send --dry-run: %s -> hcom bus @%s (team: %s, HCOM_DIR=%s)\n", target, res.Name, displayTeam, displayDir)
+	fmt.Fprintf(stderr, "herder send --dry-run: %s -> hcom bus @%s (team: %s, HCOM_DIR=%s)\n", target, res.Name, displayTeam, displayDir)
 	if jsonOut {
 		writeJSON(stdout, hcomDryRunRecord{
 			Target:    target,
@@ -252,22 +252,22 @@ func dryRunHcom(h *driver.Hcom, target string, jsonOut bool, stdout, stderr io.W
 }
 
 func die(stderr io.Writer, msg string) {
-	fmt.Fprintf(stderr, "herder-send: %s\n", msg)
+	fmt.Fprintf(stderr, "herder send: %s\n", msg)
 }
 
 func printHelp(stdout io.Writer) {
 	lines := []string{
 		"#!/usr/bin/env bash",
-		"# herder-send — send a message to an already-spawned peer agent, safely.",
+		"# herder send — send a message to an already-spawned peer agent, safely.",
 		"#",
 		"# Usage:",
-		"#   herder-send <target> <message> [opts]",
+		"#   herder send <target> <message> [opts]",
 		"#",
 		"# <target>: short-guid, full guid, label, terminal_id (term_*), or pane_id. A",
 		"# guid/label is resolved to the agent's CURRENT pane via its durable terminal_id",
 		"# (registry pane_ids go stale as herdr compacts ids — see \"resolve\" below); a bare",
 		"# term_* is resolved the same drift-proof way without needing a registry record",
-		"# (this is what `herder-spawn --notify` injects for the orchestrator ring). A raw",
+		"# (this is what `herder spawn --notify` injects for the orchestrator ring). A raw",
 		"# pane_id is used verbatim.",
 		"#",
 		"# Options:",
@@ -291,7 +291,7 @@ func printHelp(stdout io.Writer) {
 		"",
 		"set -euo pipefail",
 		"",
-		"die() { printf 'herder-send: %s\\n' \"$*\" >&2; exit 64; }",
+		"die() { printf 'herder send: %s\\n' \"$*\" >&2; exit 64; }",
 		"[[ \"${HERDR_ENV:-}\" = \"1\" ]] || die \"not running inside a herdr pane (HERDR_ENV != 1)\"",
 		"command -v herdr >/dev/null 2>&1 || die \"herdr not on PATH\"",
 		"command -v jq >/dev/null 2>&1 || die \"jq not on PATH\"",

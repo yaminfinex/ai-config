@@ -168,7 +168,7 @@ func (h *Herdr) Send(target, message string, opts SendOptions, stdout, stderr io
 		return 1
 	}
 	if res.DriftNote != "" {
-		fmt.Fprintf(stderr, "herder-send: %s\n", res.DriftNote)
+		fmt.Fprintf(stderr, "herder send: %s\n", res.DriftNote)
 	}
 
 	paneID := res.PaneID
@@ -185,7 +185,7 @@ func (h *Herdr) Send(target, message string, opts SendOptions, stdout, stderr io
 	preStatus := h.detectStatus(paneID)
 	if !opts.Force {
 		if reason, blocked := preflightBlockedReason(preText); blocked {
-			fmt.Fprintf(stderr, "herder-send: refusing to send to %s: %s\n", paneID, reason)
+			fmt.Fprintf(stderr, "herder send: refusing to send to %s: %s\n", paneID, reason)
 			return 2
 		}
 	}
@@ -224,7 +224,7 @@ func (h *Herdr) Send(target, message string, opts SendOptions, stdout, stderr io
 	}
 
 	if !landed {
-		fmt.Fprintf(stderr, "herder-send: message never landed in %s after %d paste attempts (agent not accepting input?)\n", paneID, sendAttempts)
+		fmt.Fprintf(stderr, "herder send: message never landed in %s after %d paste attempts (agent not accepting input?)\n", paneID, sendAttempts)
 	}
 
 	submitted := false

@@ -1,7 +1,7 @@
-// Package cli wires the herder command surface: one subcommand per bash
-// script it replaces (spawn, send, list, wait, cull). Each subcommand's
+// Package cli wires the herder command surface: one subcommand per original
+// herder operation (spawn, send, list, wait, cull). Each subcommand's
 // stderr/stdout/exit-code contract is pinned by the hermetic suites in
-// skills/herder/tests — a port lands only when its suite is green with zero
+// tools/herder/tests — a port lands only when its suite is green with zero
 // golden edits, so the dispatch layer stays out of the way: it routes on
 // args[0] and passes everything else (including -h/--help) through to the
 // subcommand, which owns its own flag parsing exactly like the bash script.
@@ -33,8 +33,6 @@ type command struct {
 }
 
 // commands is the single registry the root usage table is generated from.
-// Ports land here phase by phase; until then a stub points at the bash
-// implementation so the binary never silently half-works.
 var commands = []command{
 	{"spawn", "Spawn a named, GUID-tagged agent in a herdr pane", spawncmd.Run},
 	{"send", "Deliver a message to a spawned agent (herdr or hcom bus)", send.Run},
@@ -49,26 +47,23 @@ var commands = []command{
 	{"sidecar", "(internal) Bridge hcom status to herdr pane status", sidecarcmd.Run},
 }
 
-// notPorted builds the stub for a subcommand whose port has not landed yet:
-// it names the bash script that is still authoritative and fails loudly, so
-// a premature shim flip cannot silently no-op.
+// notPorted builds the stub for a subcommand whose port has not landed yet.
 func notPorted(name, phase string) func(args []string, stdout, stderr io.Writer) int {
 	return func(args []string, stdout, stderr io.Writer) int {
-		fmt.Fprintf(stderr, "herder %s: not ported yet (%s) — use skills/herder/scripts/herder-%s\n",
-			name, phase, name)
+		fmt.Fprintf(stderr, "herder %s: not ported yet (%s)\n", name, phase)
 		return 1
 	}
 }
 
 // rootUsage renders the no-arg / help output: what the binary is, the
-// subcommand table, and where the still-bash implementations live.
+// subcommand table, and where the contract suites live.
 func rootUsage() string {
 	var b strings.Builder
 	b.WriteString("herder — spawn, message, and cull herdr-pane agents\n")
 	b.WriteString("\n")
 	b.WriteString("Go port of the herder skill's bash substrate. Each subcommand mirrors the\n")
-	b.WriteString("matching skills/herder/scripts/herder-<name> script byte-for-byte; the\n")
-	b.WriteString("hermetic suites in skills/herder/tests are the contract.\n")
+	b.WriteString("original herder contract; the hermetic suites in tools/herder/tests are the\n")
+	b.WriteString("contract.\n")
 	b.WriteString("\n")
 	b.WriteString("Commands:\n")
 	for _, cmd := range commands {

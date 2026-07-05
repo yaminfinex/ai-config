@@ -11,7 +11,7 @@ import (
 	"ai-config/tools/herder/internal/registry"
 )
 
-// IsHcomCapable is the single source of truth for agents that herder-spawn
+// IsHcomCapable is the single source of truth for agents that herder spawn
 // routes through hcom. Adding a tool here must also add its config pin in
 // PinConfigDir when hcom local mode would otherwise redirect it.
 func IsHcomCapable(agent string) bool {

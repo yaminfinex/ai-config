@@ -63,7 +63,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		if opts.status == "idle" && doneIsIdleEquivalent(paneID) {
 			waitRC = 0
 		} else {
-			fmt.Fprintf(stderr, "herder-wait: timeout waiting for %s to reach status=%s\n", paneID, opts.status)
+			fmt.Fprintf(stderr, "herder wait: timeout waiting for %s to reach status=%s\n", paneID, opts.status)
 		}
 	}
 
@@ -128,17 +128,17 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 func printHelp(stdout io.Writer) {
 	lines := []string{
 		"#!/usr/bin/env bash",
-		"# herder-wait — block until a spawned agent reaches a status, optionally read its screen.",
+		"# herder wait — block until a spawned agent reaches a status, optionally read its screen.",
 		"#",
 		"# Usage:",
-		"#   herder-wait <target> [--status idle|working|blocked|done|unknown] [--timeout MS]",
+		"#   herder wait <target> [--status idle|working|blocked|done|unknown] [--timeout MS]",
 		"#                        [--read] [--lines N] [--source visible|recent|recent-unwrapped]",
 		"#",
 		"# <target> is one of: short guid, full guid, label, or pane id. A guid/label is",
 		"# resolved to the agent's CURRENT pane via its durable terminal_id (registry",
 		"# pane_ids go stale as herdr compacts ids); a raw pane id is used verbatim.",
 		"# Default status is `idle` (works for the claude/codex integrations, which",
-		"# never emit `done`). Pair with the small post-send sleep in herder-spawn so",
+		"# never emit `done`). Pair with the small post-send sleep in herder spawn so",
 		"# the integration has had time to flip to `working` before you wait on idle.",
 		"# If the wait returns sooner than expected, read the pane and call again — the",
 	}
@@ -168,9 +168,9 @@ func resolvePane(target string, paneOut []byte, stderr io.Writer) (string, bool)
 		}
 	}
 	if paneErr != nil || len(panes) == 0 {
-		fmt.Fprintf(stderr, "herder-wait: could not read live pane list; cannot resolve %s\n", target)
+		fmt.Fprintf(stderr, "herder wait: could not read live pane list; cannot resolve %s\n", target)
 	} else {
-		fmt.Fprintf(stderr, "herder-wait: %s (terminal %s) is not live anywhere — agent gone or culled\n", displayName(rec, target), term)
+		fmt.Fprintf(stderr, "herder wait: %s (terminal %s) is not live anywhere — agent gone or culled\n", displayName(rec, target), term)
 	}
 	return "", false
 }
@@ -209,5 +209,5 @@ func displayName(rec *registry.Record, fallback string) string {
 }
 
 func die(stderr io.Writer, msg string) {
-	fmt.Fprintf(stderr, "herder-wait: %s\n", msg)
+	fmt.Fprintf(stderr, "herder wait: %s\n", msg)
 }

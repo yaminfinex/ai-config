@@ -87,7 +87,7 @@ func (c *Client) Run(args ...string) (exitCode int, err error) {
 }
 
 // Agent is one entry of `herdr agent list` (.result.agents[]). TerminalID
-// stays a pointer because herder-list's reconcile keys its live map on
+// stays a pointer because herder list's reconcile keys its live map on
 // `select(.terminal_id != null)` — null and "" must stay distinguishable.
 // Raw preserves the full object: reconcile embeds it verbatim as the
 // record's `live` field, including members this struct doesn't name.

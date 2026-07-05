@@ -21,7 +21,7 @@ Proven across a six-phase run with zero context lost; the only failure mode ever
 ## Handoff — new tab, verified delivery
 
 ```bash
-herder-spawn --role leg-<N+1> --agent claude --new-tab --cwd <worktree> --no-focus \
+herder spawn --role leg-<N+1> --agent claude --new-tab --cwd <worktree> --no-focus \
   --prompt 'Relay leg <N+1>. Read <playbook> in full, then execute leg <N+1> per the relay protocol. Do not skip the verification gate.'
 ```
 
@@ -34,7 +34,7 @@ failure was delivery, not self-spawning. Two variants:
 - **Self-spawn** (true relay, default): each leg spawns its successor with `--new-tab` and
   verifies delivery before idling. No separate ring — the spawned successor *is* the signal.
 - **Herder-owned handoff:** when a herder pane exists anyway, legs end with a DONE block, ring the
-  herder (`herder-send <herder terminal_id> 'Leg N DONE — run-log updated'`), and idle; the herder spawns
+  herder (`herder send <herder terminal_id> 'Leg N DONE — run-log updated'`), and idle; the herder spawns
   the successor on the ring, with a run-log sweep as the backstop for a dropped ring.
 
 ## Mid-leg handoff (context budget)

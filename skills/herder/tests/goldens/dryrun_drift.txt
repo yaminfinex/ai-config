@@ -1,7 +1,0 @@
-=== STDERR ===
-herder-send: pane drifted — beta spawned at p_20, terminal term_BBB now at p_99
-herder-send --dry-run: beta -> pane p_99 (via terminal_id) [DRIFTED]
-=== STDOUT ===
-{"pane_id":"p_99","target":"beta","resolved_via":"terminal_id","drifted":true,"dry_run":true}
-=== EXIT ===
-0

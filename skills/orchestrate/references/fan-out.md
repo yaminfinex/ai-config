@@ -14,16 +14,16 @@ serialize them instead of discovering the interaction as a merge conflict.
 ## Rules
 
 1. **One worktree per writer**, own branch each (`herdr worktree create --branch <unit> --base
-   <run-branch> ... --json`, then `herder-spawn --new-tab --notify --cwd <path>` with the one-line
+   <run-branch> ... --json`, then `herder spawn --new-tab --notify --cwd <path>` with the one-line
    prompt — `--notify` makes each worker ring you on done). Read-only workers may share the main
    worktree — then they write nothing, scratch included.
 2. **Cap the fleet at what you can supervise**; batch beyond that.
 3. **Results land as files** (e.g. `napkins/<run>/results/<unit>.md`) + a `DONE` block; then the
-   worker rings the orchestrator (`herder-send <orchestrator terminal_id> 'Unit X DONE'`). Pane reads are
+   worker rings the orchestrator (`herder send <orchestrator terminal_id> 'Unit X DONE'`). Pane reads are
    for diagnosing stuck workers, not collecting output. The orchestrator idles and integrates **in
    completion order as rings arrive** — not by waiting on workers one at a time, which stalls on
    whichever you picked and is blind to whoever finished first. Keep a backstop sweep
-   (`herder-list` + run-log) so a dropped ring from a busy orchestrator doesn't strand a worker.
+   (`herder list` + run-log) so a dropped ring from a busy orchestrator doesn't strand a worker.
 4. **Integrate serially.** Workers never merge their own branches; the orchestrator (or an
    integration agent) lands them one at a time, re-running the gate after each — the
    post-integration gate is the one that matters.

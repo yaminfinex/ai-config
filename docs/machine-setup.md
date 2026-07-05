@@ -21,7 +21,7 @@ bin/ai-setup --dry-run --shell-path
 bin/ai-setup --shell-path
 ```
 
-Open a fresh shell after this step so `ai-setup`, `ai-doctor`, `herder-spawn`, and the other
+Open a fresh shell after this step so `ai-setup`, `ai-doctor`, `herder spawn`, and the other
 repo commands resolve from `bin/`.
 
 ## Install Symlinks
@@ -44,7 +44,7 @@ bin/ai-setup --hcom-hooks install
 
 ## Activate Herder Shims
 
-Herder's `claude` and `codex` PATH shims live in `skills/herder/shims/`. Activate them through
+Herder's `claude` and `codex` PATH shims live in `tools/herder/shims/`. Activate them through
 mise `conf.d`:
 
 ```sh
@@ -75,7 +75,7 @@ Run:
 ```sh
 bin/ai-doctor
 type -a claude codex
-herder-spawn --role smoke --agent codex --cwd "$PWD" \
+herder spawn --role smoke --agent codex --cwd "$PWD" \
   --prompt 'Reply exactly PONG MACHINE-SETUP, then wait idle.'
 ```
 

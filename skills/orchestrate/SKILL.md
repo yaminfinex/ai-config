@@ -9,6 +9,9 @@ Protocol layer for executing one mission across many agent sessions. The `herder
 substrate (spawn, message, cull); this is the policy (who spawns whom, what each agent owns, how
 context and verification cross session boundaries).
 
+Requires `herder` on PATH. See `tools/herder/README.md` for the implementation map and
+`docs/machine-setup.md` for activation.
+
 **This is a menu, not a procedure.** Compose a protocol for *this run* from the options below,
 write it into the run's playbook, adapt freely. The references are proven shapes to draw on, not
 stages to execute.
@@ -83,28 +86,28 @@ Pick by **who verifies a unit of work**, then parallelism — not task size.
    `verify=queued` because the message was accepted but will inject at a later hook boundary. Under
    the **herdr** keystroke driver, delivery is confirmed by sigil + status heuristics, with
    `verify=queued` for a busy target whose input line accepted the message for the next turn. The
-   old herdr caveat still holds: give each agent its **own tab** (`herder-spawn --new-tab`) and
+   old herdr caveat still holds: give each agent its **own tab** (`herder spawn --new-tab`) and
    confirm the driver result, because keystroke delivery into crowded/non-active panes is the failure
    mode the hcom bus removes.
 9. **Completion is a doorbell, not a poll.** A finished agent writes its DONE/BLOCKED block (the
    run-log stays the source of truth and the only carrier of evidence regardless of transport), then rings the
-   orchestrator: one line, `herder-send <orchestrator terminal_id> 'Unit N DONE — run-log updated'`
+   orchestrator: one line, `herder send <orchestrator terminal_id> 'Unit N DONE — run-log updated'`
    (record the orchestrator's durable `terminal_id`, not a bare `pane_id`, in the run-shape header —
-   a `pane_id` drifts when herdr compacts ids — or just spawn with `herder-spawn --notify`, which
+   a `pane_id` drifts when herdr compacts ids — or just spawn with `herder spawn --notify`, which
    resolves your terminal_id automatically and injects the exact ring command plus
-   `$HERDER_SEND`/`$HERDER_NOTIFY_TO` into the child so it can ring without finding the helper on
-   PATH). The ring goes through `herder-send` and thus the **active delivery driver** selected for the
+   `$HERDER_BIN`/`$HERDER_NOTIFY_TO` into the child so it can ring without finding the helper on
+   PATH). The ring goes through `herder send` and thus the **active delivery driver** selected for the
    orchestrator target — hcom bus for a recorded bus-bound orchestrator, herdr keystrokes otherwise.
    The worker never picks a transport. The orchestrator idles between units and wakes on the
-   ring instead of burning a turn blocking in `herder-wait`; it reads the run-log and verifies
+   ring instead of burning a turn blocking in `herder wait`; it reads the run-log and verifies
    there (invariant 4), never trusting the ring's word. The ring is best-effort and the worker
    rings **exactly once, whatever it reports**: a working orchestrator only *queues* the message
-   (`herder-send` reports `verify=queued`, exit 0 — that is success, not a failure to retry), and
+   (`herder send` reports `verify=queued`, exit 0 — that is success, not a failure to retry), and
    one at a modal refuses it (exit 2). This `queued` backstop is **driver-agnostic** — it holds
    whether the ring went over the hcom bus (accepted, injects at the next hook boundary) or herdr
    keystrokes (left on the input line). A worker that resends on a `queued`/`not_delivered` result
    just stacks duplicate messages in the orchestrator's queue. Because the ring carries no evidence
-   and must never be load-bearing, keep a coarse backstop (a bounded `herder-wait` heartbeat or a
+   and must never be load-bearing, keep a coarse backstop (a bounded `herder wait` heartbeat or a
    run-log sweep) so a dropped ring degrades to polling latency, not a deadlock.
    Relays need no ring — the spawned successor *is* the signal (`relay.md`).
    **Delivery drivers do not arbitrate turns or serialize writes.** A driver only moves a message

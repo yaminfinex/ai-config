@@ -9,9 +9,11 @@ Forks the *current* Claude/Codex session into a sibling herdr pane. The original
 conversation keeps running where it is; the fork starts as a copy that diverges from this
 point on.
 
-Companion to the `herder` skill. Same hard requirement (`HERDR_ENV=1`), same registry, same
-placement defaults. Prefer this helper when the user says "fork this"; prefer `herder fork
-<guid>` directly when you already know the target guid/label.
+Companion to the `herder` skill. Same hard requirements (`HERDR_ENV=1` and `herder` on PATH),
+same registry, same placement defaults. Prefer this helper when the user says "fork this";
+prefer `herder fork <guid>` directly when you already know the target guid/label. See
+`tools/herder/README.md` for the implementation map and `docs/machine-setup.md` for machine
+activation.
 
 ## Session start
 
@@ -19,16 +21,15 @@ placement defaults. Prefer this helper when the user says "fork this"; prefer `h
 [ "${HERDR_ENV:-}" = "1" ] || { echo "not in a herdr pane — herder-fork needs herdr"; exit 0; }
 ```
 
-Requires `bin/herder` for registered Claude sessions. Raw fallback paths require
-`herder-spawn` (resolved from `$PATH` or the sibling `herder` skill's `scripts/` dir).
+Requires `herder` on PATH.
 
 ## Paths
 
 | Case | Path | Result |
 |------|------|--------|
-| Registered Claude | `bin/herder fork <guid>` | New guid, bus-bound from birth, `provenance.forked_from`, sidecar enrichment. |
-| Codex self-fork | `herder-spawn --agent codex --extra-arg fork --extra-arg --last` (or explicit id) | Raw `codex fork`; codex exposes no reliable session id to the helper on this machine. |
-| Unregistered Claude | `herder-spawn --agent claude --extra-arg --resume <id> --extra-arg --fork-session` | Raw Claude fork; bus/provenance adoption requires enrolling first or later manual cleanup. |
+| Registered Claude | `herder fork <guid>` | New guid, bus-bound from birth, `provenance.forked_from`, sidecar enrichment. |
+| Codex self-fork | `herder spawn --agent codex --extra-arg fork --extra-arg --last` (or explicit id) | Raw `codex fork`; codex exposes no reliable session id to the helper on this machine. |
+| Unregistered Claude | `herder spawn --agent claude --extra-arg --resume <id> --extra-arg --fork-session` | Raw Claude fork; bus/provenance adoption requires enrolling first or later manual cleanup. |
 
 Registered Claude means either `$HERDER_GUID` is present in the pane env, or the helper can
 correlate the current pane to an hcom row and resolve that row's `session_id` / `hcom_name`
@@ -50,7 +51,7 @@ herder-fork --cwd /path/to/repo    # override auto-resolved cwd
 
 Placement is preserved on both paths: registered Claude passes cwd/split/focus through to
 the native lifecycle; raw fallbacks pass `--from-pane`, `--cwd`, `--split`, and focus flags
-to `herder-spawn`.
+to `herder spawn`.
 
 ## Cwd resolution
 
@@ -68,7 +69,7 @@ make `claude --resume ... --fork-session` miss the session and exit immediately.
 
 ## Safety / pane lifecycle
 
-- This skill never closes panes or culls. Use `herder-cull` for cleanup.
+- This skill never closes panes or culls. Use `herder cull` for cleanup.
 - Default is `--no-focus`; the user keeps the current pane focused.
 - Native Claude forks inherit `herder fork`'s lifecycle behavior: label uniqueness, launch-failure
   closure rows, hcom bus binding, and provenance are handled by the Go substrate.

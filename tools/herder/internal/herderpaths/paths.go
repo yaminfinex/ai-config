@@ -7,10 +7,9 @@ import (
 )
 
 type Paths struct {
-	RepoRoot   string
-	ScriptsDir string
-	HerderSend string
-	BinHerder  string
+	RepoRoot  string
+	BinHerder string
+	ShimsDir  string
 }
 
 func Resolve() (Paths, error) {
@@ -34,7 +33,7 @@ func Resolve() (Paths, error) {
 		}
 		wd = next
 	}
-	return Paths{}, fmt.Errorf("could not locate ai-config root containing skills/herder/scripts/herder-send and bin/herder")
+	return Paths{}, fmt.Errorf("could not locate ai-config root containing bin/herder and tools/herder/shims")
 }
 
 func pathsForRoot(root string) (Paths, bool) {
@@ -42,21 +41,24 @@ func pathsForRoot(root string) (Paths, bool) {
 	if err == nil {
 		root = absRoot
 	}
-	scriptsDir := filepath.Join(root, "skills", "herder", "scripts")
-	herderSend := filepath.Join(scriptsDir, "herder-send")
 	binHerder := filepath.Join(root, "bin", "herder")
-	if !isExecutableFile(herderSend) || !isExecutableFile(binHerder) {
+	shimsDir := filepath.Join(root, "tools", "herder", "shims")
+	if !isExecutableFile(binHerder) || !isDir(shimsDir) {
 		return Paths{}, false
 	}
 	return Paths{
-		RepoRoot:   root,
-		ScriptsDir: scriptsDir,
-		HerderSend: herderSend,
-		BinHerder:  binHerder,
+		RepoRoot:  root,
+		BinHerder: binHerder,
+		ShimsDir:  shimsDir,
 	}, true
 }
 
 func isExecutableFile(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir() && st.Mode()&0o111 != 0
+}
+
+func isDir(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
 }

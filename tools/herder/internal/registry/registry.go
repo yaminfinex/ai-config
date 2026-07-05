@@ -129,7 +129,7 @@ func decode(r io.Reader, path string) ([]Record, error) {
 // LatestByGUID collapses rows to the latest record per guid, reproducing
 // `group_by(.guid) | map(.[-1])`: stable-sort by guid (null first, then
 // codepoint order), keep the last row of each equal-guid run. The result is
-// guid-sorted, NOT file-ordered — herder-list's output order depends on this.
+// guid-sorted, NOT file-ordered — herder list's output order depends on this.
 func LatestByGUID(recs []Record) []Record {
 	sorted := make([]Record, len(recs))
 	copy(sorted, recs)
@@ -250,7 +250,7 @@ func PreserveToolSessionID(prov Provenance, recs []Record, guid string) Provenan
 }
 
 // Append writes one raw JSON row to the registry, creating the state dir on
-// first use (herder-spawn's `mkdir -p $STATE_DIR` + `printf '%s\n' >>`).
+// first use (herder spawn's `mkdir -p $STATE_DIR` + `printf '%s\n' >>`).
 // The caller owns the row's serialization; Append only guarantees the
 // trailing newline that keeps the file valid JSONL.
 func Append(path string, row []byte) error {

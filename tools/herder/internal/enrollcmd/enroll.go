@@ -204,5 +204,5 @@ func ptrString(s *string) string {
 }
 
 func die(stderr io.Writer, msg string) {
-	fmt.Fprintf(stderr, "herder-enroll: %s\n", msg)
+	fmt.Fprintf(stderr, "herder enroll: %s\n", msg)
 }

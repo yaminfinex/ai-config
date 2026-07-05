@@ -6,7 +6,7 @@ fi
 AI_CONFIG_SHIMS_INSTALL_SH=1
 
 shims_dir() {
-  printf '%s\n' "$(abs_path "$AI_CONFIG_ROOT/skills/herder/shims")"
+  printf '%s\n' "$(abs_path "$AI_CONFIG_ROOT/tools/herder/shims")"
 }
 
 shims_config_home() {

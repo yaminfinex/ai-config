@@ -21,10 +21,10 @@ not the whole doc>.
 - Autonomy: <autonomous — sliding-door capture mandatory | interactive — gates at: ...>
 - Topology: <per stage>
 - Liveness: <per role — cull-on-done / keep-open for interrogation>
-- Notify-back address: <orchestrator `terminal_id` (durable; `herdr pane get $HERDR_PANE_ID`) agents `herder-send` on done | none — relay/soloist self-spawn>
+- Notify-back address: <orchestrator `terminal_id` (durable; `herdr pane get $HERDR_PANE_ID`) agents `herder send` on done | none — relay/soloist self-spawn>
 - Golden agent: <bottle name + what it holds | none>
 - Worktree(s) / branch / workspace: <...>
-- Registered panes: <whether hand-launched panes should run `herder-enroll`; whether culled panes may be reopened with `herder resume <guid>`>
+- Registered panes: <whether hand-launched panes should run `herder enroll`; whether culled panes may be reopened with `herder resume <guid>`>
 
 ## Units — one agent each. Do ONLY your unit.
 
@@ -42,7 +42,7 @@ not the whole doc>.
 5. Commit (no push/PR): `<message convention + trailer>`.
 6. Append `## Unit N — DONE` (see block formats). This block is the truth; the ring below is only
    a doorbell.
-7. **Ring, then hand off.** Ring the orchestrator — `herder-send <notify-back address> 'Unit N
+7. **Ring, then hand off.** Ring the orchestrator — `herder send <notify-back address> 'Unit N
    DONE — run-log updated'` (best-effort; don't block the run on it). Then per topology: relay
    self-spawns the successor `--new-tab` + verifies delivery (the successor is its own ring);
    orchestrator-driven units idle (kept open / culled per liveness); the final unit spawns

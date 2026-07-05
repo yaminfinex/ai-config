@@ -1,0 +1,28 @@
+=== STDERR ===
+herdr agent start failed:
+{
+  "error": {
+    "code": "agent_placement_not_found",
+    "message": "mock start failure"
+  }
+}
+=== STDOUT ===
+
+=== EXIT ===
+3
+=== AGENT START ARGV ===
+agent
+start
+worker-<SHORT>
+--no-focus
+--split
+right
+--
+/bin/zsh
+-lic
+export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder HCOM_DIR=<CASE>/home/.hcom; exec <REPO>/bin/herder launch claude --tag worker --dangerously-skip-permissions
+=== HERDR MUTATING CALLS ===
+agent start worker-<SHORT>
+=== HCOM DIR ===
+=== REGISTRY ===
+=== BRIEF ===
