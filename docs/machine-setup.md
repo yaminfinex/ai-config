@@ -70,6 +70,21 @@ grep -RInE '^[[:space:]]*(alias[[:space:]]+(claude|codex|herder)=|(function[[:sp
 Remove or rename any `herder`, `claude`, or `codex` alias or function that should no longer shadow
 the managed paths.
 
+**PATH-order shadowing (interactive shells).** If mise activation runs in `~/.zshenv`, any PATH
+prepends later in `~/.zshrc` (`~/.local/bin`, nvm, pnpm, …) land *ahead* of the managed entries —
+`ai-doctor` then reports `claude: shadowed before expected` even with no alias in sight. mise does
+not re-assert ordering on its own; fix it by force-reapplying the managed env as the **last** line
+of `~/.zshrc`:
+
+```sh
+# Re-assert mise-managed PATH entries (conf.d _.path) after the prepends above.
+eval "$(mise hook-env -s zsh --force 2>/dev/null)"
+```
+
+No repo paths are hardcoded — the mise conf.d file stays the single source of truth; this line
+just replays it after everything else has had its say. Verify with `type -a claude` in a fresh
+shell.
+
 ## Updates
 
 After the first setup, use:
