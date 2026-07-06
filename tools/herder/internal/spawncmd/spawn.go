@@ -393,6 +393,16 @@ func (r *runner) run() int {
 	var wsListOut []byte
 	var workspaces []workspace
 
+	// Default the target to the CALLER's own pane when neither --workspace nor
+	// --from-pane was given. Without an anchor the new tab/pane lands in whatever
+	// workspace currently has FOCUS (wherever the human is looking), not where the
+	// spawn was aimed; anchoring to HERDR_PANE_ID makes placement deterministic.
+	if opts.Workspace == "" && opts.FromPane == "" {
+		if paneID := os.Getenv("HERDR_PANE_ID"); paneID != "" {
+			opts.FromPane = paneID
+		}
+	}
+
 	if opts.FromPane != "" {
 		out, _, _ := r.herdr.Combined("pane", "get", opts.FromPane)
 		pane, parseErr := herdrcli.ParsePaneGet(out)

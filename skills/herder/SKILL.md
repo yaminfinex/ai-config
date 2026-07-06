@@ -86,6 +86,26 @@ Refuses to send into interrupted / modal panes unless `--force`. Verifies the pr
 
 **Long briefs to codex go through a file, not the wire** *(herdr-driver sharp edge)*. Codex collapses any paste over ~1k chars into a `[Pasted Content N chars]` blob (which then needs a fragile, codex-version-specific double-Enter to submit), a multi-line brief trips its "Create a plan?" overlay, and leading characters clip during boot — all three make codex act on only the tail. A short single-line pointer dodges all three at once, so it is the *durable* fix, not patching the Enter dance. **`herder spawn` now does this automatically for codex**: a long or multi-line initial prompt (incl. anything made multi-line by the `--notify` appendix) is staged to `$HERDER_STATE_DIR/briefs/<guid>.md` and only a one-line `Read <file> …, then plan` pointer is sent (reported as `brief: staged to …` / `brief_file` in `--json`). Claude has none of these pathologies and always gets the inline prompt. For **mid-session** `herder send` to codex the same discipline is still manual: stage the brief in a file and send a one-line pointer yourself. This paste-collapse dance is a keystroke-transport artifact — the hcom driver delivers a brief as one bus message with a recorded `deliver:` ack, so it does not apply when a codex peer is a joined hcom target. Recipe: `references/spawn-patterns.md` → *Send a long brief to codex*.
 
+## Self-send (in-place compaction)
+
+```bash
+herder send "$HERDR_PANE_ID" '/compact <steer: journal state, open units, next gate>'
+```
+
+`herder send` targeting your **own** pane queues an input line against yourself: issued mid-turn,
+the harness fires it the moment the current turn ends. The headline use is a long-running agent
+compacting itself at a boundary it chooses, instead of waiting for auto-compaction to fire
+mid-unit. A queued `/compact` delivered this way is parsed as a real slash command (verified:
+in-place compaction runs and in-context working memory survives into the summary), and
+`/compact <instructions>` lets the agent **steer its own summary** toward what the continuation
+needs. Generic and agent-agnostic — any slash command or text works, claude or codex.
+
+**Only self-send from an agent about to end its turn as part of a real handoff** — it queues a
+real `/compact` against the caller, so it is never a "test" you run in a session you want to
+keep. Write durable state first (commit + journal/HANDOFF block) **before** compacting yourself;
+anything not persisted is at the mercy of the summary. The `orchestrate` skill owns when to
+compact-in-place vs. spawn a fresh continuation.
+
 ## Delivery drivers
 
 `herder send` (and the `--notify` ring) express **delivery intent** — "get this message to that agent" — without naming a transport. A pluggable **delivery driver** does the mechanics, selected at runtime:

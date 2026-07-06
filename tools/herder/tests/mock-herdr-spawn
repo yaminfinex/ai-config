@@ -102,6 +102,10 @@ case "${1:-} ${2:-}" in
       p_50|p_41)  jq -n --arg p "$(agent_pane)" '{result:{pane:{pane_id:$p, terminal_id:"term_AGENT"}}}';;
       *)          jq -n '{result:{}}';;
     esac;;
+  "workspace list")
+    # Read (not logged): serves the workspace validation that the caller-pane
+    # anchoring default triggers (HERDR_PANE_ID=p_orch → ws_1) on every spawn.
+    jq -n '{result:{workspaces:[{workspace_id:"ws_1"}]}}';;
   "tab create")
     log_call "$@"
     : > "$STATE/tab_created"

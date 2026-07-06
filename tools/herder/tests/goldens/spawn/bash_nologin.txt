@@ -14,6 +14,8 @@ worker-<SHORT>
 --no-focus
 --split
 right
+--workspace
+ws_1
 --
 env
 HERDER_GUID=<GUID>

@@ -17,6 +17,8 @@ worker-<SHORT>
 --no-focus
 --split
 right
+--workspace
+ws_1
 --tab
 tab_9
 --
@@ -24,7 +26,7 @@ tab_9
 -lic
 export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder HCOM_DIR=<CASE>/home/.hcom; exec <REPO>/bin/herder launch claude --tag worker --dangerously-skip-permissions
 === HERDR MUTATING CALLS ===
-tab create --no-focus --label worker-<SHORT>
+tab create --no-focus --label worker-<SHORT> --workspace ws_1
 agent start worker-<SHORT>
 pane close p_40
 === HCOM DIR ===

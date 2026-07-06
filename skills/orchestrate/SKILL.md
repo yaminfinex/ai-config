@@ -89,8 +89,15 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
    lands. Backlog-backed runs add a durable unit ledger alongside — `references/backlog-integration.md`.
 2. **Spawn prompts are one line** — "read <playbook> in full, then execute <unit>". Context
    travels through the files + branch, never the prompt.
-3. **Context discipline.** One unit per agent; wide reading goes to subagents. If a unit balloons:
-   commit WIP, report HANDOFF on the unit thread, stop. A clean continuation beats a degraded context.
+3. **Context discipline.** One unit per agent; wide reading goes to subagents. A ballooning unit
+   has two recoveries — both write durable state first (commit WIP + a HANDOFF report on the unit
+   thread), since whatever isn't persisted is lost either way. **Compact in place:** self-send a
+   steered `/compact` as the last act before the turn ends (`herder` skill → *Self-send*) — keeps
+   the same pane, session identity, and bus name; the agent wakes post-compaction and continues
+   its own unit with a summary it steered. **Spawn a fresh continuation:** stop and let a clean
+   copy pick up from the HANDOFF report. Compact in place when the context is still coherent and
+   only heavy; spawn fresh when it is already degraded (a steered compaction of muddled context
+   just preserves the muddle) or the continuation should switch agent/model.
 4. **Verification before done.** A finished worker reports DONE on its unit thread with the
    playbook-pinned commands' results. The orchestrator never trusts the claim: it re-runs the
    pinned gates itself (a build-cached green is not independent evidence), then records the

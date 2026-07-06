@@ -14,6 +14,8 @@ quote;$`&<>("* )worker-<SHORT>
 --no-focus
 --split
 right
+--workspace
+ws_1
 --
 /bin/zsh
 -lic
