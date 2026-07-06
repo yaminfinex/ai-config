@@ -25,7 +25,8 @@ Operational rules:
 - `bin/ai-adopt <name>` searches global skill roots and project-local `.claude/skills`, `.agents/skills`, and `.codex/skills` roots from the current directory upward.
 - If a live skill exists outside the repo, surface it as unharvested instead of overwriting it.
 - Use `bin/ai-setup --dry-run` before installing or repairing links when the effect is not obvious.
-- Use `bin/ai-setup --shell-path` only when the user wants shell startup files modified; normal setup only prints the PATH reminder.
+- `bin/ai-setup` requires mise and writes the managed mise PATH config for `bin/` and
+  `tools/herder/shims/`; do not add shell rc PATH blocks.
 
 After changes:
 

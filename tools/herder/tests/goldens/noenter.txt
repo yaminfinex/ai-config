@@ -1,0 +1,6 @@
+=== STDERR ===
+sent 21 chars to p_10 (claude), not submitted (--no-enter), verify=placed
+=== STDOUT ===
+{"pane_id":"p_10","agent":"claude","target":"alpha","resolved_via":"terminal_id","submitted":false,"verify":"placed","extra_enter_sent":false,"paste_collapsed":false,"message_preview":"ring: alpha unit DONE"}
+=== EXIT ===
+0

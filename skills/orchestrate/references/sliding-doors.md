@@ -11,7 +11,7 @@ comes after — architecture seams, approach/library choices, scope calls on ope
 design to land. Mechanical consequences of already-made decisions don't count; don't dilute the
 signal.
 
-Run-log block, written at the moment the door is taken:
+Journal entry, written when the door is taken — workers report theirs on the unit thread:
 
 ```markdown
 ## SLIDING DOOR — <short name> (Unit N)
@@ -42,7 +42,9 @@ needed.
    `Chosen: BRANCHED`.
 2. **Isolate the doors.** Code doors get a worktree + branch each (one writer per worktree);
    design doors just get separate files. Spawn each door's agent with the standard one-line
-   prompt + a per-door addendum in the playbook (same scope, different approach pinned). Doors
+   prompt + a per-door addendum in the playbook (same scope, different approach pinned). When the
+   door is a branch of an existing registered conversation, `herder fork <guid>` / `herder-fork`
+   can preserve session lineage with `provenance.forked_from`; otherwise spawn a fresh agent. Doors
    share nothing and may run concurrently.
 3. **Same gate for both.** A door that can't go green has answered the question.
 4. **Comparison is its own unit:** a fresh agent (or the user) reads both artifacts + DONE blocks

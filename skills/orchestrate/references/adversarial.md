@@ -13,15 +13,16 @@ For a contested decision where one agent's first idea would anchor too hard.
 2. **Adversarial review:** a fresh agent attacks all designs — failure scenarios, unstated
    assumptions. Output: verdicts + amendments, not a rewrite.
 3. **Implementation:** land the winner with the amendments applied, grafting the best of the
-   runners-up. Track each amendment to closure in the run-log (applied, or rejected with
+   runners-up. Track each amendment to closure in the journal (applied, or rejected with
    reasons) — the jury's value survives only if its output is tracked.
 
 ## Standing adversary
 
 One implementer + a long-lived reviewer pane attacking each commit **as it lands**, when
 end-of-run review would be too late to redirect cheaply (auth, data, money). The adversary reads
-the run-log and `git log`, never edits the worktree; findings go in as `REVIEW` blocks, addressed
-or rejected-with-reasons in the next commit. Use a different agent/model family than the doer.
+the journal and `git log`, never edits the worktree; findings go to the doer on the bus
+(`--intent request`, a `review` thread), addressed or rejected-with-reasons in the next commit;
+the journal tracks closure. Use a different agent/model family than the doer.
 
 ## Golden-agent purpose check
 
@@ -29,7 +30,7 @@ The reviewers above attack *quality*; the golden agent attacks *drift from inten
 **bottle** (`bottling` skill) the agent that holds the original intent — the one that grilled the
 user or wrote the design doc — before the run consumes its context. Decant a fresh copy (the
 bottle stays pristine) wherever judgment is needed and the user isn't in the loop: at gates, when
-a sliding door bites, and at the end-of-run review walking the run-log's decisions. It reviews,
+a sliding door bites, and at the end-of-run review walking the journal's decisions. It reviews,
 never implements — its context is the mission's origin, not the run's evolution, which is exactly
 what makes it a good check and a poor doer. On an autonomous run it's the closest thing to asking
 the user.

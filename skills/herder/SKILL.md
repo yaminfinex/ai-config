@@ -18,25 +18,41 @@ herdr agent list
 
 Record `$HERDR_PANE_ID`. Never close it, never cull yourself.
 
-## Scripts (in `scripts/`)
+## CLI
 
-| Script | Purpose |
+Requires `herder` on PATH. Run `bin/ai-setup` from the ai-config checkout and restart the shell;
+see `tools/herder/README.md` for the implementation map and `docs/machine-setup.md` for machine
+activation.
+
+| Command | Purpose |
 |--------|---------|
-| `herder-spawn` | Mint GUID, `herdr agent start` a child, register it, deliver an initial prompt. |
-| `herder-send` | Mid-session message to an already-spawned peer, with state preflight + delivery verification. |
-| `herder-send-self` | Send an input line to your OWN pane (`$HERDR_PANE_ID`) — the basis for self-driven in-place `/compact`. |
-| `herder-wait` | Block until a target agent reaches a status. |
-| `herder-list` | Reconciled view of registry vs `herdr agent list`. |
-| `herder-cull` | Close a pane and mark registry row closed, with `terminal_id` identity check. |
+| `herder spawn` | Mint GUID, `herdr agent start` a child, register it, deliver an initial prompt. |
+| `herder send` | Mid-session message to an already-spawned peer, with state preflight + delivery verification. |
+| `herder wait` | Block until a target agent reaches a status. |
+| `herder list` | Reconciled view of registry vs `herdr agent list`, including TEAM/BUS columns and `--teams`. |
+| `herder cull` | Close a pane and mark registry row closed, with `terminal_id` identity check and advisory bus cleanup. |
+| `herder enroll` | Register the current pane in-session, with optional `--label`, `--role`, and `--json`. |
+| `herder rename` | Append a new label for a registry target and best-effort sync the herdr pane name. |
+| `herder fork` | Branch an enrolled agent session into a new guid with `provenance.forked_from`. |
+| `herder resume` | Reopen an enrolled closed session with the same guid and `provenance.resumed_at`. |
 
-Each script's `--help` is the source of truth for flags. The herder *uses* these; it does not reimplement them.
+`bin/herder` is a hash-keyed build-cache launcher for the Go implementation in `tools/herder`
+(module `ai-config/tools/herder`). The launcher rebuilds when Go sources change and then re-execs
+the cached binary. The CLI contract — flags, stderr summaries, `--json` shapes, exit codes — is
+pinned by the golden suites in `tools/herder/tests/`.
 
-The `herder-*` scripts are symlinked into `bin/` (on PATH via the managed shell block), so they're callable bare from any pane — **including freshly spawned ones**, which is what makes notify-back work. A spawned agent that never loaded this skill still gets `$HERDER_SEND` (the absolute path to `herder-send`) exported into its shell by `herder-spawn`, so it can ring a peer even if PATH is misconfigured. This closes the gap where agents couldn't find `herder-send` and fell back to raw `herdr agent send` — which writes the text **without** an Enter, so the ring silently never submits.
+Each subcommand's `--help` is the source of truth for flags. The herder *uses* these; it does not reimplement them.
+
+`herder` is callable bare from any pane once `bin/` is on PATH. A spawned agent that never loaded
+this skill still gets `$HERDER_BIN` (the absolute path to `bin/herder`) exported into its shell by
+`herder spawn`, so it can ring a peer with `"$HERDER_BIN" send ...` even if PATH is misconfigured.
+This closes the gap where agents fell back to raw `herdr agent send` — which writes the text
+**without** an Enter, so the ring silently never submits.
 
 ## Spawning
 
 ```bash
-herder-spawn --role review --agent codex --split right --no-focus \
+herder spawn --role review --agent codex --split right --no-focus \
   --prompt 'Review the current branch diff vs main and produce a structured report.'
 ```
 
@@ -44,13 +60,13 @@ Defaults: `--no-focus`, `--split right` for review/research/QA, `--split down` f
 
 **Tab-per-agent: use `--new-tab`, never hand-roll `tab create` + `agent start`.** When the user wants each agent in its own tab, pass `--new-tab`. The naive path leaves a **spare shell** in every tab: `herdr tab create` seeds the tab with a default (root) shell pane, and `herdr agent start --tab` *always* opens a new pane (even without `--split`), so the root shell is left behind. `--new-tab` creates the tab, spawns the agent into it, then closes the root shell — identity-checked by `terminal_id` so it never closes the agent — and re-resolves the agent's `pane_id` after the close compacts ids. The tab is labelled with the agent's label and ends with the agent as its sole pane. Culling the agent later closes its last pane, which auto-closes the tab (no `tab close` needed — that respects the workspace/tab-lifecycle rule below). `--new-tab` and `--tab <id>` are mutually exclusive.
 
-**Permissions are autonomous by default.** `herder-spawn` injects `--dangerously-skip-permissions` (claude) / `--dangerously-bypass-approvals-and-sandbox` (codex) so spawned agents don't stall on tool-approval prompts you can't see in their pane. This is needed because `exec claude` bypasses your shell alias (where skip-permissions usually lives). Pass `--safe` for a default ask-mode agent, or pass your own permission flag via `--extra-arg` (any recognised one suppresses the default). The summary line shows which flag was applied.
+**Permissions are autonomous by default.** `herder spawn` injects `--dangerously-skip-permissions` (claude) / `--dangerously-bypass-approvals-and-sandbox` (codex) so spawned agents don't stall on tool-approval prompts you can't see in their pane. This is needed because `exec claude` bypasses your shell alias (where skip-permissions usually lives). Pass `--safe` for a default ask-mode agent, or pass your own permission flag via `--extra-arg` (any recognised one suppresses the default). The summary line shows which flag was applied.
 
-**First-run directory-trust modals are handled.** Both claude ("Is this a project you created or one you trust?") and codex ("Do you trust the contents of this directory?") show a trust modal on first run in an untrusted dir — every fresh worktree counts, and the tool-permission flags above do **not** dismiss it. The modal sits at `status=idle` and its selector arrow spoofs the input sigil, so a naive send pastes the prompt *into* the modal and stray characters silently confirm trust. `herder-spawn` detects it and, in autonomous mode, accepts it deliberately (reported as `trust-accepted`). Under `--safe` it refuses and surfaces it instead — you accept it in the pane, then `herder-send` the prompt.
+**First-run directory-trust modals are handled.** Both claude ("Is this a project you created or one you trust?") and codex ("Do you trust the contents of this directory?") show a trust modal on first run in an untrusted dir — every fresh worktree counts, and the tool-permission flags above do **not** dismiss it. The modal sits at `status=idle` and its selector arrow spoofs the input sigil, so a naive send pastes the prompt *into* the modal and stray characters silently confirm trust. `herder spawn` detects it and, in autonomous mode, accepts it deliberately (reported as `trust-accepted`). Under `--safe` it refuses and surfaces it instead — you accept it in the pane, then `herder send` the prompt.
 
-**Initial-prompt delivery is verified, not fire-and-forget.** After the agent settles (output stable, modals cleared), `herder-spawn` delegates the send to `herder-send`, which confirms the text landed (re-pasting if dropped) and submitted. A prompt that can't be confirmed is reported `prompt: NOT confirmed` / `delivery_result` (in `--json`) rather than silently lost — read the pane before assuming it landed.
+**Initial-prompt delivery is verified, not fire-and-forget.** After the agent settles (output stable, modals cleared), `herder spawn` delegates the send to `herder send`, which confirms the text landed (re-pasting if dropped) and submitted. A prompt that can't be confirmed is reported `prompt: NOT confirmed` / `delivery_result` (in `--json`) rather than silently lost — read the pane before assuming it landed.
 
-**Notify-back (`--notify`).** Pass `--notify` so the spawned agent rings *you* when its unit is done, instead of you polling it. `herder-spawn` resolves *your own* pane to its durable `terminal_id` (via `herdr pane get` — `HERDR_PANE_ID` is the `p_<n>` alias form) and exports it as `HERDER_NOTIFY_TO` (or `--notify-to <target>` to point elsewhere) alongside `HERDER_SEND`, then appends a concrete ring command to the prompt — so the worker runs exactly what it was handed, no PATH or skill-load needed, and the ring follows you across pane-id compaction instead of firing into a recycled pane. The run-log block stays the record; the ring is only a doorbell (`orchestrate` skill, invariant 9). Don't hand-roll the ring with `herdr agent send` — no Enter, no submit.
+**Notify-back (`--notify`).** Pass `--notify` so the spawned agent rings *you* when its unit is done, instead of you polling it. `herder spawn` resolves *your own* pane to its durable `terminal_id` (via `herdr pane get` — `HERDR_PANE_ID` is the `p_<n>` alias form) and exports it as `HERDER_NOTIFY_TO` (or `--notify-to <target>` to point elsewhere) alongside `HERDER_BIN`, then appends a concrete ring command to the prompt — so the worker runs exactly what it was handed, no PATH or skill-load needed, and the ring follows you across pane-id compaction instead of firing into a recycled pane. The ring goes through the same `herder send` intent (and thus the active delivery driver — hcom when you're a joined instance, herdr otherwise); the worker doesn't pick a transport. The run-log block stays the record; the ring is only a doorbell (`orchestrate` skill, invariant 9). Ring via `$HERDER_BIN`, not a hand-rolled `herdr agent send` — that raw keystroke call writes the text with no Enter so the ring never submits (a herdr-driver artifact the `herder send` path handles for you).
 
 After spawning, echo `<label>`, short GUID, and pane id back to the user.
 
@@ -59,58 +75,110 @@ Recipes (worktrees, follow-ups, culling): `references/spawn-patterns.md`.
 ## Sending to a running peer
 
 ```bash
-herder-send <guid|short-guid|label|terminal_id|pane_id> "message"
+herder send <guid|short-guid|label|terminal_id|pane_id> "message"
 ```
 
-Refuses to send into interrupted / modal panes unless `--force`. Verifies the prompt buffer cleared before claiming delivery. Use this instead of hand-rolling `herdr agent send` + `pane send-keys Enter`. Rationale: `references/herder-delta.md` → *Driving peer agents safely*.
+Refuses to send into interrupted / modal panes unless `--force`. Verifies the prompt buffer cleared before claiming delivery. Use this instead of hand-rolling a transport call. Delivery runs through the **active delivery driver** (see *Delivery drivers* below) — the command expresses intent; the driver (herdr keystrokes, or hcom hooks when the target is a joined hcom instance) does the mechanics. Rationale: `references/herder-delta.md` → *Driving peer agents safely*.
 
-**Sending to a BUSY target reports `verify=queued`, not failure.** If the target is mid-turn when you send (the common case for ringing a working orchestrator), it can't process the message now — claude/codex queues it to run after the current turn, and the queued text renders on the input line where the sigil heuristic can't tell it from an unsubmitted buffer. `herder-send` detects this (the target was `working` before the send) and reports `verify=queued` with **exit 0** — that is success. It deliberately does **not** fire the extra-Enter recovery in this case (on a busy agent each extra Enter stacks another duplicate queued message). So **do not resend on a `queued` (or `not_delivered`) doorbell** — the run-log is the record; resending just piles duplicates into the target's queue.
+**Sending to a BUSY target reports `verify=queued`, not failure.** If the target is mid-turn when you send (the common case for ringing a working orchestrator), it can't process the message now — it's queued to run after the current turn. `herder send` detects this (the target was `working` before the send) and reports `verify=queued` with **exit 0** — that is success. So **do not resend on a `queued` (or `not_delivered`) doorbell** — the run-log is the record; resending just piles duplicates into the target's queue. This `queued`-vs-`delivered` contract is driver-agnostic — under the hcom driver the queued case is a message accepted to the bus but not yet injected at a hook boundary; under herdr it is text left on the input line. (herdr-driver detail: the queued text renders where the sigil heuristic can't tell it from an unsubmitted buffer, so herdr deliberately skips the extra-Enter recovery here — on a busy agent each extra Enter stacks another duplicate.)
 
-**Targets resolve by `terminal_id`, not the stored pane number — so sends don't drift.** A guid/short-guid/label is looked up in the registry, then re-resolved to the agent's *current* pane via its durable `terminal_id` (herdr compacts/reassigns `pane_id`s as panes close, so the spawn-time pane in the registry goes stale and would mis-send to whoever sits there now). A bare `terminal_id` (`term_*`) resolves the same drift-proof way without a registry record — this is the handle `herder-spawn --notify` injects for the orchestrator ring, so the notify-back doorbell follows the orchestrator across pane-id compaction instead of firing into a recycled pane. A raw `pane_id` argument is used verbatim. If the target's terminal isn't live anywhere (agent gone/culled) `herder-send` **refuses** (exit 2) rather than firing into a recycled pane — pass an explicit live `pane_id` to override. Use `herder-send --dry-run <target>` to print where a target resolves (and whether it has drifted) without sending. `herder-wait` and `herder-list` resolve the same way. Background: `references/herder-delta.md` → *Known sharp edges* (pane-id compaction).
+**Targets resolve by `terminal_id`, not the stored pane number — so sends don't drift** *(herdr-driver resolution)*. A guid/short-guid/label is looked up in the registry, then re-resolved to the agent's *current* pane via its durable `terminal_id` (herdr compacts/reassigns `pane_id`s as panes close, so the spawn-time pane in the registry goes stale and would mis-send to whoever sits there now). A bare `terminal_id` (`term_*`) resolves the same drift-proof way without a registry record — this is the handle `herder spawn --notify` injects for the orchestrator ring, so the notify-back doorbell follows the orchestrator across pane-id compaction instead of firing into a recycled pane. A raw `pane_id` argument is used verbatim. If the target's terminal isn't live anywhere (agent gone/culled) `herder send` **refuses** (exit 2) rather than firing into a recycled pane — pass an explicit live `pane_id` to override. Use `herder send --dry-run <target>` to print the transport a real send would take: herdr pane resolution, hcom bus coordinate, or, under forced `HERDER_BUS=hcom`, `would REFUSE (exit 2)` for a registry row that has no recorded bus name. `herder wait` uses the same terminal-id discipline for pane state, and `herder list` reconciles pane state while displaying `TEAM`/`BUS`. The hcom driver has no pane-drift failure mode: guid/label resolves through the registry to a recorded `hcom_name` and `hcom_dir`, then sends to that bus name. Background: `references/herder-delta.md` → *Known sharp edges* (pane-id compaction).
 
-**Long briefs to codex go through a file, not the wire.** Codex collapses any paste over ~1k chars into a `[Pasted Content N chars]` blob (which then needs a fragile, codex-version-specific double-Enter to submit), a multi-line brief trips its "Create a plan?" overlay, and leading characters clip during boot — all three make codex act on only the tail. A short single-line pointer dodges all three at once, so it is the *durable* fix, not patching the Enter dance. **`herder-spawn` now does this automatically for codex**: a long or multi-line initial prompt (incl. anything made multi-line by the `--notify` appendix) is staged to `$HERDER_STATE_DIR/briefs/<guid>.md` and only a one-line `Read <file> …, then plan` pointer is sent (reported as `brief: staged to …` / `brief_file` in `--json`). Claude has none of these pathologies and always gets the inline prompt. For **mid-session** `herder-send` to codex the same discipline is still manual: stage the brief in a file and send a one-line pointer yourself. Recipe: `references/spawn-patterns.md` → *Send a long brief to codex*.
+**Long briefs to codex go through a file, not the wire** *(herdr-driver sharp edge)*. Codex collapses any paste over ~1k chars into a `[Pasted Content N chars]` blob (which then needs a fragile, codex-version-specific double-Enter to submit), a multi-line brief trips its "Create a plan?" overlay, and leading characters clip during boot — all three make codex act on only the tail. A short single-line pointer dodges all three at once, so it is the *durable* fix, not patching the Enter dance. **`herder spawn` now does this automatically for codex**: a long or multi-line initial prompt (incl. anything made multi-line by the `--notify` appendix) is staged to `$HERDER_STATE_DIR/briefs/<guid>.md` and only a one-line `Read <file> …, then plan` pointer is sent (reported as `brief: staged to …` / `brief_file` in `--json`). Claude has none of these pathologies and always gets the inline prompt. For **mid-session** `herder send` to codex the same discipline is still manual: stage the brief in a file and send a one-line pointer yourself. This paste-collapse dance is a keystroke-transport artifact — the hcom driver delivers a brief as one bus message with a recorded `deliver:` ack, so it does not apply when a codex peer is a joined hcom target. Recipe: `references/spawn-patterns.md` → *Send a long brief to codex*.
 
 ## Self-send (in-place compaction)
 
 ```bash
-herder-send-self <message...>          # → herder-send "$HERDR_PANE_ID" "<message>"
+herder send "$HERDR_PANE_ID" '/compact <steer: journal state, open units, next gate>'
 ```
 
-A thin wrapper that targets your **own** pane. Issued mid-turn, the input is submitted to your own prompt and the harness queues it to fire the moment the current turn ends — so the headline use is a long-running agent compacting itself at a boundary it chooses, instead of waiting for auto-compaction to fire mid-unit:
+`herder send` targeting your **own** pane queues an input line against yourself: issued mid-turn,
+the harness fires it the moment the current turn ends. The headline use is a long-running agent
+compacting itself at a boundary it chooses, instead of waiting for auto-compaction to fire
+mid-unit. A queued `/compact` delivered this way is parsed as a real slash command (verified:
+in-place compaction runs and in-context working memory survives into the summary), and
+`/compact <instructions>` lets the agent **steer its own summary** toward what the continuation
+needs. Generic and agent-agnostic — any slash command or text works, claude or codex.
+
+**Only self-send from an agent about to end its turn as part of a real handoff** — it queues a
+real `/compact` against the caller, so it is never a "test" you run in a session you want to
+keep. Write durable state first (commit + journal/HANDOFF block) **before** compacting yourself;
+anything not persisted is at the mercy of the summary. The `orchestrate` skill owns when to
+compact-in-place vs. spawn a fresh continuation.
+
+## Delivery drivers
+
+`herder send` (and the `--notify` ring) express **delivery intent** — "get this message to that agent" — without naming a transport. A pluggable **delivery driver** does the mechanics, selected at runtime:
+
+- **`herdr` — the always-present keystroke fallback.** Writes text into the target's pane and submits it, verifying delivery by sigil heuristic + status. Never requires anything beyond herdr, so a machine with no other transport behaves exactly as it always has. All the resolution/queued/paste-collapse sharp edges above are *herdr-driver* behavior.
+- **`hcom` — a bus driver, auto-selected from the registry.** Delivers over hcom's hooks + SQLite bus instead of keystrokes: a message becomes a bus event injected at the peer's next hook boundary, with a recorded `deliver:` ack (real delivery semantics, no silent pane-drop). Both Claude and Codex are first-class hcom targets. In `auto`, a guid/short-guid/label with a recorded non-empty `hcom_name` and an available hcom CLI routes to hcom; a bus-less record, raw `term_*`/`p_*`, missing hcom, or no record routes to herdr. An hcom send is scoped to the record's `hcom_dir`, so team buses stay isolated without making the caller manage `HCOM_DIR`.
+
+**`HERDER_BUS` override** (env; values `auto` | `herdr` | `hcom`): `auto` is the default registry-driven selection above; `herdr` forces keystrokes; `hcom` forces the bus for testing/debugging. Forced hcom still refuses a registry row with an empty `hcom_name` (exit 2); with no registry row, it treats the target as a literal hcom bus name on the caller's ambient bus. Selection is transport-neutral by design: **no command or flag ever names a transport** — you never pass `--hcom`.
+
+**Launch-through-hcom (no post-spawn join).** hcom-capable agents are `claude`, `codex`, and `gemini`; `opencode` is deliberately excluded until its real default config dir can be pinned safely. For those capable agents, `herder spawn` execs `bin/herder launch <tool> --tag <role>` (`hcom <tool> --run-here --tag <role>`) inside the pane's login shell, so they are bus-bound from birth (hooks + pty). hcom is a **hard dependency** for these spawns (spawn errors early if hcom is absent — no raw degrade); `bash`, `opencode`, and other non-capable agents exec raw and stay keystroke-only. There is no `--bus` flag and no join step.
+
+The role becomes the hcom `--tag`, hcom assigns a `<role>-<random>` name, and `herder spawn` captures that name by launch-pane correlation (`launch_context.pane_id`), falling back to tag+cwd+recency. The registry stores `team`, `hcom_dir`, `hcom_name`, and `hcom_tag`; an empty `hcom_name` means the peer stays reachable by herdr keystrokes only.
+
+Registry rows also carry optional `provenance` (`mechanism`, `spawned_by`, hcom `tool_session_id`, tag/batch, cwd/workspace/branch, timestamp, plus lifecycle fields `forked_from` and `resumed_at`). Spawned agents export `HERDER_SPAWNED_BY` into their child env, so lineage is derivable from the append-only registry. Manual/shim launches use `manual-<short>` by default (or `HERDER_LABEL` / `herder enroll --label`) and record `mechanism:"shim"` when launched through the PATH shim, otherwise `mechanism:"enroll"`. Sidecar resume-recognition matches discovered `tool_session_id` against all registry rows, including closed and older session-bearing rows, so raw hcom/PATH-shim resumes can reattach to the existing guid when the tool preserves its session id.
+
+## Enroll / Rename
 
 ```bash
-herder-send-self /compact focus on run-log state, open units, and the next gate
+herder enroll --label reviewer-1 --role reviewer --json
+herder rename reviewer-1 reviewer-lead
 ```
 
-A queued `/compact` delivered this way is parsed as a real slash command (verified: in-place compaction runs and in-context working memory survives into the summary), and `/compact <instructions>` lets the agent **steer its own summary** toward what the continuation needs. Generic and agent-agnostic — any slash command or text works, claude or codex.
+Use `herder enroll` from inside a pane that should become addressable by guid/label/hcom. It requires `HERDR_ENV=1` and `HERDR_PANE_ID`, resolves its own `terminal_id`, `pane_id`, `workspace_id`, and cwd through `herdr pane get`, then appends a full registry row. Re-running it is idempotent in the append-only sense: latest row wins.
 
-**Only call this from an agent about to end its turn as part of a real handoff** — it queues a real `/compact` against the caller, so it is never a "test" you run in a session you want to keep. Write durable state first (commit + run-log block) **before** compacting yourself; anything not persisted is at the mercy of the summary. The `orchestrate` skill's context-management notes own when to compact-in-place vs. spawn a fresh continuation.
+Use `herder rename` to change labels. It refuses unknown targets and refuses a label already owned by a different active guid; on success it appends a full latest-wins row carrying the prior fields forward, then runs `herdr agent rename <terminal_id> <label>` best-effort. A herdr rename failure is advisory only; the registry update is the source of truth.
+
+## Fork / Resume
+
+```bash
+herder fork <guid|short-guid|label> [--label L] [--role R] [--prompt P] [--json]
+herder resume <guid|short-guid|label> [--json]
+```
+
+Use `herder fork` when a session should branch. The child gets a new guid and a `provenance` row with `mechanism:"fork"` and `forked_from:<parent-guid>`. If the parent is live and has an hcom name, fork targets that live hcom row; otherwise it targets the stored `provenance.tool_session_id` from any registry row for the parent, including closed rows. If neither coordinate exists, it fails clearly. The default label is `<parent-label>-fork-<new-short>`, and labels cannot collide with another active guid. If the underlying hcom launch exits before binding a pane, the command appends a closed `launch_failed` row and exits nonzero instead of leaving a fake active agent.
+
+Use `herder resume` when a session should continue. It refuses a target that is already active and live; otherwise it reopens the same guid via the stored `tool_session_id`, appends an active row with fresh pane coordinates, and sets `provenance.resumed_at`. This depends on tools preserving/resolving session ids; Codex rows can currently have an empty hcom `session_id`, so fork/resume fails until a real `tool_session_id` has been recorded. Raw hcom/PATH-shim resumes still work as muscle memory: when sidecar sees a known `tool_session_id` without `HERDER_GUID`, it reattaches to the existing guid instead of minting a `manual-*` identity.
+
+**Teams are an optional ringfence — the global bus is the default posture.** Spawns without `--team` land on the global `~/.hcom` bus, and that is the normal operating mode: addressing and filtering ride the registry (every command dereferences guid/short-guid/label to the recorded `hcom_name`/`hcom_dir`), so per-agent targeting needs no team. When you do want bus isolation: `--team <name>` wins, else `$HERDER_TEAM`, else global. A named team pins the child's `HCOM_DIR` to `$HERDER_TEAMS_ROOT/<team>` (default root `~/.hcom/teams`). `herder list` shows `TEAM` and `BUS`, and `herder list --teams` enumerates the global bus plus team dirs. The config-dir pin table now lives in `tools/herder/internal/launchcmd`. **Known caveat (team buses only):** the config-dir pin makes claude read its JSON state from `~/.claude/.claude.json`, which starts fresh — the *first* team-bus claude launch per machine hits one-time onboarding (login/theme picker) in the pane. Complete it once and the state persists machine-wide; codex is unaffected, and the global bus pins nothing so it has no such wall. Do not build protocols that *require* teams.
+
+Machine activation is explicit: `ai-setup` writes a mise `conf.d` PATH drop-in for `bin/` and
+`tools/herder/shims/`.
+
+Full contract, selection logic, and the guide for adding a third driver: `references/delivery-drivers.md`.
 
 ## Waiting
 
 ```bash
-herder-wait <target> [--status idle|working|blocked] [--timeout MS] [--read]
+herder wait <target> [--status idle|working|blocked] [--timeout MS] [--read]
 ```
 
-Default status `idle`. The claude/codex integration hooks never emit `done`, so don't wait for it. If `herder-wait` returns sooner than expected, read the pane and call again.
+Default status `idle`. The claude/codex integration hooks never emit `done`, so don't wait for it. If `herder wait` returns sooner than expected, read the pane and call again.
 
-Prefer being *rung* over blocking here: a spawned agent that finishes can `herder-send` its orchestrator a one-line doorbell, so the orchestrator idles and wakes on the message instead of burning a turn in `herder-wait`. The `orchestrate` skill owns that protocol (invariant 9); `herder-wait` is then the **backstop** for a dropped ring — a busy orchestrator only queues a send and one at a modal refuses it (`herder-send` exit 2) — not the primary signal. Keep backstop waits bounded so an incoming ring isn't blocked behind a long `herder-wait` loop.
+The `herder launch` wrapper starts a sidecar for hcom-backed panes. The sidecar listens to hcom lifecycle events and reports `working`, `idle`, and `blocked` back to herdr with `pane.report_agent`, so `herder wait --status idle` follows hcom `listening` instead of relying on herdr's process classifier.
+
+Prefer being *rung* over blocking here: a spawned agent that finishes can `herder send` its orchestrator a one-line doorbell, so the orchestrator idles and wakes on the message instead of burning a turn in `herder wait`. The `orchestrate` skill owns that protocol (invariant 9); `herder wait` is then the **backstop** for a dropped ring — a busy orchestrator only queues a send and one at a modal refuses it (`herder send` exit 2) — not the primary signal. Keep backstop waits bounded so an incoming ring isn't blocked behind a long `herder wait` loop.
 
 ## Culling
 
 ```bash
-herder-cull --guid <short>      # or --label / --pane
-herder-cull --gone [--dry-run]  # records whose terminal_id is no longer live
+herder cull --guid <short>      # or --label / --pane
+herder cull --gone [--dry-run]  # records whose terminal_id is no longer live
 ```
 
-`herder-cull` verifies `terminal_id` before closing — herdr `pane_id`s can compact and reassign, so a stale id may point to someone else's work. Refuses on mismatch; `--force` bypasses. Confirm before culling unless the user gave explicit consent for *this* cull.
+`herder cull` verifies `terminal_id` before closing — herdr `pane_id`s can compact and reassign, so a stale id may point to someone else's work. Refuses on mismatch; `--force` bypasses. Confirm before culling unless the user gave explicit consent for *this* cull.
+
+For a registry row with `hcom_name`, cull also best-effort drops the bus entry with `hcom kill <name>` scoped to the recorded `hcom_dir`. This is advisory hygiene only: a bus-drop failure is reported but never makes pane culling fail, and `--dry-run` does not touch the bus.
 
 ## Safety rules
 
 - Never close `$HERDR_PANE_ID` (your own pane).
 - Never close panes outside the registry without explicit user confirmation.
 - **Never call `herdr workspace close` or `herdr tab close`.** Workspace/tab lifecycle is the user's. Closing the last tab implicitly closes the workspace with no `api.request.start` log line — no clean post-mortem.
-- **Never send `esc` to a running peer agent.** It's the only input-shaped key `pane send-keys` accepts, but it doubles as **interrupt** for codex/claude. Use `herder-send` instead of hand-rolling.
+- **Never send `esc` to a running peer agent.** It's the only input-shaped key `pane send-keys` accepts, but it doubles as **interrupt** for codex/claude. Use `herder send` instead of hand-rolling.
 - Never `herdr session stop` / `session delete` without explicit confirmation.
 - Default `--no-focus` so the user keeps their context.
 - `herdr pane read` / `agent read` before sending follow-ups; `herdr agent send` writes literal text without Enter.

@@ -1,0 +1,27 @@
+=== STDERR ===
+
+=== STDOUT ===
+{
+  "guid": "guid-beta-0000",
+  "short_guid": "beta",
+  "label": "beta",
+  "role": "reviewer",
+  "agent": "codex",
+  "terminal_id": "term_BBB",
+  "pane_id": "p_20",
+  "team": "blue",
+  "hcom_dir": "/hfake/.hcom/teams/blue",
+  "hcom_name": "beta-rive",
+  "hcom_tag": "reviewer",
+  "status": "active",
+  "live": {
+    "pane_id": "p_99",
+    "terminal_id": "term_BBB",
+    "agent": "codex",
+    "agent_status": "working"
+  },
+  "live_pane": "p_99",
+  "live_status": "working"
+}
+=== EXIT ===
+0

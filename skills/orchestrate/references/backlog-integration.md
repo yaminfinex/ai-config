@@ -7,13 +7,13 @@ let the run lean on it. When it doesn't, nothing changes — this whole file is 
 
 - **Backlog.md (`backlog/`, git-tracked, durable)** = the *unit ledger*. The list of units, their
   grouping, dependencies, and current status. Survives the branch, the prune, and the run.
-- **Run-log (napkins, gitignored, ephemeral)** = the *evidence ledger*. START/DONE/BLOCKED blocks,
-  verification output, sliding doors, deviations. Stays the source of truth for *what happened*
-  (invariants 4 + 9). Evidence never goes into backlog tasks.
+- **Journal (run-log — napkins, gitignored, ephemeral)** = the *decision ledger*: dispatches,
+  sliding doors, deviations, verification verdicts (invariants 4 + 9). Reports and evidence ride
+  the bus on unit threads; neither belongs in backlog tasks.
 
-Rule of thumb: backlog answers *what's left and what's ready*; the run-log answers *what was done
-and is it green*. If you're tempted to paste verification into a backlog task, stop — that's the
-run-log's job.
+Rule of thumb: backlog answers *what's left and what's ready*; the journal answers *what was
+decided and did it verify*; the unit thread holds the worker's report. Verification pasted into
+a backlog task is a smell — reports belong on the bus; the journal records the verdict.
 
 ## Detect (do this once, at run-shape time)
 
@@ -49,14 +49,14 @@ waves instead of hand-sequencing in the playbook:
 ```bash
 backlog sequence list --plain     # wave 1 = the ready/unblocked units
 ```
-The orchestrator dispatches a wave, waits for its DONE rings, recomputes. This replaces "spawn
+The orchestrator dispatches a wave, waits for its DONE reports, recomputes. This replaces "spawn
 Unit N after Unit N-1" bookkeeping for anything with real branching.
 
 **Status mirrors the unit lifecycle.** The agent owning a unit moves its task:
-- on `## Unit N — START` → `backlog task edit <id> -s "In Progress" --plain`
-- on `## Unit N — DONE` (after verification is green and pasted in the run-log) →
+- on starting the unit → `backlog task edit <id> -s "In Progress" --plain`
+- on sending its DONE report (pinned gates green) →
   `backlog task edit <id> -s "Done" --plain`
-- on `## Unit N — BLOCKED` → leave status, the run-log block carries the failure.
+- on a BLOCKED report → leave status; the report carries the failure.
 
 Assignee optionally tracks ownership: `-a <pane-label>`.
 
@@ -68,12 +68,12 @@ flip another agent's status.
 
 Spawn prompts are still one line (invariant 2) — "read `<playbook>` in full, then execute Unit N";
 the playbook tells the agent whether this is a backlog-backed run and what its task ID is. The
-run-log is still the carrier of evidence and the cold-pickup surface. Backlog being absent must
-never block a run — it's an enhancement to durability, not a dependency.
+journal is still the cold-pickup surface; reports and evidence ride the bus. Backlog being absent
+must never block a run — it's an enhancement to durability, not a dependency.
 
 ## End of run
 
 The branch merges; `backlog/` merges with it, so the durable unit record ships in the repo. Harvest
-the run-log into the backlog where it belongs (follow-ups discovered mid-run → new `backlog task
+the journal into the backlog where it belongs (follow-ups discovered mid-run → new `backlog task
 create`, no run label) before pruning napkins. Closed run-label tasks can stay closed in `backlog/`
 as the record, or `backlog cleanup` ages them out.

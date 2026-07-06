@@ -343,8 +343,8 @@ func TestBuildLaunchPaneDefaultSafe(t *testing.T) {
 	if !plan.Pane {
 		t.Error("pane plan should report Pane=true")
 	}
-	if plan.Argv[0] != "herder-spawn" {
-		t.Errorf("Argv[0] = %q, want herder-spawn", plan.Argv[0])
+	if got := strings.Join(plan.Argv[:2], " "); got != "herder spawn" {
+		t.Errorf("Argv[0:2] = %q, want herder spawn", got)
 	}
 	if split, _ := flagValue(plan.Argv, "--split"); split != "right" {
 		t.Errorf("--split = %q, want right", split)
@@ -460,7 +460,7 @@ func TestBuildLaunchPaneRestoresPermissionMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildLaunch: %v", err)
 	}
-	// The mode rides through as --extra-arg, which herder-spawn recognises and
+	// The mode rides through as --extra-arg, which herder spawn recognises and
 	// so suppresses its autonomous default — making --safe redundant.
 	if contains(plan.Argv, "--safe") {
 		t.Errorf("restored-mode pane must not pass --safe: %v", plan.Argv)

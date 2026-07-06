@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# mock-hcom — a deterministic, hermetic stand-in for the `hcom` CLI, used by
+# check-hcom-contract.sh to exercise the hcom delivery driver without a live bus.
+#
+# It answers exactly the hcom sub-invocations driver-hcom.sh makes:
+#   hcom list <bus_name>                                  → joined? (exit 0/1)
+#   hcom send --from <sender> @<bus_name> -- <message>    → deliver (exit 0/1)
+#   hcom events --last N --context deliver:<name> --after <iso>  → ack array
+#
+# Behaviour is driven by env vars (set by the harness):
+#   MOCK_HCOM_SCENARIO  delivered | queued | notjoined | sendfail
+#   MOCK_HCOM_PROBE     a scratch dir; every invocation records the effective
+#                       HCOM_DIR and (for send) the full argv, so the test can
+#                       assert bus scoping + recipient addressing.
+#
+# It records the HCOM_DIR it was invoked under on EVERY call, proving the driver
+# scoped the send to the peer's recorded team bus.
+
+set -euo pipefail
+
+SCEN="${MOCK_HCOM_SCENARIO:-delivered}"
+PROBE="${MOCK_HCOM_PROBE:-/tmp/mock-hcom-probe}"
+mkdir -p "$PROBE"
+
+# Record the effective bus dir on every call (last write wins; all calls in one
+# hcom_send share the same scoped HCOM_DIR, so this is stable within a send).
+printf '%s' "${HCOM_DIR:-<unset>}" > "$PROBE/hcom_dir"
+
+case "${1:-}" in
+  list)
+    # hcom list <bus_name>
+    printf '%s' "${2:-}" > "$PROBE/list_target"
+    [[ "$SCEN" == "notjoined" ]] && exit 1
+    jq -n --arg n "${2:-}" '[{name:$n, joined:true}]'
+    exit 0
+    ;;
+  send)
+    # hcom send --from <sender> @<bus_name> -- <message>
+    printf '%s\n' "$*" > "$PROBE/send_argv"
+    [[ "$SCEN" == "sendfail" ]] && exit 1
+    printf 'ok\n'
+    exit 0
+    ;;
+  events)
+    # hcom events --last N --context deliver:<name> --after <iso>
+    printf '%s\n' "$*" > "$PROBE/events_argv"
+    if [[ "$SCEN" == "delivered" ]]; then
+      jq -n '[{event:"deliver", ok:true}]'
+    else
+      jq -n '[]'
+    fi
+    exit 0
+    ;;
+  *)
+    printf 'mock-hcom: unhandled: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac

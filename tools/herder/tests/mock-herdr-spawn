@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# mock-herdr-spawn — a deterministic, hermetic stand-in for the `herdr` CLI,
+# used by check-spawn-contract.sh to exercise the FULL herder spawn path
+# (tab create, agent start, readiness/modal machine, root-pane close +
+# re-resolution, prompt delivery via the send leg) without a live session.
+#
+# It answers exactly the herdr sub-invocations herder spawn (and the herder send
+# it delegates prompt delivery to) makes:
+#   herdr pane get <pane>
+#   herdr tab create [flags...]
+#   herdr agent start <label> [flags...] -- <argv...>
+#   herdr pane list
+#   herdr pane close <pane>
+#   herdr agent read <pane> [flags...]
+#   herdr agent list
+#   herdr agent send <pane> <message>
+#   herdr pane send-keys <pane> Enter
+#
+# Behaviour is driven by env vars (set by the harness):
+#   MOCK_SPAWN_SCENARIO  ready | modal | rootguard | startfail
+#       ready     — agent is receptive immediately
+#       modal     — a first-run directory-trust modal is open until an Enter
+#                   clears it (then the agent is receptive)
+#       rootguard — `tab create` reports a root pane whose terminal_id equals
+#                   the agent's (herder spawn must refuse the root-pane close)
+#       startfail — `agent start` fails with a JSON error payload (exit 3)
+#   MOCK_SPAWN_AGENT     claude | codex | bash — reported in `agent list` and
+#                        selects the input sigil (❯ / › / $)
+#   MOCK_SPAWN_STATE     scratch dir; marker files move the state machine
+#                        through modal → ready → buffered → submitted
+#   MOCK_PROBE_DIR       probe dir; every MUTATING call appends to calls, and
+#                        `agent start` records its full argv (one arg per line)
+#                        to agent_start_argv
+#
+# Pane/terminal topology:
+#   p_orch @ term_ORCH   the spawning orchestrator pane (HERDR_PANE_ID)
+#   p_50   @ term_AGENT  the agent's pane at launch
+#   p_40   @ term_ROOT   the seed root shell of a --new-tab tab (tab_9)
+#   p_41   @ term_AGENT  the agent's pane AFTER the root close compacts ids
+
+set -euo pipefail
+
+SCEN="${MOCK_SPAWN_SCENARIO:-ready}"
+AGENT_KIND="${MOCK_SPAWN_AGENT:-claude}"
+STATE="${MOCK_SPAWN_STATE:?}"
+PROBE="${MOCK_PROBE_DIR:?}"
+mkdir -p "$STATE" "$PROBE"
+
+log_call() { printf '%s\n' "$*" >>"$PROBE/calls"; }
+
+sent()          { [[ -f "$STATE/send" ]]; }
+entered()       { [[ -f "$STATE/enter" ]]; }
+modal_cleared() { [[ -f "$STATE/modal_cleared" ]]; }
+root_closed()   { [[ -f "$STATE/root_closed" ]]; }
+tab_created()   { [[ -f "$STATE/tab_created" ]]; }
+sent_msg()      { cat "$STATE/msg" 2>/dev/null || true; }
+
+case "$AGENT_KIND" in
+  claude) sig='❯';;
+  codex)  sig='›';;
+  *)      sig='$';;
+esac
+
+agent_pane() { if root_closed; then printf 'p_41'; else printf 'p_50'; fi; }
+
+root_term() {
+  # rootguard: the seed root pane reports the AGENT's terminal_id, so
+  # herder spawn's identity guard must refuse to close it.
+  if [[ "$SCEN" == "rootguard" ]]; then printf 'term_AGENT'; else printf 'term_ROOT'; fi
+}
+
+modal_open() { [[ "$SCEN" == "modal" ]] && ! modal_cleared; }
+
+current_status() {
+  if entered; then printf 'working'; else printf 'idle'; fi
+}
+
+current_text() {
+  local msg; msg="$(sent_msg)"
+  if modal_open; then
+    printf '⏺ starting…\nDo you trust the contents of this directory?\n  1. Yes, continue\n%s ' "$sig"
+    return
+  fi
+  if ! sent; then
+    printf '⏺ ready\n%s ' "$sig"
+    return
+  fi
+  if entered; then
+    printf '⏺ %s\n⏺ working…\n%s ' "$msg" "$sig"
+  else
+    printf '⏺ ready\n%s %s' "$sig" "$msg"
+  fi
+}
+
+emit_read() { jq -n --arg t "$1" '{result:{read:{text:$t}}}'; }
+
+case "${1:-} ${2:-}" in
+  "pane get")
+    case "${3:-}" in
+      p_orch)     jq -n '{result:{pane:{pane_id:"p_orch", terminal_id:"term_ORCH", workspace_id:"ws_1"}}}';;
+      p_40)       jq -n --arg t "$(root_term)" '{result:{pane:{pane_id:"p_40", terminal_id:$t}}}';;
+      p_50|p_41)  jq -n --arg p "$(agent_pane)" '{result:{pane:{pane_id:$p, terminal_id:"term_AGENT"}}}';;
+      *)          jq -n '{result:{}}';;
+    esac;;
+  "workspace list")
+    # Read (not logged): serves the workspace validation that the caller-pane
+    # anchoring default triggers (HERDR_PANE_ID=p_orch → ws_1) on every spawn.
+    jq -n '{result:{workspaces:[{workspace_id:"ws_1"}]}}';;
+  "tab create")
+    log_call "$@"
+    : > "$STATE/tab_created"
+    jq -n --arg t "$(root_term)" \
+      '{result:{tab:{tab_id:"tab_9"}, root_pane:{pane_id:"p_40", terminal_id:$t}}}';;
+  "agent start")
+    log_call agent start "${3:-}"
+    printf '%s\n' "$@" >"$PROBE/agent_start_argv"
+    if [[ "$SCEN" == "startfail" ]]; then
+      jq -n '{error:{code:"agent_placement_not_found", message:"mock start failure"}}'
+      exit 3
+    fi
+    # tab_id echoes an explicit --tab placement, else the default tab.
+    tab="tab_1"
+    prev=""
+    for a in "$@"; do
+      [[ "$prev" == "--tab" ]] && tab="$a"
+      prev="$a"
+    done
+    jq -n --arg tab "$tab" \
+      '{result:{agent:{pane_id:"p_50", workspace_id:"ws_1", tab_id:$tab,
+                       terminal_id:"term_AGENT", cwd:"/mock/cwd"},
+                type:"agent_started"}}';;
+  "pane list")
+    if tab_created && ! root_closed; then
+      jq -n --arg p "$(agent_pane)" '{result:{panes:[
+        {pane_id:"p_orch", terminal_id:"term_ORCH"},
+        {pane_id:"p_40",   terminal_id:"term_ROOT"},
+        {pane_id:$p,       terminal_id:"term_AGENT"}
+      ]}}'
+    else
+      jq -n --arg p "$(agent_pane)" '{result:{panes:[
+        {pane_id:"p_orch", terminal_id:"term_ORCH"},
+        {pane_id:$p,       terminal_id:"term_AGENT"}
+      ]}}'
+    fi;;
+  "pane close")
+    log_call "$@"
+    [[ "${3:-}" == "p_40" ]] && : > "$STATE/root_closed"
+    jq -n --arg pane "${3:-}" '{result:{type:"closed", pane_id:$pane}}';;
+  "agent read")
+    emit_read "$(current_text)";;
+  "agent list")
+    jq -n --arg p "$(agent_pane)" --arg a "$AGENT_KIND" --arg st "$(current_status)" \
+      '{result:{agents:[{pane_id:$p, terminal_id:"term_AGENT", agent:$a, agent_status:$st}]}}';;
+  "agent send")
+    log_call "$@"
+    printf '%s' "${4:-}" >"$STATE/msg"
+    : > "$STATE/send"
+    printf '{"result":{"ok":true}}\n';;
+  "pane send-keys")
+    log_call "$@"
+    if [[ "${4:-}" == "Enter" ]]; then
+      if modal_open; then
+        : > "$STATE/modal_cleared"
+      elif sent; then
+        : > "$STATE/enter"
+      fi
+    fi
+    printf '{"result":{"ok":true}}\n';;
+  *)
+    printf 'mock-herdr-spawn: unhandled: %s\n' "$*" >&2
+    exit 64;;
+esac

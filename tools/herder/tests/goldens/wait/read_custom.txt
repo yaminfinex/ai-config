@@ -1,0 +1,15 @@
+=== STDERR ===
+
+=== STDOUT ===
+{
+  "result": {
+    "read": {
+      "text": "⏺ mock transcript line 1\n❯ "
+    }
+  }
+}
+=== EXIT ===
+0
+=== HERDR CALLS ===
+wait agent-status p_10 --status idle --timeout 60000
+pane read p_10 --source visible --lines 5

@@ -1,0 +1,6 @@
+=== STDERR ===
+herder send: refusing to send to p_10: first-run directory-trust prompt is open; accept it (focus pane + Enter) before sending
+=== STDOUT ===
+
+=== EXIT ===
+2

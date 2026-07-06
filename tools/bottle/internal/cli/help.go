@@ -49,7 +49,7 @@ Pitfalls:
     A default-mode bottle stays safe-by-default — the seeded agent prompts.
     --yolo overrides any restored mode with full bypass
     (--dangerously-skip-permissions).
-  - --pane right|below needs a herdr environment (it shells out to herder-spawn).
+  - --pane right|below needs a herdr environment (it shells out to herder spawn).
 `
 
 const rebottleHelp = `Examples:

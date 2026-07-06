@@ -140,7 +140,7 @@ Internal package boundaries (each independently testable):
 | Command | Behavior |
 |---|---|
 | `bottle create <name> [--session ID \| --last] [--at] [--note "…"] [--attach PATH...]` | Snapshot a session into a new bottle. Defaults: `--session` falls back to `$CLAUDE_CODE_SESSION_ID` when inside a Claude session, else `--last` (most recent session for the cwd). Name exists → version bumps. `--at` opens the rewind picker. |
-| `bottle decant <name>[@v] [--pane right\|below] [--prompt "…"] [--yolo] [--cwd PATH]` | Materialize a fresh session from the bottle and resume it — interactive in the current terminal by default, or into a herdr split via `herder-spawn` with `--pane`. Records the decant in the registry. `--yolo` ⇒ `--dangerously-skip-permissions`. |
+| `bottle decant <name>[@v] [--pane right\|below] [--prompt "…"] [--yolo] [--cwd PATH]` | Materialize a fresh session from the bottle and resume it — interactive in the current terminal by default, or into a herdr split via `herder spawn` with `--pane`. Records the decant in the registry. `--yolo` ⇒ `--dangerously-skip-permissions`. |
 | `bottle rebottle [<name>] [--session ID] [--note "…"]` | Sugar for `create`: resolves the current (or given) session in the `decants` map, sets `parent` automatically. Same name (default: parent's name) bumps version; a new name starts a new named lineage with parent recorded. Errors clearly if the session isn't a known decant (fall back to plain `create`). |
 | `bottle list` | Table: name, latest version, version count, age, note. |
 | `bottle log <name>` | Version chain with provenance, e.g. `@3 ← decant of @2 (session 9f2c…), 2026-06-10`. Follows `parent` links across renames. |
@@ -170,7 +170,7 @@ Entries from in-flight subagents after the cut go with it. Non-interactive form:
    bottle's metadata unless `--cwd` overrides; refuse with guidance if that
    directory no longer exists).
 4. `chdir` to the resolved cwd, then `exec claude --resume <new-uuid>` (or hand the
-   command to `herder-spawn` for `--pane`, mirroring `herder-fork`'s
+   command to `herder spawn` for `--pane`, mirroring `herder fork`'s
    `--from-pane`/`--cwd` anchoring). The chdir is mandatory — verified empirically:
    `claude --resume` scopes session lookup to the project directory derived from
    the process cwd and fails with "No conversation found" from anywhere else.

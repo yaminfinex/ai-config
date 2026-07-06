@@ -6,47 +6,37 @@
 #               [--cwd PATH] [--skip-perms|--yolo]
 #               [--prompt TEXT] [--focus] [-- EXTRA_AGENT_ARGS...]
 #
-# Detects the running agent from env (CLAUDECODE / CLAUDE_CODE_SESSION_ID / CODEX_HOME),
-# then calls `herder-spawn` to launch a forked session next to the current pane.
-#
-# Auto-resolves the forked pane's cwd to the current pane's workspace checkout path,
-# so `claude --resume` finds the original session (Claude Code stores sessions
-# per-project-directory; spawning in the wrong cwd causes the resume to fail and
-# the pane to die within seconds). Override with --cwd if you really need to.
-#
-# For claude: invokes `claude --resume <id> --fork-session` (propagates $CLAUDE_EFFORT).
-#             --skip-perms (alias --yolo) appends --dangerously-skip-permissions.
-# For codex : invokes `codex fork <id>` or `codex fork --last`.
-#
-# Any args after `--` are appended AFTER --resume/--fork-session, so they reach the
-# forked agent unchanged (e.g. `-- --model claude-sonnet-4-6`).
+# Registered Claude sessions use `herder fork <guid>` so the child is
+# bus-bound from birth and carries provenance.forked_from. Codex self-fork and
+# unregistered Claude sessions fall back to raw tool fork/resume through
+# `herder spawn`.
 
 set -euo pipefail
 
 die() { printf 'herder-fork: %s\n' "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# Resolve herder-spawn: prefer $PATH, else fall back to the sibling skill's
-# script via this script's real location (resilient to being run through a
-# symlink in $HOME/.claude/skills/, $HOME/.codex/skills/, etc).
-resolve_herder_spawn() {
-  if have herder-spawn; then
-    printf 'herder-spawn'
+resolve_herder_bin() {
+  if have herder; then
+    printf 'herder'
     return
   fi
+  die "herder not found on PATH; run bin/ai-setup from the ai-config checkout and restart your shell"
+}
 
-  local self
-  self="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
-  local skills_dir
-  skills_dir="$(dirname "$(dirname "$(dirname "$self")")")"
-  local sibling="$skills_dir/herder/scripts/herder-spawn"
-  [[ -x "$sibling" ]] || die "herder-spawn not found on PATH or at $sibling"
-  printf '%s' "$sibling"
+registry_path() {
+  if [[ -n "${HERDER_STATE_DIR:-}" ]]; then
+    printf '%s\n' "$HERDER_STATE_DIR/registry.jsonl"
+  elif [[ -n "${XDG_STATE_HOME:-}" ]]; then
+    printf '%s\n' "$XDG_STATE_HOME/herder/registry.jsonl"
+  else
+    printf '%s\n' "$HOME/.local/state/herder/registry.jsonl"
+  fi
 }
 
 [[ "${HERDR_ENV:-}" = "1" ]] || die "not running inside a herdr pane (HERDR_ENV != 1)"
-HERDER_SPAWN="$(resolve_herder_spawn)"
 [[ -n "${HERDR_PANE_ID:-}" ]] || die "HERDR_PANE_ID not set; cannot anchor fork to current pane"
+HERDER_BIN="$(resolve_herder_bin)"
 
 SPLIT="right"
 AGENT=""
@@ -59,20 +49,24 @@ PASSTHROUGH=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --right) SPLIT="right"; shift;;
-    --below|--down) SPLIT="down"; shift;;
-    --agent) AGENT="$2"; shift 2;;
-    --session-id) SESSION_ID="$2"; shift 2;;
-    --prompt) PROMPT="$2"; shift 2;;
-    --cwd) CWD="$2"; shift 2;;
-    --skip-perms|--yolo) SKIP_PERMS=1; shift;;
-    --focus) FOCUS_FLAG="--focus"; shift;;
-    --no-focus) FOCUS_FLAG="--no-focus"; shift;;
-    --) shift; PASSTHROUGH+=("$@"); break;;
-    -h|--help) sed -n '1,22p' "$0"; exit 0;;
-    *) die "unknown arg: $1";;
+    --right) SPLIT="right"; shift ;;
+    --below|--down) SPLIT="down"; shift ;;
+    --agent) AGENT="${2:-}"; [[ -n "$AGENT" ]] || die "--agent requires a value"; shift 2 ;;
+    --session-id) SESSION_ID="${2:-}"; [[ -n "$SESSION_ID" ]] || die "--session-id requires a value"; shift 2 ;;
+    --prompt) PROMPT="${2:-}"; [[ -n "$PROMPT" ]] || die "--prompt requires a value"; shift 2 ;;
+    --cwd) CWD="${2:-}"; [[ -n "$CWD" ]] || die "--cwd requires a value"; shift 2 ;;
+    --skip-perms|--yolo) SKIP_PERMS=1; shift ;;
+    --focus) FOCUS_FLAG="--focus"; shift ;;
+    --no-focus) FOCUS_FLAG="--no-focus"; shift ;;
+    --) shift; PASSTHROUGH+=("$@"); break ;;
+    -h|--help) sed -n '1,14p' "$0"; exit 0 ;;
+    *) die "unknown arg: $1" ;;
   esac
 done
+
+PANE_JSON="$(herdr pane get "$HERDR_PANE_ID" 2>&1 || true)"
+PANE_ID="$(printf '%s' "$PANE_JSON" | jq -r '.result.pane.pane_id // empty' 2>/dev/null || true)"
+WORKSPACE_ID="$(printf '%s' "$PANE_JSON" | jq -r '.result.pane.workspace_id // empty' 2>/dev/null || true)"
 
 if [[ -z "$AGENT" ]]; then
   if [[ "${CLAUDECODE:-0}" = "1" || -n "${CLAUDE_CODE_SESSION_ID:-}" ]]; then
@@ -86,11 +80,74 @@ if [[ -z "$AGENT" ]]; then
   fi
 fi
 
+if [[ -z "$CWD" ]]; then
+  CWD="$(printf '%s' "$PANE_JSON" | jq -r '.result.pane.foreground_cwd // .result.pane.cwd // empty' 2>/dev/null || true)"
+  if [[ -z "$CWD" && -n "$WORKSPACE_ID" ]]; then
+    WS_LIST_JSON="$(herdr workspace list 2>&1 || true)"
+    CWD="$(printf '%s' "$WS_LIST_JSON" | jq -r --arg ws "$WORKSPACE_ID" '
+      .result.workspaces[]? | select(.workspace_id==$ws)
+      | (.worktree.checkout_path // .worktree.repo_root // .cwd // empty)
+    ' 2>/dev/null || true)"
+  fi
+  [[ -n "$CWD" ]] || CWD="$PWD"
+fi
+
+current_hcom_identity() {
+  [[ -n "$PANE_ID" ]] || return 0
+  have hcom || return 0
+  hcom list --json 2>/dev/null | jq -r --arg pane "$PANE_ID" '
+    .[]? | select((.launch_context.pane_id // "") == $pane)
+    | [(.name // ""), (.session_id // "")] | @tsv
+  ' 2>/dev/null | tail -n1
+}
+
+registered_guid_for_current_session() {
+  if [[ -n "${HERDER_GUID:-}" ]]; then
+    printf '%s\n' "$HERDER_GUID"
+    return
+  fi
+
+  local hcom_name="" hcom_session="" identity reg
+  identity="$(current_hcom_identity || true)"
+  if [[ -n "$identity" ]]; then
+    hcom_name="${identity%%$'\t'*}"
+    hcom_session="${identity#*$'\t'}"
+    [[ "$identity" == *$'\t'* ]] || hcom_session=""
+  fi
+  [[ -n "$SESSION_ID" ]] || SESSION_ID="${CLAUDE_CODE_SESSION_ID:-$hcom_session}"
+
+  reg="$(registry_path)"
+  [[ -f "$reg" ]] || return 0
+  jq -sr --arg hcom_name "$hcom_name" --arg session "$SESSION_ID" '
+    def key: (.guid // "");
+    sort_by(key)
+    | group_by(key)
+    | map(.[-1])
+    | map(select(
+        (($hcom_name != "") and ((.hcom_name // "") == $hcom_name)) or
+        (($session != "") and ((.provenance.tool_session_id // "") == $session))
+      ))
+    | last.guid // empty
+  ' "$reg" 2>/dev/null || true
+}
+
+if [[ "$AGENT" = "claude" ]]; then
+  native_target="$(registered_guid_for_current_session)"
+  if [[ -n "$native_target" ]]; then
+    fork_args=(fork "$native_target")
+    [[ -z "$PROMPT" ]] || fork_args+=(--prompt "$PROMPT")
+    HERDER_LIFECYCLE_CWD="$CWD" \
+      HERDER_LIFECYCLE_SPLIT="$SPLIT" \
+      HERDER_LIFECYCLE_FOCUS="$FOCUS_FLAG" \
+      exec "$HERDER_BIN" "${fork_args[@]}"
+  fi
+fi
+
 agent_args=()
 case "$AGENT" in
   claude)
     [[ -n "$SESSION_ID" ]] || SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
-    [[ -n "$SESSION_ID" ]] || die "no claude session id (set --session-id or run inside a claude session)"
+    [[ -n "$SESSION_ID" ]] || die "no registered herder guid or claude session id (set --session-id, run inside claude, or herder enroll first)"
     agent_args=(--resume "$SESSION_ID" --fork-session)
     [[ -n "${CLAUDE_EFFORT:-}" ]] && agent_args+=(--effort "$CLAUDE_EFFORT")
     [[ "$SKIP_PERMS" -eq 1 ]] && agent_args+=(--dangerously-skip-permissions)
@@ -101,37 +158,16 @@ case "$AGENT" in
     else
       agent_args=(fork --last)
     fi
-    [[ "$SKIP_PERMS" -eq 1 ]] && \
+    [[ "$SKIP_PERMS" -eq 1 ]] &&
       printf 'herder-fork: --skip-perms is claude-only; ignoring for codex\n' >&2
     ;;
-  *) die "unknown agent: $AGENT (use claude or codex)";;
+  *) die "unknown agent: $AGENT (use claude or codex)" ;;
 esac
 
-# PASSTHROUGH lands AFTER --resume/--fork-session so user-supplied flags
-# reach claude/codex unchanged (e.g. -- --model claude-sonnet-4-6).
 [[ "${#PASSTHROUGH[@]}" -eq 0 ]] || agent_args+=("${PASSTHROUGH[@]}")
 
-# Resolve the cwd of the current pane's workspace. Claude Code stores
-# sessions per project directory, so `claude --resume <id> --fork-session`
-# launched in the wrong cwd silently finds no matching session and exits
-# within seconds — the forked pane dies. We anchor the new pane to the
-# original session's project root by reading the workspace's worktree path.
-if [[ -z "$CWD" ]]; then
-  FROM_PANE_JSON="$(herdr pane get "$HERDR_PANE_ID" 2>&1 || true)"
-  WS_ID="$(printf '%s' "$FROM_PANE_JSON" | jq -r '.result.pane.workspace_id // empty' 2>/dev/null || true)"
-  if [[ -n "$WS_ID" ]]; then
-    WS_LIST_JSON="$(herdr workspace list 2>&1 || true)"
-    CWD="$(printf '%s' "$WS_LIST_JSON" | jq -r --arg ws "$WS_ID" '
-      .result.workspaces[]? | select(.workspace_id==$ws)
-      | (.worktree.checkout_path // .worktree.repo_root // .cwd // empty)
-    ' 2>/dev/null || true)"
-  fi
-  # Last-resort fallback: current pwd. Better than letting herder-spawn
-  # default to whichever workspace happened to be created first.
-  [[ -n "$CWD" ]] || CWD="$PWD"
-fi
-
 spawn_args=(
+  spawn
   --role "fork-${AGENT}"
   --agent "$AGENT"
   --from-pane "$HERDR_PANE_ID"
@@ -146,4 +182,4 @@ done
 
 [[ -z "$PROMPT" ]] || spawn_args+=(--prompt "$PROMPT")
 
-exec "$HERDER_SPAWN" "${spawn_args[@]}"
+exec "$HERDER_BIN" "${spawn_args[@]}"
