@@ -51,7 +51,10 @@ func setEnvDefault(key, value string) {
 // Run executes the herder launch contract: parse hcom-owned flags, pin real
 // config dirs when needed, optionally fork the status sidecar, then exec hcom.
 func Run(args []string, stdout, stderr io.Writer) int {
-	_ = stdout
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+		printHelp(stdout)
+		return 0
+	}
 	if len(args) == 0 || args[0] == "" || args[0][0] == '-' {
 		if len(args) == 0 || args[0] != "--resume" && args[0] != "--fork" {
 			die(stderr, "usage: herder launch <tool> [--tag TAG] [tool-args...]")
@@ -178,6 +181,27 @@ func sidecarLogFile() (*os.File, error) {
 		pane = "unknown"
 	}
 	return os.OpenFile(filepath.Join(logDir, "sidecar-"+pane+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+}
+
+func printHelp(stdout io.Writer) {
+	fmt.Fprint(stdout, `herder launch — exec an hcom-bound tool in the CURRENT pane (used by herder spawn).
+
+Replaces the raw tool invocation so the agent binds to the hcom message bus from
+birth. herder spawn runs this inside the new pane; you rarely invoke it by hand.
+
+Usage:
+  herder launch <tool> [--tag TAG] [tool-args...]
+  herder launch --resume <tool> <target> [--tag TAG] [tool-args...]
+  herder launch --fork   <tool> <target> [--tag TAG] [tool-args...]
+
+Options:
+  --tag TAG    hcom tag; names the instance <tag>-<random> so @<tag>- fan-out works
+  tool-args    everything after the tool is passed through to it
+
+hcom is a HARD dependency — launch execs 'hcom <tool> --run-here' and never falls
+back to a raw tool. HCOM_DIR (the team bus) is inherited from the environment, and
+each tool's real config dir is pinned so auth survives an isolated team bus.
+`)
 }
 
 func die(stderr io.Writer, msg string) {

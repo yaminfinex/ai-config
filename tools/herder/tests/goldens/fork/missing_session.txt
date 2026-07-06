@@ -1,5 +1,5 @@
 === STDERR ===
-herder-lifecycle: cannot fork nosess: missing live hcom_name or stored provenance.tool_session_id
+herder-lifecycle: cannot fork nosess: no live parent and no recorded tool_session_id — nothing to fork from; spawn a fresh agent instead
 === STDOUT ===
 
 === EXIT ===

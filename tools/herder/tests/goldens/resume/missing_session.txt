@@ -1,5 +1,5 @@
 === STDERR ===
-herder-lifecycle: cannot resume nosess: missing provenance.tool_session_id
+herder-lifecycle: cannot resume nosess: no tool_session_id recorded for this guid (never captured, or predates session capture) — spawn a fresh agent instead
 === STDOUT ===
 
 === EXIT ===

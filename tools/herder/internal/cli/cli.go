@@ -55,15 +55,17 @@ func notPorted(name, phase string) func(args []string, stdout, stderr io.Writer)
 	}
 }
 
-// rootUsage renders the no-arg / help output: what the binary is, the
-// subcommand table, and where the contract suites live.
+// rootUsage renders the no-arg / help output: what the binary is and the
+// subcommand table.
 func rootUsage() string {
 	var b strings.Builder
-	b.WriteString("herder — spawn, message, and cull herdr-pane agents\n")
+	b.WriteString("herder — spawn, message, and cull agent sessions in herdr panes.\n")
 	b.WriteString("\n")
-	b.WriteString("Go port of the herder skill's bash substrate. Each subcommand mirrors the\n")
-	b.WriteString("original herder contract; the hermetic suites in tools/herder/tests are the\n")
-	b.WriteString("contract.\n")
+	b.WriteString("Single interface for running agent sessions: spawns named, GUID-tagged\n")
+	b.WriteString("agents into herdr panes bound to the hcom message bus, delivers verified\n")
+	b.WriteString("messages, and culls them via a durable registry. Use herder instead of raw\n")
+	b.WriteString("`herdr agent start/send` (which writes text without submitting it) and\n")
+	b.WriteString("instead of `hcom <n> claude` / `hcom kill` (which bypass the registry).\n")
 	b.WriteString("\n")
 	b.WriteString("Commands:\n")
 	for _, cmd := range commands {

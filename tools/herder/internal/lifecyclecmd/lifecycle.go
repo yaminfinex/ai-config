@@ -96,7 +96,7 @@ func (r *runner) fork(opts forkOptions) int {
 		vehicleTarget = sessionID
 	}
 	if vehicleTarget == "" {
-		die(r.stderr, fmt.Sprintf("cannot fork %s: missing live hcom_name or stored provenance.tool_session_id", opts.target))
+		die(r.stderr, fmt.Sprintf("cannot fork %s: no live parent and no recorded tool_session_id — nothing to fork from; spawn a fresh agent instead", opts.target))
 		return 1
 	}
 
@@ -169,7 +169,7 @@ func (r *runner) resume(opts resumeOptions) int {
 	}
 	sessionID := registry.ToolSessionIDForGUID(recs, guid)
 	if sessionID == "" {
-		die(r.stderr, fmt.Sprintf("cannot resume %s: missing provenance.tool_session_id", opts.target))
+		die(r.stderr, fmt.Sprintf("cannot resume %s: no tool_session_id recorded for this guid (never captured, or predates session capture) — spawn a fresh agent instead", opts.target))
 		return 1
 	}
 	label := firstNonEmpty(ptrString(rec.Label), "resumed-"+registry.ShortGUID(guid))
@@ -431,18 +431,47 @@ func parseResumeArgs(args []string, stdout, stderr io.Writer) (resumeOptions, in
 }
 
 func printForkHelp(stdout io.Writer) {
-	fmt.Fprint(stdout, `herder fork — branch an enrolled agent session into a new guid.
+	fmt.Fprint(stdout, `herder fork — branch an enrolled agent's session into a NEW guid, in a new pane.
+
+Forks the target's conversation into a fresh agent with its own guid, so the child
+starts from the parent's context but diverges independently. Needs either a live
+parent (forks off its bus name) or a recorded tool_session_id.
 
 Usage:
   herder fork <target> [--label L] [--role R] [--prompt P] [--json]
+
+Options:
+  --label L    label for the fork (default: <parent>-fork-<short>)
+  --role R     role / hcom tag for the fork (default: parent's role, else worker)
+  --prompt P   initial prompt delivered to the fork once it is ready
+  --json       print the new registry record as JSON on stdout
+
+If it fails:
+  - "cannot fork ...: no live parent and no recorded tool_session_id": the parent
+    is not live and no session was ever captured, so there is nothing to fork from
+    — spawn a fresh agent instead.
+  - "unknown target": run 'herder list --all' to find the right guid/label.
 `)
 }
 
 func printResumeHelp(stdout io.Writer) {
-	fmt.Fprint(stdout, `herder resume — reopen an enrolled agent session with the same guid.
+	fmt.Fprint(stdout, `herder resume — reopen an enrolled agent's session under the SAME guid, in a new pane.
+
+Resumes a closed or dead agent from its recorded tool_session_id, keeping the same
+guid and label so its registry identity stays continuous. Only works if a session
+id was captured for that guid.
 
 Usage:
   herder resume <target> [--json]
+
+Options:
+  --json    print the new registry record as JSON on stdout
+
+If it fails:
+  - "already running": the agent is live — use herder send/wait, not resume.
+  - "cannot resume ...: no tool_session_id recorded for this guid": its session was
+    never captured (or it predates session capture) — spawn a fresh agent instead.
+  - "unknown target": run 'herder list --all' to find the right guid/label.
 `)
 }
 

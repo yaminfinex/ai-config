@@ -1,106 +1,80 @@
 #!/usr/bin/env bash
-# check-help-contract.sh — lock command --help text against committed goldens.
+# check-help-contract.sh — smoke-assert every subcommand's --help text.
 #
-# Verification drives current executable paths (or HERDER_*_BIN overrides) through
-# the same guarded environment and compares stdout/stderr/exit byte-for-byte.
+# Not byte-pinned: help text is prose that carries operational doctrine and is
+# expected to evolve. This suite asserts only the invariants a caller relies on:
+#   1. `herder <cmd> --help` exits 0.
+#   2. It names itself ("herder <cmd>") so the reader knows what they invoked.
+#   3. It carries NO leaked bash-script corpse (`#!/usr/bin/env bash`,
+#      `set -euo pipefail`) — help is plain CLI text, not a script header.
 
 set -uo pipefail
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/../../.." && pwd)"
-GOLDENS="$TESTS_DIR/goldens/help"
-
-WRITE=0
-[[ "${1:-}" == "--write" ]] && WRITE=1
 
 ROOT="$(mktemp -d)"
 MOCKBIN="$ROOT/bin"
-mkdir -p "$MOCKBIN" "$GOLDENS"
+mkdir -p "$MOCKBIN"
 trap 'rm -rf "$ROOT"' EXIT
 
-cat >"$MOCKBIN/herdr" <<'MOCK_HERDR'
+for tool in herdr jq hcom; do
+  cat >"$MOCKBIN/$tool" <<'MOCK'
 #!/usr/bin/env bash
 exit 0
-MOCK_HERDR
-cat >"$MOCKBIN/jq" <<'MOCK_JQ'
-#!/usr/bin/env bash
-exit 0
-MOCK_JQ
+MOCK
+  chmod +x "$MOCKBIN/$tool"
+done
 cat >"$MOCKBIN/uuidgen" <<'MOCK_UUIDGEN'
 #!/usr/bin/env bash
 printf '00000000-0000-0000-0000-000000000000\n'
 MOCK_UUIDGEN
-chmod +x "$MOCKBIN/herdr" "$MOCKBIN/jq" "$MOCKBIN/uuidgen"
+chmod +x "$MOCKBIN/uuidgen"
 
 PATH_HERMETIC="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:/sbin"
 
-bin_for() {
-  local cmd="$1"
-  case "$cmd" in
-    send)  printf '%s' "${HERDER_CMD_SEND_BIN:-$REPO_ROOT/bin/herder send}" ;;
-    spawn) printf '%s' "${HERDER_SPAWN_BIN:-$REPO_ROOT/bin/herder spawn}" ;;
-    list)  printf '%s' "${HERDER_LIST_BIN:-$REPO_ROOT/bin/herder list}" ;;
-    wait)  printf '%s' "${HERDER_WAIT_BIN:-$REPO_ROOT/bin/herder wait}" ;;
-    cull)  printf '%s' "${HERDER_CULL_BIN:-$REPO_ROOT/bin/herder cull}" ;;
-    fork)  printf '%s' "${HERDER_FORK_BIN:-$REPO_ROOT/bin/herder fork}" ;;
-    resume) printf '%s' "${HERDER_RESUME_BIN:-$REPO_ROOT/bin/herder resume}" ;;
-  esac
-}
-
 run_help() {
-  local bin="$1" err out code
-  local bin_argv=()
-  read -r -a bin_argv <<<"$bin"
-  err="$(mktemp)"
+  local cmd="$1"
   mkdir -p "$ROOT/home/.local/state/herder" "$ROOT/cache" "$ROOT/gocache"
   : >"$ROOT/home/.local/state/herder/registry.jsonl"
-  out="$(env -i \
+  env -i \
     PATH="$PATH_HERMETIC" \
     HOME="$ROOT/home" \
     XDG_CACHE_HOME="$ROOT/cache" \
     GOCACHE="$ROOT/gocache" \
     HERDR_ENV=1 \
     HERDR_PANE_ID=p_help \
-    "${bin_argv[@]}" --help 2>"$err")"
-  code=$?
-  printf '=== STDERR ===\n%s\n=== STDOUT ===\n%s\n=== EXIT ===\n%s\n' \
-    "$(cat "$err")" "$out" "$code"
-  rm -f "$err"
+    "$REPO_ROOT/bin/herder" $cmd --help 2>&1
 }
 
 fail=0
-for cmd in send spawn list wait cull fork resume; do
-  bin="$(bin_for "$cmd")"
-  block="$(run_help "$bin")"
-  gold="$GOLDENS/$cmd.txt"
-  if [[ "$WRITE" -eq 1 ]]; then
-    printf '%s\n' "$block" >"$gold"
-    printf 'WROTE  %s\n' "$cmd"
-    continue
+assert_help() {
+  local cmd="$1" out code
+  out="$(run_help "$cmd")"
+  code=$?
+  if [[ "$code" -ne 0 ]]; then
+    printf 'FAIL  %-8s --help exited %s (want 0)\n' "$cmd" "$code"; fail=1; return
   fi
-  if [[ ! -f "$gold" ]]; then
-    printf 'MISSING GOLDEN  %s (run --write first)\n' "$cmd"
-    fail=1
-    continue
+  if ! grep -qF "herder $cmd" <<<"$out"; then
+    printf 'FAIL  %-8s --help does not mention "herder %s"\n' "$cmd" "$cmd"; fail=1; return
   fi
-  if diff -u "$gold" <(printf '%s\n' "$block") >"/tmp/herder_help_diff.$$" 2>&1; then
-    printf 'PASS  %s\n' "$cmd"
-  else
-    printf 'FAIL  %s\n' "$cmd"
-    cat "/tmp/herder_help_diff.$$"
-    fail=1
+  if grep -qF '#!/usr/bin/env bash' <<<"$out"; then
+    printf 'FAIL  %-8s --help leaks a shebang line\n' "$cmd"; fail=1; return
   fi
-  rm -f "/tmp/herder_help_diff.$$"
+  if grep -qF 'set -euo pipefail' <<<"$out"; then
+    printf 'FAIL  %-8s --help leaks "set -euo pipefail"\n' "$cmd"; fail=1; return
+  fi
+  printf 'PASS  %s\n' "$cmd"
+}
+
+for cmd in spawn send list wait cull enroll rename fork resume launch sidecar; do
+  assert_help "$cmd"
 done
 
-if [[ "$WRITE" -eq 1 ]]; then
-  printf '\nGoldens written from current bin/herder subcommands.\n'
-  exit 0
-fi
 if [[ "$fail" -eq 0 ]]; then
-  printf '\nALL GREEN — help contract matches goldens.\n'
+  printf '\nALL GREEN — every subcommand --help is clean.\n'
   exit 0
 else
-  printf '\nCONTRACT DRIFT — see diffs above.\n'
+  printf '\nHELP CONTRACT FAILED — see failures above.\n'
   exit 1
 fi

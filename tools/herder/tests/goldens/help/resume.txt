@@ -1,9 +1,0 @@
-=== STDERR ===
-
-=== STDOUT ===
-herder resume — reopen an enrolled agent session with the same guid.
-
-Usage:
-  herder resume <target> [--json]
-=== EXIT ===
-0

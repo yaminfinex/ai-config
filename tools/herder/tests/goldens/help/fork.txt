@@ -1,9 +1,0 @@
-=== STDERR ===
-
-=== STDOUT ===
-herder fork — branch an enrolled agent session into a new guid.
-
-Usage:
-  herder fork <target> [--label L] [--role R] [--prompt P] [--json]
-=== EXIT ===
-0

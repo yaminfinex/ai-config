@@ -170,10 +170,23 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 }
 
 func printHelp(stdout io.Writer) {
-	fmt.Fprint(stdout, `herder enroll — register the current herdr pane in the herder registry.
+	fmt.Fprint(stdout, `herder enroll — register the CURRENT herdr pane in the herder registry.
+
+Run from inside a herdr pane to make the running agent (or shell) addressable by
+herder send/wait/list/cull. Identity comes from HERDER_GUID/HERDER_LABEL/HERDER_ROLE
+if set, else a fresh guid and a "manual-<short>" label are generated.
 
 Usage:
   herder enroll [--label LABEL] [--role ROLE] [--json]
+
+Options:
+  --label LABEL   label to record (default: $HERDER_LABEL, else manual-<short>)
+  --role ROLE     role to record (default: $HERDER_ROLE, else "manual")
+  --json          print the appended registry record as JSON on stdout
+
+Records pane_id, terminal_id, workspace_id, cwd, and hcom coordinates so later
+resolution survives herdr pane-id compaction. Must run inside a herdr pane
+(HERDR_ENV=1 and HERDR_PANE_ID set); refuses otherwise.
 `)
 }
 

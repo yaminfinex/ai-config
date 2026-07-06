@@ -165,18 +165,17 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 }
 
 func printHelp(stdout io.Writer) {
-	fmt.Fprint(stdout, `#!/usr/bin/env bash
-# herder list — show spawned agents, optionally reconciled with live herdr state.
-#
-# Usage:
-#   herder list                       # table of active records, reconciled with live agents
-#   herder list --all                 # include records with status != active
-#   herder list --json                # raw JSONL of reconciled records to stdout
-#   herder list --raw                 # raw registry JSONL without reconciliation
-#   herder list --guid GUID           # single record (full JSON), exit 1 if missing
-#   herder list --teams               # enumerate team buses under $HERDER_TEAMS_ROOT
+	fmt.Fprint(stdout, `herder list — show spawned agents, reconciled with live herdr state.
 
-set -euo pipefail
+Usage:
+  herder list              table of active records, reconciled with live agents
+  herder list --all        include records whose status is not active (e.g. closed)
+  herder list --json       reconciled records as JSONL on stdout
+  herder list --raw        raw registry JSONL, no reconciliation
+  herder list --guid GUID  one record as full JSON (exit 1 if not found)
+  herder list --teams      list team buses under $HERDER_TEAMS_ROOT
+
+Use --all to check whether a missing agent was culled.
 `)
 }
 

@@ -46,8 +46,11 @@ func (t *flexibleJSONText) UnmarshalJSON(b []byte) error {
 
 // Run bridges hcom status to herdr's pane.report_agent socket protocol.
 func Run(args []string, stdout, stderr io.Writer) int {
-	_ = stdout
 	_ = stderr
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+		printHelp(stdout)
+		return 0
+	}
 	opts, ok := parseArgs(args)
 	if !ok {
 		return 1
@@ -67,6 +70,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		parentSessionID: os.Getenv("HERDER_PARENT_SESSION_ID"),
 	}
 	return sidecar.run()
+}
+
+func printHelp(stdout io.Writer) {
+	fmt.Fprint(stdout, `herder sidecar — internal: bridges hcom status to herdr pane status.
+
+Invoked automatically by herder launch/spawn. Not for direct use.
+
+Usage:
+  herder sidecar --tool <tool>
+`)
 }
 
 func parseArgs(args []string) (options, bool) {

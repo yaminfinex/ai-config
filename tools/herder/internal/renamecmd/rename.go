@@ -93,10 +93,19 @@ func syncHerdrName(terminalID, label string, stdout io.Writer) {
 }
 
 func printHelp(stdout io.Writer) {
-	fmt.Fprint(stdout, `herder rename — append a new label for an enrolled agent.
+	fmt.Fprint(stdout, `herder rename — give an enrolled agent a new label (registry + herdr, best-effort).
 
 Usage:
   herder rename <target> <new-label>
+
+<target> is a short-guid, full guid, label, or pane_id. Appends a new registry
+record carrying the new label (append-only JSONL) and asks herdr to rename the
+pane too; if the herdr rename fails, the registry is still updated.
+
+If it fails:
+  - "unknown target": run 'herder list' to find the right guid/label.
+  - "label already belongs to active guid": the label is taken by a live agent —
+    pick another, or cull the holder first.
 `)
 }
 
