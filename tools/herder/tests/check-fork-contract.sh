@@ -69,7 +69,9 @@ run_case() {
   mkdir -p "$CASE/home" "$CASE/probe"
   seed_registry
   RUN_ERR_F="$CASE/stderr"
-  RUN_OUT="$(env -i \
+  # Pin the runner cwd to $REPO so fork's os.Getwd()-derived child cwd is a
+  # stable fixture value regardless of where this suite is invoked from.
+  RUN_OUT="$(cd "$REPO" && env -i \
     PATH="$PATH_HERMETIC" \
     HOME="$CASE/home" \
     AI_CONFIG_ROOT="$REPO" \
