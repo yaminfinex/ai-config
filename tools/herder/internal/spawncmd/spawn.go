@@ -50,6 +50,7 @@ type options struct {
 	Team          string
 	Notify        bool
 	NotifyTo      string
+	NotifyBusName string
 	SettleMS      int
 }
 
@@ -461,15 +462,6 @@ func (r *runner) run() int {
 			fmt.Fprintln(r.stderr, "herder spawn: --notify set but HERDR_PANE_ID is empty; no ring target injected")
 		}
 	}
-	if opts.Notify && opts.Prompt != "" && opts.NotifyTo != "" {
-		opts.Prompt += fmt.Sprintf(`
-
-When your unit is finished and your run-log DONE/BLOCKED block is written, ring the orchestrator so it does not have to poll (the run-log block is the record — this is only a doorbell):
-  "$HERDER_BIN" send %s 'Unit DONE — run-log updated'
-Ring exactly ONCE and then stop, whatever it reports. The orchestrator is usually mid-turn when you ring, so the helper will say verify=queued (or even verify=not_delivered) — that is EXPECTED and is NOT a failure: your message is queued and the run-log is the real record. Do NOT resend on a queued/not_delivered result; resending just stacks duplicate messages in the orchestrator's queue.
-Do NOT ring with raw 'herdr agent send' — it writes the text without submitting it, so the ring never lands. Use the command above (also available as "$HERDER_BIN" send "$HERDER_NOTIFY_TO").`, opts.NotifyTo)
-	}
-
 	permInjected := ""
 	if !opts.Safe {
 		if flag := defaultPermFlag(opts.Agent); flag != "" && !hasExplicitPermFlag(opts.ExtraArgs) {
@@ -573,6 +565,28 @@ Do NOT ring with raw 'herdr agent send' — it writes the text without submittin
 	if spawnedBy == "" {
 		spawnedBy = "user"
 	}
+
+	// Notify appendix: a finished worker pings the spawner so it needn't poll.
+	// Route bus-native when the spawner has a recorded hcom name (a real status
+	// message with content, not a fixed slogan); fall back to the keystroke
+	// ring — with neutral, doctrine-free wording — only for a bus-less spawner.
+	if opts.Notify && opts.Prompt != "" {
+		opts.NotifyBusName = resolveSpawnerBus(registryPath, opts.NotifyTo, spawnedBy)
+		if opts.NotifyBusName != "" {
+			opts.Prompt += fmt.Sprintf(`
+
+When your unit is finished (or blocked), report to the spawner over the hcom bus so it does not have to poll — a real status message with content, not a fixed slogan:
+  hcom send @%s --intent inform -- "<what you finished, what's left, any blockers>"
+Send it ONCE when you are genuinely done or blocked, then end your turn. (If your hcom setup expects a --name, use your own agent name.)`, opts.NotifyBusName)
+		} else if opts.NotifyTo != "" {
+			opts.Prompt += fmt.Sprintf(`
+
+When your unit is finished (or blocked), ring the spawner ONCE so it does not have to poll:
+  "$HERDER_BIN" send %s 'done — see %s'
+The spawner is often mid-turn, so the helper may report verify=queued or verify=not_delivered — that is EXPECTED, not a failure; do NOT resend (a resend just stacks duplicates). Do NOT use raw 'herdr agent send' — it writes the text without submitting, so the ring never lands.`, opts.NotifyTo, label)
+		}
+	}
+
 	hcomEnv := ""
 	if isHcomAgent {
 		hcomEnv = " HCOM_DIR=" + shellquote.Quote(hcomDirEff)
@@ -915,8 +929,14 @@ func (r *runner) writeSummary(record spawnRecord, isHcomAgent, rootClosed bool, 
 	} else if r.opts.Safe {
 		fmt.Fprintln(r.stderr, "  perms:  --safe (agent default ask-mode)")
 	}
-	if r.opts.Notify && r.opts.NotifyTo != "" {
-		fmt.Fprintf(r.stderr, "  notify: rings %s on done (HERDER_BIN + HERDER_NOTIFY_TO injected)\n", r.opts.NotifyTo)
+	if r.opts.Notify {
+		if r.opts.NotifyBusName != "" {
+			fmt.Fprintf(r.stderr, "  notify: worker reports to @%s over hcom on done\n", r.opts.NotifyBusName)
+		} else if r.opts.NotifyTo != "" {
+			fmt.Fprintf(r.stderr, "  notify: rings %s on done (bus-less spawner; HERDER_BIN + HERDER_NOTIFY_TO injected)\n", r.opts.NotifyTo)
+		} else {
+			fmt.Fprintln(r.stderr, "  notify: requested, but spawner has no bus name and no ring target — no notify appendix injected")
+		}
 	}
 	if isHcomAgent {
 		if hcomCapture == "captured" {
@@ -971,7 +991,8 @@ func printHelp(stdout io.Writer) {
 		"  --tab ID          add to an existing tab; --new-tab gives the agent its own fresh tab",
 		"  --cwd PATH        working directory for the agent (default: current)",
 		"  --safe            keep the agent's default ask-mode (default: autonomous/skip-permissions)",
-		"  --notify          worker rings the spawner on done; --notify-to PANE overrides the target",
+		"  --notify          worker pings the spawner on done — hcom message if the spawner has a bus",
+		"                    name, else keystroke ring; --notify-to NAME|PANE overrides the target",
 		"  --extra-arg ARG   pass ARG through to the agent (repeatable)",
 		"  --json            print the registry record as JSON on stdout",
 		"",
@@ -994,8 +1015,9 @@ func printHelp(stdout io.Writer) {
 		"  staged to $HERDER_STATE_DIR/briefs/<guid>.md and only a one-line pointer is sent to",
 		"  the pane (dodges codex paste-blob / plan-overlay pathologies).",
 		"",
-		"  --notify is the doorbell: a finished worker rings the spawner instead of the spawner",
-		"  polling wait in a loop. The run-log stays the record; the ring is only a signal.",
+		"  --notify is the doorbell: a finished worker pings the spawner so it needn't poll wait in",
+		"  a loop. A bus-bound spawner gets a real hcom status message; a bus-less one gets a single",
+		"  keystroke ring. It is only a signal — send it once and stop, whatever it reports.",
 	}
 	fmt.Fprint(stdout, strings.Join(lines, "\n")+"\n")
 }
@@ -1183,6 +1205,29 @@ func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {
 			return value
+		}
+	}
+	return ""
+}
+
+// resolveSpawnerBus returns the spawner's recorded hcom bus name so a finished
+// worker can report completion over the bus instead of the keystroke ring. It
+// keys on a POSITIVE identity: an explicit --notify-to that names a registry
+// peer, else the spawner's own guid ($HERDER_GUID, captured as spawnedBy).
+// Returns "" when the spawner has no recorded bus name (bus-less → ring path).
+func resolveSpawnerBus(registryPath, notifyTo, spawnedBy string) string {
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		return ""
+	}
+	if notifyTo != "" {
+		if rec := registry.Resolve(recs, notifyTo); rec != nil && rec.HcomName != "" {
+			return rec.HcomName
+		}
+	}
+	if spawnedBy != "" && spawnedBy != "user" {
+		if rec := registry.Resolve(recs, spawnedBy); rec != nil {
+			return rec.HcomName
 		}
 	}
 	return ""

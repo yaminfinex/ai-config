@@ -70,11 +70,15 @@ fail=0
 run_spawn() {
   local herdr_scen="$1" agent_kind="$2" hcom_scen="$3"; shift 3
   mkdir -p "$CASE/home" "$CASE/state" "$CASE/mock" "$CASE/probe"
+  # Optional pre-seed so a scenario can give the spawner a registry identity
+  # (e.g. a bus-bound orchestrator row that --notify resolves against).
+  [[ -n "${SPAWN_SEED_REGISTRY:-}" ]] && printf '%s\n' "$SPAWN_SEED_REGISTRY" >"$CASE/state/registry.jsonl"
   RUN_ERR_F="$CASE/stderr"
   RUN_OUT="$(env -i \
     PATH="$PATH_HERMETIC" \
     HOME="$CASE/home" \
     HERDR_ENV=1 HERDR_PANE_ID=p_orch \
+    HERDER_GUID="${SPAWN_HERDER_GUID:-}" \
     HERDER_STATE_DIR="$CASE/state" \
     HERDER_SPAWN_SHELL=/bin/zsh \
     MOCK_SPAWN_SCENARIO="$herdr_scen" MOCK_SPAWN_AGENT="$agent_kind" \
@@ -150,6 +154,12 @@ scenario claude_newtab     ready claude launchctx --role worker --agent claude -
 scenario newtab_rootguard  rootguard claude launchctx --role worker --agent claude --new-tab --json
 scenario codex_brief       ready codex launchctx --role worker --agent codex --prompt "$MULTILINE_BRIEF" --json
 scenario notify            ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
+# Bus-native notify: the spawner (HERDER_GUID) has a recorded hcom_name, so the
+# --notify appendix routes completion over hcom instead of the keystroke ring.
+SPAWN_HERDER_GUID="guid-orch-0000"
+SPAWN_SEED_REGISTRY='{"guid":"guid-orch-0000","short_guid":"orch","label":"orchestrator","role":"orchestrator","agent":"claude","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_dir":"/hcom","hcom_name":"orchestrator-bumo","hcom_tag":"orchestrator","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-orch","tag":"orchestrator","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
+scenario notify_bus        ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
+unset SPAWN_HERDER_GUID SPAWN_SEED_REGISTRY
 scenario capture_fallback  ready claude fallback --role worker --agent claude --json
 scenario capture_fail      ready claude fail --role worker --agent claude --json
 scenario perm_explicit     ready claude launchctx --role worker --agent claude --extra-arg --dangerously-skip-permissions --json
