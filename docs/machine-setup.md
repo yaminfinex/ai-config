@@ -32,6 +32,11 @@ This writes `${XDG_CONFIG_HOME:-$HOME/.config}/mise/conf.d/ai-config.toml` with 
 - `<checkout>/bin`
 - `<checkout>/tools/herder/shims`
 
+The same file sets `HERDER_SHIM_ARGS_CLAUDE` / `HERDER_SHIM_ARGS_CODEX` so hand-typed `claude`
+and `codex` skip permission prompts by default (the shims prepend these before user args).
+Delete those two lines locally for an ask-mode machine — but note `ai-setup` restores them on
+the next run.
+
 Restart the shell after setup so `ai-setup`, `ai-doctor`, `herder`, `claude`, and `codex` resolve
 from the managed PATH entries.
 

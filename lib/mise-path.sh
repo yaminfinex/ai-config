@@ -48,6 +48,10 @@ mise_render_config() {
   mise_path_marker
   printf '%s\n' "[env]"
   printf '_.path = ["%s", "%s"]\n' "$bin_dir" "$shims_dir"
+  # Hand-typed launches skip permission prompts by default (the shims prepend
+  # these before user args). Delete the lines locally for ask-mode machines.
+  printf 'HERDER_SHIM_ARGS_CLAUDE = "--dangerously-skip-permissions"\n'
+  printf 'HERDER_SHIM_ARGS_CODEX = "--dangerously-bypass-approvals-and-sandbox"\n'
 }
 
 mise_file_is_ours() {

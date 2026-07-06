@@ -65,6 +65,8 @@ expected_config() {
 # Managed by ai-config. Remove with: bin/ai-setup --shims remove
 [env]
 _.path = ["$BIN_DIR", "$SHIM_DIR"]
+HERDER_SHIM_ARGS_CLAUDE = "--dangerously-skip-permissions"
+HERDER_SHIM_ARGS_CODEX = "--dangerously-bypass-approvals-and-sandbox"
 EOF
 }
 
