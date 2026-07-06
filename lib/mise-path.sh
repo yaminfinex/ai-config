@@ -29,6 +29,17 @@ mise_path_marker() {
   printf '%s\n' "# Managed by ai-config. Remove with: bin/ai-setup --shims remove"
 }
 
+# hcom is a hard dependency of the herder bus substrate (plan 002 R4/R7): the
+# github backend pulls the prebuilt release binary (attestation-verified) with
+# no brew/compile. Pinned for reproducibility — bump deliberately.
+mise_hcom_tool() {
+  printf '%s\n' "github:aannoo/hcom"
+}
+
+mise_hcom_version() {
+  printf '%s\n' "0.7.22"
+}
+
 mise_available() {
   command -v mise >/dev/null 2>&1 || [ -d "$(mise_config_dir)" ]
 }
@@ -52,6 +63,8 @@ mise_render_config() {
   # these before user args). Delete the lines locally for ask-mode machines.
   printf 'HERDER_SHIM_ARGS_CLAUDE = "--dangerously-skip-permissions"\n'
   printf 'HERDER_SHIM_ARGS_CODEX = "--dangerously-bypass-approvals-and-sandbox"\n'
+  printf '%s\n' "[tools]"
+  printf '"%s" = "%s"\n' "$(mise_hcom_tool)" "$(mise_hcom_version)"
 }
 
 mise_file_is_ours() {
@@ -161,6 +174,17 @@ mise_path_install() {
   mise_render_config "$bin_dir" "$shims_dir" > "$tmp"
   mv "$tmp" "$file"
   log_info "installed ai-config mise PATH config: $file"
+
+  # Pull the now-declared managed tools (hcom) so a fresh setup lands them
+  # without a separate step. Idempotent; already-present versions are skipped.
+  if command -v mise >/dev/null 2>&1; then
+    local hcom_spec="$(mise_hcom_tool)@$(mise_hcom_version)"
+    if mise install "$hcom_spec" >/dev/null 2>&1; then
+      log_info "installed managed mise tool: $hcom_spec"
+    else
+      log_warn "could not install $hcom_spec via mise; run: mise install \"$hcom_spec\""
+    fi
+  fi
 }
 
 mise_path_remove() {

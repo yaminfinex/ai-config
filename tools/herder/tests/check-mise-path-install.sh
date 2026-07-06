@@ -67,6 +67,8 @@ expected_config() {
 _.path = ["$BIN_DIR", "$SHIM_DIR"]
 HERDER_SHIM_ARGS_CLAUDE = "--dangerously-skip-permissions"
 HERDER_SHIM_ARGS_CODEX = "--dangerously-bypass-approvals-and-sandbox"
+[tools]
+"github:aannoo/hcom" = "0.7.22"
 EOF
 }
 

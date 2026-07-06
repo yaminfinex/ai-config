@@ -37,12 +37,20 @@ and `codex` skip permission prompts by default (the shims prepend these before u
 Delete those two lines locally for an ask-mode machine — but note `ai-setup` restores them on
 the next run.
 
-Restart the shell after setup so `ai-setup`, `ai-doctor`, `herder`, `claude`, and `codex` resolve
-from the managed PATH entries.
+It also declares `hcom` as a managed mise tool (`[tools] "github:aannoo/hcom"`) and installs it —
+hcom is a hard dependency of the herder bus substrate (`launch`/`spawn` refuse to run without it).
+The `github:` backend pulls the prebuilt, attestation-verified release binary; no brew or compile.
+Pinned for reproducibility — bump the version in `lib/mise-path.sh`. (Homebrew
+`brew install aannoo/hcom/hcom`, the `hcom-installer.sh` script, and `uv tool install hcom` also
+work, but sit outside mise's management.)
+
+Restart the shell after setup so `ai-setup`, `ai-doctor`, `herder`, `claude`, `codex`, and `hcom`
+resolve from the managed PATH entries.
 
 ## Optional hcom Hooks
 
-hcom hooks are explicit machine config. Install them separately:
+hcom hooks are explicit machine config, layered on top of the hcom binary that `ai-setup` already
+installed above. Install them separately:
 
 ```sh
 bin/ai-setup --hcom-hooks status
@@ -55,7 +63,7 @@ Run:
 
 ```sh
 bin/ai-doctor
-type -a herder claude codex
+type -a herder claude codex hcom
 herder spawn --role smoke --agent codex --cwd "$PWD" \
   --prompt 'Reply exactly PONG MACHINE-SETUP, then wait idle.'
 ```
