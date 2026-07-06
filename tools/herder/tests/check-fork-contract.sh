@@ -48,13 +48,17 @@ chmod +x "$MOCKBIN/hcom"
 PATH_HERMETIC="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin"
 fail=0
 
+# herder fork records the checkout's live git branch into child provenance;
+# normalize it so goldens hold on any branch (seeded rows use fixture-branch).
+LIVE_BRANCH="$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+
 seed_registry() {
   mkdir -p "$CASE/state"
   cat >"$CASE/state/registry.jsonl" <<'JSONL'
-{"guid":"guid-parent-0000","short_guid":"parent","label":"parent","role":"worker","agent":"claude","terminal_id":"term_PARENT","pane_id":"p_parent","hcom_dir":"/hcom","hcom_name":"parent-rive","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-parent","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
-{"guid":"guid-closed-0000","short_guid":"closed","label":"closed-parent","role":"reviewer","agent":"claude","terminal_id":"term_CLOSED","pane_id":"p_closed","hcom_dir":"/hcom","hcom_name":"closed-rive","hcom_tag":"reviewer","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-closed","tag":"reviewer","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
-{"guid":"guid-closed-0000","short_guid":"closed","label":"closed-parent","role":"reviewer","agent":"claude","terminal_id":"term_CLOSED","pane_id":"p_closed","hcom_dir":"/hcom","hcom_name":"closed-rive","hcom_tag":"reviewer","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"reviewer","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"2026-07-03T00:01:00Z"}}
-{"guid":"guid-nosess-0000","short_guid":"nosess","label":"no-session","role":"worker","agent":"codex","terminal_id":"term_NOSESS","pane_id":"p_nosess","hcom_dir":"/hcom","hcom_name":"","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
+{"guid":"guid-parent-0000","short_guid":"parent","label":"parent","role":"worker","agent":"claude","terminal_id":"term_PARENT","pane_id":"p_parent","hcom_dir":"/hcom","hcom_name":"parent-rive","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-parent","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"2026-07-03T00:00:00Z"}}
+{"guid":"guid-closed-0000","short_guid":"closed","label":"closed-parent","role":"reviewer","agent":"claude","terminal_id":"term_CLOSED","pane_id":"p_closed","hcom_dir":"/hcom","hcom_name":"closed-rive","hcom_tag":"reviewer","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-closed","tag":"reviewer","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"2026-07-03T00:00:00Z"}}
+{"guid":"guid-closed-0000","short_guid":"closed","label":"closed-parent","role":"reviewer","agent":"claude","terminal_id":"term_CLOSED","pane_id":"p_closed","hcom_dir":"/hcom","hcom_name":"closed-rive","hcom_tag":"reviewer","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"reviewer","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"2026-07-03T00:01:00Z"}}
+{"guid":"guid-nosess-0000","short_guid":"nosess","label":"no-session","role":"worker","agent":"codex","terminal_id":"term_NOSESS","pane_id":"p_nosess","hcom_dir":"/hcom","hcom_name":"","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"2026-07-03T00:00:00Z"}}
 {"guid":"guid-other-0000","short_guid":"other","label":"taken","role":"worker","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","status":"active"}
 JSONL
 }
@@ -91,6 +95,9 @@ block_for() {
     block="${block//$short/<SHORT>}"
   fi
   block="${block//$REPO/<REPO>}"
+  if [[ -n "$LIVE_BRANCH" ]]; then
+    block="${block//\"branch\":\"$LIVE_BRANCH\"/\"branch\":\"<BRANCH>\"}"
+  fi
   block="$(sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g' <<<"$block")"
   printf '%s' "$block"
 }
