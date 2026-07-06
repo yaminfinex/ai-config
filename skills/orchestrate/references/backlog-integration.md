@@ -35,14 +35,37 @@ mid-run to enable this; absence is a valid state, not a setup gap.
 **Ringfence the run with a label.** Every unit-task for this run carries `-l run-<slug>`. That
 label *is* the run's scope — `backlog task list -l run-<slug> --plain` is the unit roster.
 
-**Seed units from / into backlog.** Either direction:
+**Seed all units on the base branch, before the fan-out.** Task IDs are sequential integers
+allocated at `task create` time — Backlog hands you `highest-existing + 1`, with nothing tied to
+the branch. So two agents on two branches off the same base each compute the same "next" ID and
+create *different* units that both answer to `task-13`; on merge they collide (or one clobbers the
+other's file). Avoid this structurally: the orchestrator creates **every** unit-task on the base /
+integration branch and commits them *before* spawning any agent. IDs are then allocated serially by
+one writer and already exist in shared history.
+
 - Units already exist as backlog tasks → the playbook's unit list points at task IDs; add the run
   label to each.
-- Units are being defined now → create them as you write the playbook:
+- Units are being defined now → create them all up front as you write the playbook, on the base
+  branch:
   ```bash
   backlog task create "Unit 1 — wire schema" -l run-<slug> --priority high --plain
   backlog task create "Unit 2 — migrate" -l run-<slug> --dep task-1 --plain
   ```
+
+**Agents edit, never create.** Once fanned out, an agent only ever *edits* its pre-assigned task
+(the **One writer per task** rule below) — it never runs `task create` on its own branch, which
+would reopen the ID race. A follow-up unit discovered mid-run rides the bus as a "new unit" note
+and lands in the journal; the orchestrator batch-creates it on the base branch between waves, then
+dispatches it.
+
+**Config is a backstop, not the fix.** Backlog's cross-branch guards (`checkActiveBranches`,
+`remoteOperations`, `activeBranchDays` in `backlog/config.yml`, all on by default) scan other
+branches for the highest ID before allocating — but only see tasks already committed and visible at
+allocation time, so they lose to a true concurrent create (both allocate before either commits).
+Confirm they're on (`grep -i branch backlog/config.yml`); it closes the *sequential*-branch cases
+but does **not** replace seeding up front for concurrent fan-out. Optional: `zeroPaddedIds` for
+cleaner merge diffs. Reference units in the playbook by run-label + title, not bare `task 13`, so
+any collision is legible rather than silent.
 
 **Dependencies, not prose ordering.** Encode unit order as `--dep`, then let backlog compute the
 waves instead of hand-sequencing in the playbook:
