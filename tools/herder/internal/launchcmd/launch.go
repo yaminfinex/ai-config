@@ -83,7 +83,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 	hcomPath, err := exec.LookPath("hcom")
 	if err != nil {
-		die(stderr, "hcom not on PATH — hcom is a hard dependency (plan 002 R4); install hcom or fix PATH. Not launching '"+tool+"' raw.")
+		die(stderr, "hcom not on PATH. herder launches agents through hcom and never falls back to a raw '"+tool+"'. Run ai-setup (installs hcom via mise), or check `mise doctor` / your PATH.")
 		return 1
 	}
 
