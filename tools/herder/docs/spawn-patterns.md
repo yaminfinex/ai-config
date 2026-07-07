@@ -146,7 +146,7 @@ Codex's composer collapses any *paste* over ~1k chars into a `[Pasted Content N 
 
 If a codex composer ends up polluted anyway (e.g. a human pasted into the pane), there is **no key that clears it**: `herdr pane send-keys` accepts only `Enter` / `esc` / `C-c`, and `esc` / `C-c` interrupt the agent rather than clearing the line (`BSpace`, `C-u` are rejected as `invalid_key`). Just submit — codex tolerates a doubled idempotent instruction, or expands a `[Pasted Content]` blob on the first Enter and submits on the second.
 
-This is the same file-staging idea as `--prompt-file` for initial prompts (recipe B): for codex, keep the wire payload to a single short line whether it's an initial prompt or a mid-session brief.
+This is the same file-staging idea as `--prompt-file` for initial prompts (recipe B) — and it applies to the BOOT-TIME initial prompt only, since that is the sole surviving paste path; spawn does the staging automatically there. Mid-session sends ride the bus and carry no wire-length constraint.
 
 ## Initial-prompt delivery caveats
 
