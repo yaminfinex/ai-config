@@ -101,11 +101,22 @@ one-shots (`codex exec`) still ride the hcom path. Applies to fresh launches onl
 **Team buses (opt-in ringfence):** the bus is scoped by `HCOM_DIR`, pinned into the child's env at
 spawn: `--team <name>` (else `$HERDER_TEAM`, else the global `~/.hcom` bus) →
 `HCOM_DIR=$HERDER_TEAMS_ROOT/<name>` (default root `~/.hcom/teams`). The global bus is the normal
-operating mode — registry addressing already gives per-agent targeting. Config-dir pin caveat:
+operating mode — registry addressing already gives per-agent targeting. Config-dir pin:
 `PinConfigDir` (`internal/launchcmd`) pins `CLAUDE_CONFIG_DIR`/`CODEX_HOME`/`GEMINI_CLI_HOME` only
 when `HCOM_DIR` is set and ≠ `~/.hcom` (hcom's local-mode condition; pinning on the global bus
-moved Claude's JSON state and caused first-run onboarding). First team-bus claude launch per
-machine therefore hits one-time onboarding; it persists machine-wide once completed.
+would move Claude's JSON state for no reason). Pinning `CLAUDE_CONFIG_DIR=~/.claude` re-roots
+claude's top-level config from `~/.claude.json` to `~/.claude/.claude.json`, so the pin also seeds
+that file by copying `~/.claude.json` when the target is missing (never overwritten; any failure
+silently falls back to fresh state). An onboarded machine therefore skips claude's one-time
+onboarding on team buses; only a never-onboarded machine (no `~/.claude.json`) sees it once, and it
+persists machine-wide after that.
+
+Without the seed, claude treats a pinned launch as a fresh install and prints an alarming triple to
+stderr — `Claude configuration file not found at: ~/.claude/.claude.json` / `A backup file exists
+at: ~/.claude/backups/.claude.json.backup.<ts>` / `You can manually restore it by running: cp …` —
+which lands in hcom's headless launch logs (`$HCOM_DIR/.tmp/logs/background_*.log`). The emitter is
+claude itself (hcom performs no config swap), it is cosmetic (no data is lost, the session works),
+and it can still appear when the seed source is absent or unreadable (TASK-011).
 
 **Context-ceiling interim (TASK-003 → TASK-022):** steered self-compaction
 (`herder send "$HERDR_PANE_ID" '/compact …'`) died with the keystroke transport — a bus message

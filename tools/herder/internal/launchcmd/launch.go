@@ -36,7 +36,10 @@ func PinConfigDir(tool string) {
 	}
 	switch tool {
 	case "claude":
-		setEnvDefault("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+		dir := filepath.Join(home, ".claude")
+		if setEnvDefault("CLAUDE_CONFIG_DIR", dir) {
+			seedClaudeConfig(home, dir)
+		}
 	case "codex":
 		setEnvDefault("CODEX_HOME", filepath.Join(home, ".codex"))
 	case "gemini":
@@ -44,10 +47,35 @@ func PinConfigDir(tool string) {
 	}
 }
 
-func setEnvDefault(key, value string) {
+// seedClaudeConfig copies ~/.claude.json into the pinned config dir when the
+// pin re-roots claude's top-level config to a path that does not exist yet.
+// CLAUDE_CONFIG_DIR moves that file from ~/.claude.json to $dir/.claude.json,
+// so without a seed the first pinned launch is a fresh install to claude:
+// one-time onboarding in the pane, plus alarming "configuration file not
+// found / backup file exists" stderr in headless launch logs (claude itself
+// is the emitter — TASK-011). An existing target is never touched, and any
+// failure degrades silently to that fresh-state behavior.
+func seedClaudeConfig(home, dir string) {
+	dst := filepath.Join(dir, ".claude.json")
+	if _, err := os.Stat(dst); err == nil {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(dst, data, 0o600)
+}
+
+func setEnvDefault(key, value string) bool {
 	if os.Getenv(key) == "" {
 		_ = os.Setenv(key, value)
+		return true
 	}
+	return false
 }
 
 // Run executes the herder launch contract: parse hcom-owned flags, pin real
@@ -307,7 +335,11 @@ Options:
 
 hcom is a HARD dependency — launch execs 'hcom <tool> --run-here' and never falls
 back to a raw tool. HCOM_DIR (the team bus) is inherited from the environment, and
-each tool's real config dir is pinned so auth survives an isolated team bus.
+each tool's real config dir is pinned so auth survives an isolated team bus. The
+claude pin also seeds ~/.claude/.claude.json from ~/.claude.json when missing, so
+pinned launches keep onboarding/identity state instead of bootstrapping fresh
+(and don't print claude's "configuration file not found / backup exists" stderr
+into headless launch logs).
 
 Exception — print one-shots: 'claude -p/--print ...' skips the bus entirely and
 execs the PATH-resolved claude (hcom would background the run and the answer
