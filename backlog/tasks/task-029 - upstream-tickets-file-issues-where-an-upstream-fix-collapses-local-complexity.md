@@ -4,6 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
+updated_date: '2026-07-07 12:36'
 labels:
   - run-herder-dx
 dependencies: []
@@ -36,3 +37,12 @@ Doctrine: NOTHING is filed externally by agents — drafts are prepared here, th
 - [ ] #3 Candidates cross-checked against the hcom version current at execution time (coordinate with TASK-028 — an upgrade may moot or reshape asks (1)/(2)/(5))
 - [ ] #4 Standing practice recorded in the orchestrate skill or run playbook template: unit closeout includes an upstream-candidate sweep
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-07 12:36
+---
+CANDIDATE (6) — hcom events sub UX (hera field report, 2026-07-07): (a) `--once` reads like "block until one event" (tail -f expectation) but means "auto-remove subscription after first match" — the command always returns immediately and notifies later via a bus message from [hcom-events]; an agent that wraps it in background execution misreads process exit as the event firing (happened live). (b) "historical matches: N" on create is ambiguous — unclear whether a historical match consumes a --once subscription or only fresh events do. (c) subscriptions stack silently — re-arming without unsub yields duplicate notifications per event (3 live pings from one idle event observed). Asks: sub-specific --help lead line "returns immediately; notification arrives as a bus message", rename/alias --once or document it as auto-unsub, state historical-match semantics on create, dedupe-or-warn on identical filter subscription.
+---
+<!-- COMMENTS:END -->
