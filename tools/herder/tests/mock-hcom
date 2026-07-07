@@ -5,7 +5,8 @@
 # It answers exactly the hcom sub-invocations driver-hcom.sh makes:
 #   hcom list <bus_name>                                  → joined? (exit 0/1)
 #   hcom send --from <sender> @<bus_name> -- <message>    → deliver (exit 0/1)
-#   hcom events --last N --context deliver:<name> --after <iso>  → ack array
+#   hcom events --last N --agent <name> --context deliver:<sender> --after <iso>  → ack array
+#     (receipts land on the RECEIVER instance with context deliver:<SENDER>)
 #
 # Behaviour is driven by env vars (set by the harness):
 #   MOCK_HCOM_SCENARIO  delivered | queued | notjoined | sendfail
@@ -42,7 +43,7 @@ case "${1:-}" in
     exit 0
     ;;
   events)
-    # hcom events --last N --context deliver:<name> --after <iso>
+    # hcom events --last N --agent <name> --context deliver:<sender> --after <iso>
     printf '%s\n' "$*" > "$PROBE/events_argv"
     if [[ "$SCEN" == "delivered" ]]; then
       jq -n '[{event:"deliver", ok:true}]'

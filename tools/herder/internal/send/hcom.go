@@ -76,10 +76,7 @@ func (h *busSender) send(target, busName, busDir, message string, timeoutMS int,
 		return 2
 	}
 
-	sender := os.Getenv("HERDER_LABEL")
-	if sender == "" {
-		sender = "orchestrator"
-	}
+	sender := senderIdentity()
 	startISO := h.now().UTC().Format("2006-01-02T15:04:05Z")
 
 	submitted := false
@@ -88,7 +85,7 @@ func (h *busSender) send(target, busName, busDir, message string, timeoutMS int,
 		verifyResult = "not_delivered"
 	} else {
 		submitted = true
-		if h.waitForAck(env, busName, startISO, timeoutMS) {
+		if h.waitForAck(env, busName, sender, startISO, timeoutMS) {
 			verifyResult = "delivered"
 		} else {
 			verifyResult = "queued"
@@ -127,19 +124,35 @@ func (h *busSender) send(target, busName, busDir, message string, timeoutMS int,
 	}
 }
 
-func (h *busSender) waitForAck(env []string, busName, startISO string, timeoutMS int) bool {
+// waitForAck polls for THIS message's delivery receipt. Receipt shape (pinned
+// live, TASK-032): hcom logs delivery on the RECEIVER's instance with context
+// `deliver:<SENDER>` — so the query keys on --agent <target> plus the sender
+// identity the message was sent --from. The pre-fix query (`--context
+// deliver:<target>`, no --agent) matched only receipts of messages the TARGET
+// itself had sent, so verify could practically never report "delivered".
+func (h *busSender) waitForAck(env []string, busName, sender, startISO string, timeoutMS int) bool {
 	windowSeconds := (timeoutMS + 999) / 1000
 	start := h.now()
 	for {
 		if int(h.now().Sub(start).Seconds()) >= windowSeconds {
 			return false
 		}
-		out, rc := h.output(env, "events", "--last", "50", "--context", "deliver:"+busName, "--after", startISO)
+		out, rc := h.output(env, "events", "--last", "50", "--agent", busName, "--context", "deliver:"+sender, "--after", startISO)
 		if rc == 0 && jsonArrayLen(out) > 0 {
 			return true
 		}
 		h.sleep(250 * time.Millisecond)
 	}
+}
+
+// senderIdentity is the --from identity a send is stamped with — the receipt's
+// deliver:<sender> context echoes it verbatim, which is what waitForAck keys on.
+func senderIdentity() string {
+	sender := os.Getenv("HERDER_LABEL")
+	if sender == "" {
+		sender = "orchestrator"
+	}
+	return sender
 }
 
 func (h *busSender) runDiscard(env []string, args ...string) int {
