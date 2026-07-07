@@ -21,7 +21,8 @@ serialize them instead of discovering the interaction as a merge conflict.
    gate results inline or bundled — lands on the unit thread. The orchestrator idles and
    integrates **in completion order as reports arrive** — not by waiting on workers one at a
    time, which stalls on whichever you picked and is blind to whoever finished first. Backstop
-   per worker: `hcom events sub --idle <name> --once`, so one that dies before reporting doesn't
+   per worker: `hcom events sub --idle <name> --once` (returns immediately — the notification
+   arrives later as a bus message; not a blocking waiter), so one that dies before reporting doesn't
    strand the run. `hcom transcript <name>` / pane reads diagnose stuck workers, not collect output.
 4. **Integrate serially.** Workers never merge their own branches; the orchestrator (or an
    integration agent) lands them one at a time, re-running the gate after each — the

@@ -24,7 +24,8 @@ orchestrator itself replaceable.
    name and the thread convention, so the prompt stays one line.
 3. **Idle for the report — don't poll.** End your turn after spawning; the phase agent's
    DONE/BLOCKED report on the unit thread wakes you. Backstop: `hcom events sub --idle <name>
-   --once` (or `--type life --agent <name>`). Quiet too long → `hcom transcript <name>` to see
+   --once` (or `--type life --agent <name>`; sub returns immediately — the notification arrives
+   later as a bus message, never run it as a blocking waiter). Quiet too long → `hcom transcript <name>` to see
    where it actually is before assuming it's stuck.
 4. **Verify before advancing — don't take the report's word:** phase commits present, tree
    clean; typecheck/lint green; targeted suites green **uncached**; this phase's acceptance

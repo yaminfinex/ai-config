@@ -116,8 +116,11 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
 9. **Completion is a report, not a poll.** A finished worker sends its DONE/BLOCKED report
    (invariant 4) and idles; the orchestrator ends its turn after dispatching and wakes on the
    delivery. Backstop for a worker that dies before reporting — event-driven, not polling:
-   `hcom events sub --idle <name> --once` (or `--type life --agent <name>`), then end the turn.
-   Diagnose a quiet worker with `hcom transcript <name>` before assuming it's stuck. Relays need
+   `hcom events sub --idle <name> --once` (or `--type life --agent <name>`), then end the turn
+   (`sub` returns immediately — it registers the subscription and the notification arrives later
+   as a bus message from [hcom-events]; never run it as a blocking waiter). Re-arming without
+   unsubscribing stacks subscriptions — duplicate pings per event; `--once` ones self-remove
+   after firing. Diagnose a quiet worker with `hcom transcript <name>` before assuming it's stuck. Relays need
    no report — the spawned successor *is* the signal (`relay.md`).
 10. **End-of-run tail:** fresh-context deep review against the acceptance criteria + remnant
    sweep + golden-agent check if bottled (`references/adversarial.md`), then harvest before the
