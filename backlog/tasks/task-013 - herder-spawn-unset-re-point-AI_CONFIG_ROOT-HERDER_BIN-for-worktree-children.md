@@ -4,7 +4,9 @@ title: 'herder spawn: unset/re-point AI_CONFIG_ROOT + HERDER_BIN for worktree ch
 status: To Do
 assignee: []
 created_date: '2026-07-07 06:40'
-labels: []
+updated_date: '2026-07-07 06:49'
+labels:
+  - run-herder-dx
 dependencies: []
 priority: medium
 ordinal: 13000

@@ -4,7 +4,9 @@ title: 'herder docs: spawn from a worktree prepends THAT worktree''s shims'
 status: To Do
 assignee: []
 created_date: '2026-07-07 06:33'
-labels: []
+updated_date: '2026-07-07 06:49'
+labels:
+  - run-herder-dx
 dependencies: []
 priority: low
 ordinal: 9000

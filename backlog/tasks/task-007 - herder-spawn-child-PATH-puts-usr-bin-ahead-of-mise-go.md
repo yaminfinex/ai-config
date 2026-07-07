@@ -4,7 +4,9 @@ title: 'herder spawn: child PATH puts /usr/bin ahead of mise go'
 status: To Do
 assignee: []
 created_date: '2026-07-07 06:33'
-labels: []
+updated_date: '2026-07-07 06:49'
+labels:
+  - run-herder-dx
 dependencies: []
 priority: medium
 ordinal: 7000
