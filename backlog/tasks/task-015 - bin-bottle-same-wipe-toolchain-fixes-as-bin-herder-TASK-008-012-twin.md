@@ -4,7 +4,9 @@ title: 'bin/bottle: same wipe + toolchain fixes as bin/herder (TASK-008/012 twin
 status: To Do
 assignee: []
 created_date: '2026-07-07 07:29'
-labels: []
+updated_date: '2026-07-07 07:41'
+labels:
+  - run-herder-dx
 dependencies: []
 priority: medium
 ordinal: 15000

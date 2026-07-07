@@ -4,7 +4,9 @@ title: 'herder: kill the herdr keystroke delivery transport — hcom is THE tran
 status: To Do
 assignee: []
 created_date: '2026-07-07 05:37'
-labels: []
+updated_date: '2026-07-07 07:41'
+labels:
+  - run-herder-dx
 dependencies: []
 priority: medium
 ordinal: 3000

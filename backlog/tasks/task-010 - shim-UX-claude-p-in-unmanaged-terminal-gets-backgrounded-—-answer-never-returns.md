@@ -6,8 +6,9 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-07 06:33'
-updated_date: '2026-07-07 07:02'
-labels: []
+updated_date: '2026-07-07 07:41'
+labels:
+  - run-herder-dx
 dependencies: []
 priority: medium
 ordinal: 10000
@@ -16,6 +17,7 @@ ordinal: 10000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
+--------------------------------------------------
 TASK-001 finding: with machine-wide shims, hand-run 'claude -p ...' in an unmanaged terminal is routed through herder launch -> hcom, which backgrounds the session; the -p answer never returns to the caller.
 
 INVESTIGATED (2026-07-07, orchestrator subagent; hcom v0.7.22 source at tag):
@@ -28,4 +30,13 @@ OPTIONS:
 (d) upstream patch: needs 3 coordinated changes fighting hcom's deliberate 'print mode = persistent background agent' design — skip.
 
 DECISION PENDING (user). SEQUENCING: touches internal/launchcmd — collides with Unit C (TASK-014) in run-herder-dx wave 1; implement in wave 2 after Unit C lands.
+
+DECISION (orchestrator under user best-judgement grant, 2026-07-07): implement option (c) — launchcmd.Run detects -p/--print for claude, sets HCOM_LAUNCH_INFLIGHT=1, execs the PATH-resolved tool; the shim's INFLIGHT guard resolves the real binary. One-shots deliberately skip the bus.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 hand-run claude -p 'question' in an unmanaged terminal returns the answer on stdout (live smoke)
+- [ ] #2 interactive claude still binds to the bus; INFLIGHT recursion guards hold (suite evidence)
+- [ ] #3 check-launch-contract covers the -p bypass; 16 suites + go gates green; docs/help updated (DoD)
+<!-- AC:END -->

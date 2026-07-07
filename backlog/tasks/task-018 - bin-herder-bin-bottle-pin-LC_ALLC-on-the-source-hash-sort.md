@@ -4,7 +4,9 @@ title: 'bin/herder + bin/bottle: pin LC_ALL=C on the source-hash sort'
 status: To Do
 assignee: []
 created_date: '2026-07-07 07:29'
-labels: []
+updated_date: '2026-07-07 07:41'
+labels:
+  - run-herder-dx
 dependencies: []
 priority: low
 ordinal: 18000
