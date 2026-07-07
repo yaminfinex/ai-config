@@ -7,12 +7,15 @@ package send
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -75,6 +78,21 @@ func (h *busSender) deliver(busName, busDir, message string, timeoutMS int) stri
 	}
 
 	sender := senderIdentity()
+	// The snapshot-and-send sequence below is only honest when one send at a
+	// time runs per (bus, sender, target): two concurrent sends would both
+	// snapshot BEFORE either receipt, and the first wake's receipt would
+	// satisfy both waiters — the second reporting delivered while actually
+	// queued (codex review P2-CONCURRENT). An exact message correlate is not
+	// available from hcom 0.7.22 (verified live: the receipt's microsecond
+	// msg_ts appears nowhere else — message events expose a second-granular
+	// ts and `hcom send` returns no id), so serialize instead: an exclusive
+	// inter-process flock spanning snapshot → send → receipt wait. Contention
+	// is rare by doctrine (ring once; never blind-resend), so blocking is the
+	// simple, shape-proof choice.
+	unlock, lockErr := lockSendWindow(busDir, sender, busName)
+	if lockErr == nil {
+		defer unlock()
+	}
 	// Backdate the receipt window by one second: --after is second-granular
 	// and an instant wake lands the receipt in the SAME second as the send —
 	// a strict boundary would exclude it on every poll (seen live, TASK-032).
@@ -190,6 +208,36 @@ func senderIdentity() string {
 		sender = "orchestrator"
 	}
 	return sender
+}
+
+// lockSendWindow takes an exclusive inter-process lock over the
+// snapshot→send→receipt-wait window for one (bus, sender, target) tuple —
+// what makes the strictly-newer-than-snapshot receipt check message-specific
+// under concurrency (codex review P2-CONCURRENT). Blocking by design: a
+// contending send waits for the holder's verify window rather than racing
+// its receipt. The lock file lives in the system temp dir keyed by the tuple
+// (not in the bus dir — hcom owns that layout); processes on one machine
+// contend, which is the only place the file-DB race exists. On any lock
+// error the send proceeds unlocked (best-effort — a delivery must not fail
+// on lockfile filesystem trouble).
+func lockSendWindow(busDir, sender, busName string) (func(), error) {
+	if busDir == "" || busDir == "null" {
+		busDir = ambientHcomDir()
+	}
+	sum := sha256.Sum256([]byte(busDir + "\x00" + sender + "\x00" + busName))
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("herder-send-%x.lock", sum[:8]))
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return func() {}, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return func() {}, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
 }
 
 func (h *busSender) runDiscard(env []string, args ...string) int {
