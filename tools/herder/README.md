@@ -31,6 +31,33 @@ env -u GOROOT go test ./...
 env -u GOROOT go vet ./...
 ```
 
+## Spawn Environment
+
+`herder spawn` shapes the child pane's environment deliberately; three behaviors are worth
+knowing when working across checkouts and worktrees:
+
+- **Shims come from the SPAWNING checkout.** Spawn prepends `<spawning checkout>/tools/herder/shims`
+  to an hcom-capable child's PATH, so spawning from a worktree injects *that worktree's* shims, not
+  main's. This is by design — the shim rewrites the hcom bootstrap with the code you are actually
+  running — and it is safe: shims carry a `herder-path-shim` marker, recognize sibling copies from
+  other checkouts by content, and never exec each other into a loop.
+- **mise ordering is re-pinned.** rc-file `mise activate` is prompt-hook driven and stays inert in
+  a spawned pane's `-lic` wrapper (stale `__MISE_*` state, no prompt), which can leave `/usr/bin`
+  ahead of mise's toolchains — e.g. the OS go shadowing the pinned one. The login-shell wrapper
+  therefore pins `${MISE_DATA_DIR:-~/.local/share/mise}/shims` to the front of the child's PATH;
+  shims re-resolve per-directory at call time, so this is position-proof. No mise → no-op.
+  (`--no-login-shell` skips this fix; it needs runtime shell expansion.)
+- **Checkout-scoped env is re-pointed.** A child spawned `--cwd` into a *different* ai-config
+  checkout (typically a worktree) gets `AI_CONFIG_ROOT` and `HERDER_BIN` re-pointed at that
+  checkout — `bin/herder` and `lib/common.sh` let the inherited env var beat their own location, so
+  without this the child silently builds and tests the spawner's tree. The spawn-time launch itself
+  still rides the spawner's `bin/herder` (the proven-buildable tree). Outside any checkout, the
+  inherited values are left untouched.
+
+`--notify` resolves the spawner's bus name from the registry by guid *and* by pane/terminal
+coordinates, so enrolled sessions (no `$HERDER_GUID` in their environment) get bus-native
+completion reports; the keystroke ring remains the fallback for genuinely bus-less spawners.
+
 ## Activation And Usage
 
 Run `bin/ai-setup` from the ai-config checkout to put `bin/` and `tools/herder/shims/` on PATH via

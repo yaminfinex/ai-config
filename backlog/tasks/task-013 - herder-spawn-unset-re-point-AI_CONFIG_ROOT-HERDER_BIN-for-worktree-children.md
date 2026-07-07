@@ -1,10 +1,10 @@
 ---
 id: TASK-013
 title: 'herder spawn: unset/re-point AI_CONFIG_ROOT + HERDER_BIN for worktree children'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-07 06:40'
-updated_date: '2026-07-07 06:49'
+updated_date: '2026-07-07 06:51'
 labels:
   - run-herder-dx
 dependencies: []

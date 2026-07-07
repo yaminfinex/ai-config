@@ -60,7 +60,22 @@ ln -s "$TESTS_DIR/mock-hcom-spawn" "$MOCKBIN/hcom"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$MOCKBIN/sleep"
 chmod +x "$MOCKBIN/sleep"
 
-PATH_HERMETIC="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin"
+# The delivery leg shells out to <REPO>/bin/herder, which must be able to build
+# this module. The hermetic PATH drops the caller's env, and the wrapper's bare
+# PATH fallback can land on a system go too old for go.mod — so re-add the
+# caller's REAL go toolchain dir (resolved through any shim via GOROOT) ahead of
+# the system dirs. AI_CONFIG_ROOT pins the wrapper to THIS worktree's sources
+# and XDG_CACHE_HOME keeps its binary hash-cache run-private, with the go build
+# cache still shared so rebuilds stay fast (same hardening as
+# check-hook-bootstrap.sh after the wrong-tree/live-cache traps).
+GO_TOOLCHAIN_DIR=""
+if command -v go >/dev/null 2>&1; then
+  GO_TOOLCHAIN_DIR="$(go env GOROOT 2>/dev/null)/bin"
+  [[ -x "$GO_TOOLCHAIN_DIR/go" ]] || GO_TOOLCHAIN_DIR=""
+fi
+GOCACHE_SHARED="${GOCACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/herder/go-build}"
+
+PATH_HERMETIC="$MOCKBIN${GO_TOOLCHAIN_DIR:+:$GO_TOOLCHAIN_DIR}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin"
 
 fail=0
 
@@ -77,6 +92,9 @@ run_spawn() {
   RUN_OUT="$(env -i \
     PATH="$PATH_HERMETIC" \
     HOME="$CASE/home" \
+    AI_CONFIG_ROOT="$REPO_ROOT" \
+    XDG_CACHE_HOME="$ROOT/xdg-cache" \
+    GOCACHE="$GOCACHE_SHARED" \
     HERDR_ENV=1 HERDR_PANE_ID=p_orch \
     HERDER_GUID="${SPAWN_HERDER_GUID:-}" \
     HERDER_STATE_DIR="$CASE/state" \
@@ -160,6 +178,13 @@ SPAWN_HERDER_GUID="guid-orch-0000"
 SPAWN_SEED_REGISTRY='{"guid":"guid-orch-0000","short_guid":"orch","label":"orchestrator","role":"orchestrator","agent":"claude","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_dir":"/hcom","hcom_name":"orchestrator-bumo","hcom_tag":"orchestrator","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-orch","tag":"orchestrator","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
 scenario notify_bus        ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
 unset SPAWN_HERDER_GUID SPAWN_SEED_REGISTRY
+# Enrolled-spawner notify: NO HERDER_GUID in the spawner's env, but the spawning
+# pane (HERDR_PANE_ID=p_orch) has an active registry row with a bus name — the
+# appendix must route bus-native via pane/terminal resolution, not fall back to
+# the keystroke ring (TASK-005).
+SPAWN_SEED_REGISTRY='{"guid":"guid-hera-0000","short_guid":"guid-her","label":"orchestrator","role":"orchestrator","agent":"claude","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_dir":"/hcom","hcom_name":"hera","hcom_tag":"orchestrator","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-hera","tag":"orchestrator","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
+scenario notify_enrolled   ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
+unset SPAWN_SEED_REGISTRY
 scenario capture_fallback  ready claude fallback --role worker --agent claude --json
 scenario capture_ambiguous ready claude fallback_ambiguous --role worker --agent claude --json
 scenario capture_fail      ready claude fail --role worker --agent claude --json

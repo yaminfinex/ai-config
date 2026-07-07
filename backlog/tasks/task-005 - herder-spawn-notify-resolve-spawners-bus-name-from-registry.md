@@ -1,10 +1,10 @@
 ---
 id: TASK-005
 title: 'herder spawn --notify: resolve spawner''s bus name from registry'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-07 05:57'
-updated_date: '2026-07-07 06:49'
+updated_date: '2026-07-07 06:51'
 labels:
   - run-herder-dx
 dependencies: []
