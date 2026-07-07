@@ -1,10 +1,10 @@
 ---
 id: TASK-009
 title: 'herder docs: spawn from a worktree prepends THAT worktree''s shims'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-07 06:33'
-updated_date: '2026-07-07 06:49'
+updated_date: '2026-07-07 07:29'
 labels:
   - run-herder-dx
 dependencies: []

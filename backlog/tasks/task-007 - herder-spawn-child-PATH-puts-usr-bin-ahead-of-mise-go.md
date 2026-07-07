@@ -1,10 +1,10 @@
 ---
 id: TASK-007
 title: 'herder spawn: child PATH puts /usr/bin ahead of mise go'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-07 06:33'
-updated_date: '2026-07-07 06:49'
+updated_date: '2026-07-07 07:29'
 labels:
   - run-herder-dx
 dependencies: []

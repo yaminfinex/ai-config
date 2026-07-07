@@ -24,6 +24,16 @@ const trustModalPattern = `Do you trust the contents of this directory|Do you tr
 
 var trustModalRE = regexp.MustCompile(trustModalPattern)
 
+// misePathFix re-pins mise's shims dir to the FRONT of the child's PATH inside
+// the login-shell wrapper. Rationale: `mise activate` in rc files is prompt-
+// hook driven, and a spawned pane inherits stale __MISE_* session state, so in
+// `-lic` mode the rc chain can leave system dirs (/usr/bin) ahead of mise's
+// tool paths — the child then resolves e.g. the OS go over the pinned one.
+// Shims are position-proof (each shim re-resolves the tool for the child's cwd
+// at call time), so one prepend restores mise-activated ordering without
+// parsing or re-running the activation. No mise on the machine → no dir → no-op.
+const misePathFix = `if [ -d "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" ]; then export PATH="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH"; fi; `
+
 type options struct {
 	Help          bool
 	Role          string
@@ -444,18 +454,21 @@ func (r *runner) run() int {
 	}
 
 	herderBin := r.paths.BinHerder
+	spawnerPaneID := os.Getenv("HERDR_PANE_ID")
+	spawnerTermID := ""
 	if opts.Notify && opts.NotifyTo == "" {
-		if paneID := os.Getenv("HERDR_PANE_ID"); paneID != "" {
-			out, err := r.herdr.Output("pane", "get", paneID)
+		if spawnerPaneID != "" {
+			out, err := r.herdr.Output("pane", "get", spawnerPaneID)
 			if err == nil {
 				pane, parseErr := herdrcli.ParsePaneGet(out)
 				if parseErr == nil {
+					spawnerTermID = pane.TerminalID
 					opts.NotifyTo = pane.TerminalID
 				}
 			}
 			if opts.NotifyTo == "" {
-				opts.NotifyTo = paneID
-				fmt.Fprintf(r.stderr, "herder spawn: could not resolve spawner terminal_id; ring target falls back to raw pane %s (drift-prone)\n", paneID)
+				opts.NotifyTo = spawnerPaneID
+				fmt.Fprintf(r.stderr, "herder spawn: could not resolve spawner terminal_id; ring target falls back to raw pane %s (drift-prone)\n", spawnerPaneID)
 			}
 		} else {
 			fmt.Fprintln(r.stderr, "herder spawn: --notify set but HERDR_PANE_ID is empty; no ring target injected")
@@ -525,6 +538,24 @@ func (r *runner) run() int {
 		childCWD, _ = os.Getwd()
 	}
 
+	// Checkout-scoped env hygiene: a child spawned --cwd into a DIFFERENT
+	// ai-config checkout (typically a worktree) would otherwise inherit the
+	// spawner's AI_CONFIG_ROOT and HERDER_BIN pointing at the spawning tree —
+	// bin/herder and lib/common.sh let the env var win over their own location,
+	// so the child's builds and suites silently exercise the wrong tree. When
+	// the child's cwd resolves to another checkout, re-point both at it. The
+	// spawn-time launch itself (launchTokens) stays on the SPAWNER's bin/herder:
+	// it is the proven-buildable tree, and a mid-work child tree must not be
+	// able to brick its own boot. Outside any checkout the inherited values are
+	// left alone — there is no wrong tree to protect against, and the spawner's
+	// herder is the only one the child can call.
+	childEnvBin := herderBin
+	childEnvRoot := ""
+	if root, bin, ok := checkoutForDir(childCWD); ok && root != r.paths.RepoRoot {
+		childEnvBin = bin
+		childEnvRoot = root
+	}
+
 	rootPaneID, rootTerm := "", ""
 	if opts.NewTab {
 		tabArgs := []string{"tab", "create", "--no-focus", "--label", label}
@@ -570,7 +601,7 @@ func (r *runner) run() int {
 	// message with content, not a fixed slogan); fall back to the keystroke
 	// ring — with neutral, doctrine-free wording — only for a bus-less spawner.
 	if opts.Notify && opts.Prompt != "" {
-		opts.NotifyBusName = resolveSpawnerBus(registryPath, opts.NotifyTo, spawnedBy)
+		opts.NotifyBusName = resolveSpawnerBus(registryPath, opts.NotifyTo, spawnedBy, spawnerPaneID, spawnerTermID)
 		if opts.NotifyBusName != "" {
 			opts.Prompt += fmt.Sprintf(`
 
@@ -598,14 +629,23 @@ The spawner is often mid-turn, so the helper may report verify=queued or verify=
 		hcomEnv = " HCOM_DIR=" + shellquote.Quote(hcomDirEff) +
 			" PATH=" + shellquote.Quote(r.paths.ShimsDir) + ":$PATH"
 	}
+	rootExport := ""
+	if childEnvRoot != "" {
+		rootExport = " AI_CONFIG_ROOT=" + shellquote.Quote(childEnvRoot)
+	}
 	argv := []string{}
 	if opts.LoginShell {
 		innerCmd := shellCommand(launchTokens)
-		inner := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s%s%s; exec %s",
-			shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(herderBin), notifyExport, hcomEnv, innerCmd)
+		inner := fmt.Sprintf("%sexport HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s%s%s%s; exec %s",
+			misePathFix, shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(childEnvBin), rootExport, notifyExport, hcomEnv, innerCmd)
 		argv = []string{opts.LoginShellBin, "-lic", inner}
 	} else {
-		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SPAWNED_BY=" + spawnedBy, "HERDER_BIN=" + herderBin}
+		// The env form has no shell, so it gets the checkout re-point but not
+		// the mise shims PATH fix (that one needs runtime expansion).
+		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SPAWNED_BY=" + spawnedBy, "HERDER_BIN=" + childEnvBin}
+		if childEnvRoot != "" {
+			argv = append(argv, "AI_CONFIG_ROOT="+childEnvRoot)
+		}
 		if opts.NotifyTo != "" {
 			argv = append(argv, "HERDER_NOTIFY_TO="+opts.NotifyTo)
 		}
@@ -1086,7 +1126,18 @@ func printHelp(stdout io.Writer) {
 		"",
 		"  --notify is the doorbell: a finished worker pings the spawner so it needn't poll wait in",
 		"  a loop. A bus-bound spawner gets a real hcom status message; a bus-less one gets a single",
-		"  keystroke ring. It is only a signal — send it once and stop, whatever it reports.",
+		"  keystroke ring. The spawner's bus name resolves from the registry by its guid AND by its",
+		"  pane/terminal coordinates, so enrolled sessions (no $HERDER_GUID in their environment)",
+		"  route bus-native too. It is only a signal — send it once and stop, whatever it reports.",
+		"",
+		"  Child environment: the SPAWNING checkout's tools/herder/shims dir is prepended to the",
+		"  child's PATH (hcom agents), so spawning from a worktree injects THAT worktree's shims —",
+		"  by design; sibling shims recognize each other by marker and never loop. The login-shell",
+		"  form also pins mise's shims dir to the front of PATH, so mise-managed toolchains beat",
+		"  system ones even though rc-file mise activation is prompt-hook driven and inert in a",
+		"  spawned pane. When --cwd lands the child in a DIFFERENT ai-config checkout (a worktree),",
+		"  AI_CONFIG_ROOT and HERDER_BIN are re-pointed at that checkout so the child builds and",
+		"  tests its own tree; the spawn-time launch itself still rides the spawner's bin/herder.",
 		"",
 		"  --team caveat: the FIRST team-bus claude launch per machine hits claude's one-time",
 		"  onboarding in the pane (the config-dir pin starts fresh state) — complete it once and it",
@@ -1285,10 +1336,14 @@ func firstNonEmpty(values ...string) string {
 
 // resolveSpawnerBus returns the spawner's recorded hcom bus name so a finished
 // worker can report completion over the bus instead of the keystroke ring. It
-// keys on a POSITIVE identity: an explicit --notify-to that names a registry
-// peer, else the spawner's own guid ($HERDER_GUID, captured as spawnedBy).
-// Returns "" when the spawner has no recorded bus name (bus-less → ring path).
-func resolveSpawnerBus(registryPath, notifyTo, spawnedBy string) string {
+// keys on a POSITIVE identity, most explicit first: a --notify-to that names a
+// registry peer (guid/short/label, else that peer's live pane/terminal id),
+// the spawner's own guid ($HERDER_GUID, captured as spawnedBy), and finally
+// the spawner's own pane/terminal coordinates — which is what identifies an
+// ENROLLED spawner (enroll records pane_id/terminal_id but the session has no
+// $HERDER_GUID in its environment, so guid-only resolution misclassified it
+// as bus-less). Returns "" when nothing matches (bus-less → ring path).
+func resolveSpawnerBus(registryPath, notifyTo, spawnedBy, spawnerPane, spawnerTerm string) string {
 	recs, err := registry.Load(registryPath)
 	if err != nil {
 		return ""
@@ -1297,13 +1352,64 @@ func resolveSpawnerBus(registryPath, notifyTo, spawnedBy string) string {
 		if rec := registry.Resolve(recs, notifyTo); rec != nil && rec.HcomName != "" {
 			return rec.HcomName
 		}
+		if name := busNameByPane(recs, notifyTo); name != "" {
+			return name
+		}
 	}
 	if spawnedBy != "" && spawnedBy != "user" {
-		if rec := registry.Resolve(recs, spawnedBy); rec != nil {
+		if rec := registry.Resolve(recs, spawnedBy); rec != nil && rec.HcomName != "" {
 			return rec.HcomName
 		}
 	}
+	for _, key := range []string{spawnerPane, spawnerTerm} {
+		if name := busNameByPane(recs, key); name != "" {
+			return name
+		}
+	}
 	return ""
+}
+
+// busNameByPane resolves a live pane_id/terminal_id to the bus name of the
+// latest ACTIVE row holding it. Pane coordinates are positional (herdr reuses
+// them across sessions), so unlike guid/label resolution this refuses closed
+// rows; ties resolve last in guid order, matching the registry's jq semantics.
+func busNameByPane(recs []registry.Record, key string) string {
+	if key == "" {
+		return ""
+	}
+	name := ""
+	for _, rec := range registry.LatestByGUID(recs) {
+		if rec.Status == "active" && rec.HcomName != "" && (rec.PaneID == key || rec.TerminalID == key) {
+			name = rec.HcomName
+		}
+	}
+	return name
+}
+
+// checkoutForDir walks dir upward to the nearest ai-config checkout, using the
+// same criteria as herderpaths (an executable bin/herder plus a
+// tools/herder/shims dir). It answers "which tree does the CHILD's cwd belong
+// to", which herderpaths.Resolve cannot: that resolves the SPAWNER's tree from
+// $AI_CONFIG_ROOT/getwd — exactly the inherited value being corrected here.
+func checkoutForDir(dir string) (root, binHerder string, ok bool) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", "", false
+	}
+	for {
+		bin := filepath.Join(abs, "bin", "herder")
+		shims := filepath.Join(abs, "tools", "herder", "shims")
+		if binSt, err := os.Stat(bin); err == nil && !binSt.IsDir() && binSt.Mode()&0o111 != 0 {
+			if shimsSt, err := os.Stat(shims); err == nil && shimsSt.IsDir() {
+				return abs, bin, true
+			}
+		}
+		next := filepath.Dir(abs)
+		if next == abs {
+			return "", "", false
+		}
+		abs = next
+	}
 }
 
 func sleepMS(ms int) {
