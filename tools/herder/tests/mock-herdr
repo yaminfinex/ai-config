@@ -39,7 +39,7 @@ emit_read() {  # $1 = text
 current_status() {
   case "$SCEN" in
     busy) printf 'working';;            # already mid-turn the whole time
-    normal|modal)
+    normal|modal|bootrace)
       if entered; then printf 'working'; else printf 'idle'; fi;;
     *) printf 'idle';;                  # idle / noenter never flip
   esac
@@ -52,12 +52,24 @@ current_text() {
     # pre-send phase
     case "$SCEN" in
       modal) printf '⏺ project loaded\nDo you trust the contents of this directory?\n  1. Yes, continue\n%s ' "$sig";;
+      bootrace) printf '✳ Starting Claude…\n  esc to interrupt';;   # booting: no ready sigil yet
       *)     printf '⏺ ready\n%s ' "$sig";;
     esac
     return
   fi
   # post-send
   case "$SCEN" in
+    bootrace)
+      # Boot-race: the paste physically landed, but while claude is still
+      # booting the capture keeps returning boot chrome — the composer (and our
+      # pasted text) is NOT visible. Only once Enter submits does the pane
+      # settle and reveal the transcript. A blind re-paste in this window is the
+      # doubling bug; the guard must NOT paste again while the pane is unreadable.
+      if entered; then
+        printf '⏺ %s\n⏺ working…\n%s ' "$msg" "$sig"
+      else
+        printf '✳ Starting Claude…\n  esc to interrupt'
+      fi;;
     busy)
       # queued: text renders on the input/sigil line and stays there (submitted or not)
       printf '⏺ working on previous turn\n%s %s' "$sig" "$msg";;

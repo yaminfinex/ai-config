@@ -47,6 +47,7 @@ SCENARIOS=(
   "normal|normal|--json alpha @MSG@"
   "noenter|noenter|--no-enter --json alpha @MSG@"
   "busy|busy|--json alpha @MSG@"
+  "bootrace|bootrace|--json alpha @MSG@"
   "force|modal|--force --json alpha @MSG@"
   "noforce_refuse|modal|--json alpha @MSG@"
   "timeout|normal|--timeout 5000 --json alpha @MSG@"

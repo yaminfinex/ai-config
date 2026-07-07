@@ -197,6 +197,19 @@ func (h *Herdr) Send(target, message string, opts SendOptions, stdout, stderr io
 	sendAttempts := 0
 
 	for !landed && sendAttempts < 2 {
+		if sendAttempts > 0 {
+			// Boot-race guard: never blind-paste on top of a buffer we cannot
+			// prove is empty. During agent boot the first paste can land while
+			// our in-loop detection lags (readPane still returns boot chrome);
+			// a second paste then stacks a duplicate, unsubmitted copy. Only
+			// re-paste when the composer POSITIVELY shows an empty ready line.
+			// If the payload is already there, or the pane is still unreadable,
+			// assume the first paste landed and fall through to the submit leg.
+			if !composerConfirmedEmpty(stripChrome(h.readPane(paneID)), sigil) {
+				landed = true
+				break
+			}
+		}
 		sendAttempts++
 		if rc, err := h.client().Run("agent", "send", paneID, message); err != nil || rc != 0 {
 			h.sleep(400 * time.Millisecond)
@@ -484,6 +497,28 @@ func msgTrailingSigil(text, sigil, msgProbe string) bool {
 
 func verifyDelivered(text, sigil, msgProbe string) bool {
 	return msgPresent(text, msgProbe) && !msgTrailingSigil(text, sigil, msgProbe)
+}
+
+// composerConfirmedEmpty reports whether the pane POSITIVELY shows a ready,
+// empty input line — the only state in which re-pasting is safe. A booting or
+// otherwise unreadable pane (no recognizable sigil, or an empty capture) and a
+// pane holding a pasted blob both return false, so the caller never blind-pastes
+// a duplicate on top of a first paste it simply cannot see yet.
+func composerConfirmedEmpty(text, sigil string) bool {
+	if sigil == "" || pastedBlobCount(text) > 0 {
+		return false
+	}
+	needle := sigil + " "
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if idx := strings.LastIndex(lines[i], needle); idx >= 0 {
+			return strings.TrimSpace(lines[i][idx+len(needle):]) == ""
+		}
+		if strings.TrimRight(lines[i], " ") == sigil {
+			return true
+		}
+	}
+	return false
 }
 
 func messagePreview(message string) string {
