@@ -125,6 +125,12 @@ func (r *runner) fork(opts forkOptions) int {
 	}
 	role := firstNonEmpty(opts.role, parent.Role, "worker")
 	prov := registry.BuildProvenance("fork", role, currentCWD(), "")
+	// spawned_by is the session that RAN this fork. BuildProvenance's ambient
+	// HERDER_SPAWNED_BY names the caller's OWN spawner — the child's grandparent
+	// when the forker was itself spawned — so resolve from HERDER_GUID instead,
+	// matching the HERDER_SPAWNED_BY that startAndAppend exports into the child's
+	// pane. The forker's spawner stays reachable transitively via the forker's row.
+	prov.SpawnedBy = firstNonEmpty(os.Getenv("HERDER_GUID"), "user")
 	prov.ForkedFrom = parentGUID
 
 	row, code := r.startAndAppend(startSpec{
@@ -695,6 +701,11 @@ Behavior:
   forks NATIVELY: the child is bus-bound from birth and records
   provenance.forked_from. Needs a live parent (forks off its bus name) or a
   recorded tool_session_id.
+
+  Child provenance: forked_from is the content parent (the forked target);
+  spawned_by is the session that RAN the fork (its HERDER_GUID, else "user") —
+  NOT that session's own spawner, which stays reachable transitively via the
+  forker's row.
 
   --self with no registered guid (codex, or an unenrolled claude) FALLS BACK to a
   raw tool fork through 'herder spawn': claude via '--resume <session>

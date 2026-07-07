@@ -70,7 +70,7 @@ PATH_HERMETIC="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.lo
 # fork --self detects the tool + identity from these env vars. Clear any ambient
 # values (this suite is often run from inside a live claude/herder pane) so each
 # --self case carries ONLY what its caller sets inline — no leakage.
-unset CLAUDECODE CLAUDE_CODE_SESSION_ID CODEX_HOME AI_AGENT HERDER_GUID
+unset CLAUDECODE CLAUDE_CODE_SESSION_ID CODEX_HOME AI_AGENT HERDER_GUID HERDER_SPAWNED_BY
 
 fail=0
 
@@ -106,6 +106,8 @@ run_case() {
     HERDER_LIFECYCLE_SETTLE_MS=0 \
     MOCK_PROBE_DIR="$CASE/probe" \
     MOCK_LIVE_PARENT="$live" \
+    HERDER_GUID="${HERDER_GUID:-}" \
+    HERDER_SPAWNED_BY="${HERDER_SPAWNED_BY:-}" \
     "${HFK[@]}" "$@" 2>"$RUN_ERR_F")"
   RUN_RC=$?
 }
@@ -190,6 +192,12 @@ run_case unknown 0 nope
 check_one unknown
 run_case missing_session 0 nosess
 check_one missing_session
+# provenance: a fork run BY a spawned session records THAT session as the child's
+# spawned_by — not the inherited HERDER_SPAWNED_BY, which names the forker's own
+# spawner (the child's grandparent). TASK-004.
+HERDER_GUID=guid-forker-1111 HERDER_SPAWNED_BY=guid-orch-2222 \
+  run_case provenance_spawned_by 1 parent --label prov-fork --json
+check_one provenance_spawned_by
 
 # --- fork --self -----------------------------------------------------------
 # claude, pane correlates to a registered guid (hcom_name) -> NATIVE fork path.
