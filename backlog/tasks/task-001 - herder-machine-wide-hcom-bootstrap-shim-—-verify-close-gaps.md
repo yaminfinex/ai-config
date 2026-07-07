@@ -4,7 +4,7 @@ title: 'herder: machine-wide hcom bootstrap shim — verify + close gaps'
 status: Done
 assignee: []
 created_date: '2026-07-07 05:36'
-updated_date: '2026-07-07 06:26'
+updated_date: '2026-07-07 07:40'
 labels:
   - run-herder-bootstrap
 dependencies: []
@@ -27,7 +27,13 @@ Work:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Hand-launched claude (mise shell) demonstrably receives the herder-native bootstrap — live smoke evidence, not fixtures only
-- [ ] #2 Every bypass vector enumerated with an explicit close-or-document decision
-- [ ] #3 All tools/herder/tests/check-*.sh + go test/vet (herder AND bottle) green
+- [x] #1 Hand-launched claude (mise shell) demonstrably receives the herder-native bootstrap — live smoke evidence, not fixtures only
+- [x] #2 Every bypass vector enumerated with an explicit close-or-document decision
+- [x] #3 All tools/herder/tests/check-*.sh + go test/vet (herder AND bottle) green
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Commit e88f859 (branch task-001-hcom-shim, merged 5ef4d3c). Live-verified: hand-typed claude in a mise shell receives the herder-native bootstrap (chain: ai-config claude shim -> herder launch -> hcom -> sessionstart -> herder rewrite). Vectors: HCOM=/abs/path documented as deliberate escape hatch; non-mise contexts degrade symmetrically (no hcom at all); recursion guards hold. Bonus fix: sibling checkout shims mutually exec'd in an infinite loop — marker line in shim first 512 bytes, find_real_* skips marked candidates; 2 new check-shims.sh scenarios. Machine-level hardening (ai-setup pins HCOM in mise conf.d) proposed, not applied. Verified independently by orchestrator (go gates + battery re-run; 9 contract suites red = pre-existing environmental baseline, later fixed by TASK-008).
+<!-- SECTION:NOTES:END -->

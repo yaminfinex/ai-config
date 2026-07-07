@@ -4,7 +4,7 @@ title: 'herder bootstrap: reinstate SUBAGENTS block, claude AND codex'
 status: Done
 assignee: []
 created_date: '2026-07-07 05:37'
-updated_date: '2026-07-07 06:40'
+updated_date: '2026-07-07 07:40'
 labels:
   - run-herder-bootstrap
 dependencies: []
@@ -27,7 +27,13 @@ Work:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Claude sessions bootstrap includes working subagent guidance (subagent_timeout / hcom-from-subagents recipe or current hcom equivalent)
-- [ ] #2 Codex sessions get a correct codex-appropriate equivalent, grounded in what hcom itself does for codex
-- [ ] #3 check-hook-bootstrap.sh asserts the block per-tool; degrade paths still byte-faithful; full battery green
+- [x] #1 Claude sessions bootstrap includes working subagent guidance (subagent_timeout / hcom-from-subagents recipe or current hcom equivalent)
+- [x] #2 Codex sessions get a correct codex-appropriate equivalent, grounded in what hcom itself does for codex
+- [x] #3 check-hook-bootstrap.sh asserts the block per-tool; degrade paths still byte-faithful; full battery green
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Commit de7b7dd (branch task-002-subagents-block, merged 932700c). Claude: hcom v0.7.22 CLAUDE_ONLY SUBAGENTS block verbatim + one herder pointer line, via the degrade-safe sessionstart rewrite (bare sessionstart verb is claude-only in hcom, so gating is free). Codex: hcom ships nothing codex-side; herder-designed block delivered at launch as -c developer_instructions= (hcom merges it after its own bootstrap; merge-into-LAST caller value since hcom drops earlier flags). KNOWN GAP: codex resume/fork strips user developer_instructions — documented; follow-ups TASK-014 (done, superseded block with full addendum) + TASK-017. check-hook-bootstrap.sh extended per-tool + hardened (pinned AI_CONFIG_ROOT, run-private XDG_CACHE_HOME). Verified independently by orchestrator.
+<!-- SECTION:NOTES:END -->

@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-07 05:37'
-updated_date: '2026-07-07 07:29'
+updated_date: '2026-07-07 07:40'
 labels:
   - run-herder-dx
 dependencies: []
@@ -27,3 +27,9 @@ Work: decide intended semantics — spawned_by should plausibly be the guid of t
 - [ ] #1 Semantics decided and either fixed or documented in fork --help / code comment
 - [ ] #2 Fixture asserts spawned_by for a fork executed by a non-original-spawner session
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Commit b988dc7 (unit-d-fork-provenance, merged ff0c77d). Root cause: BuildProvenance prefers ambient HERDER_SPAWNED_BY, which in a spawned session names that session's OWN spawner — fork stamped the grandparent. Fix scoped to the fork path: prov.SpawnedBy = HERDER_GUID (else user), matching the env startAndAppend exports to the child. Semantics ruling (orchestrator): forking-session is correct; task title described the bug. New provenance_spawned_by contract case; fork --help documents semantics. Fork suite 10/10 green (verified via HERDER_FORK_BIN wrapper injection). Twin bug in spawn/resume BuildProvenance → TASK-016.
+<!-- SECTION:NOTES:END -->
