@@ -256,11 +256,12 @@ assert_not_contains "no-tag: tag group line omitted" "$AC_OUT" "You are tagged"
 assert_contains     "no-tag: still closes cleanly" "$AC_OUT" "This is session context, not a task for immediate action."
 
 # ---------------------------------------------------------------------------
-# 6. codex SUBAGENTS delivery (TASK-002): codex has no sessionstart rewrite —
-#    hcom bakes its bootstrap into launch args — so `herder launch codex`
-#    threads the codex block in as a user-level -c developer_instructions=,
-#    which hcom merges after its own bootstrap. Mock hcom first on PATH records
-#    the argv herder launch execs. HERDR_* unset keeps the sidecar out.
+# 6. codex bootstrap delivery (TASK-002, full rewrite TASK-014): codex has no
+#    sessionstart rewrite — hcom bakes its bootstrap into launch args — so
+#    `herder launch codex` threads the full herder addendum in as a user-level
+#    -c developer_instructions=, which hcom merges after its own bootstrap.
+#    Mock hcom first on PATH records the argv herder launch execs. HERDR_*
+#    unset keeps the sidecar out.
 # ---------------------------------------------------------------------------
 LAUNCHBIN="$ROOT/launchbin"
 mkdir -p "$LAUNCHBIN"
@@ -284,14 +285,18 @@ run_launch() {
   LAUNCH_ARGV="$(cat "$PROBE/launch-argv")"
 }
 
-# 6a. Fresh codex launch gets the codex SUBAGENTS block as developer_instructions.
+# 6a. Fresh codex launch gets the full herder addendum as developer_instructions.
 run_launch codex --tag smoke
 assert_eq       "codex launch: exit 0" "$LAUNCH_RC" "0"
 assert_contains "codex launch: launches through hcom" "$LAUNCH_ARGV" "ARG<codex>"
 assert_contains "codex launch: --run-here preserved" "$LAUNCH_ARGV" "ARG<--run-here>"
-assert_contains "codex launch: block rides developer_instructions" "$LAUNCH_ARGV" "ARG<developer_instructions=## SUBAGENTS"
+assert_contains "codex launch: block rides developer_instructions" "$LAUNCH_ARGV" "ARG<developer_instructions=[HERDER SESSION ADDENDUM]"
+assert_contains "codex launch: supersedes hcom lifecycle guidance" "$LAUNCH_ARGV" "SUPERSEDED"
+assert_contains "codex launch: AGENTS section" "$LAUNCH_ARGV" "AGENTS (herder lifecycle)"
+assert_contains "codex launch: anti-pattern warning" "$LAUNCH_ARGV" 'Do NOT spawn with `hcom <n> claude`, stop with `hcom kill`'
 assert_contains "codex launch: codex-appropriate doctrine" "$LAUNCH_ARGV" "Codex has no Task/subagent tool"
 assert_contains "codex launch: herder spawn recipe" "$LAUNCH_ARGV" "herder spawn --role"
+assert_contains "codex launch: herder cull verb" "$LAUNCH_ARGV" "herder cull"
 assert_not_contains "codex launch: claude Task recipe not leaked" "$LAUNCH_ARGV" "Run Task with background=true"
 
 # 6b. Caller-supplied developer_instructions are merged, not clobbered — hcom
@@ -302,12 +307,30 @@ assert_eq       "codex launch merge: single developer_instructions flag" "$DEVI_
 assert_contains "codex launch merge: user text survives" "$LAUNCH_ARGV" "USER SYSTEM PROMPT"
 assert_contains "codex launch merge: block appended after user text" "$LAUNCH_ARGV" "USER SYSTEM PROMPT
 ---
-## SUBAGENTS"
+[HERDER SESSION ADDENDUM]"
 
 # 6c. Non-codex launches are untouched — claude's block rides sessionstart.
 run_launch claude --tag smoke
 assert_contains     "claude launch: launches through hcom" "$LAUNCH_ARGV" "ARG<claude>"
 assert_not_contains "claude launch: no developer_instructions threading" "$LAUNCH_ARGV" "developer_instructions="
+
+# 6d. Codex resume/fork paths do NOT thread the block: hcom strips ALL user
+#     developer_instructions there (they embed the prior instance's identity)
+#     and re-adds only its own bootstrap — threading would be dead argv weight.
+#     KNOWN GAP (TASK-014, structural): resumed/forked codex sessions see only
+#     hcom's stock bootstrap, herder doctrine included ONLY on fresh launches.
+run_launch --resume codex sess-123
+assert_eq           "codex resume: exit 0" "$LAUNCH_RC" "0"
+assert_contains     "codex resume: routes through hcom r" "$LAUNCH_ARGV" "ARG<r>"
+assert_not_contains "codex resume: no developer_instructions threading" "$LAUNCH_ARGV" "developer_instructions="
+
+# codex-native fork fallback: spawn relaunches with `fork <session>` in the
+# tool args (mode is still "launch") — hcom's strip predicate fires on the
+# literal token, so herder must skip threading there too.
+run_launch codex fork sess-123
+assert_eq           "codex fork fallback: exit 0" "$LAUNCH_RC" "0"
+assert_contains     "codex fork fallback: fork subcommand preserved" "$LAUNCH_ARGV" "ARG<fork>"
+assert_not_contains "codex fork fallback: no developer_instructions threading" "$LAUNCH_ARGV" "developer_instructions="
 
 echo
 if [ "$fail" -eq 0 ]; then

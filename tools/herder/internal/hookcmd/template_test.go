@@ -38,29 +38,53 @@ func TestBootstrapTemplate_ClaudeSubagentsBlock(t *testing.T) {
 	}
 }
 
-func TestCodexSubagentsBlock_Content(t *testing.T) {
+// TASK-014 pins: the codex block grew from SUBAGENTS-only to the full herder
+// addendum. hcom's own bootstrap always lands FIRST in developer_instructions
+// and cannot be removed at the launch-args seam, so the block supersedes the
+// hcom-native lifecycle guidance rather than replacing the whole bootstrap.
+func TestCodexBootstrapBlock_Content(t *testing.T) {
 	for _, want := range []string{
-		"## SUBAGENTS",
-		"Codex has no Task/subagent tool",
+		// Addendum framing: names what stands and what is overridden.
+		"[HERDER SESSION ADDENDUM]",
+		"SUPERSEDED",
+		// Shared herder lifecycle doctrine (verbatim from herderAgentsSection).
+		"## AGENTS (herder lifecycle)",
 		"herder spawn --role",
 		"herder cull",
-		"do NOT spawn with `hcom <n> claude`",
+		"Do NOT spawn with `hcom <n> claude`, stop with `hcom kill`",
+		"Delivery is verified",
+		"`herder <command> --help`",
+		// Codex-specific subagent doctrine.
+		"## SUBAGENTS",
+		"Codex has no Task/subagent tool",
 	} {
-		if !strings.Contains(CodexSubagentsBlock, want) {
-			t.Errorf("codex SUBAGENTS block missing %q", want)
+		if !strings.Contains(CodexBootstrapBlock, want) {
+			t.Errorf("codex bootstrap block missing %q", want)
 		}
 	}
 
 	// The block is delivered verbatim (no render pass), so it must not carry
 	// unresolved {placeholders} from the claude template's vocabulary.
 	for _, banned := range []string{"{display_name}", "{instance_name}", "{SENDER}", "{tag}", "{active_instances}"} {
-		if strings.Contains(CodexSubagentsBlock, banned) {
-			t.Errorf("codex SUBAGENTS block carries unresolved placeholder %q", banned)
+		if strings.Contains(CodexBootstrapBlock, banned) {
+			t.Errorf("codex bootstrap block carries unresolved placeholder %q", banned)
 		}
 	}
 
 	// Claude's Task-tool recipe must not leak into the codex block.
-	if strings.Contains(CodexSubagentsBlock, "background=true") {
-		t.Error("claude Task recipe leaked into the codex SUBAGENTS block")
+	if strings.Contains(CodexBootstrapBlock, "background=true") {
+		t.Error("claude Task recipe leaked into the codex bootstrap block")
+	}
+}
+
+// The AGENTS doctrine must be textually shared between the two delivery
+// surfaces — the claude sessionstart rewrite and the codex launch block — so
+// they cannot drift apart.
+func TestHerderAgentsSection_SharedAcrossSurfaces(t *testing.T) {
+	if !strings.Contains(bootstrapTemplate, herderAgentsSection) {
+		t.Error("claude bootstrapTemplate no longer embeds herderAgentsSection verbatim")
+	}
+	if !strings.Contains(CodexBootstrapBlock, herderAgentsSection) {
+		t.Error("CodexBootstrapBlock no longer embeds herderAgentsSection verbatim")
 	}
 }
