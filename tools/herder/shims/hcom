@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
-# hcom shim - routes a herder-spawned agent's hcom traffic through `herder hook`.
+# herder-path-shim: hcom — sibling herder shims detect this marker line and skip it.
 #
-# herder spawn prepends this shim's dir to the child's PATH (per-spawn, never
-# machine-wide), so both the Claude hooks' `${HCOM:-hcom} <verb>` calls and the
-# agent's own `hcom ...` CLI usage resolve here. We forward everything to
-# `bin/herder hook`, which is a byte-faithful hcom passthrough for every verb
+# hcom shim - routes an agent's hcom traffic through `herder hook`.
+#
+# This shim's dir reaches PATH two ways: herder spawn prepends it per-spawn, and
+# ai-setup's mise conf.d _.path puts it on PATH machine-wide — so hand-launched
+# sessions in mise-activated shells resolve here too. Both the Claude hooks'
+# `${HCOM:-hcom} <verb>` calls and the agent's own `hcom ...` CLI usage forward
+# to `bin/herder hook`, which is a byte-faithful hcom passthrough for every verb
 # EXCEPT sessionstart — whose injected bootstrap it rewrites to herder doctrine.
 #
 # This replaces the dead env-var vector (HCOM="herder hook"): hcom unconditionally
 # re-exports HCOM=hcom to its launch children, so any env interception is clobbered
 # the moment an agent is launched THROUGH hcom. PATH ordering is not hcom's to reset.
 #
-# Recursion guard: `herder hook` must find the REAL hcom, not this shim. We
-# resolve it here (skipping ourselves on PATH) and export HERDER_HOOK_HCOM to its
-# absolute path before exec. If no real hcom exists we still exec `herder hook`,
-# which degrades to a silent exit 0 — mirroring the hook string's own fallback.
+# Recursion guard: `herder hook` must find the REAL hcom, not this shim — and not
+# a sibling copy of it either (a worktree checkout's shim dir and the main
+# checkout's can share one PATH; resolving each other loops forever). We skip
+# ourselves by path and any other herder shim by its marker line, then export
+# HERDER_HOOK_HCOM to the real binary's absolute path before exec. If no real
+# hcom exists we still exec `herder hook`, which degrades to a silent exit 0 —
+# mirroring the hook string's own fallback.
 
 set -euo pipefail
 
@@ -43,8 +49,17 @@ herder="$repo_root/bin/herder"
 
 [[ -x "$herder" && ! -d "$herder" ]] || die "missing executable bin/herder at $herder"
 
-# Find the real hcom, skipping this shim wherever it appears on PATH (directly
-# or via a symlinked dir). First match wins, exactly like the claude/codex shims.
+# A candidate is a herder shim (this file or a sibling copy from another
+# checkout/worktree) iff its head carries the marker line. Content beats path
+# comparison: every checkout's copy matches, so two shim dirs on one PATH can
+# never resolve each other as "the real binary" and recurse.
+is_herder_shim() {
+  LC_ALL=C head -c 512 -- "$1" 2>/dev/null | grep -Fq 'herder-path-shim'
+}
+
+# Find the real hcom, skipping every herder shim wherever one appears on PATH
+# (directly or via a symlinked dir). First match wins, exactly like the
+# claude/codex shims.
 find_real_hcom() {
   local entry candidate
   IFS=:
@@ -55,6 +70,7 @@ find_real_hcom() {
     candidate="$(canonical_path "$candidate" 2>/dev/null || true)"
     [[ -n "$candidate" ]] || continue
     [[ "$candidate" == "$shim_path" ]] && continue
+    is_herder_shim "$candidate" && continue
     printf '%s\n' "$candidate"
     return 0
   done

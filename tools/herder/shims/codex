@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
+# herder-path-shim: codex — sibling herder shims detect this marker line and skip it.
+#
 # codex shim - daily entry point for hcom-bound launches.
 #
 # Normal path: codex [args...] -> bin/herder launch codex [default args] [args...].
 # Recursion path: herder launch exports HCOM_LAUNCH_INFLIGHT=1 before `hcom codex`; if
-# hcom resolves `codex` through PATH and lands back here, this shim skips itself and
-# execs the real binary. HERDER_SHIM_ARGS_CODEX is deliberately whitespace-split and
-# prepended before user args, so static defaults can live in mise [env] instead of
-# being hardcoded here.
+# hcom resolves `codex` through PATH and lands back here, this shim skips itself (and
+# any sibling herder shim from another checkout, by marker) and execs the real binary.
+# HERDER_SHIM_ARGS_CODEX is deliberately whitespace-split and prepended before user
+# args, so static defaults can live in mise [env] instead of being hardcoded here.
 
 set -euo pipefail
 
@@ -34,6 +36,13 @@ shim_dir="$(dirname "$shim_path")"
 repo_root="$(cd "$shim_dir/../../.." 2>/dev/null && pwd -P)" || die "cannot resolve repo root"
 herder_launch="$repo_root/bin/herder"
 
+# A candidate is a herder shim (this file or a sibling copy from another
+# checkout/worktree) iff its head carries the marker line. Content beats path
+# comparison: two shim dirs on one PATH must never exec each other and loop.
+is_herder_shim() {
+  LC_ALL=C head -c 512 -- "$1" 2>/dev/null | grep -Fq 'herder-path-shim'
+}
+
 find_real_tool() {
   local entry candidate
   IFS=:
@@ -44,6 +53,7 @@ find_real_tool() {
     candidate="$(canonical_path "$candidate" 2>/dev/null || true)"
     [[ -n "$candidate" ]] || continue
     [[ "$candidate" == "$shim_path" ]] && continue
+    is_herder_shim "$candidate" && continue
     printf '%s\n' "$candidate"
     return 0
   done
