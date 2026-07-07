@@ -32,6 +32,11 @@ case "${1:-} ${2:-}" in
   "agent start")
     printf '%s\n' "$*" >>"$PROBE/herdr_start_argv"
     jq -n '{result:{agent:{pane_id:"p_child", terminal_id:"term_CHILD", workspace_id:"ws_child", cwd:"/mock/cwd"}}}';;
+  "pane get")
+    # fork --self resolves the current pane's cwd from here (foreground_cwd first).
+    jq -n '{result:{pane:{pane_id:"p_self", terminal_id:"term_SELF", workspace_id:"ws_self", foreground_cwd:"/mock/foreground", cwd:"/mock/cwd"}}}';;
+  "workspace list")
+    jq -n '{result:{workspaces:[]}}';;
   *)
     printf 'mock herdr (fork suite): unhandled: %s\n' "$*" >&2
     exit 64;;
@@ -41,11 +46,32 @@ chmod +x "$MOCKBIN/herdr"
 
 cat >"$MOCKBIN/hcom" <<'MOCK_HCOM'
 #!/usr/bin/env bash
+# fork --self correlates the current pane to a registered guid via `hcom list`.
+if [[ "${1:-} ${2:-}" == "list --json" ]]; then
+  printf '%s\n' "${MOCK_HCOM_IDENTITY:-[]}"
+  exit 0
+fi
 exit 0
 MOCK_HCOM
 chmod +x "$MOCKBIN/hcom"
 
+# Probe standing in for `herder spawn` on the --self fallback path: records the
+# handoff argv instead of really re-forking the tool. fork --self resolves the
+# spawn binary from $HERDER_BIN, so pointing it here captures the handoff.
+cat >"$MOCKBIN/herder-spawn-probe" <<'MOCK_SPAWN'
+#!/usr/bin/env bash
+printf 'spawn-handoff: %s\n' "$*"
+exit 0
+MOCK_SPAWN
+chmod +x "$MOCKBIN/herder-spawn-probe"
+
 PATH_HERMETIC="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin"
+
+# fork --self detects the tool + identity from these env vars. Clear any ambient
+# values (this suite is often run from inside a live claude/herder pane) so each
+# --self case carries ONLY what its caller sets inline — no leakage.
+unset CLAUDECODE CLAUDE_CODE_SESSION_ID CODEX_HOME AI_AGENT HERDER_GUID
+
 fail=0
 
 # herder fork records the checkout's live git branch into child provenance;
@@ -80,6 +106,36 @@ run_case() {
     HERDER_LIFECYCLE_SETTLE_MS=0 \
     MOCK_PROBE_DIR="$CASE/probe" \
     MOCK_LIVE_PARENT="$live" \
+    "${HFK[@]}" "$@" 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+}
+
+# fork --self detects tool + identity from the env, so its cases carry the
+# tool-detect vars (CLAUDECODE / CLAUDE_CODE_SESSION_ID / CODEX_HOME / AI_AGENT),
+# the pane->identity map (MOCK_HCOM_IDENTITY), and a spawn probe via HERDER_BIN.
+# Callers set the relevant vars inline; unset ones default to empty.
+run_self_case() {
+  local name="$1" live="$2"; shift 2
+  CASE="$ROOT/$name"
+  mkdir -p "$CASE/home" "$CASE/probe"
+  seed_registry
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(cd "$REPO" && env -i \
+    PATH="$PATH_HERMETIC" \
+    HOME="$CASE/home" \
+    AI_CONFIG_ROOT="$REPO" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self \
+    HERDER_STATE_DIR="$CASE/state" \
+    HERDER_LIFECYCLE_SETTLE_MS=0 \
+    HERDER_BIN="$MOCKBIN/herder-spawn-probe" \
+    MOCK_PROBE_DIR="$CASE/probe" \
+    MOCK_LIVE_PARENT="$live" \
+    CLAUDECODE="${CLAUDECODE:-}" \
+    CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}" \
+    CODEX_HOME="${CODEX_HOME:-}" \
+    AI_AGENT="${AI_AGENT:-}" \
+    HERDER_GUID="${HERDER_GUID:-}" \
+    MOCK_HCOM_IDENTITY="${MOCK_HCOM_IDENTITY:-}" \
     "${HFK[@]}" "$@" 2>"$RUN_ERR_F")"
   RUN_RC=$?
 }
@@ -134,6 +190,24 @@ run_case unknown 0 nope
 check_one unknown
 run_case missing_session 0 nosess
 check_one missing_session
+
+# --- fork --self -----------------------------------------------------------
+# claude, pane correlates to a registered guid (hcom_name) -> NATIVE fork path.
+CLAUDECODE=1 \
+  MOCK_HCOM_IDENTITY='[{"name":"parent-rive","session_id":"sess-parent","launch_context":{"pane_id":"p_self"}}]' \
+  run_self_case self_native 1 --self --prompt "hello self" --json
+check_one self_native
+# claude, no registered guid, orphan session id -> FALLBACK to spawn --resume.
+CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=sess-orphan \
+  run_self_case self_fallback_claude 0 --self
+check_one self_fallback_claude
+# codex always falls back (native fork is claude-only); no session -> fork --last.
+CODEX_HOME=/mock/codex \
+  run_self_case self_fallback_codex 0 --self --split down
+check_one self_fallback_codex
+# no tool env -> clear refusal (exit 1), before any pane/registry lookup.
+run_self_case self_unknown 0 --self
+check_one self_unknown
 
 if [[ "$WRITE" -eq 1 ]]; then
   printf '\nGoldens written from: %s\n' "${HFK[*]}"; exit 0

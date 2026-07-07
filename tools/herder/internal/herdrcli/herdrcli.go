@@ -103,10 +103,11 @@ type Agent struct {
 // Pane is one pane object, from `herdr pane list` (.result.panes[]) or
 // `herdr pane get` (.result.pane).
 type Pane struct {
-	PaneID      string `json:"pane_id"`
-	TerminalID  string `json:"terminal_id"`
-	WorkspaceID string `json:"workspace_id"`
-	CWD         string `json:"cwd"`
+	PaneID        string `json:"pane_id"`
+	TerminalID    string `json:"terminal_id"`
+	WorkspaceID   string `json:"workspace_id"`
+	CWD           string `json:"cwd"`
+	ForegroundCWD string `json:"foreground_cwd"`
 }
 
 // Workspace is one entry of `herdr workspace list` (.result.workspaces[]).

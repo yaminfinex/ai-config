@@ -21,9 +21,11 @@ import (
 type forkOptions struct {
 	help   bool
 	json   bool
+	self   bool
 	label  string
 	role   string
 	prompt string
+	split  string
 	target string
 }
 
@@ -38,7 +40,11 @@ func RunFork(args []string, stdout, stderr io.Writer) int {
 	if code != 0 || opts.help {
 		return code
 	}
-	return (&runner{stdout: stdout, stderr: stderr}).fork(opts)
+	r := &runner{stdout: stdout, stderr: stderr}
+	if opts.self {
+		return r.forkSelf(opts)
+	}
+	return r.fork(opts)
 }
 
 func RunResume(args []string, stdout, stderr io.Writer) int {
@@ -70,6 +76,9 @@ func (r *runner) client() herdrClient {
 func (r *runner) fork(opts forkOptions) int {
 	if code := requireTools(r.stderr); code != 0 {
 		return code
+	}
+	if opts.split != "" {
+		os.Setenv("HERDER_LIFECYCLE_SPLIT", opts.split)
 	}
 	recs, registryPath, code := loadRegistry(r.stderr)
 	if code != 0 {
@@ -142,6 +151,222 @@ func (r *runner) fork(opts forkOptions) int {
 		fmt.Fprintln(r.stdout, string(b))
 	}
 	return 0
+}
+
+// forkSelf forks the CURRENT session — "fork me, right now, from this pane" —
+// auto-detecting the tool and identity from the environment. A registered pane
+// routes through the native fork path (bus-bound child, provenance.forked_from);
+// an unregistered one falls back to a raw tool fork/resume through spawn.
+func (r *runner) forkSelf(opts forkOptions) int {
+	if code := requireTools(r.stderr); code != 0 {
+		return code
+	}
+	paneEnvID := os.Getenv("HERDR_PANE_ID")
+	if paneEnvID == "" {
+		die(r.stderr, "HERDR_PANE_ID not set; cannot anchor a self-fork to the current pane — run 'herder fork --self' from inside a herdr-managed agent pane")
+		return 1
+	}
+	agent, ok := detectSelfAgent()
+	if !ok {
+		die(r.stderr, "could not detect the current tool from the environment (not claude, not codex) — run 'herder fork --self' from inside a claude or codex pane, or fork a known target with 'herder fork <guid>'")
+		return 1
+	}
+	recs, _, code := loadRegistry(r.stderr)
+	if code != 0 {
+		return code
+	}
+
+	// Resolve the pane's cwd. Sessions key on the project dir, so the fork must
+	// land where the pane is actually working: pane foreground_cwd/cwd first, then
+	// its workspace checkout, then this process's cwd as a last resort.
+	paneOut, _, _ := r.client().Combined("pane", "get", paneEnvID)
+	pane, _ := herdrcli.ParsePaneGet(paneOut)
+	cwd := r.resolveSelfCWD(pane)
+
+	// Correlate the pane to a registered guid. HERDER_GUID (exported into every
+	// herder-spawned pane) is the direct key; otherwise map pane -> hcom identity
+	// -> registry row via hcom_name or the recorded tool_session_id.
+	name, hcomSession := "", ""
+	if pane.PaneID != "" {
+		name, hcomSession = currentHcomIdentity(pane.PaneID)
+	}
+	sessionID := firstNonEmpty(os.Getenv("CLAUDE_CODE_SESSION_ID"), hcomSession)
+	nativeGUID := os.Getenv("HERDER_GUID")
+	if nativeGUID == "" {
+		nativeGUID = selfMatchGUID(recs, name, sessionID)
+	}
+
+	// A registered claude session forks natively so the child is bus-bound from
+	// birth and carries provenance.forked_from. Codex and unregistered claude
+	// sessions have no native fork; they fall back to a raw tool fork through spawn.
+	if agent == "claude" && nativeGUID != "" {
+		os.Setenv("HERDER_LIFECYCLE_CWD", cwd)
+		os.Setenv("HERDER_LIFECYCLE_FOCUS", "--no-focus")
+		return r.fork(forkOptions{
+			target: nativeGUID,
+			label:  opts.label,
+			role:   opts.role,
+			prompt: opts.prompt,
+			split:  firstNonEmpty(opts.split, "right"),
+			json:   opts.json,
+		})
+	}
+	return r.forkSelfFallback(opts, agent, paneEnvID, cwd, sessionID)
+}
+
+// forkSelfFallback hands off to `herder spawn`, which re-forks the tool in a
+// fresh pane: claude via `--resume <session> --fork-session`, codex via
+// `fork <session>` (or `fork --last`). It mirrors the bash script's terminal
+// `exec "$HERDER_BIN" spawn ...`.
+func (r *runner) forkSelfFallback(opts forkOptions, agent, paneEnvID, cwd, sessionID string) int {
+	split := firstNonEmpty(opts.split, "right")
+	role := firstNonEmpty(opts.role, "fork-"+agent)
+	var agentArgs []string
+	switch agent {
+	case "claude":
+		if sessionID == "" {
+			die(r.stderr, "no registered herder guid and no claude session id to fork from — run 'herder enroll' to register this session, set CLAUDE_CODE_SESSION_ID, or fork a known target with 'herder fork <guid>'")
+			return 1
+		}
+		agentArgs = []string{"--resume", sessionID, "--fork-session"}
+	case "codex":
+		if sessionID != "" {
+			agentArgs = []string{"fork", sessionID}
+		} else {
+			agentArgs = []string{"fork", "--last"}
+		}
+	default:
+		die(r.stderr, "unknown tool: "+agent)
+		return 1
+	}
+
+	paths, err := herderpaths.Resolve()
+	if err != nil {
+		die(r.stderr, err.Error())
+		return 1
+	}
+	herderBin := firstNonEmpty(os.Getenv("HERDER_BIN"), paths.BinHerder)
+
+	spawnArgs := []string{"spawn", "--role", role, "--agent", agent, "--from-pane", paneEnvID, "--cwd", cwd, "--split", split, "--no-focus"}
+	for _, a := range agentArgs {
+		spawnArgs = append(spawnArgs, "--extra-arg", a)
+	}
+	if opts.prompt != "" {
+		spawnArgs = append(spawnArgs, "--prompt", opts.prompt)
+	}
+
+	cmd := exec.Command(herderBin, spawnArgs...)
+	cmd.Stdout = r.stdout
+	cmd.Stderr = r.stderr
+	cmd.Env = os.Environ()
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
+		}
+		die(r.stderr, "failed to hand off to herder spawn: "+err.Error())
+		return 1
+	}
+	return 0
+}
+
+// detectSelfAgent identifies the tool running the current session from its env,
+// matching the herder-fork script's detection order.
+func detectSelfAgent() (string, bool) {
+	if os.Getenv("CLAUDECODE") == "1" || os.Getenv("CLAUDE_CODE_SESSION_ID") != "" {
+		return "claude", true
+	}
+	if strings.HasPrefix(os.Getenv("AI_AGENT"), "claude-code") {
+		return "claude", true
+	}
+	if os.Getenv("CODEX_HOME") != "" {
+		return "codex", true
+	}
+	return "", false
+}
+
+func (r *runner) resolveSelfCWD(pane herdrcli.Pane) string {
+	if pane.ForegroundCWD != "" {
+		return pane.ForegroundCWD
+	}
+	if pane.CWD != "" {
+		return pane.CWD
+	}
+	if pane.WorkspaceID != "" {
+		if cwd := r.workspaceCheckout(pane.WorkspaceID); cwd != "" {
+			return cwd
+		}
+	}
+	return currentCWD()
+}
+
+func (r *runner) workspaceCheckout(wsID string) string {
+	out, err := r.client().Output("workspace", "list")
+	if err != nil {
+		return ""
+	}
+	var envelope struct {
+		Result struct {
+			Workspaces []struct {
+				WorkspaceID string `json:"workspace_id"`
+				Worktree    struct {
+					CheckoutPath string `json:"checkout_path"`
+					RepoRoot     string `json:"repo_root"`
+				} `json:"worktree"`
+				CWD string `json:"cwd"`
+			} `json:"workspaces"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(out, &envelope) != nil {
+		return ""
+	}
+	for _, ws := range envelope.Result.Workspaces {
+		if ws.WorkspaceID == wsID {
+			return firstNonEmpty(ws.Worktree.CheckoutPath, ws.Worktree.RepoRoot, ws.CWD)
+		}
+	}
+	return ""
+}
+
+// currentHcomIdentity maps a pane to its hcom (name, session_id) by scanning
+// `hcom list --json` for the entry launched in that pane. The last match wins,
+// mirroring the script's `tail -n1`.
+func currentHcomIdentity(paneID string) (name, session string) {
+	out, err := exec.Command("hcom", "list", "--json").Output()
+	if err != nil {
+		return "", ""
+	}
+	var entries []struct {
+		Name          string `json:"name"`
+		SessionID     string `json:"session_id"`
+		LaunchContext struct {
+			PaneID string `json:"pane_id"`
+		} `json:"launch_context"`
+	}
+	if json.Unmarshal(out, &entries) != nil {
+		return "", ""
+	}
+	for _, e := range entries {
+		if e.LaunchContext.PaneID == paneID {
+			name, session = e.Name, e.SessionID
+		}
+	}
+	return name, session
+}
+
+// selfMatchGUID finds the registered guid for the current session, matching a
+// row by hcom_name or recorded tool_session_id. Latest-per-guid, greatest-guid
+// tie-break — the script's group_by/last.
+func selfMatchGUID(recs []registry.Record, name, session string) string {
+	guid := ""
+	for _, rec := range registry.LatestByGUID(recs) {
+		match := (name != "" && rec.HcomName == name) ||
+			(session != "" && rec.Provenance != nil && rec.Provenance.ToolSessionID == session)
+		if match && rec.GUID != nil {
+			guid = *rec.GUID
+		}
+	}
+	return guid
 }
 
 func (r *runner) resume(opts resumeOptions) int {
@@ -372,6 +597,16 @@ func parseForkArgs(args []string, stdout, stderr io.Writer) (forkOptions, int) {
 			}
 			opts.prompt = args[i+1]
 			i += 2
+		case "--split":
+			if i+1 >= len(args) {
+				die(stderr, "--split requires a value")
+				return opts, 1
+			}
+			opts.split = args[i+1]
+			i += 2
+		case "--self":
+			opts.self = true
+			i++
 		case "--json":
 			opts.json = true
 			i++
@@ -385,15 +620,19 @@ func parseForkArgs(args []string, stdout, stderr io.Writer) (forkOptions, int) {
 				return opts, 1
 			}
 			if opts.target != "" {
-				die(stderr, "usage: herder fork <target> [--label L] [--role R] [--prompt P] [--json]")
+				die(stderr, "usage: herder fork <target> [--label L] [--role R] [--prompt P] [--json] | herder fork --self [--split D] ...")
 				return opts, 1
 			}
 			opts.target = args[i]
 			i++
 		}
 	}
-	if opts.target == "" {
-		die(stderr, "usage: herder fork <target> [--label L] [--role R] [--prompt P] [--json]")
+	if opts.self && opts.target != "" {
+		die(stderr, "cannot combine --self with a positional target; fork THIS session (--self) or a named one (<target>), not both")
+		return opts, 1
+	}
+	if !opts.self && opts.target == "" {
+		die(stderr, "usage: herder fork <target> [--label L] [--role R] [--prompt P] [--json] | herder fork --self [--split D] ...")
 		return opts, 1
 	}
 	return opts, 0
@@ -431,25 +670,51 @@ func parseResumeArgs(args []string, stdout, stderr io.Writer) (resumeOptions, in
 }
 
 func printForkHelp(stdout io.Writer) {
-	fmt.Fprint(stdout, `herder fork — branch an enrolled agent's session into a NEW guid, in a new pane.
+	fmt.Fprint(stdout, `herder fork — branch an agent's session into a NEW guid, in a new pane.
 
-Forks the target's conversation into a fresh agent with its own guid, so the child
-starts from the parent's context but diverges independently. Needs either a live
-parent (forks off its bus name) or a recorded tool_session_id.
+Forks a conversation into a fresh agent with its own guid, so the child starts
+from the parent's context but diverges independently. Name a target to fork an
+enrolled peer; pass --self to fork THIS session ("fork me, from this pane"),
+auto-detecting the current tool and identity from the environment.
 
 Usage:
-  herder fork <target> [--label L] [--role R] [--prompt P] [--json]
+  herder fork <target> [--label L] [--role R] [--prompt P] [--split D] [--json]
+  herder fork --self    [--label L] [--role R] [--prompt P] [--split D] [--json]
 
 Options:
+  --self       fork the current session instead of a named target (mutually
+               exclusive with <target>)
   --label L    label for the fork (default: <parent>-fork-<short>)
-  --role R     role / hcom tag for the fork (default: parent's role, else worker)
+  --role R     role / hcom tag for the fork (default: parent's role, else worker;
+               --self fallback default: fork-<tool>)
   --prompt P   initial prompt delivered to the fork once it is ready
+  --split D    pane split for the new pane: right (default) or down
   --json       print the new registry record as JSON on stdout
 
+Behavior:
+  A named target (or a --self pane that resolves to a registered claude guid)
+  forks NATIVELY: the child is bus-bound from birth and records
+  provenance.forked_from. Needs a live parent (forks off its bus name) or a
+  recorded tool_session_id.
+
+  --self with no registered guid (codex, or an unenrolled claude) FALLS BACK to a
+  raw tool fork through 'herder spawn': claude via '--resume <session>
+  --fork-session', codex via 'fork <session>' (else 'fork --last'). Tool and cwd
+  are detected from the pane; cwd tracks the pane's foreground dir so the session
+  key resolves.
+
+Exit codes:
+  0  fork launched (native) or handed off to spawn (fallback)
+  1  refusal or launch failure — see the message
+
 If it fails:
+  - "could not detect the current tool": --self was run outside a claude/codex
+    pane — run it from inside one, or fork a known target with 'herder fork <guid>'.
+  - "HERDR_PANE_ID not set": --self needs a herdr-managed pane to anchor to.
+  - "no registered herder guid and no claude session id": nothing to fork from —
+    'herder enroll' this session first, or set CLAUDE_CODE_SESSION_ID.
   - "cannot fork ...: no live parent and no recorded tool_session_id": the parent
-    is not live and no session was ever captured, so there is nothing to fork from
-    — spawn a fresh agent instead.
+    is not live and no session was ever captured — spawn a fresh agent instead.
   - "unknown target": run 'herder list --all' to find the right guid/label.
 `)
 }
