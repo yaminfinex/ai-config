@@ -32,7 +32,9 @@ herder spawn --role leg-<N+1> --agent claude --cwd <worktree> --no-focus \
   before idling. No separate report — the spawned successor *is* the signal.
 - **Herder-owned handoff:** when a herding pane exists anyway, a leg ends by reporting DONE on
   the bus (`hcom send @<herder> --intent request --thread leg-<N> -- ...`) and idling; the herder
-  spawns the successor, with `hcom events sub --idle <leg-name> --once` as the missing-report backstop.
+  spawns the successor, with `hcom events sub --idle <leg-name> --once` as the missing-report
+  backstop (returns immediately — the notification arrives later as a bus message; not a
+  blocking waiter).
 
 ## Mid-leg handoff (context budget)
 
