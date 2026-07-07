@@ -250,6 +250,30 @@ if [[ "$WRITE" -eq 0 ]]; then
   else
     bad "unknown modal: timeout reason surfaces visible snippet" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
+
+  # ---- default cwd: omitted --cwd places the child in the caller's cwd ----
+  # With --cwd omitted, herder spawn must still put an explicit --cwd on the
+  # agent-start wire (resolved from the anchored workspace's checkout path, else
+  # the spawner's own cwd) — NOT leave placement to herdr's default ($HOME,
+  # which for a fresh/untrusted dir re-opens the trust modal). Matches the
+  # documented "--cwd default: current".
+  CASE="$ROOT/default_cwd"
+  run_spawn ready claude launchctx --role worker --agent claude
+  if grep -qxF -- '--cwd' "$CASE/probe/agent_start_argv" 2>/dev/null \
+    && grep -qxF '/mock/cwd' "$CASE/probe/agent_start_argv" 2>/dev/null; then
+    ok "default cwd: omitted --cwd places child via explicit --cwd"
+  else
+    bad "default cwd: omitted --cwd places child via explicit --cwd" "argv=$(cat "$CASE/probe/agent_start_argv" 2>/dev/null)"
+  fi
+
+  # An explicit --cwd is honored verbatim on the wire.
+  CASE="$ROOT/explicit_cwd"
+  run_spawn ready claude launchctx --role worker --agent claude --cwd /tmp/trusted
+  if grep -qxF '/tmp/trusted' "$CASE/probe/agent_start_argv" 2>/dev/null; then
+    ok "explicit --cwd honored on the agent-start wire"
+  else
+    bad "explicit --cwd honored on the agent-start wire" "argv=$(cat "$CASE/probe/agent_start_argv" 2>/dev/null)"
+  fi
 fi
 
 if [[ "$WRITE" -eq 1 ]]; then

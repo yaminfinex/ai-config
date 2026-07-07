@@ -16,6 +16,8 @@ worker-<SHORT>
 right
 --workspace
 ws_1
+--cwd
+/mock/cwd
 --
 env
 HERDER_GUID=<GUID>

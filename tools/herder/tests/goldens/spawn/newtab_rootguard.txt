@@ -22,6 +22,8 @@ right
 ws_1
 --tab
 tab_9
+--cwd
+/mock/cwd
 --
 /bin/zsh
 -lic

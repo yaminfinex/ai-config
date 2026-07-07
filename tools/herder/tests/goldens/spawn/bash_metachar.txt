@@ -16,6 +16,8 @@ quote;$`&<>("* )worker-<SHORT>
 right
 --workspace
 ws_1
+--cwd
+/mock/cwd
 --
 /bin/zsh
 -lic

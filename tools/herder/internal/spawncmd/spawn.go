@@ -622,8 +622,14 @@ The spawner is often mid-turn, so the helper may report verify=queued or verify=
 	if opts.Tab != "" {
 		startArgs = append(startArgs, "--tab", opts.Tab)
 	}
-	if opts.CWD != "" {
-		startArgs = append(startArgs, "--cwd", opts.CWD)
+	// Place the agent in the resolved cwd — the explicit --cwd, else the anchored
+	// workspace's checkout path, else the spawner's own cwd (os.Getwd). Passing it
+	// explicitly is what makes "default: current" true: without a --cwd on the
+	// wire, herdr starts the child in its own default (e.g. $HOME), which for a
+	// fresh/untrusted dir re-opens the trust modal. childCWD is only "" if getwd
+	// itself failed, in which case we let herdr pick as before.
+	if childCWD != "" {
+		startArgs = append(startArgs, "--cwd", childCWD)
 	}
 	startArgs = append(startArgs, "--")
 	startArgs = append(startArgs, argv...)
