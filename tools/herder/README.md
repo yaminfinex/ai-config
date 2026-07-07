@@ -103,7 +103,7 @@ keystrokes are never typed. Exit codes and target forms: `herder send --help`. C
 
 **Initial prompts ride the bus too (TASK-032).** `herder spawn --prompt` for a bus-capable agent
 (claude/codex/gemini) waits for the child to BIND its bus name — positively observable (sidecar
-registry enrichment, or the hcom roster correlated by frozen launch pane_id / unique tag+cwd) and
+registry enrichment, or the hcom roster correlated by frozen launch pane_id) and
 early in boot, well before the TUI is interactive — then sends the FULL prompt (multiline included)
 as a verified hcom message and reports the receipt. Verify vocabulary: `delivered` (receipt seen),
 `queued` (sent, no receipt in the window — it injects the moment the agent is deliverable; do NOT
