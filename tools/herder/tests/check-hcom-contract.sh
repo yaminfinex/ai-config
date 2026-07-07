@@ -26,6 +26,11 @@ set -uo pipefail
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/../../.." && pwd -P)"
+# Env hygiene (TASK-019): herder-spawned agents export HERDER_BIN/AI_CONFIG_ROOT
+# pointing at the spawner's checkout — honoring them silently drives another
+# tree's wrapper/sources. Ignore the binary override; pin the root to THIS tree.
+unset HERDER_BIN
+export AI_CONFIG_ROOT="$REPO_ROOT"
 HS=("$REPO_ROOT/bin/herder" send)
 [[ -n "${HERDER_CMD_SEND_BIN:-}" ]] && HS=("$HERDER_CMD_SEND_BIN")
 
