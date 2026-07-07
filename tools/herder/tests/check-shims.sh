@@ -56,12 +56,16 @@ make_case() {
   mkdir -p "$SHIM_CASE" "$HERDER_BIN" "$REALBIN" "$OTHERBIN" "$PROBE"
   cp "$SHIMS_DIR/claude" "$SHIM_CASE/claude"
   cp "$SHIMS_DIR/codex" "$SHIM_CASE/codex"
+  cp "$SHIMS_DIR/hcom" "$SHIM_CASE/hcom"
 
   cat > "$HERDER_BIN/herder" <<'MOCK_HERDER_LAUNCH'
 #!/usr/bin/env bash
 set -euo pipefail
 : "${PROBE:?}"
 printf '%s\n' "$@" >"$PROBE/herder_argv"
+# Record the recursion-guard handoff so tests can assert the shim resolved the
+# REAL hcom (not itself) before forwarding to `herder hook`.
+printf '%s\n' "${HERDER_HOOK_HCOM-}" >"$PROBE/herder_hook_hcom"
 MOCK_HERDER_LAUNCH
 
   cat > "$REALBIN/claude" <<'MOCK_REAL_CLAUDE'
@@ -84,8 +88,15 @@ printf '%s\n' "$count" >"$PROBE/real_codex_count"
 printf '%s\n' "$@" >"$PROBE/real_codex_argv"
 MOCK_REAL_CODEX
 
-  chmod +x "$SHIM_CASE/claude" "$SHIM_CASE/codex" "$HERDER_BIN/herder" \
-    "$REALBIN/claude" "$REALBIN/codex"
+  cat > "$REALBIN/hcom" <<'MOCK_REAL_HCOM'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${PROBE:?}"
+printf '%s\n' "$@" >"$PROBE/real_hcom_argv"
+MOCK_REAL_HCOM
+
+  chmod +x "$SHIM_CASE/claude" "$SHIM_CASE/codex" "$SHIM_CASE/hcom" "$HERDER_BIN/herder" \
+    "$REALBIN/claude" "$REALBIN/codex" "$REALBIN/hcom"
 }
 
 run_with_timeout() {
@@ -175,6 +186,45 @@ else
   bad "missing bin/herder: loud diagnostic" "stderr=$(cat "$err" 2>/dev/null)"
 fi
 assert_file_missing "missing bin/herder: no real binary fallback" "$PROBE/real_claude_count"
+
+# 6. hcom shim forwards to `bin/herder hook` and exports HERDER_HOOK_HCOM to the
+#    REAL hcom (found behind itself on PATH), so `herder hook` never recurses.
+make_case hcom_forward
+run_with_timeout 5 env -i \
+  PATH="$SHIM_CASE:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
+  "$SHIM_CASE/hcom" sessionstart --extra flag
+rc=$?
+assert_eq "hcom shim: exit 0" "$rc" "0"
+assert_file_eq "hcom shim: forwards to herder hook with args" "$PROBE/herder_argv" \
+  "$(printf '%s\n' hook sessionstart --extra flag)"
+assert_file_eq "hcom shim: exports HERDER_HOOK_HCOM to real hcom" "$PROBE/herder_hook_hcom" \
+  "$(cd "$REALBIN" && pwd -P)/hcom"
+assert_file_missing "hcom shim: real hcom not run directly (herder hook owns it)" "$PROBE/real_hcom_argv"
+
+# 7. Recursion guard: even when PATH names the shim dir through a symlink, the
+#    shim skips itself and resolves the real hcom rather than looping.
+make_case hcom_recursion
+ln -s "$SHIM_CASE" "$CASE_DIR/shimlink"
+run_with_timeout 5 env -i \
+  PATH="$CASE_DIR/shimlink:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
+  "$SHIM_CASE/hcom" send @luna -- hi
+rc=$?
+assert_eq "hcom recursion: exit 0 (no loop)" "$rc" "0"
+assert_file_eq "hcom recursion: still resolves real hcom past the symlink" "$PROBE/herder_hook_hcom" \
+  "$(cd "$REALBIN" && pwd -P)/hcom"
+
+# 8. hcom shim with NO real hcom on PATH still forwards (herder hook degrades to
+#    exit 0 itself); HERDER_HOOK_HCOM is left empty. PATH is a coreutils-only base
+#    with no hcom, so the "no real hcom" condition is hermetic.
+make_case hcom_no_real
+run_with_timeout 5 env -i \
+  PATH="$SHIM_CASE:/usr/bin:/bin" HOME="$HOME" PROBE="$PROBE" \
+  "$SHIM_CASE/hcom" post
+rc=$?
+assert_eq "hcom no-real: exit 0" "$rc" "0"
+assert_file_eq "hcom no-real: forwards to herder hook anyway" "$PROBE/herder_argv" \
+  "$(printf '%s\n' hook post)"
+assert_file_eq "hcom no-real: HERDER_HOOK_HCOM left empty" "$PROBE/herder_hook_hcom" ""
 
 echo
 if [[ "$fail" -eq 0 ]]; then

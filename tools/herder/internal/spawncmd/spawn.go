@@ -586,9 +586,17 @@ The spawner is often mid-turn, so the helper may report verify=queued or verify=
 		}
 	}
 
+	// hcom agents get HCOM_DIR (bus scoping) plus the shim dir prepended to PATH,
+	// so the child's hcom traffic — the Claude hooks' `${HCOM:-hcom} <verb>` AND
+	// the agent's own hcom CLI — resolves to our `hcom` shim, which forwards to
+	// `herder hook`. That rewrites the sessionstart bootstrap to herder doctrine
+	// and passes every other verb through verbatim. This is a PER-SPAWN PATH
+	// scope, never machine-wide: the env-var vector (HCOM="herder hook") is dead
+	// because hcom re-exports HCOM=hcom to its launch children, clobbering it.
 	hcomEnv := ""
 	if isHcomAgent {
-		hcomEnv = " HCOM_DIR=" + shellquote.Quote(hcomDirEff)
+		hcomEnv = " HCOM_DIR=" + shellquote.Quote(hcomDirEff) +
+			" PATH=" + shellquote.Quote(r.paths.ShimsDir) + ":$PATH"
 	}
 	argv := []string{}
 	if opts.LoginShell {
@@ -602,7 +610,7 @@ The spawner is often mid-turn, so the helper may report verify=queued or verify=
 			argv = append(argv, "HERDER_NOTIFY_TO="+opts.NotifyTo)
 		}
 		if isHcomAgent {
-			argv = append(argv, "HCOM_DIR="+hcomDirEff)
+			argv = append(argv, "HCOM_DIR="+hcomDirEff, "PATH="+r.paths.ShimsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 		}
 		argv = append(argv, launchTokens...)
 	}
