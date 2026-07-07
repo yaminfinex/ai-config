@@ -1,8 +1,8 @@
 # Herder herdr notes
 
 > HISTORICAL (2026-07-05): this is a pre-Go-port working note retained for
-> low-level herdr observations and sharp-edge provenance. `skills/herder/SKILL.md`,
-> `references/delivery-drivers.md`, current `bin/herder --help`, and the Go source
+> low-level herdr observations and sharp-edge provenance. `delivery-drivers.md`,
+> current `bin/herder --help`, `herder <cmd> --help`, and the Go source
 > are the shipped source of truth. Re-verify command syntax with `herdr <cmd> -h`
 > before relying on examples here.
 

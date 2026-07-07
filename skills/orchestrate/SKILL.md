@@ -1,13 +1,13 @@
 ---
 name: orchestrate
-description: Run a long or complex plan across multiple agent sessions — compose a per-run protocol from a menu of topologies (sequential phases, relay, fan-out, branch-both-sides, adversarial structures), autonomy postures, and liveness policies, then set up the playbook + run-log state files and drive the run. Use when the user says "orchestrate this plan", "run this as a relay", "spawn phase agents", "split this across agents/sessions", "herd this plan", or hands over a substantial implementation plan / long runbook that won't fit one context window. Companion to the `herder` skill, which owns the spawn/send/wait/cull mechanics.
+description: Run a long or complex plan across multiple agent sessions — compose a per-run protocol from a menu of topologies (sequential phases, relay, fan-out, branch-both-sides, adversarial structures), autonomy postures, and liveness policies, then set up the playbook + run-log state files and drive the run. Use when the user says "orchestrate this plan", "run this as a relay", "spawn phase agents", "split this across agents/sessions", "herd this plan", or hands over a substantial implementation plan / long runbook that won't fit one context window. Built on the `herder` CLI (see `herder --help`), which owns the spawn/send/wait/cull mechanics.
 ---
 
 # Orchestrate
 
-Protocol layer for executing one mission across many agent sessions. The `herder` skill is the
-substrate (spawn, message, cull); this is the policy (who spawns whom, what each agent owns, how
-context and verification cross session boundaries).
+Protocol layer for executing one mission across many agent sessions. The `herder` CLI is the
+substrate (spawn, message, cull — see `herder --help`); this is the policy (who spawns whom, what
+each agent owns, how context and verification cross session boundaries).
 
 Requires `herder` on PATH (`tools/herder/README.md`; activation: `docs/machine-setup.md`).
 Agents spawned through `herder` are hcom **bus**-bound from birth; all run coordination rides
@@ -42,8 +42,8 @@ Record in the playbook's run-shape header (`references/state-files.md`):
 5. **Backlog (if present).** If the project uses Backlog.md (`command -v backlog` + a `backlog/`
    dir), lean on it as the durable unit ledger — `references/backlog-integration.md`. Absent → skip.
 6. **Bus scoping + observability.** On a machine running several orchestrations, a per-run team
-   (`herder spawn --team <run-slug>`) keeps their traffic from interleaving (caveats: `herder`
-   skill). Own-tab-per-agent (`herder spawn --new-tab`) is a preference for humans watching the
+   (`herder spawn --team <run-slug>`) keeps their traffic from interleaving (caveats: `herder spawn
+   --help`). Own-tab-per-agent (`herder spawn --new-tab`) is a preference for humans watching the
    run, not a correctness rule.
 
 ## Topologies
@@ -91,10 +91,13 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
    travels through the files + branch, never the prompt.
 3. **Context discipline.** One unit per agent; wide reading goes to subagents. A ballooning unit
    has two recoveries — both write durable state first (commit WIP + a HANDOFF report on the unit
-   thread), since whatever isn't persisted is lost either way. **Compact in place:** self-send a
-   steered `/compact` as the last act before the turn ends (`herder` skill → *Self-send*) — keeps
-   the same pane, session identity, and bus name; the agent wakes post-compaction and continues
-   its own unit with a summary it steered. **Spawn a fresh continuation:** stop and let a clean
+   thread), since whatever isn't persisted is lost either way. **Compact in place:** as the last
+   act before the turn ends, self-send a steered compact — `herder send "$HERDR_PANE_ID" '/compact
+   <steer: journal state, open units, next gate>'`. Targeting your own pane queues a real input
+   line the harness fires the instant the turn ends; it is a live command, not a test, so persist
+   durable state first (above). It keeps the same pane, session identity, and bus name; the agent
+   wakes post-compaction and continues its own unit with a summary it steered. **Spawn a fresh
+   continuation:** stop and let a clean
    copy pick up from the HANDOFF report. Compact in place when the context is still coherent and
    only heavy; spawn fresh when it is already degraded (a steered compaction of muddled context
    just preserves the muddle) or the continuation should switch agent/model.
@@ -124,4 +127,15 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
    sweep + golden-agent check if bottled (`references/adversarial.md`), then harvest before the
    PR.
 
-Lifecycle mechanics (`herder enroll` / `fork` / `resume`) live in the `herder` skill.
+Lifecycle mechanics (`herder enroll` / `fork` / `resume`) live in the `herder` CLI — `herder --help`.
+
+## Substrate safety
+
+The bus and panes are shared with the user; a few moves are never yours to make:
+
+- Never close `$HERDR_PANE_ID` (your own pane), and never cull yourself.
+- Never `herdr workspace close` or `herdr tab close` — workspace/tab lifecycle is the user's.
+- Never send `esc` to a running peer — it doubles as interrupt and kills the peer's in-flight turn.
+- Never `herdr session stop` / `session delete` without explicit user confirmation.
+- Prefer `herder send` over any raw `herdr` keystroke call (raw `agent send` writes text with no
+  Enter, so the message never submits).

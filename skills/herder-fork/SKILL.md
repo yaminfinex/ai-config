@@ -1,6 +1,6 @@
 ---
 name: herder-fork
-description: Fork the current claude or codex session into a new herdr pane via the herder. Use when the user says "fork this", "fork right", "fork below", "fork the session", "branch this session", or wants to spawn a forked copy of the active agent next to the current pane. Companion to the `herder` skill.
+description: Fork the current claude or codex session into a new herdr pane via the herder. Use when the user says "fork this", "fork right", "fork below", "fork the session", "branch this session", or wants to spawn a forked copy of the active agent next to the current pane. Wraps the `herder fork` CLI — see `herder fork --help`.
 ---
 
 # herder-fork
@@ -9,11 +9,11 @@ Forks the *current* Claude/Codex session into a sibling herdr pane. The original
 conversation keeps running where it is; the fork starts as a copy that diverges from this
 point on.
 
-Companion to the `herder` skill. Same hard requirements (`HERDR_ENV=1` and `herder` on PATH),
-same registry, same placement defaults. Prefer this helper when the user says "fork this";
-prefer `herder fork <guid>` directly when you already know the target guid/label. See
-`tools/herder/README.md` for the implementation map and `docs/machine-setup.md` for machine
-activation.
+Same hard requirements as the underlying `herder fork` (`HERDR_ENV=1` and `herder` on PATH),
+same registry, same placement defaults — see `herder fork --help` for the contract. Prefer this
+helper when the user says "fork this"; prefer `herder fork <guid>` directly when you already know
+the target guid/label. See `tools/herder/README.md` for the implementation map and
+`docs/machine-setup.md` for machine activation.
 
 ## Session start
 

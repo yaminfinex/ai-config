@@ -165,4 +165,4 @@ To add a third driver (e.g., agmsg SQLite or h5i git-log):
 
 - `herder send --help` + the send goldens (`tools/herder/tests/goldens/`): public contract (target forms, options, exit codes, `--json`)
 - `orchestrate/SKILL.md` Invariants 8–9: how delivery drivers fulfill the invariants
-- `herder/SKILL.md`: user-facing command docs (transport-agnostic)
+- `herder send --help` / `herder --help`: user-facing command docs (transport-agnostic)

@@ -51,7 +51,8 @@ not the whole doc>.
 
 Own ONE unit. If it balloons: WIP commit, then a HANDOFF report on your unit thread (state +
 ordered remaining steps for an agent with zero shared memory + WIP sha), then either compact in
-place (self-send a steered `/compact` — `herder` skill → *Self-send*; same session continues) or
+place (self-send a steered `/compact` — `herder send "$HERDR_PANE_ID" '/compact …'`, `herder send
+--help`; same session continues) or
 stop and let a fresh copy pick up the report. Compact in place when the context is coherent and
 only heavy; spawn fresh when it's degraded or should switch agent/model.
 

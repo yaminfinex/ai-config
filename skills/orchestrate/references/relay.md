@@ -40,7 +40,8 @@ If a leg balloons, commit WIP and journal `## Leg N — HANDOFF (continue)` with
 steps + current state, then either:
 
 - **Compact in place** — self-send a steered `/compact <HANDOFF entry, remaining steps, gate>`
-  as the last act before the turn ends (`herder` skill → *Self-send*). The same session continues
+  as the last act before the turn ends (`herder send "$HERDR_PANE_ID" '/compact …'`; `herder send
+  --help`). The same session continues
   its own leg post-compaction; no respawn, and the relay's self-spawn wiring is untouched.
   Default when the context is coherent and only heavy.
 - **Spawn the continuation** — same leg, prompt notes "continue from the HANDOFF entry". Prefer

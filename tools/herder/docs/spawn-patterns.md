@@ -108,7 +108,7 @@ For mid-session messages to a running peer, prefer the wrapper:
 herder send <guid|short-guid|label|pane_id> "Quick clarification: focus only on auth.ts changes."
 ```
 
-It preflights state (refuses to send into interrupted / modal panes unless `--force`), writes the text, submits Enter, and verifies the prompt buffer cleared. See `references/herder-delta.md` → *Driving peer agents safely* for the rationale.
+It preflights state (refuses to send into interrupted / modal panes unless `--force`), writes the text, submits Enter, and verifies the prompt buffer cleared. See `herder-delta.md` → *Driving peer agents safely* for the rationale.
 
 For raw shells where you don't want submission, drop to the primitives:
 

@@ -1033,6 +1033,10 @@ func printHelp(stdout io.Writer) {
 		"  --notify is the doorbell: a finished worker pings the spawner so it needn't poll wait in",
 		"  a loop. A bus-bound spawner gets a real hcom status message; a bus-less one gets a single",
 		"  keystroke ring. It is only a signal — send it once and stop, whatever it reports.",
+		"",
+		"  --team caveat: the FIRST team-bus claude launch per machine hits claude's one-time",
+		"  onboarding in the pane (the config-dir pin starts fresh state) — complete it once and it",
+		"  persists machine-wide; the global bus pins nothing and is unaffected.",
 	}
 	fmt.Fprint(stdout, strings.Join(lines, "\n")+"\n")
 }

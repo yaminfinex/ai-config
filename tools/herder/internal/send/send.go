@@ -288,6 +288,22 @@ func printHelp(stdout io.Writer) {
 		"    A blind resend double-submits; verify before retrying.",
 		"  - target gone / not live: run `herder list --all` to see whether it was culled.",
 		"  - watching long work: don't loop send/wait — have the worker ring you (spawn --notify).",
+		"",
+		"Self-send (steer your own compaction):",
+		"  Targeting YOUR OWN pane queues an input line against yourself; issued mid-turn it fires",
+		"  when the current turn ends. Headline use is in-place compaction at a boundary you choose:",
+		"    herder send \"$HERDR_PANE_ID\" '/compact <steer: journal, open units, next gate>'",
+		"  It queues a REAL command — write durable state (commit + journal) FIRST.",
+		"",
+		"Transport (HERDER_BUS env: auto|herdr|hcom):",
+		"  auto (default) picks the driver from the registry; herdr forces keystrokes; hcom forces",
+		"  the bus. Forced hcom still refuses a row with no recorded bus name (exit 2). No flag ever",
+		"  names a transport.",
+		"",
+		"Codex mid-session:",
+		"  Long/multi-line messages to a codex pane over keystrokes hit paste-blob pathologies —",
+		"  stage a file and send a one-line pointer instead. (spawn does this automatically, but",
+		"  only for the initial prompt.) Not needed for a bus-routed codex target.",
 	}
 	fmt.Fprint(stdout, strings.Join(lines, "\n")+"\n")
 }
