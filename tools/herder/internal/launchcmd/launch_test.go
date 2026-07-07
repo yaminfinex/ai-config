@@ -1,6 +1,8 @@
 package launchcmd
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -139,5 +141,111 @@ func TestCodexStripsDevInstructions(t *testing.T) {
 		if got := codexStripsDevInstructions(c.args); got != c.want {
 			t.Errorf("codexStripsDevInstructions(%v) = %v, want %v", c.args, got, c.want)
 		}
+	}
+}
+
+func TestPinConfigDir_SeedsClaudeConfigOnPin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HCOM_DIR", t.TempDir()) // isolated bus → pin fires
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{"real":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	PinConfigDir("claude")
+
+	dir := filepath.Join(home, ".claude")
+	if got := os.Getenv("CLAUDE_CONFIG_DIR"); got != dir {
+		t.Fatalf("CLAUDE_CONFIG_DIR = %q, want %q", got, dir)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".claude.json"))
+	if err != nil {
+		t.Fatalf("seed not written: %v", err)
+	}
+	if string(data) != `{"real":true}` {
+		t.Errorf("seed content = %q, want copy of ~/.claude.json", data)
+	}
+}
+
+func TestPinConfigDir_SeedNeverOverwritesExistingTarget(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HCOM_DIR", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{"real":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(`{"pinned":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	PinConfigDir("claude")
+
+	data, _ := os.ReadFile(filepath.Join(dir, ".claude.json"))
+	if string(data) != `{"pinned":true}` {
+		t.Errorf("existing target overwritten: %q", data)
+	}
+}
+
+func TestPinConfigDir_SeedSkippedWhenSourceMissing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HCOM_DIR", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+
+	PinConfigDir("claude")
+
+	if got := os.Getenv("CLAUDE_CONFIG_DIR"); got != filepath.Join(home, ".claude") {
+		t.Fatalf("pin should still fire without a seed source, got %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", ".claude.json")); err == nil {
+		t.Error("seed file created out of nothing")
+	}
+}
+
+func TestPinConfigDir_NoSeedWhenUserPresetConfigDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HCOM_DIR", t.TempDir())
+	preset := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", preset)
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{"real":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	PinConfigDir("claude")
+
+	if got := os.Getenv("CLAUDE_CONFIG_DIR"); got != preset {
+		t.Fatalf("preset CLAUDE_CONFIG_DIR clobbered: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(preset, ".claude.json")); err == nil {
+		t.Error("seeded into a user-preset config dir")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", ".claude.json")); err == nil {
+		t.Error("seeded into unpinned default dir")
+	}
+}
+
+func TestPinConfigDir_NoopOnGlobalBus(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HCOM_DIR", filepath.Join(home, ".hcom"))
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{"real":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	PinConfigDir("claude")
+
+	if got := os.Getenv("CLAUDE_CONFIG_DIR"); got != "" {
+		t.Fatalf("global bus must not pin, got %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", ".claude.json")); err == nil {
+		t.Error("global bus must not seed")
 	}
 }

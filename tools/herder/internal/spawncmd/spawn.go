@@ -1129,9 +1129,10 @@ func printHelp(stdout io.Writer) {
 		"  AI_CONFIG_ROOT and HERDER_BIN are re-pointed at that checkout so the child builds and",
 		"  tests its own tree; the spawn-time launch itself still rides the spawner's bin/herder.",
 		"",
-		"  --team caveat: the FIRST team-bus claude launch per machine hits claude's one-time",
-		"  onboarding in the pane (the config-dir pin starts fresh state) — complete it once and it",
-		"  persists machine-wide; the global bus pins nothing and is unaffected.",
+		"  --team caveat: team-bus launches pin claude's config dir and seed its state from",
+		"  ~/.claude.json, so an onboarded machine skips claude's one-time onboarding; only a",
+		"  never-onboarded machine (no ~/.claude.json) sees it once in the pane, and it persists",
+		"  machine-wide after that. The global bus pins nothing and is unaffected.",
 	}
 	fmt.Fprint(stdout, strings.Join(lines, "\n")+"\n")
 }
