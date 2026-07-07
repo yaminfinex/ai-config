@@ -1,0 +1,12 @@
+=== STDERR ===
+sent 21 chars to alpha (hcom @alpha-rive), verify=not_delivered
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== HCOM SEND ARGV ===
+send --from orchestrator @alpha-rive -- ring: alpha unit DONE
+=== HCOM EVENTS ARGV ===
+
+=== HCOM DIR ===
+<BUS>

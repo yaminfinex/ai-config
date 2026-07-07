@@ -1,25 +1,23 @@
 package send
 
+// herder send is BUS-ONLY (TASK-003, locked): the hcom bus is THE delivery
+// transport. Every target form resolves through the spawn registry to a
+// recorded bus name; a target that cannot resolve to a bus-bound agent is a
+// clear hard error (exit 2) — keystrokes are never typed. The old herdr
+// keystroke transport survives in exactly one deliberate place: spawn's
+// boot-time initial-prompt paste (internal/spawncmd/bootpaste.go), which is
+// spawn-private and not reachable from here.
+
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"ai-config/tools/herder/internal/driver"
+	"ai-config/tools/herder/internal/registry"
 )
-
-type dryRunRecord struct {
-	PaneID      string `json:"pane_id"`
-	Target      string `json:"target"`
-	ResolvedVia string `json:"resolved_via"`
-	Drifted     bool   `json:"drifted"`
-	DryRun      bool   `json:"dry_run"`
-}
 
 type hcomDryRunRecord struct {
 	Target    string `json:"target"`
@@ -42,15 +40,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		die(stderr, "not running inside a herdr pane (HERDR_ENV != 1)")
 		return 64
 	}
-	selection := driver.NewSelection()
-	if _, err := exec.LookPath("herdr"); err != nil {
-		die(stderr, "herdr not on PATH")
-		return 64
-	}
-	if _, err := exec.LookPath("jq"); err != nil {
-		die(stderr, "jq not on PATH")
-		return 64
-	}
 
 	opts, target, message, code := parseArgs(args, stdout, stderr)
 	if code != 0 {
@@ -60,29 +49,106 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
+	forced := false
+	switch os.Getenv("HERDER_BUS") {
+	case "herdr":
+		die(stderr, "HERDER_BUS=herdr is gone — the herdr keystroke transport was removed; hcom is the only transport (unset HERDER_BUS, or use auto|hcom)")
+		return 64
+	case "hcom":
+		forced = true
+	}
+
+	recs, err := registry.Load(registry.DefaultPath())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		die(stderr, "registry not readable: "+err.Error())
+		return 1
+	}
+	rec := registry.Resolve(recs, target)
+	if rec == nil {
+		rec = registry.ActiveByPaneOrTerminal(recs, target)
+	}
+
+	sender := &busSender{}
+
+	if rec == nil {
+		if forced {
+			// Forced-hcom debug affordance (unchanged from the driver era): an
+			// unregistered target is a literal bus name on the ambient HCOM_DIR.
+			if opts.DryRun {
+				fmt.Fprintf(stderr, "herder send --dry-run: %s -> hcom bus @%s (team: global, HCOM_DIR=%s)\n", target, target, ambientHcomDir())
+				if opts.JSONOutput {
+					writeCompactJSON(stdout, hcomDryRunRecord{
+						Target:    target,
+						Transport: "hcom",
+						HcomName:  target,
+						HcomDir:   ambientHcomDir(),
+						Team:      "global",
+						DryRun:    true,
+					})
+				}
+				return 0
+			}
+			return sender.send(target, target, "", message, opts.TimeoutMS, opts.JSONOutput, stdout, stderr)
+		}
+		if opts.DryRun {
+			fmt.Fprintf(stderr, "herder send --dry-run: would REFUSE (exit 2): no registry row matches %s — bus-only (keystroke transport removed)\n", target)
+			if opts.JSONOutput {
+				writeCompactJSON(stdout, hcomDryRunRefuseRecord{Target: target, Transport: "hcom", Would: "refuse", DryRun: true})
+			}
+			return 2
+		}
+		fmt.Fprintf(stderr, "herder send: refused — no registry row matches '%s' (tried guid, short-guid, label, terminal_id, pane_id); herder send is bus-only, the keystroke transport was removed. Nothing was typed or sent.\n", target)
+		return 2
+	}
+
+	if rec.HcomName == "" || rec.HcomName == "null" {
+		if opts.DryRun {
+			fmt.Fprintf(stderr, "herder send --dry-run: would REFUSE (exit 2): %s has no recorded bus name — not bus-bound\n", target)
+			if opts.JSONOutput {
+				writeCompactJSON(stdout, hcomDryRunRefuseRecord{Target: target, Transport: "hcom", Would: "refuse", DryRun: true})
+			}
+			return 2
+		}
+		fmt.Fprintf(stderr, "herder send: refused — %s has no recorded bus name (not launched through hcom); herder send is bus-only, the keystroke transport was removed. Nothing was typed or sent.\n", target)
+		return 2
+	}
+
 	if opts.DryRun {
-		return dryRun(selection, target, opts.JSONOutput, stdout, stderr)
+		team := rec.Team
+		if team == "" {
+			team = "global"
+		}
+		dir := rec.HcomDir
+		if dir == "" || dir == "null" {
+			dir = ambientHcomDir()
+		}
+		fmt.Fprintf(stderr, "herder send --dry-run: %s -> hcom bus @%s (team: %s, HCOM_DIR=%s)\n", target, rec.HcomName, team, dir)
+		if opts.JSONOutput {
+			writeCompactJSON(stdout, hcomDryRunRecord{
+				Target:    target,
+				Transport: "hcom",
+				HcomName:  rec.HcomName,
+				HcomDir:   rec.HcomDir,
+				Team:      rec.Team,
+				DryRun:    true,
+			})
+		}
+		return 0
 	}
-	sendOpts := driver.SendOptions{
-		NoEnter:    opts.NoEnter,
-		NoVerify:   opts.NoVerify,
-		Force:      opts.Force,
-		TimeoutMS:  opts.TimeoutMS,
-		JSONOutput: opts.JSONOutput,
+
+	return sender.send(target, rec.HcomName, rec.HcomDir, message, opts.TimeoutMS, opts.JSONOutput, stdout, stderr)
+}
+
+func ambientHcomDir() string {
+	if dir := os.Getenv("HCOM_DIR"); dir != "" {
+		return dir
 	}
-	switch selection.Select(target) {
-	case driver.TransportHcom:
-		return selection.Hcom.Send(target, message, sendOpts, stdout, stderr)
-	default:
-		return selection.Herdr.Send(target, message, sendOpts, stdout, stderr)
-	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".hcom")
 }
 
 type options struct {
 	Help       bool
-	NoEnter    bool
-	NoVerify   bool
-	Force      bool
 	TimeoutMS  int
 	JSONOutput bool
 	DryRun     bool
@@ -98,18 +164,9 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, string, string
 		case "--dry-run":
 			opts.DryRun = true
 			i++
-		case "--no-enter":
-			opts.NoEnter = true
-			i++
-		case "--no-verify":
-			opts.NoVerify = true
-			i++
-		case "--force":
-			opts.Force = true
-			i++
 		case "--timeout":
 			if i+1 >= len(args) {
-				die(stderr, "unknown flag: --timeout")
+				die(stderr, "--timeout requires a value")
 				return opts, "", "", 64
 			}
 			var timeout int
@@ -143,7 +200,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, string, string
 	}
 
 	if target == "" {
-		die(stderr, "target required (guid, label, or pane id)")
+		die(stderr, "target required (guid, label, terminal_id, or pane id)")
 		return opts, "", "", 64
 	}
 	if message == "" && !opts.DryRun {
@@ -153,162 +210,55 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, string, string
 	return opts, target, message, 0
 }
 
-func dryRun(selection *driver.Selection, target string, jsonOut bool, stdout, stderr io.Writer) int {
-	switch selection.Select(target) {
-	case driver.TransportHcom:
-		return dryRunHcom(selection.Hcom, target, jsonOut, stdout, stderr)
-	default:
-		return dryRunHerdr(selection.Herdr, target, jsonOut, stdout, stderr)
-	}
-}
-
-func dryRunHerdr(h *driver.Herdr, target string, jsonOut bool, stdout, stderr io.Writer) int {
-	res, err := h.Resolve(target)
-	if err != nil {
-		var resolveErr *driver.ResolveError
-		if errors.As(err, &resolveErr) {
-			if resolveErr.Code == 2 {
-				return 2
-			}
-			return 1
-		}
-		return 1
-	}
-	if res.DriftNote != "" {
-		fmt.Fprintf(stderr, "herder send: %s\n", res.DriftNote)
-	}
-	fmt.Fprintf(stderr, "herder send --dry-run: %s -> pane %s (via %s)", target, res.PaneID, res.ResolvedVia)
-	if res.Drifted {
-		fmt.Fprint(stderr, " [DRIFTED]")
-	}
-	fmt.Fprintln(stderr)
-	if jsonOut {
-		record := dryRunRecord{
-			PaneID:      res.PaneID,
-			Target:      target,
-			ResolvedVia: res.ResolvedVia,
-			Drifted:     res.Drifted,
-			DryRun:      true,
-		}
-		b, _ := json.Marshal(record)
-		fmt.Fprintln(stdout, string(b))
-	}
-	return 0
-}
-
-func dryRunHcom(h *driver.Hcom, target string, jsonOut bool, stdout, stderr io.Writer) int {
-	res, err := h.Resolve(target)
-	if err != nil {
-		var resolveErr *driver.ResolveError
-		if errors.As(err, &resolveErr) && resolveErr.Code == 2 {
-			fmt.Fprintf(stderr, "herder send --dry-run: would REFUSE (exit 2): %s has no recorded bus name — not bus-bound\n", target)
-			if jsonOut {
-				writeJSON(stdout, hcomDryRunRefuseRecord{
-					Target:    target,
-					Transport: "hcom",
-					Would:     "refuse",
-					DryRun:    true,
-				})
-			}
-			return 2
-		}
-		return 1
-	}
-
-	hcomDir := res.Dir
-	team := res.Team
-	if !res.Found {
-		hcomDir = os.Getenv("HCOM_DIR")
-		if hcomDir == "" {
-			home, _ := os.UserHomeDir()
-			hcomDir = filepath.Join(home, ".hcom")
-		}
-		team = "global"
-	}
-	displayTeam := team
-	if displayTeam == "" {
-		displayTeam = "global"
-	}
-	displayDir := hcomDir
-	if displayDir == "" {
-		displayDir = os.Getenv("HCOM_DIR")
-		if displayDir == "" {
-			home, _ := os.UserHomeDir()
-			displayDir = filepath.Join(home, ".hcom")
-		}
-	}
-	fmt.Fprintf(stderr, "herder send --dry-run: %s -> hcom bus @%s (team: %s, HCOM_DIR=%s)\n", target, res.Name, displayTeam, displayDir)
-	if jsonOut {
-		writeJSON(stdout, hcomDryRunRecord{
-			Target:    target,
-			Transport: "hcom",
-			HcomName:  res.Name,
-			HcomDir:   hcomDir,
-			Team:      team,
-			DryRun:    true,
-		})
-	}
-	return 0
-}
-
 func die(stderr io.Writer, msg string) {
 	fmt.Fprintf(stderr, "herder send: %s\n", msg)
 }
 
 func printHelp(stdout io.Writer) {
 	lines := []string{
-		"herder send — deliver a message to an already-spawned agent, with delivery verified.",
+		"herder send — deliver a message to a spawned agent over the hcom bus, delivery verified.",
 		"",
 		"Usage:",
 		"  herder send <target> <message> [options]",
 		"",
 		"<target> is a short-guid, full guid, label, terminal_id (term_*), or raw pane_id.",
-		"A guid/label/term_* resolves to the agent's CURRENT pane (drift-proof as herdr",
-		"compacts pane ids); a raw pane_id is used verbatim. hcom-bound agents route over",
-		"the message bus automatically.",
+		"Every form resolves through the spawn registry to the agent's recorded bus name:",
+		"guid/label match the latest row; terminal/pane ids match the latest ACTIVE row",
+		"(drift-proof as herdr compacts pane ids). hcom is THE transport — a target with no",
+		"bus-bound registry row is refused (exit 2); nothing is ever typed into a pane.",
+		"(The herdr keystroke transport was removed. The one surviving keystroke path is",
+		"spawn's boot-time initial-prompt paste, owned by `herder spawn`.)",
 		"",
 		"Options:",
 		"  --dry-run       resolve the target and print where it would send, then exit without sending",
-		"  --no-enter      place the text in the prompt but do not submit it",
-		"  --no-verify     skip post-send delivery verification (faster, blind)",
-		"  --force         skip the pre-flight target-state check (still verifies delivery)",
-		"  --timeout MS    max wait for the prompt buffer to clear (default 3000)",
+		"  --timeout MS    max wait for a delivery receipt on the bus (default 3000)",
 		"  --json          emit a JSON record of the send on stdout",
 		"",
 		"Exit codes:",
-		"  0   sent + verified, OR queued. \"queued\" means the target was busy and the",
-		"      message is accepted to run next — do NOT resend; a resend double-delivers.",
-		"  1   send failed, or delivery could not be verified. verify=not_delivered/not_landed",
-		"      means the paste was not confirmed — read the pane before retrying.",
-		"  2   refused: target gone (terminal not live) or in an interrupted/modal state.",
+		"  0   sent + verified, OR queued. \"queued\" means no delivery receipt inside the window —",
+		"      normal for a busy target; the bus injects the message at its next turn boundary.",
+		"      Do NOT resend; a resend double-delivers.",
+		"  1   hcom send itself failed (transient — the bus errored).",
+		"  2   refused: target is not bus-bound (no registry row, or a row without a recorded",
+		"      bus name), or not joined on its recorded bus. Nothing was sent.",
 		"  64  usage error.",
 		"",
 		"If it fails:",
-		"  - not_delivered / \"NOT confirmed\": read the pane first — `herder wait <target> --read`.",
-		"    A blind resend double-submits; verify before retrying.",
-		"  - target gone / not live: run `herder list --all` to see whether it was culled.",
-		"  - watching long work: don't loop send/wait — have the worker ring you (spawn --notify).",
+		"  - exit 2 \"no recorded bus name\": the agent was not launched through hcom (bash panes,",
+		"    sidecar rows) — there is no delivery path to it; interact via its pane directly.",
+		"  - watching long work: don't loop send/wait — have the worker report back (spawn --notify).",
 		"",
-		"Self-send (steer your own compaction):",
-		"  Targeting YOUR OWN pane queues an input line against yourself; issued mid-turn it fires",
-		"  when the current turn ends. Headline use is in-place compaction at a boundary you choose:",
-		"    herder send \"$HERDR_PANE_ID\" '/compact <steer: journal, open units, next gate>'",
-		"  It queues a REAL command — write durable state (commit + journal) FIRST.",
+		"Transport (HERDER_BUS env: auto|hcom):",
+		"  auto (default) resolves through the registry and refuses non-bus targets; hcom forces",
+		"  the bus for debugging — an unregistered target is then treated as a literal bus name on",
+		"  the ambient HCOM_DIR. The old herdr keystroke value is a hard error. No flag ever names",
+		"  a transport.",
 		"",
-		"Transport (HERDER_BUS env: auto|herdr|hcom):",
-		"  auto (default) picks the driver from the registry; herdr forces keystrokes; hcom forces",
-		"  the bus. Forced hcom still refuses a row with no recorded bus name (exit 2). No flag ever",
-		"  names a transport.",
-		"",
-		"Codex mid-session:",
-		"  Long/multi-line messages to a codex pane over keystrokes hit paste-blob pathologies —",
-		"  stage a file and send a one-line pointer instead. (spawn does this automatically, but",
-		"  only for the initial prompt.) Not needed for a bus-routed codex target.",
+		"Context ceiling (interim):",
+		"  Steered self-compaction (send \"$HERDR_PANE_ID\" '/compact ...') died with the keystroke",
+		"  transport — a bus message cannot type a slash command. Until `herder compact` exists",
+		"  (TASK-022): at context ceiling, commit + write a HANDOFF report on your thread, then",
+		"  stop and let the orchestrator respawn fresh.",
 	}
 	fmt.Fprint(stdout, strings.Join(lines, "\n")+"\n")
-}
-
-func writeJSON(stdout io.Writer, record any) {
-	b, _ := json.Marshal(record)
-	fmt.Fprintln(stdout, string(b))
 }

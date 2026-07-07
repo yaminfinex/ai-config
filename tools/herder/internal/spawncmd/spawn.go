@@ -380,6 +380,10 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		die(stderr, "use --prompt or --prompt-file, not both")
 		return opts, 1
 	}
+	if opts.Notify && opts.Prompt == "" && opts.PromptFile == "" {
+		die(stderr, "--notify requires --prompt/--prompt-file (the notify appendix rides the initial prompt)")
+		return opts, 1
+	}
 	if opts.Workspace != "" && opts.FromPane != "" {
 		die(stderr, "use --workspace or --from-pane, not both")
 		return opts, 1
@@ -456,22 +460,13 @@ func (r *runner) run() int {
 	herderBin := r.paths.BinHerder
 	spawnerPaneID := os.Getenv("HERDR_PANE_ID")
 	spawnerTermID := ""
-	if opts.Notify && opts.NotifyTo == "" {
-		if spawnerPaneID != "" {
-			out, err := r.herdr.Output("pane", "get", spawnerPaneID)
-			if err == nil {
-				pane, parseErr := herdrcli.ParsePaneGet(out)
-				if parseErr == nil {
-					spawnerTermID = pane.TerminalID
-					opts.NotifyTo = pane.TerminalID
-				}
+	if opts.Notify && opts.NotifyTo == "" && spawnerPaneID != "" {
+		out, err := r.herdr.Output("pane", "get", spawnerPaneID)
+		if err == nil {
+			pane, parseErr := herdrcli.ParsePaneGet(out)
+			if parseErr == nil {
+				spawnerTermID = pane.TerminalID
 			}
-			if opts.NotifyTo == "" {
-				opts.NotifyTo = spawnerPaneID
-				fmt.Fprintf(r.stderr, "herder spawn: could not resolve spawner terminal_id; ring target falls back to raw pane %s (drift-prone)\n", spawnerPaneID)
-			}
-		} else {
-			fmt.Fprintln(r.stderr, "herder spawn: --notify set but HERDR_PANE_ID is empty; no ring target injected")
 		}
 	}
 	permInjected := ""
@@ -495,6 +490,24 @@ func (r *runner) run() int {
 		return 1
 	}
 	registryPath := filepath.Join(stateDir, "registry.jsonl")
+
+	spawnedBy := os.Getenv("HERDER_GUID")
+	if spawnedBy == "" {
+		spawnedBy = "user"
+	}
+
+	// Notify is bus-native ONLY (TASK-003): the spawner must resolve to a
+	// recorded hcom name — via --notify-to, its own guid, or its pane/terminal
+	// coordinates (enrolled sessions). The keystroke ring at a terminal id went
+	// with the herdr delivery transport; a bus-less spawner is a hard error
+	// BEFORE any pane is created, not a silent downgrade.
+	if opts.Notify {
+		opts.NotifyBusName = resolveSpawnerBus(registryPath, opts.NotifyTo, spawnedBy, spawnerPaneID, spawnerTermID)
+		if opts.NotifyBusName == "" {
+			die(r.stderr, fmt.Sprintf("--notify: spawner does not resolve to a bus-bound agent (tried --notify-to %q, spawner guid %q, pane %q, terminal %q) — the keystroke ring was removed; spawn from a bus-bound session or point --notify-to at a bus-bound registry row", opts.NotifyTo, spawnedBy, spawnerPaneID, spawnerTermID))
+			return 1
+		}
+	}
 
 	guid, err := registry.NewGUID()
 	if err != nil {
@@ -587,34 +600,15 @@ func (r *runner) run() int {
 		launchTokens = append(launchTokens, opts.ExtraArgs...)
 	}
 
-	notifyExport := ""
-	if opts.NotifyTo != "" {
-		notifyExport = " HERDER_NOTIFY_TO=" + shellquote.Quote(opts.NotifyTo)
-	}
-	spawnedBy := os.Getenv("HERDER_GUID")
-	if spawnedBy == "" {
-		spawnedBy = "user"
-	}
-
-	// Notify appendix: a finished worker pings the spawner so it needn't poll.
-	// Route bus-native when the spawner has a recorded hcom name (a real status
-	// message with content, not a fixed slogan); fall back to the keystroke
-	// ring — with neutral, doctrine-free wording — only for a bus-less spawner.
+	// Notify appendix: a finished worker pings the spawner so it needn't poll —
+	// a real status message with content over the hcom bus, not a fixed slogan.
+	// The bus name was resolved (and hard-error-checked) before pane creation.
 	if opts.Notify && opts.Prompt != "" {
-		opts.NotifyBusName = resolveSpawnerBus(registryPath, opts.NotifyTo, spawnedBy, spawnerPaneID, spawnerTermID)
-		if opts.NotifyBusName != "" {
-			opts.Prompt += fmt.Sprintf(`
+		opts.Prompt += fmt.Sprintf(`
 
 When your unit is finished (or blocked), report to the spawner over the hcom bus so it does not have to poll — a real status message with content, not a fixed slogan:
   hcom send @%s --intent inform -- "<what you finished, what's left, any blockers>"
 Send it ONCE when you are genuinely done or blocked, then end your turn. (If your hcom setup expects a --name, use your own agent name.)`, opts.NotifyBusName)
-		} else if opts.NotifyTo != "" {
-			opts.Prompt += fmt.Sprintf(`
-
-When your unit is finished (or blocked), ring the spawner ONCE so it does not have to poll:
-  "$HERDER_BIN" send %s 'done — see %s'
-The spawner is often mid-turn, so the helper may report verify=queued or verify=not_delivered — that is EXPECTED, not a failure; do NOT resend (a resend just stacks duplicates). Do NOT use raw 'herdr agent send' — it writes the text without submitting, so the ring never lands.`, opts.NotifyTo, label)
-		}
 	}
 
 	// hcom agents get HCOM_DIR (bus scoping) plus the shim dir prepended to PATH,
@@ -636,8 +630,8 @@ The spawner is often mid-turn, so the helper may report verify=queued or verify=
 	argv := []string{}
 	if opts.LoginShell {
 		innerCmd := shellCommand(launchTokens)
-		inner := fmt.Sprintf("%sexport HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s%s%s%s; exec %s",
-			misePathFix, shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(childEnvBin), rootExport, notifyExport, hcomEnv, innerCmd)
+		inner := fmt.Sprintf("%sexport HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s%s%s; exec %s",
+			misePathFix, shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(childEnvBin), rootExport, hcomEnv, innerCmd)
 		argv = []string{opts.LoginShellBin, "-lic", inner}
 	} else {
 		// The env form has no shell, so it gets the checkout re-point but not
@@ -645,9 +639,6 @@ The spawner is often mid-turn, so the helper may report verify=queued or verify=
 		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SPAWNED_BY=" + spawnedBy, "HERDER_BIN=" + childEnvBin}
 		if childEnvRoot != "" {
 			argv = append(argv, "AI_CONFIG_ROOT="+childEnvRoot)
-		}
-		if opts.NotifyTo != "" {
-			argv = append(argv, "HERDER_NOTIFY_TO="+opts.NotifyTo)
 		}
 		if isHcomAgent {
 			argv = append(argv, "HCOM_DIR="+hcomDirEff, "PATH="+r.paths.ShimsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -766,9 +757,9 @@ The spawner is often mid-turn, so the helper may report verify=queued or verify=
 	if opts.Prompt != "" && trustBlocked {
 		deliveryResult = "blocked_trust_modal"
 	} else if opts.Prompt != "" {
-		out, rc := runSend(herderBin, paneID, wirePayload)
-		if len(out) > 0 {
-			deliveryResult = parseVerify(out)
+		verify, rc := (&bootPaster{Client: r.herdr}).paste(paneID, wirePayload)
+		if verify != "" {
+			deliveryResult = verify
 		}
 		if rc == 0 {
 			promptSent = true
@@ -1034,24 +1025,18 @@ func (r *runner) writeSummary(record spawnRecord, isHcomAgent, rootClosed bool, 
 		fmt.Fprintln(r.stderr, "  perms:  --safe (agent default ask-mode)")
 	}
 	if r.opts.Notify {
-		if r.opts.NotifyBusName != "" {
-			fmt.Fprintf(r.stderr, "  notify: worker reports to @%s over hcom on done\n", r.opts.NotifyBusName)
-		} else if r.opts.NotifyTo != "" {
-			fmt.Fprintf(r.stderr, "  notify: rings %s on done (bus-less spawner; HERDER_BIN + HERDER_NOTIFY_TO injected)\n", r.opts.NotifyTo)
-		} else {
-			fmt.Fprintln(r.stderr, "  notify: requested, but spawner has no bus name and no ring target — no notify appendix injected")
-		}
+		fmt.Fprintf(r.stderr, "  notify: worker reports to @%s over hcom on done\n", r.opts.NotifyBusName)
 	}
 	if isHcomAgent {
 		if hcomCapture == "captured" {
 			fmt.Fprintf(r.stderr, "  bus:    %s @%s  (team: %s)\n", firstNonEmpty(record.Team, "global"), record.HcomName, teamSummary(record.Team))
 			fmt.Fprintf(r.stderr, "          HCOM_DIR=%s\n", record.HcomDir)
 		} else {
-			fmt.Fprintf(r.stderr, "  bus:    %s — name NOT captured (%s); reachable via herdr keystrokes only\n", firstNonEmpty(record.Team, "global"), hcomCapture)
+			fmt.Fprintf(r.stderr, "  bus:    %s — name NOT captured (%s); herder send cannot reach it (bus-only) — inspect the pane directly\n", firstNonEmpty(record.Team, "global"), hcomCapture)
 			fmt.Fprintf(r.stderr, "          HCOM_DIR=%s\n", record.HcomDir)
 		}
 	} else {
-		fmt.Fprintf(r.stderr, "  bus:    n/a (%s is not an hcom agent; herdr keystroke transport)\n", record.Agent)
+		fmt.Fprintf(r.stderr, "  bus:    n/a (%s is not an hcom agent — no bus name, so herder send cannot reach it)\n", record.Agent)
 	}
 	if briefFile != "" {
 		fmt.Fprintf(r.stderr, "  brief:  staged to %s (codex; sent a one-line pointer to dodge paste-blob/plan-overlay)\n", briefFile)
@@ -1082,7 +1067,7 @@ func printHelp(stdout io.Writer) {
 		"Usage:",
 		"  herder spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]",
 		"               [--team NAME] [--split right|down] [--workspace ID | --from-pane PANE_ID]",
-		"               [--tab ID | --new-tab] [--cwd PATH] [--safe] [--notify | --notify-to PANE]",
+		"               [--tab ID | --new-tab] [--cwd PATH] [--safe] [--notify | --notify-to TARGET]",
 		"               [--extra-arg ARG]... [--no-focus] [--json]",
 		"",
 		"Options:",
@@ -1095,8 +1080,9 @@ func printHelp(stdout io.Writer) {
 		"  --tab ID          add to an existing tab; --new-tab gives the agent its own fresh tab",
 		"  --cwd PATH        working directory for the agent (default: current)",
 		"  --safe            keep the agent's default ask-mode (default: autonomous/skip-permissions)",
-		"  --notify          worker pings the spawner on done — hcom message if the spawner has a bus",
-		"                    name, else keystroke ring; --notify-to NAME|PANE overrides the target",
+		"  --notify          worker reports to the spawner over the hcom bus on done (requires --prompt",
+		"                    and a bus-bound spawner); --notify-to TARGET resolves the bus name from",
+		"                    another registry row (guid, label, terminal_id, or pane_id)",
 		"  --extra-arg ARG   pass ARG through to the agent (repeatable)",
 		"  --json            print the registry record as JSON on stdout",
 		"",
@@ -1110,25 +1096,29 @@ func printHelp(stdout io.Writer) {
 		"Behavior:",
 		"  claude/codex/gemini launch THROUGH hcom (via `herder launch`) so they bind to the",
 		"  message bus from birth — hcom is a HARD dependency for them; other agents exec raw",
-		"  and are reachable over herdr keystrokes only. The assigned bus name, team, and hcom",
-		"  coordinates are captured into the registry so send/wait/cull can resolve this agent.",
+		"  and get no bus name, so `herder send` (bus-only) cannot reach them after spawn.",
+		"  The assigned bus name, team, and hcom coordinates are captured into the registry",
+		"  so send/wait/cull can resolve this agent.",
 		"",
 		"  A fresh/untrusted directory opens claude's first-run trust dialog before the",
 		"  agent is receptive. Autonomous mode auto-accepts it (the dialog is an",
 		"  alternate-screen overlay, so detection reads the pane's VISIBLE source);",
 		"  --safe leaves it up and surfaces it so you can accept it in the pane.",
 		"",
-		"  Initial-prompt delivery is verified. If it can't be confirmed the summary reports",
+		"  Initial-prompt delivery is typed into the freshly booted pane and verified — the one",
+		"  deliberate keystroke path that remains (the agent has no bus binding yet at boot);",
+		"  every later message goes through `herder send` over the hcom bus.",
+		"  If it can't be confirmed the summary reports",
 		"  \"prompt: NOT confirmed\" — read the pane (`herder wait <guid> --read`) before assuming",
 		"  it landed; a blind resend double-submits. For codex, a long or multi-line brief is",
 		"  staged to $HERDER_STATE_DIR/briefs/<guid>.md and only a one-line pointer is sent to",
 		"  the pane (dodges codex paste-blob / plan-overlay pathologies).",
 		"",
-		"  --notify is the doorbell: a finished worker pings the spawner so it needn't poll wait in",
-		"  a loop. A bus-bound spawner gets a real hcom status message; a bus-less one gets a single",
-		"  keystroke ring. The spawner's bus name resolves from the registry by its guid AND by its",
-		"  pane/terminal coordinates, so enrolled sessions (no $HERDER_GUID in their environment)",
-		"  route bus-native too. It is only a signal — send it once and stop, whatever it reports.",
+		"  --notify is the doorbell: a finished worker reports to the spawner over the hcom bus so",
+		"  it needn't poll wait in a loop. The spawner's bus name resolves from the registry by its",
+		"  guid AND by its pane/terminal coordinates, so enrolled sessions (no $HERDER_GUID in their",
+		"  environment) route bus-native too. A spawner that resolves to NO bus name is a hard error",
+		"  (the keystroke ring was removed). It is only a signal — send it once and stop.",
 		"",
 		"  Child environment: the SPAWNING checkout's tools/herder/shims dir is prepended to the",
 		"  child's PATH (hcom agents), so spawning from a worktree injects THAT worktree's shims —",
@@ -1180,31 +1170,6 @@ func teamSummary(team string) string {
 		return "global (~/.hcom)"
 	}
 	return team
-}
-
-func parseVerify(out []byte) string {
-	var record struct {
-		Verify string `json:"verify"`
-	}
-	if json.Unmarshal(out, &record) != nil || record.Verify == "" {
-		return "unknown"
-	}
-	return record.Verify
-}
-
-func runSend(herderBin, paneID, payload string) ([]byte, int) {
-	cmd := exec.Command(herderBin, "send", paneID, payload, "--json")
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	err := cmd.Run()
-	if err == nil {
-		return stdout.Bytes(), 0
-	}
-	var exitErr *exec.ExitError
-	if ok := errorAs(err, &exitErr); ok {
-		return stdout.Bytes(), exitErr.ExitCode()
-	}
-	return stdout.Bytes(), 1
 }
 
 func shellCommand(args []string) string {
@@ -1419,13 +1384,3 @@ func sleepMS(ms int) {
 	time.Sleep(time.Duration(ms) * time.Millisecond)
 }
 
-func errorAs(err error, target any) bool {
-	switch t := target.(type) {
-	case **exec.ExitError:
-		if e, ok := err.(*exec.ExitError); ok {
-			*t = e
-			return true
-		}
-	}
-	return false
-}

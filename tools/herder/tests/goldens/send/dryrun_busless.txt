@@ -1,0 +1,11 @@
+=== STDERR ===
+herder send --dry-run: would REFUSE (exit 2): plain has no recorded bus name — not bus-bound
+=== STDOUT ===
+{"target":"plain","transport":"hcom","would":"refuse","dry_run":true}
+=== EXIT ===
+2
+=== HCOM SEND ARGV ===
+
+=== HCOM EVENTS ARGV ===
+
+=== HCOM DIR ===

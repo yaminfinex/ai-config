@@ -168,6 +168,27 @@ func Resolve(recs []Record, target string) *Record {
 	return hit
 }
 
+// ActiveByPaneOrTerminal resolves a pane_id/terminal_id to the latest ACTIVE
+// row holding it. Pane coordinates are positional (herdr reuses them across
+// sessions), so unlike guid/label resolution this refuses closed rows; ties
+// resolve last in guid order, matching the registry's jq semantics. Used by
+// bus-only send to map term_*/pane targets to a registry row (and from there
+// to a bus name) now that keystroke delivery at raw coordinates is gone.
+func ActiveByPaneOrTerminal(recs []Record, key string) *Record {
+	if key == "" {
+		return nil
+	}
+	collapsed := LatestByGUID(recs)
+	var hit *Record
+	for i := range collapsed {
+		rec := &collapsed[i]
+		if rec.Status == "active" && (rec.PaneID == key || rec.TerminalID == key) {
+			hit = rec
+		}
+	}
+	return hit
+}
+
 // ActiveLabelOwner returns the active latest row that owns label, excluding
 // exceptGUID. Label writers use this as the registry-level uniqueness
 // invariant for rename, enroll, fork, and sidecar manual identity rows.

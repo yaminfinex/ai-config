@@ -1,0 +1,11 @@
+=== STDERR ===
+herder send: refused — term_BBB has no recorded bus name (not launched through hcom); herder send is bus-only, the keystroke transport was removed. Nothing was typed or sent.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HCOM SEND ARGV ===
+
+=== HCOM EVENTS ARGV ===
+
+=== HCOM DIR ===

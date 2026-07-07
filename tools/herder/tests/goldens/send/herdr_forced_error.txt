@@ -1,0 +1,11 @@
+=== STDERR ===
+herder send: HERDER_BUS=herdr is gone — the herdr keystroke transport was removed; hcom is the only transport (unset HERDER_BUS, or use auto|hcom)
+=== STDOUT ===
+
+=== EXIT ===
+64
+=== HCOM SEND ARGV ===
+
+=== HCOM EVENTS ARGV ===
+
+=== HCOM DIR ===

@@ -1,6 +1,0 @@
-=== STDERR ===
-herder send --dry-run: alpha -> pane p_10 (via terminal_id)
-=== STDOUT ===
-{"pane_id":"p_10","target":"alpha","resolved_via":"terminal_id","drifted":false,"dry_run":true}
-=== EXIT ===
-0

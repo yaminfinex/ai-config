@@ -1,0 +1,12 @@
+=== STDERR ===
+sent 21 chars to term_AAA (hcom @alpha-rive), submitted, verify=delivered
+=== STDOUT ===
+{"pane_id":"","agent":"agent","target":"term_AAA","hcom_name":"alpha-rive","hcom_dir":"<BUS>","resolved_via":"registry","submitted":true,"verify":"delivered","message_preview":"ring: alpha unit DONE"}
+=== EXIT ===
+0
+=== HCOM SEND ARGV ===
+send --from orchestrator @alpha-rive -- ring: alpha unit DONE
+=== HCOM EVENTS ARGV ===
+events --last 50 --context deliver:alpha-rive --after <TS>
+=== HCOM DIR ===
+<BUS>

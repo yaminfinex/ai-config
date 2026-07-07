@@ -1,0 +1,11 @@
+=== STDERR ===
+herder send --dry-run: would REFUSE (exit 2): no registry row matches ghost — bus-only (keystroke transport removed)
+=== STDOUT ===
+{"target":"ghost","transport":"hcom","would":"refuse","dry_run":true}
+=== EXIT ===
+2
+=== HCOM SEND ARGV ===
+
+=== HCOM EVENTS ARGV ===
+
+=== HCOM DIR ===

@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# check-hcom-contract.sh — lock the hcom delivery-driver contract (W3 identity
-# resolution) against a hermetic mock `hcom`. This is the durable guard that the
-# registry-driven transport selection + bus-scoped send behave to contract without
-# a live bus. Complements check-send-contract.sh (which locks the herdr keystroke
-# path). Asserts, driving the REAL herder send CLI (the driver library's only
-# public entry point — so the same suite gates the bash and Go implementations):
+# check-hcom-contract.sh — lock the hcom bus-send contract (W3 identity
+# resolution) against a hermetic mock `hcom`. This is the durable guard that
+# registry-driven resolution + bus-scoped send behave to contract without a
+# live bus. hcom is THE transport (TASK-003): a bus-less or unknown target is
+# REFUSED, never typed at. Complements check-send-contract.sh (bus-only send
+# goldens). Asserts, driving the REAL herder send CLI:
 #
-#   selection  — a registry row with a non-empty hcom_name routes to the hcom
-#                driver; a bus-less row (and unknown/term_* targets) route to herdr.
-#   scoping    — hcom_send scopes every hcom call to the peer's recorded hcom_dir
+#   resolution — a registry row with a non-empty hcom_name routes to its bus
+#                name; a bus-less row (and its term_* coordinates) REFUSES
+#                with exit 2 (no keystroke fallback exists).
+#   scoping    — the send scopes every hcom call to the peer's recorded hcom_dir
 #                (proves team-bus isolation) and never leaks HCOM_DIR to the caller.
 #   addressing — the send goes to @<hcom_name> (the recorded bus name), not the
 #                user-facing guid/label, with --from <sender>.
@@ -28,15 +29,16 @@ REPO_ROOT="$(cd "$TESTS_DIR/../../.." && pwd -P)"
 HS=("$REPO_ROOT/bin/herder" send)
 [[ -n "${HERDER_CMD_SEND_BIN:-}" ]] && HS=("$HERDER_CMD_SEND_BIN")
 
-# Hermetic bin: mock `hcom`/`herdr` first on PATH, real jq/date/bash behind it.
+# Hermetic bin: mock `hcom` first on PATH, real jq/date/bash behind it.
+# Deliberately NO herdr — bus-only send must never invoke one; a lingering
+# keystroke path would fail loudly here.
 MOCKBIN="$(mktemp -d)"
 ln -s "$TESTS_DIR/mock-hcom" "$MOCKBIN/hcom"
-ln -s "$TESTS_DIR/mock-herdr" "$MOCKBIN/herdr"
 
 # Registry with a bus-bound peer (alpha team) and a bus-less peer (bash pane).
-# The bus-less peer's terminal_id is term_AAA — live at p_10 in mock-herdr's pane
-# list — so the auto-selection test can positively prove it resolves down the
-# herdr keystroke path (not just that hcom refused it).
+# The bus-less peer's terminal_id is term_AAA, so the resolution tests can
+# prove that BOTH its label and its terminal coordinates are refused (exit 2)
+# now that no keystroke fallback exists.
 REG_DIR="$(mktemp -d)"
 BUS_DIR="$(mktemp -d)"   # stands in for the team's HCOM_DIR
 {
@@ -83,23 +85,23 @@ run_send() {
   rm -f "$errf"
 }
 
-# ---- 1. selection (registry-driven, HERDER_BUS=auto), proven end-to-end ----
-# A bus row routes to the hcom driver (dry-run reports the hcom transport); a
-# bus-less row and a term_* target route down the herdr keystroke path (dry-run
-# resolves them to a live pane via mock-herdr's pane list).
+# ---- 1. resolution (registry-driven, HERDER_BUS=auto), proven end-to-end ----
+# A bus row routes to its recorded bus name (dry-run reports the hcom
+# transport); a bus-less row REFUSES — by label AND by its term_* coordinates —
+# because no keystroke fallback exists anymore (TASK-003).
 run_send auto delivered "$(mktemp -d)" "" --dry-run --json busagent
 [[ "$RUN_RC" -eq 0 ]] && grep -q '"transport":"hcom"' <<<"$RUN_OUT" \
-  && ok "select: bus row → hcom" || bad "select: bus row → hcom" "rc=$RUN_RC out='$RUN_OUT'"
+  && ok "resolve: bus row → hcom" || bad "resolve: bus row → hcom" "rc=$RUN_RC out='$RUN_OUT'"
 
 run_send auto delivered "$(mktemp -d)" "" --dry-run --json plain
-[[ "$RUN_RC" -eq 0 ]] && grep -q '"pane_id":"p_10"' <<<"$RUN_OUT" && grep -q '"resolved_via":"terminal_id"' <<<"$RUN_OUT" \
-  && ok "select: bus-less row → herdr" || bad "select: bus-less row → herdr" "rc=$RUN_RC out='$RUN_OUT' err=$RUN_ERR"
-grep -q -- '-> pane p_10 (via terminal_id)' <<<"$RUN_ERR" \
-  && ok "select: bus-less row resolves via herdr pane path" || bad "select: bus-less row resolves via herdr pane path" "err=$RUN_ERR"
+[[ "$RUN_RC" -eq 2 ]] && grep -q '"would":"refuse"' <<<"$RUN_OUT" \
+  && ok "resolve: bus-less row → refuse (no keystroke fallback)" || bad "resolve: bus-less row → refuse" "rc=$RUN_RC out='$RUN_OUT' err=$RUN_ERR"
+grep -q 'would REFUSE (exit 2)' <<<"$RUN_ERR" \
+  && ok "resolve: bus-less row refusal says refuse" || bad "resolve: bus-less row refusal says refuse" "err=$RUN_ERR"
 
 run_send auto delivered "$(mktemp -d)" "" --dry-run --json term_AAA
-[[ "$RUN_RC" -eq 0 ]] && grep -q '"resolved_via":"terminal_id(direct)"' <<<"$RUN_OUT" \
-  && ok "select: term_* → herdr" || bad "select: term_* → herdr" "rc=$RUN_RC out='$RUN_OUT' err=$RUN_ERR"
+[[ "$RUN_RC" -eq 2 ]] && grep -q '"would":"refuse"' <<<"$RUN_OUT" \
+  && ok "resolve: term_* of bus-less row → refuse" || bad "resolve: term_* of bus-less row → refuse" "rc=$RUN_RC out='$RUN_OUT' err=$RUN_ERR"
 
 # ---- 2. delivered: scoping + addressing + verify=delivered/exit 0 ----
 P="$(mktemp -d)"

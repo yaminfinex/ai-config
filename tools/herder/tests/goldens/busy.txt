@@ -1,6 +1,0 @@
-=== STDERR ===
-sent 21 chars to p_10 (claude), submitted, verify=queued (target was busy; message queued to run next — do NOT resend)
-=== STDOUT ===
-{"pane_id":"p_10","agent":"claude","target":"alpha","resolved_via":"terminal_id","submitted":true,"verify":"queued","extra_enter_sent":false,"paste_collapsed":false,"message_preview":"ring: alpha unit DONE"}
-=== EXIT ===
-0

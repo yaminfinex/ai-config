@@ -1,10 +1,10 @@
 ---
 id: TASK-003
 title: 'herder: kill the herdr keystroke delivery transport — hcom is THE transport'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-07 05:37'
-updated_date: '2026-07-07 07:41'
+updated_date: '2026-07-07 07:42'
 labels:
   - run-herder-dx
 dependencies: []

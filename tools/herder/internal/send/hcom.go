@@ -1,4 +1,9 @@
-package driver
+package send
+
+// The hcom bus delivery engine — moved here from the retired internal/driver
+// package (TASK-003). With the herdr keystroke transport removed there is no
+// transport abstraction left to select over: send resolves the target to a
+// registry row and calls this engine directly.
 
 import (
 	"bytes"
@@ -10,23 +15,12 @@ import (
 	"os/exec"
 	"time"
 	"unicode/utf8"
-
-	"ai-config/tools/herder/internal/registry"
 )
 
-type Hcom struct {
-	RegistryPath string
-	Bin          string
-	Sleep        func(time.Duration)
-	Now          func() time.Time
-}
-
-type HcomResolution struct {
-	Name   string
-	Dir    string
-	Team   string
-	Found  bool
-	Refuse bool
+type busSender struct {
+	Bin   string
+	Sleep func(time.Duration)
+	Now   func() time.Time
 }
 
 type hcomRecord struct {
@@ -41,21 +35,14 @@ type hcomRecord struct {
 	MessagePreview string `json:"message_preview"`
 }
 
-func (h *Hcom) bin() string {
+func (h *busSender) bin() string {
 	if h != nil && h.Bin != "" {
 		return h.Bin
 	}
 	return "hcom"
 }
 
-func (h *Hcom) registryPath() string {
-	if h != nil && h.RegistryPath != "" {
-		return h.RegistryPath
-	}
-	return registry.DefaultPath()
-}
-
-func (h *Hcom) sleep(d time.Duration) {
+func (h *busSender) sleep(d time.Duration) {
 	if h != nil && h.Sleep != nil {
 		h.Sleep(d)
 		return
@@ -63,46 +50,22 @@ func (h *Hcom) sleep(d time.Duration) {
 	time.Sleep(d)
 }
 
-func (h *Hcom) now() time.Time {
+func (h *busSender) now() time.Time {
 	if h != nil && h.Now != nil {
 		return h.Now()
 	}
 	return time.Now()
 }
 
-func (h *Hcom) Resolve(target string) (HcomResolution, error) {
-	rec, found := registryRecordFor(h.registryPath(), target)
-	if !found {
-		return HcomResolution{Name: target}, nil
-	}
-	if rec.HcomName != "" && rec.HcomName != "null" {
-		return HcomResolution{
-			Name:  rec.HcomName,
-			Dir:   rec.HcomDir,
-			Team:  rec.Team,
-			Found: true,
-		}, nil
-	}
-	return HcomResolution{Found: true, Refuse: true}, &ResolveError{Code: 2, Message: fmt.Sprintf("%s has no recorded bus name", target)}
-}
-
-func (h *Hcom) Send(target, message string, opts SendOptions, stdout, stderr io.Writer) int {
-	if opts.TimeoutMS == 0 {
-		opts.TimeoutMS = 3000
+// send delivers message to busName (scoping every hcom call to busDir when the
+// registry recorded one) and polls for a delivery receipt. Exit contract is
+// unchanged from the driver era: 0 delivered/queued, 1 send failed, 2 target
+// not joined on its bus.
+func (h *busSender) send(target, busName, busDir, message string, timeoutMS int, jsonOut bool, stdout, stderr io.Writer) int {
+	if timeoutMS == 0 {
+		timeoutMS = 3000
 	}
 
-	res, err := h.Resolve(target)
-	if err != nil {
-		var resolveErr *ResolveError
-		if errors.As(err, &resolveErr) && resolveErr.Code == 2 {
-			fmt.Fprintf(stderr, "hcom_send: %s has no recorded bus name (not launched through hcom)\n", target)
-			return 2
-		}
-		return 1
-	}
-
-	busName := res.Name
-	busDir := res.Dir
 	env := os.Environ()
 	if busDir != "" && busDir != "null" {
 		env = setEnv(env, "HCOM_DIR", busDir)
@@ -125,7 +88,7 @@ func (h *Hcom) Send(target, message string, opts SendOptions, stdout, stderr io.
 		verifyResult = "not_delivered"
 	} else {
 		submitted = true
-		if h.waitForAck(env, busName, startISO, opts.TimeoutMS) {
+		if h.waitForAck(env, busName, startISO, timeoutMS) {
 			verifyResult = "delivered"
 		} else {
 			verifyResult = "queued"
@@ -142,7 +105,7 @@ func (h *Hcom) Send(target, message string, opts SendOptions, stdout, stderr io.
 	}
 	fmt.Fprintln(stderr)
 
-	if opts.JSONOutput {
+	if jsonOut {
 		writeCompactJSON(stdout, hcomRecord{
 			PaneID:         "",
 			Agent:          "agent",
@@ -164,7 +127,7 @@ func (h *Hcom) Send(target, message string, opts SendOptions, stdout, stderr io.
 	}
 }
 
-func (h *Hcom) waitForAck(env []string, busName, startISO string, timeoutMS int) bool {
+func (h *busSender) waitForAck(env []string, busName, startISO string, timeoutMS int) bool {
 	windowSeconds := (timeoutMS + 999) / 1000
 	start := h.now()
 	for {
@@ -179,7 +142,7 @@ func (h *Hcom) waitForAck(env []string, busName, startISO string, timeoutMS int)
 	}
 }
 
-func (h *Hcom) runDiscard(env []string, args ...string) int {
+func (h *busSender) runDiscard(env []string, args ...string) int {
 	cmd := exec.Command(h.bin(), args...)
 	cmd.Env = env
 	err := cmd.Run()
@@ -193,7 +156,7 @@ func (h *Hcom) runDiscard(env []string, args ...string) int {
 	return 0
 }
 
-func (h *Hcom) output(env []string, args ...string) ([]byte, int) {
+func (h *busSender) output(env []string, args ...string) ([]byte, int) {
 	cmd := exec.Command(h.bin(), args...)
 	cmd.Env = env
 	var stdout bytes.Buffer
@@ -227,4 +190,16 @@ func setEnv(env []string, key, value string) []string {
 		}
 	}
 	return append(append([]string(nil), env...), prefix+value)
+}
+
+func messagePreview(message string) string {
+	if len(message) <= 120 {
+		return message
+	}
+	return string([]byte(message)[:120])
+}
+
+func writeCompactJSON(w io.Writer, v any) {
+	b, _ := json.Marshal(v)
+	fmt.Fprintln(w, string(b))
 }

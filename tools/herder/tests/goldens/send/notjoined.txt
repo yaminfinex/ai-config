@@ -1,0 +1,12 @@
+=== STDERR ===
+hcom_send: target alpha (@alpha-rive) not found on bus (not joined or does not exist)
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HCOM SEND ARGV ===
+
+=== HCOM EVENTS ARGV ===
+
+=== HCOM DIR ===
+<BUS>

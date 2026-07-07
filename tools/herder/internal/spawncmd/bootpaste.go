@@ -1,0 +1,353 @@
+package spawncmd
+
+// Boot-time initial-prompt paste engine. Moved verbatim-in-spirit from the
+// retired internal/driver keystroke transport (TASK-003): keystroke delivery
+// is no longer a send transport — hcom is THE transport — but the initial
+// prompt at spawn is typed into the freshly booted pane by design (the agent
+// has no bus binding yet: hcom_name capture happens after delivery, and bash
+// agents never get one). This code is spawn-private so it can never be
+// selected as a delivery path again; `herder send` is bus-only.
+
+import (
+	"encoding/json"
+	"regexp"
+	"strings"
+	"time"
+
+	"ai-config/tools/herder/internal/herdrcli"
+)
+
+type bootPaster struct {
+	Client *herdrcli.Client
+	Sleep  func(time.Duration)
+}
+
+func (b *bootPaster) client() *herdrcli.Client {
+	if b != nil && b.Client != nil {
+		return b.Client
+	}
+	return &herdrcli.Client{}
+}
+
+func (b *bootPaster) sleep(d time.Duration) {
+	if b != nil && b.Sleep != nil {
+		b.Sleep(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+const bootPasteTimeoutMS = 3000
+
+// paste types message into paneID and verifies delivery, preserving the
+// retired transport's contract: ("", 2) preflight refusal (modal/interrupted
+// state — nothing typed), ("not_landed", 1) paste never appeared,
+// ("not_delivered", 1) placed but submit unconfirmed, ("delivered"|"queued", 0)
+// success. The caller maps "" to delivery_result=not_attempted, matching the
+// old shell-out where a refusal produced no --json record.
+func (b *bootPaster) paste(paneID, message string) (string, int) {
+	kind := b.detectKind(paneID)
+	sigil := ""
+	switch kind {
+	case "codex":
+		sigil = "›"
+	case "claude":
+		sigil = "❯"
+	}
+
+	preText := stripChrome(b.readPane(paneID))
+	preStatus := b.detectStatus(paneID)
+	if _, blocked := preflightBlockedReason(preText); blocked {
+		return "", 2
+	}
+	// The scrollback preflight above is blind to alternate-screen overlays:
+	// the first-run trust dialog (and claude /login) paint the VISIBLE screen
+	// but never enter the recent-unwrapped stream, so a blind paste would land
+	// inside the modal. Re-run the block check against the visible source too.
+	if _, blocked := preflightBlockedReason(stripChrome(b.readVisible(paneID))); blocked {
+		return "", 2
+	}
+
+	msgProbe := messageProbe(message)
+	preBlobs := pastedBlobCount(preText)
+	landed := msgProbe == ""
+	pasteCollapsed := false
+	sendAttempts := 0
+
+	for !landed && sendAttempts < 2 {
+		if sendAttempts > 0 {
+			// Boot-race guard: never blind-paste on top of a buffer we cannot
+			// prove is empty. During agent boot the first paste can land while
+			// our in-loop detection lags (readPane still returns boot chrome);
+			// a second paste then stacks a duplicate, unsubmitted copy. Only
+			// re-paste when the composer POSITIVELY shows an empty ready line.
+			// If the payload is already there, or the pane is still unreadable,
+			// assume the first paste landed and fall through to the submit leg.
+			if !composerConfirmedEmpty(stripChrome(b.readPane(paneID)), sigil) {
+				landed = true
+				break
+			}
+		}
+		sendAttempts++
+		if rc, err := b.client().Run("agent", "send", paneID, message); err != nil || rc != 0 {
+			b.sleep(400 * time.Millisecond)
+			continue
+		}
+		waited := 0
+		for waited < 2500 {
+			b.sleep(250 * time.Millisecond)
+			if b.statusConfirmsDelivery(paneID, preStatus) {
+				landed = true
+				break
+			}
+			post := stripChrome(b.readPane(paneID))
+			if msgPresent(post, msgProbe) {
+				landed = true
+				break
+			}
+			if pastedBlobCount(post) > preBlobs {
+				landed = true
+				pasteCollapsed = true
+				break
+			}
+			waited += 250
+		}
+	}
+
+	if !landed {
+		return "not_landed", 1
+	}
+
+	submitted := false
+	if msgProbe != "" {
+		b.sleep(200 * time.Millisecond)
+		_, _ = b.client().Run("pane", "send-keys", paneID, "Enter")
+		submitted = true
+	}
+
+	verifyResult := "not_attempted"
+	if submitted {
+		verifyResult = "delivered"
+		delivered := false
+		if pasteCollapsed {
+			if b.waitBlobSubmitted(paneID, preBlobs) {
+				delivered = true
+			} else {
+				_, _ = b.client().Run("pane", "send-keys", paneID, "Enter")
+				if b.waitBlobSubmitted(paneID, preBlobs) {
+					delivered = true
+				} else {
+					_, _ = b.client().Run("pane", "send-keys", paneID, "Enter")
+					if b.waitBlobSubmitted(paneID, preBlobs) {
+						delivered = true
+					}
+				}
+			}
+		} else if b.pollDelivered(paneID, preStatus, sigil, msgProbe, bootPasteTimeoutMS) {
+			delivered = true
+		} else if preStatus == "working" {
+			return "queued", 0
+		} else if msgTrailingSigil(stripChrome(b.readPane(paneID)), sigil, msgProbe) {
+			_, _ = b.client().Run("pane", "send-keys", paneID, "Enter")
+			if b.pollDelivered(paneID, preStatus, sigil, msgProbe, bootPasteTimeoutMS) {
+				delivered = true
+			}
+		}
+		if !delivered {
+			verifyResult = "not_delivered"
+		}
+	}
+
+	if verifyResult == "not_delivered" {
+		return verifyResult, 1
+	}
+	return verifyResult, 0
+}
+
+func (b *bootPaster) readPane(paneID string) string {
+	return b.readSource(paneID, "recent-unwrapped")
+}
+
+// readVisible reads the pane's VISIBLE screen — the only source that shows an
+// alternate-screen overlay (trust dialog, /login), which the recent-unwrapped
+// scrollback never captures. Used only by the paste preflight; delivery
+// verification and the re-paste guard stay on recent-unwrapped by design.
+func (b *bootPaster) readVisible(paneID string) string {
+	return b.readSource(paneID, "visible")
+}
+
+func (b *bootPaster) readSource(paneID, source string) string {
+	out, _, err := b.client().Combined("agent", "read", paneID, "--source", source, "--lines", "80")
+	if err != nil {
+		return ""
+	}
+	var envelope struct {
+		Result struct {
+			Read struct {
+				Text string `json:"text"`
+			} `json:"read"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out, &envelope); err != nil {
+		return ""
+	}
+	return envelope.Result.Read.Text
+}
+
+func (b *bootPaster) detectKind(paneID string) string {
+	for _, agent := range b.agentList() {
+		if agent.PaneID == paneID {
+			return agent.Agent
+		}
+	}
+	return ""
+}
+
+func (b *bootPaster) detectStatus(paneID string) string {
+	for _, agent := range b.agentList() {
+		if agent.PaneID == paneID {
+			return agent.Status
+		}
+	}
+	return ""
+}
+
+func (b *bootPaster) agentList() []herdrcli.Agent {
+	out, err := b.client().Output("agent", "list")
+	if err != nil {
+		return nil
+	}
+	agents, err := herdrcli.ParseAgentList(out)
+	if err != nil {
+		return nil
+	}
+	return agents
+}
+
+func (b *bootPaster) statusConfirmsDelivery(paneID, preStatus string) bool {
+	return b.detectStatus(paneID) == "working" && preStatus != "working"
+}
+
+func (b *bootPaster) pollDelivered(paneID, preStatus, sigil, msgProbe string, timeoutMS int) bool {
+	elapsed := 0
+	for elapsed < timeoutMS {
+		b.sleep(250 * time.Millisecond)
+		if b.statusConfirmsDelivery(paneID, preStatus) {
+			return true
+		}
+		post := stripChrome(b.readPane(paneID))
+		if verifyDelivered(post, sigil, msgProbe) {
+			return true
+		}
+		elapsed += 250
+	}
+	return false
+}
+
+func (b *bootPaster) waitBlobSubmitted(paneID string, preBlobs int) bool {
+	for i := 0; i < 8; i++ {
+		if pastedBlobCount(stripChrome(b.readPane(paneID))) <= preBlobs {
+			return true
+		}
+		b.sleep(300 * time.Millisecond)
+	}
+	return false
+}
+
+var (
+	csiRE       = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+	oscRE       = regexp.MustCompile(`\x1b\][^\x07]*\x07`)
+	pasteBlobRE = regexp.MustCompile(`(?m)\[Pasted (Content|text)`)
+)
+
+func stripChrome(text string) string {
+	text = csiRE.ReplaceAllString(text, "")
+	return oscRE.ReplaceAllString(text, "")
+}
+
+func preflightBlockedReason(text string) (string, bool) {
+	switch {
+	case regexp.MustCompile(`Conversation interrupted|Interrupted by user`).MatchString(text):
+		return `agent is in "Conversation interrupted" state`, true
+	case trustModalRE.MatchString(text):
+		return "first-run directory-trust prompt is open", true
+	case regexp.MustCompile(`Sandbox approval|Approve command\?|Allow this command\?`).MatchString(text):
+		return "codex approval modal is open", true
+	case regexp.MustCompile(`Do you want to allow|Permission required`).MatchString(text):
+		return "claude permission prompt is open", true
+	default:
+		return "", false
+	}
+}
+
+func pastedBlobCount(text string) int {
+	return len(pasteBlobRE.FindAllStringIndex(text, -1))
+}
+
+func messageProbe(message string) string {
+	lines := strings.Split(message, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		runes := []rune(line)
+		if len(runes) > 45 {
+			line = string(runes[len(runes)-45:])
+		}
+		return line
+	}
+	return ""
+}
+
+func msgPresent(text, msgProbe string) bool {
+	return msgProbe == "" || strings.Contains(text, msgProbe)
+}
+
+func msgTrailingSigil(text, sigil, msgProbe string) bool {
+	if msgProbe == "" {
+		return false
+	}
+	lines := strings.Split(text, "\n")
+	if sigil != "" {
+		needle := sigil + " "
+		for i := len(lines) - 1; i >= 0; i-- {
+			if strings.Contains(lines[i], needle) {
+				return strings.Contains(lines[i], msgProbe)
+			}
+		}
+		return false
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			return strings.Contains(lines[i], msgProbe)
+		}
+	}
+	return false
+}
+
+func verifyDelivered(text, sigil, msgProbe string) bool {
+	return msgPresent(text, msgProbe) && !msgTrailingSigil(text, sigil, msgProbe)
+}
+
+// composerConfirmedEmpty reports whether the pane POSITIVELY shows a ready,
+// empty input line — the only state in which re-pasting is safe. A booting or
+// otherwise unreadable pane (no recognizable sigil, or an empty capture) and a
+// pane holding a pasted blob both return false, so the caller never blind-pastes
+// a duplicate on top of a first paste it simply cannot see yet.
+func composerConfirmedEmpty(text, sigil string) bool {
+	if sigil == "" || pastedBlobCount(text) > 0 {
+		return false
+	}
+	needle := sigil + " "
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if idx := strings.LastIndex(lines[i], needle); idx >= 0 {
+			return strings.TrimSpace(lines[i][idx+len(needle):]) == ""
+		}
+		if strings.TrimRight(lines[i], " ") == sigil {
+			return true
+		}
+	}
+	return false
+}

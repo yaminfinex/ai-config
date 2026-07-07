@@ -2,7 +2,7 @@
 spawned worker-<SHORT> (bash) in pane p_50 (workspace ws_1)
   guid:   <GUID>
   cwd:    /mock/cwd
-  bus:    n/a (bash is not an hcom agent; herdr keystroke transport)
+  bus:    n/a (bash is not an hcom agent — no bus name, so herder send cannot reach it)
 === STDOUT ===
 {"guid":"<GUID>","short_guid":"<SHORT>","label":"worker-<SHORT>","role":"worker","agent":"bash","extra_args":[""],"argv":["/bin/zsh","-lic","if [ -d \"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims\" ]; then export PATH=\"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH\"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder; exec bash"],"pane_id":"p_50","workspace_id":"ws_1","tab_id":"tab_1","terminal_id":"term_AGENT","cwd":"/mock/cwd","started_at":"<TS>","started_by_pane":"p_orch","initial_prompt_present":false,"team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_1","branch":"","ts":"<TS>"},"prompt_sent":false,"delivery_result":"not_attempted","perm_injected":"","new_tab":false,"root_pane_closed":false,"hcom_capture":"not_hcom_agent"}
 === EXIT ===

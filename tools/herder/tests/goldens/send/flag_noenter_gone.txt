@@ -1,0 +1,11 @@
+=== STDERR ===
+herder send: unknown flag: --no-enter
+=== STDOUT ===
+
+=== EXIT ===
+64
+=== HCOM SEND ARGV ===
+
+=== HCOM EVENTS ARGV ===
+
+=== HCOM DIR ===

@@ -8,7 +8,7 @@
 #   argv        — the exact `herdr agent start` argv: login-shell wrapping
 #                 ($SHELL -lic 'export HERDER_*…; exec …'), --no-login-shell env
 #                 form, herder launch routing with the role as --tag, HCOM_DIR
-#                 team-bus pinning, HERDER_BIN/HERDER_NOTIFY_TO exports.
+#                 team-bus pinning, HERDER_BIN export.
 #   permissions — per-agent autonomous-mode flag injection (claude/codex),
 #                 suppression under --safe or an explicit caller perm flag.
 #   readiness   — trust-modal clearing (Enter) vs --safe refusal; the
@@ -16,7 +16,9 @@
 #   new-tab     — tab create, root-pane identity check + close, pane_id
 #                 re-resolution by terminal_id after compaction; the rootguard
 #                 refusal when the root reports the agent's terminal.
-#   delivery    — prompt handoff via the verified send leg; codex brief staging
+#   delivery    — initial-prompt handoff via the in-process boot-paste engine
+#                 (spawn-private; the ONE surviving keystroke path after
+#                 TASK-003 made herder send bus-only); codex brief staging
 #                 (multi-line brief → file + one-line pointer on the wire).
 #   capture     — hcom name capture by frozen launch pane_id, tag+cwd fallback
 #                 (newest wins), and the best-effort failure path.
@@ -60,7 +62,7 @@ ln -s "$TESTS_DIR/mock-hcom-spawn" "$MOCKBIN/hcom"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$MOCKBIN/sleep"
 chmod +x "$MOCKBIN/sleep"
 
-# The delivery leg shells out to <REPO>/bin/herder, which must be able to build
+# The spawn CLI runs through <REPO>/bin/herder, which must be able to build
 # this module. The hermetic PATH drops the caller's env, and the wrapper's bare
 # PATH fallback can land on a system go too old for go.mod — so re-add the
 # caller's REAL go toolchain dir (resolved through any shim via GOROOT) ahead of
@@ -171,17 +173,20 @@ scenario claude_modal_safe modal claude launchctx --role worker --agent claude -
 scenario claude_newtab     ready claude launchctx --role worker --agent claude --new-tab --json
 scenario newtab_rootguard  rootguard claude launchctx --role worker --agent claude --new-tab --json
 scenario codex_brief       ready codex launchctx --role worker --agent codex --prompt "$MULTILINE_BRIEF" --json
+# Bus-less spawner: notify is bus-native ONLY (TASK-003) — a spawner that
+# resolves to no hcom name is a hard error BEFORE any pane is created (no
+# keystroke ring exists to fall back to).
 scenario notify            ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
 # Bus-native notify: the spawner (HERDER_GUID) has a recorded hcom_name, so the
-# --notify appendix routes completion over hcom instead of the keystroke ring.
+# --notify appendix routes completion over hcom.
 SPAWN_HERDER_GUID="guid-orch-0000"
 SPAWN_SEED_REGISTRY='{"guid":"guid-orch-0000","short_guid":"orch","label":"orchestrator","role":"orchestrator","agent":"claude","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_dir":"/hcom","hcom_name":"orchestrator-bumo","hcom_tag":"orchestrator","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-orch","tag":"orchestrator","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
 scenario notify_bus        ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
 unset SPAWN_HERDER_GUID SPAWN_SEED_REGISTRY
 # Enrolled-spawner notify: NO HERDER_GUID in the spawner's env, but the spawning
 # pane (HERDR_PANE_ID=p_orch) has an active registry row with a bus name — the
-# appendix must route bus-native via pane/terminal resolution, not fall back to
-# the keystroke ring (TASK-005).
+# appendix must route bus-native via pane/terminal resolution rather than
+# hard-erroring (TASK-005 resolution order, TASK-003 bus-only).
 SPAWN_SEED_REGISTRY='{"guid":"guid-hera-0000","short_guid":"guid-her","label":"orchestrator","role":"orchestrator","agent":"claude","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_dir":"/hcom","hcom_name":"hera","hcom_tag":"orchestrator","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-hera","tag":"orchestrator","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
 scenario notify_enrolled   ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
 unset SPAWN_SEED_REGISTRY
@@ -229,6 +234,11 @@ if [[ "$WRITE" -eq 0 ]]; then
     fi
   done
   [[ "$trailing_ok" -eq 1 ]] && ok "usage: trailing value flags refused" || bad "usage: trailing value flags refused" "$trailing_detail"
+
+  CASE="$ROOT/usage_notify_noprompt"
+  run_spawn ready claude launchctx --role worker --agent claude --notify
+  [[ "$RUN_RC" -eq 1 ]] && grep -q -- '--notify requires --prompt' "$RUN_ERR_F" \
+    && ok "usage: --notify without --prompt refused" || bad "usage: --notify without --prompt refused" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
 
   CASE="$ROOT/usage_wait_timeout"
   run_spawn ready claude launchctx --role worker --agent bash --wait-timeout-ms 15s

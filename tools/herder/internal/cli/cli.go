@@ -36,7 +36,7 @@ type command struct {
 // commands is the single registry the root usage table is generated from.
 var commands = []command{
 	{"spawn", "Spawn a named, GUID-tagged agent in a herdr pane", spawncmd.Run},
-	{"send", "Deliver a message to a spawned agent (herdr or hcom bus)", send.Run},
+	{"send", "Deliver a message to a spawned agent over the hcom bus (bus-only)", send.Run},
 	{"list", "Show spawned agents, reconciled with live herdr state", listcmd.Run},
 	{"wait", "Block until an agent reaches a status, optionally read its screen", waitcmd.Run},
 	{"cull", "Close spawned agents and mark them closed in the registry", cullcmd.Run},
