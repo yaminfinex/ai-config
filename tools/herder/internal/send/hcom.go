@@ -57,11 +57,10 @@ func (h *busSender) now() time.Time {
 	return time.Now()
 }
 
-// send delivers message to busName (scoping every hcom call to busDir when the
-// registry recorded one) and polls for a delivery receipt. Exit contract is
-// unchanged from the driver era: 0 delivered/queued, 1 send failed, 2 target
-// not joined on its bus.
-func (h *busSender) send(target, busName, busDir, message string, timeoutMS int, jsonOut bool, stdout, stderr io.Writer) int {
+// deliver is the transport core: scope to busDir, confirm the target is joined,
+// send, poll for the receipt. Returns "delivered" | "queued" | "not_joined" |
+// "send_failed" — the caller maps these onto its own reporting/exit contract.
+func (h *busSender) deliver(busName, busDir, message string, timeoutMS int) string {
 	if timeoutMS == 0 {
 		timeoutMS = 3000
 	}
@@ -72,24 +71,45 @@ func (h *busSender) send(target, busName, busDir, message string, timeoutMS int,
 	}
 
 	if rc := h.runDiscard(env, "list", busName); rc != 0 {
-		fmt.Fprintf(stderr, "hcom_send: target %s (@%s) not found on bus (not joined or does not exist)\n", target, busName)
-		return 2
+		return "not_joined"
 	}
 
 	sender := senderIdentity()
 	startISO := h.now().UTC().Format("2006-01-02T15:04:05Z")
-
-	submitted := false
-	verifyResult := "not_attempted"
 	if rc := h.runDiscard(env, "send", "--from", sender, "@"+busName, "--", message); rc != 0 {
+		return "send_failed"
+	}
+	if h.waitForAck(env, busName, sender, startISO, timeoutMS) {
+		return "delivered"
+	}
+	return "queued"
+}
+
+// DeliverBus delivers message to a KNOWN bus coordinate (name + bus dir) and
+// returns the transport verdict: "delivered" (receipt seen), "queued" (sent,
+// no receipt in the window — do NOT resend), "not_joined", or "send_failed".
+// In-process caller: herder spawn's initial-prompt delivery (TASK-032) — spawn
+// resolved the coordinate itself from the bind it just observed, so the CLI
+// layer's registry resolution would only re-derive the same values.
+func DeliverBus(busName, busDir, message string, timeoutMS int) string {
+	return (&busSender{}).deliver(busName, busDir, message, timeoutMS)
+}
+
+// send delivers message to busName (scoping every hcom call to busDir when the
+// registry recorded one) and polls for a delivery receipt. Exit contract is
+// unchanged from the driver era: 0 delivered/queued, 1 send failed, 2 target
+// not joined on its bus.
+func (h *busSender) send(target, busName, busDir, message string, timeoutMS int, jsonOut bool, stdout, stderr io.Writer) int {
+	verdict := h.deliver(busName, busDir, message, timeoutMS)
+	if verdict == "not_joined" {
+		fmt.Fprintf(stderr, "hcom_send: target %s (@%s) not found on bus (not joined or does not exist)\n", target, busName)
+		return 2
+	}
+
+	submitted := verdict != "send_failed"
+	verifyResult := verdict
+	if verdict == "send_failed" {
 		verifyResult = "not_delivered"
-	} else {
-		submitted = true
-		if h.waitForAck(env, busName, sender, startISO, timeoutMS) {
-			verifyResult = "delivered"
-		} else {
-			verifyResult = "queued"
-		}
 	}
 
 	fmt.Fprintf(stderr, "sent %d chars to %s (hcom @%s)", utf8.RuneCountInString(message), target, busName)

@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 # mock-hcom-spawn — a deterministic, hermetic stand-in for the `hcom` CLI, used
 # by check-spawn-contract.sh to exercise herder spawn's hcom NAME CAPTURE
-# (correlating the child's frozen launch pane_id to the bus entry) without a
-# live bus. herder spawn only needs `hcom list --json` from it; it also
-# satisfies `command -v hcom` (hcom is a hard dependency for hcom-capable
-# agents).
+# (correlating the child's frozen launch pane_id to the bus entry) AND the
+# bus-first initial-prompt delivery (TASK-032: bind-wait → `hcom send` → the
+# receipt poll) without a live bus. It answers:
+#   hcom list --json                                       → bus roster (capture)
+#   hcom list <bus_name>                                   → joined? (send precheck)
+#   hcom send --from <sender> @<bus_name> -- <message>     → deliver (exit 0/1)
+#   hcom events --last N --agent <name> --context deliver:<sender> --after <iso>
+#                                                          → receipt array
+# It also satisfies `command -v hcom` (hcom is a hard dependency for
+# hcom-capable agents).
 #
 # Behaviour is driven by env vars (set by the harness):
-#   MOCK_HCOM_SPAWN_SCENARIO
+#   MOCK_HCOM_SPAWN_SCENARIO   <capture>[_<delivery>]
+#     capture half:
 #       launchctx (default) — an entry whose launch_context.pane_id is p_50
 #                             (the frozen launch pane) exists → primary capture
 #       fallback            — no launch_context match; a UNIQUE entry with the
@@ -16,11 +23,15 @@
 #       fallback_ambiguous  — no launch_context match; TWO live entries share
 #                             tag ("worker") + directory /mock/cwd → no positive
 #                             correlate → capture refuses to guess (ambiguous)
-#       fail                — empty bus → capture fails (best-effort: spawn
-#                             still succeeds, keystroke-only)
+#       fail                — empty bus → capture fails (promptless spawn stays
+#                             best-effort; a bus prompt reports bind_timeout)
+#     delivery half (bus prompts only; default = receipt on first poll):
+#       *_queued            — send succeeds, no receipt ever → verify: queued
+#       *_sendfail          — `hcom send` exits 1 → verify: send_failed
 #   MOCK_PROBE_DIR   probe dir; every invocation records the effective
-#                    HCOM_DIR to hcom_dir (proves the capture is scoped to the
-#                    resolved team bus)
+#                    HCOM_DIR to hcom_dir (proves capture AND delivery are
+#                    scoped to the resolved team bus); send/events argv are
+#                    recorded to send_argv/events_argv for the goldens
 
 set -euo pipefail
 
@@ -33,7 +44,7 @@ printf '%s' "${HCOM_DIR:-<unset>}" >"$PROBE/hcom_dir"
 case "${1:-} ${2:-}" in
   "list --json")
     case "$SCEN" in
-      launchctx)
+      launchctx*)
         jq -n '[
           {name:"decoy-yolo",  tag:"other",  directory:"/elsewhere",
            created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_99"}},
@@ -57,6 +68,23 @@ case "${1:-} ${2:-}" in
       *)
         jq -n '[]';;
     esac;;
+  "list "*)
+    # hcom list <bus_name> — the bus send's target-joined precheck
+    printf '%s' "${2:-}" >"$PROBE/list_target"
+    jq -n --arg n "${2:-}" '[{name:$n}]';;
+  "send "*)
+    # hcom send --from <sender> @<bus_name> -- <message>
+    printf '%s\n' "$*" >"$PROBE/send_argv"
+    [[ "$SCEN" == *_sendfail ]] && exit 1
+    printf 'ok\n';;
+  "events "*)
+    # hcom events --last N --agent <name> --context deliver:<sender> --after <iso>
+    printf '%s\n' "$*" >"$PROBE/events_argv"
+    if [[ "$SCEN" == *_queued ]]; then
+      jq -n '[]'
+    else
+      jq -n '[{event:"deliver", ok:true}]'
+    fi;;
   *)
     printf 'mock-hcom-spawn: unhandled: %s\n' "$*" >&2
     exit 1;;

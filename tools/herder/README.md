@@ -101,19 +101,42 @@ window ⇒ `queued` (do NOT resend). A target with no bus-bound registry row is 
 keystrokes are never typed. Exit codes and target forms: `herder send --help`. Contract pinned by
 `tests/check-send-contract.sh` (bus-only goldens) + `check-hcom-contract.sh` (scoping/addressing).
 
-Three deliberate exceptions ride keystrokes, none reachable as a send transport:
+**Initial prompts ride the bus too (TASK-032).** `herder spawn --prompt` for a bus-capable agent
+(claude/codex/gemini) waits for the child to BIND its bus name — positively observable (sidecar
+registry enrichment, or the hcom roster correlated by frozen launch pane_id / unique tag+cwd) and
+early in boot, well before the TUI is interactive — then sends the FULL prompt (multiline included)
+as a verified hcom message and reports the receipt. Verify vocabulary: `delivered` (receipt seen),
+`queued` (sent, no receipt in the window — it injects the moment the agent is deliverable; do NOT
+resend), `send_failed`/`not_joined` (nothing delivered — a retry via `herder send` is safe),
+`bind_timeout`/`bind_ambiguous` (nothing went on the wire — deliver once `herder list` shows the
+bus name). Knobs: `HERDER_SPAWN_BIND_MS` (bind wait, default 60000) and `HERDER_SPAWN_VERIFY_MS`
+(receipt window, default 20000). A slash-command prompt arrives as message TEXT, not a typed
+slash command. hcom wakes an idle agent with an EMPTY composer instantly — even a fresh,
+never-prompted session; a message sent mid-boot is held until the session can take it (probed
+live: send fired 107ms after bind, mid-boot, delivered whole at TUI readiness 2s later).
 
-- **Boot-time initial prompt** (`herder spawn --prompt`): typed into the freshly booted pane by
-  the spawn-private paste engine (`internal/spawncmd/bootpaste.go`) — at that moment the agent has
-  no bus binding yet (hcom name capture happens after delivery; bash agents never get one).
-- **Trust-modal auto-accept** at spawn readiness (a single Enter; `--safe` opts out).
+**The one delivery blocker: unsubmitted composer text.** On BOTH families, text sitting
+unsubmitted in the composer starves incoming bus delivery indefinitely and SILENTLY — no receipt,
+no error (probed live; it was the root cause of the wave-4 reviewer stranding, TASK-031). Remedy:
+read the pane (`herder wait <guid> --read`); if text sits on the input line, submit or clear it —
+`herdr pane send-keys <pane> Enter` — and queued messages then inject at the next boundary.
+Retiring the boot-paste from bus-capable spawns removed the machinery that used to CREATE that
+state; a human draft left in a composer can still do it.
+
+Two deliberate exceptions ride keystrokes, neither reachable as a send transport:
+
+- **Trust-modal auto-accept** during spawn's bind/ready wait (a single Enter; `--safe` opts out).
+  The modal blocks boot itself — pre-bind — so both wait paths clear it.
 - **Steered self-compaction** (`herder compact '<steer>'`, TASK-022): queues a real
-  `/compact <steer>` input line into the CALLER'S OWN pane via the same package-private engine.
-  Input automation, not delivery — there is no target argument, and identity is proven
-  (HERDER_GUID → session id → terminal+cwd corroboration) before anything is typed; unprovable
-  identity refuses, as do a guid/session-id mismatch and a row terminal that disagrees with the
-  live pane without session-id corroboration (a stale or inherited HERDER_GUID looks exactly
-  like drift). Pinned by `tests/check-compact-contract.sh` (goldens + grep gates).
+  `/compact <steer>` input line into the CALLER'S OWN pane via the package-private paste engine
+  (`internal/spawncmd/bootpaste.go` — its other remaining user is `spawn --prompt` for BASH
+  agents, which never get a bus binding). Input automation, not delivery — there is no target
+  argument, and identity is proven (HERDER_GUID → session id → terminal+cwd corroboration) before
+  anything is typed; unprovable identity refuses, as do a guid/session-id mismatch and a row
+  terminal that disagrees with the live pane without session-id corroboration (a stale or
+  inherited HERDER_GUID looks exactly like drift). The TASK-024 evidence gating (composer-payload
+  check immediately before Enter; cleared composer degrades to not_delivered, never delivered) is
+  a locked floor. Pinned by `tests/check-compact-contract.sh` (goldens + grep gates).
 
 **Print one-shot bypass (TASK-010):** `claude -p/--print ...` hand-run through the shims skips the
 bus entirely — hcom hard-codes print mode as a persistent background agent (stdin nulled, stdout to

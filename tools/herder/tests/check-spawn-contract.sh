@@ -16,10 +16,13 @@
 #   new-tab     — tab create, root-pane identity check + close, pane_id
 #                 re-resolution by terminal_id after compaction; the rootguard
 #                 refusal when the root reports the agent's terminal.
-#   delivery    — initial-prompt handoff via the in-process boot-paste engine
-#                 (spawn-private; the ONE surviving keystroke path after
-#                 TASK-003 made herder send bus-only); codex brief staging
-#                 (multi-line brief → file + one-line pointer on the wire).
+#   delivery    — bus-first initial prompts (TASK-032): bind-wait (bus-name
+#                 capture is the delivery gate) → in-process hcom send with the
+#                 full prompt (multiline included; no codex brief staging) →
+#                 receipt poll (delivered / queued / send_failed /
+#                 bind_timeout). bash prompts keep the in-process boot-paste
+#                 engine (spawn-private keystroke path; TASK-024 evidence
+#                 gating pinned by the compact suite).
 #   capture     — hcom name capture by frozen launch pane_id, tag+cwd fallback
 #                 (newest wins), and the best-effort failure path.
 #   registry    — the appended JSONL record (identity + bus coordinate fields).
@@ -102,6 +105,8 @@ run_spawn() {
     HERDER_SPAWNED_BY="${SPAWN_HERDER_SPAWNED_BY:-}" \
     HERDER_STATE_DIR="$CASE/state" \
     HERDER_SPAWN_SHELL=/bin/zsh \
+    HERDER_SPAWN_BIND_MS="${SPAWN_BIND_MS:-60000}" \
+    HERDER_SPAWN_VERIFY_MS="${SPAWN_VERIFY_MS:-1000}" \
     MOCK_SPAWN_SCENARIO="$herdr_scen" MOCK_SPAWN_AGENT="$agent_kind" \
     MOCK_SPAWN_STATE="$CASE/mock" MOCK_PROBE_DIR="$CASE/probe" \
     MOCK_HCOM_SPAWN_SCENARIO="$hcom_scen" \
@@ -117,7 +122,8 @@ block_for() {  # assemble + normalize the golden block for the current CASE
   block+="$(printf '\n=== HERDR MUTATING CALLS ===\n%s' "$(cat "$CASE/probe/calls" 2>/dev/null)")"
   block+="$(printf '\n=== HCOM DIR ===\n%s' "$(cat "$CASE/probe/hcom_dir" 2>/dev/null)")"
   block+="$(printf '\n=== REGISTRY ===\n%s' "$(cat "$CASE/state/registry.jsonl" 2>/dev/null)")"
-  block+="$(printf '\n=== BRIEF ===\n%s' "$(cat "$CASE/state/briefs/"*.md 2>/dev/null)")"
+  block+="$(printf '\n=== HCOM SEND ARGV ===\n%s' "$(cat "$CASE/probe/send_argv" 2>/dev/null)")"
+  block+="$(printf '\n=== HCOM EVENTS ARGV ===\n%s' "$(cat "$CASE/probe/events_argv" 2>/dev/null)")"
 
   block="${block//$CASE/<CASE>}"
   block="${block//$REPO_ROOT/<REPO>}"
@@ -173,7 +179,21 @@ scenario claude_modal      modal claude launchctx --role worker --agent claude -
 scenario claude_modal_safe modal claude launchctx --role worker --agent claude --safe --prompt "do the thing" --json
 scenario claude_newtab     ready claude launchctx --role worker --agent claude --new-tab --json
 scenario newtab_rootguard  rootguard claude launchctx --role worker --agent claude --new-tab --json
-scenario codex_brief       ready codex launchctx --role worker --agent codex --prompt "$MULTILINE_BRIEF" --json
+# Multiline codex brief rides the bus WHOLE (TASK-032) — no brief-file staging,
+# no one-line pointer; the full text appears in the hcom send argv.
+scenario codex_multiline   ready codex launchctx --role worker --agent codex --prompt "$MULTILINE_BRIEF" --json
+# bash has no bus binding — its prompt keeps the spawn-private paste engine.
+scenario bash_prompt       ready bash launchctx --role worker --agent bash --prompt "do the thing" --json
+# Bus delivery verify variants: send lands but no receipt in the window
+# (queued — do NOT resend), and hcom send itself failing (send_failed — a
+# resend IS safe, nothing went on the bus).
+scenario bus_queued        ready claude launchctx_queued --role worker --agent claude --prompt "do the thing" --json
+scenario bus_sendfail      ready claude launchctx_sendfail --role worker --agent claude --prompt "do the thing" --json
+# Bind timeout: the bus never shows the child (empty roster) — the prompt is
+# NOT sent (nothing to address), reported with the safe-resend remedy.
+SPAWN_BIND_MS=3000
+scenario bind_timeout      ready claude fail --role worker --agent claude --prompt "do the thing" --json
+unset SPAWN_BIND_MS
 # Bus-less spawner: notify is bus-native ONLY (TASK-003) — a spawner that
 # resolves to no hcom name is a hard error BEFORE any pane is created (no
 # keystroke ring exists to fall back to).
@@ -197,10 +217,9 @@ scenario capture_fail      ready claude fail --role worker --agent claude --json
 scenario perm_explicit     ready claude launchctx --role worker --agent claude --extra-arg --dangerously-skip-permissions --json
 scenario team              ready claude launchctx --role worker --agent claude --team smoke --json
 scenario start_fail        startfail claude launchctx --role worker --agent claude --json
-# TASK-024: post-submit the echo leaves recent-unwrapped and the status flip
-# lags past the verify window — delivery must verify via the positively-empty
-# composer line instead of false-negativing to not_delivered.
-scenario claude_echoloss   echoloss claude launchctx --role worker --agent claude --prompt "do the thing" --json
+# (TASK-024's claude_echoloss paste-race scenario retired with the paste path
+# itself — bus prompts have no Enter/echo to race. The composer-evidence rules
+# it pinned stay pinned by the compact suite's clear_before_enter.)
 
 # ---- Unit H additions (TASK-006 --worktree, TASK-016 provenance, TASK-023 --notify-to) ----
 # --worktree: one-shot worktree mode — source repo resolved via worktree list,
@@ -307,15 +326,29 @@ if [[ "$WRITE" -eq 0 ]]; then
   fi
 
   # Self-healing: an UNRECOGNIZED alternate-screen overlay (status=blocked, no
-  # trust match) must not be auto-accepted; the timeout reason surfaces a snippet
-  # of the visible text so the caller sees WHAT is blocking.
+  # trust match) must not be auto-accepted; it can block boot before the bus
+  # bind, so the bind-timeout reason surfaces a snippet of the visible text so
+  # the caller sees WHAT is blocking (same rule as awaitReady's timeout).
   CASE="$ROOT/unknown_modal"
-  run_spawn unknownmodal claude launchctx --role worker --agent claude --prompt "do the thing" --wait-timeout-ms 1500
+  SPAWN_BIND_MS=1500
+  run_spawn unknownmodal claude fail --role worker --agent claude --prompt "do the thing"
+  unset SPAWN_BIND_MS
+  if grep -q 'bind-timeout(1500ms)' "$RUN_ERR_F" \
+    && grep -q 'blocked-by: Sign in to continue' "$RUN_ERR_F"; then
+    ok "unknown modal: bind-timeout reason surfaces visible snippet"
+  else
+    bad "unknown modal: bind-timeout reason surfaces visible snippet" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  # The paste path (bash prompts) keeps awaitReady's unknown-overlay
+  # self-healing: its NOT-confirmed line carries the blocked-by snippet.
+  CASE="$ROOT/unknown_modal_paste"
+  run_spawn unknownmodal bash launchctx --role worker --agent bash --prompt "do the thing" --wait-timeout-ms 1500
   if grep -q 'timeout(status=blocked' "$RUN_ERR_F" \
     && grep -q 'blocked-by: Sign in to continue' "$RUN_ERR_F"; then
-    ok "unknown modal: timeout reason surfaces visible snippet"
+    ok "unknown modal (paste path): ready timeout surfaces visible snippet"
   else
-    bad "unknown modal: timeout reason surfaces visible snippet" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+    bad "unknown modal (paste path): ready timeout surfaces visible snippet" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
 
   # ---- default cwd: omitted --cwd places the child in the caller's cwd ----
