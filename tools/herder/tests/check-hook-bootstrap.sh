@@ -18,9 +18,24 @@ TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/../../.." && pwd)"
 HERDER="${HERDER_BIN:-$REPO_ROOT/bin/herder}"
 
+# The bin/herder wrapper resolves its Go module through AI_CONFIG_ROOT whenever
+# that is already exported — and herder-spawned worktree agents inherit the MAIN
+# checkout's value — so pin it to THIS repo or the test silently builds and
+# exercises another checkout's sources.
+export AI_CONFIG_ROOT="$REPO_ROOT"
+
 ROOT="$(mktemp -d)"
 cleanup() { rm -rf "$ROOT"; }
 trap cleanup EXIT
+
+# Hermetic herder binary cache: bin/herder keys its cached binary on the source
+# hash but each rebuild does `rm -f <cache>/herder-*`, so two checkouts sharing
+# one cache (the live session's main checkout vs this repo) thrash — a
+# concurrent hcom hook can delete the test binary MID-RUN and force a rebuild
+# under a restricted PATH. Keep the binary cache private to this run, but reuse
+# the machine's warm Go object cache so the one-off build stays fast.
+export GOCACHE="${GOCACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/herder/go-build}"
+export XDG_CACHE_HOME="$ROOT/xdg-cache"
 
 fail=0
 ok()  { printf 'PASS  %s\n' "$1"; }
@@ -149,6 +164,13 @@ assert_contains "sessionstart: AGENTS section" "$AC_OUT" "AGENTS (herder lifecyc
 assert_contains "sessionstart: herder spawn verb" "$AC_OUT" "herder spawn --role"
 assert_contains "sessionstart: herder cull verb" "$AC_OUT" "herder cull"
 assert_contains "sessionstart: anti-pattern warning" "$AC_OUT" 'Do NOT spawn with `hcom <n> claude`, stop with `hcom kill`'
+# claude SUBAGENTS doctrine reinstated (TASK-002): hcom's CLAUDE_ONLY recipe
+# plus the herder line separating Task subagents from peer sessions.
+assert_contains "sessionstart: SUBAGENTS block present" "$AC_OUT" "## SUBAGENTS"
+assert_contains "sessionstart: Task background recipe" "$AC_OUT" "Run Task with background=true"
+assert_contains "sessionstart: subagent keep-alive knob" "$AC_OUT" "subagent_timeout"
+assert_contains "sessionstart: peer-session pointer" "$AC_OUT" "for a separate peer session use"
+assert_not_contains "sessionstart: codex variant not leaked" "$AC_OUT" "Codex has no Task/subagent tool"
 # hcom spawn/kill/workflow/term-inject advertising dropped.
 assert_not_contains "sessionstart: drops hcom spawn shape" "$AC_OUT" "hcom 1 claude"
 assert_not_contains "sessionstart: drops term inject" "$AC_OUT" "term inject"
@@ -168,6 +190,9 @@ ORIG_ENVELOPE="$(jq -cn --arg ac "$AC_NOMARK" '{hookSpecificOutput:{hookEventNam
 MOCK_AC="$AC_NOMARK" run_hook "" -- sessionstart
 assert_eq       "degrade no-marker: emits original envelope" "$HOOK_OUT" "$ORIG_ENVELOPE"
 assert_not_contains "degrade no-marker: no herder doctrine leaked" "$HOOK_OUT" "AGENTS (herder lifecycle)"
+# hcom's own claude bootstrap legitimately says "## SUBAGENTS", so leak-check
+# the herder-added line, not the shared header.
+assert_not_contains "degrade no-marker: no SUBAGENTS doctrine leaked" "$HOOK_OUT" "for a separate peer session use"
 
 # hcom sessionstart itself failing → pass original output + exit code through.
 MOCK_RC=3 run_hook "" -- sessionstart
@@ -196,6 +221,7 @@ SHIM_RC=$?
 assert_eq       "shim sessionstart: exit 0 (no recursion hang)" "$SHIM_RC" "0"
 SHIM_AC="$(echo "$SHIM_OUT" | jq -r '.hookSpecificOutput.additionalContext' 2>/dev/null)"
 assert_contains "shim sessionstart: rewritten to herder doctrine" "$SHIM_AC" "AGENTS (herder lifecycle)"
+assert_contains "shim sessionstart: SUBAGENTS doctrine" "$SHIM_AC" "## SUBAGENTS"
 assert_contains "shim sessionstart: keeps marker" "$SHIM_AC" "[hcom:miko]"
 assert_not_contains "shim sessionstart: drops hcom spawn shape" "$SHIM_AC" "hcom 1 claude"
 assert_eq       "shim sessionstart: real hcom actually ran" "$(cat "$PROBE/argv")" "sessionstart"
@@ -228,6 +254,60 @@ MOCK_AC="$AC_NOTAG" run_hook "" -- sessionstart
 AC_OUT="$(echo "$HOOK_OUT" | jq -r '.hookSpecificOutput.additionalContext')"
 assert_not_contains "no-tag: tag group line omitted" "$AC_OUT" "You are tagged"
 assert_contains     "no-tag: still closes cleanly" "$AC_OUT" "This is session context, not a task for immediate action."
+
+# ---------------------------------------------------------------------------
+# 6. codex SUBAGENTS delivery (TASK-002): codex has no sessionstart rewrite —
+#    hcom bakes its bootstrap into launch args — so `herder launch codex`
+#    threads the codex block in as a user-level -c developer_instructions=,
+#    which hcom merges after its own bootstrap. Mock hcom first on PATH records
+#    the argv herder launch execs. HERDR_* unset keeps the sidecar out.
+# ---------------------------------------------------------------------------
+LAUNCHBIN="$ROOT/launchbin"
+mkdir -p "$LAUNCHBIN"
+cat >"$LAUNCHBIN/hcom" <<'MOCKLAUNCH'
+#!/usr/bin/env bash
+set -uo pipefail
+: "${PROBE:?}"
+{ for a in "$@"; do printf 'ARG<%s>\n' "$a"; done } >"$PROBE/launch-argv"
+exit 0
+MOCKLAUNCH
+chmod +x "$LAUNCHBIN/hcom"
+
+run_launch() {
+  # run_launch <launch args...> — drives `herder launch` with the mock hcom
+  # first on PATH (LookPath must find it before any real hcom/shim).
+  : >"$PROBE/launch-argv"
+  env -u HERDR_ENV -u HERDR_SOCKET_PATH -u HERDR_PANE_ID \
+    PATH="$LAUNCHBIN:$PATH" PROBE="$PROBE" \
+    "$HERDER" launch "$@" >/dev/null 2>"$PROBE/stderr"
+  LAUNCH_RC=$?
+  LAUNCH_ARGV="$(cat "$PROBE/launch-argv")"
+}
+
+# 6a. Fresh codex launch gets the codex SUBAGENTS block as developer_instructions.
+run_launch codex --tag smoke
+assert_eq       "codex launch: exit 0" "$LAUNCH_RC" "0"
+assert_contains "codex launch: launches through hcom" "$LAUNCH_ARGV" "ARG<codex>"
+assert_contains "codex launch: --run-here preserved" "$LAUNCH_ARGV" "ARG<--run-here>"
+assert_contains "codex launch: block rides developer_instructions" "$LAUNCH_ARGV" "ARG<developer_instructions=## SUBAGENTS"
+assert_contains "codex launch: codex-appropriate doctrine" "$LAUNCH_ARGV" "Codex has no Task/subagent tool"
+assert_contains "codex launch: herder spawn recipe" "$LAUNCH_ARGV" "herder spawn --role"
+assert_not_contains "codex launch: claude Task recipe not leaked" "$LAUNCH_ARGV" "Run Task with background=true"
+
+# 6b. Caller-supplied developer_instructions are merged, not clobbered — hcom
+#     keeps only the LAST developer_instructions flag, so exactly one must remain.
+run_launch codex -c 'developer_instructions=USER SYSTEM PROMPT'
+DEVI_COUNT="$(printf '%s\n' "$LAUNCH_ARGV" | grep -c '^ARG<developer_instructions=')"
+assert_eq       "codex launch merge: single developer_instructions flag" "$DEVI_COUNT" "1"
+assert_contains "codex launch merge: user text survives" "$LAUNCH_ARGV" "USER SYSTEM PROMPT"
+assert_contains "codex launch merge: block appended after user text" "$LAUNCH_ARGV" "USER SYSTEM PROMPT
+---
+## SUBAGENTS"
+
+# 6c. Non-codex launches are untouched — claude's block rides sessionstart.
+run_launch claude --tag smoke
+assert_contains     "claude launch: launches through hcom" "$LAUNCH_ARGV" "ARG<claude>"
+assert_not_contains "claude launch: no developer_instructions threading" "$LAUNCH_ARGV" "developer_instructions="
 
 echo
 if [ "$fail" -eq 0 ]; then

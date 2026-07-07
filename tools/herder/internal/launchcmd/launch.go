@@ -6,8 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 
+	"ai-config/tools/herder/internal/hookcmd"
 	"ai-config/tools/herder/internal/registry"
 )
 
@@ -124,6 +126,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// Codex gets its SUBAGENTS doctrine here, not via the sessionstart rewrite:
+	// hcom bakes the codex bootstrap into launch args (developer_instructions),
+	// never into hook output, so launch time is the only herder-owned seam.
+	// Fresh launches only — on resume/fork hcom strips ALL user
+	// developer_instructions (they embed the previous instance's identity) and
+	// re-adds just its own bootstrap, so threading the block there is dead weight.
+	if tool == "codex" && mode == "launch" {
+		rest = threadCodexSubagentsBlock(rest)
+	}
+
 	hcomArgs := []string{tool, "--run-here"}
 	if mode == "resume" {
 		hcomArgs = []string{"r", target, "--run-here"}
@@ -149,6 +161,33 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// threadCodexSubagentsBlock delivers hookcmd.CodexSubagentsBlock to a fresh
+// codex session as a user-level developer_instructions config. hcom's codex
+// preprocessing (add_codex_developer_instructions) treats that as a system
+// prompt and merges it AFTER its own bootstrap (bootstrap + "\n---\n" + ours) —
+// a supported hcom surface, so nothing here parses or rewrites hcom output.
+//
+// hcom keeps only the LAST developer_instructions flag it sees and silently
+// drops earlier ones, so when the caller already passed one we append the block
+// inside that value instead of adding a second flag that would clobber theirs.
+func threadCodexSubagentsBlock(args []string) []string {
+	out := append([]string(nil), args...)
+	for i := len(out) - 1; i >= 0; i-- {
+		tok := out[i]
+		if strings.HasPrefix(tok, "-c=developer_instructions=") ||
+			strings.HasPrefix(tok, "--config=developer_instructions=") {
+			out[i] = tok + "\n---\n" + hookcmd.CodexSubagentsBlock
+			return out
+		}
+		if (tok == "-c" || tok == "--config") && i+1 < len(out) &&
+			strings.HasPrefix(out[i+1], "developer_instructions=") {
+			out[i+1] = out[i+1] + "\n---\n" + hookcmd.CodexSubagentsBlock
+			return out
+		}
+	}
+	return append(out, "-c", "developer_instructions="+hookcmd.CodexSubagentsBlock)
 }
 
 func startSidecar(tool string) {

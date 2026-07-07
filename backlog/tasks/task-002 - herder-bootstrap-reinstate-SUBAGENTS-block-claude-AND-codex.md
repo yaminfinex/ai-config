@@ -1,10 +1,10 @@
 ---
 id: TASK-002
 title: 'herder bootstrap: reinstate SUBAGENTS block, claude AND codex'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-07 05:37'
-updated_date: '2026-07-07 05:55'
+updated_date: '2026-07-07 06:40'
 labels:
   - run-herder-bootstrap
 dependencies: []
