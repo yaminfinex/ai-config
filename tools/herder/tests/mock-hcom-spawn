@@ -10,10 +10,12 @@
 #   MOCK_HCOM_SPAWN_SCENARIO
 #       launchctx (default) — an entry whose launch_context.pane_id is p_50
 #                             (the frozen launch pane) exists → primary capture
-#       fallback            — no launch_context match; an entry with the spawn
-#                             tag ("worker") and directory /mock/cwd exists
-#                             (plus an OLDER decoy with the same tag+dir, to
-#                             prove newest-by-created_at wins)
+#       fallback            — no launch_context match; a UNIQUE entry with the
+#                             spawn tag ("worker") and directory /mock/cwd exists
+#                             (decoys differ in tag/dir) → captured by tag+cwd
+#       fallback_ambiguous  — no launch_context match; TWO live entries share
+#                             tag ("worker") + directory /mock/cwd → no positive
+#                             correlate → capture refuses to guess (ambiguous)
 #       fail                — empty bus → capture fails (best-effort: spawn
 #                             still succeeds, keystroke-only)
 #   MOCK_PROBE_DIR   probe dir; every invocation records the effective
@@ -39,6 +41,13 @@ case "${1:-} ${2:-}" in
            created_at:"2026-01-01T00:00:01Z", launch_context:{pane_id:"p_50"}}
         ]';;
       fallback)
+        jq -n '[
+          {name:"decoy-dir",   tag:"worker", directory:"/elsewhere",
+           created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_98"}},
+          {name:"worker-nova", tag:"worker", directory:"/mock/cwd",
+           created_at:"2026-01-01T00:00:01Z", launch_context:{pane_id:"p_99"}}
+        ]';;
+      fallback_ambiguous)
         jq -n '[
           {name:"worker-old",  tag:"worker", directory:"/mock/cwd",
            created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_98"}},

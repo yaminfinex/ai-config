@@ -372,6 +372,7 @@ func findRowForLaunchFallback(rows []hcomRow, tool, tag, cwd, lifecycleMode, par
 		return nil
 	}
 	var hit *hcomRow
+	matches := 0
 	for i := range rows {
 		if rows[i].Status == "inactive" {
 			continue
@@ -381,7 +382,16 @@ func findRowForLaunchFallback(rows []hcomRow, tool, tag, cwd, lifecycleMode, par
 		}
 		if rows[i].Tool == tool && rows[i].Tag == tag && rows[i].Directory == cwd {
 			hit = &rows[i]
+			matches++
 		}
+	}
+	// A tag+cwd match is only a trustworthy correlate when it is UNAMBIGUOUS.
+	// With two or more live agents sharing tool+tag+cwd there is no positive
+	// signal (pane_id/terminal_id/guid) to say which row is ours; picking the
+	// newest silently attaches an unrelated agent's identity to this pane's
+	// registry guid — the wrong-guid enrichment bug. Refuse to guess.
+	if matches != 1 {
+		return nil
 	}
 	return hit
 }

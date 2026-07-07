@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -779,9 +778,17 @@ The spawner is often mid-turn, so the helper may report verify=queued or verify=
 								matches = append(matches, entry)
 							}
 						}
-						sort.Slice(matches, func(i, j int) bool { return matches[i].CreatedAt < matches[j].CreatedAt })
-						if len(matches) > 0 {
-							record.HcomName = matches[len(matches)-1].Name
+						// Only a UNIQUE tag+cwd match is trustworthy without a
+						// positive pane correlate. Two or more live entries
+						// sharing tag+cwd cannot be told apart; picking the newest
+						// (latest-wins) silently captures an unrelated agent's
+						// identity — the wrong-guid enrichment bug. Refuse to
+						// guess: record the capture as ambiguous and stop.
+						if len(matches) == 1 {
+							record.HcomName = matches[0].Name
+						} else if len(matches) > 1 {
+							hcomCapture = "ambiguous"
+							break
 						}
 					}
 					if record.HcomName != "" {

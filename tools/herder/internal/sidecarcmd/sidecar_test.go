@@ -73,22 +73,59 @@ func TestFindRowForPaneSkipsForkParentSession(t *testing.T) {
 	}
 }
 
-func TestFindRowForLaunchFallbackUsesLatestMatchingRow(t *testing.T) {
-	rows := []hcomRow{
+func TestFindRowForLaunchFallbackRequiresUniqueMatch(t *testing.T) {
+	// A single tag+cwd match (decoys ruled out by tool/dir) is captured.
+	unique := []hcomRow{
 		{Name: "wrong-tool", Tool: "claude", Tag: "smoke", Directory: "/work", Status: "active"},
-		{Name: "first", Tool: "codex", Tag: "smoke", Directory: "/work", Status: "active"},
 		{Name: "wrong-dir", Tool: "codex", Tag: "smoke", Directory: "/other", Status: "listening"},
+		{Name: "mine", Tool: "codex", Tag: "smoke", Directory: "/work", Status: "listening"},
+	}
+	row := findRowForLaunchFallback(unique, "codex", "smoke", "/work", "", "")
+	if row == nil || row.Name != "mine" {
+		t.Fatalf("unique match = %+v, want mine", row)
+	}
+
+	// Two live agents share tool+tag+cwd: no positive correlate → refuse to
+	// guess (this is the wrong-guid enrichment path; newest-wins would grab
+	// whichever registered last).
+	ambiguous := []hcomRow{
+		{Name: "first", Tool: "codex", Tag: "smoke", Directory: "/work", Status: "active"},
 		{Name: "latest", Tool: "codex", Tag: "smoke", Directory: "/work", Status: "listening"},
 	}
-	row := findRowForLaunchFallback(rows, "codex", "smoke", "/work", "", "")
-	if row == nil {
-		t.Fatal("findRowForLaunchFallback returned nil")
+	if got := findRowForLaunchFallback(ambiguous, "codex", "smoke", "/work", "", ""); got != nil {
+		t.Fatalf("ambiguous tag+cwd matched %+v, want nil (refuse to guess)", *got)
 	}
-	if row.Name != "latest" || row.Status != "listening" {
-		t.Fatalf("row = %+v, want latest/listening", *row)
-	}
-	if got := findRowForLaunchFallback(rows, "codex", "", "/work", "", ""); got != nil {
+
+	if got := findRowForLaunchFallback(unique, "codex", "", "/work", "", ""); got != nil {
 		t.Fatalf("empty tag matched %+v, want nil", *got)
+	}
+}
+
+// TestFindRowRefusesAmbiguousFallbackForHeadlessLaunch reproduces the forensic:
+// an orchestrator sidecar (its own guid) fails to pane-correlate any hcom row
+// (its launch_context drifted across a compaction), and a headless launch
+// (calc17-tina) shares tool+tag+cwd. Newest-wins used to attach calc17-tina's
+// name onto the orchestrator's guid. The positive-correlate invariant must
+// refuse the enrichment entirely rather than guess.
+func TestFindRowRefusesAmbiguousFallbackForHeadlessLaunch(t *testing.T) {
+	s := &sidecar{tool: "claude", paneID: "p_orch", tag: "orchestrator", cwd: "/repo"}
+	rows := []hcomRow{
+		{Name: "orchestrator-bumo", Tool: "claude", Tag: "orchestrator", Directory: "/repo", Status: "listening", LaunchContext: struct {
+			PaneID string `json:"pane_id"`
+		}{PaneID: "p_gone"}},
+		{Name: "calc17-tina", Tool: "claude", Tag: "orchestrator", Directory: "/repo", Status: "listening", LaunchContext: struct {
+			PaneID string `json:"pane_id"`
+		}{PaneID: ""}},
+	}
+	if got := s.findRow(rows); got != nil {
+		t.Fatalf("findRow attached %q despite no positive correlate; want nil", got.Name)
+	}
+
+	// Positive control: once the orchestrator's own row carries the matching
+	// pane_id, that pane correlate wins and enrichment proceeds.
+	rows[0].LaunchContext.PaneID = "p_orch"
+	if got := s.findRow(rows); got == nil || got.Name != "orchestrator-bumo" {
+		t.Fatalf("pane-correlated findRow = %+v, want orchestrator-bumo", got)
 	}
 }
 

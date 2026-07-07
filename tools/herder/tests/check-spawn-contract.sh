@@ -161,6 +161,7 @@ SPAWN_SEED_REGISTRY='{"guid":"guid-orch-0000","short_guid":"orch","label":"orche
 scenario notify_bus        ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
 unset SPAWN_HERDER_GUID SPAWN_SEED_REGISTRY
 scenario capture_fallback  ready claude fallback --role worker --agent claude --json
+scenario capture_ambiguous ready claude fallback_ambiguous --role worker --agent claude --json
 scenario capture_fail      ready claude fail --role worker --agent claude --json
 scenario perm_explicit     ready claude launchctx --role worker --agent claude --extra-arg --dangerously-skip-permissions --json
 scenario team              ready claude launchctx --role worker --agent claude --team smoke --json
