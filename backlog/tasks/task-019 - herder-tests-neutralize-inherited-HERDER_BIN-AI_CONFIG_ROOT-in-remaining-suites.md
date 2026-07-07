@@ -3,9 +3,11 @@ id: TASK-019
 title: >-
   herder tests: neutralize inherited HERDER_BIN/AI_CONFIG_ROOT in remaining
   suites
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - unit-s-mige
 created_date: '2026-07-07 07:29'
+updated_date: '2026-07-07 20:36'
 labels: []
 dependencies: []
 priority: medium

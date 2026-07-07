@@ -3,9 +3,11 @@ id: TASK-030
 title: >-
   docs: clarify hcom events sub semantics in orchestrate skill + herder
   bootstrap WAITING RULES
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - unit-t-dilo
 created_date: '2026-07-07 12:37'
+updated_date: '2026-07-07 20:36'
 labels:
   - run-herder-dx
 dependencies: []

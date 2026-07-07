@@ -3,9 +3,11 @@ id: TASK-032
 title: >-
   spawn delivery mechanics: consolidated brittleness review (map, failure-mode
   inventory, hardening)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - unit-r-zulu
 created_date: '2026-07-07 20:31'
+updated_date: '2026-07-07 20:36'
 labels:
   - run-herder-dx
 dependencies: []
@@ -32,4 +34,5 @@ SEQUENCING: TASK-031 (late-submit remedy) is GATED on this review — its fix sh
 - [ ] #3 Ranked hardening proposal reported for ratification BEFORE code, incl. agent-family-aware readiness assessment and the TASK-031 late-submit question
 - [ ] #4 Ratified subset implemented with suite/golden coverage; TASK-024 evidence gating not weakened; battery green
 - [ ] #5 TASK-031 resolved or formally superseded; spawn NOT-confirmed hint + README delivery section match post-hardening reality
+- [ ] #6 QUESTION ZERO (user, 2026-07-07): why is a paste required at all — can spawn initial-prompt delivery ride the hcom bus (TASK-017-style post-registration send) instead of bootpaste? Evaluate explicitly: readiness (registry-bind poll), first-turn semantics (does a bus message wake a never-prompted fresh session, per family — lusa smoke says idle codex delivers; reviewer-kimi dirty-composer says not always), framing (<hcom>-tagged vs plain user prompt), bash/bus-less spawns, slash-command prompts. If viable, bootpaste retires to compact-only and the whole paste/Enter state machine collapses — answer this BEFORE proposing paste hardening
 <!-- AC:END -->

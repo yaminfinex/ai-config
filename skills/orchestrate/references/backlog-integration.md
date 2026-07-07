@@ -52,11 +52,11 @@ one writer and already exist in shared history.
   backlog task create "Unit 2 — migrate" -l run-<slug> --dep task-1 --plain
   ```
 
-**Agents edit, never create.** Once fanned out, an agent only ever *edits* its pre-assigned task
-(the **One writer per task** rule below) — it never runs `task create` on its own branch, which
-would reopen the ID race. A follow-up unit discovered mid-run rides the bus as a "new unit" note
-and lands in the journal; the orchestrator batch-creates it on the base branch between waves, then
-dispatches it.
+**Agents report, never write.** Once fanned out, an agent never touches `backlog/` at all — no
+`task create` (which would reopen the ID race on its branch) and no `task edit` either (see **the
+board lives on the base branch** below). A follow-up unit discovered mid-run rides the bus as a
+"new unit" note and lands in the journal; the orchestrator batch-creates it on the base branch
+between waves, then dispatches it.
 
 **Config is a backstop, not the fix.** Backlog's cross-branch guards (`checkActiveBranches`,
 `remoteOperations`, `activeBranchDays` in `backlog/config.yml`, all on by default) scan other
@@ -75,17 +75,27 @@ backlog sequence list --plain     # wave 1 = the ready/unblocked units
 The orchestrator dispatches a wave, waits for its DONE reports, recomputes. This replaces "spawn
 Unit N after Unit N-1" bookkeeping for anything with real branching.
 
-**Status mirrors the unit lifecycle.** The agent owning a unit moves its task:
-- on starting the unit → `backlog task edit <id> -s "In Progress" --plain`
-- on sending its DONE report (pinned gates green) →
-  `backlog task edit <id> -s "Done" --plain`
-- on a BLOCKED report → leave status; the report carries the failure.
+**The board lives on the base branch; the orchestrator is its only writer.** Workers never edit
+`backlog/` in their worktrees — a status flipped on a feature branch is invisible on the board
+until merge (the user watching the base branch sees a stale run), and worker-side task edits are
+the source of both the ID race above and recurring merge conflicts. Instead, status rides the
+signals workers already send:
 
-Assignee optionally tracks ownership: `-a <pane-label>`.
+- worker picks up the unit → says so on its unit thread → orchestrator:
+  `backlog task edit <id> -s "In Progress" -a <worker> --plain`, commit on the base branch.
+- DONE report (pinned gates green) → orchestrator verifies (invariant 4), then applies the
+  **hygiene payload from the report** — per-AC evidence (`--check-ac N`), implementation notes
+  (`--notes`), `-s Done` — and commits. The worker authors the content; the orchestrator holds
+  the pen.
+- BLOCKED report → status stays; the report carries the failure; the journal records the verdict.
 
-**One writer per task.** Invariant 7 (one writer per worktree) extends here: the agent that owns a
-unit is the only one that edits its task. The orchestrator reads (`list`, `sequence`) but doesn't
-flip another agent's status.
+Each transition is a small commit on the base branch, so `backlog board` / `task list` there is
+live during the run, not a post-merge artifact.
+
+**One writer per task → one writer for the board.** Invariant 7 (one writer per worktree) lands
+here as: the orchestrator is the single writer of `backlog/`, full stop. A worker remains the
+single *author* of its unit's hygiene content — it just delivers that content on the bus instead
+of committing it.
 
 ## What stays the same
 
