@@ -31,6 +31,16 @@ case "${1:-} ${2:-}" in
     fi;;
   "agent start")
     printf '%s\n' "$*" >>"$PROBE/herdr_start_argv"
+    # TASK-017: stand in for the sidecar's registry bind — a beat after the
+    # pane starts, append an enrichment row carrying the new bus name so the
+    # fork addendum poll finds it (real sidecars bind seconds after boot).
+    if [[ -n "${MOCK_BIND_NAME:-}" ]]; then
+      guid="$(sed -n 's/.*HERDER_GUID=\([^ ]*\).*/\1/p' <<<"$*")"
+      ( sleep 1
+        printf '{"guid":"%s","short_guid":"%s","label":"codex-child","role":"worker","agent":"codex","pane_id":"p_child","terminal_id":"term_CHILD","workspace_id":"ws_child","cwd":"/mock/cwd","hcom_dir":"/hcom","hcom_name":"%s","hcom_tag":"worker","status":"active","provenance":{"mechanism":"fork","spawned_by":"user","tool_session_id":"sess-codexp-child","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_child","branch":"fixture-branch","ts":"2026-07-03T00:02:00Z"}}\n' \
+          "$guid" "${guid:0:8}" "$MOCK_BIND_NAME" >>"${HERDER_STATE_DIR:?}/registry.jsonl"
+      ) >/dev/null 2>&1 &
+    fi
     jq -n '{result:{agent:{pane_id:"p_child", terminal_id:"term_CHILD", workspace_id:"ws_child", cwd:"/mock/cwd"}}}';;
   "pane get")
     # fork --self resolves the current pane's cwd from here (foreground_cwd first).
@@ -51,6 +61,12 @@ if [[ "${1:-} ${2:-}" == "list --json" ]]; then
   printf '%s\n' "${MOCK_HCOM_IDENTITY:-[]}"
   exit 0
 fi
+# TASK-017: the addendum send rides the real bus engine — record what it sends
+# and ack the delivery receipt so verify=delivered without a poll stall.
+case "${1:-}" in
+  send)   printf '%s\n' "$*" >>"${MOCK_PROBE_DIR:?}/hcom_send_argv" ;;
+  events) printf '[{"event":"deliver"}]\n' ;;
+esac
 exit 0
 MOCK_HCOM
 chmod +x "$MOCKBIN/hcom"
@@ -87,6 +103,13 @@ seed_registry() {
 {"guid":"guid-nosess-0000","short_guid":"nosess","label":"no-session","role":"worker","agent":"codex","terminal_id":"term_NOSESS","pane_id":"p_nosess","hcom_dir":"/hcom","hcom_name":"","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"2026-07-03T00:00:00Z"}}
 {"guid":"guid-other-0000","short_guid":"other","label":"taken","role":"worker","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","status":"active"}
 JSONL
+  # TASK-017: forkable codex parent, seeded only for the codex addendum case so
+  # the pre-existing goldens' REGISTRY sections stay byte-identical.
+  if [[ -n "${SEED_CODEX:-}" ]]; then
+    cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"guid":"guid-codexp-0000","short_guid":"codexp","label":"codex-parent","role":"worker","agent":"codex","terminal_id":"term_CODEXP","pane_id":"p_codexp","hcom_dir":"/hcom","hcom_name":"codexp-vibe","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-codexp","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"2026-07-03T00:00:00Z"}}
+JSONL
+  fi
 }
 
 run_case() {
@@ -104,8 +127,10 @@ run_case() {
     HERDR_ENV=1 HERDR_PANE_ID=p_self \
     HERDER_STATE_DIR="$CASE/state" \
     HERDER_LIFECYCLE_SETTLE_MS=0 \
+    HERDER_ADDENDUM_SETTLE_MS="${HERDER_ADDENDUM_SETTLE_MS:-10000}" \
     MOCK_PROBE_DIR="$CASE/probe" \
     MOCK_LIVE_PARENT="$live" \
+    MOCK_BIND_NAME="${MOCK_BIND_NAME:-}" \
     HERDER_GUID="${HERDER_GUID:-}" \
     HERDER_SPAWNED_BY="${HERDER_SPAWNED_BY:-}" \
     "${HFK[@]}" "$@" 2>"$RUN_ERR_F")"
@@ -148,6 +173,12 @@ block_for() {
     "$(cat "$RUN_ERR_F")" "$RUN_OUT" "$RUN_RC" \
     "$(cat "$CASE/probe/herdr_start_argv" 2>/dev/null)" \
     "$(cat "$CASE/state/registry.jsonl" 2>/dev/null)")"
+  # TASK-017: codex cases capture the addendum send verbatim (pins doctrine
+  # content at the delivery surface); section absent on non-codex cases so
+  # their goldens stay byte-identical.
+  if [[ -f "$CASE/probe/hcom_send_argv" ]]; then
+    block+="$(printf '\n=== HCOM SEND ARGV ===\n%s' "$(cat "$CASE/probe/hcom_send_argv")")"
+  fi
   guid="$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' <<<"$block" | head -n1 || true)"
   if [[ -n "$guid" ]]; then
     short="${guid:0:8}"
@@ -192,6 +223,12 @@ run_case unknown 0 nope
 check_one unknown
 run_case missing_session 0 nosess
 check_one missing_session
+# TASK-017: a forked codex child loses the launch-seam addendum (hcom strips
+# user developer_instructions on resume/fork), so the native fork path
+# re-delivers it over the bus once the sidecar binds the child's bus name.
+SEED_CODEX=1 MOCK_BIND_NAME=codexfork-vibe \
+  run_case codex_addendum 0 codexp --json
+check_one codex_addendum
 # provenance: a fork run BY a spawned session records THAT session as the child's
 # spawned_by — not the inherited HERDER_SPAWNED_BY, which names the forker's own
 # spawner (the child's grandparent). TASK-004.

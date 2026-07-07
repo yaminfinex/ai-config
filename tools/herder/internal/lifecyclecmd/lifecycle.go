@@ -14,7 +14,9 @@ import (
 
 	"ai-config/tools/herder/internal/herderpaths"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/hookcmd"
 	"ai-config/tools/herder/internal/registry"
+	"ai-config/tools/herder/internal/send"
 	"ai-config/tools/herder/internal/shellquote"
 )
 
@@ -152,6 +154,9 @@ func (r *runner) fork(opts forkOptions) int {
 	if opts.json {
 		b, _ := json.Marshal(row)
 		fmt.Fprintln(r.stdout, string(b))
+	}
+	if firstNonEmpty(parent.Agent, "claude") == "codex" {
+		r.deliverCodexAddendum(registryPath, guid, label)
 	}
 	return 0
 }
@@ -442,6 +447,9 @@ func (r *runner) resume(opts resumeOptions) int {
 		b, _ := json.Marshal(row)
 		fmt.Fprintln(r.stdout, string(b))
 	}
+	if firstNonEmpty(rec.Agent, "claude") == "codex" {
+		r.deliverCodexAddendum(registryPath, guid, label)
+	}
 	return 0
 }
 
@@ -557,6 +565,61 @@ func (r *runner) verifyLaunchStayedAlive(registryPath string, row []byte, paneID
 	}
 	die(r.stderr, "launch failed before lifecycle bind")
 	return 1
+}
+
+// deliverCodexAddendum re-delivers the herder doctrine to a freshly
+// resumed/forked codex session over the bus (TASK-017): hcom strips ALL user
+// developer_instructions on codex resume/fork and re-applies only its own
+// stock bootstrap, so the launch-args seam cannot carry the addendum there —
+// post-boot bus delivery is the sanctioned path. Readiness is the sidecar's
+// registry bind: the lifecycle row starts with hcom_name="" and the sidecar
+// enriches it with the new instance's bus name once hcom registers it, so we
+// poll the registry (no pane reading, no hcom output parsing) bounded by
+// HERDER_ADDENDUM_SETTLE_MS (default 60000; <=0 skips delivery — hermetic
+// suites). Delivery is deliberately dedup-free: the addendum is name-agnostic
+// and self-marks a repeat as a no-op, while dedup state would false-skip
+// exactly when it matters (the prior copy compacted out of the codex
+// context). Every failure mode WARNS and returns — doctrine delivery never
+// blocks or fails the resume/fork verdict.
+func (r *runner) deliverCodexAddendum(registryPath, guid, label string) {
+	settleMS := addendumSettleMS()
+	if settleMS <= 0 {
+		return
+	}
+	deadline := time.Now().Add(time.Duration(settleMS) * time.Millisecond)
+	for {
+		bound := false
+		if recs, err := registry.Load(registryPath); err == nil {
+			for _, rec := range registry.LatestByGUID(recs) {
+				if ptrString(rec.GUID) == guid && rec.HcomName != "" && rec.HcomName != "null" {
+					bound = true
+				}
+			}
+		}
+		if bound {
+			break
+		}
+		if time.Now().After(deadline) {
+			fmt.Fprintf(r.stderr, "herder-lifecycle: WARNING — herder addendum NOT delivered to %s: no bus bind within %dms (codex resume/fork sessions carry only hcom's stock bootstrap). Deliver manually once it is up: herder send %s '<addendum>'\n", label, settleMS, guid)
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if rc := send.Run([]string{guid, hookcmd.CodexResumeAddendum}, r.stdout, r.stderr); rc != 0 {
+		fmt.Fprintf(r.stderr, "herder-lifecycle: WARNING — herder addendum NOT delivered to %s: send exit %d (codex resume/fork sessions carry only hcom's stock bootstrap). Deliver manually: herder send %s '<addendum>'\n", label, rc, guid)
+	}
+}
+
+// addendumSettleMS mirrors lifecycleSettleMS for the TASK-017 post-boot
+// delivery window.
+func addendumSettleMS() int {
+	value := os.Getenv("HERDER_ADDENDUM_SETTLE_MS")
+	if value == "" {
+		return 60000
+	}
+	var n int
+	_, _ = fmt.Sscanf(value, "%d", &n)
+	return n
 }
 
 func lifecycleSettleMS() int {
@@ -713,6 +776,14 @@ Behavior:
   are detected from the pane; cwd tracks the pane's foreground dir so the session
   key resolves.
 
+  Codex doctrine re-delivery (TASK-017): hcom strips user developer_instructions
+  on codex fork, so a NAMED-target codex fork waits for the child to bind a bus
+  name in the registry (up to HERDER_ADDENDUM_SETTLE_MS, default 60000; <=0
+  skips) and re-sends the herder addendum as a verified bus message; failures
+  WARN and never fail the fork. Known residual (TASK-027): the codex --self
+  fallback rides 'herder spawn', which cannot deliver post-boot — those sessions
+  keep hcom's stock bootstrap.
+
 Exit codes:
   0  fork launched (native) or handed off to spawn (fallback)
   1  refusal or launch failure — see the message
@@ -741,6 +812,15 @@ Usage:
 
 Options:
   --json    print the new registry record as JSON on stdout
+
+Codex doctrine re-delivery (TASK-017): hcom strips user developer_instructions
+on codex resume, so the launch-time herder addendum cannot ride along. Resuming
+a codex agent therefore waits for the new session to bind a bus name in the
+registry (up to HERDER_ADDENDUM_SETTLE_MS, default 60000; <=0 skips) and sends
+the addendum as a verified bus message. A repeat delivery on a re-resume is
+harmless by design. Bind timeout or send failure WARNS on stderr with the
+manual remedy and never fails the resume. Claude sessions re-bootstrap through
+their sessionstart hook and skip all of this.
 
 If it fails:
   - "already running": the agent is live — use herder send/wait, not resume.

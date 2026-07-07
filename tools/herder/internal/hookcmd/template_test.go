@@ -77,14 +77,64 @@ func TestCodexBootstrapBlock_Content(t *testing.T) {
 	}
 }
 
-// The AGENTS doctrine must be textually shared between the two delivery
-// surfaces — the claude sessionstart rewrite and the codex launch block — so
-// they cannot drift apart.
+// The AGENTS doctrine must be textually shared between the three delivery
+// surfaces — the claude sessionstart rewrite, the codex launch block, and the
+// codex post-resume re-delivery — so they cannot drift apart.
 func TestHerderAgentsSection_SharedAcrossSurfaces(t *testing.T) {
 	if !strings.Contains(bootstrapTemplate, herderAgentsSection) {
 		t.Error("claude bootstrapTemplate no longer embeds herderAgentsSection verbatim")
 	}
 	if !strings.Contains(CodexBootstrapBlock, herderAgentsSection) {
 		t.Error("CodexBootstrapBlock no longer embeds herderAgentsSection verbatim")
+	}
+	if !strings.Contains(CodexResumeAddendum, herderAgentsSection) {
+		t.Error("CodexResumeAddendum no longer embeds herderAgentsSection verbatim")
+	}
+}
+
+// TASK-017 pins: resumed/forked codex sessions get the addendum re-delivered
+// as a bus MESSAGE (hcom strips user developer_instructions on those paths),
+// so the variant differs from the launch block ONLY in its preamble — the
+// doctrine tail (AGENTS + codex SUBAGENTS) is byte-identical by construction,
+// and both blocks must end with that exact shared tail.
+func TestCodexResumeAddendum_Content(t *testing.T) {
+	sharedTail := herderAgentsSection + "\n\n" + codexSubagentsSection
+	if !strings.HasSuffix(CodexBootstrapBlock, sharedTail) {
+		t.Error("CodexBootstrapBlock no longer ends with the shared doctrine tail")
+	}
+	if !strings.HasSuffix(CodexResumeAddendum, sharedTail) {
+		t.Error("CodexResumeAddendum no longer ends with the shared doctrine tail")
+	}
+
+	for _, want := range []string{
+		// Message framing: self-identifies, no reply, repeat is a no-op.
+		"[HERDER SESSION ADDENDUM — re-delivered after resume/fork]",
+		"do NOT reply to this message",
+		"resumed or forked through herder",
+		"nothing has changed",
+		// Same supersede contract as the launch block.
+		"SUPERSEDED",
+	} {
+		if !strings.Contains(CodexResumeAddendum, want) {
+			t.Errorf("codex resume addendum missing %q", want)
+		}
+	}
+
+	// It arrives mid-conversation, not as system context: it must not point at
+	// surrounding context it cannot see from a message.
+	if strings.Contains(CodexResumeAddendum, "context above") {
+		t.Error("codex resume addendum references 'context above' — invalid for message delivery")
+	}
+
+	// Delivered verbatim (no render pass) — no unresolved claude placeholders.
+	for _, banned := range []string{"{display_name}", "{instance_name}", "{SENDER}", "{tag}", "{active_instances}"} {
+		if strings.Contains(CodexResumeAddendum, banned) {
+			t.Errorf("codex resume addendum carries unresolved placeholder %q", banned)
+		}
+	}
+
+	// Claude's Task-tool recipe must not leak into the codex doctrine.
+	if strings.Contains(CodexResumeAddendum, "background=true") {
+		t.Error("claude Task recipe leaked into the codex resume addendum")
 	}
 }
