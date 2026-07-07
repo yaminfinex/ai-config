@@ -4,7 +4,9 @@ title: 'herder bootstrap: reinstate SUBAGENTS block, claude AND codex'
 status: To Do
 assignee: []
 created_date: '2026-07-07 05:37'
-labels: []
+updated_date: '2026-07-07 05:55'
+labels:
+  - run-herder-bootstrap
 dependencies: []
 priority: high
 ordinal: 2000

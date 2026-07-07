@@ -4,7 +4,9 @@ title: 'herder: machine-wide hcom bootstrap shim — verify + close gaps'
 status: To Do
 assignee: []
 created_date: '2026-07-07 05:36'
-labels: []
+updated_date: '2026-07-07 05:55'
+labels:
+  - run-herder-bootstrap
 dependencies: []
 priority: high
 ordinal: 1000
