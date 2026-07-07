@@ -4,8 +4,9 @@ title: 'codex resume/fork: deliver herder doctrine post-boot (seam cannot)'
 status: To Do
 assignee: []
 created_date: '2026-07-07 07:29'
-updated_date: '2026-07-07 07:59'
-labels: []
+updated_date: '2026-07-07 09:33'
+labels:
+  - run-herder-dx
 dependencies: []
 priority: medium
 ordinal: 17000
