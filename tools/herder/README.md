@@ -156,11 +156,18 @@ Sessions that route through the shims get a herder-native rewrite of hcom's sess
 - **codex** — fresh launches get a `[HERDER SESSION ADDENDUM]` (supersede preamble + the shared
   AGENTS doctrine + a codex-shaped SUBAGENTS block, which fans sub-work out via `herder spawn`
   since codex has no Task tool) threaded as user-level `-c developer_instructions=`; hcom's own
-  bootstrap merges first and is superseded by instruction, not removed. Known gap: codex
-  **resume/fork** strips user developer_instructions, so those sessions carry only hcom's stock
-  bootstrap until TASK-017 lands.
+  bootstrap merges first and is superseded by instruction, not removed. On codex **resume/fork**
+  hcom strips user developer_instructions (the launch seam cannot deliver there — TASK-014), so
+  `herder resume`/`herder fork` re-deliver the addendum **post-boot** (TASK-017): they wait for
+  the new session to bind its bus name in the registry (sidecar enrichment, bounded by
+  `HERDER_ADDENDUM_SETTLE_MS`, default 60s), then send a resume-worded variant as a verified bus
+  message. Delivery is dedup-free (a repeat is a harmless no-op by wording) and never blocks: on
+  bind timeout or send failure the command warns with the manual `herder send` remedy and the
+  resume/fork still succeeds. Residual gap (TASK-027): the codex `fork --self` fallback rides
+  `herder spawn`, which has no post-boot delivery — those sessions keep hcom's stock bootstrap.
 
-The claude and codex doctrine blocks are a shared constant with a byte-identity drift guard.
+The claude and codex doctrine blocks (launch and resume variants) share their doctrine sections
+as single constants with byte-identity drift guards.
 
 ## Activation And Usage
 

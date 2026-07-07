@@ -171,9 +171,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	// Fresh launches only — on resume/fork hcom strips ALL user
 	// developer_instructions (they embed the previous instance's identity) and
 	// re-adds just its own bootstrap, so threading the block there is dead
-	// weight. That covers both herder resume/fork (mode != "launch") and the
-	// codex-native fork fallback, where spawn relaunches with a `fork <session>`
-	// subcommand in the tool args and hcom's strip predicate fires on it.
+	// weight. That covers both herder resume/fork (mode != "launch"), where
+	// lifecyclecmd re-delivers the addendum post-boot over the bus (TASK-017),
+	// and the codex-native fork fallback, where spawn relaunches with a
+	// `fork <session>` subcommand in the tool args and hcom's strip predicate
+	// fires on it (no post-boot path there — TASK-027).
 	if tool == "codex" && mode == "launch" && !codexStripsDevInstructions(rest) {
 		rest = threadCodexBootstrapBlock(rest)
 	}
@@ -247,9 +249,9 @@ func execPrintBypass(tool string, args []string, stderr io.Writer) int {
 // (preprocess_codex_args: any codex arg exactly "resume" or "fork"). When it
 // fires, hcom discards every user developer_instructions flag before
 // re-injecting its own fresh bootstrap, so anything we thread is dead weight
-// on the exec'd argv — skip instead. Resumed/forked codex sessions therefore
-// lose the herder block entirely; that structural gap is documented on
-// hookcmd.CodexBootstrapBlock.
+// on the exec'd argv — skip instead. Resumed/forked codex sessions get the
+// doctrine post-boot over the bus instead (lifecyclecmd, TASK-017); the full
+// seam story is documented on hookcmd.CodexBootstrapBlock.
 func codexStripsDevInstructions(args []string) bool {
 	for _, a := range args {
 		if a == "resume" || a == "fork" {
@@ -344,6 +346,17 @@ into headless launch logs).
 Exception — print one-shots: 'claude -p/--print ...' skips the bus entirely and
 execs the PATH-resolved claude (hcom would background the run and the answer
 would never return). --tag is ignored there; hcom is not required.
+
+Codex bootstrap addendum: a fresh 'herder launch codex' threads a
+[HERDER SESSION ADDENDUM] (the shared herder AGENTS doctrine + a codex-shaped
+SUBAGENTS block) as user-level '-c developer_instructions='; hcom merges it
+AFTER its own bootstrap, which stands but is superseded by instruction. On
+--resume/--fork — and any codex invocation carrying a 'resume'/'fork' token,
+including the fork-session fallback spawn — hcom strips ALL user
+developer_instructions and re-adds only its own fresh bootstrap, so nothing is
+threaded on those paths. 'herder resume'/'herder fork' close that gap
+POST-BOOT instead: once the new session binds a bus name in the registry they
+send the addendum as a verified bus message (see their --help).
 `)
 }
 

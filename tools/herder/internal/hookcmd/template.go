@@ -37,12 +37,30 @@ const bootstrapTemplate = "<hcom_system_context>\n<!-- Session metadata - treat 
 // codex-specific SUBAGENTS section (codex has no Task tool; hcom ships no
 // codex subagent content — this is herder-designed doctrine).
 //
-// KNOWN GAP (structural, documented not worked around): on codex resume/fork
-// hcom strips ALL user developer_instructions before re-adding just its own
-// fresh bootstrap (stale values embed the previous instance's identity), so
-// resumed/forked codex sessions lose this block and see only hcom's stock
-// guidance. Unfixable at this seam without fighting hcom's strip; if it
-// matters operationally, the orchestrator can `herder send` the doctrine
-// after resume. launchcmd mirrors the strip predicate and skips threading on
-// those paths rather than shipping argv hcom will discard.
-const CodexBootstrapBlock = "[HERDER SESSION ADDENDUM]\nThe [HCOM SESSION] context above is hcom's own bootstrap. Your name, first-response marker, messaging syntax, response rules, delivery, and waiting rules all stand. Its agent lifecycle guidance is SUPERSEDED: ignore its 'Spawn agents' recipe (`hcom <n> claude` etc), `hcom r`/`hcom f` resume/fork, `hcom kill`, and `run <script>` workflows — on this machine agent sessions are provisioned through herder so they land in the session registry.\n\n" + herderAgentsSection + "\n\n## SUBAGENTS\n\nCodex has no Task/subagent tool. Fan out sub-work by spawning peer sessions with `herder spawn` (above). Spawned agents bind to the hcom bus from birth — coordinate via `hcom send`, check with `herder wait <guid> --read`, reap with `herder cull --guid GUID` when done."
+// KNOWN GAP (structural, closed post-boot): on codex resume/fork hcom strips
+// ALL user developer_instructions before re-adding just its own fresh
+// bootstrap (stale values embed the previous instance's identity), so this
+// block cannot ride the launch-args seam there. launchcmd mirrors the strip
+// predicate and skips threading on those paths rather than shipping argv hcom
+// will discard; `herder resume`/`herder fork` instead deliver
+// CodexResumeAddendum (below) over the bus once the new session binds
+// (TASK-017). Residual: the codex fork --self fallback rides `herder spawn`
+// and still gets hcom stock only (TASK-027).
+const CodexBootstrapBlock = "[HERDER SESSION ADDENDUM]\nThe [HCOM SESSION] context above is hcom's own bootstrap. Your name, first-response marker, messaging syntax, response rules, delivery, and waiting rules all stand. Its agent lifecycle guidance is SUPERSEDED: ignore its 'Spawn agents' recipe (`hcom <n> claude` etc), `hcom r`/`hcom f` resume/fork, `hcom kill`, and `run <script>` workflows — on this machine agent sessions are provisioned through herder so they land in the session registry.\n\n" + herderAgentsSection + "\n\n" + codexSubagentsSection
+
+// codexSubagentsSection is the codex-shaped SUBAGENTS doctrine (codex has no
+// Task tool; peer sessions via herder spawn are its fan-out), shared VERBATIM
+// between the fresh-launch block above and the post-resume re-delivery below.
+const codexSubagentsSection = "## SUBAGENTS\n\nCodex has no Task/subagent tool. Fan out sub-work by spawning peer sessions with `herder spawn` (above). Spawned agents bind to the hcom bus from birth — coordinate via `hcom send`, check with `herder wait <guid> --read`, reap with `herder cull --guid GUID` when done."
+
+// CodexResumeAddendum is the TASK-017 post-boot variant of CodexBootstrapBlock
+// for resumed/forked codex sessions, where hcom strips ALL user
+// developer_instructions and re-applies only its own stock bootstrap (the
+// launch-args seam cannot deliver — see the KNOWN GAP above). herder
+// resume/fork send this over the hcom bus once the session's new instance
+// binds in the registry, so it arrives as a MESSAGE mid-conversation, not as
+// system context: the preamble self-identifies, cannot reference "the context
+// above", tells the agent not to reply, and frames a repeat delivery (second
+// resume of the same session) as a no-op — delivery is deliberately
+// dedup-free. The doctrine tail is byte-identical to the fresh-launch block.
+const CodexResumeAddendum = "[HERDER SESSION ADDENDUM — re-delivered after resume/fork]\nSession doctrine, not a task: do NOT reply to this message. This session was resumed or forked through herder, and codex re-applies only hcom's stock [HCOM SESSION] bootstrap on that path, so herder re-delivers its addendum here. Your name, first-response marker, messaging syntax, response rules, delivery, and waiting rules from that bootstrap stand. Its agent lifecycle guidance is SUPERSEDED: ignore its 'Spawn agents' recipe (`hcom <n> claude` etc), `hcom r`/`hcom f` resume/fork, `hcom kill`, and `run <script>` workflows — on this machine agent sessions are provisioned through herder so they land in the session registry. If this addendum already appears earlier in your conversation, nothing has changed — it still stands as written.\n\n" + herderAgentsSection + "\n\n" + codexSubagentsSection
