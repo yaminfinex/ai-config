@@ -10,7 +10,12 @@
 #   herdr pane send-keys <pane> Enter
 #
 # Behaviour is driven by two env vars (set by the harness):
-#   MOCK_HERDR_SCENARIO  idle | normal | noenter | busy | modal
+#   MOCK_HERDR_SCENARIO  idle | normal | noenter | busy | modal | modalvis
+#       modal     — first-run trust modal in EVERY read source (idealized).
+#       modalvis  — first-run trust modal that behaves like the real
+#                   alternate-screen overlay: its text appears ONLY for
+#                   `--source visible`; recent-unwrapped reads null. Locks the
+#                   send preflight's visible-source check.
 #   MOCK_HERDR_STATE     a scratch dir; `agent send` / `send-keys Enter` drop marker
 #                        files here so `agent read` / `agent list` can move through
 #                        pre-send → buffered → submitted states deterministically.
@@ -33,6 +38,15 @@ sig='❯'   # claude sigil (all mock agents are claude)
 
 emit_read() {  # $1 = text
   jq -n --arg t "$1" '{result:{read:{text:$t}}}'
+}
+
+# read_source scans a herdr invocation's args for the value after --source.
+read_source() {
+  local prev=""
+  for a in "$@"; do
+    [[ "$prev" == "--source" ]] && { printf '%s' "$a"; return; }
+    prev="$a"
+  done
 }
 
 # ---- current agent_status for the (single) mock agent ----
@@ -107,7 +121,16 @@ case "${1:-}" in
         jq -n --arg st "$(current_status)" \
           '{result:{agents:[{pane_id:"p_10", agent:"claude", agent_status:$st}]}}';;
       read)
-        emit_read "$(current_text)";;
+        if [[ "$SCEN" == "modalvis" ]]; then
+          # Alternate-screen trust overlay: visible only; scrollback is null.
+          if [[ "$(read_source "$@")" == "visible" ]]; then
+            emit_read "$(printf '⏺ project loaded\nIs this a project you created or one you trust?\n  ❯ 1. Yes, I trust this folder\n    2. No, exit')"
+          else
+            emit_read ""
+          fi
+        else
+          emit_read "$(current_text)"
+        fi;;
       send)
         # herdr agent send <pane> <message>
         printf '%s' "${4:-}" > "$STATE/msg"

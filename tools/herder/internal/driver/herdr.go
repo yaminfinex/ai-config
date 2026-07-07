@@ -188,6 +188,14 @@ func (h *Herdr) Send(target, message string, opts SendOptions, stdout, stderr io
 			fmt.Fprintf(stderr, "herder send: refusing to send to %s: %s\n", paneID, reason)
 			return 2
 		}
+		// The scrollback preflight above is blind to alternate-screen overlays:
+		// the first-run trust dialog (and claude /login) paint the VISIBLE screen
+		// but never enter the recent-unwrapped stream, so a blind paste would land
+		// inside the modal. Re-run the block check against the visible source too.
+		if reason, blocked := preflightBlockedReason(stripChrome(h.readVisible(paneID))); blocked {
+			fmt.Fprintf(stderr, "herder send: refusing to send to %s: %s\n", paneID, reason)
+			return 2
+		}
 	}
 
 	msgProbe := messageProbe(message)
@@ -343,7 +351,19 @@ func (h *Herdr) Send(target, message string, opts SendOptions, stdout, stderr io
 }
 
 func (h *Herdr) readPane(paneID string) string {
-	out, _, err := h.client().Combined("agent", "read", paneID, "--source", "recent-unwrapped", "--lines", "80")
+	return h.readSource(paneID, "recent-unwrapped")
+}
+
+// readVisible reads the pane's VISIBLE screen — the only source that shows an
+// alternate-screen overlay (trust dialog, /login), which the recent-unwrapped
+// scrollback never captures. Used only by the send preflight; delivery
+// verification and the re-paste guard stay on recent-unwrapped by design.
+func (h *Herdr) readVisible(paneID string) string {
+	return h.readSource(paneID, "visible")
+}
+
+func (h *Herdr) readSource(paneID, source string) string {
+	out, _, err := h.client().Combined("agent", "read", paneID, "--source", source, "--lines", "80")
 	if err != nil {
 		return ""
 	}

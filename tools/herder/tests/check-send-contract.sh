@@ -50,6 +50,7 @@ SCENARIOS=(
   "bootrace|bootrace|--json alpha @MSG@"
   "force|modal|--force --json alpha @MSG@"
   "noforce_refuse|modal|--json alpha @MSG@"
+  "modalvis_refuse|modalvis|--json alpha @MSG@"
   "timeout|normal|--timeout 5000 --json alpha @MSG@"
 )
 
