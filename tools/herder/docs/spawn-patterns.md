@@ -51,6 +51,11 @@ checkout path, branch — keep the `workspace_id` if you plan to `herdr worktree
 If the worktree gets created but the spawn then fails, nothing is auto-removed; the failure
 report names the workspace and the exact remove command.
 
+`herdr worktree remove --workspace <id>` only applies while the workspace is open. Culling the
+workspace's last agent auto-closes it, leaving the git worktree + branch on disk — clean those
+up with `git worktree remove <checkout_path> && git branch -D <branch>` (the spawn summary
+prints this breadcrumb with the real coordinates; it's in your spawn transcript).
+
 Do **not** hand-roll `herdr worktree create --json` + `jq` + `herder spawn --cwd` for this —
 that two-CLI dance predates `--worktree` and leaves a spare seed shell pane in the new workspace.
 

@@ -4,6 +4,7 @@ spawned worker-<SHORT> (claude) in pane p_41 (workspace w_WT)
   cwd:    /mock/wt
   worktree: branch task/foo (base main) @ /mock/wt
             workspace w_WT (new; seed shell closed, agent is sole pane) — remove later: herdr worktree remove --workspace w_WT
+            after cull the workspace auto-closes (herdr remove no longer applies); then: git worktree remove /mock/wt && git branch -D task/foo
   perms:  --dangerously-skip-permissions (autonomous; pass --safe to opt out)
   bus:    global @worker-rive  (team: global (~/.hcom))
           HCOM_DIR=<CASE>/home/.hcom

@@ -1135,6 +1135,7 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 		} else {
 			fmt.Fprintf(r.stderr, "            workspace %s (new; WARNING: seed shell NOT closed — spare pane may remain) — remove later: herdr worktree remove --workspace %s\n", wtInfo.WorkspaceID, wtInfo.WorkspaceID)
 		}
+		fmt.Fprintf(r.stderr, "            after cull the workspace auto-closes (herdr remove no longer applies); then: git worktree remove %s && git branch -D %s\n", wtInfo.CheckoutPath, wtInfo.Branch)
 	}
 	if r.opts.NewTab {
 		if rootClosed {
@@ -1249,6 +1250,10 @@ func printHelp(stdout io.Writer) {
 		"  spawn then fails, NOTHING is auto-removed — the failure report names the workspace and the",
 		"  exact `herdr worktree remove` command. The workspace label stays herdr's branch-derived",
 		"  default (it names the TREE); the agent label stays role-short (it names the AGENT).",
+		"  Cleanup: `herdr worktree remove --workspace <id>` works only while the workspace is open.",
+		"  Culling the workspace's last agent auto-closes it, leaving the git worktree + branch on",
+		"  disk — from there use `git worktree remove <checkout_path> && git branch -D <branch>`",
+		"  (the summary prints this breadcrumb with the real coordinates).",
 		"",
 		"  --notify is the doorbell: a finished worker reports to the spawner over the hcom bus so",
 		"  it needn't poll wait in a loop. The spawner's bus name resolves from the registry by its",
