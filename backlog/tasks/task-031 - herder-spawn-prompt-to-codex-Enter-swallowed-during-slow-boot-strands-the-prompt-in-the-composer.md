@@ -3,10 +3,10 @@ id: TASK-031
 title: >-
   herder spawn --prompt to codex: Enter swallowed during slow boot strands the
   prompt in the composer
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-07 20:24'
-updated_date: '2026-07-07 20:55'
+updated_date: '2026-07-07 21:59'
 labels:
   - run-herder-dx
 dependencies: []
@@ -24,11 +24,17 @@ Direction to evaluate: when ready-wait times out but the paste landed (composerH
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Repro pinned: a slow-boot codex fixture (or mock delay) demonstrates paste-lands/Enter-swallowed producing not_delivered with the prompt stranded
-- [ ] #2 Chosen remedy implemented: bounded post-timeout late-submit (only with composer-payload evidence) OR spawn hint text names the manual send-keys Enter recovery — decision recorded with rationale
-- [ ] #3 TASK-024 evidence gating preserved (no false delivered); spawn goldens reviewed line-by-line if verify text changes
-- [ ] #4 Pinned gate green (go vet/test + full battery, env -u)
+- [x] #1 Repro pinned: a slow-boot codex fixture (or mock delay) demonstrates paste-lands/Enter-swallowed producing not_delivered with the prompt stranded
+- [x] #2 Chosen remedy implemented: bounded post-timeout late-submit (only with composer-payload evidence) OR spawn hint text names the manual send-keys Enter recovery — decision recorded with rationale
+- [x] #3 TASK-024 evidence gating preserved (no false delivered); spawn goldens reviewed line-by-line if verify text changes
+- [x] #4 Pinned gate green (go vet/test + full battery, env -u)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+SUPERSEDED by TASK-032 (Unit R): spawn no longer pastes for claude/codex — the stranded-composer state is not producible by spawn (B1 bus-first delivery, merged with TASK-032). ACs disposed: repro intent pinned by bind_timeout/bus goldens + map R1 entry (the paste path no longer exists to reproduce against); remedy = design change (B1) rather than late-submit; manual send-keys-Enter recovery for human-dirtied composers documented in spawn hints + README Delivery (B2); TASK-024 gating untouched (floor); battery green. Closed at Unit R acceptance per ratified B4.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 

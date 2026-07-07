@@ -3,11 +3,11 @@ id: TASK-032
 title: >-
   spawn delivery mechanics: consolidated brittleness review (map, failure-mode
   inventory, hardening)
-status: In Progress
+status: Done
 assignee:
   - unit-r-zulu
 created_date: '2026-07-07 20:31'
-updated_date: '2026-07-07 20:55'
+updated_date: '2026-07-07 21:59'
 labels:
   - run-herder-dx
 dependencies: []
@@ -32,7 +32,13 @@ SEQUENCING: TASK-031 (late-submit remedy) is GATED on this review — its fix sh
 - [x] #1 PHASE A map artifact exists (napkin or docs): full delivery state machine per agent family with every timeout/retry/evidence gate named
 - [x] #2 Failure-mode inventory: TASK-023/024/031 + wave-3 NOT-confirmed incidents each located on the map with root cause; residual race windows enumerated explicitly
 - [x] #3 Ranked hardening proposal reported for ratification BEFORE code, incl. agent-family-aware readiness assessment and the TASK-031 late-submit question
-- [ ] #4 Ratified subset implemented with suite/golden coverage; TASK-024 evidence gating not weakened; battery green
-- [ ] #5 TASK-031 resolved or formally superseded; spawn NOT-confirmed hint + README delivery section match post-hardening reality
-- [ ] #6 QUESTION ZERO (user, 2026-07-07): why is a paste required at all — can spawn initial-prompt delivery ride the hcom bus (TASK-017-style post-registration send) instead of bootpaste? Evaluate explicitly: readiness (registry-bind poll), first-turn semantics (does a bus message wake a never-prompted fresh session, per family — lusa smoke says idle codex delivers; reviewer-kimi dirty-composer says not always), framing (<hcom>-tagged vs plain user prompt), bash/bus-less spawns, slash-command prompts. If viable, bootpaste retires to compact-only and the whole paste/Enter state machine collapses — answer this BEFORE proposing paste hardening
+- [x] #4 Ratified subset implemented with suite/golden coverage; TASK-024 evidence gating not weakened; battery green
+- [x] #5 TASK-031 resolved or formally superseded; spawn NOT-confirmed hint + README delivery section match post-hardening reality
+- [x] #6 QUESTION ZERO (user, 2026-07-07): why is a paste required at all — can spawn initial-prompt delivery ride the hcom bus (TASK-017-style post-registration send) instead of bootpaste? Evaluate explicitly: readiness (registry-bind poll), first-turn semantics (does a bus message wake a never-prompted fresh session, per family — lusa smoke says idle codex delivers; reviewer-kimi dirty-composer says not always), framing (<hcom>-tagged vs plain user prompt), bash/bus-less spawns, slash-command prompts. If viable, bootpaste retires to compact-only and the whole paste/Enter state machine collapses — answer this BEFORE proposing paste hardening
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+DONE by worker-zulu (Unit R, wave 5; branch unit-r-spawn-review; hygiene via orchestrator pen from #3231/#3333/#3388). PHASE A: map napkin (unit-r-spawn-delivery-map.md) — Question Zero answered YES via live probes rosa/keto/vila/rina: bus delivery wakes never-prompted fresh sessions of BOTH families <1s on empty composer; DIRTY composer starves silently on both (kimi 8h); hcom is queue-until-deliverable (send at bind+107ms into booting codex: zero loss). Bootpaste manufactured the exact state that defeated its own fallback — TASK-031 dead end was self-inflicted. PHASE B commits: 9d5064f+2361dfc+e6534bb+f60505e send receipt verification made real+message-specific (verify=delivered was TRIPLY broken: wrong query side — receipts live on RECEIVER as deliver:<SENDER>; same-second --after exclusion; JSONL-vs-array parse — then review hardened: strictly-newer-than-snapshot id + per busDir/sender/target flock for concurrent sends); 6feb865 B1 bus-first spawn delivery (awaitBind HERDER_SPAWN_BIND_MS 60s → in-process DeliverBus full prompt → receipt verify HERDER_SPAWN_VERIFY_MS 20s; codex brief staging deleted; vocabulary delivered/queued/send_failed/not_joined/bind_timeout/ready_match_timeout); 222b1bb review P1: prompt bind gate child-specific only (this-guid enrichment or frozen-launch-pane), bind_ambiguous unreachable+removed; 17b6cd7 README P3. Bootpaste retired to compact+bash, TASK-024 floor untouched (pinned by compact suite + bash_prompt golden). Rulings: --ready-match = additional send gate; --no-ready-wait no-op for bus prompts. --json: brief_file field REMOVED. CODEX REVIEW: 3 rounds — P1 misdelivery-class + P2 receipt races caught by review, not gates; final APPROVE. VERIFICATION: hera battery green in worktree post-DONE, post-P1/P2, post-round-3 (17/17+go each time); live smokes: codex reviewer spawn via R binary = verify delivered (receipt seen) — the kimi scenario dogfooded; TestConcurrentSendsAreSerialized fails unlocked 2/2, passes locked. FOLLOW-UPS: TASK-033 (row enrichment residual), relay.md stale resend line (hera fixes at integration), TASK-029 candidates 7/8/9.
+<!-- SECTION:NOTES:END -->
