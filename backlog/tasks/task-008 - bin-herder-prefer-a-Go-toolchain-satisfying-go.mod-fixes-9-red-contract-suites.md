@@ -3,10 +3,10 @@ id: TASK-008
 title: >-
   bin/herder: prefer a Go toolchain satisfying go.mod (fixes 9 red contract
   suites)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-07 06:33'
-updated_date: '2026-07-07 06:51'
+updated_date: '2026-07-07 07:29'
 labels:
   - run-herder-dx
 dependencies: []

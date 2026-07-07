@@ -3,10 +3,10 @@ id: TASK-012
 title: >-
   bin/herder: build-cache thrash across checkouts — rm -f herder-* wipes sibling
   binaries
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-07 06:40'
-updated_date: '2026-07-07 06:51'
+updated_date: '2026-07-07 07:29'
 labels:
   - run-herder-dx
 dependencies: []
