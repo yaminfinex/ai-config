@@ -7,3 +7,7 @@ herder launch: hcom not on PATH. herder launches agents through hcom and never f
 === HCOM ARGV ===
 
 === ENV PROBES ===
+
+=== TOOL ARGV ===
+
+=== TOOL ENV ===

@@ -5,14 +5,17 @@
 === EXIT ===
 0
 === HCOM ARGV ===
-claude
+r
+sess-1
 --run-here
+-p
+hello
 === ENV PROBES ===
 HCOM_LAUNCH_INFLIGHT=1
 CLAUDE_CONFIG_DIR=
 CODEX_HOME=
 GEMINI_CLI_HOME=
-HCOM_DIR=<CASE>/home/.hcom
+HCOM_DIR=
 === TOOL ARGV ===
 
 === TOOL ENV ===

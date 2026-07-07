@@ -1,13 +1,15 @@
 === STDERR ===
-herder launch: usage: herder launch <tool> [--tag TAG] [tool-args...]
+
 === STDOUT ===
 
 === EXIT ===
-1
+0
 === HCOM ARGV ===
 
 === ENV PROBES ===
 
 === TOOL ARGV ===
-
+-p
+hello
 === TOOL ENV ===
+HCOM_LAUNCH_INFLIGHT=1

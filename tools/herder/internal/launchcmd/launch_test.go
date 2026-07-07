@@ -89,6 +89,35 @@ func TestThreadCodexBootstrapBlock_DoesNotMutateInput(t *testing.T) {
 	}
 }
 
+// isPrintInvocation must mirror hcom's print switch exactly (any claude arg
+// literally "-p" or "--print") and stay claude-only: codex's -p is --profile,
+// and a false positive there would silently unbind a real session from the bus.
+func TestIsPrintInvocation(t *testing.T) {
+	cases := []struct {
+		tool string
+		args []string
+		want bool
+	}{
+		{"claude", []string{"-p", "hello"}, true},
+		{"claude", []string{"--print", "hello"}, true},
+		{"claude", []string{"--model", "opus", "-p"}, true},
+		{"claude", []string{"--model", "opus"}, false},
+		{"claude", []string{}, false},
+		// Only exact tokens trigger, matching hcom's argv scan.
+		{"claude", []string{"--print-width", "80"}, false},
+		{"claude", []string{"-print"}, false},
+		{"claude", []string{"prompt with -p inside"}, false},
+		// Other tools never bypass: -p means different things there.
+		{"codex", []string{"-p", "myprofile"}, false},
+		{"gemini", []string{"--print"}, false},
+	}
+	for _, c := range cases {
+		if got := isPrintInvocation(c.tool, c.args); got != c.want {
+			t.Errorf("isPrintInvocation(%q, %v) = %v, want %v", c.tool, c.args, got, c.want)
+		}
+	}
+}
+
 // codexStripsDevInstructions must mirror hcom's strip predicate exactly (any
 // arg literally "resume" or "fork"): threading on those paths ships argv hcom
 // discards before launch.

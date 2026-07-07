@@ -7,6 +7,8 @@
 === HCOM ARGV ===
 codex
 --run-here
+-p
+myprofile
 -c
 developer_instructions=[HERDER SESSION ADDENDUM]
 The [HCOM SESSION] context above is hcom's own bootstrap. Your name, first-response marker, messaging syntax, response rules, delivery, and waiting rules all stand. Its agent lifecycle guidance is SUPERSEDED: ignore its 'Spawn agents' recipe (`hcom <n> claude` etc), `hcom r`/`hcom f` resume/fork, `hcom kill`, and `run <script>` workflows — on this machine agent sessions are provisioned through herder so they land in the session registry.
@@ -32,9 +34,9 @@ Codex has no Task/subagent tool. Fan out sub-work by spawning peer sessions with
 === ENV PROBES ===
 HCOM_LAUNCH_INFLIGHT=1
 CLAUDE_CONFIG_DIR=
-CODEX_HOME=<CASE>/home/.codex
+CODEX_HOME=
 GEMINI_CLI_HOME=
-HCOM_DIR=<CASE>/team
+HCOM_DIR=
 === TOOL ARGV ===
 
 === TOOL ENV ===

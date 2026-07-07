@@ -35,6 +35,17 @@ printf '%s\n' "$@" >"$PROBE/argv"
 exit "${MOCK_HCOM_RC:-0}"
 MOCK_HCOM
 chmod +x "$MOCKBIN/hcom"
+# Mock claude lives in BASEBIN (present in BOTH path modes): the print bypass
+# execs the PATH-resolved tool directly and must work with hcom absent.
+cat >"$BASEBIN/claude" <<'MOCK_CLAUDE'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${PROBE:?}"
+printf '%s\n' "$@" >"$PROBE/tool_argv"
+printf 'HCOM_LAUNCH_INFLIGHT=%s\n' "${HCOM_LAUNCH_INFLIGHT-}" >"$PROBE/tool_env"
+exit 0
+MOCK_CLAUDE
+chmod +x "$BASEBIN/claude"
 cat >"$BASEBIN/go" <<'MOCK_GO'
 #!/usr/bin/env bash
 exec /opt/homebrew/bin/go "$@"
@@ -71,6 +82,8 @@ run_case() {
     printf '=== EXIT ===\n%s\n' "$code"
     printf '=== HCOM ARGV ===\n%s\n' "$(cat "$case_dir/probe/argv" 2>/dev/null)"
     printf '=== ENV PROBES ===\n%s\n' "$(cat "$case_dir/probe/env" 2>/dev/null)"
+    printf '=== TOOL ARGV ===\n%s\n' "$(cat "$case_dir/probe/tool_argv" 2>/dev/null)"
+    printf '=== TOOL ENV ===\n%s\n' "$(cat "$case_dir/probe/tool_env" 2>/dev/null)"
   } | sed "s|$case_dir|<CASE>|g"
 }
 
@@ -115,6 +128,14 @@ scenario preset_claude    with-hcom '<case-home>' '<case-team>' 'CLAUDE_CONFIG_D
 scenario global_unset     with-hcom '<case-home>' ''          ''                                     claude
 scenario global_home      with-hcom '<case-home>' '<case-home>/.hcom' ''                            claude
 scenario unknown_tool     with-hcom '<case-home>' '<case-team>' ''                                  pi --flag
+# TASK-010 print bypass: claude -p/--print one-shots skip hcom and exec the
+# PATH-resolved tool with the shim recursion guard set.
+scenario print_p          with-hcom '<case-home>' ''          ''                                     claude -p hello
+scenario print_long       with-hcom '<case-home>' ''          ''                                     claude --model opus --print hello
+scenario print_tag_drop   with-hcom '<case-home>' ''          ''                                     claude --tag worker -p hello
+scenario print_no_hcom    no-hcom   '<case-home>' ''          ''                                     claude -p hello
+scenario print_codex      with-hcom '<case-home>' ''          ''                                     codex -p myprofile
+scenario print_resume     with-hcom '<case-home>' ''          ''                                     --resume claude sess-1 -p hello
 
 if [[ "$WRITE" -eq 1 ]]; then
   printf '\nGoldens written from: %s\n' "$HL"
