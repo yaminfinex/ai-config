@@ -85,6 +85,12 @@ re-querying. If the worktree is created but the spawn then fails, nothing is aut
 failure report names the workspace and the exact remove command. Worktree/workspace lifecycle
 stays herdr-owned; herder only wraps it.
 
+Cleanup has two phases: `herdr worktree remove --workspace <id>` works only while the workspace
+is still open. Culling the workspace's last agent auto-closes the workspace (herdr behavior), and
+the git worktree + branch stay on disk — from there cleanup is
+`git worktree remove <checkout_path> && git branch -D <branch>`. The spawn summary prints this
+post-cull breadcrumb with the real coordinates so it survives in the spawn transcript.
+
 ## Delivery
 
 hcom is THE transport (TASK-003, locked): `herder send` resolves every target form
