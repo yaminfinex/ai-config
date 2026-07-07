@@ -32,10 +32,10 @@ case "${1:-}" in
     shift
     printf '%s\n' "${HCOM_DIR:-}" >>"$MOCK_PROBE_DIR/hcom_dirs"
     printf '%s\n' "$*" >>"$MOCK_PROBE_DIR/hcom_kill_argv"
-    if [[ "${MOCK_HCOM_KILL_FAIL:-0}" = "1" ]]; then
-      printf 'mock kill failed\n' >&2
-      exit 23
-    fi
+    case "${MOCK_HCOM_KILL_FAIL:-0}" in
+      1)        printf 'mock kill failed\n' >&2; exit 23;;
+      notfound) printf 'instance %s not found\n' "$*" >&2; exit 1;;
+    esac
     printf '{"result":{"ok":true}}\n'
     ;;
   *)
@@ -197,6 +197,14 @@ run_cull 1 all --label fail
 [[ "$(cat "$PROBE/closed_panes" 2>/dev/null)" = "p_fail" ]] && ok "kill failure: pane still closed" || bad "kill failure: pane still closed" "closed=$(cat "$PROBE/closed_panes" 2>/dev/null)"
 [[ "$(line_count "$PROBE/hcom_kill_argv")" = "1" ]] && ok "kill failure: hcom attempted once" || bad "kill failure: hcom attempted once" "count=$(line_count "$PROBE/hcom_kill_argv")"
 grep -q 'bus: drop failed (mock kill failed) — pane closed anyway' <<<"$RUN_OUT" && ok "kill failure: reports advisory failure" || bad "kill failure: reports advisory failure" "out=$RUN_OUT"
+
+# 3b. An already-absent bus row (hcom kill: not found) is the expected
+# post-timeout state — softened to a plain note, not an alarming "drop failed".
+make_case gonebus failbus
+run_cull notfound all --label fail
+[[ "$RUN_RC" -eq 0 ]] && ok "already-gone bus: cull exits 0" || bad "already-gone bus: cull exits 0" "rc=$RUN_RC out=$RUN_OUT"
+grep -q 'bus: @bus-fail already gone (nothing to drop)' <<<"$RUN_OUT" && ok "already-gone bus: softened note" || bad "already-gone bus: softened note" "out=$RUN_OUT"
+grep -q 'drop failed' <<<"$RUN_OUT" && bad "already-gone bus: no drop-failed line" "out=$RUN_OUT" || ok "already-gone bus: no drop-failed line"
 
 # 4. --gone sweep applies bus-drop per record without calling pane close.
 make_case gone gone

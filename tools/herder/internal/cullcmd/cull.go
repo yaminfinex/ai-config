@@ -370,6 +370,13 @@ func dropBusEntry(rec registry.Record, stdout io.Writer) {
 	if reason == "" {
 		reason = fmt.Sprintf("exit %d", rc)
 	}
+	// An already-absent bus row is the EXPECTED post-timeout/cull state — the
+	// agent's hcom entry was reaped when its pane died — not a failure. Report it
+	// as a plain note instead of an alarming "drop failed".
+	if strings.Contains(strings.ToLower(reason), "not found") {
+		fmt.Fprintf(stdout, "bus: @%s already gone (nothing to drop)\n", hcomName)
+		return
+	}
 	fmt.Fprintf(stdout, "bus: drop failed (%s) — pane closed anyway\n", reason)
 }
 
