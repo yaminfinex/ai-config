@@ -3,10 +3,10 @@ id: TASK-004
 title: >-
   herder fork: child provenance.spawned_by records original spawner, not the
   forking session
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-07 05:37'
-updated_date: '2026-07-07 06:52'
+updated_date: '2026-07-07 07:29'
 labels:
   - run-herder-dx
 dependencies: []
