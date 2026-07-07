@@ -27,13 +27,14 @@ issues; when running Go directly from this module, use `env -u GOROOT go ...`.
 From the repository root:
 
 ```bash
-for f in tools/herder/tests/check-*.sh; do env -u HERDER_BIN -u AI_CONFIG_ROOT bash "$f"; done
+for f in tools/herder/tests/check-*.sh; do bash "$f"; done
 ```
 
-The `env -u` matters in herder-spawned or worktree sessions: inherited `HERDER_BIN` /
-`AI_CONFIG_ROOT` beat the scripts' own locations and silently point the suites at another
-checkout's tree (the suites will neutralize these themselves under TASK-019; until then, unset
-them at the call site).
+The suites neutralize inherited `HERDER_BIN` / `AI_CONFIG_ROOT` themselves (each pins
+`AI_CONFIG_ROOT` to its own checkout and ignores the spawn-exported binary override), so
+they are safe to run bare from herder-spawned or worktree sessions. `env -u HERDER_BIN
+-u AI_CONFIG_ROOT bash "$f"` still works and is harmless belt-and-braces on checkouts
+that predate the sweep.
 
 From this directory:
 

@@ -16,13 +16,14 @@ set -uo pipefail
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/../../.." && pwd)"
-HERDER="${HERDER_BIN:-$REPO_ROOT/bin/herder}"
-
-# The bin/herder wrapper resolves its Go module through AI_CONFIG_ROOT whenever
-# that is already exported — and herder-spawned worktree agents inherit the MAIN
-# checkout's value — so pin it to THIS repo or the test silently builds and
-# exercises another checkout's sources.
+# Env hygiene (TASK-019): herder-spawned agents export HERDER_BIN/AI_CONFIG_ROOT
+# pointing at the spawner's checkout — honoring them silently drives another
+# tree's wrapper/sources. Ignore the binary override; pin the root to THIS tree.
+# (The explicit-binary knob keeps a purpose-named var so the spawn-exported
+# HERDER_BIN can never select the binary under test.)
+unset HERDER_BIN
 export AI_CONFIG_ROOT="$REPO_ROOT"
+HERDER="${HERDER_HOOK_BIN:-$REPO_ROOT/bin/herder}"
 
 ROOT="$(mktemp -d)"
 cleanup() { rm -rf "$ROOT"; }
