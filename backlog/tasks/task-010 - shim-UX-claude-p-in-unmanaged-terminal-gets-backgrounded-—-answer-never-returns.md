@@ -3,10 +3,10 @@ id: TASK-010
 title: >-
   shim UX: claude -p in unmanaged terminal gets backgrounded — answer never
   returns
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-07 06:33'
-updated_date: '2026-07-07 07:41'
+updated_date: '2026-07-07 07:43'
 labels:
   - run-herder-dx
 dependencies: []

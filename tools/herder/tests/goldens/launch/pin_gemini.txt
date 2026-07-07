@@ -13,3 +13,6 @@ CLAUDE_CONFIG_DIR=
 CODEX_HOME=
 GEMINI_CLI_HOME=<CASE>/home/.gemini
 HCOM_DIR=<CASE>/team
+=== TOOL ARGV ===
+
+=== TOOL ENV ===

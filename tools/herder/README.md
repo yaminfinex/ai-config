@@ -12,7 +12,8 @@ use `env -u GOROOT go ...`.
 - `cmd/herder/` - binary entry point.
 - `internal/` - subcommands, registry handling, hcom/herdr drivers, launch wrappers, and sidecars.
 - `shims/` - `claude` and `codex` PATH shims that route interactive launches through
-  `herder launch`.
+  `herder launch`. Print one-shots (`claude -p/--print`) bypass the bus and exec the real
+  binary — see the print-bypass note in `docs/delivery-drivers.md`.
 - `tests/` - hermetic contract suites, fixtures, mocks, and goldens.
 
 ## Gates
