@@ -50,11 +50,9 @@ not the whole doc>.
 ## Context discipline (≤<budget>)
 
 Own ONE unit. If it balloons: WIP commit, then a HANDOFF report on your unit thread (state +
-ordered remaining steps for an agent with zero shared memory + WIP sha), then either compact in
-place (self-send a steered `/compact` — `herder send "$HERDR_PANE_ID" '/compact …'`, `herder send
---help`; same session continues) or
-stop and let a fresh copy pick up the report. Compact in place when the context is coherent and
-only heavy; spawn fresh when it's degraded or should switch agent/model.
+ordered remaining steps for an agent with zero shared memory + WIP sha), then stop and let a
+fresh copy pick up the report. (INTERIM until TASK-022's `herder compact`: in-place steered
+compaction is gone — `herder send` is bus-only and cannot type `/compact` into your composer.)
 
 ## Decisions already made — do not re-litigate
 

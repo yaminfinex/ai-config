@@ -108,16 +108,17 @@ For mid-session messages to a running peer, prefer the wrapper:
 herder send <guid|short-guid|label|pane_id> "Quick clarification: focus only on auth.ts changes."
 ```
 
-It preflights state (refuses to send into interrupted / modal panes unless `--force`), writes the text, submits Enter, and verifies the prompt buffer cleared. See `herder-delta.md` → *Driving peer agents safely* for the rationale.
+Delivery is bus-only (TASK-003): every target form resolves through the registry to the peer's
+recorded hcom name and the message rides the bus with a delivery receipt (`verify=delivered`,
+or `queued` when the peer is mid-turn — do NOT resend). A target with no bus-bound registry row
+(bash panes, sidecar rows) is refused with exit 2; keystrokes are never typed.
 
-For raw shells where you don't want submission, drop to the primitives:
+For raw shells (which `herder send` refuses), drive the pane with the primitives:
 
 ```bash
 herdr agent send <label> "echo 'still here'"      # literal text, no Enter
 herdr pane send-keys <pane_id> Enter              # submit when ready
 ```
-
-For a **long brief to a codex peer**, do not send it over the wire — see recipe H below.
 
 ## G. Spawn off a specific parent pane (not the focused one)
 
@@ -135,28 +136,15 @@ herder spawn \
 
 `--from-pane` and `--workspace` are mutually exclusive. `herder spawn` resolves `--from-pane` to its `workspace_id` and validates it against the live workspace list before calling `agent start`, so a stale id fails fast with a clear error instead of the upstream `agent_placement_not_found` JSON.
 
-## H. Send a long brief to codex (stage a file, send a one-line pointer)
+## H. Long briefs to codex (boot-time staging; mid-session rides the bus)
 
-Codex collapses any paste over ~1k chars into a `[Pasted Content N chars]` blob, and a multi-line brief can trip its "Create a plan?" overlay — in both cases codex parses only the tail and builds the wrong thing. Never push a long brief to codex over the wire. Stage it and point at it.
+Codex's composer collapses any *paste* over ~1k chars into a `[Pasted Content N chars]` blob, and a multi-line paste can trip its "Create a plan?" overlay — in both cases codex parses only the tail. This is a KEYSTROKE pathology, so after TASK-003 it can only occur at the one place keystrokes remain:
 
-> **At spawn time this is automatic.** `herder spawn --agent codex` already stages a long or multi-line `--prompt`/`--prompt-file` to `$HERDER_STATE_DIR/briefs/<guid>.md` and sends only a one-line pointer (reported as `brief: staged to …`). The recipe below is for **mid-session** `herder send` to an already-running codex, where staging is still your responsibility.
+> **Boot-time initial prompt — automatic.** `herder spawn --agent codex` stages a long or multi-line `--prompt`/`--prompt-file` to `$HERDER_STATE_DIR/briefs/<guid>.md` and pastes only a one-line pointer (reported as `brief: staged to …`).
 
-```bash
-# 1. Write the full brief to a gitignored scratch file (napkins/ is gitignored;
-#    use /tmp/… outside a repo).
-cat > napkins/impl-brief.md <<'EOF'
-<the full multi-line brief, however long>
-EOF
+**Mid-session sends need no staging**: `herder send` to a codex peer rides the hcom bus (hook injection, not composer paste), so blob/overlay pathologies do not apply — any length is safe on the wire. A big file pointer is still often kinder to the peer's context than a wall of text, but that is a context choice, not a transport constraint.
 
-# 2. Send a SHORT single-line pointer. Single-line sends submit cleanly — no
-#    overlay, no [Pasted Content] blob, no doubling.
-herder send <guid|label|pane_id> \
-  "Read napkins/impl-brief.md in full, then plan before writing any code."
-```
-
-`herder send` handles the codex blob case (it treats a fresh `[Pasted Content]` blob as landed instead of re-pasting), but keeping the wire payload to one short line sidesteps the blob and overlay entirely — strictly better.
-
-If a codex composer ends up polluted (e.g. a doubled paste from an earlier attempt), there is **no key that clears it**: `herdr pane send-keys` accepts only `Enter` / `esc` / `C-c`, and `esc` / `C-c` interrupt the agent rather than clearing the line (`BSpace`, `C-u` are rejected as `invalid_key`). Just submit — codex tolerates a doubled idempotent instruction, or expands a `[Pasted Content]` blob on the first Enter and submits on the second.
+If a codex composer ends up polluted anyway (e.g. a human pasted into the pane), there is **no key that clears it**: `herdr pane send-keys` accepts only `Enter` / `esc` / `C-c`, and `esc` / `C-c` interrupt the agent rather than clearing the line (`BSpace`, `C-u` are rejected as `invalid_key`). Just submit — codex tolerates a doubled idempotent instruction, or expands a `[Pasted Content]` blob on the first Enter and submits on the second.
 
 This is the same file-staging idea as `--prompt-file` for initial prompts (recipe B): for codex, keep the wire payload to a single short line whether it's an initial prompt or a mid-session brief.
 

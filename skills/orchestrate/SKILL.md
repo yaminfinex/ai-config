@@ -90,17 +90,12 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
 2. **Spawn prompts are one line** — "read <playbook> in full, then execute <unit>". Context
    travels through the files + branch, never the prompt.
 3. **Context discipline.** One unit per agent; wide reading goes to subagents. A ballooning unit
-   has two recoveries — both write durable state first (commit WIP + a HANDOFF report on the unit
-   thread), since whatever isn't persisted is lost either way. **Compact in place:** as the last
-   act before the turn ends, self-send a steered compact — `herder send "$HERDR_PANE_ID" '/compact
-   <steer: journal state, open units, next gate>'`. Targeting your own pane queues a real input
-   line the harness fires the instant the turn ends; it is a live command, not a test, so persist
-   durable state first (above). It keeps the same pane, session identity, and bus name; the agent
-   wakes post-compaction and continues its own unit with a summary it steered. **Spawn a fresh
-   continuation:** stop and let a clean
-   copy pick up from the HANDOFF report. Compact in place when the context is still coherent and
-   only heavy; spawn fresh when it is already degraded (a steered compaction of muddled context
-   just preserves the muddle) or the continuation should switch agent/model.
+   writes durable state first (commit WIP + a HANDOFF report on the unit thread — whatever isn't
+   persisted is lost), then **stops and lets a fresh spawn pick up from the HANDOFF report**.
+   INTERIM (TASK-003 → TASK-022): steered in-place compaction (`herder send "$HERDR_PANE_ID"
+   '/compact …'`) is GONE — `herder send` is bus-only, and a bus message cannot type a slash
+   command into your own composer. A dedicated `herder compact <steer>` is tracked as TASK-022;
+   until it lands, the fresh-spawn handoff is the ONLY recovery.
 4. **Verification before done.** A finished worker reports DONE on its unit thread with the
    playbook-pinned commands' results. The orchestrator never trusts the claim: it re-runs the
    pinned gates itself (a build-cached green is not independent evidence), then records the
@@ -137,5 +132,6 @@ The bus and panes are shared with the user; a few moves are never yours to make:
 - Never `herdr workspace close` or `herdr tab close` — workspace/tab lifecycle is the user's.
 - Never send `esc` to a running peer — it doubles as interrupt and kills the peer's in-flight turn.
 - Never `herdr session stop` / `session delete` without explicit user confirmation.
-- Prefer `herder send` over any raw `herdr` keystroke call (raw `agent send` writes text with no
-  Enter, so the message never submits).
+- `herder send` is the ONLY delivery path (bus-only; it refuses non-bus targets rather than
+  typing keystrokes). Never message a peer with raw `herdr agent send` / `pane send-keys` —
+  raw `agent send` writes text with no Enter, so the message never submits.

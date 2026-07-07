@@ -37,24 +37,18 @@ herder spawn --role leg-<N+1> --agent claude --cwd <worktree> --no-focus \
 ## Mid-leg handoff (context budget)
 
 If a leg balloons, commit WIP and journal `## Leg N — HANDOFF (continue)` with exact remaining
-steps + current state, then either:
+steps + current state, then **spawn the continuation** — same leg, prompt notes "continue from
+the HANDOFF entry".
 
-- **Compact in place** — self-send a steered `/compact <HANDOFF entry, remaining steps, gate>`
-  as the last act before the turn ends (`herder send "$HERDR_PANE_ID" '/compact …'`; `herder send
-  --help`). The same session continues
-  its own leg post-compaction; no respawn, and the relay's self-spawn wiring is untouched.
-  Default when the context is coherent and only heavy.
-- **Spawn the continuation** — same leg, prompt notes "continue from the HANDOFF entry". Prefer
-  when the context is degraded or a different agent/model should take the leg.
-
-Either escape hatch is what lets legs be sized optimistically.
+INTERIM (TASK-003 → TASK-022): compact-in-place (self-sending a steered `/compact` via
+`herder send "$HERDR_PANE_ID"`) is GONE — send is bus-only and a bus message cannot type a
+slash command. `herder compact <steer>` is tracked as TASK-022; until it lands, the
+fresh-spawn continuation is the only escape hatch, so size legs accordingly.
 
 ## The soloist
 
 Degenerate relay: one role, no leg boundaries. A single agent works a runbook until context
-approaches budget. Its cheapest budget reset is **compact in place** — bring the journal current,
-then self-send a steered `/compact <runbook position, next steps>` and continue as the same
-session — so the soloist stays one continuous agent across many compactions instead of a chain
-of respawns. Fall back to a fresh-copy mid-leg handoff when a compaction would only preserve a
-muddled context. Same state files, gate, and mechanics either way; the HANDOFF entries (and the
-steered summaries) become the runbook's progress marks.
+approaches budget, then resets via the mid-leg handoff above: journal a HANDOFF entry, stop, and
+a fresh copy continues the runbook (a chain of respawns over the same state files). Same state
+files, gate, and mechanics as any leg; the HANDOFF entries become the runbook's progress marks.
+(When TASK-022's `herder compact` lands, in-place compaction returns as the cheaper reset.)

@@ -1,10 +1,10 @@
 # Herder herdr notes
 
 > HISTORICAL (2026-07-05): this is a pre-Go-port working note retained for
-> low-level herdr observations and sharp-edge provenance. `delivery-drivers.md`,
-> current `bin/herder --help`, `herder <cmd> --help`, and the Go source
-> are the shipped source of truth. Re-verify command syntax with `herdr <cmd> -h`
-> before relying on examples here.
+> low-level herdr observations and sharp-edge provenance. The tools/herder
+> README (incl. its Delivery section), current `bin/herder --help`,
+> `herder <cmd> --help`, and the Go source are the shipped source of truth.
+> Re-verify command syntax with `herdr <cmd> -h` before relying on examples here.
 
 Upstream's own herdr usage doc lives at https://github.com/ogulcancelik/herdr/blob/master/SKILL.md — read it if you want the full concepts walk-through, recipes, and the "ids are not durable" warning in context. `herder` assumes you know enough herdr to use the commands below; everything else can be confirmed with `herdr <cmd> -h`.
 

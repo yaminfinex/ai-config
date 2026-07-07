@@ -15,10 +15,11 @@ issues; when running Go directly from this module, use `env -u GOROOT go ...`.
 ## Layout
 
 - `cmd/herder/` - binary entry point.
-- `internal/` - subcommands, registry handling, hcom/herdr drivers, launch wrappers, and sidecars.
+- `internal/` - subcommands, registry handling, the hcom bus delivery engine, launch wrappers,
+  and sidecars.
 - `shims/` - `claude` and `codex` PATH shims that route interactive launches through
   `herder launch`. Print one-shots (`claude -p/--print`) bypass the bus and exec the real
-  binary — see the print-bypass note in `docs/delivery-drivers.md`.
+  binary — see "Print one-shot bypass" under Delivery below.
 - `tests/` - hermetic contract suites, fixtures, mocks, and goldens.
 
 ## Gates
@@ -67,7 +68,49 @@ knowing when working across checkouts and worktrees:
 
 `--notify` resolves the spawner's bus name from the registry by guid *and* by pane/terminal
 coordinates, so enrolled sessions (no `$HERDER_GUID` in their environment) get bus-native
-completion reports; the keystroke ring remains the fallback for genuinely bus-less spawners.
+completion reports. Notify is bus-native ONLY: a spawner that resolves to no bus name is a hard
+error before any pane is created (the keystroke ring went with the herdr delivery transport,
+TASK-003).
+
+## Delivery
+
+hcom is THE transport (TASK-003, locked): `herder send` resolves every target form
+(guid | short-guid | label | terminal_id | pane_id) through the spawn registry to the agent's
+recorded bus name and delivers over the hcom bus, scoped to the row's recorded `hcom_dir` (team
+buses cross correctly), then polls for a `deliver:` receipt — ack ⇒ `delivered`, none in the
+window ⇒ `queued` (do NOT resend). A target with no bus-bound registry row is refused with exit 2;
+keystrokes are never typed. Exit codes and target forms: `herder send --help`. Contract pinned by
+`tests/check-send-contract.sh` (bus-only goldens) + `check-hcom-contract.sh` (scoping/addressing).
+
+Two deliberate exceptions ride keystrokes, neither reachable as a send transport:
+
+- **Boot-time initial prompt** (`herder spawn --prompt`): typed into the freshly booted pane by
+  the spawn-private paste engine (`internal/spawncmd/bootpaste.go`) — at that moment the agent has
+  no bus binding yet (hcom name capture happens after delivery; bash agents never get one).
+- **Trust-modal auto-accept** at spawn readiness (a single Enter; `--safe` opts out).
+
+**Print one-shot bypass (TASK-010):** `claude -p/--print ...` hand-run through the shims skips the
+bus entirely — hcom hard-codes print mode as a persistent background agent (stdin nulled, stdout to
+`~/.hcom/logs`, Stop hook polling the bus), so a routed one-shot would never return its answer.
+`herder launch` detects the flag before building hcom args, sets `HCOM_LAUNCH_INFLIGHT=1`, and execs
+the PATH-resolved tool; the shim's recursion guard resolves the real binary. `--tag` is ignored on
+this path and hcom need not be installed. Claude-only: codex `-p` is `--profile`, and codex
+one-shots (`codex exec`) still ride the hcom path. Applies to fresh launches only — `--resume`/
+`--fork` stay on hcom.
+
+**Team buses (opt-in ringfence):** the bus is scoped by `HCOM_DIR`, pinned into the child's env at
+spawn: `--team <name>` (else `$HERDER_TEAM`, else the global `~/.hcom` bus) →
+`HCOM_DIR=$HERDER_TEAMS_ROOT/<name>` (default root `~/.hcom/teams`). The global bus is the normal
+operating mode — registry addressing already gives per-agent targeting. Config-dir pin caveat:
+`PinConfigDir` (`internal/launchcmd`) pins `CLAUDE_CONFIG_DIR`/`CODEX_HOME`/`GEMINI_CLI_HOME` only
+when `HCOM_DIR` is set and ≠ `~/.hcom` (hcom's local-mode condition; pinning on the global bus
+moved Claude's JSON state and caused first-run onboarding). First team-bus claude launch per
+machine therefore hits one-time onboarding; it persists machine-wide once completed.
+
+**Context-ceiling interim (TASK-003 → TASK-022):** steered self-compaction
+(`herder send "$HERDR_PANE_ID" '/compact …'`) died with the keystroke transport — a bus message
+cannot type a slash command. Until `herder compact` lands (TASK-022), an agent at context ceiling
+commits + writes a HANDOFF report, then stops for a fresh spawn.
 
 ## Session Bootstrap
 
@@ -95,5 +138,5 @@ the herder-native bootstrap. `HCOM=/abs/path` bypasses the hcom PATH shim when y
 behavior; non-mise contexts (GUI editors, launchd) simply never see the shims.
 
 Usage lives in `herder --help` (and each subcommand's `--help`); low-level notes and recipes are
-under `docs/` here (`herder-delta.md`, `spawn-patterns.md`, `delivery-drivers.md`). Multi-session
+under `docs/` here (`herder-delta.md`, `spawn-patterns.md`). Multi-session
 run protocols live in the `orchestrate` skill. Machine setup details live in `docs/machine-setup.md`.
