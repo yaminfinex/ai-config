@@ -4,7 +4,9 @@ title: 'herder spawn: one-shot worktree mode (--worktree BRANCH [--base REF])'
 status: To Do
 assignee: []
 created_date: '2026-07-07 05:57'
-labels: []
+updated_date: '2026-07-07 08:30'
+labels:
+  - run-herder-dx
 dependencies: []
 priority: medium
 ordinal: 6000
