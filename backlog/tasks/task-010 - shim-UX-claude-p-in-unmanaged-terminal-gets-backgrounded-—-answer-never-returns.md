@@ -3,10 +3,10 @@ id: TASK-010
 title: >-
   shim UX: claude -p in unmanaged terminal gets backgrounded — answer never
   returns
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-07 06:33'
-updated_date: '2026-07-07 07:41'
+updated_date: '2026-07-07 07:54'
 labels:
   - run-herder-dx
 dependencies: []
@@ -36,7 +36,13 @@ DECISION (orchestrator under user best-judgement grant, 2026-07-07): implement o
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 hand-run claude -p 'question' in an unmanaged terminal returns the answer on stdout (live smoke)
-- [ ] #2 interactive claude still binds to the bus; INFLIGHT recursion guards hold (suite evidence)
-- [ ] #3 check-launch-contract covers the -p bypass; 16 suites + go gates green; docs/help updated (DoD)
+- [x] #1 hand-run claude -p 'question' in an unmanaged terminal returns the answer on stdout (live smoke)
+- [x] #2 interactive claude still binds to the bus; INFLIGHT recursion guards hold (suite evidence)
+- [x] #3 check-launch-contract covers the -p bypass; 16 suites + go gates green; docs/help updated (DoD)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented option (c) in commit 2fbfd9d (branch unit-g-print-bypass). Root cause: hcom hard-codes -p/--print as its background switch (stdin nulled, stdout to hcom logs, Stop hook polling the bus), so shim-routed one-shots never returned. Change: launchcmd.Run detects exact -p/--print tokens for claude before the hcom LookPath, sets HCOM_LAUNCH_INFLIGHT=1, execs the PATH-resolved tool; shim recursion guard resolves the real binary (shims/claude untouched). Fresh launches only; --tag dropped; hcom not required for one-shots. Verification: go vet/test green, 16/16 check suites green (env -u pinned gate); 6 new print_* goldens + TestIsPrintInvocation; 15 pre-existing goldens gained only the new harness probe sections (line-reviewed). Live smoke (AC#1): env -i unmanaged shell, worktree shims first on PATH, claude -p returned PONG on stdout — replicated independently by orchestrator. Docs: launch --help, README shims bullet, delivery-drivers.md print-bypass note. Follow-ups (wave 3): stderr notice on dropped --tag; wire future codex/gemini print modes into the same switch; check-help-contract could golden subcommand help.
+<!-- SECTION:NOTES:END -->

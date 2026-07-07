@@ -7,3 +7,7 @@ herder launch: usage: herder launch <tool> [--tag TAG] [tool-args...]
 === HCOM ARGV ===
 
 === ENV PROBES ===
+
+=== TOOL ARGV ===
+
+=== TOOL ENV ===

@@ -94,6 +94,15 @@ activation only puts the shim directory on PATH; permission defaults such as Cla
 stay a manual machine choice rather than repo-written config. The shims are repo-prepared; machine
 PATH activation is handled by `ai-setup --shims install`.
 
+**Print one-shot bypass (TASK-010):** `claude -p/--print ...` hand-run through the shims skips the
+bus entirely — hcom hard-codes print mode as a persistent background agent (stdin nulled, stdout to
+`~/.hcom/logs`, Stop hook polling the bus), so a routed one-shot would never return its answer.
+`herder launch` detects the flag before building hcom args, sets `HCOM_LAUNCH_INFLIGHT=1`, and execs
+the PATH-resolved tool; the shim's recursion guard resolves the real binary. `--tag` is ignored on
+this path and hcom need not be installed. Claude-only: codex `-p` is `--profile`, and codex
+one-shots (`codex exec`) still ride the hcom path. Applies to fresh launches only — `--resume`/
+`--fork` stay on hcom.
+
 **Supported on:** systems with hcom installed and on PATH; the target must be a bus-bound hcom instance (herder spawn does this automatically for hcom-capable agents).
 
 ---

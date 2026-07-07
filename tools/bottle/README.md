@@ -175,8 +175,13 @@ scripts/smoke-decant.sh        # live-harness smoke (costs a few small API calls
 ```
 
 There is no install step: the repo's `bin/bottle` is a wrapper that hashes the
-module sources, rebuilds the binary into `~/.cache/bottle/` when they change,
-and reuses the cached build otherwise.
+module sources (locale-pinned) and reuses a per-hash cached binary — checking
+`$XDG_CACHE_HOME/bottle`, `~/.cache/bottle/`, and a UID-scoped shared tmp
+cache — rebuilding only when the sources change. Builds pick a Go toolchain
+that satisfies `go.mod` (PATH `go` if new enough, else mise-installed
+toolchains probed directly) and pin `GOTOOLCHAIN=local`, so a build never
+stalls on a toolchain download. Stale cached binaries are pruned by age after
+a successful build; parallel checkouts never wipe each other's builds.
 
 Commands take an injected `deps` struct (store root, clock, TTY-ness, session
 locator, launcher, git reader), so tests drive a temp store and assert on

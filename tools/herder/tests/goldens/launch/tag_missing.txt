@@ -7,3 +7,7 @@ herder launch: --tag needs a value
 === HCOM ARGV ===
 
 === ENV PROBES ===
+
+=== TOOL ARGV ===
+
+=== TOOL ENV ===

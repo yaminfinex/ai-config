@@ -86,12 +86,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		args = args[2:]
 	}
 
-	hcomPath, err := exec.LookPath("hcom")
-	if err != nil {
-		die(stderr, "hcom not on PATH. herder launches agents through hcom and never falls back to a raw '"+tool+"'. Run ai-setup (installs hcom via mise), or check `mise doctor` / your PATH.")
-		return 1
-	}
-
 	tag := ""
 	var rest []string
 	for i := 0; i < len(args); {
@@ -124,6 +118,23 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			rest = append(rest, arg)
 			i++
 		}
+	}
+
+	// One-shot print runs skip the bus by design (TASK-010, option c): hcom
+	// hard-codes -p/--print as its background switch — stdin nulled, stdout to
+	// hcom logs, Stop hook polling the bus for up to a day — so a hand-run
+	// one-shot routed through hcom never returns its answer. Exec the
+	// PATH-resolved tool instead; that usually re-enters the shim, whose
+	// HCOM_LAUNCH_INFLIGHT recursion guard resolves the real binary. This sits
+	// before the hcom check: a print one-shot works without hcom installed.
+	if mode == "launch" && isPrintInvocation(tool, rest) {
+		return execPrintBypass(tool, rest, stderr)
+	}
+
+	hcomPath, err := exec.LookPath("hcom")
+	if err != nil {
+		die(stderr, "hcom not on PATH. herder launches agents through hcom and never falls back to a raw '"+tool+"'. Run ai-setup (installs hcom via mise), or check `mise doctor` / your PATH.")
+		return 1
 	}
 
 	// Codex gets its herder bootstrap here, not via the sessionstart rewrite:
@@ -161,6 +172,44 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	argv := append([]string{"hcom"}, hcomArgs...)
 	if err := syscall.Exec(hcomPath, argv, os.Environ()); err != nil {
 		die(stderr, "exec hcom: "+err.Error())
+		return 1
+	}
+	return 0
+}
+
+// isPrintInvocation mirrors hcom's print-mode switch for claude: any tool-arg
+// token exactly "-p" or "--print" (hcom scans raw argv the same way, and the
+// flag is boolean — no value forms to handle). Only claude has a flag-based
+// print mode today; codex one-shots use the `exec` subcommand and stay on the
+// hcom path, where `-p` means something else entirely (--profile).
+func isPrintInvocation(tool string, args []string) bool {
+	if tool != "claude" {
+		return false
+	}
+	for _, a := range args {
+		if a == "-p" || a == "--print" {
+			return true
+		}
+	}
+	return false
+}
+
+// execPrintBypass replaces the hcom exec for one-shot print runs: resolve the
+// tool through PATH (typically the shim), set the shim's recursion guard so it
+// execs the real binary, and hand stdio over untouched so the answer returns
+// to the caller. --tag is dropped — there is no bus session to name. Config
+// pinning is skipped too: only hcom's local mode redirects config dirs, and
+// hcom is out of the picture here.
+func execPrintBypass(tool string, args []string, stderr io.Writer) int {
+	toolPath, err := exec.LookPath(tool)
+	if err != nil {
+		die(stderr, "print bypass: no '"+tool+"' on PATH: "+err.Error())
+		return 1
+	}
+	_ = os.Setenv("HCOM_LAUNCH_INFLIGHT", "1")
+	argv := append([]string{tool}, args...)
+	if err := syscall.Exec(toolPath, argv, os.Environ()); err != nil {
+		die(stderr, "exec "+tool+": "+err.Error())
 		return 1
 	}
 	return 0
@@ -259,6 +308,10 @@ Options:
 hcom is a HARD dependency — launch execs 'hcom <tool> --run-here' and never falls
 back to a raw tool. HCOM_DIR (the team bus) is inherited from the environment, and
 each tool's real config dir is pinned so auth survives an isolated team bus.
+
+Exception — print one-shots: 'claude -p/--print ...' skips the bus entirely and
+execs the PATH-resolved claude (hcom would background the run and the answer
+would never return). --tag is ignored there; hcom is not required.
 `)
 }
 
