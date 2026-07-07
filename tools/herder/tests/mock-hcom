@@ -44,11 +44,11 @@ case "${1:-}" in
     ;;
   events)
     # hcom events --last N --agent <name> --context deliver:<sender> --after <iso>
+    # Real hcom emits JSONL (one event object per line), not a JSON array; no
+    # match emits nothing.
     printf '%s\n' "$*" > "$PROBE/events_argv"
     if [[ "$SCEN" == "delivered" ]]; then
-      jq -n '[{event:"deliver", ok:true}]'
-    else
-      jq -n '[]'
+      jq -cn '{data:{context:"deliver:orchestrator"}, instance:"receiver", type:"status"}'
     fi
     exit 0
     ;;

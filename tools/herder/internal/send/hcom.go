@@ -75,7 +75,13 @@ func (h *busSender) deliver(busName, busDir, message string, timeoutMS int) stri
 	}
 
 	sender := senderIdentity()
-	startISO := h.now().UTC().Format("2006-01-02T15:04:05Z")
+	// Backdate the receipt window by one second: --after is second-granular
+	// and an instant wake lands the receipt in the SAME second as the send —
+	// a strict boundary would exclude it on every poll (seen live, TASK-032).
+	// The only extra thing a 1s backdate can match is a receipt for a message
+	// this same sender sent this same target under a second ago, which the
+	// ring-once doctrine forbids anyway.
+	startISO := h.now().UTC().Add(-1 * time.Second).Format("2006-01-02T15:04:05Z")
 	if rc := h.runDiscard(env, "send", "--from", sender, "@"+busName, "--", message); rc != 0 {
 		return "send_failed"
 	}
@@ -158,7 +164,7 @@ func (h *busSender) waitForAck(env []string, busName, sender, startISO string, t
 			return false
 		}
 		out, rc := h.output(env, "events", "--last", "50", "--agent", busName, "--context", "deliver:"+sender, "--after", startISO)
-		if rc == 0 && jsonArrayLen(out) > 0 {
+		if rc == 0 && eventCount(out) > 0 {
 			return true
 		}
 		h.sleep(250 * time.Millisecond)
@@ -205,12 +211,28 @@ func (h *busSender) output(env []string, args ...string) ([]byte, int) {
 	return stdout.Bytes(), 0
 }
 
-func jsonArrayLen(out []byte) int {
+// eventCount counts events in `hcom events` output. Live hcom emits JSONL —
+// one event object per line — NOT a JSON array (seen live, TASK-032: the old
+// array-only parse returned 0 on every real receipt, so verify could never
+// report delivered even once the query itself was right). A JSON array is
+// still accepted for robustness across hcom output modes.
+func eventCount(out []byte) int {
 	var arr []json.RawMessage
-	if err := json.Unmarshal(out, &arr); err != nil {
-		return 0
+	if err := json.Unmarshal(out, &arr); err == nil {
+		return len(arr)
 	}
-	return len(arr)
+	count := 0
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(line, &obj) == nil {
+			count++
+		}
+	}
+	return count
 }
 
 func setEnv(env []string, key, value string) []string {
