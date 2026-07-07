@@ -37,4 +37,5 @@ worktree create --cwd /mock/src --branch task/foo --no-focus --json
 agent start worker-<SHORT>
 === HCOM DIR ===
 === REGISTRY ===
-=== BRIEF ===
+=== HCOM SEND ARGV ===
+=== HCOM EVENTS ARGV ===

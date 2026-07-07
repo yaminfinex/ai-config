@@ -8,4 +8,5 @@ herder spawn: --notify: spawner does not resolve to a bus-bound agent (tried --n
 === HERDR MUTATING CALLS ===
 === HCOM DIR ===
 === REGISTRY ===
-=== BRIEF ===
+=== HCOM SEND ARGV ===
+=== HCOM EVENTS ARGV ===

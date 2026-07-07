@@ -29,4 +29,5 @@ if [ -d "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" ]; then export PATH="$
 agent start worker-<SHORT>
 === HCOM DIR ===
 === REGISTRY ===
-=== BRIEF ===
+=== HCOM SEND ARGV ===
+=== HCOM EVENTS ARGV ===

@@ -312,7 +312,9 @@ func printCompactHelp(stdout io.Writer) {
 		"  - exit 2 \"no registry row proves this pane is yours\": run inside a",
 		"    herder-spawned session, or `herder enroll` this pane first.",
 		"  - exit 1 unverified: check your composer/transcript — the line usually DID",
-		"    submit; do not resend blind.",
+		"    submit; do not resend blind. Note: a line left UNSUBMITTED in a composer",
+		"    also starves incoming hcom delivery (nothing injects until it is submitted",
+		"    or cleared) — don't leave one stranded.",
 	}
 	fmt.Fprint(stdout, strings.Join(lines, "\n")+"\n")
 }

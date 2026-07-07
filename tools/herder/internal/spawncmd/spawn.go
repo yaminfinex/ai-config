@@ -17,6 +17,7 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/registry"
+	"ai-config/tools/herder/internal/send"
 	"ai-config/tools/herder/internal/shellquote"
 )
 
@@ -53,6 +54,8 @@ type options struct {
 	ExtraArgs     []string
 	JSONOutput    bool
 	WaitTimeoutMS int
+	BindTimeoutMS int
+	VerifyMS      int
 	ReadyMatch    string
 	NoReadyWait   bool
 	LoginShell    bool
@@ -117,7 +120,6 @@ type spawnJSONRecord struct {
 	NewTab               bool                `json:"new_tab"`
 	RootPaneClosed       bool                `json:"root_pane_closed"`
 	HcomCapture          string              `json:"hcom_capture"`
-	BriefFile            string              `json:"brief_file,omitempty"`
 	Worktree             *worktreeInfo       `json:"worktree,omitempty"`
 }
 
@@ -206,6 +208,8 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		Split:         "right",
 		FocusFlag:     "--no-focus",
 		WaitTimeoutMS: envInt("HERDER_SPAWN_WAIT_MS", 15000),
+		BindTimeoutMS: envInt("HERDER_SPAWN_BIND_MS", 60000),
+		VerifyMS:      envInt("HERDER_SPAWN_VERIFY_MS", 20000),
 		LoginShell:    true,
 		LoginShellBin: firstNonEmpty(os.Getenv("HERDER_SPAWN_SHELL"), os.Getenv("SHELL"), "/bin/bash"),
 		SettleMS:      envInt("HERDER_SPAWN_SETTLE_MS", 1500),
@@ -835,12 +839,29 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		}
 	}
 
+	// Initial-prompt delivery is bus-first (TASK-032): a bus-capable agent's
+	// prompt waits for the child to BIND its bus name, then rides hcom with a
+	// receipt-based verify — the boot-paste engine (TUI readiness scraping,
+	// Enter retries) no longer touches these families. hcom wakes an idle,
+	// empty-composer agent instantly (even a never-prompted fresh one) and
+	// holds a message sent mid-boot until the session is deliverable, so the
+	// send fires at the earliest bind instant with no TUI-ready gate. Paste
+	// remains for bash (no bus binding ever exists to ride).
+	busPrompt := isHcomAgent && opts.Prompt != ""
 	readyReason := ""
 	trustBlocked := false
 	modalCleared := false
-	if opts.NoReadyWait {
+	capturedName := ""
+	switch {
+	case busPrompt:
+		// Bind is the delivery gate, so --no-ready-wait cannot skip this wait
+		// (ruling: it stays meaningful only for the paste path). The trust
+		// modal blocks BOOT itself — pre-bind — so awaitBind clears it too.
+		capturedName, readyReason, trustBlocked, modalCleared = r.awaitBind(&paneID, registryPath, guid, hcomDirEff, launchPaneID)
+		_ = modalCleared
+	case opts.NoReadyWait:
 		readyReason = "ready-wait skipped (--no-ready-wait)"
-	} else {
+	default:
 		readyReason, trustBlocked, modalCleared = r.awaitReady(&paneID)
 		sleepMS(opts.SettleMS)
 		_ = modalCleared
@@ -848,26 +869,21 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 
 	promptSent := false
 	deliveryResult := "not_attempted"
-	wirePayload := opts.Prompt
-	briefFile := ""
-	if opts.Prompt != "" && opts.Agent == "codex" && (strings.Contains(opts.Prompt, "\n") || len(opts.Prompt) > 800) {
-		briefDir := filepath.Join(stateDir, "briefs")
-		if err := os.MkdirAll(briefDir, 0o755); err != nil {
-			die(r.stderr, err.Error())
-			return 1
-		}
-		briefFile = filepath.Join(briefDir, guid+".md")
-		if err := os.WriteFile(briefFile, []byte(opts.Prompt+"\n"), 0o644); err != nil {
-			die(r.stderr, err.Error())
-			return 1
-		}
-		wirePayload = "Read " + briefFile + " in full (it is your complete brief), then plan before writing code."
-	}
-
 	if opts.Prompt != "" && trustBlocked {
 		deliveryResult = "blocked_trust_modal"
+	} else if busPrompt {
+		if capturedName != "" {
+			deliveryResult = send.DeliverBus(capturedName, hcomDirEff, opts.Prompt, opts.VerifyMS)
+			if deliveryResult == "delivered" || deliveryResult == "queued" {
+				promptSent = true
+			}
+		} else if strings.HasPrefix(readyReason, "bound-but-ready-match-timeout") {
+			deliveryResult = "ready_match_timeout"
+		} else {
+			deliveryResult = "bind_timeout"
+		}
 	} else if opts.Prompt != "" {
-		verify, rc := (&bootPaster{Client: r.herdr}).paste(paneID, wirePayload)
+		verify, rc := (&bootPaster{Client: r.herdr}).paste(paneID, opts.Prompt)
 		if verify != "" {
 			deliveryResult = verify
 		}
@@ -899,7 +915,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		InitialPromptPresent: opts.Prompt != "",
 		Team:                 opts.Team,
 		HcomDir:              hcomDirRec,
-		HcomName:             "",
+		HcomName:             capturedName,
 		HcomTag:              hcomTagRec,
 		Status:               "active",
 		Provenance:           registry.BuildProvenance("spawn", spawnedBy, opts.Role, resolvedCWD, wsID),
@@ -911,7 +927,11 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	}
 
 	hcomCapture := "not_hcom_agent"
-	if isHcomAgent {
+	if isHcomAgent && record.HcomName != "" {
+		// Bus-first delivery already bound the name (awaitBind) and the row
+		// above records it — no post-write capture loop to run.
+		hcomCapture = "captured"
+	} else if isHcomAgent {
 		hcomCapture = "not_found"
 		if name := registryCapturedName(registryPath, guid); name != "" {
 			record.HcomName = name
@@ -961,7 +981,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		}
 	}
 
-	r.writeSummary(record, wtInfo, isHcomAgent, rootClosed, permInjected, hcomCapture, briefFile, promptSent, deliveryResult, readyReason, trustBlocked)
+	r.writeSummary(record, wtInfo, isHcomAgent, rootClosed, permInjected, hcomCapture, busPrompt, promptSent, deliveryResult, readyReason, trustBlocked)
 	if opts.JSONOutput {
 		outRecord := spawnJSONRecord{
 			GUID:                 record.GUID,
@@ -991,7 +1011,6 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			NewTab:               opts.NewTab,
 			RootPaneClosed:       rootClosed,
 			HcomCapture:          hcomCapture,
-			BriefFile:            briefFile,
 			Worktree:             wtInfo,
 		}
 		b, _ := json.Marshal(outRecord)
@@ -1060,6 +1079,69 @@ func (r *runner) awaitReady(paneID *string) (reason string, trustBlocked bool, m
 	return reason, false, modalCleared
 }
 
+// awaitBind waits for the child to BIND its bus name — the delivery gate for
+// bus-first initial prompts (TASK-032). Bind is positively observable via
+// CHILD-SPECIFIC signals only (childBoundBusOnce: this guid's registry
+// enrichment, or the frozen-launch-pane roster match) and lands early in
+// boot, well before the TUI is interactive — hcom holds a message sent at
+// that instant until the session is deliverable, so no TUI-readiness gate is
+// layered on top. The
+// trust modal is the one boot blocker that precedes bind, so it is cleared
+// here exactly as in awaitReady (--safe refuses instead). --ready-match,
+// when given, additionally gates the send on the pane text (ruling: the flag
+// keeps its "don't deliver before the screen shows X" meaning on both paths).
+// Budget: HERDER_SPAWN_BIND_MS (default 60000 — codex binds in seconds, but a
+// cold MCP-heavy boot gets headroom).
+func (r *runner) awaitBind(paneID *string, registryPath, guid, hcomDir, launchPaneID string) (name, reason string, trustBlocked, modalCleared bool) {
+	waited := 0
+	boundName := ""
+	for waited < r.opts.BindTimeoutMS {
+		text := r.paneText(*paneID)
+		visible := r.paneVisibleText(*paneID)
+		if trustModalRE.MatchString(text) || trustModalRE.MatchString(visible) {
+			if r.opts.Safe {
+				return "", "trust-modal-open (blocked by --safe; accept it in the pane)", true, modalCleared
+			}
+			_, _ = r.herdr.Run("pane", "send-keys", *paneID, "Enter")
+			modalCleared = true
+			sleepMS(800)
+			waited += 800
+			continue
+		}
+		if boundName == "" {
+			boundName = childBoundBusOnce(registryPath, guid, hcomDir, launchPaneID)
+		}
+		if boundName != "" && (r.opts.ReadyMatch == "" || strings.Contains(text, r.opts.ReadyMatch)) {
+			return boundName, "bound" + trustSuffix(modalCleared), false, modalCleared
+		}
+		sleepMS(500)
+		waited += 500
+	}
+	if boundName != "" {
+		// Bound, but --ready-match never showed: honor the caller's gate — no
+		// send — and say exactly which half timed out.
+		return "", "bound-but-ready-match-timeout(" + strconv.Itoa(r.opts.BindTimeoutMS) + "ms)" + trustSuffix(modalCleared), false, modalCleared
+	}
+	reason = "bind-timeout(" + strconv.Itoa(r.opts.BindTimeoutMS) + "ms)" + trustSuffix(modalCleared)
+	// Self-healing (same rule as awaitReady): a wedged pane whose overlay we
+	// could not match is an UNKNOWN modal — it can block boot before the bus
+	// bind ever happens. Surface the first visible line so the caller sees
+	// WHAT is blocking instead of a bare bind timeout.
+	if r.paneStatus(*paneID) == "blocked" {
+		if snippet := firstVisibleLine(r.paneVisibleText(*paneID)); snippet != "" {
+			reason += " blocked-by: " + snippet
+		}
+	}
+	return "", reason, false, modalCleared
+}
+
+func trustSuffix(modalCleared bool) string {
+	if modalCleared {
+		return ",trust-accepted"
+	}
+	return ""
+}
+
 func (r *runner) paneText(paneID string) string {
 	return r.paneRead(paneID, "recent-unwrapped")
 }
@@ -1120,7 +1202,7 @@ func (r *runner) paneStatus(paneID string) string {
 	return ""
 }
 
-func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAgent, rootClosed bool, permInjected, hcomCapture, briefFile string, promptSent bool, deliveryResult, readyReason string, trustBlocked bool) {
+func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAgent, rootClosed bool, permInjected, hcomCapture string, busPrompt, promptSent bool, deliveryResult, readyReason string, trustBlocked bool) {
 	fmt.Fprintf(r.stderr, "spawned %s (%s) in pane %s (workspace %s)\n", record.Label, record.Agent, record.PaneID, record.WorkspaceID)
 	fmt.Fprintf(r.stderr, "  guid:   %s\n", record.GUID)
 	fmt.Fprintf(r.stderr, "  cwd:    %s\n", record.CWD)
@@ -1163,18 +1245,30 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 	} else {
 		fmt.Fprintf(r.stderr, "  bus:    n/a (%s is not an hcom agent — no bus name, so herder send cannot reach it)\n", record.Agent)
 	}
-	if briefFile != "" {
-		fmt.Fprintf(r.stderr, "  brief:  staged to %s (codex; sent a one-line pointer to dodge paste-blob/plan-overlay)\n", briefFile)
-	}
 	if r.opts.Prompt != "" {
-		if promptSent {
+		switch {
+		case busPrompt && promptSent && deliveryResult == "delivered":
+			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars) over the hcom bus, bind: %s, verify: delivered (receipt seen)\n", len(r.opts.Prompt), readyReason)
+		case busPrompt && promptSent:
+			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars) over the hcom bus, bind: %s, verify: %s\n", len(r.opts.Prompt), readyReason, deliveryResult)
+			fmt.Fprintln(r.stderr, "          no receipt in the window — it injects when the agent is deliverable; do NOT resend.")
+			fmt.Fprintf(r.stderr, "          If it never lands: UNSUBMITTED COMPOSER TEXT starves bus delivery — check `herder wait %s --read`;\n", record.Label)
+			fmt.Fprintf(r.stderr, "          if text sits on the input line, submit it: herdr pane send-keys %s Enter\n", record.PaneID)
+		case promptSent:
 			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars), ready: %s, verify: %s\n", len(r.opts.Prompt), readyReason, deliveryResult)
-		} else if deliveryResult == "blocked_trust_modal" {
+		case deliveryResult == "blocked_trust_modal":
 			fmt.Fprintln(r.stderr, "  prompt: NOT sent — a directory-trust modal is open and --safe forbids auto-accepting it.")
 			fmt.Fprintf(r.stderr, "          Accept it in the pane (focus + Enter), then: herder send %s \"<prompt>\"\n", record.Label)
-		} else {
+		case deliveryResult == "bind_timeout" || deliveryResult == "ready_match_timeout":
+			fmt.Fprintf(r.stderr, "  prompt: NOT sent (%s) — nothing went on the wire; a resend is SAFE.\n", readyReason)
+			fmt.Fprintf(r.stderr, "          once `herder list` shows its bus name: herder send %s \"<prompt>\"\n", record.Label)
+		case busPrompt:
+			fmt.Fprintf(r.stderr, "  prompt: NOT confirmed (verify: %s, bind: %s) — the bus send did not go through\n", deliveryResult, readyReason)
+			fmt.Fprintf(r.stderr, "          check the bus first (`hcom events --agent %s`), then retry: herder send %s \"<prompt>\"\n", record.HcomName, record.Label)
+		default:
 			fmt.Fprintf(r.stderr, "  prompt: NOT confirmed (verify: %s, ready: %s) — delivery unverified\n", deliveryResult, readyReason)
-			fmt.Fprintf(r.stderr, "          read the pane first: herder wait %s --read; do NOT blind-resend (double-submits)\n", record.Label)
+			fmt.Fprintf(r.stderr, "          read the pane first: herder wait %s --read; do NOT blind-resend (double-submits);\n", record.Label)
+			fmt.Fprintf(r.stderr, "          if the text sits stranded on the input line, submit it: herdr pane send-keys %s Enter\n", record.PaneID)
 		}
 	} else if trustBlocked {
 		fmt.Fprintln(r.stderr, "  note:   directory-trust modal is open (--safe); accept it in the pane to use the agent")
@@ -1198,7 +1292,8 @@ func printHelp(stdout io.Writer) {
 		"Options:",
 		"  --role R          agent role; becomes the hcom --tag and label prefix (required)",
 		"  --agent A         tool to run: claude, codex, gemini, bash, ... (required)",
-		"  --prompt TEXT     initial prompt (or --prompt-file F), delivered verified once ready",
+		"  --prompt TEXT     initial prompt (or --prompt-file F): bus-capable agents get it as a",
+		"                    verified hcom message once their bus name binds; bash gets it typed",
 		"  --team NAME       join the bus at $HERDER_TEAMS_ROOT/<NAME> (default: global ~/.hcom)",
 		"  --split D         pane split: right (default) or down",
 		"  --workspace ID    place in this workspace; --from-pane PANE_ID copies another pane's",
@@ -1217,9 +1312,13 @@ func printHelp(stdout io.Writer) {
 		"Advanced:",
 		"  --label-prefix STR    override the label prefix (default: the role)",
 		"  --no-login-shell      run the agent without a login+interactive shell wrapper",
-		"  --wait-timeout-ms MS  max wait for the agent to become ready before sending the prompt",
-		"  --ready-match STR     treat the pane as ready when its screen matches STR",
-		"  --no-ready-wait       send the prompt immediately, skipping the readiness wait",
+		"  --wait-timeout-ms MS  paste path (bash) / promptless spawns: max boot ready-wait",
+		"                        (bus delivery waits for hcom BIND instead: HERDER_SPAWN_BIND_MS,",
+		"                        default 60000; receipt window: HERDER_SPAWN_VERIFY_MS, default 20000)",
+		"  --ready-match STR     don't deliver before the pane's screen matches STR (both paths)",
+		"  --no-ready-wait       paste path/promptless only: skip the boot ready-wait. Bus delivery",
+		"                        cannot skip its bind wait — without a bound bus name there is",
+		"                        nothing to deliver to.",
 		"",
 		"Behavior:",
 		"  claude/codex/gemini launch THROUGH hcom (via `herder launch`) so they bind to the",
@@ -1233,14 +1332,20 @@ func printHelp(stdout io.Writer) {
 		"  alternate-screen overlay, so detection reads the pane's VISIBLE source);",
 		"  --safe leaves it up and surfaces it so you can accept it in the pane.",
 		"",
-		"  Initial-prompt delivery is typed into the freshly booted pane and verified — the one",
-		"  deliberate keystroke path that remains (the agent has no bus binding yet at boot);",
-		"  every later message goes through `herder send` over the hcom bus.",
-		"  If it can't be confirmed the summary reports",
-		"  \"prompt: NOT confirmed\" — read the pane (`herder wait <guid> --read`) before assuming",
-		"  it landed; a blind resend double-submits. For codex, a long or multi-line brief is",
-		"  staged to $HERDER_STATE_DIR/briefs/<guid>.md and only a one-line pointer is sent to",
-		"  the pane (dodges codex paste-blob / plan-overlay pathologies).",
+		"  Initial-prompt delivery rides the hcom bus (TASK-032): spawn waits for the child to",
+		"  BIND its bus name (early in boot, well before the TUI is interactive), sends the full",
+		"  prompt as a bus message, and reports the receipt — verify: delivered (receipt seen) or",
+		"  queued (sent, no receipt yet; it injects the moment the agent is deliverable — do NOT",
+		"  resend). hcom wakes an idle agent with an EMPTY composer instantly, even a fresh",
+		"  never-prompted one; a message sent mid-boot is held until the session can take it.",
+		"  The one thing that starves bus delivery — on both families — is UNSUBMITTED TEXT in",
+		"  the composer: nothing injects until it is submitted or cleared. Remedy: read the pane",
+		"  (`herder wait <guid> --read`); if text sits on the input line, submit it with",
+		"  `herdr pane send-keys <pane> Enter` — queued messages then flow at the next boundary.",
+		"  A slash-command prompt (e.g. --prompt '/review …') arrives as MESSAGE TEXT, not as a",
+		"  typed slash command — the agent can invoke the skill itself, but nothing auto-executes.",
+		"  bash agents have no bus: their prompt is typed into the pane by the spawn-private",
+		"  paste engine and verified on-screen (the paste engine's other user is herder compact).",
 		"",
 		"  --worktree wraps `herdr worktree create` (worktree/workspace lifecycle stays herdr-owned):",
 		"  the source repo resolves from the spawner's cwd (works from inside a linked worktree),",
@@ -1472,15 +1577,46 @@ func appendLine(path string, line []byte) error {
 
 func registryCapturedName(path, guid string) string {
 	for i := 0; i < 6; i++ {
-		recs, err := registry.Load(path)
-		if err == nil {
-			for _, rec := range registry.LatestByGUID(recs) {
-				if rec.GUID != nil && *rec.GUID == guid && rec.HcomName != "" {
-					return rec.HcomName
-				}
-			}
+		if name := registryCapturedNameOnce(path, guid); name != "" {
+			return name
 		}
 		sleepMS(700)
+	}
+	return ""
+}
+
+// registryCapturedNameOnce is a single-shot read of the sidecar's registry
+// enrichment for guid — the earliest place the child's bus name appears.
+func registryCapturedNameOnce(path, guid string) string {
+	recs, err := registry.Load(path)
+	if err != nil {
+		return ""
+	}
+	for _, rec := range registry.LatestByGUID(recs) {
+		if rec.GUID != nil && *rec.GUID == guid && rec.HcomName != "" {
+			return rec.HcomName
+		}
+	}
+	return ""
+}
+
+// childBoundBusOnce makes ONE attempt to learn the child's bus name using
+// CHILD-SPECIFIC signals only: the sidecar's registry enrichment for THIS
+// guid, or the hcom roster entry whose launch_context matches the frozen
+// launch pane. The post-write capture loop's tag+cwd-unique fallback is
+// deliberately NOT consulted here: during the pre-bind window a PRE-EXISTING
+// same-tag+cwd agent is the only roster match, so that heuristic would bind
+// the initial prompt to the OLD session — silent misdelivery (codex review
+// P1). A stale match therefore never satisfies the prompt gate; the caller
+// keeps waiting for the child itself, to bind_timeout if it never appears.
+func childBoundBusOnce(registryPath, guid, hcomDir, launchPaneID string) string {
+	if name := registryCapturedNameOnce(registryPath, guid); name != "" {
+		return name
+	}
+	for _, entry := range hcomList(hcomDir) {
+		if entry.LaunchContext.PaneID == launchPaneID {
+			return entry.Name
+		}
 	}
 	return ""
 }

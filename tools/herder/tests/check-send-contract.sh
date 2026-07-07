@@ -77,6 +77,10 @@ MSG='ring: alpha unit DONE'
 SCENARIOS=(
   "delivered|auto|delivered|--json alpha @MSG@"
   "queued|auto|queued|--timeout 1000 --json alpha @MSG@"
+  # P2 regression (codex review): a receipt from a PREVIOUS same-sender send
+  # sits inside the backdated --after window on every poll — the pre-send
+  # snapshot must pin it and verify must report queued, never delivered.
+  "stale_receipt|auto|stalereceipt|--timeout 1000 --json alpha @MSG@"
   "notjoined|auto|notjoined|alpha @MSG@"
   "sendfail|auto|sendfail|alpha @MSG@"
   "resolve_term|auto|delivered|--json term_AAA @MSG@"

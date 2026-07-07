@@ -31,4 +31,5 @@ agent start worker-<SHORT>
 === HCOM DIR ===
 === REGISTRY ===
 {"guid":"<GUID>","short_guid":"<SHORT>","label":"worker-<SHORT>","role":"worker","agent":"bash","extra_args":[""],"argv":["env","HERDER_GUID=<GUID>","HERDER_ROLE=worker","HERDER_LABEL=worker-<SHORT>","HERDER_SPAWNED_BY=user","HERDER_BIN=<REPO>/bin/herder","bash"],"pane_id":"p_50","workspace_id":"ws_1","tab_id":"tab_1","terminal_id":"term_AGENT","cwd":"/mock/cwd","started_at":"<TS>","started_by_pane":"p_orch","initial_prompt_present":false,"team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_1","branch":"","ts":"<TS>"}}
-=== BRIEF ===
+=== HCOM SEND ARGV ===
+=== HCOM EVENTS ARGV ===

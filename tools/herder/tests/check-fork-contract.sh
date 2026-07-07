@@ -67,10 +67,15 @@ if [[ "${1:-} ${2:-}" == "list --json" ]]; then
   exit 0
 fi
 # TASK-017: the addendum send rides the real bus engine — record what it sends
-# and ack the delivery receipt so verify=delivered without a poll stall.
+# and ack the delivery receipt so verify=delivered without a poll stall. Live
+# receipt shape (TASK-032): JSONL with a monotone `id`; the engine snapshots
+# the newest id pre-send and requires a STRICTLY newer one, so the mock's id
+# grows per call (snapshot sees N, the first poll sees N+1 ⇒ delivered).
 case "${1:-}" in
   send)   printf '%s\n' "$*" >>"${MOCK_PROBE_DIR:?}/hcom_send_argv" ;;
-  events) printf '[{"event":"deliver"}]\n' ;;
+  events) n=$(( $(cat "${MOCK_PROBE_DIR:?}/events_calls" 2>/dev/null || echo 0) + 1 ))
+          printf '%s' "$n" >"${MOCK_PROBE_DIR:?}/events_calls"
+          printf '{"id":%s,"data":{"context":"deliver:sender"},"type":"status"}\n' "$n" ;;
 esac
 exit 0
 MOCK_HCOM

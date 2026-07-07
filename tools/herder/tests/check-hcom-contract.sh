@@ -121,8 +121,10 @@ SARGV="$(cat "$P/send_argv" 2>/dev/null || true)"
 grep -q -- '--from orchestrator' <<<"$SARGV" && ok "addressing: --from sender" || bad "addressing: --from sender" "argv='$SARGV'"
 grep -q -- '@busagent-rive'       <<<"$SARGV" && ok "addressing: @hcom_name recipient" || bad "addressing: @hcom_name" "argv='$SARGV'"
 grep -q -- '-- hello world'        <<<"$SARGV" && ok "addressing: message after --" || bad "addressing: message after --" "argv='$SARGV'"
-# verify probe correlated on the bus name
-grep -q 'deliver:busagent-rive' "$P/events_argv" 2>/dev/null && ok "verify: ack keyed on bus name" || bad "verify: ack keyed on bus name" "$(cat "$P/events_argv" 2>/dev/null)"
+# verify probe correlated on the RECEIVER instance + the sender's receipt
+# context (receipts land as instance=<target>, context=deliver:<sender>)
+grep -q -- '--agent busagent-rive' "$P/events_argv" 2>/dev/null && ok "verify: ack keyed on receiver instance" || bad "verify: ack keyed on receiver instance" "$(cat "$P/events_argv" 2>/dev/null)"
+grep -q 'deliver:orchestrator' "$P/events_argv" 2>/dev/null && ok "verify: ack keyed on sender receipt context" || bad "verify: ack keyed on sender receipt context" "$(cat "$P/events_argv" 2>/dev/null)"
 # JSON record shape
 grep -q '"hcom_name":"busagent-rive"' <<<"$RUN_OUT" && ok "json: hcom_name field" || bad "json: hcom_name field" "out='$RUN_OUT'"
 

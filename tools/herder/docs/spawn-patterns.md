@@ -148,25 +148,15 @@ herder spawn \
 
 `--from-pane` and `--workspace` are mutually exclusive. `herder spawn` resolves `--from-pane` to its `workspace_id` and validates it against the live workspace list before calling `agent start`, so a stale id fails fast with a clear error instead of the upstream `agent_placement_not_found` JSON.
 
-## H. Long briefs to codex (boot-time staging; mid-session rides the bus)
+## H. Long briefs to codex (everything rides the bus now)
 
-Codex's composer collapses any *paste* over ~1k chars into a `[Pasted Content N chars]` blob, and a multi-line paste can trip its "Create a plan?" overlay — in both cases codex parses only the tail. This is a KEYSTROKE pathology, so after TASK-003 it can only occur at the one place keystrokes remain:
+Codex's composer collapses any *paste* over ~1k chars into a `[Pasted Content N chars]` blob, and a multi-line paste can trip its "Create a plan?" overlay — in both cases codex parses only the tail. These are KEYSTROKE pathologies, and since TASK-032 no codex-bound prompt travels by keystroke: `herder spawn --prompt`/`--prompt-file` delivers the FULL brief (any length, multiline) as a verified hcom message once the child binds its bus name, and mid-session `herder send` always rode the bus. No brief-file staging, no one-line pointer — those existed only to dodge the paste pathologies. A big file pointer is still often kinder to the peer's context than a wall of text, but that is a context choice, not a transport constraint.
 
-> **Boot-time initial prompt — automatic.** `herder spawn --agent codex` stages a long or multi-line `--prompt`/`--prompt-file` to `$HERDER_STATE_DIR/briefs/<guid>.md` and pastes only a one-line pointer (reported as `brief: staged to …`).
-
-**Mid-session sends need no staging**: `herder send` to a codex peer rides the hcom bus (hook injection, not composer paste), so blob/overlay pathologies do not apply — any length is safe on the wire. A big file pointer is still often kinder to the peer's context than a wall of text, but that is a context choice, not a transport constraint.
-
-If a codex composer ends up polluted anyway (e.g. a human pasted into the pane), there is **no key that clears it**: `herdr pane send-keys` accepts only `Enter` / `esc` / `C-c`, and `esc` / `C-c` interrupt the agent rather than clearing the line (`BSpace`, `C-u` are rejected as `invalid_key`). Just submit — codex tolerates a doubled idempotent instruction, or expands a `[Pasted Content]` blob on the first Enter and submits on the second.
-
-This is the same file-staging idea as `--prompt-file` for initial prompts (recipe B) — and it applies to the BOOT-TIME initial prompt only, since that is the sole surviving paste path; spawn does the staging automatically there. Mid-session sends ride the bus and carry no wire-length constraint.
+If a composer ends up polluted anyway (e.g. a human pasted into the pane), two facts matter. First, **unsubmitted composer text starves incoming bus delivery** — on both families, nothing injects until it is submitted or cleared (silent: no receipt, no error). Second, there is **no key that clears it**: `herdr pane send-keys` accepts only `Enter` / `esc` / `C-c`, and `esc` / `C-c` interrupt the agent rather than clearing the line (`BSpace`, `C-u` are rejected as `invalid_key`). Just submit — codex tolerates a doubled idempotent instruction, or expands a `[Pasted Content]` blob on the first Enter and submits on the second — and queued bus messages then inject at the next boundary.
 
 ## Initial-prompt delivery caveats
 
-`herder spawn` waits up to 15s (override with `--wait-timeout-ms`) for the agent to report `idle` before sending the prompt. If the agent has no herdr integration installed, `wait --status idle` may never resolve and we fall through to the send anyway. If you see prompts landing before the agent prompt is ready, either:
-
-- Install the matching integration (`herdr integration install claude|codex|…`).
-- Increase `--wait-timeout-ms`.
-- Skip `--prompt` and send manually after the agent is visibly ready.
+For bus-capable agents (claude/codex/gemini), `herder spawn` waits up to 60s (`HERDER_SPAWN_BIND_MS`) for the child to bind its bus name, then sends the prompt as a verified hcom message and polls up to 20s (`HERDER_SPAWN_VERIFY_MS`) for the delivery receipt. `verify: delivered` = receipt seen; `verify: queued` = sent, injects when the agent is deliverable — do NOT resend either way. On `bind_timeout` nothing was sent; deliver manually once `herder list` shows the bus name. bash agents keep the typed-into-the-pane path and the `--wait-timeout-ms` boot ready-wait (default 15s).
 
 ## Naming convention
 

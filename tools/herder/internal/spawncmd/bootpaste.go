@@ -1,12 +1,17 @@
 package spawncmd
 
-// Boot-time initial-prompt paste engine. Moved verbatim-in-spirit from the
-// retired internal/driver keystroke transport (TASK-003): keystroke delivery
-// is no longer a send transport — hcom is THE transport — but the initial
-// prompt at spawn is typed into the freshly booted pane by design (the agent
-// has no bus binding yet: hcom_name capture happens after delivery, and bash
-// agents never get one). This code is spawn-private so it can never be
-// selected as a delivery path again; `herder send` is bus-only.
+// Keystroke paste engine. Moved verbatim-in-spirit from the retired
+// internal/driver keystroke transport (TASK-003): keystroke delivery is not a
+// send transport — hcom is THE transport. Two callers remain, neither of them
+// a bus-capable initial prompt (those ride hcom since TASK-032: bind-wait,
+// then a receipt-verified bus message — this engine's TUI scraping and Enter
+// retries manufactured the exact stranded-composer state that starves bus
+// delivery): (1) spawn --prompt for BASH agents, which never get a bus
+// binding; (2) herder compact, which queues a /compact line into the caller's
+// own pane. The TASK-024 evidence gating below (composer-payload checks
+// immediately before Enter; cleared-composer degrades to not_delivered, never
+// delivered) is a locked floor for both. Package-private by design; `herder
+// send` is bus-only.
 
 import (
 	"encoding/json"

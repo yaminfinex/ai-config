@@ -15,4 +15,5 @@ herdr worktree create failed:
 worktree create --cwd /mock/src --branch task/foo --no-focus --json
 === HCOM DIR ===
 === REGISTRY ===
-=== BRIEF ===
+=== HCOM SEND ARGV ===
+=== HCOM EVENTS ARGV ===
