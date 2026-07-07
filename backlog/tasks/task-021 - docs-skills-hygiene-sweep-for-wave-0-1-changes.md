@@ -1,10 +1,10 @@
 ---
 id: TASK-021
 title: docs/skills hygiene sweep for wave 0/1 changes
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-07 07:41'
-updated_date: '2026-07-07 07:41'
+updated_date: '2026-07-07 07:44'
 labels:
   - run-herder-dx
 dependencies: []
