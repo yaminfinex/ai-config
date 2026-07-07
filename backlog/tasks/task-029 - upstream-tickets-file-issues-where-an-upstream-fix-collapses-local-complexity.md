@@ -1,0 +1,38 @@
+---
+id: TASK-029
+title: 'upstream tickets: file issues where an upstream fix collapses local complexity'
+status: To Do
+assignee: []
+created_date: '2026-07-07 12:31'
+labels:
+  - run-herder-dx
+dependencies: []
+priority: medium
+ordinal: 29000
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+USER DIRECTIVE (2026-07-07): as we close pieces of work, capture anything worth an upstream ticket when a fix there collapses complexity here. This task is the ledger + the eventual filing pass. Candidates accumulated so far (append at every unit closeout):
+
+(1) hcom — user developer_instructions STRIPPED on codex resume/fork (flagship example). hcom re-adds only its own bootstrap; the launch-args seam cannot deliver there. Cost to us: TASK-014 merge-into-last launch hack, TASK-017 entire post-boot bus-delivery mechanism, TASK-027 residual, and the mirrored strip predicate that TASK-028 must re-audit every hcom upgrade. Upstream ask: preserve/merge user developer_instructions across resume/fork, or expose a supported per-agent bootstrap-extension seam (overriding/extending hcom system prompts).
+
+(2) hcom — codex sessionstart is a no-op (no SessionStart-equivalent seam for codex). Forces the -c developer_instructions= ride-along for fresh launches. Possibly the same fix as (1): one sanctioned injection point.
+
+(3) hcom — print-mode (claude -p) one-shots become persistent background agents. TASK-010 recorded option (d) "upstream patch" as skipped (3 coordinated changes fighting deliberate design); we carry the HCOM_LAUNCH_INFLIGHT bypass instead. Upstream ask: native print-mode passthrough; would let us delete the bypass + its goldens.
+
+(4) Claude Code (not hcom) — alarming ".claude.json not found / backup exists / restored" triple when CLAUDE_CONFIG_DIR is re-rooted; reads like data loss, is cosmetic. Draft UX feedback already written in TASK-011 DONE report, unfiled.
+
+(5) hcom minor — replying to an inform with --intent ack is rejected; forces intent=inform for acknowledgements (ergonomics only, may be by-design).
+
+Doctrine: NOTHING is filed externally by agents — drafts are prepared here, the user reviews and files.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 Each candidate above (plus any appended later) gets an explicit verdict in notes: file / do-not-file / superseded, with one-paragraph rationale tied to what local complexity it would collapse
+- [ ] #2 For every FILE verdict: ready-to-paste issue draft (title, repro, current local workaround, concrete ask) stored in the task or a linked napkin — nothing submitted externally; user files
+- [ ] #3 Candidates cross-checked against the hcom version current at execution time (coordinate with TASK-028 — an upgrade may moot or reshape asks (1)/(2)/(5))
+- [ ] #4 Standing practice recorded in the orchestrate skill or run playbook template: unit closeout includes an upstream-candidate sweep
+<!-- AC:END -->
