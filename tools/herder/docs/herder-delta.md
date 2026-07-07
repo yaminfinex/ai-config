@@ -6,7 +6,7 @@
 > are the shipped source of truth. Re-verify command syntax with `herdr <cmd> -h`
 > before relying on examples here.
 
-Upstream's own herdr usage doc lives at https://github.com/ogulcancelik/herdr/blob/master/SKILL.md — read it if you want the full concepts walk-through, recipes, and the "ids are not durable" warning in context. The herder skill assumes you know enough herdr to use the commands below; everything else can be confirmed with `herdr <cmd> -h`.
+Upstream's own herdr usage doc lives at https://github.com/ogulcancelik/herdr/blob/master/SKILL.md — read it if you want the full concepts walk-through, recipes, and the "ids are not durable" warning in context. `herder` assumes you know enough herdr to use the commands below; everything else can be confirmed with `herdr <cmd> -h`.
 
 This file documents the parts the herder uses on top of upstream's base surface — primarily `agent start`, agent metadata reporting (where session ids live), `worktree`, and `integration` — plus a few read-side details the herder relies on.
 

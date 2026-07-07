@@ -33,7 +33,7 @@ bin/ai-doctor --quick
 - `skills/`: globally portable skills. `ai-setup` links each `skills/*/SKILL.md` directory into supported home skill roots.
 - `.agents/skills/`: project-local skills for this repo. This is canonical for repo-local skill instructions.
 - `.claude`: symlink to `.agents`, so Claude sees the same project-local skills without duplicate files.
-- Skill `references/` subdirs (e.g. `skills/herder/references/`): supporting material a skill loads on demand. Nothing here is linked into home skill roots by `ai-setup`.
+- Skill `references/` subdirs (e.g. `skills/orchestrate/references/`): supporting material a skill loads on demand. Nothing here is linked into home skill roots by `ai-setup`.
 
 `ai-config-bootstrap` lives under `.agents/skills/` only and is intentionally not copied into global home skill roots.
 

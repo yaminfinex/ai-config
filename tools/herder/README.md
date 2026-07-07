@@ -36,4 +36,6 @@ env -u GOROOT go vet ./...
 Run `bin/ai-setup` from the ai-config checkout to put `bin/` and `tools/herder/shims/` on PATH via
 mise. Restart the shell, then verify with `ai-doctor`.
 
-Usage lives in the `herder` skill. Machine setup details live in `docs/machine-setup.md`.
+Usage lives in `herder --help` (and each subcommand's `--help`); low-level notes and recipes are
+under `docs/` here (`herder-delta.md`, `spawn-patterns.md`, `delivery-drivers.md`). Multi-session
+run protocols live in the `orchestrate` skill. Machine setup details live in `docs/machine-setup.md`.
