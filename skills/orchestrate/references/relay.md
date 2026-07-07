@@ -25,8 +25,10 @@ herder spawn --role leg-<N+1> --agent claude --cwd <worktree> --no-focus \
   --prompt 'Relay leg <N+1>. Read <playbook> in full, then execute leg <N+1> per the relay protocol. Do not skip the verification gate.'
 ```
 
-`herder spawn` verifies the initial prompt landed (`delivery_result` in `--json`); on
-`prompt: NOT confirmed`, read the pane and re-send with `herder send`. Two variants:
+`herder spawn` delivers the initial prompt over the bus and verifies by receipt
+(`delivery_result` in `--json`): `delivered`/`queued` are success (never resend a `queued`);
+`bind_timeout`/`send_failed` are safe to retry with `herder send` once the agent appears on
+the bus (`hcom list`). Two variants:
 
 - **Self-spawn** (true relay, default): each leg spawns its successor and verifies delivery
   before idling. No separate report — the spawned successor *is* the signal.
