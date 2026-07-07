@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-07 20:55'
+updated_date: '2026-07-07 21:30'
 labels:
   - run-herder-dx
 dependencies: []
@@ -49,5 +49,10 @@ CANDIDATE (6) — hcom events sub UX (hera field report, 2026-07-07): (a) `--onc
 created: 2026-07-07 20:55
 ---
 CANDIDATES (7)+(8) — from Unit R phase A (TASK-032 map, live-probe evidence): (7) hcom — dirty-composer starvation is SILENT: a bus message to an agent whose composer holds unsubmitted text queues indefinitely with no receipt, no error, no timeout event, BOTH families (probes vila/keto; reviewer-kimi starved 8h). Ask: an hcom-side "delivery blocked: composer holds a draft" event/receipt — would have named the state in seconds. (8) codex TUI — boot-window input is lossy (Enter-swallow, head-clipping of early pastes); moot for herder post-B1 (bus-first spawn delivery) but still the physics under any remaining TUI-paste user.
+---
+
+created: 2026-07-07 21:30
+---
+CANDIDATE (9) — from Unit R phase B (TASK-032): hcom lacks an "await receipt of message X" primitive — herder reconstructs delivery receipts by polling the event stream, and ALL THREE reconstruction layers were live bugs (receipt query keyed to the wrong side: receipts live on the RECEIVER instance as deliver:<SENDER>; --after boundary excluded same-second receipts; live events emit JSONL while the parser expected a JSON array — masked by mock-shape drift). A first-class receipt-await (send returns a receipt handle, or events exposes await --msg-id) would delete the whole heuristic class.
 ---
 <!-- COMMENTS:END -->
