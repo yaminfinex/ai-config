@@ -4,35 +4,224 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/common.sh"
 
 src_dir="$AI_CONFIG_ROOT/tools/bottle"
-cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/bottle"
+
+hash_cmd=()
+if command -v sha256sum >/dev/null 2>&1; then
+  hash_cmd=(sha256sum)
+elif [ -x /sbin/sha256sum ]; then
+  hash_cmd=(/sbin/sha256sum)
+elif command -v shasum >/dev/null 2>&1; then
+  hash_cmd=(shasum -a 256)
+else
+  log_error "bottle: no sha256 tool found"
+  exit 1
+fi
+
+# The tmp candidate is shared across HOMEs (worktrees, hermetic test envs with
+# fake HOME) — it is both the last-resort build dir and a reuse/seed cache so
+# sibling checkouts and env -i callers don't rebuild per invocation.
+shared_cache_root="${TMPDIR:-/tmp}/bottle-cache-${UID:-$(id -u 2>/dev/null || printf unknown)}"
+shared_cache="$shared_cache_root/bottle"
+
+cache_candidates=()
+if [ -n "${XDG_CACHE_HOME:-}" ]; then
+  cache_candidates+=("$XDG_CACHE_HOME/bottle")
+fi
+if [ -n "${HOME:-}" ]; then
+  cache_candidates+=("$HOME/.cache/bottle")
+fi
+cache_candidates+=("$shared_cache")
+
+cache_dir=""
+for candidate in "${cache_candidates[@]}"; do
+  if mkdir -p "$candidate" 2>/dev/null && [ -w "$candidate" ] && [ -O "$candidate" ]; then
+    if [ "$candidate" = "$shared_cache" ]; then
+      chmod go-w "$shared_cache_root" "$shared_cache" 2>/dev/null || true
+    fi
+    cache_dir="$candidate"
+    break
+  fi
+done
+
+if [ -z "$cache_dir" ]; then
+  log_error "bottle: no writable cache directory found"
+  exit 1
+fi
 
 # Key the cached binary on a hash of the module sources so a source change
-# triggers a rebuild and an unchanged tree reuses the cache.
+# triggers a rebuild and an unchanged tree reuses the cache. LC_ALL=C pins the
+# sort order so the same tree hashes identically in any locale.
 src_hash="$(
   cd "$src_dir" &&
     find go.mod cmd internal -type f \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' \) -print0 |
-    sort -z |
-    xargs -0 sha256sum |
-    sha256sum |
+    LC_ALL=C sort -z |
+    xargs -0 "${hash_cmd[@]}" |
+    "${hash_cmd[@]}" |
     cut -c1-16
 )"
 
-bottle_bin="$cache_dir/bottle-$src_hash"
+bin_name="bottle-$src_hash"
+bottle_bin="$cache_dir/$bin_name"
 
-if [ ! -x "$bottle_bin" ]; then
-  if command -v go >/dev/null 2>&1; then
-    go_cmd=(go)
-  elif command -v mise >/dev/null 2>&1; then
-    go_cmd=(mise x go -- go)
-  else
-    log_error "bottle: no go toolchain found — install one with: mise use -g go"
-    exit 1
+# Reuse from ANY candidate (a fake-HOME cache misses, the shared tmp cache
+# hits). touch keeps actively used binaries out of the age prune's reach.
+for candidate in "${cache_candidates[@]}"; do
+  cand_bin="$candidate/$bin_name"
+  if [ -x "$cand_bin" ] && [ -O "$cand_bin" ]; then
+    touch -c "$cand_bin" 2>/dev/null || true
+    exec "$cand_bin" "$@"
+  fi
+done
+
+# --- build required: pick a go toolchain that satisfies go.mod -------------
+
+# Required version: the toolchain directive if present, else the go directive.
+required_go="$(awk '$1 == "toolchain" && $2 ~ /^go[0-9]/ { print substr($2, 3); exit }' "$src_dir/go.mod" 2>/dev/null || true)"
+if [ -z "$required_go" ]; then
+  required_go="$(awk '$1 == "go" { print $2; exit }' "$src_dir/go.mod" 2>/dev/null || true)"
+fi
+
+go_binary_version() { # prints the dotted numeric version of a go binary; empty on failure
+  local out
+  out="$(env -u GOROOT GOTOOLCHAIN=local "$1" version 2>/dev/null || true)"
+  out="${out#go version }"
+  out="${out%% *}"
+  out="${out#go}"
+  printf '%s\n' "$out" | sed 's/[^0-9.].*$//'
+}
+
+ver_ge() { # ver_ge A B — dotted numeric compare, A >= B
+  local -a a b
+  local i x y
+  IFS=. read -r -a a <<<"$1"
+  IFS=. read -r -a b <<<"$2"
+  for ((i = 0; i < ${#a[@]} || i < ${#b[@]}; i++)); do
+    x="${a[i]:-0}"
+    y="${b[i]:-0}"
+    if [ "$x" -gt "$y" ] 2>/dev/null; then return 0; fi
+    if [ "$x" -lt "$y" ] 2>/dev/null; then return 1; fi
+  done
+  return 0
+}
+
+satisfies() { # satisfies VERSION — empty requirement accepts anything parseable
+  [ -n "$1" ] && { [ -z "$required_go" ] || ver_ge "$1" "$required_go"; }
+}
+
+go_cmd=()
+path_go="$(command -v go 2>/dev/null || true)"
+path_go_ver=""
+if [ -n "$path_go" ]; then
+  path_go_ver="$(go_binary_version "$path_go")"
+  if satisfies "$path_go_ver"; then
+    go_cmd=("$path_go")
+  fi
+fi
+
+if [ ${#go_cmd[@]} -eq 0 ]; then
+  # Fall through to mise-installed toolchains. Never `mise x` here: it
+  # auto-installs (can hang on a blocked download) and misresolves under a
+  # fake HOME, so probe installed toolchains directly and version-check them.
+  best_go=""
+  best_ver="0"
+  consider_go() {
+    local g="$1" v
+    [ -x "$g" ] || return 0
+    v="$(go_binary_version "$g")"
+    satisfies "$v" || return 0
+    if ! ver_ge "$best_ver" "$v"; then
+      best_go="$g"
+      best_ver="$v"
+    fi
+  }
+
+  mise_bin="$(command -v mise 2>/dev/null || true)"
+  if [ -n "$mise_bin" ]; then
+    # `mise where` is read-only (never installs); guard it with a timeout
+    # anyway so a wedged mise cannot hang the wrapper.
+    if command -v timeout >/dev/null 2>&1; then
+      mise_where="$(timeout 5 "$mise_bin" where go 2>/dev/null || true)"
+    else
+      mise_where="$("$mise_bin" where go 2>/dev/null || true)"
+    fi
+    if [ -n "$mise_where" ]; then
+      consider_go "$mise_where/bin/go"
+    fi
   fi
 
-  mkdir -p "$cache_dir"
-  rm -f "$cache_dir"/bottle-*
-  (cd "$src_dir" && "${go_cmd[@]}" build -o "$bottle_bin.tmp.$$" ./cmd/bottle)
-  mv "$bottle_bin.tmp.$$" "$bottle_bin"
+  mise_roots=()
+  if [ -n "${MISE_DATA_DIR:-}" ]; then
+    mise_roots+=("$MISE_DATA_DIR")
+  fi
+  if [ -n "${XDG_DATA_HOME:-}" ]; then
+    mise_roots+=("$XDG_DATA_HOME/mise")
+  fi
+  if [ -n "${HOME:-}" ]; then
+    mise_roots+=("$HOME/.local/share/mise")
+  fi
+  if [ -n "$mise_bin" ]; then
+    # Derive the data dir from the mise binary's install prefix
+    # (~/.local/bin/mise -> ~/.local/share/mise). This is what finds a real
+    # toolchain when HOME points elsewhere (hermetic test envs).
+    mise_prefix="$(cd "$(dirname "$mise_bin")/.." 2>/dev/null && pwd -P || true)"
+    if [ -n "$mise_prefix" ]; then
+      mise_roots+=("$mise_prefix/share/mise")
+    fi
+  fi
+
+  for root in "${mise_roots[@]}"; do
+    for g in "$root"/installs/go/*/bin/go; do
+      consider_go "$g"
+    done
+  done
+
+  if [ -n "$best_go" ]; then
+    go_cmd=("$best_go")
+  fi
 fi
+
+if [ ${#go_cmd[@]} -eq 0 ]; then
+  if [ -n "$path_go" ]; then
+    log_error "bottle: go on PATH is ${path_go_ver:-unparseable} ($path_go) but tools/bottle needs go >= $required_go, and no satisfying mise-installed go was found"
+  else
+    log_error "bottle: no go toolchain satisfying go >= ${required_go:-any} found"
+  fi
+  log_error "bottle: install one with: mise use -g go@${required_go:-latest}"
+  exit 1
+fi
+
+if [ -z "${GOCACHE:-}" ] || ! mkdir -p "$GOCACHE" 2>/dev/null || [ ! -w "$GOCACHE" ]; then
+  export GOCACHE="$cache_dir/go-build"
+  mkdir -p "$GOCACHE"
+fi
+
+# The picked toolchain already satisfies go.mod, so pin GOTOOLCHAIN=local
+# (unless the caller chose otherwise): a build must never stall on a
+# toolchain download.
+tmp_bin="$bottle_bin.tmp.$$"
+(cd "$src_dir" && env -u GOROOT GOTOOLCHAIN="${GOTOOLCHAIN:-local}" "${go_cmd[@]}" build -o "$tmp_bin" ./cmd/bottle)
+mv "$tmp_bin" "$bottle_bin"
+
+# Seed the shared tmp cache so other HOMEs (worktree agents, hermetic test
+# cases) reuse this build instead of each rebuilding their own.
+if [ "$cache_dir" != "$shared_cache" ]; then
+  if mkdir -p "$shared_cache" 2>/dev/null && [ -w "$shared_cache" ] && [ -O "$shared_cache" ]; then
+    chmod go-w "$shared_cache_root" "$shared_cache" 2>/dev/null || true
+    if cp "$bottle_bin" "$shared_cache/$bin_name.tmp.$$" 2>/dev/null; then
+      mv "$shared_cache/$bin_name.tmp.$$" "$shared_cache/$bin_name" 2>/dev/null || rm -f "$shared_cache/$bin_name.tmp.$$"
+    fi
+  fi
+fi
+
+# Prune ONLY after a successful build, and only by age: per-hash binaries from
+# sibling checkouts stay (touch-on-use above keeps live ones fresh), so
+# parallel checkouts never wipe each other's binaries.
+for candidate in "$cache_dir" "$shared_cache"; do
+  [ -d "$candidate" ] && [ -O "$candidate" ] || continue
+  find "$candidate" -maxdepth 1 -type f \
+    \( \( -name 'bottle-*' ! -name "$bin_name" -mtime +14 \) -o \
+    \( -name 'bottle-*.tmp.*' ! -name "$bin_name.tmp.$$" -mtime +1 \) \) \
+    -delete 2>/dev/null || true
+done
 
 exec "$bottle_bin" "$@"

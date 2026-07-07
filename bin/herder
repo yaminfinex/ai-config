@@ -50,11 +50,12 @@ if [ -z "$cache_dir" ]; then
 fi
 
 # Key the cached binary on a hash of the module sources so a source change
-# triggers a rebuild and an unchanged tree reuses the cache.
+# triggers a rebuild and an unchanged tree reuses the cache. LC_ALL=C pins the
+# sort order so the same tree hashes identically in any locale.
 src_hash="$(
   cd "$src_dir" &&
     find go.mod cmd internal -type f \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' \) -print0 |
-    sort -z |
+    LC_ALL=C sort -z |
     xargs -0 "${hash_cmd[@]}" |
     "${hash_cmd[@]}" |
     cut -c1-16
