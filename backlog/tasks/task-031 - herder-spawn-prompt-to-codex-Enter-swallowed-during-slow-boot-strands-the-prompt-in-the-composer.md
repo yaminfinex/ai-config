@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-07 20:24'
+updated_date: '2026-07-07 20:31'
 labels:
   - run-herder-dx
 dependencies: []
@@ -28,3 +29,12 @@ Direction to evaluate: when ready-wait times out but the paste landed (composerH
 - [ ] #3 TASK-024 evidence gating preserved (no false delivered); spawn goldens reviewed line-by-line if verify text changes
 - [ ] #4 Pinned gate green (go vet/test + full battery, env -u)
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-07 20:31
+---
+GATED on TASK-032 (consolidated spawn delivery review, user-raised) — the late-submit remedy should fall out of that map, not precede it.
+---
+<!-- COMMENTS:END -->
