@@ -29,9 +29,17 @@
 #       blocked         — the VISIBLE screen shows an open permission modal:
 #                         preflight must refuse with nothing typed.
 #       guid_drift      — the env pane resolves to a DIFFERENT terminal than
-#                         the caller's registry row: compact must paste into
-#                         the registry terminal's live pane, with a note.
+#                         the caller's registry row. WITHOUT a corroborating
+#                         session id this must REFUSE (a stale/inherited
+#                         HERDER_GUID looks identical — codex review P1); WITH
+#                         one (drift_corroborated harness case) compact pastes
+#                         into the registry terminal's live pane, with a note.
 #       term_dead       — the registry terminal is not in agent list.
+#       clear_landed    — codex review P2: the payload lands in the composer
+#                         (first read after send) but is CLEARED before the
+#                         Enter (escape/modal/redraw). The pre-Enter sample
+#                         must disarm composer-empty evidence and the verify
+#                         must degrade to not_delivered, never delivered.
 #   MOCK_COMPACT_STATE  scratch dir; marker files move ready → sent → entered
 #   MOCK_PROBE_DIR      probe dir; every MUTATING call appends to calls
 #   MOCK_COMPACT_CWD    foreground_cwd reported by pane get (positional proof)
@@ -60,8 +68,8 @@ sig='❯'
 
 self_status() {
   case "$SCEN" in
-    idle) printf 'done';;
-    *)    printf 'working';;
+    idle|clear_landed) printf 'done';;
+    *)                 printf 'working';;
   esac
 }
 
@@ -78,7 +86,23 @@ composer_text() {
     return
   fi
   if ! entered; then
+    # clear_landed: the payload shows on the FIRST read after the send (landing
+    # detection sees it), then the composer is cleared before the Enter.
+    if [[ "$SCEN" == "clear_landed" ]]; then
+      if [[ -f "$STATE/landing_seen" ]]; then
+        printf '⏺ working on the task…\n%s ' "$sig"
+      else
+        : > "$STATE/landing_seen"
+        printf '⏺ working on the task…\n%s %s' "$sig" "$msg"
+      fi
+      return
+    fi
     printf '⏺ working on the task…\n%s %s' "$sig" "$msg"
+    return
+  fi
+  if [[ "$SCEN" == "clear_landed" ]]; then
+    # Nothing was ever submitted: no echo, empty composer, status still done.
+    printf '⏺ working on the task…\n%s ' "$sig"
     return
   fi
   case "$SCEN" in

@@ -76,11 +76,12 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	row, positional, refuseMsg := resolveSelfRow(recs, pane)
-	if row == nil {
+	self, refuseMsg := resolveSelfRow(recs, pane)
+	if self.row == nil {
 		dieCompact(stderr, "refused — "+refuseMsg+" herder compact only ever types into the caller's own pane; without proof of self-identity it refuses. Nothing was typed.")
 		return 2
 	}
+	row := self.row
 	if row.Agent != "claude" && row.Agent != "codex" {
 		dieCompact(stderr, fmt.Sprintf("refused — your registry row records agent %q, which has no interactive composer to type /compact into. Nothing was typed.", row.Agent))
 		return 2
@@ -106,9 +107,19 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if row.TerminalID != pane.TerminalID {
-		// Durable-key identity with a drifted environment pane id: the row's
-		// terminal is provably ours, the env pane no longer is. Surface it.
-		fmt.Fprintf(stderr, "herder compact: note — HERDR_PANE_ID (%s) no longer names your terminal (env: %s, registry: %s); using the registry terminal's live pane %s\n", envPane, pane.TerminalID, row.TerminalID, targetPane)
+		// The env pane's LIVE terminal disagrees with the registry row. A
+		// durable key alone cannot arbitrate this: HERDER_GUID (and equally a
+		// session id) can be stale or inherited by a process that is NOT in
+		// that row's pane, and typing there would break the self-pane-only
+		// guarantee (codex review P1). Proceed only when a SECOND independent
+		// self signal corroborates the row — the caller's current
+		// HCOM_SESSION_ID matching the row's recorded session — which proves
+		// this process IS that session and the env pane id merely drifted.
+		if !self.corroborated {
+			dieCompact(stderr, fmt.Sprintf("refused — your pane's live terminal (%s) disagrees with your registry row's (%s) and no second self signal corroborates the row (HCOM_SESSION_ID matching its recorded session). A stale or inherited HERDER_GUID looks exactly like this. Nothing was typed.", pane.TerminalID, row.TerminalID))
+			return 2
+		}
+		fmt.Fprintf(stderr, "herder compact: note — HERDR_PANE_ID (%s) no longer names your terminal (env: %s, registry: %s); session id corroborates the row, using its live pane %s\n", envPane, pane.TerminalID, row.TerminalID, targetPane)
 	}
 
 	line := "/compact"
@@ -118,7 +129,7 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 
 	if opts.DryRun {
 		fmt.Fprintf(stderr, "herder compact --dry-run: would queue %q into own pane %s (terminal %s, guid %s, resolution: %s)\n",
-			line, targetPane, row.TerminalID, ptrOrEmpty(row.GUID), map[bool]string{true: "positional+cwd", false: "durable-key"}[positional])
+			line, targetPane, row.TerminalID, ptrOrEmpty(row.GUID), map[bool]string{true: "positional+cwd", false: "durable-key"}[self.positional])
 		return 0
 	}
 
@@ -139,35 +150,52 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+// selfIdentity is resolveSelfRow's verdict: the caller's own registry row,
+// how it was proven, and whether a SECOND independent signal (guid row and
+// session row agreeing) corroborates it — required before the row's terminal
+// may override a disagreeing live env pane (codex review P1).
+type selfIdentity struct {
+	row          *registry.Record
+	positional   bool
+	corroborated bool
+}
+
 // resolveSelfRow proves which registry identity is the caller's own. Durable
-// keys first: HERDER_GUID (every herder-spawned/forked/resumed session), then
-// the hcom session id recorded in provenance. Only when neither exists does it
-// fall back to positional resolution by the CURRENT terminal — and then it
-// demands corroborating evidence (the pane's foreground cwd matching our own
-// working directory) because a positional match cannot otherwise be told apart
-// from a neighbour after pane-id churn. Returns (row, positional, refuseMsg).
-func resolveSelfRow(recs []registry.Record, pane herdrcli.Pane) (*registry.Record, bool, string) {
-	if guid := os.Getenv("HERDER_GUID"); guid != "" {
-		row := registry.Resolve(recs, guid)
-		if row == nil {
-			return nil, false, "HERDER_GUID=" + guid + " has no registry row."
+// keys first: HERDER_GUID (every herder-spawned/forked/resumed session) and
+// the hcom session id recorded in provenance — when BOTH are present they
+// must agree on one identity (a mismatch means at least one is stale or
+// inherited: refuse, never pick). Only when neither exists does it fall back
+// to positional resolution by the CURRENT terminal — and then it demands
+// corroborating evidence (the pane's foreground cwd matching our own working
+// directory) because a positional match cannot otherwise be told apart from a
+// neighbour after pane-id churn.
+func resolveSelfRow(recs []registry.Record, pane herdrcli.Pane) (selfIdentity, string) {
+	guid := os.Getenv("HERDER_GUID")
+	sessionID := os.Getenv("HCOM_SESSION_ID")
+
+	var guidRow, sessRow *registry.Record
+	if guid != "" {
+		guidRow = registry.Resolve(recs, guid)
+		if guidRow == nil {
+			return selfIdentity{}, "HERDER_GUID=" + guid + " has no registry row."
 		}
+	}
+	if sessionID != "" {
+		sessRow = registry.ResolveByToolSessionID(recs, sessionID)
+	}
+	if guidRow != nil && sessRow != nil && !sameGUID(guidRow, sessRow) {
+		return selfIdentity{}, fmt.Sprintf("HERDER_GUID (%s) and HCOM_SESSION_ID (%s) resolve to DIFFERENT identities (%s vs %s) — at least one is stale or inherited.", guid, sessionID, ptrOrEmpty(guidRow.GUID), ptrOrEmpty(sessRow.GUID))
+	}
+	if row := firstRow(guidRow, sessRow); row != nil {
 		if row.TerminalID == "" {
-			return nil, false, "your registry row (guid " + guid + ") records no terminal_id."
+			return selfIdentity{}, "your registry row (guid " + ptrOrEmpty(row.GUID) + ") records no terminal_id."
 		}
-		return row, false, ""
+		return selfIdentity{row: row, corroborated: guidRow != nil && sessRow != nil}, ""
 	}
-	if sessionID := os.Getenv("HCOM_SESSION_ID"); sessionID != "" {
-		if row := registry.ResolveByToolSessionID(recs, sessionID); row != nil {
-			if row.TerminalID == "" {
-				return nil, false, "your registry row (session " + sessionID + ") records no terminal_id."
-			}
-			return row, false, ""
-		}
-	}
+
 	row := registry.ActiveByPaneOrTerminal(recs, pane.TerminalID)
 	if row == nil {
-		return nil, true, "no registry row proves this pane is yours (no HERDER_GUID, no session match, no active row for terminal " + pane.TerminalID + ")."
+		return selfIdentity{positional: true}, "no registry row proves this pane is yours (no HERDER_GUID, no session match, no active row for terminal " + pane.TerminalID + ")."
 	}
 	wd, _ := os.Getwd()
 	paneCWD := pane.ForegroundCWD
@@ -175,9 +203,22 @@ func resolveSelfRow(recs []registry.Record, pane herdrcli.Pane) (*registry.Recor
 		paneCWD = pane.CWD
 	}
 	if wd == "" || paneCWD == "" || wd != paneCWD {
-		return nil, true, fmt.Sprintf("positional identity only (terminal %s) and the pane's foreground cwd (%q) does not corroborate this process's cwd (%q).", pane.TerminalID, paneCWD, wd)
+		return selfIdentity{positional: true}, fmt.Sprintf("positional identity only (terminal %s) and the pane's foreground cwd (%q) does not corroborate this process's cwd (%q).", pane.TerminalID, paneCWD, wd)
 	}
-	return row, true, ""
+	return selfIdentity{row: row, positional: true}, ""
+}
+
+func sameGUID(a, b *registry.Record) bool {
+	return a.GUID != nil && b.GUID != nil && *a.GUID == *b.GUID
+}
+
+func firstRow(rows ...*registry.Record) *registry.Record {
+	for _, row := range rows {
+		if row != nil {
+			return row
+		}
+	}
+	return nil
 }
 
 func queuedWord(verify string) string {
@@ -245,8 +286,11 @@ func printCompactHelp(stdout io.Writer) {
 		"messaging stays on the hcom bus (`herder send`). There is no target argument and",
 		"no pane flag: the only pane herder compact can address is the one it PROVES to be",
 		"yours — via HERDER_GUID, else your recorded session id, else an active registry",
-		"row for your current terminal corroborated by matching cwd. Unprovable identity,",
-		"a non-composer agent (bash), or a dead terminal is refused; it never guesses.",
+		"row for your current terminal corroborated by matching cwd. If guid and session",
+		"id disagree, or your row's terminal disagrees with your live pane without a",
+		"session-id corroboration (a stale/inherited HERDER_GUID looks exactly like",
+		"that), it refuses. Unprovable identity, a non-composer agent (bash), or a dead",
+		"terminal is refused; it never guesses.",
 		"",
 		"Options:",
 		"  --dry-run   resolve your own pane and print what would be queued, then exit",

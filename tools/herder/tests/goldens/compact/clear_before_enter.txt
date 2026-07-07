@@ -1,0 +1,9 @@
+=== STDERR ===
+herder compact: typed but submission unverified (verify: not_delivered) — read your own pane before retrying; a blind retry may double-queue /compact.
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== HERDR MUTATING CALLS ===
+agent send w1-2 /compact focus on the open unit, keep gate commands and thread names
+pane send-keys w1-2 Enter

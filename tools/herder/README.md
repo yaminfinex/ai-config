@@ -92,7 +92,9 @@ Three deliberate exceptions ride keystrokes, none reachable as a send transport:
   `/compact <steer>` input line into the CALLER'S OWN pane via the same package-private engine.
   Input automation, not delivery — there is no target argument, and identity is proven
   (HERDER_GUID → session id → terminal+cwd corroboration) before anything is typed; unprovable
-  identity refuses. Pinned by `tests/check-compact-contract.sh` (goldens + grep gates).
+  identity refuses, as do a guid/session-id mismatch and a row terminal that disagrees with the
+  live pane without session-id corroboration (a stale or inherited HERDER_GUID looks exactly
+  like drift). Pinned by `tests/check-compact-contract.sh` (goldens + grep gates).
 
 **Print one-shot bypass (TASK-010):** `claude -p/--print ...` hand-run through the shims skips the
 bus entirely — hcom hard-codes print mode as a persistent background agent (stdin nulled, stdout to

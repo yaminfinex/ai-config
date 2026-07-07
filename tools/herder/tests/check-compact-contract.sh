@@ -61,10 +61,13 @@ ROW_SELF='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"wor
 ROW_SELF_REG='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_REG","pane_id":"w1-5","hcom_dir":"","hcom_name":"me-bus","hcom_tag":"worker","status":"active"}'
 ROW_SELF_BASH='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"bash","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}'
 ROW_SELF_SESS='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"me-bus","hcom_tag":"worker","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-me","tag":"worker","batch_id":"","cwd":"/x","workspace_id":"w1","branch":"main","ts":"2026-07-07T00:00:00Z"}}'
+ROW_SELF_REG_SESS='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_REG","pane_id":"w1-5","hcom_dir":"","hcom_name":"me-bus","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-me","tag":"worker","batch_id":"","cwd":"/x","workspace_id":"w1","branch":"main","ts":"2026-07-07T00:00:00Z"}}'
+ROW_PARENT='{"guid":"guid-par-0000","short_guid":"guid-par","label":"parent","role":"orchestrator","agent":"claude","terminal_id":"term_OTHER","pane_id":"w1-3","hcom_dir":"","hcom_name":"parent-bus","hcom_tag":"orchestrator","status":"active"}'
+ROW_OTHER_SESS='{"guid":"guid-oth-0000","short_guid":"guid-oth","label":"other","role":"worker","agent":"claude","terminal_id":"term_OTHER","pane_id":"w1-3","hcom_dir":"","hcom_name":"other-bus","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-x","tag":"worker","batch_id":"","cwd":"/x","workspace_id":"w1","branch":"main","ts":"2026-07-07T00:00:00Z"}}'
 
 # run_compact <scenario> <env-mode> <args...>
-#   env-mode: guid | session | positional | positional_badcwd | noguidrow |
-#             outside | nopaneid
+#   env-mode: guid | session | guid_session | parentguid | guid_conflict |
+#             positional | positional_badcwd | noguidrow | outside | nopaneid
 run_compact() {
   local scen="$1" envmode="$2"; shift 2
   mkdir -p "$CASE/state" "$CASE/mock" "$CASE/probe" "$CASE/cwd"
@@ -73,6 +76,9 @@ run_compact() {
   case "$envmode" in
     guid)              guid="guid-me-0000";;
     session)           sess="sess-me";;
+    guid_session)      guid="guid-me-0000"; sess="sess-me";;
+    parentguid)        guid="guid-par-0000";;
+    guid_conflict)     guid="guid-me-0000"; sess="sess-x";;
     positional)        ;;
     positional_badcwd) cwdval="/mock/elsewhere";;
     noguidrow)         guid="guid-ghost-0000";;
@@ -164,11 +170,27 @@ scenario refuse_bash         midturn         guid       "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF"
 scenario refuse_term_dead    term_dead       guid       "$STEER"
 
-# Pane-id churn: durable guid identity wins; the paste must land in the
-# registry terminal's CURRENT pane (w1-5), never the drifted env pane.
+# Pane-id churn vs stale identity (codex review P1): a durable key whose
+# terminal disagrees with the live env pane REFUSES unless a second self
+# signal (session id matching the row) corroborates it — a stale/inherited
+# HERDER_GUID is indistinguishable from drift by the guid alone.
 COMPACT_SEED_REGISTRY="$ROW_SELF_REG"
-scenario guid_drift          guid_drift      guid       "$STEER"
+scenario guid_drift          guid_drift      guid          "$STEER"
+COMPACT_SEED_REGISTRY="$ROW_SELF_REG_SESS"
+scenario drift_corroborated  guid_drift      guid_session  "$STEER"
+# Stale inherited guid: the row's terminal belongs to a LIVE neighbour pane —
+# compact must type NOWHERE (no mutating calls at all).
+COMPACT_SEED_REGISTRY="$ROW_PARENT"
+scenario stale_guid          midturn         parentguid    "$STEER"
+# HERDER_GUID and HCOM_SESSION_ID resolving to different identities: refuse.
+COMPACT_SEED_REGISTRY="$ROW_SELF"$'\n'"$ROW_OTHER_SESS"
+scenario key_conflict        midturn         guid_conflict "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF"
+
+# Codex review P2: payload lands, composer cleared BEFORE the Enter — the
+# pre-Enter sample must disarm composer-empty evidence; verify degrades to
+# not_delivered (exit 1), never a false delivered.
+scenario clear_before_enter  clear_landed    guid          "$STEER"
 
 # Environment/usage refusals.
 scenario refuse_outside      midturn         outside    "$STEER"

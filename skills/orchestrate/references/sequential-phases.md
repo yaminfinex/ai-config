@@ -41,11 +41,15 @@ orchestrator itself replaceable.
 10. **Remediations:** mechanical → one direct agent, one commit; contested → jury first. Each
     lands as its own commit.
 
-## Orchestrator self-respawn
+## Orchestrator context reset
 
-When your own context balloons: bring the journal fully current, write a HANDOFF entry (in
-flight / verified / next), spawn a fresh orchestrator pointed at it. If a fresh orchestrator
-couldn't pick up the run from the journal, it is missing something every other agent needed too.
+When your own context balloons: bring the journal fully current FIRST (compaction and respawn
+both lose anything unpersisted), then compact in place — `herder compact '<steer: run name,
+in-flight units, pending verdicts, journal path>'` queues a real `/compact` into your own
+composer and fires at turn end. Fall back to self-respawn when the session is too incoherent
+to steer: write a HANDOFF entry (in flight / verified / next) and spawn a fresh orchestrator
+pointed at it. Either way the journal is the test: if a fresh orchestrator couldn't pick up
+the run from it, it is missing something every other agent needed too.
 
 ## Seen live
 

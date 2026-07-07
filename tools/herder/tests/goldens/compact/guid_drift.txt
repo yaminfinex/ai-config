@@ -1,10 +1,7 @@
 === STDERR ===
-herder compact: note — HERDR_PANE_ID (p_env) no longer names your terminal (env: term_OTHER, registry: term_REG); using the registry terminal's live pane w1-5
-herder compact: submitted — "/compact focus on the open unit, keep gate commands and thread names" is in your composer and fires when the current turn ends (verify: delivered)
+herder compact: refused — your pane's live terminal (term_OTHER) disagrees with your registry row's (term_REG) and no second self signal corroborates the row (HCOM_SESSION_ID matching its recorded session). A stale or inherited HERDER_GUID looks exactly like this. Nothing was typed.
 === STDOUT ===
 
 === EXIT ===
-0
+2
 === HERDR MUTATING CALLS ===
-agent send w1-5 /compact focus on the open unit, keep gate commands and thread names
-pane send-keys w1-5 Enter
