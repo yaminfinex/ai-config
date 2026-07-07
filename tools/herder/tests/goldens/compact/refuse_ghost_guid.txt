@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: refused — HERDER_GUID=guid-ghost-0000 has no registry row. herder compact only ever types into the caller's own pane; without proof of self-identity it refuses. Nothing was typed.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===

@@ -254,11 +254,10 @@ func printHelp(stdout io.Writer) {
 		"  the ambient HCOM_DIR. The old herdr keystroke value is a hard error. No flag ever names",
 		"  a transport.",
 		"",
-		"Context ceiling (interim):",
-		"  Steered self-compaction (send \"$HERDR_PANE_ID\" '/compact ...') died with the keystroke",
-		"  transport — a bus message cannot type a slash command. Until `herder compact` exists",
-		"  (TASK-022): at context ceiling, commit + write a HANDOFF report on your thread, then",
-		"  stop and let the orchestrator respawn fresh.",
+		"Context ceiling:",
+		"  A bus message cannot type a slash command, so steered self-compaction is NOT a send:",
+		"  use `herder compact '<steer>'` — it queues a real /compact into your OWN pane (self",
+		"  only) that fires at turn end. Persist state first (commit + progress report).",
 	}
 	fmt.Fprint(stdout, strings.Join(lines, "\n")+"\n")
 }

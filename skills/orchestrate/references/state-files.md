@@ -49,10 +49,11 @@ not the whole doc>.
 
 ## Context discipline (≤<budget>)
 
-Own ONE unit. If it balloons: WIP commit, then a HANDOFF report on your unit thread (state +
-ordered remaining steps for an agent with zero shared memory + WIP sha), then stop and let a
-fresh copy pick up the report. (INTERIM until TASK-022's `herder compact`: in-place steered
-compaction is gone — `herder send` is bus-only and cannot type `/compact` into your composer.)
+Own ONE unit. If it balloons: persist state FIRST (WIP commit + progress note on your unit
+thread — compaction loses anything unpersisted), then compact in place:
+`herder compact '<what to keep: unit, ACs, gate commands, thread name>'`. If the session is too
+incoherent to steer, write a full HANDOFF report (state + ordered remaining steps for an agent
+with zero shared memory + WIP sha) and stop for a fresh spawn instead.
 
 ## Decisions already made — do not re-litigate
 

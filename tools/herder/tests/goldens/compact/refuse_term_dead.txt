@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: refused — terminal term_ME is not live in herdr agent list; cannot locate your own pane. Nothing was typed.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===

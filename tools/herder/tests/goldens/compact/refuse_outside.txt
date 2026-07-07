@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: not running inside a herdr pane (HERDR_ENV/HERDR_PANE_ID required) — herder compact queues input to the caller's OWN pane only
+=== STDOUT ===
+
+=== EXIT ===
+64
+=== HERDR MUTATING CALLS ===

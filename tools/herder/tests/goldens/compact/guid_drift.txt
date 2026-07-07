@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: refused — your pane's live terminal (term_OTHER) disagrees with your registry row's (term_REG) and no second self signal corroborates the row (HCOM_SESSION_ID matching its recorded session). A stale or inherited HERDER_GUID looks exactly like this. Nothing was typed.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===

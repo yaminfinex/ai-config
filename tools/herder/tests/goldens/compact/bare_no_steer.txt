@@ -1,0 +1,9 @@
+=== STDERR ===
+herder compact: submitted — "/compact" is in your composer and fires when the current turn ends (verify: delivered)
+=== STDOUT ===
+
+=== EXIT ===
+0
+=== HERDR MUTATING CALLS ===
+agent send w1-2 /compact
+pane send-keys w1-2 Enter

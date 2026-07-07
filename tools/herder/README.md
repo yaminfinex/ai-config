@@ -95,12 +95,19 @@ window ⇒ `queued` (do NOT resend). A target with no bus-bound registry row is 
 keystrokes are never typed. Exit codes and target forms: `herder send --help`. Contract pinned by
 `tests/check-send-contract.sh` (bus-only goldens) + `check-hcom-contract.sh` (scoping/addressing).
 
-Two deliberate exceptions ride keystrokes, neither reachable as a send transport:
+Three deliberate exceptions ride keystrokes, none reachable as a send transport:
 
 - **Boot-time initial prompt** (`herder spawn --prompt`): typed into the freshly booted pane by
   the spawn-private paste engine (`internal/spawncmd/bootpaste.go`) — at that moment the agent has
   no bus binding yet (hcom name capture happens after delivery; bash agents never get one).
 - **Trust-modal auto-accept** at spawn readiness (a single Enter; `--safe` opts out).
+- **Steered self-compaction** (`herder compact '<steer>'`, TASK-022): queues a real
+  `/compact <steer>` input line into the CALLER'S OWN pane via the same package-private engine.
+  Input automation, not delivery — there is no target argument, and identity is proven
+  (HERDER_GUID → session id → terminal+cwd corroboration) before anything is typed; unprovable
+  identity refuses, as do a guid/session-id mismatch and a row terminal that disagrees with the
+  live pane without session-id corroboration (a stale or inherited HERDER_GUID looks exactly
+  like drift). Pinned by `tests/check-compact-contract.sh` (goldens + grep gates).
 
 **Print one-shot bypass (TASK-010):** `claude -p/--print ...` hand-run through the shims skips the
 bus entirely — hcom hard-codes print mode as a persistent background agent (stdin nulled, stdout to
@@ -131,10 +138,13 @@ which lands in hcom's headless launch logs (`$HCOM_DIR/.tmp/logs/background_*.lo
 claude itself (hcom performs no config swap), it is cosmetic (no data is lost, the session works),
 and it can still appear when the seed source is absent or unreadable (TASK-011).
 
-**Context-ceiling interim (TASK-003 → TASK-022):** steered self-compaction
-(`herder send "$HERDR_PANE_ID" '/compact …'`) died with the keystroke transport — a bus message
-cannot type a slash command. Until `herder compact` lands (TASK-022), an agent at context ceiling
-commits + writes a HANDOFF report, then stops for a fresh spawn.
+**Context ceiling:** an agent nearing its ceiling persists state FIRST (commit WIP + progress
+report — compaction loses anything unpersisted), then compacts in place:
+`herder compact 'keep: unit, ACs, gate commands, thread; drop tool output'`. Run from the
+agent's own tool call, the `/compact` line is queued in its composer and fires at turn end.
+The old `herder send "$HERDR_PANE_ID" '/compact …'` recipe died with the keystroke transport;
+`herder compact` is its dedicated replacement. If the session is too incoherent to steer, the
+fresh-spawn handoff still works: HANDOFF report + successor spawn.
 
 ## Session Bootstrap
 

@@ -1,0 +1,9 @@
+=== STDERR ===
+herder compact: submitted — "/compact --dry-run is my steer" is in your composer and fires when the current turn ends (verify: delivered)
+=== STDOUT ===
+
+=== EXIT ===
+0
+=== HERDR MUTATING CALLS ===
+agent send w1-2 /compact --dry-run is my steer
+pane send-keys w1-2 Enter

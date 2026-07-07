@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: refused — your registry row records agent "bash", which has no interactive composer to type /compact into. Nothing was typed.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===

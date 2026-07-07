@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: steer must be a single line — an embedded newline would submit early and corrupt the /compact command
+=== STDOUT ===
+
+=== EXIT ===
+64
+=== HERDR MUTATING CALLS ===
