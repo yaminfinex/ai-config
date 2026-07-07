@@ -78,14 +78,21 @@ func (h *busSender) deliver(busName, busDir, message string, timeoutMS int) stri
 	// Backdate the receipt window by one second: --after is second-granular
 	// and an instant wake lands the receipt in the SAME second as the send —
 	// a strict boundary would exclude it on every poll (seen live, TASK-032).
-	// The only extra thing a 1s backdate can match is a receipt for a message
-	// this same sender sent this same target under a second ago, which the
-	// ring-once doctrine forbids anyway.
+	// Message-specificity does NOT ride the timestamp: the pre-send snapshot
+	// below pins the newest matching receipt's event id, and only a STRICTLY
+	// NEWER event counts as THIS send's ack (codex review P2 — without it, a
+	// stale receipt from a previous same-sender send inside the window would
+	// let this send claim delivered).
 	startISO := h.now().UTC().Add(-1 * time.Second).Format("2006-01-02T15:04:05Z")
+	receiptArgs := []string{"events", "--last", "50", "--agent", busName, "--context", "deliver:" + sender, "--after", startISO}
+	preMax := int64(0)
+	if out, rc := h.output(env, receiptArgs...); rc == 0 {
+		preMax = maxEventID(out)
+	}
 	if rc := h.runDiscard(env, "send", "--from", sender, "@"+busName, "--", message); rc != 0 {
 		return "send_failed"
 	}
-	if h.waitForAck(env, busName, sender, startISO, timeoutMS) {
+	if h.waitForAck(env, receiptArgs, preMax, timeoutMS) {
 		return "delivered"
 	}
 	return "queued"
@@ -153,18 +160,22 @@ func (h *busSender) send(target, busName, busDir, message string, timeoutMS int,
 // waitForAck polls for THIS message's delivery receipt. Receipt shape (pinned
 // live, TASK-032): hcom logs delivery on the RECEIVER's instance with context
 // `deliver:<SENDER>` — so the query keys on --agent <target> plus the sender
-// identity the message was sent --from. The pre-fix query (`--context
-// deliver:<target>`, no --agent) matched only receipts of messages the TARGET
-// itself had sent, so verify could practically never report "delivered".
-func (h *busSender) waitForAck(env []string, busName, sender, startISO string, timeoutMS int) bool {
+// identity the message was sent --from. (The pre-fix query — `--context
+// deliver:<target>`, no --agent — matched only receipts of messages the
+// TARGET itself had sent, so verify could practically never report
+// "delivered".) A receipt counts only if its event id is STRICTLY newer than
+// preMax, the newest matching receipt snapshotted before the send — receipts
+// carry no message correlate, so the id ordering is what ties the ack to THIS
+// send rather than a previous same-sender one (codex review P2).
+func (h *busSender) waitForAck(env []string, receiptArgs []string, preMax int64, timeoutMS int) bool {
 	windowSeconds := (timeoutMS + 999) / 1000
 	start := h.now()
 	for {
 		if int(h.now().Sub(start).Seconds()) >= windowSeconds {
 			return false
 		}
-		out, rc := h.output(env, "events", "--last", "50", "--agent", busName, "--context", "deliver:"+sender, "--after", startISO)
-		if rc == 0 && eventCount(out) > 0 {
+		out, rc := h.output(env, receiptArgs...)
+		if rc == 0 && maxEventID(out) > preMax {
 			return true
 		}
 		h.sleep(250 * time.Millisecond)
@@ -211,28 +222,38 @@ func (h *busSender) output(env []string, args ...string) ([]byte, int) {
 	return stdout.Bytes(), 0
 }
 
-// eventCount counts events in `hcom events` output. Live hcom emits JSONL —
-// one event object per line — NOT a JSON array (seen live, TASK-032: the old
-// array-only parse returned 0 on every real receipt, so verify could never
-// report delivered even once the query itself was right). A JSON array is
-// still accepted for robustness across hcom output modes.
-func eventCount(out []byte) int {
-	var arr []json.RawMessage
-	if err := json.Unmarshal(out, &arr); err == nil {
-		return len(arr)
+// maxEventID returns the largest event id in `hcom events` output, 0 if none.
+// Event ids are the bus's monotone sequence, which is what makes the
+// strictly-newer-than-snapshot comparison in waitForAck message-specific.
+// Live hcom emits JSONL — one event object per line — NOT a JSON array (seen
+// live, TASK-032: an array-only parse saw 0 events on every real receipt, so
+// verify could never report delivered even once the query itself was right).
+// A JSON array is still accepted for robustness across hcom output modes.
+func maxEventID(out []byte) int64 {
+	var events []struct {
+		ID int64 `json:"id"`
 	}
-	count := 0
-	for _, line := range bytes.Split(out, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-		var obj map[string]json.RawMessage
-		if json.Unmarshal(line, &obj) == nil {
-			count++
+	if err := json.Unmarshal(out, &events); err != nil {
+		for _, line := range bytes.Split(out, []byte("\n")) {
+			line = bytes.TrimSpace(line)
+			if len(line) == 0 {
+				continue
+			}
+			var event struct {
+				ID int64 `json:"id"`
+			}
+			if json.Unmarshal(line, &event) == nil {
+				events = append(events, event)
+			}
 		}
 	}
-	return count
+	max := int64(0)
+	for _, event := range events {
+		if event.ID > max {
+			max = event.ID
+		}
+	}
+	return max
 }
 
 func setEnv(env []string, key, value string) []string {

@@ -9,7 +9,7 @@
 #     (receipts land on the RECEIVER instance with context deliver:<SENDER>)
 #
 # Behaviour is driven by env vars (set by the harness):
-#   MOCK_HCOM_SCENARIO  delivered | queued | notjoined | sendfail
+#   MOCK_HCOM_SCENARIO  delivered | queued | stalereceipt | notjoined | sendfail
 #   MOCK_HCOM_PROBE     a scratch dir; every invocation records the effective
 #                       HCOM_DIR and (for send) the full argv, so the test can
 #                       assert bus scoping + recipient addressing.
@@ -44,12 +44,25 @@ case "${1:-}" in
     ;;
   events)
     # hcom events --last N --agent <name> --context deliver:<sender> --after <iso>
-    # Real hcom emits JSONL (one event object per line), not a JSON array; no
-    # match emits nothing.
+    # Real hcom emits JSONL (one event object per line, monotone `id`), not a
+    # JSON array; no match emits nothing.
     printf '%s\n' "$*" > "$PROBE/events_argv"
-    if [[ "$SCEN" == "delivered" ]]; then
-      jq -cn '{data:{context:"deliver:orchestrator"}, instance:"receiver", type:"status"}'
-    fi
+    case "$SCEN" in
+      delivered)
+        # Stateful: the pre-send snapshot (first call) sees no receipts; the
+        # post-send polls see THIS send's receipt, id strictly newer than the
+        # snapshot — mirrors a live instant wake.
+        if [[ -f "$PROBE/events_polled" ]]; then
+          jq -cn '{id:42, data:{context:"deliver:orchestrator"}, instance:"receiver", type:"status"}'
+        else
+          : > "$PROBE/events_polled"
+        fi;;
+      stalereceipt)
+        # A receipt from a PREVIOUS same-sender send sits inside the backdated
+        # window on EVERY call: the snapshot pins id 41 and nothing strictly
+        # newer ever appears — verify must NOT claim delivered (codex P2).
+        jq -cn '{id:41, data:{context:"deliver:orchestrator"}, instance:"receiver", type:"status"}';;
+    esac
     exit 0
     ;;
   *)
