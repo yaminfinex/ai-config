@@ -43,8 +43,9 @@ needed.
 2. **Isolate the doors.** Code doors get a worktree + branch each (one writer per worktree);
    design doors just get separate files. Spawn each door's agent with the standard one-line
    prompt + a per-door addendum in the playbook (same scope, different approach pinned). When the
-   door is a branch of an existing registered conversation, `herder fork <guid>` / `herder-fork`
-   can preserve session lineage with `provenance.forked_from`; otherwise spawn a fresh agent. Doors
+   door is a branch of an existing registered conversation, `herder fork <guid>` (or `herder fork
+   --self` from the pane itself) can preserve session lineage with `provenance.forked_from`;
+   otherwise spawn a fresh agent. Doors
    share nothing and may run concurrently.
 3. **Same gate for both.** A door that can't go green has answered the question.
 4. **Comparison is its own unit:** a fresh agent (or the user) reads both artifacts + DONE blocks

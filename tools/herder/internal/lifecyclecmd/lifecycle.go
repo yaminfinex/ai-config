@@ -216,8 +216,7 @@ func (r *runner) forkSelf(opts forkOptions) int {
 
 // forkSelfFallback hands off to `herder spawn`, which re-forks the tool in a
 // fresh pane: claude via `--resume <session> --fork-session`, codex via
-// `fork <session>` (or `fork --last`). It mirrors the bash script's terminal
-// `exec "$HERDER_BIN" spawn ...`.
+// `fork <session>` (or `fork --last`).
 func (r *runner) forkSelfFallback(opts forkOptions, agent, paneEnvID, cwd, sessionID string) int {
 	split := firstNonEmpty(opts.split, "right")
 	role := firstNonEmpty(opts.role, "fork-"+agent)
@@ -271,7 +270,7 @@ func (r *runner) forkSelfFallback(opts forkOptions, agent, paneEnvID, cwd, sessi
 }
 
 // detectSelfAgent identifies the tool running the current session from its env,
-// matching the herder-fork script's detection order.
+// checking claude markers before codex.
 func detectSelfAgent() (string, bool) {
 	if os.Getenv("CLAUDECODE") == "1" || os.Getenv("CLAUDE_CODE_SESSION_ID") != "" {
 		return "claude", true
