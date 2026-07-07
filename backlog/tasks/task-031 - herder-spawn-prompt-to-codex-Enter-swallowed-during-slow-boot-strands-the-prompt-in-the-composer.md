@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-07 20:24'
-updated_date: '2026-07-07 20:31'
+updated_date: '2026-07-07 20:55'
 labels:
   - run-herder-dx
 dependencies: []
@@ -36,5 +36,10 @@ Direction to evaluate: when ready-wait times out but the paste landed (composerH
 created: 2026-07-07 20:31
 ---
 GATED on TASK-032 (consolidated spawn delivery review, user-raised) — the late-submit remedy should fall out of that map, not precede it.
+---
+
+created: 2026-07-07 20:55
+---
+Unit R phase A verdict (ratified): SUPERSEDED by TASK-032 B1/B4 pending phase-B verification — root cause reframed: the stranded composer was bootpaste-manufactured, and it is the very state that blocks bus delivery (both families, not codex-specific). Spawn moves to bus-first delivery; the late-submit loop is not needed. Manual remedy (send-keys Enter) gets documented via B2. Final disposition at Unit R acceptance.
 ---
 <!-- COMMENTS:END -->

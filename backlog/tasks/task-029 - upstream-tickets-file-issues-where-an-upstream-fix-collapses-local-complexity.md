@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-07 12:36'
+updated_date: '2026-07-07 20:55'
 labels:
   - run-herder-dx
 dependencies: []
@@ -44,5 +44,10 @@ Doctrine: NOTHING is filed externally by agents — drafts are prepared here, th
 created: 2026-07-07 12:36
 ---
 CANDIDATE (6) — hcom events sub UX (hera field report, 2026-07-07): (a) `--once` reads like "block until one event" (tail -f expectation) but means "auto-remove subscription after first match" — the command always returns immediately and notifies later via a bus message from [hcom-events]; an agent that wraps it in background execution misreads process exit as the event firing (happened live). (b) "historical matches: N" on create is ambiguous — unclear whether a historical match consumes a --once subscription or only fresh events do. (c) subscriptions stack silently — re-arming without unsub yields duplicate notifications per event (3 live pings from one idle event observed). Asks: sub-specific --help lead line "returns immediately; notification arrives as a bus message", rename/alias --once or document it as auto-unsub, state historical-match semantics on create, dedupe-or-warn on identical filter subscription.
+---
+
+created: 2026-07-07 20:55
+---
+CANDIDATES (7)+(8) — from Unit R phase A (TASK-032 map, live-probe evidence): (7) hcom — dirty-composer starvation is SILENT: a bus message to an agent whose composer holds unsubmitted text queues indefinitely with no receipt, no error, no timeout event, BOTH families (probes vila/keto; reviewer-kimi starved 8h). Ask: an hcom-side "delivery blocked: composer holds a draft" event/receipt — would have named the state in seconds. (8) codex TUI — boot-window input is lossy (Enter-swallow, head-clipping of early pastes); moot for herder post-B1 (bus-first spawn delivery) but still the physics under any remaining TUI-paste user.
 ---
 <!-- COMMENTS:END -->
