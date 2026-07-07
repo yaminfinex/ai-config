@@ -226,6 +226,43 @@ assert_file_eq "hcom no-real: forwards to herder hook anyway" "$PROBE/herder_arg
   "$(printf '%s\n' hook post)"
 assert_file_eq "hcom no-real: HERDER_HOOK_HCOM left empty" "$PROBE/herder_hook_hcom" ""
 
+# 9. Sibling shim dirs on one PATH (worktree checkout + machine-wide main checkout):
+#    the hcom shim must export HERDER_HOOK_HCOM to the REAL hcom, never to the
+#    sibling shim — resolving each other made the two `herder hook`s ping-pong forever.
+make_case hcom_sibling
+SIBLING_REPO="$CASE_DIR/sibling"
+SIBLING_SHIMS="$SIBLING_REPO/tools/herder/shims"
+mkdir -p "$SIBLING_SHIMS"
+cp "$SHIMS_DIR/claude" "$SHIMS_DIR/codex" "$SHIMS_DIR/hcom" "$SIBLING_SHIMS/"
+chmod +x "$SIBLING_SHIMS/claude" "$SIBLING_SHIMS/codex" "$SIBLING_SHIMS/hcom"
+run_with_timeout 5 env -i \
+  PATH="$SHIM_CASE:$SIBLING_SHIMS:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
+  "$SHIM_CASE/hcom" post
+rc=$?
+assert_eq "hcom sibling: exit 0" "$rc" "0"
+assert_file_eq "hcom sibling: forwards to herder hook" "$PROBE/herder_argv" \
+  "$(printf '%s\n' hook post)"
+assert_file_eq "hcom sibling: HERDER_HOOK_HCOM skips the sibling shim, hits real hcom" \
+  "$PROBE/herder_hook_hcom" "$(cd "$REALBIN" && pwd -P)/hcom"
+
+# 10. Same sibling layout under HCOM_LAUNCH_INFLIGHT=1: the claude shim must exec
+#     the REAL claude once — exec'ing the sibling shim instead loops forever.
+make_case claude_sibling
+SIBLING_REPO="$CASE_DIR/sibling"
+SIBLING_SHIMS="$SIBLING_REPO/tools/herder/shims"
+mkdir -p "$SIBLING_SHIMS"
+cp "$SHIMS_DIR/claude" "$SHIMS_DIR/codex" "$SHIMS_DIR/hcom" "$SIBLING_SHIMS/"
+chmod +x "$SIBLING_SHIMS/claude" "$SIBLING_SHIMS/codex" "$SIBLING_SHIMS/hcom"
+run_with_timeout 5 env -i \
+  PATH="$SHIM_CASE:$SIBLING_SHIMS:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
+  HCOM_LAUNCH_INFLIGHT=1 "$SHIM_CASE/claude" --real
+rc=$?
+assert_eq "claude sibling inflight: exit 0 (no loop)" "$rc" "0"
+assert_file_eq "claude sibling inflight: real binary called once" "$PROBE/real_claude_count" "1"
+assert_file_eq "claude sibling inflight: real argv preserved" "$PROBE/real_claude_argv" \
+  "$(printf '%s\n' --real)"
+assert_file_missing "claude sibling inflight: herder launch not called" "$PROBE/herder_argv"
+
 echo
 if [[ "$fail" -eq 0 ]]; then
   printf 'ALL GREEN - shim contract holds.\n'

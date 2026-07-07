@@ -1,10 +1,10 @@
 ---
 id: TASK-001
 title: 'herder: machine-wide hcom bootstrap shim — verify + close gaps'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-07 05:36'
-updated_date: '2026-07-07 05:55'
+updated_date: '2026-07-07 05:56'
 labels:
   - run-herder-bootstrap
 dependencies: []
