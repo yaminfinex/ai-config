@@ -15,9 +15,12 @@
 #   herdr agent list
 #   herdr agent send <pane> <message>
 #   herdr pane send-keys <pane> Enter
+#   herdr worktree list --cwd <dir> --json
+#   herdr worktree create --cwd <dir> --branch <name> [--base REF] --no-focus --json
 #
 # Behaviour is driven by env vars (set by the harness):
 #   MOCK_SPAWN_SCENARIO  ready | modal | modalvis | unknownmodal | rootguard | startfail
+#                        | wtcreatefail | wtstartfail
 #       ready     — agent is receptive immediately
 #       modal     — a first-run directory-trust modal is open until an Enter
 #                   clears it (then the agent is receptive). Modal text shows in
@@ -33,6 +36,10 @@
 #       rootguard — `tab create` reports a root pane whose terminal_id equals
 #                   the agent's (herder spawn must refuse the root-pane close)
 #       startfail — `agent start` fails with a JSON error payload (exit 3)
+#       wtcreatefail — `worktree create` fails with a JSON error payload
+#                   (exit 3); locks --worktree fail-fast before any pane
+#       wtstartfail — `worktree create` succeeds but `agent start` then fails:
+#                   locks --worktree's created-but-not-spawned leak report
 #   MOCK_SPAWN_AGENT     claude | codex | bash — reported in `agent list` and
 #                        selects the input sigil (❯ / › / $)
 #   MOCK_SPAWN_STATE     scratch dir; marker files move the state machine
@@ -45,6 +52,7 @@
 #   p_orch @ term_ORCH   the spawning orchestrator pane (HERDR_PANE_ID)
 #   p_50   @ term_AGENT  the agent's pane at launch
 #   p_40   @ term_ROOT   the seed root shell of a --new-tab tab (tab_9)
+#   p_60   @ term_WTROOT the seed root shell of a --worktree workspace (w_WT)
 #   p_41   @ term_AGENT  the agent's pane AFTER the root close compacts ids
 
 set -euo pipefail
@@ -136,6 +144,7 @@ case "${1:-} ${2:-}" in
     case "${3:-}" in
       p_orch)     jq -n '{result:{pane:{pane_id:"p_orch", terminal_id:"term_ORCH", workspace_id:"ws_1"}}}';;
       p_40)       jq -n --arg t "$(root_term)" '{result:{pane:{pane_id:"p_40", terminal_id:$t}}}';;
+      p_60)       jq -n '{result:{pane:{pane_id:"p_60", terminal_id:"term_WTROOT", workspace_id:"w_WT"}}}';;
       p_50|p_41)  jq -n --arg p "$(agent_pane)" '{result:{pane:{pane_id:$p, terminal_id:"term_AGENT"}}}';;
       *)          jq -n '{result:{}}';;
     esac;;
@@ -153,20 +162,24 @@ case "${1:-} ${2:-}" in
   "agent start")
     log_call agent start "${3:-}"
     printf '%s\n' "$@" >"$PROBE/agent_start_argv"
-    if [[ "$SCEN" == "startfail" ]]; then
+    if [[ "$SCEN" == "startfail" || "$SCEN" == "wtstartfail" ]]; then
       jq -n '{error:{code:"agent_placement_not_found", message:"mock start failure"}}'
       exit 3
     fi
-    # tab_id echoes an explicit --tab placement, else the default tab.
-    tab="tab_1"
+    # tab_id/workspace_id/cwd echo explicit placements, else the defaults
+    # (identical output for every pre-worktree scenario, which always sends
+    # --workspace ws_1 and --cwd /mock/cwd or nothing).
+    tab="tab_1"; ws="ws_1"; cwd="/mock/cwd"
     prev=""
     for a in "$@"; do
       [[ "$prev" == "--tab" ]] && tab="$a"
+      [[ "$prev" == "--workspace" ]] && ws="$a"
+      [[ "$prev" == "--cwd" ]] && cwd="$a"
       prev="$a"
     done
-    jq -n --arg tab "$tab" \
-      '{result:{agent:{pane_id:"p_50", workspace_id:"ws_1", tab_id:$tab,
-                       terminal_id:"term_AGENT", cwd:"/mock/cwd"},
+    jq -n --arg tab "$tab" --arg ws "$ws" --arg cwd "$cwd" \
+      '{result:{agent:{pane_id:"p_50", workspace_id:$ws, tab_id:$tab,
+                       terminal_id:"term_AGENT", cwd:$cwd},
                 type:"agent_started"}}';;
   "pane list")
     if tab_created && ! root_closed; then
@@ -183,7 +196,8 @@ case "${1:-} ${2:-}" in
     fi;;
   "pane close")
     log_call "$@"
-    [[ "${3:-}" == "p_40" ]] && : > "$STATE/root_closed"
+    # p_40 (--new-tab seed) and p_60 (--worktree seed) both compact pane ids.
+    [[ "${3:-}" == "p_40" || "${3:-}" == "p_60" ]] && : > "$STATE/root_closed"
     jq -n --arg pane "${3:-}" '{result:{type:"closed", pane_id:$pane}}';;
   "agent read")
     if altscreen_open; then
@@ -216,6 +230,22 @@ case "${1:-} ${2:-}" in
       fi
     fi
     printf '{"result":{"ok":true}}\n';;
+  "worktree list")
+    # Read (not logged): serves --worktree's source-repo resolution — the
+    # parent checkout `worktree create` must be pointed at.
+    jq -n '{result:{source:{repo_root:"/mock/src", source_checkout_path:"/mock/src"}}}';;
+  "worktree create")
+    log_call "$@"
+    if [[ "$SCEN" == "wtcreatefail" ]]; then
+      jq -n '{error:{code:"worktree_create_failed", message:"mock worktree create failure (branch exists)"}}'
+      exit 3
+    fi
+    jq -n '{result:{type:"worktree_created",
+      workspace:{workspace_id:"w_WT", label:"task-foo",
+                 worktree:{checkout_path:"/mock/wt", repo_root:"/mock/src"}},
+      tab:{tab_id:"tab_WT", workspace_id:"w_WT"},
+      root_pane:{pane_id:"p_60", terminal_id:"term_WTROOT", workspace_id:"w_WT"},
+      worktree:{branch:"task/foo", path:"/mock/wt", open_workspace_id:"w_WT"}}}';;
   *)
     printf 'mock-herdr-spawn: unhandled: %s\n' "$*" >&2
     exit 64;;

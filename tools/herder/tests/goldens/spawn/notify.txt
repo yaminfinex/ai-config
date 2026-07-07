@@ -1,5 +1,5 @@
 === STDERR ===
-herder spawn: --notify: spawner does not resolve to a bus-bound agent (tried --notify-to "", spawner guid "user", pane "p_orch", terminal "term_ORCH") — the keystroke ring was removed; spawn from a bus-bound session or point --notify-to at a bus-bound registry row
+herder spawn: --notify: spawner does not resolve to a bus-bound agent (tried --notify-to "" as registry row and as bus name, spawner guid "user", pane "p_orch", terminal "term_ORCH") — the keystroke ring was removed; spawn from a bus-bound session, or point --notify-to at a bus-bound registry row or a live bus name on the child's bus
 === STDOUT ===
 
 === EXIT ===

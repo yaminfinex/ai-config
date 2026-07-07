@@ -13,8 +13,8 @@ serialize them instead of discovering the interaction as a merge conflict.
 
 ## Rules
 
-1. **One worktree per writer**, own branch each (`herdr worktree create --branch <unit> --base
-   <run-branch> ... --json`, then `herder spawn --cwd <path>` with the one-line prompt).
+1. **One worktree per writer**, own branch each (`herder spawn --worktree <unit> --base
+   <run-branch> ...` with the one-line prompt — one step; it creates the worktree + workspace).
    Read-only workers may share the main worktree — then they write nothing, scratch included.
 2. **Cap the fleet at what you can supervise**; batch beyond that.
 3. **Deliverables land as files** (e.g. `napkins/<run>/results/<unit>.md`); the DONE report —

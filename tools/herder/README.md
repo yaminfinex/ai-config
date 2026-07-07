@@ -68,9 +68,22 @@ knowing when working across checkouts and worktrees:
 
 `--notify` resolves the spawner's bus name from the registry by guid *and* by pane/terminal
 coordinates, so enrolled sessions (no `$HERDER_GUID` in their environment) get bus-native
-completion reports. Notify is bus-native ONLY: a spawner that resolves to no bus name is a hard
-error before any pane is created (the keystroke ring went with the herdr delivery transport,
-TASK-003).
+completion reports. `--notify-to` additionally accepts the target's bus name directly: an active
+registry row's `hcom_name` matches, and a name the registry doesn't know is accepted if it is
+live on the bus the child will join (team-scoped — a global-bus peer for a `--team` child still
+refuses, since the child couldn't reach it anyway). Notify is bus-native ONLY: a spawner that
+resolves to no bus name is a hard error before any pane is created (the keystroke ring went with
+the herdr delivery transport, TASK-003).
+
+`--worktree BRANCH [--base REF]` is the one-step worktree mode: spawn drives
+`herdr worktree create` itself (resolving the source repo from the spawner's cwd, which works
+from inside a linked worktree), spawns into the resulting workspace's checkout, and closes the
+workspace's seed shell pane under the same identity guard as `--new-tab`. The summary and
+`--json` (`worktree` block) surface the created coordinates — `workspace_id`, checkout path,
+branch — so an orchestrator can reuse or `herdr worktree remove` the workspace later without
+re-querying. If the worktree is created but the spawn then fails, nothing is auto-removed: the
+failure report names the workspace and the exact remove command. Worktree/workspace lifecycle
+stays herdr-owned; herder only wraps it.
 
 ## Delivery
 

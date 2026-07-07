@@ -312,11 +312,23 @@ func ShortGUID(guid string) string {
 	return guid
 }
 
-// BuildProvenance harvests the ambient lineage and workspace fields common to
-// spawn, sidecar, and in-session enroll flows. Explicit arguments win over
-// ambient values for fields the caller just resolved.
-func BuildProvenance(mechanism, tag, cwd, workspaceID string) Provenance {
-	spawnedBy := os.Getenv("HERDER_SPAWNED_BY")
+// BuildProvenance harvests the lineage and workspace fields common to spawn,
+// fork, resume, sidecar, and in-session enroll flows. Explicit arguments win
+// over ambient values for fields the caller just resolved.
+//
+// spawnedBy is recorded verbatim when non-empty. Creator flows (spawn, fork,
+// resume's no-prior-provenance fallback) pass the session that PERFORMED the
+// action ($HERDER_GUID, else "user") so the row agrees with the
+// HERDER_SPAWNED_BY they export into the child — the ambient
+// $HERDER_SPAWNED_BY in a spawned session names that session's OWN spawner,
+// i.e. the child's grandparent. Passing "" harvests the ambient chain
+// ($HERDER_SPAWNED_BY, then $HERDER_GUID, then "user"), which is right only
+// for rows that describe the CURRENT session (enroll, sidecar): there the
+// ambient spawner genuinely is the row's spawner.
+func BuildProvenance(mechanism, spawnedBy, tag, cwd, workspaceID string) Provenance {
+	if spawnedBy == "" {
+		spawnedBy = os.Getenv("HERDER_SPAWNED_BY")
+	}
 	if spawnedBy == "" {
 		spawnedBy = os.Getenv("HERDER_GUID")
 	}
