@@ -856,10 +856,19 @@ func (r *runner) awaitReady(paneID *string) (reason string, trustBlocked bool, m
 	prev := ""
 	waited := 0
 	status := ""
+	lastVisible := ""
 	for waited < r.opts.WaitTimeoutMS {
+		// recent-unwrapped stays the basis for the readiness/stability compare
+		// below (normal composer content lands there). But the first-run trust
+		// dialog is an alternate-screen overlay: it renders on the VISIBLE
+		// screen yet never enters the scrollback stream, so recent-unwrapped is
+		// null while it is up. Match the modal regex against BOTH sources so
+		// detection is not blind to the overlay.
 		text := r.paneText(*paneID)
+		visible := r.paneVisibleText(*paneID)
+		lastVisible = visible
 		status = r.paneStatus(*paneID)
-		if trustModalRE.MatchString(text) {
+		if trustModalRE.MatchString(text) || trustModalRE.MatchString(visible) {
 			if r.opts.Safe {
 				return "trust-modal-open (blocked by --safe; accept it in the pane)", true, modalCleared
 			}
@@ -890,11 +899,28 @@ func (r *runner) awaitReady(paneID *string) (reason string, trustBlocked bool, m
 	if modalCleared {
 		suffix = ",trust-accepted"
 	}
-	return "timeout(status=" + status + suffix + ")", false, modalCleared
+	reason = "timeout(status=" + status + suffix + ")"
+	// Self-healing: a wedged pane (classically status=blocked) whose overlay we
+	// could not match is an UNKNOWN modal. Surface the first visible line so the
+	// caller sees WHAT is blocking instead of a bare status=blocked timeout.
+	if status == "blocked" {
+		if snippet := firstVisibleLine(lastVisible); snippet != "" {
+			reason += " blocked-by: " + snippet
+		}
+	}
+	return reason, false, modalCleared
 }
 
 func (r *runner) paneText(paneID string) string {
-	out, err := r.herdr.Output("agent", "read", paneID, "--source", "recent-unwrapped", "--lines", "40")
+	return r.paneRead(paneID, "recent-unwrapped")
+}
+
+func (r *runner) paneVisibleText(paneID string) string {
+	return r.paneRead(paneID, "visible")
+}
+
+func (r *runner) paneRead(paneID, source string) string {
+	out, err := r.herdr.Output("agent", "read", paneID, "--source", source, "--lines", "40")
 	if err != nil {
 		return ""
 	}
@@ -909,6 +935,23 @@ func (r *runner) paneText(paneID string) string {
 		return ""
 	}
 	return envelope.Result.Read.Text
+}
+
+// firstVisibleLine returns the first non-blank line of a visible-screen capture,
+// trimmed and length-capped, for surfacing an unrecognized blocking overlay in a
+// timeout reason.
+func firstVisibleLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" {
+			continue
+		}
+		if runes := []rune(s); len(runes) > 80 {
+			s = string(runes[:80])
+		}
+		return s
+	}
+	return ""
 }
 
 func (r *runner) paneStatus(paneID string) string {
@@ -1023,6 +1066,11 @@ func printHelp(stdout io.Writer) {
 		"  message bus from birth — hcom is a HARD dependency for them; other agents exec raw",
 		"  and are reachable over herdr keystrokes only. The assigned bus name, team, and hcom",
 		"  coordinates are captured into the registry so send/wait/cull can resolve this agent.",
+		"",
+		"  A fresh/untrusted directory opens claude's first-run trust dialog before the",
+		"  agent is receptive. Autonomous mode auto-accepts it (the dialog is an",
+		"  alternate-screen overlay, so detection reads the pane's VISIBLE source);",
+		"  --safe leaves it up and surfaces it so you can accept it in the pane.",
 		"",
 		"  Initial-prompt delivery is verified. If it can't be confirmed the summary reports",
 		"  \"prompt: NOT confirmed\" — read the pane (`herder wait <guid> --read`) before assuming",

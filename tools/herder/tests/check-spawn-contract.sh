@@ -209,6 +209,47 @@ if [[ "$WRITE" -eq 0 ]]; then
   run_spawn ready claude launchctx --role worker --agent bash --wait-timeout-ms 15s
   [[ "$RUN_RC" -eq 1 ]] && grep -q -- '--wait-timeout-ms must be numeric' "$RUN_ERR_F" \
     && ok "usage: --wait-timeout-ms numeric" || bad "usage: --wait-timeout-ms numeric" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+
+  # ---- alternate-screen trust modal: detection reads the VISIBLE source ----
+  # These lock the per-source fix: the modal text appears ONLY for
+  # `--source visible` and the pane reports status=blocked; recent-unwrapped is
+  # null. Asserted directly (not golden) — this is new behavior with no bash
+  # substrate to characterize against.
+
+  # Autonomous: the visible-only modal must be detected, auto-accepted, and the
+  # prompt delivered with trust-accepted in the ready reason.
+  CASE="$ROOT/modal_visible"
+  run_spawn modalvis claude launchctx --role worker --agent claude --prompt "do the thing"
+  if [[ "$RUN_RC" -eq 0 ]] \
+    && grep -q 'trust-accepted' "$RUN_ERR_F" \
+    && grep -q 'prompt: sent' "$RUN_ERR_F"; then
+    ok "trust-modal (visible-only): auto-accepted + prompt delivered"
+  else
+    bad "trust-modal (visible-only): auto-accepted + prompt delivered" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  # --safe: the visible-only modal must still be seen and the send refused, with
+  # the trust modal surfaced in the summary (prompt NOT sent).
+  CASE="$ROOT/modal_visible_safe"
+  run_spawn modalvis claude launchctx --role worker --agent claude --safe --prompt "do the thing"
+  if grep -q 'directory-trust modal is open' "$RUN_ERR_F" \
+    && grep -q 'NOT sent' "$RUN_ERR_F"; then
+    ok "trust-modal (visible-only) --safe: refused + modal surfaced"
+  else
+    bad "trust-modal (visible-only) --safe: refused + modal surfaced" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  # Self-healing: an UNRECOGNIZED alternate-screen overlay (status=blocked, no
+  # trust match) must not be auto-accepted; the timeout reason surfaces a snippet
+  # of the visible text so the caller sees WHAT is blocking.
+  CASE="$ROOT/unknown_modal"
+  run_spawn unknownmodal claude launchctx --role worker --agent claude --prompt "do the thing" --wait-timeout-ms 1500
+  if grep -q 'timeout(status=blocked' "$RUN_ERR_F" \
+    && grep -q 'blocked-by: Sign in to continue' "$RUN_ERR_F"; then
+    ok "unknown modal: timeout reason surfaces visible snippet"
+  else
+    bad "unknown modal: timeout reason surfaces visible snippet" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
 fi
 
 if [[ "$WRITE" -eq 1 ]]; then

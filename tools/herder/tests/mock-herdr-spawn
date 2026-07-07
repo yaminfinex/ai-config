@@ -17,10 +17,19 @@
 #   herdr pane send-keys <pane> Enter
 #
 # Behaviour is driven by env vars (set by the harness):
-#   MOCK_SPAWN_SCENARIO  ready | modal | rootguard | startfail
+#   MOCK_SPAWN_SCENARIO  ready | modal | modalvis | unknownmodal | rootguard | startfail
 #       ready     — agent is receptive immediately
 #       modal     — a first-run directory-trust modal is open until an Enter
-#                   clears it (then the agent is receptive)
+#                   clears it (then the agent is receptive). Modal text shows in
+#                   EVERY read source (idealized; kept for back-compat).
+#       modalvis  — a first-run trust modal that behaves like the real
+#                   alternate-screen overlay: its text appears ONLY for
+#                   `--source visible`; `--source recent-unwrapped` reads null,
+#                   and agent status is `blocked` until an Enter clears it.
+#                   Locks the per-source detection fix.
+#       unknownmodal — an UNRECOGNIZED alternate-screen overlay: non-trust text
+#                   on `--source visible` only, status `blocked`, never clears.
+#                   Exercises the self-healing timeout snippet.
 #       rootguard — `tab create` reports a root pane whose terminal_id equals
 #                   the agent's (herder spawn must refuse the root-pane close)
 #       startfail — `agent start` fails with a JSON error payload (exit 3)
@@ -70,8 +79,36 @@ root_term() {
 }
 
 modal_open() { [[ "$SCEN" == "modal" ]] && ! modal_cleared; }
+# Alternate-screen overlays: text lives on the visible screen only. modalvis
+# clears on Enter; unknownmodal never does (an overlay we don't recognize).
+modalvis_open()  { [[ "$SCEN" == "modalvis" ]] && ! modal_cleared; }
+altscreen_open() { modalvis_open || [[ "$SCEN" == "unknownmodal" ]]; }
+
+# read_source scans a herdr invocation's args for the value after --source.
+read_source() {
+  local prev=""
+  for a in "$@"; do
+    [[ "$prev" == "--source" ]] && { printf '%s' "$a"; return; }
+    prev="$a"
+  done
+}
+
+# visible_text is what an alternate-screen overlay paints on the VISIBLE screen
+# while it is up — invisible to the recent-unwrapped scrollback stream.
+visible_text() {
+  if modalvis_open; then
+    printf '⏺ starting…\nIs this a project you created or one you trust?\n  ❯ 1. Yes, I trust this folder\n    2. No, exit\n'
+    return
+  fi
+  if [[ "$SCEN" == "unknownmodal" ]]; then
+    printf 'Sign in to continue\nPaste your API key to authenticate:\n> \n'
+    return
+  fi
+  current_text
+}
 
 current_status() {
+  if altscreen_open; then printf 'blocked'; return; fi
   if entered; then printf 'working'; else printf 'idle'; fi
 }
 
@@ -147,7 +184,17 @@ case "${1:-} ${2:-}" in
     [[ "${3:-}" == "p_40" ]] && : > "$STATE/root_closed"
     jq -n --arg pane "${3:-}" '{result:{type:"closed", pane_id:$pane}}';;
   "agent read")
-    emit_read "$(current_text)";;
+    if altscreen_open; then
+      # Overlay is up: only the visible source can see it; the scrollback
+      # (recent-unwrapped) reads null, exactly as on a live boot trust modal.
+      if [[ "$(read_source "$@")" == "visible" ]]; then
+        emit_read "$(visible_text)"
+      else
+        emit_read ""
+      fi
+    else
+      emit_read "$(current_text)"
+    fi;;
   "agent list")
     jq -n --arg p "$(agent_pane)" --arg a "$AGENT_KIND" --arg st "$(current_status)" \
       '{result:{agents:[{pane_id:$p, terminal_id:"term_AGENT", agent:$a, agent_status:$st}]}}';;
@@ -159,7 +206,8 @@ case "${1:-} ${2:-}" in
   "pane send-keys")
     log_call "$@"
     if [[ "${4:-}" == "Enter" ]]; then
-      if modal_open; then
+      # modal/modalvis clear on Enter; unknownmodal never does (it stays wedged).
+      if modal_open || modalvis_open; then
         : > "$STATE/modal_cleared"
       elif sent; then
         : > "$STATE/enter"
