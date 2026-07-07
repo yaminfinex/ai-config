@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: unknown flag: --pane (steer text starting with -- goes after a `--` separator)
+=== STDOUT ===
+
+=== EXIT ===
+64
+=== HERDR MUTATING CALLS ===

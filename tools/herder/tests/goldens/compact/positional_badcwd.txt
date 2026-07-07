@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: refused — positional identity only (terminal term_ME) and the pane's foreground cwd ("/mock/elsewhere") does not corroborate this process's cwd ("<CASE>/cwd"). herder compact only ever types into the caller's own pane; without proof of self-identity it refuses. Nothing was typed.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===

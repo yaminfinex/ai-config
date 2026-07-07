@@ -90,12 +90,13 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
 2. **Spawn prompts are one line** — "read <playbook> in full, then execute <unit>". Context
    travels through the files + branch, never the prompt.
 3. **Context discipline.** One unit per agent; wide reading goes to subagents. A ballooning unit
-   writes durable state first (commit WIP + a HANDOFF report on the unit thread — whatever isn't
-   persisted is lost), then **stops and lets a fresh spawn pick up from the HANDOFF report**.
-   INTERIM (TASK-003 → TASK-022): steered in-place compaction (`herder send "$HERDR_PANE_ID"
-   '/compact …'`) is GONE — `herder send` is bus-only, and a bus message cannot type a slash
-   command into your own composer. A dedicated `herder compact <steer>` is tracked as TASK-022;
-   until it lands, the fresh-spawn handoff is the ONLY recovery.
+   writes durable state first (commit WIP + a progress report on the unit thread — whatever isn't
+   persisted is lost, compaction included), then compacts in place: `herder compact '<steer:
+   what to keep>'` queues a real `/compact <steer>` into the agent's OWN composer and fires at
+   turn end. (The old `herder send "$HERDR_PANE_ID" '/compact …'` recipe died with the keystroke
+   transport — `herder compact` is its dedicated self-only replacement.) If the session is too
+   far gone to steer coherently, fall back to the fresh-spawn handoff: HANDOFF report on the
+   unit thread, stop, successor picks it up.
 4. **Verification before done.** A finished worker reports DONE on its unit thread with the
    playbook-pinned commands' results. The orchestrator never trusts the claim: it re-runs the
    pinned gates itself (a build-cached green is not independent evidence), then records the

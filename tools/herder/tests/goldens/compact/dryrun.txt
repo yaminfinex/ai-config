@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact --dry-run: would queue "/compact focus on the open unit, keep gate commands and thread names" into own pane w1-2 (terminal term_ME, guid guid-me-0000, resolution: durable-key)
+=== STDOUT ===
+
+=== EXIT ===
+0
+=== HERDR MUTATING CALLS ===

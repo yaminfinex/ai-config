@@ -1,0 +1,10 @@
+=== STDERR ===
+herder compact: note — HERDR_PANE_ID (p_env) no longer names your terminal (env: term_OTHER, registry: term_REG); using the registry terminal's live pane w1-5
+herder compact: submitted — "/compact focus on the open unit, keep gate commands and thread names" is in your composer and fires when the current turn ends (verify: delivered)
+=== STDOUT ===
+
+=== EXIT ===
+0
+=== HERDR MUTATING CALLS ===
+agent send w1-5 /compact focus on the open unit, keep gate commands and thread names
+pane send-keys w1-5 Enter

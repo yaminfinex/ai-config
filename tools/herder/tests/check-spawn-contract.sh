@@ -196,6 +196,10 @@ scenario capture_fail      ready claude fail --role worker --agent claude --json
 scenario perm_explicit     ready claude launchctx --role worker --agent claude --extra-arg --dangerously-skip-permissions --json
 scenario team              ready claude launchctx --role worker --agent claude --team smoke --json
 scenario start_fail        startfail claude launchctx --role worker --agent claude --json
+# TASK-024: post-submit the echo leaves recent-unwrapped and the status flip
+# lags past the verify window — delivery must verify via the positively-empty
+# composer line instead of false-negativing to not_delivered.
+scenario claude_echoloss   echoloss claude launchctx --role worker --agent claude --prompt "do the thing" --json
 
 # ---- usage / validation errors (direct assertions; no goldens needed) ----
 if [[ "$WRITE" -eq 0 ]]; then

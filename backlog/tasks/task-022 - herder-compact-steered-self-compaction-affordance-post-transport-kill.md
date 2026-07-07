@@ -1,9 +1,10 @@
 ---
 id: TASK-022
 title: 'herder compact: steered self-compaction affordance (post-transport-kill)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-07 07:51'
+updated_date: '2026-07-07 08:40'
 labels:
   - run-herder-dx
 dependencies: []

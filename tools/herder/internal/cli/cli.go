@@ -44,6 +44,7 @@ var commands = []command{
 	{"rename", "Rename an enrolled agent label and sync herdr best-effort", renamecmd.Run},
 	{"fork", "Branch an enrolled agent session into a new guid", lifecyclecmd.RunFork},
 	{"resume", "Reopen an enrolled agent session with the same guid", lifecyclecmd.RunResume},
+	{"compact", "Queue a steered /compact into the caller's own pane (self only)", spawncmd.RunCompact},
 	{"launch", "Launch an hcom-bound tool in the current pane", launchcmd.Run},
 	{"hook", "(internal) Shim hcom hook calls; rewrite the spawn bootstrap", hookcmd.Run},
 	{"sidecar", "(internal) Bridge hcom status to herdr pane status", sidecarcmd.Run},
@@ -71,7 +72,7 @@ func rootUsage() string {
 	b.WriteString("\n")
 	b.WriteString("Commands:\n")
 	for _, cmd := range commands {
-		fmt.Fprintf(&b, "  %-7s %s\n", cmd.name, cmd.summary)
+		fmt.Fprintf(&b, "  %-8s %s\n", cmd.name, cmd.summary)
 	}
 	b.WriteString("\n")
 	b.WriteString("Run `herder <command> --help` for that command's usage.\n")

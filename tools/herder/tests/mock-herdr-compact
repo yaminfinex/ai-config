@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# mock-herdr-compact — deterministic, hermetic stand-in for the `herdr` CLI,
+# used by check-compact-contract.sh to exercise the herder compact path
+# (self-pane proof, terminal re-resolution, the visible-only preflight, the
+# paste + submit legs) without a live session.
+#
+# Answers exactly the herdr sub-invocations herder compact makes:
+#   herdr pane get <pane>
+#   herdr agent list
+#   herdr agent read <pane> [--source ...] [--lines N]
+#   herdr agent send <pane> <message>
+#   herdr pane send-keys <pane> Enter
+#
+# Behaviour is driven by env vars (set by the harness):
+#   MOCK_COMPACT_SCENARIO
+#       midturn         — self agent is working (the normal self-compact case);
+#                         post-Enter the composer empties and the echo is gone
+#                         (claude drops it on redraw) — delivery must verify via
+#                         composer-empty evidence.
+#       queued_slow     — working agent whose composer KEEPS the text trailing
+#                         the sigil after Enter (no submit visible in-window):
+#                         paste must fall back to the honest "queued" outcome.
+#       idle            — idle agent; post-Enter the transcript shows the echo
+#                         (classic delivered verification).
+#       scrollback_noise— like midturn, but recent-unwrapped carries an old
+#                         "Interrupted by user" line: the compact preflight is
+#                         VISIBLE-only and must proceed (the boot preflight
+#                         would have refused).
+#       blocked         — the VISIBLE screen shows an open permission modal:
+#                         preflight must refuse with nothing typed.
+#       guid_drift      — the env pane resolves to a DIFFERENT terminal than
+#                         the caller's registry row: compact must paste into
+#                         the registry terminal's live pane, with a note.
+#       term_dead       — the registry terminal is not in agent list.
+#   MOCK_COMPACT_STATE  scratch dir; marker files move ready → sent → entered
+#   MOCK_PROBE_DIR      probe dir; every MUTATING call appends to calls
+#   MOCK_COMPACT_CWD    foreground_cwd reported by pane get (positional proof)
+#
+# Topology:
+#   p_env  — the caller's HERDR_PANE_ID (legacy alias, never in agent list)
+#   w1-2 @ term_ME     the caller's canonical pane (default self)
+#   w1-3 @ term_OTHER  a neighbour pane
+#   w1-5 @ term_REG    the caller's REAL pane in guid_drift (registry terminal)
+
+set -euo pipefail
+
+SCEN="${MOCK_COMPACT_SCENARIO:-midturn}"
+STATE="${MOCK_COMPACT_STATE:?}"
+PROBE="${MOCK_PROBE_DIR:?}"
+CWDVAL="${MOCK_COMPACT_CWD:-/mock/self-cwd}"
+mkdir -p "$STATE" "$PROBE"
+
+log_call() { printf '%s\n' "$*" >>"$PROBE/calls"; }
+
+sent()     { [[ -f "$STATE/send" ]]; }
+entered()  { [[ -f "$STATE/enter" ]]; }
+sent_msg() { cat "$STATE/msg" 2>/dev/null || true; }
+
+sig='❯'
+
+self_status() {
+  case "$SCEN" in
+    idle) printf 'done';;
+    *)    printf 'working';;
+  esac
+}
+
+# env_pane_terminal: what `pane get $HERDR_PANE_ID` reports. In guid_drift the
+# env pane no longer holds the caller's terminal (pane-id churn).
+env_pane_terminal() {
+  if [[ "$SCEN" == "guid_drift" ]]; then printf 'term_OTHER'; else printf 'term_ME'; fi
+}
+
+composer_text() {
+  local msg; msg="$(sent_msg)"
+  if ! sent; then
+    printf '⏺ working on the task…\n%s ' "$sig"
+    return
+  fi
+  if ! entered; then
+    printf '⏺ working on the task…\n%s %s' "$sig" "$msg"
+    return
+  fi
+  case "$SCEN" in
+    queued_slow)
+      # Submit not visible in-window: text still trails the sigil.
+      printf '⏺ working on the task…\n%s %s' "$sig" "$msg";;
+    idle)
+      # Classic transcript echo + empty composer.
+      printf '⏺ %s\n⏺ compacting…\n%s ' "$msg" "$sig";;
+    *)
+      # Claude redraw: echo gone, composer positively empty.
+      printf '⏺ working on the task…\n%s ' "$sig";;
+  esac
+}
+
+read_text() {  # $1 = source
+  local base; base="$(composer_text)"
+  case "$SCEN" in
+    blocked)
+      if [[ "$1" == "visible" ]]; then
+        printf 'Do you want to allow this tool call?\n  1. Yes\n  2. No\n'
+      else
+        printf '%s' "$base"
+      fi;;
+    scrollback_noise)
+      if [[ "$1" == "visible" ]]; then
+        printf '%s' "$base"
+      else
+        printf '⏺ Interrupted by user\n%s' "$base"
+      fi;;
+    *)
+      printf '%s' "$base";;
+  esac
+}
+
+read_source() {
+  local prev=""
+  for a in "$@"; do
+    [[ "$prev" == "--source" ]] && { printf '%s' "$a"; return; }
+    prev="$a"
+  done
+  printf 'recent-unwrapped'
+}
+
+case "${1:-} ${2:-}" in
+  "pane get")
+    case "${3:-}" in
+      p_env)
+        jq -n --arg t "$(env_pane_terminal)" --arg cwd "$CWDVAL" \
+          '{result:{pane:{pane_id:"w1-2", terminal_id:$t, workspace_id:"w1", cwd:$cwd, foreground_cwd:$cwd}}}';;
+      *) jq -n '{result:{}}';;
+    esac;;
+  "agent list")
+    if [[ "$SCEN" == "term_dead" ]]; then
+      jq -n '{result:{agents:[{pane_id:"w1-3", terminal_id:"term_OTHER", agent:"claude", agent_status:"idle"}]}}'
+    elif [[ "$SCEN" == "guid_drift" ]]; then
+      jq -n --arg st "$(self_status)" '{result:{agents:[
+        {pane_id:"w1-2", terminal_id:"term_OTHER", agent:"claude", agent_status:"idle"},
+        {pane_id:"w1-5", terminal_id:"term_REG", agent:"claude", agent_status:$st}
+      ]}}'
+    else
+      jq -n --arg st "$(self_status)" '{result:{agents:[
+        {pane_id:"w1-2", terminal_id:"term_ME", agent:"claude", agent_status:$st},
+        {pane_id:"w1-3", terminal_id:"term_OTHER", agent:"claude", agent_status:"idle"}
+      ]}}'
+    fi;;
+  "agent read")
+    src="$(read_source "$@")"
+    jq -n --arg t "$(read_text "$src")" '{result:{read:{text:$t}}}';;
+  "agent send")
+    log_call "$@"
+    printf '%s' "${4:-}" >"$STATE/msg"
+    : > "$STATE/send"
+    printf '{"result":{"ok":true}}\n';;
+  "pane send-keys")
+    log_call "$@"
+    if [[ "${4:-}" == "Enter" ]] && sent; then
+      : > "$STATE/enter"
+    fi
+    printf '{"result":{"ok":true}}\n';;
+  *)
+    printf 'mock-herdr-compact: unhandled: %s\n' "$*" >&2
+    exit 64;;
+esac

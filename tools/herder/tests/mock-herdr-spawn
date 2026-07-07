@@ -33,6 +33,11 @@
 #       rootguard — `tab create` reports a root pane whose terminal_id equals
 #                   the agent's (herder spawn must refuse the root-pane close)
 #       startfail — `agent start` fails with a JSON error payload (exit 3)
+#       echoloss  — TASK-024 verify race: after the submit Enter the prompt
+#                   echo is GONE from recent-unwrapped (claude redraw) and the
+#                   agent status never flips to working inside the verify
+#                   window. Delivery must still verify via the positively-empty
+#                   composer line, not report a false not_delivered.
 #   MOCK_SPAWN_AGENT     claude | codex | bash — reported in `agent list` and
 #                        selects the input sigil (❯ / › / $)
 #   MOCK_SPAWN_STATE     scratch dir; marker files move the state machine
@@ -109,11 +114,19 @@ visible_text() {
 
 current_status() {
   if altscreen_open; then printf 'blocked'; return; fi
+  # echoloss: the status flip lags past the verify window — never 'working'.
+  if [[ "$SCEN" == "echoloss" ]]; then printf 'idle'; return; fi
   if entered; then printf 'working'; else printf 'idle'; fi
 }
 
 current_text() {
   local msg; msg="$(sent_msg)"
+  # echoloss: post-submit redraw drops the echo from recent-unwrapped; only a
+  # positively-empty composer line remains as submission evidence.
+  if [[ "$SCEN" == "echoloss" ]] && entered; then
+    printf '⏺ redrawing…\n%s ' "$sig"
+    return
+  fi
   if modal_open; then
     printf '⏺ starting…\nDo you trust the contents of this directory?\n  1. Yes, continue\n%s ' "$sig"
     return

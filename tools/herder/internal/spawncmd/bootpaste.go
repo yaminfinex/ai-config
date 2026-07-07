@@ -20,6 +20,15 @@ import (
 type bootPaster struct {
 	Client *herdrcli.Client
 	Sleep  func(time.Duration)
+
+	// PreflightVisibleOnly restricts the paste preflight to the VISIBLE screen
+	// (what is blocking NOW). The boot path keeps the additional scrollback
+	// check (default false): a fresh pane's scrollback ≈ its screen, so the
+	// stream check costs nothing and catches text mid-redraw. herder compact
+	// sets it: a mid-session pane's last 80 scrollback lines legitimately
+	// contain answered permission prompts and past interrupts, which are not
+	// current blockers.
+	PreflightVisibleOnly bool
 }
 
 func (b *bootPaster) client() *herdrcli.Client {
@@ -57,7 +66,7 @@ func (b *bootPaster) paste(paneID, message string) (string, int) {
 
 	preText := stripChrome(b.readPane(paneID))
 	preStatus := b.detectStatus(paneID)
-	if _, blocked := preflightBlockedReason(preText); blocked {
+	if _, blocked := preflightBlockedReason(preText); blocked && !b.PreflightVisibleOnly {
 		return "", 2
 	}
 	// The scrollback preflight above is blind to alternate-screen overlays:
@@ -71,6 +80,12 @@ func (b *bootPaster) paste(paneID, message string) (string, int) {
 	msgProbe := messageProbe(message)
 	preBlobs := pastedBlobCount(preText)
 	landed := msgProbe == ""
+	// landedConfirmed distinguishes POSITIVE landing evidence (status flip,
+	// probe text seen, blob count jump) from the boot-race guard's "assume it
+	// landed" fallthrough. Only a positively-landed payload may later count an
+	// empty composer line as submission evidence — on an assumed landing, an
+	// empty composer is indistinguishable from a paste that never arrived.
+	landedConfirmed := false
 	pasteCollapsed := false
 	sendAttempts := 0
 
@@ -98,15 +113,18 @@ func (b *bootPaster) paste(paneID, message string) (string, int) {
 			b.sleep(250 * time.Millisecond)
 			if b.statusConfirmsDelivery(paneID, preStatus) {
 				landed = true
+				landedConfirmed = true
 				break
 			}
 			post := stripChrome(b.readPane(paneID))
 			if msgPresent(post, msgProbe) {
 				landed = true
+				landedConfirmed = true
 				break
 			}
 			if pastedBlobCount(post) > preBlobs {
 				landed = true
+				landedConfirmed = true
 				pasteCollapsed = true
 				break
 			}
@@ -130,26 +148,29 @@ func (b *bootPaster) paste(paneID, message string) (string, int) {
 		verifyResult = "delivered"
 		delivered := false
 		if pasteCollapsed {
-			if b.waitBlobSubmitted(paneID, preBlobs) {
+			if b.waitBlobSubmitted(paneID, preBlobs, sigil) {
 				delivered = true
 			} else {
 				_, _ = b.client().Run("pane", "send-keys", paneID, "Enter")
-				if b.waitBlobSubmitted(paneID, preBlobs) {
+				if b.waitBlobSubmitted(paneID, preBlobs, sigil) {
 					delivered = true
 				} else {
 					_, _ = b.client().Run("pane", "send-keys", paneID, "Enter")
-					if b.waitBlobSubmitted(paneID, preBlobs) {
+					if b.waitBlobSubmitted(paneID, preBlobs, sigil) {
 						delivered = true
 					}
 				}
 			}
-		} else if b.pollDelivered(paneID, preStatus, sigil, msgProbe, bootPasteTimeoutMS) {
+		} else if b.pollDelivered(paneID, preStatus, sigil, msgProbe, bootPasteTimeoutMS, landedConfirmed) {
 			delivered = true
 		} else if preStatus == "working" {
 			return "queued", 0
 		} else if msgTrailingSigil(stripChrome(b.readPane(paneID)), sigil, msgProbe) {
+			// The trailing-sigil read just POSITIVELY saw the payload in the
+			// composer, so the re-poll may use composer-empty evidence even if
+			// the original landing was assumed.
 			_, _ = b.client().Run("pane", "send-keys", paneID, "Enter")
-			if b.pollDelivered(paneID, preStatus, sigil, msgProbe, bootPasteTimeoutMS) {
+			if b.pollDelivered(paneID, preStatus, sigil, msgProbe, bootPasteTimeoutMS, true) {
 				delivered = true
 			}
 		}
@@ -228,7 +249,15 @@ func (b *bootPaster) statusConfirmsDelivery(paneID, preStatus string) bool {
 	return b.detectStatus(paneID) == "working" && preStatus != "working"
 }
 
-func (b *bootPaster) pollDelivered(paneID, preStatus, sigil, msgProbe string, timeoutMS int) bool {
+// pollDelivered watches for submission evidence after the Enter: a status
+// flip to working, the payload echo leaving the composer for the transcript,
+// or — only when the payload was POSITIVELY seen in the composer beforehand
+// (composerEvidence) — the composer line coming back positively empty. That
+// last signal is what kills the TASK-024 false negatives: a claude redraw can
+// drop the echo from the recent-unwrapped window and the herdr status flip
+// can lag past the poll window, but a payload that was IN the composer and is
+// gone after exactly one Enter has, by elimination, been submitted.
+func (b *bootPaster) pollDelivered(paneID, preStatus, sigil, msgProbe string, timeoutMS int, composerEvidence bool) bool {
 	elapsed := 0
 	for elapsed < timeoutMS {
 		b.sleep(250 * time.Millisecond)
@@ -239,14 +268,24 @@ func (b *bootPaster) pollDelivered(paneID, preStatus, sigil, msgProbe string, ti
 		if verifyDelivered(post, sigil, msgProbe) {
 			return true
 		}
+		if composerEvidence && composerLineEmpty(post, sigil) {
+			return true
+		}
 		elapsed += 250
 	}
 	return false
 }
 
-func (b *bootPaster) waitBlobSubmitted(paneID string, preBlobs int) bool {
+// waitBlobSubmitted's blob-count signal alone is not sufficient: the
+// SUBMITTED message echoes into the transcript as another "[Pasted text …]"
+// marker, holding the window-wide count up and (pre-TASK-024) driving
+// pointless extra Enters into a false not_delivered. A blob landing is always
+// positive landing evidence, so a positively-empty composer line is accepted
+// as submission proof alongside the count going back down.
+func (b *bootPaster) waitBlobSubmitted(paneID string, preBlobs int, sigil string) bool {
 	for i := 0; i < 8; i++ {
-		if pastedBlobCount(stripChrome(b.readPane(paneID))) <= preBlobs {
+		post := stripChrome(b.readPane(paneID))
+		if pastedBlobCount(post) <= preBlobs || composerLineEmpty(post, sigil) {
 			return true
 		}
 		b.sleep(300 * time.Millisecond)
@@ -330,13 +369,14 @@ func verifyDelivered(text, sigil, msgProbe string) bool {
 	return msgPresent(text, msgProbe) && !msgTrailingSigil(text, sigil, msgProbe)
 }
 
-// composerConfirmedEmpty reports whether the pane POSITIVELY shows a ready,
-// empty input line — the only state in which re-pasting is safe. A booting or
-// otherwise unreadable pane (no recognizable sigil, or an empty capture) and a
-// pane holding a pasted blob both return false, so the caller never blind-pastes
-// a duplicate on top of a first paste it simply cannot see yet.
-func composerConfirmedEmpty(text, sigil string) bool {
-	if sigil == "" || pastedBlobCount(text) > 0 {
+// composerLineEmpty reports whether the last composer line ("<sigil> …") is
+// POSITIVELY present and empty. Unlike composerConfirmedEmpty it looks ONLY at
+// the composer line — a "[Pasted text …]" marker elsewhere in the window (the
+// transcript echo of a just-submitted paste) does not veto it. Used as
+// submission evidence after an Enter; never as a re-paste guard (re-pasting
+// stays gated on the stricter composerConfirmedEmpty).
+func composerLineEmpty(text, sigil string) bool {
+	if sigil == "" {
 		return false
 	}
 	needle := sigil + " "
@@ -350,4 +390,13 @@ func composerConfirmedEmpty(text, sigil string) bool {
 		}
 	}
 	return false
+}
+
+// composerConfirmedEmpty reports whether the pane POSITIVELY shows a ready,
+// empty input line — the only state in which re-pasting is safe. A booting or
+// otherwise unreadable pane (no recognizable sigil, or an empty capture) and a
+// pane holding a pasted blob both return false, so the caller never blind-pastes
+// a duplicate on top of a first paste it simply cannot see yet.
+func composerConfirmedEmpty(text, sigil string) bool {
+	return pastedBlobCount(text) == 0 && composerLineEmpty(text, sigil)
 }
