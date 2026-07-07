@@ -193,6 +193,14 @@ scenario bus_sendfail      ready claude launchctx_sendfail --role worker --agent
 # NOT sent (nothing to address), reported with the safe-resend remedy.
 SPAWN_BIND_MS=3000
 scenario bind_timeout      ready claude fail --role worker --agent claude --prompt "do the thing" --json
+# P1 regression (codex review): a PRE-EXISTING same-tag+cwd bus agent
+# (worker-nova on the fallback roster; launch pane p_99 ≠ the child's frozen
+# p_50) must NEVER satisfy the prompt bind gate — tag+cwd cannot tell an old
+# session from the child during the pre-bind window, and binding it would
+# deliver the initial prompt to the OLD session. The golden pins the refusal:
+# bind-timeout, NO hcom send argv. (The post-write capture loop's tag+cwd
+# enrichment of the registry row is pre-existing behavior and still visible.)
+scenario bind_stale_tagcwd ready claude fallback --role worker --agent claude --prompt "do the thing" --json
 unset SPAWN_BIND_MS
 # Bus-less spawner: notify is bus-native ONLY (TASK-003) — a spawner that
 # resolves to no hcom name is a hard error BEFORE any pane is created (no

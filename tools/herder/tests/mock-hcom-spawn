@@ -79,10 +79,16 @@ case "${1:-} ${2:-}" in
     printf 'ok\n';;
   "events "*)
     # hcom events --last N --agent <name> --context deliver:<sender> --after <iso>
-    # Real hcom emits JSONL (one event object per line); no match emits nothing.
+    # Real hcom emits JSONL (one event object per line, monotone `id`); no
+    # match emits nothing. Stateful like mock-hcom: the pre-send snapshot call
+    # sees no receipts; post-send polls see a strictly-newer receipt.
     printf '%s\n' "$*" >"$PROBE/events_argv"
     if [[ "$SCEN" != *_queued ]]; then
-      jq -cn '{data:{context:"deliver:orchestrator"}, instance:"worker-rive", type:"status"}'
+      if [[ -f "$PROBE/events_polled" ]]; then
+        jq -cn '{id:42, data:{context:"deliver:orchestrator"}, instance:"worker-rive", type:"status"}'
+      else
+        : >"$PROBE/events_polled"
+      fi
     fi;;
   *)
     printf 'mock-hcom-spawn: unhandled: %s\n' "$*" >&2

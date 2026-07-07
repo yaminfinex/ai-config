@@ -108,8 +108,11 @@ early in boot, well before the TUI is interactive — then sends the FULL prompt
 as a verified hcom message and reports the receipt. Verify vocabulary: `delivered` (receipt seen),
 `queued` (sent, no receipt in the window — it injects the moment the agent is deliverable; do NOT
 resend), `send_failed`/`not_joined` (nothing delivered — a retry via `herder send` is safe),
-`bind_timeout`/`bind_ambiguous` (nothing went on the wire — deliver once `herder list` shows the
-bus name). Knobs: `HERDER_SPAWN_BIND_MS` (bind wait, default 60000) and `HERDER_SPAWN_VERIFY_MS`
+`bind_timeout` (nothing went on the wire — deliver once `herder list` shows the bus name).
+The prompt gate trusts CHILD-SPECIFIC bind signals only (this guid's sidecar enrichment, or the
+frozen-launch-pane roster match) — a pre-existing same-tag+cwd bus agent never satisfies it, so a
+stale roster match waits out to `bind_timeout` instead of misdelivering the prompt to the old
+session. Knobs: `HERDER_SPAWN_BIND_MS` (bind wait, default 60000) and `HERDER_SPAWN_VERIFY_MS`
 (receipt window, default 20000). A slash-command prompt arrives as message TEXT, not a typed
 slash command. hcom wakes an idle agent with an EMPTY composer instantly — even a fresh,
 never-prompted session; a message sent mid-boot is held until the session can take it (probed

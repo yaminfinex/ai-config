@@ -35,3 +35,4 @@ agent start worker-<SHORT>
 === HCOM SEND ARGV ===
 send --from orchestrator @worker-rive -- do the thing
 === HCOM EVENTS ARGV ===
+events --last 50 --agent worker-rive --context deliver:orchestrator --after <TS>

@@ -857,7 +857,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		// Bind is the delivery gate, so --no-ready-wait cannot skip this wait
 		// (ruling: it stays meaningful only for the paste path). The trust
 		// modal blocks BOOT itself — pre-bind — so awaitBind clears it too.
-		capturedName, readyReason, trustBlocked, modalCleared = r.awaitBind(&paneID, registryPath, guid, hcomDirEff, launchPaneID, resolvedCWD, resolvedCWDPhys)
+		capturedName, readyReason, trustBlocked, modalCleared = r.awaitBind(&paneID, registryPath, guid, hcomDirEff, launchPaneID)
 		_ = modalCleared
 	case opts.NoReadyWait:
 		readyReason = "ready-wait skipped (--no-ready-wait)"
@@ -877,8 +877,6 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			if deliveryResult == "delivered" || deliveryResult == "queued" {
 				promptSent = true
 			}
-		} else if strings.HasPrefix(readyReason, "bind-ambiguous") {
-			deliveryResult = "bind_ambiguous"
 		} else if strings.HasPrefix(readyReason, "bound-but-ready-match-timeout") {
 			deliveryResult = "ready_match_timeout"
 		} else {
@@ -1082,18 +1080,19 @@ func (r *runner) awaitReady(paneID *string) (reason string, trustBlocked bool, m
 }
 
 // awaitBind waits for the child to BIND its bus name — the delivery gate for
-// bus-first initial prompts (TASK-032). Bind is positively observable (the
-// sidecar's registry enrichment, or the child's hcom row correlated by frozen
-// launch pane_id / unique tag+cwd) and lands early in boot, well before the
-// TUI is interactive — hcom holds a message sent at that instant until the
-// session is deliverable, so no TUI-readiness gate is layered on top. The
+// bus-first initial prompts (TASK-032). Bind is positively observable via
+// CHILD-SPECIFIC signals only (childBoundBusOnce: this guid's registry
+// enrichment, or the frozen-launch-pane roster match) and lands early in
+// boot, well before the TUI is interactive — hcom holds a message sent at
+// that instant until the session is deliverable, so no TUI-readiness gate is
+// layered on top. The
 // trust modal is the one boot blocker that precedes bind, so it is cleared
 // here exactly as in awaitReady (--safe refuses instead). --ready-match,
 // when given, additionally gates the send on the pane text (ruling: the flag
 // keeps its "don't deliver before the screen shows X" meaning on both paths).
 // Budget: HERDER_SPAWN_BIND_MS (default 60000 — codex binds in seconds, but a
 // cold MCP-heavy boot gets headroom).
-func (r *runner) awaitBind(paneID *string, registryPath, guid, hcomDir, launchPaneID, cwd, cwdPhys string) (name, reason string, trustBlocked, modalCleared bool) {
+func (r *runner) awaitBind(paneID *string, registryPath, guid, hcomDir, launchPaneID string) (name, reason string, trustBlocked, modalCleared bool) {
 	waited := 0
 	boundName := ""
 	for waited < r.opts.BindTimeoutMS {
@@ -1110,11 +1109,7 @@ func (r *runner) awaitBind(paneID *string, registryPath, guid, hcomDir, launchPa
 			continue
 		}
 		if boundName == "" {
-			got, state := captureBusOnce(registryPath, guid, hcomDir, launchPaneID, r.opts.Role, cwd, cwdPhys)
-			if state == "ambiguous" {
-				return "", "bind-ambiguous (two live bus entries share tag+cwd; refusing to guess)", false, modalCleared
-			}
-			boundName = got
+			boundName = childBoundBusOnce(registryPath, guid, hcomDir, launchPaneID)
 		}
 		if boundName != "" && (r.opts.ReadyMatch == "" || strings.Contains(text, r.opts.ReadyMatch)) {
 			return boundName, "bound" + trustSuffix(modalCleared), false, modalCleared
@@ -1264,7 +1259,7 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 		case deliveryResult == "blocked_trust_modal":
 			fmt.Fprintln(r.stderr, "  prompt: NOT sent — a directory-trust modal is open and --safe forbids auto-accepting it.")
 			fmt.Fprintf(r.stderr, "          Accept it in the pane (focus + Enter), then: herder send %s \"<prompt>\"\n", record.Label)
-		case deliveryResult == "bind_timeout" || deliveryResult == "bind_ambiguous" || deliveryResult == "ready_match_timeout":
+		case deliveryResult == "bind_timeout" || deliveryResult == "ready_match_timeout":
 			fmt.Fprintf(r.stderr, "  prompt: NOT sent (%s) — nothing went on the wire; a resend is SAFE.\n", readyReason)
 			fmt.Fprintf(r.stderr, "          once `herder list` shows its bus name: herder send %s \"<prompt>\"\n", record.Label)
 		case busPrompt:
@@ -1605,38 +1600,25 @@ func registryCapturedNameOnce(path, guid string) string {
 	return ""
 }
 
-// captureBusOnce makes ONE attempt to learn the child's bus name, in the same
-// trust order as the post-write capture loop: sidecar registry enrichment
-// first, then the child's hcom row correlated by its frozen launch pane_id,
-// then a UNIQUE tag+cwd match. Two or more live entries sharing tag+cwd cannot
-// be told apart — state "ambiguous" refuses to guess (the wrong-guid
-// enrichment bug). "not_found" is transient: the caller keeps polling.
-func captureBusOnce(registryPath, guid, hcomDir, launchPaneID, role, cwd, cwdPhys string) (name, state string) {
+// childBoundBusOnce makes ONE attempt to learn the child's bus name using
+// CHILD-SPECIFIC signals only: the sidecar's registry enrichment for THIS
+// guid, or the hcom roster entry whose launch_context matches the frozen
+// launch pane. The post-write capture loop's tag+cwd-unique fallback is
+// deliberately NOT consulted here: during the pre-bind window a PRE-EXISTING
+// same-tag+cwd agent is the only roster match, so that heuristic would bind
+// the initial prompt to the OLD session — silent misdelivery (codex review
+// P1). A stale match therefore never satisfies the prompt gate; the caller
+// keeps waiting for the child itself, to bind_timeout if it never appears.
+func childBoundBusOnce(registryPath, guid, hcomDir, launchPaneID string) string {
 	if name := registryCapturedNameOnce(registryPath, guid); name != "" {
-		return name, "captured"
+		return name
 	}
-	entries := hcomList(hcomDir)
-	if len(entries) == 0 {
-		return "", "not_found"
-	}
-	for _, entry := range entries {
+	for _, entry := range hcomList(hcomDir) {
 		if entry.LaunchContext.PaneID == launchPaneID {
-			return entry.Name, "captured"
+			return entry.Name
 		}
 	}
-	var matches []hcomEntry
-	for _, entry := range entries {
-		if entry.Tag == role && (entry.Directory == cwd || entry.Directory == cwdPhys) {
-			matches = append(matches, entry)
-		}
-	}
-	if len(matches) == 1 {
-		return matches[0].Name, "captured"
-	}
-	if len(matches) > 1 {
-		return "", "ambiguous"
-	}
-	return "", "not_found"
+	return ""
 }
 
 func envInt(name string, fallback int) int {
