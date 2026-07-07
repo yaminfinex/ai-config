@@ -124,13 +124,10 @@ func (r *runner) fork(opts forkOptions) int {
 		return 1
 	}
 	role := firstNonEmpty(opts.role, parent.Role, "worker")
-	prov := registry.BuildProvenance("fork", role, currentCWD(), "")
-	// spawned_by is the session that RAN this fork. BuildProvenance's ambient
-	// HERDER_SPAWNED_BY names the caller's OWN spawner — the child's grandparent
-	// when the forker was itself spawned — so resolve from HERDER_GUID instead,
-	// matching the HERDER_SPAWNED_BY that startAndAppend exports into the child's
-	// pane. The forker's spawner stays reachable transitively via the forker's row.
-	prov.SpawnedBy = firstNonEmpty(os.Getenv("HERDER_GUID"), "user")
+	// spawned_by is the session that RAN this fork ($HERDER_GUID, matching the
+	// HERDER_SPAWNED_BY that startAndAppend exports into the child's pane); the
+	// forker's own spawner stays reachable transitively via the forker's row.
+	prov := registry.BuildProvenance("fork", firstNonEmpty(os.Getenv("HERDER_GUID"), "user"), role, currentCWD(), "")
 	prov.ForkedFrom = parentGUID
 
 	row, code := r.startAndAppend(startSpec{
@@ -407,7 +404,10 @@ func (r *runner) resume(opts resumeOptions) int {
 		die(r.stderr, fmt.Sprintf("label %q already belongs to active guid %s", label, ptrString(owner.GUID)))
 		return 1
 	}
-	prov := registry.BuildProvenance("resume", rec.HcomTag, currentCWD(), "")
+	// No-prior-provenance fallback: spawned_by is the session performing this
+	// resume ($HERDER_GUID), not the ambient grandparent. Normally overwritten
+	// by the preserved prior provenance just below.
+	prov := registry.BuildProvenance("resume", firstNonEmpty(os.Getenv("HERDER_GUID"), "user"), rec.HcomTag, currentCWD(), "")
 	if rec.Provenance != nil {
 		prov = *rec.Provenance
 	}

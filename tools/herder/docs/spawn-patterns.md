@@ -33,19 +33,26 @@ Report back to user:
 User: "spawn a claude to implement <task> on a branch off main"
 
 ```bash
-WT_JSON="$(herdr worktree create --branch task/foo --base main --label foo --no-focus --json)"
-WT_PATH="$(printf '%s' "$WT_JSON" | jq -r .result.worktree.path)"   # or whatever field herdr returns; verify with `herdr worktree create -h`
-
 herder spawn \
   --role implementer \
   --agent claude \
-  --cwd "$WT_PATH" \
-  --split down \
+  --worktree task/foo \
+  --base main \
   --no-focus \
   --prompt-file /tmp/task-brief.md
 ```
 
-If the worktree response JSON differs, do `herdr worktree create … --json | jq` interactively first to confirm field names — do not guess.
+`--worktree` does the whole dance in one verified step: it drives `herdr worktree create`
+(resolving the source repo from your cwd — works from inside a linked worktree too), spawns the
+agent into the new workspace's checkout, and closes the workspace's seed shell pane under the
+same identity guard as `--new-tab`, so the agent ends up the sole pane of its own workspace.
+The summary and `--json` (`worktree` block) report the created coordinates — `workspace_id`,
+checkout path, branch — keep the `workspace_id` if you plan to `herdr worktree remove` later.
+If the worktree gets created but the spawn then fails, nothing is auto-removed; the failure
+report names the workspace and the exact remove command.
+
+Do **not** hand-roll `herdr worktree create --json` + `jq` + `herder spawn --cwd` for this —
+that two-CLI dance predates `--worktree` and leaves a spare seed shell pane in the new workspace.
 
 ## C. Spawn a bare terminal pane (no agent)
 

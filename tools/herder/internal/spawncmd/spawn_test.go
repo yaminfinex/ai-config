@@ -35,20 +35,67 @@ func TestResolveSpawnerBusMatchesEnrolledPane(t *testing.T) {
 	}
 
 	// spawner identified only by its pane id (the enrolled case: spawnedBy=user)
-	if got := resolveSpawnerBus(path, "", "user", "p_orch", ""); got != "hera" {
+	if got := resolveSpawnerBus(path, "", "user", "p_orch", "", ""); got != "hera" {
 		t.Fatalf("pane match = %q, want hera", got)
 	}
 	// terminal id fallback (notifyTo auto-resolved to the spawner's terminal)
-	if got := resolveSpawnerBus(path, "term_ORCH", "user", "", ""); got != "hera" {
+	if got := resolveSpawnerBus(path, "term_ORCH", "user", "", "", ""); got != "hera" {
 		t.Fatalf("terminal match via notifyTo = %q, want hera", got)
 	}
 	// closed rows never resolve by pane coordinates
-	if got := resolveSpawnerBus(path, "", "user", "p_stale", ""); got != "" {
+	if got := resolveSpawnerBus(path, "", "user", "p_stale", "", ""); got != "" {
 		t.Fatalf("closed pane match = %q, want empty", got)
 	}
 	// guid resolution still wins first
-	if got := resolveSpawnerBus(path, "", "guid-hera", "", ""); got != "hera" {
+	if got := resolveSpawnerBus(path, "", "guid-hera", "", "", ""); got != "hera" {
 		t.Fatalf("guid match = %q, want hera", got)
+	}
+}
+
+func TestResolveSpawnerBusAcceptsBusNames(t *testing.T) {
+	// Stub hcom on PATH so liveOnBus is hermetic: the bus knows only lone-wolf.
+	stubDir := t.TempDir()
+	stub := "#!/bin/sh\necho '[{\"name\":\"lone-wolf\",\"tag\":\"x\",\"directory\":\"/d\",\"created_at\":\"2026-01-01T00:00:00Z\",\"launch_context\":{\"pane_id\":\"p_9\"}}]'\n"
+	if err := os.WriteFile(filepath.Join(stubDir, "hcom"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	rows := []string{
+		`{"guid":"guid-hera","short_guid":"guid-her","label":"orchestrator","pane_id":"p_orch","terminal_id":"term_ORCH","hcom_name":"hera","status":"active"}`,
+		`{"guid":"guid-old","short_guid":"guid-old","label":"old","pane_id":"p_stale","terminal_id":"term_STALE","hcom_name":"ghost","status":"closed"}`,
+	}
+	for _, row := range rows {
+		if err := registry.Append(path, []byte(row)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// --notify-to may BE a bus name: an ACTIVE row's hcom_name matches (TASK-023)
+	if got := resolveSpawnerBus(path, "hera", "user", "", "", "/no-such-bus"); got != "hera" {
+		t.Fatalf("active hcom_name match = %q, want hera", got)
+	}
+	// a closed row's bus name must not vouch, and the stub bus doesn't know it
+	if got := resolveSpawnerBus(path, "ghost", "user", "", "", "/no-such-bus"); got != "" {
+		t.Fatalf("closed hcom_name match = %q, want empty", got)
+	}
+	// literal bus name unknown to the registry validates against the child's bus
+	if got := resolveSpawnerBus(path, "lone-wolf", "user", "", "", "/no-such-bus"); got != "lone-wolf" {
+		t.Fatalf("literal bus name = %q, want lone-wolf", got)
+	}
+	// a name live nowhere still refuses
+	if got := resolveSpawnerBus(path, "nosuch", "user", "", "", "/no-such-bus"); got != "" {
+		t.Fatalf("unknown name = %q, want empty", got)
+	}
+	// literal validation works even with NO readable registry (non-bus-env shell)
+	if got := resolveSpawnerBus(filepath.Join(t.TempDir(), "absent.jsonl"), "lone-wolf", "user", "", "", "/no-such-bus"); got != "lone-wolf" {
+		t.Fatalf("literal without registry = %q, want lone-wolf", got)
+	}
+	// an EXPLICIT but unresolvable --notify-to must not fall through to the
+	// spawner's own resolution — a typo must never silently redirect reports
+	if got := resolveSpawnerBus(path, "nosuch", "guid-hera", "p_orch", "term_ORCH", "/no-such-bus"); got != "" {
+		t.Fatalf("unresolvable notifyTo fell through to spawner = %q, want empty", got)
 	}
 }
 

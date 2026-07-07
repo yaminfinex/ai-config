@@ -265,7 +265,7 @@ func (s *sidecar) appendEnrichment(row *hcomRow) {
 	if latest != nil && latest.Provenance != nil && latest.Provenance.Mechanism != "" {
 		mechanism = latest.Provenance.Mechanism
 	}
-	prov := registry.BuildProvenance(mechanism, row.Tag, coords.CWD, coords.WorkspaceID)
+	prov := registry.BuildProvenance(mechanism, "", row.Tag, coords.CWD, coords.WorkspaceID)
 	if latest != nil && latest.Provenance != nil {
 		carried := *latest.Provenance
 		carried.CWD = prov.CWD

@@ -45,6 +45,8 @@ type options struct {
 	FromPane      string
 	Tab           string
 	NewTab        bool
+	Worktree      string
+	Base          string
 	CWD           string
 	FocusFlag     string
 	LabelPrefix   string
@@ -116,6 +118,17 @@ type spawnJSONRecord struct {
 	RootPaneClosed       bool                `json:"root_pane_closed"`
 	HcomCapture          string              `json:"hcom_capture"`
 	BriefFile            string              `json:"brief_file,omitempty"`
+	Worktree             *worktreeInfo       `json:"worktree,omitempty"`
+}
+
+// worktreeInfo is the --worktree coordinate block surfaced in the summary and
+// the --json record, so an orchestrator can manage the workspace lifecycle
+// (reuse, remove) without re-querying herdr.
+type worktreeInfo struct {
+	Branch       string `json:"branch"`
+	Base         string `json:"base,omitempty"`
+	CheckoutPath string `json:"checkout_path"`
+	WorkspaceID  string `json:"workspace_id"`
 }
 
 type workspace struct {
@@ -267,6 +280,20 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		case "--new-tab":
 			opts.NewTab = true
 			i++
+		case "--worktree":
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			opts.Worktree = v
+			i += 2
+		case "--base":
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			opts.Base = v
+			i += 2
 		case "--cwd":
 			v, ok := value()
 			if !ok {
@@ -392,6 +419,24 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		die(stderr, "use --new-tab or --tab, not both")
 		return opts, 1
 	}
+	if opts.Base != "" && opts.Worktree == "" {
+		die(stderr, "--base requires --worktree")
+		return opts, 1
+	}
+	if opts.Worktree != "" {
+		if opts.Workspace != "" || opts.FromPane != "" {
+			die(stderr, "use --worktree or --workspace/--from-pane, not both (--worktree creates its own workspace)")
+			return opts, 1
+		}
+		if opts.CWD != "" {
+			die(stderr, "use --worktree or --cwd, not both (the worktree's checkout is the cwd)")
+			return opts, 1
+		}
+		if opts.Tab != "" || opts.NewTab {
+			die(stderr, "use --worktree or --tab/--new-tab, not both (--worktree already gives the agent its own fresh workspace and tab)")
+			return opts, 1
+		}
+	}
 	return opts, 0
 }
 
@@ -411,7 +456,8 @@ func (r *runner) run() int {
 	// --from-pane was given. Without an anchor the new tab/pane lands in whatever
 	// workspace currently has FOCUS (wherever the human is looking), not where the
 	// spawn was aimed; anchoring to HERDR_PANE_ID makes placement deterministic.
-	if opts.Workspace == "" && opts.FromPane == "" {
+	// --worktree needs no anchor: it creates its own workspace below.
+	if opts.Workspace == "" && opts.FromPane == "" && opts.Worktree == "" {
 		if paneID := os.Getenv("HERDR_PANE_ID"); paneID != "" {
 			opts.FromPane = paneID
 		}
@@ -496,15 +542,28 @@ func (r *runner) run() int {
 		spawnedBy = "user"
 	}
 
+	// The child's bus dir (team or global) is resolved early because --notify-to
+	// validation is scoped to the bus the CHILD will join; the team dir itself is
+	// only created later, after the notify hard-error gate has passed.
+	teamsRoot := os.Getenv("HERDER_TEAMS_ROOT")
+	if teamsRoot == "" {
+		teamsRoot = filepath.Join(os.Getenv("HOME"), ".hcom", "teams")
+	}
+	hcomDirEff := filepath.Join(os.Getenv("HOME"), ".hcom")
+	if opts.Team != "" {
+		hcomDirEff = filepath.Join(teamsRoot, opts.Team)
+	}
+
 	// Notify is bus-native ONLY (TASK-003): the spawner must resolve to a
-	// recorded hcom name — via --notify-to, its own guid, or its pane/terminal
-	// coordinates (enrolled sessions). The keystroke ring at a terminal id went
-	// with the herdr delivery transport; a bus-less spawner is a hard error
-	// BEFORE any pane is created, not a silent downgrade.
+	// recorded hcom name — via --notify-to (a registry row, or a bus name
+	// checked against the registry and the child's bus), its own guid, or its
+	// pane/terminal coordinates (enrolled sessions). The keystroke ring at a
+	// terminal id went with the herdr delivery transport; a bus-less spawner is
+	// a hard error BEFORE any pane is created, not a silent downgrade.
 	if opts.Notify {
-		opts.NotifyBusName = resolveSpawnerBus(registryPath, opts.NotifyTo, spawnedBy, spawnerPaneID, spawnerTermID)
+		opts.NotifyBusName = resolveSpawnerBus(registryPath, opts.NotifyTo, spawnedBy, spawnerPaneID, spawnerTermID, hcomDirEff)
 		if opts.NotifyBusName == "" {
-			die(r.stderr, fmt.Sprintf("--notify: spawner does not resolve to a bus-bound agent (tried --notify-to %q, spawner guid %q, pane %q, terminal %q) — the keystroke ring was removed; spawn from a bus-bound session or point --notify-to at a bus-bound registry row", opts.NotifyTo, spawnedBy, spawnerPaneID, spawnerTermID))
+			die(r.stderr, fmt.Sprintf("--notify: spawner does not resolve to a bus-bound agent (tried --notify-to %q as registry row and as bus name, spawner guid %q, pane %q, terminal %q) — the keystroke ring was removed; spawn from a bus-bound session, or point --notify-to at a bus-bound registry row or a live bus name on the child's bus", opts.NotifyTo, spawnedBy, spawnerPaneID, spawnerTermID))
 			return 1
 		}
 	}
@@ -525,17 +584,66 @@ func (r *runner) run() int {
 		}
 	}
 
-	teamsRoot := os.Getenv("HERDER_TEAMS_ROOT")
-	if teamsRoot == "" {
-		teamsRoot = filepath.Join(os.Getenv("HOME"), ".hcom", "teams")
-	}
-	hcomDirEff := filepath.Join(os.Getenv("HOME"), ".hcom")
 	if opts.Team != "" {
-		hcomDirEff = filepath.Join(teamsRoot, opts.Team)
 		_ = os.MkdirAll(hcomDirEff, 0o755)
 	}
 
+	// --worktree: drive `herdr worktree create` and spawn into the resulting
+	// workspace in one verified step. The create opens a full WORKSPACE with a
+	// seed tab + root shell pane, so the payload's coordinates feed the exact
+	// machinery --new-tab already uses: agent start into that tab, then the
+	// guarded seed-pane close. Everything herdr-side (branch, checkout path,
+	// workspace) stays herdr-owned — herder only wraps it.
+	var wtInfo *worktreeInfo
+	rootPaneID, rootTerm := "", ""
+	spawnCompleted := false
+	if opts.Worktree != "" {
+		// herdr refuses `worktree create` from inside a linked worktree, so
+		// resolve the source checkout first: `worktree list --cwd` answers with
+		// the parent repo for any dir inside the repo or one of its worktrees.
+		spawnerCWD, _ := os.Getwd()
+		srcOut, srcRC, _ := r.herdr.Combined("worktree", "list", "--cwd", spawnerCWD, "--json")
+		src := parseWorktreeSource(srcOut)
+		if srcRC != 0 || src == "" {
+			fmt.Fprintf(r.stderr, "herder spawn: --worktree: cannot resolve a source repo from %s (herdr worktree list returned: %s)\n", spawnerCWD, strings.TrimRight(string(srcOut), "\n"))
+			return 1
+		}
+		createArgs := []string{"worktree", "create", "--cwd", src, "--branch", opts.Worktree, "--no-focus", "--json"}
+		if opts.Base != "" {
+			createArgs = append(createArgs, "--base", opts.Base)
+		}
+		createOut, createRC, _ := r.herdr.Combined(createArgs...)
+		created := parseWorktreeCreate(createOut)
+		if createRC != 0 || created.WorkspaceID == "" || created.CheckoutPath == "" || created.TabID == "" {
+			fmt.Fprintf(r.stderr, "herdr worktree create failed:\n%s\n", strings.TrimRight(string(createOut), "\n"))
+			if createRC == 0 {
+				createRC = 1
+			}
+			return createRC
+		}
+		wtInfo = &worktreeInfo{Branch: opts.Worktree, Base: opts.Base, CheckoutPath: created.CheckoutPath, WorkspaceID: created.WorkspaceID}
+		opts.Workspace = created.WorkspaceID
+		opts.Tab = created.TabID
+		rootPaneID, rootTerm = created.RootPaneID, created.RootTerminalID
+		// From here on the worktree EXISTS: any failed exit must say so loudly
+		// (report, never auto-remove — the branch/checkout may be wanted, and a
+		// destructive unwind on a half-understood failure is worse than a leak).
+		defer func() {
+			if spawnCompleted {
+				return
+			}
+			fmt.Fprintf(r.stderr, "herder spawn: --worktree %s: worktree/workspace was CREATED but the spawn did not complete — left in place (not auto-removed):\n", opts.Worktree)
+			fmt.Fprintf(r.stderr, "  workspace: %s\n", wtInfo.WorkspaceID)
+			fmt.Fprintf(r.stderr, "  checkout:  %s\n", wtInfo.CheckoutPath)
+			fmt.Fprintf(r.stderr, "  branch:    %s\n", wtInfo.Branch)
+			fmt.Fprintf(r.stderr, "  reuse: herder spawn --workspace %s …  |  remove: herdr worktree remove --workspace %s --force (the git branch survives removal)\n", wtInfo.WorkspaceID, wtInfo.WorkspaceID)
+		}()
+	}
+
 	childCWD := opts.CWD
+	if wtInfo != nil {
+		childCWD = wtInfo.CheckoutPath
+	}
 	if childCWD == "" && opts.Workspace != "" {
 		if len(workspaces) == 0 && len(wsListOut) > 0 {
 			workspaces = parseWorkspaces(wsListOut)
@@ -569,7 +677,6 @@ func (r *runner) run() int {
 		childEnvRoot = root
 	}
 
-	rootPaneID, rootTerm := "", ""
 	if opts.NewTab {
 		tabArgs := []string{"tab", "create", "--no-focus", "--label", label}
 		if opts.Workspace != "" {
@@ -686,8 +793,11 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	}
 	launchPaneID := paneID
 
+	// Seed-pane close: --new-tab's tab create and --worktree's workspace create
+	// both leave a root shell pane behind; the identity-guarded close applies
+	// to whichever path populated rootPaneID/rootTerm.
 	rootClosed := false
-	if opts.NewTab && rootPaneID != "" && rootTerm != "" {
+	if rootPaneID != "" && rootTerm != "" {
 		if rootTerm == termID {
 			fmt.Fprintf(r.stderr, "herder spawn: refusing to close root pane — terminal_id matches the agent (%s)\n", termID)
 		} else {
@@ -792,7 +902,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		HcomName:             "",
 		HcomTag:              hcomTagRec,
 		Status:               "active",
-		Provenance:           registry.BuildProvenance("spawn", opts.Role, resolvedCWD, wsID),
+		Provenance:           registry.BuildProvenance("spawn", spawnedBy, opts.Role, resolvedCWD, wsID),
 	}
 	registryLine, _ := json.Marshal(record)
 	if err := appendLine(registryPath, registryLine); err != nil {
@@ -851,7 +961,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		}
 	}
 
-	r.writeSummary(record, isHcomAgent, rootClosed, permInjected, hcomCapture, briefFile, promptSent, deliveryResult, readyReason, trustBlocked)
+	r.writeSummary(record, wtInfo, isHcomAgent, rootClosed, permInjected, hcomCapture, briefFile, promptSent, deliveryResult, readyReason, trustBlocked)
 	if opts.JSONOutput {
 		outRecord := spawnJSONRecord{
 			GUID:                 record.GUID,
@@ -882,10 +992,12 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			RootPaneClosed:       rootClosed,
 			HcomCapture:          hcomCapture,
 			BriefFile:            briefFile,
+			Worktree:             wtInfo,
 		}
 		b, _ := json.Marshal(outRecord)
 		fmt.Fprintln(r.stdout, string(b))
 	}
+	spawnCompleted = true
 	return 0
 }
 
@@ -1008,10 +1120,22 @@ func (r *runner) paneStatus(paneID string) string {
 	return ""
 }
 
-func (r *runner) writeSummary(record spawnRecord, isHcomAgent, rootClosed bool, permInjected, hcomCapture, briefFile string, promptSent bool, deliveryResult, readyReason string, trustBlocked bool) {
+func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAgent, rootClosed bool, permInjected, hcomCapture, briefFile string, promptSent bool, deliveryResult, readyReason string, trustBlocked bool) {
 	fmt.Fprintf(r.stderr, "spawned %s (%s) in pane %s (workspace %s)\n", record.Label, record.Agent, record.PaneID, record.WorkspaceID)
 	fmt.Fprintf(r.stderr, "  guid:   %s\n", record.GUID)
 	fmt.Fprintf(r.stderr, "  cwd:    %s\n", record.CWD)
+	if wtInfo != nil {
+		base := ""
+		if wtInfo.Base != "" {
+			base = " (base " + wtInfo.Base + ")"
+		}
+		fmt.Fprintf(r.stderr, "  worktree: branch %s%s @ %s\n", wtInfo.Branch, base, wtInfo.CheckoutPath)
+		if rootClosed {
+			fmt.Fprintf(r.stderr, "            workspace %s (new; seed shell closed, agent is sole pane) — remove later: herdr worktree remove --workspace %s\n", wtInfo.WorkspaceID, wtInfo.WorkspaceID)
+		} else {
+			fmt.Fprintf(r.stderr, "            workspace %s (new; WARNING: seed shell NOT closed — spare pane may remain) — remove later: herdr worktree remove --workspace %s\n", wtInfo.WorkspaceID, wtInfo.WorkspaceID)
+		}
+	}
 	if r.opts.NewTab {
 		if rootClosed {
 			fmt.Fprintf(r.stderr, "  tab:    %s (new, root shell closed; agent is sole pane)\n", r.opts.Tab)
@@ -1067,8 +1191,8 @@ func printHelp(stdout io.Writer) {
 		"Usage:",
 		"  herder spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]",
 		"               [--team NAME] [--split right|down] [--workspace ID | --from-pane PANE_ID]",
-		"               [--tab ID | --new-tab] [--cwd PATH] [--safe] [--notify | --notify-to TARGET]",
-		"               [--extra-arg ARG]... [--no-focus] [--json]",
+		"               [--tab ID | --new-tab | --worktree BRANCH [--base REF]] [--cwd PATH] [--safe]",
+		"               [--notify | --notify-to TARGET] [--extra-arg ARG]... [--no-focus] [--json]",
 		"",
 		"Options:",
 		"  --role R          agent role; becomes the hcom --tag and label prefix (required)",
@@ -1078,11 +1202,14 @@ func printHelp(stdout io.Writer) {
 		"  --split D         pane split: right (default) or down",
 		"  --workspace ID    place in this workspace; --from-pane PANE_ID copies another pane's",
 		"  --tab ID          add to an existing tab; --new-tab gives the agent its own fresh tab",
+		"  --worktree BRANCH create a fresh git worktree on BRANCH (via `herdr worktree create`) and",
+		"                    spawn into its workspace in one step; --base REF picks the start point",
 		"  --cwd PATH        working directory for the agent (default: current)",
 		"  --safe            keep the agent's default ask-mode (default: autonomous/skip-permissions)",
 		"  --notify          worker reports to the spawner over the hcom bus on done (requires --prompt",
 		"                    and a bus-bound spawner); --notify-to TARGET resolves the bus name from",
-		"                    another registry row (guid, label, terminal_id, or pane_id)",
+		"                    another registry row (guid, label, terminal_id, pane_id, or recorded hcom",
+		"                    name), else accepts TARGET as a literal bus name if live on the child's bus",
 		"  --extra-arg ARG   pass ARG through to the agent (repeatable)",
 		"  --json            print the registry record as JSON on stdout",
 		"",
@@ -1114,11 +1241,23 @@ func printHelp(stdout io.Writer) {
 		"  staged to $HERDER_STATE_DIR/briefs/<guid>.md and only a one-line pointer is sent to",
 		"  the pane (dodges codex paste-blob / plan-overlay pathologies).",
 		"",
+		"  --worktree wraps `herdr worktree create` (worktree/workspace lifecycle stays herdr-owned):",
+		"  the source repo resolves from the spawner's cwd (works from inside a linked worktree),",
+		"  the created workspace's seed shell pane is closed under the same identity guard as",
+		"  --new-tab, and the summary + --json surface the worktree coordinates (workspace_id,",
+		"  checkout path, branch) for later lifecycle management. If the worktree is created but the",
+		"  spawn then fails, NOTHING is auto-removed — the failure report names the workspace and the",
+		"  exact `herdr worktree remove` command. The workspace label stays herdr's branch-derived",
+		"  default (it names the TREE); the agent label stays role-short (it names the AGENT).",
+		"",
 		"  --notify is the doorbell: a finished worker reports to the spawner over the hcom bus so",
 		"  it needn't poll wait in a loop. The spawner's bus name resolves from the registry by its",
 		"  guid AND by its pane/terminal coordinates, so enrolled sessions (no $HERDER_GUID in their",
-		"  environment) route bus-native too. A spawner that resolves to NO bus name is a hard error",
-		"  (the keystroke ring was removed). It is only a signal — send it once and stop.",
+		"  environment) route bus-native too. --notify-to may also name the target directly by its",
+		"  bus name: an active registry row's hcom_name matches, and an unregistered name is accepted",
+		"  if live on the bus the child will join (team-scoped — cross-bus names still refuse).",
+		"  A spawner that resolves to NO bus name is a hard error (the keystroke ring was removed).",
+		"  It is only a signal — send it once and stop.",
 		"",
 		"  Child environment: the SPAWNING checkout's tools/herder/shims dir is prepended to the",
 		"  child's PATH (hcom agents), so spawning from a worktree injects THAT worktree's shims —",
@@ -1234,6 +1373,65 @@ func parseTabCreate(out []byte) (tabID, rootPaneID, rootTerm string) {
 	return envelope.Result.Tab.TabID, envelope.Result.RootPane.PaneID, envelope.Result.RootPane.TerminalID
 }
 
+// parseWorktreeSource extracts the parent checkout path from `herdr worktree
+// list --cwd … --json` (.result.source) — the directory `worktree create`
+// must be pointed at, since herdr refuses to create from a linked worktree.
+func parseWorktreeSource(out []byte) string {
+	var envelope struct {
+		Result struct {
+			Source struct {
+				SourceCheckoutPath string `json:"source_checkout_path"`
+				RepoRoot           string `json:"repo_root"`
+			} `json:"source"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(out, &envelope) != nil {
+		return ""
+	}
+	return firstNonEmpty(envelope.Result.Source.SourceCheckoutPath, envelope.Result.Source.RepoRoot)
+}
+
+// worktreeCreatePayload is the slice of `herdr worktree create --json` herder
+// spawn consumes: the new workspace and checkout to spawn into, plus the seed
+// tab/root-pane coordinates that feed the guarded seed-pane close.
+type worktreeCreatePayload struct {
+	WorkspaceID    string
+	CheckoutPath   string
+	TabID          string
+	RootPaneID     string
+	RootTerminalID string
+}
+
+func parseWorktreeCreate(out []byte) worktreeCreatePayload {
+	var envelope struct {
+		Result struct {
+			Workspace struct {
+				WorkspaceID string `json:"workspace_id"`
+				Worktree    struct {
+					CheckoutPath string `json:"checkout_path"`
+				} `json:"worktree"`
+			} `json:"workspace"`
+			Tab struct {
+				TabID string `json:"tab_id"`
+			} `json:"tab"`
+			RootPane struct {
+				PaneID     string `json:"pane_id"`
+				TerminalID string `json:"terminal_id"`
+			} `json:"root_pane"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(out, &envelope) != nil {
+		return worktreeCreatePayload{}
+	}
+	return worktreeCreatePayload{
+		WorkspaceID:    envelope.Result.Workspace.WorkspaceID,
+		CheckoutPath:   envelope.Result.Workspace.Worktree.CheckoutPath,
+		TabID:          envelope.Result.Tab.TabID,
+		RootPaneID:     envelope.Result.RootPane.PaneID,
+		RootTerminalID: envelope.Result.RootPane.TerminalID,
+	}
+}
+
 type agentStartPayload struct {
 	Agent struct {
 		PaneID      string `json:"pane_id"`
@@ -1299,19 +1497,24 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// resolveSpawnerBus returns the spawner's recorded hcom bus name so a finished
-// worker can report completion over the bus instead of the keystroke ring. It
-// keys on a POSITIVE identity, most explicit first: a --notify-to that names a
-// registry peer (guid/short/label, else that peer's live pane/terminal id),
-// the spawner's own guid ($HERDER_GUID, captured as spawnedBy), and finally
-// the spawner's own pane/terminal coordinates — which is what identifies an
-// ENROLLED spawner (enroll records pane_id/terminal_id but the session has no
-// $HERDER_GUID in its environment, so guid-only resolution misclassified it
-// as bus-less). Returns "" when nothing matches (bus-less → ring path).
-func resolveSpawnerBus(registryPath, notifyTo, spawnedBy, spawnerPane, spawnerTerm string) string {
+// resolveSpawnerBus returns the notify target's hcom bus name so a finished
+// worker can report completion over the bus. It keys on a POSITIVE identity,
+// most explicit first: a --notify-to that names a registry peer (guid/short/
+// label, else that peer's live pane/terminal id, else an active row's recorded
+// hcom_name), a --notify-to that IS a literal bus name live on the bus the
+// child will join (TASK-023 — bus names are first-class addresses, consistent
+// with send's HERDER_BUS=hcom affordance), the spawner's own guid
+// ($HERDER_GUID, captured as spawnedBy), and finally the spawner's own
+// pane/terminal coordinates — which is what identifies an ENROLLED spawner
+// (enroll records pane_id/terminal_id but the session has no $HERDER_GUID in
+// its environment, so guid-only resolution misclassified it as bus-less).
+// Returns "" when nothing matches (bus-less → hard error at the caller).
+func resolveSpawnerBus(registryPath, notifyTo, spawnedBy, spawnerPane, spawnerTerm, childHcomDir string) string {
 	recs, err := registry.Load(registryPath)
 	if err != nil {
-		return ""
+		// No readable registry: registry-keyed steps can't match, but an
+		// explicit --notify-to may still validate as a literal bus name below.
+		recs = nil
 	}
 	if notifyTo != "" {
 		if rec := registry.Resolve(recs, notifyTo); rec != nil && rec.HcomName != "" {
@@ -1320,6 +1523,13 @@ func resolveSpawnerBus(registryPath, notifyTo, spawnedBy, spawnerPane, spawnerTe
 		if name := busNameByPane(recs, notifyTo); name != "" {
 			return name
 		}
+		if activeBusName(recs, notifyTo) || liveOnBus(childHcomDir, notifyTo) {
+			return notifyTo
+		}
+		// An EXPLICIT target that resolves nowhere is a hard error, not a
+		// silent fallthrough to the spawner's own name — a typo'd --notify-to
+		// must never quietly redirect completion reports.
+		return ""
 	}
 	if spawnedBy != "" && spawnedBy != "user" {
 		if rec := registry.Resolve(recs, spawnedBy); rec != nil && rec.HcomName != "" {
@@ -1349,6 +1559,33 @@ func busNameByPane(recs []registry.Record, key string) string {
 		}
 	}
 	return name
+}
+
+// activeBusName reports whether name is the recorded hcom_name of an ACTIVE
+// registry row — --notify-to may address a peer directly by its bus name, not
+// only by guid/label/pane coordinates. Closed rows don't count: the bus
+// recycles names, so a stale row must not vouch for a live address.
+func activeBusName(recs []registry.Record, name string) bool {
+	for _, rec := range registry.LatestByGUID(recs) {
+		if rec.Status == "active" && rec.HcomName == name {
+			return true
+		}
+	}
+	return false
+}
+
+// liveOnBus reports whether name is currently joined on the bus at hcomDir —
+// the bus the CHILD will send its notify on. This validates a literal
+// --notify-to bus name that the registry doesn't know (e.g. an agent launched
+// outside herder), while keeping cross-bus names (a global-bus peer for a
+// --team child) a hard error: the child could never reach them anyway.
+func liveOnBus(hcomDir, name string) bool {
+	for _, entry := range hcomList(hcomDir) {
+		if entry.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // checkoutForDir walks dir upward to the nearest ai-config checkout, using the

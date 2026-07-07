@@ -1,0 +1,18 @@
+=== STDERR ===
+herdr worktree create failed:
+{
+  "error": {
+    "code": "worktree_create_failed",
+    "message": "mock worktree create failure (branch exists)"
+  }
+}
+=== STDOUT ===
+
+=== EXIT ===
+3
+=== AGENT START ARGV ===
+=== HERDR MUTATING CALLS ===
+worktree create --cwd /mock/src --branch task/foo --no-focus --json
+=== HCOM DIR ===
+=== REGISTRY ===
+=== BRIEF ===

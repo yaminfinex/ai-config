@@ -1,9 +1,11 @@
 ---
 id: TASK-023
 title: 'herder spawn --notify-to: accept a literal bus name (post-TASK-003 regression)'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - unit-h-risa
 created_date: '2026-07-07 08:31'
+updated_date: '2026-07-07 08:38'
 labels:
   - run-herder-dx
 dependencies: []

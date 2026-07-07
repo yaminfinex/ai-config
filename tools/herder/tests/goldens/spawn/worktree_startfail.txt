@@ -1,0 +1,40 @@
+=== STDERR ===
+herdr agent start failed:
+{
+  "error": {
+    "code": "agent_placement_not_found",
+    "message": "mock start failure"
+  }
+}
+herder spawn: --worktree task/foo: worktree/workspace was CREATED but the spawn did not complete — left in place (not auto-removed):
+  workspace: w_WT
+  checkout:  /mock/wt
+  branch:    task/foo
+  reuse: herder spawn --workspace w_WT …  |  remove: herdr worktree remove --workspace w_WT --force (the git branch survives removal)
+=== STDOUT ===
+
+=== EXIT ===
+3
+=== AGENT START ARGV ===
+agent
+start
+worker-<SHORT>
+--no-focus
+--split
+right
+--workspace
+w_WT
+--tab
+tab_WT
+--cwd
+/mock/wt
+--
+/bin/zsh
+-lic
+if [ -d "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" ]; then export PATH="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder HCOM_DIR=<CASE>/home/.hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch claude --tag worker --dangerously-skip-permissions
+=== HERDR MUTATING CALLS ===
+worktree create --cwd /mock/src --branch task/foo --no-focus --json
+agent start worker-<SHORT>
+=== HCOM DIR ===
+=== REGISTRY ===
+=== BRIEF ===

@@ -99,6 +99,7 @@ run_spawn() {
     GOCACHE="$GOCACHE_SHARED" \
     HERDR_ENV=1 HERDR_PANE_ID=p_orch \
     HERDER_GUID="${SPAWN_HERDER_GUID:-}" \
+    HERDER_SPAWNED_BY="${SPAWN_HERDER_SPAWNED_BY:-}" \
     HERDER_STATE_DIR="$CASE/state" \
     HERDER_SPAWN_SHELL=/bin/zsh \
     MOCK_SPAWN_SCENARIO="$herdr_scen" MOCK_SPAWN_AGENT="$agent_kind" \
@@ -197,6 +198,33 @@ scenario perm_explicit     ready claude launchctx --role worker --agent claude -
 scenario team              ready claude launchctx --role worker --agent claude --team smoke --json
 scenario start_fail        startfail claude launchctx --role worker --agent claude --json
 
+# ---- Unit H additions (TASK-006 --worktree, TASK-016 provenance, TASK-023 --notify-to) ----
+# --worktree: one-shot worktree mode — source repo resolved via worktree list,
+# herdr worktree create driven, agent lands in the new workspace's checkout,
+# the workspace's seed root pane (p_60) closes under the identity guard, and
+# the summary/--json surface the worktree coordinates.
+scenario worktree          ready claude launchctx --role worker --agent claude --worktree task/foo --base main --json
+# worktree created but agent start fails: non-zero exit + loud leak report
+# naming workspace/checkout/branch and the exact remove command; NOT auto-removed.
+scenario worktree_startfail wtstartfail claude launchctx --role worker --agent claude --worktree task/foo --json
+# worktree create itself fails: herdr's error surfaces verbatim BEFORE any pane.
+scenario worktree_createfail wtcreatefail claude launchctx --role worker --agent claude --worktree task/foo --json
+# TASK-016: a spawner that was ITSELF spawned (ambient HERDER_SPAWNED_BY =
+# grandparent, HERDER_GUID = parent) must record provenance.spawned_by=parent —
+# the same value exported to the child as HERDER_SPAWNED_BY (row/env agreement).
+SPAWN_HERDER_GUID="guid-parent-000"
+SPAWN_HERDER_SPAWNED_BY="guid-grandpa-00"
+scenario spawn_grandparent ready claude launchctx --role worker --agent claude --json
+unset SPAWN_HERDER_GUID SPAWN_HERDER_SPAWNED_BY
+# TASK-023: --notify-to as a bus name. An ACTIVE registry row's hcom_name
+# matches even when the value is not a guid/label/pane coordinate...
+SPAWN_SEED_REGISTRY='{"guid":"guid-hera-0000","short_guid":"guid-her","label":"orchestrator","role":"orchestrator","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","hcom_dir":"/hcom","hcom_name":"hera","hcom_tag":"orchestrator","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-hera","tag":"orchestrator","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
+scenario notify_to_hcomname ready claude launchctx --role worker --agent claude --notify --notify-to hera --prompt "do the thing" --json
+unset SPAWN_SEED_REGISTRY
+# ...and a name the registry doesn't know at all validates as a literal bus
+# name against the bus the child will join (decoy-yolo lives on the mock bus).
+scenario notify_to_busname ready claude launchctx --role worker --agent claude --notify --notify-to decoy-yolo --prompt "do the thing" --json
+
 # ---- usage / validation errors (direct assertions; no goldens needed) ----
 if [[ "$WRITE" -eq 0 ]]; then
   ok()  { printf 'PASS  %s\n' "$1"; }
@@ -222,7 +250,7 @@ if [[ "$WRITE" -eq 0 ]]; then
   [[ "$RUN_RC" -eq 1 ]] && grep -q 'use --new-tab or --tab, not both' "$RUN_ERR_F" \
     && ok "usage: --new-tab/--tab exclusive" || bad "usage: --new-tab/--tab exclusive" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
 
-  trailing_value_flags=(--split --workspace --from-pane --tab --cwd --label-prefix --extra-arg --wait-timeout-ms --ready-match --login-shell --team --notify-to)
+  trailing_value_flags=(--split --workspace --from-pane --tab --cwd --label-prefix --extra-arg --wait-timeout-ms --ready-match --login-shell --team --notify-to --worktree --base)
   trailing_ok=1
   trailing_detail=""
   for flag in "${trailing_value_flags[@]}"; do
@@ -308,6 +336,40 @@ if [[ "$WRITE" -eq 0 ]]; then
     ok "explicit --cwd honored on the agent-start wire"
   else
     bad "explicit --cwd honored on the agent-start wire" "argv=$(cat "$CASE/probe/agent_start_argv" 2>/dev/null)"
+  fi
+
+  # ---- Unit H direct assertions (TASK-006 flag validation, TASK-023 refusal) ----
+  CASE="$ROOT/usage_worktree_workspace"
+  run_spawn ready claude launchctx --role worker --agent bash --worktree task/x --workspace ws_1
+  [[ "$RUN_RC" -eq 1 ]] && grep -q 'use --worktree or --workspace/--from-pane, not both' "$RUN_ERR_F" \
+    && ok "usage: --worktree/--workspace exclusive" || bad "usage: --worktree/--workspace exclusive" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+
+  CASE="$ROOT/usage_worktree_cwd"
+  run_spawn ready claude launchctx --role worker --agent bash --worktree task/x --cwd /tmp
+  [[ "$RUN_RC" -eq 1 ]] && grep -q 'use --worktree or --cwd, not both' "$RUN_ERR_F" \
+    && ok "usage: --worktree/--cwd exclusive" || bad "usage: --worktree/--cwd exclusive" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+
+  CASE="$ROOT/usage_worktree_newtab"
+  run_spawn ready claude launchctx --role worker --agent bash --worktree task/x --new-tab
+  [[ "$RUN_RC" -eq 1 ]] && grep -q 'use --worktree or --tab/--new-tab, not both' "$RUN_ERR_F" \
+    && ok "usage: --worktree/--new-tab exclusive" || bad "usage: --worktree/--new-tab exclusive" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+
+  CASE="$ROOT/usage_base_alone"
+  run_spawn ready claude launchctx --role worker --agent bash --base main
+  [[ "$RUN_RC" -eq 1 ]] && grep -q -- '--base requires --worktree' "$RUN_ERR_F" \
+    && ok "usage: --base without --worktree refused" || bad "usage: --base without --worktree refused" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+
+  # TASK-023 AC#2: an unresolvable --notify-to still hard-errors BEFORE any pane
+  # exists — no agent start on the wire, nothing in the registry.
+  CASE="$ROOT/notify_to_unresolvable"
+  run_spawn ready claude launchctx --role worker --agent claude --notify-to nosuch --prompt "do the thing"
+  if [[ "$RUN_RC" -eq 1 ]] \
+    && grep -q 'as registry row and as bus name' "$RUN_ERR_F" \
+    && [[ ! -f "$CASE/probe/agent_start_argv" ]] \
+    && [[ ! -s "$CASE/state/registry.jsonl" ]]; then
+    ok "notify-to unresolvable: hard error before pane creation"
+  else
+    bad "notify-to unresolvable: hard error before pane creation" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
 fi
 

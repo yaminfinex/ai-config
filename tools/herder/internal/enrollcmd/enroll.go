@@ -99,7 +99,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if latest != nil {
 		agent = firstNonEmpty(latest.Agent, agent)
 	}
-	prov := registry.BuildProvenance(mechanism, os.Getenv("HCOM_TAG"), pane.CWD, pane.WorkspaceID)
+	prov := registry.BuildProvenance(mechanism, "", os.Getenv("HCOM_TAG"), pane.CWD, pane.WorkspaceID)
 
 	base := []byte(`{}`)
 	if latest != nil && len(bytes.TrimSpace(latest.Raw)) > 0 {
