@@ -257,7 +257,25 @@ assert_not_contains "no-tag: tag group line omitted" "$AC_OUT" "You are tagged"
 assert_contains     "no-tag: still closes cleanly" "$AC_OUT" "This is session context, not a task for immediate action."
 
 # ---------------------------------------------------------------------------
-# 6. codex bootstrap delivery (TASK-002, full rewrite TASK-014): codex has no
+# 5b. reTag is quote-agnostic (TASK-040). hcom quotes the tag with double quotes
+#     through 0.7.22 and single quotes from 0.7.23 on. CANNED_AC is the 0.7.22
+#     (double) reality; the 0.7.23 (single) twin must extract the same tag and
+#     produce a byte-identical rewritten additionalContext.
+# ---------------------------------------------------------------------------
+MOCK_AC="$CANNED_AC" run_hook "" -- sessionstart
+AC_DOUBLE="$(echo "$HOOK_OUT" | jq -r '.hookSpecificOutput.additionalContext')"
+
+AC_SINGLE_IN="${CANNED_AC/You are tagged \"boothook\"/You are tagged \'boothook\'}"
+if [ "$AC_SINGLE_IN" = "$CANNED_AC" ]; then
+  bad "quote-agnostic: fixture swap" "single-quoted twin identical to double-quoted source"
+fi
+MOCK_AC="$AC_SINGLE_IN" run_hook "" -- sessionstart
+AC_SINGLE="$(echo "$HOOK_OUT" | jq -r '.hookSpecificOutput.additionalContext')"
+assert_contains "quote-agnostic: single-quoted source renders tag line" "$AC_SINGLE" "You are tagged 'boothook'"
+assert_eq       "quote-agnostic: rewrite byte-stable across quote styles" "$AC_SINGLE" "$AC_DOUBLE"
+
+# ---------------------------------------------------------------------------
+# 7. codex bootstrap delivery (TASK-002, full rewrite TASK-014): codex has no
 #    sessionstart rewrite — hcom bakes its bootstrap into launch args — so
 #    `herder launch codex` threads the full herder addendum in as a user-level
 #    -c developer_instructions=, which hcom merges after its own bootstrap.
