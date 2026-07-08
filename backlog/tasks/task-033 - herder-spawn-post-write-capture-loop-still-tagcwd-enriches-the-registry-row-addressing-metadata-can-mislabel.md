@@ -3,11 +3,11 @@ id: TASK-033
 title: >-
   herder spawn: post-write capture loop still tag+cwd-enriches the registry row
   (addressing metadata can mislabel)
-status: In Progress
+status: Done
 assignee:
   - unit-u-fila
 created_date: '2026-07-07 21:46'
-updated_date: '2026-07-08 01:22'
+updated_date: '2026-07-08 01:47'
 labels:
   - run-herder-dx
 dependencies: []
@@ -23,7 +23,13 @@ Residual flagged by Unit R during the TASK-032 P1 fix (out of that fix scope by 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Row enrichment never records a bus name from a tag+cwd-unique guess; regression scenario with a stale same-tag+cwd agent pins the row left empty (or child-verified) — extend bind_stale_tagcwd golden
-- [ ] #2 Established + pinned whether sidecar enrichment self-heals a wrong row name; herder send to a stale-enriched row either resolves correctly or refuses
-- [ ] #3 Pinned gate green (go vet/test + full battery)
+- [x] #1 Row enrichment never records a bus name from a tag+cwd-unique guess; regression scenario with a stale same-tag+cwd agent pins the row left empty (or child-verified) — extend bind_stale_tagcwd golden
+- [x] #2 Established + pinned whether sidecar enrichment self-heals a wrong row name; herder send to a stale-enriched row either resolves correctly or refuses
+- [x] #3 Pinned gate green (go vet/test + full battery)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Removed the tag+cwd unique-match guess from BOTH row-enrichment writers. (1) herder spawn's post-write capture loop (internal/spawncmd/spawn.go) now records hcom_name only from child-specific signals (this-guid sidecar enrichment / frozen-launch-pane match), else leaves it empty. (2) The sidecar's enrichment write (internal/sidecarcmd/sidecar.go) is gated on pane correlation via findRowCorrelated; a fallback-only tool+tag+cwd match never writes a name — defers to a later poll's pane correlate. findRowForLaunchFallback stays for status bridging, fenced out of the name write (round-2 fix after codex review P1: the guess re-entered via the sidecar). Pinned: bind_stale_tagcwd + capture_fallback/ambiguous goldens (spawn), TestSidecarDoesNotEnrichFromStaleUniqueFallback + TestAppendEnrichmentSelfHealsStaleHcomName (sidecar). AC#2: empty-name row => herder send refuses (exit 2); pane correlate self-heals via LatestByGUID. Merged b6f8847; hera-verified gate green twice (worker worktree R2 + post-merge main, 17/17 + go vet/test herder+bottle). Review: meho REQUEST-CHANGES => APPROVE.
+<!-- SECTION:NOTES:END -->
