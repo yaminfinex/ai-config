@@ -160,6 +160,38 @@ Two deliberate exceptions ride keystrokes, neither reachable as a send transport
   check immediately before Enter; cleared composer degrades to not_delivered, never delivered) is
   a locked floor. Pinned by `tests/check-compact-contract.sh` (goldens + grep gates).
 
+  **compact-then-continue** (`herder compact '<steer>' --then '<continuation>'`, TASK-034,
+  claude-only): `/compact` normally ends the turn and STOPS. `--then` turns it into
+  compact-then-continue. It is NOT a second paste — a plain queued line jumps the `/compact`
+  queue and is consumed pre-compaction (claude injects plain messages at a mid-turn tool
+  boundary; slash commands hold until turn end — both proven live, task-034 comments). Instead,
+  once the `/compact` paste VERIFIES (the TASK-024 floor gates arming — an unverified paste arms
+  nothing, so a continuation never fires into an uncompacted session), `herder compact` forks a
+  detached, `setsid`-isolated sender (`herder compact-then`, an internal subcommand not in the
+  command table). That sender waits for the caller's turn to END, then delivers the continuation
+  over the bus through the same receipt-verified engine `herder send` uses (`send.DeliverBus`).
+  Turn end is **proven, never assumed from a delay** (a fixed grace window would let a stale
+  status read inject mid-turn — experiment #1 over the bus): it fires only on an observed
+  `active`→`listening` transition, or — if it armed after the turn already ended — on an hcom
+  event-history `listening` record newer than the arm-time watermark. That event-history proof is
+  gated on a *trusted* watermark: the arm-time snapshot distinguishes a genuinely empty history
+  from an hcom failure (retried a few times), and an unestablished snapshot DISABLES the
+  event-history proof rather than trusting a `0` that would accept a pre-arm record (fail-open) —
+  the observed transition then remains the only path. If neither proof materializes before
+  `--then-timeout` it **fails closed** and drops the continuation loudly (a re-sendable dropped
+  message beats a silent mid-turn injection). The target is the caller's OWN
+  bus name, captured from the proven self row at compact time and never re-resolved from a pane id
+  (task-034 experiment #2 misresolved a reused pane to a stale row). Delivery treats `queued` as
+  success (hcom queue-until-deliverable injects it at the next turn — never resent) and retries a
+  transient `not_joined`/`send_failed` with a settling backoff over the REMAINING timeout budget.
+  Bounded by `--then-timeout` (default 15m; timeout gives up with a loud log line + manual-send
+  remedy, never a zombie); one line per phase lands in
+  `<herder-state-dir>/compact-then/compact-then-<short>-<pid>.log`. Codex is refused (its
+  compaction semantics differ). Covered by `tests/check-compact-contract.sh`
+  (armed/aborted/sent/armed-late/timeout goldens + `mock-hcom-then`) and
+  `internal/spawncmd/compactthen_test.go` (proof (a)/(b), the naked-listening poison case,
+  fail-closed timeout, budget-based retry).
+
 **Print one-shot bypass (TASK-010):** `claude -p/--print ...` hand-run through the shims skips the
 bus entirely — hcom hard-codes print mode as a persistent background agent (stdin nulled, stdout to
 `~/.hcom/logs`, Stop hook polling the bus), so a routed one-shot would never return its answer.
@@ -194,8 +226,11 @@ report — compaction loses anything unpersisted), then compacts in place:
 `herder compact 'keep: unit, ACs, gate commands, thread; drop tool output'`. Run from the
 agent's own tool call, the `/compact` line is queued in its composer and fires at turn end.
 The old `herder send "$HERDR_PANE_ID" '/compact …'` recipe died with the keystroke transport;
-`herder compact` is its dedicated replacement. If the session is too incoherent to steer, the
-fresh-spawn handoff still works: HANDOFF report + successor spawn.
+`herder compact` is its dedicated replacement. To keep going unattended past the ceiling, add
+`--then '<continuation>'` (claude-only) — after compaction the detached sender delivers the
+continuation to the agent's own bus, so compact-then-STOP becomes compact-then-continue without
+a human nudging it back. If the session is too incoherent to steer, the fresh-spawn handoff
+still works: HANDOFF report + successor spawn.
 
 ## Session Bootstrap
 

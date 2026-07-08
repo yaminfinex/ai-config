@@ -49,6 +49,14 @@ ln -s "$TESTS_DIR/mock-herdr-compact" "$MOCKBIN/herdr"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$MOCKBIN/sleep"
 chmod +x "$MOCKBIN/sleep"
 
+# Separate mock PATH for the detached-sender (`herder compact-then`) scenarios:
+# it needs a mock `hcom` (status polling + bus delivery) and no mock herdr.
+MOCKBIN_THEN="$ROOT/bin-then"
+mkdir -p "$MOCKBIN_THEN"
+ln -s "$TESTS_DIR/mock-hcom-then" "$MOCKBIN_THEN/hcom"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$MOCKBIN_THEN/sleep"
+chmod +x "$MOCKBIN_THEN/sleep"
+
 # Same wrapper-build hardening as check-spawn-contract.sh: real go toolchain
 # ahead of system dirs, wrapper pinned to THIS worktree, run-private hash cache.
 GO_TOOLCHAIN_DIR=""
@@ -58,6 +66,7 @@ if command -v go >/dev/null 2>&1; then
 fi
 GOCACHE_SHARED="${GOCACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/herder/go-build}"
 PATH_HERMETIC="$MOCKBIN${GO_TOOLCHAIN_DIR:+:$GO_TOOLCHAIN_DIR}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin"
+THEN_PATH_HERMETIC="$MOCKBIN_THEN${GO_TOOLCHAIN_DIR:+:$GO_TOOLCHAIN_DIR}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin"
 
 fail=0
 
@@ -100,9 +109,35 @@ run_compact() {
     HERDR_ENV="$herdrenv" HERDR_PANE_ID="$paneid" \
     HERDER_GUID="$guid" HCOM_SESSION_ID="$sess" \
     HERDER_STATE_DIR="$CASE/state" \
+    HERDER_COMPACT_THEN_DRYRUN=1 \
     MOCK_COMPACT_SCENARIO="$scen" MOCK_COMPACT_STATE="$CASE/mock" \
     MOCK_PROBE_DIR="$CASE/probe" MOCK_COMPACT_CWD="$cwdval" \
     "${HC[@]}" "$@" 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+}
+
+# run_then_child drives the detached sender directly (`herder compact-then …`)
+# against a hermetic mock hcom that flips the caller status active→listening and
+# acks the delivery — the "sent shape" the parent's arm would produce live.
+# poll/grace/timeout are tiny so the Go loop's internal sleeps stay sub-second.
+run_then_child() {
+  local scen="$1"; shift
+  mkdir -p "$CASE/mock" "$CASE/hcomstate"
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i \
+    PATH="$THEN_PATH_HERMETIC" \
+    HOME="$ROOT/home" \
+    XDG_CACHE_HOME="$ROOT/xdg-cache" \
+    GOCACHE="$GOCACHE_SHARED" \
+    AI_CONFIG_ROOT="$REPO_ROOT" \
+    HERDR_ENV=1 \
+    HERDER_LABEL=me \
+    HERDER_COMPACT_THEN_POLL_MS=1 \
+    HERDER_COMPACT_THEN_GRACE_MS=0 \
+    HERDER_COMPACT_THEN_TIMEOUT_MS="${THEN_TIMEOUT_MS:-2000}" \
+    MOCK_THEN_SCENARIO="$scen" MOCK_THEN_STATE="$CASE/hcomstate" \
+    "$REPO_ROOT/bin/herder" compact-then \
+      --name me-bus --message 'continue: run the gate, then report DONE' "$@" 2>"$RUN_ERR_F")"
   RUN_RC=$?
 }
 
@@ -202,6 +237,51 @@ scenario refuse_outside      midturn         outside    "$STEER"
 scenario refuse_nopaneid     midturn         nopaneid   "$STEER"
 scenario usage_unknown_flag  midturn         guid       --pane w1-3 "$STEER"
 scenario usage_multiline     midturn         guid       $'line one\nline two'
+
+# ---- TASK-034: compact --then (compact-then-continue) ----
+# Rows for the --then preconditions: a claude self row with NO bus name (cannot
+# deliver a continuation) and a codex self row (--then is claude-only).
+ROW_SELF_NOBUS='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"","hcom_tag":"worker","status":"active"}'
+ROW_SELF_CODEX='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"codex","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"me-bus","hcom_tag":"worker","status":"active"}'
+CONT='run the pinned gate, then report DONE on thread unit-w'
+
+# Parent arm/abort shapes (HERDER_COMPACT_THEN_DRYRUN=1 in run_compact keeps the
+# arm hermetic — it describes the sender instead of forking one).
+COMPACT_SEED_REGISTRY="$ROW_SELF"
+scenario then_armed          midturn       guid   "$STEER" --then "$CONT"
+scenario then_dryrun         midturn       guid   --dry-run "$STEER" --then "$CONT"
+# Unverified /compact paste => --then must NOT arm (AC#2 ordering floor).
+scenario then_abort_unverified clear_landed guid  "$STEER" --then "$CONT"
+scenario then_abort_blocked  blocked       guid   "$STEER" --then "$CONT"
+# Preconditions refuse BEFORE anything is typed (no mutating herdr calls).
+COMPACT_SEED_REGISTRY="$ROW_SELF_NOBUS"
+scenario then_refuse_nobus   midturn       guid   "$STEER" --then "$CONT"
+COMPACT_SEED_REGISTRY="$ROW_SELF_CODEX"
+scenario then_refuse_codex   midturn       guid   "$STEER" --then "$CONT"
+COMPACT_SEED_REGISTRY="$ROW_SELF"
+# Usage: empty / missing continuation.
+scenario then_usage_empty    midturn       guid   "$STEER" --then ""
+scenario then_usage_badtimeout midturn     guid   "$STEER" --then "$CONT" --then-timeout nope
+
+# Detached-sender "sent shapes": drive `herder compact-then` directly against a
+# mock hcom that ends the turn and acks (sent), leaves the target busy (queued),
+# or never ends the turn (timeout — must give up loudly, never deliver).
+then_child_scenario() {  # then_child_scenario <name> <mock scen> <extra args...>
+  local name="$1" scen="$2"; shift 2
+  CASE="$ROOT/$name"
+  run_then_child "$scen" "$@"
+  check_one "$name"
+}
+then_child_scenario then_sent       sent
+then_child_scenario then_queued     queued_busy
+# Armed-late: "active" never sampled → turn end PROVEN via the hcom event history
+# (proof (b)), then delivered. A naked sampled "listening" must NOT be enough.
+then_child_scenario then_armed_late armed_late
+THEN_TIMEOUT_MS=50 then_child_scenario then_timeout stuck
+# Fail-open guard (codex review P1 residual): the arm-time event snapshot FAILS
+# → proof (b) DISABLED; a naked "listening" (no observed transition) must fail
+# closed and deliver nothing, never trust a possibly-pre-arm event.
+THEN_TIMEOUT_MS=50 then_child_scenario then_snapshot_fail snap_fail
 
 # ---- grep gates: the ruled exception stays a ruled exception ----
 if [[ "$WRITE" -eq 0 ]]; then

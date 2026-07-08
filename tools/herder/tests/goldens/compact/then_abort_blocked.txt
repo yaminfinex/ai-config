@@ -1,0 +1,8 @@
+=== STDERR ===
+herder compact: refused — your pane shows a blocking overlay (modal/interrupted state); /compact was NOT typed. Clear it and retry.
+herder compact: --then NOT armed — the /compact paste was not verified, so no continuation was scheduled. Nothing will be delivered.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===

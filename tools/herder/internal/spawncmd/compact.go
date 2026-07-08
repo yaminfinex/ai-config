@@ -19,16 +19,25 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
 )
 
 type compactOptions struct {
-	Help   bool
-	DryRun bool
-	Steer  string
+	Help        bool
+	DryRun      bool
+	Steer       string
+	Then        string
+	ThenSet     bool
+	ThenTimeout time.Duration
 }
+
+// defaultThenTimeout bounds a detached continuation sender's lifetime: long
+// enough for a slow pre-compact turn plus compaction, short enough that a wedged
+// session never leaves a zombie waiter. --then-timeout overrides it.
+const defaultThenTimeout = 15 * time.Minute
 
 // RunCompact executes herder compact and returns the process exit code.
 func RunCompact(args []string, stdout, stderr io.Writer) int {
@@ -87,6 +96,26 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	// --then preconditions, checked BEFORE anything is typed (AC#2: a --then
+	// that cannot possibly deliver its continuation must not even fire the
+	// /compact — the caller asked for compact-THEN-continue, not a bare compact).
+	// The continuation targets the caller's OWN verified bus name, captured HERE
+	// from the proven self row — never re-resolved from a pane id later (task-034
+	// experiment #2). Claude-only: codex compaction semantics differ.
+	thenBusName, thenBusDir := "", ""
+	if opts.ThenSet {
+		if row.Agent != "claude" {
+			dieCompact(stderr, fmt.Sprintf("refused — --then is claude-only (codex compaction semantics differ); your registry row records agent %q. Re-run without --then. Nothing was typed.", row.Agent))
+			return 2
+		}
+		thenBusName = row.HcomName
+		if thenBusName == "" || thenBusName == "null" {
+			dieCompact(stderr, "refused — --then needs your own bus name to deliver the continuation, but your registry row records none (this session is not bus-bound). Re-run without --then, or enroll on the bus first. Nothing was typed.")
+			return 2
+		}
+		thenBusDir = row.HcomDir
+	}
+
 	// Paste target: the CURRENT live pane holding our durable terminal_id —
 	// the same drift-proof re-resolution send and cull use. This also yields
 	// the canonical pane id the paste engine's status/kind detection matches
@@ -130,6 +159,10 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 	if opts.DryRun {
 		fmt.Fprintf(stderr, "herder compact --dry-run: would queue %q into own pane %s (terminal %s, guid %s, resolution: %s)\n",
 			line, targetPane, row.TerminalID, ptrOrEmpty(row.GUID), map[bool]string{true: "positional+cwd", false: "durable-key"}[self.positional])
+		if opts.ThenSet {
+			fmt.Fprintf(stderr, "herder compact --dry-run: --then would arm a detached bus sender to @%s (bus %s) once the paste verified, delivering the continuation (%d chars) after this turn ends (timeout %s)\n",
+				thenBusName, busDirLabel(thenBusDir), runeLen(opts.Then), opts.ThenTimeout)
+		}
 		return 0
 	}
 
@@ -137,16 +170,34 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 	switch {
 	case verify == "" && rc == 2:
 		dieCompact(stderr, "refused — your pane shows a blocking overlay (modal/interrupted state); /compact was NOT typed. Clear it and retry.")
+		thenAbortNote(stderr, opts.ThenSet)
 		return 2
 	case rc == 0:
 		fmt.Fprintf(stderr, "herder compact: %s — %q is in your composer and fires when the current turn ends (verify: %s)\n", queuedWord(verify), line, verify)
+		// AC#2 ordering floor: the paste is verified (rc==0), so and only so is
+		// it safe to arm the continuation — an unverified /compact must never
+		// have a continuation fired behind it into an uncompacted session.
+		if opts.ThenSet {
+			armCompactThen(stderr, ptrOrEmpty(row.ShortGUID), thenBusName, thenBusDir, opts.Then, int(opts.ThenTimeout/time.Millisecond))
+		}
 		return 0
 	case verify == "not_landed":
 		dieCompact(stderr, "paste did not land — nothing appeared in your composer; nothing was submitted. Retry is safe.")
+		thenAbortNote(stderr, opts.ThenSet)
 		return 1
 	default:
 		dieCompact(stderr, "typed but submission unverified (verify: "+verify+") — read your own pane before retrying; a blind retry may double-queue /compact.")
+		thenAbortNote(stderr, opts.ThenSet)
 		return 1
+	}
+}
+
+// thenAbortNote states plainly that --then armed nothing when the /compact
+// paste did not verify (AC#2): the caller is never left wondering whether a
+// continuation is about to fire into an uncompacted session.
+func thenAbortNote(stderr io.Writer, thenSet bool) {
+	if thenSet {
+		fmt.Fprintln(stderr, "herder compact: --then NOT armed — the /compact paste was not verified, so no continuation was scheduled. Nothing will be delivered.")
 	}
 }
 
@@ -254,6 +305,26 @@ func parseCompactArgs(args []string, stdout, stderr io.Writer) (compactOptions, 
 			steerOnly = true
 		case "--dry-run":
 			opts.DryRun = true
+		case "--then":
+			if i+1 >= len(args) {
+				dieCompact(stderr, "--then requires a continuation message (the prompt to deliver over the bus after compaction)")
+				return opts, 64
+			}
+			opts.Then = args[i+1]
+			opts.ThenSet = true
+			i++
+		case "--then-timeout":
+			if i+1 >= len(args) {
+				dieCompact(stderr, "--then-timeout requires a duration (e.g. 15m, 900s)")
+				return opts, 64
+			}
+			dur, err := time.ParseDuration(args[i+1])
+			if err != nil || dur <= 0 {
+				dieCompact(stderr, "--then-timeout must be a positive Go duration (e.g. 15m, 900s): "+args[i+1])
+				return opts, 64
+			}
+			opts.ThenTimeout = dur
+			i++
 		case "-h", "--help":
 			printCompactHelp(stdout)
 			opts.Help = true
@@ -267,6 +338,13 @@ func parseCompactArgs(args []string, stdout, stderr io.Writer) (compactOptions, 
 		}
 	}
 	opts.Steer = strings.TrimSpace(strings.Join(steerParts, " "))
+	if opts.ThenSet && strings.TrimSpace(opts.Then) == "" {
+		dieCompact(stderr, "--then continuation message is empty — pass the prompt to deliver after compaction, or drop --then")
+		return opts, 64
+	}
+	if opts.ThenTimeout == 0 {
+		opts.ThenTimeout = defaultThenTimeout
+	}
 	return opts, 0
 }
 
@@ -275,12 +353,28 @@ func printCompactHelp(stdout io.Writer) {
 		"herder compact — queue a steered /compact into the CALLER'S OWN pane (self only).",
 		"",
 		"Usage:",
-		"  herder compact [--dry-run] [<steer text> | -- <steer text>]",
+		"  herder compact [--dry-run] [--then <continuation> [--then-timeout <dur>]] \\",
+		"                 [<steer text> | -- <steer text>]",
 		"",
 		"Types a real `/compact <steer>` input line into your own composer via the",
 		"spawn-private paste engine and submits it. If you are mid-turn (the normal case —",
 		"you run this from your own tool call), the line is QUEUED and fires when the",
 		"current turn ends: your session compacts in place, steered, and continues.",
+		"",
+		"--then <continuation> (compact-then-continue, claude-only): normally /compact",
+		"ends the turn and STOPS. With --then, once the /compact paste is VERIFIED, a",
+		"detached background sender is armed; it waits for this turn to END, then delivers",
+		"<continuation> to your OWN bus name over the hcom bus so it lands AFTER",
+		"compaction. It is NOT a second paste: a plain queued line would jump the /compact",
+		"queue and be consumed pre-compaction (that is why this is a post-turn bus send).",
+		"Turn end is PROVEN, never assumed from a delay: it either observes your live",
+		"working→idle status transition or finds it in hcom's event history — a naked",
+		"status sample never suffices (a stale read would inject mid-turn). If it cannot",
+		"prove the turn ended before --then-timeout it FAILS CLOSED and drops the",
+		"continuation loudly (a dropped, re-sendable message beats a silent mid-turn",
+		"injection). The continuation targets the bus name proven for THIS session at",
+		"compact time — never re-resolved from a pane id. If the /compact paste does not",
+		"verify, nothing is armed. Codex is refused: its compaction semantics differ.",
 		"",
 		"This is input automation on your own pane, NOT message delivery — agent-to-agent",
 		"messaging stays on the hcom bus (`herder send`). There is no target argument and",
@@ -293,8 +387,17 @@ func printCompactHelp(stdout io.Writer) {
 		"terminal is refused; it never guesses.",
 		"",
 		"Options:",
-		"  --dry-run   resolve your own pane and print what would be queued, then exit",
-		"  --          everything after is steer text (for steers starting with --)",
+		"  --dry-run          resolve your own pane and print what would be queued (and",
+		"                     what --then would arm), then exit",
+		"  --then <msg>       claude-only: after compaction completes, deliver <msg> to",
+		"                     your own bus over hcom (compact-then-continue)",
+		"  --then-timeout <d> bound the detached sender's wait for turn end (default 15m);",
+		"                     on timeout it gives up loudly in its log, never zombies",
+		"  --                 everything after is steer text (for steers starting with --)",
+		"",
+		"--then diagnostics: the detached sender logs one line per phase (armed → turn",
+		"ended → delivered/queued, or TIMEOUT with a manual-send remedy) to",
+		"<herder-state-dir>/compact-then/compact-then-<short>-<pid>.log.",
 		"",
 		"Exit codes:",
 		"  0   queued/submitted — /compact fires at the end of the current turn.",
@@ -307,6 +410,9 @@ func printCompactHelp(stdout io.Writer) {
 		"Context-ceiling recipe (skills/orchestrate): commit WIP + write your HANDOFF/",
 		"progress state FIRST (compaction loses anything unpersisted), then:",
 		"  herder compact 'keep: current unit, ACs, gate commands, thread name; drop tool output'",
+		"To keep going without a human nudging you back afterwards, add a continuation:",
+		"  herder compact 'keep: unit, ACs, gate, thread; drop tool output' \\",
+		"    --then 'resume TASK-XXX: run the gate, then report DONE on thread unit-w'",
 		"",
 		"If it fails:",
 		"  - exit 2 \"no registry row proves this pane is yours\": run inside a",

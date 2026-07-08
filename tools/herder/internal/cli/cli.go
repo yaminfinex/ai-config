@@ -90,6 +90,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "-h", "--help", "help":
 		fmt.Fprint(stdout, rootUsage())
 		return 0
+	case "compact-then":
+		// Internal: the detached continuation sender `herder compact --then`
+		// forks. Not in the command table (never invoked by hand), so it stays
+		// out of the root usage and help-contract surfaces.
+		return spawncmd.RunCompactThen(args[1:], stdout, stderr)
 	}
 
 	for _, cmd := range commands {
