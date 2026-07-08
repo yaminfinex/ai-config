@@ -183,7 +183,9 @@ everything else is a cache.**
   sidecar before exec'ing the tool.
 - **Sidecar** (hidden subcommand, one per occupant) — status bridge (hcom events →
   `pane.report_agent`), enrolment + name capture, turnover detection (§8.1), guid anchoring
-  (§5.3). Exits with its occupant; distinguishes "bus errored" from "row absent" before
+  (§5.3), and sid reporting: it pushes the sid it learns from the bus to the seat substrate
+  (`pane.report_agent_session`), making herder its own sid reporter for the §8.3 probe.
+  Exits with its occupant; distinguishes "bus errored" from "row absent" before
   counting an occupant miss.
 - **PATH shims** — wrap hand-typed `claude`/`codex` into `herder launch` so hand launches join
   the same substrate (activation staged separately).
@@ -400,11 +402,25 @@ row re-keys the same guid. This one rule serves spawned, shimmed, and enrolled s
 On any epoch/node mismatch between a seat binding and the live substrate:
 
 1. Suspend trust in the binding; sends refuse until reconciled.
-2. Probe: does the terminal exist, and does the pane's reported sid match the session's sid
-   (herdr exposes per-pane agent sids)? For process seats: pid + bus status.
+2. Probe: does the terminal exist, and does the pane's reported sid match the session's sid?
+   For process seats: pid + bus status.
 3. Outcomes: match ⇒ re-confirm + re-stamp epoch (`reconciled`); sid found live in a different
    seat ⇒ re-bind (seat migrated — the handoff case); neither ⇒ unseat (cold restart — the
    occupant genuinely died).
+
+**Sid-probe precondition (normative).** herdr's per-pane sid exposure is report-only — the
+substrate never scans for a sid; `agent_session` populates only when a reporter pushes it
+(`pane.report_agent_session`). The probe therefore requires an active sid reporter: the herder
+sidecar self-reporting the sid it already learns from the bus (preferred — no third-party
+config writes, covers every tool herder launches, reuses the sidecar's ambiguity guard), or the
+tool's herdr agent integration (`herdr integration install claude|codex`). Spawn and any future
+doctor surface warn when neither reporter is active.
+
+**Sid-less fallback (normative).** A probe returning no `agent_session` means *sid-less, not
+dead*. Reconcile on the durable substrate key: `terminal_id` first, then a guarded
+(tool, label, cwd) match that refuses on ambiguity. The outcome is re-confirmation at
+`continuity: assumed` — never a fake match, never an unseat on absence-of-evidence alone; a
+later sid report upgrades assumed → confirmed per §8.2.
 
 This procedure is what makes herdr live-handoff updates, cold restarts, and hcom db resets all
 safe without herder distinguishing them in advance. Reconciliation only ever adjudicates seats
@@ -479,7 +495,10 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
 - **AC-23 herdr cold restart** — reconciliation unseats all locally-seated herdr sessions
   (occupants died); sessions are dormant and resumable, not lost.
 - **AC-24 herdr live handoff** — after `herdr update`, reconciliation re-confirms surviving
-  occupants (sid probe) and re-stamps epochs; no healthy session is unseated.
+  occupants (sid probe where a reporter is active; terminal_id + guarded label/cwd match
+  otherwise, re-confirming at `assumed` continuity) and re-stamps epochs; no healthy session
+  is unseated. Note terminal ids may be reissued wholesale at handoff, so the fallback match
+  must not assume terminal_id stability across the boundary.
 - **AC-25 unknown-node rows** — a registry containing rows attributed to an unknown node id
   (a hand-copied fragment, a synced-in file) still loads: those rows are flagged anomalous in
   `list`, never written to, and never adjudicated by reconciliation; every command keeps
@@ -554,6 +573,7 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 | D8 | Headless: full schema now (pid/node/epochs), degraded command support | §3.3, AC-35 |
 | D9 | Registry: one live JSONL per state dir; kind-partitioned projection; flock write discipline; backup-not-sync; sqlite/hybrid rejected with recorded rationale; rotate-never-delete growth stance | §5, §10 |
 | D10 | One resolver: targets are sessions; seats via explicit escapes; `resolve` + a minimal usage-driven proxy set as the substrate escape hatch | §4, §7 |
+| D11 | Sid probing requires an active reporter (sidecar self-report preferred over tool integrations); sid-less panes reconcile via terminal_id-then-guarded-match at `assumed` continuity, never unseat on absence of evidence | §4, §8.3, AC-24 |
 
 Process notes outside the spec: where the distilled glossary lands (CONTEXT.md home) and which
 gaps ride which branch belong to the implementation plan, not this document. Open naming
