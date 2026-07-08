@@ -29,21 +29,23 @@ case "${1:-}" in
     is_json=0
     for a in "$@"; do [[ "$a" == "--json" ]] && is_json=1; done
     if [[ "$is_json" -eq 1 ]]; then
-      # First poll reports the caller still working; every later poll reports the
-      # turn ended. The sender must not deliver until it sees "listening".
+      # Live shape: `hcom list <name> --json` is a SINGLE object whose "name" is
+      # the base name (hcom 0.7.23), NOT a JSON array.
       if [[ "$SCEN" == "stuck" ]]; then
         # The caller's turn never ends: always working. The sender must time out
         # loudly and NEVER deliver.
-        jq -cn '[{name:"me-bus", status:"active"}]'
+        jq -cn '{name:"me-bus", status:"active"}'
         exit 0
       fi
+      # First poll reports the caller still working; every later poll reports the
+      # turn ended. The sender must not deliver until it sees "listening".
       n=0
       [[ -f "$STATE/polls" ]] && n="$(cat "$STATE/polls")"
       printf '%d' $((n + 1)) >"$STATE/polls"
       if [[ "$n" -eq 0 ]]; then
-        jq -cn '[{name:"me-bus", status:"active"}]'
+        jq -cn '{name:"me-bus", status:"active"}'
       else
-        jq -cn '[{name:"me-bus", status:"listening"}]'
+        jq -cn '{name:"me-bus", status:"listening"}'
       fi
       exit 0
     fi

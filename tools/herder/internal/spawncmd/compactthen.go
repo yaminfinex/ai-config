@@ -141,6 +141,17 @@ func thenDeliver(p busProbe, cfg thenConfig, log io.Writer) int {
 // uses in-process, TASK-032).
 type hcomProbe struct{}
 
+// hcomRow is the subset of an `hcom list --json` entry this loop reads. Live
+// hcom (0.7.23) reports a scoped query (`hcom list <name> --json`) as a SINGLE
+// object whose "name" is the agent's BASE name (e.g. "reko" for bus name
+// "smoke034-reko"), while an unscoped query is a JSON array whose entries carry
+// both "base_name" and the full "name". listStatus handles both.
+type hcomRow struct {
+	Name     string `json:"name"`
+	BaseName string `json:"base_name"`
+	Status   string `json:"status"`
+}
+
 func (hcomProbe) listStatus(busName, busDir string) string {
 	cmd := exec.Command("hcom", "list", busName, "--json")
 	cmd.Env = os.Environ()
@@ -152,25 +163,39 @@ func (hcomProbe) listStatus(busName, busDir string) string {
 	if err := cmd.Run(); err != nil {
 		return ""
 	}
-	var rows []struct {
-		Name   string `json:"name"`
-		Status string `json:"status"`
-	}
-	if json.Unmarshal(out.Bytes(), &rows) != nil {
+	return normalizeStatus(pickStatus(out.Bytes(), busName))
+}
+
+// pickStatus extracts the queried agent's status from `hcom list <name> --json`
+// output, accepting either a single object (the scoped-query shape) or an array
+// (defensive — the unscoped shape). `hcom list <name>` already narrows to the
+// one agent, so a single object / sole array element is taken directly; only a
+// multi-row array is disambiguated by matching the full name or base name.
+func pickStatus(raw []byte, busName string) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
 		return ""
 	}
-	// Prefer the row whose name matches exactly; fall back to the sole row when
-	// `hcom list <name>` already narrowed to one.
-	status := ""
-	for _, r := range rows {
-		if r.Name == busName {
-			return normalizeStatus(r.Status)
+	if trimmed[0] == '{' {
+		var row hcomRow
+		if json.Unmarshal(trimmed, &row) != nil {
+			return ""
 		}
+		return row.Status
+	}
+	var rows []hcomRow
+	if json.Unmarshal(trimmed, &rows) != nil || len(rows) == 0 {
+		return ""
 	}
 	if len(rows) == 1 {
-		status = rows[0].Status
+		return rows[0].Status
 	}
-	return normalizeStatus(status)
+	for _, r := range rows {
+		if r.Name == busName || r.BaseName == busName {
+			return r.Status
+		}
+	}
+	return ""
 }
 
 func (hcomProbe) deliver(busName, busDir, message string, timeoutMS int) string {

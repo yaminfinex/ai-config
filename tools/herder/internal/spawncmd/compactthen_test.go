@@ -225,6 +225,31 @@ func TestThenLoopGivesUpAfterRetries(t *testing.T) {
 	}
 }
 
+func TestPickStatusShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		// Live scoped-query shape: a single object whose name is the BASE name,
+		// not the full bus name queried with.
+		{"single object base name", `{"name":"reko","status":"listening"}`, "listening"},
+		{"single object active", `{"name":"reko","status":"active"}`, "active"},
+		// Defensive array shapes.
+		{"sole array element", `[{"name":"reko","status":"listening"}]`, "listening"},
+		{"array match by full name", `[{"name":"other","status":"active"},{"name":"smoke034-reko","status":"listening"}]`, "listening"},
+		{"array match by base name", `[{"name":"x","status":"active"},{"base_name":"reko","name":"smoke034-reko","status":"blocked"}]`, "blocked"},
+		{"empty", ``, ""},
+		{"empty array", `[]`, ""},
+		{"garbage", `not json`, ""},
+	}
+	for _, c := range cases {
+		if got := pickStatus([]byte(c.raw), "smoke034-reko"); got != c.want {
+			t.Errorf("%s: pickStatus(%q) = %q, want %q", c.name, c.raw, got, c.want)
+		}
+	}
+}
+
 func TestParseThenArgsRequiresNameAndMessage(t *testing.T) {
 	var errb bytes.Buffer
 	if _, code := parseThenArgs([]string{"--name", "me-bus"}, &errb); code != 64 {
