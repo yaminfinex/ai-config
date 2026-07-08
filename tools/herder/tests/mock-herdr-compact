@@ -28,6 +28,10 @@
 #                         would have refused).
 #       blocked         — the VISIBLE screen shows an open permission modal:
 #                         preflight must refuse with nothing typed.
+#       polluted_clear  — the VISIBLE composer starts with stray text; ctrl+u
+#                         clears it, then the paste proceeds and reports recovery.
+#       polluted_still  — the VISIBLE composer starts with stray text; ctrl+u
+#                         is accepted but leaves it polluted, so paste refuses.
 #       guid_drift      — the env pane resolves to a DIFFERENT terminal than
 #                         the caller's registry row. WITHOUT a corroborating
 #                         session id this must REFUSE (a stale/inherited
@@ -62,6 +66,7 @@ log_call() { printf '%s\n' "$*" >>"$PROBE/calls"; }
 
 sent()     { [[ -f "$STATE/send" ]]; }
 entered()  { [[ -f "$STATE/enter" ]]; }
+composer_cleared() { [[ -f "$STATE/composer_cleared" ]]; }
 sent_msg() { cat "$STATE/msg" 2>/dev/null || true; }
 
 sig='❯'
@@ -81,6 +86,10 @@ env_pane_terminal() {
 
 composer_text() {
   local msg; msg="$(sent_msg)"
+  if [[ "$SCEN" == "polluted_clear" || "$SCEN" == "polluted_still" ]] && ! composer_cleared && ! sent; then
+    printf '⏺ working on the task…\n%s stray draft' "$sig"
+    return
+  fi
   if ! sent; then
     printf '⏺ working on the task…\n%s ' "$sig"
     return
@@ -181,6 +190,8 @@ case "${1:-} ${2:-}" in
     log_call "$@"
     if [[ "${4:-}" == "Enter" ]] && sent; then
       : > "$STATE/enter"
+    elif [[ "${4:-}" == "ctrl+u" && "$SCEN" == "polluted_clear" ]]; then
+      : > "$STATE/composer_cleared"
     fi
     printf '{"result":{"ok":true}}\n';;
   *)

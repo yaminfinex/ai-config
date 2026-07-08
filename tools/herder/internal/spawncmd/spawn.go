@@ -118,6 +118,7 @@ type spawnJSONRecord struct {
 	PromptSent           bool                `json:"prompt_sent"`
 	DeliveryResult       string              `json:"delivery_result"`
 	ResendCommand        string              `json:"resend_command,omitempty"`
+	PasteNotes           []string            `json:"paste_notes,omitempty"`
 	PermInjected         string              `json:"perm_injected"`
 	NewTab               bool                `json:"new_tab"`
 	RootPaneClosed       bool                `json:"root_pane_closed"`
@@ -877,6 +878,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 
 	promptSent := false
 	deliveryResult := "not_attempted"
+	pasteNotes := []string(nil)
 	if opts.Prompt != "" && trustBlocked {
 		deliveryResult = "blocked_trust_modal"
 	} else if busPrompt {
@@ -891,12 +893,15 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			deliveryResult = "bind_timeout"
 		}
 	} else if opts.Prompt != "" {
-		verify, rc := (&bootPaster{Client: r.herdr}).paste(paneID, opts.Prompt)
-		if verify != "" {
-			deliveryResult = verify
+		paste := (&bootPaster{Client: r.herdr}).paste(paneID, opts.Prompt)
+		if paste.Verify != "" {
+			deliveryResult = paste.Verify
 		}
-		if rc == 0 {
+		if paste.Code == 0 {
 			promptSent = true
+		}
+		if paste.ComposerCleared {
+			pasteNotes = append(pasteNotes, "composer_cleared")
 		}
 	}
 
@@ -1017,7 +1022,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		}
 	}
 
-	r.writeSummary(record, wtInfo, isHcomAgent, rootClosed, permInjected, hcomCapture, busPrompt, promptSent, deliveryResult, readyReason, trustBlocked)
+	r.writeSummary(record, wtInfo, isHcomAgent, rootClosed, permInjected, hcomCapture, busPrompt, promptSent, deliveryResult, readyReason, trustBlocked, pasteNotes)
 	if opts.JSONOutput {
 		outRecord := spawnJSONRecord{
 			GUID:                 record.GUID,
@@ -1044,6 +1049,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			PromptSent:           promptSent,
 			DeliveryResult:       deliveryResult,
 			ResendCommand:        resendCommandFor(deliveryResult, record.Label, opts.Prompt),
+			PasteNotes:           pasteNotes,
 			PermInjected:         permInjected,
 			NewTab:               opts.NewTab,
 			RootPaneClosed:       rootClosed,
@@ -1243,7 +1249,7 @@ func (r *runner) paneStatus(paneID string) string {
 	return ""
 }
 
-func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAgent, rootClosed bool, permInjected, hcomCapture string, busPrompt, promptSent bool, deliveryResult, readyReason string, trustBlocked bool) {
+func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAgent, rootClosed bool, permInjected, hcomCapture string, busPrompt, promptSent bool, deliveryResult, readyReason string, trustBlocked bool, pasteNotes []string) {
 	fmt.Fprintf(r.stderr, "spawned %s (%s) in pane %s (workspace %s)\n", record.Label, record.Agent, record.PaneID, record.WorkspaceID)
 	fmt.Fprintf(r.stderr, "  guid:   %s\n", record.GUID)
 	fmt.Fprintf(r.stderr, "  cwd:    %s\n", record.CWD)
@@ -1287,6 +1293,7 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 		fmt.Fprintf(r.stderr, "  bus:    n/a (%s is not an hcom agent — no bus name, so herder send cannot reach it)\n", record.Agent)
 	}
 	if r.opts.Prompt != "" {
+		noteSuffix := pasteNoteSuffix(pasteNotes)
 		switch {
 		case busPrompt && promptSent && deliveryResult == "delivered":
 			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars) over the hcom bus, bind: %s, verify: delivered (receipt seen)\n", len(r.opts.Prompt), readyReason)
@@ -1294,9 +1301,10 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars) over the hcom bus, bind: %s, verify: %s\n", len(r.opts.Prompt), readyReason, deliveryResult)
 			fmt.Fprintln(r.stderr, "          no receipt in the window — it injects when the agent is deliverable; do NOT resend.")
 			fmt.Fprintf(r.stderr, "          If it never lands: UNSUBMITTED COMPOSER TEXT starves bus delivery — check `herder wait %s --read`;\n", record.Label)
-			fmt.Fprintf(r.stderr, "          if text sits on the input line, submit it: herdr pane send-keys %s Enter\n", record.PaneID)
+			fmt.Fprintln(r.stderr, "          a queued bus message visible on the input line is NOT garbage — do NOT clear it.")
+			fmt.Fprintf(r.stderr, "          Clear only unrelated garbage text: herdr pane send-keys %s ctrl+u\n", record.PaneID)
 		case promptSent:
-			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars), ready: %s, verify: %s\n", len(r.opts.Prompt), readyReason, deliveryResult)
+			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars), ready: %s, verify: %s%s\n", len(r.opts.Prompt), readyReason, deliveryResult, noteSuffix)
 		case deliveryResult == "blocked_trust_modal":
 			fmt.Fprintln(r.stderr, "  prompt: NOT sent — a directory-trust modal is open and --safe forbids auto-accepting it.")
 			fmt.Fprintf(r.stderr, "          Accept it in the pane (focus + Enter), then: herder send %s \"<prompt>\"\n", record.Label)
@@ -1308,13 +1316,20 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 			fmt.Fprintf(r.stderr, "  prompt: NOT confirmed (verify: %s, bind: %s) — the bus send did not go through\n", deliveryResult, readyReason)
 			fmt.Fprintf(r.stderr, "          check the bus first (`hcom events --agent %s`), then retry: herder send %s \"<prompt>\"\n", record.HcomName, record.Label)
 		default:
-			fmt.Fprintf(r.stderr, "  prompt: NOT confirmed (verify: %s, ready: %s) — delivery unverified\n", deliveryResult, readyReason)
+			fmt.Fprintf(r.stderr, "  prompt: NOT confirmed (verify: %s, ready: %s%s) — delivery unverified\n", deliveryResult, readyReason, noteSuffix)
 			fmt.Fprintf(r.stderr, "          read the pane first: herder wait %s --read; do NOT blind-resend (double-submits);\n", record.Label)
-			fmt.Fprintf(r.stderr, "          if the text sits stranded on the input line, submit it: herdr pane send-keys %s Enter\n", record.PaneID)
+			fmt.Fprintf(r.stderr, "          if garbage text sits stranded on the input line, clear it: herdr pane send-keys %s ctrl+u\n", record.PaneID)
 		}
 	} else if trustBlocked {
 		fmt.Fprintln(r.stderr, "  note:   directory-trust modal is open (--safe); accept it in the pane to use the agent")
 	}
+}
+
+func pasteNoteSuffix(notes []string) string {
+	if len(notes) == 0 {
+		return ""
+	}
+	return " (notes: " + strings.Join(notes, ",") + ")"
 }
 
 func die(stderr io.Writer, msg string) {
@@ -1384,9 +1399,9 @@ func printHelp(stdout io.Writer) {
 		"  more often. hcom wakes an idle agent with an EMPTY composer instantly, even a fresh",
 		"  never-prompted one; a message sent mid-boot is held until the session can take it.",
 		"  The one thing that starves bus delivery — on both families — is UNSUBMITTED TEXT in",
-		"  the composer: nothing injects until it is submitted or cleared. Remedy: read the pane",
-		"  (`herder wait <guid> --read`); if text sits on the input line, submit it with",
-		"  `herdr pane send-keys <pane> Enter` — queued messages then flow at the next boundary.",
+		"  the composer: nothing injects until it is submitted or cleared. Preferred remedy for",
+		"  stray/garbage text: `herdr pane send-keys <pane> ctrl+u`; use Enter only when the",
+		"  visible text is a real message you intend to submit.",
 		"  A slash-command prompt (e.g. --prompt '/review …') arrives as MESSAGE TEXT, not as a",
 		"  typed slash command — the agent can invoke the skill itself, but nothing auto-executes.",
 		"  bash agents have no bus: their prompt is typed into the pane by the spawn-private",

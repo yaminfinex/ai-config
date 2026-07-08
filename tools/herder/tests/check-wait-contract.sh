@@ -48,7 +48,7 @@ mkdir -p "$MOCKBIN" "$GOLDENS"
 trap 'rm -rf "$ROOT"' EXIT
 
 # Mock herdr. Topology (vs fixture registry): term_AAA live at stored pane p_10;
-# term_BBB live but renumbered to p_99 (stored p_20 — resolution must follow the
+# term_BBB live but re-keyed to p_99 (stored p_20 — resolution must follow the
 # terminal); term_CCC absent (gone). Scenarios:
 #   MOCK_WAIT_SCENARIO  normal | emptylist (pane list has zero panes) | closed_after_wait
 #   MOCK_WAIT_RC        exit code for `herdr wait agent-status` (0 ok, 1 timeout)

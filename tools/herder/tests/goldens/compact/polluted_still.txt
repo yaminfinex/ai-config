@@ -1,0 +1,8 @@
+=== STDERR ===
+herder compact: refused — your pane still has unsubmitted composer text after the ctrl+u recovery attempt; /compact was NOT typed. Inspect the pane, clear or submit that text by hand, then retry.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===
+pane send-keys w1-2 ctrl+u

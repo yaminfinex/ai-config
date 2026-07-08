@@ -198,6 +198,8 @@ scenario positional_badcwd   midturn         positional_badcwd "$STEER"
 # Preflight: visible-only (old scrollback noise must NOT refuse; a live visible
 # modal MUST).
 scenario scrollback_noise    scrollback_noise guid      "$STEER"
+scenario polluted_clear      polluted_clear   guid      "$STEER"
+scenario polluted_still      polluted_still   guid      "$STEER"
 scenario blocked_modal       blocked          guid      "$STEER"
 
 # Self-pane proof failures.

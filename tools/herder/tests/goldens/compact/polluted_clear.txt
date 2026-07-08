@@ -1,0 +1,10 @@
+=== STDERR ===
+herder compact: submitted — "/compact focus on the open unit, keep gate commands and thread names" is in your composer and fires when the current turn ends (verify: delivered (notes: composer_cleared))
+=== STDOUT ===
+
+=== EXIT ===
+0
+=== HERDR MUTATING CALLS ===
+pane send-keys w1-2 ctrl+u
+agent send w1-2 /compact focus on the open unit, keep gate commands and thread names
+pane send-keys w1-2 Enter
