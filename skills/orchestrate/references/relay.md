@@ -44,16 +44,12 @@ If a leg balloons, commit WIP and journal `## Leg N — HANDOFF (continue)` with
 steps + current state, then **spawn the continuation** — same leg, prompt notes "continue from
 the HANDOFF entry".
 
-Cheaper alternative when the leg is still coherent: compact in place with
-`herder compact '<steer: what the continuation must keep>'` (queued into the leg's own
-composer, fires at turn end) and continue the same leg — no successor spawn needed. Persist
-state (WIP commit + journal note) BEFORE compacting; the fresh-spawn continuation remains the
-escape hatch for sessions too far gone to steer. Since bare `/compact` STOPS the turn, an
-unattended leg adds `--then '<continue from the HANDOFF entry: next steps>'` (claude-only,
-TASK-034): after compaction a detached sender delivers that continuation to the leg's own bus,
-so the same leg resumes itself post-compaction instead of idling until the herder notices. The
-continuation only arms if the `/compact` verified and targets the leg's own verified bus name —
-it cannot leak into an uncompacted or wrong session.
+Cheaper alternative when the leg is still coherent: compact in place and continue the same
+leg — no successor spawn. Mechanics, persistence-first rule, and preference order are SKILL.md
+invariant 3; the relay-specific steer is `herder compact '<what the continuation must keep>'
+--then '<continue from the HANDOFF entry: next steps>'`, so an unattended leg resumes itself
+post-compaction instead of idling. The fresh-spawn continuation above remains the escape hatch
+for sessions too far gone to steer.
 
 ## The soloist
 

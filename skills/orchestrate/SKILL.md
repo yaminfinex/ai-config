@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run a long or complex plan across multiple agent sessions — compose a per-run protocol from a menu of topologies (sequential phases, relay, fan-out, branch-both-sides, adversarial structures), autonomy postures, and liveness policies, then set up the playbook + run-log state files and drive the run. Use when the user says "orchestrate this plan", "run this as a relay", "spawn phase agents", "split this across agents/sessions", "herd this plan", or hands over a substantial implementation plan / long runbook that won't fit one context window. Built on the `herder` CLI (see `herder --help`), which owns the spawn/send/wait/cull mechanics.
+description: Run a long or complex plan across multiple agent sessions — compose a per-run protocol (topology, autonomy, liveness), set up the playbook + run-log state files, and drive the run over the `herder` CLI. Use when the user says "orchestrate this plan", "herd this plan", "run this as a relay", "split this across agents/sessions", or hands over a substantial plan or runbook that won't fit one context window.
 ---
 
 # Orchestrate
@@ -37,11 +37,19 @@ Record in the playbook's run-shape header (`references/state-files.md`):
    interrogation. Hold a pane open only when live back-and-forth is genuinely expected — `hcom
    transcript <name>` reads a worker's conversation after the fact, and `herder resume <guid>`
    reopens a culled registered session, so culling discards no conversation.
-4. **Golden agent.** Consider bottling (`bottling` skill) the agent holding the original intent
+4. **Model per role.** All model-selection reasoning lives here; pin the choices in the run-shape
+   header and revisit them here as models change. Match capability to role: the smartest,
+   most expensive tier earns its cost on planning, design, adjudication, and advisory roles —
+   routine implementation goes to strong, cheaper coders. For review and adjudication, sameness is
+   the risk — a reviewer from the doer's family shares its blind spots — so when the stakes warrant
+   it, reach for a cross-family reviewer, double reviews at critical points, or a panel spanning
+   families, classes, and lenses. (Current lineup: fable = plan/design/adjudicate; codex and opus
+   both implement well.)
+5. **Golden agent.** Consider bottling (`bottling` skill) the agent holding the original intent
    before the run consumes it; decant later as the user's proxy (`references/adversarial.md`).
-5. **Backlog (if present).** If the project uses Backlog.md (`command -v backlog` + a `backlog/`
+6. **Backlog (if present).** If the project uses Backlog.md (`command -v backlog` + a `backlog/`
    dir), lean on it as the durable unit ledger — `references/backlog-integration.md`. Absent → skip.
-6. **Bus scoping + observability.** On a machine running several orchestrations, a per-run team
+7. **Bus scoping + observability.** On a machine running several orchestrations, a per-run team
    (`herder spawn --team <run-slug>`) keeps their traffic from interleaving (caveats: `herder spawn
    --help`). Own-tab-per-agent (`herder spawn --new-tab`) is a preference for humans watching the
    run, not a correctness rule.
@@ -89,20 +97,20 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
    lands. Backlog-backed runs add a durable unit ledger alongside — `references/backlog-integration.md`.
 2. **Spawn prompts are one line** — "read <playbook> in full, then execute <unit>". Context
    travels through the files + branch, never the prompt.
-3. **Context discipline.** One unit per agent; wide reading goes to subagents. A ballooning unit
-   writes durable state first (commit WIP + a progress report on the unit thread — whatever isn't
-   persisted is lost, compaction included), then compacts in place: `herder compact '<steer:
-   what to keep>'` queues a real `/compact <steer>` into the agent's OWN composer and fires at
-   turn end. (The old `herder send "$HERDR_PANE_ID" '/compact …'` recipe died with the keystroke
-   transport — `herder compact` is its dedicated self-only replacement.) `/compact` alone STOPS
-   the turn; to keep a worker moving unattended add `--then '<continuation>'` (claude-only,
-   TASK-034) — after compaction a detached sender delivers the continuation to the worker's own
-   bus, so it resumes its unit (e.g. `--then 'resume <TASK>: run the gate, report DONE on <thread>'`)
-   without the orchestrator nudging it back. The continuation only arms if the `/compact` itself
-   verified, and it targets the worker's own verified bus name (never a re-resolved pane id) — so
-   it can never fire into an uncompacted or wrong session. If the session is too far gone to steer
-   coherently, fall back to the fresh-spawn handoff: HANDOFF report on the unit thread, stop,
-   successor picks it up.
+3. **Context discipline.** One unit per agent; wide reading goes to subagents. Compact in the
+   200–250k-token band, every time — past it agents get measurably less coherent and much more
+   expensive. The band binds every session in the run: watch your own context and your workers',
+   and apply it to a long-running worker at a unit boundary. Before any compaction, persist
+   durable state — commit WIP + a progress report on the unit thread; whatever isn't persisted
+   is lost. Then, in preference order: **compact in place** — `herder compact '<steer: what to
+   keep>'` queues a real `/compact <steer>` into the agent's own composer and fires at turn end.
+   `/compact` alone STOPS the turn; to keep a worker moving unattended add `--then
+   '<continuation>'` (claude-only) — after a verified compaction it is delivered to the worker's
+   own bus (e.g. `--then 'resume <unit>: run the gate, report DONE on <thread>'`), so the worker
+   resumes without a nudge. Or **replace**: when the session is too far gone to steer, it writes
+   a HANDOFF report on the unit thread (state + ordered remaining steps for an agent with zero
+   shared memory + WIP sha) and stops; the successor takes over the label (`herder rename`) and
+   culls the original before anything else — one claimant per label.
 4. **Verification before done.** A finished worker reports DONE on its unit thread with the
    playbook-pinned commands' results. The orchestrator never trusts the claim: it re-runs the
    pinned gates itself (a build-cached green is not independent evidence), then records the
