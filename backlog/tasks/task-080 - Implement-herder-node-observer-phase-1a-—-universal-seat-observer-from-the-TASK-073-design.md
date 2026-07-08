@@ -3,10 +3,10 @@ id: TASK-080
 title: >-
   Implement herder node observer, phase 1a — universal seat observer (from the
   TASK-073 design)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-08 22:04'
-updated_date: '2026-07-08 22:36'
+updated_date: '2026-07-08 22:51'
 labels: []
 dependencies: []
 priority: high
@@ -65,5 +65,10 @@ DONE-2 e3e11cf: socket client implemented (persistent connection per generation,
 created: 2026-07-08 22:36
 ---
 Opus review (review080-ziro): REQUEST-CHANGES. P1-1 REPRODUCED: first sid observation on sid-less enrolled seat misread as turnover — healthy seat displaced by unlabelled child on first sweep (the task's own incident class, inflicted); root cause: guard reads first-sighting as sid-change, no prior-sid requirement, enrichment path (recognised) unimplemented. P1-2: turnover dedupe runs OUTSIDE the lock and closure discards tx.Projection — concurrent sweeps mint duplicate children (fresh GUIDs bypass normalize dedupe); violates the check-then-append-under-lock hard constraint. P2: epoch-wide doubt invisible in list (GUID-less flag dropped); CLI fallback conflates socket-absent with protocol-incompatible; step subsets not selectable (AC-2 not demonstrable). LOWs incl. T-8 lacks convergence assertion, T-9 demo hollow (matches orchestrator gate finding), no independent protocol pin, bus-row-ABSENT wrongly counts as death corroboration. STEWARD CONDITION CLEARED by reviewer end-to-end injection (gate-as-invoked failing-capable; demo hardening still required). Clean: all four ratified invariants at code level, node-mint accounting, E-4, no state:lost, write.go additive-only. Fix round with worker.
+---
+
+created: 2026-07-08 22:51
+---
+MERGED 7012f9e (no-ff), post-merge gate on main: herder+bottle vet/test GREEN, suites 30/30. Stack d754749+e3e11cf+c460436. All 12 ACs met and re-verified by reviewer (P1-1 repro re-run: recognised enrichment, zero displacement; 8-way concurrent sweep: exactly-once turnover). Steward T-9 condition cleared (gate failing-capable incl. alias evasion). Unit arc: DONE-1 rejected at triage (CLI-seam substitution for settled socket client); DONE-2 socket client + T-11d; opus REQUEST-CHANGES (reproduced P1 identity destruction + lock-discipline violation); DONE-3 all 10 findings fixed; delta APPROVE. NONBLOCKING NOTE for the record: busCorroboratesDead now requires a PRESENT-but-dead bus row globally — a process seat with dead pid + fully ABSENT bus row will not unseat (reviewer: defensible per design §3, low impact); watch in bake. Phase 1b/2 remain gated per design. Autostart default OFF — flipping it is an owner decision after bake.
 ---
 <!-- COMMENTS:END -->
