@@ -1,11 +1,11 @@
 ---
 id: TASK-055
 title: 'wave A1: registry v2 record types + kind-partitioned projection (AC-30, AC-33)'
-status: In Progress
+status: Done
 assignee:
   - codex-66dd90b8
 created_date: '2026-07-08 05:55'
-updated_date: '2026-07-08 06:17'
+updated_date: '2026-07-08 06:24'
 labels: []
 dependencies: []
 priority: high
@@ -34,5 +34,10 @@ DONE report received (wave-a1-gino #6654, commit 5172774). hera gate re-run from
 created: 2026-07-08 06:17
 ---
 Adversarial verdict (opus @review-a1-zumi #6723): FINDINGS, 1 medium. F1: detectLabelConflicts (registry.go:403) ranges over the byLabel map, so with >=2 distinct conflicted labels the emitted duplicate-live-label anomaly ORDER is randomized run-to-run (violates spec 3.1 inv 6/12 determinism; contradicts its own test name). Masked by fixture gap: duplicate-labels.jsonl has only ONE conflicting label. Fix: sort label keys (or sort those anomalies by Label) + extend fixture to two conflicted labels. Surfaces 1/2/3/5 all HELD under attack (legacy quarantine safe for real JSONL; kind-partition no phantom sessions incl guid==node_id collision case; 5.4 mapping faithful; fixtures match memo). Fix round routed to worker; reviewer held for re-verdict.
+---
+
+created: 2026-07-08 06:24
+---
+MERGED to main 7895b70 (no-ff) after fix round: F1 fixed in 49db7dc (sorted label keys, fixture extended to two conflicted labels, cross-label order asserted — reviewer confirmed the assertion fails against pre-fix code). APPROVE-DELTA (@review-a1-zumi #6810). hera gate + post-merge gate on main: vet+test clean (registry/v2 executed under go 1.26.4, covering the reviewers inspection-only caveat), 21/21 suites green. Worker wave-a1-gino + reviewer culled; worktree/branch cleaned. A2 (TASK-056) unblocked — consumer-API design question routed to spec-ravu before dispatch.
 ---
 <!-- COMMENTS:END -->
