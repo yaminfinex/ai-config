@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 05:22'
+updated_date: '2026-07-08 09:09'
 labels: []
 dependencies: []
 priority: medium
@@ -37,5 +37,10 @@ spec-ravu independent confirmation (#5816): herdr pane move --new-tab --workspac
 created: 2026-07-08 05:22
 ---
 Refinement (spec-ravu #5865): pane_id re-keying on move is CROSS-WORKSPACE only — same-workspace --new-tab moves keep pane_id unchanged (verified live: two panes moved to new tabs within w3, both pane_ids survived; earlier re-key was the w6554208c1918a12 -> w3 crossing). terminal_id persists in both cases. Consequence for the rewrite: same-workspace tab moves need NO coordinate refresh; cross-workspace moves need re-enroll or herder reconcile.
+---
+
+created: 2026-07-08 09:09
+---
+[hera 2026-07-08] Vibe hand-back (#10058): worker task047-zamo, 1 commit 2aaad7a, fence held (spawncmd+herdrcli+docs/goldens/mocks), vibe live-validated (real spawn moved, coordinates re-fetched, cull clean, no seed shell). HERA GATE GREEN from worktree: vet/test both modules (spawncmd+herdrcli -count=1 fresh), 23/23 suites. Adversarial review dispatched: review-047-bozo (guid 5ad8a38c, own tab), brief napkins/run-herder-dx/brief-review-047.md — angles: move-before-gates cached-state audit, re-fetch failure interleavings, --new-tab --workspace combo, fail-soft JSON encoding, worktree seed-close guard, 052 label-shape consumers, dead code, pane hygiene on move_failed. NOTE: A4 merged after this gate — 047 is now second lander; integration (merge main in-branch) routes with any fix round after the verdict.
 ---
 <!-- COMMENTS:END -->

@@ -1,10 +1,10 @@
 ---
 id: TASK-059
 title: 'wave A5: registry rotation + list --all archive consultation (spec 5.1 growth)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-08 05:55'
-updated_date: '2026-07-08 08:57'
+updated_date: '2026-07-08 09:09'
 labels: []
 dependencies: []
 priority: low
@@ -23,5 +23,10 @@ Plan unit A5 (spec-plan-wave-a.md). Size-threshold rotation reusing A4 rotate-re
 created: 2026-07-08 08:57
 ---
 [hera 2026-07-08] +A5 obligation from A4 review (mori #9974 LOW): post-migration, retired guids live archive-only — list --all must consult archives and lineage resolution must resolve forked_from pointing at archived guids, else they vanish/dangle silently. Carry the reviewer's evidence into the A5 brief.
+---
+
+created: 2026-07-08 09:09
+---
+[hera 2026-07-08] A4 merged; dispatching A5 (rotation + archive consultation) — final wave-A unit.
 ---
 <!-- COMMENTS:END -->
