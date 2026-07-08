@@ -8,7 +8,7 @@ status: In Progress
 assignee:
   - '@hera'
 created_date: '2026-07-08 10:19'
-updated_date: '2026-07-08 10:55'
+updated_date: '2026-07-08 11:17'
 labels: []
 dependencies: []
 priority: high
@@ -27,5 +27,10 @@ Live hit (TASK-050 controlled restart, 2026-07-08): guid 404a13df (label hera, s
 created: 2026-07-08 10:55
 ---
 Dispatched: codex worker task069-66b53edf (bus @task069-melo), worktree task-069-cull-closed-record off main 3a92aaa (branch base includes 067 merge). Brief: napkins/run-herder-dx/brief-069.md — scope: confirmed-write closed record on pane-less cull paths, honest nonzero exit on write failure, label freed once closed (minimal uniqueness-predicate fix in scope; unseated-not-closed stays on TASK-042). Orchestrator performs live 404a13df reclamation as post-merge validation. Opus adversarial review to follow DONE.
+---
+
+created: 2026-07-08 11:17
+---
+Round 1: worker DONE 2a0adbf; my gate green 28/28 from worker worktree. Opus review (review069-sumi #11628): REQUEST-CHANGES — P1 CONFIRMED on brief attack-angle-1: appendClosed wrote state=retired on EVERY cull path (incl normal live-seated cull) = wave-C retire semantic smuggled under cull; spec is cull->unseated/resumable (:67,:119-121,:397), AC-11 latent breakage once resume enforces refuses-retired, default-list disappearance. P2: check-cull-busdrop.sh contract assertion flipped to bless the violation. LOW: pane-less no-force path can bus-drop a live-but-undetected agent. Verified good: exit-code honesty, confirmed-write guard, snapshot carry-forward, real-trap seeding in the reclaim check. Fix round dispatched (#11639): revert to unseated close records keeping all confirmed-write machinery, restore busdrop contract, replace reclaim check with spec-truth check (label STAYS held post-cull until retire ships), guard the bus-drop. Spec ruling requested from spec-ravu (#11640): pull retire forward (rec A) vs cull --retire variant (rec against); note systemic-review memo finding 3 (enforcement ahead of escape verbs) recommends shipping retire + --take-from as one composite unit. NOTE: systemic reviewer and opus reviewer DIVERGED on retired-on-forced-cull — resolved in favor of spec text pending ruling.
 ---
 <!-- COMMENTS:END -->
