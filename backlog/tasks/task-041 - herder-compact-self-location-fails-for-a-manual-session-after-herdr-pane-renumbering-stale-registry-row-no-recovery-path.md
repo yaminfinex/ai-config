@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:34'
-updated_date: '2026-07-08 09:48'
+updated_date: '2026-07-08 11:31'
 labels: []
 dependencies: []
 priority: medium
@@ -35,5 +35,10 @@ SECOND live hit, new mechanism (hera, 2026-07-08, post-046): herder compact refu
 created: 2026-07-08 09:48
 ---
 [hera 2026-07-08] THIRD live hit at owner-called compact: refusal text is now the improved self-identity chain ('no HERDER_GUID, no session match, no active row for terminal term_65612408bc9034... Nothing was typed') — better diagnosis than hit 2, still no recovery affordance and still no pane-list fallback for a detection-lost-but-alive caller pane. Workaround (ctrl+u + send-text + enter into own pane) used again, worked again. Scope unchanged.
+---
+
+created: 2026-07-08 11:31
+---
+lale field data (#11888), second refusal mode (benign): herder compact also refuses when the invoking shell cwd is a SUBDIRECTORY of the pane foreground cwd (cwd corroboration too strict); running from the repo root cleared it. Distinct from the own-pane refusal already on this task; fold both into whatever loosens compact's corroboration.
 ---
 <!-- COMMENTS:END -->

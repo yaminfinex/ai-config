@@ -3,9 +3,11 @@ id: TASK-071
 title: >-
   C0: retire + reopen verbs — pulled forward from wave C per spec-ravu ruling
   (releases entombed labels)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@hera'
 created_date: '2026-07-08 11:19'
+updated_date: '2026-07-08 11:31'
 labels: []
 dependencies: []
 priority: high
@@ -27,3 +29,12 @@ FENCE (from the ruling, binding for the worker brief):
 INTERIM: no hand-editing the registry to free labels (row surgery outside the locked path violates invariant 3/§5.2). Post-merge: orchestrator retires 404a13df and reclaims "hera" as operational validation — no further ruling needed.
 Sequencing: dispatch AFTER TASK-069 fix round lands (cullcmd/check-suite adjacency; keep the gate count stable).
 <!-- SECTION:DESCRIPTION:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 11:31
+---
+Dispatched: codex worker task071-8ae31a57, worktree task-071-retire-reopen off main 38bf281. Brief: napkins/run-herder-dx/brief-071.md (ruling fence binding; retire+reopen together; --take-from and repeat-cull dedupe explicitly fenced out). Post-merge validation reserved: retire 404a13df, reclaim label hera.
+---
+<!-- COMMENTS:END -->
