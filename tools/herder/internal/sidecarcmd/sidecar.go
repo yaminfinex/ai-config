@@ -151,7 +151,7 @@ func (s *sidecar) run() int {
 			// same reason as the initial write: a fallback-only row is not proven
 			// ours, so its bus name must never be attached to this guid (TASK-033).
 			if s.shouldAppendCorrelatedEnrichment(row, paneCorrelated) {
-				s.appendCorrelatedEnrichment(row)
+				_ = s.appendCorrelatedEnrichment(row)
 			}
 			s.reportAgentSession(row, paneCorrelated)
 			if state, ok := mapStatus(row.Status); ok && state != s.lastState {
@@ -182,9 +182,9 @@ func (s *sidecar) enrichDiscovered(row *hcomRow, paneCorrelated bool) bool {
 	if row == nil || !paneCorrelated {
 		return false
 	}
-	s.appendCorrelatedEnrichment(row)
+	wrote := s.appendCorrelatedEnrichment(row)
 	s.reportAgentSession(row, paneCorrelated)
-	return true
+	return wrote
 }
 
 func (s *sidecar) shouldAppendCorrelatedEnrichment(row *hcomRow, paneCorrelated bool) bool {
@@ -197,10 +197,13 @@ func (s *sidecar) shouldAppendCorrelatedEnrichment(row *hcomRow, paneCorrelated 
 	return row.SessionID != "" && (row.SessionID != s.enrichedSessionID || s.latestSessionMissing(row.SessionID))
 }
 
-func (s *sidecar) appendCorrelatedEnrichment(row *hcomRow) {
-	s.appendEnrichment(row)
+func (s *sidecar) appendCorrelatedEnrichment(row *hcomRow) bool {
+	if !s.appendEnrichment(row) {
+		return false
+	}
 	s.enrichedCorrelated = true
 	s.enrichedSessionID = row.SessionID
+	return true
 }
 
 func (s *sidecar) discoverRow() (*hcomRow, bool) {
@@ -246,6 +249,9 @@ func findRowForProcessID(rows []hcomRow, processID, lifecycleMode, parentSession
 	if processID == "" {
 		return nil
 	}
+	// If multiple GUID-sharing child processes exist, correctness depends on
+	// them inheriting the same HCOM_PROCESS_ID; scan-order drift then degrades
+	// to a miss, not cross-enrichment.
 	for i := range rows {
 		if lifecycleMode == "fork" && parentSessionID != "" && rows[i].SessionID == parentSessionID {
 			continue
@@ -294,7 +300,7 @@ func (s *sidecar) findRow(rows []hcomRow) *hcomRow {
 	return row
 }
 
-func (s *sidecar) appendEnrichment(row *hcomRow) {
+func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 	guid, hadGUID := os.LookupEnv("HERDER_GUID")
 	recs, _ := registry.Load(s.registry)
 	resumed := false
@@ -311,7 +317,7 @@ func (s *sidecar) appendEnrichment(row *hcomRow) {
 			var err error
 			guid, err = registry.NewGUID()
 			if err != nil {
-				return
+				return false
 			}
 		}
 	}
@@ -328,7 +334,7 @@ func (s *sidecar) appendEnrichment(row *hcomRow) {
 		latest = s.latestFromRecords(recs, guid)
 	}
 	if latest != nil && latest.Status == "closed" && !resumed {
-		return
+		return false
 	}
 	label := os.Getenv("HERDER_LABEL")
 	role := os.Getenv("HERDER_ROLE")
@@ -347,7 +353,7 @@ func (s *sidecar) appendEnrichment(row *hcomRow) {
 		role = "manual"
 	}
 	if owner := registry.ActiveLabelOwner(recs, label, guid); owner != nil {
-		return
+		return false
 	}
 
 	mechanism := "enroll"
@@ -401,8 +407,9 @@ func (s *sidecar) appendEnrichment(row *hcomRow) {
 		"provenance":   prov,
 	})
 	if err == nil {
-		_ = registry.Append(s.registry, out)
+		return registry.Append(s.registry, out) == nil
 	}
+	return false
 }
 
 type paneCoordinates struct {
@@ -524,6 +531,9 @@ func (s *sidecar) findProcessIDForOwnChild() string {
 	if scan == nil {
 		scan = scanProcessEnvirons
 	}
+	// If multiple processes share this HERDER_GUID, they are expected to share
+	// this child's HCOM_PROCESS_ID too; lexical /proc scan order can then only
+	// cause a later roster miss, not enrichment of a different hcom row.
 	for _, read := range scan(s.tool) {
 		if read.err != nil {
 			continue

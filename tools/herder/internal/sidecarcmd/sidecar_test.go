@@ -581,6 +581,55 @@ func TestFallbackFirstThenEmptySessionProcessCorrelationEnrichesInLoop(t *testin
 	}
 }
 
+func TestNoopFirstCorrelatedAppendKeepsEmptySessionRetryOpen(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	prior := `{"guid":"guid-other-0000","short_guid":"other","label":"taken","role":"worker","agent":"codex","pane_id":"p_other","status":"active"}`
+	if err := registry.Append(registryPath, []byte(prior)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "taken")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath}
+	row := &hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening"}
+
+	if !s.shouldAppendCorrelatedEnrichment(row, true) {
+		t.Fatal("first empty-sid correlated row did not request enrichment")
+	}
+	if s.appendCorrelatedEnrichment(row) {
+		t.Fatal("label-conflicted append reported success; want no-op")
+	}
+	if s.enrichedCorrelated || s.enrichedSessionID != "" {
+		t.Fatalf("enriched state after no-op = correlated %v sid %q, want false/empty", s.enrichedCorrelated, s.enrichedSessionID)
+	}
+	if !s.shouldAppendCorrelatedEnrichment(row, true) {
+		t.Fatal("empty-sid retry gate closed after no-op append")
+	}
+
+	t.Setenv("HERDER_LABEL", "worker-guid")
+	if !s.appendCorrelatedEnrichment(row) {
+		t.Fatal("append after clearing label conflict reported no write")
+	}
+	if !s.enrichedCorrelated || s.enrichedSessionID != "" {
+		t.Fatalf("enriched state after retry = correlated %v sid %q, want true/empty", s.enrichedCorrelated, s.enrichedSessionID)
+	}
+
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := registry.Resolve(recs, "guid-new-0000")
+	if latest == nil {
+		t.Fatal("retried append did not create guid-new-0000 row")
+	}
+	if latest.HcomName != "worker-mine" {
+		t.Fatalf("retried hcom_name = %q, want worker-mine", latest.HcomName)
+	}
+}
+
 func TestReportAgentSessionOnSessionIDChangeOnly(t *testing.T) {
 	logPath := installFakeHerdrForSidecar(t, 0)
 	s := &sidecar{tool: "claude", paneID: "p_child"}
