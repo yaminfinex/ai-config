@@ -16,6 +16,8 @@ import (
 	"ai-config/tools/herder/internal/registry"
 )
 
+const observerGlobalAdviceKey = "*"
+
 type options struct {
 	help       bool
 	mode       string
@@ -76,7 +78,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "no record for guid %s\n", opts.targetGUID)
 			return 1
 		}
-		out := reconciledJSON(rec, idx, advice[ptrString(rec.GUID)])
+		out := reconciledJSON(rec, idx, observerAdviceFor(advice, ptrString(rec.GUID)))
 		var pretty bytes.Buffer
 		if err := json.Indent(&pretty, out, "", "  "); err != nil {
 			return 1
@@ -99,7 +101,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			if !opts.includeAll && (rec.Status != "active" || rec.Archived) {
 				continue
 			}
-			fmt.Fprintln(stdout, string(reconciledJSON(rec, idx, advice[ptrString(rec.GUID)])))
+			fmt.Fprintln(stdout, string(reconciledJSON(rec, idx, observerAdviceFor(advice, ptrString(rec.GUID)))))
 		}
 		return 0
 	}
@@ -133,7 +135,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			bus = "@" + rec.HcomName
 		}
 		role := rec.Role
-		if flags := advice[ptrString(rec.GUID)]; len(flags) > 0 {
+		if flags := observerAdviceFor(advice, ptrString(rec.GUID)); len(flags) > 0 {
 			role = role + observerAdviceSuffix(flags)
 		}
 		fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-12s %-16s %s\n",
@@ -399,7 +401,17 @@ func loadObserverAdvice() map[string][]observerstatus.Flag {
 	if err != nil {
 		return map[string][]observerstatus.Flag{}
 	}
-	return observerstatus.FlagsByGUID(st)
+	out := observerstatus.FlagsByGUID(st)
+	for _, flag := range observerstatus.GlobalFlags(st) {
+		out[observerGlobalAdviceKey] = append(out[observerGlobalAdviceKey], flag)
+	}
+	return out
+}
+
+func observerAdviceFor(advice map[string][]observerstatus.Flag, guid string) []observerstatus.Flag {
+	flags := append([]observerstatus.Flag{}, advice[guid]...)
+	flags = append(flags, advice[observerGlobalAdviceKey]...)
+	return flags
 }
 
 func observerAdviceSuffix(flags []observerstatus.Flag) string {

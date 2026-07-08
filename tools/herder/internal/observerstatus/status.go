@@ -112,3 +112,13 @@ func FlagsByGUID(st Status) map[string][]Flag {
 	}
 	return out
 }
+
+func GlobalFlags(st Status) []Flag {
+	var out []Flag
+	for _, flag := range st.Flags {
+		if flag.GUID == "" {
+			out = append(out, flag)
+		}
+	}
+	return out
+}

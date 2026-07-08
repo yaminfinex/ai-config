@@ -16,10 +16,13 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 )
 
+const supportedHerdrProtocol = 16
+
 type socketStatus struct {
 	socket     string
 	protocol   int
 	compatible bool
+	discovered bool
 	detail     string
 }
 
@@ -43,6 +46,9 @@ func connectHerdrSocket() (*herdrSocketClient, socketStatus, error) {
 	if err != nil {
 		return nil, st, err
 	}
+	if st.protocol != supportedHerdrProtocol {
+		return nil, st, fmt.Errorf("herdr protocol incompatible: observer supports %d, server reported %d", supportedHerdrProtocol, st.protocol)
+	}
 	if !st.compatible {
 		return nil, st, fmt.Errorf("herdr protocol incompatible: %s", st.detail)
 	}
@@ -62,13 +68,14 @@ func connectHerdrSocket() (*herdrSocketClient, socketStatus, error) {
 
 func discoverHerdrSocket() (socketStatus, error) {
 	if sock := os.Getenv("HERDER_OBSERVER_HERDR_SOCKET"); sock != "" {
-		return socketStatus{socket: sock, compatible: true, detail: "env socket"}, nil
+		return socketStatus{socket: sock, protocol: supportedHerdrProtocol, compatible: true, discovered: true, detail: "env socket"}, nil
 	}
 	out, err := exec.Command("herdr", "status", "server").Output()
 	if err != nil {
 		return socketStatus{detail: "herdr status server unavailable"}, err
 	}
 	st := parseStatusServer(out)
+	st.discovered = true
 	if st.socket == "" {
 		return st, fmt.Errorf("herdr status server did not report socket")
 	}

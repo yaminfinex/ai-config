@@ -20,7 +20,7 @@ set -euo pipefail
 STATE="${MOCK_HERDR_STATE:?}"
 case "${1:-} ${2:-}" in
   "status server")
-    printf 'status: running\nversion: mock\nprotocol: 16\ncompatible: yes\nsocket: %s/herdr.sock\n' "$STATE";;
+    printf 'status: running\nversion: mock\nprotocol: %s\ncompatible: %s\nsocket: %s/herdr.sock\n' "${MOCK_HERDR_PROTOCOL:-16}" "${MOCK_HERDR_COMPATIBLE:-yes}" "$STATE";;
   "session snapshot")
     cat "$STATE/snapshot.json";;
   "pane process_info")
@@ -68,6 +68,11 @@ chmod +x "$MOCKBIN/hcom"
 
 PATH_HERMETIC="/home/grace/.local/share/mise/installs/go/1.26.4/bin:$MOCKBIN:/usr/bin:/bin:/usr/local/bin:$HOME/.local/bin"
 fail=0
+SELECTOR="${1:-${OBSERVER_CONTRACT_STEP:-all}}"
+case "$SELECTOR" in
+  all|step1|step2|step3) ;;
+  *) printf 'usage: %s [all|step1|step2|step3]\n' "$0" >&2; exit 2;;
+esac
 
 pass() { printf 'PASS  %s\n' "$1"; }
 fail_case() { printf 'FAIL  %s: %s\n' "$1" "$2"; fail=1; }
@@ -187,7 +192,7 @@ proc_empty() {
 }
 
 run_herder() {
-  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local "$@"
+  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" MOCK_HERDR_PROTOCOL="${MOCK_HERDR_PROTOCOL:-16}" MOCK_HERDR_COMPATIBLE="${MOCK_HERDR_COMPATIBLE:-yes}" HERDER_OBSERVER_ALLOW_CLI_FALLBACK="${HERDER_OBSERVER_ALLOW_CLI_FALLBACK:-}" GOTOOLCHAIN=local "$@"
 }
 
 run_sweep_json() {
@@ -237,6 +242,32 @@ JSONL
   assert_jq "T-2 child has cleared_from and new sid" 'select(.event=="registered" and .lineage.cleared_from=="guid-old" and .sids[-1].sid=="new-sid")' "$STATE/registry.jsonl"
   run_sweep_json >"$CASE/out2.json" || fail_case "T-2 rerun" "command failed"
   [[ "$(jq -s '[.[] | select(.lineage.cleared_from=="guid-old")] | length' "$STATE/registry.jsonl")" == "1" ]] && pass "T-2 rerun idempotent" || fail_case "T-2 rerun idempotent" "$(cat "$STATE/registry.jsonl")"
+
+  case_dir t2_first_sid
+  write_registry <<JSONL
+$node_row
+$(session_row guid-first seated alpha t_first p_first bus-first enroll)
+JSONL
+  snapshot '[{"pane_id":"p_first","terminal_id":"t_first","label":"alpha"}]' '[{"pane_id":"p_first","terminal_id":"t_first","agent":"claude","agent_status":"idle","name":"alpha"}]'
+  jq -cn '{name:"bus-first",status:"idle",session_id:"first-sid",process_bound:true,status_age:1}' >"$HCOM/hcom.jsonl"
+  run_sweep_json >"$CASE/out-first.json" || fail_case "T-2 first sid sweep" "command failed"
+  assert_jq "T-2 first sid recognises same GUID" 'select(.guid=="guid-first" and .event=="recognised" and .state=="seated" and .sids[-1].sid=="first-sid" and .observed_via=="observer sid enrichment")' "$STATE/registry.jsonl"
+  [[ "$(jq -s '[.[] | select(.lineage.cleared_from=="guid-first")] | length' "$STATE/registry.jsonl")" == "0" ]] && pass "T-2 first sid does not turnover" || fail_case "T-2 first sid child minted" "$(cat "$STATE/registry.jsonl")"
+
+  case_dir t2_concurrent
+  write_registry <<JSONL
+$node_row
+$(session_row guid-race seated alpha t_race p_race bus-race enroll old-sid)
+JSONL
+  snapshot '[{"pane_id":"p_race","terminal_id":"t_race","label":"alpha"}]' '[{"pane_id":"p_race","terminal_id":"t_race","agent":"claude","agent_status":"idle","name":"alpha"}]'
+  jq -cn '{name:"bus-race",status:"idle",session_id:"new-sid",process_bound:true,status_age:1}' >"$HCOM/hcom.jsonl"
+  run_sweep_json >"$CASE/race1.json" &
+  race1=$!
+  run_sweep_json >"$CASE/race2.json" &
+  race2=$!
+  wait "$race1" || fail_case "T-2 concurrent sweep 1" "command failed"
+  wait "$race2" || fail_case "T-2 concurrent sweep 2" "command failed"
+  [[ "$(jq -s '[.[] | select(.lineage.cleared_from=="guid-race" and .sids[-1].sid=="new-sid")] | length' "$STATE/registry.jsonl")" == "1" ]] && pass "T-2 concurrent turnover dedupes under lock" || fail_case "T-2 concurrent dedupe" "$(cat "$STATE/registry.jsonl")"
 }
 
 t4_socket_down_process_continues() {
@@ -247,10 +278,22 @@ $(session_row guid-herdr seated alpha t_missing p_missing bus-alpha enroll old-s
 $(process_row)
 JSONL
   rm -f "$HDR/herdr.sock" "$HDR/snapshot.json"
+  jq -cn '{name:"proc-bus",status:"stopped",process_bound:false,status_age:1}' >"$HCOM/hcom.jsonl"
   run_sweep_json >"$CASE/out.json" || fail_case "T-4 sweep" "command failed"
   assert_jq "T-4 protocol incompatible surfaced" 'select(.status.protocol_compatible==false)' "$CASE/out.json"
   [[ "$(latest_count guid-herdr unseated)" == "0" ]] && pass "T-4 herdr verdict paused" || fail_case "T-4 herdr verdict paused" "$(cat "$STATE/registry.jsonl")"
   [[ "$(latest_count guid-proc unseated)" == "1" ]] && pass "T-4 process verdict continues" || fail_case "T-4 process verdict continues" "$(cat "$STATE/registry.jsonl")"
+
+  case_dir t4_protocol
+  write_registry <<JSONL
+$node_row
+$(session_row guid-proto seated alpha t_proto p_proto bus-alpha enroll old-sid)
+JSONL
+  snapshot '[]' '[]'
+  jq -cn '{name:"bus-alpha",status:"stopped",process_bound:false,status_age:1}' >"$HCOM/hcom.jsonl"
+  HERDER_OBSERVER_ALLOW_CLI_FALLBACK=1 MOCK_HERDR_PROTOCOL=17 run_sweep_json >"$CASE/proto.json" || fail_case "T-4 protocol fallback sweep" "command failed"
+  assert_jq "T-4 protocol pin does not trust server compatible flag" 'select(.status.protocol_detail | contains("cli-fallback"))' "$CASE/proto.json"
+  [[ "$(latest_count guid-proto unseated)" == "1" ]] && pass "T-4 CLI fallback only on protocol mismatch" || fail_case "T-4 protocol fallback" "$(cat "$STATE/registry.jsonl")"
 }
 
 t5_t6_t7_advice_and_coexistence() {
@@ -271,18 +314,52 @@ JSONL
 }
 
 t9_grep_gate() {
-  local gate='registry\.Record|registry\.Status'
-  if rg -n "$gate" "$REPO_ROOT/tools/herder/internal/observercmd" >/tmp/observer-grep.$$ 2>&1; then
-    fail_case "T-9 v2-only grep gate" "$(cat /tmp/observer-grep.$$)"
-  else
+  observer_legacy_gate() {
+    local scan_dir="$1"
+    python3 - "$scan_dir" <<'PY'
+import pathlib, re, sys
+
+root = pathlib.Path(sys.argv[1])
+bad = []
+for path in root.rglob("*.go"):
+    text = path.read_text()
+    # The observer must import internal/registry for the ratified UpdateLocked
+    # writer path. The forbidden legacy view is registry.Record/Status, including
+    # through alias imports such as `import reg ".../registry"; reg.Record`.
+    aliases = {"registry"}
+    for match in re.finditer(r'import\s+(?:\((?P<block>.*?)\)|(?P<line>[^\n]+))', text, re.S):
+        imports = (match.group("block") or match.group("line") or "").splitlines()
+        for item in imports:
+            if '"ai-config/tools/herder/internal/registry"' not in item:
+                continue
+            stripped = item.strip()
+            alias = stripped.split()[0] if len(stripped.split()) > 1 else "registry"
+            if alias not in {".", "_"} and not alias.startswith('"'):
+                aliases.add(alias)
+            else:
+                aliases.add("registry")
+    for alias in aliases:
+        pattern = re.compile(rf'\b{re.escape(alias)}\.(Record|Status)\b')
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if pattern.search(line):
+                bad.append(f"{path}:{lineno}:{line}")
+if bad:
+    print("\n".join(bad))
+    sys.exit(1)
+PY
+  }
+  if observer_legacy_gate "$REPO_ROOT/tools/herder/internal/observercmd" >/tmp/observer-grep.$$ 2>&1; then
     pass "T-9 v2-only grep gate"
-  fi
-  local tmp="$ROOT/observer-negative.go"
-  printf 'package observercmd\nimport "ai-config/tools/herder/internal/registry"\nvar _ registry.Record\n' >"$tmp"
-  if rg -n "$gate" "$tmp" >/dev/null 2>&1; then
-    pass "T-9 grep gate negative demo trips"
   else
-    fail_case "T-9 grep gate negative demo trips" "injected legacy registry.Record was not detected"
+    fail_case "T-9 v2-only grep gate" "$(cat /tmp/observer-grep.$$)"
+  fi
+  local neg="$ROOT/t9-negative/observercmd"
+  mkdir -p "$neg"
+  printf 'package observercmd\nimport reg "ai-config/tools/herder/internal/registry"\nvar _ reg.Record\n' >"$neg/observer-negative.go"
+  if observer_legacy_gate "$neg" >/dev/null 2>&1; then
+    fail_case "T-9 grep gate negative demo trips through scan function" "injected legacy registry import was not detected"
+  else
+    pass "T-9 grep gate negative demo trips through scan function"
   fi
   rm -f /tmp/observer-grep.$$
 }
@@ -311,6 +388,8 @@ JSONL
   run_sweep_json >"$CASE/out.json" || fail_case "T-11a sweep" "command failed"
   [[ "$(jq -s '[.[] | select(.event=="unseated")] | length' "$STATE/registry.jsonl")" == "0" ]] && pass "T-11a wholesale reissue unseats zero" || fail_case "T-11a wholesale" "$(cat "$STATE/registry.jsonl")"
   assert_jq "T-11a epoch doubt flagged" 'select(any(.status.flags[]?; .type=="epoch-doubt"))' "$CASE/out.json"
+  run_herder "${HERDER[@]}" list >"$CASE/list.txt" 2>/dev/null
+  grep -q 'observer advice: epoch doubt' "$CASE/list.txt" && pass "T-11a list surfaces epoch-wide advice" || fail_case "T-11a list epoch advice" "$(cat "$CASE/list.txt")"
 
   case_dir t11b
   write_registry <<JSONL
@@ -334,8 +413,11 @@ JSONL
   [[ "$(latest_count guid-lone unseated)" == "0" ]] && pass "T-11c lone live bus does not unseat" || fail_case "T-11c live bus" "$(cat "$STATE/registry.jsonl")"
   assert_jq "T-11c lone absence flagged" 'select(any(.status.flags[]?; .guid=="guid-lone" and .type=="epoch-doubt"))' "$CASE/out.json"
   : >"$HCOM/hcom.jsonl"
-  run_sweep_json >"$CASE/out2.json" || fail_case "T-11c dead bus sweep" "command failed"
-  [[ "$(latest_count guid-lone unseated)" == "1" ]] && pass "T-11c lone dead bus unseats" || fail_case "T-11c dead bus" "$(cat "$STATE/registry.jsonl")"
+  run_sweep_json >"$CASE/out2.json" || fail_case "T-11c absent bus sweep" "command failed"
+  [[ "$(latest_count guid-lone unseated)" == "0" ]] && pass "T-11c absent bus row alone does not unseat" || fail_case "T-11c absent bus row" "$(cat "$STATE/registry.jsonl")"
+  jq -cn '{name:"bus-lone",status:"stopped",session_id:"old-lone",process_bound:false,status_age:1}' >"$HCOM/hcom.jsonl"
+  run_sweep_json >"$CASE/out3.json" || fail_case "T-11c dead bus sweep" "command failed"
+  [[ "$(latest_count guid-lone unseated)" == "1" ]] && pass "T-11c present dead bus row unseats" || fail_case "T-11c dead bus" "$(cat "$STATE/registry.jsonl")"
 
   case_dir t11d
   write_registry <<JSONL
@@ -362,7 +444,7 @@ JSONL
   wait "$pid" 2>/dev/null || true
 }
 
-t8_status_stop_and_nudge() {
+t8_status_stop() {
   case_dir t8
   write_registry <<JSONL
 $node_row
@@ -377,6 +459,7 @@ JSONL
     sleep 0.2
   done
   [[ -f "$STATE/observer.status.json" ]] && pass "T-8 run writes status" || fail_case "T-8 run writes status" "$(cat "$CASE/run.err" 2>/dev/null)"
+  [[ "$(latest_count guid-run unseated)" == "1" ]] && pass "T-8 registry converges before restart" || fail_case "T-8 pre-restart convergence" "$(cat "$STATE/registry.jsonl")"
   run_herder "${HERDER[@]}" observer status >"$CASE/status.txt" || fail_case "T-8 status" "command failed"
   grep -q 'observer status:' "$CASE/status.txt" && pass "T-8 status reports" || fail_case "T-8 status reports" "$(cat "$CASE/status.txt")"
   env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local "${HERDER[@]}" observer run >"$CASE/run2.out" 2>"$CASE/run2.err"
@@ -391,10 +474,13 @@ JSONL
     sleep 0.2
   done
   [[ -f "$STATE/observer.status.json" ]] && pass "T-8 kill9 restart rewrites status" || fail_case "T-8 restart" "$(cat "$CASE/run3.err" 2>/dev/null)"
+  [[ "$(latest_count guid-run unseated)" == "1" ]] && pass "T-8 kill9 restart preserves registry convergence" || fail_case "T-8 restart convergence" "$(cat "$STATE/registry.jsonl")"
   run_herder "${HERDER[@]}" observer stop >"$CASE/stop.txt" || fail_case "T-8 stop" "command failed"
   grep -q 'signalled pid' "$CASE/stop.txt" && pass "T-8 stop signals pid" || fail_case "T-8 stop output" "$(cat "$CASE/stop.txt")"
   wait "$pid" 2>/dev/null || true
+}
 
+tnudge_autostart() {
   case_dir nudge
   write_registry <<JSONL
 $node_row
@@ -411,14 +497,34 @@ JSONL
   run_herder "${HERDER[@]}" observer stop >/dev/null 2>&1 || true
 }
 
-t1_enrolled_crash_and_noop
-t2_turnover
-t4_socket_down_process_continues
-t5_t6_t7_advice_and_coexistence
-t9_grep_gate
-t10_accounting_fresh_node_mint
-t11_epoch_discrimination
-t8_status_stop_and_nudge
+run_step1() {
+  t1_enrolled_crash_and_noop
+  t2_turnover
+  t4_socket_down_process_continues
+  t5_t6_t7_advice_and_coexistence
+  t9_grep_gate
+  t10_accounting_fresh_node_mint
+  t11_epoch_discrimination
+}
+
+run_step2() {
+  t8_status_stop
+}
+
+run_step3() {
+  tnudge_autostart
+}
+
+case "$SELECTOR" in
+  all)
+    run_step1
+    run_step2
+    run_step3
+    ;;
+  step1) run_step1 ;;
+  step2) run_step2 ;;
+  step3) run_step3 ;;
+esac
 
 if [[ "$fail" -eq 0 ]]; then
   printf '\nALL GREEN - observer contract holds.\n'

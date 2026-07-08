@@ -65,8 +65,10 @@ type herdrContext struct {
 }
 
 type candidate struct {
+	kind string
 	guid string
 	row  v2.SessionRecord
+	sid  string
 }
 
 type sweepResult struct {
@@ -231,9 +233,9 @@ func loadHerdrState(hctx *herdrContext) herdrState {
 	}
 	client, st, err := connectHerdrSocket()
 	if err != nil {
-		if !st.compatible && os.Getenv("HERDER_OBSERVER_ALLOW_CLI_FALLBACK") == "1" {
+		if cliFallbackAllowed(st) {
 			if hd := loadHerdrStateCLI("cli-fallback"); hd.available {
-				hd.err = fmt.Errorf("herdr socket unavailable/incompatible; using CLI fallback: %w", err)
+				hd.err = fmt.Errorf("herdr socket protocol incompatible; using CLI fallback: %w", err)
 				return hd
 			}
 		}
@@ -244,6 +246,13 @@ func loadHerdrState(hctx *herdrContext) herdrState {
 	}
 	defer client.Close()
 	return loadHerdrStateSocket(&herdrContext{client: client, seenTerms: map[string]bool{}, connectionGap: true}, "socket")
+}
+
+func cliFallbackAllowed(st socketStatus) bool {
+	return os.Getenv("HERDER_OBSERVER_ALLOW_CLI_FALLBACK") == "1" &&
+		st.discovered &&
+		st.protocol != 0 &&
+		st.protocol != supportedHerdrProtocol
 }
 
 func loadHerdrStateSocket(hctx *herdrContext, source string) herdrState {
@@ -409,8 +418,8 @@ func buildCandidates(proj *v2.Projection, hd herdrState, bus busState, now time.
 			if !hd.available {
 				continue
 			}
-			if pair, ok := turnoverCandidates(proj, rec, hd, bus, now); ok {
-				out = append(out, pair...)
+			if cand, ok := sidObservationCandidate(rec, hd, bus, now); ok {
+				out = append(out, cand)
 				continue
 			}
 			pane, present := hd.byTerm[rec.Seat.TerminalID]
@@ -440,18 +449,61 @@ func buildCandidates(proj *v2.Projection, hd herdrState, bus busState, now time.
 	return out
 }
 
-func turnoverCandidates(proj *v2.Projection, rec v2.SessionRecord, hd herdrState, bus busState, now time.Time) ([]candidate, bool) {
+func sidObservationCandidate(rec v2.SessionRecord, hd herdrState, bus busState, now time.Time) (candidate, bool) {
 	if !observerOwnedSeat(rec) {
-		return nil, false
+		return candidate{}, false
 	}
 	newSID := observedSID(rec, hd, bus)
 	if newSID == "" {
+		return candidate{}, false
+	}
+	priorSID := latestSID(rec)
+	if priorSID == newSID {
+		return candidate{}, false
+	}
+	if priorSID == "" {
+		return recognisedCandidate(rec, newSID, now), true
+	}
+	return turnoverCandidate(rec, newSID, now), true
+}
+
+func recognisedCandidate(rec v2.SessionRecord, newSID string, now time.Time) candidate {
+	stamp := now.Format(time.RFC3339)
+	next := rec
+	next.Event = "recognised"
+	next.State = v2.StateSeated
+	next.RecordedAt = stamp
+	next.SIDs = append(append([]v2.SID(nil), rec.SIDs...), v2.SID{SID: newSID, ObservedAt: stamp, Source: "harvest"})
+	next.Continuity = "confirmed"
+	next.ObservedVia = "observer sid enrichment"
+	if next.Seat != nil {
+		seat := *next.Seat
+		seat.ConfirmedAt = stamp
+		next.Seat = &seat
+	}
+	return candidate{kind: "recognised", guid: rec.GUID, row: next, sid: newSID}
+}
+
+func turnoverCandidate(rec v2.SessionRecord, newSID string, now time.Time) candidate {
+	stamp := now.Format(time.RFC3339)
+	old := rec
+	old.Event = "unseated"
+	old.RecordedAt = stamp
+	old.State = v2.StateUnseated
+	old.Seat = nil
+	old.CloseResult = "displaced"
+	old.CloseReason = "observer detected sid turnover in sidecar-less seat"
+	old.ObservedVia = "observer turnover"
+	return candidate{kind: "turnover", guid: rec.GUID, row: old, sid: newSID}
+}
+
+func turnoverRowsLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string, now time.Time) ([]v2.SessionRecord, bool) {
+	current := registry.V2ByGUID(proj, rec.GUID)
+	if current == nil || current.State != v2.StateSeated || current.Seat == nil || !observerOwnedSeat(*current) {
 		return nil, false
 	}
-	if newSID == latestSID(rec) {
-		return nil, false
-	}
-	if turnoverAlreadyRecorded(proj, rec.GUID, newSID) {
+	priorSID := latestSID(*current)
+	if newSID == "" || priorSID == newSID || priorSID == "" || turnoverAlreadyRecorded(proj, current.GUID, newSID) {
 		return nil, false
 	}
 	guid, err := registry.NewGUID()
@@ -459,7 +511,7 @@ func turnoverCandidates(proj *v2.Projection, rec v2.SessionRecord, hd herdrState
 		return nil, false
 	}
 	stamp := now.Format(time.RFC3339)
-	childSeat := cloneSeat(rec.Seat)
+	childSeat := cloneSeat(current.Seat)
 	if childSeat != nil {
 		childSeat.ConfirmedAt = stamp
 	}
@@ -469,21 +521,21 @@ func turnoverCandidates(proj *v2.Projection, rec v2.SessionRecord, hd herdrState
 		Event:      "registered",
 		RecordedAt: stamp,
 		State:      v2.StateSeated,
-		Role:       rec.Role,
-		Tool:       rec.Tool,
+		Role:       current.Role,
+		Tool:       current.Tool,
 		Seat:       childSeat,
 		SIDs:       []v2.SID{{SID: newSID, ObservedAt: stamp, Source: "harvest"}},
 		Continuity: "confirmed",
-		Lineage:    v2.Lineage{ClearedFrom: rec.GUID},
+		Lineage:    v2.Lineage{ClearedFrom: current.GUID},
 		Provenance: v2.Provenance{
 			Mechanism: "clear",
-			SpawnedBy: firstNonEmpty(rec.GUID, "observer"),
-			CWD:       rec.Provenance.CWD,
+			SpawnedBy: firstNonEmpty(current.GUID, "observer"),
+			CWD:       current.Provenance.CWD,
 			TS:        stamp,
 		},
 		ObservedVia: "observer turnover",
 	}
-	old := rec
+	old := *current
 	old.Event = "unseated"
 	old.RecordedAt = stamp
 	old.State = v2.StateUnseated
@@ -492,7 +544,19 @@ func turnoverCandidates(proj *v2.Projection, rec v2.SessionRecord, hd herdrState
 	old.CloseResult = "displaced"
 	old.CloseReason = "observer detected sid turnover in sidecar-less seat"
 	old.ObservedVia = "observer turnover"
-	return []candidate{{guid: child.GUID, row: child}, {guid: old.GUID, row: old}}, true
+	return []v2.SessionRecord{child, old}, true
+}
+
+func recognisedRowLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string, now time.Time) (v2.SessionRecord, bool) {
+	current := registry.V2ByGUID(proj, rec.GUID)
+	if current == nil || current.State != v2.StateSeated || current.Seat == nil || !observerOwnedSeat(*current) {
+		return v2.SessionRecord{}, false
+	}
+	priorSID := latestSID(*current)
+	if newSID == "" || priorSID == newSID || priorSID != "" {
+		return v2.SessionRecord{}, false
+	}
+	return recognisedCandidate(*current, newSID, now).row, true
 }
 
 func observerOwnedSeat(rec v2.SessionRecord) bool {
@@ -550,7 +614,7 @@ func unseatCandidate(rec v2.SessionRecord, now time.Time, reason, via string) ca
 	next.CloseResult = "observed_dead"
 	next.CloseReason = reason
 	next.ObservedVia = via
-	return candidate{guid: rec.GUID, row: next}
+	return candidate{kind: "unseat", guid: rec.GUID, row: next}
 }
 
 func reconfirmCandidate(rec v2.SessionRecord, pane herdrcli.Pane, now time.Time) candidate {
@@ -567,7 +631,7 @@ func reconfirmCandidate(rec v2.SessionRecord, pane herdrcli.Pane, now time.Time)
 		}
 		next.Seat = &seat
 	}
-	return candidate{guid: rec.GUID, row: next}
+	return candidate{kind: "reconfirm", guid: rec.GUID, row: next}
 }
 
 func applyCandidates(path string, cands []candidate, stderr io.Writer) observerstatus.Summary {
@@ -575,11 +639,31 @@ func applyCandidates(path string, cands []candidate, stderr io.Writer) observers
 	if len(cands) == 0 {
 		return summary
 	}
-	rows := make([]v2.SessionRecord, 0, len(cands))
-	for _, cand := range cands {
-		rows = append(rows, cand.row)
-	}
 	encoded, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		rows := make([]v2.SessionRecord, 0, len(cands)+1)
+		now := time.Now().UTC()
+		for _, cand := range cands {
+			switch cand.kind {
+			case "turnover":
+				if pair, ok := turnoverRowsLocked(tx.Projection, cand.row, cand.sid, now); ok {
+					rows = append(rows, pair...)
+				}
+			case "recognised":
+				if row, ok := recognisedRowLocked(tx.Projection, cand.row, cand.sid, now); ok {
+					rows = append(rows, row)
+				}
+			default:
+				if current := registry.V2ByGUID(tx.Projection, cand.guid); current != nil {
+					if cand.row.Event == "unseated" && (current.State == v2.StateRetired || current.State == v2.StateLost) {
+						continue
+					}
+					if cand.row.Event == "reconciled" && current.State != v2.StateSeated {
+						continue
+					}
+				}
+				rows = append(rows, cand.row)
+			}
+		}
 		return rows, nil
 	})
 	if err != nil {
@@ -743,7 +827,7 @@ func busCorroboratesDead(rec v2.SessionRecord, bus busState) bool {
 	}
 	row, ok := bus.rows[rec.Seat.HcomName]
 	if !ok {
-		return true
+		return false
 	}
 	if row.ProcessBound != nil && !*row.ProcessBound {
 		return true
