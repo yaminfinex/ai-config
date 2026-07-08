@@ -3,10 +3,10 @@ id: TASK-047
 title: >-
   herdr-0.7.3 audit: rewrite spawn --new-tab on herdr pane move (0.7.0 #299) —
   kill the seed-shell dance
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 09:09'
+updated_date: '2026-07-08 09:14'
 labels: []
 dependencies: []
 priority: medium
@@ -42,5 +42,10 @@ Refinement (spec-ravu #5865): pane_id re-keying on move is CROSS-WORKSPACE only 
 created: 2026-07-08 09:09
 ---
 [hera 2026-07-08] Vibe hand-back (#10058): worker task047-zamo, 1 commit 2aaad7a, fence held (spawncmd+herdrcli+docs/goldens/mocks), vibe live-validated (real spawn moved, coordinates re-fetched, cull clean, no seed shell). HERA GATE GREEN from worktree: vet/test both modules (spawncmd+herdrcli -count=1 fresh), 23/23 suites. Adversarial review dispatched: review-047-bozo (guid 5ad8a38c, own tab), brief napkins/run-herder-dx/brief-review-047.md — angles: move-before-gates cached-state audit, re-fetch failure interleavings, --new-tab --workspace combo, fail-soft JSON encoding, worktree seed-close guard, 052 label-shape consumers, dead code, pane hygiene on move_failed. NOTE: A4 merged after this gate — 047 is now second lander; integration (merge main in-branch) routes with any fix round after the verdict.
+---
+
+created: 2026-07-08 09:14
+---
+[hera 2026-07-08] MERGED to main (78edf09, no-ff) after review-047-bozo CLEAN verdict (#10145: all 8 angles probed — launchPaneID pre-move capture is CORRECT by design (matches child launch_context), post-refetch paneID feeds reads, no stale tab-scoped state in cull/send/wait, JSON-escaped fail-soft reason, new-tab can never reach the seed-close block, 052 label shape has no dependent consumers, dead code gone, move_failed leaves a labelled cullable pane). Second-lander integration auto-merged clean; post-merge gate on main GREEN (fresh -count=1, 24/24 suites). Reviewer static-only — execution covered by hera gate + vibe live validation. Residuals filed to TASK-051 polish bucket: LOW latent (re-fetch uses pre-move pane id with no terminal_id fallback — safe while new-tab moves stay same-workspace, breaks if doctrine ever changes), NIT compactMessage passes non-whitespace control/ANSI bytes to the human stderr line, NIT dead write opts.Tab. Credits: task047-zamo (2aaad7a), vibe (dispatch, review, live validation), review-047-bozo. TASK-052 fold delivered: --label-prefix replaces role prefix.
 ---
 <!-- COMMENTS:END -->

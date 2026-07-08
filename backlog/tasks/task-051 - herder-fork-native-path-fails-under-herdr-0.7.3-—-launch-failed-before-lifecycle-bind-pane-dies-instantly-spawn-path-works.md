@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:08'
-updated_date: '2026-07-08 08:30'
+updated_date: '2026-07-08 09:14'
 labels: []
 dependencies: []
 priority: medium
@@ -30,5 +30,10 @@ Second independent repro (spec-ravu #5816, same session-fork exercise). CORRECTI
 created: 2026-07-08 08:30
 ---
 [hera 2026-07-08] +message-polish item from kato #9547 (A3 residual LOW): node.go malformed-marker refusal with len(nodes)==1 suggests 'rerun with --new' but --new re-refuses in that exact state — drop the suggestion there or make --new restore-from-single-row. Joins fork-fix + cull-message items.
+---
+
+created: 2026-07-08 09:14
+---
+[hera 2026-07-08] +3 polish items from bozo #10145: (1) LOW latent: new-tab re-fetch queries the PRE-move pane id with no terminal_id fallback — fine while new-tab moves are same-workspace, add the fallback if that doctrine ever shifts; (2) NIT: compactMessage (spawn.go:1533) strips only whitespace, control/ANSI bytes survive into the human stderr summary; (3) NIT: dead write opts.Tab (spawn.go:809).
 ---
 <!-- COMMENTS:END -->
