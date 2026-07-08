@@ -192,8 +192,8 @@ unset MOCK_CULL_APPEND_ENRICHED MOCK_CULL_APPEND_HCOM_DIR
 [[ "$RUN_RC" -eq 0 ]] && ok "race cull: exit 0" || bad "race cull: exit 0" "rc=$RUN_RC out=$RUN_OUT"
 [[ "$(cat "$PROBE/hcom_kill_argv" 2>/dev/null)" = "bus-race" ]] && ok "race cull: refreshed hcom_name dropped" || bad "race cull: refreshed hcom_name dropped" "argv=$(cat "$PROBE/hcom_kill_argv" 2>/dev/null)"
 [[ "$(cat "$PROBE/hcom_dirs" 2>/dev/null)" = "$BUS_DIR" ]] && ok "race cull: refreshed hcom_dir used" || bad "race cull: refreshed hcom_dir used" "got=$(cat "$PROBE/hcom_dirs" 2>/dev/null) want=$BUS_DIR"
-tail -n1 "$REG_DIR/registry.jsonl" | jq -e '.kind=="session" and .guid=="guid-race" and (.event=="unseated" or .event=="migrated_v1") and .state=="unseated" and .label=="race" and (.status|not) and (.seat|not)' >/dev/null \
-  && ok "race cull: v2 unseated row present" || bad "race cull: v2 unseated row present" "latest=$(tail -n1 "$REG_DIR/registry.jsonl")"
+tail -n1 "$REG_DIR/registry.jsonl" | jq -e '.kind=="session" and .guid=="guid-race" and .event=="unseated" and .state=="unseated" and .label=="race" and .close_result=="closed" and (.status|not) and (.seat|not)' >/dev/null \
+  && ok "race cull: v2 unseated close row present" || bad "race cull: v2 unseated close row present" "latest=$(tail -n1 "$REG_DIR/registry.jsonl")"
 RACE_LEGACY_VIEW="$(env -i PATH="$PATH_HERMETIC" HOME="$HOME" HERDER_STATE_DIR="$REG_DIR" "$REPO_ROOT/bin/herder" list --all 2>&1)"
 grep -q 'race' <<<"$RACE_LEGACY_VIEW" && ok "race cull: legacy view keeps label" || bad "race cull: legacy view keeps label" "view=$RACE_LEGACY_VIEW"
 grep -q 'p_bus' <<<"$RACE_LEGACY_VIEW" && bad "race cull: legacy view drops pane" "view=$RACE_LEGACY_VIEW" || ok "race cull: legacy view drops pane"

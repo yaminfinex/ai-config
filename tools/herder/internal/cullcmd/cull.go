@@ -148,6 +148,8 @@ func printHelp(stdout io.Writer) {
 		"  agent; after a restart, ids reshuffle. Within a run, cull retargets to the",
 		"  original agent's current pane (via terminal_id) so it never closes someone",
 		"  else's work. Each close appends a new closed record (the registry is append-only JSONL).",
+		"  A row with neither pane_id nor terminal_id has nothing to verify or close; cull",
+		"  records it closed without requiring --force, matching --gone recovery.",
 		"",
 		"If it fails:",
 		"  - \"not live anywhere\": the agent is already gone; the row is recorded closed.",
@@ -224,7 +226,18 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 			return false
 		}
 		fmt.Fprintf(stdout, "recorded closed %s (%s) pane=%s → already_gone\n", label, guid, pane)
-		dropBusEntry(closed, stdout)
+		dropBusEntryIfGone(closed, opts.force, stdout)
+		return true
+	}
+
+	if pane == "" && term == "" {
+		closed, err := appendClosed(registryPath, rec, nowISO, culler, "already_gone", "registry row has no pane_id or terminal_id")
+		if err != nil {
+			die(stderr, err.Error())
+			return false
+		}
+		fmt.Fprintf(stdout, "recorded closed %s (%s) pane=%s → already_gone\n", label, guid, pane)
+		dropBusEntryIfGone(closed, opts.force, stdout)
 		return true
 	}
 
@@ -247,7 +260,7 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 					die(stderr, err.Error())
 					return false
 				}
-				dropBusEntry(closed, stdout)
+				dropBusEntryIfGone(closed, opts.force, stdout)
 				return true
 			}
 		}
@@ -330,23 +343,51 @@ func closeErrorReason(out []byte) string {
 func appendClosed(path string, rec registry.Record, nowISO, culler, result, reason string) (registry.Record, error) {
 	guid := ptrString(rec.GUID)
 	rec = latestForGUID(path, rec)
-	_, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	encoded, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		latest := registry.V2ByGUID(tx.Projection, guid)
 		if latest == nil {
-			return nil, nil
+			return nil, fmt.Errorf("registry close failed for %s: latest record not found", guid)
 		}
 		next := *latest
 		next.Event = "unseated"
 		next.State = v2.StateUnseated
 		next.RecordedAt = nowISO
 		next.Seat = nil
+		next.CloseResult = result
+		next.CloseReason = reason
 		return []v2.SessionRecord{next}, nil
 	})
 	if err != nil {
 		return rec, err
 	}
+	if !containsCloseRow(encoded, guid, nowISO, result, reason) {
+		return rec, fmt.Errorf("registry close failed for %s: no close record appended", guid)
+	}
 	rec.Status = "closed"
+	rec.CloseResult = result
+	rec.CloseReason = reason
 	return rec, nil
+}
+
+func containsCloseRow(rows [][]byte, guid, recordedAt, result, reason string) bool {
+	for _, row := range rows {
+		var session v2.SessionRecord
+		if err := json.Unmarshal(row, &session); err != nil {
+			continue
+		}
+		if session.Kind != "" && session.Kind != v2.KindSession {
+			continue
+		}
+		if session.GUID == guid &&
+			session.Event == "unseated" &&
+			session.State == v2.StateUnseated &&
+			session.RecordedAt == recordedAt &&
+			session.CloseResult == result &&
+			session.CloseReason == reason {
+			return true
+		}
+	}
+	return false
 }
 
 func latestForGUID(path string, rec registry.Record) registry.Record {
@@ -400,6 +441,28 @@ func dropBusEntry(rec registry.Record, stdout io.Writer) {
 		return
 	}
 	fmt.Fprintf(stdout, "bus: drop failed (%s) — pane closed anyway\n", reason)
+}
+
+func dropBusEntryIfGone(rec registry.Record, force bool, stdout io.Writer) {
+	if !force && busEntryJoined(rec) {
+		fmt.Fprintf(stdout, "bus: @%s still joined; not dropped without --force\n", rec.HcomName)
+		return
+	}
+	dropBusEntry(rec, stdout)
+}
+
+func busEntryJoined(rec registry.Record) bool {
+	if rec.HcomName == "" || rec.HcomName == "null" {
+		return false
+	}
+	if _, err := exec.LookPath("hcom"); err != nil {
+		return false
+	}
+	cmd := exec.Command("hcom", "list", rec.HcomName)
+	if rec.HcomDir != "" && rec.HcomDir != "null" {
+		cmd.Env = setEnv(os.Environ(), "HCOM_DIR", rec.HcomDir)
+	}
+	return cmd.Run() == nil
 }
 
 func setEnv(env []string, key, value string) []string {
