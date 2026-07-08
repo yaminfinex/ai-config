@@ -64,12 +64,38 @@ src_hash="$(
 bin_name="herder-$src_hash"
 herder_bin="$cache_dir/$bin_name"
 
+# Remember the freshest good binary for THIS checkout so a later rebuild against
+# a mid-edit-broken tree can serve it instead of spewing the compiler error on
+# the hook path. Keyed on a hash of the source dir path (NOT the source hash):
+# per-checkout, so a sibling checkout's binary is never served in its place
+# (TASK-012). A pointer is written into whichever cache dir holds the binary
+# (per-candidate, including the shared tmp cache), so fake-HOME / env -i callers
+# and sibling HOMEs recover last-good the same way exact-hash reuse already
+# walks ALL candidates. The dot prefix keeps it clear of the `herder-*` prune
+# globs; the prune ages out stale build/pointer temps (below).
+checkout_id="$(printf '%s' "$src_dir" | "${hash_cmd[@]}" | cut -c1-16)"
+lastgood_name=".herder-lastgood-$checkout_id"
+
+record_last_good() { # record_last_good DIR BIN — write DIR/$lastgood_name -> BIN, only on change
+  local dir="$1" target="$2" ptr tmp
+  [ -x "$target" ] || return 0
+  [ -d "$dir" ] && [ -w "$dir" ] || return 0
+  ptr="$dir/$lastgood_name"
+  [ "$(cat "$ptr" 2>/dev/null || true)" = "$target" ] && return 0
+  tmp="$ptr.tmp.$$"
+  if printf '%s\n' "$target" >"$tmp" 2>/dev/null; then
+    mv "$tmp" "$ptr" 2>/dev/null || rm -f "$tmp" 2>/dev/null || true
+  fi
+  return 0
+}
+
 # Reuse from ANY candidate (a fake-HOME cache misses, the shared tmp cache
 # hits). touch keeps actively used binaries out of the age prune's reach.
 for candidate in "${cache_candidates[@]}"; do
   cand_bin="$candidate/$bin_name"
   if [ -x "$cand_bin" ] && [ -O "$cand_bin" ]; then
     touch -c "$cand_bin" 2>/dev/null || true
+    record_last_good "$candidate" "$cand_bin"
     exec "$cand_bin" "$@"
   fi
 done
@@ -200,11 +226,56 @@ fi
 # (unless the caller chose otherwise): a build must never stall on a
 # toolchain download.
 tmp_bin="$herder_bin.tmp.$$"
-(cd "$src_dir" && env -u GOROOT GOTOOLCHAIN="${GOTOOLCHAIN:-local}" "${go_cmd[@]}" build -o "$tmp_bin" ./cmd/herder)
-mv "$tmp_bin" "$herder_bin"
+build_log="$cache_dir/.herder-build.$$"
+# Clean scratch build files on any catchable exit so they never leak (a SIGKILL
+# can't be trapped — the age prune below sweeps its leftovers). The exec paths
+# replace the process before EXIT fires and already rm'd these, so EXIT only
+# bites the interrupted-build case. INT/TERM are handled SEPARATELY: they must
+# STOP the wrapper (exit 130/143), never fall through — a caught supervisor
+# signal resuming into the else branch would morph an interrupted build into a
+# last-good serve (a killed build must terminate, never launch). The EXIT trap
+# still fires on that exit, so cleanup runs.
+cleanup_build() { rm -f "$tmp_bin" "$build_log" 2>/dev/null || true; }
+trap cleanup_build EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if (cd "$src_dir" && env -u GOROOT GOTOOLCHAIN="${GOTOOLCHAIN:-local}" "${go_cmd[@]}" build -o "$tmp_bin" ./cmd/herder) 2>"$build_log"; then
+  mv "$tmp_bin" "$herder_bin"
+  rm -f "$build_log" 2>/dev/null || true
+  record_last_good "$cache_dir" "$herder_bin"
+else
+  # Rebuild failed — usually a transient mid-edit-broken package firing on the
+  # hook path. If this checkout has a last-good binary (in ANY cache candidate,
+  # same walk order + ownership checks as exact reuse), serve it with ONE quiet
+  # line and swallow the compiler spew, so hook-fed features (status bridging,
+  # sidecar enrichment) keep working while the tree is broken. A genuinely
+  # never-built checkout has no fallback: fail loud with the compiler output so
+  # a real breakage is never hidden.
+  rm -f "$tmp_bin" 2>/dev/null || true
+  last_good=""
+  for candidate in "${cache_candidates[@]}"; do
+    ptr="$candidate/$lastgood_name"
+    [ -f "$ptr" ] || continue
+    cand="$(cat "$ptr" 2>/dev/null || true)"
+    if [ -n "$cand" ] && [ -x "$cand" ] && [ -O "$cand" ]; then
+      last_good="$cand"
+      break
+    fi
+  done
+  if [ -n "$last_good" ]; then
+    rm -f "$build_log" 2>/dev/null || true
+    printf 'herder: rebuild failed, serving last-good %s\n' "${last_good##*/herder-}" >&2
+    exec "$last_good" "$@"
+  fi
+  cat "$build_log" >&2 2>/dev/null || true
+  rm -f "$build_log" 2>/dev/null || true
+  exit 1
+fi
 
 # Seed the shared tmp cache so other HOMEs (worktree agents, hermetic test
-# cases) reuse this build instead of each rebuilding their own.
+# cases) reuse this build instead of each rebuilding their own — and record the
+# checkout pointer THERE too, so a sibling HOME that only ever saw the broken
+# hash still recovers last-good from the shared cache.
 if [ "$cache_dir" != "$shared_cache" ]; then
   if mkdir -p "$shared_cache" 2>/dev/null && [ -w "$shared_cache" ] && [ -O "$shared_cache" ]; then
     chmod go-w "$shared_cache_root" "$shared_cache" 2>/dev/null || true
@@ -213,15 +284,20 @@ if [ "$cache_dir" != "$shared_cache" ]; then
     fi
   fi
 fi
+record_last_good "$shared_cache" "$shared_cache/$bin_name"
 
 # Prune ONLY after a successful build, and only by age: per-hash binaries from
 # sibling checkouts stay (touch-on-use above keeps live ones fresh), so
-# parallel checkouts never wipe each other's binaries.
+# parallel checkouts never wipe each other's binaries. The dot-prefixed build
+# logs and pointer temps escape the `herder-*` globs, so age them out here too —
+# this is what collects a SIGKILL'd build's leftovers.
 for candidate in "$cache_dir" "$shared_cache"; do
   [ -d "$candidate" ] && [ -O "$candidate" ] || continue
   find "$candidate" -maxdepth 1 -type f \
     \( \( -name 'herder-*' ! -name "$bin_name" -mtime +14 \) -o \
-    \( -name 'herder-*.tmp.*' ! -name "$bin_name.tmp.$$" -mtime +1 \) \) \
+    \( -name 'herder-*.tmp.*' ! -name "$bin_name.tmp.$$" -mtime +1 \) -o \
+    \( -name '.herder-build.*' -mtime +1 \) -o \
+    \( -name '.herder-lastgood-*.tmp.*' -mtime +1 \) \) \
     -delete 2>/dev/null || true
 done
 

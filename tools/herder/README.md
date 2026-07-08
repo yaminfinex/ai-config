@@ -12,6 +12,14 @@ fast, explicit error. Stale cached binaries are pruned only after a successful b
 so parallel checkouts never wipe each other's builds. It also self-heals common Go environment
 issues; when running Go directly from this module, use `env -u GOROOT go ...`.
 
+When a rebuild fails (typically a hook firing while its package is mid-edit-broken), the launcher
+serves the last successfully built binary **for this checkout** — recorded in a per-checkout
+last-good pointer (keyed on the source-dir path, so a sibling checkout's binary is never served in
+its place) — and emits one quiet line (`herder: rebuild failed, serving last-good <hash>`) instead
+of the compiler output. Hook-fed features keep working through the broken window. A genuinely
+never-built checkout has no fallback and fails loud with the full compiler output, so a real
+breakage is never hidden. `bin/bottle` carries the same behavior.
+
 ## Layout
 
 - `cmd/herder/` - binary entry point.
