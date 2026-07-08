@@ -24,11 +24,14 @@ type options struct {
 
 type hcomRow struct {
 	Name          string           `json:"name"`
+	BaseName      string           `json:"base_name"`
 	Tag           string           `json:"tag"`
 	Directory     string           `json:"directory"`
 	Tool          string           `json:"tool"`
 	Status        string           `json:"status"`
+	StatusAgeS    int64            `json:"status_age_seconds"`
 	SessionID     string           `json:"session_id"`
+	UnreadCount   int64            `json:"unread_count"`
 	CreatedAt     flexibleJSONText `json:"created_at"`
 	LaunchContext struct {
 		PaneID    string `json:"pane_id"`
@@ -120,6 +123,7 @@ type sidecar struct {
 	parentSessionID     string
 	correlatedProcessID string
 	processEnvirons     processEnvironmentScanner
+	statuslineSnapshots *statuslineSnapshotWriter
 }
 
 type processEnvironmentScanner func(tool string) []processEnvironmentRead
@@ -134,6 +138,11 @@ func (s *sidecar) run() int {
 	s.lastState = "working"
 
 	row, paneCorrelated := s.discoverRow()
+	rows := hcomList()
+	s.writeStatuslineSnapshots(rows)
+	if row == nil {
+		row, paneCorrelated = s.findRowCorrelated(rows)
+	}
 	s.enrichDiscovered(row, paneCorrelated)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -164,8 +173,24 @@ func (s *sidecar) run() int {
 			return 0
 		}
 		<-ticker.C
-		row, paneCorrelated = s.findRowCorrelated(hcomList())
+		rows = hcomList()
+		s.writeStatuslineSnapshots(rows)
+		row, paneCorrelated = s.findRowCorrelated(rows)
 	}
+}
+
+func (s *sidecar) writeStatuslineSnapshots(rows []hcomRow) {
+	if s.statuslineSnapshots == nil {
+		s.statuslineSnapshots = newStatuslineSnapshotWriter(os.Getenv("HCOM_DIR"))
+	}
+	s.statuslineSnapshots.writeRows(rows, time.Now())
+}
+
+func (s *sidecar) removeOwnStatuslineSnapshot() {
+	if s.statuslineSnapshots == nil {
+		s.statuslineSnapshots = newStatuslineSnapshotWriter(os.Getenv("HCOM_DIR"))
+	}
+	s.statuslineSnapshots.removeInstance(defaultStatuslineInstanceName())
 }
 
 // enrichDiscovered writes the initial registry enrichment for a freshly
@@ -669,6 +694,7 @@ func (s *sidecar) reportAgentSession(row *hcomRow, paneCorrelated bool) {
 }
 
 func (s *sidecar) release() {
+	s.removeOwnStatuslineSnapshot()
 	_ = s.send("pane.release_agent", map[string]any{
 		"pane_id": s.paneID,
 		"source":  "herder:sidecar",

@@ -33,13 +33,30 @@ Current reader keys:
 
 ```sh
 HCOM_UNREAD=3
+HCOM_LAST_TS=1783506400
 HCOM_LAST_AGE_S=42
 ```
 
-The writer is intentionally not implemented here because the event-driven hcom
-or herder sidecar/internals that should maintain this file are outside this
-unit. A future writer should update the file atomically and avoid per-render
-database or CLI work.
+`HCOM_LAST_TS` is the preferred last-activity Unix timestamp. Readers with
+`EPOCHSECONDS` compute age from it during render without subprocesses, so the
+displayed age stays fresh without rewriting the file every second.
+`HCOM_LAST_AGE_S` remains a fallback for old files and for shells without
+`EPOCHSECONDS`; that fallback is a write-time age and can become unboundedly
+stale while `HCOM_UNREAD` stays unchanged.
+
+The writer runs from the herder sidecar host loop. On each hcom roster pass it
+maintains one atomically replaced file per safe bus instance key under
+`$HCOM_DIR/statusline/`. The key is hcom's `base_name` when present, matching
+`HCOM_INSTANCE_NAME`; otherwise it falls back to hcom's `name`. It skips writes
+when the rendered values are unchanged, and tolerates timestamp drift between
+multiple sidecars by not rewriting when `HCOM_UNREAD` is unchanged and the
+existing `HCOM_LAST_TS` is within one sidecar tick. Unsafe names are skipped,
+and if multiple live rows map to the same safe key in one roster pass, the
+writer removes that `<safe-name>.env` once and writes nothing for the key until
+the collision clears. Readers then omit the bus segment instead of showing
+another agent's data. Best-effort cleanup only removes `<safe-name>.env` files
+inside the `statusline/` directory. The writer never writes or deletes the
+`HCOM_STATUSLINE_STATE` override path.
 
 ## Codex
 
