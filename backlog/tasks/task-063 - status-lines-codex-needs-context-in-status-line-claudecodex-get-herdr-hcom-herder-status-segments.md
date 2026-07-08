@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - vibe
 created_date: '2026-07-08 07:19'
-updated_date: '2026-07-08 09:47'
+updated_date: '2026-07-08 09:54'
 labels: []
 dependencies: []
 ordinal: 63000
@@ -25,6 +25,12 @@ Scope:
 4. Bring the codex config under ai-config management like claude/ (settings.shared + local example pattern) so the statusline ships from this repo.
 
 Notes: HERDER_GUID/HERDER_LABEL/HERDER_ROLE/HCOM env are already injected into spawned agents (see spawncmd); hcom unread state would need a cheap source — check what ~/.hcom exposes as flat files before inventing one.
+
+Delta re-verdict from review-063-magi on 61ab259: all six ruled fixes VERIFIED in sandbox (B1 order-safe pre-arg-loop capture; M1 symlink write-through incl dangling refusal; M2 record/restore round-trip exact; L1 graceful skip on unsafe shapes; L2 small_uint overflow guard; N2 doc drift). ONE NEW MEDIUM blocks merge:
+
+[D1] Default ai-setup aborts whole run under set -euo pipefail when codex step returns non-zero — bin/ai-setup:224 calls codex_config_apply_default bare. Paths: (a) python3 absent (shared_valid logs "skipping" but returns 1 — pre-existing); (b) dangling ~/.codex/config.toml symlink (resolved_file returns 1 — NEW in 61ab259, M1 fix widened blast radius). Both reproduced by reviewer.
+
+hera ruling: fix both. Round-3 dispatched via vibe→taro: default invocation non-fatal (|| return 0 in apply_default), explicit --codex-config keeps error rc, suite case proving failing default path still completes ai-setup. Magi holding for delta scoped to D1 closure.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
