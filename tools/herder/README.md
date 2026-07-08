@@ -74,7 +74,11 @@ registry row's `hcom_name` matches, and a name the registry doesn't know is acce
 live on the bus the child will join (team-scoped — a global-bus peer for a `--team` child still
 refuses, since the child couldn't reach it anyway). Notify is bus-native ONLY: a spawner that
 resolves to no bus name is a hard error before any pane is created (the keystroke ring went with
-the herdr delivery transport, TASK-003).
+the herdr delivery transport, TASK-003). Pane/terminal notify resolution shares `herder send`'s
+reused-pane discipline (TASK-035): a lone active row resolves as before, but when a coordinate
+matches several active rows the single bus-live one wins, and an ambiguous coordinate (0 or >1
+live) is a warn-and-SKIP — notify is best-effort at spawn time (TASK-017 warn-never-block), so the
+worker still spawns rather than the report routing to a guessed session or the spawn hard-failing.
 
 `--worktree BRANCH [--base REF]` is the one-step worktree mode: spawn drives
 `herdr worktree create` itself (resolving the source repo from the spawner's cwd, which works
