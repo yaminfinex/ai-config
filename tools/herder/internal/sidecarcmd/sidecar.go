@@ -333,6 +333,9 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 	if latest == nil {
 		latest = s.latestFromRecords(recs, guid)
 	}
+	if latest == nil {
+		latest = s.archivedLatest(guid)
+	}
 	if latest != nil && latest.Status == "closed" {
 		return false
 	}
@@ -452,6 +455,17 @@ func (s *sidecar) latestFromRecords(recs []registry.Record, guid string) *regist
 		}
 	}
 	return nil
+}
+
+func (s *sidecar) archivedLatest(guid string) *registry.Record {
+	if guid == "" {
+		return nil
+	}
+	recs, err := registry.LoadArchives(s.registry)
+	if err != nil {
+		return nil
+	}
+	return s.latestFromRecords(recs, guid)
 }
 
 func (s *sidecar) latestSessionMissing(sessionID string) bool {

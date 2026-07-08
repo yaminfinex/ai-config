@@ -1026,6 +1026,402 @@ func TestLegacyV1MigrationRefusesMismatchedExistingArchive(t *testing.T) {
 	}
 }
 
+func TestRotationAtThresholdArchivesAndReseeds(t *testing.T) {
+	t.Setenv(rotationThresholdEnv, "650")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "registry.jsonl.archive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "registry.jsonl.archive", "0001-v1-migration.jsonl"), []byte(`{"guid":"legacy","status":"active"}`+"\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	original := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"guid-keep","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"keep-old","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"` + testNodeA + `","terminal_id":"term_old","pane_id":"p_old","hcom_name":"keep-bus","namespace":"/hcom","confirmed_at":"2026-07-08T00:00:01Z"}}`,
+		`{"kind":"session","guid":"guid-drop","event":"retired","recorded_at":"2026-07-08T00:00:02Z","node":"` + testNodeA + `","state":"retired","label":"drop","role":"worker","tool":"claude"}`,
+		`{"kind":"session","guid":"guid-keep","event":"labelled","recorded_at":"2026-07-08T00:00:03Z","node":"` + testNodeA + `","state":"seated","label":"keep","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"` + testNodeA + `","terminal_id":"term_new","pane_id":"p_new","hcom_name":"keep-bus","namespace":"/hcom","confirmed_at":"2026-07-08T00:00:03Z"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		if current := V2ByGUID(tx.Projection, "guid-drop"); current != nil {
+			t.Fatalf("retired row visible after rotation = %+v", current)
+		}
+		return []v2.SessionRecord{{GUID: "guid-new", Event: "registered", State: v2.StateSeated, Label: "new", Tool: "bash"}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "registry.jsonl.archive", "0002-rotation.jsonl")
+	if got := mustReadFile(t, archive); string(got) != original {
+		t.Fatalf("rotation archive changed\narchive=%s\noriginal=%s", got, original)
+	}
+	if mode := fileMode(t, archive); mode != 0o444 {
+		t.Fatalf("archive mode = %o, want 0444", mode)
+	}
+	proj := loadProjection(t, path)
+	if got := V2ByGUID(proj, "guid-keep"); got == nil || got.Label != "keep" || got.Seat == nil || got.Seat.PaneID != "p_new" {
+		t.Fatalf("kept row = %+v, want latest self-contained snapshot", got)
+	}
+	if got := V2ByGUID(proj, "guid-drop"); got != nil {
+		t.Fatalf("retired row reseeded live: %+v", got)
+	}
+	if got := V2ByGUID(proj, "guid-new"); got == nil || got.Node != testNodeA {
+		t.Fatalf("new row = %+v, want post-rotation append node-stamped", got)
+	}
+	if got := len(registryArchivePathsForTest(t, path)); got != 2 {
+		t.Fatalf("archives = %d, want 2", got)
+	}
+	once := mustReadFile(t, path)
+	t.Setenv(rotationThresholdEnv, "1048576")
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if twice := mustReadFile(t, path); !bytes.Equal(once, twice) {
+		t.Fatalf("under-threshold recheck changed live\nonce=%s\ntwice=%s", once, twice)
+	}
+	if got := len(registryArchivePathsForTest(t, path)); got != 2 {
+		t.Fatalf("archives after under-threshold write = %d, want 2", got)
+	}
+}
+
+func TestRotationRecoversPartialLiveFromArchive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"guid-a","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"a","role":"worker","tool":"codex"}`,
+		`{"kind":"session","guid":"guid-b","event":"registered","recorded_at":"2026-07-08T00:00:02Z","node":"` + testNodeA + `","state":"unseated","label":"b","role":"worker","tool":"claude"}`,
+	}, "\n") + "\n"
+	archive := filepath.Join(dir, "registry.jsonl.archive", "0002-rotation.jsonl")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, []byte(source), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	partial := `{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}` + "\n"
+	if err := os.WriteFile(path, []byte(partial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	proj := loadProjection(t, path)
+	if V2ByGUID(proj, "guid-a") == nil || V2ByGUID(proj, "guid-b") == nil {
+		t.Fatalf("recovered sessions = %+v, want guid-a and guid-b", proj.Sessions())
+	}
+	if got := mustReadFile(t, archive); string(got) != source {
+		t.Fatalf("archive changed during recovery")
+	}
+}
+
+func TestMigrationRecoveryDoesNotRefireOnPureV2LiveWithStaleMigrationArchive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "registry.jsonl.archive", "0001-v1-migration.jsonl")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staleV1 := strings.Join([]string{
+		`{"guid":"guid-old-a","label":"old-a","status":"active"}`,
+		`{"guid":"guid-old-b","label":"old-b","status":"active"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(archive, []byte(staleV1), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	live := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"guid-current","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"current","role":"worker","tool":"codex"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(live), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: "guid-new", Event: "registered", State: v2.StateSeated, Label: "new", Tool: "bash"}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	proj := loadProjection(t, path)
+	if V2ByGUID(proj, "guid-old-a") != nil || V2ByGUID(proj, "guid-old-b") != nil {
+		t.Fatalf("stale migration archive resurrected old rows: %+v", proj.Sessions())
+	}
+	if V2ByGUID(proj, "guid-current") == nil || V2ByGUID(proj, "guid-new") == nil {
+		t.Fatalf("live rows = %+v, want current and new", proj.Sessions())
+	}
+}
+
+func TestRotationRecoveryUsesNewestRotationArchiveOverMigrationArchive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archDir := filepath.Join(dir, "registry.jsonl.archive")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staleMigration := strings.Join([]string{
+		`{"guid":"guid-stale","label":"stale","status":"active"}`,
+		`{"guid":"guid-retired","label":"retired-before","status":"active"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(archDir, "0001-v1-migration.jsonl"), []byte(staleMigration), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	rotation := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"guid-post","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"post","role":"worker","tool":"codex"}`,
+		`{"kind":"session","guid":"guid-retired","event":"retired","recorded_at":"2026-07-08T00:00:02Z","node":"` + testNodeA + `","state":"retired","label":"retired","role":"worker","tool":"claude"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(archDir, "0002-rotation.jsonl"), []byte(rotation), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	partial := `{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}` + "\n"
+	if err := os.WriteFile(path, []byte(partial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	proj := loadProjection(t, path)
+	if V2ByGUID(proj, "guid-post") == nil {
+		t.Fatalf("post-migration session missing after recovery: %+v", proj.Sessions())
+	}
+	if V2ByGUID(proj, "guid-stale") != nil {
+		t.Fatalf("stale migration row resurrected: %+v", proj.Sessions())
+	}
+	if retired := V2ByGUID(proj, "guid-retired"); retired != nil {
+		t.Fatalf("retired row reseeded live: %+v", retired)
+	}
+}
+
+func TestLoadWithArchivesMergesDeterministicallyLiveWins(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	archDir := filepath.Join(dir, "registry.jsonl.archive")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archDir, "0002-rotation.jsonl"), []byte(`{"guid":"guid-arch","short_guid":"arch","label":"arch-new","status":"closed"}`+"\n"+`{"guid":"guid-collide","short_guid":"collide","label":"arch-collide","status":"closed"}`+"\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archDir, "0001-rotation.jsonl"), []byte(`{"guid":"guid-arch","short_guid":"arch","label":"arch-old","status":"active"}`+"\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"guid":"guid-collide","short_guid":"collide","label":"live-collide","status":"active"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := LoadWithArchives(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arch := Resolve(recs, "guid-arch")
+	if arch == nil || ptrString(arch.Label) != "arch-new" || !arch.Archived {
+		t.Fatalf("archive-only = %+v, want latest archive row marked archived", arch)
+	}
+	live := Resolve(recs, "guid-collide")
+	if live == nil || ptrString(live.Label) != "live-collide" || live.Archived {
+		t.Fatalf("live collision = %+v, want live row to win", live)
+	}
+}
+
+func TestLoadWithArchivesUsesLatestAcrossThreeRotationArchives(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	archDir := filepath.Join(dir, "registry.jsonl.archive")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, label := range map[string]string{
+		"0002-rotation.jsonl": "two",
+		"0003-rotation.jsonl": "three",
+		"0004-rotation.jsonl": "four",
+	} {
+		row := `{"guid":"guid-tie","short_guid":"tie","label":"` + label + `","status":"closed"}` + "\n"
+		if err := os.WriteFile(filepath.Join(archDir, name), []byte(row), 0o444); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := LoadWithArchives(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Resolve(recs, "guid-tie"); got == nil || ptrString(got.Label) != "four" {
+		t.Fatalf("latest archive tie = %+v, want 0004/four", got)
+	}
+}
+
+func TestRotationReusesMatchingArchiveAfterPreTruncateCrash(t *testing.T) {
+	t.Setenv(rotationThresholdEnv, "650")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"guid-live","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"live","role":"worker","tool":"codex"}`,
+		`{"kind":"session","guid":"guid-retired","event":"retired","recorded_at":"2026-07-08T00:00:02Z","node":"` + testNodeA + `","state":"retired","label":"` + strings.Repeat("x", 256) + `","role":"worker","tool":"codex"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "registry.jsonl.archive", "0002-rotation.jsonl")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, []byte(source), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: "guid-after", Event: "registered", State: v2.StateSeated, Label: "after", Tool: "bash"}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if archives := registryArchivePathsForTest(t, path); len(archives) != 1 || filepath.Base(archives[0]) != "0002-rotation.jsonl" {
+		t.Fatalf("archives = %+v, want only reused 0002 archive", archives)
+	}
+}
+
+func TestRotationSkipsWhenReseedWouldStillExceedThreshold(t *testing.T) {
+	t.Setenv(rotationThresholdEnv, "10")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hugeLabel := strings.Repeat("x", 128)
+	source := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"guid-huge","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"` + hugeLabel + `","role":"worker","tool":"codex"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: "guid-after", Event: "registered", State: v2.StateSeated, Label: "after", Tool: "bash"}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if archives := registryArchivePathsForTest(t, path); len(archives) != 0 {
+		t.Fatalf("archives = %+v, want no rotation because reseed remains over threshold", archives)
+	}
+}
+
+func TestRotationInvalidThresholdNamesFix(t *testing.T) {
+	t.Setenv(rotationThresholdEnv, "not-bytes")
+	path := writeRegistry(t, `{"kind":"node","event":"node_registered","node_id":"`+testNodeA+`","recorded_at":"2026-07-08T00:00:00Z"}`)
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil })
+	if err == nil || !strings.Contains(err.Error(), rotationThresholdEnv+`="not-bytes"`) || !strings.Contains(err.Error(), "unset it to use the default") {
+		t.Fatalf("err = %v, want variable/value/fix guidance", err)
+	}
+}
+
+func TestRotationRecoveryRefusalTexts(t *testing.T) {
+	for name, tc := range map[string]struct {
+		writeArchive func(string)
+		want         string
+	}{
+		"missing": {
+			writeArchive: func(path string) {
+				if err := os.Symlink("missing-target", path); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "missing archive",
+		},
+		"empty": {
+			writeArchive: func(path string) {
+				if err := os.WriteFile(path, nil, 0o444); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "is empty",
+		},
+		"quarantined": {
+			writeArchive: func(path string) {
+				if err := os.WriteFile(path, []byte("{not-json\n"), 0o444); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "has quarantined rows",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "registry.jsonl")
+			archive := filepath.Join(dir, "registry.jsonl.archive", "0002-rotation.jsonl")
+			if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tc.writeArchive(archive)
+			if err := os.WriteFile(path, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil })
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRotationArchiveByteVerificationRefusalText(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "registry.jsonl.archive", "0002-rotation.jsonl")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, []byte("old\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	err := ensureArchive(archive, []byte("new\n"))
+	if err == nil || !strings.Contains(err.Error(), "byte verification failed") || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("err = %v, want byte verification refusal text", err)
+	}
+}
+
+func TestArchiveConsultationProvidesForkParentSessionID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	archDir := filepath.Join(dir, "registry.jsonl.archive")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archDir, "0001-rotation.jsonl"), []byte(`{"kind":"session","guid":"guid-parent","event":"retired","recorded_at":"2026-07-08T00:00:00Z","state":"retired","label":"parent","role":"worker","tool":"codex","sids":[{"sid":"sess-parent","observed_at":"2026-07-08T00:00:00Z","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sess-parent"}}`+"\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"kind":"session","guid":"guid-child","event":"registered","recorded_at":"2026-07-08T00:00:01Z","state":"unseated","label":"child","role":"worker","tool":"codex","lineage":{"forked_from":"guid-parent"},"provenance":{"mechanism":"fork","forked_from":"guid-parent"}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := LoadWithArchives(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := Resolve(recs, "guid-parent")
+	if parent == nil || !parent.Archived {
+		t.Fatalf("parent = %+v, want archive-resolved parent", parent)
+	}
+	if sid := ToolSessionIDForGUID(recs, "guid-parent"); sid != "sess-parent" {
+		t.Fatalf("parent sid = %q, want sess-parent", sid)
+	}
+}
+
 func TestRegisteredCarriesRecognisedHcomName(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	guid, label := "guid-carry", "worker"
@@ -1369,6 +1765,24 @@ func mustReadFile(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func fileMode(t *testing.T, path string) fs.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Mode().Perm()
+}
+
+func registryArchivePathsForTest(t *testing.T, path string) []string {
+	t.Helper()
+	paths, err := registryArchivePaths(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return paths
 }
 
 func mustMarshalRecord(t *testing.T, rec Record) []byte {

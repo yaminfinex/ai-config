@@ -85,13 +85,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	recs, err := registry.Load(registryPath)
+	if opts.includeAll {
+		recs, err = registry.LoadWithArchives(registryPath)
+	}
 	if err != nil {
 		return 1
 	}
 	collapsed := registry.LatestByGUID(recs)
 	if opts.mode == "json" {
 		for _, rec := range collapsed {
-			if !opts.includeAll && rec.Status != "active" {
+			if !opts.includeAll && (rec.Status != "active" || rec.Archived) {
 				continue
 			}
 			fmt.Fprintln(stdout, string(reconciledJSON(rec, idx)))
@@ -102,13 +105,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-12s %-16s %s\n",
 		"GUID", "LABEL", "AGENT", "PANE", "LIVE", "TEAM", "BUS", "ROLE")
 	for _, rec := range collapsed {
-		if !opts.includeAll && rec.Status != "active" {
+		if !opts.includeAll && (rec.Status != "active" || rec.Archived) {
 			continue
 		}
 		live, _ := idx.match(rec)
 		livePane := rec.PaneID
 		liveStatus := idx.unmatchedStatus(rec)
-		if live != nil {
+		if rec.Archived {
+			liveStatus = "ARCHIVED"
+		} else if live != nil {
 			if pane, ok := rawStringField(live.Raw, "pane_id"); ok {
 				livePane = pane
 			}
@@ -340,6 +345,15 @@ func decodeRecord(line string) (registry.Record, error) {
 }
 
 func reconciledJSON(rec registry.Record, idx liveIndex) []byte {
+	if rec.Archived {
+		return appendJSONFields(rec.Raw,
+			`"archived":true`,
+			`"live":null`,
+			`"live_pane":null`,
+			`"live_status":"ARCHIVED"`,
+			`"live_matched_by":null`,
+		)
+	}
 	live, matchedBy := idx.match(rec)
 	if live == nil {
 		return appendJSONFields(rec.Raw,

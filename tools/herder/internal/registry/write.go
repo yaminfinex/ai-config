@@ -50,7 +50,17 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 	var nodeID string
 	var mintedRow []byte
 	var migratedRows [][]byte
-	if migrationNeeded(path, proj) {
+	var rotationRows [][]byte
+	if rotationRecoveryNeeded(path, proj) {
+		rotationRows, proj, err = recoverRotationLocked(path, f, proj)
+		if err != nil {
+			return nil, err
+		}
+		nodeID, mintedRow, proj, err = ensureLockedNode(path, f, proj)
+		if err != nil {
+			return nil, err
+		}
+	} else if migrationNeeded(path, proj) {
 		nodeID, mintedRow, err = ensureMigrationNode(path, proj)
 		if err != nil {
 			return nil, err
@@ -66,6 +76,15 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 			return nil, err
 		}
 	}
+	if len(migratedRows) == 0 && len(rotationRows) == 0 {
+		rotationRows, proj, err = rotateIfNeededLocked(path, f, proj, nodeID)
+		if err != nil {
+			return nil, err
+		}
+		if len(rotationRows) > 0 {
+			mintedRow = nil
+		}
+	}
 	rows, err := fn(LockedUpdate{Projection: proj})
 	if err != nil {
 		return nil, err
@@ -75,6 +94,7 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 		encoded = append(encoded, mintedRow)
 	}
 	encoded = append(encoded, migratedRows...)
+	encoded = append(encoded, rotationRows...)
 	for _, row := range rows {
 		if current := V2ByGUID(proj, row.GUID); current != nil && !sessionHasRegisteredNode(proj, *current) {
 			return nil, fmt.Errorf("registry refused to mutate guid %s: latest row is attributed to unknown node %s (no node_registered row)", current.GUID, current.Node)

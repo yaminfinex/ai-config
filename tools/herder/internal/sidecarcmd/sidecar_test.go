@@ -881,6 +881,45 @@ func TestAppendEnrichmentDoesNotResurrectClosedGUID(t *testing.T) {
 	}
 }
 
+func TestAppendEnrichmentDoesNotResurrectArchivedClosedGUID(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	if err := os.WriteFile(registryPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(state, "registry.jsonl.archive", "0002-rotation.jsonl")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prior := `{"guid":"guid-closed-0000","short_guid":"closed","label":"closed-worker","role":"worker","agent":"codex","terminal_id":"term_OLD","pane_id":"p_old","status":"closed","hcom_name":"worker-rive","provenance":{"mechanism":"spawn","spawned_by":"parent-guid","tool_session_id":"sess-123","tag":"worker","batch_id":"","cwd":"/old","workspace_id":"ws_old","branch":"","ts":"2026-07-03T00:00:00Z"}}`
+	if err := os.WriteFile(archive, []byte(prior+"\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_GUID", "guid-closed-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "closed-worker")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{tool: "codex", paneID: "p_new", cwd: "/repo", registry: registryPath}
+	s.appendEnrichment(&hcomRow{Name: "worker-rive", Tag: "worker", SessionID: "sess-123", Directory: "/repo"})
+
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("live rows = %+v, want no resurrection append", recs)
+	}
+	archived, err := registry.LoadWithArchives(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := registry.Resolve(archived, "guid-closed-0000")
+	if latest == nil || latest.Status != "closed" || !latest.Archived {
+		t.Fatalf("archived latest = %+v, want closed archived row", latest)
+	}
+}
+
 func TestAppendEnrichmentRefusesActiveLabelCollision(t *testing.T) {
 	state := t.TempDir()
 	registryPath := filepath.Join(state, "registry.jsonl")
