@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 00:59'
-updated_date: '2026-07-08 01:00'
+updated_date: '2026-07-08 01:19'
 labels:
   - run-herder-dx
 dependencies: []
@@ -34,5 +34,11 @@ USER ASK (2026-07-08): "compact and queue an immediate next message? usually com
 created: 2026-07-08 01:00
 ---
 LIVE RESULT #1 (hera, naive two-line variant): FAILED — ordering inversion. The plain continuation line did NOT queue behind /compact: claude injects plain queued messages into the RUNNING turn at the next tool boundary (arrived mid-turn, consumed pre-compact), while slash commands hold until turn end. DESIGN IMPLICATION: --then cannot be a second paste line. Correct mechanism (experiment #2 in flight): detached post-compact BUS send — compact --then should fork a detached child that waits for compaction to finish (poll session state, not sleep) then herder-sends the continuation to the caller own bus name; hcom queue-until-deliverable (TASK-032 finding) makes the timing forgiving. ACs should be reread under this design.
+---
+
+author: hera
+created: 2026-07-08 01:19
+---
+RESULT #2 (delayed bus send, 2026-07-08): FAILED — but at herder's resolution layer, NOT the design. The helper's `herder send w6554208c1918a12-1 '<continuation>'` errored pre-send: 'target w6554208c1918a12-1 (@zero) not found on bus'. Root cause: the orchestrator pane has THREE manual-enroll registry rows (@hera live, @vore and @zero stale from earlier sessions in the same reused pane, all still LIVE=working), and pane-id resolution picked a stale row. The hcom queue-until-deliverable leg was never exercised. Filed as its own bug (stale manual rows + ambiguous pane-id resolution). Design implication stands from result #1+#2 combined: --then must be a detached post-compact BUS send resolved to the live bus name (in-binary, using the compacting session's own verified identity — not pane-id re-resolution).
 ---
 <!-- COMMENTS:END -->
