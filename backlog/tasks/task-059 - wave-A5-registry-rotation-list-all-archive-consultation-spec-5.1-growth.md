@@ -1,10 +1,10 @@
 ---
 id: TASK-059
 title: 'wave A5: registry rotation + list --all archive consultation (spec 5.1 growth)'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-08 05:55'
-updated_date: '2026-07-08 09:47'
+updated_date: '2026-07-08 09:53'
 labels: []
 dependencies: []
 priority: low
@@ -16,6 +16,16 @@ ordinal: 59000
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Plan unit A5 (spec-plan-wave-a.md). Size-threshold rotation reusing A4 rotate-reseed mechanics; archives read-only beside the log; list --all and lineage resolution consult archives. Smallest unit; may fold into A4 if the worker is ahead. Depends: A4 (TASK-058).
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+MERGED to main 6c0124f (no-ff), post-merge gate green from repo root: go vet+test tools/herder + tools/bottle, 25/25 check-*.sh bare sequential.
+
+Delta re-verdict from review-a5-vonu: CLEAN. All 3 blocking findings closed (rotation-recovery precedence over migration recovery; migrationNeeded short-circuit on any rotation archive; crash+no-crash variants tested). Residual corner (migrated install with retirement drift, no rotation archive yet) closed completely via migrationPartialLive Event=="migrated_v1" guard — no drift path resurrects. Sidecar archive-consult gated to live-miss; lifecycle loadRegistry live-only with resolveTargetWithArchiveFallback for fork/resume. Deviation (b) resolved in-fix by the Event-guard rather than re-accepted.
+
+This closes wave A (A1-A5 all merged). Worker wave-a5-lina d3e618cf + reviewer review-a5-vonu 338e9497 culled; worktree wave-a5-rotation + branch removed.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 
