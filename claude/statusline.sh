@@ -61,7 +61,7 @@ if [ "${HERDR_ENV:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
   line1="${line1} ・ ${herder_seg}"
 fi
 
-# Optional hcom bus snapshot. A future event-driven writer may update this
+# Optional hcom bus snapshot. The event-driven herder sidecar updates this
 # file; this renderer only performs cheap file reads and omits the segment when
 # no snapshot exists.
 hcom_state_file="${HCOM_STATUSLINE_STATE:-}"
@@ -70,13 +70,25 @@ if [ -z "$hcom_state_file" ] && [ -n "${HCOM_DIR:-}" ]; then
 fi
 if [ -n "$hcom_state_file" ] && [ -r "$hcom_state_file" ]; then
   hcom_unread=""
+  hcom_last_ts=""
   hcom_last_age_s=""
   while IFS='=' read -r key value; do
     case "$key" in
       HCOM_UNREAD) hcom_unread="$value" ;;
+      HCOM_LAST_TS) hcom_last_ts="$value" ;;
       HCOM_LAST_AGE_S) hcom_last_age_s="$value" ;;
     esac
   done < "$hcom_state_file"
+  if small_uint "$hcom_last_ts"; then
+    hcom_now="${EPOCHSECONDS:-}"
+    if small_uint "$hcom_now"; then
+      if [ "$hcom_last_ts" -le "$hcom_now" ]; then
+        hcom_last_age_s="$(( hcom_now - hcom_last_ts ))"
+      else
+        hcom_last_age_s="0"
+      fi
+    fi
+  fi
   hcom_bus_seg=""
   if small_uint "$hcom_unread" && [ "$hcom_unread" != "0" ]; then
     hcom_bus_seg="${MAGENTA}✉ ${hcom_unread}${RESET}"
