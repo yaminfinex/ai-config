@@ -96,7 +96,16 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
    machine-local today, so journal + branch remain the cold-pickup artifacts until bus durability
    lands. Backlog-backed runs add a durable unit ledger alongside — `references/backlog-integration.md`.
 2. **Spawn prompts are one line** — "read <playbook> in full, then execute <unit>". Context
-   travels through the files + branch, never the prompt.
+   travels through the files + branch, never the prompt. What those files capture per unit is
+   bound by the **task-capture contract** — evergreen: it binds whether units live in a backlog
+   tool or a raw dispatch brief (a backlog is just a place to put the same information). **Three
+   readers** must each be able to do a good job from the capture plus its references: the
+   orchestrator at a future date (possibly post-compaction), the dispatched worker, and the
+   eventual reviewers. Every reference must be reachable by the eventual worker — quote it
+   inline or keep it in docs the capture ships with (main is ideal, not required; the backlog
+   itself may live in ephemeral napkins). Acceptance criteria are written at capture time,
+   while intent is fresh — never invented at dispatch. Plain language throughout: no
+   run-internal dialect, no opaque references — dispatchable by a reader with zero run context.
 3. **Context discipline.** One unit per agent; wide reading goes to subagents. Compact in the
    200–250k-token band, every time — past it agents get measurably less coherent and much more
    expensive. The band binds every session in the run: watch your own context and your workers',
