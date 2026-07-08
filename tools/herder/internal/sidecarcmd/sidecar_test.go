@@ -185,6 +185,46 @@ func TestAppendEnrichmentCarriesPriorRowAndSessionID(t *testing.T) {
 	}
 }
 
+// TestAppendEnrichmentSelfHealsStaleHcomName pins the AC #2 answer for TASK-033:
+// the sidecar SELF-HEALS a wrong row name. spawn no longer tag+cwd-guesses a bus
+// name into the row, but if a stale/wrong hcom_name ever sits on the guid's row,
+// the sidecar — running in the CHILD's own pane, enriching THIS guid — appends a
+// newer row carrying the correct name from its own pane's hcom entry, and
+// LatestByGUID (what `herder send <guid>` resolves through) returns the corrected
+// name. So a stale-enriched row resolves CORRECTLY after the sidecar runs.
+func TestAppendEnrichmentSelfHealsStaleHcomName(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	// Prior row already carries a WRONG name (as a pre-fix tag+cwd guess would).
+	stale := `{"guid":"guid-spawned-0000","short_guid":"guid","label":"worker-guid","role":"worker","agent":"claude","terminal_id":"term_NEW","pane_id":"p_new","status":"active","hcom_name":"worker-stale","hcom_tag":"worker","provenance":{"mechanism":"spawn","spawned_by":"parent-guid","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"","ts":"2026-07-03T00:00:00Z"}}`
+	if err := registry.Append(registryPath, []byte(stale)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_GUID", "guid-spawned-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_SPAWNED_BY", "parent-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	// The sidecar runs in the child's own pane and discovers the child's OWN row
+	// (worker-rive) — the correct bus name.
+	s := &sidecar{tool: "claude", paneID: "p_new", cwd: "/repo", registry: registryPath}
+	s.appendEnrichment(&hcomRow{Name: "worker-rive", Tag: "worker", SessionID: "sess-123", Directory: "/repo"})
+
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The stale-named row that `herder send guid-spawned-0000` resolves through is
+	// now the corrected one.
+	latest := registry.Resolve(recs, "guid-spawned-0000")
+	if latest == nil {
+		t.Fatal("latest row not found")
+	}
+	if latest.HcomName != "worker-rive" {
+		t.Fatalf("HcomName = %q, want worker-rive (self-heal did not override the stale name)", latest.HcomName)
+	}
+}
+
 func TestAppendEnrichmentGeneratesManualShimIdentity(t *testing.T) {
 	state := t.TempDir()
 	registryPath := filepath.Join(state, "registry.jsonl")

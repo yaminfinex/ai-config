@@ -19,10 +19,12 @@
 #                             (the frozen launch pane) exists → primary capture
 #       fallback            — no launch_context match; a UNIQUE entry with the
 #                             spawn tag ("worker") and directory /mock/cwd exists
-#                             (decoys differ in tag/dir) → captured by tag+cwd
+#                             (decoys differ in tag/dir). TASK-033: tag+cwd is no
+#                             longer a capture signal, so this stale unique match
+#                             is NOT captured → not_found (row left empty)
 #       fallback_ambiguous  — no launch_context match; TWO live entries share
 #                             tag ("worker") + directory /mock/cwd → no positive
-#                             correlate → capture refuses to guess (ambiguous)
+#                             correlate → not captured → not_found (row left empty)
 #       fail                — empty bus → capture fails (promptless spawn stays
 #                             best-effort; a bus prompt reports bind_timeout)
 #     delivery half (bus prompts only; default = receipt on first poll):

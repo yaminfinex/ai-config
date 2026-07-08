@@ -791,10 +791,6 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	tabID := start.Agent.TabID
 	termID := start.Agent.TerminalID
 	resolvedCWD := start.Agent.CWD
-	resolvedCWDPhys := resolvedCWD
-	if phys, err := filepath.EvalSymlinks(resolvedCWD); err == nil {
-		resolvedCWDPhys = phys
-	}
 	launchPaneID := paneID
 
 	// Seed-pane close: --new-tab's tab create and --worktree's workspace create
@@ -932,49 +928,42 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		// above records it — no post-write capture loop to run.
 		hcomCapture = "captured"
 	} else if isHcomAgent {
+		// Post-write row enrichment trusts CHILD-SPECIFIC signals ONLY, the same
+		// discipline the bus-first bind gate enforces (childBoundBusOnce, 222b1bb):
+		// this guid's sidecar registry enrichment, or the hcom roster entry whose
+		// launch_context matches the frozen launch pane. The tag+cwd-unique
+		// fallback is GONE (TASK-033): even a UNIQUE same-tag+cwd match can be a
+		// STALE pre-existing agent still on the bus, and enriching the row with
+		// its name would make a later `herder send <guid>` message the WRONG
+		// session — no prompt misdelivery (that gate is already fixed), but a
+		// mislabeled row. When no child-specific signal appears the name is LEFT
+		// EMPTY for sidecar enrichment to fill from the child's own pane row
+		// (findRowForPane) later — never guessed.
 		hcomCapture = "not_found"
 		if name := registryCapturedName(registryPath, guid); name != "" {
+			// The sidecar already persisted this enrichment to the registry; the
+			// in-memory record just needs the name for the summary/JSON. No second
+			// append.
 			record.HcomName = name
 			hcomCapture = "captured"
 		} else {
 			for i := 0; i < 6; i++ {
-				entries := hcomList(hcomDirEff)
-				if len(entries) > 0 {
-					for _, entry := range entries {
-						if entry.LaunchContext.PaneID == launchPaneID {
-							record.HcomName = entry.Name
-							break
-						}
-					}
-					if record.HcomName == "" {
-						var matches []hcomEntry
-						for _, entry := range entries {
-							if entry.Tag == opts.Role && (entry.Directory == resolvedCWD || entry.Directory == resolvedCWDPhys) {
-								matches = append(matches, entry)
-							}
-						}
-						// Only a UNIQUE tag+cwd match is trustworthy without a
-						// positive pane correlate. Two or more live entries
-						// sharing tag+cwd cannot be told apart; picking the newest
-						// (latest-wins) silently captures an unrelated agent's
-						// identity — the wrong-guid enrichment bug. Refuse to
-						// guess: record the capture as ambiguous and stop.
-						if len(matches) == 1 {
-							record.HcomName = matches[0].Name
-						} else if len(matches) > 1 {
-							hcomCapture = "ambiguous"
-							break
-						}
-					}
-					if record.HcomName != "" {
-						hcomCapture = "captured"
-						updated, _ := json.Marshal(record)
-						if err := appendLine(registryPath, updated); err != nil {
-							die(r.stderr, err.Error())
-							return 1
-						}
+				name := ""
+				for _, entry := range hcomList(hcomDirEff) {
+					if entry.LaunchContext.PaneID == launchPaneID {
+						name = entry.Name
 						break
 					}
+				}
+				if name != "" {
+					record.HcomName = name
+					hcomCapture = "captured"
+					updated, _ := json.Marshal(record)
+					if err := appendLine(registryPath, updated); err != nil {
+						die(r.stderr, err.Error())
+						return 1
+					}
+					break
 				}
 				sleepMS(700)
 			}
