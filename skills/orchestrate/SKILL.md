@@ -53,6 +53,12 @@ Record in the playbook's run-shape header (`references/state-files.md`):
    (`herder spawn --team <run-slug>`) keeps their traffic from interleaving (caveats: `herder spawn
    --help`). Own-tab-per-agent (`herder spawn --new-tab`) is a preference for humans watching the
    run, not a correctness rule.
+8. **Local planning disciplines.** Check the available-skills listing before inventing process:
+   where the `ce-plan` and `ce-doc-review` skills exist (compound-engineering plugin), use them —
+   `ce-plan` discipline for writing implementation plans and substantial unit briefs, and
+   `ce-doc-review` (multi-persona document review) on planning/design documents before declaring
+   them buildable. They compose with, not replace, the adversarial structures in
+   `references/adversarial.md`.
 
 ## Topologies
 
