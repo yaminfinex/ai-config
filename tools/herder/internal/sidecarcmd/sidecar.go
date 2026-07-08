@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"ai-config/tools/herder/internal/herdrcli"
@@ -29,7 +31,8 @@ type hcomRow struct {
 	SessionID     string           `json:"session_id"`
 	CreatedAt     flexibleJSONText `json:"created_at"`
 	LaunchContext struct {
-		PaneID string `json:"pane_id"`
+		PaneID    string `json:"pane_id"`
+		ProcessID string `json:"process_id"`
 	} `json:"launch_context"`
 }
 
@@ -101,19 +104,28 @@ func parseArgs(args []string) (options, bool) {
 }
 
 type sidecar struct {
-	tool              string
-	paneID            string
-	socketPath        string
-	tag               string
-	cwd               string
-	ppid0             int
-	registry          string
-	lastState         string
-	missing           int
-	enrichedSessionID string
-	lastReportedSID   string
-	lifecycleMode     string
-	parentSessionID   string
+	tool                string
+	paneID              string
+	socketPath          string
+	tag                 string
+	cwd                 string
+	ppid0               int
+	registry            string
+	lastState           string
+	missing             int
+	enrichedSessionID   string
+	lastReportedSID     string
+	lifecycleMode       string
+	parentSessionID     string
+	correlatedProcessID string
+	processEnvirons     processEnvironmentScanner
+}
+
+type processEnvironmentScanner func(tool string) []processEnvironmentRead
+
+type processEnvironmentRead struct {
+	env map[string]string
+	err error
 }
 
 func (s *sidecar) run() int {
@@ -215,6 +227,21 @@ func findRowForPane(rows []hcomRow, paneID, lifecycleMode, parentSessionID strin
 	return nil
 }
 
+func findRowForProcessID(rows []hcomRow, processID, lifecycleMode, parentSessionID string) *hcomRow {
+	if processID == "" {
+		return nil
+	}
+	for i := range rows {
+		if lifecycleMode == "fork" && parentSessionID != "" && rows[i].SessionID == parentSessionID {
+			continue
+		}
+		if rows[i].LaunchContext.ProcessID == processID {
+			return &rows[i]
+		}
+	}
+	return nil
+}
+
 // findRowCorrelated locates this session's hcom row and reports whether the
 // match is CHILD-SPECIFIC. A pane correlate (launch_context.pane_id == this
 // pane) positively identifies THIS session's row; the tool+tag+cwd launch
@@ -229,6 +256,20 @@ func findRowForPane(rows []hcomRow, paneID, lifecycleMode, parentSessionID strin
 func (s *sidecar) findRowCorrelated(rows []hcomRow) (row *hcomRow, paneCorrelated bool) {
 	if r := findRowForPane(rows, s.paneID, s.lifecycleMode, s.parentSessionID); r != nil {
 		return r, true
+	}
+	if r := findRowForProcessID(rows, s.correlatedProcessID, s.lifecycleMode, s.parentSessionID); r != nil {
+		return r, true
+	}
+	// Codex hcom rows may lack launch_context.pane_id but carry
+	// launch_context.process_id. Reading a LIVE child process environ is
+	// authoritative for this spawned child and not the TASK-043 inherited shell
+	// env hazard: HERDER_GUID proves ownership, and HCOM_PROCESS_ID is then only
+	// used to select the matching roster row.
+	if processID := s.findProcessIDForOwnChild(); processID != "" {
+		if r := findRowForProcessID(rows, processID, s.lifecycleMode, s.parentSessionID); r != nil {
+			s.correlatedProcessID = processID
+			return r, true
+		}
 	}
 	return findRowForLaunchFallback(rows, s.tool, s.tag, s.cwd, s.lifecycleMode, s.parentSessionID), false
 }
@@ -457,6 +498,90 @@ func ptrString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func (s *sidecar) findProcessIDForOwnChild() string {
+	guid := os.Getenv("HERDER_GUID")
+	if guid == "" {
+		return ""
+	}
+	scan := s.processEnvirons
+	if scan == nil {
+		scan = scanProcessEnvirons
+	}
+	for _, read := range scan(s.tool) {
+		if read.err != nil {
+			continue
+		}
+		if read.env["HERDER_GUID"] != guid {
+			continue
+		}
+		if processID := read.env["HCOM_PROCESS_ID"]; processID != "" {
+			return processID
+		}
+	}
+	return ""
+}
+
+func scanProcessEnvirons(tool string) []processEnvironmentRead {
+	if tool == "" {
+		return nil
+	}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+	ownPID := os.Getpid()
+	var reads []processEnvironmentRead
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid == ownPID {
+			continue
+		}
+		procDir := "/proc/" + entry.Name()
+		if !processLooksLikeTool(procDir, tool) {
+			continue
+		}
+		env, err := readProcessEnviron(procDir + "/environ")
+		reads = append(reads, processEnvironmentRead{env: env, err: err})
+	}
+	return reads
+}
+
+func processLooksLikeTool(procDir, tool string) bool {
+	needle := strings.ToLower(tool)
+	for _, name := range []string{"comm", "cmdline"} {
+		b, err := os.ReadFile(procDir + "/" + name)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(strings.ToLower(string(b)), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func readProcessEnviron(path string) (map[string]string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	env := make(map[string]string)
+	for _, part := range bytes.Split(b, []byte{0}) {
+		if len(part) == 0 {
+			continue
+		}
+		key, value, ok := bytes.Cut(part, []byte{'='})
+		if !ok {
+			continue
+		}
+		env[string(key)] = string(value)
+	}
+	return env, nil
 }
 
 func hcomList() []hcomRow {
