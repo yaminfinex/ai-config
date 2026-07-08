@@ -60,12 +60,23 @@ func TestTornRowsAreQuarantined(t *testing.T) {
 func TestProjectionAnomaliesAreLoudAndDeterministic(t *testing.T) {
 	p, _ := loadFixture(t, "duplicate-labels.jsonl")
 	var sawLabel, sawSeat, sawNode bool
+	var labelOrder []string
 	for _, a := range p.Anomalies() {
 		switch a.Type {
 		case "duplicate-live-label":
 			sawLabel = true
-			if a.Label != "shared" || a.WinnerGUID != "guid-alpha" || strings.Join(a.GUIDs, ",") != "guid-beta,guid-alpha" {
-				t.Fatalf("duplicate label anomaly = %+v, want guid-alpha as file-order winner", a)
+			labelOrder = append(labelOrder, a.Label)
+			switch a.Label {
+			case "also-shared":
+				if a.WinnerGUID != "guid-delta" || strings.Join(a.GUIDs, ",") != "guid-gamma,guid-delta" {
+					t.Fatalf("also-shared anomaly = %+v, want guid-delta as file-order winner", a)
+				}
+			case "shared":
+				if a.WinnerGUID != "guid-alpha" || strings.Join(a.GUIDs, ",") != "guid-beta,guid-alpha" {
+					t.Fatalf("shared anomaly = %+v, want guid-alpha as file-order winner", a)
+				}
+			default:
+				t.Fatalf("unexpected duplicate label anomaly = %+v", a)
 			}
 		case "double-seated-session":
 			sawSeat = true
@@ -82,8 +93,11 @@ func TestProjectionAnomaliesAreLoudAndDeterministic(t *testing.T) {
 	if !sawLabel || !sawSeat || !sawNode {
 		t.Fatalf("anomalies = %+v, want duplicate label, double seat, and unknown node", p.Anomalies())
 	}
-	if got := p.Sessions(); len(got) != 3 {
-		t.Fatalf("Sessions len = %d, want 3", len(got))
+	if strings.Join(labelOrder, ",") != "also-shared,shared" {
+		t.Fatalf("duplicate label anomaly order = %v, want sorted label order", labelOrder)
+	}
+	if got := p.Sessions(); len(got) != 5 {
+		t.Fatalf("Sessions len = %d, want 5", len(got))
 	}
 }
 

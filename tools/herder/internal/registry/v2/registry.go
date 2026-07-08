@@ -400,10 +400,16 @@ func (p *Projection) detectLabelConflicts() {
 		}
 		byLabel[rec.Label] = append(byLabel[rec.Label], rec)
 	}
+	labels := make([]string, 0, len(byLabel))
 	for label, holders := range byLabel {
 		if len(holders) < 2 {
 			continue
 		}
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	for _, label := range labels {
+		holders := byLabel[label]
 		sort.Slice(holders, func(i, j int) bool { return holders[i].Ordinal < holders[j].Ordinal })
 		winner := holders[len(holders)-1]
 		guids := make([]string, len(holders))
