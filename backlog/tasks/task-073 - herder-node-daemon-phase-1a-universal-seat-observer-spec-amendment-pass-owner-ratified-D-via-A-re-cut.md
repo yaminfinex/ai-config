@@ -3,10 +3,10 @@ id: TASK-073
 title: >-
   Design pass: herder node daemon phase 1a — universal seat observer (NOT ready
   to build; deliverable is a design)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-08 11:44'
-updated_date: '2026-07-08 21:29'
+updated_date: '2026-07-08 21:34'
 labels: []
 dependencies: []
 priority: high
@@ -67,5 +67,10 @@ Design-input addendum (owner FYI, verified in the same schema pull): the herdr s
 created: 2026-07-08 21:29
 ---
 Design-input correction (owner, verified): plugin registration is NOT required to use the socket API. The herdr server listens on a plain unix socket (~/.config/herdr/herdr.sock, 'herdr status server' reports it; protocol 16 on the live install) and the herdr CLI itself is just a socket client — all queries run here worked with zero plugins installed. Consequence: the candidate substrate for the observer is 'daemon speaks the socket protocol directly as an ordinary client' — which fits the ratified invariants BETTER than a plugin: the daemon keeps its own lifecycle (disposability invariant), needs no upstream plugin-system coupling, and the plugin route remains merely a packaging option if in-terminal actions/panes are ever wanted. Designer should weigh direct-socket-client as the default shape and note the protocol-version compatibility story ('protocol: 16', 'compatible: yes' in status output) as the upstream-stability surface.
+---
+
+created: 2026-07-08 21:34
+---
+Design pass dispatched: designer design073-meme (Fable, per design-task pattern on task 78), docs-only branch task-073-observer-design off c11b469, brief napkins/run-herder-dx/brief-073-design.md (mechanics only — this task's text is the substance). Review chain on DONE: fresh adversarial design review -> fix -> tomo final intent review.
 ---
 <!-- COMMENTS:END -->
