@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:34'
-updated_date: '2026-07-08 06:45'
+updated_date: '2026-07-08 09:48'
 labels: []
 dependencies: []
 priority: medium
@@ -30,5 +30,10 @@ vibe (herdr-0.7.3 audit, bus #5629, applied by hera): herdr 0.7.0 #569: pane ids
 created: 2026-07-08 06:45
 ---
 SECOND live hit, new mechanism (hera, 2026-07-08, post-046): herder compact refused with correct-coordinates row — 'terminal term_65612408bc9034 not live in herdr agent list' — because compact self-location checks the AGENT LIST, and heras pre-handoff process is detection-lost (herdr-upgrade breakage class 2) while the PANE is alive and readable (wait --read fine). Fail-closed still correct, but the liveness source is wrong: compact needs the TASK-046 tri-state treatment — pane-list fallback + guid/label match — or at minimum the detection-lost guidance wait got. Re-scope this ticket to: (a) pane-list fallback in compact self-location, (b) recovery-affordance refusal text. Workaround used: direct herdr pane send-keys injection into own verified pane.
+---
+
+created: 2026-07-08 09:48
+---
+[hera 2026-07-08] THIRD live hit at owner-called compact: refusal text is now the improved self-identity chain ('no HERDER_GUID, no session match, no active row for terminal term_65612408bc9034... Nothing was typed') — better diagnosis than hit 2, still no recovery affordance and still no pane-list fallback for a detection-lost-but-alive caller pane. Workaround (ctrl+u + send-text + enter into own pane) used again, worked again. Scope unchanged.
 ---
 <!-- COMMENTS:END -->
