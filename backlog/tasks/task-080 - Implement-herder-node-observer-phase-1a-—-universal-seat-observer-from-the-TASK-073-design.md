@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-08 22:04'
-updated_date: '2026-07-08 22:07'
+updated_date: '2026-07-08 22:09'
 labels: []
 dependencies: []
 priority: high
@@ -45,5 +45,10 @@ SEQUENCING: dispatchable now for steps 1-2 groundwork; AC-8 (observer-side turno
 created: 2026-07-08 22:07
 ---
 Dispatched: codex worker (implementation per model doctrine), branch task-080-observer-impl off 52b5153, thin mechanics brief napkins/run-herder-dx/brief-080.md — task + normative doc carry all substance (design-task pattern test, evaluation on task 78). AC-8 blocks on E-10 at the steward.
+---
+
+created: 2026-07-08 22:09
+---
+Spec adjudication landed: ALL errata E-1..E-11 ACCEPTED (steward commit 9dc1d9e on the herder-spec branch). AC-8 turnover UNBLOCKED — E-10 accepted, no return-to-review. NEW MERGE-GATE CONDITION (steward, riding the E-2 deviated acceptance): the T-9 grep gate must be present AND demonstrably failing-capable (negative demonstration in DONE evidence) before this task merges; an aspirational gate voids the E-2 acceptance and reopens spec work. Worker notified of both. Note: E-5 landed with the noop definition harmonized to the refined idempotency formulation; E-4 adds observed_via to the never-carry-forward envelope set — both already consistent with the design.
 ---
 <!-- COMMENTS:END -->
