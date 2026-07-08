@@ -201,6 +201,13 @@ scenario bus_sendfail      ready claude launchctx_sendfail --role worker --agent
 # NOT sent (nothing to address), reported with the safe-resend remedy.
 SPAWN_BIND_MS=3000
 scenario bind_timeout      ready claude fail --role worker --agent claude --prompt "do the thing" --json
+# TASK-036 review P2: the bind_timeout recovery prints an EXACT `herder send`
+# resend command. Labels are built from --label-prefix verbatim and metachar
+# prefixes are accepted (bash_metachar), so the resend must shell-quote the LABEL
+# too — else a pasted command splits at ;, expands $, globs *, or dies on an
+# unmatched backtick. This golden pairs the metachar label prefix with a
+# bind_timeout so the summary line + --json resend_command pin the quoted round-trip.
+scenario bind_timeout_metachar ready claude fail --role worker --agent claude --label-prefix "$METACHAR_LABEL_PREFIX" --prompt "do the thing" --json
 # P1 regression (codex review) + TASK-033: a PRE-EXISTING same-tag+cwd bus agent
 # (worker-nova on the fallback roster; launch pane p_99 ≠ the child's frozen
 # p_50) must NEVER satisfy the prompt bind gate NOR enrich the registry row —

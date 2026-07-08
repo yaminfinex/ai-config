@@ -116,6 +116,7 @@ type spawnJSONRecord struct {
 	Provenance           registry.Provenance `json:"provenance"`
 	PromptSent           bool                `json:"prompt_sent"`
 	DeliveryResult       string              `json:"delivery_result"`
+	ResendCommand        string              `json:"resend_command,omitempty"`
 	PermInjected         string              `json:"perm_injected"`
 	NewTab               bool                `json:"new_tab"`
 	RootPaneClosed       bool                `json:"root_pane_closed"`
@@ -1006,6 +1007,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			Provenance:           record.Provenance,
 			PromptSent:           promptSent,
 			DeliveryResult:       deliveryResult,
+			ResendCommand:        resendCommandFor(deliveryResult, record.Label, opts.Prompt),
 			PermInjected:         permInjected,
 			NewTab:               opts.NewTab,
 			RootPaneClosed:       rootClosed,
@@ -1089,8 +1091,12 @@ func (r *runner) awaitReady(paneID *string) (reason string, trustBlocked bool, m
 // here exactly as in awaitReady (--safe refuses instead). --ready-match,
 // when given, additionally gates the send on the pane text (ruling: the flag
 // keeps its "don't deliver before the screen shows X" meaning on both paths).
-// Budget: HERDER_SPAWN_BIND_MS (default 60000 — codex binds in seconds, but a
-// cold MCP-heavy boot gets headroom).
+// Budget: HERDER_SPAWN_BIND_MS (default 60000). Claude/bash publish
+// launch_context.pane_id, so the roster match here resolves them in a second or
+// two; codex omits pane_id and is only correlated via the sidecar's async
+// tag+cwd registry enrichment, which under load can lag past any window
+// (TASK-036) — a codex bind_timeout is expected, and its recovery is the exact
+// verbatim resend command reported below.
 func (r *runner) awaitBind(paneID *string, registryPath, guid, hcomDir, launchPaneID string) (name, reason string, trustBlocked, modalCleared bool) {
 	waited := 0
 	boundName := ""
@@ -1260,7 +1266,8 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 			fmt.Fprintf(r.stderr, "          Accept it in the pane (focus + Enter), then: herder send %s \"<prompt>\"\n", record.Label)
 		case deliveryResult == "bind_timeout" || deliveryResult == "ready_match_timeout":
 			fmt.Fprintf(r.stderr, "  prompt: NOT sent (%s) — nothing went on the wire; a resend is SAFE.\n", readyReason)
-			fmt.Fprintf(r.stderr, "          once `herder list` shows its bus name: herder send %s \"<prompt>\"\n", record.Label)
+			fmt.Fprintf(r.stderr, "          once `herder list` shows its bus name, resend verbatim (also in --json as resend_command):\n")
+			fmt.Fprintf(r.stderr, "          %s\n", resendCommand(record.Label, r.opts.Prompt))
 		case busPrompt:
 			fmt.Fprintf(r.stderr, "  prompt: NOT confirmed (verify: %s, bind: %s) — the bus send did not go through\n", deliveryResult, readyReason)
 			fmt.Fprintf(r.stderr, "          check the bus first (`hcom events --agent %s`), then retry: herder send %s \"<prompt>\"\n", record.HcomName, record.Label)
@@ -1335,7 +1342,10 @@ func printHelp(stdout io.Writer) {
 		"  BIND its bus name (early in boot, well before the TUI is interactive), sends the full",
 		"  prompt as a bus message, and reports the receipt — verify: delivered (receipt seen) or",
 		"  queued (sent, no receipt yet; it injects the moment the agent is deliverable — do NOT",
-		"  resend). hcom wakes an idle agent with an EMPTY composer instantly, even a fresh",
+		"  resend). On bind_timeout nothing goes on the wire (a resend is SAFE): the summary and",
+		"  --json (resend_command) carry the exact verbatim `herder send` command to run once the",
+		"  bus name shows in `herder list` — codex correlates via a slower path, so it hits this",
+		"  more often. hcom wakes an idle agent with an EMPTY composer instantly, even a fresh",
 		"  never-prompted one; a message sent mid-boot is held until the session can take it.",
 		"  The one thing that starves bus delivery — on both families — is UNSUBMITTED TEXT in",
 		"  the composer: nothing injects until it is submitted or cleared. Remedy: read the pane",
@@ -1616,6 +1626,31 @@ func childBoundBusOnce(registryPath, guid, hcomDir, launchPaneID string) string 
 		if entry.LaunchContext.PaneID == launchPaneID {
 			return entry.Name
 		}
+	}
+	return ""
+}
+
+// resendCommand renders the exact, copy-pasteable recovery command for a prompt
+// that bind-timed out (nothing went on the wire — a resend is safe; TASK-036).
+// BOTH the label and the prompt are shell-quoted with the same printf %q-
+// compatible quoting herder uses elsewhere: the label is built from
+// --label-prefix verbatim and metachar prefixes are accepted (bash_metachar
+// golden), so an unquoted label could split at ;, expand $, glob *, or die on an
+// unmatched backtick when pasted — exactly when recovery matters. A multi-line
+// brief (and any notify appendix already folded in) round-trips verbatim too.
+func resendCommand(label, prompt string) string {
+	return "herder send " + shellquote.Quote(label) + " " + shellquote.Quote(prompt)
+}
+
+// resendCommandFor returns the recovery command for the --json surface, but ONLY
+// for the delivery results where a resend is the documented remedy and provably
+// safe — bind_timeout and ready_match_timeout (nothing went on the wire). Every
+// other result (delivered, queued, blocked_trust_modal, send_failed, the paste
+// variants) has its own remedy and must NOT carry a resend_command, so the field
+// is omitempty and left "" here. Mirrors the writeSummary human line exactly.
+func resendCommandFor(deliveryResult, label, prompt string) string {
+	if deliveryResult == "bind_timeout" || deliveryResult == "ready_match_timeout" {
+		return resendCommand(label, prompt)
 	}
 	return ""
 }

@@ -131,7 +131,10 @@ early in boot, well before the TUI is interactive — then sends the FULL prompt
 as a verified hcom message and reports the receipt. Verify vocabulary: `delivered` (receipt seen),
 `queued` (sent, no receipt in the window — it injects the moment the agent is deliverable; do NOT
 resend), `send_failed`/`not_joined` (nothing delivered — a retry via `herder send` is safe),
-`bind_timeout` (nothing went on the wire — deliver once `herder list` shows the bus name).
+`bind_timeout` (nothing went on the wire — resend once `herder list` shows the bus name). On
+`bind_timeout`/`ready_match_timeout` the summary prints the EXACT verbatim resend command
+(`herder send <label> <shell-quoted prompt>`, notify appendix and all) and `--json` carries it as
+`resend_command`, so recovery is one paste rather than a retype (TASK-036).
 The prompt gate trusts CHILD-SPECIFIC bind signals only (this guid's sidecar enrichment, or the
 frozen-launch-pane roster match) — a pre-existing same-tag+cwd bus agent never satisfies it, so a
 stale roster match waits out to `bind_timeout` instead of misdelivering the prompt to the old
@@ -140,7 +143,17 @@ name only from the same child-specific signals and never from a tag+cwd guess, s
 leaves the row's name EMPTY for the sidecar to fill from the child's own pane later — a later
 `herder send <guid>` can never resolve to the old session. Knobs: `HERDER_SPAWN_BIND_MS` (bind wait,
 default 60000) and `HERDER_SPAWN_VERIFY_MS`
-(receipt window, default 20000). A slash-command prompt arrives as message TEXT, not a typed
+(receipt window, default 20000). Family asymmetry (TASK-036): claude/bash publish
+`launch_context.pane_id`, so the frozen-launch-pane roster match correlates them in a second or
+two; **codex omits `pane_id`** (its hcom `launch_context` carries only `process_id`), so BOTH
+pane-id paths — this spawn's roster match and the sidecar's `findRowForPane` — miss it, and it is
+reached only via the sidecar's async tag+cwd registry enrichment. That enrichment lands AFTER the
+bind window and, under multi-agent load, can lag past any window (measured: a codex joined the bus
+~1s after launch yet was still uncorrelated 4+ minutes later), so a codex `bind_timeout` is
+EXPECTED, not a fault — the row still enriches eventually and the printed `resend_command` then
+delivers. Widening the window is deliberately NOT the fix (the failure is correlation, not boot
+speed); the clean fix is upstream — hcom publishing `pane_id` for codex like it does for claude
+(TASK-028/029). A slash-command prompt arrives as message TEXT, not a typed
 slash command. hcom wakes an idle agent with an EMPTY composer instantly — even a fresh,
 never-prompted session; a message sent mid-boot is held until the session can take it (probed
 live: send fired 107ms after bind, mid-boot, delivered whole at TUI readiness 2s later).
