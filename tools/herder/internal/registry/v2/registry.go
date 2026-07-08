@@ -186,6 +186,7 @@ func Load(r io.Reader, opts LoadOptions) (*Projection, error) {
 			return nil, err
 		}
 	}
+	p.detectUnknownNodes()
 	p.detectLabelConflicts()
 	return p, nil
 }
@@ -257,15 +258,6 @@ func (p *Projection) ingestLine(raw []byte, lineNo int, opts LoadOptions) {
 		if !ok {
 			return
 		}
-		if opts.LocalNodeID != "" && rec.Node != "" && rec.Node != opts.LocalNodeID {
-			p.anomalies = append(p.anomalies, Anomaly{
-				Type:    "unknown-node",
-				Message: fmt.Sprintf("session row %s attributed to non-local node %s", rec.GUID, rec.Node),
-				Line:    lineNo,
-				GUID:    rec.GUID,
-				Node:    rec.Node,
-			})
-		}
 		if prev, ok := p.sessions[rec.GUID]; ok && prev.State == StateSeated && rec.State == StateSeated && !sameSeat(prev.Seat, rec.Seat) {
 			p.anomalies = append(p.anomalies, Anomaly{
 				Type:       "double-seated-session",
@@ -284,14 +276,6 @@ func (p *Projection) ingestLine(raw []byte, lineNo int, opts LoadOptions) {
 		}
 		rec.Raw = bytes.Clone(raw)
 		rec.Ordinal = lineNo
-		if opts.LocalNodeID != "" && rec.NodeID != opts.LocalNodeID {
-			p.anomalies = append(p.anomalies, Anomaly{
-				Type:    "unknown-node",
-				Message: fmt.Sprintf("node row attributed to non-local node %s", rec.NodeID),
-				Line:    lineNo,
-				Node:    rec.NodeID,
-			})
-		}
 		p.nodes[rec.NodeID] = rec
 	case KindNamespace:
 		var rec NamespaceRecord
@@ -301,14 +285,6 @@ func (p *Projection) ingestLine(raw []byte, lineNo int, opts LoadOptions) {
 		}
 		rec.Raw = bytes.Clone(raw)
 		rec.Ordinal = lineNo
-		if opts.LocalNodeID != "" && rec.Node != "" && rec.Node != opts.LocalNodeID {
-			p.anomalies = append(p.anomalies, Anomaly{
-				Type:    "unknown-node",
-				Message: fmt.Sprintf("namespace row %s attributed to non-local node %s", rec.NamespaceID, rec.Node),
-				Line:    lineNo,
-				Node:    rec.Node,
-			})
-		}
 		p.namespaces[rec.NamespaceID] = rec
 	case KindEpoch:
 		var rec EpochRecord
@@ -318,14 +294,6 @@ func (p *Projection) ingestLine(raw []byte, lineNo int, opts LoadOptions) {
 		}
 		rec.Raw = bytes.Clone(raw)
 		rec.Ordinal = lineNo
-		if opts.LocalNodeID != "" && rec.Node != "" && rec.Node != opts.LocalNodeID {
-			p.anomalies = append(p.anomalies, Anomaly{
-				Type:    "unknown-node",
-				Message: fmt.Sprintf("epoch row %s attributed to non-local node %s", rec.EpochID, rec.Node),
-				Line:    lineNo,
-				Node:    rec.Node,
-			})
-		}
 		p.epochs[rec.EpochID] = rec
 	default:
 		p.quarantine(lineNo, "unknown kind "+kind, raw, opts.Stderr)
@@ -392,6 +360,48 @@ func legacySession(obj map[string]json.RawMessage, raw []byte, lineNo int) (Sess
 		rec.Continuity = "confirmed"
 	}
 	return rec, nil
+}
+
+func (p *Projection) detectUnknownNodes() {
+	for _, rec := range p.sessions {
+		if rec.Node == "" || p.hasNode(rec.Node) {
+			continue
+		}
+		p.anomalies = append(p.anomalies, Anomaly{
+			Type:    "unknown-node",
+			Message: fmt.Sprintf("session row %s attributed to unregistered node %s", rec.GUID, rec.Node),
+			Line:    rec.Ordinal,
+			GUID:    rec.GUID,
+			Node:    rec.Node,
+		})
+	}
+	for _, rec := range p.namespaces {
+		if rec.Node == "" || p.hasNode(rec.Node) {
+			continue
+		}
+		p.anomalies = append(p.anomalies, Anomaly{
+			Type:    "unknown-node",
+			Message: fmt.Sprintf("namespace row %s attributed to unregistered node %s", rec.NamespaceID, rec.Node),
+			Line:    rec.Ordinal,
+			Node:    rec.Node,
+		})
+	}
+	for _, rec := range p.epochs {
+		if rec.Node == "" || p.hasNode(rec.Node) {
+			continue
+		}
+		p.anomalies = append(p.anomalies, Anomaly{
+			Type:    "unknown-node",
+			Message: fmt.Sprintf("epoch row %s attributed to unregistered node %s", rec.EpochID, rec.Node),
+			Line:    rec.Ordinal,
+			Node:    rec.Node,
+		})
+	}
+}
+
+func (p *Projection) hasNode(nodeID string) bool {
+	_, ok := p.nodes[nodeID]
+	return ok
 }
 
 func (p *Projection) detectLabelConflicts() {

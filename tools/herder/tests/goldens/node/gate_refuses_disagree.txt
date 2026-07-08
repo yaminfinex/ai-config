@@ -1,0 +1,6 @@
+=== STDERR ===
+herder rename: registry node gate refused: marker contains <NODE> but registry node rows are <NODE>; run `herder node init` to repair the state dir
+=== STDOUT ===
+
+=== EXIT ===
+1

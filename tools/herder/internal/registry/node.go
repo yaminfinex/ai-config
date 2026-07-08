@@ -50,6 +50,11 @@ func InitNode(path string, forceNew bool) (NodeInitResult, error) {
 	}
 	nodes := proj.Nodes()
 
+	malformedMarker := markerPresent && marker != "" && !isNodeIDShape(marker)
+	if malformedMarker && (!forceNew || len(nodes) == 1) {
+		return NodeInitResult{}, malformedMarkerError(NodeMarkerPath(path), marker, nodes)
+	}
+
 	if forceNew {
 		nodeID, _, _, err := mintLockedNode(path, f, proj, "")
 		if err != nil {
@@ -61,7 +66,7 @@ func InitNode(path string, forceNew bool) (NodeInitResult, error) {
 		return NodeInitResult{NodeID: nodeID, Changed: true, Message: "minted fresh node id"}, nil
 	}
 
-	validMarker := markerPresent && marker != ""
+	validMarker := markerPresent && marker != "" && !malformedMarker
 
 	if validMarker && hasNode(nodes, marker) {
 		return NodeInitResult{NodeID: marker, Message: "node id already initialized"}, nil
@@ -93,6 +98,13 @@ func InitNode(path string, forceNew bool) (NodeInitResult, error) {
 		return NodeInitResult{NodeID: nodeID, Changed: true, Message: "repaired missing node_id marker"}, nil
 	}
 	return NodeInitResult{}, fmt.Errorf("registry node init refused: %s; rerun with `herder node init --new` to mint a fresh node id for this state dir", describeNodeState(marker, markerPresent, nodes))
+}
+
+func malformedMarkerError(path, marker string, nodes []v2.NodeRecord) error {
+	if len(nodes) == 1 {
+		return fmt.Errorf("registry node init refused: malformed node marker %s contains %q; restore it from registry node_registered row %s, or rerun with `herder node init --new` for clone repair", path, marker, nodes[0].NodeID)
+	}
+	return fmt.Errorf("registry node init refused: malformed node marker %s contains %q; rerun with `herder node init --new` when the marker and registry node rows are both bad", path, marker)
 }
 
 func describeNodeState(marker string, markerPresent bool, nodes []v2.NodeRecord) string {

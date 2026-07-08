@@ -60,6 +60,9 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 		encoded = append(encoded, mintedRow)
 	}
 	for _, row := range rows {
+		if current := V2ByGUID(proj, row.GUID); current != nil && !sessionHasRegisteredNode(proj, *current) {
+			return nil, fmt.Errorf("registry refused to mutate guid %s: latest row is attributed to unknown node %s (no node_registered row)", current.GUID, current.Node)
+		}
 		normalized, ok, err := normalizeSessionAppend(proj, row)
 		if err != nil {
 			return nil, err
@@ -158,14 +161,8 @@ func stampSessionNode(row v2.SessionRecord, nodeID string) (v2.SessionRecord, er
 	if nodeID == "" {
 		return row, fmt.Errorf("registry node gate failed: empty local node id")
 	}
-	if row.Node != "" && row.Node != nodeID {
-		return row, fmt.Errorf("registry node gate refused: session row for guid %s is attributed to node %s, local node is %s; run `herder node init` to repair the state dir", row.GUID, row.Node, nodeID)
-	}
 	row.Node = nodeID
 	if row.Seat != nil {
-		if row.Seat.Node != "" && row.Seat.Node != nodeID {
-			return row, fmt.Errorf("registry node gate refused: seat for guid %s is attributed to node %s, local node is %s; run `herder node init` to repair the state dir", row.GUID, row.Seat.Node, nodeID)
-		}
 		row.Seat.Node = nodeID
 	}
 	return row, nil
@@ -216,6 +213,9 @@ func readNodeMarker(path string) (string, bool, error) {
 	if id == "" {
 		return "", false, fmt.Errorf("registry node gate refused: empty node marker %s; run `herder node init` to repair the state dir", path)
 	}
+	if !isNodeIDShape(id) {
+		return "", false, fmt.Errorf("registry node gate refused: malformed node marker %s contains %q; run `herder node init` to repair the state dir", path, id)
+	}
 	return id, true, nil
 }
 
@@ -228,6 +228,25 @@ func readNodeMarkerLenient(path string) (string, bool, error) {
 		return "", false, err
 	}
 	return strings.TrimSpace(string(b)), true, nil
+}
+
+func isNodeIDShape(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	for i, r := range id {
+		switch i {
+		case 8, 13, 18, 23:
+			if r != '-' {
+				return false
+			}
+		default:
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func writeNodeMarker(path, nodeID string) error {
@@ -250,7 +269,19 @@ func writeNodeMarker(path, nodeID string) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+func syncDir(path string) error {
+	d, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func hasNode(nodes []v2.NodeRecord, nodeID string) bool {
@@ -260,6 +291,10 @@ func hasNode(nodes []v2.NodeRecord, nodeID string) bool {
 		}
 	}
 	return false
+}
+
+func sessionHasRegisteredNode(proj *v2.Projection, rec v2.SessionRecord) bool {
+	return rec.Node == "" || hasNode(proj.Nodes(), rec.Node)
 }
 
 func nodeGateError(marker string, markerPresent bool, nodes []v2.NodeRecord) error {
@@ -493,7 +528,6 @@ func carrySeatFields(row, current v2.SessionRecord) v2.SessionRecord {
 func sameProjectedSession(a, b v2.SessionRecord) bool {
 	return a.Kind == b.Kind &&
 		a.GUID == b.GUID &&
-		a.Node == b.Node &&
 		a.State == b.State &&
 		a.Label == b.Label &&
 		a.Role == b.Role &&
@@ -512,7 +546,6 @@ func sameSeatFields(a, b *v2.Seat) bool {
 		return a == nil && b == nil
 	}
 	return a.Kind == b.Kind &&
-		a.Node == b.Node &&
 		a.TerminalID == b.TerminalID &&
 		a.PaneID == b.PaneID &&
 		a.PID == b.PID &&
@@ -561,7 +594,7 @@ func V2LabelOwner(proj *v2.Projection, label, exceptGUID string) *v2.SessionReco
 		return nil
 	}
 	for _, rec := range proj.Sessions() {
-		if rec.Label == label && rec.GUID != exceptGUID && isNonRetired(rec.State) {
+		if rec.Label == label && rec.GUID != exceptGUID && isNonRetired(rec.State) && sessionHasRegisteredNode(proj, rec) {
 			cp := rec
 			return &cp
 		}

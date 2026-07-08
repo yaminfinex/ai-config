@@ -101,6 +101,29 @@ func TestProjectionAnomaliesAreLoudAndDeterministic(t *testing.T) {
 	}
 }
 
+func TestUnknownNodeMeansNoNodeRegisteredRow(t *testing.T) {
+	data := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"node-local","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"node","event":"node_registered","node_id":"node-restored","recorded_at":"2026-07-08T00:00:01Z"}`,
+		`{"kind":"session","guid":"guid-restored","event":"registered","recorded_at":"2026-07-08T00:00:02Z","node":"node-restored","state":"unseated","label":"restored","tool":"codex"}`,
+		`{"kind":"session","guid":"guid-ghost","event":"registered","recorded_at":"2026-07-08T00:00:03Z","node":"node-ghost","state":"unseated","label":"ghost","tool":"codex"}`,
+	}, "\n") + "\n"
+	var stderr bytes.Buffer
+	p, err := Load(strings.NewReader(data), LoadOptions{LocalNodeID: "node-local", Stderr: &stderr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unknown []Anomaly
+	for _, a := range p.Anomalies() {
+		if a.Type == "unknown-node" {
+			unknown = append(unknown, a)
+		}
+	}
+	if len(unknown) != 1 || unknown[0].GUID != "guid-ghost" || unknown[0].Node != "node-ghost" {
+		t.Fatalf("unknown-node anomalies = %+v, want only unregistered node-ghost", unknown)
+	}
+}
+
 func TestLegacyV1RealShapesMapReadOnly(t *testing.T) {
 	p, stderr := loadFixture(t, "v1-real-shape.jsonl")
 	if stderr != "" {
