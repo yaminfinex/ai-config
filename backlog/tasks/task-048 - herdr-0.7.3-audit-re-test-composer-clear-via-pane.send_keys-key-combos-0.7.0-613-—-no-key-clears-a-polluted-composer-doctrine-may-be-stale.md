@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 05:08'
+updated_date: '2026-07-08 08:18'
 labels: []
 dependencies: []
 priority: medium
@@ -27,5 +27,10 @@ Upstream pane.send_keys/pane.send_input.keys now accept Herdr key-combo strings 
 created: 2026-07-08 05:08
 ---
 vibe (herdr-0.7.3 audit, bus #5689, applied by hera): Verification half DONE — doctrine FALSIFIED live on 0.7.3: a composer-clear key exists and works end-to-end. Evidence (2026-07-08, disposable probes keyprobe-b4a557db/clprobe-e7ebebb4/cxprobe-4e5b86b5, all culled): (1) `herdr pane send-keys` accepts herdr-native combo strings — ctrl+u and backspace accepted+delivered; tmux-style C-u/BSpace still rejected invalid_key (capability is new; docs must not suggest tmux syntax). (2) Claude composer: ctrl+u clears cleanly (native kill-line, 'Ctrl+Y to paste deleted text' shown). (3) Starvation re-confirmed on 0.7.3: queued hcom message did NOT inject while composer polluted. (4) Clear->unblock proven: after ctrl+u the starved message injected immediately and the probe replied on the bus (#5661 UNBLOCKED). (5) Codex composer: ctrl+u clears too (placeholder restored). New doctrine for spawn-patterns.md:155: polluted composer -> `herdr pane send-keys <pane> ctrl+u`; queued bus delivery resumes at next boundary. Submit-through and codex double-submit tolerance no longer load-bearing. BOARD DECISION (hera): task re-scoped to the remaining CODE half — adopt ctrl+u in bootpaste/spawn recovery + cull/send help text; the doc rewrite folds into TASK-049's sweep.
+---
+
+created: 2026-07-08 08:18
+---
+[hera 2026-07-08] Vibe hand-back (#9373): worker task048-nezu, 1 commit 74fd3e0, vibe gate independently green. HERA GATE GREEN from worktree: vet/test both modules (spawncmd -count=1 fresh), 22/22 suites. Fence held (no internal/registry). Opus adversarial review dispatched: review-048-solo (guid 33b771d5, own tab), brief napkins/run-herder-dx/brief-review-048.md. Reviewer explicitly rules on: (1) the endorsed deviation — bash "$" composer sigil (recovery was inert with sigil ""; risk = scrollback dollar-space false-positive -> loud code-2 refusal on previously-working bash+--prompt; tighten with line anchoring vs accept); (2) queued-bus-message-vs-garbage — code path AND docs wording (cleared queued message re-injection is UNVERIFIED); plus ctrl+u wrong-state/double-fire, fail-closed integrity (TASK-024 floor byte-untouched through the pasteResult refactor), golden reality (fixtures must exercise the re-read). MEDIUM+ blocks merge.
 ---
 <!-- COMMENTS:END -->
