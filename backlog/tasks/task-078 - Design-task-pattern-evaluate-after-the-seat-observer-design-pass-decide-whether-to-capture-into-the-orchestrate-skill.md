@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 20:57'
+updated_date: '2026-07-08 22:05'
 labels: []
 dependencies: []
 priority: medium
@@ -30,3 +31,12 @@ THE DECISION THIS TASK HOLDS OPEN: do NOT encode design-task typing into the orc
 - [ ] #1 Seat-observer design pass has completed using this pattern and its outcome is summarized in a comment here
 - [ ] #2 Explicit decision recorded: capture into skill (with placement), amend, or drop — with reasons
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 22:05
+---
+FIRST DATA POINT — seat-observer design pass completed under this pattern (2026-07-08, one session): Designer (Fable) delivered in ~55 min: design doc answering all 8 settle-items, errata E-1..E-11, filed-ready impl task text. PATTERN OBSERVATIONS: (1) designer asked ZERO mid-unit questions — the remediated capture (task text as sole substance, thin mechanics brief) carried everything; (2) designer flagged its four contested scope calls to the reviewer in a dedicated section instead of self-adjudicating — the reviewer adjudicated all four (favorable with caveats), which worked exactly as the pattern intended; (3) delegation freedom was used lightly (source survey + live socket probes, no jury requested — each call had stated rationale and cheap reversal); (4) cross-family quality review (codex on Fable) produced 3 P1 + 3 P2, all substantive — the standout caught a false-applied trap in UpdateLocked return semantics at design time; one fix round to delta APPROVE; (5) tomo intent review (INTENT-OK) added distinct value beyond quality: caught that E-2 deviates from decision-record wording (needs an explicit steward call) and that the 60m cadence row class is designer-added, not owner-ratified — drift-detection the quality reviewer did not attempt; (6) the filed-ready impl text survived the reviewer's cold read ('buildable step by step') and filed cleanly as TASK-080 with 12 ACs. VERDICT SO FAR: pattern worked end-to-end with zero orchestrator scope re-invention. Remaining before the capture-into-skill decision: watch whether TASK-080's dispatch actually proceeds without re-inventing scope (the pattern's ultimate test).
+---
+<!-- COMMENTS:END -->

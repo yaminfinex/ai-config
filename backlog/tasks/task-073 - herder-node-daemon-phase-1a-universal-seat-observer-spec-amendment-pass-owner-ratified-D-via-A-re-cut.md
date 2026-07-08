@@ -3,10 +3,10 @@ id: TASK-073
 title: >-
   Design pass: herder node daemon phase 1a — universal seat observer (NOT ready
   to build; deliverable is a design)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-08 11:44'
-updated_date: '2026-07-08 22:02'
+updated_date: '2026-07-08 22:06'
 labels: []
 dependencies: []
 priority: high
@@ -82,5 +82,10 @@ Designer DONE d393f3b verified: docs-only diff confirmed (3 files, +722, nothing
 created: 2026-07-08 22:02
 ---
 Fix round 1e6bb84 (docs-only verified, +141/-56): all six findings + LOW applied. Delta APPROVE from dreview073-zinu — per-candidate outcome accounting pinned (T-10), suite split by rollout step (independently landable), herder-list advice surfacing mandatory (AC-11/T-6), E-10 block-on-steward coupling, implementable epoch rule (T-11/AC-12), fallback wording honest, cold-read buildable. Nonblocking nit recorded: E-11 self-labels 'four new ACs' while coverage rides E-7 + impl AC-11/12. Final gate in flight: tomo intent review (INTENT-OK/INTENT-DRIFT).
+---
+
+created: 2026-07-08 22:06
+---
+DESIGN PASS DONE. Merged 815d413 (docs-only +807), post-merge gate on main 29/29 + both go suites. All four ACs met: (1) design doc durable on main answering all 8 settle-items; (2) errata E-1..E-11 handed to spec steward with tomo's two notes (E-2 explicit call, 60m cadence designer-added) and E-10 return-to-review coupling; (3) filed-ready impl text filed as TASK-080 (12 ACs); (4) review chain complete — codex quality REQUEST-CHANGES -> fix 1e6bb84 -> delta APPROVE; tomo INTENT-OK. Implementation proceeds under TASK-080.
 ---
 <!-- COMMENTS:END -->
