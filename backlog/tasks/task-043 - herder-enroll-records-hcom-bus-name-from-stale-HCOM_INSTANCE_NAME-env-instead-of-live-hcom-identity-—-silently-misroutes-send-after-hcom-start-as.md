@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-08 10:19'
+updated_date: '2026-07-08 23:41'
 labels: []
 dependencies: []
 priority: medium
@@ -32,3 +32,10 @@ created: 2026-07-08 10:19
 0.7.3 re-verify complete (TASK-050 controlled restart): CONFIRMED STILL BROKEN, as predicted — no upstream change touches env staleness. Fresh repro: live bus identity hera (after hcom start --as hera), env frozen at HCOM_INSTANCE_NAME=mono; herder enroll wrote row 0c607d43 with hcom_name=mono. Workaround re-verified: HCOM_INSTANCE_NAME=hera herder enroll wrote row bbbc84c2 with hcom_name=hera (bus link confirmed: herder list shows BUS=@hera). New wrinkle for the fix design: the label-uniqueness check runs BEFORE pane-supersession retirement, so the corrective re-enroll cannot reuse the label the broken row holds — it needs a variant label, then rename. An enroll that resolved live hcom identity (or cross-checked env vs live) would have avoided the entire second enroll.
 ---
 <!-- COMMENTS:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 enroll resolves the LIVE hcom bus identity (from hcom, not env) or cross-checks env vs live and refuses/warns on mismatch — repro from comment 2 passes: after hcom start --as X with stale HCOM_INSTANCE_NAME=Y, the row records hcom_name=X
+- [ ] #2 the corrective path needs no variant-label dance: fixing a wrong-name row does not require enrolling under a throwaway label first (or the constraint is documented in the refusal text)
+- [ ] #3 suite covers stale-env enroll and the mismatch refusal/warning
+<!-- AC:END -->

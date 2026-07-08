@@ -4,6 +4,7 @@ title: 'herder send: resolve seat.hcom_name (bus name) as a send key'
 status: To Do
 assignee: []
 created_date: '2026-07-08 10:03'
+updated_date: '2026-07-08 23:42'
 labels:
   - herder
   - dx
@@ -19,3 +20,10 @@ herder send resolves guid / label / terminal / pane — but NOT seat.hcom_name (
 
 Reported by vibe during TASK-063 round-3 hand-back (bus #10730).
 <!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 herder send <bus-name> resolves via seat.hcom_name (repro from the description passes: send by bus name while the label differs)
+- [ ] #2 duplicate hcom_name across live rows refuses with candidates named (same discipline as label ambiguity)
+- [ ] #3 resolver order documented in send --help; suite covers resolution and refusal
+<!-- AC:END -->

@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 20:27'
-updated_date: '2026-07-08 20:49'
+updated_date: '2026-07-08 23:42'
 labels: []
 dependencies: []
 priority: high
@@ -33,3 +33,11 @@ created: 2026-07-08 20:49
 Context-measurement sources validated live by task075-zore (owner-commissioned investigation): CLAUDE = transcript JSONL ~/.claude/projects/<cwd-slug>/<session-id>.jsonl, last non-sidechain assistant message .message.usage (input + cache_read + cache_creation tokens); registry v2 already holds session id + cwd to resolve the path. CODEX = rollout JSONL ~/.codex/sessions/.../rollout-<ts>-<uuid>.jsonl, last token_count event, .payload.info.last_token_usage.total_tokens and .model_context_window (validated: 61768/258400 = 23.9%). Both are pure file reads by session id — no pane interaction. This answers this task's INVESTIGATE item and adds an implementation option: a herder ctx column can read these two sources directly per tool kind, with the statusline env snapshot remaining the better eventual source (carries window size + freshness/CTX_TS). Owner: 'not against building something into herder'.
 ---
 <!-- COMMENTS:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 claude statusline.sh writes CTX_PCT/CTX_TOKENS/CTX_SIZE/CTX_TS into its instance env file on each render (atomic tmp+rename, same discipline as the TASK-067 writer)
+- [ ] #2 herder list shows a ctx column sourced from the snapshot dir; absence/staleness rendered honestly (unknown, not 0%; CTX_TS drives staleness)
+- [ ] #3 codex source resolved: statusline publishes equivalent metrics, or list falls back to the validated rollout-JSONL read (comment 1), or absence is rendered unknown — one of the three, decided and implemented
+- [ ] #4 docs/status-lines.md contract updated for the two-way env-file protocol
+<!-- AC:END -->

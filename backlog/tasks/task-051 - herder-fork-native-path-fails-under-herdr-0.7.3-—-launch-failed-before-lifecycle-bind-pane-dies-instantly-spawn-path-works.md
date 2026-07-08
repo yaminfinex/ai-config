@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:08'
-updated_date: '2026-07-08 09:14'
+updated_date: '2026-07-08 23:42'
 labels: []
 dependencies: []
 priority: medium
@@ -37,3 +37,11 @@ created: 2026-07-08 09:14
 [hera 2026-07-08] +3 polish items from bozo #10145: (1) LOW latent: new-tab re-fetch queries the PRE-move pane id with no terminal_id fallback — fine while new-tab moves are same-workspace, add the fallback if that doctrine ever shifts; (2) NIT: compactMessage (spawn.go:1533) strips only whitespace, control/ANSI bytes survive into the human stderr summary; (3) NIT: dead write opts.Tab (spawn.go:809).
 ---
 <!-- COMMENTS:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 herder fork native path launches successfully under herdr 0.7.3+ (repro: herder fork --self) — pane survives to lifecycle bind, row seats
+- [ ] #2 herder cull of an already-closed guid reports "already closed at <ts> (<reason>)" instead of the misleading "no matching active records"
+- [ ] #3 fork acceptance check added to the herdr-upgrade runbook gate
+- [ ] #4 the three polish items from comments (node.go --new suggestion in the single-row malformed state; compactMessage control/ANSI strip; dead opts.Tab) get explicit fix-or-defer verdicts in the DONE report
+<!-- AC:END -->

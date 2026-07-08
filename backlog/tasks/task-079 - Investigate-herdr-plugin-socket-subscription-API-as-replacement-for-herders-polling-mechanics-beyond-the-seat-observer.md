@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 21:12'
-updated_date: '2026-07-08 21:29'
+updated_date: '2026-07-08 23:43'
 labels: []
 dependencies: []
 priority: medium
@@ -43,5 +43,10 @@ Scope note (owner FYI, verified): the socket API is queryable (pane.get/list/rea
 created: 2026-07-08 21:29
 ---
 Same correction as on task 73: no plugin registration needed for the socket API — the server listens on ~/.config/herdr/herdr.sock and any process can be a client (the herdr CLI is one; verified with zero plugins installed, protocol 16). The investigation should therefore compare THREE shapes per mechanic: keep current, direct socket client, or plugin packaging — with plugin only warranted where in-terminal integration (actions, plugin panes) matters.
+---
+
+created: 2026-07-08 23:43
+---
+Anchor post-TASK-080: a working direct socket client now exists in-repo (tools/herder/internal/observercmd/socket.go — discovery, protocol pin 16, persistent connection + events.subscribe, wrapped-result handling). The investigation should evaluate reusing/extracting it rather than designing from scratch. Stability data point for AC-2: protocol field + pin worked live; ALSO fold in the TASK-081 finding — session.snapshot wraps its payload under result.snapshot and mock-shape drift hid it, so any wider socket adoption needs live-shape contract checks, not just mocked ones.
 ---
 <!-- COMMENTS:END -->

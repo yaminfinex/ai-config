@@ -3,10 +3,10 @@ id: TASK-077
 title: >-
   Task-capture remediation pass: bring open backlog tasks up to the capture
   contract (TASK-073 first)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-08 20:49'
-updated_date: '2026-07-08 21:10'
+updated_date: '2026-07-08 23:43'
 labels: []
 dependencies: []
 priority: high
@@ -36,5 +36,10 @@ This is orchestrator-lane work (backlog/ has a single writer: the orchestrator) 
 created: 2026-07-08 21:10
 ---
 TASK-073 remediated (8f52a6a): retyped as a design task, decision-record content inlined in operative form, all references now reachable (design doc cited at branch+commit+path; napkins memo dependence removed), four ACs added covering the design deliverables and review chain. Remaining: audit the rest of the open To Do tail with pass/rewritten verdicts.
+---
+
+created: 2026-07-08 23:43
+---
+TAIL AUDIT COMPLETE (2026-07-08, all 18 open tasks read in full against the capture contract — three readers, reachable references, ACs at capture, plain language, no run context). VERDICTS — PASS (3): TASK-029 (ledger task, 4 ACs, candidates enumerated inline), TASK-078 (2 ACs, pattern stated self-contained), TASK-079 (3 ACs, verified facts inline; anchoring comment added for the shipped socket client). REWRITTEN (15): TASK-041/042/070 had scope drift — current scope existed only in the comment trail and 042s description still proposed the spec-illegal adopt-same-guid design; descriptions consolidated to current scope (042 states the frozen composite doctrine; 070 re-grounded against the shipped observer with a post-081 ordering note). TASK-061/062/065/066 had EMPTY descriptions with substance buried in Implementation Notes; promoted to plain-language descriptions. TASK-043/051/076/038/054/060/068/074 were substantively sound but had ZERO acceptance criteria; ACs written for all (074s scope section lifted into formal ACs). Every open task now carries ACs. Systemic observation for the capture doctrine: the dominant failure mode was not missing information but WRONG LAYER — scope lived in comments/notes where a dispatched worker reading top-down would miss or misread it; the contract should be read as "the description alone must be dispatch-safe; comments are history".
 ---
 <!-- COMMENTS:END -->

@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-08 11:19'
+updated_date: '2026-07-08 23:41'
 labels: []
 dependencies: []
 priority: medium
@@ -16,7 +16,11 @@ ordinal: 42000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Live hit (hera restart, 2026-07-08): the orchestrator session died (post-upgrade dead hooks) and a fresh claude session started in the SAME pane under a new bus name (dora). Assuming the retired identity took a three-step off-label dance: (1) hcom start --as hera to reclaim the bus name (only hcom can do this; herder rename only relabels a row + pane title, and cannot re-point a dead row at a live session); (2) herder enroll with manually-set HERDER_GUID=<old full guid> HERDER_LABEL/HERDER_ROLE env to adopt the old guid — the env-input path is designed for spawn bootstraps, not interactive adoption, and requires digging the full guid out of herder list --all --json (JSONL); (3) a SECOND enroll to fix the bus coordinate (see companion task on stale HCOM_INSTANCE_NAME). Proposal: herder adopt <target> — run from inside a pane; reclaims the target guid+label+role for the current pane/session, reclaims the hcom bus name (hcom start --as) or verifies it matches, retires stale rows via the TASK-035 guards, appends the row with LIVE coordinates. Retire-on-reenroll itself worked perfectly in production (retired @dora/@vore/@zero rows in one shot).
+A restarted session in the same pane needs a first-class identity-adoption path. FROZEN DOCTRINE (spec D1 / §3.1-1, ratified with owner clarification): a restarted process is a NEW transcript and must get a NEW guid — resume keeps the guid (same transcript continuing), only fork, /clear, and restart-replacement mint new guids. The legal composite for the restart case is: herder enroll (new guid) -> transfer the label from the old row -> retire the old row. Never re-key a guid to a new transcript (the original description of this task proposed adopt-same-guid; that design is DROPPED as spec-illegal).
+
+REMAINING SCOPE after the 0.7.3 re-run and TASK-071 (retire/reopen shipped): (1) an adopt convenience wrapper — herder adopt <old-target>, run from inside the new pane, composing the existing verbs (enroll new guid, retire old row, rename to reclaim the label), reclaiming or verifying the hcom bus name (hcom start --as), never re-keying a guid; (2) enroll label-uniqueness UX — enroll refuses a label held by a DEAD row (unseated + live_status=gone) with the same message as an active holder; it must distinguish, and either point at retire or (safer) refuse with the exact retire+rename recovery sequence named. rename --take-from stays wave C (atomicity convenience only — un-entombing already works via retire + plain rename).
+
+Live-hit history and the narrowing trail are in the comments; the two items above are the whole remaining scope.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Comments
@@ -47,3 +51,10 @@ created: 2026-07-08 11:19
 Spec-ravu ruling #11678 on the label-entombment blocker (surfaced by TASK-069 review): cull --retire variant REFUSED at steward level (seat-verb/session-verb separation; second write path to a terminal state; would need owner-blessed spec amendment). Resolution: retire + reopen pulled forward as unit C0 = TASK-071 (no spec change, pure sequencing). rename --take-from explicitly stays in wave C as an atomicity convenience — un-entombing needs only retire + existing plain rename. This task's remaining scope narrows further: the adopt composite convenience wrapper, and the enroll label-uniqueness UX against unseated holders.
 ---
 <!-- COMMENTS:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 herder adopt (or the agreed composite wrapper) takes a restarted session from fresh-pane state to: new guid seated with live coordinates, old row retired, label reclaimed, bus name reclaimed-or-verified — one command, guid never re-keyed
+- [ ] #2 enroll refusal against a label held by an unseated/dead row names the holder state and the concrete recovery steps (distinct from the active-holder refusal)
+- [ ] #3 suite covers the composite happy path and both refusal shapes
+<!-- AC:END -->

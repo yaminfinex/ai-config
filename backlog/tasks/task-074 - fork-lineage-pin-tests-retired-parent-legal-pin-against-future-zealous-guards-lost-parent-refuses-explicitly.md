@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 11:53'
+updated_date: '2026-07-08 23:42'
 labels: []
 dependencies: []
 priority: low
@@ -21,3 +22,9 @@ Scope (tiny, bundle-eligible into any lifecyclecmd-adjacent unit):
 1. Pin test: fork retired parent -> child registered with forked_from=<retired guid>, child seats fine, parent row count unchanged and state still retired.
 2. The ONE illegal parent is LOST (transcript verified gone = no substrate): fork of a lost parent must refuse EXPLICITLY with a clean message naming the lost verification, rather than failing wherever the missing transcript bites; test asserts refusal + zero rows appended anywhere.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 Pin test: fork of a RETIRED parent succeeds — child registered with forked_from=<retired guid>, child seats, parent row count unchanged and state still retired
+- [ ] #2 Fork of a LOST parent (transcript verified gone) refuses explicitly, naming the lost verification; zero rows appended anywhere
+<!-- AC:END -->
