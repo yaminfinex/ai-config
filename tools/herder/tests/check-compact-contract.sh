@@ -278,6 +278,10 @@ then_child_scenario then_queued     queued_busy
 # (proof (b)), then delivered. A naked sampled "listening" must NOT be enough.
 then_child_scenario then_armed_late armed_late
 THEN_TIMEOUT_MS=50 then_child_scenario then_timeout stuck
+# Fail-open guard (codex review P1 residual): the arm-time event snapshot FAILS
+# → proof (b) DISABLED; a naked "listening" (no observed transition) must fail
+# closed and deliver nothing, never trust a possibly-pre-arm event.
+THEN_TIMEOUT_MS=50 then_child_scenario then_snapshot_fail snap_fail
 
 # ---- grep gates: the ruled exception stays a ruled exception ----
 if [[ "$WRITE" -eq 0 ]]; then

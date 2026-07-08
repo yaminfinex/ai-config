@@ -17,9 +17,11 @@ type fakeProbe struct {
 	deliverN    int
 	lastMessage string
 	// Event-history proof: the arm-time watermark and the id of a post-arm
-	// turn-end event (0 = no such event exists).
+	// turn-end event (0 = no such event exists). snapshotFailed makes the arm
+	// watermark UNESTABLISHED (ok=false), disabling proof (b).
 	armWatermark   int64
 	turnEndEventID int64
+	snapshotFailed bool
 }
 
 func (f *fakeProbe) listStatus(_, _ string) string {
@@ -35,7 +37,12 @@ func (f *fakeProbe) listStatus(_, _ string) string {
 	return f.statuses[len(f.statuses)-1]
 }
 
-func (f *fakeProbe) maxEventID(_, _ string) int64 { return f.armWatermark }
+func (f *fakeProbe) maxEventID(_, _ string) (int64, bool) {
+	if f.snapshotFailed {
+		return 0, false
+	}
+	return f.armWatermark, true
+}
 
 func (f *fakeProbe) turnEndedSince(_, _ string, watermark int64) bool {
 	return f.turnEndEventID != 0 && f.turnEndEventID > watermark
@@ -188,6 +195,59 @@ func TestThenLoopPoisonNakedListeningNeverDelivers(t *testing.T) {
 		if !strings.Contains(log.String(), "FAILING CLOSED") {
 			t.Fatalf("%s: log missing fail-closed line:\n%s", c.name, log.String())
 		}
+	}
+}
+
+func TestThenLoopFailedSnapshotDisablesEventProof(t *testing.T) {
+	// codex review P1 residual (fail-open): the arm-time snapshot FAILED, so the
+	// watermark is untrusted. Even though a "listening" event exists and the
+	// sampled status is listening, proof (b) MUST be disabled — that event could
+	// predate the arm. With no observed active→listening transition either, it
+	// must fail closed and deliver nothing.
+	p := &fakeProbe{
+		statuses:       []string{"listening"},
+		deliverRet:     []string{"delivered"},
+		snapshotFailed: true,
+		turnEndEventID: 999, // a listening event exists, but the watermark is untrusted
+	}
+	cfg := baseCfg()
+	cfg.PollMS = 1000
+	cfg.TimeoutMS = 5000
+	clk := &fakeClock{now: time.Unix(0, 0), step: 1000 * time.Millisecond}
+	var log bytes.Buffer
+	code := runThenLoop(p, cfg, &log, clk.Now, clk.Sleep)
+
+	if code != 1 {
+		t.Fatalf("failed snapshot + stale listening must fail closed (exit 1), got %d; log:\n%s", code, log.String())
+	}
+	if p.deliverN != 0 {
+		t.Fatalf("must NOT deliver on an untrusted watermark, got %d delivers", p.deliverN)
+	}
+	if !strings.Contains(log.String(), "event-history proof DISABLED") {
+		t.Fatalf("log missing proof-disabled line:\n%s", log.String())
+	}
+	if !strings.Contains(log.String(), "event_proof=false") {
+		t.Fatalf("timeout line should record event_proof=false:\n%s", log.String())
+	}
+}
+
+func TestThenLoopFailedSnapshotStillDeliversOnObservedTransition(t *testing.T) {
+	// Even with a failed snapshot, proof (a) — a live observed active→listening
+	// transition — remains a valid path (it needs no watermark).
+	p := &fakeProbe{
+		statuses:       []string{"active", "listening"},
+		deliverRet:     []string{"delivered"},
+		snapshotFailed: true,
+	}
+	clk := &fakeClock{now: time.Unix(0, 0), step: 100 * time.Millisecond}
+	var log bytes.Buffer
+	code := runThenLoop(p, baseCfg(), &log, clk.Now, clk.Sleep)
+
+	if code != 0 {
+		t.Fatalf("observed transition must still deliver despite failed snapshot, got %d; log:\n%s", code, log.String())
+	}
+	if p.deliverN != 1 {
+		t.Fatalf("want 1 deliver via proof (a), got %d", p.deliverN)
 	}
 }
 

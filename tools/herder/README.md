@@ -173,9 +173,13 @@ Two deliberate exceptions ride keystrokes, neither reachable as a send transport
   Turn end is **proven, never assumed from a delay** (a fixed grace window would let a stale
   status read inject mid-turn — experiment #1 over the bus): it fires only on an observed
   `active`→`listening` transition, or — if it armed after the turn already ended — on an hcom
-  event-history `listening` record newer than the arm-time watermark. If neither proof
-  materializes before `--then-timeout` it **fails closed** and drops the continuation loudly (a
-  re-sendable dropped message beats a silent mid-turn injection). The target is the caller's OWN
+  event-history `listening` record newer than the arm-time watermark. That event-history proof is
+  gated on a *trusted* watermark: the arm-time snapshot distinguishes a genuinely empty history
+  from an hcom failure (retried a few times), and an unestablished snapshot DISABLES the
+  event-history proof rather than trusting a `0` that would accept a pre-arm record (fail-open) —
+  the observed transition then remains the only path. If neither proof materializes before
+  `--then-timeout` it **fails closed** and drops the continuation loudly (a re-sendable dropped
+  message beats a silent mid-turn injection). The target is the caller's OWN
   bus name, captured from the proven self row at compact time and never re-resolved from a pane id
   (task-034 experiment #2 misresolved a reused pane to a stale row). Delivery treats `queued` as
   success (hcom queue-until-deliverable injects it at the next turn — never resent) and retries a

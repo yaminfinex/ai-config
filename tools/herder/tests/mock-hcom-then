@@ -37,10 +37,10 @@ case "${1:-}" in
         jq -cn '{name:"me-bus", status:"active"}'
         exit 0
       fi
-      if [[ "$SCEN" == "armed_late" ]]; then
-        # Armed-late: "active" is NEVER sampled (turn ended before the first
-        # poll), so proof (a) can't fire — the sender must reach turn-end via the
-        # event-history proof (b) below.
+      if [[ "$SCEN" == "armed_late" || "$SCEN" == "snap_fail" ]]; then
+        # Never sample "active" (proof (a) can't fire). armed_late reaches
+        # turn-end via the event-history proof (b); snap_fail makes the arm-time
+        # events snapshot FAIL, so proof (b) is DISABLED and it must fail closed.
         jq -cn '{name:"me-bus", status:"listening"}'
         exit 0
       fi
@@ -70,6 +70,11 @@ case "${1:-}" in
     has_context=0
     for a in "$@"; do [[ "$a" == "--context" ]] && has_context=1; done
     if [[ "$has_context" -eq 0 ]]; then
+      if [[ "$SCEN" == "snap_fail" ]]; then
+        # The arm-time snapshot query fails (hcom transient): every attempt errors,
+        # so maxEventID returns ok=false and proof (b) stays disabled.
+        exit 1
+      fi
       # Arm-watermark snapshot / turn-end query. armed_late is stateful: the arm
       # snapshot (first call) sees only the pre-arm event #10, so watermark=10;
       # a LATER call also carries a post-arm listening event #20 (>10), which is

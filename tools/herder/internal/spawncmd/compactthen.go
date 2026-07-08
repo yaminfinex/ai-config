@@ -58,7 +58,12 @@ type thenConfig struct {
 //   - listStatus reports the caller's CURRENT session status
 //     ("active"|"listening"|"blocked"|"" unknown).
 //   - maxEventID snapshots the newest hcom event id for the caller at arm time,
-//     the watermark that makes a later turn-end event provably POST-arm.
+//     the watermark that makes a later turn-end event provably POST-arm. It
+//     returns ok=false when the snapshot could not be ESTABLISHED (hcom errored
+//     or returned unparseable output) — distinct from a genuinely empty history
+//     (ok=true, id 0). A bare 0 would conflate the two and let proof (b) accept
+//     a PRE-arm listening record under an hcom transient (codex review P1
+//     residual: fail-open); the ok flag gates proof (b) on a trusted watermark.
 //   - turnEndedSince reports whether hcom's event history shows a working→idle
 //     (status "listening") transition for the caller with an id STRICTLY newer
 //     than the arm-time watermark — proof the turn ended after we armed, even
@@ -67,7 +72,7 @@ type thenConfig struct {
 //     verdict ("delivered"|"queued"|"not_joined"|"send_failed").
 type busProbe interface {
 	listStatus(busName, busDir string) string
-	maxEventID(busName, busDir string) int64
+	maxEventID(busName, busDir string) (int64, bool)
 	turnEndedSince(busName, busDir string, watermark int64) bool
 	deliver(busName, busDir, message string, timeoutMS int) string
 }
@@ -103,9 +108,18 @@ func RunCompactThen(args []string, stdout, stderr io.Writer) int {
 // recoverable (the user just re-sends), a mid-turn injection silently corrupts
 // the compaction it was meant to follow.
 func runThenLoop(p busProbe, cfg thenConfig, log io.Writer, now func() time.Time, sleep func(time.Duration)) int {
-	watermark := p.maxEventID(cfg.BusName, cfg.BusDir)
-	fmt.Fprintf(log, "herder compact-then: armed for @%s (bus %s) — waiting for a PROVEN turn end before delivering %d chars (poll %dms, timeout %dms, arm event #%d)\n",
-		cfg.BusName, busDirLabel(cfg.BusDir), runeLen(cfg.Message), cfg.PollMS, cfg.TimeoutMS, watermark)
+	watermark, snapOK := establishWatermark(p, cfg, now, sleep)
+	if snapOK {
+		fmt.Fprintf(log, "herder compact-then: armed for @%s (bus %s) — waiting for a PROVEN turn end before delivering %d chars (poll %dms, timeout %dms, arm event #%d)\n",
+			cfg.BusName, busDirLabel(cfg.BusDir), runeLen(cfg.Message), cfg.PollMS, cfg.TimeoutMS, watermark)
+	} else {
+		// No trusted arm-time watermark: proof (b) is DISABLED (an untrusted
+		// watermark could accept a pre-arm listening record — fail-open). Only a
+		// live observed active→listening transition (proof (a)) can deliver; if
+		// that never comes, fail closed at timeout.
+		fmt.Fprintf(log, "herder compact-then: armed for @%s (bus %s) — arm-time event snapshot NOT established (hcom unavailable); event-history proof DISABLED, only a live observed working→listening transition will deliver (poll %dms, timeout %dms)\n",
+			cfg.BusName, busDirLabel(cfg.BusDir), cfg.PollMS, cfg.TimeoutMS)
+	}
 
 	start := now()
 	deadline := start.Add(time.Duration(cfg.TimeoutMS) * time.Millisecond)
@@ -120,7 +134,7 @@ func runThenLoop(p busProbe, cfg thenConfig, log io.Writer, now func() time.Time
 		if status == "listening" {
 			if sawActive {
 				proof = "observed working→listening transition"
-			} else if p.turnEndedSince(cfg.BusName, cfg.BusDir, watermark) {
+			} else if snapOK && p.turnEndedSince(cfg.BusName, cfg.BusDir, watermark) {
 				proof = "hcom events show a post-arm working→listening transition (armed after the turn began)"
 			}
 		}
@@ -129,9 +143,29 @@ func runThenLoop(p busProbe, cfg thenConfig, log io.Writer, now func() time.Time
 			return thenDeliver(p, cfg, log, now, sleep, deadline)
 		}
 		if !now().Before(deadline) {
-			fmt.Fprintf(log, "herder compact-then: TIMEOUT after %dms — turn end never PROVEN (last status=%q, saw_active=%t); FAILING CLOSED, continuation NOT delivered (a dropped continuation beats a mid-turn injection). Deliver it manually once the session is idle:\n  herder send %s -- %s\n",
-				cfg.TimeoutMS, statusLabel(status), sawActive, cfg.BusName, shellPreview(cfg.Message))
+			fmt.Fprintf(log, "herder compact-then: TIMEOUT after %dms — turn end never PROVEN (last status=%q, saw_active=%t, event_proof=%t); FAILING CLOSED, continuation NOT delivered (a dropped continuation beats a mid-turn injection). Deliver it manually once the session is idle:\n  herder send %s -- %s\n",
+				cfg.TimeoutMS, statusLabel(status), sawActive, snapOK, cfg.BusName, shellPreview(cfg.Message))
 			return 1
+		}
+		sleep(time.Duration(cfg.PollMS) * time.Millisecond)
+	}
+}
+
+// establishWatermark takes the arm-time event-id snapshot, retrying a bounded
+// few times so a single hcom transient at arm does not permanently disable
+// proof (b). ok=false only after every retry failed to establish a trusted
+// watermark — the caller then restricts itself to proof (a).
+func establishWatermark(p busProbe, cfg thenConfig, now func() time.Time, sleep func(time.Duration)) (int64, bool) {
+	tries := envInt("HERDER_COMPACT_THEN_ARM_TRIES", 3)
+	if tries < 1 {
+		tries = 1
+	}
+	for i := 1; ; i++ {
+		if wm, ok := p.maxEventID(cfg.BusName, cfg.BusDir); ok {
+			return wm, true
+		}
+		if i >= tries {
+			return 0, false
 		}
 		sleep(time.Duration(cfg.PollMS) * time.Millisecond)
 	}
@@ -148,7 +182,10 @@ func runThenLoop(p busProbe, cfg thenConfig, log io.Writer, now func() time.Time
 func thenDeliver(p busProbe, cfg thenConfig, log io.Writer, now func() time.Time, sleep func(time.Duration), deadline time.Time) int {
 	backoff := time.Duration(cfg.RetryBackoffMS) * time.Millisecond
 	for attempt := 1; ; attempt++ {
-		verdict := p.deliver(cfg.BusName, cfg.BusDir, cfg.Message, cfg.DeliverdMS)
+		// Cap the receipt window to the budget actually left (viro P2 nit): a
+		// 3s receipt wait must not overshoot a near-exhausted --then-timeout.
+		perSend := capMS(cfg.DeliverdMS, deadline, now)
+		verdict := p.deliver(cfg.BusName, cfg.BusDir, cfg.Message, perSend)
 		switch verdict {
 		case "delivered":
 			fmt.Fprintf(log, "herder compact-then: delivered on attempt %d — continuation is in @%s's queue post-compaction.\n", attempt, cfg.BusName)
@@ -162,9 +199,29 @@ func thenDeliver(p busProbe, cfg thenConfig, log io.Writer, now func() time.Time
 				attempt, verdict, cfg.BusName, shellPreview(cfg.Message))
 			return 1
 		}
-		fmt.Fprintf(log, "herder compact-then: send attempt %d -> %s; retrying in %dms (session may still be compacting)\n", attempt, verdict, cfg.RetryBackoffMS)
-		sleep(backoff)
+		// Cap the backoff to the remaining budget so the last sleep lands exactly
+		// on the deadline rather than past it.
+		wait := backoff
+		if rem := deadline.Sub(now()); rem < wait {
+			wait = rem
+		}
+		fmt.Fprintf(log, "herder compact-then: send attempt %d -> %s; retrying in %dms (session may still be compacting)\n", attempt, verdict, int(wait/time.Millisecond))
+		sleep(wait)
 	}
+}
+
+// capMS clamps a millisecond budget to the time actually left before deadline,
+// with a 1ms floor — never 0, since send.DeliverBus treats a 0 timeout as its
+// 3s default (which would defeat the cap).
+func capMS(want int, deadline time.Time, now func() time.Time) int {
+	remMS := int(deadline.Sub(now()) / time.Millisecond)
+	if remMS < want {
+		want = remMS
+	}
+	if want < 1 {
+		want = 1
+	}
+	return want
 }
 
 // hcomProbe is the production busProbe: `hcom list <name> --json` for status,
@@ -243,19 +300,37 @@ type hcomEvent struct {
 	} `json:"data"`
 }
 
-func (hcomProbe) maxEventID(busName, busDir string) int64 {
-	events := runHcomEvents(busName, busDir)
+// maxEventID snapshots the caller's newest event id, distinguishing a trusted
+// empty history (ok=true, 0) from an UNESTABLISHED snapshot (ok=false): an hcom
+// error, or non-empty output that parses to zero events (garbage we must not
+// trust). Only a trusted watermark may gate proof (b).
+func (hcomProbe) maxEventID(busName, busDir string) (int64, bool) {
+	out, err := runHcomEventsRaw(busName, busDir)
+	if err != nil {
+		return 0, false
+	}
+	if len(bytes.TrimSpace(out)) == 0 {
+		return 0, true // genuinely empty history — a trusted 0 watermark
+	}
+	events := parseHcomEvents(out)
+	if len(events) == 0 {
+		return 0, false // output present but unparseable — distrust it
+	}
 	var max int64
 	for _, e := range events {
 		if e.ID > max {
 			max = e.ID
 		}
 	}
-	return max
+	return max, true
 }
 
 func (hcomProbe) turnEndedSince(busName, busDir string, watermark int64) bool {
-	for _, e := range runHcomEvents(busName, busDir) {
+	out, err := runHcomEventsRaw(busName, busDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range parseHcomEvents(out) {
 		if e.ID > watermark && e.Type == "status" && e.Data.Status == "listening" {
 			return true
 		}
@@ -263,9 +338,10 @@ func (hcomProbe) turnEndedSince(busName, busDir string, watermark int64) bool {
 	return false
 }
 
-// runHcomEvents fetches recent events for busName, scoped to busDir. Live hcom
-// emits JSONL (one event per line, monotone id); a JSON array is also accepted.
-func runHcomEvents(busName, busDir string) []hcomEvent {
+// runHcomEventsRaw fetches recent events for busName, scoped to busDir, and
+// returns the raw bytes + any exec error. Live hcom emits JSONL (one event per
+// line, monotone id); a JSON array is also accepted by parseHcomEvents.
+func runHcomEventsRaw(busName, busDir string) ([]byte, error) {
 	cmd := exec.Command("hcom", "events", "--agent", busName, "--last", "50")
 	cmd.Env = os.Environ()
 	if busDir != "" && busDir != "null" {
@@ -274,9 +350,9 @@ func runHcomEvents(busName, busDir string) []hcomEvent {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
-		return nil
+		return nil, err
 	}
-	return parseHcomEvents(out.Bytes())
+	return out.Bytes(), nil
 }
 
 func parseHcomEvents(raw []byte) []hcomEvent {
