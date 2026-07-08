@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 08:39'
+updated_date: '2026-07-08 08:48'
 labels: []
 dependencies: []
 priority: medium
@@ -42,5 +42,10 @@ created: 2026-07-08 08:25
 created: 2026-07-08 08:39
 ---
 [hera 2026-07-08] Round 2 (#9703): 4d8dec3 fixes MEDIUM at all 5 sites (do-not-clear caveat for queued messages) + NIT properly (typed Refusal cause blocked|composer_polluted; non-circular guidance). Hera regate green on branch tree (22/22). LIVE-VERIFY ANSWERED (vibe, disposable probe 922dcd6d): queued bus message is NOT lost to ctrl+u — marker sent mid-turn, pane cleared before delivery, hcom delivered at the boundary and probe acked. hcom holds queued messages in its own store and injects regardless of composer state; NO compact.go guard needed; solo LOW closed empirically. BONUS FINDING: queued text NEVER rendered on the composer line (claude + hcom 0.7.23, three attempts) — the "queued renders on input line" sharp-edge claim is version-stale (possibly described the retired keystroke transport); do-not-clear caveat kept as defensive wording; CODEX render behavior unverified. INTEGRATION: 048 is second lander behind A3 which touched every spawn golden — nezu to merge main in-branch, regenerate new goldens post-A3, full 23-suite gate; then hera regate + solo delta on the final tree.
+---
+
+created: 2026-07-08 08:48
+---
+[hera 2026-07-08] Round 3 (#9813): nezu merged main in-branch (1dfb37f, A3 ancestor verified), regenerated bash goldens with node stamps, bus_queued golden carries both sides; compact polluted goldens correctly unchanged (no registry rows emitted). HERA REGATE GREEN on final tree: vet/test both modules, spawncmd -count=1 fresh, 23/23 suites. Solo delta requested on the final tree (caveat wording x5 vs empirical result, typed refusal causes, golden integration sanity). CLEAN delta = merge.
 ---
 <!-- COMMENTS:END -->
