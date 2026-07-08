@@ -167,14 +167,19 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	verify, rc := (&bootPaster{Client: herdr, PreflightVisibleOnly: true}).paste(targetPane, line)
+	paste := (&bootPaster{Client: herdr, PreflightVisibleOnly: true}).paste(targetPane, line)
+	verify, rc := paste.Verify, paste.Code
 	switch {
 	case verify == "" && rc == 2:
 		dieCompact(stderr, "refused — your pane shows a blocking overlay (modal/interrupted state); /compact was NOT typed. Clear it and retry.")
 		thenAbortNote(stderr, opts.ThenSet)
 		return 2
 	case rc == 0:
-		fmt.Fprintf(stderr, "herder compact: %s — %q is in your composer and fires when the current turn ends (verify: %s)\n", queuedWord(verify), line, verify)
+		notes := []string(nil)
+		if paste.ComposerCleared {
+			notes = append(notes, "composer_cleared")
+		}
+		fmt.Fprintf(stderr, "herder compact: %s — %q is in your composer and fires when the current turn ends (verify: %s%s)\n", queuedWord(verify), line, verify, pasteNoteSuffix(notes))
 		// AC#2 ordering floor: the paste is verified (rc==0), so and only so is
 		// it safe to arm the continuation — an unverified /compact must never
 		// have a continuation fired behind it into an uncompacted session.

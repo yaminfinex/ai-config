@@ -14,7 +14,7 @@
 #   readiness   — trust-modal clearing (Enter) vs --safe refusal; the
 #                 status+stable ready reason.
 #   new-tab     — tab create, root-pane identity check + close, pane_id
-#                 re-resolution by terminal_id after compaction; the rootguard
+#                 re-resolution by terminal_id after any re-key; the rootguard
 #                 refusal when the root reports the agent's terminal.
 #   delivery    — bus-first initial prompts (TASK-032): bind-wait (bus-name
 #                 capture is the delivery gate) → in-process hcom send with the
@@ -192,6 +192,9 @@ scenario newtab_rootguard  rootguard claude launchctx --role worker --agent clau
 scenario codex_multiline   ready codex launchctx --role worker --agent codex --prompt "$MULTILINE_BRIEF" --json
 # bash has no bus binding — its prompt keeps the spawn-private paste engine.
 scenario bash_prompt       ready bash launchctx --role worker --agent bash --prompt "do the thing" --json
+scenario bash_prompt_polluted_clear polluted_clear bash launchctx --role worker --agent bash --prompt "do the thing" --json
+scenario bash_prompt_polluted_still polluted_still bash launchctx --role worker --agent bash --prompt "do the thing" --json
+scenario bash_prompt_blocked_modal modal bash launchctx --role worker --agent bash --no-ready-wait --prompt "do the thing" --json
 # Bus delivery verify variants: send lands but no receipt in the window
 # (queued — do NOT resend), and hcom send itself failing (send_failed — a
 # resend IS safe, nothing went on the bus).

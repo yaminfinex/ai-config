@@ -53,13 +53,20 @@ func (b *bootPaster) sleep(d time.Duration) {
 
 const bootPasteTimeoutMS = 3000
 
-// paste types message into paneID and verifies delivery, preserving the
-// retired transport's contract: ("", 2) preflight refusal (modal/interrupted
-// state — nothing typed), ("not_landed", 1) paste never appeared,
-// ("not_delivered", 1) placed but submit unconfirmed, ("delivered"|"queued", 0)
-// success. The caller maps "" to delivery_result=not_attempted, matching the
-// old shell-out where a refusal produced no --json record.
-func (b *bootPaster) paste(paneID, message string) (string, int) {
+type pasteResult struct {
+	Verify          string
+	Code            int
+	ComposerCleared bool
+}
+
+// paste types message into paneID and verifies delivery, preserving the retired
+// transport's result contract: ("", 2) preflight refusal (modal/interrupted
+// state or uncleared composer pollution — nothing typed), ("not_landed", 1)
+// paste never appeared, ("not_delivered", 1) placed but submit unconfirmed,
+// ("delivered"|"queued", 0) success. The caller maps "" to
+// delivery_result=not_attempted, matching the old shell-out where a refusal
+// produced no --json record.
+func (b *bootPaster) paste(paneID, message string) pasteResult {
 	kind := b.detectKind(paneID)
 	sigil := ""
 	switch kind {
@@ -67,19 +74,42 @@ func (b *bootPaster) paste(paneID, message string) (string, int) {
 		sigil = "›"
 	case "claude":
 		sigil = "❯"
+	case "bash":
+		sigil = "$"
 	}
 
 	preText := stripChrome(b.readPane(paneID))
 	preStatus := b.detectStatus(paneID)
 	if _, blocked := preflightBlockedReason(preText); blocked && !b.PreflightVisibleOnly {
-		return "", 2
+		return pasteResult{Code: 2}
 	}
 	// The scrollback preflight above is blind to alternate-screen overlays:
 	// the first-run trust dialog (and claude /login) paint the VISIBLE screen
 	// but never enter the recent-unwrapped stream, so a blind paste would land
 	// inside the modal. Re-run the block check against the visible source too.
-	if _, blocked := preflightBlockedReason(stripChrome(b.readVisible(paneID))); blocked {
-		return "", 2
+	visibleText := stripChrome(b.readVisible(paneID))
+	if _, blocked := preflightBlockedReason(visibleText); blocked {
+		return pasteResult{Code: 2}
+	}
+
+	recoveryText := preText
+	if b.PreflightVisibleOnly {
+		recoveryText = visibleText
+	}
+	composerCleared := false
+	if composerLinePolluted(recoveryText, sigil) {
+		_, _ = b.client().Run("pane", "send-keys", paneID, "ctrl+u")
+		b.sleep(200 * time.Millisecond)
+		if b.PreflightVisibleOnly {
+			recoveryText = stripChrome(b.readVisible(paneID))
+		} else {
+			recoveryText = stripChrome(b.readPane(paneID))
+		}
+		if !composerConfirmedEmpty(recoveryText, sigil) {
+			return pasteResult{Code: 2}
+		}
+		composerCleared = true
+		preText = recoveryText
 	}
 
 	msgProbe := messageProbe(message)
@@ -139,7 +169,7 @@ func (b *bootPaster) paste(paneID, message string) (string, int) {
 	}
 
 	if !landed {
-		return "not_landed", 1
+		return pasteResult{Verify: "not_landed", Code: 1, ComposerCleared: composerCleared}
 	}
 
 	submitted := false
@@ -181,7 +211,7 @@ func (b *bootPaster) paste(paneID, message string) (string, int) {
 		} else if b.pollDelivered(paneID, preStatus, sigil, msgProbe, bootPasteTimeoutMS, composerEvidence) {
 			delivered = true
 		} else if preStatus == "working" {
-			return "queued", 0
+			return pasteResult{Verify: "queued", Code: 0, ComposerCleared: composerCleared}
 		} else if msgTrailingSigil(stripChrome(b.readPane(paneID)), sigil, msgProbe) {
 			// This read just saw the payload trailing the composer sigil and
 			// the Enter follows immediately, so composer-empty evidence is
@@ -197,9 +227,9 @@ func (b *bootPaster) paste(paneID, message string) (string, int) {
 	}
 
 	if verifyResult == "not_delivered" {
-		return verifyResult, 1
+		return pasteResult{Verify: verifyResult, Code: 1, ComposerCleared: composerCleared}
 	}
-	return verifyResult, 0
+	return pasteResult{Verify: verifyResult, Code: 0, ComposerCleared: composerCleared}
 }
 
 func (b *bootPaster) readPane(paneID string) string {
@@ -439,4 +469,21 @@ func composerLineEmpty(text, sigil string) bool {
 // a duplicate on top of a first paste it simply cannot see yet.
 func composerConfirmedEmpty(text, sigil string) bool {
 	return pastedBlobCount(text) == 0 && composerLineEmpty(text, sigil)
+}
+
+func composerLinePolluted(text, sigil string) bool {
+	if sigil == "" {
+		return false
+	}
+	needle := sigil + " "
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if idx := strings.LastIndex(lines[i], needle); idx >= 0 {
+			return strings.TrimSpace(lines[i][idx+len(needle):]) != ""
+		}
+		if strings.TrimRight(lines[i], " ") == sigil {
+			return false
+		}
+	}
+	return false
 }

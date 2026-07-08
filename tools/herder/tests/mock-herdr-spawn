@@ -19,8 +19,8 @@
 #   herdr worktree create --cwd <dir> --branch <name> [--base REF] --no-focus --json
 #
 # Behaviour is driven by env vars (set by the harness):
-#   MOCK_SPAWN_SCENARIO  ready | modal | modalvis | unknownmodal | rootguard | startfail
-#                        | wtcreatefail | wtstartfail
+#   MOCK_SPAWN_SCENARIO  ready | modal | modalvis | unknownmodal | polluted_clear
+#                        | polluted_still | rootguard | startfail | wtcreatefail | wtstartfail
 #       ready     — agent is receptive immediately
 #       modal     — a first-run directory-trust modal is open until an Enter
 #                   clears it (then the agent is receptive). Modal text shows in
@@ -33,6 +33,10 @@
 #       unknownmodal — an UNRECOGNIZED alternate-screen overlay: non-trust text
 #                   on `--source visible` only, status `blocked`, never clears.
 #                   Exercises the self-healing timeout snippet.
+#       polluted_clear — a bash composer starts with stray text; ctrl+u clears it,
+#                   then the paste proceeds and reports composer_cleared.
+#       polluted_still — a bash composer starts with stray text; ctrl+u is accepted
+#                   but does not clear, so paste refuses before typing.
 #       rootguard — `tab create` reports a root pane whose terminal_id equals
 #                   the agent's (herder spawn must refuse the root-pane close)
 #       startfail — `agent start` fails with a JSON error payload (exit 3)
@@ -55,7 +59,7 @@
 #   p_50   @ term_AGENT  the agent's pane at launch
 #   p_40   @ term_ROOT   the seed root shell of a --new-tab tab (tab_9)
 #   p_60   @ term_WTROOT the seed root shell of a --worktree workspace (w_WT)
-#   p_41   @ term_AGENT  the agent's pane AFTER the root close compacts ids
+#   p_41   @ term_AGENT  legacy fixture pane after a root close/re-key
 
 set -euo pipefail
 
@@ -70,6 +74,7 @@ log_call() { printf '%s\n' "$*" >>"$PROBE/calls"; }
 sent()          { [[ -f "$STATE/send" ]]; }
 entered()       { [[ -f "$STATE/enter" ]]; }
 modal_cleared() { [[ -f "$STATE/modal_cleared" ]]; }
+composer_cleared() { [[ -f "$STATE/composer_cleared" ]]; }
 root_closed()   { [[ -f "$STATE/root_closed" ]]; }
 tab_created()   { [[ -f "$STATE/tab_created" ]]; }
 sent_msg()      { cat "$STATE/msg" 2>/dev/null || true; }
@@ -126,6 +131,10 @@ current_text() {
   local msg; msg="$(sent_msg)"
   if modal_open; then
     printf '⏺ starting…\nDo you trust the contents of this directory?\n  1. Yes, continue\n%s ' "$sig"
+    return
+  fi
+  if [[ "$SCEN" == "polluted_clear" || "$SCEN" == "polluted_still" ]] && ! composer_cleared && ! sent; then
+    printf '⏺ ready\n%s stray draft' "$sig"
     return
   fi
   if ! sent; then
@@ -198,7 +207,8 @@ case "${1:-} ${2:-}" in
     fi;;
   "pane close")
     log_call "$@"
-    # p_40 (--new-tab seed) and p_60 (--worktree seed) both compact pane ids.
+    # p_40 (--new-tab seed) and p_60 (--worktree seed) both trigger this
+    # fixture's legacy root-closed pane shape.
     [[ "${3:-}" == "p_40" || "${3:-}" == "p_60" ]] && : > "$STATE/root_closed"
     jq -n --arg pane "${3:-}" '{result:{type:"closed", pane_id:$pane}}';;
   "agent read")
@@ -230,6 +240,8 @@ case "${1:-} ${2:-}" in
       elif sent; then
         : > "$STATE/enter"
       fi
+    elif [[ "${4:-}" == "ctrl+u" && "$SCEN" == "polluted_clear" ]]; then
+      : > "$STATE/composer_cleared"
     fi
     printf '{"result":{"ok":true}}\n';;
   "worktree list")

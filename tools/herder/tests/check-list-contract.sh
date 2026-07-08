@@ -50,7 +50,7 @@ trap 'rm -rf "$ROOT"' EXIT
 
 # Mock herdr: herder list calls `herdr agent list` and `herdr pane list`. Topology (vs fixture
 # registry): term_AAA live at its stored pane p_10 (idle, no drift); term_BBB
-# live but renumbered to p_99 (working, drifted from stored p_20); term_CCC and
+# live but re-keyed to p_99 (working, drifted from stored p_20); term_CCC and
 # term_DDD absent (gone); label reborn matches a new-epoch live agent by name;
 # term_UND is alive in pane list but absent from agent list (undetected).
 # MOCK_LIST_SCENARIO=fail makes the agent call fail, which herder list must

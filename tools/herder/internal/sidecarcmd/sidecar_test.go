@@ -113,7 +113,7 @@ func TestFindRowForLaunchFallbackRequiresUniqueMatch(t *testing.T) {
 
 // TestFindRowRefusesAmbiguousFallbackForHeadlessLaunch reproduces the forensic:
 // an orchestrator sidecar (its own guid) fails to pane-correlate any hcom row
-// (its launch_context drifted across a compaction), and a headless launch
+// (its launch_context drifted after a pane id re-key), and a headless launch
 // (calc17-tina) shares tool+tag+cwd. Newest-wins used to attach calc17-tina's
 // name onto the orchestrator's guid. The positive-correlate invariant must
 // refuse the enrichment entirely rather than guess.
