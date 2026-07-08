@@ -38,13 +38,61 @@ if [ -n "$branch" ]; then
 fi
 
 # herder/herdr identity — pure env, no `herdr` call (statusline renders often).
-# HERDR_PANE_ID is set in every herdr pane; HERDER_ROLE only on spawned agents.
+# HERDR_PANE_ID is set in every herdr pane; HERDER_* only on spawned agents.
 if [ "${HERDR_ENV:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
   herder_seg="${BLUE}⬡ ${HERDR_PANE_ID}${RESET}"
+  if [ -n "${HERDER_LABEL:-}" ]; then
+    herder_seg="${herder_seg} ${BLUE}${HERDER_LABEL}${RESET}"
+  fi
   if [ -n "${HERDER_ROLE:-}" ]; then
     herder_seg="${herder_seg} ${BLUE}[${HERDER_ROLE}]${RESET}"
   fi
+  hcom_name="${HCOM_INSTANCE_NAME:-${HCOM_NAME:-}}"
+  if [ -n "$hcom_name" ]; then
+    herder_seg="${herder_seg} ${BLUE}@${hcom_name}${RESET}"
+  fi
   line1="${line1} ・ ${herder_seg}"
+fi
+
+# Optional hcom bus snapshot. A future event-driven writer may update this
+# file; this renderer only performs cheap file reads and omits the segment when
+# no snapshot exists.
+hcom_state_file="${HCOM_STATUSLINE_STATE:-}"
+if [ -z "$hcom_state_file" ] && [ -n "${HCOM_DIR:-}" ]; then
+  hcom_state_file="${HCOM_DIR%/}/statusline/${HCOM_INSTANCE_NAME:-${HCOM_NAME:-self}}.env"
+fi
+if [ -n "$hcom_state_file" ] && [ -r "$hcom_state_file" ]; then
+  hcom_unread=""
+  hcom_last_age_s=""
+  while IFS='=' read -r key value; do
+    case "$key" in
+      HCOM_UNREAD) hcom_unread="$value" ;;
+      HCOM_LAST_AGE_S) hcom_last_age_s="$value" ;;
+    esac
+  done < "$hcom_state_file"
+  hcom_bus_seg=""
+  case "$hcom_unread" in
+    ''|*[!0-9]*) ;;
+    0) ;;
+    *) hcom_bus_seg="${MAGENTA}✉ ${hcom_unread}${RESET}" ;;
+  esac
+  case "$hcom_last_age_s" in
+    ''|*[!0-9]*) ;;
+    *)
+      if [ "$hcom_last_age_s" -lt 60 ]; then
+        hcom_age="${hcom_last_age_s}s"
+      elif [ "$hcom_last_age_s" -lt 3600 ]; then
+        hcom_age="$(( (hcom_last_age_s + 30) / 60 ))m"
+      else
+        hcom_age="$(( (hcom_last_age_s + 1800) / 3600 ))h"
+      fi
+      [ -n "$hcom_bus_seg" ] && hcom_bus_seg="${hcom_bus_seg} "
+      hcom_bus_seg="${hcom_bus_seg}${MAGENTA}last ${hcom_age}${RESET}"
+      ;;
+  esac
+  if [ -n "$hcom_bus_seg" ]; then
+    line1="${line1} ・ ${hcom_bus_seg}"
+  fi
 fi
 
 line2=""
