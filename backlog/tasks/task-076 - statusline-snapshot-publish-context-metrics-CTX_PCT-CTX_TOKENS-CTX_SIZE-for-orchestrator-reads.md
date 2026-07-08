@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 20:27'
+updated_date: '2026-07-08 20:49'
 labels: []
 dependencies: []
 priority: high
@@ -23,3 +24,12 @@ INVESTIGATE: codex status line — does its hook receive equivalent context data
 
 WHY HIGH: this is the enforcement mechanism for TASK-075 doctrine — the 200-250k compact band applies to workers, and a standing rule that requires pane-scraping to check will not get checked. Depends on: nothing (067 writer + contract already on main). Cross-file: TASK-075 capture should reference 'statusline snapshot' as the intended read path once this lands.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 20:49
+---
+Context-measurement sources validated live by task075-zore (owner-commissioned investigation): CLAUDE = transcript JSONL ~/.claude/projects/<cwd-slug>/<session-id>.jsonl, last non-sidechain assistant message .message.usage (input + cache_read + cache_creation tokens); registry v2 already holds session id + cwd to resolve the path. CODEX = rollout JSONL ~/.codex/sessions/.../rollout-<ts>-<uuid>.jsonl, last token_count event, .payload.info.last_token_usage.total_tokens and .model_context_window (validated: 61768/258400 = 23.9%). Both are pure file reads by session id — no pane interaction. This answers this task's INVESTIGATE item and adds an implementation option: a herder ctx column can read these two sources directly per tool kind, with the statusline env snapshot remaining the better eventual source (carries window size + freshness/CTX_TS). Owner: 'not against building something into herder'.
+---
+<!-- COMMENTS:END -->
