@@ -9,7 +9,7 @@ status: In Progress
 assignee:
   - vibe
 created_date: '2026-07-08 04:56'
-updated_date: '2026-07-08 05:25'
+updated_date: '2026-07-08 05:29'
 labels: []
 dependencies: []
 priority: high
@@ -59,5 +59,10 @@ Policy enforcement (vibe #5926, owner policy: codex implements, opus reviews, Fa
 created: 2026-07-08 05:25
 ---
 x-ref TASK-053 (sid self-reporting, prevention half): sid-based matching deliberately EXCLUDED from the reconcile fallback ladder for now — sids are empty by default until TASK-053 lands (ravu memo point 1). Reconcile stays terminal_id -> pane_id -> name==label. Status note: codex worker spawn mid-bind on extended window; Fable predecessor culled cleanly.
+---
+
+created: 2026-07-08 05:29
+---
+Registry corpse context for reconcile expectations (spec-ravu #6043): 1159 rows / 485 guids / 1.1MB, zero spec-v2 fields; ~28 of 34 latest-active rows are corpses. First reconcile run will mostly unseat/close corpses — dry-run output will be large; that is expected, not a bug.
 ---
 <!-- COMMENTS:END -->

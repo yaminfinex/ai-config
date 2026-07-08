@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 05:22'
+updated_date: '2026-07-08 05:29'
 labels: []
 dependencies: []
 priority: medium
@@ -32,5 +32,10 @@ hera (from spec-ravu #5816 + vibe #5689): stable-ids doctrine text must carry th
 created: 2026-07-08 05:22
 ---
 Refinement (spec-ravu #5865): doctrine text precision — pane_id is stable within a workspace (survives same-workspace tab moves); it re-keys only when a move CROSSES workspaces. terminal_id is move-stable in all cases.
+---
+
+created: 2026-07-08 05:29
+---
+spec-ravu migration-inventory (bus #6043, applied by hera): TASK-049 accelerant — complete doctrine-site table exists in memo-migration-inventory.md (herder-spec worktree napkin; branch-local, copy before pruning). 10 sites with current line numbers: send.go:227, wait.go:137, cull.go:141-143, enroll.go:188, registry.go:172-176, spawn.go:1554-1556, compact.go:159-208, docs/spawn-patterns.md:83, docs/herder-delta.md:135+, spec §3.3 (already fixed on-branch). Verdict per site: defensive CONCLUSIONS all survive 0.7.3 (terminal_id anchoring etc. stays); MECHANISM wording stale everywhere (claims routine in-session compaction/recycling). The sweep is a wording pass, not a logic pass.
 ---
 <!-- COMMENTS:END -->
