@@ -114,8 +114,8 @@ window ⇒ `queued` (do NOT resend). A target with no bus-bound registry row is 
 keystrokes are never typed. Exit codes and target forms: `herder send --help`. Contract pinned by
 `tests/check-send-contract.sh` (bus-only goldens) + `check-hcom-contract.sh` (scoping/addressing).
 
-Pane/terminal ids are positional and reused across sessions, so one coordinate can match several
-active rows (a reused pane accumulates a stale manual-enroll identity per prior session, TASK-035).
+Pane ids are display-only and terminal ids are run-scoped, so one coordinate can match several
+active rows (for example, stale manual-enroll identities from prior sessions, TASK-035).
 A lone candidate resolves as before (bus-less and not-yet-joined rows keep their existing
 refuse/queue outcomes); when >1 active row shares the coordinate, resolution delivers to the single
 row currently JOINED on the bus and REFUSES (exit 2) with the candidate list on ambiguity (0 or >1

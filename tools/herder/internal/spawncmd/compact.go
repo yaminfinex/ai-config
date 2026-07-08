@@ -65,8 +65,9 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Current truth: which terminal does the pane named by our environment
-	// hold NOW. HERDR_PANE_ID was captured at pane start and pane ids can be
-	// compacted/reassigned, so it is an entry point, never the paste target.
+	// hold NOW. HERDR_PANE_ID was captured at pane start and pane ids can
+	// re-key on moves or reshuffle after restart, so it is an entry point,
+	// never the paste target.
 	envPane := os.Getenv("HERDR_PANE_ID")
 	out, err := herdr.Output("pane", "get", envPane)
 	if err != nil {
@@ -216,10 +217,10 @@ type selfIdentity struct {
 // the hcom session id recorded in provenance — when BOTH are present they
 // must agree on one identity (a mismatch means at least one is stale or
 // inherited: refuse, never pick). Only when neither exists does it fall back
-// to positional resolution by the CURRENT terminal — and then it demands
-// corroborating evidence (the pane's foreground cwd matching our own working
-// directory) because a positional match cannot otherwise be told apart from a
-// neighbour after pane-id churn.
+// to resolution by the CURRENT terminal — and then it demands corroborating
+// evidence (the pane's foreground cwd matching our own working directory)
+// because a terminal-only match cannot otherwise be told apart from a stale
+// registry identity after pane-id re-keying or restart reshuffle.
 func resolveSelfRow(recs []registry.Record, pane herdrcli.Pane) (selfIdentity, string) {
 	guid := os.Getenv("HERDER_GUID")
 	sessionID := os.Getenv("HCOM_SESSION_ID")

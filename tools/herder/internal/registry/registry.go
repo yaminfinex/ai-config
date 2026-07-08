@@ -234,11 +234,11 @@ func Resolve(recs []Record, target string) *Record {
 }
 
 // ActiveByPaneOrTerminal resolves a pane_id/terminal_id to the latest ACTIVE
-// row holding it. Pane coordinates are positional (herdr reuses them across
-// sessions), so unlike guid/label resolution this refuses closed rows; ties
-// resolve last in guid order, matching the registry's jq semantics. Used by
-// bus-only send to map term_*/pane targets to a registry row (and from there
-// to a bus name) now that keystroke delivery at raw coordinates is gone.
+// row holding it. Pane ids are display-only and terminal ids are run-scoped,
+// so unlike guid/label resolution this refuses closed rows; ties resolve last
+// in guid order, matching the registry's jq semantics. Used by bus-only send
+// to map term_*/pane targets to a registry row (and from there to a bus name)
+// now that keystroke delivery at raw coordinates is gone.
 func ActiveByPaneOrTerminal(recs []Record, key string) *Record {
 	if key == "" {
 		return nil
@@ -256,9 +256,9 @@ func ActiveByPaneOrTerminal(recs []Record, key string) *Record {
 
 // ActiveCandidatesByPaneOrTerminal returns EVERY latest ACTIVE row whose
 // pane_id or terminal_id equals key, in guid order (the same order
-// LatestByGUID yields). Pane coordinates are positional — herdr reuses one
-// physical pane across sessions — so a reused pane can accumulate several
-// active rows (a stale manual-enroll identity per prior session). Unlike
+// LatestByGUID yields). Pane ids are display-only and may have stale registry
+// claimants, so one coordinate can accumulate several active rows (for
+// example, a stale manual-enroll identity per prior session). Unlike
 // ActiveByPaneOrTerminal, which silently keeps only the last, this exposes the
 // full candidate set so a caller can disambiguate by bus liveness and refuse
 // to guess when more than one is live (TASK-035).
