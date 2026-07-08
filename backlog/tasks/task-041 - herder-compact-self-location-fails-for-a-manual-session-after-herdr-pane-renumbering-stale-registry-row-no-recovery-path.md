@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:34'
-updated_date: '2026-07-08 11:31'
+updated_date: '2026-07-08 23:36'
 labels: []
 dependencies: []
 priority: medium
@@ -16,7 +16,15 @@ ordinal: 41000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Live hit (hera, 2026-07-08, first production compact --then attempt): herder compact refused with 'terminal term_65586d58... not live in herdr agent list; cannot locate your own pane'. The orchestrator is a MANUAL session; its registry row records the pane/terminal from enroll time, herdr since renumbered panes (live pane now w6554208c1918a12-3; row says -1 with a dead terminal id), and the self-location ladder (HERDER_GUID -> session id -> registry row) dead-ends on the stale coordinates. Fail-closed refusal is CORRECT (nothing typed) — but there is no recovery affordance: the refusal message doesn't say HOW to re-prove identity. Fix directions: (a) refusal message suggests re-enrolling (herder enroll) to refresh the row — verify enroll actually detects the CURRENT pane in this situation (its env may be equally stale: HERDR_PANE_ID held a legacy p_NNN handle); (b) ladder gains a live fallback: match own process/session against herdr agent list (the live list DOES show the session, correct pane, agent_status) — child-specific by construction; (c) at minimum document the restart-or-reenroll remedy in compact --help. Related: TASK-035 handled this class for SEND (pane-id resolution); compact's SELF path has the same disease from the other side.
+herder compact self-location refuses for manual/enrolled sessions whose registry coordinates or herdr detection state have drifted. Three live hits + one field report (see comments for full evidence); CURRENT CONSOLIDATED SCOPE (supersedes the original description):
+
+(a) PANE-LIST FALLBACK: compact self-location checks the herdr AGENT list only; a detection-lost-but-alive caller (pane alive and readable, agent absent from agent list — the herdr-upgrade breakage class, and shell-relaunched sessions per TASK-070) is refused even with correct registry coordinates. Give compact the same tri-state treatment TASK-046 gave wait/list: fall back to the pane list + guid/label match when the agent list has no entry.
+
+(b) RECOVERY AFFORDANCE: the refusal text diagnoses well (identity chain: no HERDER_GUID, no session match, no active row) but never says HOW to re-prove identity. Refusal must name concrete recovery steps (re-enroll, or the manual pane-injection workaround: herdr pane send-keys <own-pane> ctrl+u, send-text the /compact command, send-keys enter).
+
+(c) CWD CORROBORATION TOO STRICT: compact also refuses when the invoking shell cwd is a SUBDIRECTORY of the pane foreground cwd (lale field report); accept subdirectory matches.
+
+Fail-closed remains correct in all cases — nothing may be typed into an unverified pane. Related: TASK-035 fixed this disease class for send; TASK-046 for wait/list.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Comments
@@ -42,3 +50,11 @@ created: 2026-07-08 11:31
 lale field data (#11888), second refusal mode (benign): herder compact also refuses when the invoking shell cwd is a SUBDIRECTORY of the pane foreground cwd (cwd corroboration too strict); running from the repo root cleared it. Distinct from the own-pane refusal already on this task; fold both into whatever loosens compact's corroboration.
 ---
 <!-- COMMENTS:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 compact from a detection-lost-but-alive pane (agent list empty for the pane, pane list + registry coordinates agree) succeeds via the pane-list fallback
+- [ ] #2 every self-location refusal message names at least one concrete recovery step; no refusal ends at diagnosis only
+- [ ] #3 compact invoked from a subdirectory of the pane foreground cwd is accepted
+- [ ] #4 contract suite covers the fallback path, the refusal wording, and the subdirectory case
+<!-- AC:END -->
