@@ -49,12 +49,20 @@ Written after the 0.7.22 → 0.7.23 upgrade (2026-07-08); shaped by what actuall
 
 ## Known gotchas
 
-- **Running sessions keep their old PATH.** A session started before the upgrade may have
-  the OLD versioned mise install dir baked into PATH; after `mise uninstall` that binary is
-  gone and the herder shim finds no real hcom — it degrades to silent exit 0 (bus goes
-  quiet, no error). Fix per session: prepend `$HOME/.local/share/mise/shims` to PATH (or
-  restart the session). Newly spawned agents are immune — spawn's argv prepends the mise
-  shims dir explicitly.
+- **Running sessions keep their old PATH — and this breaks INBOUND delivery, not just CLI
+  calls.** A session started before the upgrade may have the OLD versioned mise install dir
+  baked into PATH; after `mise uninstall` that binary is gone and the herder shim finds no
+  real hcom — it degrades to silent exit 0. Two distinct symptoms (both live-hit on
+  2026-07-08): (a) the session's own `hcom`/`herder` shell calls go quiet — fixable per
+  Bash call by prepending `$HOME/.local/share/mise/shims` to PATH; (b) the session's HOOKS
+  (which run in the agent process env, unreachable from a shell export) drop incoming
+  message BODIES and delivery receipts — the agent sees empty `<hcom>` wakes repeating
+  while the real content sits queued. (b) has no in-session fix: drain/read via
+  `hcom listen`/`hcom events` in a PATH-fixed shell, and RESTART the session when
+  practical (compaction does NOT help — same process, same env). Newly spawned agents are
+  immune — spawn's argv prepends the mise shims dir explicitly. Upgrade sequencing lesson:
+  do step 5's uninstalls when long-lived sessions (orchestrators!) are between runs, or
+  accept degraded polling until they restart.
 - **`hash -r`** after PATH surgery in a live shell; bash caches lookups.
 - **The battery cannot see bootstrap-text drift** — its sessionstart fixtures are canned.
   Only step 6's live smoke proves the pairing. Keep fixtures covering BOTH old and new
