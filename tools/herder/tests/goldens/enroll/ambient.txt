@@ -1,8 +1,9 @@
 === STDERR ===
 enrolled cli-label (guid-existing-0000) pane=p_self terminal=term_SELF
 === STDOUT ===
-{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"<TS>","node":"","state":"seated","label":"cli-label","role":"cli-role","tool":"manual","seat":{"kind":"herdr","node":"","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"bus-ambient","namespace":"/hfake/.hcom","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"enroll","spawned_by":"guid-existing-0000","tag":"env-role","batch_id":"batch-9","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}
+{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"cli-label","role":"cli-role","tool":"manual","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"bus-ambient","namespace":"/hfake/.hcom","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"enroll","spawned_by":"guid-existing-0000","tag":"env-role","batch_id":"batch-9","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}
 === EXIT ===
 0
 === REGISTRY ===
-{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"<TS>","node":"","state":"seated","label":"cli-label","role":"cli-role","tool":"manual","seat":{"kind":"herdr","node":"","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"bus-ambient","namespace":"/hfake/.hcom","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"enroll","spawned_by":"guid-existing-0000","tag":"env-role","batch_id":"batch-9","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}
+{"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
+{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"cli-label","role":"cli-role","tool":"manual","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"bus-ambient","namespace":"/hfake/.hcom","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"enroll","spawned_by":"guid-existing-0000","tag":"env-role","batch_id":"batch-9","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}

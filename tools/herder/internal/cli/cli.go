@@ -18,6 +18,7 @@ import (
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/lifecyclecmd"
 	"ai-config/tools/herder/internal/listcmd"
+	"ai-config/tools/herder/internal/nodecmd"
 	"ai-config/tools/herder/internal/reconcilecmd"
 	"ai-config/tools/herder/internal/renamecmd"
 	"ai-config/tools/herder/internal/send"
@@ -47,6 +48,7 @@ var commands = []command{
 	{"fork", "Branch an enrolled agent session into a new guid", lifecyclecmd.RunFork},
 	{"resume", "Reopen an enrolled agent session with the same guid", lifecyclecmd.RunResume},
 	{"compact", "Queue a steered /compact into the caller's own pane (self only)", spawncmd.RunCompact},
+	{"node", "Manage the local herder node id", nodecmd.Run},
 	{"launch", "Launch an hcom-bound tool in the current pane", launchcmd.Run},
 	{"hook", "(internal) Shim hcom hook calls; rewrite the spawn bootstrap", hookcmd.Run},
 	{"sidecar", "(internal) Bridge hcom status to herdr pane status", sidecarcmd.Run},

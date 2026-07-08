@@ -28,7 +28,8 @@ agent start worker-<SHORT>
 === HCOM DIR ===
 <CASE>/home/.hcom
 === REGISTRY ===
-{"kind":"session","guid":"<GUID>","event":"registered","recorded_at":"<TS>","node":"","state":"seated","label":"worker-<SHORT>","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"","terminal_id":"term_AGENT","pane_id":"p_50","namespace":"<CASE>/home/.hcom","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tag":"worker","cwd":"/mock/cwd","workspace_id":"ws_1","ts":"<TS>"}}
-{"kind":"session","guid":"<GUID>","event":"recognised","recorded_at":"<TS>","node":"","state":"seated","label":"worker-<SHORT>","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"","terminal_id":"term_AGENT","pane_id":"p_50","hcom_name":"worker-rive","namespace":"<CASE>/home/.hcom","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tag":"worker","cwd":"/mock/cwd","workspace_id":"ws_1","ts":"<TS>"}}
+{"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
+{"kind":"session","guid":"<GUID>","event":"registered","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"worker-<SHORT>","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50","namespace":"<CASE>/home/.hcom","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tag":"worker","cwd":"/mock/cwd","workspace_id":"ws_1","ts":"<TS>"}}
+{"kind":"session","guid":"<GUID>","event":"recognised","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"worker-<SHORT>","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50","hcom_name":"worker-rive","namespace":"<CASE>/home/.hcom","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tag":"worker","cwd":"/mock/cwd","workspace_id":"ws_1","ts":"<TS>"}}
 === HCOM SEND ARGV ===
 === HCOM EVENTS ARGV ===
