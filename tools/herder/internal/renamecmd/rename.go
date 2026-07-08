@@ -41,6 +41,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		}
 		guid = rec.GUID
 		oldLabel = rec.Label
+		switch rec.State {
+		case v2.StateRetired:
+			return nil, fmt.Errorf("target %s is retired; run 'herder reopen %s' first", rec.GUID, rec.GUID)
+		case v2.StateLost:
+			return nil, fmt.Errorf("target %s is lost; lost sessions cannot be renamed", rec.GUID)
+		}
 		if owner := registry.V2LabelOwner(tx.Projection, newLabel, guid); owner != nil {
 			return nil, fmt.Errorf("label %q already belongs to active guid %s", newLabel, owner.GUID)
 		}

@@ -386,7 +386,7 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 		return row, true, nil
 	}
 	switch row.Event {
-	case "unseated", "retired":
+	case "unseated":
 		if current.State == row.State && row.Event == "unseated" && row.CloseResult == "" && row.CloseReason == "" && !current.LegacyV1 {
 			return row, false, nil
 		}
@@ -394,6 +394,22 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 			return row, false, nil
 		}
 		row = carryIdentityFields(row, *current)
+		row.Seat = nil
+	case "retired":
+		if current.State == v2.StateRetired || current.State == v2.StateLost {
+			return row, false, nil
+		}
+		row = carryUnlabelledIdentityFields(row, *current)
+		row.State = v2.StateRetired
+		row.Label = ""
+		row.Seat = nil
+	case "reopened":
+		if current.State != v2.StateRetired {
+			return row, false, nil
+		}
+		row = carryUnlabelledIdentityFields(row, *current)
+		row.State = v2.StateUnseated
+		row.Label = ""
 		row.Seat = nil
 	case "labelled", "label_transferred":
 		if current.Label == row.Label {
@@ -510,6 +526,10 @@ func cloneSeat(seat *v2.Seat) *v2.Seat {
 
 func carryIdentityFields(row, current v2.SessionRecord) v2.SessionRecord {
 	row.Label = current.Label
+	return carryUnlabelledIdentityFields(row, current)
+}
+
+func carryUnlabelledIdentityFields(row, current v2.SessionRecord) v2.SessionRecord {
 	row.Role = firstNonEmpty(row.Role, current.Role)
 	row.Tool = firstNonEmpty(row.Tool, current.Tool)
 	if len(row.SIDs) == 0 {
@@ -617,7 +637,11 @@ func V2ByGUID(proj *v2.Projection, guid string) *v2.SessionRecord {
 func V2Resolve(proj *v2.Projection, target string) *v2.SessionRecord {
 	var hit *v2.SessionRecord
 	for _, rec := range proj.Sessions() {
-		if rec.GUID == target || ShortGUID(rec.GUID) == target || rec.Label == target {
+		paneID := ""
+		if rec.Seat != nil {
+			paneID = rec.Seat.PaneID
+		}
+		if rec.GUID == target || ShortGUID(rec.GUID) == target || rec.Label == target || paneID == target {
 			cp := rec
 			hit = &cp
 		}
