@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -9,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
 func writeRegistry(t *testing.T, rows ...string) string {
@@ -260,10 +264,273 @@ func TestAppend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"guid":"g-1","status":"active"}` + "\n" + `{"guid":"g-2","status":"active"}` + "\n"
-	if string(data) != want {
-		t.Fatalf("file = %q, want %q", data, want)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("lines = %d, want 2: %s", len(lines), data)
 	}
+	for i, line := range lines {
+		var row map[string]any
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			t.Fatal(err)
+		}
+		if row["kind"] != "session" || row["state"] != "seated" || row["status"] != nil {
+			t.Fatalf("line %d = %s, want clean seated v2 session row", i+1, line)
+		}
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 || ptrString(recs[0].GUID) != "g-1" || recs[0].Status != "active" || ptrString(recs[1].GUID) != "g-2" {
+		t.Fatalf("legacy view = %+v, want active g-1/g-2 records", recs)
+	}
+}
+
+func TestLoadDerivesLegacyViewFromV2Rows(t *testing.T) {
+	path := writeRegistry(t,
+		`{"kind":"session","guid":"guid-seated","event":"registered","recorded_at":"2026-07-08T00:00:00Z","state":"seated","label":"seat","role":"worker","tool":"codex","seat":{"kind":"herdr","terminal_id":"term_1","pane_id":"p_1","hcom_name":"bus-seat","namespace":"/hcom"},"provenance":{"mechanism":"spawn","tool_session_id":"sess-1","tag":"worker"}}`,
+		`{"kind":"session","guid":"guid-unseated","event":"unseated","recorded_at":"2026-07-08T00:00:01Z","state":"unseated","label":"dormant","role":"worker","tool":"claude","provenance":{"mechanism":"spawn","tag":"worker"}}`,
+		`{"kind":"session","guid":"guid-retired","event":"retired","recorded_at":"2026-07-08T00:00:02Z","state":"retired","label":"done","tool":"bash"}`,
+	)
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byGUID := map[string]Record{}
+	for _, rec := range recs {
+		byGUID[ptrString(rec.GUID)] = rec
+	}
+	if got := byGUID["guid-seated"]; got.Status != "active" || got.PaneID != "p_1" || got.TerminalID != "term_1" || got.HcomName != "bus-seat" || got.HcomDir != "/hcom" || got.Agent != "codex" {
+		t.Fatalf("seated legacy view = %+v", got)
+	}
+	if got := byGUID["guid-unseated"]; got.Status != "active" || got.PaneID != "" || got.Agent != "claude" {
+		t.Fatalf("unseated legacy view = %+v, want active status without seat", got)
+	}
+	if got := byGUID["guid-retired"]; got.Status != "closed" || got.Agent != "bash" {
+		t.Fatalf("retired legacy view = %+v, want closed bash", got)
+	}
+}
+
+func TestTwoProcessLabelClaimsOneWinner(t *testing.T) {
+	if os.Getenv("HERDER_REGISTRY_CLAIM_HELPER") == "1" {
+		runLabelClaimHelper()
+		return
+	}
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	start := filepath.Join(t.TempDir(), "start")
+	cmds := make([]*exec.Cmd, 0, 2)
+	stderrs := make([]*bytes.Buffer, 0, 2)
+	for _, guid := range []string{"guid-alpha", "guid-beta"} {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestTwoProcessLabelClaimsOneWinner$", "-test.count=1")
+		cmd.Env = append(os.Environ(),
+			"HERDER_REGISTRY_CLAIM_HELPER=1",
+			"HERDER_REGISTRY_CLAIM_PATH="+path,
+			"HERDER_REGISTRY_CLAIM_GUID="+guid,
+			"HERDER_REGISTRY_CLAIM_START="+start,
+		)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		cmds = append(cmds, cmd)
+		stderrs = append(stderrs, &stderr)
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start helper %s: %v", guid, err)
+		}
+		t.Cleanup(func() {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		})
+	}
+	winners := 0
+	losers := 0
+	if err := os.WriteFile(start, []byte("go\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i, cmd := range cmds {
+		err := cmd.Wait()
+		if err == nil {
+			winners++
+			continue
+		}
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("unexpected helper error: %v", err)
+		}
+		stderr := stderrs[i].String()
+		if exitErr.ExitCode() == 42 && strings.Contains(stderr, `label "shared" already belongs`) {
+			losers++
+			continue
+		}
+		t.Fatalf("unexpected helper exit %d stderr=%s", exitErr.ExitCode(), stderr)
+	}
+	if winners != 1 || losers != 1 {
+		t.Fatalf("winners=%d losers=%d, want one winner and one loser", winners, losers)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner := ActiveLabelOwner(recs, "shared", ""); owner == nil {
+		t.Fatal("legacy resolver sees no shared owner")
+	}
+}
+
+func runLabelClaimHelper() {
+	start := os.Getenv("HERDER_REGISTRY_CLAIM_START")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(start); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			os.Stderr.WriteString("timed out waiting for start barrier\n")
+			os.Exit(2)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	path := os.Getenv("HERDER_REGISTRY_CLAIM_PATH")
+	guid := os.Getenv("HERDER_REGISTRY_CLAIM_GUID")
+	label := "shared"
+	prov := Provenance{Mechanism: "spawn"}
+	rec := Record{GUID: &guid, Label: &label, Status: "active", Provenance: &prov}
+	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{V2FromRecord(rec, "registered", v2.StateSeated, "")}, nil
+	})
+	if err == nil {
+		os.Exit(0)
+	}
+	os.Stderr.WriteString(err.Error() + "\n")
+	if strings.Contains(err.Error(), `label "shared" already belongs`) {
+		os.Exit(42)
+	}
+	os.Exit(2)
+}
+
+func TestLockedValidatorCarriesLegacySeatOnRename(t *testing.T) {
+	path := writeRegistry(t, `{"guid":"guid-legacy","short_guid":"legacy","label":"old","role":"worker","agent":"codex","terminal_id":"term_OLD","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"bus-old","status":"active"}`)
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, "guid-legacy")
+		if current == nil {
+			t.Fatal("missing legacy projection row")
+		}
+		next := *current
+		next.Event = "labelled"
+		next.Label = "new"
+		return []v2.SessionRecord{next}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := Resolve(recs, "guid-legacy")
+	if latest == nil || ptrString(latest.Label) != "new" || latest.PaneID != "p_old" || latest.TerminalID != "term_OLD" || latest.HcomName != "bus-old" || latest.HcomDir != "/hcom" {
+		t.Fatalf("latest = %+v, want renamed row with legacy seat carried", latest)
+	}
+}
+
+func TestAppendLegacyRetiredPreservesCloseReason(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	row := []byte(`{"guid":"guid-launch","short_guid":"launch","label":"launch","role":"worker","agent":"codex","terminal_id":"term_L","pane_id":"p_l","hcom_dir":"/hcom","hcom_name":"launch-bus","status":"closed","close_result":"launch_failed","close_reason":"pane exited before lifecycle bind"}`)
+	if err := AppendLegacySessionEvent(path, row, "retired", v2.StateRetired); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(data), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["state"] != v2.StateRetired || got["event"] != "retired" || got["close_result"] != "launch_failed" || got["close_reason"] != "pane exited before lifecycle bind" {
+		t.Fatalf("row = %s, want retired launch_failed with close_reason", data)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Status != "closed" || recs[0].CloseResult != "launch_failed" || recs[0].CloseReason == "" {
+		t.Fatalf("legacy view = %+v, want closed launch_failed", recs)
+	}
+}
+
+func TestLockedValidatorPreservesRenameAgainstStaleEnrichment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	guid, oldLabel := "guid-stale", "old"
+	if err := Append(path, []byte(`{"guid":"`+guid+`","label":"`+oldLabel+`","role":"worker","agent":"codex","pane_id":"p_old","terminal_id":"term_old","status":"active"}`)); err != nil {
+		t.Fatal(err)
+	}
+	stale := Record{GUID: &guid, Label: &oldLabel, Role: "worker", Agent: "codex", PaneID: "p_new", TerminalID: "term_new", HcomName: "bus-new", Status: "active"}
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, guid)
+		next := *current
+		next.Event = "labelled"
+		next.Label = "new"
+		return []v2.SessionRecord{next}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, stale), "recognised", v2.StateSeated); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := Resolve(recs, guid)
+	if latest == nil || ptrString(latest.Label) != "new" || latest.HcomName != "bus-new" {
+		t.Fatalf("latest = %+v, want label new with enriched bus", latest)
+	}
+}
+
+func TestLockedValidatorDoesNotResurrectUnseatedSession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	guid, label := "guid-culled", "worker"
+	if err := Append(path, []byte(`{"guid":"`+guid+`","label":"`+label+`","role":"worker","agent":"codex","pane_id":"p_old","terminal_id":"term_old","status":"active"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, guid)
+		next := *current
+		next.Event = "unseated"
+		next.State = v2.StateUnseated
+		next.Seat = nil
+		return []v2.SessionRecord{next}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stale := Record{GUID: &guid, Label: &label, Role: "worker", Agent: "codex", PaneID: "p_new", TerminalID: "term_new", HcomName: "bus-new", Status: "active"}
+	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, stale), "recognised", v2.StateSeated); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := Resolve(recs, guid)
+	if latest == nil || latest.PaneID != "" || latest.HcomName != "" {
+		t.Fatalf("latest = %+v, want still unseated/no seat after stale heartbeat", latest)
+	}
+}
+
+func TestLockedWriterRefusesUnlocked(t *testing.T) {
+	t.Setenv("HERDER_TEST_FLOCK_REFUSE", "1")
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	err := Append(path, []byte(`{"guid":"g-1","status":"active"}`))
+	if err == nil || !strings.Contains(err.Error(), "refusing to write unlocked") {
+		t.Fatalf("err = %v, want refusing to write unlocked", err)
+	}
+}
+
+func mustMarshalRecord(t *testing.T, rec Record) []byte {
+	t.Helper()
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func TestDefaultPath(t *testing.T) {

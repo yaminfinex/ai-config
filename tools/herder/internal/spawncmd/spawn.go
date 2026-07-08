@@ -17,6 +17,7 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/send"
 	"ai-config/tools/herder/internal/shellquote"
 )
@@ -927,8 +928,29 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		Status:               "active",
 		Provenance:           registry.BuildProvenance("spawn", spawnedBy, opts.Role, resolvedCWD, wsID),
 	}
-	registryLine, _ := json.Marshal(record)
-	if err := appendLine(registryPath, registryLine); err != nil {
+	regRec := registry.Record{
+		GUID:       &record.GUID,
+		ShortGUID:  &record.ShortGUID,
+		Label:      &record.Label,
+		Role:       record.Role,
+		Agent:      record.Agent,
+		PaneID:     record.PaneID,
+		TerminalID: record.TerminalID,
+		HcomDir:    record.HcomDir,
+		HcomName:   record.HcomName,
+		HcomTag:    record.HcomTag,
+		Status:     record.Status,
+		Provenance: &record.Provenance,
+	}
+	if _, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		if owner := registry.V2LabelOwner(tx.Projection, record.Label, record.GUID); owner != nil {
+			return nil, fmt.Errorf("label %q already belongs to active guid %s", record.Label, owner.GUID)
+		}
+		row := registry.V2FromRecord(regRec, "registered", v2.StateSeated, record.StartedAt)
+		row.Provenance.CWD = record.CWD
+		row.Provenance.WorkspaceID = record.WorkspaceID
+		return []v2.SessionRecord{row}, nil
+	}); err != nil {
 		die(r.stderr, err.Error())
 		return 1
 	}
@@ -969,8 +991,22 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 				if name != "" {
 					record.HcomName = name
 					hcomCapture = "captured"
-					updated, _ := json.Marshal(record)
-					if err := appendLine(registryPath, updated); err != nil {
+					if _, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+						current := registry.V2ByGUID(tx.Projection, record.GUID)
+						if current == nil || current.State == v2.StateRetired || current.State == v2.StateLost {
+							return nil, nil
+						}
+						next := *current
+						next.Event = "recognised"
+						next.State = v2.StateSeated
+						next.RecordedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+						if next.Seat == nil {
+							next.Seat = &v2.Seat{Kind: "herdr"}
+						}
+						next.Seat.HcomName = name
+						next.Seat.ConfirmedAt = next.RecordedAt
+						return []v2.SessionRecord{next}, nil
+					}); err != nil {
 						die(r.stderr, err.Error())
 						return 1
 					}
@@ -1571,19 +1607,6 @@ func parseAgentStart(out []byte) (agentStartPayload, error) {
 	return envelope.Result, err
 }
 
-func appendLine(path string, line []byte) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if _, err := f.Write(line); err != nil {
-		return err
-	}
-	_, err = f.Write([]byte("\n"))
-	return err
-}
-
 func registryCapturedName(path, guid string) string {
 	for i := 0; i < 6; i++ {
 		if name := registryCapturedNameOnce(path, guid); name != "" {
@@ -1842,4 +1865,3 @@ func sleepMS(ms int) {
 	}
 	time.Sleep(time.Duration(ms) * time.Millisecond)
 }
-

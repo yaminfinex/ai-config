@@ -1,8 +1,6 @@
 package enrollcmd
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +9,7 @@ import (
 
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
 type options struct {
@@ -72,27 +71,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	role := firstNonEmpty(opts.role, os.Getenv("HERDER_ROLE"), "manual")
 
 	registryPath := registry.DefaultPath()
-	var recs []registry.Record
-	var latest *registry.Record
-	if loaded, err := registry.Load(registryPath); err == nil {
-		recs = loaded
-		for _, rec := range registry.LatestByGUID(recs) {
-			if ptrString(rec.GUID) == guid {
-				cp := rec
-				latest = &cp
-				break
-			}
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		die(stderr, err.Error())
-		return 1
-	}
-	if owner := registry.ActiveLabelOwner(recs, label, guid); owner != nil {
-		die(stderr, fmt.Sprintf("label %q already belongs to active guid %s", label, ptrString(owner.GUID)))
-		return 1
-	}
+	var appendedRow []byte
 
-	// Retire prior identities bound to this same pane. A herdr pane hosts
+	// Unseat prior identities bound to this same pane. A herdr pane hosts
 	// exactly one live session at a time, but pane ids are positional and
 	// reused across sessions — so any OTHER active row still claiming this
 	// pane_id is a stale identity from an earlier session that reused the pane.
@@ -100,72 +81,78 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	// send resolution could pick it over the live one (TASK-035). Mark each
 	// closed before appending this session's row.
 	nowISO := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	for _, prior := range registry.LatestByGUID(recs) {
-		if prior.Status != "active" || prior.PaneID != pane.PaneID || ptrString(prior.GUID) == guid {
-			continue
+	encoded, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		var latest *v2.SessionRecord
+		for _, rec := range tx.Projection.Sessions() {
+			if rec.GUID == guid {
+				cp := rec
+				latest = &cp
+				break
+			}
 		}
-		if !shouldRetirePriorRow(prior, pane.TerminalID, busJoined) {
-			continue
+		if owner := registry.V2LabelOwner(tx.Projection, label, guid); owner != nil {
+			return nil, fmt.Errorf("label %q already belongs to active guid %s", label, owner.GUID)
 		}
-		retire, err := registry.UpdateRawObject(prior.Raw, map[string]any{
-			"status":         "closed",
-			"closed_at":      nowISO,
-			"closed_by_pane": pane.PaneID,
-			"close_result":   "superseded",
-			"close_reason":   "reenroll_same_pane",
-		})
-		if err != nil {
-			die(stderr, err.Error())
-			return 1
+		var rows []v2.SessionRecord
+		for _, priorV2 := range tx.Projection.Sessions() {
+			prior := registry.LegacyFromV2(priorV2)
+			if prior.Status != "active" || prior.PaneID != pane.PaneID || ptrString(prior.GUID) == guid {
+				continue
+			}
+			if !shouldRetirePriorRow(prior, pane.TerminalID, busJoined) {
+				continue
+			}
+			next := priorV2
+			next.Event = "unseated"
+			next.State = v2.StateUnseated
+			next.RecordedAt = nowISO
+			next.Seat = nil
+			rows = append(rows, next)
+			fmt.Fprintf(stderr, "retired stale pane row %s (%s) superseded by re-enroll\n", ptrString(prior.Label), ptrString(prior.GUID))
 		}
-		if err := registry.Append(registryPath, retire); err != nil {
-			die(stderr, err.Error())
-			return 1
-		}
-		fmt.Fprintf(stderr, "retired stale pane row %s (%s) superseded by re-enroll\n", ptrString(prior.Label), ptrString(prior.GUID))
-	}
 
-	mechanism := "enroll"
-	agent := firstNonEmpty(envTool(), "manual")
-	if latest != nil && latest.Provenance != nil && latest.Provenance.Mechanism != "" {
-		mechanism = latest.Provenance.Mechanism
-	}
-	if latest != nil {
-		agent = firstNonEmpty(latest.Agent, agent)
-	}
-	prov := registry.BuildProvenance(mechanism, "", os.Getenv("HCOM_TAG"), pane.CWD, pane.WorkspaceID)
-
-	base := []byte(`{}`)
-	if latest != nil && len(bytes.TrimSpace(latest.Raw)) > 0 {
-		base = latest.Raw
-	}
-	row, err := registry.UpdateRawObject(base, map[string]any{
-		"guid":         guid,
-		"short_guid":   short,
-		"label":        label,
-		"role":         role,
-		"agent":        agent,
-		"pane_id":      pane.PaneID,
-		"terminal_id":  pane.TerminalID,
-		"workspace_id": pane.WorkspaceID,
-		"cwd":          pane.CWD,
-		"hcom_dir":     os.Getenv("HCOM_DIR"),
-		"hcom_name":    os.Getenv("HCOM_INSTANCE_NAME"),
-		"hcom_tag":     os.Getenv("HCOM_TAG"),
-		"status":       "active",
-		"provenance":   prov,
+		mechanism := "enroll"
+		agent := firstNonEmpty(envTool(), "manual")
+		if latest != nil && latest.Provenance.Mechanism != "" {
+			mechanism = latest.Provenance.Mechanism
+		}
+		if latest != nil {
+			agent = firstNonEmpty(latest.Tool, agent)
+		}
+		prov := registry.BuildProvenance(mechanism, "", os.Getenv("HCOM_TAG"), pane.CWD, pane.WorkspaceID)
+		rec := registry.Record{
+			GUID:       &guid,
+			ShortGUID:  &short,
+			Label:      &label,
+			Role:       role,
+			Agent:      agent,
+			PaneID:     pane.PaneID,
+			TerminalID: pane.TerminalID,
+			HcomDir:    os.Getenv("HCOM_DIR"),
+			HcomName:   os.Getenv("HCOM_INSTANCE_NAME"),
+			HcomTag:    os.Getenv("HCOM_TAG"),
+			Status:     "active",
+			Provenance: &prov,
+		}
+		next := registry.V2FromRecord(rec, "seated", v2.StateSeated, nowISO)
+		next.Provenance.CWD = pane.CWD
+		next.Provenance.WorkspaceID = pane.WorkspaceID
+		if latest != nil && latest.Lineage != (v2.Lineage{}) {
+			next.Lineage = latest.Lineage
+		}
+		rows = append(rows, next)
+		return rows, nil
 	})
 	if err != nil {
 		die(stderr, err.Error())
 		return 1
 	}
-	if err := registry.Append(registryPath, row); err != nil {
-		die(stderr, err.Error())
-		return 1
+	if len(encoded) > 0 {
+		appendedRow = encoded[len(encoded)-1]
 	}
 	fmt.Fprintf(stderr, "enrolled %s (%s) pane=%s terminal=%s\n", label, guid, pane.PaneID, pane.TerminalID)
 	if opts.json {
-		fmt.Fprintln(stdout, string(row))
+		fmt.Fprintln(stdout, string(appendedRow))
 	}
 	return 0
 }

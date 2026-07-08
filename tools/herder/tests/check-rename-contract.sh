@@ -28,6 +28,8 @@ set -euo pipefail
 PROBE="${MOCK_PROBE_DIR:?}"
 mkdir -p "$PROBE"
 case "${1:-} ${2:-}" in
+  "agent list")
+    jq -n '{result:{agents:[]}}';;
   "agent rename")
     printf '%s\n' "$*" >>"$PROBE/herdr_rename_argv"
     if [[ "${MOCK_RENAME_SCENARIO:-ok}" == "fail" ]]; then
@@ -35,6 +37,8 @@ case "${1:-} ${2:-}" in
       exit 7
     fi
     jq -n '{result:{type:"ok"}}';;
+  "pane list")
+    jq -n '{result:{panes:[]}}';;
   *)
     printf 'mock herdr (rename suite): unhandled: %s\n' "$*" >&2
     exit 64;;
@@ -48,7 +52,7 @@ fail=0
 seed_registry() {
   mkdir -p "$CASE/state"
   cat >"$CASE/state/registry.jsonl" <<'JSONL'
-{"guid":"guid-alpha-0000","short_guid":"alpha","label":"alpha","role":"worker","agent":"codex","terminal_id":"term_ALPHA","pane_id":"p_alpha","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-alpha","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
+{"guid":"guid-alpha-0000","short_guid":"alpha","label":"alpha","role":"worker","agent":"codex","terminal_id":"term_ALPHA","pane_id":"p_alpha","hcom_dir":"/hcom-alpha","hcom_name":"alpha-rive","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-alpha","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
 {"guid":"guid-beta-0000","short_guid":"beta","label":"beta","role":"reviewer","agent":"claude","terminal_id":"term_BETA","pane_id":"p_beta","status":"active"}
 {"guid":"guid-closed-0000","short_guid":"closed","label":"old-closed","role":"reviewer","agent":"claude","terminal_id":"term_CLOSED","pane_id":"p_closed","status":"closed"}
 JSONL
@@ -77,9 +81,35 @@ block_for() {
     "$(cat "$CASE/state/registry.jsonl" 2>/dev/null)"
 }
 
+block_for_with_list() {
+  printf '%s\n=== LIST ===\n%s' \
+    "$(block_for)" \
+    "$(env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" "$REPO_ROOT/bin/herder" list 2>&1)"
+}
+
 check_one() {
   local name="$1" block gold
-  block="$(block_for)"
+  block="$(block_for | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g')"
+  gold="$GOLDENS/$name.txt"
+  if [[ "$WRITE" -eq 1 ]]; then
+    printf '%s\n' "$block" >"$gold"
+    printf 'WROTE  %s\n' "$name"
+    return
+  fi
+  if [[ ! -f "$gold" ]]; then
+    printf 'MISSING GOLDEN  %s (run --write first)\n' "$name"; fail=1; return
+  fi
+  if diff -u "$gold" <(printf '%s\n' "$block") >/tmp/hrn_diff.$$ 2>&1; then
+    printf 'PASS  %s\n' "$name"
+  else
+    printf 'FAIL  %s\n' "$name"; cat /tmp/hrn_diff.$$; fail=1
+  fi
+  rm -f /tmp/hrn_diff.$$
+}
+
+check_one_with_list() {
+  local name="$1" block gold
+  block="$(block_for_with_list | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g')"
   gold="$GOLDENS/$name.txt"
   if [[ "$WRITE" -eq 1 ]]; then
     printf '%s\n' "$block" >"$gold"
@@ -105,6 +135,8 @@ run_case collision ok alpha beta
 check_one collision
 run_case reuse_closed ok alpha old-closed
 check_one reuse_closed
+run_case legacy_preserves_seat ok alpha alpha-legacy-new
+check_one_with_list legacy_preserves_seat
 run_case unknown ok nope new-label
 check_one unknown
 

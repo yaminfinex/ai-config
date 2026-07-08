@@ -407,7 +407,7 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 		"provenance":   prov,
 	})
 	if err == nil {
-		return registry.Append(s.registry, out) == nil
+		return registry.AppendLegacySessionEvent(s.registry, out, "recognised", "seated") == nil
 	}
 	return false
 }

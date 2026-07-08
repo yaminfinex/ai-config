@@ -102,7 +102,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				res.Write = "error"
 				res.Detail = res.Detail + "; write failed: " + err.Error()
 				exit = 1
-			} else if err := registry.Append(registryPath, row); err != nil {
+			} else if err := registry.AppendLegacySessionEvent(registryPath, row, "reconciled", "seated"); err != nil {
 				res.Write = "error"
 				res.Detail = res.Detail + "; write failed: " + err.Error()
 				exit = 1
