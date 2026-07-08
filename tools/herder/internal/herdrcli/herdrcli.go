@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
 )
 
@@ -208,10 +209,44 @@ func ParsePaneGet(out []byte) (Pane, error) {
 
 func ParseSessionSnapshot(out []byte) (Snapshot, error) {
 	var envelope struct {
-		Result Snapshot `json:"result"`
+		Result json.RawMessage `json:"result"`
 	}
-	err := json.Unmarshal(out, &envelope)
-	return envelope.Result, err
+	if err := json.Unmarshal(out, &envelope); err != nil {
+		return Snapshot{}, err
+	}
+	if len(envelope.Result) == 0 || bytes.Equal(envelope.Result, []byte("null")) {
+		return Snapshot{}, nil
+	}
+	return ParseSessionSnapshotResult(envelope.Result)
+}
+
+func ParseSessionSnapshotResult(result []byte) (Snapshot, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(result, &obj); err != nil {
+		return Snapshot{}, err
+	}
+	if raw, ok := obj["snapshot"]; ok {
+		var snap Snapshot
+		if err := json.Unmarshal(raw, &snap); err != nil {
+			return Snapshot{}, err
+		}
+		if emptySessionSnapshot(snap) {
+			return Snapshot{}, fmt.Errorf("herdr session snapshot payload is empty")
+		}
+		return snap, nil
+	}
+	var direct Snapshot
+	if err := json.Unmarshal(result, &direct); err != nil {
+		return Snapshot{}, err
+	}
+	if emptySessionSnapshot(direct) {
+		return Snapshot{}, fmt.Errorf("herdr session snapshot payload has no snapshot")
+	}
+	return direct, nil
+}
+
+func emptySessionSnapshot(s Snapshot) bool {
+	return s.Protocol == 0 && len(s.Panes) == 0 && len(s.Agents) == 0
 }
 
 func ParseProcessInfo(out []byte) (ProcessInfo, error) {
