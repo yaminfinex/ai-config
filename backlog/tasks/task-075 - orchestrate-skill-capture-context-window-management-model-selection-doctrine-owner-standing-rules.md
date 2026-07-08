@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-08 12:23'
-updated_date: '2026-07-08 20:25'
+updated_date: '2026-07-08 20:41'
 labels: []
 dependencies: []
 priority: high
@@ -31,5 +31,10 @@ Notes: current run doctrine (run-log) says "codex implements, opus reviews" — 
 created: 2026-07-08 20:25
 ---
 Dispatched post-compact: worker task075-zore (opus 4.8 per owner model doctrine — prose/skill work), branch task-075-orchestrate-doctrine off 3fb67a0, brief napkins/run-herder-dx/brief-075.md. Review will be codex (cross-family).
+---
+
+created: 2026-07-08 20:41
+---
+OWNER COURSE-CORRECTION (direct-to-worker, 2026-07-08): opus draft rejected; worker upgraded to Fable IN PLACE (same guid 684dbe3c). Corrected intent, superseding parts of the original description + brief: (1) model-choice doctrine CENTRALISED in one place, not strewn across files — models change, one update point; (2) ZERO task-ID references (TASK-NNN) in skill files — timeless doctrine, no changelog narration; (3) cross-family review/adjudication is an OPTION when warranted, NOT hard doctrine (original description overstated this; brief amplified it); (4) no old-ways narration — prune pre-existing instances too; (5) general skill pruning per https://github.com/mattpocock/skills/blob/main/skills/productivity/writing-great-skills/SKILL.md is in scope. Orchestrator released worker from conflicting brief fences. Review plan: codex adversarial reviewer (now genuinely cross-family vs Fable worker).
 ---
 <!-- COMMENTS:END -->
