@@ -143,10 +143,37 @@ JSONL
   check_one reenroll_reused_pane
 }
 
+# TASK-035 P1-b: herdr COMPACTS pane ids, so a still-live session that moved can
+# keep an old pane_id that a NEW unrelated session now reuses. Retirement keys on
+# pane_id AND the durable terminal_id — a prior row whose terminal_id differs from
+# the enrolling pane's is a different session and must NOT be closed. Seed a row
+# on p_self but terminal_id=term_ELSEWHERE; enroll (pane terminal=term_SELF) and
+# assert that row is left ACTIVE (no closed record) while a same-terminal stale
+# row IS retired.
+scenario_reenroll_compacted_pane() {
+  CASE="$ROOT/reenroll_compacted_pane"
+  mkdir -p "$CASE/home" "$CASE/state"
+  cat >"$CASE/state/registry.jsonl" <<'JSONL'
+{"guid":"guid-live-else0","short_guid":"livels","label":"live-elsewhere","role":"manual","agent":"claude","terminal_id":"term_ELSEWHERE","pane_id":"p_self","hcom_name":"live-else-bus","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"manual","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"2026-07-01T00:00:00Z"}}
+{"guid":"guid-stalehere0","short_guid":"staleh","label":"stale-here","role":"manual","agent":"claude","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stale-here-bus","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"manual","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"2026-07-02T00:00:00Z"}}
+JSONL
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i \
+    PATH="$PATH_HERMETIC" \
+    HOME="$CASE/home" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self \
+    HERDER_STATE_DIR="$CASE/state" \
+    HERDER_GUID=guid-fresh-0000 \
+    "${HEN[@]}" --label fresh-session --json 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+  check_one reenroll_compacted_pane
+}
+
 scenario_default "${HEN[@]}" --json
 scenario_ambient "${HEN[@]}" --label cli-label --role cli-role --json
 scenario_reenroll_spawned
 scenario_reenroll_reused_pane
+scenario_reenroll_compacted_pane
 
 if [[ "$WRITE" -eq 0 ]]; then
   RUN_ERR_F="$ROOT/outside-stderr"

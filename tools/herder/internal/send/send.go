@@ -168,22 +168,18 @@ func Run(args []string, stdout, stderr io.Writer) int {
 // two joined agents). Silently picking one, as the old last-in-guid-order
 // resolution did, is the misdelivery this refuses (TASK-035).
 func disambiguatePane(sender *busSender, candidates []registry.Record, target string, stderr io.Writer) (*registry.Record, int) {
-	var live []registry.Record
-	for i := range candidates {
-		if sender.joined(candidates[i].HcomName, candidates[i].HcomDir) {
-			live = append(live, candidates[i])
-		}
+	chosen, live := registry.PickLiveCandidate(candidates, func(r registry.Record) bool {
+		return sender.joined(r.HcomName, r.HcomDir)
+	})
+	if chosen != nil {
+		return chosen, 0
 	}
-	switch len(live) {
-	case 1:
-		return &live[0], 0
-	case 0:
+	if len(live) == 0 {
 		fmt.Fprintf(stderr, "herder send: refused — %d active rows claim '%s' but none is joined on the bus; cannot tell which session owns the pane now. Candidates:\n%sAddress one directly by its guid or label. Nothing was sent.\n", len(candidates), target, formatCandidates(candidates))
 		return nil, 2
-	default:
-		fmt.Fprintf(stderr, "herder send: refused — %d rows claiming '%s' are bus-live at once; refusing to guess which. Candidates:\n%sAddress one directly by its guid or label. Nothing was sent.\n", len(live), target, formatCandidates(live))
-		return nil, 2
 	}
+	fmt.Fprintf(stderr, "herder send: refused — %d rows claiming '%s' are bus-live at once; refusing to guess which. Candidates:\n%sAddress one directly by its guid or label. Nothing was sent.\n", len(live), target, formatCandidates(live))
+	return nil, 2
 }
 
 // formatCandidates renders one indented line per row for an ambiguity refusal:

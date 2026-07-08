@@ -104,6 +104,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		if prior.Status != "active" || prior.PaneID != pane.PaneID || ptrString(prior.GUID) == guid {
 			continue
 		}
+		if !shouldRetirePriorRow(prior, pane.TerminalID, busJoined) {
+			continue
+		}
 		retire, err := registry.UpdateRawObject(prior.Raw, map[string]any{
 			"status":         "closed",
 			"closed_at":      nowISO,
@@ -222,6 +225,44 @@ active rows still claiming that pane_id — a dead session's row never lingers a
 LIVE=working. Must run inside a herdr pane (HERDR_ENV=1 and HERDR_PANE_ID set);
 refuses otherwise.
 `)
+}
+
+// shouldRetirePriorRow decides whether a prior active row that shares this
+// pane_id is a stale identity to close on re-enroll (TASK-035 AC#1). pane_id
+// alone is NOT enough: herdr COMPACTS pane ids, so a still-live session that
+// moved can keep an old pane_id that a new, unrelated session now reuses —
+// closing that row would corrupt a LIVE session (review P1-b). It refuses to
+// close a row that is plausibly a different, live session:
+//   - terminal_id is the durable coordinate herdr preserves across pane-id
+//     compaction; when both rows carry one and they DIFFER, the prior row is
+//     another session merely sharing a recycled pane_id — leave it.
+//   - a row whose bus name is currently JOINED is by definition live, never
+//     stale. The probe is protective ONLY: an unavailable bus returns false so
+//     it can never FORCE a close, only prevent one.
+func shouldRetirePriorRow(prior registry.Record, paneTerminalID string, joined func(name, dir string) bool) bool {
+	if prior.TerminalID != "" && paneTerminalID != "" && prior.TerminalID != paneTerminalID {
+		return false
+	}
+	if prior.HcomName != "" && prior.HcomName != "null" && joined != nil && joined(prior.HcomName, prior.HcomDir) {
+		return false
+	}
+	return true
+}
+
+// busJoined reports whether name is currently joined on the bus at dir, via the
+// same `hcom list <name>` probe send/spawn use (exit 0 ⇒ joined). Best-effort:
+// a missing/erroring hcom yields false, so liveness can only protect a row from
+// retirement, never trigger one.
+func busJoined(name, dir string) bool {
+	if name == "" {
+		return false
+	}
+	cmd := exec.Command("hcom", "list", name)
+	cmd.Env = os.Environ()
+	if dir != "" && dir != "null" {
+		cmd.Env = append(cmd.Env, "HCOM_DIR="+dir)
+	}
+	return cmd.Run() == nil
 }
 
 func envTool() string {
