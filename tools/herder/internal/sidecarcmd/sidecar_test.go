@@ -183,8 +183,8 @@ func TestAppendEnrichmentCarriesPriorRowAndSessionID(t *testing.T) {
 	if latest.Provenance == nil || latest.Provenance.ToolSessionID != "sess-123" || latest.Provenance.Mechanism != "spawn" {
 		t.Fatalf("Provenance = %+v, want spawn with sess-123", latest.Provenance)
 	}
-	if !strings.Contains(string(latest.Raw), `"extra_field":"keep"`) {
-		t.Fatalf("enrichment row did not carry prior extra field: %s", latest.Raw)
+	if strings.Contains(string(latest.Raw), `"extra_field":"keep"`) {
+		t.Fatalf("enrichment row carried unknown legacy field into v2 output: %s", latest.Raw)
 	}
 }
 
@@ -511,17 +511,15 @@ func readReportLog(t *testing.T, path string) []string {
 	return strings.Split(trimmed, "\n")
 }
 
-func TestAppendEnrichmentRecognizesResumeBySessionID(t *testing.T) {
+func TestAppendEnrichmentDoesNotResumeClosedBySessionID(t *testing.T) {
 	state := t.TempDir()
 	registryPath := filepath.Join(state, "registry.jsonl")
 	rows := []string{
 		`{"guid":"guid-resume-0000","short_guid":"guid","label":"resume-old","role":"worker","agent":"claude","terminal_id":"term_OLD","pane_id":"p_old","status":"active","provenance":{"mechanism":"spawn","spawned_by":"parent-guid","tool_session_id":"sess-resume","tag":"worker","batch_id":"","cwd":"/old","workspace_id":"ws_old","branch":"old-branch","ts":"2026-07-03T00:00:00Z"}}`,
 		`{"guid":"guid-resume-0000","short_guid":"guid","label":"resume-latest","role":"worker","agent":"claude","terminal_id":"term_OLD","pane_id":"p_old","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"parent-guid","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/old","workspace_id":"ws_old","branch":"old-branch","ts":"2026-07-03T00:01:00Z"}}`,
 	}
-	for _, row := range rows {
-		if err := registry.Append(registryPath, []byte(row)); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(registryPath, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	t.Setenv("HERDER_GUID", "")
 	t.Setenv("HERDER_LABEL", "")
@@ -537,24 +535,12 @@ func TestAppendEnrichmentRecognizesResumeBySessionID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(recs) != 3 {
-		t.Fatalf("rows = %d, want 3", len(recs))
+	if len(recs) != 2 {
+		t.Fatalf("rows = %d, want 2 (closed projection must not be resurrected)", len(recs))
 	}
 	latest := registry.Resolve(recs, "guid-resume-0000")
-	if latest == nil {
-		t.Fatal("latest resumed row not found")
-	}
-	if ptrString(latest.Label) != "resume-latest" || latest.Status != "active" || latest.HcomName != "resume-vire" {
-		t.Fatalf("latest = label %q status %q hcom %q, want carried active resume-vire", ptrString(latest.Label), latest.Status, latest.HcomName)
-	}
-	if latest.Provenance == nil {
-		t.Fatal("provenance missing")
-	}
-	if latest.Provenance.Mechanism != "spawn" || latest.Provenance.ToolSessionID != "sess-resume" || latest.Provenance.ResumedAt == "" {
-		t.Fatalf("Provenance = %+v, want spawn sess-resume with resumed_at", latest.Provenance)
-	}
-	if latest.Provenance.ForkedFrom != "" {
-		t.Fatalf("ForkedFrom = %q, want empty", latest.Provenance.ForkedFrom)
+	if latest == nil || ptrString(latest.Label) != "resume-latest" || latest.Status != "closed" || latest.HcomName != "" {
+		t.Fatalf("latest = %+v, want unchanged closed resume-latest row", latest)
 	}
 }
 

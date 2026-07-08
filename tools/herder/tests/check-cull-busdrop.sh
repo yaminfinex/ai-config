@@ -192,8 +192,8 @@ unset MOCK_CULL_APPEND_ENRICHED MOCK_CULL_APPEND_HCOM_DIR
 [[ "$RUN_RC" -eq 0 ]] && ok "race cull: exit 0" || bad "race cull: exit 0" "rc=$RUN_RC out=$RUN_OUT"
 [[ "$(cat "$PROBE/hcom_kill_argv" 2>/dev/null)" = "bus-race" ]] && ok "race cull: refreshed hcom_name dropped" || bad "race cull: refreshed hcom_name dropped" "argv=$(cat "$PROBE/hcom_kill_argv" 2>/dev/null)"
 [[ "$(cat "$PROBE/hcom_dirs" 2>/dev/null)" = "$BUS_DIR" ]] && ok "race cull: refreshed hcom_dir used" || bad "race cull: refreshed hcom_dir used" "got=$(cat "$PROBE/hcom_dirs" 2>/dev/null) want=$BUS_DIR"
-tail -n1 "$REG_DIR/registry.jsonl" | jq -e '.guid=="guid-race" and .status=="closed" and .hcom_name=="bus-race" and .hcom_dir=="'"$BUS_DIR"'"' >/dev/null \
-  && ok "race cull: closed row carries enrichment" || bad "race cull: closed row carries enrichment" "latest=$(tail -n1 "$REG_DIR/registry.jsonl")"
+tail -n1 "$REG_DIR/registry.jsonl" | jq -e '.kind=="session" and .guid=="guid-race" and .event=="unseated" and .state=="unseated" and .label=="race" and (.status|not) and (.seat|not)' >/dev/null \
+  && ok "race cull: v2 unseated row appended" || bad "race cull: v2 unseated row appended" "latest=$(tail -n1 "$REG_DIR/registry.jsonl")"
 
 # 3. Failed hcom kill is advisory; cull still succeeds and closes the pane.
 make_case fail failbus

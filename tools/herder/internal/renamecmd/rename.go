@@ -10,6 +10,7 @@ import (
 
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -28,42 +29,35 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	registryPath := registry.DefaultPath()
-	recs, err := registry.Load(registryPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			die(stderr, "no registry at "+registryPath)
-			return 1
+	var oldLabel, guid, terminalID string
+	if _, err := os.Stat(registryPath); err != nil && errors.Is(err, os.ErrNotExist) {
+		die(stderr, "no registry at "+registryPath)
+		return 1
+	}
+	_, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		rec := registry.V2Resolve(tx.Projection, target)
+		if rec == nil {
+			return nil, fmt.Errorf("unknown target: %s", target)
 		}
-		die(stderr, err.Error())
-		return 1
-	}
-	rec := registry.Resolve(recs, target)
-	if rec == nil {
-		die(stderr, "unknown target: "+target)
-		return 1
-	}
-	guid := ptrString(rec.GUID)
-	if owner := registry.ActiveLabelOwner(recs, newLabel, guid); owner != nil {
-		die(stderr, fmt.Sprintf("label %q already belongs to active guid %s", newLabel, ptrString(owner.GUID)))
-		return 1
-	}
-
-	base := rec.Raw
-	if len(bytes.TrimSpace(base)) == 0 {
-		base = []byte(`{}`)
-	}
-	row, err := registry.UpdateRawObject(base, map[string]any{"label": newLabel})
+		guid = rec.GUID
+		oldLabel = rec.Label
+		if owner := registry.V2LabelOwner(tx.Projection, newLabel, guid); owner != nil {
+			return nil, fmt.Errorf("label %q already belongs to active guid %s", newLabel, owner.GUID)
+		}
+		terminalID = registry.LegacyFromV2(*rec).TerminalID
+		next := *rec
+		next.Event = "labelled"
+		next.RecordedAt = ""
+		next.Label = newLabel
+		return []v2.SessionRecord{next}, nil
+	})
 	if err != nil {
 		die(stderr, err.Error())
 		return 1
 	}
-	if err := registry.Append(registryPath, row); err != nil {
-		die(stderr, err.Error())
-		return 1
-	}
 
-	fmt.Fprintf(stderr, "renamed %s -> %s (%s)\n", ptrString(rec.Label), newLabel, guid)
-	syncHerdrName(rec.TerminalID, newLabel, stdout)
+	fmt.Fprintf(stderr, "renamed %s -> %s (%s)\n", oldLabel, newLabel, guid)
+	syncHerdrName(terminalID, newLabel, stdout)
 	return 0
 }
 

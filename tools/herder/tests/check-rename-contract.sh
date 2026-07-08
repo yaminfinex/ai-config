@@ -79,7 +79,7 @@ block_for() {
 
 check_one() {
   local name="$1" block gold
-  block="$(block_for)"
+  block="$(block_for | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g')"
   gold="$GOLDENS/$name.txt"
   if [[ "$WRITE" -eq 1 ]]; then
     printf '%s\n' "$block" >"$gold"

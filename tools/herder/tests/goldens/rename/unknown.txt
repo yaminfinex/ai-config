@@ -7,6 +7,6 @@ herder rename: unknown target: nope
 === HERDR RENAME ARGV ===
 
 === REGISTRY ===
-{"guid":"guid-alpha-0000","short_guid":"alpha","label":"alpha","role":"worker","agent":"codex","terminal_id":"term_ALPHA","pane_id":"p_alpha","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-alpha","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
+{"guid":"guid-alpha-0000","short_guid":"alpha","label":"alpha","role":"worker","agent":"codex","terminal_id":"term_ALPHA","pane_id":"p_alpha","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-alpha","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
 {"guid":"guid-beta-0000","short_guid":"beta","label":"beta","role":"reviewer","agent":"claude","terminal_id":"term_BETA","pane_id":"p_beta","status":"active"}
 {"guid":"guid-closed-0000","short_guid":"closed","label":"old-closed","role":"reviewer","agent":"claude","terminal_id":"term_CLOSED","pane_id":"p_closed","status":"closed"}
