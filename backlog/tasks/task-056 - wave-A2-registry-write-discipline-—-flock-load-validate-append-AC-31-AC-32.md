@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-08 05:55'
-updated_date: '2026-07-08 07:13'
+updated_date: '2026-07-08 07:24'
 labels: []
 dependencies: []
 priority: high
@@ -40,5 +40,10 @@ created: 2026-07-08 07:03
 created: 2026-07-08 07:13
 ---
 [hera 2026-07-08] Opus adversarial verdict (review-a2-kilo, #7705): NOT CLEAN — 1 MEDIUM blocks. MEDIUM: rename drops the seat of legacy-v1-latest sessions (legacySession() maps Seat=nil; carrySeatFields copies nil; appended labelled row is seatless -> active-but-unreachable; hits exactly the pre-A4 migration guids; rename/happy golden ENSHRINED the bug). LOW-1 cull->unseated label retention: accepted, spec-intended (AC-18 + ruling). LOW-2 launch-failed close writes unseated/active-dormant, drops close_result: reclassified wrong-state-mapping, folded into fix round (should be retired). LOW-3 spawn orphan pane on write refusal: filed TASK-062. NIT-1 (two-process test, brief required) + NIT-2 (goldens must pin legacy VIEW; restore cull-busdrop assertion; rename-preserves-seat case) folded into fix round. Everything else probed clean: flock-before-load held through append+fsync, fsync err checked, complete writer reroute, uniqueness-in-lock, no-op appends nothing, refusal loud, grandfathering round-trips. Fix round dispatched to wave-a2-bumo (verified delivered). Delta re-verdict then merge; A2 still second in merge order behind F1.
+---
+
+created: 2026-07-08 07:24
+---
+[hera 2026-07-08] Fix round + F1 integration DONE (#7989): c021f9d (seat preservation for legacy-v1 writes; launch-failed close -> retired with close_result preserved; two-process label-claim test; legacy-view goldens restored + legacy_preserves_seat case) + 569571a (merge main; F1 29d077e ancestor verified; sidecar.go conflict resolved preserving F1 write-confirmation under locked reroute). HERA REGATE GREEN from worktree: vet/test both modules, registry+sidecarcmd -count=1 fresh, 22/22 suites. Delta re-verdict requested from review-a2-kilo (verify MEDIUM repro, all carrySeatFields callers, conflict resolution, no regression). CLEAN delta = merge (A2 is second lander; conflict integration already done in-branch).
 ---
 <!-- COMMENTS:END -->
