@@ -170,6 +170,10 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 	paste := (&bootPaster{Client: herdr, PreflightVisibleOnly: true}).paste(targetPane, line)
 	verify, rc := paste.Verify, paste.Code
 	switch {
+	case verify == "" && rc == 2 && paste.Refusal == "composer_polluted":
+		dieCompact(stderr, "refused — your pane still has unsubmitted composer text after the ctrl+u recovery attempt; /compact was NOT typed. Inspect the pane, clear or submit that text by hand, then retry.")
+		thenAbortNote(stderr, opts.ThenSet)
+		return 2
 	case verify == "" && rc == 2:
 		dieCompact(stderr, "refused — your pane shows a blocking overlay (modal/interrupted state); /compact was NOT typed. Clear it and retry.")
 		thenAbortNote(stderr, opts.ThenSet)

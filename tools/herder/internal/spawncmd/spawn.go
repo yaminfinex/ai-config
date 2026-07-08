@@ -1301,7 +1301,8 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars) over the hcom bus, bind: %s, verify: %s\n", len(r.opts.Prompt), readyReason, deliveryResult)
 			fmt.Fprintln(r.stderr, "          no receipt in the window — it injects when the agent is deliverable; do NOT resend.")
 			fmt.Fprintf(r.stderr, "          If it never lands: UNSUBMITTED COMPOSER TEXT starves bus delivery — check `herder wait %s --read`;\n", record.Label)
-			fmt.Fprintf(r.stderr, "          if garbage text sits on the input line, clear it: herdr pane send-keys %s ctrl+u\n", record.PaneID)
+			fmt.Fprintln(r.stderr, "          a queued bus message visible on the input line is NOT garbage — do NOT clear it.")
+			fmt.Fprintf(r.stderr, "          Clear only unrelated garbage text: herdr pane send-keys %s ctrl+u\n", record.PaneID)
 		case promptSent:
 			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars), ready: %s, verify: %s%s\n", len(r.opts.Prompt), readyReason, deliveryResult, noteSuffix)
 		case deliveryResult == "blocked_trust_modal":

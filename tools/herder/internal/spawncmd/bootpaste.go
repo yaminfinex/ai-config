@@ -57,6 +57,7 @@ type pasteResult struct {
 	Verify          string
 	Code            int
 	ComposerCleared bool
+	Refusal         string
 }
 
 // paste types message into paneID and verifies delivery, preserving the retired
@@ -81,7 +82,7 @@ func (b *bootPaster) paste(paneID, message string) pasteResult {
 	preText := stripChrome(b.readPane(paneID))
 	preStatus := b.detectStatus(paneID)
 	if _, blocked := preflightBlockedReason(preText); blocked && !b.PreflightVisibleOnly {
-		return pasteResult{Code: 2}
+		return pasteResult{Code: 2, Refusal: "blocked"}
 	}
 	// The scrollback preflight above is blind to alternate-screen overlays:
 	// the first-run trust dialog (and claude /login) paint the VISIBLE screen
@@ -89,7 +90,7 @@ func (b *bootPaster) paste(paneID, message string) pasteResult {
 	// inside the modal. Re-run the block check against the visible source too.
 	visibleText := stripChrome(b.readVisible(paneID))
 	if _, blocked := preflightBlockedReason(visibleText); blocked {
-		return pasteResult{Code: 2}
+		return pasteResult{Code: 2, Refusal: "blocked"}
 	}
 
 	recoveryText := preText
@@ -106,7 +107,7 @@ func (b *bootPaster) paste(paneID, message string) pasteResult {
 			recoveryText = stripChrome(b.readPane(paneID))
 		}
 		if !composerConfirmedEmpty(recoveryText, sigil) {
-			return pasteResult{Code: 2}
+			return pasteResult{Code: 2, Refusal: "composer_polluted"}
 		}
 		composerCleared = true
 		preText = recoveryText

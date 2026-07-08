@@ -1,5 +1,5 @@
 === STDERR ===
-herder compact: refused — your pane shows a blocking overlay (modal/interrupted state); /compact was NOT typed. Clear it and retry.
+herder compact: refused — your pane still has unsubmitted composer text after the ctrl+u recovery attempt; /compact was NOT typed. Inspect the pane, clear or submit that text by hand, then retry.
 === STDOUT ===
 
 === EXIT ===

@@ -163,7 +163,8 @@ unsubmitted in the composer starves incoming bus delivery indefinitely and SILEN
 no error (probed live; it was the root cause of the wave-4 reviewer stranding, TASK-031). Remedy:
 read the pane (`herder wait <guid> --read`); if garbage text sits on the input line, clear it with
 `herdr pane send-keys <pane> ctrl+u`. Use `Enter` only for legitimate text that should submit.
-Queued messages then inject at the next boundary.
+A queued bus message rendered on the input line is not garbage; do not clear it, because it
+self-delivers at the next turn boundary.
 Retiring the boot-paste from bus-capable spawns removed the machinery that used to CREATE that
 state; a human draft left in a composer can still do it.
 
