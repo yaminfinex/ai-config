@@ -1632,11 +1632,14 @@ func childBoundBusOnce(registryPath, guid, hcomDir, launchPaneID string) string 
 
 // resendCommand renders the exact, copy-pasteable recovery command for a prompt
 // that bind-timed out (nothing went on the wire — a resend is safe; TASK-036).
-// The prompt is shell-quoted with the same printf %q-compatible quoting herder
-// uses elsewhere, so a multi-line brief (and any notify appendix already folded
-// in) round-trips verbatim through `herder send`.
+// BOTH the label and the prompt are shell-quoted with the same printf %q-
+// compatible quoting herder uses elsewhere: the label is built from
+// --label-prefix verbatim and metachar prefixes are accepted (bash_metachar
+// golden), so an unquoted label could split at ;, expand $, glob *, or die on an
+// unmatched backtick when pasted — exactly when recovery matters. A multi-line
+// brief (and any notify appendix already folded in) round-trips verbatim too.
 func resendCommand(label, prompt string) string {
-	return "herder send " + label + " " + shellquote.Quote(prompt)
+	return "herder send " + shellquote.Quote(label) + " " + shellquote.Quote(prompt)
 }
 
 // resendCommandFor returns the recovery command for the --json surface, but ONLY

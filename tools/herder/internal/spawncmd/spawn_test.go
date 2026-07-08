@@ -6,9 +6,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"ai-config/tools/herder/internal/registry"
+	"ai-config/tools/herder/internal/shellquote"
 )
 
 // resolveBus calls resolveSpawnerBus discarding the ambiguity signal + warning,
@@ -254,5 +256,22 @@ func TestResendCommandQuotesPromptVerbatim(t *testing.T) {
 		if r == '\n' {
 			t.Fatalf("resendCommand left a raw newline in the quoted prompt: %q", cmd)
 		}
+	}
+}
+
+// TestResendCommandQuotesMetacharLabel pins that the LABEL is quoted too: labels
+// are built from --label-prefix verbatim and metachar prefixes are accepted, so
+// an unquoted label would split/expand/glob when the recovery command is pasted.
+func TestResendCommandQuotesMetacharLabel(t *testing.T) {
+	label := `quote;$` + "`" + `&<>("* )-abc1234`
+	cmd := resendCommand(label, "do the thing")
+	want := "herder send " + shellquote.Quote(label) + " " + shellquote.Quote("do the thing")
+	if cmd != want {
+		t.Fatalf("resendCommand = %q, want %q", cmd, want)
+	}
+	// The raw metachar label must NOT appear verbatim — proof it was quoted, not
+	// pasted through as splittable/expandable shell.
+	if strings.Contains(cmd, "herder send "+label) {
+		t.Fatalf("resendCommand emitted the label RAW: %q", cmd)
 	}
 }
