@@ -1,14 +1,17 @@
 ---
 title: "Herder node daemon + registry write path — design-it-twice pass"
 date: 2026-07-08
-status: DECISION PENDING — four divergent designs + comparison + a recommendation; author has
-  not picked. Brainstorm mode; nothing here amends the herder spec yet.
+status: DECIDED 2026-07-08 — author ratified the recommendation, re-cut observer-first after
+  the run-herder-dx systemic review landed. Decision record at the end of this doc. The spec
+  amendment pass has NOT run yet; note the spec is now RATIFIED on main (2026-07-08), so the
+  amendments go through the erratum/ruling process, not draft edits.
 purpose: settle whether `herder` grows a node daemon, what it may own (write path? reads?
   observation?), and how the spoke/control-plane duties from the boundaries discussion land —
   by comparing radically different shapes rather than grilling vibes
 related:
   - docs/design/2026-07-08-sessions-missions-boundaries.md   # the discussion that raised this (Q8/Q9)
-  - docs/specs/herder-spec.md (herder-spec branch)           # §5.2 flock discipline; §10 "registry daemon rejected"
+  - docs/specs/herder-spec.md (main; RATIFIED 2026-07-08)    # §5.2 flock discipline; §10 "registry daemon rejected"
+  - napkins/run-herder-dx/systemic-review-memo.md            # sysreview-fifi's board-wide defect taxonomy — reshaped phase 1
 ---
 
 # Herder node daemon: four designs
@@ -149,11 +152,50 @@ duties that justified it.
 - Keep from D regardless: *the file is truth; the daemon is a cursor-stamped view; liveness
   without an appended row is advice.*
 
-## Open items on decision
+## Decision record (2026-07-08, author — ratified in the systemic-review round)
 
-- Author pick (A-then-D per recommendation, straight A, or other).
-- If picked: spec amendment pass on herder-spec branch (§2 terms, §3.1 invariant 13, §4
-  diagram, §5.2 nudge/barrier notes, §6.4 herd link, §7 verbs, §8.4 catch-up sweep, §9 new
-  ACs, §10 rewording) — the four designs' amendment lists converge on these sections.
+**D-via-A, reject B and C** — with phase 1 re-cut after the run-herder-dx systemic review
+(`napkins/run-herder-dx/systemic-review-memo.md`, TASK-001..070) changed what the daemon is
+*for*: its highest-value duty is closing the enrolled/manual-seat observer blind spot (memo
+cluster E / §3.3(c) — the class behind most live incidents, always the orchestrator's own
+session), not carrying the spoke. Supporting evidence from the memo: B's daemon-down refusal
+institutionalizes the cluster-F off-registry-dance loop and its drain+exec upgrade buys a
+TASK-046-genre handoff class; C's server-side resolver mirror is self-inflicted cluster H and
+ratified §10 records hcom relay as unused/unmodelled; memo anti-rec 5 explicitly leaves the
+rebuildable-projection-cache door open (which is D), and anti-rec 1 confirms D's
+view-never-repair doctrine.
+
+Phasing as decided:
+
+- **Phase 1a — universal seat observer** (carved out to the run-herder-dx board): the daemon
+  tails the registry as its work queue and observes every seated row regardless of seat
+  mechanism (spawn / enroll / resume / fork) — subsuming memo §3.3(c); do NOT build
+  enroll-forks-a-sidecar as a stopgap. Sidecars otherwise untouched (deputy demotion is safe
+  whenever taken — §5.2 idempotence). Ships together with the spec amendment pass.
+- **Phase 1b — spoke telemetry + inbound `deliver`** (C's delivery-only-by-structure framing,
+  D's receipt semantics): gated on the herd-server design and the mission snapshot-overlay
+  payload format — both still in grilling on the boundaries track.
+- **Phase 2 — hot reads** (D's mode shim: barrier, `source` stamps, `--cold`): gated behind
+  the legacy-view retirement (memo §3.4) — the projection must only ever be built against the
+  v2 four-state machine.
+
+Memo-derived invariants for the spec amendment (spec-level, not implementation notes):
+
+1. No write authority in the daemon; §10 sharpened ("a registry *write* daemon remains
+   rejected"), not reversed. Daemon observation facts append through the shared locked writer.
+2. Daemon appends obey the confirmed-write contract (memo §3.1) — no discarded
+   `applied | noop | refused` outcomes; the daemon is a sweep site of that contract.
+3. The daemon's projection consumes the v2 state machine only, never the legacy 2-state view.
+4. The daemon is disposable: death/rebuild is a non-event, and no handoff protocol may exist
+   (TASK-046 is the recorded evidence for why).
+5. The file is truth; the daemon is a cursor-stamped view; liveness without an appended row is
+   advice; repairs stay explicit verbs (memo anti-rec 1).
+
+## Open items after decision
+
+- Spec amendment pass (now against the RATIFIED spec on main: §2 terms, §3.1 invariant, §4
+  diagram/observer definition for enrolled seats, §5.2 nudge notes, §7, §8.4 catch-up sweep,
+  §9 new ACs, §10 rewording) — rides with the phase-1a board unit.
 - Boundaries doc §6 open question 2 (ingestion transport) unaffected; session shipper remains
   a separate component per Q8 ruling.
+- Phase-1b payload format + herd-server projection: back to the boundaries grilling.

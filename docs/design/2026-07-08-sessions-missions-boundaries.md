@@ -118,10 +118,11 @@ sessions in herder's registry + herder spawning them.
 
 ## 6. Open questions (the short list)
 
-0. **Herder node daemon shape** — raised by the Q8/Q9 grilling; four divergent designs +
-   comparison + recommendation captured in
-   `docs/design/2026-07-08-herder-node-daemon-designs.md` (decision pending: recommended
-   D-via-A — flock-shared writes, disposable read projection, phased).
+0. **Herder node daemon shape** — DECIDED (Q10): D-via-A, observer-first re-cut; decision
+   record in `docs/design/2026-07-08-herder-node-daemon-designs.md`. Phase 1a (universal seat
+   observer + spec amendment) carved out to the run-herder-dx board; phase 1b (spoke +
+   deliver) gated on the herd-server/snapshot-overlay grilling below; phase 2 (hot reads)
+   gated on legacy-view retirement.
 
 1. **Mission ↔ herder interaction contract** (S1, S4, D2): exactly what an orchestrator writes
    into mission events (guid? seat? run refs?) — spec'd alongside the `mission` CLI, honoring
@@ -174,6 +175,20 @@ point for the next session — do not re-ask these.
   **design-it-twice pass** → `docs/design/2026-07-08-herder-node-daemon-designs.md` (four
   designs; recommendation **D-via-A** — flock-shared writes, disposable read projection,
   phased; **DECISION PENDING — this is the next session's first agenda item**).
+
+- **Q10 Daemon design pick (with the run-herder-dx systemic review on the table)?** →
+  **Decided: D-via-A, observer-first re-cut.** sysreview-fifi's memo
+  (`napkins/run-herder-dx/systemic-review-memo.md`) changed the daemon's primary duty: cluster
+  E (nothing observes an enrolled seat — the orchestrator's own session was the victim in
+  virtually every live incident) makes the universal seat observer phase 1a, ahead of the
+  spoke. B rejected on board evidence (daemon-down refusal feeds the cluster-F
+  off-registry-dance loop; TASK-046 shows the stateful-daemon handoff cost); C rejected on
+  ratified §10 (hcom relay unused/unmodelled) + server-side resolver mirror = self-inflicted
+  cluster H. Memo-derived spec invariants (confirmed-write on daemon appends; v2-only
+  projection; disposability; no write authority) recorded in the designs doc's decision
+  record. Ground truth correction folded in: **herder spec is RATIFIED on main 2026-07-08**
+  (teams dropped D5, migration D12); this doc's earlier "herder-spec branch, draft" references
+  are superseded.
 
 **Not yet grilled** (the remaining tree): session service design (storage, shipping protocol,
 what the team surface shows, auth beyond tailnet); mission CLI verb set + dir format + event
