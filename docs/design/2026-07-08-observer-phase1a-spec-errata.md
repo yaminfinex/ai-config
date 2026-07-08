@@ -68,10 +68,12 @@ readers; absence means nothing.
 
 Append two bullets:
 
-> - Every locked append resolves to exactly one typed outcome — **applied** (rows written),
->   **noop** (projection already showed the target state; idempotent re-assertion), or
->   **refused** (validation failed; the error names why). Writers must surface the outcome;
->   none may be discarded.
+> - Every locked append resolves **each candidate row** to exactly one typed outcome —
+>   **applied** (that row written), **noop** (projection already showed the target state;
+>   idempotent re-assertion), or **refused** (validation failed; the error names why).
+>   Writers must surface the outcome per candidate; none may be discarded. Rows the write
+>   machinery itself appends alongside a caller's candidates (node mint, migration,
+>   rotation) are never counted as the caller's outcomes.
 > - The node observer appends under this same discipline as an ordinary peer. Its
 >   check-then-append decisions are made against the projection loaded under the write lock,
 >   never against its own cached view.
@@ -99,7 +101,10 @@ Rationale: the outcome vocabulary exists structurally in the writer today and as
 > during downtime collapse into their observed end state. Correction rows are appended at
 > observation time — `recorded_at` is never backdated; staleness evidence rides in the row
 > body. Dormant rows with live counter-evidence and epoch-wide doubt are **flagged for the
-> explicit verbs** (enroll / reconcile / resume), never auto-repaired.
+> explicit verbs** (enroll / reconcile / resume), never auto-repaired — and the flags are
+> surfaced in the operator's default view (`list`), marked as observer advice, not only in
+> observer-specific status output. Across a herdr epoch boundary (probe-inferred; terminal
+> ids may be reissued wholesale), absence of recorded terminal ids alone never unseats.
 
 Rationale: settles the settle-item at spec level; keeps repairs-are-verbs doctrine.
 
@@ -143,8 +148,10 @@ Amend the opening sentence:
 
 Rationale: §8.1's own closing line promises "this one rule serves spawned, shimmed, and
 enrolled sessions alike" — today no component runs the rule for enrolled seats; this erratum
-makes the promise true. NOTE: this rides scope call #1 in the design doc (§11); if
-adversarial review rejects observer-side turnover detection, this erratum is withdrawn.
+makes the promise true. NOTE: this rides scope call #1 in the design doc (§11), which
+design review adjudicated IN. If the steward rejects this erratum, the phase-1a design
+**returns to design review** for re-adjudication — implementation never silently ships
+without observer-side turnover (review finding P2-1).
 
 ## E-11 — §9 Acceptance scenarios: four new ACs
 

@@ -2,8 +2,9 @@
 title: "Herder node observer — phase 1a design (universal seat observer)"
 date: 2026-07-08
 status: DRAFT for review — output of the TASK-073 design pass. Review chain: fresh-context
-  adversarial design review → fix round → tomo final intent review. Not buildable until that
-  chain completes (TASK-073 AC-4).
+  adversarial design review (dreview073-zinu, REQUEST-CHANGES → fix round applied: P1-1..3,
+  P2-1..3, LOW; substrate upheld, all four §11 scope calls adjudicated IN with caveats) →
+  tomo final intent review. Not buildable until that chain completes (TASK-073 AC-4).
 purpose: turn the ratified "D-via-A, observer-first" decision
   (docs/design/2026-07-08-herder-node-daemon-designs.md, branch sessions-missions-design,
   commit 1fbe376) into a buildable phase-1a design; every settle-item from TASK-073 is
@@ -56,7 +57,7 @@ This section is the contract. Every mechanism below traces back here.
 | # | Invariant (operative form) | Honored by |
 |---|---|---|
 | 1 | **No registry write authority.** Observation facts append through the same shared locked writer package every CLI verb uses, byte-indistinguishable from CLI appends. | The observer links `internal/registry` and calls `UpdateLocked` (write.go:29-139) like any verb. It has no privileged path, no IPC append surface, and no listening socket at all (§4.4). §10's daemon rejection is sharpened, not reversed (errata E-8). |
-| 2 | **Confirmed-write contract.** Every append reports a typed applied / noop / refused outcome; none may be discarded. | `UpdateLocked` already expresses this structurally (applied = returned rows; noop = normalize declines, write.go:102-108,132-134; refused = error). The observer logs every outcome per fact and counts them in its status file (§4.5); a refused outcome is never retried blind — it triggers a fresh sweep (the projection changed under us). Errata E-5 promotes the reconcile `Write: none|pending|applied|error` vocabulary to normative. |
+| 2 | **Confirmed-write contract.** Every append reports a typed applied / noop / refused outcome; none may be discarded. | The observer resolves an outcome **per candidate observation fact**, never from `UpdateLocked`'s raw return: the returned encoded rows include node-mint, migration, and rotation rows appended before caller rows (write.go:88-98,132-138), so raw row count can fake `applied` on a fresh or freshly-migrated state dir. Mechanism: the observer identifies which of *its own* candidate rows survived normalization (candidate declined by `normalizeSessionAppend` ⇒ `noop`, write.go:102-108; candidate present in the encoded output ⇒ `applied`; returned error mapped to a preserved refusal category ⇒ `refused`) and counts exactly those in its status file (§4.5). A refused outcome is never retried blind — it triggers a fresh sweep (the projection changed under us). Errata E-5 promotes the reconcile `Write: none|pending|applied|error` vocabulary to normative, stated per candidate row. |
 | 3 | **v2 states only.** The observer's projection consumes seated/unseated/retired/lost, never the legacy 2-state view. | The observer imports `internal/registry/v2` only; it never touches `registry.Record`/`Status` (the legacy view most verbs still use — a migration liability the observer must not extend). Enforced by the contract suite (§7, scenario T-9) and a lint check in the impl task. |
 | 4 | **Disposable; no handoff between generations.** Death or rebuild is a non-event. | No durable observer state: the registry cursor is in-memory; boot always runs the full catch-up sweep (§6). The only files are a flock-held lockfile and an advisory status file, both overwritten by any new generation without reading the old (§4). kill -9 is a supported stop mechanism. Upgrade = replace, never drain-and-handoff (§4.3). |
 | 5 | **File is truth; observer is a cursor-stamped view; liveness without an appended row is advice; repairs stay explicit verbs.** | The observer rebuilds its view from the file on every change (§5.1); its status file is labelled advice; it appends only on positive evidence and **flags** everything ambiguous or repair-shaped (dormant-live rows, epoch-wide doubt, guarded-match candidates) for the explicit verbs `enroll` / `reconcile --apply` / `resume` (§6.3). |
@@ -116,8 +117,11 @@ while process seats live on. The level-triggered sweep over `session.snapshot` +
 latency. This is the classic list-then-watch pattern with the list side doubling as the
 catch-up sweep.
 
-**Decision: direct socket client for probes and events; registry tail as work queue;
-CLI-equivalent fallback (2.1) automatic whenever the socket is incompatible or absent.**
+**Decision: direct socket client for probes and events; registry tail as work queue.
+Fallback is honest about what it can cover: the CLI path (2.1) kicks in only for
+protocol-client incompatibility where the `herdr` CLI still works (it is itself a socket
+client); a socket that is absent or dead has no CLI equivalent — herdr-seat verdicts pause
+(observation gap, §8) while process-seat and hcom checks continue.**
 
 ## 3. What the observer watches, per seat kind
 
@@ -151,13 +155,37 @@ is not consulted. herdr-down never degrades these.
 
 Absence of evidence — socket down, hcom db errored (distinguished from row-absent, same rule
 the sidecar uses, spec §4), probe timeout — is an observation gap, never a verdict.
-Epoch-wide doubt (reconnect after server restart; snapshot full of unknown terminal_ids) is
-§8.3 reconciliation territory: the observer runs the probe portion with the sid-less
-fallback's conservatism, appends re-confirms/unseats only where per-seat evidence is
-positive, and flags everything else for `herder reconcile` — repairs stay explicit verbs.
+
+**Epoch discrimination rule (implementable, tested as T-11).** herdr exposes no boot id;
+epochs are probe-inferred (spec §6.3), and a live handoff may reissue terminal ids wholesale
+(spec AC-24) — so a naive sweep after `herdr update` would see every recorded terminal_id
+absent and mass-unseat healthy seats. The observer discriminates as follows:
+
+- **Within one uninterrupted socket connection**, the server cannot have restarted: a
+  terminal_id that was present in an earlier snapshot on this connection and is absent now
+  (or whose pane emitted closed/exited) is same-epoch positive death evidence.
+- **Across any connection gap** (boot, reconnect), epoch doubt is ON until dispelled.
+  Compute the overlap between the new snapshot's terminal_ids and the registry's seated
+  herdr-seat terminal_ids: **any overlap ⇒ same epoch presumed** (terminal ids survive
+  within a server lifetime; a handoff reissues them wholesale, so partial survival is
+  incompatible with a boundary) — absences may then be adjudicated individually. **Zero
+  overlap with ≥2 seats recorded ⇒ epoch boundary presumed**: no absence-based unseat
+  verdicts at all; flag epoch-wide doubt for `herder reconcile` (repairs stay explicit
+  verbs) and run only the §8.3-conservative probe portion (sid / guarded re-confirm where
+  evidence is positive).
+- **The lone-seat gap case** (exactly one seated herdr seat recorded, absent after a gap —
+  overlap arithmetic cannot discriminate): absence alone never unseats; the verdict needs
+  corroborating cross-substrate evidence — a dead/stale hcom row (process unbound, status
+  stale beyond threshold) — which is epoch-independent. Without corroboration: flagged, not
+  unseated.
+
+The observer neither mints nor re-stamps epoch records in 1a; epoch re-stamping is §8.3
+repair and stays with `reconcile`.
+
 The observer never produces `state: lost` (transcript-verified-gone is resume/recognition
-evidence, not liveness evidence; note `StateLost` is defined but unproduced in the entire
-codebase today — the observer does not change that).
+evidence, not liveness evidence; note that no production observer/lifecycle path emits
+`lost` today — `StateLost` appears only in guards and test fixtures — and the observer does
+not change that).
 
 **Turnover detection for observer-owned seats.** Spec §8.1's one rule ("sid changed in my
 seat ⇒ turnover") is assigned to "the sidecar" — which enrolled seats don't have, so today
@@ -329,9 +357,16 @@ also §8.2 confines sid-lookup recognition to unregistered seats and seat-contin
 neither of which a seatless dormant row has). It flags them: status file + log +
 `observer status` output, each with the suggested verb (`herder enroll` from the pane /
 `herder reconcile --apply` / `herder resume`). The 275a4ac2 test subject is caught here on
-the very first sweep: unseated row, live pane, label match ⇒ flagged with evidence. Whether
-`herder list` surfaces these flags (it already surfaces anomalies) is left to the impl task
-as a SHOULD.
+the very first sweep: unseated row, live pane, label match ⇒ flagged with evidence.
+
+**Surfacing is mandatory, not a SHOULD** (review finding P1-3): advice that lives only in
+`observer status` is invisible exactly when it matters — the operator trusting a stale row
+is running `herder list` or `send`, not `observer status`. `herder list` therefore consults
+`observer.status.json` when present and annotates flagged rows inline, explicitly marked as
+observer advice (e.g. `unseated ⚠ live occupant observed — herder enroll?`). This stays
+inside invariant 5: the registry is untouched, the annotation is labelled advice, `list`
+already surfaces projection anomalies, and a deleted/stale status file simply drops the
+annotation. Mandatory AC in the impl task (AC-11).
 
 Live unregistered occupants (a pane with an agent no seated row claims) are flagged the same
 way, never auto-registered — registration stays with enroll/shim/recognition.
@@ -349,8 +384,10 @@ call, cheap to drop if review dislikes it.
 ## 7. Testability: the enroll/observer contract suite
 
 New `tools/herder/tests/check-observer-contract.sh` in the house style (mock-herdr +
-mock-hcom + real registry package + temp HERDER_STATE_DIR), exercising `observer sweep`
-(single-shot — hermetic, no daemon lifecycle in tests except T-8):
+mock-hcom + real registry package + temp HERDER_STATE_DIR). **The suite lands split by
+rollout step** (review finding P1-2 — each step must be shippable green): step 1 (`observer
+sweep` only, no daemon lifecycle) ships T-1..T-7 and T-9..T-11; step 2 adds T-8 plus
+`status`/`stop` checks; step 3 adds nudge-start checks. Scenarios:
 
 - **T-1 enrolled-seat crash**: enroll a seat (mock pane), kill the mock occupant, sweep ⇒
   exactly one `unseated` row, `close_result: observed_dead`, evidence in close_reason.
@@ -365,15 +402,24 @@ mock-hcom + real registry package + temp HERDER_STATE_DIR), exercising `observer
   ⇒ projection converges, no revert of a rename, no resurrect of a cull (spec AC-32 discipline
   under two writers).
 - **T-6 dormant-live flag**: unseated row + live matching pane ⇒ NO append; flag present in
-  sweep --json output with suggested verb (the 275a4ac2 scenario, pinned as a test).
+  sweep --json output with suggested verb AND annotated in `herder list` output (the
+  275a4ac2 scenario, pinned as a test; §6.3 surfacing is mandatory).
 - **T-7 ambiguity refusal**: two candidate fallback matches ⇒ no append, flagged.
-- **T-8 disposability**: start `observer run`, kill -9 mid-loop, restart ⇒ lock reacquired,
-  sweep produces identical net state; no observer-state file is ever read across generations
-  (assert by deleting them pre-restart).
+- **T-8 disposability** *(step 2)*: start `observer run`, kill -9 mid-loop, restart ⇒ lock
+  reacquired, sweep produces identical net state; no observer-state file is ever read across
+  generations (assert by deleting them pre-restart).
 - **T-9 v2-only**: suite greps the observer package for legacy `registry.Record`/`Status`
   imports (invariant 3, enforced mechanically).
-- **T-10 confirmed-write accounting**: sweep --json reports applied/noop/refused counts that
-  reconcile exactly with rows actually appended.
+- **T-10 confirmed-write accounting**: sweep --json reports applied/noop/refused counts
+  **per candidate observation fact** that reconcile exactly with the observer's own rows
+  actually appended — run once against a fresh state dir so the node-mint row is present in
+  `UpdateLocked`'s return, and assert it is NOT counted as an observer `applied` (finding
+  P1-1 pinned as a test).
+- **T-11 epoch discrimination** *(the §3 rule)*: (a) snapshot with wholesale-reissued
+  terminal ids (0/3 recorded seats present) ⇒ zero unseat rows, epoch-wide doubt flagged;
+  (b) same snapshot with 2/3 present ⇒ the absent seat unseats; (c) lone recorded seat
+  absent after a connection gap with a live hcom row ⇒ flagged, not unseated; with a
+  dead/stale hcom row ⇒ unseated.
 
 This suite IS the "enroll contract check" the settle-list asks for: T-1/T-2/T-6 are
 executable statements of what observation an enrolled seat is owed.
@@ -385,10 +431,11 @@ executable statements of what observation an enrolled seat is owed.
   same lock; the tail detects it by inode and reloads (§5.1). Un-acquirable lock (network
   fs) refuses per write.go:39 — outcome `refused`, counted, sweep retries next tick.
 - **Partial/torn reads**: only via the quarantining loader; never raw tail-parsing (§5.1).
-- **herdr socket down or incompatible**: `status server`-style handshake on connect; protocol
-  incompatibility ⇒ log + status-file flag + degrade to CLI fallback if the CLI is itself
-  compatible, else herdr-seat probing pauses (observation gap, no verdicts); process seats
-  and hcom checks continue. Upstream protocol version (`protocol: 16, compatible: yes`) is
+- **herdr socket down or incompatible**: `status server`-style handshake on connect. Socket
+  absent or dead ⇒ herdr-seat probing pauses outright (no CLI equivalent exists — the CLI is
+  a socket client too); protocol-client incompatibility ⇒ log + status-file flag + degrade
+  to the CLI fallback if the CLI itself still speaks the server's protocol, else pause. A
+  pause is an observation gap, never a verdict; process seats and hcom checks continue. Upstream protocol version (`protocol: 16, compatible: yes`) is
   the recorded stability surface — herdr is an external dependency on its own release
   channel; the observer must fail *soft* on its drift.
 - **hcom db locked/errored**: bus-errored ≠ row-absent (sidecar's rule, kept). No occupant
@@ -403,11 +450,12 @@ executable statements of what observation an enrolled seat is owed.
 
 ## 9. Migration / rollout order
 
-1. **`observer sweep` + contract suite** (no daemon). Pure, hermetic, reviewable; validates
-   probe logic and write discipline before any long-lived process exists. Can be cron'd as a
-   stopgap universal observer from day one.
+1. **`observer sweep` + the step-1 contract suite** (T-1..T-7, T-9..T-11 — no daemon, no
+   daemon-lifecycle tests). Pure, hermetic, reviewable; validates probe logic and write
+   discipline before any long-lived process exists. Can be cron'd as a stopgap universal
+   observer from day one.
 2. **`observer run`** (loop + subscriptions + singleton lock + status/stop verbs), started
-   explicitly by operators.
+   explicitly by operators. T-8 and the `status`/`stop` checks land here.
 3. **Nudge-start** from seat-creating verbs, behind config `observer.autostart` (ships
    default-on after one bake period on the reference machine).
 4. **Parity bake**: observer + sidecars coexist (idempotent double observation, T-5); watch
@@ -431,7 +479,10 @@ unregistered occupants; `state: lost` production; plugin packaging.
 
 1. **Turnover detection for observer-owned seats** (§3) — in, because the incident class is
    the task's WHY; the alternative (observe-only, no turnover) leaves the orchestrator's
-   `/clear` invisible for another phase.
+   `/clear` invisible for another phase. *Adjudicated IN by design review.* Coupling rule:
+   implementation builds turnover once spec erratum E-10 is accepted; if the spec steward
+   rejects E-10, this design **returns to design review** — a weaker phase 1a never ships
+   silently (finding P2-1).
 2. **Fallback sid reporting** (§6.4) — in as SHOULD; drop is cheap.
 3. **60m re-confirmation cadence** (§5.3) — mechanism firm, default tunable.
 4. **Dormant-live rows flagged, never repaired** (§6.3) — the conservative reading of
