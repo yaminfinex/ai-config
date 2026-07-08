@@ -3,10 +3,11 @@ id: TASK-053
 title: >-
   sidecar: self-report agent sessions via herdr pane report-agent-session
   (0.7.3) — handoff-stranding prevention + AC-24 substrate
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - codex-f07b1274
 created_date: '2026-07-08 05:25'
-updated_date: '2026-07-08 05:30'
+updated_date: '2026-07-08 06:04'
 labels: []
 dependencies: []
 priority: high
@@ -27,5 +28,10 @@ Sidecar self-reports agent sessions via `herdr pane report-agent-session` (new 0
 created: 2026-07-08 05:30
 ---
 Memo path update (spec-ravu #6065): canonical copy now napkins/run-herder-dx/spec-memo-sid-exposure.md (main checkout, run napkin) — worktree copy is disposable. Wave-A sizing companion: spec-plan-wave-a.md beside it.
+---
+
+created: 2026-07-08 06:04
+---
+Dispatched (vibe #6530): codex worker task053-nida (f07b1274), worktree /home/grace/Coding/ai-config-task053, branch task-053-sid-reporting, brief via the 045 workaround (spawn capture missed again — same signature, another datapoint for TASK-045; bus delivery verified, worker acked). Scope fenced to sidecarcmd only with explicit stop-and-report-blocked if registry internals seem needed — no collision with wave-A1. Ground truth: ratified spec D11/AC-24 + spec-memo-sid-exposure.md. Hand-back: worker DONE -> vibe review -> hera gate (opus adversarial review per policy).
 ---
 <!-- COMMENTS:END -->
