@@ -74,6 +74,9 @@ retire_out="$(run_hr retire trap --json 2>"$CASE/retire.err")"; retire_rc=$?
 assert "retire unseated exits 0" test "$retire_rc" -eq 0
 assert "retire json is unlabelled" bash -c 'grep -q "\"event\":\"retired\"" <<<"$1" && ! grep -q "\"label\"" <<<"$1"' bash "$retire_out"
 
+run_hr rename guid-old-0000 should-refuse >/dev/null 2>"$CASE/rename-retired.err"; rename_retired_rc=$?
+assert "rename retired refuses with reopen guidance" bash -c 'test "$1" -ne 0 && grep -q "herder reopen guid-old-0000" "$2" && ! test -s "$3"' bash "$rename_retired_rc" "$CASE/rename-retired.err" "$CASE/probe/herdr_rename_argv"
+
 rename_out="$(run_hr rename other trap 2>"$CASE/rename.err")"; rename_rc=$?
 assert "rename reuses retired label" test "$rename_rc" -eq 0
 
@@ -93,16 +96,28 @@ assert "retire twice succeeds once" test "$first_rc" -eq 0 -a "$second_rc" -eq 0
 new_case refusals
 run_hr retire busy >/dev/null 2>"$CASE/seated.err"; seated_rc=$?
 run_hr retire gone >/dev/null 2>"$CASE/lost.err"; lost_rc=$?
+run_hr rename gone should-refuse >/dev/null 2>"$CASE/rename-lost.err"; rename_lost_rc=$?
 assert "retire seated refuses with cull guidance" bash -c 'test "$1" -ne 0 && grep -qi "cull first" "$2"' bash "$seated_rc" "$CASE/seated.err"
 assert "retire lost refuses" bash -c 'test "$1" -ne 0 && grep -q "LOST sessions cannot be retired" "$2"' bash "$lost_rc" "$CASE/lost.err"
+assert "rename lost refuses" bash -c 'test "$1" -ne 0 && grep -q "lost sessions cannot be renamed" "$2"' bash "$rename_lost_rc" "$CASE/rename-lost.err"
+
+new_case same_pane_successor
+cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"guid":"guid-old-pane-0000","event":"registered","recorded_at":"2026-07-08T00:00:05Z","node":"11111111-1111-1111-1111-111111111111","state":"unseated","label":"old-pane","role":"worker","tool":"codex"}
+{"guid":"guid-new-pane-0000","event":"registered","recorded_at":"2026-07-08T00:00:06Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"new-pane","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","pane_id":"p_reused","terminal_id":"term_reused"}}
+JSONL
+run_hr retire p_reused >/dev/null 2>"$CASE/retire-pane.err"; retire_pane_rc=$?
+assert "retire by pane_id hits seated successor guard" bash -c 'test "$1" -ne 0 && grep -qi "cull first" "$2" && grep -q "guid-new-pane-0000" "$2"' bash "$retire_pane_rc" "$CASE/retire-pane.err"
 
 new_case reopen
 run_hr retire trap >/dev/null 2>"$CASE/retire.err"; retire_rc=$?
 reopen_out="$(run_hr reopen guid-old-0000 --json 2>"$CASE/reopen.err")"; reopen_rc=$?
 run_hr reopen other >/dev/null 2>"$CASE/reopen-open.err"; reopen_open_rc=$?
+rename_after_reopen_out="$(run_hr rename guid-old-0000 trap 2>"$CASE/rename-after-reopen.err")"; rename_after_reopen_rc=$?
 assert "reopen retired exits 0" test "$retire_rc" -eq 0 -a "$reopen_rc" -eq 0
 assert "reopen is unseated unlabelled" bash -c 'grep -q "\"event\":\"reopened\"" <<<"$1" && grep -q "\"state\":\"unseated\"" <<<"$1" && ! grep -q "\"label\"" <<<"$1"' bash "$reopen_out"
 assert "reopen non-retired refuses" test "$reopen_open_rc" -ne 0
+assert "reopen then rename claims freed label" bash -c 'test "$1" -eq 0 && grep -q "renamed  -> trap (guid-old-0000)" "$2" && grep -q "\"event\":\"labelled\"" "$3" && grep -q "\"label\":\"trap\"" "$3"' bash "$rename_after_reopen_rc" "$CASE/rename-after-reopen.err" "$CASE/state/registry.jsonl"
 
 if [[ "$fail" -eq 0 ]]; then
   printf '\nALL GREEN — retire/reopen contract holds.\n'

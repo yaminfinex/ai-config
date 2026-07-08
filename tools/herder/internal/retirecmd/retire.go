@@ -154,9 +154,9 @@ func printHelp(verb string, stdout io.Writer) {
 Usage:
   herder reopen <target> [--json]
 
-<target> is a short-guid, full guid, label, or pane_id. Only retired sessions
-can be reopened. The reopened session is always unseated and unlabelled; claim
-a label afterwards with 'herder rename'.
+<target> is a short-guid, full guid, or label. Only retired sessions can be
+reopened. The reopened session is always unseated and unlabelled; claim a label
+afterwards with 'herder rename'.
 `)
 		return
 	}
@@ -165,10 +165,10 @@ a label afterwards with 'herder rename'.
 Usage:
   herder retire <target> [--json]
 
-<target> is a short-guid, full guid, label, or pane_id. Retire is legal only
-from unseated sessions. If the target is seated, cull first, then retire the
-unseated session. Lost sessions cannot be retired. Retiring an already-retired
-session succeeds as a confirmed no-op and appends no duplicate row.
+<target> is a short-guid, full guid, or label. Retire is legal only from
+unseated sessions. If the target is seated, cull first, then retire the unseated
+session. Lost sessions cannot be retired. Retiring an already-retired session
+succeeds as a confirmed no-op and appends no duplicate row.
 `)
 }
 
