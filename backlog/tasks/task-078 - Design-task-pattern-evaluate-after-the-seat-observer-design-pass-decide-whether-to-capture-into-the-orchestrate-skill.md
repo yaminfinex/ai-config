@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 20:57'
-updated_date: '2026-07-08 22:05'
+updated_date: '2026-07-08 22:52'
 labels: []
 dependencies: []
 priority: medium
@@ -38,5 +38,10 @@ THE DECISION THIS TASK HOLDS OPEN: do NOT encode design-task typing into the orc
 created: 2026-07-08 22:05
 ---
 FIRST DATA POINT — seat-observer design pass completed under this pattern (2026-07-08, one session): Designer (Fable) delivered in ~55 min: design doc answering all 8 settle-items, errata E-1..E-11, filed-ready impl task text. PATTERN OBSERVATIONS: (1) designer asked ZERO mid-unit questions — the remediated capture (task text as sole substance, thin mechanics brief) carried everything; (2) designer flagged its four contested scope calls to the reviewer in a dedicated section instead of self-adjudicating — the reviewer adjudicated all four (favorable with caveats), which worked exactly as the pattern intended; (3) delegation freedom was used lightly (source survey + live socket probes, no jury requested — each call had stated rationale and cheap reversal); (4) cross-family quality review (codex on Fable) produced 3 P1 + 3 P2, all substantive — the standout caught a false-applied trap in UpdateLocked return semantics at design time; one fix round to delta APPROVE; (5) tomo intent review (INTENT-OK) added distinct value beyond quality: caught that E-2 deviates from decision-record wording (needs an explicit steward call) and that the 60m cadence row class is designer-added, not owner-ratified — drift-detection the quality reviewer did not attempt; (6) the filed-ready impl text survived the reviewer's cold read ('buildable step by step') and filed cleanly as TASK-080 with 12 ACs. VERDICT SO FAR: pattern worked end-to-end with zero orchestrator scope re-invention. Remaining before the capture-into-skill decision: watch whether TASK-080's dispatch actually proceeds without re-inventing scope (the pattern's ultimate test).
+---
+
+created: 2026-07-08 22:52
+---
+SECOND DATA POINT — implementation leg (TASK-080) complete, pattern evaluation can now be scored end-to-end: (1) the designer's filed-ready task text dispatched with a mechanics-only brief and the worker asked ZERO design questions — capture fidelity held through implementation; (2) the classic failure appeared anyway: worker substituted the CLI seam for the settled socket client on convenience grounds — caught at ORCHESTRATOR TRIAGE because the dispatch contract's mandatory deviations section forced disclosure; one rejection cycle, clean correction; (3) cross-family code review then caught a REPRODUCED identity-destruction P1 that five prior verification layers (settled design, two design reviews, intent review, 30/30 gate) structurally could not catch — evidence that design review and code review find DISJOINT defect classes and the pattern needs both; (4) total cost: 1 designer + 2 reviewers + 1 implementer, 3 fix rounds across both legs, zero scope re-invention by the orchestrator at any point. RECOMMENDATION FORMING: capture the pattern into the skill with two amendments — (a) implementation dispatch briefs must quote the stop-and-report rule prominently (the substitution happened despite it being in the normative doc), (b) the design pass should enumerate 'settled decisions an implementer might be tempted to reverse' as an explicit list the reviewer checks the diff against. Awaiting owner decision per this task's ACs.
 ---
 <!-- COMMENTS:END -->
