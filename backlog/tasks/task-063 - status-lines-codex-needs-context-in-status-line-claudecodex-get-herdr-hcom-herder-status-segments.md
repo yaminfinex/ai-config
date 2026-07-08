@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - vibe
 created_date: '2026-07-08 07:19'
-updated_date: '2026-07-08 09:35'
+updated_date: '2026-07-08 09:47'
 labels: []
 dependencies: []
 ordinal: 63000
@@ -43,5 +43,10 @@ created: 2026-07-08 09:31
 created: 2026-07-08 09:35
 ---
 [hera 2026-07-08] Opus adversarial verdict (review-063-magi, #10416): NOT CLEAN — 1 BLOCKER + 2 MEDIUM + 2 LOW + 2 NIT, all key findings sandbox-reproduced. B1: plain ai-setup FABRICATES ~/.codex (mkdir -p + fresh config) on machines with no codex — angle-3 ruling FAILS. M1: symlinked config.toml replaced by a plain file (dotfiles diverge silently). M2: remove DELETES managed keys instead of restoring pre-install values (angle-6 ruling: delete-not-restore). L1: multi-line arrays/inline comments/CRLF fail SAFELY (tomllib net aborts, live untouched) but config stays unmanageable with poor messaging. L2: overlong integers bypass the statusline whitelist (display garbage, no injection). Probed clean: subtable/duplicate-section handling, up-front non-TOML rejection, true idempotent no-op, ANSI/control injection blocked, env segments display-only. HERA RULINGS: B1 fix (default path guards existence; explicit install may create; skip flag); M1 write-through-symlink (resolve, tmp+mv in target dir, refuse dangling); M2 RESTORE semantics (record pre-install values in stable state file; restore on remove; delete only when nothing recorded); L1 safe-abort accepted + messaging + pin tests; L2 length-cap. Fix round routed to taro via vibe.
+---
+
+created: 2026-07-08 09:47
+---
+[hera 2026-07-08] Round-2 61ab259 regated green (25/25 bare, mode bit verified). Magi delta requested (B1 order guarantee + three repro re-runs). See TASK-059 comment for the shared pre-compact checkpoint.
 ---
 <!-- COMMENTS:END -->
