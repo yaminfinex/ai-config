@@ -1,5 +1,5 @@
 === STDERR ===
-renamed alpha -> old-closed (guid-alpha-0000)
+renamed alpha -> alpha-legacy-new (guid-alpha-0000)
 === STDOUT ===
 herdr: rename skipped (registry row has no terminal_id)
 === EXIT ===
@@ -11,4 +11,8 @@ herdr: rename skipped (registry row has no terminal_id)
 {"kind":"namespace","event":"namespace_observed","namespace_id":"<GUID>","node":"<GUID>","path":"/hcom-alpha","recorded_at":"<TS>"}
 {"kind":"session","guid":"guid-alpha-0000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"alpha","role":"worker","tool":"codex","sids":[{"sid":"sess-alpha","observed_at":"<TS>","source":"harvest"}],"continuity":"confirmed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-alpha","tag":"worker","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
 {"kind":"session","guid":"guid-beta-0000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"beta","role":"reviewer","tool":"claude","continuity":"assumed","lineage":{},"provenance":{}}
-{"kind":"session","guid":"guid-alpha-0000","event":"labelled","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"old-closed","role":"worker","tool":"codex","sids":[{"sid":"sess-alpha","observed_at":"<TS>","source":"harvest"}],"continuity":"confirmed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-alpha","tag":"worker","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
+{"kind":"session","guid":"guid-alpha-0000","event":"labelled","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"alpha-legacy-new","role":"worker","tool":"codex","sids":[{"sid":"sess-alpha","observed_at":"<TS>","source":"harvest"}],"continuity":"confirmed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-alpha","tag":"worker","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
+=== LIST ===
+GUID       LABEL                AGENT   PANE               LIVE      TEAM         BUS              ROLE
+guid       alpha-legacy-new     codex                      gone      global       -                worker
+guid       beta                 claude                     gone      global       -                reviewer

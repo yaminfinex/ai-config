@@ -139,8 +139,8 @@ run_case collision ok alpha beta
 check_one collision
 run_case reuse_closed ok alpha old-closed
 check_one reuse_closed
-run_case legacy_preserves_seat ok alpha alpha-legacy-new
-check_one_with_list legacy_preserves_seat
+run_case legacy_migrates_dormant ok alpha alpha-legacy-new
+check_one_with_list legacy_migrates_dormant
 run_case unknown ok nope new-label
 check_one unknown
 

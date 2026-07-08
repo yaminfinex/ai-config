@@ -333,7 +333,7 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 	if latest == nil {
 		latest = s.latestFromRecords(recs, guid)
 	}
-	if latest != nil && latest.Status == "closed" && !resumed {
+	if latest != nil && latest.Status == "closed" {
 		return false
 	}
 	label := os.Getenv("HERDER_LABEL")
