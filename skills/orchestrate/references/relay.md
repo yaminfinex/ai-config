@@ -38,11 +38,11 @@ the bus (`hcom list`). Two variants:
   backstop (returns immediately — the notification arrives later as a bus message; not a
   blocking waiter).
 
-## Mid-leg handoff (context budget)
+## Mid-leg handoff (context band)
 
-If a leg balloons, commit WIP and journal `## Leg N — HANDOFF (continue)` with exact remaining
-steps + current state, then **spawn the continuation** — same leg, prompt notes "continue from
-the HANDOFF entry".
+If a leg hits the 200–250k-token band (invariant 3 — every time, not a judgment call), commit
+WIP and journal `## Leg N — HANDOFF (continue)` with exact remaining steps + current state,
+then **spawn the continuation** — same leg, prompt notes "continue from the HANDOFF entry".
 
 Cheaper alternative when the leg is still coherent: compact in place and continue the same
 leg — no successor spawn. Mechanics, persistence-first rule, and preference order are SKILL.md
@@ -54,7 +54,8 @@ for sessions too far gone to steer.
 ## The soloist
 
 Degenerate relay: one role, no leg boundaries. A single agent works a runbook until context
-approaches budget, then resets via the mid-leg handoff above: journal a HANDOFF entry, stop, and
+approaches the 200–250k band (invariant 3), then resets via the mid-leg handoff above: journal
+a HANDOFF entry, stop, and
 a fresh copy continues the runbook (a chain of respawns over the same state files). Same state
 files, gate, and mechanics as any leg; the HANDOFF entries become the runbook's progress marks.
 In-place compaction (`herder compact '<steer>'`) is the cheaper reset when the soloist is still

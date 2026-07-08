@@ -22,8 +22,8 @@ stages to execute.
 In-process subagents (fan-out, map-reduce, wide exploration) stay the default for fire-and-forget
 work. Spawn a pane (a full session) when persistence matters — follow-ups without respawning,
 talking to a branch of the work later, work that outlives one context window — or to pin the
-right agent/model per role (adversaries benefit from a different family than the doer), budget
-context per agent, and keep each session on one job.
+right agent/model per role (run-shape item 4), budget context per agent, and keep each session
+on one job.
 
 ## Shape the run — agree upfront with the user
 
@@ -118,8 +118,9 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
    own bus (e.g. `--then 'resume <unit>: run the gate, report DONE on <thread>'`), so the worker
    resumes without a nudge. Or **replace**: when the session is too far gone to steer, it writes
    a HANDOFF report on the unit thread (state + ordered remaining steps for an agent with zero
-   shared memory + WIP sha) and stops; the successor takes over the label (`herder rename`) and
-   culls the original before anything else — one claimant per label.
+   shared memory + WIP sha) and stops. The takeover is mechanical, in order: cull the original
+   first (`herder rename` refuses a label a live session still holds — never two claimants),
+   then rename the successor onto the label, then continue the unit.
 4. **Verification before done.** A finished worker reports DONE on its unit thread with the
    playbook-pinned commands' results. The orchestrator never trusts the claim: it re-runs the
    pinned gates itself (a build-cached green is not independent evidence), then records the
