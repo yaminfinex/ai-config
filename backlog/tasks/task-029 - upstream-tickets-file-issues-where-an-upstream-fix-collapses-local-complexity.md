@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-08 06:44'
+updated_date: '2026-07-08 09:31'
 labels:
   - run-herder-dx
 dependencies: []
@@ -91,5 +91,10 @@ F3 upstream issue draft FINALIZED and HELD (vibe #6996): regression-window claim
 created: 2026-07-08 06:44
 ---
 Owner decision: F3 upstream filing DEFERRED to run closeout — draft stays held as finalized; vibe files at closeout with fresh evidence capture, issue URL lands here then.
+---
+
+created: 2026-07-08 09:31
+---
+[hera 2026-07-08] +upstream ledger entry (TASK-063 Phase 0, authoritative from a codex worker on codex-cli 0.142.5): no custom statusline/footer command hook — only [tui].status_line built-in item ids + terminal_title. herder/hcom identity segments cannot render in the codex footer until upstream adds a hook. Candidate for the same closeout filing batch as F3.
 ---
 <!-- COMMENTS:END -->
