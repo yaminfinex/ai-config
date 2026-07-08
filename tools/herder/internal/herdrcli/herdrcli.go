@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
 )
 
@@ -220,17 +221,32 @@ func ParseSessionSnapshot(out []byte) (Snapshot, error) {
 }
 
 func ParseSessionSnapshotResult(result []byte) (Snapshot, error) {
-	var wrapped struct {
-		Snapshot *Snapshot `json:"snapshot"`
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(result, &obj); err != nil {
+		return Snapshot{}, err
 	}
-	if err := json.Unmarshal(result, &wrapped); err == nil && wrapped.Snapshot != nil {
-		return *wrapped.Snapshot, nil
+	if raw, ok := obj["snapshot"]; ok {
+		var snap Snapshot
+		if err := json.Unmarshal(raw, &snap); err != nil {
+			return Snapshot{}, err
+		}
+		if emptySessionSnapshot(snap) {
+			return Snapshot{}, fmt.Errorf("herdr session snapshot payload is empty")
+		}
+		return snap, nil
 	}
 	var direct Snapshot
 	if err := json.Unmarshal(result, &direct); err != nil {
 		return Snapshot{}, err
 	}
+	if emptySessionSnapshot(direct) {
+		return Snapshot{}, fmt.Errorf("herdr session snapshot payload has no snapshot")
+	}
 	return direct, nil
+}
+
+func emptySessionSnapshot(s Snapshot) bool {
+	return s.Protocol == 0 && len(s.Panes) == 0 && len(s.Agents) == 0
 }
 
 func ParseProcessInfo(out []byte) (ProcessInfo, error) {

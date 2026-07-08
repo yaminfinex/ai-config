@@ -186,6 +186,23 @@ func TestParseSessionSnapshotWrappedAndFlat(t *testing.T) {
 	}
 }
 
+func TestParseSessionSnapshotRejectsMalformedWrapped(t *testing.T) {
+	if _, err := ParseSessionSnapshot([]byte(`{"result":{"type":"session_snapshot","snapshot":{"protocol":"sixteen","panes":[],"agents":[]}}}`)); err == nil {
+		t.Fatal("want error for malformed wrapped snapshot")
+	}
+}
+
+func TestParseSessionSnapshotRejectsNeitherShape(t *testing.T) {
+	for _, payload := range []string{
+		`{"result":{"type":"not_session_snapshot","ok":true}}`,
+		`{"result":{"protocol":0,"panes":[],"agents":[]}}`,
+	} {
+		if _, err := ParseSessionSnapshot([]byte(payload)); err == nil {
+			t.Fatalf("ParseSessionSnapshot(%s) succeeded, want error", payload)
+		}
+	}
+}
+
 func TestParseWorkspaceTabAgentStart(t *testing.T) {
 	wss, err := ParseWorkspaceList([]byte(`{"result":{"workspaces":[{"workspace_id":"ws_1"},{"workspace_id":"ws_2"}]}}`))
 	if err != nil || len(wss) != 2 || wss[1].WorkspaceID != "ws_2" {
