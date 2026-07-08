@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"time"
 
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
@@ -89,6 +90,36 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if owner := registry.ActiveLabelOwner(recs, label, guid); owner != nil {
 		die(stderr, fmt.Sprintf("label %q already belongs to active guid %s", label, ptrString(owner.GUID)))
 		return 1
+	}
+
+	// Retire prior identities bound to this same pane. A herdr pane hosts
+	// exactly one live session at a time, but pane ids are positional and
+	// reused across sessions — so any OTHER active row still claiming this
+	// pane_id is a stale identity from an earlier session that reused the pane.
+	// Left active its bus name lingers as a forever-'working' row, and pane-id
+	// send resolution could pick it over the live one (TASK-035). Mark each
+	// closed before appending this session's row.
+	nowISO := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	for _, prior := range registry.LatestByGUID(recs) {
+		if prior.Status != "active" || prior.PaneID != pane.PaneID || ptrString(prior.GUID) == guid {
+			continue
+		}
+		retire, err := registry.UpdateRawObject(prior.Raw, map[string]any{
+			"status":         "closed",
+			"closed_at":      nowISO,
+			"closed_by_pane": pane.PaneID,
+			"close_result":   "superseded",
+			"close_reason":   "reenroll_same_pane",
+		})
+		if err != nil {
+			die(stderr, err.Error())
+			return 1
+		}
+		if err := registry.Append(registryPath, retire); err != nil {
+			die(stderr, err.Error())
+			return 1
+		}
+		fmt.Fprintf(stderr, "retired stale pane row %s (%s) superseded by re-enroll\n", ptrString(prior.Label), ptrString(prior.GUID))
 	}
 
 	mechanism := "enroll"
@@ -185,8 +216,11 @@ Options:
   --json          print the appended registry record as JSON on stdout
 
 Records pane_id, terminal_id, workspace_id, cwd, and hcom coordinates so later
-resolution survives herdr pane-id compaction. Must run inside a herdr pane
-(HERDR_ENV=1 and HERDR_PANE_ID set); refuses otherwise.
+resolution survives herdr pane-id compaction. A herdr pane hosts one live
+session at a time, so re-enrolling a reused pane RETIRES (closes) any prior
+active rows still claiming that pane_id — a dead session's row never lingers as
+LIVE=working. Must run inside a herdr pane (HERDR_ENV=1 and HERDR_PANE_ID set);
+refuses otherwise.
 `)
 }
 

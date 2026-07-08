@@ -1,0 +1,15 @@
+=== STDERR ===
+retired stale pane row stale-a (guid-stale1-000) superseded by re-enroll
+retired stale pane row stale-b (guid-stale2-000) superseded by re-enroll
+enrolled fresh-session (guid-fresh-0000) pane=p_self terminal=term_SELF
+=== STDOUT ===
+{"agent":"manual","cwd":"/mock/cwd","guid":"guid-fresh-0000","hcom_dir":"","hcom_name":"","hcom_tag":"","label":"fresh-session","pane_id":"p_self","provenance":{"mechanism":"enroll","spawned_by":"guid-fresh-0000","tool_session_id":"","tag":"","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"},"role":"manual","short_guid":"guid","status":"active","terminal_id":"term_SELF","workspace_id":"ws_self"}
+=== EXIT ===
+0
+=== REGISTRY ===
+{"guid":"guid-stale1-000","short_guid":"stale1","label":"stale-a","role":"manual","agent":"claude","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stale-a-bus","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"manual","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"}}
+{"guid":"guid-stale2-000","short_guid":"stale2","label":"stale-b","role":"manual","agent":"claude","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stale-b-bus","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"manual","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"}}
+{"guid":"guid-other-pane0","short_guid":"otherp","label":"other-pane","role":"manual","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","hcom_name":"other-bus","status":"active"}
+{"agent":"claude","close_reason":"reenroll_same_pane","close_result":"superseded","closed_at":"<TS>","closed_by_pane":"p_self","guid":"guid-stale1-000","hcom_name":"stale-a-bus","label":"stale-a","pane_id":"p_self","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"manual","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"},"role":"manual","short_guid":"stale1","status":"closed","terminal_id":"term_SELF"}
+{"agent":"claude","close_reason":"reenroll_same_pane","close_result":"superseded","closed_at":"<TS>","closed_by_pane":"p_self","guid":"guid-stale2-000","hcom_name":"stale-b-bus","label":"stale-b","pane_id":"p_self","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"manual","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"},"role":"manual","short_guid":"stale2","status":"closed","terminal_id":"term_SELF"}
+{"agent":"manual","cwd":"/mock/cwd","guid":"guid-fresh-0000","hcom_dir":"","hcom_name":"","hcom_tag":"","label":"fresh-session","pane_id":"p_self","provenance":{"mechanism":"enroll","spawned_by":"guid-fresh-0000","tool_session_id":"","tag":"","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"},"role":"manual","short_guid":"guid","status":"active","terminal_id":"term_SELF","workspace_id":"ws_self"}

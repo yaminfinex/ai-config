@@ -117,9 +117,36 @@ JSONL
   check_one reenroll_spawned
 }
 
+# TASK-035 AC#1: a reused pane accumulates a stale manual identity per prior
+# session; re-enrolling that pane must RETIRE (close) the prior active rows for
+# it so a dead session's row stops lingering as LIVE=working. Seed two stale
+# manual rows on p_self (the pane the mock reports) plus one on a DIFFERENT
+# pane that must be left untouched; enroll fresh and assert both p_self rows
+# gain a closed record while the other-pane row stays active.
+scenario_reenroll_reused_pane() {
+  CASE="$ROOT/reenroll_reused_pane"
+  mkdir -p "$CASE/home" "$CASE/state"
+  cat >"$CASE/state/registry.jsonl" <<'JSONL'
+{"guid":"guid-stale1-000","short_guid":"stale1","label":"stale-a","role":"manual","agent":"claude","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stale-a-bus","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"manual","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"2026-07-01T00:00:00Z"}}
+{"guid":"guid-stale2-000","short_guid":"stale2","label":"stale-b","role":"manual","agent":"claude","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stale-b-bus","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"manual","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"2026-07-02T00:00:00Z"}}
+{"guid":"guid-other-pane0","short_guid":"otherp","label":"other-pane","role":"manual","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","hcom_name":"other-bus","status":"active"}
+JSONL
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i \
+    PATH="$PATH_HERMETIC" \
+    HOME="$CASE/home" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self \
+    HERDER_STATE_DIR="$CASE/state" \
+    HERDER_GUID=guid-fresh-0000 \
+    "${HEN[@]}" --label fresh-session --json 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+  check_one reenroll_reused_pane
+}
+
 scenario_default "${HEN[@]}" --json
 scenario_ambient "${HEN[@]}" --label cli-label --role cli-role --json
 scenario_reenroll_spawned
+scenario_reenroll_reused_pane
 
 if [[ "$WRITE" -eq 0 ]]; then
   RUN_ERR_F="$ROOT/outside-stderr"
