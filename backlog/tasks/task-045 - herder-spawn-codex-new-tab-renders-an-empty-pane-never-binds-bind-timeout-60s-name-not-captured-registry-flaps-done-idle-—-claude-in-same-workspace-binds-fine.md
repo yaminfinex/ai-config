@@ -7,7 +7,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:49'
-updated_date: '2026-07-08 06:36'
+updated_date: '2026-07-08 06:51'
 labels: []
 dependencies: []
 priority: high
@@ -51,5 +51,10 @@ ROOT CAUSE (vibe diagnosis #6902, read-only, live-validated): both capture signa
 FIX RANKING: F1 (primary, sidecarcmd-only): sidecar correlates its panes agent process to the roster via HCOM_PROCESS_ID read from /proc/<pid>/environ of the RUNNING agent (authoritative, unlike TASK-043 inherited-shell env) — proven live byte-equal to roster launch_context.process_id; HERDER_GUID + HCOM_INSTANCE_NAME in environ as belt-and-braces; feeds awaitBind through the existing enrichment path, no spawn.go change, TASK-033-compliant positive child-specific signal. F2 (spawn-side variant): collides with A2 — only if F1 latency proves insufficient. F3 (upstream): hcom 0.7.23 codex hook binding broken — filed on TASK-029 regardless; also the only thing that revives codex sid-reporting for TASK-053.
 
 DISPATCH DECISION (hera): F1 GO now, before A2 merges — sidecarcmd-only, but NOTE A2s scope also touches sidecar enrichment call sites; whichever branch merges second gets an explicit conflict-check + regate. Interim workaround remains the dispatch path.
+---
+
+created: 2026-07-08 06:51
+---
+[hera, from vibe review 2026-07-08 #7247] F1 delivered by task045-nina (482bfc7, fenced to sidecarcmd, worker gate green). Vibe review found ONE blocking defect: poll-loop enrichment at sidecar.go:152 requires a non-empty session_id, but codex rows have empty sids — if first correlation lands in the poll loop instead of bootstrap (real race: discoverRow can return the non-correlated fallback row; roster row can appear before /proc/<pid>/environ is scannable), hcom_name is never written and the TASK-045 symptom recurs with no recovery path. Same dead-recovery class as the TASK-053 miss; caught by the reachability check (run-log doctrine). Fix + 1 test requested from worker; on hand-back: hera gate + opus adversarial review. Sequencing: A2 also touches sidecar.go — second merge gets conflict-check + regate.
 ---
 <!-- COMMENTS:END -->
