@@ -74,9 +74,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	var appendedRow []byte
 
 	// Unseat prior identities bound to this same pane. A herdr pane hosts
-	// exactly one live session at a time, but pane ids are positional and
-	// reused across sessions — so any OTHER active row still claiming this
-	// pane_id is a stale identity from an earlier session that reused the pane.
+	// exactly one live session at a time, but pane ids are display-only and
+	// can re-key on moves or reshuffle after restart — so any OTHER active row
+	// still claiming this pane_id is a stale identity from an earlier session.
 	// Left active its bus name lingers as a forever-'working' row, and pane-id
 	// send resolution could pick it over the live one (TASK-035). Mark each
 	// closed before appending this session's row.
@@ -206,7 +206,7 @@ Options:
   --json          print the appended registry record as JSON on stdout
 
 Records pane_id, terminal_id, workspace_id, cwd, and hcom coordinates so later
-resolution survives herdr pane-id compaction. A herdr pane hosts one live
+resolution survives pane move re-keying and restart reshuffles. A herdr pane hosts one live
 session at a time, so re-enrolling a reused pane RETIRES (closes) any prior
 active rows still claiming that pane_id — a dead session's row never lingers as
 LIVE=working. Must run inside a herdr pane (HERDR_ENV=1 and HERDR_PANE_ID set);
@@ -216,13 +216,13 @@ refuses otherwise.
 
 // shouldRetirePriorRow decides whether a prior active row that shares this
 // pane_id is a stale identity to close on re-enroll (TASK-035 AC#1). pane_id
-// alone is NOT enough: herdr COMPACTS pane ids, so a still-live session that
-// moved can keep an old pane_id that a new, unrelated session now reuses —
-// closing that row would corrupt a LIVE session (review P1-b). It refuses to
-// close a row that is plausibly a different, live session:
-//   - terminal_id is the durable coordinate herdr preserves across pane-id
-//     compaction; when both rows carry one and they DIFFER, the prior row is
-//     another session merely sharing a recycled pane_id — leave it.
+// alone is NOT enough: pane ids can re-key on moves and all ids reshuffle
+// after restart, so a still-live session may no longer be at its recorded
+// pane_id — closing that row would corrupt a LIVE session (review P1-b). It
+// refuses to close a row that is plausibly a different, live session:
+//   - terminal_id is the move-stable coordinate within a herdr server run;
+//     when both rows carry one and they DIFFER, the prior row is another
+//     session merely sharing the recorded pane_id — leave it.
 //   - a row whose bus name is currently JOINED is by definition live, never
 //     stale. The probe is protective ONLY: an unavailable bus returns false so
 //     it can never FORCE a close, only prevent one.

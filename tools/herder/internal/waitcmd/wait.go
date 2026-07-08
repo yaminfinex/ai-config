@@ -137,7 +137,7 @@ func printHelp(stdout io.Writer) {
 		"                       [--read] [--lines N] [--source visible|recent|recent-unwrapped]",
 		"",
 		"<target> is a short-guid, full guid, label, or pane_id. A guid/label resolves to",
-		"the agent's CURRENT pane (drift-proof as herdr compacts pane ids); a raw pane_id",
+		"the agent's CURRENT pane (drift-proof across pane move re-keying and restart reshuffles); a raw pane_id",
 		"is used verbatim.",
 		"",
 		"Options:",
