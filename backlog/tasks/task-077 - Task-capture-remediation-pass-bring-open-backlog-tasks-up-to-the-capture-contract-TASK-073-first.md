@@ -3,9 +3,10 @@ id: TASK-077
 title: >-
   Task-capture remediation pass: bring open backlog tasks up to the capture
   contract (TASK-073 first)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-08 20:49'
+updated_date: '2026-07-08 21:10'
 labels: []
 dependencies: []
 priority: high
@@ -28,3 +29,12 @@ This is orchestrator-lane work (backlog/ has a single writer: the orchestrator) 
 - [ ] #2 Every remediated task has acceptance criteria and only reachable-or-inlined references
 - [ ] #3 Each open To Do task audited with a pass/rewritten verdict recorded in this task's notes
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 21:10
+---
+TASK-073 remediated (8f52a6a): retyped as a design task, decision-record content inlined in operative form, all references now reachable (design doc cited at branch+commit+path; napkins memo dependence removed), four ACs added covering the design deliverables and review chain. Remaining: audit the rest of the open To Do tail with pass/rewritten verdicts.
+---
+<!-- COMMENTS:END -->
