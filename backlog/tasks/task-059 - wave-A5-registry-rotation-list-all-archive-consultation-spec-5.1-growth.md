@@ -4,7 +4,7 @@ title: 'wave A5: registry rotation + list --all archive consultation (spec 5.1 g
 status: In Progress
 assignee: []
 created_date: '2026-07-08 05:55'
-updated_date: '2026-07-08 09:09'
+updated_date: '2026-07-08 09:10'
 labels: []
 dependencies: []
 priority: low
@@ -28,5 +28,10 @@ created: 2026-07-08 08:57
 created: 2026-07-08 09:09
 ---
 [hera 2026-07-08] A4 merged; dispatching A5 (rotation + archive consultation) — final wave-A unit.
+---
+
+created: 2026-07-08 09:10
+---
+[hera 2026-07-08] Dispatched: codex worker wave-a5-lina (guid d3e618cf), worktree wave-a5-rotation (workspace wD), brief napkins/run-herder-dx/brief-wave-a5.md. Scope: size-threshold rotation REUSING A4 mechanics (durable numbered archives, node-guaranteed reseed, same crash guarantees), list --all archive consultation with ARCHIVED marking, lineage resolution across archive boundaries, multi-archive deterministic merge (live beats archives), optional cheap truncation-detection hardening (mori residual — skip-with-reasons valid). Inherited obligation from mori LOW carried in. Adversarial review mandatory. Last unit of wave A.
 ---
 <!-- COMMENTS:END -->
