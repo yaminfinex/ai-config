@@ -190,6 +190,74 @@ point for the next session — do not re-ask these.
   (teams dropped D5, migration D12); this doc's earlier "herder-spec branch, draft" references
   are superseded.
 
+- **Q11 Per-mission board = verbatim nested Backlog.md instance?** → **STRONG co-sign, 100%.**
+  Per-mission backlog is proving itself in live use: much better than current napkin
+  conventions and a central run log; visual; excellent for final closeout capture. Dir shape
+  confirmed: `missions/<slug>/{mission.md, backlog/, events.jsonl, artifacts/}` — mission dir
+  self-contained, moves as a unit; `mission backlog` = cwd-pinned passthrough to the
+  Backlog.md CLI; mission invents nothing board-shaped. Author's forward pointer: the board
+  will eventually carry **agent assignment (labels) against tickets and session history** —
+  feeds the mission↔herder interaction contract (ids as attributes, §3). Nested-instance
+  behavior in a shared repo to be verified before the CLI spec.
+
+- **Q12 CLI verb set (`new`/`log`/`backlog`/`status`) + no-git rule?** → Accepted in
+  discussion with two author amendments: (1) git doctrine lives in skill prose, but write
+  verbs **may grow an opt-in auto-commit marker** — reserved, not designed yet; default stays
+  no-git. (2) The `backlog` passthrough is **not fully open**: some Backlog.md options clash
+  with our system (its own git integration, a stray `init`) — needs a small denylist and/or
+  config pinned at scaffold time. Author also asked: what does events.jsonl actually hold
+  given the board carries structured state? → Q13.
+
+- **Q13 events.jsonl content?** → Three-category cut accepted: **boundary crossings +
+  attribution only** — (1) arrivals (adopted-from provenance), (2) departures (harvested-to /
+  deleted disposition), (3) presence & external effect (agent ids as attributes; PRs merged,
+  deploys). Discriminating rule: *if it's recoverable from git log of the mission subtree or
+  from the board files, it doesn't belong in events.jsonl.* Author amendment: the skill
+  **enumerates known `--action` terms** (freeform-only would be painful) but the CLI validates
+  nothing — an open, documented vocabulary.
+
+- **Q14 Run-log in mission-native orchestrate?** → **Decompose, ratified.** Ledger half dies
+  into the board (unit status → columns; DISPATCHED → assignment; VERDICT/BLOCKED → task
+  notes — already live practice on run-herder-dx). Narrative half (decisions-why, sliding
+  doors, HANDOFF, what-didn't-work) survives as **`artifacts/journal.md` — markdown prose,
+  not jsonl**, an orchestrate-skill convention missions know nothing about. Playbook gets the
+  same treatment ("Decisions already made" graduates toward mission.md). Side effects: run
+  memory becomes durable + team-visible (napkins → mission repo), retiring the
+  "machine-local cold-pickup" caveat in state-files.md; run-log's accreted doctrine gets
+  harvested to skills at migration (per sysreview memo §4 meta-observation).
+
+- **Q15 events.jsonl — keep or kill?** → **STRONG KILL** (supersedes Q13; author). Chain of
+  custody → journal prose or conventioned git commits; attribution anchor → no present
+  justification ("the orchestrator should know anyway; losing this provenance is not much");
+  discipline folds into **backlog + git**. Cascade: (1) mission dir is now
+  `missions/<slug>/{mission.md, backlog/, artifacts/}`; (2) `mission log` dies — Q12's verb
+  set shrinks to **`new` / `backlog` / `status`**, leaving scaffolding as the only write verb;
+  (3) D8/S8 reword at v2: adopt/harvest = file ops + conventioned commit message + board
+  notes at closeout; (4) §3's "mission events carry ids as attributes" is superseded — the
+  future session-history join rides board assignment + herder registry + session store, i.e.
+  identity lives on herder's side of the fence, not in mission files; (5) the non-authority
+  agent's surfaces are artifacts + board-task notes. Q6's "events.jsonl survives as
+  provenance journal" is now also superseded — nothing survives.
+
+- **Q16 Manifest-authority mechanics (§6.3)?** → **Ratified as proposed.** Advisory
+  `authority:` field in mission.md frontmatter, stamped by `mission new`, holding a
+  **label-grade name** (survives orchestrator turnover via label transfer; a plain human
+  string for herder-less missions), never a guid. Only the authority edits mission.md or
+  restructures the board; transfer = the authority editing the field; no lease, no lock, no
+  CLI verb. Enforcement = git: a merge conflict on mission.md is by definition an authority
+  violation; authority's version wins, the other writer re-proposes via ticket note. Mirrors
+  the live "@hera owns the board, propose-only" convention. §6.3 closed.
+
+- **Q17 Mission↔herder interaction contract (§6.1)?** → **Ratified, with a sharpening that
+  names the asymmetry: herder may be VERY mission-aware; missions are completely
+  herder-unaware.** The whole contract: board assignee (Backlog.md native field) holds an
+  opaque label-grade name — same vocabulary as Q16's authority field; every richer join
+  (assignee → label → guid → sids → session store) happens on herder's side at view time,
+  best-effort. No guid, seat, or run ref ever lands in a mission file; run refs die with
+  mission-native orchestrate (the run IS the mission). Supersedes D2's guid-keyed membership
+  → label-keyed, guid-free; D2's substance (explicit membership, richer herder-side identity)
+  survives. §6.1 closed — the mission thread (Q11–Q17) is fully grilled.
+
 **Not yet grilled** (the remaining tree): session service design (storage, shipping protocol,
 what the team surface shows, auth beyond tailnet); mission CLI verb set + dir format + event
 shapes; manifest-authority mechanics (§6.3); mission↔herder interaction contract (§6.1);
