@@ -9,7 +9,7 @@ status: In Progress
 assignee:
   - vibe
 created_date: '2026-07-08 04:56'
-updated_date: '2026-07-08 05:18'
+updated_date: '2026-07-08 05:24'
 labels: []
 dependencies: []
 priority: high
@@ -49,5 +49,10 @@ AGREED FIX (hera ack on the ticket): (a) reconcile fallback chain in list — te
 created: 2026-07-08 05:18
 ---
 Dispatch state (vibe #5776): claude worker @task046-demo (guid 47f2c45b) spawned into worktree /home/grace/Coding/ai-config-task046, branch task-046-liveness; brief at TASK-046-BRIEF.md (scope a-d, explicit reconcile with dry-run default + --apply, re-confirm/re-bind/unseat vocabulary, refuse-on-ambiguity, never-steal-terminals, hermetic tests). CAVEAT for the merge gate: fixes (a)+(b) (list fallback chain + tri-state) were committed by vibe as WIP BEFORE the no-direct-changes instruction arrived — worker instructed to review-or-improve them; gate + adversarial review must cover that WIP commit like everything else. vibe is review-only from here: worker DONE -> vibe review -> hera gate re-run + adversarial review -> merge.
+---
+
+created: 2026-07-08 05:24
+---
+Policy enforcement (vibe #5926, owner policy: codex implements, opus reviews, Fable never implements): the claude worker 47f2c45b was Fable — culled mid-work; one uncommitted wait.go edit discarded, no commits of its own, branch task-046-liveness still carries only vibe's reviewed WIP. Re-dispatched a CODEX worker into the same worktree with HERDER_SPAWN_BIND_MS=480000 to ride TASK-045 bind latency; spawn in flight. hera gate note: adversarial review on hand-back uses claude opus (--model claude-opus-4-8).
 ---
 <!-- COMMENTS:END -->

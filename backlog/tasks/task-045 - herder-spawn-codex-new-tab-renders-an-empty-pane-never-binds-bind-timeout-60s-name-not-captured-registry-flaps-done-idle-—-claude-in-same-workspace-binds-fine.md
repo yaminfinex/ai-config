@@ -7,7 +7,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:49'
-updated_date: '2026-07-08 04:59'
+updated_date: '2026-07-08 05:24'
 labels: []
 dependencies: []
 priority: high
@@ -32,5 +32,10 @@ UPDATE from lale control test (bus #5542, 2026-07-08): --split right fails IDENT
 created: 2026-07-08 04:59
 ---
 Isolation result from lale (bus #5598, 2026-07-08) — root cause narrowed to the HERDER SHIM PATH, not env inheritance and not upstream hcom: (1) raw 'hcom 1 codex' binds fine (<1 min, agent mazo); (2) herder-spawned codex post-hcom-upgrade binds ~6 MINUTES after spawn (probe re-registered as probe-codex-dove well past the 60s name-capture window) — slow-boot, TASK-036 flavor, upgraded from no-boot; (3) pre-upgrade codex spawns (venue-iface-bobo/tina) never bind, permanently stale. Fix question: why does the shim/launch path delay codex hcom registration by minutes? Suspects: sidecar/hookcmd startup ordering for codex, HERDER_HOOK_HCOM shim indirection, or codex notify/hook config injection racing the TUI. Bonus TASK-046 confirmation in same test: cull mistargeted (pane-reassigned warning) and the culled pane survived to bind later.
+---
+
+created: 2026-07-08 05:24
+---
+Live experiment in flight (vibe #5926): the TASK-046 codex re-dispatch runs with HERDER_SPAWN_BIND_MS=480000 (8x the default window). Outcome is a direct datapoint: if the worker binds and gets verified prompt delivery end-to-end, the ~6min shim bind latency is bounded and an extended window is a viable interim mitigation; if not, latency is unbounded/fatal and the shim fix escalates.
 ---
 <!-- COMMENTS:END -->
