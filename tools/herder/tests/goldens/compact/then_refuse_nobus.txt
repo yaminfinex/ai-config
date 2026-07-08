@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: refused — --then needs your own bus name to deliver the continuation, but your registry row records none (this session is not bus-bound). Re-run without --then, or enroll on the bus first. Nothing was typed.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===

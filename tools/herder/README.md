@@ -160,6 +160,26 @@ Two deliberate exceptions ride keystrokes, neither reachable as a send transport
   check immediately before Enter; cleared composer degrades to not_delivered, never delivered) is
   a locked floor. Pinned by `tests/check-compact-contract.sh` (goldens + grep gates).
 
+  **compact-then-continue** (`herder compact '<steer>' --then '<continuation>'`, TASK-034,
+  claude-only): `/compact` normally ends the turn and STOPS. `--then` turns it into
+  compact-then-continue. It is NOT a second paste — a plain queued line jumps the `/compact`
+  queue and is consumed pre-compaction (claude injects plain messages at a mid-turn tool
+  boundary; slash commands hold until turn end — both proven live, task-034 comments). Instead,
+  once the `/compact` paste VERIFIES (the TASK-024 floor gates arming — an unverified paste arms
+  nothing, so a continuation never fires into an uncompacted session), `herder compact` forks a
+  detached, `setsid`-isolated sender (`herder compact-then`, an internal subcommand not in the
+  command table). That sender waits for the caller's turn to END — polling its OWN hcom session
+  status for working→idle (`active`→`listening`), never a fixed sleep — then delivers the
+  continuation over the bus through the same receipt-verified engine `herder send` uses
+  (`send.DeliverBus`). The target is the caller's OWN bus name, captured from the proven self row
+  at compact time and never re-resolved from a pane id (task-034 experiment #2 misresolved a
+  reused pane to a stale row). hcom's queue-until-deliverable makes the post-turn-end timing
+  forgiving. The sender is bounded by `--then-timeout` (default 15m; on timeout it gives up with
+  a loud log line and a manual-send remedy, never a zombie) and logs one line per phase to
+  `<herder-state-dir>/compact-then/compact-then-<short>-<pid>.log`. Codex is refused (its
+  compaction semantics differ). Covered by `tests/check-compact-contract.sh` (armed/aborted/sent
+  goldens + `mock-hcom-then`) and `internal/spawncmd/compactthen_test.go` (turn-end/timeout/retry).
+
 **Print one-shot bypass (TASK-010):** `claude -p/--print ...` hand-run through the shims skips the
 bus entirely — hcom hard-codes print mode as a persistent background agent (stdin nulled, stdout to
 `~/.hcom/logs`, Stop hook polling the bus), so a routed one-shot would never return its answer.
@@ -194,8 +214,11 @@ report — compaction loses anything unpersisted), then compacts in place:
 `herder compact 'keep: unit, ACs, gate commands, thread; drop tool output'`. Run from the
 agent's own tool call, the `/compact` line is queued in its composer and fires at turn end.
 The old `herder send "$HERDR_PANE_ID" '/compact …'` recipe died with the keystroke transport;
-`herder compact` is its dedicated replacement. If the session is too incoherent to steer, the
-fresh-spawn handoff still works: HANDOFF report + successor spawn.
+`herder compact` is its dedicated replacement. To keep going unattended past the ceiling, add
+`--then '<continuation>'` (claude-only) — after compaction the detached sender delivers the
+continuation to the agent's own bus, so compact-then-STOP becomes compact-then-continue without
+a human nudging it back. If the session is too incoherent to steer, the fresh-spawn handoff
+still works: HANDOFF report + successor spawn.
 
 ## Session Bootstrap
 

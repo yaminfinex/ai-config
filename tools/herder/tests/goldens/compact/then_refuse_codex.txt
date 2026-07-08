@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: refused — --then is claude-only (codex compaction semantics differ); your registry row records agent "codex". Re-run without --then. Nothing was typed.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===

@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# mock-hcom-then — hermetic stand-in for `hcom`, used by check-compact-contract.sh
+# to drive the detached continuation sender (`herder compact-then`, TASK-034)
+# without a live bus. It answers the two hcom surfaces the sender touches:
+#
+#   status poll:  hcom list <name> --json   → [{name,status}] (active→listening)
+#   bus deliver (send.DeliverBus):
+#                 hcom list <name>          → joined? (exit 0/1)
+#                 hcom events … --after …   → receipt array (stateful ack)
+#                 hcom send --from … @… -- … → deliver (exit 0/1)
+#
+# Behaviour via env:
+#   MOCK_THEN_SCENARIO
+#     sent        — status is "active" on the first poll, "listening" after;
+#                   the delivery acks (classic delivered).
+#     queued_busy — same turn-end, but the delivery never acks in-window
+#                   (send.DeliverBus reports "queued").
+#   MOCK_THEN_STATE — scratch dir for the poll counter + events snapshot marker.
+
+set -euo pipefail
+
+SCEN="${MOCK_THEN_SCENARIO:-sent}"
+STATE="${MOCK_THEN_STATE:?}"
+mkdir -p "$STATE"
+
+case "${1:-}" in
+  list)
+    # Distinguish the --json status poll from the bare joined-check DeliverBus runs.
+    is_json=0
+    for a in "$@"; do [[ "$a" == "--json" ]] && is_json=1; done
+    if [[ "$is_json" -eq 1 ]]; then
+      # First poll reports the caller still working; every later poll reports the
+      # turn ended. The sender must not deliver until it sees "listening".
+      if [[ "$SCEN" == "stuck" ]]; then
+        # The caller's turn never ends: always working. The sender must time out
+        # loudly and NEVER deliver.
+        jq -cn '[{name:"me-bus", status:"active"}]'
+        exit 0
+      fi
+      n=0
+      [[ -f "$STATE/polls" ]] && n="$(cat "$STATE/polls")"
+      printf '%d' $((n + 1)) >"$STATE/polls"
+      if [[ "$n" -eq 0 ]]; then
+        jq -cn '[{name:"me-bus", status:"active"}]'
+      else
+        jq -cn '[{name:"me-bus", status:"listening"}]'
+      fi
+      exit 0
+    fi
+    # Bare `hcom list <name>` — joined check: exit 0.
+    exit 0
+    ;;
+  send)
+    exit 0
+    ;;
+  events)
+    # Stateful ack mirroring mock-hcom: the pre-send snapshot sees nothing; the
+    # post-send poll sees THIS send's receipt (id newer than the snapshot).
+    if [[ "$SCEN" == "queued_busy" ]]; then
+      exit 0  # never acks → DeliverBus reports "queued"
+    fi
+    if [[ -f "$STATE/events_polled" ]]; then
+      jq -cn '{id:42, data:{context:"deliver:me"}, instance:"receiver", type:"status"}'
+    else
+      : >"$STATE/events_polled"
+    fi
+    exit 0
+    ;;
+  *)
+    printf 'mock-hcom-then: unhandled: %s\n' "$*" >&2
+    exit 64
+    ;;
+esac

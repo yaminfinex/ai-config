@@ -1,0 +1,9 @@
+=== STDERR ===
+herder compact-then: armed for @me-bus (bus default) — waiting for this turn to end before delivering 40 chars (poll 1ms, timeout 2000ms)
+herder compact-then: turn ended (status=listening after working) — delivering continuation to @me-bus
+herder compact-then: delivered — continuation is in @me-bus's queue post-compaction.
+=== STDOUT ===
+
+=== EXIT ===
+0
+=== HERDR MUTATING CALLS ===

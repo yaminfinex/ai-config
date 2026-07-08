@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: --then continuation message is empty — pass the prompt to deliver after compaction, or drop --then
+=== STDOUT ===
+
+=== EXIT ===
+64
+=== HERDR MUTATING CALLS ===

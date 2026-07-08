@@ -1,0 +1,9 @@
+=== STDERR ===
+herder compact-then: armed for @me-bus (bus default) — waiting for this turn to end before delivering 40 chars (poll 1ms, timeout 50ms)
+herder compact-then: TIMEOUT after 50ms waiting for turn end (last status="active"); continuation NOT delivered. Deliver it manually once the session is idle:
+  herder send me-bus -- 'continue: run the gate, then report DONE'
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== HERDR MUTATING CALLS ===

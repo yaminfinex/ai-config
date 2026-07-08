@@ -94,9 +94,15 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
    persisted is lost, compaction included), then compacts in place: `herder compact '<steer:
    what to keep>'` queues a real `/compact <steer>` into the agent's OWN composer and fires at
    turn end. (The old `herder send "$HERDR_PANE_ID" '/compact …'` recipe died with the keystroke
-   transport — `herder compact` is its dedicated self-only replacement.) If the session is too
-   far gone to steer coherently, fall back to the fresh-spawn handoff: HANDOFF report on the
-   unit thread, stop, successor picks it up.
+   transport — `herder compact` is its dedicated self-only replacement.) `/compact` alone STOPS
+   the turn; to keep a worker moving unattended add `--then '<continuation>'` (claude-only,
+   TASK-034) — after compaction a detached sender delivers the continuation to the worker's own
+   bus, so it resumes its unit (e.g. `--then 'resume <TASK>: run the gate, report DONE on <thread>'`)
+   without the orchestrator nudging it back. The continuation only arms if the `/compact` itself
+   verified, and it targets the worker's own verified bus name (never a re-resolved pane id) — so
+   it can never fire into an uncompacted or wrong session. If the session is too far gone to steer
+   coherently, fall back to the fresh-spawn handoff: HANDOFF report on the unit thread, stop,
+   successor picks it up.
 4. **Verification before done.** A finished worker reports DONE on its unit thread with the
    playbook-pinned commands' results. The orchestrator never trusts the claim: it re-runs the
    pinned gates itself (a build-cached green is not independent evidence), then records the

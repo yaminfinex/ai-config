@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: --then-timeout must be a positive Go duration (e.g. 15m, 900s): nope
+=== STDOUT ===
+
+=== EXIT ===
+64
+=== HERDR MUTATING CALLS ===
