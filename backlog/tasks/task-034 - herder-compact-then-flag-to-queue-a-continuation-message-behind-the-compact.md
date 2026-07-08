@@ -3,11 +3,11 @@ id: TASK-034
 title: >-
   herder compact: --then flag to queue a continuation message behind the
   /compact
-status: In Progress
+status: Done
 assignee:
   - unit-w-kava
 created_date: '2026-07-08 00:59'
-updated_date: '2026-07-08 01:55'
+updated_date: '2026-07-08 03:01'
 labels:
   - run-herder-dx
 dependencies: []
@@ -23,15 +23,19 @@ USER ASK (2026-07-08): "compact and queue an immediate next message? usually com
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 compact --then forks a detached sender that fires the continuation over the BUS to the caller's own verified bus name (never pane-id re-resolution); it waits for the current turn to END (session-state detection, not sleep) before sending, so the continuation cannot inject into the running pre-compact turn
-- [ ] #2 Ordering safety: the compact line's paste evidence (TASK-024 floor) is verified before the sender is armed; unverifiable compact line => --then aborts loudly, nothing sent
-- [ ] #3 Suite/golden coverage: compact suite extended for --then (armed/aborted/sent shapes), mocks emit live shapes
-- [ ] #4 Live smoke: real steered self-compact with --then on a live session; continuation observed arriving post-compaction with transcript evidence
-- [ ] #5 Docs: compact --help + README + orchestrate skill context-discipline sections document compact-then-continue; claude-only scope stated
-- [ ] #6 Pinned gate green (go vet/test herder+bottle + full 18-suite battery)
+- [x] #1 compact --then forks a detached sender that fires the continuation over the BUS to the caller's own verified bus name (never pane-id re-resolution); it waits for the current turn to END (session-state detection, not sleep) before sending, so the continuation cannot inject into the running pre-compact turn
+- [x] #2 Ordering safety: the compact line's paste evidence (TASK-024 floor) is verified before the sender is armed; unverifiable compact line => --then aborts loudly, nothing sent
+- [x] #3 Suite/golden coverage: compact suite extended for --then (armed/aborted/sent shapes), mocks emit live shapes
+- [x] #4 Live smoke: real steered self-compact with --then on a live session; continuation observed arriving post-compaction with transcript evidence
+- [x] #5 Docs: compact --help + README + orchestrate skill context-discipline sections document compact-then-continue; claude-only scope stated
+- [x] #6 Pinned gate green (go vet/test herder+bottle + full 18-suite battery)
 <!-- AC:END -->
 
+## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
+compact --then is a detached, setsid-isolated post-compaction BUS send (herder compact-then, internal subcommand), NOT a second paste (experiment #1: a plain queued line jumps the /compact queue). It arms ONLY after the /compact paste verifies (TASK-024 floor), targets the caller's OWN bus name from the proven self row at compact time (never pane-id re-resolution — experiment #2). Turn end is PROVEN, never assumed from a delay: (a) an observed active->listening transition, else (b) an hcom event-history listening record strictly newer than a TRUSTED arm-time event-id watermark — maxEventID distinguishes empty history (trusted 0) from an unestablished snapshot (hcom error/garbage; bounded retries), and an unestablished snapshot DISABLES proof (b) rather than failing open; unproven turn-end FAILS CLOSED (drop > mid-turn inject). Delivery treats queued as success (never resent), retries not_joined/send_failed with settling backoff over the remaining --then-timeout budget, and caps the receipt window to the deadline. Default timeout 15m; diagnostics at <state>/compact-then/*.log. Claude-only. Live-verified TWICE (throwaway agents; POSTCOMPACT markers + isCompactSummary:true); live runs caught a real bug (hcom list --json single-object shape). Merged 735a18d; hera gates green four times (worktree R1-R3 + post-merge main, 18/18). Review: viro REQUEST-CHANGES x2 (grace fail-open, watermark fail-open, retry burn) => APPROVE.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 
