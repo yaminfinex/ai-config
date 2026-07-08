@@ -3,6 +3,7 @@ package sidecarcmd
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -110,6 +111,7 @@ type sidecar struct {
 	lastState         string
 	missing           int
 	enrichedSessionID string
+	lastReportedSID   string
 	lifecycleMode     string
 	parentSessionID   string
 }
@@ -139,6 +141,7 @@ func (s *sidecar) run() int {
 				s.appendEnrichment(row)
 				s.enrichedSessionID = row.SessionID
 			}
+			s.reportAgentSession(row, paneCorrelated)
 			if state, ok := mapStatus(row.Status); ok && state != s.lastState {
 				s.report(state)
 				s.lastState = state
@@ -169,6 +172,7 @@ func (s *sidecar) enrichDiscovered(row *hcomRow, paneCorrelated bool) bool {
 	}
 	s.appendEnrichment(row)
 	s.enrichedSessionID = row.SessionID
+	s.reportAgentSession(row, paneCorrelated)
 	return true
 }
 
@@ -477,6 +481,27 @@ func (s *sidecar) report(state string) {
 		"state":   state,
 		"seq":     time.Now().UnixNano(),
 	})
+}
+
+func (s *sidecar) reportAgentSession(row *hcomRow, paneCorrelated bool) {
+	if row == nil || !paneCorrelated || s.paneID == "" || row.SessionID == "" || row.SessionID == s.lastReportedSID {
+		return
+	}
+	// `--source` is the reporter identity used by herdr to order/replace this
+	// reporter's session info, not the agent's start cause. `--seq` is optional
+	// stale-report protection for multiple reports from one source; the sidecar
+	// reports only after its pane-correlated hcom sid changes, so omitting it
+	// avoids inventing sequence semantics beyond herdr's accepted CLI contract.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "herdr", "pane", "report-agent-session", s.paneID,
+		"--source", "herder:sidecar",
+		"--agent", firstNonEmpty(row.Tool, s.tool),
+		"--agent-session-id", row.SessionID)
+	if err := cmd.Run(); err != nil {
+		return
+	}
+	s.lastReportedSID = row.SessionID
 }
 
 func (s *sidecar) release() {

@@ -2,7 +2,10 @@ package sidecarcmd
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -293,6 +296,140 @@ func TestSidecarDoesNotEnrichFromStaleUniqueFallback(t *testing.T) {
 	}
 }
 
+func TestReportAgentSessionOnFirstPaneCorrelatedEnrichment(t *testing.T) {
+	logPath := installFakeHerdrForSidecar(t, 0)
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "worker-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath}
+	row := &hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", SessionID: "sess-mine"}
+
+	if !s.enrichDiscovered(row, true) {
+		t.Fatal("enrichDiscovered returned false for pane-correlated row")
+	}
+	got := readReportLog(t, logPath)
+	if len(got) != 1 {
+		t.Fatalf("report calls = %d (%v), want 1", len(got), got)
+	}
+	want := "pane report-agent-session p_child --source herder:sidecar --agent codex --agent-session-id sess-mine"
+	if got[0] != want {
+		t.Fatalf("report call = %q, want %q", got[0], want)
+	}
+}
+
+func TestReportAgentSessionOnSessionIDChangeOnly(t *testing.T) {
+	logPath := installFakeHerdrForSidecar(t, 0)
+	s := &sidecar{tool: "claude", paneID: "p_child"}
+
+	s.reportAgentSession(&hcomRow{Tool: "claude", SessionID: "sess-1"}, true)
+	s.reportAgentSession(&hcomRow{Tool: "claude", SessionID: "sess-1"}, true)
+	s.reportAgentSession(&hcomRow{Tool: "claude", SessionID: "sess-2"}, true)
+
+	got := readReportLog(t, logPath)
+	if len(got) != 2 {
+		t.Fatalf("report calls = %d (%v), want first sid and changed sid only", len(got), got)
+	}
+	if !strings.Contains(got[0], "--agent-session-id sess-1") || !strings.Contains(got[1], "--agent-session-id sess-2") {
+		t.Fatalf("report calls = %v, want sess-1 then sess-2", got)
+	}
+}
+
+func TestReportAgentSessionSkipsEmptyPaneEmptySessionAndFallback(t *testing.T) {
+	logPath := installFakeHerdrForSidecar(t, 0)
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	(&sidecar{tool: "codex", paneID: ""}).reportAgentSession(&hcomRow{Tool: "codex", SessionID: "sess-1"}, true)
+	(&sidecar{tool: "codex", paneID: "p_child"}).reportAgentSession(&hcomRow{Tool: "codex", SessionID: ""}, true)
+	(&sidecar{tool: "codex", paneID: "p_child"}).reportAgentSession(&hcomRow{Tool: "codex", SessionID: "sess-1"}, false)
+
+	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath}
+	if s.enrichDiscovered(&hcomRow{Name: "stale", Tool: "codex", Tag: "worker", Directory: "/repo", SessionID: "sess-stale"}, false) {
+		t.Fatal("enrichDiscovered wrote from fallback-only match; want false")
+	}
+	if got := readReportLog(t, logPath); len(got) != 0 {
+		t.Fatalf("report calls = %v, want none", got)
+	}
+}
+
+func TestReportAgentSessionFailureIsSwallowed(t *testing.T) {
+	logPath := installFakeHerdrForSidecar(t, 9)
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "worker-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath}
+	if !s.enrichDiscovered(&hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", SessionID: "sess-mine"}, true) {
+		t.Fatal("enrichDiscovered returned false after report failure; want sidecar to continue")
+	}
+	if s.lastReportedSID != "" {
+		t.Fatalf("lastReportedSID = %q, want empty after failed report", s.lastReportedSID)
+	}
+	if got := readReportLog(t, logPath); len(got) != 1 {
+		t.Fatalf("report attempts = %d (%v), want 1 failed attempt", len(got), got)
+	}
+}
+
+func TestReportAgentSessionRetriesStableSIDAfterFailure(t *testing.T) {
+	logPath := installFakeHerdrForSidecar(t, 0)
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	failOncePath := filepath.Join(t.TempDir(), "fail-once")
+	if err := os.WriteFile(failOncePath, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_HERDR_FAIL_ONCE", failOncePath)
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "worker-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath}
+	row := &hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", SessionID: "sess-mine"}
+
+	if !s.enrichDiscovered(row, true) {
+		t.Fatal("initial pane-correlated enrichment returned false")
+	}
+	if s.enrichedSessionID != "sess-mine" {
+		t.Fatalf("enrichedSessionID = %q, want sess-mine", s.enrichedSessionID)
+	}
+	if s.lastReportedSID != "" {
+		t.Fatalf("lastReportedSID = %q after first failed report, want empty", s.lastReportedSID)
+	}
+	if got := readReportLog(t, logPath); len(got) != 1 {
+		t.Fatalf("report attempts after first tick = %d (%v), want 1", len(got), got)
+	}
+
+	// Same sid, same pane-correlated row: enrichment would not append again, but
+	// reportAgentSession must retry because lastReportedSID is still empty.
+	if row.SessionID != "" && (row.SessionID != s.enrichedSessionID || s.latestSessionMissing(row.SessionID)) {
+		s.appendEnrichment(row)
+		s.enrichedSessionID = row.SessionID
+	}
+	s.reportAgentSession(row, true)
+	if s.lastReportedSID != "sess-mine" {
+		t.Fatalf("lastReportedSID = %q after retry, want sess-mine", s.lastReportedSID)
+	}
+	if got := readReportLog(t, logPath); len(got) != 2 {
+		t.Fatalf("report attempts after retry = %d (%v), want 2", len(got), got)
+	}
+
+	s.reportAgentSession(row, true)
+	if got := readReportLog(t, logPath); len(got) != 2 {
+		t.Fatalf("report attempts after successful stable tick = %d (%v), want still 2", len(got), got)
+	}
+}
+
 func TestAppendEnrichmentGeneratesManualShimIdentity(t *testing.T) {
 	state := t.TempDir()
 	registryPath := filepath.Join(state, "registry.jsonl")
@@ -323,6 +460,55 @@ func TestAppendEnrichmentGeneratesManualShimIdentity(t *testing.T) {
 	if rec.Provenance == nil || rec.Provenance.Mechanism != "shim" || rec.Provenance.SpawnedBy != "user" {
 		t.Fatalf("Provenance = %+v, want shim/user", rec.Provenance)
 	}
+}
+
+func installFakeHerdrForSidecar(t *testing.T, reportExit int) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake herdr is a shell script")
+	}
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "report.log")
+	script := `#!/bin/sh
+if [ "$1" = "pane" ] && [ "$2" = "get" ]; then
+  printf '{"result":{"pane":{"pane_id":"%s","terminal_id":"term_TEST","workspace_id":"ws_TEST","cwd":"/repo"}}}\n' "$3"
+  exit 0
+fi
+if [ "$1" = "pane" ] && [ "$2" = "report-agent-session" ]; then
+  printf '%s\n' "$*" >> "$FAKE_HERDR_REPORT_LOG"
+  if [ -n "$FAKE_HERDR_FAIL_ONCE" ] && [ -f "$FAKE_HERDR_FAIL_ONCE" ]; then
+    rm -f "$FAKE_HERDR_FAIL_ONCE"
+    exit 9
+  fi
+  exit "$FAKE_HERDR_REPORT_EXIT"
+fi
+printf 'fake herdr: unhandled: %s\n' "$*" >&2
+exit 1
+`
+	bin := filepath.Join(dir, "herdr")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_HERDR_REPORT_LOG", logPath)
+	t.Setenv("FAKE_HERDR_REPORT_EXIT", fmt.Sprintf("%d", reportExit))
+	return logPath
+}
+
+func readReportLog(t *testing.T, path string) []string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	trimmed := strings.TrimSpace(string(b))
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "\n")
 }
 
 func TestAppendEnrichmentRecognizesResumeBySessionID(t *testing.T) {
