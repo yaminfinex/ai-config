@@ -48,11 +48,13 @@ MOCKBIN="$ROOT/bin"
 mkdir -p "$MOCKBIN" "$GOLDENS"
 trap 'rm -rf "$ROOT"' EXIT
 
-# Mock herdr: herder list only calls `herdr agent list`. Topology (vs fixture
+# Mock herdr: herder list calls `herdr agent list` and `herdr pane list`. Topology (vs fixture
 # registry): term_AAA live at its stored pane p_10 (idle, no drift); term_BBB
 # live but renumbered to p_99 (working, drifted from stored p_20); term_CCC and
-# term_DDD absent (gone). MOCK_LIST_SCENARIO=fail makes the call fail, which
-# herder list must treat as an empty live list (everything gone), not an error.
+# term_DDD absent (gone); label reborn matches a new-epoch live agent by name;
+# term_UND is alive in pane list but absent from agent list (undetected).
+# MOCK_LIST_SCENARIO=fail makes the agent call fail, which herder list must
+# treat as an empty live list (pane-list can still prove undetected), not an error.
 cat > "$MOCKBIN/herdr" <<'MOCK_HERDR'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -64,7 +66,16 @@ case "${1:-} ${2:-}" in
     fi
     jq -n '{result:{agents:[
       {pane_id:"p_10", terminal_id:"term_AAA", agent:"claude", agent_status:"idle"},
-      {pane_id:"p_99", terminal_id:"term_BBB", agent:"codex",  agent_status:"working"}
+      {pane_id:"p_99", terminal_id:"term_BBB", agent:"codex",  agent_status:"working"},
+      {pane_id:"p_55", terminal_id:"term_NEW", agent:"claude", agent_status:"idle", name:"reborn"}
+    ]}}'
+    ;;
+  "pane list")
+    jq -n '{result:{panes:[
+      {pane_id:"p_10", terminal_id:"term_AAA"},
+      {pane_id:"p_99", terminal_id:"term_BBB"},
+      {pane_id:"p_55", terminal_id:"term_NEW"},
+      {pane_id:"p_60", terminal_id:"term_UND"}
     ]}}'
     ;;
   *)

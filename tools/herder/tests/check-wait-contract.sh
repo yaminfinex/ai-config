@@ -68,6 +68,18 @@ case "${1:-} ${2:-}" in
       ]}}'
     fi
     ;;
+  "agent get")
+    pane="${3:-}"
+    if [[ "${MOCK_WAIT_SCENARIO:-normal}" == "lost" && "$pane" == "p_99" ]]; then
+      jq -n '{result:{agent:{agent_status:"unknown"}}}'
+    elif [[ "$pane" == "p_10" ]]; then
+      jq -n '{result:{agent:{agent:"claude", agent_status:"idle"}}}'
+    elif [[ "$pane" == "p_99" ]]; then
+      jq -n '{result:{agent:{agent:"codex", agent_status:"working"}}}'
+    else
+      jq -n '{result:{agent:{}}}'
+    fi
+    ;;
   "wait agent-status")
     shift 2
     printf 'wait agent-status %s\n' "$*" >>"$MOCK_PROBE_DIR/wait_argv"
@@ -96,6 +108,7 @@ SCENARIOS=(
   "gone|normal|0|$FIX|gone"
   "emptylist|emptylist|0|$FIX|beta"
   "timeout|normal|1|$FIX|alpha"
+  "timeout_lost_detection|lost|1|$FIX|beta"
   "read_defaults|normal|0|$FIX|alpha --read"
   "read_custom|normal|0|$FIX|alpha --read --lines 5 --source visible"
   "noregistry_pane|normal|0|/hfake/absent-state|p_5"
