@@ -140,8 +140,8 @@ func (s *sidecar) run() int {
 			if paneCorrelated && row.SessionID != "" && (row.SessionID != s.enrichedSessionID || s.latestSessionMissing(row.SessionID)) {
 				s.appendEnrichment(row)
 				s.enrichedSessionID = row.SessionID
-				s.reportAgentSession(row)
 			}
+			s.reportAgentSession(row, paneCorrelated)
 			if state, ok := mapStatus(row.Status); ok && state != s.lastState {
 				s.report(state)
 				s.lastState = state
@@ -172,7 +172,7 @@ func (s *sidecar) enrichDiscovered(row *hcomRow, paneCorrelated bool) bool {
 	}
 	s.appendEnrichment(row)
 	s.enrichedSessionID = row.SessionID
-	s.reportAgentSession(row)
+	s.reportAgentSession(row, paneCorrelated)
 	return true
 }
 
@@ -483,8 +483,8 @@ func (s *sidecar) report(state string) {
 	})
 }
 
-func (s *sidecar) reportAgentSession(row *hcomRow) {
-	if row == nil || s.paneID == "" || row.SessionID == "" || row.SessionID == s.lastReportedSID {
+func (s *sidecar) reportAgentSession(row *hcomRow, paneCorrelated bool) {
+	if row == nil || !paneCorrelated || s.paneID == "" || row.SessionID == "" || row.SessionID == s.lastReportedSID {
 		return
 	}
 	// `--source` is the reporter identity used by herdr to order/replace this

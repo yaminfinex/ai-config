@@ -325,9 +325,9 @@ func TestReportAgentSessionOnSessionIDChangeOnly(t *testing.T) {
 	logPath := installFakeHerdrForSidecar(t, 0)
 	s := &sidecar{tool: "claude", paneID: "p_child"}
 
-	s.reportAgentSession(&hcomRow{Tool: "claude", SessionID: "sess-1"})
-	s.reportAgentSession(&hcomRow{Tool: "claude", SessionID: "sess-1"})
-	s.reportAgentSession(&hcomRow{Tool: "claude", SessionID: "sess-2"})
+	s.reportAgentSession(&hcomRow{Tool: "claude", SessionID: "sess-1"}, true)
+	s.reportAgentSession(&hcomRow{Tool: "claude", SessionID: "sess-1"}, true)
+	s.reportAgentSession(&hcomRow{Tool: "claude", SessionID: "sess-2"}, true)
 
 	got := readReportLog(t, logPath)
 	if len(got) != 2 {
@@ -346,8 +346,9 @@ func TestReportAgentSessionSkipsEmptyPaneEmptySessionAndFallback(t *testing.T) {
 	t.Setenv("HERDER_ROLE", "worker")
 	t.Setenv("HCOM_DIR", "/hcom")
 
-	(&sidecar{tool: "codex", paneID: ""}).reportAgentSession(&hcomRow{Tool: "codex", SessionID: "sess-1"})
-	(&sidecar{tool: "codex", paneID: "p_child"}).reportAgentSession(&hcomRow{Tool: "codex", SessionID: ""})
+	(&sidecar{tool: "codex", paneID: ""}).reportAgentSession(&hcomRow{Tool: "codex", SessionID: "sess-1"}, true)
+	(&sidecar{tool: "codex", paneID: "p_child"}).reportAgentSession(&hcomRow{Tool: "codex", SessionID: ""}, true)
+	(&sidecar{tool: "codex", paneID: "p_child"}).reportAgentSession(&hcomRow{Tool: "codex", SessionID: "sess-1"}, false)
 
 	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath}
 	if s.enrichDiscovered(&hcomRow{Name: "stale", Tool: "codex", Tag: "worker", Directory: "/repo", SessionID: "sess-stale"}, false) {
@@ -376,6 +377,56 @@ func TestReportAgentSessionFailureIsSwallowed(t *testing.T) {
 	}
 	if got := readReportLog(t, logPath); len(got) != 1 {
 		t.Fatalf("report attempts = %d (%v), want 1 failed attempt", len(got), got)
+	}
+}
+
+func TestReportAgentSessionRetriesStableSIDAfterFailure(t *testing.T) {
+	logPath := installFakeHerdrForSidecar(t, 0)
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	failOncePath := filepath.Join(t.TempDir(), "fail-once")
+	if err := os.WriteFile(failOncePath, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_HERDR_FAIL_ONCE", failOncePath)
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "worker-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath}
+	row := &hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", SessionID: "sess-mine"}
+
+	if !s.enrichDiscovered(row, true) {
+		t.Fatal("initial pane-correlated enrichment returned false")
+	}
+	if s.enrichedSessionID != "sess-mine" {
+		t.Fatalf("enrichedSessionID = %q, want sess-mine", s.enrichedSessionID)
+	}
+	if s.lastReportedSID != "" {
+		t.Fatalf("lastReportedSID = %q after first failed report, want empty", s.lastReportedSID)
+	}
+	if got := readReportLog(t, logPath); len(got) != 1 {
+		t.Fatalf("report attempts after first tick = %d (%v), want 1", len(got), got)
+	}
+
+	// Same sid, same pane-correlated row: enrichment would not append again, but
+	// reportAgentSession must retry because lastReportedSID is still empty.
+	if row.SessionID != "" && (row.SessionID != s.enrichedSessionID || s.latestSessionMissing(row.SessionID)) {
+		s.appendEnrichment(row)
+		s.enrichedSessionID = row.SessionID
+	}
+	s.reportAgentSession(row, true)
+	if s.lastReportedSID != "sess-mine" {
+		t.Fatalf("lastReportedSID = %q after retry, want sess-mine", s.lastReportedSID)
+	}
+	if got := readReportLog(t, logPath); len(got) != 2 {
+		t.Fatalf("report attempts after retry = %d (%v), want 2", len(got), got)
+	}
+
+	s.reportAgentSession(row, true)
+	if got := readReportLog(t, logPath); len(got) != 2 {
+		t.Fatalf("report attempts after successful stable tick = %d (%v), want still 2", len(got), got)
 	}
 }
 
@@ -425,6 +476,10 @@ if [ "$1" = "pane" ] && [ "$2" = "get" ]; then
 fi
 if [ "$1" = "pane" ] && [ "$2" = "report-agent-session" ]; then
   printf '%s\n' "$*" >> "$FAKE_HERDR_REPORT_LOG"
+  if [ -n "$FAKE_HERDR_FAIL_ONCE" ] && [ -f "$FAKE_HERDR_FAIL_ONCE" ]; then
+    rm -f "$FAKE_HERDR_FAIL_ONCE"
+    exit 9
+  fi
   exit "$FAKE_HERDR_REPORT_EXIT"
 fi
 printf 'fake herdr: unhandled: %s\n' "$*" >&2
