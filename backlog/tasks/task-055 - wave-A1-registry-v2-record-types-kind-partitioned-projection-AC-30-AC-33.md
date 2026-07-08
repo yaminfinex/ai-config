@@ -1,9 +1,11 @@
 ---
 id: TASK-055
 title: 'wave A1: registry v2 record types + kind-partitioned projection (AC-30, AC-33)'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - codex-66dd90b8
 created_date: '2026-07-08 05:55'
+updated_date: '2026-07-08 06:02'
 labels: []
 dependencies: []
 priority: high
