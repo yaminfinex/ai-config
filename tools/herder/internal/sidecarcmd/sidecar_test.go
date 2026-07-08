@@ -521,6 +521,66 @@ func TestProcessIDCorrelationEnrichesAndReportsAgentSession(t *testing.T) {
 	}
 }
 
+func TestFallbackFirstThenEmptySessionProcessCorrelationEnrichesInLoop(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "worker-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{
+		tool:     "codex",
+		paneID:   "p_child",
+		tag:      "worker",
+		cwd:      "/repo",
+		registry: registryPath,
+		processEnvirons: func(tool string) []processEnvironmentRead {
+			return []processEnvironmentRead{{
+				env: map[string]string{
+					"HERDER_GUID":     "guid-new-0000",
+					"HCOM_PROCESS_ID": "proc-child",
+				},
+			}}
+		},
+	}
+
+	fallback := &hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening"}
+	if s.enrichDiscovered(fallback, false) {
+		t.Fatal("fallback-first bootstrap wrote enrichment; want no write")
+	}
+
+	rows := []hcomRow{
+		{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening", SessionID: "", LaunchContext: launchContext("", "proc-child")},
+	}
+	row, paneCorrelated := s.findRowCorrelated(rows)
+	if row == nil || row.Name != "worker-mine" || row.SessionID != "" || !paneCorrelated {
+		t.Fatalf("process-correlated empty-sid row = %+v (paneCorrelated=%v), want worker-mine empty sid/true", row, paneCorrelated)
+	}
+	if !s.shouldAppendCorrelatedEnrichment(row, paneCorrelated) {
+		t.Fatal("empty-sid first correlated poll did not request enrichment")
+	}
+	s.appendCorrelatedEnrichment(row)
+
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := registry.Resolve(recs, "guid-new-0000")
+	if latest == nil {
+		t.Fatal("latest registry row not found after empty-sid process correlation")
+	}
+	if latest.HcomName != "worker-mine" {
+		t.Fatalf("latest hcom_name = %q, want worker-mine after empty-sid process correlation", latest.HcomName)
+	}
+	if !s.enrichedCorrelated || s.enrichedSessionID != "" {
+		t.Fatalf("enriched state = correlated %v sid %q, want true/empty", s.enrichedCorrelated, s.enrichedSessionID)
+	}
+	if s.shouldAppendCorrelatedEnrichment(row, paneCorrelated) {
+		t.Fatal("same empty-sid correlated row requested duplicate enrichment after first write")
+	}
+}
+
 func TestReportAgentSessionOnSessionIDChangeOnly(t *testing.T) {
 	logPath := installFakeHerdrForSidecar(t, 0)
 	s := &sidecar{tool: "claude", paneID: "p_child"}

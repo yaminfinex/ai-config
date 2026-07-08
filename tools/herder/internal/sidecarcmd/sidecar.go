@@ -113,6 +113,7 @@ type sidecar struct {
 	registry            string
 	lastState           string
 	missing             int
+	enrichedCorrelated  bool
 	enrichedSessionID   string
 	lastReportedSID     string
 	lifecycleMode       string
@@ -149,9 +150,8 @@ func (s *sidecar) run() int {
 			// Re-enrichment is gated on a CHILD-SPECIFIC (pane) correlate for the
 			// same reason as the initial write: a fallback-only row is not proven
 			// ours, so its bus name must never be attached to this guid (TASK-033).
-			if paneCorrelated && row.SessionID != "" && (row.SessionID != s.enrichedSessionID || s.latestSessionMissing(row.SessionID)) {
-				s.appendEnrichment(row)
-				s.enrichedSessionID = row.SessionID
+			if s.shouldAppendCorrelatedEnrichment(row, paneCorrelated) {
+				s.appendCorrelatedEnrichment(row)
 			}
 			s.reportAgentSession(row, paneCorrelated)
 			if state, ok := mapStatus(row.Status); ok && state != s.lastState {
@@ -182,10 +182,25 @@ func (s *sidecar) enrichDiscovered(row *hcomRow, paneCorrelated bool) bool {
 	if row == nil || !paneCorrelated {
 		return false
 	}
-	s.appendEnrichment(row)
-	s.enrichedSessionID = row.SessionID
+	s.appendCorrelatedEnrichment(row)
 	s.reportAgentSession(row, paneCorrelated)
 	return true
+}
+
+func (s *sidecar) shouldAppendCorrelatedEnrichment(row *hcomRow, paneCorrelated bool) bool {
+	if row == nil || !paneCorrelated {
+		return false
+	}
+	if !s.enrichedCorrelated {
+		return true
+	}
+	return row.SessionID != "" && (row.SessionID != s.enrichedSessionID || s.latestSessionMissing(row.SessionID))
+}
+
+func (s *sidecar) appendCorrelatedEnrichment(row *hcomRow) {
+	s.appendEnrichment(row)
+	s.enrichedCorrelated = true
+	s.enrichedSessionID = row.SessionID
 }
 
 func (s *sidecar) discoverRow() (*hcomRow, bool) {
