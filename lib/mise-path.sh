@@ -37,7 +37,7 @@ mise_hcom_tool() {
 }
 
 mise_hcom_version() {
-  printf '%s\n' "0.7.22"
+  printf '%s\n' "0.7.23"
 }
 
 mise_available() {
