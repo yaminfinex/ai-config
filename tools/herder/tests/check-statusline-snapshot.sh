@@ -10,7 +10,11 @@ REPO_ROOT="$(cd "$TESTS_DIR/../../.." && pwd -P)"
 STATUSLINE="$REPO_ROOT/claude/statusline.sh"
 
 ROOT="$(mktemp -d)"
-cleanup() { rm -rf "$ROOT"; }
+TMP_RENDER_TEST="$REPO_ROOT/tools/herder/internal/sidecarcmd/statusline_snapshot_render_tmp_test.go"
+cleanup() {
+  rm -rf "$ROOT"
+  rm -f "$TMP_RENDER_TEST"
+}
 trap cleanup EXIT
 
 fail=0
@@ -46,6 +50,41 @@ case "$OUT" in
   *"last 42s"* ) ok "fallback age snapshot shows age" ;;
   *) bad "fallback age snapshot shows age" "out=$OUT" ;;
 esac
+
+cat > "$TMP_RENDER_TEST" <<'GO'
+package sidecarcmd
+
+import (
+	"os"
+	"testing"
+	"time"
+)
+
+func TestRenderStatuslineSnapshotForShellContract(t *testing.T) {
+	out := os.Getenv("STATUSLINE_RENDER_OUT")
+	if out == "" {
+		t.Fatal("STATUSLINE_RENDER_OUT is required")
+	}
+	content := renderStatuslineSnapshot(hcomRow{Name: "worker-rive", UnreadCount: 4, StatusAgeS: 1}, time.Now())
+	if err := os.WriteFile(out, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+GO
+if (cd "$REPO_ROOT/tools/herder" && STATUSLINE_RENDER_OUT="$ROOT/hcom/statusline/worker-rive.env" go test ./internal/sidecarcmd -run TestRenderStatuslineSnapshotForShellContract -count=1 >/dev/null); then
+  OUT="$(render 2>&1)"
+  case "$OUT" in
+    *"✉ 4"* ) ok "writer-rendered snapshot shows unread" ;;
+    *) bad "writer-rendered snapshot shows unread" "out=$OUT" ;;
+  esac
+  if grep -Eq 'last [0-5]s' <<<"$OUT"; then
+    ok "writer-rendered snapshot computes age"
+  else
+    bad "writer-rendered snapshot computes age" "out=$OUT"
+  fi
+else
+  bad "writer-rendered snapshot generated" "go test failed"
+fi
 
 now="${EPOCHSECONDS:-$(date +%s)}"
 cat > "$ROOT/hcom/statusline/worker-rive.env" <<EOF

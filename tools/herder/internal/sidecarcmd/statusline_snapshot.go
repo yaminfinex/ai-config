@@ -13,15 +13,17 @@ import (
 const statuslineSnapshotTickTolerance = 2 * time.Second
 
 type statuslineSnapshotWriter struct {
-	dir     string
-	cache   map[string]string
-	written map[string]struct{}
+	dir      string
+	cache    map[string]string
+	written  map[string]struct{}
+	collided map[string]struct{}
 }
 
 func newStatuslineSnapshotWriter(hcomDir string) *statuslineSnapshotWriter {
 	w := &statuslineSnapshotWriter{
-		cache:   make(map[string]string),
-		written: make(map[string]struct{}),
+		cache:    make(map[string]string),
+		written:  make(map[string]struct{}),
+		collided: make(map[string]struct{}),
 	}
 	if hcomDir != "" {
 		w.dir = filepath.Join(hcomDir, "statusline")
@@ -33,6 +35,7 @@ func (w *statuslineSnapshotWriter) writeRows(rows []hcomRow, now time.Time) {
 	if w == nil || w.dir == "" || rows == nil {
 		return
 	}
+	collisions := statuslineSnapshotCollisions(rows)
 	seen := make(map[string]struct{})
 	for _, row := range rows {
 		name, ok := statuslineSnapshotName(row)
@@ -40,6 +43,11 @@ func (w *statuslineSnapshotWriter) writeRows(rows []hcomRow, now time.Time) {
 			continue
 		}
 		seen[name] = struct{}{}
+		if _, collision := collisions[name]; collision {
+			w.removeCollided(name)
+			continue
+		}
+		delete(w.collided, name)
 		content := renderStatuslineSnapshot(row, now)
 		_ = w.writeIfChanged(name, content)
 	}
@@ -51,6 +59,24 @@ func (w *statuslineSnapshotWriter) writeRows(rows []hcomRow, now time.Time) {
 		delete(w.written, name)
 		delete(w.cache, name)
 	}
+}
+
+func statuslineSnapshotCollisions(rows []hcomRow) map[string]struct{} {
+	counts := make(map[string]int)
+	for _, row := range rows {
+		name, ok := statuslineSnapshotName(row)
+		if !ok {
+			continue
+		}
+		counts[name]++
+	}
+	collisions := make(map[string]struct{})
+	for name, count := range counts {
+		if count > 1 {
+			collisions[name] = struct{}{}
+		}
+	}
+	return collisions
 }
 
 func statuslineSnapshotName(row hcomRow) (string, bool) {
@@ -68,6 +94,10 @@ func safeStatuslineName(name string) (string, bool) {
 		return "", false
 	}
 	return name, true
+}
+
+func defaultStatuslineInstanceName() string {
+	return firstNonEmpty(os.Getenv("HCOM_INSTANCE_NAME"), os.Getenv("HCOM_NAME"), "self")
 }
 
 func renderStatuslineSnapshot(row hcomRow, now time.Time) string {
@@ -122,6 +152,31 @@ func (w *statuslineSnapshotWriter) writeIfChanged(name, content string) error {
 	w.cache[name] = content
 	w.written[name] = struct{}{}
 	return nil
+}
+
+func (w *statuslineSnapshotWriter) removeCollided(name string) {
+	if _, removed := w.collided[name]; removed {
+		return
+	}
+	w.remove(name)
+	w.collided[name] = struct{}{}
+}
+
+func (w *statuslineSnapshotWriter) remove(name string) {
+	if w == nil || w.dir == "" {
+		return
+	}
+	_ = os.Remove(w.path(name))
+	delete(w.written, name)
+	delete(w.cache, name)
+}
+
+func (w *statuslineSnapshotWriter) removeInstance(name string) {
+	safeName, ok := safeStatuslineName(name)
+	if !ok {
+		return
+	}
+	w.remove(safeName)
 }
 
 func (w *statuslineSnapshotWriter) path(name string) string {

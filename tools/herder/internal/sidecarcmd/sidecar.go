@@ -186,6 +186,13 @@ func (s *sidecar) writeStatuslineSnapshots(rows []hcomRow) {
 	s.statuslineSnapshots.writeRows(rows, time.Now())
 }
 
+func (s *sidecar) removeOwnStatuslineSnapshot() {
+	if s.statuslineSnapshots == nil {
+		s.statuslineSnapshots = newStatuslineSnapshotWriter(os.Getenv("HCOM_DIR"))
+	}
+	s.statuslineSnapshots.removeInstance(defaultStatuslineInstanceName())
+}
+
 // enrichDiscovered writes the initial registry enrichment for a freshly
 // discovered row, but ONLY when the match is pane-correlated (child-specific).
 // A fallback-only (tool+tag+cwd) row is left unwritten: a stale same-tag+cwd
@@ -687,6 +694,7 @@ func (s *sidecar) reportAgentSession(row *hcomRow, paneCorrelated bool) {
 }
 
 func (s *sidecar) release() {
+	s.removeOwnStatuslineSnapshot()
 	_ = s.send("pane.release_agent", map[string]any{
 		"pane_id": s.paneID,
 		"source":  "herder:sidecar",

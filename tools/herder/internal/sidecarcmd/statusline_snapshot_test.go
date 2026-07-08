@@ -135,6 +135,60 @@ func TestStatuslineSnapshotWriterSkipsTimestampDriftWithinTick(t *testing.T) {
 	}
 }
 
+func TestStatuslineSnapshotWriterRewritesTimestampDriftBeyondTick(t *testing.T) {
+	root := t.TempDir()
+	statusDir := filepath.Join(root, "statusline")
+	if err := os.MkdirAll(statusDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(statusDir, "worker-rive.env")
+	original := "HCOM_UNREAD=5\nHCOM_LAST_TS=100\nHCOM_LAST_AGE_S=10\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := newStatuslineSnapshotWriter(root)
+	w.writeRows([]hcomRow{{Name: "worker-rive", UnreadCount: 5, StatusAgeS: 0}}, time.Unix(103, 0))
+	if got := readFile(t, path); got == original || !strings.Contains(got, "HCOM_UNREAD=5\n") || !strings.Contains(got, "HCOM_LAST_TS=103\n") {
+		t.Fatalf("timestamp drift beyond tolerance did not rewrite with unchanged unread: %q", got)
+	}
+}
+
+func TestStatuslineSnapshotWriterOmitsCollidedBaseName(t *testing.T) {
+	root := t.TempDir()
+	statusDir := filepath.Join(root, "statusline")
+	if err := os.MkdirAll(statusDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(statusDir, "sumo.env")
+	if err := os.WriteFile(path, []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := newStatuslineSnapshotWriter(root)
+	rows := []hcomRow{
+		{Name: "task067-sumo", BaseName: "sumo", UnreadCount: 1, StatusAgeS: 0},
+		{Name: "other-sumo", BaseName: "sumo", UnreadCount: 9, StatusAgeS: 0},
+	}
+	w.writeRows(rows, time.Unix(100, 0))
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("collided base_name file still exists: err=%v", err)
+	}
+
+	if err := os.WriteFile(path, []byte("reappeared\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.writeRows(rows, time.Unix(101, 0))
+	if got := readFile(t, path); got != "reappeared\n" {
+		t.Fatalf("persistent collision removed more than once: %q", got)
+	}
+
+	w.writeRows([]hcomRow{{Name: "task067-sumo", BaseName: "sumo", UnreadCount: 2, StatusAgeS: 0}}, time.Unix(102, 0))
+	if got := readFile(t, path); !strings.Contains(got, "HCOM_UNREAD=2\n") {
+		t.Fatalf("collision clear did not restore snapshot: %q", got)
+	}
+}
+
 func TestStatuslineSnapshotWriterRecreatesCachedFileWhenMissing(t *testing.T) {
 	root := t.TempDir()
 	w := newStatuslineSnapshotWriter(root)
@@ -149,6 +203,32 @@ func TestStatuslineSnapshotWriterRecreatesCachedFileWhenMissing(t *testing.T) {
 	w.writeRows([]hcomRow{row}, now)
 	if got := readFile(t, path); !strings.Contains(got, "HCOM_LAST_TS=100\n") {
 		t.Fatalf("missing cached file was not recreated: %q", got)
+	}
+}
+
+func TestSidecarReleaseRemovesOwnStatuslineSnapshot(t *testing.T) {
+	root := t.TempDir()
+	statusDir := filepath.Join(root, "statusline")
+	if err := os.MkdirAll(statusDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(statusDir, "sumo.env")
+	if err := os.WriteFile(path, []byte("owned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(statusDir, "other.env")
+	if err := os.WriteFile(foreign, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HCOM_DIR", root)
+	t.Setenv("HCOM_INSTANCE_NAME", "sumo")
+
+	(&sidecar{}).removeOwnStatuslineSnapshot()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("own statusline snapshot still exists after release cleanup: err=%v", err)
+	}
+	if got := readFile(t, foreign); got != "keep\n" {
+		t.Fatalf("release cleanup changed foreign snapshot: %q", got)
 	}
 }
 
