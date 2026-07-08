@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 11:44'
-updated_date: '2026-07-08 21:14'
+updated_date: '2026-07-08 21:29'
 labels: []
 dependencies: []
 priority: high
@@ -62,5 +62,10 @@ DESIGN INPUT (owner-directed, 2026-07-08, verified against the live herdr instal
 created: 2026-07-08 21:14
 ---
 Design-input addendum (owner FYI, verified in the same schema pull): the herdr socket API is also QUERYABLE, not just event-emitting — request/response schemas with query verbs incl pane.get/list/read/process_info, agent.list/get, workspace.list, session.snapshot. Consequence for the observer design: the classic list-then-watch pattern is available — on observer start, query the full snapshot to reconcile the registry against current pane/agent truth (the catch-up sweep becomes a point-in-time query instead of an event replay), then consume subscriptions for deltas. This directly answers part of the 'catch-up sweep semantics after downtime' settle-item.
+---
+
+created: 2026-07-08 21:29
+---
+Design-input correction (owner, verified): plugin registration is NOT required to use the socket API. The herdr server listens on a plain unix socket (~/.config/herdr/herdr.sock, 'herdr status server' reports it; protocol 16 on the live install) and the herdr CLI itself is just a socket client — all queries run here worked with zero plugins installed. Consequence: the candidate substrate for the observer is 'daemon speaks the socket protocol directly as an ordinary client' — which fits the ratified invariants BETTER than a plugin: the daemon keeps its own lifecycle (disposability invariant), needs no upstream plugin-system coupling, and the plugin route remains merely a packaging option if in-terminal actions/panes are ever wanted. Designer should weigh direct-socket-client as the default shape and note the protocol-version compatibility story ('protocol: 16', 'compatible: yes' in status output) as the upstream-stability surface.
 ---
 <!-- COMMENTS:END -->

@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 21:12'
-updated_date: '2026-07-08 21:14'
+updated_date: '2026-07-08 21:29'
 labels: []
 dependencies: []
 priority: medium
@@ -38,5 +38,10 @@ DELIVERABLE: a written findings memo (docs/ or the task itself) with a keep/repl
 created: 2026-07-08 21:14
 ---
 Scope note (owner FYI, verified): the socket API is queryable (pane.get/list/read/process_info, agent.list/get, session.snapshot) in addition to subscriptions — so candidate replacements should also consider queries as a cleaner substitute for current pane-probe mechanics (e.g. cull's pane-get probe could ride the socket query instead of whatever it uses today), independent of the event stream.
+---
+
+created: 2026-07-08 21:29
+---
+Same correction as on task 73: no plugin registration needed for the socket API — the server listens on ~/.config/herdr/herdr.sock and any process can be a client (the herdr CLI is one; verified with zero plugins installed, protocol 16). The investigation should therefore compare THREE shapes per mechanic: keep current, direct socket client, or plugin packaging — with plugin only warranted where in-terminal integration (actions, plugin panes) matters.
 ---
 <!-- COMMENTS:END -->
