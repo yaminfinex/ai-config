@@ -7,7 +7,7 @@ status: Done
 assignee:
   - codex-f07b1274
 created_date: '2026-07-08 05:25'
-updated_date: '2026-07-08 06:30'
+updated_date: '2026-07-08 06:36'
 labels: []
 dependencies: []
 priority: high
@@ -48,5 +48,10 @@ Adversarial verdict (opus @review-053-kana #6759): FINDINGS, 1 medium. Invariant
 created: 2026-07-08 06:30
 ---
 MERGED to main 7d48494 (no-ff) after fix round 04a3c1d (retry keyed on lastReportedSID, guard internalized, fail->retry->dedup test driving the real exec path). APPROVE-DELTA @review-053-kana #6855 (F1 dead, invariant 1 preserved via double guard, no new findings). hera final gate from worktree + post-merge gate on main: vet+test clean, 21/21 suites green. Deployment posture: sid reporting effective for NEW spawns/launches; fleet coverage via natural turnover. Worker task053-nida + reviewer culled; worktree/branch cleaned.
+---
+
+created: 2026-07-08 06:36
+---
+Consequence flag (vibe #6902): codex session_id is empty under hcom 0.7.23 (hook handshake never completes), so the shipped sid self-reporting is INERT FOR CODEX until the upstream hcom codex hook integration is fixed (TASK-029/F3). Claude fully covered. AC-24 substrate is therefore claude-complete, codex-pending-upstream.
 ---
 <!-- COMMENTS:END -->

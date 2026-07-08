@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-08 05:13'
+updated_date: '2026-07-08 06:44'
 labels:
   - run-herder-dx
 dependencies: []
@@ -76,5 +76,20 @@ vibe (herdr-0.7.3 audit, bus #5629, applied by hera): Reverse-direction entry: h
 created: 2026-07-08 05:13
 ---
 hera (from vibe #5729): upstream herdr candidate — after update --handoff, surviving pre-handoff agent processes are detection-lost (absent from agent list, agent_status=unknown) because their hook reports never re-reach the new server; #684 covers hook-sequence re-anchoring but not server-side re-adoption without a fresh report. Candidate for upstream filing.
+---
+
+created: 2026-07-08 06:36
+---
+UPSTREAM FILING CANDIDATE, HIGH (vibe #6902, TASK-045 F3): hcom 0.7.23 codex hook binding is broken — hooks_bound:false, session_id empty, launch_context lacks pane_id (0.7.22 had it). Breaks any pane-correlation consumer and codex sid-reporting (TASK-053). File upstream regardless of the herder-side F1 mitigation.
+---
+
+created: 2026-07-08 06:40
+---
+F3 upstream issue draft FINALIZED and HELD (vibe #6996): regression-window claim softened to what records support (0.7.22 had full launch_context + slow-but-completing binds; 0.7.23 first version where hooks_bound never completes), evidence plan concrete (fresh redacted side-by-side claude-vs-codex rows at filing time). Filing gated on OWNER sign-off — outward-facing action; go/no-go is in front of the owner now. On greenlight: vibe files, issue URL lands here.
+---
+
+created: 2026-07-08 06:44
+---
+Owner decision: F3 upstream filing DEFERRED to run closeout — draft stays held as finalized; vibe files at closeout with fresh evidence capture, issue URL lands here then.
 ---
 <!-- COMMENTS:END -->

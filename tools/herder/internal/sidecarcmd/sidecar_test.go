@@ -2,6 +2,7 @@ package sidecarcmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,16 @@ import (
 
 	"ai-config/tools/herder/internal/registry"
 )
+
+func launchContext(paneID, processID string) struct {
+	PaneID    string `json:"pane_id"`
+	ProcessID string `json:"process_id"`
+} {
+	return struct {
+		PaneID    string `json:"pane_id"`
+		ProcessID string `json:"process_id"`
+	}{PaneID: paneID, ProcessID: processID}
+}
 
 func TestMapStatus(t *testing.T) {
 	tests := map[string]struct {
@@ -57,12 +68,8 @@ func TestFindRowForPaneWithFlexibleCreatedAt(t *testing.T) {
 
 func TestFindRowForPaneSkipsForkParentSession(t *testing.T) {
 	rows := []hcomRow{
-		{Name: "parent", SessionID: "sess-parent", LaunchContext: struct {
-			PaneID string `json:"pane_id"`
-		}{PaneID: "p_target"}},
-		{Name: "child", SessionID: "sess-child", LaunchContext: struct {
-			PaneID string `json:"pane_id"`
-		}{PaneID: "p_target"}},
+		{Name: "parent", SessionID: "sess-parent", LaunchContext: launchContext("p_target", "")},
+		{Name: "child", SessionID: "sess-child", LaunchContext: launchContext("p_target", "")},
 	}
 	row := findRowForPane(rows, "p_target", "fork", "sess-parent")
 	if row == nil {
@@ -113,12 +120,8 @@ func TestFindRowForLaunchFallbackRequiresUniqueMatch(t *testing.T) {
 func TestFindRowRefusesAmbiguousFallbackForHeadlessLaunch(t *testing.T) {
 	s := &sidecar{tool: "claude", paneID: "p_orch", tag: "orchestrator", cwd: "/repo"}
 	rows := []hcomRow{
-		{Name: "orchestrator-bumo", Tool: "claude", Tag: "orchestrator", Directory: "/repo", Status: "listening", LaunchContext: struct {
-			PaneID string `json:"pane_id"`
-		}{PaneID: "p_gone"}},
-		{Name: "calc17-tina", Tool: "claude", Tag: "orchestrator", Directory: "/repo", Status: "listening", LaunchContext: struct {
-			PaneID string `json:"pane_id"`
-		}{PaneID: ""}},
+		{Name: "orchestrator-bumo", Tool: "claude", Tag: "orchestrator", Directory: "/repo", Status: "listening", LaunchContext: launchContext("p_gone", "")},
+		{Name: "calc17-tina", Tool: "claude", Tag: "orchestrator", Directory: "/repo", Status: "listening", LaunchContext: launchContext("", "")},
 	}
 	if got := s.findRow(rows); got != nil {
 		t.Fatalf("findRow attached %q despite no positive correlate; want nil", got.Name)
@@ -129,6 +132,154 @@ func TestFindRowRefusesAmbiguousFallbackForHeadlessLaunch(t *testing.T) {
 	rows[0].LaunchContext.PaneID = "p_orch"
 	if got := s.findRow(rows); got == nil || got.Name != "orchestrator-bumo" {
 		t.Fatalf("pane-correlated findRow = %+v, want orchestrator-bumo", got)
+	}
+}
+
+func TestFindRowCorrelatedUsesProcessIDWhenPaneIDMissing(t *testing.T) {
+	t.Setenv("HERDER_GUID", "guid-child-0000")
+	scans := 0
+	s := &sidecar{
+		tool:   "codex",
+		paneID: "p_child",
+		processEnvirons: func(tool string) []processEnvironmentRead {
+			scans++
+			if tool != "codex" {
+				t.Fatalf("scan tool = %q, want codex", tool)
+			}
+			return []processEnvironmentRead{{
+				env: map[string]string{
+					"HERDER_GUID":     "guid-child-0000",
+					"HCOM_PROCESS_ID": "proc-child",
+				},
+			}}
+		},
+	}
+	rows := []hcomRow{
+		{Name: "worker-mine", Tool: "codex", Status: "listening", SessionID: "sess-mine", LaunchContext: launchContext("", "proc-child")},
+	}
+
+	row, paneCorrelated := s.findRowCorrelated(rows)
+	if row == nil || row.Name != "worker-mine" || !paneCorrelated {
+		t.Fatalf("process-correlated row = %+v (paneCorrelated=%v), want worker-mine/true", row, paneCorrelated)
+	}
+	if s.correlatedProcessID != "proc-child" {
+		t.Fatalf("cached process id = %q, want proc-child", s.correlatedProcessID)
+	}
+
+	row, paneCorrelated = s.findRowCorrelated(rows)
+	if row == nil || row.Name != "worker-mine" || !paneCorrelated {
+		t.Fatalf("cached process-correlated row = %+v (paneCorrelated=%v), want worker-mine/true", row, paneCorrelated)
+	}
+	if scans != 1 {
+		t.Fatalf("process scan count = %d, want 1 after cached success", scans)
+	}
+}
+
+func TestFindRowCorrelatedRefusesDifferentHERDERGUID(t *testing.T) {
+	t.Setenv("HERDER_GUID", "guid-child-0000")
+	s := &sidecar{
+		tool:   "codex",
+		paneID: "p_child",
+		tag:    "worker",
+		cwd:    "/repo",
+		processEnvirons: func(tool string) []processEnvironmentRead {
+			return []processEnvironmentRead{{
+				env: map[string]string{
+					"HERDER_GUID":     "guid-other-0000",
+					"HCOM_PROCESS_ID": "proc-child",
+				},
+			}}
+		},
+	}
+	rows := []hcomRow{
+		{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening", SessionID: "sess-mine", LaunchContext: launchContext("", "proc-child")},
+	}
+
+	row, paneCorrelated := s.findRowCorrelated(rows)
+	if row == nil || row.Name != "worker-mine" {
+		t.Fatalf("fallback row = %+v, want worker-mine for status bridging", row)
+	}
+	if paneCorrelated {
+		t.Fatal("different HERDER_GUID reported child-specific correlation; want false")
+	}
+	if s.correlatedProcessID != "" {
+		t.Fatalf("cached process id = %q, want empty", s.correlatedProcessID)
+	}
+}
+
+func TestFindRowCorrelatedRefusesUnmatchedProcessID(t *testing.T) {
+	t.Setenv("HERDER_GUID", "guid-child-0000")
+	s := &sidecar{
+		tool:   "codex",
+		paneID: "p_child",
+		processEnvirons: func(tool string) []processEnvironmentRead {
+			return []processEnvironmentRead{{
+				env: map[string]string{
+					"HERDER_GUID":     "guid-child-0000",
+					"HCOM_PROCESS_ID": "proc-missing",
+				},
+			}}
+		},
+	}
+	rows := []hcomRow{
+		{Name: "worker-mine", Tool: "codex", Status: "listening", SessionID: "sess-mine", LaunchContext: launchContext("", "proc-child")},
+	}
+
+	row, paneCorrelated := s.findRowCorrelated(rows)
+	if row != nil || paneCorrelated {
+		t.Fatalf("unmatched process id row = %+v (paneCorrelated=%v), want nil/false", row, paneCorrelated)
+	}
+	if s.correlatedProcessID != "" {
+		t.Fatalf("cached process id = %q, want empty", s.correlatedProcessID)
+	}
+}
+
+func TestFindRowCorrelatedPaneIDPrecedenceSkipsProcessScan(t *testing.T) {
+	t.Setenv("HERDER_GUID", "guid-child-0000")
+	scans := 0
+	s := &sidecar{
+		tool:   "codex",
+		paneID: "p_child",
+		processEnvirons: func(tool string) []processEnvironmentRead {
+			scans++
+			return nil
+		},
+	}
+	rows := []hcomRow{
+		{Name: "wrong-process", Tool: "codex", Status: "listening", SessionID: "sess-wrong", LaunchContext: launchContext("", "proc-child")},
+		{Name: "pane-mine", Tool: "codex", Status: "listening", SessionID: "sess-mine", LaunchContext: launchContext("p_child", "")},
+	}
+
+	row, paneCorrelated := s.findRowCorrelated(rows)
+	if row == nil || row.Name != "pane-mine" || !paneCorrelated {
+		t.Fatalf("pane-correlated row = %+v (paneCorrelated=%v), want pane-mine/true", row, paneCorrelated)
+	}
+	if scans != 0 {
+		t.Fatalf("process scans = %d, want 0 when pane_id matches", scans)
+	}
+}
+
+func TestFindRowCorrelatedSwallowsProcessEnvironReadFailure(t *testing.T) {
+	t.Setenv("HERDER_GUID", "guid-child-0000")
+	s := &sidecar{
+		tool:   "codex",
+		paneID: "p_child",
+		tag:    "worker",
+		cwd:    "/repo",
+		processEnvirons: func(tool string) []processEnvironmentRead {
+			return []processEnvironmentRead{{err: errors.New("permission denied")}}
+		},
+	}
+	rows := []hcomRow{
+		{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening", SessionID: "sess-mine", LaunchContext: launchContext("", "proc-child")},
+	}
+
+	row, paneCorrelated := s.findRowCorrelated(rows)
+	if row == nil || row.Name != "worker-mine" {
+		t.Fatalf("fallback row after environ failure = %+v, want worker-mine for polling/status bridging", row)
+	}
+	if paneCorrelated {
+		t.Fatal("environ read failure reported child-specific correlation; want false")
 	}
 }
 
@@ -254,9 +405,7 @@ func TestSidecarDoesNotEnrichFromStaleUniqueFallback(t *testing.T) {
 	// A stale agent is the ONLY tool+tag+cwd match; its launch pane (p_gone) is not
 	// ours, so there is no pane correlate.
 	stale := []hcomRow{
-		{Name: "worker-stale", Tool: "claude", Tag: "worker", Directory: "/repo", Status: "listening", SessionID: "sess-stale", LaunchContext: struct {
-			PaneID string `json:"pane_id"`
-		}{PaneID: "p_gone"}},
+		{Name: "worker-stale", Tool: "claude", Tag: "worker", Directory: "/repo", Status: "listening", SessionID: "sess-stale", LaunchContext: launchContext("p_gone", "")},
 	}
 	row, paneCorrelated := s.findRowCorrelated(stale)
 	if row == nil || row.Name != "worker-stale" {
@@ -277,9 +426,7 @@ func TestSidecarDoesNotEnrichFromStaleUniqueFallback(t *testing.T) {
 	}
 
 	// Positive control: the child's own pane-correlated row appears → real name enriches.
-	withMine := append(stale, hcomRow{Name: "worker-mine", Tool: "claude", Tag: "worker", Directory: "/repo", Status: "listening", SessionID: "sess-mine", LaunchContext: struct {
-		PaneID string `json:"pane_id"`
-	}{PaneID: "p_child"}})
+	withMine := append(stale, hcomRow{Name: "worker-mine", Tool: "claude", Tag: "worker", Directory: "/repo", Status: "listening", SessionID: "sess-mine", LaunchContext: launchContext("p_child", "")})
 	row, paneCorrelated = s.findRowCorrelated(withMine)
 	if row == nil || row.Name != "worker-mine" || !paneCorrelated {
 		t.Fatalf("pane-correlated match = %+v (paneCorrelated=%v), want worker-mine/true", row, paneCorrelated)
@@ -318,6 +465,168 @@ func TestReportAgentSessionOnFirstPaneCorrelatedEnrichment(t *testing.T) {
 	want := "pane report-agent-session p_child --source herder:sidecar --agent codex --agent-session-id sess-mine"
 	if got[0] != want {
 		t.Fatalf("report call = %q, want %q", got[0], want)
+	}
+}
+
+func TestProcessIDCorrelationEnrichesAndReportsAgentSession(t *testing.T) {
+	logPath := installFakeHerdrForSidecar(t, 0)
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "worker-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{
+		tool:     "codex",
+		paneID:   "p_child",
+		cwd:      "/repo",
+		registry: registryPath,
+		processEnvirons: func(tool string) []processEnvironmentRead {
+			return []processEnvironmentRead{{
+				env: map[string]string{
+					"HERDER_GUID":     "guid-new-0000",
+					"HCOM_PROCESS_ID": "proc-child",
+				},
+			}}
+		},
+	}
+	rows := []hcomRow{
+		{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", SessionID: "sess-mine", LaunchContext: launchContext("", "proc-child")},
+	}
+
+	row, paneCorrelated := s.findRowCorrelated(rows)
+	if row == nil || row.Name != "worker-mine" || !paneCorrelated {
+		t.Fatalf("process-correlated match = %+v (paneCorrelated=%v), want worker-mine/true", row, paneCorrelated)
+	}
+	if !s.enrichDiscovered(row, paneCorrelated) {
+		t.Fatal("enrichDiscovered did not write for process_id-correlated row")
+	}
+
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := registry.Resolve(recs, "guid-new-0000")
+	if latest == nil || latest.HcomName != "worker-mine" || latest.Provenance == nil || latest.Provenance.ToolSessionID != "sess-mine" {
+		t.Fatalf("latest registry row = %+v, want hcom worker-mine with sess-mine", latest)
+	}
+	got := readReportLog(t, logPath)
+	if len(got) != 1 {
+		t.Fatalf("report calls = %d (%v), want 1", len(got), got)
+	}
+	want := "pane report-agent-session p_child --source herder:sidecar --agent codex --agent-session-id sess-mine"
+	if got[0] != want {
+		t.Fatalf("report call = %q, want %q", got[0], want)
+	}
+}
+
+func TestFallbackFirstThenEmptySessionProcessCorrelationEnrichesInLoop(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "worker-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{
+		tool:     "codex",
+		paneID:   "p_child",
+		tag:      "worker",
+		cwd:      "/repo",
+		registry: registryPath,
+		processEnvirons: func(tool string) []processEnvironmentRead {
+			return []processEnvironmentRead{{
+				env: map[string]string{
+					"HERDER_GUID":     "guid-new-0000",
+					"HCOM_PROCESS_ID": "proc-child",
+				},
+			}}
+		},
+	}
+
+	fallback := &hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening"}
+	if s.enrichDiscovered(fallback, false) {
+		t.Fatal("fallback-first bootstrap wrote enrichment; want no write")
+	}
+
+	rows := []hcomRow{
+		{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening", SessionID: "", LaunchContext: launchContext("", "proc-child")},
+	}
+	row, paneCorrelated := s.findRowCorrelated(rows)
+	if row == nil || row.Name != "worker-mine" || row.SessionID != "" || !paneCorrelated {
+		t.Fatalf("process-correlated empty-sid row = %+v (paneCorrelated=%v), want worker-mine empty sid/true", row, paneCorrelated)
+	}
+	if !s.shouldAppendCorrelatedEnrichment(row, paneCorrelated) {
+		t.Fatal("empty-sid first correlated poll did not request enrichment")
+	}
+	s.appendCorrelatedEnrichment(row)
+
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := registry.Resolve(recs, "guid-new-0000")
+	if latest == nil {
+		t.Fatal("latest registry row not found after empty-sid process correlation")
+	}
+	if latest.HcomName != "worker-mine" {
+		t.Fatalf("latest hcom_name = %q, want worker-mine after empty-sid process correlation", latest.HcomName)
+	}
+	if !s.enrichedCorrelated || s.enrichedSessionID != "" {
+		t.Fatalf("enriched state = correlated %v sid %q, want true/empty", s.enrichedCorrelated, s.enrichedSessionID)
+	}
+	if s.shouldAppendCorrelatedEnrichment(row, paneCorrelated) {
+		t.Fatal("same empty-sid correlated row requested duplicate enrichment after first write")
+	}
+}
+
+func TestNoopFirstCorrelatedAppendKeepsEmptySessionRetryOpen(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	prior := `{"guid":"guid-other-0000","short_guid":"other","label":"taken","role":"worker","agent":"codex","pane_id":"p_other","status":"active"}`
+	if err := registry.Append(registryPath, []byte(prior)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "taken")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath}
+	row := &hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening"}
+
+	if !s.shouldAppendCorrelatedEnrichment(row, true) {
+		t.Fatal("first empty-sid correlated row did not request enrichment")
+	}
+	if s.appendCorrelatedEnrichment(row) {
+		t.Fatal("label-conflicted append reported success; want no-op")
+	}
+	if s.enrichedCorrelated || s.enrichedSessionID != "" {
+		t.Fatalf("enriched state after no-op = correlated %v sid %q, want false/empty", s.enrichedCorrelated, s.enrichedSessionID)
+	}
+	if !s.shouldAppendCorrelatedEnrichment(row, true) {
+		t.Fatal("empty-sid retry gate closed after no-op append")
+	}
+
+	t.Setenv("HERDER_LABEL", "worker-guid")
+	if !s.appendCorrelatedEnrichment(row) {
+		t.Fatal("append after clearing label conflict reported no write")
+	}
+	if !s.enrichedCorrelated || s.enrichedSessionID != "" {
+		t.Fatalf("enriched state after retry = correlated %v sid %q, want true/empty", s.enrichedCorrelated, s.enrichedSessionID)
+	}
+
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := registry.Resolve(recs, "guid-new-0000")
+	if latest == nil {
+		t.Fatal("retried append did not create guid-new-0000 row")
+	}
+	if latest.HcomName != "worker-mine" {
+		t.Fatalf("retried hcom_name = %q, want worker-mine", latest.HcomName)
 	}
 }
 
