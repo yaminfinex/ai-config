@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 05:30'
+updated_date: '2026-07-08 07:46'
 labels: []
 dependencies: []
 priority: medium
@@ -42,5 +42,10 @@ spec-ravu migration-inventory (bus #6043, applied by hera): TASK-049 accelerant 
 created: 2026-07-08 05:30
 ---
 Memo path update (spec-ravu #6065): canonical copy now napkins/run-herder-dx/spec-memo-migration-inventory.md (main checkout, run napkin) — worktree copy is disposable.
+---
+
+created: 2026-07-08 07:46
+---
+[hera, from vibe #8663] Worker task049-deli delivered wording-only sweep; vibe review caught 3 sites overclaiming the OTHER direction (drift-proof/survives-restart contradicts run-scoped terminal_ids — restart = fail-closed + reconcile per TASK-046). Precision fix round routed; hand-back after.
 ---
 <!-- COMMENTS:END -->
