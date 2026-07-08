@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 05:08'
+updated_date: '2026-07-08 05:20'
 labels: []
 dependencies: []
 priority: medium
@@ -27,5 +27,10 @@ pane move relocates a running pane into another tab/new tab/new workspace withou
 created: 2026-07-08 05:08
 ---
 vibe (herdr-0.7.3 audit, bus #5689, applied by hera): pane move verified live (--new-workspace): running codex TUI survived relocation intact. CRITICAL nuance for the rewrite: pane_id/tab_id/workspace_id are REASSIGNED on move (w6554208c1918a12:pA -> w2:p1) — 'stable ids' means never-recycled, NOT immutable across moves; terminal_id is what persists. So the --new-tab rewrite must refresh registry coordinates after the move (or lean on terminal_id resolution, which worked: cull retargeted a post-move stale row correctly). Also observed: pane ordinals are hex (...p9->pA). Bonus: culling the workspace's last pane cleans up the whole workspace — no seed-shell-style residue. (Probe policy per bigboss: future probes go in a separate workspace — pane move --new-workspace used for exactly that.)
+---
+
+created: 2026-07-08 05:20
+---
+spec-ravu independent confirmation (#5816): herdr pane move --new-tab --workspace live-moved their own RUNNING claude pane (w6554208c1918a12:pC -> w3:p2); process and terminal_id survived, pane_id RE-KEYS across workspace moves too. Registry rows need re-enroll (or the TASK-046 reconcile) after any move — the rewrite must do the coordinate refresh unconditionally.
 ---
 <!-- COMMENTS:END -->
