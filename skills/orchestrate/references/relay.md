@@ -38,27 +38,24 @@ the bus (`hcom list`). Two variants:
   backstop (returns immediately — the notification arrives later as a bus message; not a
   blocking waiter).
 
-## Mid-leg handoff (context budget)
+## Mid-leg handoff (context band)
 
-If a leg balloons, commit WIP and journal `## Leg N — HANDOFF (continue)` with exact remaining
-steps + current state, then **spawn the continuation** — same leg, prompt notes "continue from
-the HANDOFF entry".
+If a leg hits the 200–250k-token band (invariant 3 — every time, not a judgment call), commit
+WIP and journal `## Leg N — HANDOFF (continue)` with exact remaining steps + current state,
+then **spawn the continuation** — same leg, prompt notes "continue from the HANDOFF entry".
 
-Cheaper alternative when the leg is still coherent: compact in place with
-`herder compact '<steer: what the continuation must keep>'` (queued into the leg's own
-composer, fires at turn end) and continue the same leg — no successor spawn needed. Persist
-state (WIP commit + journal note) BEFORE compacting; the fresh-spawn continuation remains the
-escape hatch for sessions too far gone to steer. Since bare `/compact` STOPS the turn, an
-unattended leg adds `--then '<continue from the HANDOFF entry: next steps>'` (claude-only,
-TASK-034): after compaction a detached sender delivers that continuation to the leg's own bus,
-so the same leg resumes itself post-compaction instead of idling until the herder notices. The
-continuation only arms if the `/compact` verified and targets the leg's own verified bus name —
-it cannot leak into an uncompacted or wrong session.
+Cheaper alternative when the leg is still coherent: compact in place and continue the same
+leg — no successor spawn. Mechanics, persistence-first rule, and preference order are SKILL.md
+invariant 3; the relay-specific steer is `herder compact '<what the continuation must keep>'
+--then '<continue from the HANDOFF entry: next steps>'`, so an unattended leg resumes itself
+post-compaction instead of idling. The fresh-spawn continuation above remains the escape hatch
+for sessions too far gone to steer.
 
 ## The soloist
 
 Degenerate relay: one role, no leg boundaries. A single agent works a runbook until context
-approaches budget, then resets via the mid-leg handoff above: journal a HANDOFF entry, stop, and
+approaches the 200–250k band (invariant 3), then resets via the mid-leg handoff above: journal
+a HANDOFF entry, stop, and
 a fresh copy continues the runbook (a chain of respawns over the same state files). Same state
 files, gate, and mechanics as any leg; the HANDOFF entries become the runbook's progress marks.
 In-place compaction (`herder compact '<steer>'`) is the cheaper reset when the soloist is still
