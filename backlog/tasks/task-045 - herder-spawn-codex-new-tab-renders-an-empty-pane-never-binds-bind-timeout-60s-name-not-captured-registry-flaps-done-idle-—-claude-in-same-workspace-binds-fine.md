@@ -7,7 +7,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:49'
-updated_date: '2026-07-08 07:03'
+updated_date: '2026-07-08 07:04'
 labels: []
 dependencies: []
 priority: high
@@ -61,5 +61,10 @@ created: 2026-07-08 06:51
 created: 2026-07-08 07:03
 ---
 [hera 2026-07-08] Vibe hand-back (#7372): fix round complete (16b04ad), review-approved. HERA GATE GREEN from worktree /home/grace/Coding/ai-config-task045: go vet+test tools/herder AND tools/bottle pass (sidecarcmd fresh), all 21 check-*.sh PASS sequentially. Net diff fenced to sidecarcmd/{sidecar.go,sidecar_test.go}; dispatch brief file added then removed by worker, net-clean. Opus adversarial review dispatched: review-045-gobi (guid e0ad9981, own tab), brief napkins/run-herder-dx/brief-review-045.md — angles: foreign-process /proc mismatch, cache-miss rescan under long outage, TASK-033 no-new-non-positive-write. Awaiting verdict; MEDIUM+ blocks merge. Caveat stands: sid REPORTING stays codex-inert until F3; this delivers hcom_name enrichment (unblocks herder send).
+---
+
+created: 2026-07-08 07:04
+---
+[hera 2026-07-08] Opus adversarial verdict (review-045-gobi, #7544): CLEAN at MEDIUM+ — all four angles probed (foreign-process /proc scan safe: per-spawn-unique HERDER_GUID, empty-HCOM_PROCESS_ID skip, first-match stable under child inheritance, unmatched->fallback never mis-enriches; rescan bounded by 2s ticker, no growth/spam; TASK-033 held: only appendCorrelatedEnrichment writes, only under proven correlation; single-threaded loop, fork guard mirrored). 3 LOWs. HERA DISPOSITION: fix round anyway for LOW-1 — appendEnrichment silently no-ops (label conflict/closed record/marshal error) while enrichedCorrelated is set unconditionally; empty-sid retry gate then requires SessionID!="" => no-op first append permanently disables codex enrichment, no recovery. Third instance of the dead-recovery class (053, F1 round 1); fix cheap, worker alive. Routed via vibe: wrote-bool return + conditional flag + 1 test; LOW-2 inheritance-dependency comment same round; LOW-3 (outage rescan cost) accepted. Delta re-verdict from review-045-gobi after fix, then merge.
 ---
 <!-- COMMENTS:END -->
