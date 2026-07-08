@@ -289,8 +289,11 @@ child-first; on disagreement the child edge wins.
   No append may revert a concurrent unrelated write (a stale status enrichment cannot undo a
   rename; a late registration cannot mask a recognised seat's `hcom_name`; nothing resurrects
   a culled session).
-- Hook-driven appends are idempotent: turnover registration dedupes on (seat, new sid);
-  unseat/retire/recognise are no-ops when the projection already shows the target state.
+- Appends are idempotent regardless of driver — the §3.2 `[idempotent]` markers are
+  caller-agnostic, hook- and user-driven alike: turnover registration dedupes on (seat, new
+  sid); unseat/retire/recognise are **confirmed no-ops** when the projection already shows the
+  target state — no row is appended, and the command reports success plus the previously
+  recorded fact (never a false negative, never an annotation-rewrite of why a seat died).
 - The loader **quarantines** malformed rows (skip + warn); one torn line never disables the CLI.
 - Projection anomalies (two live holders of one label; one session in two seats) resolve
   deterministically and loudly — flagged conflict, never silent tie-breaking.
