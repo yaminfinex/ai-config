@@ -7,7 +7,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-08 04:49'
-updated_date: '2026-07-08 07:15'
+updated_date: '2026-07-08 07:32'
 labels: []
 dependencies: []
 priority: high
@@ -76,5 +76,10 @@ created: 2026-07-08 07:13
 created: 2026-07-08 07:15
 ---
 [hera 2026-07-08] MERGED to main (no-ff) after review-045-gobi DELTA CLEAN (#7757). Post-merge gate on main from repo root GREEN: vet/test herder+bottle, 21/21 check suites. Delivered: sidecar /proc HCOM_PROCESS_ID correlation (pane path first), write-confirmed enrichment (no-op leaves retry gate open), 8 tests incl fallback-first empty-sid race + no-op-retry recovery. herder send to codex workers now resolves via hcom_name enrichment. STANDING CAVEAT: sid REPORTING remains codex-inert until upstream hcom hook fix — F3 draft held on TASK-029, files at run closeout per owner. Credits: worker task045-nina (3 commits), vibe (2 review rounds, blocking find + class-ledger doctrine), review-045-gobi (adversarial + LOW-1 escalated by hera to fix round).
+---
+
+created: 2026-07-08 07:32
+---
+[hera 2026-07-08] PRODUCTION-VERIFIED: first post-merge codex spawn (wave-a3, guid a1d6ca7a) bound to the bus at birth — spawn prompt delivered with receipt (bind: bound, verify: delivered). The manual prompt-delivery workaround (spawn, watch hcom list, verified hcom send) is retired.
 ---
 <!-- COMMENTS:END -->
