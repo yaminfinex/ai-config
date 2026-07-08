@@ -292,8 +292,13 @@ child-first; on disagreement the child edge wins.
 - Appends are idempotent regardless of driver — the §3.2 `[idempotent]` markers are
   caller-agnostic, hook- and user-driven alike: turnover registration dedupes on (seat, new
   sid); unseat/retire/recognise are **confirmed no-ops** when the projection already shows the
-  target state — no row is appended, and the command reports success plus the previously
-  recorded fact (never a false negative, never an annotation-rewrite of why a seat died).
+  target state **and the writer's owned patch adds no new information** — no row is appended,
+  and the command reports success plus the previously recorded fact (never a false negative,
+  never an annotation-rewrite of why a seat died). A first verified observation on a row that
+  lacks it (e.g. close-annotating a never-annotated migrated corpse after probing) IS new
+  information: one annotation row is legal; owned observation fields are write-once per
+  episode — later differing claims no-op, and unverifiable claims are rendered honestly,
+  never recorded (§3.1-9).
 - The loader **quarantines** malformed rows (skip + warn); one torn line never disables the CLI.
 - Projection anomalies (two live holders of one label; one session in two seats) resolve
   deterministically and loudly — flagged conflict, never silent tie-breaking.
