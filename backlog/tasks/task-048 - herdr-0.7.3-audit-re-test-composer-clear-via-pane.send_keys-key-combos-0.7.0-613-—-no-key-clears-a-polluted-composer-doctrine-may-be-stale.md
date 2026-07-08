@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 08:25'
+updated_date: '2026-07-08 08:39'
 labels: []
 dependencies: []
 priority: medium
@@ -37,5 +37,10 @@ created: 2026-07-08 08:18
 created: 2026-07-08 08:25
 ---
 [hera 2026-07-08] Opus adversarial verdict (review-048-solo, #9466): no BLOCKER; 1 MEDIUM, 2 LOW, 1 NIT. Angle rulings: bash "$" sigil ACCEPTED (bottom-up last-sigil anchor symmetric with composerConfirmedEmpty; worst case fails closed, loud refusal never mis-type); queued-message angle TIGHTEN. MEDIUM: the queued/no-receipt hint (spawn.go:1304 + 4 doc mirrors + bus_queued golden) recommends ctrl+u on the input line in exactly the branch where a queued message renders there — operator following it destroys an in-flight delivery; old Enter-hint was harmless, new hint is destructive, no caveat. LOW(code): compact.go:170 auto-recovery on the caller's own pane can ctrl+u a rendered queued message if the compacting agent is composer-starved; whether hcom re-injects is UNVERIFIED -> possible silent loss. LOW(accepted): bash false-positive fails closed. NIT: polluted_still refusal reuses the modal message + circular clear-and-retry. Probed clean: exactly-one-ctrl+u (single if, golden-pinned), ownership assumptions, fail-closed integrity + TASK-024 chain byte-untouched, fixtures genuinely exercise the re-read (mock flips composer_cleared state between reads), doc tmux-syntax sweep. DISPOSITION: MEDIUM+NIT fix round to nezu via vibe; compact LOW settled EMPIRICALLY (vibe live-tests ctrl+u on a queued message with disposables — re-inject vs lost — result recorded here; guard/caveat scoped if lost). Reviewer static-only (no go1.26) — execution covered by hera gate pre-review.
+---
+
+created: 2026-07-08 08:39
+---
+[hera 2026-07-08] Round 2 (#9703): 4d8dec3 fixes MEDIUM at all 5 sites (do-not-clear caveat for queued messages) + NIT properly (typed Refusal cause blocked|composer_polluted; non-circular guidance). Hera regate green on branch tree (22/22). LIVE-VERIFY ANSWERED (vibe, disposable probe 922dcd6d): queued bus message is NOT lost to ctrl+u — marker sent mid-turn, pane cleared before delivery, hcom delivered at the boundary and probe acked. hcom holds queued messages in its own store and injects regardless of composer state; NO compact.go guard needed; solo LOW closed empirically. BONUS FINDING: queued text NEVER rendered on the composer line (claude + hcom 0.7.23, three attempts) — the "queued renders on input line" sharp-edge claim is version-stale (possibly described the retired keystroke transport); do-not-clear caveat kept as defensive wording; CODEX render behavior unverified. INTEGRATION: 048 is second lander behind A3 which touched every spawn golden — nezu to merge main in-branch, regenerate new goldens post-A3, full 23-suite gate; then hera regate + solo delta on the final tree.
 ---
 <!-- COMMENTS:END -->
