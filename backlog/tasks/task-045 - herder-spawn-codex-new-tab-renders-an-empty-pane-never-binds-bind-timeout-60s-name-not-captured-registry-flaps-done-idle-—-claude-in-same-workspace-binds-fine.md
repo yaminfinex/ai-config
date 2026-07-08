@@ -7,7 +7,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:49'
-updated_date: '2026-07-08 07:04'
+updated_date: '2026-07-08 07:13'
 labels: []
 dependencies: []
 priority: high
@@ -66,5 +66,10 @@ created: 2026-07-08 07:03
 created: 2026-07-08 07:04
 ---
 [hera 2026-07-08] Opus adversarial verdict (review-045-gobi, #7544): CLEAN at MEDIUM+ — all four angles probed (foreign-process /proc scan safe: per-spawn-unique HERDER_GUID, empty-HCOM_PROCESS_ID skip, first-match stable under child inheritance, unmatched->fallback never mis-enriches; rescan bounded by 2s ticker, no growth/spam; TASK-033 held: only appendCorrelatedEnrichment writes, only under proven correlation; single-threaded loop, fork guard mirrored). 3 LOWs. HERA DISPOSITION: fix round anyway for LOW-1 — appendEnrichment silently no-ops (label conflict/closed record/marshal error) while enrichedCorrelated is set unconditionally; empty-sid retry gate then requires SessionID!="" => no-op first append permanently disables codex enrichment, no recovery. Third instance of the dead-recovery class (053, F1 round 1); fix cheap, worker alive. Routed via vibe: wrote-bool return + conditional flag + 1 test; LOW-2 inheritance-dependency comment same round; LOW-3 (outage rescan cost) accepted. Delta re-verdict from review-045-gobi after fix, then merge.
+---
+
+created: 2026-07-08 07:13
+---
+[hera 2026-07-08] Round-2 regate GREEN (3e66df4): vet/test both modules, sidecarcmd -count=1 fresh, 21/21 suites from worktree. Vibe delta-approved (all five no-op legs covered, flag set only on real write, recovery test pins the forced label-conflict path). Delta re-verdict requested from review-045-gobi; CLEAN delta = merge.
 ---
 <!-- COMMENTS:END -->
