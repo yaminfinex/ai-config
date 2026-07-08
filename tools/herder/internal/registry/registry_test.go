@@ -430,6 +430,160 @@ func TestLockedValidatorCarriesLegacySeatOnRename(t *testing.T) {
 	}
 }
 
+func TestRegisteredCarriesRecognisedHcomName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	guid, label := "guid-carry", "worker"
+	recognised := Record{
+		GUID:       &guid,
+		Label:      &label,
+		Role:       "worker",
+		Agent:      "codex",
+		PaneID:     "p_sidecar",
+		TerminalID: "term_sidecar",
+		HcomName:   "worker-rive",
+		HcomDir:    "/hcom",
+		Status:     "active",
+	}
+	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated); err != nil {
+		t.Fatal(err)
+	}
+	registered := Record{
+		GUID:       &guid,
+		Label:      &label,
+		Role:       "worker",
+		Agent:      "codex",
+		PaneID:     "p_spawn",
+		TerminalID: "term_spawn",
+		HcomDir:    "/hcom",
+		Status:     "active",
+		Provenance: &Provenance{Mechanism: "spawn", ToolSessionID: "sess-spawn", Tag: "worker"},
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{V2FromRecord(registered, "registered", v2.StateSeated, "2026-07-08T00:00:01Z")}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := Resolve(recs, guid)
+	if latest == nil || latest.HcomName != "worker-rive" || latest.PaneID != "p_spawn" || latest.TerminalID != "term_spawn" {
+		t.Fatalf("latest legacy view = %+v, want registered seat with carried hcom_name and fresh spawn coordinates", latest)
+	}
+	collapsed := LatestByGUID(recs)
+	if len(collapsed) != 1 || collapsed[0].HcomName != "worker-rive" {
+		t.Fatalf("LatestByGUID = %+v, want bus-reachable hcom_name", collapsed)
+	}
+}
+
+func TestRegisteredCarrySurvivesRotationReseed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	guid, label := "guid-reseed", "worker"
+	recognised := Record{
+		GUID:       &guid,
+		Label:      &label,
+		Role:       "worker",
+		Agent:      "codex",
+		PaneID:     "p_sidecar",
+		TerminalID: "term_sidecar",
+		HcomName:   "worker-rive",
+		HcomDir:    "/hcom",
+		Status:     "active",
+	}
+	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated); err != nil {
+		t.Fatal(err)
+	}
+	registered := Record{
+		GUID:       &guid,
+		Label:      &label,
+		Role:       "worker",
+		Agent:      "codex",
+		PaneID:     "p_spawn",
+		TerminalID: "term_spawn",
+		HcomDir:    "/hcom",
+		Status:     "active",
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{V2FromRecord(registered, "registered", v2.StateSeated, "2026-07-08T00:00:01Z")}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proj, err := v2.Load(bytes.NewReader(data), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reseedPath := filepath.Join(t.TempDir(), "registry.jsonl")
+	for _, rec := range proj.Sessions() {
+		if rec.State == v2.StateRetired || rec.State == v2.StateLost {
+			continue
+		}
+		b, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Append(reseedPath, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reseeded, err := Load(reseedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := Resolve(reseeded, guid)
+	if latest == nil || latest.HcomName != "worker-rive" || latest.PaneID != "p_spawn" || latest.TerminalID != "term_spawn" {
+		t.Fatalf("reseeded latest = %+v, want self-contained registered row with hcom_name", latest)
+	}
+}
+
+func TestRegisteredNoOpDoesNotAppend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	guid, label := "guid-noop", "worker"
+	row := v2.SessionRecord{
+		Kind:       v2.KindSession,
+		GUID:       guid,
+		Event:      "registered",
+		RecordedAt: "2026-07-08T00:00:00Z",
+		State:      v2.StateSeated,
+		Label:      label,
+		Role:       "worker",
+		Tool:       "codex",
+		Seat: &v2.Seat{
+			Kind:        "herdr",
+			TerminalID:  "term_spawn",
+			PaneID:      "p_spawn",
+			HcomName:    "worker-rive",
+			Namespace:   "/hcom",
+			ConfirmedAt: "2026-07-08T00:00:00Z",
+		},
+		Continuity: "assumed",
+		Lineage:    v2.Lineage{},
+		Provenance: v2.Provenance{Mechanism: "spawn", Tag: "worker"},
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{row}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := registryRowCount(t, path)
+	repeat := row
+	repeat.RecordedAt = "2026-07-08T00:00:01Z"
+	repeat.Seat = cloneSeat(row.Seat)
+	repeat.Seat.HcomName = ""
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{repeat}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if after := registryRowCount(t, path); after != before {
+		t.Fatalf("row count = %d, want unchanged %d after no-op registered append", after, before)
+	}
+}
+
 func TestAppendLegacyRetiredPreservesCloseReason(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	row := []byte(`{"guid":"guid-launch","short_guid":"launch","label":"launch","role":"worker","agent":"codex","terminal_id":"term_L","pane_id":"p_l","hcom_dir":"/hcom","hcom_name":"launch-bus","status":"closed","close_result":"launch_failed","close_reason":"pane exited before lifecycle bind"}`)
@@ -531,6 +685,19 @@ func mustMarshalRecord(t *testing.T, rec Record) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func registryRowCount(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return 0
+	}
+	return bytes.Count(trimmed, []byte("\n")) + 1
 }
 
 func TestDefaultPath(t *testing.T) {

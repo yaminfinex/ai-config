@@ -187,8 +187,84 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 		if (current.State == v2.StateRetired || current.State == v2.StateLost) && !current.LegacyV1 {
 			return row, false, nil
 		}
+		row = carryRegisteredFields(row, *current)
+		if sameProjectedSession(row, *current) {
+			return row, false, nil
+		}
 	}
 	return row, true, nil
+}
+
+func carryRegisteredFields(row, current v2.SessionRecord) v2.SessionRecord {
+	if row.Seat == nil {
+		row.State = current.State
+	}
+	row.Label = firstNonEmpty(row.Label, current.Label)
+	row.Role = firstNonEmpty(row.Role, current.Role)
+	row.Tool = firstNonEmpty(row.Tool, current.Tool)
+	if len(row.SIDs) == 0 {
+		row.SIDs = current.SIDs
+	}
+	if row.Continuity == "" {
+		row.Continuity = current.Continuity
+	}
+	if row.Lineage == (v2.Lineage{}) {
+		row.Lineage = current.Lineage
+	}
+	if row.Provenance == (v2.Provenance{}) {
+		row.Provenance = current.Provenance
+	}
+	row.Seat = mergeSeatFields(row.Seat, current.Seat)
+	return row
+}
+
+func mergeSeatFields(patch, current *v2.Seat) *v2.Seat {
+	if patch == nil {
+		return cloneSeat(current)
+	}
+	if current == nil {
+		return cloneSeat(patch)
+	}
+	seat := *current
+	if patch.Kind != "" {
+		seat.Kind = patch.Kind
+	}
+	if patch.Node != "" {
+		seat.Node = patch.Node
+	}
+	if patch.TerminalID != "" {
+		seat.TerminalID = patch.TerminalID
+	}
+	if patch.PaneID != "" {
+		seat.PaneID = patch.PaneID
+	}
+	if patch.PID != 0 {
+		seat.PID = patch.PID
+	}
+	if patch.HcomName != "" {
+		seat.HcomName = patch.HcomName
+	}
+	if patch.Namespace != "" {
+		seat.Namespace = patch.Namespace
+	}
+	if patch.HcomEpoch != "" {
+		seat.HcomEpoch = patch.HcomEpoch
+	}
+	if patch.HerdrEpoch != "" {
+		seat.HerdrEpoch = patch.HerdrEpoch
+	}
+	if patch.ConfirmedAt != "" {
+		seat.ConfirmedAt = patch.ConfirmedAt
+	}
+	return &seat
+}
+
+func cloneSeat(seat *v2.Seat) *v2.Seat {
+	if seat == nil {
+		return nil
+	}
+	cp := *seat
+	return &cp
 }
 
 func carryIdentityFields(row, current v2.SessionRecord) v2.SessionRecord {
@@ -242,6 +318,51 @@ func carrySeatFields(row, current v2.SessionRecord) v2.SessionRecord {
 		row.Provenance = current.Provenance
 	}
 	return row
+}
+
+func sameProjectedSession(a, b v2.SessionRecord) bool {
+	return a.Kind == b.Kind &&
+		a.GUID == b.GUID &&
+		a.Node == b.Node &&
+		a.State == b.State &&
+		a.Label == b.Label &&
+		a.Role == b.Role &&
+		a.Tool == b.Tool &&
+		sameSeatFields(a.Seat, b.Seat) &&
+		sameSIDs(a.SIDs, b.SIDs) &&
+		a.Continuity == b.Continuity &&
+		a.Lineage == b.Lineage &&
+		a.Provenance == b.Provenance &&
+		a.CloseResult == b.CloseResult &&
+		a.CloseReason == b.CloseReason
+}
+
+func sameSeatFields(a, b *v2.Seat) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Kind == b.Kind &&
+		a.Node == b.Node &&
+		a.TerminalID == b.TerminalID &&
+		a.PaneID == b.PaneID &&
+		a.PID == b.PID &&
+		a.HcomName == b.HcomName &&
+		a.Namespace == b.Namespace &&
+		a.HcomEpoch == b.HcomEpoch &&
+		a.HerdrEpoch == b.HerdrEpoch &&
+		a.ConfirmedAt == b.ConfirmedAt
+}
+
+func sameSIDs(a, b []v2.SID) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func V2ByGUID(proj *v2.Projection, guid string) *v2.SessionRecord {
