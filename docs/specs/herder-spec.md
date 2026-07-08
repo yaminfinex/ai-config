@@ -128,8 +128,10 @@ Label sub-machine (`unlabelled ⇄ labelled` via label/transfer/release-on-retir
 
 ### 3.3 Seat model
 
-- `herdr` seat: key `terminal_id`, addressed by `pane_id` (positional; compacts on close —
-  display only, never a key). `process` seat: key pid + hcom process binding.
+- `herdr` seat: key `terminal_id`, addressed by `pane_id` (run-scoped: stable within a server
+  run, re-keyed by cross-workspace moves, reshuffled across restarts — display only, never a
+  key; terminal_id survives moves but not restarts, which is the epoch machinery's job, §6.3).
+  `process` seat: key pid + hcom process binding.
 - **Seat liveness = occupant liveness.** Terminal presence is necessary, not sufficient: if the
   occupant exits while the terminal survives, the session is unseated (recorded) and the seat is
   vacant — re-seatable in place.
@@ -291,6 +293,35 @@ child-first; on disagreement the child edge wins.
   to be backed up like source. **Backup ≠ sync**: the registry is node-local state and must not
   sit under bidirectional file synchronisation (whole-file sync silently drops concurrent
   appends); the §6.1 gate catches a synced-in registry, it does not make syncing safe.
+
+### 5.4 Migration from the v1 registry (one-shot, at first v2 write)
+
+The pre-spec registry is status-snapshot rows (`status: active | closed`, flat `hcom_*`
+fields, no kind/node/event/state/seat/sids/continuity/lineage on any row). It migrates once,
+by rewrite, under the §5.2 lock:
+
+1. **Rotate first.** The untouched v1 file becomes the first rotation archive (§5.1 growth
+   stance); rows are never destroyed. The live file is reseeded with one v2 row per
+   non-retired guid.
+2. **Mapping.** `status: closed` ⇒ `state: retired`. `status: active` maps through a
+   **recognition pass, never verbatim**: seat probe live (terminal_id, then the §8.3 fallback
+   ladder) ⇒ `seated`; probe dead ⇒ `unseated`; transcript verified gone ⇒ `lost`. Migration
+   must not seat corpses (on the reference machine at spec time, ~28 of 34 latest-active
+   guids were dead sessions never culled).
+3. **Attribution.** Migrated rows carry the freshly-minted local node_id and a migration
+   event marker, so backfill stays distinguishable from live observation. Absent-node in an
+   unmigrated file is a bootstrap state, not an anomaly — §3.1-12 applies only after the mint.
+4. **Vocabulary.** `tool` covers every agent kind herder launches (bash included), not only
+   claude|codex. `short_guid` is derived display, never stored data. Unknown legacy keys
+   (e.g. `team`) are **ignored, not quarantined** — quarantine is for malformed rows only.
+5. **Sids & continuity.** `provenance.tool_session_id` seeds `sids[]` where present (~17% of
+   guids on the reference machine); every other migrated session carries
+   `continuity: assumed`.
+6. **Namespaces.** Flat `hcom_dir` paths mint/attach namespace ids (§6.2) at migration;
+   retired teams-era dirs (`~/.hcom/teams/*`) become distinct namespaces, never grandfathered
+   into the default.
+7. **Idempotence.** Byte-duplicate v1 rows collapse to one v2 event; re-running migration on
+   an already-migrated file is a no-op.
 
 ## 6. Nodes, namespaces, epochs
 
@@ -529,6 +560,11 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
 - **AC-34 anchors** — with the registry lost, current-epoch sid↔guid and label↔guid joins are
   rebuildable from the birth anchors. *(S24)*
 
+- **AC-36 v1 migration** — a v1 registry (status-snapshot rows) migrates one-shot: the v1
+  file is archived untouched; closed ⇒ retired; active ⇒ recognition pass (live ⇒ seated,
+  dead ⇒ unseated, gone ⇒ lost — no corpse is seated); legacy keys ignored; migrated rows
+  node-attributed and event-marked as migration; re-running is a no-op.
+
 **Headless**
 
 - **AC-35 process seat** — a headless (hcom `--headless`) session gets a `process` seat:
@@ -543,7 +579,11 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
   attribution stamp (§3.1-10), the §6.1 gate, and the namespace anchor.
 - **Teams** — dropped from the model. hcom has no team concept (its `tag` is a soft label on
   one shared bus); herder's former HCOM_DIR-per-team construct is retired. Posture: one
-  namespace per node; per-run traffic grouping uses hcom tags.
+  namespace per node; per-run traffic grouping uses hcom tags. Removal-day requirements
+  (recorded from the live survey, 2026-07-08): the spawn hook template and the orchestrate
+  skill stop advertising `--team`; legacy `team` row keys keep parsing (§5.4); the tag
+  replacement needs spawn-time tag propagation, tag-filtered list/events ergonomics, and a
+  name-collision story — hard message isolation is explicitly not reproduced.
 - **sqlite / hybrid registry store** — considered and rejected (§5.1). A rebuildable
   projection cache remains a compatible future optimization because JSONL stays the log of
   record.
@@ -574,6 +614,7 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 | D9 | Registry: one live JSONL per state dir; kind-partitioned projection; flock write discipline; backup-not-sync; sqlite/hybrid rejected with recorded rationale; rotate-never-delete growth stance | §5, §10 |
 | D10 | One resolver: targets are sessions; seats via explicit escapes; `resolve` + a minimal usage-driven proxy set as the substrate escape hatch | §4, §7 |
 | D11 | Sid probing requires an active reporter (sidecar self-report preferred over tool integrations); sid-less panes reconcile via terminal_id-then-guarded-match at `assumed` continuity, never unseat on absence of evidence | §4, §8.3, AC-24 |
+| D12 | v1 registry migrates by one-shot rewrite-with-archive at first v2 write: closed→retired, active→recognition (never verbatim), absent-node legal only pre-mint, legacy keys ignored, tool vocabulary widened beyond claude\|codex | §5.4, AC-36 |
 
 Process notes outside the spec: where the distilled glossary lands (CONTEXT.md home) and which
 gaps ride which branch belong to the implementation plan, not this document. Open naming
