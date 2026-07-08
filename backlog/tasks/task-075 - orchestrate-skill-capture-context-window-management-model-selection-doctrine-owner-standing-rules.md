@@ -3,9 +3,10 @@ id: TASK-075
 title: >-
   orchestrate skill: capture context-window management + model-selection
   doctrine (owner standing rules)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-08 12:23'
+updated_date: '2026-07-08 20:25'
 labels: []
 dependencies: []
 priority: high
@@ -23,3 +24,12 @@ Owner-directed (2026-07-08, in-session): fold two standing doctrines into the or
 
 Notes: current run doctrine (run-log) says "codex implements, opus reviews" — (b) supersedes it with the cross-family generalization (today's runs are codex-implement so opus-review remains correct in practice). Home for the capture: the orchestrate skill's doctrine/menu sections + playbook templates; run-log tail gets the interim copy immediately (done at filing time). Propose-only beyond skill files: nothing ships without owner.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 20:25
+---
+Dispatched post-compact: worker task075-zore (opus 4.8 per owner model doctrine — prose/skill work), branch task-075-orchestrate-doctrine off 3fb67a0, brief napkins/run-herder-dx/brief-075.md. Review will be codex (cross-family).
+---
+<!-- COMMENTS:END -->
