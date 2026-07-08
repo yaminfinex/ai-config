@@ -3,11 +3,11 @@ id: TASK-064
 title: >-
   post-A2 projection: spawn registration masks sidecar hcom_name enrichment
   (TASK-045 symptom returns)
-status: In Progress
+status: Done
 assignee:
   - vibe
 created_date: '2026-07-08 07:38'
-updated_date: '2026-07-08 07:46'
+updated_date: '2026-07-08 08:07'
 labels: []
 dependencies: []
 ordinal: 64000
@@ -38,5 +38,10 @@ created: 2026-07-08 07:41
 created: 2026-07-08 07:46
 ---
 [hera, from vibe #8663] Dispatched: codex worker task064-tori, worktree task-064-seat-merge, brief spec-ruling-faithful (merge ONCE in normalizeSessionAppend as event+owned-field-patch overlay; absence=carry-forward; per-sub-field seat merge; no-op registration; 4 ruling tests; fenced to internal/registry; A3 conflict warning included). Defect 2 SHARPENED by vibe recon: spawn already re-reads after final append (registryCapturedName, 6x700ms loop, spawn.go:976) — it read the masked projection, so the carry-forward fix resolves defect 2 with NO spawncmd change; brief requires a test on exactly the read path spawn uses. Pipeline: vibe review -> hera gate -> adversarial review (engine diff, mandatory) -> merge; second lander vs A3 takes conflict regate.
+---
+
+created: 2026-07-08 08:07
+---
+[hera 2026-07-08] MERGED to main (3ae97aa, no-ff) after review-064-vono CLEAN verdict (#9108: sameProjectedSession complete — ClosedAt was a red herring, field does not exist; carry never resurrects cleared seats; patch-wins on hcom_name safe in every interleaving, sidecar re-enrich self-heals transients; rows self-contained, reseed test is the §5.1 proof; merge reachable only under the A2 flock). Reviewer was static-only (no go1.26 offline) — execution covered by hera gate (vet, go test -count=1 registry, 22/22 suites) before review + post-merge gate on main GREEN (fresh -count=1, 22/22). Reviewer NIT graduated to A3 second-lander regate check: carryRegisteredFields omits top-level Node, harmless until A3 starts stamping nodes — verify registered-carry vs node-stamp interplay at A3 integration. Vibe to run post-merge live validation (codex spawn shows BUS + hcom_capture:captured). Credits: task064-tori (2aa85f1), vibe (recon sharpening defect 2 to projection-only + review), review-064-vono, spec-ravu (ruling).
 ---
 <!-- COMMENTS:END -->
