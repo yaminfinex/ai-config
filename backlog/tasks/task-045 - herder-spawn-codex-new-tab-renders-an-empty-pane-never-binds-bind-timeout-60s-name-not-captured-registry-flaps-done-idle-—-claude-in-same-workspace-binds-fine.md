@@ -7,7 +7,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:49'
-updated_date: '2026-07-08 06:51'
+updated_date: '2026-07-08 07:03'
 labels: []
 dependencies: []
 priority: high
@@ -56,5 +56,10 @@ DISPATCH DECISION (hera): F1 GO now, before A2 merges — sidecarcmd-only, but N
 created: 2026-07-08 06:51
 ---
 [hera, from vibe review 2026-07-08 #7247] F1 delivered by task045-nina (482bfc7, fenced to sidecarcmd, worker gate green). Vibe review found ONE blocking defect: poll-loop enrichment at sidecar.go:152 requires a non-empty session_id, but codex rows have empty sids — if first correlation lands in the poll loop instead of bootstrap (real race: discoverRow can return the non-correlated fallback row; roster row can appear before /proc/<pid>/environ is scannable), hcom_name is never written and the TASK-045 symptom recurs with no recovery path. Same dead-recovery class as the TASK-053 miss; caught by the reachability check (run-log doctrine). Fix + 1 test requested from worker; on hand-back: hera gate + opus adversarial review. Sequencing: A2 also touches sidecar.go — second merge gets conflict-check + regate.
+---
+
+created: 2026-07-08 07:03
+---
+[hera 2026-07-08] Vibe hand-back (#7372): fix round complete (16b04ad), review-approved. HERA GATE GREEN from worktree /home/grace/Coding/ai-config-task045: go vet+test tools/herder AND tools/bottle pass (sidecarcmd fresh), all 21 check-*.sh PASS sequentially. Net diff fenced to sidecarcmd/{sidecar.go,sidecar_test.go}; dispatch brief file added then removed by worker, net-clean. Opus adversarial review dispatched: review-045-gobi (guid e0ad9981, own tab), brief napkins/run-herder-dx/brief-review-045.md — angles: foreign-process /proc mismatch, cache-miss rescan under long outage, TASK-033 no-new-non-positive-write. Awaiting verdict; MEDIUM+ blocks merge. Caveat stands: sid REPORTING stays codex-inert until F3; this delivers hcom_name enrichment (unblocks herder send).
 ---
 <!-- COMMENTS:END -->
