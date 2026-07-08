@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-08 22:04'
-updated_date: '2026-07-08 22:25'
+updated_date: '2026-07-08 22:36'
 labels: []
 dependencies: []
 priority: high
@@ -60,5 +60,10 @@ Worker DONE d754749 REJECTED at orchestrator triage: deviation 2 substituted the
 created: 2026-07-08 22:25
 ---
 DONE-2 e3e11cf: socket client implemented (persistent connection per generation, events.subscribe, reconnect => connection_gap), CLI demoted to fallback, T-11 re-pinned incl. new T-11d (uninterrupted-connection clause). My independent gate running; opus adversarial reviewer dispatched (cross-family vs codex worker) briefed on the DONE-1 substitution history, the steward T-9 failing-capability condition, and all accepted errata as contract.
+---
+
+created: 2026-07-08 22:36
+---
+Opus review (review080-ziro): REQUEST-CHANGES. P1-1 REPRODUCED: first sid observation on sid-less enrolled seat misread as turnover — healthy seat displaced by unlabelled child on first sweep (the task's own incident class, inflicted); root cause: guard reads first-sighting as sid-change, no prior-sid requirement, enrichment path (recognised) unimplemented. P1-2: turnover dedupe runs OUTSIDE the lock and closure discards tx.Projection — concurrent sweeps mint duplicate children (fresh GUIDs bypass normalize dedupe); violates the check-then-append-under-lock hard constraint. P2: epoch-wide doubt invisible in list (GUID-less flag dropped); CLI fallback conflates socket-absent with protocol-incompatible; step subsets not selectable (AC-2 not demonstrable). LOWs incl. T-8 lacks convergence assertion, T-9 demo hollow (matches orchestrator gate finding), no independent protocol pin, bus-row-ABSENT wrongly counts as death corroboration. STEWARD CONDITION CLEARED by reviewer end-to-end injection (gate-as-invoked failing-capable; demo hardening still required). Clean: all four ratified invariants at code level, node-mint accounting, E-4, no state:lost, write.go additive-only. Fix round with worker.
 ---
 <!-- COMMENTS:END -->
