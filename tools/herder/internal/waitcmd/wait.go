@@ -64,7 +64,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			waitRC = 0
 		} else {
 			fmt.Fprintf(stderr, "herder wait: timeout waiting for %s to reach status=%s\n", paneID, opts.status)
-			if agentDetectionLost(paneID, paneOut) {
+			if agentDetectionLost(paneID) {
 				fmt.Fprintf(stderr, "herder wait: pane %s is alive, but herdr agent detection is lost (agent get reports unknown or absent). This usually means the process predates a server handoff; restart the agent in the pane or relaunch it to restore status.\n", paneID)
 			}
 		}
@@ -217,7 +217,11 @@ func doneIsIdleEquivalent(paneID string) bool {
 	return envelope.Result.Agent.Agent == "codex" && envelope.Result.Agent.AgentStatus == "done"
 }
 
-func agentDetectionLost(paneID string, paneOut []byte) bool {
+func agentDetectionLost(paneID string) bool {
+	paneOut, err := exec.Command("herdr", "pane", "list").Output()
+	if err != nil {
+		return false
+	}
 	panes, err := herdrcli.ParsePaneList(paneOut)
 	if err != nil {
 		return false

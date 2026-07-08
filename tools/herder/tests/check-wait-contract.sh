@@ -50,7 +50,7 @@ trap 'rm -rf "$ROOT"' EXIT
 # Mock herdr. Topology (vs fixture registry): term_AAA live at stored pane p_10;
 # term_BBB live but renumbered to p_99 (stored p_20 — resolution must follow the
 # terminal); term_CCC absent (gone). Scenarios:
-#   MOCK_WAIT_SCENARIO  normal | emptylist (pane list has zero panes)
+#   MOCK_WAIT_SCENARIO  normal | emptylist (pane list has zero panes) | closed_after_wait
 #   MOCK_WAIT_RC        exit code for `herdr wait agent-status` (0 ok, 1 timeout)
 # Every wait/read invocation appends its argv to $MOCK_PROBE_DIR.
 cat > "$MOCKBIN/herdr" <<'MOCK_HERDR'
@@ -59,8 +59,16 @@ set -euo pipefail
 : "${MOCK_PROBE_DIR:?}"
 case "${1:-} ${2:-}" in
   "pane list")
+    count_file="$MOCK_PROBE_DIR/pane_list_count"
+    count="$(cat "$count_file" 2>/dev/null || printf 0)"
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$count_file"
     if [[ "${MOCK_WAIT_SCENARIO:-normal}" == "emptylist" ]]; then
       jq -n '{result:{panes:[]}}'
+    elif [[ "${MOCK_WAIT_SCENARIO:-normal}" == "closed_after_wait" && "$count" -gt 1 ]]; then
+      jq -n '{result:{panes:[
+        {pane_id:"p_10", terminal_id:"term_AAA"}
+      ]}}'
     else
       jq -n '{result:{panes:[
         {pane_id:"p_10", terminal_id:"term_AAA"},
@@ -72,6 +80,8 @@ case "${1:-} ${2:-}" in
     pane="${3:-}"
     if [[ "${MOCK_WAIT_SCENARIO:-normal}" == "lost" && "$pane" == "p_99" ]]; then
       jq -n '{result:{agent:{agent_status:"unknown"}}}'
+    elif [[ "${MOCK_WAIT_SCENARIO:-normal}" == "closed_after_wait" && "$pane" == "p_99" ]]; then
+      exit 1
     elif [[ "$pane" == "p_10" ]]; then
       jq -n '{result:{agent:{agent:"claude", agent_status:"idle"}}}'
     elif [[ "$pane" == "p_99" ]]; then
@@ -109,6 +119,7 @@ SCENARIOS=(
   "emptylist|emptylist|0|$FIX|beta"
   "timeout|normal|1|$FIX|alpha"
   "timeout_lost_detection|lost|1|$FIX|beta"
+  "timeout_closed_after_wait|closed_after_wait|1|$FIX|beta"
   "read_defaults|normal|0|$FIX|alpha --read"
   "read_custom|normal|0|$FIX|alpha --read --lines 5 --source visible"
   "noregistry_pane|normal|0|/hfake/absent-state|p_5"

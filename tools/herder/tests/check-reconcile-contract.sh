@@ -31,6 +31,7 @@ case "${1:-} ${2:-}" in
       {pane_id:"p_99", terminal_id:"term_BBB", agent:"codex", agent_status:"working", name:"beta", cwd:"/work/beta"},
       {pane_id:"p_conflict", terminal_id:"term_CON", agent:"claude", agent_status:"idle", name:"intruder", cwd:"/work/gamma"},
       {pane_id:"p_55", terminal_id:"term_NEW", agent:"claude", agent_status:"idle", name:"delta", cwd:"/work/delta"},
+      {pane_id:"p_dup", terminal_id:"term_DUPLIVE", agent:"claude", agent_status:"idle", name:"duplabel", cwd:"/work/dupe"},
       {pane_id:"p_amb1", terminal_id:"term_AMB1", agent:"codex", agent_status:"idle", name:"amb", cwd:"/work/one"},
       {pane_id:"p_amb2", terminal_id:"term_AMB2", agent:"codex", agent_status:"idle", name:"amb", cwd:"/work/two"}
     ]}}'
@@ -41,6 +42,7 @@ case "${1:-} ${2:-}" in
       {pane_id:"p_99", terminal_id:"term_BBB"},
       {pane_id:"p_conflict", terminal_id:"term_CON"},
       {pane_id:"p_55", terminal_id:"term_NEW"},
+      {pane_id:"p_dup", terminal_id:"term_DUPLIVE"},
       {pane_id:"p_amb1", terminal_id:"term_AMB1"},
       {pane_id:"p_amb2", terminal_id:"term_AMB2"},
       {pane_id:"p_60", terminal_id:"term_UND"}
@@ -61,6 +63,8 @@ SCENARIOS=(
   "table_mixed|$FIX/reconcile|0|"
   "json_mixed|$FIX/reconcile|0|--json"
   "apply_mixed_refuses_writes|$FIX/reconcile|1|--apply"
+  "duplicate_label|$FIX/reconcile-duplicate-label|1|"
+  "duplicate_label_apply|$FIX/reconcile-duplicate-label|1|--apply"
   "dryrun_apply_fixture|$FIX/reconcile-apply|1|"
   "apply_fixture|$FIX/reconcile-apply|1|--apply"
   "help|$FIX/reconcile|0|--help"

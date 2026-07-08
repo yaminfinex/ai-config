@@ -78,10 +78,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	hasAmbiguous := false
 	for _, rec := range active {
 		res := reconcileOne(rec, held, live)
+		results = append(results, res)
+	}
+	markDuplicateRebinds(results)
+	for _, res := range results {
 		if res.Outcome == "ambiguous" {
 			hasAmbiguous = true
 		}
-		results = append(results, res)
 	}
 
 	exit := 0
@@ -318,6 +321,26 @@ func fallbackCandidates(rec registry.Record, held map[string]string, live liveSt
 		})
 	}
 	return out
+}
+
+func markDuplicateRebinds(results []result) {
+	byTerminal := make(map[string][]int)
+	for i, res := range results {
+		if res.Outcome != "re-bind (assumed-continuity)" || res.TerminalID == "" {
+			continue
+		}
+		byTerminal[res.TerminalID] = append(byTerminal[res.TerminalID], i)
+	}
+	for term, indexes := range byTerminal {
+		if len(indexes) < 2 {
+			continue
+		}
+		for _, idx := range indexes {
+			results[idx].Outcome = "ambiguous"
+			results[idx].Detail = fmt.Sprintf("fallback candidate terminal %s is claimed by multiple active rows; refusing to guess", term)
+			results[idx].Write = "none"
+		}
+	}
 }
 
 func paneAlive(rec registry.Record, live liveState) bool {
