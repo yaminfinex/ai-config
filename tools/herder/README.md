@@ -123,7 +123,11 @@ resend), `send_failed`/`not_joined` (nothing delivered — a retry via `herder s
 The prompt gate trusts CHILD-SPECIFIC bind signals only (this guid's sidecar enrichment, or the
 frozen-launch-pane roster match) — a pre-existing same-tag+cwd bus agent never satisfies it, so a
 stale roster match waits out to `bind_timeout` instead of misdelivering the prompt to the old
-session. Knobs: `HERDER_SPAWN_BIND_MS` (bind wait, default 60000) and `HERDER_SPAWN_VERIFY_MS`
+session. The post-write registry ROW enrichment shares that discipline (TASK-033): it records a bus
+name only from the same child-specific signals and never from a tag+cwd guess, so a stale match
+leaves the row's name EMPTY for the sidecar to fill from the child's own pane later — a later
+`herder send <guid>` can never resolve to the old session. Knobs: `HERDER_SPAWN_BIND_MS` (bind wait,
+default 60000) and `HERDER_SPAWN_VERIFY_MS`
 (receipt window, default 20000). A slash-command prompt arrives as message TEXT, not a typed
 slash command. hcom wakes an idle agent with an EMPTY composer instantly — even a fresh,
 never-prompted session; a message sent mid-boot is held until the session can take it (probed

@@ -3,10 +3,11 @@ id: TASK-035
 title: >-
   herder registry: reused panes accumulate stale 'working' manual rows; pane-id
   resolution picks the wrong bus name
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - unit-v-koda
 created_date: '2026-07-08 01:20'
-updated_date: '2026-07-08 01:20'
+updated_date: '2026-07-08 01:22'
 labels: []
 dependencies: []
 priority: medium

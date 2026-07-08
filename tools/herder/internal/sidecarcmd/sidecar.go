@@ -118,11 +118,8 @@ func (s *sidecar) run() int {
 	s.report("working")
 	s.lastState = "working"
 
-	row := s.discoverRow()
-	if row != nil {
-		s.appendEnrichment(row)
-		s.enrichedSessionID = row.SessionID
-	}
+	row, paneCorrelated := s.discoverRow()
+	s.enrichDiscovered(row, paneCorrelated)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -135,7 +132,10 @@ func (s *sidecar) run() int {
 			s.missing++
 		} else {
 			s.missing = 0
-			if row.SessionID != "" && (row.SessionID != s.enrichedSessionID || s.latestSessionMissing(row.SessionID)) {
+			// Re-enrichment is gated on a CHILD-SPECIFIC (pane) correlate for the
+			// same reason as the initial write: a fallback-only row is not proven
+			// ours, so its bus name must never be attached to this guid (TASK-033).
+			if paneCorrelated && row.SessionID != "" && (row.SessionID != s.enrichedSessionID || s.latestSessionMissing(row.SessionID)) {
 				s.appendEnrichment(row)
 				s.enrichedSessionID = row.SessionID
 			}
@@ -149,22 +149,41 @@ func (s *sidecar) run() int {
 			return 0
 		}
 		<-ticker.C
-		row = s.findRow(hcomList())
+		row, paneCorrelated = s.findRowCorrelated(hcomList())
 	}
 }
 
-func (s *sidecar) discoverRow() *hcomRow {
+// enrichDiscovered writes the initial registry enrichment for a freshly
+// discovered row, but ONLY when the match is pane-correlated (child-specific).
+// A fallback-only (tool+tag+cwd) row is left unwritten: a stale same-tag+cwd
+// agent can be the sole match, and attaching its bus name to this guid is the
+// wrong-guid enrichment TASK-033 forbids — the sidecar WRITE is row enrichment,
+// so AC #1's "never record a tag+cwd-guessed name" binds it too. The manual
+// bus name still reaches the registry via `herder enroll` (HCOM_INSTANCE_NAME,
+// a genuinely child-specific signal), and a spawned agent's pane correlate
+// appears on a later poll → the real name enriches then. Returns whether it
+// wrote, so the invariant is unit-testable without run()'s loop.
+func (s *sidecar) enrichDiscovered(row *hcomRow, paneCorrelated bool) bool {
+	if row == nil || !paneCorrelated {
+		return false
+	}
+	s.appendEnrichment(row)
+	s.enrichedSessionID = row.SessionID
+	return true
+}
+
+func (s *sidecar) discoverRow() (*hcomRow, bool) {
 	for i := 0; i < 90; i++ {
 		if os.Getppid() != s.ppid0 {
 			s.release()
-			return nil
+			return nil, false
 		}
-		if row := s.findRow(hcomList()); row != nil {
-			return row
+		if row, paneCorrelated := s.findRowCorrelated(hcomList()); row != nil {
+			return row, paneCorrelated
 		}
 		time.Sleep(700 * time.Millisecond)
 	}
-	return nil
+	return nil, false
 }
 
 func mapStatus(status string) (string, bool) {
@@ -192,11 +211,27 @@ func findRowForPane(rows []hcomRow, paneID, lifecycleMode, parentSessionID strin
 	return nil
 }
 
-func (s *sidecar) findRow(rows []hcomRow) *hcomRow {
-	if row := findRowForPane(rows, s.paneID, s.lifecycleMode, s.parentSessionID); row != nil {
-		return row
+// findRowCorrelated locates this session's hcom row and reports whether the
+// match is CHILD-SPECIFIC. A pane correlate (launch_context.pane_id == this
+// pane) positively identifies THIS session's row; the tool+tag+cwd launch
+// fallback does NOT — during a window where our own row has no pane correlate,
+// a STALE same-tag+cwd agent can be the sole match. The fallback row is still
+// returned (status bridging keeps using it), flagged paneCorrelated=false so
+// callers never write its bus name onto this guid (TASK-033: row enrichment
+// must never record a tag+cwd-guessed name — the sidecar WRITE is row
+// enrichment). On a fallback-only tick the name is simply left unwritten; the
+// sidecar re-fires each poll, so once the pane correlate appears the real name
+// is enriched then (natural retry).
+func (s *sidecar) findRowCorrelated(rows []hcomRow) (row *hcomRow, paneCorrelated bool) {
+	if r := findRowForPane(rows, s.paneID, s.lifecycleMode, s.parentSessionID); r != nil {
+		return r, true
 	}
-	return findRowForLaunchFallback(rows, s.tool, s.tag, s.cwd, s.lifecycleMode, s.parentSessionID)
+	return findRowForLaunchFallback(rows, s.tool, s.tag, s.cwd, s.lifecycleMode, s.parentSessionID), false
+}
+
+func (s *sidecar) findRow(rows []hcomRow) *hcomRow {
+	row, _ := s.findRowCorrelated(rows)
+	return row
 }
 
 func (s *sidecar) appendEnrichment(row *hcomRow) {

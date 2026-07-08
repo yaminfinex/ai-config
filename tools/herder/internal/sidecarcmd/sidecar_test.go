@@ -185,6 +185,114 @@ func TestAppendEnrichmentCarriesPriorRowAndSessionID(t *testing.T) {
 	}
 }
 
+// TestAppendEnrichmentSelfHealsStaleHcomName pins the AC #2 answer for TASK-033:
+// the sidecar SELF-HEALS a wrong row name. spawn no longer tag+cwd-guesses a bus
+// name into the row, but if a stale/wrong hcom_name ever sits on the guid's row,
+// the sidecar — running in the CHILD's own pane, enriching THIS guid — appends a
+// newer row carrying the correct name from its own pane's hcom entry, and
+// LatestByGUID (what `herder send <guid>` resolves through) returns the corrected
+// name. So a stale-enriched row resolves CORRECTLY after the sidecar runs.
+func TestAppendEnrichmentSelfHealsStaleHcomName(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	// Prior row already carries a WRONG name (as a pre-fix tag+cwd guess would).
+	stale := `{"guid":"guid-spawned-0000","short_guid":"guid","label":"worker-guid","role":"worker","agent":"claude","terminal_id":"term_NEW","pane_id":"p_new","status":"active","hcom_name":"worker-stale","hcom_tag":"worker","provenance":{"mechanism":"spawn","spawned_by":"parent-guid","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"","ts":"2026-07-03T00:00:00Z"}}`
+	if err := registry.Append(registryPath, []byte(stale)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_GUID", "guid-spawned-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_SPAWNED_BY", "parent-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	// The sidecar runs in the child's own pane and discovers the child's OWN row
+	// (worker-rive) — the correct bus name.
+	s := &sidecar{tool: "claude", paneID: "p_new", cwd: "/repo", registry: registryPath}
+	s.appendEnrichment(&hcomRow{Name: "worker-rive", Tag: "worker", SessionID: "sess-123", Directory: "/repo"})
+
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The stale-named row that `herder send guid-spawned-0000` resolves through is
+	// now the corrected one.
+	latest := registry.Resolve(recs, "guid-spawned-0000")
+	if latest == nil {
+		t.Fatal("latest row not found")
+	}
+	if latest.HcomName != "worker-rive" {
+		t.Fatalf("HcomName = %q, want worker-rive (self-heal did not override the stale name)", latest.HcomName)
+	}
+}
+
+// TestSidecarDoesNotEnrichFromStaleUniqueFallback pins the AC #1 invariant on the
+// SIDECAR write (the P1 the reviewer surfaced): the tag+cwd guess spawn no longer
+// makes must not re-enter through the sidecar's enrichment. A stale same-tool+tag
+// +cwd agent is the SOLE roster match and this guid's own row has no pane
+// correlate yet — findRowCorrelated returns it flagged non-child-specific, and
+// enrichDiscovered writes NOTHING, so the guid's row keeps its empty name (never
+// worker-stale). Positive control: once the child's own pane-correlated row shows
+// up, the real name enriches.
+func TestSidecarDoesNotEnrichFromStaleUniqueFallback(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	// spawn's row for this guid, post-fix: name left EMPTY (no tag+cwd guess).
+	prior := `{"guid":"guid-new-0000","short_guid":"guid","label":"worker-guid","role":"worker","agent":"claude","terminal_id":"term_CHILD","pane_id":"p_child","status":"active","hcom_name":"","hcom_tag":"worker","provenance":{"mechanism":"spawn","spawned_by":"parent-guid","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"","ts":"2026-07-03T00:00:00Z"}}`
+	if err := registry.Append(registryPath, []byte(prior)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_SPAWNED_BY", "parent-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+
+	s := &sidecar{tool: "claude", paneID: "p_child", tag: "worker", cwd: "/repo", registry: registryPath}
+
+	// A stale agent is the ONLY tool+tag+cwd match; its launch pane (p_gone) is not
+	// ours, so there is no pane correlate.
+	stale := []hcomRow{
+		{Name: "worker-stale", Tool: "claude", Tag: "worker", Directory: "/repo", Status: "listening", SessionID: "sess-stale", LaunchContext: struct {
+			PaneID string `json:"pane_id"`
+		}{PaneID: "p_gone"}},
+	}
+	row, paneCorrelated := s.findRowCorrelated(stale)
+	if row == nil || row.Name != "worker-stale" {
+		t.Fatalf("fallback row = %+v, want worker-stale (still returned for status bridging)", row)
+	}
+	if paneCorrelated {
+		t.Fatal("stale unique tag+cwd match reported paneCorrelated=true; want false")
+	}
+	if s.enrichDiscovered(row, paneCorrelated) {
+		t.Fatal("enrichDiscovered wrote from a fallback-only match; want no write")
+	}
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest := registry.Resolve(recs, "guid-new-0000"); latest == nil || latest.HcomName != "" {
+		t.Fatalf("guid row hcom_name = %q, want \"\" (stale name must not be written)", latest.HcomName)
+	}
+
+	// Positive control: the child's own pane-correlated row appears → real name enriches.
+	withMine := append(stale, hcomRow{Name: "worker-mine", Tool: "claude", Tag: "worker", Directory: "/repo", Status: "listening", SessionID: "sess-mine", LaunchContext: struct {
+		PaneID string `json:"pane_id"`
+	}{PaneID: "p_child"}})
+	row, paneCorrelated = s.findRowCorrelated(withMine)
+	if row == nil || row.Name != "worker-mine" || !paneCorrelated {
+		t.Fatalf("pane-correlated match = %+v (paneCorrelated=%v), want worker-mine/true", row, paneCorrelated)
+	}
+	if !s.enrichDiscovered(row, paneCorrelated) {
+		t.Fatal("enrichDiscovered did not write for a pane-correlated match")
+	}
+	recs, err = registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest := registry.Resolve(recs, "guid-new-0000"); latest == nil || latest.HcomName != "worker-mine" {
+		t.Fatalf("guid row hcom_name = %q, want worker-mine (pane correlate must enrich)", latest.HcomName)
+	}
+}
+
 func TestAppendEnrichmentGeneratesManualShimIdentity(t *testing.T) {
 	state := t.TempDir()
 	registryPath := filepath.Join(state, "registry.jsonl")
