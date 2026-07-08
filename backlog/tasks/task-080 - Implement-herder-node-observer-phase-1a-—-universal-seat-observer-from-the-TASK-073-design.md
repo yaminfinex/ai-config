@@ -3,9 +3,10 @@ id: TASK-080
 title: >-
   Implement herder node observer, phase 1a — universal seat observer (from the
   TASK-073 design)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-08 22:04'
+updated_date: '2026-07-08 22:07'
 labels: []
 dependencies: []
 priority: high
@@ -37,3 +38,12 @@ SEQUENCING: dispatchable now for steps 1-2 groundwork; AC-8 (observer-side turno
 - [ ] #11 herder list annotates observer-flagged rows (dormant-live, epoch doubt) inline as observer advice from observer.status.json; missing file degrades silently (T-6 asserts list output)
 - [ ] #12 Epoch discrimination rule implemented + pinned by T-11 (wholesale reissue = zero unseats + doubt flag; partial overlap unseats only absent; lone absent needs corroborating dead-bus evidence)
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 22:07
+---
+Dispatched: codex worker (implementation per model doctrine), branch task-080-observer-impl off 52b5153, thin mechanics brief napkins/run-herder-dx/brief-080.md — task + normative doc carry all substance (design-task pattern test, evaluation on task 78). AC-8 blocks on E-10 at the steward.
+---
+<!-- COMMENTS:END -->
