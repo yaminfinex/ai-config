@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-08 05:29'
+updated_date: '2026-07-08 05:55'
 labels: []
 dependencies: []
 priority: medium
@@ -30,5 +30,10 @@ vibe (herdr-0.7.3 audit, bus #5629, applied by hera): Upstream #620/#684/#943/#7
 created: 2026-07-08 05:29
 ---
 RESPEC per spec D1 / §3.1-1 (spec-ravu #6043, hera concurs — flagged in the spec review as flag 2): drop the adopt-same-guid design; a restarted process is a NEW transcript and must get a new guid. The composite affordance is: herder enroll (new guid) -> rename <new> <label> --take-from <old> (explicit lease transfer) -> retire <old>. Today's live runbook (guid 404a13df reused for hera's new transcript) was expedient but spec-illegal; do not repeat post-ratification. Wrapping the composite as a single 'herder adopt' convenience remains open — but it composes the three verbs, never re-keys a guid.
+---
+
+created: 2026-07-08 05:55
+---
+Ratification note (#6423): identity rules confirmed with owner clarification — resume KEEPS the guid (same transcript continuing, AC-11); only fork, /clear, and restart-replacement mint new guids. The enroll + rename --take-from + retire composite on this ticket is now frozen doctrine for the restart case.
 ---
 <!-- COMMENTS:END -->
