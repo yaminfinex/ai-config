@@ -353,10 +353,11 @@ appear in seat bindings and §8.3 reconciliation, never in addressing or human l
 |---|---|
 | `node init [--new]` | Explicit form of the lazy node mint (§6.1); idempotent, locked. Normally never needed — the first registry write mints transparently. `--new` mints a fresh node_id (clone repair). |
 | `spawn` | Register session + create seat + seat + brief (+ label). Readiness observed via the status bridge. Emits guid + label + seat. |
-| `launch` | The substrate primitive spawn rides on: the §4 choke point + sidecar in the current context. |
+| `launch` | The substrate primitive spawn rides on: the §4 choke point + sidecar in the current context. Exception: claude `-p`/`--print` one-shots bypass the bus and sidecar entirely (exec the tool directly, no hcom required) — they return their answer and never become sessions. |
 | `enroll` | Adopt the session found in an existing seat (same code path as sidecar enrolment). Label collisions refuse (§3.1-6). |
 | `send <target>` | Resolve label\|guid → session → seat; deliver via bus; **receipt always includes the resolved guid**. Refusals: unseated (report unseating/eviction), unreconciled binding, name↔sid disagreement. Warnings: unbriefed, `continuity: assumed`. Dereference-at-issue is the race semantics. |
 | `wait <target>` | Observe the seat (herdr status via bridge; process seats: bus status). |
+| `compact <steer>` | Queue a steered `/compact` into the **caller's own** pane. Self-only by construction: no target argument exists; self-identity is proven via the registry before anything is typed. The one ruled exception to bus-only delivery. No registry event — `/compact` is a non-event (§3.1-2, AC-9). |
 | `list` | Sessions × (label, seat, liveness, continuity). Default: seated + recently unseated; `--all` includes retired/lost (and rotation archives). |
 | `resolve <target>` | Print the session's current coordinates (`--hcom-name`, `--terminal`, `--pane`, `--guid`) for composition with raw substrate commands. The general escape hatch (below). |
 | `cull <target>` | Destroy the seat; session → unseated. Never touches other sessions' rows; kills the sidecar last (no post-cull resurrection). |
