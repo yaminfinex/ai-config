@@ -470,6 +470,12 @@ func (r *runner) resume(opts resumeOptions) int {
 		die(r.stderr, "target has no guid: "+opts.target)
 		return 1
 	}
+	if proj, err := v2.LoadFile(registryPath, v2.LoadOptions{}); err == nil {
+		if latest := registry.V2ByGUID(proj, guid); latest != nil && latest.State == v2.StateRetired && !latest.LegacyV1 {
+			die(r.stderr, fmt.Sprintf("cannot resume %s: session is retired; run 'herder reopen %s' first", opts.target, guid))
+			return 1
+		}
+	}
 	live := liveAgents(r.client())
 	if rec.Status == "active" && rec.TerminalID != "" && live[rec.TerminalID].TerminalID != nil {
 		die(r.stderr, fmt.Sprintf("%s is already running; use herder send/wait", firstNonEmpty(ptrString(rec.Label), opts.target)))

@@ -1942,3 +1942,37 @@ func TestBuildProvenanceSpawnedBy(t *testing.T) {
 		t.Fatalf("ambient user fallback = %q, want user", p.SpawnedBy)
 	}
 }
+
+func TestV2LabelOwnerIgnoresRetiredLabelHolder(t *testing.T) {
+	proj, err := v2.Load(strings.NewReader(strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"node-1","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"guid":"guid-retired","event":"retired","node":"node-1","state":"retired","label":"shared"}`,
+		`{"guid":"guid-lost","event":"lost","node":"node-1","state":"lost","label":"gone"}`,
+		`{"guid":"guid-unseated","event":"registered","node":"node-1","state":"unseated","label":"live"}`,
+	}, "\n")+"\n"), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner := V2LabelOwner(proj, "shared", ""); owner != nil {
+		t.Fatalf("retired label owner = %+v, want nil", owner)
+	}
+	if owner := V2LabelOwner(proj, "gone", ""); owner != nil {
+		t.Fatalf("lost label owner = %+v, want nil", owner)
+	}
+	if owner := V2LabelOwner(proj, "live", ""); owner == nil || owner.GUID != "guid-unseated" {
+		t.Fatalf("live label owner = %+v, want guid-unseated", owner)
+	}
+}
+
+func TestV2ResolveMatchesPaneID(t *testing.T) {
+	proj, err := v2.Load(strings.NewReader(strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"node-1","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"guid":"guid-pane","event":"registered","node":"node-1","state":"seated","label":"pane-agent","seat":{"kind":"herdr","pane_id":"p_123"}}`,
+	}, "\n")+"\n"), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := V2Resolve(proj, "p_123"); got == nil || got.GUID != "guid-pane" {
+		t.Fatalf("V2Resolve pane = %+v, want guid-pane", got)
+	}
+}
