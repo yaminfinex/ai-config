@@ -148,6 +148,8 @@ func printHelp(stdout io.Writer) {
 		"  agent; after a restart, ids reshuffle. Within a run, cull retargets to the",
 		"  original agent's current pane (via terminal_id) so it never closes someone",
 		"  else's work. Each close appends a new closed record (the registry is append-only JSONL).",
+		"  A row with neither pane_id nor terminal_id has nothing to verify or close; cull",
+		"  records it closed without requiring --force, matching --gone recovery.",
 		"",
 		"If it fails:",
 		"  - \"not live anywhere\": the agent is already gone; the row is recorded closed.",
@@ -219,6 +221,17 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 
 	if opts.goneOnly {
 		closed, err := appendClosed(registryPath, rec, nowISO, culler, "already_gone", "terminal_id not in live agent list")
+		if err != nil {
+			die(stderr, err.Error())
+			return false
+		}
+		fmt.Fprintf(stdout, "recorded closed %s (%s) pane=%s → already_gone\n", label, guid, pane)
+		dropBusEntry(closed, stdout)
+		return true
+	}
+
+	if pane == "" && term == "" {
+		closed, err := appendClosed(registryPath, rec, nowISO, culler, "already_gone", "registry row has no pane_id or terminal_id")
 		if err != nil {
 			die(stderr, err.Error())
 			return false
@@ -330,22 +343,34 @@ func closeErrorReason(out []byte) string {
 func appendClosed(path string, rec registry.Record, nowISO, culler, result, reason string) (registry.Record, error) {
 	guid := ptrString(rec.GUID)
 	rec = latestForGUID(path, rec)
+	wrote := false
 	_, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		latest := registry.V2ByGUID(tx.Projection, guid)
 		if latest == nil {
-			return nil, nil
+			return nil, fmt.Errorf("registry close failed for %s: latest record not found", guid)
+		}
+		if latest.State == v2.StateRetired || latest.State == v2.StateLost {
+			return nil, fmt.Errorf("registry close failed for %s: latest record is already %s", guid, latest.State)
 		}
 		next := *latest
-		next.Event = "unseated"
-		next.State = v2.StateUnseated
+		next.Event = "retired"
+		next.State = v2.StateRetired
 		next.RecordedAt = nowISO
 		next.Seat = nil
+		next.CloseResult = result
+		next.CloseReason = reason
+		wrote = true
 		return []v2.SessionRecord{next}, nil
 	})
 	if err != nil {
 		return rec, err
 	}
+	if !wrote {
+		return rec, fmt.Errorf("registry close failed for %s: no close record appended", guid)
+	}
 	rec.Status = "closed"
+	rec.CloseResult = result
+	rec.CloseReason = reason
 	return rec, nil
 }
 
