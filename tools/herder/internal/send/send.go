@@ -67,14 +67,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 	rec := registry.Resolve(recs, target)
 	if rec == nil {
-		// Pane/terminal targets are positional and reused across sessions, so
-		// one coordinate can match several active rows (a reused pane
-		// accumulates a stale manual-enroll identity per prior session,
-		// TASK-035). A single candidate resolves exactly as before — bus-less
-		// bash rows and not-joined-yet claude/codex rows flow through to the
-		// deliver path unchanged. Only when >1 candidate matches is bus
-		// liveness a tiebreaker: deliver to the sole joined row, and refuse
-		// loudly with the candidate list when 0 or >1 are live (never guess).
+		// Pane targets are display coordinates and terminal targets are
+		// run-scoped coordinates, so a coordinate match can still be ambiguous
+		// in the registry (for example, stale manual-enroll identities from a
+		// prior session on the same pane). A single candidate resolves exactly
+		// as before — bus-less bash rows and not-joined-yet claude/codex rows
+		// flow through to the deliver path unchanged. Only when >1 candidate
+		// matches is bus liveness a tiebreaker: deliver to the sole joined row,
+		// and refuse loudly with the candidate list when 0 or >1 are live
+		// (never guess).
 		candidates := registry.ActiveCandidatesByPaneOrTerminal(recs, target)
 		switch len(candidates) {
 		case 0:
@@ -291,8 +292,9 @@ func printHelp(stdout io.Writer) {
 		"<target> is a short-guid, full guid, label, terminal_id (term_*), or raw pane_id.",
 		"Every form resolves through the spawn registry to the agent's recorded bus name:",
 		"guid/label match the latest row; terminal/pane ids match the ACTIVE row(s) holding",
-		"the coordinate (drift-proof as herdr compacts pane ids). A pane is positional and",
-		"reused across sessions, so one coordinate can match several active rows; resolution",
+		"the coordinate (drift-proof across pane move re-keying). Terminal ids are run-scoped:",
+		"after a herdr restart resolution refuses rather than mis-sends; recover via reconcile.",
+		"A pane id is display-only, so one coordinate can match several active rows; resolution",
 		"then delivers to the single row currently JOINED on the bus and REFUSES (exit 2) with",
 		"the candidate list when the coordinate is ambiguous (0 or >1 rows bus-live) rather than",
 		"guessing. hcom is THE transport — a target with no bus-bound registry row is refused",

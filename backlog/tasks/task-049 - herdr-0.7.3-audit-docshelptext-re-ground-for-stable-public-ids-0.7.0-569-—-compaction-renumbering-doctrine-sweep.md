@@ -3,10 +3,10 @@ id: TASK-049
 title: >-
   herdr-0.7.3 audit: docs+helptext re-ground for stable public ids (0.7.0 #569)
   — compaction/renumbering doctrine sweep
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 05:30'
+updated_date: '2026-07-08 07:59'
 labels: []
 dependencies: []
 priority: medium
@@ -42,5 +42,15 @@ spec-ravu migration-inventory (bus #6043, applied by hera): TASK-049 accelerant 
 created: 2026-07-08 05:30
 ---
 Memo path update (spec-ravu #6065): canonical copy now napkins/run-herder-dx/spec-memo-migration-inventory.md (main checkout, run napkin) — worktree copy is disposable.
+---
+
+created: 2026-07-08 07:46
+---
+[hera, from vibe #8663] Worker task049-deli delivered wording-only sweep; vibe review caught 3 sites overclaiming the OTHER direction (drift-proof/survives-restart contradicts run-scoped terminal_ids — restart = fail-closed + reconcile per TASK-046). Precision fix round routed; hand-back after.
+---
+
+created: 2026-07-08 07:59
+---
+[hera 2026-07-08] MERGED to main (f671bdf, no-ff). Post-merge gate on main from repo root GREEN (vet/test both modules, 22/22 suites). Delivered: 10-site doctrine wording sweep + vibe precision round (removed three restart-survival overclaims; run-scoped terminal_ids, restart = fail-closed + reconcile). Wording-only, zero logic changes; site 6 already gone on main, worker correctly left spawn.go untouched; A2 secondary sweep found no contradicting text (reported, not invented). Review path: worker round + vibe precision round + hera gate — adversarial reviewer skipped per doctrine (non-engine). Residual angle (phrase-based grep may have missed stale mechanism claims outside the memo's 10 sites; check text against the ravu pane_id refinement) NOTED for the 048/047 docs lane rather than a new task. Credits: task049-deli (d1a2fa9, a4b60cc), vibe (two rounds).
 ---
 <!-- COMMENTS:END -->

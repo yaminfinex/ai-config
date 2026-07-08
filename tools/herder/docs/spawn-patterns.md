@@ -80,8 +80,8 @@ Do **not** hand-roll `herdr tab create` then `herder spawn --tab <id>`: `tab cre
 
 1. `herdr tab create --label <agent-label> [--workspace …] [--cwd …]` → captures the root pane's `pane_id` + `terminal_id`.
 2. `herdr agent start --tab <new-tab>` → the agent lands as a second pane.
-3. Closes the root pane — but only after confirming via `herdr pane get` that it still holds the root `terminal_id` (never the agent's). pane ids compact, so a bare-id close could otherwise hit the agent.
-4. Re-resolves the agent's `pane_id` by its durable `terminal_id` (the close renumbers panes in the tab).
+3. Closes the root pane — but only after confirming via `herdr pane get` that it still holds the root `terminal_id` (never the agent's). Within a run, a stale pane id hits nothing; after restart, ids reshuffle, so a bare-id close must still be guarded.
+4. Re-resolves the agent's `pane_id` by its move-stable `terminal_id`.
 
 The summary prints `tab: <id> (new, root shell closed; agent is sole pane)`; `--json` adds `new_tab` / `root_pane_closed`. If the close is skipped (identity check fails), the summary warns `root shell NOT closed` so you can clean it up by hand. Culling the agent later closes its last pane, which auto-closes the tab — no `tab close` call needed.
 
