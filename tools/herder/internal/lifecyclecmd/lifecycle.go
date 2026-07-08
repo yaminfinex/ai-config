@@ -17,6 +17,7 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/hookcmd"
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/send"
 	"ai-config/tools/herder/internal/shellquote"
 )
@@ -626,7 +627,7 @@ func (r *runner) verifyLaunchStayedAlive(registryPath string, row []byte, paneID
 		"close_reason":   "pane exited before lifecycle bind",
 	})
 	if err == nil {
-		_ = registry.AppendLegacySessionEvent(registryPath, closed, "unseated", "unseated")
+		_ = registry.AppendLegacySessionEvent(registryPath, closed, "retired", v2.StateRetired)
 	}
 	die(r.stderr, "launch failed before lifecycle bind")
 	return 1

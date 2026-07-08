@@ -215,6 +215,20 @@ func carrySeatFields(row, current v2.SessionRecord) v2.SessionRecord {
 	row.Tool = firstNonEmpty(row.Tool, current.Tool)
 	row.State = current.State
 	row.Seat = current.Seat
+	if row.Seat == nil && current.LegacyV1 {
+		legacy := LegacyFromV2(current)
+		if legacy.PaneID != "" || legacy.TerminalID != "" || legacy.HcomName != "" || legacy.HcomDir != "" {
+			row.State = v2.StateSeated
+			row.Seat = &v2.Seat{
+				Kind:        "herdr",
+				TerminalID:  legacy.TerminalID,
+				PaneID:      legacy.PaneID,
+				HcomName:    legacy.HcomName,
+				Namespace:   legacy.HcomDir,
+				ConfirmedAt: row.RecordedAt,
+			}
+		}
+	}
 	if len(row.SIDs) == 0 {
 		row.SIDs = current.SIDs
 	}

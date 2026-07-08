@@ -46,16 +46,18 @@ type Record struct {
 	ShortGUID *string `json:"short_guid"`
 	Label     *string `json:"label"`
 
-	Role       string      `json:"role"`
-	Agent      string      `json:"agent"`
-	PaneID     string      `json:"pane_id"`
-	TerminalID string      `json:"terminal_id"`
-	Team       string      `json:"team"`
-	HcomDir    string      `json:"hcom_dir"`
-	HcomName   string      `json:"hcom_name"`
-	HcomTag    string      `json:"hcom_tag"`
-	Status     string      `json:"status"`
-	Provenance *Provenance `json:"provenance,omitempty"`
+	Role        string      `json:"role"`
+	Agent       string      `json:"agent"`
+	PaneID      string      `json:"pane_id"`
+	TerminalID  string      `json:"terminal_id"`
+	Team        string      `json:"team"`
+	HcomDir     string      `json:"hcom_dir"`
+	HcomName    string      `json:"hcom_name"`
+	HcomTag     string      `json:"hcom_tag"`
+	Status      string      `json:"status"`
+	CloseResult string      `json:"close_result,omitempty"`
+	CloseReason string      `json:"close_reason,omitempty"`
+	Provenance  *Provenance `json:"provenance,omitempty"`
 
 	Raw json.RawMessage `json:"-"`
 }
@@ -161,14 +163,16 @@ func legacyRecordFromV2Object(obj map[string]json.RawMessage) Record {
 	var prov Provenance
 	_ = json.Unmarshal(obj["provenance"], &prov)
 	rec := Record{
-		Role:       rawString(obj["role"]),
-		Agent:      rawString(obj["tool"]),
-		PaneID:     seat.PaneID,
-		TerminalID: seat.TerminalID,
-		HcomDir:    seat.Namespace,
-		HcomName:   seat.HcomName,
-		Status:     status,
-		Provenance: &prov,
+		Role:        rawString(obj["role"]),
+		Agent:       rawString(obj["tool"]),
+		PaneID:      seat.PaneID,
+		TerminalID:  seat.TerminalID,
+		HcomDir:     seat.Namespace,
+		HcomName:    seat.HcomName,
+		Status:      status,
+		CloseResult: rawString(obj["close_result"]),
+		CloseReason: rawString(obj["close_reason"]),
+		Provenance:  &prov,
 	}
 	if guid != "" {
 		rec.GUID = &guid
@@ -461,6 +465,12 @@ func overlayLegacyFields(rec *Record, obj map[string]json.RawMessage) {
 	if v := rawString(obj["status"]); v != "" {
 		rec.Status = v
 	}
+	if v := rawString(obj["close_result"]); v != "" {
+		rec.CloseResult = v
+	}
+	if v := rawString(obj["close_reason"]); v != "" {
+		rec.CloseReason = v
+	}
 	var prov Provenance
 	if err := json.Unmarshal(obj["provenance"], &prov); err == nil && prov != (Provenance{}) {
 		rec.Provenance = &prov
@@ -602,17 +612,19 @@ func V2FromRecord(rec Record, event, state, recordedAt string) v2.SessionRecord 
 		}
 	}
 	out := v2.SessionRecord{
-		Kind:       v2.KindSession,
-		GUID:       guid,
-		Event:      event,
-		RecordedAt: recordedAt,
-		State:      state,
-		Label:      ptrValue(rec.Label),
-		Role:       rec.Role,
-		Tool:       rec.Agent,
-		Continuity: "assumed",
-		Lineage:    v2.Lineage{ForkedFrom: firstNonEmpty(prov.ForkedFrom)},
-		Provenance: prov,
+		Kind:        v2.KindSession,
+		GUID:        guid,
+		Event:       event,
+		RecordedAt:  recordedAt,
+		State:       state,
+		Label:       ptrValue(rec.Label),
+		Role:        rec.Role,
+		Tool:        rec.Agent,
+		Continuity:  "assumed",
+		Lineage:     v2.Lineage{ForkedFrom: firstNonEmpty(prov.ForkedFrom)},
+		Provenance:  prov,
+		CloseResult: rec.CloseResult,
+		CloseReason: rec.CloseReason,
 	}
 	if prov.ToolSessionID != "" {
 		out.SIDs = []v2.SID{{SID: prov.ToolSessionID, ObservedAt: firstNonEmpty(prov.TS, recordedAt), Source: "harvest"}}
@@ -658,12 +670,14 @@ func LegacyFromV2(rec v2.SessionRecord) Record {
 		ResumedAt:     rec.Provenance.ResumedAt,
 	}
 	out := Record{
-		GUID:       &guid,
-		ShortGUID:  &short,
-		Role:       rec.Role,
-		Agent:      rec.Tool,
-		Status:     status,
-		Provenance: &prov,
+		GUID:        &guid,
+		ShortGUID:   &short,
+		Role:        rec.Role,
+		Agent:       rec.Tool,
+		Status:      status,
+		CloseResult: rec.CloseResult,
+		CloseReason: rec.CloseReason,
+		Provenance:  &prov,
 	}
 	if label != "" {
 		out.Label = &label

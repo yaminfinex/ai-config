@@ -194,6 +194,10 @@ unset MOCK_CULL_APPEND_ENRICHED MOCK_CULL_APPEND_HCOM_DIR
 [[ "$(cat "$PROBE/hcom_dirs" 2>/dev/null)" = "$BUS_DIR" ]] && ok "race cull: refreshed hcom_dir used" || bad "race cull: refreshed hcom_dir used" "got=$(cat "$PROBE/hcom_dirs" 2>/dev/null) want=$BUS_DIR"
 tail -n1 "$REG_DIR/registry.jsonl" | jq -e '.kind=="session" and .guid=="guid-race" and .event=="unseated" and .state=="unseated" and .label=="race" and (.status|not) and (.seat|not)' >/dev/null \
   && ok "race cull: v2 unseated row appended" || bad "race cull: v2 unseated row appended" "latest=$(tail -n1 "$REG_DIR/registry.jsonl")"
+RACE_LEGACY_VIEW="$(env -i PATH="$PATH_HERMETIC" HOME="$HOME" HERDER_STATE_DIR="$REG_DIR" "$REPO_ROOT/bin/herder" list --all 2>&1)"
+grep -q 'race' <<<"$RACE_LEGACY_VIEW" && ok "race cull: legacy view keeps label" || bad "race cull: legacy view keeps label" "view=$RACE_LEGACY_VIEW"
+grep -q 'p_bus' <<<"$RACE_LEGACY_VIEW" && bad "race cull: legacy view drops pane" "view=$RACE_LEGACY_VIEW" || ok "race cull: legacy view drops pane"
+grep -q '@bus-race' <<<"$RACE_LEGACY_VIEW" && bad "race cull: legacy view drops bus" "view=$RACE_LEGACY_VIEW" || ok "race cull: legacy view drops bus"
 
 # 3. Failed hcom kill is advisory; cull still succeeds and closes the pane.
 make_case fail failbus

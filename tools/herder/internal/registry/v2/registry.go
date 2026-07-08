@@ -39,23 +39,25 @@ type Projection struct {
 }
 
 type SessionRecord struct {
-	Kind       string          `json:"kind,omitempty"`
-	GUID       string          `json:"guid"`
-	Event      string          `json:"event"`
-	RecordedAt string          `json:"recorded_at"`
-	Node       string          `json:"node"`
-	State      string          `json:"state"`
-	Label      string          `json:"label,omitempty"`
-	Role       string          `json:"role,omitempty"`
-	Tool       string          `json:"tool,omitempty"`
-	Seat       *Seat           `json:"seat,omitempty"`
-	SIDs       []SID           `json:"sids,omitempty"`
-	Continuity string          `json:"continuity,omitempty"`
-	Lineage    Lineage         `json:"lineage,omitempty"`
-	Provenance Provenance      `json:"provenance,omitempty"`
-	Raw        json.RawMessage `json:"-"`
-	Ordinal    int             `json:"-"`
-	LegacyV1   bool            `json:"-"`
+	Kind        string          `json:"kind,omitempty"`
+	GUID        string          `json:"guid"`
+	Event       string          `json:"event"`
+	RecordedAt  string          `json:"recorded_at"`
+	Node        string          `json:"node"`
+	State       string          `json:"state"`
+	Label       string          `json:"label,omitempty"`
+	Role        string          `json:"role,omitempty"`
+	Tool        string          `json:"tool,omitempty"`
+	Seat        *Seat           `json:"seat,omitempty"`
+	SIDs        []SID           `json:"sids,omitempty"`
+	Continuity  string          `json:"continuity,omitempty"`
+	Lineage     Lineage         `json:"lineage,omitempty"`
+	Provenance  Provenance      `json:"provenance,omitempty"`
+	CloseResult string          `json:"close_result,omitempty"`
+	CloseReason string          `json:"close_reason,omitempty"`
+	Raw         json.RawMessage `json:"-"`
+	Ordinal     int             `json:"-"`
+	LegacyV1    bool            `json:"-"`
 }
 
 type Seat struct {

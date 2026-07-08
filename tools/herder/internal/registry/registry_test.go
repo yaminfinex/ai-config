@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -8,8 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
+	"time"
 
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -310,42 +311,60 @@ func TestLoadDerivesLegacyViewFromV2Rows(t *testing.T) {
 	}
 }
 
-func TestConcurrentLabelClaimsOneWinner(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	errs := make([]error, 2)
-	for i, guid := range []string{"guid-alpha", "guid-beta"} {
-		wg.Add(1)
-		go func(i int, guid string) {
-			defer wg.Done()
-			<-start
-			label := "shared"
-			prov := Provenance{Mechanism: "spawn"}
-			rec := Record{GUID: &guid, Label: &label, Status: "active", Provenance: &prov}
-			_, errs[i] = UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
-				if owner := V2LabelOwner(tx.Projection, label, guid); owner != nil {
-					return nil, errors.New("owner " + owner.GUID)
-				}
-				return []v2.SessionRecord{V2FromRecord(rec, "registered", v2.StateSeated, "")}, nil
-			})
-		}(i, guid)
+func TestTwoProcessLabelClaimsOneWinner(t *testing.T) {
+	if os.Getenv("HERDER_REGISTRY_CLAIM_HELPER") == "1" {
+		runLabelClaimHelper()
+		return
 	}
-	close(start)
-	wg.Wait()
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	start := filepath.Join(t.TempDir(), "start")
+	cmds := make([]*exec.Cmd, 0, 2)
+	stderrs := make([]*bytes.Buffer, 0, 2)
+	for _, guid := range []string{"guid-alpha", "guid-beta"} {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestTwoProcessLabelClaimsOneWinner$", "-test.count=1")
+		cmd.Env = append(os.Environ(),
+			"HERDER_REGISTRY_CLAIM_HELPER=1",
+			"HERDER_REGISTRY_CLAIM_PATH="+path,
+			"HERDER_REGISTRY_CLAIM_GUID="+guid,
+			"HERDER_REGISTRY_CLAIM_START="+start,
+		)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		cmds = append(cmds, cmd)
+		stderrs = append(stderrs, &stderr)
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start helper %s: %v", guid, err)
+		}
+		t.Cleanup(func() {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		})
+	}
 	winners := 0
 	losers := 0
-	for _, err := range errs {
+	if err := os.WriteFile(start, []byte("go\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i, cmd := range cmds {
+		err := cmd.Wait()
 		if err == nil {
 			winners++
-		} else if strings.Contains(err.Error(), "label \"shared\" already belongs") || strings.Contains(err.Error(), "owner guid-") {
-			losers++
-		} else {
-			t.Fatalf("unexpected concurrent claim error: %v", err)
+			continue
 		}
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("unexpected helper error: %v", err)
+		}
+		stderr := stderrs[i].String()
+		if exitErr.ExitCode() == 42 && strings.Contains(stderr, `label "shared" already belongs`) {
+			losers++
+			continue
+		}
+		t.Fatalf("unexpected helper exit %d stderr=%s", exitErr.ExitCode(), stderr)
 	}
 	if winners != 1 || losers != 1 {
-		t.Fatalf("winners=%d losers=%d errs=%v, want one winner and one loser", winners, losers, errs)
+		t.Fatalf("winners=%d losers=%d, want one winner and one loser", winners, losers)
 	}
 	recs, err := Load(path)
 	if err != nil {
@@ -353,6 +372,87 @@ func TestConcurrentLabelClaimsOneWinner(t *testing.T) {
 	}
 	if owner := ActiveLabelOwner(recs, "shared", ""); owner == nil {
 		t.Fatal("legacy resolver sees no shared owner")
+	}
+}
+
+func runLabelClaimHelper() {
+	start := os.Getenv("HERDER_REGISTRY_CLAIM_START")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(start); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			os.Stderr.WriteString("timed out waiting for start barrier\n")
+			os.Exit(2)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	path := os.Getenv("HERDER_REGISTRY_CLAIM_PATH")
+	guid := os.Getenv("HERDER_REGISTRY_CLAIM_GUID")
+	label := "shared"
+	prov := Provenance{Mechanism: "spawn"}
+	rec := Record{GUID: &guid, Label: &label, Status: "active", Provenance: &prov}
+	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{V2FromRecord(rec, "registered", v2.StateSeated, "")}, nil
+	})
+	if err == nil {
+		os.Exit(0)
+	}
+	os.Stderr.WriteString(err.Error() + "\n")
+	if strings.Contains(err.Error(), `label "shared" already belongs`) {
+		os.Exit(42)
+	}
+	os.Exit(2)
+}
+
+func TestLockedValidatorCarriesLegacySeatOnRename(t *testing.T) {
+	path := writeRegistry(t, `{"guid":"guid-legacy","short_guid":"legacy","label":"old","role":"worker","agent":"codex","terminal_id":"term_OLD","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"bus-old","status":"active"}`)
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, "guid-legacy")
+		if current == nil {
+			t.Fatal("missing legacy projection row")
+		}
+		next := *current
+		next.Event = "labelled"
+		next.Label = "new"
+		return []v2.SessionRecord{next}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := Resolve(recs, "guid-legacy")
+	if latest == nil || ptrString(latest.Label) != "new" || latest.PaneID != "p_old" || latest.TerminalID != "term_OLD" || latest.HcomName != "bus-old" || latest.HcomDir != "/hcom" {
+		t.Fatalf("latest = %+v, want renamed row with legacy seat carried", latest)
+	}
+}
+
+func TestAppendLegacyRetiredPreservesCloseReason(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	row := []byte(`{"guid":"guid-launch","short_guid":"launch","label":"launch","role":"worker","agent":"codex","terminal_id":"term_L","pane_id":"p_l","hcom_dir":"/hcom","hcom_name":"launch-bus","status":"closed","close_result":"launch_failed","close_reason":"pane exited before lifecycle bind"}`)
+	if err := AppendLegacySessionEvent(path, row, "retired", v2.StateRetired); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(data), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["state"] != v2.StateRetired || got["event"] != "retired" || got["close_result"] != "launch_failed" || got["close_reason"] != "pane exited before lifecycle bind" {
+		t.Fatalf("row = %s, want retired launch_failed with close_reason", data)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Status != "closed" || recs[0].CloseResult != "launch_failed" || recs[0].CloseReason == "" {
+		t.Fatalf("legacy view = %+v, want closed launch_failed", recs)
 	}
 }
 
