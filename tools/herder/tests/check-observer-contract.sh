@@ -31,9 +31,9 @@ case "${1:-} ${2:-}" in
       jq -n '{result:{process_info:{foreground_processes:[{pid:1234,argv:["claude"],cwd:"/mock/cwd"}]}}}'
     fi;;
   "agent list")
-    jq '{result:{agents:[.result.agents[]?]}}' "$STATE/snapshot.json";;
+    jq '{result:{agents:[(.result.snapshot.agents // .result.agents // [])[]?]}}' "$STATE/snapshot.json";;
   "pane list")
-    jq '{result:{panes:[.result.panes[]? | {pane_id,terminal_id}]}}' "$STATE/snapshot.json";;
+    jq '{result:{panes:[(.result.snapshot.panes // .result.panes // [])[]? | {pane_id,terminal_id}]}}' "$STATE/snapshot.json";;
   "pane get")
     jq -n '{result:{pane:{pane_id:"p_self", terminal_id:"t_self", workspace_id:"ws", cwd:"/mock/cwd"}}}';;
   *)
@@ -114,7 +114,7 @@ def response(req):
     method = req.get("method")
     params = req.get("params") or {}
     if method == "session.snapshot":
-        snap = load_json(os.path.join(state, "snapshot.json"), {"result": {"protocol": 16, "version": "mock", "panes": [], "agents": []}})
+        snap = load_json(os.path.join(state, "snapshot.json"), {"result": {"type": "session_snapshot", "snapshot": {"protocol": 16, "version": "mock", "panes": [], "agents": []}}})
         return {"id": mid, "result": snap.get("result", snap)}
     if method == "pane.process_info":
         pane_id = params.get("pane_id") or ""
@@ -184,7 +184,7 @@ process_row() {
 }
 
 snapshot() {
-  jq -cn --argjson panes "$1" --argjson agents "$2" '{result:{protocol:16,version:"mock",panes:$panes,agents:$agents}}' >"$HDR/snapshot.json"
+  jq -cn --argjson panes "$1" --argjson agents "$2" '{result:{type:"session_snapshot",snapshot:{protocol:16,version:"mock",panes:$panes,agents:$agents}}}' >"$HDR/snapshot.json"
 }
 
 proc_empty() {

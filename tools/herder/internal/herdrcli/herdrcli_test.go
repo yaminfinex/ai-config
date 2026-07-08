@@ -155,6 +155,37 @@ func TestParsePaneListAndGet(t *testing.T) {
 	}
 }
 
+func TestParseSessionSnapshotWrappedAndFlat(t *testing.T) {
+	wrapped := []byte(`{"result":{"type":"session_snapshot","snapshot":{
+		"protocol":16,
+		"version":"0.7.3",
+		"panes":[{"pane_id":"pane_live","terminal_id":"term_live","agent_status":"idle","label":"alpha"}],
+		"agents":[{"pane_id":"pane_live","terminal_id":"term_live","agent":"claude","agent_status":"idle"}]
+	}}}`)
+	snap, err := ParseSessionSnapshot(wrapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Protocol != 16 || snap.Version != "0.7.3" || len(snap.Panes) != 1 || len(snap.Agents) != 1 {
+		t.Fatalf("wrapped snapshot = %+v", snap)
+	}
+	if snap.Panes[0].TerminalID != "term_live" || snap.Panes[0].AgentStatus != "idle" {
+		t.Errorf("pane mapping = %+v", snap.Panes[0])
+	}
+	if snap.Agents[0].TerminalID == nil || *snap.Agents[0].TerminalID != "term_live" ||
+		snap.Agents[0].Status != "idle" || snap.Agents[0].Name != "" {
+		t.Errorf("agent mapping = %+v", snap.Agents[0])
+	}
+
+	flat, err := ParseSessionSnapshot([]byte(`{"result":{"protocol":16,"version":"flat","panes":[],"agents":[]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flat.Protocol != 16 || flat.Version != "flat" {
+		t.Errorf("flat snapshot = %+v", flat)
+	}
+}
+
 func TestParseWorkspaceTabAgentStart(t *testing.T) {
 	wss, err := ParseWorkspaceList([]byte(`{"result":{"workspaces":[{"workspace_id":"ws_1"},{"workspace_id":"ws_2"}]}}`))
 	if err != nil || len(wss) != 2 || wss[1].WorkspaceID != "ws_2" {

@@ -208,10 +208,29 @@ func ParsePaneGet(out []byte) (Pane, error) {
 
 func ParseSessionSnapshot(out []byte) (Snapshot, error) {
 	var envelope struct {
-		Result Snapshot `json:"result"`
+		Result json.RawMessage `json:"result"`
 	}
-	err := json.Unmarshal(out, &envelope)
-	return envelope.Result, err
+	if err := json.Unmarshal(out, &envelope); err != nil {
+		return Snapshot{}, err
+	}
+	if len(envelope.Result) == 0 || bytes.Equal(envelope.Result, []byte("null")) {
+		return Snapshot{}, nil
+	}
+	return ParseSessionSnapshotResult(envelope.Result)
+}
+
+func ParseSessionSnapshotResult(result []byte) (Snapshot, error) {
+	var wrapped struct {
+		Snapshot *Snapshot `json:"snapshot"`
+	}
+	if err := json.Unmarshal(result, &wrapped); err == nil && wrapped.Snapshot != nil {
+		return *wrapped.Snapshot, nil
+	}
+	var direct Snapshot
+	if err := json.Unmarshal(result, &direct); err != nil {
+		return Snapshot{}, err
+	}
+	return direct, nil
 }
 
 func ParseProcessInfo(out []byte) (ProcessInfo, error) {

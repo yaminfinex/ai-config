@@ -255,9 +255,11 @@ func (c *herdrSocketClient) call(method string, params any, out any) error {
 }
 
 func (c *herdrSocketClient) snapshot() (herdrcli.Snapshot, error) {
-	var snap herdrcli.Snapshot
-	err := c.call("session.snapshot", map[string]any{}, &snap)
-	return snap, err
+	var raw json.RawMessage
+	if err := c.call("session.snapshot", map[string]any{}, &raw); err != nil {
+		return herdrcli.Snapshot{}, err
+	}
+	return herdrcli.ParseSessionSnapshotResult(raw)
 }
 
 func (c *herdrSocketClient) processInfo(paneID string) (herdrcli.ProcessInfo, error) {
