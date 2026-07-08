@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-08 11:44'
-updated_date: '2026-07-08 21:48'
+updated_date: '2026-07-08 22:02'
 labels: []
 dependencies: []
 priority: high
@@ -77,5 +77,10 @@ Design pass dispatched: designer design073-meme (Fable, per design-task pattern 
 created: 2026-07-08 21:48
 ---
 Designer DONE d393f3b verified: docs-only diff confirmed (3 files, +722, nothing else). Fresh-context adversarial design review dispatched: dreview073 (codex, cross-family). Reviewer owns quality incl. the four flagged scope calls in design doc §11; tomo's later review owns intent.
+---
+
+created: 2026-07-08 22:02
+---
+Fix round 1e6bb84 (docs-only verified, +141/-56): all six findings + LOW applied. Delta APPROVE from dreview073-zinu — per-candidate outcome accounting pinned (T-10), suite split by rollout step (independently landable), herder-list advice surfacing mandatory (AC-11/T-6), E-10 block-on-steward coupling, implementable epoch rule (T-11/AC-12), fallback wording honest, cold-read buildable. Nonblocking nit recorded: E-11 self-labels 'four new ACs' while coverage rides E-7 + impl AC-11/12. Final gate in flight: tomo intent review (INTENT-OK/INTENT-DRIFT).
 ---
 <!-- COMMENTS:END -->
