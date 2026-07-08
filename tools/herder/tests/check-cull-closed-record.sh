@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# check-cull-closed-record.sh — prove cull appends confirmed unseated close rows.
+# check-cull-closed-record.sh — prove cull appends first unseated close rows
+# and treats repeated unseated culls as confirmed no-ops.
 
 set -uo pipefail
 
@@ -78,17 +79,17 @@ fail=0
 ok()  { printf 'PASS  %s\n' "$1"; }
 bad() { printf 'FAIL  %s — %s\n' "$1" "$2"; fail=1; }
 
-seed_unseated_holder() {
+seed_seated_paneless_holder() {
   local reg="$1" label="$2"
   cat >"$reg" <<JSONL
-{"kind":"session","guid":"guid-dead-$label","event":"migrated_v1","recorded_at":"2026-07-08T00:00:00Z","state":"unseated","label":"$label","role":"worker","tool":"codex"}
+{"kind":"session","guid":"guid-dead-$label","event":"registered","recorded_at":"2026-07-08T00:00:00Z","state":"seated","label":"$label","role":"worker","tool":"codex","seat":{"kind":"herdr"}}
 JSONL
 }
 
 seed_bus_holder() {
   local reg="$1" label="$2"
   cat >"$reg" <<JSONL
-{"guid":"guid-bus-$label","short_guid":"bus-$label","label":"$label","role":"worker","agent":"codex","hcom_dir":"/mock/hcom","hcom_name":"bus-$label","status":"active"}
+{"kind":"session","guid":"guid-bus-$label","event":"registered","recorded_at":"2026-07-08T00:00:00Z","state":"seated","label":"$label","role":"worker","tool":"codex","seat":{"kind":"herdr","hcom_name":"bus-$label","namespace":"/mock/hcom"}}
 JSONL
 }
 
@@ -114,9 +115,9 @@ close_count() {
   jq -r --arg guid "$guid" 'select(.guid==$guid and .event=="unseated" and .state=="unseated" and .close_result=="already_gone") | .guid' "$REGISTRY" | wc -l | tr -d '[:space:]'
 }
 
-# 1. Dead pane-less holder -> cull confirms an appended unseated close snapshot.
+# 1. Seated pane-less holder -> cull confirms an appended unseated close snapshot.
 make_case closed_record
-seed_unseated_holder "$REGISTRY" trap
+seed_seated_paneless_holder "$REGISTRY" trap
 run_herder "$REG_DIR" p_culler "" cull --label trap
 [[ "$RUN_RC" -eq 0 ]] && ok "closed record: cull exits 0" || bad "closed record: cull exits 0" "rc=$RUN_RC out=$RUN_OUT"
 tail -n1 "$REGISTRY" | jq -e '.event=="unseated" and .state=="unseated" and .label=="trap" and .close_result=="already_gone" and .close_reason=="registry row has no pane_id or terminal_id" and (.seat|not)' >/dev/null \
@@ -133,12 +134,19 @@ run_herder "$REG_DIR" p_self "" rename other trap
 [[ "$RUN_RC" -ne 0 ]] && grep -q 'label "trap" already belongs to active guid guid-dead-trap' <<<"$RUN_OUT" \
   && ok "closed record: rename still refuses held label" || bad "closed record: rename still refuses held label" "rc=$RUN_RC out=$RUN_OUT"
 
-# 3. Repeated cull is honest: if it reports success, another close row was appended.
+# 3. Repeated cull is honest: success reports the recorded fact without
+# appending another close row or amending the original annotation.
 before="$(close_count guid-dead-trap)"
+before_bytes="$(cat "$REGISTRY")"
 run_herder "$REG_DIR" p_culler "" cull --label trap
 after="$(close_count guid-dead-trap)"
-[[ "$RUN_RC" -eq 0 && "$after" -eq $((before + 1)) ]] \
-  && ok "closed record: repeat cull appends confirmed row" || bad "closed record: repeat cull appends confirmed row" "rc=$RUN_RC before=$before after=$after out=$RUN_OUT"
+after_bytes="$(cat "$REGISTRY")"
+[[ "$RUN_RC" -eq 0 && "$after" -eq "$before" ]] \
+  && ok "closed record: repeat cull does not append" || bad "closed record: repeat cull does not append" "rc=$RUN_RC before=$before after=$after out=$RUN_OUT"
+[[ "$after_bytes" = "$before_bytes" ]] \
+  && ok "closed record: repeat cull leaves registry byte-identical" || bad "closed record: repeat cull leaves registry byte-identical" "before=$before_bytes after=$after_bytes out=$RUN_OUT"
+grep -q 'already unseated trap (guid-dead-trap) at .*close_result=already_gone' <<<"$RUN_OUT" \
+  && ok "closed record: repeat cull reports recorded fact" || bad "closed record: repeat cull reports recorded fact" "out=$RUN_OUT"
 
 # 4. Pane-less non-force cull must not kill a still-joined bus row.
 make_case bus_guard
