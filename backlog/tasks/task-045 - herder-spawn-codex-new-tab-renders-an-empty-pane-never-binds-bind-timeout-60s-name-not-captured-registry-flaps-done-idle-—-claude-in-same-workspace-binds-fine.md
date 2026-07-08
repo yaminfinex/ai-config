@@ -7,7 +7,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:49'
-updated_date: '2026-07-08 05:33'
+updated_date: '2026-07-08 06:36'
 labels: []
 dependencies: []
 priority: high
@@ -42,5 +42,14 @@ Live experiment in flight (vibe #5926): the TASK-046 codex re-dispatch runs with
 created: 2026-07-08 05:33
 ---
 Extended-bind experiment result (vibe #6107, applied by hera) — MECHANISM SHARPENED: HERDER_SPAWN_BIND_MS=480000 did NOT fix spawn-native delivery. Spawn exited delivery_result=bind_timeout / hcom_capture=not_found even though the bind demonstrably COMPLETED on the hcom side well within the window (worker task046-fulo live and listening). So the defect is not (only) codex boot latency: herder spawn's NAME-CAPTURE loop never sees a bind that hcom itself completed — capture-loop-side. Additional symptom for the ticket: the registry row gets minted with EMPTY hcom_name, so herder send cannot resolve the worker afterwards (needs re-enroll or reconcile once TASK-046 lands). Investigation focus: what the capture loop polls (hcom list? events? launch tag?) and why a completed codex bind is invisible to it — note hcom 0.7.23 changed tag-line emission (x-ref TASK-040 reTag) and lale's earlier data showed pty-only/session_id-none partial binds; the capture key may be looking at the wrong field for codex. WORKAROUND OF THE DAY (proven end-to-end): spawn codex normally, watch hcom list for the bus name, deliver the initial prompt directly via hcom send to the live name — injected first try, worker acked and implementing.
+---
+
+created: 2026-07-08 06:36
+---
+ROOT CAUSE (vibe diagnosis #6902, read-only, live-validated): both capture signals are STRUCTURALLY dead for codex under hcom 0.7.23. awaitBind (spawn.go:1621) learns the childs name only via (a) sidecar registry enrichment, which requires pane-correlation launch_context.pane_id==paneID (sidecar.go:211), or (b) direct roster match on launch_context.pane_id (spawn.go:1626). Claude rows carry launch_context.pane_id via the hook handshake (hooks_bound:true). Codex rows never complete the hook handshake (hooks_bound:false, session_id empty) and their launch_context has ONLY the internal process_id — no pane_id — so neither signal can EVER fire; window length is irrelevant (matches the 8-min experiment and all three corpses). The late-appearing name is the pty/process-bound registration, which makes the bus name live but feeds nothing herder watches.
+
+FIX RANKING: F1 (primary, sidecarcmd-only): sidecar correlates its panes agent process to the roster via HCOM_PROCESS_ID read from /proc/<pid>/environ of the RUNNING agent (authoritative, unlike TASK-043 inherited-shell env) — proven live byte-equal to roster launch_context.process_id; HERDER_GUID + HCOM_INSTANCE_NAME in environ as belt-and-braces; feeds awaitBind through the existing enrichment path, no spawn.go change, TASK-033-compliant positive child-specific signal. F2 (spawn-side variant): collides with A2 — only if F1 latency proves insufficient. F3 (upstream): hcom 0.7.23 codex hook binding broken — filed on TASK-029 regardless; also the only thing that revives codex sid-reporting for TASK-053.
+
+DISPATCH DECISION (hera): F1 GO now, before A2 merges — sidecarcmd-only, but NOTE A2s scope also touches sidecar enrichment call sites; whichever branch merges second gets an explicit conflict-check + regate. Interim workaround remains the dispatch path.
 ---
 <!-- COMMENTS:END -->
