@@ -23,6 +23,8 @@ PUSH_PATHS=(
   "claude/settings.shared.json"
   "claude/settings.local.example.json"
   "codex/AGENTS.md"
+  "codex/config.shared.toml"
+  "codex/config.local.example.toml"
   "cursor/rules"
   "bin"
   "lib"
@@ -42,6 +44,8 @@ PORTABLE_SCAN_PATHS=(
   "claude/settings.shared.json"
   "claude/settings.local.example.json"
   "codex/AGENTS.md"
+  "codex/config.shared.toml"
+  "codex/config.local.example.toml"
   "cursor/rules"
   "bin"
   "lib"
@@ -211,7 +215,7 @@ portable_staged_files() {
 
   staged_files | while IFS= read -r file; do
     case "$file" in
-      .agents/skills/*|.claude/skills/*|skills/*|claude/hooks/*|claude/commands/*|claude/statusline.sh|claude/settings.shared.json|claude/settings.local.example.json|codex/AGENTS.md|cursor/rules/*|bin/*|lib/*)
+      .agents/skills/*|.claude/skills/*|skills/*|claude/hooks/*|claude/commands/*|claude/statusline.sh|claude/settings.shared.json|claude/settings.local.example.json|codex/AGENTS.md|codex/config.shared.toml|codex/config.local.example.toml|cursor/rules/*|bin/*|lib/*)
         printf '%s/%s\n' "$AI_CONFIG_ROOT" "$file"
         ;;
     esac

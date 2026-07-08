@@ -1,0 +1,6 @@
+# Machine-local Codex config example.
+#
+# Keep personal overrides in ~/.codex/config.toml. ai-setup merges
+# codex/config.shared.toml into that live file and preserves unrelated keys.
+[tui]
+notifications = true

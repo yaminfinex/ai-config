@@ -7,11 +7,17 @@ dry_run=0
 heal_only=0
 hcom_hooks_action=""
 shims_action=""
+codex_config_action=""
+skip_codex_config=0
+codex_home_existed=0
+
+[ -d "$HOME/.codex" ] && codex_home_existed=1
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1 ;;
     --heal-only) heal_only=1 ;;
+    --skip-codex-config) skip_codex_config=1 ;;
     --hcom-hooks)
       shift
       case "${1:-}" in
@@ -40,10 +46,25 @@ while [ "$#" -gt 0 ]; do
           ;;
       esac
       ;;
+    --codex-config)
+      shift
+      case "${1:-}" in
+        install|remove|status) codex_config_action="$1" ;;
+        "")
+          log_error "--codex-config requires one of: install, remove, status"
+          exit 2
+          ;;
+        *)
+          log_error "unknown --codex-config action: $1"
+          exit 2
+          ;;
+      esac
+      ;;
     -h|--help)
       cat <<'USAGE'
-Usage: ai-setup [--dry-run] [--heal-only]
+Usage: ai-setup [--dry-run] [--heal-only] [--skip-codex-config]
        ai-setup [--dry-run] --hcom-hooks install|remove|status
+       ai-setup [--dry-run] --codex-config install|remove|status
        ai-setup [--dry-run] --shims install|remove|status
 
 Installs symlinks from live agent config paths into this repo, melds
@@ -54,6 +75,8 @@ real files or directories.
 --hcom-hooks manages global hcom hooks for Claude and Codex only when explicitly
 requested. Hooks are launch-managed by hcom itself; ai-setup is the durable/manual
 install, remove, and status layer rather than a default setup side effect.
+--codex-config manages the shared Codex TUI config fragment in ~/.codex/config.toml.
+--skip-codex-config skips the default Codex config merge.
 --shims is a compatibility alias for managing the same mise conf.d PATH file.
 USAGE
       exit 0
@@ -184,12 +207,21 @@ if [ -n "$shims_action" ]; then
   exit 0
 fi
 
+if [ -n "$codex_config_action" ]; then
+  source "$AI_CONFIG_ROOT/lib/codex-config.sh"
+  codex_config_main "$codex_config_action" "$dry_run"
+  log_info "ai-setup codex config $codex_config_action complete"
+  exit 0
+fi
+
 source "$AI_CONFIG_ROOT/lib/mise-path.sh"
 source "$AI_CONFIG_ROOT/lib/claude-settings.sh"
+source "$AI_CONFIG_ROOT/lib/codex-config.sh"
 mise_require || exit 1
 install_portable_links
 install_skill_links
 claude_settings_apply "$dry_run"
+codex_config_apply_default "$dry_run" "$codex_home_existed" "$skip_codex_config"
 mise_path_install
 
 log_info "ai-setup complete"

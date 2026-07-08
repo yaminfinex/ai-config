@@ -1,0 +1,7 @@
+# Shared Codex TUI defaults managed by ai-config.
+#
+# Codex does not expose a Claude-style statusline command hook. These native
+# footer/title items are the portable subset Codex can render directly.
+[tui]
+status_line = ["model-with-reasoning", "context-remaining", "git-branch", "current-dir"]
+terminal_title = ["spinner", "project", "git-branch", "model", "status"]
