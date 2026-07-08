@@ -206,7 +206,8 @@ Options:
   --json          print the appended registry record as JSON on stdout
 
 Records pane_id, terminal_id, workspace_id, cwd, and hcom coordinates so later
-resolution survives pane move re-keying and restart reshuffles. A herdr pane hosts one live
+resolution survives pane move re-keying within a server run. After restart,
+recorded terminal_id is dead until reconcile or re-enroll. A herdr pane hosts one live
 session at a time, so re-enrolling a reused pane RETIRES (closes) any prior
 active rows still claiming that pane_id — a dead session's row never lingers as
 LIVE=working. Must run inside a herdr pane (HERDR_ENV=1 and HERDR_PANE_ID set);
