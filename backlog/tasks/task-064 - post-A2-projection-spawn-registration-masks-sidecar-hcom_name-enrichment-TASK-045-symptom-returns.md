@@ -1,0 +1,27 @@
+---
+id: TASK-064
+title: >-
+  post-A2 projection: spawn registration masks sidecar hcom_name enrichment
+  (TASK-045 symptom returns)
+status: To Do
+assignee:
+  - vibe
+created_date: '2026-07-08 07:38'
+labels: []
+dependencies: []
+ordinal: 64000
+---
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+LIVE on main, found by vibe on first post-A2-merge codex spawn (#8318, guid a27c2465, deterministic repro). Evidence: row1 event=recognised 07:33:39 carries seat.hcom_name task049-deli (045 sidecar correlation WORKED, enriched through the A2 locked writer); row2 event=registered 07:33:53 (spawn final registration) has NO seat.hcom_name; latest-row-per-guid projection takes row2 -> herder list BUS=-, herder send cannot resolve, spawn reported hcom_capture:not_found. Original TASK-045 symptom returns, new cause: later partial-seat append masks earlier enrichment in the collapse.
+
+Two defects, both A2-path: (1) spawn final registration does not merge/carry forward seat fields already recorded for the guid — violates the owned-fields spirit (a registration should not clobber enrichment it does not own; note A2 reviewer audit assumed spawn builds a COMPLETE fresh seat, untrue when capture misses). (2) spawn capture check concluded not_found although the enrichment was in the registry 14s earlier — field-shape mismatch post-v2, or check-once-no-re-read after the registration append.
+
+Fix direction pending spec-ravu ruling (requested): EITHER projection resolves seat sub-fields event-sourced (most recent row that HAS the field) OR writers must read-modify-write carrying forward seat fields inside the flock (extend carrySeatFields discipline to registered events). Capture check re-reads after final append either way.
+
+NOT a reopen of TASK-056: A2 shipped through its gate; this is an integration defect between 045-enrichment and A2-projection semantics that no existing test seeds (sidecar-enriches-BEFORE-spawn-registers ordering). Regression test must pin exactly that ordering.
+
+Sequencing: dispatch via vibe (their find, their worker). Conflict fence: wave A3 (in flight, wave-a3-node-gate) also touches registry/write.go — second lander takes conflict-check + regate, same rule as F1/A2. Interim workaround: hcom send to bus name from hcom list (unblocks any run today).
+<!-- SECTION:NOTES:END -->
