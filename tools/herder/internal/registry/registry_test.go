@@ -966,6 +966,66 @@ func TestLegacyV1MigrationRecoversEmptyLiveFromArchive(t *testing.T) {
 	}
 }
 
+func TestLegacyV1MigrationRecoversPartialLiveWithNodeFromArchive(t *testing.T) {
+	sourcePath := copyRegistryFixture(t, "v1-real-shape.jsonl")
+	source := mustReadFile(t, sourcePath)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	archive := mustMigrationArchivePath(t, path)
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, source, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	partial := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"2447b0e6-5004-4aca-84cd-08d7798dad52","event":"migrated_v1","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"unseated","label":"partial","role":"worker","tool":"claude","continuity":"assumed"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(partial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	proj := loadProjection(t, path)
+	if got := len(proj.Nodes()); got < 1 {
+		t.Fatalf("nodes = %+v, want node row recovered", proj.Nodes())
+	}
+	for _, rec := range proj.Sessions() {
+		if rec.Node == "" || !hasNode(proj.Nodes(), rec.Node) {
+			t.Fatalf("session %s node = %q nodes=%+v, want registered node attribution", rec.GUID, rec.Node, proj.Nodes())
+		}
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: "guid-after-recovery", Event: "registered", State: v2.StateSeated, Label: "after", Tool: "codex"}}, nil
+	}); err != nil {
+		t.Fatalf("next locked write after recovery failed: %v", err)
+	}
+}
+
+func TestLegacyV1MigrationRefusesMismatchedExistingArchive(t *testing.T) {
+	path := copyRegistryFixture(t, "v1-real-shape.jsonl")
+	original := mustReadFile(t, path)
+	archive := mustMigrationArchivePath(t, path)
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, original[:len(original)/2], 0o444); err != nil {
+		t.Fatal(err)
+	}
+	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil })
+	if err == nil || !strings.Contains(err.Error(), "existing archive") || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("err = %v, want mismatched archive refusal", err)
+	}
+	if got := mustReadFile(t, path); !bytes.Equal(got, original) {
+		t.Fatalf("live registry was changed after archive refusal")
+	}
+}
+
 func TestRegisteredCarriesRecognisedHcomName(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	guid, label := "guid-carry", "worker"

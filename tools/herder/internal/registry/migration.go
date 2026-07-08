@@ -85,10 +85,16 @@ func migrateLegacyV1Locked(path string, f *os.File, liveProj *v2.Projection, nod
 	if err != nil {
 		return nil, liveProj, err
 	}
-	if len(source) > 0 {
+	if projectionHasLegacyV1(liveProj) {
 		if err := ensureMigrationArchive(archive, source); err != nil {
 			return nil, liveProj, err
 		}
+	} else {
+		archived, err := validatedRecoveryArchive(archive, liveProj)
+		if err != nil {
+			return nil, liveProj, err
+		}
+		source = archived
 	}
 	if archived, err := os.ReadFile(archive); err == nil && len(archived) > 0 {
 		source = archived
@@ -134,10 +140,11 @@ func migrateLegacyV1Locked(path string, f *os.File, liveProj *v2.Projection, nod
 func migrationReseedRows(source []byte, proj *v2.Projection, nodeID string, mintedNodeRow []byte) ([][]byte, error) {
 	migrationTime := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	var rows [][]byte
-	if len(mintedNodeRow) > 0 {
-		rows = append(rows, bytes.Clone(mintedNodeRow))
-	}
+	sawNodeID := false
 	for _, node := range proj.Nodes() {
+		if node.NodeID == nodeID {
+			sawNodeID = true
+		}
 		if len(node.Raw) > 0 {
 			rows = append(rows, bytes.Clone(node.Raw))
 			continue
@@ -147,6 +154,16 @@ func migrationReseedRows(source []byte, proj *v2.Projection, nodeID string, mint
 			return nil, err
 		}
 		rows = append(rows, b)
+	}
+	if !sawNodeID {
+		if len(mintedNodeRow) == 0 {
+			var err error
+			mintedNodeRow, err = nodeRowBytes(nodeID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		rows = append(rows, bytes.Clone(mintedNodeRow))
 	}
 	namespaceRows, err := migrationNamespaceRows(source, proj, nodeID, migrationTime)
 	if err != nil {
@@ -270,6 +287,15 @@ func nonRetiredSessionCount(proj *v2.Projection) int {
 	return count
 }
 
+func projectionHasLegacyV1(proj *v2.Projection) bool {
+	for _, rec := range proj.Sessions() {
+		if rec.LegacyV1 {
+			return true
+		}
+	}
+	return false
+}
+
 func lockedFileBytes(f *os.File) ([]byte, error) {
 	if _, err := f.Seek(0, 0); err != nil {
 		return nil, err
@@ -279,6 +305,13 @@ func lockedFileBytes(f *os.File) ([]byte, error) {
 
 func ensureMigrationArchive(path string, source []byte) error {
 	if _, err := os.Stat(path); err == nil {
+		existing, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if len(existing) != len(source) || !bytes.Equal(existing, source) {
+			return fmt.Errorf("registry migration refused: existing archive %s does not match live v1 registry; restore or remove the archive before retrying", path)
+		}
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err
@@ -287,7 +320,20 @@ func ensureMigrationArchive(path string, source []byte) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, source, 0o444); err != nil {
+	_ = os.Remove(tmp)
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o444)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(source); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	if err := os.Chmod(tmp, 0o444); err != nil {
@@ -297,6 +343,28 @@ func ensureMigrationArchive(path string, source []byte) error {
 		return err
 	}
 	return syncDir(filepath.Dir(path))
+}
+
+func validatedRecoveryArchive(path string, liveProj *v2.Projection) ([]byte, error) {
+	source, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("registry migration recovery refused: missing archive %s; restore the archive before retrying: %w", path, err)
+	}
+	if len(source) == 0 {
+		return nil, fmt.Errorf("registry migration recovery refused: archive %s is empty; restore the archive before retrying", path)
+	}
+	proj, err := v2.Load(bytes.NewReader(source), v2.LoadOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if len(proj.Quarantined()) > 0 {
+		return nil, fmt.Errorf("registry migration recovery refused: archive %s has quarantined rows; restore the archive before retrying", path)
+	}
+	expected := nonRetiredSessionCount(proj)
+	if expected == 0 || len(liveProj.Sessions()) >= expected {
+		return nil, fmt.Errorf("registry migration recovery refused: archive %s does not contain enough non-retired sessions to recover the partial live registry", path)
+	}
+	return source, nil
 }
 
 func migrationArchivePath(path string) (string, error) {

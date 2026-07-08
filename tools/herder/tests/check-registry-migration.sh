@@ -12,7 +12,7 @@ export AI_CONFIG_ROOT="$REPO_ROOT"
 
 cd "$HERDER_ROOT" || exit 1
 
-if go test ./internal/registry -run 'Test(LegacyV1MigrationArchivesAndReseeds|LegacyV1MigrationTwiceIsByteStable|LegacyV1MigrationHandlesMixedFile|LegacyV1MigrationRecoversEmptyLiveFromArchive)$'; then
+if go test ./internal/registry -run 'Test(LegacyV1MigrationArchivesAndReseeds|LegacyV1MigrationTwiceIsByteStable|LegacyV1MigrationHandlesMixedFile|LegacyV1MigrationRecoversEmptyLiveFromArchive|LegacyV1MigrationRecoversPartialLiveWithNodeFromArchive|LegacyV1MigrationRefusesMismatchedExistingArchive)$'; then
   printf '\nALL GREEN — registry v1 migration invariants pass.\n'
   exit 0
 fi
