@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - codex-f07b1274
 created_date: '2026-07-08 05:25'
-updated_date: '2026-07-08 06:15'
+updated_date: '2026-07-08 06:19'
 labels: []
 dependencies: []
 priority: high
@@ -38,5 +38,10 @@ Dispatched (vibe #6530): codex worker task053-nida (f07b1274), worktree /home/gr
 created: 2026-07-08 06:15
 ---
 HAND-BACK (vibe #6674): 3 commits, real diff dfe3bec (sidecar.go +25, sidecar_test.go +131 — scope fence respected exactly, verified by hera diff --stat). vibe APPROVED, no fix round. hera gate re-run: vet+test clean (10+5 pkgs), 20/20 suites green (branch predates A1s 21st suite — expected). Opus adversarial review dispatched: @review-053-kana (wrong-guid report poisoning, dedup self-heal, fail-soft bound, 0.7.3 flag semantics, test-vs-mock drift). DEPLOYMENT NOTE recorded: running sidecars keep old binary — sid reporting effective for NEW spawns; fleet coverage arrives with natural turnover (consistent with D11 re-seat-via-observation). Third consecutive spawn-capture miss datapoint -> TASK-045. Merge gates on verdict.
+---
+
+created: 2026-07-08 06:19
+---
+Adversarial verdict (opus @review-053-kana #6759): FINDINGS, 1 medium. Invariants 1/3/4/5 held (incl. flags/exit-codes/stderr verified against real herdr 0.7.3). F1: failed report NOT self-healed for a stable sid — enrichedSessionID advances UNCONDITIONALLY (sidecar.go:142/174) while lastReportedSID only sets on success; after one failed report the outer guard (keyed on enrichedSessionID) never fires again for the same sid, so one transient herdr failure (500ms deadline under load, mid-handoff — precisely when it matters) silently loses sid delivery for the whole session. Test gap: failure case never issues a second poll with the same sid. Fix: key the report on lastReportedSID != row.SessionID (reportAgentSession already self-dedups), not on enrichment change; add second-poll-after-failure test. Non-blocking note: reportAgentSession trusts caller for pane-correlation — consider passing paneCorrelated explicitly. Fix round routed to vibe/worker; reviewer held for delta re-verdict.
 ---
 <!-- COMMENTS:END -->
