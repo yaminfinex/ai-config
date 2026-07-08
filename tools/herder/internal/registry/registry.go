@@ -126,6 +126,10 @@ func decode(r io.Reader, path string) ([]Record, error) {
 					if err := json.Unmarshal(raw, &obj); err != nil {
 						warnQuarantined(path, lineNo, err)
 					} else {
+						kind := rawString(obj["kind"])
+						if kind != "" && kind != v2.KindSession {
+							continue
+						}
 						if isV2SessionObject(obj) {
 							rec = legacyRecordFromV2Object(obj)
 						}

@@ -1,0 +1,6 @@
+=== STDERR ===
+
+=== STDOUT ===
+herder node init: repaired missing node_id marker: <NODE>
+=== EXIT ===
+0

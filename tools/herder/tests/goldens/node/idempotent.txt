@@ -1,0 +1,6 @@
+=== STDERR ===
+
+=== STDOUT ===
+herder node init: node id already initialized: <NODE>
+=== EXIT ===
+0
