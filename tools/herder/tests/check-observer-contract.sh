@@ -12,13 +12,15 @@ HERDER=("$REPO_ROOT/bin/herder")
 ROOT="$(mktemp -d)"
 MOCKBIN="$ROOT/bin"
 mkdir -p "$MOCKBIN"
-trap 'rm -rf "$ROOT"' EXIT
+trap 'for p in ${SOCKET_PIDS:-}; do kill "$p" 2>/dev/null || true; done; rm -rf "$ROOT"' EXIT
 
 cat >"$MOCKBIN/herdr" <<'MOCK_HERDR'
 #!/usr/bin/env bash
 set -euo pipefail
 STATE="${MOCK_HERDR_STATE:?}"
 case "${1:-} ${2:-}" in
+  "status server")
+    printf 'status: running\nversion: mock\nprotocol: 16\ncompatible: yes\nsocket: %s/herdr.sock\n' "$STATE";;
   "session snapshot")
     cat "$STATE/snapshot.json";;
   "pane process_info")
@@ -77,6 +79,70 @@ case_dir() {
   HCOM="$CASE/hcom"
   mkdir -p "$STATE" "$HDR" "$HCOM"
   : >"$HCOM/hcom.jsonl"
+  start_socket_server
+}
+
+start_socket_server() {
+  python3 - "$HDR" >"$CASE/socket.log" 2>&1 <<'PY' &
+import json, os, socket, sys, threading
+
+state = sys.argv[1]
+sock_path = os.path.join(state, "herdr.sock")
+try:
+    os.unlink(sock_path)
+except FileNotFoundError:
+    pass
+
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(sock_path)
+server.listen(20)
+
+def load_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return default
+
+def response(req):
+    mid = req.get("id")
+    method = req.get("method")
+    params = req.get("params") or {}
+    if method == "session.snapshot":
+        snap = load_json(os.path.join(state, "snapshot.json"), {"result": {"protocol": 16, "version": "mock", "panes": [], "agents": []}})
+        return {"id": mid, "result": snap.get("result", snap)}
+    if method == "pane.process_info":
+        pane_id = params.get("pane_id") or ""
+        default = {"result": {"process_info": {"foreground_processes": [{"pid": 1234, "argv": ["claude"], "cwd": "/mock/cwd"}]}}}
+        proc = load_json(os.path.join(state, "proc-" + pane_id + ".json"), default)
+        return {"id": mid, "result": proc.get("result", proc)}
+    if method == "events.subscribe":
+        with open(os.path.join(state, "subscribed"), "w") as f:
+            f.write(json.dumps(params, separators=(",", ":")))
+        return {"id": mid, "result": {"ok": True}}
+    return {"id": mid, "error": {"code": "unknown_method", "message": method or ""}}
+
+def handle(conn):
+    with conn:
+        f = conn.makefile("rwb")
+        for raw in f:
+            try:
+                resp = response(json.loads(raw))
+            except Exception as exc:
+                resp = {"id": None, "error": {"code": "mock_error", "message": str(exc)}}
+            f.write((json.dumps(resp, separators=(",", ":")) + "\n").encode())
+            f.flush()
+
+while True:
+    conn, _ = server.accept()
+    threading.Thread(target=handle, args=(conn,), daemon=True).start()
+PY
+  local pid=$!
+  SOCKET_PIDS="${SOCKET_PIDS:-} $pid"
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [[ -S "$HDR/herdr.sock" ]] && return
+    sleep 0.1
+  done
 }
 
 write_registry() {
@@ -180,7 +246,7 @@ $node_row
 $(session_row guid-herdr seated alpha t_missing p_missing bus-alpha enroll old-sid)
 $(process_row)
 JSONL
-  rm -f "$HDR/snapshot.json"
+  rm -f "$HDR/herdr.sock" "$HDR/snapshot.json"
   run_sweep_json >"$CASE/out.json" || fail_case "T-4 sweep" "command failed"
   assert_jq "T-4 protocol incompatible surfaced" 'select(.status.protocol_compatible==false)' "$CASE/out.json"
   [[ "$(latest_count guid-herdr unseated)" == "0" ]] && pass "T-4 herdr verdict paused" || fail_case "T-4 herdr verdict paused" "$(cat "$STATE/registry.jsonl")"
@@ -270,6 +336,30 @@ JSONL
   : >"$HCOM/hcom.jsonl"
   run_sweep_json >"$CASE/out2.json" || fail_case "T-11c dead bus sweep" "command failed"
   [[ "$(latest_count guid-lone unseated)" == "1" ]] && pass "T-11c lone dead bus unseats" || fail_case "T-11c dead bus" "$(cat "$STATE/registry.jsonl")"
+
+  case_dir t11d
+  write_registry <<JSONL
+$node_row
+$(session_row guid-a seated a t1 p1 bus-a enroll old-a)
+$(session_row guid-b seated b t2 p2 bus-b enroll old-b)
+$(session_row guid-c seated c t3 p3 bus-c enroll old-c)
+JSONL
+  snapshot '[{"pane_id":"p1","terminal_id":"t1","label":"a"},{"pane_id":"p2","terminal_id":"t2","label":"b"},{"pane_id":"p3","terminal_id":"t3","label":"c"}]' '[]'
+  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local HERDER_OBSERVER_SWEEP_INTERVAL=1s "${HERDER[@]}" observer run >"$CASE/run.out" 2>"$CASE/run.err" &
+  pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [[ -f "$STATE/observer.status.json" && -f "$HDR/subscribed" ]] && break
+    sleep 0.2
+  done
+  [[ -f "$HDR/subscribed" ]] && pass "T-11d persistent run subscribes to pane events" || fail_case "T-11d subscribe" "$(cat "$CASE/run.err" 2>/dev/null)"
+  snapshot '[]' '[]'
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    [[ "$(jq -s '[.[] | select(.event=="unseated" and .close_result=="observed_dead")] | length' "$STATE/registry.jsonl")" == "3" ]] && break
+    sleep 0.3
+  done
+  [[ "$(jq -s '[.[] | select(.event=="unseated" and .close_result=="observed_dead")] | length' "$STATE/registry.jsonl")" == "3" ]] && pass "T-11d uninterrupted socket absence unseats all previously seen terms" || fail_case "T-11d same-epoch absence" "$(cat "$STATE/registry.jsonl")"
+  run_herder "${HERDER[@]}" observer stop >/dev/null 2>&1 || true
+  wait "$pid" 2>/dev/null || true
 }
 
 t8_status_stop_and_nudge() {

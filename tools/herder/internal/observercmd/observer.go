@@ -48,11 +48,20 @@ type busState struct {
 }
 
 type herdrState struct {
-	available bool
-	snapshot  herdrcli.Snapshot
-	byTerm    map[string]herdrcli.Pane
-	procs     map[string]herdrcli.ProcessInfo
-	err       error
+	available       bool
+	source          string
+	connectionGap   bool
+	snapshot        herdrcli.Snapshot
+	byTerm          map[string]herdrcli.Pane
+	procs           map[string]herdrcli.ProcessInfo
+	sameEpochAbsent map[string]bool
+	err             error
+}
+
+type herdrContext struct {
+	client        *herdrSocketClient
+	seenTerms     map[string]bool
+	connectionGap bool
 }
 
 type candidate struct {
@@ -158,6 +167,10 @@ func runSweep(opts options, stdout, stderr io.Writer) int {
 }
 
 func sweepOnce(stderr io.Writer) (sweepResult, error) {
+	return sweepOnceWithHerdr(stderr, nil)
+}
+
+func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, error) {
 	registryPath := registry.DefaultPath()
 	stateDir := filepath.Dir(registryPath)
 	now := time.Now().UTC()
@@ -175,10 +188,12 @@ func sweepOnce(stderr io.Writer) (sweepResult, error) {
 	if err != nil {
 		return sweepResult{}, err
 	}
-	hd := loadHerdrState()
+	hd := loadHerdrState(hctx)
 	if !hd.available {
 		st.ProtocolCompatible = false
 		st.ProtocolDetail = hd.err.Error()
+	} else {
+		st.ProtocolDetail = fmt.Sprintf("source=%s connection_gap=%t", firstNonEmpty(hd.source, "unknown"), hd.connectionGap)
 	}
 	bus := loadBusState()
 	cands := buildCandidates(proj, hd, bus, now)
@@ -210,21 +225,107 @@ func loadProjection(path string, stderr io.Writer) (*v2.Projection, error) {
 	return v2.Load(f, v2.LoadOptions{Stderr: stderr})
 }
 
-func loadHerdrState() herdrState {
+func loadHerdrState(hctx *herdrContext) herdrState {
+	if hctx != nil && hctx.client != nil {
+		return loadHerdrStateSocket(hctx, "socket")
+	}
+	client, st, err := connectHerdrSocket()
+	if err != nil {
+		if !st.compatible && os.Getenv("HERDER_OBSERVER_ALLOW_CLI_FALLBACK") == "1" {
+			if hd := loadHerdrStateCLI("cli-fallback"); hd.available {
+				hd.err = fmt.Errorf("herdr socket unavailable/incompatible; using CLI fallback: %w", err)
+				return hd
+			}
+		}
+		if st.detail != "" {
+			return herdrState{err: fmt.Errorf("%s: %w", st.detail, err)}
+		}
+		return herdrState{err: err}
+	}
+	defer client.Close()
+	return loadHerdrStateSocket(&herdrContext{client: client, seenTerms: map[string]bool{}, connectionGap: true}, "socket")
+}
+
+func loadHerdrStateSocket(hctx *herdrContext, source string) herdrState {
+	snap, err := hctx.client.snapshot()
+	if err != nil {
+		return herdrState{source: source, err: fmt.Errorf("herdr socket session.snapshot failed: %w", err)}
+	}
+	previousSeen := map[string]bool{}
+	for term, seen := range hctx.seenTerms {
+		previousSeen[term] = seen
+	}
+	if hctx.seenTerms == nil {
+		hctx.seenTerms = map[string]bool{}
+	}
+	hd := herdrState{
+		available:       true,
+		source:          source,
+		connectionGap:   hctx.connectionGap,
+		snapshot:        snap,
+		byTerm:          map[string]herdrcli.Pane{},
+		procs:           map[string]herdrcli.ProcessInfo{},
+		sameEpochAbsent: map[string]bool{},
+	}
+	for _, pane := range snap.Panes {
+		if pane.TerminalID != "" {
+			hd.byTerm[pane.TerminalID] = pane
+			hctx.seenTerms[pane.TerminalID] = true
+		}
+	}
+	for _, agent := range snap.Agents {
+		if agent.TerminalID == nil || *agent.TerminalID == "" {
+			continue
+		}
+		if _, ok := hd.byTerm[*agent.TerminalID]; !ok {
+			hd.byTerm[*agent.TerminalID] = herdrcli.Pane{
+				PaneID:      agent.PaneID,
+				TerminalID:  *agent.TerminalID,
+				Agent:       agent.Agent,
+				AgentStatus: agent.Status,
+				Label:       agent.Name,
+				CWD:         agent.CWD,
+			}
+		}
+		hctx.seenTerms[*agent.TerminalID] = true
+	}
+	if !hctx.connectionGap {
+		for term := range previousSeen {
+			if _, ok := hd.byTerm[term]; !ok {
+				hd.sameEpochAbsent[term] = true
+			}
+		}
+	}
+	for term, pane := range hd.byTerm {
+		id := firstNonEmpty(pane.PaneID, term)
+		pi, err := hctx.client.processInfo(id)
+		if err != nil {
+			continue
+		}
+		hd.procs[term] = pi
+	}
+	hctx.connectionGap = false
+	return hd
+}
+
+func loadHerdrStateCLI(source string) herdrState {
 	client := &herdrcli.Client{}
 	out, err := client.Output("session", "snapshot")
 	if err != nil {
-		return herdrState{err: fmt.Errorf("herdr session.snapshot unavailable")}
+		return herdrState{source: source, err: fmt.Errorf("herdr CLI session.snapshot unavailable")}
 	}
 	snap, err := herdrcli.ParseSessionSnapshot(out)
 	if err != nil {
-		return herdrState{err: fmt.Errorf("herdr session.snapshot parse failed: %w", err)}
+		return herdrState{source: source, err: fmt.Errorf("herdr CLI session.snapshot parse failed: %w", err)}
 	}
 	hd := herdrState{
-		available: true,
-		snapshot:  snap,
-		byTerm:    map[string]herdrcli.Pane{},
-		procs:     map[string]herdrcli.ProcessInfo{},
+		available:       true,
+		source:          source,
+		connectionGap:   true,
+		snapshot:        snap,
+		byTerm:          map[string]herdrcli.Pane{},
+		procs:           map[string]herdrcli.ProcessInfo{},
+		sameEpochAbsent: map[string]bool{},
 	}
 	for _, pane := range snap.Panes {
 		if pane.TerminalID != "" {
@@ -321,6 +422,10 @@ func buildCandidates(proj *v2.Projection, hd herdrState, bus busState, now time.
 				if shouldReconfirm(rec, now) {
 					out = append(out, reconfirmCandidate(rec, pane, now))
 				}
+				continue
+			}
+			if hd.sameEpochAbsent[rec.Seat.TerminalID] {
+				out = append(out, unseatCandidate(rec, now, "terminal_id absent after prior sighting on uninterrupted herdr socket connection", "socket subscription sweep"))
 				continue
 			}
 			if recordedHerdr >= 2 && overlap == 0 {
@@ -551,6 +656,9 @@ func epochFlags(proj *v2.Projection, hd herdrState, bus busState) []observerstat
 	if !hd.available {
 		return nil
 	}
+	if !hd.connectionGap {
+		return nil
+	}
 	overlap, recorded := herdrOverlap(proj, hd)
 	if recorded >= 2 && overlap == 0 {
 		return []observerstatus.Flag{{
@@ -649,21 +757,77 @@ func runDaemon(stdout, stderr io.Writer) int {
 		return 0
 	}
 	defer lock.Close()
-	_, _ = sweepOnce(stderr)
 	interval := sweepInterval()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
 	defer signal.Stop(signals)
 	for {
+		client, _, err := connectHerdrSocket()
+		if err != nil {
+			_, _ = sweepOnceWithHerdr(stderr, nil)
+			if waitOrSignal(interval, signals) {
+				return 0
+			}
+			continue
+		}
+		hctx := &herdrContext{client: client, seenTerms: map[string]bool{}, connectionGap: true}
+		if err := client.subscribeObserverEvents(); err != nil {
+			fmt.Fprintf(stderr, "herder observer run: events.subscribe failed: %v\n", err)
+			client.Close()
+			_, _ = sweepOnceWithHerdr(stderr, nil)
+			if waitOrSignal(interval, signals) {
+				return 0
+			}
+			continue
+		}
+		_, _ = sweepOnceWithHerdr(stderr, hctx)
+		_ = touch(lock.path)
+		ticker := time.NewTicker(interval)
+		reconnect := false
+		for !reconnect {
+			select {
+			case <-ticker.C:
+				if _, err := sweepOnceWithHerdr(stderr, hctx); err != nil {
+					reconnect = true
+				}
+				_ = touch(lock.path)
+			case <-signals:
+				ticker.Stop()
+				client.Close()
+				return 0
+			default:
+				if client.nextEvent(250 * time.Millisecond) {
+					// Events are latency hints. A full sweep is still the correctness
+					// path, and it subsumes a targeted probe while preserving the
+					// same uninterrupted socket generation.
+					_, _ = sweepOnceWithHerdr(stderr, hctx)
+					_ = touch(lock.path)
+				}
+				select {
+				case <-client.closed:
+					reconnect = true
+				default:
+				}
+			}
+		}
+		ticker.Stop()
+		client.Close()
 		select {
-		case <-ticker.C:
-			_, _ = sweepOnce(stderr)
-			_ = touch(lock.path)
 		case <-signals:
 			return 0
+		default:
 		}
+	}
+}
+
+func waitOrSignal(d time.Duration, signals <-chan os.Signal) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return false
+	case <-signals:
+		return true
 	}
 }
 
