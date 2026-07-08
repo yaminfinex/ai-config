@@ -3,9 +3,11 @@ id: TASK-036
 title: >-
   herder spawn: codex boot latency routinely exceeds the 60s bind window
   (bind_timeout twice in wave 7)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - unit-y-vivo
 created_date: '2026-07-08 02:30'
+updated_date: '2026-07-08 03:28'
 labels: []
 dependencies: []
 priority: low

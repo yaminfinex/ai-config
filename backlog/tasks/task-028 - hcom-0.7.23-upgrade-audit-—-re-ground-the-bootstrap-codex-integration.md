@@ -1,9 +1,11 @@
 ---
 id: TASK-028
 title: hcom 0.7.23 upgrade audit — re-ground the bootstrap/codex integration
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - audit-028-zoru
 created_date: '2026-07-07 12:23'
+updated_date: '2026-07-08 03:28'
 labels: []
 dependencies: []
 priority: medium

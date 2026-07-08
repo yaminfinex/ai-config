@@ -3,9 +3,11 @@ id: TASK-037
 title: >-
   herder hooks: mid-edit broken source in a worktree makes every hook firing
   spew the go build error (serve last-good binary instead)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - unit-z-nova
 created_date: '2026-07-08 02:37'
+updated_date: '2026-07-08 03:28'
 labels: []
 dependencies: []
 priority: low

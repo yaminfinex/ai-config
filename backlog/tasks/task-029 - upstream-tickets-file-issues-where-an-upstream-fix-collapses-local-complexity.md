@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-07 21:30'
+updated_date: '2026-07-08 03:28'
 labels:
   - run-herder-dx
 dependencies: []
@@ -54,5 +54,11 @@ CANDIDATES (7)+(8) — from Unit R phase A (TASK-032 map, live-probe evidence): 
 created: 2026-07-07 21:30
 ---
 CANDIDATE (9) — from Unit R phase B (TASK-032): hcom lacks an "await receipt of message X" primitive — herder reconstructs delivery receipts by polling the event stream, and ALL THREE reconstruction layers were live bugs (receipt query keyed to the wrong side: receipts live on the RECEIVER instance as deliver:<SENDER>; --after boundary excluded same-second receipts; live events emit JSONL while the parser expected a JSON array — masked by mock-shape drift). A first-class receipt-await (send returns a receipt handle, or events exposes await --msg-id) would delete the whole heuristic class.
+---
+
+author: hera
+created: 2026-07-08 03:28
+---
+Candidate 10 (wave 7, 2026-07-08): hcom list <name> --json returns a SINGLE object keyed by the BASE name (not an array, not the full scoped name). This surprised two independent implementations in one night (compact --then pickStatus live bug, fixed 2a434fd; mock-shape divergence). Upstream ask: document the single-object/base-name contract in --json help, or emit an array consistently. Candidate 11 (wave 7): codex boot-to-bus-join latency exceeded 60s twice; if hcom's launch path contributes measurable startup cost for codex, a changelog note or a faster join would collapse herder's TASK-036 workaround. (TASK-036 unit is measuring; fold its finding in before filing.)
 ---
 <!-- COMMENTS:END -->
