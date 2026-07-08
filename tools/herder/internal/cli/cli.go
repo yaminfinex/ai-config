@@ -18,7 +18,10 @@ import (
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/lifecyclecmd"
 	"ai-config/tools/herder/internal/listcmd"
+	"ai-config/tools/herder/internal/nodecmd"
+	"ai-config/tools/herder/internal/reconcilecmd"
 	"ai-config/tools/herder/internal/renamecmd"
+	"ai-config/tools/herder/internal/retirecmd"
 	"ai-config/tools/herder/internal/send"
 	"ai-config/tools/herder/internal/sidecarcmd"
 	"ai-config/tools/herder/internal/spawncmd"
@@ -38,13 +41,17 @@ var commands = []command{
 	{"spawn", "Spawn a named, GUID-tagged agent in a herdr pane", spawncmd.Run},
 	{"send", "Deliver a message to a spawned agent over the hcom bus (bus-only)", send.Run},
 	{"list", "Show spawned agents, reconciled with live herdr state", listcmd.Run},
+	{"reconcile", "Audit or repair registry coordinates after herdr handoff", reconcilecmd.Run},
 	{"wait", "Block until an agent reaches a status, optionally read its screen", waitcmd.Run},
 	{"cull", "Close spawned agents and mark them closed in the registry", cullcmd.Run},
 	{"enroll", "Register the current herdr pane in the registry", enrollcmd.Run},
 	{"rename", "Rename an enrolled agent label and sync herdr best-effort", renamecmd.Run},
+	{"retire", "Retire an unseated session and release its label", retirecmd.RunRetire},
+	{"reopen", "Reopen a retired session as unseated and unlabelled", retirecmd.RunReopen},
 	{"fork", "Branch an enrolled agent session into a new guid", lifecyclecmd.RunFork},
 	{"resume", "Reopen an enrolled agent session with the same guid", lifecyclecmd.RunResume},
 	{"compact", "Queue a steered /compact into the caller's own pane (self only)", spawncmd.RunCompact},
+	{"node", "Manage the local herder node id", nodecmd.Run},
 	{"launch", "Launch an hcom-bound tool in the current pane", launchcmd.Run},
 	{"hook", "(internal) Shim hcom hook calls; rewrite the spawn bootstrap", hookcmd.Run},
 	{"sidecar", "(internal) Bridge hcom status to herdr pane status", sidecarcmd.Run},

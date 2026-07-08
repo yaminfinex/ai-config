@@ -31,6 +31,15 @@ func TestHcomEntryAcceptsNumericCreatedAt(t *testing.T) {
 	}
 }
 
+func TestSpawnLabelPrefixReplacement(t *testing.T) {
+	if got := spawnLabel("spec", "", "abcd1234"); got != "spec-abcd1234" {
+		t.Fatalf("default label = %q, want spec-abcd1234", got)
+	}
+	if got := spawnLabel("spec", "spec-hera", "abcd1234"); got != "spec-hera-abcd1234" {
+		t.Fatalf("prefix label = %q, want spec-hera-abcd1234", got)
+	}
+}
+
 func TestResolveSpawnerBusMatchesEnrolledPane(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	rows := []string{

@@ -21,6 +21,7 @@ not the whole doc>.
 - Autonomy: <autonomous — sliding-door capture mandatory | interactive — gates at: ...>
 - Topology: <per stage>
 - Liveness: <per role — cull-on-done / keep-open for interrogation>
+- Models: <per role>
 - Report to: <orchestrator hcom name — DONE/BLOCKED go there, one thread per unit (`--thread <unit-slug>`, members seeded on the first send) | none — relay/soloist self-spawn>
 - Bus: <global (default) | team `<run-slug>` when the machine runs several orchestrations>
 - Golden agent: <bottle name + what it holds | none>
@@ -47,13 +48,15 @@ not the whole doc>.
    own signal); orchestrator-driven units idle (kept open / culled per liveness); the final unit
    spawns nothing.
 
-## Context discipline (≤<budget>)
+## Context discipline (200–250k band)
 
-Own ONE unit. If it balloons: persist state FIRST (WIP commit + progress note on your unit
-thread — compaction loses anything unpersisted), then compact in place:
+Own ONE unit. At the 200–250k-token band — every time, not a judgment call: persist state FIRST
+(WIP commit + progress note on your unit thread — compaction loses anything unpersisted), then
+compact in place:
 `herder compact '<what to keep: unit, ACs, gate commands, thread name>'`. If the session is too
 incoherent to steer, write a full HANDOFF report (state + ordered remaining steps for an agent
-with zero shared memory + WIP sha) and stop for a fresh spawn instead.
+with zero shared memory + WIP sha) and stop; the orchestrator culls this session before a
+successor takes its label.
 
 ## Decisions already made — do not re-litigate
 

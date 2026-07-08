@@ -13,9 +13,9 @@
 #                 suppression under --safe or an explicit caller perm flag.
 #   readiness   — trust-modal clearing (Enter) vs --safe refusal; the
 #                 status+stable ready reason.
-#   new-tab     — tab create, root-pane identity check + close, pane_id
-#                 re-resolution by terminal_id after compaction; the rootguard
-#                 refusal when the root reports the agent's terminal.
+#   new-tab     — normal split launch followed by `pane move --new-tab`,
+#                 fail-soft move errors, and unconditional pane coordinate
+#                 re-fetch before registry write.
 #   delivery    — bus-first initial prompts (TASK-032): bind-wait (bus-name
 #                 capture is the delivery gate) → in-process hcom send with the
 #                 full prompt (multiline included; no codex brief staging) →
@@ -141,6 +141,7 @@ block_for() {  # assemble + normalize the golden block for the current CASE
     block="${block//$guid/<GUID>}"
     block="${block//$short/<SHORT>}"
   fi
+  block="$(sed -E 's/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/<GUID>/g; s/"hostname":"[^"]*"/"hostname":"<HOST>"/g' <<<"$block")"
   # started_at / closed_at ISO timestamps
   block="$(sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g' <<<"$block")"
   printf '%s' "$block"
@@ -186,12 +187,15 @@ scenario claude_prompt     ready claude launchctx --role worker --agent claude -
 scenario claude_modal      modal claude launchctx --role worker --agent claude --prompt "do the thing" --json
 scenario claude_modal_safe modal claude launchctx --role worker --agent claude --safe --prompt "do the thing" --json
 scenario claude_newtab     ready claude launchctx --role worker --agent claude --new-tab --json
-scenario newtab_rootguard  rootguard claude launchctx --role worker --agent claude --new-tab --json
+scenario newtab_movefail   newtab_movefail claude launchctx --role worker --agent claude --new-tab --json
 # Multiline codex brief rides the bus WHOLE (TASK-032) — no brief-file staging,
 # no one-line pointer; the full text appears in the hcom send argv.
 scenario codex_multiline   ready codex launchctx --role worker --agent codex --prompt "$MULTILINE_BRIEF" --json
 # bash has no bus binding — its prompt keeps the spawn-private paste engine.
 scenario bash_prompt       ready bash launchctx --role worker --agent bash --prompt "do the thing" --json
+scenario bash_prompt_polluted_clear polluted_clear bash launchctx --role worker --agent bash --prompt "do the thing" --json
+scenario bash_prompt_polluted_still polluted_still bash launchctx --role worker --agent bash --prompt "do the thing" --json
+scenario bash_prompt_blocked_modal modal bash launchctx --role worker --agent bash --no-ready-wait --prompt "do the thing" --json
 # Bus delivery verify variants: send lands but no receipt in the window
 # (queued — do NOT resend), and hcom send itself failing (send_failed — a
 # resend IS safe, nothing went on the bus).
@@ -303,6 +307,16 @@ if [[ "$WRITE" -eq 0 ]]; then
   run_spawn ready claude launchctx --role worker --agent bash --new-tab --tab tab_3
   [[ "$RUN_RC" -eq 1 ]] && grep -q 'use --new-tab or --tab, not both' "$RUN_ERR_F" \
     && ok "usage: --new-tab/--tab exclusive" || bad "usage: --new-tab/--tab exclusive" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+
+  CASE="$ROOT/label_prefix_replace"
+  run_spawn ready claude launchctx --role spec --agent bash --label-prefix spec-hera --json
+  if [[ "$RUN_RC" -eq 0 ]] \
+    && grep -q '"label":"spec-hera-' <<<"$RUN_OUT" \
+    && ! grep -q '"label":"spec-heraspec-' <<<"$RUN_OUT"; then
+    ok "label-prefix: replaces role prefix"
+  else
+    bad "label-prefix: replaces role prefix" "rc=$RUN_RC out=$RUN_OUT err=$(cat "$RUN_ERR_F")"
+  fi
 
   trailing_value_flags=(--split --workspace --from-pane --tab --cwd --label-prefix --extra-arg --wait-timeout-ms --ready-match --login-shell --team --notify-to --worktree --base)
   trailing_ok=1

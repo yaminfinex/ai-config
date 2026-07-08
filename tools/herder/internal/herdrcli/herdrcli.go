@@ -96,6 +96,8 @@ type Agent struct {
 	PaneID     string  `json:"pane_id"`
 	Agent      string  `json:"agent"`
 	Status     string  `json:"agent_status"`
+	Name       string  `json:"name"`
+	CWD        string  `json:"cwd"`
 
 	Raw json.RawMessage `json:"-"`
 }
@@ -106,6 +108,7 @@ type Pane struct {
 	PaneID        string `json:"pane_id"`
 	TerminalID    string `json:"terminal_id"`
 	WorkspaceID   string `json:"workspace_id"`
+	TabID         string `json:"tab_id"`
 	CWD           string `json:"cwd"`
 	ForegroundCWD string `json:"foreground_cwd"`
 }

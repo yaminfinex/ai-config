@@ -1,9 +1,10 @@
 === STDERR ===
 enrolled spawned-new (guid-spawned-0000) pane=p_self terminal=term_SELF
 === STDOUT ===
-{"agent":"codex","cwd":"/mock/cwd","guid":"guid-spawned-0000","hcom_dir":"","hcom_name":"","hcom_tag":"","label":"spawned-new","pane_id":"p_self","provenance":{"mechanism":"spawn","spawned_by":"guid-spawned-0000","tool_session_id":"","tag":"","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"},"role":"worker","short_guid":"guid","status":"active","terminal_id":"term_SELF","workspace_id":"ws_self"}
+{"kind":"session","guid":"guid-spawned-0000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"spawned-new","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"guid-spawned-0000","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}
 === EXIT ===
 0
 === REGISTRY ===
-{"guid":"guid-spawned-0000","short_guid":"guid","label":"spawned-old","role":"worker","agent":"codex","terminal_id":"term_OLD","pane_id":"p_old","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/old","workspace_id":"ws_old","branch":"","ts":"<TS>"}}
-{"agent":"codex","cwd":"/mock/cwd","guid":"guid-spawned-0000","hcom_dir":"","hcom_name":"","hcom_tag":"","label":"spawned-new","pane_id":"p_self","provenance":{"mechanism":"spawn","spawned_by":"guid-spawned-0000","tool_session_id":"","tag":"","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"},"role":"worker","short_guid":"guid","status":"active","terminal_id":"term_SELF","workspace_id":"ws_self"}
+{"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
+{"kind":"session","guid":"guid-spawned-0000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"spawned-old","role":"worker","tool":"codex","continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tag":"worker","cwd":"/old","workspace_id":"ws_old","ts":"<TS>"}}
+{"kind":"session","guid":"guid-spawned-0000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"spawned-new","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"guid-spawned-0000","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}

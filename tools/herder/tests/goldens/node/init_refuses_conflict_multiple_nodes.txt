@@ -1,0 +1,6 @@
+=== STDERR ===
+herder node init: registry node init refused: marker contains <NODE> but registry node rows are <NODE>,<NODE>; rerun with `herder node init --new` to mint a fresh node id for this state dir
+=== STDOUT ===
+
+=== EXIT ===
+2

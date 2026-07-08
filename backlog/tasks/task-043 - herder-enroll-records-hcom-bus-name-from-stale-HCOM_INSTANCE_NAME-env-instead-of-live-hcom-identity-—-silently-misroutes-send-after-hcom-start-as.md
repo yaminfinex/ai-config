@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-08 05:04'
+updated_date: '2026-07-08 10:19'
 labels: []
 dependencies: []
 priority: medium
@@ -25,5 +25,10 @@ Live hit (hera restart, 2026-07-08): after reclaiming the bus name with hcom sta
 created: 2026-07-08 05:04
 ---
 vibe (herdr-0.7.3 audit, bus #5629, applied by hera): no upstream change touches hcom env-var staleness — expect unaffected; TASK-050 (NEW-4) includes a cheap re-verify to confirm.
+---
+
+created: 2026-07-08 10:19
+---
+0.7.3 re-verify complete (TASK-050 controlled restart): CONFIRMED STILL BROKEN, as predicted — no upstream change touches env staleness. Fresh repro: live bus identity hera (after hcom start --as hera), env frozen at HCOM_INSTANCE_NAME=mono; herder enroll wrote row 0c607d43 with hcom_name=mono. Workaround re-verified: HCOM_INSTANCE_NAME=hera herder enroll wrote row bbbc84c2 with hcom_name=hera (bus link confirmed: herder list shows BUS=@hera). New wrinkle for the fix design: the label-uniqueness check runs BEFORE pane-supersession retirement, so the corrective re-enroll cannot reuse the label the broken row holds — it needs a variant label, then rename. An enroll that resolved live hcom identity (or cross-checked env vs live) would have avoided the entire second enroll.
 ---
 <!-- COMMENTS:END -->

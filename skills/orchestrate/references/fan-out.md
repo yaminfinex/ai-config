@@ -36,7 +36,8 @@ serialize them instead of discovering the interaction as a merge conflict.
 
 ## Variants
 
-- **Map-reduce review:** N read-only reviewers, each a different lens or model family, over the
-  same diff; a synthesis agent dedupes and ranks. Diversity catches what redundancy can't.
+- **Map-reduce review:** N read-only reviewers, each a different lens (models per the run-shape
+  header), over the same diff; a synthesis agent dedupes and ranks. Diversity catches what
+  redundancy can't.
 - **Sharded migration:** a discovery agent writes the unit list into the playbook; workers take
   shards; an integration agent lands them sequentially.

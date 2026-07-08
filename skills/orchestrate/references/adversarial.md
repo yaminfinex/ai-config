@@ -7,11 +7,12 @@ mid-run for one contested decision, or appended as the tail.
 
 For a contested decision where one agent's first idea would anchor too hard.
 
-1. **Divergent designs:** 2–3 fresh-context agents, same problem, different brief/angle (ideally
-   different model families — shared blind spots are the failure mode). Each writes a design
-   file; none sees the others'.
+1. **Divergent designs:** 2–3 fresh-context agents, same problem, different brief/angle; models
+   per the playbook's per-role picks (run-shape header). Each writes a design file; none sees
+   the others'.
 2. **Adversarial review:** a fresh agent attacks all designs — failure scenarios, unstated
-   assumptions. Output: verdicts + amendments, not a rewrite.
+   assumptions. Output: verdicts + amendments, not a rewrite. Divergence between reviewers is
+   itself signal — surface it for adjudication rather than averaging it away.
 3. **Implementation:** land the winner with the amendments applied, grafting the best of the
    runners-up. Track each amendment to closure in the journal (applied, or rejected with
    reasons) — the jury's value survives only if its output is tracked.
@@ -22,7 +23,7 @@ One implementer + a long-lived reviewer pane attacking each commit **as it lands
 end-of-run review would be too late to redirect cheaply (auth, data, money). The adversary reads
 the journal and `git log`, never edits the worktree; findings go to the doer on the bus
 (`--intent request`, a `review` thread), addressed or rejected-with-reasons in the next commit;
-the journal tracks closure. Use a different agent/model family than the doer.
+the journal tracks closure. The adversary's agent/model is a run-shape pick (playbook header).
 
 ## Golden-agent purpose check
 

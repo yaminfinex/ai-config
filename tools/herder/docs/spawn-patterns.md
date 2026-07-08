@@ -44,8 +44,8 @@ herder spawn \
 
 `--worktree` does the whole dance in one verified step: it drives `herdr worktree create`
 (resolving the source repo from your cwd — works from inside a linked worktree too), spawns the
-agent into the new workspace's checkout, and closes the workspace's seed shell pane under the
-same identity guard as `--new-tab`, so the agent ends up the sole pane of its own workspace.
+agent into the new workspace's checkout, and closes the workspace's seed shell pane under an
+identity guard, so the agent ends up the sole pane of its own workspace.
 The summary and `--json` (`worktree` block) report the created coordinates — `workspace_id`,
 checkout path, branch — keep the `workspace_id` if you plan to `herdr worktree remove` later.
 If the worktree gets created but the spawn then fails, nothing is auto-removed; the failure
@@ -76,14 +76,13 @@ herder spawn --role impl --agent claude --new-tab --no-focus \
   --prompt 'Implement <task> …'
 ```
 
-Do **not** hand-roll `herdr tab create` then `herder spawn --tab <id>`: `tab create` seeds the tab with a default (root) shell pane, and `herdr agent start --tab` *always* opens a new pane (even with no `--split`), so you end up with **agent + spare shell** in every tab. `--new-tab` does the whole dance and closes the seed shell:
+Do **not** hand-roll `herdr tab create` then `herder spawn --tab <id>`: `tab create` seeds the tab with a default (root) shell pane, and `herdr agent start --tab` *always* opens a new pane (even with no `--split`), so you end up with **agent + spare shell** in every tab. `--new-tab` avoids the seed shell entirely:
 
-1. `herdr tab create --label <agent-label> [--workspace …] [--cwd …]` → captures the root pane's `pane_id` + `terminal_id`.
-2. `herdr agent start --tab <new-tab>` → the agent lands as a second pane.
-3. Closes the root pane — but only after confirming via `herdr pane get` that it still holds the root `terminal_id` (never the agent's). pane ids compact, so a bare-id close could otherwise hit the agent.
-4. Re-resolves the agent's `pane_id` by its durable `terminal_id` (the close renumbers panes in the tab).
+1. `herdr agent start` launches the agent through the normal split path in the current tab.
+2. `herdr pane move <agent-pane> --new-tab --label <agent-label>` moves that running pane into a fresh tab.
+3. `herdr pane get <agent-pane>` re-fetches the current `pane_id`, `tab_id`, `workspace_id`, and `terminal_id` before the registry row is written.
 
-The summary prints `tab: <id> (new, root shell closed; agent is sole pane)`; `--json` adds `new_tab` / `root_pane_closed`. If the close is skipped (identity check fails), the summary warns `root shell NOT closed` so you can clean it up by hand. Culling the agent later closes its last pane, which auto-closes the tab — no `tab close` call needed.
+The summary prints `tab: <id> (new; agent pane moved, no seed shell)`; `--json` adds `new_tab`, `root_pane_closed:false`, and `new_tab_result`. If the move fails, spawn continues: the agent is alive in the original split pane, the summary warns loudly, and `new_tab_result` records the failure reason. Culling the agent later closes its last pane, which auto-closes the tab — no `tab close` call needed.
 
 ## D. Cull a spawned agent
 
@@ -152,7 +151,7 @@ herder spawn \
 
 Codex's composer collapses any *paste* over ~1k chars into a `[Pasted Content N chars]` blob, and a multi-line paste can trip its "Create a plan?" overlay — in both cases codex parses only the tail. These are KEYSTROKE pathologies, and since TASK-032 no codex-bound prompt travels by keystroke: `herder spawn --prompt`/`--prompt-file` delivers the FULL brief (any length, multiline) as a verified hcom message once the child binds its bus name, and mid-session `herder send` always rode the bus. No brief-file staging, no one-line pointer — those existed only to dodge the paste pathologies. A big file pointer is still often kinder to the peer's context than a wall of text, but that is a context choice, not a transport constraint.
 
-If a composer ends up polluted anyway (e.g. a human pasted into the pane), two facts matter. First, **unsubmitted composer text starves incoming bus delivery** — on both families, nothing injects until it is submitted or cleared (silent: no receipt, no error). Second, there is **no key that clears it**: `herdr pane send-keys` accepts only `Enter` / `esc` / `C-c`, and `esc` / `C-c` interrupt the agent rather than clearing the line (`BSpace`, `C-u` are rejected as `invalid_key`). Just submit — codex tolerates a doubled idempotent instruction, or expands a `[Pasted Content]` blob on the first Enter and submits on the second — and queued bus messages then inject at the next boundary.
+If a composer ends up polluted anyway (e.g. a human pasted into the pane), **unsubmitted composer text starves incoming bus delivery** — on both families, nothing injects until it is submitted or cleared (silent: no receipt, no error). For stray or garbage text, clear the composer with the herdr-native combo string: `herdr pane send-keys <pane_id> ctrl+u`; queued bus messages inject at the next boundary. A queued bus message rendered on the input line is not garbage; do not clear it, because it self-delivers at the next turn boundary. Use `Enter` only when the visible text is a legitimate message that should submit. `ctrl+u` and `backspace` are herdr-native key names; tmux-style names such as `C-u`, `Ctrl-u`, `^U`, `BSpace`, and capital-`Escape` are still rejected as `invalid_key`.
 
 ## Initial-prompt delivery caveats
 

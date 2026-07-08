@@ -17,6 +17,7 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/hookcmd"
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/send"
 	"ai-config/tools/herder/internal/shellquote"
 )
@@ -87,7 +88,12 @@ func (r *runner) fork(opts forkOptions) int {
 	if code != 0 {
 		return code
 	}
-	parent := registry.Resolve(recs, opts.target)
+	var err error
+	recs, parent, err := resolveTargetWithArchiveFallback(recs, registryPath, opts.target)
+	if err != nil {
+		die(r.stderr, err.Error())
+		return 1
+	}
 	if parent == nil {
 		die(r.stderr, "unknown target: "+opts.target)
 		return 1
@@ -449,7 +455,12 @@ func (r *runner) resume(opts resumeOptions) int {
 	if code != 0 {
 		return code
 	}
-	rec := registry.Resolve(recs, opts.target)
+	var err error
+	recs, rec, err := resolveTargetWithArchiveFallback(recs, registryPath, opts.target)
+	if err != nil {
+		die(r.stderr, err.Error())
+		return 1
+	}
 	if rec == nil {
 		die(r.stderr, "unknown target: "+opts.target)
 		return 1
@@ -458,6 +469,12 @@ func (r *runner) resume(opts resumeOptions) int {
 	if guid == "" {
 		die(r.stderr, "target has no guid: "+opts.target)
 		return 1
+	}
+	if proj, err := v2.LoadFile(registryPath, v2.LoadOptions{}); err == nil {
+		if latest := registry.V2ByGUID(proj, guid); latest != nil && latest.State == v2.StateRetired && !latest.LegacyV1 {
+			die(r.stderr, fmt.Sprintf("cannot resume %s: session is retired; run 'herder reopen %s' first", opts.target, guid))
+			return 1
+		}
 	}
 	live := liveAgents(r.client())
 	if rec.Status == "active" && rec.TerminalID != "" && live[rec.TerminalID].TerminalID != nil {
@@ -596,7 +613,7 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		die(r.stderr, err.Error())
 		return nil, 1
 	}
-	if err := registry.Append(spec.RegistryPath, row); err != nil {
+	if err := registry.AppendLegacySessionEvent(spec.RegistryPath, row, "registered", "seated"); err != nil {
 		die(r.stderr, err.Error())
 		return nil, 1
 	}
@@ -626,7 +643,7 @@ func (r *runner) verifyLaunchStayedAlive(registryPath string, row []byte, paneID
 		"close_reason":   "pane exited before lifecycle bind",
 	})
 	if err == nil {
-		_ = registry.Append(registryPath, closed)
+		_ = registry.AppendLegacySessionEvent(registryPath, closed, "retired", v2.StateRetired)
 	}
 	die(r.stderr, "launch failed before lifecycle bind")
 	return 1
@@ -924,6 +941,21 @@ func loadRegistry(stderr io.Writer) ([]registry.Record, string, int) {
 		return nil, path, 1
 	}
 	return recs, path, 0
+}
+
+func resolveTargetWithArchiveFallback(live []registry.Record, path, target string) ([]registry.Record, *registry.Record, error) {
+	if rec := registry.Resolve(live, target); rec != nil {
+		return live, rec, nil
+	}
+	archived, err := registry.LoadArchives(path)
+	if err != nil {
+		return live, nil, err
+	}
+	if len(archived) == 0 {
+		return live, nil, nil
+	}
+	recs := append(archived, live...)
+	return recs, registry.Resolve(recs, target), nil
 }
 
 func liveAgents(client herdrClient) map[string]herdrcli.Agent {

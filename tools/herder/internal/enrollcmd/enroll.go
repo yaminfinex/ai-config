@@ -1,8 +1,6 @@
 package enrollcmd
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +9,7 @@ import (
 
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
 type options struct {
@@ -72,100 +71,88 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	role := firstNonEmpty(opts.role, os.Getenv("HERDER_ROLE"), "manual")
 
 	registryPath := registry.DefaultPath()
-	var recs []registry.Record
-	var latest *registry.Record
-	if loaded, err := registry.Load(registryPath); err == nil {
-		recs = loaded
-		for _, rec := range registry.LatestByGUID(recs) {
-			if ptrString(rec.GUID) == guid {
+	var appendedRow []byte
+
+	// Unseat prior identities bound to this same pane. A herdr pane hosts
+	// exactly one live session at a time, but pane ids are display-only and
+	// can re-key on moves or reshuffle after restart — so any OTHER active row
+	// still claiming this pane_id is a stale identity from an earlier session.
+	// Left active its bus name lingers as a forever-'working' row, and pane-id
+	// send resolution could pick it over the live one (TASK-035). Mark each
+	// closed before appending this session's row.
+	nowISO := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	encoded, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		var latest *v2.SessionRecord
+		for _, rec := range tx.Projection.Sessions() {
+			if rec.GUID == guid {
 				cp := rec
 				latest = &cp
 				break
 			}
 		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		die(stderr, err.Error())
-		return 1
-	}
-	if owner := registry.ActiveLabelOwner(recs, label, guid); owner != nil {
-		die(stderr, fmt.Sprintf("label %q already belongs to active guid %s", label, ptrString(owner.GUID)))
-		return 1
-	}
+		if owner := registry.V2LabelOwner(tx.Projection, label, guid); owner != nil {
+			return nil, fmt.Errorf("label %q already belongs to active guid %s", label, owner.GUID)
+		}
+		var rows []v2.SessionRecord
+		for _, priorV2 := range tx.Projection.Sessions() {
+			prior := registry.LegacyFromV2(priorV2)
+			if prior.Status != "active" || prior.PaneID != pane.PaneID || ptrString(prior.GUID) == guid {
+				continue
+			}
+			if !shouldRetirePriorRow(prior, pane.TerminalID, busJoined) {
+				continue
+			}
+			next := priorV2
+			next.Event = "unseated"
+			next.State = v2.StateUnseated
+			next.RecordedAt = nowISO
+			next.Seat = nil
+			rows = append(rows, next)
+			fmt.Fprintf(stderr, "retired stale pane row %s (%s) superseded by re-enroll\n", ptrString(prior.Label), ptrString(prior.GUID))
+		}
 
-	// Retire prior identities bound to this same pane. A herdr pane hosts
-	// exactly one live session at a time, but pane ids are positional and
-	// reused across sessions — so any OTHER active row still claiming this
-	// pane_id is a stale identity from an earlier session that reused the pane.
-	// Left active its bus name lingers as a forever-'working' row, and pane-id
-	// send resolution could pick it over the live one (TASK-035). Mark each
-	// closed before appending this session's row.
-	nowISO := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	for _, prior := range registry.LatestByGUID(recs) {
-		if prior.Status != "active" || prior.PaneID != pane.PaneID || ptrString(prior.GUID) == guid {
-			continue
+		mechanism := "enroll"
+		agent := firstNonEmpty(envTool(), "manual")
+		if latest != nil && latest.Provenance.Mechanism != "" {
+			mechanism = latest.Provenance.Mechanism
 		}
-		if !shouldRetirePriorRow(prior, pane.TerminalID, busJoined) {
-			continue
+		if latest != nil {
+			agent = firstNonEmpty(latest.Tool, agent)
 		}
-		retire, err := registry.UpdateRawObject(prior.Raw, map[string]any{
-			"status":         "closed",
-			"closed_at":      nowISO,
-			"closed_by_pane": pane.PaneID,
-			"close_result":   "superseded",
-			"close_reason":   "reenroll_same_pane",
-		})
-		if err != nil {
-			die(stderr, err.Error())
-			return 1
+		prov := registry.BuildProvenance(mechanism, "", os.Getenv("HCOM_TAG"), pane.CWD, pane.WorkspaceID)
+		rec := registry.Record{
+			GUID:       &guid,
+			ShortGUID:  &short,
+			Label:      &label,
+			Role:       role,
+			Agent:      agent,
+			PaneID:     pane.PaneID,
+			TerminalID: pane.TerminalID,
+			HcomDir:    os.Getenv("HCOM_DIR"),
+			HcomName:   os.Getenv("HCOM_INSTANCE_NAME"),
+			HcomTag:    os.Getenv("HCOM_TAG"),
+			Status:     "active",
+			Provenance: &prov,
 		}
-		if err := registry.Append(registryPath, retire); err != nil {
-			die(stderr, err.Error())
-			return 1
+		next := registry.V2FromRecord(rec, "seated", v2.StateSeated, nowISO)
+		next.Provenance.CWD = pane.CWD
+		next.Provenance.WorkspaceID = pane.WorkspaceID
+		if latest != nil && latest.Lineage != (v2.Lineage{}) {
+			next.Lineage = latest.Lineage
 		}
-		fmt.Fprintf(stderr, "retired stale pane row %s (%s) superseded by re-enroll\n", ptrString(prior.Label), ptrString(prior.GUID))
-	}
-
-	mechanism := "enroll"
-	agent := firstNonEmpty(envTool(), "manual")
-	if latest != nil && latest.Provenance != nil && latest.Provenance.Mechanism != "" {
-		mechanism = latest.Provenance.Mechanism
-	}
-	if latest != nil {
-		agent = firstNonEmpty(latest.Agent, agent)
-	}
-	prov := registry.BuildProvenance(mechanism, "", os.Getenv("HCOM_TAG"), pane.CWD, pane.WorkspaceID)
-
-	base := []byte(`{}`)
-	if latest != nil && len(bytes.TrimSpace(latest.Raw)) > 0 {
-		base = latest.Raw
-	}
-	row, err := registry.UpdateRawObject(base, map[string]any{
-		"guid":         guid,
-		"short_guid":   short,
-		"label":        label,
-		"role":         role,
-		"agent":        agent,
-		"pane_id":      pane.PaneID,
-		"terminal_id":  pane.TerminalID,
-		"workspace_id": pane.WorkspaceID,
-		"cwd":          pane.CWD,
-		"hcom_dir":     os.Getenv("HCOM_DIR"),
-		"hcom_name":    os.Getenv("HCOM_INSTANCE_NAME"),
-		"hcom_tag":     os.Getenv("HCOM_TAG"),
-		"status":       "active",
-		"provenance":   prov,
+		rows = append(rows, next)
+		return rows, nil
 	})
 	if err != nil {
 		die(stderr, err.Error())
 		return 1
 	}
-	if err := registry.Append(registryPath, row); err != nil {
-		die(stderr, err.Error())
-		return 1
+	if len(encoded) > 0 {
+		appendedRow = encoded[len(encoded)-1]
 	}
 	fmt.Fprintf(stderr, "enrolled %s (%s) pane=%s terminal=%s\n", label, guid, pane.PaneID, pane.TerminalID)
 	if opts.json {
-		fmt.Fprintln(stdout, string(row))
+		fmt.Fprintln(stdout, string(appendedRow))
 	}
 	return 0
 }
@@ -219,7 +206,8 @@ Options:
   --json          print the appended registry record as JSON on stdout
 
 Records pane_id, terminal_id, workspace_id, cwd, and hcom coordinates so later
-resolution survives herdr pane-id compaction. A herdr pane hosts one live
+resolution survives pane move re-keying within a server run. After restart,
+recorded terminal_id is dead until reconcile or re-enroll. A herdr pane hosts one live
 session at a time, so re-enrolling a reused pane RETIRES (closes) any prior
 active rows still claiming that pane_id — a dead session's row never lingers as
 LIVE=working. Must run inside a herdr pane (HERDR_ENV=1 and HERDR_PANE_ID set);
@@ -229,13 +217,13 @@ refuses otherwise.
 
 // shouldRetirePriorRow decides whether a prior active row that shares this
 // pane_id is a stale identity to close on re-enroll (TASK-035 AC#1). pane_id
-// alone is NOT enough: herdr COMPACTS pane ids, so a still-live session that
-// moved can keep an old pane_id that a new, unrelated session now reuses —
-// closing that row would corrupt a LIVE session (review P1-b). It refuses to
-// close a row that is plausibly a different, live session:
-//   - terminal_id is the durable coordinate herdr preserves across pane-id
-//     compaction; when both rows carry one and they DIFFER, the prior row is
-//     another session merely sharing a recycled pane_id — leave it.
+// alone is NOT enough: pane ids can re-key on moves and all ids reshuffle
+// after restart, so a still-live session may no longer be at its recorded
+// pane_id — closing that row would corrupt a LIVE session (review P1-b). It
+// refuses to close a row that is plausibly a different, live session:
+//   - terminal_id is the move-stable coordinate within a herdr server run;
+//     when both rows carry one and they DIFFER, the prior row is another
+//     session merely sharing the recorded pane_id — leave it.
 //   - a row whose bus name is currently JOINED is by definition live, never
 //     stale. The probe is protective ONLY: an unavailable bus returns false so
 //     it can never FORCE a close, only prevent one.

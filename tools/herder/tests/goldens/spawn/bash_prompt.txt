@@ -29,6 +29,7 @@ agent send p_50 do the thing
 pane send-keys p_50 Enter
 === HCOM DIR ===
 === REGISTRY ===
-{"guid":"<GUID>","short_guid":"<SHORT>","label":"worker-<SHORT>","role":"worker","agent":"bash","extra_args":[""],"argv":["/bin/zsh","-lic","if [ -d \"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims\" ]; then export PATH=\"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH\"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder; exec bash"],"pane_id":"p_50","workspace_id":"ws_1","tab_id":"tab_1","terminal_id":"term_AGENT","cwd":"/mock/cwd","started_at":"<TS>","started_by_pane":"p_orch","initial_prompt_present":true,"team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_1","branch":"","ts":"<TS>"}}
+{"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
+{"kind":"session","guid":"<GUID>","event":"registered","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"worker-<SHORT>","role":"worker","tool":"bash","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tag":"worker","cwd":"/mock/cwd","workspace_id":"ws_1","ts":"<TS>"}}
 === HCOM SEND ARGV ===
 === HCOM EVENTS ARGV ===

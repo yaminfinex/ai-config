@@ -1,0 +1,13 @@
+=== STDERR ===
+
+=== STDOUT ===
+GUID       LABEL                OUTCOME                        DETAIL
+beta       beta                 re-confirm                     terminal live; pane refresh p_20 -> p_99
+delta      delta                re-bind (assumed-continuity)   one live name+agent-kind+cwd fallback match; identity assumed per D12
+=== EXIT ===
+0
+=== REGISTRY ===
+{"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
+{"kind":"namespace","event":"namespace_observed","namespace_id":"<GUID>","node":"<GUID>","path":"/hfake/.hcom/teams/blue","recorded_at":"<TS>"}
+{"kind":"session","guid":"guid-beta-0000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"beta","role":"reviewer","tool":"codex","continuity":"assumed","lineage":{},"provenance":{}}
+{"kind":"session","guid":"guid-delta-0000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"delta","role":"worker","tool":"claude","continuity":"assumed","lineage":{},"provenance":{}}

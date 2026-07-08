@@ -1,0 +1,6 @@
+=== STDERR ===
+herder node init: registry node init refused: malformed node marker <ROOT>/init_new_refuses_malformed_marker_with_registry/state/node_id contains "not-a-node-id"; restore it from registry node_registered row <NODE>, or rerun with `herder node init --new` for clone repair
+=== STDOUT ===
+
+=== EXIT ===
+2

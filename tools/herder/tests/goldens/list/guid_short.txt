@@ -17,7 +17,8 @@
   "close_result": "closed",
   "live": null,
   "live_pane": null,
-  "live_status": "gone"
+  "live_status": "gone",
+  "live_matched_by": null
 }
 === EXIT ===
 0

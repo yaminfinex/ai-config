@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -9,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
 func writeRegistry(t *testing.T, rows ...string) string {
@@ -38,6 +42,12 @@ func ptrString(s *string) string {
 	}
 	return *s
 }
+
+const (
+	testNodeA = "11111111-1111-4111-8111-111111111111"
+	testNodeB = "22222222-2222-4222-8222-222222222222"
+	testNodeC = "33333333-3333-4333-8333-333333333333"
+)
 
 func TestLoadParsesRowsAndKeepsRaw(t *testing.T) {
 	row := `{"guid":"g-1","short_guid":"s1","label":"alpha","role":"worker","agent":"claude","terminal_id":"term_A","pane_id":"p_1","team":"blue","hcom_dir":"/x/.hcom","hcom_name":"alpha-rive","hcom_tag":"worker","status":"active"}`
@@ -83,15 +93,22 @@ func TestLoadToleratesBlankLinesAndLongRows(t *testing.T) {
 	}
 }
 
-func TestLoadMalformedRowFails(t *testing.T) {
+func TestLoadQuarantinesMalformedRows(t *testing.T) {
 	path := writeRegistry(t, `{"guid":"g-1"}`, `{not json`)
-	if _, err := Load(path); err == nil {
-		t.Fatal("want error on malformed row, got nil")
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// A non-object value breaks jq's group_by(.guid) too — error, not skip.
+	if len(recs) != 1 || ptrString(recs[0].GUID) != "g-1" {
+		t.Fatalf("recs = %+v, want only valid row", recs)
+	}
 	path = writeRegistry(t, `"just a string"`)
-	if _, err := Load(path); err == nil {
-		t.Fatal("want error on non-object row, got nil")
+	recs, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("recs = %+v, want non-object row quarantined", recs)
 	}
 }
 
@@ -253,10 +270,1541 @@ func TestAppend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"guid":"g-1","status":"active"}` + "\n" + `{"guid":"g-2","status":"active"}` + "\n"
-	if string(data) != want {
-		t.Fatalf("file = %q, want %q", data, want)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("lines = %d, want node row plus 2 session rows: %s", len(lines), data)
 	}
+	for i, line := range lines {
+		var row map[string]any
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			if row["kind"] != "node" || row["event"] != "node_registered" || row["node_id"] == "" {
+				t.Fatalf("line %d = %s, want node_registered row", i+1, line)
+			}
+			continue
+		}
+		if row["kind"] != "session" || row["state"] != "seated" || row["status"] != nil || row["node"] == "" {
+			t.Fatalf("line %d = %s, want clean node-attributed seated v2 session row", i+1, line)
+		}
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 || ptrString(recs[0].GUID) != "g-1" || recs[0].Status != "active" || ptrString(recs[1].GUID) != "g-2" {
+		t.Fatalf("legacy view = %+v, want active g-1/g-2 records", recs)
+	}
+}
+
+func TestLockedWriteMintsNodeOnceAndStampsRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "registry.jsonl")
+	for _, guid := range []string{"guid-alpha", "guid-beta"} {
+		guid := guid
+		if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+			return []v2.SessionRecord{{GUID: guid, Label: guid, State: v2.StateSeated}}, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	proj := loadProjection(t, path)
+	nodes := proj.Nodes()
+	if len(nodes) != 1 {
+		t.Fatalf("nodes = %+v, want exactly one minted node", nodes)
+	}
+	marker, err := os.ReadFile(NodeMarkerPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeID := strings.TrimSpace(string(marker))
+	if nodeID == "" || nodeID != nodes[0].NodeID {
+		t.Fatalf("marker = %q nodes = %+v, want agreement", marker, nodes)
+	}
+	for _, rec := range proj.Sessions() {
+		if rec.Node != nodeID {
+			t.Fatalf("session %s node = %q, want %q", rec.GUID, rec.Node, nodeID)
+		}
+	}
+}
+
+func TestTwoProcessFirstWritersConvergeOnOneNode(t *testing.T) {
+	if os.Getenv("HERDER_REGISTRY_NODE_HELPER") == "1" {
+		runNodeMintHelper()
+		return
+	}
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	start := filepath.Join(t.TempDir(), "start")
+	cmds := make([]*exec.Cmd, 0, 2)
+	for _, guid := range []string{"guid-alpha", "guid-beta"} {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestTwoProcessFirstWritersConvergeOnOneNode$", "-test.count=1")
+		cmd.Env = append(os.Environ(),
+			"HERDER_REGISTRY_NODE_HELPER=1",
+			"HERDER_REGISTRY_NODE_PATH="+path,
+			"HERDER_REGISTRY_NODE_GUID="+guid,
+			"HERDER_REGISTRY_NODE_START="+start,
+		)
+		cmds = append(cmds, cmd)
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start helper %s: %v", guid, err)
+		}
+		t.Cleanup(func() {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		})
+	}
+	if err := os.WriteFile(start, []byte("go\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("helper failed: %v", err)
+		}
+	}
+	proj := loadProjection(t, path)
+	if got := len(proj.Nodes()); got != 1 {
+		t.Fatalf("node rows = %d, want 1", got)
+	}
+	nodeID := proj.Nodes()[0].NodeID
+	for _, rec := range proj.Sessions() {
+		if rec.Node != nodeID {
+			t.Fatalf("session %s node = %q, want %q", rec.GUID, rec.Node, nodeID)
+		}
+	}
+}
+
+func runNodeMintHelper() {
+	start := os.Getenv("HERDER_REGISTRY_NODE_START")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(start); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			os.Stderr.WriteString("timed out waiting for start barrier\n")
+			os.Exit(2)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	path := os.Getenv("HERDER_REGISTRY_NODE_PATH")
+	guid := os.Getenv("HERDER_REGISTRY_NODE_GUID")
+	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: guid, Label: guid, State: v2.StateSeated}}, nil
+	})
+	if err != nil {
+		os.Stderr.WriteString(err.Error() + "\n")
+		os.Exit(2)
+	}
+}
+
+func TestLockedWriteRefusesHalfPresentNodeState(t *testing.T) {
+	t.Run("marker only", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "registry.jsonl")
+		if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+			return []v2.SessionRecord{{GUID: "guid-marker", State: v2.StateSeated}}, nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "herder node init") {
+			t.Fatalf("err = %v, want node init guidance", err)
+		}
+	})
+	t.Run("row only", func(t *testing.T) {
+		path := writeRegistry(t, `{"kind":"node","event":"node_registered","node_id":"`+testNodeB+`","recorded_at":"2026-07-08T00:00:00Z"}`)
+		_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+			return []v2.SessionRecord{{GUID: "guid-row", State: v2.StateSeated}}, nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "herder node init") {
+			t.Fatalf("err = %v, want node init guidance", err)
+		}
+	})
+	t.Run("empty marker", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "registry.jsonl")
+		if err := os.WriteFile(NodeMarkerPath(path), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+			return []v2.SessionRecord{{GUID: "guid-empty", State: v2.StateSeated}}, nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "herder node init") {
+			t.Fatalf("err = %v, want node init guidance", err)
+		}
+	})
+}
+
+func TestNodeInitRepairsAndCloneRepairKeepsPriorRows(t *testing.T) {
+	t.Run("idempotent healthy state", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "registry.jsonl")
+		first, err := InitNode(path, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := InitNode(path, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first.NodeID == "" || second.NodeID != first.NodeID || second.Changed {
+			t.Fatalf("first=%+v second=%+v, want stable no-op second init", first, second)
+		}
+		if got := len(loadProjection(t, path).Nodes()); got != 1 {
+			t.Fatalf("node rows = %d, want 1 after idempotent init", got)
+		}
+	})
+	t.Run("marker only", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "registry.jsonl")
+		if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := InitNode(path, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.Changed || res.NodeID != testNodeA || !hasNode(loadProjection(t, path).Nodes(), testNodeA) {
+			t.Fatalf("res=%+v, want marker node row repair", res)
+		}
+	})
+	t.Run("row only", func(t *testing.T) {
+		path := writeRegistry(t, `{"kind":"node","event":"node_registered","node_id":"`+testNodeB+`","recorded_at":"2026-07-08T00:00:00Z"}`)
+		res, err := InitNode(path, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		marker, err := os.ReadFile(NodeMarkerPath(path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.Changed || res.NodeID != testNodeB || strings.TrimSpace(string(marker)) != testNodeB {
+			t.Fatalf("res=%+v marker=%q, want marker repair", res, marker)
+		}
+	})
+	t.Run("malformed marker refuses", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "registry.jsonl")
+		if err := os.WriteFile(NodeMarkerPath(path), []byte("not-a-node-id\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(`{"kind":"node","event":"node_registered","node_id":"`+testNodeB+`","recorded_at":"2026-07-08T00:00:00Z"}`+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, forceNew := range []bool{false, true} {
+			if _, err := InitNode(path, forceNew); err == nil || !strings.Contains(err.Error(), NodeMarkerPath(path)) || !strings.Contains(err.Error(), "restore it from registry") {
+				t.Fatalf("forceNew=%v err = %v, want malformed marker refusal with restore guidance", forceNew, err)
+			}
+		}
+	})
+	t.Run("conflicting marker multiple nodes refuses", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "registry.jsonl")
+		if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(
+			`{"kind":"node","event":"node_registered","node_id":"`+testNodeB+`","recorded_at":"2026-07-08T00:00:00Z"}`+"\n"+
+				`{"kind":"node","event":"node_registered","node_id":"`+testNodeC+`","recorded_at":"2026-07-08T00:00:01Z"}`+"\n",
+		), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := InitNode(path, false); err == nil || !strings.Contains(err.Error(), "registry node init refused") || !strings.Contains(err.Error(), testNodeB) || !strings.Contains(err.Error(), testNodeC) {
+			t.Fatalf("err = %v, want conflicting marker/multiple-node refusal", err)
+		}
+	})
+	t.Run("empty marker", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "registry.jsonl")
+		if err := os.WriteFile(NodeMarkerPath(path), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := InitNode(path, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.Changed || res.NodeID == "" || len(loadProjection(t, path).Nodes()) != 1 {
+			t.Fatalf("res=%+v, want fresh repair for empty marker", res)
+		}
+	})
+	t.Run("empty marker new", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "registry.jsonl")
+		if err := os.WriteFile(NodeMarkerPath(path), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := InitNode(path, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.Changed || res.NodeID == "" || strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path)))) != res.NodeID {
+			t.Fatalf("res=%+v, want --new repair for empty marker", res)
+		}
+	})
+	t.Run("new clone node", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "registry.jsonl")
+		if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+			return []v2.SessionRecord{{GUID: "guid-old", State: v2.StateSeated}}, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		oldProj := loadProjection(t, path)
+		oldNode := oldProj.Nodes()[0].NodeID
+		if _, err := InitNode(path, true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+			return []v2.SessionRecord{{GUID: "guid-new", State: v2.StateSeated}}, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		proj := loadProjection(t, path)
+		nodes := proj.Nodes()
+		if len(nodes) != 2 {
+			t.Fatalf("nodes = %+v, want old and fresh node", nodes)
+		}
+		newNode := strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path))))
+		if newNode == "" || newNode == oldNode {
+			t.Fatalf("new marker = %q old = %q, want fresh", newNode, oldNode)
+		}
+		byGUID := map[string]v2.SessionRecord{}
+		for _, rec := range proj.Sessions() {
+			byGUID[rec.GUID] = rec
+		}
+		if byGUID["guid-old"].Node != oldNode {
+			t.Fatalf("old row node = %q, want %q", byGUID["guid-old"].Node, oldNode)
+		}
+		if byGUID["guid-new"].Node != newNode {
+			t.Fatalf("new row node = %q, want %q", byGUID["guid-new"].Node, newNode)
+		}
+	})
+}
+
+func TestCloneRepairLifecycleWritesStampFreshNode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{
+			{GUID: "guid-cull", State: v2.StateSeated, Label: "cull-me", Role: "worker", Tool: "codex", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_cull"}},
+			{GUID: "guid-rename", State: v2.StateSeated, Label: "old-name", Role: "worker", Tool: "codex", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_rename"}},
+			{GUID: "guid-recognise", State: v2.StateSeated, Label: "recognise-me", Role: "worker", Tool: "codex", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_old"}},
+		}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldNode := strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path))))
+	if _, err := InitNode(path, true); err != nil {
+		t.Fatal(err)
+	}
+	newNode := strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path))))
+	if newNode == oldNode {
+		t.Fatalf("clone repair marker = old node %q, want fresh", oldNode)
+	}
+
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, "guid-cull")
+		next := *current
+		next.Event = "unseated"
+		next.RecordedAt = ""
+		next.State = v2.StateUnseated
+		next.Seat = nil
+		return []v2.SessionRecord{next}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, "guid-rename")
+		next := *current
+		next.Event = "labelled"
+		next.RecordedAt = ""
+		next.Label = "new-name"
+		return []v2.SessionRecord{next}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, "guid-recognise")
+		next := *current
+		next.Event = "recognised"
+		next.RecordedAt = ""
+		next.Seat = &v2.Seat{Kind: "herdr", TerminalID: "term_new", PaneID: "p_new"}
+		return []v2.SessionRecord{next}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	proj := loadProjection(t, path)
+	for _, guid := range []string{"guid-cull", "guid-rename", "guid-recognise"} {
+		rec := V2ByGUID(proj, guid)
+		if rec == nil {
+			t.Fatalf("missing %s", guid)
+		}
+		if rec.Node != newNode {
+			t.Fatalf("%s node = %q, want fresh node %q", guid, rec.Node, newNode)
+		}
+		if rec.Seat != nil && rec.Seat.Node != newNode {
+			t.Fatalf("%s seat node = %q, want fresh node %q", guid, rec.Seat.Node, newNode)
+		}
+	}
+	lines := strings.Split(strings.TrimSpace(string(mustReadFile(t, path))), "\n")
+	oldRows := 0
+	for _, line := range lines {
+		if strings.Contains(line, `"node":"`+oldNode+`"`) {
+			oldRows++
+		}
+	}
+	if oldRows != 3 {
+		t.Fatalf("old-node session rows = %d, want original three rows untouched", oldRows)
+	}
+}
+
+func TestUnknownNodeRowsAreReadOnlyButDoNotBlockLocalWrites(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(
+		`{"kind":"node","event":"node_registered","node_id":"`+testNodeA+`","recorded_at":"2026-07-08T00:00:00Z"}`+"\n"+
+			`{"kind":"session","guid":"guid-ghost","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"`+testNodeB+`","state":"seated","label":"ghost","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"`+testNodeB+`","terminal_id":"term_ghost"}}`+"\n"+
+			`{"kind":"session","guid":"guid-local","event":"registered","recorded_at":"2026-07-08T00:00:02Z","node":"`+testNodeA+`","state":"seated","label":"local","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"`+testNodeA+`","terminal_id":"term_local"}}`+"\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proj := loadProjection(t, path)
+	if got := proj.Anomalies(); len(got) != 1 || got[0].Type != "unknown-node" || got[0].GUID != "guid-ghost" {
+		t.Fatalf("anomalies = %+v, want unknown-node for guid-ghost", got)
+	}
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, "guid-ghost")
+		next := *current
+		next.Event = "labelled"
+		next.Label = "ghost-new"
+		return []v2.SessionRecord{next}, nil
+	}); err == nil || !strings.Contains(err.Error(), "unknown node") {
+		t.Fatalf("err = %v, want unknown-node mutation refusal", err)
+	}
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, "guid-local")
+		next := *current
+		next.Event = "labelled"
+		next.RecordedAt = ""
+		next.Label = "ghost"
+		return []v2.SessionRecord{next}, nil
+	}); err != nil {
+		t.Fatalf("local write using unknown row label should still work: %v", err)
+	}
+	latest := V2ByGUID(loadProjection(t, path), "guid-local")
+	if latest.Label != "ghost" || latest.Node != testNodeA {
+		t.Fatalf("latest local row = %+v, want label ghost stamped local node", latest)
+	}
+}
+
+func TestLoadDerivesLegacyViewFromV2Rows(t *testing.T) {
+	path := writeRegistry(t,
+		`{"kind":"session","guid":"guid-seated","event":"registered","recorded_at":"2026-07-08T00:00:00Z","state":"seated","label":"seat","role":"worker","tool":"codex","seat":{"kind":"herdr","terminal_id":"term_1","pane_id":"p_1","hcom_name":"bus-seat","namespace":"/hcom"},"provenance":{"mechanism":"spawn","tool_session_id":"sess-1","tag":"worker"}}`,
+		`{"kind":"session","guid":"guid-unseated","event":"unseated","recorded_at":"2026-07-08T00:00:01Z","state":"unseated","label":"dormant","role":"worker","tool":"claude","provenance":{"mechanism":"spawn","tag":"worker"}}`,
+		`{"kind":"session","guid":"guid-retired","event":"retired","recorded_at":"2026-07-08T00:00:02Z","state":"retired","label":"done","tool":"bash"}`,
+	)
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byGUID := map[string]Record{}
+	for _, rec := range recs {
+		byGUID[ptrString(rec.GUID)] = rec
+	}
+	if got := byGUID["guid-seated"]; got.Status != "active" || got.PaneID != "p_1" || got.TerminalID != "term_1" || got.HcomName != "bus-seat" || got.HcomDir != "/hcom" || got.Agent != "codex" {
+		t.Fatalf("seated legacy view = %+v", got)
+	}
+	if got := byGUID["guid-unseated"]; got.Status != "active" || got.PaneID != "" || got.Agent != "claude" {
+		t.Fatalf("unseated legacy view = %+v, want active status without seat", got)
+	}
+	if got := byGUID["guid-retired"]; got.Status != "closed" || got.Agent != "bash" {
+		t.Fatalf("retired legacy view = %+v, want closed bash", got)
+	}
+}
+
+func TestTwoProcessLabelClaimsOneWinner(t *testing.T) {
+	if os.Getenv("HERDER_REGISTRY_CLAIM_HELPER") == "1" {
+		runLabelClaimHelper()
+		return
+	}
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	start := filepath.Join(t.TempDir(), "start")
+	cmds := make([]*exec.Cmd, 0, 2)
+	stderrs := make([]*bytes.Buffer, 0, 2)
+	for _, guid := range []string{"guid-alpha", "guid-beta"} {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestTwoProcessLabelClaimsOneWinner$", "-test.count=1")
+		cmd.Env = append(os.Environ(),
+			"HERDER_REGISTRY_CLAIM_HELPER=1",
+			"HERDER_REGISTRY_CLAIM_PATH="+path,
+			"HERDER_REGISTRY_CLAIM_GUID="+guid,
+			"HERDER_REGISTRY_CLAIM_START="+start,
+		)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		cmds = append(cmds, cmd)
+		stderrs = append(stderrs, &stderr)
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start helper %s: %v", guid, err)
+		}
+		t.Cleanup(func() {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		})
+	}
+	winners := 0
+	losers := 0
+	if err := os.WriteFile(start, []byte("go\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i, cmd := range cmds {
+		err := cmd.Wait()
+		if err == nil {
+			winners++
+			continue
+		}
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("unexpected helper error: %v", err)
+		}
+		stderr := stderrs[i].String()
+		if exitErr.ExitCode() == 42 && strings.Contains(stderr, `label "shared" already belongs`) {
+			losers++
+			continue
+		}
+		t.Fatalf("unexpected helper exit %d stderr=%s", exitErr.ExitCode(), stderr)
+	}
+	if winners != 1 || losers != 1 {
+		t.Fatalf("winners=%d losers=%d, want one winner and one loser", winners, losers)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner := ActiveLabelOwner(recs, "shared", ""); owner == nil {
+		t.Fatal("legacy resolver sees no shared owner")
+	}
+}
+
+func runLabelClaimHelper() {
+	start := os.Getenv("HERDER_REGISTRY_CLAIM_START")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(start); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			os.Stderr.WriteString("timed out waiting for start barrier\n")
+			os.Exit(2)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	path := os.Getenv("HERDER_REGISTRY_CLAIM_PATH")
+	guid := os.Getenv("HERDER_REGISTRY_CLAIM_GUID")
+	label := "shared"
+	prov := Provenance{Mechanism: "spawn"}
+	rec := Record{GUID: &guid, Label: &label, Status: "active", Provenance: &prov}
+	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{V2FromRecord(rec, "registered", v2.StateSeated, "")}, nil
+	})
+	if err == nil {
+		os.Exit(0)
+	}
+	os.Stderr.WriteString(err.Error() + "\n")
+	if strings.Contains(err.Error(), `label "shared" already belongs`) {
+		os.Exit(42)
+	}
+	os.Exit(2)
+}
+
+func TestLockedValidatorMigratesLegacyActiveDormantOnRename(t *testing.T) {
+	path := writeRegistry(t, `{"guid":"guid-legacy","short_guid":"legacy","label":"old","role":"worker","agent":"codex","terminal_id":"term_OLD","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"bus-old","status":"active"}`)
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, "guid-legacy")
+		if current == nil {
+			t.Fatal("missing legacy projection row")
+		}
+		next := *current
+		next.Event = "labelled"
+		next.Label = "new"
+		return []v2.SessionRecord{next}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := Resolve(recs, "guid-legacy")
+	if latest == nil || ptrString(latest.Label) != "new" || latest.PaneID != "" || latest.TerminalID != "" || latest.HcomName != "" || latest.HcomDir != "" {
+		t.Fatalf("latest = %+v, want renamed dormant row without legacy seat", latest)
+	}
+}
+
+func TestLegacyV1MigrationArchivesAndReseeds(t *testing.T) {
+	path := copyRegistryFixture(t, "v1-real-shape.jsonl")
+	original := mustReadFile(t, path)
+	seenMigrated := false
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		if current := V2ByGUID(tx.Projection, "2447b0e6-5004-4aca-84cd-08d7798dad52"); current == nil || current.LegacyV1 || current.State != v2.StateUnseated {
+			t.Fatalf("migrated projection current = %+v, want dormant v2 row", current)
+		}
+		seenMigrated = true
+		return []v2.SessionRecord{{GUID: "guid-new", Event: "registered", State: v2.StateSeated, Label: "new", Tool: "codex"}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !seenMigrated {
+		t.Fatal("write callback did not run")
+	}
+	archive := mustMigrationArchivePath(t, path)
+	if got := mustReadFile(t, archive); !bytes.Equal(got, original) {
+		t.Fatalf("archive bytes changed\narchive=%s\noriginal=%s", got, original)
+	}
+	proj := loadProjection(t, path)
+	if got := len(proj.Nodes()); got != 1 {
+		t.Fatalf("nodes = %d, want 1", got)
+	}
+	if got := len(proj.Namespaces()); got != 2 {
+		t.Fatalf("namespaces = %+v, want default and teams hcom dirs", proj.Namespaces())
+	}
+	byGUID := map[string]v2.SessionRecord{}
+	for _, rec := range proj.Sessions() {
+		if rec.LegacyV1 {
+			t.Fatalf("live file still has legacy row: %+v", rec)
+		}
+		byGUID[rec.GUID] = rec
+	}
+	if _, ok := byGUID["366fb03a-2f91-47f8-8a6c-eee954e413a5"]; ok {
+		t.Fatalf("closed legacy guid was reseeded live: %+v", byGUID["366fb03a-2f91-47f8-8a6c-eee954e413a5"])
+	}
+	corpse := byGUID["2447b0e6-5004-4aca-84cd-08d7798dad52"]
+	if corpse.Event != migrationEventV1 || corpse.State != v2.StateUnseated || corpse.Seat != nil || corpse.Node == "" {
+		t.Fatalf("corpse = %+v, want migrated dormant node-stamped row", corpse)
+	}
+	team := byGUID["24cb80b1-852f-4d30-8f78-e241aaf7c97e"]
+	if team.State != v2.StateUnseated || len(team.SIDs) != 1 || team.Continuity != "confirmed" {
+		t.Fatalf("team = %+v, want dormant sid-seeded confirmed row", team)
+	}
+	if byGUID["guid-new"].Node == "" {
+		t.Fatalf("new row = %+v, want node-stamped append after migration", byGUID["guid-new"])
+	}
+}
+
+func TestLegacyV1MigrationTwiceIsByteStable(t *testing.T) {
+	path := copyRegistryFixture(t, "v1-real-shape.jsonl")
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	once := mustReadFile(t, path)
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	twice := mustReadFile(t, path)
+	if !bytes.Equal(once, twice) {
+		t.Fatalf("migrate twice changed live file\nonce=%s\ntwice=%s", once, twice)
+	}
+}
+
+func TestLegacyV1MigrationHandlesMixedFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	original := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"guid-v2","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"v2","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"` + testNodeA + `","terminal_id":"term_v2","pane_id":"p_v2","hcom_name":"v2-bus","namespace":"/hcom","confirmed_at":"2026-07-08T00:00:01Z"}}`,
+		`{"guid":"guid-legacy","short_guid":"legacy","label":"legacy","role":"worker","agent":"claude","terminal_id":"term_old","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"legacy-bus","status":"active"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustReadFile(t, mustMigrationArchivePath(t, path)); string(got) != original {
+		t.Fatalf("archive = %s, want original mixed file", got)
+	}
+	proj := loadProjection(t, path)
+	v2row := V2ByGUID(proj, "guid-v2")
+	if v2row == nil || v2row.State != v2.StateSeated || v2row.Seat == nil || v2row.Seat.HcomName != "v2-bus" {
+		t.Fatalf("v2 row = %+v, want latest snapshot preserved", v2row)
+	}
+	legacy := V2ByGUID(proj, "guid-legacy")
+	if legacy == nil || legacy.State != v2.StateUnseated || legacy.Seat != nil || legacy.Event != migrationEventV1 {
+		t.Fatalf("legacy row = %+v, want dormant migrated row", legacy)
+	}
+}
+
+func TestLegacyV1MigrationRecoversEmptyLiveFromArchive(t *testing.T) {
+	sourcePath := copyRegistryFixture(t, "v1-real-shape.jsonl")
+	source := mustReadFile(t, sourcePath)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	archive := mustMigrationArchivePath(t, path)
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, source, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustReadFile(t, archive); !bytes.Equal(got, source) {
+		t.Fatalf("archive changed during recovery")
+	}
+	proj := loadProjection(t, path)
+	if got := len(proj.Sessions()); got != 3 {
+		t.Fatalf("sessions = %+v, want three non-retired recovered sessions", proj.Sessions())
+	}
+}
+
+func TestLegacyV1MigrationRecoversPartialLiveWithNodeFromArchive(t *testing.T) {
+	sourcePath := copyRegistryFixture(t, "v1-real-shape.jsonl")
+	source := mustReadFile(t, sourcePath)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	archive := mustMigrationArchivePath(t, path)
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, source, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	partial := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"2447b0e6-5004-4aca-84cd-08d7798dad52","event":"migrated_v1","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"unseated","label":"partial","role":"worker","tool":"claude","continuity":"assumed"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(partial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	proj := loadProjection(t, path)
+	if got := len(proj.Nodes()); got < 1 {
+		t.Fatalf("nodes = %+v, want node row recovered", proj.Nodes())
+	}
+	for _, rec := range proj.Sessions() {
+		if rec.Node == "" || !hasNode(proj.Nodes(), rec.Node) {
+			t.Fatalf("session %s node = %q nodes=%+v, want registered node attribution", rec.GUID, rec.Node, proj.Nodes())
+		}
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: "guid-after-recovery", Event: "registered", State: v2.StateSeated, Label: "after", Tool: "codex"}}, nil
+	}); err != nil {
+		t.Fatalf("next locked write after recovery failed: %v", err)
+	}
+}
+
+func TestLegacyV1MigrationRefusesMismatchedExistingArchive(t *testing.T) {
+	path := copyRegistryFixture(t, "v1-real-shape.jsonl")
+	original := mustReadFile(t, path)
+	archive := mustMigrationArchivePath(t, path)
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, original[:len(original)/2], 0o444); err != nil {
+		t.Fatal(err)
+	}
+	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil })
+	if err == nil || !strings.Contains(err.Error(), "existing archive") || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("err = %v, want mismatched archive refusal", err)
+	}
+	if got := mustReadFile(t, path); !bytes.Equal(got, original) {
+		t.Fatalf("live registry was changed after archive refusal")
+	}
+}
+
+func TestRotationAtThresholdArchivesAndReseeds(t *testing.T) {
+	t.Setenv(rotationThresholdEnv, "650")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "registry.jsonl.archive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "registry.jsonl.archive", "0001-v1-migration.jsonl"), []byte(`{"guid":"legacy","status":"active"}`+"\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	original := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"guid-keep","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"keep-old","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"` + testNodeA + `","terminal_id":"term_old","pane_id":"p_old","hcom_name":"keep-bus","namespace":"/hcom","confirmed_at":"2026-07-08T00:00:01Z"}}`,
+		`{"kind":"session","guid":"guid-drop","event":"retired","recorded_at":"2026-07-08T00:00:02Z","node":"` + testNodeA + `","state":"retired","label":"drop","role":"worker","tool":"claude"}`,
+		`{"kind":"session","guid":"guid-keep","event":"labelled","recorded_at":"2026-07-08T00:00:03Z","node":"` + testNodeA + `","state":"seated","label":"keep","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"` + testNodeA + `","terminal_id":"term_new","pane_id":"p_new","hcom_name":"keep-bus","namespace":"/hcom","confirmed_at":"2026-07-08T00:00:03Z"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		if current := V2ByGUID(tx.Projection, "guid-drop"); current != nil {
+			t.Fatalf("retired row visible after rotation = %+v", current)
+		}
+		return []v2.SessionRecord{{GUID: "guid-new", Event: "registered", State: v2.StateSeated, Label: "new", Tool: "bash"}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "registry.jsonl.archive", "0002-rotation.jsonl")
+	if got := mustReadFile(t, archive); string(got) != original {
+		t.Fatalf("rotation archive changed\narchive=%s\noriginal=%s", got, original)
+	}
+	if mode := fileMode(t, archive); mode != 0o444 {
+		t.Fatalf("archive mode = %o, want 0444", mode)
+	}
+	proj := loadProjection(t, path)
+	if got := V2ByGUID(proj, "guid-keep"); got == nil || got.Label != "keep" || got.Seat == nil || got.Seat.PaneID != "p_new" {
+		t.Fatalf("kept row = %+v, want latest self-contained snapshot", got)
+	}
+	if got := V2ByGUID(proj, "guid-drop"); got != nil {
+		t.Fatalf("retired row reseeded live: %+v", got)
+	}
+	if got := V2ByGUID(proj, "guid-new"); got == nil || got.Node != testNodeA {
+		t.Fatalf("new row = %+v, want post-rotation append node-stamped", got)
+	}
+	if got := len(registryArchivePathsForTest(t, path)); got != 2 {
+		t.Fatalf("archives = %d, want 2", got)
+	}
+	once := mustReadFile(t, path)
+	t.Setenv(rotationThresholdEnv, "1048576")
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if twice := mustReadFile(t, path); !bytes.Equal(once, twice) {
+		t.Fatalf("under-threshold recheck changed live\nonce=%s\ntwice=%s", once, twice)
+	}
+	if got := len(registryArchivePathsForTest(t, path)); got != 2 {
+		t.Fatalf("archives after under-threshold write = %d, want 2", got)
+	}
+}
+
+func TestRotationRecoversPartialLiveFromArchive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"guid-a","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"a","role":"worker","tool":"codex"}`,
+		`{"kind":"session","guid":"guid-b","event":"registered","recorded_at":"2026-07-08T00:00:02Z","node":"` + testNodeA + `","state":"unseated","label":"b","role":"worker","tool":"claude"}`,
+	}, "\n") + "\n"
+	archive := filepath.Join(dir, "registry.jsonl.archive", "0002-rotation.jsonl")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, []byte(source), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	partial := `{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}` + "\n"
+	if err := os.WriteFile(path, []byte(partial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	proj := loadProjection(t, path)
+	if V2ByGUID(proj, "guid-a") == nil || V2ByGUID(proj, "guid-b") == nil {
+		t.Fatalf("recovered sessions = %+v, want guid-a and guid-b", proj.Sessions())
+	}
+	if got := mustReadFile(t, archive); string(got) != source {
+		t.Fatalf("archive changed during recovery")
+	}
+}
+
+func TestMigrationRecoveryDoesNotRefireOnPureV2LiveWithStaleMigrationArchive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "registry.jsonl.archive", "0001-v1-migration.jsonl")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staleV1 := strings.Join([]string{
+		`{"guid":"guid-old-a","label":"old-a","status":"active"}`,
+		`{"guid":"guid-old-b","label":"old-b","status":"active"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(archive, []byte(staleV1), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	live := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"guid-current","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"current","role":"worker","tool":"codex"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(live), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: "guid-new", Event: "registered", State: v2.StateSeated, Label: "new", Tool: "bash"}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	proj := loadProjection(t, path)
+	if V2ByGUID(proj, "guid-old-a") != nil || V2ByGUID(proj, "guid-old-b") != nil {
+		t.Fatalf("stale migration archive resurrected old rows: %+v", proj.Sessions())
+	}
+	if V2ByGUID(proj, "guid-current") == nil || V2ByGUID(proj, "guid-new") == nil {
+		t.Fatalf("live rows = %+v, want current and new", proj.Sessions())
+	}
+}
+
+func TestRotationRecoveryUsesNewestRotationArchiveOverMigrationArchive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archDir := filepath.Join(dir, "registry.jsonl.archive")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staleMigration := strings.Join([]string{
+		`{"guid":"guid-stale","label":"stale","status":"active"}`,
+		`{"guid":"guid-retired","label":"retired-before","status":"active"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(archDir, "0001-v1-migration.jsonl"), []byte(staleMigration), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	rotation := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"guid-post","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"post","role":"worker","tool":"codex"}`,
+		`{"kind":"session","guid":"guid-retired","event":"retired","recorded_at":"2026-07-08T00:00:02Z","node":"` + testNodeA + `","state":"retired","label":"retired","role":"worker","tool":"claude"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(archDir, "0002-rotation.jsonl"), []byte(rotation), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	partial := `{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}` + "\n"
+	if err := os.WriteFile(path, []byte(partial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	proj := loadProjection(t, path)
+	if V2ByGUID(proj, "guid-post") == nil {
+		t.Fatalf("post-migration session missing after recovery: %+v", proj.Sessions())
+	}
+	if V2ByGUID(proj, "guid-stale") != nil {
+		t.Fatalf("stale migration row resurrected: %+v", proj.Sessions())
+	}
+	if retired := V2ByGUID(proj, "guid-retired"); retired != nil {
+		t.Fatalf("retired row reseeded live: %+v", retired)
+	}
+}
+
+func TestLoadWithArchivesMergesDeterministicallyLiveWins(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	archDir := filepath.Join(dir, "registry.jsonl.archive")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archDir, "0002-rotation.jsonl"), []byte(`{"guid":"guid-arch","short_guid":"arch","label":"arch-new","status":"closed"}`+"\n"+`{"guid":"guid-collide","short_guid":"collide","label":"arch-collide","status":"closed"}`+"\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archDir, "0001-rotation.jsonl"), []byte(`{"guid":"guid-arch","short_guid":"arch","label":"arch-old","status":"active"}`+"\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"guid":"guid-collide","short_guid":"collide","label":"live-collide","status":"active"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := LoadWithArchives(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arch := Resolve(recs, "guid-arch")
+	if arch == nil || ptrString(arch.Label) != "arch-new" || !arch.Archived {
+		t.Fatalf("archive-only = %+v, want latest archive row marked archived", arch)
+	}
+	live := Resolve(recs, "guid-collide")
+	if live == nil || ptrString(live.Label) != "live-collide" || live.Archived {
+		t.Fatalf("live collision = %+v, want live row to win", live)
+	}
+}
+
+func TestLoadWithArchivesUsesLatestAcrossThreeRotationArchives(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	archDir := filepath.Join(dir, "registry.jsonl.archive")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, label := range map[string]string{
+		"0002-rotation.jsonl": "two",
+		"0003-rotation.jsonl": "three",
+		"0004-rotation.jsonl": "four",
+	} {
+		row := `{"guid":"guid-tie","short_guid":"tie","label":"` + label + `","status":"closed"}` + "\n"
+		if err := os.WriteFile(filepath.Join(archDir, name), []byte(row), 0o444); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := LoadWithArchives(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Resolve(recs, "guid-tie"); got == nil || ptrString(got.Label) != "four" {
+		t.Fatalf("latest archive tie = %+v, want 0004/four", got)
+	}
+}
+
+func TestRotationReusesMatchingArchiveAfterPreTruncateCrash(t *testing.T) {
+	t.Setenv(rotationThresholdEnv, "650")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"guid-live","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"live","role":"worker","tool":"codex"}`,
+		`{"kind":"session","guid":"guid-retired","event":"retired","recorded_at":"2026-07-08T00:00:02Z","node":"` + testNodeA + `","state":"retired","label":"` + strings.Repeat("x", 256) + `","role":"worker","tool":"codex"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "registry.jsonl.archive", "0002-rotation.jsonl")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, []byte(source), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: "guid-after", Event: "registered", State: v2.StateSeated, Label: "after", Tool: "bash"}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if archives := registryArchivePathsForTest(t, path); len(archives) != 1 || filepath.Base(archives[0]) != "0002-rotation.jsonl" {
+		t.Fatalf("archives = %+v, want only reused 0002 archive", archives)
+	}
+}
+
+func TestRotationSkipsWhenReseedWouldStillExceedThreshold(t *testing.T) {
+	t.Setenv(rotationThresholdEnv, "10")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hugeLabel := strings.Repeat("x", 128)
+	source := strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"kind":"session","guid":"guid-huge","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"` + hugeLabel + `","role":"worker","tool":"codex"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: "guid-after", Event: "registered", State: v2.StateSeated, Label: "after", Tool: "bash"}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if archives := registryArchivePathsForTest(t, path); len(archives) != 0 {
+		t.Fatalf("archives = %+v, want no rotation because reseed remains over threshold", archives)
+	}
+}
+
+func TestRotationInvalidThresholdNamesFix(t *testing.T) {
+	t.Setenv(rotationThresholdEnv, "not-bytes")
+	path := writeRegistry(t, `{"kind":"node","event":"node_registered","node_id":"`+testNodeA+`","recorded_at":"2026-07-08T00:00:00Z"}`)
+	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil })
+	if err == nil || !strings.Contains(err.Error(), rotationThresholdEnv+`="not-bytes"`) || !strings.Contains(err.Error(), "unset it to use the default") {
+		t.Fatalf("err = %v, want variable/value/fix guidance", err)
+	}
+}
+
+func TestRotationRecoveryRefusalTexts(t *testing.T) {
+	for name, tc := range map[string]struct {
+		writeArchive func(string)
+		want         string
+	}{
+		"missing": {
+			writeArchive: func(path string) {
+				if err := os.Symlink("missing-target", path); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "missing archive",
+		},
+		"empty": {
+			writeArchive: func(path string) {
+				if err := os.WriteFile(path, nil, 0o444); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "is empty",
+		},
+		"quarantined": {
+			writeArchive: func(path string) {
+				if err := os.WriteFile(path, []byte("{not-json\n"), 0o444); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "has quarantined rows",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "registry.jsonl")
+			archive := filepath.Join(dir, "registry.jsonl.archive", "0002-rotation.jsonl")
+			if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tc.writeArchive(archive)
+			if err := os.WriteFile(path, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil })
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRotationArchiveByteVerificationRefusalText(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "registry.jsonl.archive", "0002-rotation.jsonl")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, []byte("old\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	err := ensureArchive(archive, []byte("new\n"))
+	if err == nil || !strings.Contains(err.Error(), "byte verification failed") || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("err = %v, want byte verification refusal text", err)
+	}
+}
+
+func TestArchiveConsultationProvidesForkParentSessionID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	archDir := filepath.Join(dir, "registry.jsonl.archive")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archDir, "0001-rotation.jsonl"), []byte(`{"kind":"session","guid":"guid-parent","event":"retired","recorded_at":"2026-07-08T00:00:00Z","state":"retired","label":"parent","role":"worker","tool":"codex","sids":[{"sid":"sess-parent","observed_at":"2026-07-08T00:00:00Z","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sess-parent"}}`+"\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"kind":"session","guid":"guid-child","event":"registered","recorded_at":"2026-07-08T00:00:01Z","state":"unseated","label":"child","role":"worker","tool":"codex","lineage":{"forked_from":"guid-parent"},"provenance":{"mechanism":"fork","forked_from":"guid-parent"}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := LoadWithArchives(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := Resolve(recs, "guid-parent")
+	if parent == nil || !parent.Archived {
+		t.Fatalf("parent = %+v, want archive-resolved parent", parent)
+	}
+	if sid := ToolSessionIDForGUID(recs, "guid-parent"); sid != "sess-parent" {
+		t.Fatalf("parent sid = %q, want sess-parent", sid)
+	}
+}
+
+func TestRegisteredCarriesRecognisedHcomName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	guid, label := "guid-carry", "worker"
+	recognised := Record{
+		GUID:       &guid,
+		Label:      &label,
+		Role:       "worker",
+		Agent:      "codex",
+		PaneID:     "p_sidecar",
+		TerminalID: "term_sidecar",
+		HcomName:   "worker-rive",
+		HcomDir:    "/hcom",
+		Status:     "active",
+	}
+	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated); err != nil {
+		t.Fatal(err)
+	}
+	registered := Record{
+		GUID:       &guid,
+		Label:      &label,
+		Role:       "worker",
+		Agent:      "codex",
+		PaneID:     "p_spawn",
+		TerminalID: "term_spawn",
+		HcomDir:    "/hcom",
+		Status:     "active",
+		Provenance: &Provenance{Mechanism: "spawn", ToolSessionID: "sess-spawn", Tag: "worker"},
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{V2FromRecord(registered, "registered", v2.StateSeated, "2026-07-08T00:00:01Z")}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := Resolve(recs, guid)
+	if latest == nil || latest.HcomName != "worker-rive" || latest.PaneID != "p_spawn" || latest.TerminalID != "term_spawn" {
+		t.Fatalf("latest legacy view = %+v, want registered seat with carried hcom_name and fresh spawn coordinates", latest)
+	}
+	collapsed := LatestByGUID(recs)
+	if len(collapsed) != 1 || collapsed[0].HcomName != "worker-rive" {
+		t.Fatalf("LatestByGUID = %+v, want bus-reachable hcom_name", collapsed)
+	}
+}
+
+func TestRegisteredCarryForwardStampsFreshNodeAfterCloneRepair(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	guid, label := "guid-clone-registered", "worker"
+	recognised := Record{
+		GUID:       &guid,
+		Label:      &label,
+		Role:       "worker",
+		Agent:      "codex",
+		PaneID:     "p_sidecar",
+		TerminalID: "term_sidecar",
+		HcomName:   "worker-rive",
+		HcomDir:    "/hcom",
+		Status:     "active",
+	}
+	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated); err != nil {
+		t.Fatal(err)
+	}
+	oldNode := strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path))))
+	if _, err := InitNode(path, true); err != nil {
+		t.Fatal(err)
+	}
+	newNode := strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path))))
+	if newNode == oldNode {
+		t.Fatalf("clone repair marker = old node %q, want fresh", oldNode)
+	}
+	registered := Record{
+		GUID:       &guid,
+		Label:      &label,
+		Role:       "worker",
+		Agent:      "codex",
+		PaneID:     "p_spawn",
+		TerminalID: "term_spawn",
+		HcomDir:    "/hcom",
+		Status:     "active",
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{V2FromRecord(registered, "registered", v2.StateSeated, "2026-07-08T00:00:01Z")}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	latest := V2ByGUID(loadProjection(t, path), guid)
+	if latest == nil {
+		t.Fatal("missing latest registered row")
+	}
+	if latest.Node != newNode || latest.Seat == nil || latest.Seat.Node != newNode {
+		t.Fatalf("latest = %+v, want fresh node %q on row and seat", latest, newNode)
+	}
+	if latest.Seat.HcomName != "worker-rive" || latest.Seat.TerminalID != "term_spawn" || latest.Seat.PaneID != "p_spawn" {
+		t.Fatalf("latest seat = %+v, want carried hcom_name plus fresh spawn coordinates", latest.Seat)
+	}
+}
+
+func TestRegisteredCarrySurvivesRotationReseed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	guid, label := "guid-reseed", "worker"
+	recognised := Record{
+		GUID:       &guid,
+		Label:      &label,
+		Role:       "worker",
+		Agent:      "codex",
+		PaneID:     "p_sidecar",
+		TerminalID: "term_sidecar",
+		HcomName:   "worker-rive",
+		HcomDir:    "/hcom",
+		Status:     "active",
+	}
+	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated); err != nil {
+		t.Fatal(err)
+	}
+	registered := Record{
+		GUID:       &guid,
+		Label:      &label,
+		Role:       "worker",
+		Agent:      "codex",
+		PaneID:     "p_spawn",
+		TerminalID: "term_spawn",
+		HcomDir:    "/hcom",
+		Status:     "active",
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{V2FromRecord(registered, "registered", v2.StateSeated, "2026-07-08T00:00:01Z")}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proj, err := v2.Load(bytes.NewReader(data), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reseedPath := filepath.Join(t.TempDir(), "registry.jsonl")
+	for _, rec := range proj.Sessions() {
+		if rec.State == v2.StateRetired || rec.State == v2.StateLost {
+			continue
+		}
+		b, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Append(reseedPath, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reseeded, err := Load(reseedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := Resolve(reseeded, guid)
+	if latest == nil || latest.HcomName != "worker-rive" || latest.PaneID != "p_spawn" || latest.TerminalID != "term_spawn" {
+		t.Fatalf("reseeded latest = %+v, want self-contained registered row with hcom_name", latest)
+	}
+}
+
+func TestRegisteredNoOpDoesNotAppend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	guid, label := "guid-noop", "worker"
+	row := v2.SessionRecord{
+		Kind:       v2.KindSession,
+		GUID:       guid,
+		Event:      "registered",
+		RecordedAt: "2026-07-08T00:00:00Z",
+		State:      v2.StateSeated,
+		Label:      label,
+		Role:       "worker",
+		Tool:       "codex",
+		Seat: &v2.Seat{
+			Kind:        "herdr",
+			TerminalID:  "term_spawn",
+			PaneID:      "p_spawn",
+			HcomName:    "worker-rive",
+			Namespace:   "/hcom",
+			ConfirmedAt: "2026-07-08T00:00:00Z",
+		},
+		Continuity: "assumed",
+		Lineage:    v2.Lineage{},
+		Provenance: v2.Provenance{Mechanism: "spawn", Tag: "worker"},
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{row}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := registryRowCount(t, path)
+	repeat := row
+	repeat.RecordedAt = "2026-07-08T00:00:01Z"
+	repeat.Seat = cloneSeat(row.Seat)
+	repeat.Seat.HcomName = ""
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{repeat}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if after := registryRowCount(t, path); after != before {
+		t.Fatalf("row count = %d, want unchanged %d after no-op registered append", after, before)
+	}
+}
+
+func TestAppendLegacyRetiredPreservesCloseReason(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	row := []byte(`{"guid":"guid-launch","short_guid":"launch","label":"launch","role":"worker","agent":"codex","terminal_id":"term_L","pane_id":"p_l","hcom_dir":"/hcom","hcom_name":"launch-bus","status":"closed","close_result":"launch_failed","close_reason":"pane exited before lifecycle bind"}`)
+	if err := AppendLegacySessionEvent(path, row, "retired", v2.StateRetired); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("lines = %d, want node row plus retired row: %s", len(lines), data)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["state"] != v2.StateRetired || got["event"] != "retired" || got["close_result"] != "launch_failed" || got["close_reason"] != "pane exited before lifecycle bind" {
+		t.Fatalf("row = %s, want retired launch_failed with close_reason", data)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Status != "closed" || recs[0].CloseResult != "launch_failed" || recs[0].CloseReason == "" {
+		t.Fatalf("legacy view = %+v, want closed launch_failed", recs)
+	}
+}
+
+func TestLockedValidatorPreservesRenameAgainstStaleEnrichment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	guid, oldLabel := "guid-stale", "old"
+	if err := Append(path, []byte(`{"guid":"`+guid+`","label":"`+oldLabel+`","role":"worker","agent":"codex","pane_id":"p_old","terminal_id":"term_old","status":"active"}`)); err != nil {
+		t.Fatal(err)
+	}
+	stale := Record{GUID: &guid, Label: &oldLabel, Role: "worker", Agent: "codex", PaneID: "p_new", TerminalID: "term_new", HcomName: "bus-new", Status: "active"}
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, guid)
+		next := *current
+		next.Event = "labelled"
+		next.Label = "new"
+		return []v2.SessionRecord{next}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, stale), "recognised", v2.StateSeated); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := Resolve(recs, guid)
+	if latest == nil || ptrString(latest.Label) != "new" || latest.HcomName != "bus-new" {
+		t.Fatalf("latest = %+v, want label new with enriched bus", latest)
+	}
+}
+
+func TestLockedValidatorDoesNotResurrectUnseatedSession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	guid, label := "guid-culled", "worker"
+	if err := Append(path, []byte(`{"guid":"`+guid+`","label":"`+label+`","role":"worker","agent":"codex","pane_id":"p_old","terminal_id":"term_old","status":"active"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, guid)
+		next := *current
+		next.Event = "unseated"
+		next.State = v2.StateUnseated
+		next.Seat = nil
+		return []v2.SessionRecord{next}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stale := Record{GUID: &guid, Label: &label, Role: "worker", Agent: "codex", PaneID: "p_new", TerminalID: "term_new", HcomName: "bus-new", Status: "active"}
+	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, stale), "recognised", v2.StateSeated); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := Resolve(recs, guid)
+	if latest == nil || latest.PaneID != "" || latest.HcomName != "" {
+		t.Fatalf("latest = %+v, want still unseated/no seat after stale heartbeat", latest)
+	}
+}
+
+func TestLockedWriterRefusesUnlocked(t *testing.T) {
+	t.Setenv("HERDER_TEST_FLOCK_REFUSE", "1")
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	err := Append(path, []byte(`{"guid":"g-1","status":"active"}`))
+	if err == nil || !strings.Contains(err.Error(), "refusing to write unlocked") {
+		t.Fatalf("err = %v, want refusing to write unlocked", err)
+	}
+}
+
+func loadProjection(t *testing.T, path string) *v2.Projection {
+	t.Helper()
+	proj, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proj
+}
+
+func copyRegistryFixture(t *testing.T, name string) string {
+	t.Helper()
+	src := filepath.Join("..", "..", "tests", "fixtures", "registry-v2", name)
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func mustMigrationArchivePath(t *testing.T, path string) string {
+	t.Helper()
+	archive, err := migrationArchivePath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return archive
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func fileMode(t *testing.T, path string) fs.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Mode().Perm()
+}
+
+func registryArchivePathsForTest(t *testing.T, path string) []string {
+	t.Helper()
+	paths, err := registryArchivePaths(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return paths
+}
+
+func mustMarshalRecord(t *testing.T, rec Record) []byte {
+	t.Helper()
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func registryRowCount(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return 0
+	}
+	return bytes.Count(trimmed, []byte("\n")) + 1
 }
 
 func TestDefaultPath(t *testing.T) {
@@ -392,5 +1940,39 @@ func TestBuildProvenanceSpawnedBy(t *testing.T) {
 	t.Setenv("HERDER_GUID", "")
 	if p := BuildProvenance("enroll", "", "", t.TempDir(), ""); p.SpawnedBy != "user" {
 		t.Fatalf("ambient user fallback = %q, want user", p.SpawnedBy)
+	}
+}
+
+func TestV2LabelOwnerIgnoresRetiredLabelHolder(t *testing.T) {
+	proj, err := v2.Load(strings.NewReader(strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"node-1","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"guid":"guid-retired","event":"retired","node":"node-1","state":"retired","label":"shared"}`,
+		`{"guid":"guid-lost","event":"lost","node":"node-1","state":"lost","label":"gone"}`,
+		`{"guid":"guid-unseated","event":"registered","node":"node-1","state":"unseated","label":"live"}`,
+	}, "\n")+"\n"), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner := V2LabelOwner(proj, "shared", ""); owner != nil {
+		t.Fatalf("retired label owner = %+v, want nil", owner)
+	}
+	if owner := V2LabelOwner(proj, "gone", ""); owner != nil {
+		t.Fatalf("lost label owner = %+v, want nil", owner)
+	}
+	if owner := V2LabelOwner(proj, "live", ""); owner == nil || owner.GUID != "guid-unseated" {
+		t.Fatalf("live label owner = %+v, want guid-unseated", owner)
+	}
+}
+
+func TestV2ResolveMatchesPaneID(t *testing.T) {
+	proj, err := v2.Load(strings.NewReader(strings.Join([]string{
+		`{"kind":"node","event":"node_registered","node_id":"node-1","recorded_at":"2026-07-08T00:00:00Z"}`,
+		`{"guid":"guid-pane","event":"registered","node":"node-1","state":"seated","label":"pane-agent","seat":{"kind":"herdr","pane_id":"p_123"}}`,
+	}, "\n")+"\n"), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := V2Resolve(proj, "p_123"); got == nil || got.GUID != "guid-pane" {
+		t.Fatalf("V2Resolve pane = %+v, want guid-pane", got)
 	}
 }

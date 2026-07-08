@@ -62,7 +62,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	liveByTerm := liveAgentsByTerminal()
+	idx := buildLiveIndex()
 
 	if opts.mode == "one" {
 		if opts.targetGUID == "" {
@@ -74,7 +74,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "no record for guid %s\n", opts.targetGUID)
 			return 1
 		}
-		out := reconciledJSON(rec, liveByTerm)
+		out := reconciledJSON(rec, idx)
 		var pretty bytes.Buffer
 		if err := json.Indent(&pretty, out, "", "  "); err != nil {
 			return 1
@@ -85,16 +85,19 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	recs, err := registry.Load(registryPath)
+	if opts.includeAll {
+		recs, err = registry.LoadWithArchives(registryPath)
+	}
 	if err != nil {
 		return 1
 	}
 	collapsed := registry.LatestByGUID(recs)
 	if opts.mode == "json" {
 		for _, rec := range collapsed {
-			if !opts.includeAll && rec.Status != "active" {
+			if !opts.includeAll && (rec.Status != "active" || rec.Archived) {
 				continue
 			}
-			fmt.Fprintln(stdout, string(reconciledJSON(rec, liveByTerm)))
+			fmt.Fprintln(stdout, string(reconciledJSON(rec, idx)))
 		}
 		return 0
 	}
@@ -102,16 +105,19 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-12s %-16s %s\n",
 		"GUID", "LABEL", "AGENT", "PANE", "LIVE", "TEAM", "BUS", "ROLE")
 	for _, rec := range collapsed {
-		if !opts.includeAll && rec.Status != "active" {
+		if !opts.includeAll && (rec.Status != "active" || rec.Archived) {
 			continue
 		}
-		live := liveByTerm[rec.TerminalID]
+		live, _ := idx.match(rec)
 		livePane := rec.PaneID
-		liveStatus := "gone"
-		if live != nil {
+		liveStatus := idx.unmatchedStatus(rec)
+		if rec.Archived {
+			liveStatus = "ARCHIVED"
+		} else if live != nil {
 			if pane, ok := rawStringField(live.Raw, "pane_id"); ok {
 				livePane = pane
 			}
+			liveStatus = "gone"
 			if status, ok := rawStringField(live.Raw, "agent_status"); ok {
 				liveStatus = status
 			}
@@ -200,8 +206,25 @@ func runTeams(stdout io.Writer) int {
 	return 0
 }
 
-func liveAgentsByTerminal() map[string]*herdrcli.Agent {
-	out, err := (&herdrcli.Client{}).Output("agent", "list")
+// liveIndex resolves registry rows to live herdr agents. Terminal ids are the
+// durable primary key, but a server update --handoff reissues them (and pane
+// ids), stranding every pre-handoff row (TASK-046) — so lookup falls back to
+// the row's stored pane_id and then to `agent list`'s name (== the undecorated
+// spawn label on 0.7.x). paneTerms/panePanes hold `pane list` coordinates so a
+// row whose pane is alive but absent from `agent list` (herdr lost agent
+// detection for the process, e.g. it predates a handoff) reads as
+// "undetected", not "gone".
+type liveIndex struct {
+	byTerm    map[string]*herdrcli.Agent
+	byPane    map[string]*herdrcli.Agent
+	byName    map[string]*herdrcli.Agent
+	paneTerms map[string]bool
+	panePanes map[string]bool
+}
+
+func buildLiveIndex() liveIndex {
+	client := &herdrcli.Client{}
+	out, err := client.Output("agent", "list")
 	if err != nil {
 		out = []byte(`{"result":{"agents":[]}}`)
 	}
@@ -209,18 +232,84 @@ func liveAgentsByTerminal() map[string]*herdrcli.Agent {
 	if err != nil {
 		agents = nil
 	}
-	live := make(map[string]*herdrcli.Agent)
+	idx := liveIndex{
+		byTerm:    make(map[string]*herdrcli.Agent),
+		byPane:    make(map[string]*herdrcli.Agent),
+		byName:    make(map[string]*herdrcli.Agent),
+		paneTerms: make(map[string]bool),
+		panePanes: make(map[string]bool),
+	}
+	nameSeen := make(map[string]int)
 	for i := range agents {
-		if agents[i].TerminalID == nil {
-			continue
-		}
 		var compact bytes.Buffer
 		if err := json.Compact(&compact, agents[i].Raw); err == nil {
 			agents[i].Raw = compact.Bytes()
 		}
-		live[*agents[i].TerminalID] = &agents[i]
+		if agents[i].TerminalID != nil {
+			idx.byTerm[*agents[i].TerminalID] = &agents[i]
+		}
+		if agents[i].PaneID != "" {
+			idx.byPane[agents[i].PaneID] = &agents[i]
+		}
+		if agents[i].Name != "" {
+			nameSeen[agents[i].Name]++
+			idx.byName[agents[i].Name] = &agents[i]
+		}
 	}
-	return live
+	// A duplicated live name can never be a safe fallback key.
+	for name, n := range nameSeen {
+		if n > 1 {
+			delete(idx.byName, name)
+		}
+	}
+	if paneOut, err := client.Output("pane", "list"); err == nil {
+		if panes, err := herdrcli.ParsePaneList(paneOut); err == nil {
+			for _, pane := range panes {
+				if pane.TerminalID != "" {
+					idx.paneTerms[pane.TerminalID] = true
+				}
+				if pane.PaneID != "" {
+					idx.panePanes[pane.PaneID] = true
+				}
+			}
+		}
+	}
+	return idx
+}
+
+// match resolves a record to its live agent: terminal_id first (durable within
+// a server generation), then the stored pane_id (new-format ids don't recycle),
+// then the unambiguous live name equal to the row's label. matchedBy reports
+// which key hit so JSON consumers can distinguish a primary match from a
+// fallback that survived a coordinate epoch change.
+func (idx liveIndex) match(rec registry.Record) (*herdrcli.Agent, string) {
+	if rec.TerminalID != "" {
+		if live := idx.byTerm[rec.TerminalID]; live != nil {
+			return live, "terminal"
+		}
+	}
+	if rec.PaneID != "" {
+		if live := idx.byPane[rec.PaneID]; live != nil {
+			return live, "pane"
+		}
+	}
+	if label := ptrString(rec.Label); label != "" {
+		if live := idx.byName[label]; live != nil {
+			return live, "name"
+		}
+	}
+	return nil, ""
+}
+
+// unmatchedStatus distinguishes a row whose pane is gone from one whose pane
+// is alive but invisible to `agent list` (detection lost; only a process
+// restart/re-report recovers real status).
+func (idx liveIndex) unmatchedStatus(rec registry.Record) string {
+	if (rec.TerminalID != "" && idx.paneTerms[rec.TerminalID]) ||
+		(rec.PaneID != "" && idx.panePanes[rec.PaneID]) {
+		return "undetected"
+	}
+	return "gone"
 }
 
 func lastOwnGUIDRecord(path, target string) (registry.Record, bool) {
@@ -255,13 +344,23 @@ func decodeRecord(line string) (registry.Record, error) {
 	return rec, nil
 }
 
-func reconciledJSON(rec registry.Record, liveByTerm map[string]*herdrcli.Agent) []byte {
-	live := liveByTerm[rec.TerminalID]
+func reconciledJSON(rec registry.Record, idx liveIndex) []byte {
+	if rec.Archived {
+		return appendJSONFields(rec.Raw,
+			`"archived":true`,
+			`"live":null`,
+			`"live_pane":null`,
+			`"live_status":"ARCHIVED"`,
+			`"live_matched_by":null`,
+		)
+	}
+	live, matchedBy := idx.match(rec)
 	if live == nil {
 		return appendJSONFields(rec.Raw,
 			`"live":null`,
 			`"live_pane":null`,
-			`"live_status":"gone"`,
+			`"live_status":`+jsonString(idx.unmatchedStatus(rec)),
+			`"live_matched_by":null`,
 		)
 	}
 	livePane := "null"
@@ -276,6 +375,7 @@ func reconciledJSON(rec registry.Record, liveByTerm map[string]*herdrcli.Agent) 
 		`"live":`+string(live.Raw),
 		`"live_pane":`+livePane,
 		`"live_status":`+jsonString(liveStatus),
+		`"live_matched_by":`+jsonString(matchedBy),
 	)
 }
 

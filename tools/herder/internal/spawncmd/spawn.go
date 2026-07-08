@@ -17,6 +17,7 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/send"
 	"ai-config/tools/herder/internal/shellquote"
 )
@@ -117,9 +118,11 @@ type spawnJSONRecord struct {
 	PromptSent           bool                `json:"prompt_sent"`
 	DeliveryResult       string              `json:"delivery_result"`
 	ResendCommand        string              `json:"resend_command,omitempty"`
+	PasteNotes           []string            `json:"paste_notes,omitempty"`
 	PermInjected         string              `json:"perm_injected"`
 	NewTab               bool                `json:"new_tab"`
 	RootPaneClosed       bool                `json:"root_pane_closed"`
+	NewTabResult         string              `json:"new_tab_result,omitempty"`
 	HcomCapture          string              `json:"hcom_capture"`
 	Worktree             *worktreeInfo       `json:"worktree,omitempty"`
 }
@@ -589,7 +592,7 @@ func (r *runner) run() int {
 		return 1
 	}
 	short := registry.ShortGUID(guid)
-	label := opts.LabelPrefix + opts.Role + "-" + short
+	label := spawnLabel(opts.Role, opts.LabelPrefix, short)
 
 	isHcomAgent := launchcmd.IsHcomCapable(opts.Agent)
 	if isHcomAgent {
@@ -605,10 +608,9 @@ func (r *runner) run() int {
 
 	// --worktree: drive `herdr worktree create` and spawn into the resulting
 	// workspace in one verified step. The create opens a full WORKSPACE with a
-	// seed tab + root shell pane, so the payload's coordinates feed the exact
-	// machinery --new-tab already uses: agent start into that tab, then the
-	// guarded seed-pane close. Everything herdr-side (branch, checkout path,
-	// workspace) stays herdr-owned — herder only wraps it.
+	// seed tab + root shell pane; the payload's coordinates feed the guarded
+	// seed-pane close after the agent starts. Everything herdr-side (branch,
+	// checkout path, workspace) stays herdr-owned — herder only wraps it.
 	var wtInfo *worktreeInfo
 	rootPaneID, rootTerm := "", ""
 	spawnCompleted := false
@@ -690,27 +692,6 @@ func (r *runner) run() int {
 	if root, bin, ok := checkoutForDir(childCWD); ok && root != r.paths.RepoRoot {
 		childEnvBin = bin
 		childEnvRoot = root
-	}
-
-	if opts.NewTab {
-		tabArgs := []string{"tab", "create", "--no-focus", "--label", label}
-		if opts.Workspace != "" {
-			tabArgs = append(tabArgs, "--workspace", opts.Workspace)
-		}
-		if opts.CWD != "" {
-			tabArgs = append(tabArgs, "--cwd", opts.CWD)
-		}
-		out, rc, _ := r.herdr.Combined(tabArgs...)
-		if rc != 0 {
-			fmt.Fprintf(r.stderr, "herdr tab create failed:\n%s\n", strings.TrimRight(string(out), "\n"))
-			return rc
-		}
-		tabID, rootID, rootTerminal := parseTabCreate(out)
-		opts.Tab, rootPaneID, rootTerm = tabID, rootID, rootTerminal
-		if opts.Tab == "" || rootPaneID == "" {
-			fmt.Fprintf(r.stderr, "unexpected tab create payload: %s\n", strings.TrimRight(string(out), "\n"))
-			return 1
-		}
 	}
 
 	launchTokens := []string{}
@@ -803,10 +784,34 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	termID := start.Agent.TerminalID
 	resolvedCWD := start.Agent.CWD
 	launchPaneID := paneID
+	newTabResult := ""
 
-	// Seed-pane close: --new-tab's tab create and --worktree's workspace create
-	// both leave a root shell pane behind; the identity-guarded close applies
-	// to whichever path populated rootPaneID/rootTerm.
+	if opts.NewTab {
+		moveArgs := []string{"pane", "move", paneID, "--new-tab", "--label", label}
+		if out, rc, _ := r.herdr.Combined(moveArgs...); rc == 0 {
+			newTabResult = "moved"
+		} else {
+			reason := compactMessage(string(out))
+			if reason == "" {
+				reason = fmt.Sprintf("herdr pane move exited %d", rc)
+			}
+			newTabResult = "move_failed: " + reason
+			fmt.Fprintf(r.stderr, "herder spawn: WARNING: --new-tab pane move failed; agent is still running in the current tab: %s\n", reason)
+		}
+		if out, err := r.herdr.Output("pane", "get", paneID); err == nil {
+			if pane, parseErr := herdrcli.ParsePaneGet(out); parseErr == nil {
+				paneID = firstNonEmpty(pane.PaneID, paneID)
+				wsID = firstNonEmpty(pane.WorkspaceID, wsID)
+				tabID = firstNonEmpty(pane.TabID, tabID)
+				termID = firstNonEmpty(pane.TerminalID, termID)
+			}
+		}
+		opts.Tab = tabID
+	}
+
+	// Seed-pane close: --worktree's workspace create leaves a root shell pane
+	// behind; --new-tab now moves the running agent pane and never creates a
+	// seed shell.
 	rootClosed := false
 	if rootPaneID != "" && rootTerm != "" {
 		if rootTerm == termID {
@@ -876,6 +881,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 
 	promptSent := false
 	deliveryResult := "not_attempted"
+	pasteNotes := []string(nil)
 	if opts.Prompt != "" && trustBlocked {
 		deliveryResult = "blocked_trust_modal"
 	} else if busPrompt {
@@ -890,12 +896,15 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			deliveryResult = "bind_timeout"
 		}
 	} else if opts.Prompt != "" {
-		verify, rc := (&bootPaster{Client: r.herdr}).paste(paneID, opts.Prompt)
-		if verify != "" {
-			deliveryResult = verify
+		paste := (&bootPaster{Client: r.herdr}).paste(paneID, opts.Prompt)
+		if paste.Verify != "" {
+			deliveryResult = paste.Verify
 		}
-		if rc == 0 {
+		if paste.Code == 0 {
 			promptSent = true
+		}
+		if paste.ComposerCleared {
+			pasteNotes = append(pasteNotes, "composer_cleared")
 		}
 	}
 
@@ -927,8 +936,29 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		Status:               "active",
 		Provenance:           registry.BuildProvenance("spawn", spawnedBy, opts.Role, resolvedCWD, wsID),
 	}
-	registryLine, _ := json.Marshal(record)
-	if err := appendLine(registryPath, registryLine); err != nil {
+	regRec := registry.Record{
+		GUID:       &record.GUID,
+		ShortGUID:  &record.ShortGUID,
+		Label:      &record.Label,
+		Role:       record.Role,
+		Agent:      record.Agent,
+		PaneID:     record.PaneID,
+		TerminalID: record.TerminalID,
+		HcomDir:    record.HcomDir,
+		HcomName:   record.HcomName,
+		HcomTag:    record.HcomTag,
+		Status:     record.Status,
+		Provenance: &record.Provenance,
+	}
+	if _, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		if owner := registry.V2LabelOwner(tx.Projection, record.Label, record.GUID); owner != nil {
+			return nil, fmt.Errorf("label %q already belongs to active guid %s", record.Label, owner.GUID)
+		}
+		row := registry.V2FromRecord(regRec, "registered", v2.StateSeated, record.StartedAt)
+		row.Provenance.CWD = record.CWD
+		row.Provenance.WorkspaceID = record.WorkspaceID
+		return []v2.SessionRecord{row}, nil
+	}); err != nil {
 		die(r.stderr, err.Error())
 		return 1
 	}
@@ -969,8 +999,22 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 				if name != "" {
 					record.HcomName = name
 					hcomCapture = "captured"
-					updated, _ := json.Marshal(record)
-					if err := appendLine(registryPath, updated); err != nil {
+					if _, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+						current := registry.V2ByGUID(tx.Projection, record.GUID)
+						if current == nil || current.State == v2.StateRetired || current.State == v2.StateLost {
+							return nil, nil
+						}
+						next := *current
+						next.Event = "recognised"
+						next.State = v2.StateSeated
+						next.RecordedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+						if next.Seat == nil {
+							next.Seat = &v2.Seat{Kind: "herdr"}
+						}
+						next.Seat.HcomName = name
+						next.Seat.ConfirmedAt = next.RecordedAt
+						return []v2.SessionRecord{next}, nil
+					}); err != nil {
 						die(r.stderr, err.Error())
 						return 1
 					}
@@ -981,7 +1025,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		}
 	}
 
-	r.writeSummary(record, wtInfo, isHcomAgent, rootClosed, permInjected, hcomCapture, busPrompt, promptSent, deliveryResult, readyReason, trustBlocked)
+	r.writeSummary(record, wtInfo, isHcomAgent, rootClosed, newTabResult, permInjected, hcomCapture, busPrompt, promptSent, deliveryResult, readyReason, trustBlocked, pasteNotes)
 	if opts.JSONOutput {
 		outRecord := spawnJSONRecord{
 			GUID:                 record.GUID,
@@ -1008,9 +1052,11 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			PromptSent:           promptSent,
 			DeliveryResult:       deliveryResult,
 			ResendCommand:        resendCommandFor(deliveryResult, record.Label, opts.Prompt),
+			PasteNotes:           pasteNotes,
 			PermInjected:         permInjected,
 			NewTab:               opts.NewTab,
 			RootPaneClosed:       rootClosed,
+			NewTabResult:         newTabResult,
 			HcomCapture:          hcomCapture,
 			Worktree:             wtInfo,
 		}
@@ -1207,7 +1253,7 @@ func (r *runner) paneStatus(paneID string) string {
 	return ""
 }
 
-func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAgent, rootClosed bool, permInjected, hcomCapture string, busPrompt, promptSent bool, deliveryResult, readyReason string, trustBlocked bool) {
+func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAgent, rootClosed bool, newTabResult, permInjected, hcomCapture string, busPrompt, promptSent bool, deliveryResult, readyReason string, trustBlocked bool, pasteNotes []string) {
 	fmt.Fprintf(r.stderr, "spawned %s (%s) in pane %s (workspace %s)\n", record.Label, record.Agent, record.PaneID, record.WorkspaceID)
 	fmt.Fprintf(r.stderr, "  guid:   %s\n", record.GUID)
 	fmt.Fprintf(r.stderr, "  cwd:    %s\n", record.CWD)
@@ -1225,10 +1271,10 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 		fmt.Fprintf(r.stderr, "            after cull the workspace auto-closes (herdr remove no longer applies); then: git worktree remove %s && git branch -D %s\n", wtInfo.CheckoutPath, wtInfo.Branch)
 	}
 	if r.opts.NewTab {
-		if rootClosed {
-			fmt.Fprintf(r.stderr, "  tab:    %s (new, root shell closed; agent is sole pane)\n", r.opts.Tab)
+		if strings.HasPrefix(newTabResult, "move_failed:") {
+			fmt.Fprintf(r.stderr, "  tab:    %s (new-tab move FAILED; agent remains alive in this tab: %s)\n", record.TabID, strings.TrimPrefix(newTabResult, "move_failed: "))
 		} else {
-			fmt.Fprintf(r.stderr, "  tab:    %s (new; WARNING: root shell NOT closed — spare pane may remain)\n", r.opts.Tab)
+			fmt.Fprintf(r.stderr, "  tab:    %s (new; agent pane moved, no seed shell)\n", record.TabID)
 		}
 	}
 	if permInjected != "" {
@@ -1251,6 +1297,7 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 		fmt.Fprintf(r.stderr, "  bus:    n/a (%s is not an hcom agent — no bus name, so herder send cannot reach it)\n", record.Agent)
 	}
 	if r.opts.Prompt != "" {
+		noteSuffix := pasteNoteSuffix(pasteNotes)
 		switch {
 		case busPrompt && promptSent && deliveryResult == "delivered":
 			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars) over the hcom bus, bind: %s, verify: delivered (receipt seen)\n", len(r.opts.Prompt), readyReason)
@@ -1258,9 +1305,10 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars) over the hcom bus, bind: %s, verify: %s\n", len(r.opts.Prompt), readyReason, deliveryResult)
 			fmt.Fprintln(r.stderr, "          no receipt in the window — it injects when the agent is deliverable; do NOT resend.")
 			fmt.Fprintf(r.stderr, "          If it never lands: UNSUBMITTED COMPOSER TEXT starves bus delivery — check `herder wait %s --read`;\n", record.Label)
-			fmt.Fprintf(r.stderr, "          if text sits on the input line, submit it: herdr pane send-keys %s Enter\n", record.PaneID)
+			fmt.Fprintln(r.stderr, "          a queued bus message visible on the input line is NOT garbage — do NOT clear it.")
+			fmt.Fprintf(r.stderr, "          Clear only unrelated garbage text: herdr pane send-keys %s ctrl+u\n", record.PaneID)
 		case promptSent:
-			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars), ready: %s, verify: %s\n", len(r.opts.Prompt), readyReason, deliveryResult)
+			fmt.Fprintf(r.stderr, "  prompt: sent (%d chars), ready: %s, verify: %s%s\n", len(r.opts.Prompt), readyReason, deliveryResult, noteSuffix)
 		case deliveryResult == "blocked_trust_modal":
 			fmt.Fprintln(r.stderr, "  prompt: NOT sent — a directory-trust modal is open and --safe forbids auto-accepting it.")
 			fmt.Fprintf(r.stderr, "          Accept it in the pane (focus + Enter), then: herder send %s \"<prompt>\"\n", record.Label)
@@ -1272,13 +1320,20 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 			fmt.Fprintf(r.stderr, "  prompt: NOT confirmed (verify: %s, bind: %s) — the bus send did not go through\n", deliveryResult, readyReason)
 			fmt.Fprintf(r.stderr, "          check the bus first (`hcom events --agent %s`), then retry: herder send %s \"<prompt>\"\n", record.HcomName, record.Label)
 		default:
-			fmt.Fprintf(r.stderr, "  prompt: NOT confirmed (verify: %s, ready: %s) — delivery unverified\n", deliveryResult, readyReason)
+			fmt.Fprintf(r.stderr, "  prompt: NOT confirmed (verify: %s, ready: %s%s) — delivery unverified\n", deliveryResult, readyReason, noteSuffix)
 			fmt.Fprintf(r.stderr, "          read the pane first: herder wait %s --read; do NOT blind-resend (double-submits);\n", record.Label)
-			fmt.Fprintf(r.stderr, "          if the text sits stranded on the input line, submit it: herdr pane send-keys %s Enter\n", record.PaneID)
+			fmt.Fprintf(r.stderr, "          if garbage text sits stranded on the input line, clear it: herdr pane send-keys %s ctrl+u\n", record.PaneID)
 		}
 	} else if trustBlocked {
 		fmt.Fprintln(r.stderr, "  note:   directory-trust modal is open (--safe); accept it in the pane to use the agent")
 	}
+}
+
+func pasteNoteSuffix(notes []string) string {
+	if len(notes) == 0 {
+		return ""
+	}
+	return " (notes: " + strings.Join(notes, ",") + ")"
 }
 
 func die(stderr io.Writer, msg string) {
@@ -1303,7 +1358,7 @@ func printHelp(stdout io.Writer) {
 		"  --team NAME       join the bus at $HERDER_TEAMS_ROOT/<NAME> (default: global ~/.hcom)",
 		"  --split D         pane split: right (default) or down",
 		"  --workspace ID    place in this workspace; --from-pane PANE_ID copies another pane's",
-		"  --tab ID          add to an existing tab; --new-tab gives the agent its own fresh tab",
+		"  --tab ID          add to an existing tab; --new-tab moves the agent's pane into its own fresh tab",
 		"  --worktree BRANCH create a fresh git worktree on BRANCH (via `herdr worktree create`) and",
 		"                    spawn into its workspace in one step; --base REF picks the start point",
 		"  --cwd PATH        working directory for the agent (default: current)",
@@ -1348,9 +1403,9 @@ func printHelp(stdout io.Writer) {
 		"  more often. hcom wakes an idle agent with an EMPTY composer instantly, even a fresh",
 		"  never-prompted one; a message sent mid-boot is held until the session can take it.",
 		"  The one thing that starves bus delivery — on both families — is UNSUBMITTED TEXT in",
-		"  the composer: nothing injects until it is submitted or cleared. Remedy: read the pane",
-		"  (`herder wait <guid> --read`); if text sits on the input line, submit it with",
-		"  `herdr pane send-keys <pane> Enter` — queued messages then flow at the next boundary.",
+		"  the composer: nothing injects until it is submitted or cleared. Preferred remedy for",
+		"  stray/garbage text: `herdr pane send-keys <pane> ctrl+u`; use Enter only when the",
+		"  visible text is a real message you intend to submit.",
 		"  A slash-command prompt (e.g. --prompt '/review …') arrives as MESSAGE TEXT, not as a",
 		"  typed slash command — the agent can invoke the skill itself, but nothing auto-executes.",
 		"  bash agents have no bus: their prompt is typed into the pane by the spawn-private",
@@ -1358,8 +1413,8 @@ func printHelp(stdout io.Writer) {
 		"",
 		"  --worktree wraps `herdr worktree create` (worktree/workspace lifecycle stays herdr-owned):",
 		"  the source repo resolves from the spawner's cwd (works from inside a linked worktree),",
-		"  the created workspace's seed shell pane is closed under the same identity guard as",
-		"  --new-tab, and the summary + --json surface the worktree coordinates (workspace_id,",
+		"  the created workspace's seed shell pane is closed under an identity guard, and the",
+		"  summary + --json surface the worktree coordinates (workspace_id,",
 		"  checkout path, branch) for later lifecycle management. If the worktree is created but the",
 		"  spawn then fails, NOTHING is auto-removed — the failure report names the workspace and the",
 		"  exact `herdr worktree remove` command. The workspace label stays herdr's branch-derived",
@@ -1475,22 +1530,16 @@ func workspaceExists(workspaces []workspace, id string) bool {
 	return false
 }
 
-func parseTabCreate(out []byte) (tabID, rootPaneID, rootTerm string) {
-	var envelope struct {
-		Result struct {
-			Tab struct {
-				TabID string `json:"tab_id"`
-			} `json:"tab"`
-			RootPane struct {
-				PaneID     string `json:"pane_id"`
-				TerminalID string `json:"terminal_id"`
-			} `json:"root_pane"`
-		} `json:"result"`
+func spawnLabel(role, labelPrefix, short string) string {
+	prefix := role
+	if labelPrefix != "" {
+		prefix = labelPrefix
 	}
-	if json.Unmarshal(out, &envelope) != nil {
-		return "", "", ""
-	}
-	return envelope.Result.Tab.TabID, envelope.Result.RootPane.PaneID, envelope.Result.RootPane.TerminalID
+	return prefix + "-" + short
+}
+
+func compactMessage(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // parseWorktreeSource extracts the parent checkout path from `herdr worktree
@@ -1569,19 +1618,6 @@ func parseAgentStart(out []byte) (agentStartPayload, error) {
 	}
 	err := json.Unmarshal(out, &envelope)
 	return envelope.Result, err
-}
-
-func appendLine(path string, line []byte) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if _, err := f.Write(line); err != nil {
-		return err
-	}
-	_, err = f.Write([]byte("\n"))
-	return err
 }
 
 func registryCapturedName(path, guid string) string {
@@ -1842,4 +1878,3 @@ func sleepMS(ms int) {
 	}
 	time.Sleep(time.Duration(ms) * time.Millisecond)
 }
-

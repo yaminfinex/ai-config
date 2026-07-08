@@ -64,6 +64,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			waitRC = 0
 		} else {
 			fmt.Fprintf(stderr, "herder wait: timeout waiting for %s to reach status=%s\n", paneID, opts.status)
+			if agentDetectionLost(paneID) {
+				fmt.Fprintf(stderr, "herder wait: pane %s is alive, but herdr agent detection is lost (agent get reports unknown or absent). This usually means the process predates a server handoff; restart the agent in the pane or relaunch it to restore status.\n", paneID)
+			}
 		}
 	}
 
@@ -134,7 +137,8 @@ func printHelp(stdout io.Writer) {
 		"                       [--read] [--lines N] [--source visible|recent|recent-unwrapped]",
 		"",
 		"<target> is a short-guid, full guid, label, or pane_id. A guid/label resolves to",
-		"the agent's CURRENT pane (drift-proof as herdr compacts pane ids); a raw pane_id",
+		"the agent's CURRENT pane (drift-proof across pane move re-keying). Terminal ids",
+		"are run-scoped: after a herdr restart resolution refuses; a raw pane_id",
 		"is used verbatim.",
 		"",
 		"Options:",
@@ -212,6 +216,43 @@ func doneIsIdleEquivalent(paneID string) bool {
 		return false
 	}
 	return envelope.Result.Agent.Agent == "codex" && envelope.Result.Agent.AgentStatus == "done"
+}
+
+func agentDetectionLost(paneID string) bool {
+	paneOut, err := exec.Command("herdr", "pane", "list").Output()
+	if err != nil {
+		return false
+	}
+	panes, err := herdrcli.ParsePaneList(paneOut)
+	if err != nil {
+		return false
+	}
+	found := false
+	for _, pane := range panes {
+		if pane.PaneID == paneID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false
+	}
+	out, err := exec.Command("herdr", "agent", "get", paneID).Output()
+	if err != nil {
+		return true
+	}
+	var envelope struct {
+		Result struct {
+			Agent struct {
+				Agent       string `json:"agent"`
+				AgentStatus string `json:"agent_status"`
+			} `json:"agent"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(out, &envelope) != nil {
+		return true
+	}
+	return envelope.Result.Agent.Agent == "" || envelope.Result.Agent.AgentStatus == "" || envelope.Result.Agent.AgentStatus == "unknown"
 }
 
 func displayName(rec *registry.Record, fallback string) string {

@@ -65,8 +65,9 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Current truth: which terminal does the pane named by our environment
-	// hold NOW. HERDR_PANE_ID was captured at pane start and pane ids can be
-	// compacted/reassigned, so it is an entry point, never the paste target.
+	// hold NOW. HERDR_PANE_ID was captured at pane start and pane ids can
+	// re-key on moves or reshuffle after restart, so it is an entry point,
+	// never the paste target.
 	envPane := os.Getenv("HERDR_PANE_ID")
 	out, err := herdr.Output("pane", "get", envPane)
 	if err != nil {
@@ -166,14 +167,23 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	verify, rc := (&bootPaster{Client: herdr, PreflightVisibleOnly: true}).paste(targetPane, line)
+	paste := (&bootPaster{Client: herdr, PreflightVisibleOnly: true}).paste(targetPane, line)
+	verify, rc := paste.Verify, paste.Code
 	switch {
+	case verify == "" && rc == 2 && paste.Refusal == "composer_polluted":
+		dieCompact(stderr, "refused — your pane still has unsubmitted composer text after the ctrl+u recovery attempt; /compact was NOT typed. Inspect the pane, clear or submit that text by hand, then retry.")
+		thenAbortNote(stderr, opts.ThenSet)
+		return 2
 	case verify == "" && rc == 2:
 		dieCompact(stderr, "refused — your pane shows a blocking overlay (modal/interrupted state); /compact was NOT typed. Clear it and retry.")
 		thenAbortNote(stderr, opts.ThenSet)
 		return 2
 	case rc == 0:
-		fmt.Fprintf(stderr, "herder compact: %s — %q is in your composer and fires when the current turn ends (verify: %s)\n", queuedWord(verify), line, verify)
+		notes := []string(nil)
+		if paste.ComposerCleared {
+			notes = append(notes, "composer_cleared")
+		}
+		fmt.Fprintf(stderr, "herder compact: %s — %q is in your composer and fires when the current turn ends (verify: %s%s)\n", queuedWord(verify), line, verify, pasteNoteSuffix(notes))
 		// AC#2 ordering floor: the paste is verified (rc==0), so and only so is
 		// it safe to arm the continuation — an unverified /compact must never
 		// have a continuation fired behind it into an uncompacted session.
@@ -216,10 +226,10 @@ type selfIdentity struct {
 // the hcom session id recorded in provenance — when BOTH are present they
 // must agree on one identity (a mismatch means at least one is stale or
 // inherited: refuse, never pick). Only when neither exists does it fall back
-// to positional resolution by the CURRENT terminal — and then it demands
-// corroborating evidence (the pane's foreground cwd matching our own working
-// directory) because a positional match cannot otherwise be told apart from a
-// neighbour after pane-id churn.
+// to resolution by the CURRENT terminal — and then it demands corroborating
+// evidence (the pane's foreground cwd matching our own working directory)
+// because a terminal-only match cannot otherwise be told apart from a stale
+// registry identity after pane-id re-keying or restart reshuffle.
 func resolveSelfRow(recs []registry.Record, pane herdrcli.Pane) (selfIdentity, string) {
 	guid := os.Getenv("HERDER_GUID")
 	sessionID := os.Getenv("HCOM_SESSION_ID")

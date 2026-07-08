@@ -7,6 +7,7 @@ herder rename: unknown target: nope
 === HERDR RENAME ARGV ===
 
 === REGISTRY ===
-{"guid":"guid-alpha-0000","short_guid":"alpha","label":"alpha","role":"worker","agent":"codex","terminal_id":"term_ALPHA","pane_id":"p_alpha","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-alpha","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
-{"guid":"guid-beta-0000","short_guid":"beta","label":"beta","role":"reviewer","agent":"claude","terminal_id":"term_BETA","pane_id":"p_beta","status":"active"}
-{"guid":"guid-closed-0000","short_guid":"closed","label":"old-closed","role":"reviewer","agent":"claude","terminal_id":"term_CLOSED","pane_id":"p_closed","status":"closed"}
+{"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
+{"kind":"namespace","event":"namespace_observed","namespace_id":"<GUID>","node":"<GUID>","path":"/hcom-alpha","recorded_at":"<TS>"}
+{"kind":"session","guid":"guid-alpha-0000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"alpha","role":"worker","tool":"codex","sids":[{"sid":"sess-alpha","observed_at":"<TS>","source":"harvest"}],"continuity":"confirmed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-alpha","tag":"worker","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
+{"kind":"session","guid":"guid-beta-0000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"beta","role":"reviewer","tool":"claude","continuity":"assumed","lineage":{},"provenance":{}}

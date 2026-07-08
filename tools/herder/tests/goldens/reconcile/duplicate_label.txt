@@ -1,0 +1,11 @@
+=== STDERR ===
+
+=== STDOUT ===
+GUID       LABEL                OUTCOME                        DETAIL
+dupa       duplabel             ambiguous                      fallback candidate terminal term_DUPLIVE is claimed by multiple active rows; refusing to guess
+dupb       duplabel             ambiguous                      fallback candidate terminal term_DUPLIVE is claimed by multiple active rows; refusing to guess
+=== EXIT ===
+1
+=== REGISTRY ===
+{"guid":"guid-dupa-0000","short_guid":"dupa","label":"duplabel","role":"worker","agent":"claude","terminal_id":"term_OLDA","pane_id":"p_old_a","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}
+{"guid":"guid-dupb-0000","short_guid":"dupb","label":"duplabel","role":"worker","agent":"claude","terminal_id":"term_OLDB","pane_id":"p_old_b","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}

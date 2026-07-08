@@ -1,8 +1,9 @@
 === STDERR ===
 enrolled manual-<SHORT> (<GUID>) pane=p_self terminal=term_SELF
 === STDOUT ===
-{"agent":"manual","cwd":"/mock/cwd","guid":"<GUID>","hcom_dir":"","hcom_name":"","hcom_tag":"","label":"manual-<SHORT>","pane_id":"p_self","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"},"role":"manual","short_guid":"<SHORT>","status":"active","terminal_id":"term_SELF","workspace_id":"ws_self"}
+{"kind":"session","guid":"<GUID>","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"manual-<SHORT>","role":"manual","tool":"manual","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"enroll","spawned_by":"user","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}
 === EXIT ===
 0
 === REGISTRY ===
-{"agent":"manual","cwd":"/mock/cwd","guid":"<GUID>","hcom_dir":"","hcom_name":"","hcom_tag":"","label":"manual-<SHORT>","pane_id":"p_self","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"<TS>"},"role":"manual","short_guid":"<SHORT>","status":"active","terminal_id":"term_SELF","workspace_id":"ws_self"}
+{"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
+{"kind":"session","guid":"<GUID>","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"manual-<SHORT>","role":"manual","tool":"manual","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"enroll","spawned_by":"user","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}

@@ -44,18 +44,19 @@ orchestrator itself replaceable.
 
 ## Orchestrator context reset
 
-When your own context balloons: bring the journal fully current FIRST (compaction and respawn
-both lose anything unpersisted), then compact in place — `herder compact '<steer: run name,
-in-flight units, pending verdicts, journal path>'` queues a real `/compact` into your own
-composer and fires at turn end. Fall back to self-respawn when the session is too incoherent
-to steer: write a HANDOFF entry (in flight / verified / next) and spawn a fresh orchestrator
-pointed at it. Either way the journal is the test: if a fresh orchestrator couldn't pick up
+At the 200–250k-token band (invariant 3 — every time, not a judgment call): bring the journal
+fully current FIRST (compaction and respawn both lose anything unpersisted), then compact in
+place — `herder compact '<steer: run name, in-flight units, pending verdicts, journal path>'`
+queues a real `/compact` into your own composer and fires at turn end. Fall back to self-respawn
+when the session is too incoherent to steer: write a HANDOFF entry (in flight / verified / next)
+and spawn a fresh orchestrator pointed at it — which culls this session before taking over the
+label (invariant 3). Either way the journal is the test: if a fresh orchestrator couldn't pick up
 the run from it, it is missing something every other agent needed too.
 
 ## Seen live
 
 - **Design-doc drift:** verify the doc's current-state claims against the actual branch *before*
-  phase 1; record corrections in the journal. A phase agent discovering drift burns its budget.
+  phase 1; record corrections in the journal. A phase agent discovering drift burns its context.
 - **"Done" with a dirty tree or red suite:** happens; that's what step 4 is for. Reply on the
   unit thread with the failing output (`--intent request --reply-to <report-id>`) rather than
   fixing it yourself.

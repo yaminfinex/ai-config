@@ -1,0 +1,2 @@
+{"guid":"guid-beta-0000","short_guid":"beta","label":"beta","role":"reviewer","agent":"codex","terminal_id":"term_BBB","pane_id":"p_20","team":"blue","hcom_dir":"/hfake/.hcom/teams/blue","hcom_name":"beta-rive","hcom_tag":"reviewer","status":"active"}
+{"guid":"guid-delta-0000","short_guid":"delta","label":"delta","role":"worker","agent":"claude","terminal_id":"term_OLD","pane_id":"p_old","cwd":"/work/delta","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}

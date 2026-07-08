@@ -91,7 +91,7 @@ worker still spawns rather than the report routing to a guessed session or the s
 `--worktree BRANCH [--base REF]` is the one-step worktree mode: spawn drives
 `herdr worktree create` itself (resolving the source repo from the spawner's cwd, which works
 from inside a linked worktree), spawns into the resulting workspace's checkout, and closes the
-workspace's seed shell pane under the same identity guard as `--new-tab`. The summary and
+workspace's seed shell pane under an identity guard. The summary and
 `--json` (`worktree` block) surface the created coordinates — `workspace_id`, checkout path,
 branch — so an orchestrator can reuse or `herdr worktree remove` the workspace later without
 re-querying. If the worktree is created but the spawn then fails, nothing is auto-removed: the
@@ -114,8 +114,8 @@ window ⇒ `queued` (do NOT resend). A target with no bus-bound registry row is 
 keystrokes are never typed. Exit codes and target forms: `herder send --help`. Contract pinned by
 `tests/check-send-contract.sh` (bus-only goldens) + `check-hcom-contract.sh` (scoping/addressing).
 
-Pane/terminal ids are positional and reused across sessions, so one coordinate can match several
-active rows (a reused pane accumulates a stale manual-enroll identity per prior session, TASK-035).
+Pane ids are display-only and terminal ids are run-scoped, so one coordinate can match several
+active rows (for example, stale manual-enroll identities from prior sessions, TASK-035).
 A lone candidate resolves as before (bus-less and not-yet-joined rows keep their existing
 refuse/queue outcomes); when >1 active row shares the coordinate, resolution delivers to the single
 row currently JOINED on the bus and REFUSES (exit 2) with the candidate list on ambiguity (0 or >1
@@ -161,8 +161,10 @@ live: send fired 107ms after bind, mid-boot, delivered whole at TUI readiness 2s
 **The one delivery blocker: unsubmitted composer text.** On BOTH families, text sitting
 unsubmitted in the composer starves incoming bus delivery indefinitely and SILENTLY — no receipt,
 no error (probed live; it was the root cause of the wave-4 reviewer stranding, TASK-031). Remedy:
-read the pane (`herder wait <guid> --read`); if text sits on the input line, submit or clear it —
-`herdr pane send-keys <pane> Enter` — and queued messages then inject at the next boundary.
+read the pane (`herder wait <guid> --read`); if garbage text sits on the input line, clear it with
+`herdr pane send-keys <pane> ctrl+u`. Use `Enter` only for legitimate text that should submit.
+A queued bus message rendered on the input line is not garbage; do not clear it, because it
+self-delivers at the next turn boundary.
 Retiring the boot-paste from bus-capable spawns removed the machinery that used to CREATE that
 state; a human draft left in a composer can still do it.
 

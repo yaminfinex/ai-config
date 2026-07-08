@@ -1,0 +1,4 @@
+{"guid":"valid-before","event":"registered","node":"node-local","state":"unseated","label":"before","role":"worker","tool":"codex","continuity":"assumed","provenance":{"mechanism":"spawn","spawned_by":"user","cwd":"$HOME/project","ts":"2026-07-08T00:01:00Z"}}
+{not json
+"just a string"
+{"guid":"valid-after","event":"registered","node":"node-local","state":"unseated","label":"after","role":"worker","tool":"claude","continuity":"assumed","provenance":{"mechanism":"spawn","spawned_by":"user","cwd":"$HOME/project","ts":"2026-07-08T00:01:01Z"}}

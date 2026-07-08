@@ -4,10 +4,10 @@ title: >-
   codex spawns never bind to hcom 0.7.23 bus (pty-only, session_id none, flagged
   stale, name-capture timeout, prompt undelivered) — split AND new-tab; claude
   fine
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 04:49'
-updated_date: '2026-07-08 04:59'
+updated_date: '2026-07-08 07:32'
 labels: []
 dependencies: []
 priority: high
@@ -32,5 +32,54 @@ UPDATE from lale control test (bus #5542, 2026-07-08): --split right fails IDENT
 created: 2026-07-08 04:59
 ---
 Isolation result from lale (bus #5598, 2026-07-08) — root cause narrowed to the HERDER SHIM PATH, not env inheritance and not upstream hcom: (1) raw 'hcom 1 codex' binds fine (<1 min, agent mazo); (2) herder-spawned codex post-hcom-upgrade binds ~6 MINUTES after spawn (probe re-registered as probe-codex-dove well past the 60s name-capture window) — slow-boot, TASK-036 flavor, upgraded from no-boot; (3) pre-upgrade codex spawns (venue-iface-bobo/tina) never bind, permanently stale. Fix question: why does the shim/launch path delay codex hcom registration by minutes? Suspects: sidecar/hookcmd startup ordering for codex, HERDER_HOOK_HCOM shim indirection, or codex notify/hook config injection racing the TUI. Bonus TASK-046 confirmation in same test: cull mistargeted (pane-reassigned warning) and the culled pane survived to bind later.
+---
+
+created: 2026-07-08 05:24
+---
+Live experiment in flight (vibe #5926): the TASK-046 codex re-dispatch runs with HERDER_SPAWN_BIND_MS=480000 (8x the default window). Outcome is a direct datapoint: if the worker binds and gets verified prompt delivery end-to-end, the ~6min shim bind latency is bounded and an extended window is a viable interim mitigation; if not, latency is unbounded/fatal and the shim fix escalates.
+---
+
+created: 2026-07-08 05:33
+---
+Extended-bind experiment result (vibe #6107, applied by hera) — MECHANISM SHARPENED: HERDER_SPAWN_BIND_MS=480000 did NOT fix spawn-native delivery. Spawn exited delivery_result=bind_timeout / hcom_capture=not_found even though the bind demonstrably COMPLETED on the hcom side well within the window (worker task046-fulo live and listening). So the defect is not (only) codex boot latency: herder spawn's NAME-CAPTURE loop never sees a bind that hcom itself completed — capture-loop-side. Additional symptom for the ticket: the registry row gets minted with EMPTY hcom_name, so herder send cannot resolve the worker afterwards (needs re-enroll or reconcile once TASK-046 lands). Investigation focus: what the capture loop polls (hcom list? events? launch tag?) and why a completed codex bind is invisible to it — note hcom 0.7.23 changed tag-line emission (x-ref TASK-040 reTag) and lale's earlier data showed pty-only/session_id-none partial binds; the capture key may be looking at the wrong field for codex. WORKAROUND OF THE DAY (proven end-to-end): spawn codex normally, watch hcom list for the bus name, deliver the initial prompt directly via hcom send to the live name — injected first try, worker acked and implementing.
+---
+
+created: 2026-07-08 06:36
+---
+ROOT CAUSE (vibe diagnosis #6902, read-only, live-validated): both capture signals are STRUCTURALLY dead for codex under hcom 0.7.23. awaitBind (spawn.go:1621) learns the childs name only via (a) sidecar registry enrichment, which requires pane-correlation launch_context.pane_id==paneID (sidecar.go:211), or (b) direct roster match on launch_context.pane_id (spawn.go:1626). Claude rows carry launch_context.pane_id via the hook handshake (hooks_bound:true). Codex rows never complete the hook handshake (hooks_bound:false, session_id empty) and their launch_context has ONLY the internal process_id — no pane_id — so neither signal can EVER fire; window length is irrelevant (matches the 8-min experiment and all three corpses). The late-appearing name is the pty/process-bound registration, which makes the bus name live but feeds nothing herder watches.
+
+FIX RANKING: F1 (primary, sidecarcmd-only): sidecar correlates its panes agent process to the roster via HCOM_PROCESS_ID read from /proc/<pid>/environ of the RUNNING agent (authoritative, unlike TASK-043 inherited-shell env) — proven live byte-equal to roster launch_context.process_id; HERDER_GUID + HCOM_INSTANCE_NAME in environ as belt-and-braces; feeds awaitBind through the existing enrichment path, no spawn.go change, TASK-033-compliant positive child-specific signal. F2 (spawn-side variant): collides with A2 — only if F1 latency proves insufficient. F3 (upstream): hcom 0.7.23 codex hook binding broken — filed on TASK-029 regardless; also the only thing that revives codex sid-reporting for TASK-053.
+
+DISPATCH DECISION (hera): F1 GO now, before A2 merges — sidecarcmd-only, but NOTE A2s scope also touches sidecar enrichment call sites; whichever branch merges second gets an explicit conflict-check + regate. Interim workaround remains the dispatch path.
+---
+
+created: 2026-07-08 06:51
+---
+[hera, from vibe review 2026-07-08 #7247] F1 delivered by task045-nina (482bfc7, fenced to sidecarcmd, worker gate green). Vibe review found ONE blocking defect: poll-loop enrichment at sidecar.go:152 requires a non-empty session_id, but codex rows have empty sids — if first correlation lands in the poll loop instead of bootstrap (real race: discoverRow can return the non-correlated fallback row; roster row can appear before /proc/<pid>/environ is scannable), hcom_name is never written and the TASK-045 symptom recurs with no recovery path. Same dead-recovery class as the TASK-053 miss; caught by the reachability check (run-log doctrine). Fix + 1 test requested from worker; on hand-back: hera gate + opus adversarial review. Sequencing: A2 also touches sidecar.go — second merge gets conflict-check + regate.
+---
+
+created: 2026-07-08 07:03
+---
+[hera 2026-07-08] Vibe hand-back (#7372): fix round complete (16b04ad), review-approved. HERA GATE GREEN from worktree /home/grace/Coding/ai-config-task045: go vet+test tools/herder AND tools/bottle pass (sidecarcmd fresh), all 21 check-*.sh PASS sequentially. Net diff fenced to sidecarcmd/{sidecar.go,sidecar_test.go}; dispatch brief file added then removed by worker, net-clean. Opus adversarial review dispatched: review-045-gobi (guid e0ad9981, own tab), brief napkins/run-herder-dx/brief-review-045.md — angles: foreign-process /proc mismatch, cache-miss rescan under long outage, TASK-033 no-new-non-positive-write. Awaiting verdict; MEDIUM+ blocks merge. Caveat stands: sid REPORTING stays codex-inert until F3; this delivers hcom_name enrichment (unblocks herder send).
+---
+
+created: 2026-07-08 07:04
+---
+[hera 2026-07-08] Opus adversarial verdict (review-045-gobi, #7544): CLEAN at MEDIUM+ — all four angles probed (foreign-process /proc scan safe: per-spawn-unique HERDER_GUID, empty-HCOM_PROCESS_ID skip, first-match stable under child inheritance, unmatched->fallback never mis-enriches; rescan bounded by 2s ticker, no growth/spam; TASK-033 held: only appendCorrelatedEnrichment writes, only under proven correlation; single-threaded loop, fork guard mirrored). 3 LOWs. HERA DISPOSITION: fix round anyway for LOW-1 — appendEnrichment silently no-ops (label conflict/closed record/marshal error) while enrichedCorrelated is set unconditionally; empty-sid retry gate then requires SessionID!="" => no-op first append permanently disables codex enrichment, no recovery. Third instance of the dead-recovery class (053, F1 round 1); fix cheap, worker alive. Routed via vibe: wrote-bool return + conditional flag + 1 test; LOW-2 inheritance-dependency comment same round; LOW-3 (outage rescan cost) accepted. Delta re-verdict from review-045-gobi after fix, then merge.
+---
+
+created: 2026-07-08 07:13
+---
+[hera 2026-07-08] Round-2 regate GREEN (3e66df4): vet/test both modules, sidecarcmd -count=1 fresh, 21/21 suites from worktree. Vibe delta-approved (all five no-op legs covered, flag set only on real write, recovery test pins the forced label-conflict path). Delta re-verdict requested from review-045-gobi; CLEAN delta = merge.
+---
+
+created: 2026-07-08 07:15
+---
+[hera 2026-07-08] MERGED to main (no-ff) after review-045-gobi DELTA CLEAN (#7757). Post-merge gate on main from repo root GREEN: vet/test herder+bottle, 21/21 check suites. Delivered: sidecar /proc HCOM_PROCESS_ID correlation (pane path first), write-confirmed enrichment (no-op leaves retry gate open), 8 tests incl fallback-first empty-sid race + no-op-retry recovery. herder send to codex workers now resolves via hcom_name enrichment. STANDING CAVEAT: sid REPORTING remains codex-inert until upstream hcom hook fix — F3 draft held on TASK-029, files at run closeout per owner. Credits: worker task045-nina (3 commits), vibe (2 review rounds, blocking find + class-ledger doctrine), review-045-gobi (adversarial + LOW-1 escalated by hera to fix round).
+---
+
+created: 2026-07-08 07:32
+---
+[hera 2026-07-08] PRODUCTION-VERIFIED: first post-merge codex spawn (wave-a3, guid a1d6ca7a) bound to the bus at birth — spawn prompt delivered with receipt (bind: bound, verify: delivered). The manual prompt-delivery workaround (spawn, watch hcom list, verified hcom send) is retired.
 ---
 <!-- COMMENTS:END -->

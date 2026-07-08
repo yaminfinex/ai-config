@@ -16,10 +16,10 @@
 package registry
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,6 +27,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
 // Record is one registry row. The typed fields are the ones the bash
@@ -44,18 +46,22 @@ type Record struct {
 	ShortGUID *string `json:"short_guid"`
 	Label     *string `json:"label"`
 
-	Role       string      `json:"role"`
-	Agent      string      `json:"agent"`
-	PaneID     string      `json:"pane_id"`
-	TerminalID string      `json:"terminal_id"`
-	Team       string      `json:"team"`
-	HcomDir    string      `json:"hcom_dir"`
-	HcomName   string      `json:"hcom_name"`
-	HcomTag    string      `json:"hcom_tag"`
-	Status     string      `json:"status"`
-	Provenance *Provenance `json:"provenance,omitempty"`
+	Role        string      `json:"role"`
+	Agent       string      `json:"agent"`
+	PaneID      string      `json:"pane_id"`
+	TerminalID  string      `json:"terminal_id"`
+	Team        string      `json:"team"`
+	HcomDir     string      `json:"hcom_dir"`
+	HcomName    string      `json:"hcom_name"`
+	HcomTag     string      `json:"hcom_tag"`
+	Status      string      `json:"status"`
+	RecordedAt  string      `json:"recorded_at,omitempty"`
+	CloseResult string      `json:"close_result,omitempty"`
+	CloseReason string      `json:"close_reason,omitempty"`
+	Provenance  *Provenance `json:"provenance,omitempty"`
 
-	Raw json.RawMessage `json:"-"`
+	Archived bool            `json:"-"`
+	Raw      json.RawMessage `json:"-"`
 }
 
 // Provenance records how an identity row entered the registry. It is optional
@@ -94,36 +100,138 @@ func DefaultPath() string {
 // Load reads every row of the registry at path. A missing file returns
 // (nil, fs.ErrNotExist)-wrapped error — callers mirror the bash scripts'
 // `[[ -f $REGISTRY ]]` guards and decide what "no registry" means for them.
-// The file is parsed as a stream of JSON values (what `jq -s` sees), so
-// blank lines and inter-row whitespace are irrelevant; a malformed or
-// non-object value is an error, matching jq aborting the whole pipeline.
+// Malformed or non-object rows are quarantined with a stderr warning and
+// skipped. That intentionally diverges from jq's old whole-file failure mode:
+// the v2 registry spec requires one torn append to never disable the CLI.
 func Load(path string) ([]Record, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return decode(f, path)
+	return decode(f, path, false)
 }
 
-func decode(r io.Reader, path string) ([]Record, error) {
+func LoadWithArchives(path string) ([]Record, error) {
+	recs, err := LoadArchives(path)
+	if err != nil {
+		return nil, err
+	}
+	live, err := Load(path)
+	if err != nil {
+		return nil, err
+	}
+	return append(recs, live...), nil
+}
+
+func LoadArchives(path string) ([]Record, error) {
+	archives, err := registryArchivePaths(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []Record
+	for _, archive := range archives {
+		f, err := os.Open(archive)
+		if err != nil {
+			return nil, err
+		}
+		recs, decErr := decode(f, archive, true)
+		closeErr := f.Close()
+		if decErr != nil {
+			return nil, decErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		out = append(out, recs...)
+	}
+	return out, nil
+}
+
+func decode(r io.Reader, path string, archived bool) ([]Record, error) {
 	var recs []Record
-	dec := json.NewDecoder(r)
-	for {
-		var raw json.RawMessage
-		if err := dec.Decode(&raw); err != nil {
-			if errors.Is(err, io.EOF) {
+	br := bufio.NewReader(r)
+	for lineNo := 1; ; lineNo++ {
+		line, err := br.ReadBytes('\n')
+		if len(line) > 0 {
+			raw := bytes.TrimSpace(line)
+			if len(raw) != 0 {
+				var rec Record
+				if err := json.Unmarshal(raw, &rec); err != nil {
+					warnQuarantined(path, lineNo, err)
+				} else {
+					var obj map[string]json.RawMessage
+					if err := json.Unmarshal(raw, &obj); err != nil {
+						warnQuarantined(path, lineNo, err)
+					} else {
+						kind := rawString(obj["kind"])
+						if kind != "" && kind != v2.KindSession {
+							continue
+						}
+						if isV2SessionObject(obj) {
+							rec = legacyRecordFromV2Object(obj)
+						}
+						rec.Archived = archived
+						rec.Raw = bytes.Clone(raw)
+						recs = append(recs, rec)
+					}
+				}
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
 				return recs, nil
 			}
-			return nil, fmt.Errorf("registry %s: row %d: %w", path, len(recs)+1, err)
+			return nil, err
 		}
-		var rec Record
-		if err := json.Unmarshal(raw, &rec); err != nil {
-			return nil, fmt.Errorf("registry %s: row %d: %w", path, len(recs)+1, err)
-		}
-		rec.Raw = bytes.Clone(raw)
-		recs = append(recs, rec)
 	}
+}
+
+func isV2SessionObject(obj map[string]json.RawMessage) bool {
+	kind := rawString(obj["kind"])
+	return (kind == "" || kind == v2.KindSession) && rawString(obj["state"]) != ""
+}
+
+func legacyRecordFromV2Object(obj map[string]json.RawMessage) Record {
+	guid := rawString(obj["guid"])
+	short := ShortGUID(guid)
+	label := rawString(obj["label"])
+	state := rawString(obj["state"])
+	status := "active"
+	if state == v2.StateRetired || state == v2.StateLost {
+		status = "closed"
+	}
+	var seat v2.Seat
+	_ = json.Unmarshal(obj["seat"], &seat)
+	var prov Provenance
+	_ = json.Unmarshal(obj["provenance"], &prov)
+	rec := Record{
+		Role:        rawString(obj["role"]),
+		Agent:       rawString(obj["tool"]),
+		PaneID:      seat.PaneID,
+		TerminalID:  seat.TerminalID,
+		HcomDir:     seat.Namespace,
+		HcomName:    seat.HcomName,
+		Status:      status,
+		CloseResult: rawString(obj["close_result"]),
+		CloseReason: rawString(obj["close_reason"]),
+		Provenance:  &prov,
+	}
+	if guid != "" {
+		rec.GUID = &guid
+		rec.ShortGUID = &short
+	}
+	if label != "" {
+		rec.Label = &label
+	}
+	if prov.Tag != "" {
+		rec.HcomTag = prov.Tag
+	}
+	return rec
+}
+
+func warnQuarantined(path string, lineNo int, err error) {
+	fmt.Fprintf(os.Stderr, "herder registry %s: quarantined line %d: %v\n", path, lineNo, err)
 }
 
 // LatestByGUID collapses rows to the latest record per guid, reproducing
@@ -169,11 +277,11 @@ func Resolve(recs []Record, target string) *Record {
 }
 
 // ActiveByPaneOrTerminal resolves a pane_id/terminal_id to the latest ACTIVE
-// row holding it. Pane coordinates are positional (herdr reuses them across
-// sessions), so unlike guid/label resolution this refuses closed rows; ties
-// resolve last in guid order, matching the registry's jq semantics. Used by
-// bus-only send to map term_*/pane targets to a registry row (and from there
-// to a bus name) now that keystroke delivery at raw coordinates is gone.
+// row holding it. Pane ids are display-only and terminal ids are run-scoped,
+// so unlike guid/label resolution this refuses closed rows; ties resolve last
+// in guid order, matching the registry's jq semantics. Used by bus-only send
+// to map term_*/pane targets to a registry row (and from there to a bus name)
+// now that keystroke delivery at raw coordinates is gone.
 func ActiveByPaneOrTerminal(recs []Record, key string) *Record {
 	if key == "" {
 		return nil
@@ -191,9 +299,9 @@ func ActiveByPaneOrTerminal(recs []Record, key string) *Record {
 
 // ActiveCandidatesByPaneOrTerminal returns EVERY latest ACTIVE row whose
 // pane_id or terminal_id equals key, in guid order (the same order
-// LatestByGUID yields). Pane coordinates are positional — herdr reuses one
-// physical pane across sessions — so a reused pane can accumulate several
-// active rows (a stale manual-enroll identity per prior session). Unlike
+// LatestByGUID yields). Pane ids are display-only and may have stale registry
+// claimants, so one coordinate can accumulate several active rows (for
+// example, a stale manual-enroll identity per prior session). Unlike
 // ActiveByPaneOrTerminal, which silently keeps only the last, this exposes the
 // full candidate set so a caller can disambiguate by bus liveness and refuse
 // to guess when more than one is live (TASK-035).
@@ -314,23 +422,105 @@ func PreserveToolSessionID(prov Provenance, recs []Record, guid string) Provenan
 	return prov
 }
 
-// Append writes one raw JSON row to the registry, creating the state dir on
-// first use (herder spawn's `mkdir -p $STATE_DIR` + `printf '%s\n' >>`).
-// The caller owns the row's serialization; Append only guarantees the
-// trailing newline that keeps the file valid JSONL.
+// Append writes one session event through the flocked v2 write path. Callers
+// should prefer UpdateLocked when the write decision depends on the current
+// projection; Append remains for tests and legacy-shaped seed rows.
 func Append(path string, row []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	rec, err := recordFromJSON(row)
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(append(bytes.TrimRight(row, "\n"), '\n')); err != nil {
-		f.Close()
+	state := v2.StateSeated
+	event := "registered"
+	if rec.Status == "closed" {
+		state = v2.StateRetired
+		event = "retired"
+	}
+	_, err = UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{V2FromRecord(rec, event, state, "")}, nil
+	})
+	return err
+}
+
+func AppendLegacySessionEvent(path string, row []byte, event, state string) error {
+	rec, err := recordFromJSON(row)
+	if err != nil {
 		return err
 	}
-	return f.Close()
+	_, err = UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{V2FromRecord(rec, event, state, "")}, nil
+	})
+	return err
+}
+
+func recordFromJSON(row []byte) (Record, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(bytes.TrimSpace(row), &obj); err != nil {
+		return Record{}, err
+	}
+	if isV2SessionObject(obj) {
+		rec := legacyRecordFromV2Object(obj)
+		overlayLegacyFields(&rec, obj)
+		return rec, nil
+	}
+	var rec Record
+	if err := json.Unmarshal(bytes.TrimSpace(row), &rec); err != nil {
+		return Record{}, err
+	}
+	rec.Raw = bytes.Clone(bytes.TrimSpace(row))
+	return rec, nil
+}
+
+func overlayLegacyFields(rec *Record, obj map[string]json.RawMessage) {
+	if v := rawString(obj["guid"]); v != "" {
+		rec.GUID = &v
+	}
+	if v := rawString(obj["short_guid"]); v != "" {
+		rec.ShortGUID = &v
+	}
+	if v := rawString(obj["label"]); v != "" {
+		rec.Label = &v
+	}
+	if v := rawString(obj["role"]); v != "" {
+		rec.Role = v
+	}
+	if v := rawString(obj["agent"]); v != "" {
+		rec.Agent = v
+	}
+	if v := rawString(obj["tool"]); v != "" && rec.Agent == "" {
+		rec.Agent = v
+	}
+	if v := rawString(obj["pane_id"]); v != "" {
+		rec.PaneID = v
+	}
+	if v := rawString(obj["terminal_id"]); v != "" {
+		rec.TerminalID = v
+	}
+	if v := rawString(obj["hcom_dir"]); v != "" {
+		rec.HcomDir = v
+	}
+	if v := rawString(obj["hcom_name"]); v != "" {
+		rec.HcomName = v
+	}
+	if v := rawString(obj["hcom_tag"]); v != "" {
+		rec.HcomTag = v
+	}
+	if v := rawString(obj["status"]); v != "" {
+		rec.Status = v
+	}
+	if v := rawString(obj["recorded_at"]); v != "" {
+		rec.RecordedAt = v
+	}
+	if v := rawString(obj["close_result"]); v != "" {
+		rec.CloseResult = v
+	}
+	if v := rawString(obj["close_reason"]); v != "" {
+		rec.CloseReason = v
+	}
+	var prov Provenance
+	if err := json.Unmarshal(obj["provenance"], &prov); err == nil && prov != (Provenance{}) {
+		rec.Provenance = &prov
+	}
 }
 
 func NewGUID() (string, error) {
@@ -434,6 +624,149 @@ func DropRawFields(raw []byte, fields ...string) []byte {
 		return raw
 	}
 	return out
+}
+
+func V2FromRecord(rec Record, event, state, recordedAt string) v2.SessionRecord {
+	guid := ptrValue(rec.GUID)
+	if state == "" {
+		switch rec.Status {
+		case "closed":
+			state = v2.StateRetired
+		case "active":
+			state = v2.StateSeated
+		default:
+			state = v2.StateUnseated
+		}
+	}
+	if recordedAt == "" {
+		recordedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	}
+	prov := v2.Provenance{}
+	if rec.Provenance != nil {
+		prov = v2.Provenance{
+			Mechanism:     rec.Provenance.Mechanism,
+			SpawnedBy:     rec.Provenance.SpawnedBy,
+			ToolSessionID: rec.Provenance.ToolSessionID,
+			Tag:           rec.Provenance.Tag,
+			BatchID:       rec.Provenance.BatchID,
+			CWD:           rec.Provenance.CWD,
+			WorkspaceID:   rec.Provenance.WorkspaceID,
+			Branch:        rec.Provenance.Branch,
+			TS:            rec.Provenance.TS,
+			ForkedFrom:    rec.Provenance.ForkedFrom,
+			ResumedAt:     rec.Provenance.ResumedAt,
+		}
+	}
+	out := v2.SessionRecord{
+		Kind:        v2.KindSession,
+		GUID:        guid,
+		Event:       event,
+		RecordedAt:  recordedAt,
+		State:       state,
+		Label:       ptrValue(rec.Label),
+		Role:        rec.Role,
+		Tool:        rec.Agent,
+		Continuity:  "assumed",
+		Lineage:     v2.Lineage{ForkedFrom: firstNonEmpty(prov.ForkedFrom)},
+		Provenance:  prov,
+		CloseResult: rec.CloseResult,
+		CloseReason: rec.CloseReason,
+	}
+	if prov.ToolSessionID != "" {
+		out.SIDs = []v2.SID{{SID: prov.ToolSessionID, ObservedAt: firstNonEmpty(prov.TS, recordedAt), Source: "harvest"}}
+		out.Continuity = "confirmed"
+	}
+	if state == v2.StateSeated {
+		out.Seat = &v2.Seat{
+			Kind:        "herdr",
+			TerminalID:  rec.TerminalID,
+			PaneID:      rec.PaneID,
+			HcomName:    rec.HcomName,
+			Namespace:   rec.HcomDir,
+			ConfirmedAt: recordedAt,
+		}
+	}
+	return out
+}
+
+func LegacyFromV2(rec v2.SessionRecord) Record {
+	if rec.LegacyV1 && len(rec.Raw) > 0 {
+		if legacy, err := recordFromJSON(rec.Raw); err == nil {
+			return legacy
+		}
+	}
+	guid := rec.GUID
+	short := ShortGUID(guid)
+	label := rec.Label
+	status := "active"
+	if rec.State == v2.StateRetired || rec.State == v2.StateLost {
+		status = "closed"
+	}
+	prov := Provenance{
+		Mechanism:     rec.Provenance.Mechanism,
+		SpawnedBy:     rec.Provenance.SpawnedBy,
+		ToolSessionID: rec.Provenance.ToolSessionID,
+		Tag:           rec.Provenance.Tag,
+		BatchID:       rec.Provenance.BatchID,
+		CWD:           rec.Provenance.CWD,
+		WorkspaceID:   rec.Provenance.WorkspaceID,
+		Branch:        rec.Provenance.Branch,
+		TS:            rec.Provenance.TS,
+		ForkedFrom:    rec.Provenance.ForkedFrom,
+		ResumedAt:     rec.Provenance.ResumedAt,
+	}
+	out := Record{
+		GUID:        &guid,
+		ShortGUID:   &short,
+		Role:        rec.Role,
+		Agent:       rec.Tool,
+		Status:      status,
+		RecordedAt:  rec.RecordedAt,
+		CloseResult: rec.CloseResult,
+		CloseReason: rec.CloseReason,
+		Provenance:  &prov,
+	}
+	if label != "" {
+		out.Label = &label
+	}
+	if rec.Seat != nil {
+		out.PaneID = rec.Seat.PaneID
+		out.TerminalID = rec.Seat.TerminalID
+		out.HcomName = rec.Seat.HcomName
+		out.HcomDir = rec.Seat.Namespace
+	}
+	out.HcomTag = prov.Tag
+	if len(rec.Raw) > 0 {
+		out.Raw = bytes.Clone(rec.Raw)
+	}
+	return out
+}
+
+func rawString(raw json.RawMessage) string {
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	return ""
+}
+
+func ptrValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func branchName(cwd string) string {

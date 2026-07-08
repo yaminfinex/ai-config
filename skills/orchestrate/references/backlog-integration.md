@@ -51,6 +51,8 @@ one writer and already exist in shared history.
   backlog task create "Unit 1 — wire schema" -l run-<slug> --priority high --plain
   backlog task create "Unit 2 — migrate" -l run-<slug> --dep task-1 --plain
   ```
+  Every task body obeys the task-capture contract (invariant 2): three readers, reachable
+  references, acceptance criteria at capture time, plain language.
 
 **Agents report, never write.** Once fanned out, an agent never touches `backlog/` at all — no
 `task create` (which would reopen the ID race on its branch) and no `task edit` either (see **the
