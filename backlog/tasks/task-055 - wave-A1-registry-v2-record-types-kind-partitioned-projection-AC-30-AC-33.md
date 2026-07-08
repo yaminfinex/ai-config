@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - codex-66dd90b8
 created_date: '2026-07-08 05:55'
-updated_date: '2026-07-08 06:15'
+updated_date: '2026-07-08 06:17'
 labels: []
 dependencies: []
 priority: high
@@ -29,5 +29,10 @@ A1-gate criterion (spec-ravu #6484): the golden v1 registry fixtures must be cut
 created: 2026-07-08 06:15
 ---
 DONE report received (wave-a1-gino #6654, commit 5172774). hera gate re-run from worktree: vet clean, tests ok (herder 11 pkgs incl new registry/v2, bottle 5), 21/21 suites green (new check-registry-v2.sh included); tools/bottle/tests genuinely absent repo-wide, worker 0-count honest. Diff 9 files +680/-22; the -22 is the LIVE legacy-loader quarantine change -> adversarial review dispatched despite plan scoping review to A2-A4 (live path = engine risk): opus @review-a1-zumi, focused on quarantine behaviour change, AC-30 phantom-session risk, 5.4 mapping, anomaly determinism, fixture fidelity vs memo. Merge gates on verdict. Worker BACKLOG items: (1) ai-doctor env warnings pre-existing; (2) open design question for A2/A4 — do CLI consumers switch to v2 projection directly or keep adapting via legacy Record API through the transition (route to spec-ravu at A2 dispatch).
+---
+
+created: 2026-07-08 06:17
+---
+Adversarial verdict (opus @review-a1-zumi #6723): FINDINGS, 1 medium. F1: detectLabelConflicts (registry.go:403) ranges over the byLabel map, so with >=2 distinct conflicted labels the emitted duplicate-live-label anomaly ORDER is randomized run-to-run (violates spec 3.1 inv 6/12 determinism; contradicts its own test name). Masked by fixture gap: duplicate-labels.jsonl has only ONE conflicting label. Fix: sort label keys (or sort those anomalies by Label) + extend fixture to two conflicted labels. Surfaces 1/2/3/5 all HELD under attack (legacy quarantine safe for real JSONL; kind-partition no phantom sessions incl guid==node_id collision case; 5.4 mapping faithful; fixtures match memo). Fix round routed to worker; reviewer held for re-verdict.
 ---
 <!-- COMMENTS:END -->
