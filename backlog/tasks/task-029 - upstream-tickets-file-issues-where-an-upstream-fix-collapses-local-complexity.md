@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-08 06:40'
+updated_date: '2026-07-08 06:44'
 labels:
   - run-herder-dx
 dependencies: []
@@ -86,5 +86,10 @@ UPSTREAM FILING CANDIDATE, HIGH (vibe #6902, TASK-045 F3): hcom 0.7.23 codex hoo
 created: 2026-07-08 06:40
 ---
 F3 upstream issue draft FINALIZED and HELD (vibe #6996): regression-window claim softened to what records support (0.7.22 had full launch_context + slow-but-completing binds; 0.7.23 first version where hooks_bound never completes), evidence plan concrete (fresh redacted side-by-side claude-vs-codex rows at filing time). Filing gated on OWNER sign-off — outward-facing action; go/no-go is in front of the owner now. On greenlight: vibe files, issue URL lands here.
+---
+
+created: 2026-07-08 06:44
+---
+Owner decision: F3 upstream filing DEFERRED to run closeout — draft stays held as finalized; vibe files at closeout with fresh evidence capture, issue URL lands here then.
 ---
 <!-- COMMENTS:END -->
