@@ -12,7 +12,7 @@ export AI_CONFIG_ROOT="$REPO_ROOT"
 
 cd "$HERDER_ROOT" || exit 1
 
-if go test ./internal/registry -run 'Test(LoadDerivesLegacyViewFromV2Rows|ConcurrentLabelClaimsOneWinner|LockedValidatorPreservesRenameAgainstStaleEnrichment|LockedValidatorDoesNotResurrectUnseatedSession|LockedWriterRefusesUnlocked)$'; then
+if go test ./internal/registry -run 'Test(LoadDerivesLegacyViewFromV2Rows|TwoProcessLabelClaimsOneWinner|LockedWriteMintsNodeOnceAndStampsRows|TwoProcessFirstWritersConvergeOnOneNode|LockedWriteRefusesHalfPresentNodeState|NodeInitRepairsAndCloneRepairKeepsPriorRows|LockedValidatorPreservesRenameAgainstStaleEnrichment|LockedValidatorDoesNotResurrectUnseatedSession|LockedWriterRefusesUnlocked)$'; then
   printf '\nALL GREEN — registry write-discipline invariants pass.\n'
   exit 0
 fi

@@ -87,9 +87,13 @@ block_for_with_list() {
     "$(env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" "$REPO_ROOT/bin/herder" list 2>&1)"
 }
 
+normalize_block() {
+  sed -E 's/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/<GUID>/g; s/"hostname":"[^"]*"/"hostname":"<HOST>"/g; s/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g'
+}
+
 check_one() {
   local name="$1" block gold
-  block="$(block_for | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g')"
+  block="$(block_for | normalize_block)"
   gold="$GOLDENS/$name.txt"
   if [[ "$WRITE" -eq 1 ]]; then
     printf '%s\n' "$block" >"$gold"
@@ -109,7 +113,7 @@ check_one() {
 
 check_one_with_list() {
   local name="$1" block gold
-  block="$(block_for_with_list | sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g')"
+  block="$(block_for_with_list | normalize_block)"
   gold="$GOLDENS/$name.txt"
   if [[ "$WRITE" -eq 1 ]]; then
     printf '%s\n' "$block" >"$gold"

@@ -265,16 +265,22 @@ func TestAppend(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("lines = %d, want 2: %s", len(lines), data)
+	if len(lines) != 3 {
+		t.Fatalf("lines = %d, want node row plus 2 session rows: %s", len(lines), data)
 	}
 	for i, line := range lines {
 		var row map[string]any
 		if err := json.Unmarshal([]byte(line), &row); err != nil {
 			t.Fatal(err)
 		}
-		if row["kind"] != "session" || row["state"] != "seated" || row["status"] != nil {
-			t.Fatalf("line %d = %s, want clean seated v2 session row", i+1, line)
+		if i == 0 {
+			if row["kind"] != "node" || row["event"] != "node_registered" || row["node_id"] == "" {
+				t.Fatalf("line %d = %s, want node_registered row", i+1, line)
+			}
+			continue
+		}
+		if row["kind"] != "session" || row["state"] != "seated" || row["status"] != nil || row["node"] == "" {
+			t.Fatalf("line %d = %s, want clean node-attributed seated v2 session row", i+1, line)
 		}
 	}
 	recs, err := Load(path)
@@ -284,6 +290,257 @@ func TestAppend(t *testing.T) {
 	if len(recs) != 2 || ptrString(recs[0].GUID) != "g-1" || recs[0].Status != "active" || ptrString(recs[1].GUID) != "g-2" {
 		t.Fatalf("legacy view = %+v, want active g-1/g-2 records", recs)
 	}
+}
+
+func TestLockedWriteMintsNodeOnceAndStampsRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "registry.jsonl")
+	for _, guid := range []string{"guid-alpha", "guid-beta"} {
+		guid := guid
+		if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+			return []v2.SessionRecord{{GUID: guid, Label: guid, State: v2.StateSeated}}, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	proj := loadProjection(t, path)
+	nodes := proj.Nodes()
+	if len(nodes) != 1 {
+		t.Fatalf("nodes = %+v, want exactly one minted node", nodes)
+	}
+	marker, err := os.ReadFile(NodeMarkerPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeID := strings.TrimSpace(string(marker))
+	if nodeID == "" || nodeID != nodes[0].NodeID {
+		t.Fatalf("marker = %q nodes = %+v, want agreement", marker, nodes)
+	}
+	for _, rec := range proj.Sessions() {
+		if rec.Node != nodeID {
+			t.Fatalf("session %s node = %q, want %q", rec.GUID, rec.Node, nodeID)
+		}
+	}
+}
+
+func TestTwoProcessFirstWritersConvergeOnOneNode(t *testing.T) {
+	if os.Getenv("HERDER_REGISTRY_NODE_HELPER") == "1" {
+		runNodeMintHelper()
+		return
+	}
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	start := filepath.Join(t.TempDir(), "start")
+	cmds := make([]*exec.Cmd, 0, 2)
+	for _, guid := range []string{"guid-alpha", "guid-beta"} {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestTwoProcessFirstWritersConvergeOnOneNode$", "-test.count=1")
+		cmd.Env = append(os.Environ(),
+			"HERDER_REGISTRY_NODE_HELPER=1",
+			"HERDER_REGISTRY_NODE_PATH="+path,
+			"HERDER_REGISTRY_NODE_GUID="+guid,
+			"HERDER_REGISTRY_NODE_START="+start,
+		)
+		cmds = append(cmds, cmd)
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start helper %s: %v", guid, err)
+		}
+		t.Cleanup(func() {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		})
+	}
+	if err := os.WriteFile(start, []byte("go\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("helper failed: %v", err)
+		}
+	}
+	proj := loadProjection(t, path)
+	if got := len(proj.Nodes()); got != 1 {
+		t.Fatalf("node rows = %d, want 1", got)
+	}
+	nodeID := proj.Nodes()[0].NodeID
+	for _, rec := range proj.Sessions() {
+		if rec.Node != nodeID {
+			t.Fatalf("session %s node = %q, want %q", rec.GUID, rec.Node, nodeID)
+		}
+	}
+}
+
+func runNodeMintHelper() {
+	start := os.Getenv("HERDER_REGISTRY_NODE_START")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(start); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			os.Stderr.WriteString("timed out waiting for start barrier\n")
+			os.Exit(2)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	path := os.Getenv("HERDER_REGISTRY_NODE_PATH")
+	guid := os.Getenv("HERDER_REGISTRY_NODE_GUID")
+	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: guid, Label: guid, State: v2.StateSeated}}, nil
+	})
+	if err != nil {
+		os.Stderr.WriteString(err.Error() + "\n")
+		os.Exit(2)
+	}
+}
+
+func TestLockedWriteRefusesHalfPresentNodeState(t *testing.T) {
+	t.Run("marker only", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "registry.jsonl")
+		if err := os.WriteFile(NodeMarkerPath(path), []byte("node-marker\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+			return []v2.SessionRecord{{GUID: "guid-marker", State: v2.StateSeated}}, nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "herder node init") {
+			t.Fatalf("err = %v, want node init guidance", err)
+		}
+	})
+	t.Run("row only", func(t *testing.T) {
+		path := writeRegistry(t, `{"kind":"node","event":"node_registered","node_id":"node-row","recorded_at":"2026-07-08T00:00:00Z"}`)
+		_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+			return []v2.SessionRecord{{GUID: "guid-row", State: v2.StateSeated}}, nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "herder node init") {
+			t.Fatalf("err = %v, want node init guidance", err)
+		}
+	})
+	t.Run("empty marker", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "registry.jsonl")
+		if err := os.WriteFile(NodeMarkerPath(path), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+			return []v2.SessionRecord{{GUID: "guid-empty", State: v2.StateSeated}}, nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "herder node init") {
+			t.Fatalf("err = %v, want node init guidance", err)
+		}
+	})
+}
+
+func TestNodeInitRepairsAndCloneRepairKeepsPriorRows(t *testing.T) {
+	t.Run("idempotent healthy state", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "registry.jsonl")
+		first, err := InitNode(path, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := InitNode(path, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first.NodeID == "" || second.NodeID != first.NodeID || second.Changed {
+			t.Fatalf("first=%+v second=%+v, want stable no-op second init", first, second)
+		}
+		if got := len(loadProjection(t, path).Nodes()); got != 1 {
+			t.Fatalf("node rows = %d, want 1 after idempotent init", got)
+		}
+	})
+	t.Run("marker only", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "registry.jsonl")
+		if err := os.WriteFile(NodeMarkerPath(path), []byte("node-marker\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := InitNode(path, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.Changed || res.NodeID != "node-marker" || !hasNode(loadProjection(t, path).Nodes(), "node-marker") {
+			t.Fatalf("res=%+v, want marker node row repair", res)
+		}
+	})
+	t.Run("row only", func(t *testing.T) {
+		path := writeRegistry(t, `{"kind":"node","event":"node_registered","node_id":"node-row","recorded_at":"2026-07-08T00:00:00Z"}`)
+		res, err := InitNode(path, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		marker, err := os.ReadFile(NodeMarkerPath(path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.Changed || res.NodeID != "node-row" || strings.TrimSpace(string(marker)) != "node-row" {
+			t.Fatalf("res=%+v marker=%q, want marker repair", res, marker)
+		}
+	})
+	t.Run("empty marker", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "registry.jsonl")
+		if err := os.WriteFile(NodeMarkerPath(path), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := InitNode(path, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.Changed || res.NodeID == "" || len(loadProjection(t, path).Nodes()) != 1 {
+			t.Fatalf("res=%+v, want fresh repair for empty marker", res)
+		}
+	})
+	t.Run("empty marker new", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "registry.jsonl")
+		if err := os.WriteFile(NodeMarkerPath(path), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := InitNode(path, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.Changed || res.NodeID == "" || strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path)))) != res.NodeID {
+			t.Fatalf("res=%+v, want --new repair for empty marker", res)
+		}
+	})
+	t.Run("new clone node", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "registry.jsonl")
+		if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+			return []v2.SessionRecord{{GUID: "guid-old", State: v2.StateSeated}}, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		oldProj := loadProjection(t, path)
+		oldNode := oldProj.Nodes()[0].NodeID
+		if _, err := InitNode(path, true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+			return []v2.SessionRecord{{GUID: "guid-new", State: v2.StateSeated}}, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		proj := loadProjection(t, path)
+		nodes := proj.Nodes()
+		if len(nodes) != 2 {
+			t.Fatalf("nodes = %+v, want old and fresh node", nodes)
+		}
+		newNode := strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path))))
+		if newNode == "" || newNode == oldNode {
+			t.Fatalf("new marker = %q old = %q, want fresh", newNode, oldNode)
+		}
+		byGUID := map[string]v2.SessionRecord{}
+		for _, rec := range proj.Sessions() {
+			byGUID[rec.GUID] = rec
+		}
+		if byGUID["guid-old"].Node != oldNode {
+			t.Fatalf("old row node = %q, want %q", byGUID["guid-old"].Node, oldNode)
+		}
+		if byGUID["guid-new"].Node != newNode {
+			t.Fatalf("new row node = %q, want %q", byGUID["guid-new"].Node, newNode)
+		}
+	})
 }
 
 func TestLoadDerivesLegacyViewFromV2Rows(t *testing.T) {
@@ -440,8 +697,12 @@ func TestAppendLegacyRetiredPreservesCloseReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("lines = %d, want node row plus retired row: %s", len(lines), data)
+	}
 	var got map[string]any
-	if err := json.Unmarshal(bytes.TrimSpace(data), &got); err != nil {
+	if err := json.Unmarshal([]byte(lines[1]), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got["state"] != v2.StateRetired || got["event"] != "retired" || got["close_result"] != "launch_failed" || got["close_reason"] != "pane exited before lifecycle bind" {
@@ -522,6 +783,24 @@ func TestLockedWriterRefusesUnlocked(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "refusing to write unlocked") {
 		t.Fatalf("err = %v, want refusing to write unlocked", err)
 	}
+}
+
+func loadProjection(t *testing.T, path string) *v2.Projection {
+	t.Helper()
+	proj, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proj
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func mustMarshalRecord(t *testing.T, rec Record) []byte {
