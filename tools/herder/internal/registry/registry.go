@@ -55,6 +55,7 @@ type Record struct {
 	HcomName    string      `json:"hcom_name"`
 	HcomTag     string      `json:"hcom_tag"`
 	Status      string      `json:"status"`
+	RecordedAt  string      `json:"recorded_at,omitempty"`
 	CloseResult string      `json:"close_result,omitempty"`
 	CloseReason string      `json:"close_reason,omitempty"`
 	Provenance  *Provenance `json:"provenance,omitempty"`
@@ -507,6 +508,9 @@ func overlayLegacyFields(rec *Record, obj map[string]json.RawMessage) {
 	if v := rawString(obj["status"]); v != "" {
 		rec.Status = v
 	}
+	if v := rawString(obj["recorded_at"]); v != "" {
+		rec.RecordedAt = v
+	}
 	if v := rawString(obj["close_result"]); v != "" {
 		rec.CloseResult = v
 	}
@@ -717,6 +721,7 @@ func LegacyFromV2(rec v2.SessionRecord) Record {
 		Role:        rec.Role,
 		Agent:       rec.Tool,
 		Status:      status,
+		RecordedAt:  rec.RecordedAt,
 		CloseResult: rec.CloseResult,
 		CloseReason: rec.CloseReason,
 		Provenance:  &prov,

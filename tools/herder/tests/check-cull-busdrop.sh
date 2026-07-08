@@ -81,8 +81,9 @@ case "\${1:-} \${2:-}" in
     printf '%s\n' "\${3:-}" >>"\$MOCK_PROBE_DIR/closed_panes"
     if [[ "\${MOCK_CULL_APPEND_ENRICHED:-0}" = "1" ]]; then
       jq -nc --arg dir "\${MOCK_CULL_APPEND_HCOM_DIR:-}" \
-        '{guid:"guid-race", short_guid:"race", label:"race", terminal_id:"term_BUS", pane_id:"p_bus",
-          agent:"claude", team:"alpha", hcom_dir:\$dir, hcom_name:"bus-race", status:"active"}' \
+        '{kind:"session", guid:"guid-race", event:"registered", recorded_at:"2026-07-08T00:00:01Z",
+          state:"seated", label:"race", role:"worker", tool:"claude",
+          seat:{kind:"herdr", terminal_id:"term_BUS", pane_id:"p_bus", hcom_name:"bus-race", namespace:\$dir}}' \
         >>"\${HERDER_STATE_DIR:?}/registry.jsonl"
     fi
     jq -n --arg pane "\${3:-}" '{result:{type:"closed", pane_id:\$pane}}'
@@ -122,30 +123,35 @@ make_case() {
   case "$kind" in
     bus)
       jq -nc --arg dir "$bus" \
-        '{guid:"guid-bus", short_guid:"bus", label:"bus", terminal_id:"term_BUS", pane_id:"p_bus",
-          agent:"claude", team:"alpha", hcom_dir:$dir, hcom_name:"bus-alpha", status:"active"}' \
+        '{kind:"session", guid:"guid-bus", event:"registered", recorded_at:"2026-07-08T00:00:00Z",
+          state:"seated", label:"bus", role:"worker", tool:"claude",
+          seat:{kind:"herdr", terminal_id:"term_BUS", pane_id:"p_bus", hcom_name:"bus-alpha", namespace:$dir}}' \
         >"$reg"
       ;;
     plain)
       jq -nc \
-        '{guid:"guid-plain", short_guid:"plain", label:"plain", terminal_id:"term_PLAIN", pane_id:"p_plain",
-          agent:"bash", team:"", hcom_dir:"", hcom_name:"", status:"active"}' \
+        '{kind:"session", guid:"guid-plain", event:"registered", recorded_at:"2026-07-08T00:00:00Z",
+          state:"seated", label:"plain", role:"worker", tool:"bash",
+          seat:{kind:"herdr", terminal_id:"term_PLAIN", pane_id:"p_plain"}}' \
         >"$reg"
       ;;
     failbus)
       jq -nc --arg dir "$bus" \
-        '{guid:"guid-fail", short_guid:"fail", label:"fail", terminal_id:"term_FAIL", pane_id:"p_fail",
-          agent:"claude", team:"alpha", hcom_dir:$dir, hcom_name:"bus-fail", status:"active"}' \
+        '{kind:"session", guid:"guid-fail", event:"registered", recorded_at:"2026-07-08T00:00:00Z",
+          state:"seated", label:"fail", role:"worker", tool:"claude",
+          seat:{kind:"herdr", terminal_id:"term_FAIL", pane_id:"p_fail", hcom_name:"bus-fail", namespace:$dir}}' \
         >"$reg"
       ;;
     gone)
       {
         jq -nc --arg dir "$bus" \
-          '{guid:"guid-gone-bus", short_guid:"gonebus", label:"gonebus", terminal_id:"term_GONE_BUS", pane_id:"p_gone_bus",
-            agent:"claude", team:"alpha", hcom_dir:$dir, hcom_name:"bus-gone", status:"active"}'
+          '{kind:"session", guid:"guid-gone-bus", event:"registered", recorded_at:"2026-07-08T00:00:00Z",
+            state:"seated", label:"gonebus", role:"worker", tool:"claude",
+            seat:{kind:"herdr", terminal_id:"term_GONE_BUS", pane_id:"p_gone_bus", hcom_name:"bus-gone", namespace:$dir}}'
         jq -nc \
-          '{guid:"guid-gone-plain", short_guid:"goneplain", label:"goneplain", terminal_id:"term_GONE_PLAIN", pane_id:"p_gone_plain",
-            agent:"bash", team:"", hcom_dir:"", hcom_name:"", status:"active"}'
+          '{kind:"session", guid:"guid-gone-plain", event:"registered", recorded_at:"2026-07-08T00:00:00Z",
+            state:"seated", label:"goneplain", role:"worker", tool:"bash",
+            seat:{kind:"herdr", terminal_id:"term_GONE_PLAIN", pane_id:"p_gone_plain"}}'
       } >"$reg"
       ;;
     *)
@@ -185,8 +191,9 @@ run_cull 0 all --label plain
 
 # 2b. Sidecar enrichment between cull's initial load and close result is preserved for close + bus drop.
 make_case race plain
-jq -nc '{guid:"guid-race", short_guid:"race", label:"race", terminal_id:"term_BUS", pane_id:"p_bus",
-  agent:"claude", team:"alpha", hcom_dir:"", hcom_name:"", status:"active"}' >"$REG_DIR/registry.jsonl"
+jq -nc '{kind:"session", guid:"guid-race", event:"registered", recorded_at:"2026-07-08T00:00:00Z",
+  state:"seated", label:"race", role:"worker", tool:"claude",
+  seat:{kind:"herdr", terminal_id:"term_BUS", pane_id:"p_bus"}}' >"$REG_DIR/registry.jsonl"
 MOCK_CULL_APPEND_ENRICHED=1 MOCK_CULL_APPEND_HCOM_DIR="$BUS_DIR" run_cull 0 all --label race
 unset MOCK_CULL_APPEND_ENRICHED MOCK_CULL_APPEND_HCOM_DIR
 [[ "$RUN_RC" -eq 0 ]] && ok "race cull: exit 0" || bad "race cull: exit 0" "rc=$RUN_RC out=$RUN_OUT"
