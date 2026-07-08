@@ -58,6 +58,7 @@ type Record struct {
 	RecordedAt  string      `json:"recorded_at,omitempty"`
 	CloseResult string      `json:"close_result,omitempty"`
 	CloseReason string      `json:"close_reason,omitempty"`
+	ObservedVia string      `json:"observed_via,omitempty"`
 	Provenance  *Provenance `json:"provenance,omitempty"`
 
 	Archived bool            `json:"-"`
@@ -215,6 +216,7 @@ func legacyRecordFromV2Object(obj map[string]json.RawMessage) Record {
 		Status:      status,
 		CloseResult: rawString(obj["close_result"]),
 		CloseReason: rawString(obj["close_reason"]),
+		ObservedVia: rawString(obj["observed_via"]),
 		Provenance:  &prov,
 	}
 	if guid != "" {
@@ -671,6 +673,7 @@ func V2FromRecord(rec Record, event, state, recordedAt string) v2.SessionRecord 
 		Provenance:  prov,
 		CloseResult: rec.CloseResult,
 		CloseReason: rec.CloseReason,
+		ObservedVia: rec.ObservedVia,
 	}
 	if prov.ToolSessionID != "" {
 		out.SIDs = []v2.SID{{SID: prov.ToolSessionID, ObservedAt: firstNonEmpty(prov.TS, recordedAt), Source: "harvest"}}
@@ -724,6 +727,7 @@ func LegacyFromV2(rec v2.SessionRecord) Record {
 		RecordedAt:  rec.RecordedAt,
 		CloseResult: rec.CloseResult,
 		CloseReason: rec.CloseReason,
+		ObservedVia: rec.ObservedVia,
 		Provenance:  &prov,
 	}
 	if label != "" {

@@ -111,6 +111,28 @@ type Pane struct {
 	TabID         string `json:"tab_id"`
 	CWD           string `json:"cwd"`
 	ForegroundCWD string `json:"foreground_cwd"`
+	Label         string `json:"label"`
+	Agent         string `json:"agent"`
+	AgentStatus   string `json:"agent_status"`
+	AgentSession  string `json:"agent_session"`
+}
+
+type ProcessInfo struct {
+	ShellPID  int       `json:"shell_pid"`
+	Processes []Process `json:"foreground_processes"`
+}
+
+type Process struct {
+	PID  int      `json:"pid"`
+	Argv []string `json:"argv"`
+	CWD  string   `json:"cwd"`
+}
+
+type Snapshot struct {
+	Protocol int     `json:"protocol"`
+	Version  string  `json:"version"`
+	Agents   []Agent `json:"agents"`
+	Panes    []Pane  `json:"panes"`
 }
 
 // Workspace is one entry of `herdr workspace list` (.result.workspaces[]).
@@ -182,6 +204,34 @@ func ParsePaneGet(out []byte) (Pane, error) {
 	}
 	err := json.Unmarshal(out, &envelope)
 	return envelope.Result.Pane, err
+}
+
+func ParseSessionSnapshot(out []byte) (Snapshot, error) {
+	var envelope struct {
+		Result Snapshot `json:"result"`
+	}
+	err := json.Unmarshal(out, &envelope)
+	return envelope.Result, err
+}
+
+func ParseProcessInfo(out []byte) (ProcessInfo, error) {
+	var envelope struct {
+		Result struct {
+			ProcessInfo ProcessInfo `json:"process_info"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out, &envelope); err != nil {
+		return ProcessInfo{}, err
+	}
+	if envelope.Result.ProcessInfo.ShellPID == 0 && len(envelope.Result.ProcessInfo.Processes) == 0 {
+		var alt struct {
+			Result ProcessInfo `json:"result"`
+		}
+		if err := json.Unmarshal(out, &alt); err == nil {
+			return alt.Result, nil
+		}
+	}
+	return envelope.Result.ProcessInfo, nil
 }
 
 // ParseWorkspaceList decodes `herdr workspace list` output

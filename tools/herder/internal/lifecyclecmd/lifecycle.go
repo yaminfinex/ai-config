@@ -16,6 +16,7 @@ import (
 	"ai-config/tools/herder/internal/herderpaths"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/hookcmd"
+	"ai-config/tools/herder/internal/observercmd"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/send"
@@ -165,6 +166,7 @@ func (r *runner) fork(opts forkOptions) int {
 	if firstNonEmpty(parent.Agent, "claude") == "codex" {
 		r.deliverCodexAddendum(registryPath, guid, label)
 	}
+	observercmd.NudgeIfConfigured(r.stderr)
 	return 0
 }
 
@@ -309,6 +311,7 @@ func (r *runner) forkSelfFallback(opts forkOptions, agent, paneEnvID, cwd, sessi
 			r.deliverCodexAddendum(registry.DefaultPath(), guid, label)
 		}
 	}
+	observercmd.NudgeIfConfigured(r.stderr)
 	return 0
 }
 
@@ -532,6 +535,7 @@ func (r *runner) resume(opts resumeOptions) int {
 	if firstNonEmpty(rec.Agent, "claude") == "codex" {
 		r.deliverCodexAddendum(registryPath, guid, label)
 	}
+	observercmd.NudgeIfConfigured(r.stderr)
 	return 0
 }
 

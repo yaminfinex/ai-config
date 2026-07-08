@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/observercmd"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -154,6 +155,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if opts.json {
 		fmt.Fprintln(stdout, string(appendedRow))
 	}
+	observercmd.NudgeIfConfigured(stderr)
 	return 0
 }
 

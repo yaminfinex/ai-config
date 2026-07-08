@@ -16,6 +16,7 @@ import (
 	"ai-config/tools/herder/internal/herderpaths"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
+	"ai-config/tools/herder/internal/observercmd"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/send"
@@ -1064,6 +1065,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		fmt.Fprintln(r.stdout, string(b))
 	}
 	spawnCompleted = true
+	observercmd.NudgeIfConfigured(r.stderr)
 	return 0
 }
 

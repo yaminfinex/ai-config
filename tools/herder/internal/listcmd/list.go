@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/registry"
 )
 
@@ -63,6 +64,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	idx := buildLiveIndex()
+	advice := loadObserverAdvice()
 
 	if opts.mode == "one" {
 		if opts.targetGUID == "" {
@@ -74,7 +76,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "no record for guid %s\n", opts.targetGUID)
 			return 1
 		}
-		out := reconciledJSON(rec, idx)
+		out := reconciledJSON(rec, idx, advice[ptrString(rec.GUID)])
 		var pretty bytes.Buffer
 		if err := json.Indent(&pretty, out, "", "  "); err != nil {
 			return 1
@@ -97,7 +99,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			if !opts.includeAll && (rec.Status != "active" || rec.Archived) {
 				continue
 			}
-			fmt.Fprintln(stdout, string(reconciledJSON(rec, idx)))
+			fmt.Fprintln(stdout, string(reconciledJSON(rec, idx, advice[ptrString(rec.GUID)])))
 		}
 		return 0
 	}
@@ -130,8 +132,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		if rec.HcomName != "" && rec.HcomName != "null" {
 			bus = "@" + rec.HcomName
 		}
+		role := rec.Role
+		if flags := advice[ptrString(rec.GUID)]; len(flags) > 0 {
+			role = role + observerAdviceSuffix(flags)
+		}
 		fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-12s %-16s %s\n",
-			ptrString(rec.ShortGUID), ptrString(rec.Label), rec.Agent, livePane, liveStatus, team, bus, rec.Role)
+			ptrString(rec.ShortGUID), ptrString(rec.Label), rec.Agent, livePane, liveStatus, team, bus, role)
 	}
 	return 0
 }
@@ -344,24 +350,32 @@ func decodeRecord(line string) (registry.Record, error) {
 	return rec, nil
 }
 
-func reconciledJSON(rec registry.Record, idx liveIndex) []byte {
+func reconciledJSON(rec registry.Record, idx liveIndex, advice []observerstatus.Flag) []byte {
+	var adviceFields []string
+	if len(advice) > 0 {
+		if b, err := json.Marshal(advice); err == nil {
+			adviceFields = append(adviceFields, `"observer_advice":`+string(b))
+		}
+	}
 	if rec.Archived {
-		return appendJSONFields(rec.Raw,
+		fields := append([]string{
 			`"archived":true`,
 			`"live":null`,
 			`"live_pane":null`,
 			`"live_status":"ARCHIVED"`,
 			`"live_matched_by":null`,
-		)
+		}, adviceFields...)
+		return appendJSONFields(rec.Raw, fields...)
 	}
 	live, matchedBy := idx.match(rec)
 	if live == nil {
-		return appendJSONFields(rec.Raw,
+		fields := append([]string{
 			`"live":null`,
 			`"live_pane":null`,
-			`"live_status":`+jsonString(idx.unmatchedStatus(rec)),
+			`"live_status":` + jsonString(idx.unmatchedStatus(rec)),
 			`"live_matched_by":null`,
-		)
+		}, adviceFields...)
+		return appendJSONFields(rec.Raw, fields...)
 	}
 	livePane := "null"
 	if pane, ok := rawStringField(live.Raw, "pane_id"); ok {
@@ -371,12 +385,39 @@ func reconciledJSON(rec registry.Record, idx liveIndex) []byte {
 	if status, ok := rawStringField(live.Raw, "agent_status"); ok {
 		liveStatus = status
 	}
-	return appendJSONFields(rec.Raw,
-		`"live":`+string(live.Raw),
-		`"live_pane":`+livePane,
-		`"live_status":`+jsonString(liveStatus),
-		`"live_matched_by":`+jsonString(matchedBy),
-	)
+	fields := append([]string{
+		`"live":` + string(live.Raw),
+		`"live_pane":` + livePane,
+		`"live_status":` + jsonString(liveStatus),
+		`"live_matched_by":` + jsonString(matchedBy),
+	}, adviceFields...)
+	return appendJSONFields(rec.Raw, fields...)
+}
+
+func loadObserverAdvice() map[string][]observerstatus.Flag {
+	st, err := observerstatus.Read(observerstatus.DefaultPath())
+	if err != nil {
+		return map[string][]observerstatus.Flag{}
+	}
+	return observerstatus.FlagsByGUID(st)
+}
+
+func observerAdviceSuffix(flags []observerstatus.Flag) string {
+	var parts []string
+	for _, flag := range flags {
+		switch flag.Type {
+		case "dormant-live":
+			parts = append(parts, "observer advice: live occupant observed")
+		case "epoch-doubt":
+			parts = append(parts, "observer advice: epoch doubt")
+		default:
+			parts = append(parts, "observer advice: "+flag.Type)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " [" + strings.Join(parts, "; ") + "]"
 }
 
 func appendJSONFields(raw []byte, fields ...string) []byte {
