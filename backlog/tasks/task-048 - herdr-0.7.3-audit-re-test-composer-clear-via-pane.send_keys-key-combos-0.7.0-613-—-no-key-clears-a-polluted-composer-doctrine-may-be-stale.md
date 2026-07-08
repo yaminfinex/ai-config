@@ -3,10 +3,10 @@ id: TASK-048
 title: >-
   adopt ctrl+u composer-clear in recovery paths (bootpaste/spawn recovery,
   cull/send help text) — clear-key doctrine falsified live on 0.7.3
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 08:48'
+updated_date: '2026-07-08 08:51'
 labels: []
 dependencies: []
 priority: medium
@@ -47,5 +47,10 @@ created: 2026-07-08 08:39
 created: 2026-07-08 08:48
 ---
 [hera 2026-07-08] Round 3 (#9813): nezu merged main in-branch (1dfb37f, A3 ancestor verified), regenerated bash goldens with node stamps, bus_queued golden carries both sides; compact polluted goldens correctly unchanged (no registry rows emitted). HERA REGATE GREEN on final tree: vet/test both modules, spawncmd -count=1 fresh, 23/23 suites. Solo delta requested on the final tree (caveat wording x5 vs empirical result, typed refusal causes, golden integration sanity). CLEAN delta = merge.
+---
+
+created: 2026-07-08 08:51
+---
+[hera 2026-07-08] MERGED to main (88e9368, no-ff) after review-048-solo DELTA CLEAN (#9875: all 5 caveat sites confirmed consistent with the empirical result; typed refusal causes correctly ordered above the generic rc==2 case; A3 node-stamp golden integration sane; core floor byte-identical to round 1). Post-merge gate on main GREEN (fresh -count=1, 23/23). Delivered: preflight-only ctrl+u composer recovery (one attempt, evidence-gated re-read, fail-closed), typed refusal causes, bash "$" sigil (accepted: bottom-up anchor symmetric with confirm-empty), do-not-clear queued-message caveat x5 sites, empirical ledger entries (queued messages survive ctrl+u; queued text does not render on claude+0.7.23 composer). Credits: task048-nezu (74fd3e0, 4d8dec3, 1dfb37f), vibe (dispatch, 2 review rounds, live probes), review-048-solo (MEDIUM + explicit angle rulings).
 ---
 <!-- COMMENTS:END -->
