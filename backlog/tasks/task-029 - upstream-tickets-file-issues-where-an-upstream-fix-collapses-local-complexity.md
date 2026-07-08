@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-08 05:04'
+updated_date: '2026-07-08 05:13'
 labels:
   - run-herder-dx
 dependencies: []
@@ -71,5 +71,10 @@ Candidate 12 (Unit Y measurement, 2026-07-08): codex roster entries omit launch_
 created: 2026-07-08 05:04
 ---
 vibe (herdr-0.7.3 audit, bus #5629, applied by hera): Reverse-direction entry: herdr 0.6.10->0.7.3 shipped fixes that collapse local complexity (stable ids #569, pane move #299, send-keys combos #613, session.snapshot, api schema, worktree #729, identity fixes #620/#684/#943). The four audit tasks TASK-047..050 enumerate the collapse work; when closing them, check whether any of our previously-planned upstream tickets are now moot.
+---
+
+created: 2026-07-08 05:13
+---
+hera (from vibe #5729): upstream herdr candidate — after update --handoff, surviving pre-handoff agent processes are detection-lost (absent from agent list, agent_status=unknown) because their hook reports never re-reach the new server; #684 covers hook-sequence re-anchoring but not server-side re-adoption without a fresh report. Candidate for upstream filing.
 ---
 <!-- COMMENTS:END -->

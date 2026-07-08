@@ -9,7 +9,7 @@ status: In Progress
 assignee:
   - vibe
 created_date: '2026-07-08 04:56'
-updated_date: '2026-07-08 05:09'
+updated_date: '2026-07-08 05:13'
 labels: []
 dependencies: []
 priority: high
@@ -33,5 +33,16 @@ vibe (herdr-0.7.3 audit, bus #5629, applied by hera): Upstream substrate for fix
 created: 2026-07-08 05:08
 ---
 hera diagnostic datapoint (2026-07-08): status reconciliation under 0.7.3 is NOT uniformly broken — a freshly SPAWNED row (ff71e7f3, new tab, claude) shows LIVE=working correctly, while hera's own re-ENROLLED row (404a13df, new-format coordinates) still shows LIVE=gone. So the matcher works for spawn-minted seat records and misses enroll-minted ones — look for a field spawn records but enroll omits (tab_id? started_by_pane? live-detection key). Narrows the parser-fix search considerably. Also x-ref new TASK-051: fork's native launch path died under 0.7.3 while spawn's survived.
+---
+
+created: 2026-07-08 05:13
+---
+vibe TASK-046 diagnosis (bus #5729, applied by hera) — parse-shape hypothesis FALSIFIED: ParseAgentList's envelope (.result.agents[]/terminal_id/agent_status) matches 0.7.3 exactly; post-handoff spawn-minted rows reconcile fine. Two confirmed mechanisms:
+
+(1) COORDINATE EPOCH INVALIDATION (fix direction b): handoff reissued terminal ids in a NEW SCHEME — old term_+16hex vs new term_+13hex — alongside the pane-id change. Pre-handoff rows are dead-keyed, so reconcile misses agents that are alive and detected in `herdr agent list` (dd58bd50, 275a4ac2, 8beda4c3 live+named, all LIVE=gone). Discovery: 0.7.x agent list exposes a `name` field equal to our undecorated label — ready-made fallback key.
+
+(2) UPSTREAM DETECTION LOSS for pre-handoff PROCESSES: hera's row (404a13df) has CORRECT new-epoch coordinates but the pane shows agent_status=unknown / no agent field and is absent from agent list while demonstrably mid-conversation — pre-handoff processes' hook reports do not reach the new server (same shape as the hcom stale-PATH gotcha 3d71d34; restart is the recovery). Fully explains wait: herder wait delegates to herdr wait agent-status, which can never leave unknown for a detection-lost pane -> timeout(status=unknown). REFINES the earlier spawn-vs-enroll datapoint: the split is PROCESS-EPOCH (post-handoff processes detect; pre-handoff ones do not, however fresh their row).
+
+AGREED FIX (hera ack on the ticket): (a) reconcile fallback chain in list — terminal_id primary, then exact new-format pane_id, then agent-list name==label; emit matched_by. (b) liveness tri-state: agent-list miss + pane-list hit -> live_status 'undetected' (reserved 'gone' for no-pane) — fixes hera's row; likely the TASK-044 mechanism; feeds TASK-050. (c) wait: on timeout with pane present + status unknown, emit detection-lost guidance instead of bare timeout. (d) DECISION (hera): coordinate self-heal is an EXPLICIT `herder reconcile` command, not auto-heal during list — list stays read-only; one auditable migration command; matches herder-spec section 8.3 doctrine (reconciliation is triggered, never assumed) so wave-F subsumes it cleanly. Unambiguous match = name+cwd+agent-kind. (e) upstream gap (server-side re-adoption of surviving processes after update --handoff, not covered by #684) -> logged on TASK-029.
 ---
 <!-- COMMENTS:END -->

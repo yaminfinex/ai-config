@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-08 05:04'
+updated_date: '2026-07-08 05:13'
 labels: []
 dependencies: []
 priority: low
@@ -25,5 +25,10 @@ Observed (hera restart, 2026-07-08): after a correct enroll (guid 404a13df, labe
 created: 2026-07-08 05:04
 ---
 vibe (herdr-0.7.3 audit, bus #5629, applied by hera): Possibly subsumed by TASK-046 (status parsing broke fleet-wide post-handoff; this pre-handoff miss may share the matcher, as 046 already notes). Re-test after 046's parser fix lands — folded into TASK-050 (NEW-4).
+---
+
+created: 2026-07-08 05:13
+---
+hera x-ref (vibe #5729): mechanism likely identified via TASK-046 — pre-handoff-process detection loss + coordinate epoch mismatch, not a matcher key herder omits. The 046 tri-state fix ('undetected' vs 'gone') should cover this row's symptom; re-verify under TASK-050 after 046 lands.
 ---
 <!-- COMMENTS:END -->
