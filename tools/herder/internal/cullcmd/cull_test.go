@@ -25,18 +25,41 @@ func TestRunClosesPaneLessRowWithoutForce(t *testing.T) {
 	if _, err := os.Stat(closeProbe); !os.IsNotExist(err) {
 		t.Fatalf("pane close probe exists = %v, want no pane close call for pane-less row", err)
 	}
-	if got := latestSession(t, registryPath, "guid-ghost"); got.Event != "retired" || got.State != v2.StateRetired || got.CloseResult != "already_gone" || got.CloseReason == "" || got.Seat != nil {
-		t.Fatalf("latest row = %+v, want retired already_gone without seat", got)
+	if got := latestSession(t, registryPath, "guid-ghost"); got.Event != "unseated" || got.State != v2.StateUnseated || got.CloseResult != "already_gone" || got.CloseReason == "" || got.Seat != nil {
+		t.Fatalf("latest row = %+v, want unseated already_gone without seat", got)
 	}
 	recs, err := registry.Load(registryPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := registry.Resolve(recs, "guid-ghost"); got == nil || got.Status != "closed" {
-		t.Fatalf("legacy latest = %+v, want closed", got)
+	if got := registry.Resolve(recs, "guid-ghost"); got == nil || got.Status != "active" {
+		t.Fatalf("legacy latest = %+v, want active dormant row", got)
 	}
 	if !strings.Contains(stdout.String(), "recorded closed ghost (guid-ghost) pane= → already_gone") {
 		t.Fatalf("stdout = %q, want recorded-closed line", stdout.String())
+	}
+}
+
+func TestRunPaneLessRepeatCullAppendsConfirmedCloseRecord(t *testing.T) {
+	registryPath := seedPaneLessCullRow(t, "ghost")
+	mockDir, _ := installCullTestMocks(t)
+	t.Setenv("PATH", mockDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HERDR_ENV", "1")
+	t.Setenv("HERDR_PANE_ID", "p_culler")
+	t.Setenv("HERDER_STATE_DIR", filepath.Dir(registryPath))
+
+	for i := 0; i < 2; i++ {
+		var stdout, stderr strings.Builder
+		if rc := Run([]string{"--label", "ghost"}, &stdout, &stderr); rc != 0 {
+			t.Fatalf("run %d rc = %d, want 0\nstdout:\n%s\nstderr:\n%s", i+1, rc, stdout.String(), stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "recorded closed ghost (guid-ghost) pane= → already_gone") {
+			t.Fatalf("run %d stdout = %q, want recorded-closed line", i+1, stdout.String())
+		}
+	}
+
+	if got := closeRecordCount(t, registryPath, "guid-ghost"); got != 2 {
+		t.Fatalf("close records = %d, want 2 confirmed appends", got)
 	}
 }
 
@@ -59,12 +82,12 @@ func TestRunPaneLessCloseWriteFailureExitsNonzero(t *testing.T) {
 	if !strings.Contains(stderr.String(), "registry lock unavailable") {
 		t.Fatalf("stderr = %q, want lock failure", stderr.String())
 	}
-	if got := latestSession(t, registryPath, "guid-ghost"); got.State == v2.StateRetired {
-		t.Fatalf("latest row = %+v, want no retired row after write refusal", got)
+	if got := closeRecordCount(t, registryPath, "guid-ghost"); got != 0 {
+		t.Fatalf("close records = %d, want no close row after write refusal", got)
 	}
 }
 
-func TestAppendClosedRecordsPaneNotFoundAsRetired(t *testing.T) {
+func TestAppendClosedRecordsPaneNotFoundAsUnseated(t *testing.T) {
 	registryPath := seedSeatedCullRow(t, "ghost", "p_missing", "")
 	recs, err := registry.Load(registryPath)
 	if err != nil {
@@ -77,8 +100,8 @@ func TestAppendClosedRecordsPaneNotFoundAsRetired(t *testing.T) {
 	if closed.Status != "closed" || closed.CloseResult != "error" || closed.CloseReason != "pane_not_found" {
 		t.Fatalf("closed legacy row = %+v", closed)
 	}
-	if got := latestSession(t, registryPath, "guid-ghost"); got.Event != "retired" || got.State != v2.StateRetired || got.CloseResult != "error" || got.CloseReason != "pane_not_found" || got.Seat != nil {
-		t.Fatalf("latest row = %+v, want retired pane_not_found without seat", got)
+	if got := latestSession(t, registryPath, "guid-ghost"); got.Event != "unseated" || got.State != v2.StateUnseated || got.CloseResult != "error" || got.CloseReason != "pane_not_found" || got.Seat != nil {
+		t.Fatalf("latest row = %+v, want unseated pane_not_found without seat", got)
 	}
 }
 
@@ -167,4 +190,19 @@ func latestSession(t *testing.T, path, guid string) v2.SessionRecord {
 		t.Fatalf("missing guid %s", guid)
 	}
 	return *got
+}
+
+func closeRecordCount(t *testing.T, path, guid string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if strings.Contains(line, `"guid":"`+guid+`"`) && strings.Contains(line, `"event":"unseated"`) && strings.Contains(line, `"close_result":"`) {
+			count++
+		}
+	}
+	return count
 }
