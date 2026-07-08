@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@hera'
 created_date: '2026-07-08 11:19'
-updated_date: '2026-07-08 11:52'
+updated_date: '2026-07-08 11:53'
 labels: []
 dependencies: []
 priority: high
@@ -41,5 +41,10 @@ Dispatched: codex worker task071-8ae31a57, worktree task-071-retire-reopen off m
 created: 2026-07-08 11:52
 ---
 Round 1: worker DONE 48830b1; my gate green 29/29 from worker worktree. Opus review (review071-dosa #12187): REQUEST-CHANGES — core verbs SPEC-FAITHFUL (ruling honored: uniqueness reads state at all three sites, label strip is belt-and-braces not load-bearing; carry-forward cannot resurrect retired rows; already-retired is a real confirmed no-op; 069 paths untouched). Blocking P2-1: rename lacks retired/lost guard — retired row silently reacquires a label via labelled-event normalization (§3.2 violation, recoverable via reopen). LOW-2 reopen help over-advertises pane_id (unreachable for Seat==nil states); LOW-3 pane resolver lexicographic-not-liveness-aware (benign today, latent; guard ordering verified safe); LOW-4 fork of retired parent unguarded -> spec question to spec-ravu (#12200); LOW-5 coverage gaps (legacy-closed resume, reopen-then-rename, retire-by-pane seated-successor refusal). Fix round dispatched (#12199, acked): P2-1 guard + LOW-2 help + LOW-5 tests; LOW-4 fenced out pending ruling. Reviewer standing by for delta.
+---
+
+created: 2026-07-08 11:53
+---
+LOW-4 resolved by spec-ravu ruling #12237: fork of a retired parent is SPEC-LEGAL (transcript is the substrate; fork mints a new guid, parent undisturbed — no illegal edge; the resume/fork asymmetry is principled). No guard; pin tests + explicit lost-parent refusal filed as TASK-074 (bundle-eligible). Erratum 6b59162 staged — pending blessing batch is now five items. This round's fix scope unchanged.
 ---
 <!-- COMMENTS:END -->
