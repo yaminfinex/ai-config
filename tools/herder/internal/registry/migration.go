@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	v2 "ai-config/tools/herder/internal/registry/v2"
@@ -19,7 +20,12 @@ const migrationEventV1 = "migrated_v1"
 const defaultRotationThresholdBytes int64 = 8 * 1024 * 1024
 const rotationThresholdEnv = "HERDER_REGISTRY_ROTATE_BYTES"
 
+var rotationThrashWarnOnce sync.Once
+
 func migrationNeeded(path string, proj *v2.Projection) bool {
+	if _, ok := latestRotationArchivePath(path); ok {
+		return false
+	}
 	for _, rec := range proj.Sessions() {
 		if rec.LegacyV1 {
 			return true
@@ -40,7 +46,10 @@ func migrationNeeded(path string, proj *v2.Projection) bool {
 	if expected == 0 {
 		return false
 	}
-	return len(proj.Sessions()) < expected
+	if len(proj.Sessions()) == 0 {
+		return true
+	}
+	return migrationPartialLive(proj, expected)
 }
 
 func ensureMigrationNode(path string, proj *v2.Projection) (string, []byte, error) {
@@ -110,52 +119,27 @@ func migrateLegacyV1Locked(path string, f *os.File, liveProj *v2.Projection, nod
 	if err != nil {
 		return nil, liveProj, err
 	}
-	rows, err := migrationReseedRows(source, sourceProj, nodeID, mintedNodeRow)
-	if err != nil {
-		return nil, liveProj, err
-	}
-	var out bytes.Buffer
-	for _, row := range rows {
-		out.Write(bytes.TrimRight(row, "\n"))
-		out.WriteByte('\n')
-	}
-	if err := f.Truncate(0); err != nil {
-		return nil, liveProj, err
-	}
-	if _, err := f.Seek(0, 0); err != nil {
-		return nil, liveProj, err
-	}
-	if _, err := f.Write(out.Bytes()); err != nil {
-		return nil, liveProj, err
-	}
-	if err := f.Sync(); err != nil {
-		return nil, liveProj, err
-	}
-	if err := syncDir(filepath.Dir(path)); err != nil {
-		return nil, liveProj, err
-	}
-	proj, err := v2.Load(bytes.NewReader(out.Bytes()), v2.LoadOptions{})
-	if err != nil {
-		return nil, liveProj, err
-	}
-	return rows, proj, nil
+	return rewriteReseedLocked(path, f, source, sourceProj, nodeID, mintedNodeRow)
 }
 
 func rotationRecoveryNeeded(path string, liveProj *v2.Projection) bool {
-	archive, ok := latestRegistryArchivePath(path)
+	archive, ok := latestRotationArchivePath(path)
 	if !ok {
 		return false
 	}
 	archProj, err := v2.LoadFile(archive, v2.LoadOptions{})
 	if err != nil {
-		return false
+		return len(liveProj.Sessions()) == 0
+	}
+	if len(liveProj.Sessions()) == 0 {
+		return true
 	}
 	expected := nonRetiredSessionCount(archProj)
 	return expected > 0 && len(liveProj.Sessions()) < expected
 }
 
 func recoverRotationLocked(path string, f *os.File, liveProj *v2.Projection) ([][]byte, *v2.Projection, error) {
-	archive, ok := latestRegistryArchivePath(path)
+	archive, ok := latestRotationArchivePath(path)
 	if !ok {
 		return nil, liveProj, fmt.Errorf("registry rotation recovery refused: no archive exists for %s", path)
 	}
@@ -193,6 +177,19 @@ func rotateIfNeededLocked(path string, f *os.File, proj *v2.Projection, nodeID s
 	if err != nil {
 		return nil, proj, err
 	}
+	rows, out, err := reseedBytes(source, proj, nodeID, nil)
+	if err != nil {
+		return nil, proj, err
+	}
+	if int64(len(out)) > threshold {
+		rotationThrashWarnOnce.Do(func() {
+			fmt.Fprintf(os.Stderr, "herder registry rotation skipped for %s: reseed snapshot is %d bytes, still above %s=%d; leaving live file unrotated\n", path, len(out), rotationThresholdEnv, threshold)
+		})
+		return nil, proj, nil
+	}
+	if _, ok := matchingRegistryArchivePath(path, source); ok {
+		return rewriteReseedBytesLocked(path, f, rows, out, proj)
+	}
 	archive, err := nextRotationArchivePath(path)
 	if err != nil {
 		return nil, proj, err
@@ -207,37 +204,49 @@ func rotateIfNeededLocked(path string, f *os.File, proj *v2.Projection, nodeID s
 	if !bytes.Equal(archived, source) {
 		return nil, proj, fmt.Errorf("registry rotation refused: archive %s byte verification failed", archive)
 	}
-	return rewriteReseedLocked(path, f, source, proj, nodeID, nil)
+	return rewriteReseedBytesLocked(path, f, rows, out, proj)
 }
 
 func rewriteReseedLocked(path string, f *os.File, source []byte, sourceProj *v2.Projection, nodeID string, mintedNodeRow []byte) ([][]byte, *v2.Projection, error) {
-	rows, err := migrationReseedRows(source, sourceProj, nodeID, mintedNodeRow)
+	rows, out, err := reseedBytes(source, sourceProj, nodeID, mintedNodeRow)
 	if err != nil {
 		return nil, sourceProj, err
+	}
+	return rewriteReseedBytesLocked(path, f, rows, out, sourceProj)
+}
+
+func reseedBytes(source []byte, sourceProj *v2.Projection, nodeID string, mintedNodeRow []byte) ([][]byte, []byte, error) {
+	rows, err := migrationReseedRows(source, sourceProj, nodeID, mintedNodeRow)
+	if err != nil {
+		return nil, nil, err
 	}
 	var out bytes.Buffer
 	for _, row := range rows {
 		out.Write(bytes.TrimRight(row, "\n"))
 		out.WriteByte('\n')
 	}
+	return rows, out.Bytes(), nil
+}
+
+func rewriteReseedBytesLocked(path string, f *os.File, rows [][]byte, out []byte, prev *v2.Projection) ([][]byte, *v2.Projection, error) {
 	if err := f.Truncate(0); err != nil {
-		return nil, sourceProj, err
+		return nil, prev, err
 	}
 	if _, err := f.Seek(0, 0); err != nil {
-		return nil, sourceProj, err
+		return nil, prev, err
 	}
-	if _, err := f.Write(out.Bytes()); err != nil {
-		return nil, sourceProj, err
+	if _, err := f.Write(out); err != nil {
+		return nil, prev, err
 	}
 	if err := f.Sync(); err != nil {
-		return nil, sourceProj, err
+		return nil, prev, err
 	}
 	if err := syncDir(filepath.Dir(path)); err != nil {
-		return nil, sourceProj, err
+		return nil, prev, err
 	}
-	proj, err := v2.Load(bytes.NewReader(out.Bytes()), v2.LoadOptions{})
+	proj, err := v2.Load(bytes.NewReader(out), v2.LoadOptions{})
 	if err != nil {
-		return nil, sourceProj, err
+		return nil, prev, err
 	}
 	return rows, proj, nil
 }
@@ -392,6 +401,19 @@ func nonRetiredSessionCount(proj *v2.Projection) int {
 	return count
 }
 
+func migrationPartialLive(proj *v2.Projection, expected int) bool {
+	sessions := proj.Sessions()
+	if len(sessions) >= expected {
+		return false
+	}
+	for _, rec := range sessions {
+		if rec.Event != migrationEventV1 {
+			return false
+		}
+	}
+	return true
+}
+
 func projectionHasLegacyV1(proj *v2.Projection) bool {
 	for _, rec := range proj.Sessions() {
 		if rec.LegacyV1 {
@@ -419,7 +441,7 @@ func ensureArchive(path string, source []byte) error {
 			return err
 		}
 		if len(existing) != len(source) || !bytes.Equal(existing, source) {
-			return fmt.Errorf("registry migration refused: existing archive %s does not match live v1 registry; restore or remove the archive before retrying", path)
+			return fmt.Errorf("registry archive byte verification failed: existing archive %s does not match live registry; restore or remove the archive before retrying", path)
 		}
 		return nil
 	} else if !os.IsNotExist(err) {
@@ -457,21 +479,21 @@ func ensureArchive(path string, source []byte) error {
 func validatedRecoveryArchive(path string, liveProj *v2.Projection) ([]byte, error) {
 	source, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("registry migration recovery refused: missing archive %s; restore the archive before retrying: %w", path, err)
+		return nil, fmt.Errorf("registry archive recovery refused: missing archive %s; restore the archive before retrying: %w", path, err)
 	}
 	if len(source) == 0 {
-		return nil, fmt.Errorf("registry migration recovery refused: archive %s is empty; restore the archive before retrying", path)
+		return nil, fmt.Errorf("registry archive recovery refused: archive %s is empty; restore the archive before retrying", path)
 	}
 	proj, err := v2.Load(bytes.NewReader(source), v2.LoadOptions{})
 	if err != nil {
 		return nil, err
 	}
 	if len(proj.Quarantined()) > 0 {
-		return nil, fmt.Errorf("registry migration recovery refused: archive %s has quarantined rows; restore the archive before retrying", path)
+		return nil, fmt.Errorf("registry archive recovery refused: archive %s has quarantined rows; restore the archive before retrying", path)
 	}
 	expected := nonRetiredSessionCount(proj)
 	if expected == 0 || len(liveProj.Sessions()) >= expected {
-		return nil, fmt.Errorf("registry migration recovery refused: archive %s does not contain enough non-retired sessions to recover the partial live registry", path)
+		return nil, fmt.Errorf("registry archive recovery refused: archive %s does not contain enough non-retired sessions to recover the partial live registry", path)
 	}
 	return source, nil
 }
@@ -526,6 +548,33 @@ func latestRegistryArchivePath(path string) (string, bool) {
 	return archives[len(archives)-1], true
 }
 
+func latestRotationArchivePath(path string) (string, bool) {
+	archives, err := registryArchivePaths(path)
+	if err != nil {
+		return "", false
+	}
+	for i := len(archives) - 1; i >= 0; i-- {
+		if archiveSequence(filepath.Base(archives[i])) >= 2 {
+			return archives[i], true
+		}
+	}
+	return "", false
+}
+
+func matchingRegistryArchivePath(path string, source []byte) (string, bool) {
+	archives, err := registryArchivePaths(path)
+	if err != nil {
+		return "", false
+	}
+	for i := len(archives) - 1; i >= 0; i-- {
+		archived, err := os.ReadFile(archives[i])
+		if err == nil && bytes.Equal(archived, source) {
+			return archives[i], true
+		}
+	}
+	return "", false
+}
+
 func nextRotationArchivePath(path string) (string, error) {
 	archives, err := registryArchivePaths(path)
 	if err != nil {
@@ -558,7 +607,7 @@ func rotationThresholdBytes() (int64, error) {
 	}
 	n, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("invalid %s=%q: %w", rotationThresholdEnv, raw, err)
+		return 0, fmt.Errorf("invalid %s=%q: set %s to a positive byte count or unset it to use the default: %w", rotationThresholdEnv, raw, rotationThresholdEnv, err)
 	}
 	return n, nil
 }

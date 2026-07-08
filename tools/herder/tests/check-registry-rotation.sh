@@ -12,7 +12,7 @@ export AI_CONFIG_ROOT="$REPO_ROOT"
 
 cd "$HERDER_ROOT" || exit 1
 
-if go test ./internal/registry -run 'Test(RotationAtThresholdArchivesAndReseeds|RotationRecoversPartialLiveFromArchive|LoadWithArchivesMergesDeterministicallyLiveWins|ArchiveConsultationProvidesForkParentSessionID)$'; then
+if go test ./internal/registry -run 'Test(RotationAtThresholdArchivesAndReseeds|RotationRecoversPartialLiveFromArchive|MigrationRecoveryDoesNotRefireOnPureV2LiveWithStaleMigrationArchive|RotationRecoveryUsesNewestRotationArchiveOverMigrationArchive|LoadWithArchivesMergesDeterministicallyLiveWins|LoadWithArchivesUsesLatestAcrossThreeRotationArchives|RotationReusesMatchingArchiveAfterPreTruncateCrash|RotationSkipsWhenReseedWouldStillExceedThreshold|RotationInvalidThresholdNamesFix|RotationRecoveryRefusalTexts|RotationArchiveByteVerificationRefusalText|ArchiveConsultationProvidesForkParentSessionID)$'; then
   printf '\nALL GREEN — registry rotation/archive-consultation invariants pass.\n'
   exit 0
 fi

@@ -88,7 +88,12 @@ func (r *runner) fork(opts forkOptions) int {
 	if code != 0 {
 		return code
 	}
-	parent := registry.Resolve(recs, opts.target)
+	var err error
+	recs, parent, err := resolveTargetWithArchiveFallback(recs, registryPath, opts.target)
+	if err != nil {
+		die(r.stderr, err.Error())
+		return 1
+	}
 	if parent == nil {
 		die(r.stderr, "unknown target: "+opts.target)
 		return 1
@@ -450,7 +455,12 @@ func (r *runner) resume(opts resumeOptions) int {
 	if code != 0 {
 		return code
 	}
-	rec := registry.Resolve(recs, opts.target)
+	var err error
+	recs, rec, err := resolveTargetWithArchiveFallback(recs, registryPath, opts.target)
+	if err != nil {
+		die(r.stderr, err.Error())
+		return 1
+	}
 	if rec == nil {
 		die(r.stderr, "unknown target: "+opts.target)
 		return 1
@@ -915,7 +925,7 @@ func requireTools(stderr io.Writer) int {
 
 func loadRegistry(stderr io.Writer) ([]registry.Record, string, int) {
 	path := registry.DefaultPath()
-	recs, err := registry.LoadWithArchives(path)
+	recs, err := registry.Load(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			die(stderr, "no registry at "+path)
@@ -925,6 +935,21 @@ func loadRegistry(stderr io.Writer) ([]registry.Record, string, int) {
 		return nil, path, 1
 	}
 	return recs, path, 0
+}
+
+func resolveTargetWithArchiveFallback(live []registry.Record, path, target string) ([]registry.Record, *registry.Record, error) {
+	if rec := registry.Resolve(live, target); rec != nil {
+		return live, rec, nil
+	}
+	archived, err := registry.LoadArchives(path)
+	if err != nil {
+		return live, nil, err
+	}
+	if len(archived) == 0 {
+		return live, nil, nil
+	}
+	recs := append(archived, live...)
+	return recs, registry.Resolve(recs, target), nil
 }
 
 func liveAgents(client herdrClient) map[string]herdrcli.Agent {

@@ -51,7 +51,16 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 	var mintedRow []byte
 	var migratedRows [][]byte
 	var rotationRows [][]byte
-	if migrationNeeded(path, proj) {
+	if rotationRecoveryNeeded(path, proj) {
+		rotationRows, proj, err = recoverRotationLocked(path, f, proj)
+		if err != nil {
+			return nil, err
+		}
+		nodeID, mintedRow, proj, err = ensureLockedNode(path, f, proj)
+		if err != nil {
+			return nil, err
+		}
+	} else if migrationNeeded(path, proj) {
 		nodeID, mintedRow, err = ensureMigrationNode(path, proj)
 		if err != nil {
 			return nil, err
@@ -61,15 +70,6 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 			return nil, err
 		}
 		mintedRow = nil
-	} else if rotationRecoveryNeeded(path, proj) {
-		rotationRows, proj, err = recoverRotationLocked(path, f, proj)
-		if err != nil {
-			return nil, err
-		}
-		nodeID, mintedRow, proj, err = ensureLockedNode(path, f, proj)
-		if err != nil {
-			return nil, err
-		}
 	} else {
 		nodeID, mintedRow, proj, err = ensureLockedNode(path, f, proj)
 		if err != nil {
@@ -80,6 +80,9 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 		rotationRows, proj, err = rotateIfNeededLocked(path, f, proj, nodeID)
 		if err != nil {
 			return nil, err
+		}
+		if len(rotationRows) > 0 {
+			mintedRow = nil
 		}
 	}
 	rows, err := fn(LockedUpdate{Projection: proj})
