@@ -3,9 +3,10 @@ id: TASK-081
 title: >-
   observer: session.snapshot socket unmarshal misses the result.snapshot wrapper
   — herdr eye is blind (empty panes/agents), epoch-doubt latched fleet-wide
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-08 23:40'
+updated_date: '2026-07-08 23:41'
 labels: []
 dependencies: []
 priority: high
@@ -41,3 +42,12 @@ Fix surface: socket.go snapshot() unwrap; mock-herdr socket mode must serve the 
 - [ ] #5 CLI fallback path (loadHerdrStateCLI) checked against real herdr CLI output for the same nesting, fixed or explicitly confirmed correct
 - [ ] #6 gate green: go vet+test both modules, all 30 check suites
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 23:41
+---
+Dispatched: worker @task081-zoni (codex), worktree task-081-observer-snapshot, brief napkins/run-herder-dx/brief-081.md (mechanics + stop-and-report quoted prominently per the TASK-078 amendment). Adversarial review to follow DONE per engine-diff doctrine.
+---
+<!-- COMMENTS:END -->
