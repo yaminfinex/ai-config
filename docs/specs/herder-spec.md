@@ -1,11 +1,11 @@
 # Herder Spec
 
-Status: **DRAFT — awaiting ratification.** Once ratified this document is the ground truth for
-herder's shape: ubiquitous language, domain model, expected behaviour, high-level design, and
-acceptance scenarios. Implementation plans derive from it; it does not narrate how we got here.
-(Derivation evidence lives in `napkins/herder-go-port/design-substrate-unification.md`,
-`domain-model-review.md`, `research-hcom-team-relay.md`, `research-registry-storage.md`, and the
-walkthrough worklist `spec-feedback.md`.)
+Status: **RATIFIED 2026-07-08** (owner walkthrough, decisions D1–D12 confirmed; D5 teams-kill
+confirmed explicitly; migration dormant-default resolved under D12). This document is the
+ground truth for herder's shape: ubiquitous language, domain model, expected behaviour,
+high-level design, and acceptance scenarios. Implementation plans derive from it; it does not
+narrate how we got here — the derivation working-memory was pruned with its branch, and this
+document stands alone.
 
 ---
 
@@ -303,11 +303,12 @@ by rewrite, under the §5.2 lock:
 1. **Rotate first.** The untouched v1 file becomes the first rotation archive (§5.1 growth
    stance); rows are never destroyed. The live file is reseeded with one v2 row per
    non-retired guid.
-2. **Mapping.** `status: closed` ⇒ `state: retired`. `status: active` maps through a
-   **recognition pass, never verbatim**: seat probe live (terminal_id, then the §8.3 fallback
-   ladder) ⇒ `seated`; probe dead ⇒ `unseated`; transcript verified gone ⇒ `lost`. Migration
-   must not seat corpses (on the reference machine at spec time, ~28 of 34 latest-active
-   guids were dead sessions never culled).
+2. **Mapping.** `status: closed` ⇒ `state: retired`. `status: active` ⇒ `unseated`
+   (**dormant default — migration performs no live probing**; a genuinely live occupant is
+   re-seated by its sidecar's next observation, an explicit enroll, or §8.3 reconciliation).
+   Migration must never seat a session verbatim: on the reference machine at spec time,
+   ~28 of 34 latest-active guids were dead sessions never culled, and a storage-wave
+   migration should not grow a substrate dependency just to classify them.
 3. **Attribution.** Migrated rows carry the freshly-minted local node_id and a migration
    event marker, so backfill stays distinguishable from live observation. Absent-node in an
    unmigrated file is a bootstrap state, not an anomaly — §3.1-12 applies only after the mint.
@@ -561,9 +562,10 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
   rebuildable from the birth anchors. *(S24)*
 
 - **AC-36 v1 migration** — a v1 registry (status-snapshot rows) migrates one-shot: the v1
-  file is archived untouched; closed ⇒ retired; active ⇒ recognition pass (live ⇒ seated,
-  dead ⇒ unseated, gone ⇒ lost — no corpse is seated); legacy keys ignored; migrated rows
-  node-attributed and event-marked as migration; re-running is a no-op.
+  file is archived untouched; closed ⇒ retired; active ⇒ unseated (dormant default, no live
+  probing — no corpse is seated, and live occupants re-seat via observation/enroll/
+  reconciliation); legacy keys ignored; migrated rows node-attributed and event-marked as
+  migration; re-running is a no-op.
 
 **Headless**
 
@@ -614,8 +616,9 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 | D9 | Registry: one live JSONL per state dir; kind-partitioned projection; flock write discipline; backup-not-sync; sqlite/hybrid rejected with recorded rationale; rotate-never-delete growth stance | §5, §10 |
 | D10 | One resolver: targets are sessions; seats via explicit escapes; `resolve` + a minimal usage-driven proxy set as the substrate escape hatch | §4, §7 |
 | D11 | Sid probing requires an active reporter (sidecar self-report preferred over tool integrations); sid-less panes reconcile via terminal_id-then-guarded-match at `assumed` continuity, never unseat on absence of evidence | §4, §8.3, AC-24 |
-| D12 | v1 registry migrates by one-shot rewrite-with-archive at first v2 write: closed→retired, active→recognition (never verbatim), absent-node legal only pre-mint, legacy keys ignored, tool vocabulary widened beyond claude\|codex | §5.4, AC-36 |
+| D12 | v1 registry migrates by one-shot rewrite-with-archive at first v2 write: closed→retired, active→unseated (dormant default, no live probing — never verbatim, never a corpse seated), absent-node legal only pre-mint, legacy keys ignored, tool vocabulary widened beyond claude\|codex | §5.4, AC-36 |
 
 Process notes outside the spec: where the distilled glossary lands (CONTEXT.md home) and which
 gaps ride which branch belong to the implementation plan, not this document. Open naming
-decision (recorded in `spec-feedback.md`): a more descriptive term for "epoch".
+decision (carried from the pre-ratification walkthrough): a more descriptive term for "epoch";
+cosmetic, may be settled by any implementation wave that touches the vocabulary.
