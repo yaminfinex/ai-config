@@ -16,10 +16,10 @@
 package registry
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -94,9 +94,9 @@ func DefaultPath() string {
 // Load reads every row of the registry at path. A missing file returns
 // (nil, fs.ErrNotExist)-wrapped error — callers mirror the bash scripts'
 // `[[ -f $REGISTRY ]]` guards and decide what "no registry" means for them.
-// The file is parsed as a stream of JSON values (what `jq -s` sees), so
-// blank lines and inter-row whitespace are irrelevant; a malformed or
-// non-object value is an error, matching jq aborting the whole pipeline.
+// Malformed or non-object rows are quarantined with a stderr warning and
+// skipped. That intentionally diverges from jq's old whole-file failure mode:
+// the v2 registry spec requires one torn append to never disable the CLI.
 func Load(path string) ([]Record, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -108,22 +108,37 @@ func Load(path string) ([]Record, error) {
 
 func decode(r io.Reader, path string) ([]Record, error) {
 	var recs []Record
-	dec := json.NewDecoder(r)
-	for {
-		var raw json.RawMessage
-		if err := dec.Decode(&raw); err != nil {
-			if errors.Is(err, io.EOF) {
+	br := bufio.NewReader(r)
+	for lineNo := 1; ; lineNo++ {
+		line, err := br.ReadBytes('\n')
+		if len(line) > 0 {
+			raw := bytes.TrimSpace(line)
+			if len(raw) != 0 {
+				var rec Record
+				if err := json.Unmarshal(raw, &rec); err != nil {
+					warnQuarantined(path, lineNo, err)
+				} else {
+					var obj map[string]json.RawMessage
+					if err := json.Unmarshal(raw, &obj); err != nil {
+						warnQuarantined(path, lineNo, err)
+					} else {
+						rec.Raw = bytes.Clone(raw)
+						recs = append(recs, rec)
+					}
+				}
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
 				return recs, nil
 			}
-			return nil, fmt.Errorf("registry %s: row %d: %w", path, len(recs)+1, err)
+			return nil, err
 		}
-		var rec Record
-		if err := json.Unmarshal(raw, &rec); err != nil {
-			return nil, fmt.Errorf("registry %s: row %d: %w", path, len(recs)+1, err)
-		}
-		rec.Raw = bytes.Clone(raw)
-		recs = append(recs, rec)
 	}
+}
+
+func warnQuarantined(path string, lineNo int, err error) {
+	fmt.Fprintf(os.Stderr, "herder registry %s: quarantined line %d: %v\n", path, lineNo, err)
 }
 
 // LatestByGUID collapses rows to the latest record per guid, reproducing
