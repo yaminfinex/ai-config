@@ -83,15 +83,22 @@ func TestLoadToleratesBlankLinesAndLongRows(t *testing.T) {
 	}
 }
 
-func TestLoadMalformedRowFails(t *testing.T) {
+func TestLoadQuarantinesMalformedRows(t *testing.T) {
 	path := writeRegistry(t, `{"guid":"g-1"}`, `{not json`)
-	if _, err := Load(path); err == nil {
-		t.Fatal("want error on malformed row, got nil")
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// A non-object value breaks jq's group_by(.guid) too — error, not skip.
+	if len(recs) != 1 || ptrString(recs[0].GUID) != "g-1" {
+		t.Fatalf("recs = %+v, want only valid row", recs)
+	}
 	path = writeRegistry(t, `"just a string"`)
-	if _, err := Load(path); err == nil {
-		t.Fatal("want error on non-object row, got nil")
+	recs, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("recs = %+v, want non-object row quarantined", recs)
 	}
 }
 
