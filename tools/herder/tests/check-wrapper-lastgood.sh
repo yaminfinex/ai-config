@@ -81,19 +81,25 @@ MAIN
 write_tag()  { printf 'package internal\n\nconst Tag = "%s"\n' "$2" > "$1/tools/herder/internal/ver.go"; }
 break_tag()  { printf 'package internal\n\nconst Tag = \n' > "$1/tools/herder/internal/ver.go"; }
 
-# Each root gets an isolated HOME/XDG_CACHE_HOME/TMPDIR so caches + the last-good
-# pointer are per-case and never touch the real ones. PATH is preserved so go /
-# mise resolve exactly as in real use.
-run_wrapper() { # run_wrapper DIR ARGS...  -> sets OUT/ERR/RC
-  local dir="$1"; shift
-  local h="$dir/.env"
-  mkdir -p "$h/tmp" "$h/.cache"
-  local errf="$dir/.stderr"
+# run_wrapper_env ROOT HOME_DIR TMP_DIR ARGS... — drive ROOT's wrapper under an
+# explicit HOME/XDG and TMPDIR (PATH preserved so go/mise resolve as in real
+# use). Distinct HOMEs sharing one TMPDIR exercise the shared-cache recovery
+# path (P2). Sets OUT/ERR/RC.
+run_wrapper_env() {
+  local root="$1" h="$2" t="$3"; shift 3
+  mkdir -p "$h/.cache" "$t"
+  local errf="$h/.stderr"
   OUT="$(HOME="$h" XDG_CACHE_HOME="$h/.cache" XDG_CONFIG_HOME="$h/.config" \
-    TMPDIR="$h/tmp" AI_CONFIG_ROOT="$dir" \
-    bash "$dir/bin/herder" "$@" 2>"$errf")"
+    TMPDIR="$t" AI_CONFIG_ROOT="$root" \
+    bash "$root/bin/herder" "$@" 2>"$errf")"
   RC=$?
   ERR="$(cat "$errf" 2>/dev/null || true)"
+}
+# run_wrapper DIR ARGS... — the common single-HOME case: HOME + TMPDIR keyed to
+# DIR (which is also AI_CONFIG_ROOT), all isolated from the real caches.
+run_wrapper() {
+  local dir="$1"; shift
+  run_wrapper_env "$dir" "$dir/.env" "$dir/.env/tmp" "$@"
 }
 
 # --- lifecycle: build good, break -> serve last-good, fix -> rebuild ---------
@@ -134,6 +140,24 @@ assert_eq       "never-built broken: no stdout"      "$OUT" ""
 assert_not_contains "never-built broken: not served" "$ERR" "serving last-good"
 # Loud = the real compiler output reaches stderr.
 assert_contains "never-built broken: compiler output shown" "$ERR" "ver.go"
+
+# --- cross-HOME (P2): build under HOME A, break, invoke under HOME B ----------
+# Both HOMEs share one TMPDIR, so the shared tmp cache carries the seeded binary
+# AND the checkout pointer. HOME B never built a good tree, yet must recover
+# last-good from the shared cache and serve it with ONE quiet line.
+XR="$ROOT/crosshome"
+make_root "$XR" V1
+SHARED_TMP="$XR/shared-tmp"
+run_wrapper_env "$XR" "$XR/homeA" "$SHARED_TMP" args-ignored
+assert_eq       "cross-HOME A: builds V1"        "$OUT" "TAG=V1"
+assert_eq       "cross-HOME A: exit 0"           "$RC"  "0"
+break_tag "$XR"
+run_wrapper_env "$XR" "$XR/homeB" "$SHARED_TMP" args-ignored
+assert_eq       "cross-HOME B: exit 0 (served)"          "$RC"  "0"
+assert_eq       "cross-HOME B: serves last-good V1"       "$OUT" "TAG=V1"
+assert_contains "cross-HOME B: quiet last-good line"      "$ERR" "herder: rebuild failed, serving last-good "
+assert_eq       "cross-HOME B: stderr is ONLY that line"  "$(printf '%s\n' "$ERR" | grep -c .)" "1"
+assert_not_contains "cross-HOME B: no compiler spew"      "$ERR" "ver.go"
 
 echo
 if [ "$fail" -eq 0 ]; then
