@@ -37,6 +37,13 @@ case "${1:-}" in
         jq -cn '{name:"me-bus", status:"active"}'
         exit 0
       fi
+      if [[ "$SCEN" == "armed_late" ]]; then
+        # Armed-late: "active" is NEVER sampled (turn ended before the first
+        # poll), so proof (a) can't fire — the sender must reach turn-end via the
+        # event-history proof (b) below.
+        jq -cn '{name:"me-bus", status:"listening"}'
+        exit 0
+      fi
       # First poll reports the caller still working; every later poll reports the
       # turn ended. The sender must not deliver until it sees "listening".
       n=0
@@ -56,8 +63,34 @@ case "${1:-}" in
     exit 0
     ;;
   events)
-    # Stateful ack mirroring mock-hcom: the pre-send snapshot sees nothing; the
-    # post-send poll sees THIS send's receipt (id newer than the snapshot).
+    # Two distinct event queries hit this branch:
+    #   - turn-end/arm-watermark (compact-then): `hcom events --agent <n> --last N`
+    #     (NO --context) → the sender's maxEventID/turnEndedSince snapshot.
+    #   - delivery receipt (send.DeliverBus): includes `--context deliver:<sender>`.
+    has_context=0
+    for a in "$@"; do [[ "$a" == "--context" ]] && has_context=1; done
+    if [[ "$has_context" -eq 0 ]]; then
+      # Arm-watermark snapshot / turn-end query. armed_late is stateful: the arm
+      # snapshot (first call) sees only the pre-arm event #10, so watermark=10;
+      # a LATER call also carries a post-arm listening event #20 (>10), which is
+      # the turnEndedSince proof (b). Other scenarios reach turn-end via observed
+      # active→listening, so they never consult this and one event suffices.
+      if [[ "$SCEN" == "armed_late" ]]; then
+        n=0
+        [[ -f "$STATE/evpolls" ]] && n="$(cat "$STATE/evpolls")"
+        printf '%d' $((n + 1)) >"$STATE/evpolls"
+        if [[ "$n" -eq 0 ]]; then
+          printf '%s\n' '{"id":10,"type":"status","data":{"status":"active"}}'
+        else
+          printf '%s\n{"id":20,"type":"status","data":{"status":"listening"}}\n' '{"id":10,"type":"status","data":{"status":"active"}}'
+        fi
+        exit 0
+      fi
+      printf '%s\n' '{"id":10,"type":"status","data":{"status":"active"}}'
+      exit 0
+    fi
+    # Delivery receipt — stateful ack mirroring mock-hcom: the pre-send snapshot
+    # sees nothing; the post-send poll sees THIS send's receipt (id newer).
     if [[ "$SCEN" == "queued_busy" ]]; then
       exit 0  # never acks → DeliverBus reports "queued"
     fi

@@ -168,17 +168,25 @@ Two deliberate exceptions ride keystrokes, neither reachable as a send transport
   once the `/compact` paste VERIFIES (the TASK-024 floor gates arming — an unverified paste arms
   nothing, so a continuation never fires into an uncompacted session), `herder compact` forks a
   detached, `setsid`-isolated sender (`herder compact-then`, an internal subcommand not in the
-  command table). That sender waits for the caller's turn to END — polling its OWN hcom session
-  status for working→idle (`active`→`listening`), never a fixed sleep — then delivers the
-  continuation over the bus through the same receipt-verified engine `herder send` uses
-  (`send.DeliverBus`). The target is the caller's OWN bus name, captured from the proven self row
-  at compact time and never re-resolved from a pane id (task-034 experiment #2 misresolved a
-  reused pane to a stale row). hcom's queue-until-deliverable makes the post-turn-end timing
-  forgiving. The sender is bounded by `--then-timeout` (default 15m; on timeout it gives up with
-  a loud log line and a manual-send remedy, never a zombie) and logs one line per phase to
+  command table). That sender waits for the caller's turn to END, then delivers the continuation
+  over the bus through the same receipt-verified engine `herder send` uses (`send.DeliverBus`).
+  Turn end is **proven, never assumed from a delay** (a fixed grace window would let a stale
+  status read inject mid-turn — experiment #1 over the bus): it fires only on an observed
+  `active`→`listening` transition, or — if it armed after the turn already ended — on an hcom
+  event-history `listening` record newer than the arm-time watermark. If neither proof
+  materializes before `--then-timeout` it **fails closed** and drops the continuation loudly (a
+  re-sendable dropped message beats a silent mid-turn injection). The target is the caller's OWN
+  bus name, captured from the proven self row at compact time and never re-resolved from a pane id
+  (task-034 experiment #2 misresolved a reused pane to a stale row). Delivery treats `queued` as
+  success (hcom queue-until-deliverable injects it at the next turn — never resent) and retries a
+  transient `not_joined`/`send_failed` with a settling backoff over the REMAINING timeout budget.
+  Bounded by `--then-timeout` (default 15m; timeout gives up with a loud log line + manual-send
+  remedy, never a zombie); one line per phase lands in
   `<herder-state-dir>/compact-then/compact-then-<short>-<pid>.log`. Codex is refused (its
-  compaction semantics differ). Covered by `tests/check-compact-contract.sh` (armed/aborted/sent
-  goldens + `mock-hcom-then`) and `internal/spawncmd/compactthen_test.go` (turn-end/timeout/retry).
+  compaction semantics differ). Covered by `tests/check-compact-contract.sh`
+  (armed/aborted/sent/armed-late/timeout goldens + `mock-hcom-then`) and
+  `internal/spawncmd/compactthen_test.go` (proof (a)/(b), the naked-listening poison case,
+  fail-closed timeout, budget-based retry).
 
 **Print one-shot bypass (TASK-010):** `claude -p/--print ...` hand-run through the shims skips the
 bus entirely — hcom hard-codes print mode as a persistent background agent (stdin nulled, stdout to

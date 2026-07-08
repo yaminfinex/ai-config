@@ -1,6 +1,6 @@
 === STDERR ===
 herder compact-then: armed for @me-bus (bus default) — waiting for a PROVEN turn end before delivering 40 chars (poll 1ms, timeout 2000ms, arm event #10)
-herder compact-then: turn end PROVEN (observed working→listening transition) — delivering continuation to @me-bus
+herder compact-then: turn end PROVEN (hcom events show a post-arm working→listening transition (armed after the turn began)) — delivering continuation to @me-bus
 herder compact-then: delivered on attempt 1 — continuation is in @me-bus's queue post-compaction.
 === STDOUT ===
 

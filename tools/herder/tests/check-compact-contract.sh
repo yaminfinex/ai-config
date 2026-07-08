@@ -272,8 +272,11 @@ then_child_scenario() {  # then_child_scenario <name> <mock scen> <extra args...
   run_then_child "$scen" "$@"
   check_one "$name"
 }
-then_child_scenario then_sent    sent
-then_child_scenario then_queued  queued_busy
+then_child_scenario then_sent       sent
+then_child_scenario then_queued     queued_busy
+# Armed-late: "active" never sampled → turn end PROVEN via the hcom event history
+# (proof (b)), then delivered. A naked sampled "listening" must NOT be enough.
+then_child_scenario then_armed_late armed_late
 THEN_TIMEOUT_MS=50 then_child_scenario then_timeout stuck
 
 # ---- grep gates: the ruled exception stays a ruled exception ----

@@ -16,6 +16,10 @@ type fakeProbe struct {
 	deliverRet  []string
 	deliverN    int
 	lastMessage string
+	// Event-history proof: the arm-time watermark and the id of a post-arm
+	// turn-end event (0 = no such event exists).
+	armWatermark   int64
+	turnEndEventID int64
 }
 
 func (f *fakeProbe) listStatus(_, _ string) string {
@@ -29,6 +33,12 @@ func (f *fakeProbe) listStatus(_, _ string) string {
 		return ""
 	}
 	return f.statuses[len(f.statuses)-1]
+}
+
+func (f *fakeProbe) maxEventID(_, _ string) int64 { return f.armWatermark }
+
+func (f *fakeProbe) turnEndedSince(_, _ string, watermark int64) bool {
+	return f.turnEndEventID != 0 && f.turnEndEventID > watermark
 }
 
 func (f *fakeProbe) deliver(_, _, message string, _ int) string {
@@ -61,13 +71,13 @@ func (c *fakeClock) Sleep(d time.Duration) {
 
 func baseCfg() thenConfig {
 	return thenConfig{
-		BusName:    "me-bus",
-		BusDir:     "",
-		Message:    "continue: run the gate, then report DONE",
-		PollMS:     100,
-		TimeoutMS:  10000,
-		GraceMS:    4000,
-		DeliverdMS: 3000,
+		BusName:        "me-bus",
+		BusDir:         "",
+		Message:        "continue: run the gate, then report DONE",
+		PollMS:         100,
+		TimeoutMS:      10000,
+		RetryBackoffMS: 100,
+		DeliverdMS:     3000,
 	}
 }
 
@@ -89,7 +99,7 @@ func TestThenLoopWaitsThroughActiveThenDelivers(t *testing.T) {
 	if p.lastMessage != baseCfg().Message {
 		t.Fatalf("delivered wrong message: %q", p.lastMessage)
 	}
-	if !strings.Contains(log.String(), "turn ended (status=listening after working)") {
+	if !strings.Contains(log.String(), "turn end PROVEN (observed working→listening transition)") {
 		t.Fatalf("log missing turn-end line:\n%s", log.String())
 	}
 	if !strings.Contains(log.String(), "delivered") {
@@ -117,32 +127,67 @@ func TestThenLoopNeverDeliversWhileActive(t *testing.T) {
 	}
 }
 
-func TestThenLoopGraceFiresWithoutObservedActive(t *testing.T) {
-	// Turn ended before the first poll could catch "active": only ever see
-	// listening. It must NOT fire immediately (grace guards a stale sample) but
-	// must fire once the grace window elapses.
+func TestThenLoopArmedLateDeliversOnEventProof(t *testing.T) {
+	// Armed-late: the turn ended before the first poll, so "active" is never
+	// sampled — but hcom's event history carries a status-listening event newer
+	// than the arm watermark, which PROVES the post-arm transition. It must
+	// deliver on that proof (proof (b)), not on the naked sample.
 	p := &fakeProbe{
-		statuses:   []string{"listening", "listening", "listening", "listening", "listening", "listening"},
-		deliverRet: []string{"delivered"},
+		statuses:       []string{"listening", "listening"},
+		deliverRet:     []string{"delivered"},
+		armWatermark:   100,
+		turnEndEventID: 150, // > watermark → post-arm turn end proven
 	}
-	cfg := baseCfg()
-	cfg.PollMS = 1000
-	cfg.GraceMS = 3000
-	clk := &fakeClock{now: time.Unix(0, 0), step: 1000 * time.Millisecond}
+	clk := &fakeClock{now: time.Unix(0, 0), step: 100 * time.Millisecond}
 	var log bytes.Buffer
-	code := runThenLoop(p, cfg, &log, clk.Now, clk.Sleep)
+	code := runThenLoop(p, baseCfg(), &log, clk.Now, clk.Sleep)
 
 	if code != 0 {
-		t.Fatalf("want exit 0, got %d; log:\n%s", code, log.String())
+		t.Fatalf("want exit 0 on event proof, got %d; log:\n%s", code, log.String())
 	}
 	if p.deliverN != 1 {
-		t.Fatalf("want 1 deliver via grace, got %d", p.deliverN)
+		t.Fatalf("want 1 deliver via event proof, got %d", p.deliverN)
 	}
-	if p.idx < 3 {
-		t.Fatalf("fired before the grace window elapsed (idx=%d)", p.idx)
+	if !strings.Contains(log.String(), "hcom events show a post-arm") {
+		t.Fatalf("log missing event-proof line:\n%s", log.String())
 	}
-	if !strings.Contains(log.String(), "via grace window") {
-		t.Fatalf("log missing grace-window line:\n%s", log.String())
+}
+
+func TestThenLoopPoisonNakedListeningNeverDelivers(t *testing.T) {
+	// The P1 poison case: sampled "listening" forever, NO observed active→
+	// listening transition, and NO post-arm turn-end event (the listening event,
+	// if any, predates the arm watermark). A naked sample must NEVER suffice —
+	// it must fail closed at timeout and deliver nothing.
+	cases := []struct {
+		name           string
+		turnEndEventID int64
+	}{
+		{"no turn-end event at all", 0},
+		{"turn-end event predates arm watermark", 50}, // < watermark 100
+	}
+	for _, c := range cases {
+		p := &fakeProbe{
+			statuses:       []string{"listening"},
+			deliverRet:     []string{"delivered"},
+			armWatermark:   100,
+			turnEndEventID: c.turnEndEventID,
+		}
+		cfg := baseCfg()
+		cfg.PollMS = 1000
+		cfg.TimeoutMS = 5000
+		clk := &fakeClock{now: time.Unix(0, 0), step: 1000 * time.Millisecond}
+		var log bytes.Buffer
+		code := runThenLoop(p, cfg, &log, clk.Now, clk.Sleep)
+
+		if code != 1 {
+			t.Fatalf("%s: want exit 1 (fail closed), got %d; log:\n%s", c.name, code, log.String())
+		}
+		if p.deliverN != 0 {
+			t.Fatalf("%s: naked listening must NOT deliver, got %d delivers", c.name, p.deliverN)
+		}
+		if !strings.Contains(log.String(), "FAILING CLOSED") {
+			t.Fatalf("%s: log missing fail-closed line:\n%s", c.name, log.String())
+		}
 	}
 }
 
@@ -189,6 +234,8 @@ func TestThenLoopQueuedIsSuccess(t *testing.T) {
 }
 
 func TestThenLoopRetriesTransientThenDelivers(t *testing.T) {
+	// Transient not_joined/send_failed retries with a settling backoff and
+	// eventually delivers — well within the timeout budget.
 	p := &fakeProbe{
 		statuses:   []string{"active", "listening"},
 		deliverRet: []string{"not_joined", "send_failed", "delivered"},
@@ -203,25 +250,34 @@ func TestThenLoopRetriesTransientThenDelivers(t *testing.T) {
 	if p.deliverN != 3 {
 		t.Fatalf("want 3 deliver attempts, got %d", p.deliverN)
 	}
+	if !strings.Contains(log.String(), "retrying in 100ms") {
+		t.Fatalf("log missing backoff line:\n%s", log.String())
+	}
 }
 
-func TestThenLoopGivesUpAfterRetries(t *testing.T) {
+func TestThenLoopGivesUpWhenBudgetExhausted(t *testing.T) {
+	// The send never succeeds: retries spend the REMAINING budget (not a fixed
+	// count), each attempt logged, then fail closed with the manual remedy once
+	// the deadline passes.
 	p := &fakeProbe{
 		statuses:   []string{"active", "listening"},
 		deliverRet: []string{"send_failed"},
 	}
+	cfg := baseCfg()
+	cfg.TimeoutMS = 500 // small budget; backoff 100ms → a few attempts then give up
 	clk := &fakeClock{now: time.Unix(0, 0), step: 100 * time.Millisecond}
 	var log bytes.Buffer
-	code := runThenLoop(p, baseCfg(), &log, clk.Now, clk.Sleep)
+	code := runThenLoop(p, cfg, &log, clk.Now, clk.Sleep)
 
 	if code != 1 {
-		t.Fatalf("want exit 1 after exhausting retries, got %d", code)
+		t.Fatalf("want exit 1 when budget exhausted, got %d", code)
 	}
-	if p.deliverN != 5 {
-		t.Fatalf("want 5 attempts, got %d", p.deliverN)
+	if p.deliverN < 2 {
+		t.Fatalf("want multiple retry attempts, got %d", p.deliverN)
 	}
-	if !strings.Contains(log.String(), "FAILED to deliver after 5 attempts") {
-		t.Fatalf("log missing give-up line:\n%s", log.String())
+	if !strings.Contains(log.String(), "FAILED to deliver within the --then-timeout budget") ||
+		!strings.Contains(log.String(), "herder send me-bus") {
+		t.Fatalf("log missing budget-exhausted give-up + remedy:\n%s", log.String())
 	}
 }
 
