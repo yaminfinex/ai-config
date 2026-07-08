@@ -30,6 +30,13 @@ BLUE='\033[34m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
+small_uint() {
+  case "$1" in
+    ''|*[!0-9]*) return 1 ;;
+    ???????????*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
 
 line1="${CYAN}${project_dir}${RESET}"
 
@@ -71,25 +78,20 @@ if [ -n "$hcom_state_file" ] && [ -r "$hcom_state_file" ]; then
     esac
   done < "$hcom_state_file"
   hcom_bus_seg=""
-  case "$hcom_unread" in
-    ''|*[!0-9]*) ;;
-    0) ;;
-    *) hcom_bus_seg="${MAGENTA}✉ ${hcom_unread}${RESET}" ;;
-  esac
-  case "$hcom_last_age_s" in
-    ''|*[!0-9]*) ;;
-    *)
-      if [ "$hcom_last_age_s" -lt 60 ]; then
-        hcom_age="${hcom_last_age_s}s"
-      elif [ "$hcom_last_age_s" -lt 3600 ]; then
-        hcom_age="$(( (hcom_last_age_s + 30) / 60 ))m"
-      else
-        hcom_age="$(( (hcom_last_age_s + 1800) / 3600 ))h"
-      fi
-      [ -n "$hcom_bus_seg" ] && hcom_bus_seg="${hcom_bus_seg} "
-      hcom_bus_seg="${hcom_bus_seg}${MAGENTA}last ${hcom_age}${RESET}"
-      ;;
-  esac
+  if small_uint "$hcom_unread" && [ "$hcom_unread" != "0" ]; then
+    hcom_bus_seg="${MAGENTA}✉ ${hcom_unread}${RESET}"
+  fi
+  if small_uint "$hcom_last_age_s"; then
+    if [ "$hcom_last_age_s" -lt 60 ]; then
+      hcom_age="${hcom_last_age_s}s"
+    elif [ "$hcom_last_age_s" -lt 3600 ]; then
+      hcom_age="$(( (hcom_last_age_s + 30) / 60 ))m"
+    else
+      hcom_age="$(( (hcom_last_age_s + 1800) / 3600 ))h"
+    fi
+    [ -n "$hcom_bus_seg" ] && hcom_bus_seg="${hcom_bus_seg} "
+    hcom_bus_seg="${hcom_bus_seg}${MAGENTA}last ${hcom_age}${RESET}"
+  fi
   if [ -n "$hcom_bus_seg" ]; then
     line1="${line1} ・ ${hcom_bus_seg}"
   fi

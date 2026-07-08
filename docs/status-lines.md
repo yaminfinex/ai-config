@@ -20,7 +20,7 @@ activity segment when the file is absent.
 Default path:
 
 ```text
-$HCOM_DIR/statusline/${HCOM_INSTANCE_NAME:-$HCOM_NAME}.env
+$HCOM_DIR/statusline/${HCOM_INSTANCE_NAME:-${HCOM_NAME:-self}}.env
 ```
 
 Override path:

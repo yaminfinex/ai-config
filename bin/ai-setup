@@ -8,11 +8,16 @@ heal_only=0
 hcom_hooks_action=""
 shims_action=""
 codex_config_action=""
+skip_codex_config=0
+codex_home_existed=0
+
+[ -d "$HOME/.codex" ] && codex_home_existed=1
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1 ;;
     --heal-only) heal_only=1 ;;
+    --skip-codex-config) skip_codex_config=1 ;;
     --hcom-hooks)
       shift
       case "${1:-}" in
@@ -57,7 +62,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     -h|--help)
       cat <<'USAGE'
-Usage: ai-setup [--dry-run] [--heal-only]
+Usage: ai-setup [--dry-run] [--heal-only] [--skip-codex-config]
        ai-setup [--dry-run] --hcom-hooks install|remove|status
        ai-setup [--dry-run] --codex-config install|remove|status
        ai-setup [--dry-run] --shims install|remove|status
@@ -71,6 +76,7 @@ real files or directories.
 requested. Hooks are launch-managed by hcom itself; ai-setup is the durable/manual
 install, remove, and status layer rather than a default setup side effect.
 --codex-config manages the shared Codex TUI config fragment in ~/.codex/config.toml.
+--skip-codex-config skips the default Codex config merge.
 --shims is a compatibility alias for managing the same mise conf.d PATH file.
 USAGE
       exit 0
@@ -215,7 +221,7 @@ mise_require || exit 1
 install_portable_links
 install_skill_links
 claude_settings_apply "$dry_run"
-codex_config_apply "$dry_run"
+codex_config_apply_default "$dry_run" "$codex_home_existed" "$skip_codex_config"
 mise_path_install
 
 log_info "ai-setup complete"
