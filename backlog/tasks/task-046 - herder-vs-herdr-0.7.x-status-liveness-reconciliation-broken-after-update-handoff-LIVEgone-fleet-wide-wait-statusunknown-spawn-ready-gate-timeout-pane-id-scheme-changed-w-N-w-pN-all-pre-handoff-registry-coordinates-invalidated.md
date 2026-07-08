@@ -9,7 +9,7 @@ status: In Progress
 assignee:
   - vibe
 created_date: '2026-07-08 04:56'
-updated_date: '2026-07-08 05:13'
+updated_date: '2026-07-08 05:18'
 labels: []
 dependencies: []
 priority: high
@@ -44,5 +44,10 @@ vibe TASK-046 diagnosis (bus #5729, applied by hera) — parse-shape hypothesis 
 (2) UPSTREAM DETECTION LOSS for pre-handoff PROCESSES: hera's row (404a13df) has CORRECT new-epoch coordinates but the pane shows agent_status=unknown / no agent field and is absent from agent list while demonstrably mid-conversation — pre-handoff processes' hook reports do not reach the new server (same shape as the hcom stale-PATH gotcha 3d71d34; restart is the recovery). Fully explains wait: herder wait delegates to herdr wait agent-status, which can never leave unknown for a detection-lost pane -> timeout(status=unknown). REFINES the earlier spawn-vs-enroll datapoint: the split is PROCESS-EPOCH (post-handoff processes detect; pre-handoff ones do not, however fresh their row).
 
 AGREED FIX (hera ack on the ticket): (a) reconcile fallback chain in list — terminal_id primary, then exact new-format pane_id, then agent-list name==label; emit matched_by. (b) liveness tri-state: agent-list miss + pane-list hit -> live_status 'undetected' (reserved 'gone' for no-pane) — fixes hera's row; likely the TASK-044 mechanism; feeds TASK-050. (c) wait: on timeout with pane present + status unknown, emit detection-lost guidance instead of bare timeout. (d) DECISION (hera): coordinate self-heal is an EXPLICIT `herder reconcile` command, not auto-heal during list — list stays read-only; one auditable migration command; matches herder-spec section 8.3 doctrine (reconciliation is triggered, never assumed) so wave-F subsumes it cleanly. Unambiguous match = name+cwd+agent-kind. (e) upstream gap (server-side re-adoption of surviving processes after update --handoff, not covered by #684) -> logged on TASK-029.
+---
+
+created: 2026-07-08 05:18
+---
+Dispatch state (vibe #5776): claude worker @task046-demo (guid 47f2c45b) spawned into worktree /home/grace/Coding/ai-config-task046, branch task-046-liveness; brief at TASK-046-BRIEF.md (scope a-d, explicit reconcile with dry-run default + --apply, re-confirm/re-bind/unseat vocabulary, refuse-on-ambiguity, never-steal-terminals, hermetic tests). CAVEAT for the merge gate: fixes (a)+(b) (list fallback chain + tri-state) were committed by vibe as WIP BEFORE the no-direct-changes instruction arrived — worker instructed to review-or-improve them; gate + adversarial review must cover that WIP commit like everything else. vibe is review-only from here: worker DONE -> vibe review -> hera gate re-run + adversarial review -> merge.
 ---
 <!-- COMMENTS:END -->
