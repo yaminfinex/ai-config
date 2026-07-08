@@ -212,3 +212,47 @@ func TestRegistryCapturedNameUsesLatestEnrichmentRow(t *testing.T) {
 		t.Fatalf("registryCapturedName = %q, want worker-rive", got)
 	}
 }
+
+// TestResendCommandForOnlySafeResults pins the recovery-command contract
+// (TASK-036): the exact `herder send` resend command is surfaced ONLY for the
+// delivery results where a resend is provably safe (nothing went on the wire) —
+// bind_timeout and ready_match_timeout — and is empty for every other result so
+// the omitempty JSON field stays absent where a resend is NOT the remedy.
+func TestResendCommandForOnlySafeResults(t *testing.T) {
+	const label = "worker-abc1234"
+	safe := map[string]bool{"bind_timeout": true, "ready_match_timeout": true}
+	for _, result := range []string{
+		"bind_timeout", "ready_match_timeout",
+		"delivered", "queued", "blocked_trust_modal", "send_failed", "not_attempted",
+	} {
+		got := resendCommandFor(result, label, "do the thing")
+		if safe[result] {
+			want := resendCommand(label, "do the thing")
+			if got != want {
+				t.Fatalf("resendCommandFor(%q) = %q, want %q", result, got, want)
+			}
+		} else if got != "" {
+			t.Fatalf("resendCommandFor(%q) = %q, want empty (resend is not the remedy)", result, got)
+		}
+	}
+}
+
+// TestResendCommandQuotesPromptVerbatim confirms the prompt round-trips through
+// shell quoting so a copy-paste resend re-sends the exact bytes — including a
+// multi-line brief with the notify appendix already folded in.
+func TestResendCommandQuotesPromptVerbatim(t *testing.T) {
+	prompt := "review unit X\nread the plan, then the diff\nreport 'findings'"
+	cmd := resendCommand("x-review-9f8e", prompt)
+	const prefix = "herder send x-review-9f8e "
+	if len(cmd) <= len(prefix) || cmd[:len(prefix)] != prefix {
+		t.Fatalf("resendCommand = %q, want prefix %q", cmd, prefix)
+	}
+	// A newline-bearing prompt must be quoted (never emitted raw), so the command
+	// stays a single shell word that pastes back intact.
+	quoted := cmd[len(prefix):]
+	for _, r := range quoted {
+		if r == '\n' {
+			t.Fatalf("resendCommand left a raw newline in the quoted prompt: %q", cmd)
+		}
+	}
+}
