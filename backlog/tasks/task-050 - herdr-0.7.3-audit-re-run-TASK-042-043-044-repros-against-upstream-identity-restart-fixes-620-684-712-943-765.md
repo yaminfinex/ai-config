@@ -3,10 +3,10 @@ id: TASK-050
 title: >-
   herdr-0.7.3 audit: re-run TASK-042/043/044 repros against upstream
   identity/restart fixes (#620/#684/#712/#943/#765)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 10:11'
+updated_date: '2026-07-08 10:19'
 labels: []
 dependencies: []
 priority: high
@@ -33,5 +33,18 @@ Controlled restart executing now (wave A + 063 both landed; vibe lane empty, vib
 created: 2026-07-08 06:31
 ---
 044 leg RESOLVED by TASK-046 (production verification #6881) — no separate fix needed. Remaining legs: 042 (adoption composite affordance) + 043 (enroll env staleness re-verify) need a controlled session-restart repro; heras own session is the natural test subject — coordinate with hera, schedule at the next natural restart or after wave-A settles rather than forcing one mid-wave.
+---
+
+created: 2026-07-08 10:19
+---
+Controlled restart EXECUTED — this comment is written by the replacement session (now @hera, guid bbbc84c2). Full evidence in napkins/run-herder-dx/restart-050-brief.md (post-restart appendix). Per-leg outcomes:
+
+042 leg — RE-SCOPE. Upstream 0.7.x fixed the herdr/hcom half: the pane shim (HERDER_SHIM=1) minted a FRESH identity at launch (HCOM_INSTANCE_NAME=mono, new HCOM_PROCESS_ID d49ed878) — the stale-env-inheritance hypothesis from the accident is FALSIFIED; and hcom 0.7.23 dropped the dead hera bus row entirely (no stale row lingered; #620/#684/#943 behaving as advertised). hcom start --as hera reclaimed the bus name cleanly. But NOTHING auto-adopts registry-side: no row for the new session, manual reclamation required end-to-end, and every composite verb is missing — rename has no --take-from; herder retire does not exist (unknown command); enroll refuses label hera held by DEAD guid 404a13df with text: label "hera" already belongs to active guid 404a13df (an unseated/live_status=gone row counts as "active" for label uniqueness). With the cull bug (TASK-069) the label hera is UNRECLAIMABLE by any current verb. Final identity: guid bbbc84c2, label hera-restart-050b, hcom_name=hera, bus @hera, pane w6554208c1918a12:p1 (pane ids did NOT reshuffle).
+
+043 leg — CONFIRM-STILL-BROKEN, fresh evidence. First enroll (row 0c607d43) recorded hcom_name=mono from the frozen launch env despite live bus identity hera. Workaround re-verified: HCOM_INSTANCE_NAME=hera herder enroll wrote row bbbc84c2 with hcom_name=hera. Wrinkle: same-label re-enroll is refused (label-uniqueness check runs BEFORE pane-supersession retirement), so the workaround needs a variant label when the first enroll already took the intended one.
+
+044 leg — already resolved via TASK-046 (comment 1), not re-run.
+
+NEW defect found during the composite attempt: herder cull pane_not_found path (with and without --force) prints "still marked closed in registry", exits 0, but appends NO closed record — filed as TASK-069. Closing this audit task; residual work lives on 042/043/069.
 ---
 <!-- COMMENTS:END -->

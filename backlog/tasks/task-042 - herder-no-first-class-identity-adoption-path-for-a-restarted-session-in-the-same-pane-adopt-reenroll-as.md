@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-08 05:55'
+updated_date: '2026-07-08 10:19'
 labels: []
 dependencies: []
 priority: medium
@@ -35,5 +35,10 @@ RESPEC per spec D1 / §3.1-1 (spec-ravu #6043, hera concurs — flagged in the s
 created: 2026-07-08 05:55
 ---
 Ratification note (#6423): identity rules confirmed with owner clarification — resume KEEPS the guid (same transcript continuing, AC-11); only fork, /clear, and restart-replacement mint new guids. The enroll + rename --take-from + retire composite on this ticket is now frozen doctrine for the restart case.
+---
+
+created: 2026-07-08 10:19
+---
+0.7.3 re-run complete (TASK-050 controlled restart, replacement session bbbc84c2). Scope confirms the audit prediction: the herdr-side identity half now works — fresh launch identity from the shim (no stale env inherited), dead bus row dropped by hcom 0.7.23, hcom start --as clean — so this task shrinks to the REGISTRY-SIDE adoption affordance, which is missing in full: (1) rename has no --take-from (help: a taken label requires culling the holder first); (2) retire absent (unknown command, wave C); (3) enroll label-uniqueness treats a DEAD row (unseated + live_status=gone) as "active" and refuses; (4) the cull escape hatch is broken — pane_not_found path writes no closed record even with --force (TASK-069) — so a dead agent's label is permanently unreclaimable today. Live consequence: the standing orchestrator now runs as label hera-restart-050b instead of hera. The frozen composite (enroll new guid -> rename --take-from -> retire old) remains the right shape; TASK-069 is a prerequisite or co-fix.
 ---
 <!-- COMMENTS:END -->
