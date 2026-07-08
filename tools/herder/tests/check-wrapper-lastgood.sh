@@ -159,6 +159,44 @@ assert_contains "cross-HOME B: quiet last-good line"      "$ERR" "herder: rebuil
 assert_eq       "cross-HOME B: stderr is ONLY that line"  "$(printf '%s\n' "$ERR" | grep -c .)" "1"
 assert_not_contains "cross-HOME B: no compiler spew"      "$ERR" "ver.go"
 
+# --- interrupted build must STOP, not serve (P3 round-2) ----------------------
+# A supervisor TERM during the go build must terminate the wrapper, NOT resume
+# into the failed-rebuild path and launch last-good. Force a slow build with a
+# stub `go` (satisfies go.mod, then sleeps on `build`), preseed last-good with a
+# real build, then TERM the wrapper mid-build: expect a nonzero exit and NO
+# serve. Needs `timeout`; skip that one assertion cleanly if absent.
+if command -v timeout >/dev/null 2>&1; then
+  SR="$ROOT/interrupt"
+  make_root "$SR" V1
+  run_wrapper "$SR" args-ignored           # real build -> seeds last-good V1
+  assert_eq "interrupt: preseed builds V1" "$OUT" "TAG=V1"
+
+  STUB="$SR/stubgo"; mkdir -p "$STUB"
+  cat > "$STUB/go" <<'STUBGO'
+#!/usr/bin/env bash
+# Satisfies the wrapper's version probe, then hangs on build so a TERM lands
+# mid-build. exec sleep with stdout closed so it never holds the caller's pipe.
+case "${1:-}" in
+  version) printf 'go version go1.99.0 linux/amd64\n' ;;
+  build)   exec sleep 30 >/dev/null 2>&1 <&- ;;
+  *)       exit 0 ;;
+esac
+STUBGO
+  chmod +x "$STUB/go"
+  write_tag "$SR" V2                        # new hash => rebuild required (no exact reuse)
+  h="$SR/.env"; errf="$h/.stderr.int"
+  OUT="$(PATH="$STUB:$PATH" HOME="$h" XDG_CACHE_HOME="$h/.cache" XDG_CONFIG_HOME="$h/.config" \
+    TMPDIR="$h/tmp" AI_CONFIG_ROOT="$SR" \
+    timeout -s TERM 2 bash "$SR/bin/herder" args-ignored 2>"$errf")"
+  RC=$?
+  ERR="$(cat "$errf" 2>/dev/null || true)"
+  if [ "$RC" -ne 0 ]; then ok "interrupt: nonzero exit (stopped)"; else bad "interrupt: nonzero exit (stopped)" "rc=0"; fi
+  assert_not_contains "interrupt: did NOT serve last-good" "$OUT" "TAG="
+  assert_not_contains "interrupt: no serve line"           "$ERR" "serving last-good"
+else
+  printf 'SKIP  interrupt case - no `timeout` available\n'
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf 'ALL GREEN - wrapper serves last-good on broken rebuild, fails loud when never built.\n'

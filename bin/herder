@@ -227,11 +227,18 @@ fi
 # toolchain download.
 tmp_bin="$herder_bin.tmp.$$"
 build_log="$cache_dir/.herder-build.$$"
-# A SIGKILL cannot be trapped (the age prune below sweeps its leftovers), but a
-# catchable death or normal exit cleans the scratch build files promptly so
-# they never leak. The exec paths replace the process before EXIT fires, and
-# both already rm'd these — so the trap only bites the interrupted-build case.
-trap 'rm -f "$tmp_bin" "$build_log" 2>/dev/null || true' EXIT INT TERM
+# Clean scratch build files on any catchable exit so they never leak (a SIGKILL
+# can't be trapped — the age prune below sweeps its leftovers). The exec paths
+# replace the process before EXIT fires and already rm'd these, so EXIT only
+# bites the interrupted-build case. INT/TERM are handled SEPARATELY: they must
+# STOP the wrapper (exit 130/143), never fall through — a caught supervisor
+# signal resuming into the else branch would morph an interrupted build into a
+# last-good serve (a killed build must terminate, never launch). The EXIT trap
+# still fires on that exit, so cleanup runs.
+cleanup_build() { rm -f "$tmp_bin" "$build_log" 2>/dev/null || true; }
+trap cleanup_build EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 if (cd "$src_dir" && env -u GOROOT GOTOOLCHAIN="${GOTOOLCHAIN:-local}" "${go_cmd[@]}" build -o "$tmp_bin" ./cmd/herder) 2>"$build_log"; then
   mv "$tmp_bin" "$herder_bin"
   rm -f "$build_log" 2>/dev/null || true
