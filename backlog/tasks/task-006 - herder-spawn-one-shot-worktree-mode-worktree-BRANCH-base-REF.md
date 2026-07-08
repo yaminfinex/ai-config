@@ -5,7 +5,7 @@ status: Done
 assignee:
   - unit-h-risa
 created_date: '2026-07-07 05:57'
-updated_date: '2026-07-07 09:02'
+updated_date: '2026-07-08 05:04'
 labels:
   - run-herder-dx
 dependencies: []
@@ -36,3 +36,12 @@ Observed during run-herder-bootstrap: spawning a worker into a fresh worktree ta
 <!-- SECTION:NOTES:BEGIN -->
 Commit cdb7652 (branch unit-h-spawn-worktree). herder spawn --worktree BRANCH [--base REF]: resolves source repo via `herdr worktree list --cwd` (works from linked worktrees — live-probed payload shapes first, throwaway branch, removed), drives `herdr worktree create --cwd <src> --branch --no-focus --json`, spawns into the new workspace checkout, closes the workspace seed root pane via the SAME identity-guard machinery as --new-tab (payload root_pane feeds rootPaneID/rootTerm), surfaces coordinates in summary + --json `worktree` block. Create failure = verbatim herdr error before any pane; created-then-spawn-failed = non-zero exit + deferred leak report (workspace/checkout/branch + exact remove command), NEVER auto-removed (degrade-safe ruling by hera). Conflicts refused: --workspace/--from-pane/--cwd/--tab/--new-tab, --base alone. Suite: goldens worktree/worktree_startfail/worktree_createfail + 4 usage assertions; mock-herdr-spawn learned worktree list/create (p_60@term_WTROOT topology). Verification: battery 16/16 + go gates green; live smoke rc=0 (fresh branch off main, agent sole pane, notify #2119 from inside checkout) + hera independent smoke. Docs: spawn --help, README spawn section, spawn-patterns recipe B (anti-pattern note for old two-CLI dance), fan-out.md rule 1 (hera-approved). Follow-ups: TASK-026 (cull-time worktree awareness; branch-exists->worktree-open fallback; workspace label override).
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 05:04
+---
+vibe (herdr-0.7.3 audit, bus #5629, applied by hera): herdr 0.7.1 #729: worktree create now checks out an existing local branch instead of failing when the branch already exists — retry/resume ergonomics for spawn --worktree improved; the existing-branch error path can simplify.
+---
+<!-- COMMENTS:END -->

@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-08 04:05'
+updated_date: '2026-07-08 05:04'
 labels:
   - run-herder-dx
 dependencies: []
@@ -66,5 +66,10 @@ author: hera
 created: 2026-07-08 04:05
 ---
 Candidate 12 (Unit Y measurement, 2026-07-08): codex roster entries omit launch_context.pane_id (claude publishes it; codex carries only process_id — verified on fully-booted sessions). This defeats herder's fast child-correlation for codex entirely: initial-prompt bind, sidecar pane-correlation, and recovery all degrade to async tag+cwd-independent enrichment that lags minutes under load. Upstream fix (publish pane_id for codex like claude) collapses the class: TASK-036's recovery affordance, the deferred redeliver verb, and the structural codex bind_timeouts all stop being needed. Strengthens/absorbs candidate 8.
+---
+
+created: 2026-07-08 05:04
+---
+vibe (herdr-0.7.3 audit, bus #5629, applied by hera): Reverse-direction entry: herdr 0.6.10->0.7.3 shipped fixes that collapse local complexity (stable ids #569, pane move #299, send-keys combos #613, session.snapshot, api schema, worktree #729, identity fixes #620/#684/#943). The four audit tasks TASK-047..050 enumerate the collapse work; when closing them, check whether any of our previously-planned upstream tickets are now moot.
 ---
 <!-- COMMENTS:END -->

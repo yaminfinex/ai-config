@@ -7,7 +7,7 @@ status: Done
 assignee:
   - unit-y-vivo
 created_date: '2026-07-08 02:30'
-updated_date: '2026-07-08 04:13'
+updated_date: '2026-07-08 05:04'
 labels: []
 dependencies: []
 priority: low
@@ -35,3 +35,12 @@ Both codex reviewer spawns in wave 7 (x-review, w-review) hit bind_timeout: code
 <!-- SECTION:NOTES:BEGIN -->
 Established via live measurement that codex bind_timeouts are STRUCTURAL, not slow boots: codex joins the bus ~1s after launch but its roster entry omits launch_context.pane_id (claude publishes it), defeating both pane-id correlation paths; correlation arrives only via async sidecar enrichment, which lags minutes under load (a clean probe exceeded a 240s window). hera cross-checked the harsher reading (post-TASK-033 = never enriches) against the registry: disproven — rows do enrich eventually; async-lag confirmed. Shipped direction (b): bind_timeout/ready_match_timeout print the exact verbatim resend command (herder send <quoted-label> <quoted-prompt>, notify appendix folded in) on stderr and as --json resend_command (omitempty; the two not-sent results only). Both label AND prompt shell-quoted (review P2: metachar labels are accepted, raw label could split/expand on paste; bind_timeout_metachar golden + TestResendCommandQuotesMetacharLabel pin the argv-level round-trip). Direction (a) family bind window TRIED AND REVERTED (measurement disproved its premise); (c) herder redeliver DEFERRED (same async dependency, heavier). Root cause routed upstream: TASK-029 candidate 12 (hcom should publish launch_context.pane_id for codex — collapses the class). Merged a475af8; hera gates green three times (worktree R1/R2 + post-merge main 19/19). Review: zana REQUEST-CHANGES (1 P2) => APPROVE (argv-level verification). Live-smoked on a real codex spawn.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 05:04
+---
+vibe (herdr-0.7.3 audit, bus #5629, applied by hera): x-ref TASK-047 (pane-move-based --new-tab) reduces boot-time moving parts but does not extend the 60s bind window; bind-latency work here is unaffected. Also note 0.7.2 #936 (Linux foreground process-group scan caching) may slightly change agent-detection timing during codex boot — watch for behavior shifts while re-testing.
+---
+<!-- COMMENTS:END -->
