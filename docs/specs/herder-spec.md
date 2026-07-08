@@ -410,7 +410,7 @@ appear in seat bindings and §8.3 reconciliation, never in addressing or human l
 | `resolve <target>` | Print the session's current coordinates (`--hcom-name`, `--terminal`, `--pane`, `--guid`) for composition with raw substrate commands. The general escape hatch (below). |
 | `cull <target>` | Destroy the seat; session → unseated. Never touches other sessions' rows; kills the sidecar last (no post-cull resurrection). |
 | `resume <target>` | Re-seat an unseated session, same guid. Refuses: already seated (names the seat, suggests fork), retired, lost. **Verifies** the tool's reported sid equals the requested sid; mismatch ⇒ turnover (new guid, `resume_failed_from`), never a same-guid re-seat. Prefers sid over hcom name as the launch vehicle. |
-| `fork <target>` | Register a new session from an existing one (`forked_from`); parent undisturbed; works on unseated parents (transcript is the substrate). |
+| `fork <target>` | Register a new session from an existing one (`forked_from`); parent undisturbed; works on unseated **and retired** parents — transcript is the substrate, and retirement closes the session's occupancy and label, never its history (§3.1-3). Only a `lost` parent refuses (transcript verified gone: no substrate). |
 | `rename <target> <label>` | Mint/move a label lease. Bare collision refuses; `--take-from <holder>` is the explicit takeover: atomic transfer + notify the displaced holder. Re-minting a previously-held name warns with the predecessor. |
 | `retire <target>` | Close the session for good; releases the label. `reopen` (rare, explicit) returns it unlabelled. |
 
