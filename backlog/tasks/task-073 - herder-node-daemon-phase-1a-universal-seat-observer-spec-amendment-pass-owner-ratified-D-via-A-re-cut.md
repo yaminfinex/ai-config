@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 11:44'
+updated_date: '2026-07-08 20:59'
 labels: []
 dependencies: []
 priority: high
@@ -29,3 +30,12 @@ Explicitly OUT of this unit (gated on design work still in grilling): spoke tele
 
 Overlap notes: subsumes memo 3.3(c) — do NOT file enroll-forks-a-sidecar as a stopgap; memo 3.3(a) and (b) remain independently fileable (pending the memo-translation pass). Sequencing: spec amendment/erratum pass runs first (spec-ravu lane), implementation dispatch after TASK-071/072 land (registry write-path adjacency).
 <!-- SECTION:DESCRIPTION:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 20:59
+---
+Owner directive (2026-07-08): the design pass this task will become gets TOMO as FINAL reviewer, in addition to the fresh-context adversarial design review. Rationale: tomo is the live claude session that authored the original node-daemon proposal this task was filed from — as final reviewer it checks drift-from-original-intent (golden-agent-style purpose check), complementing the fresh-context reviewer who attacks quality. Sequencing at dispatch: designer produces -> fresh-context adversarial review -> fix round -> tomo final review -> buildable. NOTE for the future orchestrator: tomo is a live session (bus name tomo); if it has been culled or compacted past usefulness by design time, resume/decant it or escalate to owner rather than silently substituting.
+---
+<!-- COMMENTS:END -->
