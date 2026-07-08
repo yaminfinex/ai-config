@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 09:14'
+updated_date: '2026-07-08 09:21'
 labels: []
 dependencies: []
 priority: medium
@@ -47,5 +47,10 @@ created: 2026-07-08 09:09
 created: 2026-07-08 09:14
 ---
 [hera 2026-07-08] MERGED to main (78edf09, no-ff) after review-047-bozo CLEAN verdict (#10145: all 8 angles probed — launchPaneID pre-move capture is CORRECT by design (matches child launch_context), post-refetch paneID feeds reads, no stale tab-scoped state in cull/send/wait, JSON-escaped fail-soft reason, new-tab can never reach the seed-close block, 052 label shape has no dependent consumers, dead code gone, move_failed leaves a labelled cullable pane). Second-lander integration auto-merged clean; post-merge gate on main GREEN (fresh -count=1, 24/24 suites). Reviewer static-only — execution covered by hera gate + vibe live validation. Residuals filed to TASK-051 polish bucket: LOW latent (re-fetch uses pre-move pane id with no terminal_id fallback — safe while new-tab moves stay same-workspace, breaks if doctrine ever changes), NIT compactMessage passes non-whitespace control/ANSI bytes to the human stderr line, NIT dead write opts.Tab. Credits: task047-zamo (2aaad7a), vibe (dispatch, review, live validation), review-047-bozo. TASK-052 fold delivered: --label-prefix replaces role prefix.
+---
+
+created: 2026-07-08 09:21
+---
+[hera 2026-07-08] PRODUCTION-VERIFIED: post-merge spawns now report 'agent pane moved, no seed shell' in the new-tab line (first seen on review-a5 spawn) — the rewrite is live in the orchestration loop.
 ---
 <!-- COMMENTS:END -->
