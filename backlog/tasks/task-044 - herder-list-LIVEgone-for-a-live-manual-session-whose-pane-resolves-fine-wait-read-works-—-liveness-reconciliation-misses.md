@@ -3,10 +3,10 @@ id: TASK-044
 title: >-
   herder list: LIVE=gone for a live manual session whose pane resolves fine
   (wait --read works) — liveness reconciliation misses
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-08 05:13'
+updated_date: '2026-07-08 06:31'
 labels: []
 dependencies: []
 priority: low
@@ -30,5 +30,10 @@ vibe (herdr-0.7.3 audit, bus #5629, applied by hera): Possibly subsumed by TASK-
 created: 2026-07-08 05:13
 ---
 hera x-ref (vibe #5729): mechanism likely identified via TASK-046 — pre-handoff-process detection loss + coordinate epoch mismatch, not a matcher key herder omits. The 046 tri-state fix ('undetected' vs 'gone') should cover this row's symptom; re-verify under TASK-050 after 046 lands.
+---
+
+created: 2026-07-08 06:31
+---
+RESOLVED BY TASK-046 (production-verified, vibe #6881): post-merge herder list from main shows true statuses fleet-wide (2 done/3 idle/1 working/1 undetected/26 genuinely gone); the pre-handoff manual-row miss was the process-epoch detection-loss mechanism, now honestly reported as undetected. No separate fix. TASK-050s 044 leg closes with this.
 ---
 <!-- COMMENTS:END -->
