@@ -276,8 +276,14 @@ child-first; on disagreement the child edge wins.
   if atomic with the write. flock is a single-machine primitive: on filesystems where it cannot
   be reliably acquired (network mounts), the write refuses rather than proceeding unlocked.
 - **Label uniqueness is checked over the full projection.**
-- Rows carry only fields their writer owns; no append may revert a concurrent unrelated write
-  (a stale status enrichment cannot undo a rename or resurrect a culled session).
+- Rows carry only fields their writer owns — writers may *change* only owned fields, but every
+  appended row remains a full self-contained snapshot (§5.1): non-owned fields are carried
+  forward from the projection read under the same lock, and the merge lives once, in the shared
+  locked append helper, not in each writer. Absence of a field in a writer's patch means
+  carry-forward, never clear; clearing is itself an owned operation (unseat clears `seat{}`).
+  No append may revert a concurrent unrelated write (a stale status enrichment cannot undo a
+  rename; a late registration cannot mask a recognised seat's `hcom_name`; nothing resurrects
+  a culled session).
 - Hook-driven appends are idempotent: turnover registration dedupes on (seat, new sid);
   unseat/retire/recognise are no-ops when the projection already shows the target state.
 - The loader **quarantines** malformed rows (skip + warn); one torn line never disables the CLI.
