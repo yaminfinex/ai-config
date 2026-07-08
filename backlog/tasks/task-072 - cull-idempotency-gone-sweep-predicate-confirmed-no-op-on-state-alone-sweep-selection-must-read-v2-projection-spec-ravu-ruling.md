@@ -3,11 +3,11 @@ id: TASK-072
 title: >-
   cull idempotency + --gone sweep predicate: confirmed no-op on state alone;
   sweep selection must read v2 projection (spec-ravu ruling)
-status: In Progress
+status: Done
 assignee:
   - '@hera'
 created_date: '2026-07-08 11:31'
-updated_date: '2026-07-08 12:25'
+updated_date: '2026-07-08 12:39'
 labels: []
 dependencies: []
 priority: medium
@@ -44,5 +44,10 @@ Round 1: worker DONE a00808b; my gate green 29/29. Opus review (review072-dula #
 created: 2026-07-08 12:25
 ---
 Adjudication landed (spec-ravu #12783): option (a) — one annotation row on FIRST verified cull of a never-annotated corpse. Unifying principle, erratum 842ff16 refined in place: append legal IFF the owned patch changes the projection; no-op condition = target state AND no new information (not state alone). Fence relayed to worker (#12788): verify before writing already_gone (seat=nil trivially verifiable; stale coordinates actually probed; source recorded); unverifiable -> write nothing + honest render; blank close_result never rendered as closure; annotations write-once per unseat episode. LOW nod: --gone seated-only CONFIRMED intended (sweeps are for state changes, not annotation hygiene). Blessing batch now: c3dbc5e 82fceb4 7782cbc 6b59162 842ff16. OPERATIONAL FOLLOW-UP available post-merge: one-time bulk-retire of migrated_v1 corpses via C0 for clean list output (no ruling needed). Worker had ruling-independent parts already patched when relay arrived; finalizing assertions + commit now.
+---
+
+created: 2026-07-08 12:39
+---
+Round 2: fix 04e6d25 — my regate 29/29; opus delta APPROVE (#13086: both P2s resolved, corpse pin restored in both suites; probe reality verified — no path stamps already_gone without a real pane-get probe; episode scoping correct — new unseat episodes re-annotate; byte-identical pins intact; belt-and-suspenders guard+normalizer). Merged main (no-ff); post-merge gate on main from repo root: herder+bottle OK, 29/29. Ruling #12783/erratum 842ff16 faithfully implemented: no-op = target state + no new information; first verified cull annotates once (source=cull-verification); unverifiable = zero writes + honest render. Worker task072-062cb333 + reviewer review072-8e3a7df3 culled; worktree/branch removed. Follow-up executed post-merge: one-time bulk-retire of migrated_v1 corpses (ruling-sanctioned operational call), EXCLUDING lale's TASK-065 evidence rows a9fcee3d/edea1564.
 ---
 <!-- COMMENTS:END -->
