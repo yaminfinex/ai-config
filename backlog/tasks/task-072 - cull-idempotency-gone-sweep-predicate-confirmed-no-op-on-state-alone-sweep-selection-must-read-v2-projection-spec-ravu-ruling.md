@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@hera'
 created_date: '2026-07-08 11:31'
-updated_date: '2026-07-08 12:24'
+updated_date: '2026-07-08 12:25'
 labels: []
 dependencies: []
 priority: medium
@@ -39,5 +39,10 @@ Dispatched: codex worker task072-062cb333, worktree task-072-cull-idempotency of
 created: 2026-07-08 12:24
 ---
 Round 1: worker DONE a00808b; my gate green 29/29. Opus review (review072-dula #12730): REQUEST-CHANGES — P2 (borderline P1): state-only no-op guard also swallows the FIRST cull of a migrated_v1 never-close-annotated corpse (the original 069 shape) and renders a BLANK close_result as a recorded fact — behavior beyond ruling #11884's repeat-cull mandate; adjudication with spec-ravu (#12747: append one annotation row vs honest no-op). P2: the 069 regression pin was deleted from BOTH suites (fixtures rewritten to seated/annotated shapes that dodge the no-op guard). LOW: --gone no longer reaches legacy_v1_mapped unseated corpses (spec nod requested in same adjudication). Verified clean: plumbing removal genuinely dead, lock-consistent fact read, byte-identical sweep assertions strong, empty-sweep exit-0 safe. Fix round dispatched in two stages (#12748, acked): ruling-independent parts now (restore corpse seeding in both suites; never render blank close_result as fact), semantic branch on ruling relay.
+---
+
+created: 2026-07-08 12:25
+---
+Adjudication landed (spec-ravu #12783): option (a) — one annotation row on FIRST verified cull of a never-annotated corpse. Unifying principle, erratum 842ff16 refined in place: append legal IFF the owned patch changes the projection; no-op condition = target state AND no new information (not state alone). Fence relayed to worker (#12788): verify before writing already_gone (seat=nil trivially verifiable; stale coordinates actually probed; source recorded); unverifiable -> write nothing + honest render; blank close_result never rendered as closure; annotations write-once per unseat episode. LOW nod: --gone seated-only CONFIRMED intended (sweeps are for state changes, not annotation hygiene). Blessing batch now: c3dbc5e 82fceb4 7782cbc 6b59162 842ff16. OPERATIONAL FOLLOW-UP available post-merge: one-time bulk-retire of migrated_v1 corpses via C0 for clean list output (no ruling needed). Worker had ruling-independent parts already patched when relay arrived; finalizing assertions + commit now.
 ---
 <!-- COMMENTS:END -->
