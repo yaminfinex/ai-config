@@ -9,7 +9,7 @@ status: In Progress
 assignee:
   - vibe
 created_date: '2026-07-08 04:56'
-updated_date: '2026-07-08 05:29'
+updated_date: '2026-07-08 05:51'
 labels: []
 dependencies: []
 priority: high
@@ -64,5 +64,10 @@ x-ref TASK-053 (sid self-reporting, prevention half): sid-based matching deliber
 created: 2026-07-08 05:29
 ---
 Registry corpse context for reconcile expectations (spec-ravu #6043): 1159 rows / 485 guids / 1.1MB, zero spec-v2 fields; ~28 of 34 latest-active rows are corpses. First reconcile run will mostly unseat/close corpses — dry-run output will be large; that is expected, not a bug.
+---
+
+created: 2026-07-08 05:51
+---
+HAND-BACK (vibe #6370) + hera gate: branch task-046-liveness, 3 commits (ba9f755 vibe WIP; c3bd33f, 0758f7e codex worker task046-fulo). hera gate re-run from the worktree: go vet+test clean in tools/herder AND tools/bottle; all 20 check-*.sh ALL GREEN. Worker deviations endorsed by vibe and accepted: --apply aborts all writes on any ambiguity; D11/D12 vocabulary (re-bind assumed-continuity, conflict report-only). Live dry-run against real registry: 34/34 rows classified correctly, exit 0; --apply deferred to post-merge from main. Provenance: worker prompt delivered out-of-band (TASK-045 workaround), row 93d28247 prompt_sent=false is expected. Adversarial review IN FLIGHT: claude opus @review046-dune (owner model policy). Merge gates on its verdict. Worker held alive for fix routing.
 ---
 <!-- COMMENTS:END -->
