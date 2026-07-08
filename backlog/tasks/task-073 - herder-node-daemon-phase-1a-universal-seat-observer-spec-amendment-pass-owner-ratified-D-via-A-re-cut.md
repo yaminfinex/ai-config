@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 11:44'
-updated_date: '2026-07-08 21:12'
+updated_date: '2026-07-08 21:14'
 labels: []
 dependencies: []
 priority: high
@@ -57,5 +57,10 @@ Owner directive (2026-07-08): the design pass this task will become gets TOMO as
 created: 2026-07-08 21:12
 ---
 DESIGN INPUT (owner-directed, 2026-07-08, verified against the live herdr install): the herdr terminal's socket API has a subscription protocol (schemas: event, subscription_event — see 'herdr api schema') whose event set includes exactly the observer-relevant facts: pane.created, pane.closed, pane.exited, pane.agent_detected, pane.agent_status_changed, pane.output_matched, agent_started, session.snapshot. herdr also has a plugin system ('herdr plugin install/link/action/log', none installed today) — a plugin is a packaged long-lived subscriber. The design pass MUST evaluate this as a candidate observer substrate, because it has the universality property this task wants for free: events are per-PANE, regardless of how the seat came to be, so enrolled seats are covered identically to spawned ones. Fit with the ratified invariants: events are liveness ADVICE (invariant 5) and a push-based front-end; the registry file stays truth; daemon/plugin downtime still requires the catch-up sweep, so the event stream supplements but cannot replace registry tailing. Open questions for the designer: can a plugin append observation facts through the shared locked writer (exec of the herder binary vs in-process); plugin lifecycle vs the disposability invariant (plugin dies with the herdr server — is that a feature); pane events do not cover hcom bus-row freshness (separate source still needed); upstream stability of the plugin/subscription API (herdr is an external dependency on its own release channel).
+---
+
+created: 2026-07-08 21:14
+---
+Design-input addendum (owner FYI, verified in the same schema pull): the herdr socket API is also QUERYABLE, not just event-emitting — request/response schemas with query verbs incl pane.get/list/read/process_info, agent.list/get, workspace.list, session.snapshot. Consequence for the observer design: the classic list-then-watch pattern is available — on observer start, query the full snapshot to reconcile the registry against current pane/agent truth (the catch-up sweep becomes a point-in-time query instead of an event replay), then consume subscriptions for deltas. This directly answers part of the 'catch-up sweep semantics after downtime' settle-item.
 ---
 <!-- COMMENTS:END -->

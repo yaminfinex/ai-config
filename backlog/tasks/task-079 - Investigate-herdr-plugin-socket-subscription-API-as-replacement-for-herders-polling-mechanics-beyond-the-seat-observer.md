@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 21:12'
+updated_date: '2026-07-08 21:14'
 labels: []
 dependencies: []
 priority: medium
@@ -30,3 +31,12 @@ DELIVERABLE: a written findings memo (docs/ or the task itself) with a keep/repl
 - [ ] #2 Upstream API stability (versioning, channel, breakage policy) assessed with evidence, not assumption
 - [ ] #3 Any recommended build work exists as filed-ready task text with acceptance criteria
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 21:14
+---
+Scope note (owner FYI, verified): the socket API is queryable (pane.get/list/read/process_info, agent.list/get, session.snapshot) in addition to subscriptions — so candidate replacements should also consider queries as a cleaner substitute for current pane-probe mechanics (e.g. cull's pane-get probe could ride the socket query instead of whatever it uses today), independent of the event stream.
+---
+<!-- COMMENTS:END -->
