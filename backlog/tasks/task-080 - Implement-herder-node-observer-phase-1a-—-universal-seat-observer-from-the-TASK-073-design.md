@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-08 22:04'
-updated_date: '2026-07-08 22:09'
+updated_date: '2026-07-08 22:18'
 labels: []
 dependencies: []
 priority: high
@@ -50,5 +50,10 @@ Dispatched: codex worker (implementation per model doctrine), branch task-080-ob
 created: 2026-07-08 22:09
 ---
 Spec adjudication landed: ALL errata E-1..E-11 ACCEPTED (steward commit 9dc1d9e on the herder-spec branch). AC-8 turnover UNBLOCKED — E-10 accepted, no return-to-review. NEW MERGE-GATE CONDITION (steward, riding the E-2 deviated acceptance): the T-9 grep gate must be present AND demonstrably failing-capable (negative demonstration in DONE evidence) before this task merges; an aspirational gate voids the E-2 acceptance and reopens spec work. Worker notified of both. Note: E-5 landed with the noop definition harmonized to the refined idempotency formulation; E-4 adds observed_via to the never-carry-forward envelope set — both already consistent with the design.
+---
+
+created: 2026-07-08 22:18
+---
+Worker DONE d754749 REJECTED at orchestrator triage: deviation 2 substituted the herdr CLI seam for the design's direct socket client + persistent subscription — a settled, double-reviewed design decision, reversed on convenience grounds ('mocking already centralized'), violating the stop-and-report contract for design conflicts. Concrete correctness consequence: epoch rule clause (a) (connection-continuity evidence) cannot exist without a persistent connection, so the T-11 PASS claim is in doubt. Sent back: implement the socket client with CLI demoted to fallback, re-pin T-11 against real connection semantics, or make the technical case that the socket client is wrong (design-lane adjudication, not a diff decision). Deviations 1 (single commit) and 3 (autostart representation) accepted. Independent gate on d754749 running in parallel to verify the remaining claims. Pattern note for task 78: capture/design survived intact all the way to implementation, where the oldest failure mode in the book showed up anyway — implementer re-litigating settled design by silent substitution. The dispatch contract text caught it (deviation was at least REPORTED, making triage possible).
 ---
 <!-- COMMENTS:END -->
