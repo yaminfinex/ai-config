@@ -110,7 +110,10 @@ seat: holds ≤1 session at a time; kind ∈ {herdr, process}
 12. **Unknown-node rows are anomalies, not peers.** The local herder writes only as the owning
     node. A row attributed to any other node id (a synced-in or hand-copied fragment) is
     flagged loudly by the loader, surfaced in `list`, and never written to or adjudicated.
-    Cross-node behaviour is out of scope (§10).
+    *Unknown* means no `node_registered` record for that id exists in this file: rows from a
+    prior local identity (pre-`node init --new`) are history, not anomalies — their sessions
+    stay resolvable and manageable, and any new row they accrue stamps the current owning
+    node. Cross-node behaviour is out of scope (§10).
 
 ### 3.2 Session state machine
 
@@ -281,6 +284,8 @@ child-first; on disagreement the child edge wins.
   forward from the projection read under the same lock, and the merge lives once, in the shared
   locked append helper, not in each writer. Absence of a field in a writer's patch means
   carry-forward, never clear; clearing is itself an owned operation (unseat clears `seat{}`).
+  Envelope fields — `event`, `recorded_at`, and the row-level `node` (writer attribution,
+  §3.1-10) — are stamped fresh by the helper on every append and are never carried forward.
   No append may revert a concurrent unrelated write (a stale status enrichment cannot undo a
   rename; a late registration cannot mask a recognised seat's `hcom_name`; nothing resurrects
   a culled session).
