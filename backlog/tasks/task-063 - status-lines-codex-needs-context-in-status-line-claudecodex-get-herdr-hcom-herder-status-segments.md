@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - vibe
 created_date: '2026-07-08 07:19'
-updated_date: '2026-07-08 09:31'
+updated_date: '2026-07-08 09:35'
 labels: []
 dependencies: []
 ordinal: 63000
@@ -38,5 +38,10 @@ created: 2026-07-08 09:17
 created: 2026-07-08 09:31
 ---
 [hera 2026-07-08] Vibe hand-back (#10333): worker task063-taro, commit 32c4666. HERA GATE: vet/test both modules green; 24/24 pre-existing suites green; NEW suite check-ai-setup-codex-config.sh FAILED bare execution — committed mode 100644 (all others 100755), Permission denied in the bare gate loop (content ALL GREEN when forced through bash). Mode fix routed and landed: 6dddb86 (vibe verified bare execution green; vibe gate template now runs bare per doctrine). Phase 0 answer (codex-cli 0.142.5): NATIVE footer config only ([tui].status_line item ids + terminal_title), no custom command hook — herder/hcom segments cannot render in codex footer until upstream adds one; recorded on 029 ledger. HERA RULING on vibe pointer (c): default-install YES (owner DX intent; backup+idempotence+preservation make it safe) — reviewer probes execution semantics. Adversarial review dispatched: review-063-magi (guid a5a0ae2a, own tab), brief napkins/run-herder-dx/brief-review-063.md — leads with awk-TOML-editing torture of the USER's live ~/.codex/config.toml (subtables, duplicate sections, multi-line arrays, symlinked configs, rollback-vs-backup), statusline reader injection, default-install execution, remove semantics. Bus-snapshot WRITER follow-up filed as TASK-067.
+---
+
+created: 2026-07-08 09:35
+---
+[hera 2026-07-08] Opus adversarial verdict (review-063-magi, #10416): NOT CLEAN — 1 BLOCKER + 2 MEDIUM + 2 LOW + 2 NIT, all key findings sandbox-reproduced. B1: plain ai-setup FABRICATES ~/.codex (mkdir -p + fresh config) on machines with no codex — angle-3 ruling FAILS. M1: symlinked config.toml replaced by a plain file (dotfiles diverge silently). M2: remove DELETES managed keys instead of restoring pre-install values (angle-6 ruling: delete-not-restore). L1: multi-line arrays/inline comments/CRLF fail SAFELY (tomllib net aborts, live untouched) but config stays unmanageable with poor messaging. L2: overlong integers bypass the statusline whitelist (display garbage, no injection). Probed clean: subtable/duplicate-section handling, up-front non-TOML rejection, true idempotent no-op, ANSI/control injection blocked, env segments display-only. HERA RULINGS: B1 fix (default path guards existence; explicit install may create; skip flag); M1 write-through-symlink (resolve, tmp+mv in target dir, refuse dangling); M2 RESTORE semantics (record pre-install values in stable state file; restore on remove; delete only when nothing recorded); L1 safe-abort accepted + messaging + pin tests; L2 length-cap. Fix round routed to taro via vibe.
 ---
 <!-- COMMENTS:END -->
