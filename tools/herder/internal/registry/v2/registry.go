@@ -55,6 +55,7 @@ type SessionRecord struct {
 	Provenance  Provenance      `json:"provenance,omitempty"`
 	CloseResult string          `json:"close_result,omitempty"`
 	CloseReason string          `json:"close_reason,omitempty"`
+	ObservedVia string          `json:"observed_via,omitempty"`
 	Raw         json.RawMessage `json:"-"`
 	Ordinal     int             `json:"-"`
 	LegacyV1    bool            `json:"-"`
