@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 08:18'
+updated_date: '2026-07-08 08:25'
 labels: []
 dependencies: []
 priority: medium
@@ -32,5 +32,10 @@ vibe (herdr-0.7.3 audit, bus #5689, applied by hera): Verification half DONE —
 created: 2026-07-08 08:18
 ---
 [hera 2026-07-08] Vibe hand-back (#9373): worker task048-nezu, 1 commit 74fd3e0, vibe gate independently green. HERA GATE GREEN from worktree: vet/test both modules (spawncmd -count=1 fresh), 22/22 suites. Fence held (no internal/registry). Opus adversarial review dispatched: review-048-solo (guid 33b771d5, own tab), brief napkins/run-herder-dx/brief-review-048.md. Reviewer explicitly rules on: (1) the endorsed deviation — bash "$" composer sigil (recovery was inert with sigil ""; risk = scrollback dollar-space false-positive -> loud code-2 refusal on previously-working bash+--prompt; tighten with line anchoring vs accept); (2) queued-bus-message-vs-garbage — code path AND docs wording (cleared queued message re-injection is UNVERIFIED); plus ctrl+u wrong-state/double-fire, fail-closed integrity (TASK-024 floor byte-untouched through the pasteResult refactor), golden reality (fixtures must exercise the re-read). MEDIUM+ blocks merge.
+---
+
+created: 2026-07-08 08:25
+---
+[hera 2026-07-08] Opus adversarial verdict (review-048-solo, #9466): no BLOCKER; 1 MEDIUM, 2 LOW, 1 NIT. Angle rulings: bash "$" sigil ACCEPTED (bottom-up last-sigil anchor symmetric with composerConfirmedEmpty; worst case fails closed, loud refusal never mis-type); queued-message angle TIGHTEN. MEDIUM: the queued/no-receipt hint (spawn.go:1304 + 4 doc mirrors + bus_queued golden) recommends ctrl+u on the input line in exactly the branch where a queued message renders there — operator following it destroys an in-flight delivery; old Enter-hint was harmless, new hint is destructive, no caveat. LOW(code): compact.go:170 auto-recovery on the caller's own pane can ctrl+u a rendered queued message if the compacting agent is composer-starved; whether hcom re-injects is UNVERIFIED -> possible silent loss. LOW(accepted): bash false-positive fails closed. NIT: polluted_still refusal reuses the modal message + circular clear-and-retry. Probed clean: exactly-one-ctrl+u (single if, golden-pinned), ownership assumptions, fail-closed integrity + TASK-024 chain byte-untouched, fixtures genuinely exercise the re-read (mock flips composer_cleared state between reads), doc tmux-syntax sweep. DISPOSITION: MEDIUM+NIT fix round to nezu via vibe; compact LOW settled EMPIRICALLY (vibe live-tests ctrl+u on a queued message with disposables — re-inject vs lost — result recorded here; guard/caveat scoped if lost). Reviewer static-only (no go1.26) — execution covered by hera gate pre-review.
 ---
 <!-- COMMENTS:END -->
