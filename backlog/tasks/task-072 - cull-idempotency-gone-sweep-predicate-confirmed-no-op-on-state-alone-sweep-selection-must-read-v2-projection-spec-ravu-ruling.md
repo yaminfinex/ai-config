@@ -3,9 +3,11 @@ id: TASK-072
 title: >-
   cull idempotency + --gone sweep predicate: confirmed no-op on state alone;
   sweep selection must read v2 projection (spec-ravu ruling)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@hera'
 created_date: '2026-07-08 11:31'
+updated_date: '2026-07-08 12:02'
 labels: []
 dependencies: []
 priority: medium
@@ -25,3 +27,12 @@ Tests (ruling-suggested): repeat cull of unseated pane-less row -> zero new rows
 
 Scope: small standalone unit, NOT bundled into C0/TASK-071 (per ruling). Touches cullcmd selection + write.go dedupe — sequence AFTER TASK-071 lands (same-territory fence).
 <!-- SECTION:DESCRIPTION:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 12:02
+---
+Dispatched: codex worker task072-062cb333, worktree task-072-cull-idempotency off main (post-071 merge). Board description is the brief (ruling #11884: confirmed no-op on state alone; --gone sweep predicate to v2 projection under flock; byte-identical consecutive sweeps test).
+---
+<!-- COMMENTS:END -->
