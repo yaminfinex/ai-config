@@ -1,6 +1,7 @@
 package hookcmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"strings"
@@ -190,6 +191,48 @@ func TestResolveRealHcom_SkipsShimDir(t *testing.T) {
 	t.Setenv("HERDER_HOOK_HCOM", dir+"/does-not-exist")
 	if got := resolveRealHcom(); got != hcom {
 		t.Errorf("bogus override should fall through, got %q", got)
+	}
+}
+
+// hcom quotes the tag with double quotes through 0.7.22 and single quotes from
+// 0.7.23 on. Both stock bootstraps must extract the same tag, and the rewrite
+// must be byte-identical either way (the rendered line is quote-normalized).
+func TestExtract_TagQuoteAgnostic(t *testing.T) {
+	// sampleAC is double-quoted (0.7.22 reality); build the 0.7.23 single-quoted
+	// twin by swapping ONLY the tag quotes.
+	singleAC := strings.Replace(sampleAC,
+		`You are tagged "boothook"`, `You are tagged 'boothook'`, 1)
+	if singleAC == sampleAC {
+		t.Fatal("fixture swap did not change anything — check the double-quoted tag line")
+	}
+
+	dv, ok := extract(sampleAC)
+	if !ok {
+		t.Fatal("extract failed on the double-quoted (0.7.22) sample")
+	}
+	sv, ok := extract(singleAC)
+	if !ok {
+		t.Fatal("extract failed on the single-quoted (0.7.23) sample")
+	}
+	if dv.tag != "boothook" || sv.tag != "boothook" {
+		t.Errorf("tag not extracted identically: double=%q single=%q", dv.tag, sv.tag)
+	}
+
+	// Whole rewrite is byte-stable across the two quote styles.
+	dOut, ok := rewriteSessionStart(envelope(sampleAC))
+	if !ok {
+		t.Fatal("rewrite failed on double-quoted sample")
+	}
+	sOut, ok := rewriteSessionStart(envelope(singleAC))
+	if !ok {
+		t.Fatal("rewrite failed on single-quoted sample")
+	}
+	if !bytes.Equal(dOut, sOut) {
+		t.Errorf("rewrite not byte-stable across quote styles:\n double=%s\n single=%s", dOut, sOut)
+	}
+	// And the rendered tag line is quote-normalized to single quotes.
+	if !strings.Contains(acFromEnvelope(t, sOut), "You are tagged 'boothook'") {
+		t.Error("single-quoted source did not render the normalized tag line")
 	}
 }
 

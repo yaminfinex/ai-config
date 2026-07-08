@@ -232,7 +232,11 @@ var (
 	reName   = regexp.MustCompile(`(?m)^\s*-?\s*Your name:\s*(.+?)\s*$`)
 	reMarker = regexp.MustCompile(`\[hcom:([^\]]+)\]`)
 	reSender = regexp.MustCompile(`Prioritize @(\S+)`)
-	reTag    = regexp.MustCompile(`You are tagged "([^"]+)"`)
+	// hcom quotes the tag with double quotes through 0.7.22 and single quotes
+	// from 0.7.23 on. Accept either, matched-pair only (no mixed "foo' ), and
+	// carry the value in whichever alternative fired — extraction is identical
+	// for both stock bootstraps, so the rendered output is byte-stable.
+	reTag    = regexp.MustCompile(`You are tagged (?:"([^"]+)"|'([^']+)')`)
 	reActive = regexp.MustCompile(`(?m)^(Active \(snapshot\):.*)$`)
 )
 
@@ -252,7 +256,13 @@ func extract(ac string) (bootstrapVals, bool) {
 		v.sender = strings.TrimSpace(m[1])
 	}
 	if m := reTag.FindStringSubmatch(ac); m != nil {
-		v.tag = strings.TrimSpace(m[1])
+		// m[1] is the double-quoted capture, m[2] the single-quoted one; exactly
+		// one is non-empty for a matched pair.
+		tag := m[1]
+		if tag == "" {
+			tag = m[2]
+		}
+		v.tag = strings.TrimSpace(tag)
 	}
 	if m := reActive.FindStringSubmatch(ac); m != nil {
 		v.activeInstances = strings.TrimSpace(m[1])
