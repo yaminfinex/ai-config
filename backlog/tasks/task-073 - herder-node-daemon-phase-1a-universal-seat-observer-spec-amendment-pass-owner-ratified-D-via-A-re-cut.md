@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 11:44'
-updated_date: '2026-07-08 21:10'
+updated_date: '2026-07-08 21:12'
 labels: []
 dependencies: []
 priority: high
@@ -38,15 +38,6 @@ REFERENCES (all reachable): full four-design comparison + decision record: docs/
 EXECUTION SHAPE (owner-agreed): Fable-class designer with delegation freedom (subagents, own jury for contested sub-decisions); works in a worktree that only grows docs artifacts; never dispatches implementation; hands filed-ready implementation task text (plain language, reachable refs, acceptance criteria) to the orchestrator, who files it. Review chain before 'buildable': fresh-context adversarial design review, fix round, then TOMO as final reviewer (owner directive — tomo authored the original daemon proposal; its review checks drift-from-intent, not quality). Pattern evaluation notes belong on task 78 afterwards.
 <!-- SECTION:DESCRIPTION:END -->
 
-## Comments
-
-<!-- COMMENTS:BEGIN -->
-created: 2026-07-08 20:59
----
-Owner directive (2026-07-08): the design pass this task will become gets TOMO as FINAL reviewer, in addition to the fresh-context adversarial design review. Rationale: tomo is the live claude session that authored the original node-daemon proposal this task was filed from — as final reviewer it checks drift-from-original-intent (golden-agent-style purpose check), complementing the fresh-context reviewer who attacks quality. Sequencing at dispatch: designer produces -> fresh-context adversarial review -> fix round -> tomo final review -> buildable. NOTE for the future orchestrator: tomo is a live session (bus name tomo); if it has been culled or compacted past usefulness by design time, resume/decant it or escalate to owner rather than silently substituting.
----
-<!-- COMMENTS:END -->
-
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 A design document for phase 1a exists in docs/design/ answering every item in WHAT THE DESIGN PASS MUST SETTLE, and it is durable (on the unit branch that merges to main)
@@ -54,3 +45,17 @@ Owner directive (2026-07-08): the design pass this task will become gets TOMO as
 - [ ] #3 Filed-ready implementation task text exists for phase 1a, with acceptance criteria, dispatchable by a reader with zero run context
 - [ ] #4 The design survived fresh-context adversarial review and tomo's final intent review, with findings addressed or rejected-with-reasons
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 20:59
+---
+Owner directive (2026-07-08): the design pass this task will become gets TOMO as FINAL reviewer, in addition to the fresh-context adversarial design review. Rationale: tomo is the live claude session that authored the original node-daemon proposal this task was filed from — as final reviewer it checks drift-from-original-intent (golden-agent-style purpose check), complementing the fresh-context reviewer who attacks quality. Sequencing at dispatch: designer produces -> fresh-context adversarial review -> fix round -> tomo final review -> buildable. NOTE for the future orchestrator: tomo is a live session (bus name tomo); if it has been culled or compacted past usefulness by design time, resume/decant it or escalate to owner rather than silently substituting.
+---
+
+created: 2026-07-08 21:12
+---
+DESIGN INPUT (owner-directed, 2026-07-08, verified against the live herdr install): the herdr terminal's socket API has a subscription protocol (schemas: event, subscription_event — see 'herdr api schema') whose event set includes exactly the observer-relevant facts: pane.created, pane.closed, pane.exited, pane.agent_detected, pane.agent_status_changed, pane.output_matched, agent_started, session.snapshot. herdr also has a plugin system ('herdr plugin install/link/action/log', none installed today) — a plugin is a packaged long-lived subscriber. The design pass MUST evaluate this as a candidate observer substrate, because it has the universality property this task wants for free: events are per-PANE, regardless of how the seat came to be, so enrolled seats are covered identically to spawned ones. Fit with the ratified invariants: events are liveness ADVICE (invariant 5) and a push-based front-end; the registry file stays truth; daemon/plugin downtime still requires the catch-up sweep, so the event stream supplements but cannot replace registry tailing. Open questions for the designer: can a plugin append observation facts through the shared locked writer (exec of the herder binary vs in-process); plugin lifecycle vs the disposability invariant (plugin dies with the herdr server — is that a feature); pane events do not cover hcom bus-row freshness (separate source still needed); upstream stability of the plugin/subscription API (herdr is an external dependency on its own release channel).
+---
+<!-- COMMENTS:END -->
