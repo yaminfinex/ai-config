@@ -23,8 +23,11 @@
 #                 bind_timeout). bash prompts keep the in-process boot-paste
 #                 engine (spawn-private keystroke path; TASK-024 evidence
 #                 gating pinned by the compact suite).
-#   capture     — hcom name capture by frozen launch pane_id, tag+cwd fallback
-#                 (newest wins), and the best-effort failure path.
+#   capture     — hcom name capture by CHILD-SPECIFIC signals only (this guid's
+#                 sidecar registry enrichment, or the frozen launch pane_id
+#                 roster match); a tag+cwd match — unique OR ambiguous — is NEVER
+#                 captured (TASK-033: a stale same-tag+cwd agent would mislabel
+#                 the row), so the name is left empty for the sidecar to fill.
 #   registry    — the appended JSONL record (identity + bus coordinate fields).
 #
 # Usage:
@@ -198,13 +201,16 @@ scenario bus_sendfail      ready claude launchctx_sendfail --role worker --agent
 # NOT sent (nothing to address), reported with the safe-resend remedy.
 SPAWN_BIND_MS=3000
 scenario bind_timeout      ready claude fail --role worker --agent claude --prompt "do the thing" --json
-# P1 regression (codex review): a PRE-EXISTING same-tag+cwd bus agent
+# P1 regression (codex review) + TASK-033: a PRE-EXISTING same-tag+cwd bus agent
 # (worker-nova on the fallback roster; launch pane p_99 ≠ the child's frozen
-# p_50) must NEVER satisfy the prompt bind gate — tag+cwd cannot tell an old
-# session from the child during the pre-bind window, and binding it would
-# deliver the initial prompt to the OLD session. The golden pins the refusal:
-# bind-timeout, NO hcom send argv. (The post-write capture loop's tag+cwd
-# enrichment of the registry row is pre-existing behavior and still visible.)
+# p_50) must NEVER satisfy the prompt bind gate NOR enrich the registry row —
+# tag+cwd cannot tell an old session from the child during the pre-bind window.
+# Binding it to the prompt would misdeliver to the OLD session (already fixed);
+# enriching the ROW with its name would make a later `herder send <guid>` message
+# the wrong session. The golden pins BOTH refusals: bind-timeout with NO hcom
+# send argv, AND the row left with hcom_name:"" / hcom_capture:"not_found" (no
+# second, worker-nova-enriched registry line) — the sidecar fills the real name
+# later from the child's own pane row.
 scenario bind_stale_tagcwd ready claude fallback --role worker --agent claude --prompt "do the thing" --json
 unset SPAWN_BIND_MS
 # Bus-less spawner: notify is bus-native ONLY (TASK-003) — a spawner that
@@ -224,6 +230,11 @@ unset SPAWN_HERDER_GUID SPAWN_SEED_REGISTRY
 SPAWN_SEED_REGISTRY='{"guid":"guid-hera-0000","short_guid":"guid-her","label":"orchestrator","role":"orchestrator","agent":"claude","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_dir":"/hcom","hcom_name":"hera","hcom_tag":"orchestrator","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-hera","tag":"orchestrator","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
 scenario notify_enrolled   ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
 unset SPAWN_SEED_REGISTRY
+# Promptless capture, no child-specific signal on the roster: TASK-033 makes both
+# a UNIQUE tag+cwd match (fallback) and an AMBIGUOUS one (fallback_ambiguous)
+# leave the row empty (hcom_capture:"not_found") — the tag+cwd guess is gone, so
+# neither a stale unique nor a stale pair can mislabel the row; capture_fail (empty
+# bus) already produced not_found. All three now pin "no child signal → not_found".
 scenario capture_fallback  ready claude fallback --role worker --agent claude --json
 scenario capture_ambiguous ready claude fallback_ambiguous --role worker --agent claude --json
 scenario capture_fail      ready claude fail --role worker --agent claude --json
