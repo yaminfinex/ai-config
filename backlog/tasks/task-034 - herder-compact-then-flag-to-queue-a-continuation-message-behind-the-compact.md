@@ -7,7 +7,7 @@ status: Done
 assignee:
   - unit-w-kava
 created_date: '2026-07-08 00:59'
-updated_date: '2026-07-08 03:01'
+updated_date: '2026-07-08 04:34'
 labels:
   - run-herder-dx
 dependencies: []
@@ -49,5 +49,11 @@ author: hera
 created: 2026-07-08 01:19
 ---
 RESULT #2 (delayed bus send, 2026-07-08): FAILED — but at herder's resolution layer, NOT the design. The helper's `herder send w6554208c1918a12-1 '<continuation>'` errored pre-send: 'target w6554208c1918a12-1 (@zero) not found on bus'. Root cause: the orchestrator pane has THREE manual-enroll registry rows (@hera live, @vore and @zero stale from earlier sessions in the same reused pane, all still LIVE=working), and pane-id resolution picked a stale row. The hcom queue-until-deliverable leg was never exercised. Filed as its own bug (stale manual rows + ambiguous pane-id resolution). Design implication stands from result #1+#2 combined: --then must be a detached post-compact BUS send resolved to the live bus name (in-binary, using the compacting session's own verified identity — not pane-id re-resolution).
+---
+
+author: hera
+created: 2026-07-08 04:34
+---
+First production --then attempt (hera self-compact, 2026-07-08): FAIL-CLOSED correctly — compact refused at self-location (stale manual-row pane/terminal after herdr renumbering; nothing typed, nothing armed). The --then machinery itself was never reached; blocker filed as TASK-041 (compact self-location vs pane renumbering). Feature's safety posture validated in anger.
 ---
 <!-- COMMENTS:END -->
