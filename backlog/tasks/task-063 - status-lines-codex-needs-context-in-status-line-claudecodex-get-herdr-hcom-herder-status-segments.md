@@ -3,10 +3,11 @@ id: TASK-063
 title: >-
   status lines: codex needs context in status line; claude+codex get
   herdr/hcom/herder status segments
-status: To Do
+status: In Progress
 assignee:
-  - hera
+  - vibe
 created_date: '2026-07-08 07:19'
+updated_date: '2026-07-08 09:17'
 labels: []
 dependencies: []
 ordinal: 63000
@@ -25,3 +26,12 @@ Scope:
 
 Notes: HERDER_GUID/HERDER_LABEL/HERDER_ROLE/HCOM env are already injected into spawned agents (see spawncmd); hcom unread state would need a cheap source — check what ~/.hcom exposes as flat files before inventing one.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 09:17
+---
+[hera, from vibe #10209] Dispatched: codex worker task063-taro, worktree task-063-statusline (base main post-047). Phased brief: Phase 0 = authoritative codex statusline surface investigation (worker IS codex — exact config keys or documented upstream gap + version), gating implementation shape; herder/hcom env segments both CLIs (spawncmd/launchcmd read-only survey); bus signal DESIGN-FIRST, reader-only shipping (no flat state file in ~/.hcom today; hookcmd/sidecarcmd/registry fenced off while A5 live — any writer is a scoped follow-up for hera sequencing); codex config management extends ai-setup with idempotence/backup contracts green.
+---
+<!-- COMMENTS:END -->
