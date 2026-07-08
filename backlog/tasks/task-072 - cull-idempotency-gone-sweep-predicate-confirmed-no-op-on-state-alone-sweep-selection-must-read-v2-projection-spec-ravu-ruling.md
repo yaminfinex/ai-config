@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@hera'
 created_date: '2026-07-08 11:31'
-updated_date: '2026-07-08 12:02'
+updated_date: '2026-07-08 12:24'
 labels: []
 dependencies: []
 priority: medium
@@ -34,5 +34,10 @@ Scope: small standalone unit, NOT bundled into C0/TASK-071 (per ruling). Touches
 created: 2026-07-08 12:02
 ---
 Dispatched: codex worker task072-062cb333, worktree task-072-cull-idempotency off main (post-071 merge). Board description is the brief (ruling #11884: confirmed no-op on state alone; --gone sweep predicate to v2 projection under flock; byte-identical consecutive sweeps test).
+---
+
+created: 2026-07-08 12:24
+---
+Round 1: worker DONE a00808b; my gate green 29/29. Opus review (review072-dula #12730): REQUEST-CHANGES — P2 (borderline P1): state-only no-op guard also swallows the FIRST cull of a migrated_v1 never-close-annotated corpse (the original 069 shape) and renders a BLANK close_result as a recorded fact — behavior beyond ruling #11884's repeat-cull mandate; adjudication with spec-ravu (#12747: append one annotation row vs honest no-op). P2: the 069 regression pin was deleted from BOTH suites (fixtures rewritten to seated/annotated shapes that dodge the no-op guard). LOW: --gone no longer reaches legacy_v1_mapped unseated corpses (spec nod requested in same adjudication). Verified clean: plumbing removal genuinely dead, lock-consistent fact read, byte-identical sweep assertions strong, empty-sweep exit-0 safe. Fix round dispatched in two stages (#12748, acked): ruling-independent parts now (restore corpse seeding in both suites; never render blank close_result as fact), semantic branch on ruling relay.
 ---
 <!-- COMMENTS:END -->
