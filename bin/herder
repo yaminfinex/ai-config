@@ -64,12 +64,32 @@ src_hash="$(
 bin_name="herder-$src_hash"
 herder_bin="$cache_dir/$bin_name"
 
+# Remember the freshest good binary for THIS checkout so a later rebuild against
+# a mid-edit-broken tree can serve it instead of spewing the compiler error on
+# the hook path. Keyed on a hash of the source dir path (NOT the source hash):
+# per-checkout, so a sibling checkout's binary is never served in its place
+# (TASK-012). The dot prefix keeps it clear of the `herder-*` prune globs.
+checkout_id="$(printf '%s' "$src_dir" | "${hash_cmd[@]}" | cut -c1-16)"
+last_good_ptr="$cache_dir/.herder-lastgood-$checkout_id"
+
+record_last_good() { # record_last_good BIN — point last-good at BIN, write only on change
+  local target="$1" tmp
+  [ -x "$target" ] || return 0
+  [ "$(cat "$last_good_ptr" 2>/dev/null || true)" = "$target" ] && return 0
+  tmp="$last_good_ptr.tmp.$$"
+  if printf '%s\n' "$target" >"$tmp" 2>/dev/null; then
+    mv "$tmp" "$last_good_ptr" 2>/dev/null || rm -f "$tmp" 2>/dev/null || true
+  fi
+  return 0
+}
+
 # Reuse from ANY candidate (a fake-HOME cache misses, the shared tmp cache
 # hits). touch keeps actively used binaries out of the age prune's reach.
 for candidate in "${cache_candidates[@]}"; do
   cand_bin="$candidate/$bin_name"
   if [ -x "$cand_bin" ] && [ -O "$cand_bin" ]; then
     touch -c "$cand_bin" 2>/dev/null || true
+    record_last_good "$cand_bin"
     exec "$cand_bin" "$@"
   fi
 done
@@ -200,8 +220,35 @@ fi
 # (unless the caller chose otherwise): a build must never stall on a
 # toolchain download.
 tmp_bin="$herder_bin.tmp.$$"
-(cd "$src_dir" && env -u GOROOT GOTOOLCHAIN="${GOTOOLCHAIN:-local}" "${go_cmd[@]}" build -o "$tmp_bin" ./cmd/herder)
-mv "$tmp_bin" "$herder_bin"
+build_log="$cache_dir/.herder-build.$$"
+if (cd "$src_dir" && env -u GOROOT GOTOOLCHAIN="${GOTOOLCHAIN:-local}" "${go_cmd[@]}" build -o "$tmp_bin" ./cmd/herder) 2>"$build_log"; then
+  mv "$tmp_bin" "$herder_bin"
+  rm -f "$build_log" 2>/dev/null || true
+  record_last_good "$herder_bin"
+else
+  # Rebuild failed — usually a transient mid-edit-broken package firing on the
+  # hook path. If this checkout has a last-good binary, serve it with ONE quiet
+  # line and swallow the compiler spew, so hook-fed features (status bridging,
+  # sidecar enrichment) keep working while the tree is broken. A genuinely
+  # never-built checkout has no fallback: fail loud with the compiler output so
+  # a real breakage is never hidden.
+  rm -f "$tmp_bin" 2>/dev/null || true
+  last_good=""
+  if [ -f "$last_good_ptr" ]; then
+    cand="$(cat "$last_good_ptr" 2>/dev/null || true)"
+    if [ -n "$cand" ] && [ -x "$cand" ] && [ -O "$cand" ]; then
+      last_good="$cand"
+    fi
+  fi
+  if [ -n "$last_good" ]; then
+    rm -f "$build_log" 2>/dev/null || true
+    printf 'herder: rebuild failed, serving last-good %s\n' "${last_good##*/herder-}" >&2
+    exec "$last_good" "$@"
+  fi
+  cat "$build_log" >&2 2>/dev/null || true
+  rm -f "$build_log" 2>/dev/null || true
+  exit 1
+fi
 
 # Seed the shared tmp cache so other HOMEs (worktree agents, hermetic test
 # cases) reuse this build instead of each rebuilding their own.
