@@ -3,11 +3,11 @@ id: TASK-053
 title: >-
   sidecar: self-report agent sessions via herdr pane report-agent-session
   (0.7.3) — handoff-stranding prevention + AC-24 substrate
-status: In Progress
+status: Done
 assignee:
   - codex-f07b1274
 created_date: '2026-07-08 05:25'
-updated_date: '2026-07-08 06:19'
+updated_date: '2026-07-08 06:30'
 labels: []
 dependencies: []
 priority: high
@@ -43,5 +43,10 @@ HAND-BACK (vibe #6674): 3 commits, real diff dfe3bec (sidecar.go +25, sidecar_te
 created: 2026-07-08 06:19
 ---
 Adversarial verdict (opus @review-053-kana #6759): FINDINGS, 1 medium. Invariants 1/3/4/5 held (incl. flags/exit-codes/stderr verified against real herdr 0.7.3). F1: failed report NOT self-healed for a stable sid — enrichedSessionID advances UNCONDITIONALLY (sidecar.go:142/174) while lastReportedSID only sets on success; after one failed report the outer guard (keyed on enrichedSessionID) never fires again for the same sid, so one transient herdr failure (500ms deadline under load, mid-handoff — precisely when it matters) silently loses sid delivery for the whole session. Test gap: failure case never issues a second poll with the same sid. Fix: key the report on lastReportedSID != row.SessionID (reportAgentSession already self-dedups), not on enrichment change; add second-poll-after-failure test. Non-blocking note: reportAgentSession trusts caller for pane-correlation — consider passing paneCorrelated explicitly. Fix round routed to vibe/worker; reviewer held for delta re-verdict.
+---
+
+created: 2026-07-08 06:30
+---
+MERGED to main 7d48494 (no-ff) after fix round 04a3c1d (retry keyed on lastReportedSID, guard internalized, fail->retry->dedup test driving the real exec path). APPROVE-DELTA @review-053-kana #6855 (F1 dead, invariant 1 preserved via double guard, no new findings). hera final gate from worktree + post-merge gate on main: vet+test clean, 21/21 suites green. Deployment posture: sid reporting effective for NEW spawns/launches; fleet coverage via natural turnover. Worker task053-nida + reviewer culled; worktree/branch cleaned.
 ---
 <!-- COMMENTS:END -->
