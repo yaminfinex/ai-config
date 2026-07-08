@@ -254,7 +254,11 @@ func (r *runner) forkSelfFallback(opts forkOptions, agent, paneEnvID, cwd, sessi
 	}
 	herderBin := firstNonEmpty(os.Getenv("HERDER_BIN"), paths.BinHerder)
 
-	spawnArgs := []string{"spawn", "--role", role, "--agent", agent, "--from-pane", paneEnvID, "--cwd", cwd, "--split", split, "--no-focus"}
+	// --json makes spawn emit the child's registry record (guid included) as one
+	// line on stdout; its human summary rides stderr. We ask for it unconditionally
+	// so the codex addendum below can recover the child guid, and forward it to our
+	// own stdout only when the fork caller asked for --json (native-path parity).
+	spawnArgs := []string{"spawn", "--role", role, "--agent", agent, "--from-pane", paneEnvID, "--cwd", cwd, "--split", split, "--no-focus", "--json"}
 	for _, a := range agentArgs {
 		spawnArgs = append(spawnArgs, "--extra-arg", a)
 	}
@@ -263,18 +267,62 @@ func (r *runner) forkSelfFallback(opts forkOptions, agent, paneEnvID, cwd, sessi
 	}
 
 	cmd := exec.Command(herderBin, spawnArgs...)
-	cmd.Stdout = r.stdout
+	var stdoutBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = r.stderr
 	cmd.Env = os.Environ()
-	if err := cmd.Run(); err != nil {
+	runErr := cmd.Run()
+	if opts.json {
+		fmt.Fprint(r.stdout, stdoutBuf.String())
+	}
+	if runErr != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if errors.As(runErr, &exitErr) {
 			return exitErr.ExitCode()
 		}
-		die(r.stderr, "failed to hand off to herder spawn: "+err.Error())
+		die(r.stderr, "failed to hand off to herder spawn: "+runErr.Error())
 		return 1
 	}
+
+	// TASK-027: close the codex fork-fallback addendum gap. hcom strips user
+	// developer_instructions on codex fork/resume, and this path spawns the child
+	// through `herder spawn` — which has no post-boot delivery — so the herder
+	// doctrine addendum would be lost. spawn owns the child guid; we surface it
+	// from its --json record and reuse the very same registry-bind poll + verified
+	// bus send the native fork/resume paths use (deliverCodexAddendum), so codex
+	// forks bootstrapped through the fallback get the doctrine like every other
+	// codex resume/fork. claude re-bootstraps through its sessionstart hook and
+	// needs nothing here. Delivery WARNS and never blocks (TASK-017 floor): a
+	// missing/unparseable guid or a bind timeout leaves the fork succeeding.
+	if agent == "codex" {
+		guid, label := parseSpawnChild(stdoutBuf.Bytes())
+		if guid == "" {
+			fmt.Fprintln(r.stderr, "herder-lifecycle: WARNING — herder addendum NOT delivered to the codex fork: could not read the child guid from 'herder spawn --json' (codex fork/resume sessions carry only hcom's stock bootstrap). Deliver manually once it is up: herder send <guid> '<addendum>'")
+		} else {
+			r.deliverCodexAddendum(registry.DefaultPath(), guid, label)
+		}
+	}
 	return 0
+}
+
+// parseSpawnChild reads the child guid + label from `herder spawn --json`, which
+// prints exactly one JSON record on stdout. It scans lines and returns the first
+// that parses with a guid, tolerating any stray non-JSON noise.
+func parseSpawnChild(out []byte) (guid, label string) {
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line[0] != '{' {
+			continue
+		}
+		var rec struct {
+			GUID  string `json:"guid"`
+			Label string `json:"label"`
+		}
+		if json.Unmarshal([]byte(line), &rec) == nil && rec.GUID != "" {
+			return rec.GUID, rec.Label
+		}
+	}
+	return "", ""
 }
 
 // detectSelfAgent identifies the tool running the current session from its env,
@@ -777,12 +825,15 @@ Behavior:
   key resolves.
 
   Codex doctrine re-delivery (TASK-017): hcom strips user developer_instructions
-  on codex fork, so a NAMED-target codex fork waits for the child to bind a bus
-  name in the registry (up to HERDER_ADDENDUM_SETTLE_MS, default 60000; <=0
-  skips) and re-sends the herder addendum as a verified bus message; failures
-  WARN and never fail the fork. Known residual (TASK-027): the codex --self
-  fallback rides 'herder spawn', which cannot deliver post-boot — those sessions
-  keep hcom's stock bootstrap.
+  on codex fork, so a codex fork waits for the child to bind a bus name in the
+  registry (up to HERDER_ADDENDUM_SETTLE_MS, default 60000; <=0 skips) and
+  re-sends the herder addendum as a verified bus message; failures WARN and never
+  fail the fork. This covers BOTH the native-target codex fork and the codex
+  --self fallback (TASK-027): the fallback rides 'herder spawn', reads the child
+  guid back from its --json record, and re-delivers over the bus the same way —
+  so fallback-forked codex sessions get the doctrine too, not hcom's bare stock
+  bootstrap. claude re-bootstraps through its sessionstart hook and needs none of
+  this.
 
 Exit codes:
   0  fork launched (native) or handed off to spawn (fallback)
