@@ -6,5 +6,7 @@ alpha      alpha                claude  p_10               idle      global     
 beta       beta                 codex   p_99               working   blue         @beta-rive       reviewer
 dupe       dupe                 claude  p_40               gone      global       -                scout
 gone       gone                 claude  p_30               gone      global       -                scout
+name       reborn               claude  p_55               idle      global       -                worker
+undet      undet                claude  p_60               undetected global       -                worker
 === EXIT ===
 0

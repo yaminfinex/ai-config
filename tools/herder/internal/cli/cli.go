@@ -18,6 +18,7 @@ import (
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/lifecyclecmd"
 	"ai-config/tools/herder/internal/listcmd"
+	"ai-config/tools/herder/internal/reconcilecmd"
 	"ai-config/tools/herder/internal/renamecmd"
 	"ai-config/tools/herder/internal/send"
 	"ai-config/tools/herder/internal/sidecarcmd"
@@ -38,6 +39,7 @@ var commands = []command{
 	{"spawn", "Spawn a named, GUID-tagged agent in a herdr pane", spawncmd.Run},
 	{"send", "Deliver a message to a spawned agent over the hcom bus (bus-only)", send.Run},
 	{"list", "Show spawned agents, reconciled with live herdr state", listcmd.Run},
+	{"reconcile", "Audit or repair registry coordinates after herdr handoff", reconcilecmd.Run},
 	{"wait", "Block until an agent reaches a status, optionally read its screen", waitcmd.Run},
 	{"cull", "Close spawned agents and mark them closed in the registry", cullcmd.Run},
 	{"enroll", "Register the current herdr pane in the registry", enrollcmd.Run},

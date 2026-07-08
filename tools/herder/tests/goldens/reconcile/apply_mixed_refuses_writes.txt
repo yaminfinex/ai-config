@@ -1,0 +1,21 @@
+=== STDERR ===
+
+=== STDOUT ===
+GUID       LABEL                OUTCOME                        DETAIL
+alpha      alpha                re-confirm                     terminal live
+amb        amb                  ambiguous                      multiple fallback candidates; refusing to guess
+beta       beta                 re-confirm                     terminal live; pane refresh p_20 -> p_99
+conflict   gamma                conflict                       stored terminal is live as name="intruder"; D11 refuses to unseat, use manual adoption/enroll
+delta      delta                re-bind (assumed-continuity)   one live name+agent-kind+cwd fallback match; identity assumed per D12
+gone       gone                 gone                           no live agent or pane matches
+undet      undet                undetected                     pane is alive, but agent list has no matching detection; restart or relaunch to restore status before rebinding
+=== EXIT ===
+1
+=== REGISTRY ===
+{"guid":"guid-alpha-0000","short_guid":"alpha","label":"alpha","role":"worker","agent":"claude","terminal_id":"term_AAA","pane_id":"p_10","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}
+{"guid":"guid-amb-0000","short_guid":"amb","label":"amb","role":"worker","agent":"codex","terminal_id":"term_AMBOLD","pane_id":"p_amb_old","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}
+{"guid":"guid-beta-0000","short_guid":"beta","label":"beta","role":"reviewer","agent":"codex","terminal_id":"term_BBB","pane_id":"p_20","team":"blue","hcom_dir":"/hfake/.hcom/teams/blue","hcom_name":"beta-rive","hcom_tag":"reviewer","status":"active"}
+{"guid":"guid-conflict-0000","short_guid":"conflict","label":"gamma","role":"worker","agent":"claude","terminal_id":"term_CON","pane_id":"p_conflict","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}
+{"guid":"guid-delta-0000","short_guid":"delta","label":"delta","role":"worker","agent":"claude","terminal_id":"term_OLD","pane_id":"p_old","cwd":"/work/delta","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}
+{"guid":"guid-gone-0000","short_guid":"gone","label":"gone","role":"worker","agent":"claude","terminal_id":"term_GONE","pane_id":"p_gone","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}
+{"guid":"guid-undetected-0000","short_guid":"undet","label":"undet","role":"worker","agent":"claude","terminal_id":"term_UND","pane_id":"p_60","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}

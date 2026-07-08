@@ -1,0 +1,6 @@
+=== STDERR ===
+no registry at /hfake/absent-state/registry.jsonl
+=== STDOUT ===
+
+=== EXIT ===
+0
