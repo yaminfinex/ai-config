@@ -7,7 +7,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:49'
-updated_date: '2026-07-08 05:24'
+updated_date: '2026-07-08 05:33'
 labels: []
 dependencies: []
 priority: high
@@ -37,5 +37,10 @@ Isolation result from lale (bus #5598, 2026-07-08) — root cause narrowed to th
 created: 2026-07-08 05:24
 ---
 Live experiment in flight (vibe #5926): the TASK-046 codex re-dispatch runs with HERDER_SPAWN_BIND_MS=480000 (8x the default window). Outcome is a direct datapoint: if the worker binds and gets verified prompt delivery end-to-end, the ~6min shim bind latency is bounded and an extended window is a viable interim mitigation; if not, latency is unbounded/fatal and the shim fix escalates.
+---
+
+created: 2026-07-08 05:33
+---
+Extended-bind experiment result (vibe #6107, applied by hera) — MECHANISM SHARPENED: HERDER_SPAWN_BIND_MS=480000 did NOT fix spawn-native delivery. Spawn exited delivery_result=bind_timeout / hcom_capture=not_found even though the bind demonstrably COMPLETED on the hcom side well within the window (worker task046-fulo live and listening). So the defect is not (only) codex boot latency: herder spawn's NAME-CAPTURE loop never sees a bind that hcom itself completed — capture-loop-side. Additional symptom for the ticket: the registry row gets minted with EMPTY hcom_name, so herder send cannot resolve the worker afterwards (needs re-enroll or reconcile once TASK-046 lands). Investigation focus: what the capture loop polls (hcom list? events? launch tag?) and why a completed codex bind is invisible to it — note hcom 0.7.23 changed tag-line emission (x-ref TASK-040 reTag) and lale's earlier data showed pty-only/session_id-none partial binds; the capture key may be looking at the wrong field for codex. WORKAROUND OF THE DAY (proven end-to-end): spawn codex normally, watch hcom list for the bus name, deliver the initial prompt directly via hcom send to the live name — injected first try, worker acked and implementing.
 ---
 <!-- COMMENTS:END -->
