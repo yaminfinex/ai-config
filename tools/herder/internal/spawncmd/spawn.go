@@ -565,8 +565,18 @@ func (r *runner) run() int {
 	// terminal id went with the herdr delivery transport; a bus-less spawner is
 	// a hard error BEFORE any pane is created, not a silent downgrade.
 	if opts.Notify {
-		opts.NotifyBusName = resolveSpawnerBus(registryPath, opts.NotifyTo, spawnedBy, spawnerPaneID, spawnerTermID, hcomDirEff)
-		if opts.NotifyBusName == "" {
+		name, ambiguous := resolveSpawnerBus(registryPath, opts.NotifyTo, spawnedBy, spawnerPaneID, spawnerTermID, hcomDirEff, r.stderr)
+		switch {
+		case name != "":
+			opts.NotifyBusName = name
+		case ambiguous:
+			// A reused pane holds several active rows and bus liveness can't
+			// single one out (TASK-035) — resolveSpawnerBus already warned with
+			// the candidate list. Notify is best-effort (TASK-017
+			// warn-never-block): drop it and spawn the worker anyway rather than
+			// block real work or route a completion report to a guessed session.
+			opts.Notify = false
+		default:
 			die(r.stderr, fmt.Sprintf("--notify: spawner does not resolve to a bus-bound agent (tried --notify-to %q as registry row and as bus name, spawner guid %q, pane %q, terminal %q) — the keystroke ring was removed; spawn from a bus-bound session, or point --notify-to at a bus-bound registry row or a live bus name on the child's bus", opts.NotifyTo, spawnedBy, spawnerPaneID, spawnerTermID))
 			return 1
 		}
@@ -1639,8 +1649,14 @@ func firstNonEmpty(values ...string) string {
 // pane/terminal coordinates — which is what identifies an ENROLLED spawner
 // (enroll records pane_id/terminal_id but the session has no $HERDER_GUID in
 // its environment, so guid-only resolution misclassified it as bus-less).
-// Returns "" when nothing matches (bus-less → hard error at the caller).
-func resolveSpawnerBus(registryPath, notifyTo, spawnedBy, spawnerPane, spawnerTerm, childHcomDir string) string {
+// Returns ("", false) when nothing matches (bus-less → hard error at the
+// caller) and ("", true) when a pane/terminal coordinate is AMBIGUOUS — a
+// reused pane holds several active rows and bus liveness can't single one out.
+// The caller treats that second signal as warn-and-skip-notify (best-effort,
+// TASK-017), NOT a hard error: a stale-row-cluttered registry must not misroute
+// a completion report the way `herder send` used to (TASK-035), and must not
+// block the spawn either.
+func resolveSpawnerBus(registryPath, notifyTo, spawnedBy, spawnerPane, spawnerTerm, childHcomDir string, warn io.Writer) (string, bool) {
 	recs, err := registry.Load(registryPath)
 	if err != nil {
 		// No readable registry: registry-keyed steps can't match, but an
@@ -1649,47 +1665,87 @@ func resolveSpawnerBus(registryPath, notifyTo, spawnedBy, spawnerPane, spawnerTe
 	}
 	if notifyTo != "" {
 		if rec := registry.Resolve(recs, notifyTo); rec != nil && rec.HcomName != "" {
-			return rec.HcomName
+			return rec.HcomName, false
 		}
-		if name := busNameByPane(recs, notifyTo); name != "" {
-			return name
+		if name, ambiguous := busNameByPaneLive(recs, notifyTo, childHcomDir, warn); name != "" {
+			return name, false
+		} else if ambiguous {
+			return "", true
 		}
 		if activeBusName(recs, notifyTo) || liveOnBus(childHcomDir, notifyTo) {
-			return notifyTo
+			return notifyTo, false
 		}
 		// An EXPLICIT target that resolves nowhere is a hard error, not a
 		// silent fallthrough to the spawner's own name — a typo'd --notify-to
 		// must never quietly redirect completion reports.
-		return ""
+		return "", false
 	}
 	if spawnedBy != "" && spawnedBy != "user" {
 		if rec := registry.Resolve(recs, spawnedBy); rec != nil && rec.HcomName != "" {
-			return rec.HcomName
+			return rec.HcomName, false
 		}
 	}
 	for _, key := range []string{spawnerPane, spawnerTerm} {
-		if name := busNameByPane(recs, key); name != "" {
-			return name
+		if name, ambiguous := busNameByPaneLive(recs, key, childHcomDir, warn); name != "" {
+			return name, false
+		} else if ambiguous {
+			return "", true
 		}
 	}
-	return ""
+	return "", false
 }
 
-// busNameByPane resolves a live pane_id/terminal_id to the bus name of the
-// latest ACTIVE row holding it. Pane coordinates are positional (herdr reuses
-// them across sessions), so unlike guid/label resolution this refuses closed
-// rows; ties resolve last in guid order, matching the registry's jq semantics.
-func busNameByPane(recs []registry.Record, key string) string {
-	if key == "" {
-		return ""
-	}
-	name := ""
-	for _, rec := range registry.LatestByGUID(recs) {
-		if rec.Status == "active" && rec.HcomName != "" && (rec.PaneID == key || rec.TerminalID == key) {
-			name = rec.HcomName
+// busNameByPaneLive resolves a pane_id/terminal_id to a notify bus name,
+// applying the same reused-pane discipline as `herder send` (TASK-035). A lone
+// active candidate resolves exactly as the old busNameByPane did — its
+// hcom_name, unprobed (bus-less rows return "", not-yet-joined rows still
+// resolve, so nothing that worked before breaks). Only when >1 active row holds
+// the coordinate is bus liveness on the CHILD's bus the tiebreaker: the single
+// joined row wins. When 0 or >1 are live it returns ("", true) — ambiguous —
+// after warning with the candidate list; the caller skips notify rather than
+// route to a guessed session.
+func busNameByPaneLive(recs []registry.Record, key, childHcomDir string, warn io.Writer) (string, bool) {
+	candidates := registry.ActiveCandidatesByPaneOrTerminal(recs, key)
+	switch len(candidates) {
+	case 0:
+		return "", false
+	case 1:
+		return candidates[0].HcomName, false
+	default:
+		chosen, live := registry.PickLiveCandidate(candidates, func(rec registry.Record) bool {
+			return rec.HcomName != "" && liveOnBus(childHcomDir, rec.HcomName)
+		})
+		if chosen != nil {
+			return chosen.HcomName, false
 		}
+		reason := "none joined on the child's bus"
+		listRows := candidates
+		if len(live) > 1 {
+			reason = fmt.Sprintf("%d joined at once", len(live))
+			listRows = live
+		}
+		if warn != nil {
+			fmt.Fprintf(warn, "herder spawn: --notify pane %q is ambiguous (%d active rows, %s) — skipping notify rather than route a completion report to a guessed session (TASK-035). Candidates: %s\n", key, len(candidates), reason, candidateBusList(listRows))
+		}
+		return "", true
 	}
-	return name
+}
+
+// candidateBusList renders one-line guid=@bus pairs for an ambiguous-notify warning.
+func candidateBusList(recs []registry.Record) string {
+	parts := make([]string, 0, len(recs))
+	for _, rec := range recs {
+		name := "(no bus name)"
+		if rec.HcomName != "" {
+			name = "@" + rec.HcomName
+		}
+		guid := ""
+		if rec.GUID != nil {
+			guid = *rec.GUID
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", guid, name))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // activeBusName reports whether name is the recorded hcom_name of an ACTIVE

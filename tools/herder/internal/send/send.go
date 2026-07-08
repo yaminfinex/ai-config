@@ -63,12 +63,32 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		die(stderr, "registry not readable: "+err.Error())
 		return 1
 	}
+	sender := &busSender{}
+
 	rec := registry.Resolve(recs, target)
 	if rec == nil {
-		rec = registry.ActiveByPaneOrTerminal(recs, target)
+		// Pane/terminal targets are positional and reused across sessions, so
+		// one coordinate can match several active rows (a reused pane
+		// accumulates a stale manual-enroll identity per prior session,
+		// TASK-035). A single candidate resolves exactly as before — bus-less
+		// bash rows and not-joined-yet claude/codex rows flow through to the
+		// deliver path unchanged. Only when >1 candidate matches is bus
+		// liveness a tiebreaker: deliver to the sole joined row, and refuse
+		// loudly with the candidate list when 0 or >1 are live (never guess).
+		candidates := registry.ActiveCandidatesByPaneOrTerminal(recs, target)
+		switch len(candidates) {
+		case 0:
+			// rec stays nil → unregistered-target path below.
+		case 1:
+			rec = &candidates[0]
+		default:
+			chosen, code := disambiguatePane(sender, candidates, target, stderr)
+			if chosen == nil {
+				return code
+			}
+			rec = chosen
+		}
 	}
-
-	sender := &busSender{}
 
 	if rec == nil {
 		if forced {
@@ -137,6 +157,53 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	return sender.send(target, rec.HcomName, rec.HcomDir, message, opts.TimeoutMS, opts.JSONOutput, stdout, stderr)
+}
+
+// disambiguatePane picks the single bus-live row among several active rows
+// that all claim one pane/terminal coordinate. Liveness is a TIEBREAKER, not a
+// gate: it runs ONLY when len(candidates) > 1 (the caller passes a lone
+// candidate straight through). It returns the chosen row, or (nil, exitCode)
+// with a loud candidate list when the coordinate is ambiguous — 0 live rows
+// (cannot tell which session owns the pane now) or >1 live rows (genuinely
+// two joined agents). Silently picking one, as the old last-in-guid-order
+// resolution did, is the misdelivery this refuses (TASK-035).
+func disambiguatePane(sender *busSender, candidates []registry.Record, target string, stderr io.Writer) (*registry.Record, int) {
+	chosen, live := registry.PickLiveCandidate(candidates, func(r registry.Record) bool {
+		return sender.joined(r.HcomName, r.HcomDir)
+	})
+	if chosen != nil {
+		return chosen, 0
+	}
+	if len(live) == 0 {
+		fmt.Fprintf(stderr, "herder send: refused — %d active rows claim '%s' but none is joined on the bus; cannot tell which session owns the pane now. Candidates:\n%sAddress one directly by its guid or label. Nothing was sent.\n", len(candidates), target, formatCandidates(candidates))
+		return nil, 2
+	}
+	fmt.Fprintf(stderr, "herder send: refused — %d rows claiming '%s' are bus-live at once; refusing to guess which. Candidates:\n%sAddress one directly by its guid or label. Nothing was sent.\n", len(live), target, formatCandidates(live))
+	return nil, 2
+}
+
+// formatCandidates renders one indented line per row for an ambiguity refusal:
+// enough identity (guid, label, bus name) for the operator to pick a target.
+func formatCandidates(recs []registry.Record) string {
+	var b strings.Builder
+	for i := range recs {
+		rec := recs[i]
+		bus := rec.HcomName
+		if bus == "" || bus == "null" {
+			bus = "(no bus name)"
+		} else {
+			bus = "@" + bus
+		}
+		fmt.Fprintf(&b, "  - guid=%s label=%s bus=%s\n", ptrString(rec.GUID), ptrString(rec.Label), bus)
+	}
+	return b.String()
+}
+
+func ptrString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func ambientHcomDir() string {
@@ -223,9 +290,13 @@ func printHelp(stdout io.Writer) {
 		"",
 		"<target> is a short-guid, full guid, label, terminal_id (term_*), or raw pane_id.",
 		"Every form resolves through the spawn registry to the agent's recorded bus name:",
-		"guid/label match the latest row; terminal/pane ids match the latest ACTIVE row",
-		"(drift-proof as herdr compacts pane ids). hcom is THE transport — a target with no",
-		"bus-bound registry row is refused (exit 2); nothing is ever typed into a pane.",
+		"guid/label match the latest row; terminal/pane ids match the ACTIVE row(s) holding",
+		"the coordinate (drift-proof as herdr compacts pane ids). A pane is positional and",
+		"reused across sessions, so one coordinate can match several active rows; resolution",
+		"then delivers to the single row currently JOINED on the bus and REFUSES (exit 2) with",
+		"the candidate list when the coordinate is ambiguous (0 or >1 rows bus-live) rather than",
+		"guessing. hcom is THE transport — a target with no bus-bound registry row is refused",
+		"(exit 2); nothing is ever typed into a pane.",
 		"(The herdr keystroke transport was removed. The one surviving keystroke path is",
 		"spawn's boot-time initial-prompt paste, owned by `herder spawn`.)",
 		"",

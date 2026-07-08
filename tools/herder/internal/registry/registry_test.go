@@ -150,6 +150,41 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+func TestActiveCandidatesByPaneOrTerminal(t *testing.T) {
+	// A reused pane p_1 carries three manual identities: two stale-but-active
+	// (bus_a already superseded on the bus, bus_b likewise) and one live.
+	// gamma sits on a different pane; delta is closed on p_1. Candidates must
+	// be every ACTIVE row on the coordinate, in guid order, and nothing else.
+	path := writeRegistry(t,
+		`{"guid":"guid-alpha-0000","short_guid":"alpha","label":"a","pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_a","status":"active"}`,
+		`{"guid":"guid-beta-0000","short_guid":"beta","label":"b","pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_b","status":"active"}`,
+		`{"guid":"guid-gamma-0000","short_guid":"gamma","label":"g","pane_id":"p_2","terminal_id":"term_2","hcom_name":"bus_g","status":"active"}`,
+		`{"guid":"guid-delta-0000","short_guid":"delta","label":"d","pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_d","status":"closed"}`,
+	)
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"p_1", "term_1"} {
+		got := ActiveCandidatesByPaneOrTerminal(recs, key)
+		if len(got) != 2 {
+			t.Fatalf("ActiveCandidatesByPaneOrTerminal(%q) = %d rows, want 2 (alpha,beta)", key, len(got))
+		}
+		if ptrString(got[0].GUID) != "guid-alpha-0000" || ptrString(got[1].GUID) != "guid-beta-0000" {
+			t.Errorf("candidates(%q) order = %q,%q, want alpha,beta (guid order)", key, ptrString(got[0].GUID), ptrString(got[1].GUID))
+		}
+	}
+	if got := ActiveCandidatesByPaneOrTerminal(recs, "p_2"); len(got) != 1 || ptrString(got[0].GUID) != "guid-gamma-0000" {
+		t.Errorf("candidates(p_2) = %+v, want just gamma", got)
+	}
+	if got := ActiveCandidatesByPaneOrTerminal(recs, ""); got != nil {
+		t.Errorf("candidates(\"\") = %+v, want nil", got)
+	}
+	if got := ActiveCandidatesByPaneOrTerminal(recs, "p_nope"); got != nil {
+		t.Errorf("candidates(unknown) = %+v, want nil", got)
+	}
+}
+
 func TestActiveLabelOwnerUsesLatestActiveRows(t *testing.T) {
 	path := writeRegistry(t,
 		`{"guid":"guid-alpha-0000","short_guid":"alpha","label":"shared","status":"active"}`,
