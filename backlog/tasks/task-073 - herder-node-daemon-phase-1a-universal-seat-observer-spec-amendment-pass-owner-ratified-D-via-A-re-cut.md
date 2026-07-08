@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-08 11:44'
-updated_date: '2026-07-08 21:34'
+updated_date: '2026-07-08 21:48'
 labels: []
 dependencies: []
 priority: high
@@ -72,5 +72,10 @@ Design-input correction (owner, verified): plugin registration is NOT required t
 created: 2026-07-08 21:34
 ---
 Design pass dispatched: designer design073-meme (Fable, per design-task pattern on task 78), docs-only branch task-073-observer-design off c11b469, brief napkins/run-herder-dx/brief-073-design.md (mechanics only — this task's text is the substance). Review chain on DONE: fresh adversarial design review -> fix -> tomo final intent review.
+---
+
+created: 2026-07-08 21:48
+---
+Designer DONE d393f3b verified: docs-only diff confirmed (3 files, +722, nothing else). Fresh-context adversarial design review dispatched: dreview073 (codex, cross-family). Reviewer owns quality incl. the four flagged scope calls in design doc §11; tomo's later review owns intent.
 ---
 <!-- COMMENTS:END -->
