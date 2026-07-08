@@ -9,7 +9,7 @@ status: In Progress
 assignee:
   - vibe
 created_date: '2026-07-08 04:56'
-updated_date: '2026-07-08 05:24'
+updated_date: '2026-07-08 05:25'
 labels: []
 dependencies: []
 priority: high
@@ -54,5 +54,10 @@ Dispatch state (vibe #5776): claude worker @task046-demo (guid 47f2c45b) spawned
 created: 2026-07-08 05:24
 ---
 Policy enforcement (vibe #5926, owner policy: codex implements, opus reviews, Fable never implements): the claude worker 47f2c45b was Fable — culled mid-work; one uncommitted wait.go edit discarded, no commits of its own, branch task-046-liveness still carries only vibe's reviewed WIP. Re-dispatched a CODEX worker into the same worktree with HERDER_SPAWN_BIND_MS=480000 to ride TASK-045 bind latency; spawn in flight. hera gate note: adversarial review on hand-back uses claude opus (--model claude-opus-4-8).
+---
+
+created: 2026-07-08 05:25
+---
+x-ref TASK-053 (sid self-reporting, prevention half): sid-based matching deliberately EXCLUDED from the reconcile fallback ladder for now — sids are empty by default until TASK-053 lands (ravu memo point 1). Reconcile stays terminal_id -> pane_id -> name==label. Status note: codex worker spawn mid-bind on extended window; Fable predecessor culled cleanly.
 ---
 <!-- COMMENTS:END -->
