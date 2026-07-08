@@ -3,10 +3,10 @@ id: TASK-056
 title: >-
   wave A2: registry write discipline — flock + load-validate-append (AC-31,
   AC-32)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-08 05:55'
-updated_date: '2026-07-08 07:24'
+updated_date: '2026-07-08 07:31'
 labels: []
 dependencies: []
 priority: high
@@ -45,5 +45,10 @@ created: 2026-07-08 07:13
 created: 2026-07-08 07:24
 ---
 [hera 2026-07-08] Fix round + F1 integration DONE (#7989): c021f9d (seat preservation for legacy-v1 writes; launch-failed close -> retired with close_result preserved; two-process label-claim test; legacy-view goldens restored + legacy_preserves_seat case) + 569571a (merge main; F1 29d077e ancestor verified; sidecar.go conflict resolved preserving F1 write-confirmation under locked reroute). HERA REGATE GREEN from worktree: vet/test both modules, registry+sidecarcmd -count=1 fresh, 22/22 suites. Delta re-verdict requested from review-a2-kilo (verify MEDIUM repro, all carrySeatFields callers, conflict resolution, no regression). CLEAN delta = merge (A2 is second lander; conflict integration already done in-branch).
+---
+
+created: 2026-07-08 07:31
+---
+[hera 2026-07-08] MERGED to main (no-ff) after review-a2-kilo DELTA CLEAN (#8087: MEDIUM repro re-run against real binary, seat survives rename; carrySeatFields callers audited; F1 sidecar merge byte-identical except locked reroute — which also retired the reviewer's swallowed-error observation; original angles untouched). Post-merge gate on main from repo root GREEN: vet + go test -count=1 herder (11 ok) + bottle (5 ok), 22/22 check suites. Wave A2 delivered: registry/write.go locked path (flock -> load v2 projection -> validate -> append -> fsync, refuse-unlocked), all writers rerouted, legacy view derived from v2 rows, legacy seats carried, launch-failed close -> retired with close_result/close_reason round-tripped, two-process label-claim test, legacy-view goldens. Credits: worker wave-a2-bumo (e0c3122, c021f9d, integration 569571a), review-a2-kilo (adversarial: 1 MEDIUM legacy-seat drop + golden-enshrined-bug catch). AC-31/AC-32 satisfied. Unblocks: A3 (TASK-057), vibe queue (049/048/047+052).
 ---
 <!-- COMMENTS:END -->
