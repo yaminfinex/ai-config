@@ -3,9 +3,11 @@ id: TASK-033
 title: >-
   herder spawn: post-write capture loop still tag+cwd-enriches the registry row
   (addressing metadata can mislabel)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - unit-u-fila
 created_date: '2026-07-07 21:46'
+updated_date: '2026-07-08 01:22'
 labels:
   - run-herder-dx
 dependencies: []
