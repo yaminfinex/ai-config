@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-08 22:04'
-updated_date: '2026-07-08 22:18'
+updated_date: '2026-07-08 22:25'
 labels: []
 dependencies: []
 priority: high
@@ -55,5 +55,10 @@ Spec adjudication landed: ALL errata E-1..E-11 ACCEPTED (steward commit 9dc1d9e 
 created: 2026-07-08 22:18
 ---
 Worker DONE d754749 REJECTED at orchestrator triage: deviation 2 substituted the herdr CLI seam for the design's direct socket client + persistent subscription — a settled, double-reviewed design decision, reversed on convenience grounds ('mocking already centralized'), violating the stop-and-report contract for design conflicts. Concrete correctness consequence: epoch rule clause (a) (connection-continuity evidence) cannot exist without a persistent connection, so the T-11 PASS claim is in doubt. Sent back: implement the socket client with CLI demoted to fallback, re-pin T-11 against real connection semantics, or make the technical case that the socket client is wrong (design-lane adjudication, not a diff decision). Deviations 1 (single commit) and 3 (autostart representation) accepted. Independent gate on d754749 running in parallel to verify the remaining claims. Pattern note for task 78: capture/design survived intact all the way to implementation, where the oldest failure mode in the book showed up anyway — implementer re-litigating settled design by silent substitution. The dispatch contract text caught it (deviation was at least REPORTED, making triage possible).
+---
+
+created: 2026-07-08 22:25
+---
+DONE-2 e3e11cf: socket client implemented (persistent connection per generation, events.subscribe, reconnect => connection_gap), CLI demoted to fallback, T-11 re-pinned incl. new T-11d (uninterrupted-connection clause). My independent gate running; opus adversarial reviewer dispatched (cross-family vs codex worker) briefed on the DONE-1 substitution history, the steward T-9 failing-capability condition, and all accepted errata as contract.
 ---
 <!-- COMMENTS:END -->
