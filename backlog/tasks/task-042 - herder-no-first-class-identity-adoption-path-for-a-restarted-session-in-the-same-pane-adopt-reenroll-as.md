@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-08 10:19'
+updated_date: '2026-07-08 11:19'
 labels: []
 dependencies: []
 priority: medium
@@ -40,5 +40,10 @@ Ratification note (#6423): identity rules confirmed with owner clarification —
 created: 2026-07-08 10:19
 ---
 0.7.3 re-run complete (TASK-050 controlled restart, replacement session bbbc84c2). Scope confirms the audit prediction: the herdr-side identity half now works — fresh launch identity from the shim (no stale env inherited), dead bus row dropped by hcom 0.7.23, hcom start --as clean — so this task shrinks to the REGISTRY-SIDE adoption affordance, which is missing in full: (1) rename has no --take-from (help: a taken label requires culling the holder first); (2) retire absent (unknown command, wave C); (3) enroll label-uniqueness treats a DEAD row (unseated + live_status=gone) as "active" and refuses; (4) the cull escape hatch is broken — pane_not_found path writes no closed record even with --force (TASK-069) — so a dead agent's label is permanently unreclaimable today. Live consequence: the standing orchestrator now runs as label hera-restart-050b instead of hera. The frozen composite (enroll new guid -> rename --take-from -> retire old) remains the right shape; TASK-069 is a prerequisite or co-fix.
+---
+
+created: 2026-07-08 11:19
+---
+Spec-ravu ruling #11678 on the label-entombment blocker (surfaced by TASK-069 review): cull --retire variant REFUSED at steward level (seat-verb/session-verb separation; second write path to a terminal state; would need owner-blessed spec amendment). Resolution: retire + reopen pulled forward as unit C0 = TASK-071 (no spec change, pure sequencing). rename --take-from explicitly stays in wave C as an atomicity convenience — un-entombing needs only retire + existing plain rename. This task's remaining scope narrows further: the adopt composite convenience wrapper, and the enroll label-uniqueness UX against unseated holders.
 ---
 <!-- COMMENTS:END -->
