@@ -3,9 +3,11 @@ id: TASK-027
 title: >-
   codex fork --self: addendum delivery for the spawn-fallback path (TASK-017
   residual)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - unit-x-zimo
 created_date: '2026-07-07 09:39'
+updated_date: '2026-07-08 01:55'
 labels:
   - run-herder-dx
 dependencies: []

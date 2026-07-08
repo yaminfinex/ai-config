@@ -3,10 +3,11 @@ id: TASK-034
 title: >-
   herder compact: --then flag to queue a continuation message behind the
   /compact
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - unit-w-kava
 created_date: '2026-07-08 00:59'
-updated_date: '2026-07-08 01:19'
+updated_date: '2026-07-08 01:55'
 labels:
   - run-herder-dx
 dependencies: []
@@ -22,11 +23,15 @@ USER ASK (2026-07-08): "compact and queue an immediate next message? usually com
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 compact --then queues both lines with per-line delivery evidence (TASK-024 gating); continuation fires only if the compact line verified first — pinned in the compact suite goldens
-- [ ] #2 Live smoke: real steered self-compact with --then, continuation message observed firing post-compaction, transcript evidence
-- [ ] #3 compact --help + README + orchestrate skill context-discipline sections document compact-then-continue; claude-only scope stated
-- [ ] #4 Pinned gate green (go vet/test + full battery)
+- [ ] #1 compact --then forks a detached sender that fires the continuation over the BUS to the caller's own verified bus name (never pane-id re-resolution); it waits for the current turn to END (session-state detection, not sleep) before sending, so the continuation cannot inject into the running pre-compact turn
+- [ ] #2 Ordering safety: the compact line's paste evidence (TASK-024 floor) is verified before the sender is armed; unverifiable compact line => --then aborts loudly, nothing sent
+- [ ] #3 Suite/golden coverage: compact suite extended for --then (armed/aborted/sent shapes), mocks emit live shapes
+- [ ] #4 Live smoke: real steered self-compact with --then on a live session; continuation observed arriving post-compaction with transcript evidence
+- [ ] #5 Docs: compact --help + README + orchestrate skill context-discipline sections document compact-then-continue; claude-only scope stated
+- [ ] #6 Pinned gate green (go vet/test herder+bottle + full 18-suite battery)
 <!-- AC:END -->
+
+
 
 ## Comments
 
