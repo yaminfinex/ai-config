@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 05:20'
+updated_date: '2026-07-08 05:22'
 labels: []
 dependencies: []
 priority: medium
@@ -27,5 +27,10 @@ Public ids are now short stable handles (w:tN/w:pN) and closed ids no longer ret
 created: 2026-07-08 05:20
 ---
 hera (from spec-ravu #5816 + vibe #5689): stable-ids doctrine text must carry the caveat — 'stable' = never-recycled, NOT immutable: pane_id/tab_id/workspace_id re-key on pane move (tab and workspace moves both); terminal_id is the only move-stable handle.
+---
+
+created: 2026-07-08 05:22
+---
+Refinement (spec-ravu #5865): doctrine text precision — pane_id is stable within a workspace (survives same-workspace tab moves); it re-keys only when a move CROSSES workspaces. terminal_id is move-stable in all cases.
 ---
 <!-- COMMENTS:END -->

@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:04'
-updated_date: '2026-07-08 05:20'
+updated_date: '2026-07-08 05:22'
 labels: []
 dependencies: []
 priority: medium
@@ -32,5 +32,10 @@ vibe (herdr-0.7.3 audit, bus #5689, applied by hera): pane move verified live (-
 created: 2026-07-08 05:20
 ---
 spec-ravu independent confirmation (#5816): herdr pane move --new-tab --workspace live-moved their own RUNNING claude pane (w6554208c1918a12:pC -> w3:p2); process and terminal_id survived, pane_id RE-KEYS across workspace moves too. Registry rows need re-enroll (or the TASK-046 reconcile) after any move — the rewrite must do the coordinate refresh unconditionally.
+---
+
+created: 2026-07-08 05:22
+---
+Refinement (spec-ravu #5865): pane_id re-keying on move is CROSS-WORKSPACE only — same-workspace --new-tab moves keep pane_id unchanged (verified live: two panes moved to new tabs within w3, both pane_ids survived; earlier re-key was the w6554208c1918a12 -> w3 crossing). terminal_id persists in both cases. Consequence for the rewrite: same-workspace tab moves need NO coordinate refresh; cross-workspace moves need re-enroll or herder reconcile.
 ---
 <!-- COMMENTS:END -->
