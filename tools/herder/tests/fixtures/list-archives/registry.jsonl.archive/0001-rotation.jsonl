@@ -1,0 +1,2 @@
+{"guid":"guid-arch-0000","short_guid":"arch","label":"arch-old","role":"worker","agent":"claude","terminal_id":"term_ARCH_OLD","pane_id":"p_arch_old","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}
+{"guid":"guid-live-0000","short_guid":"live","label":"live-archived","role":"worker","agent":"claude","terminal_id":"term_ARCH_LIVE","pane_id":"p_arch_live","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"closed","close_result":"retired"}

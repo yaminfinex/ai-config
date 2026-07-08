@@ -59,7 +59,8 @@ type Record struct {
 	CloseReason string      `json:"close_reason,omitempty"`
 	Provenance  *Provenance `json:"provenance,omitempty"`
 
-	Raw json.RawMessage `json:"-"`
+	Archived bool            `json:"-"`
+	Raw      json.RawMessage `json:"-"`
 }
 
 // Provenance records how an identity row entered the registry. It is optional
@@ -107,10 +108,46 @@ func Load(path string) ([]Record, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return decode(f, path)
+	return decode(f, path, false)
 }
 
-func decode(r io.Reader, path string) ([]Record, error) {
+func LoadWithArchives(path string) ([]Record, error) {
+	recs, err := LoadArchives(path)
+	if err != nil {
+		return nil, err
+	}
+	live, err := Load(path)
+	if err != nil {
+		return nil, err
+	}
+	return append(recs, live...), nil
+}
+
+func LoadArchives(path string) ([]Record, error) {
+	archives, err := registryArchivePaths(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []Record
+	for _, archive := range archives {
+		f, err := os.Open(archive)
+		if err != nil {
+			return nil, err
+		}
+		recs, decErr := decode(f, archive, true)
+		closeErr := f.Close()
+		if decErr != nil {
+			return nil, decErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		out = append(out, recs...)
+	}
+	return out, nil
+}
+
+func decode(r io.Reader, path string, archived bool) ([]Record, error) {
 	var recs []Record
 	br := bufio.NewReader(r)
 	for lineNo := 1; ; lineNo++ {
@@ -133,6 +170,7 @@ func decode(r io.Reader, path string) ([]Record, error) {
 						if isV2SessionObject(obj) {
 							rec = legacyRecordFromV2Object(obj)
 						}
+						rec.Archived = archived
 						rec.Raw = bytes.Clone(raw)
 						recs = append(recs, rec)
 					}

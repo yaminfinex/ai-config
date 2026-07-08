@@ -1,0 +1,8 @@
+=== STDERR ===
+
+=== STDOUT ===
+GUID       LABEL                AGENT   PANE               LIVE      TEAM         BUS              ROLE
+arch       arch-final           claude  p_arch             ARCHIVED  global       -                worker
+live       live-current         codex   p_live             gone      global       -                worker
+=== EXIT ===
+0

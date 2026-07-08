@@ -1,0 +1,7 @@
+=== STDERR ===
+
+=== STDOUT ===
+{"guid":"guid-arch-0000","short_guid":"arch","label":"arch-final","role":"worker","agent":"claude","terminal_id":"term_ARCH","pane_id":"p_arch","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"closed","close_result":"retired","archived":true,"live":null,"live_pane":null,"live_status":"ARCHIVED","live_matched_by":null}
+{"guid":"guid-live-0000","short_guid":"live","label":"live-current","role":"worker","agent":"codex","terminal_id":"term_LIVE","pane_id":"p_live","team":"","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active","live":null,"live_pane":null,"live_status":"gone","live_matched_by":null}
+=== EXIT ===
+0

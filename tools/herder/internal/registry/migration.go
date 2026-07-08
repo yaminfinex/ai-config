@@ -8,12 +8,16 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
 const migrationEventV1 = "migrated_v1"
+const defaultRotationThresholdBytes int64 = 8 * 1024 * 1024
+const rotationThresholdEnv = "HERDER_REGISTRY_ROTATE_BYTES"
 
 func migrationNeeded(path string, proj *v2.Projection) bool {
 	for _, rec := range proj.Sessions() {
@@ -133,6 +137,107 @@ func migrateLegacyV1Locked(path string, f *os.File, liveProj *v2.Projection, nod
 	proj, err := v2.Load(bytes.NewReader(out.Bytes()), v2.LoadOptions{})
 	if err != nil {
 		return nil, liveProj, err
+	}
+	return rows, proj, nil
+}
+
+func rotationRecoveryNeeded(path string, liveProj *v2.Projection) bool {
+	archive, ok := latestRegistryArchivePath(path)
+	if !ok {
+		return false
+	}
+	archProj, err := v2.LoadFile(archive, v2.LoadOptions{})
+	if err != nil {
+		return false
+	}
+	expected := nonRetiredSessionCount(archProj)
+	return expected > 0 && len(liveProj.Sessions()) < expected
+}
+
+func recoverRotationLocked(path string, f *os.File, liveProj *v2.Projection) ([][]byte, *v2.Projection, error) {
+	archive, ok := latestRegistryArchivePath(path)
+	if !ok {
+		return nil, liveProj, fmt.Errorf("registry rotation recovery refused: no archive exists for %s", path)
+	}
+	source, err := validatedRecoveryArchive(archive, liveProj)
+	if err != nil {
+		return nil, liveProj, err
+	}
+	sourceProj, err := v2.Load(bytes.NewReader(source), v2.LoadOptions{})
+	if err != nil {
+		return nil, liveProj, err
+	}
+	nodeID, mintedRow, err := recoveryNode(path, liveProj, sourceProj)
+	if err != nil {
+		return nil, liveProj, err
+	}
+	return rewriteReseedLocked(path, f, source, sourceProj, nodeID, mintedRow)
+}
+
+func rotateIfNeededLocked(path string, f *os.File, proj *v2.Projection, nodeID string) ([][]byte, *v2.Projection, error) {
+	threshold, err := rotationThresholdBytes()
+	if err != nil {
+		return nil, proj, err
+	}
+	if threshold <= 0 {
+		return nil, proj, nil
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return nil, proj, err
+	}
+	if info.Size() <= threshold {
+		return nil, proj, nil
+	}
+	source, err := lockedFileBytes(f)
+	if err != nil {
+		return nil, proj, err
+	}
+	archive, err := nextRotationArchivePath(path)
+	if err != nil {
+		return nil, proj, err
+	}
+	if err := ensureArchive(archive, source); err != nil {
+		return nil, proj, err
+	}
+	archived, err := os.ReadFile(archive)
+	if err != nil {
+		return nil, proj, err
+	}
+	if !bytes.Equal(archived, source) {
+		return nil, proj, fmt.Errorf("registry rotation refused: archive %s byte verification failed", archive)
+	}
+	return rewriteReseedLocked(path, f, source, proj, nodeID, nil)
+}
+
+func rewriteReseedLocked(path string, f *os.File, source []byte, sourceProj *v2.Projection, nodeID string, mintedNodeRow []byte) ([][]byte, *v2.Projection, error) {
+	rows, err := migrationReseedRows(source, sourceProj, nodeID, mintedNodeRow)
+	if err != nil {
+		return nil, sourceProj, err
+	}
+	var out bytes.Buffer
+	for _, row := range rows {
+		out.Write(bytes.TrimRight(row, "\n"))
+		out.WriteByte('\n')
+	}
+	if err := f.Truncate(0); err != nil {
+		return nil, sourceProj, err
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		return nil, sourceProj, err
+	}
+	if _, err := f.Write(out.Bytes()); err != nil {
+		return nil, sourceProj, err
+	}
+	if err := f.Sync(); err != nil {
+		return nil, sourceProj, err
+	}
+	if err := syncDir(filepath.Dir(path)); err != nil {
+		return nil, sourceProj, err
+	}
+	proj, err := v2.Load(bytes.NewReader(out.Bytes()), v2.LoadOptions{})
+	if err != nil {
+		return nil, sourceProj, err
 	}
 	return rows, proj, nil
 }
@@ -304,6 +409,10 @@ func lockedFileBytes(f *os.File) ([]byte, error) {
 }
 
 func ensureMigrationArchive(path string, source []byte) error {
+	return ensureArchive(path, source)
+}
+
+func ensureArchive(path string, source []byte) error {
 	if _, err := os.Stat(path); err == nil {
 		existing, err := os.ReadFile(path)
 		if err != nil {
@@ -371,12 +480,110 @@ func migrationArchivePath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("empty registry path")
 	}
-	return filepath.Join(filepath.Dir(path), filepath.Base(path)+".archive", "0001-v1-migration.jsonl"), nil
+	return filepath.Join(registryArchiveDir(path), "0001-v1-migration.jsonl"), nil
 }
 
 func migrationArchivePathUnchecked(path string) string {
 	archive, _ := migrationArchivePath(path)
 	return archive
+}
+
+func registryArchiveDir(path string) string {
+	return filepath.Join(filepath.Dir(path), filepath.Base(path)+".archive")
+}
+
+func registryArchivePaths(path string) ([]string, error) {
+	dir := registryArchiveDir(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var paths []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if archiveSequence(name) == 0 || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		return archiveSequence(filepath.Base(paths[i])) < archiveSequence(filepath.Base(paths[j]))
+	})
+	return paths, nil
+}
+
+func latestRegistryArchivePath(path string) (string, bool) {
+	archives, err := registryArchivePaths(path)
+	if err != nil || len(archives) == 0 {
+		return "", false
+	}
+	return archives[len(archives)-1], true
+}
+
+func nextRotationArchivePath(path string) (string, error) {
+	archives, err := registryArchivePaths(path)
+	if err != nil {
+		return "", err
+	}
+	next := 1
+	for _, archive := range archives {
+		if seq := archiveSequence(filepath.Base(archive)); seq >= next {
+			next = seq + 1
+		}
+	}
+	return filepath.Join(registryArchiveDir(path), fmt.Sprintf("%04d-rotation.jsonl", next)), nil
+}
+
+func archiveSequence(name string) int {
+	if len(name) < 5 || name[4] != '-' {
+		return 0
+	}
+	seq, err := strconv.Atoi(name[:4])
+	if err != nil || seq <= 0 {
+		return 0
+	}
+	return seq
+}
+
+func rotationThresholdBytes() (int64, error) {
+	raw := strings.TrimSpace(os.Getenv(rotationThresholdEnv))
+	if raw == "" {
+		return defaultRotationThresholdBytes, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s=%q: %w", rotationThresholdEnv, raw, err)
+	}
+	return n, nil
+}
+
+func recoveryNode(path string, liveProj, archiveProj *v2.Projection) (string, []byte, error) {
+	marker, markerPresent, err := readNodeMarker(NodeMarkerPath(path))
+	if err != nil {
+		return "", nil, err
+	}
+	if markerPresent {
+		if hasNode(liveProj.Nodes(), marker) || hasNode(archiveProj.Nodes(), marker) {
+			return marker, nil, nil
+		}
+		row, err := nodeRowBytes(marker)
+		return marker, row, err
+	}
+	nodes := archiveProj.Nodes()
+	if len(nodes) == 1 {
+		nodeID := nodes[0].NodeID
+		if err := writeNodeMarker(NodeMarkerPath(path), nodeID); err != nil {
+			return "", nil, err
+		}
+		return nodeID, nil, nil
+	}
+	return "", nil, nodeGateError("", false, liveProj.Nodes())
 }
 
 func nodeRowBytes(nodeID string) ([]byte, error) {

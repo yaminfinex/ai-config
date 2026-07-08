@@ -915,7 +915,7 @@ func requireTools(stderr io.Writer) int {
 
 func loadRegistry(stderr io.Writer) ([]registry.Record, string, int) {
 	path := registry.DefaultPath()
-	recs, err := registry.Load(path)
+	recs, err := registry.LoadWithArchives(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			die(stderr, "no registry at "+path)
