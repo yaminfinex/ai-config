@@ -5,10 +5,11 @@ title: >-
   --handoff (LIVE=gone fleet-wide, wait status=unknown, spawn ready-gate
   timeout); pane-id scheme changed w-N -> w:pN; all pre-handoff registry
   coordinates invalidated
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - vibe
 created_date: '2026-07-08 04:56'
-updated_date: '2026-07-08 05:08'
+updated_date: '2026-07-08 05:09'
 labels: []
 dependencies: []
 priority: high
