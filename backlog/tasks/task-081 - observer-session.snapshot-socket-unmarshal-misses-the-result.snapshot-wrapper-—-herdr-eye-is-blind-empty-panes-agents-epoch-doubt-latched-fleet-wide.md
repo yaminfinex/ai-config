@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-08 23:40'
-updated_date: '2026-07-08 23:41'
+updated_date: '2026-07-08 23:54'
 labels: []
 dependencies: []
 priority: high
@@ -49,5 +49,10 @@ Fix surface: socket.go snapshot() unwrap; mock-herdr socket mode must serve the 
 created: 2026-07-08 23:41
 ---
 Dispatched: worker @task081-zoni (codex), worktree task-081-observer-snapshot, brief napkins/run-herder-dx/brief-081.md (mechanics + stop-and-report quoted prominently per the TASK-078 amendment). Adversarial review to follow DONE per engine-diff doctrine.
+---
+
+created: 2026-07-08 23:54
+---
+Round 1: worker DONE (7e1ed46) — unwrap fix correct for the live shape; my independent gate green from the worktree (HERDER_OK/BOTTLE_OK/30 suites); live sweep verified (overlap 8/8, epoch-doubt cleared, dormant-live flag on the TASK-070 specimen). Adversarial review (opus, @review081-karo): REQUEST-CHANGES — P1: wrapped-then-direct parse converts malformed/neither-shape payloads into empty-successful Snapshot + nil err; in daemon mode a malformed sweep on an uninterrupted connection would mass-unseat via the same-connection-absence branch above the pause guard. Fix round sent. LOW-1 (advisory, recorded): mock-vs-live shape pinned only by hand-copied unit-test literals; re-flattening the contract mock keeps the suite green — live-shape contract checks remain an open class (relates TASK-079 note). LOW-2: CLI wrapped shape unverifiable-live on 0.7.3 — deviation note to say so explicitly. Reviewer verified safe: protocol pin (reads status-server handshake, decoded 0 never compatible), empty-Label synthetic panes (guarded), blast radius (observercmd-only consumer). MEANWHILE a separate live P1 hit the registry (write freeze from a v1-row append by an old build in a spawned worktree — repaired, filed as TASK-083/084); observer sweeps during the freeze refused cleanly with typed outcomes, which is the discipline working.
 ---
 <!-- COMMENTS:END -->
