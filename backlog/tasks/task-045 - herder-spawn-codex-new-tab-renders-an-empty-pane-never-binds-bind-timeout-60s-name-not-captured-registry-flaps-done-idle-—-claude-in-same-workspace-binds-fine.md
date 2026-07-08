@@ -4,10 +4,10 @@ title: >-
   codex spawns never bind to hcom 0.7.23 bus (pty-only, session_id none, flagged
   stale, name-capture timeout, prompt undelivered) — split AND new-tab; claude
   fine
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 04:49'
-updated_date: '2026-07-08 07:13'
+updated_date: '2026-07-08 07:15'
 labels: []
 dependencies: []
 priority: high
@@ -71,5 +71,10 @@ created: 2026-07-08 07:04
 created: 2026-07-08 07:13
 ---
 [hera 2026-07-08] Round-2 regate GREEN (3e66df4): vet/test both modules, sidecarcmd -count=1 fresh, 21/21 suites from worktree. Vibe delta-approved (all five no-op legs covered, flag set only on real write, recovery test pins the forced label-conflict path). Delta re-verdict requested from review-045-gobi; CLEAN delta = merge.
+---
+
+created: 2026-07-08 07:15
+---
+[hera 2026-07-08] MERGED to main (no-ff) after review-045-gobi DELTA CLEAN (#7757). Post-merge gate on main from repo root GREEN: vet/test herder+bottle, 21/21 check suites. Delivered: sidecar /proc HCOM_PROCESS_ID correlation (pane path first), write-confirmed enrichment (no-op leaves retry gate open), 8 tests incl fallback-first empty-sid race + no-op-retry recovery. herder send to codex workers now resolves via hcom_name enrichment. STANDING CAVEAT: sid REPORTING remains codex-inert until upstream hcom hook fix — F3 draft held on TASK-029, files at run closeout per owner. Credits: worker task045-nina (3 commits), vibe (2 review rounds, blocking find + class-ledger doctrine), review-045-gobi (adversarial + LOW-1 escalated by hera to fix round).
 ---
 <!-- COMMENTS:END -->
