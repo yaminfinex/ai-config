@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - vibe
 created_date: '2026-07-08 07:19'
-updated_date: '2026-07-08 09:54'
+updated_date: '2026-07-08 10:03'
 labels: []
 dependencies: []
 ordinal: 63000
@@ -31,6 +31,8 @@ Delta re-verdict from review-063-magi on 61ab259: all six ruled fixes VERIFIED i
 [D1] Default ai-setup aborts whole run under set -euo pipefail when codex step returns non-zero — bin/ai-setup:224 calls codex_config_apply_default bare. Paths: (a) python3 absent (shared_valid logs "skipping" but returns 1 — pre-existing); (b) dangling ~/.codex/config.toml symlink (resolved_file returns 1 — NEW in 61ab259, M1 fix widened blast radius). Both reproduced by reviewer.
 
 hera ruling: fix both. Round-3 dispatched via vibe→taro: default invocation non-fatal (|| return 0 in apply_default), explicit --codex-config keeps error rc, suite case proving failing default path still completes ai-setup. Magi holding for delta scoped to D1 closure.
+
+Round 3: taro fix 9a78841 (single || return 0 guard in apply_default covering both rc=1 sources; explicit path rc preserved; dangling_default suite case). Vibe independent gate green; hera regate green (vet+test both modules + 25/25 bare from worktree). Delta requested from magi scoped to D1 (probes: pre-guard non-zero paths in apply_default; explicit-path rc not swallowed).
 <!-- SECTION:NOTES:END -->
 
 ## Comments

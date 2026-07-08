@@ -1,0 +1,21 @@
+---
+id: TASK-068
+title: 'herder send: resolve seat.hcom_name (bus name) as a send key'
+status: To Do
+assignee: []
+created_date: '2026-07-08 10:03'
+labels:
+  - herder
+  - dx
+dependencies: []
+priority: low
+ordinal: 68000
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+herder send resolves guid / label / terminal / pane — but NOT seat.hcom_name (the bus name). Live hit during TASK-063 round 3: `herder send task063-taro` refused because the registry label is task063-6cf471f0 while the bus name is task063-taro; guid worked. Operators think in bus names (that is what hcom list shows and what @-mentions use), so send should accept hcom_name as a resolution key, with the same ambiguity refusal discipline as label resolution (duplicate hcom_names across live rows must refuse, not pick).
+
+Reported by vibe during TASK-063 round-3 hand-back (bus #10730).
+<!-- SECTION:DESCRIPTION:END -->
