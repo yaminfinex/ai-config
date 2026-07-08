@@ -7,7 +7,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:49'
-updated_date: '2026-07-08 04:55'
+updated_date: '2026-07-08 04:59'
 labels: []
 dependencies: []
 priority: high
@@ -25,3 +25,12 @@ Reported by lale (market-sim run, bus msg #5477, 2026-07-08), blocking their cod
 <!-- SECTION:NOTES:BEGIN -->
 UPDATE from lale control test (bus #5542, 2026-07-08): --split right fails IDENTICALLY to --new-tab, killing the new-tab env/PATH hypothesis. Refined symptoms: codex TUI boots fine and sits idle at its prompt (not a no-boot); hcom binding stays PARTIAL — pty-only, session_id none, flagged stale on hcom list (matches venue-iface-bobo/tina, lale's probe, and hera's earlier smoke36-kure/probe2-mako — signature predates the herdr handoff and postdates the hcom 0.7.22->0.7.23 upgrade); name capture times out at 60s; initial prompt never delivered. Root-cause suspicion moves to the codex bind path in hcom 0.7.23 (hooks/session registration for codex never completes; pty capture alone succeeds). Investigate: hcom 0.7.23 changelog/codex integration, herder hookcmd shim for codex (x-ref TASK-040 reTag fix — did codex tag-line capture regress differently?), and compare a raw 'hcom 1 codex' spawn outside herder to isolate herder vs hcom. SECOND symptom (herder registry, pre-handoff herdr 0.6.10): lale's three codex spawns all registered the SAME pane id w655fb01faa5682c-3 (wrong/duplicate), so cull targeted wrong records — pane-id capture at spawn time races or falls back when bind fails; x-ref TASK-046. lale's run continues codex-primary-violating on claude workers; ping bus thread #5477/#5542 when fixed.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-08 04:59
+---
+Isolation result from lale (bus #5598, 2026-07-08) — root cause narrowed to the HERDER SHIM PATH, not env inheritance and not upstream hcom: (1) raw 'hcom 1 codex' binds fine (<1 min, agent mazo); (2) herder-spawned codex post-hcom-upgrade binds ~6 MINUTES after spawn (probe re-registered as probe-codex-dove well past the 60s name-capture window) — slow-boot, TASK-036 flavor, upgraded from no-boot; (3) pre-upgrade codex spawns (venue-iface-bobo/tina) never bind, permanently stale. Fix question: why does the shim/launch path delay codex hcom registration by minutes? Suspects: sidecar/hookcmd startup ordering for codex, HERDER_HOOK_HCOM shim indirection, or codex notify/hook config injection racing the TUI. Bonus TASK-046 confirmation in same test: cull mistargeted (pane-reassigned warning) and the culled pane survived to bind later.
+---
+<!-- COMMENTS:END -->
