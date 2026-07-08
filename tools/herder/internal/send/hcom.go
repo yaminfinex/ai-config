@@ -116,6 +116,22 @@ func (h *busSender) deliver(busName, busDir, message string, timeoutMS int) stri
 	return "queued"
 }
 
+// joined reports whether busName is currently joined on busDir's bus, using
+// the same `hcom list <name>` probe deliver() runs before sending (exit 0 ⇒
+// joined). It is the tiebreaker disambiguatePane uses to resolve a reused-pane
+// coordinate to the one live session (TASK-035); a bus-less row (no recorded
+// name) can never be joined and is reported not-live.
+func (h *busSender) joined(busName, busDir string) bool {
+	if busName == "" || busName == "null" {
+		return false
+	}
+	env := os.Environ()
+	if busDir != "" && busDir != "null" {
+		env = setEnv(env, "HCOM_DIR", busDir)
+	}
+	return h.runDiscard(env, "list", busName) == 0
+}
+
 // DeliverBus delivers message to a KNOWN bus coordinate (name + bus dir) and
 // returns the transport verdict: "delivered" (receipt seen), "queued" (sent,
 // no receipt in the window — do NOT resend), "not_joined", or "send_failed".

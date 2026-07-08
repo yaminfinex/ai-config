@@ -189,6 +189,29 @@ func ActiveByPaneOrTerminal(recs []Record, key string) *Record {
 	return hit
 }
 
+// ActiveCandidatesByPaneOrTerminal returns EVERY latest ACTIVE row whose
+// pane_id or terminal_id equals key, in guid order (the same order
+// LatestByGUID yields). Pane coordinates are positional — herdr reuses one
+// physical pane across sessions — so a reused pane can accumulate several
+// active rows (a stale manual-enroll identity per prior session). Unlike
+// ActiveByPaneOrTerminal, which silently keeps only the last, this exposes the
+// full candidate set so a caller can disambiguate by bus liveness and refuse
+// to guess when more than one is live (TASK-035).
+func ActiveCandidatesByPaneOrTerminal(recs []Record, key string) []Record {
+	if key == "" {
+		return nil
+	}
+	collapsed := LatestByGUID(recs)
+	var out []Record
+	for i := range collapsed {
+		rec := collapsed[i]
+		if rec.Status == "active" && (rec.PaneID == key || rec.TerminalID == key) {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
 // ActiveLabelOwner returns the active latest row that owns label, excluding
 // exceptGUID. Label writers use this as the registry-level uniqueness
 // invariant for rename, enroll, fork, and sidecar manual identity rows.
