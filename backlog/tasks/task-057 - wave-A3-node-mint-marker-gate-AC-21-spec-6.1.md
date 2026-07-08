@@ -4,7 +4,7 @@ title: 'wave A3: node mint + marker gate (AC-21, spec 6.1)'
 status: In Progress
 assignee: []
 created_date: '2026-07-08 05:55'
-updated_date: '2026-07-08 08:10'
+updated_date: '2026-07-08 08:23'
 labels: []
 dependencies: []
 priority: medium
@@ -43,5 +43,10 @@ created: 2026-07-08 08:07
 created: 2026-07-08 08:10
 ---
 [hera 2026-07-08] SPEC RULING (spec-ravu #9269, normative): A — row-writer attribution. Row-level node = "who wrote THIS row" (§5.1 comment, §3.1-10; D7 keeps it a zero-cost stamp — no behaviour may hang off it). Post-clone rows are KNOWN-node history (old node_registered record still in file per AC-28), not AC-25 anomalies; unknown-node = id with NO node_registered record. Session location lives in seat.node; stale seats handled by reconciliation/unseat (inv 11), never by refusing writes. FIX FENCE: (1) node is an ENVELOPE field — locked helper stamps it fresh on every append like event/recorded_at; NEVER carried forward; no writer may supply it (kills the bug: writers copying Node=OLD violated carry discipline in mirror image — some fields must never be carried). Also retro-validates 064 vono NIT: omitting Node from carry set was correct. (2) AC-21 gate checks marker-registry agreement on LOCAL id only; nothing foreign to refuse on lifecycle writes to known-node sessions. (3) Graceful refusal (read-only, flagged, AC-25) only for unknown-node rows; loader keys anomaly on no-node_registered-record. (4) Tests: clone-repair then cull/rename/seat pre-clone guid succeeds with NEW stamp + old rows untouched; healthy init no-op + kato refusal impossible on this path; synced-in unregistered-node row flagged, mutations refuse gracefully, everything else works. Junk marker: REFUSE with marker path + repair guidance (restore from registry node record, or --new when both halves bad); mint-shape validation required; never mint-over/silently rewrite; shape-valid adoption still passes agreement gate. Spec errata staged: 82fceb4 (rides with c3dbc5e, owner blessing at next spec-touching merge).
+---
+
+created: 2026-07-08 08:23
+---
+[hera 2026-07-08] Fix round DONE (#9442): a55f61a (main merge, 064 ancestor verified) + 82dfa45 (node = append envelope, unknown-node = no node_registered row + read-only-not-blocking, UUID-shape marker validation, dir fsync, carry-vs-stamp interplay test, 5 refusal-coverage cases). HERA REGATE GREEN: vet/test both modules, registry -count=1 fresh, 23/23 suites. Delta re-verdict requested from review-a3-kato with four checks incl. the blocker repro-by-name (clone-repair then lifecycle on PRE-CLONE guid — not explicitly named in the DONE report, flagged as potential gap) and the subtle one: envelope Node stamping must be EXCLUDED from sameProjectedSession like event/recorded_at, else a fresh local stamp on an otherwise-identical row defeats 064 idempotence post-clone.
 ---
 <!-- COMMENTS:END -->
