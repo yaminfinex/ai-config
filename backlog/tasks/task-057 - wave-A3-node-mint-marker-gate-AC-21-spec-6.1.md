@@ -1,10 +1,10 @@
 ---
 id: TASK-057
 title: 'wave A3: node mint + marker gate (AC-21, spec 6.1)'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-08 05:55'
-updated_date: '2026-07-08 08:23'
+updated_date: '2026-07-08 08:30'
 labels: []
 dependencies: []
 priority: medium
@@ -48,5 +48,10 @@ created: 2026-07-08 08:10
 created: 2026-07-08 08:23
 ---
 [hera 2026-07-08] Fix round DONE (#9442): a55f61a (main merge, 064 ancestor verified) + 82dfa45 (node = append envelope, unknown-node = no node_registered row + read-only-not-blocking, UUID-shape marker validation, dir fsync, carry-vs-stamp interplay test, 5 refusal-coverage cases). HERA REGATE GREEN: vet/test both modules, registry -count=1 fresh, 23/23 suites. Delta re-verdict requested from review-a3-kato with four checks incl. the blocker repro-by-name (clone-repair then lifecycle on PRE-CLONE guid — not explicitly named in the DONE report, flagged as potential gap) and the subtle one: envelope Node stamping must be EXCLUDED from sameProjectedSession like event/recorded_at, else a fresh local stamp on an otherwise-identical row defeats 064 idempotence post-clone.
+---
+
+created: 2026-07-08 08:30
+---
+[hera 2026-07-08] MERGED to main (50e71a7, no-ff) after review-a3-kato DELTA CLEAN (#9547: blocker re-repro'd against fix — impossible; TestCloneRepairLifecycleWritesStampFreshNode exists and pins it; junk-marker shape gate real; 5 refusal goldens green on force-rebuilt binary; Node dropped from sameProjectedSession/sameSeatFields equality so envelope stamping cannot defeat 064 no-op idempotence). Post-merge gate on main GREEN: vet + go test -count=1 (11 herder / 5 bottle ok), 23/23 suites from repo root. Wave A3 delivered: node mint in-lock, AC-21 gate, node init [--new] with clone repair, node-as-envelope per ruling, unknown-node=unregistered-only (read-only+flagged), UUID marker validation, refusal contract coverage. Kato residual LOW (circular --new guidance at len(nodes)==1, tamper-only corner) -> folded to TASK-051 message-polish bucket. Credits: worker wave-a3-memo (f825a5e, a55f61a, 82dfa45), review-a3-kato (blocker + independent delta re-verification), spec-ravu (envelope ruling + errata 82fceb4). AC-21/AC-25 satisfied. Unblocks A4 (TASK-058).
 ---
 <!-- COMMENTS:END -->
