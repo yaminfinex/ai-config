@@ -421,7 +421,7 @@ codex_config_apply_default() {
     return 0
   fi
 
-  codex_config_apply "$dry_run"
+  codex_config_apply "$dry_run" || return 0
 }
 
 codex_config_remove() {

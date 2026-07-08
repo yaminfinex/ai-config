@@ -158,6 +158,15 @@ assert_contains "dangling: guidance" "$RUN_OUT" "dangling symlink"
 assert_symlink "dangling: link preserved" "$HOME_DIR/.codex/config.toml"
 assert_not_exists "dangling: target not created" "$CASE_DIR/missing/config.toml"
 
+make_case dangling_default
+ln -s "$CASE_DIR/missing/config.toml" "$HOME_DIR/.codex/config.toml"
+run_setup
+assert_eq "dangling default: exit 0" "$RUN_RC" "0"
+assert_contains "dangling default: refusal surfaced" "$RUN_OUT" "dangling symlink"
+assert_contains "dangling default: setup completed" "$RUN_OUT" "ai-setup complete"
+assert_symlink "dangling default: link preserved" "$HOME_DIR/.codex/config.toml"
+assert_not_exists "dangling default: target not created" "$CASE_DIR/missing/config.toml"
+
 # 6. remove restores pre-install values recorded by install.
 make_case restore
 cat > "$HOME_DIR/.codex/config.toml" <<'TOML'
