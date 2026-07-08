@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - codex-f07b1274
 created_date: '2026-07-08 05:25'
-updated_date: '2026-07-08 06:04'
+updated_date: '2026-07-08 06:15'
 labels: []
 dependencies: []
 priority: high
@@ -33,5 +33,10 @@ Memo path update (spec-ravu #6065): canonical copy now napkins/run-herder-dx/spe
 created: 2026-07-08 06:04
 ---
 Dispatched (vibe #6530): codex worker task053-nida (f07b1274), worktree /home/grace/Coding/ai-config-task053, branch task-053-sid-reporting, brief via the 045 workaround (spawn capture missed again — same signature, another datapoint for TASK-045; bus delivery verified, worker acked). Scope fenced to sidecarcmd only with explicit stop-and-report-blocked if registry internals seem needed — no collision with wave-A1. Ground truth: ratified spec D11/AC-24 + spec-memo-sid-exposure.md. Hand-back: worker DONE -> vibe review -> hera gate (opus adversarial review per policy).
+---
+
+created: 2026-07-08 06:15
+---
+HAND-BACK (vibe #6674): 3 commits, real diff dfe3bec (sidecar.go +25, sidecar_test.go +131 — scope fence respected exactly, verified by hera diff --stat). vibe APPROVED, no fix round. hera gate re-run: vet+test clean (10+5 pkgs), 20/20 suites green (branch predates A1s 21st suite — expected). Opus adversarial review dispatched: @review-053-kana (wrong-guid report poisoning, dedup self-heal, fail-soft bound, 0.7.3 flag semantics, test-vs-mock drift). DEPLOYMENT NOTE recorded: running sidecars keep old binary — sid reporting effective for NEW spawns; fleet coverage arrives with natural turnover (consistent with D11 re-seat-via-observation). Third consecutive spawn-capture miss datapoint -> TASK-045. Merge gates on verdict.
 ---
 <!-- COMMENTS:END -->
