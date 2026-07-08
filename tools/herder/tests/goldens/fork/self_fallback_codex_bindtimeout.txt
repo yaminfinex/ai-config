@@ -1,5 +1,6 @@
 === STDERR ===
-spawn-handoff: spawn --role fork-claude --agent claude --from-pane p_self --cwd /mock/foreground --split right --no-focus --json --extra-arg --resume --extra-arg sess-orphan --extra-arg --fork-session
+spawn-handoff: spawn --role fork-codex --agent codex --from-pane p_self --cwd /mock/foreground --split right --no-focus --json --extra-arg fork --extra-arg --last
+herder-lifecycle: WARNING — herder addendum NOT delivered to codex-fallback-child: no bus bind within 1ms (codex resume/fork sessions carry only hcom's stock bootstrap). Deliver manually once it is up: herder send <GUID> '<addendum>'
 === STDOUT ===
 
 === EXIT ===

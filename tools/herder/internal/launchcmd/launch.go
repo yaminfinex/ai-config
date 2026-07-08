@@ -173,9 +173,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	// re-adds just its own bootstrap, so threading the block there is dead
 	// weight. That covers both herder resume/fork (mode != "launch"), where
 	// lifecyclecmd re-delivers the addendum post-boot over the bus (TASK-017),
-	// and the codex-native fork fallback, where spawn relaunches with a
+	// and the codex `fork --self` fallback, where spawn relaunches with a
 	// `fork <session>` subcommand in the tool args and hcom's strip predicate
-	// fires on it (no post-boot path there — TASK-027).
+	// fires on it — there too lifecyclecmd re-delivers post-boot, reading the
+	// child guid back from spawn's --json record (TASK-027).
 	if tool == "codex" && mode == "launch" && !codexStripsDevInstructions(rest) {
 		rest = threadCodexBootstrapBlock(rest)
 	}

@@ -214,8 +214,10 @@ Sessions that route through the shims get a herder-native rewrite of hcom's sess
   `HERDER_ADDENDUM_SETTLE_MS`, default 60s), then send a resume-worded variant as a verified bus
   message. Delivery is dedup-free (a repeat is a harmless no-op by wording) and never blocks: on
   bind timeout or send failure the command warns with the manual `herder send` remedy and the
-  resume/fork still succeeds. Residual gap (TASK-027): the codex `fork --self` fallback rides
-  `herder spawn`, which has no post-boot delivery — those sessions keep hcom's stock bootstrap.
+  resume/fork still succeeds. The codex `fork --self` fallback is covered too (TASK-027): it rides
+  `herder spawn`, reads the child guid back from spawn's `--json` record, and re-delivers the
+  addendum over the bus the same way — so fallback-forked codex sessions get the doctrine, not
+  hcom's bare stock bootstrap.
 
 The claude and codex doctrine blocks (launch and resume variants) share their doctrine sections
 as single constants with byte-identity drift guards.
