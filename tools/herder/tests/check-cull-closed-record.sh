@@ -79,10 +79,10 @@ fail=0
 ok()  { printf 'PASS  %s\n' "$1"; }
 bad() { printf 'FAIL  %s — %s\n' "$1" "$2"; fail=1; }
 
-seed_seated_paneless_holder() {
+seed_unseated_holder() {
   local reg="$1" label="$2"
   cat >"$reg" <<JSONL
-{"kind":"session","guid":"guid-dead-$label","event":"registered","recorded_at":"2026-07-08T00:00:00Z","state":"seated","label":"$label","role":"worker","tool":"codex","seat":{"kind":"herdr"}}
+{"kind":"session","guid":"guid-dead-$label","event":"migrated_v1","recorded_at":"2026-07-08T00:00:00Z","state":"unseated","label":"$label","role":"worker","tool":"codex"}
 JSONL
 }
 
@@ -115,13 +115,19 @@ close_count() {
   jq -r --arg guid "$guid" 'select(.guid==$guid and .event=="unseated" and .state=="unseated" and .close_result=="already_gone") | .guid' "$REGISTRY" | wc -l | tr -d '[:space:]'
 }
 
-# 1. Seated pane-less holder -> cull confirms an appended unseated close snapshot.
+# 1. Migrated v1 unseated pane-less holder -> cull exercises the real corpse shape.
 make_case closed_record
-seed_seated_paneless_holder "$REGISTRY" trap
+seed_unseated_holder "$REGISTRY" trap
+before="$(close_count guid-dead-trap)"
 run_herder "$REG_DIR" p_culler "" cull --label trap
+after="$(close_count guid-dead-trap)"
 [[ "$RUN_RC" -eq 0 ]] && ok "closed record: cull exits 0" || bad "closed record: cull exits 0" "rc=$RUN_RC out=$RUN_OUT"
-tail -n1 "$REGISTRY" | jq -e '.event=="unseated" and .state=="unseated" and .label=="trap" and .close_result=="already_gone" and .close_reason=="registry row has no pane_id or terminal_id" and (.seat|not)' >/dev/null \
-  && ok "closed record: unseated close row appended" || bad "closed record: unseated close row appended" "latest=$(tail -n1 "$REGISTRY")"
+[[ "$after" -eq $((before + 1)) ]] \
+  && ok "closed record: first cull appends one annotation" || bad "closed record: first cull appends one annotation" "before=$before after=$after out=$RUN_OUT"
+tail -n1 "$REGISTRY" | jq -e '.event=="unseated" and .state=="unseated" and .label=="trap" and .close_result=="already_gone" and (.close_reason | contains("source=cull-verification")) and (.seat|not)' >/dev/null \
+  && ok "closed record: verified annotation row appended" || bad "closed record: verified annotation row appended" "latest=$(tail -n1 "$REGISTRY")"
+grep -q 'recorded closed trap (guid-dead-trap) pane= → already_gone' <<<"$RUN_OUT" \
+  && ok "closed record: first cull reports recorded close" || bad "closed record: first cull reports recorded close" "out=$RUN_OUT"
 
 # 2. Current spec truth: unseated rows still hold labels; retire/wave C will reclaim.
 run_herder "$REG_DIR" p_self "" enroll --label trap --role worker
@@ -145,6 +151,8 @@ after_bytes="$(cat "$REGISTRY")"
   && ok "closed record: repeat cull does not append" || bad "closed record: repeat cull does not append" "rc=$RUN_RC before=$before after=$after out=$RUN_OUT"
 [[ "$after_bytes" = "$before_bytes" ]] \
   && ok "closed record: repeat cull leaves registry byte-identical" || bad "closed record: repeat cull leaves registry byte-identical" "before=$before_bytes after=$after_bytes out=$RUN_OUT"
+grep -q 'already unseated trap (guid-dead-trap) at .*close_result=never-close-annotated' <<<"$RUN_OUT" \
+  && bad "closed record: repeat cull must not report missing annotation" "out=$RUN_OUT" || ok "closed record: repeat cull does not report missing annotation"
 grep -q 'already unseated trap (guid-dead-trap) at .*close_result=already_gone' <<<"$RUN_OUT" \
   && ok "closed record: repeat cull reports recorded fact" || bad "closed record: repeat cull reports recorded fact" "out=$RUN_OUT"
 

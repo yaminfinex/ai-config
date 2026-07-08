@@ -242,7 +242,7 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 	}
 
 	if pane == "" && term == "" {
-		closed, appended, err := appendClosed(registryPath, rec, nowISO, "already_gone", "registry row has no pane_id or terminal_id")
+		closed, appended, err := appendClosed(registryPath, rec, nowISO, "already_gone", "source=cull-verification; no seat coordinates")
 		if err != nil {
 			die(stderr, err.Error())
 			return false
@@ -263,12 +263,16 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 					label, guid, pane, term, livePane)
 				pane = livePane
 			} else {
+				if rec.CloseResult == "" && isAlreadyUnseated(registryPath, guid) {
+					reportUnverifiable(stdout, rec, label, guid)
+					return true
+				}
 				if vrc == 1 {
 					fmt.Fprintf(stderr, "pane %s gone and terminal %s not live anywhere; recording closed without API call\n", pane, term)
 				} else {
 					fmt.Fprintf(stderr, "pane %s reassigned to another terminal and %s not live anywhere; recording closed\n", pane, term)
 				}
-				closed, appended, err := appendClosed(registryPath, rec, nowISO, "already_gone", "terminal_id not in live agent list")
+				closed, appended, err := appendClosed(registryPath, rec, nowISO, "already_gone", "source=cull-verification; terminal_id not in live agent list")
 				if err != nil {
 					die(stderr, err.Error())
 					return false
@@ -326,7 +330,23 @@ func reportClosedFact(stdout io.Writer, rec registry.Record, appended bool, resu
 	if guid == "" {
 		guid = fallbackGUID
 	}
-	fmt.Fprintf(stdout, "already unseated %s (%s) at %s, close_result=%s\n", label, guid, rec.RecordedAt, rec.CloseResult)
+	closeResult := rec.CloseResult
+	if closeResult == "" {
+		closeResult = "never-close-annotated"
+	}
+	fmt.Fprintf(stdout, "already unseated %s (%s) at %s, close_result=%s\n", label, guid, rec.RecordedAt, closeResult)
+}
+
+func reportUnverifiable(stdout io.Writer, rec registry.Record, fallbackLabel, fallbackGUID string) {
+	label := ptrString(rec.Label)
+	if label == "" {
+		label = fallbackLabel
+	}
+	guid := ptrString(rec.GUID)
+	if guid == "" {
+		guid = fallbackGUID
+	}
+	fmt.Fprintf(stdout, "already unseated %s (%s) at %s; never close-annotated (migrated corpse); gone-ness unverifiable from here\n", label, guid, rec.RecordedAt)
 }
 
 func verifyPaneIdentity(pane, wantTerm string) int {
@@ -389,7 +409,7 @@ func appendClosed(path string, rec registry.Record, nowISO, result, reason strin
 		if latest == nil {
 			return nil, fmt.Errorf("registry close failed for %s: latest record not found", guid)
 		}
-		if latest.State == v2.StateUnseated && !latest.LegacyV1 {
+		if latest.State == v2.StateUnseated && latest.CloseResult != "" && !latest.LegacyV1 {
 			cp := *latest
 			already = &cp
 			return nil, nil
@@ -416,6 +436,15 @@ func appendClosed(path string, rec registry.Record, nowISO, result, reason strin
 	rec.CloseResult = result
 	rec.CloseReason = reason
 	return rec, true, nil
+}
+
+func isAlreadyUnseated(path, guid string) bool {
+	proj, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		return false
+	}
+	current := registry.V2ByGUID(proj, guid)
+	return current != nil && current.State == v2.StateUnseated
 }
 
 func containsCloseRow(rows [][]byte, guid, recordedAt, result, reason string) bool {

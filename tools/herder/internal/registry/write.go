@@ -387,7 +387,7 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 	}
 	switch row.Event {
 	case "unseated":
-		if current.State == row.State && !current.LegacyV1 {
+		if current.State == row.State && (current.CloseResult != "" || row.CloseResult == "") && !current.LegacyV1 {
 			return row, false, nil
 		}
 		if current.State == v2.StateRetired || current.State == v2.StateLost {
