@@ -5,11 +5,11 @@ title: >-
   --handoff (LIVE=gone fleet-wide, wait status=unknown, spawn ready-gate
   timeout); pane-id scheme changed w-N -> w:pN; all pre-handoff registry
   coordinates invalidated
-status: In Progress
+status: Done
 assignee:
   - vibe
 created_date: '2026-07-08 04:56'
-updated_date: '2026-07-08 05:51'
+updated_date: '2026-07-08 05:59'
 labels: []
 dependencies: []
 priority: high
@@ -69,5 +69,10 @@ Registry corpse context for reconcile expectations (spec-ravu #6043): 1159 rows 
 created: 2026-07-08 05:51
 ---
 HAND-BACK (vibe #6370) + hera gate: branch task-046-liveness, 3 commits (ba9f755 vibe WIP; c3bd33f, 0758f7e codex worker task046-fulo). hera gate re-run from the worktree: go vet+test clean in tools/herder AND tools/bottle; all 20 check-*.sh ALL GREEN. Worker deviations endorsed by vibe and accepted: --apply aborts all writes on any ambiguity; D11/D12 vocabulary (re-bind assumed-continuity, conflict report-only). Live dry-run against real registry: 34/34 rows classified correctly, exit 0; --apply deferred to post-merge from main. Provenance: worker prompt delivered out-of-band (TASK-045 workaround), row 93d28247 prompt_sent=false is expected. Adversarial review IN FLIGHT: claude opus @review046-dune (owner model policy). Merge gates on its verdict. Worker held alive for fix routing.
+---
+
+created: 2026-07-08 05:59
+---
+MERGED to main a5e73fe (no-ff). Post-merge gate on main: go vet+test clean (herder 10 pkgs, bottle 5 pkgs), 20/20 check suites green. Adversarial verdict: APPROVE (opus @review046-dune #6436) — demotion+all-or-nothing guard, anti-steal filter, and wait post-timeout re-fetch all held under attack; 3 low non-blocking findings: F1 (agent-list outage flips actives to undetected — display-only) + F2 (conflict outcome exits 0) -> TASK-060; F3 (lock-free read-classify-append, pre-existing) -> noted on TASK-056 (wave A2 flock is the designed fix). First audited reconcile --apply to run from main next; TASK-044 re-verify rides TASK-050.
 ---
 <!-- COMMENTS:END -->
