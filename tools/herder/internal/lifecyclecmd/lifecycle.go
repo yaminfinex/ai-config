@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -305,9 +306,19 @@ func (r *runner) forkSelfFallback(opts forkOptions, agent, paneEnvID, cwd, sessi
 	return 0
 }
 
+// guidShapeRE matches registry.NewGUID's canonical UUID hex shape (kept loose on
+// the version/variant nibbles so it survives a guid-format tweak — the agent +
+// status field requirement in parseSpawnChild is the real anti-misroute guard). A
+// child guid only routes the addendum if it looks like a guid AND rides a full
+// spawn record.
+var guidShapeRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
 // parseSpawnChild reads the child guid + label from `herder spawn --json`, which
-// prints exactly one JSON record on stdout. It scans lines and returns the first
-// that parses with a guid, tolerating any stray non-JSON noise.
+// prints exactly one full registry record on stdout. It requires the whole
+// record shape — canonical guid PLUS the always-present agent and status fields —
+// before trusting a line, so a stray diagnostic line that merely happens to carry
+// a "guid" key can never route the addendum to a wrong session (wrong-target is
+// worse than a skip; the caller warns-never-blocks on the empty return).
 func parseSpawnChild(out []byte) (guid, label string) {
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
@@ -315,12 +326,18 @@ func parseSpawnChild(out []byte) (guid, label string) {
 			continue
 		}
 		var rec struct {
-			GUID  string `json:"guid"`
-			Label string `json:"label"`
+			GUID   string `json:"guid"`
+			Label  string `json:"label"`
+			Agent  string `json:"agent"`
+			Status string `json:"status"`
 		}
-		if json.Unmarshal([]byte(line), &rec) == nil && rec.GUID != "" {
-			return rec.GUID, rec.Label
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
 		}
+		if rec.Agent == "" || rec.Status == "" || !guidShapeRE.MatchString(rec.GUID) {
+			continue
+		}
+		return rec.GUID, rec.Label
 	}
 	return "", ""
 }

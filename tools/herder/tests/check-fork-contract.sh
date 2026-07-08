@@ -95,9 +95,13 @@ cat >"$MOCKBIN/herder-spawn-probe" <<'MOCK_SPAWN'
 printf 'spawn-handoff: %s\n' "$*" >&2
 if [[ -n "${MOCK_SPAWN_GUID:-}" ]]; then
   # Stand in for spawn recording the child (bus name bound) so the fork's
-  # addendum poll finds it immediately, then print the --json record it keys on.
-  printf '{"guid":"%s","short_guid":"%s","label":"codex-fallback-child","role":"fork-codex","agent":"codex","pane_id":"p_fbchild","terminal_id":"term_FBCHILD","workspace_id":"ws_fb","cwd":"/mock/cwd","hcom_dir":"/hcom","hcom_name":"%s","hcom_tag":"fork-codex","status":"active","provenance":{"mechanism":"fork","spawned_by":"user","tool_session_id":"sess-fb","tag":"fork-codex","batch_id":"","cwd":"/repo","workspace_id":"ws_fb","branch":"fixture-branch","ts":"2026-07-03T00:03:00Z"}}\n' \
-    "$MOCK_SPAWN_GUID" "${MOCK_SPAWN_GUID:0:8}" "${MOCK_SPAWN_BIND:?}" >>"${HERDER_STATE_DIR:?}/registry.jsonl"
+  # addendum poll finds it immediately — UNLESS MOCK_SPAWN_NOBIND is set, which
+  # models spawn returning before any bus bind lands (the fork's poll then times
+  # out). Either way print the --json record the fork caller keys on.
+  if [[ -z "${MOCK_SPAWN_NOBIND:-}" ]]; then
+    printf '{"guid":"%s","short_guid":"%s","label":"codex-fallback-child","role":"fork-codex","agent":"codex","pane_id":"p_fbchild","terminal_id":"term_FBCHILD","workspace_id":"ws_fb","cwd":"/mock/cwd","hcom_dir":"/hcom","hcom_name":"%s","hcom_tag":"fork-codex","status":"active","provenance":{"mechanism":"fork","spawned_by":"user","tool_session_id":"sess-fb","tag":"fork-codex","batch_id":"","cwd":"/repo","workspace_id":"ws_fb","branch":"fixture-branch","ts":"2026-07-03T00:03:00Z"}}\n' \
+      "$MOCK_SPAWN_GUID" "${MOCK_SPAWN_GUID:0:8}" "${MOCK_SPAWN_BIND:?}" >>"${HERDER_STATE_DIR:?}/registry.jsonl"
+  fi
   printf '{"guid":"%s","short_guid":"%s","label":"codex-fallback-child","agent":"codex","status":"active"}\n' \
     "$MOCK_SPAWN_GUID" "${MOCK_SPAWN_GUID:0:8}"
 fi
@@ -184,6 +188,7 @@ run_self_case() {
     MOCK_LIVE_PARENT="$live" \
     MOCK_SPAWN_GUID="${MOCK_SPAWN_GUID:-}" \
     MOCK_SPAWN_BIND="${MOCK_SPAWN_BIND:-}" \
+    MOCK_SPAWN_NOBIND="${MOCK_SPAWN_NOBIND:-}" \
     CLAUDECODE="${CLAUDECODE:-}" \
     CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}" \
     CODEX_HOME="${CODEX_HOME:-}" \
@@ -289,6 +294,16 @@ check_one self_fallback_codex
 CODEX_HOME=/mock/codex \
   run_self_case self_fallback_codex_noguid 0 --self
 check_one self_fallback_codex_noguid
+# TASK-027 bind-timeout seam: guid parsed from spawn --json, but the child never
+# binds a bus name (MOCK_SPAWN_NOBIND) — deliverCodexAddendum polls registry.DefaultPath()
+# and times out at HERDER_ADDENDUM_SETTLE_MS=1 -> WARN with manual remedy, exit 0.
+# Pins the fallback's parse + registry-path + warn-never-block seam that the
+# happy-path (immediate bind) and noguid (no poll) cases don't reach.
+CODEX_HOME=/mock/codex \
+  MOCK_SPAWN_GUID=abcdef12-0027-0027-0027-000000000027 MOCK_SPAWN_NOBIND=1 \
+  HERDER_ADDENDUM_SETTLE_MS=1 \
+  run_self_case self_fallback_codex_bindtimeout 0 --self
+check_one self_fallback_codex_bindtimeout
 # no tool env -> clear refusal (exit 1), before any pane/registry lookup.
 run_self_case self_unknown 0 --self
 check_one self_unknown
