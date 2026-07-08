@@ -1,0 +1,23 @@
+{
+  "disableWorkflows": true,
+  "enabledPlugins": {
+    "compound-engineering@compound-engineering-plugin": true
+  },
+  "extraKnownMarketplaces": {
+    "compound-engineering-plugin": {
+      "source": {
+        "repo": "EveryInc/compound-engineering-plugin",
+        "source": "github"
+      }
+    }
+  },
+  "permissions": {
+    "deny": [
+      "Artifact"
+    ]
+  },
+  "statusLine": {
+    "command": "$HOME/.claude/statusline.sh",
+    "type": "command"
+  }
+}

@@ -46,8 +46,9 @@ Usage: ai-setup [--dry-run] [--heal-only]
        ai-setup [--dry-run] --hcom-hooks install|remove|status
        ai-setup [--dry-run] --shims install|remove|status
 
-Installs symlinks from live agent config paths into this repo and writes the
-managed mise conf.d PATH file for ai-config.
+Installs symlinks from live agent config paths into this repo, melds
+claude/settings.shared.json into ~/.claude/settings.json (additive; local-only
+keys are preserved), and writes the managed mise conf.d PATH file for ai-config.
 --heal-only only repairs missing, broken, or wrong symlinks and never backs up
 real files or directories.
 --hcom-hooks manages global hcom hooks for Claude and Codex only when explicitly
@@ -184,9 +185,11 @@ if [ -n "$shims_action" ]; then
 fi
 
 source "$AI_CONFIG_ROOT/lib/mise-path.sh"
+source "$AI_CONFIG_ROOT/lib/claude-settings.sh"
 mise_require || exit 1
 install_portable_links
 install_skill_links
+claude_settings_apply "$dry_run"
 mise_path_install
 
 log_info "ai-setup complete"

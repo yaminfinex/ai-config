@@ -228,6 +228,35 @@ check_claude_statusline_settings() {
   esac
 }
 
+check_claude_shared_settings() {
+  local shared="$AI_CONFIG_ROOT/claude/settings.shared.json"
+
+  [ -f "$shared" ] || return 0
+
+  if ! command -v jq >/dev/null 2>&1; then
+    warn "jq not installed; skipping shared settings check"
+    return
+  fi
+
+  source "$AI_CONFIG_ROOT/lib/claude-settings.sh"
+
+  jq -e . "$shared" >/dev/null 2>&1 || {
+    err "shared settings fragment is not valid JSON: $shared"
+    return
+  }
+
+  claude_settings_live_valid || {
+    warn "live claude settings are not valid JSON: $CLAUDE_SETTINGS_LIVE"
+    return
+  }
+
+  if claude_settings_in_sync; then
+    [ "$quick" -eq 1 ] || log_info "claude shared settings ok: $CLAUDE_SETTINGS_LIVE"
+  else
+    warn "claude settings missing shared fragment keys; run bin/ai-setup"
+  fi
+}
+
 print_claude_config_divergence_options() {
   cat >&2 <<'OPTIONS'
   pinned (team-bus) claude sessions read ~/.claude/.claude.json; plain sessions
@@ -337,6 +366,7 @@ check_portable_links
 check_skill_links
 check_unharvested_live_skills
 check_claude_statusline_settings
+check_claude_shared_settings
 check_claude_config_divergence
 check_mise_path
 check_secret_scan

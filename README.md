@@ -6,7 +6,7 @@ This repo is the canonical corpus. Live agent config paths are symlinked into it
 
 ## Commands
 
-- `bin/ai-setup`: install or repair live symlinks.
+- `bin/ai-setup`: install or repair live symlinks and meld `claude/settings.shared.json` into `~/.claude/settings.json` (additive merge; see [docs/claude-context-trim.md](docs/claude-context-trim.md)).
 - `bin/ai-doctor`: inspect Git state, symlink drift, local-only skills, likely secrets, absolute home paths, and pinned-vs-plain claude config divergence (`~/.claude/.claude.json` vs `~/.claude.json` — flags only; re-align or delete is the user's call).
 - `bin/ai-sync`: pull remote changes and heal safe symlink drift.
 - `bin/ai-adopt <skill-path|skill-name>`: copy a local-only skill into `skills/<name>` and relink live roots.
