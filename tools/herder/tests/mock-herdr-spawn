@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # mock-herdr-spawn — a deterministic, hermetic stand-in for the `herdr` CLI,
 # used by check-spawn-contract.sh to exercise the FULL herder spawn path
-# (tab create, agent start, readiness/modal machine, root-pane close +
-# re-resolution, prompt delivery via the send leg) without a live session.
+# (agent start, --new-tab pane move, readiness/modal machine, root-pane close +
+# re-resolution for worktrees, prompt delivery via the send leg) without a live session.
 #
 # It answers exactly the herdr sub-invocations herder spawn (and the herder send
 # it delegates prompt delivery to) makes:
 #   herdr pane get <pane>
-#   herdr tab create [flags...]
 #   herdr agent start <label> [flags...] -- <argv...>
+#   herdr pane move <pane> --new-tab [--label <label>]
 #   herdr pane list
 #   herdr pane close <pane>
 #   herdr agent read <pane> [flags...]
@@ -20,7 +20,8 @@
 #
 # Behaviour is driven by env vars (set by the harness):
 #   MOCK_SPAWN_SCENARIO  ready | modal | modalvis | unknownmodal | polluted_clear
-#                        | polluted_still | rootguard | startfail | wtcreatefail | wtstartfail
+#                        | polluted_still | newtab_movefail | rootguard | startfail
+#                        | wtcreatefail | wtstartfail
 #       ready     — agent is receptive immediately
 #       modal     — a first-run directory-trust modal is open until an Enter
 #                   clears it (then the agent is receptive). Modal text shows in
@@ -37,7 +38,9 @@
 #                   then the paste proceeds and reports composer_cleared.
 #       polluted_still — a bash composer starts with stray text; ctrl+u is accepted
 #                   but does not clear, so paste refuses before typing.
-#       rootguard — `tab create` reports a root pane whose terminal_id equals
+#       newtab_movefail — `pane move <agent> --new-tab` fails, leaving the
+#                   agent alive in its original split pane
+#       rootguard — the worktree seed root pane reports a terminal_id equal to
 #                   the agent's (herder spawn must refuse the root-pane close)
 #       startfail — `agent start` fails with a JSON error payload (exit 3)
 #       wtcreatefail — `worktree create` fails with a JSON error payload
@@ -57,9 +60,8 @@
 # Pane/terminal topology:
 #   p_orch @ term_ORCH   the spawning orchestrator pane (HERDR_PANE_ID)
 #   p_50   @ term_AGENT  the agent's pane at launch
-#   p_40   @ term_ROOT   the seed root shell of a --new-tab tab (tab_9)
 #   p_60   @ term_WTROOT the seed root shell of a --worktree workspace (w_WT)
-#   p_41   @ term_AGENT  legacy fixture pane after a root close/re-key
+#   p_41   @ term_AGENT  fixture pane after a worktree root close/re-key
 
 set -euo pipefail
 
@@ -76,7 +78,7 @@ entered()       { [[ -f "$STATE/enter" ]]; }
 modal_cleared() { [[ -f "$STATE/modal_cleared" ]]; }
 composer_cleared() { [[ -f "$STATE/composer_cleared" ]]; }
 root_closed()   { [[ -f "$STATE/root_closed" ]]; }
-tab_created()   { [[ -f "$STATE/tab_created" ]]; }
+newtab_moved()  { [[ -f "$STATE/newtab_moved" ]]; }
 sent_msg()      { cat "$STATE/msg" 2>/dev/null || true; }
 
 case "$AGENT_KIND" in
@@ -88,10 +90,12 @@ esac
 agent_pane() { if root_closed; then printf 'p_41'; else printf 'p_50'; fi; }
 
 root_term() {
-  # rootguard: the seed root pane reports the AGENT's terminal_id, so
+  # rootguard: the worktree seed root pane reports the AGENT's terminal_id, so
   # herder spawn's identity guard must refuse to close it.
   if [[ "$SCEN" == "rootguard" ]]; then printf 'term_AGENT'; else printf 'term_ROOT'; fi
 }
+
+agent_tab() { if newtab_moved; then printf 'tab_9'; else printf 'tab_1'; fi; }
 
 modal_open() { [[ "$SCEN" == "modal" ]] && ! modal_cleared; }
 # Alternate-screen overlays: text lives on the visible screen only. modalvis
@@ -153,10 +157,9 @@ emit_read() { jq -n --arg t "$1" '{result:{read:{text:$t}}}'; }
 case "${1:-} ${2:-}" in
   "pane get")
     case "${3:-}" in
-      p_orch)     jq -n '{result:{pane:{pane_id:"p_orch", terminal_id:"term_ORCH", workspace_id:"ws_1"}}}';;
-      p_40)       jq -n --arg t "$(root_term)" '{result:{pane:{pane_id:"p_40", terminal_id:$t}}}';;
-      p_60)       jq -n '{result:{pane:{pane_id:"p_60", terminal_id:"term_WTROOT", workspace_id:"w_WT"}}}';;
-      p_50|p_41)  jq -n --arg p "$(agent_pane)" '{result:{pane:{pane_id:$p, terminal_id:"term_AGENT"}}}';;
+      p_orch)     jq -n '{result:{pane:{pane_id:"p_orch", terminal_id:"term_ORCH", workspace_id:"ws_1", tab_id:"tab_1"}}}';;
+      p_60)       jq -n '{result:{pane:{pane_id:"p_60", terminal_id:"term_WTROOT", workspace_id:"w_WT", tab_id:"tab_WT"}}}';;
+      p_50|p_41)  jq -n --arg p "$(agent_pane)" --arg tab "$(agent_tab)" '{result:{pane:{pane_id:$p, terminal_id:"term_AGENT", workspace_id:"ws_1", tab_id:$tab}}}';;
       *)          jq -n '{result:{}}';;
     esac;;
   "workspace list")
@@ -165,11 +168,6 @@ case "${1:-} ${2:-}" in
     # checkout_path lets herder spawn resolve the child's default cwd from the
     # anchored workspace when --cwd is omitted (the documented "current" default).
     jq -n '{result:{workspaces:[{workspace_id:"ws_1", worktree:{checkout_path:"/mock/cwd"}}]}}';;
-  "tab create")
-    log_call "$@"
-    : > "$STATE/tab_created"
-    jq -n --arg t "$(root_term)" \
-      '{result:{tab:{tab_id:"tab_9"}, root_pane:{pane_id:"p_40", terminal_id:$t}}}';;
   "agent start")
     log_call agent start "${3:-}"
     printf '%s\n' "$@" >"$PROBE/agent_start_argv"
@@ -192,11 +190,18 @@ case "${1:-} ${2:-}" in
       '{result:{agent:{pane_id:"p_50", workspace_id:$ws, tab_id:$tab,
                        terminal_id:"term_AGENT", cwd:$cwd},
                 type:"agent_started"}}';;
+  "pane move")
+    log_call "$@"
+    if [[ "$SCEN" == "newtab_movefail" ]]; then
+      jq -n '{error:{code:"pane_move_failed", message:"mock pane move failure"}}'
+      exit 5
+    fi
+    : > "$STATE/newtab_moved"
+    jq -n '{result:{type:"pane_moved", pane:{pane_id:"p_50", workspace_id:"ws_1", tab_id:"tab_9", terminal_id:"term_AGENT"}}}';;
   "pane list")
-    if tab_created && ! root_closed; then
+    if ! root_closed; then
       jq -n --arg p "$(agent_pane)" '{result:{panes:[
         {pane_id:"p_orch", terminal_id:"term_ORCH"},
-        {pane_id:"p_40",   terminal_id:"term_ROOT"},
         {pane_id:$p,       terminal_id:"term_AGENT"}
       ]}}'
     else
@@ -207,9 +212,7 @@ case "${1:-} ${2:-}" in
     fi;;
   "pane close")
     log_call "$@"
-    # p_40 (--new-tab seed) and p_60 (--worktree seed) both trigger this
-    # fixture's legacy root-closed pane shape.
-    [[ "${3:-}" == "p_40" || "${3:-}" == "p_60" ]] && : > "$STATE/root_closed"
+    [[ "${3:-}" == "p_60" ]] && : > "$STATE/root_closed"
     jq -n --arg pane "${3:-}" '{result:{type:"closed", pane_id:$pane}}';;
   "agent read")
     if altscreen_open; then

@@ -141,11 +141,11 @@ func TestParsePaneListAndGet(t *testing.T) {
 		t.Errorf("panes = %+v", panes)
 	}
 
-	pane, err := ParsePaneGet([]byte(`{"result":{"pane":{"pane_id":"pane_9","terminal_id":"term_C","workspace_id":"ws_1"}}}`))
+	pane, err := ParsePaneGet([]byte(`{"result":{"pane":{"pane_id":"pane_9","terminal_id":"term_C","workspace_id":"ws_1","tab_id":"tab_2"}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pane.PaneID != "pane_9" || pane.TerminalID != "term_C" || pane.WorkspaceID != "ws_1" {
+	if pane.PaneID != "pane_9" || pane.TerminalID != "term_C" || pane.WorkspaceID != "ws_1" || pane.TabID != "tab_2" {
 		t.Errorf("pane = %+v", pane)
 	}
 	// Error payloads have no .result.pane; `// empty` becomes the zero Pane.

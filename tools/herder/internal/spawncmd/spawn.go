@@ -122,6 +122,7 @@ type spawnJSONRecord struct {
 	PermInjected         string              `json:"perm_injected"`
 	NewTab               bool                `json:"new_tab"`
 	RootPaneClosed       bool                `json:"root_pane_closed"`
+	NewTabResult         string              `json:"new_tab_result,omitempty"`
 	HcomCapture          string              `json:"hcom_capture"`
 	Worktree             *worktreeInfo       `json:"worktree,omitempty"`
 }
@@ -591,7 +592,7 @@ func (r *runner) run() int {
 		return 1
 	}
 	short := registry.ShortGUID(guid)
-	label := opts.LabelPrefix + opts.Role + "-" + short
+	label := spawnLabel(opts.Role, opts.LabelPrefix, short)
 
 	isHcomAgent := launchcmd.IsHcomCapable(opts.Agent)
 	if isHcomAgent {
@@ -607,10 +608,9 @@ func (r *runner) run() int {
 
 	// --worktree: drive `herdr worktree create` and spawn into the resulting
 	// workspace in one verified step. The create opens a full WORKSPACE with a
-	// seed tab + root shell pane, so the payload's coordinates feed the exact
-	// machinery --new-tab already uses: agent start into that tab, then the
-	// guarded seed-pane close. Everything herdr-side (branch, checkout path,
-	// workspace) stays herdr-owned — herder only wraps it.
+	// seed tab + root shell pane; the payload's coordinates feed the guarded
+	// seed-pane close after the agent starts. Everything herdr-side (branch,
+	// checkout path, workspace) stays herdr-owned — herder only wraps it.
 	var wtInfo *worktreeInfo
 	rootPaneID, rootTerm := "", ""
 	spawnCompleted := false
@@ -692,27 +692,6 @@ func (r *runner) run() int {
 	if root, bin, ok := checkoutForDir(childCWD); ok && root != r.paths.RepoRoot {
 		childEnvBin = bin
 		childEnvRoot = root
-	}
-
-	if opts.NewTab {
-		tabArgs := []string{"tab", "create", "--no-focus", "--label", label}
-		if opts.Workspace != "" {
-			tabArgs = append(tabArgs, "--workspace", opts.Workspace)
-		}
-		if opts.CWD != "" {
-			tabArgs = append(tabArgs, "--cwd", opts.CWD)
-		}
-		out, rc, _ := r.herdr.Combined(tabArgs...)
-		if rc != 0 {
-			fmt.Fprintf(r.stderr, "herdr tab create failed:\n%s\n", strings.TrimRight(string(out), "\n"))
-			return rc
-		}
-		tabID, rootID, rootTerminal := parseTabCreate(out)
-		opts.Tab, rootPaneID, rootTerm = tabID, rootID, rootTerminal
-		if opts.Tab == "" || rootPaneID == "" {
-			fmt.Fprintf(r.stderr, "unexpected tab create payload: %s\n", strings.TrimRight(string(out), "\n"))
-			return 1
-		}
 	}
 
 	launchTokens := []string{}
@@ -805,10 +784,34 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	termID := start.Agent.TerminalID
 	resolvedCWD := start.Agent.CWD
 	launchPaneID := paneID
+	newTabResult := ""
 
-	// Seed-pane close: --new-tab's tab create and --worktree's workspace create
-	// both leave a root shell pane behind; the identity-guarded close applies
-	// to whichever path populated rootPaneID/rootTerm.
+	if opts.NewTab {
+		moveArgs := []string{"pane", "move", paneID, "--new-tab", "--label", label}
+		if out, rc, _ := r.herdr.Combined(moveArgs...); rc == 0 {
+			newTabResult = "moved"
+		} else {
+			reason := compactMessage(string(out))
+			if reason == "" {
+				reason = fmt.Sprintf("herdr pane move exited %d", rc)
+			}
+			newTabResult = "move_failed: " + reason
+			fmt.Fprintf(r.stderr, "herder spawn: WARNING: --new-tab pane move failed; agent is still running in the current tab: %s\n", reason)
+		}
+		if out, err := r.herdr.Output("pane", "get", paneID); err == nil {
+			if pane, parseErr := herdrcli.ParsePaneGet(out); parseErr == nil {
+				paneID = firstNonEmpty(pane.PaneID, paneID)
+				wsID = firstNonEmpty(pane.WorkspaceID, wsID)
+				tabID = firstNonEmpty(pane.TabID, tabID)
+				termID = firstNonEmpty(pane.TerminalID, termID)
+			}
+		}
+		opts.Tab = tabID
+	}
+
+	// Seed-pane close: --worktree's workspace create leaves a root shell pane
+	// behind; --new-tab now moves the running agent pane and never creates a
+	// seed shell.
 	rootClosed := false
 	if rootPaneID != "" && rootTerm != "" {
 		if rootTerm == termID {
@@ -1022,7 +1025,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		}
 	}
 
-	r.writeSummary(record, wtInfo, isHcomAgent, rootClosed, permInjected, hcomCapture, busPrompt, promptSent, deliveryResult, readyReason, trustBlocked, pasteNotes)
+	r.writeSummary(record, wtInfo, isHcomAgent, rootClosed, newTabResult, permInjected, hcomCapture, busPrompt, promptSent, deliveryResult, readyReason, trustBlocked, pasteNotes)
 	if opts.JSONOutput {
 		outRecord := spawnJSONRecord{
 			GUID:                 record.GUID,
@@ -1053,6 +1056,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			PermInjected:         permInjected,
 			NewTab:               opts.NewTab,
 			RootPaneClosed:       rootClosed,
+			NewTabResult:         newTabResult,
 			HcomCapture:          hcomCapture,
 			Worktree:             wtInfo,
 		}
@@ -1249,7 +1253,7 @@ func (r *runner) paneStatus(paneID string) string {
 	return ""
 }
 
-func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAgent, rootClosed bool, permInjected, hcomCapture string, busPrompt, promptSent bool, deliveryResult, readyReason string, trustBlocked bool, pasteNotes []string) {
+func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAgent, rootClosed bool, newTabResult, permInjected, hcomCapture string, busPrompt, promptSent bool, deliveryResult, readyReason string, trustBlocked bool, pasteNotes []string) {
 	fmt.Fprintf(r.stderr, "spawned %s (%s) in pane %s (workspace %s)\n", record.Label, record.Agent, record.PaneID, record.WorkspaceID)
 	fmt.Fprintf(r.stderr, "  guid:   %s\n", record.GUID)
 	fmt.Fprintf(r.stderr, "  cwd:    %s\n", record.CWD)
@@ -1267,10 +1271,10 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 		fmt.Fprintf(r.stderr, "            after cull the workspace auto-closes (herdr remove no longer applies); then: git worktree remove %s && git branch -D %s\n", wtInfo.CheckoutPath, wtInfo.Branch)
 	}
 	if r.opts.NewTab {
-		if rootClosed {
-			fmt.Fprintf(r.stderr, "  tab:    %s (new, root shell closed; agent is sole pane)\n", r.opts.Tab)
+		if strings.HasPrefix(newTabResult, "move_failed:") {
+			fmt.Fprintf(r.stderr, "  tab:    %s (new-tab move FAILED; agent remains alive in this tab: %s)\n", record.TabID, strings.TrimPrefix(newTabResult, "move_failed: "))
 		} else {
-			fmt.Fprintf(r.stderr, "  tab:    %s (new; WARNING: root shell NOT closed — spare pane may remain)\n", r.opts.Tab)
+			fmt.Fprintf(r.stderr, "  tab:    %s (new; agent pane moved, no seed shell)\n", record.TabID)
 		}
 	}
 	if permInjected != "" {
@@ -1354,7 +1358,7 @@ func printHelp(stdout io.Writer) {
 		"  --team NAME       join the bus at $HERDER_TEAMS_ROOT/<NAME> (default: global ~/.hcom)",
 		"  --split D         pane split: right (default) or down",
 		"  --workspace ID    place in this workspace; --from-pane PANE_ID copies another pane's",
-		"  --tab ID          add to an existing tab; --new-tab gives the agent its own fresh tab",
+		"  --tab ID          add to an existing tab; --new-tab moves the agent's pane into its own fresh tab",
 		"  --worktree BRANCH create a fresh git worktree on BRANCH (via `herdr worktree create`) and",
 		"                    spawn into its workspace in one step; --base REF picks the start point",
 		"  --cwd PATH        working directory for the agent (default: current)",
@@ -1409,8 +1413,8 @@ func printHelp(stdout io.Writer) {
 		"",
 		"  --worktree wraps `herdr worktree create` (worktree/workspace lifecycle stays herdr-owned):",
 		"  the source repo resolves from the spawner's cwd (works from inside a linked worktree),",
-		"  the created workspace's seed shell pane is closed under the same identity guard as",
-		"  --new-tab, and the summary + --json surface the worktree coordinates (workspace_id,",
+		"  the created workspace's seed shell pane is closed under an identity guard, and the",
+		"  summary + --json surface the worktree coordinates (workspace_id,",
 		"  checkout path, branch) for later lifecycle management. If the worktree is created but the",
 		"  spawn then fails, NOTHING is auto-removed — the failure report names the workspace and the",
 		"  exact `herdr worktree remove` command. The workspace label stays herdr's branch-derived",
@@ -1526,22 +1530,16 @@ func workspaceExists(workspaces []workspace, id string) bool {
 	return false
 }
 
-func parseTabCreate(out []byte) (tabID, rootPaneID, rootTerm string) {
-	var envelope struct {
-		Result struct {
-			Tab struct {
-				TabID string `json:"tab_id"`
-			} `json:"tab"`
-			RootPane struct {
-				PaneID     string `json:"pane_id"`
-				TerminalID string `json:"terminal_id"`
-			} `json:"root_pane"`
-		} `json:"result"`
+func spawnLabel(role, labelPrefix, short string) string {
+	prefix := role
+	if labelPrefix != "" {
+		prefix = labelPrefix
 	}
-	if json.Unmarshal(out, &envelope) != nil {
-		return "", "", ""
-	}
-	return envelope.Result.Tab.TabID, envelope.Result.RootPane.PaneID, envelope.Result.RootPane.TerminalID
+	return prefix + "-" + short
+}
+
+func compactMessage(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // parseWorktreeSource extracts the parent checkout path from `herdr worktree

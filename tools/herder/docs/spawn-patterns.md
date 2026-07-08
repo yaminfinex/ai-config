@@ -44,8 +44,8 @@ herder spawn \
 
 `--worktree` does the whole dance in one verified step: it drives `herdr worktree create`
 (resolving the source repo from your cwd — works from inside a linked worktree too), spawns the
-agent into the new workspace's checkout, and closes the workspace's seed shell pane under the
-same identity guard as `--new-tab`, so the agent ends up the sole pane of its own workspace.
+agent into the new workspace's checkout, and closes the workspace's seed shell pane under an
+identity guard, so the agent ends up the sole pane of its own workspace.
 The summary and `--json` (`worktree` block) report the created coordinates — `workspace_id`,
 checkout path, branch — keep the `workspace_id` if you plan to `herdr worktree remove` later.
 If the worktree gets created but the spawn then fails, nothing is auto-removed; the failure
@@ -76,14 +76,13 @@ herder spawn --role impl --agent claude --new-tab --no-focus \
   --prompt 'Implement <task> …'
 ```
 
-Do **not** hand-roll `herdr tab create` then `herder spawn --tab <id>`: `tab create` seeds the tab with a default (root) shell pane, and `herdr agent start --tab` *always* opens a new pane (even with no `--split`), so you end up with **agent + spare shell** in every tab. `--new-tab` does the whole dance and closes the seed shell:
+Do **not** hand-roll `herdr tab create` then `herder spawn --tab <id>`: `tab create` seeds the tab with a default (root) shell pane, and `herdr agent start --tab` *always* opens a new pane (even with no `--split`), so you end up with **agent + spare shell** in every tab. `--new-tab` avoids the seed shell entirely:
 
-1. `herdr tab create --label <agent-label> [--workspace …] [--cwd …]` → captures the root pane's `pane_id` + `terminal_id`.
-2. `herdr agent start --tab <new-tab>` → the agent lands as a second pane.
-3. Closes the root pane — but only after confirming via `herdr pane get` that it still holds the root `terminal_id` (never the agent's). Within a run, a stale pane id hits nothing; after restart, ids reshuffle, so a bare-id close must still be guarded.
-4. Re-resolves the agent's `pane_id` by its move-stable `terminal_id`.
+1. `herdr agent start` launches the agent through the normal split path in the current tab.
+2. `herdr pane move <agent-pane> --new-tab --label <agent-label>` moves that running pane into a fresh tab.
+3. `herdr pane get <agent-pane>` re-fetches the current `pane_id`, `tab_id`, `workspace_id`, and `terminal_id` before the registry row is written.
 
-The summary prints `tab: <id> (new, root shell closed; agent is sole pane)`; `--json` adds `new_tab` / `root_pane_closed`. If the close is skipped (identity check fails), the summary warns `root shell NOT closed` so you can clean it up by hand. Culling the agent later closes its last pane, which auto-closes the tab — no `tab close` call needed.
+The summary prints `tab: <id> (new; agent pane moved, no seed shell)`; `--json` adds `new_tab`, `root_pane_closed:false`, and `new_tab_result`. If the move fails, spawn continues: the agent is alive in the original split pane, the summary warns loudly, and `new_tab_result` records the failure reason. Culling the agent later closes its last pane, which auto-closes the tab — no `tab close` call needed.
 
 ## D. Cull a spawned agent
 

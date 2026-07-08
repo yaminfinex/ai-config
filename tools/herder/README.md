@@ -91,7 +91,7 @@ worker still spawns rather than the report routing to a guessed session or the s
 `--worktree BRANCH [--base REF]` is the one-step worktree mode: spawn drives
 `herdr worktree create` itself (resolving the source repo from the spawner's cwd, which works
 from inside a linked worktree), spawns into the resulting workspace's checkout, and closes the
-workspace's seed shell pane under the same identity guard as `--new-tab`. The summary and
+workspace's seed shell pane under an identity guard. The summary and
 `--json` (`worktree` block) surface the created coordinates — `workspace_id`, checkout path,
 branch — so an orchestrator can reuse or `herdr worktree remove` the workspace later without
 re-querying. If the worktree is created but the spawn then fails, nothing is auto-removed: the
