@@ -3,11 +3,11 @@ id: TASK-063
 title: >-
   status lines: codex needs context in status line; claude+codex get
   herdr/hcom/herder status segments
-status: In Progress
+status: Done
 assignee:
   - vibe
 created_date: '2026-07-08 07:19'
-updated_date: '2026-07-08 10:03'
+updated_date: '2026-07-08 10:08'
 labels: []
 dependencies: []
 ordinal: 63000
@@ -33,6 +33,12 @@ Delta re-verdict from review-063-magi on 61ab259: all six ruled fixes VERIFIED i
 hera ruling: fix both. Round-3 dispatched via vibe→taro: default invocation non-fatal (|| return 0 in apply_default), explicit --codex-config keeps error rc, suite case proving failing default path still completes ai-setup. Magi holding for delta scoped to D1 closure.
 
 Round 3: taro fix 9a78841 (single || return 0 guard in apply_default covering both rc=1 sources; explicit path rc preserved; dangling_default suite case). Vibe independent gate green; hera regate green (vet+test both modules + 25/25 bare from worktree). Delta requested from magi scoped to D1 (probes: pre-guard non-zero paths in apply_default; explicit-path rc not swallowed).
+
+MERGED to main 59ec21f (no-ff). Post-merge gate green from repo root: go vet+test tools/herder + tools/bottle, 26/26 check-*.sh bare sequential (check-ai-setup-codex-config.sh joins the standing gate).
+
+Final delta (round 3, 9a78841) from review-063-magi: CLEAN. D1 closed — single || return 0 guard in apply_default suppresses set -e for the whole apply subtree (both rc=1 sources: python3-absent, dangling symlink); no pre-guard non-zero path exists; explicit --codex-config path unguarded, rc=1 verified surfaced. dangling_default suite case pins failing-default-run reaches "ai-setup complete" rc=0. Magi minor (python3-absent flavor not pinned E2E, same code path, pinned in isolation): accepted as adequate, no action.
+
+Review trail: 6 findings fixed across rounds 2-3 (B1 arg-parse order, M1 symlink write-through, M2 record/restore, L1 safe_to_edit grace, L2 small_uint overflow, D1 default-path abort). Reviewer review-063-magi a5a0ae2a culled; worker task063-taro released/culled by vibe; worktree+branch cleaned.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
