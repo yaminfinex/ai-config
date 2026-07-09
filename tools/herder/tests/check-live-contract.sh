@@ -44,7 +44,13 @@ run_hcom_bootstrap() {
     --arg transcript "$hcom_dir/transcript.jsonl" \
     --arg cwd "$PWD" \
     '{hook_event_name:"SessionStart",session_id:$sid,transcript_path:$transcript,cwd:$cwd}')"
-  printf '%s' "$payload" | HCOM_DIR="$hcom_dir" "$hcom_bin" sessionstart
+  printf '%s' "$payload" | env -i \
+    HOME="${HOME:-}" \
+    PATH="${PATH:-}" \
+    HCOM_DIR="$hcom_dir" \
+    HCOM_LAUNCHED=1 \
+    HCOM_PROCESS_ID="live-contract-$$" \
+    "$hcom_bin" sessionstart
 }
 
 bootstrap_instance_name() {
@@ -160,6 +166,10 @@ check_hcom_list_shape() {
   out="$("$hcom_bin" list self --json 2>"$ROOT/hcom-list-self.err")"
   rc=$?
   if [[ "$rc" -ne 0 ]]; then
+    if grep -q "Cannot use 'self' without identity" "$ROOT/hcom-list-self.err"; then
+      skip "hcom list self --json shape" "no live hcom self identity in this environment"
+      return
+    fi
     fail "hcom list self --json shape" "hcom list self --json exited $rc: $(cat "$ROOT/hcom-list-self.err")"
     return
   fi
