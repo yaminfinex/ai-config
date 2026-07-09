@@ -94,9 +94,11 @@ func testDeps() deps {
 	return deps{
 		env:          func(string) string { return "" },
 		cwd:          func() (string, error) { return "", nil },
+		lookPath:     func(string) (string, error) { return "", nil },
 		exec:         func(string, []string, string, io.Reader, io.Writer, io.Writer) execResult { return execResult{} },
 		git:          func([]string, string) ([]byte, error) { return nil, nil },
 		clock:        func() time.Time { return time.Unix(0, 0) },
+		stdin:        strings.NewReader(""),
 		stdout:       io.Discard,
 		stderr:       io.Discard,
 		missionsRepo: "",

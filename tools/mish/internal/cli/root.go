@@ -20,6 +20,14 @@ type usageError struct {
 	err error
 }
 
+type passthroughExit struct {
+	code int
+}
+
+func (e passthroughExit) Error() string {
+	return fmt.Sprintf("passthrough exited %d", e.code)
+}
+
 func (e usageError) Error() string {
 	return e.err.Error()
 }
@@ -39,21 +47,28 @@ func (e refusalError) Error() string {
 
 // Run executes the mish command tree and returns the process exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
-	d := newDeps(stdout, stderr)
+	return runWithDeps(args, newDeps(stdout, stderr))
+}
+
+func runWithDeps(args []string, d deps) int {
 	root := newRoot(d)
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
+		var passthrough passthroughExit
+		if errors.As(err, &passthrough) {
+			return passthrough.code
+		}
 		var refusal refusalError
 		if errors.As(err, &refusal) {
-			fmt.Fprintln(stderr, err)
+			fmt.Fprintln(d.stderr, err)
 			return exitRefuse
 		}
 		var usage usageError
 		if errors.As(err, &usage) {
-			fmt.Fprintln(stderr, err)
+			fmt.Fprintln(d.stderr, err)
 			return exitUsage
 		}
-		fmt.Fprintf(stderr, "mish: %v \u2014 run 'mish --help' for the command list\n", err)
+		fmt.Fprintf(d.stderr, "mish: %v \u2014 run 'mish --help' for the command list\n", err)
 		return exitUsage
 	}
 	return exitOK
@@ -77,7 +92,7 @@ func newRoot(d deps) *cobra.Command {
 	})
 	root.AddCommand(
 		newNewCommand(),
-		newBacklogCommand(),
+		newBacklogCommand(d),
 		newStatusCommand(),
 	)
 	return root
@@ -85,10 +100,6 @@ func newRoot(d deps) *cobra.Command {
 
 func newNewCommand() *cobra.Command {
 	return stubCommand("new", "Scaffold a mission directory")
-}
-
-func newBacklogCommand() *cobra.Command {
-	return stubCommand("backlog", "Run an allowlisted Backlog.md command inside a mission")
 }
 
 func newStatusCommand() *cobra.Command {
