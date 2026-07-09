@@ -184,6 +184,25 @@ func TestNewMarkerMatrix(t *testing.T) {
 		}
 	})
 
+	t.Run("same nearest marker still refuses different higher marker", func(t *testing.T) {
+		repo := t.TempDir()
+		base := filepath.Join(t.TempDir(), "repo")
+		cwd := filepath.Join(base, "nested")
+		mkdir(t, cwd)
+		writeFileForTest(t, filepath.Join(base, ".mission"), "other\n")
+		writeFileForTest(t, filepath.Join(cwd, ".mission"), "perf-regression\n")
+		d := newTestDeps(repo, cwd)
+
+		code, _, stderr := runNewForTest([]string{"new", "perf-regression"}, d)
+		if code != exitRefuse {
+			t.Fatalf("exit = %d, want refusal", code)
+		}
+		assertContains(t, stderr, "names other, not perf-regression")
+		if _, err := os.Stat(filepath.Join(repo, "missions", "perf-regression")); !os.IsNotExist(err) {
+			t.Fatalf("mission dir was created despite higher marker refusal")
+		}
+	})
+
 	t.Run("no marker flag skips marker", func(t *testing.T) {
 		repo := t.TempDir()
 		cwd := filepath.Join(t.TempDir(), "work")

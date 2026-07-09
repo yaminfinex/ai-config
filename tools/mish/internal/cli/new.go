@@ -208,6 +208,7 @@ type markerPlan struct {
 }
 
 func planMarkerWrite(cwd, missionsRepo, slug string, noMarker bool) (markerPlan, error) {
+	sawSameSlugMarker := false
 	for _, dir := range ancestors(cwd) {
 		path := filepath.Join(dir, ".mission")
 		data, err := os.ReadFile(path)
@@ -230,6 +231,9 @@ func planMarkerWrite(cwd, missionsRepo, slug string, noMarker bool) (markerPlan,
 				remedy:  "remove the marker or pass --no-marker from a clean directory",
 			}
 		}
+		sawSameSlugMarker = true
+	}
+	if sawSameSlugMarker {
 		return markerPlan{write: false}, nil
 	}
 	if noMarker || pathInside(cwd, missionsRepo) {
