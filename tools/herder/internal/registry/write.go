@@ -19,9 +19,22 @@ var errNoAppend = errors.New("registry append skipped")
 
 type LockedUpdate struct {
 	Projection *v2.Projection
+	WasMinted  bool
 }
 
 type LockedUpdateFunc func(LockedUpdate) ([]v2.SessionRecord, error)
+
+type LegacyV1AppendError struct {
+	GUID string
+}
+
+func (e *LegacyV1AppendError) Error() string {
+	target := "session row"
+	if e.GUID != "" {
+		target = "session row for guid " + e.GUID
+	}
+	return "registry refused v1-shaped append to a minted v2 registry: " + target + " looks like it came from a registry-writing herder binary older than this registry schema; use the spawner HERDER_BIN or upgrade the checkout for new writes. If this fired while mutating an existing poisoned guid, back up the registry, identify and excise the on-disk v1-shaped row, then retry with the verified archive in place"
+}
 
 // UpdateLocked is the single registry write path. It holds an exclusive flock
 // while it loads the v2 projection, validates the caller's session snapshots,
@@ -47,6 +60,7 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	wasMinted := len(proj.Nodes()) > 0
 	var nodeID string
 	var mintedRow []byte
 	var migratedRows [][]byte
@@ -85,7 +99,7 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 			mintedRow = nil
 		}
 	}
-	rows, err := fn(LockedUpdate{Projection: proj})
+	rows, err := fn(LockedUpdate{Projection: proj, WasMinted: wasMinted})
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +110,9 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 	encoded = append(encoded, migratedRows...)
 	encoded = append(encoded, rotationRows...)
 	for _, row := range rows {
+		if wasMinted && isLegacyV1SessionAppend(row) {
+			return nil, &LegacyV1AppendError{GUID: row.GUID}
+		}
 		if current := V2ByGUID(proj, row.GUID); current != nil && !sessionHasRegisteredNode(proj, *current) {
 			return nil, fmt.Errorf("registry refused to mutate guid %s: latest row is attributed to unknown node %s (no node_registered row)", current.GUID, current.Node)
 		}
@@ -450,6 +467,10 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 		}
 	}
 	return row, true, nil
+}
+
+func isLegacyV1SessionAppend(row v2.SessionRecord) bool {
+	return row.LegacyV1 || row.Event == "legacy_v1_mapped"
 }
 
 func carryRegisteredFields(row, current v2.SessionRecord) v2.SessionRecord {

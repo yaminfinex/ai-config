@@ -441,7 +441,7 @@ func ensureArchive(path string, source []byte) error {
 			return err
 		}
 		if len(existing) != len(source) || !bytes.Equal(existing, source) {
-			return fmt.Errorf("registry archive byte verification failed: existing archive %s does not match live registry; restore or remove the archive before retrying", path)
+			return fmt.Errorf("registry archive byte verification failed: existing archive %s does not match live registry; do not remove the archive. Safe recovery is to back up the registry, identify and excise post-mint v1-shaped rows from the live file, then retry with the verified archive in place", path)
 		}
 		return nil
 	} else if !os.IsNotExist(err) {

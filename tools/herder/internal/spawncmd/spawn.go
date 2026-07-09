@@ -677,23 +677,15 @@ func (r *runner) run() int {
 		childCWD, _ = os.Getwd()
 	}
 
-	// Checkout-scoped env hygiene: a child spawned --cwd into a DIFFERENT
-	// ai-config checkout (typically a worktree) would otherwise inherit the
-	// spawner's AI_CONFIG_ROOT and HERDER_BIN pointing at the spawning tree —
-	// bin/herder and lib/common.sh let the env var win over their own location,
-	// so the child's builds and suites silently exercise the wrong tree. When
-	// the child's cwd resolves to another checkout, re-point both at it. The
-	// spawn-time launch itself (launchTokens) stays on the SPAWNER's bin/herder:
-	// it is the proven-buildable tree, and a mid-work child tree must not be
-	// able to brick its own boot. Outside any checkout the inherited values are
-	// left alone — there is no wrong tree to protect against, and the spawner's
-	// herder is the only one the child can call.
+	// Registry-write hygiene: herder lifecycle commands inside the child must
+	// keep using the spawner's build, even when the child cwd is an ai-config
+	// worktree at an older ref. bin/herder lets AI_CONFIG_ROOT override its own
+	// location, so pin BOTH values to the spawner checkout; otherwise a child
+	// hcom shim or an interactive `herder` command can build registry-writing
+	// code from the child's checkout and append rows the live schema cannot
+	// accept.
 	childEnvBin := herderBin
-	childEnvRoot := ""
-	if root, bin, ok := checkoutForDir(childCWD); ok && root != r.paths.RepoRoot {
-		childEnvBin = bin
-		childEnvRoot = root
-	}
+	childEnvRoot := r.paths.RepoRoot
 
 	launchTokens := []string{}
 	if isHcomAgent {
@@ -727,10 +719,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		hcomEnv = " HCOM_DIR=" + shellquote.Quote(hcomDirEff) +
 			" PATH=" + shellquote.Quote(r.paths.ShimsDir) + ":$PATH"
 	}
-	rootExport := ""
-	if childEnvRoot != "" {
-		rootExport = " AI_CONFIG_ROOT=" + shellquote.Quote(childEnvRoot)
-	}
+	rootExport := " AI_CONFIG_ROOT=" + shellquote.Quote(childEnvRoot)
 	argv := []string{}
 	if opts.LoginShell {
 		innerCmd := shellCommand(launchTokens)
@@ -738,12 +727,10 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			misePathFix, shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(childEnvBin), rootExport, hcomEnv, innerCmd)
 		argv = []string{opts.LoginShellBin, "-lic", inner}
 	} else {
-		// The env form has no shell, so it gets the checkout re-point but not
+		// The env form has no shell, so it gets the spawner herder pin but not
 		// the mise shims PATH fix (that one needs runtime expansion).
 		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SPAWNED_BY=" + spawnedBy, "HERDER_BIN=" + childEnvBin}
-		if childEnvRoot != "" {
-			argv = append(argv, "AI_CONFIG_ROOT="+childEnvRoot)
-		}
+		argv = append(argv, "AI_CONFIG_ROOT="+childEnvRoot)
 		if isHcomAgent {
 			argv = append(argv, "HCOM_DIR="+hcomDirEff, "PATH="+r.paths.ShimsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 		}
@@ -1440,9 +1427,12 @@ func printHelp(stdout io.Writer) {
 		"  by design; sibling shims recognize each other by marker and never loop. The login-shell",
 		"  form also pins mise's shims dir to the front of PATH, so mise-managed toolchains beat",
 		"  system ones even though rc-file mise activation is prompt-hook driven and inert in a",
-		"  spawned pane. When --cwd lands the child in a DIFFERENT ai-config checkout (a worktree),",
-		"  AI_CONFIG_ROOT and HERDER_BIN are re-pointed at that checkout so the child builds and",
-		"  tests its own tree; the spawn-time launch itself still rides the spawner's bin/herder.",
+		"  spawned pane. AI_CONFIG_ROOT and HERDER_BIN are pinned to the SPAWNER checkout even",
+		"  when --cwd/--worktree lands the child in another ai-config checkout: herder lifecycle",
+		"  commands write the shared registry, so they must use the same schema generation as the",
+		"  spawner build rather than an older child worktree. To deliberately run herder from the",
+		"  child checkout, override the pin explicitly: `env -u AI_CONFIG_ROOT -u HERDER_BIN",
+		"  ./bin/herder ...` or `AI_CONFIG_ROOT=$PWD ./bin/herder ...`.",
 		"",
 		"  --team caveat: team-bus launches pin claude's config dir and seed its state from",
 		"  ~/.claude.json, so an onboarded machine skips claude's one-time onboarding; only a",
@@ -1846,32 +1836,6 @@ func liveOnBus(hcomDir, name string) bool {
 		}
 	}
 	return false
-}
-
-// checkoutForDir walks dir upward to the nearest ai-config checkout, using the
-// same criteria as herderpaths (an executable bin/herder plus a
-// tools/herder/shims dir). It answers "which tree does the CHILD's cwd belong
-// to", which herderpaths.Resolve cannot: that resolves the SPAWNER's tree from
-// $AI_CONFIG_ROOT/getwd — exactly the inherited value being corrected here.
-func checkoutForDir(dir string) (root, binHerder string, ok bool) {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return "", "", false
-	}
-	for {
-		bin := filepath.Join(abs, "bin", "herder")
-		shims := filepath.Join(abs, "tools", "herder", "shims")
-		if binSt, err := os.Stat(bin); err == nil && !binSt.IsDir() && binSt.Mode()&0o111 != 0 {
-			if shimsSt, err := os.Stat(shims); err == nil && shimsSt.IsDir() {
-				return abs, bin, true
-			}
-		}
-		next := filepath.Dir(abs)
-		if next == abs {
-			return "", "", false
-		}
-		abs = next
-	}
 }
 
 func sleepMS(ms int) {
