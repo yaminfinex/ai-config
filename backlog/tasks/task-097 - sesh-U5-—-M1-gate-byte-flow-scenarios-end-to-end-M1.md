@@ -1,9 +1,11 @@
 ---
 id: TASK-097
 title: 'sesh U5 — M1 gate: byte-flow scenarios end-to-end (M1)'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - sesh-scaffold-buro
 created_date: '2026-07-09 05:28'
+updated_date: '2026-07-09 06:32'
 labels:
   - sesh
 dependencies:

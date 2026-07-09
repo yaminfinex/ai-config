@@ -1,10 +1,10 @@
 ---
 id: TASK-096
 title: 'sesh U4 — shipper: discovery, cursors, tailing (M1)'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 05:28'
-updated_date: '2026-07-09 05:56'
+updated_date: '2026-07-09 06:32'
 labels:
   - sesh
 dependencies:
@@ -28,9 +28,15 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U4
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Cold-start backfill ships a pre-seeded fixture tree fully (S1)
-- [ ] #2 Truncate below cursor -> single reset + re-ship, no loop (S3); move mid-tail -> no re-ship (S4); delete -> cursor GC only (S5)
-- [ ] #3 Same-path recreate >=1KiB -> fingerprint mismatch -> reset; <1KiB -> size-regression rule catches it first
-- [ ] #4 kill -9 mid-file + restart -> no loss, replay absorbed; store unreachable -> cursor holds, memory flat
-- [ ] #5 Higher schema_generation -> typed refusal, non-destructive message; corrupt registry -> rebuild via rescan + recovery GET
+- [x] #1 Cold-start backfill ships a pre-seeded fixture tree fully (S1)
+- [x] #2 Truncate below cursor -> single reset + re-ship, no loop (S3); move mid-tail -> no re-ship (S4); delete -> cursor GC only (S5)
+- [x] #3 Same-path recreate >=1KiB -> fingerprint mismatch -> reset; <1KiB -> size-regression rule catches it first
+- [x] #4 kill -9 mid-file + restart -> no loss, replay absorbed; store unreachable -> cursor holds, memory flat
+- [x] #5 Higher schema_generation -> typed refusal, non-destructive message; corrupt registry -> rebuild via rescan + recovery GET
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to sesh-build @ 804c225. Provenance: 77c11af+88f7379 impl (characterization-first: 11 churn tests failing before the state machine) -> cross-family codex review veli (MERGE-WITH-FIXES: uniform error-path clamp UNSOUND w/ data-loss construction, dir-fsync swallowed, fake-store permissiveness) -> 239497c merge + d7261e5 fixes -> veli re-check PASS all. The clamp finding fed wire Amendment 1 field validation; the fingerprint-routing livelock found during fixes is Amendment 2 (in flight, non-blocking). Doors accepted: debounce-coalesce discovery, anti-hot-loop guard, no-grace GC, poisoned-park reading. Orchestrator re-ran gates fresh at each step. Trail: thread sesh-u4.
+<!-- SECTION:NOTES:END -->
