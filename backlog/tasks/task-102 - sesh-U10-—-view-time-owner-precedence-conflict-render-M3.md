@@ -1,9 +1,10 @@
 ---
 id: TASK-102
 title: sesh U10 — view-time owner precedence + conflict render (M3)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 05:29'
+updated_date: '2026-07-09 07:18'
 labels:
   - sesh
 dependencies:
