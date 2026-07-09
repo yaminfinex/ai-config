@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sesh/internal/index"
 	"sesh/internal/store"
@@ -147,5 +148,37 @@ func TestSQLStoreListsMirroredButUnindexedSession(t *testing.T) {
 	}
 	if !strings.Contains(body, "cut-mid-") {
 		t.Error("raw fallback must show the mirrored partial bytes")
+	}
+}
+
+func TestSQLStoreNodesFlagsStaleLastPut(t *testing.T) {
+	st, _, live := openLiveStore(t)
+	now := time.Now().UTC()
+	for _, row := range []struct {
+		host, user string
+		at         time.Time
+	}{
+		{"fresh-host", "grace", now.Add(-47 * time.Hour)},
+		{"stale-host", "grace", now.Add(-49 * time.Hour)},
+	} {
+		if _, err := st.DB().ExecContext(t.Context(), `INSERT INTO last_seen(hostname, os_user, last_put_at) VALUES (?, ?, ?)`,
+			row.host, row.user, row.at.Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	nodes, err := live.Nodes(t.Context(), 48*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := map[string]bool{}
+	for _, node := range nodes {
+		status[node.Hostname] = node.Stale
+	}
+	if status["fresh-host"] {
+		t.Fatal("fresh-host should not be stale")
+	}
+	if !status["stale-host"] {
+		t.Fatal("stale-host should be stale")
 	}
 }

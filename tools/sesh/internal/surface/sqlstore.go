@@ -217,6 +217,34 @@ func (s *SQLStore) MirrorFile(_ context.Context, tool wire.Tool, wireSessionID, 
 	return os.Open(s.mirrorPath(tool, wireSessionID, fileUUID, generation))
 }
 
+// Nodes returns last-PUT activity by hostname and OS user for the nodes view.
+func (s *SQLStore) Nodes(ctx context.Context, staleAfter time.Duration) ([]NodeStatus, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT hostname, os_user, last_put_at FROM last_seen ORDER BY hostname, os_user`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	now := time.Now().UTC()
+	var out []NodeStatus
+	for rows.Next() {
+		var n NodeStatus
+		var raw string
+		if err := rows.Scan(&n.Hostname, &n.OSUser, &raw); err != nil {
+			return nil, err
+		}
+		t, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return nil, err
+		}
+		n.LastPutAt = t.UTC()
+		age := now.Sub(n.LastPutAt)
+		n.Age = age.Round(time.Second).String()
+		n.Stale = age > staleAfter
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // --- queries (each fully drains its result set before the next runs) ---
 
 func genKey(tool wire.Tool, wireID, fileUUID string, gen int) string {

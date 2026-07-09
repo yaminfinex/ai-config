@@ -34,6 +34,7 @@ type Cursor struct {
 	Offset      int64     `json:"offset"`
 	Fingerprint string    `json:"fingerprint,omitempty"`
 	Poisoned    bool      `json:"poisoned,omitempty"`
+	LastAckAt   time.Time `json:"last_ack_at,omitempty"`
 	// SessionOwner records an observed SESSION_OWNER correlation for this
 	// session. Once observed it is never retracted by process death (I8).
 	// Written by the U9 correlation unit; carried here so the registry
@@ -171,6 +172,30 @@ func (r *Registry) All() []Cursor {
 		out = append(out, c)
 	}
 	return out
+}
+
+// LoadSnapshot reads the cursor registry without taking the daemon lock. It
+// is for status reporting only and never writes or repairs the file.
+func LoadSnapshot(dir string) ([]Cursor, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, registryFileName))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var f registryFile
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return nil, err
+	}
+	if f.SchemaGeneration > SchemaGeneration {
+		return nil, &NewerRegistryError{Path: filepath.Join(dir, registryFileName), FileGeneration: f.SchemaGeneration, BinaryGeneration: SchemaGeneration}
+	}
+	out := make([]Cursor, 0, len(f.Cursors))
+	for _, c := range f.Cursors {
+		out = append(out, c)
+	}
+	return out, nil
 }
 
 // Put upserts a cursor and persists the registry durably.

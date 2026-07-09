@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"sesh/internal/index"
+	"sesh/internal/ship"
 	"sesh/internal/store"
 	"sesh/internal/wire"
 )
@@ -48,28 +49,6 @@ func TestShipRequiresStoreURL(t *testing.T) {
 	}
 }
 
-func TestStubsReportNotImplemented(t *testing.T) {
-	stubs := [][]string{
-		{"status"},
-		{"admin", "drop-file"},
-	}
-	for _, args := range stubs {
-		root := newRoot()
-		var out bytes.Buffer
-		root.SetOut(&out)
-		root.SetErr(&out)
-		root.SetArgs(args)
-		err := root.Execute()
-		if err == nil {
-			t.Errorf("sesh %s: expected not-implemented error, got nil", strings.Join(args, " "))
-			continue
-		}
-		if !strings.Contains(err.Error(), "not implemented") {
-			t.Errorf("sesh %s: error %q does not say not implemented", strings.Join(args, " "), err)
-		}
-	}
-}
-
 func TestServeRejectsNonLoopbackBind(t *testing.T) {
 	root := newRoot()
 	var out bytes.Buffer
@@ -85,6 +64,21 @@ func TestServeRejectsNonLoopbackBind(t *testing.T) {
 	}
 }
 
+func TestServeRejectsNonLoopbackSurfaceBind(t *testing.T) {
+	root := newRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"serve", "--addr", "127.0.0.1:0", "--surface-addr", "0.0.0.0:0", "--data-dir", t.TempDir()})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("sesh serve should reject non-loopback surface bind before M4")
+	}
+	if !strings.Contains(err.Error(), "loopback") || !strings.Contains(err.Error(), "surface") {
+		t.Fatalf("serve error %q does not mention surface loopback", err)
+	}
+}
+
 func TestReindexRunsOnEmptyStore(t *testing.T) {
 	root := newRoot()
 	var out bytes.Buffer
@@ -93,6 +87,91 @@ func TestReindexRunsOnEmptyStore(t *testing.T) {
 	root.SetArgs([]string{"reindex", "--data-dir", t.TempDir()})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("sesh reindex on empty store: %v", err)
+	}
+}
+
+func TestStatusReportsHealthyStore(t *testing.T) {
+	stateDir := t.TempDir()
+	writeCursor(t, stateDir, ship.Cursor{
+		Tool:      wire.ToolClaude,
+		SessionID: "11111111-1111-1111-1111-111111111111",
+		FileUUID:  "22222222-2222-2222-2222-222222222222",
+		Offset:    12,
+		LastAckAt: time.Now().Add(-1 * time.Minute).UTC(),
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/health" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	root := newRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"status", "--state-dir", stateDir, "--store-url", server.URL + "/"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("status healthy: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "cursors: 1") || !strings.Contains(out.String(), "store: reachable") {
+		t.Fatalf("status output missing healthy facts:\n%s", out.String())
+	}
+}
+
+func TestStatusFailsOnUnreachableStore(t *testing.T) {
+	stateDir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	}))
+	server.Close()
+
+	root := newRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"status", "--state-dir", stateDir, "--store-url", server.URL})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "store unreachable") {
+		t.Fatalf("status unreachable error = %v output:\n%s", err, out.String())
+	}
+}
+
+func TestStatusFailsOnPoisonedCursor(t *testing.T) {
+	stateDir := t.TempDir()
+	writeCursor(t, stateDir, ship.Cursor{
+		Tool:      wire.ToolClaude,
+		SessionID: "11111111-1111-1111-1111-111111111111",
+		FileUUID:  "22222222-2222-2222-2222-222222222222",
+		Offset:    12,
+		Poisoned:  true,
+	})
+
+	root := newRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"status", "--state-dir", stateDir})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "poisoned") {
+		t.Fatalf("status poisoned error = %v output:\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "POISONED") {
+		t.Fatalf("status output missing poison marker:\n%s", out.String())
+	}
+}
+
+func TestAdminDropFileRefusesWithoutYes(t *testing.T) {
+	root := newRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"admin", "drop-file", "claude", "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222", "--data-dir", t.TempDir()})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("drop-file without --yes error = %v", err)
 	}
 }
 
@@ -201,5 +280,17 @@ func TestBareAdminErrors(t *testing.T) {
 	root.SetArgs([]string{"admin"})
 	if err := root.Execute(); err == nil {
 		t.Error("sesh admin without a subcommand should error")
+	}
+}
+
+func writeCursor(t *testing.T, stateDir string, cur ship.Cursor) {
+	t.Helper()
+	reg, err := ship.OpenRegistry(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reg.Close()
+	if err := reg.Put(cur); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -35,16 +35,56 @@ tests/check-*.sh per-scenario gate harnesses (S1..S11)
 etc/             systemd / launchd unit templates
 ```
 
-## Status
+## Operator Surface
 
-M0 scaffold: all subcommands (`ship`, `serve`, `reindex`, `status`,
-`admin drop-file`) are stubs that exit 1 with not-implemented. Bodies land
-per milestone (M1 byte flow, M2 index + surface, M3 facts, M4 auth + rollout).
+Implemented M2 commands:
+
+```sh
+sesh ship --store-url http://127.0.0.1:8765
+sesh serve --addr 127.0.0.1:8765 --surface-addr 127.0.0.1:8766
+sesh reindex
+sesh status
+sesh admin drop-file <tool> <session_id> <file_uuid> --yes
+```
+
+`sesh status` reports cursor offsets, poisoned files, last ACK age, and store
+reachability. It exits nonzero when the configured store is unreachable or any
+cursor is poisoned.
+
+`sesh admin drop-file` is an irreversible operator repair. It refuses to run
+without `--yes`, removes exactly one mirrored file identity plus its index rows,
+leaves sibling files in the same logical session intact, and records the action
+in `drop_log`. Hard precondition: stop `sesh serve` before running `drop-file`;
+the admin command is a separate process and does not quiesce live ingest or
+queued append-index events.
 
 `internal/surface` (U7) reads the frozen index schema through its `Store`
 seam; `surface.SQLStore` satisfies it from the live store DB + mirror, and
 `sesh serve` runs the surface on its own loopback read listener
-(`--surface-addr`, default 127.0.0.1:8766 — the port the M2 `tailscale
-serve` exposure proxies; ingest stays on `--addr`). Gates:
-`tests/check-surface-fixtures.sh` (fixture-backed renders) and
-`tests/check-surface-live.sh` (real serve + ship, S2 renders once).
+(`--surface-addr`, default 127.0.0.1:8766 — the port the M2 Tailscale Serve
+exposure proxies; ingest stays on `--addr`). The surface includes `/` recency,
+`/s/{tool}/{id}` transcript pages, `/s/{tool}/{id}/raw` raw mirror fallback,
+and `/nodes` last-PUT status. Gates: `tests/check-surface-fixtures.sh`
+(fixture-backed renders) and `tests/check-surface-live.sh` (real serve + ship,
+S2 renders once).
+
+## M2 Exposure Runbook
+
+Before M4 auth, keep ingest private to the local machine. The ingest listener
+rejects non-loopback binds:
+
+```sh
+sesh serve --addr 127.0.0.1:8765 --surface-addr 127.0.0.1:8766
+```
+
+Expose only the read-only surface port with Tailscale Serve:
+
+```sh
+tailscale serve --bg --http=443 http://127.0.0.1:8766
+```
+
+Do not expose `127.0.0.1:8765`; it accepts transcript bytes. The read listener
+serves the browser surface only, while ingest remains loopback-only until M4
+auth and rollout gates land.
+
+M2 exposure owner sign-off: PENDING (`@bigboss`).

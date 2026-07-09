@@ -14,12 +14,14 @@ import (
 	"testing"
 	"time"
 
+	"sesh/internal/index"
 	"sesh/internal/wire"
 )
 
 const (
 	testSession = "11111111-1111-1111-1111-111111111111"
 	testFile    = "22222222-2222-2222-2222-222222222222"
+	siblingFile = "33333333-3333-3333-3333-333333333333"
 )
 
 func newTestStore(t *testing.T, logBuf *bytes.Buffer) *Store {
@@ -195,6 +197,123 @@ func TestDroppedAppendEventMarksDirtyForReindex(t *testing.T) {
 	}
 	if len(recovery.Generations) != 1 || !recovery.Generations[0].DirtyForReindex {
 		t.Fatalf("recovery after dropped event = %+v", recovery)
+	}
+}
+
+func TestDropFileRemovesOnlyTargetAndReindexLeavesNoOrphans(t *testing.T) {
+	st := newTestStore(t, new(bytes.Buffer))
+	idx, err := index.New(t.Context(), st.DB(), st.MirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targetBody := []byte(`{"type":"user","uuid":"target-msg","sessionId":"` + testSession + `"}` + "\n")
+	siblingBody := []byte(`{"type":"user","uuid":"sibling-msg","sessionId":"` + testSession + `"}` + "\n")
+	decodeAck(t, putReq(t, st, wire.ToolClaude, testSession, testFile, 0, targetBody, nil))
+	processNextAppend(t, st, idx)
+	decodeAck(t, putReq(t, st, wire.ToolClaude, testSession, siblingFile, 0, siblingBody, nil))
+	processNextAppend(t, st, idx)
+
+	if countRows(t, st, `SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND file_uuid = ?`, wire.ToolClaude, testFile) == 0 {
+		t.Fatal("target index rows were not created")
+	}
+	if countRows(t, st, `SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND file_uuid = ?`, wire.ToolClaude, siblingFile) == 0 {
+		t.Fatal("sibling index rows were not created")
+	}
+
+	if err := st.DropFile(t.Context(), wire.ToolClaude, testSession, testFile, "test drop"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(st.MirrorPath(wire.ToolClaude, testSession, testFile, 0)); !os.IsNotExist(err) {
+		t.Fatalf("target mirror still exists or stat failed unexpectedly: %v", err)
+	}
+	if _, err := os.Stat(st.MirrorPath(wire.ToolClaude, testSession, siblingFile, 0)); err != nil {
+		t.Fatalf("sibling mirror missing: %v", err)
+	}
+	if got := countRows(t, st, `SELECT COUNT(*) FROM files WHERE tool = ? AND file_uuid = ?`, wire.ToolClaude, testFile); got != 0 {
+		t.Fatalf("target files rows = %d, want 0", got)
+	}
+	if got := countRows(t, st, `SELECT COUNT(*) FROM files WHERE tool = ? AND file_uuid = ?`, wire.ToolClaude, siblingFile); got != 1 {
+		t.Fatalf("sibling files rows = %d, want 1", got)
+	}
+	if got := countRows(t, st, `SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND file_uuid = ?`, wire.ToolClaude, testFile); got != 0 {
+		t.Fatalf("target index rows after drop = %d, want 0", got)
+	}
+	if got := countRows(t, st, `SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND file_uuid = ?`, wire.ToolClaude, siblingFile); got != 1 {
+		t.Fatalf("sibling index rows after drop = %d, want 1", got)
+	}
+	if got := countRows(t, st, `SELECT COUNT(*) FROM drop_log WHERE tool = ? AND session_id = ? AND file_uuid = ?`, wire.ToolClaude, testSession, testFile); got != 1 {
+		t.Fatalf("drop audit rows = %d, want 1", got)
+	}
+
+	if err := idx.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := countRows(t, st, `SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND file_uuid = ?`, wire.ToolClaude, testFile); got != 0 {
+		t.Fatalf("target index rows after reindex = %d, want 0", got)
+	}
+	if got := countRows(t, st, `SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND file_uuid = ?`, wire.ToolClaude, siblingFile); got != 1 {
+		t.Fatalf("sibling index rows after reindex = %d, want 1", got)
+	}
+}
+
+func TestDropFileAuditSurvivesDeleteFailureAndBytesSurvive(t *testing.T) {
+	st := newTestStore(t, new(bytes.Buffer))
+	idx, err := index.New(t.Context(), st.DB(), st.MirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"type":"user","uuid":"target-msg","sessionId":"` + testSession + `"}` + "\n")
+	decodeAck(t, putReq(t, st, wire.ToolClaude, testSession, testFile, 0, body, nil))
+	processNextAppend(t, st, idx)
+
+	if _, err := st.DB().ExecContext(t.Context(), `DROP TABLE index_file_state`); err != nil {
+		t.Fatal(err)
+	}
+	err = st.DropFile(t.Context(), wire.ToolClaude, testSession, testFile, "test delete failure")
+	if err == nil || !strings.Contains(err.Error(), "index_file_state") {
+		t.Fatalf("drop-file error = %v, want delete failure naming index_file_state", err)
+	}
+	if got := countRows(t, st, `SELECT COUNT(*) FROM drop_log WHERE tool = ? AND session_id = ? AND file_uuid = ?`, wire.ToolClaude, testSession, testFile); got != 1 {
+		t.Fatalf("drop audit rows after delete failure = %d, want 1", got)
+	}
+	if got := countRows(t, st, `SELECT COUNT(*) FROM files WHERE tool = ? AND session_id = ? AND file_uuid = ?`, wire.ToolClaude, testSession, testFile); got != 1 {
+		t.Fatalf("files rows after delete failure = %d, want 1", got)
+	}
+	if _, err := os.Stat(st.MirrorPath(wire.ToolClaude, testSession, testFile, 0)); err != nil {
+		t.Fatalf("mirror bytes should survive failed delete tx: %v", err)
+	}
+}
+
+func TestNodesFlagsStaleLastPut(t *testing.T) {
+	st := newTestStore(t, new(bytes.Buffer))
+	now := time.Now().UTC()
+	for _, row := range []struct {
+		host, user string
+		at         time.Time
+	}{
+		{"fresh-host", "grace", now.Add(-47 * time.Hour)},
+		{"stale-host", "grace", now.Add(-49 * time.Hour)},
+	} {
+		if _, err := st.DB().ExecContext(t.Context(), `INSERT INTO last_seen(hostname, os_user, last_put_at) VALUES (?, ?, ?)`,
+			row.host, row.user, formatTime(row.at)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	nodes, err := st.Nodes(t.Context(), 48*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := map[string]bool{}
+	for _, node := range nodes {
+		status[node.Hostname] = node.Stale
+	}
+	if status["fresh-host"] {
+		t.Fatal("fresh-host should not be stale")
+	}
+	if !status["stale-host"] {
+		t.Fatal("stale-host should be stale")
 	}
 }
 
@@ -398,6 +517,27 @@ func assertMirror(t *testing.T, st *Store, generation int, want []byte) {
 	if !bytes.Equal(got, want) {
 		t.Fatalf("generation %d mirror = %q want %q", generation, got, want)
 	}
+}
+
+func processNextAppend(t *testing.T, st *Store, idx *index.Indexer) {
+	t.Helper()
+	select {
+	case ev := <-st.AppendEvents():
+		if err := idx.ProcessAppend(t.Context(), ev); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("missing append event")
+	}
+}
+
+func countRows(t *testing.T, st *Store, query string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := st.DB().QueryRowContext(t.Context(), query, args...).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func fingerprint(b []byte) string {

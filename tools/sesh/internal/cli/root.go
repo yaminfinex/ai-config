@@ -1,7 +1,4 @@
-// Package cli wires the sesh command tree. A subcommand is a stub until its
-// owning unit lands (plan 2026-07-09-001; ship = U4, serve = U3); stubs
-// report not-implemented and exit nonzero so nothing can script against
-// them early.
+// Package cli wires the sesh command tree.
 package cli
 
 import (
@@ -36,7 +33,7 @@ func newRoot() *cobra.Command {
 		newShip(),
 		newServe(),
 		newReindex(),
-		stub("status", "Report shipper/store health, staleness, and quarantine state"),
+		newStatus(),
 		newAdmin(),
 	)
 	return root
@@ -187,28 +184,4 @@ func defaultStoreDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".local", "state", "sesh", "store"), nil
-}
-
-func newAdmin() *cobra.Command {
-	admin := &cobra.Command{
-		Use:   "admin",
-		Short: "Administrative operations on the store",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("%s: missing subcommand", cmd.CommandPath())
-		},
-	}
-	admin.AddCommand(
-		stub("drop-file", "Drop a mirrored file from the store (redaction path)"),
-	)
-	return admin
-}
-
-func stub(use, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("%s: not implemented", cmd.CommandPath())
-		},
-	}
 }

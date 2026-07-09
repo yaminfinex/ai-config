@@ -282,6 +282,7 @@ func (s *Shipper) shipFile(ctx context.Context, d Discovered) error {
 				next = size
 			}
 			cur.Offset = next
+			cur.LastAckAt = time.Now().UTC()
 			if err := s.Registry.Put(cur); err != nil {
 				return err
 			}
