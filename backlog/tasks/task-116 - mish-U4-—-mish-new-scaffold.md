@@ -1,10 +1,10 @@
 ---
 id: TASK-116
 title: mish U4 — mish new scaffold
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 09:46'
-updated_date: '2026-07-09 10:07'
+updated_date: '2026-07-09 10:24'
 labels:
   - mish
 dependencies: []
@@ -33,3 +33,9 @@ Settled decisions: NO exec of backlog init — board written directly from a fix
 - [ ] #5 directory listing compared exactly against the §4.1 tree (AGENTS.md litter test)
 - [ ] #6 no git invocation in any code path of new
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to mish-build @ 300215e (--no-ff, root.go stub-wiring conflict resolved by orchestrator). Worker: codex mish-u4-buno (3e86095 + 9bbd0ac chain-walk fix + 0af7fc0 --no-marker bypass). Review: opus behavioral ACCEPT + 2 orchestrator-required fixes: AC-3 whole-chain marker refusal (nested same-slug shadowed a higher different-slug marker) and --no-marker must bypass the different-slug refusal (spec §6.1(5) names it as the remedy). Verified live: owner/authority source chains, pins, no-AGENTS.md, bonus real-binary AC-4.
+<!-- SECTION:NOTES:END -->

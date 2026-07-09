@@ -1,10 +1,10 @@
 ---
 id: TASK-118
 title: mish U6 — mish status single-mission report
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 09:46'
-updated_date: '2026-07-09 10:07'
+updated_date: '2026-07-09 10:24'
 labels:
   - mish
 dependencies: []
@@ -32,3 +32,9 @@ Settled decisions: compose from missionfs findings (KTD6 — direct frontmatter 
 - [ ] #4 board counts render in configured status order for a board with custom statuses
 - [ ] #5 --mission naming a missing dir refuses with §5.3 wording before any output
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to mish-build @ 938da31 (--no-ff, root.go conflict resolved; stubCommand machinery removed — all three verbs real). Worker: codex mish-u6-bola (8311f26 + hardening 078322d). Review: opus behavioral FIX-NEEDED → fixed: malformed manifest/config now degrade-with-warning exit 0 (was crash exit 2); AC-14 zero-git-invocation on non-git repos via os.Stat(.git) precheck (was 1 rev-parse probe, shim-verified); typed FindingMissingArtifacts; mission-relative warning paths; regression tests. Orchestrator smoke: new→backlog→status end-to-end green on merged binary.
+<!-- SECTION:NOTES:END -->
