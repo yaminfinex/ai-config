@@ -24,5 +24,6 @@ Git and custody:
 Closeout, rename, and marker hygiene:
   Closing later means final board states, a harvest pass, Closeout prose in mission.md,
   status: closed, custody-rhythm review, and a close custody commit. Renames are authority
-  acts outside the CLI: git mv the directory, edit mission: and backlog/config.yml
-  project_name, fix stale markers, then make one rename custody commit.
+  acts outside the CLI: choose a new slug (§4.3 rules) whose directory does not exist, git mv
+  the directory, edit mission: and backlog/config.yml project_name, fix stale markers, then
+  make one rename custody commit.

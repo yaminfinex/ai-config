@@ -74,8 +74,9 @@ Git and custody:
 Closeout, rename, and marker hygiene:
   Closing later means final board states, a harvest pass, Closeout prose in mission.md,
   status: closed, custody-rhythm review, and a close custody commit. Renames are authority
-  acts outside the CLI: git mv the directory, edit mission: and backlog/config.yml
-  project_name, fix stale markers, then make one rename custody commit.
+  acts outside the CLI: choose a new slug (§4.3 rules) whose directory does not exist, git mv
+  the directory, edit mission: and backlog/config.yml project_name, fix stale markers, then
+  make one rename custody commit.
 `
 
 const backlogHelpText = `Usage: mish backlog [--mission <slug>] <subcommand> [args...]
@@ -137,7 +138,7 @@ Warnings mean:
   pinned board key drifted from the mission invariants
   mission: frontmatter does not match the directory slug
   mission.md has unknown keys or status is not active/closed
-  duplicate task IDs appear across backlog/tasks and backlog/completed
+  duplicate task IDs appear on the board
   board or artifacts/ is missing
   mission subtree has uncommitted or unpushed git changes
 
@@ -157,9 +158,10 @@ Closeout checklist:
   mission(<slug>): close <summary>
 
 Rename and marker hygiene:
-  Rename outside the CLI with git mv, mission: and project_name edits, marker fixes, and one
-  rename custody commit. Keep one .mission marker per directory chain; delete stale markers
-  when the worktree no longer participates.
+  Rename outside the CLI by choosing a new slug (§4.3 rules) whose directory does not exist,
+  then git mv, mission: and project_name edits, marker fixes, and one rename custody commit.
+  Keep one .mission marker per directory chain; delete stale markers when the worktree no
+  longer participates.
 `
 
 func rootHelp() string {

@@ -9,7 +9,7 @@ Warnings mean:
   pinned board key drifted from the mission invariants
   mission: frontmatter does not match the directory slug
   mission.md has unknown keys or status is not active/closed
-  duplicate task IDs appear across backlog/tasks and backlog/completed
+  duplicate task IDs appear on the board
   board or artifacts/ is missing
   mission subtree has uncommitted or unpushed git changes
 
@@ -29,6 +29,7 @@ Closeout checklist:
   mission(<slug>): close <summary>
 
 Rename and marker hygiene:
-  Rename outside the CLI with git mv, mission: and project_name edits, marker fixes, and one
-  rename custody commit. Keep one .mission marker per directory chain; delete stale markers
-  when the worktree no longer participates.
+  Rename outside the CLI by choosing a new slug (§4.3 rules) whose directory does not exist,
+  then git mv, mission: and project_name edits, marker fixes, and one rename custody commit.
+  Keep one .mission marker per directory chain; delete stale markers when the worktree no
+  longer participates.
