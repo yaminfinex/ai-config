@@ -8,6 +8,8 @@
 # after checking if that shape is needed. Without type information, selector
 # aliases and interface methods named UpdateLocked are not resolved. If-init
 # checks intentionally do not model overwrite-before-check inside the branch.
+# RangeStmt overwrites are also conservative: reads inside the loop body may
+# count as checks because the range variables are assigned by the loop itself.
 # Reads that occur only inside nested closures do not count as checks; this is
 # conservative by design because deferred/goroutine captures are easy to mistake
 # for durable handling of a registry write failure.
@@ -309,14 +311,14 @@ func (s *scanner) errorBindingChecked(errIdent *ast.Ident, assigned ast.Node) bo
 		return false
 	}
 	readStart := assigned.End()
-	stopStart := assigned.End()
-	if branch := s.enclosingMutualExclusion(assigned); branch != nil {
-		stopStart = branch.End()
-	}
+	excluded := s.siblingBranchExclusions(assigned)
 	var stop ast.Node
 	ast.Inspect(root, func(n ast.Node) bool {
-		if n == nil || n.Pos() <= stopStart {
+		if n == nil || n.Pos() <= readStart {
 			return true
+		}
+		if excluded[n] {
+			return false
 		}
 		if fl, ok := n.(*ast.FuncLit); ok && fl != root {
 			return false
@@ -331,6 +333,9 @@ func (s *scanner) errorBindingChecked(errIdent *ast.Ident, assigned ast.Node) bo
 	ast.Inspect(root, func(n ast.Node) bool {
 		if found || n == nil || n.Pos() <= readStart {
 			return !found
+		}
+		if excluded[n] {
+			return false
 		}
 		if stop != nil && n.Pos() >= stop.End() {
 			return false
@@ -433,29 +438,59 @@ func (s *scanner) nearestFunc(n ast.Node) ast.Node {
 	return nil
 }
 
-func (s *scanner) enclosingMutualExclusion(n ast.Node) ast.Node {
+func (s *scanner) siblingBranchExclusions(n ast.Node) map[ast.Node]bool {
+	excluded := map[ast.Node]bool{}
 	for p := s.parents[n]; p != nil; p = s.parents[p] {
-		if ifs, ok := p.(*ast.IfStmt); ok && n.Pos() > ifs.Body.Pos() && n.End() <= ifs.Body.End() {
-			return ifs
+		switch node := p.(type) {
+		case *ast.BlockStmt:
+			if ifs, ok := s.parents[node].(*ast.IfStmt); ok {
+				if node == ifs.Body {
+					addExcluded(excluded, ifs.Else)
+				} else if ifs.Else == node {
+					addExcluded(excluded, ifs.Body)
+				}
+			}
+		case *ast.IfStmt:
+			if parentIf, ok := s.parents[node].(*ast.IfStmt); ok && parentIf.Else == node {
+				addExcluded(excluded, parentIf.Body)
+			}
+		case *ast.CaseClause:
+			s.addCaseSiblings(excluded, node)
+		case *ast.CommClause:
+			s.addCommSiblings(excluded, node)
 		}
-		if ifs, ok := p.(*ast.IfStmt); ok && ifs.Else != nil && n.Pos() >= ifs.Else.Pos() && n.End() <= ifs.Else.End() {
-			return ifs
-		}
-		if _, ok := p.(*ast.CaseClause); ok {
-			if owner := s.caseOwner(p); owner != nil {
-				return owner
+	}
+	return excluded
+}
+
+func (s *scanner) addCaseSiblings(excluded map[ast.Node]bool, cc *ast.CaseClause) {
+	switch owner := s.caseOwner(cc).(type) {
+	case *ast.SwitchStmt:
+		for _, clause := range owner.Body.List {
+			if clause != cc {
+				addExcluded(excluded, clause)
 			}
 		}
-		if _, ok := p.(*ast.CommClause); ok {
-			if owner := s.commOwner(p); owner != nil {
-				return owner
+	case *ast.TypeSwitchStmt:
+		for _, clause := range owner.Body.List {
+			if clause != cc {
+				addExcluded(excluded, clause)
 			}
 		}
 	}
-	return nil
 }
 
-func (s *scanner) caseOwner(cc ast.Node) ast.Node {
+func (s *scanner) addCommSiblings(excluded map[ast.Node]bool, cc *ast.CommClause) {
+	if owner, ok := s.commOwner(cc).(*ast.SelectStmt); ok {
+		for _, clause := range owner.Body.List {
+			if clause != cc {
+				addExcluded(excluded, clause)
+			}
+		}
+	}
+}
+
+func (s *scanner) caseOwner(cc *ast.CaseClause) ast.Node {
 	for p := s.parents[cc]; p != nil; p = s.parents[p] {
 		switch p.(type) {
 		case *ast.SwitchStmt, *ast.TypeSwitchStmt:
@@ -465,13 +500,19 @@ func (s *scanner) caseOwner(cc ast.Node) ast.Node {
 	return nil
 }
 
-func (s *scanner) commOwner(cc ast.Node) ast.Node {
+func (s *scanner) commOwner(cc *ast.CommClause) ast.Node {
 	for p := s.parents[cc]; p != nil; p = s.parents[p] {
 		if _, ok := p.(*ast.SelectStmt); ok {
 			return p
 		}
 	}
 	return nil
+}
+
+func addExcluded(excluded map[ast.Node]bool, node ast.Node) {
+	if node != nil {
+		excluded[node] = true
+	}
 }
 
 func (s *scanner) report(pos token.Pos, reason string) {
@@ -542,7 +583,7 @@ else
 fi
 
 neg_root="$ROOT/negative"
-mkdir -p "$neg_root"/{blank,bare,ignored,defer,go,decl_func,decl_package,labeled,switch_init,funclit,method_value,paren,shadow,field_use,selector_assign,guarded_unchecked,overwrite_unread,switch_unchecked}
+mkdir -p "$neg_root"/{blank,bare,ignored,defer,go,decl_func,decl_package,labeled,switch_init,funclit,method_value,paren,shadow,field_use,selector_assign,guarded_unchecked,overwrite_unread,switch_unchecked,guarded_overwrite,switch_case_overwrite,sibling_branch_read}
 
 cat >"$neg_root/blank/negative.go" <<'GO'
 package negative
@@ -762,6 +803,70 @@ func switchUnchecked(mode string) error {
 }
 GO
 
+cat >"$neg_root/guarded_overwrite/negative.go" <<'GO'
+package negative
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func other() error { return nil }
+
+func guardedOverwrite(cond bool) error {
+	if cond {
+		_, err := registry.UpdateLocked("registry.jsonl", nil)
+		err = other()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+GO
+
+cat >"$neg_root/switch_case_overwrite/negative.go" <<'GO'
+package negative
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func other() error { return nil }
+
+func switchCaseOverwrite(mode string) error {
+	var err error
+	switch mode {
+	case "a":
+		_, err = registry.UpdateLocked("a.jsonl", nil)
+		err = other()
+		if err != nil {
+			return err
+		}
+	case "b":
+		_, err = registry.UpdateLocked("b.jsonl", nil)
+	}
+	return err
+}
+GO
+
+cat >"$neg_root/sibling_branch_read/negative.go" <<'GO'
+package negative
+
+import (
+	"errors"
+	registry "ai-config/tools/herder/internal/registry"
+)
+
+func siblingBranchRead(cond bool) error {
+	var err error
+	if cond {
+		_, err = registry.UpdateLocked("a.jsonl", nil)
+	} else {
+		err = errors.New("other path")
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+GO
+
 expect_violation() {
   local name="$1" want="$2" rc
   set +e
@@ -795,6 +900,9 @@ expect_violation selector_assign 'registry.UpdateLocked error result is not assi
 expect_violation guarded_unchecked 'registry.UpdateLocked error result is assigned but never checked'
 expect_violation overwrite_unread 'registry.UpdateLocked error result is assigned but never checked'
 expect_violation switch_unchecked 'registry.UpdateLocked error result is assigned but never checked'
+expect_violation guarded_overwrite 'registry.UpdateLocked error result is assigned but never checked'
+expect_violation switch_case_overwrite 'registry.UpdateLocked error result is assigned but never checked'
+expect_violation sibling_branch_read 'registry.UpdateLocked error result is assigned but never checked'
 
 pos_root="$ROOT/positive"
 mkdir -p "$pos_root"/{branch_checked,return_forward,argument_forward,guarded_branch,error_wrap,switch_cases,select_cases}
