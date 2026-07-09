@@ -3,10 +3,10 @@ id: TASK-084
 title: >-
   registry hardening: v2 writer refuses v1-shape appends at write time (D12);
   archive-collision refusal must stop suggesting archive removal
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-08 23:53'
-updated_date: '2026-07-09 09:44'
+updated_date: '2026-07-09 13:04'
 labels: []
 dependencies: []
 priority: high
@@ -31,3 +31,9 @@ COMPANION to the write-freeze incident (see the shim-resolution task filed the s
 - [ ] #4 Spec erratum routed via the steward lane if write-time validation needs D12 wording; otherwise an explicit no-spec-change note
 - [ ] #5 gate green: go vet+test both modules, all check suites
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged b6dc9f9 with TASK-083. Poison-at-door typed refusal + corrected remedies incl. excision path; archive wording fixed. Follow-ups TASK-125/126 filed from review findings.
+<!-- SECTION:NOTES:END -->

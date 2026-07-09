@@ -3,10 +3,10 @@ id: TASK-083
 title: >-
   spawned-agent shim resolves herder from the agent worktree — old-build binary
   writes v1 rows into the live v2 registry (write-freeze incident)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-08 23:53'
-updated_date: '2026-07-09 09:44'
+updated_date: '2026-07-09 13:04'
 labels: []
 dependencies: []
 priority: high
@@ -28,3 +28,9 @@ FIX: the write path an agent uses against the shared registry must match the reg
 - [ ] #3 Chosen direction (pin vs handshake vs both) recorded with rationale
 - [ ] #4 gate green: go vet+test both modules, all check suites
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged b6dc9f9 with TASK-084 (ed525c7+99e2efd+04e14b4). Spawn AND resume/fork env pinning; validated live same-day by the synfinex poison incident. Reviewer tofu APPROVE after resume-path gap fixed.
+<!-- SECTION:NOTES:END -->
