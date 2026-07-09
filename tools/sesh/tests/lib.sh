@@ -237,6 +237,10 @@ assert_db() { # <description> <sql> <expected_output>
   [ "$got" = "$3" ] || fail "$1: query [$2] = [$got], want [$3]"
 }
 
+# dbq_is <sql> <expected> — predicate form of assert_db for wait_for loops
+# (the live index consumes append events asynchronously after mirror ACKs).
+dbq_is() { [ "$(dbq "$1" 2>/dev/null)" = "$2" ]; }
+
 # reg_offset <tool/sid/uuid> — the registry cursor offset, or "absent".
 reg_offset() {
   jq -r --arg k "$1" 'if .cursors[$k] then .cursors[$k].offset else "absent" end' \
