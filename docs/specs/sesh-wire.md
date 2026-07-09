@@ -265,8 +265,14 @@ session. When parsed content ids do not unify files, the indexer unifies logical
 by overlapping `(entry_type, message_uuid)` across file UUIDs of the same tool; this is
 the primary Claude resume path observed in Claude Code v2.1.195, where a captured resume
 pair rewrote copied history under the resumed file's own content id and unified only by
-141 overlapping message UUIDs. This rule does not move parsing to the shipper and does
-not change file identity.
+141 overlapping message UUIDs. Overlap unification requires at least two overlapping
+`(entry_type, message_uuid)` pairs with non-empty `message_uuid`; a single shared UUID is
+too weak given the snapshot-id collision class, and empty `message_uuid` rows never
+participate. When files unify by overlap, the unified session's `logical_session_id` is
+the parsed content id of the earliest file in the unified set by first-ingest order of
+generation 0, keeping the value deterministic under reindex and stable when later files
+join the set. This rule does not move parsing to the shipper and does not change file
+identity.
 
 Table: `sesh_index_messages`
 
