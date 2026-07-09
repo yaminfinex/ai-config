@@ -1,11 +1,11 @@
 ---
 id: TASK-100
 title: 'sesh U8 — ops: sesh status + admin drop-file + M2 exposure (M2)'
-status: In Progress
+status: Done
 assignee:
   - sesh-store-soho
 created_date: '2026-07-09 05:28'
-updated_date: '2026-07-09 06:48'
+updated_date: '2026-07-09 07:17'
 labels:
   - sesh
 dependencies:
@@ -31,3 +31,9 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U8
 - [ ] #4 Ingest handler rejects non-loopback source pre-M4; only read port exposed via serve config
 - [ ] #5 Runbook section reviewed at M2 sign-off
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Done at dd70936 (rework on merged b1ed0d0), merged to sesh-build @ 6e28d9d. Cycle: opus adversarial review found BLOCKER (DropFile audit ordering), MED (cross-process serialization vs live serve), LOW (delete scoping) + orchestrator overlap ruling (duplicate Store seam + --read-addr removed in favor of U7 SQLStore + --surface-addr). All fixed; opus re-check ACCEPT on all five items (reports: napkins/sesh-build/review-u8-report.md + review-u8-recheck-report.md). MED resolved as documented hard precondition: stop serve before drop-file. AC5 (M2 exposure sign-off) rides the M2 gate request to owner. Orchestrator gate runs on merged tip: full suite + all ten harnesses green, M2-named harnesses twice.
+<!-- SECTION:NOTES:END -->

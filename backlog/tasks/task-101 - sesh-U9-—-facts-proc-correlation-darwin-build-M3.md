@@ -1,10 +1,10 @@
 ---
 id: TASK-101
 title: sesh U9 — facts + /proc correlation + darwin build (M3)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 05:29'
-updated_date: '2026-07-09 06:54'
+updated_date: '2026-07-09 07:17'
 labels:
   - sesh
 dependencies:
@@ -30,3 +30,9 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U9
 - [ ] #4 Other-uid environ unreadable -> skipped silently (S7)
 - [ ] #5 Darwin cross-compile runs facts-only, no /proc references (S11)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Done at 665266b (a9f914d + slug-collision fix), merged to sesh-build @ 8a15b45. Cycle: rizo (codex) adversarial review — one HIGH (lossy slug cohort could false-positive stamp wrong owner on distinct-cwd collision); fixed with distinct-actual-cwd tracking => absence on ambiguity, red-first regression + live s6 lossy-cohort harness case; rizo re-check ACCEPT (regression bite proven against old logic). Named residual by design: dead session + single live distinct cwd indistinguishable without content (dumb shipper). Mission-spec ratification (#27740) confirms mechanics as-built. check-s6-owner.sh now in the suite. Sliding doors on thread sesh-u9 (comm matcher, leaf unanimity, strict cohort unanimity, munge charset, node-local latest-observation).
+<!-- SECTION:NOTES:END -->
