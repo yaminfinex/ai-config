@@ -1,12 +1,12 @@
 ---
-title: "Brief — session service build (shipper + store + surface + deploy)"
+title: "Brief — sesh build (shipper + store + surface + deploy)"
 date: 2026-07-09
-status: DISPATCH BRIEF — ready to cut into tasks the moment the owner settles the three
-  micro-decisions (spec §10). The spec it implements is DRAFT; its *shape* is ratified
-  (Q18–Q20), so build work may start on everything the micro-decisions don't touch.
+status: DISPATCH BRIEF — micro-decisions settled by owner 2026-07-09 (name `sesh`, home
+  `tools/sesh`, HTTP PUT byte ranges, store URL by env/flag); task-cutting unblocked. The
+  spec it implements is DRAFT; its *shape* is ratified (Q18–Q20).
 ---
 
-# Brief: build the session service, spec-first
+# Brief: build `sesh` (the session service), spec-first
 
 You are implementing `docs/specs/session-service-spec.md` — read it in full first; it is
 the contract. This brief adds working mode, reading order, verify-early items, and the
@@ -54,7 +54,7 @@ task cut. Where this brief and the spec disagree, the spec wins.
 3. **tsnet WhoIs + grant** smoke test with a second tailnet identity — confirm the deny
    path *before* transcripts flow, not after.
 
-## Task cut (four lanes, cut after spec §10 lands)
+## Task cut (four lanes; code home `tools/sesh`)
 
 1. **Shipper** — discovery/tail/cursor engine + facts + /proc correlation; per-user unit
    files. Cross-platform (Linux + macOS; correlation compiled out on darwin).

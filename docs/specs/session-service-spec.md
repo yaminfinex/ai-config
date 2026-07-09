@@ -1,9 +1,9 @@
-# Session Service Spec
+# Session Service Spec — `sesh`
 
 STATUS: **DRAFT — awaiting ratification.** Distilled from the ratified Q18–Q20 rulings
 (boundaries v2 §1A/§3), the session-shipping prior-art memo, and the live /proc-correlation
-validation run on this node (2026-07-08). Three micro-decisions are open (§10) and block
-task-cutting, not drafting.
+validation run on this node (2026-07-08). The three launch micro-decisions were settled by
+the owner 2026-07-09 (§10); task-cutting is unblocked.
 
 Related ground truth:
 - `docs/design/2026-07-09-sessions-missions-boundaries-v2.md` — §1A (shape), §3 (identity)
@@ -29,6 +29,10 @@ policy, live relay, per-session ACLs, OTel.
 
 ## 2. Ubiquitous language
 
+- **sesh** — the service's name, covering all three parts: the shipper binary, the store,
+  and the surface. Code home: `tools/sesh` in this repo for now; expected to move to its
+  own repo later — the wire API (§8) is deliberately the *only* contract between shipper
+  and store, so the move is a relocation, not a redesign.
 - **Session file** — a harness-owned JSONL transcript on disk. Claude Code:
   `~/.claude/projects/<project-slug>/<session-uuid>.jsonl`. Codex CLI:
   `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl`. The formats are
@@ -244,15 +248,25 @@ One page, people-first recency:
 ## 7. Deployment shape
 
 - **Shipper**: single static binary; per-user systemd unit (Linux) / launchd agent
-  (macOS); config = store address + nothing else worth deciding on a node.
+  (macOS); config = the store URL (env var or flag) + nothing else worth deciding on a
+  node. The store's location is therefore a deployment-time value, not a spec concern:
+  localhost in the short term, likely co-located with the herd server in the medium term —
+  either way no shipper changes beyond the URL.
 - **Store + surface**: one deployable service (mirror storage + index DB + HTTP), joined
-  to the tailnet under its own node identity; runs on the host chosen in §10.1.
+  to the tailnet under its own node identity, so it can migrate hosts without shippers
+  noticing.
 - Rollout order: store first, then shippers node-by-node (I3 makes onboarding
   order-free — each node backfills whenever its shipper lands).
 
-## 8. Wire protocol (default, pending §10.3)
+## 8. Wire protocol (owner-confirmed 2026-07-09)
 
-HTTP over the tailnet. One write verb dominates:
+This HTTP API is the **only** protocol between services. Shipper→store is the one
+cross-service boundary; the surface reads the store in-process (or via store-internal
+endpoints) and has no protocol of its own; nothing else talks to anything. Versioned under
+`/v1` so the later repo split and store relocation are non-events.
+
+HTTP over the tailnet (plain localhost allowed for the dev/short-term same-host case).
+One write verb dominates:
 
 - `PUT /v1/files/{tool}/{session_id}/{file_uuid}/bytes?offset=N` — raw byte range in the
   body; headers carry fingerprint, hostname, OS user, optional SESSION_OWNER; response is
@@ -279,13 +293,13 @@ HTTP over the tailnet. One write verb dominates:
 - **No authentication derived from attribution** (I10).
 - **No Windows** in v1.
 
-## 10. Open micro-decisions (block task-cutting, not ratification of shape)
+## 10. Launch micro-decisions (settled by owner, 2026-07-09)
 
-1. **Store host** — which machine runs the store+surface service.
-2. **Tool name & repo home** — what the binary/service is called and where the code lives
-   (this repo vs sibling).
-3. **Wire detail** — confirm HTTP PUT byte-range (§8) or substitute (e.g. gRPC stream,
-   rsync-style batch). Default stands unless overridden.
+1. **Store host** — ruled a non-decision: the shipper takes the store URL by env/flag;
+   localhost short-term, probably herd-server co-located later. Spec §7 encodes this.
+2. **Tool name & repo home** — **`sesh`**, living at `tools/sesh` for now with a planned
+   later move; the §8 API is the only cross-service contract, keeping the move cheap.
+3. **Wire detail** — HTTP PUT byte ranges confirmed as drafted (§8).
 
 ## 11. Decisions embedded in this spec (ratification checklist)
 
