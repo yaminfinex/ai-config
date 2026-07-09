@@ -60,6 +60,46 @@ Record in the playbook's run-shape header (`references/state-files.md`):
    them buildable. They compose with, not replace, the adversarial structures in
    `references/adversarial.md`.
 
+## Unit types
+
+Type every unit at capture, in the capture itself: the type sets the deliverable, the worker
+class (run-shape item 4), and the review shape. An untyped unit defaults to implement — the
+strictest type.
+
+- **Research / investigate.** For answering a question. Deliverable: a findings memo (durable
+  doc or the task itself) with an explicit verdict per question asked, plus filed-ready task
+  text for any build work it recommends. No machine changes ride on the unit. Review is
+  stakes-gated: usually an intent check that the question asked is the question answered.
+- **Design.** For work not yet ready to build. The deliverable is never code; it is (a) a
+  durable design document, (b) spec errata routed through the spec-steward lane wherever a
+  ratified spec is touched — the designer proposes, never edits — and (c) the follow-on
+  implementation task(s) written filed-ready: acceptance criteria and the settled-decisions
+  list (below) authored by the designer while intent is fresh. The designer gets a top-tier
+  reasoning model and delegation freedom — subagents for wide reading, its own jury for
+  genuinely contested sub-decisions — in a worktree that only grows docs. It never dispatches
+  implementation: unit-cutting stays with the orchestrator, who files the tasks (single-writer).
+  Review: adversarial design review before the design is declared buildable, stakes-gated; add
+  a separate original-intent review when drift from the ask would be costly — design review and
+  intent review catch disjoint defect classes.
+- **Implement.** Deliverable: code on a branch, gate-green, DONE report with a
+  **mandatory-deviations section** ("none" is an explicit entry, not an omission). Two rules
+  bind every implement dispatch, however the unit was born:
+  - **Stop-and-report, quoted in the brief.** If a settled decision seems wrong, inconvenient,
+    or harder than an alternative, the worker stops and reports the tension — it never
+    substitutes its own design and discloses later. The rule living in a normative doc is not
+    enough; quote it in the dispatch brief itself.
+  - **Settled-decisions list.** The capture enumerates the decisions an implementer might be
+    tempted to reverse; reviewers check the diff against that list. After a design pass the
+    designer authors it; for directly-captured units the orchestrator does, at capture time.
+  Review: adversarial review is mandatory for engine changes; sameness-vs-stakes reasoning for
+  reviewer choice lives in run-shape item 4.
+- **Decision.** A unit that exists to hold a choice that is the user's to make. Deliverable:
+  the decision recorded with reasons, plus whatever evidence the orchestrator accumulates to
+  inform it. Never dispatched — the orchestrator presents, the user decides.
+
+A unit can chain types (research → design → implement); each leg is its own unit with its own
+capture, worker, and review — never one agent flowing across legs.
+
 ## Topologies
 
 Pick by **who verifies a unit of work**, then parallelism — not task size.
@@ -110,8 +150,11 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
    eventual reviewers. Every reference must be reachable by the eventual worker — quote it
    inline or keep it in docs the capture ships with (main is ideal, not required; the backlog
    itself may live in ephemeral napkins). Acceptance criteria are written at capture time,
-   while intent is fresh — never invented at dispatch. Plain language throughout: no
-   run-internal dialect, no opaque references — dispatchable by a reader with zero run context.
+   while intent is fresh — never invented at dispatch. The capture names the unit's type
+   (see Unit types) and, for implement units, its settled-decisions list. Plain language
+   throughout: no run-internal dialect, no opaque references — dispatchable by a reader with
+   zero run context. The description alone must be dispatch-safe: current scope lives there,
+   not in a comment trail a top-down reader would misread.
 3. **Context discipline.** One unit per agent; wide reading goes to subagents. Compact in the
    200–250k-token band, every time — past it agents get measurably less coherent and much more
    expensive. The band binds every session in the run: watch your own context and your workers',
