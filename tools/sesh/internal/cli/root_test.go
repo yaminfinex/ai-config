@@ -22,9 +22,24 @@ func TestHelpListsAllSubcommands(t *testing.T) {
 	}
 }
 
+// TestShipRequiresStoreURL: `ship` is real since U4; its whole config
+// surface is the store URL, and running without one must fail up front
+// rather than start a daemon that can only hold position.
+func TestShipRequiresStoreURL(t *testing.T) {
+	t.Setenv("SESH_STORE_URL", "")
+	root := newRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"ship"})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "SESH_STORE_URL") {
+		t.Errorf("sesh ship without a store URL: want config error naming SESH_STORE_URL, got %v", err)
+	}
+}
+
 func TestStubsReportNotImplemented(t *testing.T) {
 	stubs := [][]string{
-		{"ship"},
 		{"serve"},
 		{"reindex"},
 		{"status"},
