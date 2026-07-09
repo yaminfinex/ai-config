@@ -44,8 +44,12 @@ func newServe() *cobra.Command {
 		Use:   "serve",
 		Short: "Run the central store: byte-range ingest, index, and team surface",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var err error
 			if dataDir == "" {
-				dataDir = filepath.Join(os.TempDir(), "sesh-store")
+				dataDir, err = defaultStoreDir()
+				if err != nil {
+					return err
+				}
 			}
 			l, err := net.Listen("tcp", addr)
 			if err != nil {
@@ -75,6 +79,20 @@ func newServe() *cobra.Command {
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8765", "loopback address for the store HTTP listener")
 	cmd.Flags().StringVar(&dataDir, "data-dir", "", "store data directory")
 	return cmd
+}
+
+func defaultStoreDir() (string, error) {
+	if dir := os.Getenv("SESH_STORE_DIR"); dir != "" {
+		return dir, nil
+	}
+	if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
+		return filepath.Join(dir, "sesh", "store"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "state", "sesh", "store"), nil
 }
 
 func newAdmin() *cobra.Command {

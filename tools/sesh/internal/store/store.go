@@ -49,6 +49,11 @@ type Store struct {
 	failAppendOnce bool
 }
 
+var (
+	errMirrorStorage = errors.New("mirror storage")
+	errStoreState    = errors.New("store state")
+)
+
 type fileState struct {
 	Tool            wire.Tool
 	SessionID       string
@@ -190,7 +195,14 @@ func (s *Store) handlePUTBytes(w http.ResponseWriter, r *http.Request, rawTool, 
 		s.writeError(w, wire.ErrUnknownTool, wire.Tool(rawTool), sessionID, fileUUID, 0, 0, "", "unknown tool")
 		return
 	}
-	if !validUUID(sessionID) || !validUUID(fileUUID) {
+	var valid bool
+	sessionID, valid = canonicalUUID(sessionID)
+	if !valid {
+		s.writeError(w, wire.ErrMalformedRequest, tool, sessionID, fileUUID, 0, 0, "", "invalid session_id or file_uuid")
+		return
+	}
+	fileUUID, valid = canonicalUUID(fileUUID)
+	if !valid {
 		s.writeError(w, wire.ErrMalformedRequest, tool, sessionID, fileUUID, 0, 0, "", "invalid session_id or file_uuid")
 		return
 	}
@@ -237,6 +249,9 @@ func (s *Store) handlePUTBytes(w http.ResponseWriter, r *http.Request, rawTool, 
 		case s.events <- *ev:
 		default:
 			s.logger.Warn("append event dropped", "tool", tool, "session_id", sessionID, "file_uuid", fileUUID, "generation", ev.Generation)
+			if err := s.markDirtyForReindex(r.Context(), *ev); err != nil {
+				s.logger.Error("failed to mark generation dirty for reindex", "error", err, "tool", tool, "session_id", sessionID, "file_uuid", fileUUID, "generation", ev.Generation)
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -248,7 +263,14 @@ func (s *Store) handleRecovery(w http.ResponseWriter, r *http.Request, rawTool, 
 		s.writeError(w, wire.ErrUnknownTool, wire.Tool(rawTool), sessionID, fileUUID, 0, 0, "", "unknown tool")
 		return
 	}
-	if !validUUID(sessionID) || !validUUID(fileUUID) {
+	var valid bool
+	sessionID, valid = canonicalUUID(sessionID)
+	if !valid {
+		s.writeError(w, wire.ErrMalformedRequest, tool, sessionID, fileUUID, 0, 0, "", "invalid session_id or file_uuid")
+		return
+	}
+	fileUUID, valid = canonicalUUID(fileUUID)
+	if !valid {
 		s.writeError(w, wire.ErrMalformedRequest, tool, sessionID, fileUUID, 0, 0, "", "invalid session_id or file_uuid")
 		return
 	}
@@ -302,7 +324,7 @@ func (s *Store) putBytes(ctx context.Context, tool wire.Tool, sessionID, fileUUI
 		ev, code, msg, action, err := s.handleOverlap(ctx, &target, offset, body, hostname, osUser, owner)
 		ack := s.ack(target)
 		if err != nil {
-			return &ack, nil, wire.ErrMirrorWriteFailed, err.Error(), ""
+			return &ack, nil, classifyStoreError(err), err.Error(), ""
 		}
 		if code != "" {
 			return &ack, nil, code, msg, action
@@ -313,7 +335,7 @@ func (s *Store) putBytes(ctx context.Context, tool wire.Tool, sessionID, fileUUI
 	ev, err := s.appendAtHighWater(ctx, &target, body, hostname, osUser, owner)
 	ack := s.ack(target)
 	if err != nil {
-		return &ack, nil, wire.ErrMirrorWriteFailed, err.Error(), ""
+		return &ack, nil, classifyStoreError(err), err.Error(), ""
 	}
 	return &ack, ev, "", "", ""
 }
@@ -329,7 +351,8 @@ func (s *Store) selectGeneration(ctx context.Context, tool wire.Tool, sessionID,
 		return st, "", "", "", err
 	}
 	if fp != nil {
-		for _, gen := range gens {
+		for i := len(gens) - 1; i >= 0; i-- {
+			gen := gens[i]
 			if gen.Fingerprint != nil && *gen.Fingerprint == *fp {
 				return gen, "", "", "", nil
 			}
@@ -362,7 +385,7 @@ func (s *Store) handleOverlap(ctx context.Context, target *fileState, offset int
 	}
 	if int64(len(body)) == overlap {
 		if err := s.recordSuccess(ctx, target, hostname, osUser, owner); err != nil {
-			return nil, "", "", "", err
+			return nil, "", "", "", fmt.Errorf("%w: %v", errStoreState, err)
 		}
 		return nil, "", "", "", nil
 	}
@@ -397,6 +420,9 @@ func (s *Store) handleDivergence(ctx context.Context, target *fileState) (wire.E
 	if active.Generation >= next {
 		next = active.Generation + 1
 	}
+	if err := s.setConflictPending(ctx, target, false); err != nil {
+		return "", "", err
+	}
 	st, err := s.createGeneration(ctx, target.Tool, target.SessionID, target.FileUUID, next, target.Fingerprint, true, time.Now().UTC())
 	if err != nil {
 		return "", "", err
@@ -408,24 +434,24 @@ func (s *Store) handleDivergence(ctx context.Context, target *fileState) (wire.E
 func (s *Store) appendAtHighWater(ctx context.Context, target *fileState, body []byte, hostname, osUser, owner string) (*wire.AppendEvent, error) {
 	if len(body) == 0 {
 		if err := s.recordSuccess(ctx, target, hostname, osUser, owner); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %v", errStoreState, err)
 		}
 		return nil, nil
 	}
 	if s.failAppendOnce {
 		s.failAppendOnce = false
-		return nil, errors.New("injected mirror write failure")
+		return nil, fmt.Errorf("%w: injected mirror write failure", errMirrorStorage)
 	}
 	start := target.HighWater
 	if err := s.writeMirror(*target, start, body); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", errMirrorStorage, err)
 	}
 	target.HighWater += int64(len(body))
 	if err := s.updateFingerprintFromMirror(ctx, target); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", errStoreState, err)
 	}
 	if err := s.recordSuccess(ctx, target, hostname, osUser, owner); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", errStoreState, err)
 	}
 	return &wire.AppendEvent{
 		Tool:          target.Tool,
@@ -682,6 +708,15 @@ func (s *Store) recordSuccess(ctx context.Context, st *fileState, hostname, osUs
 	return nil
 }
 
+func (s *Store) markDirtyForReindex(ctx context.Context, ev wire.AppendEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.ExecContext(ctx, `UPDATE files SET dirty_for_reindex = 1, updated_at = ?
+		WHERE tool = ? AND session_id = ? AND file_uuid = ? AND generation = ?`,
+		formatTime(time.Now().UTC()), ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
+	return err
+}
+
 func (s *Store) conflictDrivenExists(ctx context.Context, tool wire.Tool, sessionID, fileUUID string, fp *string) (bool, error) {
 	query := `SELECT COUNT(*) FROM files WHERE tool = ? AND session_id = ? AND file_uuid = ? AND conflict_driven = 1 AND `
 	args := []any{tool, sessionID, fileUUID}
@@ -738,6 +773,13 @@ func (s *Store) writeError(w http.ResponseWriter, code wire.ErrorCode, tool wire
 	})
 }
 
+func classifyStoreError(err error) wire.ErrorCode {
+	if errors.Is(err, errMirrorStorage) {
+		return wire.ErrMirrorWriteFailed
+	}
+	return wire.ErrStoreUnavailable
+}
+
 func parseTool(raw string) (wire.Tool, bool) {
 	switch wire.Tool(raw) {
 	case wire.ToolClaude, wire.ToolCodex:
@@ -747,9 +789,12 @@ func parseTool(raw string) (wire.Tool, bool) {
 	}
 }
 
-func validUUID(s string) bool {
-	_, err := uuid.Parse(s)
-	return err == nil
+func canonicalUUID(s string) (string, bool) {
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return s, false
+	}
+	return id.String(), true
 }
 
 func parseOffset(raw string) (int64, error) {

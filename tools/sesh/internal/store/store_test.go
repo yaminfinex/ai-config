@@ -144,6 +144,24 @@ func TestDivergentReplayConflictsThenOpensGeneration(t *testing.T) {
 	assertMirror(t, st, 1, gen1)
 }
 
+func TestRepeatedDivergenceWithSharedFingerprintRoutesToHighestGeneration(t *testing.T) {
+	st := newTestStore(t, new(bytes.Buffer))
+	prefix := bytes.Repeat([]byte("a"), wire.FingerprintWindowBytes)
+	gen0 := append(append([]byte{}, prefix...), []byte(" generation zero")...)
+	gen1 := append(append([]byte{}, prefix...), []byte(" generation one")...)
+	fp := fingerprint(gen0)
+
+	decodeAck(t, putReq(t, st, wire.ToolClaude, testSession, testFile, 0, gen0, &fp))
+	decodeError(t, putReq(t, st, wire.ToolClaude, testSession, testFile, 0, gen1, &fp), wire.ErrByteConflict)
+	decodeError(t, putReq(t, st, wire.ToolClaude, testSession, testFile, 0, gen1, &fp), wire.ErrGenerationOpened)
+	ack := decodeAck(t, putReq(t, st, wire.ToolClaude, testSession, testFile, 0, gen1, &fp))
+	if ack.Generation != 1 || ack.HighWater != int64(len(gen1)) {
+		t.Fatalf("shared-fingerprint gen1 ack = %+v", ack)
+	}
+	assertMirror(t, st, 0, gen0)
+	assertMirror(t, st, 1, gen1)
+}
+
 func TestSubWindowPoisonKeySecondLegitimateRecreatePoisonsNullFingerprint(t *testing.T) {
 	st := newTestStore(t, new(bytes.Buffer))
 	first := []byte("short-a")
@@ -158,6 +176,25 @@ func TestSubWindowPoisonKeySecondLegitimateRecreatePoisonsNullFingerprint(t *tes
 	poisoned := decodeError(t, putReq(t, st, wire.ToolClaude, testSession, testFile, 0, third, nil), wire.ErrPoisonedFile)
 	if poisoned.Generation != 1 {
 		t.Fatalf("poisoned response = %+v", poisoned)
+	}
+}
+
+func TestDroppedAppendEventMarksDirtyForReindex(t *testing.T) {
+	st, err := Open(t.Context(), Config{Dir: t.TempDir(), Logger: slog.New(slog.NewTextHandler(new(bytes.Buffer), nil)), AppendBuffer: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	decodeAck(t, putReq(t, st, wire.ToolClaude, testSession, testFile, 0, []byte("one"), nil))
+	decodeAck(t, putReq(t, st, wire.ToolClaude, testSession, testFile, 3, []byte("two"), nil))
+
+	resp := recoveryReq(t, st, wire.ToolClaude, testSession, testFile, nil)
+	var recovery wire.RecoveryResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &recovery); err != nil {
+		t.Fatal(err)
+	}
+	if len(recovery.Generations) != 1 || !recovery.Generations[0].DirtyForReindex {
+		t.Fatalf("recovery after dropped event = %+v", recovery)
 	}
 }
 
@@ -180,6 +217,20 @@ func TestOffsetGapUnknownToolBodyTooLargeAndWriteFailureUseWireCodes(t *testing.
 	if failed.HighWater != 0 {
 		t.Fatalf("write failure advanced highwater: %+v", failed)
 	}
+}
+
+func TestMalformedRequestsByName(t *testing.T) {
+	st := newTestStore(t, new(bytes.Buffer))
+	badOffset := putReq(t, st, wire.ToolClaude, testSession, testFile, -1, []byte("x"), nil)
+	decodeError(t, badOffset, wire.ErrMalformedRequest)
+
+	req := httptest.NewRequest(http.MethodPut, "/v1/files/claude/"+testSession+"/"+testFile+"/bytes?offset=0", strings.NewReader("x"))
+	req.Header.Set("Content-Type", wire.ContentTypeBytes)
+	req.Header.Set(wire.HeaderWireVersion, "1")
+	req.Header.Set(wire.HeaderHostname, "node-a")
+	rr := httptest.NewRecorder()
+	st.Handler().ServeHTTP(rr, req)
+	decodeError(t, rr, wire.ErrMalformedRequest)
 }
 
 func TestFingerprintConflictSelectsGenerationAndCurrentHighWater(t *testing.T) {
@@ -206,6 +257,20 @@ func TestFingerprintConflictSelectsGenerationAndCurrentHighWater(t *testing.T) {
 
 func TestRecoveryGETKnownUUIDOnlyAndFingerprintFiltered(t *testing.T) {
 	st := newTestStore(t, new(bytes.Buffer))
+	shortBody := []byte("below-window")
+	decodeAck(t, putReq(t, st, wire.ToolCodex, testSession, testFile, 0, shortBody, nil))
+	shortResp := recoveryReq(t, st, wire.ToolCodex, testSession, testFile, nil)
+	if shortResp.Code != http.StatusOK {
+		t.Fatalf("short recovery status=%d body=%s", shortResp.Code, shortResp.Body.String())
+	}
+	var shortRecovery wire.RecoveryResponse
+	if err := json.Unmarshal(shortResp.Body.Bytes(), &shortRecovery); err != nil {
+		t.Fatal(err)
+	}
+	if len(shortRecovery.Generations) != 1 || shortRecovery.Generations[0].Fingerprint != nil || shortRecovery.Generations[0].HighWater != int64(len(shortBody)) {
+		t.Fatalf("short recovery = %+v", shortRecovery)
+	}
+
 	body := bytes.Repeat([]byte("a"), wire.FingerprintWindowBytes)
 	fp := fingerprint(body)
 	decodeAck(t, putReq(t, st, wire.ToolClaude, testSession, testFile, 0, body, &fp))
@@ -231,6 +296,23 @@ func TestRecoveryGETKnownUUIDOnlyAndFingerprintFiltered(t *testing.T) {
 	if notFound.ShipperAction != wire.ShipperActionStartFromZero {
 		t.Fatalf("not found = %+v", notFound)
 	}
+}
+
+func TestUUIDsCanonicalizeBeforeRegistryAndMirrorPaths(t *testing.T) {
+	st := newTestStore(t, new(bytes.Buffer))
+	urnSession := "urn:uuid:11111111-1111-1111-1111-111111111111"
+	bracedFile := "{22222222-2222-2222-2222-222222222222}"
+	body := []byte("canonical")
+	decodeAck(t, putReq(t, st, wire.ToolClaude, urnSession, bracedFile, 0, body, nil))
+
+	ack := decodeAck(t, putReq(t, st, wire.ToolClaude, testSession, testFile, int64(len(body)), []byte(" tail"), nil))
+	if ack.HighWater != int64(len("canonical tail")) {
+		t.Fatalf("canonical replay ack = %+v", ack)
+	}
+	if _, err := os.Stat(st.MirrorPath(wire.ToolClaude, "urn:uuid:11111111-1111-1111-1111-111111111111", "{22222222-2222-2222-2222-222222222222}", 0)); !os.IsNotExist(err) {
+		t.Fatalf("non-canonical mirror path exists or stat failed unexpectedly: %v", err)
+	}
+	assertMirror(t, st, 0, []byte("canonical tail"))
 }
 
 func TestFingerprintClaimComputedMismatchIsLoggedAndComputedWins(t *testing.T) {
