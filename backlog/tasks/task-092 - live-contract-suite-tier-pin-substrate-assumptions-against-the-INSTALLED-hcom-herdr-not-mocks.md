@@ -3,10 +3,10 @@ id: TASK-092
 title: >-
   live-contract suite tier: pin substrate assumptions against the INSTALLED
   hcom/herdr, not mocks
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 05:09'
-updated_date: '2026-07-09 09:44'
+updated_date: '2026-07-09 12:58'
 labels: []
 dependencies: []
 priority: high
@@ -28,3 +28,9 @@ WORK: a new test tier, tools/herder/tests/check-live-contract.sh, that runs its 
 - [ ] #3 Upgrade runbook references the tier as a required step; a periodic-run mechanism or documented cadence exists
 - [ ] #4 gate green: go vet+test both modules, all check suites (including the new tier skipping or passing per environment)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged 8f32694 (b790d19+bb9a6ae+376b2be). Three adversarial review rounds by cross-family reviewer garo, all findings demonstrated+fixed+re-verified (aspirational-green, skip-abuse, mixed-binary, false-red roster, vanishing negative demo, deleted diff artifact, env coupling). Independent gate green all rounds; post-merge gate on main running.
+<!-- SECTION:NOTES:END -->
