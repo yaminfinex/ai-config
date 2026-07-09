@@ -3,9 +3,10 @@ id: TASK-134
 title: >-
   sesh — remediation: sqlitedsn rejects relative paths; reindex fails on one
   corrupt ledger row (run-sesh-107 F2+F3)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 23:53'
+updated_date: '2026-07-09 23:54'
 labels:
   - run-sesh-107
 dependencies: []
