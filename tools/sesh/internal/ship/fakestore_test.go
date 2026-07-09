@@ -38,6 +38,9 @@ type fakeStore struct {
 	// putLog records every PUT offset per identity key, for assertions like
 	// "no re-ship from zero after a move".
 	putLog map[string][]int64
+	// ownerLog records the X-Sesh-Session-Owner header of every PUT per
+	// identity key ("" when absent) — the facts observation surface (U9).
+	ownerLog map[string][]string
 }
 
 type fakeFile struct {
@@ -61,7 +64,7 @@ type fakeGen struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{files: map[string]*fakeFile{}, putLog: map[string][]int64{}}
+	return &fakeStore{files: map[string]*fakeFile{}, putLog: map[string][]int64{}, ownerLog: map[string][]string{}}
 }
 
 func (fs *fakeStore) server() *httptest.Server {
@@ -105,6 +108,13 @@ func (fs *fakeStore) puts(tool, sid, fuuid string) []int64 {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	return append([]int64(nil), fs.putLog[fs.key(tool, sid, fuuid)]...)
+}
+
+// owners returns the session-owner header value of every PUT, in order.
+func (fs *fakeStore) owners(tool, sid, fuuid string) []string {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return append([]string(nil), fs.ownerLog[fs.key(tool, sid, fuuid)]...)
 }
 
 // seed pre-loads a generation, as if shipped earlier (for recovery tests).
@@ -199,6 +209,7 @@ func (fs *fakeStore) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	key := fs.key(tool, sid, fuuid)
 	fs.putLog[key] = append(fs.putLog[key], offset)
+	fs.ownerLog[key] = append(fs.ownerLog[key], r.Header.Get(wire.HeaderSessionOwner))
 
 	f := fs.files[key]
 	if f == nil {

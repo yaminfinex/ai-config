@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"os/user"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -39,11 +38,7 @@ func newShip() *cobra.Command {
 			}
 			defer reg.Close()
 
-			hostname, err := os.Hostname()
-			if err != nil {
-				return err
-			}
-			u, err := user.Current()
+			facts, err := ship.GatherFacts()
 			if err != nil {
 				return err
 			}
@@ -56,9 +51,10 @@ func newShip() *cobra.Command {
 			defer stop()
 
 			s := &ship.Shipper{
-				Registry: reg,
-				Client:   &ship.Client{BaseURL: storeURL, Hostname: hostname, OSUser: u.Username},
-				Roots:    ship.DefaultRoots(home),
+				Registry:  reg,
+				Client:    &ship.Client{BaseURL: storeURL, Hostname: facts.Hostname, OSUser: facts.OSUser},
+				Roots:     ship.DefaultRoots(home),
+				Correlate: ship.PlatformCorrelator(),
 			}
 			err = s.Run(ctx)
 			if errors.Is(err, context.Canceled) {

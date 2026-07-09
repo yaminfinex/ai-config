@@ -682,6 +682,77 @@ func TestFingerprintRoutingSilentResumeOfNonActiveGeneration(t *testing.T) {
 	}
 }
 
+// --- U9 / I8: SESSION_OWNER persists in the registry, never retracted ------
+//
+// The correlator observes an owner while the session's process lives; the
+// observation writes into the cursor registry, ships as a header on
+// subsequent PUTs, and survives both the process's death (correlation goes
+// absent) and a shipper restart. Absence never retracts (I8).
+func TestSessionOwnerPersistsAcrossProcessDeathAndRestart(t *testing.T) {
+	h := newHarness(t)
+	data := fixture(t, "claude-normal.jsonl")
+	h.writeClaude("-p", uuidNormal, data[:20000])
+
+	// Pass 1: the process is alive and correlated.
+	h.shipper.Correlate = func(ds []Discovered) map[string]string {
+		out := map[string]string{}
+		for _, d := range ds {
+			out[d.Identity.Key()] = "alice"
+		}
+		return out
+	}
+	h.runOnce()
+	if got := h.store.owners("claude", uuidNormal, uuidNormal); len(got) == 0 || got[len(got)-1] != "alice" {
+		t.Fatalf("PUT owner headers = %v, want alice on the shipping pass", got)
+	}
+
+	// Pass 2: process died (honest absence) and the file grows; the recorded
+	// owner still ships.
+	h.shipper.Correlate = func([]Discovered) map[string]string { return nil }
+	h.writeClaude("-p", uuidNormal, data)
+	h.runOnce()
+	got := h.store.owners("claude", uuidNormal, uuidNormal)
+	if got[len(got)-1] != "alice" {
+		t.Fatalf("owner header after process death = %q, want alice (never retracted)", got[len(got)-1])
+	}
+
+	// Restart: the observation lives in the registry file, not in memory.
+	h.restart()
+	h.shipper.Correlate = func([]Discovered) map[string]string { return nil }
+	h.writeClaude("-p", uuidNormal, append(append([]byte(nil), data...), data[:5000]...))
+	h.runOnce()
+	got = h.store.owners("claude", uuidNormal, uuidNormal)
+	if got[len(got)-1] != "alice" {
+		t.Fatalf("owner header after restart = %q, want alice (registry-persisted, I8)", got[len(got)-1])
+	}
+	c, _ := h.cursor(wire.ToolClaude, uuidNormal)
+	if c.SessionOwner != "alice" {
+		t.Fatalf("registry SessionOwner = %q, want alice", c.SessionOwner)
+	}
+}
+
+// A file discovered while quiescent (nothing to PUT) still gets its
+// correlation recorded — stamping must not depend on bytes flowing.
+func TestSessionOwnerRecordedOnQuiescentFile(t *testing.T) {
+	h := newHarness(t)
+	data := fixture(t, "claude-normal.jsonl")
+	h.writeClaude("-p", uuidNormal, data)
+	h.runOnce() // ships to quiescence, no owner known
+
+	h.shipper.Correlate = func(ds []Discovered) map[string]string {
+		out := map[string]string{}
+		for _, d := range ds {
+			out[d.Identity.Key()] = "bob"
+		}
+		return out
+	}
+	h.runOnce() // quiescent pass: no PUT, but the observation must persist
+	c, _ := h.cursor(wire.ToolClaude, uuidNormal)
+	if c.SessionOwner != "bob" {
+		t.Fatalf("registry SessionOwner = %q, want bob (recorded without a PUT)", c.SessionOwner)
+	}
+}
+
 // Registry save must fail loudly when directory durability cannot be
 // confirmed (U4 review finding #2): a removed registry dir makes the
 // temp-file step fail and the error must surface, not vanish.
