@@ -579,7 +579,7 @@ func (idx *Indexer) quarantineObservedTimes(ctx context.Context) (map[quarantine
 		}
 		observed, err := time.Parse(time.RFC3339Nano, raw)
 		if err != nil {
-			return nil, err
+			continue
 		}
 		out[key] = observed.UTC()
 	}

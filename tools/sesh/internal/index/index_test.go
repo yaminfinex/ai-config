@@ -300,38 +300,63 @@ func TestUnparseableJSONQuarantinesAndCounts(t *testing.T) {
 
 func TestQuarantineObservedAtSurvivesReindex(t *testing.T) {
 	st, idx := newHarness(t)
-	body := []byte("[]\n")
+	body := []byte("[]\nnot-json\n")
 	putBytes(t, st, testSession, testFile, 0, body)
 	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
 		t.Fatal(err)
 	}
 	original := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	if _, err := st.DB().ExecContext(t.Context(), `UPDATE quarantine_ledger SET observed_at = ?, day = ?`, formatTime(original), original.Format("2006-01-02")); err != nil {
+	if _, err := st.DB().ExecContext(t.Context(), `UPDATE quarantine_ledger SET observed_at = ?, day = ? WHERE line_ordinal = 0`, formatTime(original), original.Format("2006-01-02")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(t.Context(), `UPDATE quarantine_ledger SET observed_at = 'not-a-time', day = 'not-a-day' WHERE line_ordinal = 1`); err != nil {
 		t.Fatal(err)
 	}
 	before, err := idx.QuarantineCounts(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(before) != 1 || before[0].Day != "2026-07-01" || before[0].Count != 1 {
+	if len(before) != 2 {
 		t.Fatalf("quarantine counts before reindex = %+v", before)
 	}
+	start := time.Now().UTC()
 	if err := idx.Reindex(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	end := time.Now().UTC()
 	after, err := idx.QuarantineCounts(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(after) != 1 || after[0].Day != "2026-07-01" || after[0].Count != 1 {
+	if len(after) == 0 {
 		t.Fatalf("quarantine counts after reindex = %+v", after)
 	}
-	var observed string
-	if err := st.DB().QueryRowContext(t.Context(), `SELECT observed_at FROM quarantine_ledger`).Scan(&observed); err != nil {
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT line_ordinal, observed_at FROM quarantine_ledger ORDER BY line_ordinal`)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if observed != formatTime(original) {
-		t.Fatalf("observed_at after reindex = %q want %q", observed, formatTime(original))
+	defer rows.Close()
+	observedByLine := map[int64]string{}
+	for rows.Next() {
+		var line int64
+		var observed string
+		if err := rows.Scan(&line, &observed); err != nil {
+			t.Fatal(err)
+		}
+		observedByLine[line] = observed
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if observedByLine[0] != formatTime(original) {
+		t.Fatalf("healthy observed_at after reindex = %q want %q", observedByLine[0], formatTime(original))
+	}
+	regenerated, err := time.Parse(time.RFC3339Nano, observedByLine[1])
+	if err != nil {
+		t.Fatalf("corrupt observed_at was not regenerated as a timestamp: %q", observedByLine[1])
+	}
+	if regenerated.Before(start) || regenerated.After(end) {
+		t.Fatalf("regenerated observed_at = %s, want between %s and %s", regenerated, start, end)
 	}
 }
 

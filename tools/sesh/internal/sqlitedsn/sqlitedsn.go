@@ -23,6 +23,9 @@ func withOptions(path string, values url.Values) string {
 		values = url.Values{}
 	}
 	values.Add("_pragma", "busy_timeout(5000)")
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
 	u := url.URL{
 		Scheme: "file",
 		Path:   filepath.ToSlash(path),
