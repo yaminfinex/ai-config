@@ -28,11 +28,7 @@ func newStatusCommand(d deps) *cobra.Command {
 				return usageError{err: fmt.Errorf("mish status: unexpected arguments: %s — run 'mish status --help' for usage", strings.Join(args, " "))}
 			}
 			if all {
-				return refusalError{
-					verb:    "status",
-					message: "overview mode is not implemented in this unit",
-					remedy:  "run from inside a mission or pass --mission <slug>",
-				}
+				return runStatusOverview(cmd, d)
 			}
 			return runStatus(cmd, d, missionFlag, cmd.Flags().Changed("mission"))
 		},
@@ -62,6 +58,9 @@ func runStatus(cmd *cobra.Command, d deps, missionFlag string, missionFlagSet bo
 	if err != nil {
 		var refusal *resolve.Refusal
 		if errors.As(err, &refusal) {
+			if refusal.Kind == resolve.RefusalNoContext && isInsideMissionsRepo(cwd, d.missionsRepo) {
+				return runStatusOverview(cmd, d)
+			}
 			return refusalError{verb: "status", message: refusal.Reason, remedy: refusal.Remedy}
 		}
 		return err
@@ -79,12 +78,44 @@ func runStatus(cmd *cobra.Command, d deps, missionFlag string, missionFlagSet bo
 	return nil
 }
 
+func runStatusOverview(cmd *cobra.Command, d deps) error {
+	repo := d.missionsRepo
+	if repo == "" {
+		return refusalError{
+			verb:    "status",
+			message: "$MISSIONS_REPO is not set",
+			remedy:  "set MISSIONS_REPO to the shared missions repo",
+		}
+	}
+	report, err := buildStatusOverview(d, repo)
+	if err != nil {
+		return refusalError{
+			verb:    "status",
+			message: "could not read mission overview",
+			remedy:  err.Error(),
+		}
+	}
+	fmt.Fprint(cmd.OutOrStdout(), report)
+	return nil
+}
+
 type statusReport struct {
 	Manifest  missionfs.Manifest
 	Counts    []missionfs.StatusCount
 	Artifacts missionfs.ArtifactScan
 	Warnings  []string
 	BoardOK   bool
+}
+
+type statusOverviewRow struct {
+	Slug         string
+	Status       string
+	Authority    string
+	Owner        string
+	Tasks        string
+	Updated      string
+	Warning      string
+	statusHeader string
 }
 
 func buildStatusReport(d deps, result resolve.Result) (string, error) {
@@ -102,7 +133,8 @@ func buildStatusReport(d deps, result resolve.Result) (string, error) {
 		valueOrUnknown(report.Manifest.Created),
 	)
 	if report.BoardOK {
-		fmt.Fprintf(&b, "board:   %s   (%d tasks)\n", formatCounts(report.Counts), totalTasks(report.Counts))
+		total := totalTasks(report.Counts)
+		fmt.Fprintf(&b, "board:   %s   (%d %s)\n", formatCounts(report.Counts), total, taskWord(total))
 	} else {
 		fmt.Fprintf(&b, "board:   %s\n", formatCounts(report.Counts))
 	}
@@ -111,6 +143,75 @@ func buildStatusReport(d deps, result resolve.Result) (string, error) {
 		fmt.Fprintf(&b, "warning: %s\n", warning)
 	}
 	return b.String(), nil
+}
+
+func buildStatusOverview(d deps, repo string) (string, error) {
+	missionsDir := filepath.Join(repo, "missions")
+	entries, err := os.ReadDir(missionsDir)
+	if err != nil {
+		return "", err
+	}
+	rows := make([]statusOverviewRow, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		slug := entry.Name()
+		missionDir := filepath.Join(missionsDir, slug)
+		row := collectStatusOverviewRow(d, resolve.Result{
+			Slug:       slug,
+			MissionDir: missionDir,
+			Source:     resolve.SourceFlag,
+		})
+		rows = append(rows, row)
+	}
+
+	statusHeader := "TASKS"
+	for _, row := range rows {
+		if row.statusHeader != "" {
+			statusHeader = "TASKS " + row.statusHeader
+			break
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%-17s %-7s %-10s %-7s %-26s %s\n", "SLUG", "STATUS", "AUTHORITY", "OWNER", statusHeader, "UPDATED")
+	for _, row := range rows {
+		fmt.Fprintf(&b, "%-17s %-7s %-10s %-7s %-26s %s", row.Slug, row.Status, row.Authority, row.Owner, row.Tasks, row.Updated)
+		if row.Warning != "" {
+			fmt.Fprintf(&b, "  warning: %s", row.Warning)
+		}
+		fmt.Fprintln(&b)
+	}
+	return b.String(), nil
+}
+
+func collectStatusOverviewRow(d deps, result resolve.Result) statusOverviewRow {
+	row := statusOverviewRow{
+		Slug:      result.Slug,
+		Status:    "warning",
+		Authority: "unknown",
+		Owner:     "unknown",
+		Tasks:     "unavailable",
+		Updated:   updatedAgo(d.clock(), newestMissionMTime(result.MissionDir)),
+	}
+
+	report, err := collectStatus(d, result)
+	if err != nil {
+		row.Warning = err.Error()
+		return row
+	}
+	row.Status = valueOrUnknown(report.Manifest.Status)
+	row.Authority = valueOrUnknown(report.Manifest.Authority)
+	row.Owner = valueOrUnknown(report.Manifest.Owner)
+	if report.BoardOK {
+		row.Tasks = formatSlashCounts(report.Counts)
+		row.statusHeader = formatStatusHeader(report.Counts)
+	}
+	if len(report.Warnings) > 0 {
+		row.Warning = report.Warnings[0]
+	}
+	return row
 }
 
 func collectStatus(d deps, result resolve.Result) (statusReport, error) {
@@ -156,6 +257,25 @@ func collectStatus(d deps, result resolve.Result) (statusReport, error) {
 	return report, nil
 }
 
+func formatSlashCounts(counts []missionfs.StatusCount) string {
+	if len(counts) == 0 {
+		return "unavailable"
+	}
+	parts := make([]string, 0, len(counts))
+	for _, count := range counts {
+		parts = append(parts, strconv.Itoa(count.Count))
+	}
+	return strings.Join(parts, "/")
+}
+
+func formatStatusHeader(counts []missionfs.StatusCount) string {
+	statuses := make([]string, 0, len(counts))
+	for _, count := range counts {
+		statuses = append(statuses, count.Status)
+	}
+	return strings.Join(statuses, "/")
+}
+
 func formatCounts(counts []missionfs.StatusCount) string {
 	if len(counts) == 0 {
 		return "unavailable"
@@ -173,6 +293,21 @@ func totalTasks(counts []missionfs.StatusCount) int {
 		total += count.Count
 	}
 	return total
+}
+
+func taskWord(total int) string {
+	if total == 1 {
+		return "task"
+	}
+	return "tasks"
+}
+
+func updatedAgo(now, then time.Time) string {
+	value := ago(now, then)
+	if value == "unknown" {
+		return value
+	}
+	return value + " ago"
 }
 
 func formatArtifacts(artifacts missionfs.ArtifactScan, now time.Time) string {
@@ -248,6 +383,32 @@ func relativeFindingPaths(missionDir string, paths []string) []string {
 		out = append(out, relativeFindingPath(missionDir, path))
 	}
 	return out
+}
+
+func newestMissionMTime(missionDir string) time.Time {
+	var newest time.Time
+	_ = filepath.WalkDir(missionDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+		return nil
+	})
+	return newest
+}
+
+func isInsideMissionsRepo(cwd, repo string) bool {
+	if cwd == "" || repo == "" {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(repo), filepath.Clean(cwd))
+	return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
 }
 
 func missionHasStaleGit(d deps, result resolve.Result) (bool, error) {

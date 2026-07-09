@@ -46,6 +46,113 @@ func TestStatusSingleMissionHappyBlock(t *testing.T) {
 	}
 }
 
+func TestStatusSingleMissionUsesSingularTaskNoun(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "perf-regression")
+	writeTaskFile(t, missionDir, "tasks/task-1.md", "TASK-1", "To Do")
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	if err != nil {
+		t.Fatalf("status error: %v\nstderr=%s", err, stderr)
+	}
+	want := "board:   1 To Do · 0 In Progress · 0 Done   (1 task)"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("status output missing singular task noun %q:\n%s", want, stdout)
+	}
+}
+
+func TestStatusOverviewFromRepoRootListsActiveAndClosedMissions(t *testing.T) {
+	repo, activeDir := makeStatusMission(t, "perf-regression")
+	writeTaskFile(t, activeDir, "tasks/task-1.md", "TASK-1", "To Do")
+	writeTaskFile(t, activeDir, "tasks/task-2.md", "TASK-2", "In Progress")
+	setTreeTimes(t, activeDir, testNow().Add(-2*time.Hour))
+
+	closedDir := addStatusMission(t, repo, "q3-launch")
+	replaceInFile(t, filepath.Join(closedDir, "mission.md"), "status: active", "status: closed")
+	writeTaskFile(t, closedDir, "completed/task-21.md", "TASK-21", "Done")
+	setTreeTimes(t, closedDir, testNow().Add(-6*24*time.Hour))
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status")
+	if err != nil {
+		t.Fatalf("status overview error: %v\nstderr=%s", err, stderr)
+	}
+	for _, want := range []string{
+		"SLUG",
+		"STATUS",
+		"AUTHORITY",
+		"OWNER",
+		"TASKS To Do/In Progress/Done",
+		"UPDATED",
+		"perf-regression",
+		"active",
+		"hera",
+		"riley",
+		"1/1/0",
+		"2h ago",
+		"q3-launch",
+		"closed",
+		"0/0/1",
+		"6d ago",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("overview output missing %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Index(stdout, "perf-regression") > strings.Index(stdout, "q3-launch") {
+		t.Fatalf("overview rows not sorted by slug:\n%s", stdout)
+	}
+}
+
+func TestStatusContextlessOutsideRepoRefuses(t *testing.T) {
+	repo, _ := makeStatusMission(t, "perf-regression")
+	outside := t.TempDir()
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, outside), "status")
+	if err == nil {
+		t.Fatalf("contextless status unexpectedly succeeded")
+	}
+	if stdout != "" {
+		t.Fatalf("contextless refusal wrote stdout:\n%s", stdout)
+	}
+	for _, want := range []string{"mish status: no mission context found", "pass --mission <slug>, run from inside missions/<slug>/, or add a .mission marker"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
+func TestStatusOverviewAllWorksFromAnywhereWithMissionsRepo(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "perf-regression")
+	writeTaskFile(t, missionDir, "tasks/task-1.md", "TASK-1", "Done")
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, t.TempDir()), "status", "--all")
+	if err != nil {
+		t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
+	}
+	for _, want := range []string{"SLUG", "perf-regression", "active", "0/0/1"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("--all overview missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestStatusOverviewBrokenManifestGetsWarningRow(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "perf-regression")
+	replaceInFile(t, filepath.Join(missionDir, "mission.md"), "mission: perf-regression", "mission: [")
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+	if err != nil {
+		t.Fatalf("status --all with broken manifest returned err %v; stderr=%s stdout=%s", err, stderr, stdout)
+	}
+	for _, want := range []string{"perf-regression", "warning", "malformed mission.md frontmatter", "0/0/0"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("broken-manifest overview missing %q:\n%s", want, stdout)
+		}
+	}
+	if stderr != "" {
+		t.Fatalf("broken-manifest overview wrote stderr:\n%s", stderr)
+	}
+}
+
 func TestStatusWarnings(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -369,6 +476,11 @@ func testNow() time.Time {
 func makeStatusMission(t *testing.T, slug string) (string, string) {
 	t.Helper()
 	repo := t.TempDir()
+	return repo, addStatusMission(t, repo, slug)
+}
+
+func addStatusMission(t *testing.T, repo, slug string) string {
+	t.Helper()
 	missionDir := filepath.Join(repo, "missions", slug)
 	for _, dir := range []string{
 		filepath.Join(missionDir, "backlog", "tasks"),
@@ -399,7 +511,7 @@ auto_commit: false
 filesystem_only: true
 check_active_branches: false
 `, slug))
-	return repo, missionDir
+	return missionDir
 }
 
 func writeTaskFile(t *testing.T, missionDir, rel, id, status string) {
@@ -465,4 +577,17 @@ func hashTree(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	return fmt.Sprintf("%x", hash.Sum(nil))
+}
+
+func setTreeTimes(t *testing.T, root string, when time.Time) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chtimes(path, when, when)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
