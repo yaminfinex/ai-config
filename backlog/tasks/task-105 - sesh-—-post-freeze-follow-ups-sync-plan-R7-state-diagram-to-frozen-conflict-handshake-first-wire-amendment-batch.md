@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-09 05:47'
+updated_date: '2026-07-09 06:22'
 labels:
   - sesh
 dependencies:
@@ -23,5 +24,11 @@ Type: design/doc follow-up, from the M0 sign-off verdict (thread sesh-u1, #25130
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Plan R7 + state diagram synced to the frozen handshake wording (or the plan owner explicitly declines)
-- [ ] #2 Rescan interval relabeled as default in the wire doc via a recorded amendment
+- [x] #2 Rescan interval relabeled as default in the wire doc via a recorded amendment
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC#2 satisfied by wire Amendment 1 (dea4ba0, zomi confirm #25965): rescan interval relabeled shipper-local default. AC#1 (plan R7/state-diagram sync, now also the ACK-clamp + splice wording from Amendment 1) still open — routes through the plan owner on missions-and-daemon.
+<!-- SECTION:NOTES:END -->

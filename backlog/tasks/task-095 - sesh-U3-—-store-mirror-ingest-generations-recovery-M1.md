@@ -1,10 +1,10 @@
 ---
 id: TASK-095
 title: 'sesh U3 — store: mirror ingest + generations + recovery (M1)'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 05:27'
-updated_date: '2026-07-09 05:56'
+updated_date: '2026-07-09 06:22'
 labels:
   - sesh
 dependencies:
@@ -26,15 +26,15 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U3
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Append at high-water ACKs + advances; identical replay no-ops (S9); divergent replay -> conflict -> generation 1 with generation 0 bytes intact
-- [ ] #2 Offset gap returns current high-water; unknown tool rejected; injected write failure returns 5xx and never ACKs
-- [ ] #3 kill -9 mid-PUT, restart, replay: no corruption, correct high-water
-- [ ] #4 Recovery GET returns high-waters + fingerprint for known and UUID-only identities
-- [ ] #5 All wire-doc error codes exercised by name in tests; mirrored files byte-identical to shipped fixtures
+- [x] #1 Append at high-water ACKs + advances; identical replay no-ops (S9); divergent replay -> conflict -> generation 1 with generation 0 bytes intact
+- [x] #2 Offset gap returns current high-water; unknown tool rejected; injected write failure returns 5xx and never ACKs
+- [x] #3 kill -9 mid-PUT, restart, replay: no corruption, correct high-water
+- [x] #4 Recovery GET returns high-waters + fingerprint for known and UUID-only identities
+- [x] #5 All wire-doc error codes exercised by name in tests; mirrored files byte-identical to shipped fixtures
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-From M0 sign-off review (thread sesh-u1, #25130), binding for this unit: (a) when the store computes a generation fingerprint that differs from the client claim, record the computed value and LOG the mismatch — claim/computed divergence is an early corruption signal; (b) add a test acknowledging the sub-window poison-key edge: a file that never reaches 1 KiB has fingerprint null, so a second legitimate sub-window recreate poisons (file_uuid, null) — rare, accepted, but must be a named test not a surprise; strengthens the later operator un-poison verb case.
+Merged to sesh-build @ dea4ba0. Provenance: 73b0493 impl -> cross-family adversarial review (opus, MERGE-WITH-FIXES) -> 0b42f32 fixes (F1 HIGH: generation routing now highest-match-first + regression for the spurious-poison recovery sequence; F5 conflict_pending cleared; F2 dirty_for_reindex on dropped events; F3 durable default data dir; F4/F6 AC test gaps; F8 UUID canonicalization; F9 error relabel) -> dea4ba0 wire Amendment 1 (drafted per zomi ruling #25692, co-signed suki #25940, FINAL CONFIRM zomi #25965 at hash). Orchestrator re-ran gates fresh at each step. Deferred: F7 global-mutex fsync serialization (flagged for post-M2 perf). Binding sign-off notes both landed and test-verified. Trail: threads sesh-u3 + sesh-u1.
 <!-- SECTION:NOTES:END -->

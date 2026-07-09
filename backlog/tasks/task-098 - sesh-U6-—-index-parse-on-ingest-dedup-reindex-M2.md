@@ -1,10 +1,11 @@
 ---
 id: TASK-098
 title: 'sesh U6 — index: parse-on-ingest + dedup + reindex (M2)'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - sesh-store-soho
 created_date: '2026-07-09 05:28'
-updated_date: '2026-07-09 05:47'
+updated_date: '2026-07-09 06:22'
 labels:
   - sesh
 dependencies:
