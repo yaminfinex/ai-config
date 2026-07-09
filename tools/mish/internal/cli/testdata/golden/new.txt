@@ -1,0 +1,29 @@
+Usage: mish new <slug> [--title T] [--authority A] [--owner O] [--no-marker]
+
+Scaffold missions/<slug>/ under $MISSIONS_REPO with mission.md, a pinned Backlog.md board,
+and an empty artifacts/ directory. The slug must be lowercase letters, digits, and single
+hyphens; it becomes both the directory name and mission: frontmatter.
+
+Authority and owner:
+  authority  --authority, else the invoking OS user
+  owner      --owner, else SESSION_OWNER, else the invoking OS user
+
+On success, mish prints both stamped values and their source so a wrong stamp is visible at
+birth. Correcting one later is an ordinary manifest edit owned by the authority.
+
+Markers:
+  new writes .mission in the invoking cwd unless --no-marker is set or cwd is inside the
+  missions repo. Existing same-slug markers are no-ops. Any marker on the cwd-to-root chain
+  that names a different slug refuses; remove it or pass --no-marker. Markers never nest.
+
+Git and custody:
+  new performs no git operations. The scaffold should be committed by the caller with:
+  mission(<slug>): new <summary>
+  Use Mission-Agent when the acting agent label matters.
+
+Closeout, rename, and marker hygiene:
+  Closing later means final board states, a harvest pass, Closeout prose in mission.md,
+  status: closed, custody-rhythm review, and a close custody commit. Renames are authority
+  acts outside the CLI: choose a new slug (§4.3 rules) whose directory does not exist, git mv
+  the directory, edit mission: and backlog/config.yml project_name, fix stale markers, then
+  make one rename custody commit.

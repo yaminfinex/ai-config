@@ -1,0 +1,78 @@
+package cli
+
+import (
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"os/user"
+	"time"
+)
+
+type execResult struct {
+	ExitCode int
+}
+
+type deps struct {
+	env          func(string) string
+	cwd          func() (string, error)
+	lookPath     func(string) (string, error)
+	exec         func(name string, args []string, dir string, stdin io.Reader, stdout, stderr io.Writer) execResult
+	git          func(args []string, dir string) ([]byte, error)
+	clock        func() time.Time
+	stdin        io.Reader
+	stdout       io.Writer
+	stderr       io.Writer
+	missionsRepo string
+	osUser       string
+}
+
+func newDeps(stdout, stderr io.Writer) deps {
+	env := os.Getenv
+	return deps{
+		env:          env,
+		cwd:          os.Getwd,
+		lookPath:     exec.LookPath,
+		exec:         runExec,
+		git:          runGit,
+		clock:        time.Now,
+		stdin:        os.Stdin,
+		stdout:       stdout,
+		stderr:       stderr,
+		missionsRepo: env("MISSIONS_REPO"),
+		osUser:       currentOSUser(env),
+	}
+}
+
+func currentOSUser(env func(string) string) string {
+	if current, err := user.Current(); err == nil && current.Username != "" {
+		return current.Username
+	}
+	if user := env("USER"); user != "" {
+		return user
+	}
+	return "unknown"
+}
+
+func runExec(name string, args []string, dir string, stdin io.Reader, stdout, stderr io.Writer) execResult {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	if err == nil {
+		return execResult{ExitCode: 0}
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return execResult{ExitCode: exitErr.ExitCode()}
+	}
+	return execResult{ExitCode: 1}
+}
+
+func runGit(args []string, dir string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	return cmd.Output()
+}
