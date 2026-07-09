@@ -1,10 +1,10 @@
 ---
 id: TASK-121
 title: mish U9 — companion skill (skills/mish)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 09:46'
-updated_date: '2026-07-09 10:46'
+updated_date: '2026-07-09 11:03'
 labels:
   - mish
 dependencies: []
@@ -31,3 +31,9 @@ Settled decisions: bottling-shaped stub (KTD10 — see skills/bottling/SKILL.md 
 - [ ] #3 skill contains no CLI mechanics that belong in help; nothing herder/orchestrate-specific
 - [ ] #4 frontmatter: name + trigger-rich description only (house skill shape)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to mish-build @ e0314b7 (--no-ff). Worker: claude mish-u9-sulo (39f35f1 + 4b3badd harvest rework + f45844e review fixes). Doctrine review (opus): ACCEPT — AC-16 git orientation airtight (--no-rebase merge, --ours=authority, direction warning), all 7 §7.2 taxonomy rows, AC-17 grammar parses for all 5 verbs, AC-18 five steps, boundary vs help clean, zero herder vocab, --comment append verified factually. Orchestrator rulings applied: harvest carries a mission-side diff (no --allow-empty — invisible to §8.4 path-scoped review); adopt MOVES (asymmetry with harvest-copies); close custody commit scope-staged.
+<!-- SECTION:NOTES:END -->
