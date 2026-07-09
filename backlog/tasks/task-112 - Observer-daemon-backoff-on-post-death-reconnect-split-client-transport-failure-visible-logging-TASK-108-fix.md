@@ -3,9 +3,10 @@ id: TASK-112
 title: >-
   Observer daemon: backoff on post-death reconnect + split-client transport +
   failure-visible logging (TASK-108 fix)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 07:14'
+updated_date: '2026-07-09 07:26'
 labels: []
 dependencies: []
 priority: high
