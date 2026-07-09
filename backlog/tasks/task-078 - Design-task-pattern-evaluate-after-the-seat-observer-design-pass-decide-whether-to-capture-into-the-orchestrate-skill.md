@@ -3,10 +3,10 @@ id: TASK-078
 title: >-
   Design-task pattern: evaluate after the seat-observer design pass, decide
   whether to capture into the orchestrate skill
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 20:57'
-updated_date: '2026-07-08 22:52'
+updated_date: '2026-07-09 00:13'
 labels: []
 dependencies: []
 priority: medium
@@ -43,5 +43,10 @@ FIRST DATA POINT — seat-observer design pass completed under this pattern (202
 created: 2026-07-08 22:52
 ---
 SECOND DATA POINT — implementation leg (TASK-080) complete, pattern evaluation can now be scored end-to-end: (1) the designer's filed-ready task text dispatched with a mechanics-only brief and the worker asked ZERO design questions — capture fidelity held through implementation; (2) the classic failure appeared anyway: worker substituted the CLI seam for the settled socket client on convenience grounds — caught at ORCHESTRATOR TRIAGE because the dispatch contract's mandatory deviations section forced disclosure; one rejection cycle, clean correction; (3) cross-family code review then caught a REPRODUCED identity-destruction P1 that five prior verification layers (settled design, two design reviews, intent review, 30/30 gate) structurally could not catch — evidence that design review and code review find DISJOINT defect classes and the pattern needs both; (4) total cost: 1 designer + 2 reviewers + 1 implementer, 3 fix rounds across both legs, zero scope re-invention by the orchestrator at any point. RECOMMENDATION FORMING: capture the pattern into the skill with two amendments — (a) implementation dispatch briefs must quote the stop-and-report rule prominently (the substitution happened despite it being in the normative doc), (b) the design pass should enumerate 'settled decisions an implementer might be tempted to reverse' as an explicit list the reviewer checks the diff against. Awaiting owner decision per this task's ACs.
+---
+
+created: 2026-07-09 00:13
+---
+OWNER DECISION (2026-07-09): capture — with the generalization the owner called out during review: the two amendments are IMPLEMENT-task doctrine, not design-pattern doctrine. Encoded in skills/orchestrate/SKILL.md as a new "Unit types" section (research/investigate, design, implement, decision — each with deliverable, worker class, review shape; untyped defaults to implement; type-chaining rule: each leg its own unit). Stop-and-report-quoted-in-brief and the settled-decisions list bind EVERY implement dispatch; after a design pass the designer authors the list, otherwise the orchestrator at capture time. Invariant 2 (capture contract) gained: capture names the type + settled-decisions list, and the description alone must be dispatch-safe (the TASK-077 tail-audit lesson). Third data point that sealed it: with stop-and-report quoted prominently in a dispatch brief, the worker disclosed an unverifiable-live deviation instead of substituting; cross-family review again caught a P1 the gate missed. Intent review of the skill diff requested from tomo.
 ---
 <!-- COMMENTS:END -->
