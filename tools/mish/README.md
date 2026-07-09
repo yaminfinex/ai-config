@@ -17,7 +17,7 @@ Install the pinned toolchain and Backlog.md dependency from the repository root:
 mise install
 GO_VERSION="$(awk '/^go /{print $2; exit}' tools/mish/go.mod)"
 mise install "go@$GO_VERSION"
-export PATH="$(mise where "go@$GO_VERSION")/bin:$(mise where npm:backlog.md)/bin:$PATH"
+export PATH="$(mise where "go@$GO_VERSION")/bin:$(mise where npm:backlog.md)/bin:$(mise where node)/bin:$PATH"
 export GOTOOLCHAIN=local
 backlog --version
 ```
