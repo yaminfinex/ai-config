@@ -3,10 +3,10 @@ id: TASK-108
 title: >-
   Investigate sustained ~34% CPU in herder observer daemon (busy-loop since
   start, empty log)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 06:59'
-updated_date: '2026-07-09 06:59'
+updated_date: '2026-07-09 07:14'
 labels: []
 dependencies: []
 priority: high
