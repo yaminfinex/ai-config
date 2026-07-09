@@ -1,9 +1,6 @@
 package cli
 
-import (
-	"fmt"
-	"strings"
-)
+import "strings"
 
 type backlogAllowlistEntry struct {
 	name string
@@ -48,27 +45,4 @@ func backlogAllowlistNames() []string {
 func backlogAllowlistSummary() string {
 	names := backlogAllowlistNames()
 	return strings.Join(names, ", ")
-}
-
-func backlogHelp() string {
-	var b strings.Builder
-	fmt.Fprintln(&b, "mish backlog runs allowlisted Backlog.md commands inside the resolved mission.")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Usage:")
-	fmt.Fprintln(&b, "  mish backlog [--mission <slug>] <subcommand> [args...]")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Allowed subcommands:")
-	for _, entry := range backlogAllowlist {
-		fmt.Fprintf(&b, "  %-10s %s\n", entry.name, entry.note)
-	}
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "Excluded:")
-	// init would reinitialize a live mission and damage the scaffold.
-	// config is closed because pinned keys are invariant; deliberate tuning is a file edit.
-	// agents writes instruction files at the board root, littering the shared repo.
-	// browser's settings endpoint rewrites config.yml, pins included.
-	// completion, instructions, and mcp have no mission use case yet.
-	fmt.Fprintln(&b, "  init, config, agents, browser, completion, instructions, mcp")
-	fmt.Fprintln(&b, "Anything outside the allowlist refuses until deliberately added.")
-	return b.String()
 }

@@ -1,0 +1,34 @@
+Usage: mish status [--mission <slug> | --all]
+
+Read mission state without mutating files. With a resolved context, status prints one mission:
+manifest status/authority/owner/created, task counts in the board's configured status order,
+artifact count/newest file, and warnings. With --all, or from inside $MISSIONS_REPO with no
+specific context, it scans every mission directory including closed missions.
+
+Warnings mean:
+  pinned board key drifted from the mission invariants
+  mission: frontmatter does not match the directory slug
+  mission.md has unknown keys or status is not active/closed
+  duplicate task IDs appear across backlog/tasks and backlog/completed
+  board or artifacts/ is missing
+  mission subtree has uncommitted or unpushed git changes
+
+Git staleness:
+  The git signal is read-only and silently skipped when the missions repo is not git or has
+  no upstream. It is a prompt to pull/push, not a source of truth for ownership.
+
+Recency:
+  UPDATED and artifact age use filesystem mtimes, never git history. They are node-local:
+  clone and pull re-stamp mtimes, so status reports when changes reached this clone, not when
+  the work happened.
+
+Closeout checklist:
+  Before setting status: closed, the authority confirms every task is Done or explicitly
+  abandoned, harvests durable outputs, writes Closeout prose in mission.md, reviews
+  'git log -- missions/<slug>/' for custody coverage, then commits:
+  mission(<slug>): close <summary>
+
+Rename and marker hygiene:
+  Rename outside the CLI with git mv, mission: and project_name edits, marker fixes, and one
+  rename custody commit. Keep one .mission marker per directory chain; delete stale markers
+  when the worktree no longer participates.

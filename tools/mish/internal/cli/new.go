@@ -37,6 +37,7 @@ func newNewCommand(d deps) *cobra.Command {
 			return runNew(d, opts, slug)
 		},
 	}
+	attachHelp(cmd, newHelpText)
 	cmd.Flags().StringVar(&opts.authority, "authority", "", "manifest authority label")
 	cmd.Flags().StringVar(&opts.owner, "owner", "", "human owner label")
 	cmd.Flags().StringVar(&opts.title, "title", "", "mission title")

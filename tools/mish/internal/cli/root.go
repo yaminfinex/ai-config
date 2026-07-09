@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -78,6 +79,7 @@ func newRoot(d deps) *cobra.Command {
 	root := &cobra.Command{
 		Use:           commandName,
 		Short:         "mish manages mission directories and their Backlog.md boards",
+		Long:          strings.TrimSuffix(rootHelp(), "\n"),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -86,6 +88,7 @@ func newRoot(d deps) *cobra.Command {
 	}
 	root.SetOut(d.stdout)
 	root.SetErr(d.stderr)
+	attachHelp(root, rootHelp())
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return usageError{err: fmt.Errorf("mish: %w \u2014 run 'mish --help' for the command list", err)}
@@ -97,4 +100,3 @@ func newRoot(d deps) *cobra.Command {
 	)
 	return root
 }
-
