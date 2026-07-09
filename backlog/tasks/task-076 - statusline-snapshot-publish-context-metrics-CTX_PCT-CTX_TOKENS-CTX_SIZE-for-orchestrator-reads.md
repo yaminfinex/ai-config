@@ -3,10 +3,10 @@ id: TASK-076
 title: >-
   statusline snapshot: publish context metrics (CTX_PCT/CTX_TOKENS/CTX_SIZE) for
   orchestrator reads
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-08 20:27'
-updated_date: '2026-07-08 23:42'
+updated_date: '2026-07-09 09:44'
 labels: []
 dependencies: []
 priority: high

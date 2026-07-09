@@ -3,9 +3,10 @@ id: TASK-110
 title: >-
   Check-suite gate: forbid discarded registry.UpdateLocked errors
   (systemic-review 3.1 enforcement residue)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 07:05'
+updated_date: '2026-07-09 09:44'
 labels: []
 dependencies: []
 priority: high

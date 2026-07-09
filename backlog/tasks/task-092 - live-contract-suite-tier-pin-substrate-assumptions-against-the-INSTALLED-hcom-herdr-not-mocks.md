@@ -3,9 +3,10 @@ id: TASK-092
 title: >-
   live-contract suite tier: pin substrate assumptions against the INSTALLED
   hcom/herdr, not mocks
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 05:09'
+updated_date: '2026-07-09 09:44'
 labels: []
 dependencies: []
 priority: high

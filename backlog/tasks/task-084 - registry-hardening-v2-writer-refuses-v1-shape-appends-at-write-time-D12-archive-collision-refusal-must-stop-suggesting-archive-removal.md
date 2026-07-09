@@ -3,9 +3,10 @@ id: TASK-084
 title: >-
   registry hardening: v2 writer refuses v1-shape appends at write time (D12);
   archive-collision refusal must stop suggesting archive removal
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-08 23:53'
+updated_date: '2026-07-09 09:44'
 labels: []
 dependencies: []
 priority: high

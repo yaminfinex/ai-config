@@ -3,9 +3,10 @@ id: TASK-083
 title: >-
   spawned-agent shim resolves herder from the agent worktree — old-build binary
   writes v1 rows into the live v2 registry (write-freeze incident)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-08 23:53'
+updated_date: '2026-07-09 09:44'
 labels: []
 dependencies: []
 priority: high
