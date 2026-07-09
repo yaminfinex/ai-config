@@ -32,6 +32,10 @@ real_hcom() {
   command -v hcom 2>/dev/null
 }
 
+real_herdr() {
+  command -v herdr 2>/dev/null
+}
+
 run_hcom_bootstrap() {
   local hcom_bin="$1" hcom_dir="$2"
   local payload
@@ -41,6 +45,24 @@ run_hcom_bootstrap() {
     --arg cwd "$PWD" \
     '{hook_event_name:"SessionStart",session_id:$sid,transcript_path:$transcript,cwd:$cwd}')"
   printf '%s' "$payload" | HCOM_DIR="$hcom_dir" "$hcom_bin" sessionstart
+}
+
+bootstrap_instance_name() {
+  local input="$ROOT/bootstrap-name-envelope.json"
+  cat >"$input"
+  python3 - "$input" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1]) as f:
+    root = json.load(f)
+ac = root["hookSpecificOutput"]["additionalContext"]
+marker = re.search(r"\[hcom:([^\]]+)\]", ac)
+if not marker:
+    raise SystemExit("missing hcom marker")
+print(marker.group(1).strip())
+PY
 }
 
 assert_bootstrap_extracts() {
@@ -72,28 +94,39 @@ def extract(text):
 base = extract(ac)
 if base["display_name"] == "" or base["instance_name"] == "" or base["sender"] == "":
     raise AssertionError("blank extracted identity")
+if base["tag"] != "live-contract":
+    raise AssertionError(f"real hcom tag line did not extract: {base!r}")
 
-insert_before = "\n\nThis is session context"
-if insert_before not in ac:
-    raise AssertionError("real hcom bootstrap missing insertion anchor")
+tag_line = None
+for line in ac.splitlines():
+    if "You are tagged" in line:
+        tag_line = line
+        break
+if tag_line is None:
+    raise AssertionError("real hcom bootstrap did not render a tag line")
+if "Message your group:" not in tag_line or "@live-contract-" not in tag_line:
+    raise AssertionError(f"real hcom tag line lost group-send guidance: {tag_line!r}")
 
-for quote in ("double", "single"):
-    if quote == "double":
-        tag_line = 'You are tagged "live-contract". Message your group: send @live-contract- -- msg'
-    else:
-        tag_line = "You are tagged 'live-contract'. Message your group: send @live-contract- -- msg"
-    variant = ac.replace(insert_before, "\n\n" + tag_line + insert_before, 1)
-    got = extract(variant)
+if '"live-contract"' in tag_line:
+    twin_line = tag_line.replace('"live-contract"', "'live-contract'", 1)
+elif "'live-contract'" in tag_line:
+    twin_line = tag_line.replace("'live-contract'", '"live-contract"', 1)
+else:
+    raise AssertionError(f"real hcom tag line did not quote the tag: {tag_line!r}")
+
+variant = ac.replace(tag_line, twin_line, 1)
+for label, text in (("real", ac), ("quote-style twin", variant)):
+    got = extract(text)
     if got["tag"] != "live-contract":
-        raise AssertionError(f"{quote}-quoted tag did not extract: {got!r}")
+        raise AssertionError(f"{label} tag did not extract: {got!r}")
     for key in ("display_name", "instance_name", "sender"):
         if got[key] != base[key]:
-            raise AssertionError(f"{quote}-quoted variant changed {key}: {got!r} vs {base!r}")
+            raise AssertionError(f"{label} changed {key}: {got!r} vs {base!r}")
 PY
 }
 
 check_hcom_bootstrap() {
-  local hcom_bin="$1" dir="$ROOT/hcom-bootstrap" out rc
+  local hcom_bin="$1" dir="$ROOT/hcom-bootstrap" out name tagged rc
   mkdir -p "$dir"
   out="$(run_hcom_bootstrap "$hcom_bin" "$dir" 2>"$dir/stderr")"
   rc=$?
@@ -101,19 +134,33 @@ check_hcom_bootstrap() {
     fail "hcom bootstrap extraction" "real hcom sessionstart exited $rc: $(cat "$dir/stderr")"
     return
   fi
-  if assert_bootstrap_extracts <<<"$out"; then
-    pass "hcom bootstrap extraction accepts real output and both tag quote styles"
+  if ! name="$(bootstrap_instance_name <<<"$out" 2>"$dir/name.err")"; then
+    fail "hcom bootstrap extraction" "could not extract scratch hcom name: $(cat "$dir/name.err")"
+    return
+  fi
+  if ! HCOM_DIR="$dir" "$hcom_bin" config -i "$name" tag live-contract >"$dir/config.out" 2>"$dir/config.err"; then
+    fail "hcom bootstrap extraction" "could not configure scratch hcom tag: $(cat "$dir/config.err")"
+    return
+  fi
+  tagged="$(run_hcom_bootstrap "$hcom_bin" "$dir" 2>"$dir/tagged.stderr")"
+  rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "hcom bootstrap extraction" "tagged hcom sessionstart exited $rc: $(cat "$dir/tagged.stderr")"
+    return
+  fi
+  if assert_bootstrap_extracts <<<"$tagged"; then
+    pass "hcom bootstrap extraction accepts real tagged output and the alternate quote style"
   else
-    fail "hcom bootstrap extraction" "extractor rejected real hcom bootstrap or a quote-style twin"
+    fail "hcom bootstrap extraction" "extractor rejected real tagged hcom bootstrap or quote-style twin"
   fi
 }
 
 check_hcom_list_shape() {
-  local out rc
-  out="$(hcom list self --json 2>"$ROOT/hcom-list-self.err")"
+  local hcom_bin="$1" out rc
+  out="$("$hcom_bin" list self --json 2>"$ROOT/hcom-list-self.err")"
   rc=$?
   if [[ "$rc" -ne 0 ]]; then
-    skip "hcom list self --json shape" "no live hcom self in this environment"
+    fail "hcom list self --json shape" "hcom list self --json exited $rc: $(cat "$ROOT/hcom-list-self.err")"
     return
   fi
   if jq -e '
@@ -131,11 +178,15 @@ check_hcom_list_shape() {
 }
 
 check_hcom_roster_launch_context() {
-  local out rc
-  out="$(hcom list --json 2>"$ROOT/hcom-list.err")"
+  local hcom_bin="$1" out rc
+  out="$("$hcom_bin" list --json 2>"$ROOT/hcom-list.err")"
   rc=$?
   if [[ "$rc" -ne 0 ]]; then
-    skip "hcom roster launch_context fields" "hcom list --json unavailable"
+    fail "hcom roster launch_context fields" "hcom list --json exited $rc: $(cat "$ROOT/hcom-list.err")"
+    return
+  fi
+  if jq -e 'type == "array" and ([.[] | select(.launch_context.terminal_preset_effective != null)] | length == 0)' <<<"$out" >/dev/null; then
+    skip "hcom roster launch_context fields" "no hcom-launched roster entries with launch_context"
     return
   fi
   if jq -e '
@@ -156,11 +207,11 @@ check_hcom_roster_launch_context() {
 }
 
 check_herdr_agent_list() {
-  local out rc
-  out="$(herdr agent list 2>"$ROOT/herdr-agent-list.err")"
+  local herdr_bin="$1" out rc
+  out="$("$herdr_bin" agent list 2>"$ROOT/herdr-agent-list.err")"
   rc=$?
   if [[ "$rc" -ne 0 ]]; then
-    skip "herdr agent list envelope" "herdr agent list unavailable: $(cat "$ROOT/herdr-agent-list.err")"
+    fail "herdr agent list envelope" "herdr agent list exited $rc: $(cat "$ROOT/herdr-agent-list.err")"
     return
   fi
   if jq -e '
@@ -179,30 +230,33 @@ check_herdr_agent_list() {
 }
 
 check_herdr_schema() {
-  local current="$ROOT/herdr-api-schema.json"
+  local herdr_bin="$1" current="$ROOT/herdr-api-schema.json"
   if [[ ! -f "$GOLDEN_SCHEMA" ]]; then
     fail "herdr api schema golden" "missing $GOLDEN_SCHEMA"
     return
   fi
-  if ! herdr api schema --json >"$current" 2>"$ROOT/herdr-schema.err"; then
-    skip "herdr api schema --json drift check" "schema unavailable: $(cat "$ROOT/herdr-schema.err")"
+  if ! "$herdr_bin" api schema --json >"$current" 2>"$ROOT/herdr-schema.err"; then
+    fail "herdr api schema --json drift check" "herdr api schema --json failed: $(cat "$ROOT/herdr-schema.err")"
     return
   fi
   if diff -u "$GOLDEN_SCHEMA" "$current" >"$ROOT/herdr-schema.diff"; then
     pass "herdr api schema --json matches committed snapshot"
   else
-    fail "herdr api schema --json drift check" "diff at $ROOT/herdr-schema.diff"
+    printf '%s\n' '--- herdr api schema diff (first 200 lines) ---'
+    sed -n '1,200p' "$ROOT/herdr-schema.diff"
+    fail "herdr api schema --json drift check" "schema differs from committed golden"
   fi
 }
 
 socket_path_from_status() {
-  python3 <<'PY'
+  local herdr_bin="$1"
+  python3 - "$herdr_bin" <<'PY'
 import json
 import subprocess
 import sys
 
 try:
-    out = subprocess.check_output(["herdr", "status", "server"], stderr=subprocess.STDOUT, text=True)
+    out = subprocess.check_output([sys.argv[1], "status", "server"], stderr=subprocess.STDOUT, text=True)
 except Exception as exc:
     print(str(exc), file=sys.stderr)
     sys.exit(1)
@@ -280,13 +334,15 @@ PY
 }
 
 check_herdr_socket_snapshot() {
-  local sock out
-  if ! sock="$(socket_path_from_status 2>"$ROOT/herdr-status.err")"; then
+  local herdr_bin="$1" sock out
+  if ! sock="$(socket_path_from_status "$herdr_bin" 2>"$ROOT/herdr-status.err")"; then
     skip "herdr socket session.snapshot nested shape" "server status unavailable: $(cat "$ROOT/herdr-status.err")"
+    check_snapshot_negative_demo
     return
   fi
   if ! out="$(fetch_socket_snapshot "$sock" 2>"$ROOT/herdr-socket.err")"; then
     skip "herdr socket session.snapshot nested shape" "socket request unavailable: $(cat "$ROOT/herdr-socket.err")"
+    check_snapshot_negative_demo
     return
   fi
   if assert_snapshot_response <<<"$out"; then
@@ -295,6 +351,10 @@ check_herdr_socket_snapshot() {
     fail "herdr socket session.snapshot nested shape" "unexpected payload"
   fi
 
+  check_snapshot_negative_demo
+}
+
+check_snapshot_negative_demo() {
   local flat='{"id":"negative-demo","result":{"type":"session_snapshot","protocol":16,"panes":[],"agents":[]}}'
   if assert_snapshot_response <<<"$flat" >/dev/null 2>&1; then
     fail "negative demo: flat session.snapshot is rejected" "flat-serving response passed nested-shape assertion"
@@ -313,18 +373,18 @@ fi
 
 if hcom_bin="$(real_hcom)" && [[ -n "$hcom_bin" && -x "$hcom_bin" ]]; then
   check_hcom_bootstrap "$hcom_bin"
-  check_hcom_list_shape
-  check_hcom_roster_launch_context
+  check_hcom_list_shape "$hcom_bin"
+  check_hcom_roster_launch_context "$hcom_bin"
 else
   skip "hcom bootstrap extraction" "installed hcom not found"
   skip "hcom list self --json shape" "installed hcom not found"
   skip "hcom roster launch_context fields" "installed hcom not found"
 fi
 
-if have_cmd herdr; then
-  check_herdr_agent_list
-  check_herdr_schema
-  check_herdr_socket_snapshot
+if herdr_bin="$(real_herdr)" && [[ -n "$herdr_bin" && -x "$herdr_bin" ]]; then
+  check_herdr_agent_list "$herdr_bin"
+  check_herdr_schema "$herdr_bin"
+  check_herdr_socket_snapshot "$herdr_bin"
 else
   skip "herdr agent list envelope" "installed herdr not found"
   skip "herdr api schema --json drift check" "installed herdr not found"

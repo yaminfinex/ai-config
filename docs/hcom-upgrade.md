@@ -44,8 +44,9 @@ Written after the 0.7.22 → 0.7.23 upgrade (2026-07-08); shaped by what actuall
    the repo root before and after applying the pin. The hcom predicates must pass
    against the installed binary: real SessionStart bootstrap extraction, focused
    `hcom list --json` single-object shape, and roster `launch_context` fields. A
-   visible skip is acceptable only on machines without installed hcom or no live
-   hcom self for the focused lookup.
+   visible skip is acceptable only when installed hcom is absent or no roster entries
+   advertise hcom launch context; once the binary is resolved, command failures are
+   hard failures.
 7. **Live smoke (the upgrade gate):** spawn a throwaway tagged agent
    (`herder spawn --role smoke<ver> --agent claude --prompt 'quote your "You are tagged"
    line back to me'`) and confirm (a) spawn binds + delivers, and (b) the agent's bootstrap
