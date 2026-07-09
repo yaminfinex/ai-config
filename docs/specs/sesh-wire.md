@@ -45,7 +45,17 @@ only when parsing cannot provide one.
 The store preserves conflicting histories by assigning a zero-based `generation` per
 `(tool, session_id, file_uuid)`. Generation `0` is the first history seen. Later
 generations are opened only by store conflict handling or by a new fingerprint for the
-same file UUID. The shipper does not invent generation numbers.
+same file UUID. The shipper does not invent generation numbers. The active generation of
+a file identity is the highest generation number.
+
+The shipper evaluates size regression (source size below its cursor) before fingerprint
+comparison; a file recreated below the fingerprint window is caught by size regression,
+never by fingerprint mismatch.
+
+A generation's recorded fingerprint is authoritative from its own mirrored bytes: once a
+generation's high-water reaches the fingerprint window, the store computes and records
+the fingerprint over mirrored bytes `[0, 1024)`; before that point the recorded value is
+the client's claim, or null. Recovery GET returns the recorded value.
 
 ## PUT Bytes
 
@@ -74,6 +84,10 @@ The store stamps tailnet identity from the connection at M4. Any client-supplied
 tailnet identity or display-owner header is ignored and must not affect storage,
 auth, or rendering.
 
+Facts are append-only observations. Omitting `X-Sesh-Session-Owner` on a later PUT
+never retracts a previously shipped observation; the store must not interpret absence
+as a change of owner.
+
 ### Successful ACK
 
 Status: `200 OK`.
@@ -92,11 +106,20 @@ Status: `200 OK`.
 }
 ```
 
-`high_water` is the next byte offset the shipper may send for the selected generation.
-The shipper advances its cursor only after receiving this response.
+`high_water` is the next byte offset the store will accept for the selected generation.
+On any `200` the shipper sets its cursor to the returned `high_water` exactly — not to
+`offset + body length` — so replays after a shipper restart are absorbed by the store's
+answer. No other response advances a cursor.
 
 ### PUT Semantics
 
+- Fingerprint routing happens before offset routing. If the request fingerprint does
+  not match the active generation's recorded fingerprint, the store opens a generation
+  for that fingerprint if none exists, selects the existing one otherwise, and returns
+  `409 fingerprint_conflict` carrying the selected generation and its current
+  `high_water`; the shipper resumes against it by rewinding to that value. A request
+  without a fingerprint is evaluated by byte comparison alone — absence is never a
+  mismatch.
 - If `offset == high_water`, the store appends the body to the active generation's
   mirror file, fsyncs, records last-PUT time and facts, returns `200`, then publishes an
   internal append event for indexing.
@@ -104,10 +127,15 @@ The shipper advances its cursor only after receiving this response.
   at that offset.
   - Identical bytes are an idempotent replay and return `200` with the current
     `high_water`.
-  - Divergent bytes are never overwritten. The store returns `409 conflict` and opens or
-    points at a new generation when the fingerprint proves a recreated file; that
-    response carries the new generation and `high_water: 0`. If the same fingerprint
-    diverges against already-ACKed bytes, the file is poisoned.
+  - Divergent bytes are never overwritten and never poison a file on first sight. The
+    first divergent PUT against a generation returns `409 byte_conflict` with the
+    current generation and `high_water` unchanged. If the next PUT for that generation
+    diverges again (no intervening successful PUT), the store opens a new generation —
+    empty, `high_water: 0` — and returns `409 generation_opened` carrying it. If
+    conflict handling would open a second conflict-driven generation for the same
+    `(file_uuid, fingerprint)`, the store instead marks the file identity poisoned and
+    answers `423 poisoned_file` from then on. Existing generations' bytes are never
+    modified by any of this.
 - If `offset > high_water`, the store returns `422 offset_gap` with the current
   `high_water`; the shipper rewinds to that value.
 - If the mirror append or fsync fails, the store returns `5xx` and does not ACK.
@@ -135,15 +163,22 @@ All error responses use `application/json`:
 | HTTP | `error` | Meaning | Required shipper reaction |
 |---|---|---|---|
 | 400 | `malformed_request` | Bad path, missing required header, bad offset, invalid UUID, invalid fingerprint syntax, or wrong wire version | Do not advance; surface in `sesh status`; retry only after local config or code changes |
-| 403 | `out_of_grant` | Tailnet identity is authenticated but not allowed to ship or read | Hold cursor; retry with backoff; surface as auth/config failure |
+| 400 | `unknown_tool` | Tool segment is not in the closed enum (shipper/store version skew, or a tool added without a wire amendment) | Hold every file of that tool; surface prominently; no retry loop — resolution is an upgrade or a wire amendment |
+| 403 | `out_of_grant` | Tailnet identity is authenticated but not allowed to ship or read | Hold cursor; retry with slow jittered backoff (grants change without redeploys); surface as auth/config failure |
 | 404 | `not_found` | Recovery lookup has no mirror state for this file UUID/fingerprint | Start from offset 0 |
-| 409 | `byte_conflict` | Request bytes diverge from mirrored bytes at an already-ACKed offset | Treat source path as recreated; clear local cursor for that file identity; rescan/recover; retry from offset 0 unless response says `poisoned` |
-| 409 | `fingerprint_conflict` | Same file UUID now presents a new fingerprint; store has opened or selected a new generation | Clear local cursor for that file identity and retry from offset 0 with the current fingerprint |
+| 409 | `byte_conflict` | Request bytes diverge from mirrored bytes at an already-ACKed offset | Re-check local identity: size regression first, then re-fingerprint. Fingerprint changed → resume with the new fingerprint (the `fingerprint_conflict` path selects the right generation). Unchanged → retry the same PUT once; a second divergence yields `generation_opened` or `poisoned_file` |
+| 409 | `fingerprint_conflict` | Request fingerprint differs from the active generation's; store opened or selected the generation for that fingerprint | Set cursor to the returned `high_water` (0 for a fresh generation) and continue with the current fingerprint |
+| 409 | `generation_opened` | Repeated divergence made the store open a new, empty generation | Set cursor to the returned `high_water` (0) and re-ship from there, so the new generation receives the complete new history from offset 0 |
 | 413 | `body_too_large` | PUT body exceeds 4 MiB | Split the range into smaller PUT bodies and retry without advancing |
 | 422 | `offset_gap` | Request offset is beyond the store high-water | Rewind cursor to returned `high_water` and retry |
-| 423 | `poisoned_file` | Repeated conflict for the same file UUID/fingerprint/generation | Stop retrying this file; keep other files shipping; surface poisoned state in `sesh status` |
+| 423 | `poisoned_file` | Conflict recurred for the same `(file_uuid, fingerprint)` after a conflict-driven generation was already opened for it | Stop retrying this file; freeze its cursor (deletion GC still applies); keep other files shipping; surface poisoned state in `sesh status` |
 | 500 | `mirror_write_failed` | Store could not durably write or fsync mirror bytes | Do not advance; retry with backoff |
 | 503 | `store_unavailable` | Store is temporarily unable to accept bytes | Do not advance; retry with backoff |
+
+`shipper_action` in error bodies is informational for logs and operators; the `error`
+code is the normative field a shipper switches on. A store that cannot be reached at
+all is treated exactly like `store_unavailable`: hold position, jittered backoff,
+cursor untouched, no local queue — the source file is the only buffer.
 
 `out_of_grant` is used for both PUT and read denial once tailnet auth is enabled. Before
 M4, serve mode binds ingest to loopback only; non-loopback ingest attempts must be
@@ -185,10 +220,21 @@ Status: `200 OK`.
 ```
 
 Status `404 not_found` with `shipper_action: "start_from_zero"` means the store has no
-mirror state for this file UUID; the shipper starts from offset 0. If a UUID-only
-recovery response contains multiple generations and the shipper still has no
-fingerprint, the shipper starts from offset 0 rather than guessing a high-water from an
-unrelated generation.
+mirror state for this file UUID; the shipper starts from offset 0.
+
+Required shipper reactions to a `200` recovery response:
+
+- Local fingerprint equals a returned generation's fingerprint → resume that generation
+  at its `high_water` (the highest-numbered match when several share a fingerprint).
+- Local fingerprint matches no returned generation → ship from offset 0 with the local
+  fingerprint; the store's `fingerprint_conflict` handling selects or opens the right
+  generation.
+- No local fingerprint (source below the fingerprint window) → ship from offset 0; the
+  body is at most window-sized and the store absorbs replays by overwrite-compare.
+- The generation the shipper would resume is marked `poisoned` → do not resume; treat
+  the file as after a `423` (frozen cursor, surfaced in `sesh status`).
+
+Recovery GET requires `X-Sesh-Wire-Version` like every other call.
 
 ## Internal Append Event
 
