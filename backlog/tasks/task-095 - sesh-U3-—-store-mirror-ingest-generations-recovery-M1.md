@@ -1,10 +1,10 @@
 ---
 id: TASK-095
 title: 'sesh U3 — store: mirror ingest + generations + recovery (M1)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 05:27'
-updated_date: '2026-07-09 05:47'
+updated_date: '2026-07-09 05:56'
 labels:
   - sesh
 dependencies:

@@ -1,9 +1,10 @@
 ---
 id: TASK-099
 title: 'sesh U7 — surface: recency page + drill-down + fallback (M2)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 05:28'
+updated_date: '2026-07-09 05:56'
 labels:
   - sesh
 dependencies:

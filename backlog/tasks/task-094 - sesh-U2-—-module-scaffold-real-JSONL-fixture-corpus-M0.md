@@ -1,11 +1,11 @@
 ---
 id: TASK-094
 title: sesh U2 — module scaffold + real-JSONL fixture corpus (M0)
-status: In Progress
+status: Done
 assignee:
   - sesh-scaffold-buro
 created_date: '2026-07-09 05:27'
-updated_date: '2026-07-09 05:47'
+updated_date: '2026-07-09 05:56'
 labels:
   - sesh
 dependencies:
@@ -26,15 +26,15 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U2
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 go build ./... and go vet ./... clean; darwin/arm64 + linux/amd64 cross-compiles pass
-- [ ] #2 sesh --help lists the five subcommands; each stub exits 1 not-implemented
-- [ ] #3 Fixture-inventory test asserts each named churn case present and parses as line-JSONL
-- [ ] #4 Module-isolation test: no imports from elsewhere in the repo
-- [ ] #5 fixtures README records provenance + scrub checklist for every fixture
+- [x] #1 go build ./... and go vet ./... clean; darwin/arm64 + linux/amd64 cross-compiles pass
+- [x] #2 sesh --help lists the five subcommands; each stub exits 1 not-implemented
+- [x] #3 Fixture-inventory test asserts each named churn case present and parses as line-JSONL
+- [x] #4 Module-isolation test: no imports from elsewhere in the repo
+- [x] #5 fixtures README records provenance + scrub checklist for every fixture
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Fixture rulings (thread sesh-u2, #25146): trailing-partial case = byte-prefix-truncated COPY of the real normal session (real bytes, chosen read boundary; provenance must state source + offset), untruncated original kept alongside. Interleaved-writers case = real forked-parentUuid-chain file as honest stand-in; OPEN GAP recorded: no genuine two-writer file exists on this claude version (two-terminal resume writes per-terminal files — contradicts prior-art interleave claim; carried to design record). Resume-pair verified with 141 overlapping message uuids.
+Merged to sesh-build @ dd0e847 (ff). Orchestrator re-ran all gates fresh (-count=1): test/vet/gofmt clean, darwin-arm64 + linux-amd64 cross-compiles pass, stubs exit 1, fixture inventory + isolation tests green; secret spot-scan clean (only hits = scrub checklist text in README). Corpus: 5 real churn cases + resume pair that produced the U1 empirical finding. Wire types carry a two-way drift guard against sesh-wire.md verbatim JSON examples. Sliding doors (accepted): ErrorResponse.Code for Go name clash; db-tagged single IndexMessage struct. Worker: sesh-scaffold-buro, kept alive for U5. Trail: thread sesh-u2.
 <!-- SECTION:NOTES:END -->
