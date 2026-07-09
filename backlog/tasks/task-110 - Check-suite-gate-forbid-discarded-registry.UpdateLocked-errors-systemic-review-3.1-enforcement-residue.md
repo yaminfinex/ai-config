@@ -3,10 +3,10 @@ id: TASK-110
 title: >-
   Check-suite gate: forbid discarded registry.UpdateLocked errors
   (systemic-review 3.1 enforcement residue)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 07:05'
-updated_date: '2026-07-09 09:44'
+updated_date: '2026-07-09 13:01'
 labels: []
 dependencies: []
 priority: high
@@ -32,3 +32,9 @@ SETTLED DECISION: the gate lives in the bare check-*.sh suite (runs in the stand
 - [ ] #3 Current tree passes the gate, with any pre-existing discards either fixed or explicitly listed in the task
 - [ ] #4 Full check suite still ALL GREEN bare from repo root
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged 0c90343 (c935c0f+9f1183f+f093ab2+7660633). Four adversarial rounds by mufa: allowlist scanner → deny-by-default CallExpr analysis, binding-aware checked-err, sibling-branch subtree exclusion. 33-probe battery green. Post-merge gate running.
+<!-- SECTION:NOTES:END -->
