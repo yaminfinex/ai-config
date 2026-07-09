@@ -47,7 +47,9 @@ The store preserves conflicting histories by assigning a zero-based `generation`
 `(tool, session_id, file_uuid)`. Generation `0` is the first history seen. Later
 generations are opened only by store conflict handling or by a new fingerprint for the
 same file UUID. The shipper does not invent generation numbers. The active generation of
-a file identity is the highest generation number.
+a file identity is the highest generation number. The active generation is the routing
+target only for PUTs that carry no fingerprint; a PUT with a fingerprint routes to its
+matching generation regardless of which generation is active.
 
 The shipper evaluates size regression (source size below its cursor) before fingerprint
 comparison; a file recreated below the fingerprint window is caught by size regression,
@@ -119,13 +121,15 @@ every `200`, append ACK and replay ACK alike. No other response advances a curso
 
 ### PUT Semantics
 
-- Fingerprint routing happens before offset routing. If the request fingerprint does
-  not match the active generation's recorded fingerprint, the store opens a generation
-  for that fingerprint if none exists, selects the existing one otherwise, and returns
-  `409 fingerprint_conflict` carrying the selected generation and its current
-  `high_water`; the shipper resumes against it by rewinding to that value. A request
-  without a fingerprint is evaluated by byte comparison alone — absence is never a
-  mismatch.
+- Fingerprint routing happens before offset routing and is silent. When the request
+  carries a fingerprint, the store routes the PUT to the generation whose recorded
+  fingerprint matches it (the highest-numbered one when several match); offset routing
+  then proceeds against that generation, and the ACK or error envelope carries that
+  generation's number and high_water. If no generation matches, the store opens a new,
+  empty generation for that fingerprint and returns 409 fingerprint_conflict carrying it
+  with high_water: 0 — the only case that returns fingerprint_conflict. A request
+  without a fingerprint routes to the active generation and is evaluated by byte
+  comparison alone — absence is never a mismatch.
 - If `offset == high_water`, the store appends the body to the active generation's
   mirror file, fsyncs, records last-PUT time and facts, returns `200`, then publishes an
   internal append event for indexing.
@@ -180,7 +184,7 @@ All error responses use `application/json`:
 | 403 | `out_of_grant` | Tailnet identity is authenticated but not allowed to ship or read | Hold cursor; retry with slow jittered backoff (grants change without redeploys); surface as auth/config failure |
 | 404 | `not_found` | Recovery lookup has no mirror state for this file UUID/fingerprint | Start from offset 0 |
 | 409 | `byte_conflict` | Request bytes diverge from mirrored bytes at an already-ACKed offset | Re-check local identity: size regression first, then re-fingerprint. Fingerprint changed → resume with the new fingerprint (the `fingerprint_conflict` path selects the right generation). Unchanged → retry the same PUT once; a second divergence yields `generation_opened` or `poisoned_file` |
-| 409 | `fingerprint_conflict` | Request fingerprint differs from the active generation's; store opened or selected the generation for that fingerprint | Set cursor to the returned `high_water` (0 for a fresh generation) and continue with the current fingerprint |
+| 409 | `fingerprint_conflict` | Request fingerprint is new for this file UUID; the store opened an empty generation for it | Set cursor to the returned `high_water` (0 for a fresh generation) and continue with the current fingerprint |
 | 409 | `generation_opened` | Repeated divergence made the store open a new, empty generation | Set cursor to the returned `high_water` (0) and re-ship from there, so the new generation receives the complete new history from offset 0 |
 | 413 | `body_too_large` | PUT body exceeds 4 MiB | Split the range into smaller PUT bodies and retry without advancing |
 | 422 | `offset_gap` | Request offset is beyond the store high-water | Rewind cursor to returned `high_water` and retry |
@@ -240,8 +244,8 @@ Required shipper reactions to a `200` recovery response:
 - Local fingerprint equals a returned generation's fingerprint → resume that generation
   at its `high_water` (the highest-numbered match when several share a fingerprint).
 - Local fingerprint matches no returned generation → ship from offset 0 with the local
-  fingerprint; the store's `fingerprint_conflict` handling selects or opens the right
-  generation.
+  fingerprint; the store's fingerprint routing silently selects the right generation or
+  opens a new one (fingerprint_conflict).
 - No local fingerprint (source below the fingerprint window) → ship from offset 0; the
   body is at most window-sized and the store absorbs replays by overwrite-compare.
 - The generation the shipper would resume is marked `poisoned` → do not resume; treat
@@ -338,6 +342,9 @@ same `sesh_index_messages` content aside from store-local primary keys.
 
 ## Changelog
 
+- 2026-07-09 — Amendment 2: fingerprint-bearing PUTs silently route to the
+  highest-numbered generation with the matching recorded fingerprint; `fingerprint_conflict`
+  is only returned when opening a new empty generation for a new fingerprint.
 - 2026-07-09 — Amendment 1: clamp 200-ACK cursor advancement to the most recently
   observed source size to stop same-prefix truncation loops; pin spanning replay PUTs to
   compare the overlap and append matching excess under fsync-before-ACK; relabel the
