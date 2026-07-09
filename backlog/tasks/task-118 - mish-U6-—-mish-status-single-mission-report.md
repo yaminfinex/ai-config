@@ -1,9 +1,10 @@
 ---
 id: TASK-118
 title: mish U6 — mish status single-mission report
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 09:46'
+updated_date: '2026-07-09 10:07'
 labels:
   - mish
 dependencies: []
