@@ -78,10 +78,13 @@ when the rendered values are unchanged, and tolerates timestamp drift between
 multiple sidecars by not rewriting when `HCOM_UNREAD` is unchanged and the
 existing `HCOM_LAST_TS` is within one sidecar tick. Unsafe names are skipped,
 and if multiple live rows map to the same safe key in one roster pass, the
-writer removes that `<safe-name>.env` once and writes nothing for the key until
-the collision clears. Readers then omit the bus segment instead of showing
-another agent's data. Best-effort cleanup only removes `<safe-name>.env` files
-inside the `statusline/` directory. The writer never writes or deletes the
+writer removes that `<safe-name>.env` on each collided pass and writes nothing
+for the key until the collision clears. Readers then omit the bus segment
+instead of showing another agent's data. The collision guard is name-keyed only:
+a renderer with a stale duplicated `HCOM_INSTANCE_NAME` can still write context
+into the shared name's existing file until a future ownership token is added.
+Best-effort cleanup only removes `<safe-name>.env` files inside the
+`statusline/` directory. The writer never writes or deletes the
 `HCOM_STATUSLINE_STATE` override path. Sidecar writes preserve valid `CTX_*`
 values already present in the file.
 

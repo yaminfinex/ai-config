@@ -249,8 +249,8 @@ func TestStatuslineSnapshotWriterOmitsCollidedBaseName(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.writeRows(rows, time.Unix(101, 0))
-	if got := readFile(t, path); got != "reappeared\n" {
-		t.Fatalf("persistent collision removed more than once: %q", got)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("persistent collision did not remove reappeared file: err=%v", err)
 	}
 
 	w.writeRows([]hcomRow{{Name: "task067-sumo", BaseName: "sumo", UnreadCount: 2, StatusAgeS: 0}}, time.Unix(102, 0))

@@ -159,9 +159,6 @@ func (w *statuslineSnapshotWriter) writeIfChanged(name, content string) error {
 }
 
 func (w *statuslineSnapshotWriter) removeCollided(name string) {
-	if _, removed := w.collided[name]; removed {
-		return
-	}
 	w.remove(name)
 	w.collided[name] = struct{}{}
 }
