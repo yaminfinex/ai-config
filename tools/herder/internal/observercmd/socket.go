@@ -35,6 +35,7 @@ type socketResponse struct {
 type herdrSocketClient struct {
 	conn     net.Conn
 	socket   string
+	sockInfo os.FileInfo
 	errLog   io.Writer
 	writeMu  sync.Mutex
 	mu       sync.Mutex
@@ -51,26 +52,62 @@ func connectHerdrSocket(errLog io.Writer) (*herdrSocketClient, socketStatus, err
 	if err != nil {
 		return nil, st, err
 	}
-	if st.protocol != supportedHerdrProtocol {
-		return nil, st, fmt.Errorf("herdr protocol incompatible: observer supports %d, server reported %d", supportedHerdrProtocol, st.protocol)
+	if err := validateSocketStatus(st); err != nil {
+		return nil, st, err
 	}
-	if !st.compatible {
-		return nil, st, fmt.Errorf("herdr protocol incompatible: %s", st.detail)
+	sockInfo, err := os.Stat(st.socket)
+	if err != nil {
+		return nil, st, err
 	}
 	conn, err := net.DialTimeout("unix", st.socket, 2*time.Second)
 	if err != nil {
 		return nil, st, err
 	}
+	afterDial, err := os.Stat(st.socket)
+	if err != nil {
+		_ = conn.Close()
+		return nil, st, err
+	}
+	if !os.SameFile(sockInfo, afterDial) {
+		_ = conn.Close()
+		return nil, st, fmt.Errorf("herdr socket incarnation changed during connect")
+	}
 	c := &herdrSocketClient{
-		conn:    conn,
-		socket:  st.socket,
-		errLog:  errLog,
-		pending: map[string]chan socketResponse{},
-		events:  make(chan json.RawMessage, 32),
-		closed:  make(chan struct{}),
+		conn:     conn,
+		socket:   st.socket,
+		sockInfo: sockInfo,
+		errLog:   errLog,
+		pending:  map[string]chan socketResponse{},
+		events:   make(chan json.RawMessage, 32),
+		closed:   make(chan struct{}),
 	}
 	go c.readLoop()
 	return c, st, nil
+}
+
+func connectHerdrRPCClient(errLog io.Writer) (*herdrSocketClient, socketStatus, error) {
+	st, err := discoverHerdrSocket()
+	if err != nil {
+		return nil, st, err
+	}
+	if err := validateSocketStatus(st); err != nil {
+		return nil, st, err
+	}
+	sockInfo, err := os.Stat(st.socket)
+	if err != nil {
+		return nil, st, err
+	}
+	return &herdrSocketClient{socket: st.socket, sockInfo: sockInfo, errLog: errLog}, st, nil
+}
+
+func validateSocketStatus(st socketStatus) error {
+	if st.protocol != supportedHerdrProtocol {
+		return fmt.Errorf("herdr protocol incompatible: observer supports %d, server reported %d", supportedHerdrProtocol, st.protocol)
+	}
+	if !st.compatible {
+		return fmt.Errorf("herdr protocol incompatible: %s", st.detail)
+	}
+	return nil
 }
 
 func discoverHerdrSocket() (socketStatus, error) {
@@ -159,6 +196,9 @@ func compatBool(v any) bool {
 }
 
 func (c *herdrSocketClient) Close() {
+	if c.conn == nil {
+		return
+	}
 	c.mu.Lock()
 	c.closing = true
 	c.mu.Unlock()
@@ -289,8 +329,15 @@ func (c *herdrSocketClient) call(method string, params any, out any) error {
 }
 
 func (c *herdrSocketClient) callFresh(method string, params any, out any) error {
+	if err := c.verifySocketIncarnation(); err != nil {
+		return err
+	}
 	conn, err := net.DialTimeout("unix", c.socket, 2*time.Second)
 	if err != nil {
+		return err
+	}
+	if err := c.verifySocketIncarnation(); err != nil {
+		_ = conn.Close()
 		return err
 	}
 	rpc := &herdrSocketClient{
@@ -303,6 +350,20 @@ func (c *herdrSocketClient) callFresh(method string, params any, out any) error 
 	go rpc.readLoop()
 	defer rpc.Close()
 	return rpc.call(method, params, out)
+}
+
+func (c *herdrSocketClient) verifySocketIncarnation() error {
+	if c.socket == "" || c.sockInfo == nil {
+		return nil
+	}
+	current, err := os.Stat(c.socket)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(c.sockInfo, current) {
+		return fmt.Errorf("herdr socket incarnation changed")
+	}
+	return nil
 }
 
 func (c *herdrSocketClient) snapshot() (herdrcli.Snapshot, error) {
@@ -343,11 +404,25 @@ func (c *herdrSocketClient) subscribeObserverEvents() error {
 
 func (c *herdrSocketClient) nextEvent(timeout time.Duration) bool {
 	select {
+	case <-c.closed:
+		return false
+	default:
+	}
+	select {
 	case <-c.events:
 		return true
 	case <-c.closed:
 		return false
 	case <-time.After(timeout):
+		return false
+	}
+}
+
+func (c *herdrSocketClient) isClosed() bool {
+	select {
+	case <-c.closed:
+		return true
+	default:
 		return false
 	}
 }

@@ -578,6 +578,32 @@ JSONL
   wait "$pid" 2>/dev/null || true
 }
 
+t14_rebound_socket_starts_new_epoch() {
+  case_dir t14epoch
+  write_registry <<JSONL
+$node_row
+$(session_row guid-a seated a t1 p1 bus-a enroll old-a)
+$(session_row guid-b seated b t2 p2 bus-b enroll old-b)
+JSONL
+  snapshot '[{"pane_id":"p1","terminal_id":"t1","label":"a"},{"pane_id":"p2","terminal_id":"t2","label":"b"}]' '[]'
+  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local HERDER_OBSERVER_SWEEP_INTERVAL=1s "${HERDER[@]}" observer run >"$CASE/run.out" 2>"$CASE/run.err" &
+  pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    jq -e '.protocol_compatible == true' "$STATE/observer.status.json" >/dev/null 2>&1 && [[ -f "$HDR/subscribed" ]] && break
+    sleep 0.2
+  done
+  sleep 1.4
+  before="$(jq -s '[.[] | select(.event=="unseated" and .close_result=="observed_dead")] | length' "$STATE/registry.jsonl")"
+  snapshot '[{"pane_id":"pZ","terminal_id":"tZ","label":"z"}]' '[]'
+  start_socket_server
+  sleep 4
+  after="$(jq -s '[.[] | select(.event=="unseated" and .close_result=="observed_dead")] | length' "$STATE/registry.jsonl")"
+  [[ "$before" == "0" && "$after" == "0" ]] && pass "T-14 rebound socket starts new epoch without same-epoch unseats" || fail_case "T-14 rebound socket epoch guard" "$(cat "$STATE/registry.jsonl")"
+  grep -q 'herdr socket incarnation changed' "$CASE/run.err" && pass "T-14 rebound socket reconnects with incarnation-change cause" || fail_case "T-14 rebound socket reconnect log" "$(cat "$CASE/run.err" 2>/dev/null)"
+  run_herder "${HERDER[@]}" observer stop >/dev/null 2>&1 || true
+  wait "$pid" 2>/dev/null || true
+}
+
 tnudge_autostart() {
   case_dir nudge
   write_registry <<JSONL
@@ -609,6 +635,7 @@ run_step2() {
   t8_status_stop
   t12_close_after_first_rpc_transport
   t13_post_death_backoff_and_failed_heartbeat
+  t14_rebound_socket_starts_new_epoch
 }
 
 run_step3() {

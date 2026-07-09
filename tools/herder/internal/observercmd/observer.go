@@ -190,7 +190,7 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 	if err != nil {
 		return sweepResult{}, err
 	}
-	hd := loadHerdrState(hctx)
+	hd := loadHerdrState(hctx, stderr)
 	if !hd.available {
 		st.ProtocolCompatible = false
 		st.ProtocolDetail = hd.err.Error()
@@ -227,11 +227,11 @@ func loadProjection(path string, stderr io.Writer) (*v2.Projection, error) {
 	return v2.Load(f, v2.LoadOptions{Stderr: stderr})
 }
 
-func loadHerdrState(hctx *herdrContext) herdrState {
+func loadHerdrState(hctx *herdrContext, stderr io.Writer) herdrState {
 	if hctx != nil && hctx.client != nil {
 		return loadHerdrStateSocket(hctx, "socket")
 	}
-	client, st, err := connectHerdrSocket(nil)
+	client, st, err := connectHerdrRPCClient(stderr)
 	if err != nil {
 		if cliFallbackAllowed(st) {
 			if hd := loadHerdrStateCLI("cli-fallback"); hd.available {
@@ -877,8 +877,18 @@ func runDaemon(stdout, stderr io.Writer) int {
 		reconnect := false
 		reconnectCause := ""
 		for !reconnect {
+			if client.isClosed() {
+				reconnect = true
+				reconnectCause = client.closeCause().Error()
+				break
+			}
 			select {
 			case <-ticker.C:
+				if client.isClosed() {
+					reconnect = true
+					reconnectCause = client.closeCause().Error()
+					break
+				}
 				if err := sweepDaemonOnce(stderr, hctx, lock.path); err != nil {
 					reconnect = true
 					reconnectCause = fmt.Sprintf("sweep failed: %v", err)
@@ -889,6 +899,11 @@ func runDaemon(stdout, stderr io.Writer) int {
 				return 0
 			default:
 				if client.nextEvent(250 * time.Millisecond) {
+					if client.isClosed() {
+						reconnect = true
+						reconnectCause = client.closeCause().Error()
+						break
+					}
 					// Events are latency hints. A full sweep is still the correctness
 					// path, and it subsumes a targeted probe while preserving the
 					// same uninterrupted socket generation.
