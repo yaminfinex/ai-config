@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -87,7 +86,7 @@ func TestStatusWarnings(t *testing.T) {
 				writeTaskFile(t, missionDir, "tasks/task-1.md", "TASK-1", "To Do")
 				writeTaskFile(t, missionDir, "completed/task-1-copy.md", "TASK-1", "Done")
 			},
-			want: "warning: duplicate task ID TASK-1:",
+			want: "warning: duplicate task ID TASK-1: backlog/tasks/task-1.md, backlog/completed/task-1-copy.md",
 		},
 		{
 			name: "missing board",
@@ -107,6 +106,34 @@ func TestStatusWarnings(t *testing.T) {
 			},
 			want: "warning: artifacts missing: artifacts/",
 		},
+		{
+			name: "missing manifest key",
+			mutate: func(t *testing.T, missionDir string) {
+				replaceInFile(t, filepath.Join(missionDir, "mission.md"), "owner: riley\n", "")
+			},
+			want: "warning: missing mission.md frontmatter key: owner",
+		},
+		{
+			name: "malformed task",
+			mutate: func(t *testing.T, missionDir string) {
+				writeFile(t, filepath.Join(missionDir, "backlog", "tasks", "stray.md"), "# no frontmatter\n")
+			},
+			want: "warning: malformed task frontmatter: backlog/tasks/stray.md",
+		},
+		{
+			name: "unknown task status",
+			mutate: func(t *testing.T, missionDir string) {
+				writeTaskFile(t, missionDir, "tasks/task-1.md", "TASK-1", "Blocked")
+			},
+			want: "warning: task status outside board config: \"Blocked\"",
+		},
+		{
+			name: "missing task id",
+			mutate: func(t *testing.T, missionDir string) {
+				writeFile(t, filepath.Join(missionDir, "backlog", "tasks", "missing-id.md"), "---\nstatus: To Do\n---\n\n# Missing ID\n")
+			},
+			want: "warning: task missing id: backlog/tasks/missing-id.md",
+		},
 	}
 
 	for _, tt := range tests {
@@ -121,6 +148,9 @@ func TestStatusWarnings(t *testing.T) {
 			if !strings.Contains(stdout, tt.want) {
 				t.Fatalf("status output missing warning %q:\n%s", tt.want, stdout)
 			}
+			if stderr != "" {
+				t.Fatalf("warning case wrote stderr:\n%s", stderr)
+			}
 			for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
 				if strings.HasPrefix(line, "warning:") && strings.Contains(line, "\n") {
 					t.Fatalf("warning was not one line: %q", line)
@@ -130,8 +160,52 @@ func TestStatusWarnings(t *testing.T) {
 	}
 }
 
+func TestStatusMalformedManifestAndConfigDegradeToExitOKWarnings(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, missionDir string)
+		want   string
+	}{
+		{
+			name: "manifest yaml",
+			mutate: func(t *testing.T, missionDir string) {
+				replaceInFile(t, filepath.Join(missionDir, "mission.md"), "mission: perf-regression", "mission: [")
+			},
+			want: "warning: malformed mission.md frontmatter: mission.md",
+		},
+		{
+			name: "config yaml",
+			mutate: func(t *testing.T, missionDir string) {
+				replaceInFile(t, filepath.Join(missionDir, "backlog", "config.yml"), `statuses: ["To Do", "In Progress", "Done"]`, "statuses: [")
+			},
+			want: "warning: malformed board config: backlog/config.yml",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, missionDir := makeStatusMission(t, "perf-regression")
+			tt.mutate(t, missionDir)
+
+			stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+			if err != nil {
+				t.Fatalf("status returned err %v, want exit-0 success; stderr=%s stdout=%s", err, stderr, stdout)
+			}
+			if stderr != "" {
+				t.Fatalf("degraded warning wrote stderr:\n%s", stderr)
+			}
+			if !strings.Contains(stdout, tt.want) {
+				t.Fatalf("status output missing degraded warning %q:\n%s", tt.want, stdout)
+			}
+			if !strings.Contains(stdout, "mission: perf-regression") || !strings.Contains(stdout, "artifacts:") {
+				t.Fatalf("degraded report did not render partial block:\n%s", stdout)
+			}
+		})
+	}
+}
+
 func TestStatusStalenessWarningUsesReadOnlyGitSeam(t *testing.T) {
 	repo, missionDir := makeStatusMission(t, "perf-regression")
+	writeFile(t, filepath.Join(repo, ".git"), "gitdir: /tmp/repo.git\n")
 	var calls [][]string
 	d := statusTestDeps(repo, missionDir)
 	d.git = func(args []string, dir string) ([]byte, error) {
@@ -167,12 +241,10 @@ func TestStatusStalenessWarningUsesReadOnlyGitSeam(t *testing.T) {
 
 func TestStatusStalenessSkippedWhenRepoIsNotGit(t *testing.T) {
 	repo, missionDir := makeStatusMission(t, "perf-regression")
+	var calls [][]string
 	d := statusTestDeps(repo, missionDir)
 	d.git = func(args []string, dir string) ([]byte, error) {
-		if reflect.DeepEqual(args, []string{"rev-parse", "--is-inside-work-tree"}) {
-			return nil, errors.New("not git")
-		}
-		t.Fatalf("git should stop after non-git probe, got %v", args)
+		calls = append(calls, append([]string(nil), args...))
 		return nil, nil
 	}
 
@@ -182,6 +254,9 @@ func TestStatusStalenessSkippedWhenRepoIsNotGit(t *testing.T) {
 	}
 	if strings.Contains(stdout, "uncommitted or unpushed") {
 		t.Fatalf("non-git repo emitted staleness warning:\n%s", stdout)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("plain non-git repo invoked git seam: %v", calls)
 	}
 }
 
@@ -238,6 +313,27 @@ func TestStatusMissionFlagMissingRefusesBeforeOutput(t *testing.T) {
 			t.Fatalf("stderr missing %q:\n%s", want, stderr)
 		}
 	}
+}
+
+func TestStatusMissingBoardOmitsTaskCountTail(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "perf-regression")
+	if err := os.Remove(filepath.Join(missionDir, "backlog", "config.yml")); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	if err != nil {
+		t.Fatalf("status error: %v\nstderr=%s", err, stderr)
+	}
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(line, "board:") {
+			if strings.Contains(line, "(0 tasks)") {
+				t.Fatalf("missing board line kept task-count tail: %q", line)
+			}
+			return
+		}
+	}
+	t.Fatalf("status output missing board line:\n%s", stdout)
 }
 
 func executeStatus(t *testing.T, d deps, args ...string) (string, string, error) {

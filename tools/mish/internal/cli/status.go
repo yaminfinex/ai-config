@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -70,7 +69,11 @@ func runStatus(cmd *cobra.Command, d deps, missionFlag string, missionFlagSet bo
 
 	report, err := buildStatusReport(d, result)
 	if err != nil {
-		return err
+		return refusalError{
+			verb:    "status",
+			message: "could not read mission status",
+			remedy:  err.Error(),
+		}
 	}
 	fmt.Fprint(cmd.OutOrStdout(), report)
 	return nil
@@ -79,15 +82,9 @@ func runStatus(cmd *cobra.Command, d deps, missionFlag string, missionFlagSet bo
 type statusReport struct {
 	Manifest  missionfs.Manifest
 	Counts    []missionfs.StatusCount
-	Artifacts artifactSummary
+	Artifacts missionfs.ArtifactScan
 	Warnings  []string
-}
-
-type artifactSummary struct {
-	Missing    bool
-	Count      int
-	NewestPath string
-	NewestTime time.Time
+	BoardOK   bool
 }
 
 func buildStatusReport(d deps, result resolve.Result) (string, error) {
@@ -104,7 +101,11 @@ func buildStatusReport(d deps, result resolve.Result) (string, error) {
 		valueOrUnknown(report.Manifest.Owner),
 		valueOrUnknown(report.Manifest.Created),
 	)
-	fmt.Fprintf(&b, "board:   %s   (%d tasks)\n", formatCounts(report.Counts), totalTasks(report.Counts))
+	if report.BoardOK {
+		fmt.Fprintf(&b, "board:   %s   (%d tasks)\n", formatCounts(report.Counts), totalTasks(report.Counts))
+	} else {
+		fmt.Fprintf(&b, "board:   %s\n", formatCounts(report.Counts))
+	}
 	fmt.Fprintf(&b, "artifacts: %s\n", formatArtifacts(report.Artifacts, d.clock()))
 	for _, warning := range report.Warnings {
 		fmt.Fprintf(&b, "warning: %s\n", warning)
@@ -129,7 +130,8 @@ func collectStatus(d deps, result resolve.Result) (statusReport, error) {
 		return statusReport{}, err
 	}
 	findings = append(findings, boardFindings...)
-	if !cfg.Missing {
+	if !cfg.Missing && len(cfg.Statuses) > 0 {
+		report.BoardOK = true
 		taskScan, err := missionfs.ScanTasks(boardDir)
 		if err != nil {
 			return statusReport{}, err
@@ -140,16 +142,14 @@ func collectStatus(d deps, result resolve.Result) (statusReport, error) {
 		findings = append(findings, orderedFindings...)
 	}
 
-	artifacts, err := scanArtifactSummary(filepath.Join(result.MissionDir, "artifacts"), result.MissionDir)
+	artifacts, err := missionfs.ScanArtifacts(filepath.Join(result.MissionDir, "artifacts"))
 	if err != nil {
 		return statusReport{}, err
 	}
 	report.Artifacts = artifacts
-	if artifacts.Missing {
-		findings = append(findings, missionfs.Finding{Kind: missionfs.FindingKind("missing_artifacts"), Path: filepath.Join(result.MissionDir, "artifacts")})
-	}
+	findings = append(findings, artifacts.Findings...)
 
-	report.Warnings = append(report.Warnings, formatFindings(findings)...)
+	report.Warnings = append(report.Warnings, formatFindings(result.MissionDir, findings)...)
 	if dirty, err := missionHasStaleGit(d, result); err == nil && dirty {
 		report.Warnings = append(report.Warnings, "mission subtree has uncommitted or unpushed changes")
 	}
@@ -158,7 +158,7 @@ func collectStatus(d deps, result resolve.Result) (statusReport, error) {
 
 func formatCounts(counts []missionfs.StatusCount) string {
 	if len(counts) == 0 {
-		return "missing board"
+		return "unavailable"
 	}
 	parts := make([]string, 0, len(counts))
 	for _, count := range counts {
@@ -175,7 +175,7 @@ func totalTasks(counts []missionfs.StatusCount) int {
 	return total
 }
 
-func formatArtifacts(artifacts artifactSummary, now time.Time) string {
+func formatArtifacts(artifacts missionfs.ArtifactScan, now time.Time) string {
 	if artifacts.Missing {
 		return "missing"
 	}
@@ -196,48 +196,12 @@ func valueOrUnknown(value string) string {
 	return value
 }
 
-func scanArtifactSummary(artifactsDir, missionDir string) (artifactSummary, error) {
-	info, err := os.Stat(artifactsDir)
-	if os.IsNotExist(err) {
-		return artifactSummary{Missing: true}, nil
-	}
-	if err != nil {
-		return artifactSummary{}, err
-	}
-	if !info.IsDir() {
-		return artifactSummary{}, fmt.Errorf("artifacts path is not a directory: %s", artifactsDir)
-	}
-
-	var summary artifactSummary
-	err = filepath.WalkDir(artifactsDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		summary.Count++
-		if info.ModTime().After(summary.NewestTime) {
-			rel, err := filepath.Rel(filepath.Join(missionDir, "artifacts"), path)
-			if err != nil {
-				return err
-			}
-			summary.NewestPath = filepath.ToSlash(rel)
-			summary.NewestTime = info.ModTime()
-		}
-		return nil
-	})
-	return summary, err
-}
-
-func formatFindings(findings []missionfs.Finding) []string {
+func formatFindings(missionDir string, findings []missionfs.Finding) []string {
 	warnings := make([]string, 0, len(findings))
 	for _, finding := range findings {
 		switch finding.Kind {
+		case missionfs.FindingMalformedManifest:
+			warnings = append(warnings, fmt.Sprintf("malformed mission.md frontmatter: %s", relativeFindingPath(missionDir, finding.Path)))
 		case missionfs.FindingUnknownManifestKey:
 			warnings = append(warnings, fmt.Sprintf("unknown mission.md frontmatter key: %s", finding.Key))
 		case missionfs.FindingMissingManifestKey:
@@ -248,28 +212,50 @@ func formatFindings(findings []missionfs.Finding) []string {
 			warnings = append(warnings, fmt.Sprintf("invalid mission status %q (expected active or closed)", finding.Actual))
 		case missionfs.FindingMissingBoard:
 			warnings = append(warnings, "board missing: backlog/config.yml")
+		case missionfs.FindingMalformedBoardConfig:
+			warnings = append(warnings, fmt.Sprintf("malformed board config: %s", relativeFindingPath(missionDir, finding.Path)))
 		case missionfs.FindingBoardPinDrift:
 			warnings = append(warnings, fmt.Sprintf("pinned board key drift: %s expected %s got %s", finding.Key, finding.Expected, finding.Actual))
+		case missionfs.FindingMissingArtifacts:
+			warnings = append(warnings, "artifacts missing: artifacts/")
 		case missionfs.FindingMalformedTask:
-			warnings = append(warnings, fmt.Sprintf("malformed task frontmatter: %s", finding.Path))
+			warnings = append(warnings, fmt.Sprintf("malformed task frontmatter: %s", relativeFindingPath(missionDir, finding.Path)))
 		case missionfs.FindingMissingTaskID:
-			warnings = append(warnings, fmt.Sprintf("task missing id: %s", finding.Path))
+			warnings = append(warnings, fmt.Sprintf("task missing id: %s", relativeFindingPath(missionDir, finding.Path)))
 		case missionfs.FindingUnknownTaskStatus:
 			warnings = append(warnings, fmt.Sprintf("task status outside board config: %q", finding.Actual))
 		case missionfs.FindingDuplicateTaskID:
-			warnings = append(warnings, fmt.Sprintf("duplicate task ID %s: %s", finding.Actual, strings.Join(finding.Paths, ", ")))
-		default:
-			if finding.Kind == "missing_artifacts" {
-				warnings = append(warnings, "artifacts missing: artifacts/")
-			}
+			warnings = append(warnings, fmt.Sprintf("duplicate task ID %s: %s", finding.Actual, strings.Join(relativeFindingPaths(missionDir, finding.Paths), ", ")))
 		}
 	}
 	return warnings
 }
 
+func relativeFindingPath(missionDir, path string) string {
+	if path == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(missionDir, path)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(rel)
+}
+
+func relativeFindingPaths(missionDir string, paths []string) []string {
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		out = append(out, relativeFindingPath(missionDir, path))
+	}
+	return out
+}
+
 func missionHasStaleGit(d deps, result resolve.Result) (bool, error) {
 	repo := d.missionsRepo
 	if repo == "" {
+		return false, nil
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".git")); err != nil {
 		return false, nil
 	}
 	if out, err := d.git([]string{"rev-parse", "--is-inside-work-tree"}, repo); err != nil || strings.TrimSpace(string(out)) != "true" {

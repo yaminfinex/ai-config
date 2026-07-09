@@ -107,6 +107,7 @@ func TestScanArtifactsMissingDirReportsMissingWithoutError(t *testing.T) {
 	if !scan.Missing {
 		t.Fatalf("Missing = false, want true")
 	}
+	assertFinding(t, scan.Findings, FindingMissingArtifacts, "")
 }
 
 func TestScanArtifactsCountsFilesAndNewestMtime(t *testing.T) {
@@ -136,5 +137,8 @@ func TestScanArtifactsCountsFilesAndNewestMtime(t *testing.T) {
 	}
 	if !scan.NewestTime.Equal(newTime) {
 		t.Fatalf("NewestTime = %s, want %s", scan.NewestTime, newTime)
+	}
+	if scan.NewestPath != "nested/new.txt" {
+		t.Fatalf("NewestPath = %q, want nested/new.txt", scan.NewestPath)
 	}
 }

@@ -152,14 +152,22 @@ func readTaskFrontmatter(path string) (taskFrontmatter, error) {
 type ArtifactScan struct {
 	Missing    bool
 	Count      int
+	NewestPath string
 	NewestTime time.Time
+	Findings   []Finding
 }
 
 // ScanArtifacts counts files under artifactsDir and records the newest file mtime.
 func ScanArtifacts(artifactsDir string) (ArtifactScan, error) {
 	info, err := os.Stat(artifactsDir)
 	if os.IsNotExist(err) {
-		return ArtifactScan{Missing: true}, nil
+		return ArtifactScan{
+			Missing: true,
+			Findings: []Finding{{
+				Kind: FindingMissingArtifacts,
+				Path: artifactsDir,
+			}},
+		}, nil
 	}
 	if err != nil {
 		return ArtifactScan{}, err
@@ -182,6 +190,11 @@ func ScanArtifacts(artifactsDir string) (ArtifactScan, error) {
 		}
 		scan.Count++
 		if info.ModTime().After(scan.NewestTime) {
+			rel, err := filepath.Rel(artifactsDir, path)
+			if err != nil {
+				return err
+			}
+			scan.NewestPath = filepath.ToSlash(rel)
 			scan.NewestTime = info.ModTime()
 		}
 		return nil

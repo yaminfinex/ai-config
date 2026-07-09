@@ -39,7 +39,11 @@ func ReadBoardConfig(boardDir string) (BoardConfig, []Finding, error) {
 	}
 	var raw map[string]any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return BoardConfig{}, nil, fmt.Errorf("parse board config: %w", err)
+		return BoardConfig{}, []Finding{{
+			Kind:   FindingMalformedBoardConfig,
+			Path:   path,
+			Actual: fmt.Sprintf("parse board config: %v", err),
+		}}, nil
 	}
 	cfg := BoardConfig{
 		ProjectName: stringValue(raw["project_name"]),

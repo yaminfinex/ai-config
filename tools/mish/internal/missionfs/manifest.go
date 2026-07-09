@@ -29,10 +29,13 @@ type FindingKind string
 const (
 	FindingUnknownManifestKey    FindingKind = "unknown_manifest_key"
 	FindingMissingManifestKey    FindingKind = "missing_manifest_key"
+	FindingMalformedManifest     FindingKind = "malformed_manifest"
 	FindingManifestSlugMismatch  FindingKind = "manifest_slug_mismatch"
 	FindingInvalidManifestStatus FindingKind = "invalid_manifest_status"
 	FindingMissingBoard          FindingKind = "missing_board"
+	FindingMalformedBoardConfig  FindingKind = "malformed_board_config"
 	FindingBoardPinDrift         FindingKind = "board_pin_drift"
+	FindingMissingArtifacts      FindingKind = "missing_artifacts"
 	FindingMalformedTask         FindingKind = "malformed_task"
 	FindingMissingTaskID         FindingKind = "missing_task_id"
 	FindingUnknownTaskStatus     FindingKind = "unknown_task_status"
@@ -59,17 +62,29 @@ func ReadManifest(missionDir string) (Manifest, []Finding, error) {
 	}
 	frontmatter, err := splitFrontmatter(data)
 	if err != nil {
-		return Manifest{}, nil, err
+		return Manifest{}, []Finding{{
+			Kind:   FindingMalformedManifest,
+			Path:   path,
+			Actual: err.Error(),
+		}}, nil
 	}
 
 	var node yaml.Node
 	if err := yaml.Unmarshal(frontmatter, &node); err != nil {
-		return Manifest{}, nil, fmt.Errorf("parse manifest frontmatter: %w", err)
+		return Manifest{}, []Finding{{
+			Kind:   FindingMalformedManifest,
+			Path:   path,
+			Actual: fmt.Sprintf("parse frontmatter: %v", err),
+		}}, nil
 	}
 
 	var manifest Manifest
 	if err := node.Decode(&manifest); err != nil {
-		return Manifest{}, nil, fmt.Errorf("decode manifest frontmatter: %w", err)
+		return Manifest{}, []Finding{{
+			Kind:   FindingMalformedManifest,
+			Path:   path,
+			Actual: fmt.Sprintf("decode frontmatter: %v", err),
+		}}, nil
 	}
 
 	findings := manifestKeyFindings(&node)
