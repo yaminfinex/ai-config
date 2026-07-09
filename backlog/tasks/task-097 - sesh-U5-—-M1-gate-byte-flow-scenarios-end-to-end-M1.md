@@ -1,11 +1,11 @@
 ---
 id: TASK-097
 title: 'sesh U5 — M1 gate: byte-flow scenarios end-to-end (M1)'
-status: In Progress
+status: Done
 assignee:
   - sesh-scaffold-buro
 created_date: '2026-07-09 05:28'
-updated_date: '2026-07-09 06:32'
+updated_date: '2026-07-09 06:44'
 labels:
   - sesh
 dependencies:
@@ -25,6 +25,12 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U5
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Five scenario scripts + both kill-and-restart checks each print ALL GREEN
-- [ ] #2 Harness is idempotent: full suite green twice back-to-back
+- [x] #1 Five scenario scripts + both kill-and-restart checks each print ALL GREEN
+- [x] #2 Harness is idempotent: full suite green twice back-to-back
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to sesh-build @ 89c0d78 (ff). M1 GATE VERIFIED BY ORCHESTRATOR OWN RUNS: all five scenario harnesses + surface harness ALL GREEN twice back-to-back on this machine, plus module gates fresh. Kill-and-restart both sides in-suite (shipper SIGKILL mid-file resumes to parity; store kill -9 mid-PUT leaves no state or exact prefix, replay converges to byte parity). Doors accepted: quiescence asserted via recovery GET + registry stability over 1s rather than PUT counting; s9 mid-PUT accepts both spec-correct durable outcomes. tests/dbq module-local SQL helper (no sqlite3 CLI on machine). Trail: thread sesh-u5.
+<!-- SECTION:NOTES:END -->
