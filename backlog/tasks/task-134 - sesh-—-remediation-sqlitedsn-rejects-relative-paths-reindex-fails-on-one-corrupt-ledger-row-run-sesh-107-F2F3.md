@@ -3,10 +3,11 @@ id: TASK-134
 title: >-
   sesh — remediation: sqlitedsn rejects relative paths; reindex fails on one
   corrupt ledger row (run-sesh-107 F2+F3)
-status: In Progress
-assignee: []
+status: Done
+assignee:
+  - sesh107-remF23-zamu
 created_date: '2026-07-09 23:53'
-updated_date: '2026-07-09 23:54'
+updated_date: '2026-07-09 23:59'
 labels:
   - run-sesh-107
 dependencies: []
@@ -28,7 +29,13 @@ Settled decisions: minimal contained fixes at the named sites, no refactors, no 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Relative --data-dir and relative dbq -db work again; test covers a relative path plus special-character paths
-- [ ] #2 Reindex succeeds with a corrupt observed_at row present: bad row falls back to now(), healthy rows keep original observed_at, proven by test
-- [ ] #3 Full pinned gate green uncached (build, vet, go test ./..., all tests/check-*.sh)
+- [x] #1 Relative --data-dir and relative dbq -db work again; test covers a relative path plus special-character paths
+- [x] #2 Reindex succeeds with a corrupt observed_at row present: bad row falls back to now(), healthy rows keep original observed_at, proven by test
+- [x] #3 Full pinned gate green uncached (build, vet, go test ./..., all tests/check-*.sh)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Landed as 45c16a6 (worker sesh107-remF23-zamu, verified by mive: independent uncached gate green, diff reviewed). filepath.Abs before URI construction restores relative-path support with one escaping path; quarantineObservedTimes skips malformed observed_at rows (DB/scan errors still fail) so Reindex tolerates corrupt disposable data. Reviewer re-verification against original repros requested.
+<!-- SECTION:NOTES:END -->
