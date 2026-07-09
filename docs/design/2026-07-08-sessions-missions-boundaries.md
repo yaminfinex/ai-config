@@ -289,6 +289,50 @@ point for the next session — do not re-ask these.
   shared unix account carry no human identity. mofa floated an explicit actor variable
   ("this box's work = this human"). → Q20.
 
+- **Q20 Attribution on shared nodes?** → Settled on the **author's facts-not-verdicts
+  design** (hooks rejected — bad ergonomics; tomo's node-side ladder superseded): the session
+  service *just ships identity facts* — tailnet identity (store-stamped from the shipper
+  connection via WhoIs — node-scoped), os user, hostname, and a declared env var
+  (working name `SESSION_OWNER`, read via /proc correlation, TASK-045 precedent — validation
+  running out of band) — and all policy moves elsewhere: display precedence is view-time
+  logic in the store (revisable without touching nodes); set-time policy lives in the
+  components with context — herder stamps owner when running mission work or from a
+  herd-server node/mission **delegation lease** (rides its node-registration framework,
+  1b+; interim = static env at provisioning), missions may carry a human-owner signal field
+  herder reads (must be SEPARATE from Q16 authority — authority may be an agent label).
+  Gap explicitly minimal: personal machines just work (tailnet identity = the human);
+  only provisioned shared servers need the declaration; non-herder pre-delegation sessions
+  on shared nodes render honestly unattributed. Doctrine: *nodes ship facts, never
+  verdicts*; attribution is never authentication. OPEN: one env-var name must win across
+  all three components (settled brainstorm-grade: **SESSION_OWNER wins**, MISSIONS_ACTOR
+  dead); /proc validation results pending.
+  **Validation returned (live, this box, 10 agent processes): design VIABLE with one
+  granularity concession.** (1) Env propagation: green same-user — herder/hcom spawn vars
+  survive into leaf processes; SESSION_OWNER would too. Cross-user is a hard wall (environ
+  is 0400): shipper runs per-user (or root). Only cooperating launchers carry the var;
+  ad-hoc shells carry nothing → honest absence. (2) **Codex leg: GREEN, the easy side** —
+  leaf codex holds its rollout file OPEN (fd → exact pid→file map, zero heuristics), env on
+  the same pid, meta header carries cwd. (3) **Claude leg: no fd (opens-per-write), no sid
+  in env/argv anywhere**, and same-cwd collisions are live-real (3 of 8 claude processes
+  shared one cwd at validation time). Resolution WITHOUT resurrecting hooks: attribute at
+  **(node, os-user, cwd) granularity** — all visible processes in the cwd agree on
+  SESSION_OWNER ⇒ stamp it; disagree or none ⇒ absent (refuse-don't-guess). Same-cwd
+  sessions overwhelmingly share an owner, so per-session exactness is only lost exactly
+  where it's ambiguous. Hooks demoted to an OPTIONAL exactness upgrade (SessionStart gets
+  session_id + inherits env), never a dependency. Upstream ask worth filing: Claude Code
+  exposing its session id in process env would delete the whole ambiguity class (§3.5
+  lesson). (4) Timing green: process alive at file creation in all observed cases;
+  late-starting shipper handles no-live-process as absence.
+  Author addenda on the validation: (a) **one shipper per user**, ratified; (b) **macOS
+  fallback = no correlation at all** — the probe is a shared-Linux-server feature; personal
+  devices are covered by store-stamped tailnet identity (= the human) + shipped os-user
+  fact; fsnotify keeps file-watching cross-platform; shared-Mac degenerate case renders
+  unattributed, no code spent; (c) **dead-process shipping is file-driven by construction**
+  (rescan + cursors never consult the writer) — the process only ever mattered for owner
+  correlation, and correlation facts once observed are REMEMBERED in the shipper's cursor
+  registry keyed by session uuid, so death never retracts an owner stamp; never-correlated
+  dead files ship with honest absence.
+
 **Not yet grilled** (the remaining tree): session service design (storage, shipping protocol,
 what the team surface shows, auth beyond tailnet); mission CLI verb set + dir format + event
 shapes; manifest-authority mechanics (§6.3); mission↔herder interaction contract (§6.1);
