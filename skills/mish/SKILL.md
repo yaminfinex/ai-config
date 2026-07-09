@@ -53,7 +53,7 @@ git -C "$MISSIONS_REPO" commit -m 'mission(perf-regression): new scaffold for th
 
 # adopt — you move the files in yourself (there is no adopt machinery),
 # then commit; the summary names the source
-cp -r ~/code/api/napkins/repro "$MISSIONS_REPO/missions/perf-regression/artifacts/hera/repro"
+mv ~/code/api/napkins/repro "$MISSIONS_REPO/missions/perf-regression/artifacts/hera/repro"
 git -C "$MISSIONS_REPO" add missions/perf-regression
 git -C "$MISSIONS_REPO" commit \
   -m 'mission(perf-regression): adopt repro script from api worktree napkins' \
@@ -77,7 +77,8 @@ git -C "$MISSIONS_REPO" commit -m 'mission(q3-perf-hunt): rename from perf-regre
 
 # close — after the closeout checklist (see mish status --help); the diff is
 # the authority's Closeout prose and status flip
-git -C "$MISSIONS_REPO" commit -am 'mission(q3-perf-hunt): close completed; findings harvested to api docs/perf'
+git -C "$MISSIONS_REPO" add missions/q3-perf-hunt
+git -C "$MISSIONS_REPO" commit -m 'mission(q3-perf-hunt): close completed; findings harvested to api docs/perf'
 ```
 
 Subjects grep across history by slug (`git log --grep 'mission(q3-perf-hunt)'`)
