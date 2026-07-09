@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-09 05:47'
-updated_date: '2026-07-09 06:46'
+updated_date: '2026-07-09 08:24'
 labels:
   - sesh
 dependencies:
@@ -30,5 +30,5 @@ Type: design/doc follow-up, from the M0 sign-off verdict (thread sesh-u1, #25130
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-AC#2 satisfied by wire Amendment 1 (dea4ba0, zomi confirm #25965): rescan interval relabeled shipper-local default. AC#1 (plan R7/state-diagram sync — now also carry Amendment 1 clamp+splice and Amendment 2 silent fingerprint routing into the plan wording) still open — routes through the plan owner on missions-and-daemon. Batch item from lovu #26753: cosmetic touch-up when a future amendment next opens the pen — byte_conflict reaction parenthetical "the fingerprint_conflict path selects the right generation" -> "the store's fingerprint routing selects the right generation" (non-normative staleness, adjudicated no-round).
+Disposition at code-complete (2026-07-09): AC2 done earlier (wire-doc parenthetical). AC1 (plan R7/state-diagram sync to frozen conflict handshake + amendment wording) remains OPEN and routes to the plan owner on the missions-and-daemon worktree — the plan is pinned at 05dfc47 for this run's purposes and was executed against as-is; sync is documentation debt, not build debt. The cosmetic byte_conflict parenthetical touch-up queued for 'next amendment' is moot for this run (no third amendment occurred) — rides any future amendment. Nothing here blocks ship.
 <!-- SECTION:NOTES:END -->

@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-09 06:48'
+updated_date: '2026-07-09 08:24'
 labels:
   - sesh
 dependencies: []
@@ -27,3 +28,9 @@ Type: implement (small batch). From the U6 fix re-check (thread sesh-u6 trail, r
 - [ ] #4 Reindex streaming or bounded memory
 - [ ] #5 Ledger observed_at survives reindex
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Disposition at code-complete (2026-07-09): all five follow-ups remain open and are PRE-FLEET-ROLLOUT work, not ship blockers for the single-store deployment: consumer lifecycle ctx, busy_timeout in DSN, O(files^2) unification, reindex memory, ledger observed_at. Plus one addition from the U7 review residual: SQLStore.Sessions runs one maxTimestamp query per logical session — fold into the same scalability pass. Schedule before onboarding the full fleet.
+<!-- SECTION:NOTES:END -->
