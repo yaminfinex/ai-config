@@ -3,9 +3,11 @@ id: TASK-132
 title: >-
   sesh — store robustness batch: consumer lifecycle, busy_timeout DSN, reindex
   memory, ledger observed_at (run-sesh-107 unit B)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - sesh107-unitB-gone
 created_date: '2026-07-09 23:13'
+updated_date: '2026-07-09 23:23'
 labels:
   - run-sesh-107
 dependencies:
