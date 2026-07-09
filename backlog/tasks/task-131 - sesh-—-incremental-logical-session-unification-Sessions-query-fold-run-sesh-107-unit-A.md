@@ -3,9 +3,11 @@ id: TASK-131
 title: >-
   sesh — incremental logical-session unification + Sessions query fold
   (run-sesh-107 unit A)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - sesh107-unitA-toku
 created_date: '2026-07-09 23:12'
+updated_date: '2026-07-09 23:14'
 labels:
   - run-sesh-107
 dependencies: []
