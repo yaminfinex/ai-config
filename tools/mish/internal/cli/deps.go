@@ -15,9 +15,11 @@ type execResult struct {
 type deps struct {
 	env          func(string) string
 	cwd          func() (string, error)
+	lookPath     func(string) (string, error)
 	exec         func(name string, args []string, dir string, stdin io.Reader, stdout, stderr io.Writer) execResult
 	git          func(args []string, dir string) ([]byte, error)
 	clock        func() time.Time
+	stdin        io.Reader
 	stdout       io.Writer
 	stderr       io.Writer
 	missionsRepo string
@@ -28,9 +30,11 @@ func newDeps(stdout, stderr io.Writer) deps {
 	return deps{
 		env:          env,
 		cwd:          os.Getwd,
+		lookPath:     exec.LookPath,
 		exec:         runExec,
 		git:          runGit,
 		clock:        time.Now,
+		stdin:        os.Stdin,
 		stdout:       stdout,
 		stderr:       stderr,
 		missionsRepo: env("MISSIONS_REPO"),
