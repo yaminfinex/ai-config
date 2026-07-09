@@ -1,10 +1,10 @@
 ---
 id: TASK-103
 title: 'sesh U11 — tsnet auth: WhoIs stamping + grant (M4)'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 05:29'
-updated_date: '2026-07-09 07:32'
+updated_date: '2026-07-09 07:58'
 labels:
   - sesh
 dependencies:
@@ -28,3 +28,9 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U1
 - [ ] #3 Forged owner/identity headers in request content ignored
 - [ ] #4 Loopback dev mode still works behind the listener interface
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Done at 80b9330 (599aec0 + review fixes), merged to sesh-build (ff). Real tsnet taken (fallback door not needed). Security review (opus, attack-focused): fail-closed deny gate verified sound; findings — MED serveTSNet wiring unverified, LOW immutable flag grants vs capability check, LOW wildcard grant. Fixed: WhoIs CapMap per-request enforcement (sesh.dev/cap/store, ship/read verbs, dynamic grants true), grant flags/env removed no fallback, wildcard dead with regression test, wiring pinned by test through the real serve plan. Re-check ACCEPT all items (reports: napkins/sesh-build/review-u11-report.md + -recheck-). CARRY-FORWARD HARD GATE: live two-identity S8 off-box drill does not exist as a harness — manual gate BEFORE U12 rollout (orchestrator+owner). Tagged/login-less nodes stamp MagicDNS names — CI grants list node names.
+<!-- SECTION:NOTES:END -->
