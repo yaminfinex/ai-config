@@ -30,6 +30,11 @@ type Shipper struct {
 	// defaults to jittered exponential capped at 30s.
 	Backoff func(attempt int) time.Duration
 	Logger  *slog.Logger
+	// Correlate observes SESSION_OWNER for the discovered files, one call
+	// per authoritative pass (spec §4.2): identity key → owner. Nil where no
+	// correlation exists (darwin ships facts-only). An identity absent from
+	// the result is honest absence and never retracts a recorded owner (I8).
+	Correlate func([]Discovered) map[string]string
 
 	// held parks identities that hit a non-retryable error
 	// (malformed_request, unknown_tool) until the process restarts: no retry
@@ -108,6 +113,31 @@ func (s *Shipper) RunOnce(ctx context.Context) error {
 				return err
 			}
 			s.logger().Info("cursor GC after deletion", "identity", c.Identity().Key())
+		}
+	}
+
+	// SESSION_OWNER correlation (spec §4.2), one call per pass, before the
+	// files ship so the observation rides this pass's PUTs. A returned owner
+	// is recorded durably in the registry; an identity absent from the
+	// result changes nothing — an observation is never retracted (I8).
+	if s.Correlate != nil {
+		owners := s.Correlate(discovered)
+		for _, d := range discovered {
+			owner := owners[d.Identity.Key()]
+			if owner == "" {
+				continue
+			}
+			cur, ok := s.Registry.Get(d.Identity)
+			if !ok {
+				cur = Cursor{Tool: d.Identity.Tool, SessionID: d.Identity.SessionID, FileUUID: d.Identity.FileUUID, Path: d.Path}
+			}
+			if cur.SessionOwner != owner {
+				cur.SessionOwner = owner
+				if err := s.Registry.Put(cur); err != nil {
+					return err
+				}
+				s.logger().Info("SESSION_OWNER observed", "identity", d.Identity.Key(), "owner", owner)
+			}
 		}
 	}
 
