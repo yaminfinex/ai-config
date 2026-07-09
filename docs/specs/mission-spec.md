@@ -45,8 +45,10 @@ machinery.
 | **missions repo** | The one shared repository holding all missions for all nodes and people (D11). Located by `$MISSIONS_REPO`. Plain git; the CLI itself never touches git. |
 | **mission dir** | `missions/<slug>/` inside the missions repo. Self-contained; moves as a unit; *is* the mission. |
 | **slug** | The mission's identity and directory name. Chosen at creation, path-safe (§4.3), unique by dir existence. |
-| **manifest** (`mission.md`) | The mission's single summary document: frontmatter (slug, authority, status, created) + prose (purpose, scope, decisions, closeout). Edited only by the authority. |
-| **authority** | The advisory `authority:` value in the manifest: an opaque, label-grade name for the one context allowed to edit the manifest or restructure the board. Transfer = the authority editing the field. Enforced by git conflict doctrine (§7), never by the CLI. |
+| **manifest** (`mission.md`) | The mission's single summary document: frontmatter (slug, authority, owner, status, created) + prose (purpose, scope, decisions, closeout). Edited only by the authority. |
+| **authority** | The advisory `authority:` value in the manifest: **write authority** — the one context allowed to edit the manifest or restructure the board. A label-grade name with deliberately opaque interpretation (an agent, a human, a role — the spec doesn't editorialize). Transfer = the authority editing the field. Enforced by git conflict doctrine (§7), never by the CLI. |
+| **owner** | The `owner:` value in the manifest: the human a mission's work is attributed to, as a label-grade name meant to be read as a person. Distinct from authority (write rights, often an agent). Stamped by `new` via the owner chain (`--owner` → `$SESSION_OWNER` → OS username) and echoed back at creation; correcting it later is a manifest edit. Attribution, never authentication. |
+| **`SESSION_OWNER`** | The one cross-surface env var declaring the human behind work on a node whose ambient identity is device-grade (provisioned shared servers: OS user = service account, tailnet identity = device). Shared vocabulary with herder and the session-shipping service. Missions read it at `new` only (birth provenance, never resolved later) and never set or validate it. Absence is meaningful: no declaration means ambient identity is trustworthy. |
 | **label-grade name** | An opaque string naming an agent or person — a plain human string for tool-less use, a herder label where herder happens to manage the writer. Missions treat every such value as text; nothing resolves or validates it. |
 | **board** | The mission's task tracker: a verbatim nested Backlog.md instance at `missions/<slug>/backlog/`, config pinned at scaffold time (§4.4). Missions invent nothing board-shaped. |
 | **task** | A Backlog.md task on the mission board. The unit of assignment, status, and notes. |
@@ -70,7 +72,7 @@ an agent needs to participate is readable from the subtree itself.
 ```
 missions repo 1 ──contains──→ 0..* mission dirs          (one shared repo, D11)
 mission 1 ──has──→ 1 manifest, 1 board, 1 artifacts tree
-mission 1 ──names──→ 1 authority (advisory, label-grade)
+mission 1 ──names──→ 1 authority (write authority, opaque) + 1 owner (human attribution)
 board 1 ──holds──→ 0..* tasks; task ──assignee──→ 0..1 label-grade name
 marker 0..* ──point at──→ 1 mission (markers are pointers, never parts)
 ```
@@ -85,8 +87,9 @@ deletion is a repo-hygiene decision made by humans with git, outside this spec.
    `missions/<slug>/`; the dir is self-contained (board config included) and moves as a unit.
    Markers point at missions from outside and are never part of them.
 2. **Missions are herder-unaware.** No guid, seat, label lease, run reference, or any other
-   herder concept appears in any mission file or in this model. `authority:` and assignee values
-   are opaque label-grade text; nothing mission-side resolves, validates, or joins them.
+   herder concept appears in any mission file or in this model. `authority:`, `owner:`, and
+   assignee values are opaque label-grade text; nothing mission-side resolves, validates, or
+   joins them.
 3. **Missions are strictly opt-in.** The missionless path costs zero: no scaffolding, no marker,
    no behaviour change in any repo that has no mission context. A `mission` command without
    resolvable context refuses with guidance; it never creates anything implicitly.
@@ -143,13 +146,14 @@ them (Q14).
 
 ### 4.2 `mission.md` — exact format
 
-Markdown with YAML frontmatter. Frontmatter keys are closed (exactly these four; unknown keys
+Markdown with YAML frontmatter. Frontmatter keys are closed (exactly these five; unknown keys
 are a lint warning in `mission status`, not an error):
 
 ```markdown
 ---
 mission: perf-regression         # the slug; must equal the directory name
-authority: hera                  # label-grade name; advisory (Q16)
+authority: hera                  # write authority; label-grade, opaque interpretation (Q16)
+owner: riley                     # human attribution; --owner → $SESSION_OWNER → OS user
 status: active                   # active | closed
 created: 2026-07-08              # yyyy-mm-dd, stamped by `mission new`
 ---
@@ -273,10 +277,15 @@ Three verbs, nothing else (Q12 as amended by Q15). `new` is the only write verb 
 Given a valid, unclaimed slug:
 
 1. Create `missions/<slug>/` under `$MISSIONS_REPO`.
-2. Write `mission.md` with the §4.2 skeleton: `mission: <slug>`, `authority:` from
-   `--authority` (default: the invoking OS username — a plain human string for herder-less
-   missions, per Q16), `status: active`, `created:` today; title from `--title` (default: the
-   slug, hyphens spaced).
+2. Write `mission.md` with the §4.2 skeleton: `mission: <slug>`; `authority:` from
+   `--authority`, default the invoking OS username — and never `$SESSION_OWNER`: the human is
+   usually not the manifest editor on exactly the nodes where the var is set; `owner:` via the
+   **owner chain** — `--owner`, else `$SESSION_OWNER`, else the invoking OS username (right by
+   construction on personal machines; self-announcingly wrong on an unprovisioned shared box,
+   which is itself the cue to provision); `status: active`; `created:` today; title from
+   `--title` (default: the slug, hyphens spaced). On success `new` **echoes the stamped
+   authority and owner with the source of each** (flag / env / OS user), so a wrong stamp is
+   visible at birth; correcting one later is an ordinary manifest edit (invariant 8).
 3. Initialize the nested board with pinned config (§4.4) and `project_name: <slug>`. Whether
    this shells to `backlog init` and rewrites `config.yml`, or writes the files directly, is
    implementation — the contract is that `mission backlog task create` works immediately
@@ -317,7 +326,7 @@ evolve.
 Single-mission mode (context resolved):
 
 ```
-mission: perf-regression         active     authority: hera     created 2026-07-08
+mission: perf-regression         active     authority: hera   owner: riley   created 2026-07-08
 board:   3 To Do · 2 In Progress · 7 Done   (12 tasks)
 artifacts: 9 files · newest analysis/flamegraph-0708.html (2h ago)
 ```
@@ -331,9 +340,9 @@ pinned sandbox) is implementation; the contract is invariant 11: read-only, no s
 Overview mode (`--all`, or no resolvable context while cwd is inside the missions repo):
 
 ```
-SLUG              STATUS  AUTHORITY  TASKS todo/doing/done   UPDATED
-perf-regression   active  hera       3/2/7                   2h ago
-q3-launch         closed  riley      0/0/21                  6d ago
+SLUG              STATUS  AUTHORITY  OWNER  TASKS todo/doing/done   UPDATED
+perf-regression   active  hera       riley  3/2/7                   2h ago
+q3-launch         closed  riley      riley  0/0/21                  6d ago
 ```
 
 One line per mission dir, cheap filesystem scan, closed missions included (they are part of
@@ -407,6 +416,15 @@ invariant 8 conflict-free in practice), push when a unit of work lands. The CLI 
 of this. On a repo that isn't git at all, everything still works single-node; the skill simply
 has nothing to say.
 
+**Custody identity — suggestion, never canonical.** The owner record lives in the manifest and
+the session layer; git is deliberately not the surface for it. Commit authorship legitimately
+differs from work ownership (agents commit; humans own), it is repo-scoped rather than
+work-scoped, and hosting rewrites mangle authors. Provisioning *should* still set a sane git
+identity on shared nodes so custody commits aren't nonsense — per-clone `git config`, or a
+conditional include keyed on the missions remote (`[includeIf "hasconfig:remote.*.url:…"]`,
+git ≥ 2.36 — follows the repo, not the path) — and the `Mission-Agent:` trailer names the
+acting agent. But nothing ever reads git identity back as ground truth.
+
 ### 8.2 Custody commits (skill)
 
 Q15 killed the event log; its custody and attribution duties fold into conventioned commit
@@ -459,10 +477,12 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
 **Scaffold & format**
 
 - **AC-1 new** — `MISSIONS_REPO` set, `mission new perf-regression --authority hera` run from a
-  code worktree: the §4.1 tree exists; `mission.md` carries the four frontmatter keys with
-  `status: active`; `backlog/config.yml` carries the four pins + `project_name: perf-regression`;
-  `.mission` containing `perf-regression` appears in the invoking cwd; no git command was
-  executed anywhere.
+  code worktree: the §4.1 tree exists; `mission.md` carries the five frontmatter keys with
+  `status: active` and `owner:` stamped per the §6.1 chain (from `$SESSION_OWNER` when set,
+  else the OS user), with authority and owner + the source of each echoed in `new`'s output;
+  `backlog/config.yml` carries the four pins + `project_name: perf-regression`; `.mission`
+  containing `perf-regression` appears in the invoking cwd; no git command was executed
+  anywhere.
 - **AC-2 slug rules** — `new` refuses: an existing slug, `Perf_Regression`, `-x`, `a--b`,
   `x-`, a 65-char slug — each with a one-line reason. `mission` frontmatter ≠ dir name is
   reported by `status` as a warning.
@@ -553,7 +573,10 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
 - **No per-account or per-project missions repos.** One shared repo, env-var located (D11
   reversed → ratified single repo).
 - **No auth model.** Access to the missions repo *is* the permission model; git hosting
-  handles it.
+  handles it. Likewise no identity verification: authority, owner, and assignee are declared
+  attribution, never authenticated — and there is no layer to derive a human from (fleet OS
+  users are service accounts, tailnet identity is device-grade, herder's model carries no
+  human either), which is why the owner is declared, not inferred.
 
 ## 11. Decisions embedded in this spec (ratification checklist)
 
@@ -575,13 +598,19 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 | M12 | Multi-node posture: union-by-construction (task-per-file + disjoint artifact paths + single-authority manifest); fixed conflict taxonomy; no merge drivers | Boundaries §4, Q16 | §7, invariant 10, AC-15..16 |
 | M13 | Missions strictly opt-in; missionless path costs zero | S2 | Invariant 3, AC-10 |
 | M14 | Custody-commit grammar `mission(<slug>): <verb> <summary>` with an open, documented verb vocabulary (new/adopt/harvest/delete/close) and optional trailers | Q13 amendment surviving Q15 | §8.2, AC-17 |
+| M15 | Human attribution: `owner:` distinct from `authority:` (owner = human, meant to be read as a person; authority = write authority, opaque interpretation); owner stamped `--owner` → `$SESSION_OWNER` → OS user and echoed with its source at `new`; `SESSION_OWNER` is the one cross-surface env name (shared with herder + session shipping); git identity is a provisioning suggestion, never canonical | Owner rulings 2026-07-09 | §2, §4.2, §6.1, §8.1, AC-1 |
 
 ## 12. Open questions (living tail — resolve with the owner before ratification)
 
 1. **`--commit` reserved design (§6.4):** ratify the proposed shape, strike it, or defer with
    the section kept as the design of record?
-2. **Authority default at `new`:** OS username as the default `--authority` value — acceptable,
-   or should the flag be mandatory so the stamp is always deliberate?
+2. **Authority default at `new`:** ~~OS username acceptable, or mandatory flag?~~ **Resolved
+   with the owner 2026-07-09** as part of the human-attribution design (M15): authority keeps
+   the OS-username default (write authority, opaque interpretation; never `$SESSION_OWNER`);
+   the human question moved to its own field, `owner:`, stamped `--owner` →
+   `$SESSION_OWNER` → OS user and echoed at creation. Node identity (hostname, OS user) and
+   human owner are distinct concepts; the single declared gap-cover for service-account
+   fleets is `SESSION_OWNER`, one name shared across mission / herder / session-service.
 3. **Marker default posture:** is write-marker-by-default right for `mission new`, or should
    the marker be opt-in (`--marker`)? Current draft: default-on with `--no-marker`, skipped
    inside the missions repo.
