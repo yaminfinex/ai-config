@@ -119,8 +119,12 @@ missions know nothing about). Run refs die — the run IS the mission.
 
 1. **Herd-server projection details** — the last ungrilled §6b item; gated with phase 1b.
    Now also owns the delegation-lease design (Q20).
-2. **Mission spec ratification** — in flight (mission-spec lane); owner-vs-authority field
-   naming and SESSION_OWNER land there mission-side.
+2. **Mission spec ratification** — in flight (mission-spec lane). Owner-confirmed and folded
+   into the draft (2026-07-09): **SESSION_OWNER is the final cross-surface name**; mission
+   `owner:` frontmatter (human attribution) is distinct from `authority:`; owner stamped
+   `--owner` > SESSION_OWNER > OS user at `mission new`, echoed with its source; absence of
+   SESSION_OWNER stays meaningful; git identity is suggestion-never-canonical. Read
+   mechanics remain session-service business.
 3. **Phase-1a implementation** — task filed on run-herder-dx; errata adjudication pending
    (E-2 v2-only deviation and E-10 turnover coupling are explicit steward calls).
 4. Upstream asks: Claude Code sid-in-env; (existing TASK-029 batch unaffected).
