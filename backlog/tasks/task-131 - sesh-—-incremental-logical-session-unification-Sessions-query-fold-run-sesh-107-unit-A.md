@@ -3,11 +3,11 @@ id: TASK-131
 title: >-
   sesh — incremental logical-session unification + Sessions query fold
   (run-sesh-107 unit A)
-status: In Progress
+status: Done
 assignee:
   - sesh107-unitA-toku
 created_date: '2026-07-09 23:12'
-updated_date: '2026-07-09 23:14'
+updated_date: '2026-07-09 23:23'
 labels:
   - run-sesh-107
 dependencies: []
@@ -35,9 +35,15 @@ Settled decisions — do not re-litigate; if one seems wrong, STOP and report on
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Per-append work is scoped: an append to file F touches only F's connected logical-session group; no full-table UPDATE/DELETE and no per-file overlap loading of unrelated files on the append path
-- [ ] #2 Equivalence test (new, automated): ingest the fixture corpus incrementally, snapshot Indexer.Checksum, run Reindex on the same store, checksums match
-- [ ] #3 Perf evidence: automated benchmark or timed harness showing per-append cost does not grow with the number of unrelated files; before/after numbers reported on the unit thread
-- [ ] #4 SQLStore.Sessions no longer issues one maxTimestamp query per logical session
-- [ ] #5 All existing gates green uncached: go build ./..., go vet ./..., go test ./..., tests/check-*.sh
+- [x] #1 Per-append work is scoped: an append to file F touches only F's connected logical-session group; no full-table UPDATE/DELETE and no per-file overlap loading of unrelated files on the append path
+- [x] #2 Equivalence test (new, automated): ingest the fixture corpus incrementally, snapshot Indexer.Checksum, run Reindex on the same store, checksums match
+- [x] #3 Perf evidence: automated benchmark or timed harness showing per-append cost does not grow with the number of unrelated files; before/after numbers reported on the unit thread
+- [x] #4 SQLStore.Sessions no longer issues one maxTimestamp query per logical session
+- [x] #5 All existing gates green uncached: go build ./..., go vet ./..., go test ./..., tests/check-*.sh
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Landed as e41d1ef on branch sesh-107-index-scalability (worker sesh107-unitA-toku, verified by mive: independent uncached gate re-run green, diff reviewed vs settled decisions). Approach: ProcessAppend now runs a connected-component unification rooted at the appended file (same-logical + >=2-message-UUID-overlap files, transitively), scoped ordinal updates, and dedupe scoped to the resulting logical session; global unify/ordinals/dedupe remain in Reindex via a rebuild-mode flag. Three index-owned sqlite indexes added (rebuilt by initSchema; disposable schema). Equivalence guarded by new TestIncrementalAppendMatchesReindexChecksum. Perf: append cost flat vs unrelated-file count (benchmark: was 6.6ms/288ms/5.25s at 0/50/200 unrelated files; now ~2ms flat). SQLStore.Sessions per-session maxTimestamp replaced by one grouped window query. Deviations: none.
+<!-- SECTION:NOTES:END -->
