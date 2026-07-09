@@ -1,10 +1,10 @@
 ---
 id: TASK-120
 title: mish U8 — agent-targeted help surface + goldens
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 09:46'
-updated_date: '2026-07-09 10:37'
+updated_date: '2026-07-09 10:46'
 labels:
   - mish
 dependencies: []
@@ -36,5 +36,5 @@ Settled decisions (KTD3, binding): write help text and goldens FROM THE SPEC FIR
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Carry-over from U5 review (binding for U8): spec §6.2 requires bare `mish backlog` wrapper help to carry the EXCLUSION RATIONALE, not just excluded names — current output lists names only; per-exclusion reasons exist as comments in allowlist.go and must appear in the help text/goldens. Also U1 ruling: cobra default help command stays; U8 owns final help rendering. Lesson from U1: pin help surface on EXECUTED output, not constructed command tree.
+Merged to mish-build @ 018b526 (--no-ff). Worker: codex mish-u8-bulo (7916d1c + fc4f47d). Doctrine review (opus): ACCEPT — spec fidelity verified line-by-line across all four goldens (allowlist + all 7 exclusion rationales, references vocab + replace edge, owner/authority chains, six custody verbs + trailers, six closeout steps), zero herder vocabulary, goldens pinned on executed output, line budget 27/60. Two text fixes applied pre-merge (rename step-1 precondition; duplicate-ID wording de-narrowed). Ruling: "or has no upstream" staleness clause stays (KTD7-sanctioned).
 <!-- SECTION:NOTES:END -->
