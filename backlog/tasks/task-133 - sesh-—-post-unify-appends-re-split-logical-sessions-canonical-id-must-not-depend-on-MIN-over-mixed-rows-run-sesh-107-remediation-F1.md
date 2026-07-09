@@ -3,9 +3,10 @@ id: TASK-133
 title: >-
   sesh — post-unify appends re-split logical sessions: canonical id must not
   depend on MIN over mixed rows (run-sesh-107 remediation F1)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 23:53'
+updated_date: '2026-07-09 23:59'
 labels:
   - run-sesh-107
 dependencies: []
