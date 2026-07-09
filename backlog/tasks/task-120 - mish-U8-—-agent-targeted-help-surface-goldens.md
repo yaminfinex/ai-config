@@ -4,6 +4,7 @@ title: mish U8 — agent-targeted help surface + goldens
 status: To Do
 assignee: []
 created_date: '2026-07-09 09:46'
+updated_date: '2026-07-09 10:21'
 labels:
   - mish
 dependencies: []
@@ -31,3 +32,9 @@ Settled decisions (KTD3, binding): write help text and goldens FROM THE SPEC FIR
 - [ ] #4 backlog help names every allowlisted subcommand and none of the excluded ones as available
 - [ ] #5 helps carry: custody grammar mission(<slug>): <verb>, closeout checklist, rename procedure, marker hygiene, git rhythm, references vocabulary + replace edge
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Carry-over from U5 review (binding for U8): spec §6.2 requires bare `mish backlog` wrapper help to carry the EXCLUSION RATIONALE, not just excluded names — current output lists names only; per-exclusion reasons exist as comments in allowlist.go and must appear in the help text/goldens. Also U1 ruling: cobra default help command stays; U8 owns final help rendering. Lesson from U1: pin help surface on EXECUTED output, not constructed command tree.
+<!-- SECTION:NOTES:END -->
