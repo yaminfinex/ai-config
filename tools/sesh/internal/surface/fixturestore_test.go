@@ -64,6 +64,7 @@ type fakeStore struct {
 	sessions []surface.SessionSummary
 	rows     map[string][]wire.IndexMessage
 	mirrors  map[string][]byte
+	nodes    []surface.NodeStatus
 }
 
 func sessionKey(tool wire.Tool, id string) string { return string(tool) + "/" + id }
@@ -108,6 +109,10 @@ func (f *fakeStore) MirrorFile(_ context.Context, tool wire.Tool, fileUUID strin
 		return nil, fmt.Errorf("no mirror for %s/%s gen %d", tool, fileUUID, gen)
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+func (f *fakeStore) Nodes(context.Context, time.Duration) ([]surface.NodeStatus, error) {
+	return append([]surface.NodeStatus(nil), f.nodes...), nil
 }
 
 func buildStore(t *testing.T, specs []sessionSpec) *fakeStore {

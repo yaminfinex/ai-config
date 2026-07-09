@@ -177,6 +177,15 @@ func (s *Store) initSchema(ctx context.Context) error {
 			os_user TEXT NOT NULL,
 			session_owner TEXT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS drop_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			dropped_at TEXT NOT NULL,
+			tool TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			file_uuid TEXT NOT NULL,
+			generations TEXT NOT NULL,
+			reason TEXT NOT NULL
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -189,8 +198,21 @@ func (s *Store) initSchema(ctx context.Context) error {
 // Handler returns the v1 HTTP handler.
 func (s *Store) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET "+wire.APIRoot+"/health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "wire_version": wire.Version})
+	})
+	mux.HandleFunc("GET "+wire.APIRoot+"/nodes", s.handleNodes)
 	mux.Handle(wire.APIRoot+"/files/", http.HandlerFunc(s.handleFiles))
 	return mux
+}
+
+func (s *Store) handleNodes(w http.ResponseWriter, r *http.Request) {
+	nodes, err := s.Nodes(r.Context(), 48*time.Hour)
+	if err != nil {
+		s.writeError(w, wire.ErrStoreUnavailable, "", "", "", 0, 0, "", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes})
 }
 
 func (s *Store) handleFiles(w http.ResponseWriter, r *http.Request) {

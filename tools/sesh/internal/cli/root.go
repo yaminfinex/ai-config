@@ -1,7 +1,4 @@
-// Package cli wires the sesh command tree. A subcommand is a stub until its
-// owning unit lands (plan 2026-07-09-001; ship = U4, serve = U3); stubs
-// report not-implemented and exit nonzero so nothing can script against
-// them early.
+// Package cli wires the sesh command tree.
 package cli
 
 import (
@@ -9,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -16,6 +14,7 @@ import (
 
 	"sesh/internal/index"
 	"sesh/internal/store"
+	"sesh/internal/surface"
 )
 
 // Execute runs the sesh command tree and returns its error, if any.
@@ -34,7 +33,7 @@ func newRoot() *cobra.Command {
 		newShip(),
 		newServe(),
 		newReindex(),
-		stub("status", "Report shipper/store health, staleness, and quarantine state"),
+		newStatus(),
 		newAdmin(),
 	)
 	return root
@@ -42,6 +41,7 @@ func newRoot() *cobra.Command {
 
 func newServe() *cobra.Command {
 	var addr string
+	var readAddr string
 	var dataDir string
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -54,18 +54,9 @@ func newServe() *cobra.Command {
 					return err
 				}
 			}
-			l, err := net.Listen("tcp", addr)
+			l, err := listenLoopback(addr, "ingest")
 			if err != nil {
 				return err
-			}
-			host, _, err := net.SplitHostPort(l.Addr().String())
-			if err != nil {
-				_ = l.Close()
-				return err
-			}
-			if !net.ParseIP(host).IsLoopback() {
-				_ = l.Close()
-				return fmt.Errorf("sesh serve: ingest listener must bind loopback before M4, got %s", l.Addr())
 			}
 			st, err := store.Open(cmd.Context(), store.Config{
 				Dir:    dataDir,
@@ -82,12 +73,44 @@ func newServe() *cobra.Command {
 				return err
 			}
 			startIndexConsumer(cmd.Context(), st, idx, slog.Default())
-			return st.Serve(l)
+			if readAddr == "" {
+				return st.Serve(l)
+			}
+			readListener, err := listenLoopback(readAddr, "read")
+			if err != nil {
+				_ = l.Close()
+				return err
+			}
+			errCh := make(chan error, 2)
+			go func() { errCh <- st.Serve(l) }()
+			go func() { errCh <- http.Serve(readListener, surface.New(st)) }()
+			err = <-errCh
+			_ = l.Close()
+			_ = readListener.Close()
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8765", "loopback address for the store HTTP listener")
+	cmd.Flags().StringVar(&readAddr, "read-addr", "", "loopback address for the read-only surface listener; empty disables it")
 	cmd.Flags().StringVar(&dataDir, "data-dir", "", "store data directory")
 	return cmd
+}
+
+func listenLoopback(addr, label string) (net.Listener, error) {
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	host, _, err := net.SplitHostPort(l.Addr().String())
+	if err != nil {
+		_ = l.Close()
+		return nil, err
+	}
+	if !net.ParseIP(host).IsLoopback() {
+		_ = l.Close()
+		return nil, fmt.Errorf("sesh serve: %s listener must bind loopback before M4, got %s", label, l.Addr())
+	}
+	return l, nil
 }
 
 func startIndexConsumer(ctx context.Context, st *store.Store, idx *index.Indexer, logger *slog.Logger) {
@@ -157,28 +180,4 @@ func defaultStoreDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".local", "state", "sesh", "store"), nil
-}
-
-func newAdmin() *cobra.Command {
-	admin := &cobra.Command{
-		Use:   "admin",
-		Short: "Administrative operations on the store",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("%s: missing subcommand", cmd.CommandPath())
-		},
-	}
-	admin.AddCommand(
-		stub("drop-file", "Drop a mirrored file from the store (redaction path)"),
-	)
-	return admin
-}
-
-func stub(use, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("%s: not implemented", cmd.CommandPath())
-		},
-	}
 }

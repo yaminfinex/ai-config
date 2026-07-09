@@ -105,6 +105,19 @@ type Store interface {
 	MirrorFile(ctx context.Context, tool wire.Tool, fileUUID string, generation int) (io.ReadCloser, error)
 }
 
+type nodeStore interface {
+	Nodes(ctx context.Context, staleAfter time.Duration) ([]NodeStatus, error)
+}
+
+// NodeStatus is one row on the read-only nodes view.
+type NodeStatus struct {
+	Hostname  string    `json:"hostname"`
+	OSUser    string    `json:"os_user"`
+	LastPutAt time.Time `json:"last_put_at"`
+	Age       string    `json:"age"`
+	Stale     bool      `json:"stale"`
+}
+
 // Server renders the surface. All handlers are GET-only; the page carries no
 // form, no POST target, and no search box (R17).
 type Server struct {
@@ -114,6 +127,7 @@ type Server struct {
 	mux   *http.ServeMux
 
 	recencyTmpl    *template.Template
+	nodesTmpl      *template.Template
 	transcriptTmpl *template.Template
 	rawTmpl        *template.Template
 }
@@ -142,17 +156,41 @@ func New(store Store, opts ...Option) *Server {
 		o(s)
 	}
 	s.recencyTmpl = mustPage("recency.html")
+	s.nodesTmpl = mustPage("nodes.html")
 	s.transcriptTmpl = mustPage("transcript.html")
 	s.rawTmpl = mustPage("raw.html")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleRecency)
+	mux.HandleFunc("GET /nodes", s.handleNodes)
 	mux.HandleFunc("GET /fragments/recency", s.handleRecencyFragment)
 	mux.HandleFunc("GET /s/{tool}/{session}", s.handleTranscript)
 	mux.HandleFunc("GET /s/{tool}/{session}/raw", s.handleRaw)
 	mux.Handle("GET /assets/", http.FileServerFS(assetFS))
 	s.mux = mux
 	return s
+}
+
+func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
+	ns, ok := s.store.(nodeStore)
+	if !ok {
+		s.writeDegraded(w, "node status unavailable")
+		return
+	}
+	nodes, err := ns.Nodes(r.Context(), 48*time.Hour)
+	if err != nil {
+		s.log.Printf("surface: nodes: %v", err)
+		s.writeDegraded(w, "node status unavailable")
+		return
+	}
+	data := struct {
+		Now   time.Time
+		Nodes []NodeStatus
+	}{Now: s.now(), Nodes: nodes}
+	if err := s.render(w, s.nodesTmpl, "nodes.html", data); err != nil {
+		s.log.Printf("surface: nodes render: %v", err)
+		s.writeDegraded(w, "node status render failed")
+	}
 }
 
 func mustPage(page string) *template.Template {

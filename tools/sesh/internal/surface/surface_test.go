@@ -195,6 +195,7 @@ func TestNoWriteSurfaceOnAnyPage(t *testing.T) {
 	srv := newServer(t, corpusStore(t))
 	pages := []string{
 		"/",
+		"/nodes",
 		"/fragments/recency",
 		"/s/claude/" + uuidNormal,
 		"/s/claude/" + uuidResumeOrig,
@@ -214,10 +215,37 @@ func TestNoWriteSurfaceOnAnyPage(t *testing.T) {
 	}
 }
 
+func TestNodesPageFlagsStaleLastPut(t *testing.T) {
+	store := corpusStore(t)
+	store.nodes = []surface.NodeStatus{
+		{
+			Hostname:  "fresh-host",
+			OSUser:    "grace",
+			LastPutAt: testNow.Add(-47 * time.Hour),
+			Age:       "47h0m0s",
+			Stale:     false,
+		},
+		{
+			Hostname:  "stale-host",
+			OSUser:    "grace",
+			LastPutAt: testNow.Add(-49 * time.Hour),
+			Age:       "49h0m0s",
+			Stale:     true,
+		},
+	}
+	body := mustGet200(t, newServer(t, store), "/nodes")
+	if !strings.Contains(body, "fresh-host") || !strings.Contains(body, "stale-host") {
+		t.Fatalf("nodes page missing expected rows:\n%s", body)
+	}
+	if !strings.Contains(body, "stale &gt;48h") || !strings.Contains(body, "fresh") {
+		t.Fatalf("nodes page missing freshness badges:\n%s", body)
+	}
+}
+
 func TestNonGETMethodsRejected(t *testing.T) {
 	srv := newServer(t, corpusStore(t))
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
-		for _, path := range []string{"/", "/s/claude/" + uuidNormal, "/s/claude/" + uuidNormal + "/raw", "/fragments/recency"} {
+		for _, path := range []string{"/", "/nodes", "/s/claude/" + uuidNormal, "/s/claude/" + uuidNormal + "/raw", "/fragments/recency"} {
 			rec := httptest.NewRecorder()
 			srv.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader("x")))
 			if rec.Code != http.StatusMethodNotAllowed {
