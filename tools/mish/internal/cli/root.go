@@ -93,26 +93,8 @@ func newRoot(d deps) *cobra.Command {
 	root.AddCommand(
 		newNewCommand(d),
 		newBacklogCommand(d),
-		newStatusCommand(),
+		newStatusCommand(d),
 	)
 	return root
 }
 
-func newStatusCommand() *cobra.Command {
-	return stubCommand("status", "Report mission health without mutating files")
-}
-
-func stubCommand(name, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:          name,
-		Short:        short,
-		SilenceUsage: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return refusalError{
-				verb:    name,
-				message: "not implemented in this bootstrap unit",
-				remedy:  "run 'mish --help' for the command list",
-			}
-		},
-	}
-}
