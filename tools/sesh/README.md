@@ -163,22 +163,32 @@ TS_AUTHKEY=tskey-auth-... sesh serve --tsnet --tsnet-hostname sesh-store \
   --addr :8765 --surface-addr :8766 --data-dir /var/lib/sesh
 ```
 
+The store URL in tsnet mode is plain `http://` on purpose: the tailnet
+itself WireGuard-encrypts and peer-authenticates every connection, so TLS
+here would add certificate lifecycle without any confidentiality gain —
+TLS termination lives in the M2 interim `tailscale serve` path, not in
+tsnet mode. Using `https://` against the tsnet listener fails at transport.
+
 **2. Grant applied.** Push the ACL/grant policy (M4 tsnet Grant Runbook
 above) so `group:sesh-shippers` has `{"verb":"ship"}` and readers have
 `{"verb":"read"}`.
 
 **3. DENY VERIFIED — before any real transcript flows** (Lane-4 binding:
-grant scope before content). From a tailnet device OUTSIDE the grant:
+grant scope before content). The probe path must use syntactically valid
+UUIDs: non-UUID segments answer 400 `malformed_request` before the grant
+check runs, which proves nothing. From a tailnet device OUTSIDE the grant:
 
 ```sh
+SID=$(uuidgen); FID=$(uuidgen)
 curl -si -H 'X-Sesh-Wire-Version: 1' \
-  https://sesh-store.<tailnet>.ts.net:8765/v1/files/claude/x/y
+  "http://sesh-store.<tailnet>.ts.net:8765/v1/files/claude/$SID/$FID"
 # REQUIRED: 403 out_of_grant (or connection refused by ACL). Anything else
 # stops the rollout here.
 ```
 
-From an in-grant device, the same GET must answer 404 `not_found`. Record
-both outputs in the rollout log; the owner ratifies M4 against them.
+From an in-grant device, the same GET must answer 404 `not_found` — that
+pair (403 outside, 404 inside) is the deny evidence. Record both outputs in
+the rollout log; the owner ratifies M4 against them.
 
 **4. Nodes, any order.** Late nodes need no special handling: the shipper's
 first pass is the same authoritative rescan as every later one, so a node
@@ -189,7 +199,7 @@ onboarded a week late backfills its full local history (up to Claude's
 # binary: place a matching-platform build at an absolute path
 sudo install -m 0755 sesh /usr/local/bin/sesh
 # service (Linux and macOS take the same command):
-tools/sesh/etc/install-ship.sh --store-url https://sesh-store.<tailnet>.ts.net:8765
+tools/sesh/etc/install-ship.sh --store-url http://sesh-store.<tailnet>.ts.net:8765
 ```
 
 Linux reboot survival on nodes nobody logs into additionally requires

@@ -45,7 +45,7 @@ TMPL="$ETC_DIR/launchd/dev.sesh.ship.plist.tmpl"
 RENDERED="$WORK/dev.sesh.ship.plist"
 sed \
   -e "s|@SESH_BIN@|$BIN/sesh|g" \
-  -e "s|@SESH_STORE_URL@|https://sesh-store.example.ts.net:8765|g" \
+  -e "s|@SESH_STORE_URL@|http://sesh-store.example.ts.net:8765|g" \
   -e "s|@HOME@|$HOME_DIR|g" \
   "$TMPL" >"$RENDERED"
 grep -q '@' "$RENDERED" && fail "unrendered @TOKEN@ left in plist: $(grep -o '@[A-Z_]*@' "$RENDERED" | sort -u)"
@@ -55,7 +55,7 @@ with open(sys.argv[1], "rb") as f:
     p = plistlib.load(f)
 assert p["Label"] == "dev.sesh.ship", p["Label"]
 assert p["ProgramArguments"][1] == "ship", p["ProgramArguments"]
-assert p["EnvironmentVariables"]["SESH_STORE_URL"].startswith("https://"), p["EnvironmentVariables"]
+assert p["EnvironmentVariables"]["SESH_STORE_URL"].startswith("http://"), p["EnvironmentVariables"]
 assert p["KeepAlive"] == {"SuccessfulExit": False}, p["KeepAlive"]
 PY
 ok "template renders to a valid launchd plist with restart-on-failure semantics"
@@ -63,10 +63,10 @@ ok "template renders to a valid launchd plist with restart-on-failure semantics"
 step "installer dry-run: correct drop-in rendered, nothing written"
 DRY_OUT="$WORK/dry-run.out"
 HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run \
-  --store-url https://sesh-store.example.ts.net:8765 \
+  --store-url http://sesh-store.example.ts.net:8765 \
   --binary "$BIN/sesh" >"$DRY_OUT" 2>&1 ||
   fail "install-ship.sh --dry-run exited nonzero: $(cat "$DRY_OUT")"
-grep -q "Environment=SESH_STORE_URL=https://sesh-store.example.ts.net:8765" "$DRY_OUT" ||
+grep -q "Environment=SESH_STORE_URL=http://sesh-store.example.ts.net:8765" "$DRY_OUT" ||
   fail "dry-run drop-in lacks the store URL"
 grep -q "ExecStart=$BIN/sesh ship" "$DRY_OUT" ||
   fail "dry-run drop-in lacks the ExecStart override for a non-default binary path"
@@ -79,6 +79,38 @@ HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run --binary relative/ses
 HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run >/dev/null 2>&1 &&
   fail "installer accepted a missing --store-url"
 ok "installer refuses relative binary paths and missing store URL"
+
+step "runbook: no https against the tsnet ingest listener, no malformed DENY probe"
+# tsnet mode is plain HTTP over WireGuard; an https:// store URL fails at
+# transport and a non-UUID probe path 400s before the grant check runs.
+if grep -n ':8765' "$SESH_MODULE_DIR/README.md" | grep 'https://'; then
+  fail "README prescribes https:// against the tsnet ingest listener"
+fi
+if grep -nE '/v1/files/[a-z]+/[^$][^/]*/[^$"]*"?$' "$SESH_MODULE_DIR/README.md" |
+  grep -vE '\$[A-Z]+|[0-9a-f]{8}-[0-9a-f]{4}'; then
+  fail "README DENY probe uses non-UUID path segments (400s before the grant check)"
+fi
+ok "runbook URLs are tsnet-correct and the DENY probe reaches the grant check"
+
+step "installer preserves operator-edited drop-ins (refuse without --force)"
+DROPIN_DIR="$HOME_DIR/.config/systemd/user/sesh-ship.service.d"
+mkdir -p "$DROPIN_DIR"
+printf '# operator-tuned\n[Service]\nEnvironment=SESH_STORE_URL=http://operator.example:1\n' \
+  >"$DROPIN_DIR/10-local.conf"
+DROPIN_SHA=$(sha256sum "$DROPIN_DIR/10-local.conf" | cut -d' ' -f1)
+if HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run \
+  --store-url http://sesh-store.example.ts.net:8765 --binary "$BIN/sesh" \
+  >"$WORK/clobber.out" 2>&1; then
+  fail "installer did not refuse a differing existing drop-in without --force"
+fi
+grep -q "refusing to overwrite" "$WORK/clobber.out" || fail "refusal message missing: $(cat "$WORK/clobber.out")"
+[ "$(sha256sum "$DROPIN_DIR/10-local.conf" | cut -d' ' -f1)" = "$DROPIN_SHA" ] ||
+  fail "refusal path modified the operator drop-in"
+HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run --force \
+  --store-url http://sesh-store.example.ts.net:8765 --binary "$BIN/sesh" \
+  >/dev/null 2>&1 || fail "--force did not override the drop-in refusal"
+rm -rf "$HOME_DIR/.config"
+ok "differing drop-in refused untouched; --force overrides"
 
 step "R23: stale binary vs newer registry refuses cleanly (simulated in the field shape)"
 R23_STATE="$WORK/r23-state"

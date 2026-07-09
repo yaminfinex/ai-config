@@ -12,13 +12,16 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: install-ship.sh --store-url URL [--binary /abs/path/sesh] [--dry-run]
+Usage: install-ship.sh --store-url URL [--binary /abs/path/sesh] [--dry-run] [--force]
 
-  --store-url URL   store base URL, e.g. https://sesh.<tailnet>.ts.net
-                    (required; the ONLY coupling between a node and the store)
+  --store-url URL   store base URL, e.g. http://sesh-store.<tailnet>.ts.net:8765
+                    (required; the ONLY coupling between a node and the store.
+                    tsnet mode is plain http — the tailnet encrypts transport)
   --binary PATH     absolute path to the sesh binary
                     (default: /usr/local/bin/sesh)
   --dry-run         print every action and rendered file; write nothing
+  --force           overwrite an existing drop-in (default: refuse, so
+                    operator edits to 10-local.conf are never clobbered)
 
 Linux : installs a systemd --user unit (sesh-ship.service) + a drop-in
         carrying SESH_STORE_URL (and an ExecStart override when --binary is
@@ -33,12 +36,14 @@ ETC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORE_URL=""
 SESH_BIN="/usr/local/bin/sesh"
 DRY_RUN=0
+FORCE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --store-url) STORE_URL="${2:?--store-url needs a value}"; shift 2 ;;
     --binary)    SESH_BIN="${2:?--binary needs a value}"; shift 2 ;;
     --dry-run)   DRY_RUN=1; shift ;;
+    --force)     FORCE=1; shift ;;
     -h|--help)   usage; exit 0 ;;
     *) echo "install-ship.sh: unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -65,9 +70,46 @@ emit()  { # <target path> — file content on stdin
   fi
 }
 
+render_dropin() {
+  echo "# Written by install-ship.sh — node-local values only. Re-run --force to change."
+  echo "[Service]"
+  echo "Environment=SESH_STORE_URL=$STORE_URL"
+  if [ "$SESH_BIN" != "/usr/local/bin/sesh" ]; then
+    echo "ExecStart="
+    echo "ExecStart=$SESH_BIN ship"
+  fi
+}
+
 install_linux() {
   local unit_dir="$HOME/.config/systemd/user"
   local dropin_dir="$unit_dir/sesh-ship.service.d"
+  local dropin="$dropin_dir/10-local.conf"
+
+  # Preflight BEFORE any write: a broken user bus (SSH session without
+  # lingering, no XDG_RUNTIME_DIR) would otherwise leave a half-installed,
+  # never-started service on disk.
+  if ! systemctl --user show-environment >/dev/null 2>&1; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      say "WARNING: systemd user manager is not reachable on this host; a real"
+      say "         run would stop here. Remedy: loginctl enable-linger $USER"
+      say "         (then reconnect so XDG_RUNTIME_DIR is set)."
+    else
+      echo "install-ship.sh: cannot talk to the systemd user manager — nothing was written." >&2
+      echo "  Likely cause: SSH session without lingering (no user bus / XDG_RUNTIME_DIR)." >&2
+      echo "  Remedy: loginctl enable-linger $USER   then reconnect and re-run." >&2
+      exit 1
+    fi
+  fi
+
+  # Preserve operator edits: never clobber an existing, differing drop-in
+  # unless --force. Checked before any write so a refusal leaves the node
+  # exactly as found.
+  if [ -f "$dropin" ] && [ "$FORCE" -eq 0 ] && ! render_dropin | cmp -s - "$dropin"; then
+    echo "install-ship.sh: $dropin exists with different content — refusing to overwrite." >&2
+    echo "  Re-run with --force to replace it, or edit it directly. Nothing was written." >&2
+    exit 1
+  fi
+
   say "installing systemd user unit into $unit_dir"
   doit mkdir -p "$dropin_dir"
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -75,16 +117,7 @@ install_linux() {
   else
     cp "$ETC_DIR/systemd/sesh-ship.service" "$unit_dir/sesh-ship.service"
   fi
-
-  {
-    echo "# Written by install-ship.sh — node-local values only. Re-run to change."
-    echo "[Service]"
-    echo "Environment=SESH_STORE_URL=$STORE_URL"
-    if [ "$SESH_BIN" != "/usr/local/bin/sesh" ]; then
-      echo "ExecStart="
-      echo "ExecStart=$SESH_BIN ship"
-    fi
-  } | emit "$dropin_dir/10-local.conf"
+  render_dropin | emit "$dropin"
 
   doit systemctl --user daemon-reload
   doit systemctl --user enable --now sesh-ship.service
@@ -95,16 +128,29 @@ install_linux() {
   fi
 }
 
-install_darwin() {
-  local agents_dir="$HOME/Library/LaunchAgents"
-  local plist="$agents_dir/dev.sesh.ship.plist"
-  say "rendering launchd agent into $agents_dir"
-  doit mkdir -p "$agents_dir" "$HOME/Library/Logs"
+render_plist() {
   sed \
     -e "s|@SESH_BIN@|$SESH_BIN|g" \
     -e "s|@SESH_STORE_URL@|$STORE_URL|g" \
     -e "s|@HOME@|$HOME|g" \
-    "$ETC_DIR/launchd/dev.sesh.ship.plist.tmpl" | emit "$plist"
+    "$ETC_DIR/launchd/dev.sesh.ship.plist.tmpl"
+}
+
+install_darwin() {
+  local agents_dir="$HOME/Library/LaunchAgents"
+  local plist="$agents_dir/dev.sesh.ship.plist"
+
+  # Same preservation rule as the Linux drop-in: a differing existing plist
+  # is operator state; refuse before any write unless --force.
+  if [ -f "$plist" ] && [ "$FORCE" -eq 0 ] && ! render_plist | cmp -s - "$plist"; then
+    echo "install-ship.sh: $plist exists with different content — refusing to overwrite." >&2
+    echo "  Re-run with --force to replace it. Nothing was written." >&2
+    exit 1
+  fi
+
+  say "rendering launchd agent into $agents_dir"
+  doit mkdir -p "$agents_dir" "$HOME/Library/Logs"
+  render_plist | emit "$plist"
   # bootout is idempotent cleanup for re-installs; first install has nothing
   # to remove.
   doit launchctl bootout "gui/$(id -u)/dev.sesh.ship" 2>/dev/null || true
