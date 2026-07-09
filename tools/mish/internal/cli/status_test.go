@@ -102,6 +102,79 @@ func TestStatusOverviewFromRepoRootListsActiveAndClosedMissions(t *testing.T) {
 	}
 }
 
+func TestStatusOverviewTaskHeaderUsesSharedOrderOnlyWhenAllBoardsMatch(t *testing.T) {
+	t.Run("shared order uses header once", func(t *testing.T) {
+		repo, activeDir := makeStatusMission(t, "perf-regression")
+		writeTaskFile(t, activeDir, "tasks/task-1.md", "TASK-1", "To Do")
+		closedDir := addStatusMission(t, repo, "q3-launch")
+		writeTaskFile(t, closedDir, "completed/task-2.md", "TASK-2", "Done")
+
+		stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+		if err != nil {
+			t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
+		}
+		if !strings.Contains(stdout, "TASKS To Do/In Progress/Done") {
+			t.Fatalf("shared-order overview missing status order in header:\n%s", stdout)
+		}
+		if strings.Contains(stdout, "1/0/0 To Do/In Progress/Done") {
+			t.Fatalf("shared-order row repeated status order:\n%s", stdout)
+		}
+	})
+
+	t.Run("mixed orders label each row", func(t *testing.T) {
+		repo, defaultDir := makeStatusMission(t, "default-board")
+		writeTaskFile(t, defaultDir, "tasks/task-1.md", "TASK-1", "To Do")
+		customDir := addStatusMission(t, repo, "custom-board")
+		replaceInFile(t, filepath.Join(customDir, "backlog", "config.yml"),
+			`statuses: ["To Do", "In Progress", "Done"]`,
+			`statuses: ["Backlog", "Active", "Shipped"]`,
+		)
+		writeTaskFile(t, customDir, "tasks/task-1.md", "TASK-1", "Backlog")
+		writeTaskFile(t, customDir, "tasks/task-2.md", "TASK-2", "Backlog")
+		writeTaskFile(t, customDir, "tasks/task-3.md", "TASK-3", "Active")
+		writeTaskFile(t, customDir, "completed/task-4.md", "TASK-4", "Shipped")
+
+		stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+		if err != nil {
+			t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
+		}
+		header := firstLine(stdout)
+		if strings.Contains(header, "TASKS To Do/In Progress/Done") || strings.Contains(header, "TASKS Backlog/Active/Shipped") {
+			t.Fatalf("mixed-order header should be plain TASKS:\n%s", stdout)
+		}
+		for _, want := range []string{
+			"1/0/0 To Do/In Progress/Done",
+			"2/1/1 Backlog/Active/Shipped",
+		} {
+			if !strings.Contains(stdout, want) {
+				t.Fatalf("mixed-order overview missing row order %q:\n%s", want, stdout)
+			}
+		}
+	})
+}
+
+func TestStatusOverviewDoesNotUseGitOrSurfaceStalenessWarnings(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "perf-regression")
+	writeFile(t, filepath.Join(repo, ".git"), "gitdir: /tmp/repo.git\n")
+	var calls [][]string
+	d := statusTestDeps(repo, missionDir)
+	d.git = func(args []string, dir string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		return []byte("dirty"), nil
+	}
+
+	stdout, stderr, err := executeStatus(t, d, "status", "--all")
+	if err != nil {
+		t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("overview invoked git seam: %v", calls)
+	}
+	if strings.Contains(stdout, "uncommitted or unpushed") {
+		t.Fatalf("overview surfaced single-mission staleness warning:\n%s", stdout)
+	}
+}
+
 func TestStatusContextlessOutsideRepoRefuses(t *testing.T) {
 	repo, _ := makeStatusMission(t, "perf-regression")
 	outside := t.TempDir()
@@ -120,6 +193,31 @@ func TestStatusContextlessOutsideRepoRefuses(t *testing.T) {
 	}
 }
 
+func TestStatusMissionAndAllAreMutuallyExclusive(t *testing.T) {
+	repo, _ := makeStatusMission(t, "perf-regression")
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--mission", "perf-regression", "--all")
+	if err == nil {
+		t.Fatalf("status --mission --all unexpectedly succeeded")
+	}
+	if stdout != "" {
+		t.Fatalf("mutual exclusion wrote stdout:\n%s", stdout)
+	}
+	want := "mish status: --mission and --all are mutually exclusive"
+	if !strings.Contains(stderr, want) {
+		t.Fatalf("stderr missing %q:\n%s", want, stderr)
+	}
+
+	var runOut, runErr bytes.Buffer
+	d := statusTestDeps(repo, repo)
+	d.stdout = &runOut
+	d.stderr = &runErr
+	code := runWithDeps([]string{"status", "--mission", "perf-regression", "--all"}, d)
+	if code != exitUsage {
+		t.Fatalf("exit code = %d, want %d; stderr=%s", code, exitUsage, runErr.String())
+	}
+}
+
 func TestStatusOverviewAllWorksFromAnywhereWithMissionsRepo(t *testing.T) {
 	repo, missionDir := makeStatusMission(t, "perf-regression")
 	writeTaskFile(t, missionDir, "tasks/task-1.md", "TASK-1", "Done")
@@ -132,6 +230,44 @@ func TestStatusOverviewAllWorksFromAnywhereWithMissionsRepo(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("--all overview missing %q:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestStatusOverviewZeroMissionsRendersHeaderOnly(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, repo string)
+	}{
+		{
+			name:  "missing missions dir",
+			setup: func(t *testing.T, repo string) {},
+		},
+		{
+			name: "empty missions dir",
+			setup: func(t *testing.T, repo string) {
+				if err := os.MkdirAll(filepath.Join(repo, "missions"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := t.TempDir()
+			tt.setup(t, repo)
+
+			stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+			if err != nil {
+				t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
+			}
+			if stderr != "" {
+				t.Fatalf("zero-mission overview wrote stderr:\n%s", stderr)
+			}
+			lines := strings.Split(strings.TrimSpace(stdout), "\n")
+			if len(lines) != 1 || !strings.Contains(lines[0], "SLUG") || !strings.Contains(lines[0], "TASKS") {
+				t.Fatalf("zero-mission overview should render header only:\n%s", stdout)
+			}
+		})
 	}
 }
 
@@ -456,6 +592,10 @@ func executeStatus(t *testing.T, d deps, args ...string) (string, string, error)
 		if errors.As(err, &refusal) {
 			fmt.Fprintln(&stderr, err)
 		}
+		var usage usageError
+		if errors.As(err, &usage) {
+			fmt.Fprintln(&stderr, err)
+		}
 	}
 	return stdout.String(), stderr.String(), err
 }
@@ -577,6 +717,11 @@ func hashTree(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	return fmt.Sprintf("%x", hash.Sum(nil))
+}
+
+func firstLine(text string) string {
+	line, _, _ := strings.Cut(text, "\n")
+	return line
 }
 
 func setTreeTimes(t *testing.T, root string, when time.Time) {

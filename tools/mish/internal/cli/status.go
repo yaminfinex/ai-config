@@ -27,6 +27,9 @@ func newStatusCommand(d deps) *cobra.Command {
 			if len(args) > 0 {
 				return usageError{err: fmt.Errorf("mish status: unexpected arguments: %s — run 'mish status --help' for usage", strings.Join(args, " "))}
 			}
+			if all && cmd.Flags().Changed("mission") {
+				return usageError{err: fmt.Errorf("mish status: --mission and --all are mutually exclusive — choose one status mode")}
+			}
 			if all {
 				return runStatusOverview(cmd, d)
 			}
@@ -108,14 +111,14 @@ type statusReport struct {
 }
 
 type statusOverviewRow struct {
-	Slug         string
-	Status       string
-	Authority    string
-	Owner        string
-	Tasks        string
-	Updated      string
-	Warning      string
-	statusHeader string
+	Slug        string
+	Status      string
+	Authority   string
+	Owner       string
+	Tasks       string
+	Updated     string
+	Warning     string
+	StatusOrder string
 }
 
 func buildStatusReport(d deps, result resolve.Result) (string, error) {
@@ -149,7 +152,11 @@ func buildStatusOverview(d deps, repo string) (string, error) {
 	missionsDir := filepath.Join(repo, "missions")
 	entries, err := os.ReadDir(missionsDir)
 	if err != nil {
-		return "", err
+		if os.IsNotExist(err) {
+			entries = nil
+		} else {
+			return "", err
+		}
 	}
 	rows := make([]statusOverviewRow, 0, len(entries))
 	for _, entry := range entries {
@@ -166,18 +173,41 @@ func buildStatusOverview(d deps, repo string) (string, error) {
 		rows = append(rows, row)
 	}
 
-	statusHeader := "TASKS"
-	for _, row := range rows {
-		if row.statusHeader != "" {
-			statusHeader = "TASKS " + row.statusHeader
-			break
-		}
+	sharedOrder := sharedStatusOrder(rows)
+	headers := []string{"SLUG", "STATUS", "AUTHORITY", "OWNER", "TASKS", "UPDATED"}
+	if sharedOrder != "" {
+		headers[4] = "TASKS " + sharedOrder
 	}
 
+	rendered := make([]statusOverviewRow, 0, len(rows))
+	rendered = append(rendered, rows...)
+	if sharedOrder == "" {
+		for i := range rendered {
+			if rendered[i].StatusOrder != "" {
+				rendered[i].Tasks = rendered[i].Tasks + " " + rendered[i].StatusOrder
+			}
+		}
+	}
+	widths := overviewWidths(headers, rendered)
+
 	var b strings.Builder
-	fmt.Fprintf(&b, "%-17s %-7s %-10s %-7s %-26s %s\n", "SLUG", "STATUS", "AUTHORITY", "OWNER", statusHeader, "UPDATED")
-	for _, row := range rows {
-		fmt.Fprintf(&b, "%-17s %-7s %-10s %-7s %-26s %s", row.Slug, row.Status, row.Authority, row.Owner, row.Tasks, row.Updated)
+	fmt.Fprintf(&b, "%-*s %-*s %-*s %-*s %-*s %s\n",
+		widths[0], headers[0],
+		widths[1], headers[1],
+		widths[2], headers[2],
+		widths[3], headers[3],
+		widths[4], headers[4],
+		headers[5],
+	)
+	for _, row := range rendered {
+		fmt.Fprintf(&b, "%-*s %-*s %-*s %-*s %-*s %s",
+			widths[0], row.Slug,
+			widths[1], row.Status,
+			widths[2], row.Authority,
+			widths[3], row.Owner,
+			widths[4], row.Tasks,
+			row.Updated,
+		)
 		if row.Warning != "" {
 			fmt.Fprintf(&b, "  warning: %s", row.Warning)
 		}
@@ -196,22 +226,86 @@ func collectStatusOverviewRow(d deps, result resolve.Result) statusOverviewRow {
 		Updated:   updatedAgo(d.clock(), newestMissionMTime(result.MissionDir)),
 	}
 
-	report, err := collectStatus(d, result)
+	var findings []missionfs.Finding
+	manifest, manifestFindings, err := missionfs.ReadManifest(result.MissionDir)
 	if err != nil {
-		row.Warning = err.Error()
-		return row
+		findings = append(findings, missionfs.Finding{
+			Kind:   missionfs.FindingMalformedManifest,
+			Path:   filepath.Join(result.MissionDir, "mission.md"),
+			Actual: err.Error(),
+		})
+	} else {
+		row.Status = valueOrUnknown(manifest.Status)
+		row.Authority = valueOrUnknown(manifest.Authority)
+		row.Owner = valueOrUnknown(manifest.Owner)
+		findings = append(findings, manifestFindings...)
 	}
-	row.Status = valueOrUnknown(report.Manifest.Status)
-	row.Authority = valueOrUnknown(report.Manifest.Authority)
-	row.Owner = valueOrUnknown(report.Manifest.Owner)
-	if report.BoardOK {
-		row.Tasks = formatSlashCounts(report.Counts)
-		row.statusHeader = formatStatusHeader(report.Counts)
+
+	boardDir := filepath.Join(result.MissionDir, "backlog")
+	cfg, boardFindings, err := missionfs.ReadBoardConfig(boardDir)
+	if err != nil {
+		findings = append(findings, missionfs.Finding{
+			Kind:   missionfs.FindingMalformedBoardConfig,
+			Path:   filepath.Join(boardDir, "config.yml"),
+			Actual: err.Error(),
+		})
+	} else {
+		findings = append(findings, boardFindings...)
+		if !cfg.Missing && len(cfg.Statuses) > 0 {
+			taskScan, err := missionfs.ScanTasks(boardDir)
+			if err != nil {
+				findings = append(findings, missionfs.Finding{
+					Kind:   missionfs.FindingMalformedTask,
+					Path:   boardDir,
+					Actual: err.Error(),
+				})
+			} else {
+				orderedCounts, orderedFindings := taskScan.OrderedCounts(cfg.Statuses)
+				row.Tasks = formatSlashCounts(orderedCounts)
+				row.StatusOrder = formatStatusHeader(orderedCounts)
+				findings = append(findings, taskScan.Findings...)
+				findings = append(findings, orderedFindings...)
+			}
+		}
 	}
-	if len(report.Warnings) > 0 {
-		row.Warning = report.Warnings[0]
+
+	if warnings := formatFindings(result.MissionDir, findings); len(warnings) > 0 {
+		row.Warning = warnings[0]
 	}
 	return row
+}
+
+func sharedStatusOrder(rows []statusOverviewRow) string {
+	if len(rows) == 0 || rows[0].StatusOrder == "" {
+		return ""
+	}
+	order := rows[0].StatusOrder
+	for _, row := range rows[1:] {
+		if row.StatusOrder != order {
+			return ""
+		}
+	}
+	return order
+}
+
+func overviewWidths(headers []string, rows []statusOverviewRow) []int {
+	widths := []int{
+		len(headers[0]),
+		len(headers[1]),
+		len(headers[2]),
+		len(headers[3]),
+		len(headers[4]),
+		len(headers[5]),
+	}
+	for _, row := range rows {
+		values := []string{row.Slug, row.Status, row.Authority, row.Owner, row.Tasks, row.Updated}
+		for i, value := range values {
+			if len(value) > widths[i] {
+				widths[i] = len(value)
+			}
+		}
+	}
+	return widths
 }
 
 func collectStatus(d deps, result resolve.Result) (statusReport, error) {
