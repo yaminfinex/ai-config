@@ -1,9 +1,11 @@
 ---
 id: TASK-094
 title: sesh U2 — module scaffold + real-JSONL fixture corpus (M0)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - sesh-scaffold-buro
 created_date: '2026-07-09 05:27'
+updated_date: '2026-07-09 05:31'
 labels:
   - sesh
 dependencies:

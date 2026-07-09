@@ -1,9 +1,11 @@
 ---
 id: TASK-093
 title: sesh U1 — wire + index-schema freeze doc (M0)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - sesh-ship-suki
 created_date: '2026-07-09 05:27'
+updated_date: '2026-07-09 05:31'
 labels:
   - sesh
 dependencies: []
