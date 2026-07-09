@@ -4,6 +4,7 @@ title: 'sesh U6 — index: parse-on-ingest + dedup + reindex (M2)'
 status: To Do
 assignee: []
 created_date: '2026-07-09 05:28'
+updated_date: '2026-07-09 05:47'
 labels:
   - sesh
 dependencies:
@@ -28,3 +29,9 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U6
 - [ ] #4 reindex from mirror alone reproduces identical index content, proven twice in a row
 - [ ] #5 Injected index-write failure -> dirty-for-reindex; next reindex heals
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+From M0 sign-off review (thread sesh-u1, #25130), keep-property guard: generation is deliberately ABSENT from the dedup key (tool, logical_session_id, entry_type, message_uuid) — that is what keeps S2 transcripts clean when a conflict-driven generation re-ships full history. Add a test pinning it; do not "fix" it into the key.
+<!-- SECTION:NOTES:END -->

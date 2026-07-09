@@ -4,6 +4,7 @@ title: 'sesh U3 — store: mirror ingest + generations + recovery (M1)'
 status: To Do
 assignee: []
 created_date: '2026-07-09 05:27'
+updated_date: '2026-07-09 05:47'
 labels:
   - sesh
 dependencies:
@@ -31,3 +32,9 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U3
 - [ ] #4 Recovery GET returns high-waters + fingerprint for known and UUID-only identities
 - [ ] #5 All wire-doc error codes exercised by name in tests; mirrored files byte-identical to shipped fixtures
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+From M0 sign-off review (thread sesh-u1, #25130), binding for this unit: (a) when the store computes a generation fingerprint that differs from the client claim, record the computed value and LOG the mismatch — claim/computed divergence is an early corruption signal; (b) add a test acknowledging the sub-window poison-key edge: a file that never reaches 1 KiB has fingerprint null, so a second legitimate sub-window recreate poisons (file_uuid, null) — rare, accepted, but must be a named test not a surprise; strengthens the later operator un-poison verb case.
+<!-- SECTION:NOTES:END -->

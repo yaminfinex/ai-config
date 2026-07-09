@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - sesh-scaffold-buro
 created_date: '2026-07-09 05:27'
-updated_date: '2026-07-09 05:31'
+updated_date: '2026-07-09 05:47'
 labels:
   - sesh
 dependencies:
@@ -32,3 +32,9 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U2
 - [ ] #4 Module-isolation test: no imports from elsewhere in the repo
 - [ ] #5 fixtures README records provenance + scrub checklist for every fixture
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixture rulings (thread sesh-u2, #25146): trailing-partial case = byte-prefix-truncated COPY of the real normal session (real bytes, chosen read boundary; provenance must state source + offset), untruncated original kept alongside. Interleaved-writers case = real forked-parentUuid-chain file as honest stand-in; OPEN GAP recorded: no genuine two-writer file exists on this claude version (two-terminal resume writes per-terminal files — contradicts prior-art interleave claim; carried to design record). Resume-pair verified with 141 overlapping message uuids.
+<!-- SECTION:NOTES:END -->
