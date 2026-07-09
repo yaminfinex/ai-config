@@ -1,11 +1,11 @@
 ---
 id: TASK-093
 title: sesh U1 — wire + index-schema freeze doc (M0)
-status: In Progress
+status: Done
 assignee:
   - sesh-ship-suki
 created_date: '2026-07-09 05:27'
-updated_date: '2026-07-09 05:31'
+updated_date: '2026-07-09 05:51'
 labels:
   - sesh
 dependencies: []
@@ -25,8 +25,14 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Doc pins every item in the plan U1 Approach list; no TBDs remain
-- [ ] #2 Both co-authors state explicit sign-off on thread sesh-u1
-- [ ] #3 Design-authority sign-off recorded; doc merged to sesh-build
+- [x] #1 Doc pins every item in the plan U1 Approach list; no TBDs remain
+- [x] #2 Both co-authors state explicit sign-off on thread sesh-u1
+- [x] #3 Design-authority sign-off recorded; doc merged to sesh-build
 - [ ] #4 U3/U4/U6 later cite the doc without amendment; internal/wire types transcribe it 1:1
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to sesh-build at 557b3d8 (branch sesh-wire, ff). Provenance: soho draft 3bfd9fe -> suki amendments ea5423a (8 items incl. confirm-then-open conflict handshake, adjudicated ACCEPTED) -> option-2 unification amendments d7cb025 + 557b3d8 after buro empirical finding (claude v2.1.195 resume rewrites content ids per-file; uuid-overlap is the primary unifier, >=2 non-empty pairs, canonical id = earliest file by first-ingest of gen 0). Sign-offs: suki #25024+#25285, soho #25035+re-ack, design authority manual-zolu final confirm #25301 on 557b3d8 exactly. AC #4 (U3/U4/U6 cite without amendment) trails — verified at those units' verdicts. Full trail: hcom thread sesh-u1.
+<!-- SECTION:NOTES:END -->
