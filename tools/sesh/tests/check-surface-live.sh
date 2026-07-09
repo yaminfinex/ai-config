@@ -40,19 +40,34 @@ assert_mirror_equals claude "$ORIG_UUID" "$ORIG_UUID" 0 "$TREE/$ORIG_UUID.jsonl"
 assert_mirror_equals claude "$NEW_UUID" "$NEW_UUID" 0 "$TREE/$NEW_UUID.jsonl"
 ok "both files mirrored byte-identical"
 
-step "live index unifies the pair into one logical session"
-unified() {
-  [ "$(dbq 'SELECT COUNT(DISTINCT logical_session_id) FROM sesh_index_messages WHERE quarantine = 0')" = "1" ] &&
-    [ "$(dbq 'SELECT COUNT(DISTINCT file_uuid) FROM sesh_index_messages WHERE quarantine = 0')" = "2" ]
+step "live index reaches the terminal deduped state"
+# The index consumer is async behind the mirror ACKs, so no partial
+# predicate is safe to assert from: "1 logical session + 2 files" is
+# satisfiable mid-ingest before the tail rows land, and the row count
+# transits intermediate values while the final event's unify/dedupe
+# statements run. Wait on the terminal conjunction itself — the index has
+# consumed every mirrored byte (complete_offset == high_water for every
+# generation; the pair's files end on line boundaries) AND one unified
+# session AND exactly the deduped count — then hard-assert from there.
+# 334 = 206 + 269 lines - 141 overlapping (entry_type, uuid) pairs, the
+# corpus README's verified S2 arithmetic.
+index_terminal() {
+  [ "$(dbq "SELECT COUNT(*) FROM files f
+        LEFT JOIN index_file_state s
+          ON s.tool = f.tool AND s.wire_session_id = f.session_id
+         AND s.file_uuid = f.file_uuid AND s.generation = f.generation
+        WHERE COALESCE(s.complete_offset, 0) < f.high_water")" = "0" ] &&
+    [ "$(dbq 'SELECT COUNT(DISTINCT logical_session_id) FROM sesh_index_messages WHERE quarantine = 0')" = "1" ] &&
+    [ "$(dbq 'SELECT COUNT(*) FROM sesh_index_messages WHERE quarantine = 0')" = "334" ]
 }
-wait_for "index to unify the resume pair" 30 unified
+wait_for "index quiescence at the terminal deduped state (one session, 334 rows)" 30 index_terminal
 LOGICAL=$(dbq 'SELECT DISTINCT logical_session_id FROM sesh_index_messages WHERE quarantine = 0')
-ROWS=$(dbq 'SELECT COUNT(*) FROM sesh_index_messages WHERE quarantine = 0')
-# 206 + 269 lines - 141 overlapping (entry_type, uuid) pairs: the corpus
-# README's verified S2 arithmetic.
-[ "$ROWS" = "334" ] || fail "live index holds $ROWS deduped rows, want 334"
-ok "one logical session ($LOGICAL) with 334 deduped rows"
+FILES=$(dbq 'SELECT COUNT(DISTINCT file_uuid) FROM sesh_index_messages WHERE quarantine = 0')
+[ "$FILES" = "2" ] || fail "terminal index holds $FILES file_uuids, want 2"
+ok "one logical session ($LOGICAL) with 334 deduped rows across 2 files"
 
+# Everything below reads the terminal index state waited on above; the
+# surface serves from the same DB, so these are plain asserts, not waits.
 step "recency page lists exactly one session for the pair"
 page=$(curl -sf "$SURFACE_URL/") || fail "GET / failed"
 links=$(grep -o 'href="/s/claude/[0-9a-f-]*"' <<<"$page" | sort -u | wc -l)
