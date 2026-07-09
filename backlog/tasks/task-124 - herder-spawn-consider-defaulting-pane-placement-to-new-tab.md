@@ -36,3 +36,19 @@ Owner request (2026-07-09): consider changing herder spawn's DEFAULT pane placem
 3. Recommendation with chosen direction; if default flips, spawn help text + docs updated and check-spawn-contract goldens updated; if race fixed instead, a regression check proves delivery succeeds into a just-created split pane.
 4. Full house gate green (go vet+test tools/herder + tools/bottle, all tests/check-*.sh bare sequential).
 <!-- SECTION:DESCRIPTION:END -->
+
+## Owner addendum (2026-07-09, same day)
+
+The organizing principle is stronger than "default to new tab": agents related to some
+work belong in THAT WORK's workspace (e.g. a reviewer for task-110 belongs in the
+task-110 worker's workspace, not the orchestrator's). herder spawn must make this easy,
+not hard. Concretely:
+
+- herder spawn today has no workspace-targeting option; the workaround is spawn then
+  `herdr pane move <pane> --new-tab --workspace <id>` (two steps, and the pane briefly
+  lands in the caller's workspace).
+- Wanted shape (design in this task): something like `--workspace <id|label>` and/or
+  inference — when spawning with --cwd/--worktree matching an existing agent's worktree,
+  offer/default placement into that agent's workspace as a new tab.
+- The new-tab-vs-split delivery race in the original capture still needs
+  characterizing; workspace targeting and the race fix are complementary.
