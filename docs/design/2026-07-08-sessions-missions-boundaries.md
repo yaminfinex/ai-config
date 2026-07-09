@@ -258,6 +258,37 @@ point for the next session — do not re-ask these.
   → label-keyed, guid-free; D2's substance (explicit membership, richer herder-side identity)
   survives. §6.1 closed — the mission thread (Q11–Q17) is fully grilled.
 
+- **Q18 Session service shape: dumb byte-shipper + central mirror?** → **Ratified
+  directionally** (author: "dumb shipper seems correct"), pending an out-of-band **prior-art
+  pass** on this specific problem (memo commissioned:
+  `docs/design/2026-07-09-session-shipping-prior-art.md`). Shape as ratified: per-node
+  shipper = inotify byte-tailer with per-file offset cursors, no parsing; store = byte-
+  faithful mirror + parse-on-ingest index (tool, session_id, node, account, project,
+  first/last activity, size); team surface reads the index only. Format knowledge lives in
+  exactly one place (the central indexer — re-parseable after any format churn); the mirror
+  is evidence-grade (feeds later read-only recovery / remote decant, D5/S4). Auth v1 =
+  tailnet identity, nothing app-level (Q1 team-visible + S6 server-ish nodes).
+  **Prior-art memo returned (2026-07-09-session-shipping-prior-art.md): shape CONFIRMED —
+  build the shipper/mirror, adopt the mechanisms.** Nothing existing does the whole job;
+  OTel disqualified (live-only, truncation, per-request shape); Anthropic's own docs call
+  the JSONL format internal/parse-breaking — the parse-centrally argument verbatim.
+  Amendments absorbed into the ratified shape: (1) file identity = session-UUID filename +
+  content fingerprint, never path or inode (resume/`/cd` move and recreate files; inode
+  reuse skips data); (2) ingest dedup by message uuid is CORE machinery, not polish
+  (verified duplication/interleave cases); (3) ACK-then-advance cursors, truncation =
+  size<cursor → reship, inotify-as-hint + periodic rescan, source-file-as-buffer; (4) the
+  mirror outlives the source (30-day client cleanup) — a product win, state it; (5) auth
+  narrowed: a tailnet **grant/ACL scope**, not whole-tailnet (phones/CI on the tailnet;
+  transcripts carry pasted secrets), trusting only tailscaled-injected identity headers.
+
+- **Q19 Team surface = people-first recency feed?** → **Ratified**: one page, person →
+  nodes → sessions by recency (tool, project, last-active, size), read-only transcript
+  drill-down; no search/analytics; zero herder awareness in v1 (mission/label columns are
+  the herd server's later overlay). Identity from shipper registration (account × hostname),
+  **with the author's wrinkle: shared nodes break this** — sessions run via herder or on a
+  shared unix account carry no human identity. mofa floated an explicit actor variable
+  ("this box's work = this human"). → Q20.
+
 **Not yet grilled** (the remaining tree): session service design (storage, shipping protocol,
 what the team surface shows, auth beyond tailnet); mission CLI verb set + dir format + event
 shapes; manifest-authority mechanics (§6.3); mission↔herder interaction contract (§6.1);
