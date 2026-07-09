@@ -3,10 +3,10 @@ id: TASK-106
 title: >-
   Characterize grok CLI for herder support — test Claude-hooks compatibility
   mode, bus join, and draft the new-harness onboarding playbook
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 06:04'
-updated_date: '2026-07-09 06:51'
+updated_date: '2026-07-09 07:12'
 labels: []
 dependencies: []
 priority: medium
