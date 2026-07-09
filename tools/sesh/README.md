@@ -41,6 +41,10 @@ M0 scaffold: all subcommands (`ship`, `serve`, `reindex`, `status`,
 `admin drop-file`) are stubs that exit 1 with not-implemented. Bodies land
 per milestone (M1 byte flow, M2 index + surface, M3 facts, M4 auth + rollout).
 
-`internal/surface` (U7) is built fixture-backed: it reads the frozen index
-schema through its `Store` seam, which U6's real index and mirror satisfy at
-M2 (`sesh serve` wires it then). Gate: `tests/check-surface-fixtures.sh`.
+`internal/surface` (U7) reads the frozen index schema through its `Store`
+seam; `surface.SQLStore` satisfies it from the live store DB + mirror, and
+`sesh serve` runs the surface on its own loopback read listener
+(`--surface-addr`, default 127.0.0.1:8766 — the port the M2 `tailscale
+serve` exposure proxies; ingest stays on `--addr`). Gates:
+`tests/check-surface-fixtures.sh` (fixture-backed renders) and
+`tests/check-surface-live.sh` (real serve + ship, S2 renders once).

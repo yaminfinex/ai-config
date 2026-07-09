@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -16,6 +17,7 @@ import (
 
 	"sesh/internal/index"
 	"sesh/internal/store"
+	"sesh/internal/surface"
 )
 
 // Execute runs the sesh command tree and returns its error, if any.
@@ -42,6 +44,7 @@ func newRoot() *cobra.Command {
 
 func newServe() *cobra.Command {
 	var addr string
+	var surfaceAddr string
 	var dataDir string
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -54,18 +57,17 @@ func newServe() *cobra.Command {
 					return err
 				}
 			}
-			l, err := net.Listen("tcp", addr)
+			l, err := listenLoopback(addr, "ingest")
 			if err != nil {
 				return err
 			}
-			host, _, err := net.SplitHostPort(l.Addr().String())
+			// The read-only surface gets its own listener so the M2
+			// exposure posture (proxy the read port, keep ingest loopback)
+			// stays a deployment concern, not a code change (U8/R19).
+			sl, err := listenLoopback(surfaceAddr, "surface")
 			if err != nil {
 				_ = l.Close()
 				return err
-			}
-			if !net.ParseIP(host).IsLoopback() {
-				_ = l.Close()
-				return fmt.Errorf("sesh serve: ingest listener must bind loopback before M4, got %s", l.Addr())
 			}
 			st, err := store.Open(cmd.Context(), store.Config{
 				Dir:    dataDir,
@@ -73,21 +75,49 @@ func newServe() *cobra.Command {
 			})
 			if err != nil {
 				_ = l.Close()
+				_ = sl.Close()
 				return err
 			}
 			defer st.Close()
 			idx, err := index.New(cmd.Context(), st.DB(), st.MirrorPath)
 			if err != nil {
 				_ = l.Close()
+				_ = sl.Close()
 				return err
 			}
 			startIndexConsumer(cmd.Context(), st, idx, slog.Default())
+			go func() {
+				srv := surface.New(surface.NewSQLStore(st.DB(), st.MirrorPath))
+				if err := http.Serve(sl, srv); err != nil {
+					slog.Default().Error("surface listener stopped", "error", err)
+				}
+			}()
 			return st.Serve(l)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8765", "loopback address for the store HTTP listener")
+	cmd.Flags().StringVar(&surfaceAddr, "surface-addr", "127.0.0.1:8766", "loopback address for the read-only surface listener")
 	cmd.Flags().StringVar(&dataDir, "data-dir", "", "store data directory")
 	return cmd
+}
+
+// listenLoopback binds addr and enforces the pre-M4 posture: every listener
+// stays loopback until tsnet auth lands (U11).
+func listenLoopback(addr, name string) (net.Listener, error) {
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	host, _, err := net.SplitHostPort(l.Addr().String())
+	if err != nil {
+		_ = l.Close()
+		return nil, err
+	}
+	if !net.ParseIP(host).IsLoopback() {
+		_ = l.Close()
+		return nil, fmt.Errorf("sesh serve: %s listener must bind loopback before M4, got %s", name, l.Addr())
+	}
+	return l, nil
 }
 
 func startIndexConsumer(ctx context.Context, st *store.Store, idx *index.Indexer, logger *slog.Logger) {

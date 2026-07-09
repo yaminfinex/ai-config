@@ -31,8 +31,12 @@ var templateFS embed.FS
 //go:embed assets/htmx.min.js
 var assetFS embed.FS
 
-// FileRef names one mirrored file generation of a logical session.
+// FileRef names one mirrored file generation of a logical session. The wire
+// session id (the PUT URL claim) is part of the mirror's addressing —
+// mirror/<tool>/<session_id>/<file_uuid>/generation-N — so mirror reads
+// carry it.
 type FileRef struct {
+	WireSessionID string
 	FileUUID      string
 	Generation    int
 	FirstIngestAt time.Time
@@ -100,9 +104,9 @@ type Store interface {
 	// Rows returns the session's sesh_index_messages rows.
 	Rows(ctx context.Context, tool wire.Tool, logicalSessionID string) ([]wire.IndexMessage, error)
 	// MirrorRange reads mirrored bytes [start, end) of one file generation.
-	MirrorRange(ctx context.Context, tool wire.Tool, fileUUID string, generation int, start, end int64) ([]byte, error)
+	MirrorRange(ctx context.Context, tool wire.Tool, wireSessionID, fileUUID string, generation int, start, end int64) ([]byte, error)
 	// MirrorFile streams a whole mirrored file generation (raw fallback).
-	MirrorFile(ctx context.Context, tool wire.Tool, fileUUID string, generation int) (io.ReadCloser, error)
+	MirrorFile(ctx context.Context, tool wire.Tool, wireSessionID, fileUUID string, generation int) (io.ReadCloser, error)
 }
 
 // Server renders the surface. All handlers are GET-only; the page carries no
