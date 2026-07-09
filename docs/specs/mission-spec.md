@@ -56,8 +56,8 @@ machinery.
 | **artifact** | Any file under `missions/<slug>/artifacts/` — free-form outputs, analyses, reports. Structure by convention only (disjoint paths per writer); the CLI never interprets contents. |
 | **context marker** | A `.mission` file in a working directory (typically a code worktree), pointing at the mission by slug. The D6 mechanism that lets `mission` commands run far from the missions repo. |
 | **context resolution** | How a `mission` invocation finds its mission: explicit flag, then cwd-inside-a-mission-dir, then the single marker on the ancestor chain (§5). Markers never shadow one another. Never ambient identity beyond `$MISSIONS_REPO` locating the repo. |
-| **passthrough** | `mission backlog …`: the Backlog.md CLI executed with cwd pinned to the mission dir, arguments forwarded verbatim minus a small denylist (§6.2). |
-| **denylist** | The Backlog.md subcommands the passthrough refuses because they clash with the mission system: `init`, `config`, `agents` (§6.2). |
+| **passthrough** | `mission backlog …`: the Backlog.md CLI executed with cwd pinned to the mission dir, exposing a deliberate allowlist of subcommands, arguments forwarded verbatim (§6.2). |
+| **allowlist** | The Backlog.md subcommands the passthrough exposes (§6.2). Deliberate and closed: anything not listed — including subcommands future Backlog.md versions add — refuses until explicitly added. |
 | **pinned config** | The four `backlog/config.yml` keys stamped at scaffold and invariant for the mission's life (§4.4): they neutralize Backlog.md's git/remote/browser behaviours inside the shared repo. |
 | **adopt / harvest** | Custody verbs, not CLI verbs: an agent moving files into a mission (adopt) or copying results out to their permanent home (harvest), recorded by conventioned commit messages and board notes (§8). |
 | **custody commit** | A git commit whose message follows the §8.2 grammar, carrying the provenance/disposition record that the killed event log (Q15) used to promise. |
@@ -105,8 +105,8 @@ deletion is a repo-hygiene decision made by humans with git, outside this spec.
    (Backlog.md resolves boards by nearest ancestor, so an unguarded miss would silently operate
    on an ancestor board — the verified sharp edge, §4.4.)
 7. **Pinned config is invariant.** The four §4.4 keys keep their scaffold values for the
-   mission's life. The CLI refuses the paths that would change them (`config` on the denylist);
-   `mission status` warns loudly on drift.
+   mission's life. The CLI refuses the paths that would change them (`config` is outside the
+   allowlist); `mission status` warns loudly on drift.
 8. **One manifest authority per mission** (Q16). Only the authority edits `mission.md` or
    restructures the board (column/status changes, task moves between states it doesn't own,
    task deletion). Transfer is the authority editing the field. A merge conflict on
@@ -170,7 +170,10 @@ created: 2026-07-08              # yyyy-mm-dd, stamped by `mission new`
 The section headings above are the scaffolded skeleton and the recommended shape; the body is
 prose and the authority may restructure it. The frontmatter is normative: `mission` must equal
 the dir name (checked by `status`), `status` has exactly two values, and edits to any of it are
-authority-only (invariant 8).
+authority-only (invariant 8). The two-value status is a lifecycle bit — "is this mission a
+going concern" — not a workflow vocabulary: disposition nuance (completed, cancelled-with-why,
+parked for a later harvest) is expressed in the Closeout section's prose and the board's final
+state, where there is room to actually say it (§8.4).
 
 ### 4.3 Slug rules
 
@@ -277,7 +280,7 @@ Three verbs, nothing else (Q12 as amended by Q15). `new` is the only write verb 
 | Command | Behaviour |
 |---|---|
 | `mission new <slug> [--title T] [--authority A] [--no-marker]` | Scaffold `missions/<slug>/` (§6.1): manifest, pinned board, empty artifacts; write the context marker into cwd. Refuses on existing slug, invalid slug, unset `$MISSIONS_REPO`, or a conflicting existing marker. |
-| `mission backlog [--mission S] <backlog-args…>` | Resolve context (§5.3), guard the board's existence (invariant 6), check the denylist, then exec the Backlog.md CLI with cwd pinned to the mission dir, forwarding arguments, stdio, and exit code verbatim (§6.2). |
+| `mission backlog [--mission S] <backlog-args…>` | Resolve context (§5.3), guard the board's existence (invariant 6), check the allowlist, then exec the Backlog.md CLI with cwd pinned to the mission dir, forwarding arguments, stdio, and exit code verbatim (§6.2). |
 | `mission status [--mission S \| --all]` | Read-only report: single-mission detail when context resolves, repo-wide overview with `--all` or when invoked with no resolvable context from inside the missions repo (§6.3). |
 
 ### 6.1 `mission new`
@@ -313,22 +316,34 @@ commit, made by the caller per the skill (§8).
 The mission system's whole board interface. Sequence: resolve context (§5.3) → verify
 `missions/<slug>/backlog/config.yml` exists, refusing on absence with a "board missing —
 scaffold damaged or wrong mission" error rather than risking ancestor fallthrough
-(invariant 6) → check the first forwarded argument against the denylist → exec `backlog` with
-cwd = the mission dir, forwarding everything else untouched. Interactive subcommands,
+(invariant 6) → check the first forwarded argument against the allowlist → exec `backlog`
+with cwd = the mission dir, forwarding everything else untouched. Interactive subcommands,
 stdin/stdout, and exit codes pass through; the wrapper adds nothing on success.
 
-**Denylist** (refused with a one-line reason each):
+**Allowlist** — the exposed surface. Anything not listed refuses, naming the allowlist —
+including subcommands future Backlog.md versions add, until deliberately added here:
 
-| Subcommand | Why refused |
+| Subcommand | Note |
 |---|---|
-| `init` | The board exists; re-init inside a mission is always damage |
-| `config` | The pinned keys are invariant (7); deliberate tuning is an authority file-edit, not a CLI path |
-| `agents` | Writes agent-instruction nudge files at board root — pollutes the shared missions repo with per-mission instruction files |
+| `task` / `tasks`, `draft` | Task CRUD, notes, status — the working surface |
+| `board` | The kanban render |
+| `search`, `overview`, `sequence` | Read-only: index search, project stats, dependency sequences |
+| `doc`, `decision` | Backlog's docs/decisions — board-internal, land inside the mission dir |
+| `milestone` / `milestones` | Board-internal grouping |
+| `cleanup` | Ages Done tasks into the completed folder — restructuring, authority etiquette applies (invariant 8) |
+| `browser` | The visual board (Q11 valued it); never auto-launched (pin) |
 
-Everything else — including subcommands added by future Backlog.md versions — passes through:
-the posture is *verbatim instance with a denylist*, not an allowlist, because the pins already
-neutralize the dangerous defaults (git, remotes, browser) and the board is Backlog.md's to
-evolve.
+Excluded, with the reasons recorded: `init` (re-init inside a mission is always damage),
+`config` (the pins are invariant; deliberate tuning is an authority file-edit, not a CLI
+path), `agents` (writes agent-instruction nudge files at board root — litters the shared
+repo), `completion`, `instructions`, `mcp` (no mission use case yet — the allowlist grows by
+deliberate addition, never by default).
+
+**Help matches the surface.** Bare `mission backlog` (or `… help`) prints the *wrapper's own*
+summary — the allowlist above with one-liners and the exclusion rationale — never Backlog.md's
+full help, so what help advertises is exactly what's invocable. Per-subcommand help passes
+through: `mission backlog task --help` returns Backlog.md's own help for `task`. A refused
+subcommand's error names the allowlist.
 
 ### 6.3 `mission status`
 
@@ -459,7 +474,11 @@ references) followed by a custody commit — there is no adopt machinery to invo
 Assignees are label-grade names; agents work their assigned tasks and only those; proposals to
 the authority ride task notes; **external effects** — a PR merged, a deploy, an upstream ticket
 filed — are recorded as notes on the task that produced them (the surviving half of Q13's
-category 3). At kickoff and closedown, movement of items between a project repo's board and the
+category 3). A mission's operating skill may layer a **stricter regime** on this floor — e.g.
+orchestrate's standing doctrine that the orchestrator, as authority, manages all task state
+while workers only report — and such overlays are legitimate and belong to that skill, not to
+missions: the §7 surfaces and conflict taxonomy are the guarantee missions themselves make,
+not a ceiling on discipline. At kickoff and closedown, movement of items between a project repo's board and the
 mission board is performed in prose — read one, write the other, by hand — per D4; no movement
 machinery exists.
 
@@ -468,7 +487,8 @@ machinery exists.
 Closing a mission is the authority: (1) board final states — every task Done or explicitly
 noted as dying with the mission; (2) harvest pass — everything with a future gets a §8.2
 harvest commit to its permanent home; (3) `mission.md` Closeout section written — disposition
-summary, harvest record, pointers outward; (4) frontmatter `status: closed`; (5) the `close`
+in words (completed, cancelled and why, parked with what's still worth harvesting), harvest
+record, pointers outward; (4) frontmatter `status: closed`; (5) the `close`
 custody commit. The dir then rests in place: greppable, browsable, cheap. Deletion, when it
 ever happens, is a git operation recorded by a `delete` custody commit.
 
@@ -540,9 +560,10 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
 
 **Command surface**
 
-- **AC-11 denylist** — `mission backlog init`, `… config set`, `… agents` each refuse with
-  their §6.2 reason; `mission backlog board`, `… task edit`, and an unknown future subcommand
-  pass through verbatim with Backlog.md's own exit code.
+- **AC-11 allowlist** — `mission backlog init`, `… config set`, `… agents`, and an
+  unknown/future subcommand each refuse, naming the allowlist; `… board` and `… task edit`
+  pass through verbatim with Backlog.md's own exit code; bare `mission backlog` (or `… help`)
+  prints the wrapper's allowlist summary, while `… task --help` returns Backlog.md's own help.
 - **AC-12 status detail** — `mission status` in a resolved context prints the §6.3 block;
   hand-editing a pinned key, breaking the frontmatter/dirname match, or deleting `artifacts/`
   each produce their one-line warning on the next run; nothing is modified (a before/after
@@ -614,7 +635,7 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 | M2 | Board = verbatim nested Backlog.md; nothing board-shaped invented; nesting behaviour verified (nearest-ancestor resolution; two sharp edges neutralized) | Q11 + 2026-07-08 verification | §4.4, invariants 5–6, AC-5..7 |
 | M3 | Pinned config = `check_active_branches`, `remote_operations`, `auto_commit`, `auto_open_browser`, all false; invariant for the mission's life; drift warned by `status` | Q12 + verification | §4.4, invariant 7, AC-12 |
 | M4 | Verb set closed at `new` / `backlog` / `status`; `new` is the CLI's only owned write | Q12 as cut by Q15 | §6, §10 |
-| M5 | Passthrough = cwd-pinned, board-guarded, denylist `{init, config, agents}`, otherwise verbatim (denylist posture, not allowlist) | Q12 | §6.2, invariant 6, AC-11 |
+| M5 | Passthrough = cwd-pinned, board-guarded, **allowlist posture** (`task/tasks, draft, board, search, overview, sequence, doc, decision, milestone/milestones, cleanup, browser`); future subcommands excluded until deliberately added; top-level help is wrapper-owned so the help surface equals the invocable surface | Q12 + owner ruling 2026-07-09 | §6.2, invariant 6, AC-11 |
 | M6 | CLI never runs git; git doctrine is skill prose; opt-in `--commit` design recorded but reserved out of v1 | Q12 | Invariant 4, §6.4, §8.1, AC-14 |
 | M7 | events.jsonl killed with full cascade (no log verb, custody → commits + board notes) | Q15 | §8.2, §10 |
 | M8 | Manifest authority: advisory `authority:` label-grade field, stamped by `new`; transfer = editing the field; conflict on mission.md = violation, authority wins | Q16 | §4.2, invariant 8, §7.2, AC-16 |
