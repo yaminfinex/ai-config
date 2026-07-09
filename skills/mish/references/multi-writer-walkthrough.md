@@ -66,6 +66,9 @@ mish backlog --mission perf-regression task edit 12 \
   --comment 'Proposed scope addition (lost in mission.md merge): also cover the p99 tail on /search — toma'
 ```
 
+(`--comment` appends; `--notes` *replaces* the whole notes field — the same
+read-then-re-set caution as the references edge in `mish backlog --help`.)
+
 The authority reads the proposal and, if accepted, makes the manifest edit
 themselves.
 

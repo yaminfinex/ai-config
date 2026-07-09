@@ -59,11 +59,15 @@ git -C "$MISSIONS_REPO" commit \
   -m 'mission(perf-regression): adopt repro script from api worktree napkins' \
   --trailer 'Mission-Source: api@9f31c2d' --trailer 'Mission-Agent: hera'
 
-# harvest — copy out, never move: the mission stays self-contained. The copy
-# leaves no diff in the missions repo, so the record is an empty commit;
-# the summary names the destination (and, where useful, the landed sha)
+# harvest — copy out, never move: the mission stays self-contained. Record
+# the disposition (destination repo, path, landed sha) on the producing task,
+# where external effects live; that record is the diff the custody commit
+# carries, keeping the harvest visible to git log -- missions/<slug>/
 cp "$MISSIONS_REPO/missions/perf-regression/artifacts/hera/fix-notes.md" ~/code/api/docs/perf/
-git -C "$MISSIONS_REPO" commit --allow-empty \
+mish backlog --mission perf-regression task edit 12 \
+  --comment 'Harvested: fix-notes.md -> api docs/perf, landed api@4e2a91b'
+git -C "$MISSIONS_REPO" add missions/perf-regression
+git -C "$MISSIONS_REPO" commit \
   -m 'mission(perf-regression): harvest fix notes to api docs/perf' \
   --trailer 'Mission-Dest: api@4e2a91b'
 
