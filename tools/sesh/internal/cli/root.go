@@ -22,7 +22,7 @@ func newRoot() *cobra.Command {
 		SilenceUsage: true,
 	}
 	root.AddCommand(
-		stub("ship", "Run the per-user shipper: discover, tail, and mirror local session files"),
+		newShip(),
 		stub("serve", "Run the central store: byte-range ingest, index, and team surface"),
 		stub("reindex", "Rebuild the disposable index from the durable mirror"),
 		stub("status", "Report shipper/store health, staleness, and quarantine state"),
