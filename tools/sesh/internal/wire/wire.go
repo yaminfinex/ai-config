@@ -11,8 +11,8 @@ import "time"
 const (
 	Version                = 1
 	APIRoot                = "/v1"
-	RescanInterval         = 60 * time.Second
-	MaxPUTBody             = 4 << 20 // 4 MiB
+	RescanInterval         = 60 * time.Second // shipper-local default, not wire contract
+	MaxPUTBody             = 4 << 20          // 4 MiB
 	FingerprintAlgorithm   = "sha256-first-1024"
 	FingerprintWindowBytes = 1024
 	// ContentTypeBytes is the required Content-Type of every PUT body.
@@ -55,10 +55,11 @@ const StatusAck = "ack"
 
 // Ack is the 200 response to PUT bytes. HighWater is the next byte offset the
 // store will accept for the selected generation; on any 200 the shipper sets
-// its cursor to HighWater exactly — never to offset+len(body). No other
-// response advances a cursor. Fingerprint is the generation's recorded value
-// (authoritative from mirrored bytes once the mirror reaches the window) or
-// null.
+// its cursor to min(HighWater, most recently observed source size) — never to
+// offset+len(body), never above the store's answer, and never above the
+// source. No other response advances a cursor. Fingerprint is the
+// generation's recorded value (authoritative from mirrored bytes once the
+// mirror reaches the window) or null.
 type Ack struct {
 	WireVersion          int     `json:"wire_version"`
 	Status               string  `json:"status"`
