@@ -46,6 +46,249 @@ func TestStatusSingleMissionHappyBlock(t *testing.T) {
 	}
 }
 
+func TestStatusSingleMissionUsesSingularTaskNoun(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "perf-regression")
+	writeTaskFile(t, missionDir, "tasks/task-1.md", "TASK-1", "To Do")
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	if err != nil {
+		t.Fatalf("status error: %v\nstderr=%s", err, stderr)
+	}
+	want := "board:   1 To Do · 0 In Progress · 0 Done   (1 task)"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("status output missing singular task noun %q:\n%s", want, stdout)
+	}
+}
+
+func TestStatusOverviewFromRepoRootListsActiveAndClosedMissions(t *testing.T) {
+	repo, activeDir := makeStatusMission(t, "perf-regression")
+	writeTaskFile(t, activeDir, "tasks/task-1.md", "TASK-1", "To Do")
+	writeTaskFile(t, activeDir, "tasks/task-2.md", "TASK-2", "In Progress")
+	setTreeTimes(t, activeDir, testNow().Add(-2*time.Hour))
+
+	closedDir := addStatusMission(t, repo, "q3-launch")
+	replaceInFile(t, filepath.Join(closedDir, "mission.md"), "status: active", "status: closed")
+	writeTaskFile(t, closedDir, "completed/task-21.md", "TASK-21", "Done")
+	setTreeTimes(t, closedDir, testNow().Add(-6*24*time.Hour))
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status")
+	if err != nil {
+		t.Fatalf("status overview error: %v\nstderr=%s", err, stderr)
+	}
+	for _, want := range []string{
+		"SLUG",
+		"STATUS",
+		"AUTHORITY",
+		"OWNER",
+		"TASKS To Do/In Progress/Done",
+		"UPDATED",
+		"perf-regression",
+		"active",
+		"hera",
+		"riley",
+		"1/1/0",
+		"2h ago",
+		"q3-launch",
+		"closed",
+		"0/0/1",
+		"6d ago",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("overview output missing %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Index(stdout, "perf-regression") > strings.Index(stdout, "q3-launch") {
+		t.Fatalf("overview rows not sorted by slug:\n%s", stdout)
+	}
+}
+
+func TestStatusOverviewTaskHeaderUsesSharedOrderOnlyWhenAllBoardsMatch(t *testing.T) {
+	t.Run("shared order uses header once", func(t *testing.T) {
+		repo, activeDir := makeStatusMission(t, "perf-regression")
+		writeTaskFile(t, activeDir, "tasks/task-1.md", "TASK-1", "To Do")
+		closedDir := addStatusMission(t, repo, "q3-launch")
+		writeTaskFile(t, closedDir, "completed/task-2.md", "TASK-2", "Done")
+
+		stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+		if err != nil {
+			t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
+		}
+		if !strings.Contains(stdout, "TASKS To Do/In Progress/Done") {
+			t.Fatalf("shared-order overview missing status order in header:\n%s", stdout)
+		}
+		if strings.Contains(stdout, "1/0/0 To Do/In Progress/Done") {
+			t.Fatalf("shared-order row repeated status order:\n%s", stdout)
+		}
+	})
+
+	t.Run("mixed orders label each row", func(t *testing.T) {
+		repo, defaultDir := makeStatusMission(t, "default-board")
+		writeTaskFile(t, defaultDir, "tasks/task-1.md", "TASK-1", "To Do")
+		customDir := addStatusMission(t, repo, "custom-board")
+		replaceInFile(t, filepath.Join(customDir, "backlog", "config.yml"),
+			`statuses: ["To Do", "In Progress", "Done"]`,
+			`statuses: ["Backlog", "Active", "Shipped"]`,
+		)
+		writeTaskFile(t, customDir, "tasks/task-1.md", "TASK-1", "Backlog")
+		writeTaskFile(t, customDir, "tasks/task-2.md", "TASK-2", "Backlog")
+		writeTaskFile(t, customDir, "tasks/task-3.md", "TASK-3", "Active")
+		writeTaskFile(t, customDir, "completed/task-4.md", "TASK-4", "Shipped")
+
+		stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+		if err != nil {
+			t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
+		}
+		header := firstLine(stdout)
+		if strings.Contains(header, "TASKS To Do/In Progress/Done") || strings.Contains(header, "TASKS Backlog/Active/Shipped") {
+			t.Fatalf("mixed-order header should be plain TASKS:\n%s", stdout)
+		}
+		for _, want := range []string{
+			"1/0/0 To Do/In Progress/Done",
+			"2/1/1 Backlog/Active/Shipped",
+		} {
+			if !strings.Contains(stdout, want) {
+				t.Fatalf("mixed-order overview missing row order %q:\n%s", want, stdout)
+			}
+		}
+	})
+}
+
+func TestStatusOverviewDoesNotUseGitOrSurfaceStalenessWarnings(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "perf-regression")
+	writeFile(t, filepath.Join(repo, ".git"), "gitdir: /tmp/repo.git\n")
+	var calls [][]string
+	d := statusTestDeps(repo, missionDir)
+	d.git = func(args []string, dir string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		return []byte("dirty"), nil
+	}
+
+	stdout, stderr, err := executeStatus(t, d, "status", "--all")
+	if err != nil {
+		t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("overview invoked git seam: %v", calls)
+	}
+	if strings.Contains(stdout, "uncommitted or unpushed") {
+		t.Fatalf("overview surfaced single-mission staleness warning:\n%s", stdout)
+	}
+}
+
+func TestStatusContextlessOutsideRepoRefuses(t *testing.T) {
+	repo, _ := makeStatusMission(t, "perf-regression")
+	outside := t.TempDir()
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, outside), "status")
+	if err == nil {
+		t.Fatalf("contextless status unexpectedly succeeded")
+	}
+	if stdout != "" {
+		t.Fatalf("contextless refusal wrote stdout:\n%s", stdout)
+	}
+	for _, want := range []string{"mish status: no mission context found", "pass --mission <slug>, run from inside missions/<slug>/, or add a .mission marker"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
+func TestStatusMissionAndAllAreMutuallyExclusive(t *testing.T) {
+	repo, _ := makeStatusMission(t, "perf-regression")
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--mission", "perf-regression", "--all")
+	if err == nil {
+		t.Fatalf("status --mission --all unexpectedly succeeded")
+	}
+	if stdout != "" {
+		t.Fatalf("mutual exclusion wrote stdout:\n%s", stdout)
+	}
+	want := "mish status: --mission and --all are mutually exclusive"
+	if !strings.Contains(stderr, want) {
+		t.Fatalf("stderr missing %q:\n%s", want, stderr)
+	}
+
+	var runOut, runErr bytes.Buffer
+	d := statusTestDeps(repo, repo)
+	d.stdout = &runOut
+	d.stderr = &runErr
+	code := runWithDeps([]string{"status", "--mission", "perf-regression", "--all"}, d)
+	if code != exitUsage {
+		t.Fatalf("exit code = %d, want %d; stderr=%s", code, exitUsage, runErr.String())
+	}
+}
+
+func TestStatusOverviewAllWorksFromAnywhereWithMissionsRepo(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "perf-regression")
+	writeTaskFile(t, missionDir, "tasks/task-1.md", "TASK-1", "Done")
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, t.TempDir()), "status", "--all")
+	if err != nil {
+		t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
+	}
+	for _, want := range []string{"SLUG", "perf-regression", "active", "0/0/1"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("--all overview missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestStatusOverviewZeroMissionsRendersHeaderOnly(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, repo string)
+	}{
+		{
+			name:  "missing missions dir",
+			setup: func(t *testing.T, repo string) {},
+		},
+		{
+			name: "empty missions dir",
+			setup: func(t *testing.T, repo string) {
+				if err := os.MkdirAll(filepath.Join(repo, "missions"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := t.TempDir()
+			tt.setup(t, repo)
+
+			stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+			if err != nil {
+				t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
+			}
+			if stderr != "" {
+				t.Fatalf("zero-mission overview wrote stderr:\n%s", stderr)
+			}
+			lines := strings.Split(strings.TrimSpace(stdout), "\n")
+			if len(lines) != 1 || !strings.Contains(lines[0], "SLUG") || !strings.Contains(lines[0], "TASKS") {
+				t.Fatalf("zero-mission overview should render header only:\n%s", stdout)
+			}
+		})
+	}
+}
+
+func TestStatusOverviewBrokenManifestGetsWarningRow(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "perf-regression")
+	replaceInFile(t, filepath.Join(missionDir, "mission.md"), "mission: perf-regression", "mission: [")
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+	if err != nil {
+		t.Fatalf("status --all with broken manifest returned err %v; stderr=%s stdout=%s", err, stderr, stdout)
+	}
+	for _, want := range []string{"perf-regression", "warning", "malformed mission.md frontmatter", "0/0/0"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("broken-manifest overview missing %q:\n%s", want, stdout)
+		}
+	}
+	if stderr != "" {
+		t.Fatalf("broken-manifest overview wrote stderr:\n%s", stderr)
+	}
+}
+
 func TestStatusWarnings(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -349,6 +592,10 @@ func executeStatus(t *testing.T, d deps, args ...string) (string, string, error)
 		if errors.As(err, &refusal) {
 			fmt.Fprintln(&stderr, err)
 		}
+		var usage usageError
+		if errors.As(err, &usage) {
+			fmt.Fprintln(&stderr, err)
+		}
 	}
 	return stdout.String(), stderr.String(), err
 }
@@ -369,6 +616,11 @@ func testNow() time.Time {
 func makeStatusMission(t *testing.T, slug string) (string, string) {
 	t.Helper()
 	repo := t.TempDir()
+	return repo, addStatusMission(t, repo, slug)
+}
+
+func addStatusMission(t *testing.T, repo, slug string) string {
+	t.Helper()
 	missionDir := filepath.Join(repo, "missions", slug)
 	for _, dir := range []string{
 		filepath.Join(missionDir, "backlog", "tasks"),
@@ -399,7 +651,7 @@ auto_commit: false
 filesystem_only: true
 check_active_branches: false
 `, slug))
-	return repo, missionDir
+	return missionDir
 }
 
 func writeTaskFile(t *testing.T, missionDir, rel, id, status string) {
@@ -465,4 +717,22 @@ func hashTree(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	return fmt.Sprintf("%x", hash.Sum(nil))
+}
+
+func firstLine(text string) string {
+	line, _, _ := strings.Cut(text, "\n")
+	return line
+}
+
+func setTreeTimes(t *testing.T, root string, when time.Time) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chtimes(path, when, when)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
