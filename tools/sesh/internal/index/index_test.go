@@ -3,6 +3,7 @@ package index
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"sesh/internal/store"
 	"sesh/internal/wire"
@@ -341,6 +343,48 @@ func TestReindexReproducesChecksumAndHealsDirtyFlag(t *testing.T) {
 	}
 }
 
+func TestIncrementalAppendMatchesReindexChecksum(t *testing.T) {
+	st, idx := newHarness(t)
+	for i := 0; i < 25; i++ {
+		sessionID := syntheticUUID(10_000 + i)
+		body := syntheticSessionBody(sessionID, fmt.Sprintf("unrelated-%02d", i), 6, time.Date(2026, 7, 9, 12, i, 0, 0, time.UTC))
+		putBytes(t, st, sessionID, sessionID, 0, body)
+		if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	origSession := syntheticUUID(20_000)
+	resumeSession := syntheticUUID(20_001)
+	origFile := syntheticUUID(21_000)
+	resumeFile := syntheticUUID(21_001)
+	orig := syntheticSessionBody(origSession, "resume-original", 8, time.Date(2026, 7, 9, 13, 0, 0, 0, time.UTC))
+	resume := syntheticResumeBody(resumeSession, "resume-new", []string{"resume-original-02", "resume-original-03"}, 5, time.Date(2026, 7, 9, 14, 0, 0, 0, time.UTC))
+	putBytes(t, st, origSession, origFile, 0, orig)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	putBytes(t, st, resumeSession, resumeFile, 0, resume)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+
+	incrementalSum, incrementalRows, err := idx.Checksum(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	reindexedSum, reindexedRows, err := idx.Checksum(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if incrementalSum != reindexedSum || incrementalRows != reindexedRows {
+		t.Fatalf("incremental checksum %s/%d does not match reindex %s/%d", incrementalSum, incrementalRows, reindexedSum, reindexedRows)
+	}
+}
+
 func TestLineOrdinalComesFromBytePositionAfterDedupDeletion(t *testing.T) {
 	st, idx := newHarness(t)
 	body := []byte(
@@ -364,6 +408,37 @@ func TestLineOrdinalComesFromBytePositionAfterDedupDeletion(t *testing.T) {
 	}
 	if ordinal != 2 {
 		t.Fatalf("line ordinal after deleted tail row = %d, want byte-position ordinal 2", ordinal)
+	}
+}
+
+func BenchmarkProcessAppendWithUnrelatedCorpus(b *testing.B) {
+	for _, unrelated := range []int{0, 50, 200} {
+		b.Run(fmt.Sprintf("unrelated_%d", unrelated), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				st, idx := newBenchHarness(b)
+				for n := 0; n < unrelated; n++ {
+					sessionID := syntheticUUID(30_000 + n)
+					body := syntheticSessionBody(sessionID, fmt.Sprintf("bench-unrelated-%04d", n), 4, time.Date(2026, 7, 9, 15, n%60, 0, 0, time.UTC))
+					putBytesBench(b, st, sessionID, sessionID, 0, body)
+					if err := idx.ProcessAppend(b.Context(), <-st.AppendEvents()); err != nil {
+						b.Fatal(err)
+					}
+				}
+				targetSession := syntheticUUID(40_000 + i%1000)
+				targetFile := syntheticUUID(41_000 + i%1000)
+				body := syntheticSessionBody(targetSession, fmt.Sprintf("bench-target-%04d", i), 4, time.Date(2026, 7, 9, 16, 0, 0, 0, time.UTC))
+				b.StartTimer()
+				putBytesBench(b, st, targetSession, targetFile, 0, body)
+				if err := idx.ProcessAppend(b.Context(), <-st.AppendEvents()); err != nil {
+					b.Fatal(err)
+				}
+				b.StopTimer()
+				if err := st.Close(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 
@@ -448,6 +523,60 @@ func putBytes(t *testing.T, st *store.Store, sessionID, fileUUID string, offset 
 	if err := json.Unmarshal(rr.Body.Bytes(), &ack); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func putBytesBench(b *testing.B, st *store.Store, sessionID, fileUUID string, offset int64, body []byte) {
+	b.Helper()
+	req := httptest.NewRequest(http.MethodPut, "/v1/files/claude/"+sessionID+"/"+fileUUID+"/bytes?offset="+strconv.FormatInt(offset, 10), bytes.NewReader(body))
+	req.Header.Set("Content-Type", wire.ContentTypeBytes)
+	req.Header.Set(wire.HeaderWireVersion, "1")
+	req.Header.Set(wire.HeaderHostname, "node-a")
+	req.Header.Set(wire.HeaderOSUser, "grace")
+	rr := httptest.NewRecorder()
+	st.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		b.Fatalf("PUT status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func newBenchHarness(b *testing.B) (*store.Store, *Indexer) {
+	b.Helper()
+	st, err := store.Open(b.Context(), store.Config{Dir: b.TempDir(), AppendBuffer: 32})
+	if err != nil {
+		b.Fatal(err)
+	}
+	idx, err := New(b.Context(), st.DB(), st.MirrorPath)
+	if err != nil {
+		_ = st.Close()
+		b.Fatal(err)
+	}
+	return st, idx
+}
+
+func syntheticUUID(n int) string {
+	return fmt.Sprintf("00000000-0000-0000-0000-%012d", n)
+}
+
+func syntheticSessionBody(sessionID, prefix string, count int, start time.Time) []byte {
+	var buf bytes.Buffer
+	for i := 0; i < count; i++ {
+		fmt.Fprintf(&buf, `{"type":"message","uuid":"%s-%02d","sessionId":"%s","timestamp":"%s","message":{"role":"user"}}`+"\n",
+			prefix, i, sessionID, start.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano))
+	}
+	return buf.Bytes()
+}
+
+func syntheticResumeBody(sessionID, prefix string, shared []string, count int, start time.Time) []byte {
+	var buf bytes.Buffer
+	for _, uuid := range shared {
+		fmt.Fprintf(&buf, `{"type":"message","uuid":"%s","sessionId":"%s","timestamp":"%s","message":{"role":"user"}}`+"\n",
+			uuid, sessionID, start.Format(time.RFC3339Nano))
+	}
+	for i := 0; i < count; i++ {
+		fmt.Fprintf(&buf, `{"type":"message","uuid":"%s-%02d","sessionId":"%s","timestamp":"%s","message":{"role":"assistant"}}`+"\n",
+			prefix, i, sessionID, start.Add(time.Duration(i+len(shared))*time.Second).Format(time.RFC3339Nano))
+	}
+	return buf.Bytes()
 }
 
 func copyFile(dst, src string) error {

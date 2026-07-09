@@ -98,6 +98,12 @@ func (idx *Indexer) initSchema(ctx context.Context) error {
 			line_ordinal INTEGER NOT NULL,
 			reason TEXT NOT NULL
 		)`,
+		`CREATE INDEX IF NOT EXISTS sesh_index_messages_file
+			ON sesh_index_messages(tool, wire_session_id, file_uuid, generation)`,
+		`CREATE INDEX IF NOT EXISTS sesh_index_messages_logical
+			ON sesh_index_messages(tool, logical_session_id)`,
+		`CREATE INDEX IF NOT EXISTS sesh_index_messages_overlap
+			ON sesh_index_messages(tool, entry_type, message_uuid)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := idx.db.ExecContext(ctx, stmt); err != nil {
@@ -110,6 +116,10 @@ func (idx *Indexer) initSchema(ctx context.Context) error {
 // ProcessAppend indexes complete JSONL lines newly available for one mirrored
 // generation. Trailing partial lines stay mirrored but unindexed.
 func (idx *Indexer) ProcessAppend(ctx context.Context, ev wire.AppendEvent) error {
+	return idx.processAppend(ctx, ev, false)
+}
+
+func (idx *Indexer) processAppend(ctx context.Context, ev wire.AppendEvent, rebuild bool) error {
 	if idx.failWriteOnce {
 		idx.failWriteOnce = false
 		_ = idx.markDirty(ctx, ev)
@@ -135,9 +145,11 @@ func (idx *Indexer) ProcessAppend(ctx context.Context, ev wire.AppendEvent) erro
 		_ = idx.markDirty(ctx, ev)
 		return normalizeDBError(err)
 	}
-	if err := idx.unifyLogicalSessions(ctx); err != nil {
-		_ = idx.markDirty(ctx, ev)
-		return normalizeDBError(err)
+	if !rebuild {
+		if err := idx.unifyConnectedLogicalSessions(ctx, ev); err != nil {
+			_ = idx.markDirty(ctx, ev)
+			return normalizeDBError(err)
+		}
 	}
 	return normalizeDBError(idx.clearDirty(ctx, ev))
 }
@@ -166,14 +178,17 @@ func (idx *Indexer) Reindex(ctx context.Context) error {
 			ByteStart:     0,
 			ByteEnd:       gen.HighWater,
 		}
-		if err := idx.ProcessAppend(ctx, ev); err != nil {
+		if err := idx.processAppend(ctx, ev, true); err != nil {
 			if errors.Is(err, ErrMirrorIncomplete) {
 				continue
 			}
 			return normalizeDBError(err)
 		}
 	}
-	return normalizeDBError(idx.unifyLogicalSessions(ctx))
+	if err := idx.unifyLogicalSessions(ctx); err != nil {
+		return normalizeDBError(err)
+	}
+	return nil
 }
 
 type generation struct {
@@ -524,6 +539,115 @@ func (idx *Indexer) clearDirty(ctx context.Context, ev wire.AppendEvent) error {
 	return err
 }
 
+func (idx *Indexer) unifyConnectedLogicalSessions(ctx context.Context, ev wire.AppendEvent) error {
+	start, ok, err := idx.fileSummary(ctx, ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
+	if err != nil || !ok {
+		return err
+	}
+	group, err := idx.connectedFiles(ctx, start)
+	if err != nil {
+		return err
+	}
+	if len(group) == 0 {
+		return nil
+	}
+	sort.Slice(group, func(i, j int) bool {
+		if group[i].firstIngest != group[j].firstIngest {
+			return group[i].firstIngest < group[j].firstIngest
+		}
+		return group[i].key < group[j].key
+	})
+	canonical := group[0].logicalID
+	if canonical == "" {
+		canonical = group[0].wireID
+	}
+	if len(group) > 1 {
+		for _, f := range group {
+			if _, err := idx.db.ExecContext(ctx, `UPDATE sesh_index_messages SET logical_session_id = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,
+				canonical, f.tool, f.wireID, f.fileUUID, f.generation); err != nil {
+				return err
+			}
+		}
+	}
+	if err := idx.updateFileOrdinalsForFiles(ctx, group); err != nil {
+		return err
+	}
+	return idx.dedupeLogical(ctx, group[0].tool, canonical)
+}
+
+func (idx *Indexer) connectedFiles(ctx context.Context, start fileSummary) ([]fileSummary, error) {
+	seen := map[string]fileSummary{start.key: start}
+	queue := []fileSummary{start}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, fn := range []func(context.Context, fileSummary) ([]fileSummary, error){
+			idx.sameLogicalFiles,
+			idx.overlappingFiles,
+		} {
+			next, err := fn(ctx, cur)
+			if err != nil {
+				return nil, err
+			}
+			for _, f := range next {
+				if _, ok := seen[f.key]; ok {
+					continue
+				}
+				seen[f.key] = f
+				queue = append(queue, f)
+			}
+		}
+	}
+	out := make([]fileSummary, 0, len(seen))
+	for _, f := range seen {
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+func (idx *Indexer) sameLogicalFiles(ctx context.Context, f fileSummary) ([]fileSummary, error) {
+	rows, err := idx.db.QueryContext(ctx, `SELECT m.tool, m.wire_session_id, m.file_uuid, m.generation,
+		MIN(m.logical_session_id), COALESCE(f.created_at, ''), MIN(m.byte_start)
+		FROM sesh_index_messages m
+		LEFT JOIN files f ON f.tool = m.tool AND f.session_id = m.wire_session_id AND f.file_uuid = m.file_uuid AND f.generation = m.generation
+		WHERE m.quarantine = 0 AND m.tool = ? AND m.logical_session_id = ?
+		GROUP BY m.tool, m.wire_session_id, m.file_uuid, m.generation`,
+		f.tool, f.logicalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanFileSummaries(rows)
+}
+
+func (idx *Indexer) overlappingFiles(ctx context.Context, f fileSummary) ([]fileSummary, error) {
+	rows, err := idx.db.QueryContext(ctx, `SELECT m.tool, m.wire_session_id, m.file_uuid, m.generation,
+		MIN(m.logical_session_id), COALESCE(reg.created_at, ''), MIN(m.byte_start)
+		FROM (
+			SELECT tool, entry_type, message_uuid
+			FROM sesh_index_messages INDEXED BY sesh_index_messages_file
+			WHERE quarantine = 0
+				AND message_uuid <> ''
+				AND tool = ?
+				AND wire_session_id = ?
+				AND file_uuid = ?
+				AND generation = ?
+		) seed
+		JOIN sesh_index_messages m INDEXED BY sesh_index_messages_overlap
+			ON m.tool = seed.tool AND m.entry_type = seed.entry_type AND m.message_uuid = seed.message_uuid
+		LEFT JOIN files reg ON reg.tool = m.tool AND reg.session_id = m.wire_session_id AND reg.file_uuid = m.file_uuid AND reg.generation = m.generation
+		WHERE m.quarantine = 0
+			AND m.message_uuid <> ''
+		GROUP BY m.tool, m.wire_session_id, m.file_uuid, m.generation
+		HAVING COUNT(DISTINCT m.entry_type || char(31) || m.message_uuid) >= 2`,
+		f.tool, f.wireID, f.fileUUID, f.generation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanFileSummaries(rows)
+}
+
 func (idx *Indexer) unifyLogicalSessions(ctx context.Context) error {
 	files, err := idx.fileSummaries(ctx)
 	if err != nil {
@@ -608,11 +732,18 @@ func (idx *Indexer) updateFileOrdinals(ctx context.Context) error {
 			}
 			return group[i].key < group[j].key
 		})
-		for ordinal, f := range group {
-			if _, err := idx.db.ExecContext(ctx, `UPDATE sesh_index_messages SET file_ordinal = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,
-				ordinal, f.tool, f.wireID, f.fileUUID, f.generation); err != nil {
-				return err
-			}
+		if err := idx.updateFileOrdinalsForFiles(ctx, group); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (idx *Indexer) updateFileOrdinalsForFiles(ctx context.Context, group []fileSummary) error {
+	for ordinal, f := range group {
+		if _, err := idx.db.ExecContext(ctx, `UPDATE sesh_index_messages SET file_ordinal = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,
+			ordinal, f.tool, f.wireID, f.fileUUID, f.generation); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -635,6 +766,23 @@ func (idx *Indexer) dedupeAll(ctx context.Context) error {
 	return err
 }
 
+func (idx *Indexer) dedupeLogical(ctx context.Context, tool wire.Tool, logical string) error {
+	_, err := idx.db.ExecContext(ctx, `DELETE FROM sesh_index_messages
+		WHERE id IN (
+			SELECT id FROM (
+				SELECT id,
+					ROW_NUMBER() OVER (
+						PARTITION BY tool, logical_session_id, entry_type, message_uuid
+						ORDER BY timestamp_utc IS NULL, timestamp_utc, file_ordinal, line_ordinal, file_uuid, generation, id
+					) AS rn
+				FROM sesh_index_messages
+				WHERE quarantine = 0 AND message_uuid <> '' AND tool = ? AND logical_session_id = ?
+			)
+			WHERE rn > 1
+		)`, tool, logical)
+	return err
+}
+
 type fileSummary struct {
 	key         string
 	tool        wire.Tool
@@ -644,6 +792,25 @@ type fileSummary struct {
 	logicalID   string
 	firstIngest string
 	pairs       map[string]bool
+}
+
+func (idx *Indexer) fileSummary(ctx context.Context, tool wire.Tool, wireID, fileUUID string, generation int) (fileSummary, bool, error) {
+	rows, err := idx.db.QueryContext(ctx, `SELECT m.tool, m.wire_session_id, m.file_uuid, m.generation,
+		MIN(m.logical_session_id), COALESCE(f.created_at, ''), MIN(m.byte_start)
+		FROM sesh_index_messages m
+		LEFT JOIN files f ON f.tool = m.tool AND f.session_id = m.wire_session_id AND f.file_uuid = m.file_uuid AND f.generation = m.generation
+		WHERE m.quarantine = 0 AND m.tool = ? AND m.wire_session_id = ? AND m.file_uuid = ? AND m.generation = ?
+		GROUP BY m.tool, m.wire_session_id, m.file_uuid, m.generation`,
+		tool, wireID, fileUUID, generation)
+	if err != nil {
+		return fileSummary{}, false, err
+	}
+	defer rows.Close()
+	files, err := scanFileSummaries(rows)
+	if err != nil || len(files) == 0 {
+		return fileSummary{}, false, err
+	}
+	return files[0], true, nil
 }
 
 func (idx *Indexer) fileSummaries(ctx context.Context) ([]fileSummary, error) {
@@ -656,6 +823,27 @@ func (idx *Indexer) fileSummaries(ctx context.Context) ([]fileSummary, error) {
 		return nil, err
 	}
 	defer rows.Close()
+	files, err := scanFileSummaries(rows)
+	if err != nil {
+		return nil, err
+	}
+	for i := range files {
+		pairs, err := idx.overlapPairs(ctx, files[i])
+		if err != nil {
+			return nil, err
+		}
+		files[i].pairs = pairs
+	}
+	return files, nil
+}
+
+type summaryRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+}
+
+func scanFileSummaries(rows summaryRows) ([]fileSummary, error) {
 	var files []fileSummary
 	for rows.Next() {
 		var f fileSummary
@@ -673,17 +861,7 @@ func (idx *Indexer) fileSummaries(ctx context.Context) ([]fileSummary, error) {
 		f.pairs = map[string]bool{}
 		files = append(files, f)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for i := range files {
-		pairs, err := idx.overlapPairs(ctx, files[i])
-		if err != nil {
-			return nil, err
-		}
-		files[i].pairs = pairs
-	}
-	return files, nil
+	return files, rows.Err()
 }
 
 func (idx *Indexer) overlapPairs(ctx context.Context, f fileSummary) (map[string]bool, error) {
