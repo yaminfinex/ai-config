@@ -91,15 +91,11 @@ func newRoot(d deps) *cobra.Command {
 		return usageError{err: fmt.Errorf("mish: %w \u2014 run 'mish --help' for the command list", err)}
 	})
 	root.AddCommand(
-		newNewCommand(),
+		newNewCommand(d),
 		newBacklogCommand(d),
 		newStatusCommand(),
 	)
 	return root
-}
-
-func newNewCommand() *cobra.Command {
-	return stubCommand("new", "Scaffold a mission directory")
 }
 
 func newStatusCommand() *cobra.Command {

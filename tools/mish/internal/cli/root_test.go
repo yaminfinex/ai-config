@@ -102,5 +102,6 @@ func testDeps() deps {
 		stdout:       io.Discard,
 		stderr:       io.Discard,
 		missionsRepo: "",
+		osUser:       "tester",
 	}
 }

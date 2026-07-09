@@ -1,10 +1,34 @@
 package missionfs
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestWriteBoardUsesFixtureByteShapeAndStampsProjectName(t *testing.T) {
+	boardDir := filepath.Join(t.TempDir(), "backlog")
+	if err := WriteBoard(boardDir, "ops-handoff"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(boardDir, "config.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := bytesReplaceLine([]byte(realBacklogConfigTemplate), `project_name: `, `project_name: "ops-handoff"`)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("written config does not match fixture byte shape with stamped project_name\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+	info, err := os.Stat(filepath.Join(boardDir, "tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("tasks path is not a directory")
+	}
+}
 
 func TestReadBoardConfigDetectsEachPinnedDrift(t *testing.T) {
 	for key, drifted := range map[string]string{
