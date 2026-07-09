@@ -5,6 +5,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"sesh/internal/index"
 	"sesh/internal/store"
 )
 
@@ -31,7 +33,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(
 		newShip(),
 		newServe(),
-		stub("reindex", "Rebuild the disposable index from the durable mirror"),
+		newReindex(),
 		stub("status", "Report shipper/store health, staleness, and quarantine state"),
 		newAdmin(),
 	)
@@ -74,10 +76,71 @@ func newServe() *cobra.Command {
 				return err
 			}
 			defer st.Close()
+			idx, err := index.New(cmd.Context(), st.DB(), st.MirrorPath)
+			if err != nil {
+				_ = l.Close()
+				return err
+			}
+			startIndexConsumer(cmd.Context(), st, idx, slog.Default())
 			return st.Serve(l)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8765", "loopback address for the store HTTP listener")
+	cmd.Flags().StringVar(&dataDir, "data-dir", "", "store data directory")
+	return cmd
+}
+
+func startIndexConsumer(ctx context.Context, st *store.Store, idx *index.Indexer, logger *slog.Logger) {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev := <-st.AppendEvents():
+				if err := st.WithWriteLock(func() error {
+					return idx.ProcessAppend(ctx, ev)
+				}); err != nil {
+					logger.Error("append index failed",
+						"error", err,
+						"tool", ev.Tool,
+						"session_id", ev.WireSessionID,
+						"file_uuid", ev.FileUUID,
+						"generation", ev.Generation,
+					)
+				}
+			}
+		}
+	}()
+}
+
+func newReindex() *cobra.Command {
+	var dataDir string
+	cmd := &cobra.Command{
+		Use:   "reindex",
+		Short: "Rebuild the disposable index from the durable mirror",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var err error
+			if dataDir == "" {
+				dataDir, err = defaultStoreDir()
+				if err != nil {
+					return err
+				}
+			}
+			st, err := store.Open(cmd.Context(), store.Config{
+				Dir:    dataDir,
+				Logger: slog.Default(),
+			})
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			idx, err := index.New(cmd.Context(), st.DB(), st.MirrorPath)
+			if err != nil {
+				return err
+			}
+			return idx.Reindex(cmd.Context())
+		},
+	}
 	cmd.Flags().StringVar(&dataDir, "data-dir", "", "store data directory")
 	return cmd
 }
