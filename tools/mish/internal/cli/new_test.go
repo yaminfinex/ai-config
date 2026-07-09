@@ -216,6 +216,24 @@ func TestNewMarkerMatrix(t *testing.T) {
 		assertNotExists(t, filepath.Join(cwd, ".mission"))
 	})
 
+	t.Run("no marker flag skips different marker refusal", func(t *testing.T) {
+		repo := t.TempDir()
+		base := filepath.Join(t.TempDir(), "repo")
+		cwd := filepath.Join(base, "nested")
+		mkdir(t, cwd)
+		writeFileForTest(t, filepath.Join(base, ".mission"), "other\n")
+		d := newTestDeps(repo, cwd)
+
+		code, _, stderr := runNewForTest([]string{"new", "perf-regression", "--no-marker"}, d)
+		if code != exitOK {
+			t.Fatalf("exit = %d, want ok; stderr=%s", code, stderr)
+		}
+		assertNotExists(t, filepath.Join(cwd, ".mission"))
+		if _, err := os.Stat(filepath.Join(repo, "missions", "perf-regression", "mission.md")); err != nil {
+			t.Fatalf("mission was not scaffolded: %v", err)
+		}
+	})
+
 	t.Run("inside missions repo skips marker", func(t *testing.T) {
 		repo := t.TempDir()
 		cwd := filepath.Join(repo, "scratch")
