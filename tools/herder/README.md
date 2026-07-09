@@ -38,6 +38,12 @@ From the repository root:
 for f in tools/herder/tests/check-*.sh; do bash "$f"; done
 ```
 
+`tests/check-live-contract.sh` is the live substrate tier. It intentionally runs against
+the installed `hcom` and `herdr` binaries rather than mocks, and prints a visible skip
+count when those binaries or live read-only surfaces are unavailable. Run it during every
+hcom/herdr upgrade and at least weekly on the main development machine so upstream drift is
+caught between upgrades.
+
 The suites neutralize inherited `HERDER_BIN` / `AI_CONFIG_ROOT` themselves (each pins
 `AI_CONFIG_ROOT` to its own checkout and ignores the spawn-exported binary override), so
 they are safe to run bare from herder-spawned or worktree sessions. `env -u HERDER_BIN

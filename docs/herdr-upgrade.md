@@ -52,6 +52,10 @@ coordinates/detection).
    regardless: coordinate reissue is apparently normal at handoff.
 4. **Post-upgrade gate, immediately, in this order:**
    a. `herdr --version` — confirm the jump.
+   a2. `bash tools/herder/tests/check-live-contract.sh` — required live substrate
+      contract tier. It must pass the herdr agent-list envelope, API schema snapshot,
+      and socket `session.snapshot` nested-shape checks against the installed binary.
+      A visible skip is acceptable only on machines without a running herdr server.
    b. `hcom list` — bus side should be UNAFFECTED (different substrate); if bus identity
       broke too, you have an hcom problem, see the other runbook.
    c. `herder reconcile` (dry-run) — review classifications, then `herder reconcile

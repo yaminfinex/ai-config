@@ -40,12 +40,18 @@ Written after the 0.7.22 → 0.7.23 upgrade (2026-07-08); shaped by what actuall
    - `rm ~/.local/bin/hcom` if a curl/installer orphan exists;
    - verify with `mise ls | grep hcom` (exactly one version) and, in a **fresh** shell,
      `which -a hcom` + `hcom --version`.
-6. **Live smoke (the upgrade gate):** spawn a throwaway tagged agent
+6. **Live contract tier:** run `bash tools/herder/tests/check-live-contract.sh` from
+   the repo root before and after applying the pin. The hcom predicates must pass
+   against the installed binary: real SessionStart bootstrap extraction, focused
+   `hcom list --json` single-object shape, and roster `launch_context` fields. A
+   visible skip is acceptable only on machines without installed hcom or no live
+   hcom self for the focused lookup.
+7. **Live smoke (the upgrade gate):** spawn a throwaway tagged agent
    (`herder spawn --role smoke<ver> --agent claude --prompt 'quote your "You are tagged"
    line back to me'`) and confirm (a) spawn binds + delivers, and (b) the agent's bootstrap
    carries the tag group line. Cull it. This catches bootstrap-scrape drift the hermetic
    battery structurally cannot (canned fixtures).
-7. **Record it:** task notes on the board + the run journal if a run is live.
+8. **Record it:** task notes on the board + the run journal if a run is live.
 
 ## Known gotchas
 
