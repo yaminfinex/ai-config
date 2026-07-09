@@ -351,7 +351,7 @@ func TestLockedWriteRefusesLegacyV1AppendToMintedRegistry(t *testing.T) {
 	if !errors.As(err, &legacyErr) || legacyErr.GUID != "guid-poison" {
 		t.Fatalf("err = %v, want LegacyV1AppendError for guid-poison", err)
 	}
-	for _, want := range []string{"v1-shaped append", "older than this registry schema", "spawner HERDER_BIN", "upgrade the checkout"} {
+	for _, want := range []string{"v1-shaped append", "older than this registry schema", "spawner HERDER_BIN", "upgrade the checkout", "excise the on-disk v1-shaped row"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("err = %v, want message containing %q", err, want)
 		}

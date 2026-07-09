@@ -71,8 +71,9 @@ knowing when working across checkouts and worktrees:
 - **Herder lifecycle env stays pinned to the spawner.** A child spawned `--cwd` or `--worktree`
   into a different ai-config checkout still gets `AI_CONFIG_ROOT` and `HERDER_BIN` pointing at the
   spawner checkout. Herder lifecycle commands write the shared registry, so they must use the same
-  schema generation as the spawner build instead of rebuilding from an older child worktree. Work
-  inside the child tree with repo-local commands by invoking those paths explicitly.
+  schema generation as the spawner build instead of rebuilding from an older child worktree. To
+  deliberately run herder from the child checkout, override the pin explicitly:
+  `env -u AI_CONFIG_ROOT -u HERDER_BIN ./bin/herder ...` or `AI_CONFIG_ROOT=$PWD ./bin/herder ...`.
 
 `--notify` resolves the spawner's bus name from the registry by guid *and* by pane/terminal
 coordinates, so enrolled sessions (no `$HERDER_GUID` in their environment) get bus-native

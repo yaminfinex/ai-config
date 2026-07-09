@@ -33,7 +33,7 @@ func (e *LegacyV1AppendError) Error() string {
 	if e.GUID != "" {
 		target = "session row for guid " + e.GUID
 	}
-	return "registry refused v1-shaped append to a minted v2 registry: " + target + " looks like it came from a registry-writing herder binary older than this registry schema; use the spawner HERDER_BIN or upgrade the checkout before retrying"
+	return "registry refused v1-shaped append to a minted v2 registry: " + target + " looks like it came from a registry-writing herder binary older than this registry schema; use the spawner HERDER_BIN or upgrade the checkout for new writes. If this fired while mutating an existing poisoned guid, back up the registry, identify and excise the on-disk v1-shaped row, then retry with the verified archive in place"
 }
 
 // UpdateLocked is the single registry write path. It holds an exclusive flock

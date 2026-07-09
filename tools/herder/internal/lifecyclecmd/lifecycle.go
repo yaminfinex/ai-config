@@ -578,8 +578,8 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	inner := shellCommand(launchTokens)
 	spawnedBy := firstNonEmpty(os.Getenv("HERDER_GUID"), "user")
 	shell := firstNonEmpty(os.Getenv("SHELL"), "/bin/zsh")
-	innerCmd := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s HCOM_DIR=%s; exec %s",
-		shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(paths.BinHerder), shellquote.Quote(spec.HcomDir), inner)
+	innerCmd := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s AI_CONFIG_ROOT=%s HCOM_DIR=%s PATH=%s:$PATH; exec %s",
+		shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(paths.BinHerder), shellquote.Quote(paths.RepoRoot), shellquote.Quote(spec.HcomDir), shellquote.Quote(paths.ShimsDir), inner)
 	argv := []string{shell, "-lic", innerCmd}
 	startArgs := []string{"agent", "start", spec.Label, focusFlag, "--split", split, "--cwd", cwd, "--", shell, "-lic", innerCmd}
 	out, rc, _ := r.client().Combined(startArgs...)
