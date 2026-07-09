@@ -1,12 +1,13 @@
 # Mission Spec
 
-Status: **DRAFT — awaiting ratification.** This document is the proposed ground truth for
-missions: ubiquitous language, domain model, invariants, expected behaviour, high-level design,
-and acceptance scenarios. It derives from the ratified boundary grilling record
-(`docs/design/2026-07-08-sessions-missions-boundaries.md` §6b, Q11–Q17 — binding) and encodes
-the nested-board verification completed 2026-07-08. Where this document and the grilling record
-disagree, the record wins until this spec is ratified. Open questions are collected in §12 and
-resolved with the owner before ratification.
+Status: **RATIFIED 2026-07-09** (owner walkthrough of the M1–M17 checklist plus a doc-review
+round; final rulings recorded in §11/§12). This document is the ground truth for missions:
+ubiquitous language, domain model, invariants, expected behaviour, high-level design, and
+acceptance scenarios. It derives from the boundary grilling record
+(`docs/design/2026-07-08-sessions-missions-boundaries.md` §6b, Q11–Q17) and encodes the
+nested-board verification completed 2026-07-08. Ratified is not frozen: implementation
+surfaces differences against this document as it finds them so requirements can evolve — §12
+is the living decision record.
 
 ---
 
@@ -58,7 +59,7 @@ machinery.
 | **context resolution** | How a `mission` invocation finds its mission: explicit flag, then cwd-inside-a-mission-dir, then the single marker on the ancestor chain (§5). Markers never shadow one another. Never ambient identity beyond `$MISSIONS_REPO` locating the repo. |
 | **passthrough** | `mission backlog …`: the Backlog.md CLI executed with cwd pinned to the mission dir, exposing a deliberate allowlist of subcommands, arguments forwarded verbatim (§6.2). |
 | **allowlist** | The Backlog.md subcommands the passthrough exposes (§6.2). Deliberate and closed: anything not listed — including subcommands future Backlog.md versions add — refuses until explicitly added. |
-| **pinned config** | The four `backlog/config.yml` keys stamped at scaffold and invariant for the mission's life (§4.4): they neutralize Backlog.md's git/remote/browser behaviours inside the shared repo. |
+| **pinned config** | The five `backlog/config.yml` keys stamped at scaffold and invariant for the mission's life (§4.4): four safety keys pinned `false` plus `filesystem_only` pinned `true` — together they neutralize Backlog.md's git/remote/browser behaviours inside the shared repo. |
 | **adopt / harvest** | Custody verbs, not CLI verbs: an agent moving files into a mission (adopt) or copying results out to their permanent home (harvest), recorded by conventioned commit messages and board notes (§8). |
 | **custody commit** | A git commit whose message follows the §8.2 grammar, carrying the provenance/disposition record that the killed event log (Q15) used to promise. |
 | **closeout** | Ending a mission: final board states, the manifest's Closeout section written, `status: closed`. A skill checklist, not a CLI verb. |
@@ -93,10 +94,12 @@ deletion is a repo-hygiene decision made by humans with git, outside this spec.
 3. **Missions are strictly opt-in.** The missionless path costs zero: no scaffolding, no marker,
    no behaviour change in any repo that has no mission context. A `mission` command without
    resolvable context refuses with guidance; it never creates anything implicitly.
-4. **The CLI never runs git.** No verb invokes git — not to commit, not to read history. Git
-   doctrine lives entirely in the companion skill; the missions repo works (degraded to
-   single-node) even when it is not a git repo at all. The one reserved exception is the
-   explicit per-invocation auto-commit flag (§6.4), opt-in and off by default.
+4. **The CLI never mutates git.** No verb commits, stages, pushes, or otherwise writes git
+   state — the one reserved exception is the explicit per-invocation auto-commit flag (§6.4),
+   opt-in and off by default. `mission status`, and only it, may make **read-only** git
+   queries to surface sync staleness (§6.3; the M6 read amendment, §12.8). Everything works —
+   degraded to single-node, no staleness signal — when the repo is not git at all. Git write
+   doctrine lives entirely in the companion skill.
 5. **The board is a verbatim nested Backlog.md instance.** Missions invent nothing board-shaped:
    no wrapper schema, no parallel status model. All CLI board access is cwd-pinned to the
    mission dir, and the passthrough forwards to the real Backlog.md CLI.
@@ -104,12 +107,10 @@ deletion is a repo-hygiene decision made by humans with git, outside this spec.
    `missions/<slug>/backlog/config.yml` exists; a missing or half-scaffolded board refuses.
    (Backlog.md resolves boards by nearest ancestor, so an unguarded miss would silently operate
    on an ancestor board — the verified sharp edge, §4.4.)
-7. **Pinned config is invariant.** The four §4.4 keys keep their scaffold values for the
-   mission's life. The CLI refuses the paths that would change them (`config` is outside the
-   allowlist); the passthrough re-checks the pins before every exec and `mission status`
-   warns loudly on drift — both detection points are needed because the pins can drift
-   without the CLI's involvement: Backlog's own web UI (`browser`) rewrites `config.yml`
-   through its settings endpoint (verified on 1.47.1).
+7. **Pinned config is invariant.** The five §4.4 keys keep their scaffold values for the
+   mission's life. The CLI refuses the paths that would change them — `config` *and*
+   `browser` are outside the allowlist, the latter because its web UI's settings endpoint
+   rewrites pins on disk (verified on 1.47.1) — and `mission status` warns loudly on drift.
 8. **One manifest authority per mission** (Q16). Only the authority edits `mission.md` or
    restructures the board (column/status changes, task moves between states it doesn't own,
    task deletion). Transfer is the authority editing the field. A merge conflict on
@@ -215,8 +216,9 @@ are neutralized by this spec:
 
 The board requires the **Backlog.md CLI ≥ 1.47 on PATH**; the load-bearing behavioural
 assumptions are exactly the two above — nearest-ancestor resolution and the pinned keys'
-semantics. Getting the CLI onto a machine is install-tooling business (ai-sync today), not
-this spec's.
+semantics. Re-run the nesting/pinning acceptance suite (AC-5..7) whenever the installed
+Backlog.md version changes: the version floor is trusted only alongside a passing suite.
+Getting the CLI onto a machine is install-tooling business (ai-sync today), not this spec's.
 
 **Pinned config** — stamped into `backlog/config.yml` at scaffold, invariant for the mission's
 life (invariant 7):
@@ -227,6 +229,7 @@ life (invariant 7):
 | `remote_operations` | `false` | Defaults true; warns about and touches git remotes — the mission CLI's no-git doctrine extends to its delegate |
 | `auto_commit` | `false` | No git side effects, ever, from board operations (verified: none observed with this off) |
 | `auto_open_browser` | `false` | No surprise browser launches from a shared-repo tool |
+| `filesystem_only` | `true` | Backlog's native git-disable switch (observed on 1.47.1) — the tool-side layer under the no-git doctrine, added at ratification |
 
 Additionally `project_name` is set to the slug at scaffold — cosmetic, not pinned. Every other
 key keeps Backlog.md's defaults and is **authority-tunable by direct file edit** (statuses,
@@ -310,7 +313,7 @@ Given a valid, unclaimed slug:
 3. Initialize the nested board with pinned config (§4.4) and `project_name: <slug>`. Whether
    this shells to `backlog init` and rewrites `config.yml`, or writes the files directly, is
    implementation — the contract is that `mission backlog task create` works immediately
-   afterwards, the four pins hold, and the mission dir contains nothing beyond the §4.1
+   afterwards, the five pins hold, and the mission dir contains nothing beyond the §4.1
    tree (in particular, the `AGENTS.md` nudge file `backlog init` writes into its cwd —
    verified on 1.47.1 — must be removed or suppressed).
 4. Create `artifacts/` (empty, with a keep-file so the tree survives file-based sync).
@@ -328,10 +331,8 @@ commit, made by the caller per the skill (§8).
 The mission system's whole board interface. Sequence: resolve context (§5.3) → verify
 `missions/<slug>/backlog/config.yml` exists, refusing on absence with a "board missing —
 scaffold damaged or wrong mission" error rather than risking ancestor fallthrough
-(invariant 6) → check the first forwarded argument against the allowlist → verify the four
-pinned keys still hold their §4.4 values, warning loudly on drift as `status` does
-(invariant 7 — the board's own web UI can rewrite them) → exec `backlog` with cwd = the
-mission dir, forwarding everything else untouched. Interactive subcommands, stdin/stdout,
+(invariant 6) → check the first forwarded argument against the allowlist → exec `backlog`
+with cwd = the mission dir, forwarding everything else untouched. Interactive subcommands, stdin/stdout,
 and exit codes pass through; the wrapper adds nothing on success.
 
 **Allowlist** — the exposed surface. Anything not listed refuses, naming the allowlist —
@@ -345,13 +346,14 @@ including subcommands future Backlog.md versions add, until deliberately added h
 | `doc`, `decision` | Backlog's docs/decisions — board-internal, land inside the mission dir |
 | `milestone` / `milestones` | Board-internal grouping |
 | `cleanup` | Ages Done tasks into the completed folder — restructuring, authority etiquette applies (invariant 8) |
-| `browser` | The visual board (Q11 valued it); never auto-launched (pin). Verified hazard (1.47.1): its settings endpoint rewrites `config.yml`, pins included — covered by the pin re-check in the guard sequence above |
 
 Excluded, with the reasons recorded: `init` (re-init inside a mission is always damage),
 `config` (the pins are invariant; deliberate tuning is an authority file-edit, not a CLI
 path), `agents` (writes agent-instruction nudge files at board root — litters the shared
-repo), `completion`, `instructions`, `mcp` (no mission use case yet — the allowlist grows by
-deliberate addition, never by default).
+repo), `browser` (dropped at ratification: its web UI's settings endpoint rewrites
+`config.yml`, pins included — verified on 1.47.1; Q11's valued visual board returns if
+Backlog grows a read-only mode), `completion`, `instructions`, `mcp` (no mission use case
+yet — the allowlist grows by deliberate addition, never by default).
 
 **Help matches the surface.** Bare `mission backlog` (or `… help`) prints the *wrapper's own*
 summary — the allowlist above with one-liners and the exclusion rationale — never Backlog.md's
@@ -372,7 +374,9 @@ artifacts: 9 files · newest analysis/flamegraph-0708.html (2h ago)
 plus warnings, each one line, when: any pinned key has drifted (invariant 7); `mission:`
 frontmatter disagrees with the dir name; frontmatter carries unknown keys; `status:` holds
 any value other than `active`/`closed` (same treatment as unknown keys); the board carries
-duplicate task IDs (the silent union breach, §7.2); the board or `artifacts/` is missing.
+duplicate task IDs (the silent union breach, §7.2); the mission subtree has uncommitted or
+unpushed changes (a **read-only** git query — the M6 read amendment, §12.8 — silently skipped
+when the missions repo isn't git); the board or `artifacts/` is missing.
 Single-mission mode applies the §5.3 existence guard first: `--mission` naming a missing dir
 refuses rather than partially rendering. Recency comes from file mtimes — never from git
 (invariant 4) — and is therefore **node-local**: clone and pull re-stamp mtimes, so recency
@@ -458,6 +462,13 @@ The CLI is deliberately shallow — scaffold, passthrough, report. Everything wi
 is the skill's prose. This section fixes the split so neither side grows into the other: **if
 it needs git, custody vocabulary, or etiquette, it's skill; if it needs the pins, the guard, or
 resolution, it's CLI.**
+
+**Delivery shape (owner ruling 2026-07-09): the skill is mission's own surface, never a wing
+of orchestrate.** Doctrine ships primarily as agent-targeted CLI help — top-level
+`mission --help` and per-verb help carry the working prose (the herder precedent, whose skill
+retired into CLI help) — with a light companion skill wrapping it. The orchestrate skill
+documents only how *orchestrate* interacts with missions (its §8.3 overlay and nothing more);
+folding general mission doctrine into orchestrate is a boundary error.
 
 ### 8.1 Git rhythm (skill)
 
@@ -553,7 +564,7 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
   code worktree: the §4.1 tree exists; `mission.md` carries the five frontmatter keys with
   `status: active` and `owner:` stamped per the §6.1 chain (from `$SESSION_OWNER` when set,
   else the OS user), with authority and owner + the source of each echoed in `new`'s output;
-  `backlog/config.yml` carries the four pins + `project_name: perf-regression`; `.mission`
+  `backlog/config.yml` carries the five pins + `project_name: perf-regression`; `.mission`
   containing `perf-regression` appears in the invoking cwd; no git command was executed
   anywhere.
 - **AC-2 slug rules** — `new` refuses: an existing slug, `Perf_Regression`, `-x`, `a--b`,
@@ -599,13 +610,16 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
 - **AC-12 status detail** — `mission status` in a resolved context prints the §6.3 block;
   hand-editing a pinned key, breaking the frontmatter/dirname match, or deleting `artifacts/`
   each produce their one-line warning on the next run; nothing is modified (a before/after
-  subtree hash is identical).
+  subtree hash is identical); with the missions repo git-backed and the subtree carrying
+  uncommitted or unpushed work, the one-line staleness warning appears.
 - **AC-13 status overview** — from the missions repo root with no marker, `mission status`
   lists every mission dir one-per-line including closed ones; from an unrelated directory with
   no context it refuses rather than showing the overview.
-- **AC-14 no git, no bus, no herder** — a full `new` + passthrough + `status` session on a
-  machine with no herder, no hcom, and `$MISSIONS_REPO` pointing at a plain non-git directory:
-  everything works; auditing the CLI's process tree shows no git invocation.
+- **AC-14 no git mutation, no bus, no herder** — a full `new` + passthrough + `status` session
+  on a machine with no herder, no hcom, and `$MISSIONS_REPO` pointing at a plain non-git
+  directory: everything works; auditing the CLI's process tree shows no git invocation at all
+  (on a git-backed repo, the only permitted git use anywhere is `status`'s read-only
+  staleness query — never a mutation).
 
 **Multi-writer doctrine**
 
@@ -665,10 +679,10 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 |---|---|---|---|
 | M1 | Mission dir = `missions/<slug>/{mission.md, backlog/, artifacts/}`, self-contained, moves as a unit | Q11, Q15 | §4.1, invariant 1, AC-8 |
 | M2 | Board = verbatim nested Backlog.md; nothing board-shaped invented; nesting behaviour verified (nearest-ancestor resolution; two sharp edges neutralized) | Q11 + 2026-07-08 verification | §4.4, invariants 5–6, AC-5..7 |
-| M3 | Pinned config = `check_active_branches`, `remote_operations`, `auto_commit`, `auto_open_browser`, all false; invariant for the mission's life; drift warned by `status` | Q12 + verification | §4.4, invariant 7, AC-12 |
+| M3 | Pinned config = `check_active_branches`, `remote_operations`, `auto_commit`, `auto_open_browser` (false) + `filesystem_only` (true — Backlog's native git-disable, added at ratification); invariant for the mission's life; drift warned by `status` | Q12 + verification + owner 2026-07-09 | §4.4, invariant 7, AC-12 |
 | M4 | Verb set closed at `new` / `backlog` / `status`; `new` is the CLI's only owned write | Q12 as cut by Q15 | §6, §10 |
-| M5 | Passthrough = cwd-pinned, board-guarded, **allowlist posture** (`task/tasks, draft, board, search, overview, sequence, doc, decision, milestone/milestones, cleanup, browser`); future subcommands excluded until deliberately added; top-level help is wrapper-owned so the help surface equals the invocable surface | Q12 + owner ruling 2026-07-09 | §6.2, invariant 6, AC-11 |
-| M6 | CLI never runs git; git doctrine is skill prose; opt-in `--commit` design recorded but reserved out of v1 | Q12 | Invariant 4, §6.4, §8.1, AC-14 |
+| M5 | Passthrough = cwd-pinned, board-guarded, **allowlist posture** (`task/tasks, draft, board, search, overview, sequence, doc, decision, milestone/milestones, cleanup`); `browser` dropped at ratification (verified pin-rewrite hazard); future subcommands excluded until deliberately added; top-level help is wrapper-owned so the help surface equals the invocable surface | Q12 + owner rulings 2026-07-09 | §6.2, invariant 6, AC-11 |
+| M6 | CLI never **mutates** git (amended at ratification: `status` may make read-only queries for the staleness signal, §12.8); git write doctrine is skill prose; opt-in `--commit` design recorded but reserved out of v1 | Q12 + owner 2026-07-09 | Invariant 4, §6.3, §6.4, §8.1, AC-14 |
 | M7 | events.jsonl killed with full cascade (no log verb, custody → commits + board notes) | Q15 | §8.2, §10 |
 | M8 | Manifest authority: advisory `authority:` label-grade field, stamped by `new`; transfer = editing the field; conflict on mission.md = violation, authority wins | Q16 | §4.2, invariant 8, §7.2, AC-16 |
 | M9 | Mission↔herder contract = board assignee holding an opaque label-grade name; every richer join herder-side at view time; missions herder-unaware, herder may be very mission-aware | Q17 | Invariant 2, §2, §10 |
@@ -678,9 +692,14 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 | M13 | Missions strictly opt-in; missionless path costs zero | S2 | Invariant 3, AC-10 |
 | M14 | Custody-commit grammar `mission(<slug>): <verb> <summary>` with an open, documented verb vocabulary (new/adopt/harvest/delete/rename/close) and optional trailers | Q13 amendment surviving Q15 | §8.2, AC-17 |
 | M15 | Human attribution: `owner:` distinct from `authority:` (owner = human, meant to be read as a person; authority = write authority, opaque interpretation); owner stamped `--owner` → `$SESSION_OWNER` → OS user and echoed with its source at `new`; `SESSION_OWNER` is the one cross-surface env name (shared with herder + session shipping); git identity is a provisioning suggestion, never canonical | Owner rulings 2026-07-09 | §2, §4.2, §6.1, §8.1, AC-1 |
-| M16 | Renames are expected but stay out of the CLI: authority skill procedure (git mv + two fields + markers + `rename` custody commit); slug-equals-dirname re-established by the procedure; verb set stays closed. `--commit` ratified as reserved (design of record, not v1). Backlog.md floor: ≥ 1.47 + stated behavioural assumptions; CLI presence is install-tooling business. Board tuning beyond the pins is per-mission, authority-owned | Owner rulings 2026-07-09 | §4.3, §4.4, §6.4, §8.5, AC-18 |
+| M16 | Renames are expected but stay out of the CLI: authority skill procedure (git mv + two fields + markers + `rename` custody commit); slug-equals-dirname re-established by the procedure; verb set stays closed. `--commit` ratified as reserved (design of record, not v1). Backlog.md floor: ≥ 1.47 + stated behavioural assumptions, re-verified via AC-5..7 on every version change; CLI presence is install-tooling business. Board tuning beyond the pins is per-mission, authority-owned | Owner rulings 2026-07-09 | §4.3, §4.4, §6.4, §8.5, AC-18 |
+| M17 | Skill delivery: mission-owned, agent-targeted CLI help (top-level + per-verb) with a light companion skill — the herder precedent; the orchestrate skill covers only orchestrate's own mission interaction, never general mission doctrine | Owner ruling 2026-07-09 | §8, §8.3 |
 
-## 12. Open questions (living tail — resolve with the owner before ratification)
+## 12. Decision record (living tail)
+
+Rulings land here as they happen. This spec is ratified, not frozen: implementation surfaces
+differences against this document as it finds them, so dumb requirements can evolve — flag the
+divergence, get the ruling, amend the line.
 
 1. **`--commit` reserved design (§6.4):** ~~ratify, strike, or defer?~~ **Resolved 2026-07-09:
    ratified as reserved** — §6.4 stands as the design of record, out of v1; implementation
@@ -715,4 +734,5 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
    permit read-only git queries inside `mission status` (never mutations), warn one line when
    the mission subtree has uncommitted or unpushed changes (silently skipped when the repo
    isn't git), and relax AC-14's audit from "no git invocation" to "no git mutation".
-   Deferred to the owner: this amends a ratified checklist row.
+   ~~Deferred to the owner: this amends a ratified checklist row.~~ **Resolved 2026-07-09:
+   accepted** — invariant 4, §6.3, AC-12, AC-14, and M6 amended accordingly.
