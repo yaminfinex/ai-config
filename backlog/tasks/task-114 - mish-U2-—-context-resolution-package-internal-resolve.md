@@ -1,10 +1,10 @@
 ---
 id: TASK-114
 title: mish U2 — context resolution package (internal/resolve)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 09:46'
-updated_date: '2026-07-09 09:54'
+updated_date: '2026-07-09 10:04'
 labels:
   - mish
 dependencies: []
@@ -32,3 +32,9 @@ Settled decisions: input = (flag value, cwd, env lookup, fs) via seams (KTD4); m
 - [ ] #4 cwd inside missions/<slug>/backlog/tasks/ resolves to <slug>; a mission.md outside a missions/ parent chain does not resolve
 - [ ] #5 unit tests cover every branch of the §5.3 flowchart; no fs scan beyond ancestor walks
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to mish-build @ 7cdab7e (--no-ff). Worker: codex mish-u2-boho, branch mish-u2-resolve (906d72e + review fixes cb63a51). Orchestrator verification: gates re-run uncached + post-merge green. Cross-family review (opus): FIX-NEEDED → fixed: blank-marker false resolution (HIGH), slug traversal escape (MED-HIGH, §4.3 pattern enforced locally in resolve), marker line-1 whitespace trim, os.Getwd fallback removed, marker-read errors typed, edge tests added. Rulings journaled in napkins/mish-build/run-log.md.
+<!-- SECTION:NOTES:END -->
