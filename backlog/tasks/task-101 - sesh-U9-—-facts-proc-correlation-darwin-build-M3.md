@@ -1,9 +1,10 @@
 ---
 id: TASK-101
 title: sesh U9 — facts + /proc correlation + darwin build (M3)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 05:29'
+updated_date: '2026-07-09 06:54'
 labels:
   - sesh
 dependencies:
