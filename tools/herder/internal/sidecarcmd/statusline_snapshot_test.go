@@ -175,6 +175,36 @@ func TestStatuslineSnapshotWriterPreservesContextMetrics(t *testing.T) {
 	}
 }
 
+func TestStatuslineSnapshotWriterDropsInvalidContextPercent(t *testing.T) {
+	root := t.TempDir()
+	statusDir := filepath.Join(root, "statusline")
+	if err := os.MkdirAll(statusDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(statusDir, "worker-rive.env")
+	original := strings.Join([]string{
+		"HCOM_UNREAD=1",
+		"HCOM_LAST_TS=90",
+		"HCOM_LAST_AGE_S=10",
+		"CTX_PCT=Inf",
+		"CTX_TOKENS=61768",
+		"CTX_SIZE=258400",
+		"CTX_TS=100",
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := newStatuslineSnapshotWriter(root)
+	w.writeRows([]hcomRow{{Name: "worker-rive", UnreadCount: 2, StatusAgeS: 5}}, time.Unix(120, 0))
+
+	got := readFile(t, path)
+	if strings.Contains(got, "CTX_PCT=") {
+		t.Fatalf("invalid context percent preserved: %q", got)
+	}
+}
+
 func TestStatuslineSnapshotWriterRewritesTimestampDriftBeyondTick(t *testing.T) {
 	root := t.TempDir()
 	statusDir := filepath.Join(root, "statusline")

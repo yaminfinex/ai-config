@@ -3,6 +3,7 @@ package sidecarcmd
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -213,7 +214,7 @@ func mergeStatuslineSnapshot(existing, next []byte) string {
 			fmt.Fprintf(&b, "%s=%s\n", key, v)
 		}
 	}
-	if v := existingVals["CTX_PCT"]; parseSnapshotNumber(v) {
+	if v := existingVals["CTX_PCT"]; parseSnapshotPercent(v) {
 		fmt.Fprintf(&b, "CTX_PCT=%s\n", v)
 	}
 	for _, key := range []string{"CTX_TOKENS", "CTX_SIZE", "CTX_TS"} {
@@ -249,10 +250,10 @@ func parseSnapshotUint(s string) bool {
 	return ok
 }
 
-func parseSnapshotNumber(s string) bool {
+func parseSnapshotPercent(s string) bool {
 	if s == "" {
 		return false
 	}
 	n, err := strconv.ParseFloat(s, 64)
-	return err == nil && n >= 0
+	return err == nil && !math.IsInf(n, 0) && !math.IsNaN(n) && n >= 0 && n <= 100
 }

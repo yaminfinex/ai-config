@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -467,15 +468,19 @@ func readContextSnapshot(rec registry.Record, now time.Time) (contextSnapshot, b
 	if err != nil {
 		return contextSnapshot{}, false
 	}
-	pct := vals["CTX_PCT"]
-	if !validSnapshotNumber(pct) {
+	pct, ok := parseSnapshotPercent(vals["CTX_PCT"])
+	if !ok {
 		return contextSnapshot{}, false
 	}
 	ts, ok := parseSnapshotUnix(vals["CTX_TS"])
 	if !ok {
 		return contextSnapshot{}, false
 	}
-	age := now.Unix() - ts
+	nowUnix := now.Unix()
+	if ts > nowUnix+int64(contextSnapshotFreshFor/time.Second) {
+		return contextSnapshot{}, false
+	}
+	age := nowUnix - ts
 	if age < 0 {
 		age = 0
 	}
@@ -516,12 +521,15 @@ func parseSnapshotUnix(s string) (int64, bool) {
 	return n, err == nil && n >= 0
 }
 
-func validSnapshotNumber(s string) bool {
+func parseSnapshotPercent(s string) (string, bool) {
 	if s == "" {
-		return false
+		return "", false
 	}
 	n, err := strconv.ParseFloat(s, 64)
-	return err == nil && n >= 0
+	if err != nil || math.IsInf(n, 0) || math.IsNaN(n) || n < 0 || n > 100 {
+		return "", false
+	}
+	return strconv.FormatFloat(math.Round(n), 'f', 0, 64), true
 }
 
 func appendJSONFields(raw []byte, fields ...string) []byte {

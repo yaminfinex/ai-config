@@ -30,6 +30,10 @@ Override path:
 $HCOM_STATUSLINE_STATE
 ```
 
+Claude reads the override path when present. Its context writer updates that
+path only when the file already exists; sidecar-owned creation/removal remains
+authoritative so collision-removed snapshots do not get recreated by a render.
+
 Bus activity keys:
 
 ```sh
@@ -54,12 +58,13 @@ CTX_SIZE=258400
 CTX_TS=1783506400
 ```
 
-`claude/statusline.sh` writes these keys on each render when Claude supplies
-context-window metrics. `CTX_PCT` is the rounded percentage used by operators,
-`CTX_TOKENS` is the current total input token count, `CTX_SIZE` is the model
-context-window size, and `CTX_TS` is the Unix timestamp of the render that wrote
-the values. The write is an atomic temp-file plus rename in the snapshot
-directory, and it preserves valid `HCOM_*` values already present in the file.
+`claude/statusline.sh` writes these keys into an existing snapshot file on each
+render when Claude supplies context-window metrics. `CTX_PCT` is the rounded
+percentage used by operators, `CTX_TOKENS` is the current total input token
+count, `CTX_SIZE` is the model context-window size, and `CTX_TS` is the Unix
+timestamp of the render that wrote the values. The write is an atomic temp-file
+plus rename in the snapshot directory, and it preserves valid `HCOM_*` values
+already present in the file.
 `herder list` reads `$HCOM_DIR/statusline/<hcom-name>.env` from each registry
 row's recorded bus directory/name and renders `unknown` when no context
 snapshot exists. It marks stale values from `CTX_TS` instead of reporting them

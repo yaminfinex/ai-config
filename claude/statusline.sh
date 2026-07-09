@@ -56,6 +56,7 @@ small_number() {
 
 write_context_snapshot() {
   [ -n "${hcom_state_file:-}" ] || return 0
+  [ -f "$hcom_state_file" ] || return 0
   [ -n "${ctx_pct:-}" ] || return 0
   [ -n "${ctx_in:-}" ] || return 0
   [ -n "${ctx_size:-}" ] || return 0
@@ -80,8 +81,7 @@ write_context_snapshot() {
   fi
 
   state_dir="$(dirname -- "$hcom_state_file")" || return 0
-  mkdir -p -- "$state_dir" 2>/dev/null || return 0
-  tmp="$(mktemp "${state_dir}/.$(basename -- "$hcom_state_file").XXXXXX.tmp")" || return 0
+  tmp="$(mktemp "${state_dir}/.$(basename -- "$hcom_state_file").tmp.XXXXXX" 2>/dev/null)" || return 0
   {
     if small_uint "$hcom_unread"; then printf 'HCOM_UNREAD=%s\n' "$hcom_unread"; fi
     if small_uint "$hcom_last_ts"; then printf 'HCOM_LAST_TS=%s\n' "$hcom_last_ts"; fi
