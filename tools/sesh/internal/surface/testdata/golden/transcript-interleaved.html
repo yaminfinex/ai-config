@@ -1,0 +1,1214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sesh — session e4578030</title>
+<script src="/assets/htmx.min.js"></script>
+<style>
+:root { color-scheme: light dark; }
+body { font: 14px/1.45 system-ui, sans-serif; margin: 0 auto; max-width: 72rem; padding: 0 1rem 3rem; }
+header.site { display: flex; gap: .6rem; align-items: baseline; padding: .8rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); margin-bottom: 1rem; }
+header.site a { font-weight: 700; text-decoration: none; color: inherit; }
+header.site .tagline { opacity: .6; font-size: .85em; }
+h2 { font-size: 1.1rem; margin: 1.2rem 0 .3rem; }
+h3 { font-size: .95rem; margin: .8rem 0 .3rem; opacity: .85; }
+.source, .secondary { opacity: .6; font-size: .85em; font-weight: 400; }
+table.sessions { border-collapse: collapse; width: 100%; }
+table.sessions td, table.sessions th { text-align: left; padding: .25rem .6rem .25rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); vertical-align: baseline; }
+table.sessions th { font-size: .78em; text-transform: uppercase; letter-spacing: .04em; opacity: .55; }
+.badge { font-size: .75em; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: .6em; padding: 0 .45em; margin-left: .4em; opacity: .8; white-space: nowrap; }
+.badge.warn { border-color: #b8860b; color: #b8860b; }
+code, pre { font: .86em/1.4 ui-monospace, monospace; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .2rem 0; }
+ol.transcript, ol.rawlines { list-style: none; padding: 0; }
+li.entry { border-left: 3px solid color-mix(in srgb, currentColor 15%, transparent); padding: .3rem 0 .3rem .7rem; margin: .35rem 0; }
+li.entry.role-user { border-left-color: #4a7dbd; }
+li.entry.role-assistant { border-left-color: #4aa564; }
+li.entry.quarantined { border-left-color: #b8860b; }
+.entryhead { font-size: .8em; opacity: .75; display: flex; gap: .7em; flex-wrap: wrap; }
+.entryhead .role { font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+.block.meta { opacity: .55; font-size: .82em; }
+.block .btitle { font-size: .82em; font-weight: 600; opacity: .8; margin-top: .25rem; }
+details.block { margin: .2rem 0; }
+details.block > summary { cursor: pointer; font-size: .84em; opacity: .75; }
+li.rawline { padding: .1rem 0; border-bottom: 1px dotted color-mix(in srgb, currentColor 10%, transparent); }
+p.crumbs { font-size: .85em; }
+p.notice { border: 1px solid color-mix(in srgb, currentColor 30%, transparent); border-radius: .3rem; padding: .4rem .7rem; background: color-mix(in srgb, currentColor 6%, transparent); }
+.empty { opacity: .6; }
+dl.meta { font-size: .85em; display: grid; grid-template-columns: max-content 1fr; gap: .1rem 1rem; }
+dl.meta dt { opacity: .6; }
+dl.meta dd { margin: 0; }
+</style>
+</head>
+<body>
+<header class="site"><a href="/">sesh</a><span class="tagline">team session mirror — read-only</span></header>
+<main>
+<p class="crumbs"><a href="/">← recency</a> · <a href="/s/claude/e4578030-c4a9-493f-82e6-de6156d0179a/raw">raw JSONL from mirror</a></p>
+<h2>claude session <code>e4578030-c4a9-493f-82e6-de6156d0179a</code></h2>
+<dl class="meta">
+<dt>owner</dt><dd>no owner claim <span class="source">grouped by OS user @ host</span></dd>
+<dt>node</dt><dd>grace@workstation</dd>
+<dt>last activity</dt><dd>2026-07-02 10:55:43 UTC</dd>
+<dt>mirrored at</dt><dd>2026-07-05 15:00:00 UTC</dd>
+<dt>files</dt><dd><code>e4578030</code> gen 0</dd>
+</dl>
+<ol class="transcript">
+<li class="entry role-user" data-uuid="03e3e96d-11b4-4b26-bd80-ad5ba1750b38">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:48:44 UTC</span></div>
+<div class="block text"><pre>You are the end-of-run deep reviewer for the rust-raw perf-levers run — fresh context, trust nothing. Read napkins/perf-levers/playbook.md in full, then the unit-status table at the top of napkins/perf-levers/run-log.md. Task: review the ENTIRE run delta git diff a103a45..HEAD (a103a45 is the pre-series baseline) against (a) all eight acceptance criteria on backlog task TASK-017 (read via: backlog task view TASK-017 --plain; do NOT edit backlog), (b) the Definition of Done in docs/plans/2026-07-01-003-perf-rust-raw-perf-levers-plan.md, and (c) the durable benchmark log experiments/single-sequencer/orchestration/logs/rust-raw/perf-levers-run-log.md for coherence and honesty as a standalone record. Delegate wide file reading to subagents to protect your context. Also run a remnant sweep: stray temp/WIP files in the tracked tree, leftover experiment code or dead knobs, TODO/FIXME introduced by the series, doc claims contradicting code. For each acceptance criterion state VERIFIED with evidence or a specific gap. Do not re-run benchmarks — the validator owns timing; check claims against the recorded evidence and the tree. Append &#39;## END-OF-RUN DEEP REVIEW&#39; at the very END of napkins/perf-levers/run-log.md (append-only, never insert mid-file) with findings ranked blocking/advisory, then ring exactly once.
+
+When your unit is finished and your run-log DONE/BLOCKED block is written, ring the orchestrator so it does not have to poll (the run-log block is the record — this is only a doorbell):
+  /home/grace/Coding/ai-config/bin/herder-send term_655932ec8685e328 &#39;Unit DONE — run-log updated&#39;
+Ring exactly ONCE and then stop, whatever it reports. The orchestrator is usually mid-turn when you ring, so the helper will say verify=queued (or even verify=not_delivered) — that is EXPECTED and is NOT a failure: your message is queued and the run-log is the real record. Do NOT resend on a queued/not_delivered result; resending just stacks duplicate messages in the orchestrator&#39;s queue.
+Do NOT ring with raw &#39;herdr agent send&#39; — it writes the text without submitting it, so the ring never lands. Use the command above (also available as &#34;$HERDER_SEND&#34; &#34;$HERDER_NOTIFY_TO&#34;).</pre></div>
+</li>
+<li class="entry role-unknown" data-uuid="9e4de549-70b9-4fde-a983-25a4f91ec16a">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:48:44 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-unknown" data-uuid="caaca977-a2f7-4834-9f53-0a010e711b7e">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:48:44 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-unknown" data-uuid="992071d5-cb08-4594-a948-58eba9be1c8e">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:48:44 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-assistant" data-uuid="220f17c5-beaf-4591-80b0-2fe3749bd42f">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:48:47 UTC</span></div>
+<details class="block thinking"><summary>thinking</summary></details>
+</li>
+<li class="entry role-assistant" data-uuid="59b877fd-636a-4ed8-b34a-a0480abf23fa">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:48:48 UTC</span></div>
+<details class="block tool_use"><summary>tool: Read</summary><pre>{
+  &#34;file_path&#34;: &#34;/home/grace/.herdr/worktrees/synfinex/fable-pass/napkins/perf-levers/playbook.md&#34;
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="2fbb9b6b-ab6d-4d77-a29a-ec011d04d5a3">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:48:48 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>1	# rust-raw perf-levers run — playbook
+2	
+3	Shared protocol for executing `docs/plans/2026-07-01-003-perf-rust-raw-perf-levers-plan.md`
+4	(the plan — the source of truth for WHAT; this file is HOW). **Every agent reads this file in
+5	full, then `napkins/perf-levers/run-log.md`, then only its own unit&#39;s plan section** plus the
+6	plan&#39;s Goal Capsule, Key Technical Decisions, and Verification Contract. Do not read the whole
+7	plan or the napkins evidence reports — delegate any wide code reading to subagents where your
+8	CLI supports them and keep your own context for the work.
+9	
+10	## Run shape
+11	
+12	- Autonomy: autonomous (the owner is away). Sliding-door capture is mandatory — every
+13	  could-have-gone-the-other-way decision gets a `SLIDING DOOR` block in the run-log.
+14	- Topology: standing orchestrator (fable, the session that wrote this) &#43; strictly sequential
+15	  units. Per-unit codex implementer; per-unit reviewer (claude opus for every unit, plus a codex
+16	  second reviewer on the load-bearing units); one standing validator (claude on model fable) who
+17	  independently re-runs gates.
+18	- Liveness: workers idle in their tabs after DONE — keep-open for interrogation until the owner
+19	  releases them. The validator stands for the whole run. Nobody culls anybody.
+20	- Notify-back address: `term_655932ec8685e328` (the orchestrator&#39;s durable terminal id). Spawns
+21	  use `herder-spawn --notify`, which injects the exact ring command into your prompt.
+22	- Backlog: yes — backlog task TASK-017 is the unit ledger (one acceptance criterion per unit).
+23	  **The orchestrator is the sole backlog writer.** Workers never run backlog commands and never
+24	  edit files under `backlog/`.
+25	- Golden agent: none — the plan and `napkins/perf-levers/orchestration-kickoff.md` carry the
+26	  original intent.
+27	- Worktree / branch / workspace: `/home/grace/.herdr/worktrees/synfinex/fable-pass`, branch
+28	  `fable-pass`, herdr workspace `w655932ec8686525`. **One writer at a time** — a unit&#39;s
+29	  implementer is the only agent editing the tree while its unit is open; reviewers and the
+30	  validator never edit code. The orchestrator writes no implementation code.
+31	- Nobody pushes or opens PRs. The owner ships.
+32	
+33	## Environment facts
+34	
+35	- All engine/bench commands run from `experiments/single-sequencer/impl/rust-raw`, prefixed
+36	  `env -u RUSTFLAGS` (the committed build config: znver4, fat-LTO, cgu=1). Non-interactive
+37	  shells may need `source ~/.cargo/env` first.
+38	- Benchmark discipline binds: `experiments/single-sequencer/impl/rust-raw/bench/AGENTS.md` plus
+39	  the plan&#39;s Verification Contract. Alternating A/B ≥3 reps, pinned core, medians, tail-first
+40	  (p99.9 never regresses beyond spread), host fingerprint recorded, too-good tripwire.
+41	- Pre-series baseline SHA: `a103a45` (docs-only on top of the last engine merge — engine code
+42	  identical to `a8c9702`).
+43	- perf on this host: use `/usr/lib/linux-tools-6.8.0-124/perf` directly (the wrapper refuses
+44	  kernel 6.8.0-94). Generic last-level-cache events are unsupported on this CPU — use the L2
+45	  request-stat events plus generic cache-references/misses.
+46	- Grid cells: `ENGINE_CORE_MODE=grid ENGINE_CORE_GRID_CELL=&lt;cell&gt; cargo bench --bench
+47	  engine_core` for baseline, single-hot-book, many-markets, market-ceiling, mild-shock,
+48	  severe-cascade.
+49	- QUIET-HOST RULE for timing runs (added 2026-07-02): this host also carries a second
+50	  orchestration run (worktree `yamen-hl-replay`). Before any TIMING measurement (cargo bench
+51	  runs, A/B reps, microbench floors — not functional tests, not allocation counting), check for
+52	  competing heavy processes: `pgrep -af &#39;cargo (bench|run)|engine_core|hl_stream&#39; | grep -v
+53	  &lt;own-worktree&gt;` — if anything heavy is running outside our worktree, wait and retry rather
+54	  than measure into contention, and note the wait in your evidence block. Run your own gate
+55	  commands sequentially, not concurrently (same target dir — cargo just lock-serializes them).
+56	  Owner amendment (2026-07-02): the other run&#39;s processes are reniced and do NOT block timing —
+57	  record which outside processes were live in your evidence block, keep alternating order-flipped
+58	  A/B rounds (background load hits both sides symmetrically), and re-run rather than report any
+59	  suspicious result in either direction.
+60	- A/B RESOLUTION RULE (added 2026-07-02, from the margin-unit refutation): three reps is the
+61	  contract minimum, not a resolution guarantee. Before claiming a ratio, check that per-rep
+62	  spread is well under the effect you are claiming; if not, escalate — more alternating rounds
+63	  (report the paired win count), and/or the one-million-op measured window
+64	  (`ENGINE_CORE_GRID_MEASURED_OPS=1000000`), which cut spread from ±11% to ±1.2% on
+65	  many-markets. A ratio whose confidence interval spans 1.0 is not evidence of &#34;flat&#34;.
+66	- Repo prose rules (root `AGENTS.md`) bind any doc you touch: no opaque identifier schemes in
+67	  human prose; documents are current-state snapshots — delete stale text rather than appending
+68	  history.
+69	
+70	## Units — one implementer each. Do ONLY your unit.
+71	
+72	The plan section named in parentheses is your spec: goal, requirements, files, approach, test
+73	scenarios, verification. Units run strictly in this order.
+74	
+75	1. **Baselines and the margin-core floor microbench** (plan section &#34;U1. Margin-core floor
+76	   microbench and pre-series baselines&#34;). Also creates the durable benchmark log
+77	   `experiments/single-sequencer/orchestration/logs/rust-raw/perf-levers-run-log.md`
+78	   (git-tracked) holding the baseline table, host fingerprint, and the exact repro commands for
+79	   the self-baseline response captures; the capture artifacts themselves go under
+80	   `napkins/perf-levers/self-baseline/` (gitignored) with their checksums recorded in the
+81	   durable log.
+82	2. **Shock allocation recycling** (plan section &#34;U2. Shock allocation recycling&#34;).
+83	3. **The Incremental Margin Aggregate with the rebuilt oracle** (plan section &#34;U3. Incremental
+84	   Margin Aggregate with rebuilt oracle&#34;). Load-bearing — double review.
+85	4. **Order Record Unification** (plan section &#34;U4. Order Record Unification&#34;). Load-bearing —
+86	   double review.
+87	5. **Fan-out evidence** (plan section &#34;U5. Fan-out evidence: production-scale shock sizing and
+88	   split-mark-batches&#34;). **GATED OUTPUT:** its verdict decides whether the sliced fan-out unit
+89	   proceeds. Write the verdict in the run-log and stop — the orchestrator makes the gate call.
+90	6. **Batched maker-side effects** (plan section &#34;U6. Batched maker-side effects in liquidation
+91	   sweeps&#34;).
+92	7. **The Sliced Price-Step Fan-out** (plan section &#34;U7. Sliced Price-Step Fan-out&#34;).
+93	   Load-bearing — double review. Spawned only after the fan-out-evidence gate says proceed.
+94	
+95	## Protocol — implementer
+96	
+97	1. Read this file, the run-log, and your unit&#39;s plan section (plus Goal Capsule, Key Technical
+98	   Decisions, Verification Contract).
+99	2. Append `## &lt;unit name&gt; — START` to `napkins/perf-levers/run-log.md`.
+100	3. Execute, scoped to your unit only. Capture sliding doors as they happen.
+101	4. Gates: the Verification Contract rows that apply to your unit. Run them clean — a cached
+102	   green is not evidence. Paste the green lines verbatim into your DONE block. Red you cannot
+103	   fix inside your unit&#39;s scope → `BLOCKED` block &#43; WIP commit &#43; ring &#43; stop. Never advance
+104	   past red.
+105	5. Commit on `fable-pass` (no push): conventional style scoped to the area, e.g.
+106	   `perf(rust-raw): recycle shock-path allocations (shock allocation recycling unit)`.
+107	   Multiple commits are fine; leave the tree clean and record the commit range in the DONE
+108	   block.
+109	6. Append `## &lt;unit name&gt; — DONE` — files changed, decisions/deviations (each with why),
+110	   verification evidence verbatim, A/B tables where the unit makes a perf claim.
+111	7. Ring the orchestrator exactly once with the injected command. `verify=queued` is success —
+112	   never resend. Then idle in your tab; review findings may come back to you for remediation
+113	   (remediate, commit, append to your DONE block, ring once).
+114	
+115	## Protocol — reviewer
+116	
+117	Read this file, the unit&#39;s DONE block in the run-log, the unit&#39;s plan section, and the commit
+118	range&#39;s diff. Review for: correctness against the Key Technical Decisions, the
+119	behavior-preservation constraint (byte-identical responses for the behavior-preserving units),
+120	test scenarios from the plan actually present, no scope creep, no abandoned experiment code.
+121	You edit nothing. Append `## &lt;unit name&gt; — REVIEW (claude|codex)` with findings ranked blocking
+122	/ advisory, each with file:line evidence. Ring once, idle. On remediation you re-review only
+123	the remediation commits.
+124	
+125	## Protocol — validator (standing, model fable)
+126	
+127	You own independent verification — the run&#39;s &#34;trust nothing&#34; instance. When the orchestrator
+128	rings you with a unit name: re-run that unit&#39;s pinned Verification Contract gates from a clean
+129	state (`cargo clean -p engine -p bench` first when a cached green is possible; never edit the
+130	tree), run the self-baseline response diff where the unit claims behavior preservation, and
+131	spot-check one or two of the DONE block&#39;s claims against reality. Append
+132	`## &lt;unit name&gt; — VALIDATED` with pasted evidence, or `## &lt;unit name&gt; — REFUTED` with the
+133	failing output. Refuse unsupported claims plainly: if you cannot reproduce an assertion, say
+134	so — do not soften it. Never edit code or backlog. You live for the whole run: keep context
+135	lean, delegate reading to subagents, and if your context balloons, `herder-send-self /compact`
+136	steered on &#34;validator role, gates per unit, evidence so far&#34;.
+137	
+138	## Decisions already made — do not re-litigate
+139	
+140	- Owner rulings (2026-07-01, binding): the cross-impl golden fixtures and the wire-format
+141	  freeze are retired; rust-raw is the source of what matters; behavior-preserving levers gate
+142	  on self-baseline response diffs against our own pre-series build; the sliced fan-out may
+143	  change response interleaving.
+144	- Cached margin contributions are summed at read time in ascending market order — no f64
+145	  running totals (non-associative drift across the ±$1 guard band changes decisions).
+146	- One market-inputs epoch per market, bumped by mark writes and market-config overwrites;
+147	  own-account events update cells eagerly at the state-mutation sites (`fold_position`,
+148	  register/deregister resting order, the leverage handler), not in per-command handlers.
+149	- The rebuilt oracle&#39;s invariant is refresh-then-compare at end of fold; epoch-current entries
+150	  must already be bit-equal before refresh.
+151	- The hypothetical order stays an overlay; transient default accounts never create cache
+152	  entries; a reduce-only hypothetical does not add its market to the touched set.
+153	- Unification dedupes identity, not lifecycle: engine-only accumulators stay engine-side (the
+154	  matcher frees filled slab nodes before `submit` returns); owner&#43;market stay in the table
+155	  entry; slab reclaim timing is untouched — a design that needs it changed stops and surfaces.
+156	- The slice budget is an engine-construction parameter; unbounded reproduces today&#39;s behavior
+157	  (kept for A/B and fallback); the slice atom is one candidate&#39;s full enforcement; advancement
+158	  hooks fold, not accept; second-batch coalescing is depth-one; the cursor is real cloned,
+159	  memory-reported engine state — never scratch (`Engine::clone` deliberately empties scratch).
+160	- The fills buffer becomes one engine-level pool owned via `OrderOutcome`; all three consumers
+161	  return it.
+162	- Acceptance is floor-plus-target with the attribution escape; the too-good tripwire applies in
+163	  reverse (a suspiciously cheap cached admission means a missed refresh trigger, not a win).
+164	
+165	## Escalate (stop, don&#39;t improvise) on
+166	
+167	- A behavior-preserving unit&#39;s self-baseline diff shows a genuine decision change rather than a
+168	  fixable bug.
+169	- The fan-out-evidence verdict says slicing is unnecessary (Goal Capsule stop condition).
+170	- A target missed while the post-change profile shows the targeted cost source removed — record
+171	  the honest miss, stop chasing.
+172	- Any design pressure to change slab reclaim timing, the journal/replay contract beyond the
+173	  plan&#39;s sliced-fan-out shape, or anything outside your unit.
+174	- Anything requiring a push, a PR, culling another agent, or an owner-only decision.
+175	
+176	## Context discipline
+177	
+178	Own ONE unit. If it balloons: WIP commit &#43; `HANDOFF (continue)` block in the run-log, then
+179	either compact in place (claude agents: `herder-send-self /compact &lt;steer&gt;`) or stop and let
+180	the orchestrator spawn a fresh copy against your HANDOFF block. The orchestrator self-compacts
+181	at unit boundaries when its context approaches 200k.
+182	</pre></details>
+</li>
+<li class="entry role-assistant" data-uuid="bc0d2a04-2a70-4458-a138-3f3c63b3c5a8">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:48:48 UTC</span></div>
+<details class="block tool_use"><summary>tool: Read</summary><pre>{
+  &#34;file_path&#34;: &#34;/home/grace/.herdr/worktrees/synfinex/fable-pass/napkins/perf-levers/run-log.md&#34;
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="453f9c21-96a6-4c2e-bc32-616680533e2c">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:48:48 UTC</span></div>
+<details class="block tool_result"><summary>tool result (error)</summary><pre>File content (259.9KB) exceeds maximum allowed size (256KB). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.</pre></details>
+</li>
+<li class="entry role-unknown" data-uuid="1afbe5ec-9a47-41d4-91f7-fd1549cce4d9">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:48:48 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-assistant" data-uuid="72f739d8-71d7-4173-9657-49bc6f4aa895">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:48:50 UTC</span></div>
+<details class="block thinking"><summary>thinking</summary></details>
+</li>
+<li class="entry role-assistant" data-uuid="8233fc30-21d2-478c-a52b-0809244c6f02">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:48:51 UTC</span></div>
+<details class="block tool_use"><summary>tool: Read</summary><pre>{
+  &#34;file_path&#34;: &#34;/home/grace/.herdr/worktrees/synfinex/fable-pass/napkins/perf-levers/run-log.md&#34;,
+  &#34;limit&#34;: 120
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="68a3d60d-4fe3-4f56-882a-a2ea5b694b8a">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:48:51 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>1	# rust-raw perf-levers run — run-log
+2	
+3	Append-only evidence ledger. Protocol: `napkins/perf-levers/playbook.md`. Plan:
+4	`docs/plans/2026-07-01-003-perf-rust-raw-perf-levers-plan.md`. Backlog ledger: TASK-017
+5	(orchestrator-only).
+6	
+7	- Worktree/branch: `/home/grace/.herdr/worktrees/synfinex/fable-pass` @ `fable-pass`
+8	- Workspace: `w655932ec8686525`; orchestrator notify-back `term_655932ec8685e328`
+9	- Pre-series baseline SHA: `a103a45`
+10	- Standing consultants (question via herder-send, do not respawn): perf-cartographer-23179bca
+11	  (claude opus, engine map), perf-profiler-da324304 (codex, perf setup)
+12	
+13	## Unit status (orchestrator keeps current)
+14	
+15	Standing validator: validator-69719c27 (claude fable, tab 4) — ready 2026-07-01.
+16	
+17	| Unit | Implementer | Review | Validation | Status |
+18	|---|---|---|---|---|
+19	| Baselines &#43; margin-core floor microbench | impl-baselines-852b21c1 (codex, tab 5) | cleared (re-review of c639e30) | VALIDATED | complete @335ff3d&#43;c639e30 |
+20	| Shock allocation recycling | impl-shock-recycling-f0c3890d (codex, tab 7) | cleared (re-review of 43362a0) | VALIDATED | complete @5d8caa6&#43;43362a0 |
+21	| Incremental Margin Aggregate &#43; oracle | impl-margin-aggregate-ed751945 (codex) | correctness cleared; perf refuted; revert executed | revert VALIDATED | CLOSED measured-net-negative, REVERTED @1d72b5a&#43;ab65d5e (tree-equal proof); AC #8 checked, backlog @acfb9ae |
+22	| Order Record Unification | impl-unification-02388ba2 (codex, tab 6) | cleared clean (claude 0 blocking &#43; 2 advisories accepted; codex 0 findings) | VALIDATED (1.131x many-markets 6/6 rounds; single-hot-book flat; footprint machine-checked) | complete @2e4cfbc&#43;9d646be; AC #3 checked, backlog @eb75d8d |
+23	| Fan-out evidence (gates the sliced fan-out) | impl-fanout-evidence-9fef34e3 (codex) | cleared; remediation c563d1f re-reviewed clear | VALIDATED (100k scale point reproduced, same regime) | complete @84a0ece&#43;5275be3&#43;c563d1f&#43;123fc15; AC #4 checked, backlog @bd1ab2a |
+24	| Batched maker-side effects | impl-batched-maker-587a565b (codex, tab 5) | FAIR TEST; sign-check VALIDATED | revert VALIDATED | CLOSED measured-net-negative, REVERTED @4e20f7e&#43;a8161aa (tree-equal proof); AC #8 checked, backlog @806deee |
+25	| Sliced Price-Step Fan-out | impl-sliced-fanout-346edac8 (codex, tab 7) | cleared clean (claude 0 blocking &#43; codex 0 blocking; setup-guard remediation 42ab47b re-reviewed clear) | VALIDATED (34.2x worst / 471x mean stall, 2/2 rounds; 12/12 byte-identical at HEAD) | complete @40d4da9&#43;42ab47b&#43;8f719bc; AC #5 checked, backlog @30a5196 |
+26	| Final docs sweep | impl-7ffa1d79 (codex, tab 10) | cleared clean (claude 0 findings) | VALIDATED (sources unchanged except self-report strings; grid snapshot reproduces, allocs/bytes exact; pointer advisory remediated @e6c215c) | complete @032175b&#43;e6c215c; AC #6 checked |
+27	
+28	## Block formats
+29	
+30	`## &lt;unit&gt; — START` / `— DONE` (files, decisions/deviations, verification verbatim, commit
+31	range) / `— BLOCKED` (failing output, WIP sha) / `— HANDOFF (continue)` (state &#43; ordered
+32	remaining steps &#43; WIP sha) / `— REVIEW (claude|codex)` (findings ranked blocking/advisory) /
+33	`— VALIDATED` or `— REFUTED` (pasted gate evidence) / `## SLIDING DOOR — &lt;name&gt; (&lt;unit&gt;)`
+34	(fork / options / chosen&#43;why / other door / reversibility).
+35	
+36	---
+37	
+38	## Baselines and the margin-core floor microbench — START
+39	
+40	- Implementer: Codex in `fable-pass`.
+41	- Scope: add the margin-core floor benchmark and capture pre-series baseline evidence only.
+42	- Initial read set: brief, playbook, run-log, the perf-levers plan&#39;s Goal Capsule, Key Technical
+43	  Decisions, the Baselines and margin-core floor microbench section, Verification Contract,
+44	  bench AGENTS/README, and backlog task &#34;Add a margin-core floor microbench for the expensive
+45	  re-margin path&#34;.
+46	
+47	## Baselines and the margin-core floor microbench — DONE
+48	
+49	- Commit range: `335ff3d`.
+50	- Files changed:
+51	  - `experiments/single-sequencer/impl/rust-raw/bench/benches/engine_core.rs`
+52	  - `experiments/single-sequencer/impl/rust-raw/bench/src/grid/report.rs`
+53	  - `experiments/single-sequencer/impl/rust-raw/bench/README.md`
+54	  - `experiments/single-sequencer/orchestration/logs/rust-raw/perf-levers-run-log.md`
+55	- Decisions and deviations:
+56	  - The margin-core floor is an `ENGINE_CORE_MODE=margin-core` mode in the existing bench target,
+57	    not a separate target, so it reuses the existing `Sequencer`, sink, rdtscp latency distribution,
+58	    allocation counting, and build-config reporting.
+59	  - The fixture uses eight markets and sixty-four positioned holders, with equal initial and
+60	    maintenance ratios and zero fees. This keeps the accepted admission, rejected admission, and
+61	    mark-tick health check near the current float-first guard band without changing engine code.
+62	  - Grid response capture is an opt-in `ENGINE_CORE_GRID_CAPTURE_DIR` writer in the grid runner.
+63	    Its capture pass is not used for timing because response-file writes run inside the measured
+64	    loop; the durable log marks the non-capturing grid run as the timing baseline.
+65	- Durable evidence:
+66	  - Baseline table, host fingerprint, exact commands, and response-capture checksums are committed
+67	    in `experiments/single-sequencer/orchestration/logs/rust-raw/perf-levers-run-log.md`.
+68	  - Raw response captures are under `napkins/perf-levers/self-baseline/`.
+69	- Verification evidence:
+70	  - `env -u RUSTFLAGS cargo test --lib -p engine`
+71	    - `test result: ok. 152 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s`
+72	  - `env -u RUSTFLAGS cargo test -p bench`
+73	    - `test result: ok. 47 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 5.50s`
+74	  - `env -u RUSTFLAGS cargo test -p bench -- --ignored`
+75	    - `test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 47 filtered out; finished in 1.91s`
+76	  - `env -u RUSTFLAGS ENGINE_CORE_MODE=margin-core ENGINE_CORE_MARGIN_LENGTH_CHECK=1 ... cargo bench --bench engine_core -- --quiet`
+77	    - Third-run rows:
+78	      - `admission_accept_near_guard,28700,711.336,1232.314,3586.736,10519.757,44824.183,751.574,2,296,0.000000`
+79	      - `admission_reject_near_guard,29159,591.110,971.825,2905.457,7253.623,38762.800,619.806,1,64,1.000000`
+80	      - `mark_tick_health_gate,15326,31078.368,40676.394,54061.532,98925.791,282560.671,31475.884,3,1096,0.000000`
+81	    - Final length check lines:
+82	      - `admission_accept_near_guard,100000,754.994,200000,753.658,0.0018`
+83	      - `admission_reject_near_guard,100000,616.339,200000,618.564,0.0036`
+84	      - `mark_tick_health_gate,100000,31542.197,200000,31587.519,0.0014`
+85	  - `env -u RUSTFLAGS ENGINE_CORE_MODE=grid cargo bench --bench engine_core -- --quiet`
+86	    - Standard grid rows all reported `rejects=0`; table is in the durable log.
+87	  - `env -u RUSTFLAGS ENGINE_CORE_MODE=grid ENGINE_CORE_GRID_MEMORY_RIDER=off ENGINE_CORE_GRID_CAPTURE_DIR=... cargo bench --bench engine_core -- --quiet`
+88	    - Capture pass completed with all printed rows reporting `rejects=0`; checksums are in the
+89	      durable log.
+90	  - Dirty capture guard:
+91	    - `thread &#39;main&#39; (...) panicked at bench/benches/engine_core.rs:1085:5: margin-core baseline capture requires a clean rust-raw tree`
+92	
+93	## Baselines and the margin-core floor microbench — REMEDIATED
+94	
+95	- Remediation commit: `c639e30`.
+96	- Review/ruling items resolved:
+97	  - Clean-tree guard now checks the rust-raw root with `git -C &lt;rust-raw-root&gt; status --porcelain -- .`.
+98	  - Margin-core capture and grid capture both imply a clean-tree guard; the separate margin opt-in
+99	    guard env is no longer the capture protection.
+100	  - The margin-core fixture has a calibration assertion that both admission decisions stay near the
+101	    float-first guard band and fail loudly if the fixture drifts toward over-funded.
+102	  - Margin-core output and JSON relabel the loop rate as `clone_bounded_loop_ops_s`; the durable log
+103	    now uses the same label.
+104	  - `margin-core-self-report.json` now writes under the rust-raw `target/` directory, not under the
+105	    tracked `bench/` source directory.
+106	- Verification evidence:
+107	  - `env -u RUSTFLAGS cargo test -p bench`
+108	    - `test result: ok. 47 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 5.63s`
+109	  - `env -u RUSTFLAGS cargo test --lib -p engine`
+110	    - `test result: ok. 152 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s`
+111	  - `env -u RUSTFLAGS cargo test -p bench -- --ignored`
+112	    - `test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 47 filtered out; finished in 1.93s`
+113	  - Short margin-core smoke:
+114	    - Header: `op,clone_bounded_loop_ops_s,p50_ns_net,p99_ns_net,p99_9_ns_net,p99_99_ns_net,max_ns_net,mean_ns_net,allocs_per_op,bytes_per_op,rejects_per_op`
+115	    - `admission_accept_near_guard,26515,831.568,831.568,831.568,831.568,831.568,804.851,2,296,0.000000`
+116	    - `admission_reject_near_guard,28185,781.474,881.663,881.663,881.663,881.663,744.738,1,64,1.000000`
+117	    - `mark_tick_health_gate,12947,36849.495,41808.848,41808.848,41808.848,41808.848,36495.494,3,1096,0.000000`
+118	    - Follow-up check: `bench_self_report_absent`.
+119	  - Clean capture paths:
+120	    - Margin-core capture with `ENGINE_CORE_MARGIN_CAPTURE_DIR=.../remediation-capture-check/margin` completed and printed the relabeled margin-core rows.</pre></details>
+</li>
+<li class="entry role-unknown" data-uuid="7694f550-71fa-4a08-8dd3-dff0e789d3a2">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:48:51 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-assistant" data-uuid="03690e4b-7de5-425e-89dc-311cc3fe81f7">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:48:56 UTC</span></div>
+<details class="block thinking"><summary>thinking</summary></details>
+</li>
+<li class="entry role-assistant" data-uuid="4e6cb747-dfe4-47ec-be82-4b16d7f27441">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:48:57 UTC</span></div>
+<div class="block text"><pre>I have the playbook and unit-status table. Now let me gather the acceptance criteria, the diff scope, and delegate wide reading.</pre></div>
+</li>
+<li class="entry role-assistant" data-uuid="8f8b9506-9074-4cea-bdaf-89fe4831df8d">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:48:58 UTC</span></div>
+<details class="block tool_use"><summary>tool: Bash</summary><pre>{
+  &#34;command&#34;: &#34;backlog task view TASK-017 --plain&#34;,
+  &#34;description&#34;: &#34;View TASK-017 acceptance criteria&#34;
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="6f0c29ed-3d2b-4dc3-ac93-460ab3ac24c3">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:48:58 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>File: /home/grace/.herdr/worktrees/synfinex/fable-pass/backlog/tasks/task-017 - Execute-the-rust-raw-perf-levers-plan-margin-cache-order-footprint-shock-fan-out.md
+
+Task TASK-017 - Execute the rust-raw perf-levers plan (margin cache, order footprint, shock fan-out)
+==================================================
+
+Status: ◒ In Progress
+Ordinal: 21000
+Assignee: @fable
+Created: 2026-07-01 22:38
+Updated: 2026-07-02 10:48
+
+Description:
+--------------------------------------------------
+Execute docs/plans/2026-07-01-003-perf-rust-raw-perf-levers-plan.md autonomously (orchestrated multi-agent run). The plan implements the four levers from doc-007 in experiments/single-sequencer/impl/rust-raw. Owner ruling 2026-07-01: cross-impl golden fixtures and the wire-format freeze are retired — rust-raw is the source of what matters; behavior-preserving levers are verified by self-baseline response diffs; the sliced fan-out may change response interleaving.
+
+Acceptance Criteria:
+--------------------------------------------------
+- [x] #1 Margin-core floor microbench built and pre-series baselines captured (grid rows, response-stream captures, baseline SHA)
+- [x] #2 Shock allocation recycling landed: mild-shock bytes/op at or below ~1,000, self-baseline diff clean
+- [x] #3 Order Record Unification landed: measured per-order footprint at or below ~220 B with no hot-path hop regressions
+- [x] #4 Fan-out evidence recorded: production-scale shock sizing cell and split-mark-batches results gate the slicing work
+- [x] #5 Sliced Price-Step Fan-out landed behind a construction-time slice budget with documented semantics, sliced-vs-unsliced evidence, and a chosen default
+- [x] #6 Stale docs corrected per the plan&#39;s documentation requirement; no abandoned experiment code; run-log carries final benchmark tables with host fingerprint
+- [x] #7 Incremental Margin Aggregate executed to its validated conclusion: lever measured net-negative on the contracted A/B (many-markets 0.88x median; both shock cells regressed including p99.9) and reverted with tree-equality proof; evidence and reopening condition recorded in the durable benchmark log
+- [x] #8 Batched maker-side effects executed to its validated conclusion: lever measured net-negative on the contracted metrics (fair-test review confirmed faithful implementation with no removable overhead; ten-round sign-check: severe-cascade worst stall 1.198x, mild-shock 1.100x, throughput down both cells, no shock cell wins) and reverted with tree-equality proof; mechanism and reopening condition recorded in the durable benchmark log
+
+Definition of Done:
+--------------------------------------------------
+No Definition of Done items defined
+
+Implementation Plan:
+--------------------------------------------------
+1. Orchestrated per napkins/perf-levers/playbook.md: autonomous, strictly sequential units; codex implementers, claude opus review on every unit plus codex second review on the load-bearing units (margin aggregate, unification, sliced fan-out), standing fable validator independently re-runs gates.
+2. Unit order: baselines &#43; margin-core floor microbench -&gt; shock allocation recycling -&gt; Incremental Margin Aggregate with rebuilt oracle -&gt; Order Record Unification -&gt; fan-out evidence (gates the sliced fan-out) -&gt; batched maker-side effects -&gt; Sliced Price-Step Fan-out.
+3. Evidence ledger: napkins/perf-levers/run-log.md (branch-local); durable benchmark tables: experiments/single-sequencer/orchestration/logs/rust-raw/perf-levers-run-log.md (committed, created by the baselines unit).
+4. Gates per the plan&#39;s Verification Contract; behavior-preserving units diff responses against the a103a45 self-baseline captures; every perf claim follows the A/B discipline.
+
+Implementation Notes:
+--------------------------------------------------
+Baselines unit complete and validated (commits 335ff3d &#43; c639e30). Margin-core floor microbench landed as ENGINE_CORE_MODE=margin-core; pre-series baseline tables &#43; host fingerprint &#43; capture checksums committed in experiments/single-sequencer/orchestration/logs/rust-raw/perf-levers-run-log.md; self-baseline response captures under napkins/perf-levers/self-baseline/ verified deterministic (byte-identical repetitions). Review found the capture clean-tree guard bench-scoped and not wired to the capture paths (2 blocking &#43; 3 advisory findings); all five remediated and re-review cleared. Validator re-ran gates from a scratch build: floor stable at 0.53% spread, within ~1.2% of committed baseline.
+
+Shock allocation recycling complete and validated (commits 5d8caa6 &#43; 43362a0). Engine-level fills pool via OrderOutcome, price-batch decode-into scratch, reusable changed-market/account/sorted-position scratch. Review empirically decomposed the initial 22,858-to-409 bytes/op headline and found ~99% was a same-commit rider methodology change; ruling made the CountingSink&#43;warmed rider the canonical engine-allocation ruler and the honest result is mild-shock 4,799-to-409 bytes/op (~12x, under the 1,000 target), reproduced exactly by the validator. A trailing-byte price-batch decode divergence was caught and exact parity restored (pinned by test; tightening recorded as owner follow-up). All 12 self-baseline response streams byte-identical. Engine suite now 156 tests.
+
+Incremental Margin Aggregate closed as measured-net-negative and REVERTED (revert 1d72b5a, tree-equal to c2c8863 by proof; durable-log closeout ab65d5e; revert validated). Full cycle: initial e51d9a1 had a pathological all-account debug oracle (caught live: 25-min bench gate vs 5.5s norm); double review found four blocking defects (maintained f64 running total violating ascending read-time summation; oracle rebuilding before comparing — structurally blind to the drift; shock health gate never routed through the cache; unprotocoled perf evidence). Remediation c44fc1c fixed all correctness items (validated: 166 tests, oracle-on release pass, 12/12 byte-identical streams) but the standing validator refuted the perf claim: contracted A/B shows many-markets 0.88x median — the implementer&#39;s 1.005x was a 3-rep artifact inside ±11% spread (A/B RESOLUTION RULE added to playbook) — with counters &#43;18% instructions / &#43;32% L2 requests per op, and both shock cells regressed on every metric including p99.9 (severe-cascade 0.667x, p99.9 &#43;35%): a tail-first gate violation. Ruling: revert; gating rejected (~1000 lines, no measured win anywhere). One bright spot recorded (many-markets tails −21–28%) plus reopening condition in the durable log. Downstream: sliced fan-out detection-cost assumptions must be re-weighed — the health gate remains a full fold per candidate.
+
+Order Record Unification complete and VALIDATED @2e4cfbc (durable-log closeout @9d646be). Footprint machine-checked at 220.01 B/order (mem-report test asserts &lt;=220.1; was ~321). Behavior preserved: 12/12 self-baseline streams byte-identical; all gates green from clean state. Perf at the A/B resolution-rule standard: many-markets 1.131x median throughput on the validator&#39;s six order-flipped 1M-op rounds (6/6 paired wins on every metric, non-overlapping ranges; implementer&#39;s three-rep 1.203x was window variance around the same win), tails improved (p99.9 0.967x); market-ceiling 1.087x over eleven implementer reps (p99.9 0.854x); single-hot-book flat within noise (0.999x) — the added id-resolved index hop costs nothing measurable where cache was already resident, satisfying the no-hot-path-hop-regression wording at measured level. Double review cleared with zero blocking findings (first unit in the run to skip remediation); claude advisories on hop-count wording and the cum_notional i128-&gt;i64 narrowing (safe under the documented arithmetic budget) accepted as record.
+
+Fan-out evidence complete and VALIDATED @84a0ece&#43;5275be3&#43;c563d1f (durable-log entry @123fc15). Scale-gated fanout-evidence cell (1M accounts, 100 markets, exposure-holder &#43; split-mark-batch knobs) landed with fail-loud truncation guard and byte-identity pins. Sizing evidence at the resolution-rule standard, order-flipped rounds under the owner&#39;s reniced-host ruling: unsliced worst price-step stall 17.7ms @10k holders, 76.4ms @50k, 135.7ms @100k vs ~100us step budget — three orders of magnitude over, growing with holder count; split-four cuts breadth ~4x (3/3 paired wins, throughput flat) but still leaves ~35ms @100k. Review independently recomputed every number from raw logs (exact match); validator reproduced the 100k point (139.4ms/40.9ms, same regime). GATE RULING: sliced fan-out gate OPEN — splitting is a breadth reducer, not a substitute for resumable slicing; riders recorded (stall columns are the acceptance metric, never whole-row percentiles; detection cost weighed at full-fold-per-candidate; split-batches shipping default is a unit-7 A/B question).
+
+Batched maker-side effects closed as measured-net-negative and REVERTED (revert 4e20f7e, tree-equal to bd1ab2a at the tree-object level; durable-log closeout a8161aa; revert validated: engine 158 &#43; bench 54 green from clean, no batching symbols remain). Full cycle: implementer landed a correct, byte-identical implementation (12/12 streams) but BLOCKED on its own gate — severe-cascade stall regressed 3/3 rounds across three design shapes. Fair-test review: faithful to plan U6, no removable overhead (pooled batches, index sort, coalescing does fewer lookups), regression in the lever&#39;s best-case cell. Validator sign-check escalated 2 to 10 rounds/cell per the A/B resolution rule: worst stall 1.198x severe / 1.100x mild, throughput 0.94x/0.93x, 7-9/10 paired losses, NO shock cell wins. Mechanism: order unification already made maker order-table writes dense/cache-friendly, so the deferred store/load round-trip &#43; mandated sort are pure added cost. Reopening: only if the sliced fan-out re-derives the need across slice boundaries under its own A/B. AC renumbering: sliced fan-out=#5, docs sweep=#6, margin closure=#7, this closure=#8.
+
+Sliced Price-Step Fan-out complete (commits 40d4da9 &#43; 42ab47b &#43; durable log 8f719bc). Construction-time PriceHealthSliceBudget with unbounded default: all twelve self-baseline streams byte-identical at HEAD (re-proven after remediation). Finite-budget-one at the million-account fanout-evidence cell: worst price-batch stall 128.9ms -&gt; 3.77ms (34.2x, validator-reproduced 2/2 order-flipped rounds), mean 471x, judged on the direct stall columns per the gate ruling. Double review zero blocking; accepted advisories recorded in the durable log: the stall is shrunk ~32x and still grows with changed-market holder count under the current snapshot design (snapshot-gather slicing is the reopening condition); the cell throughput column is op-count-mix inflated by bench drain folds (honest whole-run figure: perf elapsed ratio ~1.34x). Remediation hardened the replay contract: the slice budget setter refuses once sequencing has begun or price-health work is pending, and the bench applies budgets at fixture construction. Cursor is cloned engine state pinned by clone-parity and deterministic-replay tests; duplicate/malformed inputs never advance; second batches coalesce depth-one.
+
+Final docs sweep complete (commits 032175b &#43; e6c215c). Stale docs corrected as current-state snapshots: retired frozen-stream/margin-cache-oracle gate language replaced by the self-baseline capture rule; reverted levers documented as tried-and-bounded, not assumed; fanout-evidence throughput column documented as op-count-mix with the direct stall columns as the gate; bench self-report strings retitled truthfully. Abandoned-code sweep across ~30 symbols from both reverted levers found nothing; every remaining hit verified intentional by review. Series-final HEAD benchmark snapshot appended to the durable log (host fingerprint, repro commands, three zero-reject full-grid reps, final fanout pair 32.8x worst / 437.7x mean). Review: zero findings, every durable-log ratio recomputed. Validator: sources unchanged except the descriptive strings, suites green from clean, independent grid rep matches allocs/bytes exactly with timing inside single-rep spread; its one advisory (evidence-pointer sentence not covering the two new bullets) remediated in e6c215c.</pre></details>
+</li>
+<li class="entry role-assistant" data-uuid="a8c412c2-453d-46e5-97f7-374a71c390ea">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:48:59 UTC</span></div>
+<details class="block tool_use"><summary>tool: Bash</summary><pre>{
+  &#34;command&#34;: &#34;git diff --stat a103a45..HEAD | tail -60&#34;,
+  &#34;description&#34;: &#34;Diff stat of full run delta&#34;
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="52aaedfc-a75e-43e2-bc1f-24c778835547">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:48:59 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre> ...n-margin-cache-order-footprint-shock-fan-out.md |   51 &#43;-
+ experiments/single-sequencer/README.md             |   16 &#43;-
+ .../single-sequencer/contract/workload/workload.md |    6 &#43;-
+ .../single-sequencer/docs/behaviour-spec.md        |   42 &#43;-
+ .../single-sequencer/docs/rust-raw-performance.md  |   20 &#43;-
+ experiments/single-sequencer/docs/system-design.md |   47 &#43;-
+ .../single-sequencer/impl/rust-raw/bench/AGENTS.md |    2 &#43;-
+ .../single-sequencer/impl/rust-raw/bench/README.md |   31 &#43;-
+ .../impl/rust-raw/bench/benches/engine_core.rs     |  666 &#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;-
+ .../impl/rust-raw/bench/src/grid/fixture.rs        |   19 &#43;-
+ .../impl/rust-raw/bench/src/grid/report.rs         |  716 &#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;-
+ .../impl/rust-raw/bench/src/grid/shock.rs          |  124 &#43;-
+ .../impl/rust-raw/engine/Cargo.toml                |    2 &#43;-
+ .../impl/rust-raw/engine/src/matcher.rs            |  237 &#43;&#43;&#43;-
+ .../impl/rust-raw/engine/src/sequencer.rs          | 1496 &#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;---
+ .../impl/rust-raw/engine/src/wire/mod.rs           |   25 &#43;
+ .../impl/rust-raw/engine/src/wire/records.rs       |   59 &#43;
+ .../impl/rust-raw/engine/src/wire/tests.rs         |   23 &#43;
+ .../lessons/engine-architecture.md                 |    4 &#43;-
+ .../logs/rust-raw/perf-levers-run-log.md           |  743 &#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;&#43;
+ 20 files changed, 3883 insertions(&#43;), 446 deletions(-)</pre></details>
+</li>
+<li class="entry role-unknown" data-uuid="5658ef98-03c7-4d25-9d8d-2c8b421c5cdf">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:48:59 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-assistant" data-uuid="5f942dfc-d2c9-49e5-a7fe-a8e8216acfc5">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:49:09 UTC</span></div>
+<details class="block thinking"><summary>thinking</summary></details>
+</li>
+<li class="entry role-assistant" data-uuid="f2ae21fe-d991-4f3f-b679-1653ff1feeb8">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:49:10 UTC</span></div>
+<details class="block tool_use"><summary>tool: Bash</summary><pre>{
+  &#34;command&#34;: &#34;git status --porcelain; echo \&#34;---UNTRACKED-ALL---\&#34;; git status --porcelain --ignored -- experiments/ | head -40; echo \&#34;---DIFF NAME STATUS---\&#34;; git diff --name-status a103a45..HEAD&#34;,
+  &#34;description&#34;: &#34;Working tree status and full diff name-status&#34;
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="3a3c0c3d-1f7b-430b-92a9-dc849d0be44b">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:49:10 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>---UNTRACKED-ALL---
+!! experiments/single-sequencer/impl/rust-raw/target/
+---DIFF NAME STATUS---
+M	backlog/tasks/task-017 - Execute-the-rust-raw-perf-levers-plan-margin-cache-order-footprint-shock-fan-out.md
+M	experiments/single-sequencer/README.md
+M	experiments/single-sequencer/contract/workload/workload.md
+M	experiments/single-sequencer/docs/behaviour-spec.md
+M	experiments/single-sequencer/docs/rust-raw-performance.md
+M	experiments/single-sequencer/docs/system-design.md
+M	experiments/single-sequencer/impl/rust-raw/bench/AGENTS.md
+M	experiments/single-sequencer/impl/rust-raw/bench/README.md
+M	experiments/single-sequencer/impl/rust-raw/bench/benches/engine_core.rs
+M	experiments/single-sequencer/impl/rust-raw/bench/src/grid/fixture.rs
+M	experiments/single-sequencer/impl/rust-raw/bench/src/grid/report.rs
+M	experiments/single-sequencer/impl/rust-raw/bench/src/grid/shock.rs
+M	experiments/single-sequencer/impl/rust-raw/engine/Cargo.toml
+M	experiments/single-sequencer/impl/rust-raw/engine/src/matcher.rs
+M	experiments/single-sequencer/impl/rust-raw/engine/src/sequencer.rs
+M	experiments/single-sequencer/impl/rust-raw/engine/src/wire/mod.rs
+M	experiments/single-sequencer/impl/rust-raw/engine/src/wire/records.rs
+M	experiments/single-sequencer/impl/rust-raw/engine/src/wire/tests.rs
+M	experiments/single-sequencer/lessons/engine-architecture.md
+A	experiments/single-sequencer/orchestration/logs/rust-raw/perf-levers-run-log.md</pre></details>
+</li>
+<li class="entry role-assistant" data-uuid="6ec73379-665b-4bc6-a253-71b8be279191">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:49:13 UTC</span></div>
+<details class="block tool_use"><summary>tool: Bash</summary><pre>{
+  &#34;command&#34;: &#34;echo \&#34;===TODO/FIXME/XXX/WIP/HACK in diff added lines===\&#34;; git diff a103a45..HEAD | grep -nE &#39;^\\&#43;&#39; | grep -iE &#39;TODO|FIXME|XXX|HACK|WIP|dbg!|println!\\(|eprintln!|unimplemented!|todo!\\(&#39; | head -60&#34;,
+  &#34;description&#34;: &#34;Grep added lines for TODO/debug markers&#34;
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="aff27ce3-6b6c-4bfc-a218-d87943b96f34">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:49:13 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>===TODO/FIXME/XXX/WIP/HACK in diff added lines===
+530:&#43;    println!(
+543:&#43;    println!(&#34;op,clone_bounded_loop_ops_s,p50_ns_net,p99_ns_net,p99_9_ns_net,p99_99_ns_net,max_ns_net,mean_ns_net,allocs_per_op,bytes_per_op,rejects_per_op&#34;);
+551:&#43;        println!(
+650:&#43;    println!(&#34;margin_core_length_check op,measured_ops,mean_ns_net,double_measured_ops,double_mean_ns_net,relative_delta&#34;);
+665:&#43;        println!(
+2005:&#43;    println!(&#34;cell,accounts,markets,kind,throughput_ops_s,p50_ns_net,p99_ns_net,p99_9_ns_net,p99_99_ns_net,max_ns_net,mean_ns_net,rejects,seed_records,resting_orders,allocs,bytes,allocs_per_op,bytes_per_op,shock_exposures,shock_markets,shock_split_batches,shock_price_batches,shock_worst_price_batch_ns,shock_mean_price_batch_ns&#34;);</pre></details>
+</li>
+<li class="entry role-unknown" data-uuid="95f14535-22db-482e-96c1-8b07ea87db31">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:49:13 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-assistant" data-uuid="c3e4b8b5-8a61-4f54-ad9d-01860505e4ea">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:49:27 UTC</span></div>
+<details class="block thinking"><summary>thinking</summary></details>
+</li>
+<li class="entry role-assistant" data-uuid="d61f2c5a-1ce1-428f-8237-5a56e6100a59">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:49:29 UTC</span></div>
+<div class="block text"><pre>Working tree is clean — no stray tracked temp/WIP files, no TODO/FIXME/dbg! introduced (the `println!`s are the bench&#39;s CSV row emitters, expected). Two levers (Incremental Margin Aggregate, Batched maker-side effects) were reverted tree-equal and must leave zero code. Let me delegate the wide reading.</pre></div>
+</li>
+<li class="entry role-assistant" data-uuid="0b91fe94-d73a-41e1-a08d-3228be38ba45">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:49:35 UTC</span></div>
+<details class="block tool_use"><summary>tool: Agent</summary><pre>{
+  &#34;description&#34;: &#34;Plan DoD and verification contract&#34;,
+  &#34;prompt&#34;: &#34;Read the file `/home/grace/.herdr/worktrees/synfinex/fable-pass/docs/plans/2026-07-01-003-perf-rust-raw-perf-levers-plan.md` in full. I am the end-of-run deep reviewer for the perf-levers run and need you to extract, verbatim where possible:\n\n1. The plan&#39;s \&#34;Definition of Done\&#34; section (every item, exact text). If it is phrased as \&#34;Goal Capsule\&#34; success criteria or a stop condition instead, capture those too.\n2. The plan&#39;s \&#34;Verification Contract\&#34; — every gate/row, especially any numeric targets (bytes/op thresholds, footprint bytes/order thresholds, tail-first p99.9 rules, A/B discipline requirements).\n3. The four levers named in the plan and, for each, whether the plan expected it to land or possibly be abandoned, plus any explicit success/failure thresholds.\n4. Any explicit \&#34;stop conditions\&#34; or escalation triggers.\n\nReport as a structured list. Quote exact numeric thresholds. Do not summarize away numbers. Do not edit anything.&#34;,
+  &#34;subagent_type&#34;: &#34;Explore&#34;,
+  &#34;run_in_background&#34;: false
+}</pre></details>
+</li>
+<li class="entry role-assistant" data-uuid="c37585bd-0cf6-4954-9c8b-732777230f26">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:49:45 UTC</span></div>
+<details class="block tool_use"><summary>tool: Agent</summary><pre>{
+  &#34;description&#34;: &#34;Durable benchmark log honesty review&#34;,
+  &#34;prompt&#34;: &#34;Read the file `/home/grace/.herdr/worktrees/synfinex/fable-pass/experiments/single-sequencer/orchestration/logs/rust-raw/perf-levers-run-log.md` in full. This is a git-tracked durable benchmark log meant to stand alone as an honest record of a 7-unit performance-optimization run (rust-raw perf-levers).\n\nEvaluate it as a standalone record for COHERENCE and HONESTY:\n1. Does it contain a host fingerprint, repro commands, and final benchmark tables? Quote them.\n2. For each of the four levers (shock allocation recycling, Incremental Margin Aggregate, Order Record Unification, Batched maker-side effects) plus the Sliced Price-Step Fan-out and the fan-out evidence: what outcome does the log record (landed / reverted net-negative), and what are the headline numbers? Quote the exact ratios/thresholds.\n3. Are the two REVERTED levers (Incremental Margin Aggregate; Batched maker-side effects) documented as tried-and-bounded with a reopening condition, NOT as assumed wins? Quote the reopening conditions.\n4. HONESTY CHECK: flag any place where the log overstates a win, buries a regression, uses an opaque identifier scheme (D1/F1/rung-4/Option-A style codes banned by repo convention), narrates chronologically instead of current-state, or presents a number without its measurement basis. Flag any internal numeric contradiction (a ratio stated two different ways).\n5. Does it note the honest whole-run throughput figures where a bench column is \&#34;op-count-mix inflated\&#34;? Quote.\n\nReport findings ranked blocking/advisory with line numbers. Do not edit anything.&#34;,
+  &#34;subagent_type&#34;: &#34;general-purpose&#34;,
+  &#34;run_in_background&#34;: false
+}</pre></details>
+</li>
+<li class="entry role-assistant" data-uuid="ea71e4d5-9ab3-4d89-ad04-b4db9b0168a0">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:49:56 UTC</span></div>
+<details class="block tool_use"><summary>tool: Agent</summary><pre>{
+  &#34;description&#34;: &#34;Engine code diff remnant sweep&#34;,
+  &#34;prompt&#34;: &#34;I am the end-of-run deep reviewer for the rust-raw perf-levers run. Two performance levers were IMPLEMENTED then REVERTED tree-equal and must leave ZERO surviving code: (a) the \&#34;Incremental Margin Aggregate\&#34; / margin-cache / rebuilt-oracle lever, and (b) the \&#34;Batched maker-side effects\&#34; lever (deferred maker store/load, batch coalescing in liquidation sweeps). Two levers DID land and should be present: (c) \&#34;Order Record Unification\&#34; (dedupe order identity into one table entry, per-order footprint ~220 B), and (d) \&#34;Sliced Price-Step Fan-out\&#34; (construction-time slice budget `PriceHealthSliceBudget`, unbounded default, cursor = cloned engine state).\n\nExamine the engine code delta over commit range a103a45..HEAD. Run these from `/home/grace/.herdr/worktrees/synfinex/fable-pass`:\n- `git diff a103a45..HEAD -- experiments/single-sequencer/impl/rust-raw/engine/` (read it fully; it is large — ~1800 lines in sequencer.rs, ~237 in matcher.rs, plus wire/*)\n- Also grep the CURRENT tree (not just diff) for leftover symbols:\n  `grep -rniE &#39;margin_aggregate|margin_cache|incremental_margin|rebuilt_oracle|oracle_refresh|batch(ed)?_maker|maker_batch|deferred_maker|coalesce&#39; experiments/single-sequencer/impl/rust-raw/engine/src/`\n\nReport:\n1. REVERT CLEANLINESS: any surviving symbol, dead knob, commented-out block, struct field, config flag, or test referencing either reverted lever. Quote file:line. (The run claims tree-equal reverts — verify nothing leaked.)\n2. LANDED LEVERS present &amp; coherent: confirm Order Record Unification and the `PriceHealthSliceBudget` sliced fan-out are actually in the code. Note the slice-budget setter&#39;s guard (it should refuse once sequencing has begun / price-health work pending).\n3. DEAD KNOBS / EXPERIMENT CODE: any env-var-gated or feature-gated experimental path, scratch/debug code, or knob that no longer has a purpose.\n4. TODO/FIXME/XXX/HACK/dbg!/unimplemented! introduced by the series.\n5. Any doc comment or code comment that contradicts the actual code behavior.\n\nReport findings ranked blocking/advisory with file:line evidence. Do not edit anything.&#34;,
+  &#34;subagent_type&#34;: &#34;general-purpose&#34;,
+  &#34;run_in_background&#34;: false
+}</pre></details>
+</li>
+<li class="entry role-assistant" data-uuid="2176cb45-5249-4345-b41f-83a16875fc76">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:50:06 UTC</span></div>
+<details class="block tool_use"><summary>tool: Agent</summary><pre>{
+  &#34;description&#34;: &#34;Bench and docs diff review&#34;,
+  &#34;prompt&#34;: &#34;I am the end-of-run deep reviewer for the rust-raw perf-levers run. Examine the BENCH and DOCS delta over commit range a103a45..HEAD from `/home/grace/.herdr/worktrees/synfinex/fable-pass`.\n\nBench files: `git diff a103a45..HEAD -- experiments/single-sequencer/impl/rust-raw/bench/` (engine_core.rs ~666 lines, grid/report.rs ~716, grid/shock.rs ~124, grid/fixture.rs, bench/README.md, bench/AGENTS.md).\nDocs files: `git diff a103a45..HEAD -- experiments/single-sequencer/README.md experiments/single-sequencer/contract/ experiments/single-sequencer/docs/ experiments/single-sequencer/lessons/`\n\nCheck for:\n1. ABANDONED EXPERIMENT CODE in the bench: any bench mode, knob, capture path, or fixture that was added for a reverted lever (Incremental Margin Aggregate / margin-cache, or Batched maker-side effects) and left dead. The surviving bench modes should be: margin-core floor microbench, the grid, the shock cells, and the fanout-evidence cell (1M accounts, split-mark-batches, sliced-vs-unsliced). Flag any mode with no live purpose.\n2. DEAD KNOBS: env vars referenced in bench code but never documented, or documented but not read; or knobs that only made sense for a reverted lever.\n3. DOC HONESTY / CONTRADICTIONS: the docs were supposed to be corrected to current-state snapshots — retired frozen-stream / margin-cache-oracle gate language replaced by the self-baseline capture rule; reverted levers documented as tried-and-bounded not assumed; fanout throughput column noted as op-count-mix. Flag any doc still asserting a reverted lever landed, any stale frozen-fixture/wire-format-freeze gate language, or any doc claim that contradicts the code.\n4. OPAQUE IDENTIFIERS: repo convention bans invented code schemes (D1/F1/rung-4a/Option-A/[SW-H4] style) in human prose. Flag any introduced in the docs delta.\n5. TODO/FIXME/XXX/HACK introduced.\n\nReport findings ranked blocking/advisory with file:line evidence. Do not edit anything.&#34;,
+  &#34;subagent_type&#34;: &#34;general-purpose&#34;,
+  &#34;run_in_background&#34;: false
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="3d81601d-5a3a-46c9-8a6e-72c6a28a0719">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:50:31 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>I&#39;ve read the full plan. Here is the verbatim extraction you requested.
+
+---
+
+## 1. Definition of Done (exact text, every item)
+
+The plan has a dedicated `## Definition of Done` section (lines 233-243). Verbatim:
+
+- &#34;Every implementation unit landed with its gates green, or explicitly stopped with evidence per the Goal Capsule stop conditions, recorded in the run-log.&#34;
+- &#34;Behavior preservation: the self-baseline response diff is clean for every behavior-preserving unit, and U7&#39;s unbounded-budget config reproduces it.&#34;
+- &#34;Targets: many-markets ≥1.4× pre-series baseline (same-host A/B medians) and mild-shock ≤1,000 bytes/op — or the attribution escape documented (targeted cost source demonstrably removed, honest miss recorded).&#34;
+- &#34;Floor: no standard grid cell&#39;s p99.9 regressed beyond measurement spread vs the U1 baseline.&#34;
+- &#34;The rebuilt margin oracle runs silent across the full suite and grid in debug (plus one release-with-debug-assertions pass).&#34;
+- &#34;Sliced fan-out: machinery landed behind the slice budget; new semantics documented in the engine docs; sliced-vs-unsliced evidence table and the chosen default budget in the run-log.&#34;
+- &#34;Stale docs corrected (R10 list), including the fills-buffer do-not-readopt note and the performance doc&#39;s gate description.&#34;
+- &#34;No abandoned experiment code in the final diff; napkins remain untouched by this plan (they harvest at branch end).&#34;
+- &#34;Backlog: an execution task tracks this plan; per-unit notes and the final summary recorded via the backlog CLI.&#34;
+
+### Goal Capsule success criteria (the &#34;Acceptance&#34; decision, line 84) — floor-plus-target framing
+
+The plan also encodes success criteria under Key Technical Decisions as **&#34;Acceptance is floor-plus-target with an attribution escape.&#34;** Verbatim:
+
+&gt; &#34;Floor (must hold): no standard cell&#39;s p99.9 regresses more than measurement spread, all in-tree gates green, self-baseline response diff clean for behavior-preserving levers. Targets: many-markets throughput ≥1.4× the pre-series baseline (same-host alternating A/B medians) and mild-shock bytes/op ≤1,000. If a target is missed but the post-change profile shows the targeted cost source removed (margin math no longer dominant; allocation sites gone), record the honest result and stop rather than chase — the &#39;too-good number means nothing happened&#39; tripwire applies in reverse too: a suspiciously cheap cached admission means a missed refresh trigger, not a win.&#34;
+
+---
+
+## 2. Verification Contract (every gate/row, exact numerics)
+
+Header (line 216): &#34;All engine/bench commands run from `experiments/single-sequencer/impl/rust-raw` with the committed build config: prefix `env -u RUSTFLAGS` (CI does not exist; these gates are convention and this plan&#39;s contract).&#34;
+
+The gate table (verbatim, Gate | Command | Applies to):
+
+- **Engine lib suite (152&#43; tests)** | `cargo test --lib -p engine` | every unit
+- **Engine boundary integration** | `cargo test --test boundary_live -p engine` | U2, U3, U4, U7
+- **Bench suite incl. grid gates** | `cargo test -p bench` and `cargo test -p bench -- --ignored` | every unit touching bench; U2/U3/U4 for grid gates
+- **Grid cells, zero rejects** | `ENGINE_CORE_MODE=grid ENGINE_CORE_GRID_CELL=&lt;cell&gt; cargo bench --bench engine_core` for baseline, single-hot-book, many-markets, market-ceiling, mild-shock, severe-cascade | U2–U7
+- **Self-baseline response diff** | diff responses of fixed-seed streams against the U1 pre-series capture (`.obox` via `SPINE_OBOX_PATH` or bench sink capture) | U2, U3, U4, U6, and U7 at unbounded budget
+- **Margin oracle** | debug-assertion runs of the lib suite &#43; grid cells (plus one release-with-debug-assertions pass) | U3 onward
+- **A/B benchmark protocol** | alternating old/new binaries ≥3 reps, pinned core, medians, vs the U1 baseline SHA; host fingerprint recorded | every perf claim
+- **Profile attribution** | `/usr/lib/linux-tools-6.8.0-124/perf` (wrapper broken for this kernel; generic LLC events unsupported — use L2 request-stats &#43; cache-references) | U3, U7 verdicts
+
+**Quality gates row (line 229), verbatim:** &#34;tail-first (p99.9 holds or improves on every standard cell — never trade tail for p50); allocs/op reported, never gated except U2&#39;s explicit target; &#39;too-good&#39; tripwire (an implausibly cheap result triggers a missed-work audit before celebration).&#34;
+
+Related discipline (R9, line 54): &#34;committed build config (`env -u RUSTFLAGS`, znver4/fat-LTO/cgu=1), same-host alternating A/B (≥3 reps, medians, pinned core), tail-gated (p99.9 must hold or improve on every standard cell), host fingerprint recorded.&#34;
+
+**Numeric thresholds appearing in / bound to the Verification Contract:**
+- Engine lib suite: **152&#43; tests**
+- A/B: **≥3 reps**, medians, pinned core
+- many-markets throughput: **≥1.4×** pre-series baseline
+- mild-shock bytes/op: **≤1,000** (U2&#39;s explicit gated target)
+- p99.9: holds or improves on every standard cell (tail-first, never trade tail for p50)
+- Six standard grid cells named: baseline, single-hot-book, many-markets, market-ceiling, mild-shock, severe-cascade
+
+---
+
+## 3. The Four Levers — land vs. abandon expectation, and thresholds
+
+The four committed levers (Goal Capsule, line 17): &#34;the Incremental Margin Aggregate, shock allocation recycling, Order Record Unification, and the Sliced Price-Step Fan-out with batched maker effects.&#34;
+
+Note on mapping to units: the four &#34;levers&#34; span the implementation units. Behavior-preserving group = margin cache, unification, recycling, batched effects (R3). Below I give each lever with its expectation and explicit thresholds.
+
+**Lever A — Incremental Margin Aggregate (U3; requirements R1, R2, R3, R10)**
+- Expected to land (the &#34;dominant lever,&#34; line 137). Behavior-preserving: must produce byte-identical responses (R3).
+- Explicit success threshold: many-markets throughput **≥1.4×** the pre-series baseline (same-host alternating A/B medians). Verification (line 169): &#34;many-markets A/B vs U1 baseline shows the margin path&#39;s profile share collapsed ... and throughput ≥1.4× floor-tracked; microbench floor for near-margin admissions drops materially; oracle silent across all runs.&#34;
+- Abandonment/attribution escape (line 84): if the ≥1.4× target is missed but the profile shows &#34;margin math no longer dominant,&#34; record the honest result and stop rather than chase. Stop condition (c) (line 19): &#34;the many-markets floor target is missed after the margin-cache profile shows the targeted cost removed (report honestly, do not chase).&#34;
+- Reverse tripwire: &#34;a suspiciously cheap cached admission means a missed refresh trigger, not a win.&#34;
+
+**Lever B — Shock allocation recycling (U2; requirements R4, R3, R10)**
+- Expected to land (the &#34;quick win,&#34; line 137). Byte-identical (R3).
+- Explicit success threshold: R4 (line 45) &#34;Target: mild-shock bytes/op from ~22,900 to under ~1,000.&#34; U2 Verification (line 158): &#34;mild-shock bytes/op **≤1,000** on this host; no standard cell p99.9 regression beyond spread (alternating A/B vs U1 baseline); behavior preservation per R3.&#34; Test scenario (line 157): &#34;allocs/op drops by an order of magnitude.&#34;
+- This is the only allocs/op-gated target (per Quality gates line 229: &#34;never gated except U2&#39;s explicit target&#34;).
+
+**Lever C — Order Record Unification (U4; requirements R7, R3)**
+- Expected to land (&#34;footprint,&#34; line 137). Byte-identical (R3).
+- Explicit threshold: R7 (line 50) &#34;The per-order resident footprint drops from ~321 B/order toward ~200 B/order.&#34; U4 test scenario (line 178): &#34;footprint assertion: measured bytes/order across the four structures **≤ ~220 B** in the mem-report view for a seeded book&#34;; also &#34;cancel-by-cloid hop count not increased.&#34; Verification (line 179): &#34;grid market-ceiling and many-markets A/B report improved or unchanged throughput and p50 with no tail regression; mem-report table in the run-log shows the footprint drop.&#34;
+- Note the two figures: R7 target directionally &#34;~321 B/order toward ~200 B/order&#34;; the test-scenario hard assertion is **≤ ~220 B**.
+
+**Lever D — Sliced Price-Step Fan-out with batched maker effects (U7, with U5 evidence gate and U6 batched effects; requirements R5, R3, R8; R6 for batched effects)**
+- This lever is conditional / may be gated out. It is &#34;the journal-shaping commitment&#34; (line 203) and deliberately changes response interleaving (permitted).
+- **U5 is the evidence gate that decides whether the slicing machinery proceeds.** Verification (line 189): &#34;This unit&#39;s output gates U7: proceed when the unsliced stall grows superlinearly-or-linearly with holders and materially exceeds the ~100 µs step budget at scale (expected from the 2.2 ms / 10k-account measurement); otherwise stop and surface.&#34; Stop condition (b) (line 19): &#34;the fan-out evidence unit shows slicing is unnecessary.&#34;
+- Explicit numeric anchors in the fan-out chain: &#34;~100 µs step budget&#34; (U5, line 189); &#34;2.2 ms / 10k-account measurement&#34; (line 189; also stated line 33 as &#34;up to ~2.2 ms at only 10k accounts&#34;); shock baseline &#34;~73k ops/s with ~22.9 KB allocated per op&#34; (line 33).
+- U7 success/floor thresholds (line 210): &#34;sliced-mode run of the U5 scale cell shows interleaved order-flow p99.9 improved by the slicing (record the factor honestly — **target ≥5×** on the worst-step-stall metric at the U5 scale, **floor: any material improvement with zero correctness findings**).&#34; Also: &#34;unbounded-budget config passes every gate in the Verification Contract unchanged.&#34;
+- Fallback/retention: the unbounded (unsliced) mode is retained for A/B measurement and as fallback if slicing misbehaves (R5 line 46; decision line 81). The shipped default budget is chosen by the sliced-fan-out unit&#39;s evidence.
+- **U6 Batched maker-side effects (R6, R3):** expected to land, byte-identical (&#34;byte-identically,&#34; line 48/191). Verification (line 199): &#34;severe-cascade A/B tail (p99/p99.9) holds or improves; no regression on generator cells.&#34; No standalone numeric target beyond tail-hold.
+
+---
+
+## 4. Stop conditions / escalation triggers (verbatim)
+
+**Goal Capsule &#34;Stop conditions&#34; (line 19), verbatim:**
+&gt; &#34;Stop and surface to the owner if (a) a behavior-preserving lever changes responses on the self-baseline diff and the cause is a genuine decision change rather than a bug; (b) the fan-out evidence unit shows slicing is unnecessary; (c) the many-markets floor target is missed after the margin-cache profile shows the targeted cost removed (report honestly, do not chase).&#34;
+
+**Attribution escape / &#34;stop rather than chase&#34; (Acceptance decision, line 84):**
+&gt; &#34;If a target is missed but the post-change profile shows the targeted cost source removed (margin math no longer dominant; allocation sites gone), record the honest result and stop rather than chase — the &#39;too-good number means nothing happened&#39; tripwire applies in reverse too: a suspiciously cheap cached admission means a missed refresh trigger, not a win.&#34;
+
+**U5 → U7 gate / escalation (line 189):**
+&gt; &#34;This unit&#39;s output gates U7: proceed when the unsliced stall grows superlinearly-or-linearly with holders and materially exceeds the ~100 µs step budget at scale (expected from the 2.2 ms / 10k-account measurement); otherwise stop and surface.&#34;
+
+**U4 slab-reclaim escalation (line 177):**
+&gt; &#34;Do not change slab reclaim timing in this unit ... if the design genuinely needs it, stop and surface per the Goal Capsule.&#34;
+
+**Too-good tripwire (Quality gates, line 229):** &#34;&#39;too-good&#39; tripwire (an implausibly cheap result triggers a missed-work audit before celebration).&#34;
+
+---
+
+### Additional numeric anchors worth flagging for a deep review (context figures, not gates)
+
+From the Problem Frame (line 33) and requirements — baseline &#34;before&#34; numbers the targets are measured against:
+- Generator throughput: &#34;2.34M ops/s at 10k accounts × 100 markets down to 538k at 10k markets&#34;
+- Touched-market means: &#34;~10/~30/~59 markets across the sweep&#34; — &#34;~85% of the engine window at 1,000 markets&#34;
+- Order footprint: &#34;~321 B/order footprint spread over four structures crossing L2 → L3 → DRAM&#34;
+- Shock cells: &#34;~73k ops/s with ~22.9 KB allocated per op&#34; and &#34;single sequenced price steps stalling the world for up to ~2.2 ms at only 10k accounts&#34;
+- Margin guard band: &#34;±$1 guard band&#34; (line 76)
+
+Two footprint figures that differ and could matter to your review: R7 states target &#34;~321 B/order toward ~200 B/order&#34; (line 50), while the U4 hard test assertion is &#34;≤ ~220 B&#34; (line 178) and Definition of Done does not restate a footprint number at all (footprint is not in the DoD &#34;Targets&#34; bullet — only many-markets ≥1.4× and mild-shock ≤1,000 bytes/op are).
+
+The file was read read-only; nothing was modified.</pre></details>
+</li>
+<li class="entry role-user" data-uuid="b780c107-8a22-46bc-9b45-2d40bd852ab2">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:52:12 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>I&#39;ve read the full 744-line log. Here&#39;s my evaluation.
+
+## Verdict
+
+The log is coherent and unusually honest. Both reverted levers are documented as tried-and-bounded with explicit reopening conditions (not assumed wins), regressions are disclosed rather than buried, it avoids opaque identifier schemes entirely, and it flags op-count-mix inflation with honest whole-run figures. I found **no blocking honesty defects**. A handful of advisory items below.
+
+---
+
+## 1. Host fingerprint, repro commands, final tables — all present
+
+**Host fingerprint** (lines 5-16), repeated for the sliced-fanout series (524-536) and the series-final snapshot (647-657):
+&gt; `Host: yamen-superset-f4-med-syd-1` / `CPU: AMD EPYC 4564P 16-Core Processor` / `Build config: target_cpu=znver4 opt_level=3 lto=fat codegen_units=1 panic=unwind pgo=off` / `Rust: rustc 1.96.0 (ac68faa20 2026-05-25)` / `Pre-series engine baseline SHA from the playbook: a103a45`
+
+**Repro commands**: baseline (22-33), each lever section carries its own (248-317, 376-411, 486-508, 598-641), and the final snapshot (663-688). All prefixed `env -u RUSTFLAGS`, pinned `taskset -c 2` for timing.
+
+**Final benchmark tables**: &#34;Standard grid at final HEAD&#34; (694-704, &#34;Median of three pinned full-grid repetitions. Every row reported `rejects=0`&#34;), &#34;Standard grid versus pre-series baseline&#34; (712-722), and &#34;Fan-out evidence at final HEAD&#34; (735-738).
+
+## 2. Per-lever outcomes and headline numbers
+
+- **Shock allocation recycling — LANDED.** Line 130-134: &#34;mild-shock improved from `4,799.413` to `408.978` bytes/op, roughly a twelve-fold reduction and below the 1,000 bytes/op target.&#34; Allocs &#34;improved from `2.178` to `1.600` allocs/op for mild-shock, not an order-of-magnitude count reduction; bytes/op is the gated target.&#34;
+- **Incremental Margin Aggregate — REVERTED net-negative** (155-182). Line 166-168: many-markets `0.88x median` throughput, p99.9 `0.72x to 0.79x`; mild-shock `0.840x median`, p99.9 `1.223x`; severe-cascade `0.667x median`, p99.9 `1.350x`. &#34;the remediated build losing 14 or 15 of 15 paired rounds on every metric across both shock cells.&#34;
+- **Order Record Unification — LANDED/validated at `2e4cfbc`** (184-321). &#34;Per live order: `220.01` bytes... asserts the same footprint stays at or below `220.1` bytes per live order.&#34; Implementer many-markets throughput `1.203x` (214); independent validator `1.131x` (232); single-hot-book `0.999x` &#34;flat within noise.&#34;
+- **Batched maker-side effects — REVERTED measured-net-negative** (418-482). Validator severe-cascade worst price-batch `1.198x` (batched worse 8/10), throughput `0.940x`; mild-shock worst `1.100x` (9/10), throughput `0.929x`. &#34;No shock cell showed a win.&#34;
+- **Sliced Price-Step Fan-out — LANDED/validated at `42ab47b`** (510-594). Line 562-564: worst price-batch stall `118.406 ms → 3.653 ms` = `32.41x`; mean `103.104 ms → 0.231 ms` = `446.99x`. Validator (578-581): `34.2x` and `471x`. Final HEAD (742): `32.8x` and `437.7x`.
+- **Fan-out evidence — validated, gate open** (323-416). Line 343: 100,000 holders unsplit worst `135.729 ms` vs split-four `34.974 ms` = `0.258x`, 3/3 paired split wins. Line 413-416: split &#34;still leave tens of milliseconds at 100,000 holders, so they are supporting evidence rather than a substitute for resumable fan-out slicing.&#34;
+
+## 3. Reverted levers documented as bounded with reopening conditions — yes
+
+**Incremental Margin Aggregate** (179-182): &#34;The lever is closed as measured net-negative and reverted. Reopen only with a design that avoids per-candidate staleness churn under mark-heavy load, only after the order-footprint lever lands because locality changes may shift the balance, and only with A/B evidence that meets the run&#39;s resolution rule on many-markets and both shock cells.&#34;
+
+**Batched maker-side effects** (478-482): &#34;Reopening condition: revisit deferred maker-side application only if the Sliced Price-Step Fan-out design needs it across slice boundaries or a future profile shows maker order-table writes or holder-index refreshes have become a distinct dominant stall again. Any reopening must re-derive the need from the current tree and pass its own order-flipped A/B on the direct shock price-batch stall metrics.&#34;
+
+Both are framed as closed/reverted with the code recoverable (`1d72b5a`; `53b2654`), tree-equality proven — not as assumed wins.
+
+## 4. Honesty check
+
+**No opaque-identifier violations** — clean. Levers are named descriptively (&#34;Sliced Price-Step Fan-out,&#34; &#34;Order Record Unification&#34;); modes are the real parameter values (&#34;finite budget one&#34; = `ENGINE_CORE_GRID_PRICE_HEALTH_SLICE_BUDGET=1&#34;, &#34;split-four&#34; = `SHOCK_SPLIT_BATCHES=4`); SHAs and env vars are exempt code references. No D1/F1/rung/Option-A codes.
+
+**Regressions are disclosed, not buried** — strength. Line 724-727: &#34;The final grid does not support a broad throughput-win claim.&#34; The final-vs-pre table (714-722) openly shows most standard-grid cells regressed: baseline `0.859x`, many-accounts `0.889x`, single-hot-book `0.922x`, many-markets `0.902x`, market-ceiling `0.869x`, mild-shock `0.902x` throughput.
+
+**Cross-ruler discipline** — strength. Lines 121-134 explicitly refuse to compare the old ReportSink `18,468` warmed number against the counting-sink target, retaining it &#34;as attribution evidence rather than as the target comparison.&#34;
+
+Advisory items (none blocking):
+
+- **[Advisory, lines 214 / 700 / 718] many-markets win vs final-grid regression use different workloads and could be conflated.** The order-unification A/B reports many-markets `1.203x`/`1.131x` at a `1,000,000 measured ops` window (old median 1,848,980 → new 2,225,065), but the standard-grid pre-series many-markets is `1,166,681` (line 87) and final HEAD is `1,052,308` = `0.902x` (line 718). Same cell name, two different &#34;old&#34; numbers and opposite directions depending on the measured-op window. The log discloses the window difference (217-219, 288-296) and narrows the accepted win to &#34;the order unification series&#34; (line 726), so it&#39;s hedged — but a reader must track which window applies.
+
+- **[Advisory, lines 714-722] ~10-14% standard-grid throughput regressions are disclosed but unattributed and possibly host-confounded.** The final snapshot ran with an outside `hl_stream` workload live at nice 19 (656-657), while the pre-series baseline (16, 83-91) records only a clean checkout with no outside-load ruling. The log rightly labels this &#34;a final snapshot, not an A/B claim&#34; (708), but the baseline throughput drop is neither explained nor disentangled from measurement variance.
+
+- **[Advisory, line 564] mean price-batch improvement ratio is slightly inflated by display rounding.** `103.104 / 0.231 = 446.3x`, but the log states `446.99x`. Similar small drifts: line 472 states `1.067x` where `0.183/0.172 = 1.064x`; final-HEAD `437.7x` (742) vs `112.009/0.256 = 437.5x`. All are sub-1% display-rounding artifacts from the two-to-three-decimal ms values, not internal contradictions — every ratio-of-medians I recomputed (32.41x, 34.2x, 471x, 1.198x, 0.940x, resident-storage 901,154 → 220.01 B/order, the 0.72–0.79x/12%/22%/35% margin-aggregate figures) reconciles.
+
+## 5. Op-count-mix-inflated columns and honest whole-run figures — yes
+
+Line 585-588: &#34;The cell throughput column is op-count-mix inflated by those bench drain folds: the row shows `154k` to roughly `1.05M` ops/s because finite mode adds synthetic drain operations to the denominator. The honest whole-run figure is the perf elapsed ratio, `11.267579176s` to `8.385791033s`, about `1.34x`; cache-miss rate also drops from `18.51%` to `14.40%`.&#34;
+
+Restated at final HEAD (740-742): &#34;The throughput column is not the fan-out gate metric for this cell: finite mode adds drain folds, so the operation count mix changes. The direct stall columns are the honest comparison.&#34; The fan-out-evidence section makes the same point about whole-row percentiles (368-372): &#34;changing the number of price batches changes the sample mix... The direct worst and mean price-batch columns isolate the stop-the-world stall and avoid that percentile contamination.&#34;
+
+---
+
+File reviewed: `/home/grace/.herdr/worktrees/synfinex/fable-pass/experiments/single-sequencer/orchestration/logs/rust-raw/perf-levers-run-log.md`
+agentId: a5eecec0b01355fa9 (use SendMessage with to: &#39;a5eecec0b01355fa9&#39;, summary: &#39;&lt;5-10 word recap&gt;&#39; to continue this agent)
+&lt;usage&gt;subagent_tokens: 49122
+tool_uses: 1
+duration_ms: 147817&lt;/usage&gt;</pre></details>
+</li>
+<li class="entry role-user" data-uuid="28295485-38a5-4c9d-8808-1e81f5c3fe0b">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:52:47 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>I&#39;ve completed the review of the BENCH and DOCS delta over `a103a45..HEAD`. Summary below.
+
+## Verdict: clean run — no blocking findings
+
+The intended corrections all landed and I found no abandoned reverted-lever code, no dead knobs, no doc contradictions, no opaque identifiers introduced, and no TODO/FIXME/XXX/HACK added.
+
+### Confirmations against your checklist
+
+**1. Abandoned experiment code — none.** The only new bench mode is `margin-core` (the near-margin admission &#43; mark-tick floor microbench). The grid, shock cells, and the new `fanout-evidence` cell (1M accounts / 100 markets / 100k exposures, `split_mark_batches`, sliced-vs-unsliced via `price_health_slice_budget`) are all live. No bench mode, capture path, or fixture was added for the reverted Incremental Margin Aggregate or Batched maker-side effects levers — grep for `batch.*maker`/`margin_cache` in the bench tree is empty. Both reverted levers were engine-side and correctly left no bench residue.
+
+**2. Dead knobs — none tied to reverted levers.** Every env var read is live. The surviving slicing lever&#39;s knobs (`ENGINE_CORE_GRID_SHOCK_EXPOSURES`, `ENGINE_CORE_GRID_SHOCK_SPLIT_BATCHES`, `ENGINE_CORE_GRID_PRICE_HEALTH_SLICE_BUDGET`) are read and documented in `bench/README.md:40-44`.
+
+**3. Doc honesty — corrected as intended.**
+- `docs/rust-raw-performance.md:16-18` replaced the retired `debug_assert_margin_cache_matches_full_recompute` oracle &#43; frozen `response_records` counts with the fixed self-baseline capture rule; the reverted incremental margin aggregate and deferred maker batching are listed under &#34;tried or bounded, do not re-open&#34; (`:106-114`), not as landed.
+- The wire-format-freeze gate line (&#34;land the pending wire-format contract changes before rebaselining pull-based margin&#34;) was deleted (`:123` area).
+- `README.md:52-55` notes the finite-slice-budget row throughput is an &#34;operation-count mix,&#34; pointing to the worst/mean price-batch columns for fan-out comparison — matches the `raw_cycles.len()` throughput change in `report.rs:678`.
+- `behaviour-spec.md` and `system-design.md` re-cast the incremental margin aggregate as a hint that must be proven (&#34;only if update and staleness churn stay below the fold cost it removes&#34;) rather than a mandate, and document the surviving finite price-health cursor/slice behaviour.
+- Verified `refresh_account_market_margin` no longer exists in engine source, so its removal from `README.md` and `rust-raw-performance.md` matches code (not a stale-symbol edit). The out-of-delta `docs/float-first-margin-decisions.md` still describes the margin cache correctly in past tense (equivalence audit of its removal) — no stale &#34;landed&#34; claim.
+
+**4. Opaque identifiers — none introduced.** Docs delta uses only section refs (`§4.6`, `§1.16`) and the pre-existing Named Term &#34;Total-Order Tiebreak.&#34; No new D1/F1/rung/Option-style codes. (The `&#34;explicit U7 gate&#34;` string in `report.rs:1200` is pre-existing context, unchanged by this delta, and is a code-level test attribute — exempt and out of scope.)
+
+**5. No TODO/FIXME/XXX/HACK introduced.**
+
+### One advisory (non-blocking)
+
+**Self-baseline capture and margin-core knobs are undocumented.** `docs/rust-raw-performance.md:16-18` and `README.md` (top-level) now direct performance work to &#34;a fixed rust-raw self-baseline capture,&#34; but the actual mechanism — `ENGINE_CORE_GRID_CAPTURE_DIR` (`impl/rust-raw/bench/src/grid/report.rs:86`) and `ENGINE_CORE_MARGIN_CAPTURE_DIR` (`impl/rust-raw/bench/benches/engine_core.rs:704`) — is named nowhere in prose. Likewise `ENGINE_CORE_MARGIN_WARMUP_OPS` / `ENGINE_CORE_MARGIN_MEASURED_OPS` / `ENGINE_CORE_MARGIN_LENGTH_CHECK` (`engine_core.rs:695-750`) are live but absent from the bench README&#39;s knob table (which documents only the grid `WARMUP_OPS`/`MEASURED_OPS` equivalents at `README.md:98`). A reader following the new byte-equivalence gate rule can&#39;t find the knob that produces the capture. These are live and correct — just under-documented. Worth a one-line addition to the README&#39;s &#34;How to change it&#34; / capture section.
+agentId: aca2d26fa6aaf6cc0 (use SendMessage with to: &#39;aca2d26fa6aaf6cc0&#39;, summary: &#39;&lt;5-10 word recap&gt;&#39; to continue this agent)
+&lt;usage&gt;subagent_tokens: 86749
+tool_uses: 13
+duration_ms: 161181&lt;/usage&gt;</pre></details>
+</li>
+<li class="entry role-user" data-uuid="c18bef30-2304-43e5-9560-4dd57f0c4478">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:53:16 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>I have completed a full read of the delta and cross-checked the current tree. Here are my findings.
+
+## Verdict: Revert is clean; both landed levers are present and coherent. No blocking findings.
+
+---
+
+### 1. REVERT CLEANLINESS — PASS (no residue)
+
+Both reverted levers leave zero surviving code in the engine tree.
+
+- **Margin-aggregate / margin-cache / rebuilt-oracle lever:** grep for `margin_aggregate|margin_cache|incremental_margin|rebuilt_oracle|oracle_refresh` → no matches anywhere under `engine/src/`. The price-batch path is back to the float-first design: `sequencer.rs:2248` comment &#34;No eager margin refresh on a mark move: account health is evaluated float-first...&#34; accurately describes current behavior. The symbols that *look* related are all pre-existing base state, not lever residue:
+  - `MarginSnapshot` (`sequencer.rs:1808`) is a per-call computed return type (`recompute_margin_*`), not a cache — unchanged by the series (appears only as context/rename-call lines in the diff).
+  - `resting_aggregate_*` / `apply_open_order_notional_delta` are the pre-existing open-order-notional aggregates; the diff only swaps `order.reduce_only` → `order.reduce_only()` accessor calls.
+- **Batched maker-side effects lever (deferred maker store/load, liquidation-sweep coalescing):** grep for `batch(ed)?_maker|maker_batch|deferred_maker|coalesce` → the only hit is the test name `sliced_price_health_coalesces_second_batches_into_one_pending_snapshot`. That &#34;coalesce&#34; is the **landed** sliced-fan-out&#39;s `pending_changed_markets` set-union (lever d), **not** the maker-batch lever — different mechanism, correctly present. No `deferred`/`store_maker`/`load_maker` maker-batching symbols exist. (`matcher.rs` `deferred_reclaims`/`reclaim_deferred_filled` are the pre-existing slab-node reclaim mechanism, unrelated to maker batching — context lines only.)
+
+### 2. LANDED LEVERS — both confirmed &amp; coherent
+
+- **Order Record Unification (c):** `OrdersById` changed from `HashMap&lt;u64, ActiveOrder&gt;` to a dense `entries: Vec&lt;(u64, ActiveOrder)&gt;` &#43; compact `indices: HashMap&lt;u64, u32&gt;` (`sequencer.rs` ~1830). `ActiveOrder` was compacted: `order_type` dropped (derived as `Limit`), `client_order_id`/`expires_at`/`reduce_only`/`post_only` packed into a `flags: u8` with accessor methods, `cum_notional` narrowed `i128`→`i64`, and `rest_qty` derived (`rest_qty() = original_qty - cum_qty`) instead of stored. `size_of::&lt;ActiveOrder&gt;() &lt;= 112` is asserted, and the `~220 B`/order footprint is enforced by `seeded_book_order_footprint_stays_under_target` (`assert bytes_per_order &lt;= 220.1`). Matcher side mirrors this: `side`/`price` removed from `RestingOrder` (now carried by `OrderLocation`), asserted `size_of::&lt;RestingOrder&gt;() == 40`.
+- **Sliced Price-Step Fan-out (d):** `PriceHealthSliceBudget { Unbounded, CandidatesPerFold(usize) }` (`sequencer.rs` ~312), default `Unbounded` (`Sequencer::new` → `with_price_health_slice_budget(Unbounded)`; `Engine::new` is now `#[cfg(test)]`-only, production goes through `with_price_health_slice_budget`). Cursor = cloned engine state: `PriceHealthCursor { candidates, next_index, pending_changed_markets }` is cloned via `clone_price_health_cursor_preserving_capacity` in `Engine::clone`, and `sequencer_clone_preserves_price_health_cursor_state` verifies a mid-flight cursor survives clone and drains identically. `candidates_per_fold(0)` asserts non-zero.
+  - **Setter guard (as required):** `set_price_health_slice_budget` refuses in both conditions — `assert!(!self.price_health_work_pending(), &#34;...cannot change while price-health work is pending&#34;)` **and** `assert_eq!(self.next_seq, 1, &#34;...must be set before sequencing begins&#34;)`. Both guards have dedicated `#[should_panic]` tests.
+
+### 3. DEAD KNOBS / EXPERIMENT CODE — none dead
+
+- The new `pub` &#34;bench-support hooks&#34; (`warm_reusable_storage_for_record`, `warm_reusable_storage_by_replay`, `current_business_time`) are **live**, used by `bench/src/grid/report.rs` (lines 948, 759/888/1001).
+- The `ENGINE_CORE_GRID_PRICE_HEALTH_SLICE_BUDGET` env knob (`bench/src/grid/report.rs:89`) is purposeful — it drives lever (d) benchmarking and correctly rejects `Some(0)`.
+- `#[cfg(feature = &#34;phase-timing&#34;)]` / `#[cfg(feature = &#34;mem-report&#34;)]` branches are pre-existing infra; the series only extended them (new price-batch fold phase timing, new mem-report rows). Not experimental leftovers.
+
+### 4. TODO/FIXME/XXX/HACK/dbg!/unimplemented! — none introduced
+
+Grep of added (`&#43;`) diff lines for `todo|fixme|xxx|hack|dbg!|unimplemented!|todo!` → NONE. (The one `TODO(shed-ack)` in the tree is in `net.rs`, which this series does not touch.)
+
+### 5. COMMENT vs CODE — no contradictions
+
+- `Cargo.toml`: stale &#34;(135 tests)&#34; count correctly deleted rather than updated to a new soon-to-be-stale number — good hygiene.
+- The removed `take_fills_buffer` &#34;recycle was throughput-neutral / not adopted&#34; comment (matcher.rs) was deleted along with its dead code; the replacement `fills_pool` comment (&#34;shared by order placement, liquidation IOC, and modify&#34;) is accurate — all three paths (`apply_order`, `apply_modify`, liquidation IOC close) call `take_fills_pool`/`return_fills_pool`.
+- `fold_price_batch` float-first comment matches the actual (non-eager) code path.
+
+---
+
+### Advisory-only (non-blocking, no action required)
+
+- **Redundant (unreachable) generic price-batch arm:** `Record::PriceBatchRequest(mut v) =&gt; return self.fold_price_batch(...)` at `sequencer.rs:2186` is effectively dead on the production path, because `accept_with_sink` intercepts the `PRICE_BATCH_REQUEST_TEMPLATE` before `decode_record` and calls `fold_price_batch` directly. Both paths converge on the same function, so this is harmless defensive redundancy, not a correctness issue.
+- **Minor misnomer:** `Engine::reserve_price_batch_scratch` (`sequencer.rs:2081`) actually reserves `changed_markets_scratch` (the engine has no field named `price_batch_scratch`; that field lives on `Sequencer`). Cosmetic only.
+- **Test-only public wrappers:** the plain no-fills `Matcher::submit`/`modify` now have no engine (non-test) callers — production uses `submit_with_fills`/`modify_with_fills`; the plain versions remain as public API exercised only by matcher unit tests. Reasonable to keep.
+
+Note: I reviewed by reading the full `a103a45..HEAD` engine diff plus current-tree greps; I did not compile/run the suite.
+agentId: a1cd26157d5476f62 (use SendMessage with to: &#39;a1cd26157d5476f62&#39;, summary: &#39;&lt;5-10 word recap&gt;&#39; to continue this agent)
+&lt;usage&gt;subagent_tokens: 99193
+tool_uses: 10
+duration_ms: 199437&lt;/usage&gt;</pre></details>
+</li>
+<li class="entry role-unknown" data-uuid="d946627c-4a0d-4ec8-b133-c89c57c7dc70">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:53:16 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-unknown" data-uuid="edcc60ef-4ac1-452a-a8ac-629f77785195">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:53:16 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-assistant" data-uuid="5fa92984-5fde-485b-a755-0aafd3cda5c7">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:53:45 UTC</span></div>
+<details class="block thinking"><summary>thinking</summary></details>
+</li>
+<li class="entry role-assistant" data-uuid="d23ec212-74c0-4acd-b8ca-12f304b0a8ce">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:53:46 UTC</span></div>
+<div class="block text"><pre>All four subagents converge: clean run, reverts leave zero residue, both landed levers present and coherent, durable log honest. Let me independently spot-check the load-bearing claims before writing findings.</pre></div>
+</li>
+<li class="entry role-assistant" data-uuid="9c055d59-3a51-4da3-803d-c4477ec0f101">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:53:51 UTC</span></div>
+<details class="block tool_use"><summary>tool: Bash</summary><pre>{
+  &#34;command&#34;: &#34;cd experiments/single-sequencer/impl/rust-raw\necho \&#34;=== revert residue grep (should be empty) ===\&#34;\ngrep -rniE &#39;margin_aggregate|margin_cache|incremental_margin|rebuilt_oracle|oracle_refresh|deferred_maker|maker_batch|batched_maker&#39; engine/src/ bench/ | grep -v -i &#39;coalesce&#39; || echo \&#34;NONE\&#34;\necho \&#34;=== footprint assertion ===\&#34;\ngrep -rn &#39;220&#39; engine/src/sequencer.rs | grep -iE &#39;assert|&lt;= 220|220.1&#39; | head\necho \&#34;=== slice budget default &#43; guards ===\&#34;\ngrep -n &#39;with_price_health_slice_budget\\|PriceHealthSliceBudget::Unbounded\\|next_seq, 1\\|price_health_work_pending&#39; engine/src/sequencer.rs | head -20&#34;,
+  &#34;description&#34;: &#34;Spot-check revert residue, footprint assert, slice guards&#34;
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="2e6b56c4-f9eb-4c2d-8965-145a8e492cd2">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:53:51 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>=== revert residue grep (should be empty) ===
+NONE
+=== footprint assertion ===
+engine/src/sequencer.rs:8308:            bytes_per_order &lt;= 220.1,
+=== slice budget default &#43; guards ===
+613:        Self::with_price_health_slice_budget(PriceHealthSliceBudget::Unbounded)
+616:    pub fn with_price_health_slice_budget(
+631:            !self.price_health_work_pending(),
+635:            self.next_seq, 1,
+641:    pub fn price_health_work_pending(&amp;self) -&gt; bool {
+659:            engine: Engine::with_price_health_slice_budget(price_health_slice_budget),
+2038:        Self::with_price_health_slice_budget(PriceHealthSliceBudget::Unbounded)
+2041:    fn with_price_health_slice_budget(price_health_slice_budget: PriceHealthSliceBudget) -&gt; Self {
+2311:            PriceHealthSliceBudget::Unbounded =&gt; None,
+5793:        let mut sequencer = Sequencer::with_dedup_windows(8, 1, PriceHealthSliceBudget::Unbounded);
+5803:        let mut sequencer = Sequencer::with_dedup_windows(1, 8, PriceHealthSliceBudget::Unbounded);
+5826:        let mut sequencer = Sequencer::with_dedup_windows(4, 4, PriceHealthSliceBudget::Unbounded);
+7086:        let mut sequencer = Sequencer::with_price_health_slice_budget(
+7143:        let mut sequencer = Sequencer::with_price_health_slice_budget(
+7230:        let mut sequencer = Sequencer::with_price_health_slice_budget(
+7313:        let mut sequencer = Sequencer::with_price_health_slice_budget(
+7326:        assert!(sequencer.price_health_work_pending());
+7328:        sequencer.set_price_health_slice_budget(PriceHealthSliceBudget::Unbounded);
+7333:        let mut sequencer = Sequencer::with_price_health_slice_budget(
+7373:        let mut sequencer = Sequencer::with_price_health_slice_budget(</pre></details>
+</li>
+<li class="entry role-assistant" data-uuid="0ec03d16-9f03-4a39-9039-fc05cb320069">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:53:53 UTC</span></div>
+<details class="block tool_use"><summary>tool: Bash</summary><pre>{
+  &#34;command&#34;: &#34;cd experiments/single-sequencer/impl/rust-raw\necho \&#34;=== durable log final tables &#43; fingerprint present ===\&#34;\ngrep -nE &#39;Host:|CPU:|Standard grid at final HEAD|Fan-out evidence at final HEAD|Build config&#39; ../../orchestration/logs/rust-raw/perf-levers-run-log.md | head\necho \&#34;=== mild-shock bytes/op in durable log ===\&#34;\ngrep -nE &#39;408\\.978|4,799|bytes/op&#39; ../../orchestration/logs/rust-raw/perf-levers-run-log.md | head&#34;,
+  &#34;description&#34;: &#34;Confirm durable log tables and mild-shock number&#34;
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="e12b3c22-377e-41bb-b9d4-2f62df1d1ca3">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:53:53 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>/bin/bash: line 5: cd: experiments/single-sequencer/impl/rust-raw: No such file or directory
+=== durable log final tables &#43; fingerprint present ===
+7:- Host: `yamen-superset-f4-med-syd-1`
+9:- CPU: `AMD EPYC 4564P 16-Core Processor`
+13:- Build config: `target_cpu=znver4 opt_level=3 lto=fat codegen_units=1 panic=unwind pgo=off`
+526:- Host: `yamen-superset-f4-med-syd-1`
+528:- CPU: `AMD EPYC 4564P 16-Core Processor`
+532:- Build config: `target_cpu=znver4 opt_level=3 lto=fat codegen_units=1 panic=unwind pgo=off`
+647:- Host: `yamen-superset-f4-med-syd-1`
+649:- CPU: `AMD EPYC 4564P 16-Core Processor`
+690:### Standard grid at final HEAD
+729:### Fan-out evidence at final HEAD
+=== mild-shock bytes/op in durable log ===
+51:| Operation | Clone-bounded loop ops/s | p50 ns | p99 ns | p99.9 ns | max ns | mean ns | allocs/op | bytes/op | rejects/op |
+81:| Cell | Accounts | Markets | Kind | Throughput ops/s | p50 ns | p99 ns | p99.9 ns | max ns | mean ns | allocs/op | bytes/op |
+96:`ReportSink`. After the shock-allocation review, the canonical bytes/op ruler for engine-internal
+99:Later perf-lever units compare bytes/op against this canonical ruler.
+109:| Cell | Canonical pre-series allocs/op | Canonical pre-series bytes/op |
+117:| mild-shock | 2.178 | 4,799.413 |
+124:| Engine / rider | ReportSink buffering bytes/op | Counting sink bytes/op |
+126:| pre-series engine, cold | 22,858 | 4,799 |
+130:Honest shock-allocation headline on the canonical ruler: mild-shock improved from `4,799.413` to
+131:`408.978` bytes/op, roughly a twelve-fold reduction and below the 1,000 bytes/op target. The old-ruler</pre></details>
+</li>
+<li class="entry role-unknown" data-uuid="66d5b7dd-e8af-4066-9400-c9b8cefa8e0f">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:53:53 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-assistant" data-uuid="8030f112-285c-4bfe-8da3-7ebcc31e1876">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:54:26 UTC</span></div>
+<details class="block thinking"><summary>thinking</summary></details>
+</li>
+<li class="entry role-assistant" data-uuid="927188dc-6a1d-486c-b2ec-fd10c0f82c9b">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:54:27 UTC</span></div>
+<div class="block text"><pre>All independently confirmed: revert residue NONE, footprint assert at `sequencer.rs:8308`, slice-budget default Unbounded with both setter guards, durable log carries fingerprint &#43; final HEAD tables, mild-shock 408.978 bytes/op. Let me verify the tail of the run-log before appending.</pre></div>
+</li>
+<li class="entry role-assistant" data-uuid="9fb9544f-143c-44f4-a0ec-9d004b66696d">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:54:28 UTC</span></div>
+<details class="block tool_use"><summary>tool: Bash</summary><pre>{
+  &#34;command&#34;: &#34;tail -5 napkins/perf-levers/run-log.md; echo \&#34;---LINECOUNT---\&#34;; wc -l napkins/perf-levers/run-log.md&#34;,
+  &#34;description&#34;: &#34;Inspect run-log tail for clean append&#34;
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="3090938f-f188-4fd7-99fe-deb15fa85320">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:54:28 UTC</span></div>
+<details class="block tool_result"><summary>tool result (error)</summary><pre>Exit code 1
+tail: cannot open &#39;napkins/perf-levers/run-log.md&#39; for reading: No such file or directory
+---LINECOUNT---
+wc: napkins/perf-levers/run-log.md: No such file or directory</pre></details>
+</li>
+<li class="entry role-unknown" data-uuid="9ca6b8fc-a73b-4a3a-9d3b-d7fe341bf4ef">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:54:28 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-assistant" data-uuid="6f010ebc-822f-46cf-9b4c-c88877c97a30">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:54:30 UTC</span></div>
+<details class="block thinking"><summary>thinking</summary></details>
+</li>
+<li class="entry role-assistant" data-uuid="ca12b133-c1d5-4075-9f3d-31ab99bdf2b7">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:54:32 UTC</span></div>
+<details class="block tool_use"><summary>tool: Bash</summary><pre>{
+  &#34;command&#34;: &#34;tail -6 /home/grace/.herdr/worktrees/synfinex/fable-pass/napkins/perf-levers/run-log.md; echo \&#34;---\&#34;; wc -l /home/grace/.herdr/worktrees/synfinex/fable-pass/napkins/perf-levers/run-log.md&#34;,
+  &#34;description&#34;: &#34;Inspect run-log tail absolute path&#34;
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="8d8add80-bdc4-4782-a16c-90ed7a924ce4">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:54:32 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>diff is the single pointer sentence the validator&#39;s advisory prescribed verbatim (evidence pointer
+now names both the lessons file and the durable benchmark log), verified directly against the full
+diff. Process note: the REMEDIATED block was inserted mid-file above the review block — content
+verified intact, blocks shifted whole; noted, not actionable. Unit closes: DONE → review clean
+(zero findings) → VALIDATED → advisory remediated. Acceptance criterion for the docs sweep is
+checked and the backlog updated next.
+---
+3769 /home/grace/.herdr/worktrees/synfinex/fable-pass/napkins/perf-levers/run-log.md</pre></details>
+</li>
+<li class="entry role-unknown" data-uuid="3fb31f58-b8ab-4a1e-aeb7-4bf6e50b1a84">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:54:32 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-assistant" data-uuid="94a43ca0-2b00-421f-b6bb-320de120bf7f">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:54:35 UTC</span></div>
+<div class="block text"><pre>Now I&#39;ll append the deep review to the end of the run-log.</pre></div>
+</li>
+<li class="entry role-assistant" data-uuid="170ac4e7-2acf-480e-8341-4d2fc37b785a">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:55:24 UTC</span></div>
+<details class="block tool_use"><summary>tool: Bash</summary><pre>{
+  &#34;command&#34;: &#34;cat &gt;&gt; /home/grace/.herdr/worktrees/synfinex/fable-pass/napkins/perf-levers/run-log.md &lt;&lt;&#39;EOF&#39;\n\n---\n\n## END-OF-RUN DEEP REVIEW\n\nEnd-of-run deep reviewer (claude opus, fresh context, trust-nothing). Scope: entire run delta\n`a103a45..HEAD` reviewed against the eight TASK-017 acceptance criteria, the plan&#39;s Definition of\nDone, and the durable benchmark log as a standalone record; plus a remnant sweep of the tracked\ntree. Wide reading delegated to four subagents (plan/DoD, durable log, engine diff, bench&#43;docs\ndiff); load-bearing claims re-checked directly. I re-ran no benchmarks — timing belongs to the\nvalidator; claims are checked against recorded evidence and the tree.\n\n### Tree state at review\n\n- `git status --porcelain` clean; only ignored path is `impl/rust-raw/target/`. No stray\n  temp/WIP/scratch files in the tracked tree.\n- Revert-residue grep over `engine/src/` and `bench/` for\n  `margin_aggregate|margin_cache|incremental_margin|rebuilt_oracle|oracle_refresh|deferred_maker|maker_batch|batched_maker`\n  → NONE. Both reverted levers leave zero surviving code (the lone `coalesce` hit is the landed\n  sliced-fan-out&#39;s depth-one snapshot union test, a different mechanism).\n- No `TODO|FIXME|XXX|HACK|dbg!|unimplemented!|todo!` introduced by the series (the added\n  `println!` lines are the bench CSV row emitters — expected).\n\n### Acceptance criteria\n\n- **#1 Margin-core floor microbench &#43; pre-series baselines — VERIFIED.** `ENGINE_CORE_MODE=margin-core`\n  floor mode in the existing bench target; baseline grid table, host fingerprint, repro commands\n  and response-capture checksums committed in the durable log; baseline SHA `a103a45` recorded.\n  Landed @335ff3d&#43;c639e30, VALIDATED.\n- **#2 Shock allocation recycling: mild-shock bytes/op ≤~1,000, self-baseline diff clean —\n  VERIFIED.** Durable log records mild-shock `4,799.413 → 408.978` bytes/op (~12x, under the\n  1,000 target) on the canonical counting-sink ruler; 12/12 self-baseline streams byte-identical.\n  Landed @5d8caa6&#43;43362a0, VALIDATED.\n- **#3 Order Record Unification: footprint ≤~220 B, no hot-path hop regressions — VERIFIED.**\n  Machine-checked at `220.01` B/order (`assert bytes_per_order &lt;= 220.1` at\n  `engine/src/sequencer.rs:8308`; was ~321); many-markets 1.131x (validator, 6/6 rounds),\n  single-hot-book flat 0.999x (added id-index hop costs nothing measurable where cache resident);\n  12/12 byte-identical. Landed @2e4cfbc&#43;9d646be, VALIDATED.\n- **#4 Fan-out evidence gates the slicing work — VERIFIED.** Scale-gated `fanout-evidence` cell\n  (1M accounts, 100 markets, exposure-holder &#43; split-mark-batch knobs) landed; sizing evidence\n  recorded (unsliced worst step-stall 3 orders over the ~100µs budget, growing with holders;\n  split-four a breadth reducer only); gate ruling OPEN recorded, 100k point validator-reproduced.\n  Landed @84a0ece&#43;5275be3&#43;c563d1f, VALIDATED.\n- **#5 Sliced Price-Step Fan-out behind construction-time slice budget, documented semantics,\n  sliced-vs-unsliced evidence, chosen default — VERIFIED.** `PriceHealthSliceBudget{Unbounded,\n  CandidatesPerFold(usize)}` with `Unbounded` default (`sequencer.rs:613/2038`); setter refuses\n  both once sequencing has begun (`assert next_seq == 1`) and while price-health work is pending\n  (`price_health_work_pending`), each with a `#[should_panic]` test; cursor is cloned engine state\n  pinned by clone-parity/deterministic-replay tests. Evidence 34.2x worst / 471x mean stall\n  (validator); 12/12 byte-identical at the unbounded default. Landed @40d4da9&#43;42ab47b, VALIDATED.\n- **#6 Stale docs corrected, no abandoned experiment code, run-log carries final tables &#43; host\n  fingerprint — VERIFIED.** Docs recast to the self-baseline capture rule (retired frozen-stream /\n  margin-cache-oracle gate language deleted), reverted levers listed as tried-and-bounded not\n  landed; abandoned-code sweep found nothing (independently reconfirmed by grep); durable log\n  carries the final-HEAD standard grid and fan-out tables with host fingerprint and repro commands.\n  Landed @032175b&#43;e6c215c, VALIDATED.\n- **#7 Incremental Margin Aggregate to validated net-negative conclusion, reverted tree-equal,\n  evidence &#43; reopening recorded — VERIFIED.** Contracted A/B: many-markets 0.88x median, both\n  shock cells regressed including p99.9 (severe-cascade 0.667x, p99.9 &#43;35%) — a tail-first\n  violation. Reverted @1d72b5a (tree-equal proof); reopening condition recorded in the durable log\n  (\&#34;only with a design that avoids per-candidate staleness churn… after the order-footprint lever\n  lands… and A/B meeting the resolution rule\&#34;). Revert VALIDATED.\n- **#8 Batched maker-side effects to validated net-negative conclusion, reverted tree-equal,\n  mechanism &#43; reopening recorded — VERIFIED.** Ten-round sign-check: severe-cascade worst stall\n  1.198x, mild-shock 1.100x, throughput down both cells, no shock cell win. Reverted @4e20f7e\n  (tree-equal proof); mechanism (unification already made maker order-table writes dense, so the\n  deferred round-trip &#43; mandated sort are pure added cost) and reopening condition recorded.\n  Revert VALIDATED.\n\n### Findings\n\n**Blocking:** none.\n\n**Advisory:**\n\n1. **DoD headline target `many-markets ≥1.4×` is not met, and the literal attribution escape does\n   not cleanly apply.** The best measured many-markets result is 1.131x (validator) / 1.203x\n   (implementer window), from Order Record Unification. The lever the plan named to deliver ≥1.4×\n   — the Incremental Margin Aggregate — was measured net-negative and reverted, so the margin cost\n   source it targeted is *restored*, not \&#34;demonstrably removed\&#34;; the plan&#39;s attribution escape is\n   worded around a cost-source-removed-but-slower outcome, which is not what happened. The run\n   instead made an evidence-backed honest-miss decision (stop, don&#39;t chase) and the acceptance\n   criteria were reframed to record it (AC #7). This is a conscious, well-evidenced outcome, not a\n   defect — but the DoD&#39;s headline throughput target is unmet, and that should be acknowledged at\n   merge rather than read as satisfied. For owner awareness.\n\n2. **mild-shock allocs/op did not drop an order of magnitude.** The plan&#39;s shock-recycling test\n   scenario anticipated \&#34;allocs/op drops by an order of magnitude\&#34;; the durable log honestly\n   records `2.178 → 1.600` allocs/op — bytes/op (the gated target) is what fell ~12x. AC #2 gates\n   bytes/op only, so this is not an AC gap; noting the plan-scenario expectation was not literally\n   met and the log discloses it plainly.\n\n3. **Self-baseline / margin-core capture knobs are undocumented in prose.** Docs now direct perf\n   work to \&#34;a fixed rust-raw self-baseline capture,\&#34; but the mechanism knobs\n   (`ENGINE_CORE_GRID_CAPTURE_DIR`, `ENGINE_CORE_MARGIN_CAPTURE_DIR`, and the\n   `ENGINE_CORE_MARGIN_WARMUP_OPS/MEASURED_OPS/LENGTH_CHECK` family) appear nowhere in the bench\n   README knob table. They are live and correct; a reader following the new byte-equivalence gate\n   rule cannot find the knob that produces the capture. One-line README addition would close it.\n\n4. **Final standard-grid snapshot shows ~10–14% throughput regressions vs pre-series, disclosed but\n   unattributed and possibly host-confounded.** The durable log labels the final grid \&#34;a final\n   snapshot, not an A/B claim\&#34; and states it \&#34;does not support a broad throughput-win claim,\&#34; but\n   that snapshot ran with an outside `hl_stream` workload live (nice 19) while the pre-series\n   baseline was a clean host. The regression is honestly surfaced, not buried; it is simply not\n   disentangled from measurement/contention variance. Non-actionable for this run; a clean-host\n   re-snapshot would be the honest close if a broad-throughput statement is ever wanted.\n\n5. **Two cosmetic engine items (harmless).** `Engine::reserve_price_batch_scratch`\n   (`sequencer.rs:2081`) actually reserves `changed_markets_scratch` — a misnomer, no field of that\n   name exists. The generic `Record::PriceBatchRequest` arm at `sequencer.rs:2186` is unreachable on\n   the production path (the sink intercepts the price-batch template before `decode_record`); both\n   arms converge on `fold_price_batch`, so it is defensive redundancy, not a bug.\n\n6. **Durable-log display-rounding nits (sub-1%, no contradiction).** A couple of mean-stall ratios\n   are rounded up from the underlying ms medians (e.g. `446.99x` vs `446.3x` recomputed; `437.7x`\n   vs `437.5x`). Every material ratio recomputes cleanly; these are two-to-three-decimal display\n   artifacts, not internal inconsistencies.\n\n### Bottom line\n\nAll eight acceptance criteria VERIFIED against recorded evidence and the tree. Both reverted levers\nare clean tree-equal reverts with reopening conditions recorded; both landed levers\n(Order Record Unification, Sliced Price-Step Fan-out) are present, guarded, and behavior-preserving\nat their documented configs. The durable benchmark log stands on its own as an honest record — wins\nand regressions both disclosed, op-count-mix inflation flagged with honest whole-run figures, no\nopaque-identifier or chronological-narration violations. No blocking issues. The one item warranting\nan owner glance at merge is advisory #1: the DoD&#39;s `many-markets ≥1.4×` headline target is unmet\nbecause the dominant lever was honestly reverted — recorded as a deliberate honest-miss, not a\nsilent gap.\nEOF\necho \&#34;appended; new line count:\&#34;; wc -l /home/grace/.herdr/worktrees/synfinex/fable-pass/napkins/perf-levers/run-log.md&#34;,
+  &#34;description&#34;: &#34;Append END-OF-RUN DEEP REVIEW to run-log&#34;
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="b571c517-e38d-4ac1-87ff-7ec16b0d06aa">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:55:24 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>appended; new line count:
+3898 /home/grace/.herdr/worktrees/synfinex/fable-pass/napkins/perf-levers/run-log.md</pre></details>
+</li>
+<li class="entry role-unknown" data-uuid="aed156ab-93db-48ec-8d96-d85c395ba743">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:55:24 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-assistant" data-uuid="52e338cb-c970-4191-9bc6-c2afbc19c311">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:55:26 UTC</span></div>
+<div class="block text"><pre>The deep review is appended (append-only, at the very end). Now I ring the orchestrator exactly once.</pre></div>
+</li>
+<li class="entry role-assistant" data-uuid="bb0197d3-869a-420e-9cf0-08e7a050d4da">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:55:27 UTC</span></div>
+<details class="block tool_use"><summary>tool: Bash</summary><pre>{
+  &#34;command&#34;: &#34;/home/grace/Coding/ai-config/bin/herder-send term_655932ec8685e328 &#39;Unit DONE — run-log updated&#39;&#34;,
+  &#34;description&#34;: &#34;Ring orchestrator once&#34;
+}</pre></details>
+</li>
+<li class="entry role-user" data-uuid="b71f2922-94a0-45a1-bf8a-b30955fb0b3c">
+<div class="entryhead"><span class="role">user</span><span class="etype">user</span><span>2026-07-02 10:55:29 UTC</span></div>
+<details class="block tool_result"><summary>tool result</summary><pre>sent 27 chars to w655932ec8686525-1 (claude), submitted, verify=delivered</pre></details>
+</li>
+<li class="entry role-unknown" data-uuid="ed1e64c4-86f5-44f7-9fe4-ad68a23e914a">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:55:29 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-unknown" data-uuid="817a6f37-431c-478d-861b-9dc88ad14b45">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">attachment</span><span>2026-07-02 10:55:29 UTC</span></div>
+<div class="block meta">attachment</div>
+</li>
+<li class="entry role-assistant" data-uuid="88702c36-25ef-45b5-a291-a5f655622a1a">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">assistant</span><span>2026-07-02 10:55:42 UTC</span></div>
+<div class="block text"><pre>Done. Ring delivered (`verify=delivered`), stopping — no resend.
+
+## End-of-run deep review complete
+
+Reviewed the entire run delta `a103a45..HEAD` against all eight TASK-017 acceptance criteria, the plan&#39;s Definition of Done, and the durable benchmark log, with a full remnant sweep. Findings appended to the very end of `napkins/perf-levers/run-log.md` under `## END-OF-RUN DEEP REVIEW`.
+
+**Verdict: all eight acceptance criteria VERIFIED. No blocking findings.**
+
+Key confirmations (independently re-checked, not just trusting worker claims):
+- **Tree clean** — no stray temp/WIP files; only `target/` ignored.
+- **Both reverted levers leave zero code** — grep for margin-aggregate/margin-cache/rebuilt-oracle/batched-maker symbols returns NONE; reverts are tree-equal with reopening conditions recorded.
+- **Both landed levers present and guarded** — Order Record Unification footprint machine-checked at 220.01 B/order (`assert ≤220.1` at `sequencer.rs:8308`); `PriceHealthSliceBudget` with `Unbounded` default and both setter guards (`next_seq==1`, `price_health_work_pending`), each with a `#[should_panic]` test.
+- **No TODO/FIXME/dbg! introduced**; durable log carries host fingerprint &#43; final-HEAD tables and stands honestly on its own (wins and ~10–14% snapshot regressions both disclosed, op-count-mix inflation flagged).
+
+**Six advisory items, none blocking.** The one worth the owner&#39;s glance at merge (advisory #1): the DoD&#39;s headline `many-markets ≥1.4×` target is **unmet** — best measured is 1.131x — because the dominant lever (Incremental Margin Aggregate) was measured net-negative and honestly reverted rather than shipped. That restores the targeted cost source, so the plan&#39;s literal &#34;attribution escape&#34; doesn&#39;t cleanly apply; the run recorded it as a deliberate honest-miss and reframed the acceptance criteria (AC #7) accordingly. A defensible outcome, but it should be acknowledged as an unmet target rather than read as satisfied.
+
+Remaining advisories: mild-shock allocs/op didn&#39;t drop an order of magnitude (bytes/op did, ~12x — the gated metric); capture knobs undocumented in the bench README; final grid snapshot ran under outside `hl_stream` load (disclosed); two cosmetic engine items and sub-1% display-rounding nits in the log.</pre></div>
+</li>
+<li class="entry role-unknown" data-uuid="3ae0034f-7cb8-4206-b960-632097eb68a2">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">system</span><span>2026-07-02 10:55:43 UTC</span></div>
+<div class="block meta">system</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">mode</span><span>—</span></div>
+<div class="block meta">mode</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">permission-mode</span><span>—</span></div>
+<div class="block meta">permission-mode</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">ai-title</span><span>—</span></div>
+<div class="block meta">ai-title</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">last-prompt</span><span>—</span></div>
+<div class="block meta">last-prompt</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">ai-title</span><span>—</span></div>
+<div class="block meta">ai-title</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">mode</span><span>—</span></div>
+<div class="block meta">mode</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">permission-mode</span><span>—</span></div>
+<div class="block meta">permission-mode</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">last-prompt</span><span>—</span></div>
+<div class="block meta">last-prompt</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">ai-title</span><span>—</span></div>
+<div class="block meta">ai-title</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">mode</span><span>—</span></div>
+<div class="block meta">mode</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">permission-mode</span><span>—</span></div>
+<div class="block meta">permission-mode</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">last-prompt</span><span>—</span></div>
+<div class="block meta">last-prompt</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">ai-title</span><span>—</span></div>
+<div class="block meta">ai-title</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">mode</span><span>—</span></div>
+<div class="block meta">mode</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">permission-mode</span><span>—</span></div>
+<div class="block meta">permission-mode</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">last-prompt</span><span>—</span></div>
+<div class="block meta">last-prompt</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">ai-title</span><span>—</span></div>
+<div class="block meta">ai-title</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">mode</span><span>—</span></div>
+<div class="block meta">mode</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">permission-mode</span><span>—</span></div>
+<div class="block meta">permission-mode</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">last-prompt</span><span>—</span></div>
+<div class="block meta">last-prompt</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">ai-title</span><span>—</span></div>
+<div class="block meta">ai-title</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">mode</span><span>—</span></div>
+<div class="block meta">mode</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">permission-mode</span><span>—</span></div>
+<div class="block meta">permission-mode</div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">last-prompt</span><span>—</span></div>
+<div class="block meta">last-prompt</div>
+</li>
+</ol>
+</main>
+</body>
+</html>
+
+
