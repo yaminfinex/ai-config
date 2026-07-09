@@ -40,3 +40,7 @@ etc/             systemd / launchd unit templates
 M0 scaffold: all subcommands (`ship`, `serve`, `reindex`, `status`,
 `admin drop-file`) are stubs that exit 1 with not-implemented. Bodies land
 per milestone (M1 byte flow, M2 index + surface, M3 facts, M4 auth + rollout).
+
+`internal/surface` (U7) is built fixture-backed: it reads the frozen index
+schema through its `Store` seam, which U6's real index and mirror satisfy at
+M2 (`sesh serve` wires it then). Gate: `tests/check-surface-fixtures.sh`.
