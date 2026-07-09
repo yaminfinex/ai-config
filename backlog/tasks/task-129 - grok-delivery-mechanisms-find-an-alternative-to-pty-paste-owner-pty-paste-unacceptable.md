@@ -3,9 +3,10 @@ id: TASK-129
 title: >-
   grok delivery mechanisms: find an alternative to pty-paste (owner: pty-paste
   unacceptable)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 21:11'
+updated_date: '2026-07-09 21:11'
 labels: []
 dependencies: []
 priority: high
