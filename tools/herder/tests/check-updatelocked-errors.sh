@@ -5,7 +5,12 @@
 # be returned, passed as arguments to another call, or assigned to an identifier
 # whose binding is checked before being overwritten. Assigning the error result
 # into a selector such as b.err is rejected; use a local err binding and copy it
-# after checking if that shape is needed.
+# after checking if that shape is needed. Without type information, selector
+# aliases and interface methods named UpdateLocked are not resolved. If-init
+# checks intentionally do not model overwrite-before-check inside the branch.
+# Reads that occur only inside nested closures do not count as checks; this is
+# conservative by design because deferred/goroutine captures are easy to mistake
+# for durable handling of a registry write failure.
 
 set -euo pipefail
 
@@ -303,30 +308,31 @@ func (s *scanner) errorBindingChecked(errIdent *ast.Ident, assigned ast.Node) bo
 	if root == nil {
 		return false
 	}
-	start := assigned.Pos()
-	if branch := s.enclosingBranchIf(assigned); branch != nil {
-		start = branch.End()
+	readStart := assigned.End()
+	stopStart := assigned.End()
+	if branch := s.enclosingMutualExclusion(assigned); branch != nil {
+		stopStart = branch.End()
 	}
-	stop := token.NoPos
+	var stop ast.Node
 	ast.Inspect(root, func(n ast.Node) bool {
-		if n == nil || n.Pos() <= start {
+		if n == nil || n.Pos() <= stopStart {
 			return true
 		}
 		if fl, ok := n.(*ast.FuncLit); ok && fl != root {
 			return false
 		}
-		if n != assigned && s.nodeAssignsBinding(n, errIdent) && (stop == token.NoPos || n.Pos() < stop) {
-			stop = n.Pos()
+		if n != assigned && s.nodeAssignsBinding(n, errIdent) && (stop == nil || n.Pos() < stop.Pos()) {
+			stop = n
 			return false
 		}
 		return true
 	})
 	found := false
 	ast.Inspect(root, func(n ast.Node) bool {
-		if found || n == nil || n.Pos() <= start {
+		if found || n == nil || n.Pos() <= readStart {
 			return !found
 		}
-		if stop != token.NoPos && n.Pos() >= stop {
+		if stop != nil && n.Pos() >= stop.End() {
 			return false
 		}
 		if fl, ok := n.(*ast.FuncLit); ok && fl != root {
@@ -427,13 +433,42 @@ func (s *scanner) nearestFunc(n ast.Node) ast.Node {
 	return nil
 }
 
-func (s *scanner) enclosingBranchIf(n ast.Node) *ast.IfStmt {
+func (s *scanner) enclosingMutualExclusion(n ast.Node) ast.Node {
 	for p := s.parents[n]; p != nil; p = s.parents[p] {
 		if ifs, ok := p.(*ast.IfStmt); ok && n.Pos() > ifs.Body.Pos() && n.End() <= ifs.Body.End() {
 			return ifs
 		}
 		if ifs, ok := p.(*ast.IfStmt); ok && ifs.Else != nil && n.Pos() >= ifs.Else.Pos() && n.End() <= ifs.Else.End() {
 			return ifs
+		}
+		if _, ok := p.(*ast.CaseClause); ok {
+			if owner := s.caseOwner(p); owner != nil {
+				return owner
+			}
+		}
+		if _, ok := p.(*ast.CommClause); ok {
+			if owner := s.commOwner(p); owner != nil {
+				return owner
+			}
+		}
+	}
+	return nil
+}
+
+func (s *scanner) caseOwner(cc ast.Node) ast.Node {
+	for p := s.parents[cc]; p != nil; p = s.parents[p] {
+		switch p.(type) {
+		case *ast.SwitchStmt, *ast.TypeSwitchStmt:
+			return p
+		}
+	}
+	return nil
+}
+
+func (s *scanner) commOwner(cc ast.Node) ast.Node {
+	for p := s.parents[cc]; p != nil; p = s.parents[p] {
+		if _, ok := p.(*ast.SelectStmt); ok {
+			return p
 		}
 	}
 	return nil
@@ -507,7 +542,7 @@ else
 fi
 
 neg_root="$ROOT/negative"
-mkdir -p "$neg_root"/{blank,bare,ignored,defer,go,decl_func,decl_package,labeled,switch_init,funclit,method_value,paren,shadow,field_use,selector_assign}
+mkdir -p "$neg_root"/{blank,bare,ignored,defer,go,decl_func,decl_package,labeled,switch_init,funclit,method_value,paren,shadow,field_use,selector_assign,guarded_unchecked,overwrite_unread,switch_unchecked}
 
 cat >"$neg_root/blank/negative.go" <<'GO'
 package negative
@@ -681,6 +716,52 @@ func selectorAssignIsRejected() {
 }
 GO
 
+cat >"$neg_root/guarded_unchecked/negative.go" <<'GO'
+package negative
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func guardedUnchecked(cond bool) error {
+	if cond {
+		_, err := registry.UpdateLocked("registry.jsonl", nil)
+		_ = "not the error"
+		_ = "still not the error"
+	}
+	return nil
+}
+GO
+
+cat >"$neg_root/overwrite_unread/negative.go" <<'GO'
+package negative
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func other() error { return nil }
+
+func overwrittenBeforeRead() error {
+	_, err := registry.UpdateLocked("registry.jsonl", nil)
+	err = other()
+	return err
+}
+GO
+
+cat >"$neg_root/switch_unchecked/negative.go" <<'GO'
+package negative
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func switchUnchecked(mode string) error {
+	var err error
+	switch mode {
+	case "a":
+		_, err = registry.UpdateLocked("a.jsonl", nil)
+	case "b":
+		_, err = registry.UpdateLocked("b.jsonl", nil)
+	}
+	return nil
+}
+GO
+
 expect_violation() {
   local name="$1" want="$2" rc
   set +e
@@ -711,9 +792,12 @@ expect_violation paren 'registry.UpdateLocked call discards the error'
 expect_violation shadow 'registry.UpdateLocked error result is assigned but never checked'
 expect_violation field_use 'registry.UpdateLocked error result is assigned but never checked'
 expect_violation selector_assign 'registry.UpdateLocked error result is not assigned to a named error'
+expect_violation guarded_unchecked 'registry.UpdateLocked error result is assigned but never checked'
+expect_violation overwrite_unread 'registry.UpdateLocked error result is assigned but never checked'
+expect_violation switch_unchecked 'registry.UpdateLocked error result is assigned but never checked'
 
 pos_root="$ROOT/positive"
-mkdir -p "$pos_root/branch_checked" "$pos_root/return_forward" "$pos_root/argument_forward"
+mkdir -p "$pos_root"/{branch_checked,return_forward,argument_forward,guarded_branch,error_wrap,switch_cases,select_cases}
 
 cat >"$pos_root/branch_checked/positive.go" <<'GO'
 package positive
@@ -753,7 +837,72 @@ func argumentForward() {
 }
 GO
 
-for name in branch_checked return_forward argument_forward; do
+cat >"$pos_root/guarded_branch/positive.go" <<'GO'
+package positive
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func guardedBranch(cond bool) error {
+	if cond {
+		_, err := registry.UpdateLocked("registry.jsonl", nil)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+GO
+
+cat >"$pos_root/error_wrap/positive.go" <<'GO'
+package positive
+
+import (
+	"fmt"
+	registry "ai-config/tools/herder/internal/registry"
+)
+
+func errorWrap() error {
+	_, err := registry.UpdateLocked("registry.jsonl", nil)
+	err = fmt.Errorf("update registry: %w", err)
+	return err
+}
+GO
+
+cat >"$pos_root/switch_cases/positive.go" <<'GO'
+package positive
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func switchCases(mode string) error {
+	var err error
+	switch mode {
+	case "a":
+		_, err = registry.UpdateLocked("a.jsonl", nil)
+	case "b":
+		_, err = registry.UpdateLocked("b.jsonl", nil)
+	}
+	return err
+}
+GO
+
+cat >"$pos_root/select_cases/positive.go" <<'GO'
+package positive
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func selectCases(a, b <-chan struct{}) error {
+	var err error
+	select {
+	case <-a:
+		_, err = registry.UpdateLocked("a.jsonl", nil)
+	case <-b:
+		_, err = registry.UpdateLocked("b.jsonl", nil)
+	}
+	return err
+}
+GO
+
+for name in branch_checked return_forward argument_forward guarded_branch error_wrap switch_cases select_cases; do
   if updatelocked_gate "$pos_root/$name" >"$ROOT/positive-$name.out" 2>&1; then
     pass "UpdateLocked error gate positive demo allows $name"
   else
