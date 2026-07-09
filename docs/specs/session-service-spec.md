@@ -247,14 +247,21 @@ One page, people-first recency:
 
 ## 7. Deployment shape
 
-- **Shipper**: single static binary; per-user systemd unit (Linux) / launchd agent
+- **One binary, `sesh`, subcommands** (owner-confirmed 2026-07-09): `sesh ship` (the
+  long-running per-user node agent), `sesh serve` (store + surface, one process),
+  `sesh reindex` (re-derive index from mirror), `sesh status` (read-only: cursors, store
+  reachability, last-ship times). One build target, one shim, house convention (herder,
+  hcom). The darwin build compiles out /proc correlation; same binary otherwise. A later
+  repo split may produce separate binaries from the same command tree — nothing depends
+  on single-binary-ness except build simplicity.
+- **Shipper**: `sesh ship` under a per-user systemd unit (Linux) / launchd agent
   (macOS); config = the store URL (env var or flag) + nothing else worth deciding on a
   node. The store's location is therefore a deployment-time value, not a spec concern:
   localhost in the short term, likely co-located with the herd server in the medium term —
   either way no shipper changes beyond the URL.
-- **Store + surface**: one deployable service (mirror storage + index DB + HTTP), joined
-  to the tailnet under its own node identity, so it can migrate hosts without shippers
-  noticing.
+- **Store + surface**: `sesh serve`, one deployable process (mirror storage + index DB +
+  HTTP), joined to the tailnet under its own node identity, so it can migrate hosts
+  without shippers noticing.
 - Rollout order: store first, then shippers node-by-node (I3 makes onboarding
   order-free — each node backfills whenever its shipper lands).
 
