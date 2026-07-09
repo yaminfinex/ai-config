@@ -178,6 +178,23 @@ func TestClaudeCohortUnanimousOrAbsent(t *testing.T) {
 			t.Fatalf("owner = %q, want absence", got)
 		}
 	})
+	t.Run("munge-colliding distinct cwds yield absence even when owners agree", func(t *testing.T) {
+		// The project-dir slug is lossy: /x/work.tree and /x/work-tree munge
+		// identically, so candidates from BOTH map to this session's slug
+		// while only one cwd can be the session's real cohort (U9 review,
+		// HIGH). Same owner on both sides is the discriminating case — a
+		// slug-keyed cohort would happily stamp it.
+		collided := strings.Replace(cwd, ".", "-", 1)
+		if mungeCwd(collided) != mungeCwd(cwd) || collided == cwd {
+			t.Fatalf("test self-check: %q and %q must be distinct munge-colliding cwds", cwd, collided)
+		}
+		fp := newFakeProc(t)
+		fp.add(100, 1, os.Getuid(), "claude", cwd, map[string]string{"SESSION_OWNER": "erin"})
+		fp.add(101, 1, os.Getuid(), "claude", collided, map[string]string{"SESSION_OWNER": "erin"})
+		if got, ok := fp.correlator().CorrelateAll([]Discovered{d})[d.Identity.Key()]; ok {
+			t.Fatalf("owner = %q, want absence (two distinct cwds behind one slug: cohort unresolvable)", got)
+		}
+	})
 	t.Run("other cwd and other comm are not candidates", func(t *testing.T) {
 		fp := newFakeProc(t)
 		fp.add(100, 1, os.Getuid(), "claude", cwd, map[string]string{"SESSION_OWNER": "bob"})

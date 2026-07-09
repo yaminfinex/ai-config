@@ -59,15 +59,28 @@ FIXTURE_PIDS+=("$(spawn_claude "$SOLO_CWD" bob)")
 FIXTURE_PIDS+=("$(spawn_claude "$DUP_CWD" carol)")
 FIXTURE_PIDS+=("$(spawn_claude "$DUP_CWD" dave)")
 
+step "slug collision: two DISTINCT cwds munge to one project dir (U9 review HIGH)"
+LOSSY_A="$WORK/lossy.tree" && mkdir -p "$LOSSY_A"
+LOSSY_B="$WORK/lossy-tree" && mkdir -p "$LOSSY_B"
+[ "$(munge "$LOSSY_A")" = "$(munge "$LOSSY_B")" ] || fail "harness self-check: cwds must munge-collide"
+LOSSY_UUID=$(fresh_uuid)
+DIR_LOSSY=$(claude_tree "$(munge "$LOSSY_A")")
+cp "$FIXTURES/claude-resume-new-file.jsonl" "$DIR_LOSSY/$LOSSY_UUID.jsonl"
+# Same owner on both sides: only the distinct-cwd detection can refuse this.
+FIXTURE_PIDS+=("$(spawn_claude "$LOSSY_A" erin)")
+FIXTURE_PIDS+=("$(spawn_claude "$LOSSY_B" erin)")
+
 step "processes alive first; the real shipper's first pass correlates + ships"
 start_shipper
 wait_quiesced codex  "$CODEX_UUID" "$CODEX_UUID" "$CODEX_SRC"
 wait_quiesced claude "$SOLO_UUID"  "$SOLO_UUID"  "$DIR_SOLO/$SOLO_UUID.jsonl"
 wait_quiesced claude "$DUP_UUID"   "$DUP_UUID"   "$DIR_DUP/$DUP_UUID.jsonl"
+wait_quiesced claude "$LOSSY_UUID" "$LOSSY_UUID" "$DIR_LOSSY/$LOSSY_UUID.jsonl"
 assert_mirror_equals codex  "$CODEX_UUID" "$CODEX_UUID" 0 "$CODEX_SRC"
 assert_mirror_equals claude "$SOLO_UUID"  "$SOLO_UUID"  0 "$DIR_SOLO/$SOLO_UUID.jsonl"
 assert_mirror_equals claude "$DUP_UUID"   "$DUP_UUID"   0 "$DIR_DUP/$DUP_UUID.jsonl"
-ok "all three fixture files mirrored to parity"
+assert_mirror_equals claude "$LOSSY_UUID" "$LOSSY_UUID" 0 "$DIR_LOSSY/$LOSSY_UUID.jsonl"
+ok "all four fixture files mirrored to parity"
 
 step "facts: codex exact stamp"
 assert_db "codex owner is alice (fd-exact)" \
@@ -86,6 +99,14 @@ assert_db "dup cohort stamped NO owner (carol vs dave collision)" \
   "SELECT COUNT(*) FROM fact_observations WHERE file_uuid='$DUP_UUID' AND session_owner IS NOT NULL" \
   "0"
 ok "guessing suppressed: collision renders as absence, never a pick"
+
+step "facts: munge-colliding cwds render absence even with agreeing owners"
+assert_db "lossy cohort observed the file" \
+  "SELECT EXISTS(SELECT 1 FROM fact_observations WHERE file_uuid='$LOSSY_UUID')" "1"
+assert_db "lossy cohort stamped NO owner (distinct cwds behind one slug)" \
+  "SELECT COUNT(*) FROM fact_observations WHERE file_uuid='$LOSSY_UUID' AND session_owner IS NOT NULL" \
+  "0"
+ok "slug ambiguity refused: no owner picked across distinct cwds"
 
 step "no environ error spam in the shipper log"
 if grep -qi "environ" "$WORK/ship.log"; then

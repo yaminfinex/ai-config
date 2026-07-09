@@ -181,11 +181,21 @@ func (c *procCorrelator) codexOwner(entries []procEntry, path string) (string, b
 // and guessing is ruled worse than absence.
 func (c *procCorrelator) claudeOwner(entries []procEntry, path string) (string, bool) {
 	cohort := filepath.Base(filepath.Dir(path)) // the munged project cwd
-	owner := ""
+	owner, cwd := "", ""
 	for _, e := range entries {
 		if e.comm != "claude" || e.cwd == "" || mungeCwd(e.cwd) != cohort {
 			continue
 		}
+		if cwd != "" && e.cwd != cwd {
+			// The slug is lossy: more than one DISTINCT actual cwd maps to
+			// this session's project dir, and the file alone cannot say
+			// which one it came from (the shipper never parses content).
+			// Spec §4.2 cohorts by actual cwd; a wrong stamp is the worst
+			// defect class here, so an unresolvable cohort is absence —
+			// even when the colliding candidates agree on an owner.
+			return "", false
+		}
+		cwd = e.cwd
 		o := c.environOwner(e.pid)
 		if o == "" || (owner != "" && o != owner) {
 			return "", false // a candidate without the variable, or a collision
