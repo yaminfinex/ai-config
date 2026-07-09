@@ -78,7 +78,7 @@ func newRoot(d deps) *cobra.Command {
 	root.AddCommand(
 		newNewCommand(),
 		newBacklogCommand(),
-		newStatusCommand(),
+		newStatusCommand(d),
 	)
 	return root
 }
@@ -89,10 +89,6 @@ func newNewCommand() *cobra.Command {
 
 func newBacklogCommand() *cobra.Command {
 	return stubCommand("backlog", "Run an allowlisted Backlog.md command inside a mission")
-}
-
-func newStatusCommand() *cobra.Command {
-	return stubCommand("status", "Report mission health without mutating files")
 }
 
 func stubCommand(name, short string) *cobra.Command {
