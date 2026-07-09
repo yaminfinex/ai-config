@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -67,6 +68,22 @@ func TestResolutionOrderSingleMarkerResolves(t *testing.T) {
 	}
 }
 
+func TestMarkerLineOneIsTrimmedBeforeResolving(t *testing.T) {
+	fsys := newMemFS()
+	fsys.addDir("/repo/missions/marker")
+	fsys.addFile("/work/.mission", " \tmarker \r\nreserved: ignored\n")
+
+	got, err := Resolve(Options{
+		CWD: "/work/sub/leaf",
+		Env: env("/repo/"),
+		FS:  fsys,
+	})
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	assertResult(t, got, "marker", "/repo/missions/marker", SourceMarker)
+}
+
 func TestMultipleMarkersRefuseAndNameBothPaths(t *testing.T) {
 	fsys := newMemFS()
 	fsys.addFile("/work/.mission", "outer\n")
@@ -86,6 +103,49 @@ func TestMultipleMarkersRefuseAndNameBothPaths(t *testing.T) {
 		if !strings.Contains(refusal.Reason, path) {
 			t.Fatalf("reason missing %q: %s", path, refusal.Reason)
 		}
+	}
+}
+
+func TestInvalidFlagSlugRefusesBeforePathResolution(t *testing.T) {
+	for _, slug := range []string{"", "../../etc/secret", "Upper", "a b"} {
+		t.Run(slug, func(t *testing.T) {
+			fsys := newMemFS()
+			fsys.addDir("/etc/secret")
+			fsys.addDir("/repo/missions")
+
+			_, err := Resolve(Options{
+				MissionFlagSet: true,
+				MissionFlag:    slug,
+				CWD:            "/work",
+				Env:            env("/repo"),
+				FS:             fsys,
+			})
+			refusal := assertRefusal(t, err, RefusalInvalidSlug)
+			if refusal.Slug != slug || !strings.Contains(refusal.Reason, strconv.Quote(slug)) {
+				t.Fatalf("refusal = %#v, want offending slug named", refusal)
+			}
+		})
+	}
+}
+
+func TestInvalidMarkerSlugRefusesBeforePathResolution(t *testing.T) {
+	for _, slug := range []string{"", "../../etc/secret", "Upper", "a b"} {
+		t.Run(slug, func(t *testing.T) {
+			fsys := newMemFS()
+			fsys.addDir("/etc/secret")
+			fsys.addDir("/repo/missions")
+			fsys.addFile("/work/.mission", slug+"\n")
+
+			_, err := Resolve(Options{
+				CWD: "/work/sub",
+				Env: env("/repo"),
+				FS:  fsys,
+			})
+			refusal := assertRefusal(t, err, RefusalInvalidSlug)
+			if refusal.Slug != slug || !strings.Contains(refusal.Reason, strconv.Quote(slug)) {
+				t.Fatalf("refusal = %#v, want offending slug named", refusal)
+			}
+		})
 	}
 }
 
@@ -161,18 +221,61 @@ func TestMissionsRepoUnsetRefusesWhenNeeded(t *testing.T) {
 }
 
 func TestCWDInsideMissionDirDoesNotNeedMissionsRepo(t *testing.T) {
+	for _, cwd := range []string{"/repo/missions/alpha", "/repo/missions/alpha/backlog/tasks"} {
+		t.Run(cwd, func(t *testing.T) {
+			fsys := newMemFS()
+			fsys.addFile("/repo/missions/alpha/mission.md", "mission: alpha\n")
+
+			got, err := Resolve(Options{
+				CWD: cwd,
+				Env: env(""),
+				FS:  fsys,
+			})
+			if err != nil {
+				t.Fatalf("Resolve returned error: %v", err)
+			}
+			assertResult(t, got, "alpha", "/repo/missions/alpha", SourceCWD)
+		})
+	}
+}
+
+func TestTrailingSlashMissionsRepoResolvesCleanMissionPath(t *testing.T) {
 	fsys := newMemFS()
-	fsys.addFile("/repo/missions/alpha/mission.md", "mission: alpha\n")
+	fsys.addDir("/repo/missions/alpha")
+	fsys.addFile("/work/.mission", "alpha\n")
 
 	got, err := Resolve(Options{
-		CWD: "/repo/missions/alpha/backlog/tasks",
-		Env: env(""),
+		CWD: "/work/sub",
+		Env: env("/repo/"),
 		FS:  fsys,
 	})
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
-	assertResult(t, got, "alpha", "/repo/missions/alpha", SourceCWD)
+	assertResult(t, got, "alpha", "/repo/missions/alpha", SourceMarker)
+}
+
+func TestEmptyCWDRefusesWithoutAmbientFallback(t *testing.T) {
+	_, err := Resolve(Options{
+		Env: env("/repo"),
+		FS:  newMemFS(),
+	})
+	assertRefusal(t, err, RefusalNoContext)
+}
+
+func TestMarkerReadErrorIsTypedRefusal(t *testing.T) {
+	fsys := newMemFS()
+	fsys.addReadError("/work/.mission")
+
+	_, err := Resolve(Options{
+		CWD: "/work/sub",
+		Env: env("/repo"),
+		FS:  fsys,
+	})
+	refusal := assertRefusal(t, err, RefusalMarkerUnreadable)
+	if len(refusal.Paths) != 1 || refusal.Paths[0] != filepath.Clean("/work/.mission") {
+		t.Fatalf("paths = %v, want marker path", refusal.Paths)
+	}
 }
 
 func TestMissionMDOutsideMissionsParentChainDoesNotResolve(t *testing.T) {
@@ -219,14 +322,16 @@ func env(repo string) EnvLookup {
 }
 
 type memFS struct {
-	files map[string]string
-	dirs  map[string]bool
+	files      map[string]string
+	readErrors map[string]error
+	dirs       map[string]bool
 }
 
 func newMemFS() *memFS {
 	fsys := &memFS{
-		files: map[string]string{},
-		dirs:  map[string]bool{},
+		files:      map[string]string{},
+		readErrors: map[string]error{},
+		dirs:       map[string]bool{},
 	}
 	fsys.addDir("/")
 	return fsys
@@ -235,6 +340,13 @@ func newMemFS() *memFS {
 func (m *memFS) addFile(path, content string) {
 	clean := filepath.Clean(path)
 	m.files[clean] = content
+	m.addParents(clean)
+}
+
+func (m *memFS) addReadError(path string) {
+	clean := filepath.Clean(path)
+	m.files[clean] = ""
+	m.readErrors[clean] = fs.ErrPermission
 	m.addParents(clean)
 }
 
@@ -266,6 +378,9 @@ func (m *memFS) Stat(path string) (fs.FileInfo, error) {
 
 func (m *memFS) ReadFile(path string) ([]byte, error) {
 	clean := filepath.Clean(path)
+	if err, ok := m.readErrors[clean]; ok {
+		return nil, err
+	}
 	content, ok := m.files[clean]
 	if !ok {
 		return nil, fs.ErrNotExist

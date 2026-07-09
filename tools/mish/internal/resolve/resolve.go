@@ -7,10 +7,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
 const missionsRepoEnv = "MISSIONS_REPO"
+
+var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
 type Source string
 
@@ -23,11 +26,13 @@ const (
 type RefusalKind string
 
 const (
-	RefusalMissionNotFound RefusalKind = "mission_not_found"
-	RefusalNoContext       RefusalKind = "no_context"
-	RefusalMultipleMarkers RefusalKind = "multiple_markers"
-	RefusalRepoUnset       RefusalKind = "missions_repo_unset"
-	RefusalMarkerMissing   RefusalKind = "marker_points_at_missing_mission"
+	RefusalMissionNotFound  RefusalKind = "mission_not_found"
+	RefusalNoContext        RefusalKind = "no_context"
+	RefusalMultipleMarkers  RefusalKind = "multiple_markers"
+	RefusalRepoUnset        RefusalKind = "missions_repo_unset"
+	RefusalMarkerMissing    RefusalKind = "marker_points_at_missing_mission"
+	RefusalInvalidSlug      RefusalKind = "invalid_slug"
+	RefusalMarkerUnreadable RefusalKind = "marker_unreadable"
 )
 
 type FS interface {
@@ -38,10 +43,13 @@ type FS interface {
 type EnvLookup func(string) string
 
 type Options struct {
-	MissionFlag string
-	CWD         string
-	Env         EnvLookup
-	FS          FS
+	MissionFlagSet bool
+	MissionFlag    string
+	// CWD is the caller-supplied working directory. It is required unless
+	// MissionFlag is set; Resolve never falls back to ambient process cwd.
+	CWD string
+	Env EnvLookup
+	FS  FS
 }
 
 type Result struct {
@@ -89,18 +97,20 @@ func Resolve(opts Options) (Result, error) {
 		env = os.Getenv
 	}
 	cwd := filepath.Clean(opts.CWD)
-	if cwd == "." || cwd == "" {
-		if actual, err := os.Getwd(); err == nil {
-			cwd = actual
-		}
-	}
 
-	if opts.MissionFlag != "" {
+	if opts.MissionFlagSet || opts.MissionFlag != "" {
+		if err := validateSlug(opts.MissionFlag); err != nil {
+			return Result{}, err
+		}
 		repo := env(missionsRepoEnv)
 		if repo == "" {
 			return Result{}, repoUnset()
 		}
 		return resolveSlug(fsys, repo, opts.MissionFlag, SourceFlag, "")
+	}
+
+	if opts.CWD == "" {
+		return Result{}, noContext()
 	}
 
 	if result, ok := resolveFromCWD(fsys, cwd); ok {
@@ -113,12 +123,11 @@ func Resolve(opts Options) (Result, error) {
 	}
 	switch len(markers) {
 	case 0:
-		return Result{}, &Refusal{
-			Kind:   RefusalNoContext,
-			Reason: "no mission context found",
-			Remedy: "pass --mission <slug>, run from inside missions/<slug>/, or add a .mission marker",
-		}
+		return Result{}, noContext()
 	case 1:
+		if err := validateSlug(markers[0].slug); err != nil {
+			return Result{}, err
+		}
 		repo := env(missionsRepoEnv)
 		if repo == "" {
 			return Result{}, repoUnset()
@@ -196,10 +205,15 @@ func collectMarkers(fsys FS, cwd string) ([]marker, error) {
 		}
 		data, err := fsys.ReadFile(path)
 		if err != nil {
-			return nil, err
+			return nil, &Refusal{
+				Kind:   RefusalMarkerUnreadable,
+				Paths:  []string{path},
+				Reason: fmt.Sprintf("could not read .mission marker %s", path),
+				Remedy: "fix marker permissions or remove the marker",
+			}
 		}
 		firstLine, _, _ := strings.Cut(string(data), "\n")
-		firstLine = strings.TrimSuffix(firstLine, "\r")
+		firstLine = strings.TrimSpace(firstLine)
 		markers = append(markers, marker{path: path, slug: firstLine})
 	}
 	return markers, nil
@@ -233,6 +247,26 @@ func repoUnset() error {
 		Kind:   RefusalRepoUnset,
 		Reason: "$MISSIONS_REPO is not set",
 		Remedy: "set MISSIONS_REPO to the shared missions repo",
+	}
+}
+
+func noContext() error {
+	return &Refusal{
+		Kind:   RefusalNoContext,
+		Reason: "no mission context found",
+		Remedy: "pass --mission <slug>, run from inside missions/<slug>/, or add a .mission marker",
+	}
+}
+
+func validateSlug(slug string) error {
+	if slugPattern.MatchString(slug) {
+		return nil
+	}
+	return &Refusal{
+		Kind:   RefusalInvalidSlug,
+		Slug:   slug,
+		Reason: fmt.Sprintf("invalid mission slug %q", slug),
+		Remedy: "use a slug matching ^[a-z0-9][a-z0-9-]{0,63}$",
 	}
 }
 
