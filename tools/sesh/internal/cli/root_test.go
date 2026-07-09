@@ -25,7 +25,6 @@ func TestHelpListsAllSubcommands(t *testing.T) {
 func TestStubsReportNotImplemented(t *testing.T) {
 	stubs := [][]string{
 		{"ship"},
-		{"serve"},
 		{"reindex"},
 		{"status"},
 		{"admin", "drop-file"},
@@ -44,6 +43,21 @@ func TestStubsReportNotImplemented(t *testing.T) {
 		if !strings.Contains(err.Error(), "not implemented") {
 			t.Errorf("sesh %s: error %q does not say not implemented", strings.Join(args, " "), err)
 		}
+	}
+}
+
+func TestServeRejectsNonLoopbackBind(t *testing.T) {
+	root := newRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"serve", "--addr", "0.0.0.0:0", "--data-dir", t.TempDir()})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("sesh serve should reject non-loopback bind before M4")
+	}
+	if !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("serve error %q does not mention loopback", err)
 	}
 }
 
