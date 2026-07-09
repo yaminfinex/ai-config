@@ -3,6 +3,7 @@
 package index
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -35,8 +36,9 @@ var (
 
 // Indexer consumes append events and rebuilds disposable index tables.
 type Indexer struct {
-	db         *sql.DB
-	mirrorPath MirrorPath
+	db                 *sql.DB
+	mirrorPath         MirrorPath
+	quarantineObserved map[quarantineKey]time.Time
 
 	failWriteOnce bool
 }
@@ -156,6 +158,14 @@ func (idx *Indexer) processAppend(ctx context.Context, ev wire.AppendEvent, rebu
 
 // Reindex rebuilds disposable index rows from the mirror and store registry.
 func (idx *Indexer) Reindex(ctx context.Context) error {
+	observed, err := idx.quarantineObservedTimes(ctx)
+	if err != nil {
+		return normalizeDBError(err)
+	}
+	idx.quarantineObserved = observed
+	defer func() {
+		idx.quarantineObserved = nil
+	}()
 	for _, stmt := range []string{
 		`DELETE FROM sesh_index_messages`,
 		`DELETE FROM index_file_state`,
@@ -244,35 +254,66 @@ func (idx *Indexer) parseComplete(ctx context.Context, ev wire.AppendEvent) ([]w
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
 		return nil, start, err
 	}
-	buf := make([]byte, ev.ByteEnd-start)
-	if _, err := io.ReadFull(f, buf); err != nil {
-		return nil, start, err
-	}
-	lastNL := bytes.LastIndexByte(buf, '\n')
-	if lastNL < 0 {
-		return nil, start, nil
-	}
-	completeBytes := buf[:lastNL+1]
-	complete := start + int64(len(completeBytes))
 	var rows []wire.IndexMessage
 	lineStart := start
 	lineOrdinal := baseOrdinal
-	for len(completeBytes) > 0 {
-		nl := bytes.IndexByte(completeBytes, '\n')
-		line := completeBytes[:nl]
-		lineEnd := lineStart + int64(len(line)) + 1
+	complete := start
+	reader := bufio.NewReaderSize(io.NewSectionReader(f, start, ev.ByteEnd-start), 64*1024)
+	for {
+		line, lineBytes, ok, err := readCompleteLine(reader)
+		if err != nil {
+			return nil, start, err
+		}
+		if !ok {
+			break
+		}
+		lineEnd := lineStart + lineBytes
 		var row wire.IndexMessage
-		if len(line) > maxIndexedLineBytes {
+		if line == nil {
 			row = quarantineLine(ev, "line_too_long", lineOrdinal, lineStart, lineEnd)
 		} else {
-			row = parseLine(ev, append([]byte(nil), line...), lineOrdinal, lineStart, lineEnd)
+			row = parseLine(ev, line, lineOrdinal, lineStart, lineEnd)
 		}
 		rows = append(rows, row)
-		completeBytes = completeBytes[nl+1:]
 		lineStart = lineEnd
+		complete = lineEnd
 		lineOrdinal++
 	}
 	return rows, complete, nil
+}
+
+func readCompleteLine(r *bufio.Reader) ([]byte, int64, bool, error) {
+	var line []byte
+	var lineBytes int64
+	tooLong := false
+	for {
+		frag, err := r.ReadSlice('\n')
+		switch {
+		case err == nil:
+			body := frag[:len(frag)-1]
+			lineBytes += int64(len(body)) + 1
+			if tooLong || len(line)+len(body) > maxIndexedLineBytes {
+				return nil, lineBytes, true, nil
+			}
+			line = append(line, body...)
+			return line, lineBytes, true, nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			lineBytes += int64(len(frag))
+			if tooLong || len(line)+len(frag) > maxIndexedLineBytes {
+				tooLong = true
+				line = nil
+				continue
+			}
+			if line == nil {
+				line = make([]byte, 0, maxIndexedLineBytes)
+			}
+			line = append(line, frag...)
+		case errors.Is(err, io.EOF):
+			return nil, 0, false, nil
+		default:
+			return nil, 0, false, err
+		}
+	}
 }
 
 func lineOrdinalAt(f *os.File, offset int64) (int64, error) {
@@ -490,12 +531,59 @@ func (idx *Indexer) insertQuarantine(ctx context.Context, row wire.IndexMessage)
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC()
+	observed := time.Now().UTC()
+	if idx.quarantineObserved != nil {
+		if t, ok := idx.quarantineObserved[newQuarantineKey(row)]; ok {
+			observed = t
+		}
+	}
 	_, err = idx.db.ExecContext(ctx, `INSERT INTO quarantine_ledger
 		(observed_at, day, tool, wire_session_id, file_uuid, generation, line_ordinal, reason)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		formatTime(now), now.Format("2006-01-02"), row.Tool, row.WireSessionID, row.FileUUID, row.Generation, row.LineOrdinal, row.QuarantineReason)
+		formatTime(observed), observed.Format("2006-01-02"), row.Tool, row.WireSessionID, row.FileUUID, row.Generation, row.LineOrdinal, row.QuarantineReason)
 	return err
+}
+
+type quarantineKey struct {
+	tool        wire.Tool
+	wireID      string
+	fileUUID    string
+	generation  int
+	lineOrdinal int64
+	reason      string
+}
+
+func newQuarantineKey(row wire.IndexMessage) quarantineKey {
+	return quarantineKey{
+		tool:        row.Tool,
+		wireID:      row.WireSessionID,
+		fileUUID:    row.FileUUID,
+		generation:  row.Generation,
+		lineOrdinal: row.LineOrdinal,
+		reason:      row.QuarantineReason,
+	}
+}
+
+func (idx *Indexer) quarantineObservedTimes(ctx context.Context) (map[quarantineKey]time.Time, error) {
+	rows, err := idx.db.QueryContext(ctx, `SELECT observed_at, tool, wire_session_id, file_uuid, generation, line_ordinal, reason FROM quarantine_ledger`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[quarantineKey]time.Time{}
+	for rows.Next() {
+		var raw string
+		var key quarantineKey
+		if err := rows.Scan(&raw, &key.tool, &key.wireID, &key.fileUUID, &key.generation, &key.lineOrdinal, &key.reason); err != nil {
+			return nil, err
+		}
+		observed, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return nil, err
+		}
+		out[key] = observed.UTC()
+	}
+	return out, rows.Err()
 }
 
 func nullableTime(t *time.Time) any {

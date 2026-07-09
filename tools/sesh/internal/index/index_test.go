@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -297,6 +298,43 @@ func TestUnparseableJSONQuarantinesAndCounts(t *testing.T) {
 	}
 }
 
+func TestQuarantineObservedAtSurvivesReindex(t *testing.T) {
+	st, idx := newHarness(t)
+	body := []byte("[]\n")
+	putBytes(t, st, testSession, testFile, 0, body)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	original := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	if _, err := st.DB().ExecContext(t.Context(), `UPDATE quarantine_ledger SET observed_at = ?, day = ?`, formatTime(original), original.Format("2006-01-02")); err != nil {
+		t.Fatal(err)
+	}
+	before, err := idx.QuarantineCounts(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 1 || before[0].Day != "2026-07-01" || before[0].Count != 1 {
+		t.Fatalf("quarantine counts before reindex = %+v", before)
+	}
+	if err := idx.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := idx.QuarantineCounts(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 1 || after[0].Day != "2026-07-01" || after[0].Count != 1 {
+		t.Fatalf("quarantine counts after reindex = %+v", after)
+	}
+	var observed string
+	if err := st.DB().QueryRowContext(t.Context(), `SELECT observed_at FROM quarantine_ledger`).Scan(&observed); err != nil {
+		t.Fatal(err)
+	}
+	if observed != formatTime(original) {
+		t.Fatalf("observed_at after reindex = %q want %q", observed, formatTime(original))
+	}
+}
+
 func TestReindexReproducesChecksumAndHealsDirtyFlag(t *testing.T) {
 	st, idx := newHarness(t)
 	processFixture(t, st, idx, origID, origID, "claude-resume-original.jsonl")
@@ -502,6 +540,45 @@ func TestOverlongLineQuarantinesAndContinues(t *testing.T) {
 	}
 }
 
+func TestLargeTrailingPartialDoesNotAllocateWholeRange(t *testing.T) {
+	st, idx := newHarness(t)
+	const size = 30 << 20
+	path := st.MirrorPath(wire.ToolClaude, testSession, testFile, 0)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.CopyN(f, zeroReader{}, size); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().Exec(`INSERT INTO files(tool, session_id, file_uuid, generation, high_water, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 'now', 'now')`,
+		wire.ToolClaude, testSession, testFile, size); err != nil {
+		t.Fatal(err)
+	}
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	if err := idx.ProcessAppend(t.Context(), wire.AppendEvent{Tool: wire.ToolClaude, WireSessionID: testSession, FileUUID: testFile, Generation: 0, ByteEnd: size}); err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&after)
+	if delta := after.TotalAlloc - before.TotalAlloc; delta > 12<<20 {
+		t.Fatalf("ProcessAppend allocated %d bytes for a %d-byte trailing partial; want bounded under 12MiB", delta, size)
+	}
+	if got, err := idx.RowCount(t.Context()); err != nil {
+		t.Fatal(err)
+	} else if got != 0 {
+		t.Fatalf("trailing partial indexed %d rows, want 0", got)
+	}
+}
+
 const (
 	testSession = "11111111-1111-1111-1111-111111111111"
 	testFile    = "22222222-2222-2222-2222-222222222222"
@@ -597,4 +674,11 @@ func copyFile(dst, src string) error {
 		return err
 	}
 	return out.Close()
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }
