@@ -71,8 +71,9 @@ strictest type.
   text for any build work it recommends. No machine changes ride on the unit. Review is
   stakes-gated: usually an intent check that the question asked is the question answered.
 - **Design.** For work not yet ready to build. The deliverable is never code; it is (a) a
-  durable design document, (b) spec errata routed through the spec-steward lane wherever a
-  ratified spec is touched — the designer proposes, never edits — and (c) the follow-on
+  durable design document, (b) proposed errata for any ratified spec the design touches,
+  routed through whatever process owns that spec — the designer proposes, never edits — and
+  (c) the follow-on
   implementation task(s) written filed-ready: acceptance criteria and the settled-decisions
   list (below) authored by the designer while intent is fresh. The designer gets delegation
   freedom (worker class per run-shape item 4) — subagents for wide reading, its own jury for
@@ -91,8 +92,9 @@ strictest type.
   - **Settled-decisions list.** The capture enumerates the decisions an implementer might be
     tempted to reverse; reviewers check the diff against that list. After a design pass the
     designer authors it; for directly-captured units the orchestrator does, at capture time.
-  Review: adversarial review is mandatory for engine changes; sameness-vs-stakes reasoning for
-  reviewer choice lives in run-shape item 4.
+  Review: adversarial review is mandatory for diffs that change behavior-carrying code
+  (docs-only diffs are stakes-gated); sameness-vs-stakes reasoning for reviewer choice lives in
+  run-shape item 4.
 - **Decision.** A unit that exists to hold a choice that is the user's to make. Deliverable:
   the decision recorded with reasons, plus whatever evidence the orchestrator accumulates to
   inform it. Never dispatched — the orchestrator presents, the user decides.
