@@ -328,6 +328,48 @@ func TestLockedWriteMintsNodeOnceAndStampsRows(t *testing.T) {
 	}
 }
 
+func TestLockedWriteRefusesLegacyV1AppendToMintedRegistry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "registry.jsonl")
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: "guid-healthy-1", Label: "healthy-1", State: v2.StateSeated}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := mustReadFile(t, path)
+
+	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{
+			GUID:     "guid-poison",
+			Event:    "legacy_v1_mapped",
+			State:    v2.StateUnseated,
+			Label:    "poison",
+			Tool:     "claude",
+			LegacyV1: true,
+		}}, nil
+	})
+	var legacyErr *LegacyV1AppendError
+	if !errors.As(err, &legacyErr) || legacyErr.GUID != "guid-poison" {
+		t.Fatalf("err = %v, want LegacyV1AppendError for guid-poison", err)
+	}
+	for _, want := range []string{"v1-shaped append", "older than this registry schema", "spawner HERDER_BIN", "upgrade the checkout"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want message containing %q", err, want)
+		}
+	}
+	if got := mustReadFile(t, path); !bytes.Equal(got, before) {
+		t.Fatalf("registry changed after refused legacy append:\nbefore=%s\nafter=%s", before, got)
+	}
+
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: "guid-healthy-2", Label: "healthy-2", State: v2.StateSeated}}, nil
+	}); err != nil {
+		t.Fatalf("healthy write after refused legacy append failed: %v", err)
+	}
+	if latest := V2ByGUID(loadProjection(t, path), "guid-healthy-2"); latest == nil || latest.State != v2.StateSeated {
+		t.Fatalf("healthy write after refusal missing/latest = %+v", latest)
+	}
+}
+
 func TestTwoProcessFirstWritersConvergeOnOneNode(t *testing.T) {
 	if os.Getenv("HERDER_REGISTRY_NODE_HELPER") == "1" {
 		runNodeMintHelper()
@@ -1020,6 +1062,9 @@ func TestLegacyV1MigrationRefusesMismatchedExistingArchive(t *testing.T) {
 	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil })
 	if err == nil || !strings.Contains(err.Error(), "existing archive") || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("err = %v, want mismatched archive refusal", err)
+	}
+	if strings.Contains(err.Error(), "remove the archive before retrying") || !strings.Contains(err.Error(), "do not remove the archive") || !strings.Contains(err.Error(), "excise post-mint v1-shaped rows") {
+		t.Fatalf("err = %v, want safe recovery text without archive-removal guidance", err)
 	}
 	if got := mustReadFile(t, path); !bytes.Equal(got, original) {
 		t.Fatalf("live registry was changed after archive refusal")
