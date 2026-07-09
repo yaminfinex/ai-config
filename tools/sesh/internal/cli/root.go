@@ -47,8 +47,6 @@ func newServe() *cobra.Command {
 	var tsnetHostname string
 	var tsnetDir string
 	var tsnetAuthKey string
-	var grantShip string
-	var grantRead string
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the central store: byte-range ingest, index, and team surface",
@@ -75,7 +73,7 @@ func newServe() *cobra.Command {
 			startIndexConsumer(cmd.Context(), st, idx, slog.Default())
 			surfaceHandler := surface.New(surface.NewSQLStore(st.DB(), st.MirrorPath))
 			if tsnetMode {
-				return serveTSNet(cmd.Context(), st.Handler(), surfaceHandler, dataDir, addr, surfaceAddr, tsnetHostname, tsnetDir, tsnetAuthKey, grantShip, grantRead)
+				return serveTSNet(cmd.Context(), st.Handler(), surfaceHandler, dataDir, addr, surfaceAddr, tsnetHostname, tsnetDir, tsnetAuthKey)
 			}
 			l, err := listenLoopback(addr, "ingest")
 			if err != nil {
@@ -104,22 +102,32 @@ func newServe() *cobra.Command {
 	cmd.Flags().StringVar(&tsnetHostname, "tsnet-hostname", "sesh-store", "tsnet node hostname")
 	cmd.Flags().StringVar(&tsnetDir, "tsnet-dir", "", "tsnet state directory; default is <data-dir>/tsnet")
 	cmd.Flags().StringVar(&tsnetAuthKey, "tsnet-auth-key", "", "tsnet auth key; empty lets tsnet use TS_AUTHKEY or stored state")
-	cmd.Flags().StringVar(&grantShip, "grant-ship", "", "comma-separated tailnet identities allowed to ship (env: SESH_GRANT_SHIP)")
-	cmd.Flags().StringVar(&grantRead, "grant-read", "", "comma-separated tailnet identities allowed to read (env: SESH_GRANT_READ)")
 	return cmd
 }
 
-func serveTSNet(ctx context.Context, ingestHandler, surfaceHandler http.Handler, dataDir, addr, surfaceAddr, hostname, tsnetDir, authKey, grantShip, grantRead string) error {
-	if grantShip == "" {
-		grantShip = os.Getenv("SESH_GRANT_SHIP")
+type tsnetServer interface {
+	Listen(network, addr string) (net.Listener, error)
+	WhoIs(context.Context, string) (store.WhoIsResult, error)
+	Close() error
+}
+
+type tsnetServePlan struct {
+	ingestAddr     string
+	surfaceAddr    string
+	ingestHandler  http.Handler
+	surfaceHandler http.Handler
+}
+
+func newTSNetServePlan(ts tsnetServer, ingestHandler, surfaceHandler http.Handler, addr, surfaceAddr string) tsnetServePlan {
+	return tsnetServePlan{
+		ingestAddr:     tsnetListenAddr(addr),
+		surfaceAddr:    tsnetListenAddr(surfaceAddr),
+		ingestHandler:  store.AuthHandler(ingestHandler, ts.WhoIs, store.CapabilityShip),
+		surfaceHandler: store.AuthHandler(surfaceHandler, ts.WhoIs, store.CapabilityRead),
 	}
-	if grantRead == "" {
-		grantRead = os.Getenv("SESH_GRANT_READ")
-	}
-	grants := store.NewGrantPolicy(grantShip, grantRead)
-	if grants.Empty() || grantShip == "" || grantRead == "" {
-		return fmt.Errorf("sesh serve --tsnet requires non-empty ship and read grants (--grant-ship/--grant-read or SESH_GRANT_SHIP/SESH_GRANT_READ)")
-	}
+}
+
+func serveTSNet(ctx context.Context, ingestHandler, surfaceHandler http.Handler, dataDir, addr, surfaceAddr, hostname, tsnetDir, authKey string) error {
 	if tsnetDir == "" {
 		tsnetDir = filepath.Join(dataDir, "tsnet")
 	}
@@ -129,21 +137,22 @@ func serveTSNet(ctx context.Context, ingestHandler, surfaceHandler http.Handler,
 		AuthKey:  authKey,
 	})
 	defer ts.Close()
-	l, err := ts.Listen("tcp", tsnetListenAddr(addr))
+	plan := newTSNetServePlan(ts, ingestHandler, surfaceHandler, addr, surfaceAddr)
+	l, err := ts.Listen("tcp", plan.ingestAddr)
 	if err != nil {
 		return err
 	}
-	sl, err := ts.Listen("tcp", tsnetListenAddr(surfaceAddr))
+	sl, err := ts.Listen("tcp", plan.surfaceAddr)
 	if err != nil {
 		_ = l.Close()
 		return err
 	}
 	errCh := make(chan error, 2)
 	go func() {
-		errCh <- http.Serve(sl, store.AuthHandler(surfaceHandler, ts.WhoIs, grants, store.CapabilityRead))
+		errCh <- http.Serve(sl, plan.surfaceHandler)
 	}()
 	go func() {
-		errCh <- http.Serve(l, store.AuthHandler(ingestHandler, ts.WhoIs, grants, store.CapabilityShip))
+		errCh <- http.Serve(l, plan.ingestHandler)
 	}()
 	select {
 	case err := <-errCh:

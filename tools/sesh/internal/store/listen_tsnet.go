@@ -6,8 +6,8 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
 
+	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 
 	"sesh/internal/wire"
@@ -17,6 +17,8 @@ const (
 	CapabilityShip = "ship"
 	CapabilityRead = "read"
 )
+
+const TailnetCapabilitySeshStore tailcfg.PeerCapability = "sesh.dev/cap/store"
 
 type contextKeyTailnetIdentity struct{}
 
@@ -34,76 +36,70 @@ func withTailnetIdentity(ctx context.Context, identity string) context.Context {
 	return context.WithValue(ctx, contextKeyTailnetIdentity{}, identity)
 }
 
-// WhoIsFunc maps a connection's remote address to the tailnet identity
-// authenticated by tailscaled/tsnet.
-type WhoIsFunc func(context.Context, string) (string, error)
-
-// GrantPolicy is the M4 capability gate: an identity must be listed for the
-// capability it is attempting, or the request is denied before the handler
-// sees bytes or renders reads.
-type GrantPolicy struct {
-	Ship map[string]bool
-	Read map[string]bool
+// WhoIsResult is the authenticated tailnet caller plus the app capabilities
+// Tailscale resolved for this connection.
+type WhoIsResult struct {
+	Identity string
+	CapMap   tailcfg.PeerCapMap
 }
 
-func NewGrantPolicy(shipCSV, readCSV string) GrantPolicy {
-	return GrantPolicy{
-		Ship: grantSet(shipCSV),
-		Read: grantSet(readCSV),
-	}
-}
+// WhoIsFunc maps a connection's remote address to its authenticated tailnet
+// identity and peer capability map.
+type WhoIsFunc func(context.Context, string) (WhoIsResult, error)
 
-func grantSet(csv string) map[string]bool {
-	out := map[string]bool{}
-	for _, part := range strings.Split(csv, ",") {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			out[part] = true
-		}
-	}
-	return out
-}
-
-func (g GrantPolicy) Allows(identity, capability string) bool {
-	var set map[string]bool
-	switch capability {
-	case CapabilityShip:
-		set = g.Ship
-	case CapabilityRead:
-		set = g.Read
-	default:
-		return false
-	}
-	return set["*"] || set[identity]
-}
-
-func (g GrantPolicy) Empty() bool {
-	return len(g.Ship) == 0 && len(g.Read) == 0
+// TailnetCapabilityGrant is the JSON value stored under
+// TailnetCapabilitySeshStore in Tailscale grants.
+type TailnetCapabilityGrant struct {
+	Verb  string   `json:"verb,omitempty"`
+	Verbs []string `json:"verbs,omitempty"`
 }
 
 // AuthHandler stamps the WhoIs identity into context and enforces the grant
 // before delegating. It is used for both ship and read listeners; loopback dev
 // mode bypasses it entirely.
-func AuthHandler(next http.Handler, whois WhoIsFunc, grants GrantPolicy, capability string) http.Handler {
+func AuthHandler(next http.Handler, whois WhoIsFunc, capability string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if whois == nil {
 			writeGrantDenied(w, "tailnet identity unavailable")
 			return
 		}
-		identity, err := whois(r.Context(), r.RemoteAddr)
-		if err != nil || identity == "" {
+		result, err := whois(r.Context(), r.RemoteAddr)
+		if err != nil || result.Identity == "" {
 			if err == nil {
 				err = fmt.Errorf("empty tailnet identity")
 			}
 			writeGrantDenied(w, err.Error())
 			return
 		}
-		if !grants.Allows(identity, capability) {
-			writeGrantDenied(w, fmt.Sprintf("tailnet identity %q is outside the %s grant", identity, capability))
+		allowed, err := allowsCapability(result.CapMap, capability)
+		if err != nil {
+			writeGrantDenied(w, err.Error())
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(withTailnetIdentity(r.Context(), identity)))
+		if !allowed {
+			writeGrantDenied(w, fmt.Sprintf("tailnet identity %q lacks %s verb in %s", result.Identity, capability, TailnetCapabilitySeshStore))
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(withTailnetIdentity(r.Context(), result.Identity)))
 	})
+}
+
+func allowsCapability(caps tailcfg.PeerCapMap, capability string) (bool, error) {
+	grants, err := tailcfg.UnmarshalCapJSON[TailnetCapabilityGrant](caps, TailnetCapabilitySeshStore)
+	if err != nil {
+		return false, fmt.Errorf("invalid %s grant: %w", TailnetCapabilitySeshStore, err)
+	}
+	for _, grant := range grants {
+		if grant.Verb == capability {
+			return true, nil
+		}
+		for _, verb := range grant.Verbs {
+			if verb == capability {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func writeGrantDenied(w http.ResponseWriter, message string) {
@@ -138,22 +134,25 @@ func (s *TSNetServer) Listen(network, addr string) (net.Listener, error) {
 	return s.srv.Listen(network, addr)
 }
 
-func (s *TSNetServer) WhoIs(ctx context.Context, remoteAddr string) (string, error) {
+func (s *TSNetServer) WhoIs(ctx context.Context, remoteAddr string) (WhoIsResult, error) {
 	lc, err := s.srv.LocalClient()
 	if err != nil {
-		return "", err
+		return WhoIsResult{}, err
 	}
 	who, err := lc.WhoIs(ctx, remoteAddr)
 	if err != nil {
-		return "", err
+		return WhoIsResult{}, err
 	}
-	if who.UserProfile.LoginName != "" {
-		return who.UserProfile.LoginName, nil
+	var identity string
+	if who.UserProfile != nil && who.UserProfile.LoginName != "" {
+		identity = who.UserProfile.LoginName
+	} else if who.Node != nil && who.Node.Name != "" {
+		identity = who.Node.Name
 	}
-	if who.Node.Name != "" {
-		return who.Node.Name, nil
+	if identity == "" {
+		return WhoIsResult{}, fmt.Errorf("WhoIs returned no user or node identity for %s", remoteAddr)
 	}
-	return "", fmt.Errorf("WhoIs returned no user or node identity for %s", remoteAddr)
+	return WhoIsResult{Identity: identity, CapMap: who.CapMap}, nil
 }
 
 func (s *TSNetServer) Close() error {

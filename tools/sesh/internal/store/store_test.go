@@ -18,6 +18,7 @@ import (
 
 	"sesh/internal/index"
 	"sesh/internal/wire"
+	"tailscale.com/tailcfg"
 )
 
 const (
@@ -212,7 +213,7 @@ func TestTailnetGrantDeniesPUTBeforeReadingBytes(t *testing.T) {
 	req.Header.Set(wire.HeaderOSUser, "grace")
 	rr := httptest.NewRecorder()
 
-	AuthHandler(st.Handler(), staticWhoIs("mallory@example.com"), NewGrantPolicy("alice@example.com", "alice@example.com"), CapabilityShip).ServeHTTP(rr, req)
+	AuthHandler(st.Handler(), staticWhoIs("mallory@example.com"), CapabilityShip).ServeHTTP(rr, req)
 	decodeError(t, rr, wire.ErrOutOfGrant)
 	if read {
 		t.Fatal("out-of-grant PUT body was read before denial")
@@ -231,11 +232,22 @@ func TestTailnetGrantDeniesReadBeforeHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 
-	AuthHandler(next, staticWhoIs("mallory@example.com"), NewGrantPolicy("alice@example.com", "alice@example.com"), CapabilityRead).ServeHTTP(rr, req)
+	AuthHandler(next, staticWhoIs("mallory@example.com"), CapabilityRead).ServeHTTP(rr, req)
 	decodeError(t, rr, wire.ErrOutOfGrant)
 	if called {
 		t.Fatal("out-of-grant read reached the read handler")
 	}
+}
+
+func TestTailnetGrantDoesNotAllowWildcardVerb(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("wildcard verb must not reach the handler")
+	})
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+
+	AuthHandler(next, staticWhoIs("mallory@example.com", "*"), CapabilityRead).ServeHTTP(rr, req)
+	decodeError(t, rr, wire.ErrOutOfGrant)
 }
 
 func TestTailnetGrantStampsWhoIsAndIgnoresForgedIdentity(t *testing.T) {
@@ -250,7 +262,7 @@ func TestTailnetGrantStampsWhoIsAndIgnoresForgedIdentity(t *testing.T) {
 	req.Header.Set("X-Sesh-Display-Owner", "mallory@example.com")
 	rr := httptest.NewRecorder()
 
-	AuthHandler(st.Handler(), staticWhoIs("alice@example.com"), NewGrantPolicy("alice@example.com", "alice@example.com"), CapabilityShip).ServeHTTP(rr, req)
+	AuthHandler(st.Handler(), staticWhoIs("alice@example.com", CapabilityShip), CapabilityShip).ServeHTTP(rr, req)
 	decodeAck(t, rr)
 
 	var got string
@@ -628,10 +640,18 @@ func nowUTC() time.Time {
 	return time.Now().UTC()
 }
 
-func staticWhoIs(identity string) WhoIsFunc {
-	return func(context.Context, string) (string, error) {
-		return identity, nil
+func staticWhoIs(identity string, verbs ...string) WhoIsFunc {
+	return func(context.Context, string) (WhoIsResult, error) {
+		return WhoIsResult{Identity: identity, CapMap: capMap(verbs...)}, nil
 	}
+}
+
+func capMap(verbs ...string) tailcfg.PeerCapMap {
+	values := make([]tailcfg.RawMessage, 0, len(verbs))
+	for _, verb := range verbs {
+		values = append(values, tailcfg.RawMessage(`{"verb":"`+verb+`"}`))
+	}
+	return tailcfg.PeerCapMap{TailnetCapabilitySeshStore: values}
 }
 
 type readTrackingBody struct {

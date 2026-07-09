@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"sesh/internal/ship"
 	"sesh/internal/store"
 	"sesh/internal/wire"
+	"tailscale.com/tailcfg"
 )
 
 func TestHelpListsAllSubcommands(t *testing.T) {
@@ -79,6 +81,65 @@ func TestServeRejectsNonLoopbackSurfaceBind(t *testing.T) {
 	}
 }
 
+func TestTSNetServePlanWrapsHandlersWithTSNetWhoIs(t *testing.T) {
+	ts := &fakeTSNetServer{
+		result: store.WhoIsResult{
+			Identity: "alice@example.com",
+			CapMap:   testCapMap(store.CapabilityShip),
+		},
+	}
+	ingestCalled := false
+	ingest := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ingestCalled = true
+		if got := store.TailnetIdentityFromContext(r.Context()); got != "alice@example.com" {
+			t.Fatalf("ingest tailnet identity = %q, want WhoIs identity", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	surfaceCalled := false
+	surface := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		surfaceCalled = true
+		if got := store.TailnetIdentityFromContext(r.Context()); got != "alice@example.com" {
+			t.Fatalf("surface tailnet identity = %q, want WhoIs identity", got)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	plan := newTSNetServePlan(ts, ingest, surface, "127.0.0.1:8765", "127.0.0.1:8766")
+	if plan.ingestAddr != ":8765" || plan.surfaceAddr != ":8766" {
+		t.Fatalf("tsnet addrs = %q/%q, want :8765/:8766", plan.ingestAddr, plan.surfaceAddr)
+	}
+
+	ingestReq := httptest.NewRequest(http.MethodPut, "/v1/files/claude/s/f/bytes?offset=0", nil)
+	ingestReq.RemoteAddr = "100.64.0.1:12345"
+	ingestRR := httptest.NewRecorder()
+	plan.ingestHandler.ServeHTTP(ingestRR, ingestReq)
+	if ingestRR.Code != http.StatusNoContent || !ingestCalled {
+		t.Fatalf("ingest status=%d called=%v body=%s", ingestRR.Code, ingestCalled, ingestRR.Body.String())
+	}
+	if len(ts.remotes) != 1 || ts.remotes[0] != "100.64.0.1:12345" {
+		t.Fatalf("WhoIs remotes after ingest = %v", ts.remotes)
+	}
+
+	readReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	readReq.RemoteAddr = "100.64.0.2:23456"
+	readDenied := httptest.NewRecorder()
+	plan.surfaceHandler.ServeHTTP(readDenied, readReq)
+	if readDenied.Code != wire.ErrOutOfGrant.HTTPStatus() || surfaceCalled {
+		t.Fatalf("read with ship cap status=%d surfaceCalled=%v", readDenied.Code, surfaceCalled)
+	}
+
+	ts.result.CapMap = testCapMap(store.CapabilityRead)
+	readOK := httptest.NewRecorder()
+	plan.surfaceHandler.ServeHTTP(readOK, readReq)
+	if readOK.Code != http.StatusAccepted || !surfaceCalled {
+		t.Fatalf("read with read cap status=%d surfaceCalled=%v body=%s", readOK.Code, surfaceCalled, readOK.Body.String())
+	}
+	if len(ts.remotes) != 3 || ts.remotes[2] != "100.64.0.2:23456" {
+		t.Fatalf("WhoIs remotes after read = %v", ts.remotes)
+	}
+}
+
 func TestReindexRunsOnEmptyStore(t *testing.T) {
 	root := newRoot()
 	var out bytes.Buffer
@@ -88,6 +149,32 @@ func TestReindexRunsOnEmptyStore(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("sesh reindex on empty store: %v", err)
 	}
+}
+
+type fakeTSNetServer struct {
+	result  store.WhoIsResult
+	remotes []string
+}
+
+func (f *fakeTSNetServer) Listen(string, string) (net.Listener, error) {
+	panic("not used")
+}
+
+func (f *fakeTSNetServer) WhoIs(_ context.Context, remoteAddr string) (store.WhoIsResult, error) {
+	f.remotes = append(f.remotes, remoteAddr)
+	return f.result, nil
+}
+
+func (f *fakeTSNetServer) Close() error {
+	return nil
+}
+
+func testCapMap(verbs ...string) tailcfg.PeerCapMap {
+	values := make([]tailcfg.RawMessage, 0, len(verbs))
+	for _, verb := range verbs {
+		values = append(values, tailcfg.RawMessage(`{"verb":"`+verb+`"}`))
+	}
+	return tailcfg.PeerCapMap{store.TailnetCapabilitySeshStore: values}
 }
 
 func TestStatusReportsHealthyStore(t *testing.T) {
