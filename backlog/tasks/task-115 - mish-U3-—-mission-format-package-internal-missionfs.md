@@ -1,10 +1,10 @@
 ---
 id: TASK-115
 title: mish U3 — mission format package (internal/missionfs)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 09:46'
-updated_date: '2026-07-09 09:54'
+updated_date: '2026-07-09 10:07'
 labels:
   - mish
 dependencies: []
@@ -33,3 +33,9 @@ Settled decisions: YAML lib for reads (KTD8); manifest writer emits the §4.2 sk
 - [ ] #5 status counts follow config.yml's configured status order, not a hardcoded vocabulary
 - [ ] #6 artifacts scan on a missing dir reports missing rather than erroring; fixtures documented as real-cut
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to mish-build @ 88f7d84 (--no-ff). Worker: codex mish-u3-kazu, branch mish-u3-missionfs (eef9cd1 + hardening a4f4022). Orchestrator verification: gates re-run uncached + post-merge green. Cross-family review (opus): ACCEPT-with-hardening; fixtures verified real-cut against live backlog 1.47.1. Hardening applied pre-merge: FindingMissingBoard (parity with ArtifactScan.Missing), malformed task files skipped with FindingMalformedTask, FindingUnknownTaskStatus for out-of-vocab statuses, FindingMissingManifestKey for absent closed keys; +boundary tests.
+<!-- SECTION:NOTES:END -->
