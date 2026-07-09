@@ -1,11 +1,11 @@
 ---
 id: TASK-098
 title: 'sesh U6 — index: parse-on-ingest + dedup + reindex (M2)'
-status: In Progress
+status: Done
 assignee:
   - sesh-store-soho
 created_date: '2026-07-09 05:28'
-updated_date: '2026-07-09 06:22'
+updated_date: '2026-07-09 06:48'
 labels:
   - sesh
 dependencies:
@@ -24,15 +24,15 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U6
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Resume-pair fixture: zero duplicate message uuids, one logical session (S2)
-- [ ] #2 Colliding ids across entry types do not cross-merge sessions; trailing partial excluded until complete
-- [ ] #3 Unparseable-but-valid-JSONL quarantines without blocking other files (S10); quarantine counts exposed
-- [ ] #4 reindex from mirror alone reproduces identical index content, proven twice in a row
-- [ ] #5 Injected index-write failure -> dirty-for-reindex; next reindex heals
+- [x] #1 Resume-pair fixture: zero duplicate message uuids, one logical session (S2)
+- [x] #2 Colliding ids across entry types do not cross-merge sessions; trailing partial excluded until complete
+- [x] #3 Unparseable-but-valid-JSONL quarantines without blocking other files (S10); quarantine counts exposed
+- [x] #4 reindex from mirror alone reproduces identical index content, proven twice in a row
+- [x] #5 Injected index-write failure -> dirty-for-reindex; next reindex heals
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-From M0 sign-off review (thread sesh-u1, #25130), keep-property guard: generation is deliberately ABSENT from the dedup key (tool, logical_session_id, entry_type, message_uuid) — that is what keeps S2 transcripts clean when a conflict-driven generation re-ships full history. Add a test pinning it; do not "fix" it into the key.
+Merged to sesh-build @ 1e6eb1f (conflict: stub list — ship real since U4, reindex real since U6; resolved keeping status+admin only). Provenance: 3fe21c8 impl -> cross-family opus review (MERGE-WITH-FIXES: blocker A serve never consumed append bus, blocker B file_ordinal=generation; +5 required) -> 22fcdb7 fixes -> fresh opus re-check ACCEPT (all items PASS with biting tests; consumer serializes via store write lock, file_ordinal full-recompute per append is deterministic incl. late joiners). Keep-property (generation absent from dedup key) pinned per binding note. Low-severity re-check notes -> TASK-106. Orchestrator gates + full harness suite green on merged state. Trail: thread sesh-u6.
 <!-- SECTION:NOTES:END -->

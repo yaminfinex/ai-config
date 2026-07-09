@@ -1,9 +1,11 @@
 ---
 id: TASK-100
 title: 'sesh U8 — ops: sesh status + admin drop-file + M2 exposure (M2)'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - sesh-store-soho
 created_date: '2026-07-09 05:28'
+updated_date: '2026-07-09 06:48'
 labels:
   - sesh
 dependencies:
