@@ -1,9 +1,10 @@
 ---
 id: TASK-104
 title: 'sesh U12 — packaging, units, rollout, migration drill (M4)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 05:29'
+updated_date: '2026-07-09 07:59'
 labels:
   - sesh
 dependencies:
