@@ -3,10 +3,10 @@ id: TASK-129
 title: >-
   grok delivery mechanisms: find an alternative to pty-paste (owner: pty-paste
   unacceptable)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 21:11'
-updated_date: '2026-07-09 21:11'
+updated_date: '2026-07-09 21:16'
 labels: []
 dependencies: []
 priority: high
@@ -47,3 +47,9 @@ Scratch dirs only; never touch the live registry/bus; no account signups — a m
 4. A recommendation section: the best non-pty delivery mechanism (or a finding that none exists at this grok version, with the specific upstream asks named), plus what it changes in the playbook's Shape B design.
 5. No production code or live state modified; all experiments in scratch.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged (901b49a, docs-only, 0 non-docs paths). Deliverable: docs/design/2026-07-09-grok-delivery-mechanism-matrix.md — 11 mechanisms probed with quoted evidence. ACs were written in the description body (capture slip: not registered as CLI AC fields); all five verified met against the doc. WORKS: MCP tool polling (scratch stdio server, grok called receive_messages and quoted the codeword), headless -p/--output-format streaming-json + grok agent serve WebSocket, kill-and-resume (heavy). DEAD: all exit-2 stderr channels, Stop block-with-reason, context-file reread. PARTIAL: PreToolUse (permission gate only), MCP notifications/sampling (unproven). RECOMMENDATION: MCP mailbox polling as the non-pty delivery mechanism; playbook Shape B splits into B1 (launch-arg bootstrap + tool-polled mailbox) / B2 (pty) / B3 (restart-resume). Owner's pty-paste-unacceptable constraint is satisfiable.
+<!-- SECTION:NOTES:END -->
