@@ -4,7 +4,7 @@ title: 'sesh U7 — surface: recency page + drill-down + fallback (M2)'
 status: In Progress
 assignee: []
 created_date: '2026-07-09 05:28'
-updated_date: '2026-07-09 06:27'
+updated_date: '2026-07-09 09:41'
 labels:
   - sesh
 dependencies:
@@ -33,5 +33,5 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U7
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Merged to sesh-build @ b69d8c0 (merge of f36da04). Provenance: b94dc15+e782579 impl (fixture-backed at M0 per ship plan) -> cross-family codex review (MERGE-WITH-FIXES: display-byte-budget DoS hole on raw path, harness toolchain preflight; all 8 sliding doors SOUND) -> f36da04 fixes (8MiB budgets on BOTH render paths incl. the parallel transcript hole ravi self-found, honest notices, budget tests; actionable preflight) -> tutu re-check PASS both + MERGE rec. Orchestrator re-ran gates fresh at each step; harness ALL GREEN twice. Status stays In Progress: AC#5 (owner eyeball) is the M2 exposure gate; live-index integration is the M2 leg. XSS/write-surface review clean; htmx sha256 verified.
+Status intent (2026-07-09, code-complete): deliberately held In Progress — ACs 1-4 done and merged (fixture leg b69d8c0, live integration 0f3b325 + harness fix 3fb59db, all through review; on sesh-build @ 5105225). AC5 is the owner eyeball at the M2 exposure gate, requested from @bigboss on thread sesh-m2gate (with the tailscale-serve exposure sign-off). This is the only task open on an owner action; check AC5 and close the moment the eyeball is recorded.
 <!-- SECTION:NOTES:END -->
