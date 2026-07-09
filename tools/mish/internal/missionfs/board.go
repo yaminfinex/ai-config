@@ -21,6 +21,7 @@ type BoardConfig struct {
 	ProjectName string
 	Statuses    []string
 	Values      map[string]any
+	Missing     bool
 }
 
 // ReadBoardConfig reads backlog/config.yml and reports drift from mish's pinned keys.
@@ -28,6 +29,12 @@ func ReadBoardConfig(boardDir string) (BoardConfig, []Finding, error) {
 	path := filepath.Join(boardDir, "config.yml")
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return BoardConfig{Missing: true}, []Finding{{
+				Kind: FindingMissingBoard,
+				Path: path,
+			}}, nil
+		}
 		return BoardConfig{}, nil, err
 	}
 	var raw map[string]any

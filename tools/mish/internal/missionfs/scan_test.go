@@ -37,9 +37,38 @@ func TestScanTasksDetectsDuplicateIDsAcrossScannedDirs(t *testing.T) {
 	assertFinding(t, scan.Findings, FindingDuplicateTaskID, "id")
 }
 
+func TestScanTasksSkipsMalformedTaskAndReportsFinding(t *testing.T) {
+	boardDir := testBoardDir(t)
+	writeTask(t, filepath.Join(boardDir, "tasks", "task-1.md"), "TASK-1", "To Do")
+	writeFile(t, filepath.Join(boardDir, "tasks", "stray.md"), "# no frontmatter\n")
+
+	scan, err := ScanTasks(boardDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scan.Counts["To Do"] != 1 {
+		t.Fatalf("To Do count = %d, want 1", scan.Counts["To Do"])
+	}
+	assertFinding(t, scan.Findings, FindingMalformedTask, "")
+}
+
+func TestScanTasksReportsMissingIDWithoutDroppingStatusCount(t *testing.T) {
+	boardDir := testBoardDir(t)
+	writeFile(t, filepath.Join(boardDir, "tasks", "missing-id.md"), "---\nstatus: To Do\n---\n\n# Missing ID\n")
+
+	scan, err := ScanTasks(boardDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scan.Counts["To Do"] != 1 {
+		t.Fatalf("To Do count = %d, want 1", scan.Counts["To Do"])
+	}
+	assertFinding(t, scan.Findings, FindingMissingTaskID, "id")
+}
+
 func TestOrderedCountsFollowConfigStatusOrder(t *testing.T) {
 	scan := TaskScan{Counts: map[string]int{"Validated": 2, "Queued": 1}}
-	got := scan.OrderedCounts([]string{"Queued", "Doing", "Validated"})
+	got, findings := scan.OrderedCounts([]string{"Queued", "Doing", "Validated"})
 	want := []StatusCount{
 		{Status: "Queued", Count: 1},
 		{Status: "Doing", Count: 0},
@@ -53,6 +82,21 @@ func TestOrderedCountsFollowConfigStatusOrder(t *testing.T) {
 			t.Fatalf("OrderedCounts[%d] = %#v, want %#v", i, got[i], want[i])
 		}
 	}
+	if len(findings) != 0 {
+		t.Fatalf("OrderedCounts findings = %#v, want none", findings)
+	}
+}
+
+func TestOrderedCountsReportsOutOfVocabularyStatus(t *testing.T) {
+	scan := TaskScan{
+		Counts:      map[string]int{"To Do": 1, "Blocked": 1},
+		StatusPaths: map[string][]string{"Blocked": {"/tmp/backlog/tasks/task-2.md"}},
+	}
+	got, findings := scan.OrderedCounts([]string{"To Do", "Done"})
+	if len(got) != 2 {
+		t.Fatalf("OrderedCounts len = %d, want 2", len(got))
+	}
+	assertFinding(t, findings, FindingUnknownTaskStatus, "status")
 }
 
 func TestScanArtifactsMissingDirReportsMissingWithoutError(t *testing.T) {

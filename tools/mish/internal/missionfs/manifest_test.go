@@ -76,3 +76,26 @@ extra: value
 	assertFinding(t, findings, FindingManifestSlugMismatch, "mission")
 	assertFinding(t, findings, FindingInvalidManifestStatus, "status")
 }
+
+func TestManifestWarnsOnMissingRequiredKeys(t *testing.T) {
+	dir := t.TempDir()
+	missionDir := filepath.Join(dir, "perf-regression")
+	if err := os.Mkdir(missionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(missionDir, manifestName), `---
+mission: perf-regression
+created: 2026-07-08
+---
+
+# Perf regression
+`)
+
+	_, findings, err := ReadManifest(missionDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFinding(t, findings, FindingMissingManifestKey, "authority")
+	assertFinding(t, findings, FindingMissingManifestKey, "owner")
+	assertFinding(t, findings, FindingMissingManifestKey, "status")
+}

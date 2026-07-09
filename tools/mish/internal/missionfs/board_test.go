@@ -38,6 +38,17 @@ func TestReadBoardConfigDetectsEachPinnedDrift(t *testing.T) {
 	}
 }
 
+func TestReadBoardConfigMissingConfigReturnsTypedFinding(t *testing.T) {
+	cfg, findings, err := ReadBoardConfig(filepath.Join(t.TempDir(), "backlog"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Missing {
+		t.Fatalf("Missing = false, want true")
+	}
+	assertFinding(t, findings, FindingMissingBoard, "")
+}
+
 func TestReadBoardConfigPreservesConfiguredStatusOrder(t *testing.T) {
 	boardDir := testBoardDir(t)
 	path := filepath.Join(boardDir, "config.yml")

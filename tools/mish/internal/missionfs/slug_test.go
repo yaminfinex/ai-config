@@ -15,7 +15,7 @@ func TestValidateSlugRefusesACTableWithOneLineReason(t *testing.T) {
 }
 
 func TestValidateSlugAcceptsSpecShape(t *testing.T) {
-	for _, slug := range []string{"a", "x1", "perf-regression", "abc123"} {
+	for _, slug := range []string{"a", "x1", "perf-regression", "abc123", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} {
 		if err := ValidateSlug(slug); err != nil {
 			t.Fatalf("ValidateSlug(%q) = %v, want nil", slug, err)
 		}

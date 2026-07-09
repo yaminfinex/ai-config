@@ -19,26 +19,45 @@ type StatusCount struct {
 
 // TaskScan summarizes task frontmatter without invoking Backlog.md.
 type TaskScan struct {
-	Counts   map[string]int
-	Findings []Finding
+	Counts      map[string]int
+	StatusPaths map[string][]string
+	Findings    []Finding
 }
 
-// OrderedCounts returns counts in the board config's status order.
-func (s TaskScan) OrderedCounts(statuses []string) []StatusCount {
+// OrderedCounts returns counts in the board config's status order and reports
+// task statuses outside that configured vocabulary.
+func (s TaskScan) OrderedCounts(statuses []string) ([]StatusCount, []Finding) {
 	out := make([]StatusCount, 0, len(statuses))
+	known := map[string]bool{}
 	for _, status := range statuses {
+		known[status] = true
 		out = append(out, StatusCount{Status: status, Count: s.Counts[status]})
 	}
-	return out
+	var findings []Finding
+	for status := range s.Counts {
+		if !known[status] {
+			findings = append(findings, Finding{
+				Kind:     FindingUnknownTaskStatus,
+				Key:      "status",
+				Actual:   status,
+				Expected: strings.Join(statuses, "|"),
+				Paths:    s.StatusPaths[status],
+			})
+		}
+	}
+	return out, findings
 }
 
 // ScanTasks reads task frontmatter from backlog/tasks and backlog/completed only.
 func ScanTasks(boardDir string) (TaskScan, error) {
-	scan := TaskScan{Counts: map[string]int{}}
+	scan := TaskScan{
+		Counts:      map[string]int{},
+		StatusPaths: map[string][]string{},
+	}
 	seen := map[string][]string{}
 	for _, rel := range []string{"tasks", "completed"} {
 		dir := filepath.Join(boardDir, rel)
-		if err := scanTaskDir(dir, scan.Counts, seen); err != nil {
+		if err := scanTaskDir(dir, &scan, seen); err != nil {
 			return TaskScan{}, err
 		}
 	}
@@ -55,7 +74,7 @@ func ScanTasks(boardDir string) (TaskScan, error) {
 	return scan, nil
 }
 
-func scanTaskDir(dir string, counts map[string]int, seen map[string][]string) error {
+func scanTaskDir(dir string, scan *TaskScan, seen map[string][]string) error {
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -65,13 +84,25 @@ func scanTaskDir(dir string, counts map[string]int, seen map[string][]string) er
 		}
 		task, err := readTaskFrontmatter(path)
 		if err != nil {
-			return err
+			scan.Findings = append(scan.Findings, Finding{
+				Kind:   FindingMalformedTask,
+				Path:   path,
+				Actual: err.Error(),
+			})
+			return nil
 		}
 		if task.Status != "" {
-			counts[task.Status]++
+			scan.Counts[task.Status]++
+			scan.StatusPaths[task.Status] = append(scan.StatusPaths[task.Status], path)
 		}
 		if task.ID != "" {
 			seen[task.ID] = append(seen[task.ID], path)
+		} else {
+			scan.Findings = append(scan.Findings, Finding{
+				Kind: FindingMissingTaskID,
+				Key:  "id",
+				Path: path,
+			})
 		}
 		return nil
 	})

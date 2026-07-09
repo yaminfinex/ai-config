@@ -28,9 +28,14 @@ type FindingKind string
 
 const (
 	FindingUnknownManifestKey    FindingKind = "unknown_manifest_key"
+	FindingMissingManifestKey    FindingKind = "missing_manifest_key"
 	FindingManifestSlugMismatch  FindingKind = "manifest_slug_mismatch"
 	FindingInvalidManifestStatus FindingKind = "invalid_manifest_status"
+	FindingMissingBoard          FindingKind = "missing_board"
 	FindingBoardPinDrift         FindingKind = "board_pin_drift"
+	FindingMalformedTask         FindingKind = "malformed_task"
+	FindingMissingTaskID         FindingKind = "missing_task_id"
+	FindingUnknownTaskStatus     FindingKind = "unknown_task_status"
 	FindingDuplicateTaskID       FindingKind = "duplicate_task_id"
 )
 
@@ -67,7 +72,7 @@ func ReadManifest(missionDir string) (Manifest, []Finding, error) {
 		return Manifest{}, nil, fmt.Errorf("decode manifest frontmatter: %w", err)
 	}
 
-	findings := unknownManifestKeys(&node)
+	findings := manifestKeyFindings(&node)
 	dirSlug := filepath.Base(missionDir)
 	if manifest.Mission != "" && manifest.Mission != dirSlug {
 		findings = append(findings, Finding{
@@ -126,11 +131,12 @@ func splitFrontmatter(data []byte) ([]byte, error) {
 	return []byte(rest[:end]), nil
 }
 
-func unknownManifestKeys(node *yaml.Node) []Finding {
+func manifestKeyFindings(node *yaml.Node) []Finding {
 	mapping := firstMapping(node)
 	if mapping == nil {
 		return nil
 	}
+	seen := map[string]bool{}
 	allowed := map[string]bool{}
 	for _, key := range manifestKeys {
 		allowed[key] = true
@@ -138,8 +144,14 @@ func unknownManifestKeys(node *yaml.Node) []Finding {
 	var findings []Finding
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
 		key := mapping.Content[i].Value
+		seen[key] = true
 		if !allowed[key] {
 			findings = append(findings, Finding{Kind: FindingUnknownManifestKey, Key: key})
+		}
+	}
+	for _, key := range manifestKeys {
+		if !seen[key] {
+			findings = append(findings, Finding{Kind: FindingMissingManifestKey, Key: key})
 		}
 	}
 	return findings
