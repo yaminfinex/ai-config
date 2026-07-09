@@ -25,7 +25,6 @@ func TestHelpListsAllSubcommands(t *testing.T) {
 func TestStubsReportNotImplemented(t *testing.T) {
 	stubs := [][]string{
 		{"ship"},
-		{"reindex"},
 		{"status"},
 		{"admin", "drop-file"},
 	}
@@ -58,6 +57,17 @@ func TestServeRejectsNonLoopbackBind(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "loopback") {
 		t.Fatalf("serve error %q does not mention loopback", err)
+	}
+}
+
+func TestReindexRunsOnEmptyStore(t *testing.T) {
+	root := newRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"reindex", "--data-dir", t.TempDir()})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("sesh reindex on empty store: %v", err)
 	}
 }
 

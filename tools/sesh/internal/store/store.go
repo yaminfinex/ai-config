@@ -109,6 +109,12 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// DB exposes the store database to same-process store components such as the
+// indexer. The store remains the owner of closing it.
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 // AppendEvents returns the in-process event bus consumed by U6.
 func (s *Store) AppendEvents() <-chan wire.AppendEvent {
 	return s.events
