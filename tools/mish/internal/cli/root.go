@@ -71,6 +71,7 @@ func newRoot(d deps) *cobra.Command {
 	}
 	root.SetOut(d.stdout)
 	root.SetErr(d.stderr)
+	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return usageError{err: fmt.Errorf("mish: %w \u2014 run 'mish --help' for the command list", err)}
 	})

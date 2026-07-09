@@ -58,6 +58,26 @@ func TestBareMishAndHelpExitOK(t *testing.T) {
 				t.Fatalf("Run(%v) help output missing %q:\n%s", args, want, out)
 			}
 		}
+		if strings.Contains(out, "completion") {
+			t.Fatalf("Run(%v) help output advertised Cobra completion command:\n%s", args, out)
+		}
+	}
+}
+
+func TestCompletionIsNotALiveVerb(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"completion", "bash"}, &stdout, &stderr)
+	if code != exitUsage {
+		t.Fatalf("Run completion exit = %d, want %d", code, exitUsage)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("completion wrote stdout:\n%s", stdout.String())
+	}
+	err := stderr.String()
+	for _, want := range []string{"unknown command", "completion", "mish", "mish --help"} {
+		if !strings.Contains(err, want) {
+			t.Fatalf("completion stderr missing %q:\n%s", want, err)
+		}
 	}
 }
 
