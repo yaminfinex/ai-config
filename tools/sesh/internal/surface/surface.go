@@ -1,0 +1,301 @@
+// Package surface serves the one read-only team page: people-first recency
+// (person → nodes → sessions), transcript drill-down rendered from the
+// message index, and a raw-JSONL fallback from the mirror whenever the index
+// cannot render (spec §4.4; plan U7; R14, R16, R17).
+//
+// The surface reads the frozen index schema of docs/specs/sesh-wire.md
+// through the Store interface below and never parses transcript files on any
+// node — it runs inside the store process. It exposes zero write actions and
+// no search (R17, spec §9). A session the mirror holds must always render
+// something: index render → raw fallback → degraded notice, never a 500.
+package surface
+
+import (
+	"bytes"
+	"context"
+	"embed"
+	"fmt"
+	"html/template"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"time"
+
+	"sesh/internal/wire"
+)
+
+//go:embed templates/*.html
+var templateFS embed.FS
+
+//go:embed assets/htmx.min.js
+var assetFS embed.FS
+
+// FileRef names one mirrored file generation of a logical session.
+type FileRef struct {
+	FileUUID      string
+	Generation    int
+	FirstIngestAt time.Time
+}
+
+// SessionSummary is what the recency page needs to list one logical session.
+// The store derives it from the index plus mirror bookkeeping; the surface
+// computes recency policy (R14) from it at view time.
+type SessionSummary struct {
+	Tool             wire.Tool
+	LogicalSessionID string
+
+	// Node facts shipped with the bytes. Sessions with no owner claim group
+	// under these, honestly (spec §4.4).
+	Hostname string
+	OSUser   string
+
+	// Display owner and the winning fact's source label. Empty until U10
+	// computes view-time precedence; empty means "nobody claimed this work"
+	// and must render as absence, never a guess.
+	Owner       string
+	OwnerSource string
+
+	// MaxTimestampUTC is the maximum parsed timestamp_utc across the
+	// session's index rows; nil when no row carries a parsed timestamp
+	// (e.g. fully quarantined). Recency falls back to FirstIngestAt then.
+	MaxTimestampUTC *time.Time
+	FirstIngestAt   time.Time
+	// MirroredAt is the last time mirror bytes were accepted for the
+	// session — the R14 secondary display field.
+	MirroredAt time.Time
+
+	MessageRows     int // non-quarantined index rows
+	QuarantinedRows int
+
+	// Files in first-ingest order; the raw fallback renders them in this
+	// order (R14's fully-quarantined ordering rule).
+	Files []FileRef
+}
+
+// FullyQuarantined reports whether the index holds nothing renderable for
+// this session, which forces the raw-lines fallback (S10).
+func (s SessionSummary) FullyQuarantined() bool {
+	return s.MessageRows == 0
+}
+
+// Recency is the R14 ordering instant: max parsed message timestamp,
+// first-ingest time when no parsed timestamp exists.
+func (s SessionSummary) Recency() time.Time {
+	if s.MaxTimestampUTC != nil {
+		return *s.MaxTimestampUTC
+	}
+	return s.FirstIngestAt
+}
+
+// Store is the read seam between the surface and the store process's index
+// and mirror. U6's real index and mirror satisfy it at M2; tests back it
+// with a fixture-driven fake until then. Implementations may return rows in
+// any order — the surface applies the frozen transcript ordering itself.
+type Store interface {
+	// Sessions lists every logical session the index or mirror knows.
+	Sessions(ctx context.Context) ([]SessionSummary, error)
+	// Session resolves one logical session; ok=false when unknown.
+	Session(ctx context.Context, tool wire.Tool, logicalSessionID string) (sum SessionSummary, ok bool, err error)
+	// Rows returns the session's sesh_index_messages rows.
+	Rows(ctx context.Context, tool wire.Tool, logicalSessionID string) ([]wire.IndexMessage, error)
+	// MirrorRange reads mirrored bytes [start, end) of one file generation.
+	MirrorRange(ctx context.Context, tool wire.Tool, fileUUID string, generation int, start, end int64) ([]byte, error)
+	// MirrorFile streams a whole mirrored file generation (raw fallback).
+	MirrorFile(ctx context.Context, tool wire.Tool, fileUUID string, generation int) (io.ReadCloser, error)
+}
+
+// Server renders the surface. All handlers are GET-only; the page carries no
+// form, no POST target, and no search box (R17).
+type Server struct {
+	store Store
+	now   func() time.Time
+	log   *log.Logger
+	mux   *http.ServeMux
+
+	recencyTmpl    *template.Template
+	transcriptTmpl *template.Template
+	rawTmpl        *template.Template
+}
+
+// Option configures a Server.
+type Option func(*Server)
+
+// WithClock fixes the wall clock used for age labels (tests).
+func WithClock(now func() time.Time) Option {
+	return func(s *Server) { s.now = now }
+}
+
+// WithLogger routes surface degradation logs.
+func WithLogger(l *log.Logger) Option {
+	return func(s *Server) { s.log = l }
+}
+
+// New builds the surface handler over a Store.
+func New(store Store, opts ...Option) *Server {
+	s := &Server{
+		store: store,
+		now:   time.Now,
+		log:   log.New(io.Discard, "", 0),
+	}
+	for _, o := range opts {
+		o(s)
+	}
+	s.recencyTmpl = mustPage("recency.html")
+	s.transcriptTmpl = mustPage("transcript.html")
+	s.rawTmpl = mustPage("raw.html")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", s.handleRecency)
+	mux.HandleFunc("GET /fragments/recency", s.handleRecencyFragment)
+	mux.HandleFunc("GET /s/{tool}/{session}", s.handleTranscript)
+	mux.HandleFunc("GET /s/{tool}/{session}/raw", s.handleRaw)
+	mux.Handle("GET /assets/", http.FileServerFS(assetFS))
+	s.mux = mux
+	return s
+}
+
+func mustPage(page string) *template.Template {
+	t := template.New(page).Funcs(template.FuncMap{
+		"fmtTime": fmtTime,
+		"fmtAge":  fmtAge,
+		"fmtSize": fmtSize,
+	})
+	return template.Must(t.ParseFS(templateFS, "templates/layout.html", "templates/"+page))
+}
+
+// ServeHTTP dispatches with a last-resort recover: a panic while serving a
+// session page must not surface as a 500 (the never-500 contract covers
+// mirrored sessions; the degraded page is the floor for everything).
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			s.log.Printf("surface: panic serving %s: %v", r.URL.Path, rec)
+			s.writeDegraded(w, "renderer panic")
+		}
+	}()
+	s.mux.ServeHTTP(w, r)
+}
+
+// writeDegraded is the render floor: a plain 200 notice, so an operator sees
+// the failure without the page ever going fully blind or 500ing.
+func (s *Server) writeDegraded(w http.ResponseWriter, reason string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>sesh — degraded</title></head><body><p>sesh surface: temporarily unable to render this view (%s). The mirror is unaffected; retry or check store logs.</p><p><a href="/">back to recency</a></p></body></html>`,
+		template.HTMLEscapeString(reason))
+}
+
+// render executes a page template into a buffer first, so a mid-render
+// failure can still fall back instead of emitting a torn page.
+func (s *Server) render(w http.ResponseWriter, tmpl *template.Template, name string, data any) error {
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, err := w.Write(buf.Bytes())
+	return err
+}
+
+func (s *Server) handleRecency(w http.ResponseWriter, r *http.Request) {
+	data, err := s.recencyData(r.Context())
+	if err != nil {
+		s.log.Printf("surface: recency: %v", err)
+		s.writeDegraded(w, "session listing unavailable")
+		return
+	}
+	if err := s.render(w, s.recencyTmpl, "recency.html", data); err != nil {
+		s.log.Printf("surface: recency render: %v", err)
+		s.writeDegraded(w, "recency render failed")
+	}
+}
+
+func (s *Server) handleRecencyFragment(w http.ResponseWriter, r *http.Request) {
+	data, err := s.recencyData(r.Context())
+	if err != nil {
+		s.log.Printf("surface: recency fragment: %v", err)
+		s.writeDegraded(w, "session listing unavailable")
+		return
+	}
+	if err := s.render(w, s.recencyTmpl, "recencyBody", data); err != nil {
+		s.log.Printf("surface: recency fragment render: %v", err)
+		s.writeDegraded(w, "recency render failed")
+	}
+}
+
+// resolveSession validates the tool segment and looks the session up.
+// Unknown tool or unknown session are honest 404s — the never-500 contract
+// covers sessions the mirror holds, not arbitrary URLs.
+func (s *Server) resolveSession(w http.ResponseWriter, r *http.Request) (SessionSummary, bool) {
+	tool := wire.Tool(r.PathValue("tool"))
+	if tool != wire.ToolClaude && tool != wire.ToolCodex {
+		http.NotFound(w, r)
+		return SessionSummary{}, false
+	}
+	id := r.PathValue("session")
+	sum, ok, err := s.store.Session(r.Context(), tool, id)
+	if err != nil {
+		// Cannot even tell whether the session is mirrored; degrade rather
+		// than guess a 404 or throw a 500.
+		s.log.Printf("surface: session lookup %s/%s: %v", tool, id, err)
+		s.writeDegraded(w, "session lookup failed")
+		return SessionSummary{}, false
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return SessionSummary{}, false
+	}
+	return sum, true
+}
+
+func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
+	sum, ok := s.resolveSession(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.store.Rows(r.Context(), sum.Tool, sum.LogicalSessionID)
+	switch {
+	case err != nil:
+		s.log.Printf("surface: rows %s/%s: %v", sum.Tool, sum.LogicalSessionID, err)
+		s.serveRawFallback(w, r, sum, "index unavailable — raw mirror lines")
+		return
+	case !renderableFromIndex(rows):
+		s.serveRawFallback(w, r, sum, "no renderable index rows (quarantined or unindexed) — raw mirror lines")
+		return
+	}
+	page := transcriptPage{
+		Session: sum,
+		RawURL:  s.rawURL(sum),
+		Entries: s.buildEntries(r.Context(), sum.Tool, rows),
+	}
+	if err := s.render(w, s.transcriptTmpl, "transcript.html", page); err != nil {
+		s.log.Printf("surface: transcript render %s/%s: %v", sum.Tool, sum.LogicalSessionID, err)
+		s.serveRawFallback(w, r, sum, "transcript render failed — raw mirror lines")
+	}
+}
+
+func (s *Server) handleRaw(w http.ResponseWriter, r *http.Request) {
+	sum, ok := s.resolveSession(w, r)
+	if !ok {
+		return
+	}
+	s.serveRawFallback(w, r, sum, "raw mirror lines")
+}
+
+// renderableFromIndex reports whether the index gives the transcript page
+// anything to stand on. All-quarantined or empty row sets go to the mirror
+// fallback (S10): quarantine markers alone are not a transcript.
+func renderableFromIndex(rows []wire.IndexMessage) bool {
+	for _, row := range rows {
+		if !row.Quarantine {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) rawURL(sum SessionSummary) string {
+	return "/s/" + url.PathEscape(string(sum.Tool)) + "/" + url.PathEscape(sum.LogicalSessionID) + "/raw"
+}

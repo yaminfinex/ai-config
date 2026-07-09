@@ -1,0 +1,38 @@
+{{template "layout" .}}
+{{define "title"}}sesh — session {{printf "%.8s" .Session.LogicalSessionID}}{{end}}
+{{define "main" -}}
+<p class="crumbs"><a href="/">← recency</a> · <a href="{{.RawURL}}">raw JSONL from mirror</a></p>
+<h2>{{.Session.Tool}} session <code>{{.Session.LogicalSessionID}}</code></h2>
+<dl class="meta">
+{{- if .Session.Owner}}
+<dt>owner</dt><dd>{{.Session.Owner}} <span class="source">{{.Session.OwnerSource}}</span></dd>
+{{- else}}
+<dt>owner</dt><dd>no owner claim <span class="source">grouped by OS user @ host</span></dd>
+{{- end}}
+<dt>node</dt><dd>{{.Session.OSUser}}@{{.Session.Hostname}}</dd>
+<dt>last activity</dt><dd>{{fmtTime .Session.MaxTimestampUTC}}</dd>
+<dt>mirrored at</dt><dd>{{fmtTime .Session.MirroredAt}}</dd>
+<dt>files</dt><dd>{{range $i, $f := .Session.Files}}{{if $i}} · {{end}}<code>{{printf "%.8s" $f.FileUUID}}</code> gen {{$f.Generation}}{{end}}</dd>
+{{- if .Session.QuarantinedRows}}
+<dt>quarantined</dt><dd>{{.Session.QuarantinedRows}} lines held out of render — see raw view</dd>
+{{- end}}
+</dl>
+<ol class="transcript">
+{{- range .Entries}}
+<li class="entry role-{{.Role}}{{if .Quarantined}} quarantined{{end}}"{{with .MessageUUID}} data-uuid="{{.}}"{{end}}>
+<div class="entryhead"><span class="role">{{.Role}}</span><span class="etype">{{.EntryType}}</span><span>{{fmtTime .Timestamp}}</span>
+{{- if .Quarantined}}<span class="badge warn">quarantined{{with .QuarantineReason}}: {{.}}{{end}}</span>{{end}}
+{{- if .Truncated}}<span class="badge warn">truncated — {{fmtSize .ByteSize}} line, full bytes in raw view</span>{{end}}</div>
+{{- range .Blocks}}
+{{- if .Collapsed}}
+<details class="block {{.Kind}}"><summary>{{if .Title}}{{.Title}}{{else}}{{.Kind}}{{end}}{{if .Truncated}} (truncated){{end}}</summary>{{if .Text}}<pre>{{.Text}}</pre>{{end}}</details>
+{{- else if eq .Kind "meta"}}
+<div class="block meta">{{.Title}}</div>
+{{- else}}
+<div class="block {{.Kind}}">{{if .Title}}<div class="btitle">{{.Title}}{{if .Truncated}} (truncated){{end}}</div>{{end}}<pre>{{.Text}}</pre></div>
+{{- end}}
+{{- end}}
+</li>
+{{- end}}
+</ol>
+{{- end}}
