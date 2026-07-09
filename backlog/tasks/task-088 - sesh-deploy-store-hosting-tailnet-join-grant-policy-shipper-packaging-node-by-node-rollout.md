@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-09 04:11'
-updated_date: '2026-07-09 04:20'
+updated_date: '2026-07-09 04:22'
 labels:
   - sesh
 dependencies: []
@@ -50,3 +50,12 @@ ADDENDUM (2026-07-09, designer): docs/design/2026-07-09-sesh-ship-plan.md @ f744
 - [ ] #4 A store host migration (change the URL the shippers read, restart units) loses no data and requires no other node change — proving the URL-only coupling
 - [ ] #5 The shared-node deployment runs one shipper per OS user, each under its own uid
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-09 04:22
+---
+READ THE RAW FILE, NOT ONLY --plain: this description exceeds the backlog CLI render cap (~3.2k chars) and `backlog task N --plain` SILENTLY TRUNCATES its tail — which here includes the ship-plan addendum, per-lane dispatch timing, and (on 085/086) the one-binary settled decision. Full capture: the task file under backlog/tasks/. Tracked as TASK-090.
+---
+<!-- COMMENTS:END -->

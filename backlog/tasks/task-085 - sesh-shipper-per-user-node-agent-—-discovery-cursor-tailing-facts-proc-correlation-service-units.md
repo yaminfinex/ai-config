@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-09 04:11'
-updated_date: '2026-07-09 04:20'
+updated_date: '2026-07-09 04:22'
 labels:
   - sesh
 dependencies: []
@@ -62,3 +62,12 @@ ADDITIONAL SETTLED DECISION (owner-confirmed 2026-07-09, spec §7): ONE binary n
 - [ ] #9 Store unreachable: shipper holds position (cursor does not advance, no local queue grows) and catches up losslessly when the store returns
 - [ ] #10 Kill and restart the shipper mid-file: no bytes lost, no bytes double-indexed (duplicate ranges allowed on the wire — the store absorbs them)
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-09 04:22
+---
+READ THE RAW FILE, NOT ONLY --plain: this description exceeds the backlog CLI render cap (~3.2k chars) and `backlog task N --plain` SILENTLY TRUNCATES its tail — which here includes the ship-plan addendum, per-lane dispatch timing, and (on 085/086) the one-binary settled decision. Full capture: the task file under backlog/tasks/. Tracked as TASK-090.
+---
+<!-- COMMENTS:END -->

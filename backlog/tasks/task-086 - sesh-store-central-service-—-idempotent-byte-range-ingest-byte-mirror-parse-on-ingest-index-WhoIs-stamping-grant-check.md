@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-09 04:11'
-updated_date: '2026-07-09 04:20'
+updated_date: '2026-07-09 04:22'
 labels:
   - sesh
 dependencies: []
@@ -57,3 +57,12 @@ ADDITIONAL SETTLED DECISION (owner-confirmed 2026-07-09, spec §7): ONE binary n
 - [ ] #7 Trailing partial line (no newline yet): mirrored as-is; the index excludes it until the line completes
 - [ ] #8 PUT response returns the durable high-water mark; a cursor-recovery GET tells a shipper with a lost registry what the store already has for a file identity
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-09 04:22
+---
+READ THE RAW FILE, NOT ONLY --plain: this description exceeds the backlog CLI render cap (~3.2k chars) and `backlog task N --plain` SILENTLY TRUNCATES its tail — which here includes the ship-plan addendum, per-lane dispatch timing, and (on 085/086) the one-binary settled decision. Full capture: the task file under backlog/tasks/. Tracked as TASK-090.
+---
+<!-- COMMENTS:END -->

@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-08 09:31'
+updated_date: '2026-07-09 04:22'
 labels:
   - run-herder-dx
 dependencies: []
@@ -96,5 +96,10 @@ Owner decision: F3 upstream filing DEFERRED to run closeout — draft stays held
 created: 2026-07-08 09:31
 ---
 [hera 2026-07-08] +upstream ledger entry (TASK-063 Phase 0, authoritative from a codex worker on codex-cli 0.142.5): no custom statusline/footer command hook — only [tui].status_line built-in item ids + terminal_title. herder/hcom identity segments cannot render in the codex footer until upstream adds a hook. Candidate for the same closeout filing batch as F3.
+---
+
+created: 2026-07-09 04:22
+---
+Candidate 13 (2026-07-09, hera): Backlog.md CLI — `task view --plain` silently truncates descriptions over ~3.2k chars with no marker (rendered 3256 of 4210 live; lost tail held a settled design decision). Ask: render fully or mark the truncation. Local details + repro on TASK-090.
 ---
 <!-- COMMENTS:END -->
