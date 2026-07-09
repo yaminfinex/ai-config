@@ -1,10 +1,10 @@
 ---
 id: TASK-102
 title: sesh U10 — view-time owner precedence + conflict render (M3)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 05:29'
-updated_date: '2026-07-09 07:18'
+updated_date: '2026-07-09 07:32'
 labels:
   - sesh
 dependencies:
@@ -29,3 +29,9 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U1
 - [ ] #3 macOS facts-only session falls through to tailnet identity (M4) or OS user (pre-M4)
 - [ ] #4 No precedence logic shipper-side (asserted)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Done at 1a5411f, merged to sesh-build (ff). Cycle: rizo (codex) adversarial review ACCEPT zero findings — precedence centralized in owner.go, raw facts across the seam (I1), conflict = honest absence + names withheld, claimed-tier grouping per 4.4, empty-string filtered as absence, no wire/shipper change. Orchestrator runs: all eleven harnesses green in worker worktree; merged-state module gates + s6/surface-live/surface-fixtures green. Sliding doors on thread sesh-u10 (grouping split, names withheld page-wide, conflict-as-unclaimed+badge). Tailnet tier wired-but-empty awaiting U11 WhoIs.
+<!-- SECTION:NOTES:END -->
