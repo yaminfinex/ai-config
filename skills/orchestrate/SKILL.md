@@ -92,9 +92,9 @@ strictest type.
   - **Settled-decisions list.** The capture enumerates the decisions an implementer might be
     tempted to reverse; reviewers check the diff against that list. After a design pass the
     designer authors it; for directly-captured units the orchestrator does, at capture time.
-  Review: adversarial review is mandatory for diffs that change behavior-carrying code
-  (docs-only diffs are stakes-gated); sameness-vs-stakes reasoning for reviewer choice lives in
-  run-shape item 4.
+  Review: adversarial review is the default for diffs that change behavior-carrying code,
+  skipped only by explicit user call (docs-only diffs are stakes-gated); sameness-vs-stakes
+  reasoning for reviewer choice lives in run-shape item 4.
 - **Decision.** A unit that exists to hold a choice that is the user's to make. Deliverable:
   the decision recorded with reasons, plus whatever evidence the orchestrator accumulates to
   inform it. Never dispatched — the orchestrator presents, the user decides.
