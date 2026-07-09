@@ -1,10 +1,10 @@
 ---
 id: TASK-117
 title: mish U5 — mish backlog pinned passthrough
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 09:46'
-updated_date: '2026-07-09 10:07'
+updated_date: '2026-07-09 10:22'
 labels:
   - mish
 dependencies: []
@@ -33,3 +33,9 @@ Settled decisions: DisableFlagParsing on the backlog command — wrapper interpr
 - [ ] #5 --mission before subcommand resolves; --mission after subcommand token forwards to backlog
 - [ ] #6 bare mish backlog prints wrapper-owned allowlist summary; missing binary → install hint
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to mish-build @ 6361b8e (--no-ff). Worker: codex mish-u5-mihe, branch mish-u5-passthrough (833761b). Orchestrator verification: gates re-run uncached + post-merge green. Cross-family review (opus): ACCEPT, zero fixes — guard order, allowlist, no-fallthrough (AC-6 proven with planted ancestor board), verbatim forwarding incl. quoted args, exit codes verbatim (backlog exit 2 not confused with wrapper usage 2), stdio, LookPath hint all verified behaviorally via shim. One carry-over pinned to TASK-120: §6.2 exclusion rationale must appear in U8 help goldens.
+<!-- SECTION:NOTES:END -->
