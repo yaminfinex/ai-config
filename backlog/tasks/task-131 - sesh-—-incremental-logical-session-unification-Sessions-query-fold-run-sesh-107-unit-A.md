@@ -7,7 +7,7 @@ status: Done
 assignee:
   - sesh107-unitA-toku
 created_date: '2026-07-09 23:12'
-updated_date: '2026-07-09 23:23'
+updated_date: '2026-07-09 23:54'
 labels:
   - run-sesh-107
 dependencies: []
@@ -47,3 +47,12 @@ Settled decisions — do not re-litigate; if one seems wrong, STOP and report on
 <!-- SECTION:NOTES:BEGIN -->
 Landed as e41d1ef on branch sesh-107-index-scalability (worker sesh107-unitA-toku, verified by mive: independent uncached gate re-run green, diff reviewed vs settled decisions). Approach: ProcessAppend now runs a connected-component unification rooted at the appended file (same-logical + >=2-message-UUID-overlap files, transitively), scoped ordinal updates, and dedupe scoped to the resulting logical session; global unify/ordinals/dedupe remain in Reindex via a rebuild-mode flag. Three index-owned sqlite indexes added (rebuilt by initSchema; disposable schema). Equivalence guarded by new TestIncrementalAppendMatchesReindexChecksum. Perf: append cost flat vs unrelated-file count (benchmark: was 6.6ms/288ms/5.25s at 0/50/200 unrelated files; now ~2ms flat). SQLStore.Sessions per-session maxTimestamp replaced by one grouped window query. Deviations: none.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-09 23:54
+---
+Review tail (run-sesh-107): AC#2's literal fixture-equivalence is met, but the GENERAL bar (incremental == reindex for any append sequence) is not — post-unify appends re-split sessions when the resume wire id sorts before the canonical id. Pre-existing (repros before this change too); unit A preserved old semantics exactly. Fix + adversarial equivalence tests tracked as TASK-133 in the same run.
+---
+<!-- COMMENTS:END -->

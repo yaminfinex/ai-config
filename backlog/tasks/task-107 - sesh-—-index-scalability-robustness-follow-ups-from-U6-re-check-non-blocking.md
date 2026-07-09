@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-09 06:48'
-updated_date: '2026-07-09 23:13'
+updated_date: '2026-07-09 23:54'
 labels:
   - sesh
   - run-sesh-107
@@ -46,5 +46,10 @@ FIELD EVIDENCE (2026-07-09, mive, M2 look-see on yamen-superset): AC#3 is not fl
 Mechanism confirmed in code: ProcessAppend (internal/index/index.go:138) runs unifyLogicalSessions on EVERY append PUT that inserts rows -> fileSummaries loads every message UUID of every file into memory (overlapPairs = one query per file), O(files^2) pairwise overlap, full-table logical_session_id/file_ordinal rewrites, then dedupeAll windowed DELETE over the entire messages table. The shipper chunks large files, so one big session triggers the global sweep dozens of times; per-PUT cost grows with total index size (quadratic-ish backfill).
 
 Priority raised low->high. AC#3 is the lead item (plus the U7 residual: fold SQLStore.Sessions per-session maxTimestamp query into the same pass); the other batch items ride along. Orchestrated fix run starting (owner: mive).
+---
+
+created: 2026-07-09 23:54
+---
+run-sesh-107 review-tail residuals (thread sesh107-review #34474), filed here as the scalability umbrella: (1) per-append cost within one logical group is the next perf ceiling — every append re-runs full-file file_ordinal UPDATEs for each group member plus a windowed dedupe over the group partition even when nothing changes, O(session rows) per shipped chunk; (2) readCompleteLine pre-allocates the full max-line cap (8MiB) for any line >64KiB — peak bounded but TotalAlloc churns on transcript files with large base64 lines; size to len+frag and grow instead; (3) Reindex is non-transactional — crash between ledger DELETE and rebuild loses observed_at history (snapshot is in-memory only); (4) PLAUSIBLE unreproduced: insert-time dedup keeps the first-arrived duplicate while Reindex keeps files-table order — arrival-order-dependent equivalence gap for replayed uuids across same-session files; (5) cosmetic: redundant cancelServe defer in cli serve, surface listener logs net.ErrClosed as error on clean shutdown.
 ---
 <!-- COMMENTS:END -->
