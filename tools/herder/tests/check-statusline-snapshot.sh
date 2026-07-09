@@ -29,6 +29,14 @@ render() {
 JSON
 }
 
+render_ctx() {
+  env -i \
+    PATH="/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin" \
+    HCOM_DIR="$ROOT/hcom" HCOM_INSTANCE_NAME="worker-rive" "$STATUSLINE" <<'JSON'
+{"workspace":{"project_dir":"/tmp/statusline-project"},"model":{"display_name":"Test Model"},"session_id":"sess-1","context_window":{"used_percentage":24,"total_input_tokens":61768,"context_window_size":258400}}
+JSON
+}
+
 mkdir -p "$ROOT/hcom/statusline"
 
 OUT="$(render 2>&1)"
@@ -36,6 +44,17 @@ case "$OUT" in
   *"✉"*|*"last "*) bad "absent snapshot omits bus segment" "out=$OUT" ;;
   *) ok "absent snapshot omits bus segment" ;;
 esac
+rm -f "$ROOT/hcom/statusline/worker-rive.env"
+OUT="$(render_ctx 2>&1)"
+case "$OUT" in
+  *"mktemp"*|*"CTX_"*) bad "context render without snapshot is quiet" "out=$OUT" ;;
+  *) ok "context render without snapshot is quiet" ;;
+esac
+if [[ -e "$ROOT/hcom/statusline/worker-rive.env" ]]; then
+  bad "context render does not recreate removed snapshot" "$(cat "$ROOT/hcom/statusline/worker-rive.env")"
+else
+  ok "context render does not recreate removed snapshot"
+fi
 
 cat > "$ROOT/hcom/statusline/worker-rive.env" <<'EOF'
 HCOM_UNREAD=3
@@ -50,6 +69,12 @@ case "$OUT" in
   *"last 42s"* ) ok "fallback age snapshot shows age" ;;
   *) bad "fallback age snapshot shows age" "out=$OUT" ;;
 esac
+OUT="$(render_ctx 2>&1)"
+if grep -q '^CTX_PCT=24$' "$ROOT/hcom/statusline/worker-rive.env"; then
+  ok "context render updates existing snapshot"
+else
+  bad "context render updates existing snapshot" "$(cat "$ROOT/hcom/statusline/worker-rive.env")"
+fi
 
 cat > "$TMP_RENDER_TEST" <<'GO'
 package sidecarcmd

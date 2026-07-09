@@ -19,6 +19,15 @@ fi
 used=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
 ctx_in=$(echo "$input" | jq -r '.context_window.total_input_tokens // empty')
 ctx_size=$(echo "$input" | jq -r '.context_window.context_window_size // empty')
+ctx_pct=$(echo "$input" | jq -r '
+  if .context_window.used_percentage != null then
+    (.context_window.used_percentage | tonumber | round | tostring)
+  elif (.context_window.total_input_tokens != null and .context_window.context_window_size != null and (.context_window.context_window_size | tonumber) > 0) then
+    (((.context_window.total_input_tokens | tonumber) * 100 / (.context_window.context_window_size | tonumber)) | round | tostring)
+  else
+    empty
+  end
+')
 cost=$(echo "$input" | jq -r '.cost.total_cost_usd // empty')
 
 CYAN='\033[36m'
@@ -36,6 +45,53 @@ small_uint() {
     ???????????*) return 1 ;;
     *) return 0 ;;
   esac
+}
+
+small_number() {
+  case "$1" in
+    ''|*[!0-9.]*|*.*.*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+write_context_snapshot() {
+  [ -n "${hcom_state_file:-}" ] || return 0
+  [ -f "$hcom_state_file" ] || return 0
+  [ -n "${ctx_pct:-}" ] || return 0
+  [ -n "${ctx_in:-}" ] || return 0
+  [ -n "${ctx_size:-}" ] || return 0
+  small_number "$ctx_pct" || return 0
+  small_uint "$ctx_in" || return 0
+  small_uint "$ctx_size" || return 0
+
+  ctx_ts="${EPOCHSECONDS:-}"
+  small_uint "$ctx_ts" || return 0
+
+  hcom_unread=""
+  hcom_last_ts=""
+  hcom_last_age_s=""
+  if [ -r "$hcom_state_file" ]; then
+    while IFS='=' read -r key value; do
+      case "$key" in
+        HCOM_UNREAD) hcom_unread="$value" ;;
+        HCOM_LAST_TS) hcom_last_ts="$value" ;;
+        HCOM_LAST_AGE_S) hcom_last_age_s="$value" ;;
+      esac
+    done < "$hcom_state_file"
+  fi
+
+  state_dir="$(dirname -- "$hcom_state_file")" || return 0
+  tmp="$(mktemp "${state_dir}/.$(basename -- "$hcom_state_file").tmp.XXXXXX" 2>/dev/null)" || return 0
+  {
+    if small_uint "$hcom_unread"; then printf 'HCOM_UNREAD=%s\n' "$hcom_unread"; fi
+    if small_uint "$hcom_last_ts"; then printf 'HCOM_LAST_TS=%s\n' "$hcom_last_ts"; fi
+    if small_uint "$hcom_last_age_s"; then printf 'HCOM_LAST_AGE_S=%s\n' "$hcom_last_age_s"; fi
+    printf 'CTX_PCT=%s\n' "$ctx_pct"
+    printf 'CTX_TOKENS=%s\n' "$ctx_in"
+    printf 'CTX_SIZE=%s\n' "$ctx_size"
+    printf 'CTX_TS=%s\n' "$ctx_ts"
+  } > "$tmp" || { rm -f -- "$tmp"; return 0; }
+  mv -f -- "$tmp" "$hcom_state_file" 2>/dev/null || { rm -f -- "$tmp"; return 0; }
 }
 
 line1="${CYAN}${project_dir}${RESET}"
@@ -68,6 +124,7 @@ hcom_state_file="${HCOM_STATUSLINE_STATE:-}"
 if [ -z "$hcom_state_file" ] && [ -n "${HCOM_DIR:-}" ]; then
   hcom_state_file="${HCOM_DIR%/}/statusline/${HCOM_INSTANCE_NAME:-${HCOM_NAME:-self}}.env"
 fi
+write_context_snapshot
 if [ -n "$hcom_state_file" ] && [ -r "$hcom_state_file" ]; then
   hcom_unread=""
   hcom_last_ts=""

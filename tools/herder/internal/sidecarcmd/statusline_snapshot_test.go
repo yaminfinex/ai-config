@@ -135,6 +135,76 @@ func TestStatuslineSnapshotWriterSkipsTimestampDriftWithinTick(t *testing.T) {
 	}
 }
 
+func TestStatuslineSnapshotWriterPreservesContextMetrics(t *testing.T) {
+	root := t.TempDir()
+	statusDir := filepath.Join(root, "statusline")
+	if err := os.MkdirAll(statusDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(statusDir, "worker-rive.env")
+	original := strings.Join([]string{
+		"HCOM_UNREAD=1",
+		"HCOM_LAST_TS=90",
+		"HCOM_LAST_AGE_S=10",
+		"CTX_PCT=24",
+		"CTX_TOKENS=61768",
+		"CTX_SIZE=258400",
+		"CTX_TS=100",
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := newStatuslineSnapshotWriter(root)
+	w.writeRows([]hcomRow{{Name: "worker-rive", UnreadCount: 2, StatusAgeS: 5}}, time.Unix(120, 0))
+
+	got := readFile(t, path)
+	for _, want := range []string{
+		"HCOM_UNREAD=2\n",
+		"HCOM_LAST_TS=115\n",
+		"HCOM_LAST_AGE_S=5\n",
+		"CTX_PCT=24\n",
+		"CTX_TOKENS=61768\n",
+		"CTX_SIZE=258400\n",
+		"CTX_TS=100\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("snapshot missing %q after hcom refresh: %q", want, got)
+		}
+	}
+}
+
+func TestStatuslineSnapshotWriterDropsInvalidContextPercent(t *testing.T) {
+	root := t.TempDir()
+	statusDir := filepath.Join(root, "statusline")
+	if err := os.MkdirAll(statusDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(statusDir, "worker-rive.env")
+	original := strings.Join([]string{
+		"HCOM_UNREAD=1",
+		"HCOM_LAST_TS=90",
+		"HCOM_LAST_AGE_S=10",
+		"CTX_PCT=Inf",
+		"CTX_TOKENS=61768",
+		"CTX_SIZE=258400",
+		"CTX_TS=100",
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := newStatuslineSnapshotWriter(root)
+	w.writeRows([]hcomRow{{Name: "worker-rive", UnreadCount: 2, StatusAgeS: 5}}, time.Unix(120, 0))
+
+	got := readFile(t, path)
+	if strings.Contains(got, "CTX_PCT=") {
+		t.Fatalf("invalid context percent preserved: %q", got)
+	}
+}
+
 func TestStatuslineSnapshotWriterRewritesTimestampDriftBeyondTick(t *testing.T) {
 	root := t.TempDir()
 	statusDir := filepath.Join(root, "statusline")
@@ -179,8 +249,8 @@ func TestStatuslineSnapshotWriterOmitsCollidedBaseName(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.writeRows(rows, time.Unix(101, 0))
-	if got := readFile(t, path); got != "reappeared\n" {
-		t.Fatalf("persistent collision removed more than once: %q", got)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("persistent collision did not remove reappeared file: err=%v", err)
 	}
 
 	w.writeRows([]hcomRow{{Name: "task067-sumo", BaseName: "sumo", UnreadCount: 2, StatusAgeS: 0}}, time.Unix(102, 0))

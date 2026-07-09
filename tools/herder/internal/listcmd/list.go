@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/observerstatus"
@@ -17,6 +20,7 @@ import (
 )
 
 const observerGlobalAdviceKey = "*"
+const contextSnapshotFreshFor = 15 * time.Minute
 
 type options struct {
 	help       bool
@@ -106,8 +110,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-12s %-16s %s\n",
-		"GUID", "LABEL", "AGENT", "PANE", "LIVE", "TEAM", "BUS", "ROLE")
+	now := time.Now()
+	fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-12s %-16s %-11s %s\n",
+		"GUID", "LABEL", "AGENT", "PANE", "LIVE", "TEAM", "BUS", "CTX", "ROLE")
 	for _, rec := range collapsed {
 		if !opts.includeAll && (rec.Status != "active" || rec.Archived) {
 			continue
@@ -138,8 +143,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		if flags := observerAdviceFor(advice, ptrString(rec.GUID)); len(flags) > 0 {
 			role = role + observerAdviceSuffix(flags)
 		}
-		fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-12s %-16s %s\n",
-			ptrString(rec.ShortGUID), ptrString(rec.Label), rec.Agent, livePane, liveStatus, team, bus, role)
+		ctx := contextSnapshotDisplay(rec, now)
+		fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-12s %-16s %-11s %s\n",
+			ptrString(rec.ShortGUID), ptrString(rec.Label), rec.Agent, livePane, liveStatus, team, bus, ctx, role)
 	}
 	return 0
 }
@@ -430,6 +436,100 @@ func observerAdviceSuffix(flags []observerstatus.Flag) string {
 		return ""
 	}
 	return " [" + strings.Join(parts, "; ") + "]"
+}
+
+type contextSnapshot struct {
+	Pct   string
+	TS    int64
+	Stale bool
+}
+
+func contextSnapshotDisplay(rec registry.Record, now time.Time) string {
+	snap, ok := readContextSnapshot(rec, now)
+	if !ok {
+		return "unknown"
+	}
+	if snap.Stale {
+		return snap.Pct + "% stale"
+	}
+	return snap.Pct + "%"
+}
+
+func readContextSnapshot(rec registry.Record, now time.Time) (contextSnapshot, bool) {
+	name := rec.HcomName
+	if rec.HcomDir == "" || name == "" || name == "null" {
+		return contextSnapshot{}, false
+	}
+	safeName, ok := safeStatuslineSnapshotName(name)
+	if !ok {
+		return contextSnapshot{}, false
+	}
+	vals, err := readStatuslineEnv(filepath.Join(rec.HcomDir, "statusline", safeName+".env"))
+	if err != nil {
+		return contextSnapshot{}, false
+	}
+	pct, ok := parseSnapshotPercent(vals["CTX_PCT"])
+	if !ok {
+		return contextSnapshot{}, false
+	}
+	ts, ok := parseSnapshotUnix(vals["CTX_TS"])
+	if !ok {
+		return contextSnapshot{}, false
+	}
+	nowUnix := now.Unix()
+	if ts > nowUnix+int64(contextSnapshotFreshFor/time.Second) {
+		return contextSnapshot{}, false
+	}
+	age := nowUnix - ts
+	if age < 0 {
+		age = 0
+	}
+	return contextSnapshot{Pct: pct, TS: ts, Stale: age > int64(contextSnapshotFreshFor/time.Second)}, true
+}
+
+func safeStatuslineSnapshotName(name string) (string, bool) {
+	if name == "" || name == "." || name == ".." {
+		return "", false
+	}
+	if strings.Contains(name, "/") || strings.Contains(name, `\`) || strings.Contains(name, "..") {
+		return "", false
+	}
+	return name, true
+}
+
+func readStatuslineEnv(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	vals := make(map[string]string)
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		vals[key] = value
+	}
+	return vals, nil
+}
+
+func parseSnapshotUnix(s string) (int64, bool) {
+	if s == "" {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	return n, err == nil && n >= 0
+}
+
+func parseSnapshotPercent(s string) (string, bool) {
+	if s == "" {
+		return "", false
+	}
+	n, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsInf(n, 0) || math.IsNaN(n) || n < 0 || n > 100 {
+		return "", false
+	}
+	return strconv.FormatFloat(math.Round(n), 'f', 0, 64), true
 }
 
 func appendJSONFields(raw []byte, fields ...string) []byte {

@@ -92,9 +92,39 @@ PATH_HERMETIC="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.lo
 TEAMS_ROOT="$ROOT/teams"
 mkdir -p "$TEAMS_ROOT/blue" "$TEAMS_ROOT/red"
 
+# Context snapshot scenario: scratch-only state, never the live registry/bus.
+CTX_STATE="$ROOT/list-ctx-state"
+CTX_HCOM="$ROOT/ctx-hcom"
+mkdir -p "$CTX_STATE" "$CTX_HCOM/statusline"
+cat > "$CTX_STATE/registry.jsonl" <<CTX_REGISTRY
+{"guid":"guid-fresh-0000","short_guid":"fresh","label":"fresh","role":"worker","agent":"claude","terminal_id":"term_AAA","pane_id":"p_10","team":"","hcom_dir":"$CTX_HCOM","hcom_name":"fresh-rive","hcom_tag":"worker","status":"active"}
+{"guid":"guid-stale-0000","short_guid":"stale","label":"stale","role":"worker","agent":"claude","terminal_id":"term_CCC","pane_id":"p_30","team":"","hcom_dir":"$CTX_HCOM","hcom_name":"stale-rive","hcom_tag":"worker","status":"active"}
+{"guid":"guid-unknown-0000","short_guid":"unknown","label":"unknown","role":"reviewer","agent":"codex","terminal_id":"term_BBB","pane_id":"p_20","team":"","hcom_dir":"$CTX_HCOM","hcom_name":"unknown-rive","hcom_tag":"reviewer","status":"active"}
+CTX_REGISTRY
+now_ts="$(date +%s)"
+cat > "$CTX_HCOM/statusline/fresh-rive.env" <<CTX_FRESH
+HCOM_UNREAD=0
+HCOM_LAST_TS=$now_ts
+HCOM_LAST_AGE_S=0
+CTX_PCT=24
+CTX_TOKENS=61768
+CTX_SIZE=258400
+CTX_TS=$now_ts
+CTX_FRESH
+cat > "$CTX_HCOM/statusline/stale-rive.env" <<'CTX_STALE'
+HCOM_UNREAD=0
+HCOM_LAST_TS=1
+HCOM_LAST_AGE_S=999999
+CTX_PCT=91
+CTX_TOKENS=230000
+CTX_SIZE=258400
+CTX_TS=1
+CTX_STALE
+
 # scenario name | mock scenario | state dir | args
 SCENARIOS=(
   "table|normal|$FIX|"
+  "ctx|normal|$CTX_STATE|"
   "table_all|normal|$FIX|--all"
   "json|normal|$FIX|--json"
   "raw|normal|$FIX|--raw"

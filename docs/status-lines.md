@@ -12,10 +12,11 @@ The herder segment uses these environment variables when present:
 - `HERDER_LABEL`, `HERDER_ROLE`
 - `HCOM_INSTANCE_NAME` or `HCOM_NAME`
 
-## hcom Bus Snapshot Contract
+## Statusline Snapshot Contract
 
-Statusline renderers may read a tiny optional state file and must omit the bus
-activity segment when the file is absent.
+Statusline renderers and the herder sidecar share a tiny optional state file
+per hcom instance. Renderers must omit unavailable segments when the file is
+absent or a key is malformed.
 
 Default path:
 
@@ -29,7 +30,11 @@ Override path:
 $HCOM_STATUSLINE_STATE
 ```
 
-Current reader keys:
+Claude reads the override path when present. Its context writer updates that
+path only when the file already exists; sidecar-owned creation/removal remains
+authoritative so collision-removed snapshots do not get recreated by a render.
+
+Bus activity keys:
 
 ```sh
 HCOM_UNREAD=3
@@ -44,6 +49,27 @@ displayed age stays fresh without rewriting the file every second.
 `EPOCHSECONDS`; that fallback is a write-time age and can become unboundedly
 stale while `HCOM_UNREAD` stays unchanged.
 
+Claude context keys:
+
+```sh
+CTX_PCT=24
+CTX_TOKENS=61768
+CTX_SIZE=258400
+CTX_TS=1783506400
+```
+
+`claude/statusline.sh` writes these keys into an existing snapshot file on each
+render when Claude supplies context-window metrics. `CTX_PCT` is the rounded
+percentage used by operators, `CTX_TOKENS` is the current total input token
+count, `CTX_SIZE` is the model context-window size, and `CTX_TS` is the Unix
+timestamp of the render that wrote the values. The write is an atomic temp-file
+plus rename in the snapshot directory, and it preserves valid `HCOM_*` values
+already present in the file.
+`herder list` reads `$HCOM_DIR/statusline/<hcom-name>.env` from each registry
+row's recorded bus directory/name and renders `unknown` when no context
+snapshot exists. It marks stale values from `CTX_TS` instead of reporting them
+as fresh.
+
 The writer runs from the herder sidecar host loop. On each hcom roster pass it
 maintains one atomically replaced file per safe bus instance key under
 `$HCOM_DIR/statusline/`. The key is hcom's `base_name` when present, matching
@@ -52,17 +78,21 @@ when the rendered values are unchanged, and tolerates timestamp drift between
 multiple sidecars by not rewriting when `HCOM_UNREAD` is unchanged and the
 existing `HCOM_LAST_TS` is within one sidecar tick. Unsafe names are skipped,
 and if multiple live rows map to the same safe key in one roster pass, the
-writer removes that `<safe-name>.env` once and writes nothing for the key until
-the collision clears. Readers then omit the bus segment instead of showing
-another agent's data. Best-effort cleanup only removes `<safe-name>.env` files
-inside the `statusline/` directory. The writer never writes or deletes the
-`HCOM_STATUSLINE_STATE` override path.
+writer removes that `<safe-name>.env` on each collided pass and writes nothing
+for the key until the collision clears. Readers then omit the bus segment
+instead of showing another agent's data. The collision guard is name-keyed only:
+a renderer with a stale duplicated `HCOM_INSTANCE_NAME` can still write context
+into the shared name's existing file until a future ownership token is added.
+Best-effort cleanup only removes `<safe-name>.env` files inside the
+`statusline/` directory. The writer never writes or deletes the
+`HCOM_STATUSLINE_STATE` override path. Sidecar writes preserve valid `CTX_*`
+values already present in the file.
 
 ## Codex
 
 Codex CLI `0.142.5` exposes native TUI footer/title configuration, not a
-Claude-style custom command hook. `codex/config.shared.toml` therefore manages
-the native subset:
+Claude-style custom command hook or custom statusline input schema.
+`codex/config.shared.toml` therefore manages the native subset:
 
 ```toml
 [tui]
@@ -72,4 +102,7 @@ terminal_title = ["spinner", "project", "git-branch", "model", "status"]
 
 This covers model, context remaining, branch, and project/current directory
 where Codex supports them. It cannot render a custom herder/hcom segment or read
-the bus snapshot until Codex adds a custom footer item or command hook.
+the bus snapshot until Codex adds a custom footer item or command hook. Since it
+cannot publish `CTX_*` through the statusline snapshot today, `herder list`
+shows `unknown` for Codex rows unless another supported writer creates the
+snapshot in the future.
