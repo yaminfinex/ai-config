@@ -3,10 +3,10 @@ id: TASK-081
 title: >-
   observer: session.snapshot socket unmarshal misses the result.snapshot wrapper
   — herdr eye is blind (empty panes/agents), epoch-doubt latched fleet-wide
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-08 23:40'
-updated_date: '2026-07-08 23:54'
+updated_date: '2026-07-09 00:01'
 labels: []
 dependencies: []
 priority: high
@@ -54,5 +54,10 @@ Dispatched: worker @task081-zoni (codex), worktree task-081-observer-snapshot, b
 created: 2026-07-08 23:54
 ---
 Round 1: worker DONE (7e1ed46) — unwrap fix correct for the live shape; my independent gate green from the worktree (HERDER_OK/BOTTLE_OK/30 suites); live sweep verified (overlap 8/8, epoch-doubt cleared, dormant-live flag on the TASK-070 specimen). Adversarial review (opus, @review081-karo): REQUEST-CHANGES — P1: wrapped-then-direct parse converts malformed/neither-shape payloads into empty-successful Snapshot + nil err; in daemon mode a malformed sweep on an uninterrupted connection would mass-unseat via the same-connection-absence branch above the pause guard. Fix round sent. LOW-1 (advisory, recorded): mock-vs-live shape pinned only by hand-copied unit-test literals; re-flattening the contract mock keeps the suite green — live-shape contract checks remain an open class (relates TASK-079 note). LOW-2: CLI wrapped shape unverifiable-live on 0.7.3 — deviation note to say so explicitly. Reviewer verified safe: protocol pin (reads status-server handshake, decoded 0 never compatible), empty-Label synthetic panes (guarded), blast radius (observercmd-only consumer). MEANWHILE a separate live P1 hit the registry (write freeze from a v1-row append by an old build in a spawned worktree — repaired, filed as TASK-083/084); observer sweeps during the freeze refused cleanly with typed outcomes, which is the discipline working.
+---
+
+created: 2026-07-09 00:01
+---
+Round 2: P1 fixed in ab8ae64 (fail-closed on malformed-wrapped and neither-shape snapshots; two rejection tests). Delta review APPROVE (@review081-karo): all three P1 scenarios error, daemon amplification path closed (available=false bails before absence evidence), legitimate empty-fleet snapshots preserved via the protocol discriminator. Independent gate green on tip; MERGED 6f80e26 --no-ff; post-merge gate on main 30/30 + both modules; live sweep with the merged binary: refused=0, epoch-doubt cleared, only the genuine dormant-live flag (TASK-070 specimen) remains. AC-5 note: CLI wrapped shape recorded as unverifiable-live on herdr 0.7.3 (no session snapshot subcommand) — parser fixed against unit tests + nested contract mock. Advice carried forward: LOW-1 (mock-vs-live drift pinned only by unit-test literals — live-shape contract checking is an open class, anchored on TASK-079).
 ---
 <!-- COMMENTS:END -->
