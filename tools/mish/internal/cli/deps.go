@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"time"
 )
 
@@ -21,6 +22,7 @@ type deps struct {
 	stdout       io.Writer
 	stderr       io.Writer
 	missionsRepo string
+	osUser       string
 }
 
 func newDeps(stdout, stderr io.Writer) deps {
@@ -34,7 +36,18 @@ func newDeps(stdout, stderr io.Writer) deps {
 		stdout:       stdout,
 		stderr:       stderr,
 		missionsRepo: env("MISSIONS_REPO"),
+		osUser:       currentOSUser(env),
 	}
+}
+
+func currentOSUser(env func(string) string) string {
+	if current, err := user.Current(); err == nil && current.Username != "" {
+		return current.Username
+	}
+	if user := env("USER"); user != "" {
+		return user
+	}
+	return "unknown"
 }
 
 func runExec(name string, args []string, dir string, stdin io.Reader, stdout, stderr io.Writer) execResult {

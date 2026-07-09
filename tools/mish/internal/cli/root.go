@@ -40,20 +40,24 @@ func (e refusalError) Error() string {
 // Run executes the mish command tree and returns the process exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
 	d := newDeps(stdout, stderr)
+	return runWithDeps(args, d)
+}
+
+func runWithDeps(args []string, d deps) int {
 	root := newRoot(d)
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
 		var refusal refusalError
 		if errors.As(err, &refusal) {
-			fmt.Fprintln(stderr, err)
+			fmt.Fprintln(d.stderr, err)
 			return exitRefuse
 		}
 		var usage usageError
 		if errors.As(err, &usage) {
-			fmt.Fprintln(stderr, err)
+			fmt.Fprintln(d.stderr, err)
 			return exitUsage
 		}
-		fmt.Fprintf(stderr, "mish: %v \u2014 run 'mish --help' for the command list\n", err)
+		fmt.Fprintf(d.stderr, "mish: %v \u2014 run 'mish --help' for the command list\n", err)
 		return exitUsage
 	}
 	return exitOK
@@ -76,15 +80,11 @@ func newRoot(d deps) *cobra.Command {
 		return usageError{err: fmt.Errorf("mish: %w \u2014 run 'mish --help' for the command list", err)}
 	})
 	root.AddCommand(
-		newNewCommand(),
+		newNewCommand(d),
 		newBacklogCommand(),
 		newStatusCommand(),
 	)
 	return root
-}
-
-func newNewCommand() *cobra.Command {
-	return stubCommand("new", "Scaffold a mission directory")
 }
 
 func newBacklogCommand() *cobra.Command {
