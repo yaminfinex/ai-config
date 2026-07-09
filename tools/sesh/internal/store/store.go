@@ -192,7 +192,36 @@ func (s *Store) initSchema(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := s.ensureColumn(ctx, "fact_observations", "tailnet_identity", "TEXT NULL"); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *Store) ensureColumn(ctx context.Context, table, column, definition string) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var dflt any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` `+definition)
+	return err
 }
 
 // Handler returns the v1 HTTP handler.
@@ -273,7 +302,8 @@ func (s *Store) handlePUTBytes(w http.ResponseWriter, r *http.Request, rawTool, 
 		s.writeError(w, errCode, tool, sessionID, fileUUID, 0, 0, "", err.Error())
 		return
 	}
-	resp, ev, code, msg, action := s.putBytes(r.Context(), tool, sessionID, fileUUID, fp, offset, body, hostname, osUser, r.Header.Get(wire.HeaderSessionOwner))
+	tailnetIdentity := TailnetIdentityFromContext(r.Context())
+	resp, ev, code, msg, action := s.putBytes(r.Context(), tool, sessionID, fileUUID, fp, offset, body, hostname, osUser, r.Header.Get(wire.HeaderSessionOwner), tailnetIdentity)
 	if code != "" {
 		generation, highWater := 0, int64(0)
 		if resp != nil {
@@ -338,7 +368,7 @@ func (s *Store) handleRecovery(w http.ResponseWriter, r *http.Request, rawTool, 
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Store) putBytes(ctx context.Context, tool wire.Tool, sessionID, fileUUID string, fp *string, offset int64, body []byte, hostname, osUser, owner string) (*wire.Ack, *wire.AppendEvent, wire.ErrorCode, string, string) {
+func (s *Store) putBytes(ctx context.Context, tool wire.Tool, sessionID, fileUUID string, fp *string, offset int64, body []byte, hostname, osUser, owner, tailnetIdentity string) (*wire.Ack, *wire.AppendEvent, wire.ErrorCode, string, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -360,7 +390,7 @@ func (s *Store) putBytes(ctx context.Context, tool wire.Tool, sessionID, fileUUI
 	}
 
 	if offset < target.HighWater {
-		ev, code, msg, action, err := s.handleOverlap(ctx, &target, offset, body, hostname, osUser, owner)
+		ev, code, msg, action, err := s.handleOverlap(ctx, &target, offset, body, hostname, osUser, owner, tailnetIdentity)
 		ack := s.ack(target)
 		if err != nil {
 			return &ack, nil, classifyStoreError(err), err.Error(), ""
@@ -371,7 +401,7 @@ func (s *Store) putBytes(ctx context.Context, tool wire.Tool, sessionID, fileUUI
 		return &ack, ev, "", "", ""
 	}
 
-	ev, err := s.appendAtHighWater(ctx, &target, body, hostname, osUser, owner)
+	ev, err := s.appendAtHighWater(ctx, &target, body, hostname, osUser, owner, tailnetIdentity)
 	ack := s.ack(target)
 	if err != nil {
 		return &ack, nil, classifyStoreError(err), err.Error(), ""
@@ -412,7 +442,7 @@ func (s *Store) selectGeneration(ctx context.Context, tool wire.Tool, sessionID,
 	return gens[len(gens)-1], "", "", "", nil
 }
 
-func (s *Store) handleOverlap(ctx context.Context, target *fileState, offset int64, body []byte, hostname, osUser, owner string) (*wire.AppendEvent, wire.ErrorCode, string, string, error) {
+func (s *Store) handleOverlap(ctx context.Context, target *fileState, offset int64, body []byte, hostname, osUser, owner, tailnetIdentity string) (*wire.AppendEvent, wire.ErrorCode, string, string, error) {
 	overlap := min(int64(len(body)), target.HighWater-offset)
 	matches, err := s.compareMirror(*target, offset, body[:overlap])
 	if err != nil {
@@ -423,13 +453,13 @@ func (s *Store) handleOverlap(ctx context.Context, target *fileState, offset int
 		return nil, code, msg, "", err
 	}
 	if int64(len(body)) == overlap {
-		if err := s.recordSuccess(ctx, target, hostname, osUser, owner); err != nil {
+		if err := s.recordSuccess(ctx, target, hostname, osUser, owner, tailnetIdentity); err != nil {
 			return nil, "", "", "", fmt.Errorf("%w: %v", errStoreState, err)
 		}
 		return nil, "", "", "", nil
 	}
 	body = body[overlap:]
-	ev, err := s.appendAtHighWater(ctx, target, body, hostname, osUser, owner)
+	ev, err := s.appendAtHighWater(ctx, target, body, hostname, osUser, owner, tailnetIdentity)
 	return ev, "", "", "", err
 }
 
@@ -470,9 +500,9 @@ func (s *Store) handleDivergence(ctx context.Context, target *fileState) (wire.E
 	return wire.ErrGenerationOpened, "opened new generation after repeated divergence", nil
 }
 
-func (s *Store) appendAtHighWater(ctx context.Context, target *fileState, body []byte, hostname, osUser, owner string) (*wire.AppendEvent, error) {
+func (s *Store) appendAtHighWater(ctx context.Context, target *fileState, body []byte, hostname, osUser, owner, tailnetIdentity string) (*wire.AppendEvent, error) {
 	if len(body) == 0 {
-		if err := s.recordSuccess(ctx, target, hostname, osUser, owner); err != nil {
+		if err := s.recordSuccess(ctx, target, hostname, osUser, owner, tailnetIdentity); err != nil {
 			return nil, fmt.Errorf("%w: %v", errStoreState, err)
 		}
 		return nil, nil
@@ -489,7 +519,7 @@ func (s *Store) appendAtHighWater(ctx context.Context, target *fileState, body [
 	if err := s.updateFingerprintFromMirror(ctx, target); err != nil {
 		return nil, fmt.Errorf("%w: %v", errStoreState, err)
 	}
-	if err := s.recordSuccess(ctx, target, hostname, osUser, owner); err != nil {
+	if err := s.recordSuccess(ctx, target, hostname, osUser, owner, tailnetIdentity); err != nil {
 		return nil, fmt.Errorf("%w: %v", errStoreState, err)
 	}
 	return &wire.AppendEvent{
@@ -717,7 +747,7 @@ func (s *Store) setConflictPending(ctx context.Context, st *fileState, pending b
 	return nil
 }
 
-func (s *Store) recordSuccess(ctx context.Context, st *fileState, hostname, osUser, owner string) error {
+func (s *Store) recordSuccess(ctx context.Context, st *fileState, hostname, osUser, owner, tailnetIdentity string) error {
 	now := time.Now().UTC()
 	_, err := s.db.ExecContext(ctx, `UPDATE files SET high_water = ?, last_put_at = ?, conflict_pending = 0, updated_at = ?
 		WHERE tool = ? AND session_id = ? AND file_uuid = ? AND generation = ?`,
@@ -737,10 +767,14 @@ func (s *Store) recordSuccess(ctx context.Context, st *fileState, hostname, osUs
 	if owner != "" {
 		ownerValue = owner
 	}
+	var tailnetValue any
+	if tailnetIdentity != "" {
+		tailnetValue = tailnetIdentity
+	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO fact_observations
-		(observed_at, tool, session_id, file_uuid, generation, hostname, os_user, session_owner)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		formatTime(now), st.Tool, st.SessionID, st.FileUUID, st.Generation, hostname, osUser, ownerValue)
+		(observed_at, tool, session_id, file_uuid, generation, hostname, os_user, session_owner, tailnet_identity)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		formatTime(now), st.Tool, st.SessionID, st.FileUUID, st.Generation, hostname, osUser, ownerValue, tailnetValue)
 	if err != nil {
 		return err
 	}

@@ -214,6 +214,28 @@ func TestSQLStoreCollectsOwnerClaimsFromObservationLog(t *testing.T) {
 	}
 }
 
+func TestSQLStoreUsesStoreStampedTailnetIdentity(t *testing.T) {
+	st, idx, live := openLiveStore(t)
+	putFixture(t, st, idx, wire.ToolClaude, uuidNormal, uuidNormal, "claude-normal.jsonl", nil)
+	if _, err := st.DB().ExecContext(t.Context(), `UPDATE fact_observations SET tailnet_identity = ?`, "alice@example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	sums, err := live.Sessions(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sums) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(sums))
+	}
+	if sums[0].TailnetIdentity != "alice@example.com" {
+		t.Fatalf("tailnet identity = %q, want store-stamped WhoIs identity", sums[0].TailnetIdentity)
+	}
+	if do := sums[0].DisplayOwner(); do.Name != "alice@example.com" || do.Source != "tailnet identity" || !do.Claimed {
+		t.Fatalf("display owner = %+v, want tailnet identity attribution", do)
+	}
+}
+
 func TestSQLStoreNodesFlagsStaleLastPut(t *testing.T) {
 	st, _, live := openLiveStore(t)
 	now := time.Now().UTC()

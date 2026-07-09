@@ -116,6 +116,7 @@ func (s *SQLStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 			if f, ok := facts[factKey(g.tool, g.wireID)]; ok && f.id > factID {
 				factID = f.id
 				sum.Hostname, sum.OSUser = f.hostname, f.osUser
+				sum.TailnetIdentity = f.tailnetIdentity
 			}
 			for _, c := range claims[factKey(g.tool, g.wireID)] {
 				if !seenClaim[c] {
@@ -123,8 +124,6 @@ func (s *SQLStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 					sum.OwnerClaims = append(sum.OwnerClaims, c)
 				}
 			}
-			// TailnetIdentity stays empty until tsnet auth stamps WhoIs
-			// (M4/U11); the precedence tier is already wired for it.
 		}
 		if c, ok := counts[countKey(key.tool, key.logical)]; ok {
 			sum.MessageRows, sum.QuarantinedRows = c.messages, c.quarantined
@@ -341,9 +340,10 @@ func (s *SQLStore) rowCounts(ctx context.Context) (map[string]rowCount, error) {
 }
 
 type factRow struct {
-	id       int64
-	hostname string
-	osUser   string
+	id              int64
+	hostname        string
+	osUser          string
+	tailnetIdentity string
 }
 
 // latestFacts returns the most recent (hostname, os_user) observation per
@@ -351,7 +351,7 @@ type factRow struct {
 // picks the node label for grouping, it never rewrites owner facts (U10
 // owns owner precedence).
 func (s *SQLStore) latestFacts(ctx context.Context) (map[string]factRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT tool, session_id, hostname, os_user, id
+	rows, err := s.db.QueryContext(ctx, `SELECT tool, session_id, hostname, os_user, COALESCE(tailnet_identity, ''), id
 		FROM fact_observations
 		WHERE id IN (SELECT MAX(id) FROM fact_observations GROUP BY tool, session_id)`)
 	if err != nil {
@@ -363,7 +363,7 @@ func (s *SQLStore) latestFacts(ctx context.Context) (map[string]factRow, error) 
 		var tool wire.Tool
 		var wireID string
 		var f factRow
-		if err := rows.Scan(&tool, &wireID, &f.hostname, &f.osUser, &f.id); err != nil {
+		if err := rows.Scan(&tool, &wireID, &f.hostname, &f.osUser, &f.tailnetIdentity, &f.id); err != nil {
 			return nil, err
 		}
 		out[factKey(tool, wireID)] = f

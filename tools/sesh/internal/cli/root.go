@@ -43,6 +43,12 @@ func newServe() *cobra.Command {
 	var addr string
 	var surfaceAddr string
 	var dataDir string
+	var tsnetMode bool
+	var tsnetHostname string
+	var tsnetDir string
+	var tsnetAuthKey string
+	var grantShip string
+	var grantRead string
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the central store: byte-range ingest, index, and team surface",
@@ -53,6 +59,23 @@ func newServe() *cobra.Command {
 				if err != nil {
 					return err
 				}
+			}
+			st, err := store.Open(cmd.Context(), store.Config{
+				Dir:    dataDir,
+				Logger: slog.Default(),
+			})
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			idx, err := index.New(cmd.Context(), st.DB(), st.MirrorPath)
+			if err != nil {
+				return err
+			}
+			startIndexConsumer(cmd.Context(), st, idx, slog.Default())
+			surfaceHandler := surface.New(surface.NewSQLStore(st.DB(), st.MirrorPath))
+			if tsnetMode {
+				return serveTSNet(cmd.Context(), st.Handler(), surfaceHandler, dataDir, addr, surfaceAddr, tsnetHostname, tsnetDir, tsnetAuthKey, grantShip, grantRead)
 			}
 			l, err := listenLoopback(addr, "ingest")
 			if err != nil {
@@ -66,26 +89,8 @@ func newServe() *cobra.Command {
 				_ = l.Close()
 				return err
 			}
-			st, err := store.Open(cmd.Context(), store.Config{
-				Dir:    dataDir,
-				Logger: slog.Default(),
-			})
-			if err != nil {
-				_ = l.Close()
-				_ = sl.Close()
-				return err
-			}
-			defer st.Close()
-			idx, err := index.New(cmd.Context(), st.DB(), st.MirrorPath)
-			if err != nil {
-				_ = l.Close()
-				_ = sl.Close()
-				return err
-			}
-			startIndexConsumer(cmd.Context(), st, idx, slog.Default())
 			go func() {
-				srv := surface.New(surface.NewSQLStore(st.DB(), st.MirrorPath))
-				if err := http.Serve(sl, srv); err != nil {
+				if err := http.Serve(sl, surfaceHandler); err != nil {
 					slog.Default().Error("surface listener stopped", "error", err)
 				}
 			}()
@@ -95,7 +100,69 @@ func newServe() *cobra.Command {
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8765", "loopback address for the store HTTP listener")
 	cmd.Flags().StringVar(&surfaceAddr, "surface-addr", "127.0.0.1:8766", "loopback address for the read-only surface listener")
 	cmd.Flags().StringVar(&dataDir, "data-dir", "", "store data directory")
+	cmd.Flags().BoolVar(&tsnetMode, "tsnet", false, "serve ingest and read listeners on tsnet with WhoIs grant checks")
+	cmd.Flags().StringVar(&tsnetHostname, "tsnet-hostname", "sesh-store", "tsnet node hostname")
+	cmd.Flags().StringVar(&tsnetDir, "tsnet-dir", "", "tsnet state directory; default is <data-dir>/tsnet")
+	cmd.Flags().StringVar(&tsnetAuthKey, "tsnet-auth-key", "", "tsnet auth key; empty lets tsnet use TS_AUTHKEY or stored state")
+	cmd.Flags().StringVar(&grantShip, "grant-ship", "", "comma-separated tailnet identities allowed to ship (env: SESH_GRANT_SHIP)")
+	cmd.Flags().StringVar(&grantRead, "grant-read", "", "comma-separated tailnet identities allowed to read (env: SESH_GRANT_READ)")
 	return cmd
+}
+
+func serveTSNet(ctx context.Context, ingestHandler, surfaceHandler http.Handler, dataDir, addr, surfaceAddr, hostname, tsnetDir, authKey, grantShip, grantRead string) error {
+	if grantShip == "" {
+		grantShip = os.Getenv("SESH_GRANT_SHIP")
+	}
+	if grantRead == "" {
+		grantRead = os.Getenv("SESH_GRANT_READ")
+	}
+	grants := store.NewGrantPolicy(grantShip, grantRead)
+	if grants.Empty() || grantShip == "" || grantRead == "" {
+		return fmt.Errorf("sesh serve --tsnet requires non-empty ship and read grants (--grant-ship/--grant-read or SESH_GRANT_SHIP/SESH_GRANT_READ)")
+	}
+	if tsnetDir == "" {
+		tsnetDir = filepath.Join(dataDir, "tsnet")
+	}
+	ts := store.NewTSNetServer(store.TSNetOptions{
+		Hostname: hostname,
+		Dir:      tsnetDir,
+		AuthKey:  authKey,
+	})
+	defer ts.Close()
+	l, err := ts.Listen("tcp", tsnetListenAddr(addr))
+	if err != nil {
+		return err
+	}
+	sl, err := ts.Listen("tcp", tsnetListenAddr(surfaceAddr))
+	if err != nil {
+		_ = l.Close()
+		return err
+	}
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- http.Serve(sl, store.AuthHandler(surfaceHandler, ts.WhoIs, grants, store.CapabilityRead))
+	}()
+	go func() {
+		errCh <- http.Serve(l, store.AuthHandler(ingestHandler, ts.WhoIs, grants, store.CapabilityShip))
+	}()
+	select {
+	case err := <-errCh:
+		_ = l.Close()
+		_ = sl.Close()
+		return err
+	case <-ctx.Done():
+		_ = l.Close()
+		_ = sl.Close()
+		return ctx.Err()
+	}
+}
+
+func tsnetListenAddr(addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return addr
+	}
+	return ":" + port
 }
 
 // listenLoopback binds addr and enforces the pre-M4 posture: every listener

@@ -2,9 +2,11 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -197,6 +199,79 @@ func TestDroppedAppendEventMarksDirtyForReindex(t *testing.T) {
 	}
 	if len(recovery.Generations) != 1 || !recovery.Generations[0].DirtyForReindex {
 		t.Fatalf("recovery after dropped event = %+v", recovery)
+	}
+}
+
+func TestTailnetGrantDeniesPUTBeforeReadingBytes(t *testing.T) {
+	st := newTestStore(t, new(bytes.Buffer))
+	read := false
+	req := httptest.NewRequest(http.MethodPut, "/v1/files/claude/"+testSession+"/"+testFile+"/bytes?offset=0", readTrackingBody{read: &read})
+	req.Header.Set("Content-Type", wire.ContentTypeBytes)
+	req.Header.Set(wire.HeaderWireVersion, "1")
+	req.Header.Set(wire.HeaderHostname, "node-a")
+	req.Header.Set(wire.HeaderOSUser, "grace")
+	rr := httptest.NewRecorder()
+
+	AuthHandler(st.Handler(), staticWhoIs("mallory@example.com"), NewGrantPolicy("alice@example.com", "alice@example.com"), CapabilityShip).ServeHTTP(rr, req)
+	decodeError(t, rr, wire.ErrOutOfGrant)
+	if read {
+		t.Fatal("out-of-grant PUT body was read before denial")
+	}
+	if got := countRows(t, st, `SELECT COUNT(*) FROM fact_observations`); got != 0 {
+		t.Fatalf("fact rows after denied PUT = %d, want 0", got)
+	}
+}
+
+func TestTailnetGrantDeniesReadBeforeHandler(t *testing.T) {
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+
+	AuthHandler(next, staticWhoIs("mallory@example.com"), NewGrantPolicy("alice@example.com", "alice@example.com"), CapabilityRead).ServeHTTP(rr, req)
+	decodeError(t, rr, wire.ErrOutOfGrant)
+	if called {
+		t.Fatal("out-of-grant read reached the read handler")
+	}
+}
+
+func TestTailnetGrantStampsWhoIsAndIgnoresForgedIdentity(t *testing.T) {
+	st := newTestStore(t, new(bytes.Buffer))
+	body := []byte(`{"type":"user","uuid":"ok","sessionId":"` + testSession + `","tailnet_identity":"mallory@example.com"}` + "\n")
+	req := httptest.NewRequest(http.MethodPut, "/v1/files/claude/"+testSession+"/"+testFile+"/bytes?offset=0", bytes.NewReader(body))
+	req.Header.Set("Content-Type", wire.ContentTypeBytes)
+	req.Header.Set(wire.HeaderWireVersion, "1")
+	req.Header.Set(wire.HeaderHostname, "node-a")
+	req.Header.Set(wire.HeaderOSUser, "grace")
+	req.Header.Set("X-Sesh-Tailnet-Identity", "mallory@example.com")
+	req.Header.Set("X-Sesh-Display-Owner", "mallory@example.com")
+	rr := httptest.NewRecorder()
+
+	AuthHandler(st.Handler(), staticWhoIs("alice@example.com"), NewGrantPolicy("alice@example.com", "alice@example.com"), CapabilityShip).ServeHTTP(rr, req)
+	decodeAck(t, rr)
+
+	var got string
+	if err := st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(tailnet_identity, '') FROM fact_observations`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != "alice@example.com" {
+		t.Fatalf("tailnet_identity = %q, want WhoIs identity; forged claims must be ignored", got)
+	}
+}
+
+func TestTailnetGrantAllowsLoopbackDevModeUnwrapped(t *testing.T) {
+	st := newTestStore(t, new(bytes.Buffer))
+	rr := putReq(t, st, wire.ToolClaude, testSession, testFile, 0, []byte("dev loopback\n"), nil)
+	decodeAck(t, rr)
+	var got string
+	if err := st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(tailnet_identity, '') FROM fact_observations`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("loopback dev mode should not invent tailnet identity, got %q", got)
 	}
 }
 
@@ -551,4 +626,19 @@ func itoa(n int64) string {
 
 func nowUTC() time.Time {
 	return time.Now().UTC()
+}
+
+func staticWhoIs(identity string) WhoIsFunc {
+	return func(context.Context, string) (string, error) {
+		return identity, nil
+	}
+}
+
+type readTrackingBody struct {
+	read *bool
+}
+
+func (b readTrackingBody) Read([]byte) (int, error) {
+	*b.read = true
+	return 0, io.EOF
 }

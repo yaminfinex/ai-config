@@ -42,6 +42,7 @@ Implemented M2 commands:
 ```sh
 sesh ship --store-url http://127.0.0.1:8765
 sesh serve --addr 127.0.0.1:8765 --surface-addr 127.0.0.1:8766
+sesh serve --tsnet --grant-ship alice@example.com --grant-read alice@example.com,bob@example.com
 sesh reindex
 sesh status
 sesh admin drop-file <tool> <session_id> <file_uuid> --yes
@@ -88,3 +89,38 @@ serves the browser surface only, while ingest remains loopback-only until M4
 auth and rollout gates land.
 
 M2 exposure owner sign-off: PENDING (`@bigboss`).
+
+## M4 tsnet Grant Runbook
+
+M4 mode embeds tsnet in `sesh serve`. The store joins the tailnet as its own
+node, authenticates each caller with WhoIs, stamps the authenticated identity
+into the fact log, and denies callers outside the app grant before ingest bytes
+or read handlers run.
+
+```sh
+TS_AUTHKEY=tskey-auth-... \
+sesh serve --tsnet \
+  --tsnet-hostname sesh-store \
+  --addr :8765 \
+  --surface-addr :8766 \
+  --grant-ship alice@example.com,ci@example.com \
+  --grant-read alice@example.com,bob@example.com
+```
+
+`--tsnet-dir` defaults to `<data-dir>/tsnet`; `--tsnet-auth-key` can be used
+instead of `TS_AUTHKEY`. `SESH_GRANT_SHIP` and `SESH_GRANT_READ` are accepted
+as env-var equivalents for the grant flags. Tailscale ACLs should still limit
+which principals can reach the store node, but the application grant is the hard
+gate:
+
+```json
+{
+  "tagOwners": {
+    "tag:sesh-store": ["autogroup:admin"]
+  },
+  "acls": [
+    {"action": "accept", "src": ["group:sesh-shippers"], "dst": ["tag:sesh-store:8765"]},
+    {"action": "accept", "src": ["group:sesh-readers"], "dst": ["tag:sesh-store:8766"]}
+  ]
+}
+```
