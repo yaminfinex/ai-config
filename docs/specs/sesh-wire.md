@@ -18,7 +18,8 @@ deduplication, facts interpretation, conflict generations, quarantine, and auth.
 - Wire version: `1`.
 - API root: `/v1`.
 - Allowed tools: `claude`, `codex`. Unknown tools are rejected.
-- Rescan interval: 60 seconds.
+- Rescan interval (shipper-local default, NOT wire contract): 60 seconds — tunable per
+  node; fsnotify-coverage calibration may adjust it without a wire amendment.
 - Maximum PUT body: 4 MiB.
 - Fingerprint algorithm: `sha256-first-1024`.
 - Fingerprint window: bytes `[0, 1024)`.
@@ -107,9 +108,14 @@ Status: `200 OK`.
 ```
 
 `high_water` is the next byte offset the store will accept for the selected generation.
-On any `200` the shipper sets its cursor to the returned `high_water` exactly — not to
-`offset + body length` — so replays after a shipper restart are absorbed by the store's
-answer. No other response advances a cursor.
+On any `200` the shipper sets its cursor to `min(returned high_water, the source size it
+most recently observed for this file)` — never above the store's answer, never above the
+source. It never uses `offset + body length`. This clamp is what makes same-prefix
+truncation quiesce instead of looping (S3): the replay `200` returns the old
+`high_water`, the clamp pins the cursor at the truncated size, and no further regression
+fires. If the file later grows with bytes that diverge from the mirror, convergence is
+the normal `byte_conflict` → `generation_opened` path. The clamp applies uniformly to
+every `200`, append ACK and replay ACK alike. No other response advances a cursor.
 
 ### PUT Semantics
 
@@ -136,6 +142,13 @@ answer. No other response advances a cursor.
     `(file_uuid, fingerprint)`, the store instead marks the file identity poisoned and
     answers `423 poisoned_file` from then on. Existing generations' bytes are never
     modified by any of this.
+  - A request body may span the high-water. The store compares the overlapping range
+    `[offset, high_water)` against mirrored bytes; any divergence in the overlap follows
+    the conflict rules above and nothing from the request is appended. When the overlap
+    is identical, the store appends the excess `[high_water, offset + body length)` to
+    the mirror under the same fsync-before-ACK rule and returns `200` with
+    `high_water = offset + body length`. A `200` therefore always means every byte of
+    the request body is durably mirrored.
 - If `offset > high_water`, the store returns `422 offset_gap` with the current
   `high_water`; the shipper rewinds to that value.
 - If the mirror append or fsync fails, the store returns `5xx` and does not ACK.
@@ -322,6 +335,13 @@ the mirror raw-lines fallback.
 bookkeeping. It must not mutate mirror bytes, file generations, fact observations, or
 high-water ACK state. A reindex that sees the same mirror bytes twice must reproduce the
 same `sesh_index_messages` content aside from store-local primary keys.
+
+## Changelog
+
+- 2026-07-09 — Amendment 1: clamp 200-ACK cursor advancement to the most recently
+  observed source size to stop same-prefix truncation loops; pin spanning replay PUTs to
+  compare the overlap and append matching excess under fsync-before-ACK; relabel the
+  60-second rescan interval as a shipper-local default, not a wire contract.
 
 ## Compatibility Rules
 
