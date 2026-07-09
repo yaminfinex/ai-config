@@ -1,11 +1,11 @@
 === STDERR ===
 
 === STDOUT ===
-GUID       LABEL                AGENT   PANE               LIVE      TEAM         BUS              ROLE
-alpha      alpha                claude  p_10               undetected global       -                worker
-beta       beta                 codex   p_20               undetected blue         @beta-rive       reviewer
-gone       gone                 claude  p_30               gone      global       -                scout
-name       reborn               claude  p_old              gone      global       -                worker
-undet      undet                claude  p_60               undetected global       -                worker
+GUID       LABEL                AGENT   PANE               LIVE      TEAM         BUS              CTX         ROLE
+alpha      alpha                claude  p_10               undetected global       -                unknown     worker
+beta       beta                 codex   p_20               undetected blue         @beta-rive       unknown     reviewer
+gone       gone                 claude  p_30               gone      global       -                unknown     scout
+name       reborn               claude  p_old              gone      global       -                unknown     worker
+undet      undet                claude  p_60               undetected global       -                unknown     worker
 === EXIT ===
 0

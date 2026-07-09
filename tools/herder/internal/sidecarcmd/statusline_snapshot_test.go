@@ -135,6 +135,46 @@ func TestStatuslineSnapshotWriterSkipsTimestampDriftWithinTick(t *testing.T) {
 	}
 }
 
+func TestStatuslineSnapshotWriterPreservesContextMetrics(t *testing.T) {
+	root := t.TempDir()
+	statusDir := filepath.Join(root, "statusline")
+	if err := os.MkdirAll(statusDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(statusDir, "worker-rive.env")
+	original := strings.Join([]string{
+		"HCOM_UNREAD=1",
+		"HCOM_LAST_TS=90",
+		"HCOM_LAST_AGE_S=10",
+		"CTX_PCT=24",
+		"CTX_TOKENS=61768",
+		"CTX_SIZE=258400",
+		"CTX_TS=100",
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := newStatuslineSnapshotWriter(root)
+	w.writeRows([]hcomRow{{Name: "worker-rive", UnreadCount: 2, StatusAgeS: 5}}, time.Unix(120, 0))
+
+	got := readFile(t, path)
+	for _, want := range []string{
+		"HCOM_UNREAD=2\n",
+		"HCOM_LAST_TS=115\n",
+		"HCOM_LAST_AGE_S=5\n",
+		"CTX_PCT=24\n",
+		"CTX_TOKENS=61768\n",
+		"CTX_SIZE=258400\n",
+		"CTX_TS=100\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("snapshot missing %q after hcom refresh: %q", want, got)
+		}
+	}
+}
+
 func TestStatuslineSnapshotWriterRewritesTimestampDriftBeyondTick(t *testing.T) {
 	root := t.TempDir()
 	statusDir := filepath.Join(root, "statusline")

@@ -1,0 +1,9 @@
+=== STDERR ===
+
+=== STDOUT ===
+GUID       LABEL                AGENT   PANE               LIVE      TEAM         BUS              CTX         ROLE
+fresh      fresh                claude  p_10               idle      global       @fresh-rive      24%         worker
+stale      stale                claude  p_30               gone      global       @stale-rive      91% stale   worker
+unknown    unknown              codex   p_99               working   global       @unknown-rive    unknown     reviewer
+=== EXIT ===
+0

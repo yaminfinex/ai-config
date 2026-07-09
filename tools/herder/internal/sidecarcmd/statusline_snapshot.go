@@ -115,6 +115,9 @@ func renderStatuslineSnapshot(row hcomRow, now time.Time) string {
 
 func (w *statuslineSnapshotWriter) writeIfChanged(name, content string) error {
 	path := w.path(name)
+	if existing, err := os.ReadFile(path); err == nil {
+		content = mergeStatuslineSnapshot(existing, []byte(content))
+	}
 	if w.cache[name] == content {
 		if _, err := os.Stat(path); err != nil {
 			delete(w.cache, name)
@@ -201,6 +204,26 @@ func equivalentStatuslineSnapshot(existing, next []byte, tolerance time.Duration
 	return diff <= int64(tolerance/time.Second)
 }
 
+func mergeStatuslineSnapshot(existing, next []byte) string {
+	nextVals := parseStatuslineSnapshot(next)
+	existingVals := parseStatuslineSnapshot(existing)
+	var b strings.Builder
+	for _, key := range []string{"HCOM_UNREAD", "HCOM_LAST_TS", "HCOM_LAST_AGE_S"} {
+		if v := nextVals[key]; parseSnapshotUint(v) {
+			fmt.Fprintf(&b, "%s=%s\n", key, v)
+		}
+	}
+	if v := existingVals["CTX_PCT"]; parseSnapshotNumber(v) {
+		fmt.Fprintf(&b, "CTX_PCT=%s\n", v)
+	}
+	for _, key := range []string{"CTX_TOKENS", "CTX_SIZE", "CTX_TS"} {
+		if v := existingVals[key]; parseSnapshotUint(v) {
+			fmt.Fprintf(&b, "%s=%s\n", key, v)
+		}
+	}
+	return b.String()
+}
+
 func parseStatuslineSnapshot(b []byte) map[string]string {
 	vals := make(map[string]string)
 	for _, line := range bytes.Split(b, []byte{'\n'}) {
@@ -219,4 +242,17 @@ func parseSnapshotInt(s string) (int64, bool) {
 	}
 	n, err := strconv.ParseInt(s, 10, 64)
 	return n, err == nil && n >= 0
+}
+
+func parseSnapshotUint(s string) bool {
+	_, ok := parseSnapshotInt(s)
+	return ok
+}
+
+func parseSnapshotNumber(s string) bool {
+	if s == "" {
+		return false
+	}
+	n, err := strconv.ParseFloat(s, 64)
+	return err == nil && n >= 0
 }
