@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-09 04:11'
-updated_date: '2026-07-09 04:19'
+updated_date: '2026-07-09 04:20'
 labels:
   - sesh
 dependencies: []
@@ -16,6 +16,7 @@ ordinal: 85000
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 <!-- SECTION:DESCRIPTION:BEGIN -->
 sesh is a team-visibility service for AI coding sessions. Every machine (node) runs a small per-OS-user agent (the SHIPPER) that tails the transcript files Claude Code and Codex CLI already write to disk, and ships their raw bytes plus four identity facts to one central service (the STORE), which keeps a byte-faithful mirror, parses it centrally into a per-message index, and serves one read-only web page (the SURFACE) answering 'what has everyone been working on?'
 
@@ -41,6 +42,11 @@ SETTLED DECISIONS (do not reverse; escalate if blocked):
 - A correlation once observed is recorded in the cursor registry and never retracted by process death.
 - Shipping is file-driven, never process-driven: backfill of dead sessions is the same code path as live tailing.
 - Config = store URL by env/flag only. The store's host is a deployment-time value (localhost short-term, likely herd-server co-located later), never baked in.
+<!-- SECTION:DESCRIPTION:END -->
+
+ADDENDUM (2026-07-09, designer): docs/design/2026-07-09-sesh-ship-plan.md @ f744ee9 on branch sessions-missions-design is the RATIFIED milestone plan (M0-M4) over the four sesh lanes, including the dispatch mapping table — read it with the other pinned refs. Milestone gates are named spec §6 scenarios passing on a REAL machine, not merges. M2 = first useful ship (browse one node); M4 = done-per-spec. THIS LANE: dispatches first, alongside the store lane; the two workers CO-AUTHOR the M0 wire + index-schema freeze doc PR, and the designer's sign-off gates the M0 merge — no lane code beyond M0 before that gate passes.
+
+ADDITIONAL SETTLED DECISION (owner-confirmed 2026-07-09, spec §7): ONE binary named sesh with subcommands ship/serve/reindex/status. Do not create a separate shipper binary — the shipper is `sesh ship`.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

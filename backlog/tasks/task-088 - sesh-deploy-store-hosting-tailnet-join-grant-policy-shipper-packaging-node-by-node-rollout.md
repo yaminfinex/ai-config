@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-09 04:11'
-updated_date: '2026-07-09 04:19'
+updated_date: '2026-07-09 04:20'
 labels:
   - sesh
 dependencies: []
@@ -16,6 +16,7 @@ ordinal: 88000
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 <!-- SECTION:DESCRIPTION:BEGIN -->
 sesh is a team-visibility service for AI coding sessions. Every machine (node) runs a small per-OS-user agent (the SHIPPER) that tails the transcript files Claude Code and Codex CLI already write to disk, and ships their raw bytes plus four identity facts to one central service (the STORE), which keeps a byte-faithful mirror, parses it centrally into a per-message index, and serves one read-only web page (the SURFACE) answering 'what has everyone been working on?'
 
@@ -36,6 +37,9 @@ SETTLED DECISIONS (do not reverse; escalate if blocked):
 - Grant scope before content: the deny path is verified before transcripts flow.
 - No Windows in v1.
 - Code lives at tools/sesh now and moves to its own repo later — nothing in deploy may depend on the repo location (no repo-path assumptions in units or scripts).
+<!-- SECTION:DESCRIPTION:END -->
+
+ADDENDUM (2026-07-09, designer): docs/design/2026-07-09-sesh-ship-plan.md @ f744ee9 on branch sessions-missions-design is the RATIFIED milestone plan (M0-M4) over the four sesh lanes, including the dispatch mapping table — read it with the other pinned refs. Milestone gates are named spec §6 scenarios passing on a REAL machine, not merges. M2 = first useful ship (browse one node); M4 = done-per-spec. THIS LANE: dispatches when M2 is demonstrable (browse one node on a real machine), per the ship-plan mapping table.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
