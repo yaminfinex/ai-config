@@ -55,7 +55,7 @@ machinery.
 | **assignee** | Backlog.md's native assignee field, holding a label-grade name. The whole mission↔agent contract (Q17): every richer join happens outside missions. |
 | **artifact** | Any file under `missions/<slug>/artifacts/` — free-form outputs, analyses, reports. Structure by convention only (disjoint paths per writer); the CLI never interprets contents. |
 | **context marker** | A `.mission` file in a working directory (typically a code worktree), pointing at the mission by slug. The D6 mechanism that lets `mission` commands run far from the missions repo. |
-| **context resolution** | How a `mission` invocation finds its mission: explicit flag, then cwd-inside-a-mission-dir, then nearest marker (§5). Never ambient identity beyond `$MISSIONS_REPO` locating the repo. |
+| **context resolution** | How a `mission` invocation finds its mission: explicit flag, then cwd-inside-a-mission-dir, then the single marker on the ancestor chain (§5). Markers never shadow one another. Never ambient identity beyond `$MISSIONS_REPO` locating the repo. |
 | **passthrough** | `mission backlog …`: the Backlog.md CLI executed with cwd pinned to the mission dir, arguments forwarded verbatim minus a small denylist (§6.2). |
 | **denylist** | The Backlog.md subcommands the passthrough refuses because they clash with the mission system: `init`, `config`, `agents` (§6.2). |
 | **pinned config** | The four `backlog/config.yml` keys stamped at scaffold and invariant for the mission's life (§4.4): they neutralize Backlog.md's git/remote/browser behaviours inside the shared repo. |
@@ -259,13 +259,15 @@ For any verb needing mission context (`backlog`, `status` in single-mission mode
 1. **Explicit flag:** `--mission <slug>` wins outright.
 2. **Cwd inside a mission dir:** walk up from cwd; the nearest ancestor containing
    `mission.md` whose parent chain sits under `missions/` identifies the mission.
-3. **Nearest marker:** walk up from cwd; the first `.mission` file found supplies the slug,
-   resolved against `$MISSIONS_REPO`.
+3. **The chain marker:** walk up from cwd; a `.mission` file on the ancestor chain supplies
+   the slug, resolved against `$MISSIONS_REPO`. **Markers never shadow:** a marker states the
+   mission for everything below it, so finding more than one marker on the chain is a refusal
+   naming both paths — nested markers are a mistake to repair, not a scoping mechanism.
 
 First hit wins; no blending. Failures refuse loudly: no context found → guidance naming all
 three mechanisms; marker names a slug with no dir → "marker points at missing mission
-<slug>"; `$MISSIONS_REPO` needed but unset → setup guidance. Resolution never scans the repo
-for candidates and never guesses.
+<slug>"; two markers on one ancestor chain → refusal naming both; `$MISSIONS_REPO` needed but
+unset → setup guidance. Resolution never scans the repo for candidates and never guesses.
 
 ## 6. Command surface — expected behaviour
 
@@ -299,8 +301,9 @@ Given a valid, unclaimed slug:
 4. Create `artifacts/` (empty, with a keep-file so the tree survives file-based sync).
 5. Write the context marker `.mission` (content: the slug) into the invoking cwd — the D6
    mechanism. Skipped when cwd is inside the missions repo (self-resolving) or `--no-marker`
-   is given. An existing marker naming a *different* slug refuses rather than overwrites; an
-   identical one is a no-op.
+   is given. Markers never nest (§5.3): an existing marker anywhere on the cwd→root chain
+   naming a *different* slug refuses (remove it, or pass `--no-marker`); one naming the same
+   slug makes the write a no-op — context already resolves.
 
 `new` performs no git operations (invariant 4): committing the scaffold is the first custody
 commit, made by the caller per the skill (§8).
@@ -483,8 +486,10 @@ keeps the blast radius exactly this small: the dir name, two fields, and the mar
 
 Markers are pointers into working directories: usually untracked (project gitignore or global
 excludes), deleted when the worktree's mission involvement ends, committed only on branches
-dedicated to mission work. A stale marker fails loudly at resolution (§5.3), so the cost of
-forgetting one is a clear refusal, not silent misdirection.
+dedicated to mission work. **One marker per directory chain** — markers never nest: switching
+a subtree to a different mission means removing or moving the existing marker, never planting
+an inner one. A stale marker fails loudly at resolution (§5.3), so the cost of forgetting one
+is a clear refusal, not silent misdirection.
 
 ## 9. Acceptance scenarios
 
@@ -502,9 +507,9 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
 - **AC-2 slug rules** — `new` refuses: an existing slug, `Perf_Regression`, `-x`, `a--b`,
   `x-`, a 65-char slug — each with a one-line reason. `mission` frontmatter ≠ dir name is
   reported by `status` as a warning.
-- **AC-3 marker safety** — `new` in a cwd holding a `.mission` for a *different* slug refuses;
-  for the same slug, no-op; with `--no-marker`, or from inside the missions repo, no marker is
-  written.
+- **AC-3 marker safety** — `new` with a `.mission` for a *different* slug anywhere on the
+  cwd→root chain refuses (markers never nest); same slug on the chain → no-op; with
+  `--no-marker`, or from inside the missions repo, no marker is written.
 - **AC-4 board ready** — immediately after `new`, `mission backlog task create "First task"`
   succeeds and the task lands on the mission's board.
 
@@ -527,7 +532,8 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
 
 - **AC-9 resolution order** — with all three sources present and disagreeing, `--mission` wins;
   absent the flag, cwd-inside-mission-dir wins over a marker higher up; absent both, the
-  nearest marker wins over a farther one.
+  single chain marker resolves — and two markers on one ancestor chain refuse, naming both
+  paths (markers never shadow).
 - **AC-10 refusals** — no context anywhere → refusal naming flag, cwd, and marker; marker
   pointing at a missing mission → refusal naming the slug; `$MISSIONS_REPO` unset where needed
   → setup guidance. No command scans for candidate missions.
@@ -614,7 +620,7 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 | M8 | Manifest authority: advisory `authority:` label-grade field, stamped by `new`; transfer = editing the field; conflict on mission.md = violation, authority wins | Q16 | §4.2, invariant 8, §7.2, AC-16 |
 | M9 | Mission↔herder contract = board assignee holding an opaque label-grade name; every richer join herder-side at view time; missions herder-unaware, herder may be very mission-aware | Q17 | Invariant 2, §2, §10 |
 | M10 | One shared missions repo, located by `$MISSIONS_REPO`; board per mission always; item movement in prose | D11, D4 | §5.1, §10 |
-| M11 | Context = marker-file/cwd resolution with explicit-flag override; `.mission` = slug pointer; env carries repo location only, never mission identity | D6 | §5, invariant 12, AC-9..10 |
+| M11 | Context = marker-file/cwd resolution with explicit-flag override; `.mission` = slug pointer; markers never shadow (one per ancestor chain — two on a chain refuse, `new` won't write beneath a different-slug marker); env carries repo location only, never mission identity | D6 + owner ruling 2026-07-09 | §5, invariant 12, AC-3, AC-9..10 |
 | M12 | Multi-node posture: union-by-construction (task-per-file + disjoint artifact paths + single-authority manifest); fixed conflict taxonomy; no merge drivers | Boundaries §4, Q16 | §7, invariant 10, AC-15..16 |
 | M13 | Missions strictly opt-in; missionless path costs zero | S2 | Invariant 3, AC-10 |
 | M14 | Custody-commit grammar `mission(<slug>): <verb> <summary>` with an open, documented verb vocabulary (new/adopt/harvest/delete/close) and optional trailers | Q13 amendment surviving Q15 | §8.2, AC-17 |
@@ -633,9 +639,10 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
    `$SESSION_OWNER` → OS user and echoed at creation. Node identity (hostname, OS user) and
    human owner are distinct concepts; the single declared gap-cover for service-account
    fleets is `SESSION_OWNER`, one name shared across mission / herder / session-service.
-3. **Marker default posture:** is write-marker-by-default right for `mission new`, or should
-   the marker be opt-in (`--marker`)? Current draft: default-on with `--no-marker`, skipped
-   inside the missions repo.
+3. **Marker default posture:** ~~default-on or opt-in?~~ **Resolved 2026-07-09: default-on,
+   with the no-shadowing amendment** — markers never nest: resolution refuses on two markers
+   in one ancestor chain, and `new` refuses to write beneath an existing different-slug
+   marker. One marker states the mission for everything below it.
 4. **Backlog.md version posture:** ~~minimum, mise-pin, or behavioural assumption only?~~
    **Resolved 2026-07-09: minimum version (≥ 1.47) + the stated behavioural assumptions**
    (§4.4). Getting the CLI onto a machine is install-tooling business (ai-sync today);
