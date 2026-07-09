@@ -200,6 +200,13 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
 10. **End-of-run tail:** fresh-context deep review against the acceptance criteria + remnant
    sweep + golden-agent check if bottled (`references/adversarial.md`), then harvest before the
    PR.
+11. **Durable artifacts never carry delivery identifiers.** READMEs, specs, docs, help text,
+   error messages, and code comments must read standalone: no milestone tags (M2), unit letters
+   (U7), task numbers (TASK-099), plan requirement IDs (R23), wave/lane names, or any other
+   run-scoped label — those mean nothing to a reader who wasn't in the run. Say the thing
+   itself ("until tailnet auth ships" not "until M4"). Delivery identifiers belong only in
+   run-scoped artifacts: the playbook, run-log, backlog tasks, bus messages, commit messages.
+   Review of any doc-carrying diff includes a sweep for these before merge.
 
 Lifecycle mechanics (`herder enroll` / `fork` / `resume`) live in the `herder` CLI — `herder --help`.
 

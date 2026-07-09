@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-09 06:04'
-updated_date: '2026-07-09 07:12'
+updated_date: '2026-07-09 21:04'
 labels: []
 dependencies: []
 priority: medium
@@ -41,10 +41,16 @@ SAFETY RAILS: run all grok experiments in a scratch directory, never against thi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A characterization report exists (napkin or docs/design/, dated) covering all five numbered areas, each backed by at-least-one actual grok run (command + observed output quoted), or an explicit documented blocker (e.g. no API key on this machine) for areas that could not be exercised
-- [ ] #2 The Claude-hooks-compatibility claim is tested empirically: a minimal hook config in grok's compatibility mode, with a table of which Claude hook events fired vs did not, and whether hook-injected context reached the model
-- [ ] #3 A definitive answer to the owner's hypothesis: can a grok session be launched and join the hcom bus (register + receive a delivered message)? YES with a reproduced transcript, or NO with the specific missing capability named
-- [ ] #4 A gap list names each herder file/function needing a grok case, each item marked trivial-switch-arm / needs-design / blocked-upstream
-- [ ] #5 A draft new-harness onboarding playbook exists as a standalone doc, written harness-agnostically, with grok as its first worked example
-- [ ] #6 No herder/hcom production code or live registry/bus state was modified; all experiments ran in scratch dirs
+- [x] #1 A characterization report exists (napkin or docs/design/, dated) covering all five numbered areas, each backed by at-least-one actual grok run (command + observed output quoted), or an explicit documented blocker (e.g. no API key on this machine) for areas that could not be exercised
+- [x] #2 The Claude-hooks-compatibility claim is tested empirically: a minimal hook config in grok's compatibility mode, with a table of which Claude hook events fired vs did not, and whether hook-injected context reached the model
+- [x] #3 A definitive answer to the owner's hypothesis: can a grok session be launched and join the hcom bus (register + receive a delivered message)? YES with a reproduced transcript, or NO with the specific missing capability named
+- [x] #4 A gap list names each herder file/function needing a grok case, each item marked trivial-switch-arm / needs-design / blocked-upstream
+- [x] #5 A draft new-harness onboarding playbook exists as a standalone doc, written harness-agnostically, with grok as its first worked example
+- [x] #6 No herder/hcom production code or live registry/bus state was modified; all experiments ran in scratch dirs
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Deliverables (committed, docs/design/): 2026-07-09-grok-cli-characterization.md + 2026-07-09-new-harness-onboarding-playbook.md. Headline findings: grok 0.2.93 CAN self-join the hcom bus via the always-trusted ~/.claude/settings.json Claude-hooks compatibility path, BUT it discards ALL passive-hook stdout — no context injection reaches the model — so bus-join is NO overall (registration without delivery is not membership). Viable integration shape: codex-style --rules bootstrap + pty-paste prompt delivery. Gap list: 8 trivial switch-arms, 4 needs-design, 1 blocked-upstream. No production code or live state touched; all runs in scratch. (Notes backfilled 2026-07-09 after owner flagged the Done row was bare — closeout doctrine: notes + AC checks land WITH the Done transition.)
+<!-- SECTION:NOTES:END -->
