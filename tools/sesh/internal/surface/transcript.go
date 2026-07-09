@@ -133,7 +133,7 @@ func (s *Server) buildEntry(ctx context.Context, tool wire.Tool, row wire.IndexM
 		entry.Truncated = true
 		readEnd = row.ByteStart + excerptBytes
 	}
-	line, err := s.store.MirrorRange(ctx, tool, row.FileUUID, row.Generation, row.ByteStart, readEnd)
+	line, err := s.store.MirrorRange(ctx, tool, row.WireSessionID, row.FileUUID, row.Generation, row.ByteStart, readEnd)
 	if err != nil {
 		s.log.Printf("surface: mirror range %s/%s gen %d [%d,%d): %v",
 			tool, row.FileUUID, row.Generation, row.ByteStart, readEnd, err)
