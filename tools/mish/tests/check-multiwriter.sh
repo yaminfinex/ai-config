@@ -9,7 +9,7 @@ build_mish
 step "AC-15 clean union across two clones"
 origin="$WORK/origin.git"
 seed="$WORK/seed"
-git init -q --bare "$origin"
+git_init_bare_origin "$origin"
 mkdir -p "$seed"
 git_init_repo "$seed"
 MISSIONS_REPO_DIR="$seed" new_mission union-demo --authority hera
@@ -20,7 +20,6 @@ assert_status 0
 git_commit_all "$seed" "seed union mission"
 git -C "$seed" remote add origin "$origin"
 git -C "$seed" push -q -u origin HEAD:main
-git -C "$origin" symbolic-ref HEAD refs/heads/main
 
 git clone -q "$origin" "$WORK/node-a"
 git clone -q "$origin" "$WORK/node-b"
@@ -47,8 +46,20 @@ git -C "$WORK/node-a" pull -q --no-rebase origin main
 
 assert_file "$WORK/node-a/missions/union-demo/artifacts/a/result.txt"
 assert_file "$WORK/node-a/missions/union-demo/artifacts/b/result.txt"
+assert_file "$WORK/node-b/missions/union-demo/artifacts/a/result.txt"
+assert_file "$WORK/node-b/missions/union-demo/artifacts/b/result.txt"
+if grep -R -n -E '^(<<<<<<<|=======|>>>>>>>)' "$WORK/node-a/missions/union-demo" "$WORK/node-b/missions/union-demo"; then
+  fail "merged union tree contains conflict markers"
+fi
 MISSIONS_REPO_DIR="$WORK/node-a" run_mish "$WORK/node-a/missions/union-demo" "union-status" status
 assert_status 0
 assert_contains "$LAST_OUT" "2 task"
+MISSIONS_REPO_DIR="$WORK/node-b" run_mish "$WORK/node-b/missions/union-demo" "union-status-node-b" status
+assert_status 0
+assert_contains "$LAST_OUT" "2 task"
+MISSIONS_REPO_DIR="$WORK/node-b" run_mish "$WORK/node-b/missions/union-demo" "union-list-node-b" backlog task list
+assert_status 0
+assert_contains "$LAST_OUT" "Node A task"
+assert_contains "$LAST_OUT" "Node B task"
 
 all_green

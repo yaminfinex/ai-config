@@ -11,6 +11,8 @@ FIXTURES="$MISH_TESTS_DIR/fixtures"
 ORIG_PATH="$PATH"
 
 export GOTOOLCHAIN=local
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
 
 fail() {
   echo "FAIL: $*" >&2
@@ -42,6 +44,7 @@ preflight() {
     command -v "$dep" >/dev/null 2>&1 || fail "harness dependency missing: $dep"
   done
   version=$(backlog --version 2>/dev/null | tr -d '[:space:]')
+  # Exact 1.47.x is intentional: this harness pins the verified Backlog.md behaviour floor.
   case "$version" in
     1.47.*) ;;
     *) fail "Backlog.md version ${version:-unknown} is not the verified 1.47.x floor" ;;
@@ -76,6 +79,8 @@ mish_env() {
     HOME="$HOME_DIR" \
     USER="mish-u10" \
     PATH="$BIN:$ORIG_PATH" \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_CONFIG_SYSTEM=/dev/null \
     MISSIONS_REPO="$MISSIONS_REPO_DIR"
   )
   if [ "${SESSION_OWNER_VALUE+x}" = "x" ]; then
@@ -89,7 +94,9 @@ mish_env_no_repo() {
     env -i \
     HOME="$HOME_DIR" \
     USER="mish-u10" \
-    PATH="$BIN:$ORIG_PATH"
+    PATH="$BIN:$ORIG_PATH" \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_CONFIG_SYSTEM=/dev/null
   )
   if [ "${SESSION_OWNER_VALUE+x}" = "x" ]; then
     env_args+=(SESSION_OWNER="$SESSION_OWNER_VALUE")
@@ -197,6 +204,12 @@ git_init_repo() {
   git -C "$dir" init -q
   git -C "$dir" config user.email mish-u10@example.invalid
   git -C "$dir" config user.name "mish u10"
+}
+
+git_init_bare_origin() {
+  local origin=$1
+  git init -q --bare "$origin"
+  git -C "$origin" symbolic-ref HEAD refs/heads/main
 }
 
 git_commit_all() {

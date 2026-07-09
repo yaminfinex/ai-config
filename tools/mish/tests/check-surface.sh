@@ -12,8 +12,7 @@ run_mish "$INVOKE_DIR" "surface-task" backlog --mission surface-a task create "S
 assert_status 0
 git_commit_all "$MISSIONS_REPO_DIR" "seed surface"
 origin="$WORK/surface-origin.git"
-git init -q --bare "$origin"
-git -C "$origin" symbolic-ref HEAD refs/heads/main
+git_init_bare_origin "$origin"
 git -C "$MISSIONS_REPO_DIR" remote add origin "$origin"
 git -C "$MISSIONS_REPO_DIR" push -q -u origin HEAD:main
 
@@ -78,5 +77,8 @@ mkdir -p "$outside"
 run_mish "$outside" "overview-refuse-outside" status
 assert_status 1
 assert_contains "$LAST_ERR" "--mission"
+assert_not_contains "$LAST_OUT" "SLUG"
+assert_not_contains "$LAST_OUT" "surface-a"
+assert_not_contains "$LAST_OUT" "surface-closed"
 
 all_green

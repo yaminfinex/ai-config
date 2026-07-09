@@ -6,9 +6,26 @@ preflight
 setup_workspace
 build_mish
 
+make_git_shim() {
+  local real_git shim_dir
+  real_git=$(command -v git)
+  shim_dir="$WORK/git-shim"
+  mkdir -p "$shim_dir"
+  cat >"$shim_dir/git" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$WORK/git.log"
+exec "$real_git" "\$@"
+EOF
+  chmod +x "$shim_dir/git"
+  echo "$shim_dir"
+}
+
 step "AC-1 scaffold format and owner/authority echo"
-SESSION_OWNER_VALUE="env-owner" run_mish "$INVOKE_DIR" "new-perf-regression" new perf-regression --authority hera
+shim=$(make_git_shim)
+: >"$WORK/git.log"
+PATH="$shim:$PATH" SESSION_OWNER_VALUE="env-owner" run_mish "$INVOKE_DIR" "new-perf-regression" new perf-regression --authority hera
 assert_status 0
+[ ! -s "$WORK/git.log" ] || fail "AC-1 scaffold invoked git"
 mission="$(mission_dir perf-regression)"
 assert_dir "$mission"
 assert_file "$mission/mission.md"
