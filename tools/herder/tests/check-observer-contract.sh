@@ -89,7 +89,7 @@ case_dir() {
 
 start_socket_server() {
   python3 - "$HDR" >"$CASE/socket.log" 2>&1 <<'PY' &
-import json, os, socket, sys, threading
+import json, os, socket, sys, threading, time
 
 state = sys.argv[1]
 sock_path = os.path.join(state, "herdr.sock")
@@ -129,14 +129,25 @@ def response(req):
 
 def handle(conn):
     with conn:
+        with open(os.path.join(state, "connections"), "a") as f:
+            f.write("1\n")
         f = conn.makefile("rwb")
         for raw in f:
             try:
-                resp = response(json.loads(raw))
+                req = json.loads(raw)
+                resp = response(req)
             except Exception as exc:
+                req = {}
                 resp = {"id": None, "error": {"code": "mock_error", "message": str(exc)}}
             f.write((json.dumps(resp, separators=(",", ":")) + "\n").encode())
             f.flush()
+            if os.path.exists(os.path.join(state, "close_after_first_request")):
+                return
+            if os.path.exists(os.path.join(state, "close_rpc_after_first_request")) and req.get("method") != "events.subscribe":
+                return
+            if os.path.exists(os.path.join(state, "close_rpc_after_first_request")) and req.get("method") == "events.subscribe":
+                while True:
+                    time.sleep(60)
 
 while True:
     conn, _ = server.accept()
@@ -201,6 +212,21 @@ run_sweep_json() {
 
 latest_count() {
   jq -s --arg guid "$1" --arg event "$2" '[.[] | select(.kind!="node" and .guid==$guid and .event==$event)] | length' "$STATE/registry.jsonl"
+}
+
+connection_count() {
+  if [[ -f "$HDR/connections" ]]; then
+    wc -l <"$HDR/connections"
+  else
+    printf '0\n'
+  fi
+}
+
+mtime_ns() {
+  python3 - "$1" <<'PY'
+import os, sys
+print(os.stat(sys.argv[1]).st_mtime_ns)
+PY
 }
 
 assert_jq() {
@@ -480,6 +506,104 @@ JSONL
   wait "$pid" 2>/dev/null || true
 }
 
+t12_close_after_first_rpc_transport() {
+  case_dir t12split
+  : >"$HDR/close_rpc_after_first_request"
+  write_registry <<JSONL
+$node_row
+$(session_row guid-a seated a t1 p1 bus-a enroll old-a)
+$(session_row guid-b seated b t2 p2 bus-b enroll old-b)
+JSONL
+  snapshot '[{"pane_id":"p1","terminal_id":"t1","label":"a"},{"pane_id":"p2","terminal_id":"t2","label":"b"}]' '[]'
+  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local HERDER_OBSERVER_SWEEP_INTERVAL=1s "${HERDER[@]}" observer run >"$CASE/run.out" 2>"$CASE/run.err" &
+  pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    jq -e '.protocol_compatible == true' "$STATE/observer.status.json" >/dev/null 2>&1 && [[ -f "$HDR/subscribed" ]] && break
+    sleep 0.2
+  done
+  jq -e '.protocol_compatible == true' "$STATE/observer.status.json" >/dev/null 2>&1 && pass "T-12 split transport sweeps through close-after-first RPC server" || fail_case "T-12 split transport status" "$(cat "$CASE/run.err" 2>/dev/null)"
+  [[ -f "$HDR/subscribed" ]] && pass "T-12 split transport keeps subscribe stream separate" || fail_case "T-12 split transport subscribe" "$(cat "$CASE/run.err" 2>/dev/null)"
+  snapshot '[]' '[]'
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    [[ "$(jq -s '[.[] | select(.event=="unseated" and .close_result=="observed_dead")] | length' "$STATE/registry.jsonl")" == "2" ]] && break
+    sleep 0.3
+  done
+  [[ "$(jq -s '[.[] | select(.event=="unseated" and .close_result=="observed_dead")] | length' "$STATE/registry.jsonl")" == "2" ]] && pass "T-12 split transport preserves same-epoch absence semantics" || fail_case "T-12 split transport absence" "$(cat "$STATE/registry.jsonl")"
+  run_herder "${HERDER[@]}" observer stop >/dev/null 2>&1 || true
+  wait "$pid" 2>/dev/null || true
+}
+
+t13_post_death_backoff_and_failed_heartbeat() {
+  case_dir t13backoff
+  : >"$HDR/close_after_first_request"
+  write_registry <<JSONL
+$node_row
+JSONL
+  snapshot '[]' '[]'
+  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local HERDER_OBSERVER_SWEEP_INTERVAL=2s "${HERDER[@]}" observer run >"$CASE/run.out" 2>"$CASE/run.err" &
+  pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    grep -q 'reconnecting after' "$CASE/run.err" 2>/dev/null && break
+    sleep 0.2
+  done
+  before="$(connection_count)"
+  sleep 0.7
+  after="$(connection_count)"
+  if (( after <= before + 1 )); then
+    pass "T-13 post-death reconnect backs off"
+  else
+    fail_case "T-13 post-death reconnect backs off" "connections before=$before after=$after"
+  fi
+  grep -q 'reconnecting after herdr socket closed' "$CASE/run.err" && pass "T-13 reconnect transition logs cause" || fail_case "T-13 reconnect transition log" "$(cat "$CASE/run.err" 2>/dev/null)"
+  run_herder "${HERDER[@]}" observer stop >/dev/null 2>&1 || true
+  wait "$pid" 2>/dev/null || true
+
+  case_dir t13heartbeat
+  write_registry <<JSONL
+$node_row
+JSONL
+  snapshot '[]' '[]'
+  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" MOCK_HERDR_PROTOCOL=17 GOTOOLCHAIN=local HERDER_OBSERVER_SWEEP_INTERVAL=1s "${HERDER[@]}" observer run >"$CASE/run.out" 2>"$CASE/run.err" &
+  pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [[ -f "$STATE/observer.lock" && -f "$STATE/observer.status.json" ]] && jq -e '.protocol_compatible == false' "$STATE/observer.status.json" >/dev/null 2>&1 && break
+    sleep 0.2
+  done
+  m1="$(mtime_ns "$STATE/observer.lock")"
+  sleep 1.3
+  m2="$(mtime_ns "$STATE/observer.lock")"
+  [[ "$m1" == "$m2" ]] && pass "T-13 failed sweeps do not advance heartbeat file" || fail_case "T-13 failed heartbeat stalls" "mtime before=$m1 after=$m2"
+  grep -q 'sweep transport unhealthy' "$CASE/run.err" && pass "T-13 failed sweep logs transport cause" || fail_case "T-13 failed sweep log" "$(cat "$CASE/run.err" 2>/dev/null)"
+  run_herder "${HERDER[@]}" observer stop >/dev/null 2>&1 || true
+  wait "$pid" 2>/dev/null || true
+}
+
+t14_rebound_socket_starts_new_epoch() {
+  case_dir t14epoch
+  write_registry <<JSONL
+$node_row
+$(session_row guid-a seated a t1 p1 bus-a enroll old-a)
+$(session_row guid-b seated b t2 p2 bus-b enroll old-b)
+JSONL
+  snapshot '[{"pane_id":"p1","terminal_id":"t1","label":"a"},{"pane_id":"p2","terminal_id":"t2","label":"b"}]' '[]'
+  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local HERDER_OBSERVER_SWEEP_INTERVAL=1s "${HERDER[@]}" observer run >"$CASE/run.out" 2>"$CASE/run.err" &
+  pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    jq -e '.protocol_compatible == true' "$STATE/observer.status.json" >/dev/null 2>&1 && [[ -f "$HDR/subscribed" ]] && break
+    sleep 0.2
+  done
+  sleep 1.4
+  before="$(jq -s '[.[] | select(.event=="unseated" and .close_result=="observed_dead")] | length' "$STATE/registry.jsonl")"
+  snapshot '[{"pane_id":"pZ","terminal_id":"tZ","label":"z"}]' '[]'
+  start_socket_server
+  sleep 4
+  after="$(jq -s '[.[] | select(.event=="unseated" and .close_result=="observed_dead")] | length' "$STATE/registry.jsonl")"
+  [[ "$before" == "0" && "$after" == "0" ]] && pass "T-14 rebound socket starts new epoch without same-epoch unseats" || fail_case "T-14 rebound socket epoch guard" "$(cat "$STATE/registry.jsonl")"
+  grep -q 'herdr socket incarnation changed' "$CASE/run.err" && pass "T-14 rebound socket reconnects with incarnation-change cause" || fail_case "T-14 rebound socket reconnect log" "$(cat "$CASE/run.err" 2>/dev/null)"
+  run_herder "${HERDER[@]}" observer stop >/dev/null 2>&1 || true
+  wait "$pid" 2>/dev/null || true
+}
+
 tnudge_autostart() {
   case_dir nudge
   write_registry <<JSONL
@@ -509,6 +633,9 @@ run_step1() {
 
 run_step2() {
   t8_status_stop
+  t12_close_after_first_rpc_transport
+  t13_post_death_backoff_and_failed_heartbeat
+  t14_rebound_socket_starts_new_epoch
 }
 
 run_step3() {

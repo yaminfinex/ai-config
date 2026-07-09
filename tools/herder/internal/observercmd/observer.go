@@ -190,7 +190,7 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 	if err != nil {
 		return sweepResult{}, err
 	}
-	hd := loadHerdrState(hctx)
+	hd := loadHerdrState(hctx, stderr)
 	if !hd.available {
 		st.ProtocolCompatible = false
 		st.ProtocolDetail = hd.err.Error()
@@ -227,11 +227,11 @@ func loadProjection(path string, stderr io.Writer) (*v2.Projection, error) {
 	return v2.Load(f, v2.LoadOptions{Stderr: stderr})
 }
 
-func loadHerdrState(hctx *herdrContext) herdrState {
+func loadHerdrState(hctx *herdrContext, stderr io.Writer) herdrState {
 	if hctx != nil && hctx.client != nil {
 		return loadHerdrStateSocket(hctx, "socket")
 	}
-	client, st, err := connectHerdrSocket()
+	client, st, err := connectHerdrRPCClient(stderr)
 	if err != nil {
 		if cliFallbackAllowed(st) {
 			if hd := loadHerdrStateCLI("cli-fallback"); hd.available {
@@ -846,9 +846,10 @@ func runDaemon(stdout, stderr io.Writer) int {
 	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
 	defer signal.Stop(signals)
 	for {
-		client, _, err := connectHerdrSocket()
+		client, _, err := connectHerdrSocket(stderr)
 		if err != nil {
-			_, _ = sweepOnceWithHerdr(stderr, nil)
+			fmt.Fprintf(stderr, "herder observer run: herdr socket connect failed: %v; retrying after %s\n", err, interval)
+			sweepDaemonOnce(stderr, nil, lock.path)
 			if waitOrSignal(interval, signals) {
 				return 0
 			}
@@ -856,52 +857,103 @@ func runDaemon(stdout, stderr io.Writer) int {
 		}
 		hctx := &herdrContext{client: client, seenTerms: map[string]bool{}, connectionGap: true}
 		if err := client.subscribeObserverEvents(); err != nil {
-			fmt.Fprintf(stderr, "herder observer run: events.subscribe failed: %v\n", err)
+			fmt.Fprintf(stderr, "herder observer run: events.subscribe failed: %v; retrying after %s\n", err, interval)
 			client.Close()
-			_, _ = sweepOnceWithHerdr(stderr, nil)
+			sweepDaemonOnce(stderr, nil, lock.path)
 			if waitOrSignal(interval, signals) {
 				return 0
 			}
 			continue
 		}
-		_, _ = sweepOnceWithHerdr(stderr, hctx)
-		_ = touch(lock.path)
+		if err := sweepDaemonOnce(stderr, hctx, lock.path); err != nil {
+			fmt.Fprintf(stderr, "herder observer run: reconnecting after initial sweep failed: %v; retrying after %s\n", err, interval)
+			client.Close()
+			if waitOrSignal(interval, signals) {
+				return 0
+			}
+			continue
+		}
 		ticker := time.NewTicker(interval)
 		reconnect := false
+		reconnectCause := ""
 		for !reconnect {
+			if client.isClosed() {
+				reconnect = true
+				reconnectCause = client.closeCause().Error()
+				break
+			}
 			select {
 			case <-ticker.C:
-				if _, err := sweepOnceWithHerdr(stderr, hctx); err != nil {
+				if client.isClosed() {
 					reconnect = true
+					reconnectCause = client.closeCause().Error()
+					break
 				}
-				_ = touch(lock.path)
+				if err := sweepDaemonOnce(stderr, hctx, lock.path); err != nil {
+					reconnect = true
+					reconnectCause = fmt.Sprintf("sweep failed: %v", err)
+				}
 			case <-signals:
 				ticker.Stop()
 				client.Close()
 				return 0
 			default:
 				if client.nextEvent(250 * time.Millisecond) {
+					if client.isClosed() {
+						reconnect = true
+						reconnectCause = client.closeCause().Error()
+						break
+					}
 					// Events are latency hints. A full sweep is still the correctness
 					// path, and it subsumes a targeted probe while preserving the
 					// same uninterrupted socket generation.
-					_, _ = sweepOnceWithHerdr(stderr, hctx)
-					_ = touch(lock.path)
+					if err := sweepDaemonOnce(stderr, hctx, lock.path); err != nil {
+						reconnect = true
+						reconnectCause = fmt.Sprintf("event-triggered sweep failed: %v", err)
+					}
 				}
 				select {
 				case <-client.closed:
 					reconnect = true
+					if reconnectCause == "" {
+						reconnectCause = client.closeCause().Error()
+					}
 				default:
 				}
 			}
 		}
 		ticker.Stop()
 		client.Close()
+		if reconnectCause == "" {
+			reconnectCause = "herdr socket reconnect requested"
+		}
+		fmt.Fprintf(stderr, "herder observer run: reconnecting after %s; retrying after %s\n", reconnectCause, interval)
 		select {
 		case <-signals:
 			return 0
 		default:
 		}
+		if waitOrSignal(interval, signals) {
+			return 0
+		}
 	}
+}
+
+func sweepDaemonOnce(stderr io.Writer, hctx *herdrContext, heartbeatPath string) error {
+	res, err := sweepOnceWithHerdr(stderr, hctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "herder observer run: sweep failed: %v\n", err)
+		return err
+	}
+	if !res.Status.ProtocolCompatible {
+		fmt.Fprintf(stderr, "herder observer run: sweep transport unhealthy: %s\n", res.Status.ProtocolDetail)
+		return errors.New(res.Status.ProtocolDetail)
+	}
+	if err := touch(heartbeatPath); err != nil {
+		fmt.Fprintf(stderr, "herder observer run: heartbeat touch failed: %v\n", err)
+		return err
+	}
+	return nil
 }
 
 func waitOrSignal(d time.Duration, signals <-chan os.Signal) bool {
