@@ -74,8 +74,8 @@ strictest type.
   durable design document, (b) spec errata routed through the spec-steward lane wherever a
   ratified spec is touched — the designer proposes, never edits — and (c) the follow-on
   implementation task(s) written filed-ready: acceptance criteria and the settled-decisions
-  list (below) authored by the designer while intent is fresh. The designer gets a top-tier
-  reasoning model and delegation freedom — subagents for wide reading, its own jury for
+  list (below) authored by the designer while intent is fresh. The designer gets delegation
+  freedom (worker class per run-shape item 4) — subagents for wide reading, its own jury for
   genuinely contested sub-decisions — in a worktree that only grows docs. It never dispatches
   implementation: unit-cutting stays with the orchestrator, who files the tasks (single-writer).
   Review: adversarial design review before the design is declared buildable, stakes-gated; add
