@@ -6,9 +6,10 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-09 23:07'
+updated_date: '2026-07-09 23:07'
 labels: []
 dependencies: []
-priority: high
+priority: medium
 ordinal: 130000
 ---
 
@@ -32,3 +33,23 @@ Owner asked to speak to a culled worker; `herder resume` is the supported path b
 3. The relaunch-loop root cause is identified and fixed OR the failure surfaces the pane's actual exit output in the error.
 4. Full house gate green.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Amendment (2026-07-09, same day — owner clarified)
+
+The owner was deleting the resumed sessions/panes manually during the incident ("that was
+me deleting the session"). That explains defect 3 entirely (each relaunch worked; the pane
+was closed by the operator; herder's "pane exited before lifecycle bind" was accurate) and
+likely the first session's death too. DESCOPE defect 3 as a bug. What remains real:
+
+1. KEPT (primary): resume does not preflight the recorded cwd — it relaunched into a
+   deleted worktree and every hook failed with ENOENT (owner observed the errors live).
+   Refuse-with-remedy or remap before launch.
+2. KEPT (secondary): "launch failed before lifecycle bind" carries zero diagnostics —
+   include the pane's exit output / distinguish "process died" from "pane closed
+   externally". Had it shown that, this incident would have self-explained in one read.
+3. DOWNGRADED to note: placement-follows-focused-workspace — fold into TASK-124's
+   workspace-affinity design rather than fixing here.
+
+Priority drops high → medium accordingly. ACs 2 and 3 replaced by: (AC2') resume with a
+missing recorded cwd refuses before launch with a remedy, golden-covered; (AC3') the
+lifecycle-bind failure message includes the pane exit context.
