@@ -64,6 +64,8 @@ run orchestration protocols (the `orchestrate` skill's domain).
 | **epoch** | One continuous lifetime of a substrate authority: hcom epoch = one db lifetime within a namespace; herdr epoch = one server lifetime. Herder mints surrogate epoch ids on first observation. |
 | **registry** | Herder's append-only JSONL event log; latest-row-per-guid projection is current state. The sole seat→session authority. |
 | **sidecar** | Per-occupant background process: status bridge (hcom events → herdr agent status), enrolment, name capture, turnover detection. |
+| **observer (node observer)** | Per-node disposable daemon that observes every seated row's liveness regardless of seat mechanism (spawn / enroll / resume / fork). Holds no write authority: its observation facts append through the §5.2 shared locked writer, byte-indistinguishable from CLI appends. Its death or rebuild is a non-event. |
+| **observation fact** | A registry row recording something the observer (or a sidecar) positively witnessed about a seat. Liveness claims without an appended row are advice, never truth. |
 | **cull** | Destroy a seat. The session goes unseated (dormant, resumable) — culling is not retirement. |
 
 ## 3. Domain model
@@ -110,7 +112,17 @@ seat: holds ≤1 session at a time; kind ∈ {herdr, process}
 12. **Unknown-node rows are anomalies, not peers.** The local herder writes only as the owning
     node. A row attributed to any other node id (a synced-in or hand-copied fragment) is
     flagged loudly by the loader, surfaced in `list`, and never written to or adjudicated.
-    Cross-node behaviour is out of scope (§10).
+    *Unknown* means no `node_registered` record for that id exists in this file: rows from a
+    prior local identity (pre-`node init --new`) are history, not anomalies — their sessions
+    stay resolvable and manageable, and any new row they accrue stamps the current owning
+    node. Cross-node behaviour is out of scope (§10).
+13. **The observer holds no write authority.** No registry write ever routes *through* the
+    node observer; observer appends use the §5.2 discipline as an ordinary peer and obey the
+    confirmed-write contract (every append reports applied | noop | refused; none discarded).
+    Observer liveness is never a precondition for any verb.
+14. **The observer is disposable.** Its death or rebuild is a non-event; no handoff protocol
+    may exist between observer generations; every boot re-derives its view from the registry
+    and live substrates (catch-up sweep, §8.4).
 
 ### 3.2 Session state machine
 
@@ -135,8 +147,8 @@ Label sub-machine (`unlabelled ⇄ labelled` via label/transfer/release-on-retir
 - **Seat liveness = occupant liveness.** Terminal presence is necessary, not sufficient: if the
   occupant exits while the terminal survives, the session is unseated (recorded) and the seat is
   vacant — re-seatable in place.
-- Unseating is a recorded event appended by whichever component first observes seat death,
-  never a per-caller inference.
+- Unseating is a recorded event appended by whichever component first observes seat death —
+  a sidecar, the node observer, or a CLI verb — never a per-caller inference.
 - Every seat binding carries: kind, key, `node`, `namespace`, `hcom_epoch`, `herdr_epoch`
   (herder epoch ids, §6), `hcom_name`, and a last-confirmed timestamp.
 
@@ -183,12 +195,19 @@ everything else is a cache.**
 - **Registry** — §5. The sole seat→session authority.
 - **`herder launch`** (choke point) — every managed launch flows through it; it forks the
   sidecar before exec'ing the tool.
-- **Sidecar** (hidden subcommand, one per occupant) — status bridge (hcom events →
+- **Sidecar** (hidden subcommand, one per occupant — spawned/shimmed launches only; enrolled
+  seats have no sidecar and are covered by the node observer) — status bridge (hcom events →
   `pane.report_agent`), enrolment + name capture, turnover detection (§8.1), guid anchoring
   (§5.3), and sid reporting: it pushes the sid it learns from the bus to the seat substrate
   (`pane.report_agent_session`), making herder its own sid reporter for the §8.3 probe.
   Exits with its occupant; distinguishes "bus errored" from "row absent" before
   counting an occupant miss.
+- **Node observer** (hidden subcommand, ≤1 per state dir) — tails the registry as its work
+  queue and observes every seated row via the seat substrates (herdr socket as an ordinary
+  client; bus row freshness; process probes). Appends observation facts as a §5.2 peer.
+  Covers sidecar-less seats (enrolled today); coexists with sidecars, whose appends are
+  idempotent alongside its own. In the diagram: a box parallel to the sidecar, reading the
+  registry and all three substrate layers, writing observation facts into the registry.
 - **PATH shims** — wrap hand-typed `claude`/`codex` into `herder launch` so hand launches join
   the same substrate (activation staged separately).
 
@@ -246,6 +265,8 @@ is display metadata, **never an ordering key**.
      "source": "hook | harvest | recognition"}
   ],
   "continuity": "confirmed | assumed",       // row-scoped epistemic claim
+  "observed_via": "…",                       // optional; probe trail for observer/sidecar
+                                             // appends (advice; per-row, never carried forward)
   "lineage": {"forked_from": null, "cleared_from": null,
               "displaced_by": null, "resume_failed_from": null},
   "provenance": {                            // frozen birth record; never changes
@@ -276,10 +297,36 @@ child-first; on disagreement the child edge wins.
   if atomic with the write. flock is a single-machine primitive: on filesystems where it cannot
   be reliably acquired (network mounts), the write refuses rather than proceeding unlocked.
 - **Label uniqueness is checked over the full projection.**
-- Rows carry only fields their writer owns; no append may revert a concurrent unrelated write
-  (a stale status enrichment cannot undo a rename or resurrect a culled session).
-- Hook-driven appends are idempotent: turnover registration dedupes on (seat, new sid);
-  unseat/retire/recognise are no-ops when the projection already shows the target state.
+- Rows carry only fields their writer owns — writers may *change* only owned fields, but every
+  appended row remains a full self-contained snapshot (§5.1): non-owned fields are carried
+  forward from the projection read under the same lock, and the merge lives once, in the shared
+  locked append helper, not in each writer. Absence of a field in a writer's patch means
+  carry-forward, never clear; clearing is itself an owned operation (unseat clears `seat{}`).
+  Envelope fields — `event`, `recorded_at`, the row-level `node` (writer attribution,
+  §3.1-10), and `observed_via` when present — are stamped fresh by (or supplied to) the
+  helper per append and are never carried forward.
+- Every locked append resolves **each candidate row** to exactly one typed outcome —
+  **applied** (that row written), **noop** (the projection already showed the target state
+  and the patch added no new information; idempotent re-assertion), or **refused**
+  (validation failed; the error names why). Writers must surface the outcome per candidate;
+  none may be discarded. Rows the write machinery itself appends alongside a caller's
+  candidates (node mint, migration, rotation) are never counted as the caller's outcomes.
+- The node observer appends under this same discipline as an ordinary peer. Its
+  check-then-append decisions are made against the projection loaded under the write lock,
+  never against its own cached view.
+  No append may revert a concurrent unrelated write (a stale status enrichment cannot undo a
+  rename; a late registration cannot mask a recognised seat's `hcom_name`; nothing resurrects
+  a culled session).
+- Appends are idempotent regardless of driver — the §3.2 `[idempotent]` markers are
+  caller-agnostic, hook- and user-driven alike: turnover registration dedupes on (seat, new
+  sid); unseat/retire/recognise are **confirmed no-ops** when the projection already shows the
+  target state **and the writer's owned patch adds no new information** — no row is appended,
+  and the command reports success plus the previously recorded fact (never a false negative,
+  never an annotation-rewrite of why a seat died). A first verified observation on a row that
+  lacks it (e.g. close-annotating a never-annotated migrated corpse after probing) IS new
+  information: one annotation row is legal; owned observation fields are write-once per
+  episode — later differing claims no-op, and unverifiable claims are rendered honestly,
+  never recorded (§3.1-9).
 - The loader **quarantines** malformed rows (skip + warn); one torn line never disables the CLI.
 - Projection anomalies (two live holders of one label; one session in two seats) resolve
   deterministically and loudly — flagged conflict, never silent tie-breaking.
@@ -396,7 +443,8 @@ appear in seat bindings and §8.3 reconciliation, never in addressing or human l
 | `resolve <target>` | Print the session's current coordinates (`--hcom-name`, `--terminal`, `--pane`, `--guid`) for composition with raw substrate commands. The general escape hatch (below). |
 | `cull <target>` | Destroy the seat; session → unseated. Never touches other sessions' rows; kills the sidecar last (no post-cull resurrection). |
 | `resume <target>` | Re-seat an unseated session, same guid. Refuses: already seated (names the seat, suggests fork), retired, lost. **Verifies** the tool's reported sid equals the requested sid; mismatch ⇒ turnover (new guid, `resume_failed_from`), never a same-guid re-seat. Prefers sid over hcom name as the launch vehicle. |
-| `fork <target>` | Register a new session from an existing one (`forked_from`); parent undisturbed; works on unseated parents (transcript is the substrate). |
+| `fork <target>` | Register a new session from an existing one (`forked_from`); parent undisturbed; works on unseated **and retired** parents — transcript is the substrate, and retirement closes the session's occupancy and label, never its history (§3.1-3). Only a `lost` parent refuses (transcript verified gone: no substrate).
+| `observer run \| sweep \| status \| stop` | Node observer lifecycle. `run`: the per-node daemon loop (singleton per state dir, flock-elected). `sweep`: one level-triggered observation pass, no daemon — the degraded-mode and testing surface. `status`/`stop`: lockfile-based, read-only / SIGTERM. Observer liveness is never a precondition for any other verb. | |
 | `rename <target> <label>` | Mint/move a label lease. Bare collision refuses; `--take-from <holder>` is the explicit takeover: atomic transfer + notify the displaced holder. Re-minting a previously-held name warns with the predecessor. |
 | `retire <target>` | Close the session for good; releases the label. `reopen` (rare, explicit) returns it unlabelled. |
 
@@ -413,7 +461,8 @@ wrapped; herder observes their effects as epoch boundaries (§6.3, §8.3).
 
 ### 8.1 Turnover detection (one rule, every path)
 
-The sidecar watches its seat's sid. **Sid changed in my seat ⇒ turnover**: unseat the old
+The seat's observer — the sidecar for spawned/shimmed seats, the node observer for
+sidecar-less seats — watches its seat's sid. **Sid changed in my seat ⇒ turnover**: unseat the old
 session (displaced), register the newcomer (new guid, `cleared_from`, unlabelled, unbriefed) —
 both inside one lock, child-first. Exception: sid changed *with* transcript-continuity evidence
 (prefix match / logical parent pointer) = the tool re-keyed the same conversation ⇒ `recognised`
@@ -457,6 +506,22 @@ later sid report upgrades assumed → confirmed per §8.2.
 This procedure is what makes herdr live-handoff updates, cold restarts, and hcom db resets all
 safe without herder distinguishing them in advance. Reconciliation only ever adjudicates seats
 recorded by the owning node; unknown-node rows (§3.1-12) are flagged, never probed or unseated.
+
+### 8.4 Catch-up sweep (observer)
+
+On every observer boot — downtime recovery is not a distinct mode — the observer runs one
+level-triggered sweep: current substrate snapshot × current bus state × current registry
+projection. Verdict discipline: **positive evidence of death unseats** (occupant exited, pane
+gone within an unchanged epoch, dead pid with stale bus row); **absence of evidence is an
+observation gap, never a verdict** (§8.3 sid-less doctrine applies); missed transitions during
+downtime collapse into their observed end state. Correction rows are appended at observation
+time — `recorded_at` is never backdated; staleness evidence rides in the row body. Dormant
+rows with live counter-evidence and epoch-wide doubt are **flagged for the explicit verbs**
+(enroll / reconcile / resume), never auto-repaired — and the flags are surfaced in the
+operator's default view (`list`), marked as observer advice (display-tier, sourced from the
+observer's status file — never mistakable for registry facts, which remain the sole authority
+per §3.1-8). Across a herdr epoch boundary (probe-inferred; terminal ids may be reissued
+wholesale), absence of recorded terminal ids alone never unseats.
 
 ## 9. Acceptance scenarios
 
@@ -567,6 +632,24 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
   reconciliation); legacy keys ignored; migrated rows node-attributed and event-marked as
   migration; re-running is a no-op.
 
+**Observer**
+
+- **AC-37 universal observation** — an *enrolled* session's occupant is killed without
+  `cull`: the observer records the unseating (positive evidence in the row) within one
+  sweep interval; behaviour identical for spawned/resumed/forked seats.
+- **AC-38 observer downtime** — seats die and turn over while no observer runs; the next
+  sweep converges the registry to the same end state as continuous observation, with no
+  backdated `recorded_at`.
+- **AC-39 disposability** — `kill -9` of the observer mid-loop loses nothing: restart
+  reacquires the singleton lock, the catch-up sweep re-derives the view, and no file
+  written by the previous generation is read by the new one.
+- **AC-40 advice, not repair** — an unseated row with a live matching occupant (the
+  migration dormant-default case) is flagged with evidence and a suggested verb; the
+  observer appends nothing for it; `enroll`/`reconcile`/`resume` remain the only re-seat
+  paths.
+- **AC-41 enrolled turnover** — `/clear` in an enrolled seat produces the child-first
+  turnover pair from the observer (§8.1), idempotent under re-observation.
+
 **Headless**
 
 - **AC-35 process seat** — a headless (hcom `--headless`) session gets a `process` seat:
@@ -596,8 +679,11 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
   future third concept; it never creates a seat; double-seat refusal is a single-writer rule.
 - **Restart/reconcile policy** (systemd `Restart=` analog) — herder is operator-driven; if ever
   added it hangs off the session or a supervisor concept, never the seat.
-- **Label TTLs / liveness-coupled labels; full bitemporal schema; registry daemon** —
-  considered and rejected; correction rows + flock are the right-sized mechanisms.
+- **Label TTLs / liveness-coupled labels; full bitemporal schema** — considered and rejected;
+  correction rows + flock are the right-sized mechanisms.
+- **Registry *write* daemon** — remains rejected. The node observer (§4, §8.4) holds no write
+  authority and no verb depends on its liveness; a daemon that owns or mediates registry
+  writes stays out of scope. (Sharpened, not reversed.)
 
 ## 11. Decisions embedded in this spec (ratification checklist)
 
