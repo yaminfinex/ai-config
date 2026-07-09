@@ -1,0 +1,262 @@
+//go:build linux
+
+package ship
+
+// Characterization tests for the /proc SESSION_OWNER correlation (U9, spec
+// §4.2), written before the correlator per the plan's failing-test-first
+// note. The kernel surface is reproduced as a fixture tree: status/comm/
+// environ as regular files, cwd and fd entries as real symlinks — the same
+// shapes the live scan reads, minus the kernel.
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"sesh/internal/wire"
+)
+
+type fakeProc struct {
+	t    *testing.T
+	root string
+}
+
+func newFakeProc(t *testing.T) *fakeProc {
+	t.Helper()
+	return &fakeProc{t: t, root: t.TempDir()}
+}
+
+// add writes one /proc/<pid> entry. env == nil means no environ file at all;
+// an "SESSION_OWNER" key absent from env means an environ without the
+// variable. openFiles become fd/N symlinks.
+func (f *fakeProc) add(pid, ppid, uid int, comm, cwd string, env map[string]string, openFiles ...string) {
+	f.t.Helper()
+	dir := filepath.Join(f.root, fmt.Sprint(pid))
+	if err := os.MkdirAll(filepath.Join(dir, "fd"), 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	status := fmt.Sprintf("Name:\t%s\nUmask:\t0002\nState:\tS (sleeping)\nPPid:\t%d\nUid:\t%d\t%d\t%d\t%d\n", comm, ppid, uid, uid, uid, uid)
+	if err := os.WriteFile(filepath.Join(dir, "status"), []byte(status), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "comm"), []byte(comm+"\n"), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+	if cwd != "" {
+		if err := os.Symlink(cwd, filepath.Join(dir, "cwd")); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	if env != nil {
+		var sb strings.Builder
+		for k, v := range env {
+			sb.WriteString(k + "=" + v + "\x00")
+		}
+		if err := os.WriteFile(filepath.Join(dir, "environ"), []byte(sb.String()), 0o644); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	for i, of := range openFiles {
+		if err := os.Symlink(of, filepath.Join(dir, "fd", fmt.Sprint(3+i))); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+}
+
+func (f *fakeProc) correlator() *procCorrelator {
+	return &procCorrelator{Root: f.root, UID: os.Getuid()}
+}
+
+func discoveredCodex(t *testing.T, dir string) Discovered {
+	t.Helper()
+	p := filepath.Join(dir, "rollout-2026-06-26T02-43-06-"+uuidCodex+".jsonl")
+	if err := os.WriteFile(p, fixture(t, "codex-rollout-meta.jsonl"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return Discovered{Identity: Identity{Tool: wire.ToolCodex, SessionID: uuidCodex, FileUUID: uuidCodex}, Path: p}
+}
+
+// discoveredClaude places the session file in a project dir named by the
+// claude munge of cohortCwd (every byte outside [A-Za-z0-9] becomes '-'),
+// which is the cohort key the correlator matches process cwds against.
+func discoveredClaude(t *testing.T, base, cohortCwd string) Discovered {
+	t.Helper()
+	dir := filepath.Join(base, mungeCwd(cohortCwd))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, uuidNormal+".jsonl")
+	if err := os.WriteFile(p, fixture(t, "claude-normal.jsonl"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return Discovered{Identity: Identity{Tool: wire.ToolClaude, SessionID: uuidNormal, FileUUID: uuidNormal}, Path: p}
+}
+
+// --- S6a: codex is fd-exact --------------------------------------------------
+
+func TestCodexOwnerExactViaOpenFD(t *testing.T) {
+	fp := newFakeProc(t)
+	d := discoveredCodex(t, t.TempDir())
+	fp.add(100, 1, os.Getuid(), "codex", "/anywhere", map[string]string{"SESSION_OWNER": "alice", "HOME": "/home/x"}, d.Path)
+	// An unrelated same-uid process holding other files must not interfere.
+	fp.add(200, 1, os.Getuid(), "vim", "/anywhere", map[string]string{"SESSION_OWNER": "bob"}, filepath.Join(t.TempDir(), "other.txt"))
+
+	owners := fp.correlator().CorrelateAll([]Discovered{d})
+	if got := owners[d.Identity.Key()]; got != "alice" {
+		t.Fatalf("codex owner = %q, want alice (exact fd join)", got)
+	}
+}
+
+func TestCodexOwnerLeafHolderWins(t *testing.T) {
+	fp := newFakeProc(t)
+	d := discoveredCodex(t, t.TempDir())
+	// Parent and child both hold the rollout open (inherited fd); the leaf
+	// (child) names the owner.
+	fp.add(100, 1, os.Getuid(), "sh", "/anywhere", map[string]string{"SESSION_OWNER": "parent-shell"}, d.Path)
+	fp.add(101, 100, os.Getuid(), "codex", "/anywhere", map[string]string{"SESSION_OWNER": "alice"}, d.Path)
+
+	owners := fp.correlator().CorrelateAll([]Discovered{d})
+	if got := owners[d.Identity.Key()]; got != "alice" {
+		t.Fatalf("codex owner = %q, want alice (leaf holder)", got)
+	}
+}
+
+func TestCodexOwnerAbsentWhenNoHolderOrNoVariable(t *testing.T) {
+	fp := newFakeProc(t)
+	d := discoveredCodex(t, t.TempDir())
+	// Holder exists but its environ has no SESSION_OWNER: honest absence.
+	fp.add(100, 1, os.Getuid(), "codex", "/anywhere", map[string]string{"HOME": "/home/x"}, d.Path)
+
+	owners := fp.correlator().CorrelateAll([]Discovered{d})
+	if got, ok := owners[d.Identity.Key()]; ok {
+		t.Fatalf("owner = %q, want absence (no SESSION_OWNER in holder environ)", got)
+	}
+	// Dead session: no process holds the file at all.
+	owners = newFakeProc(t).correlator().CorrelateAll([]Discovered{d})
+	if got, ok := owners[d.Identity.Key()]; ok {
+		t.Fatalf("owner = %q, want absence (no holder)", got)
+	}
+}
+
+// --- S6b: claude cohort is unanimous-or-absent -------------------------------
+
+func TestClaudeCohortUnanimousOrAbsent(t *testing.T) {
+	base := t.TempDir()
+	cwd := filepath.Join(t.TempDir(), "work.tree")
+	d := discoveredClaude(t, base, cwd)
+
+	t.Run("single candidate stamps", func(t *testing.T) {
+		fp := newFakeProc(t)
+		fp.add(100, 1, os.Getuid(), "claude", cwd, map[string]string{"SESSION_OWNER": "bob"})
+		if got := fp.correlator().CorrelateAll([]Discovered{d})[d.Identity.Key()]; got != "bob" {
+			t.Fatalf("owner = %q, want bob", got)
+		}
+	})
+	t.Run("two agreeing candidates stamp", func(t *testing.T) {
+		fp := newFakeProc(t)
+		fp.add(100, 1, os.Getuid(), "claude", cwd, map[string]string{"SESSION_OWNER": "bob"})
+		fp.add(101, 1, os.Getuid(), "claude", cwd, map[string]string{"SESSION_OWNER": "bob"})
+		if got := fp.correlator().CorrelateAll([]Discovered{d})[d.Identity.Key()]; got != "bob" {
+			t.Fatalf("owner = %q, want bob (unanimous)", got)
+		}
+	})
+	t.Run("disagreeing candidates yield absence", func(t *testing.T) {
+		fp := newFakeProc(t)
+		fp.add(100, 1, os.Getuid(), "claude", cwd, map[string]string{"SESSION_OWNER": "carol"})
+		fp.add(101, 1, os.Getuid(), "claude", cwd, map[string]string{"SESSION_OWNER": "dave"})
+		if got, ok := fp.correlator().CorrelateAll([]Discovered{d})[d.Identity.Key()]; ok {
+			t.Fatalf("owner = %q, want honest absence (same-cwd collision)", got)
+		}
+	})
+	t.Run("candidate without the variable breaks unanimity", func(t *testing.T) {
+		fp := newFakeProc(t)
+		fp.add(100, 1, os.Getuid(), "claude", cwd, map[string]string{"SESSION_OWNER": "carol"})
+		fp.add(101, 1, os.Getuid(), "claude", cwd, map[string]string{"HOME": "/home/x"})
+		if got, ok := fp.correlator().CorrelateAll([]Discovered{d})[d.Identity.Key()]; ok {
+			t.Fatalf("owner = %q, want absence", got)
+		}
+	})
+	t.Run("munge-colliding distinct cwds yield absence even when owners agree", func(t *testing.T) {
+		// The project-dir slug is lossy: /x/work.tree and /x/work-tree munge
+		// identically, so candidates from BOTH map to this session's slug
+		// while only one cwd can be the session's real cohort (U9 review,
+		// HIGH). Same owner on both sides is the discriminating case — a
+		// slug-keyed cohort would happily stamp it.
+		collided := strings.Replace(cwd, ".", "-", 1)
+		if mungeCwd(collided) != mungeCwd(cwd) || collided == cwd {
+			t.Fatalf("test self-check: %q and %q must be distinct munge-colliding cwds", cwd, collided)
+		}
+		fp := newFakeProc(t)
+		fp.add(100, 1, os.Getuid(), "claude", cwd, map[string]string{"SESSION_OWNER": "erin"})
+		fp.add(101, 1, os.Getuid(), "claude", collided, map[string]string{"SESSION_OWNER": "erin"})
+		if got, ok := fp.correlator().CorrelateAll([]Discovered{d})[d.Identity.Key()]; ok {
+			t.Fatalf("owner = %q, want absence (two distinct cwds behind one slug: cohort unresolvable)", got)
+		}
+	})
+	t.Run("other cwd and other comm are not candidates", func(t *testing.T) {
+		fp := newFakeProc(t)
+		fp.add(100, 1, os.Getuid(), "claude", cwd, map[string]string{"SESSION_OWNER": "bob"})
+		fp.add(101, 1, os.Getuid(), "claude", "/elsewhere", map[string]string{"SESSION_OWNER": "carol"})
+		fp.add(102, 1, os.Getuid(), "vim", cwd, map[string]string{"SESSION_OWNER": "dave"})
+		if got := fp.correlator().CorrelateAll([]Discovered{d})[d.Identity.Key()]; got != "bob" {
+			t.Fatalf("owner = %q, want bob (cohort excludes other cwd/comm)", got)
+		}
+	})
+}
+
+// --- S7/I9: the cross-user wall — other uids skipped before any read ---------
+
+func TestOtherUIDSkippedSilentlyBeforeAnyRead(t *testing.T) {
+	fp := newFakeProc(t)
+	d := discoveredCodex(t, t.TempDir())
+	// Another uid's process holds the same rollout with a READABLE environ:
+	// if the correlator consulted it, "mallory" would leak into the stamp.
+	// The uid gate must reject it from the status line alone.
+	fp.add(300, 1, os.Getuid()+1, "codex", "/anywhere", map[string]string{"SESSION_OWNER": "mallory"}, d.Path)
+	fp.add(100, 1, os.Getuid(), "codex", "/anywhere", map[string]string{"SESSION_OWNER": "alice"}, d.Path)
+
+	owners := fp.correlator().CorrelateAll([]Discovered{d})
+	if got := owners[d.Identity.Key()]; got != "alice" {
+		t.Fatalf("owner = %q, want alice (other-uid holder ignored)", got)
+	}
+
+	// On a live /proc the other uid's environ is unreadable (0400); a dying
+	// same-uid process races the same way. Either read failure is silent
+	// absence, never an error.
+	fp2 := newFakeProc(t)
+	d2 := discoveredCodex(t, t.TempDir())
+	fp2.add(400, 1, os.Getuid(), "codex", "/anywhere", map[string]string{"SESSION_OWNER": "gone"}, d2.Path)
+	if err := os.Chmod(filepath.Join(fp2.root, "400", "environ"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getuid() == 0 {
+		t.Skip("running as root: chmod 000 does not make the file unreadable")
+	}
+	owners = fp2.correlator().CorrelateAll([]Discovered{d2})
+	if got, ok := owners[d2.Identity.Key()]; ok {
+		t.Fatalf("owner = %q, want silent absence on unreadable environ", got)
+	}
+}
+
+// A process table that vanishes mid-scan (procfs races) must never error the
+// pass: correlation is best-effort enrichment, shipping never depends on it.
+func TestCorrelatorToleratesVanishingEntries(t *testing.T) {
+	fp := newFakeProc(t)
+	d := discoveredCodex(t, t.TempDir())
+	// Entry with a status file only — no comm, no cwd, no fd dir.
+	if err := os.MkdirAll(filepath.Join(fp.root, "500"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fp.root, "500", "status"), []byte(fmt.Sprintf("PPid:\t1\nUid:\t%d\t0\t0\t0\n", os.Getuid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Non-numeric entries (self, sys, ...) are ignored.
+	if err := os.MkdirAll(filepath.Join(fp.root, "self"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if owners := fp.correlator().CorrelateAll([]Discovered{d}); len(owners) != 0 {
+		t.Fatalf("owners = %v, want none", owners)
+	}
+}

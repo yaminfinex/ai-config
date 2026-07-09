@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sesh — session 019f01cf</title>
+<script src="/assets/htmx.min.js"></script>
+<style>
+:root { color-scheme: light dark; }
+body { font: 14px/1.45 system-ui, sans-serif; margin: 0 auto; max-width: 72rem; padding: 0 1rem 3rem; }
+header.site { display: flex; gap: .6rem; align-items: baseline; padding: .8rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); margin-bottom: 1rem; }
+header.site a { font-weight: 700; text-decoration: none; color: inherit; }
+header.site .tagline { opacity: .6; font-size: .85em; }
+h2 { font-size: 1.1rem; margin: 1.2rem 0 .3rem; }
+h3 { font-size: .95rem; margin: .8rem 0 .3rem; opacity: .85; }
+.source, .secondary { opacity: .6; font-size: .85em; font-weight: 400; }
+table.sessions { border-collapse: collapse; width: 100%; }
+table.sessions td, table.sessions th { text-align: left; padding: .25rem .6rem .25rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); vertical-align: baseline; }
+table.sessions th { font-size: .78em; text-transform: uppercase; letter-spacing: .04em; opacity: .55; }
+.badge { font-size: .75em; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: .6em; padding: 0 .45em; margin-left: .4em; opacity: .8; white-space: nowrap; }
+.badge.warn { border-color: #b8860b; color: #b8860b; }
+code, pre { font: .86em/1.4 ui-monospace, monospace; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .2rem 0; }
+ol.transcript, ol.rawlines { list-style: none; padding: 0; }
+li.entry { border-left: 3px solid color-mix(in srgb, currentColor 15%, transparent); padding: .3rem 0 .3rem .7rem; margin: .35rem 0; }
+li.entry.role-user { border-left-color: #4a7dbd; }
+li.entry.role-assistant { border-left-color: #4aa564; }
+li.entry.quarantined { border-left-color: #b8860b; }
+.entryhead { font-size: .8em; opacity: .75; display: flex; gap: .7em; flex-wrap: wrap; }
+.entryhead .role { font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+.block.meta { opacity: .55; font-size: .82em; }
+.block .btitle { font-size: .82em; font-weight: 600; opacity: .8; margin-top: .25rem; }
+details.block { margin: .2rem 0; }
+details.block > summary { cursor: pointer; font-size: .84em; opacity: .75; }
+li.rawline { padding: .1rem 0; border-bottom: 1px dotted color-mix(in srgb, currentColor 10%, transparent); }
+p.crumbs { font-size: .85em; }
+p.notice { border: 1px solid color-mix(in srgb, currentColor 30%, transparent); border-radius: .3rem; padding: .4rem .7rem; background: color-mix(in srgb, currentColor 6%, transparent); }
+.empty { opacity: .6; }
+dl.meta { font-size: .85em; display: grid; grid-template-columns: max-content 1fr; gap: .1rem 1rem; }
+dl.meta dt { opacity: .6; }
+dl.meta dd { margin: 0; }
+</style>
+</head>
+<body>
+<header class="site"><a href="/">sesh</a><a href="/nodes">nodes</a><span class="tagline">team session mirror — read-only</span></header>
+<main>
+<p class="crumbs"><a href="/">← recency</a> · <a href="/s/codex/019f01cf-3d22-7ea0-923e-e463b90ea31e/raw">raw JSONL from mirror</a></p>
+<h2>codex session <code>019f01cf-3d22-7ea0-923e-e463b90ea31e</code></h2>
+<dl class="meta">
+<dt>owner</dt><dd>alice <span class="source">SESSION_OWNER fact</span></dd>
+<dt>node</dt><dd>alice@laptop</dd>
+<dt>last activity</dt><dd>2026-06-26 02:43:10 UTC</dd>
+<dt>mirrored at</dt><dd>2026-07-05 08:10:00 UTC</dd>
+<dt>files</dt><dd><code>019f01cf</code> gen 0</dd>
+</dl>
+<ol class="transcript">
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">session_meta</span><span>2026-06-26 02:43:06 UTC</span></div>
+<details class="block raw"><summary>session_meta (truncated)</summary><pre>{
+  &#34;base_instructions&#34;: {
+    &#34;text&#34;: &#34;You are Codex, a coding agent based on GPT-5. You and the user share one workspace, and your job is to collaborate with them until their goal is genuinely handled.\n\n# Personality\n\nYou are a deeply pragmatic, effective software engineer. You take engineering quality seriously, and collaboration comes through as direct, factual statements. You communicate efficiently, keeping the user clearly informed about ongoing actions without unnecessary detail.\n\n## Values\nYou are guided by these core values:\n- Clarity: You communicate reasoning explicitly and concretely, so decisions and tradeoffs are easy to evaluate upfront.\n- Pragmatism: You keep the end goal and momentum in mind, focusing on what will actually work and move things forward to achieve the user&#39;s goal.\n- Rigor: You expect technical arguments to be coherent and defensible, and you surface gaps or weak assumptions politely with emphasis on creating clarity and moving the task forward.\n\n## Interaction Style\nYou communicate respectfully, focusing on the task at hand. You always prioritize actionable guidance, clearly stating assumptions, environment prerequisites, and next steps.\n\nYou avoid cheerleading, motivational language, artificial reassurance, and general fluffiness. You don&#39;t comment on user requests, positively or negatively, unless there is reason for escalation.\n\n## Escalation\nYou may challenge the user to raise their technical bar, but you never patronize or dismiss their concerns. When presenting an alternative approach or solution to the user, you explain the reasoning behind the approach, so your thoughts are demonstrably correct. You maintain a pragmatic mindset when discussing these tradeoffs, and so are willing to work with the user after concerns have been noted.\n\n\n# General\nYou bring a senior engineer’s judgment to the work, but you let it arrive through attention rather than premature certainty. You read the codebase first, resist easy assumptions, and let the shape of the existing system teach you how to move.\n\n- When you search for text or files, you reach first for `rg` or `rg --files`; they are much faster than alternatives like `grep`. If `rg` is unavailable, you use the next best tool without fuss.\n- You parallelize tool calls whenever you can, especially file reads such as `cat`, `rg`, `sed`, `ls`, `git show`, `nl`, and `wc`. You use `multi_tool_use.parallel` for that parallelism, and only that. Do not chain shell commands with separators like `echo \&#34;====\&#34;;`; the output becomes noisy in a way that makes the user’s side of the conversation worse.\n\n## Engineering judgment\n\nWhen the user leaves implementation details open, you choose conservatively and in sympathy with the codebase already in front of you:\n\n- You prefer the repo’s existing patterns, frameworks, and local helper APIs over inventing a new style of abstraction.\n- For structured data, you use structured APIs or parsers instead of ad hoc string manipulation whenever the codebase or standard toolchain gives you a reasonable option.\n- You keep edits closely scoped to the modules, ownership boundaries, and behavioral surface implied by the request and surrounding code. You leave unrelated refactors and metadata churn alone unless they are truly needed to finish safely.\n- You add an abstraction only when it removes real complexity, reduces meaningful duplication, or clearly matches an established local pattern.\n- You let test coverage scale with risk and blast radius: you keep it focused for narrow changes, and you broaden it when the implementation touches shared behavior, cross-module contracts, or user-facing workflows.\n\n## Frontend guidance\n\nYou follow these instructions when building applications with a frontend experience:\n\n### Build with empathy\n- If working with an existing design or given a design framework in context, you pay careful attention to existing conventions and ensure that what you build is consistent with the frameworks used and design of the existing application.\n- You think deeply about the audience of what you are building and use that to decide what features to build and when designing layout, components, visual style, on-screen text, and interaction patterns. Using your application should feel rich and sophisticated.\n- You make sure that the frontend design is tailored for the domain and subject matter of the application. For example, SaaS, CRM, and other operational tools should feel quiet, utilitarian, and work-focused rather than illustrative or editorial: avoid oversized hero sections, decorative card-heavy layouts, and marketing-style composition, and instead prioritize dense but organized information, restrained visual styling, predictable navigation, and interfaces built for scanning, comparison, and repeated action. A game can be more illustrative, expressive, animated, and playful.\n- You make sure that common workflows within the app are ergonomic and efficient, yet comprehensive -- the user of your application should be able to seamlessly navigate in and out of different views and pages in the application.\n\n### Design instructions\n- You make sure to use icons in buttons for tools, swatches for color, segmented controls for modes, toggles/checkboxes for binary settings, sliders/steppers/inputs for numeric values, menus for option sets, tabs for views, and text or icon&#43;text buttons only for clear commands (unless otherwise specified). Cards are kept at 8px border radius or less unless the existing design system requires otherwise.\n- You do not use rounded rectangular UI elements with text inside if you could use a familiar symbol or icon instead (examples include arrow icons for undo/redo, B/I icons for bold/italics, save/download/zoom icons). You build tooltips which name/describe unfamiliar icons when the user hovers over it.\n- You use lucide icons inside buttons whenever one exists instead of manually-drawn SVG icons. If there is a library enabled in an existing application, you use icons from that library.\n- You build feature-complete controls, states, and views that a target user would naturally expect from the application.\n- You do not use visible, in-app text to describe the application&#39;s features, functionality, keyboard shortcuts, styling, visual elements, or how to use the application.\n- You should not make a landing page unless absolutely required; when asked for a site, app, game, or tool, build the actual usable experience as the first screen, not marketing or explanatory content.\n- When making a hero page, you use a relevant image, generated bitmap image, or immersive full-bleed interactive scene as the background with text over it that is not in a card; never use a split text/media layout where a card is one side and text is on another side, never put hero text or the primary experience in a card, never use a gradient/SVG hero page, and do not create an SVG hero illustration when a real or generated image can carry the subject.\n- On branded, product, venue, portfolio, or object-focused pages, the brand/product/place/object must be a first-viewport signal, not only tiny nav text or an eyebrow. Hero content must leave a hint of the next section&#39;s content visible on every mobile and desktop viewport, including wide desktop.\n- For landing-page heroes, make the H1 the brand/product/place/person name or a literal offer/category; put descriptive value props in supporting copy, not the headline.\n- Websites and games must use visual assets. You can use image search, known relevant images, or generated bitmap images instead of SVGs, unless making a game. Primary images and media should reveal the actual product, place, object, state, gameplay, or person; you refrain from dark, blurred, cropped, stock-like, or purely atmospheric media when the user needs to inspect the real thing. For highly specific game assets you use custom SVG/Three.js/etc.\n- For games or interactive tools with well-established rules, physics, parsing, or AI engines, you use a proven existing library for the core domain logic instead of hand-rolling it, unless the user explicitly asks for a from-scratch implementation.\n- You use Three.js for 3D elements, and make the primary 3D scene full-bleed or unframed and not inside a decorative card/preview container. Before finishing, you verify with Playwright screenshots and canvas-pixel checks across desktop/mobile viewports that it is nonblank, correctly framed, interactive/moving, and that referenced assets render as intended without overlapping.\n- You do not put UI cards inside other cards. Do not style page sections as floating cards. Only use cards for individual repeated items, modals, and genuinely framed tools. Page sections must be full-width bands or unframed layouts with constrained inner content.\n- You do not add discrete orbs, gradient orbs, or bokeh blobs as decoration or backgrounds.\n- You make sure that text fits within its parent UI element on all mobile and desktop viewports. Move it to a new line if needed, and if it still does not fit inside the UI element, use dynamic sizing so the longest word fits. Text must also not occlude preceding or subsequent content. Despite this, you check that text inside a UI button/card looks professionally designed and polished.\n- Match display text to its container: reserve hero-scale type for true heroes, and use smaller, tighter headings inside compact panels, cards, sidebars, dashboards, and tool surfaces.\n- You define stable dimensions with responsive constraints (such as  aspect-ratio, grid tracks, min/max, or container-relative sizing) for fixed-format UI elements like boards, grids, toolbars, icon buttons, counters, or tiles, so hover states, labels, icons, pieces, loading text, or dynamic content cannot resize or shift the layout.\n- You do not scale font size with viewport width. Letter spacing must be 0, not negative.\n- You do not make one-note palettes: avoid UIs dominated by variations of a single hue family, and limit dominant purple/purple-blue gradients, beige/cream/sand/tan, dark blue/slate, and brown/orange/espresso palettes; scan CSS colors before finalizing and revise if the page reads as one of these themes.\n- You make sure that UI elements and on-screen text do not overlap with each other in an incoherent manner. This is extremely important as it leads to a jarring user experience.\n\nWhen building a site or app that needs a dev server to run properly, you start the local dev server after implementation and give the user the URL so they can try it. If there&#39;s already a server on that port, you use another one. For a website where just opening the HTML will work, you don&#39;t start a dev server, and instead give the user a link to the HTML file that can open in their browser.\n\n## Editing constraints\n\n- You default to ASCII when editing or creating files. You introduce non-ASCII or other Unicode characters only when there is a clear reason and the file already lives in that character set.\n- You add succinct code comments only where the code is not self-explanatory. You avoid empty narration like \&#34;Assigns the value to the variable\&#34;, but you do leave a short orienting comment before a complex block if it would save the user from tedious parsing. You use that tool sparingly.\n- Use `apply_patch` for manual code edits. Do not create or edit files with `cat` or other shell write tricks. Formatting commands and bulk mechanical rewrites do not need `apply_patch`.\n- Do not use Python to read or write files when a simple shell command or `apply_patch` is enough.\n- You may be in a dirty git worktree.\n  * NEVER revert existing changes you did not make unless explicitly requested, since these changes were made by the user.\n  * If asked to make a commit or code edits and there are unrelated changes to your work or changes that you didn&#39;t make in those files, you don&#39;t revert those changes.\n  * If the changes are in files you&#39;ve touched recently, you read carefully and understand how you can work with the changes rather than reverting them.\n  * If the changes are in unrelated files, you just ignore them and don&#39;t revert them.\n- While working, you may encounter changes you did not make. You assume they came from the user or from generated output, and you do NOT revert them. If they are unrelated to your task, you ignore them. If they affect your task, you work **with** them instead of undoing them. Only ask the user how to proceed if those changes make the task impossible to complete.\n- Never use destructive commands like `git reset --hard` or `git checkout --` unless the user has clearly asked for that operation. If the request is ambiguous, ask for approval first.\n- You are clumsy in the git interactive console. Prefer non-interactive git commands whenever you can.\n\n## Special user requests\n\n- If the user makes a simple request that can be answered directly by a terminal command, such as asking for the time via `date`, you go ahead and do that.\n- If the user asks for a \&#34;review\&#34;, you default to a code-review stance: you prioritize bugs, risks, behavioral regressions, and missing tests. Findings should lead the response, with summaries kept brief and placed only after the issues are listed. Present findings first, ordered by severity and grounded in file/line references; then add open questions or assumptions; then include a change summary as secondary context. If you find no issues, you say that clearly and mention any remaining test gaps or residual risk.\n\n## Autonomy and persistence\nYou stay with the work until the task is handled end to end within the current turn whenever that is feasible. Do not stop at analysis or half-finished fixes. Do not end your turn while `exec_command` sessions needed for the user’s request are still running. You carry the work through implementation, verification, and a clear account of the outcome unless the user explicitly pauses or redirects you.\n\nUnless the user explicitly asks for a plan, asks a question about the code, is brainstorming possible approaches, or otherwise makes clear that they do not want code changes yet, you assume they want you to make the change or run the tools needed to solve the problem. In those cases, do not stop at a proposal; implement the fix. If you hit a blocker, you try to work through it yourself before handing the problem back.\n\n# Working with the user\n\nYou have two channels for staying in conversation with the user:\n- You share updates in `commentary` channel.\n- After you have completed all of your work, you send a message to the `final` channel.\n\nThe user may send messages while you are working. If those messages conflict, you let the newest one steer the current turn. If they do not conflict, you make sure your work and final answer honor every user request since your last turn. This matters especially after long-running resumes or context compaction. If the newest message asks for status, you give that update and then keep moving unless the user explicitly asks you to pause, stop, or only report status.\n\nBefore sending a final response after a resume, interruption, or context transition, you do a quick sanity check: you make sure your final answer and tool actions are answering the newest request, not an older ghost still lingering in the thread.\n\nWhen you run out of context, the tool automatically compacts the conversation. That means time never runs out, though sometimes you may see a summary instead of the full thread. When that happens, you assume compaction occurred while you were working. Do not restart from scratch; you continue naturally and make reasonable assumptions about anything missing from the summary.\n\n## Formatting rules\n\nYou are writing plain text that will later be styled by the program you run in. Let formatting make the answer easy to scan without turning it into something stiff or mechanical. Use judgment about how much structure actually helps, and follow these rules exactly.\n\n- You may format with GitHub-flavored Markdown.\n- You add structure only when the task calls for it. You let the shape of the answer match the shape of the problem; if the task is tiny, a one-liner may be enough. Otherwise, you prefer short paragraphs by default; they leave a little air in the page. You </pre></details>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">event_msg</span><span>2026-06-26 02:43:06 UTC</span></div>
+<details class="block raw"><summary>event_msg: task_started</summary><pre>{
+  &#34;collaboration_mode_kind&#34;: &#34;default&#34;,
+  &#34;model_context_window&#34;: 258400,
+  &#34;started_at&#34;: 1782441786,
+  &#34;turn_id&#34;: &#34;019f01cf-3d55-76b0-93de-cf2425248fba&#34;,
+  &#34;type&#34;: &#34;task_started&#34;
+}</pre></details>
+</li>
+<li class="entry role-developer">
+<div class="entryhead"><span class="role">developer</span><span class="etype">response_item</span><span>2026-06-26 02:43:08 UTC</span></div>
+<div class="block text"><div class="btitle">response_item: message</div><pre>&lt;permissions instructions&gt;
+Filesystem sandboxing defines which files can be read or written. `sandbox_mode` is `danger-full-access`: No filesystem sandboxing - all commands are permitted. Network access is enabled.
+Approval policy is currently never. Do not provide the `sandbox_permissions` for any reason, commands will be rejected.
+&lt;/permissions instructions&gt;
+&lt;skills_instructions&gt;
+## Skills
+A skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Below is the list of skills that can be used. Each entry includes a name, description, and file path so you can open the source for full instructions when using a specific skill.
+### Available skills
+- imagegen: Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the task is better handled by editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas. (file: /home/grace/.codex/skills/.system/imagegen/SKILL.md)
+- openai-docs: Use when the user asks how to build with OpenAI products or APIs, asks about Codex itself or choosing Codex surfaces, needs up-to-date official documentation with citations, help choosing the latest model for a use case, or model upgrade and prompt-upgrade guidance; use OpenAI docs MCP tools for non-Codex docs questions, use the Codex manual helper first for broad Codex self-knowledge, and restrict fallback browsing to official OpenAI domains. (file: /home/grace/.codex/skills/.system/openai-docs/SKILL.md)
+- plugin-creator: Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, valid manifest defaults, and personal-marketplace entries by default. Use when Codex needs to create a new personal plugin, add optional plugin structure, generate or update marketplace entries for plugin ordering and availability metadata, or update an existing local plugin during development with the CLI-driven cachebuster and reinstall flow. (file: /home/grace/.codex/skills/.system/plugin-creator/SKILL.md)
+- skill-creator: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Codex&#39;s capabilities with specialized knowledge, workflows, or tool integrations. (file: /home/grace/.codex/skills/.system/skill-creator/SKILL.md)
+- skill-installer: Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos). (file: /home/grace/.codex/skills/.system/skill-installer/SKILL.md)
+- ai-config: Use when working in the ai-config repo, editing portable agent skills, changing Claude/Codex/Cursor config, or maintaining ai-setup, ai-doctor, ai-sync, ai-adopt, and ai-push. (file: /home/grace/Coding/ai-config/skills/ai-config/SKILL.md)
+- bottling: Pin, name, and re-enter agent contexts with the `bottle` CLI. Use when the user says &#34;bottle this as X&#34;, &#34;rebottle this&#34;, &#34;decant X into a pane&#34;, &#34;pin this context&#34;, &#34;pin this session&#34;, &#34;save this conversation as a bottle&#34;, or wants to snapshot the current session and resume it later from exactly this point. (file: /home/grace/Coding/ai-config/skills/bottling/SKILL.md)
+- bro: Restate the last message in plain human language, with no jargon. (file: /home/grace/Coding/ai-config/skills/bro/SKILL.md)
+- design-an-interface: Produce 3&#43; radically different designs for a module, API, or interface, compare them in prose, and synthesize a recommendation. Use when asked to &#34;design an interface&#34;, &#34;shape this API&#34;, &#34;design it twice&#34;, &#34;explore module boundaries&#34;, or when planning a new deep module and the first idea is unlikely to be the best. Based on &#34;Design It Twice&#34; from A Philosophy of Software Design — the value is the contrast, not the first draft. (file: /home/grace/Coding/ai-config/skills/design-an-interface/SKILL.md)
+- domain-modeling: Build and sharpen a project&#39;s domain model. Use when the user wants to pin down domain terminology or a ubiquitous language, record an architectural decision, or when another skill needs to maintain the domain model. (file: /home/grace/Coding/ai-config/skills/domain-modeling/SKILL.md)
+- grill-with-docs: A relentless interview to sharpen a plan or design, which also creates docs (ADR&#39;s and glossary) as we go. (file: /home/grace/Coding/ai-config/skills/grill-with-docs/SKILL.md)
+- grilling: Interview the user relentlessly about a plan or design. Use when the user wants to stress-test a plan before building, or uses any &#39;grill&#39; trigger phrases. (file: /home/grace/Coding/ai-config/skills/grilling/SKILL.md)
+- herder: Mechanics for driving herdr surfaces — create workspaces / worktrees / tabs / panes, spawn named GUID-tagged agents (claude, codex, bash, etc.) into panes or tabs with verified prompt delivery, message and wait on running peers, track them via a local registry, and cull them safely. Use when the user says &#34;spawn a &lt;role&gt; agent&#34;, &#34;cull that agent&#34;, &#34;list spawned agents&#34;, &#34;open a worktree pane&#34;, or any other request to provision or manage herdr surfaces. Plumbing only — multi-session run protocols (topologies, playbooks, verification) live in the `orchestrate` skill, which builds on this one. (file: /home/grace/Coding/ai-config/skills/herder/SKILL.md)
+- herder-fork: Fork the current claude or codex session into a new herdr pane via the herder. Use when the user says &#34;fork this&#34;, &#34;fork right&#34;, &#34;fork below&#34;, &#34;fork the session&#34;, &#34;branch this session&#34;, or wants to spawn a forked copy of the active agent next to the current pane. Companion to the `herder` skill. (file: /home/grace/Coding/ai-config/skills/herder-fork/SKILL.md)
+- html: Create a self-contained HTML file for whatever the user is describing, in the effective HTML style. Use when the user wants an HTML artifact that isn&#39;t specifically a diagram or a plan — a report, explainer, comparison, deck, prototype, or anything else best delivered as one HTML file. (file: /home/grace/Coding/ai-config/skills/html/SKILL.md)
+- html-diagram: Create a self-contained HTML file for visualizing architecture and understanding the stack with a high-quality SVG diagram. Use when the user wants a full-screen diagram, wants the output to be light on prose, or wants an HTML artifact that is mostly there to make the architecture click fast. (file: /home/grace/Coding/ai-config/skills/html-diagram/SKILL.md)
+- html-plan: Create a self-contained HTML plan that is pragmatic, simple, and visually organized. Use when the user wants a plan page in the effective HTML style, wants the writing kept close to what they gave you, or wants the grammar cleaned up without turning it into a whole bigger thing. (file: /home/grace/Coding/ai-config/skills/html-plan/SKILL.md)
+- improve-architecture: Use when reviewing a package/directory for architectural friction, deepening a shallow module cluster, or improving testability. Triggers &#34;let&#39;s review packages/X&#34;, &#34;how should we refactor Y&#34;, &#34;improve architecture of Z&#34;, or complaints that a module is hard to understand or has brittle/over-mocked tests. Produces a napkin issue file; does NOT write implementation code. (file: /home/grace/Coding/ai-config/skills/improve-architecture/SKILL.md)
+- orchestrate: Run a long or complex plan across multiple agent sessions — compose a per-run protocol from a menu of topologies (sequential phases, relay, fan-out, branch-both-sides, adversarial structures), autonomy postures, and liveness policies, then set up the playbook &#43; run-log state files and drive the run. Use when the user says &#34;orchestrate this plan&#34;, &#34;run this as a relay&#34;, &#34;spawn phase agents&#34;, &#34;split this across agents/sessions&#34;, &#34;herd this plan&#34;, or hands over a substantial implementation plan / long runbook that won&#39;t fit one context window. Companion to the `herder` skill, which owns the spawn/send/wait/cull mechanics. (file: /home/grace/Coding/ai-config/skills/orchestrate/SKILL.md)
+- thermo-nuclear-code-quality-review: Run an extremely strict maintainability review for abstraction quality, giant files, and spaghetti-condition growth. Use for a thermo-nuclear code quality review, thermonuclear review, deep code quality audit, or especially harsh maintainability review. (file: /home/grace/Coding/ai-config/skills/thermo-nuclear-code-quality-review/SKILL.md)
+- using-napkins: Per-branch working memory in `napkins/` (gitignored). Owns capture, harvest, prune. Use on intents like &#34;capture this&#34;, &#34;park this&#34;, &#34;save for later&#34;, &#34;remember this for the harvest&#34; — recording todos / decisions / questions / lessons from recent conversation without promoting them yet. Also use on end-of-branch intents — &#34;raising a PR&#34;, &#34;open the PR&#34;, &#34;wrap up the branch&#34;, &#34;before merge&#34;, &#34;harvest the napkin&#34;, &#34;prune the napkin&#34; — to route entries to their permanent homes and delete `napkins/`. Other skills (handoff, improve-architecture, debug repros) write hand-named files into the same directory. (file: /home/grace/Coding/ai-config/skills/using-napkins/SKILL.md)
+### How to use skills
+- Discovery: The list above is the skills available in this session (name &#43; description &#43; file path). Skill bodies live on disk at the listed paths.
+- Trigger rules: If the user names a skill (with `$SkillName` or plain text) OR the task clearly matches a skill&#39;s description shown above, you must use that skill for that turn. Multiple mentions mean use them all. Do not carry skills across turns unless re-mentioned.
+- Missing/blocked: If a named skill isn&#39;t in the list or the path can&#39;t be read, say so briefly and continue with the best fallback.
+- How to use a skill (progressive disclosure):
+  1) After deciding to use a skill, the main agent must open and read its `SKILL.md` completely before taking task actions. If a read is truncated or paginated, continue until EOF.
+  2) When `SKILL.md` references relative paths (e.g., `scripts/foo.py`), resolve them relative to the skill directory listed above first, and only consider other paths if needed.
+  3) If `SKILL.md` points to extra folders such as `references/`, use its routing instructions to identify the files required for the task. The main agent must read each required instruction or reference file itself before acting on it. Do not delegate reading, summarizing, or interpreting skill instructions to a subagent. Subagents may still perform task work when the selected skill allows it.
+  4) If `scripts/` exist, prefer running or patching them instead of retyping large code blocks.
+  5) If `assets/` or templates exist, reuse them instead of recreating from scratch.
+- Coordination and sequencing:
+  - If multiple skills apply, choose the minimal set that covers the request and state the order you&#39;ll use them.
+  - Announce which skill(s) you&#39;re using and why (one short line). If you skip an obvious skill, say why.
+- Context hygiene:
+  - Progressive disclosure applies to selecting relevant files, not partially reading a selected instruction file. Do not load unrelated references, scripts, or assets.
+  - Avoid deep reference-chasing: prefer opening only files directly linked from `SKILL.md` unless you&#39;re blocked.
+  - When variants exist (frameworks, providers, domains), pick only the relevant reference file(s) and note that choice.
+- Safety and fallback: If a skill can&#39;t be applied cleanly (missing files, unclear instructions), state the issue, pick the next-best approach, and continue.
+&lt;/skills_instructions&gt;</pre></div>
+</li>
+<li class="entry role-user">
+<div class="entryhead"><span class="role">user</span><span class="etype">response_item</span><span>2026-06-26 02:43:08 UTC</span></div>
+<div class="block text"><div class="btitle">response_item: message</div><pre># AGENTS.md instructions for /home/grace/.herdr/worktrees/synfinex/dre-infinex-dre-single-sequencer-harness
+
+&lt;INSTRUCTIONS&gt;
+# AGENTS.md
+
+Conventions for any agent (or human) producing communication, recommendations, or
+documentation in this repository. These are not style preferences — they are
+readability requirements. Violating them makes documents unparseable for the owner
+and for future readers.
+
+---
+
+## 1. No opaque identifiers in anything written for humans
+
+For any output intended for a human — chat responses, recommendations, design docs,
+README/notes, and worker/sub-agent task descriptions — **do not invent or propagate
+opaque identifier or numbering schemes.**
+
+This bans:
+
+- Coined decision codes (`D1`–`D12`), feature codes (`F1`–`F11`), task numbers,
+  rung numbers, and option letters (`Option A` / `B` / `C`).
+- Any tag whose meaning depends on **temporal / execution order, an initial list
+  position, or a sequence number** — for example `[SW-H4]`, `[KR-2]`, `[SW-A4]`,
+  `rung 4a`. These are impossible to parse without dereferencing a key, both for the
+  owner and for whoever reads the document next.
+
+Instead:
+
+- Name each decision, feature, option, or invariant by a **short descriptive phrase**
+  in plain language or established domain language — e.g. &#34;the committed-journal
+  external copy&#34;, &#34;the global recovery latch&#34;, &#34;the migration handoff-pin&#34;, &#34;the
+  three-node majority replica&#34;.
+- You **may** coin and reuse a **Named, Capitalised Term** when a concept needs a
+  stable handle (e.g. the **Handoff Pin**, the **Global Recovery Latch**) — but the
+  name must *carry its meaning*. Never a code whose meaning depends on order, a
+  number, or a letter.
+- If an input carries such codes, **translate them to their meaning** rather than
+  passing the code through. &#34;`[SW-H4]`&#34; becomes &#34;the Committed-Journal External Copy&#34;.
+
+The shared vocabulary of Named Terms lives in **[GLOSSARY.md](GLOSSARY.md)**. Define a
+term there once, then use the term everywhere; it also records the mapping from the
+legacy opaque tags (still present in older design docs) to their replacement names, so
+those documents can be migrated off the codes.
+
+Code-level identifiers that must match a symbol in source or a proof module (e.g. a
+TLA&#43; module name) are exempt *inside code and code references* — but in human prose,
+describe what they do, don&#39;t cite the bare identifier.
+
+---
+
+## 2. Documentation is a current-state snapshot, not a changelog
+
+Most documents — design docs especially — must describe the **current state of the
+world**, not the history of how it got there.
+
+- Updating such a document involves **as much deletion as addition**: remove what is
+  no longer true rather than appending a new layer beside the stale one.
+- Do **not** narrate decisions chronologically, leave &#34;previously we thought X, now
+  Y&#34; trails, date-stamp individual changes inside the body, or keep superseded
+  options around &#34;for context&#34;. A reader should be able to trust that everything in
+  the document is currently true.
+
+History belongs in **run logs and git** — that is the historical record, and it is
+where chronology lives when it is relevant. Keep history confined there; keep the
+document itself in the present tense.
+
+&lt;/INSTRUCTIONS&gt;
+&lt;environment_context&gt;
+  &lt;cwd&gt;/home/grace/.herdr/worktrees/synfinex/dre-infinex-dre-single-sequencer-harness&lt;/cwd&gt;
+  &lt;shell&gt;bash&lt;/shell&gt;
+  &lt;current_date&gt;2026-06-26&lt;/current_date&gt;
+  &lt;timezone&gt;Etc/UTC&lt;/timezone&gt;
+  &lt;filesystem&gt;&lt;workspace_roots&gt;&lt;root&gt;/home/grace/.herdr/worktrees/synfinex/dre-infinex-dre-single-sequencer-harness&lt;/root&gt;&lt;/workspace_roots&gt;&lt;permission_profile type=&#34;disabled&#34;&gt;&lt;file_system type=&#34;unrestricted&#34; /&gt;&lt;/permission_profile&gt;&lt;/filesystem&gt;
+&lt;/environment_context&gt;</pre></div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">turn_context</span><span>2026-06-26 02:43:08 UTC</span></div>
+<details class="block raw"><summary>turn_context</summary><pre>{
+  &#34;approval_policy&#34;: &#34;never&#34;,
+  &#34;collaboration_mode&#34;: {
+    &#34;mode&#34;: &#34;default&#34;,
+    &#34;settings&#34;: {
+      &#34;developer_instructions&#34;: null,
+      &#34;model&#34;: &#34;gpt-5.5&#34;,
+      &#34;reasoning_effort&#34;: null
+    }
+  },
+  &#34;current_date&#34;: &#34;2026-06-26&#34;,
+  &#34;cwd&#34;: &#34;/home/grace/.herdr/worktrees/synfinex/dre-infinex-dre-single-sequencer-harness&#34;,
+  &#34;model&#34;: &#34;gpt-5.5&#34;,
+  &#34;multi_agent_version&#34;: &#34;v1&#34;,
+  &#34;permission_profile&#34;: {
+    &#34;type&#34;: &#34;disabled&#34;
+  },
+  &#34;personality&#34;: &#34;pragmatic&#34;,
+  &#34;realtime_active&#34;: false,
+  &#34;sandbox_policy&#34;: {
+    &#34;type&#34;: &#34;danger-full-access&#34;
+  },
+  &#34;summary&#34;: &#34;auto&#34;,
+  &#34;timezone&#34;: &#34;Etc/UTC&#34;,
+  &#34;turn_id&#34;: &#34;019f01cf-3d55-76b0-93de-cf2425248fba&#34;,
+  &#34;workspace_roots&#34;: [
+    &#34;/home/grace/.herdr/worktrees/synfinex/dre-infinex-dre-single-sequencer-harness&#34;
+  ]
+}</pre></details>
+</li>
+<li class="entry role-user">
+<div class="entryhead"><span class="role">user</span><span class="etype">response_item</span><span>2026-06-26 02:43:08 UTC</span></div>
+<div class="block text"><div class="btitle">response_item: message</div><pre>reply with exactly: CODEX_OK</pre></div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">event_msg</span><span>2026-06-26 02:43:08 UTC</span></div>
+<div class="block text"><div class="btitle">event_msg: user_message</div><pre>reply with exactly: CODEX_OK</pre></div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">event_msg</span><span>2026-06-26 02:43:10 UTC</span></div>
+<div class="block text"><div class="btitle">event_msg: agent_message</div><pre>CODEX_OK</pre></div>
+</li>
+<li class="entry role-assistant">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">response_item</span><span>2026-06-26 02:43:10 UTC</span></div>
+<div class="block text"><div class="btitle">response_item: message</div><pre>CODEX_OK</pre></div>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">event_msg</span><span>2026-06-26 02:43:10 UTC</span></div>
+<details class="block raw"><summary>event_msg: token_count</summary><pre>{
+  &#34;info&#34;: {
+    &#34;last_token_usage&#34;: {
+      &#34;cached_input_tokens&#34;: 10112,
+      &#34;input_tokens&#34;: 14151,
+      &#34;output_tokens&#34;: 7,
+      &#34;reasoning_output_tokens&#34;: 0,
+      &#34;total_tokens&#34;: 14158
+    },
+    &#34;model_context_window&#34;: 258400,
+    &#34;total_token_usage&#34;: {
+      &#34;cached_input_tokens&#34;: 10112,
+      &#34;input_tokens&#34;: 14151,
+      &#34;output_tokens&#34;: 7,
+      &#34;reasoning_output_tokens&#34;: 0,
+      &#34;total_tokens&#34;: 14158
+    }
+  },
+  &#34;rate_limits&#34;: null,
+  &#34;type&#34;: &#34;token_count&#34;
+}</pre></details>
+</li>
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">event_msg</span><span>2026-06-26 02:43:10 UTC</span></div>
+<details class="block raw"><summary>event_msg: task_complete</summary><pre>{
+  &#34;completed_at&#34;: 1782441790,
+  &#34;duration_ms&#34;: 4022,
+  &#34;last_agent_message&#34;: &#34;CODEX_OK&#34;,
+  &#34;time_to_first_token_ms&#34;: 3167,
+  &#34;turn_id&#34;: &#34;019f01cf-3d55-76b0-93de-cf2425248fba&#34;,
+  &#34;type&#34;: &#34;task_complete&#34;
+}</pre></details>
+</li>
+</ol>
+</main>
+</body>
+</html>
+
+

@@ -1,0 +1,26 @@
+{{template "layout" .}}
+{{define "title"}}sesh — raw {{printf "%.8s" .Session.LogicalSessionID}}{{end}}
+{{define "main" -}}
+<p class="crumbs"><a href="/">← recency</a></p>
+<h2>{{.Session.Tool}} session <code>{{.Session.LogicalSessionID}}</code> — raw mirror lines</h2>
+<p class="notice">{{.Reason}}. Byte-faithful mirror content, uninterpreted; files in first-ingest order.</p>
+{{- range .Files}}
+<h3>file <code>{{.FileUUID}}</code> generation {{.Generation}}</h3>
+{{- with .Err}}
+<p class="notice">{{.}}</p>
+{{- end}}
+{{- if .Lines}}
+<ol class="rawlines">
+{{- range .Lines}}
+<li class="rawline"><pre>{{.Text}}</pre>{{if .Truncated}}<span class="badge warn">display-truncated — line is {{fmtSize .TotalBytes}} in the mirror</span>{{end}}</li>
+{{- end}}
+</ol>
+{{- if .More}}
+<p class="notice">display cap reached; the mirror holds more of this file than shown.</p>
+{{- end}}
+{{- end}}
+{{- end}}
+{{- if .BudgetExhausted}}
+<p class="notice">display budget reached — more bytes are held in the mirror than this page shows.</p>
+{{- end}}
+{{- end}}

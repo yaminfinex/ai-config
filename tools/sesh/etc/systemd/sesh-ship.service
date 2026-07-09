@@ -1,0 +1,28 @@
+# sesh-ship.service — per-user shipper unit (systemd --user).
+#
+# Fleet-identical file: the only node-local values are the store URL and,
+# when the binary lives off the default path, an ExecStart override — both
+# carried by the 10-local.conf drop-in that etc/install-ship.sh writes.
+# Installs to ~/.config/systemd/user/sesh-ship.service.
+#
+# Reboot survival on a node nobody logs into requires lingering:
+#   loginctl enable-linger <user>       (rollout runbook, per node, per user)
+
+[Unit]
+Description=sesh shipper — mirror this user's session transcripts to the team store
+# Deliberately no network-online dependency: an unreachable store is a normal
+# hold-position condition for the shipper (jittered backoff, cursor
+# untouched, the source file is the only buffer), so starting before the
+# network is up is safe and simpler than ordering against it.
+
+[Service]
+# Pinned absolute path, never a $PATH lookup. The install script writes an
+# ExecStart override drop-in when the binary is installed elsewhere.
+ExecStart=/usr/local/bin/sesh ship
+# SESH_STORE_URL arrives via drop-in (Environment=), never baked here: the
+# store host is a deployment-time value and must stay a URL-only coupling.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
