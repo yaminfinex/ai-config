@@ -50,14 +50,15 @@ type fixtureFile struct {
 }
 
 type sessionSpec struct {
-	tool               wire.Tool
-	logicalID          string
-	hostname, osUser   string
-	owner, ownerSource string
-	mirroredAt         time.Time
-	quarantineAll      bool
-	quarantineReason   string
-	files              []fixtureFile
+	tool             wire.Tool
+	logicalID        string
+	hostname, osUser string
+	ownerClaims      []string
+	tailnetIdentity  string
+	mirroredAt       time.Time
+	quarantineAll    bool
+	quarantineReason string
+	files            []fixtureFile
 }
 
 type fakeStore struct {
@@ -185,8 +186,8 @@ func (f *fakeStore) addSession(t *testing.T, spec sessionSpec) {
 		LogicalSessionID: spec.logicalID,
 		Hostname:         spec.hostname,
 		OSUser:           spec.osUser,
-		Owner:            spec.owner,
-		OwnerSource:      spec.ownerSource,
+		OwnerClaims:      spec.ownerClaims,
+		TailnetIdentity:  spec.tailnetIdentity,
 		MaxTimestampUTC:  maxTS,
 		FirstIngestAt:    spec.files[0].firstIngest,
 		MirroredAt:       spec.mirroredAt,
@@ -293,9 +294,9 @@ func corpusStore(t *testing.T) *fakeStore {
 		{
 			tool: wire.ToolCodex, logicalID: uuidCodexMeta,
 			hostname: "laptop", osUser: "alice",
-			owner: "alice", ownerSource: "SESSION_OWNER fact",
-			mirroredAt: day("2026-07-05T08:10:00Z"),
-			files:      []fixtureFile{{name: "codex-rollout-meta.jsonl", fileUUID: uuidCodexMeta, firstIngest: day("2026-07-05T08:00:00Z")}},
+			ownerClaims: []string{"alice"},
+			mirroredAt:  day("2026-07-05T08:10:00Z"),
+			files:       []fixtureFile{{name: "codex-rollout-meta.jsonl", fileUUID: uuidCodexMeta, firstIngest: day("2026-07-05T08:00:00Z")}},
 		},
 		{
 			tool: wire.ToolClaude, logicalID: uuidPartial,

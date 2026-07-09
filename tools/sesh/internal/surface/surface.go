@@ -54,11 +54,15 @@ type SessionSummary struct {
 	Hostname string
 	OSUser   string
 
-	// Display owner and the winning fact's source label. Empty until U10
-	// computes view-time precedence; empty means "nobody claimed this work"
-	// and must render as absence, never a guess.
-	Owner       string
-	OwnerSource string
+	// OwnerClaims are the distinct SESSION_OWNER values observed for this
+	// session in the facts log, in first-observed order. Raw observations,
+	// never verdicts (I1) — precedence and conflict rendering happen at
+	// view time in owner.go.
+	OwnerClaims []string
+	// TailnetIdentity is the store-stamped WhoIs user of the shipping node.
+	// Empty until tsnet auth lands (M4/U11); the precedence tier is wired
+	// so U11 only fills the field.
+	TailnetIdentity string
 
 	// MaxTimestampUTC is the maximum parsed timestamp_utc across the
 	// session's index rows; nil when no row carries a parsed timestamp

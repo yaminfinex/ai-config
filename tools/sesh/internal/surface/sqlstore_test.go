@@ -7,6 +7,7 @@ package surface_test
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +26,13 @@ import (
 // and synchronously indexes the resulting append event.
 func putFixture(t *testing.T, st *store.Store, idx *index.Indexer, tool wire.Tool, sessionID, fileUUID, fixture string, body []byte) {
 	t.Helper()
+	putBytesOwned(t, st, idx, tool, sessionID, fileUUID, fixture, body, 0, "")
+}
+
+// putBytesOwned is putFixture plus offset control and an optional
+// X-Sesh-Session-Owner observation.
+func putBytesOwned(t *testing.T, st *store.Store, idx *index.Indexer, tool wire.Tool, sessionID, fileUUID, fixture string, body []byte, offset int64, owner string) {
+	t.Helper()
 	if fixture != "" {
 		raw, err := os.ReadFile(filepath.Join(fixturesDir(), fixture))
 		if err != nil {
@@ -33,12 +41,15 @@ func putFixture(t *testing.T, st *store.Store, idx *index.Indexer, tool wire.Too
 		body = raw
 	}
 	req := httptest.NewRequest(http.MethodPut,
-		"/v1/files/"+string(tool)+"/"+sessionID+"/"+fileUUID+"/bytes?offset=0",
+		fmt.Sprintf("/v1/files/%s/%s/%s/bytes?offset=%d", tool, sessionID, fileUUID, offset),
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", wire.ContentTypeBytes)
 	req.Header.Set(wire.HeaderWireVersion, "1")
 	req.Header.Set(wire.HeaderHostname, "gate-node")
 	req.Header.Set(wire.HeaderOSUser, "grace")
+	if owner != "" {
+		req.Header.Set(wire.HeaderSessionOwner, owner)
+	}
 	rr := httptest.NewRecorder()
 	st.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -90,8 +101,8 @@ func TestSQLStoreRendersResumePairOnceFromLiveIndex(t *testing.T) {
 	if sum.Hostname != "gate-node" || sum.OSUser != "grace" {
 		t.Errorf("node facts = %s/%s, want gate-node/grace", sum.Hostname, sum.OSUser)
 	}
-	if sum.Owner != "" {
-		t.Errorf("owner = %q; no SESSION_OWNER fact was shipped, absence must stay honest", sum.Owner)
+	if len(sum.OwnerClaims) != 0 {
+		t.Errorf("owner claims = %v; no SESSION_OWNER fact was shipped, absence must stay honest", sum.OwnerClaims)
 	}
 	if sum.MaxTimestampUTC == nil || !strings.HasPrefix(sum.MaxTimestampUTC.Format("2006-01-02"), "2026-06-28") {
 		t.Errorf("max parsed timestamp = %v, want the pair's real last activity on 2026-06-28", sum.MaxTimestampUTC)
@@ -148,6 +159,58 @@ func TestSQLStoreListsMirroredButUnindexedSession(t *testing.T) {
 	}
 	if !strings.Contains(body, "cut-mid-") {
 		t.Error("raw fallback must show the mirrored partial bytes")
+	}
+}
+
+func TestSQLStoreCollectsOwnerClaimsFromObservationLog(t *testing.T) {
+	st, idx, live := openLiveStore(t)
+	raw, err := os.ReadFile(filepath.Join(fixturesDir(), "claude-normal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cut := bytes.IndexByte(raw, '\n') + 1
+
+	// Two PUTs observing the same owner: one claim, attributed cleanly.
+	putBytesOwned(t, st, idx, wire.ToolClaude, uuidNormal, uuidNormal, "", raw[:cut], 0, "alice")
+	putBytesOwned(t, st, idx, wire.ToolClaude, uuidNormal, uuidNormal, "", raw[cut:], int64(cut), "alice")
+	sums, err := live.Sessions(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sums) != 1 || len(sums[0].OwnerClaims) != 1 || sums[0].OwnerClaims[0] != "alice" {
+		t.Fatalf("same-owner observations: sessions %+v, want one session with one alice claim", sums)
+	}
+	if do := sums[0].DisplayOwner(); do.Name != "alice" || do.Conflict {
+		t.Fatalf("display owner = %+v, want alice without conflict", do)
+	}
+
+	// A later PUT observing a DIFFERENT owner for the same session: the log
+	// keeps both observations (append-only, I8 — never retracted) and the
+	// view renders honest absence with the conflict label. A different
+	// fixture, because identical content ids would unify the two sessions.
+	raw2, err := os.ReadFile(filepath.Join(fixturesDir(), "claude-interleaved-writers-standin.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cut2 := bytes.IndexByte(raw2, '\n') + 1
+	putBytesOwned(t, st, idx, wire.ToolClaude, uuidInterleave, uuidInterleave, "", raw2[:cut2], 0, "carol")
+	putBytesOwned(t, st, idx, wire.ToolClaude, uuidInterleave, uuidInterleave, "", raw2[cut2:], int64(cut2), "dave")
+	sum, ok, err := live.Session(t.Context(), wire.ToolClaude, uuidInterleave)
+	if err != nil || !ok {
+		t.Fatalf("conflicted session lookup: ok=%v err=%v", ok, err)
+	}
+	if len(sum.OwnerClaims) != 2 {
+		t.Fatalf("owner claims = %v, want both observations kept", sum.OwnerClaims)
+	}
+	if do := sum.DisplayOwner(); !do.Conflict || do.Name != "" {
+		t.Fatalf("display owner = %+v, want conflict with honest absence", do)
+	}
+	body := mustGet200(t, newServer(t, live), "/")
+	if !strings.Contains(body, "conflicting claims") {
+		t.Error("recency page must badge the conflicted session")
+	}
+	if !strings.Contains(body, `<h2>alice <span class="source">SESSION_OWNER fact</span></h2>`) {
+		t.Error("cleanly claimed session must group under alice with its source")
 	}
 }
 

@@ -93,17 +93,24 @@ free_port() {
 
 # --- store lifecycle ---------------------------------------------------------
 
-# start_store [port] — real `sesh serve` on an ephemeral loopback port against
-# $STORE_DIR. Reusing the port across a restart is what S9 needs; first start
-# picks a free one. The surface listener (M2) always gets an ephemeral port so
-# harness runs never collide on the well-known default.
+# start_store [port] [surface_port] — real `sesh serve` on ephemeral loopback
+# ports against $STORE_DIR. Reusing the port across a restart is what S9
+# needs; first start picks free ones. The surface listener (M2) is recorded
+# in SURFACE_URL for render assertions and never defaults to the well-known
+# port, so harness runs cannot collide on it.
 start_store() {
   STORE_PORT="${1:-$(free_port)}"
+  SURFACE_PORT="${2:-$(free_port)}"
   STORE_URL="http://127.0.0.1:$STORE_PORT"
-  "$BIN/sesh" serve --addr "127.0.0.1:$STORE_PORT" --surface-addr "127.0.0.1:$(free_port)" \
+  SURFACE_URL="http://127.0.0.1:$SURFACE_PORT"
+  "$BIN/sesh" serve --addr "127.0.0.1:$STORE_PORT" --surface-addr "127.0.0.1:$SURFACE_PORT" \
     --data-dir "$STORE_DIR" >>"$WORK/store.log" 2>&1 &
   STORE_PID=$!
   wait_for "store to accept connections" 10 store_up
+}
+
+surface_up() {
+  [ "$(curl -s -o /dev/null -w '%{http_code}' "$SURFACE_URL/" || true)" = "200" ]
 }
 
 store_up() {

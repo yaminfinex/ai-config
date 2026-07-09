@@ -4,10 +4,13 @@
 <p class="crumbs"><a href="/">← recency</a> · <a href="{{.RawURL}}">raw JSONL from mirror</a></p>
 <h2>{{.Session.Tool}} session <code>{{.Session.LogicalSessionID}}</code></h2>
 <dl class="meta">
-{{- if .Session.Owner}}
-<dt>owner</dt><dd>{{.Session.Owner}} <span class="source">{{.Session.OwnerSource}}</span></dd>
+{{- $owner := .Session.DisplayOwner}}
+{{- if $owner.Conflict}}
+<dt>owner</dt><dd>absent <span class="source">{{$owner.Source}} — attribution withheld</span></dd>
+{{- else if $owner.Name}}
+<dt>owner</dt><dd>{{$owner.Name}} <span class="source">{{$owner.Source}}</span></dd>
 {{- else}}
-<dt>owner</dt><dd>no owner claim <span class="source">grouped by OS user @ host</span></dd>
+<dt>owner</dt><dd>absent <span class="source">{{$owner.Source}}</span></dd>
 {{- end}}
 <dt>node</dt><dd>{{.Session.OSUser}}@{{.Session.Hostname}}</dd>
 <dt>last activity</dt><dd>{{fmtTime .Session.MaxTimestampUTC}}</dd>

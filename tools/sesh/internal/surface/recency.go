@@ -41,7 +41,10 @@ type sessionItem struct {
 	// At is the effective R14 recency instant used for ordering.
 	At               time.Time
 	FullyQuarantined bool
-	URL              string
+	// Owner is the view-time attribution verdict (owner.go); conflicts
+	// badge on the row while the session groups under its node.
+	Owner DisplayOwner
+	URL   string
 }
 
 func (s *Server) recencyData(ctx context.Context) (recencyPage, error) {
@@ -64,16 +67,19 @@ func groupPeople(sums []SessionSummary) []personGroup {
 
 	nodeKey := func(sum SessionSummary) string { return sum.OSUser + "@" + sum.Hostname }
 	for _, sum := range sums {
+		owner := sum.DisplayOwner()
 		item := sessionItem{
 			SessionSummary:   sum,
 			At:               sum.Recency(),
 			FullyQuarantined: sum.FullyQuarantined(),
+			Owner:            owner,
 			URL:              "/s/" + url.PathEscape(string(sum.Tool)) + "/" + url.PathEscape(sum.LogicalSessionID),
 		}
-		key := personKey{sum.Owner, sum.OwnerSource}
-		if sum.Owner == "" {
-			// No owner claim: the "person" is the node identity, honestly
-			// labeled as such — never a guessed name.
+		key := personKey{owner.Name, owner.Source}
+		if !owner.Claimed {
+			// No identity claim won (unclaimed, node-tier, or conflicting):
+			// the "person" is the node identity, honestly labeled as such —
+			// never a guessed name. Conflicts badge on the session row.
 			key = personKey{nodeKey(sum), "no owner claim — OS user @ host"}
 		}
 		if people[key] == nil {

@@ -63,6 +63,10 @@ func (s *SQLStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 	if err != nil {
 		return nil, err
 	}
+	claims, err := s.ownerClaims(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	type sessionKey struct {
 		tool    wire.Tool
@@ -98,6 +102,7 @@ func (s *SQLStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 			FirstIngestAt:    members[0].createdAt,
 		}
 		var factID int64 = -1
+		seenClaim := map[string]bool{}
 		for _, g := range members {
 			sum.Files = append(sum.Files, FileRef{
 				WireSessionID: g.wireID,
@@ -112,6 +117,14 @@ func (s *SQLStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 				factID = f.id
 				sum.Hostname, sum.OSUser = f.hostname, f.osUser
 			}
+			for _, c := range claims[factKey(g.tool, g.wireID)] {
+				if !seenClaim[c] {
+					seenClaim[c] = true
+					sum.OwnerClaims = append(sum.OwnerClaims, c)
+				}
+			}
+			// TailnetIdentity stays empty until tsnet auth stamps WhoIs
+			// (M4/U11); the precedence tier is already wired for it.
 		}
 		if c, ok := counts[countKey(key.tool, key.logical)]; ok {
 			sum.MessageRows, sum.QuarantinedRows = c.messages, c.quarantined
@@ -354,6 +367,33 @@ func (s *SQLStore) latestFacts(ctx context.Context) (map[string]factRow, error) 
 			return nil, err
 		}
 		out[factKey(tool, wireID)] = f
+	}
+	return out, rows.Err()
+}
+
+// ownerClaims returns the distinct SESSION_OWNER observations per wire
+// session in first-observed order. Raw claims only — precedence and
+// conflict handling are owner.go's view-time job (R15, I1).
+func (s *SQLStore) ownerClaims(ctx context.Context) (map[string][]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT tool, session_id, session_owner, MIN(id) AS first_id
+		FROM fact_observations
+		WHERE session_owner IS NOT NULL AND session_owner <> ''
+		GROUP BY tool, session_id, session_owner
+		ORDER BY first_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var tool wire.Tool
+		var wireID, owner string
+		var firstID int64
+		if err := rows.Scan(&tool, &wireID, &owner, &firstID); err != nil {
+			return nil, err
+		}
+		key := factKey(tool, wireID)
+		out[key] = append(out[key], owner)
 	}
 	return out, rows.Err()
 }
