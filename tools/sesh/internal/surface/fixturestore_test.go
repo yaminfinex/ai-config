@@ -300,10 +300,11 @@ func corpusStore(t *testing.T) *fakeStore {
 	})
 }
 
-// giantLineStore builds a one-session store whose single line is a real
-// claude-normal user entry inflated to multiple MiB — real shape, synthetic
-// size — for the R14/R16 truncation scenario.
-func giantLineStore(t *testing.T) *fakeStore {
+// inflatedLine re-marshals a real claude-normal user entry with its text
+// content inflated to contentSize bytes — real shape, synthetic size, for
+// the truncation and display-budget scenarios. Never committed as a fixture
+// or golden.
+func inflatedLine(t *testing.T, contentSize int) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(fixturesDir(), "claude-normal.jsonl"))
 	if err != nil {
@@ -318,16 +319,44 @@ func giantLineStore(t *testing.T) *fakeStore {
 	if !ok {
 		t.Fatal("claude-normal line 3 has no message object")
 	}
-	msg["content"] = string(bytes.Repeat([]byte("x"), 3<<20))
+	msg["content"] = string(bytes.Repeat([]byte("x"), contentSize))
 	giant, err := json.Marshal(entry)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return giant
+}
+
+// oneFileStore wraps a single synthetic-size mirror file as one session.
+func oneFileStore(t *testing.T, data []byte, quarantineAll bool) *fakeStore {
+	t.Helper()
 	ingest, _ := time.Parse(time.RFC3339, "2026-07-07T00:00:00Z")
 	return buildStore(t, []sessionSpec{{
 		tool: wire.ToolClaude, logicalID: uuidNormal,
 		hostname: "workstation", osUser: "grace",
-		mirroredAt: ingest,
-		files:      []fixtureFile{{bytes: append(giant, '\n'), fileUUID: uuidNormal, firstIngest: ingest}},
+		mirroredAt:    ingest,
+		quarantineAll: quarantineAll, quarantineReason: "parser_rejected",
+		files: []fixtureFile{{bytes: data, fileUUID: uuidNormal, firstIngest: ingest}},
 	}})
+}
+
+// giantLineStore: one multi-MiB single line (truncation scenario).
+func giantLineStore(t *testing.T) *fakeStore {
+	t.Helper()
+	return oneFileStore(t, append(inflatedLine(t, 3<<20), '\n'), false)
+}
+
+// manyLargeLinesStore: n distinct-uuid lines of ~contentSize each — the
+// adversarially large mirrored session for the display-budget scenarios.
+func manyLargeLinesStore(t *testing.T, n, contentSize int, quarantineAll bool) *fakeStore {
+	t.Helper()
+	line := inflatedLine(t, contentSize)
+	var data []byte
+	for i := 0; i < n; i++ {
+		// Distinct uuids so dedup keeps every line.
+		l := bytes.Replace(line, []byte(`"uuid":"`), []byte(fmt.Sprintf(`"uuid":"%08d-`, i)), 1)
+		data = append(data, l...)
+		data = append(data, '\n')
+	}
+	return oneFileStore(t, data, quarantineAll)
 }

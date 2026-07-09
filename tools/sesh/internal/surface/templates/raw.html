@@ -16,8 +16,11 @@
 {{- end}}
 </ol>
 {{- if .More}}
-<p class="notice">line cap reached; the mirror holds more lines than shown.</p>
+<p class="notice">display cap reached; the mirror holds more of this file than shown.</p>
 {{- end}}
 {{- end}}
+{{- end}}
+{{- if .BudgetExhausted}}
+<p class="notice">display budget reached — more bytes are held in the mirror than this page shows.</p>
 {{- end}}
 {{- end}}

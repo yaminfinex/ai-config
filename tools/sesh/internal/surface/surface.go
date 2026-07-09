@@ -268,8 +268,8 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 	page := transcriptPage{
 		Session: sum,
 		RawURL:  s.rawURL(sum),
-		Entries: s.buildEntries(r.Context(), sum.Tool, rows),
 	}
+	page.Entries, page.OmittedRows = s.buildEntries(r.Context(), sum.Tool, rows)
 	if err := s.render(w, s.transcriptTmpl, "transcript.html", page); err != nil {
 		s.log.Printf("surface: transcript render %s/%s: %v", sum.Tool, sum.LogicalSessionID, err)
 		s.serveRawFallback(w, r, sum, "transcript render failed — raw mirror lines")

@@ -43,14 +43,14 @@ func checkGolden(t *testing.T, name, got string) {
 func TestGoldenSnapshots(t *testing.T) {
 	srv := newServer(t, corpusStore(t))
 	pages := map[string]string{
-		"recency.html":                     "/",
-		"recency-fragment.html":            "/fragments/recency",
-		"transcript-claude-normal.html":    "/s/claude/" + uuidNormal,
-		"transcript-resume-pair.html":      "/s/claude/" + uuidResumeOrig,
-		"transcript-interleaved.html":      "/s/claude/" + uuidInterleave,
-		"transcript-codex.html":            "/s/codex/" + uuidCodexMeta,
-		"fallback-quarantined-raw.html":    "/s/claude/" + uuidPartial,
-		"raw-claude-normal.html":           "/s/claude/" + uuidNormal + "/raw",
+		"recency.html":                  "/",
+		"recency-fragment.html":         "/fragments/recency",
+		"transcript-claude-normal.html": "/s/claude/" + uuidNormal,
+		"transcript-resume-pair.html":   "/s/claude/" + uuidResumeOrig,
+		"transcript-interleaved.html":   "/s/claude/" + uuidInterleave,
+		"transcript-codex.html":         "/s/codex/" + uuidCodexMeta,
+		"fallback-quarantined-raw.html": "/s/claude/" + uuidPartial,
+		"raw-claude-normal.html":        "/s/claude/" + uuidNormal + "/raw",
 	}
 	for name, path := range pages {
 		t.Run(name, func(t *testing.T) {

@@ -35,4 +35,7 @@
 </li>
 {{- end}}
 </ol>
+{{- if .OmittedRows}}
+<p class="notice">display budget reached — {{.OmittedRows}} further lines omitted from this render; the full bytes are in the <a href="{{.RawURL}}">raw view</a> and the mirror.</p>
+{{- end}}
 {{- end}}

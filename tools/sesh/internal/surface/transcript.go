@@ -23,6 +23,12 @@ const (
 	maxBlockChars = 16 << 10
 	// excerptBytes is how much of an unparseable/oversized line is shown.
 	excerptBytes = 4 << 10
+	// transcriptDisplayBudgetBytes bounds the total block text one
+	// transcript page renders. Pages render buffered, so many
+	// individually-renderable large lines would otherwise accumulate
+	// without bound; past the budget the page stops with an honest
+	// omitted-rows notice and points at the raw view.
+	transcriptDisplayBudgetBytes = 8 << 20
 )
 
 // transcriptPage is the template model for drill-down (R16).
@@ -30,6 +36,8 @@ type transcriptPage struct {
 	Session SessionSummary
 	RawURL  string
 	Entries []displayEntry
+	// OmittedRows counts index rows the display budget kept off the page.
+	OmittedRows int
 }
 
 // displayEntry renders one index row.
@@ -88,13 +96,23 @@ func sortTranscript(rows []wire.IndexMessage) {
 // buildEntries turns index rows into display entries, reading each row's
 // line bytes back from the mirror. Every step is defensive: a row that
 // cannot be read or parsed renders as a raw excerpt, never an error page.
-func (s *Server) buildEntries(ctx context.Context, tool wire.Tool, rows []wire.IndexMessage) []displayEntry {
+// It stops once rendered text exceeds the display budget and reports how
+// many rows were left off the page.
+func (s *Server) buildEntries(ctx context.Context, tool wire.Tool, rows []wire.IndexMessage) (entries []displayEntry, omitted int) {
 	sortTranscript(rows)
-	entries := make([]displayEntry, 0, len(rows))
-	for _, row := range rows {
-		entries = append(entries, s.buildEntry(ctx, tool, row))
+	entries = make([]displayEntry, 0, len(rows))
+	var spent int64
+	for i, row := range rows {
+		if spent > transcriptDisplayBudgetBytes {
+			return entries, len(rows) - i
+		}
+		entry := s.buildEntry(ctx, tool, row)
+		for _, b := range entry.Blocks {
+			spent += int64(len(b.Text))
+		}
+		entries = append(entries, entry)
 	}
-	return entries
+	return entries, 0
 }
 
 func (s *Server) buildEntry(ctx context.Context, tool wire.Tool, row wire.IndexMessage) displayEntry {

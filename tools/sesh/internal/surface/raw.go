@@ -9,10 +9,14 @@ import (
 )
 
 // Raw-view caps. Lines are display-truncated with honest byte counts; the
-// mirror keeps the full bytes.
+// mirror keeps the full bytes. The session-level budget bounds what one
+// request can hold in memory — pages render buffered, so without it an
+// adversarially large mirrored session (many large lines) would OOM the
+// store instead of degrading.
 const (
-	rawLineDisplayBytes = 1 << 20
-	maxRawLines         = 10000
+	rawLineDisplayBytes   = 1 << 20
+	maxRawLines           = 10000
+	rawDisplayBudgetBytes = 8 << 20
 )
 
 // rawPage is the template model for the raw-JSONL fallback (R16, S10): the
@@ -21,6 +25,9 @@ type rawPage struct {
 	Session SessionSummary
 	Reason  string
 	Files   []rawFile
+	// BudgetExhausted flags that the display budget cut the page short;
+	// the remaining bytes stay in the mirror, honestly noticed.
+	BudgetExhausted bool
 }
 
 type rawFile struct {
@@ -42,7 +49,12 @@ type rawLine struct {
 // as notices, and only a fully failed render drops to the degraded page.
 func (s *Server) serveRawFallback(w http.ResponseWriter, r *http.Request, sum SessionSummary, reason string) {
 	page := rawPage{Session: sum, Reason: reason}
+	budget := int64(rawDisplayBudgetBytes)
 	for _, ref := range sessionFilesFirstIngest(sum) {
+		if budget <= 0 {
+			page.BudgetExhausted = true
+			break
+		}
 		rf := rawFile{FileUUID: ref.FileUUID, Generation: ref.Generation}
 		rc, err := s.store.MirrorFile(r.Context(), sum.Tool, ref.FileUUID, ref.Generation)
 		if err != nil {
@@ -51,8 +63,11 @@ func (s *Server) serveRawFallback(w http.ResponseWriter, r *http.Request, sum Se
 			page.Files = append(page.Files, rf)
 			continue
 		}
-		rf.Lines, rf.More, err = readRawLines(rc)
+		rf.Lines, rf.More, err = readRawLines(rc, &budget)
 		rc.Close()
+		if rf.More && budget <= 0 {
+			page.BudgetExhausted = true
+		}
 		if err != nil {
 			s.log.Printf("surface: raw fallback read %s/%s gen %d: %v", sum.Tool, ref.FileUUID, ref.Generation, err)
 			rf.Err = "mirror read failed mid-file; partial lines shown"
@@ -79,15 +94,17 @@ func sessionFilesFirstIngest(sum SessionSummary) []FileRef {
 }
 
 // readRawLines scans mirrored bytes into display lines, cutting oversized
-// lines at rawLineDisplayBytes without buffering the remainder. A trailing
-// partial line (no newline yet) renders like any other bytes — the mirror is
+// lines at rawLineDisplayBytes without buffering the remainder and charging
+// every displayed byte against the caller's budget. A trailing partial line
+// (no newline yet) renders like any other bytes — the mirror is
 // byte-faithful and so is this view.
-func readRawLines(rc io.Reader) (lines []rawLine, more bool, err error) {
+func readRawLines(rc io.Reader, budget *int64) (lines []rawLine, more bool, err error) {
 	br := bufio.NewReaderSize(rc, 64<<10)
-	for len(lines) < maxRawLines {
+	for len(lines) < maxRawLines && *budget > 0 {
 		line, readErr := readCappedLine(br)
 		if line != nil {
 			lines = append(lines, *line)
+			*budget -= int64(len(line.Text))
 		}
 		if readErr == io.EOF {
 			return lines, false, nil
@@ -96,7 +113,7 @@ func readRawLines(rc io.Reader) (lines []rawLine, more bool, err error) {
 			return lines, false, readErr
 		}
 	}
-	// Cap hit: report there is more without reading it.
+	// Line cap or budget hit: report there is more without reading it.
 	if _, err := br.Peek(1); err == nil {
 		more = true
 	}

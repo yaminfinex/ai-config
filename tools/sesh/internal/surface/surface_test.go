@@ -145,6 +145,48 @@ func TestOversizedLineTruncatesWithRawAvailable(t *testing.T) {
 	}
 }
 
+// --- display budgets: an adversarially large mirrored session must degrade,
+// not OOM the store (pages render buffered) ---
+
+func TestRawFallbackBudgetBoundsManyLargeLines(t *testing.T) {
+	// 30 quarantined lines of ~1 MiB each: 30 MiB mirrored, but the raw
+	// fallback must stop at its display budget with an honest notice.
+	srv := newServer(t, manyLargeLinesStore(t, 30, 1<<20, true))
+	body := mustGet200(t, srv, "/s/claude/"+uuidNormal)
+	if !strings.Contains(body, "raw mirror lines") {
+		t.Fatal("fully-quarantined session must take the raw fallback")
+	}
+	if len(body) > 10<<20 {
+		t.Errorf("raw fallback rendered %d bytes for a 30 MiB session; the display budget must bound the page", len(body))
+	}
+	if !strings.Contains(body, "display budget reached") {
+		t.Error("budget-cut raw page must carry the more-bytes-held-in-mirror notice")
+	}
+	if strings.Count(body, "rawline") == 0 {
+		t.Error("budget must cut the page short, not empty")
+	}
+}
+
+func TestTranscriptBudgetOmitsRowsHonestly(t *testing.T) {
+	// 600 parseable entries rendering ~16 KiB each (block cap): ~9.4 MiB of
+	// text, past the 8 MiB budget — the page must stop and say how many
+	// rows it left out, pointing at the raw view.
+	srv := newServer(t, manyLargeLinesStore(t, 600, 20<<10, false))
+	body := mustGet200(t, srv, "/s/claude/"+uuidNormal)
+	if len(body) > 10<<20 {
+		t.Errorf("transcript rendered %d bytes; the display budget must bound the page", len(body))
+	}
+	if !strings.Contains(body, "display budget reached") || !strings.Contains(body, "omitted") {
+		t.Error("budget-cut transcript must carry the omitted-rows notice")
+	}
+	if !strings.Contains(body, "/raw") {
+		t.Error("budget notice must point at the raw view")
+	}
+	if n := strings.Count(body, `<li class="entry`); n == 0 || n >= 600 {
+		t.Errorf("rendered %d entries; want a nonzero prefix cut by the budget", n)
+	}
+}
+
 // --- AC4 / R17: zero write surface ---
 
 var writeSurfaceRe = regexp.MustCompile(`(?i)<\s*(form|input|button|select|textarea)\b`)
