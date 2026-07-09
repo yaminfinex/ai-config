@@ -1,10 +1,10 @@
 ---
 id: TASK-113
 title: mish U1 — module bootstrap + CLI skeleton (tools/mish)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 09:46'
-updated_date: '2026-07-09 09:47'
+updated_date: '2026-07-09 09:54'
 labels:
   - mish
 dependencies: []
@@ -33,3 +33,9 @@ Settled decisions (do not reverse; stop-and-report if one seems wrong): standalo
 - [ ] #5 GOOS=darwin GOARCH=arm64 and GOOS=linux GOARCH=amd64 builds succeed
 - [ ] #6 no imports from ai-config outside tools/mish; module name is mish
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to mish-build @ 73e4a33 (--no-ff). Worker: codex mish-u1-boma, branch mish-u1-skeleton (2ebd861 + review fix bbbfd27). Orchestrator verification: gates re-run uncached from worker worktree + post-merge on mish-build — green. Review finding (fixed): cobra default completion cmd was a live fourth verb (R1/M4 breach); DisableDefaultCmd + executed-surface tests added. Ruling: default help command stays (M17 surface, not a verb); U8 owns final help rendering.
+<!-- SECTION:NOTES:END -->
