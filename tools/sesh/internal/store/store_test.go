@@ -257,6 +257,34 @@ func TestDropFileRemovesOnlyTargetAndReindexLeavesNoOrphans(t *testing.T) {
 	}
 }
 
+func TestDropFileAuditSurvivesDeleteFailureAndBytesSurvive(t *testing.T) {
+	st := newTestStore(t, new(bytes.Buffer))
+	idx, err := index.New(t.Context(), st.DB(), st.MirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"type":"user","uuid":"target-msg","sessionId":"` + testSession + `"}` + "\n")
+	decodeAck(t, putReq(t, st, wire.ToolClaude, testSession, testFile, 0, body, nil))
+	processNextAppend(t, st, idx)
+
+	if _, err := st.DB().ExecContext(t.Context(), `DROP TABLE index_file_state`); err != nil {
+		t.Fatal(err)
+	}
+	err = st.DropFile(t.Context(), wire.ToolClaude, testSession, testFile, "test delete failure")
+	if err == nil || !strings.Contains(err.Error(), "index_file_state") {
+		t.Fatalf("drop-file error = %v, want delete failure naming index_file_state", err)
+	}
+	if got := countRows(t, st, `SELECT COUNT(*) FROM drop_log WHERE tool = ? AND session_id = ? AND file_uuid = ?`, wire.ToolClaude, testSession, testFile); got != 1 {
+		t.Fatalf("drop audit rows after delete failure = %d, want 1", got)
+	}
+	if got := countRows(t, st, `SELECT COUNT(*) FROM files WHERE tool = ? AND session_id = ? AND file_uuid = ?`, wire.ToolClaude, testSession, testFile); got != 1 {
+		t.Fatalf("files rows after delete failure = %d, want 1", got)
+	}
+	if _, err := os.Stat(st.MirrorPath(wire.ToolClaude, testSession, testFile, 0)); err != nil {
+		t.Fatalf("mirror bytes should survive failed delete tx: %v", err)
+	}
+}
+
 func TestNodesFlagsStaleLastPut(t *testing.T) {
 	st := newTestStore(t, new(bytes.Buffer))
 	now := time.Now().UTC()

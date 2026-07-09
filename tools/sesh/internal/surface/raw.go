@@ -56,7 +56,7 @@ func (s *Server) serveRawFallback(w http.ResponseWriter, r *http.Request, sum Se
 			break
 		}
 		rf := rawFile{FileUUID: ref.FileUUID, Generation: ref.Generation}
-		rc, err := s.store.MirrorFile(r.Context(), sum.Tool, ref.FileUUID, ref.Generation)
+		rc, err := s.store.MirrorFile(r.Context(), sum.Tool, ref.WireSessionID, ref.FileUUID, ref.Generation)
 		if err != nil {
 			s.log.Printf("surface: raw fallback %s/%s gen %d: %v", sum.Tool, ref.FileUUID, ref.Generation, err)
 			rf.Err = "mirror file unreadable"

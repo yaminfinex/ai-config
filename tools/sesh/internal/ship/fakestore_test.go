@@ -27,6 +27,14 @@ type fakeStore struct {
 
 	// unavailable makes every PUT answer 503.
 	unavailable bool
+	// nonConformingFingerprintInform makes the first fingerprint-routed PUT
+	// answer 409 fingerprint_conflict carrying the matched generation and its
+	// high_water instead of routing silently. A conforming store never does
+	// this (Amendment 2: fingerprint_conflict only ever opens a new empty
+	// generation, high_water 0); the knob exists solely so tests can prove the
+	// shipper's verbatim error-rewind tolerates a non-conforming store (U4
+	// review finding #1).
+	nonConformingFingerprintInform bool
 	// putLog records every PUT offset per identity key, for assertions like
 	// "no re-ship from zero after a move".
 	putLog map[string][]int64
@@ -38,11 +46,8 @@ type fakeFile struct {
 	// conflictOpenedFor notes that a conflict-driven generation was already
 	// opened for a fingerprint; recurrence poisons.
 	conflictOpenedFor map[string]bool
-	// informedFP marks fingerprints whose non-active matching generation was
-	// already announced to the shipper via 409 fingerprint_conflict; later
-	// PUTs with that fingerprint route through to the generation (the
-	// inform-once model — the doc-text-compatible convergent reading; the
-	// real U3 store routes silently, which the shipper handles identically).
+	// informedFP tracks which fingerprints already got the one non-conforming
+	// inform; used only under nonConformingFingerprintInform.
 	informedFP map[string]bool
 }
 
@@ -227,18 +232,23 @@ func (fs *fakeStore) handle(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if matched < 0 {
+			// Amendment 2 (W1): a new fingerprint opens a new, empty
+			// generation — the ONLY case that returns fingerprint_conflict,
+			// always with high_water 0.
 			f.generations = append(f.generations, &fakeGen{fingerprint: reqFP})
 			writeErr(409, wire.ErrFingerprintConflict, len(f.generations)-1, 0)
 			return
 		}
-		if !f.informedFP[reqFP] {
-			// Inform once with the selected generation and ITS high-water
-			// (which may exceed the shipper's local size — the review
-			// finding #1 scenario); subsequent PUTs route through.
+		if fs.nonConformingFingerprintInform && !f.informedFP[reqFP] {
+			// Deliberately non-conforming: announce the selected generation
+			// and ITS high-water (which may exceed the shipper's local size —
+			// the review finding #1 scenario) instead of routing silently.
 			f.informedFP[reqFP] = true
 			writeErr(409, wire.ErrFingerprintConflict, matched, int64(len(f.generations[matched].data)))
 			return
 		}
+		// Amendment 2 (W1): silent route-through to the highest-numbered
+		// matching generation; the response envelope carries its number.
 		genIdx, gen = matched, f.generations[matched]
 	}
 

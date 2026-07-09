@@ -41,7 +41,7 @@ func newRoot() *cobra.Command {
 
 func newServe() *cobra.Command {
 	var addr string
-	var readAddr string
+	var surfaceAddr string
 	var dataDir string
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -58,45 +58,49 @@ func newServe() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// The read-only surface gets its own listener so the M2
+			// exposure posture (proxy the read port, keep ingest loopback)
+			// stays a deployment concern, not a code change (U8/R19).
+			sl, err := listenLoopback(surfaceAddr, "surface")
+			if err != nil {
+				_ = l.Close()
+				return err
+			}
 			st, err := store.Open(cmd.Context(), store.Config{
 				Dir:    dataDir,
 				Logger: slog.Default(),
 			})
 			if err != nil {
 				_ = l.Close()
+				_ = sl.Close()
 				return err
 			}
 			defer st.Close()
 			idx, err := index.New(cmd.Context(), st.DB(), st.MirrorPath)
 			if err != nil {
 				_ = l.Close()
+				_ = sl.Close()
 				return err
 			}
 			startIndexConsumer(cmd.Context(), st, idx, slog.Default())
-			if readAddr == "" {
-				return st.Serve(l)
-			}
-			readListener, err := listenLoopback(readAddr, "read")
-			if err != nil {
-				_ = l.Close()
-				return err
-			}
-			errCh := make(chan error, 2)
-			go func() { errCh <- st.Serve(l) }()
-			go func() { errCh <- http.Serve(readListener, surface.New(st)) }()
-			err = <-errCh
-			_ = l.Close()
-			_ = readListener.Close()
-			return err
+			go func() {
+				srv := surface.New(surface.NewSQLStore(st.DB(), st.MirrorPath))
+				if err := http.Serve(sl, srv); err != nil {
+					slog.Default().Error("surface listener stopped", "error", err)
+				}
+			}()
+			return st.Serve(l)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8765", "loopback address for the store HTTP listener")
-	cmd.Flags().StringVar(&readAddr, "read-addr", "", "loopback address for the read-only surface listener; empty disables it")
+	cmd.Flags().StringVar(&surfaceAddr, "surface-addr", "127.0.0.1:8766", "loopback address for the read-only surface listener")
 	cmd.Flags().StringVar(&dataDir, "data-dir", "", "store data directory")
 	return cmd
 }
 
-func listenLoopback(addr, label string) (net.Listener, error) {
+// listenLoopback binds addr and enforces the pre-M4 posture: every listener
+// stays loopback until tsnet auth lands (U11).
+func listenLoopback(addr, name string) (net.Listener, error) {
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -108,7 +112,7 @@ func listenLoopback(addr, label string) (net.Listener, error) {
 	}
 	if !net.ParseIP(host).IsLoopback() {
 		_ = l.Close()
-		return nil, fmt.Errorf("sesh serve: %s listener must bind loopback before M4, got %s", label, l.Addr())
+		return nil, fmt.Errorf("sesh serve: %s listener must bind loopback before M4, got %s", name, l.Addr())
 	}
 	return l, nil
 }

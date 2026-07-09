@@ -95,11 +95,13 @@ free_port() {
 
 # start_store [port] — real `sesh serve` on an ephemeral loopback port against
 # $STORE_DIR. Reusing the port across a restart is what S9 needs; first start
-# picks a free one.
+# picks a free one. The surface listener (M2) always gets an ephemeral port so
+# harness runs never collide on the well-known default.
 start_store() {
   STORE_PORT="${1:-$(free_port)}"
   STORE_URL="http://127.0.0.1:$STORE_PORT"
-  "$BIN/sesh" serve --addr "127.0.0.1:$STORE_PORT" --data-dir "$STORE_DIR" >>"$WORK/store.log" 2>&1 &
+  "$BIN/sesh" serve --addr "127.0.0.1:$STORE_PORT" --surface-addr "127.0.0.1:$(free_port)" \
+    --data-dir "$STORE_DIR" >>"$WORK/store.log" 2>&1 &
   STORE_PID=$!
   wait_for "store to accept connections" 10 store_up
 }
@@ -236,6 +238,10 @@ assert_db() { # <description> <sql> <expected_output>
   got=$(dbq "$2") || fail "$1: query failed: $2"
   [ "$got" = "$3" ] || fail "$1: query [$2] = [$got], want [$3]"
 }
+
+# dbq_is <sql> <expected> — predicate form of assert_db for wait_for loops
+# (the live index consumes append events asynchronously after mirror ACKs).
+dbq_is() { [ "$(dbq "$1" 2>/dev/null)" = "$2" ]; }
 
 # reg_offset <tool/sid/uuid> — the registry cursor offset, or "absent".
 reg_offset() {

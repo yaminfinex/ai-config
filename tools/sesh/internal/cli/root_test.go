@@ -64,18 +64,18 @@ func TestServeRejectsNonLoopbackBind(t *testing.T) {
 	}
 }
 
-func TestServeRejectsNonLoopbackReadBind(t *testing.T) {
+func TestServeRejectsNonLoopbackSurfaceBind(t *testing.T) {
 	root := newRoot()
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
-	root.SetArgs([]string{"serve", "--addr", "127.0.0.1:0", "--read-addr", "0.0.0.0:0", "--data-dir", t.TempDir()})
+	root.SetArgs([]string{"serve", "--addr", "127.0.0.1:0", "--surface-addr", "0.0.0.0:0", "--data-dir", t.TempDir()})
 	err := root.Execute()
 	if err == nil {
-		t.Fatal("sesh serve should reject non-loopback read bind before M4")
+		t.Fatal("sesh serve should reject non-loopback surface bind before M4")
 	}
-	if !strings.Contains(err.Error(), "loopback") || !strings.Contains(err.Error(), "read") {
-		t.Fatalf("serve error %q does not mention read loopback", err)
+	if !strings.Contains(err.Error(), "loopback") || !strings.Contains(err.Error(), "surface") {
+		t.Fatalf("serve error %q does not mention surface loopback", err)
 	}
 }
 

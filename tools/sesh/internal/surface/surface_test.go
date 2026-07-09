@@ -279,18 +279,18 @@ func (e *erroringStore) Rows(ctx context.Context, tool wire.Tool, id string) ([]
 	return e.Store.Rows(ctx, tool, id)
 }
 
-func (e *erroringStore) MirrorRange(ctx context.Context, tool wire.Tool, fileUUID string, gen int, start, end int64) ([]byte, error) {
+func (e *erroringStore) MirrorRange(ctx context.Context, tool wire.Tool, wireSessionID, fileUUID string, gen int, start, end int64) ([]byte, error) {
 	if e.mirrorErr {
 		return nil, io.ErrUnexpectedEOF
 	}
-	return e.Store.MirrorRange(ctx, tool, fileUUID, gen, start, end)
+	return e.Store.MirrorRange(ctx, tool, wireSessionID, fileUUID, gen, start, end)
 }
 
-func (e *erroringStore) MirrorFile(ctx context.Context, tool wire.Tool, fileUUID string, gen int) (io.ReadCloser, error) {
+func (e *erroringStore) MirrorFile(ctx context.Context, tool wire.Tool, wireSessionID, fileUUID string, gen int) (io.ReadCloser, error) {
 	if e.mirrorErr {
 		return nil, io.ErrUnexpectedEOF
 	}
-	return e.Store.MirrorFile(ctx, tool, fileUUID, gen)
+	return e.Store.MirrorFile(ctx, tool, wireSessionID, fileUUID, gen)
 }
 
 func TestNever500OnMirroredSession(t *testing.T) {

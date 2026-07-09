@@ -68,8 +68,8 @@ type fakeStore struct {
 }
 
 func sessionKey(tool wire.Tool, id string) string { return string(tool) + "/" + id }
-func mirrorKey(tool wire.Tool, fileUUID string, gen int) string {
-	return fmt.Sprintf("%s/%s/%d", tool, fileUUID, gen)
+func mirrorKey(tool wire.Tool, wireSessionID, fileUUID string, gen int) string {
+	return fmt.Sprintf("%s/%s/%s/%d", tool, wireSessionID, fileUUID, gen)
 }
 
 func (f *fakeStore) Sessions(context.Context) ([]surface.SessionSummary, error) {
@@ -89,10 +89,10 @@ func (f *fakeStore) Rows(_ context.Context, tool wire.Tool, id string) ([]wire.I
 	return append([]wire.IndexMessage(nil), f.rows[sessionKey(tool, id)]...), nil
 }
 
-func (f *fakeStore) MirrorRange(_ context.Context, tool wire.Tool, fileUUID string, gen int, start, end int64) ([]byte, error) {
-	data, ok := f.mirrors[mirrorKey(tool, fileUUID, gen)]
+func (f *fakeStore) MirrorRange(_ context.Context, tool wire.Tool, wireSessionID, fileUUID string, gen int, start, end int64) ([]byte, error) {
+	data, ok := f.mirrors[mirrorKey(tool, wireSessionID, fileUUID, gen)]
 	if !ok {
-		return nil, fmt.Errorf("no mirror for %s/%s gen %d", tool, fileUUID, gen)
+		return nil, fmt.Errorf("no mirror for %s/%s/%s gen %d", tool, wireSessionID, fileUUID, gen)
 	}
 	if start < 0 || start > int64(len(data)) {
 		return nil, fmt.Errorf("range start %d out of mirror size %d", start, len(data))
@@ -103,10 +103,10 @@ func (f *fakeStore) MirrorRange(_ context.Context, tool wire.Tool, fileUUID stri
 	return data[start:end], nil
 }
 
-func (f *fakeStore) MirrorFile(_ context.Context, tool wire.Tool, fileUUID string, gen int) (io.ReadCloser, error) {
-	data, ok := f.mirrors[mirrorKey(tool, fileUUID, gen)]
+func (f *fakeStore) MirrorFile(_ context.Context, tool wire.Tool, wireSessionID, fileUUID string, gen int) (io.ReadCloser, error) {
+	data, ok := f.mirrors[mirrorKey(tool, wireSessionID, fileUUID, gen)]
 	if !ok {
-		return nil, fmt.Errorf("no mirror for %s/%s gen %d", tool, fileUUID, gen)
+		return nil, fmt.Errorf("no mirror for %s/%s/%s gen %d", tool, wireSessionID, fileUUID, gen)
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
@@ -143,8 +143,10 @@ func (f *fakeStore) addSession(t *testing.T, spec sessionSpec) {
 			}
 			data = raw
 		}
-		f.mirrors[mirrorKey(spec.tool, file.fileUUID, 0)] = data
-		files = append(files, surface.FileRef{FileUUID: file.fileUUID, Generation: 0, FirstIngestAt: file.firstIngest})
+		// Wire session claim = file uuid, the claude path convention (and
+		// what the fake's parseIndexRow sets on every row).
+		f.mirrors[mirrorKey(spec.tool, file.fileUUID, file.fileUUID, 0)] = data
+		files = append(files, surface.FileRef{WireSessionID: file.fileUUID, FileUUID: file.fileUUID, Generation: 0, FirstIngestAt: file.firstIngest})
 
 		lineOrd := int64(0)
 		start := 0

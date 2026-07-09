@@ -597,16 +597,22 @@ func TestRunDaemonShipsNewFileOnHint(t *testing.T) {
 
 // --- U4 review finding #1 regression: error-path rewinds are never clamped -
 //
-// Store holds an older generation for fingerprint F at a high-water far above
-// the local size, plus a newer active generation with a different
-// fingerprint. The local file matches F in its first KiB but diverges after
-// it. A shipper that clamps the fingerprint_conflict rewind to local size
-// falsely quiesces at local EOF and the divergent history is silently lost.
-// The correct machine adopts the returned high-water verbatim, lets size
+// DEFENSIVE-TOLERANCE COVERAGE: since Amendment 2 a conforming store returns
+// fingerprint_conflict only when opening a new empty generation (high_water
+// 0), so this scenario needs the fake's non-conforming inform knob. The
+// shipper's catalog reaction is deliberately general and must keep absorbing
+// it: a store holds an older generation for fingerprint F at a high-water far
+// above the local size, plus a newer active generation with a different
+// fingerprint, and announces the F-selection via 409 instead of routing
+// silently. The local file matches F in its first KiB but diverges after it.
+// A shipper that clamps the fingerprint_conflict rewind to local size falsely
+// quiesces at local EOF and the divergent history is silently lost. The
+// correct machine adopts the returned high-water verbatim, lets size
 // regression force the re-PUT, and converges through byte_conflict →
 // generation_opened into a fresh generation holding the complete local bytes.
 func TestFingerprintConflictHighWaterAboveLocalSizeNotClamped(t *testing.T) {
 	h := newHarness(t)
+	h.store.nonConformingFingerprintInform = true
 	oldHistory := fixture(t, "claude-normal.jsonl") // fingerprint F, 38,976 bytes
 	newerGen := fixture(t, "claude-resume-new-file.jsonl")
 	divergent := fixture(t, "codex-rollout-meta.jsonl")
@@ -630,6 +636,45 @@ func TestFingerprintConflictHighWaterAboveLocalSizeNotClamped(t *testing.T) {
 	}
 	if string(h.store.generationBytes("claude", uuidNormal, uuidNormal, 2)) != string(local) {
 		t.Fatal("the divergent local bytes must be fully mirrored in the new generation — clamping the error rewind loses them")
+	}
+	c, _ := h.cursor(wire.ToolClaude, uuidNormal)
+	if c.Offset != int64(len(local)) {
+		t.Fatalf("cursor: %d, want %d", c.Offset, len(local))
+	}
+}
+
+// --- Amendment 2 (W1) pinning: fingerprint routing is silent ---------------
+//
+// A local file whose fingerprint matches a non-active generation resumes it
+// in ONE round trip: the store routes silently by fingerprint (highest match)
+// and never emits fingerprint_conflict for a selection. The single-PUT
+// assertion is the drift-back guard — the retired inform-once model needed a
+// 409 round trip before routing through.
+func TestFingerprintRoutingSilentResumeOfNonActiveGeneration(t *testing.T) {
+	h := newHarness(t)
+	oldHistory := fixture(t, "claude-normal.jsonl")
+	newerGen := fixture(t, "claude-resume-new-file.jsonl")
+	fpF := fingerprintOf(t, oldHistory)
+	// Generation 0 holds a prefix of the F history; a newer active generation
+	// has a different fingerprint. The local F file extends generation 0.
+	h.store.seed("claude", uuidNormal, uuidNormal, fpF, oldHistory[:20000])
+	h.store.seedExtra("claude", uuidNormal, uuidNormal, fingerprintOf(t, newerGen), newerGen)
+	local := oldHistory[:30000]
+
+	h.writeClaude("-p", uuidNormal, local)
+	h.runOnce()
+
+	if got := h.store.puts("claude", uuidNormal, uuidNormal); len(got) != 1 {
+		t.Fatalf("puts: %v, want exactly one (silent routing needs no 409 round trip)", got)
+	}
+	if got := h.store.generationCount("claude", uuidNormal, uuidNormal); got != 2 {
+		t.Fatalf("generations: %d, want 2 (selection must not open a generation)", got)
+	}
+	if string(h.store.generationBytes("claude", uuidNormal, uuidNormal, 0)) != string(local) {
+		t.Fatal("generation 0 must carry the extended F history")
+	}
+	if string(h.store.generationBytes("claude", uuidNormal, uuidNormal, 1)) != string(newerGen) {
+		t.Fatal("the active generation must be untouched by the routed PUT")
 	}
 	c, _ := h.cursor(wire.ToolClaude, uuidNormal)
 	if c.Offset != int64(len(local)) {
