@@ -35,18 +35,24 @@ type fakeStore struct {
 type fakeFile struct {
 	generations []*fakeGen
 	poisoned    bool
-	// conflictPending is set after a divergent PUT against the active
-	// generation and cleared by any successful PUT (wire doc: "no
-	// intervening successful PUT").
-	conflictPending bool
-	// conflictGenOpened notes that a conflict-driven generation was already
+	// conflictOpenedFor notes that a conflict-driven generation was already
 	// opened for a fingerprint; recurrence poisons.
 	conflictOpenedFor map[string]bool
+	// informedFP marks fingerprints whose non-active matching generation was
+	// already announced to the shipper via 409 fingerprint_conflict; later
+	// PUTs with that fingerprint route through to the generation (the
+	// inform-once model — the doc-text-compatible convergent reading; the
+	// real U3 store routes silently, which the shipper handles identically).
+	informedFP map[string]bool
 }
 
 type fakeGen struct {
 	fingerprint string // "" = null (below window)
 	data        []byte
+	// conflictPending is set after a divergent PUT against this generation
+	// and cleared by any successful PUT (wire doc: "no intervening
+	// successful PUT").
+	conflictPending bool
 }
 
 func newFakeStore() *fakeStore {
@@ -103,7 +109,16 @@ func (fs *fakeStore) seed(tool, sid, fuuid, fingerprint string, data []byte) {
 	fs.files[fs.key(tool, sid, fuuid)] = &fakeFile{
 		generations:       []*fakeGen{{fingerprint: fingerprint, data: append([]byte(nil), data...)}},
 		conflictOpenedFor: map[string]bool{},
+		informedFP:        map[string]bool{},
 	}
+}
+
+// seedExtra appends one more (newer, active) generation to a seeded file.
+func (fs *fakeStore) seedExtra(tool, sid, fuuid, fingerprint string, data []byte) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	f := fs.files[fs.key(tool, sid, fuuid)]
+	f.generations = append(f.generations, &fakeGen{fingerprint: fingerprint, data: append([]byte(nil), data...)})
 }
 
 func (fs *fakeStore) setPoisoned(tool, sid, fuuid string) {
@@ -154,6 +169,20 @@ func (fs *fakeStore) handle(w http.ResponseWriter, r *http.Request) {
 		writeErr(400, wire.ErrMalformedRequest, 0, 0)
 		return
 	}
+	// Required headers per the frozen wire doc (U4 review finding #4: the
+	// fake must be as strict as a conforming store).
+	if r.Header.Get("Content-Type") != wire.ContentTypeBytes ||
+		r.Header.Get(wire.HeaderHostname) == "" ||
+		r.Header.Get(wire.HeaderOSUser) == "" {
+		writeErr(400, wire.ErrMalformedRequest, 0, 0)
+		return
+	}
+	reqFP := r.Header.Get(wire.HeaderFingerprint)
+	if reqFP != "" && r.Header.Get(wire.HeaderFingerprintAlgorithm) != wire.FingerprintAlgorithm {
+		writeErr(400, wire.ErrMalformedRequest, 0, 0)
+		return
+	}
+
 	body, err := io.ReadAll(io.LimitReader(r.Body, wire.MaxPUTBody+1))
 	if err != nil {
 		writeErr(500, wire.ErrMirrorWriteFailed, 0, 0)
@@ -165,42 +194,59 @@ func (fs *fakeStore) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	key := fs.key(tool, sid, fuuid)
 	fs.putLog[key] = append(fs.putLog[key], offset)
-	reqFP := r.Header.Get(wire.HeaderFingerprint)
 
 	f := fs.files[key]
 	if f == nil {
-		f = &fakeFile{generations: []*fakeGen{{fingerprint: reqFP}}, conflictOpenedFor: map[string]bool{}}
+		f = &fakeFile{
+			generations:       []*fakeGen{{fingerprint: reqFP}},
+			conflictOpenedFor: map[string]bool{},
+			informedFP:        map[string]bool{},
+		}
 		fs.files[key] = f
+	}
+	if f.informedFP == nil {
+		f.informedFP = map[string]bool{}
 	}
 	if f.poisoned {
 		writeErr(423, wire.ErrPoisonedFile, len(f.generations)-1, 0)
 		return
 	}
+
+	// Fingerprint routing before offset routing. Absence is never a
+	// mismatch; a claim against a null-recorded generation records it.
 	genIdx := len(f.generations) - 1
 	gen := f.generations[genIdx]
-
-	// Fingerprint routing before offset routing. Absence is never a mismatch;
-	// a claim against a null-recorded generation records it.
-	if reqFP != "" && gen.fingerprint != "" && reqFP != gen.fingerprint {
-		for i, g := range f.generations {
-			if g.fingerprint == reqFP {
-				writeErr(409, wire.ErrFingerprintConflict, i, int64(len(g.data)))
-				return
-			}
-		}
-		f.generations = append(f.generations, &fakeGen{fingerprint: reqFP})
-		writeErr(409, wire.ErrFingerprintConflict, len(f.generations)-1, 0)
-		return
-	}
 	if reqFP != "" && gen.fingerprint == "" {
 		gen.fingerprint = reqFP
+	}
+	if reqFP != "" && reqFP != gen.fingerprint {
+		matched := -1
+		for i, g := range f.generations {
+			if g.fingerprint == reqFP {
+				matched = i // ascending: last match = highest
+			}
+		}
+		if matched < 0 {
+			f.generations = append(f.generations, &fakeGen{fingerprint: reqFP})
+			writeErr(409, wire.ErrFingerprintConflict, len(f.generations)-1, 0)
+			return
+		}
+		if !f.informedFP[reqFP] {
+			// Inform once with the selected generation and ITS high-water
+			// (which may exceed the shipper's local size — the review
+			// finding #1 scenario); subsequent PUTs route through.
+			f.informedFP[reqFP] = true
+			writeErr(409, wire.ErrFingerprintConflict, matched, int64(len(f.generations[matched].data)))
+			return
+		}
+		genIdx, gen = matched, f.generations[matched]
 	}
 
 	highWater := int64(len(gen.data))
 	switch {
 	case offset == highWater:
 		gen.data = append(gen.data, body...)
-		f.conflictPending = false
+		gen.conflictPending = false
 		fs.writeAck(w, tool, sid, fuuid, genIdx, int64(len(gen.data)), gen.fingerprint)
 	case offset < highWater:
 		end := offset + int64(len(body))
@@ -210,19 +256,18 @@ func (fs *fakeStore) handle(w http.ResponseWriter, r *http.Request) {
 		if bytes.Equal(gen.data[offset:end], body[:end-offset]) {
 			// Identical replay: silent success. When the range extends past
 			// high-water with a matching overlap, the excess is appended
-			// (compare-overlap-and-append-excess — the U3 store's behavior,
-			// proposed for pinning on thread sesh-u4).
+			// (compare-overlap-and-append-excess, Amendment 1).
 			if excess := body[end-offset:]; len(excess) > 0 {
 				gen.data = append(gen.data, excess...)
 			}
-			f.conflictPending = false
+			gen.conflictPending = false
 			fs.writeAck(w, tool, sid, fuuid, genIdx, int64(len(gen.data)), gen.fingerprint)
 			return
 		}
 		// Divergence: first sight = byte_conflict, no state change; second
 		// consecutive = open a generation, or poison on recurrence.
-		if !f.conflictPending {
-			f.conflictPending = true
+		if !gen.conflictPending {
+			gen.conflictPending = true
 			writeErr(409, wire.ErrByteConflict, genIdx, highWater)
 			return
 		}
@@ -233,7 +278,7 @@ func (fs *fakeStore) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.conflictOpenedFor[fpKey] = true
-		f.conflictPending = false
+		gen.conflictPending = false
 		f.generations = append(f.generations, &fakeGen{fingerprint: gen.fingerprint})
 		writeErr(409, wire.ErrGenerationOpened, len(f.generations)-1, 0)
 	default: // offset > highWater

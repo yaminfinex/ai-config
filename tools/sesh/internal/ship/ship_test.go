@@ -594,3 +594,64 @@ func TestRunDaemonShipsNewFileOnHint(t *testing.T) {
 		t.Fatalf("daemon exit: %v", err)
 	}
 }
+
+// --- U4 review finding #1 regression: error-path rewinds are never clamped -
+//
+// Store holds an older generation for fingerprint F at a high-water far above
+// the local size, plus a newer active generation with a different
+// fingerprint. The local file matches F in its first KiB but diverges after
+// it. A shipper that clamps the fingerprint_conflict rewind to local size
+// falsely quiesces at local EOF and the divergent history is silently lost.
+// The correct machine adopts the returned high-water verbatim, lets size
+// regression force the re-PUT, and converges through byte_conflict →
+// generation_opened into a fresh generation holding the complete local bytes.
+func TestFingerprintConflictHighWaterAboveLocalSizeNotClamped(t *testing.T) {
+	h := newHarness(t)
+	oldHistory := fixture(t, "claude-normal.jsonl") // fingerprint F, 38,976 bytes
+	newerGen := fixture(t, "claude-resume-new-file.jsonl")
+	divergent := fixture(t, "codex-rollout-meta.jsonl")
+	// Local file: same real first KiB as oldHistory (same fingerprint F),
+	// then real bytes that diverge, total well below oldHistory's size.
+	local := append(append([]byte(nil), oldHistory[:1024]...), divergent[:1000]...)
+
+	fpF := fingerprintOf(t, oldHistory)
+	h.store.seed("claude", uuidNormal, uuidNormal, fpF, oldHistory)
+	h.store.seedExtra("claude", uuidNormal, uuidNormal, fingerprintOf(t, newerGen), newerGen)
+
+	h.writeClaude("-p", uuidNormal, local)
+	h.runOnce()
+	h.runOnce() // must be quiescent-correct, not quiescent-lossy
+
+	if got := h.store.generationCount("claude", uuidNormal, uuidNormal); got != 3 {
+		t.Fatalf("generations: %d, want 3 (divergent local history must open its own)", got)
+	}
+	if string(h.store.generationBytes("claude", uuidNormal, uuidNormal, 0)) != string(oldHistory) {
+		t.Fatal("generation 0 must be untouched")
+	}
+	if string(h.store.generationBytes("claude", uuidNormal, uuidNormal, 2)) != string(local) {
+		t.Fatal("the divergent local bytes must be fully mirrored in the new generation — clamping the error rewind loses them")
+	}
+	c, _ := h.cursor(wire.ToolClaude, uuidNormal)
+	if c.Offset != int64(len(local)) {
+		t.Fatalf("cursor: %d, want %d", c.Offset, len(local))
+	}
+}
+
+// Registry save must fail loudly when directory durability cannot be
+// confirmed (U4 review finding #2): a removed registry dir makes the
+// temp-file step fail and the error must surface, not vanish.
+func TestRegistrySaveSurfacesDurabilityErrors(t *testing.T) {
+	dir := t.TempDir()
+	reg, err := OpenRegistry(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reg.Close()
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	err = reg.Put(Cursor{Tool: wire.ToolClaude, SessionID: uuidFresh, FileUUID: uuidFresh})
+	if err == nil {
+		t.Fatal("save into a vanished state dir must fail loudly, not report durable success")
+	}
+}

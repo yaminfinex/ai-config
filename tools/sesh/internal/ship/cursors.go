@@ -214,10 +214,21 @@ func (r *Registry) save() error {
 		os.Remove(tmpPath)
 		return err
 	}
-	// fsync the directory so the rename itself is durable.
-	if d, err := os.Open(r.dir); err == nil {
-		_ = d.Sync()
+	// fsync the directory so the rename itself is durable. Every syscall in
+	// the durability chain failing fails the save (R23 / herder-spec 5.2:
+	// a hidden storage failure is exactly what the discipline exists to
+	// surface); at-least-once replay makes a failed-but-actually-durable
+	// save safe.
+	d, err := os.Open(r.dir)
+	if err != nil {
+		return fmt.Errorf("cursor registry rename may not be durable: open %s: %w", r.dir, err)
+	}
+	if err := d.Sync(); err != nil {
 		d.Close()
+		return fmt.Errorf("cursor registry rename may not be durable: fsync %s: %w", r.dir, err)
+	}
+	if err := d.Close(); err != nil {
+		return fmt.Errorf("cursor registry rename may not be durable: close %s: %w", r.dir, err)
 	}
 	return nil
 }

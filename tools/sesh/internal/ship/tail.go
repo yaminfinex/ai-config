@@ -270,11 +270,13 @@ func (s *Shipper) shipFile(ctx context.Context, d Discovered) error {
 			return fmt.Errorf("%w: %v", errHold, err)
 		}
 		if ack != nil {
-			// Cursor := returned high_water, capped at the current local
-			// source size. The cap is the S3 no-loop clause agreed with the
-			// store lane on thread sesh-u4 (pending doc ratification): a
-			// store high-water beyond the local size is a truncated source,
-			// and adopting it verbatim re-arms the reset loop.
+			// Amendment 1: on any 200, cursor := min(returned high_water,
+			// most recently observed source size) — the clamp that makes
+			// same-prefix truncation quiesce (S3) instead of looping on the
+			// store's longer high-water. The clamp applies to 200s ONLY: a
+			// 200 means every local byte in the range was compared or
+			// appended, so quiescing at local EOF is safe. Error-path
+			// rewinds carry no such comparison and are adopted verbatim.
 			next := ack.HighWater
 			if next > size {
 				next = size
@@ -291,12 +293,14 @@ func (s *Shipper) shipFile(ctx context.Context, d Discovered) error {
 		case wire.ErrOffsetGap, wire.ErrFingerprintConflict, wire.ErrGenerationOpened:
 			// All three carry the high-water to rewind to (gap: current;
 			// fingerprint_conflict: the selected generation's;
-			// generation_opened: 0 for the fresh generation).
-			next := werr.HighWater
-			if next > size {
-				next = size
-			}
-			cur.Offset = next
+			// generation_opened: 0 for the fresh generation). Adopted
+			// VERBATIM, never clamped to local size: no byte comparison has
+			// happened on an error path, so clamping here can falsely
+			// quiesce a divergent recreated file at local EOF and silently
+			// lose its history (U4 review finding #1). A high-water beyond
+			// the local size triggers the size-regression reset on the next
+			// iteration, whose re-PUT forces the comparison.
+			cur.Offset = werr.HighWater
 			if err := s.Registry.Put(cur); err != nil {
 				return err
 			}
