@@ -1,0 +1,38 @@
+---
+id: TASK-124
+title: 'herder spawn: consider defaulting pane placement to new tab'
+status: To Do
+assignee: []
+created_date: '2026-07-09 12:43'
+labels: []
+dependencies: []
+priority: medium
+ordinal: 124000
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+## Capture
+
+Owner request (2026-07-09): consider changing herder spawn's DEFAULT pane placement from same-tab right-split to a new tab. Implications not yet understood — this is an investigate-then-decide task, not a blind flag flip.
+
+## Motivation (observed incidents, 2026-07-09 harvest wave)
+
+- Spawning into same-tab right-splits caused message-delivery problems: prompts sent over the bus at spawn time showed 'no receipt in the window' (observed on 2 of 4 reviewer spawns this wave, panes p2N/p2P) — apparent cause: panes not fully rendered at delivery time, so the agent was not yet deliverable.
+- Same-tab splits also crowd the operator's tab (4 reviewer panes landed beside the orchestrator; owner had to have them moved out via `herdr pane move --new-tab`).
+- Interim doctrine already in force: orchestrators must pass --new-tab on every spawn. This task is about making the DEFAULT safe instead of relying on callers remembering.
+
+## Scope
+
+1. Characterize the delivery failure: is it a race between pane render and bus bind, or between render and prompt injection? Does `herder wait <guid>` after spawn mask it? Reproduce with a same-tab split spawn.
+2. Enumerate implications of a new-tab default: callers relying on --split right|down behavior, check scripts/goldens asserting spawn output shape, workspace tab proliferation for short-lived agents, --new-tab interaction with --cwd/--worktree, focus stealing.
+3. Recommend: either flip the default (with --split kept as opt-in) or fix the underlying render/delivery race so both placements are safe — or both. If the race is the real bug, flipping the default only hides it.
+
+## Acceptance criteria
+
+1. Repro (or a documented failed-repro attempt) of the delivery race with same-tab split spawn.
+2. Written implications assessment covering the enumeration above.
+3. Recommendation with chosen direction; if default flips, spawn help text + docs updated and check-spawn-contract goldens updated; if race fixed instead, a regression check proves delivery succeeds into a just-created split pane.
+4. Full house gate green (go vet+test tools/herder + tools/bottle, all tests/check-*.sh bare sequential).
+<!-- SECTION:DESCRIPTION:END -->
