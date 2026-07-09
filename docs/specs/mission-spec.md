@@ -179,8 +179,9 @@ authority-only (invariant 8).
   scaffold names and hidden files unambiguous.
 - No trailing hyphen; no consecutive hyphens (`--`) — both refuse at `mission new`.
 - Uniqueness = directory existence: `mission new` refuses if `missions/<slug>/` exists.
-- The slug is permanent in v1. Renaming a mission is a git-level operation with marker fallout
-  and no CLI support; parked as an open question (§12).
+- Renames are expected over a mission's life but stay out of the CLI (the verb set is closed):
+  a rename is an authority act performed with git and hand edits per the documented procedure
+  (§8.5), recorded by a `rename` custody commit.
 
 ### 4.4 The board
 
@@ -200,6 +201,11 @@ are neutralized by this spec:
 2. A board-less directory below repo root silently falls through to the *ancestor* board —
    exactly why every CLI board access is cwd-pinned to the mission dir and guarded by
    invariant 6.
+
+The board requires the **Backlog.md CLI ≥ 1.47 on PATH**; the load-bearing behavioural
+assumptions are exactly the two above — nearest-ancestor resolution and the pinned keys'
+semantics. Getting the CLI onto a machine is install-tooling business (ai-sync today), not
+this spec's.
 
 **Pinned config** — stamped into `backlog/config.yml` at scaffold, invariant for the mission's
 life (invariant 7):
@@ -435,8 +441,8 @@ messages plus board notes. The grammar:
 - **Verbs** — an open, documented vocabulary (Q13's amendment survives the log it was made
   for): `new` (scaffold), `adopt` (files arrive; summary names the source), `harvest` (results
   copied out; summary names the destination — repo, path, and where useful the landed sha),
-  `delete` (disposition of removed material), `close` (closeout commit), plus freeform verbs
-  where none fits. Nothing validates the vocabulary; the skill documents it and agents extend
+  `delete` (disposition of removed material), `rename` (slug change; summary names old and
+  new), `close` (closeout commit), plus freeform verbs where none fits. Nothing validates the vocabulary; the skill documents it and agents extend
   it in the open.
 - **Trailers**, optional, for the greppable cases: `Mission-Source:`, `Mission-Dest:`,
   `Mission-Agent:` (a label-grade name — same vocabulary as authority and assignee).
@@ -463,7 +469,17 @@ summary, harvest record, pointers outward; (4) frontmatter `status: closed`; (5)
 custody commit. The dir then rests in place: greppable, browsable, cheap. Deletion, when it
 ever happens, is a git operation recorded by a `delete` custody commit.
 
-### 8.5 Marker hygiene (skill)
+### 8.5 Rename procedure (skill)
+
+Renames happen; they are an authority act, not a CLI verb. The procedure: (1) pick the new
+slug (§4.3 rules; target dir must not exist); (2) `git mv missions/<old> missions/<new>`;
+(3) edit `mission:` frontmatter to the new slug (it must equal the dir name) and
+`project_name` in `backlog/config.yml` (cosmetic); (4) fix or remove markers pointing at the
+old slug — resolution fails loudly on stale ones (§5.3), so stragglers announce themselves
+rather than misdirecting; (5) one `rename` custody commit covering the lot. Self-containment
+keeps the blast radius exactly this small: the dir name, two fields, and the markers.
+
+### 8.6 Marker hygiene (skill)
 
 Markers are pointers into working directories: usually untracked (project gitignore or global
 excludes), deleted when the worktree's mission involvement ends, committed only on branches
@@ -542,8 +558,12 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
   note. (Doctrine scenario: validated as skill prose + a documented walkthrough, not CLI
   behaviour.)
 - **AC-17 custody grammar** — the skill's worked examples produce commits whose subjects parse
-  as `mission(<slug>): <verb> <summary>` for new/adopt/harvest/close, greppable across the
-  repo history by slug and by verb.
+  as `mission(<slug>): <verb> <summary>` for new/adopt/harvest/rename/close, greppable across
+  the repo history by slug and by verb.
+- **AC-18 rename** — after the §8.5 procedure (dir moved, `mission:` + `project_name` updated,
+  markers fixed, one `rename` custody commit): resolution via the updated markers works;
+  `status` shows no frontmatter/dirname warning; board and artifacts are intact; the old slug
+  survives only in history. (Doctrine scenario, skill-validated like AC-16.)
 
 ## 10. Non-goals (recorded decisions, not omissions)
 
@@ -599,11 +619,13 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 | M13 | Missions strictly opt-in; missionless path costs zero | S2 | Invariant 3, AC-10 |
 | M14 | Custody-commit grammar `mission(<slug>): <verb> <summary>` with an open, documented verb vocabulary (new/adopt/harvest/delete/close) and optional trailers | Q13 amendment surviving Q15 | §8.2, AC-17 |
 | M15 | Human attribution: `owner:` distinct from `authority:` (owner = human, meant to be read as a person; authority = write authority, opaque interpretation); owner stamped `--owner` → `$SESSION_OWNER` → OS user and echoed with its source at `new`; `SESSION_OWNER` is the one cross-surface env name (shared with herder + session shipping); git identity is a provisioning suggestion, never canonical | Owner rulings 2026-07-09 | §2, §4.2, §6.1, §8.1, AC-1 |
+| M16 | Renames are expected but stay out of the CLI: authority skill procedure (git mv + two fields + markers + `rename` custody commit); slug-equals-dirname re-established by the procedure; verb set stays closed. `--commit` ratified as reserved (design of record, not v1). Backlog.md floor: ≥ 1.47 + stated behavioural assumptions; CLI presence is install-tooling business. Board tuning beyond the pins is per-mission, authority-owned | Owner rulings 2026-07-09 | §4.3, §4.4, §6.4, §8.5, AC-18 |
 
 ## 12. Open questions (living tail — resolve with the owner before ratification)
 
-1. **`--commit` reserved design (§6.4):** ratify the proposed shape, strike it, or defer with
-   the section kept as the design of record?
+1. **`--commit` reserved design (§6.4):** ~~ratify, strike, or defer?~~ **Resolved 2026-07-09:
+   ratified as reserved** — §6.4 stands as the design of record, out of v1; implementation
+   waits on the manual commit rhythm demonstrating the need.
 2. **Authority default at `new`:** ~~OS username acceptable, or mandatory flag?~~ **Resolved
    with the owner 2026-07-09** as part of the human-attribution design (M15): authority keeps
    the OS-username default (write authority, opaque interpretation; never `$SESSION_OWNER`);
@@ -614,11 +636,15 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 3. **Marker default posture:** is write-marker-by-default right for `mission new`, or should
    the marker be opt-in (`--marker`)? Current draft: default-on with `--no-marker`, skipped
    inside the missions repo.
-4. **Backlog.md version posture:** verification ran against 1.47.1. Should the spec state a
-   minimum version, a mise-pinned version in the missions repo, or only the behavioural
-   assumption (nearest-ancestor resolution + these config keys)?
-5. **Non-pinned board tuning:** the draft lets the authority tune statuses/labels/milestones by
-   direct `config.yml` edit (§4.4). Confirm, or should boards be uniform across the repo?
-6. **Mission rename:** parked with no CLI support (§4.3). Acceptable for v1?
-7. **Overview trigger:** `status` shows the overview with no context only when cwd is inside
-   the missions repo (§6.3). Right call, or should `--all` be the only path to it?
+4. **Backlog.md version posture:** ~~minimum, mise-pin, or behavioural assumption only?~~
+   **Resolved 2026-07-09: minimum version (≥ 1.47) + the stated behavioural assumptions**
+   (§4.4). Getting the CLI onto a machine is install-tooling business (ai-sync today);
+   portability beyond that is dealt with later.
+5. **Non-pinned board tuning:** ~~confirm, or uniform boards?~~ **Resolved 2026-07-09:
+   per-mission** — the authority tunes statuses/labels/milestones by direct `config.yml` edit;
+   uniformity is at most a social norm.
+6. **Mission rename:** ~~parked with no CLI support — acceptable?~~ **Resolved 2026-07-09:
+   renames will happen** — the slug is not permanent. Handled as an authority skill procedure
+   (§8.5) with a `rename` custody verb; the verb set stays closed at three.
+7. **Overview trigger:** ~~inside-repo default plus `--all`, or `--all` only?~~ **Resolved
+   2026-07-09: keep as drafted** (§6.3).
