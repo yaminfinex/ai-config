@@ -186,31 +186,6 @@ func TestResolveSpawnerBusReusedPaneTiebreaker(t *testing.T) {
 	}
 }
 
-func TestCheckoutForDirWalksUpToCheckoutRoot(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "tools", "herder", "shims"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "bin", "herder"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	nested := filepath.Join(root, "tools", "herder", "internal")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	gotRoot, gotBin, ok := checkoutForDir(nested)
-	if !ok || gotRoot != root || gotBin != filepath.Join(root, "bin", "herder") {
-		t.Fatalf("checkoutForDir(%q) = (%q, %q, %v), want (%q, ..., true)", nested, gotRoot, gotBin, ok, root)
-	}
-	if _, _, ok := checkoutForDir(t.TempDir()); ok {
-		t.Fatal("checkoutForDir on a plain dir = ok, want miss")
-	}
-}
-
 func TestRegistryCapturedNameUsesLatestEnrichmentRow(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	if err := registry.Append(path, []byte(`{"guid":"guid-1","short_guid":"guid","label":"worker-guid","hcom_name":"","status":"active"}`)); err != nil {

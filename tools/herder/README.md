@@ -68,12 +68,11 @@ knowing when working across checkouts and worktrees:
   therefore pins `${MISE_DATA_DIR:-~/.local/share/mise}/shims` to the front of the child's PATH;
   shims re-resolve per-directory at call time, so this is position-proof. No mise → no-op.
   (`--no-login-shell` skips this fix; it needs runtime shell expansion.)
-- **Checkout-scoped env is re-pointed.** A child spawned `--cwd` into a *different* ai-config
-  checkout (typically a worktree) gets `AI_CONFIG_ROOT` and `HERDER_BIN` re-pointed at that
-  checkout — `bin/herder` and `lib/common.sh` let the inherited env var beat their own location, so
-  without this the child silently builds and tests the spawner's tree. The spawn-time launch itself
-  still rides the spawner's `bin/herder` (the proven-buildable tree). Outside any checkout, the
-  inherited values are left untouched.
+- **Herder lifecycle env stays pinned to the spawner.** A child spawned `--cwd` or `--worktree`
+  into a different ai-config checkout still gets `AI_CONFIG_ROOT` and `HERDER_BIN` pointing at the
+  spawner checkout. Herder lifecycle commands write the shared registry, so they must use the same
+  schema generation as the spawner build instead of rebuilding from an older child worktree. Work
+  inside the child tree with repo-local commands by invoking those paths explicitly.
 
 `--notify` resolves the spawner's bus name from the registry by guid *and* by pane/terminal
 coordinates, so enrolled sessions (no `$HERDER_GUID` in their environment) get bus-native
