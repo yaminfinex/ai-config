@@ -106,12 +106,17 @@ deletion is a repo-hygiene decision made by humans with git, outside this spec.
    on an ancestor board — the verified sharp edge, §4.4.)
 7. **Pinned config is invariant.** The four §4.4 keys keep their scaffold values for the
    mission's life. The CLI refuses the paths that would change them (`config` is outside the
-   allowlist); `mission status` warns loudly on drift.
+   allowlist); the passthrough re-checks the pins before every exec and `mission status`
+   warns loudly on drift — both detection points are needed because the pins can drift
+   without the CLI's involvement: Backlog's own web UI (`browser`) rewrites `config.yml`
+   through its settings endpoint (verified on 1.47.1).
 8. **One manifest authority per mission** (Q16). Only the authority edits `mission.md` or
    restructures the board (column/status changes, task moves between states it doesn't own,
    task deletion). Transfer is the authority editing the field. A merge conflict on
-   `mission.md` is by definition an authority violation: the authority's version wins, the
-   other writer re-proposes via a task note.
+   `mission.md` signals either an authority violation *or* the authority's own unsynced
+   edits from two nodes (the authority is a label, not a single writer); in both cases the
+   current authority resolves the merge — choosing or combining versions — and only
+   non-authority content re-enters as a task note.
 9. **Non-authority writers have exactly two surfaces:** their assigned tasks (status within the
    task, notes) and disjoint artifact paths. Everything else is propose-only via task notes.
 10. **Multi-node writes union by construction.** Task-per-file boards, disjoint artifact paths,
@@ -181,7 +186,10 @@ state, where there is room to actually say it (§8.4).
   an alphanumeric, max 64 chars. No leading `.` or `_` is possible by construction, keeping
   scaffold names and hidden files unambiguous.
 - No trailing hyphen; no consecutive hyphens (`--`) — both refuse at `mission new`.
-- Uniqueness = directory existence: `mission new` refuses if `missions/<slug>/` exists.
+- Uniqueness = directory existence: `mission new` refuses if `missions/<slug>/` exists. The
+  check is per-clone: two unsynced nodes can mint the same slug concurrently — the §8.1
+  rhythm (pull before `new`) narrows the window, and a collision that lands anyway resolves
+  per §7.2 (rename, no content adjudication).
 - Renames are expected over a mission's life but stay out of the CLI (the verb set is closed):
   a rename is an authority act performed with git and hand edits per the documented procedure
   (§8.5), recorded by a `rename` custody commit.
@@ -269,8 +277,10 @@ For any verb needing mission context (`backlog`, `status` in single-mission mode
 
 First hit wins; no blending. Failures refuse loudly: no context found → guidance naming all
 three mechanisms; marker names a slug with no dir → "marker points at missing mission
-<slug>"; two markers on one ancestor chain → refusal naming both; `$MISSIONS_REPO` needed but
-unset → setup guidance. Resolution never scans the repo for candidates and never guesses.
+<slug>"; `--mission` naming a missing mission dir → "mission <slug> not found" (mirroring
+the marker case); two markers on one ancestor chain → refusal naming both; `$MISSIONS_REPO`
+needed but unset → setup guidance. Resolution never scans the repo for candidates and never
+guesses.
 
 ## 6. Command surface — expected behaviour
 
@@ -300,7 +310,9 @@ Given a valid, unclaimed slug:
 3. Initialize the nested board with pinned config (§4.4) and `project_name: <slug>`. Whether
    this shells to `backlog init` and rewrites `config.yml`, or writes the files directly, is
    implementation — the contract is that `mission backlog task create` works immediately
-   afterwards and the four pins hold.
+   afterwards, the four pins hold, and the mission dir contains nothing beyond the §4.1
+   tree (in particular, the `AGENTS.md` nudge file `backlog init` writes into its cwd —
+   verified on 1.47.1 — must be removed or suppressed).
 4. Create `artifacts/` (empty, with a keep-file so the tree survives file-based sync).
 5. Write the context marker `.mission` (content: the slug) into the invoking cwd — the D6
    mechanism. Skipped when cwd is inside the missions repo (self-resolving) or `--no-marker`
@@ -316,9 +328,11 @@ commit, made by the caller per the skill (§8).
 The mission system's whole board interface. Sequence: resolve context (§5.3) → verify
 `missions/<slug>/backlog/config.yml` exists, refusing on absence with a "board missing —
 scaffold damaged or wrong mission" error rather than risking ancestor fallthrough
-(invariant 6) → check the first forwarded argument against the allowlist → exec `backlog`
-with cwd = the mission dir, forwarding everything else untouched. Interactive subcommands,
-stdin/stdout, and exit codes pass through; the wrapper adds nothing on success.
+(invariant 6) → check the first forwarded argument against the allowlist → verify the four
+pinned keys still hold their §4.4 values, warning loudly on drift as `status` does
+(invariant 7 — the board's own web UI can rewrite them) → exec `backlog` with cwd = the
+mission dir, forwarding everything else untouched. Interactive subcommands, stdin/stdout,
+and exit codes pass through; the wrapper adds nothing on success.
 
 **Allowlist** — the exposed surface. Anything not listed refuses, naming the allowlist —
 including subcommands future Backlog.md versions add, until deliberately added here:
@@ -331,7 +345,7 @@ including subcommands future Backlog.md versions add, until deliberately added h
 | `doc`, `decision` | Backlog's docs/decisions — board-internal, land inside the mission dir |
 | `milestone` / `milestones` | Board-internal grouping |
 | `cleanup` | Ages Done tasks into the completed folder — restructuring, authority etiquette applies (invariant 8) |
-| `browser` | The visual board (Q11 valued it); never auto-launched (pin) |
+| `browser` | The visual board (Q11 valued it); never auto-launched (pin). Verified hazard (1.47.1): its settings endpoint rewrites `config.yml`, pins included — covered by the pin re-check in the guard sequence above |
 
 Excluded, with the reasons recorded: `init` (re-init inside a mission is always damage),
 `config` (the pins are invariant; deliberate tuning is an authority file-edit, not a CLI
@@ -356,8 +370,13 @@ artifacts: 9 files · newest analysis/flamegraph-0708.html (2h ago)
 ```
 
 plus warnings, each one line, when: any pinned key has drifted (invariant 7); `mission:`
-frontmatter disagrees with the dir name; frontmatter carries unknown keys; the board or
-`artifacts/` is missing. Recency comes from file mtimes — never from git (invariant 4). How the
+frontmatter disagrees with the dir name; frontmatter carries unknown keys; `status:` holds
+any value other than `active`/`closed` (same treatment as unknown keys); the board carries
+duplicate task IDs (the silent union breach, §7.2); the board or `artifacts/` is missing.
+Single-mission mode applies the §5.3 existence guard first: `--mission` naming a missing dir
+refuses rather than partially rendering. Recency comes from file mtimes — never from git
+(invariant 4) — and is therefore **node-local**: clone and pull re-stamp mtimes, so recency
+reports when changes reached *this clone*, not when the work happened. How the
 board summary is sourced (parsing task files vs invoking a read-only Backlog.md command in the
 pinned sandbox) is implementation; the contract is invariant 11: read-only, no side effects.
 
@@ -370,8 +389,11 @@ q3-launch         closed  riley      riley  0/0/21                  6d ago
 ```
 
 One line per mission dir, cheap filesystem scan, closed missions included (they are part of
-orientation). Invoked with no context *outside* the missions repo, `status` refuses with the
-§5.3 guidance rather than guessing that an overview was wanted.
+orientation). The TASKS column reports per-status counts in the board's own configured
+status order — `todo/doing/done` above is the default-config illustration, not a fixed
+vocabulary (statuses are authority-tunable, §4.4). UPDATED is the node-local recency defined
+above: when changes reached this clone. Invoked with no context *outside* the missions repo,
+`status` refuses with the §5.3 guidance rather than guessing that an overview was wanted.
 
 ### 6.4 Reserved: per-invocation auto-commit (`--commit`) — designed, not in v1
 
@@ -418,12 +440,17 @@ trivially. When a conflict does surface, resolution is fixed in advance:
 |---|---|---|
 | `mission.md` | Authority violation by definition (Q16) | Authority's version wins verbatim; the other writer re-proposes as a task note |
 | `backlog/config.yml` | Pinned-config drift or unauthorized tuning | Scaffold pins restored; other keys: authority's version wins |
-| A task file | Two writers on one ticket | The task's **assignee's** version wins; the other writer re-proposes via a note on the merged task |
+| A task file | Two writers on one ticket | The task's **assignee's** version wins; the other writer re-proposes via a note on the merged task. When the conflict involves a reassignment or an authority restructuring act, the **authority-side** version adjudicates instead (reassignment and sweeps are restructuring, invariant 8); the displaced assignee's edits re-enter as a note |
+| A task file modified on one side, moved or deleted by restructuring on the other | Modify/delete conflict (e.g. `cleanup` aged the task while an edit was in flight) | The move wins; the edit re-enters as a note on the moved/completed task |
+| Duplicate task IDs after a union | **Silent — no git conflict:** two nodes each allocated the next sequential ID between syncs; the board lists one task while ID-addressed commands resolve to the other (verified on 1.47.1) | The later-created task is renumbered by its creator per the skill's procedure; `mission status` surfaces the duplicate (§6.3) |
 | An artifact path | Disjoint-path convention breached | Accidental collision: either writer renames theirs to a disjoint path and notes the board — no content adjudication |
+| A whole mission dir | Same slug minted on two unsynced nodes (§4.3 uniqueness is per-clone) — two missions interleaved under one path | Treated like the artifact-path breach: the later-pushed mission renames per §8.5; no content adjudication |
 
 No merge machinery is mandated or recommended: in particular, **no `merge=union` gitattributes**
 — union merges corrupt frontmatter files, and the taxonomy above is a human/agent doctrine, not
-a driver. (A merge conflict is already the loud signal; the taxonomy just says who wins.)
+a driver. (A merge conflict is the loud signal for every row but one: the duplicate-task-ID
+breach unions silently, which is exactly why it gets a `status` detection surface as well as
+a taxonomy row.)
 
 ## 8. The companion skill
 
@@ -436,7 +463,9 @@ resolution, it's CLI.**
 
 The missions repo is synced by ordinary git usage: commit early and often at the mission-subtree
 grain, pull before board restructuring or manifest edits (the authority's habit that keeps
-invariant 8 conflict-free in practice), push when a unit of work lands. The CLI never does any
+invariant 8 conflict-free in practice), pull before `mission new` and before task creation
+(narrows the §7.2 slug-collision and duplicate-task-ID windows), push when a unit of work
+lands. The CLI never does any
 of this. On a repo that isn't git at all, everything still works single-node; the skill simply
 has nothing to say.
 
@@ -488,7 +517,10 @@ Closing a mission is the authority: (1) board final states — every task Done o
 noted as dying with the mission; (2) harvest pass — everything with a future gets a §8.2
 harvest commit to its permanent home; (3) `mission.md` Closeout section written — disposition
 in words (completed, cancelled and why, parked with what's still worth harvesting), harvest
-record, pointers outward; (4) frontmatter `status: closed`; (5) the `close`
+record, pointers outward; (4) frontmatter `status: closed`; (5) custody-rhythm review — the
+authority skims `git log -- missions/<slug>/` for custody-grammar coverage, records gaps in
+the Closeout section, and notes whether the manual commit rhythm held (this is the evidence
+stream the §6.4 reserved design's implementation decision consumes); (6) the `close`
 custody commit. The dir then rests in place: greppable, browsable, cheap. Deletion, when it
 ever happens, is a git operation recorded by a `delete` custody commit.
 
@@ -644,7 +676,7 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 | M11 | Context = marker-file/cwd resolution with explicit-flag override; `.mission` = slug pointer; markers never shadow (one per ancestor chain — two on a chain refuse, `new` won't write beneath a different-slug marker); env carries repo location only, never mission identity | D6 + owner ruling 2026-07-09 | §5, invariant 12, AC-3, AC-9..10 |
 | M12 | Multi-node posture: union-by-construction (task-per-file + disjoint artifact paths + single-authority manifest); fixed conflict taxonomy; no merge drivers | Boundaries §4, Q16 | §7, invariant 10, AC-15..16 |
 | M13 | Missions strictly opt-in; missionless path costs zero | S2 | Invariant 3, AC-10 |
-| M14 | Custody-commit grammar `mission(<slug>): <verb> <summary>` with an open, documented verb vocabulary (new/adopt/harvest/delete/close) and optional trailers | Q13 amendment surviving Q15 | §8.2, AC-17 |
+| M14 | Custody-commit grammar `mission(<slug>): <verb> <summary>` with an open, documented verb vocabulary (new/adopt/harvest/delete/rename/close) and optional trailers | Q13 amendment surviving Q15 | §8.2, AC-17 |
 | M15 | Human attribution: `owner:` distinct from `authority:` (owner = human, meant to be read as a person; authority = write authority, opaque interpretation); owner stamped `--owner` → `$SESSION_OWNER` → OS user and echoed with its source at `new`; `SESSION_OWNER` is the one cross-surface env name (shared with herder + session shipping); git identity is a provisioning suggestion, never canonical | Owner rulings 2026-07-09 | §2, §4.2, §6.1, §8.1, AC-1 |
 | M16 | Renames are expected but stay out of the CLI: authority skill procedure (git mv + two fields + markers + `rename` custody commit); slug-equals-dirname re-established by the procedure; verb set stays closed. `--commit` ratified as reserved (design of record, not v1). Backlog.md floor: ≥ 1.47 + stated behavioural assumptions; CLI presence is install-tooling business. Board tuning beyond the pins is per-mission, authority-owned | Owner rulings 2026-07-09 | §4.3, §4.4, §6.4, §8.5, AC-18 |
 
@@ -676,3 +708,11 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
    (§8.5) with a `rename` custody verb; the verb set stays closed at three.
 7. **Overview trigger:** ~~inside-repo default plus `--all`, or `--all` only?~~ **Resolved
    2026-07-09: keep as drafted** (§6.3).
+8. **Sync-staleness observability (deferred from the 2026-07-09 doc review, product-lens,
+   P1):** "team-visible" has no staleness signal — an unsynced board is indistinguishable
+   from a quiet one on every reading node, and `status` is forbidden from noticing (recency
+   is mtime-only; invariant 4 bans git reads). The proposed fix reopens M6's read half:
+   permit read-only git queries inside `mission status` (never mutations), warn one line when
+   the mission subtree has uncommitted or unpushed changes (silently skipped when the repo
+   isn't git), and relax AC-14's audit from "no git invocation" to "no git mutation".
+   Deferred to the owner: this amends a ratified checklist row.
