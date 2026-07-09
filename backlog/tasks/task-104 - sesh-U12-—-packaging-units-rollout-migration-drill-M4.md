@@ -1,10 +1,10 @@
 ---
 id: TASK-104
 title: 'sesh U12 — packaging, units, rollout, migration drill (M4)'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 05:29'
-updated_date: '2026-07-09 07:59'
+updated_date: '2026-07-09 08:15'
 labels:
   - sesh
 dependencies:
@@ -31,3 +31,9 @@ Read first: /home/grace/Coding/ai-config/napkins/sesh-build/playbook.md, plan U1
 - [ ] #4 Store host migration loses nothing, changes nothing on nodes
 - [ ] #5 Stale binary vs newer registry refuses cleanly in the field (R23)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Done at 5105225 (2dab5eb + review fixes), merged to sesh-build (ff). Cycle: gemo (codex) adversarial review found 2 field-breakers — P1 runbook https:// vs plaintext-HTTP tsnet listener + non-UUID deny probe (would have bricked fleet install + made deny verification impossible); P2 installer wrote before proving user bus (half-install on no-linger hosts, drop-in clobber). Fixed: http:// + rationale (RULING: plain HTTP over tsnet intended — WireGuard encrypts/authenticates in-tailnet; ListenTLS door rejected), uuidgen probes with 403/404 pair, gate guards for both regressions, preflight-before-writes + drop-in preservation sans --force. gemo re-check ACCEPT with simulation evidence. Field ACs 1-4 = rollout checklists with owner (M4 gate); AC5 R23 locally proven by check-deploy-artifacts. Code-complete tip verified: full thirteen-script suite + module gates green under orchestrator runs.
+<!-- SECTION:NOTES:END -->
