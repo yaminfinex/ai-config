@@ -3,10 +3,10 @@ id: TASK-076
 title: >-
   statusline snapshot: publish context metrics (CTX_PCT/CTX_TOKENS/CTX_SIZE) for
   orchestrator reads
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-08 20:27'
-updated_date: '2026-07-09 09:44'
+updated_date: '2026-07-09 13:07'
 labels: []
 dependencies: []
 priority: high
@@ -41,3 +41,9 @@ Context-measurement sources validated live by task075-zore (owner-commissioned i
 - [ ] #3 codex source resolved: statusline publishes equivalent metrics, or list falls back to the validated rollout-JSONL read (comment 1), or absence is rendered unknown — one of the three, decided and implemented
 - [ ] #4 docs/status-lines.md contract updated for the two-way env-file protocol
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged (18b7ed0+832aad4+7238914) after three review rounds by data: hostile-input hardening, collision resurrection closed, R1 limitation documented. Codex publishes honest unknown (no statusline hook upstream).
+<!-- SECTION:NOTES:END -->
