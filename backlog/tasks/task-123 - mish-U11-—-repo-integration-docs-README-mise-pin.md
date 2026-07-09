@@ -1,10 +1,10 @@
 ---
 id: TASK-123
 title: 'mish U11 — repo integration + docs (README, mise pin)'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 09:46'
-updated_date: '2026-07-09 10:53'
+updated_date: '2026-07-09 10:59'
 labels:
   - mish
 dependencies: []
@@ -34,5 +34,5 @@ Settled decisions: do NOT build install/ship packaging, launchers, or bin/mish (
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Coordination input from sesh orchestrator (2026-07-09, post-U12-merge): sesh U12 install shape is stable-to-copy at code level but not field-proven until their M4 rollout — mish v1 keeps run-from-source deferral. Applicable NOW to this unit: (1) README gate commands are code — every command must be executable verbatim from a cold read; (2) consider a small doc-vs-reality guard in the U10 harness or here (sesh precedent: tests/check-deploy-artifacts.sh greps docs for known-wrong patterns). When packaging is eventually pulled in (follow-up, not this unit): copy tools/sesh/etc/* patterns on sesh-build @ 5105225 — fleet-identical unit + drop-in per-host config, idempotent --dry-run-pure preflighting installer, zero repo-path assumptions; write installer failure modes first; copy files, do not extract shared abstractions at two tools.
+Merged to mish-build @ 7f0d095 (--no-ff). Worker: codex mish-u11-goma (2e98f97). mise.toml pins npm:backlog.md 1.47.1. README: portable mise-based setup (orchestrator-verified in a cold --noprofile shell), gates = verification contract with run-all.sh as documented runner, floor gate + golden regen + packaging deferral documented. Review fix applied pre-merge: machine-local Go path removed. sesh coordination input (installer disciplines) preserved in earlier notes for the future packaging follow-up.
 <!-- SECTION:NOTES:END -->
