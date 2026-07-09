@@ -259,13 +259,22 @@ This event is internal to the store process. It is not a second shipper/store pr
 U6 writes and U7 reads the message index through this schema. Column names are frozen;
 SQLite types may use the closest practical affinity.
 
+Logical session unification is store-side index logic. The indexer first uses parsed
+content ids or linking fields when they correctly identify multiple files as one logical
+session. When parsed content ids do not unify files, the indexer unifies logical sessions
+by overlapping `(entry_type, message_uuid)` across file UUIDs of the same tool; this is
+the primary Claude resume path observed in Claude Code v2.1.195, where a captured resume
+pair rewrote copied history under the resumed file's own content id and unified only by
+141 overlapping message UUIDs. This rule does not move parsing to the shipper and does
+not change file identity.
+
 Table: `sesh_index_messages`
 
 | Column | Meaning |
 |---|---|
 | `id` | Store-local integer primary key |
 | `tool` | `claude` or `codex` |
-| `logical_session_id` | Parsed session id; falls back to `wire_session_id` only when unavailable |
+| `logical_session_id` | Store-derived logical session id after content-id/link-field or overlap unification; falls back to `wire_session_id` only when unavailable |
 | `wire_session_id` | Session id claim from the PUT URL |
 | `entry_type` | Parsed transcript entry type; opaque string allowed |
 | `message_uuid` | Parsed message UUID when present; empty string when absent |
