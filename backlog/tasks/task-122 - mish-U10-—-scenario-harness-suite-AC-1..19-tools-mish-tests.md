@@ -1,9 +1,10 @@
 ---
 id: TASK-122
 title: mish U10 — scenario harness suite AC-1..19 (tools/mish/tests)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 09:46'
+updated_date: '2026-07-09 10:37'
 labels:
   - mish
 dependencies: []

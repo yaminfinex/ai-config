@@ -1,10 +1,10 @@
 ---
 id: TASK-120
 title: mish U8 — agent-targeted help surface + goldens
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 09:46'
-updated_date: '2026-07-09 10:21'
+updated_date: '2026-07-09 10:37'
 labels:
   - mish
 dependencies: []

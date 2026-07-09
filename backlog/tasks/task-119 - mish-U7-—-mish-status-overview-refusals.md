@@ -1,10 +1,10 @@
 ---
 id: TASK-119
 title: mish U7 — mish status overview + refusals
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 09:46'
-updated_date: '2026-07-09 10:24'
+updated_date: '2026-07-09 10:37'
 labels:
   - mish
 dependencies: []
@@ -30,3 +30,9 @@ Settled decisions: cheap filesystem scan of missions/*/ only; TASKS column in ea
 - [ ] #2 --all works from anywhere with MISSIONS_REPO set
 - [ ] #3 broken-manifest mission renders a warning row, table survives
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to mish-build @ 23ff802 (--no-ff). Worker: codex mish-u7-loza (f36360b + 7090903). Review: opus behavioral FIX-NEEDED → fixed: CRITICAL git-free overview collector (was forking git per mission + leaking staleness warning into rows; zero-git-call test added), mixed-vocab TASKS rendering (uniform → shared header, mixed → per-row order suffix), --mission+--all usage error exit 2, zero-mission states unified to header-only table, content-based column widths.
+<!-- SECTION:NOTES:END -->
