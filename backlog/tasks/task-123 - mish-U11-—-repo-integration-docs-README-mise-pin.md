@@ -4,6 +4,7 @@ title: 'mish U11 — repo integration + docs (README, mise pin)'
 status: To Do
 assignee: []
 created_date: '2026-07-09 09:46'
+updated_date: '2026-07-09 09:49'
 labels:
   - mish
 dependencies: []
@@ -29,3 +30,9 @@ Settled decisions: do NOT build install/ship packaging, launchers, or bin/mish (
 - [ ] #2 mise.toml pins npm:backlog.md to 1.47.1; mise install yields it; harness lib asserts the floor
 - [ ] #3 README documents run-from-source + the packaging deferral
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Coordination input from sesh orchestrator (2026-07-09, post-U12-merge): sesh U12 install shape is stable-to-copy at code level but not field-proven until their M4 rollout — mish v1 keeps run-from-source deferral. Applicable NOW to this unit: (1) README gate commands are code — every command must be executable verbatim from a cold read; (2) consider a small doc-vs-reality guard in the U10 harness or here (sesh precedent: tests/check-deploy-artifacts.sh greps docs for known-wrong patterns). When packaging is eventually pulled in (follow-up, not this unit): copy tools/sesh/etc/* patterns on sesh-build @ 5105225 — fleet-identical unit + drop-in per-host config, idempotent --dry-run-pure preflighting installer, zero repo-path assumptions; write installer failure modes first; copy files, do not extract shared abstractions at two tools.
+<!-- SECTION:NOTES:END -->
