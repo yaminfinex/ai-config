@@ -2,8 +2,18 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"sesh/internal/index"
+	"sesh/internal/store"
+	"sesh/internal/wire"
 )
 
 func TestHelpListsAllSubcommands(t *testing.T) {
@@ -68,6 +78,103 @@ func TestReindexRunsOnEmptyStore(t *testing.T) {
 	root.SetArgs([]string{"reindex", "--data-dir", t.TempDir()})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("sesh reindex on empty store: %v", err)
+	}
+}
+
+func TestIndexConsumerDrainsServeAppendEvents(t *testing.T) {
+	st, err := store.Open(t.Context(), store.Config{Dir: t.TempDir(), AppendBuffer: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := st.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	idx, err := index.New(t.Context(), st.DB(), st.MirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	startIndexConsumer(ctx, st, idx, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+
+	body := []byte(`{"type":"user","uuid":"ok","sessionId":"11111111-1111-1111-1111-111111111111"}` + "\n")
+	req := httptest.NewRequest(http.MethodPut, "/v1/files/claude/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222/bytes?offset=0", bytes.NewReader(body))
+	req.Header.Set("Content-Type", wire.ContentTypeBytes)
+	req.Header.Set(wire.HeaderWireVersion, "1")
+	req.Header.Set(wire.HeaderHostname, "node-a")
+	req.Header.Set(wire.HeaderOSUser, "grace")
+	rr := httptest.NewRecorder()
+	st.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var ack wire.Ack
+	if err := json.Unmarshal(rr.Body.Bytes(), &ack); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rows, err := idx.RowCount(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rows == 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("index consumer did not drain append event, rows=%d", rows)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestIndexConsumerFailureMarksGenerationDirty(t *testing.T) {
+	st, err := store.Open(t.Context(), store.Config{Dir: t.TempDir(), AppendBuffer: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := st.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	idx, err := index.New(t.Context(), st.DB(), st.MirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx.InjectWriteFailureOnce()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	startIndexConsumer(ctx, st, idx, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+
+	body := []byte(`{"type":"user","uuid":"ok","sessionId":"11111111-1111-1111-1111-111111111111"}` + "\n")
+	req := httptest.NewRequest(http.MethodPut, "/v1/files/claude/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222/bytes?offset=0", bytes.NewReader(body))
+	req.Header.Set("Content-Type", wire.ContentTypeBytes)
+	req.Header.Set(wire.HeaderWireVersion, "1")
+	req.Header.Set(wire.HeaderHostname, "node-a")
+	req.Header.Set(wire.HeaderOSUser, "grace")
+	rr := httptest.NewRecorder()
+	st.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var dirty int
+		if err := st.DB().QueryRow(`SELECT COUNT(*) FROM files WHERE dirty_for_reindex = 1`).Scan(&dirty); err != nil {
+			t.Fatal(err)
+		}
+		if dirty == 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("index consumer failure did not mark generation dirty")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

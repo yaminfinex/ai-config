@@ -90,6 +90,8 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	s := &Store{
 		dir:       cfg.Dir,
 		mirrorDir: mirrorDir,
@@ -115,6 +117,14 @@ func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
+// WithWriteLock runs fn under the store write lock. Same-process components
+// that write the store database use this to serialize with ingest writes.
+func (s *Store) WithWriteLock(fn func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return fn()
+}
+
 // AppendEvents returns the in-process event bus consumed by U6.
 func (s *Store) AppendEvents() <-chan wire.AppendEvent {
 	return s.events
@@ -131,6 +141,7 @@ func (s *Store) InjectMirrorErrorOnce() {
 func (s *Store) initSchema(ctx context.Context) error {
 	stmts := []string{
 		`PRAGMA journal_mode=WAL`,
+		`PRAGMA busy_timeout=5000`,
 		`CREATE TABLE IF NOT EXISTS files (
 			tool TEXT NOT NULL,
 			session_id TEXT NOT NULL,

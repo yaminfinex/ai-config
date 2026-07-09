@@ -3,7 +3,6 @@
 package index
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -15,6 +14,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"sesh/internal/wire"
@@ -22,6 +22,16 @@ import (
 
 // MirrorPath resolves a mirrored generation path.
 type MirrorPath func(tool wire.Tool, sessionID, fileUUID string, generation int) string
+
+const maxIndexedLineBytes = 8 << 20
+
+var (
+	// ErrMirrorIncomplete means store metadata references bytes that are not
+	// currently readable from the durable mirror.
+	ErrMirrorIncomplete = errors.New("mirror incomplete")
+	// ErrStoreBusy is returned when another sesh process holds the store DB.
+	ErrStoreBusy = errors.New("store database busy")
+)
 
 // Indexer consumes append events and rebuilds disposable index tables.
 type Indexer struct {
@@ -91,7 +101,7 @@ func (idx *Indexer) initSchema(ctx context.Context) error {
 	}
 	for _, stmt := range stmts {
 		if _, err := idx.db.ExecContext(ctx, stmt); err != nil {
-			return err
+			return normalizeDBError(err)
 		}
 	}
 	return nil
@@ -108,20 +118,28 @@ func (idx *Indexer) ProcessAppend(ctx context.Context, ev wire.AppendEvent) erro
 	rows, complete, err := idx.parseComplete(ctx, ev)
 	if err != nil {
 		_ = idx.markDirty(ctx, ev)
-		return err
+		return normalizeDBError(err)
 	}
 	if len(rows) == 0 {
-		return idx.setCompleteOffset(ctx, ev, complete)
+		if err := idx.setCompleteOffset(ctx, ev, complete); err != nil {
+			_ = idx.markDirty(ctx, ev)
+			return normalizeDBError(err)
+		}
+		return normalizeDBError(idx.clearDirty(ctx, ev))
 	}
 	if err := idx.insertRows(ctx, rows); err != nil {
 		_ = idx.markDirty(ctx, ev)
-		return err
+		return normalizeDBError(err)
 	}
 	if err := idx.setCompleteOffset(ctx, ev, complete); err != nil {
 		_ = idx.markDirty(ctx, ev)
-		return err
+		return normalizeDBError(err)
 	}
-	return idx.unifyLogicalSessions(ctx)
+	if err := idx.unifyLogicalSessions(ctx); err != nil {
+		_ = idx.markDirty(ctx, ev)
+		return normalizeDBError(err)
+	}
+	return normalizeDBError(idx.clearDirty(ctx, ev))
 }
 
 // Reindex rebuilds disposable index rows from the mirror and store registry.
@@ -132,12 +150,12 @@ func (idx *Indexer) Reindex(ctx context.Context) error {
 		`DELETE FROM quarantine_ledger`,
 	} {
 		if _, err := idx.db.ExecContext(ctx, stmt); err != nil {
-			return err
+			return normalizeDBError(err)
 		}
 	}
 	gens, err := idx.generations(ctx)
 	if err != nil {
-		return err
+		return normalizeDBError(err)
 	}
 	for _, gen := range gens {
 		ev := wire.AppendEvent{
@@ -149,14 +167,13 @@ func (idx *Indexer) Reindex(ctx context.Context) error {
 			ByteEnd:       gen.HighWater,
 		}
 		if err := idx.ProcessAppend(ctx, ev); err != nil {
-			return err
+			if errors.Is(err, ErrMirrorIncomplete) {
+				continue
+			}
+			return normalizeDBError(err)
 		}
 	}
-	if err := idx.unifyLogicalSessions(ctx); err != nil {
-		return err
-	}
-	_, err = idx.db.ExecContext(ctx, `UPDATE files SET dirty_for_reindex = 0`)
-	return err
+	return normalizeDBError(idx.unifyLogicalSessions(ctx))
 }
 
 type generation struct {
@@ -170,7 +187,7 @@ type generation struct {
 func (idx *Indexer) generations(ctx context.Context) ([]generation, error) {
 	rows, err := idx.db.QueryContext(ctx, `SELECT tool, session_id, file_uuid, generation, high_water FROM files ORDER BY tool, session_id, file_uuid, generation`)
 	if err != nil {
-		return nil, err
+		return nil, normalizeDBError(err)
 	}
 	defer rows.Close()
 	var out []generation
@@ -195,9 +212,20 @@ func (idx *Indexer) parseComplete(ctx context.Context, ev wire.AppendEvent) ([]w
 	path := idx.mirrorPath(ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, start, err
+		return nil, start, fmt.Errorf("%w: %v", ErrMirrorIncomplete, err)
 	}
 	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, start, fmt.Errorf("%w: %v", ErrMirrorIncomplete, err)
+	}
+	if st.Size() < ev.ByteEnd {
+		return nil, start, fmt.Errorf("%w: mirror short: have %d want %d", ErrMirrorIncomplete, st.Size(), ev.ByteEnd)
+	}
+	baseOrdinal, err := lineOrdinalAt(f, start)
+	if err != nil {
+		return nil, start, err
+	}
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
 		return nil, start, err
 	}
@@ -211,27 +239,50 @@ func (idx *Indexer) parseComplete(ctx context.Context, ev wire.AppendEvent) ([]w
 	}
 	completeBytes := buf[:lastNL+1]
 	complete := start + int64(len(completeBytes))
-	baseOrdinal, err := idx.nextLineOrdinal(ctx, ev)
-	if err != nil {
-		return nil, start, err
-	}
 	var rows []wire.IndexMessage
-	sc := bufio.NewScanner(bytes.NewReader(completeBytes))
-	sc.Buffer(make([]byte, 0, 1<<20), 8<<20)
 	lineStart := start
 	lineOrdinal := baseOrdinal
-	for sc.Scan() {
-		line := append([]byte(nil), sc.Bytes()...)
+	for len(completeBytes) > 0 {
+		nl := bytes.IndexByte(completeBytes, '\n')
+		line := completeBytes[:nl]
 		lineEnd := lineStart + int64(len(line)) + 1
-		row := parseLine(ev, line, lineOrdinal, lineStart, lineEnd)
+		var row wire.IndexMessage
+		if len(line) > maxIndexedLineBytes {
+			row = quarantineLine(ev, "line_too_long", lineOrdinal, lineStart, lineEnd)
+		} else {
+			row = parseLine(ev, append([]byte(nil), line...), lineOrdinal, lineStart, lineEnd)
+		}
 		rows = append(rows, row)
+		completeBytes = completeBytes[nl+1:]
 		lineStart = lineEnd
 		lineOrdinal++
 	}
-	if err := sc.Err(); err != nil {
-		return nil, start, err
-	}
 	return rows, complete, nil
+}
+
+func lineOrdinalAt(f *os.File, offset int64) (int64, error) {
+	if offset == 0 {
+		return 0, nil
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return 0, err
+	}
+	buf := make([]byte, 32*1024)
+	var ordinal int64
+	var read int64
+	for read < offset {
+		want := int64(len(buf))
+		if remaining := offset - read; remaining < want {
+			want = remaining
+		}
+		n, err := io.ReadFull(f, buf[:want])
+		ordinal += int64(bytes.Count(buf[:n], []byte{'\n'}))
+		read += int64(n)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return ordinal, nil
 }
 
 func parseLine(ev wire.AppendEvent, line []byte, lineOrdinal int64, byteStart, byteEnd int64) wire.IndexMessage {
@@ -268,6 +319,24 @@ func parseLine(ev wire.AppendEvent, line []byte, lineOrdinal int64, byteStart, b
 		row.QuarantineReason = err.Error()
 	}
 	return row
+}
+
+func quarantineLine(ev wire.AppendEvent, reason string, lineOrdinal int64, byteStart, byteEnd int64) wire.IndexMessage {
+	return wire.IndexMessage{
+		Tool:             ev.Tool,
+		LogicalSessionID: ev.WireSessionID,
+		WireSessionID:    ev.WireSessionID,
+		EntryType:        "unparseable",
+		FileUUID:         ev.FileUUID,
+		Generation:       ev.Generation,
+		Role:             "unknown",
+		FileOrdinal:      int64(ev.Generation),
+		LineOrdinal:      lineOrdinal,
+		ByteStart:        byteStart,
+		ByteEnd:          byteEnd,
+		Quarantine:       true,
+		QuarantineReason: reason,
+	}
 }
 
 type parsedLine struct {
@@ -443,21 +512,14 @@ func (idx *Indexer) setCompleteOffset(ctx context.Context, ev wire.AppendEvent, 
 	return err
 }
 
-func (idx *Indexer) nextLineOrdinal(ctx context.Context, ev wire.AppendEvent) (int64, error) {
-	var n sql.NullInt64
-	err := idx.db.QueryRowContext(ctx, `SELECT MAX(line_ordinal) + 1 FROM sesh_index_messages WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,
-		ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation).Scan(&n)
-	if err != nil {
-		return 0, err
-	}
-	if n.Valid {
-		return n.Int64, nil
-	}
-	return 0, nil
-}
-
 func (idx *Indexer) markDirty(ctx context.Context, ev wire.AppendEvent) error {
 	_, err := idx.db.ExecContext(ctx, `UPDATE files SET dirty_for_reindex = 1 WHERE tool = ? AND session_id = ? AND file_uuid = ? AND generation = ?`,
+		ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
+	return err
+}
+
+func (idx *Indexer) clearDirty(ctx context.Context, ev wire.AppendEvent) error {
+	_, err := idx.db.ExecContext(ctx, `UPDATE files SET dirty_for_reindex = 0 WHERE tool = ? AND session_id = ? AND file_uuid = ? AND generation = ?`,
 		ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
 	return err
 }
@@ -523,7 +585,37 @@ func (idx *Indexer) unifyLogicalSessions(ctx context.Context) error {
 			}
 		}
 	}
+	if err := idx.updateFileOrdinals(ctx); err != nil {
+		return err
+	}
 	return idx.dedupeAll(ctx)
+}
+
+func (idx *Indexer) updateFileOrdinals(ctx context.Context) error {
+	files, err := idx.fileSummaries(ctx)
+	if err != nil {
+		return err
+	}
+	groups := map[string][]fileSummary{}
+	for _, f := range files {
+		key := string(f.tool) + "\x00" + f.logicalID
+		groups[key] = append(groups[key], f)
+	}
+	for _, group := range groups {
+		sort.Slice(group, func(i, j int) bool {
+			if group[i].firstIngest != group[j].firstIngest {
+				return group[i].firstIngest < group[j].firstIngest
+			}
+			return group[i].key < group[j].key
+		})
+		for ordinal, f := range group {
+			if _, err := idx.db.ExecContext(ctx, `UPDATE sesh_index_messages SET file_ordinal = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,
+				ordinal, f.tool, f.wireID, f.fileUUID, f.generation); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (idx *Indexer) dedupeAll(ctx context.Context) error {
@@ -680,4 +772,14 @@ func (idx *Indexer) RowCount(ctx context.Context) (int, error) {
 	var n int
 	err := idx.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sesh_index_messages`).Scan(&n)
 	return n, err
+}
+
+func normalizeDBError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(err.Error(), "database is locked") || strings.Contains(err.Error(), "database is busy") {
+		return fmt.Errorf("%w: stop live sesh serve or retry after it finishes writing", ErrStoreBusy)
+	}
+	return err
 }

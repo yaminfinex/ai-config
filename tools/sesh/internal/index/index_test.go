@@ -104,6 +104,26 @@ func TestResumePairUnifiesByOverlapAndDedupesMessageUUIDs(t *testing.T) {
 	if canonical != origID {
 		t.Fatalf("canonical logical_session_id = %q want earliest original %q", canonical, origID)
 	}
+	gotOrdinals := map[string]int{}
+	rows, err := st.DB().Query(`SELECT file_uuid, MIN(file_ordinal) FROM sesh_index_messages WHERE quarantine = 0 GROUP BY file_uuid`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var fileUUID string
+		var ordinal int
+		if err := rows.Scan(&fileUUID, &ordinal); err != nil {
+			t.Fatal(err)
+		}
+		gotOrdinals[fileUUID] = ordinal
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if gotOrdinals[origID] != 0 || gotOrdinals[newID] != 1 {
+		t.Fatalf("resume file ordinals = %+v, want original=0 new=1", gotOrdinals)
+	}
 }
 
 func TestGenerationAbsentFromDedupKey(t *testing.T) {
@@ -158,13 +178,58 @@ func TestEntryTypeIsPartOfDedupAndOverlapKey(t *testing.T) {
 	}
 }
 
-func TestTrailingPartialHeldBackUntilCompleted(t *testing.T) {
+func TestExactlyOneOverlappingPairDoesNotUnify(t *testing.T) {
 	st, idx := newHarness(t)
-	processFixture(t, st, idx, "45308169-72e6-4cbe-a05c-2a0025db055e", "45308169-72e6-4cbe-a05c-2a0025db055e", "claude-trailing-partial.jsonl")
-	var rowsBefore int
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM sesh_index_messages`).Scan(&rowsBefore); err != nil {
+	aSession := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	bSession := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	a := []byte(
+		`{"type":"user","uuid":"shared","sessionId":"` + aSession + `"}` + "\n" +
+			`{"type":"assistant","uuid":"a-only","sessionId":"` + aSession + `"}` + "\n")
+	b := []byte(
+		`{"type":"user","uuid":"shared","sessionId":"` + bSession + `"}` + "\n" +
+			`{"type":"assistant","uuid":"b-only","sessionId":"` + bSession + `"}` + "\n")
+	putBytes(t, st, aSession, aSession, 0, a)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
 		t.Fatal(err)
 	}
+	putBytes(t, st, bSession, bSession, 0, b)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	var sessions int
+	if err := st.DB().QueryRow(`SELECT COUNT(DISTINCT logical_session_id) FROM sesh_index_messages WHERE quarantine = 0`).Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if sessions != 2 {
+		t.Fatalf("one overlapping pair unified sessions, got %d sessions", sessions)
+	}
+}
+
+func TestFileHistorySnapshotPairDoesNotMergeUnrelatedSessions(t *testing.T) {
+	st, idx := newHarness(t)
+	aSession := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	bSession := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	a := []byte(`{"type":"file-history-snapshot","uuid":"shared-snapshot","sessionId":"` + aSession + `"}` + "\n")
+	b := []byte(`{"type":"file-history-snapshot","uuid":"shared-snapshot","sessionId":"` + bSession + `"}` + "\n")
+	putBytes(t, st, aSession, aSession, 0, a)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	putBytes(t, st, bSession, bSession, 0, b)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	var sessions int
+	if err := st.DB().QueryRow(`SELECT COUNT(DISTINCT logical_session_id) FROM sesh_index_messages WHERE quarantine = 0`).Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if sessions != 2 {
+		t.Fatalf("file-history-snapshot pair merged unrelated sessions, got %d sessions", sessions)
+	}
+}
+
+func TestTrailingPartialHeldBackUntilCompleted(t *testing.T) {
+	st, idx := newHarness(t)
 	full, err := os.ReadFile(fixture("claude-normal.jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -172,6 +237,20 @@ func TestTrailingPartialHeldBackUntilCompleted(t *testing.T) {
 	partial, err := os.ReadFile(fixture("claude-trailing-partial.jsonl"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	heldStart := int64(bytes.LastIndexByte(partial, '\n') + 1)
+	heldEnd := int64(bytes.IndexByte(full[heldStart:], '\n')) + heldStart + 1
+	processFixture(t, st, idx, "45308169-72e6-4cbe-a05c-2a0025db055e", "45308169-72e6-4cbe-a05c-2a0025db055e", "claude-trailing-partial.jsonl")
+	var rowsBefore int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM sesh_index_messages`).Scan(&rowsBefore); err != nil {
+		t.Fatal(err)
+	}
+	var heldRows int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM sesh_index_messages WHERE byte_start = ?`, heldStart).Scan(&heldRows); err != nil {
+		t.Fatal(err)
+	}
+	if heldRows != 0 {
+		t.Fatalf("held-back partial line was indexed early at byte_start=%d", heldStart)
 	}
 	putBytes(t, st, "45308169-72e6-4cbe-a05c-2a0025db055e", "45308169-72e6-4cbe-a05c-2a0025db055e", int64(len(partial)), full[len(partial):])
 	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
@@ -183,6 +262,13 @@ func TestTrailingPartialHeldBackUntilCompleted(t *testing.T) {
 	}
 	if rowsAfter <= rowsBefore {
 		t.Fatalf("completed partial did not add rows: before=%d after=%d", rowsBefore, rowsAfter)
+	}
+	var gotStart, gotEnd int64
+	if err := st.DB().QueryRow(`SELECT byte_start, byte_end FROM sesh_index_messages WHERE byte_start = ?`, heldStart).Scan(&gotStart, &gotEnd); err != nil {
+		t.Fatal(err)
+	}
+	if gotStart != heldStart || gotEnd != heldEnd {
+		t.Fatalf("completed held-back line span = %d-%d, want %d-%d", gotStart, gotEnd, heldStart, heldEnd)
 	}
 }
 
@@ -252,6 +338,92 @@ func TestReindexReproducesChecksumAndHealsDirtyFlag(t *testing.T) {
 	}
 	if dirty != 0 {
 		t.Fatalf("reindex did not heal dirty flags: %d", dirty)
+	}
+}
+
+func TestLineOrdinalComesFromBytePositionAfterDedupDeletion(t *testing.T) {
+	st, idx := newHarness(t)
+	body := []byte(
+		`{"type":"user","uuid":"a","sessionId":"` + testSession + `"}` + "\n" +
+			`{"type":"assistant","uuid":"b","sessionId":"` + testSession + `"}` + "\n")
+	putBytes(t, st, testSession, testFile, 0, body)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().Exec(`DELETE FROM sesh_index_messages WHERE message_uuid = 'b'`); err != nil {
+		t.Fatal(err)
+	}
+	tail := []byte(`{"type":"user","uuid":"c","sessionId":"` + testSession + `"}` + "\n")
+	putBytes(t, st, testSession, testFile, int64(len(body)), tail)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	var ordinal int
+	if err := st.DB().QueryRow(`SELECT line_ordinal FROM sesh_index_messages WHERE message_uuid = 'c'`).Scan(&ordinal); err != nil {
+		t.Fatal(err)
+	}
+	if ordinal != 2 {
+		t.Fatalf("line ordinal after deleted tail row = %d, want byte-position ordinal 2", ordinal)
+	}
+}
+
+func TestReindexSkipsAndMarksMissingMirror(t *testing.T) {
+	st, idx := newHarness(t)
+	if _, err := st.DB().Exec(`INSERT INTO files(tool, session_id, file_uuid, generation, high_water, created_at, updated_at) VALUES (?, ?, ?, 0, 10, 'now', 'now')`,
+		wire.ToolClaude, testSession, testFile); err != nil {
+		t.Fatal(err)
+	}
+	shortFile := "33333333-3333-3333-3333-333333333333"
+	shortPath := st.MirrorPath(wire.ToolClaude, testSession, shortFile, 0)
+	if err := os.MkdirAll(filepath.Dir(shortPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shortPath, []byte("short"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().Exec(`INSERT INTO files(tool, session_id, file_uuid, generation, high_water, created_at, updated_at) VALUES (?, ?, ?, 0, 10, 'now', 'now')`,
+		wire.ToolClaude, testSession, shortFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var dirty int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM files WHERE dirty_for_reindex = 1`).Scan(&dirty); err != nil {
+		t.Fatal(err)
+	}
+	if dirty != 2 {
+		t.Fatalf("missing/short mirror dirty count = %d, want 2", dirty)
+	}
+}
+
+func TestOverlongLineQuarantinesAndContinues(t *testing.T) {
+	st, idx := newHarness(t)
+	body := append(bytes.Repeat([]byte("x"), maxIndexedLineBytes+1), '\n')
+	body = append(body, []byte(`{"type":"user","uuid":"ok","sessionId":"`+testSession+`"}`+"\n")...)
+	path := st.MirrorPath(wire.ToolClaude, testSession, testFile, 0)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().Exec(`INSERT INTO files(tool, session_id, file_uuid, generation, high_water, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 'now', 'now')`,
+		wire.ToolClaude, testSession, testFile, len(body)); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.ProcessAppend(t.Context(), wire.AppendEvent{Tool: wire.ToolClaude, WireSessionID: testSession, FileUUID: testFile, Generation: 0, ByteEnd: int64(len(body))}); err != nil {
+		t.Fatal(err)
+	}
+	var quarantined, good int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM sesh_index_messages WHERE quarantine = 1 AND quarantine_reason = 'line_too_long'`).Scan(&quarantined); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM sesh_index_messages WHERE quarantine = 0 AND message_uuid = 'ok'`).Scan(&good); err != nil {
+		t.Fatal(err)
+	}
+	if quarantined != 1 || good != 1 {
+		t.Fatalf("overlong quarantine/good rows = %d/%d, want 1/1", quarantined, good)
 	}
 }
 

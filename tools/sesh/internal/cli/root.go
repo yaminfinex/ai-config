@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -74,12 +75,41 @@ func newServe() *cobra.Command {
 				return err
 			}
 			defer st.Close()
+			idx, err := index.New(cmd.Context(), st.DB(), st.MirrorPath)
+			if err != nil {
+				_ = l.Close()
+				return err
+			}
+			startIndexConsumer(cmd.Context(), st, idx, slog.Default())
 			return st.Serve(l)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8765", "loopback address for the store HTTP listener")
 	cmd.Flags().StringVar(&dataDir, "data-dir", "", "store data directory")
 	return cmd
+}
+
+func startIndexConsumer(ctx context.Context, st *store.Store, idx *index.Indexer, logger *slog.Logger) {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev := <-st.AppendEvents():
+				if err := st.WithWriteLock(func() error {
+					return idx.ProcessAppend(ctx, ev)
+				}); err != nil {
+					logger.Error("append index failed",
+						"error", err,
+						"tool", ev.Tool,
+						"session_id", ev.WireSessionID,
+						"file_uuid", ev.FileUUID,
+						"generation", ev.Generation,
+					)
+				}
+			}
+		}
+	}()
 }
 
 func newReindex() *cobra.Command {
