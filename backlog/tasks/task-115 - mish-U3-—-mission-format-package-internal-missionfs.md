@@ -1,9 +1,10 @@
 ---
 id: TASK-115
 title: mish U3 — mission format package (internal/missionfs)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 09:46'
+updated_date: '2026-07-09 09:54'
 labels:
   - mish
 dependencies: []

@@ -1,9 +1,10 @@
 ---
 id: TASK-114
 title: mish U2 — context resolution package (internal/resolve)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 09:46'
+updated_date: '2026-07-09 09:54'
 labels:
   - mish
 dependencies: []
