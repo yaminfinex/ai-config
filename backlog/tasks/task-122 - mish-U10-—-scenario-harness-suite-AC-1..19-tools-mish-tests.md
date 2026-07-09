@@ -1,10 +1,10 @@
 ---
 id: TASK-122
 title: mish U10 — scenario harness suite AC-1..19 (tools/mish/tests)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 09:46'
-updated_date: '2026-07-09 10:37'
+updated_date: '2026-07-09 10:53'
 labels:
   - mish
 dependencies: []
@@ -32,3 +32,9 @@ Settled decisions: sesh harness shape (lib.sh + check scripts printing ALL GREEN
 - [ ] #4 AC-14 audit: git PATH shim proves zero git invocations on non-git repo; only read-only subcommands on git-backed repo
 - [ ] #5 every check hermetic: temp dirs, explicit env, no dependence on the developer's environment
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to mish-build @ bb8ac7a (--no-ff). Worker: codex mish-u10-pola (979d3a2 + 5942e86). Review (opus, mutation-tested): FIX-NEEDED → fixed: AC-14 now exercises the REAL staleness path under the shim (bare origin + upstream; porcelain + rev-list asserted in git.log; allowlist corrected to rev-parse/status/rev-list), run-all.sh aggregate gate, AC-1 own no-git shim, AC-13 table-absence assert, AC-15 both-clones union + conflict-marker grep, ambient gitconfig neutralized. Ruling: exact-1.47.* floor intentional. Milestone gate: full suite ALL GREEN re-run by orchestrator pre- and post-merge.
+<!-- SECTION:NOTES:END -->

@@ -1,10 +1,10 @@
 ---
 id: TASK-123
 title: 'mish U11 — repo integration + docs (README, mise pin)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 09:46'
-updated_date: '2026-07-09 09:49'
+updated_date: '2026-07-09 10:53'
 labels:
   - mish
 dependencies: []
