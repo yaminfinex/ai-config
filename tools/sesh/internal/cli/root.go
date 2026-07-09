@@ -1,6 +1,7 @@
-// Package cli wires the sesh command tree. Every subcommand is a stub until
-// its owning unit lands (plan 2026-07-09-001, U3 onward); stubs report
-// not-implemented and exit nonzero so nothing can script against them early.
+// Package cli wires the sesh command tree. A subcommand is a stub until its
+// owning unit lands (plan 2026-07-09-001; ship = U4, serve = U3); stubs
+// report not-implemented and exit nonzero so nothing can script against
+// them early.
 package cli
 
 import (
@@ -28,7 +29,7 @@ func newRoot() *cobra.Command {
 		SilenceUsage: true,
 	}
 	root.AddCommand(
-		stub("ship", "Run the per-user shipper: discover, tail, and mirror local session files"),
+		newShip(),
 		newServe(),
 		stub("reindex", "Rebuild the disposable index from the durable mirror"),
 		stub("status", "Report shipper/store health, staleness, and quarantine state"),
