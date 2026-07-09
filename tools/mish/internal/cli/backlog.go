@@ -25,6 +25,7 @@ func newBacklogCommand(d deps) *cobra.Command {
 			return runBacklog(d, args)
 		},
 	}
+	attachHelp(cmd, backlogHelp())
 	return cmd
 }
 

@@ -36,6 +36,7 @@ func newStatusCommand(d deps) *cobra.Command {
 			return runStatus(cmd, d, missionFlag, cmd.Flags().Changed("mission"))
 		},
 	}
+	attachHelp(cmd, statusHelpText)
 	cmd.Flags().StringVar(&missionFlag, "mission", "", "mission slug to report")
 	cmd.Flags().BoolVar(&all, "all", false, "report all missions")
 	return cmd

@@ -1,0 +1,26 @@
+Usage: mish <verb> [args]
+
+mish manages missions: durable work homes under $MISSIONS_REPO/missions/<slug>/.
+A mission is one directory containing mission.md, a pinned Backlog.md board, and artifacts/.
+The slug is the directory name and must match mission.md frontmatter. A .mission marker points
+a project worktree at a mission; markers never nest.
+
+Concepts:
+  authority  label with write authority for mission state and board etiquette
+  owner      human owner stamped by --owner, SESSION_OWNER, then OS user
+  custody    git commit prose that records adoption, harvest, rename, closeout, and deletion
+  marker     .mission file containing a slug, deleted when the worktree no longer participates
+
+Verbs:
+  new       scaffold a mission and stamp authority/owner
+  backlog   run allowlisted Backlog.md commands in one mission
+  status    report mission health and overview read-only
+
+Git rhythm: pull before creating missions, task creation, board restructuring, or manifest
+edits; commit early at the mission-subtree grain; push when a unit lands. mish never writes git.
+
+Custody commits use: mission(<slug>): <verb> <summary>
+Open custody verbs include new, adopt, harvest, delete, rename, and close. Optional trailers:
+Mission-Source, Mission-Dest, Mission-Agent.
+
+Run 'mish <verb> --help' for the working doctrine on each verb.
