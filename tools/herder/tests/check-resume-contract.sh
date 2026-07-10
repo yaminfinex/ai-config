@@ -28,7 +28,9 @@ set -euo pipefail
 PROBE="${MOCK_PROBE_DIR:?}"
 mkdir -p "$PROBE"
 case "${1:-} ${2:-}" in
-  "agent list")
+	"workspace list")
+		jq -n '{result:{workspaces:[{workspace_id:"ws_1"},{workspace_id:"ws_target"}]}}';;
+	"agent list")
     if [[ "${MOCK_LIVE_TARGET:-0}" == "1" ]]; then
       jq -n '{result:{agents:[{terminal_id:"term_ACTIVE", pane_id:"p_active", name:"active", agent_status:"idle"}]}}'
     else
@@ -36,6 +38,9 @@ case "${1:-} ${2:-}" in
     fi;;
   "agent start")
     printf '%s\n' "$*" >>"$PROBE/herdr_start_argv"
+		ws="ws_resumed"; prev=""
+		for arg in "$@"; do [[ "$prev" == "--workspace" ]] && ws="$arg"; prev="$arg"; done
+		printf '%s' "$ws" >"$PROBE/agent_workspace"
     # TASK-017: stand in for the sidecar's registry bind — a beat after the
     # pane starts, append an enrichment row carrying the new bus name so the
     # resume addendum poll finds it (real sidecars bind seconds after boot).
@@ -46,7 +51,12 @@ case "${1:-} ${2:-}" in
           "$guid" "$MOCK_BIND_NAME" >>"${HERDER_STATE_DIR:?}/registry.jsonl"
       ) >/dev/null 2>&1 &
     fi
-    jq -n '{result:{agent:{pane_id:"p_resumed", terminal_id:"term_RESUMED", workspace_id:"ws_resumed", cwd:"/mock/cwd"}}}';;
+		jq -n --arg ws "$ws" '{result:{agent:{pane_id:"p_resumed", terminal_id:"term_RESUMED", workspace_id:$ws, cwd:"/mock/cwd"}}}';;
+	"pane move")
+		printf '%s\n' "$*" >>"$PROBE/herdr_move_argv"
+		jq -n '{result:{type:"pane_moved"}}';;
+	"pane get")
+		jq -n --arg ws "$(cat "$PROBE/agent_workspace" 2>/dev/null || printf ws_resumed)" '{result:{pane:{pane_id:"p_resumed",terminal_id:"term_RESUMED",workspace_id:$ws,tab_id:"tab_new",cwd:"/mock/cwd"}}}';;
   *)
     printf 'mock herdr (resume suite): unhandled: %s\n' "$*" >&2
     exit 64;;
@@ -91,6 +101,9 @@ JSONL
 {"guid":"guid-codex-0000","short_guid":"codex","label":"codex-me","role":"worker","agent":"codex","terminal_id":"term_CODEX","pane_id":"p_codex","hcom_dir":"/hcom","hcom_name":"codex-vibe","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-codex","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
 JSONL
   fi
+	# Recorded cwd values are real directories so the preflight tests the normal
+	# launch path. Individual refusal cases replace one with a missing path.
+	sed -i "s#\"cwd\":\"/repo\"#\"cwd\":\"$REPO\"#g" "$CASE/state/registry.jsonl"
 }
 
 run_case() {
@@ -118,9 +131,10 @@ run_case() {
 
 block_for() {
   local block
-  block="$(printf '=== STDERR ===\n%s\n=== STDOUT ===\n%s\n=== EXIT ===\n%s\n=== HERDR START ARGV ===\n%s\n=== REGISTRY ===\n%s' \
+block="$(printf '=== STDERR ===\n%s\n=== STDOUT ===\n%s\n=== EXIT ===\n%s\n=== HERDR START ARGV ===\n%s\n=== HERDR MOVE ARGV ===\n%s\n=== REGISTRY ===\n%s' \
     "$(cat "$RUN_ERR_F")" "$RUN_OUT" "$RUN_RC" \
     "$(cat "$CASE/probe/herdr_start_argv" 2>/dev/null)" \
+    "$(cat "$CASE/probe/herdr_move_argv" 2>/dev/null)" \
     "$(cat "$CASE/state/registry.jsonl" 2>/dev/null)")"
   # TASK-017: codex cases capture the addendum send verbatim (pins doctrine
   # content at the delivery surface); section absent on non-codex cases so
@@ -158,6 +172,10 @@ run_case happy 0 resume --json
 check_one happy
 run_case closed_row_full_guid 0 guid-resume-0000 --json
 check_one closed_row_full_guid
+run_case explicit_split 0 resume --split down --json
+check_one explicit_split
+run_case explicit_workspace 0 resume --workspace ws_target --json
+check_one explicit_workspace
 run_case refuse_live 1 active
 check_one refuse_live
 run_case label_collision 0 collide
@@ -177,6 +195,22 @@ check_one codex_addendum
 SEED_CODEX=1 HERDER_ADDENDUM_SETTLE_MS=1 \
   run_case codex_addendum_timeout 0 codex
 check_one codex_addendum_timeout
+
+# A deleted recorded checkout is rejected before any pane starts. An explicit
+# replacement cwd is the supported recovery path.
+CASE="$ROOT/missing_cwd"
+mkdir -p "$CASE/home" "$CASE/probe"
+seed_registry
+sed -i "s#\"cwd\":\"$REPO\"#\"cwd\":\"$CASE/missing-worktree\"#g" "$CASE/state/registry.jsonl"
+RUN_ERR_F="$CASE/stderr"
+RUN_OUT="$(cd "$REPO" && env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" AI_CONFIG_ROOT="$REPO" HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_STATE_DIR="$CASE/state" HERDER_LIFECYCLE_SETTLE_MS=0 HERDER_ADDENDUM_SETTLE_MS=0 MOCK_PROBE_DIR="$CASE/probe" MOCK_LIVE_TARGET=0 "$REPO/bin/herder" resume resume 2>"$RUN_ERR_F")"
+RUN_RC=$?
+if [[ "$RUN_RC" -ne 0 ]] && grep -q '\[cwd_unavailable\]' "$RUN_ERR_F" && grep -q -- '--cwd' "$RUN_ERR_F" && [[ ! -f "$CASE/probe/herdr_start_argv" ]]; then
+	printf 'PASS  missing cwd refuses before launch\n'
+else
+	printf 'FAIL  missing cwd refusal — rc=%s err=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")"
+	fail=1
+fi
 
 if [[ "$WRITE" -eq 1 ]]; then
   printf '\nGoldens written from: %s\n' "${HRS[*]}"; exit 0

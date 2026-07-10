@@ -36,6 +36,9 @@ case "${1:-} ${2:-}" in
     fi;;
   "agent start")
     printf '%s\n' "$*" >>"$PROBE/herdr_start_argv"
+		ws="ws_child"; prev=""
+		for arg in "$@"; do [[ "$prev" == "--workspace" ]] && ws="$arg"; prev="$arg"; done
+		printf '%s' "$ws" >"$PROBE/agent_workspace"
     # TASK-017: stand in for the sidecar's registry bind — a beat after the
     # pane starts, append an enrichment row carrying the new bus name so the
     # fork addendum poll finds it (real sidecars bind seconds after boot).
@@ -46,12 +49,19 @@ case "${1:-} ${2:-}" in
           "$guid" "${guid:0:8}" "$MOCK_BIND_NAME" >>"${HERDER_STATE_DIR:?}/registry.jsonl"
       ) >/dev/null 2>&1 &
     fi
-    jq -n '{result:{agent:{pane_id:"p_child", terminal_id:"term_CHILD", workspace_id:"ws_child", cwd:"/mock/cwd"}}}';;
+		jq -n --arg ws "$ws" '{result:{agent:{pane_id:"p_child", terminal_id:"term_CHILD", workspace_id:$ws, cwd:"/mock/cwd"}}}';;
+	"pane move")
+		printf '%s\n' "$*" >>"$PROBE/herdr_move_argv"
+		jq -n '{result:{type:"pane_moved"}}';;
   "pane get")
     # fork --self resolves the current pane's cwd from here (foreground_cwd first).
-    jq -n '{result:{pane:{pane_id:"p_self", terminal_id:"term_SELF", workspace_id:"ws_self", foreground_cwd:"/mock/foreground", cwd:"/mock/cwd"}}}';;
+		if [[ "${3:-}" == "p_self" ]]; then
+			jq -n '{result:{pane:{pane_id:"p_self", terminal_id:"term_SELF", workspace_id:"ws_self", foreground_cwd:"/mock/foreground", cwd:"/mock/cwd"}}}'
+		else
+			jq -n --arg ws "$(cat "$PROBE/agent_workspace" 2>/dev/null || printf ws_child)" '{result:{pane:{pane_id:"p_child",terminal_id:"term_CHILD",workspace_id:$ws,tab_id:"tab_new",cwd:"/mock/cwd"}}}'
+		fi;;
   "workspace list")
-    jq -n '{result:{workspaces:[]}}';;
+    jq -n '{result:{workspaces:[{workspace_id:"ws_1"},{workspace_id:"ws_target"}]}}';;
   *)
     printf 'mock herdr (fork suite): unhandled: %s\n' "$*" >&2
     exit 64;;
@@ -138,6 +148,7 @@ JSONL
 {"guid":"guid-codexp-0000","short_guid":"codexp","label":"codex-parent","role":"worker","agent":"codex","terminal_id":"term_CODEXP","pane_id":"p_codexp","hcom_dir":"/hcom","hcom_name":"codexp-vibe","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-codexp","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"2026-07-03T00:00:00Z"}}
 JSONL
   fi
+	sed -i "s#\"cwd\":\"/repo\"#\"cwd\":\"$REPO\"#g" "$CASE/state/registry.jsonl"
 }
 
 run_case() {
@@ -201,9 +212,10 @@ run_self_case() {
 
 block_for() {
   local block guid short
-  block="$(printf '=== STDERR ===\n%s\n=== STDOUT ===\n%s\n=== EXIT ===\n%s\n=== HERDR START ARGV ===\n%s\n=== REGISTRY ===\n%s' \
+  block="$(printf '=== STDERR ===\n%s\n=== STDOUT ===\n%s\n=== EXIT ===\n%s\n=== HERDR START ARGV ===\n%s\n=== HERDR MOVE ARGV ===\n%s\n=== REGISTRY ===\n%s' \
     "$(cat "$RUN_ERR_F")" "$RUN_OUT" "$RUN_RC" \
     "$(cat "$CASE/probe/herdr_start_argv" 2>/dev/null)" \
+    "$(cat "$CASE/probe/herdr_move_argv" 2>/dev/null)" \
     "$(cat "$CASE/state/registry.jsonl" 2>/dev/null)")"
   # TASK-017: codex cases capture the addendum send verbatim (pins doctrine
   # content at the delivery surface); section absent on non-codex cases so
@@ -250,6 +262,10 @@ run_case happy_live 1 parent --prompt "hello fork" --json
 check_one happy_live
 run_case closed_row 0 closed --label closed-fork --role reviewer-fork --json
 check_one closed_row
+run_case explicit_split 1 parent --split down --json
+check_one explicit_split
+run_case explicit_workspace 1 parent --workspace ws_target --json
+check_one explicit_workspace
 run_case label_collision 1 parent --label taken
 check_one label_collision
 run_case unknown 0 nope

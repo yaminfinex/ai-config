@@ -1,18 +1,20 @@
 === STDERR ===
 resumed codex-me (guid-codex-0000) pane=p_resumed
-sent 2526 chars to guid-codex-0000 (hcom @codex-vibe), submitted, verify=delivered
+sent 2542 chars to guid-codex-0000 (hcom @codex-vibe), submitted, verify=delivered
 === STDOUT ===
-{"agent":"codex","argv":["/bin/zsh","-lic","export HERDER_GUID=guid-codex-0000 HERDER_ROLE=worker HERDER_LABEL=codex-me HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --resume codex sess-codex --tag worker --dangerously-bypass-approvals-and-sandbox --go"],"cwd":"/mock/cwd","guid":"guid-codex-0000","hcom_dir":"/hcom","hcom_name":"","hcom_tag":"worker","label":"codex-me","pane_id":"p_resumed","provenance":{"batch_id":"","branch":"feat/herder-go-port","cwd":"/mock/cwd","mechanism":"spawn","resumed_at":"<TS>","spawned_by":"user","tag":"worker","tool_session_id":"sess-codex","ts":"<TS>","workspace_id":"ws_resumed"},"role":"worker","short_guid":"codex","started_at":"<TS>","started_by_pane":"p_self","status":"active","terminal_id":"term_RESUMED","workspace_id":"ws_resumed"}
+{"agent":"codex","argv":["/bin/zsh","-lic","export HERDER_GUID=guid-codex-0000 HERDER_ROLE=worker HERDER_LABEL=codex-me HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --resume codex sess-codex --tag worker --dangerously-bypass-approvals-and-sandbox --go"],"cwd":"/mock/cwd","guid":"guid-codex-0000","hcom_dir":"/hcom","hcom_name":"","hcom_tag":"worker","label":"codex-me","pane_id":"p_resumed","provenance":{"batch_id":"","branch":"feat/herder-go-port","cwd":"/mock/cwd","mechanism":"spawn","resumed_at":"<TS>","spawned_by":"user","tag":"worker","tool_session_id":"sess-codex","ts":"<TS>","workspace_id":"ws_1"},"role":"worker","short_guid":"codex","started_at":"<TS>","started_by_pane":"p_self","status":"active","terminal_id":"term_RESUMED","workspace_id":"ws_1"}
 === EXIT ===
 0
 === HERDR START ARGV ===
-agent start codex-me --no-focus --split right --cwd <REPO> -- /bin/zsh -lic export HERDER_GUID=guid-codex-0000 HERDER_ROLE=worker HERDER_LABEL=codex-me HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --resume codex sess-codex --tag worker --dangerously-bypass-approvals-and-sandbox --go
+agent start codex-me --no-focus --split right --workspace ws_1 --cwd <REPO> -- /bin/zsh -lic export HERDER_GUID=guid-codex-0000 HERDER_ROLE=worker HERDER_LABEL=codex-me HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --resume codex sess-codex --tag worker --dangerously-bypass-approvals-and-sandbox --go
+=== HERDR MOVE ARGV ===
+pane move p_resumed --new-tab --label codex-me
 === REGISTRY ===
 {"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
 {"kind":"namespace","event":"namespace_observed","namespace_id":"<GUID>","node":"<GUID>","path":"/hcom","recorded_at":"<TS>"}
-{"kind":"session","guid":"guid-active-0000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"active-live","role":"worker","tool":"claude","sids":[{"sid":"sess-active","observed_at":"<TS>","source":"harvest"}],"continuity":"confirmed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-active","tag":"worker","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
+{"kind":"session","guid":"guid-active-0000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"active-live","role":"worker","tool":"claude","sids":[{"sid":"sess-active","observed_at":"<TS>","source":"harvest"}],"continuity":"confirmed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-active","tag":"worker","cwd":"<REPO>","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
 {"kind":"session","guid":"guid-other-0000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"taken","role":"worker","tool":"claude","continuity":"assumed","lineage":{},"provenance":{}}
-{"kind":"session","guid":"guid-codex-0000","event":"registered","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"codex-me","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_RESUMED","pane_id":"p_resumed","namespace":"/hcom","confirmed_at":"<TS>"},"sids":[{"sid":"sess-codex","observed_at":"<TS>","source":"harvest"}],"continuity":"confirmed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-codex","tag":"worker","cwd":"/mock/cwd","workspace_id":"ws_resumed","branch":"feat/herder-go-port","ts":"<TS>","resumed_at":"<TS>"}}
+{"kind":"session","guid":"guid-codex-0000","event":"registered","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"codex-me","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_RESUMED","pane_id":"p_resumed","namespace":"/hcom","confirmed_at":"<TS>"},"sids":[{"sid":"sess-codex","observed_at":"<TS>","source":"harvest"}],"continuity":"confirmed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-codex","tag":"worker","cwd":"/mock/cwd","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>","resumed_at":"<TS>"}}
 {"guid":"guid-codex-0000","short_guid":"codex","label":"codex-me","role":"worker","agent":"codex","pane_id":"p_resumed","terminal_id":"term_RESUMED","workspace_id":"ws_resumed","cwd":"/mock/cwd","hcom_dir":"/hcom","hcom_name":"codex-vibe","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-codex","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_resumed","branch":"feat/herder-go-port","ts":"<TS>"}}
 === HCOM SEND ARGV ===
 send --from orchestrator @codex-vibe -- [HERDER SESSION ADDENDUM — re-delivered after resume/fork]
@@ -22,13 +24,13 @@ Session doctrine, not a task: do NOT reply to this message. This session was res
 
 Provision and manage agent sessions through herder. Do NOT spawn with `hcom <n> claude`, stop with `hcom kill`, or drive raw `herdr agent start/send` — those bypass the registry or write text without submitting it. herder-spawned claude/codex bind to the bus from birth, so once running you message them with `hcom send`.
 
-- Spawn:  herder spawn --role R --agent <claude|codex|bash|...> --prompt 'short task (or a one-line pointer to a brief file)' [--team NAME] [--split right|down] [--new-tab] [--cwd PATH]
+- Spawn:  herder spawn --role R --agent <claude|codex|bash|...> --prompt 'short task (or a one-line pointer to a brief file)' [--team NAME] [--workspace ID] [--split right|down] [--cwd PATH]
 - List:   herder list [--all]                 # --all reveals culled records
 - Wait:   herder wait <guid> [--read]          # boot-settle / post-send check — NOT for watching long work
 - Send:   herder send <guid> 'msg'             # verified delivery to a spawned agent (guid/label, drift-proof)
 - Cull:   herder cull --guid GUID              # close the pane + mark the registry record closed
-- Fork:   herder fork <guid> [--prompt P]      # branch a session into a NEW guid, keeps parent context
-- Resume: herder resume <guid>                 # reopen a closed session under the SAME guid
+- Fork:   herder fork <guid> [--prompt P] [--workspace ID] [--split right|down] # fresh tab by default
+- Resume: herder resume <guid> [--cwd PATH] [--workspace ID] [--split right|down] # fresh tab by default
 
 Delivery is verified: "queued" injects at the target's next turn (do NOT resend); "NOT confirmed" means read the pane (`herder wait <guid> --read`) before retrying — a blind resend double-submits.
 If unsure about syntax, always run `herder <command> --help` (or `hcom <command> --help`) FIRST. Do not guess.

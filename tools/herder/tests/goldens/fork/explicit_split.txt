@@ -1,13 +1,13 @@
 === STDERR ===
 forked parent -> parent-fork-<SHORT> (<GUID>) pane=p_child from=guid-parent-0000
 === STDOUT ===
-{"agent":"claude","argv":["/bin/zsh","-lic","export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=parent-fork-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --fork claude parent-rive --tag worker --parent-session sess-parent --dangerously-skip-permissions --go --hcom-prompt hello\\ fork"],"cwd":"/mock/cwd","guid":"<GUID>","hcom_dir":"/hcom","hcom_name":"","hcom_tag":"worker","label":"parent-fork-<SHORT>","pane_id":"p_child","provenance":{"batch_id":"","branch":"<BRANCH>","cwd":"/mock/cwd","forked_from":"guid-parent-0000","mechanism":"fork","spawned_by":"user","tag":"worker","tool_session_id":"","ts":"<TS>","workspace_id":"ws_1"},"role":"worker","short_guid":"<SHORT>","started_at":"<TS>","started_by_pane":"p_self","status":"active","terminal_id":"term_CHILD","workspace_id":"ws_1"}
+{"agent":"claude","argv":["/bin/zsh","-lic","export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=parent-fork-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --fork claude parent-rive --tag worker --parent-session sess-parent --dangerously-skip-permissions --go"],"cwd":"/mock/cwd","guid":"<GUID>","hcom_dir":"/hcom","hcom_name":"","hcom_tag":"worker","label":"parent-fork-<SHORT>","pane_id":"p_child","provenance":{"batch_id":"","branch":"<BRANCH>","cwd":"/mock/cwd","forked_from":"guid-parent-0000","mechanism":"fork","spawned_by":"user","tag":"worker","tool_session_id":"","ts":"<TS>","workspace_id":"ws_1"},"role":"worker","short_guid":"<SHORT>","started_at":"<TS>","started_by_pane":"p_self","status":"active","terminal_id":"term_CHILD","workspace_id":"ws_1"}
 === EXIT ===
 0
 === HERDR START ARGV ===
-agent start parent-fork-<SHORT> --no-focus --split right --workspace ws_1 --cwd <REPO> -- /bin/zsh -lic export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=parent-fork-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --fork claude parent-rive --tag worker --parent-session sess-parent --dangerously-skip-permissions --go --hcom-prompt hello\ fork
+agent start parent-fork-<SHORT> --no-focus --split down --workspace ws_1 --cwd <REPO> -- /bin/zsh -lic export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=parent-fork-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --fork claude parent-rive --tag worker --parent-session sess-parent --dangerously-skip-permissions --go
 === HERDR MOVE ARGV ===
-pane move p_child --new-tab --label parent-fork-<SHORT>
+
 === REGISTRY ===
 {"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
 {"kind":"namespace","event":"namespace_observed","namespace_id":"<GUID>","node":"<GUID>","path":"/hcom","recorded_at":"<TS>"}

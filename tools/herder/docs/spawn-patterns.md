@@ -67,22 +67,26 @@ herder spawn --role scratch --agent bash --split right --no-focus
 
 `HERDER_GUID` and `HERDER_LABEL` are still injected into the shell env so the user can interact with the pane and the herder still owns the registry record.
 
-## C2. Give each agent its own tab (no spare shell) — `--new-tab`
+## C2. Default placement: one fresh tab per agent
 
 User: "spawn these in separate tabs" / "one tab per agent".
 
 ```bash
-herder spawn --role impl --agent claude --new-tab --no-focus \
+herder spawn --role impl --agent claude --no-focus \
   --prompt 'Implement <task> …'
 ```
 
-Do **not** hand-roll `herdr tab create` then `herder spawn --tab <id>`: `tab create` seeds the tab with a default (root) shell pane, and `herdr agent start --tab` *always* opens a new pane (even with no `--split`), so you end up with **agent + spare shell** in every tab. `--new-tab` avoids the seed shell entirely:
+Fresh-tab placement is the default for every non-worktree spawn. `--new-tab` is
+accepted as an explicit spelling of that default; pass `--split right|down` to
+opt back into the target workspace's current tab.
+
+Do **not** hand-roll `herdr tab create` then `herder spawn --tab <id>`: `tab create` seeds the tab with a default (root) shell pane, and `herdr agent start --tab` *always* opens a new pane (even with no `--split`), so you end up with **agent + spare shell** in every tab. Fresh-tab placement avoids the seed shell entirely:
 
 1. `herdr agent start` launches the agent through the normal split path in the current tab.
 2. `herdr pane move <agent-pane> --new-tab --label <agent-label>` moves that running pane into a fresh tab.
 3. `herdr pane get <agent-pane>` re-fetches the current `pane_id`, `tab_id`, `workspace_id`, and `terminal_id` before the registry row is written.
 
-The summary prints `tab: <id> (new; agent pane moved, no seed shell)`; `--json` adds `new_tab`, `root_pane_closed:false`, and `new_tab_result`. If the move fails, spawn continues: the agent is alive in the original split pane, the summary warns loudly, and `new_tab_result` records the failure reason. Culling the agent later closes its last pane, which auto-closes the tab — no `tab close` call needed.
+The summary prints `tab: <id> (new; agent pane moved, no seed shell)`; `--json` adds `new_tab`, `root_pane_closed:false`, and `new_tab_result`. If the move fails, spawn fails closed: it closes the launched pane, verifies that it is gone, and reports if teardown could not be confirmed. The agent never silently remains in the operator's tab. Culling a successfully launched agent later closes its last pane, which auto-closes the tab — no `tab close` call needed.
 
 ## D. Cull a spawned agent
 
@@ -133,19 +137,34 @@ herdr pane send-keys <pane_id> Enter              # submit when ready
 
 ## G. Spawn off a specific parent pane (not the focused one)
 
-When the herder is running in one workspace but the user wants the new agent to join a *different* pane's workspace (e.g. spawn a reviewer next to a long-running implementer), use `--from-pane` to bind to that parent's workspace:
+When the herder is running in one workspace but the user wants the new agent to join a *different* work workspace (e.g. spawn a reviewer for a long-running implementer), target it directly with `--workspace`, or use `--from-pane` to copy a pane's workspace:
 
 ```bash
 herder spawn \
   --role review \
   --agent codex \
-  --from-pane w652d833fd5cdcd-1 \
-  --split right \
+  --workspace ws_42 \
   --no-focus \
   --prompt 'Review the diff.'
 ```
 
-`--from-pane` and `--workspace` are mutually exclusive. `herder spawn` resolves `--from-pane` to its `workspace_id` and validates it against the live workspace list before calling `agent start`, so a stale id fails fast with a clear error instead of the upstream `agent_placement_not_found` JSON.
+This opens a fresh tab inside `ws_42`. Add `--split right|down` only when same-tab placement is intentional. `--from-pane` and `--workspace` are mutually exclusive. `herder spawn` resolves `--from-pane` to its `workspace_id` and validates it against the live workspace list before calling `agent start`, so a stale id fails fast with a clear error instead of the upstream `agent_placement_not_found` JSON.
+
+## G2. Resume or fork into a work workspace
+
+`herder resume` and `herder fork` use the same placement policy: a fresh tab by
+default, an explicit `--split` for same-tab placement, and `--workspace <id>` for
+direct workspace affinity. Without an explicit workspace they prefer the target's
+recorded workspace when it is still live, then the caller pane's workspace.
+
+```bash
+herder resume <guid> --workspace ws_42
+herder fork <guid> --workspace ws_42 --prompt 'Review the implementation.'
+```
+
+Resume also preflights its working directory. When closeout removed the recorded
+worktree, pass `--cwd <existing-directory>` or recreate the worktree; no pane is
+launched until the directory exists.
 
 ## H. Long briefs to codex (everything rides the bus now)
 

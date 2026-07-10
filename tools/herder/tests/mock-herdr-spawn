@@ -79,6 +79,7 @@ modal_cleared() { [[ -f "$STATE/modal_cleared" ]]; }
 composer_cleared() { [[ -f "$STATE/composer_cleared" ]]; }
 root_closed()   { [[ -f "$STATE/root_closed" ]]; }
 newtab_moved()  { [[ -f "$STATE/newtab_moved" ]]; }
+agent_closed()  { [[ -f "$STATE/agent_closed" ]]; }
 sent_msg()      { cat "$STATE/msg" 2>/dev/null || true; }
 
 case "$AGENT_KIND" in
@@ -159,7 +160,8 @@ case "${1:-} ${2:-}" in
     case "${3:-}" in
       p_orch)     jq -n '{result:{pane:{pane_id:"p_orch", terminal_id:"term_ORCH", workspace_id:"ws_1", tab_id:"tab_1"}}}';;
       p_60)       jq -n '{result:{pane:{pane_id:"p_60", terminal_id:"term_WTROOT", workspace_id:"w_WT", tab_id:"tab_WT"}}}';;
-      p_50|p_41)  jq -n --arg p "$(agent_pane)" --arg tab "$(agent_tab)" '{result:{pane:{pane_id:$p, terminal_id:"term_AGENT", workspace_id:"ws_1", tab_id:$tab}}}';;
+      p_50|p_41)  if agent_closed; then jq -n '{result:{}}'; exit 4; fi
+                   jq -n --arg p "$(agent_pane)" --arg tab "$(agent_tab)" --arg ws "$(cat "$STATE/agent_workspace" 2>/dev/null || printf ws_1)" '{result:{pane:{pane_id:$p, terminal_id:"term_AGENT", workspace_id:$ws, tab_id:$tab}}}';;
       *)          jq -n '{result:{}}';;
     esac;;
   "workspace list")
@@ -167,7 +169,7 @@ case "${1:-} ${2:-}" in
     # anchoring default triggers (HERDR_PANE_ID=p_orch → ws_1) on every spawn.
     # checkout_path lets herder spawn resolve the child's default cwd from the
     # anchored workspace when --cwd is omitted (the documented "current" default).
-    jq -n '{result:{workspaces:[{workspace_id:"ws_1", worktree:{checkout_path:"/mock/cwd"}}]}}';;
+    jq -n '{result:{workspaces:[{workspace_id:"ws_1", worktree:{checkout_path:"/mock/cwd"}},{workspace_id:"ws_2", worktree:{checkout_path:"/mock/other"}}]}}';;
   "agent start")
     log_call agent start "${3:-}"
     printf '%s\n' "$@" >"$PROBE/agent_start_argv"
@@ -186,6 +188,7 @@ case "${1:-} ${2:-}" in
       [[ "$prev" == "--cwd" ]] && cwd="$a"
       prev="$a"
     done
+    printf '%s' "$ws" >"$STATE/agent_workspace"
     jq -n --arg tab "$tab" --arg ws "$ws" --arg cwd "$cwd" \
       '{result:{agent:{pane_id:"p_50", workspace_id:$ws, tab_id:$tab,
                        terminal_id:"term_AGENT", cwd:$cwd},
@@ -213,6 +216,7 @@ case "${1:-} ${2:-}" in
   "pane close")
     log_call "$@"
     [[ "${3:-}" == "p_60" ]] && : > "$STATE/root_closed"
+    [[ "${3:-}" == "p_50" || "${3:-}" == "p_41" ]] && : > "$STATE/agent_closed"
     jq -n --arg pane "${3:-}" '{result:{type:"closed", pane_id:$pane}}';;
   "agent read")
     if altscreen_open; then

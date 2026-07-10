@@ -17,6 +17,7 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/observercmd"
+	"ai-config/tools/herder/internal/placement"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/send"
@@ -44,6 +45,7 @@ type options struct {
 	Prompt        string
 	PromptFile    string
 	Split         string
+	SplitExplicit bool
 	Workspace     string
 	FromPane      string
 	Tab           string
@@ -201,11 +203,128 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 type runner struct {
-	opts   options
-	stdout io.Writer
-	stderr io.Writer
-	herdr  *herdrcli.Client
-	paths  herderpaths.Paths
+	opts           options
+	stdout         io.Writer
+	stderr         io.Writer
+	herdr          herdrClient
+	paths          herderpaths.Paths
+	updateRegistry func(string, registry.LockedUpdateFunc) ([][]byte, error)
+}
+
+type herdrClient interface {
+	Combined(args ...string) ([]byte, int, error)
+	Output(args ...string) ([]byte, error)
+	Run(args ...string) (int, error)
+}
+
+func (r *runner) updateLocked(path string, fn registry.LockedUpdateFunc) ([][]byte, error) {
+	if r.updateRegistry != nil {
+		return r.updateRegistry(path, fn)
+	}
+	return registry.UpdateLocked(path, fn)
+}
+
+type paneCleanup struct {
+	confirmed bool
+	detail    string
+}
+
+func paneLookupAbsent(out []byte) bool {
+	text := strings.ToLower(string(out))
+	return strings.Contains(text, "pane_not_found") ||
+		strings.Contains(text, "pane not found") ||
+		strings.Contains(text, "no such pane")
+}
+
+// closePaneConfirmed closes only the pane that still carries the launched
+// terminal, then proves the pane id is no longer addressable.
+func (r *runner) closePaneConfirmed(paneID, terminalID string) paneCleanup {
+	before, beforeRC, beforeErr := r.herdr.Combined("pane", "get", paneID)
+	if beforeErr != nil {
+		return paneCleanup{detail: "pre-close pane lookup could not run: " + beforeErr.Error()}
+	}
+	if beforeRC != 0 {
+		if paneLookupAbsent(before) {
+			return paneCleanup{confirmed: true, detail: "pane already absent before cleanup"}
+		}
+		return paneCleanup{detail: fmt.Sprintf("pre-close pane lookup exited %d: %s", beforeRC, compactMessage(string(before)))}
+	}
+	pane, err := herdrcli.ParsePaneGet(before)
+	if err != nil {
+		return paneCleanup{detail: "pre-close pane lookup was unreadable: " + compactMessage(string(before))}
+	}
+	if pane.PaneID == "" {
+		return paneCleanup{confirmed: true, detail: "pane already absent before cleanup"}
+	}
+	if terminalID != "" && pane.TerminalID != terminalID {
+		return paneCleanup{detail: fmt.Sprintf("refused to close %s: terminal changed from %s to %s", paneID, terminalID, pane.TerminalID)}
+	}
+	closeOut, closeRC, closeErr := r.herdr.Combined("pane", "close", paneID)
+	if closeErr != nil {
+		return paneCleanup{detail: "pane close could not run: " + closeErr.Error()}
+	}
+	if closeRC != 0 {
+		return paneCleanup{detail: fmt.Sprintf("pane close exited %d: %s", closeRC, compactMessage(string(closeOut)))}
+	}
+	after, afterRC, afterErr := r.herdr.Combined("pane", "get", paneID)
+	if afterErr != nil {
+		return paneCleanup{detail: "post-close verification could not run: " + afterErr.Error()}
+	}
+	if afterRC != 0 {
+		if paneLookupAbsent(after) {
+			return paneCleanup{confirmed: true, detail: "pane close confirmed"}
+		}
+		return paneCleanup{detail: fmt.Sprintf("post-close pane lookup exited %d without confirming absence: %s", afterRC, compactMessage(string(after)))}
+	}
+	afterPane, err := herdrcli.ParsePaneGet(after)
+	if err == nil && afterPane.PaneID == "" {
+		return paneCleanup{confirmed: true, detail: "pane close confirmed"}
+	}
+	return paneCleanup{detail: "pane close returned success but the pane is still addressable"}
+}
+
+func (r *runner) failAfterLaunch(reason, paneID, terminalID string) int {
+	cleanup := r.closePaneConfirmed(paneID, terminalID)
+	if cleanup.confirmed {
+		die(r.stderr, reason+"; launched pane cleanup confirmed: "+cleanup.detail)
+	} else {
+		die(r.stderr, reason+"; launched pane cleanup FAILED: "+cleanup.detail+" (pane may still be running)")
+	}
+	return 1
+}
+
+func (r *runner) registerSpawn(registryPath string, record spawnRecord) error {
+	regRec := registry.Record{
+		GUID:       &record.GUID,
+		ShortGUID:  &record.ShortGUID,
+		Label:      &record.Label,
+		Role:       record.Role,
+		Agent:      record.Agent,
+		PaneID:     record.PaneID,
+		TerminalID: record.TerminalID,
+		HcomDir:    record.HcomDir,
+		HcomName:   record.HcomName,
+		HcomTag:    record.HcomTag,
+		Status:     record.Status,
+		Provenance: &record.Provenance,
+	}
+	_, err := r.updateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		if owner := registry.V2LabelOwner(tx.Projection, record.Label, record.GUID); owner != nil {
+			return nil, fmt.Errorf("label %q already belongs to active guid %s", record.Label, owner.GUID)
+		}
+		row := registry.V2FromRecord(regRec, "registered", v2.StateSeated, record.StartedAt)
+		row.Provenance.CWD = record.CWD
+		row.Provenance.WorkspaceID = record.WorkspaceID
+		return []v2.SessionRecord{row}, nil
+	})
+	return err
+}
+
+func (r *runner) registerSpawnOrRollback(registryPath string, record spawnRecord) int {
+	if err := r.registerSpawn(registryPath, record); err != nil {
+		return r.failAfterLaunch("registry write refused: "+err.Error(), record.PaneID, record.TerminalID)
+	}
+	return 0
 }
 
 func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
@@ -264,6 +383,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 				return opts, 1
 			}
 			opts.Split = v
+			opts.SplitExplicit = true
 			i += 2
 		case "--workspace":
 			v, ok := value()
@@ -424,10 +544,6 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		die(stderr, "use --workspace or --from-pane, not both")
 		return opts, 1
 	}
-	if opts.NewTab && opts.Tab != "" {
-		die(stderr, "use --new-tab or --tab, not both")
-		return opts, 1
-	}
 	if opts.Base != "" && opts.Worktree == "" {
 		die(stderr, "--base requires --worktree")
 		return opts, 1
@@ -446,6 +562,19 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			return opts, 1
 		}
 	}
+	decision, err := placement.Resolve(placement.Flags{
+		Split:         opts.Split,
+		SplitExplicit: opts.SplitExplicit,
+		NewTab:        opts.NewTab,
+		ExistingTab:   opts.Tab,
+		Worktree:      opts.Worktree != "",
+	})
+	if err != nil {
+		die(stderr, err.Error())
+		return opts, 1
+	}
+	opts.Split = decision.Split
+	opts.NewTab = decision.NewTab
 	return opts, 0
 }
 
@@ -784,7 +913,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 				reason = fmt.Sprintf("herdr pane move exited %d", rc)
 			}
 			newTabResult = "move_failed: " + reason
-			fmt.Fprintf(r.stderr, "herder spawn: WARNING: --new-tab pane move failed; agent is still running in the current tab: %s\n", reason)
+			return r.failAfterLaunch("fresh-tab placement failed: "+reason, paneID, termID)
 		}
 		if out, err := r.herdr.Output("pane", "get", paneID); err == nil {
 			if pane, parseErr := herdrcli.ParsePaneGet(out); parseErr == nil {
@@ -924,31 +1053,8 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		Status:               "active",
 		Provenance:           registry.BuildProvenance("spawn", spawnedBy, opts.Role, resolvedCWD, wsID),
 	}
-	regRec := registry.Record{
-		GUID:       &record.GUID,
-		ShortGUID:  &record.ShortGUID,
-		Label:      &record.Label,
-		Role:       record.Role,
-		Agent:      record.Agent,
-		PaneID:     record.PaneID,
-		TerminalID: record.TerminalID,
-		HcomDir:    record.HcomDir,
-		HcomName:   record.HcomName,
-		HcomTag:    record.HcomTag,
-		Status:     record.Status,
-		Provenance: &record.Provenance,
-	}
-	if _, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
-		if owner := registry.V2LabelOwner(tx.Projection, record.Label, record.GUID); owner != nil {
-			return nil, fmt.Errorf("label %q already belongs to active guid %s", record.Label, owner.GUID)
-		}
-		row := registry.V2FromRecord(regRec, "registered", v2.StateSeated, record.StartedAt)
-		row.Provenance.CWD = record.CWD
-		row.Provenance.WorkspaceID = record.WorkspaceID
-		return []v2.SessionRecord{row}, nil
-	}); err != nil {
-		die(r.stderr, err.Error())
-		return 1
+	if code := r.registerSpawnOrRollback(registryPath, record); code != 0 {
+		return code
 	}
 
 	hcomCapture := "not_hcom_agent"
@@ -1345,9 +1451,9 @@ func printHelp(stdout io.Writer) {
 		"  --prompt TEXT     initial prompt (or --prompt-file F): bus-capable agents get it as a",
 		"                    verified hcom message once their bus name binds; bash gets it typed",
 		"  --team NAME       join the bus at $HERDER_TEAMS_ROOT/<NAME> (default: global ~/.hcom)",
-		"  --split D         pane split: right (default) or down",
+		"  --split D         opt into the current tab with a right or down split",
 		"  --workspace ID    place in this workspace; --from-pane PANE_ID copies another pane's",
-		"  --tab ID          add to an existing tab; --new-tab moves the agent's pane into its own fresh tab",
+		"  --tab ID          add to an existing tab; --new-tab explicitly selects the default fresh-tab placement",
 		"  --worktree BRANCH create a fresh git worktree on BRANCH (via `herdr worktree create`) and",
 		"                    spawn into its workspace in one step; --base REF picks the start point",
 		"  --cwd PATH        working directory for the agent (default: current)",
@@ -1371,6 +1477,11 @@ func printHelp(stdout io.Writer) {
 		"                        nothing to deliver to.",
 		"",
 		"Behavior:",
+		"  Non-worktree spawns open in a fresh tab by default. Pass --split right|down to opt",
+		"  into splitting the target workspace's current tab. --workspace chooses the work",
+		"  workspace directly; otherwise the caller pane anchors placement so UI focus cannot",
+		"  redirect the spawn into an unrelated workspace.",
+		"",
 		"  claude/codex/gemini launch THROUGH hcom (via `herder launch`) so they bind to the",
 		"  message bus from birth — hcom is a HARD dependency for them; other agents exec raw",
 		"  and get no bus name, so `herder send` (bus-only) cannot reach them after spawn.",
@@ -1382,7 +1493,7 @@ func printHelp(stdout io.Writer) {
 		"  alternate-screen overlay, so detection reads the pane's VISIBLE source);",
 		"  --safe leaves it up and surfaces it so you can accept it in the pane.",
 		"",
-		"  Initial-prompt delivery rides the hcom bus (TASK-032): spawn waits for the child to",
+		"  Initial-prompt delivery rides the hcom bus: spawn waits for the child to",
 		"  BIND its bus name (early in boot, well before the TUI is interactive), sends the full",
 		"  prompt as a bus message, and reports the receipt — verify: delivered (receipt seen) or",
 		"  queued (sent, no receipt yet; it injects the moment the agent is deliverable — do NOT",
@@ -1788,7 +1899,7 @@ func busNameByPaneLive(recs []registry.Record, key, childHcomDir string, warn io
 			listRows = live
 		}
 		if warn != nil {
-			fmt.Fprintf(warn, "herder spawn: --notify pane %q is ambiguous (%d active rows, %s) — skipping notify rather than route a completion report to a guessed session (TASK-035). Candidates: %s\n", key, len(candidates), reason, candidateBusList(listRows))
+			fmt.Fprintf(warn, "herder spawn: --notify pane %q is ambiguous (%d active rows, %s) — skipping notify rather than route a completion report to a guessed session. Candidates: %s\n", key, len(candidates), reason, candidateBusList(listRows))
 		}
 		return "", true
 	}
