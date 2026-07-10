@@ -3,9 +3,10 @@ id: TASK-135
 title: >-
   sesh — logical-session inheritance must not fire on parse-written ids (codex
   meta-only first chunk diverges from Reindex) (run-sesh-107 remediation F1b)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-10 00:11'
+updated_date: '2026-07-10 00:11'
 labels:
   - run-sesh-107
 dependencies: []
