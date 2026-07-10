@@ -3,10 +3,10 @@ id: TASK-139
 title: >-
   sesh — shipper/ingest efficiency research: account for remaining steady-state
   cost and evaluate cleaner architectures
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-10 01:19'
-updated_date: '2026-07-10 01:20'
+updated_date: '2026-07-10 01:39'
 labels:
   - sesh
 dependencies: []
@@ -29,8 +29,14 @@ Deliverable: a findings memo (durable) with a verdict per question, plus filed-r
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Profile-backed cost accounting of a post-fix authoritative pass on an agent-heavy workload, split across walk/stat, /proc sweep, cursor checks, mirror reads, HTTP, and store ingest
-- [ ] #2 Explicit adopt/reject/defer verdict with payoff estimate for each candidate: dirty-set hint passes, TTL-cached /proc correlation, adaptive admission for idle-machine ACK latency, cached walk state, plus anything dominant found in profiling
-- [ ] #3 Recommendations that touch the authoritative-pass model are framed as proposed spec errata, not designed around silently
-- [ ] #4 Findings memo delivered plus filed-ready task text for recommended build work; no behavior-changing code committed
+- [x] #1 Profile-backed cost accounting of a post-fix authoritative pass on an agent-heavy workload, split across walk/stat, /proc sweep, cursor checks, mirror reads, HTTP, and store ingest
+- [x] #2 Explicit adopt/reject/defer verdict with payoff estimate for each candidate: dirty-set hint passes, TTL-cached /proc correlation, adaptive admission for idle-machine ACK latency, cached walk state, plus anything dominant found in profiling
+- [x] #3 Recommendations that touch the authoritative-pass model are framed as proposed spec errata, not designed around silently
+- [x] #4 Findings memo delivered plus filed-ready task text for recommended build work; no behavior-changing code committed
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Research complete (worker codex, resumed from the shipper CPU fix; orchestrator-verified: branch clean at fc457ae, no behavior code landed, memo internally consistent with pprof+jiffies+strace evidence). Full findings memo durable as backlog doc-001. Executive verdict: the authoritative full-pass architecture is sound — pure walk/stat is ~6ms/750 files; the avoidable cost is side effects done per-file instead of per-pass. Cost split of a 20.92ms quiescent pass: /proc correlation 70%, cursor checks 22%, discovery 6%. Active-pass dominant term: whole-registry cursor saves (~24ms of ~60ms for 8 dirty files; up to 33% of sustained shipper CPU incl MarshalIndent). Store CPU dominated by SQLite commit/statement churn (no event transactions). Verdicts — ADOPT: pass-batched cursor persistence (TASK-140, highest payoff), TTL-cached /proc correlation (TASK-141), adaptive first-hint-after-idle admission (TASK-142, restores ~25ms isolated ACK), transactional index ingest (TASK-143, ~4x est), graceful serve shutdown (TASK-144, found via zero-byte pprof on SIGTERM). REJECT: dirty-set hint passes (saves only the ~21ms baseline, would need spec errata weakening the authoritative-pass model, high invalidation risk) and cached walk/stat state (saves <0.3 core points). No spec erratum recommended; all adopted items preserve I3/I4/I8. Deviation accepted: sustained store pprof lost to the SIGTERM bug itself; store attribution from short-burst profile instead.
+<!-- SECTION:NOTES:END -->
