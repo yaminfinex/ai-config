@@ -1,10 +1,10 @@
 ---
 id: TASK-126
 title: 'registry: UpdateLocked multi-row batch refusal is not atomic'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 12:54'
-updated_date: '2026-07-10 10:12'
+updated_date: '2026-07-10 10:32'
 labels: []
 dependencies: []
 priority: medium
@@ -33,4 +33,6 @@ Run the legacy gate — ideally all row validation — as a pre-pass over the wh
 
 <!-- SECTION:NOTES:BEGIN -->
 Dispatched 2026-07-10 with TASK-147 as one unit (@worker-gole, 5.6-high, branch task-126-batch-atomicity), brief napkins/run-herder-dx/task-126-147-brief.md.
+
+Done 2026-07-10, merged --no-ff. Full-batch validate+project before any caller-row append; every refusal vector (legacy-v1, unknown-node, normalize, label-conflict, stamp, marshal, projection) returns before the write block — refusal means bytes unchanged, direct AND observer writes. Reviewer enumerated all return paths and proved both repro tests red-for-the-claimed-reason on reverted code. TOCTOU note (honest, accepted): a genuine mid-batch I/O failure can still leave pre-fsync rows, surfaced as an error with torn-tail quarantine on reload — strictly narrower than the pre-fix window. (ACs were description-body only — verified manually, no CLI AC fields.)
 <!-- SECTION:NOTES:END -->
