@@ -3,9 +3,10 @@ id: TASK-148
 title: >-
   sesh — remove dead store.Store.Serve now that serve wiring owns listener
   lifecycle
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-10 02:24'
+updated_date: '2026-07-10 10:07'
 labels:
   - sesh
 dependencies: []
