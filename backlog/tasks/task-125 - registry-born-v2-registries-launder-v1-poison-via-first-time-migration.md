@@ -1,10 +1,10 @@
 ---
 id: TASK-125
 title: 'registry: born-v2 registries launder v1 poison via first-time migration'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 12:54'
-updated_date: '2026-07-10 01:47'
+updated_date: '2026-07-10 01:48'
 labels: []
 dependencies: []
 priority: high
@@ -35,3 +35,9 @@ Migration should distinguish "registry was born v2 / already fully migrated" (e.
 - [ ] #3 Refusal message names cause + remedy (excision), consistent with existing refusal wording rules
 - [ ] #4 Full house gate green
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Dispatched 2026-07-10 to gpt-5.6-sol high-reasoning worker (@worker-nuvo, branch task-125-born-v2-poison), brief napkins/run-herder-dx/task-125-brief.md; failing-test-first ordering required.
+<!-- SECTION:NOTES:END -->

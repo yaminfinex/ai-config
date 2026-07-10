@@ -3,9 +3,10 @@ id: TASK-145
 title: >-
   herder instructions reach only herder-launched sessions — raw/resumed codex
   gets stock hcom bootstrap advertising the wrong spawn recipe
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-10 01:41'
+updated_date: '2026-07-10 01:48'
 labels: []
 dependencies: []
 priority: high
@@ -28,3 +29,9 @@ DIRECTIONS TO EVALUATE: (a) machine-wide hcom template override so the stock boo
 - [ ] #2 Chosen mechanism implemented so raw-launched/resumed sessions on this machine no longer see the bare hcom spawn recipe without the herder supersede
 - [ ] #3 Regression check covering the injection (script-level test or documented manual verification)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Research leg dispatched 2026-07-10 to gpt-5.6-sol (@researcher-todo, branch task-145-injection-research), brief napkins/run-herder-dx/task-145-research-brief.md; deliverable = committed design memo + matrix + recommendation. Implement leg is a separate unit after the direction is picked.
+<!-- SECTION:NOTES:END -->
