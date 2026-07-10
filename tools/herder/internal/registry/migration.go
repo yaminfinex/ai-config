@@ -60,7 +60,13 @@ func refuseFirstV1MigrationForBornV2(path string, f *os.File, proj *v2.Projectio
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(archive); err == nil {
+	archProj, err := v2.LoadFile(archive, v2.LoadOptions{})
+	if err == nil {
+		for _, rec := range archProj.Sessions() {
+			if rec.LegacyV1 {
+				return &LegacyV1AppendError{GUID: rec.GUID, ArchivePath: archive}
+			}
+		}
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err

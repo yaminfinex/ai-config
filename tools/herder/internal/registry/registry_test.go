@@ -338,14 +338,17 @@ func TestLockedWriteRefusesLegacyV1AppendToMintedRegistry(t *testing.T) {
 	before := mustReadFile(t, path)
 
 	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
-		return []v2.SessionRecord{{
-			GUID:     "guid-poison",
-			Event:    "legacy_v1_mapped",
-			State:    v2.StateUnseated,
-			Label:    "poison",
-			Tool:     "claude",
-			LegacyV1: true,
-		}}, nil
+		return []v2.SessionRecord{
+			{GUID: "guid-healthy-2", Label: "healthy-2", State: v2.StateSeated},
+			{
+				GUID:     "guid-poison",
+				Event:    "legacy_v1_mapped",
+				State:    v2.StateUnseated,
+				Label:    "poison",
+				Tool:     "claude",
+				LegacyV1: true,
+			},
+		}, nil
 	})
 	var legacyErr *LegacyV1AppendError
 	if !errors.As(err, &legacyErr) || legacyErr.GUID != "guid-poison" {
@@ -420,6 +423,62 @@ func TestLockedWriteRefusesInjectedLegacyV1RowInBornV2Registry(t *testing.T) {
 	}
 	if _, err := os.Stat(mustMigrationArchivePath(t, path)); !os.IsNotExist(err) {
 		t.Fatalf("migration archive was minted from poisoned born-v2 registry: %v", err)
+	}
+}
+
+func TestLockedWriteRefusesLegacyV1RowInPlantedMigrationArchive(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "registry.jsonl")
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: "guid-healthy", Label: "healthy", State: v2.StateSeated}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poison := []byte(`{"guid":"guid-poison","label":"poison","role":"worker","agent":"claude","status":"active"}` + "\n")
+	if _, err := f.Write(poison); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	poisonedLive := mustReadFile(t, path)
+	archive := mustMigrationArchivePath(t, path)
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, poisonedLive, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	callbackRan := false
+
+	_, err = UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		callbackRan = true
+		return nil, nil
+	})
+	var legacyErr *LegacyV1AppendError
+	if !errors.As(err, &legacyErr) || legacyErr.GUID != "guid-poison" {
+		t.Fatalf("err = %v, want LegacyV1AppendError for guid-poison", err)
+	}
+	for _, want := range []string{"migration archive", "v1-shaped session row", "restore the archive", "excise post-mint v1-shaped rows"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want message containing %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "remove the archive") {
+		t.Fatalf("err = %v, must not advise removing an archive", err)
+	}
+	if callbackRan {
+		t.Fatal("write callback ran despite poisoned migration archive")
+	}
+	if got := mustReadFile(t, path); !bytes.Equal(got, poisonedLive) {
+		t.Fatalf("registry changed after archive refusal:\nbefore=%s\nafter=%s", poisonedLive, got)
+	}
+	if got := mustReadFile(t, archive); !bytes.Equal(got, poisonedLive) {
+		t.Fatalf("migration archive changed after refusal:\nbefore=%s\nafter=%s", poisonedLive, got)
 	}
 }
 
@@ -1007,44 +1066,6 @@ func TestLegacyV1MigrationTwiceIsByteStable(t *testing.T) {
 	twice := mustReadFile(t, path)
 	if !bytes.Equal(once, twice) {
 		t.Fatalf("migrate twice changed live file\nonce=%s\ntwice=%s", once, twice)
-	}
-}
-
-func TestLegacyV1MigrationHandlesMixedFileWithVerifiedArchive(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.jsonl")
-	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	original := strings.Join([]string{
-		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
-		`{"kind":"session","guid":"guid-v2","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"v2","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"` + testNodeA + `","terminal_id":"term_v2","pane_id":"p_v2","hcom_name":"v2-bus","namespace":"/hcom","confirmed_at":"2026-07-08T00:00:01Z"}}`,
-		`{"guid":"guid-legacy","short_guid":"legacy","label":"legacy","role":"worker","agent":"claude","terminal_id":"term_old","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"legacy-bus","status":"active"}`,
-	}, "\n") + "\n"
-	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	archive := mustMigrationArchivePath(t, path)
-	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(archive, []byte(original), 0o444); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
-		t.Fatal(err)
-	}
-	if got := mustReadFile(t, mustMigrationArchivePath(t, path)); string(got) != original {
-		t.Fatalf("archive = %s, want original mixed file", got)
-	}
-	proj := loadProjection(t, path)
-	v2row := V2ByGUID(proj, "guid-v2")
-	if v2row == nil || v2row.State != v2.StateSeated || v2row.Seat == nil || v2row.Seat.HcomName != "v2-bus" {
-		t.Fatalf("v2 row = %+v, want latest snapshot preserved", v2row)
-	}
-	legacy := V2ByGUID(proj, "guid-legacy")
-	if legacy == nil || legacy.State != v2.StateUnseated || legacy.Seat != nil || legacy.Event != migrationEventV1 {
-		t.Fatalf("legacy row = %+v, want dormant migrated row", legacy)
 	}
 }
 
