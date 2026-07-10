@@ -406,6 +406,52 @@ func TestReindexReproducesChecksumAndHealsDirtyFlag(t *testing.T) {
 	}
 }
 
+func TestAppendEventRollsBackAllIndexStateOnWriteFailure(t *testing.T) {
+	st, idx := newHarness(t)
+	body := []byte(
+		`{"type":"user","uuid":"kept-only-after-retry","sessionId":"` + testSession + `"}` + "\n" +
+			`{"type":"assistant","uuid":"reject","sessionId":"` + testSession + `"}` + "\n")
+	putBytes(t, st, testSession, testFile, 0, body)
+	ev := <-st.AppendEvents()
+	if _, err := st.DB().Exec(`CREATE TRIGGER reject_index_row BEFORE INSERT ON sesh_index_messages
+		WHEN NEW.message_uuid = 'reject' BEGIN SELECT RAISE(ABORT, 'reject index row'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.ProcessAppend(t.Context(), ev); err == nil {
+		t.Fatal("expected index write failure")
+	}
+	var rows, states, dirty int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM sesh_index_messages`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM index_file_state`).Scan(&states); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB().QueryRow(`SELECT dirty_for_reindex FROM files WHERE tool = ? AND session_id = ? AND file_uuid = ? AND generation = 0`,
+		wire.ToolClaude, testSession, testFile).Scan(&dirty); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 || states != 0 || dirty != 1 {
+		t.Fatalf("failed event left rows/state/dirty = %d/%d/%d, want 0/0/1", rows, states, dirty)
+	}
+	if _, err := st.DB().Exec(`DROP TRIGGER reject_index_row`); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.ProcessAppend(t.Context(), ev); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM sesh_index_messages`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB().QueryRow(`SELECT dirty_for_reindex FROM files WHERE tool = ? AND session_id = ? AND file_uuid = ? AND generation = 0`,
+		wire.ToolClaude, testSession, testFile).Scan(&dirty); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 2 || dirty != 0 {
+		t.Fatalf("retried event rows/dirty = %d/%d, want 2/0", rows, dirty)
+	}
+}
+
 func TestIncrementalAppendMatchesReindexChecksum(t *testing.T) {
 	st, idx := newHarness(t)
 	for i := 0; i < 25; i++ {
@@ -724,6 +770,32 @@ func BenchmarkProcessAppendWithUnrelatedCorpus(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func BenchmarkProcessAppendBatch320Rows(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		st, idx := newBenchHarness(b)
+		events := make([]wire.AppendEvent, 0, 8)
+		for n := 0; n < 8; n++ {
+			sessionID := syntheticUUID(50_000 + i*8 + n)
+			fileUUID := syntheticUUID(60_000 + i*8 + n)
+			body := syntheticSessionBody(sessionID, fmt.Sprintf("bench-batch-%04d-%02d", i, n), 40,
+				time.Date(2026, 7, 9, 17, n, 0, 0, time.UTC))
+			putBytesBench(b, st, sessionID, fileUUID, 0, body)
+			events = append(events, <-st.AppendEvents())
+		}
+		b.StartTimer()
+		for _, ev := range events {
+			if err := idx.ProcessAppend(b.Context(), ev); err != nil {
+				b.Fatal(err)
+			}
+		}
+		b.StopTimer()
+		if err := st.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
