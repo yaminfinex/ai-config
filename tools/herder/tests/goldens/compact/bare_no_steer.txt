@@ -1,9 +1,7 @@
 === STDERR ===
-herder compact: submitted — "/compact" is in your composer and fires when the current turn ends (verify: delivered)
+herder compact: refused — explicit continuation intent is required: pass --then <continuation> to resume after compaction or --stop to compact and go idle. Without either flag, compaction silently leaves the session dormant. Nothing was typed.
 === STDOUT ===
 
 === EXIT ===
-0
+2
 === HERDR MUTATING CALLS ===
-agent send w1-2 /compact
-pane send-keys w1-2 Enter

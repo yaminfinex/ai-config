@@ -252,6 +252,8 @@ scenario capture_fallback  ready claude fallback --role worker --agent claude --
 scenario capture_ambiguous ready claude fallback_ambiguous --role worker --agent claude --json
 scenario capture_fail      ready claude fail --role worker --agent claude --json
 scenario perm_explicit     ready claude launchctx --role worker --agent claude --extra-arg --dangerously-skip-permissions --json
+scenario model_claude     ready claude launchctx --role worker --agent claude --model claude-opus-test --json
+scenario model_codex      ready codex launchctx --role worker --agent codex --model gpt-test --json
 scenario team              ready claude launchctx --role worker --agent claude --team smoke --json
 scenario start_fail        startfail claude launchctx --role worker --agent claude --json
 # (TASK-024's claude_echoloss paste-race scenario retired with the paste path
@@ -320,7 +322,7 @@ if [[ "$WRITE" -eq 0 ]]; then
     bad "label-prefix: replaces role prefix" "rc=$RUN_RC out=$RUN_OUT err=$(cat "$RUN_ERR_F")"
   fi
 
-  trailing_value_flags=(--split --workspace --from-pane --tab --cwd --label-prefix --extra-arg --wait-timeout-ms --ready-match --login-shell --team --notify-to --worktree --base)
+  trailing_value_flags=(--split --workspace --from-pane --tab --cwd --label-prefix --extra-arg --model --wait-timeout-ms --ready-match --login-shell --team --notify-to --worktree --base)
   trailing_ok=1
   trailing_detail=""
   for flag in "${trailing_value_flags[@]}"; do
@@ -332,6 +334,11 @@ if [[ "$WRITE" -eq 0 ]]; then
     fi
   done
   [[ "$trailing_ok" -eq 1 ]] && ok "usage: trailing value flags refused" || bad "usage: trailing value flags refused" "$trailing_detail"
+
+  CASE="$ROOT/usage_model_collision"
+  run_spawn ready claude launchctx --role worker --agent claude --model claude-opus-test --extra-arg --model --extra-arg legacy-pin
+  [[ "$RUN_RC" -eq 1 ]] && grep -q -- '--model conflicts with a model pin in --extra-arg' "$RUN_ERR_F" \
+    && ok "usage: first-class/passthrough model collision refused" || bad "usage: model collision refused" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
 
   CASE="$ROOT/usage_notify_noprompt"
   run_spawn ready claude launchctx --role worker --agent claude --notify

@@ -31,6 +31,7 @@ type compactOptions struct {
 	Steer       string
 	Then        string
 	ThenSet     bool
+	Stop        bool
 	ThenTimeout time.Duration
 }
 
@@ -94,6 +95,14 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 	row := self.row
 	if row.Agent != "claude" && row.Agent != "codex" {
 		dieCompact(stderr, fmt.Sprintf("refused — your registry row records agent %q, which has no interactive composer to type /compact into. Nothing was typed.", row.Agent))
+		return 2
+	}
+	if !opts.DryRun && !opts.ThenSet && !opts.Stop {
+		if row.Agent == "codex" {
+			dieCompact(stderr, "refused — explicit continuation intent is required: pass --stop to compact and go idle. Without it, compaction silently leaves the session dormant. Nothing was typed.")
+		} else {
+			dieCompact(stderr, "refused — explicit continuation intent is required: pass --then <continuation> to resume after compaction or --stop to compact and go idle. Without either flag, compaction silently leaves the session dormant. Nothing was typed.")
+		}
 		return 2
 	}
 
@@ -315,6 +324,8 @@ func parseCompactArgs(args []string, stdout, stderr io.Writer) (compactOptions, 
 			steerOnly = true
 		case "--dry-run":
 			opts.DryRun = true
+		case "--stop":
+			opts.Stop = true
 		case "--then":
 			if i+1 >= len(args) {
 				dieCompact(stderr, "--then requires a continuation message (the prompt to deliver over the bus after compaction)")
@@ -352,6 +363,10 @@ func parseCompactArgs(args []string, stdout, stderr io.Writer) (compactOptions, 
 		dieCompact(stderr, "--then continuation message is empty — pass the prompt to deliver after compaction, or drop --then")
 		return opts, 64
 	}
+	if opts.ThenSet && opts.Stop {
+		dieCompact(stderr, "use --then <continuation> or --stop, not both")
+		return opts, 64
+	}
 	if opts.ThenTimeout == 0 {
 		opts.ThenTimeout = defaultThenTimeout
 	}
@@ -363,13 +378,17 @@ func printCompactHelp(stdout io.Writer) {
 		"herder compact — queue a steered /compact into the CALLER'S OWN pane (self only).",
 		"",
 		"Usage:",
-		"  herder compact [--dry-run] [--then <continuation> [--then-timeout <dur>]] \\",
+		"  herder compact [--dry-run] (--then <continuation> [--then-timeout <dur>] | --stop) \\",
 		"                 [<steer text> | -- <steer text>]",
 		"",
 		"Types a real `/compact <steer>` input line into your own composer via the",
 		"spawn-private paste engine and submits it. If you are mid-turn (the normal case —",
 		"you run this from your own tool call), the line is QUEUED and fires when the",
 		"current turn ends: your session compacts in place, steered, and continues.",
+		"",
+		"Compaction ends the turn. Choose --then to resume automatically or --stop to",
+		"explicitly go idle; without that choice the session would become dormant waiting",
+		"for human input. --dry-run may omit both because it queues nothing.",
 		"",
 		"--then <continuation> (compact-then-continue, claude-only): normally /compact",
 		"ends the turn and STOPS. With --then, once the /compact paste is VERIFIED, a",
@@ -401,6 +420,7 @@ func printCompactHelp(stdout io.Writer) {
 		"                     what --then would arm), then exit",
 		"  --then <msg>       claude-only: after compaction completes, deliver <msg> to",
 		"                     your own bus over hcom (compact-then-continue)",
+		"  --stop             compact without a continuation and explicitly go idle",
 		"  --then-timeout <d> bound the detached sender's wait for turn end (default 15m);",
 		"                     on timeout it gives up loudly in its log, never zombies",
 		"  --                 everything after is steer text (for steers starting with --)",
@@ -419,10 +439,10 @@ func printCompactHelp(stdout io.Writer) {
 		"",
 		"Context-ceiling recipe (skills/orchestrate): commit WIP + write your HANDOFF/",
 		"progress state FIRST (compaction loses anything unpersisted), then:",
-		"  herder compact 'keep: current unit, ACs, gate commands, thread name; drop tool output'",
+		"  herder compact --stop 'keep: current unit, ACs, gate commands, thread name; drop tool output'",
 		"To keep going without a human nudging you back afterwards, add a continuation:",
 		"  herder compact 'keep: unit, ACs, gate, thread; drop tool output' \\",
-		"    --then 'resume TASK-XXX: run the gate, then report DONE on thread unit-w'",
+		"    --then 'resume the current unit: run the gate, then report DONE'",
 		"",
 		"If it fails:",
 		"  - exit 2 \"no registry row proves this pane is yours\": run inside a",
