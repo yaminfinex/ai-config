@@ -139,6 +139,12 @@ func (idx *Indexer) processAppend(ctx context.Context, ev wire.AppendEvent, rebu
 		}
 		return normalizeDBError(idx.clearDirty(ctx, ev))
 	}
+	if !rebuild {
+		if err := idx.inheritFileLogicalSession(ctx, ev, rows); err != nil {
+			_ = idx.markDirty(ctx, ev)
+			return normalizeDBError(err)
+		}
+	}
 	if err := idx.insertRows(ctx, rows); err != nil {
 		_ = idx.markDirty(ctx, ev)
 		return normalizeDBError(err)
@@ -595,6 +601,41 @@ func nullableTime(t *time.Time) any {
 
 func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func (idx *Indexer) inheritFileLogicalSession(ctx context.Context, ev wire.AppendEvent, rows []wire.IndexMessage) error {
+	existing, err := idx.fileLogicalSessions(ctx, ev)
+	if err != nil {
+		return err
+	}
+	if len(existing) != 1 || existing[0] == ev.WireSessionID {
+		return nil
+	}
+	for i := range rows {
+		if !rows[i].Quarantine {
+			rows[i].LogicalSessionID = existing[0]
+		}
+	}
+	return nil
+}
+
+func (idx *Indexer) fileLogicalSessions(ctx context.Context, ev wire.AppendEvent) ([]string, error) {
+	rows, err := idx.db.QueryContext(ctx, `SELECT DISTINCT logical_session_id FROM sesh_index_messages
+		WHERE quarantine = 0 AND tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?
+		ORDER BY logical_session_id`, ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var logical string
+		if err := rows.Scan(&logical); err != nil {
+			return nil, err
+		}
+		out = append(out, logical)
+	}
+	return out, rows.Err()
 }
 
 func (idx *Indexer) completeOffset(ctx context.Context, ev wire.AppendEvent) (int64, error) {

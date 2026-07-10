@@ -448,6 +448,88 @@ func TestIncrementalAppendMatchesReindexChecksum(t *testing.T) {
 	}
 }
 
+func TestPostUnifyAppendStaysInCurrentLogicalSession(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		origSession   string
+		resumeSession string
+	}{
+		{
+			name:          "resume id sorts before canonical",
+			origSession:   syntheticUUID(20_100),
+			resumeSession: syntheticUUID(20_099),
+		},
+		{
+			name:          "resume id sorts after canonical",
+			origSession:   syntheticUUID(20_200),
+			resumeSession: syntheticUUID(20_201),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, idx := newHarness(t)
+			origFile := syntheticUUID(21_100)
+			resumeFile := syntheticUUID(21_101)
+			orig := syntheticSessionBody(tc.origSession, "post-unify-original", 6, time.Date(2026, 7, 9, 13, 0, 0, 0, time.UTC))
+			resume := syntheticResumeBody(tc.resumeSession, "post-unify-resume", []string{"post-unify-original-02", "post-unify-original-03"}, 3, time.Date(2026, 7, 9, 14, 0, 0, 0, time.UTC))
+			putBytes(t, st, tc.origSession, origFile, 0, orig)
+			if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+				t.Fatal(err)
+			}
+			putBytes(t, st, tc.resumeSession, resumeFile, 0, resume)
+			if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+				t.Fatal(err)
+			}
+
+			tail := []byte(`{"type":"message","uuid":"post-unify-tail","sessionId":"` + tc.resumeSession + `","timestamp":"2026-07-09T15:00:00Z","message":{"role":"user"}}` + "\n")
+			putBytes(t, st, tc.resumeSession, resumeFile, int64(len(resume)), tail)
+			if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+				t.Fatal(err)
+			}
+
+			assertOneLogicalSession(t, st, tc.origSession, []string{origFile, resumeFile})
+			assertChecksumMatchesReindex(t, idx)
+		})
+	}
+}
+
+func TestPostUnifyAppendCanBridgeTransitiveResumeChain(t *testing.T) {
+	st, idx := newHarness(t)
+	aSession := syntheticUUID(20_300)
+	bSession := syntheticUUID(20_299)
+	cSession := syntheticUUID(20_301)
+	aFile := syntheticUUID(21_300)
+	bFile := syntheticUUID(21_301)
+	cFile := syntheticUUID(21_302)
+
+	aBody := syntheticSessionBody(aSession, "chain-a", 6, time.Date(2026, 7, 9, 13, 0, 0, 0, time.UTC))
+	bBody := syntheticResumeBody(bSession, "chain-b", []string{"chain-a-02", "chain-a-03"}, 2, time.Date(2026, 7, 9, 14, 0, 0, 0, time.UTC))
+	putBytes(t, st, aSession, aFile, 0, aBody)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	putBytes(t, st, bSession, bFile, 0, bBody)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+
+	bridge := []byte(
+		`{"type":"message","uuid":"chain-bridge-00","sessionId":"` + bSession + `","timestamp":"2026-07-09T15:00:00Z","message":{"role":"user"}}` + "\n" +
+			`{"type":"message","uuid":"chain-bridge-01","sessionId":"` + bSession + `","timestamp":"2026-07-09T15:00:01Z","message":{"role":"assistant"}}` + "\n")
+	putBytes(t, st, bSession, bFile, int64(len(bBody)), bridge)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+
+	cBody := syntheticResumeBody(cSession, "chain-c", []string{"chain-bridge-00", "chain-bridge-01"}, 2, time.Date(2026, 7, 9, 16, 0, 0, 0, time.UTC))
+	putBytes(t, st, cSession, cFile, 0, cBody)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+
+	assertOneLogicalSession(t, st, aSession, []string{aFile, bFile, cFile})
+	assertChecksumMatchesReindex(t, idx)
+}
+
 func TestLineOrdinalComesFromBytePositionAfterDedupDeletion(t *testing.T) {
 	st, idx := newHarness(t)
 	body := []byte(
@@ -679,6 +761,39 @@ func syntheticResumeBody(sessionID, prefix string, shared []string, count int, s
 			prefix, i, sessionID, start.Add(time.Duration(i+len(shared))*time.Second).Format(time.RFC3339Nano))
 	}
 	return buf.Bytes()
+}
+
+func assertOneLogicalSession(t *testing.T, st *store.Store, want string, files []string) {
+	t.Helper()
+	for _, fileUUID := range files {
+		var count int
+		var logical string
+		if err := st.DB().QueryRow(`SELECT COUNT(DISTINCT logical_session_id), MIN(logical_session_id)
+			FROM sesh_index_messages WHERE quarantine = 0 AND file_uuid = ?`, fileUUID).Scan(&count, &logical); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 || logical != want {
+			t.Fatalf("file %s logical sessions = %d/%q, want one %q", fileUUID, count, logical, want)
+		}
+	}
+}
+
+func assertChecksumMatchesReindex(t *testing.T, idx *Indexer) {
+	t.Helper()
+	incrementalSum, incrementalRows, err := idx.Checksum(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	reindexedSum, reindexedRows, err := idx.Checksum(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if incrementalSum != reindexedSum || incrementalRows != reindexedRows {
+		t.Fatalf("incremental checksum %s/%d does not match reindex %s/%d", incrementalSum, incrementalRows, reindexedSum, reindexedRows)
+	}
 }
 
 func copyFile(dst, src string) error {
