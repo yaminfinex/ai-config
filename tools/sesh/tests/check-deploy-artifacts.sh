@@ -69,9 +69,20 @@ HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run \
 grep -q "Environment=SESH_STORE_URL=http://sesh-store.example.ts.net:8765" "$DRY_OUT" ||
   fail "dry-run drop-in lacks the store URL"
 grep -q "ExecStart=$BIN/sesh ship" "$DRY_OUT" ||
-  fail "dry-run drop-in lacks the ExecStart override for a non-default binary path"
+  fail "dry-run unit lacks the rendered absolute binary path"
 [ -e "$HOME_DIR/.config" ] && fail "dry-run created files under HOME"
-ok "dry-run renders drop-in (URL + ExecStart override) and writes nothing"
+ok "dry-run renders the unit binary path and URL drop-in, and writes nothing"
+
+step "installer default: resolves a user-owned GOBIN path without sudo"
+DEFAULT_GOBIN="$WORK/gobin"
+HOME="$HOME_DIR" GOBIN="$DEFAULT_GOBIN" bash "$ETC_DIR/install-ship.sh" --dry-run \
+  --store-url http://sesh-store.example.ts.net:8765 >"$WORK/default-bin.out" 2>&1 ||
+  fail "installer could not resolve its GOBIN default: $(cat "$WORK/default-bin.out")"
+grep -q "ExecStart=$DEFAULT_GOBIN/sesh ship" "$WORK/default-bin.out" ||
+  fail "installer did not render the GOBIN default into ExecStart"
+grep -nE '(^|[[:space:]])sudo([[:space:]]|$)' "$ETC_DIR/install-ship.sh" &&
+  fail "installer invokes sudo"
+ok "GOBIN becomes the pinned ExecStart and install uses no sudo"
 
 step "installer argument validation"
 HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run --binary relative/sesh \

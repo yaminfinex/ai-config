@@ -7,14 +7,18 @@ recency page.
 Authority chain: `docs/specs/session-service-spec.md` (product contract) >
 `docs/specs/sesh-wire.md` (wire and index contract).
 
-## Build
+## Build and install
 
 Standalone Go module (Go ≥ 1.26); no imports from the host repository — this
-tool is expected to move repos. Plain `go build`, no wrappers:
+tool is expected to move repos. The house convention installs user-owned binaries in GOBIN
+(`go env GOBIN`, falling back to `$(go env GOPATH)/bin`). Local and installed binaries are
+independent copies:
 
 ```sh
 cd tools/sesh
-go build ./cmd/sesh
+just build
+just install
+just versions
 ```
 
 Cross-compiles: `GOOS=darwin GOARCH=arm64` and `GOOS=linux GOARCH=amd64`.
@@ -195,11 +199,17 @@ onboarded a week late backfills its full local history (up to Claude's
 30-day retention) unaided. Per node, per shipping user:
 
 ```sh
-# binary: place a matching-platform build at an absolute path
-sudo install -m 0755 sesh /usr/local/bin/sesh
+# install a matching-platform build into the user's GOBIN
+just install
 # service (Linux and macOS take the same command):
-tools/sesh/etc/install-ship.sh --store-url http://sesh-store.<tailnet>.ts.net:8765
+just deploy http://sesh-store.<tailnet>.ts.net:8765
 ```
+
+For older installations pinned to `/usr/local/bin/sesh`, run `just deploy` and then `just restart`:
+the installer renders the resolved, absolute GOBIN path into the user unit, and the restart completes
+the migration. `just versions` reports cleanly once the new binary is running; the old binary
+predates the version command. Remove the root-owned copy after that check. Install and upgrade do
+not require sudo.
 
 Linux reboot survival on nodes nobody logs into additionally requires
 lingering — the installer warns when it is off:

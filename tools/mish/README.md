@@ -5,11 +5,18 @@ A mission is a self-contained Backlog.md board under a shared missions repo, wit
 marker, pinned board config, and status checks that make multi-agent custody visible. The
 normative behavior lives in `../../docs/specs/mission-spec.md`.
 
-## Development
+## Build and install
 
-Run `mish` from source. Install and ship packaging, launchers, and `bin/mish` are deferred until
-the house installer shape from sesh is copied after its rollout; v1 does not install a command on
-PATH.
+The house convention is a user-owned install in GOBIN (`go env GOBIN`, falling back to
+`$(go env GOPATH)/bin`). The local `./mish` and installed command are independent copies:
+
+```sh
+just build
+just install
+just versions
+```
+
+There are no repository symlinks and mish has no service tier.
 
 Install the pinned toolchain and Backlog.md dependency from the repository root:
 

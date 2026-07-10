@@ -18,14 +18,13 @@ Usage: install-ship.sh --store-url URL [--binary /abs/path/sesh] [--dry-run] [--
                     (required; the ONLY coupling between a node and the store.
                     tsnet mode is plain http — the tailnet encrypts transport)
   --binary PATH     absolute path to the sesh binary
-                    (default: /usr/local/bin/sesh)
+                    (default: <GOBIN>/sesh; GOPATH/bin when GOBIN is unset)
   --dry-run         print every action and rendered file; write nothing
   --force           overwrite an existing drop-in (default: refuse, so
                     operator edits to 10-local.conf are never clobbered)
 
 Linux : installs a systemd --user unit (sesh-ship.service) + a drop-in
-        carrying SESH_STORE_URL (and an ExecStart override when --binary is
-        not the default), then enables and starts it. Reboot survival on
+        carrying SESH_STORE_URL, then enables and starts it. Reboot survival on
         no-login nodes additionally needs: loginctl enable-linger $USER
 Darwin: renders dev.sesh.ship.plist.tmpl into ~/Library/LaunchAgents and
         bootstraps it into the gui domain.
@@ -34,7 +33,7 @@ USAGE
 
 ETC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORE_URL=""
-SESH_BIN="/usr/local/bin/sesh"
+SESH_BIN=""
 DRY_RUN=0
 FORCE=0
 
@@ -48,6 +47,16 @@ while [ $# -gt 0 ]; do
     *) echo "install-ship.sh: unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if [ -z "$SESH_BIN" ]; then
+  command -v go >/dev/null 2>&1 || {
+    echo "install-ship.sh: go is required to resolve GOBIN; pass --binary explicitly" >&2
+    exit 2
+  }
+  SESH_BIN="$(go env GOBIN)"
+  [ -n "$SESH_BIN" ] || SESH_BIN="$(go env GOPATH)/bin"
+  SESH_BIN="$SESH_BIN/sesh"
+fi
 
 [ -n "$STORE_URL" ] || { echo "install-ship.sh: --store-url is required" >&2; usage >&2; exit 2; }
 case "$SESH_BIN" in
@@ -74,10 +83,11 @@ render_dropin() {
   echo "# Written by install-ship.sh — node-local values only. Re-run --force to change."
   echo "[Service]"
   echo "Environment=SESH_STORE_URL=$STORE_URL"
-  if [ "$SESH_BIN" != "/usr/local/bin/sesh" ]; then
-    echo "ExecStart="
-    echo "ExecStart=$SESH_BIN ship"
-  fi
+}
+
+render_unit() {
+  sed "s|^ExecStart=/usr/local/bin/sesh ship$|ExecStart=$SESH_BIN ship|" \
+    "$ETC_DIR/systemd/sesh-ship.service"
 }
 
 install_linux() {
@@ -113,9 +123,10 @@ install_linux() {
   say "installing systemd user unit into $unit_dir"
   doit mkdir -p "$dropin_dir"
   if [ "$DRY_RUN" -eq 1 ]; then
-    echo "DRY-RUN: would copy $ETC_DIR/systemd/sesh-ship.service -> $unit_dir/sesh-ship.service"
+    echo "DRY-RUN: would write $unit_dir/sesh-ship.service:"
+    render_unit | sed 's/^/    /'
   else
-    cp "$ETC_DIR/systemd/sesh-ship.service" "$unit_dir/sesh-ship.service"
+    render_unit >"$unit_dir/sesh-ship.service"
   fi
   render_dropin | emit "$dropin"
 

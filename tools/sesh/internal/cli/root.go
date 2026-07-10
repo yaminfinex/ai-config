@@ -17,6 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"sesh/internal/buildinfo"
 	"sesh/internal/index"
 	"sesh/internal/store"
 	"sesh/internal/surface"
@@ -36,6 +37,14 @@ func newRoot() *cobra.Command {
 		SilenceUsage: true,
 	}
 	root.AddCommand(
+		&cobra.Command{
+			Use:   "version",
+			Short: "Print the build version",
+			Args:  cobra.NoArgs,
+			Run: func(cmd *cobra.Command, _ []string) {
+				fmt.Fprintln(cmd.OutOrStdout(), buildinfo.Version)
+			},
+		},
 		newShip(),
 		newServe(),
 		newReindex(),
