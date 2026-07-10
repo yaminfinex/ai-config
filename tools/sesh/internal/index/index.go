@@ -212,6 +212,7 @@ func (idx *Indexer) processAppend(ctx context.Context, ev wire.AppendEvent, rebu
 		_ = idx.markDirty(ctx, ev)
 		return normalizeDBError(err)
 	}
+	// The applyAppend call tree must not mutate Indexer fields: txIdx is a shallow copy.
 	txIdx := *idx
 	txIdx.tx = tx
 	if err := txIdx.applyAppend(ctx, ev, rebuild); err != nil {
