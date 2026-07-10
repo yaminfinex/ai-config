@@ -94,6 +94,39 @@ func TestAcknowledgementBeforeBatchFlushReplaysAfterRestart(t *testing.T) {
 	}
 }
 
+func TestOwnerObservationsSurviveCrashBeforePassFlush(t *testing.T) {
+	h := newHarness(t)
+	pathA := h.writeClaude("-batch", uuidNormal, fixture(t, "claude-normal.jsonl"))
+	pathB := h.writeClaude("-batch", uuidFresh, []byte("x"))
+	discovered := []Discovered{
+		{Identity: Identity{Tool: wire.ToolClaude, SessionID: uuidNormal, FileUUID: uuidNormal}, Path: pathA},
+		{Identity: Identity{Tool: wire.ToolClaude, SessionID: uuidFresh, FileUUID: uuidFresh}, Path: pathB},
+	}
+	h.shipper.Correlate = func([]Discovered) map[string]string {
+		return map[string]string{
+			discovered[0].Identity.Key(): "alice",
+			discovered[1].Identity.Key(): "bob",
+		}
+	}
+
+	h.shipper.Registry.beginBatch()
+	replacementsBefore := h.shipper.Registry.durableReplacements
+	if err := h.shipper.recordOwnerObservations(discovered); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.shipper.Registry.durableReplacements - replacementsBefore; got != 1 {
+		t.Fatalf("durable replacements for two new owners = %d, want 1", got)
+	}
+	// Simulate process death before the pass-level endBatch can run.
+	h.restart()
+	for uuid, owner := range map[string]string{uuidNormal: "alice", uuidFresh: "bob"} {
+		cursor, ok := h.cursor(wire.ToolClaude, uuid)
+		if !ok || cursor.SessionOwner != owner {
+			t.Fatalf("owner for %s after restart = %q, ok=%v; want durable %s", uuid, cursor.SessionOwner, ok, owner)
+		}
+	}
+}
+
 func BenchmarkRegistryPersistence(b *testing.B) {
 	makeRegistry := func(b *testing.B) *Registry {
 		b.Helper()
