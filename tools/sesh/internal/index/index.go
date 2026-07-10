@@ -3,6 +3,7 @@
 package index
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -12,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -35,10 +37,13 @@ var (
 
 // Indexer consumes append events and rebuilds disposable index tables.
 type Indexer struct {
-	db         *sql.DB
-	mirrorPath MirrorPath
+	db                 *sql.DB
+	mirrorPath         MirrorPath
+	quarantineObserved map[quarantineKey]time.Time
 
 	failWriteOnce bool
+
+	migrationReindexed bool
 }
 
 // New initializes index tables on the store database.
@@ -65,6 +70,7 @@ func (idx *Indexer) initSchema(ctx context.Context) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			tool TEXT NOT NULL,
 			logical_session_id TEXT NOT NULL,
+			parsed_logical_session_id TEXT NOT NULL,
 			wire_session_id TEXT NOT NULL,
 			entry_type TEXT NOT NULL,
 			message_uuid TEXT NOT NULL,
@@ -98,18 +104,75 @@ func (idx *Indexer) initSchema(ctx context.Context) error {
 			line_ordinal INTEGER NOT NULL,
 			reason TEXT NOT NULL
 		)`,
+		`CREATE INDEX IF NOT EXISTS sesh_index_messages_file
+			ON sesh_index_messages(tool, wire_session_id, file_uuid, generation)`,
+		`CREATE INDEX IF NOT EXISTS sesh_index_messages_logical
+			ON sesh_index_messages(tool, logical_session_id)`,
+		`CREATE INDEX IF NOT EXISTS sesh_index_messages_overlap
+			ON sesh_index_messages(tool, entry_type, message_uuid)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := idx.db.ExecContext(ctx, stmt); err != nil {
 			return normalizeDBError(err)
 		}
 	}
+	needsReindex, err := idx.ensureParsedLogicalColumn(ctx)
+	if err != nil {
+		return normalizeDBError(err)
+	}
+	if needsReindex {
+		slog.Default().Info("index parsed logical session migration: rebuilding message index from mirror")
+		if err := idx.Reindex(ctx); err != nil {
+			return normalizeDBError(err)
+		}
+		idx.migrationReindexed = true
+	}
 	return nil
+}
+
+func (idx *Indexer) ensureParsedLogicalColumn(ctx context.Context) (bool, error) {
+	rows, err := idx.db.QueryContext(ctx, `PRAGMA table_info(sesh_index_messages)`)
+	if err != nil {
+		return false, err
+	}
+	hasColumn := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			_ = rows.Close()
+			return false, err
+		}
+		if name == "parsed_logical_session_id" {
+			hasColumn = true
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, err
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	if hasColumn {
+		return false, nil
+	}
+	if _, err := idx.db.ExecContext(ctx, `ALTER TABLE sesh_index_messages ADD COLUMN parsed_logical_session_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ProcessAppend indexes complete JSONL lines newly available for one mirrored
 // generation. Trailing partial lines stay mirrored but unindexed.
 func (idx *Indexer) ProcessAppend(ctx context.Context, ev wire.AppendEvent) error {
+	return idx.processAppend(ctx, ev, false)
+}
+
+func (idx *Indexer) processAppend(ctx context.Context, ev wire.AppendEvent, rebuild bool) error {
 	if idx.failWriteOnce {
 		idx.failWriteOnce = false
 		_ = idx.markDirty(ctx, ev)
@@ -127,6 +190,12 @@ func (idx *Indexer) ProcessAppend(ctx context.Context, ev wire.AppendEvent) erro
 		}
 		return normalizeDBError(idx.clearDirty(ctx, ev))
 	}
+	if !rebuild {
+		if err := idx.inheritFileLogicalSession(ctx, ev, rows); err != nil {
+			_ = idx.markDirty(ctx, ev)
+			return normalizeDBError(err)
+		}
+	}
 	if err := idx.insertRows(ctx, rows); err != nil {
 		_ = idx.markDirty(ctx, ev)
 		return normalizeDBError(err)
@@ -135,15 +204,25 @@ func (idx *Indexer) ProcessAppend(ctx context.Context, ev wire.AppendEvent) erro
 		_ = idx.markDirty(ctx, ev)
 		return normalizeDBError(err)
 	}
-	if err := idx.unifyLogicalSessions(ctx); err != nil {
-		_ = idx.markDirty(ctx, ev)
-		return normalizeDBError(err)
+	if !rebuild {
+		if err := idx.unifyConnectedLogicalSessions(ctx, ev); err != nil {
+			_ = idx.markDirty(ctx, ev)
+			return normalizeDBError(err)
+		}
 	}
 	return normalizeDBError(idx.clearDirty(ctx, ev))
 }
 
 // Reindex rebuilds disposable index rows from the mirror and store registry.
 func (idx *Indexer) Reindex(ctx context.Context) error {
+	observed, err := idx.quarantineObservedTimes(ctx)
+	if err != nil {
+		return normalizeDBError(err)
+	}
+	idx.quarantineObserved = observed
+	defer func() {
+		idx.quarantineObserved = nil
+	}()
 	for _, stmt := range []string{
 		`DELETE FROM sesh_index_messages`,
 		`DELETE FROM index_file_state`,
@@ -166,14 +245,17 @@ func (idx *Indexer) Reindex(ctx context.Context) error {
 			ByteStart:     0,
 			ByteEnd:       gen.HighWater,
 		}
-		if err := idx.ProcessAppend(ctx, ev); err != nil {
+		if err := idx.processAppend(ctx, ev, true); err != nil {
 			if errors.Is(err, ErrMirrorIncomplete) {
 				continue
 			}
 			return normalizeDBError(err)
 		}
 	}
-	return normalizeDBError(idx.unifyLogicalSessions(ctx))
+	if err := idx.unifyLogicalSessions(ctx); err != nil {
+		return normalizeDBError(err)
+	}
+	return nil
 }
 
 type generation struct {
@@ -201,7 +283,7 @@ func (idx *Indexer) generations(ctx context.Context) ([]generation, error) {
 	return out, rows.Err()
 }
 
-func (idx *Indexer) parseComplete(ctx context.Context, ev wire.AppendEvent) ([]wire.IndexMessage, int64, error) {
+func (idx *Indexer) parseComplete(ctx context.Context, ev wire.AppendEvent) ([]indexedMessage, int64, error) {
 	start, err := idx.completeOffset(ctx, ev)
 	if err != nil {
 		return nil, 0, err
@@ -229,35 +311,71 @@ func (idx *Indexer) parseComplete(ctx context.Context, ev wire.AppendEvent) ([]w
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
 		return nil, start, err
 	}
-	buf := make([]byte, ev.ByteEnd-start)
-	if _, err := io.ReadFull(f, buf); err != nil {
-		return nil, start, err
-	}
-	lastNL := bytes.LastIndexByte(buf, '\n')
-	if lastNL < 0 {
-		return nil, start, nil
-	}
-	completeBytes := buf[:lastNL+1]
-	complete := start + int64(len(completeBytes))
-	var rows []wire.IndexMessage
+	var rows []indexedMessage
 	lineStart := start
 	lineOrdinal := baseOrdinal
-	for len(completeBytes) > 0 {
-		nl := bytes.IndexByte(completeBytes, '\n')
-		line := completeBytes[:nl]
-		lineEnd := lineStart + int64(len(line)) + 1
+	complete := start
+	reader := bufio.NewReaderSize(io.NewSectionReader(f, start, ev.ByteEnd-start), 64*1024)
+	for {
+		line, lineBytes, ok, err := readCompleteLine(reader)
+		if err != nil {
+			return nil, start, err
+		}
+		if !ok {
+			break
+		}
+		lineEnd := lineStart + lineBytes
 		var row wire.IndexMessage
-		if len(line) > maxIndexedLineBytes {
+		if line == nil {
 			row = quarantineLine(ev, "line_too_long", lineOrdinal, lineStart, lineEnd)
 		} else {
-			row = parseLine(ev, append([]byte(nil), line...), lineOrdinal, lineStart, lineEnd)
+			row = parseLine(ev, line, lineOrdinal, lineStart, lineEnd)
 		}
-		rows = append(rows, row)
-		completeBytes = completeBytes[nl+1:]
+		rows = append(rows, indexedMessage{IndexMessage: row, ParsedLogicalSessionID: row.LogicalSessionID})
 		lineStart = lineEnd
+		complete = lineEnd
 		lineOrdinal++
 	}
 	return rows, complete, nil
+}
+
+type indexedMessage struct {
+	wire.IndexMessage
+	ParsedLogicalSessionID string
+}
+
+func readCompleteLine(r *bufio.Reader) ([]byte, int64, bool, error) {
+	var line []byte
+	var lineBytes int64
+	tooLong := false
+	for {
+		frag, err := r.ReadSlice('\n')
+		switch {
+		case err == nil:
+			body := frag[:len(frag)-1]
+			lineBytes += int64(len(body)) + 1
+			if tooLong || len(line)+len(body) > maxIndexedLineBytes {
+				return nil, lineBytes, true, nil
+			}
+			line = append(line, body...)
+			return line, lineBytes, true, nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			lineBytes += int64(len(frag))
+			if tooLong || len(line)+len(frag) > maxIndexedLineBytes {
+				tooLong = true
+				line = nil
+				continue
+			}
+			if line == nil {
+				line = make([]byte, 0, maxIndexedLineBytes)
+			}
+			line = append(line, frag...)
+		case errors.Is(err, io.EOF):
+			return nil, 0, false, nil
+		default:
+			return nil, 0, false, err
+		}
+	}
 }
 
 func lineOrdinalAt(f *os.File, offset int64) (int64, error) {
@@ -423,16 +541,16 @@ func parseTime(raw string) *time.Time {
 	return nil
 }
 
-func (idx *Indexer) insertRows(ctx context.Context, rows []wire.IndexMessage) error {
+func (idx *Indexer) insertRows(ctx context.Context, rows []indexedMessage) error {
 	for _, row := range rows {
 		if row.Quarantine {
-			if err := idx.insertQuarantine(ctx, row); err != nil {
+			if err := idx.insertQuarantine(ctx, row.IndexMessage); err != nil {
 				return err
 			}
 			continue
 		}
 		if row.MessageUUID != "" {
-			exists, err := idx.dedupExists(ctx, row)
+			exists, err := idx.dedupExists(ctx, row.IndexMessage)
 			if err != nil {
 				return err
 			}
@@ -440,18 +558,18 @@ func (idx *Indexer) insertRows(ctx context.Context, rows []wire.IndexMessage) er
 				continue
 			}
 			_, err = idx.db.ExecContext(ctx, `INSERT INTO sesh_index_messages
-				(tool, logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')`,
-				row.Tool, row.LogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID, row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd)
+				(tool, logical_session_id, parsed_logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')`,
+				row.Tool, row.LogicalSessionID, row.ParsedLogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID, row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd)
 			if err != nil {
 				return err
 			}
 			continue
 		}
 		_, err := idx.db.ExecContext(ctx, `INSERT INTO sesh_index_messages
-			(tool, logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')`,
-			row.Tool, row.LogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID, row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd)
+			(tool, logical_session_id, parsed_logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')`,
+			row.Tool, row.LogicalSessionID, row.ParsedLogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID, row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd)
 		if err != nil {
 			return err
 		}
@@ -469,18 +587,65 @@ func (idx *Indexer) dedupExists(ctx context.Context, row wire.IndexMessage) (boo
 
 func (idx *Indexer) insertQuarantine(ctx context.Context, row wire.IndexMessage) error {
 	_, err := idx.db.ExecContext(ctx, `INSERT INTO sesh_index_messages
-		(tool, logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-		row.Tool, row.LogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID, row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd, row.QuarantineReason)
+		(tool, logical_session_id, parsed_logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+		row.Tool, row.LogicalSessionID, row.LogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID, row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd, row.QuarantineReason)
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC()
+	observed := time.Now().UTC()
+	if idx.quarantineObserved != nil {
+		if t, ok := idx.quarantineObserved[newQuarantineKey(row)]; ok {
+			observed = t
+		}
+	}
 	_, err = idx.db.ExecContext(ctx, `INSERT INTO quarantine_ledger
 		(observed_at, day, tool, wire_session_id, file_uuid, generation, line_ordinal, reason)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		formatTime(now), now.Format("2006-01-02"), row.Tool, row.WireSessionID, row.FileUUID, row.Generation, row.LineOrdinal, row.QuarantineReason)
+		formatTime(observed), observed.Format("2006-01-02"), row.Tool, row.WireSessionID, row.FileUUID, row.Generation, row.LineOrdinal, row.QuarantineReason)
 	return err
+}
+
+type quarantineKey struct {
+	tool        wire.Tool
+	wireID      string
+	fileUUID    string
+	generation  int
+	lineOrdinal int64
+	reason      string
+}
+
+func newQuarantineKey(row wire.IndexMessage) quarantineKey {
+	return quarantineKey{
+		tool:        row.Tool,
+		wireID:      row.WireSessionID,
+		fileUUID:    row.FileUUID,
+		generation:  row.Generation,
+		lineOrdinal: row.LineOrdinal,
+		reason:      row.QuarantineReason,
+	}
+}
+
+func (idx *Indexer) quarantineObservedTimes(ctx context.Context) (map[quarantineKey]time.Time, error) {
+	rows, err := idx.db.QueryContext(ctx, `SELECT observed_at, tool, wire_session_id, file_uuid, generation, line_ordinal, reason FROM quarantine_ledger`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[quarantineKey]time.Time{}
+	for rows.Next() {
+		var raw string
+		var key quarantineKey
+		if err := rows.Scan(&raw, &key.tool, &key.wireID, &key.fileUUID, &key.generation, &key.lineOrdinal, &key.reason); err != nil {
+			return nil, err
+		}
+		observed, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			continue
+		}
+		out[key] = observed.UTC()
+	}
+	return out, rows.Err()
 }
 
 func nullableTime(t *time.Time) any {
@@ -492,6 +657,43 @@ func nullableTime(t *time.Time) any {
 
 func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func (idx *Indexer) inheritFileLogicalSession(ctx context.Context, ev wire.AppendEvent, rows []indexedMessage) error {
+	existing, err := idx.fileLogicalSessions(ctx, ev)
+	if err != nil {
+		return err
+	}
+	if len(existing) != 1 || existing[0] == ev.WireSessionID {
+		return nil
+	}
+	for i := range rows {
+		if !rows[i].Quarantine {
+			rows[i].LogicalSessionID = existing[0]
+		}
+	}
+	return nil
+}
+
+func (idx *Indexer) fileLogicalSessions(ctx context.Context, ev wire.AppendEvent) ([]string, error) {
+	rows, err := idx.db.QueryContext(ctx, `SELECT DISTINCT logical_session_id FROM sesh_index_messages
+		WHERE quarantine = 0 AND tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?
+			AND logical_session_id <> parsed_logical_session_id
+			AND parsed_logical_session_id <> ''
+		ORDER BY logical_session_id`, ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var logical string
+		if err := rows.Scan(&logical); err != nil {
+			return nil, err
+		}
+		out = append(out, logical)
+	}
+	return out, rows.Err()
 }
 
 func (idx *Indexer) completeOffset(ctx context.Context, ev wire.AppendEvent) (int64, error) {
@@ -522,6 +724,115 @@ func (idx *Indexer) clearDirty(ctx context.Context, ev wire.AppendEvent) error {
 	_, err := idx.db.ExecContext(ctx, `UPDATE files SET dirty_for_reindex = 0 WHERE tool = ? AND session_id = ? AND file_uuid = ? AND generation = ?`,
 		ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
 	return err
+}
+
+func (idx *Indexer) unifyConnectedLogicalSessions(ctx context.Context, ev wire.AppendEvent) error {
+	start, ok, err := idx.fileSummary(ctx, ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
+	if err != nil || !ok {
+		return err
+	}
+	group, err := idx.connectedFiles(ctx, start)
+	if err != nil {
+		return err
+	}
+	if len(group) == 0 {
+		return nil
+	}
+	sort.Slice(group, func(i, j int) bool {
+		if group[i].firstIngest != group[j].firstIngest {
+			return group[i].firstIngest < group[j].firstIngest
+		}
+		return group[i].key < group[j].key
+	})
+	canonical := group[0].logicalID
+	if canonical == "" {
+		canonical = group[0].wireID
+	}
+	if len(group) > 1 {
+		for _, f := range group {
+			if _, err := idx.db.ExecContext(ctx, `UPDATE sesh_index_messages SET logical_session_id = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,
+				canonical, f.tool, f.wireID, f.fileUUID, f.generation); err != nil {
+				return err
+			}
+		}
+	}
+	if err := idx.updateFileOrdinalsForFiles(ctx, group); err != nil {
+		return err
+	}
+	return idx.dedupeLogical(ctx, group[0].tool, canonical)
+}
+
+func (idx *Indexer) connectedFiles(ctx context.Context, start fileSummary) ([]fileSummary, error) {
+	seen := map[string]fileSummary{start.key: start}
+	queue := []fileSummary{start}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, fn := range []func(context.Context, fileSummary) ([]fileSummary, error){
+			idx.sameLogicalFiles,
+			idx.overlappingFiles,
+		} {
+			next, err := fn(ctx, cur)
+			if err != nil {
+				return nil, err
+			}
+			for _, f := range next {
+				if _, ok := seen[f.key]; ok {
+					continue
+				}
+				seen[f.key] = f
+				queue = append(queue, f)
+			}
+		}
+	}
+	out := make([]fileSummary, 0, len(seen))
+	for _, f := range seen {
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+func (idx *Indexer) sameLogicalFiles(ctx context.Context, f fileSummary) ([]fileSummary, error) {
+	rows, err := idx.db.QueryContext(ctx, `SELECT m.tool, m.wire_session_id, m.file_uuid, m.generation,
+		MIN(m.logical_session_id), COALESCE(f.created_at, ''), MIN(m.byte_start)
+		FROM sesh_index_messages m
+		LEFT JOIN files f ON f.tool = m.tool AND f.session_id = m.wire_session_id AND f.file_uuid = m.file_uuid AND f.generation = m.generation
+		WHERE m.quarantine = 0 AND m.tool = ? AND m.logical_session_id = ?
+		GROUP BY m.tool, m.wire_session_id, m.file_uuid, m.generation`,
+		f.tool, f.logicalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanFileSummaries(rows)
+}
+
+func (idx *Indexer) overlappingFiles(ctx context.Context, f fileSummary) ([]fileSummary, error) {
+	rows, err := idx.db.QueryContext(ctx, `SELECT m.tool, m.wire_session_id, m.file_uuid, m.generation,
+		MIN(m.logical_session_id), COALESCE(reg.created_at, ''), MIN(m.byte_start)
+		FROM (
+			SELECT tool, entry_type, message_uuid
+			FROM sesh_index_messages INDEXED BY sesh_index_messages_file
+			WHERE quarantine = 0
+				AND message_uuid <> ''
+				AND tool = ?
+				AND wire_session_id = ?
+				AND file_uuid = ?
+				AND generation = ?
+		) seed
+		JOIN sesh_index_messages m INDEXED BY sesh_index_messages_overlap
+			ON m.tool = seed.tool AND m.entry_type = seed.entry_type AND m.message_uuid = seed.message_uuid
+		LEFT JOIN files reg ON reg.tool = m.tool AND reg.session_id = m.wire_session_id AND reg.file_uuid = m.file_uuid AND reg.generation = m.generation
+		WHERE m.quarantine = 0
+			AND m.message_uuid <> ''
+		GROUP BY m.tool, m.wire_session_id, m.file_uuid, m.generation
+		HAVING COUNT(DISTINCT m.entry_type || char(31) || m.message_uuid) >= 2`,
+		f.tool, f.wireID, f.fileUUID, f.generation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanFileSummaries(rows)
 }
 
 func (idx *Indexer) unifyLogicalSessions(ctx context.Context) error {
@@ -608,11 +919,18 @@ func (idx *Indexer) updateFileOrdinals(ctx context.Context) error {
 			}
 			return group[i].key < group[j].key
 		})
-		for ordinal, f := range group {
-			if _, err := idx.db.ExecContext(ctx, `UPDATE sesh_index_messages SET file_ordinal = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,
-				ordinal, f.tool, f.wireID, f.fileUUID, f.generation); err != nil {
-				return err
-			}
+		if err := idx.updateFileOrdinalsForFiles(ctx, group); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (idx *Indexer) updateFileOrdinalsForFiles(ctx context.Context, group []fileSummary) error {
+	for ordinal, f := range group {
+		if _, err := idx.db.ExecContext(ctx, `UPDATE sesh_index_messages SET file_ordinal = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,
+			ordinal, f.tool, f.wireID, f.fileUUID, f.generation); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -635,6 +953,23 @@ func (idx *Indexer) dedupeAll(ctx context.Context) error {
 	return err
 }
 
+func (idx *Indexer) dedupeLogical(ctx context.Context, tool wire.Tool, logical string) error {
+	_, err := idx.db.ExecContext(ctx, `DELETE FROM sesh_index_messages
+		WHERE id IN (
+			SELECT id FROM (
+				SELECT id,
+					ROW_NUMBER() OVER (
+						PARTITION BY tool, logical_session_id, entry_type, message_uuid
+						ORDER BY timestamp_utc IS NULL, timestamp_utc, file_ordinal, line_ordinal, file_uuid, generation, id
+					) AS rn
+				FROM sesh_index_messages
+				WHERE quarantine = 0 AND message_uuid <> '' AND tool = ? AND logical_session_id = ?
+			)
+			WHERE rn > 1
+		)`, tool, logical)
+	return err
+}
+
 type fileSummary struct {
 	key         string
 	tool        wire.Tool
@@ -644,6 +979,25 @@ type fileSummary struct {
 	logicalID   string
 	firstIngest string
 	pairs       map[string]bool
+}
+
+func (idx *Indexer) fileSummary(ctx context.Context, tool wire.Tool, wireID, fileUUID string, generation int) (fileSummary, bool, error) {
+	rows, err := idx.db.QueryContext(ctx, `SELECT m.tool, m.wire_session_id, m.file_uuid, m.generation,
+		MIN(m.logical_session_id), COALESCE(f.created_at, ''), MIN(m.byte_start)
+		FROM sesh_index_messages m
+		LEFT JOIN files f ON f.tool = m.tool AND f.session_id = m.wire_session_id AND f.file_uuid = m.file_uuid AND f.generation = m.generation
+		WHERE m.quarantine = 0 AND m.tool = ? AND m.wire_session_id = ? AND m.file_uuid = ? AND m.generation = ?
+		GROUP BY m.tool, m.wire_session_id, m.file_uuid, m.generation`,
+		tool, wireID, fileUUID, generation)
+	if err != nil {
+		return fileSummary{}, false, err
+	}
+	defer rows.Close()
+	files, err := scanFileSummaries(rows)
+	if err != nil || len(files) == 0 {
+		return fileSummary{}, false, err
+	}
+	return files[0], true, nil
 }
 
 func (idx *Indexer) fileSummaries(ctx context.Context) ([]fileSummary, error) {
@@ -656,6 +1010,27 @@ func (idx *Indexer) fileSummaries(ctx context.Context) ([]fileSummary, error) {
 		return nil, err
 	}
 	defer rows.Close()
+	files, err := scanFileSummaries(rows)
+	if err != nil {
+		return nil, err
+	}
+	for i := range files {
+		pairs, err := idx.overlapPairs(ctx, files[i])
+		if err != nil {
+			return nil, err
+		}
+		files[i].pairs = pairs
+	}
+	return files, nil
+}
+
+type summaryRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+}
+
+func scanFileSummaries(rows summaryRows) ([]fileSummary, error) {
 	var files []fileSummary
 	for rows.Next() {
 		var f fileSummary
@@ -673,17 +1048,7 @@ func (idx *Indexer) fileSummaries(ctx context.Context) ([]fileSummary, error) {
 		f.pairs = map[string]bool{}
 		files = append(files, f)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for i := range files {
-		pairs, err := idx.overlapPairs(ctx, files[i])
-		if err != nil {
-			return nil, err
-		}
-		files[i].pairs = pairs
-	}
-	return files, nil
+	return files, rows.Err()
 }
 
 func (idx *Indexer) overlapPairs(ctx context.Context, f fileSummary) (map[string]bool, error) {
@@ -741,7 +1106,7 @@ func (idx *Indexer) QuarantineCounts(ctx context.Context) ([]QuarantineCount, er
 
 // Checksum summarizes current index content ignoring store-local row ids.
 func (idx *Indexer) Checksum(ctx context.Context) (string, int, error) {
-	rows, err := idx.db.QueryContext(ctx, `SELECT tool, logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, COALESCE(timestamp_utc, ''), file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason
+	rows, err := idx.db.QueryContext(ctx, `SELECT tool, logical_session_id, parsed_logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, COALESCE(timestamp_utc, ''), file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason
 		FROM sesh_index_messages ORDER BY tool, logical_session_id, wire_session_id, file_uuid, generation, line_ordinal, byte_start, entry_type, message_uuid`)
 	if err != nil {
 		return "", 0, err
@@ -749,8 +1114,8 @@ func (idx *Indexer) Checksum(ctx context.Context) (string, int, error) {
 	defer rows.Close()
 	h := sha256.New()
 	n := 0
-	vals := make([]any, 15)
-	ptrs := make([]any, 15)
+	vals := make([]any, 16)
+	ptrs := make([]any, 16)
 	for i := range vals {
 		ptrs[i] = &vals[i]
 	}

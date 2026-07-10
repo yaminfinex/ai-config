@@ -70,7 +70,9 @@ func newServe() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			startIndexConsumer(cmd.Context(), st, idx, slog.Default())
+			serveCtx, cancelServe := context.WithCancel(cmd.Context())
+			defer cancelServe()
+			startIndexConsumer(serveCtx, st, idx, slog.Default())
 			surfaceHandler := surface.New(surface.NewSQLStore(st.DB(), st.MirrorPath))
 			if tsnetMode {
 				return serveTSNet(cmd.Context(), st.Handler(), surfaceHandler, dataDir, addr, surfaceAddr, tsnetHostname, tsnetDir, tsnetAuthKey)
@@ -92,7 +94,9 @@ func newServe() *cobra.Command {
 					slog.Default().Error("surface listener stopped", "error", err)
 				}
 			}()
-			return st.Serve(l)
+			defer sl.Close()
+			defer cancelServe()
+			return st.Serve(serveCtx, l)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8765", "loopback address for the store HTTP listener")

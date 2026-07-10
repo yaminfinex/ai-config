@@ -3,13 +3,16 @@ package index
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
+	"time"
 
 	"sesh/internal/store"
 	"sesh/internal/wire"
@@ -295,6 +298,68 @@ func TestUnparseableJSONQuarantinesAndCounts(t *testing.T) {
 	}
 }
 
+func TestQuarantineObservedAtSurvivesReindex(t *testing.T) {
+	st, idx := newHarness(t)
+	body := []byte("[]\nnot-json\n")
+	putBytes(t, st, testSession, testFile, 0, body)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	original := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	if _, err := st.DB().ExecContext(t.Context(), `UPDATE quarantine_ledger SET observed_at = ?, day = ? WHERE line_ordinal = 0`, formatTime(original), original.Format("2006-01-02")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(t.Context(), `UPDATE quarantine_ledger SET observed_at = 'not-a-time', day = 'not-a-day' WHERE line_ordinal = 1`); err != nil {
+		t.Fatal(err)
+	}
+	before, err := idx.QuarantineCounts(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 2 {
+		t.Fatalf("quarantine counts before reindex = %+v", before)
+	}
+	start := time.Now().UTC()
+	if err := idx.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	end := time.Now().UTC()
+	after, err := idx.QuarantineCounts(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) == 0 {
+		t.Fatalf("quarantine counts after reindex = %+v", after)
+	}
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT line_ordinal, observed_at FROM quarantine_ledger ORDER BY line_ordinal`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	observedByLine := map[int64]string{}
+	for rows.Next() {
+		var line int64
+		var observed string
+		if err := rows.Scan(&line, &observed); err != nil {
+			t.Fatal(err)
+		}
+		observedByLine[line] = observed
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if observedByLine[0] != formatTime(original) {
+		t.Fatalf("healthy observed_at after reindex = %q want %q", observedByLine[0], formatTime(original))
+	}
+	regenerated, err := time.Parse(time.RFC3339Nano, observedByLine[1])
+	if err != nil {
+		t.Fatalf("corrupt observed_at was not regenerated as a timestamp: %q", observedByLine[1])
+	}
+	if regenerated.Before(start) || regenerated.After(end) {
+		t.Fatalf("regenerated observed_at = %s, want between %s and %s", regenerated, start, end)
+	}
+}
+
 func TestReindexReproducesChecksumAndHealsDirtyFlag(t *testing.T) {
 	st, idx := newHarness(t)
 	processFixture(t, st, idx, origID, origID, "claude-resume-original.jsonl")
@@ -341,6 +406,270 @@ func TestReindexReproducesChecksumAndHealsDirtyFlag(t *testing.T) {
 	}
 }
 
+func TestIncrementalAppendMatchesReindexChecksum(t *testing.T) {
+	st, idx := newHarness(t)
+	for i := 0; i < 25; i++ {
+		sessionID := syntheticUUID(10_000 + i)
+		body := syntheticSessionBody(sessionID, fmt.Sprintf("unrelated-%02d", i), 6, time.Date(2026, 7, 9, 12, i, 0, 0, time.UTC))
+		putBytes(t, st, sessionID, sessionID, 0, body)
+		if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	origSession := syntheticUUID(20_000)
+	resumeSession := syntheticUUID(20_001)
+	origFile := syntheticUUID(21_000)
+	resumeFile := syntheticUUID(21_001)
+	orig := syntheticSessionBody(origSession, "resume-original", 8, time.Date(2026, 7, 9, 13, 0, 0, 0, time.UTC))
+	resume := syntheticResumeBody(resumeSession, "resume-new", []string{"resume-original-02", "resume-original-03"}, 5, time.Date(2026, 7, 9, 14, 0, 0, 0, time.UTC))
+	putBytes(t, st, origSession, origFile, 0, orig)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	putBytes(t, st, resumeSession, resumeFile, 0, resume)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+
+	incrementalSum, incrementalRows, err := idx.Checksum(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	reindexedSum, reindexedRows, err := idx.Checksum(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if incrementalSum != reindexedSum || incrementalRows != reindexedRows {
+		t.Fatalf("incremental checksum %s/%d does not match reindex %s/%d", incrementalSum, incrementalRows, reindexedSum, reindexedRows)
+	}
+}
+
+func TestPostUnifyAppendStaysInCurrentLogicalSession(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		origSession   string
+		resumeSession string
+	}{
+		{
+			name:          "resume id sorts before canonical",
+			origSession:   syntheticUUID(20_100),
+			resumeSession: syntheticUUID(20_099),
+		},
+		{
+			name:          "resume id sorts after canonical",
+			origSession:   syntheticUUID(20_200),
+			resumeSession: syntheticUUID(20_201),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, idx := newHarness(t)
+			origFile := syntheticUUID(21_100)
+			resumeFile := syntheticUUID(21_101)
+			orig := syntheticSessionBody(tc.origSession, "post-unify-original", 6, time.Date(2026, 7, 9, 13, 0, 0, 0, time.UTC))
+			resume := syntheticResumeBody(tc.resumeSession, "post-unify-resume", []string{"post-unify-original-02", "post-unify-original-03"}, 3, time.Date(2026, 7, 9, 14, 0, 0, 0, time.UTC))
+			putBytes(t, st, tc.origSession, origFile, 0, orig)
+			if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+				t.Fatal(err)
+			}
+			putBytes(t, st, tc.resumeSession, resumeFile, 0, resume)
+			if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+				t.Fatal(err)
+			}
+
+			tail := []byte(`{"type":"message","uuid":"post-unify-tail","sessionId":"` + tc.resumeSession + `","timestamp":"2026-07-09T15:00:00Z","message":{"role":"user"}}` + "\n")
+			putBytes(t, st, tc.resumeSession, resumeFile, int64(len(resume)), tail)
+			if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+				t.Fatal(err)
+			}
+
+			assertOneLogicalSession(t, st, tc.origSession, []string{origFile, resumeFile})
+			assertChecksumMatchesReindex(t, idx)
+		})
+	}
+}
+
+func TestPostUnifyAppendCanBridgeTransitiveResumeChain(t *testing.T) {
+	st, idx := newHarness(t)
+	aSession := syntheticUUID(20_300)
+	bSession := syntheticUUID(20_299)
+	cSession := syntheticUUID(20_301)
+	aFile := syntheticUUID(21_300)
+	bFile := syntheticUUID(21_301)
+	cFile := syntheticUUID(21_302)
+
+	aBody := syntheticSessionBody(aSession, "chain-a", 6, time.Date(2026, 7, 9, 13, 0, 0, 0, time.UTC))
+	bBody := syntheticResumeBody(bSession, "chain-b", []string{"chain-a-02", "chain-a-03"}, 2, time.Date(2026, 7, 9, 14, 0, 0, 0, time.UTC))
+	putBytes(t, st, aSession, aFile, 0, aBody)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	putBytes(t, st, bSession, bFile, 0, bBody)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+
+	bridge := []byte(
+		`{"type":"message","uuid":"chain-bridge-00","sessionId":"` + bSession + `","timestamp":"2026-07-09T15:00:00Z","message":{"role":"user"}}` + "\n" +
+			`{"type":"message","uuid":"chain-bridge-01","sessionId":"` + bSession + `","timestamp":"2026-07-09T15:00:01Z","message":{"role":"assistant"}}` + "\n")
+	putBytes(t, st, bSession, bFile, int64(len(bBody)), bridge)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+
+	cBody := syntheticResumeBody(cSession, "chain-c", []string{"chain-bridge-00", "chain-bridge-01"}, 2, time.Date(2026, 7, 9, 16, 0, 0, 0, time.UTC))
+	putBytes(t, st, cSession, cFile, 0, cBody)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+
+	assertOneLogicalSession(t, st, aSession, []string{aFile, bFile, cFile})
+	assertChecksumMatchesReindex(t, idx)
+}
+
+func TestCodexSessionMetaDoesNotDriveAppendInheritance(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		chunks []string
+	}{
+		{
+			name: "meta-only first chunk",
+			chunks: []string{
+				codexSessionMetaLine("codex-payload-session"),
+				codexResponseItemLine("codex-item-1") + codexResponseItemLine("codex-item-2"),
+			},
+		},
+		{
+			name: "meta and items in one chunk",
+			chunks: []string{
+				codexSessionMetaLine("codex-payload-session") +
+					codexResponseItemLine("codex-item-1") +
+					codexResponseItemLine("codex-item-2"),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, idx := newHarness(t)
+			wireID := syntheticUUID(20_400)
+			fileUUID := syntheticUUID(21_400)
+			var offset int64
+			for _, chunk := range tc.chunks {
+				putToolBytes(t, st, wire.ToolCodex, wireID, fileUUID, offset, []byte(chunk))
+				if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+					t.Fatal(err)
+				}
+				offset += int64(len(chunk))
+			}
+
+			got := map[string]string{}
+			rows, err := st.DB().QueryContext(t.Context(), `SELECT entry_type, logical_session_id
+				FROM sesh_index_messages WHERE quarantine = 0 ORDER BY line_ordinal`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var typ, logical string
+				if err := rows.Scan(&typ, &logical); err != nil {
+					t.Fatal(err)
+				}
+				got[typ] = logical
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if got["session_meta"] != "codex-payload-session" {
+				t.Fatalf("session_meta logical = %q, want payload id", got["session_meta"])
+			}
+			if got["response_item"] != wireID {
+				t.Fatalf("response_item logical = %q, want wire id %q", got["response_item"], wireID)
+			}
+			assertChecksumMatchesReindex(t, idx)
+		})
+	}
+}
+
+func TestParsedLogicalMigrationReindexesLegacyUnifiedRowsBeforeAppend(t *testing.T) {
+	st, idx := newHarness(t)
+	origSession := syntheticUUID(20_500)
+	resumeSession := syntheticUUID(20_499)
+	origFile := syntheticUUID(21_500)
+	resumeFile := syntheticUUID(21_501)
+	origBody := syntheticSessionBody(origSession, "legacy-original", 6, time.Date(2026, 7, 9, 13, 0, 0, 0, time.UTC))
+	resumeBody := syntheticResumeBody(resumeSession, "legacy-resume", []string{"legacy-original-02", "legacy-original-03"}, 3, time.Date(2026, 7, 9, 14, 0, 0, 0, time.UTC))
+	putBytes(t, st, origSession, origFile, 0, origBody)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	putBytes(t, st, resumeSession, resumeFile, 0, resumeBody)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	assertOneLogicalSession(t, st, origSession, []string{origFile, resumeFile})
+	rebuildMessagesWithoutParsedLogicalColumn(t, st)
+
+	upgraded, err := New(t.Context(), st.DB(), st.MirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !upgraded.migrationReindexed {
+		t.Fatal("legacy schema migration did not trigger reindex")
+	}
+	tail := []byte(`{"type":"message","uuid":"legacy-tail","sessionId":"` + resumeSession + `","timestamp":"2026-07-09T15:00:00Z","message":{"role":"user"}}` + "\n")
+	putBytes(t, st, resumeSession, resumeFile, int64(len(resumeBody)), tail)
+	if err := upgraded.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+
+	assertOneLogicalSession(t, st, origSession, []string{origFile, resumeFile})
+	assertChecksumMatchesReindex(t, upgraded)
+}
+
+func TestFreshIndexSchemaDoesNotRunMigrationReindex(t *testing.T) {
+	st, idx := newHarness(t)
+	if idx.migrationReindexed {
+		t.Fatal("fresh index schema triggered migration reindex")
+	}
+	var columns int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sesh_index_messages') WHERE name = 'parsed_logical_session_id'`).Scan(&columns); err != nil {
+		t.Fatal(err)
+	}
+	if columns != 1 {
+		t.Fatalf("parsed logical column count = %d, want 1", columns)
+	}
+}
+
+func TestEmptyParsedLogicalSessionIDDoesNotDriveAppendInheritance(t *testing.T) {
+	st, idx := newHarness(t)
+	wireID := syntheticUUID(20_600)
+	fileUUID := syntheticUUID(21_600)
+	meta := codexSessionMetaLine("codex-empty-parsed-session")
+	putToolBytes(t, st, wire.ToolCodex, wireID, fileUUID, 0, []byte(meta))
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(t.Context(), `UPDATE sesh_index_messages SET parsed_logical_session_id = '' WHERE entry_type = 'session_meta'`); err != nil {
+		t.Fatal(err)
+	}
+	items := codexResponseItemLine("codex-empty-parsed-item-1") + codexResponseItemLine("codex-empty-parsed-item-2")
+	putToolBytes(t, st, wire.ToolCodex, wireID, fileUUID, int64(len(meta)), []byte(items))
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+
+	var itemLogical string
+	if err := st.DB().QueryRowContext(t.Context(), `SELECT DISTINCT logical_session_id
+		FROM sesh_index_messages WHERE entry_type = 'response_item'`).Scan(&itemLogical); err != nil {
+		t.Fatal(err)
+	}
+	if itemLogical != wireID {
+		t.Fatalf("response_item logical = %q, want wire id %q", itemLogical, wireID)
+	}
+}
+
 func TestLineOrdinalComesFromBytePositionAfterDedupDeletion(t *testing.T) {
 	st, idx := newHarness(t)
 	body := []byte(
@@ -364,6 +693,37 @@ func TestLineOrdinalComesFromBytePositionAfterDedupDeletion(t *testing.T) {
 	}
 	if ordinal != 2 {
 		t.Fatalf("line ordinal after deleted tail row = %d, want byte-position ordinal 2", ordinal)
+	}
+}
+
+func BenchmarkProcessAppendWithUnrelatedCorpus(b *testing.B) {
+	for _, unrelated := range []int{0, 50, 200} {
+		b.Run(fmt.Sprintf("unrelated_%d", unrelated), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				st, idx := newBenchHarness(b)
+				for n := 0; n < unrelated; n++ {
+					sessionID := syntheticUUID(30_000 + n)
+					body := syntheticSessionBody(sessionID, fmt.Sprintf("bench-unrelated-%04d", n), 4, time.Date(2026, 7, 9, 15, n%60, 0, 0, time.UTC))
+					putBytesBench(b, st, sessionID, sessionID, 0, body)
+					if err := idx.ProcessAppend(b.Context(), <-st.AppendEvents()); err != nil {
+						b.Fatal(err)
+					}
+				}
+				targetSession := syntheticUUID(40_000 + i%1000)
+				targetFile := syntheticUUID(41_000 + i%1000)
+				body := syntheticSessionBody(targetSession, fmt.Sprintf("bench-target-%04d", i), 4, time.Date(2026, 7, 9, 16, 0, 0, 0, time.UTC))
+				b.StartTimer()
+				putBytesBench(b, st, targetSession, targetFile, 0, body)
+				if err := idx.ProcessAppend(b.Context(), <-st.AppendEvents()); err != nil {
+					b.Fatal(err)
+				}
+				b.StopTimer()
+				if err := st.Close(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 
@@ -427,6 +787,45 @@ func TestOverlongLineQuarantinesAndContinues(t *testing.T) {
 	}
 }
 
+func TestLargeTrailingPartialDoesNotAllocateWholeRange(t *testing.T) {
+	st, idx := newHarness(t)
+	const size = 30 << 20
+	path := st.MirrorPath(wire.ToolClaude, testSession, testFile, 0)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.CopyN(f, zeroReader{}, size); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().Exec(`INSERT INTO files(tool, session_id, file_uuid, generation, high_water, created_at, updated_at) VALUES (?, ?, ?, 0, ?, 'now', 'now')`,
+		wire.ToolClaude, testSession, testFile, size); err != nil {
+		t.Fatal(err)
+	}
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	if err := idx.ProcessAppend(t.Context(), wire.AppendEvent{Tool: wire.ToolClaude, WireSessionID: testSession, FileUUID: testFile, Generation: 0, ByteEnd: size}); err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&after)
+	if delta := after.TotalAlloc - before.TotalAlloc; delta > 12<<20 {
+		t.Fatalf("ProcessAppend allocated %d bytes for a %d-byte trailing partial; want bounded under 12MiB", delta, size)
+	}
+	if got, err := idx.RowCount(t.Context()); err != nil {
+		t.Fatal(err)
+	} else if got != 0 {
+		t.Fatalf("trailing partial indexed %d rows, want 0", got)
+	}
+}
+
 const (
 	testSession = "11111111-1111-1111-1111-111111111111"
 	testFile    = "22222222-2222-2222-2222-222222222222"
@@ -434,7 +833,12 @@ const (
 
 func putBytes(t *testing.T, st *store.Store, sessionID, fileUUID string, offset int64, body []byte) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPut, "/v1/files/claude/"+sessionID+"/"+fileUUID+"/bytes?offset="+strconv.FormatInt(offset, 10), bytes.NewReader(body))
+	putToolBytes(t, st, wire.ToolClaude, sessionID, fileUUID, offset, body)
+}
+
+func putToolBytes(t *testing.T, st *store.Store, tool wire.Tool, sessionID, fileUUID string, offset int64, body []byte) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, "/v1/files/"+string(tool)+"/"+sessionID+"/"+fileUUID+"/bytes?offset="+strconv.FormatInt(offset, 10), bytes.NewReader(body))
 	req.Header.Set("Content-Type", wire.ContentTypeBytes)
 	req.Header.Set(wire.HeaderWireVersion, "1")
 	req.Header.Set(wire.HeaderHostname, "node-a")
@@ -447,6 +851,136 @@ func putBytes(t *testing.T, st *store.Store, sessionID, fileUUID string, offset 
 	var ack wire.Ack
 	if err := json.Unmarshal(rr.Body.Bytes(), &ack); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func codexSessionMetaLine(payloadID string) string {
+	return `{"type":"session_meta","payload":{"id":"` + payloadID + `"}}` + "\n"
+}
+
+func codexResponseItemLine(itemID string) string {
+	return `{"type":"response_item","payload":{"item":{"id":"` + itemID + `","role":"assistant"}}}` + "\n"
+}
+
+func putBytesBench(b *testing.B, st *store.Store, sessionID, fileUUID string, offset int64, body []byte) {
+	b.Helper()
+	req := httptest.NewRequest(http.MethodPut, "/v1/files/claude/"+sessionID+"/"+fileUUID+"/bytes?offset="+strconv.FormatInt(offset, 10), bytes.NewReader(body))
+	req.Header.Set("Content-Type", wire.ContentTypeBytes)
+	req.Header.Set(wire.HeaderWireVersion, "1")
+	req.Header.Set(wire.HeaderHostname, "node-a")
+	req.Header.Set(wire.HeaderOSUser, "grace")
+	rr := httptest.NewRecorder()
+	st.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		b.Fatalf("PUT status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func newBenchHarness(b *testing.B) (*store.Store, *Indexer) {
+	b.Helper()
+	st, err := store.Open(b.Context(), store.Config{Dir: b.TempDir(), AppendBuffer: 32})
+	if err != nil {
+		b.Fatal(err)
+	}
+	idx, err := New(b.Context(), st.DB(), st.MirrorPath)
+	if err != nil {
+		_ = st.Close()
+		b.Fatal(err)
+	}
+	return st, idx
+}
+
+func syntheticUUID(n int) string {
+	return fmt.Sprintf("00000000-0000-0000-0000-%012d", n)
+}
+
+func syntheticSessionBody(sessionID, prefix string, count int, start time.Time) []byte {
+	var buf bytes.Buffer
+	for i := 0; i < count; i++ {
+		fmt.Fprintf(&buf, `{"type":"message","uuid":"%s-%02d","sessionId":"%s","timestamp":"%s","message":{"role":"user"}}`+"\n",
+			prefix, i, sessionID, start.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano))
+	}
+	return buf.Bytes()
+}
+
+func syntheticResumeBody(sessionID, prefix string, shared []string, count int, start time.Time) []byte {
+	var buf bytes.Buffer
+	for _, uuid := range shared {
+		fmt.Fprintf(&buf, `{"type":"message","uuid":"%s","sessionId":"%s","timestamp":"%s","message":{"role":"user"}}`+"\n",
+			uuid, sessionID, start.Format(time.RFC3339Nano))
+	}
+	for i := 0; i < count; i++ {
+		fmt.Fprintf(&buf, `{"type":"message","uuid":"%s-%02d","sessionId":"%s","timestamp":"%s","message":{"role":"assistant"}}`+"\n",
+			prefix, i, sessionID, start.Add(time.Duration(i+len(shared))*time.Second).Format(time.RFC3339Nano))
+	}
+	return buf.Bytes()
+}
+
+func assertOneLogicalSession(t *testing.T, st *store.Store, want string, files []string) {
+	t.Helper()
+	for _, fileUUID := range files {
+		var count int
+		var logical string
+		if err := st.DB().QueryRow(`SELECT COUNT(DISTINCT logical_session_id), MIN(logical_session_id)
+			FROM sesh_index_messages WHERE quarantine = 0 AND file_uuid = ?`, fileUUID).Scan(&count, &logical); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 || logical != want {
+			t.Fatalf("file %s logical sessions = %d/%q, want one %q", fileUUID, count, logical, want)
+		}
+	}
+}
+
+func assertChecksumMatchesReindex(t *testing.T, idx *Indexer) {
+	t.Helper()
+	incrementalSum, incrementalRows, err := idx.Checksum(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	reindexedSum, reindexedRows, err := idx.Checksum(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if incrementalSum != reindexedSum || incrementalRows != reindexedRows {
+		t.Fatalf("incremental checksum %s/%d does not match reindex %s/%d", incrementalSum, incrementalRows, reindexedSum, reindexedRows)
+	}
+}
+
+func rebuildMessagesWithoutParsedLogicalColumn(t *testing.T, st *store.Store) {
+	t.Helper()
+	stmts := []string{
+		`ALTER TABLE sesh_index_messages RENAME TO sesh_index_messages_with_parsed`,
+		`CREATE TABLE sesh_index_messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			tool TEXT NOT NULL,
+			logical_session_id TEXT NOT NULL,
+			wire_session_id TEXT NOT NULL,
+			entry_type TEXT NOT NULL,
+			message_uuid TEXT NOT NULL,
+			file_uuid TEXT NOT NULL,
+			generation INTEGER NOT NULL,
+			role TEXT NOT NULL,
+			timestamp_utc TEXT NULL,
+			file_ordinal INTEGER NOT NULL,
+			line_ordinal INTEGER NOT NULL,
+			byte_start INTEGER NOT NULL,
+			byte_end INTEGER NOT NULL,
+			quarantine INTEGER NOT NULL,
+			quarantine_reason TEXT NOT NULL
+		)`,
+		`INSERT INTO sesh_index_messages
+			(id, tool, logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
+			SELECT id, tool, logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason
+			FROM sesh_index_messages_with_parsed`,
+		`DROP TABLE sesh_index_messages_with_parsed`,
+	}
+	for _, stmt := range stmts {
+		if _, err := st.DB().ExecContext(t.Context(), stmt); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -468,4 +1002,11 @@ func copyFile(dst, src string) error {
 		return err
 	}
 	return out.Close()
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }

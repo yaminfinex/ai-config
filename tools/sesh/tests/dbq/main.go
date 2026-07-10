@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	_ "modernc.org/sqlite"
+
+	"sesh/internal/sqlitedsn"
 )
 
 func main() {
@@ -31,7 +33,7 @@ func main() {
 func run(dbPath, query string) error {
 	// mode=ro: assertions must never mutate store state; busy_timeout rides
 	// out a store holding the WAL write lock mid-transaction.
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite", sqlitedsn.ReadOnly(dbPath))
 	if err != nil {
 		return err
 	}

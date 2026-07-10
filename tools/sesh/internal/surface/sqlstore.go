@@ -59,6 +59,10 @@ func (s *SQLStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 	if err != nil {
 		return nil, err
 	}
+	maxTimestamps, err := s.maxTimestamps(ctx)
+	if err != nil {
+		return nil, err
+	}
 	facts, err := s.latestFacts(ctx)
 	if err != nil {
 		return nil, err
@@ -128,11 +132,7 @@ func (s *SQLStore) Sessions(ctx context.Context) ([]SessionSummary, error) {
 		if c, ok := counts[countKey(key.tool, key.logical)]; ok {
 			sum.MessageRows, sum.QuarantinedRows = c.messages, c.quarantined
 		}
-		if sum.MessageRows > 0 {
-			ts, err := s.maxTimestamp(ctx, key.tool, key.logical)
-			if err != nil {
-				return nil, err
-			}
+		if ts, ok := maxTimestamps[countKey(key.tool, key.logical)]; ok {
 			sum.MaxTimestampUTC = ts
 		}
 		out = append(out, sum)
@@ -398,28 +398,35 @@ func (s *SQLStore) ownerClaims(ctx context.Context) (map[string][]string, error)
 	return out, rows.Err()
 }
 
-// maxTimestamp finds the session's newest parsed timestamp. julianday
-// compares the RFC3339Nano strings chronologically (lexicographic MAX would
-// mis-order second-exact timestamps against sub-second ones); the string
-// tiebreak keeps it deterministic past julianday's float precision.
-func (s *SQLStore) maxTimestamp(ctx context.Context, tool wire.Tool, logical string) (*time.Time, error) {
-	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT timestamp_utc FROM sesh_index_messages
-		WHERE tool = ? AND logical_session_id = ? AND quarantine = 0 AND timestamp_utc IS NOT NULL
-		ORDER BY julianday(timestamp_utc) DESC, timestamp_utc DESC LIMIT 1`,
-		tool, logical).Scan(&raw)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
+func (s *SQLStore) maxTimestamps(ctx context.Context) (map[string]*time.Time, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT tool, logical_session_id, timestamp_utc FROM (
+			SELECT tool, logical_session_id, timestamp_utc,
+				ROW_NUMBER() OVER (
+					PARTITION BY tool, logical_session_id
+					ORDER BY julianday(timestamp_utc) DESC, timestamp_utc DESC
+				) AS rn
+			FROM sesh_index_messages
+			WHERE quarantine = 0 AND timestamp_utc IS NOT NULL
+		) WHERE rn = 1`)
 	if err != nil {
 		return nil, err
 	}
-	t, err := time.Parse(time.RFC3339Nano, raw)
-	if err != nil {
-		return nil, nil // unparseable timestamp string: honest absence
+	defer rows.Close()
+	out := map[string]*time.Time{}
+	for rows.Next() {
+		var tool wire.Tool
+		var logical, raw string
+		if err := rows.Scan(&tool, &logical, &raw); err != nil {
+			return nil, err
+		}
+		t, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			continue
+		}
+		u := t.UTC()
+		out[countKey(tool, logical)] = &u
 	}
-	t = t.UTC()
-	return &t, nil
+	return out, rows.Err()
 }
 
 func parseStoreTime(raw string) time.Time {
