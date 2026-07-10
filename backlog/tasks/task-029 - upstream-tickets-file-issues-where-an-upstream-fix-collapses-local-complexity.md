@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-09 04:22'
+updated_date: '2026-07-10 01:42'
 labels:
   - run-herder-dx
 dependencies: []
@@ -37,6 +37,16 @@ Doctrine: NOTHING is filed externally by agents — drafts are prepared here, th
 - [ ] #3 Candidates cross-checked against the hcom version current at execution time (coordinate with TASK-028 — an upgrade may moot or reshape asks (1)/(2)/(5))
 - [ ] #4 Standing practice recorded in the orchestrate skill or run playbook template: unit closeout includes an upstream-candidate sweep
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Upstream candidate (from the plain-truncation investigation, 2026-07-10) — Backlog.md 1.47.1, drafted ready to file:
+
+TITLE: task create accepts nested structured-section markers, then --plain silently omits description content
+
+BODY: Backlog.md 1.47.1 accepts reserved structured-section markers inside --description, wraps that input in a second Description marker pair, and later parses only through the first end marker. task view --plain silently omits the remaining description content and emits no warning. Repro in a throwaway board: create a task whose description contains its own SECTION:DESCRIPTION:BEGIN/END pair followed by more text; the raw file then has two begin and two end markers; --plain renders only the inner pair content and advances to Acceptance Criteria without any truncation or malformed-section warning. This is not an output-length cap: clean 20k-character Description/AC/Notes/Comment fixtures render in full. Expected: creation/editing should reject or escape reserved markers in section bodies, or parsing should detect duplicate/nested markers and warn/fail — never silently omit raw task content.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 

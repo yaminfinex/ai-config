@@ -3,10 +3,10 @@ id: TASK-090
 title: >-
   backlog CLI: task view --plain silently truncates descriptions over ~3.2k
   chars — dispatch hazard for long captures
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 04:22'
-updated_date: '2026-07-10 01:35'
+updated_date: '2026-07-10 01:42'
 labels: []
 dependencies: []
 priority: high
@@ -23,13 +23,15 @@ SCOPE: (1) LOCAL DOCTRINE NOW: dispatch briefs and the orchestrate-skill backlog
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The exact truncation behavior is pinned (cap value, which sections, marker or none) with a repro
-- [ ] #2 Local mitigation landed: orchestrate backlog reference + any brief templates direct capture-critical reads at the raw file (or a discovered full-render flag)
-- [ ] #3 Upstream issue draft in the TASK-029 ledger if no upstream remedy exists
+- [x] #1 The exact truncation behavior is pinned (cap value, which sections, marker or none) with a repro
+- [x] #2 Local mitigation landed: orchestrate backlog reference + any brief templates direct capture-critical reads at the raw file (or a discovered full-render flag)
+- [x] #3 Upstream issue draft in the TASK-029 ledger if no upstream remedy exists
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Dispatched 2026-07-10 to gpt-5.6-sol worker (@worker-maso, branch task-090-plain-truncation), brief napkins/run-herder-dx/task-090-brief.md.
+
+Done 2026-07-10, merged to main (d284300 --no-ff). ROOT CAUSE REVISED: no character cap exists in --plain (20k payloads round-trip byte-perfect on Backlog.md 1.47.1; formatter source has no slice/limit). Actual mechanism: duplicated/nested SECTION markers — the CLI wraps marker-containing input in a second pair, the parser returns the FIRST begin/end pair only, and --plain silently omits the remainder with no warning (the historical failure had two DESCRIPTION marker pairs). Mitigation merged: orchestrate backlog reference requires raw backlog/tasks/ reads for capture-critical decisions, --plain as index only. Upstream draft appended to the TASK-029 ledger. Docs-only diff, gate skipped per stakes rule; verified 1 file +8 lines.
 <!-- SECTION:NOTES:END -->
