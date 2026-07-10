@@ -1,9 +1,10 @@
 ---
 id: TASK-140
 title: sesh — batch cursor-registry durability at the authoritative-pass boundary
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-10 01:39'
+updated_date: '2026-07-10 01:54'
 labels:
   - sesh
 dependencies: []

@@ -1,9 +1,10 @@
 ---
 id: TASK-143
 title: sesh — make index ingestion transactional and statement-efficient
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-10 01:39'
+updated_date: '2026-07-10 01:54'
 labels:
   - sesh
 dependencies: []
