@@ -3,11 +3,11 @@ id: TASK-137
 title: >-
   sesh — parsed-id migration must self-heal: auto-reindex on column backfill +
   empty-parsed treated as unknown (run-sesh-107 remediation F1c)
-status: In Progress
+status: Done
 assignee:
   - sesh107-remF1b-pogo
 created_date: '2026-07-10 00:23'
-updated_date: '2026-07-10 00:24'
+updated_date: '2026-07-10 00:29'
 labels:
   - run-sesh-107
 dependencies: []
@@ -36,8 +36,14 @@ Settled decisions — do not re-litigate; tension = STOP and report on your unit
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Upgraded store (column freshly added over legacy rows) self-heals: first post-upgrade append to a pre-upgrade-unified session keeps it unified, checksum parity with Reindex, no operator action
-- [ ] #2 Fresh database pays no migration reindex (control test)
-- [ ] #3 Rows with empty parsed id never trigger inheritance (mixed-binary shape: codex items keep wire id)
-- [ ] #4 Benchmark still flat vs unrelated-file count; full pinned gate green uncached
+- [x] #1 Upgraded store (column freshly added over legacy rows) self-heals: first post-upgrade append to a pre-upgrade-unified session keeps it unified, checksum parity with Reindex, no operator action
+- [x] #2 Fresh database pays no migration reindex (control test)
+- [x] #3 Rows with empty parsed id never trigger inheritance (mixed-binary shape: codex items keep wire id)
+- [x] #4 Benchmark still flat vs unrelated-file count; full pinned gate green uncached
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Landed as 8a5bea1 (worker sesh107-remF1b-pogo; verified by mive gate re-run + reviewer hazard repros both CONFIRMED fixed). Migration no longer backfills parsed:=logical (the marker-eraser); column-add triggers a logged one-time Reindex inside index.New, ordered before the append consumer; fresh DBs skip it; inheritance predicate requires parsed <> ''. Operational: migration reindex is startup-blocking, minutes on a field-sized mirror; hard failure fails startup visibly.
+<!-- SECTION:NOTES:END -->
