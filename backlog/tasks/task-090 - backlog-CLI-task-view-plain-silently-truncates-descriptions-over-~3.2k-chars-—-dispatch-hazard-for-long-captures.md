@@ -3,9 +3,10 @@ id: TASK-090
 title: >-
   backlog CLI: task view --plain silently truncates descriptions over ~3.2k
   chars — dispatch hazard for long captures
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 04:22'
+updated_date: '2026-07-10 01:35'
 labels: []
 dependencies: []
 priority: high
@@ -26,3 +27,9 @@ SCOPE: (1) LOCAL DOCTRINE NOW: dispatch briefs and the orchestrate-skill backlog
 - [ ] #2 Local mitigation landed: orchestrate backlog reference + any brief templates direct capture-critical reads at the raw file (or a discovered full-render flag)
 - [ ] #3 Upstream issue draft in the TASK-029 ledger if no upstream remedy exists
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Dispatched 2026-07-10 to gpt-5.6-sol worker (@worker-maso, branch task-090-plain-truncation), brief napkins/run-herder-dx/task-090-brief.md.
+<!-- SECTION:NOTES:END -->
