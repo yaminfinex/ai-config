@@ -3,9 +3,11 @@ id: TASK-137
 title: >-
   sesh — parsed-id migration must self-heal: auto-reindex on column backfill +
   empty-parsed treated as unknown (run-sesh-107 remediation F1c)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - sesh107-remF1b-pogo
 created_date: '2026-07-10 00:23'
+updated_date: '2026-07-10 00:24'
 labels:
   - run-sesh-107
 dependencies: []
