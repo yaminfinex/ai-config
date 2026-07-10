@@ -3,10 +3,10 @@ id: TASK-148
 title: >-
   sesh — remove dead store.Store.Serve now that serve wiring owns listener
   lifecycle
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-10 02:24'
-updated_date: '2026-07-10 10:07'
+updated_date: '2026-07-10 10:10'
 labels:
   - sesh
 dependencies: []
@@ -26,6 +26,12 @@ Settled decisions:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 store.Store.Serve and its test-only usages are removed; go build and go vet green
-- [ ] #2 Live serve path behavior unchanged; existing cli/store tests and check scripts green
+- [x] #1 store.Store.Serve and its test-only usages are removed; go build and go vet green
+- [x] #2 Live serve path behavior unchanged; existing cli/store tests and check scripts green
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Fixed on branch sesh-store-serve-cleanup (c131ab0, orchestrator-verified). Pure deletion, 44 lines removed, zero added: store.Store.Serve and its only caller (its own context-cancellation test) removed, along with the test's now-unused imports. No production caller existed; the live serve path (cli serveHTTP coordinated shutdown) is untouched — no cli file changed. Orchestrator re-ran pinned gate uncached: all packages + check scripts green. Cross-family review skipped by stakes call (pure dead-code deletion, zero additions); hera merge protocol is the second pair of eyes. Merge pending hera handoff.
+<!-- SECTION:NOTES:END -->
