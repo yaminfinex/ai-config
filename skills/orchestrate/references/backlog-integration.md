@@ -32,6 +32,14 @@ mid-run to enable this; absence is a valid state, not a setup gap.
 
 ## When present — the connection
 
+**Use the raw task file for capture-critical reads.** `--plain` is an index and summary view: it
+is useful for rosters, status, sequencing, and locating a task, but it is not the source of record
+for a worker pickup. A dispatch brief for a backlog-backed unit names the task's raw Markdown path
+under the configured backlog directory's `tasks/` folder, and the worker reads that file in full.
+Do the same whenever a decision depends on the complete description, acceptance criteria, notes,
+or comments. Structured-section damage can make a rendered view omit content without a truncation
+marker; only the raw file exposes both the content and the damaged boundaries.
+
 **Ringfence the run with a label.** Every unit-task for this run carries `-l run-<slug>`. That
 label *is* the run's scope — `backlog task list -l run-<slug> --plain` is the unit roster.
 
