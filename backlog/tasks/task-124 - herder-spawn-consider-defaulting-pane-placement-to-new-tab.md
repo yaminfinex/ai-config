@@ -4,6 +4,7 @@ title: 'herder spawn: consider defaulting pane placement to new tab'
 status: To Do
 assignee: []
 created_date: '2026-07-09 12:43'
+updated_date: '2026-07-10 01:22'
 labels: []
 dependencies: []
 priority: medium
@@ -52,3 +53,9 @@ not hard. Concretely:
   offer/default placement into that agent's workspace as a new tab.
 - The new-tab-vs-split delivery race in the original capture still needs
   characterizing; workspace targeting and the race fix are complementary.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Scope addendum (2026-07-10, live instance): herder RESUME has the same placement gap — resuming a culled session reopens its pane in the invoker's current tab (task-138 worker reopened into the orchestrator tab; owner had to ask for a move). Whatever default/flag lands for spawn placement must apply to resume (and fork) identically — treat every pane-creating lifecycle verb as a spawn for placement purposes.
+<!-- SECTION:NOTES:END -->
