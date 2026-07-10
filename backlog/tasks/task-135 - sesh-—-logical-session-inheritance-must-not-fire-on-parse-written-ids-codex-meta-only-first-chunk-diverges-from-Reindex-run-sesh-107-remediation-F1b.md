@@ -3,10 +3,11 @@ id: TASK-135
 title: >-
   sesh — logical-session inheritance must not fire on parse-written ids (codex
   meta-only first chunk diverges from Reindex) (run-sesh-107 remediation F1b)
-status: In Progress
-assignee: []
+status: Done
+assignee:
+  - sesh107-remF1b-pogo
 created_date: '2026-07-10 00:11'
-updated_date: '2026-07-10 00:11'
+updated_date: '2026-07-10 00:23'
 labels:
   - run-sesh-107
 dependencies: []
@@ -32,8 +33,14 @@ Settled decisions — do not re-litigate; tension = STOP and report on your unit
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Reviewer's meta-only repro shape yields identical incremental and post-Reindex checksums (new equivalence test covering meta-only first chunk, plus meta+items single-chunk control)
-- [ ] #2 Resumed-append unification (both id orderings + transitive chain tests) still green
-- [ ] #3 Benchmark still flat vs unrelated-file count
-- [ ] #4 Full pinned gate green uncached
+- [x] #1 Reviewer's meta-only repro shape yields identical incremental and post-Reindex checksums (new equivalence test covering meta-only first chunk, plus meta+items single-chunk control)
+- [x] #2 Resumed-append unification (both id orderings + transitive chain tests) still green
+- [x] #3 Benchmark still flat vs unrelated-file count
+- [x] #4 Full pinned gate green uncached
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Landed as b33a67e (worker sesh107-remF1b-pogo; verified by mive gate re-run + reviewer repro suite, all fixed shapes hold; Checksum now covers the parsed column — stricter bar). Reviewer upgrade-path probe found two adjacent migration hazards fixed in follow-on TASK-137: backfill erases pre-upgrade unification markers (re-split on first append until reindex), and old-binary writes post-migration produce empty parsed ids that misfire inheritance.
+<!-- SECTION:NOTES:END -->
