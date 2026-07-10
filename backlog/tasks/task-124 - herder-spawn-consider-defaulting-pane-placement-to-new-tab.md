@@ -1,10 +1,10 @@
 ---
 id: TASK-124
 title: 'herder spawn: consider defaulting pane placement to new tab'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 12:43'
-updated_date: '2026-07-10 01:22'
+updated_date: '2026-07-10 10:12'
 labels: []
 dependencies: []
 priority: medium
@@ -58,4 +58,6 @@ not hard. Concretely:
 
 <!-- SECTION:NOTES:BEGIN -->
 Scope addendum (2026-07-10, live instance): herder RESUME has the same placement gap — resuming a culled session reopens its pane in the invoker's current tab (task-138 worker reopened into the orchestrator tab; owner had to ask for a move). Whatever default/flag lands for spawn placement must apply to resume (and fork) identically — treat every pane-creating lifecycle verb as a spawn for placement purposes.
+
+Dispatched 2026-07-10 with TASK-130 + TASK-062 as one lifecycle unit (@worker-vanu, 5.6-high, branch task-124-lifecycle-placement), brief napkins/run-herder-dx/task-124-130-062-brief.md. Settled: --new-tab default for non-worktree pane-creating verbs, workspace targeting flag, resume follows spawn rules.
 <!-- SECTION:NOTES:END -->

@@ -3,9 +3,10 @@ id: TASK-147
 title: >-
   registry: validate archive CONTENT, not just existence, before trusting prior
   migration
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-10 02:13'
+updated_date: '2026-07-10 10:12'
 labels: []
 dependencies: []
 priority: low
@@ -24,3 +25,9 @@ Defense-in-depth from the born-v2 poison-fix adversarial review (informational, 
 - [ ] #2 Genuine migration archives still verify (existing suite green)
 - [ ] #3 Full house gate green
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Riding the batch-atomicity unit (@worker-gole) — same package, one worker/review; brief napkins/run-herder-dx/task-126-147-brief.md.
+<!-- SECTION:NOTES:END -->

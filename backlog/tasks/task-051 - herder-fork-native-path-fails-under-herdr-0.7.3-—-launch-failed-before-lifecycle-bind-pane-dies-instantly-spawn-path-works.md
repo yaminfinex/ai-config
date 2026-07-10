@@ -3,10 +3,10 @@ id: TASK-051
 title: >-
   herder fork: native path fails under herdr 0.7.3 — 'launch failed before
   lifecycle bind', pane dies instantly (spawn path works)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 05:08'
-updated_date: '2026-07-08 23:42'
+updated_date: '2026-07-10 10:11'
 labels: []
 dependencies: []
 priority: medium
@@ -45,3 +45,9 @@ created: 2026-07-08 09:14
 - [ ] #3 fork acceptance check added to the herdr-upgrade runbook gate
 - [ ] #4 the three polish items from comments (node.go --new suggestion in the single-row malformed state; compactMessage control/ANSI strip; dead opts.Tab) get explicit fix-or-defer verdicts in the DONE report
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Closed as no-longer-reproducible (2026-07-10 re-check): the defect (fork native path dies at launch under herdr 0.7.3) was disproven in the field — herder fork was used successfully three times on 2026-07-09 for the design-gate authority forks (journal, fork-the-authority protocol), on the current herdr. If a fork launch failure recurs it will be a new capture with fresh evidence.
+<!-- SECTION:NOTES:END -->

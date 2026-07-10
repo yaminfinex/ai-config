@@ -3,10 +3,10 @@ id: TASK-130
 title: >-
   herder resume: broken after closeout cleanup (deleted-cwd crash,
   wrong-workspace placement, unrecoverable relaunch)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 23:07'
-updated_date: '2026-07-09 23:07'
+updated_date: '2026-07-10 10:12'
 labels: []
 dependencies: []
 priority: medium
@@ -53,3 +53,9 @@ likely the first session's death too. DESCOPE defect 3 as a bug. What remains re
 Priority drops high → medium accordingly. ACs 2 and 3 replaced by: (AC2') resume with a
 missing recorded cwd refuses before launch with a remedy, golden-covered; (AC3') the
 lifecycle-bind failure message includes the pane exit context.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Riding the lifecycle unit (@worker-vanu): resume cwd preflight + settle-window diagnostics.
+<!-- SECTION:NOTES:END -->

@@ -1,9 +1,10 @@
 ---
 id: TASK-126
 title: 'registry: UpdateLocked multi-row batch refusal is not atomic'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 12:54'
+updated_date: '2026-07-10 10:12'
 labels: []
 dependencies: []
 priority: medium
@@ -27,3 +28,9 @@ Run the legacy gate — ideally all row validation — as a pre-pass over the wh
 2. Observer multi-row candidate path covered (sweep refusal leaves zero rows landed).
 3. Full house gate green.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Dispatched 2026-07-10 with TASK-147 as one unit (@worker-gole, 5.6-high, branch task-126-batch-atomicity), brief napkins/run-herder-dx/task-126-147-brief.md.
+<!-- SECTION:NOTES:END -->
