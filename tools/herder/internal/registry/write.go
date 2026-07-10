@@ -61,6 +61,9 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 		return nil, err
 	}
 	wasMinted := len(proj.Nodes()) > 0
+	if err := refuseFirstV1MigrationForBornV2(path, f, proj); err != nil {
+		return nil, err
+	}
 	var nodeID string
 	var mintedRow []byte
 	var migratedRows [][]byte

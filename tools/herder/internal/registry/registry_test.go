@@ -370,6 +370,59 @@ func TestLockedWriteRefusesLegacyV1AppendToMintedRegistry(t *testing.T) {
 	}
 }
 
+func TestLockedWriteRefusesInjectedLegacyV1RowInBornV2Registry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "registry.jsonl")
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: "guid-healthy", Label: "healthy", State: v2.StateSeated}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(mustMigrationArchivePath(t, path)); !os.IsNotExist(err) {
+		t.Fatalf("migration archive exists before poison injection: %v", err)
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poison := []byte(`{"guid":"guid-poison","label":"poison","role":"worker","agent":"claude","status":"active"}` + "\n")
+	if _, err := f.Write(poison); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	poisonedLive := mustReadFile(t, path)
+	callbackRan := false
+
+	_, err = UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		callbackRan = true
+		return nil, nil
+	})
+	var legacyErr *LegacyV1AppendError
+	if !errors.As(err, &legacyErr) || legacyErr.GUID != "guid-poison" {
+		t.Fatalf("err = %v, want LegacyV1AppendError for guid-poison", err)
+	}
+	for _, want := range []string{"older than this registry schema", "excise the on-disk v1-shaped row"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want message containing %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "remove the archive") {
+		t.Fatalf("err = %v, must not advise removing an archive", err)
+	}
+	if callbackRan {
+		t.Fatal("write callback ran despite poisoned born-v2 registry")
+	}
+	if got := mustReadFile(t, path); !bytes.Equal(got, poisonedLive) {
+		t.Fatalf("registry changed after refused migration:\nbefore=%s\nafter=%s", poisonedLive, got)
+	}
+	if _, err := os.Stat(mustMigrationArchivePath(t, path)); !os.IsNotExist(err) {
+		t.Fatalf("migration archive was minted from poisoned born-v2 registry: %v", err)
+	}
+}
+
 func TestTwoProcessFirstWritersConvergeOnOneNode(t *testing.T) {
 	if os.Getenv("HERDER_REGISTRY_NODE_HELPER") == "1" {
 		runNodeMintHelper()
@@ -888,6 +941,13 @@ func TestLockedValidatorMigratesLegacyActiveDormantOnRename(t *testing.T) {
 func TestLegacyV1MigrationArchivesAndReseeds(t *testing.T) {
 	path := copyRegistryFixture(t, "v1-real-shape.jsonl")
 	original := mustReadFile(t, path)
+	before := loadProjection(t, path)
+	if len(before.Nodes()) != 0 {
+		t.Fatalf("genuine v1 fixture has v2 node rows: %+v", before.Nodes())
+	}
+	if _, err := os.Stat(mustMigrationArchivePath(t, path)); !os.IsNotExist(err) {
+		t.Fatalf("genuine v1 fixture has a prior migration archive: %v", err)
+	}
 	seenMigrated := false
 	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
 		if current := V2ByGUID(tx.Projection, "2447b0e6-5004-4aca-84cd-08d7798dad52"); current == nil || current.LegacyV1 || current.State != v2.StateUnseated {
@@ -950,7 +1010,7 @@ func TestLegacyV1MigrationTwiceIsByteStable(t *testing.T) {
 	}
 }
 
-func TestLegacyV1MigrationHandlesMixedFile(t *testing.T) {
+func TestLegacyV1MigrationHandlesMixedFileWithVerifiedArchive(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "registry.jsonl")
 	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
@@ -962,6 +1022,13 @@ func TestLegacyV1MigrationHandlesMixedFile(t *testing.T) {
 		`{"guid":"guid-legacy","short_guid":"legacy","label":"legacy","role":"worker","agent":"claude","terminal_id":"term_old","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"legacy-bus","status":"active"}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archive := mustMigrationArchivePath(t, path)
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, []byte(original), 0o444); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
