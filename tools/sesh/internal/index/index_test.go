@@ -530,6 +530,68 @@ func TestPostUnifyAppendCanBridgeTransitiveResumeChain(t *testing.T) {
 	assertChecksumMatchesReindex(t, idx)
 }
 
+func TestCodexSessionMetaDoesNotDriveAppendInheritance(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		chunks []string
+	}{
+		{
+			name: "meta-only first chunk",
+			chunks: []string{
+				codexSessionMetaLine("codex-payload-session"),
+				codexResponseItemLine("codex-item-1") + codexResponseItemLine("codex-item-2"),
+			},
+		},
+		{
+			name: "meta and items in one chunk",
+			chunks: []string{
+				codexSessionMetaLine("codex-payload-session") +
+					codexResponseItemLine("codex-item-1") +
+					codexResponseItemLine("codex-item-2"),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, idx := newHarness(t)
+			wireID := syntheticUUID(20_400)
+			fileUUID := syntheticUUID(21_400)
+			var offset int64
+			for _, chunk := range tc.chunks {
+				putToolBytes(t, st, wire.ToolCodex, wireID, fileUUID, offset, []byte(chunk))
+				if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+					t.Fatal(err)
+				}
+				offset += int64(len(chunk))
+			}
+
+			got := map[string]string{}
+			rows, err := st.DB().QueryContext(t.Context(), `SELECT entry_type, logical_session_id
+				FROM sesh_index_messages WHERE quarantine = 0 ORDER BY line_ordinal`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var typ, logical string
+				if err := rows.Scan(&typ, &logical); err != nil {
+					t.Fatal(err)
+				}
+				got[typ] = logical
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if got["session_meta"] != "codex-payload-session" {
+				t.Fatalf("session_meta logical = %q, want payload id", got["session_meta"])
+			}
+			if got["response_item"] != wireID {
+				t.Fatalf("response_item logical = %q, want wire id %q", got["response_item"], wireID)
+			}
+			assertChecksumMatchesReindex(t, idx)
+		})
+	}
+}
+
 func TestLineOrdinalComesFromBytePositionAfterDedupDeletion(t *testing.T) {
 	st, idx := newHarness(t)
 	body := []byte(
@@ -693,7 +755,12 @@ const (
 
 func putBytes(t *testing.T, st *store.Store, sessionID, fileUUID string, offset int64, body []byte) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPut, "/v1/files/claude/"+sessionID+"/"+fileUUID+"/bytes?offset="+strconv.FormatInt(offset, 10), bytes.NewReader(body))
+	putToolBytes(t, st, wire.ToolClaude, sessionID, fileUUID, offset, body)
+}
+
+func putToolBytes(t *testing.T, st *store.Store, tool wire.Tool, sessionID, fileUUID string, offset int64, body []byte) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, "/v1/files/"+string(tool)+"/"+sessionID+"/"+fileUUID+"/bytes?offset="+strconv.FormatInt(offset, 10), bytes.NewReader(body))
 	req.Header.Set("Content-Type", wire.ContentTypeBytes)
 	req.Header.Set(wire.HeaderWireVersion, "1")
 	req.Header.Set(wire.HeaderHostname, "node-a")
@@ -707,6 +774,14 @@ func putBytes(t *testing.T, st *store.Store, sessionID, fileUUID string, offset 
 	if err := json.Unmarshal(rr.Body.Bytes(), &ack); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func codexSessionMetaLine(payloadID string) string {
+	return `{"type":"session_meta","payload":{"id":"` + payloadID + `"}}` + "\n"
+}
+
+func codexResponseItemLine(itemID string) string {
+	return `{"type":"response_item","payload":{"item":{"id":"` + itemID + `","role":"assistant"}}}` + "\n"
 }
 
 func putBytesBench(b *testing.B, st *store.Store, sessionID, fileUUID string, offset int64, body []byte) {

@@ -67,6 +67,7 @@ func (idx *Indexer) initSchema(ctx context.Context) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			tool TEXT NOT NULL,
 			logical_session_id TEXT NOT NULL,
+			parsed_logical_session_id TEXT NOT NULL,
 			wire_session_id TEXT NOT NULL,
 			entry_type TEXT NOT NULL,
 			message_uuid TEXT NOT NULL,
@@ -112,7 +113,48 @@ func (idx *Indexer) initSchema(ctx context.Context) error {
 			return normalizeDBError(err)
 		}
 	}
+	if err := idx.ensureParsedLogicalColumn(ctx); err != nil {
+		return normalizeDBError(err)
+	}
 	return nil
+}
+
+func (idx *Indexer) ensureParsedLogicalColumn(ctx context.Context) error {
+	rows, err := idx.db.QueryContext(ctx, `PRAGMA table_info(sesh_index_messages)`)
+	if err != nil {
+		return err
+	}
+	hasColumn := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if name == "parsed_logical_session_id" {
+			hasColumn = true
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if !hasColumn {
+		if _, err := idx.db.ExecContext(ctx, `ALTER TABLE sesh_index_messages ADD COLUMN parsed_logical_session_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	_, err = idx.db.ExecContext(ctx, `UPDATE sesh_index_messages
+		SET parsed_logical_session_id = logical_session_id
+		WHERE parsed_logical_session_id = ''`)
+	return err
 }
 
 // ProcessAppend indexes complete JSONL lines newly available for one mirrored
@@ -232,7 +274,7 @@ func (idx *Indexer) generations(ctx context.Context) ([]generation, error) {
 	return out, rows.Err()
 }
 
-func (idx *Indexer) parseComplete(ctx context.Context, ev wire.AppendEvent) ([]wire.IndexMessage, int64, error) {
+func (idx *Indexer) parseComplete(ctx context.Context, ev wire.AppendEvent) ([]indexedMessage, int64, error) {
 	start, err := idx.completeOffset(ctx, ev)
 	if err != nil {
 		return nil, 0, err
@@ -260,7 +302,7 @@ func (idx *Indexer) parseComplete(ctx context.Context, ev wire.AppendEvent) ([]w
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
 		return nil, start, err
 	}
-	var rows []wire.IndexMessage
+	var rows []indexedMessage
 	lineStart := start
 	lineOrdinal := baseOrdinal
 	complete := start
@@ -280,12 +322,17 @@ func (idx *Indexer) parseComplete(ctx context.Context, ev wire.AppendEvent) ([]w
 		} else {
 			row = parseLine(ev, line, lineOrdinal, lineStart, lineEnd)
 		}
-		rows = append(rows, row)
+		rows = append(rows, indexedMessage{IndexMessage: row, ParsedLogicalSessionID: row.LogicalSessionID})
 		lineStart = lineEnd
 		complete = lineEnd
 		lineOrdinal++
 	}
 	return rows, complete, nil
+}
+
+type indexedMessage struct {
+	wire.IndexMessage
+	ParsedLogicalSessionID string
 }
 
 func readCompleteLine(r *bufio.Reader) ([]byte, int64, bool, error) {
@@ -485,16 +532,16 @@ func parseTime(raw string) *time.Time {
 	return nil
 }
 
-func (idx *Indexer) insertRows(ctx context.Context, rows []wire.IndexMessage) error {
+func (idx *Indexer) insertRows(ctx context.Context, rows []indexedMessage) error {
 	for _, row := range rows {
 		if row.Quarantine {
-			if err := idx.insertQuarantine(ctx, row); err != nil {
+			if err := idx.insertQuarantine(ctx, row.IndexMessage); err != nil {
 				return err
 			}
 			continue
 		}
 		if row.MessageUUID != "" {
-			exists, err := idx.dedupExists(ctx, row)
+			exists, err := idx.dedupExists(ctx, row.IndexMessage)
 			if err != nil {
 				return err
 			}
@@ -502,18 +549,18 @@ func (idx *Indexer) insertRows(ctx context.Context, rows []wire.IndexMessage) er
 				continue
 			}
 			_, err = idx.db.ExecContext(ctx, `INSERT INTO sesh_index_messages
-				(tool, logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')`,
-				row.Tool, row.LogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID, row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd)
+				(tool, logical_session_id, parsed_logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')`,
+				row.Tool, row.LogicalSessionID, row.ParsedLogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID, row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd)
 			if err != nil {
 				return err
 			}
 			continue
 		}
 		_, err := idx.db.ExecContext(ctx, `INSERT INTO sesh_index_messages
-			(tool, logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')`,
-			row.Tool, row.LogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID, row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd)
+			(tool, logical_session_id, parsed_logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')`,
+			row.Tool, row.LogicalSessionID, row.ParsedLogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID, row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd)
 		if err != nil {
 			return err
 		}
@@ -531,9 +578,9 @@ func (idx *Indexer) dedupExists(ctx context.Context, row wire.IndexMessage) (boo
 
 func (idx *Indexer) insertQuarantine(ctx context.Context, row wire.IndexMessage) error {
 	_, err := idx.db.ExecContext(ctx, `INSERT INTO sesh_index_messages
-		(tool, logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-		row.Tool, row.LogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID, row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd, row.QuarantineReason)
+		(tool, logical_session_id, parsed_logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+		row.Tool, row.LogicalSessionID, row.LogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID, row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd, row.QuarantineReason)
 	if err != nil {
 		return err
 	}
@@ -603,7 +650,7 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
-func (idx *Indexer) inheritFileLogicalSession(ctx context.Context, ev wire.AppendEvent, rows []wire.IndexMessage) error {
+func (idx *Indexer) inheritFileLogicalSession(ctx context.Context, ev wire.AppendEvent, rows []indexedMessage) error {
 	existing, err := idx.fileLogicalSessions(ctx, ev)
 	if err != nil {
 		return err
@@ -622,6 +669,7 @@ func (idx *Indexer) inheritFileLogicalSession(ctx context.Context, ev wire.Appen
 func (idx *Indexer) fileLogicalSessions(ctx context.Context, ev wire.AppendEvent) ([]string, error) {
 	rows, err := idx.db.QueryContext(ctx, `SELECT DISTINCT logical_session_id FROM sesh_index_messages
 		WHERE quarantine = 0 AND tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?
+			AND logical_session_id <> parsed_logical_session_id
 		ORDER BY logical_session_id`, ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
 	if err != nil {
 		return nil, err
@@ -1048,7 +1096,7 @@ func (idx *Indexer) QuarantineCounts(ctx context.Context) ([]QuarantineCount, er
 
 // Checksum summarizes current index content ignoring store-local row ids.
 func (idx *Indexer) Checksum(ctx context.Context) (string, int, error) {
-	rows, err := idx.db.QueryContext(ctx, `SELECT tool, logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, COALESCE(timestamp_utc, ''), file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason
+	rows, err := idx.db.QueryContext(ctx, `SELECT tool, logical_session_id, parsed_logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, COALESCE(timestamp_utc, ''), file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason
 		FROM sesh_index_messages ORDER BY tool, logical_session_id, wire_session_id, file_uuid, generation, line_ordinal, byte_start, entry_type, message_uuid`)
 	if err != nil {
 		return "", 0, err
@@ -1056,8 +1104,8 @@ func (idx *Indexer) Checksum(ctx context.Context) (string, int, error) {
 	defer rows.Close()
 	h := sha256.New()
 	n := 0
-	vals := make([]any, 15)
-	ptrs := make([]any, 15)
+	vals := make([]any, 16)
+	ptrs := make([]any, 16)
 	for i := range vals {
 		ptrs[i] = &vals[i]
 	}
