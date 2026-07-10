@@ -218,7 +218,7 @@ are neutralized by this spec:
    exactly why every CLI board access is cwd-pinned to the mission dir and guarded by
    invariant 6.
 
-The board requires the **Backlog.md CLI ≥ 1.47 on PATH**; the load-bearing behavioural
+The board supports the **Backlog.md CLI 1.47.x**, pinned to 1.47.1 in this repository; the load-bearing behavioural
 assumptions are exactly the two above — nearest-ancestor resolution and the pinned keys'
 semantics. Re-run the nesting/pinning acceptance suite (AC-5..7, plus AC-19's references
 semantics) whenever the installed Backlog.md version changes: the version floor is trusted
@@ -299,7 +299,7 @@ Three verbs, nothing else (Q12 as amended by Q15). `new` is the only write verb 
 
 | Command | Behaviour |
 |---|---|
-| `mish new <slug> [--title T] [--authority A] [--no-marker]` | Scaffold `missions/<slug>/` (§6.1): manifest, pinned board, empty artifacts; write the context marker into cwd. Refuses on existing slug, invalid slug, unset `$MISSIONS_REPO`, or a conflicting existing marker. |
+| `mish new <slug> [--title T] [--authority A] [--owner O] [--no-marker]` | Scaffold `missions/<slug>/` (§6.1): manifest, pinned board, empty artifacts; write the context marker into cwd. Refuses on existing slug, invalid slug, unset `$MISSIONS_REPO`, or a conflicting existing marker. |
 | `mish backlog [--mission S] <backlog-args…>` | Resolve context (§5.3), guard the board's existence (invariant 6), check the allowlist, then exec the Backlog.md CLI with cwd pinned to the mission dir, forwarding arguments, stdio, and exit code verbatim (§6.2). |
 | `mish status [--mission S \| --all]` | Read-only report: single-mission detail when context resolves, repo-wide overview with `--all` or when invoked with no resolvable context from inside the missions repo (§6.3). |
 
@@ -383,7 +383,7 @@ frontmatter disagrees with the dir name; frontmatter carries unknown keys; `stat
 any value other than `active`/`closed` (same treatment as unknown keys); the board carries
 duplicate task IDs (the silent union breach, §7.2); the mission subtree has uncommitted or
 unpushed changes (a **read-only** git query — the M6 read amendment, §12.8 — silently skipped
-when the missions repo isn't git); the board or `artifacts/` is missing.
+when the missions repo isn't git or has no configured upstream); the board or `artifacts/` is missing.
 Single-mission mode applies the §5.3 existence guard first: `--mission` naming a missing dir
 refuses rather than partially rendering. Recency comes from file mtimes — never from git
 (invariant 4) — and is therefore **node-local**: clone and pull re-stamp mtimes, so recency
@@ -449,7 +449,7 @@ trivially. When a conflict does surface, resolution is fixed in advance:
 
 | Conflict on | Meaning | Resolution |
 |---|---|---|
-| `mission.md` | Authority violation by definition (Q16) | Authority's version wins verbatim; the other writer re-proposes as a task note |
+| `mission.md` | Authority violation by definition (Q16) | The authority-side version adjudicates and may combine the authority's own unsynced edits; the other writer re-proposes as a task note |
 | `backlog/config.yml` | Pinned-config drift or unauthorized tuning | Scaffold pins restored; other keys: authority's version wins |
 | A task file | Two writers on one ticket | The task's **assignee's** version wins; the other writer re-proposes via a note on the merged task. When the conflict involves a reassignment or an authority restructuring act, the **authority-side** version adjudicates instead (reassignment and sweeps are restructuring, invariant 8); the displaced assignee's edits re-enter as a note |
 | A task file modified on one side, moved or deleted by restructuring on the other | Modify/delete conflict (e.g. `cleanup` aged the task while an edit was in flight) | The move wins; the edit re-enters as a note on the moved/completed task |
@@ -741,9 +741,9 @@ divergence, get the ruling, amend the line.
    in one ancestor chain, and `new` refuses to write beneath an existing different-slug
    marker. One marker states the mission for everything below it.
 4. **Backlog.md version posture:** ~~minimum, mise-pin, or behavioural assumption only?~~
-   **Resolved 2026-07-09: minimum version (≥ 1.47) + the stated behavioural assumptions**
-   (§4.4). Getting the CLI onto a machine is install-tooling business (ai-sync today);
-   portability beyond that is dealt with later.
+   **Resolved 2026-07-09 and narrowed by implementation evidence 2026-07-10: supported
+   series 1.47.x, repository pin 1.47.1, plus the stated behavioural assumptions** (§4.4).
+   Any version change requires the acceptance suite before support is claimed.
 5. **Non-pinned board tuning:** ~~confirm, or uniform boards?~~ **Resolved 2026-07-09:
    per-mission** — the authority tunes statuses/labels/milestones by direct `config.yml` edit;
    uniformity is at most a social norm.

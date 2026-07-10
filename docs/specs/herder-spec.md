@@ -250,7 +250,7 @@ is display metadata, **never an ordering key**.
   "recorded_at": "…",                       // append time — distinct from provenance.ts
   "node": "<node_id>",                       // writer attribution (§3.1-10)
   "state": "seated | unseated | retired | lost",
-  "label": "…", "role": "…", "tool": "claude | codex",
+  "label": "…", "role": "…", "tool": "<agent tool name>",
   "seat": {                                  // present while seated
     "kind": "herdr | process",
     "node": "<node_id>",                     // where the seat physically is
