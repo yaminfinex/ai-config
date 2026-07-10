@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -41,6 +42,8 @@ type Indexer struct {
 	quarantineObserved map[quarantineKey]time.Time
 
 	failWriteOnce bool
+
+	migrationReindexed bool
 }
 
 // New initializes index tables on the store database.
@@ -113,16 +116,24 @@ func (idx *Indexer) initSchema(ctx context.Context) error {
 			return normalizeDBError(err)
 		}
 	}
-	if err := idx.ensureParsedLogicalColumn(ctx); err != nil {
+	needsReindex, err := idx.ensureParsedLogicalColumn(ctx)
+	if err != nil {
 		return normalizeDBError(err)
+	}
+	if needsReindex {
+		slog.Default().Info("index parsed logical session migration: rebuilding message index from mirror")
+		if err := idx.Reindex(ctx); err != nil {
+			return normalizeDBError(err)
+		}
+		idx.migrationReindexed = true
 	}
 	return nil
 }
 
-func (idx *Indexer) ensureParsedLogicalColumn(ctx context.Context) error {
+func (idx *Indexer) ensureParsedLogicalColumn(ctx context.Context) (bool, error) {
 	rows, err := idx.db.QueryContext(ctx, `PRAGMA table_info(sesh_index_messages)`)
 	if err != nil {
-		return err
+		return false, err
 	}
 	hasColumn := false
 	for rows.Next() {
@@ -132,7 +143,7 @@ func (idx *Indexer) ensureParsedLogicalColumn(ctx context.Context) error {
 		var defaultValue sql.NullString
 		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
 			_ = rows.Close()
-			return err
+			return false, err
 		}
 		if name == "parsed_logical_session_id" {
 			hasColumn = true
@@ -141,20 +152,18 @@ func (idx *Indexer) ensureParsedLogicalColumn(ctx context.Context) error {
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return err
+		return false, err
 	}
 	if err := rows.Close(); err != nil {
-		return err
+		return false, err
 	}
-	if !hasColumn {
-		if _, err := idx.db.ExecContext(ctx, `ALTER TABLE sesh_index_messages ADD COLUMN parsed_logical_session_id TEXT NOT NULL DEFAULT ''`); err != nil {
-			return err
-		}
+	if hasColumn {
+		return false, nil
 	}
-	_, err = idx.db.ExecContext(ctx, `UPDATE sesh_index_messages
-		SET parsed_logical_session_id = logical_session_id
-		WHERE parsed_logical_session_id = ''`)
-	return err
+	if _, err := idx.db.ExecContext(ctx, `ALTER TABLE sesh_index_messages ADD COLUMN parsed_logical_session_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ProcessAppend indexes complete JSONL lines newly available for one mirrored
@@ -670,6 +679,7 @@ func (idx *Indexer) fileLogicalSessions(ctx context.Context, ev wire.AppendEvent
 	rows, err := idx.db.QueryContext(ctx, `SELECT DISTINCT logical_session_id FROM sesh_index_messages
 		WHERE quarantine = 0 AND tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?
 			AND logical_session_id <> parsed_logical_session_id
+			AND parsed_logical_session_id <> ''
 		ORDER BY logical_session_id`, ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
 	if err != nil {
 		return nil, err

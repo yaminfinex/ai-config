@@ -592,6 +592,84 @@ func TestCodexSessionMetaDoesNotDriveAppendInheritance(t *testing.T) {
 	}
 }
 
+func TestParsedLogicalMigrationReindexesLegacyUnifiedRowsBeforeAppend(t *testing.T) {
+	st, idx := newHarness(t)
+	origSession := syntheticUUID(20_500)
+	resumeSession := syntheticUUID(20_499)
+	origFile := syntheticUUID(21_500)
+	resumeFile := syntheticUUID(21_501)
+	origBody := syntheticSessionBody(origSession, "legacy-original", 6, time.Date(2026, 7, 9, 13, 0, 0, 0, time.UTC))
+	resumeBody := syntheticResumeBody(resumeSession, "legacy-resume", []string{"legacy-original-02", "legacy-original-03"}, 3, time.Date(2026, 7, 9, 14, 0, 0, 0, time.UTC))
+	putBytes(t, st, origSession, origFile, 0, origBody)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	putBytes(t, st, resumeSession, resumeFile, 0, resumeBody)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	assertOneLogicalSession(t, st, origSession, []string{origFile, resumeFile})
+	rebuildMessagesWithoutParsedLogicalColumn(t, st)
+
+	upgraded, err := New(t.Context(), st.DB(), st.MirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !upgraded.migrationReindexed {
+		t.Fatal("legacy schema migration did not trigger reindex")
+	}
+	tail := []byte(`{"type":"message","uuid":"legacy-tail","sessionId":"` + resumeSession + `","timestamp":"2026-07-09T15:00:00Z","message":{"role":"user"}}` + "\n")
+	putBytes(t, st, resumeSession, resumeFile, int64(len(resumeBody)), tail)
+	if err := upgraded.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+
+	assertOneLogicalSession(t, st, origSession, []string{origFile, resumeFile})
+	assertChecksumMatchesReindex(t, upgraded)
+}
+
+func TestFreshIndexSchemaDoesNotRunMigrationReindex(t *testing.T) {
+	st, idx := newHarness(t)
+	if idx.migrationReindexed {
+		t.Fatal("fresh index schema triggered migration reindex")
+	}
+	var columns int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sesh_index_messages') WHERE name = 'parsed_logical_session_id'`).Scan(&columns); err != nil {
+		t.Fatal(err)
+	}
+	if columns != 1 {
+		t.Fatalf("parsed logical column count = %d, want 1", columns)
+	}
+}
+
+func TestEmptyParsedLogicalSessionIDDoesNotDriveAppendInheritance(t *testing.T) {
+	st, idx := newHarness(t)
+	wireID := syntheticUUID(20_600)
+	fileUUID := syntheticUUID(21_600)
+	meta := codexSessionMetaLine("codex-empty-parsed-session")
+	putToolBytes(t, st, wire.ToolCodex, wireID, fileUUID, 0, []byte(meta))
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(t.Context(), `UPDATE sesh_index_messages SET parsed_logical_session_id = '' WHERE entry_type = 'session_meta'`); err != nil {
+		t.Fatal(err)
+	}
+	items := codexResponseItemLine("codex-empty-parsed-item-1") + codexResponseItemLine("codex-empty-parsed-item-2")
+	putToolBytes(t, st, wire.ToolCodex, wireID, fileUUID, int64(len(meta)), []byte(items))
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+
+	var itemLogical string
+	if err := st.DB().QueryRowContext(t.Context(), `SELECT DISTINCT logical_session_id
+		FROM sesh_index_messages WHERE entry_type = 'response_item'`).Scan(&itemLogical); err != nil {
+		t.Fatal(err)
+	}
+	if itemLogical != wireID {
+		t.Fatalf("response_item logical = %q, want wire id %q", itemLogical, wireID)
+	}
+}
+
 func TestLineOrdinalComesFromBytePositionAfterDedupDeletion(t *testing.T) {
 	st, idx := newHarness(t)
 	body := []byte(
@@ -868,6 +946,41 @@ func assertChecksumMatchesReindex(t *testing.T, idx *Indexer) {
 	}
 	if incrementalSum != reindexedSum || incrementalRows != reindexedRows {
 		t.Fatalf("incremental checksum %s/%d does not match reindex %s/%d", incrementalSum, incrementalRows, reindexedSum, reindexedRows)
+	}
+}
+
+func rebuildMessagesWithoutParsedLogicalColumn(t *testing.T, st *store.Store) {
+	t.Helper()
+	stmts := []string{
+		`ALTER TABLE sesh_index_messages RENAME TO sesh_index_messages_with_parsed`,
+		`CREATE TABLE sesh_index_messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			tool TEXT NOT NULL,
+			logical_session_id TEXT NOT NULL,
+			wire_session_id TEXT NOT NULL,
+			entry_type TEXT NOT NULL,
+			message_uuid TEXT NOT NULL,
+			file_uuid TEXT NOT NULL,
+			generation INTEGER NOT NULL,
+			role TEXT NOT NULL,
+			timestamp_utc TEXT NULL,
+			file_ordinal INTEGER NOT NULL,
+			line_ordinal INTEGER NOT NULL,
+			byte_start INTEGER NOT NULL,
+			byte_end INTEGER NOT NULL,
+			quarantine INTEGER NOT NULL,
+			quarantine_reason TEXT NOT NULL
+		)`,
+		`INSERT INTO sesh_index_messages
+			(id, tool, logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
+			SELECT id, tool, logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason
+			FROM sesh_index_messages_with_parsed`,
+		`DROP TABLE sesh_index_messages_with_parsed`,
+	}
+	for _, stmt := range stmts {
+		if _, err := st.DB().ExecContext(t.Context(), stmt); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
