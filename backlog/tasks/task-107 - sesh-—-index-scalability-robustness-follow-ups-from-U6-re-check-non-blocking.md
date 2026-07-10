@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-07-09 06:48'
-updated_date: '2026-07-10 10:13'
+updated_date: '2026-07-10 10:15'
 labels:
   - sesh
   - run-sesh-107
@@ -51,5 +51,10 @@ Priority raised low->high. AC#3 is the lead item (plus the U7 residual: fold SQL
 created: 2026-07-09 23:54
 ---
 run-sesh-107 review-tail residuals (thread sesh107-review #34474), filed here as the scalability umbrella: (1) per-append cost within one logical group is the next perf ceiling — every append re-runs full-file file_ordinal UPDATEs for each group member plus a windowed dedupe over the group partition even when nothing changes, O(session rows) per shipped chunk; (2) readCompleteLine pre-allocates the full max-line cap (8MiB) for any line >64KiB — peak bounded but TotalAlloc churns on transcript files with large base64 lines; size to len+frag and grow instead; (3) Reindex is non-transactional — crash between ledger DELETE and rebuild loses observed_at history (snapshot is in-memory only); (4) PLAUSIBLE unreproduced: insert-time dedup keeps the first-arrived duplicate while Reindex keeps files-table order — arrival-order-dependent equivalence gap for replayed uuids across same-session files; (5) cosmetic: redundant cancelServe defer in cli serve, surface listener logs net.ErrClosed as error on clean shutdown.
+---
+
+created: 2026-07-10 10:15
+---
+Correction to the audit note: 'store.Serve removed entirely' is verified on branch sesh-store-serve-cleanup (TASK-148, c131ab0) but that branch's merge is still pending with hera — the AC1 evidence (ctx wiring + bounded StopAndWait drain) is all on main and stands on its own.
 ---
 <!-- COMMENTS:END -->
