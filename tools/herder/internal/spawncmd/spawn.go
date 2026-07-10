@@ -17,6 +17,7 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/observercmd"
+	"ai-config/tools/herder/internal/panecleanup"
 	"ai-config/tools/herder/internal/placement"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
@@ -224,71 +225,12 @@ func (r *runner) updateLocked(path string, fn registry.LockedUpdateFunc) ([][]by
 	return registry.UpdateLocked(path, fn)
 }
 
-type paneCleanup struct {
-	confirmed bool
-	detail    string
-}
-
-func paneLookupAbsent(out []byte) bool {
-	text := strings.ToLower(string(out))
-	return strings.Contains(text, "pane_not_found") ||
-		strings.Contains(text, "pane not found") ||
-		strings.Contains(text, "no such pane")
-}
-
-// closePaneConfirmed closes only the pane that still carries the launched
-// terminal, then proves the pane id is no longer addressable.
-func (r *runner) closePaneConfirmed(paneID, terminalID string) paneCleanup {
-	before, beforeRC, beforeErr := r.herdr.Combined("pane", "get", paneID)
-	if beforeErr != nil {
-		return paneCleanup{detail: "pre-close pane lookup could not run: " + beforeErr.Error()}
-	}
-	if beforeRC != 0 {
-		if paneLookupAbsent(before) {
-			return paneCleanup{confirmed: true, detail: "pane already absent before cleanup"}
-		}
-		return paneCleanup{detail: fmt.Sprintf("pre-close pane lookup exited %d: %s", beforeRC, compactMessage(string(before)))}
-	}
-	pane, err := herdrcli.ParsePaneGet(before)
-	if err != nil {
-		return paneCleanup{detail: "pre-close pane lookup was unreadable: " + compactMessage(string(before))}
-	}
-	if pane.PaneID == "" {
-		return paneCleanup{confirmed: true, detail: "pane already absent before cleanup"}
-	}
-	if terminalID != "" && pane.TerminalID != terminalID {
-		return paneCleanup{detail: fmt.Sprintf("refused to close %s: terminal changed from %s to %s", paneID, terminalID, pane.TerminalID)}
-	}
-	closeOut, closeRC, closeErr := r.herdr.Combined("pane", "close", paneID)
-	if closeErr != nil {
-		return paneCleanup{detail: "pane close could not run: " + closeErr.Error()}
-	}
-	if closeRC != 0 {
-		return paneCleanup{detail: fmt.Sprintf("pane close exited %d: %s", closeRC, compactMessage(string(closeOut)))}
-	}
-	after, afterRC, afterErr := r.herdr.Combined("pane", "get", paneID)
-	if afterErr != nil {
-		return paneCleanup{detail: "post-close verification could not run: " + afterErr.Error()}
-	}
-	if afterRC != 0 {
-		if paneLookupAbsent(after) {
-			return paneCleanup{confirmed: true, detail: "pane close confirmed"}
-		}
-		return paneCleanup{detail: fmt.Sprintf("post-close pane lookup exited %d without confirming absence: %s", afterRC, compactMessage(string(after)))}
-	}
-	afterPane, err := herdrcli.ParsePaneGet(after)
-	if err == nil && afterPane.PaneID == "" {
-		return paneCleanup{confirmed: true, detail: "pane close confirmed"}
-	}
-	return paneCleanup{detail: "pane close returned success but the pane is still addressable"}
-}
-
 func (r *runner) failAfterLaunch(reason, paneID, terminalID string) int {
-	cleanup := r.closePaneConfirmed(paneID, terminalID)
-	if cleanup.confirmed {
-		die(r.stderr, reason+"; launched pane cleanup confirmed: "+cleanup.detail)
+	cleanup := panecleanup.CloseConfirmed(r.herdr, paneID, terminalID)
+	if cleanup.Confirmed {
+		die(r.stderr, reason+"; launched pane cleanup confirmed: "+cleanup.Detail)
 	} else {
-		die(r.stderr, reason+"; launched pane cleanup FAILED: "+cleanup.detail+" (pane may still be running)")
+		die(r.stderr, reason+"; launched pane cleanup FAILED: "+cleanup.Detail+" (pane may still be running)")
 	}
 	return 1
 }

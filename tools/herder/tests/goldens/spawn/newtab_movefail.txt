@@ -1,5 +1,5 @@
 === STDERR ===
-herder spawn: fresh-tab placement failed: { "error": { "code": "pane_move_failed", "message": "mock pane move failure" } }; launched pane cleanup FAILED: post-close pane lookup exited 4 without confirming absence: { "result": {} } (pane may still be running)
+herder spawn: fresh-tab placement failed: { "error": { "code": "pane_move_failed", "message": "mock pane move failure" } }; launched pane cleanup confirmed: pane close confirmed
 === STDOUT ===
 
 === EXIT ===

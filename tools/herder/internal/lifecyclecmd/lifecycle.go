@@ -17,6 +17,7 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/hookcmd"
 	"ai-config/tools/herder/internal/observercmd"
+	"ai-config/tools/herder/internal/panecleanup"
 	"ai-config/tools/herder/internal/placement"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
@@ -822,61 +823,13 @@ func compactLifecycleMessage(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-func paneLookupAbsent(out []byte) bool {
-	text := strings.ToLower(string(out))
-	return strings.Contains(text, "pane_not_found") ||
-		strings.Contains(text, "pane not found") ||
-		strings.Contains(text, "no such pane")
-}
-
 func (r *runner) failAfterLaunch(reason, paneID, terminalID string) {
-	before, beforeRC, beforeErr := r.client().Combined("pane", "get", paneID)
-	if beforeErr != nil {
-		die(r.stderr, reason+"; launched pane cleanup FAILED: pre-close lookup could not run: "+beforeErr.Error())
+	cleanup := panecleanup.CloseConfirmed(r.client(), paneID, terminalID)
+	if cleanup.Confirmed {
+		die(r.stderr, reason+"; launched pane cleanup confirmed: "+cleanup.Detail)
 		return
 	}
-	if beforeRC != 0 {
-		if paneLookupAbsent(before) {
-			die(r.stderr, reason+"; launched pane cleanup confirmed: pane already absent")
-		} else {
-			die(r.stderr, fmt.Sprintf("%s; launched pane cleanup FAILED: pre-close lookup exit=%d: %s", reason, beforeRC, compactLifecycleMessage(string(before))))
-		}
-		return
-	}
-	pane, err := herdrcli.ParsePaneGet(before)
-	if err != nil || pane.PaneID == "" {
-		die(r.stderr, reason+"; launched pane cleanup FAILED: pre-close lookup was unreadable")
-		return
-	}
-	if terminalID != "" && pane.TerminalID != terminalID {
-		die(r.stderr, fmt.Sprintf("%s; launched pane cleanup FAILED: terminal changed from %s to %s", reason, terminalID, pane.TerminalID))
-		return
-	}
-	closeOut, closeRC, closeErr := r.client().Combined("pane", "close", paneID)
-	if closeErr != nil || closeRC != 0 {
-		detail := compactLifecycleMessage(string(closeOut))
-		if closeErr != nil {
-			detail = closeErr.Error()
-		}
-		die(r.stderr, fmt.Sprintf("%s; launched pane cleanup FAILED: close exit=%d: %s", reason, closeRC, detail))
-		return
-	}
-	after, afterRC, afterErr := r.client().Combined("pane", "get", paneID)
-	if afterErr != nil {
-		die(r.stderr, reason+"; launched pane cleanup FAILED: post-close verification could not run: "+afterErr.Error())
-		return
-	}
-	if afterRC != 0 && !paneLookupAbsent(after) {
-		die(r.stderr, fmt.Sprintf("%s; launched pane cleanup FAILED: post-close lookup exit=%d without confirming absence: %s", reason, afterRC, compactLifecycleMessage(string(after))))
-		return
-	}
-	if afterRC == 0 {
-		if afterPane, parseErr := herdrcli.ParsePaneGet(after); parseErr != nil || afterPane.PaneID != "" {
-			die(r.stderr, reason+"; launched pane cleanup FAILED: pane still addressable after close")
-			return
-		}
-	}
-	die(r.stderr, reason+"; launched pane cleanup confirmed")
+	die(r.stderr, reason+"; launched pane cleanup FAILED: "+cleanup.Detail+" (pane may still be running)")
 }
 
 // deliverCodexAddendum re-delivers the herder doctrine to a freshly
