@@ -112,6 +112,7 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 	}
 	encoded = append(encoded, migratedRows...)
 	encoded = append(encoded, rotationRows...)
+	var pending [][]byte
 	for _, row := range rows {
 		if wasMinted && isLegacyV1SessionAppend(row) {
 			return nil, &LegacyV1AppendError{GUID: row.GUID}
@@ -137,17 +138,22 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := f.Seek(0, io.SeekEnd); err != nil {
-			return nil, err
-		}
-		if _, err := f.Write(append(bytes.TrimRight(b, "\n"), '\n')); err != nil {
-			return nil, err
-		}
-		encoded = append(encoded, b)
 		proj, err = projectionWithAppended(proj, b)
 		if err != nil {
 			return nil, err
 		}
+		pending = append(pending, b)
+	}
+	if len(pending) > 0 {
+		if _, err := f.Seek(0, io.SeekEnd); err != nil {
+			return nil, err
+		}
+		for _, b := range pending {
+			if _, err := f.Write(append(bytes.TrimRight(b, "\n"), '\n')); err != nil {
+				return nil, err
+			}
+		}
+		encoded = append(encoded, pending...)
 	}
 	if len(encoded) == 0 {
 		return nil, nil
