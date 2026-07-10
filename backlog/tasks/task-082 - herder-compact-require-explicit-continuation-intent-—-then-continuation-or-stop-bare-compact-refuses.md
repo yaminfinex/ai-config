@@ -3,10 +3,10 @@ id: TASK-082
 title: >-
   herder compact: require explicit continuation intent — --then <continuation>
   or --stop; bare compact refuses
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-08 23:45'
-updated_date: '2026-07-10 21:20'
+updated_date: '2026-07-10 21:47'
 labels: []
 dependencies: []
 priority: medium
@@ -25,15 +25,17 @@ Notes: (1) --then is claude-only today and codex is refused entirely — the bar
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 bare herder compact (no --then, no --stop) refuses with a message naming both flags and the dormancy consequence; exit non-zero, nothing typed or queued
-- [ ] #2 herder compact --stop performs the current bare-compact behavior (compact, no continuation) — explicit opt-in
-- [ ] #3 herder compact --then <c> unchanged; --dry-run legal without either flag
-- [ ] #4 help text documents the required choice and the reason (post-compact dormancy)
-- [ ] #5 contract suite covers the refusal, --stop, and --then acceptance paths
+- [x] #1 bare herder compact (no --then, no --stop) refuses with a message naming both flags and the dormancy consequence; exit non-zero, nothing typed or queued
+- [x] #2 herder compact --stop performs the current bare-compact behavior (compact, no continuation) — explicit opt-in
+- [x] #3 herder compact --then <c> unchanged; --dry-run legal without either flag
+- [x] #4 help text documents the required choice and the reason (post-compact dormancy)
+- [x] #5 contract suite covers the refusal, --stop, and --then acceptance paths
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Dispatched 2026-07-10 bundled with TASK-061 (worker kore, branch task-082-061-cli-dx, gpt-5.6-sol), brief napkins/run-herder-dx/task-082-061-brief.md.
+
+Shipped in merge e52a8f3 (commits 8879b02+3284560). Bare compact refuses exit-2 before ANY side effect (golden proves zero mutating calls); --stop is byte-identical to the old bare path (golden was a 100% rename); codex refusal untouched and never advises --then; --dry-run legal alone; contract suite covers all paths. Opus review round 1 fixed + delta APPROVE. Gates 52/52 x2 + post-merge green.
 <!-- SECTION:NOTES:END -->
