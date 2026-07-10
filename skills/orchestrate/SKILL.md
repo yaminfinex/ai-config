@@ -43,8 +43,11 @@ Record in the playbook's run-shape header (`references/state-files.md`):
    routine implementation goes to strong, cheaper coders. For review and adjudication, sameness is
    the risk — a reviewer from the doer's family shares its blind spots — so when the stakes warrant
    it, reach for a cross-family reviewer, double reviews at critical points, or a panel spanning
-   families, classes, and lenses. (Current lineup: fable = plan/design/adjudicate; codex and opus
-   both implement well.)
+   families, classes, and lenses. (Current lineup: fable = plan/design/adjudicate, with codex
+   gpt-5.6-sol as a second advisor on adjudications; gpt-5.6-sol is the default coder except
+   frontend (claude-family there) and the default for research and long-running
+   explorations/investigations, with its reasoning effort dialed to task complexity; opus
+   remains the cross-family reviewer for codex-implemented work.)
 5. **Golden agent.** Consider bottling (`bottling` skill) the agent holding the original intent
    before the run consumes it; decant later as the user's proxy (`references/adversarial.md`).
 6. **Backlog (if present).** If the project uses Backlog.md (`command -v backlog` + a `backlog/`
