@@ -3,10 +3,10 @@ id: TASK-105
 title: >-
   sesh — post-freeze follow-ups: sync plan R7/state-diagram to frozen conflict
   handshake + first wire amendment batch
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-09 05:47'
-updated_date: '2026-07-09 08:24'
+updated_date: '2026-07-10 10:13'
 labels:
   - sesh
 dependencies:
@@ -23,12 +23,12 @@ Type: design/doc follow-up, from the M0 sign-off verdict (thread sesh-u1, #25130
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Plan R7 + state diagram synced to the frozen handshake wording (or the plan owner explicitly declines)
+- [x] #1 Plan R7 + state diagram synced to the frozen handshake wording (or the plan owner explicitly declines)
 - [x] #2 Rescan interval relabeled as default in the wire doc via a recorded amendment
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Disposition at code-complete (2026-07-09): AC2 done earlier (wire-doc parenthetical). AC1 (plan R7/state-diagram sync to frozen conflict handshake + amendment wording) remains OPEN and routes to the plan owner on the missions-and-daemon worktree — the plan is pinned at 05dfc47 for this run's purposes and was executed against as-is; sync is documentation debt, not build debt. The cosmetic byte_conflict parenthetical touch-up queued for 'next amendment' is moot for this run (no third amendment occurred) — rides any future amendment. Nothing here blocks ship.
+Supersession audit 2026-07-10: AC2 was already done (wire-doc parenthetical amendment). AC1 completed in this audit: the routing blocker dissolved when the missions-and-daemon branch merged — the plan is an ordinary main doc now, in the sesh lane. Synced three stale spots in docs/plans/2026-07-09-001-feat-sesh-session-service-plan.md to the frozen confirm-then-open handshake in docs/specs/sesh-wire.md: R7 prose (conflict no longer opens a generation immediately — shipper re-checks identity and retries once, confirmed second divergence opens the generation), the state-diagram Poisoned transition (poisoned = recurrence after a conflict-driven generation, not second conflict), and the sequence diagram's divergent branch (409 byte_conflict + confirm-then-open, replacing the stale generation-hint/recreate-path reaction). The cosmetic byte_conflict parenthetical still rides any future wire amendment (no pen open).
 <!-- SECTION:NOTES:END -->

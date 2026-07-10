@@ -46,7 +46,7 @@ Requirements restate the spec at implementation grain; spec references in parent
 **Store**
 
 - R6. Ingest is idempotent byte-range PUT with a durable-ACK high-water response; identical replays overwrite-compare silently (I4; S9).
-- R7. Divergent bytes at an already-ACKed offset are a conflict: the store never overwrites mirrored bytes, returns a distinct conflict error, and opens a new generation of the file identity; a repeated conflict marks the file poisoned (visible in `sesh status`) and the shipper stops retrying it.
+- R7. Divergent bytes at an already-ACKed offset are a conflict: the store never overwrites mirrored bytes and returns a distinct conflict error; the shipper re-checks its local identity and retries once, and a confirmed second divergence opens a new generation of the file identity; conflict recurrence after a conflict-driven generation marks the file poisoned (visible in `sesh status`) and the shipper stops retrying it.
 - R8. The mirror is byte-faithful and retained past client deletion (I2, I7; S5).
 - R9. The index is parse-on-ingest: the logical session id is derived from parsed line content (the wire session id is a filename claim, used as fallback); dedup key is (logical session, entry type, message uuid); trailing partial lines are held back (I5; S2).
 - R10. Parse failures quarantine index entries without blocking the mirror; `sesh reindex` re-derives the full index from the mirror; quarantine counts (total and recent) are exposed to operators (S10).
@@ -164,7 +164,7 @@ stateDiagram-v2
   Moved --> Fingerprinted: cursor unchanged
   Fingerprinted --> Gone: file deleted
   Gone --> [*]: cursor GC (mirror retains)
-  Fingerprinted --> Poisoned: second byte-conflict from store
+  Fingerprinted --> Poisoned: byte-conflict recurs after a conflict-driven generation
   Poisoned --> [*]: stop retrying, flag in sesh status
 ```
 
@@ -184,8 +184,8 @@ sequenceDiagram
     alt identical
       ST-->>S: 200 {high_water} (no-op)
     else divergent
-      ST-->>S: 409 conflict {generation hint}
-      S->>S: clear fingerprint, cursor=0 (recreate path)
+      ST-->>S: 409 byte_conflict
+      S->>S: re-check identity, retry once (confirmed divergence opens a generation)
     end
   else offset > high-water (gap)
     ST-->>S: 422 {high_water} — shipper rewinds to high-water

@@ -3,10 +3,10 @@ id: TASK-107
 title: >-
   sesh — index scalability + robustness follow-ups (from U6 re-check,
   non-blocking)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-09 06:48'
-updated_date: '2026-07-09 23:54'
+updated_date: '2026-07-10 10:13'
 labels:
   - sesh
   - run-sesh-107
@@ -23,17 +23,17 @@ Type: implement (small batch). From the U6 fix re-check (thread sesh-u6 trail, r
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Consumer lifecycle bounded (ctx or Close)
-- [ ] #2 busy_timeout in DSN
-- [ ] #3 Incremental unification or measured OK at fleet scale
-- [ ] #4 Reindex streaming or bounded memory
-- [ ] #5 Ledger observed_at survives reindex
+- [x] #1 Consumer lifecycle bounded (ctx or Close)
+- [x] #2 busy_timeout in DSN
+- [x] #3 Incremental unification or measured OK at fleet scale
+- [x] #4 Reindex streaming or bounded memory
+- [x] #5 Ledger observed_at survives reindex
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Disposition at code-complete (2026-07-09): all five follow-ups remain open and are PRE-FLEET-ROLLOUT work, not ship blockers for the single-store deployment: consumer lifecycle ctx, busy_timeout in DSN, O(files^2) unification, reindex memory, ledger observed_at. Plus one addition from the U7 review residual: SQLStore.Sessions runs one maxTimestamp query per logical session — fold into the same scalability pass. Schedule before onboarding the full fleet.
+Supersession audit 2026-07-10: all five ACs shipped across run-sesh-107 and the efficiency batch, all on main. AC1 consumer lifecycle: run-sesh-107 wired ctx through serve; then the shutdown rework gave the consumer an explicit bounded StopAndWait with FIFO drain and dirty-marking of stranded events, and the now-dead store.Serve was removed entirely. AC2 busy_timeout: moved into the DSN via the sqlitedsn package (run-sesh-107). AC3 incremental unification: connected-component unification scoped to the touched file's group (run-sesh-107), field-verified (stalled backfill completed in under 2 min; recency page 28.8s -> 0.94s); the U7 residual (per-session maxTimestamp queries) folded into the same pass as one window query. AC4 reindex memory: streaming line parser (64KB bufio, line_too_long quarantine) replaced whole-file allocation (run-sesh-107). AC5 ledger observed_at: preserved across reindex via in-memory snapshot (run-sesh-107). Comment-trail residuals dispositioned: arrival-order dedup gap already tracked as TASK-136; cosmetic serve items (redundant cancelServe defer, ErrClosed logged as error) mooted by the coordinated-shutdown rewrite; three surviving algorithmic residuals (per-group append cost, oversized-line alloc churn, non-transactional reindex observed_at crash window) re-filed with fresh context as a follow-up task in this commit.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
