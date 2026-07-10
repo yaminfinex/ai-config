@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"sesh/internal/wire"
 )
@@ -20,15 +21,25 @@ func PlatformCorrelator() func([]Discovered) map[string]string {
 	return c.CorrelateAll
 }
 
+const defaultCorrelationTTL = 10 * time.Second
+
 // procCorrelator joins discovered session files to running processes through
-// one /proc scan per pass. One shipper per OS user: any entry of another uid
-// is rejected on its status line alone, before its environ or fd table is
-// ever touched (S7/I9 — the cross-user wall is kernel-enforced at 0400, and
-// never even attempting the read is what keeps a two-user node free of
-// EACCES noise).
+// a short-lived observation cache. One shipper per OS user: any entry of
+// another uid is rejected on its status line alone, before its environ or fd
+// table is ever touched (S7/I9 — the cross-user wall is kernel-enforced at
+// 0400, and never even attempting the read is what keeps a two-user node free
+// of EACCES noise).
 type procCorrelator struct {
 	Root string // "/proc"; tests inject a fixture tree
 	UID  int
+
+	ttl            time.Duration
+	now            func() time.Time
+	cacheAt        time.Time
+	cacheValid     bool
+	cachedOwners   map[string]string
+	lastIdentities map[string]struct{}
+	scanCount      uint64
 }
 
 type procEntry struct {
@@ -43,21 +54,64 @@ type procEntry struct {
 // absence is a result, never an error, and nothing here logs — a dying
 // process or a procfs race reads exactly like absence (I9).
 func (c *procCorrelator) CorrelateAll(discovered []Discovered) map[string]string {
-	entries := c.scan()
-	if len(entries) == 0 {
+	identities := make(map[string]struct{}, len(discovered))
+	grew := false
+	for _, d := range discovered {
+		key := d.Identity.Key()
+		identities[key] = struct{}{}
+		if _, seen := c.lastIdentities[key]; !seen {
+			grew = true
+		}
+	}
+	if len(discovered) == 0 {
+		c.lastIdentities = identities
 		return nil
 	}
+
+	now := time.Now()
+	if c.now != nil {
+		now = c.now()
+	}
+	ttl := c.ttl
+	if ttl <= 0 {
+		ttl = defaultCorrelationTTL
+	}
+	if c.cacheValid && !grew && now.Before(c.cacheAt.Add(ttl)) {
+		c.lastIdentities = identities
+		return c.ownersFor(discovered)
+	}
+
+	entries := c.scan()
 	owners := map[string]string{}
-	for _, d := range discovered {
-		var owner string
-		var ok bool
-		switch d.Identity.Tool {
-		case wire.ToolCodex:
-			owner, ok = c.codexOwner(entries, d.Path)
-		case wire.ToolClaude:
-			owner, ok = c.claudeOwner(entries, d.Path)
+	if len(entries) > 0 {
+		for _, d := range discovered {
+			var owner string
+			var ok bool
+			switch d.Identity.Tool {
+			case wire.ToolCodex:
+				owner, ok = c.codexOwner(entries, d.Path)
+			case wire.ToolClaude:
+				owner, ok = c.claudeOwner(entries, d.Path)
+			}
+			if ok {
+				owners[d.Identity.Key()] = owner
+			}
 		}
-		if ok {
+	}
+	c.cacheAt = now
+	c.cacheValid = true
+	c.cachedOwners = owners
+	c.lastIdentities = identities
+	return owners
+}
+
+func (c *procCorrelator) ownersFor(discovered []Discovered) map[string]string {
+	var owners map[string]string
+	for _, d := range discovered {
+		if owner := c.cachedOwners[d.Identity.Key()]; owner != "" {
+			if owners == nil {
+				owners = make(map[string]string)
+			}
 			owners[d.Identity.Key()] = owner
 		}
 	}
@@ -68,6 +122,7 @@ func (c *procCorrelator) CorrelateAll(discovered []Discovered) map[string]string
 // world-readable status file; entries of other uids contribute nothing and
 // are never opened further.
 func (c *procCorrelator) scan() []procEntry {
+	c.scanCount++
 	dirents, err := os.ReadDir(c.Root)
 	if err != nil {
 		return nil

@@ -14,16 +14,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sesh/internal/wire"
 )
 
 type fakeProc struct {
-	t    *testing.T
+	t    testing.TB
 	root string
 }
 
-func newFakeProc(t *testing.T) *fakeProc {
+func newFakeProc(t testing.TB) *fakeProc {
 	t.Helper()
 	return &fakeProc{t: t, root: t.TempDir()}
 }
@@ -71,11 +72,16 @@ func (f *fakeProc) correlator() *procCorrelator {
 
 func discoveredCodex(t *testing.T, dir string) Discovered {
 	t.Helper()
-	p := filepath.Join(dir, "rollout-2026-06-26T02-43-06-"+uuidCodex+".jsonl")
+	return discoveredCodexUUID(t, dir, uuidCodex)
+}
+
+func discoveredCodexUUID(t *testing.T, dir, uuid string) Discovered {
+	t.Helper()
+	p := filepath.Join(dir, "rollout-2026-06-26T02-43-06-"+uuid+".jsonl")
 	if err := os.WriteFile(p, fixture(t, "codex-rollout-meta.jsonl"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return Discovered{Identity: Identity{Tool: wire.ToolCodex, SessionID: uuidCodex, FileUUID: uuidCodex}, Path: p}
+	return Discovered{Identity: Identity{Tool: wire.ToolCodex, SessionID: uuid, FileUUID: uuid}, Path: p}
 }
 
 // discoveredClaude places the session file in a project dir named by the
@@ -258,5 +264,147 @@ func TestCorrelatorToleratesVanishingEntries(t *testing.T) {
 	}
 	if owners := fp.correlator().CorrelateAll([]Discovered{d}); len(owners) != 0 {
 		t.Fatalf("owners = %v, want none", owners)
+	}
+}
+
+func TestCorrelationCacheHitAndExpiryObservePIDChurn(t *testing.T) {
+	fp := newFakeProc(t)
+	d := discoveredCodex(t, t.TempDir())
+	fp.add(100, 1, os.Getuid(), "codex", "/work", map[string]string{"SESSION_OWNER": "alice"}, d.Path)
+	c := fp.correlator()
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+
+	if got := c.CorrelateAll([]Discovered{d})[d.Identity.Key()]; got != "alice" {
+		t.Fatalf("initial owner = %q, want alice", got)
+	}
+	if c.scanCount != 1 {
+		t.Fatalf("initial scans = %d, want 1", c.scanCount)
+	}
+
+	if err := os.RemoveAll(filepath.Join(fp.root, "100")); err != nil {
+		t.Fatal(err)
+	}
+	fp.add(101, 1, os.Getuid(), "codex", "/work", map[string]string{"SESSION_OWNER": "bob"}, d.Path)
+	now = now.Add(9 * time.Second)
+	if got := c.CorrelateAll([]Discovered{d})[d.Identity.Key()]; got != "alice" {
+		t.Fatalf("cached owner = %q, want historical positive alice before expiry", got)
+	}
+	if c.scanCount != 1 {
+		t.Fatalf("cache-hit scans = %d, want 1", c.scanCount)
+	}
+
+	now = now.Add(time.Second)
+	if got := c.CorrelateAll([]Discovered{d})[d.Identity.Key()]; got != "bob" {
+		t.Fatalf("owner after expiry and PID churn = %q, want bob", got)
+	}
+	if c.scanCount != 2 {
+		t.Fatalf("expired scans = %d, want 2", c.scanCount)
+	}
+}
+
+func TestCorrelationCacheRefreshesForNewIdentity(t *testing.T) {
+	fp := newFakeProc(t)
+	d1 := discoveredCodexUUID(t, t.TempDir(), "10000000-0000-4000-8000-000000000000")
+	d2 := discoveredCodexUUID(t, t.TempDir(), "20000000-0000-4000-8000-000000000000")
+	fp.add(100, 1, os.Getuid(), "codex", "/work/a", map[string]string{"SESSION_OWNER": "alice"}, d1.Path)
+	c := fp.correlator()
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+
+	c.CorrelateAll([]Discovered{d1})
+	fp.add(200, 1, os.Getuid(), "codex", "/work/b", map[string]string{"SESSION_OWNER": "bob"}, d2.Path)
+	now = now.Add(time.Second)
+	owners := c.CorrelateAll([]Discovered{d1, d2})
+	if got := owners[d2.Identity.Key()]; got != "bob" {
+		t.Fatalf("new identity owner = %q, want immediate bob correlation", got)
+	}
+	if c.scanCount != 2 {
+		t.Fatalf("scans after identity-set growth = %d, want 2 before TTL expiry", c.scanCount)
+	}
+}
+
+func TestExpiredCorrelationAbsenceKeepsPersistedOwner(t *testing.T) {
+	h := newHarness(t)
+	data := fixture(t, "codex-rollout-meta.jsonl")
+	path := h.writeCodex("2026/07/10", uuidCodex, data)
+	fp := newFakeProc(t)
+	fp.add(100, 1, os.Getuid(), "codex", "/work", map[string]string{"SESSION_OWNER": "alice"}, path)
+	c := fp.correlator()
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+	h.shipper.Correlate = c.CorrelateAll
+	h.runOnce()
+
+	if err := os.RemoveAll(filepath.Join(fp.root, "100")); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Second)
+	cacheHitBytes := append(append([]byte(nil), data...), '\n')
+	if err := os.WriteFile(path, cacheHitBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.runOnce()
+	h.assertMirror("codex", uuidCodex, cacheHitBytes)
+	if c.scanCount != 1 {
+		t.Fatalf("cache-hit pass performed %d proc sweeps, want 1 total while bytes still shipped", c.scanCount)
+	}
+
+	now = now.Add(defaultCorrelationTTL)
+	afterExpiryBytes := append(append([]byte(nil), cacheHitBytes...), '\n')
+	if err := os.WriteFile(path, afterExpiryBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.runOnce()
+	cursor, _ := h.cursor(wire.ToolCodex, uuidCodex)
+	if cursor.SessionOwner != "alice" {
+		t.Fatalf("owner after process death = %q, want persisted alice", cursor.SessionOwner)
+	}
+	h.assertMirror("codex", uuidCodex, afterExpiryBytes)
+	if c.scanCount != 2 {
+		t.Fatalf("expired pass proc sweeps = %d, want 2 total", c.scanCount)
+	}
+	owners := h.store.owners("codex", uuidCodex, uuidCodex)
+	if got := owners[len(owners)-1]; got != "alice" {
+		t.Fatalf("owner shipped after process death = %q, want persisted alice", got)
+	}
+}
+
+func BenchmarkCorrelationAcrossFivePasses(b *testing.B) {
+	fp := newFakeProc(b)
+	cwd := filepath.Join(b.TempDir(), "work.tree")
+	fp.add(100, 1, os.Getuid(), "claude", cwd, map[string]string{"SESSION_OWNER": "alice"})
+	for pid := 101; pid < 850; pid++ {
+		fp.add(pid, 1, os.Getuid(), "worker", "/elsewhere", map[string]string{"HOME": "/tmp"})
+	}
+	discovered := make([]Discovered, 750)
+	for i := range discovered {
+		uuid := fmt.Sprintf("%08d-0000-4000-8000-000000000000", i)
+		discovered[i] = Discovered{
+			Identity: Identity{Tool: wire.ToolClaude, SessionID: uuid, FileUUID: uuid},
+			Path:     filepath.Join("root", mungeCwd(cwd), uuid+".jsonl"),
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		ttl  time.Duration
+	}{
+		{name: "full-sweep-every-pass", ttl: time.Nanosecond},
+		{name: "cached-ten-seconds", ttl: defaultCorrelationTTL},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ResetTimer()
+			for n := 0; n < b.N; n++ {
+				now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+				c := fp.correlator()
+				c.ttl = tc.ttl
+				c.now = func() time.Time { return now }
+				for pass := 0; pass < 5; pass++ {
+					c.CorrelateAll(discovered)
+					now = now.Add(2 * time.Second)
+				}
+			}
+		})
 	}
 }
