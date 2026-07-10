@@ -1,14 +1,13 @@
 # Session Service Spec — `sesh`
 
-STATUS: **DRAFT — awaiting ratification.** Distilled from the ratified Q18–Q20 rulings
-(boundaries v2 §1A/§3), the session-shipping prior-art memo, and the live /proc-correlation
-validation run on this node (2026-07-08). The three launch micro-decisions were settled by
-the owner 2026-07-09 (§10); task-cutting is unblocked.
+STATUS: **STANDING CONTRACT — implementation shipped; field rollout not fully verified.**
+The wire/index contract is frozen and the Go implementation conforms under its automated
+suite. Live off-box grant verification, multi-user/macOS rollout, reboot survival, late-node
+backfill, and store-host migration remain open operational gates on the task board.
 
 Related ground truth:
-- `docs/design/2026-07-09-sessions-missions-boundaries-v2.md` — §1A (shape), §3 (identity)
-- `docs/design/2026-07-09-session-shipping-prior-art.md` — mechanisms adopted, with citations
-- `docs/design/2026-07-08-sessions-missions-boundaries.md` §6b Q18–Q20 — the ruling trail
+- `docs/specs/system-boundaries.md` — component shape and identity boundaries
+- `docs/specs/sesh-wire.md` — frozen shipper/store wire and index schema
 
 ---
 
@@ -38,13 +37,14 @@ policy, live relay, per-session ACLs, OTel.
   `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl`. The formats are
   upstream-internal and version-unstable; the service treats their **bytes** as the
   contract, not their schema.
-- **Session** — the logical unit, keyed **(tool, session_id)**. One session may span
-  multiple files with overlapping content (verified Claude resume behaviour); the session,
-  not the file, is what users see.
+- **Session** — the logical unit identified by `(tool, logical_session_id)`. The store derives
+  that id from parsed content and overlap evidence, falling back to the wire `session_id`
+  claim when parsing cannot do better. One session may span multiple files with overlapping
+  content; the logical session, not a wire claim or file, is what users see.
 - **Shipper** — the per-node, per-OS-user agent that tails session files and ships raw
   byte ranges plus facts to the store. Dumb by doctrine: no parsing, no policy.
-- **Facts** — the four identity observations a shipper attaches: tailnet identity
-  (store-stamped, see §3), OS user, hostname, and `SESSION_OWNER` where visible. Facts are
+- **Facts** — identity observations attached to an ingest: OS user, hostname, and
+  `SESSION_OWNER` where visible from the shipper, plus tailnet identity stamped by the store. Facts are
   observations; every interpretation of them happens off-node.
 - **Store** — the central service: byte-faithful **mirror** (raw bytes as shipped, the
   durable archive) + parse-on-ingest **index** (per-message rows for rendering) + the
@@ -69,14 +69,16 @@ policy, live relay, per-session ACLs, OTel.
 ### 3.1 Identity spine
 
 ```
-(tool, session_id)                      ← the universal session key
-  └─ session files (1..n)               ← identity = uuid + fingerprint, not path
-       └─ shipped byte ranges           ← mirror rows, idempotent by (file identity, offset)
-            └─ parsed messages          ← index rows, deduped by message uuid
+(tool, logical_session_id)              ← store-derived session key
+  └─ wire session claims (1..n)         ← fallback identity when parsing cannot unify
+       └─ session files (1..n)           ← identity = uuid + fingerprint, not path
+            └─ shipped byte ranges       ← mirror rows, idempotent by (file identity, offset)
+                 └─ parsed messages      ← composite-key dedup; empty UUIDs never dedup
 ```
 
-A session's transcript as rendered is the **union of its files' parsed messages, deduped
-by message uuid** — because Claude Code verifiably violates one-file-per-session (resume
+A session's transcript as rendered is the **union of its files' parsed messages**. Rows with
+a message UUID dedupe by `(tool, logical_session_id, entry_type, message_uuid)`; rows without
+a UUID remain distinct. Claude Code verifiably violates one-file-per-session (resume
 can create a new file; stream-json resume has duplicated entire history; concurrent
 resumes interleave into one file; `/cd` relocates the file between project dirs).
 
@@ -111,9 +113,11 @@ session service defines only the read side.
   has unshipped bytes — whether its process is alive, dead, or predates the shipper's
   install. Backfill from offset 0 is the same code path as tailing.
 - **I4 — At-least-once, idempotent ingest.** The cursor advances only after the store's
-  durable ACK; the store treats duplicate byte ranges as overwrite-compare, not append.
-- **I5 — Dedup is correctness, not polish.** The index dedupes by message uuid across all
-  files of a session; without it, verified upstream behaviours render duplicated history.
+  durable ACK. Matching replay ranges compare overlap and append only matching excess;
+  divergent history enters the frozen confirm-then-open conflict-generation protocol.
+- **I5 — Dedup is correctness, not polish.** The index dedupes non-empty message UUIDs by
+  `(tool, logical_session_id, entry_type, message_uuid)` across all files of a session;
+  empty UUIDs never dedupe.
 - **I6 — Identity survives churn.** Cursors key on file identity, so renames/moves
   (`/cd`) don't re-ship; size regression below the cursor means truncation → reset to 0
   and re-ship; deletion is not truncation → GC the cursor, keep the mirror.
@@ -142,7 +146,7 @@ One binary, cross-platform (Linux servers + macOS laptops), running per OS user
   lines ship as-is (the mirror doesn't care; the ingest parser holds back the incomplete
   tail). The source file is the buffer — when the store is unreachable, the shipper just
   stops advancing; no local queue.
-- **File identity**: session UUID from the filename immediately; fingerprint recorded once
+- **File identity**: session UUID claim from the filename immediately; fingerprint recorded once
   the file exceeds the fingerprint window (identity must work at size ~0 — freshly created
   session files are tiny). Same UUID + different fingerprint = recreated file → reset.
 - **Facts**: hostname and OS user attached to every ship; `SESSION_OWNER` per §4.2.
@@ -152,7 +156,7 @@ One binary, cross-platform (Linux servers + macOS laptops), running per OS user
 
 ### 4.2 SESSION_OWNER correlation (Linux-only enrichment)
 
-Validated live (2026-07-08), TASK-045 precedent. The shipper correlates session files to
+Validated live on Linux before implementation. The shipper correlates session files to
 running processes via `/proc`, reads `SESSION_OWNER` from `/proc/<pid>/environ`, and
 stamps the session:
 
@@ -177,9 +181,9 @@ stamps the session:
   from request content.
 - **Mirror**: raw bytes per file identity, retained past client deletion (I7). Retention
   policy is a store setting (default: keep indefinitely until a policy exists).
-- **Index (parse-on-ingest)**: parses mirrored bytes into per-message rows — message uuid,
-  role, timestamp, session id, ordering — deduped by message uuid across a session's
-  files (I5), holding back trailing partial lines. When an upstream format change breaks
+- **Index (parse-on-ingest)**: parses mirrored bytes into per-message rows, derives logical
+  session identity from content/overlap evidence, and applies I5's composite-key dedup while
+  holding back trailing partial lines. When an upstream format change breaks
   parsing, the mirror is unaffected and the index is **re-derivable from the mirror** after
   a parser fix: one deploy, no node touched. Parse failures quarantine the file's index
   entries, never block the mirror.
@@ -212,8 +216,9 @@ One page, people-first recency:
   renders one clean transcript.
 - `/cd` moves a session file across project dirs → rescan re-finds it by identity; no
   re-ship, no duplicate.
-- Session file truncated/recreated → fingerprint mismatch or size regression → reset to
-  0, re-ship; mirror overwrite-compares.
+- Session file truncated/recreated → size regression resets the shipper cursor; matching
+  history replays idempotently, while divergent bytes follow confirm-then-open generation
+  handling so prior mirror evidence is never overwritten.
 - Store down → shippers hold position; no data loss (source files are the buffer); catch
   up on return.
 - Two users on one shared node → two shippers; each reads only its own environ (I9);
@@ -247,11 +252,11 @@ One page, people-first recency:
 
 ## 7. Deployment shape
 
-- **One binary, `sesh`, subcommands** (owner-confirmed 2026-07-09): `sesh ship` (the
+- **One binary, `sesh`, subcommands**: `sesh ship` (the
   long-running per-user node agent), `sesh serve` (store + surface, one process),
   `sesh reindex` (re-derive index from mirror), `sesh status` (read-only: cursors, store
-  reachability, last-ship times). One build target, one shim, house convention (herder,
-  hcom). The darwin build compiles out /proc correlation; same binary otherwise. A later
+  reachability, last-ship times), and `sesh admin` for explicit operator repair. It is a
+  plain Go build with no repository launcher shim. The darwin build compiles out /proc correlation; same binary otherwise. A later
   repo split may produce separate binaries from the same command tree — nothing depends
   on single-binary-ness except build simplicity.
 - **Shipper**: `sesh ship` under a per-user systemd unit (Linux) / launchd agent
@@ -268,8 +273,8 @@ One page, people-first recency:
 ## 8. Wire protocol (owner-confirmed 2026-07-09)
 
 This HTTP API is the **only** protocol between services. Shipper→store is the one
-cross-service boundary; the surface reads the store in-process (or via store-internal
-endpoints) and has no protocol of its own; nothing else talks to anything. Versioned under
+cross-service boundary; the server-rendered HTML surface reads store state in-process and
+has no separate read protocol. Versioned under
 `/v1` so the later repo split and store relocation are non-events.
 
 HTTP over the tailnet (plain localhost allowed for the dev/short-term same-host case).
@@ -280,13 +285,13 @@ One write verb dominates:
   the durable-ACK high-water mark (the shipper's new cursor).
 - A small `GET` set for cursors-recovery (ask the store "what do you have for this file
   identity?") so a shipper with a lost registry can resume without re-shipping the world.
-- Read side: surface-internal JSON endpoints; no public read API commitment in v1.
+- Read side: no public JSON protocol; HTML routes read the store and mirror in-process.
 
 ## 9. Non-goals (recorded decisions, not omissions)
 
 - **No search** (S9 kill). Recency + drill-down only.
-- **No node-side parsing** — upstream calls the format internal and parse-breaking;
-  parsing lives in the store's one deploy (prior-art Q4).
+- **No node-side parsing** — upstream formats are internal and parse-breaking; parsing lives
+  in the store's one deploy.
 - **No node-side policy** — no attribution ladders, no display precedence on nodes (Q20).
 - **No process supervision semantics** — the service never starts, stops, signals, or
   even requires session processes; files are the interface (I3).
@@ -294,8 +299,9 @@ One write verb dominates:
   is rescan-interval class, best-effort better via fsnotify.
 - **No per-session ACLs in v1** — grant-scoped team visibility; the honest threat model
   is "the team can read each other's shells already." Revisit with team growth.
-- **No OTel transport** — disqualified (no backfill, shape mismatch, truncation, per-tool
-  divergence; prior-art Q2). Optional gravy later, never the spine.
+- **No OTel transport** — disqualified by lack of faithful backfill, transcript-shape
+  mismatch, truncation, and per-tool divergence. Optional telemetry may be added later,
+  never as the transcript spine.
 - **No hcom/herder/mission awareness** (I11).
 - **No authentication derived from attribution** (I10).
 - **No Windows** in v1.
@@ -308,14 +314,35 @@ One write verb dominates:
    later move; the §8 API is the only cross-service contract, keeping the move cheap.
 3. **Wire detail** — HTTP PUT byte ranges confirmed as drafted (§8).
 
-## 11. Decisions embedded in this spec (ratification checklist)
+## 11. Transport rationale and precedents
 
-- (tool, session_id) spine; file identity = uuid + fingerprint (Q18 + prior-art Q3/Q4)
-- Dumb shipper / byte mirror / parse-on-ingest split (Q18; prior-art verdict "build")
-- Facts-not-verdicts, view-time display owner, set-time policy elsewhere (Q20)
+The service deliberately combines mechanisms that mature log shippers already proved:
+
+- Content fingerprints avoid inode/path identity failures. Filebeat documents fingerprint
+  identity and inode-reuse data loss; Vector independently uses content-derived checkpoints.
+  See [Filebeat file identity](https://www.elastic.co/docs/reference/beats/filebeat/file-identity),
+  [Filebeat inode reuse](https://www.elastic.co/guide/en/beats/filebeat/current/inode-reuse-issue.html),
+  and [Vector checkpointing](https://vector.dev/highlights/2021-01-31-file-source-checkpointing/).
+- Persistent cursors advance only after durable acknowledgement, making delivery at-least-once
+  and requiring idempotent store writes. Fluent Bit's tail input is representative:
+  [tail input documentation](https://docs.fluentbit.io/manual/data-pipeline/inputs/tail).
+- Size regression is truncation, and filesystem notifications are hints rather than a complete
+  history. Periodic rescans catch missed events, moves, and downtime gaps.
+- Raw-file shipping is necessary because harness telemetry is incomplete and divergent, while
+  Claude resume behavior can create overlapping files. The mirror therefore remains evidence;
+  parsing and unification stay centrally re-runnable.
+- Tailnet-native mode uses connection-bound identity and app-capability grants rather than
+  client-supplied identity: [Tailscale identity](https://tailscale.com/docs/concepts/tailscale-identity)
+  and [application capabilities](https://tailscale.com/blog/app-capabilities).
+
+## 12. Decisions embedded in this spec
+
+- Store-derived logical-session spine; file identity = uuid + fingerprint
+- Dumb shipper / byte mirror / parse-on-ingest split
+- Facts-not-verdicts, view-time display owner, set-time policy elsewhere
 - SESSION_OWNER as sole cross-surface var; /proc correlation tiers (codex exact, claude
   cohort, macOS none); hooks non-dependency (Q19–Q20 + live validation)
 - One shipper per OS user (environ wall)
-- Tailnet grant auth, WhoIs-stamped identity, never client-supplied (prior-art Q5)
+- Tailnet grant auth, WhoIs-stamped identity, never client-supplied
 - File-driven shipping; mirror outlives client cleanup
 - Kill list honored: no search, no OTel spine, no events relay

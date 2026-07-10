@@ -4,9 +4,8 @@ Per-user shippers mirror Claude Code and Codex CLI session transcripts
 byte-faithfully to one central store, which parses on ingest and serves a team
 recency page.
 
-Authority chain: `docs/specs/session-service-spec.md` (invariants I1–I11) >
-`docs/specs/sesh-wire.md` (wire freeze, M0) >
-`docs/plans/2026-07-09-001-feat-sesh-session-service-plan.md`.
+Authority chain: `docs/specs/session-service-spec.md` (product contract) >
+`docs/specs/sesh-wire.md` (wire and index contract).
 
 ## Build
 
@@ -37,7 +36,7 @@ etc/             systemd unit, launchd template, install-ship.sh
 
 ## Operator Surface
 
-Implemented M2 commands:
+Implemented commands:
 
 ```sh
 sesh ship --store-url http://127.0.0.1:8765
@@ -59,19 +58,19 @@ in `drop_log`. Hard precondition: stop `sesh serve` before running `drop-file`;
 the admin command is a separate process and does not quiesce live ingest or
 queued append-index events.
 
-`internal/surface` (U7) reads the frozen index schema through its `Store`
+`internal/surface` reads the frozen index schema through its `Store`
 seam; `surface.SQLStore` satisfies it from the live store DB + mirror, and
 `sesh serve` runs the surface on its own loopback read listener
-(`--surface-addr`, default 127.0.0.1:8766 — the port the M2 Tailscale Serve
+(`--surface-addr`, default 127.0.0.1:8766 — the port the interim Tailscale Serve
 exposure proxies; ingest stays on `--addr`). The surface includes `/` recency,
 `/s/{tool}/{id}` transcript pages, `/s/{tool}/{id}/raw` raw mirror fallback,
 and `/nodes` last-PUT status. Gates: `tests/check-surface-fixtures.sh`
 (fixture-backed renders) and `tests/check-surface-live.sh` (real serve + ship,
 S2 renders once).
 
-## M2 Exposure Runbook
+## Interim read-only exposure runbook
 
-Before M4 auth, keep ingest private to the local machine. The ingest listener
+Until tailnet-native auth is verified, keep ingest private to the local machine. The ingest listener
 rejects non-loopback binds:
 
 ```sh
@@ -85,14 +84,14 @@ tailscale serve --bg --http=443 http://127.0.0.1:8766
 ```
 
 Do not expose `127.0.0.1:8765`; it accepts transcript bytes. The read listener
-serves the browser surface only, while ingest remains loopback-only until M4
-auth and rollout gates land.
+serves the browser surface only, while ingest remains loopback-only until
+tailnet-native auth and rollout verification land.
 
-M2 exposure owner sign-off: PENDING (`@bigboss`).
+Owner sign-off before exposing the read-only surface: PENDING (`@bigboss`).
 
-## M4 tsnet Grant Runbook
+## Tailnet-native grant runbook
 
-M4 mode embeds tsnet in `sesh serve`. The store joins the tailnet as its own
+Tailnet-native mode embeds tsnet in `sesh serve`. The store joins the tailnet as its own
 node, authenticates each caller with WhoIs, stamps the authenticated user or
 node identity into the fact log, and denies callers without the matching
 Tailscale app-capability verb before ingest bytes or read handlers run.
@@ -166,10 +165,10 @@ TS_AUTHKEY=tskey-auth-... sesh serve --tsnet --tsnet-hostname sesh-store \
 The store URL in tsnet mode is plain `http://` on purpose: the tailnet
 itself WireGuard-encrypts and peer-authenticates every connection, so TLS
 here would add certificate lifecycle without any confidentiality gain —
-TLS termination lives in the M2 interim `tailscale serve` path, not in
+TLS termination lives in the interim `tailscale serve` path, not in
 tsnet mode. Using `https://` against the tsnet listener fails at transport.
 
-**2. Grant applied.** Push the ACL/grant policy (M4 tsnet Grant Runbook
+**2. Grant applied.** Push the ACL/grant policy (Tailnet-native grant runbook
 above) so `group:sesh-shippers` has `{"verb":"ship"}` and readers have
 `{"verb":"read"}`.
 
@@ -188,7 +187,7 @@ curl -si -H 'X-Sesh-Wire-Version: 1' \
 
 From an in-grant device, the same GET must answer 404 `not_found` — that
 pair (403 outside, 404 inside) is the deny evidence. Record both outputs in
-the rollout log; the owner ratifies M4 against them.
+the rollout log; the owner ratifies field readiness against them.
 
 **4. Nodes, any order.** Late nodes need no special handling: the shipper's
 first pass is the same authoritative rescan as every later one, so a node
@@ -249,7 +248,7 @@ If step 3 cannot carry the tsnet dir, re-auth the new host with the same
 `--tsnet-hostname sesh-store`; the MagicDNS URL is preserved and nodes still
 change nothing.
 
-### Field failure signature: stale binary vs newer registry (R23)
+### Field failure signature: stale binary vs newer registry
 
 An outdated `sesh` build started against a registry written by a newer build
 refuses cleanly — exit nonzero, registry untouched, unit in a restart loop

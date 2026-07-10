@@ -1,7 +1,8 @@
 # sesh Wire and Index Schema
 
-Status: draft for U1 co-author review. After M0 merge, this document is the frozen
-shipper-to-store wire contract and binds above the implementation plan.
+Status: **FROZEN 2026-07-09; implementation conformance verified 2026-07-10.** This is the
+shipper-to-store wire and index contract. Changes listed under Compatibility Rules require
+an amendment here before code lands.
 
 ## Authority
 
@@ -83,7 +84,7 @@ Conditional headers:
 | `X-Sesh-Fingerprint` | Lowercase hex SHA-256 of source bytes `[0, 1024)`, present only once the file is at least 1024 bytes |
 | `X-Sesh-Session-Owner` | `SESSION_OWNER` observed by the shipper, omitted when absent or ambiguous |
 
-The store stamps tailnet identity from the connection at M4. Any client-supplied
+In tailnet-native mode, the store stamps tailnet identity from the connection. Any client-supplied
 tailnet identity or display-owner header is ignored and must not affect storage,
 auth, or rendering.
 
@@ -197,8 +198,8 @@ code is the normative field a shipper switches on. A store that cannot be reache
 all is treated exactly like `store_unavailable`: hold position, jittered backoff,
 cursor untouched, no local queue — the source file is the only buffer.
 
-`out_of_grant` is used for both PUT and read denial once tailnet auth is enabled. Before
-M4, serve mode binds ingest to loopback only; non-loopback ingest attempts must be
+`out_of_grant` is used for both PUT and read denial once tailnet auth is enabled. In
+loopback-only mode, non-loopback ingest attempts must be
 denied before bytes are accepted.
 
 ## Recovery GET
@@ -273,7 +274,7 @@ This event is internal to the store process. It is not a second shipper/store pr
 
 ## Message Index Schema
 
-U6 writes and U7 reads the message index through this schema. Column names are frozen;
+The indexer writes and the read-only surface consumes the message index through this schema. Column names are frozen;
 SQLite types may use the closest practical affinity.
 
 Logical session unification is store-side index logic. The indexer first uses parsed

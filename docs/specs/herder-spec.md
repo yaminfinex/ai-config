@@ -1,11 +1,15 @@
 # Herder Spec
 
-Status: **RATIFIED 2026-07-08** (owner walkthrough, decisions D1–D12 confirmed; D5 teams-kill
-confirmed explicitly; migration dormant-default resolved under D12). This document is the
-ground truth for herder's shape: ubiquitous language, domain model, expected behaviour,
-high-level design, and acceptance scenarios. Implementation plans derive from it; it does not
-narrate how we got here — the derivation working-memory was pruned with its branch, and this
-document stands alone.
+Status: **RATIFIED 2026-07-08; conformance audited 2026-07-10.** This document is the
+normative contract for herder's domain model and expected behaviour. It is not a claim that
+every contract surface has shipped.
+
+Known implementation gaps are tracked on the task board in plain-language captures. The
+current gaps include typed per-candidate registry-write outcomes; a unified `resolve` surface;
+end-to-end process seats; the transition to `lost`; richer send receipts and state reporting;
+positional cull targets; atomic label takeover; namespace-id consumption; live-coordinate
+precedence; and removal of the legacy two-state view. Until those land, the implementation is
+more limited than the corresponding normative sections below.
 
 ---
 
@@ -250,7 +254,7 @@ is display metadata, **never an ordering key**.
   "recorded_at": "…",                       // append time — distinct from provenance.ts
   "node": "<node_id>",                       // writer attribution (§3.1-10)
   "state": "seated | unseated | retired | lost",
-  "label": "…", "role": "…", "tool": "claude | codex",
+  "label": "…", "role": "…", "tool": "<agent tool name>",
   "seat": {                                  // present while seated
     "kind": "herdr | process",
     "node": "<node_id>",                     // where the seat physically is
@@ -708,3 +712,9 @@ Process notes outside the spec: where the distilled glossary lands (CONTEXT.md h
 gaps ride which branch belong to the implementation plan, not this document. Open naming
 decision (carried from the pre-ratification walkthrough): a more descriptive term for "epoch";
 cosmetic, may be settled by any implementation wave that touches the vocabulary.
+
+## 12. Amendments
+
+- **2026-07-10 — conformance clarification.** The status now distinguishes the normative
+  contract from shipped behavior and records the known implementation-gap categories. The
+  session-record example now reflects the already-ratified open tool vocabulary.

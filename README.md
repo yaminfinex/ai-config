@@ -45,7 +45,7 @@ Beyond skills and agent config, the repo also tracks:
 - `claude/`, `codex/`: shared agent config fragments and examples managed by `ai-setup`.
 - `tools/bottle/`: the Go implementation behind `bin/bottle` (see `tools/bottle/README.md`).
 - `vendor/`: vendored upstream projects some skills build on (e.g. `native-shortcuts-herd`).
-- `docs/`: design notes and plans.
+- `docs/`: operating guides, characterizations, standing specifications, and their preserved source records.
 
 ## Optional: herdr
 
