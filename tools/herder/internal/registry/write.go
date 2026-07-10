@@ -25,13 +25,17 @@ type LockedUpdate struct {
 type LockedUpdateFunc func(LockedUpdate) ([]v2.SessionRecord, error)
 
 type LegacyV1AppendError struct {
-	GUID string
+	GUID        string
+	ArchivePath string
 }
 
 func (e *LegacyV1AppendError) Error() string {
 	target := "session row"
 	if e.GUID != "" {
 		target = "session row for guid " + e.GUID
+	}
+	if e.ArchivePath != "" {
+		return "registry refused migration archive " + e.ArchivePath + ": it contains a v1-shaped " + target + " alongside v2 node state, so it cannot verify a prior v1 migration; back up the registry and archive, restore the archive from a verified pre-migration backup, identify and excise post-mint v1-shaped rows from the live registry, then retry with the verified archive in place"
 	}
 	return "registry refused v1-shaped append to a minted v2 registry: " + target + " looks like it came from a registry-writing herder binary older than this registry schema; use the spawner HERDER_BIN or upgrade the checkout for new writes. If this fired while mutating an existing poisoned guid, back up the registry, identify and excise the on-disk v1-shaped row, then retry with the verified archive in place"
 }

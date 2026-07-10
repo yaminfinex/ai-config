@@ -1069,44 +1069,6 @@ func TestLegacyV1MigrationTwiceIsByteStable(t *testing.T) {
 	}
 }
 
-func TestLegacyV1MigrationHandlesMixedFileWithVerifiedArchive(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.jsonl")
-	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	original := strings.Join([]string{
-		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
-		`{"kind":"session","guid":"guid-v2","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"v2","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"` + testNodeA + `","terminal_id":"term_v2","pane_id":"p_v2","hcom_name":"v2-bus","namespace":"/hcom","confirmed_at":"2026-07-08T00:00:01Z"}}`,
-		`{"guid":"guid-legacy","short_guid":"legacy","label":"legacy","role":"worker","agent":"claude","terminal_id":"term_old","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"legacy-bus","status":"active"}`,
-	}, "\n") + "\n"
-	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	archive := mustMigrationArchivePath(t, path)
-	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(archive, []byte(original), 0o444); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
-		t.Fatal(err)
-	}
-	if got := mustReadFile(t, mustMigrationArchivePath(t, path)); string(got) != original {
-		t.Fatalf("archive = %s, want original mixed file", got)
-	}
-	proj := loadProjection(t, path)
-	v2row := V2ByGUID(proj, "guid-v2")
-	if v2row == nil || v2row.State != v2.StateSeated || v2row.Seat == nil || v2row.Seat.HcomName != "v2-bus" {
-		t.Fatalf("v2 row = %+v, want latest snapshot preserved", v2row)
-	}
-	legacy := V2ByGUID(proj, "guid-legacy")
-	if legacy == nil || legacy.State != v2.StateUnseated || legacy.Seat != nil || legacy.Event != migrationEventV1 {
-		t.Fatalf("legacy row = %+v, want dormant migrated row", legacy)
-	}
-}
-
 func TestLegacyV1MigrationRecoversEmptyLiveFromArchive(t *testing.T) {
 	sourcePath := copyRegistryFixture(t, "v1-real-shape.jsonl")
 	source := mustReadFile(t, sourcePath)
