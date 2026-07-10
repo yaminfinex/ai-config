@@ -4,7 +4,7 @@ title: sesh — batch cursor-registry durability at the authoritative-pass bound
 status: Done
 assignee: []
 created_date: '2026-07-10 01:39'
-updated_date: '2026-07-10 02:03'
+updated_date: '2026-07-10 02:45'
 labels:
   - sesh
 dependencies: []
@@ -43,3 +43,12 @@ Settled decisions:
 <!-- SECTION:NOTES:BEGIN -->
 Fixed on branch sesh-shipper-efficiency (d66e18a, shipper lane worker, orchestrator-verified). RunOnce opens a registry batch and defers the closing flush, joining persistence failure into the pass error via errors.Join so early returns cannot bypass it. Put/Delete keep immediate durability outside a pass (batching private to the RunOnce boundary, reentrant depth counter); inside a pass they mutate authoritative memory and mark dirty for one outer flush. Failed flushes stay dirty for later-pass retry; atomic temp+fsync+rename+dir-fsync format unchanged; cursor transition sites untouched (store ACK remains sole advance; recovery refusal, locking, I8 preserved). Tests cover multi-file/multi-PUT batching, partial-pass hold durability, post-ACK flush failure, crash-before-flush replay convergence. Measured: 750-cursor/8-dirty benchmark 19.3-20.9ms -> 2.05-2.35ms per pass (87.9-90.2% reduction vs 70% AC); strace shows exactly 1 renameat + 2 fsyncs per pass. Orchestrator re-ran pinned gate uncached from the lane worktree: all packages + check scripts green. Merge pending lane review + hera handoff.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-10 02:45
+---
+AMENDED after cross-family review: new commit 00935f2 on top (reviewed commits not rebased). Review Finding 1: owner observations are not replay-reconstructible (ephemeral process state; a quiescent file never re-carries the owner header), so pass-batching their durability opened a crash window the old immediate Put lacked. Fix: correlation stanza extracted verbatim; a pass recording at least one changed owner triggers exactly one immediate registry flush after the stanza (flush clears dirty, so endBatch cannot double-replace; a flush failure stays dirty, surfaces, and the endBatch defer retries). Crash test proves owners survive process death without endBatch. Reviewer confirmed closed, no new hazards. Honest AC1 nuance (reviewer-flagged): a pass with new owners AND byte ACKs performs two durable replacements, so at-most-one-per-pass is conditional on no new-owner observation — new owners are rare; re-measured batching win 87.6% intact. Review observations accepted without change: flush+hold co-occurrence logs at Warn; backoff now floors all admissions (up to 30s recovery latency, deliberate); startup double-pass benign; empty /proc scan cached <=10s. Orchestrator gate re-run on amended lane: green.
+---
+<!-- COMMENTS:END -->
