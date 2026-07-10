@@ -1,11 +1,11 @@
 ---
 id: TASK-062
 title: spawn orphans the pane when the registry write refuses (cull-on-write-refusal)
-status: In Progress
+status: Done
 assignee:
   - hera
 created_date: '2026-07-08 07:13'
-updated_date: '2026-07-10 10:12'
+updated_date: '2026-07-10 11:04'
 labels: []
 dependencies: []
 ordinal: 62000
@@ -19,9 +19,9 @@ spawncmd launches the pane BEFORE the registry write; if UpdateLocked refuses (f
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 registry-write refusal after pane launch no longer orphans the pane: either best-effort cull with both errors reported, or claim-before-launch — one chosen, rationale in the DONE report
-- [ ] #2 spawn exits non-zero on registry-write refusal
-- [ ] #3 suite covers the refusal path (no orphan pane, no phantom row)
+- [x] #1 registry-write refusal after pane launch no longer orphans the pane: either best-effort cull with both errors reported, or claim-before-launch — one chosen, rationale in the DONE report
+- [x] #2 spawn exits non-zero on registry-write refusal
+- [x] #3 suite covers the refusal path (no orphan pane, no phantom row)
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -30,4 +30,6 @@ spawncmd launches the pane BEFORE the registry write; if UpdateLocked refuses (f
 From A2 adversarial review LOW-3 (#7705): spawncmd launches the pane (spawn.go:791) BEFORE the registry write; if UpdateLocked refuses (flock refusal, label collision) spawn dies at :953 leaving an orphan pane with no registry row. Pre-existing pattern (old appendLine also died post-launch) but A2's lock-refusal path widens when it fires. Proposal: on registry-write refusal after pane launch, cull the just-launched pane before dying (best-effort, report both errors), or claim the label/row BEFORE launching and enrich after. Related: A2 also made cull return command failure on write refusal instead of silent success — spawn should get the same discipline.
 
 Riding the lifecycle unit (@worker-vanu): pane teardown on registry write refusal, confirmed not assumed.
+
+Shipped in merge 7cfa20b (branch task-124-lifecycle-placement, commits 158e6a7+371144a). Chosen direction: teardown-on-refusal with CONFIRMED close (shared internal/panecleanup.CloseConfirmed), not claim-before-launch — rationale in DONE report. Spawn exits non-zero surfacing the refusal; suite covers refusal path incl. terminal-identity refusal cases. Opus adversarial review: round-1 findings fixed, delta APPROVE. Independent gate + post-merge gate 52/52 green.
 <!-- SECTION:NOTES:END -->

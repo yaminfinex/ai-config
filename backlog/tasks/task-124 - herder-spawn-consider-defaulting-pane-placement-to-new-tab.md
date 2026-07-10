@@ -1,10 +1,10 @@
 ---
 id: TASK-124
 title: 'herder spawn: consider defaulting pane placement to new tab'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 12:43'
-updated_date: '2026-07-10 10:12'
+updated_date: '2026-07-10 11:04'
 labels: []
 dependencies: []
 priority: medium
@@ -60,4 +60,6 @@ not hard. Concretely:
 Scope addendum (2026-07-10, live instance): herder RESUME has the same placement gap — resuming a culled session reopens its pane in the invoker's current tab (task-138 worker reopened into the orchestrator tab; owner had to ask for a move). Whatever default/flag lands for spawn placement must apply to resume (and fork) identically — treat every pane-creating lifecycle verb as a spawn for placement purposes.
 
 Dispatched 2026-07-10 with TASK-130 + TASK-062 as one lifecycle unit (@worker-vanu, 5.6-high, branch task-124-lifecycle-placement), brief napkins/run-herder-dx/task-124-130-062-brief.md. Settled: --new-tab default for non-worktree pane-creating verbs, workspace targeting flag, resume follows spawn rules.
+
+Shipped in merge 7cfa20b (158e6a7+371144a). ACs verified manually — body-prose ACs, no CLI AC fields. New-tab is now the DEFAULT for every non-worktree pane-creating verb (spawn --cwd, resume, fork); --split right|down opts into same-tab; --worktree unchanged (still hard-errors with tab flags); first-class --workspace targeting lands panes in a named workspace; resume/fork prefer the target recorded live workspace. Help text, README, spawn-patterns docs, and launch-contract goldens updated (AC3 chosen-direction branch). AC1 race repro superseded: owner addendum settled the direction, so the same-tab split race is avoided by default and --split is explicit opt-in. Opus review round 1 fixed + delta APPROVE; independent + post-merge gates 52/52 green.
 <!-- SECTION:NOTES:END -->

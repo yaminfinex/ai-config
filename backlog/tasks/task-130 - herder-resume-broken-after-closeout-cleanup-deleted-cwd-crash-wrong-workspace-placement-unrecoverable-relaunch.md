@@ -3,10 +3,10 @@ id: TASK-130
 title: >-
   herder resume: broken after closeout cleanup (deleted-cwd crash,
   wrong-workspace placement, unrecoverable relaunch)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 23:07'
-updated_date: '2026-07-10 10:12'
+updated_date: '2026-07-10 11:04'
 labels: []
 dependencies: []
 priority: medium
@@ -58,4 +58,6 @@ lifecycle-bind failure message includes the pane exit context.
 
 <!-- SECTION:NOTES:BEGIN -->
 Riding the lifecycle unit (@worker-vanu): resume cwd preflight + settle-window diagnostics.
+
+Shipped in merge 7cfa20b (158e6a7+371144a). ACs verified manually — body-prose ACs, no CLI AC fields. AC1/AC2-prime: resume preflights the recorded cwd and refuses BEFORE any pane launch with typed [cwd_unavailable] naming path + remedy (--cwd or recreate worktree); golden missing_cwd proves refusal with zero pane created. AC3-prime: settle-window/launch failures now carry diagnostics (mode/agent/label/cwd/workspace/pane/settle/exit context) instead of bare "launch failed before lifecycle bind". Placement note folded into the TASK-124 workspace-affinity work per the amendment. Opus review + delta APPROVE; gates 52/52 green.
 <!-- SECTION:NOTES:END -->
