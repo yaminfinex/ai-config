@@ -62,8 +62,8 @@ func (s *Shipper) Run(ctx context.Context) error {
 	}
 
 	attempt := 0
+	admission := newHintAdmission(s.minHintInterval())
 	for {
-		passStarted := time.Now()
 		err := s.RunOnce(ctx)
 		switch {
 		case err == nil:
@@ -71,6 +71,7 @@ func (s *Shipper) Run(ctx context.Context) error {
 		case errors.Is(err, errHold):
 			attempt++
 			s.logger().Warn("holding position; store not accepting", "attempt", attempt, "err", err)
+			admission.HoldUntil(time.Now().Add(s.backoff(attempt)))
 		default:
 			// Non-hold errors are surfaced but never kill the daemon: files
 			// are the interface and the next pass retries what it can.
@@ -78,46 +79,13 @@ func (s *Shipper) Run(ctx context.Context) error {
 			s.logger().Error("pass error", "err", err)
 		}
 
-		var delay <-chan time.Time
-		if attempt > 0 {
-			delay = time.After(s.backoff(attempt))
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
+		if err := waitForAdmission(ctx, ticker.C, wake, admission, func() {
 			if watcher != nil {
 				s.watchDirs(watcher)
 			}
-		case <-wake:
-			// Debounce the hint so one save burst is one pass.
-			if err := waitUntil(ctx, time.Now().Add(200*time.Millisecond)); err != nil {
-				return err
-			}
-			// Continuous transcript appends keep wake pending. Admit at most
-			// one authoritative pass per interval instead of running at the
-			// debounce ceiling forever.
-			if err := waitUntil(ctx, passStarted.Add(s.minHintInterval())); err != nil {
-				return err
-			}
-		case <-delay:
+		}); err != nil {
+			return err
 		}
-	}
-}
-
-func waitUntil(ctx context.Context, deadline time.Time) error {
-	d := time.Until(deadline)
-	if d <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
 	}
 }
 
