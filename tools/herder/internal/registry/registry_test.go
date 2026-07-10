@@ -338,14 +338,17 @@ func TestLockedWriteRefusesLegacyV1AppendToMintedRegistry(t *testing.T) {
 	before := mustReadFile(t, path)
 
 	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
-		return []v2.SessionRecord{{
-			GUID:     "guid-poison",
-			Event:    "legacy_v1_mapped",
-			State:    v2.StateUnseated,
-			Label:    "poison",
-			Tool:     "claude",
-			LegacyV1: true,
-		}}, nil
+		return []v2.SessionRecord{
+			{GUID: "guid-healthy-2", Label: "healthy-2", State: v2.StateSeated},
+			{
+				GUID:     "guid-poison",
+				Event:    "legacy_v1_mapped",
+				State:    v2.StateUnseated,
+				Label:    "poison",
+				Tool:     "claude",
+				LegacyV1: true,
+			},
+		}, nil
 	})
 	var legacyErr *LegacyV1AppendError
 	if !errors.As(err, &legacyErr) || legacyErr.GUID != "guid-poison" {
