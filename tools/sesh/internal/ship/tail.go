@@ -36,10 +36,23 @@ type Shipper struct {
 	// the result is honest absence and never retracts a recorded owner (I8).
 	Correlate func([]Discovered) map[string]string
 
+	// hintInterval is the minimum interval between authoritative passes
+	// admitted by filesystem hints. Tests shorten it; zero uses the default.
+	hintInterval time.Duration
+
 	// held parks identities that hit a non-retryable error
 	// (malformed_request, unknown_tool) until the process restarts: no retry
 	// loop, surfaced loudly instead.
 	held map[string]string
+}
+
+const defaultHintInterval = 2 * time.Second
+
+func (s *Shipper) minHintInterval() time.Duration {
+	if s.hintInterval > 0 {
+		return s.hintInterval
+	}
+	return defaultHintInterval
 }
 
 // errHold marks a hold-position condition (store unreachable/unavailable,

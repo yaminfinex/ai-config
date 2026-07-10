@@ -63,6 +63,7 @@ func (s *Shipper) Run(ctx context.Context) error {
 
 	attempt := 0
 	for {
+		passStarted := time.Now()
 		err := s.RunOnce(ctx)
 		switch {
 		case err == nil:
@@ -86,23 +87,43 @@ func (s *Shipper) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			if watcher != nil {
+				s.watchDirs(watcher)
+			}
 		case <-wake:
 			// Debounce the hint so one save burst is one pass.
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(200 * time.Millisecond):
+			if err := waitUntil(ctx, time.Now().Add(200*time.Millisecond)); err != nil {
+				return err
+			}
+			// Continuous transcript appends keep wake pending. Admit at most
+			// one authoritative pass per interval instead of running at the
+			// debounce ceiling forever.
+			if err := waitUntil(ctx, passStarted.Add(s.minHintInterval())); err != nil {
+				return err
 			}
 		case <-delay:
-		}
-		if watcher != nil {
-			s.watchDirs(watcher) // pick up directories created since last pass
 		}
 	}
 }
 
-// watchDirs (re-)registers every directory under both roots. Adding an
-// already-watched directory is a cheap no-op in fsnotify.
+func waitUntil(ctx context.Context, deadline time.Time) error {
+	d := time.Until(deadline)
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// watchDirs (re-)registers every directory under both roots. It runs when the
+// watcher is armed and on periodic rescans. Create events add new directories
+// between rescans without making every hint re-walk both trees.
 func (s *Shipper) watchDirs(w *fsnotify.Watcher) {
 	for _, root := range []string{s.Roots.Claude, s.Roots.Codex} {
 		resolved, err := filepath.EvalSymlinks(root)

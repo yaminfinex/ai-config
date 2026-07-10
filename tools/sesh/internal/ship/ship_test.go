@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -592,6 +593,66 @@ func TestRunDaemonShipsNewFileOnHint(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil && !strings.Contains(err.Error(), "context canceled") {
 		t.Fatalf("daemon exit: %v", err)
+	}
+}
+
+func TestRunDaemonBoundsPassesDuringContinuousWrites(t *testing.T) {
+	h := newHarness(t)
+	h.shipper.Rescan = 30 * time.Second
+	h.shipper.hintInterval = 250 * time.Millisecond
+	os.MkdirAll(filepath.Join(h.roots.Claude, "-p"), 0o755)
+	os.MkdirAll(h.roots.Codex, 0o755)
+	h.writeClaude("-p", uuidNormal, fixture(t, "claude-normal.jsonl"))
+
+	var mu sync.Mutex
+	var passes []time.Time
+	ready := make(chan struct{})
+	h.shipper.Correlate = func([]Discovered) map[string]string {
+		mu.Lock()
+		passes = append(passes, time.Now())
+		if len(passes) == 1 {
+			close(ready)
+		}
+		mu.Unlock()
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- h.shipper.Run(ctx) }()
+	<-ready
+
+	path := filepath.Join(h.roots.Claude, "-p", uuidNormal+".jsonl")
+	deadline := time.Now().Add(900 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("\n"); err != nil {
+			f.Close()
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil && !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("daemon exit: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(passes) < 3 || len(passes) > 6 {
+		t.Fatalf("authoritative passes during continuous writes = %d, want 3..6", len(passes))
+	}
+	for i := 1; i < len(passes); i++ {
+		if elapsed := passes[i].Sub(passes[i-1]); elapsed < 225*time.Millisecond {
+			t.Fatalf("passes %d and %d started %s apart, want at least 225ms", i-1, i, elapsed)
+		}
 	}
 }
 
