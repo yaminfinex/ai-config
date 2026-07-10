@@ -3,9 +3,10 @@ id: TASK-082
 title: >-
   herder compact: require explicit continuation intent — --then <continuation>
   or --stop; bare compact refuses
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-08 23:45'
+updated_date: '2026-07-10 21:20'
 labels: []
 dependencies: []
 priority: medium
@@ -30,3 +31,9 @@ Notes: (1) --then is claude-only today and codex is refused entirely — the bar
 - [ ] #4 help text documents the required choice and the reason (post-compact dormancy)
 - [ ] #5 contract suite covers the refusal, --stop, and --then acceptance paths
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Dispatched 2026-07-10 bundled with TASK-061 (worker kore, branch task-082-061-cli-dx, gpt-5.6-sol), brief napkins/run-herder-dx/task-082-061-brief.md.
+<!-- SECTION:NOTES:END -->
