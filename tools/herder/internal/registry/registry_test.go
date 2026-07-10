@@ -941,6 +941,13 @@ func TestLockedValidatorMigratesLegacyActiveDormantOnRename(t *testing.T) {
 func TestLegacyV1MigrationArchivesAndReseeds(t *testing.T) {
 	path := copyRegistryFixture(t, "v1-real-shape.jsonl")
 	original := mustReadFile(t, path)
+	before := loadProjection(t, path)
+	if len(before.Nodes()) != 0 {
+		t.Fatalf("genuine v1 fixture has v2 node rows: %+v", before.Nodes())
+	}
+	if _, err := os.Stat(mustMigrationArchivePath(t, path)); !os.IsNotExist(err) {
+		t.Fatalf("genuine v1 fixture has a prior migration archive: %v", err)
+	}
 	seenMigrated := false
 	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
 		if current := V2ByGUID(tx.Projection, "2447b0e6-5004-4aca-84cd-08d7798dad52"); current == nil || current.LegacyV1 || current.State != v2.StateUnseated {
@@ -1003,7 +1010,7 @@ func TestLegacyV1MigrationTwiceIsByteStable(t *testing.T) {
 	}
 }
 
-func TestLegacyV1MigrationHandlesMixedFile(t *testing.T) {
+func TestLegacyV1MigrationHandlesMixedFileWithVerifiedArchive(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "registry.jsonl")
 	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
@@ -1015,6 +1022,13 @@ func TestLegacyV1MigrationHandlesMixedFile(t *testing.T) {
 		`{"guid":"guid-legacy","short_guid":"legacy","label":"legacy","role":"worker","agent":"claude","terminal_id":"term_old","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"legacy-bus","status":"active"}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archive := mustMigrationArchivePath(t, path)
+	if err := os.MkdirAll(filepath.Dir(archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, []byte(original), 0o444); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {

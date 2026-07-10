@@ -52,6 +52,30 @@ func migrationNeeded(path string, proj *v2.Projection) bool {
 	return migrationPartialLive(proj, expected)
 }
 
+func refuseFirstV1MigrationForBornV2(path string, f *os.File, proj *v2.Projection) error {
+	if !projectionHasLegacyV1(proj) || len(proj.Nodes()) == 0 {
+		return nil
+	}
+	archive, err := migrationArchivePath(path)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(archive); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if _, _, _, err := ensureLockedNode(path, f, proj); err != nil {
+		return err
+	}
+	for _, rec := range proj.Sessions() {
+		if rec.LegacyV1 {
+			return &LegacyV1AppendError{GUID: rec.GUID}
+		}
+	}
+	return nil
+}
+
 func ensureMigrationNode(path string, proj *v2.Projection) (string, []byte, error) {
 	markerPath := NodeMarkerPath(path)
 	marker, markerPresent, err := readNodeMarker(markerPath)
