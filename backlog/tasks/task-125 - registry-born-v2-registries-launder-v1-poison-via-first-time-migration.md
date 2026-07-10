@@ -1,10 +1,10 @@
 ---
 id: TASK-125
 title: 'registry: born-v2 registries launder v1 poison via first-time migration'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 12:54'
-updated_date: '2026-07-10 01:48'
+updated_date: '2026-07-10 02:13'
 labels: []
 dependencies: []
 priority: high
@@ -30,14 +30,16 @@ Migration should distinguish "registry was born v2 / already fully migrated" (e.
 4. Full house gate green.
 <!-- SECTION:DESCRIPTION:END -->
 
-- [ ] #1 Repro encoded as failing test first: born-v2 registry + injected raw v1 row causes next UpdateLocked to refuse, not launder
-- [ ] #2 Legit first-time migration of a genuine v1 registry still works (existing migration suite green)
-- [ ] #3 Refusal message names cause + remedy (excision), consistent with existing refusal wording rules
-- [ ] #4 Full house gate green
+- [x] #1 Repro encoded as failing test first: born-v2 registry + injected raw v1 row causes next UpdateLocked to refuse, not launder
+- [x] #2 Legit first-time migration of a genuine v1 registry still works (existing migration suite green)
+- [x] #3 Refusal message names cause + remedy (excision), consistent with existing refusal wording rules
+- [x] #4 Full house gate green
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Dispatched 2026-07-10 to gpt-5.6-sol high-reasoning worker (@worker-nuvo, branch task-125-born-v2-poison), brief napkins/run-herder-dx/task-125-brief.md; failing-test-first ordering required.
+
+Done 2026-07-10, merged --no-ff to main. Red-before-green proven: repro test committed first (be8419b, fails pre-fix with err=nil + poison adopted), fix second (f6fc2f2, typed LegacyV1AppendError before callback/archive mutation). Adversarial review (opus): APPROVE — laundering reproduced end-to-end on reverted code (archive minted from poisoned bytes, poison reseeded as trusted migrated_v1), refusal path asserted precisely (typed error, callback not run, no archive, live file byte-unchanged); boundary edges hold (genuine v1 migrates, matching-archive recovery allowed, non-matching fails closed downstream, corrupted-v2 not misclassified, node-gate precedence kept). Mid-batch non-atomic refusal explicitly untouched — remains the separate batch-atomicity task. Informational hardening spun off: archive-content validation (reject archives containing legacyV1 rows).
 <!-- SECTION:NOTES:END -->
