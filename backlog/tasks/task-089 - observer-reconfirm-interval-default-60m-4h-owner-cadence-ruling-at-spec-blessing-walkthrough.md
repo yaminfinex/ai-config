@@ -3,9 +3,10 @@ id: TASK-089
 title: >-
   observer: reconfirm interval default 60m -> 4h (owner cadence ruling at spec
   blessing walkthrough)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-09 04:15'
+updated_date: '2026-07-10 21:19'
 labels: []
 dependencies: []
 priority: low
@@ -28,3 +29,9 @@ Tiny, bundle-eligible into any observer-adjacent unit.
 - [ ] #2 the override mechanism is verified working and documented in observer help output
 - [ ] #3 gate green: go vet+test both modules, all check suites
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+CLOSED by owner re-ruling (2026-07-10, chat): "1h is fine" — the current time.Hour default STAYS; the 60m→4h change is dropped. Basis: the 16h observer bake appended ZERO reconfirm rows to the registry (confirmations ride the status file), so the row-volume concern behind the original 4h ruling proved empty. No code change; ACs moot. (ACs verified manually as moot — task closed without implementation by design.)
+<!-- SECTION:NOTES:END -->

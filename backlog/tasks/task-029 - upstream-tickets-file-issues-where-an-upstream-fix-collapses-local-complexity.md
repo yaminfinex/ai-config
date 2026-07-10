@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-10 01:42'
+updated_date: '2026-07-10 21:19'
 labels:
   - run-herder-dx
 dependencies: []
@@ -46,6 +46,8 @@ Upstream candidate (from the plain-truncation investigation, 2026-07-10) — Bac
 TITLE: task create accepts nested structured-section markers, then --plain silently omits description content
 
 BODY: Backlog.md 1.47.1 accepts reserved structured-section markers inside --description, wraps that input in a second Description marker pair, and later parses only through the first end marker. task view --plain silently omits the remaining description content and emits no warning. Repro in a throwaway board: create a task whose description contains its own SECTION:DESCRIPTION:BEGIN/END pair followed by more text; the raw file then has two begin and two end markers; --plain renders only the inner pair content and advances to Acceptance Criteria without any truncation or malformed-section warning. This is not an output-length cap: clean 20k-character Description/AC/Notes/Comment fixtures render in full. Expected: creation/editing should reject or escape reserved markers in section bodies, or parsing should detect duplicate/nested markers and warn/fail — never silently omit raw task content.
+
+OWNER (2026-07-10, chat): HOLD the filing batch — do not commission the verdict/drafting pass yet. Ledger stays open for closeout appends; nested-marker Backlog.md draft remains ready-to-paste in notes.
 <!-- SECTION:NOTES:END -->
 
 ## Comments

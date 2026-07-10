@@ -1,10 +1,10 @@
 ---
 id: TASK-146
 title: 'observer: bake review + autostart decision (closure task)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-10 01:50'
-updated_date: '2026-07-10 01:51'
+updated_date: '2026-07-10 21:19'
 labels: []
 dependencies: []
 priority: high
@@ -20,7 +20,7 @@ The observer daemon has been baking since 2026-07-09T09:42Z (manual instance, pi
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Bake evidence assembled for all four watch items with numbers from the live state dir
-- [ ] #2 Owner ruling recorded: autostart ON (with chosen cadence) or parked with reason
+- [x] #2 Owner ruling recorded: autostart ON (with chosen cadence) or parked with reason
 - [ ] #3 If ON: autostart default flipped + docs updated; if parked: standing orders updated
 <!-- AC:END -->
 
@@ -34,4 +34,6 @@ Bake evidence (assembled 2026-07-10, ~16h into bake, pid 2876552, same pid throu
 (4) Reconfirmation row volume: zero observer rows appended to the registry during the entire bake; confirmations ride the status file. Volume concern currently empty at the 60m cadence.
 (5) False dormant-live/turnover: zero flags across ~11 sessions cycling through the fleet in 16h; no live session misflagged.
 Honest gap: the interesting write paths (corroborate-dead, dormant flagging, reconnect/generation across a herdr restart) were never triggered because the fleet stayed healthy — the bake proves safety and fail-closed posture, not positive-path breadth. Ruling options: flip autostart ON on safety evidence, or extend bake with a synthetic exercise (kill an agent process without cull; restart herdr) to see the positive paths fire once.
+
+OWNER RULING (2026-07-10, chat): synthetic exercise FIRST, then autostart ON. Exercise = (a) kill an agent process without cull, watch corroborate-dead/dormant flagging fire correctly; (b) one herdr restart, watch reconnect/generation behavior. Cadence ruled in the same session: current 1h reconfirm interval stays (TASK-089 closed — bake showed zero reconfirm rows, volume concern empty). hera runs the exercise; autostart flips ON on a clean pass.
 <!-- SECTION:NOTES:END -->

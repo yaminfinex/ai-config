@@ -3,10 +3,10 @@ id: TASK-038
 title: >-
   claude context: trim compound-engineering plugin footprint while keeping
   upstream updates
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 02:42'
-updated_date: '2026-07-08 23:42'
+updated_date: '2026-07-10 21:19'
 labels: []
 dependencies: []
 priority: low
@@ -25,3 +25,9 @@ The plugin ships ~20 model-visible skills (~1k tokens of catalogue descriptions 
 - [ ] #2 If build: unused ce-* skills no longer appear in the model-visible catalogue while ce-plan, ce-doc-review, ce-brainstorm, ce-commit-push-pr keep working and upstream updates remain consumable
 - [ ] #3 Before/after context measurement recorded in docs/claude-context-trim.md
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+ABANDONED by owner ruling (2026-07-10, chat): none of the four directions pursued — the fork and sync-script both create permanent maintenance surface to save ~1k tokens/request, and upstream per-skill disable may land on its own. Measurements remain in docs/claude-context-trim.md if this is ever revisited. Closed without implementation by design.
+<!-- SECTION:NOTES:END -->

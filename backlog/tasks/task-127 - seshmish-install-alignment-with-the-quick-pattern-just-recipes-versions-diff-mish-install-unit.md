@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-09 20:14'
+updated_date: '2026-07-10 21:19'
 labels: []
 dependencies: []
 priority: medium
@@ -45,3 +46,9 @@ mish (tools/mish): NO install tier by design — README states install/packaging
 
 sesh/mish orchestrator lanes are closed; this is a hera-lane task. The sesh service is live-deployable — any change to install-ship.sh or units must preserve rollout compatibility for already-installed nodes (drop-in preservation covers config; binary path changes would need a migration note).
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+INSTALL-LOCATION RULING (2026-07-10; owner delegated the pick to hera with "least user-hostile, most aligned"): GOBIN. Rationale: (1) no sudo on any install/upgrade — /usr/local/bin makes every `just install` a root operation; (2) exact parity with the quick reference pattern (`go install` → GOBIN) this task exists to copy; (3) coherence — sesh runs as a systemd --user service, and a user-owned binary path matches a user-level service (root-owned binary under a user unit is the mismatch). No migration concern: single machine, nothing deployed elsewhere. Implementation note: the sesh unit keeps a pinned ABSOLUTE ExecStart — the installer renders the absolute GOBIN path into the unit at install time (keeps the no-repo-path-coupling gate honest). mive dispatches (sesh lane, per standing order 12.4).
+<!-- SECTION:NOTES:END -->
