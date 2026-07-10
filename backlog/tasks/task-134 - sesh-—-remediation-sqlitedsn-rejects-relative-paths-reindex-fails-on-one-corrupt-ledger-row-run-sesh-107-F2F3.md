@@ -7,7 +7,7 @@ status: Done
 assignee:
   - sesh107-remF23-zamu
 created_date: '2026-07-09 23:53'
-updated_date: '2026-07-09 23:59'
+updated_date: '2026-07-10 00:00'
 labels:
   - run-sesh-107
 dependencies: []
@@ -39,3 +39,12 @@ Settled decisions: minimal contained fixes at the named sites, no refactors, no 
 <!-- SECTION:NOTES:BEGIN -->
 Landed as 45c16a6 (worker sesh107-remF23-zamu, verified by mive: independent uncached gate green, diff reviewed). filepath.Abs before URI construction restores relative-path support with one escaping path; quarantineObservedTimes skips malformed observed_at rows (DB/scan errors still fail) so Reindex tolerates corrupt disposable data. Reviewer re-verification against original repros requested.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-10 00:00
+---
+Reviewer re-verification (sesh107-review #34669): both findings FIXED CONFIRMED against the original repros on 45c16a6; no regressions; Abs additionally removes a latent relative-path/cwd hazard on pooled connections.
+---
+<!-- COMMENTS:END -->
