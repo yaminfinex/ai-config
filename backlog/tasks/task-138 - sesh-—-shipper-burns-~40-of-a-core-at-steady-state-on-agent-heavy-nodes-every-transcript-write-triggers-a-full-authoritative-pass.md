@@ -3,9 +3,10 @@ id: TASK-138
 title: >-
   sesh — shipper burns ~40% of a core at steady state on agent-heavy nodes:
   every transcript write triggers a full authoritative pass
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-10 01:00'
+updated_date: '2026-07-10 01:07'
 labels:
   - sesh
 dependencies: []
