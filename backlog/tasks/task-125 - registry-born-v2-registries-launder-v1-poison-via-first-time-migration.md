@@ -4,6 +4,7 @@ title: 'registry: born-v2 registries launder v1 poison via first-time migration'
 status: To Do
 assignee: []
 created_date: '2026-07-09 12:54'
+updated_date: '2026-07-10 01:47'
 labels: []
 dependencies: []
 priority: high
@@ -21,10 +22,16 @@ Empirically demonstrated: on a minted v2 registry with NO 0001-v1-migration arch
 
 Migration should distinguish "registry was born v2 / already fully migrated" (e.g. v2 node rows present + no prior migration marker) and refuse to run first-time v1 migration on it — typed refusal naming the old-binary cause, consistent with the TASK-084 error surface.
 
-## Acceptance criteria
-
+## Acceptance Criteria
+<!-- AC:BEGIN -->
 1. Repro from the capture encoded as a failing test first (born-v2 registry + injected raw v1 row → next UpdateLocked must refuse, not launder).
 2. Legit first-time migration of a genuine v1 registry still works (existing migration suite green).
 3. Refusal message names cause + remedy (excision), consistent with TASK-084 wording rules.
 4. Full house gate green.
 <!-- SECTION:DESCRIPTION:END -->
+
+- [ ] #1 Repro encoded as failing test first: born-v2 registry + injected raw v1 row causes next UpdateLocked to refuse, not launder
+- [ ] #2 Legit first-time migration of a genuine v1 registry still works (existing migration suite green)
+- [ ] #3 Refusal message names cause + remedy (excision), consistent with existing refusal wording rules
+- [ ] #4 Full house gate green
+<!-- AC:END -->

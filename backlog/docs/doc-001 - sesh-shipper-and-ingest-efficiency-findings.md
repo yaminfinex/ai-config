@@ -335,3 +335,15 @@ is to keep authority simple and make side effects proportional: one cursor commi
 pass, one `/proc` correlation per short TTL, one SQLite transaction per index event, and
 an immediate first pass after idle. Those changes address the measured dominant costs
 without reopening the backfill/live-tail split that I3 deliberately closed.
+
+## Post-review observation: nested directory creation and watch coverage
+
+Adversarial review of the admission change surfaced a bounded gap worth recording here:
+when a nested directory tree is created in one burst (`mkdir -p` style), fsnotify Create
+events for inner directories can race their registration, leaving the innermost
+directories unwatched until the periodic rescan re-walks the roots (60-second default).
+This is not a defect — the rescan is the designed guarantee for exactly this class of
+miss — but it bounds worst-case discovery latency for brand-new deeply nested session
+directories at one rescan interval. Any future work on hint admission or watch
+registration should preserve that guarantee and may consider re-walking a newly created
+directory's subtree at registration time as a cheap narrowing of the window.
