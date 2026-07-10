@@ -1,13 +1,14 @@
 # Session Service Spec — `sesh`
 
-STATUS: **STANDING CONTRACT — implementation shipped; field rollout not fully verified.**
-The wire/index contract is frozen and the Go implementation conforms under its automated
-suite. Live off-box grant verification, multi-user/macOS rollout, reboot survival, late-node
-backfill, and store-host migration remain open operational gates on the task board.
+STATUS: **DRAFT — awaiting ratification.** Distilled from the ratified Q18–Q20 rulings
+(boundaries v2 §1A/§3), the session-shipping prior-art memo, and the live /proc-correlation
+validation run on this node (2026-07-08). The three launch micro-decisions were settled by
+the owner 2026-07-09 (§10); task-cutting is unblocked.
 
 Related ground truth:
-- `docs/specs/system-boundaries.md` — component shape and identity boundaries
-- `docs/specs/sesh-wire.md` — frozen shipper/store wire and index schema
+- `docs/design/2026-07-09-sessions-missions-boundaries-v2.md` — §1A (shape), §3 (identity)
+- `docs/design/2026-07-09-session-shipping-prior-art.md` — mechanisms adopted, with citations
+- `docs/design/2026-07-08-sessions-missions-boundaries.md` §6b Q18–Q20 — the ruling trail
 
 ---
 

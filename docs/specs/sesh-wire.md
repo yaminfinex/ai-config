@@ -1,8 +1,7 @@
 # sesh Wire and Index Schema
 
-Status: **FROZEN 2026-07-09; implementation conformance verified 2026-07-10.** This is the
-shipper-to-store wire and index contract. Changes listed under Compatibility Rules require
-an amendment here before code lands.
+Status: **FROZEN 2026-07-09.** This is the shipper-to-store wire and index contract. Changes
+listed under Compatibility Rules require an amendment here before code lands.
 
 ## Authority
 

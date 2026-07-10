@@ -5,16 +5,11 @@ round; final rulings recorded in §11/§12; amended same day by owner rulings §
 CLI named `mish`, cross-references on the board's native `references` field). This document
 is the ground truth for missions:
 ubiquitous language, domain model, invariants, expected behaviour, high-level design, and
-acceptance scenarios. It derives from the consolidated boundary record
-(`docs/specs/system-boundaries.md`) and encodes the
+acceptance scenarios. It derives from the boundary grilling record
+(`docs/design/2026-07-08-sessions-missions-boundaries.md` §6b, Q11–Q17) and encodes the
 nested-board verification completed 2026-07-08. Ratified is not frozen: implementation
 surfaces differences against this document as it finds them so requirements can evolve — §12
 is the living decision record.
-
-Implementation conformance was audited 2026-07-10. Two code defects remain tracked on the
-task board: positional help handling currently prevents the valid slug `help`, and context
-resolution does not yet reuse the canonical slug validator. These are implementation bugs,
-not amendments to the mission contract.
 
 ---
 

@@ -4,6 +4,8 @@ This directory separates standing documentation from its source records. Current
 
 Historical implementation plans and design records remain under `plans/` and `design/` while backlog entries or open decisions still depend on their detail. Retire one only after its load-bearing content and references have a named successor.
 
+When a cited record is consolidated, its old path remains only as a one-line pointer to the canonical document.
+
 ## Operating guides and characterizations
 
 - `machine-setup.md`: install and configure this repository on a machine.
@@ -12,7 +14,7 @@ Historical implementation plans and design records remain under `plans/` and `de
 - `status-lines.md`: Claude and Codex status-line setup and data flow.
 - `new-harness-onboarding.md`: reusable harness characterization and integration checklist.
 - `grok-integration-characterization.md`: tested Grok integration and delivery behavior, including the complete delivery-probe evidence.
-- `herder-instruction-injection.md`: launch/resume instruction-delivery characterization and proposed closure.
+- `design/2026-07-10-herder-instruction-injection.md`: launch/resume instruction-delivery characterization and proposed closure.
 
 ## Specifications
 
