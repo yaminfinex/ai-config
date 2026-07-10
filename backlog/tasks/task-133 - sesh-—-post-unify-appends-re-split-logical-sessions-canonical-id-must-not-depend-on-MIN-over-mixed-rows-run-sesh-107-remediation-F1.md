@@ -3,10 +3,11 @@ id: TASK-133
 title: >-
   sesh — post-unify appends re-split logical sessions: canonical id must not
   depend on MIN over mixed rows (run-sesh-107 remediation F1)
-status: In Progress
-assignee: []
+status: Done
+assignee:
+  - sesh107-remF1-lola
 created_date: '2026-07-09 23:53'
-updated_date: '2026-07-09 23:59'
+updated_date: '2026-07-10 00:06'
 labels:
   - run-sesh-107
 dependencies: []
@@ -34,8 +35,14 @@ Settled decisions — do not re-litigate; tension = STOP and report on your unit
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Repro from the description (resume id sorting before original, two-chunk append) yields identical incremental and post-Reindex checksums, one logical session, stable file_ordinal
-- [ ] #2 Equivalence tests extended: post-unify appends, both id orderings, three-file transitive chain — all green
-- [ ] #3 No regression on the scoped-append perf property (benchmark from TASK-131 still flat vs unrelated-file count)
-- [ ] #4 Full pinned gate green uncached (build, vet, go test ./..., all tests/check-*.sh)
+- [x] #1 Repro from the description (resume id sorting before original, two-chunk append) yields identical incremental and post-Reindex checksums, one logical session, stable file_ordinal
+- [x] #2 Equivalence tests extended: post-unify appends, both id orderings, three-file transitive chain — all green
+- [x] #3 No regression on the scoped-append perf property (benchmark from TASK-131 still flat vs unrelated-file count)
+- [x] #4 Full pinned gate green uncached (build, vet, go test ./..., all tests/check-*.sh)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Landed as 3efd24e (worker sesh107-remF1-lola, verified by mive: independent uncached gate green, benchmark re-run flat, diff reviewed). Append rows now inherit the file generation's existing logical session pre-insert, only when exactly one existing logical id differs from the wire id — resumed files stay unified after dedup consumed overlap evidence; normal/parser-break files unchanged (broad rule was tried and rejected: check-s10 caught it). Adversarial equivalence tests added: post-unify appends both id orderings + transitive chain, all asserting checksum parity with Reindex. Reviewer repro re-verification pending.
+<!-- SECTION:NOTES:END -->
