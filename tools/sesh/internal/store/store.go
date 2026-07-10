@@ -14,7 +14,6 @@ import (
 	"io"
 	"log/slog"
 	"mime"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -818,25 +817,6 @@ func (s *Store) poisonFingerprint(ctx context.Context, tool wire.Tool, sessionID
 	}
 	_, err := s.db.ExecContext(ctx, query, args...)
 	return err
-}
-
-// Serve runs the store on a listener. U11 can replace the listener with tsnet.
-func (s *Store) Serve(ctx context.Context, l net.Listener) error {
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- http.Serve(l, s.Handler())
-	}()
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
-		_ = l.Close()
-		err := <-errCh
-		if errors.Is(err, net.ErrClosed) || errors.Is(err, http.ErrServerClosed) {
-			return ctx.Err()
-		}
-		return err
-	}
 }
 
 func (s *Store) writeError(w http.ResponseWriter, code wire.ErrorCode, tool wire.Tool, sessionID, fileUUID string, generation int, highWater int64, action, message string) {

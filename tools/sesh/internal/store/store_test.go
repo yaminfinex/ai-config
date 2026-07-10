@@ -6,10 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -202,28 +200,6 @@ func TestDroppedAppendEventMarksDirtyForReindex(t *testing.T) {
 	}
 	if len(recovery.Generations) != 1 || !recovery.Generations[0].DirtyForReindex {
 		t.Fatalf("recovery after dropped event = %+v", recovery)
-	}
-}
-
-func TestServeReturnsOnContextCancellation(t *testing.T) {
-	st := newTestStore(t, new(bytes.Buffer))
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- st.Serve(ctx, l)
-	}()
-	cancel()
-	select {
-	case err := <-errCh:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("Serve error = %v, want context canceled", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Serve did not return after context cancellation")
 	}
 }
 
