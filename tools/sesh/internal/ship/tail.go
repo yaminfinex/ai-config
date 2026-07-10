@@ -97,7 +97,14 @@ func (s *Shipper) logger() *slog.Logger {
 // recovery GETs when the registry was lost, GC cursors whose files are gone,
 // then ship every discovered file to quiescence. Hold-class conditions come
 // back errHold-wrapped; the pass still visits every other file first.
-func (s *Shipper) RunOnce(ctx context.Context) error {
+func (s *Shipper) RunOnce(ctx context.Context) (runErr error) {
+	s.Registry.beginBatch()
+	defer func() {
+		if err := s.Registry.endBatch(); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("cursor registry batch flush: %w", err))
+		}
+	}()
+
 	discovered, err := Discover(s.Roots)
 	if err != nil {
 		return err
