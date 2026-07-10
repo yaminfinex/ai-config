@@ -23,7 +23,7 @@ import (
 )
 
 type bootPaster struct {
-	Client *herdrcli.Client
+	Client herdrClient
 	Sleep  func(time.Duration)
 
 	// PreflightVisibleOnly restricts the paste preflight to the VISIBLE screen
@@ -36,7 +36,7 @@ type bootPaster struct {
 	PreflightVisibleOnly bool
 }
 
-func (b *bootPaster) client() *herdrcli.Client {
+func (b *bootPaster) client() herdrClient {
 	if b != nil && b.Client != nil {
 		return b.Client
 	}

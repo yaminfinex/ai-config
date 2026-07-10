@@ -17,6 +17,8 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/hookcmd"
 	"ai-config/tools/herder/internal/observercmd"
+	"ai-config/tools/herder/internal/panecleanup"
+	"ai-config/tools/herder/internal/placement"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/send"
@@ -24,20 +26,29 @@ import (
 )
 
 type forkOptions struct {
-	help   bool
-	json   bool
-	self   bool
-	label  string
-	role   string
-	prompt string
-	split  string
-	target string
+	help          bool
+	json          bool
+	self          bool
+	label         string
+	role          string
+	prompt        string
+	split         string
+	splitExplicit bool
+	newTab        bool
+	workspace     string
+	cwd           string
+	target        string
 }
 
 type resumeOptions struct {
-	help   bool
-	json   bool
-	target string
+	help          bool
+	json          bool
+	split         string
+	splitExplicit bool
+	newTab        bool
+	workspace     string
+	cwd           string
+	target        string
 }
 
 func RunFork(args []string, stdout, stderr io.Writer) int {
@@ -78,18 +89,81 @@ func (r *runner) client() herdrClient {
 	return &herdrcli.Client{}
 }
 
+type cwdUnavailableError struct {
+	mode  string
+	path  string
+	cause string
+}
+
+func (e *cwdUnavailableError) Error() string {
+	return fmt.Sprintf("[cwd_unavailable] cannot %s from working directory %s: %s; pass --cwd <existing-directory>, or recreate the removed worktree", e.mode, e.path, e.cause)
+}
+
+func preflightCWD(mode, cwd string) error {
+	info, err := os.Stat(cwd)
+	if err != nil {
+		return &cwdUnavailableError{mode: mode, path: cwd, cause: err.Error()}
+	}
+	if !info.IsDir() {
+		return &cwdUnavailableError{mode: mode, path: cwd, cause: "path is not a directory"}
+	}
+	return nil
+}
+
+func placementDecision(split string, splitExplicit, newTab bool) (placement.Decision, error) {
+	return placement.Resolve(placement.Flags{
+		Split:         split,
+		SplitExplicit: splitExplicit,
+		NewTab:        newTab,
+	})
+}
+
+// resolveWorkspace prefers an explicit target, then a still-live recorded
+// workspace, then the caller's own pane. It never falls through to whichever
+// unrelated workspace happens to have UI focus.
+func (r *runner) resolveWorkspace(requested, recorded string) (string, error) {
+	out, rc, runErr := r.client().Combined("workspace", "list")
+	live := map[string]bool{}
+	if runErr == nil && rc == 0 {
+		if workspaces, err := herdrcli.ParseWorkspaceList(out); err == nil {
+			for _, ws := range workspaces {
+				live[ws.WorkspaceID] = true
+			}
+		}
+	}
+	if requested != "" {
+		if !live[requested] {
+			return "", fmt.Errorf("workspace %s is not live; run 'herdr workspace list' and pass a current --workspace id", requested)
+		}
+		return requested, nil
+	}
+	if recorded != "" && live[recorded] {
+		return recorded, nil
+	}
+	if paneID := os.Getenv("HERDR_PANE_ID"); paneID != "" {
+		paneOut, paneRC, paneErr := r.client().Combined("pane", "get", paneID)
+		if paneErr == nil && paneRC == 0 {
+			if pane, err := herdrcli.ParsePaneGet(paneOut); err == nil {
+				return pane.WorkspaceID, nil
+			}
+		}
+	}
+	return "", nil
+}
+
 func (r *runner) fork(opts forkOptions) int {
 	if code := requireTools(r.stderr); code != 0 {
 		return code
 	}
-	if opts.split != "" {
-		os.Setenv("HERDER_LIFECYCLE_SPLIT", opts.split)
+	place, err := placementDecision(opts.split, opts.splitExplicit, opts.newTab)
+	if err != nil {
+		die(r.stderr, err.Error())
+		return 1
 	}
 	recs, registryPath, code := loadRegistry(r.stderr)
 	if code != 0 {
 		return code
 	}
-	var err error
 	recs, parent, err := resolveTargetWithArchiveFallback(recs, registryPath, opts.target)
 	if err != nil {
 		die(r.stderr, err.Error())
@@ -134,10 +208,20 @@ func (r *runner) fork(opts forkOptions) int {
 		return 1
 	}
 	role := firstNonEmpty(opts.role, parent.Role, "worker")
+	cwd := firstNonEmpty(opts.cwd, os.Getenv("HERDER_LIFECYCLE_CWD"), currentCWD())
+	recordedWorkspace := ""
+	if parent.Provenance != nil {
+		recordedWorkspace = parent.Provenance.WorkspaceID
+	}
+	workspace, err := r.resolveWorkspace(opts.workspace, recordedWorkspace)
+	if err != nil {
+		die(r.stderr, err.Error())
+		return 1
+	}
 	// spawned_by is the session that RAN this fork ($HERDER_GUID, matching the
 	// HERDER_SPAWNED_BY that startAndAppend exports into the child's pane); the
 	// forker's own spawner stays reachable transitively via the forker's row.
-	prov := registry.BuildProvenance("fork", firstNonEmpty(os.Getenv("HERDER_GUID"), "user"), role, currentCWD(), "")
+	prov := registry.BuildProvenance("fork", firstNonEmpty(os.Getenv("HERDER_GUID"), "user"), role, cwd, workspace)
 	prov.ForkedFrom = parentGUID
 
 	row, code := r.startAndAppend(startSpec{
@@ -154,6 +238,10 @@ func (r *runner) fork(opts forkOptions) int {
 		RegistryPath:  registryPath,
 		BaseRaw:       []byte(`{}`),
 		Provenance:    prov,
+		CWD:           cwd,
+		Workspace:     workspace,
+		Split:         place.Split,
+		NewTab:        place.NewTab,
 	})
 	if code != 0 {
 		return code
@@ -217,15 +305,18 @@ func (r *runner) forkSelf(opts forkOptions) int {
 	// birth and carries provenance.forked_from. Codex and unregistered claude
 	// sessions have no native fork; they fall back to a raw tool fork through spawn.
 	if agent == "claude" && nativeGUID != "" {
-		os.Setenv("HERDER_LIFECYCLE_CWD", cwd)
 		os.Setenv("HERDER_LIFECYCLE_FOCUS", "--no-focus")
 		return r.fork(forkOptions{
-			target: nativeGUID,
-			label:  opts.label,
-			role:   opts.role,
-			prompt: opts.prompt,
-			split:  firstNonEmpty(opts.split, "right"),
-			json:   opts.json,
+			target:        nativeGUID,
+			label:         opts.label,
+			role:          opts.role,
+			prompt:        opts.prompt,
+			split:         opts.split,
+			splitExplicit: opts.splitExplicit,
+			newTab:        opts.newTab,
+			workspace:     opts.workspace,
+			cwd:           firstNonEmpty(opts.cwd, cwd),
+			json:          opts.json,
 		})
 	}
 	return r.forkSelfFallback(opts, agent, paneEnvID, cwd, sessionID)
@@ -235,7 +326,6 @@ func (r *runner) forkSelf(opts forkOptions) int {
 // fresh pane: claude via `--resume <session> --fork-session`, codex via
 // `fork <session>` (or `fork --last`).
 func (r *runner) forkSelfFallback(opts forkOptions, agent, paneEnvID, cwd, sessionID string) int {
-	split := firstNonEmpty(opts.split, "right")
 	role := firstNonEmpty(opts.role, "fork-"+agent)
 	var agentArgs []string
 	switch agent {
@@ -267,7 +357,17 @@ func (r *runner) forkSelfFallback(opts forkOptions, agent, paneEnvID, cwd, sessi
 	// line on stdout; its human summary rides stderr. We ask for it unconditionally
 	// so the codex addendum below can recover the child guid, and forward it to our
 	// own stdout only when the fork caller asked for --json (native-path parity).
-	spawnArgs := []string{"spawn", "--role", role, "--agent", agent, "--from-pane", paneEnvID, "--cwd", cwd, "--split", split, "--no-focus", "--json"}
+	spawnArgs := []string{"spawn", "--role", role, "--agent", agent, "--cwd", firstNonEmpty(opts.cwd, cwd), "--no-focus", "--json"}
+	if opts.workspace != "" {
+		spawnArgs = append(spawnArgs, "--workspace", opts.workspace)
+	} else {
+		spawnArgs = append(spawnArgs, "--from-pane", paneEnvID)
+	}
+	if opts.splitExplicit {
+		spawnArgs = append(spawnArgs, "--split", opts.split)
+	} else if opts.newTab {
+		spawnArgs = append(spawnArgs, "--new-tab")
+	}
 	for _, a := range agentArgs {
 		spawnArgs = append(spawnArgs, "--extra-arg", a)
 	}
@@ -454,11 +554,15 @@ func (r *runner) resume(opts resumeOptions) int {
 	if code := requireTools(r.stderr); code != 0 {
 		return code
 	}
+	place, err := placementDecision(opts.split, opts.splitExplicit, opts.newTab)
+	if err != nil {
+		die(r.stderr, err.Error())
+		return 1
+	}
 	recs, registryPath, code := loadRegistry(r.stderr)
 	if code != 0 {
 		return code
 	}
-	var err error
 	recs, rec, err := resolveTargetWithArchiveFallback(recs, registryPath, opts.target)
 	if err != nil {
 		die(r.stderr, err.Error())
@@ -494,6 +598,21 @@ func (r *runner) resume(opts resumeOptions) int {
 		die(r.stderr, fmt.Sprintf("label %q already belongs to active guid %s", label, ptrString(owner.GUID)))
 		return 1
 	}
+	recordedCWD, recordedWorkspace := "", ""
+	if rec.Provenance != nil {
+		recordedCWD = rec.Provenance.CWD
+		recordedWorkspace = rec.Provenance.WorkspaceID
+	}
+	cwd := firstNonEmpty(opts.cwd, recordedCWD, currentCWD())
+	if err := preflightCWD("resume", cwd); err != nil {
+		die(r.stderr, err.Error())
+		return 1
+	}
+	workspace, err := r.resolveWorkspace(opts.workspace, recordedWorkspace)
+	if err != nil {
+		die(r.stderr, err.Error())
+		return 1
+	}
 	// No-prior-provenance fallback: spawned_by is the session performing this
 	// resume ($HERDER_GUID), not the ambient grandparent. Normally overwritten
 	// by the preserved prior provenance just below.
@@ -502,6 +621,8 @@ func (r *runner) resume(opts resumeOptions) int {
 		prov = *rec.Provenance
 	}
 	prov.ToolSessionID = sessionID
+	prov.CWD = cwd
+	prov.WorkspaceID = workspace
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	prov.TS = now
 	prov.ResumedAt = now
@@ -523,6 +644,10 @@ func (r *runner) resume(opts resumeOptions) int {
 		RegistryPath:  registryPath,
 		BaseRaw:       base,
 		Provenance:    prov,
+		CWD:           cwd,
+		Workspace:     workspace,
+		Split:         place.Split,
+		NewTab:        place.NewTab,
 	})
 	if code != 0 {
 		return code
@@ -553,6 +678,10 @@ type startSpec struct {
 	RegistryPath  string
 	BaseRaw       []byte
 	Provenance    registry.Provenance
+	CWD           string
+	Workspace     string
+	Split         string
+	NewTab        bool
 }
 
 func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
@@ -561,8 +690,8 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		die(r.stderr, err.Error())
 		return nil, 1
 	}
-	cwd := firstNonEmpty(os.Getenv("HERDER_LIFECYCLE_CWD"), currentCWD())
-	split := firstNonEmpty(os.Getenv("HERDER_LIFECYCLE_SPLIT"), "right")
+	cwd := firstNonEmpty(spec.CWD, os.Getenv("HERDER_LIFECYCLE_CWD"), currentCWD())
+	split := firstNonEmpty(spec.Split, os.Getenv("HERDER_LIFECYCLE_SPLIT"), "right")
 	focusFlag := firstNonEmpty(os.Getenv("HERDER_LIFECYCLE_FOCUS"), "--no-focus")
 	extra := permissionArgs(spec.Agent)
 	extra = append(extra, "--go")
@@ -582,15 +711,39 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(paths.BinHerder), shellquote.Quote(paths.RepoRoot), shellquote.Quote(spec.HcomDir), shellquote.Quote(paths.ShimsDir), inner)
 	argv := []string{shell, "-lic", innerCmd}
 	startArgs := []string{"agent", "start", spec.Label, focusFlag, "--split", split, "--cwd", cwd, "--", shell, "-lic", innerCmd}
+	if spec.Workspace != "" {
+		startArgs = []string{"agent", "start", spec.Label, focusFlag, "--split", split, "--workspace", spec.Workspace, "--cwd", cwd, "--", shell, "-lic", innerCmd}
+	}
 	out, rc, _ := r.client().Combined(startArgs...)
 	if rc != 0 {
-		fmt.Fprintf(r.stderr, "herdr agent start failed:\n%s\n", strings.TrimRight(string(out), "\n"))
+		fmt.Fprintf(r.stderr, "herdr agent start failed (mode=%s agent=%s label=%s cwd=%s workspace=%s):\n%s\n", spec.Mode, spec.Agent, spec.Label, cwd, spec.Workspace, strings.TrimRight(string(out), "\n"))
 		return nil, rc
 	}
 	start, err := parseAgentStart(out)
 	if err != nil || start.Agent.PaneID == "" {
 		fmt.Fprintf(r.stderr, "unexpected start payload: %s\n", strings.TrimRight(string(out), "\n"))
 		return nil, 1
+	}
+	if spec.NewTab {
+		moveOut, moveRC, moveErr := r.client().Combined("pane", "move", start.Agent.PaneID, "--new-tab", "--label", spec.Label)
+		if moveErr != nil || moveRC != 0 {
+			reason := compactLifecycleMessage(string(moveOut))
+			if moveErr != nil {
+				reason = moveErr.Error()
+			} else if reason == "" {
+				reason = fmt.Sprintf("herdr pane move exited %d", moveRC)
+			}
+			r.failAfterLaunch("fresh-tab placement failed: "+reason, start.Agent.PaneID, start.Agent.TerminalID)
+			return nil, 1
+		}
+		if paneOut, paneRC, paneErr := r.client().Combined("pane", "get", start.Agent.PaneID); paneErr == nil && paneRC == 0 {
+			if pane, parseErr := herdrcli.ParsePaneGet(paneOut); parseErr == nil {
+				start.Agent.PaneID = firstNonEmpty(pane.PaneID, start.Agent.PaneID)
+				start.Agent.TerminalID = firstNonEmpty(pane.TerminalID, start.Agent.TerminalID)
+				start.Agent.WorkspaceID = firstNonEmpty(pane.WorkspaceID, start.Agent.WorkspaceID)
+				start.Agent.CWD = firstNonEmpty(pane.CWD, start.Agent.CWD)
+			}
+		}
 	}
 	spec.Provenance.CWD = firstNonEmpty(start.Agent.CWD, cwd)
 	spec.Provenance.WorkspaceID = start.Agent.WorkspaceID
@@ -614,14 +767,14 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		"provenance":      spec.Provenance,
 	})
 	if err != nil {
-		die(r.stderr, err.Error())
+		r.failAfterLaunch("registry row encoding failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
 		return nil, 1
 	}
 	if err := registry.AppendLegacySessionEvent(spec.RegistryPath, row, "registered", "seated"); err != nil {
-		die(r.stderr, err.Error())
+		r.failAfterLaunch("registry write refused: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
 		return nil, 1
 	}
-	if code := r.verifyLaunchStayedAlive(spec.RegistryPath, row, start.Agent.PaneID); code != 0 {
+	if code := r.verifyLaunchStayedAlive(spec.RegistryPath, row, start.Agent.PaneID, spec, cwd); code != 0 {
 		return nil, code
 	}
 	var decoded map[string]any
@@ -629,13 +782,14 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	return decoded, 0
 }
 
-func (r *runner) verifyLaunchStayedAlive(registryPath string, row []byte, paneID string) int {
+func (r *runner) verifyLaunchStayedAlive(registryPath string, row []byte, paneID string, spec startSpec, cwd string) int {
 	settle := lifecycleSettleMS()
 	if settle <= 0 {
 		return 0
 	}
 	time.Sleep(time.Duration(settle) * time.Millisecond)
-	if _, err := r.client().Output("pane", "get", paneID); err == nil {
+	paneOut, paneRC, paneErr := r.client().Combined("pane", "get", paneID)
+	if paneErr == nil && paneRC == 0 {
 		return 0
 	}
 	closed := registry.DropRawFields(row, "closed_at", "closed_by_pane", "close_result", "close_reason")
@@ -649,8 +803,33 @@ func (r *runner) verifyLaunchStayedAlive(registryPath string, row []byte, paneID
 	if err == nil {
 		_ = registry.AppendLegacySessionEvent(registryPath, closed, "retired", v2.StateRetired)
 	}
-	die(r.stderr, "launch failed before lifecycle bind")
+	lookup := compactLifecycleMessage(string(paneOut))
+	if paneErr != nil {
+		lookup = paneErr.Error()
+	}
+	if lookup == "" {
+		lookup = "no pane diagnostics returned"
+	}
+	exitContext := "process exit code/signal unavailable (the pane may have exited or been closed externally)"
+	lookupLower := strings.ToLower(lookup)
+	if strings.Contains(lookupLower, "exit_code") || strings.Contains(lookupLower, "exit code") || strings.Contains(lookupLower, "signal") {
+		exitContext = "process exit context included in the pane diagnostics above"
+	}
+	die(r.stderr, fmt.Sprintf("launch failed before lifecycle bind: mode=%s agent=%s label=%s cwd=%s workspace=%s pane=%s settle_ms=%d; pane lookup exit=%d: %s; %s", spec.Mode, spec.Agent, spec.Label, cwd, spec.Workspace, paneID, settle, paneRC, lookup, exitContext))
 	return 1
+}
+
+func compactLifecycleMessage(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func (r *runner) failAfterLaunch(reason, paneID, terminalID string) {
+	cleanup := panecleanup.CloseConfirmed(r.client(), paneID, terminalID)
+	if cleanup.Confirmed {
+		die(r.stderr, reason+"; launched pane cleanup confirmed: "+cleanup.Detail)
+		return
+	}
+	die(r.stderr, reason+"; launched pane cleanup FAILED: "+cleanup.Detail+" (pane may still be running)")
 }
 
 // deliverCodexAddendum re-delivers the herder doctrine to a freshly
@@ -757,7 +936,25 @@ func parseForkArgs(args []string, stdout, stderr io.Writer) (forkOptions, int) {
 				return opts, 1
 			}
 			opts.split = args[i+1]
+			opts.splitExplicit = true
 			i += 2
+		case "--workspace":
+			if i+1 >= len(args) {
+				die(stderr, "--workspace requires a value")
+				return opts, 1
+			}
+			opts.workspace = args[i+1]
+			i += 2
+		case "--cwd":
+			if i+1 >= len(args) {
+				die(stderr, "--cwd requires a value")
+				return opts, 1
+			}
+			opts.cwd = args[i+1]
+			i += 2
+		case "--new-tab":
+			opts.newTab = true
+			i++
 		case "--self":
 			opts.self = true
 			i++
@@ -796,6 +993,31 @@ func parseResumeArgs(args []string, stdout, stderr io.Writer) (resumeOptions, in
 	var opts resumeOptions
 	for i := 0; i < len(args); {
 		switch args[i] {
+		case "--split":
+			if i+1 >= len(args) {
+				die(stderr, "--split requires a value")
+				return opts, 1
+			}
+			opts.split = args[i+1]
+			opts.splitExplicit = true
+			i += 2
+		case "--workspace":
+			if i+1 >= len(args) {
+				die(stderr, "--workspace requires a value")
+				return opts, 1
+			}
+			opts.workspace = args[i+1]
+			i += 2
+		case "--cwd":
+			if i+1 >= len(args) {
+				die(stderr, "--cwd requires a value")
+				return opts, 1
+			}
+			opts.cwd = args[i+1]
+			i += 2
+		case "--new-tab":
+			opts.newTab = true
+			i++
 		case "--json":
 			opts.json = true
 			i++
@@ -809,7 +1031,7 @@ func parseResumeArgs(args []string, stdout, stderr io.Writer) (resumeOptions, in
 				return opts, 1
 			}
 			if opts.target != "" {
-				die(stderr, "usage: herder resume <target> [--json]")
+				die(stderr, "usage: herder resume <target> [--cwd PATH] [--workspace ID] [--split D] [--json]")
 				return opts, 1
 			}
 			opts.target = args[i]
@@ -817,7 +1039,7 @@ func parseResumeArgs(args []string, stdout, stderr io.Writer) (resumeOptions, in
 		}
 	}
 	if opts.target == "" {
-		die(stderr, "usage: herder resume <target> [--json]")
+		die(stderr, "usage: herder resume <target> [--cwd PATH] [--workspace ID] [--split D] [--json]")
 		return opts, 1
 	}
 	return opts, 0
@@ -832,8 +1054,10 @@ enrolled peer; pass --self to fork THIS session ("fork me, from this pane"),
 auto-detecting the current tool and identity from the environment.
 
 Usage:
-  herder fork <target> [--label L] [--role R] [--prompt P] [--split D] [--json]
-  herder fork --self    [--label L] [--role R] [--prompt P] [--split D] [--json]
+  herder fork <target> [--label L] [--role R] [--prompt P] [--cwd PATH]
+                       [--workspace ID] [--split D | --new-tab] [--json]
+  herder fork --self    [--label L] [--role R] [--prompt P] [--cwd PATH]
+                       [--workspace ID] [--split D | --new-tab] [--json]
 
 Options:
   --self       fork the current session instead of a named target (mutually
@@ -842,10 +1066,18 @@ Options:
   --role R     role / hcom tag for the fork (default: parent's role, else worker;
                --self fallback default: fork-<tool>)
   --prompt P   initial prompt delivered to the fork once it is ready
-  --split D    pane split for the new pane: right (default) or down
+  --cwd PATH   working directory for the child (default: the resolved source cwd)
+  --workspace ID
+               place in this live workspace; otherwise prefer the parent's live
+               recorded workspace, then the caller pane's workspace
+  --split D    opt into the target workspace's current tab: right or down
+  --new-tab    explicitly select the default fresh-tab placement
   --json       print the new registry record as JSON on stdout
 
 Behavior:
+  Forks open in a fresh tab by default. --split right|down is the explicit
+  same-tab opt-in. Placement is anchored to a workspace, never ambient UI focus.
+
   A named target (or a --self pane that resolves to a registered claude guid)
   forks NATIVELY: the child is bus-bound from birth and records
   provenance.forked_from. Needs a live parent (forks off its bus name) or a
@@ -862,12 +1094,12 @@ Behavior:
   are detected from the pane; cwd tracks the pane's foreground dir so the session
   key resolves.
 
-  Codex doctrine re-delivery (TASK-017): hcom strips user developer_instructions
+  Codex doctrine re-delivery: hcom strips user developer_instructions
   on codex fork, so a codex fork waits for the child to bind a bus name in the
   registry (up to HERDER_ADDENDUM_SETTLE_MS, default 60000; <=0 skips) and
   re-sends the herder addendum as a verified bus message; failures WARN and never
   fail the fork. This covers BOTH the native-target codex fork and the codex
-  --self fallback (TASK-027): the fallback rides 'herder spawn', reads the child
+  --self fallback: the fallback rides 'herder spawn', reads the child
   guid back from its --json record, and re-delivers over the bus the same way —
   so fallback-forked codex sessions get the doctrine too, not hcom's bare stock
   bootstrap. claude re-bootstraps through its sessionstart hook and needs none of
@@ -897,12 +1129,22 @@ guid and label so its registry identity stays continuous. Only works if a sessio
 id was captured for that guid.
 
 Usage:
-  herder resume <target> [--json]
+  herder resume <target> [--cwd PATH] [--workspace ID]
+                         [--split D | --new-tab] [--json]
 
 Options:
-  --json    print the new registry record as JSON on stdout
+  --cwd PATH     replace the recorded working directory
+  --workspace ID place in this live workspace; otherwise prefer the recorded
+                 live workspace, then the caller pane's workspace
+  --split D      opt into the target workspace's current tab: right or down
+  --new-tab      explicitly select the default fresh-tab placement
+  --json         print the new registry record as JSON on stdout
 
-Codex doctrine re-delivery (TASK-017): hcom strips user developer_instructions
+Resumes open in a fresh tab by default. Before launch, the recorded or explicit
+working directory must exist. If closeout removed it, pass --cwd with an existing
+directory or recreate the worktree.
+
+Codex doctrine re-delivery: hcom strips user developer_instructions
 on codex resume, so the launch-time herder addendum cannot ride along. Resuming
 a codex agent therefore waits for the new session to bind a bus name in the
 registry (up to HERDER_ADDENDUM_SETTLE_MS, default 60000; <=0 skips) and sends

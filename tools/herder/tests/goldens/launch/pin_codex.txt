@@ -15,13 +15,13 @@ The [HCOM SESSION] context above is hcom's own bootstrap. Your name, first-respo
 
 Provision and manage agent sessions through herder. Do NOT spawn with `hcom <n> claude`, stop with `hcom kill`, or drive raw `herdr agent start/send` — those bypass the registry or write text without submitting it. herder-spawned claude/codex bind to the bus from birth, so once running you message them with `hcom send`.
 
-- Spawn:  herder spawn --role R --agent <claude|codex|bash|...> --prompt 'short task (or a one-line pointer to a brief file)' [--team NAME] [--split right|down] [--new-tab] [--cwd PATH]
+- Spawn:  herder spawn --role R --agent <claude|codex|bash|...> --prompt 'short task (or a one-line pointer to a brief file)' [--team NAME] [--workspace ID] [--split right|down] [--cwd PATH]
 - List:   herder list [--all]                 # --all reveals culled records
 - Wait:   herder wait <guid> [--read]          # boot-settle / post-send check — NOT for watching long work
 - Send:   herder send <guid> 'msg'             # verified delivery to a spawned agent (guid/label, drift-proof)
 - Cull:   herder cull --guid GUID              # close the pane + mark the registry record closed
-- Fork:   herder fork <guid> [--prompt P]      # branch a session into a NEW guid, keeps parent context
-- Resume: herder resume <guid>                 # reopen a closed session under the SAME guid
+- Fork:   herder fork <guid> [--prompt P] [--workspace ID] [--split right|down] # fresh tab by default
+- Resume: herder resume <guid> [--cwd PATH] [--workspace ID] [--split right|down] # fresh tab by default
 
 Delivery is verified: "queued" injects at the target's next turn (do NOT resend); "NOT confirmed" means read the pane (`herder wait <guid> --read`) before retrying — a blind resend double-submits.
 If unsure about syntax, always run `herder <command> --help` (or `hcom <command> --help`) FIRST. Do not guess.

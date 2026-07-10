@@ -2,6 +2,7 @@
 spawned quote;$`&<>("* )-<SHORT> (claude) in pane p_50 (workspace ws_1)
   guid:   <GUID>
   cwd:    /mock/cwd
+  tab:    tab_9 (new; agent pane moved, no seed shell)
   perms:  --dangerously-skip-permissions (autonomous; pass --safe to opt out)
   bus:    global — name NOT captured (not_found); herder send cannot reach it (bus-only) — inspect the pane directly
           HCOM_DIR=<CASE>/home/.hcom
@@ -9,7 +10,7 @@ spawned quote;$`&<>("* )-<SHORT> (claude) in pane p_50 (workspace ws_1)
           once `herder list` shows its bus name, resend verbatim (also in --json as resend_command):
           herder send quote\;\$\`\&\<\>\(\"\*\ \)-<SHORT> do\ the\ thing
 === STDOUT ===
-{"guid":"<GUID>","short_guid":"<SHORT>","label":"quote;$`\u0026\u003c\u003e(\"* )-<SHORT>","role":"worker","agent":"claude","extra_args":["--dangerously-skip-permissions"],"argv":["/bin/zsh","-lic","if [ -d \"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims\" ]; then export PATH=\"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH\"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=quote\\;\\$\\`\\\u0026\\\u003c\\\u003e\\(\\\"\\*\\ \\)-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=<CASE>/home/.hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch claude --tag worker --dangerously-skip-permissions"],"pane_id":"p_50","workspace_id":"ws_1","tab_id":"tab_1","terminal_id":"term_AGENT","cwd":"/mock/cwd","started_at":"<TS>","started_by_pane":"p_orch","initial_prompt_present":true,"team":"","hcom_dir":"<CASE>/home/.hcom","hcom_name":"","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_1","branch":"","ts":"<TS>"},"prompt_sent":false,"delivery_result":"bind_timeout","resend_command":"herder send quote\\;\\$\\`\\\u0026\\\u003c\\\u003e\\(\\\"\\*\\ \\)-<SHORT> do\\ the\\ thing","perm_injected":"--dangerously-skip-permissions","new_tab":false,"root_pane_closed":false,"hcom_capture":"not_found"}
+{"guid":"<GUID>","short_guid":"<SHORT>","label":"quote;$`\u0026\u003c\u003e(\"* )-<SHORT>","role":"worker","agent":"claude","extra_args":["--dangerously-skip-permissions"],"argv":["/bin/zsh","-lic","if [ -d \"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims\" ]; then export PATH=\"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH\"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=quote\\;\\$\\`\\\u0026\\\u003c\\\u003e\\(\\\"\\*\\ \\)-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=<CASE>/home/.hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch claude --tag worker --dangerously-skip-permissions"],"pane_id":"p_50","workspace_id":"ws_1","tab_id":"tab_9","terminal_id":"term_AGENT","cwd":"/mock/cwd","started_at":"<TS>","started_by_pane":"p_orch","initial_prompt_present":true,"team":"","hcom_dir":"<CASE>/home/.hcom","hcom_name":"","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_1","branch":"","ts":"<TS>"},"prompt_sent":false,"delivery_result":"bind_timeout","resend_command":"herder send quote\\;\\$\\`\\\u0026\\\u003c\\\u003e\\(\\\"\\*\\ \\)-<SHORT> do\\ the\\ thing","perm_injected":"--dangerously-skip-permissions","new_tab":true,"root_pane_closed":false,"new_tab_result":"moved","hcom_capture":"not_found"}
 === EXIT ===
 0
 === AGENT START ARGV ===
@@ -29,6 +30,7 @@ ws_1
 if [ -d "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" ]; then export PATH="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=quote\;\$\`\&\<\>\(\"\*\ \)-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=<CASE>/home/.hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch claude --tag worker --dangerously-skip-permissions
 === HERDR MUTATING CALLS ===
 agent start quote;$`&<>("* )-<SHORT>
+pane move p_50 --new-tab --label quote;$`&<>("* )-<SHORT>
 === HCOM DIR ===
 <CASE>/home/.hcom
 === REGISTRY ===

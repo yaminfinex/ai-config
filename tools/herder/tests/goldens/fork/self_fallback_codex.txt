@@ -1,17 +1,19 @@
 === STDERR ===
-spawn-handoff: spawn --role fork-codex --agent codex --from-pane p_self --cwd /mock/foreground --split down --no-focus --json --extra-arg fork --extra-arg --last
-sent 2526 chars to <GUID> (hcom @codexfb-vibe), submitted, verify=delivered
+spawn-handoff: spawn --role fork-codex --agent codex --cwd /mock/foreground --no-focus --json --from-pane p_self --split down --extra-arg fork --extra-arg --last
+sent 2542 chars to <GUID> (hcom @codexfb-vibe), submitted, verify=delivered
 === STDOUT ===
 {"guid":"<GUID>","short_guid":"<SHORT>","label":"codex-fallback-child","agent":"codex","status":"active"}
 === EXIT ===
 0
 === HERDR START ARGV ===
 
+=== HERDR MOVE ARGV ===
+
 === REGISTRY ===
-{"guid":"guid-parent-0000","short_guid":"parent","label":"parent","role":"worker","agent":"claude","terminal_id":"term_PARENT","pane_id":"p_parent","hcom_dir":"/hcom","hcom_name":"parent-rive","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-parent","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"<TS>"}}
-{"guid":"guid-closed-0000","short_guid":"closed","label":"closed-parent","role":"reviewer","agent":"claude","terminal_id":"term_CLOSED","pane_id":"p_closed","hcom_dir":"/hcom","hcom_name":"closed-rive","hcom_tag":"reviewer","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-closed","tag":"reviewer","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"<TS>"}}
-{"guid":"guid-closed-0000","short_guid":"closed","label":"closed-parent","role":"reviewer","agent":"claude","terminal_id":"term_CLOSED","pane_id":"p_closed","hcom_dir":"/hcom","hcom_name":"closed-rive","hcom_tag":"reviewer","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"reviewer","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"<TS>"}}
-{"guid":"guid-nosess-0000","short_guid":"nosess","label":"no-session","role":"worker","agent":"codex","terminal_id":"term_NOSESS","pane_id":"p_nosess","hcom_dir":"/hcom","hcom_name":"","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"<TS>"}}
+{"guid":"guid-parent-0000","short_guid":"parent","label":"parent","role":"worker","agent":"claude","terminal_id":"term_PARENT","pane_id":"p_parent","hcom_dir":"/hcom","hcom_name":"parent-rive","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-parent","tag":"worker","batch_id":"","cwd":"<REPO>","workspace_id":"ws_1","branch":"fixture-branch","ts":"<TS>"}}
+{"guid":"guid-closed-0000","short_guid":"closed","label":"closed-parent","role":"reviewer","agent":"claude","terminal_id":"term_CLOSED","pane_id":"p_closed","hcom_dir":"/hcom","hcom_name":"closed-rive","hcom_tag":"reviewer","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-closed","tag":"reviewer","batch_id":"","cwd":"<REPO>","workspace_id":"ws_1","branch":"fixture-branch","ts":"<TS>"}}
+{"guid":"guid-closed-0000","short_guid":"closed","label":"closed-parent","role":"reviewer","agent":"claude","terminal_id":"term_CLOSED","pane_id":"p_closed","hcom_dir":"/hcom","hcom_name":"closed-rive","hcom_tag":"reviewer","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"reviewer","batch_id":"","cwd":"<REPO>","workspace_id":"ws_1","branch":"fixture-branch","ts":"<TS>"}}
+{"guid":"guid-nosess-0000","short_guid":"nosess","label":"no-session","role":"worker","agent":"codex","terminal_id":"term_NOSESS","pane_id":"p_nosess","hcom_dir":"/hcom","hcom_name":"","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"<REPO>","workspace_id":"ws_1","branch":"fixture-branch","ts":"<TS>"}}
 {"guid":"guid-other-0000","short_guid":"other","label":"taken","role":"worker","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","status":"active"}
 {"guid":"<GUID>","short_guid":"<SHORT>","label":"codex-fallback-child","role":"fork-codex","agent":"codex","pane_id":"p_fbchild","terminal_id":"term_FBCHILD","workspace_id":"ws_fb","cwd":"/mock/cwd","hcom_dir":"/hcom","hcom_name":"codexfb-vibe","hcom_tag":"fork-codex","status":"active","provenance":{"mechanism":"fork","spawned_by":"user","tool_session_id":"sess-fb","tag":"fork-codex","batch_id":"","cwd":"/repo","workspace_id":"ws_fb","branch":"fixture-branch","ts":"<TS>"}}
 === HCOM SEND ARGV ===
@@ -22,13 +24,13 @@ Session doctrine, not a task: do NOT reply to this message. This session was res
 
 Provision and manage agent sessions through herder. Do NOT spawn with `hcom <n> claude`, stop with `hcom kill`, or drive raw `herdr agent start/send` — those bypass the registry or write text without submitting it. herder-spawned claude/codex bind to the bus from birth, so once running you message them with `hcom send`.
 
-- Spawn:  herder spawn --role R --agent <claude|codex|bash|...> --prompt 'short task (or a one-line pointer to a brief file)' [--team NAME] [--split right|down] [--new-tab] [--cwd PATH]
+- Spawn:  herder spawn --role R --agent <claude|codex|bash|...> --prompt 'short task (or a one-line pointer to a brief file)' [--team NAME] [--workspace ID] [--split right|down] [--cwd PATH]
 - List:   herder list [--all]                 # --all reveals culled records
 - Wait:   herder wait <guid> [--read]          # boot-settle / post-send check — NOT for watching long work
 - Send:   herder send <guid> 'msg'             # verified delivery to a spawned agent (guid/label, drift-proof)
 - Cull:   herder cull --guid GUID              # close the pane + mark the registry record closed
-- Fork:   herder fork <guid> [--prompt P]      # branch a session into a NEW guid, keeps parent context
-- Resume: herder resume <guid>                 # reopen a closed session under the SAME guid
+- Fork:   herder fork <guid> [--prompt P] [--workspace ID] [--split right|down] # fresh tab by default
+- Resume: herder resume <guid> [--cwd PATH] [--workspace ID] [--split right|down] # fresh tab by default
 
 Delivery is verified: "queued" injects at the target's next turn (do NOT resend); "NOT confirmed" means read the pane (`herder wait <guid> --read`) before retrying — a blind resend double-submits.
 If unsure about syntax, always run `herder <command> --help` (or `hcom <command> --help`) FIRST. Do not guess.

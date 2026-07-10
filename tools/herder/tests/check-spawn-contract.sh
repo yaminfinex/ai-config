@@ -181,6 +181,8 @@ METACHAR_EXTRA_ARG='arg with $dollar `tick` ; | & < > ( ) " * newline
 end'
 
 scenario bash_basic        ready claude launchctx --role worker --agent bash --json
+scenario bash_split        ready claude launchctx --role worker --agent bash --split down --json
+scenario workspace_target ready claude launchctx --role worker --agent bash --workspace ws_2 --json
 scenario bash_nologin      ready claude launchctx --role worker --agent bash --no-login-shell --json
 scenario bash_metachar     ready claude launchctx --role worker --agent bash --label-prefix "$METACHAR_LABEL_PREFIX" --extra-arg "$METACHAR_EXTRA_ARG" --json
 scenario claude_prompt     ready claude launchctx --role worker --agent claude --prompt "do the thing" --json

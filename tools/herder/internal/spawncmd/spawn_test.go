@@ -3,6 +3,7 @@ package spawncmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,68 @@ import (
 	"ai-config/tools/herder/internal/registry"
 	"ai-config/tools/herder/internal/shellquote"
 )
+
+type cleanupHerdr struct {
+	closed bool
+	calls  []string
+}
+
+func (f *cleanupHerdr) Combined(args ...string) ([]byte, int, error) {
+	f.calls = append(f.calls, strings.Join(args, " "))
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "get" {
+		if f.closed {
+			return []byte(`{"error":{"code":"pane_not_found"}}`), 4, nil
+		}
+		return []byte(`{"result":{"pane":{"pane_id":"p_new","terminal_id":"term_new"}}}`), 0, nil
+	}
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "close" {
+		f.closed = true
+		return []byte(`{"result":{"type":"closed"}}`), 0, nil
+	}
+	return nil, 64, nil
+}
+
+func (f *cleanupHerdr) Output(args ...string) ([]byte, error) { return nil, errors.New("unused") }
+func (f *cleanupHerdr) Run(args ...string) (int, error)       { return 64, errors.New("unused") }
+
+func TestRegistryRefusalClosesAndConfirmsLaunchedPane(t *testing.T) {
+	client := &cleanupHerdr{}
+	var stderr strings.Builder
+	r := &runner{
+		herdr:  client,
+		stderr: &stderr,
+		updateRegistry: func(string, registry.LockedUpdateFunc) ([][]byte, error) {
+			return nil, errors.New("lock refused")
+		},
+	}
+	record := spawnRecord{
+		GUID:       "guid-new",
+		ShortGUID:  "guid-new",
+		Label:      "worker-new",
+		Role:       "worker",
+		Agent:      "bash",
+		PaneID:     "p_new",
+		TerminalID: "term_new",
+		Status:     "active",
+		StartedAt:  "2026-07-10T00:00:00Z",
+	}
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	if code := r.registerSpawnOrRollback(path, record); code != 1 {
+		t.Fatalf("registerSpawnOrRollback() = %d, want 1", code)
+	}
+	if !client.closed {
+		t.Fatal("launched pane was not closed")
+	}
+	if got := strings.Join(client.calls, "\n"); !strings.Contains(got, "pane close p_new") {
+		t.Fatalf("calls missing close:\n%s", got)
+	}
+	if !strings.Contains(stderr.String(), "registry write refused: lock refused") || !strings.Contains(stderr.String(), "cleanup confirmed") {
+		t.Fatalf("stderr = %q, want refusal plus confirmed cleanup", stderr.String())
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("registry path exists after refused write: %v", statErr)
+	}
+}
 
 // resolveBus calls resolveSpawnerBus discarding the ambiguity signal + warning,
 // for the many cases that assert only the resolved name.

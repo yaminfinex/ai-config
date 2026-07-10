@@ -81,6 +81,14 @@ knowing when working across checkouts and worktrees:
   deliberately run herder from the child checkout, override the pin explicitly:
   `env -u AI_CONFIG_ROOT -u HERDER_BIN ./bin/herder ...` or `AI_CONFIG_ROOT=$PWD ./bin/herder ...`.
 
+- **Pane-creating lifecycle commands default to a fresh tab.** `herder spawn`, `herder resume`,
+  and `herder fork` open outside the operator's current tab unless `--split right|down` explicitly
+  opts into same-tab placement. `--workspace <id>` targets a work workspace directly; resume and
+  fork otherwise prefer the target's still-live recorded workspace, then the caller pane's
+  workspace. Worktree spawns keep their native dedicated workspace/tab behavior. Resume validates
+  the recorded or explicit cwd before launch and points a missing-worktree refusal at `--cwd` or
+  worktree recreation.
+
 `--notify` resolves the spawner's bus name from the registry by guid *and* by pane/terminal
 coordinates, so enrolled sessions (no `$HERDER_GUID` in their environment) get bus-native
 completion reports. `--notify-to` additionally accepts the target's bus name directly: an active
