@@ -57,6 +57,7 @@ type options struct {
 	FocusFlag     string
 	LabelPrefix   string
 	ExtraArgs     []string
+	Model         string
 	JSONOutput    bool
 	WaitTimeoutMS int
 	BindTimeoutMS int
@@ -392,6 +393,17 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			}
 			opts.ExtraArgs = append(opts.ExtraArgs, v)
 			i += 2
+		case "--model":
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			if strings.TrimSpace(v) == "" {
+				die(stderr, "--model requires a non-empty model id")
+				return opts, 1
+			}
+			opts.Model = v
+			i += 2
 		case "--json":
 			opts.JSONOutput = true
 			i++
@@ -465,6 +477,17 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 	if opts.Agent == "" {
 		die(stderr, "--agent required")
 		return opts, 1
+	}
+	if opts.Model != "" && opts.Agent != "claude" && opts.Agent != "codex" {
+		die(stderr, "--model is supported only for --agent claude or --agent codex; use --extra-arg for another agent's model option")
+		return opts, 1
+	}
+	if opts.Model != "" && hasModelExtraArg(opts.Agent, opts.ExtraArgs) {
+		die(stderr, "--model conflicts with a model pin in --extra-arg; use the first-class --model flag or the passthrough form, not both")
+		return opts, 1
+	}
+	if opts.Model != "" {
+		opts.ExtraArgs = append([]string{"--model", opts.Model}, opts.ExtraArgs...)
 	}
 	if opts.Team != "" && !regexp.MustCompile(`^[A-Za-z0-9._-]+$`).MatchString(opts.Team) {
 		die(stderr, "--team must be a single safe path segment (letters/digits/._- only): "+opts.Team)
@@ -1385,7 +1408,7 @@ func printHelp(stdout io.Writer) {
 		"  herder spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]",
 		"               [--team NAME] [--split right|down] [--workspace ID | --from-pane PANE_ID]",
 		"               [--tab ID | --new-tab | --worktree BRANCH [--base REF]] [--cwd PATH] [--safe]",
-		"               [--notify | --notify-to TARGET] [--extra-arg ARG]... [--no-focus] [--json]",
+		"               [--notify | --notify-to TARGET] [--model ID] [--extra-arg ARG]... [--no-focus] [--json]",
 		"",
 		"Options:",
 		"  --role R          agent role; becomes the hcom --tag and label prefix (required)",
@@ -1405,6 +1428,7 @@ func printHelp(stdout io.Writer) {
 		"                    another registry row (guid, label, terminal_id, pane_id, or recorded hcom",
 		"                    name), else accepts TARGET as a literal bus name if live on the child's bus",
 		"  --extra-arg ARG   pass ARG through to the agent (repeatable)",
+		"  --model ID        pin the model for claude or codex (maps to the agent's --model flag)",
 		"  --json            print the registry record as JSON on stdout",
 		"",
 		"Advanced:",
@@ -1522,6 +1546,37 @@ func recordExtraArgs(args []string) []string {
 		return []string{""}
 	}
 	return args
+}
+
+func hasModelExtraArg(agent string, args []string) bool {
+	for i, arg := range args {
+		if arg == "--model" || arg == "-m" || strings.HasPrefix(arg, "--model=") {
+			return true
+		}
+		if agent != "codex" {
+			continue
+		}
+		switch {
+		case (arg == "-c" || arg == "--config") && i+1 < len(args):
+			if isModelConfigOverride(args[i+1]) {
+				return true
+			}
+		case strings.HasPrefix(arg, "-c="):
+			if isModelConfigOverride(strings.TrimPrefix(arg, "-c=")) {
+				return true
+			}
+		case strings.HasPrefix(arg, "--config="):
+			if isModelConfigOverride(strings.TrimPrefix(arg, "--config=")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isModelConfigOverride(arg string) bool {
+	key, _, ok := strings.Cut(arg, "=")
+	return ok && strings.TrimSpace(key) == "model"
 }
 
 func teamSummary(team string) string {

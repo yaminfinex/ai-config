@@ -183,24 +183,24 @@ STEER='focus on the open unit, keep gate commands and thread names'
 # Happy paths: mid-turn (composer-empty evidence), honest queued fallback,
 # idle transcript echo, session-id identity, positional identity + cwd proof.
 COMPACT_SEED_REGISTRY="$ROW_SELF"
-scenario midturn_delivered   midturn         guid       "$STEER"
-scenario queued_fallback     queued_slow     guid       "$STEER"
-scenario idle_delivered      idle            guid       "$STEER"
+scenario stop_delivered      midturn         guid       --stop "$STEER"
+scenario queued_fallback     queued_slow     guid       --stop "$STEER"
+scenario idle_delivered      idle            guid       --stop "$STEER"
 scenario bare_no_steer       midturn         guid
 scenario dryrun              midturn         guid       --dry-run "$STEER"
-scenario steer_after_ddash   midturn         guid       -- --dry-run is my steer
+scenario steer_after_ddash   midturn         guid       --stop -- --dry-run is my steer
 COMPACT_SEED_REGISTRY="$ROW_SELF_SESS"
-scenario session_identity    midturn         session    "$STEER"
+scenario session_identity    midturn         session    --stop "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF"
-scenario positional_ok       midturn         positional "$STEER"
-scenario positional_badcwd   midturn         positional_badcwd "$STEER"
+scenario positional_ok       midturn         positional --stop "$STEER"
+scenario positional_badcwd   midturn         positional_badcwd --stop "$STEER"
 
 # Preflight: visible-only (old scrollback noise must NOT refuse; a live visible
 # modal MUST).
-scenario scrollback_noise    scrollback_noise guid      "$STEER"
-scenario polluted_clear      polluted_clear   guid      "$STEER"
-scenario polluted_still      polluted_still   guid      "$STEER"
-scenario blocked_modal       blocked          guid      "$STEER"
+scenario scrollback_noise    scrollback_noise guid      --stop "$STEER"
+scenario polluted_clear      polluted_clear   guid      --stop "$STEER"
+scenario polluted_still      polluted_still   guid      --stop "$STEER"
+scenario blocked_modal       blocked          guid      --stop "$STEER"
 
 # Self-pane proof failures.
 COMPACT_SEED_REGISTRY=""
@@ -210,20 +210,20 @@ scenario refuse_ghost_guid   midturn         noguidrow  "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF_BASH"
 scenario refuse_bash         midturn         guid       "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF"
-scenario refuse_term_dead    term_dead       guid       "$STEER"
+scenario refuse_term_dead    term_dead       guid       --stop "$STEER"
 
 # Pane-id churn vs stale identity (codex review P1): a durable key whose
 # terminal disagrees with the live env pane REFUSES unless a second self
 # signal (session id matching the row) corroborates it — a stale/inherited
 # HERDER_GUID is indistinguishable from drift by the guid alone.
 COMPACT_SEED_REGISTRY="$ROW_SELF_REG"
-scenario guid_drift          guid_drift      guid          "$STEER"
+scenario guid_drift          guid_drift      guid          --stop "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF_REG_SESS"
-scenario drift_corroborated  guid_drift      guid_session  "$STEER"
+scenario drift_corroborated  guid_drift      guid_session  --stop "$STEER"
 # Stale inherited guid: the row's terminal belongs to a LIVE neighbour pane —
 # compact must type NOWHERE (no mutating calls at all).
 COMPACT_SEED_REGISTRY="$ROW_PARENT"
-scenario stale_guid          midturn         parentguid    "$STEER"
+scenario stale_guid          midturn         parentguid    --stop "$STEER"
 # HERDER_GUID and HCOM_SESSION_ID resolving to different identities: refuse.
 COMPACT_SEED_REGISTRY="$ROW_SELF"$'\n'"$ROW_OTHER_SESS"
 scenario key_conflict        midturn         guid_conflict "$STEER"
@@ -232,7 +232,7 @@ COMPACT_SEED_REGISTRY="$ROW_SELF"
 # Codex review P2: payload lands, composer cleared BEFORE the Enter — the
 # pre-Enter sample must disarm composer-empty evidence; verify degrades to
 # not_delivered (exit 1), never a false delivered.
-scenario clear_before_enter  clear_landed    guid          "$STEER"
+scenario clear_before_enter  clear_landed    guid          --stop "$STEER"
 
 # Environment/usage refusals.
 scenario refuse_outside      midturn         outside    "$STEER"
@@ -260,6 +260,7 @@ COMPACT_SEED_REGISTRY="$ROW_SELF_NOBUS"
 scenario then_refuse_nobus   midturn       guid   "$STEER" --then "$CONT"
 COMPACT_SEED_REGISTRY="$ROW_SELF_CODEX"
 scenario then_refuse_codex   midturn       guid   "$STEER" --then "$CONT"
+scenario codex_bare_refusal  midturn       guid   "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF"
 # Usage: empty / missing continuation.
 scenario then_usage_empty    midturn       guid   "$STEER" --then ""
