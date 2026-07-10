@@ -1,0 +1,41 @@
+# sesh — local builds and user-owned installs are independent copies.
+
+version := `git describe --tags --always --dirty`
+ldflags := "-s -w -X sesh/internal/buildinfo.Version=" + version
+gobin := `bin="$(go env GOBIN)"; if [ -z "$bin" ]; then bin="$(go env GOPATH)/bin"; fi; printf '%s' "$bin"`
+
+_default:
+    @just --list
+
+build:
+    go build -ldflags '{{ldflags}}' -o sesh ./cmd/sesh
+    @echo "built ./sesh  ({{version}})"
+
+run *args: build
+    ./sesh {{args}}
+
+test:
+    go test ./...
+
+install:
+    go install -ldflags '{{ldflags}}' ./cmd/sesh
+    @echo "installed sesh  ({{version}})  ->  {{gobin}}/sesh"
+
+# Install the current binary and (re)configure the per-user shipper.
+# Pass --force after the URL only when replacing operator-owned configuration.
+deploy store_url *args: install
+    etc/install-ship.sh --store-url {{store_url}} --binary {{gobin}}/sesh {{args}}
+
+# Restart an already configured service after installing the current binary.
+restart: install
+    @case "$(uname -s)" in Linux) systemctl --user restart sesh-ship.service ;; Darwin) launchctl kickstart -k "gui/$(id -u)/dev.sesh.ship" ;; *) echo "unsupported platform" >&2; exit 2 ;; esac
+
+# Compare this checkout with the shipper without requiring it to run. Linux
+# reads the running image; macOS can only inspect the executable path on disk,
+# which may differ from the running image until the service restarts.
+versions:
+    @echo "local    {{version}}"
+    @if [ "$(uname -s)" = Linux ]; then pid="$(systemctl --user show sesh-ship.service --property=MainPID --value 2>/dev/null || true)"; if [ -n "$pid" ] && [ "$pid" != 0 ] && [ -x "/proc/$pid/exe" ]; then printf 'running  '; "/proc/$pid/exe" version; else echo "running  (not running)"; fi; else label="gui/$(id -u)/dev.sesh.ship"; pid="$(launchctl print "$label" 2>/dev/null | awk '/pid =/{print $3; exit}')"; if [ -n "$pid" ]; then executable="$(ps -p "$pid" -o comm=)"; printf 'on-disk  '; "$executable" version; else echo "on-disk  (not running)"; fi; fi
+
+clean:
+    rm -f sesh

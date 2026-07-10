@@ -1,0 +1,29 @@
+# mish — local builds and user-owned installs are independent copies.
+
+version := `git describe --tags --always --dirty`
+ldflags := "-s -w -X mish/internal/buildinfo.Version=" + version
+gobin := `bin="$(go env GOBIN)"; if [ -z "$bin" ]; then bin="$(go env GOPATH)/bin"; fi; printf '%s' "$bin"`
+
+_default:
+    @just --list
+
+build:
+    go build -ldflags '{{ldflags}}' -o mish ./cmd/mish
+    @echo "built ./mish  ({{version}})"
+
+run *args: build
+    ./mish {{args}}
+
+test:
+    go test ./...
+
+install:
+    go install -ldflags '{{ldflags}}' ./cmd/mish
+    @echo "installed mish  ({{version}})  ->  {{gobin}}/mish"
+
+versions:
+    @echo "local      {{version}}"
+    @if [ -x "{{gobin}}/mish" ]; then printf 'installed  '; "{{gobin}}/mish" version; else echo "installed  (not installed)"; fi
+
+clean:
+    rm -f mish
