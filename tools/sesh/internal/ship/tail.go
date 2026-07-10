@@ -97,7 +97,14 @@ func (s *Shipper) logger() *slog.Logger {
 // recovery GETs when the registry was lost, GC cursors whose files are gone,
 // then ship every discovered file to quiescence. Hold-class conditions come
 // back errHold-wrapped; the pass still visits every other file first.
-func (s *Shipper) RunOnce(ctx context.Context) error {
+func (s *Shipper) RunOnce(ctx context.Context) (runErr error) {
+	s.Registry.beginBatch()
+	defer func() {
+		if err := s.Registry.endBatch(); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("cursor registry batch flush: %w", err))
+		}
+	}()
+
 	discovered, err := Discover(s.Roots)
 	if err != nil {
 		return err
@@ -133,25 +140,8 @@ func (s *Shipper) RunOnce(ctx context.Context) error {
 	// files ship so the observation rides this pass's PUTs. A returned owner
 	// is recorded durably in the registry; an identity absent from the
 	// result changes nothing — an observation is never retracted (I8).
-	if s.Correlate != nil {
-		owners := s.Correlate(discovered)
-		for _, d := range discovered {
-			owner := owners[d.Identity.Key()]
-			if owner == "" {
-				continue
-			}
-			cur, ok := s.Registry.Get(d.Identity)
-			if !ok {
-				cur = Cursor{Tool: d.Identity.Tool, SessionID: d.Identity.SessionID, FileUUID: d.Identity.FileUUID, Path: d.Path}
-			}
-			if cur.SessionOwner != owner {
-				cur.SessionOwner = owner
-				if err := s.Registry.Put(cur); err != nil {
-					return err
-				}
-				s.logger().Info("SESSION_OWNER observed", "identity", d.Identity.Key(), "owner", owner)
-			}
-		}
+	if err := s.recordOwnerObservations(discovered); err != nil {
+		return err
 	}
 
 	var holds []error
@@ -161,6 +151,38 @@ func (s *Shipper) RunOnce(ctx context.Context) error {
 		}
 	}
 	return errors.Join(holds...)
+}
+
+func (s *Shipper) recordOwnerObservations(discovered []Discovered) error {
+	if s.Correlate == nil {
+		return nil
+	}
+	owners := s.Correlate(discovered)
+	recorded := false
+	for _, d := range discovered {
+		owner := owners[d.Identity.Key()]
+		if owner == "" {
+			continue
+		}
+		cur, ok := s.Registry.Get(d.Identity)
+		if !ok {
+			cur = Cursor{Tool: d.Identity.Tool, SessionID: d.Identity.SessionID, FileUUID: d.Identity.FileUUID, Path: d.Path}
+		}
+		if cur.SessionOwner != owner {
+			cur.SessionOwner = owner
+			if err := s.Registry.Put(cur); err != nil {
+				return err
+			}
+			recorded = true
+			s.logger().Info("SESSION_OWNER observed", "identity", d.Identity.Key(), "owner", owner)
+		}
+	}
+	if recorded {
+		// Process correlation is ephemeral: unlike ACKed bytes, a crash
+		// cannot reconstruct this observation by replaying the source file.
+		return s.Registry.flush()
+	}
+	return nil
 }
 
 // recoverCursor rebuilds one identity's cursor from a recovery GET, per the

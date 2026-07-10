@@ -7,6 +7,7 @@ package ship
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -646,13 +647,79 @@ func TestRunDaemonBoundsPassesDuringContinuousWrites(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(passes) < 3 || len(passes) > 6 {
-		t.Fatalf("authoritative passes during continuous writes = %d, want 3..6", len(passes))
+	if len(passes) < 4 || len(passes) > 7 {
+		t.Fatalf("authoritative passes during continuous writes = %d, want 4..7", len(passes))
 	}
-	for i := 1; i < len(passes); i++ {
+	// The first hint after startup has no prior hint-driven work and is
+	// intentionally immediate. Every subsequent hint admission is bounded
+	// start-to-start by the configured interval.
+	for i := 2; i < len(passes); i++ {
 		if elapsed := passes[i].Sub(passes[i-1]); elapsed < 225*time.Millisecond {
 			t.Fatalf("passes %d and %d started %s apart, want at least 225ms", i-1, i, elapsed)
 		}
+	}
+}
+
+func TestRunDaemonIsolatedHintLatencyOnRepresentativeTree(t *testing.T) {
+	h := newHarness(t)
+	h.shipper.Rescan = 30 * time.Second
+	os.MkdirAll(filepath.Join(h.roots.Claude, "-p"), 0o755)
+	os.MkdirAll(h.roots.Codex, 0o755)
+
+	var targetPath, targetUUID string
+	for i := 0; i < 750; i++ {
+		uuid := fmt.Sprintf("%08d-0000-4000-8000-000000000000", i)
+		path := h.writeClaude("-p", uuid, []byte("x"))
+		if i == 749 {
+			targetPath = path
+			targetUUID = uuid
+		}
+	}
+	h.runOnce()
+
+	initialPass := make(chan struct{}, 1)
+	h.shipper.Correlate = func([]Discovered) map[string]string {
+		select {
+		case initialPass <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- h.shipper.Run(ctx) }()
+	<-initialPass
+	time.Sleep(50 * time.Millisecond) // let the quiescent startup pass finish
+
+	started := time.Now()
+	if err := os.WriteFile(targetPath, []byte("xy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(time.Second)
+	var latency time.Duration
+	for {
+		if latency == 0 && string(h.store.mirrorBytes("claude", targetUUID, targetUUID)) == "xy" {
+			latency = time.Since(started)
+		}
+		if latency > 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("isolated hint did not reach the store within one second")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	t.Logf("isolated append-to-ACK latency on 750-file tree: %s", latency)
+	if latency >= 250*time.Millisecond {
+		t.Fatalf("isolated append-to-ACK latency = %s, want below 250ms", latency)
+	}
+
+	time.Sleep(20 * time.Millisecond) // keep cancellation outside the measured ACK path
+	cancel()
+	if err := <-done; err != nil && !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("daemon exit: %v", err)
 	}
 }
 

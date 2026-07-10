@@ -86,9 +86,12 @@ func (e *LockedRegistryError) Error() string {
 // atomically (temp + fsync + rename) while an exclusive flock on a sidecar
 // lock file is held for the daemon's lifetime.
 type Registry struct {
-	dir      string
-	lockFile *os.File
-	cursors  map[string]Cursor
+	dir                 string
+	lockFile            *os.File
+	cursors             map[string]Cursor
+	dirty               bool
+	batchDepth          int
+	durableReplacements uint64
 	// NeedsRecovery is true when the registry was missing or unreadable at
 	// open: cursors must be rebuilt from rescan + recovery GETs before
 	// shipping resumes. An unreadable file is renamed aside (never deleted).
@@ -198,16 +201,58 @@ func LoadSnapshot(dir string) ([]Cursor, error) {
 	return out, nil
 }
 
-// Put upserts a cursor and persists the registry durably.
-func (r *Registry) Put(c Cursor) error {
-	r.cursors[c.Identity().Key()] = c
-	return r.save()
+// beginBatch defers durable persistence until the matching endBatch. Cursor
+// mutations remain immediately visible in memory; callers must only make
+// authoritative state transitions before invoking Put or Delete.
+func (r *Registry) beginBatch() {
+	r.batchDepth++
 }
 
-// Delete GCs a cursor (file deletion; the mirror retains) and persists.
+// endBatch closes one batch and durably persists all accumulated mutations
+// when the outermost batch ends.
+func (r *Registry) endBatch() error {
+	if r.batchDepth == 0 {
+		return errors.New("cursor registry batch ended without a matching begin")
+	}
+	r.batchDepth--
+	if r.batchDepth > 0 {
+		return nil
+	}
+	return r.flush()
+}
+
+// Put upserts a cursor. Outside a batch it persists immediately; inside a
+// batch the outermost endBatch performs the durable replacement.
+func (r *Registry) Put(c Cursor) error {
+	r.cursors[c.Identity().Key()] = c
+	r.dirty = true
+	if r.batchDepth > 0 {
+		return nil
+	}
+	return r.flush()
+}
+
+// Delete GCs a cursor (file deletion; the mirror retains). Persistence uses
+// the same immediate-or-batched rule as Put.
 func (r *Registry) Delete(id Identity) error {
 	delete(r.cursors, id.Key())
-	return r.save()
+	r.dirty = true
+	if r.batchDepth > 0 {
+		return nil
+	}
+	return r.flush()
+}
+
+func (r *Registry) flush() error {
+	if !r.dirty {
+		return nil
+	}
+	if err := r.save(); err != nil {
+		return err
+	}
+	r.dirty = false
+	r.durableReplacements++
+	return nil
 }
 
 func (r *Registry) save() error {

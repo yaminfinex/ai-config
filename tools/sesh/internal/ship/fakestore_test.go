@@ -27,6 +27,9 @@ type fakeStore struct {
 
 	// unavailable makes every PUT answer 503.
 	unavailable bool
+	// unavailableFor makes selected identities answer 503 so a pass can
+	// exercise successful and held files together.
+	unavailableFor map[string]bool
 	// nonConformingFingerprintInform makes the first fingerprint-routed PUT
 	// answer 409 fingerprint_conflict carrying the matched generation and its
 	// high_water instead of routing silently. A conforming store never does
@@ -175,7 +178,8 @@ func (fs *fakeStore) handle(w http.ResponseWriter, r *http.Request) {
 		writeErr(400, wire.ErrMalformedRequest, 0, 0)
 		return
 	}
-	if fs.unavailable {
+	key := fs.key(tool, sid, fuuid)
+	if fs.unavailable || fs.unavailableFor[key] {
 		writeErr(503, wire.ErrStoreUnavailable, 0, 0)
 		return
 	}
@@ -207,7 +211,6 @@ func (fs *fakeStore) handle(w http.ResponseWriter, r *http.Request) {
 		writeErr(413, wire.ErrBodyTooLarge, 0, 0)
 		return
 	}
-	key := fs.key(tool, sid, fuuid)
 	fs.putLog[key] = append(fs.putLog[key], offset)
 	fs.ownerLog[key] = append(fs.ownerLog[key], r.Header.Get(wire.HeaderSessionOwner))
 
