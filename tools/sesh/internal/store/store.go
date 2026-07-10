@@ -318,7 +318,7 @@ func (s *Store) handlePUTBytes(w http.ResponseWriter, r *http.Request, rawTool, 
 		case s.events <- *ev:
 		default:
 			s.logger.Warn("append event dropped", "tool", tool, "session_id", sessionID, "file_uuid", fileUUID, "generation", ev.Generation)
-			if err := s.markDirtyForReindex(r.Context(), *ev); err != nil {
+			if err := s.MarkDirtyForReindex(r.Context(), *ev); err != nil {
 				s.logger.Error("failed to mark generation dirty for reindex", "error", err, "tool", tool, "session_id", sessionID, "file_uuid", fileUUID, "generation", ev.Generation)
 			}
 		}
@@ -781,7 +781,8 @@ func (s *Store) recordSuccess(ctx context.Context, st *fileState, hostname, osUs
 	return nil
 }
 
-func (s *Store) markDirtyForReindex(ctx context.Context, ev wire.AppendEvent) error {
+// MarkDirtyForReindex records that a durable append event was not indexed.
+func (s *Store) MarkDirtyForReindex(ctx context.Context, ev wire.AppendEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.ExecContext(ctx, `UPDATE files SET dirty_for_reindex = 1, updated_at = ?

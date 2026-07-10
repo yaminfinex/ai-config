@@ -3,18 +3,24 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"sesh/internal/index"
 	"sesh/internal/store"
 	"sesh/internal/surface"
+	"sesh/internal/wire"
 )
 
 // Execute runs the sesh command tree and returns its error, if any.
@@ -51,6 +57,8 @@ func newServe() *cobra.Command {
 		Use:   "serve",
 		Short: "Run the central store: byte-range ingest, index, and team surface",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			serveCtx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
 			var err error
 			if dataDir == "" {
 				dataDir, err = defaultStoreDir()
@@ -58,7 +66,7 @@ func newServe() *cobra.Command {
 					return err
 				}
 			}
-			st, err := store.Open(cmd.Context(), store.Config{
+			st, err := store.Open(serveCtx, store.Config{
 				Dir:    dataDir,
 				Logger: slog.Default(),
 			})
@@ -66,16 +74,22 @@ func newServe() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			idx, err := index.New(cmd.Context(), st.DB(), st.MirrorPath)
+			idx, err := index.New(serveCtx, st.DB(), st.MirrorPath)
 			if err != nil {
 				return err
 			}
-			serveCtx, cancelServe := context.WithCancel(cmd.Context())
-			defer cancelServe()
-			startIndexConsumer(serveCtx, st, idx, slog.Default())
+			consumer := startIndexConsumer(cmd.Context(), st, idx, slog.Default())
+			defer func() { _ = consumer.StopAndWait() }()
 			surfaceHandler := surface.New(surface.NewSQLStore(st.DB(), st.MirrorPath))
 			if tsnetMode {
-				return serveTSNet(cmd.Context(), st.Handler(), surfaceHandler, dataDir, addr, surfaceAddr, tsnetHostname, tsnetDir, tsnetAuthKey)
+				err = serveTSNet(serveCtx, st.Handler(), surfaceHandler, dataDir, addr, surfaceAddr, tsnetHostname, tsnetDir, tsnetAuthKey)
+				if consumerErr := consumer.StopAndWait(); consumerErr != nil {
+					return errors.Join(err, consumerErr)
+				}
+				if errors.Is(err, context.Canceled) {
+					return nil
+				}
+				return err
 			}
 			l, err := listenLoopback(addr, "ingest")
 			if err != nil {
@@ -89,14 +103,17 @@ func newServe() *cobra.Command {
 				_ = l.Close()
 				return err
 			}
-			go func() {
-				if err := http.Serve(sl, surfaceHandler); err != nil {
-					slog.Default().Error("surface listener stopped", "error", err)
-				}
-			}()
-			defer sl.Close()
-			defer cancelServe()
-			return st.Serve(serveCtx, l)
+			err = serveHTTP(serveCtx,
+				httpEndpoint{listener: l, handler: st.Handler()},
+				httpEndpoint{listener: sl, handler: surfaceHandler},
+			)
+			if consumerErr := consumer.StopAndWait(); consumerErr != nil {
+				return errors.Join(err, consumerErr)
+			}
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8765", "loopback address for the store HTTP listener")
@@ -151,23 +168,67 @@ func serveTSNet(ctx context.Context, ingestHandler, surfaceHandler http.Handler,
 		_ = l.Close()
 		return err
 	}
-	errCh := make(chan error, 2)
-	go func() {
-		errCh <- http.Serve(sl, plan.surfaceHandler)
-	}()
-	go func() {
-		errCh <- http.Serve(l, plan.ingestHandler)
-	}()
+	return serveHTTP(ctx,
+		httpEndpoint{listener: l, handler: plan.ingestHandler},
+		httpEndpoint{listener: sl, handler: plan.surfaceHandler},
+	)
+}
+
+const serveShutdownTimeout = 10 * time.Second
+
+type httpEndpoint struct {
+	listener net.Listener
+	handler  http.Handler
+}
+
+func serveHTTP(ctx context.Context, endpoints ...httpEndpoint) error {
+	servers := make([]*http.Server, len(endpoints))
+	errCh := make(chan error, len(endpoints))
+	for i, endpoint := range endpoints {
+		servers[i] = &http.Server{Handler: endpoint.handler}
+		go func(server *http.Server, listener net.Listener) {
+			errCh <- server.Serve(listener)
+		}(servers[i], endpoint.listener)
+	}
+
+	completed := 0
+	var serveErr error
 	select {
-	case err := <-errCh:
-		_ = l.Close()
-		_ = sl.Close()
-		return err
+	case serveErr = <-errCh:
+		completed = 1
 	case <-ctx.Done():
-		_ = l.Close()
-		_ = sl.Close()
+		serveErr = ctx.Err()
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), serveShutdownTimeout)
+	defer cancel()
+	shutdownErrs := make(chan error, len(servers))
+	var shutdowns sync.WaitGroup
+	for _, server := range servers {
+		shutdowns.Add(1)
+		go func(server *http.Server) {
+			defer shutdowns.Done()
+			if err := server.Shutdown(shutdownCtx); err != nil {
+				_ = server.Close()
+				shutdownErrs <- err
+			}
+		}(server)
+	}
+	shutdowns.Wait()
+	close(shutdownErrs)
+	for err := range shutdownErrs {
+		if err != nil {
+			return fmt.Errorf("shut down HTTP listeners: %w", err)
+		}
+	}
+	for completed < len(servers) {
+		<-errCh
+		completed++
+	}
+	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	return serveErr
 }
 
 func tsnetListenAddr(addr string) string {
@@ -197,27 +258,87 @@ func listenLoopback(addr, name string) (net.Listener, error) {
 	return l, nil
 }
 
-func startIndexConsumer(ctx context.Context, st *store.Store, idx *index.Indexer, logger *slog.Logger) {
+type indexConsumer struct {
+	stop         chan struct{}
+	done         chan struct{}
+	stopOnce     sync.Once
+	waitOnce     sync.Once
+	waitErr      error
+	drainTimeout time.Duration
+	store        *store.Store
+}
+
+func startIndexConsumer(ctx context.Context, st *store.Store, idx *index.Indexer, logger *slog.Logger) *indexConsumer {
+	consumer := &indexConsumer{
+		stop:         make(chan struct{}),
+		done:         make(chan struct{}),
+		drainTimeout: serveShutdownTimeout,
+		store:        st,
+	}
+	workCtx := context.WithoutCancel(ctx)
+	process := func(ev wire.AppendEvent) {
+		if err := st.WithWriteLock(func() error {
+			return idx.ProcessAppend(workCtx, ev)
+		}); err != nil {
+			logger.Error("append index failed",
+				"error", err,
+				"tool", ev.Tool,
+				"session_id", ev.WireSessionID,
+				"file_uuid", ev.FileUUID,
+				"generation", ev.Generation,
+			)
+		}
+	}
 	go func() {
+		defer close(consumer.done)
 		for {
 			select {
-			case <-ctx.Done():
-				return
-			case ev := <-st.AppendEvents():
-				if err := st.WithWriteLock(func() error {
-					return idx.ProcessAppend(ctx, ev)
-				}); err != nil {
-					logger.Error("append index failed",
-						"error", err,
-						"tool", ev.Tool,
-						"session_id", ev.WireSessionID,
-						"file_uuid", ev.FileUUID,
-						"generation", ev.Generation,
-					)
+			case <-consumer.stop:
+				for {
+					select {
+					case ev := <-st.AppendEvents():
+						process(ev)
+					default:
+						return
+					}
 				}
+			case ev := <-st.AppendEvents():
+				process(ev)
 			}
 		}
 	}()
+	return consumer
+}
+
+func (consumer *indexConsumer) StopAndWait() error {
+	consumer.stopOnce.Do(func() { close(consumer.stop) })
+	consumer.waitOnce.Do(func() {
+		timer := time.NewTimer(consumer.drainTimeout)
+		defer timer.Stop()
+		select {
+		case <-consumer.done:
+		case <-timer.C:
+			consumer.waitErr = errors.Join(
+				errors.New("timed out draining index consumer"),
+				consumer.markBufferedDirty(),
+			)
+		}
+	})
+	return consumer.waitErr
+}
+
+func (consumer *indexConsumer) markBufferedDirty() error {
+	ctx, cancel := context.WithTimeout(context.Background(), serveShutdownTimeout)
+	defer cancel()
+	var err error
+	for {
+		select {
+		case ev := <-consumer.store.AppendEvents():
+			err = errors.Join(err, consumer.store.MarkDirtyForReindex(ctx, ev))
+		default:
+			return err
+		}
+	}
 }
 
 func newReindex() *cobra.Command {
