@@ -3,10 +3,10 @@ id: TASK-127
 title: >-
   sesh+mish install alignment with the quick pattern (just recipes, versions
   diff, mish install unit)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-09 20:14'
-updated_date: '2026-07-10 21:19'
+updated_date: '2026-07-10 21:20'
 labels: []
 dependencies: []
 priority: medium
@@ -35,8 +35,8 @@ mish (tools/mish): NO install tier by design — README states install/packaging
 3. Decide and document the house-standard install location (quick uses GOBIN; sesh service pins /usr/local/bin) — one convention, stated in both READMEs.
 4. Keep the check-deploy-artifacts.sh invariants green (no repo-path coupling; preflight; drop-in preservation).
 
-## Acceptance criteria
-
+## Acceptance Criteria
+<!-- AC:BEGIN -->
 1. `just build/install` (+ sesh deploy/restart recipe) exist and work for both tools; local vs installed artifacts are independent copies, never symlinks into the repo.
 2. A versions/staleness surface exists for sesh (local vs running service).
 3. mish v1 install lands on PATH via the house installer shape; its README deferred-install note replaced with the real recipe.
@@ -46,6 +46,14 @@ mish (tools/mish): NO install tier by design — README states install/packaging
 
 sesh/mish orchestrator lanes are closed; this is a hera-lane task. The sesh service is live-deployable — any change to install-ship.sh or units must preserve rollout compatibility for already-installed nodes (drop-in preservation covers config; binary path changes would need a migration note).
 <!-- SECTION:DESCRIPTION:END -->
+
+- [ ] #1 just build/install (+ sesh deploy/restart recipe) exist and work for both tools; local vs installed artifacts are independent copies, never symlinks into the repo
+- [ ] #2 A versions/staleness surface exists for sesh (local build vs running shipper vs store), complementing the runtime stale-binary refusal
+- [ ] #3 mish v1 install lands on PATH via the house installer shape; its README deferred-install note replaced with the real recipe
+- [ ] #4 Both tools' own suites green plus the sesh deploy-artifacts gate; house install-location convention (GOBIN) stated in both READMEs
+<!-- AC:END -->
+
+
 
 ## Implementation Notes
 
