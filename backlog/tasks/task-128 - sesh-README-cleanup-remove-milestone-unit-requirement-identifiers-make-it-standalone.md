@@ -3,9 +3,10 @@ id: TASK-128
 title: >-
   sesh README cleanup: remove milestone/unit/requirement identifiers, make it
   standalone
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-09 21:05'
+updated_date: '2026-07-10 10:30'
 labels: []
 dependencies: []
 priority: medium
@@ -31,3 +32,9 @@ tools/sesh/README.md shipped saturated with run-scoped delivery identifiers — 
 2. A reader with no knowledge of the build run can follow both runbooks end to end.
 3. sesh + mish suites and house gate green (docs-only diff expected — gate proves nothing broke).
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Done 2026-07-10 via the docs-consolidation remediation unit (merged): sesh README rewritten standalone — verified zero milestone/unit/requirement/task identifiers by grep on merged main. Note: ACs lived in the description body, not CLI AC fields (known capture slip), so no check-ac; both criteria verified manually.
+<!-- SECTION:NOTES:END -->
