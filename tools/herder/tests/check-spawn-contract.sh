@@ -340,6 +340,19 @@ if [[ "$WRITE" -eq 0 ]]; then
   [[ "$RUN_RC" -eq 1 ]] && grep -q -- '--model conflicts with a model pin in --extra-arg' "$RUN_ERR_F" \
     && ok "usage: first-class/passthrough model collision refused" || bad "usage: model collision refused" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
 
+  for shape in short_split long_split short_glued long_glued; do
+    CASE="$ROOT/usage_model_config_collision_$shape"
+    case "$shape" in
+      short_split) config_args=(--extra-arg -c --extra-arg model=legacy-pin) ;;
+      long_split)  config_args=(--extra-arg --config --extra-arg model=legacy-pin) ;;
+      short_glued) config_args=(--extra-arg -c=model=legacy-pin) ;;
+      long_glued)  config_args=(--extra-arg --config=model=legacy-pin) ;;
+    esac
+    run_spawn ready codex launchctx --role worker --agent codex --model gpt-test "${config_args[@]}"
+    [[ "$RUN_RC" -eq 1 ]] && grep -q -- '--model conflicts with a model pin in --extra-arg' "$RUN_ERR_F" \
+      && ok "usage: codex config model collision refused ($shape)" || bad "usage: codex config model collision refused ($shape)" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  done
+
   CASE="$ROOT/usage_notify_noprompt"
   run_spawn ready claude launchctx --role worker --agent claude --notify
   [[ "$RUN_RC" -eq 1 ]] && grep -q -- '--notify requires --prompt' "$RUN_ERR_F" \

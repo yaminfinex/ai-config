@@ -378,7 +378,7 @@ func printCompactHelp(stdout io.Writer) {
 		"herder compact — queue a steered /compact into the CALLER'S OWN pane (self only).",
 		"",
 		"Usage:",
-		"  herder compact [--dry-run] (--then <continuation> [--then-timeout <dur>] | --stop) \\",
+		"  herder compact [--dry-run] [--then <continuation> [--then-timeout <dur>] | --stop] \\",
 		"                 [<steer text> | -- <steer text>]",
 		"",
 		"Types a real `/compact <steer>` input line into your own composer via the",

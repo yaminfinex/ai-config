@@ -482,7 +482,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		die(stderr, "--model is supported only for --agent claude or --agent codex; use --extra-arg for another agent's model option")
 		return opts, 1
 	}
-	if opts.Model != "" && hasModelExtraArg(opts.ExtraArgs) {
+	if opts.Model != "" && hasModelExtraArg(opts.Agent, opts.ExtraArgs) {
 		die(stderr, "--model conflicts with a model pin in --extra-arg; use the first-class --model flag or the passthrough form, not both")
 		return opts, 1
 	}
@@ -1548,13 +1548,35 @@ func recordExtraArgs(args []string) []string {
 	return args
 }
 
-func hasModelExtraArg(args []string) bool {
-	for _, arg := range args {
+func hasModelExtraArg(agent string, args []string) bool {
+	for i, arg := range args {
 		if arg == "--model" || arg == "-m" || strings.HasPrefix(arg, "--model=") {
 			return true
 		}
+		if agent != "codex" {
+			continue
+		}
+		switch {
+		case (arg == "-c" || arg == "--config") && i+1 < len(args):
+			if isModelConfigOverride(args[i+1]) {
+				return true
+			}
+		case strings.HasPrefix(arg, "-c="):
+			if isModelConfigOverride(strings.TrimPrefix(arg, "-c=")) {
+				return true
+			}
+		case strings.HasPrefix(arg, "--config="):
+			if isModelConfigOverride(strings.TrimPrefix(arg, "--config=")) {
+				return true
+			}
+		}
 	}
 	return false
+}
+
+func isModelConfigOverride(arg string) bool {
+	key, _, ok := strings.Cut(arg, "=")
+	return ok && strings.TrimSpace(key) == "model"
 }
 
 func teamSummary(team string) string {
