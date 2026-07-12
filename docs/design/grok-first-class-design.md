@@ -84,15 +84,30 @@ its public generic verbs, executed by the binder, a herder process:
   0.7.23 on isolated scratch buses, as corrected by independent adversarial
   reproduction (§Design-time verification, V1–V4). The pickup contract, exactly:
 
-  1. **Drain** (the only durable primitive): anonymous `hcom events --full --type
-     message --sql "id > <C> AND EXISTS (SELECT 1 FROM json_each(msg_delivered_to)
-     WHERE value='<seat>')"` — no `--wait`. Append+fsync every returned row to the
-     journal; derive C as the max journaled event id; repeat until the query returns
-     empty. `msg_delivered_to` is hcom's own canonical routing snapshot: it covers
-     direct, thread, tag, and broadcast fanout exactly as hcom routed them and
-     excludes the sender — a mention-or-broadcast predicate is wrong (it returns the
-     seat its **own** broadcasts, and thread fanout keeps the sender in `mentions`;
-     both self-delivery bugs reproduced, V3).
+  1. **Drain** (the only durable primitive): anonymous `hcom events --full` — no
+     `--wait` — paged **oldest-first above the cursor**. hcom's snapshot query is
+     `ORDER BY id DESC LIMIT 20` by default, so a naive `id > C` drain returns only
+     the **newest** 20 rows; deriving C from that page skips every older matching row
+     forever (reproduced with a 25-message backlog: 20 returned, C advanced past all
+     25, repeat empty, five lost — V9). The drain query therefore selects its page
+     itself, via the reproduction-proven shape:
+
+     ```sql
+     id IN (SELECT id FROM events_v
+            WHERE type='message' AND id > <C>
+              AND EXISTS (SELECT 1 FROM json_each(msg_delivered_to)
+                          WHERE value='<seat>')
+            ORDER BY id ASC LIMIT 20)
+     ```
+
+     Append+fsync every returned row to the journal; set C to the max id of the
+     page; repeat until a page comes back empty. A merely large `--last N` is **not**
+     a fix — it moves the loss threshold without removing it. `msg_delivered_to` is
+     hcom's own canonical routing snapshot: it covers direct, thread, tag, and
+     broadcast fanout exactly as hcom routed them and excludes the sender — a
+     mention-or-broadcast predicate is wrong (it returns the seat its **own**
+     broadcasts, and thread fanout keeps the sender in `mentions`; both self-delivery
+     bugs reproduced, V3).
   2. **Edge trigger** (latency optimization only, zero correctness weight): after a
      drain returns empty, block on the same anonymous query with `--wait`. On any
      wake **or timeout**, return to step 1. `--wait` is structurally unfit as the
@@ -102,8 +117,9 @@ its public generic verbs, executed by the binder, a herder process:
      drain reads from the binder's cursor, so backlog of any age is picked up.
   3. **Identity-free reads, explicitly scrubbed**: every read invocation (drain and
      wait) runs with **no hcom identity** — no `--name`, and an environment scrubbed
-     of hcom identity/session-detection variables (`HCOM_PROCESS_ID` and tool-session
-     markers). A read under a registered identity triggers hcom's post-dispatch
+     of the native router's identity inputs, concretely `HCOM_PROCESS_ID` and
+     `CODEX_THREAD_ID` in 0.7.23 (the scrub list is version-pinned and revisited on
+     any hcom upgrade). A read under a registered identity triggers hcom's post-dispatch
      pending-message delivery: it appends formatted unread messages to stdout
      (corrupting the machine-read output) and advances the seat's internal cursor
      (reproduced: unread 2 → 0 from a named query; V1). Anonymous `--wait` polls
@@ -619,6 +635,10 @@ contract was corrected for:
 - **T26 self-delivery exclusion** — the seat's own broadcast and its own
   thread-fanout sends never enter its spool (the `msg_delivered_to` predicate
   excludes the sender); a peer's broadcast, thread, tag, and direct sends all do.
+- **T27 backlog beyond the snapshot page** — more than 20 matching messages queue
+  while the binder is down; the restart drain journals **every id and payload
+  exactly once**, oldest first, across multiple pages (pinning the oldest-first
+  paged query shape against hcom's newest-first `LIMIT 20` snapshot default).
 
 **Live smoke (one, isolated, gated):** real Grok 0.2.93, throwaway `HOME`/`GROK_HOME`/
 `HCOM_DIR`/herder state, owner-authorized spend. Proves bidirectionally: an inbound
@@ -686,7 +706,7 @@ nonfunctional family is forbidden until the live smoke is green.
 
 | # | Unit | Territory (fence) | Gate |
 |---|---|---|---|
-| U1 | **Transport core**: spool journal + state machine, binder (incl. supervision, seat lock/generation fencing, hcom generic binding), tap, bus MCP server, `herder grok <tap\|mcp\|bridge>` subcommands. No spawn wiring — nothing user-reachable changes. | New internal package(s) only (e.g. `tools/herder/internal/grokbridge/`) + `herder grok` command registration. | T1–T18 + T23 hermetic (mock Grok + isolated bus); T24–T26 against the real hcom binary; probes P1/P4/P5/P7 answered and recorded. |
+| U1 | **Transport core**: spool journal + state machine, binder (incl. supervision, seat lock/generation fencing, hcom generic binding), tap, bus MCP server, `herder grok <tap\|mcp\|bridge>` subcommands. No spawn wiring — nothing user-reachable changes. | New internal package(s) only (e.g. `tools/herder/internal/grokbridge/`) + `herder grok` command registration. | T1–T18 + T23 hermetic (mock Grok + isolated bus); T24–T27 against the real hcom binary; probes P1/P4/P5/P7 answered and recorded. |
 | U2 | **Launch contract, behind an activation gate**: `launchcmd`/`spawncmd` family wiring, version/capability gate, dedicated `GROK_HOME` seeding, session preassign + verify, doctrine composition, flag mapping + refusals, boot arming prompt. `--agent grok` refuses with a clear "family not activated" error unless the explicit activation config/env is set — the smoke runs gated. | `launchcmd`, `spawncmd` grok branches; `grokbridge` consumed, not modified. | T19–T22 + the **isolated live smoke** (owner spend, §10.3) run under the activation flag. |
 | U3 | **Lifecycle & identity**: resume/fork/cull paths, subagent guards, registry capability flags, wake-degraded reporting. | `lifecyclecmd`, registry schema additions. | T14–T16 + resume/fork live re-check ridealong on the U2 smoke pattern. |
 | U4 | **Observer & transcript**: `chat_history.jsonl` adapter, `events.jsonl` labeled enrichment, honest-unknown reconciliation. | `observercmd` + transcript plumbing. | Adapter tests against recorded session fixtures; no synthesized status (assert `unknown` preserved). |
@@ -768,3 +788,11 @@ overclaimed, the correction is spelled out.
   0.2.93 `--help` lists `--no-subagents` ("Disable subagent spawning") and
   `--agents <JSON>` ("Inline subagent definitions as JSON") — the former is the DR-4
   enforcement vehicle; the latter is on the DR-3 refusal list.
+- **V9 — snapshot `events` pages newest-first, capped at 20 by default.** From
+  independent reproduction against installed 0.7.23 (source-confirmed:
+  `ORDER BY id DESC LIMIT last_n`, `last_n` defaulting to 20): with 25 direct
+  messages queued to one seat, a naive `id > C` drain returned only the newest 20;
+  deriving C from that page and repeating returned zero rows, permanently skipping
+  the oldest five. The corrected oldest-first paged shape (`id IN (SELECT id …
+  ORDER BY id ASC LIMIT 20)`, DR-1 step 1) returned 20 then 5 — all 25 exactly
+  once. A larger `--last N` only moves the loss threshold. T27 pins this.
