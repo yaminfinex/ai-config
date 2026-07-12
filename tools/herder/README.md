@@ -42,7 +42,10 @@ for f in tools/herder/tests/check-*.sh; do bash "$f"; done
 the installed `hcom` and `herdr` binaries rather than mocks, and prints a visible skip
 count when those binaries or live read-only surfaces are unavailable. Run it during every
 hcom/herdr upgrade and at least weekly on the main development machine so upstream drift is
-caught between upgrades.
+caught between upgrades. Its Herdr socket probes are optional live-environment coverage:
+they issue only read-only snapshot and connection-scoped subscription requests, apply hard
+timeouts, and close every connection immediately. They never create or change panes,
+plugins, registry records, server state, or observer state.
 
 The suites neutralize inherited `HERDER_BIN` / `AI_CONFIG_ROOT` themselves (each pins
 `AI_CONFIG_ROOT` to its own checkout and ignores the spawn-exported binary override), so
