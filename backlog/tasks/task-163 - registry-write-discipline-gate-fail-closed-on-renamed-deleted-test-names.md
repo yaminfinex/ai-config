@@ -1,9 +1,10 @@
 ---
 id: TASK-163
 title: 'registry write-discipline gate: fail closed on renamed/deleted test names'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-12 12:19'
+updated_date: '2026-07-12 13:15'
 labels: []
 dependencies: []
 priority: medium

@@ -3,9 +3,10 @@ id: TASK-164
 title: >-
   herder operator language: align living docs/help with the four-state session
   model
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-12 12:19'
+updated_date: '2026-07-12 13:15'
 labels: []
 dependencies: []
 priority: low
