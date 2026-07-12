@@ -1,7 +1,7 @@
 <!-- Provenance: design record, 2026-07-12. Design only; implementation is staged separately (§Staging). -->
 # Grok as a first-class herder/hcom family — design
 
-Status: proposed design, pending adversarial review
+Status: proposed design, revised once after adversarial review; pending delta review
 Subject: xAI Grok CLI 0.2.93 (`f00f96316d`) against herder + hcom 0.7.23
 
 Evidence base (cited throughout by path + section):
@@ -34,19 +34,24 @@ Four cooperating parts per Grok seat, plus one durable store. Names used through
 - **Spool** — the seat's durable message journal (append-only JSONL under the herder
   state dir, keyed by seat GUID). The single source of truth for the receipt state
   machine. Survives every process in this diagram.
-- **Binder** — a per-seat herder-owned daemon. The only spool writer. Binds the seat to
-  hcom (`hcom start` / `hcom listen` / `hcom send`), owns the receipt state machine,
-  serves a per-seat unix socket to the tap and the MCP server.
+- **Binder** — a per-seat herder-owned daemon. The only spool writer, enforced by an
+  exclusive per-seat OS lock with generation fencing (DR-2). Binds the seat to hcom
+  (`hcom start` for identity, committed-cursor `hcom events` queries for inbound
+  pickup, `hcom send` for outbound), owns the receipt state machine, serves a per-seat
+  unix socket to the tap and the MCP server.
 - **Tap** — `herder grok tap --seat <guid>`: the command Grok itself runs as a
   persistent monitor. A dumb pipe: connects to the binder socket and prints exactly the
   lines the binder hands it. Prints nothing else, ever.
 - **Bus MCP server** — `herder grok mcp`: a Grok-spawned stdio MCP server exposing
   `fetch_message`, `ack_message`, `list_pending`, `send_message`. A thin adapter that
-  forwards every operation to the binder over the same socket.
+  forwards every operation to the binder over the same socket. Scope honesty: the
+  characterization proved generic MCP request/response tool transport in Grok 0.2.93
+  (characterization "MCP probe") — these four operations are **new bridge code** riding
+  that transport, not individually characterized vendor capabilities.
 
 ```text
-hcom bus
-   │  hcom listen --json (binder pickup)
+hcom bus (events store: id-addressed, non-destructive)
+   │  hcom events --wait, gated by binder-owned committed cursor (id > C)
    ▼
 binder ──────────────► spool (append-only journal; fsync before wake)
    │ per-seat unix socket
@@ -67,9 +72,30 @@ restart without losing a message or fabricating a receipt.
 
 **DECISION.** The Grok family is owned end-to-end by herder: launch, registration,
 delivery bridge, receipts, lifecycle, observation. hcom is consumed exclusively through
-its public generic verbs — `hcom start` (identity), `hcom listen --json` (inbound
-pickup), `hcom send --name` (outbound) — executed by the binder, a herder process. No
-`hcom grok` launcher is required or waited for. Grok's accidental Claude-hook
+its public generic verbs, executed by the binder, a herder process:
+
+- `hcom start` — bus identity (adhoc registration; `--as` reclaim on restart);
+- `hcom events` — **the inbound pickup source of record.** The events store is
+  id-addressed, SQL-queryable, and **non-destructive**: querying it does not consume
+  unread state or advance any hcom-side cursor, and each row carries the full message
+  envelope (event id, sender, text, intent, thread, mentions, scope, delivered_to,
+  reply_to). All three properties were verified against installed hcom 0.7.23 on an
+  isolated scratch bus (§Design-time verification, V1–V4). The binder queries with its
+  **own committed cursor** — `--type message --sql "id > <C> AND (broadcast OR seat
+  mentioned)"` — in blocking `--wait` mode, so pickup is level-triggered against
+  durable state the binder alone paces.
+- `hcom send --name` — outbound.
+
+`hcom listen` is **explicitly rejected as a pickup source**: hcom advances the
+instance's internal `last_event_id` before printing, outside binder control — a
+crash between hcom's internal advance and the binder's fsync would silently lose the
+message on restart (`hcom start --as` preserves that cursor) — and its JSON emits only
+`{from,text}`, without the event id, intent, or thread the receipt machine keys on.
+Both defects confirmed by direct probe (§Design-time verification, V5). Because the
+committed cursor lives with the spool and the events store is non-destructive, no
+hcom-internal cursor state can lose a message for this design.
+
+No `hcom grok` launcher is required or waited for. Grok's accidental Claude-hook
 compatibility is structurally disabled (DR-3) so no half-integration path exists.
 
 **Which `hcom` binary.** In herder panes, `hcom` on PATH resolves to
@@ -117,14 +143,17 @@ enforces this with a zero-byte-output test (§8, T17).
   probes. Kept only as the implicit degraded behavior when the wake channel is down
   (doctrine still mandates `list_pending` at deterministic points).
 
-**hcom-side "delivered" honesty.** The binder picking a message off `hcom listen` must
-not let anything report end-to-end delivery. Whether hcom marks a listened-to message
-as read/delivered in its own bookkeeping is unverified (probe P2, §9). Until proven
-otherwise: herder's spool receipt is the **only** authoritative delivery signal for
-Grok seats; every herder surface (send verification, registry, observer) reports from
-the spool; and family documentation states that hcom-native read/delivery markers for
-Grok rows are pickup markers, not delivery. If hcom's semantics cannot be kept honest
-by configuration, an upstream ask is filed (owner decision, §10).
+**hcom-side "delivered" honesty.** Herder's spool receipt is the **only**
+authoritative delivery signal for Grok seats; every herder surface (send verification,
+registry, observer) reports from the spool. Because the binder never runs `hcom
+listen`, hcom's own unread counters for the seat are never consumed and will
+visibly drift upward — family documentation states plainly that hcom-native
+unread/read markers for Grok rows are meaningless and non-authoritative. Two
+non-blocking upstream niceties remain (owner decision, §10): a roster tool label for
+generically-started identities (an adhoc `hcom start` row labels itself from the
+detected calling environment, not the represented tool — §Design-time verification,
+V6), and optionally a native non-destructive fetch/commit API that would let the
+unread markers track reality.
 
 ## DR-2 — The receipt state machine
 
@@ -142,10 +171,13 @@ queued ──► surfaced ──► fetched ──► acked            (terminal
    └────────────┴────────────┴─────► undeliverable   (terminal: seat retired unacked)
 ```
 
-- **queued** — the binder has appended a full journal record (message id, sender,
+- **queued** — the binder has appended a full journal record (hcom event id, sender,
   intent, thread, payload, payload hash, timestamps) and fsynced it. This happens
   **before any wake emission and before any inference is possible** — pending ids
-  persist before inference, always.
+  persist before inference, always. The binder's **committed cursor is derived, not
+  stored**: it is the maximum hcom event id present in the journal, recomputed by
+  replay. A message is "picked up" if and only if it is durably queued; there is no
+  separate cursor record to fall out of sync.
 - **surfaced** — at least one *surfacing event* is journaled: either (a) a wake line
   handed to the tap, or (b) the id returned in a `list_pending` or `fetch_message`
   MCP response. (b) is the recovery-equivalent of a wake and is the sanctioned
@@ -214,7 +246,7 @@ and degrades (below). No hcom-level resend is ever triggered by this machinery;
 
 | Scenario | Behavior |
 |---|---|
-| **Binder crash/restart** (any point) | Supervisor restarts it; it replays the journal, reconciles pickup cursor against hcom, reclaims its bus identity (`hcom start --as <name>`), reopens the socket. Unacked ids are re-surfaced via `HCOM_RECOVER` on tap reconnect — not re-woken individually. Crash *between hcom pickup and journal append* is closed by ordering: the binder journals before advancing its hcom read cursor, so an unjournaled message is picked up again (at-least-once into the spool; ids dedupe). |
+| **Binder crash/restart** (any point) | Supervisor restarts it; it acquires the seat lock (below), replays the journal, derives the committed cursor, reclaims its bus identity (`hcom start --as <name>`), reopens the socket, and re-queries `hcom events` from the derived cursor. The crash windows, walked: *(a) crash after events query, before journal append+fsync* — the cursor never advanced (it is derived from the journal), and the events store is non-destructive, so the re-query returns the same message again; at-least-once into the spool, deduped by event id. *(b) crash after append, before wake* — replay finds the id queued-but-unsurfaced; `HCOM_RECOVER` covers it. *(c) crash after wake* — unacked ids are re-surfaced via a single `HCOM_RECOVER` on tap reconnect, never re-woken individually. No hcom-internal cursor participates in correctness at any point (DR-1). |
 | **Duplicate wake** (nudge, tap restart race) | States are monotonic; double fetch is idempotent; one delivery results. |
 | **Out-of-order fetch/ack** across ids | Allowed. Ids are independent; ordering is advisory (wake-line order, `list_pending` queue order). No global ordering requirement. |
 | **Auth/rate failure (429) mid-turn** after fetch, before ack | Id remains `fetched`, journal intact (persisted before inference). Doctrine: at the start of any turn following an error, call `list_pending`. The idle-aware nudge also re-surfaces. Delivery completes on the retried turn. API-key auth does not self-refresh — repeated auth failures degrade the seat honestly (DR-5) rather than looping. |
@@ -249,6 +281,23 @@ single writer (binder), fsync on the records that gate external claims (`queued`
 This matches the house pattern (events.jsonl everywhere) and makes every recovery path
 above a pure replay.
 
+**Single-writer is enforced, not asserted.** A registry pid/socket record is
+observation, not exclusion — a slow old binder can overlap a supervisor restart.
+Therefore:
+
+- The binder holds an **exclusive per-seat OS lock** (`flock` on a seat lock file) for
+  the entire time it may touch the journal, the hcom identity, or the socket. A
+  restarting binder blocks on the lock until the predecessor releases or is killed;
+  two live binders for one seat are structurally impossible.
+- Each lock acquisition increments a durable **generation number** (journaled). The
+  tap and MCP server learn the current generation at socket handshake, and **every
+  subsequent request is generation-fenced**: an operation stamped with a stale
+  generation is rejected with a reconnect error, never executed. A tap or MCP
+  connection that straddles a binder restart therefore cannot produce duplicate
+  surfacing records, and an ack accepted by a dying generation cannot be re-presented
+  by the next one — the journal (fsynced under the lock) is the arbiter either way.
+- The deliberate dual-binder race is a gate test (T23, §8).
+
 ## DR-3 — Launch contract
 
 **DECISION.** `herder spawn --agent grok` becomes a first-class family with a
@@ -262,7 +311,8 @@ name it):
 
 1. Generate seat GUID + session UUID (v7; `--session-id` requires a valid unused UUID —
    characterization "Launch"). Record both in the registry *before* launch.
-2. Start the binder. It acquires the bus identity (`hcom start`, tag-derived name),
+2. Start the binder. It acquires the seat lock, then the bus identity (`hcom start`;
+   the adhoc path assigns the name — role-tag ergonomics are probe P1, §9),
    writes it to the seat state, opens the socket. Launch blocks briefly on this.
 3. Compose the doctrine block (below) with the assigned bus name, seat GUID, session
    id, MCP tool names, and the tap command line.
@@ -341,22 +391,40 @@ message delivery.
 | normal autonomy | `--always-approve` |
 | `--safe` | no permission flag (Grok's native ask-mode default) |
 | `--model X` | `--model X` |
-| always | `--no-auto-update`, `--session-id <uuid>`, `--rules <doctrine>` |
+| always | `--no-auto-update`, `--no-subagents`, `--session-id <uuid>`, `--rules <doctrine>` |
 | resume | `--resume <sid>` (+ doctrine + arming prompt) |
 | fork | `--resume <sid> --fork-session` (+ fresh doctrine + arming prompt) |
 
 Passthrough args (`--extra-arg`) that collide with the contract are **refused with an
 error, never silently reconciled**: `--session-id`, `--resume`, `--fork-session`,
 `--rules`, `--permission-mode`, `--always-approve`, `--model` (when the first-class
-flag was also given), any auto-update flag, and any arg that would re-point
-`GROK_HOME`/`HOME`. `bypassPermissions` is not mapped anywhere pending the owner
-ruling (§10).
+flag was also given), any auto-update flag, any arg that would re-point
+`GROK_HOME`/`HOME`, and **anything that would re-enable or define subagents**
+(`--agents`, or any negation of `--no-subagents`) — the subagent prohibition is a
+soundness condition (DR-4), not a preference. `bypassPermissions` is not mapped
+anywhere pending the owner ruling (§10).
 
-**Version pinning.** Launch always passes `--no-auto-update`; the seeded config
-carries `auto_update = false`; the launched binary's reported version is recorded in
-the registry at boot. Tests key on version/capability, not screen text
-(characterization risk #8). An optional config knob may pin an explicit binary path;
-default is PATH resolution.
+**Version gate — the resolved binary is gated, not merely recorded.** Recording the
+version after boot is observation; the launch contract needs exclusion. The box
+reality makes this concrete: the characterized binary is 0.2.93, but PATH already
+resolves to an **uncharacterized 0.2.99** — the documented auto-update repointed
+`~/.local/bin/grok` (demo report "Live vendor-state contamination"; resolved versions
+re-verified at design time, §Design-time verification V7). Therefore:
+
+- Family config carries a **supported-version set and/or an explicit pinned binary
+  path** (the characterized 0.2.93 binary initially). Launch resolves the binary,
+  reads its version, and **refuses to launch** any version outside the supported set —
+  before the seat is activated, with an error naming the resolved path, the version,
+  and the supported set. No silent fallback, no launch-then-warn.
+- Capability follows the same gate: flags the contract depends on (`--no-subagents`,
+  `--session-id`, `--rules`, `--no-auto-update`) are part of the version's
+  characterization; a new version enters the supported set only via a characterization
+  pass, not by assumption (characterization risk #8: pin to version/capability, not
+  screen text).
+- The isolated live smoke (§8) runs **the same binary resolution the launch path
+  uses**, so the gate battery and ordinary launches exercise one binary, never two.
+- Launch always passes `--no-auto-update` and the seeded config carries
+  `auto_update = false`, so the gated binary cannot drift under a running family.
 
 ## DR-4 — Identity and lifecycle
 
@@ -369,15 +437,30 @@ hazards").
 
 **Parent/subagent separation.** A Grok subagent is its own session (own uuid-v7) whose
 `SessionEnd` stopped the parent's bus instance in probes (characterization "Event
-census", subagent hazard). Three independent guards:
+census", subagent hazard). Beyond the lifecycle hazard, subagents threaten the receipt
+machine itself: the MCP tool surface carries no proven caller-session identity (the
+characterized `tools/call` envelope shows name/arguments/progress metadata only), so a
+subagent that can reach the seat's MCP tools could fetch and ack a parent message the
+parent model never saw — a **false delivered receipt**. Doctrine cannot close that;
+only an enforced boundary can. The guards, all enforceable:
 
-1. The hazard's vehicle — Claude-compat hooks — is disabled outright (DR-3), so no
-   subagent lifecycle event can reach hcom at all.
+1. The lifecycle hazard's vehicle — Claude-compat hooks — is disabled outright (DR-3),
+   so no subagent lifecycle event can reach hcom at all.
 2. Registry lifecycle transitions for the seat require **process-level evidence**
    (Grok pid exit, pane death, binder socket state) — never session events.
-3. Doctrine forbids subagents from operating the bus MCP tools; the MCP server journals
-   whatever session evidence accompanies each call, so a violation is visible in the
-   journal rather than silently impersonating the seat.
+3. **First-class seats launch with subagents disabled**: `--no-subagents` ("Disable
+   subagent spawning") is verified present in the characterized 0.2.93 CLI
+   (§Design-time verification, V8), is in the always-argv (DR-3), and any passthrough
+   that would re-enable or define subagents is refused. The flag is part of the
+   version capability gate: a resolved binary without it fails the gate and does not
+   launch.
+
+Stated plainly: **without an enforced subagent boundary — `--no-subagents`, or a
+future OS/cryptographic caller-identity boundary on the MCP channel — the delivered
+predicate of DR-2 is unsound**, because ack-authorship cannot be attributed to the
+parent model. No first-class seat runs without one of those in force. Doctrine still
+tells the model not to delegate bus work, but it carries zero soundness weight. T16
+(§8) tests this boundary as a **rejection** contract, not a journaling one.
 
 **Resume** re-enters the same seat: same GUID, same session id, same spool, same bus
 name (binder persists across the Grok restart, or reclaims with `hcom start --as`).
@@ -440,8 +523,9 @@ Receipt state machine cases (each is an explicit named test):
 - **T7 ack-before-fetch rejected** — instructive error; no delivered claim.
 - **T8 foreign/unknown id fetch rejected.**
 - **T9 binder crash before wake** (journaled, unsurfaced) — restart replays;
-  `HCOM_RECOVER`; re-list; delivered. Also: crash before journal append → hcom
-  re-pickup (cursor not advanced); no loss, no dup delivery.
+  `HCOM_RECOVER`; re-list; delivered. Also: crash after events query, before journal
+  append — the derived cursor never advanced, the events store is non-destructive, so
+  the restart re-query returns the message; no loss, no duplicate delivery.
 - **T10 binder crash after wake, before fetch** — restart does not re-wake per id;
   single `HCOM_RECOVER`; delivered via re-list.
 - **T11 tap death** — seat flips wake-degraded; messages keep queueing; tap restart →
@@ -454,8 +538,12 @@ Receipt state machine cases (each is an explicit named test):
   regression.
 - **T15 fork** — fresh spool and name; parent's unacked ids stay put; lineage
   recorded; no cross-seat fetch possible (T8 applies across the pair).
-- **T16 subagent lifecycle** — synthetic subagent session events never transition the
-  seat; MCP call with subagent session evidence is journaled as such.
+- **T16 subagent boundary (REJECTION test)** — launch argv provably contains
+  `--no-subagents`; every passthrough form that would re-enable or define subagents
+  (`--agents`, negations) is refused at spawn; an MCP request fenced to a stale
+  generation or bearing non-seat session evidence is **rejected, never executed or
+  journaled as accepted**; synthetic subagent session events never transition the
+  seat.
 - **T17 silence gate** — idle binder+tap emit zero bytes on the model-facing channel
   over an extended window; diagnostics appear only in files.
 - **T18 reporting gate** — `delivered` is claimable only from `acked`; wake emission,
@@ -466,27 +554,40 @@ Launch/lifecycle contract tests:
 
 - **T19 passthrough refusals** — every colliding `--extra-arg` from the DR-3 list is
   refused with a targeted error.
-- **T20 update suppression + version record** — `--no-auto-update` always present;
-  seeded config carries `auto_update = false`; version captured at boot.
+- **T20 version/capability gate** — a resolved binary outside the supported set is
+  **refused before seat activation** (error names path, version, supported set); the
+  supported-set config and pinned-path knob are honored; `--no-auto-update` always
+  present and seeded config carries `auto_update = false`; the smoke asserts its
+  binary is the launch-path-resolved binary, not a separately pinned one.
 - **T21 child environment** — launched Grok's `/proc` env shows the pinned
   `GROK_HOME` et al. despite the login-shell reset (integration test in a real pane);
   no secret name's *value* appears in argv, generated files, registry, or logs.
 - **T22 identity binding** — a second Grok session in the same cwd cannot claim the
   seat (no cwd-keyed path exists to exercise).
+- **T23 dual-binder race** — two binders deliberately started for one seat: exactly
+  one holds the seat lock and serves; the loser blocks or exits without touching
+  journal, hcom identity, or socket; tap/MCP connections straddling the generation
+  change are fenced with reconnect errors; the journal shows no duplicate surfacing
+  and no ack accepted by a stale generation.
 
 **Live smoke (one, isolated, gated):** real Grok 0.2.93, throwaway `HOME`/`GROK_HOME`/
 `HCOM_DIR`/herder state, owner-authorized spend. Proves bidirectionally: an inbound
 message reaches `delivered` through the full correlated chain, and an outbound
 `send_message` lands on the isolated bus with hcom's receipt. This is the acceptance
-gate for the launch unit (§9) — the first moment `--agent grok` may be called working.
+gate for the launch unit (§11, U2), run under the activation flag. It does not by
+itself declare the family working — that happens only at the activation change after
+the lifecycle and observer units land (§11, "Activation is its own gate").
 
 ## 9. Implementation probes (facts to nail before/while building; not owner-level)
 
-- **P1** `hcom start` from a non-AI daemon process: name assignment, tag control,
-  `--as` reclaim behavior, what tool label the roster records.
-- **P2** `hcom listen --json` pickup semantics: message id fields, cursor behavior,
-  and whether pickup flips any hcom-side read/delivered marker (feeds DR-1 honesty;
-  escalates to §10 only if dishonest and unconfigurable).
+- **P1** `hcom start` identity ergonomics for a daemon binder: per-start name/tag
+  control (the adhoc path assigns a random name — V6) and `--as` reclaim behavior
+  across binder restarts. (Registration itself, envelope, and pickup are settled —
+  §Design-time verification.)
+- **P2** — *resolved at design time.* `hcom listen` is disqualified as pickup
+  (destructive internal cursor, `{from,text}`-only JSON) and `hcom events` is
+  qualified (non-destructive, id-addressed, full envelope, blocking `--wait`); see
+  §Design-time verification V1–V5. No implementation probe remains.
 - **P3** Grok TUI positional initial-prompt argv: does it start turn 1 unattended?
   (Fallback path and its owner flag: DR-3.)
 - **P4** Bus MCP server child environment: does Grok pass `GROK_SESSION_ID` (or
@@ -509,10 +610,16 @@ gate for the launch unit (§9) — the first moment `--agent grok` may be called
    decides any pin after scored trials (onboarding memo Q5, ranked task 3).
 3. **Live-smoke inference spend** — the §8 smoke consumes xAI quota; each
    implementation unit that runs it needs spend authorization.
-4. **Upstream hcom asks (conditional)** — file or hold: (a) a `grok` tool label for
-   generically-started agents so the hcom roster can say what herder's registry says;
-   (b) deferred/suppressible delivery markers if probe P2 shows `listen` pickup
-   overstates delivery and no configuration corrects it.
+4. **Upstream hcom asks (conditional, non-blocking)** — the review-directed
+   escalation ("no adequate pickup surface → blocking owner decision before
+   implementation") was evaluated and **averted**: the events surface passed
+   design-time verification as the pickup source of record (§Design-time
+   verification), so implementation is not blocked on upstream hcom. What remains is
+   file-or-hold niceties: (a) a `grok` tool label for generically-started identities
+   so the hcom roster can say what herder's registry says (adhoc rows currently label
+   from the detected environment — V6); (b) a native non-destructive fetch/commit API
+   so hcom's unread markers could track reality instead of being documented as
+   non-authoritative for Grok rows (DR-1).
 5. **Boot-arming fallback (conditional)** — only if probe P3 falsifies the argv boot
    prompt: approve one constant arming line via the existing composer boot-paste at
    launch (never message content), or require waiting for an alternative. Flagged
@@ -525,8 +632,8 @@ nonfunctional family is forbidden until the live smoke is green.
 
 | # | Unit | Territory (fence) | Gate |
 |---|---|---|---|
-| U1 | **Transport core**: spool journal + state machine, binder (incl. supervision + hcom generic binding), tap, bus MCP server, `herder grok <tap\|mcp\|bridge>` subcommands. No spawn wiring — nothing user-reachable changes. | New internal package(s) only (e.g. `tools/herder/internal/grokbridge/`) + `herder grok` command registration. | T1–T18 hermetic (mock Grok + isolated bus); probes P1/P2/P4/P5/P7 answered and recorded. |
-| U2 | **Launch contract**: `launchcmd`/`spawncmd` family wiring, dedicated `GROK_HOME` seeding, session preassign + verify, doctrine composition, flag mapping + refusals, boot arming prompt. | `launchcmd`, `spawncmd` grok branches; `grokbridge` consumed, not modified. | T19–T22 + the **isolated live smoke** (owner spend, §10.3). `--agent grok` is declared working here or not at all. |
+| U1 | **Transport core**: spool journal + state machine, binder (incl. supervision, seat lock/generation fencing, hcom generic binding), tap, bus MCP server, `herder grok <tap\|mcp\|bridge>` subcommands. No spawn wiring — nothing user-reachable changes. | New internal package(s) only (e.g. `tools/herder/internal/grokbridge/`) + `herder grok` command registration. | T1–T18 + T23 hermetic (mock Grok + isolated bus); probes P1/P4/P5/P7 answered and recorded. |
+| U2 | **Launch contract, behind an activation gate**: `launchcmd`/`spawncmd` family wiring, version/capability gate, dedicated `GROK_HOME` seeding, session preassign + verify, doctrine composition, flag mapping + refusals, boot arming prompt. `--agent grok` refuses with a clear "family not activated" error unless the explicit activation config/env is set — the smoke runs gated. | `launchcmd`, `spawncmd` grok branches; `grokbridge` consumed, not modified. | T19–T22 + the **isolated live smoke** (owner spend, §10.3) run under the activation flag. |
 | U3 | **Lifecycle & identity**: resume/fork/cull paths, subagent guards, registry capability flags, wake-degraded reporting. | `lifecyclecmd`, registry schema additions. | T14–T16 + resume/fork live re-check ridealong on the U2 smoke pattern. |
 | U4 | **Observer & transcript**: `chat_history.jsonl` adapter, `events.jsonl` labeled enrichment, honest-unknown reconciliation. | `observercmd` + transcript plumbing. | Adapter tests against recorded session fixtures; no synthesized status (assert `unknown` preserved). |
 | U5 | **Shim/setup/doctor/docs**: `grok` PATH shim, ai-setup/ai-doctor coverage, user docs. | shims + setup/doctor scripts + docs. | Ships only after U2's live smoke is green; recursion/shadowing checks (memo "Minimal first-class diff" #6). |
@@ -535,3 +642,52 @@ U1 → U2 strictly ordered; U3 and U4 can proceed in parallel after U2; U5 last.
 unit is independently mergeable behind its fence, and cross-family adversarial review
 plus the full repository gate battery apply to every behavior diff (per house rules;
 see task acceptance criteria in the backlog).
+
+**Activation is its own gate.** U2's green smoke does **not** declare the family
+working — it proves transport + launch under the activation flag. `--agent grok`
+becomes available by default only in a small **activation change after U3 and U4
+merge** (it may ride U5): removing the gate requires resume/fork/cull, subagent
+guards, wake-degraded reporting (U3) and the honest transcript/status adapter (U4) to
+be present, so no user ever reaches a spawnable family whose lifecycle or observation
+contracts don't exist yet. Until that change, the family is explicitly experimental
+and opt-in.
+
+## 12. Design-time verification
+
+Empirical checks run while writing this design (2026-07-12), against installed hcom
+0.7.23 and the two Grok binaries on the box. Isolation: hcom probes used a throwaway
+scratch `HCOM_DIR` bus with two throwaway adhoc identities (nothing touched the live
+bus); Grok probes were `--version`/`--help` only — no session, no inference, scratch
+`HOME`/`GROK_HOME`, no writes to `~/.grok`. Reproduction: create a scratch
+`HCOM_DIR`; register two identities with `hcom start`; send one direct message and
+one broadcast between them; interleave `hcom list` (unread counts), `hcom events`
+queries, and one `hcom listen`.
+
+- **V1 — `hcom events` is non-destructive.** The recipient's unread count (`+1` in
+  `hcom list`) was unchanged after an events query that returned the message in full.
+- **V2 — events rows carry the full envelope.** `--json` rows include the event `id`,
+  `type`, `ts`, and `data` with `from`, `text`, `intent`, `mentions[]`, `thread`; the
+  documented `events_v` SQL view additionally exposes `msg_scope`,
+  `msg_delivered_to[]`, `msg_reply_to`.
+- **V3 — committed-cursor queries work.** `hcom events --type message --sql "id > <C>
+  AND (msg_scope='broadcast' OR EXISTS (SELECT 1 FROM json_each(msg_mentions) WHERE
+  value='<seat>'))"` returned exactly the direct-plus-broadcast set addressed to the
+  identity, in id order.
+- **V4 — `--wait` blocks and returns matches** (returned immediately when a matching
+  row already existed), giving the binder a blocking pickup with the same
+  non-destructive semantics.
+- **V5 — `hcom listen` is destructive and lossy, confirming its disqualification.**
+  `listen --json` returned `{from,text}` only — no id, intent, or thread — and
+  consumed the unread state (the `+1` cleared), i.e. the instance cursor advanced
+  outside caller control.
+- **V6 — adhoc `hcom start` registers, with an environment-guessed label.** On a bare
+  scratch bus, `hcom start` created a named roster row immediately; its tool label
+  reflected the detected calling environment, not the tool the identity represents —
+  the basis of the roster-label upstream ask (§10.4a).
+- **V7 — the PATH binary is uncharacterized.** `command -v grok` resolves to a 0.2.99
+  binary (`b1b49ccb71`); the characterized 0.2.93 (`f00f96316d`) remains at its
+  pinned downloads path. The DR-3 version gate is live on day one.
+- **V8 — the subagent boundary flag exists in the characterized version.** Grok
+  0.2.93 `--help` lists `--no-subagents` ("Disable subagent spawning") and
+  `--agents <JSON>` ("Inline subagent definitions as JSON") — the former is the DR-4
+  enforcement vehicle; the latter is on the DR-3 refusal list.
