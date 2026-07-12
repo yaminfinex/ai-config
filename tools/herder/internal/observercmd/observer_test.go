@@ -110,6 +110,26 @@ func TestSuccessorCarryMarksBusIdentityUnverifiedWithoutProof(t *testing.T) {
 	}
 }
 
+func TestObservedSIDUsesPaneCorrelatedBusForSidecarlessSeat(t *testing.T) {
+	rec := v2.SessionRecord{
+		GUID:       "guid-self",
+		State:      v2.StateSeated,
+		Seat:       &v2.Seat{Kind: "herdr", TerminalID: "term-missing", PaneID: "pane-self", HcomName: "stale-name"},
+		Provenance: v2.Provenance{Mechanism: "enroll"},
+	}
+	joined := true
+	bus := busState{available: true, rows: map[string]hcomidentity.Row{
+		"live-self": {
+			Name: "live-self", SessionID: "session-new", Joined: &joined,
+			LaunchContext: hcomidentity.LaunchContext{PaneID: "pane-self"},
+		},
+	}}
+
+	if got := observedSID(rec, herdrState{available: true, byTerm: map[string]herdrcli.Pane{}}, bus); got != "session-new" {
+		t.Fatalf("observedSID = %q, want pane-correlated session-new", got)
+	}
+}
+
 func TestDoctrineDeliveryRequiresFullUnmanagedCodexCorrelation(t *testing.T) {
 	proj, err := v2.Load(bytes.NewReader(nil), v2.LoadOptions{})
 	if err != nil {

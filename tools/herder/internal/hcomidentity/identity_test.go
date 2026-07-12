@@ -51,6 +51,38 @@ func TestResolveIgnoresUnjoinedMatches(t *testing.T) {
 	}
 }
 
+func TestResolveAcceptsEitherRecordedOrCanonicalPane(t *testing.T) {
+	rows := []Row{{
+		Name: "live-self", Joined: boolPtr(true),
+		LaunchContext: LaunchContext{PaneID: "pane-from-launch"},
+	}}
+
+	got := Resolve(rows, Evidence{PaneIDs: []string{"pane-from-launch", "pane-canonical"}})
+	if !got.Verified || got.Name != "live-self" {
+		t.Fatalf("Resolve = %+v, want launch-pane correlate to prove live-self", got)
+	}
+}
+
+func TestCurrentEvidenceIncludesCallerProcessAndAllPaneForms(t *testing.T) {
+	t.Setenv("HCOM_SESSION_ID", "")
+	t.Setenv("HCOM_PROCESS_ID", "process-self")
+	got := CurrentEvidence("pane-from-launch", "pane-canonical")
+	if got.ProcessID != "process-self" || len(got.PaneIDs) != 2 || got.PaneIDs[0] != "pane-from-launch" || got.PaneIDs[1] != "pane-canonical" {
+		t.Fatalf("CurrentEvidence = %+v, want caller process plus launch/canonical panes", got)
+	}
+}
+
+func TestResolveUsesCallerProcessWhenPaneFormsMiss(t *testing.T) {
+	rows := []Row{{
+		Name: "live-self", Joined: boolPtr(true),
+		LaunchContext: LaunchContext{PaneID: "pane-from-launch", ProcessID: "process-self"},
+	}}
+	got := Resolve(rows, Evidence{ProcessID: "process-self", PaneIDs: []string{"pane-stale", "pane-canonical"}})
+	if !got.Verified || got.Name != "live-self" {
+		t.Fatalf("Resolve = %+v, want caller process to prove live-self", got)
+	}
+}
+
 func TestDecodeAcceptsJSONLines(t *testing.T) {
 	rows, err := Decode([]byte("{\"name\":\"one\"}\n{\"name\":\"two\"}\n"))
 	if err != nil || len(rows) != 2 || rows[1].Name != "two" {

@@ -519,7 +519,9 @@ func mergeSeatFields(patch, current *v2.Seat) *v2.Seat {
 		return cloneSeat(current)
 	}
 	if current == nil {
-		return cloneSeat(patch)
+		seat := cloneSeat(patch)
+		defaultSeatVerification(seat)
+		return seat
 	}
 	seat := *current
 	if patch.Kind != "" {
@@ -539,6 +541,10 @@ func mergeSeatFields(patch, current *v2.Seat) *v2.Seat {
 	}
 	if patch.HcomName != "" {
 		seat.HcomName = patch.HcomName
+		if patch.HcomVerified == nil {
+			verified := false
+			seat.HcomVerified = &verified
+		}
 	}
 	if patch.HcomVerified != nil {
 		seat.HcomVerified = patch.HcomVerified
@@ -556,6 +562,14 @@ func mergeSeatFields(patch, current *v2.Seat) *v2.Seat {
 		seat.ConfirmedAt = patch.ConfirmedAt
 	}
 	return &seat
+}
+
+func defaultSeatVerification(seat *v2.Seat) {
+	if seat == nil || seat.HcomName == "" || seat.HcomVerified != nil {
+		return
+	}
+	verified := false
+	seat.HcomVerified = &verified
 }
 
 func cloneSeat(seat *v2.Seat) *v2.Seat {

@@ -747,7 +747,7 @@ func resolveSeatBus(rec v2.SessionRecord, sessionID string, bus busState) hcomid
 			rows = append(rows, row)
 		}
 	}
-	return hcomidentity.Resolve(rows, hcomidentity.Evidence{SessionID: sessionID, PaneID: rec.Seat.PaneID})
+	return hcomidentity.Resolve(rows, hcomidentity.Evidence{SessionID: sessionID, PaneIDs: []string{rec.Seat.PaneID}})
 }
 
 func applyBusIdentity(seat *v2.Seat, identity hcomidentity.Result) {

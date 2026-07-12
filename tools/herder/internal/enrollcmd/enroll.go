@@ -56,7 +56,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		pane.CWD, _ = os.Getwd()
 	}
 	hcomDir := os.Getenv("HCOM_DIR")
-	liveBus := hcomidentity.ResolveLive(hcomDir, hcomidentity.CurrentEvidence(pane.PaneID))
+	liveBus := hcomidentity.ResolveLive(hcomDir, hcomidentity.CurrentEvidence(paneID, pane.PaneID))
 	if !liveBus.Verified {
 		fmt.Fprintf(stderr, "herder enroll: live bus identity could not be verified (%s); recording hcom_name as unknown. Join this session to hcom, then rerun `herder enroll` to repair the row.\n", liveBus.Reason)
 	}
@@ -96,6 +96,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				latest = &cp
 				break
 			}
+		}
+		if err := verifyExistingGUIDOwner(latest, pane, liveBus); err != nil {
+			return nil, err
 		}
 		if owner := registry.V2LabelOwner(tx.Projection, label, guid); owner != nil {
 			return nil, fmt.Errorf("label %q already belongs to active guid %s", label, owner.GUID)
@@ -170,6 +173,29 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func verifyExistingGUIDOwner(current *v2.SessionRecord, pane herdrcli.Pane, live hcomidentity.Result) error {
+	if current == nil {
+		return nil
+	}
+	recordedSID := current.Provenance.ToolSessionID
+	if len(current.SIDs) > 0 {
+		recordedSID = current.SIDs[len(current.SIDs)-1].SID
+	}
+	if recordedSID != "" {
+		if live.SessionID == "" {
+			return fmt.Errorf("refused to re-enroll %s: recorded session %q cannot be corroborated from the live bus; restore live bus identity proof, then retry", current.GUID, recordedSID)
+		}
+		if recordedSID != live.SessionID {
+			return fmt.Errorf("refused to re-enroll %s: calling live session %q does not match recorded session %q; enroll the caller under its own guid", current.GUID, live.SessionID, recordedSID)
+		}
+		return nil
+	}
+	if current.Seat != nil && current.Seat.TerminalID != "" && current.Seat.TerminalID == pane.TerminalID {
+		return nil
+	}
+	return fmt.Errorf("refused to re-enroll %s: its recorded seat is not the calling session and no matching live session id corroborates ownership; enroll the caller under its own guid", current.GUID)
+}
+
 func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 	var opts options
 	for i := 0; i < len(args); {
@@ -228,7 +254,9 @@ LIVE=working. Must run inside a herdr pane (HERDR_ENV=1 and HERDR_PANE_ID set);
 refuses otherwise. The launch-time HCOM_INSTANCE_NAME is never trusted. If the
 current bus row cannot be proven from session/process/pane identity, hcom_name is
 recorded as unknown. Rerun herder enroll from the existing session to recapture
-and repair its bus binding; the same guid and label may be reused.
+and repair its bus binding; the same guid and label may be reused only when the
+live session id or unchanged terminal corroborates ownership. An inherited guid
+that belongs to another session is refused.
 `)
 }
 

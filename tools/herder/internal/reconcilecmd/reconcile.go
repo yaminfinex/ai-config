@@ -21,16 +21,17 @@ type options struct {
 }
 
 type result struct {
-	GUID       string      `json:"guid"`
-	ShortGUID  string      `json:"short_guid,omitempty"`
-	Label      string      `json:"label"`
-	Outcome    string      `json:"outcome"`
-	Detail     string      `json:"detail"`
-	TerminalID string      `json:"terminal_id,omitempty"`
-	PaneID     string      `json:"pane_id,omitempty"`
-	Write      string      `json:"write"`
-	Candidates []candidate `json:"candidates,omitempty"`
-	bus        hcomidentity.Result
+	GUID           string      `json:"guid"`
+	ShortGUID      string      `json:"short_guid,omitempty"`
+	Label          string      `json:"label"`
+	Outcome        string      `json:"outcome"`
+	Detail         string      `json:"detail"`
+	TerminalID     string      `json:"terminal_id,omitempty"`
+	PaneID         string      `json:"pane_id,omitempty"`
+	Write          string      `json:"write"`
+	Candidates     []candidate `json:"candidates,omitempty"`
+	bus            hcomidentity.Result
+	busUnavailable bool
 }
 
 type candidate struct {
@@ -383,10 +384,12 @@ func updateRow(raw []byte, res result) ([]byte, error) {
 	if res.PaneID != "" {
 		updates["pane_id"] = res.PaneID
 	}
-	verified := res.bus.Verified
-	updates["hcom_verified"] = verified
-	if res.bus.Verified {
-		updates["hcom_name"] = res.bus.Name
+	if !res.busUnavailable {
+		verified := res.bus.Verified
+		updates["hcom_verified"] = verified
+		if res.bus.Verified {
+			updates["hcom_name"] = res.bus.Name
+		}
 	}
 	return registry.UpdateRawObject(raw, updates)
 }
@@ -401,16 +404,17 @@ func reconcileBusIdentity(rec registry.Record, res result, rosters map[string]bu
 		rosters[rec.HcomDir] = roster
 	}
 	if roster.err != nil {
+		res.busUnavailable = true
 		res.bus = hcomidentity.Result{Reason: roster.err.Error()}
 	} else {
 		sessionID := ""
 		if rec.Provenance != nil {
 			sessionID = rec.Provenance.ToolSessionID
 		}
-		res.bus = hcomidentity.Resolve(roster.rows, hcomidentity.Evidence{SessionID: sessionID, PaneID: res.PaneID})
+		res.bus = hcomidentity.Resolve(roster.rows, hcomidentity.Evidence{SessionID: sessionID, PaneIDs: []string{res.PaneID}})
 	}
 	needsWrite := res.bus.Verified && (rec.HcomName != res.bus.Name || rec.HcomVerified == nil || !*rec.HcomVerified)
-	needsDowngrade := !res.bus.Verified && rec.HcomName != "" && (rec.HcomVerified == nil || *rec.HcomVerified)
+	needsDowngrade := !res.busUnavailable && !res.bus.Verified && rec.HcomName != "" && (rec.HcomVerified == nil || *rec.HcomVerified)
 	if needsWrite || needsDowngrade {
 		res.Write = "pending"
 		if res.bus.Verified {

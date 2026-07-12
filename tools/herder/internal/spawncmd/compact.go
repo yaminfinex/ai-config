@@ -130,7 +130,7 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 			dieCompact(stderr, "refused — --then cannot verify that the stored bus name belongs to this calling session ("+listErr.Error()+"). Rerun `herder enroll` from this session to repair its bus binding, then retry. Nothing was typed.")
 			return 2
 		}
-		verified, live := hcomidentity.VerifyStored(rows, hcomidentity.CurrentEvidence(pane.PaneID), thenBusName)
+		verified, live := hcomidentity.VerifyStored(rows, hcomidentity.CurrentEvidence(envPane, pane.PaneID), thenBusName)
 		if !verified {
 			cause := live.Reason
 			if live.Verified {

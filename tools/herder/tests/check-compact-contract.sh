@@ -267,6 +267,9 @@ CONT='run the pinned gate, then report DONE on thread unit-w'
 COMPACT_SEED_REGISTRY="$ROW_SELF"
 scenario then_armed          midturn       guid   "$STEER" --then "$CONT"
 scenario then_dryrun         midturn       guid   --dry-run "$STEER" --then "$CONT"
+MOCK_HCOM_ROWS='[{"name":"me-bus","joined":true,"launch_context":{"pane_id":"p_env"}}]'
+scenario then_armed_rekeyed_pane midturn    guid   "$STEER" --then "$CONT"
+unset MOCK_HCOM_ROWS
 # Unverified /compact paste => --then must NOT arm (AC#2 ordering floor).
 scenario then_abort_unverified clear_landed guid  "$STEER" --then "$CONT"
 scenario then_abort_blocked  blocked       guid   "$STEER" --then "$CONT"

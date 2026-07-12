@@ -1605,6 +1605,32 @@ func TestRegisteredCarriesRecognisedHcomName(t *testing.T) {
 	}
 }
 
+func TestRegisteredReplacementNameWithoutProofDefaultsUnverified(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	verified := true
+	current := v2.SessionRecord{
+		GUID: "guid-replace-name", Event: "recognised", State: v2.StateSeated,
+		Seat: &v2.Seat{Kind: "herdr", HcomName: "old-name", HcomVerified: &verified},
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{current}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	patch := current
+	patch.Event = "registered"
+	patch.Seat = &v2.Seat{Kind: "herdr", HcomName: "new-name"}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{patch}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	latest := V2ByGUID(loadProjection(t, path), current.GUID)
+	if latest == nil || latest.Seat == nil || latest.Seat.HcomName != "new-name" || latest.Seat.HcomVerified == nil || *latest.Seat.HcomVerified {
+		t.Fatalf("latest seat = %+v, want replacement name explicitly unverified", latest)
+	}
+}
+
 func TestRegisteredCarryForwardStampsFreshNodeAfterCloneRepair(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	guid, label := "guid-clone-registered", "worker"
