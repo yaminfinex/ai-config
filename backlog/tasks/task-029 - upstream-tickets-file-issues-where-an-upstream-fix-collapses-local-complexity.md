@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-10 21:19'
+updated_date: '2026-07-12 07:50'
 labels:
   - run-herder-dx
 dependencies: []
@@ -113,5 +113,10 @@ created: 2026-07-08 09:31
 created: 2026-07-09 04:22
 ---
 Candidate 13 (2026-07-09, hera): Backlog.md CLI — `task view --plain` silently truncates descriptions over ~3.2k chars with no marker (rendered 3256 of 4210 live; lost tail held a settled design decision). Ask: render fully or mark the truncation. Local details + repro on TASK-090.
+---
+
+created: 2026-07-12 07:50
+---
+hera (A1 closeout): two candidates. (1) hcom — roster launch_context.pane_id is captured from launch-time env HERDR_PANE_ID and diverges from the live canonical pane id after a herdr pane move/re-key; herder A1 now correlates on BOTH pane forms plus caller-own HCOM_PROCESS_ID to compensate, but an upstream live-refreshed pane coordinate (or a documented 'this field is launch-frozen' contract) would collapse that multi-correlate complexity. (2) herdr — no adopt/re-recognition path for shell-relaunched sessions: herdr tracker never adopts an agent it did not launch, so live_status stays undetected/unknown for legitimately live sessions (TASK-070 field evidence: observer-confirmed row shows unknown in herder list). A herdr-adopt affordance (bind an existing live pane/process to tracker state) is the upstream-shaped fix.
 ---
 <!-- COMMENTS:END -->
