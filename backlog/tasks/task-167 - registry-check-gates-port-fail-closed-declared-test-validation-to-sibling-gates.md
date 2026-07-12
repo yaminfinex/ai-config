@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-12 13:32'
+updated_date: '2026-07-12 13:34'
 labels: []
 dependencies: []
 priority: medium
@@ -24,3 +25,9 @@ Adversarial review of the write-discipline gate hardening found the same defect 
 - [ ] #2 Both migration and rotation gates validate every declared name exists and executes, fail closed on renames/deletions/skips, and include the missing-name self-probe
 - [ ] #3 Registry gates and full herder go test suite pass
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Optional hardening from the write-discipline delta review, fold in while porting the idiom: (1) declaration floor should count DISTINCT names, not entries (a duplicate entry keeping the count satisfied is never legitimate — refuse on any duplicate); (2) the evidence self-probe pins rejection of an absent name but not the PASS-evidence half — a probe with synthetic skip-shaped evidence (helper must reject a name that has RUN but no PASS) closes the sliver where the PASS grep is dropped and a t.Skip-ed test sails through.
+<!-- SECTION:NOTES:END -->
