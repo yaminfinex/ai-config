@@ -1,10 +1,10 @@
 ---
 id: TASK-153
 title: 'mish: align help slug and context validation with mission spec'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-10 10:15'
-updated_date: '2026-07-12 07:53'
+updated_date: '2026-07-12 08:04'
 labels: []
 dependencies: []
 references:
@@ -24,8 +24,14 @@ Fix two mission-contract violations found during the documentation accuracy audi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 mish new help creates the valid help mission slug; extra positional arguments still refuse
-- [ ] #2 Explicit, marker, and cwd context resolution all use the canonical mission slug validator
-- [ ] #3 Trailing-hyphen and consecutive-hyphen mission directories refuse consistently
-- [ ] #4 CLI/help goldens and scenario tests cover both regressions
+- [x] #1 mish new help creates the valid help mission slug; extra positional arguments still refuse
+- [x] #2 Explicit, marker, and cwd context resolution all use the canonical mission slug validator
+- [x] #3 Trailing-hyphen and consecutive-hyphen mission directories refuse consistently
+- [x] #4 CLI/help goldens and scenario tests cover both regressions
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+SHIPPED, merged from branch task-153-mish-slug (commit b4ad3c3). mish new help creates the valid help mission (extra positionals still refuse rc2); explicit --mission, .mission marker, and cwd resolution all delegate to missionfs.ValidateSlug — the looser resolve.go slugPattern regexp is REMOVED, and cwd resolution (previously ZERO validation) now validates; trailing/consecutive-hyphen dirs refuse consistently with cause+remedy, no destructive advice. Only-tightens property verified by review: creation always used the canonical validator, so nothing creatable can now fail resolution. Adversarial review (opus, cross-family): APPROVE, all six lenses cleared, all help surfaces live-verified intact (new -h/--help, help new, bare help, -h, --help); two non-blocking notes recorded (help detection scans args before -- splitting — harmless since hyphen-leading slugs are never valid; cwd refusal remedy wording reads as typed-slug context). Gates: independent 4-module + 53-script battery green from the worktree; post-merge battery green on main.
+<!-- SECTION:NOTES:END -->
