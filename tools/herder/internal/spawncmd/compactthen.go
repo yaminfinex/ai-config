@@ -16,11 +16,11 @@ package spawncmd
 //       compact time from the caller's own registry row (never re-resolved from
 //       a pane id here).
 //
-// This file therefore never touches the paste engine or a pane: it polls
-// `hcom list <name> --json` for the caller's session status (active→listening =
-// turn ended) and then delivers over the bus through send.DeliverBus — the same
-// receipt-verified engine `herder send` uses. Claude-only: codex compaction
-// semantics differ (stated in `herder compact --help`).
+// This file therefore never touches the paste engine or a pane: it polls both
+// `hcom list <name> --json` and hcom's event history for independent proof that
+// the caller's turn ended, then delivers over the bus through send.DeliverBus —
+// the same receipt-verified engine `herder send` uses. Claude-only: codex
+// compaction semantics differ (stated in `herder compact --help`).
 
 import (
 	"bytes"
@@ -103,6 +103,8 @@ func RunCompactThen(args []string, stdout, stderr io.Writer) int {
 //	    for the caller with an id newer than the arm-time watermark proves the
 //	    working→idle transition already happened AFTER we armed.
 //
+// The event-history proof is independent of the live status sample: a trusted
+// post-arm listening event remains sufficient when live status is unavailable.
 // If neither proof materializes within --then-timeout it FAILS CLOSED with a
 // loud line and delivers nothing: a dropped continuation is visible and
 // recoverable (the user just re-sends), a mid-turn injection silently corrupts
@@ -130,21 +132,26 @@ func runThenLoop(p busProbe, cfg thenConfig, log io.Writer, now func() time.Time
 		if status == "active" {
 			sawActive = true
 		}
+		turnEndEventFound := false
+		if snapOK {
+			// Event history is an independent proof path. In particular, a live
+			// status probe may be unavailable even though hcom retained a strict
+			// post-arm listening event for this identity.
+			turnEndEventFound = p.turnEndedSince(cfg.BusName, cfg.BusDir, watermark)
+		}
 		proof := ""
-		if status == "listening" {
-			if sawActive {
-				proof = "observed working→listening transition"
-			} else if snapOK && p.turnEndedSince(cfg.BusName, cfg.BusDir, watermark) {
-				proof = "hcom events show a post-arm working→listening transition (armed after the turn began)"
-			}
+		if status == "listening" && sawActive {
+			proof = "observed working→listening transition"
+		} else if turnEndEventFound {
+			proof = "hcom events show a post-arm working→listening transition (armed after the turn began)"
 		}
 		if proof != "" {
 			fmt.Fprintf(log, "herder compact-then: turn end PROVEN (%s) — delivering continuation to @%s\n", proof, cfg.BusName)
 			return thenDeliver(p, cfg, log, now, sleep, deadline)
 		}
 		if !now().Before(deadline) {
-			fmt.Fprintf(log, "herder compact-then: TIMEOUT after %dms — turn end never PROVEN (last status=%q, saw_active=%t, event_proof=%t); FAILING CLOSED, continuation NOT delivered (a dropped continuation beats a mid-turn injection). Deliver it manually once the session is idle:\n  herder send %s -- %s\n",
-				cfg.TimeoutMS, statusLabel(status), sawActive, snapOK, cfg.BusName, shellPreview(cfg.Message))
+			fmt.Fprintf(log, "herder compact-then: TIMEOUT after %dms — turn end never PROVEN (last status=%q, saw_active=%t, snapshot_established=%t, turn_end_event_found=%t); FAILING CLOSED, continuation NOT delivered (a dropped continuation beats a mid-turn injection). Deliver it manually once the session is idle:\n  herder send %s -- %s\n",
+				cfg.TimeoutMS, statusLabel(status), sawActive, snapOK, turnEndEventFound, cfg.BusName, shellPreview(cfg.Message))
 			return 1
 		}
 		sleep(time.Duration(cfg.PollMS) * time.Millisecond)
@@ -241,6 +248,14 @@ type hcomRow struct {
 }
 
 func (hcomProbe) listStatus(busName, busDir string) string {
+	out, err := runHcomListRaw(busName, busDir)
+	if err != nil {
+		return ""
+	}
+	return normalizeStatus(pickStatus(out, busName))
+}
+
+func runHcomListRaw(busName, busDir string) ([]byte, error) {
 	cmd := exec.Command("hcom", "list", busName, "--json")
 	cmd.Env = os.Environ()
 	if busDir != "" && busDir != "null" {
@@ -249,9 +264,9 @@ func (hcomProbe) listStatus(busName, busDir string) string {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
-		return ""
+		return nil, err
 	}
-	return normalizeStatus(pickStatus(out.Bytes(), busName))
+	return out.Bytes(), nil
 }
 
 // pickStatus extracts the queried agent's status from `hcom list <name> --json`
@@ -286,6 +301,34 @@ func pickStatus(raw []byte, busName string) string {
 	return ""
 }
 
+// hcomAgentKnown checks whether a successful scoped list query actually
+// returned an agent row. This lets an empty events response mean trusted empty
+// history only when hcom can also identify the queried agent; an unknown agent
+// that happens to produce empty event output leaves the snapshot unestablished.
+func hcomAgentKnown(raw []byte, busName string) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return false
+	}
+	if trimmed[0] == '{' {
+		var row hcomRow
+		return json.Unmarshal(trimmed, &row) == nil && (row.Name != "" || row.BaseName != "")
+	}
+	var rows []hcomRow
+	if json.Unmarshal(trimmed, &rows) != nil || len(rows) == 0 {
+		return false
+	}
+	if len(rows) == 1 {
+		return rows[0].Name != "" || rows[0].BaseName != ""
+	}
+	for _, row := range rows {
+		if row.Name == busName || row.BaseName == busName {
+			return true
+		}
+	}
+	return false
+}
+
 func (hcomProbe) deliver(busName, busDir, message string, timeoutMS int) string {
 	return send.DeliverBus(busName, busDir, message, timeoutMS)
 }
@@ -301,16 +344,18 @@ type hcomEvent struct {
 }
 
 // maxEventID snapshots the caller's newest event id, distinguishing a trusted
-// empty history (ok=true, 0) from an UNESTABLISHED snapshot (ok=false): an hcom
-// error, or non-empty output that parses to zero events (garbage we must not
-// trust). Only a trusted watermark may gate proof (b).
+// empty history for a known agent (ok=true, 0) from an UNESTABLISHED snapshot
+// (ok=false): an hcom error, an unknown agent with empty output, or non-empty
+// output that parses to zero events (garbage we must not trust). Only a trusted
+// watermark may gate proof (b).
 func (hcomProbe) maxEventID(busName, busDir string) (int64, bool) {
 	out, err := runHcomEventsRaw(busName, busDir)
 	if err != nil {
 		return 0, false
 	}
 	if len(bytes.TrimSpace(out)) == 0 {
-		return 0, true // genuinely empty history — a trusted 0 watermark
+		listed, listErr := runHcomListRaw(busName, busDir)
+		return 0, listErr == nil && hcomAgentKnown(listed, busName)
 	}
 	events := parseHcomEvents(out)
 	if len(events) == 0 {

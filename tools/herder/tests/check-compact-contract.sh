@@ -304,6 +304,9 @@ then_child_scenario then_queued     queued_busy
 # Armed-late: "active" never sampled → turn end PROVEN via the hcom event history
 # (proof (b)), then delivered. A naked sampled "listening" must NOT be enough.
 then_child_scenario then_armed_late armed_late
+# Independent fallback: live status stays unknown, but a strict post-arm event
+# under the queried identity proves turn end and the continuation is sent once.
+then_child_scenario then_unknown_status_event unknown_event
 THEN_TIMEOUT_MS=50 then_child_scenario then_timeout stuck
 # Fail-open guard (codex review P1 residual): the arm-time event snapshot FAILS
 # → proof (b) DISABLED; a naked "listening" (no observed transition) must fail

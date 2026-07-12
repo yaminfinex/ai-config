@@ -1,6 +1,6 @@
 === STDERR ===
 herder compact-then: armed for @me-bus (bus default) — waiting for a PROVEN turn end before delivering 40 chars (poll 1ms, timeout 50ms, arm event #10)
-herder compact-then: TIMEOUT after 50ms — turn end never PROVEN (last status="active", saw_active=true, event_proof=true); FAILING CLOSED, continuation NOT delivered (a dropped continuation beats a mid-turn injection). Deliver it manually once the session is idle:
+herder compact-then: TIMEOUT after 50ms — turn end never PROVEN (last status="active", saw_active=true, snapshot_established=true, turn_end_event_found=false); FAILING CLOSED, continuation NOT delivered (a dropped continuation beats a mid-turn injection). Deliver it manually once the session is idle:
   herder send me-bus -- 'continue: run the gate, then report DONE'
 === STDOUT ===
 
