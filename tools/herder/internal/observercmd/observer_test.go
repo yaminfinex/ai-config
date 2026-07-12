@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -158,6 +159,85 @@ func TestDoctrineDeliverySuppressesManagedAmbiguousAndRepeatedSessions(t *testin
 	}
 	if got := doctrineCandidates(managed, hd, busState{available: true, rows: map[string]hcomRow{row.Name: row}}, nil, joined); len(got) != 0 {
 		t.Fatalf("managed correlation candidates = %+v, want none", got)
+	}
+}
+
+func TestDoctrineReceiptTokenIgnoresCodexProcessOrdering(t *testing.T) {
+	proj, err := v2.Load(bytes.NewReader(nil), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hd := herdrState{
+		available: true,
+		byTerm: map[string]herdrcli.Pane{
+			"term-1": {PaneID: "pane-1", TerminalID: "term-1", AgentSession: "sid-1"},
+		},
+		procs: map[string]herdrcli.ProcessInfo{
+			"term-1": {Processes: []herdrcli.Process{
+				{PID: 1111, Argv: []string{"codex", "resume"}},
+				{PID: 2222, Argv: []string{"codex", "resume"}},
+			}},
+		},
+	}
+	bus := busState{available: true, rows: map[string]hcomRow{
+		"raw-codex": {
+			Name: "raw-codex", Tool: "codex", SessionID: "sid-1", ProcessBound: boolPtr(true),
+			LaunchContext: hcomLaunchContext{PaneID: "pane-1", ProcessID: "process-1"},
+		},
+	}}
+	first := doctrineCandidates(proj, hd, bus, nil, func(hcomRow) bool { return true })
+	hd.procs["term-1"] = herdrcli.ProcessInfo{Processes: []herdrcli.Process{
+		{PID: 2222, Argv: []string{"codex", "resume"}},
+		{PID: 1111, Argv: []string{"codex", "resume"}},
+	}}
+	second := doctrineCandidates(proj, hd, bus, nil, func(hcomRow) bool { return true })
+	if len(first) != 1 || len(second) != 1 || first[0].Token != "process-1:sid-1" || second[0].Token != first[0].Token {
+		t.Fatalf("tokens before/after process reorder = %+v / %+v, want stable process-1:sid-1", first, second)
+	}
+}
+
+func TestPriorDoctrineDeliveriesPrunesOnlyWhenLiveSnapshotIsAuthoritative(t *testing.T) {
+	stateDir := t.TempDir()
+	status := observerstatus.Status{DoctrineDeliveries: map[string]string{
+		"live:sid": "2026-07-12T00:00:00Z",
+		"dead:sid": "2026-07-11T00:00:00Z",
+	}}
+	if err := observerstatus.WriteAtomic(observerstatus.PathForStateDir(stateDir), status); err != nil {
+		t.Fatal(err)
+	}
+	pruned := priorDoctrineDeliveries(stateDir, map[string]bool{"live:sid": true}, true)
+	if len(pruned) != 1 || pruned["live:sid"] == "" {
+		t.Fatalf("pruned receipts = %v, want only live:sid", pruned)
+	}
+	preserved := priorDoctrineDeliveries(stateDir, nil, false)
+	if len(preserved) != 2 {
+		t.Fatalf("receipts during transport gap = %v, want both preserved", preserved)
+	}
+}
+
+func TestJoinedHcomRowAcceptsObjectAndSingletonArray(t *testing.T) {
+	binDir := t.TempDir()
+	stub := "#!/usr/bin/env bash\nprintf '%s' \"$HCOM_LIST_JSON\"\n"
+	if err := os.WriteFile(filepath.Join(binDir, "hcom"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	want := hcomRow{Name: "raw-codex", Tool: "codex", SessionID: "sid-1"}
+	for _, tc := range []struct {
+		name string
+		json string
+		want bool
+	}{
+		{name: "object", json: `{"name":"raw-codex","tool":"codex","session_id":"sid-1"}`, want: true},
+		{name: "singleton array", json: `[{"name":"raw-codex","tool":"codex","session_id":"sid-1"}]`, want: true},
+		{name: "ambiguous array", json: `[{"tool":"codex","session_id":"sid-1"},{"tool":"codex","session_id":"sid-1"}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HCOM_LIST_JSON", tc.json)
+			if got := joinedHcomRow(want); got != tc.want {
+				t.Fatalf("joinedHcomRow() = %t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 

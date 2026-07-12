@@ -199,7 +199,7 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 		LastSweepAt:        now.Format(time.RFC3339),
 		ProtocolCompatible: true,
 		Confirmed:          map[string]string{},
-		DoctrineDeliveries: priorDoctrineDeliveries(stateDir),
+		DoctrineDeliveries: map[string]string{},
 	}
 	proj, err := loadProjection(registryPath, stderr)
 	if err != nil {
@@ -213,6 +213,8 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 		st.ProtocolDetail = fmt.Sprintf("source=%s connection_gap=%t", firstNonEmpty(hd.source, "unknown"), hd.connectionGap)
 	}
 	bus := loadBusState()
+	liveTokens, authoritativeTokens := liveDoctrineTokens(hd, bus)
+	st.DoctrineDeliveries = priorDoctrineDeliveries(stateDir, liveTokens, authoritativeTokens)
 	cands := buildCandidates(proj, hd, bus, now)
 	doctrine := doctrineCandidates(proj, hd, bus, st.DoctrineDeliveries, joinedHcomRow)
 	flags := advisoryFlags(proj, hd)
@@ -232,13 +234,17 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 	return sweepResult{Status: st, Candidates: len(cands)}, nil
 }
 
-func priorDoctrineDeliveries(stateDir string) map[string]string {
+// Receipt loss or status rotation deliberately fails toward re-delivery: informational doctrine spam is safer than silence.
+func priorDoctrineDeliveries(stateDir string, liveTokens map[string]bool, prune bool) map[string]string {
 	receipts := map[string]string{}
 	prior, err := observerstatus.Read(observerstatus.PathForStateDir(stateDir))
 	if err != nil {
 		return receipts
 	}
 	for token, stamp := range prior.DoctrineDeliveries {
+		if prune && !liveTokens[token] {
+			continue
+		}
 		receipts[token] = stamp
 	}
 	return receipts
@@ -436,12 +442,34 @@ func doctrineCandidates(proj *v2.Projection, hd herdrState, bus busState, receip
 		return nil
 	}
 	var out []doctrineCandidate
+	for _, correlation := range doctrineCorrelations(hd, bus) {
+		if !joined(correlation.row) || managedCorrelation(proj, correlation.pane, correlation.row) {
+			continue
+		}
+		if _, delivered := receipts[correlation.token]; delivered {
+			continue
+		}
+		out = append(out, doctrineCandidate{Name: correlation.row.Name, Token: correlation.token})
+	}
+	return out
+}
+
+type doctrineCorrelation struct {
+	pane  herdrcli.Pane
+	row   hcomRow
+	token string
+}
+
+func doctrineCorrelations(hd herdrState, bus busState) []doctrineCorrelation {
+	if !hd.available || !bus.available {
+		return nil
+	}
+	var out []doctrineCorrelation
 	for term, pane := range hd.byTerm {
 		if pane.PaneID == "" || pane.AgentSession == "" {
 			continue
 		}
-		pid := liveCodexPID(hd.procs[term])
-		if pid == 0 {
+		if liveCodexPID(hd.procs[term]) == 0 {
 			continue
 		}
 		matches := make([]hcomRow, 0, 1)
@@ -451,16 +479,27 @@ func doctrineCandidates(proj *v2.Projection, hd herdrState, bus busState, receip
 			}
 			matches = append(matches, row)
 		}
-		if len(matches) != 1 || !joined(matches[0]) || managedCorrelation(proj, pane, matches[0]) {
+		if len(matches) != 1 {
 			continue
 		}
-		token := matches[0].LaunchContext.ProcessID + ":" + strconv.Itoa(pid) + ":" + pane.AgentSession
-		if _, delivered := receipts[token]; delivered {
-			continue
-		}
-		out = append(out, doctrineCandidate{Name: matches[0].Name, Token: token})
+		out = append(out, doctrineCorrelation{
+			pane:  pane,
+			row:   matches[0],
+			token: matches[0].LaunchContext.ProcessID + ":" + pane.AgentSession,
+		})
 	}
 	return out
+}
+
+func liveDoctrineTokens(hd herdrState, bus busState) (map[string]bool, bool) {
+	if !hd.available || !bus.available {
+		return nil, false
+	}
+	tokens := map[string]bool{}
+	for _, correlation := range doctrineCorrelations(hd, bus) {
+		tokens[correlation.token] = true
+	}
+	return tokens, true
 }
 
 func liveCodexPID(pi herdrcli.ProcessInfo) int {
