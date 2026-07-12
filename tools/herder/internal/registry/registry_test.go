@@ -302,7 +302,7 @@ func TestLockedWriteMintsNodeOnceAndStampsRows(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", "registry.jsonl")
 	for _, guid := range []string{"guid-alpha", "guid-beta"} {
 		guid := guid
-		if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 			return []v2.SessionRecord{{GUID: guid, Label: guid, State: v2.StateSeated}}, nil
 		}); err != nil {
 			t.Fatal(err)
@@ -328,16 +328,72 @@ func TestLockedWriteMintsNodeOnceAndStampsRows(t *testing.T) {
 	}
 }
 
+func TestLockedWriteReturnsPerCandidateOutcomes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "registry.jsonl")
+	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{
+			{GUID: "guid-shared", Label: "shared", Event: "registered", State: v2.StateSeated},
+			{GUID: "guid-shared", Label: "shared", Event: "registered", State: v2.StateSeated},
+		}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 2 {
+		t.Fatalf("outcomes = %+v, want one per candidate", outcomes)
+	}
+	if outcomes[0].Status != WriteApplied || len(outcomes[0].Row) == 0 || outcomes[0].Reason != "" {
+		t.Fatalf("applied outcome = %+v", outcomes[0])
+	}
+	if outcomes[1].Status != WriteNoop || len(outcomes[1].Row) != 0 || outcomes[1].Reason != "" {
+		t.Fatalf("noop outcome = %+v", outcomes[1])
+	}
+}
+
+func TestLockedWriteRefusalIsAtomicAndReportedPerCandidate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "registry.jsonl")
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{GUID: "guid-existing", Label: "taken", State: v2.StateSeated}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := mustReadFile(t, path)
+
+	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{
+			{GUID: "guid-valid", Label: "valid", State: v2.StateSeated},
+			{GUID: "guid-refused", Label: "taken", State: v2.StateSeated},
+		}, nil
+	})
+	if err != nil {
+		t.Fatalf("candidate refusal returned batch error: %v", err)
+	}
+	if len(outcomes) != 2 {
+		t.Fatalf("outcomes = %+v, want one per candidate", outcomes)
+	}
+	for i, outcome := range outcomes {
+		if outcome.Status != WriteRefused || outcome.Reason == "" || len(outcome.Row) != 0 {
+			t.Fatalf("outcomes[%d] = %+v, want refused with reason and no row", i, outcome)
+		}
+	}
+	if !strings.Contains(outcomes[0].Reason, "batch refused atomically") || !strings.Contains(outcomes[1].Reason, `label "taken" already belongs`) {
+		t.Fatalf("outcomes = %+v, want atomic-block reason followed by candidate-specific reason", outcomes)
+	}
+	if got := mustReadFile(t, path); !bytes.Equal(got, before) {
+		t.Fatalf("registry changed after atomic refusal:\nbefore=%s\nafter=%s", before, got)
+	}
+}
+
 func TestLockedWriteRefusesLegacyV1AppendToMintedRegistry(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", "registry.jsonl")
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{{GUID: "guid-healthy-1", Label: "healthy-1", State: v2.StateSeated}}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 	before := mustReadFile(t, path)
 
-	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{
 			{GUID: "guid-healthy-2", Label: "healthy-2", State: v2.StateSeated},
 			{
@@ -350,6 +406,13 @@ func TestLockedWriteRefusesLegacyV1AppendToMintedRegistry(t *testing.T) {
 			},
 		}, nil
 	})
+	if err != nil {
+		t.Fatalf("batch error = %v, want typed refusal outcomes", err)
+	}
+	if len(outcomes) != 2 {
+		t.Fatalf("outcomes = %+v, want one per candidate", outcomes)
+	}
+	err = outcomes[1].Err()
 	var legacyErr *LegacyV1AppendError
 	if !errors.As(err, &legacyErr) || legacyErr.GUID != "guid-poison" {
 		t.Fatalf("err = %v, want LegacyV1AppendError for guid-poison", err)
@@ -363,7 +426,7 @@ func TestLockedWriteRefusesLegacyV1AppendToMintedRegistry(t *testing.T) {
 		t.Fatalf("registry changed after refused legacy append:\nbefore=%s\nafter=%s", before, got)
 	}
 
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{{GUID: "guid-healthy-2", Label: "healthy-2", State: v2.StateSeated}}, nil
 	}); err != nil {
 		t.Fatalf("healthy write after refused legacy append failed: %v", err)
@@ -375,7 +438,7 @@ func TestLockedWriteRefusesLegacyV1AppendToMintedRegistry(t *testing.T) {
 
 func TestLockedWriteRefusesInjectedLegacyV1RowInBornV2Registry(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", "registry.jsonl")
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{{GUID: "guid-healthy", Label: "healthy", State: v2.StateSeated}}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -399,10 +462,13 @@ func TestLockedWriteRefusesInjectedLegacyV1RowInBornV2Registry(t *testing.T) {
 	poisonedLive := mustReadFile(t, path)
 	callbackRan := false
 
-	_, err = UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		callbackRan = true
 		return nil, nil
 	})
+	if len(outcomes) != 0 {
+		t.Fatalf("outcomes = %+v, want none for batch refusal", outcomes)
+	}
 	var legacyErr *LegacyV1AppendError
 	if !errors.As(err, &legacyErr) || legacyErr.GUID != "guid-poison" {
 		t.Fatalf("err = %v, want LegacyV1AppendError for guid-poison", err)
@@ -428,7 +494,7 @@ func TestLockedWriteRefusesInjectedLegacyV1RowInBornV2Registry(t *testing.T) {
 
 func TestLockedWriteRefusesLegacyV1RowInPlantedMigrationArchive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", "registry.jsonl")
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{{GUID: "guid-healthy", Label: "healthy", State: v2.StateSeated}}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -455,10 +521,13 @@ func TestLockedWriteRefusesLegacyV1RowInPlantedMigrationArchive(t *testing.T) {
 	}
 	callbackRan := false
 
-	_, err = UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		callbackRan = true
 		return nil, nil
 	})
+	if len(outcomes) != 0 {
+		t.Fatalf("outcomes = %+v, want none for batch refusal", outcomes)
+	}
 	var legacyErr *LegacyV1AppendError
 	if !errors.As(err, &legacyErr) || legacyErr.GUID != "guid-poison" {
 		t.Fatalf("err = %v, want LegacyV1AppendError for guid-poison", err)
@@ -543,11 +612,19 @@ func runNodeMintHelper() {
 	}
 	path := os.Getenv("HERDER_REGISTRY_NODE_PATH")
 	guid := os.Getenv("HERDER_REGISTRY_NODE_GUID")
-	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{{GUID: guid, Label: guid, State: v2.StateSeated}}, nil
 	})
 	if err != nil {
 		os.Stderr.WriteString(err.Error() + "\n")
+		os.Exit(2)
+	}
+	if outcome, oneErr := SingleOutcome(outcomes); oneErr != nil || outcome.Err() != nil {
+		if oneErr != nil {
+			os.Stderr.WriteString(oneErr.Error() + "\n")
+		} else {
+			os.Stderr.WriteString(outcome.Err().Error() + "\n")
+		}
 		os.Exit(2)
 	}
 }
@@ -559,18 +636,24 @@ func TestLockedWriteRefusesHalfPresentNodeState(t *testing.T) {
 		if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 			return []v2.SessionRecord{{GUID: "guid-marker", State: v2.StateSeated}}, nil
 		})
+		if len(outcomes) != 0 {
+			t.Fatalf("outcomes = %+v, want none for batch refusal", outcomes)
+		}
 		if err == nil || !strings.Contains(err.Error(), "herder node init") {
 			t.Fatalf("err = %v, want node init guidance", err)
 		}
 	})
 	t.Run("row only", func(t *testing.T) {
 		path := writeRegistry(t, `{"kind":"node","event":"node_registered","node_id":"`+testNodeB+`","recorded_at":"2026-07-08T00:00:00Z"}`)
-		_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 			return []v2.SessionRecord{{GUID: "guid-row", State: v2.StateSeated}}, nil
 		})
+		if len(outcomes) != 0 {
+			t.Fatalf("outcomes = %+v, want none for batch refusal", outcomes)
+		}
 		if err == nil || !strings.Contains(err.Error(), "herder node init") {
 			t.Fatalf("err = %v, want node init guidance", err)
 		}
@@ -581,9 +664,12 @@ func TestLockedWriteRefusesHalfPresentNodeState(t *testing.T) {
 		if err := os.WriteFile(NodeMarkerPath(path), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 			return []v2.SessionRecord{{GUID: "guid-empty", State: v2.StateSeated}}, nil
 		})
+		if len(outcomes) != 0 {
+			t.Fatalf("outcomes = %+v, want none for batch refusal", outcomes)
+		}
 		if err == nil || !strings.Contains(err.Error(), "herder node init") {
 			t.Fatalf("err = %v, want node init guidance", err)
 		}
@@ -697,7 +783,7 @@ func TestNodeInitRepairsAndCloneRepairKeepsPriorRows(t *testing.T) {
 	})
 	t.Run("new clone node", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "registry.jsonl")
-		if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 			return []v2.SessionRecord{{GUID: "guid-old", State: v2.StateSeated}}, nil
 		}); err != nil {
 			t.Fatal(err)
@@ -707,7 +793,7 @@ func TestNodeInitRepairsAndCloneRepairKeepsPriorRows(t *testing.T) {
 		if _, err := InitNode(path, true); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 			return []v2.SessionRecord{{GUID: "guid-new", State: v2.StateSeated}}, nil
 		}); err != nil {
 			t.Fatal(err)
@@ -736,7 +822,7 @@ func TestNodeInitRepairsAndCloneRepairKeepsPriorRows(t *testing.T) {
 
 func TestCloneRepairLifecycleWritesStampFreshNode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{
 			{GUID: "guid-cull", State: v2.StateSeated, Label: "cull-me", Role: "worker", Tool: "codex", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_cull"}},
 			{GUID: "guid-rename", State: v2.StateSeated, Label: "old-name", Role: "worker", Tool: "codex", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_rename"}},
@@ -754,7 +840,7 @@ func TestCloneRepairLifecycleWritesStampFreshNode(t *testing.T) {
 		t.Fatalf("clone repair marker = old node %q, want fresh", oldNode)
 	}
 
-	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
 		current := V2ByGUID(tx.Projection, "guid-cull")
 		next := *current
 		next.Event = "unseated"
@@ -765,7 +851,7 @@ func TestCloneRepairLifecycleWritesStampFreshNode(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
 		current := V2ByGUID(tx.Projection, "guid-rename")
 		next := *current
 		next.Event = "labelled"
@@ -775,7 +861,7 @@ func TestCloneRepairLifecycleWritesStampFreshNode(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
 		current := V2ByGUID(tx.Projection, "guid-recognise")
 		next := *current
 		next.Event = "recognised"
@@ -828,16 +914,25 @@ func TestUnknownNodeRowsAreReadOnlyButDoNotBlockLocalWrites(t *testing.T) {
 	if got := proj.Anomalies(); len(got) != 1 || got[0].Type != "unknown-node" || got[0].GUID != "guid-ghost" {
 		t.Fatalf("anomalies = %+v, want unknown-node for guid-ghost", got)
 	}
-	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
 		current := V2ByGUID(tx.Projection, "guid-ghost")
 		next := *current
 		next.Event = "labelled"
 		next.Label = "ghost-new"
 		return []v2.SessionRecord{next}, nil
-	}); err == nil || !strings.Contains(err.Error(), "unknown node") {
+	})
+	if err == nil {
+		outcome, oneErr := SingleOutcome(outcomes)
+		if oneErr != nil {
+			err = oneErr
+		} else {
+			err = outcome.Err()
+		}
+	}
+	if err == nil || !strings.Contains(err.Error(), "unknown node") {
 		t.Fatalf("err = %v, want unknown-node mutation refusal", err)
 	}
-	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
 		current := V2ByGUID(tx.Projection, "guid-local")
 		next := *current
 		next.Event = "labelled"
@@ -960,9 +1055,17 @@ func runLabelClaimHelper() {
 	label := "shared"
 	prov := Provenance{Mechanism: "spawn"}
 	rec := Record{GUID: &guid, Label: &label, Status: "active", Provenance: &prov}
-	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{V2FromRecord(rec, "registered", v2.StateSeated, "")}, nil
 	})
+	if err == nil {
+		outcome, oneErr := SingleOutcome(outcomes)
+		if oneErr != nil {
+			err = oneErr
+		} else {
+			err = outcome.Err()
+		}
+	}
 	if err == nil {
 		os.Exit(0)
 	}
@@ -975,7 +1078,7 @@ func runLabelClaimHelper() {
 
 func TestLockedValidatorMigratesLegacyActiveDormantOnRename(t *testing.T) {
 	path := writeRegistry(t, `{"guid":"guid-legacy","short_guid":"legacy","label":"old","role":"worker","agent":"codex","terminal_id":"term_OLD","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"bus-old","status":"active"}`)
-	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
 		current := V2ByGUID(tx.Projection, "guid-legacy")
 		if current == nil {
 			t.Fatal("missing legacy projection row")
@@ -1008,7 +1111,7 @@ func TestLegacyV1MigrationArchivesAndReseeds(t *testing.T) {
 		t.Fatalf("genuine v1 fixture has a prior migration archive: %v", err)
 	}
 	seenMigrated := false
-	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
 		if current := V2ByGUID(tx.Projection, "2447b0e6-5004-4aca-84cd-08d7798dad52"); current == nil || current.LegacyV1 || current.State != v2.StateUnseated {
 			t.Fatalf("migrated projection current = %+v, want dormant v2 row", current)
 		}
@@ -1056,11 +1159,11 @@ func TestLegacyV1MigrationArchivesAndReseeds(t *testing.T) {
 
 func TestLegacyV1MigrationTwiceIsByteStable(t *testing.T) {
 	path := copyRegistryFixture(t, "v1-real-shape.jsonl")
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
 		t.Fatal(err)
 	}
 	once := mustReadFile(t, path)
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
 		t.Fatal(err)
 	}
 	twice := mustReadFile(t, path)
@@ -1084,7 +1187,7 @@ func TestLegacyV1MigrationRecoversEmptyLiveFromArchive(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
 		t.Fatal(err)
 	}
 	if got := mustReadFile(t, archive); !bytes.Equal(got, source) {
@@ -1118,7 +1221,7 @@ func TestLegacyV1MigrationRecoversPartialLiveWithNodeFromArchive(t *testing.T) {
 	if err := os.WriteFile(path, []byte(partial), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
 		t.Fatal(err)
 	}
 	proj := loadProjection(t, path)
@@ -1130,7 +1233,7 @@ func TestLegacyV1MigrationRecoversPartialLiveWithNodeFromArchive(t *testing.T) {
 			t.Fatalf("session %s node = %q nodes=%+v, want registered node attribution", rec.GUID, rec.Node, proj.Nodes())
 		}
 	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{{GUID: "guid-after-recovery", Event: "registered", State: v2.StateSeated, Label: "after", Tool: "codex"}}, nil
 	}); err != nil {
 		t.Fatalf("next locked write after recovery failed: %v", err)
@@ -1147,7 +1250,10 @@ func TestLegacyV1MigrationRefusesMismatchedExistingArchive(t *testing.T) {
 	if err := os.WriteFile(archive, original[:len(original)/2], 0o444); err != nil {
 		t.Fatal(err)
 	}
-	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil })
+	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil })
+	if len(outcomes) != 0 {
+		t.Fatalf("outcomes = %+v, want none for batch refusal", outcomes)
+	}
 	if err == nil || !strings.Contains(err.Error(), "existing archive") || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("err = %v, want mismatched archive refusal", err)
 	}
@@ -1181,7 +1287,7 @@ func TestRotationAtThresholdArchivesAndReseeds(t *testing.T) {
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
 		if current := V2ByGUID(tx.Projection, "guid-drop"); current != nil {
 			t.Fatalf("retired row visible after rotation = %+v", current)
 		}
@@ -1211,7 +1317,7 @@ func TestRotationAtThresholdArchivesAndReseeds(t *testing.T) {
 	}
 	once := mustReadFile(t, path)
 	t.Setenv(rotationThresholdEnv, "1048576")
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
 		t.Fatal(err)
 	}
 	if twice := mustReadFile(t, path); !bytes.Equal(once, twice) {
@@ -1244,7 +1350,7 @@ func TestRotationRecoversPartialLiveFromArchive(t *testing.T) {
 	if err := os.WriteFile(path, []byte(partial), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
 		t.Fatal(err)
 	}
 	proj := loadProjection(t, path)
@@ -1280,7 +1386,7 @@ func TestMigrationRecoveryDoesNotRefireOnPureV2LiveWithStaleMigrationArchive(t *
 	if err := os.WriteFile(path, []byte(live), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{{GUID: "guid-new", Event: "registered", State: v2.StateSeated, Label: "new", Tool: "bash"}}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -1323,7 +1429,7 @@ func TestRotationRecoveryUsesNewestRotationArchiveOverMigrationArchive(t *testin
 	if err := os.WriteFile(path, []byte(partial), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
 		t.Fatal(err)
 	}
 	proj := loadProjection(t, path)
@@ -1419,7 +1525,7 @@ func TestRotationReusesMatchingArchiveAfterPreTruncateCrash(t *testing.T) {
 	if err := os.WriteFile(archive, []byte(source), 0o444); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{{GUID: "guid-after", Event: "registered", State: v2.StateSeated, Label: "after", Tool: "bash"}}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -1444,7 +1550,7 @@ func TestRotationSkipsWhenReseedWouldStillExceedThreshold(t *testing.T) {
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{{GUID: "guid-after", Event: "registered", State: v2.StateSeated, Label: "after", Tool: "bash"}}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -1460,7 +1566,10 @@ func TestRotationInvalidThresholdNamesFix(t *testing.T) {
 	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil })
+	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil })
+	if len(outcomes) != 0 {
+		t.Fatalf("outcomes = %+v, want none for batch refusal", outcomes)
+	}
 	if err == nil || !strings.Contains(err.Error(), rotationThresholdEnv+`="not-bytes"`) || !strings.Contains(err.Error(), "unset it to use the default") {
 		t.Fatalf("err = %v, want variable/value/fix guidance", err)
 	}
@@ -1507,7 +1616,10 @@ func TestRotationRecoveryRefusalTexts(t *testing.T) {
 			if err := os.WriteFile(path, nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			_, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil })
+			outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil })
+			if len(outcomes) != 0 {
+				t.Fatalf("outcomes = %+v, want none for batch refusal", outcomes)
+			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
@@ -1569,9 +1681,7 @@ func TestRegisteredCarriesRecognisedHcomName(t *testing.T) {
 		HcomDir:    "/hcom",
 		Status:     "active",
 	}
-	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated); err != nil {
-		t.Fatal(err)
-	}
+	mustAppendLegacySessionEvent(t, path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated)
 	registered := Record{
 		GUID:       &guid,
 		Label:      &label,
@@ -1583,7 +1693,7 @@ func TestRegisteredCarriesRecognisedHcomName(t *testing.T) {
 		Status:     "active",
 		Provenance: &Provenance{Mechanism: "spawn", ToolSessionID: "sess-spawn", Tag: "worker"},
 	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{V2FromRecord(registered, "registered", v2.StateSeated, "2026-07-08T00:00:01Z")}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -1612,7 +1722,7 @@ func TestRegisteredReplacementNameWithoutProofDefaultsUnverified(t *testing.T) {
 		GUID: "guid-replace-name", Event: "recognised", State: v2.StateSeated,
 		Seat: &v2.Seat{Kind: "herdr", HcomName: "old-name", HcomVerified: &verified},
 	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{current}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -1620,7 +1730,7 @@ func TestRegisteredReplacementNameWithoutProofDefaultsUnverified(t *testing.T) {
 	patch := current
 	patch.Event = "registered"
 	patch.Seat = &v2.Seat{Kind: "herdr", HcomName: "new-name"}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{patch}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -1645,9 +1755,7 @@ func TestRegisteredCarryForwardStampsFreshNodeAfterCloneRepair(t *testing.T) {
 		HcomDir:    "/hcom",
 		Status:     "active",
 	}
-	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated); err != nil {
-		t.Fatal(err)
-	}
+	mustAppendLegacySessionEvent(t, path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated)
 	oldNode := strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path))))
 	if _, err := InitNode(path, true); err != nil {
 		t.Fatal(err)
@@ -1666,7 +1774,7 @@ func TestRegisteredCarryForwardStampsFreshNodeAfterCloneRepair(t *testing.T) {
 		HcomDir:    "/hcom",
 		Status:     "active",
 	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{V2FromRecord(registered, "registered", v2.StateSeated, "2026-07-08T00:00:01Z")}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -1697,9 +1805,7 @@ func TestRegisteredCarrySurvivesRotationReseed(t *testing.T) {
 		HcomDir:    "/hcom",
 		Status:     "active",
 	}
-	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated); err != nil {
-		t.Fatal(err)
-	}
+	mustAppendLegacySessionEvent(t, path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated)
 	registered := Record{
 		GUID:       &guid,
 		Label:      &label,
@@ -1710,7 +1816,7 @@ func TestRegisteredCarrySurvivesRotationReseed(t *testing.T) {
 		HcomDir:    "/hcom",
 		Status:     "active",
 	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{V2FromRecord(registered, "registered", v2.StateSeated, "2026-07-08T00:00:01Z")}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -1770,7 +1876,7 @@ func TestRegisteredCarryMarksUnverifiedThenNoOps(t *testing.T) {
 		Lineage:    v2.Lineage{},
 		Provenance: v2.Provenance{Mechanism: "spawn", Tag: "worker"},
 	}
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{row}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -1779,7 +1885,7 @@ func TestRegisteredCarryMarksUnverifiedThenNoOps(t *testing.T) {
 	repeat.RecordedAt = "2026-07-08T00:00:01Z"
 	repeat.Seat = cloneSeat(row.Seat)
 	repeat.Seat.HcomName = ""
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{repeat}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -1790,7 +1896,7 @@ func TestRegisteredCarryMarksUnverifiedThenNoOps(t *testing.T) {
 	}
 	before := registryRowCount(t, path)
 	repeat.RecordedAt = "2026-07-08T00:00:02Z"
-	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{repeat}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -1803,9 +1909,7 @@ func TestRegisteredCarryMarksUnverifiedThenNoOps(t *testing.T) {
 func TestAppendLegacyRetiredPreservesCloseReason(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	row := []byte(`{"guid":"guid-launch","short_guid":"launch","label":"launch","role":"worker","agent":"codex","terminal_id":"term_L","pane_id":"p_l","hcom_dir":"/hcom","hcom_name":"launch-bus","status":"closed","close_result":"launch_failed","close_reason":"pane exited before lifecycle bind"}`)
-	if err := AppendLegacySessionEvent(path, row, "retired", v2.StateRetired); err != nil {
-		t.Fatal(err)
-	}
+	mustAppendLegacySessionEvent(t, path, row, "retired", v2.StateRetired)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -1837,7 +1941,7 @@ func TestLockedValidatorPreservesRenameAgainstStaleEnrichment(t *testing.T) {
 		t.Fatal(err)
 	}
 	stale := Record{GUID: &guid, Label: &oldLabel, Role: "worker", Agent: "codex", PaneID: "p_new", TerminalID: "term_new", HcomName: "bus-new", Status: "active"}
-	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
 		current := V2ByGUID(tx.Projection, guid)
 		next := *current
 		next.Event = "labelled"
@@ -1846,9 +1950,7 @@ func TestLockedValidatorPreservesRenameAgainstStaleEnrichment(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, stale), "recognised", v2.StateSeated); err != nil {
-		t.Fatal(err)
-	}
+	mustAppendLegacySessionEvent(t, path, mustMarshalRecord(t, stale), "recognised", v2.StateSeated)
 	recs, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -1865,7 +1967,7 @@ func TestLockedValidatorDoesNotResurrectUnseatedSession(t *testing.T) {
 	if err := Append(path, []byte(`{"guid":"`+guid+`","label":"`+label+`","role":"worker","agent":"codex","pane_id":"p_old","terminal_id":"term_old","status":"active"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
 		current := V2ByGUID(tx.Projection, guid)
 		next := *current
 		next.Event = "unseated"
@@ -1876,9 +1978,7 @@ func TestLockedValidatorDoesNotResurrectUnseatedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	stale := Record{GUID: &guid, Label: &label, Role: "worker", Agent: "codex", PaneID: "p_new", TerminalID: "term_new", HcomName: "bus-new", Status: "active"}
-	if err := AppendLegacySessionEvent(path, mustMarshalRecord(t, stale), "recognised", v2.StateSeated); err != nil {
-		t.Fatal(err)
-	}
+	mustAppendLegacySessionEvent(t, path, mustMarshalRecord(t, stale), "recognised", v2.StateSeated)
 	recs, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -1964,6 +2064,31 @@ func mustMarshalRecord(t *testing.T, rec Record) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func mustAppendLegacySessionEvent(t *testing.T, path string, row []byte, event, state string) WriteOutcome {
+	t.Helper()
+	outcome, err := AppendLegacySessionEvent(path, row, event, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := outcome.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return outcome
+}
+
+func updateLockedForTest(path string, fn LockedUpdateFunc) error {
+	outcomes, err := UpdateLocked(path, fn)
+	if err != nil {
+		return err
+	}
+	for _, outcome := range outcomes {
+		if err := outcome.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func registryRowCount(t *testing.T, path string) int {

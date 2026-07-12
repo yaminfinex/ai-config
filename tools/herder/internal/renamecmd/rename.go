@@ -34,7 +34,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		die(stderr, "no registry at "+registryPath)
 		return 1
 	}
-	_, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		rec := registry.V2Resolve(tx.Projection, target)
 		if rec == nil {
 			return nil, fmt.Errorf("unknown target: %s", target)
@@ -58,6 +58,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return []v2.SessionRecord{next}, nil
 	})
 	if err != nil {
+		die(stderr, err.Error())
+		return 1
+	}
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil {
+		die(stderr, err.Error())
+		return 1
+	}
+	if err := outcome.Err(); err != nil {
 		die(stderr, err.Error())
 		return 1
 	}

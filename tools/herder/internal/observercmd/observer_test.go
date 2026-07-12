@@ -16,14 +16,16 @@ import (
 
 func TestApplyCandidatesRefusalLeavesBatchUnapplied(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	if _, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{
 			{GUID: "guid-healthy", Label: "healthy", State: v2.StateSeated},
 			{GUID: "guid-poison", Label: "poison", State: v2.StateSeated},
 		}, nil
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	assertObserverWriteOutcomes(t, outcomes)
 	proj, err := v2.LoadFile(path, v2.LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -94,11 +96,13 @@ func TestSuccessorCarryMarksBusIdentityUnverifiedWithoutProof(t *testing.T) {
 		SIDs:       []v2.SID{{SID: "sess-old"}},
 		Provenance: v2.Provenance{Mechanism: "enroll"},
 	}
-	if _, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{current}, nil
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	assertObserverWriteOutcomes(t, outcomes)
 	proj, err := v2.LoadFile(path, v2.LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +111,15 @@ func TestSuccessorCarryMarksBusIdentityUnverifiedWithoutProof(t *testing.T) {
 	rows, ok := turnoverRowsLocked(proj, current, "sess-new", hcomidentity.Result{Reason: "no live proof"}, time.Now().UTC())
 	if !ok || len(rows) != 2 || rows[0].Seat == nil || rows[0].Seat.HcomVerified == nil || *rows[0].Seat.HcomVerified {
 		t.Fatalf("turnover rows = %+v, want successor with explicit unverified bus identity", rows)
+	}
+}
+
+func assertObserverWriteOutcomes(t *testing.T, outcomes []registry.WriteOutcome) {
+	t.Helper()
+	for _, outcome := range outcomes {
+		if err := outcome.Err(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

@@ -828,10 +828,16 @@ func applyCandidates(path string, cands []candidate, stderr io.Writer) observers
 	if len(cands) == 0 {
 		return summary
 	}
-	encoded, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	type outcomeRange struct {
+		start int
+		count int
+	}
+	ranges := make([]outcomeRange, len(cands))
+	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		rows := make([]v2.SessionRecord, 0, len(cands)+1)
 		now := time.Now().UTC()
-		for _, cand := range cands {
+		for i, cand := range cands {
+			start := len(rows)
 			switch cand.kind {
 			case "turnover":
 				if pair, ok := turnoverRowsLocked(tx.Projection, cand.row, cand.sid, cand.bus, now); ok {
@@ -852,6 +858,7 @@ func applyCandidates(path string, cands []candidate, stderr io.Writer) observers
 				}
 				rows = append(rows, cand.row)
 			}
+			ranges[i] = outcomeRange{start: start, count: len(rows) - start}
 		}
 		return rows, nil
 	})
@@ -860,22 +867,37 @@ func applyCandidates(path string, cands []candidate, stderr io.Writer) observers
 		summary.Refused = len(cands)
 		return summary
 	}
-	applied := map[string]int{}
-	for _, raw := range encoded {
-		var rec v2.SessionRecord
-		if err := json.Unmarshal(raw, &rec); err != nil {
+	expected := 0
+	for _, r := range ranges {
+		expected += r.count
+	}
+	if len(outcomes) != expected {
+		fmt.Fprintf(stderr, "herder observer sweep: refused %d candidate(s): registry returned %d outcomes for %d rows\n", len(cands), len(outcomes), expected)
+		summary.Refused = len(cands)
+		return summary
+	}
+	for _, r := range ranges {
+		if r.count == 0 {
+			summary.Noop++
 			continue
 		}
-		key := rec.GUID + "\x00" + rec.Event + "\x00" + rec.CloseResult + "\x00" + rec.ObservedVia
-		applied[key]++
-	}
-	for _, cand := range cands {
-		key := cand.row.GUID + "\x00" + cand.row.Event + "\x00" + cand.row.CloseResult + "\x00" + cand.row.ObservedVia
-		if applied[key] > 0 {
-			applied[key]--
+		status := registry.WriteNoop
+		for _, outcome := range outcomes[r.start : r.start+r.count] {
+			if outcome.Status == registry.WriteRefused {
+				status = registry.WriteRefused
+				break
+			}
+			if outcome.Status == registry.WriteApplied {
+				status = registry.WriteApplied
+			}
+		}
+		switch status {
+		case registry.WriteApplied:
 			summary.Applied++
-		} else {
+		case registry.WriteNoop:
 			summary.Noop++
+		case registry.WriteRefused:
+			summary.Refused++
 		}
 	}
 	return summary

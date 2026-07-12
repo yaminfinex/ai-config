@@ -440,21 +440,31 @@ func Append(path string, row []byte) error {
 		state = v2.StateRetired
 		event = "retired"
 	}
-	_, err = UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{V2FromRecord(rec, event, state, "")}, nil
 	})
-	return err
-}
-
-func AppendLegacySessionEvent(path string, row []byte, event, state string) error {
-	rec, err := recordFromJSON(row)
 	if err != nil {
 		return err
 	}
-	_, err = UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+	outcome, err := SingleOutcome(outcomes)
+	if err != nil {
+		return err
+	}
+	return outcome.Err()
+}
+
+func AppendLegacySessionEvent(path string, row []byte, event, state string) (WriteOutcome, error) {
+	rec, err := recordFromJSON(row)
+	if err != nil {
+		return WriteOutcome{}, err
+	}
+	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{V2FromRecord(rec, event, state, "")}, nil
 	})
-	return err
+	if err != nil {
+		return WriteOutcome{}, err
+	}
+	return SingleOutcome(outcomes)
 }
 
 func recordFromJSON(row []byte) (Record, error) {

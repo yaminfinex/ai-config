@@ -43,7 +43,7 @@ func TestRegistryRefusalClosesAndConfirmsLaunchedPane(t *testing.T) {
 	r := &runner{
 		herdr:  client,
 		stderr: &stderr,
-		updateRegistry: func(string, registry.LockedUpdateFunc) ([][]byte, error) {
+		updateRegistry: func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
 			return nil, errors.New("lock refused")
 		},
 	}

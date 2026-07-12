@@ -150,7 +150,7 @@ func TestResolveTargetWithArchiveFallbackSkipsArchivesOnLiveHit(t *testing.T) {
 func TestResumeRefusesRetiredSession(t *testing.T) {
 	dir := t.TempDir()
 	registryPath := filepath.Join(dir, "registry.jsonl")
-	if _, err := registry.UpdateLocked(registryPath, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(registryPath, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{{
 			Kind:       v2.KindSession,
 			GUID:       "guid-retired",
@@ -161,8 +161,14 @@ func TestResumeRefusesRetiredSession(t *testing.T) {
 			Tool:       "codex",
 			SIDs:       []v2.SID{{SID: "session-retired", Source: "harvest"}},
 		}}, nil
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
+	}
+	for _, outcome := range outcomes {
+		if err := outcome.Err(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	mockBin := t.TempDir()
 	for _, tool := range []string{"herdr", "hcom"} {

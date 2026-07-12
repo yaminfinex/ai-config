@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-updatelocked-errors.sh — forbid discarded registry.UpdateLocked errors.
+# check-updatelocked-errors.sh — forbid discarded registry.UpdateLocked outcomes or errors.
 #
 # The scanner is intentionally strict about the error result: UpdateLocked may
 # be returned, passed as arguments to another call, or assigned to an identifier
@@ -13,6 +13,11 @@
 # Reads that occur only inside nested closures do not count as checks; this is
 # conservative by design because deferred/goroutine captures are easy to mistake
 # for durable handling of a registry write failure.
+#
+# The first result is checked independently for UpdateLocked, the injectable
+# updateLocked wrapper, and AppendLegacySessionEvent: it must be bound to a named
+# local and consumed before overwrite. This keeps the typed per-candidate
+# confirmation contract distinct from merely checking the batch error.
 
 set -euo pipefail
 
@@ -215,7 +220,7 @@ func (s *scanner) checkCall(call *ast.CallExpr) {
 			return
 		}
 	}
-	s.report(call.Pos(), "registry.UpdateLocked call discards the error")
+	s.report(call.Pos(), "registry write call discards the error")
 }
 
 func (s *scanner) checkAssign(as *ast.AssignStmt, callExpr ast.Expr) {
@@ -223,23 +228,33 @@ func (s *scanner) checkAssign(as *ast.AssignStmt, callExpr ast.Expr) {
 		return
 	}
 	if len(as.Lhs) < 2 {
-		s.report(as.Pos(), "registry.UpdateLocked call does not bind the error result")
+		s.report(as.Pos(), "registry write call does not bind the error result")
 		return
 	}
 	errIdent, ok := as.Lhs[1].(*ast.Ident)
 	if !ok {
-		s.report(as.Lhs[1].Pos(), "registry.UpdateLocked error result is not assigned to a named error")
+		s.report(as.Lhs[1].Pos(), "registry write error result is not assigned to a named error")
 		return
 	}
 	if errIdent.Name == "_" {
-		s.report(errIdent.Pos(), "registry.UpdateLocked error result is assigned to _")
+		s.report(errIdent.Pos(), "registry write error result is assigned to _")
 		return
 	}
-	if s.initBindingChecked(errIdent, as) {
+	if !s.initBindingChecked(errIdent, as) && !s.errorBindingChecked(errIdent, as) {
+		s.report(errIdent.Pos(), "registry write error result is assigned but never checked")
 		return
 	}
-	if !s.errorBindingChecked(errIdent, as) {
-		s.report(errIdent.Pos(), "registry.UpdateLocked error result is assigned but never checked")
+	outcomeIdent, ok := as.Lhs[0].(*ast.Ident)
+	if !ok {
+		s.report(as.Lhs[0].Pos(), "registry write outcomes are not assigned to a named result")
+		return
+	}
+	if outcomeIdent.Name == "_" {
+		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned to _")
+		return
+	}
+	if !s.initBindingChecked(outcomeIdent, as) && !s.errorBindingChecked(outcomeIdent, as) {
+		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned but never consumed")
 	}
 }
 
@@ -248,16 +263,25 @@ func (s *scanner) checkValueSpec(vs *ast.ValueSpec, callExpr ast.Expr) {
 		return
 	}
 	if len(vs.Names) < 2 {
-		s.report(vs.Pos(), "registry.UpdateLocked call does not bind the error result")
+		s.report(vs.Pos(), "registry write call does not bind the error result")
 		return
 	}
 	errIdent := vs.Names[1]
 	if errIdent.Name == "_" {
-		s.report(errIdent.Pos(), "registry.UpdateLocked error result is assigned to _")
+		s.report(errIdent.Pos(), "registry write error result is assigned to _")
 		return
 	}
 	if s.nearestFunc(vs) == nil || !s.errorBindingChecked(errIdent, vs) {
-		s.report(errIdent.Pos(), "registry.UpdateLocked error result is assigned but never checked")
+		s.report(errIdent.Pos(), "registry write error result is assigned but never checked")
+		return
+	}
+	outcomeIdent := vs.Names[0]
+	if outcomeIdent.Name == "_" {
+		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned to _")
+		return
+	}
+	if s.nearestFunc(vs) == nil || !s.errorBindingChecked(outcomeIdent, vs) {
+		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned but never consumed")
 	}
 }
 
@@ -272,7 +296,7 @@ func (s *scanner) isUpdateLockedCall(expr ast.Expr) bool {
 func (s *scanner) isUpdateLockedValue(expr ast.Expr) bool {
 	switch fn := unwrapParen(expr).(type) {
 	case *ast.Ident:
-		if fn.Name == "UpdateLocked" && (s.file.Name.Name == "registry" || s.dotAlias) {
+		if (fn.Name == "UpdateLocked" || fn.Name == "AppendLegacySessionEvent") && (s.file.Name.Name == "registry" || s.dotAlias) {
 			return true
 		}
 		if fn.Obj != nil {
@@ -280,7 +304,10 @@ func (s *scanner) isUpdateLockedValue(expr ast.Expr) bool {
 		}
 		return s.aliases[fn.Name]
 	case *ast.SelectorExpr:
-		if fn.Sel.Name != "UpdateLocked" {
+		if fn.Sel.Name == "updateLocked" {
+			return true
+		}
+		if fn.Sel.Name != "UpdateLocked" && fn.Sel.Name != "AppendLegacySessionEvent" {
 			return false
 		}
 		id, ok := fn.X.(*ast.Ident)
@@ -577,13 +604,13 @@ updatelocked_gate() {
 }
 
 if updatelocked_gate "$REPO_ROOT/tools/herder" >"$ROOT/current.out" 2>&1; then
-  pass "UpdateLocked error gate current tree"
+  pass "UpdateLocked outcome/error gate current tree"
 else
-  fail_case "UpdateLocked error gate current tree" "$(cat "$ROOT/current.out")"
+  fail_case "UpdateLocked outcome/error gate current tree" "$(cat "$ROOT/current.out")"
 fi
 
 neg_root="$ROOT/negative"
-mkdir -p "$neg_root"/{blank,bare,ignored,defer,go,decl_func,decl_package,labeled,switch_init,funclit,method_value,paren,shadow,field_use,selector_assign,guarded_unchecked,overwrite_unread,switch_unchecked,guarded_overwrite,switch_case_overwrite,sibling_branch_read}
+mkdir -p "$neg_root"/{blank,bare,ignored,defer,go,decl_func,decl_package,labeled,switch_init,funclit,method_value,paren,shadow,field_use,selector_assign,guarded_unchecked,overwrite_unread,switch_unchecked,guarded_overwrite,switch_case_overwrite,sibling_branch_read,outcomes_blank,outcomes_unread,append_outcomes_blank,wrapper_outcomes_blank}
 
 cat >"$neg_root/blank/negative.go" <<'GO'
 package negative
@@ -867,6 +894,52 @@ func siblingBranchRead(cond bool) error {
 }
 GO
 
+cat >"$neg_root/outcomes_blank/negative.go" <<'GO'
+package negative
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func blankOutcomes() error {
+	_, err := registry.UpdateLocked("registry.jsonl", nil)
+	return err
+}
+GO
+
+cat >"$neg_root/outcomes_unread/negative.go" <<'GO'
+package negative
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func unreadOutcomes() error {
+	outcomes, err := registry.UpdateLocked("registry.jsonl", nil)
+	return err
+}
+GO
+
+cat >"$neg_root/append_outcomes_blank/negative.go" <<'GO'
+package negative
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func blankAppendOutcomes() error {
+	_, err := registry.AppendLegacySessionEvent("registry.jsonl", nil, "registered", "seated")
+	return err
+}
+GO
+
+cat >"$neg_root/wrapper_outcomes_blank/negative.go" <<'GO'
+package negative
+
+type runner struct{}
+
+func (*runner) updateLocked() (int, error) { return 0, nil }
+
+func blankWrapperOutcomes(r *runner) error {
+	_, err := r.updateLocked()
+	return err
+}
+GO
+
 expect_violation() {
   local name="$1" want="$2" rc
   set +e
@@ -874,35 +947,39 @@ expect_violation() {
   rc=$?
   set -e
   if [[ "$rc" != "1" ]]; then
-    fail_case "UpdateLocked error gate negative demo catches $name" "want exit 1, got $rc: $(cat "$ROOT/negative-$name.out")"
+    fail_case "UpdateLocked outcome/error gate negative demo catches $name" "want exit 1, got $rc: $(cat "$ROOT/negative-$name.out")"
   elif ! grep -q "$want" "$ROOT/negative-$name.out"; then
-    fail_case "UpdateLocked error gate negative demo catches $name" "missing expected diagnostic $want: $(cat "$ROOT/negative-$name.out")"
+    fail_case "UpdateLocked outcome/error gate negative demo catches $name" "missing expected diagnostic $want: $(cat "$ROOT/negative-$name.out")"
   else
-    pass "UpdateLocked error gate negative demo catches $name"
+    pass "UpdateLocked outcome/error gate negative demo catches $name"
   fi
 }
 
-expect_violation blank 'registry.UpdateLocked error result is assigned to _'
-expect_violation bare 'registry.UpdateLocked call discards the error'
-expect_violation ignored 'registry.UpdateLocked error result is assigned but never checked'
-expect_violation defer 'registry.UpdateLocked call discards the error'
-expect_violation go 'registry.UpdateLocked call discards the error'
-expect_violation decl_func 'registry.UpdateLocked error result is assigned to _'
-expect_violation decl_package 'registry.UpdateLocked error result is assigned to _'
-expect_violation labeled 'registry.UpdateLocked call discards the error'
-expect_violation switch_init 'registry.UpdateLocked error result is assigned to _'
-expect_violation funclit 'registry.UpdateLocked error result is assigned to _'
-expect_violation method_value 'registry.UpdateLocked call discards the error'
-expect_violation paren 'registry.UpdateLocked call discards the error'
-expect_violation shadow 'registry.UpdateLocked error result is assigned but never checked'
-expect_violation field_use 'registry.UpdateLocked error result is assigned but never checked'
-expect_violation selector_assign 'registry.UpdateLocked error result is not assigned to a named error'
-expect_violation guarded_unchecked 'registry.UpdateLocked error result is assigned but never checked'
-expect_violation overwrite_unread 'registry.UpdateLocked error result is assigned but never checked'
-expect_violation switch_unchecked 'registry.UpdateLocked error result is assigned but never checked'
-expect_violation guarded_overwrite 'registry.UpdateLocked error result is assigned but never checked'
-expect_violation switch_case_overwrite 'registry.UpdateLocked error result is assigned but never checked'
-expect_violation sibling_branch_read 'registry.UpdateLocked error result is assigned but never checked'
+expect_violation blank 'registry write error result is assigned to _'
+expect_violation bare 'registry write call discards the error'
+expect_violation ignored 'registry write error result is assigned but never checked'
+expect_violation defer 'registry write call discards the error'
+expect_violation go 'registry write call discards the error'
+expect_violation decl_func 'registry write error result is assigned to _'
+expect_violation decl_package 'registry write error result is assigned to _'
+expect_violation labeled 'registry write call discards the error'
+expect_violation switch_init 'registry write error result is assigned to _'
+expect_violation funclit 'registry write error result is assigned to _'
+expect_violation method_value 'registry write call discards the error'
+expect_violation paren 'registry write call discards the error'
+expect_violation shadow 'registry write error result is assigned but never checked'
+expect_violation field_use 'registry write error result is assigned but never checked'
+expect_violation selector_assign 'registry write error result is not assigned to a named error'
+expect_violation guarded_unchecked 'registry write error result is assigned but never checked'
+expect_violation overwrite_unread 'registry write error result is assigned but never checked'
+expect_violation switch_unchecked 'registry write error result is assigned but never checked'
+expect_violation guarded_overwrite 'registry write error result is assigned but never checked'
+expect_violation switch_case_overwrite 'registry write error result is assigned but never checked'
+expect_violation sibling_branch_read 'registry write error result is assigned but never checked'
+expect_violation outcomes_blank 'registry write outcomes are assigned to _'
+expect_violation outcomes_unread 'registry write outcomes are assigned but never consumed'
+expect_violation append_outcomes_blank 'registry write outcomes are assigned to _'
+expect_violation wrapper_outcomes_blank 'registry write outcomes are assigned to _'
 
 pos_root="$ROOT/positive"
 mkdir -p "$pos_root"/{branch_checked,return_forward,argument_forward,guarded_branch,error_wrap,switch_cases,select_cases}
@@ -913,12 +990,14 @@ package positive
 import registry "ai-config/tools/herder/internal/registry"
 
 func branchChecked(cond bool) error {
+	var outcomes []registry.WriteOutcome
 	var err error
 	if cond {
-		_, err = registry.UpdateLocked("a.jsonl", nil)
+		outcomes, err = registry.UpdateLocked("a.jsonl", nil)
 	} else {
-		_, err = registry.UpdateLocked("b.jsonl", nil)
+		outcomes, err = registry.UpdateLocked("b.jsonl", nil)
 	}
+	if len(outcomes) > 0 {}
 	return err
 }
 GO
@@ -928,7 +1007,7 @@ package positive
 
 import registry "ai-config/tools/herder/internal/registry"
 
-func returnForward() ([][]byte, error) {
+func returnForward() ([]registry.WriteOutcome, error) {
 	return registry.UpdateLocked("registry.jsonl", nil)
 }
 GO
@@ -938,7 +1017,7 @@ package positive
 
 import registry "ai-config/tools/herder/internal/registry"
 
-func use(_ [][]byte, _ error) {}
+func use(_ []registry.WriteOutcome, _ error) {}
 
 func argumentForward() {
 	use(registry.UpdateLocked("registry.jsonl", nil))
@@ -952,10 +1031,11 @@ import registry "ai-config/tools/herder/internal/registry"
 
 func guardedBranch(cond bool) error {
 	if cond {
-		_, err := registry.UpdateLocked("registry.jsonl", nil)
+		outcomes, err := registry.UpdateLocked("registry.jsonl", nil)
 		if err != nil {
 			return err
 		}
+		if len(outcomes) > 0 {}
 	}
 	return nil
 }
@@ -970,7 +1050,8 @@ import (
 )
 
 func errorWrap() error {
-	_, err := registry.UpdateLocked("registry.jsonl", nil)
+	outcomes, err := registry.UpdateLocked("registry.jsonl", nil)
+	if len(outcomes) > 0 {}
 	err = fmt.Errorf("update registry: %w", err)
 	return err
 }
@@ -982,13 +1063,15 @@ package positive
 import registry "ai-config/tools/herder/internal/registry"
 
 func switchCases(mode string) error {
+	var outcomes []registry.WriteOutcome
 	var err error
 	switch mode {
 	case "a":
-		_, err = registry.UpdateLocked("a.jsonl", nil)
+		outcomes, err = registry.UpdateLocked("a.jsonl", nil)
 	case "b":
-		_, err = registry.UpdateLocked("b.jsonl", nil)
+		outcomes, err = registry.UpdateLocked("b.jsonl", nil)
 	}
+	if len(outcomes) > 0 {}
 	return err
 }
 GO
@@ -999,22 +1082,24 @@ package positive
 import registry "ai-config/tools/herder/internal/registry"
 
 func selectCases(a, b <-chan struct{}) error {
+	var outcomes []registry.WriteOutcome
 	var err error
 	select {
 	case <-a:
-		_, err = registry.UpdateLocked("a.jsonl", nil)
+		outcomes, err = registry.UpdateLocked("a.jsonl", nil)
 	case <-b:
-		_, err = registry.UpdateLocked("b.jsonl", nil)
+		outcomes, err = registry.UpdateLocked("b.jsonl", nil)
 	}
+	if len(outcomes) > 0 {}
 	return err
 }
 GO
 
 for name in branch_checked return_forward argument_forward guarded_branch error_wrap switch_cases select_cases; do
   if updatelocked_gate "$pos_root/$name" >"$ROOT/positive-$name.out" 2>&1; then
-    pass "UpdateLocked error gate positive demo allows $name"
+    pass "UpdateLocked outcome/error gate positive demo allows $name"
   else
-    fail_case "UpdateLocked error gate positive demo allows $name" "$(cat "$ROOT/positive-$name.out")"
+    fail_case "UpdateLocked outcome/error gate positive demo allows $name" "$(cat "$ROOT/positive-$name.out")"
   fi
 done
 

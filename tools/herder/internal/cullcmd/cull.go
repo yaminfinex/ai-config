@@ -404,7 +404,7 @@ func appendClosed(path string, rec registry.Record, nowISO, result, reason strin
 	guid := ptrString(rec.GUID)
 	rec = latestForGUID(path, rec)
 	var already *v2.SessionRecord
-	encoded, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		latest := registry.V2ByGUID(tx.Projection, guid)
 		if latest == nil {
 			return nil, fmt.Errorf("registry close failed for %s: latest record not found", guid)
@@ -429,7 +429,14 @@ func appendClosed(path string, rec registry.Record, nowISO, result, reason strin
 	if already != nil {
 		return registry.LegacyFromV2(*already), false, nil
 	}
-	if !containsCloseRow(encoded, guid, nowISO, result, reason) {
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil {
+		return rec, false, err
+	}
+	if err := outcome.Err(); err != nil {
+		return rec, false, err
+	}
+	if outcome.Status != registry.WriteApplied {
 		return rec, false, fmt.Errorf("registry close failed for %s: no close record appended", guid)
 	}
 	rec.Status = "closed"
@@ -445,27 +452,6 @@ func isAlreadyUnseated(path, guid string) bool {
 	}
 	current := registry.V2ByGUID(proj, guid)
 	return current != nil && current.State == v2.StateUnseated
-}
-
-func containsCloseRow(rows [][]byte, guid, recordedAt, result, reason string) bool {
-	for _, row := range rows {
-		var session v2.SessionRecord
-		if err := json.Unmarshal(row, &session); err != nil {
-			continue
-		}
-		if session.Kind != "" && session.Kind != v2.KindSession {
-			continue
-		}
-		if session.GUID == guid &&
-			session.Event == "unseated" &&
-			session.State == v2.StateUnseated &&
-			session.RecordedAt == recordedAt &&
-			session.CloseResult == result &&
-			session.CloseReason == reason {
-			return true
-		}
-	}
-	return false
 }
 
 func latestForGUID(path string, rec registry.Record) registry.Record {

@@ -88,7 +88,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	// send resolution could pick it over the live one (TASK-035). Mark each
 	// closed before appending this session's row.
 	nowISO := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	encoded, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		var latest *v2.SessionRecord
 		for _, rec := range tx.Projection.Sessions() {
 			if rec.GUID == guid {
@@ -162,8 +162,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		die(stderr, err.Error())
 		return 1
 	}
-	if len(encoded) > 0 {
-		appendedRow = encoded[len(encoded)-1]
+	for _, outcome := range outcomes {
+		if err := outcome.Err(); err != nil {
+			die(stderr, err.Error())
+			return 1
+		}
+	}
+	if len(outcomes) > 0 {
+		appendedRow = outcomes[len(outcomes)-1].Row
 	}
 	fmt.Fprintf(stderr, "enrolled %s (%s) pane=%s terminal=%s\n", label, guid, pane.PaneID, pane.TerminalID)
 	if opts.json {

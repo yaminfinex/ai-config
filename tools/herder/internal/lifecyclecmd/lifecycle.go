@@ -770,7 +770,11 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		r.failAfterLaunch("registry row encoding failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
 		return nil, 1
 	}
-	if err := registry.AppendLegacySessionEvent(spec.RegistryPath, row, "registered", "seated"); err != nil {
+	outcome, err := registry.AppendLegacySessionEvent(spec.RegistryPath, row, "registered", "seated")
+	if err == nil {
+		err = outcome.Err()
+	}
+	if err != nil {
 		r.failAfterLaunch("registry write refused: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
 		return nil, 1
 	}
@@ -800,8 +804,19 @@ func (r *runner) verifyLaunchStayedAlive(registryPath string, row []byte, paneID
 		"close_result":   "launch_failed",
 		"close_reason":   "pane exited before lifecycle bind",
 	})
+	registryCleanup := ""
 	if err == nil {
-		_ = registry.AppendLegacySessionEvent(registryPath, closed, "retired", v2.StateRetired)
+		outcome, writeErr := registry.AppendLegacySessionEvent(registryPath, closed, "retired", v2.StateRetired)
+		if writeErr == nil {
+			writeErr = outcome.Err()
+		}
+		if writeErr != nil {
+			registryCleanup = "; registry cleanup failed: " + writeErr.Error()
+		} else {
+			registryCleanup = "; registry cleanup=" + string(outcome.Status)
+		}
+	} else {
+		registryCleanup = "; registry cleanup encoding failed: " + err.Error()
 	}
 	lookup := compactLifecycleMessage(string(paneOut))
 	if paneErr != nil {
@@ -815,7 +830,7 @@ func (r *runner) verifyLaunchStayedAlive(registryPath string, row []byte, paneID
 	if strings.Contains(lookupLower, "exit_code") || strings.Contains(lookupLower, "exit code") || strings.Contains(lookupLower, "signal") {
 		exitContext = "process exit context included in the pane diagnostics above"
 	}
-	die(r.stderr, fmt.Sprintf("launch failed before lifecycle bind: mode=%s agent=%s label=%s cwd=%s workspace=%s pane=%s settle_ms=%d; pane lookup exit=%d: %s; %s", spec.Mode, spec.Agent, spec.Label, cwd, spec.Workspace, paneID, settle, paneRC, lookup, exitContext))
+	die(r.stderr, fmt.Sprintf("launch failed before lifecycle bind: mode=%s agent=%s label=%s cwd=%s workspace=%s pane=%s settle_ms=%d; pane lookup exit=%d: %s; %s%s", spec.Mode, spec.Agent, spec.Label, cwd, spec.Workspace, paneID, settle, paneRC, lookup, exitContext, registryCleanup))
 	return 1
 }
 
