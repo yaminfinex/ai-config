@@ -8,7 +8,7 @@
 #                    (NOT the stale spawn-time pane_id): live status + current
 #                    pane (drift) are reported; missing terminal ⇒ "gone".
 #   collapse       — append-only registry collapses to latest-record-per-guid;
-#                    non-active latest rows are hidden unless --all.
+#                    retired and lost sessions are hidden unless --all.
 #   modes          — table (default), --all, --json, --raw, --guid (found +
 #                    missing), --teams, missing registry, herdr-list failure,
 #                    unresolved continuation surfacing + acknowledgement.

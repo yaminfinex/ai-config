@@ -49,8 +49,8 @@ MOCKBIN="$(mktemp -d)"
 ln -s "$TESTS_DIR/mock-hcom" "$MOCKBIN/hcom"
 
 # Registry: a bus-bound peer (team bus), a bus-less peer (bash pane), and a
-# CLOSED bus-bound row — its pane/terminal coordinates must NOT resolve
-# (coordinates are positional; closed rows are refused on that path).
+# RETIRED bus-bound session — its pane/terminal coordinates must NOT resolve
+# (coordinates are positional; retired sessions are refused on that path).
 REG_DIR="$(mktemp -d)"
 BUS_DIR="$(mktemp -d)"
 {

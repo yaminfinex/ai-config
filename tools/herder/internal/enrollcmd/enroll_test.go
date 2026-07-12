@@ -35,10 +35,10 @@ func TestStaleSeatClaimPreservesRawV1Protection(t *testing.T) {
 	}
 }
 
-func TestLabelOwnerErrorDistinguishesActiveAndDeadHolders(t *testing.T) {
+func TestLabelOwnerErrorDistinguishesSeatedAndUnseatedHolders(t *testing.T) {
 	active := labelOwnerError("stable", v2.SessionRecord{GUID: "guid-active", State: v2.StateSeated})
-	if !strings.Contains(active.Error(), "already belongs to active guid guid-active") || strings.Contains(active.Error(), "herder adopt") {
-		t.Fatalf("active error = %q", active)
+	if !strings.Contains(active.Error(), "already belongs to seated session guid-active") || strings.Contains(active.Error(), "herder adopt") {
+		t.Fatalf("seated error = %q", active)
 	}
 	dead := labelOwnerError("stable", v2.SessionRecord{GUID: "guid-dead", State: v2.StateUnseated})
 	for _, want := range []string{"state unseated", "dead/unseated", "herder adopt guid-dead", "herder retire guid-dead", "herder rename <target> stable"} {

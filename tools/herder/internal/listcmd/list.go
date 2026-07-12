@@ -225,8 +225,8 @@ func printHelp(stdout io.Writer) {
 	fmt.Fprint(stdout, `herder list — show spawned agents, reconciled with live herdr state.
 
 Usage:
-  herder list              table of active records, reconciled with live agents
-  herder list --all        include records whose status is not active (e.g. closed)
+  herder list              table of non-retired sessions (seated and unseated), reconciled with live agents
+  herder list --all        additionally include retired and lost sessions
   herder list --json       reconciled sessions and unresolved failures as JSONL
   herder list --raw        raw registry JSONL, no reconciliation
   herder list --guid GUID  one record as full JSON (exit 1 if not found)
@@ -237,7 +237,7 @@ Usage:
 The table lists unresolved detached continuation failures before agent rows.
 Run the recorded recovery command, then use --ack-continuation to clear the
 failure from list and observer advice. Use --all to check whether a missing
-agent was culled.
+session is retired or lost.
 
 In --json output, select kind=="session" for session rows; for compatibility,
 a row without kind is also a session row. Unresolved failures have

@@ -204,7 +204,7 @@ func (r *runner) fork(opts forkOptions) int {
 		label = fmt.Sprintf("%s-fork-%s", firstNonEmpty(ptrString(parent.Label), "agent"), short)
 	}
 	if owner := registry.NonRetiredLabelOwner(recs, label, guid); owner != nil {
-		die(r.stderr, fmt.Sprintf("label %q already belongs to active guid %s", label, ptrString(owner.GUID)))
+		die(r.stderr, fmt.Sprintf("label %q already belongs to non-retired session %s", label, ptrString(owner.GUID)))
 		return 1
 	}
 	role := firstNonEmpty(opts.role, parent.Role, "worker")
@@ -595,7 +595,7 @@ func (r *runner) resume(opts resumeOptions) int {
 	}
 	label := firstNonEmpty(ptrString(rec.Label), "resumed-"+registry.ShortGUID(guid))
 	if owner := registry.NonRetiredLabelOwner(recs, label, guid); owner != nil {
-		die(r.stderr, fmt.Sprintf("label %q already belongs to active guid %s", label, ptrString(owner.GUID)))
+		die(r.stderr, fmt.Sprintf("label %q already belongs to non-retired session %s", label, ptrString(owner.GUID)))
 		return 1
 	}
 	recordedCWD, recordedWorkspace := "", ""

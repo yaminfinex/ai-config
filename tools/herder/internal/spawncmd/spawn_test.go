@@ -108,7 +108,7 @@ func TestResolveSpawnerBusMatchesEnrolledPane(t *testing.T) {
 	rows := []string{
 		// enrolled orchestrator: pane/terminal identity, bus name, NO spawner guid in play
 		`{"guid":"guid-hera","short_guid":"guid-her","label":"orchestrator","pane_id":"p_orch","terminal_id":"term_ORCH","hcom_name":"hera","status":"active"}`,
-		// closed row holding the SAME pane id from an older session must not win
+		// retired session holding the SAME pane id from an older legacy row must not win
 		`{"guid":"guid-old","short_guid":"guid-old","label":"old","pane_id":"p_stale","terminal_id":"term_STALE","hcom_name":"stale-name","status":"closed"}`,
 	}
 	for _, row := range rows {
@@ -125,9 +125,9 @@ func TestResolveSpawnerBusMatchesEnrolledPane(t *testing.T) {
 	if got := resolveBus(path, "term_ORCH", "user", "", "", ""); got != "hera" {
 		t.Fatalf("terminal match via notifyTo = %q, want hera", got)
 	}
-	// closed rows never resolve by pane coordinates
+	// retired sessions never resolve by pane coordinates
 	if got := resolveBus(path, "", "user", "p_stale", "", ""); got != "" {
-		t.Fatalf("closed pane match = %q, want empty", got)
+		t.Fatalf("retired pane match = %q, want empty", got)
 	}
 	// guid resolution still wins first
 	if got := resolveBus(path, "", "guid-hera", "", "", ""); got != "hera" {
@@ -155,13 +155,13 @@ func TestResolveSpawnerBusAcceptsBusNames(t *testing.T) {
 		}
 	}
 
-	// --notify-to may BE a bus name: an ACTIVE row's hcom_name matches (TASK-023)
+	// --notify-to may BE a bus name: a seated session's hcom_name matches (TASK-023)
 	if got := resolveBus(path, "hera", "user", "", "", "/no-such-bus"); got != "hera" {
-		t.Fatalf("active hcom_name match = %q, want hera", got)
+		t.Fatalf("seated hcom_name match = %q, want hera", got)
 	}
-	// a closed row's bus name must not vouch, and the stub bus doesn't know it
+	// a retired session's bus name must not vouch, and the stub bus doesn't know it
 	if got := resolveBus(path, "ghost", "user", "", "", "/no-such-bus"); got != "" {
-		t.Fatalf("closed hcom_name match = %q, want empty", got)
+		t.Fatalf("retired hcom_name match = %q, want empty", got)
 	}
 	// literal bus name unknown to the registry validates against the child's bus
 	if got := resolveBus(path, "lone-wolf", "user", "", "", "/no-such-bus"); got != "lone-wolf" {
@@ -185,7 +185,7 @@ func TestResolveSpawnerBusAcceptsBusNames(t *testing.T) {
 // TestResolveSpawnerBusReusedPaneTiebreaker pins TASK-035 P1-a: notify
 // resolution of a reused pane must NOT silently last-pick a stale row. A stub
 // `hcom list --json` reports whichever names STUB_JOINED lists as joined; the
-// spawner pane p_reuse holds three active rows (hera/vore/zero).
+// spawner pane p_reuse holds three seated sessions (hera/vore/zero).
 func TestResolveSpawnerBusReusedPaneTiebreaker(t *testing.T) {
 	stubDir := t.TempDir()
 	stub := "#!/bin/sh\n" +

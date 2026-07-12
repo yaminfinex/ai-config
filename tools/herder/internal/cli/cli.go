@@ -45,7 +45,7 @@ var commands = []command{
 	{"list", "Show spawned agents, reconciled with live herdr state", listcmd.Run},
 	{"reconcile", "Audit or repair registry coordinates after herdr handoff", reconcilecmd.Run},
 	{"wait", "Block until an agent reaches a status, optionally read its screen", waitcmd.Run},
-	{"cull", "Close spawned agents and mark them closed in the registry", cullcmd.Run},
+	{"cull", "Close spawned-agent panes and unseat their registry sessions", cullcmd.Run},
 	{"enroll", "Register the current herdr pane in the registry", enrollcmd.Run},
 	{"adopt", "Replace a restarted session with a fresh guid and its prior label", adoptcmd.Run},
 	{"rename", "Rename an enrolled agent label and sync herdr best-effort", renamecmd.Run},

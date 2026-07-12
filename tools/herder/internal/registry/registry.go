@@ -1,7 +1,7 @@
 // Package registry reads and appends the herder agent registry: an
 // append-only JSONL file at $HERDER_STATE_DIR/registry.jsonl (default
 // ${XDG_STATE_HOME:-~/.local/state}/herder). Later rows for the same guid
-// supersede earlier ones (status updates, cull close records).
+// supersede earlier ones (status updates, cull unseated session records).
 //
 // Every bash reader collapses the file through one jq idiom —
 //
@@ -372,7 +372,7 @@ func UnseatedByPaneOrTerminal(recs []Record, key string) *Record {
 // SeatedCandidatesByPaneOrTerminal returns EVERY latest seated row whose
 // pane_id or terminal_id equals key, in guid order (the same order
 // LatestByGUID yields). Pane ids are display-only and may have stale registry
-// claimants, so one coordinate can accumulate several active rows (for
+// claimants, so one coordinate can accumulate several seated sessions (for
 // example, a stale manual-enroll identity per prior session). Unlike
 // SeatedByPaneOrTerminal, which silently keeps only the last, this exposes the
 // full candidate set so a caller can disambiguate by bus liveness and refuse

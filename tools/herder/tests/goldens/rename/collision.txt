@@ -1,5 +1,5 @@
 === STDERR ===
-herder rename: label "beta" already belongs to active guid guid-beta-0000
+herder rename: label "beta" already belongs to non-retired session guid-beta-0000
 === STDOUT ===
 
 === EXIT ===

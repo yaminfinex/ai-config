@@ -152,7 +152,7 @@ func TestContinuationFailureAmbiguousActiveTargetEmitsNoFlag(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 	if flags := continuationFailureFlags(proj, stateDir, &stderr); len(flags) != 0 {
-		t.Fatalf("ambiguous active target emitted observer advice: %+v", flags)
+		t.Fatalf("ambiguous seated target emitted observer advice: %+v", flags)
 	}
 }
 
