@@ -1,9 +1,10 @@
 ---
 id: TASK-169
 title: 'grok: isolated pane + roster demo (no production diff)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
+updated_date: '2026-07-12 22:28'
 labels: []
 dependencies: []
 priority: high
@@ -18,7 +19,7 @@ Using the installed Grok Build CLI (0.2.93) and completely throwaway HOME/GROK_H
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Owner chose auth path and authorized one inference smoke; no credential value appears anywhere (commands, logs, memo, task, registry, bus)
+- [x] #1 Owner chose auth path and authorized one inference smoke; no credential value appears anywhere (commands, logs, memo, task, registry, bus)
 - [ ] #2 Isolated roots for all four state/config namespaces; separate pane or private terminal server; teardown documented
 - [ ] #3 grok opens interactively in a herder-created pane and completes a harmless prompt; herder + isolated hcom rows recorded with honest unknown/mislabelled fields
 - [ ] #4 Outbound hcom message proven once with receipt; inbound probed once and reported delivered/queued/refused/absent without blind retries; report states plainly this is roster/pane only
