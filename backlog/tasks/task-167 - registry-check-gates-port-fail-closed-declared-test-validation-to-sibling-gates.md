@@ -3,10 +3,10 @@ id: TASK-167
 title: >-
   registry check gates: port fail-closed declared-test validation to sibling
   gates
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-12 13:32'
-updated_date: '2026-07-12 13:34'
+updated_date: '2026-07-12 13:54'
 labels: []
 dependencies: []
 priority: medium
