@@ -1,0 +1,19 @@
+=== STDERR ===
+transferred label alpha from guid-alpha-0000 to guid-beta-0000
+=== STDOUT ===
+herdr: rename skipped (registry row has no terminal_id)
+=== EXIT ===
+0
+=== HERDR RENAME ARGV ===
+
+=== REGISTRY ===
+{"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
+{"kind":"namespace","event":"namespace_observed","namespace_id":"<GUID>","node":"<GUID>","path":"/hcom-alpha","recorded_at":"<TS>"}
+{"kind":"session","guid":"guid-alpha-0000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"alpha","role":"worker","tool":"codex","sids":[{"sid":"sess-alpha","observed_at":"<TS>","source":"harvest"}],"continuity":"confirmed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-alpha","tag":"worker","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
+{"kind":"session","guid":"guid-beta-0000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"beta","role":"reviewer","tool":"claude","continuity":"assumed","lineage":{},"provenance":{}}
+{"kind":"session","guid":"guid-alpha-0000","event":"label_transferred","recorded_at":"<TS>","node":"<GUID>","state":"unseated","role":"worker","tool":"codex","sids":[{"sid":"sess-alpha","observed_at":"<TS>","source":"harvest"}],"continuity":"confirmed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-alpha","tag":"worker","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
+{"kind":"session","guid":"guid-beta-0000","event":"label_transferred","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"alpha","role":"reviewer","tool":"claude","continuity":"assumed","lineage":{},"provenance":{}}
+=== LIST ===
+GUID       LABEL                AGENT   PANE               LIVE      TEAM         BUS              CTX         ROLE
+guid                            codex                      gone      global       -                unknown     worker
+guid       alpha                claude                     gone      global       -                unknown     reviewer

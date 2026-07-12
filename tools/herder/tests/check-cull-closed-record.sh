@@ -129,9 +129,13 @@ tail -n1 "$REGISTRY" | jq -e '.event=="unseated" and .state=="unseated" and .lab
 grep -q 'recorded closed trap (guid-dead-trap) pane= → already_gone' <<<"$RUN_OUT" \
   && ok "closed record: first cull reports recorded close" || bad "closed record: first cull reports recorded close" "out=$RUN_OUT"
 
-# 2. Current spec truth: unseated rows still hold labels; retire/wave C will reclaim.
+# 2. Unseated rows still hold labels; enroll names the lifecycle state and the
+# explicit adopt or retire+rename recovery rather than calling the holder live.
 run_herder "$REG_DIR" p_self "" enroll --label trap --role worker
-[[ "$RUN_RC" -ne 0 ]] && grep -q 'label "trap" already belongs to active guid guid-dead-trap' <<<"$RUN_OUT" \
+[[ "$RUN_RC" -ne 0 ]] \
+  && grep -q 'state unseated (dead/unseated)' <<<"$RUN_OUT" \
+  && grep -q 'herder adopt guid-dead-trap' <<<"$RUN_OUT" \
+  && grep -q 'herder retire guid-dead-trap' <<<"$RUN_OUT" \
   && ok "closed record: enroll still refuses held label" || bad "closed record: enroll still refuses held label" "rc=$RUN_RC out=$RUN_OUT"
 cat >>"$REGISTRY" <<'JSONL'
 {"kind":"session","guid":"guid-live-other","event":"registered","recorded_at":"2026-07-08T00:00:01Z","state":"seated","label":"other","role":"worker","tool":"codex","seat":{"kind":"herdr","terminal_id":"term_OTHER","pane_id":"p_other"}}

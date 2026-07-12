@@ -209,8 +209,10 @@ if [[ "$WRITE" -eq 0 ]]; then
   CASE="$ROOT/collision"
   mkdir -p "$CASE/home" "$CASE/state"
   cat >"$CASE/state/registry.jsonl" <<'JSONL'
-{"guid":"guid-other-0000","short_guid":"other","label":"taken","role":"worker","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","status":"active"}
+{"kind":"node","event":"node_registered","node_id":"11111111-1111-1111-1111-111111111111","recorded_at":"2026-07-12T00:00:00Z"}
+{"kind":"session","guid":"guid-other-0000","event":"registered","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"taken","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_OTHER","pane_id":"p_other"}}
 JSONL
+  printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
   RUN_ERR_F="$CASE/stderr"
   RUN_OUT="$(env -i \
     PATH="$PATH_HERMETIC" \
@@ -223,6 +225,29 @@ JSONL
     printf 'PASS  guard: active label collision refused\n'
   else
     printf 'FAIL  guard: active label collision refused — rc=%s err=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")"; fail=1
+  fi
+
+  CASE="$ROOT/dead-collision"
+  mkdir -p "$CASE/home" "$CASE/state"
+  cat >"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"node","event":"node_registered","node_id":"11111111-1111-1111-1111-111111111111","recorded_at":"2026-07-12T00:00:00Z"}
+{"kind":"session","guid":"guid-dormant-0000","event":"unseated","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"unseated","label":"taken","role":"worker","tool":"claude"}
+JSONL
+  printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i \
+    PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self \
+    "${HEN[@]}" --label taken 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+  if [[ "$RUN_RC" -eq 1 ]] \
+    && grep -q 'state unseated (dead/unseated)' "$RUN_ERR_F" \
+    && grep -q 'herder adopt guid-dormant-0000' "$RUN_ERR_F" \
+    && grep -q 'herder retire guid-dormant-0000' "$RUN_ERR_F" \
+    && grep -q 'herder rename <target> taken' "$RUN_ERR_F"; then
+    printf 'PASS  guard: dead label collision names state and recovery\n'
+  else
+    printf 'FAIL  guard: dead label collision names state and recovery — rc=%s err=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")"; fail=1
   fi
 
   CASE="$ROOT/guid-mismatch"

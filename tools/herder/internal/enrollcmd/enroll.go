@@ -22,6 +22,17 @@ type options struct {
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
+	return run(args, stdout, stderr, false)
+}
+
+// RunFresh enrolls the caller under a newly minted guid even if HERDER_GUID is
+// present. Composite replacement flows use it to preserve transcript identity:
+// a restarted process is a new session, never a re-keyed old guid.
+func RunFresh(args []string, stdout, stderr io.Writer) int {
+	return run(args, stdout, stderr, true)
+}
+
+func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool) int {
 	opts, code := parseArgs(args, stdout, stderr)
 	if code != 0 {
 		return code
@@ -62,6 +73,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	guid := os.Getenv("HERDER_GUID")
+	if forceFreshGUID {
+		guid = ""
+	}
 	if guid == "" {
 		var err error
 		guid, err = registry.NewGUID()
@@ -101,7 +115,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			return nil, err
 		}
 		if owner := registry.V2LabelOwner(tx.Projection, label, guid); owner != nil {
-			return nil, fmt.Errorf("label %q already belongs to active guid %s", label, owner.GUID)
+			return nil, labelOwnerError(label, *owner)
 		}
 		var rows []v2.SessionRecord
 		for _, priorV2 := range tx.Projection.Sessions() {
@@ -177,6 +191,17 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	observercmd.NudgeIfConfigured(stderr)
 	return 0
+}
+
+func labelOwnerError(label string, owner v2.SessionRecord) error {
+	switch owner.State {
+	case v2.StateUnseated:
+		return fmt.Errorf("label %q is held by guid %s in state %s (dead/unseated); from the replacement pane run 'herder adopt %s', or run 'herder retire %s' then 'herder rename <target> %s'", label, owner.GUID, owner.State, owner.GUID, owner.GUID, label)
+	case v2.StateLost:
+		return fmt.Errorf("label %q is held by guid %s in state %s; LOST sessions cannot transfer or release labels automatically", label, owner.GUID, owner.State)
+	default:
+		return fmt.Errorf("label %q already belongs to active guid %s", label, owner.GUID)
+	}
 }
 
 func verifyExistingGUIDOwner(current *v2.SessionRecord, pane herdrcli.Pane, live hcomidentity.Result) error {

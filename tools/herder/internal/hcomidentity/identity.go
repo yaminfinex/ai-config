@@ -157,6 +157,17 @@ func VerifyStored(rows []Row, evidence Evidence, stored string) (bool, Result) {
 	return resolved.Verified && stored != "" && stored == resolved.Name, resolved
 }
 
+// JoinedNamed returns the live row holding name. Callers use this before an
+// explicit reclaim so a different live session is never displaced.
+func JoinedNamed(rows []Row, name string) (Row, bool) {
+	for _, row := range rows {
+		if row.Name == name && joined(row) {
+			return row, true
+		}
+	}
+	return Row{}, false
+}
+
 func joined(row Row) bool {
 	if row.Joined != nil && !*row.Joined {
 		return false
