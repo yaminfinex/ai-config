@@ -61,6 +61,13 @@ type scanner struct {
 	bad      []string
 }
 
+type bindingReadPolicy uint8
+
+const (
+	anyBindingRead bindingReadPolicy = iota
+	meaningfulOutcomeRead
+)
+
 func main() {
 	if len(os.Args) != 2 {
 		fmt.Fprintf(os.Stderr, "usage: %s <scan-dir>\n", os.Args[0])
@@ -253,8 +260,8 @@ func (s *scanner) checkAssign(as *ast.AssignStmt, callExpr ast.Expr) {
 		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned to _")
 		return
 	}
-	if !s.initBindingChecked(outcomeIdent, as) && !s.errorBindingChecked(outcomeIdent, as) {
-		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned but never consumed")
+	if !s.initOutcomeBindingConsumed(outcomeIdent, as) && !s.outcomeBindingConsumed(outcomeIdent, as) {
+		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned but never consumed; inspect each outcome or return the outcomes")
 	}
 }
 
@@ -280,8 +287,8 @@ func (s *scanner) checkValueSpec(vs *ast.ValueSpec, callExpr ast.Expr) {
 		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned to _")
 		return
 	}
-	if s.nearestFunc(vs) == nil || !s.errorBindingChecked(outcomeIdent, vs) {
-		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned but never consumed")
+	if s.nearestFunc(vs) == nil || !s.outcomeBindingConsumed(outcomeIdent, vs) {
+		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned but never consumed; inspect each outcome or return the outcomes")
 	}
 }
 
@@ -330,7 +337,15 @@ func (s *scanner) contextParent(expr ast.Expr) (ast.Node, ast.Expr) {
 }
 
 func (s *scanner) errorBindingChecked(errIdent *ast.Ident, assigned ast.Node) bool {
-	if errIdent.Obj == nil {
+	return s.bindingReadAfter(errIdent, assigned, anyBindingRead)
+}
+
+func (s *scanner) outcomeBindingConsumed(outcomeIdent *ast.Ident, assigned ast.Node) bool {
+	return s.bindingReadAfter(outcomeIdent, assigned, meaningfulOutcomeRead)
+}
+
+func (s *scanner) bindingReadAfter(target *ast.Ident, assigned ast.Node, policy bindingReadPolicy) bool {
+	if target.Obj == nil {
 		return false
 	}
 	root := s.nearestFunc(assigned)
@@ -350,7 +365,7 @@ func (s *scanner) errorBindingChecked(errIdent *ast.Ident, assigned ast.Node) bo
 		if fl, ok := n.(*ast.FuncLit); ok && fl != root {
 			return false
 		}
-		if n != assigned && s.nodeAssignsBinding(n, errIdent) && (stop == nil || n.Pos() < stop.Pos()) {
+		if n != assigned && s.nodeAssignsBinding(n, target) && (stop == nil || n.Pos() < stop.Pos()) {
 			stop = n
 			return false
 		}
@@ -370,8 +385,7 @@ func (s *scanner) errorBindingChecked(errIdent *ast.Ident, assigned ast.Node) bo
 		if fl, ok := n.(*ast.FuncLit); ok && fl != root {
 			return false
 		}
-		id, ok := n.(*ast.Ident)
-		if !ok || !sameBinding(id, errIdent) || s.isWriteIdent(id) {
+		if !s.isConsumedBindingRead(n, target, policy) {
 			return true
 		}
 		found = true
@@ -381,20 +395,28 @@ func (s *scanner) errorBindingChecked(errIdent *ast.Ident, assigned ast.Node) bo
 }
 
 func (s *scanner) initBindingChecked(errIdent *ast.Ident, assigned *ast.AssignStmt) bool {
+	return s.initBindingRead(errIdent, assigned, anyBindingRead)
+}
+
+func (s *scanner) initOutcomeBindingConsumed(outcomeIdent *ast.Ident, assigned *ast.AssignStmt) bool {
+	return s.initBindingRead(outcomeIdent, assigned, meaningfulOutcomeRead)
+}
+
+func (s *scanner) initBindingRead(target *ast.Ident, assigned *ast.AssignStmt, policy bindingReadPolicy) bool {
 	switch p := s.parents[assigned].(type) {
 	case *ast.IfStmt:
-		return s.bindingReadInNode(errIdent, p.Cond) || s.bindingReadInNode(errIdent, p.Body) || s.bindingReadInNode(errIdent, p.Else)
+		return s.bindingReadInNode(target, p.Cond, policy) || s.bindingReadInNode(target, p.Body, policy) || s.bindingReadInNode(target, p.Else, policy)
 	case *ast.ForStmt:
-		return s.bindingReadInNode(errIdent, p.Cond) || s.bindingReadInNode(errIdent, p.Post) || s.bindingReadInNode(errIdent, p.Body)
+		return s.bindingReadInNode(target, p.Cond, policy) || s.bindingReadInNode(target, p.Post, policy) || s.bindingReadInNode(target, p.Body, policy)
 	case *ast.SwitchStmt:
-		return s.bindingReadInNode(errIdent, p.Tag) || s.bindingReadInNode(errIdent, p.Body)
+		return s.bindingReadInNode(target, p.Tag, policy) || s.bindingReadInNode(target, p.Body, policy)
 	case *ast.TypeSwitchStmt:
-		return s.bindingReadInNode(errIdent, p.Body)
+		return s.bindingReadInNode(target, p.Body, policy)
 	}
 	return false
 }
 
-func (s *scanner) bindingReadInNode(target *ast.Ident, node ast.Node) bool {
+func (s *scanner) bindingReadInNode(target *ast.Ident, node ast.Node, policy bindingReadPolicy) bool {
 	found := false
 	ast.Inspect(node, func(n ast.Node) bool {
 		if found || n == nil {
@@ -403,14 +425,97 @@ func (s *scanner) bindingReadInNode(target *ast.Ident, node ast.Node) bool {
 		if fl, ok := n.(*ast.FuncLit); ok {
 			return fl == node
 		}
-		id, ok := n.(*ast.Ident)
-		if !ok || !sameBinding(id, target) || s.isWriteIdent(id) {
+		if !s.isConsumedBindingRead(n, target, policy) {
 			return true
 		}
 		found = true
 		return false
 	})
 	return found
+}
+
+func (s *scanner) isConsumedBindingRead(node ast.Node, target *ast.Ident, policy bindingReadPolicy) bool {
+	id, ok := node.(*ast.Ident)
+	if !ok || !sameBinding(id, target) || s.isWriteIdent(id) {
+		return false
+	}
+	return policy != meaningfulOutcomeRead || !s.isOutcomeDiscardRead(id)
+}
+
+func (s *scanner) isOutcomeDiscardRead(id *ast.Ident) bool {
+	parent, child := s.contextParent(id)
+	switch node := parent.(type) {
+	case *ast.AssignStmt:
+		if !exprListContains(node.Rhs, child) {
+			return false
+		}
+		for _, lhs := range node.Lhs {
+			blank, ok := lhs.(*ast.Ident)
+			if !ok || blank.Name != "_" {
+				return false
+			}
+		}
+		return len(node.Lhs) > 0
+	case *ast.RangeStmt:
+		return node.X == child && len(node.Body.List) == 0
+	case *ast.CallExpr:
+		for i, arg := range node.Args {
+			if unwrapParen(arg) == child && s.localCallDiscardsArgument(node, i) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func (s *scanner) localCallDiscardsArgument(call *ast.CallExpr, argIndex int) bool {
+	var params *ast.FieldList
+	switch fn := unwrapParen(call.Fun).(type) {
+	case *ast.Ident:
+		if fn.Obj == nil {
+			return false
+		}
+		decl, ok := fn.Obj.Decl.(*ast.FuncDecl)
+		if !ok {
+			return false
+		}
+		params = decl.Type.Params
+	case *ast.FuncLit:
+		params = fn.Type.Params
+	default:
+		return false
+	}
+	param, ok := parameterAt(params, argIndex)
+	return ok && (param == nil || param.Name == "_")
+}
+
+func parameterAt(params *ast.FieldList, argIndex int) (*ast.Ident, bool) {
+	if params == nil {
+		return nil, false
+	}
+	index := 0
+	for fieldIndex, field := range params.List {
+		count := len(field.Names)
+		if count == 0 {
+			count = 1
+		}
+		if argIndex < index+count {
+			if len(field.Names) == 0 {
+				return nil, true
+			}
+			return field.Names[argIndex-index], true
+		}
+		index += count
+		if _, variadic := field.Type.(*ast.Ellipsis); variadic && fieldIndex == len(params.List)-1 && argIndex >= index {
+			if len(field.Names) == 0 {
+				return nil, true
+			}
+			return field.Names[len(field.Names)-1], true
+		}
+	}
+	return nil, false
 }
 
 func (s *scanner) nodeAssignsBinding(n ast.Node, target *ast.Ident) bool {
@@ -598,9 +703,12 @@ func sameBinding(a, b *ast.Ident) bool {
 }
 GO
 
+SCANNER_BIN="$ROOT/updatelocked-error-gate"
+go build -o "$SCANNER_BIN" "$SCANNER"
+
 updatelocked_gate() {
   local scan_dir="$1"
-  go run "$SCANNER" "$scan_dir"
+  "$SCANNER_BIN" "$scan_dir"
 }
 
 if updatelocked_gate "$REPO_ROOT/tools/herder" >"$ROOT/current.out" 2>&1; then
@@ -610,7 +718,7 @@ else
 fi
 
 neg_root="$ROOT/negative"
-mkdir -p "$neg_root"/{blank,bare,ignored,defer,go,decl_func,decl_package,labeled,switch_init,funclit,method_value,paren,shadow,field_use,selector_assign,guarded_unchecked,overwrite_unread,switch_unchecked,guarded_overwrite,switch_case_overwrite,sibling_branch_read,outcomes_blank,outcomes_unread,append_outcomes_blank,wrapper_outcomes_blank}
+mkdir -p "$neg_root"/{blank,bare,ignored,defer,go,decl_func,decl_package,labeled,switch_init,funclit,method_value,paren,shadow,field_use,selector_assign,guarded_unchecked,overwrite_unread,switch_unchecked,guarded_overwrite,switch_case_overwrite,sibling_branch_read,outcomes_blank,outcomes_unread,outcomes_blank_after_bind,outcomes_empty_range,outcomes_ignored_argument,append_outcomes_blank,wrapper_outcomes_blank,malformed_source}
 
 cat >"$neg_root/blank/negative.go" <<'GO'
 package negative
@@ -916,6 +1024,51 @@ func unreadOutcomes() error {
 }
 GO
 
+cat >"$neg_root/outcomes_blank_after_bind/negative.go" <<'GO'
+package negative
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func discardBoundOutcomes() error {
+	outcomes, err := registry.UpdateLocked("registry.jsonl", nil)
+	_ = outcomes
+	return err
+}
+GO
+
+cat >"$neg_root/outcomes_empty_range/negative.go" <<'GO'
+package negative
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func rangeWithoutInspectingOutcomes() error {
+	outcomes, err := registry.UpdateLocked("registry.jsonl", nil)
+	for range outcomes {
+	}
+	return err
+}
+GO
+
+cat >"$neg_root/outcomes_ignored_argument/negative.go" <<'GO'
+package negative
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func ignoreOutcomes(_ []registry.WriteOutcome) {}
+
+func passOutcomesToIgnoringFunction() error {
+	outcomes, err := registry.UpdateLocked("registry.jsonl", nil)
+	ignoreOutcomes(outcomes)
+	return err
+}
+GO
+
+cat >"$neg_root/malformed_source/negative.go" <<'GO'
+package negative
+
+func malformed(
+GO
+
 cat >"$neg_root/append_outcomes_blank/negative.go" <<'GO'
 package negative
 
@@ -978,11 +1131,24 @@ expect_violation switch_case_overwrite 'registry write error result is assigned 
 expect_violation sibling_branch_read 'registry write error result is assigned but never checked'
 expect_violation outcomes_blank 'registry write outcomes are assigned to _'
 expect_violation outcomes_unread 'registry write outcomes are assigned but never consumed'
+expect_violation outcomes_blank_after_bind 'registry write outcomes are assigned but never consumed'
+expect_violation outcomes_empty_range 'registry write outcomes are assigned but never consumed'
+expect_violation outcomes_ignored_argument 'registry write outcomes are assigned but never consumed'
 expect_violation append_outcomes_blank 'registry write outcomes are assigned to _'
 expect_violation wrapper_outcomes_blank 'registry write outcomes are assigned to _'
 
+set +e
+updatelocked_gate "$neg_root/malformed_source" >"$ROOT/negative-malformed-source.out" 2>&1
+malformed_rc=$?
+set -e
+if [[ "$malformed_rc" == "0" ]]; then
+  fail_case "UpdateLocked outcome/error gate rejects malformed source" "parse failure was treated as a passing scan"
+else
+  pass "UpdateLocked outcome/error gate rejects malformed source"
+fi
+
 pos_root="$ROOT/positive"
-mkdir -p "$pos_root"/{branch_checked,return_forward,argument_forward,guarded_branch,error_wrap,switch_cases,select_cases}
+mkdir -p "$pos_root"/{branch_checked,return_forward,argument_forward,bound_argument_forward,aggregate,range_inspection,guarded_branch,error_wrap,switch_cases,select_cases}
 
 cat >"$pos_root/branch_checked/positive.go" <<'GO'
 package positive
@@ -1017,10 +1183,57 @@ package positive
 
 import registry "ai-config/tools/herder/internal/registry"
 
-func use(_ []registry.WriteOutcome, _ error) {}
+func use(outcomes []registry.WriteOutcome, err error) {
+	if len(outcomes) > 0 {}
+	if err != nil {}
+}
 
 func argumentForward() {
 	use(registry.UpdateLocked("registry.jsonl", nil))
+}
+GO
+
+cat >"$pos_root/bound_argument_forward/positive.go" <<'GO'
+package positive
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func inspect(outcomes []registry.WriteOutcome) {
+	if len(outcomes) > 0 {}
+}
+
+func boundArgumentForward() error {
+	outcomes, err := registry.UpdateLocked("registry.jsonl", nil)
+	inspect(outcomes)
+	return err
+}
+GO
+
+cat >"$pos_root/aggregate/positive.go" <<'GO'
+package positive
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func aggregate() ([]registry.WriteOutcome, error) {
+	outcomes, err := registry.UpdateLocked("registry.jsonl", nil)
+	collected := append([]registry.WriteOutcome(nil), outcomes...)
+	return collected, err
+}
+GO
+
+cat >"$pos_root/range_inspection/positive.go" <<'GO'
+package positive
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func inspectEachOutcome() error {
+	outcomes, err := registry.UpdateLocked("registry.jsonl", nil)
+	for _, outcome := range outcomes {
+		if outcomeErr := outcome.Err(); outcomeErr != nil {
+			return outcomeErr
+		}
+	}
+	return err
 }
 GO
 
@@ -1095,7 +1308,7 @@ func selectCases(a, b <-chan struct{}) error {
 }
 GO
 
-for name in branch_checked return_forward argument_forward guarded_branch error_wrap switch_cases select_cases; do
+for name in branch_checked return_forward argument_forward bound_argument_forward aggregate range_inspection guarded_branch error_wrap switch_cases select_cases; do
   if updatelocked_gate "$pos_root/$name" >"$ROOT/positive-$name.out" 2>&1; then
     pass "UpdateLocked outcome/error gate positive demo allows $name"
   else
