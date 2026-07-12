@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"ai-config/tools/herder/internal/continuationstate"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/observerstatus"
@@ -65,6 +67,36 @@ func TestApplyCandidatesRefusalLeavesBatchUnapplied(t *testing.T) {
 	}
 	if !bytes.Equal(after, before) {
 		t.Fatalf("registry changed after refused observer batch:\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
+func TestContinuationFailureFindingRequiresExplicitAcknowledgement(t *testing.T) {
+	stateDir := t.TempDir()
+	rec := continuationstate.Record{
+		ID: "compact-then-self-42", Status: "failed", Target: "worker-hone",
+		UpdatedAt: "2026-07-12T12:00:00Z", Reason: "delivery budget exhausted",
+		LogPath: "/tmp/sender.log", RecoveryCommand: "herder send worker-hone -- 'continue'",
+	}
+	if err := continuationstate.Write(filepath.Join(stateDir, "continuations"), rec); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	flags := continuationFailureFlags(stateDir, &stderr)
+	if len(flags) != 1 || flags[0].Type != "failed-continuation" ||
+		!strings.Contains(flags[0].Suggested, "--ack-continuation "+rec.ID) {
+		t.Fatalf("flags = %+v; want actionable failed-continuation finding", flags)
+	}
+
+	// Merely reading again (the equivalent of an observer restart/sweep) retains
+	// the finding; only the explicit acknowledgement mutates the record.
+	if again := continuationFailureFlags(stateDir, &stderr); len(again) != 1 {
+		t.Fatalf("finding cleared without acknowledgement: %+v", again)
+	}
+	if _, err := continuationstate.Acknowledge(filepath.Join(stateDir, "continuations"), rec.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if cleared := continuationFailureFlags(stateDir, &stderr); len(cleared) != 0 {
+		t.Fatalf("finding after acknowledgement = %+v, want cleared", cleared)
 	}
 }
 

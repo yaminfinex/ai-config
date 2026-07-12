@@ -2,9 +2,14 @@ package spawncmd
 
 import (
 	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"ai-config/tools/herder/internal/continuationstate"
 )
 
 // fakeProbe scripts a sequence of status samples and records deliver calls, so
@@ -479,6 +484,84 @@ func TestThenLoopGivesUpWhenBudgetExhausted(t *testing.T) {
 	if !strings.Contains(log.String(), "FAILED to deliver within the --then-timeout budget") ||
 		!strings.Contains(log.String(), "herder send me-bus") {
 		t.Fatalf("log missing budget-exhausted give-up + remedy:\n%s", log.String())
+	}
+}
+
+func TestThenLoopPersistsDetachedOutcomesWithoutRegistryWrites(t *testing.T) {
+	tests := []struct {
+		name       string
+		statuses   []string
+		verdict    string
+		timeoutMS  int
+		wantStatus string
+	}{
+		{name: "delivered closes silently", statuses: []string{"active", "listening"}, verdict: "delivered", timeoutMS: 1000, wantStatus: "delivered"},
+		{name: "queued closes silently", statuses: []string{"active", "listening"}, verdict: "queued", timeoutMS: 1000, wantStatus: "queued"},
+		{name: "timeout remains failed", statuses: []string{"active"}, timeoutMS: 200, wantStatus: "failed"},
+		{name: "send budget remains failed", statuses: []string{"active", "listening"}, verdict: "send_failed", timeoutMS: 300, wantStatus: "failed"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			t.Setenv("HERDER_STATE_DIR", stateDir)
+			registryPath := filepath.Join(stateDir, "registry.jsonl")
+			p := &fakeProbe{statuses: tc.statuses}
+			if tc.verdict != "" {
+				p.deliverRet = []string{tc.verdict}
+			}
+			cfg := baseCfg()
+			cfg.Message = "continue with 'quoted' work"
+			cfg.TimeoutMS = tc.timeoutMS
+			cfg.RecordID = "compact-then-self-42"
+			cfg.LogPath = filepath.Join(stateDir, "compact-then", "sender.log")
+			clk := &fakeClock{now: time.Unix(0, 0), step: 100 * time.Millisecond}
+			var log bytes.Buffer
+			runThenLoop(p, cfg, &log, clk.Now, clk.Sleep)
+
+			records, err := continuationstate.ReadAll(continuationstate.DefaultDir())
+			if err != nil || len(records) != 1 {
+				t.Fatalf("records = %+v, %v; want one", records, err)
+			}
+			rec := records[0]
+			if rec.Status != tc.wantStatus || rec.Target != cfg.BusName || rec.LogPath != cfg.LogPath {
+				t.Fatalf("record = %+v, want status=%s target/log preserved", rec, tc.wantStatus)
+			}
+			if len(rec.Lifecycle) != 2 || rec.Lifecycle[0].Status != "armed" || rec.Lifecycle[1].Status != tc.wantStatus {
+				t.Fatalf("lifecycle = %+v, want armed then %s", rec.Lifecycle, tc.wantStatus)
+			}
+			if !strings.Contains(rec.RecoveryCommand, `\'`) {
+				t.Fatalf("recovery command is not shell-safe for apostrophes: %q", rec.RecoveryCommand)
+			}
+			if tc.wantStatus == "failed" && rec.Reason == "" {
+				t.Fatalf("failed record missing reason: %+v", rec)
+			}
+			if _, err := os.Stat(registryPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("detached sender touched registry: %v", err)
+			}
+		})
+	}
+}
+
+func TestThenLoopDeliverySurvivesLifecycleWriteFailure(t *testing.T) {
+	blockedStateDir := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blockedStateDir, []byte("block mkdir"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_STATE_DIR", blockedStateDir)
+	p := &fakeProbe{
+		statuses:   []string{"active", "listening"},
+		deliverRet: []string{"delivered"},
+	}
+	cfg := baseCfg()
+	cfg.RecordID = "compact-then-self-42"
+	cfg.LogPath = "/tmp/sender.log"
+	clk := &fakeClock{now: time.Unix(0, 0), step: 100 * time.Millisecond}
+	var log bytes.Buffer
+	if code := runThenLoop(p, cfg, &log, clk.Now, clk.Sleep); code != 0 || p.deliverN != 1 {
+		t.Fatalf("state failure blocked delivery: exit=%d deliveries=%d log=%s", code, p.deliverN, log.String())
+	}
+	if !strings.Contains(log.String(), "durable continuation status") {
+		t.Fatalf("state failure degraded silently instead of to diagnostics: %s", log.String())
 	}
 }
 
