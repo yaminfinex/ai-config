@@ -3,9 +3,11 @@ id: TASK-111
 title: >-
   herder rename --take-from: atomic label transfer between sessions
   (systemic-review AC-19)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - hera-run
 created_date: '2026-07-09 07:05'
+updated_date: '2026-07-12 09:22'
 labels: []
 dependencies: []
 priority: medium

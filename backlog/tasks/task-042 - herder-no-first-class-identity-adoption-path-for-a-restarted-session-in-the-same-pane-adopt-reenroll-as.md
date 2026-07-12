@@ -3,10 +3,11 @@ id: TASK-042
 title: >-
   identity adoption for a restarted session: respec as enroll (new guid) +
   rename --take-from + retire — guid reuse violates spec D1
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - hera-run
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-12 07:49'
+updated_date: '2026-07-12 09:22'
 labels: []
 dependencies: []
 priority: medium
