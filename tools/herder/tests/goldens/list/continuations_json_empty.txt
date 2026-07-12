@@ -1,0 +1,6 @@
+=== STDERR ===
+
+=== STDOUT ===
+{"kind":"unresolved_continuation","schema":"herder.continuation.v1","id":"compact-then-beta-42","status":"failed","target":"beta-rive","updated_at":"2026-07-12T12:00:00Z","reason":"delivery budget exhausted after 3 attempts","log_path":"/hfake/state/compact-then/compact-then-beta-42.log","recovery_command":"herder send beta-rive -- continue","lifecycle":[{"status":"armed","timestamp":"2026-07-12T11:59:00Z"},{"status":"failed","timestamp":"2026-07-12T12:00:00Z","reason":"delivery budget exhausted after 3 attempts"}]}
+=== EXIT ===
+0

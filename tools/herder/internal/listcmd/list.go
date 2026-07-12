@@ -79,6 +79,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	registryPath := registry.DefaultPath()
 	if _, err := os.Stat(registryPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if opts.mode == "json" {
+				renderJSONContinuationFailures(stdout, stderr, failures)
+			}
 			fmt.Fprintf(stderr, "no registry at %s\n", registryPath)
 			return 0
 		}
@@ -131,8 +134,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				continue
 			}
 			out := reconciledJSON(rec, idx, observerAdviceFor(advice, ptrString(rec.GUID)))
-			fmt.Fprintln(stdout, string(appendUnresolvedContinuations(out, failures)))
+			fmt.Fprintln(stdout, string(out))
 		}
+		renderJSONContinuationFailures(stdout, stderr, failures)
 		return 0
 	}
 
@@ -223,7 +227,7 @@ func printHelp(stdout io.Writer) {
 Usage:
   herder list              table of active records, reconciled with live agents
   herder list --all        include records whose status is not active (e.g. closed)
-  herder list --json       reconciled records as JSONL on stdout
+  herder list --json       reconciled sessions and unresolved failures as JSONL
   herder list --raw        raw registry JSONL, no reconciliation
   herder list --guid GUID  one record as full JSON (exit 1 if not found)
   herder list --teams      list team buses under $HERDER_TEAMS_ROOT
@@ -234,6 +238,10 @@ The table lists unresolved detached continuation failures before agent rows.
 Run the recorded recovery command, then use --ack-continuation to clear the
 failure from list and observer advice. Use --all to check whether a missing
 agent was culled.
+
+In --json output, select kind=="session" for session rows; for compatibility,
+a row without kind is also a session row. Unresolved failures have
+kind=="unresolved_continuation" and are independent of session-row filters.
 `)
 }
 
@@ -454,15 +462,22 @@ func reconciledJSON(rec registry.Record, idx liveIndex, advice []observerstatus.
 	return appendJSONFields(rec.Raw, fields...)
 }
 
-func appendUnresolvedContinuations(out []byte, failures []continuationstate.Record) []byte {
-	if len(failures) == 0 {
-		return out
+func renderJSONContinuationFailures(stdout, stderr io.Writer, failures []continuationstate.Record) {
+	renderJSONContinuationFailuresWith(stdout, stderr, failures, json.Marshal)
+}
+
+func renderJSONContinuationFailuresWith(stdout, stderr io.Writer, failures []continuationstate.Record, marshal func(any) ([]byte, error)) {
+	for _, failure := range failures {
+		out, err := marshal(struct {
+			Kind string `json:"kind"`
+			continuationstate.Record
+		}{Kind: "unresolved_continuation", Record: failure})
+		if err != nil {
+			fmt.Fprintf(stderr, "herder list: cannot render unresolved continuation %s as JSON: %v. Inspect %s and retry after correcting the serialization failure.\n", failure.ID, err, continuationstate.DefaultDir())
+			continue
+		}
+		fmt.Fprintln(stdout, string(out))
 	}
-	b, err := json.Marshal(failures)
-	if err != nil {
-		return out
-	}
-	return appendJSONFields(out, `"unresolved_continuations":`+string(b))
 }
 
 func loadObserverAdvice() map[string][]observerstatus.Flag {

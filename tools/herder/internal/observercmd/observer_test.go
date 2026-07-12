@@ -136,6 +136,85 @@ func TestContinuationFailureWithoutTargetRowDoesNotBecomeGlobal(t *testing.T) {
 	}
 }
 
+func TestContinuationFailureAmbiguousActiveTargetEmitsNoFlag(t *testing.T) {
+	stateDir := t.TempDir()
+	if err := continuationstate.Write(filepath.Join(stateDir, "continuations"), continuationstate.Record{
+		ID: "failed", Status: "failed", Target: "shared-name", UpdatedAt: "2026-07-12T12:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projJSON := `{"kind":"session","guid":"guid-one","event":"seated","recorded_at":"2026-07-12T11:00:00Z","state":"seated","label":"one","seat":{"kind":"herdr","hcom_name":"shared-name"}}
+{"kind":"session","guid":"guid-two","event":"seated","recorded_at":"2026-07-12T11:00:00Z","state":"seated","label":"two","seat":{"kind":"herdr","hcom_name":"shared-name"}}
+`
+	proj, err := v2.Load(bytes.NewBufferString(projJSON), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	if flags := continuationFailureFlags(proj, stateDir, &stderr); len(flags) != 0 {
+		t.Fatalf("ambiguous active target emitted observer advice: %+v", flags)
+	}
+}
+
+func TestContinuationFailureFollowsWritePathNameReuse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	rows := []v2.SessionRecord{
+		{GUID: "guid-previous", Event: "seated", State: v2.StateSeated, Label: "previous", Seat: &v2.Seat{Kind: "herdr", HcomName: "shared-name"}},
+		{GUID: "guid-previous", Event: "unseated", State: v2.StateUnseated, CloseResult: "closed", CloseReason: "occupant exited"},
+		{GUID: "guid-previous", Event: "retired", State: v2.StateRetired},
+		{GUID: "guid-current", Event: "seated", State: v2.StateSeated, Label: "current", Seat: &v2.Seat{Kind: "herdr", HcomName: "shared-name"}},
+	}
+	for _, row := range rows {
+		outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+			return []v2.SessionRecord{row}, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(outcomes) != 1 || outcomes[0].Status != registry.WriteApplied {
+			t.Fatalf("write outcome for %s = %+v, want one applied row", row.Event, outcomes)
+		}
+	}
+
+	proj, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := registry.V2ByGUID(proj, "guid-previous")
+	if previous == nil || previous.State != v2.StateRetired || previous.Seat != nil {
+		t.Fatalf("retired row = %+v, want writer-normalized terminal row without a seat", previous)
+	}
+	stateDir := filepath.Dir(path)
+	if err := continuationstate.Write(filepath.Join(stateDir, "continuations"), continuationstate.Record{
+		ID: "failed", Status: "failed", Target: "shared-name", UpdatedAt: "2026-07-12T12:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	flags := continuationFailureFlags(proj, stateDir, &stderr)
+	if len(flags) != 1 || flags[0].GUID != "guid-current" {
+		t.Fatalf("name-reuse flags = %+v, want one flag on the respawned seated row", flags)
+	}
+}
+
+func TestContinuationTargetSyntheticTerminalSeatsAreIgnored(t *testing.T) {
+	// These terminal rows cannot be produced by registry.UpdateLocked today because
+	// the normalizer strips their seats. They pin the defensive guard for external
+	// registry authors and future writers that might preserve stale seat metadata.
+	projJSON := `{"kind":"session","guid":"guid-current","event":"seated","recorded_at":"2026-07-12T11:00:00Z","state":"seated","label":"current","seat":{"kind":"herdr","hcom_name":"shared-name"}}
+{"kind":"session","guid":"guid-retired","event":"retired","recorded_at":"2026-07-12T11:00:00Z","state":"retired","label":"retired","seat":{"kind":"herdr","hcom_name":"shared-name"}}
+{"kind":"session","guid":"guid-lost","event":"lost","recorded_at":"2026-07-12T11:00:00Z","state":"lost","label":"lost","seat":{"kind":"herdr","hcom_name":"shared-name"}}
+`
+	proj, err := v2.Load(bytes.NewBufferString(projJSON), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guid, _, ok := continuationTarget(proj, "shared-name")
+	if !ok || guid != "guid-current" {
+		t.Fatalf("continuationTarget = (%q, %t), want seated guid-current", guid, ok)
+	}
+}
+
 func TestReconfirmRefreshesBusIdentityFromLiveCorrelate(t *testing.T) {
 	rec := v2.SessionRecord{
 		GUID:  "guid-self",

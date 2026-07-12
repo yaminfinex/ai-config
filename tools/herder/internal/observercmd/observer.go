@@ -982,7 +982,9 @@ func continuationFailureFlags(proj *v2.Projection, stateDir string, stderr io.Wr
 func continuationTarget(proj *v2.Projection, target string) (string, string, bool) {
 	var guid, label string
 	for _, rec := range proj.Sessions() {
-		if rec.Seat == nil || rec.Seat.HcomName != target {
+		// Normal writes strip seats from retired/lost rows; this guard is belt-and-braces
+		// for externally authored rows and future writers that might retain stale seats.
+		if rec.State == v2.StateRetired || rec.State == v2.StateLost || rec.Seat == nil || rec.Seat.HcomName != target {
 			continue
 		}
 		if guid != "" {

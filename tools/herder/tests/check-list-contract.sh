@@ -144,6 +144,35 @@ cat > "$CONT_STATE/continuations/compact-then-beta-42.json" <<'CONT_FAILURE'
 }
 CONT_FAILURE
 printf '{}\n' > "$CONT_STATE/continuations/foreign.json"
+cat > "$CONT_STATE/observer.status.json" <<'OBSERVER_STATUS'
+{
+  "schema": "herder.observer.v1",
+  "advice": true,
+  "last_sweep_summary": {"applied": 0, "noop": 0, "refused": 0},
+  "protocol_compatible": true,
+  "flags": [
+    {
+      "guid": "guid-beta-0000",
+      "label": "beta",
+      "type": "failed-continuation",
+      "severity": "warning",
+      "detail": "detached continuation delivery failed",
+      "suggested": "run the recorded recovery command"
+    }
+  ]
+}
+OBSERVER_STATUS
+
+# An unresolved failure remains a JSONL document record even when no session
+# row survives reconciliation or filtering.
+CONT_EMPTY_STATE="$ROOT/list-continuations-empty-state"
+mkdir -p "$CONT_EMPTY_STATE/continuations"
+: > "$CONT_EMPTY_STATE/registry.jsonl"
+cp "$CONT_STATE/continuations/compact-then-beta-42.json" "$CONT_EMPTY_STATE/continuations/"
+
+CONT_NO_REGISTRY_STATE="$ROOT/list-continuations-no-registry-state"
+mkdir -p "$CONT_NO_REGISTRY_STATE/continuations"
+cp "$CONT_STATE/continuations/compact-then-beta-42.json" "$CONT_NO_REGISTRY_STATE/continuations/"
 
 # scenario name | mock scenario | state dir | args
 SCENARIOS=(
@@ -160,11 +189,14 @@ SCENARIOS=(
   "livefail|fail|$FIX|"
   "provenance_raw|normal|$TESTS_DIR/fixtures/list-provenance|--raw"
   "provenance_json|normal|$TESTS_DIR/fixtures/list-provenance|--json"
+  "v2_json|normal|$TESTS_DIR/fixtures/list-v2|--json"
   "guid_fork_shadow|normal|$TESTS_DIR/fixtures/list-guid-fork-shadow|--guid guid-parent-0000"
   "archive_all|normal|$TESTS_DIR/fixtures/list-archives|--all"
   "archive_json|normal|$TESTS_DIR/fixtures/list-archives|--json --all"
   "continuations_table|normal|$CONT_STATE|"
   "continuations_json|normal|$CONT_STATE|--json"
+  "continuations_json_empty|normal|$CONT_EMPTY_STATE|--json"
+  "continuations_json_no_registry|normal|$CONT_NO_REGISTRY_STATE|--json"
   "continuations_ack|normal|$CONT_STATE|--ack-continuation compact-then-beta-42"
 )
 

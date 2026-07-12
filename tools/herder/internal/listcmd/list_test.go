@@ -2,6 +2,7 @@ package listcmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,12 +67,32 @@ func TestFailedContinuationIsVisibleAndExplicitlyAcknowledged(t *testing.T) {
 	}
 }
 
-func TestUnresolvedContinuationJSONIsAdditive(t *testing.T) {
-	failure := continuationstate.Record{ID: "failed", Status: "failed", Target: "worker-hone"}
-	out := appendUnresolvedContinuations([]byte(`{"guid":"guid-worker"}`), []continuationstate.Record{failure})
-	for _, want := range []string{`"guid":"guid-worker"`, `"unresolved_continuations":[`, `"target":"worker-hone"`} {
-		if !strings.Contains(string(out), want) {
-			t.Fatalf("JSON output missing %s: %s", want, out)
+func TestUnresolvedContinuationJSONIsDocumentLevel(t *testing.T) {
+	failure := continuationstate.Record{ID: "failed", Status: "failed", Target: "target-fixture"}
+	var out, stderr bytes.Buffer
+	renderJSONContinuationFailures(&out, &stderr, []continuationstate.Record{failure})
+	for _, want := range []string{`"kind":"unresolved_continuation"`, `"id":"failed"`, `"target":"target-fixture"`} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("JSON output missing %s: %s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), `"unresolved_continuations"`) {
+		t.Fatalf("JSON output retained per-session attachment: %s", out.String())
+	}
+}
+
+func TestUnresolvedContinuationJSONMarshalFailureIsLoud(t *testing.T) {
+	failure := continuationstate.Record{ID: "failed", Status: "failed", Target: "target-fixture"}
+	var out, stderr bytes.Buffer
+	renderJSONContinuationFailuresWith(&out, &stderr, []continuationstate.Record{failure}, func(any) ([]byte, error) {
+		return nil, errors.New("encoder unavailable")
+	})
+	if out.Len() != 0 {
+		t.Fatalf("marshal failure wrote JSON: %s", out.String())
+	}
+	for _, want := range []string{"failed", "encoder unavailable", "Inspect", "retry"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("marshal warning missing %q: %s", want, stderr.String())
 		}
 	}
 }
