@@ -3,10 +3,10 @@ id: TASK-157
 title: >-
   compact-then: turn-end proof can never establish when target status reads
   unknown — investigate proof path, not timeout length
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-12 01:57'
-updated_date: '2026-07-12 06:45'
+updated_date: '2026-07-12 06:55'
 labels: []
 dependencies: []
 priority: medium
@@ -21,13 +21,15 @@ OWNER INCIDENT (relayed 2026-07-12, from another run): a compact --then was drop
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Root cause of unknown-status turn-end proof failures named with evidence
-- [ ] #2 Fix or explicit wont-fix for the proof path; timeout default re-examined against findings (not blindly raised)
-- [ ] #3 Failure surfacing assessed: dropped continuation should be discoverable without reading sender logs
+- [x] #1 Root cause of unknown-status turn-end proof failures named with evidence
+- [x] #2 Fix or explicit wont-fix for the proof path; timeout default re-examined against findings (not blindly raised)
+- [x] #3 Failure surfacing assessed: dropped continuation should be discoverable without reading sender logs
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Investigation unit dispatched 2026-07-12 (researcher, branch task-157-compactthen-proof, gpt-5.6-sol high), brief napkins/run-herder-dx/task-157-investigation-brief.md. Deliverable: root-cause report + filed-ready fix captures; fix itself is a separate unit.
+
+Investigation complete, merged with memo docs/design/2026-07-12-compact-then-proof-failure-investigation.md + two hermetic repro tests. Root cause: poisoned hcom_name from enroll (TASK-043 path, named at enrollcmd.Run), carried forward (TASK-065), watched by the sender for the full window; event fallback separately defective (gated behind live status — TASK-158); discoverability failure filed as TASK-159. Identity-integrity unit A1 dispatched with the preflight fix. Timeout verdict: keep 15m.
 <!-- SECTION:NOTES:END -->
