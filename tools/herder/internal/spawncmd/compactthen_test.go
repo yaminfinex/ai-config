@@ -27,7 +27,7 @@ type fakeProbe struct {
 // coordinateProbe models a session whose registry row names one bus identity
 // while its live status and events are published under another. Production
 // hcom returns "not found" for the recorded name and an empty event history,
-// which listStatus/maxEventID expose as unknown plus a trusted zero watermark.
+// which listStatus/maxEventID expose as unknown plus an untrusted watermark.
 type coordinateProbe struct {
 	recordedName string
 	actualName   string
@@ -41,6 +41,9 @@ func (p *coordinateProbe) listStatus(busName, _ string) string {
 }
 
 func (p *coordinateProbe) maxEventID(busName, _ string) (int64, bool) {
+	if _, known := p.statuses[busName]; !known && len(p.events[busName]) == 0 {
+		return 0, false
+	}
 	var max int64
 	for _, event := range p.events[busName] {
 		if event.ID > max {
@@ -228,9 +231,9 @@ func TestThenLoopWrongBusCoordinateStallsUnknownDespiteRealTurnEnd(t *testing.T)
 	if p.deliverN != 0 {
 		t.Fatalf("wrong coordinate must not deliver, got %d deliveries", p.deliverN)
 	}
-	if !strings.Contains(log.String(), "arm event #0") ||
+	if !strings.Contains(log.String(), "arm-time event snapshot NOT established") ||
 		!strings.Contains(log.String(), `last status="unknown"`) ||
-		!strings.Contains(log.String(), "saw_active=false, event_proof=true") {
+		!strings.Contains(log.String(), "saw_active=false, snapshot_established=false, turn_end_event_found=false") {
 		t.Fatalf("log does not reproduce the unknown-status stall signature:\n%s", log.String())
 	}
 	if !p.turnEndedSince(p.actualName, "", 0) {
@@ -238,7 +241,7 @@ func TestThenLoopWrongBusCoordinateStallsUnknownDespiteRealTurnEnd(t *testing.T)
 	}
 }
 
-func TestThenLoopUnknownStatusDoesNotConsultAvailableEventProof(t *testing.T) {
+func TestThenLoopUnknownStatusConsultsAvailableEventProof(t *testing.T) {
 	p := &fakeProbe{
 		statuses:       []string{""},
 		armWatermark:   100,
@@ -253,11 +256,47 @@ func TestThenLoopUnknownStatusDoesNotConsultAvailableEventProof(t *testing.T) {
 
 	code := runThenLoop(p, cfg, &log, clk.Now, clk.Sleep)
 
-	if code != 1 || p.deliverN != 0 {
-		t.Fatalf("current loop must reproduce the gated fallback: exit=%d delivers=%d; log:\n%s", code, p.deliverN, log.String())
+	if code != 0 || p.deliverN != 1 {
+		t.Fatalf("event proof must deliver exactly once despite unknown live status: exit=%d delivers=%d; log:\n%s", code, p.deliverN, log.String())
 	}
-	if !strings.Contains(log.String(), `last status="unknown"`) {
-		t.Fatalf("log missing unknown status:\n%s", log.String())
+	if !strings.Contains(log.String(), "hcom events show a post-arm") {
+		t.Fatalf("log missing event-proof line:\n%s", log.String())
+	}
+}
+
+func TestThenLoopUnknownStatusWithoutNewEventFailsClosed(t *testing.T) {
+	cases := []struct {
+		name           string
+		turnEndEventID int64
+	}{
+		{name: "no turn-end event"},
+		{name: "pre-arm turn-end event", turnEndEventID: 50},
+		{name: "same-watermark turn-end event", turnEndEventID: 100},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &fakeProbe{
+				statuses:       []string{""},
+				armWatermark:   100,
+				turnEndEventID: tc.turnEndEventID,
+				deliverRet:     []string{"delivered"},
+			}
+			cfg := baseCfg()
+			cfg.PollMS = 1000
+			cfg.TimeoutMS = 5000
+			clk := &fakeClock{now: time.Unix(0, 0), step: 1000 * time.Millisecond}
+			var log bytes.Buffer
+
+			code := runThenLoop(p, cfg, &log, clk.Now, clk.Sleep)
+
+			if code != 1 || p.deliverN != 0 {
+				t.Fatalf("ambiguous event history must fail closed: exit=%d delivers=%d; log:\n%s", code, p.deliverN, log.String())
+			}
+			if !strings.Contains(log.String(), `last status="unknown"`) ||
+				!strings.Contains(log.String(), "snapshot_established=true, turn_end_event_found=false") {
+				t.Fatalf("timeout diagnostics do not separate snapshot from proof:\n%s", log.String())
+			}
+		})
 	}
 }
 
@@ -272,6 +311,7 @@ func TestThenLoopPoisonNakedListeningNeverDelivers(t *testing.T) {
 	}{
 		{"no turn-end event at all", 0},
 		{"turn-end event predates arm watermark", 50}, // < watermark 100
+		{"turn-end event equals arm watermark", 100},  // strict comparison: not post-arm
 	}
 	for _, c := range cases {
 		p := &fakeProbe{
@@ -327,8 +367,8 @@ func TestThenLoopFailedSnapshotDisablesEventProof(t *testing.T) {
 	if !strings.Contains(log.String(), "event-history proof DISABLED") {
 		t.Fatalf("log missing proof-disabled line:\n%s", log.String())
 	}
-	if !strings.Contains(log.String(), "event_proof=false") {
-		t.Fatalf("timeout line should record event_proof=false:\n%s", log.String())
+	if !strings.Contains(log.String(), "snapshot_established=false, turn_end_event_found=false") {
+		t.Fatalf("timeout line should separate the failed snapshot from event proof:\n%s", log.String())
 	}
 }
 
@@ -463,6 +503,28 @@ func TestPickStatusShapes(t *testing.T) {
 	for _, c := range cases {
 		if got := pickStatus([]byte(c.raw), "smoke034-reko"); got != c.want {
 			t.Errorf("%s: pickStatus(%q) = %q, want %q", c.name, c.raw, got, c.want)
+		}
+	}
+}
+
+func TestHcomAgentKnownShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{"single scoped row", `{"name":"reko","status":"listening"}`, true},
+		{"sole array row", `[{"name":"reko"}]`, true},
+		{"matching row among neighbors", `[{"name":"other"},{"name":"smoke034-reko"}]`, true},
+		{"no matching row", `[{"name":"other"},{"name":"neighbor"}]`, false},
+		{"empty output", ``, false},
+		{"empty array", `[]`, false},
+		{"empty row", `[{}]`, false},
+		{"garbage", `not json`, false},
+	}
+	for _, tc := range cases {
+		if got := hcomAgentKnown([]byte(tc.raw), "smoke034-reko"); got != tc.want {
+			t.Errorf("%s: hcomAgentKnown(%q) = %t, want %t", tc.name, tc.raw, got, tc.want)
 		}
 	}
 }

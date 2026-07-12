@@ -1,6 +1,6 @@
 === STDERR ===
 herder compact-then: armed for @me-bus (bus default) — arm-time event snapshot NOT established (hcom unavailable); event-history proof DISABLED, only a live observed working→listening transition will deliver (poll 1ms, timeout 50ms)
-herder compact-then: TIMEOUT after 50ms — turn end never PROVEN (last status="listening", saw_active=false, event_proof=false); FAILING CLOSED, continuation NOT delivered (a dropped continuation beats a mid-turn injection). Deliver it manually once the session is idle:
+herder compact-then: TIMEOUT after 50ms — turn end never PROVEN (last status="listening", saw_active=false, snapshot_established=false, turn_end_event_found=false); FAILING CLOSED, continuation NOT delivered (a dropped continuation beats a mid-turn injection). Deliver it manually once the session is idle:
   herder send me-bus -- 'continue: run the gate, then report DONE'
 === STDOUT ===
 

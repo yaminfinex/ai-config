@@ -15,6 +15,8 @@
 #                   the delivery acks (classic delivered).
 #     queued_busy — same turn-end, but the delivery never acks in-window
 #                   (send.DeliverBus reports "queued").
+#     unknown_event — live status is unavailable, but a post-arm listening
+#                   event proves the turn ended and delivery acks.
 #   MOCK_THEN_STATE — scratch dir for the poll counter + events snapshot marker.
 
 set -euo pipefail
@@ -36,6 +38,11 @@ case "${1:-}" in
         # loudly and NEVER deliver.
         jq -cn '{name:"me-bus", status:"active"}'
         exit 0
+      fi
+      if [[ "$SCEN" == "unknown_event" ]]; then
+        # The live status path is unavailable. Event history must independently
+        # prove the turn end.
+        exit 1
       fi
       if [[ "$SCEN" == "armed_late" || "$SCEN" == "snap_fail" ]]; then
         # Never sample "active" (proof (a) can't fire). armed_late reaches
@@ -80,7 +87,7 @@ case "${1:-}" in
       # a LATER call also carries a post-arm listening event #20 (>10), which is
       # the turnEndedSince proof (b). Other scenarios reach turn-end via observed
       # active→listening, so they never consult this and one event suffices.
-      if [[ "$SCEN" == "armed_late" ]]; then
+      if [[ "$SCEN" == "armed_late" || "$SCEN" == "unknown_event" ]]; then
         n=0
         [[ -f "$STATE/evpolls" ]] && n="$(cat "$STATE/evpolls")"
         printf '%d' $((n + 1)) >"$STATE/evpolls"
