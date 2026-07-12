@@ -5,9 +5,9 @@
 # mocks used by the rest of the contract battery. Mutating operations are out of
 # scope: hcom hook bootstrapping runs under a scratch HCOM_DIR, and herdr checks
 # use read/introspection commands or read-only socket requests. Herdr event
-# subscriptions are connection-scoped, so the subscription probe closes its
-# connection immediately after validating the acknowledgement and leaves no
-# server-side subscription behind.
+# The check assumes Herdr subscriptions are connection-scoped. The subscription
+# probe guarantees that its client connection closes immediately after the
+# acknowledgement; it does not inspect server-side subscription state.
 
 set -uo pipefail
 
@@ -413,7 +413,7 @@ PY
 
 fetch_socket_snapshot() {
   local sock="$1"
-  python3 - "$sock" <<'PY'
+  run_live python3 - "$sock" <<'PY'
 import json
 import socket
 import sys
@@ -429,14 +429,15 @@ try:
     while True:
         data = s.recv(65536)
         if not data:
-            break
+            print("connection closed before session.snapshot response", file=sys.stderr)
+            sys.exit(3)
         chunks.append(data)
-        if b"\n" in b"".join(chunks):
+        joined = b"".join(chunks)
+        if b"\n" in joined:
+            print(joined.splitlines()[0].decode())
             break
 finally:
     s.close()
-line = b"".join(chunks).splitlines()[0]
-print(line.decode())
 PY
 }
 
@@ -461,7 +462,7 @@ PY
 
 fetch_socket_subscription_ack() {
   local sock="$1"
-  python3 - "$sock" <<'PY'
+  run_live python3 - "$sock" <<'PY'
 import json
 import socket
 import sys
@@ -486,15 +487,16 @@ try:
     while True:
         data = s.recv(65536)
         if not data:
-            raise RuntimeError("connection closed before subscription acknowledgement")
+            print("connection closed before subscription acknowledgement", file=sys.stderr)
+            sys.exit(3)
         chunks.append(data)
         joined = b"".join(chunks)
         if b"\n" in joined:
             print(joined.splitlines()[0].decode())
             break
 finally:
-    # Subscriptions are connection-scoped. Closing here unregisters this
-    # read-only probe on success, mismatch, timeout, and socket errors.
+    # Assuming Herdr scopes subscriptions to their connection, this close ends
+    # the read-only probe on success, mismatch, timeout, and socket errors.
     s.close()
 PY
 }
@@ -513,13 +515,20 @@ check_herdr_socket_subscription() {
     check_subscription_negative_demo
     return
   fi
-  if ! out="$(fetch_socket_subscription_ack "$sock" 2>"$ROOT/herdr-subscription.err")"; then
+  out="$(fetch_socket_subscription_ack "$sock" 2>"$ROOT/herdr-subscription.err")"
+  rc=$?
+  if [[ "$rc" -eq 3 ]]; then
+    fail "herdr socket subscription acknowledgement" "$(cat "$ROOT/herdr-subscription.err")"
+    check_subscription_negative_demo
+    return
+  fi
+  if [[ "$rc" -ne 0 ]]; then
     skip "herdr socket subscription acknowledgement" "live socket unavailable: $(cat "$ROOT/herdr-subscription.err")"
     check_subscription_negative_demo
     return
   fi
   if assert_subscription_response <<<"$out"; then
-    pass "herdr socket subscription returns subscription_started and closes immediately"
+    pass "herdr socket subscription returns subscription_started; client closes immediately"
   else
     fail "herdr socket subscription acknowledgement" "unexpected payload"
   fi
@@ -549,7 +558,14 @@ check_herdr_socket_snapshot() {
     check_snapshot_negative_demo
     return
   fi
-  if ! out="$(fetch_socket_snapshot "$sock" 2>"$ROOT/herdr-socket.err")"; then
+  out="$(fetch_socket_snapshot "$sock" 2>"$ROOT/herdr-socket.err")"
+  rc=$?
+  if [[ "$rc" -eq 3 ]]; then
+    fail "herdr socket session.snapshot nested shape" "$(cat "$ROOT/herdr-socket.err")"
+    check_snapshot_negative_demo
+    return
+  fi
+  if [[ "$rc" -ne 0 ]]; then
     skip "herdr socket session.snapshot nested shape" "socket request unavailable: $(cat "$ROOT/herdr-socket.err")"
     check_snapshot_negative_demo
     return
