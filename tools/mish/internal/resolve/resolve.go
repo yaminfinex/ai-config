@@ -7,13 +7,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
+
+	"mish/internal/missionfs"
 )
 
 const missionsRepoEnv = "MISSIONS_REPO"
-
-var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
 type Source string
 
@@ -113,7 +112,9 @@ func Resolve(opts Options) (Result, error) {
 		return Result{}, noContext()
 	}
 
-	if result, ok := resolveFromCWD(fsys, cwd); ok {
+	if result, ok, err := resolveFromCWD(fsys, cwd); err != nil {
+		return Result{}, err
+	} else if ok {
 		return result, nil
 	}
 
@@ -173,7 +174,7 @@ func resolveSlug(fsys FS, repo, slug string, source Source, markerPath string) (
 	}, nil
 }
 
-func resolveFromCWD(fsys FS, cwd string) (Result, bool) {
+func resolveFromCWD(fsys FS, cwd string) (Result, bool, error) {
 	for _, dir := range ancestors(cwd) {
 		if !fileExists(fsys, filepath.Join(dir, "mission.md")) {
 			continue
@@ -182,13 +183,17 @@ func resolveFromCWD(fsys FS, cwd string) (Result, bool) {
 		if filepath.Base(parent) != "missions" {
 			continue
 		}
+		slug := filepath.Base(dir)
+		if err := validateSlug(slug); err != nil {
+			return Result{}, false, err
+		}
 		return Result{
-			Slug:       filepath.Base(dir),
+			Slug:       slug,
 			MissionDir: dir,
 			Source:     SourceCWD,
-		}, true
+		}, true, nil
 	}
-	return Result{}, false
+	return Result{}, false, nil
 }
 
 type marker struct {
@@ -259,14 +264,15 @@ func noContext() error {
 }
 
 func validateSlug(slug string) error {
-	if slugPattern.MatchString(slug) {
+	if err := missionfs.ValidateSlug(slug); err == nil {
 		return nil
-	}
-	return &Refusal{
-		Kind:   RefusalInvalidSlug,
-		Slug:   slug,
-		Reason: fmt.Sprintf("invalid mission slug %q", slug),
-		Remedy: "use a slug matching ^[a-z0-9][a-z0-9-]{0,63}$",
+	} else {
+		return &Refusal{
+			Kind:   RefusalInvalidSlug,
+			Slug:   slug,
+			Reason: fmt.Sprintf("invalid mission slug %q: %v", slug, err),
+			Remedy: "use lowercase letters, digits, and single hyphens, with no trailing hyphen",
+		}
 	}
 }
 

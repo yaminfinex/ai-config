@@ -50,6 +50,8 @@ Run 'mish <verb> --help' for the working doctrine on each verb.
 
 const newHelpText = `Usage: mish new <slug> [--title T] [--authority A] [--owner O] [--no-marker]
 
+Use 'mish new -h' or 'mish new --help' for this help; 'mish help new' is also available.
+
 Scaffold missions/<slug>/ under $MISSIONS_REPO with mission.md, a pinned Backlog.md board,
 and an empty artifacts/ directory. The slug must be lowercase letters, digits, and single
 hyphens; it becomes both the directory name and mission: frontmatter.

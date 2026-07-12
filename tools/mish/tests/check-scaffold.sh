@@ -63,6 +63,13 @@ assert_contains "$(mission_dir owner-fallback)/mission.md" "owner: $os_owner"
 assert_contains "$LAST_OUT" "owner: $os_owner (source: OS user)"
 
 step "AC-2 slug rules and existing slug refusal"
+run_mish "$INVOKE_DIR" "help-slug" new help --no-marker
+assert_status 0
+assert_dir "$(mission_dir help)"
+assert_contains "$LAST_OUT" "created mission help"
+run_mish "$INVOKE_DIR" "extra-slug-refuses" new another slug
+assert_status 2
+assert_contains "$LAST_ERR" "expected exactly one slug"
 for slug in perf-regression Perf_Regression -x a--b x- "$(printf 'a%.0s' {1..65})"; do
   run_mish "$INVOKE_DIR" "slug-${slug//[^a-zA-Z0-9]/_}" new "$slug"
   assert_status 1

@@ -53,4 +53,22 @@ run_mish_no_repo "$plain" "unset-repo" status --mission flag-mission
 assert_status 1
 assert_contains "$LAST_ERR" "MISSIONS_REPO"
 
+step "canonical slug refusals across context sources"
+for slug in a--b x-; do
+  mkdir -p "$MISSIONS_REPO_DIR/missions/$slug/backlog/tasks"
+  printf '%s\n' "mission: $slug" >"$MISSIONS_REPO_DIR/missions/$slug/mission.md"
+  run_mish "$INVOKE_DIR" "invalid-flag-${slug//-/x}" status --mission "$slug"
+  assert_status 1
+  assert_contains "$LAST_ERR" "invalid mission slug"
+  invalid_marker="$WORK/invalid-marker-${slug//-/x}"
+  mkdir -p "$invalid_marker"
+  write_marker "$invalid_marker" "$slug"
+  run_mish "$invalid_marker" "invalid-marker-${slug//-/x}" status
+  assert_status 1
+  assert_contains "$LAST_ERR" "invalid mission slug"
+  run_mish "$MISSIONS_REPO_DIR/missions/$slug/backlog/tasks" "invalid-cwd-${slug//-/x}" status
+  assert_status 1
+  assert_contains "$LAST_ERR" "invalid mission slug"
+done
+
 all_green
