@@ -26,8 +26,17 @@ test_names=(
 )
 
 minimum_test_count=10
-if ((${#test_names[@]} < minimum_test_count)); then
-  printf 'REGISTRY GATE DECLARATION FLOOR VIOLATED — only %d tests remain, but at least %d invariant anchors are required; restore any removed declarations or replace them with the tests that now anchor those invariants in check-registry-write-discipline.sh.\n' "${#test_names[@]}" "$minimum_test_count" >&2
+declare -A declared_test_names=()
+for test_name in "${test_names[@]}"; do
+  if [[ -n "${declared_test_names[$test_name]+present}" ]]; then
+    printf 'REGISTRY GATE DECLARATION DUPLICATED — "%s" appears more than once; remove the duplicate or replace it with the distinct test that anchors the missing invariant in check-registry-write-discipline.sh.\n' "$test_name" >&2
+    exit 1
+  fi
+  declared_test_names["$test_name"]=1
+done
+distinct_test_count=${#declared_test_names[@]}
+if ((distinct_test_count < minimum_test_count)); then
+  printf 'REGISTRY GATE DECLARATION FLOOR VIOLATED — only %d distinct tests remain, but at least %d invariant anchors are required; restore any removed declarations or replace them with the tests that now anchor those invariants in check-registry-write-discipline.sh.\n' "$distinct_test_count" "$minimum_test_count" >&2
   exit 1
 fi
 
@@ -82,6 +91,13 @@ printf '%s\n' "$test_output"
 # Prove the execution-evidence check also rejects a known-absent test.
 if test_executed_and_passed "$test_output" "$missing_test_probe"; then
   printf '\nREGISTRY WRITE-DISCIPLINE GATE SELF-CHECK FAILED — the absent test "%s" had RUN and PASS evidence; fix execution-evidence validation in check-registry-write-discipline.sh.\n' "$missing_test_probe"
+  exit 1
+fi
+
+# Pin the PASS half: skip-shaped output has RUN evidence but must be rejected.
+skip_probe_output="$(printf '=== RUN   %s\n--- SKIP: %s (0.00s)\n' "$missing_test_probe" "$missing_test_probe")"
+if test_executed_and_passed "$skip_probe_output" "$missing_test_probe"; then
+  printf '\nREGISTRY WRITE-DISCIPLINE GATE SELF-CHECK FAILED — skip-shaped output for "%s" was accepted without PASS evidence; restore PASS-evidence validation in check-registry-write-discipline.sh.\n' "$missing_test_probe"
   exit 1
 fi
 
