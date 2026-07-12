@@ -4,6 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: To Do
 assignee: []
 created_date: '2026-07-12 21:03'
+updated_date: '2026-07-12 21:16'
 labels: []
 dependencies: []
 priority: medium
@@ -23,3 +24,9 @@ Design, then separately implement, Grok as an explicit herder/hcom family. The h
 - [ ] #3 Receipt/recovery tests cover initial, idle, busy, duplicate, out-of-order, bridge-restart, auth/rate-failure, compaction, resume, fork, subagent lifecycle; delivered only on correlated monitor wake + message-id ack
 - [ ] #4 Observer/transcript honest (unknown stays unknown); shim/setup/doctor land only with working launch; isolated live smoke proves bidirectional messaging; cross-family adversarial review + full gates
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+SETTLED DELIVERY DECISIONS recovered by archaeology (do not relitigate in design): (1) PTY paste is technically functional but OWNER-REJECTED as the delivery mechanism (characterization doc B4). (2) MCP polling + ack with resume fallback was chosen (901b49a), then SUPERSEDED on wake only: later monitor probes proved idle wake and busy-turn buffering, giving the final architecture = monitor-wake + MCP fetch/ack/pending/send. (3) Passive hook stdout, stop-hook exit-2 stderr, and hcom term inject are proven DEAD surfaces (mechanism matrix, docs/grok-integration-characterization.md:306). CAVEAT the design must close: monitor and MCP were proved SEPARATELY, never as one end-to-end receipt state machine — correlation/persistence/recovery is the genuinely open design work. Full lineage: napkins/run-herder-dx/grok-delivery-archaeology-memo.md; canonical record: docs/grok-integration-characterization.md (960 lines, recovery commits 1c3adbc + 140944d).
+<!-- SECTION:NOTES:END -->

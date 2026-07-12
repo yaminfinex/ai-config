@@ -379,6 +379,14 @@ runtime config surface with its preservation rule unchanged.
 
 ---
 
+> **Owner decision (2026-07-12):** store-served distribution (option 1c)
+> sanctioned; full design pass filed as TASK-168 and delivered in
+> `docs/design/2026-07-12-sesh-store-served-distribution.md`. tsnet day 1
+> accepted with a Tier-B admin ask (one tag + one grant, owner self-issues
+> keys). Naming ruled: node `sesh`, `tag:sesh`, capability
+> `infinex.xyz/cap/sesh` (the `sesh-store` / `sesh.dev/cap/store` names in
+> this memo predate that ruling).
+
 # Recommendations (synthesis — separated from the survey; owner decides)
 
 Both researchers independently converged on: prebuilt binaries + a
