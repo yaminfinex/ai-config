@@ -3,10 +3,10 @@ id: TASK-156
 title: >-
   docs drift: compact recipes in herder README + orchestrate skill show bare
   invocations the CLI now refuses
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-12 01:49'
-updated_date: '2026-07-12 06:45'
+updated_date: '2026-07-12 07:23'
 labels: []
 dependencies: []
 priority: medium
@@ -23,4 +23,6 @@ The compact continuation-intent change (merge e52a8f3: bare herder compact refus
 
 <!-- SECTION:NOTES:BEGIN -->
 Bundled into the TASK-145 implement leg (worker razu).
+
+Shipped in the same merge (22def8f). Every compact recipe in tools/herder/README.md, skills/orchestrate/SKILL.md + references, and docs examples now carries --then or --stop with the refusal behavior stated; reviewer grep-verified no bare recipe survives. (ACs verified manually — no CLI AC fields.)
 <!-- SECTION:NOTES:END -->
