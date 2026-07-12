@@ -53,7 +53,8 @@ not the whole doc>.
 Own ONE unit. At the 200–250k-token band — every time, not a judgment call: persist state FIRST
 (WIP commit + progress note on your unit thread — compaction loses anything unpersisted), then
 compact in place:
-`herder compact '<what to keep: unit, ACs, gate commands, thread name>'`. If the session is too
+`herder compact '<what to keep: unit, ACs, gate commands, thread name>' --then
+'resume the unit from the progress note and report on its thread'`. If the session is too
 incoherent to steer, write a full HANDOFF report (state + ordered remaining steps for an agent
 with zero shared memory + WIP sha) and stop; the orchestrator culls this session before a
 successor takes its label.

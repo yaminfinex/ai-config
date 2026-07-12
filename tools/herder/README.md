@@ -186,7 +186,7 @@ Two deliberate exceptions ride keystrokes, neither reachable as a send transport
 
 - **Trust-modal auto-accept** during spawn's bind/ready wait (a single Enter; `--safe` opts out).
   The modal blocks boot itself — pre-bind — so both wait paths clear it.
-- **Steered self-compaction** (`herder compact '<steer>'`, TASK-022): queues a real
+- **Steered self-compaction** (`herder compact '<steer>' --stop`): queues a real
   `/compact <steer>` input line into the CALLER'S OWN pane via the package-private paste engine
   (`internal/spawncmd/bootpaste.go` — its other remaining user is `spawn --prompt` for BASH
   agents, which never get a bus binding). Input automation, not delivery — there is no target
@@ -197,7 +197,7 @@ Two deliberate exceptions ride keystrokes, neither reachable as a send transport
   check immediately before Enter; cleared composer degrades to not_delivered, never delivered) is
   a locked floor. Pinned by `tests/check-compact-contract.sh` (goldens + grep gates).
 
-  **compact-then-continue** (`herder compact '<steer>' --then '<continuation>'`, TASK-034,
+  **compact-then-continue** (`herder compact '<steer>' --then '<continuation>'`,
   claude-only): `/compact` normally ends the turn and STOPS. `--then` turns it into
   compact-then-continue. It is NOT a second paste — a plain queued line jumps the `/compact`
   queue and is consumed pre-compaction (claude injects plain messages at a mid-turn tool
@@ -259,15 +259,16 @@ claude itself (hcom performs no config swap), it is cosmetic (no data is lost, t
 and it can still appear when the seed source is absent or unreadable (TASK-011).
 
 **Context ceiling:** an agent nearing its ceiling persists state FIRST (commit WIP + progress
-report — compaction loses anything unpersisted), then compacts in place:
-`herder compact 'keep: unit, ACs, gate commands, thread; drop tool output'`. Run from the
-agent's own tool call, the `/compact` line is queued in its composer and fires at turn end.
+report — compaction loses anything unpersisted), then compacts in place and resumes autonomously:
+`herder compact 'keep: unit, ACs, gate commands, thread; drop tool output' --then
+'resume the current unit from the persisted progress report'`. Run from the agent's own tool
+call, the `/compact` line is queued in its composer and fires at turn end.
 The old `herder send "$HERDR_PANE_ID" '/compact …'` recipe died with the keystroke transport;
-`herder compact` is its dedicated replacement. To keep going unattended past the ceiling, add
-`--then '<continuation>'` (claude-only) — after compaction the detached sender delivers the
-continuation to the agent's own bus, so compact-then-STOP becomes compact-then-continue without
-a human nudging it back. If the session is too incoherent to steer, the fresh-spawn handoff
-still works: HANDOFF report + successor spawn.
+`herder compact` is its dedicated replacement. Bare `herder compact '<steer>'` is refused:
+choose `--then '<continuation>'` (claude-only) for autonomous work or `--stop` for an interactive
+handoff. After compaction, `--then` delivers the continuation to the agent's own bus, so the
+agent continues without a human nudge. If the session is too incoherent to steer, the
+fresh-spawn handoff still works: HANDOFF report + successor spawn.
 
 ## Session Bootstrap
 

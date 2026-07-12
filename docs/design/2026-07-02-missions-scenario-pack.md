@@ -85,9 +85,10 @@ CLI help + orchestrate):
   child's own hcom roster row, pane-correlated, with a refuse-to-guess doctrine (ambiguous
   correlate → record nothing rather than the wrong thing).
 - **Lifecycle verbs exist**: `fork` (+ `--self`, `--split`), `resume` (same guid, provenance
-  `resumed_at`), `enroll` (adopt the current pane; retires stale rows), `compact '<steer>'`
-  (self-only) and `compact --then '<continuation>'` — compact-then-continue past the context
-  ceiling, claude-only. Idea #15 (fast fork) is done, not pending.
+  `resumed_at`), `enroll` (adopt the current pane; retires stale rows), and
+  `compact '<steer>' --then '<continuation>'` (self-only) — compact-then-continue past the
+  context ceiling, claude-only. `compact '<steer>' --stop` is the interactive opt-out.
+  Idea #15 (fast fork) is done, not pending.
 - **Backlog.md is bootstrapped at the repo root** as the durable cross-machine work ledger
   (git-tracked `backlog/`, 38 tasks and counting), with live doctrine: run-label ringfencing,
   units seeded on the base branch, and **the board lives on the base branch with the
@@ -674,7 +675,7 @@ For re-grounding the corpus doc without rewriting it — what the week did to th
 - **#7 (evidence by reference)** — re-key on guid; blocked on #10 ingest (unchanged), but the
   discovery model now inherits the spec's `sids[]` history instead of inventing one.
 - Corpus §1 ground-truth items now stale: "messaging flaky" (solved: bus-only + receipts),
-  "compaction pain partially solved via herder-send-self" (now `herder compact [--then]`),
+  "compaction pain partially solved via herder-send-self" (now `herder compact (--then '<continuation>' | --stop)`),
   "bottle unused" (contradicted), "free-form task state fails" (Backlog.md ledger live).
 
 ## What this pack does NOT cover (known gaps)

@@ -2,6 +2,7 @@ package observercmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/hookcmd"
 	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
@@ -24,6 +26,7 @@ import (
 const (
 	defaultSweepInterval     = 30 * time.Second
 	defaultReconfirmInterval = time.Hour
+	doctrineReceiptRetention = 24 * time.Hour
 	lockFileName             = "observer.lock"
 )
 
@@ -33,12 +36,19 @@ type options struct {
 }
 
 type hcomRow struct {
-	Name         string `json:"name"`
-	Status       string `json:"status"`
-	Joined       bool   `json:"joined"`
-	SessionID    string `json:"session_id"`
-	ProcessBound *bool  `json:"process_bound"`
-	StatusAge    int    `json:"status_age"`
+	Name          string            `json:"name"`
+	Tool          string            `json:"tool"`
+	Status        string            `json:"status"`
+	Joined        bool              `json:"joined"`
+	SessionID     string            `json:"session_id"`
+	ProcessBound  *bool             `json:"process_bound"`
+	StatusAge     int               `json:"status_age"`
+	LaunchContext hcomLaunchContext `json:"launch_context"`
+}
+
+type hcomLaunchContext struct {
+	PaneID    string `json:"pane_id"`
+	ProcessID string `json:"process_id"`
 }
 
 type busState struct {
@@ -74,6 +84,11 @@ type candidate struct {
 type sweepResult struct {
 	Status     observerstatus.Status `json:"status"`
 	Candidates int                   `json:"candidates"`
+}
+
+type doctrineCandidate struct {
+	Name  string
+	Token string
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -185,6 +200,7 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 		LastSweepAt:        now.Format(time.RFC3339),
 		ProtocolCompatible: true,
 		Confirmed:          map[string]string{},
+		DoctrineDeliveries: map[string]string{},
 	}
 	proj, err := loadProjection(registryPath, stderr)
 	if err != nil {
@@ -198,10 +214,13 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 		st.ProtocolDetail = fmt.Sprintf("source=%s connection_gap=%t", firstNonEmpty(hd.source, "unknown"), hd.connectionGap)
 	}
 	bus := loadBusState()
+	st.DoctrineDeliveries = priorDoctrineDeliveries(stateDir, hd, bus, now)
 	cands := buildCandidates(proj, hd, bus, now)
+	doctrine := doctrineCandidates(proj, hd, bus, st.DoctrineDeliveries, joinedHcomRow)
 	flags := advisoryFlags(proj, hd)
 	flags = append(flags, epochFlags(proj, hd, bus)...)
 	summary := applyCandidates(registryPath, cands, stderr)
+	deliverDoctrine(doctrine, st.DoctrineDeliveries, sendDoctrine, now)
 	for _, rec := range proj.Sessions() {
 		if rec.State == v2.StateSeated && rec.Seat != nil {
 			st.Confirmed[rec.GUID] = rec.Seat.ConfirmedAt
@@ -213,6 +232,54 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 		return sweepResult{}, err
 	}
 	return sweepResult{Status: st, Candidates: len(cands)}, nil
+}
+
+// Receipt loss or status rotation deliberately fails toward re-delivery: informational doctrine spam is safer than silence.
+func priorDoctrineDeliveries(stateDir string, hd herdrState, bus busState, now time.Time) map[string]string {
+	receipts := map[string]string{}
+	prior, err := observerstatus.Read(observerstatus.PathForStateDir(stateDir))
+	if err != nil {
+		return receipts
+	}
+	for token, stamp := range prior.DoctrineDeliveries {
+		if keepDoctrineReceipt(token, stamp, hd, bus, now) {
+			receipts[token] = stamp
+		}
+	}
+	return receipts
+}
+
+func keepDoctrineReceipt(token, stamp string, hd herdrState, bus busState, now time.Time) bool {
+	if !hd.available || !bus.available {
+		return true
+	}
+	processID, sessionID, ok := strings.Cut(token, ":")
+	if !ok || processID == "" || sessionID == "" {
+		return false
+	}
+	sameProcess := false
+	sameSession := false
+	for _, row := range bus.rows {
+		if row.LaunchContext.ProcessID == processID && row.SessionID == sessionID {
+			return true
+		}
+		sameProcess = sameProcess || row.LaunchContext.ProcessID == processID
+		sameSession = sameSession || row.SessionID == sessionID
+	}
+	if sameProcess || sameSession {
+		return false
+	}
+	for _, pane := range hd.byTerm {
+		if pane.AgentSession == sessionID {
+			return true
+		}
+	}
+	deliveredAt, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		return false
+	}
+	age := now.Sub(deliveredAt)
+	return age < doctrineReceiptRetention || age < 0
 }
 
 func loadProjection(path string, stderr io.Writer) (*v2.Projection, error) {
@@ -396,6 +463,122 @@ func loadBusState() busState {
 		}
 	}
 	return busState{available: true, rows: rows}
+}
+
+// doctrineCandidates finds only unmanaged Codex sessions for which the live
+// herdr pane/process, tool session id, and joined hcom process row all agree.
+// Every match is exact and child-specific; ambiguity or a missing leg yields
+// no candidate.
+func doctrineCandidates(proj *v2.Projection, hd herdrState, bus busState, receipts map[string]string, joined func(hcomRow) bool) []doctrineCandidate {
+	if proj == nil || !hd.available || !bus.available || joined == nil {
+		return nil
+	}
+	var out []doctrineCandidate
+	for _, correlation := range doctrineCorrelations(hd, bus) {
+		if !joined(correlation.row) || managedCorrelation(proj, correlation.pane, correlation.row) {
+			continue
+		}
+		if _, delivered := receipts[correlation.token]; delivered {
+			continue
+		}
+		out = append(out, doctrineCandidate{Name: correlation.row.Name, Token: correlation.token})
+	}
+	return out
+}
+
+type doctrineCorrelation struct {
+	pane  herdrcli.Pane
+	row   hcomRow
+	token string
+}
+
+func doctrineCorrelations(hd herdrState, bus busState) []doctrineCorrelation {
+	if !hd.available || !bus.available {
+		return nil
+	}
+	var out []doctrineCorrelation
+	for term, pane := range hd.byTerm {
+		if pane.PaneID == "" || pane.AgentSession == "" {
+			continue
+		}
+		if liveCodexPID(hd.procs[term]) == 0 {
+			continue
+		}
+		matches := make([]hcomRow, 0, 1)
+		for _, row := range bus.rows {
+			if row.Tool != "codex" || row.SessionID != pane.AgentSession || row.LaunchContext.PaneID != pane.PaneID || row.LaunchContext.ProcessID == "" || row.ProcessBound == nil || !*row.ProcessBound {
+				continue
+			}
+			matches = append(matches, row)
+		}
+		if len(matches) != 1 {
+			continue
+		}
+		out = append(out, doctrineCorrelation{
+			pane:  pane,
+			row:   matches[0],
+			token: matches[0].LaunchContext.ProcessID + ":" + pane.AgentSession,
+		})
+	}
+	return out
+}
+
+func liveCodexPID(pi herdrcli.ProcessInfo) int {
+	for _, proc := range pi.Processes {
+		if proc.PID > 0 && len(proc.Argv) > 0 && filepath.Base(proc.Argv[0]) == "codex" {
+			return proc.PID
+		}
+	}
+	return 0
+}
+
+func managedCorrelation(proj *v2.Projection, pane herdrcli.Pane, row hcomRow) bool {
+	for _, rec := range proj.Sessions() {
+		if rec.State != v2.StateSeated || rec.Seat == nil {
+			continue
+		}
+		if rec.Seat.TerminalID == pane.TerminalID || rec.Seat.PaneID == pane.PaneID || rec.Seat.HcomName == row.Name || latestSID(rec) == pane.AgentSession {
+			return true
+		}
+	}
+	return false
+}
+
+func joinedHcomRow(row hcomRow) bool {
+	out, err := exec.Command("hcom", "list", row.Name, "--json").Output()
+	if err != nil {
+		return false
+	}
+	var current hcomRow
+	if json.Unmarshal(out, &current) != nil {
+		var rows []hcomRow
+		if json.Unmarshal(out, &rows) != nil || len(rows) != 1 {
+			return false
+		}
+		current = rows[0]
+	}
+	return current.SessionID != "" && current.SessionID == row.SessionID && current.Tool == "codex"
+}
+
+func deliverDoctrine(candidates []doctrineCandidate, receipts map[string]string, send func(string) bool, now time.Time) {
+	if receipts == nil || send == nil {
+		return
+	}
+	for _, cand := range candidates {
+		if _, exists := receipts[cand.Token]; exists {
+			continue
+		}
+		if send(cand.Name) {
+			receipts[cand.Token] = now.UTC().Format(time.RFC3339)
+		}
+	}
+}
+
+func sendDoctrine(name string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "hcom", "send", "@"+name, "--from", "herder-observer", "--intent", "inform", "--", hookcmd.CodexResumeAddendum)
+	return cmd.Run() == nil
 }
 
 func buildCandidates(proj *v2.Projection, hd herdrState, bus busState, now time.Time) []candidate {
