@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: To Do
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-12 21:16'
+updated_date: '2026-07-12 22:46'
 labels: []
 dependencies: []
 priority: medium
@@ -29,4 +29,6 @@ Design, then separately implement, Grok as an explicit herder/hcom family. The h
 
 <!-- SECTION:NOTES:BEGIN -->
 SETTLED DELIVERY DECISIONS recovered by archaeology (do not relitigate in design): (1) PTY paste is technically functional but OWNER-REJECTED as the delivery mechanism (characterization doc B4). (2) MCP polling + ack with resume fallback was chosen (901b49a), then SUPERSEDED on wake only: later monitor probes proved idle wake and busy-turn buffering, giving the final architecture = monitor-wake + MCP fetch/ack/pending/send. (3) Passive hook stdout, stop-hook exit-2 stderr, and hcom term inject are proven DEAD surfaces (mechanism matrix, docs/grok-integration-characterization.md:306). CAVEAT the design must close: monitor and MCP were proved SEPARATELY, never as one end-to-end receipt state machine — correlation/persistence/recovery is the genuinely open design work. Full lineage: napkins/run-herder-dx/grok-delivery-archaeology-memo.md; canonical record: docs/grok-integration-characterization.md (960 lines, recovery commits 1c3adbc + 140944d).
+
+DEMO FINDINGS (falsify the claude-hook shortcut entirely — registration AND delivery must both be first-class): grok 0.2.93 hooks all exit 0 against real hcom 0.7.23 yet NO roster row/bus name is created (memo erratum in docs/design/grok-onboarding-memo.md). Environment truths for the design: raw-agent login shells reset HOME and drop spawn-time env (child-side injection required); hcom in herder panes resolves to tools/herder/shims/hcom routing through herder hook — design must decide which hcom hooks resolve to; grok settings env.HCOM override ineffective in 0.2.93, only direct child env export works; update suppression documented and proven (--no-auto-update, [cli] auto_update=false); never equate hook exit 0 with registration/delivery. Evidence: docs/design/grok-demo-report-2026-07-12.md.
 <!-- SECTION:NOTES:END -->

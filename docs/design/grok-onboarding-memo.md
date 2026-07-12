@@ -315,3 +315,22 @@ launch; it is honest inbound delivery. Ship the isolated roster/pane demo immedi
 owner accepts that limitation. For production, treat Grok as its own delivery family and
 build the already-characterized monitor + MCP bridge instead of leaning on misleading
 Claude-hook compatibility.
+
+---
+
+## ERRATUM (2026-07-12, post-demo — supersedes the "zero-diff degraded path" gains)
+
+The isolated demo (see grok-demo-report-2026-07-12.md) FALSIFIED the expected degraded-
+path gain "Grok's inherited Claude hooks may register it on the isolated hcom bus".
+Empirical result with grok 0.2.93 + hcom 0.7.23: all four Claude-compatible hooks
+(SessionStart/UserPromptSubmit/PostToolUse/Stop) exit 0 against the real hcom binary,
+yet hcom creates NO roster row and assigns NO bus name — there is no misleading
+tool:claude row, and therefore no address for outbound or inbound messaging. The
+zero-diff path yields a PANE demo only. Additional environment truths the first-class
+design must absorb: (1) raw-agent login shells reset HOME and drop spawn-time env —
+child-side wrappers (or first-class env injection) are required; (2) in herder panes,
+`hcom` resolves to tools/herder/shims/hcom, which routes hook calls through `herder
+hook`, not raw hcom; (3) Grok 0.2.93's settings-level env.HCOM override is ineffective —
+only a direct child env export reached the real binary; (4) a successful hook exit must
+never be equated with registration or delivery capability; (5) update suppression:
+`--no-auto-update` flag and `[cli] auto_update = false` are both documented and worked.
