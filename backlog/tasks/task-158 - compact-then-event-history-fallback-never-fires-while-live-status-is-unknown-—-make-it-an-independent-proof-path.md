@@ -3,9 +3,10 @@ id: TASK-158
 title: >-
   compact-then: event-history fallback never fires while live status is unknown
   — make it an independent proof path
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-12 06:52'
+updated_date: '2026-07-12 08:06'
 labels: []
 dependencies: []
 priority: medium
