@@ -692,7 +692,7 @@ func carrySeatFields(row, current v2.SessionRecord) v2.SessionRecord {
 	row.State = current.State
 	row.Seat = current.Seat
 	if row.Seat == nil && current.LegacyV1 {
-		legacy := LegacyFromV2(current)
+		legacy, _ := DecodeLegacyV1Raw(current)
 		if legacy.PaneID != "" || legacy.TerminalID != "" || legacy.HcomName != "" || legacy.HcomDir != "" {
 			row.State = v2.StateSeated
 			row.Seat = &v2.Seat{

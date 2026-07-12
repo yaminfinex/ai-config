@@ -180,7 +180,7 @@ func (r *runner) fork(opts forkOptions) int {
 	}
 	sessionID := registry.ToolSessionIDForGUID(recs, parentGUID)
 	live := liveAgents(r.client())
-	liveParent := parent.Status == "active" && parent.TerminalID != "" && live[parent.TerminalID].TerminalID != nil
+	liveParent := registry.IsSeated(*parent) && parent.TerminalID != "" && live[parent.TerminalID].TerminalID != nil
 
 	vehicleTarget := ""
 	if liveParent && parent.HcomName != "" {
@@ -203,7 +203,7 @@ func (r *runner) fork(opts forkOptions) int {
 	if label == "" {
 		label = fmt.Sprintf("%s-fork-%s", firstNonEmpty(ptrString(parent.Label), "agent"), short)
 	}
-	if owner := registry.ActiveLabelOwner(recs, label, guid); owner != nil {
+	if owner := registry.NonRetiredLabelOwner(recs, label, guid); owner != nil {
 		die(r.stderr, fmt.Sprintf("label %q already belongs to active guid %s", label, ptrString(owner.GUID)))
 		return 1
 	}
@@ -584,7 +584,7 @@ func (r *runner) resume(opts resumeOptions) int {
 		}
 	}
 	live := liveAgents(r.client())
-	if rec.Status == "active" && rec.TerminalID != "" && live[rec.TerminalID].TerminalID != nil {
+	if registry.IsSeated(*rec) && rec.TerminalID != "" && live[rec.TerminalID].TerminalID != nil {
 		die(r.stderr, fmt.Sprintf("%s is already running; use herder send/wait", firstNonEmpty(ptrString(rec.Label), opts.target)))
 		return 1
 	}
@@ -594,7 +594,7 @@ func (r *runner) resume(opts resumeOptions) int {
 		return 1
 	}
 	label := firstNonEmpty(ptrString(rec.Label), "resumed-"+registry.ShortGUID(guid))
-	if owner := registry.ActiveLabelOwner(recs, label, guid); owner != nil {
+	if owner := registry.NonRetiredLabelOwner(recs, label, guid); owner != nil {
 		die(r.stderr, fmt.Sprintf("label %q already belongs to active guid %s", label, ptrString(owner.GUID)))
 		return 1
 	}

@@ -79,7 +79,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	live := buildLiveState()
-	active := activeRows(recs)
+	active := nonRetiredRows(recs)
 	held := heldTerminals(active)
 
 	var results []result
@@ -228,10 +228,10 @@ func buildLiveState() liveState {
 	return live
 }
 
-func activeRows(recs []registry.Record) []registry.Record {
+func nonRetiredRows(recs []registry.Record) []registry.Record {
 	var out []registry.Record
 	for _, rec := range registry.LatestByGUID(recs) {
-		if rec.Status == "active" {
+		if registry.IsNonRetired(rec) {
 			out = append(out, rec)
 		}
 	}

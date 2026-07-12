@@ -361,7 +361,7 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 	if latest == nil {
 		latest = s.archivedLatest(guid)
 	}
-	if latest != nil && latest.Status == "closed" {
+	if latest != nil && registry.IsTerminal(*latest) {
 		return false
 	}
 	label := os.Getenv("HERDER_LABEL")
@@ -380,7 +380,7 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 	if role == "" {
 		role = "manual"
 	}
-	if owner := registry.ActiveLabelOwner(recs, label, guid); owner != nil {
+	if owner := registry.NonRetiredLabelOwner(recs, label, guid); owner != nil {
 		return false
 	}
 

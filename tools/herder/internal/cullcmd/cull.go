@@ -186,7 +186,7 @@ func liveAgents() map[string]herdrcli.Agent {
 func selectTargets(recs []registry.Record, proj *v2.Projection, live map[string]herdrcli.Agent, opts options) []registry.Record {
 	var out []registry.Record
 	for _, rec := range recs {
-		if rec.Status != "active" {
+		if !registry.IsNonRetired(rec) {
 			continue
 		}
 		if opts.goneOnly {
@@ -427,7 +427,11 @@ func appendClosed(path string, rec registry.Record, nowISO, result, reason strin
 		return rec, false, err
 	}
 	if already != nil {
-		return registry.LegacyFromV2(*already), false, nil
+		rec.State = already.State
+		rec.RecordedAt = already.RecordedAt
+		rec.CloseResult = already.CloseResult
+		rec.CloseReason = already.CloseReason
+		return rec, false, nil
 	}
 	outcome, err := registry.SingleOutcome(outcomes)
 	if err != nil {
@@ -439,7 +443,7 @@ func appendClosed(path string, rec registry.Record, nowISO, result, reason strin
 	if outcome.Status != registry.WriteApplied {
 		return rec, false, fmt.Errorf("registry close failed for %s: no close record appended", guid)
 	}
-	rec.Status = "closed"
+	rec.State = v2.StateUnseated
 	rec.CloseResult = result
 	rec.CloseReason = reason
 	return rec, true, nil

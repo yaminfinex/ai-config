@@ -167,42 +167,43 @@ func TestResolve(t *testing.T) {
 	}
 }
 
-func TestActiveCandidatesByPaneOrTerminal(t *testing.T) {
-	// A reused pane p_1 carries three manual identities: two stale-but-active
+func TestSeatedCandidatesByPaneOrTerminal(t *testing.T) {
+	// A reused pane p_1 carries three manual identities: two stale-but-seated
 	// (bus_a already superseded on the bus, bus_b likewise) and one live.
-	// gamma sits on a different pane; delta is closed on p_1. Candidates must
-	// be every ACTIVE row on the coordinate, in guid order, and nothing else.
+	// gamma sits on a different pane; delta is retired on p_1. Candidates must
+	// be every seated row on the coordinate, in guid order, and nothing else.
 	path := writeRegistry(t,
-		`{"guid":"guid-alpha-0000","short_guid":"alpha","label":"a","pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_a","status":"active"}`,
-		`{"guid":"guid-beta-0000","short_guid":"beta","label":"b","pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_b","status":"active"}`,
-		`{"guid":"guid-gamma-0000","short_guid":"gamma","label":"g","pane_id":"p_2","terminal_id":"term_2","hcom_name":"bus_g","status":"active"}`,
-		`{"guid":"guid-delta-0000","short_guid":"delta","label":"d","pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_d","status":"closed"}`,
+		`{"kind":"session","guid":"guid-alpha-0000","label":"a","state":"seated","seat":{"pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_a"}}`,
+		`{"kind":"session","guid":"guid-beta-0000","label":"b","state":"seated","seat":{"pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_b"}}`,
+		`{"kind":"session","guid":"guid-gamma-0000","label":"g","state":"seated","seat":{"pane_id":"p_2","terminal_id":"term_2","hcom_name":"bus_g"}}`,
+		`{"kind":"session","guid":"guid-delta-0000","label":"d","state":"retired","seat":{"pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_d"}}`,
+		`{"kind":"session","guid":"guid-epsilon-0000","label":"e","state":"unseated","seat":{"pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_e"}}`,
 	)
 	recs, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"p_1", "term_1"} {
-		got := ActiveCandidatesByPaneOrTerminal(recs, key)
+		got := SeatedCandidatesByPaneOrTerminal(recs, key)
 		if len(got) != 2 {
-			t.Fatalf("ActiveCandidatesByPaneOrTerminal(%q) = %d rows, want 2 (alpha,beta)", key, len(got))
+			t.Fatalf("SeatedCandidatesByPaneOrTerminal(%q) = %d rows, want 2 (alpha,beta)", key, len(got))
 		}
 		if ptrString(got[0].GUID) != "guid-alpha-0000" || ptrString(got[1].GUID) != "guid-beta-0000" {
 			t.Errorf("candidates(%q) order = %q,%q, want alpha,beta (guid order)", key, ptrString(got[0].GUID), ptrString(got[1].GUID))
 		}
 	}
-	if got := ActiveCandidatesByPaneOrTerminal(recs, "p_2"); len(got) != 1 || ptrString(got[0].GUID) != "guid-gamma-0000" {
+	if got := SeatedCandidatesByPaneOrTerminal(recs, "p_2"); len(got) != 1 || ptrString(got[0].GUID) != "guid-gamma-0000" {
 		t.Errorf("candidates(p_2) = %+v, want just gamma", got)
 	}
-	if got := ActiveCandidatesByPaneOrTerminal(recs, ""); got != nil {
+	if got := SeatedCandidatesByPaneOrTerminal(recs, ""); got != nil {
 		t.Errorf("candidates(\"\") = %+v, want nil", got)
 	}
-	if got := ActiveCandidatesByPaneOrTerminal(recs, "p_nope"); got != nil {
+	if got := SeatedCandidatesByPaneOrTerminal(recs, "p_nope"); got != nil {
 		t.Errorf("candidates(unknown) = %+v, want nil", got)
 	}
 }
 
-func TestActiveLabelOwnerUsesLatestActiveRows(t *testing.T) {
+func TestNonRetiredLabelOwnerUsesLatestRows(t *testing.T) {
 	path := writeRegistry(t,
 		`{"guid":"guid-alpha-0000","short_guid":"alpha","label":"shared","status":"active"}`,
 		`{"guid":"guid-beta-0000","short_guid":"beta","label":"closed-label","status":"active"}`,
@@ -213,17 +214,17 @@ func TestActiveLabelOwnerUsesLatestActiveRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := ActiveLabelOwner(recs, "shared", "guid-alpha-0000")
+	owner := NonRetiredLabelOwner(recs, "shared", "guid-alpha-0000")
 	if owner == nil || ptrString(owner.GUID) != "guid-gamma-0000" {
-		t.Fatalf("ActiveLabelOwner(shared, except alpha) = %+v, want gamma", owner)
+		t.Fatalf("NonRetiredLabelOwner(shared, except alpha) = %+v, want gamma", owner)
 	}
-	if owner := ActiveLabelOwner(recs, "shared", "guid-gamma-0000"); owner == nil || ptrString(owner.GUID) != "guid-alpha-0000" {
-		t.Fatalf("ActiveLabelOwner(shared, except gamma) = %+v, want alpha", owner)
+	if owner := NonRetiredLabelOwner(recs, "shared", "guid-gamma-0000"); owner == nil || ptrString(owner.GUID) != "guid-alpha-0000" {
+		t.Fatalf("NonRetiredLabelOwner(shared, except gamma) = %+v, want alpha", owner)
 	}
-	if owner := ActiveLabelOwner(recs, "closed-label", ""); owner != nil {
+	if owner := NonRetiredLabelOwner(recs, "closed-label", ""); owner != nil {
 		t.Fatalf("closed latest row owns label: %+v, want nil", owner)
 	}
-	if owner := ActiveLabelOwner(recs, "", ""); owner != nil {
+	if owner := NonRetiredLabelOwner(recs, "", ""); owner != nil {
 		t.Fatalf("empty label owner = %+v, want nil", owner)
 	}
 }
@@ -293,8 +294,8 @@ func TestAppend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(recs) != 2 || ptrString(recs[0].GUID) != "g-1" || recs[0].Status != "active" || ptrString(recs[1].GUID) != "g-2" {
-		t.Fatalf("legacy view = %+v, want active g-1/g-2 records", recs)
+	if len(recs) != 2 || ptrString(recs[0].GUID) != "g-1" || recs[0].State != v2.StateSeated || recs[0].Status != "" || ptrString(recs[1].GUID) != "g-2" {
+		t.Fatalf("four-state view = %+v, want seated g-1/g-2 records", recs)
 	}
 }
 
@@ -952,7 +953,7 @@ func TestUnknownNodeRowsAreReadOnlyButDoNotBlockLocalWrites(t *testing.T) {
 	}
 }
 
-func TestLoadDerivesLegacyViewFromV2Rows(t *testing.T) {
+func TestLoadPreservesFourStateViewFromV2Rows(t *testing.T) {
 	path := writeRegistry(t,
 		`{"kind":"session","guid":"guid-seated","event":"registered","recorded_at":"2026-07-08T00:00:00Z","state":"seated","label":"seat","role":"worker","tool":"codex","seat":{"kind":"herdr","terminal_id":"term_1","pane_id":"p_1","hcom_name":"bus-seat","namespace":"/hcom"},"provenance":{"mechanism":"spawn","tool_session_id":"sess-1","tag":"worker"}}`,
 		`{"kind":"session","guid":"guid-unseated","event":"unseated","recorded_at":"2026-07-08T00:00:01Z","state":"unseated","label":"dormant","role":"worker","tool":"claude","provenance":{"mechanism":"spawn","tag":"worker"}}`,
@@ -966,14 +967,52 @@ func TestLoadDerivesLegacyViewFromV2Rows(t *testing.T) {
 	for _, rec := range recs {
 		byGUID[ptrString(rec.GUID)] = rec
 	}
-	if got := byGUID["guid-seated"]; got.Status != "active" || got.PaneID != "p_1" || got.TerminalID != "term_1" || got.HcomName != "bus-seat" || got.HcomDir != "/hcom" || got.Agent != "codex" {
-		t.Fatalf("seated legacy view = %+v", got)
+	if got := byGUID["guid-seated"]; got.State != v2.StateSeated || got.Status != "" || got.PaneID != "p_1" || got.TerminalID != "term_1" || got.HcomName != "bus-seat" || got.HcomDir != "/hcom" || got.Agent != "codex" {
+		t.Fatalf("seated view = %+v", got)
 	}
-	if got := byGUID["guid-unseated"]; got.Status != "active" || got.PaneID != "" || got.Agent != "claude" {
-		t.Fatalf("unseated legacy view = %+v, want active status without seat", got)
+	if got := byGUID["guid-unseated"]; got.State != v2.StateUnseated || got.Status != "" || got.PaneID != "" || got.Agent != "claude" {
+		t.Fatalf("unseated view = %+v", got)
 	}
-	if got := byGUID["guid-retired"]; got.Status != "closed" || got.Agent != "bash" {
-		t.Fatalf("retired legacy view = %+v, want closed bash", got)
+	if got := byGUID["guid-retired"]; got.State != v2.StateRetired || got.Status != "" || got.Agent != "bash" {
+		t.Fatalf("retired view = %+v", got)
+	}
+}
+
+func TestReadPredicatesKeepSeatAndLeaseQuestionsSeparate(t *testing.T) {
+	rows := []Record{
+		{State: v2.StateSeated},
+		{State: v2.StateUnseated},
+		{State: v2.StateRetired},
+		{State: v2.StateLost},
+		{},
+	}
+	wantSeated := []bool{true, false, false, false, false}
+	wantNonRetired := []bool{true, true, false, false, false}
+	for i, row := range rows {
+		if got := IsSeated(row); got != wantSeated[i] {
+			t.Errorf("row %d IsSeated = %v, want %v", i, got, wantSeated[i])
+		}
+		if got := IsNonRetired(row); got != wantNonRetired[i] {
+			t.Errorf("row %d IsNonRetired = %v, want %v", i, got, wantNonRetired[i])
+		}
+	}
+}
+
+func TestDecodeLegacyV1RawReadsCoordinatesWithoutMappingV2State(t *testing.T) {
+	rec := v2.SessionRecord{
+		LegacyV1: true,
+		State:    v2.StateUnseated,
+		Raw:      json.RawMessage(`{"guid":"guid-old","status":"active","pane_id":"p_old","terminal_id":"term_old","hcom_name":"bus-old","hcom_dir":"/old-bus"}`),
+	}
+	got, ok := DecodeLegacyV1Raw(rec)
+	if !ok {
+		t.Fatal("DecodeLegacyV1Raw did not decode a legacy row")
+	}
+	if got.V1Status != "active" || got.PaneID != "p_old" || got.TerminalID != "term_old" || got.HcomName != "bus-old" || got.HcomDir != "/old-bus" {
+		t.Fatalf("compat = %+v, want original v1 status and coordinates", got)
+	}
+	if _, ok := DecodeLegacyV1Raw(v2.SessionRecord{State: v2.StateSeated, Raw: rec.Raw}); ok {
+		t.Fatal("v2 row was accepted by legacy-v1 compatibility decoder")
 	}
 }
 
@@ -1036,8 +1075,8 @@ func TestTwoProcessLabelClaimsOneWinner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owner := ActiveLabelOwner(recs, "shared", ""); owner == nil {
-		t.Fatal("legacy resolver sees no shared owner")
+	if owner := NonRetiredLabelOwner(recs, "shared", ""); owner == nil {
+		t.Fatal("non-retired resolver sees no shared owner")
 	}
 }
 
@@ -1933,8 +1972,8 @@ func TestAppendLegacyRetiredPreservesCloseReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(recs) != 1 || recs[0].Status != "closed" || recs[0].CloseResult != "launch_failed" || recs[0].CloseReason == "" {
-		t.Fatalf("legacy view = %+v, want closed launch_failed", recs)
+	if len(recs) != 1 || recs[0].State != v2.StateRetired || recs[0].Status != "" || recs[0].CloseResult != "launch_failed" || recs[0].CloseReason == "" {
+		t.Fatalf("four-state view = %+v, want retired launch_failed", recs)
 	}
 }
 

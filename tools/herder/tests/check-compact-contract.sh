@@ -81,13 +81,13 @@ THEN_PATH_HERMETIC="$MOCKBIN_THEN${GO_TOOLCHAIN_DIR:+:$GO_TOOLCHAIN_DIR}:/usr/bi
 fail=0
 
 # Registry rows the scenarios seed (see run_compact's COMPACT_SEED_REGISTRY).
-ROW_SELF='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"me-bus","hcom_tag":"worker","status":"active"}'
-ROW_SELF_REG='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_REG","pane_id":"w1-5","hcom_dir":"","hcom_name":"me-bus","hcom_tag":"worker","status":"active"}'
-ROW_SELF_BASH='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"bash","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active"}'
-ROW_SELF_SESS='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"me-bus","hcom_tag":"worker","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-me","tag":"worker","batch_id":"","cwd":"/x","workspace_id":"w1","branch":"main","ts":"2026-07-07T00:00:00Z"}}'
-ROW_SELF_REG_SESS='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_REG","pane_id":"w1-5","hcom_dir":"","hcom_name":"me-bus","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-me","tag":"worker","batch_id":"","cwd":"/x","workspace_id":"w1","branch":"main","ts":"2026-07-07T00:00:00Z"}}'
-ROW_PARENT='{"guid":"guid-par-0000","short_guid":"guid-par","label":"parent","role":"orchestrator","agent":"claude","terminal_id":"term_OTHER","pane_id":"w1-3","hcom_dir":"","hcom_name":"parent-bus","hcom_tag":"orchestrator","status":"active"}'
-ROW_OTHER_SESS='{"guid":"guid-oth-0000","short_guid":"guid-oth","label":"other","role":"worker","agent":"claude","terminal_id":"term_OTHER","pane_id":"w1-3","hcom_dir":"","hcom_name":"other-bus","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-x","tag":"worker","batch_id":"","cwd":"/x","workspace_id":"w1","branch":"main","ts":"2026-07-07T00:00:00Z"}}'
+ROW_SELF='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"me-bus"},"provenance":{"tag":"worker"}}'
+ROW_SELF_REG='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_REG","pane_id":"w1-5","hcom_name":"me-bus"},"provenance":{"tag":"worker"}}'
+ROW_SELF_BASH='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"bash","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2"}}'
+ROW_SELF_SESS='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"me-bus"},"provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-me","tag":"worker","cwd":"/x","workspace_id":"w1","branch":"main","ts":"2026-07-07T00:00:00Z"}}'
+ROW_SELF_REG_SESS='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_REG","pane_id":"w1-5","hcom_name":"me-bus"},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-me","tag":"worker","cwd":"/x","workspace_id":"w1","branch":"main","ts":"2026-07-07T00:00:00Z"}}'
+ROW_PARENT='{"kind":"session","guid":"guid-par-0000","event":"seated","state":"seated","label":"parent","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_OTHER","pane_id":"w1-3","hcom_name":"parent-bus"},"provenance":{"tag":"orchestrator"}}'
+ROW_OTHER_SESS='{"kind":"session","guid":"guid-oth-0000","event":"seated","state":"seated","label":"other","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_OTHER","pane_id":"w1-3","hcom_name":"other-bus"},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-x","tag":"worker","cwd":"/x","workspace_id":"w1","branch":"main","ts":"2026-07-07T00:00:00Z"}}'
 
 # run_compact <scenario> <env-mode> <args...>
 #   env-mode: guid | session | guid_session | parentguid | guid_conflict |
@@ -256,10 +256,10 @@ scenario usage_multiline     midturn         guid       $'line one\nline two'
 # ---- TASK-034: compact --then (compact-then-continue) ----
 # Rows for the --then preconditions: a claude self row with NO bus name (cannot
 # deliver a continuation) and a codex self row (--then is claude-only).
-ROW_SELF_NOBUS='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"","hcom_tag":"worker","status":"active"}'
-ROW_SELF_CODEX='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"codex","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"me-bus","hcom_tag":"worker","status":"active"}'
-ROW_SELF_WRONG_STOPPED='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"stopped-name","hcom_tag":"worker","status":"active"}'
-ROW_SELF_WRONG_LIVE='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"live-neighbor","hcom_tag":"worker","status":"active"}'
+ROW_SELF_NOBUS='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2"},"provenance":{"tag":"worker"}}'
+ROW_SELF_CODEX='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"codex","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"me-bus"},"provenance":{"tag":"worker"}}'
+ROW_SELF_WRONG_STOPPED='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"stopped-name"},"provenance":{"tag":"worker"}}'
+ROW_SELF_WRONG_LIVE='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"live-neighbor"},"provenance":{"tag":"worker"}}'
 CONT='run the pinned gate, then report DONE on thread unit-w'
 
 # Parent arm/abort shapes (HERDER_COMPACT_THEN_DRYRUN=1 in run_compact keeps the

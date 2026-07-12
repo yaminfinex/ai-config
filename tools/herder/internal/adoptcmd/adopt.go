@@ -225,8 +225,7 @@ func busCoordinates(rec v2.SessionRecord) (string, string) {
 	if rec.Seat != nil {
 		name = rec.Seat.HcomName
 		dir = rec.Seat.Namespace
-	} else {
-		legacy := registry.LegacyFromV2(rec)
+	} else if legacy, ok := registry.DecodeLegacyV1Raw(rec); ok {
 		name = legacy.HcomName
 		dir = legacy.HcomDir
 	}

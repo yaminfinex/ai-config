@@ -879,8 +879,8 @@ func TestAppendEnrichmentDoesNotResurrectClosedGUID(t *testing.T) {
 		t.Fatalf("rows = %d, want 1 closed row only", len(recs))
 	}
 	latest := registry.Resolve(recs, "guid-closed-0000")
-	if latest == nil || latest.Status != "closed" {
-		t.Fatalf("latest = %+v, want closed", latest)
+	if latest == nil || !registry.IsTerminal(*latest) {
+		t.Fatalf("latest = %+v, want retired", latest)
 	}
 }
 

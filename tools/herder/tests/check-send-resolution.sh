@@ -58,15 +58,15 @@ esac
 MOCK_HCOM
 chmod +x "$MOCKBIN/hcom"
 
-# Registry: pane p_reuse carries three ACTIVE manual rows (the reused-pane bug),
-# each bus-bound. pane p_solo carries exactly ONE active bus-bound row (single-
-# candidate path). pane p_bash carries one active BUS-LESS row.
+# Registry: pane p_reuse carries three seated manual rows (the reused-pane bug),
+# each bus-bound. pane p_solo carries exactly ONE seated bus-bound row (single-
+# candidate path). pane p_bash carries one seated BUS-LESS row.
 {
-  jq -nc --arg d "$BUS_DIR" '{guid:"guid-hera-0000", short_guid:"hera", label:"hera", role:"lead", agent:"claude", pane_id:"p_reuse", terminal_id:"term_reuse", hcom_dir:$d, hcom_name:"hera-rive", status:"active"}'
-  jq -nc --arg d "$BUS_DIR" '{guid:"guid-vore-0000", short_guid:"vore", label:"vore", role:"worker", agent:"claude", pane_id:"p_reuse", terminal_id:"term_reuse", hcom_dir:$d, hcom_name:"vore-lilo", status:"active"}'
-  jq -nc --arg d "$BUS_DIR" '{guid:"guid-zero-0000", short_guid:"zero", label:"zero", role:"worker", agent:"claude", pane_id:"p_reuse", terminal_id:"term_reuse", hcom_dir:$d, hcom_name:"zero-mano", status:"active"}'
-  jq -nc --arg d "$BUS_DIR" '{guid:"guid-solo-0000", short_guid:"solo", label:"solo", role:"worker", agent:"claude", pane_id:"p_solo", terminal_id:"term_solo", hcom_dir:$d, hcom_name:"solo-teki", status:"active"}'
-  jq -nc '{guid:"guid-bash-0000", short_guid:"bash", label:"bashrow", role:"worker", agent:"bash", pane_id:"p_bash", terminal_id:"term_bash", hcom_dir:"", hcom_name:"", status:"active"}'
+  jq -nc --arg d "$BUS_DIR" '{kind:"session", guid:"guid-alpha-0000", event:"seated", state:"seated", label:"alpha", role:"lead", tool:"claude", seat:{kind:"herdr", pane_id:"p_reuse", terminal_id:"term_reuse", namespace:$d, hcom_name:"alpha-bus"}}'
+  jq -nc --arg d "$BUS_DIR" '{kind:"session", guid:"guid-beta-0000", event:"seated", state:"seated", label:"beta", role:"worker", tool:"claude", seat:{kind:"herdr", pane_id:"p_reuse", terminal_id:"term_reuse", namespace:$d, hcom_name:"beta-bus"}}'
+  jq -nc --arg d "$BUS_DIR" '{kind:"session", guid:"guid-gamma-0000", event:"seated", state:"seated", label:"gamma", role:"worker", tool:"claude", seat:{kind:"herdr", pane_id:"p_reuse", terminal_id:"term_reuse", namespace:$d, hcom_name:"gamma-bus"}}'
+  jq -nc --arg d "$BUS_DIR" '{kind:"session", guid:"guid-solo-0000", event:"seated", state:"seated", label:"solo", role:"worker", tool:"claude", seat:{kind:"herdr", pane_id:"p_solo", terminal_id:"term_solo", namespace:$d, hcom_name:"solo-teki"}}'
+  jq -nc '{kind:"session", guid:"guid-bash-0000", event:"seated", state:"seated", label:"bashrow", role:"worker", tool:"bash", seat:{kind:"herdr", pane_id:"p_bash", terminal_id:"term_bash"}}'
 } > "$REG_DIR/registry.jsonl"
 
 fail=0
@@ -105,26 +105,26 @@ want() {  # $1=label $2=want-rc; then --grep <pat>... / --nogrep <pat>...
 
 # --- MULTI-CANDIDATE: liveness is the tiebreaker ---------------------------
 
-# One live (@hera) among two stale — deliver to the live one.
-run_send "hera-rive" 1 p_reuse "ring: DONE"
-want "reuse: one live delivers to it" 0 --grep "@hera-rive" "verify=delivered" \
+# One live bus among two stale — deliver to the live one.
+run_send "alpha-bus" 1 p_reuse "ring: DONE"
+want "reuse: one live delivers to it" 0 --grep "@alpha-bus" "verify=delivered" \
   --nogrep "refusing to guess" "refused"
 
 # terminal_id form resolves the same reused-pane candidate set.
-run_send "vore-lilo" 1 term_reuse "ring: DONE"
-want "reuse(term): one live delivers to it" 0 --grep "@vore-lilo"
+run_send "beta-bus" 1 term_reuse "ring: DONE"
+want "reuse(term): one live delivers to it" 0 --grep "@beta-bus"
 
 # Zero live — cannot tell which session owns the pane; refuse with full list.
 run_send "" 0 p_reuse "ring: DONE"
 want "reuse: none live refuses" 2 \
-  --grep "none is joined" "guid-hera-0000" "guid-vore-0000" "guid-zero-0000" "Nothing was sent" \
+  --grep "none is joined" "guid-alpha-0000" "guid-beta-0000" "guid-gamma-0000" "Nothing was sent" \
   --nogrep "verify=delivered"
 
 # Two live at once — genuine ambiguity; refuse and list the LIVE rows only.
-run_send "hera-rive zero-mano" 1 p_reuse "ring: DONE"
+run_send "alpha-bus gamma-bus" 1 p_reuse "ring: DONE"
 want "reuse: multi live refuses" 2 \
-  --grep "bus-live at once" "guid-hera-0000" "guid-zero-0000" "Nothing was sent" \
-  --nogrep "guid-vore-0000"
+  --grep "bus-live at once" "guid-alpha-0000" "guid-gamma-0000" "Nothing was sent" \
+  --nogrep "guid-beta-0000"
 
 # --- SINGLE-CANDIDATE: unchanged from pre-TASK-035 (no ambiguity path) ------
 

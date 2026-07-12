@@ -1,6 +1,7 @@
 package enrollcmd
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -10,6 +11,28 @@ import (
 
 func rec(terminalID, hcomName string) registry.Record {
 	return registry.Record{TerminalID: terminalID, HcomName: hcomName}
+}
+
+func TestStaleSeatClaimPreservesRawV1Protection(t *testing.T) {
+	seated := v2.SessionRecord{State: v2.StateSeated, Seat: &v2.Seat{PaneID: "p_current", TerminalID: "term_current"}}
+	if got, ok := staleSeatClaim(seated); !ok || got.PaneID != "p_current" || got.TerminalID != "term_current" {
+		t.Fatalf("seated claim = %+v, %v", got, ok)
+	}
+	if got, ok := staleSeatClaim(v2.SessionRecord{State: v2.StateUnseated}); ok {
+		t.Fatalf("unseated v2 row claimed a seat: %+v", got)
+	}
+	legacy := v2.SessionRecord{
+		LegacyV1: true,
+		State:    v2.StateUnseated,
+		Raw:      json.RawMessage(`{"status":"active","pane_id":"p_old","terminal_id":"term_old","hcom_name":"bus-old","hcom_dir":"/old-bus"}`),
+	}
+	if got, ok := staleSeatClaim(legacy); !ok || got.PaneID != "p_old" || got.TerminalID != "term_old" || got.HcomName != "bus-old" || got.HcomDir != "/old-bus" {
+		t.Fatalf("legacy-v1 claim = %+v, %v", got, ok)
+	}
+	legacy.Raw = json.RawMessage(`{"status":"closed","pane_id":"p_old"}`)
+	if got, ok := staleSeatClaim(legacy); ok {
+		t.Fatalf("closed legacy-v1 row claimed a seat: %+v", got)
+	}
 }
 
 func TestLabelOwnerErrorDistinguishesActiveAndDeadHolders(t *testing.T) {

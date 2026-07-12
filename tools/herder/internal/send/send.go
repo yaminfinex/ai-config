@@ -76,7 +76,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		// matches is bus liveness a tiebreaker: deliver to the sole joined row,
 		// and refuse loudly with the candidate list when 0 or >1 are live
 		// (never guess).
-		candidates := registry.ActiveCandidatesByPaneOrTerminal(recs, target)
+		candidates := registry.SeatedCandidatesByPaneOrTerminal(recs, target)
 		switch len(candidates) {
 		case 0:
 			// rec stays nil → unregistered-target path below.

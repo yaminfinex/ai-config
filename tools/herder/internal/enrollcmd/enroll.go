@@ -118,8 +118,8 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 		}
 		var rows []v2.SessionRecord
 		for _, priorV2 := range tx.Projection.Sessions() {
-			prior := registry.LegacyFromV2(priorV2)
-			if prior.Status != "active" || prior.PaneID != pane.PaneID || ptrString(prior.GUID) == guid || ptrString(prior.GUID) == preserveGUID {
+			prior, claimsSeat := staleSeatClaim(priorV2)
+			if !claimsSeat || prior.PaneID != pane.PaneID || priorV2.GUID == guid || priorV2.GUID == preserveGUID {
 				continue
 			}
 			if !shouldRetirePriorRow(prior, pane.TerminalID, busJoined) {
@@ -131,7 +131,7 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 			next.RecordedAt = nowISO
 			next.Seat = nil
 			rows = append(rows, next)
-			fmt.Fprintf(stderr, "retired stale pane row %s (%s) superseded by re-enroll\n", ptrString(prior.Label), ptrString(prior.GUID))
+			fmt.Fprintf(stderr, "retired stale pane row %s (%s) superseded by re-enroll\n", priorV2.Label, priorV2.GUID)
 		}
 
 		mechanism := "enroll"
@@ -190,6 +190,29 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 	}
 	observercmd.NudgeIfConfigured(stderr)
 	return 0
+}
+
+func staleSeatClaim(rec v2.SessionRecord) (registry.Record, bool) {
+	prior := registry.Record{}
+	if rec.LegacyV1 {
+		legacy, ok := registry.DecodeLegacyV1Raw(rec)
+		if !ok || legacy.V1Status != "active" {
+			return prior, false
+		}
+		prior.PaneID = legacy.PaneID
+		prior.TerminalID = legacy.TerminalID
+		prior.HcomName = legacy.HcomName
+		prior.HcomDir = legacy.HcomDir
+		return prior, true
+	}
+	if rec.State != v2.StateSeated || rec.Seat == nil {
+		return prior, false
+	}
+	prior.PaneID = rec.Seat.PaneID
+	prior.TerminalID = rec.Seat.TerminalID
+	prior.HcomName = rec.Seat.HcomName
+	prior.HcomDir = rec.Seat.Namespace
+	return prior, true
 }
 
 func labelOwnerError(label string, owner v2.SessionRecord) error {

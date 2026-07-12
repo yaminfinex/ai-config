@@ -55,17 +55,19 @@ REG_DIR="$(mktemp -d)"
 BUS_DIR="$(mktemp -d)"
 {
   jq -nc --arg dir "$BUS_DIR" \
-    '{guid:"guid-alpha-0000", short_guid:"alpha", label:"alpha", role:"reviewer", agent:"claude",
-      terminal_id:"term_AAA", pane_id:"p_10",
-      team:"alpha-team", hcom_dir:$dir, hcom_name:"alpha-rive", hcom_tag:"reviewer", status:"active"}'
+    '{kind:"session", guid:"guid-alpha-0000", event:"seated", state:"seated", label:"alpha", role:"reviewer", tool:"claude", team:"alpha-team",
+      seat:{kind:"herdr", terminal_id:"term_AAA", pane_id:"p_10", namespace:$dir, hcom_name:"alpha-rive"},
+      provenance:{tag:"reviewer"}}'
   jq -nc \
-    '{guid:"guid-plain-0000", short_guid:"plain", label:"plain", role:"worker", agent:"bash",
-      terminal_id:"term_BBB", pane_id:"p_20",
-      team:"", hcom_dir:"", hcom_name:"", hcom_tag:"", status:"active"}'
+    '{kind:"session", guid:"guid-plain-0000", event:"seated", state:"seated", label:"plain", role:"worker", tool:"bash",
+      seat:{kind:"herdr", terminal_id:"term_BBB", pane_id:"p_20"}}'
   jq -nc --arg dir "$BUS_DIR" \
-    '{guid:"guid-gone-0000", short_guid:"gone", label:"gone", role:"worker", agent:"claude",
-      terminal_id:"term_CCC", pane_id:"p_30",
-      team:"", hcom_dir:$dir, hcom_name:"gone-lilo", hcom_tag:"worker", status:"closed"}'
+    '{kind:"session", guid:"guid-gone-0000", event:"retired", state:"retired", label:"gone", role:"worker", tool:"claude",
+      seat:{kind:"herdr", terminal_id:"term_CCC", pane_id:"p_30", namespace:$dir, hcom_name:"gone-lilo"},
+      provenance:{tag:"worker"}}'
+  jq -nc --arg dir "$BUS_DIR" \
+    '{guid:"guid-legacy-0000", short_guid:"legacy", label:"legacy", role:"worker", agent:"claude",
+      terminal_id:"term_DDD", pane_id:"p_40", hcom_dir:$dir, hcom_name:"legacy-bus", status:"active"}'
 } > "$REG_DIR/registry.jsonl"
 
 trap 'rm -rf "$MOCKBIN" "$REG_DIR" "$BUS_DIR"' EXIT
@@ -89,6 +91,7 @@ SCENARIOS=(
   "refuse_busless_term|auto|delivered|term_BBB @MSG@"
   "refuse_unknown|auto|delivered|--json ghost @MSG@"
   "refuse_closed_pane|auto|delivered|p_30 @MSG@"
+  "refuse_legacy_active_term|auto|delivered|term_DDD @MSG@"
   "dryrun_bus|auto|delivered|--dry-run --json alpha"
   "dryrun_busless|auto|delivered|--dry-run --json plain"
   "dryrun_unknown|auto|delivered|--dry-run --json ghost"

@@ -32,8 +32,8 @@ func TestRunClosesSeatedPaneLessRowWithoutForce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := registry.Resolve(recs, "guid-ghost"); got == nil || got.Status != "active" {
-		t.Fatalf("legacy latest = %+v, want active dormant row", got)
+	if got := registry.Resolve(recs, "guid-ghost"); got == nil || got.State != v2.StateUnseated {
+		t.Fatalf("latest = %+v, want unseated dormant row", got)
 	}
 	if !strings.Contains(stdout.String(), "recorded closed ghost (guid-ghost) pane= → already_gone") {
 		t.Fatalf("stdout = %q, want recorded-closed line", stdout.String())
@@ -197,8 +197,8 @@ func TestAppendClosedRecordsPaneNotFoundAsUnseated(t *testing.T) {
 	if !appended {
 		t.Fatalf("appendClosed appended = false, want true")
 	}
-	if closed.Status != "closed" || closed.CloseResult != "error" || closed.CloseReason != "pane_not_found" {
-		t.Fatalf("closed legacy row = %+v", closed)
+	if closed.State != v2.StateUnseated || closed.CloseResult != "error" || closed.CloseReason != "pane_not_found" {
+		t.Fatalf("closed fact row = %+v", closed)
 	}
 	if got := latestSession(t, registryPath, "guid-ghost"); got.Event != "unseated" || got.State != v2.StateUnseated || got.CloseResult != "error" || got.CloseReason != "pane_not_found" || got.Seat != nil {
 		t.Fatalf("latest row = %+v, want unseated pane_not_found without seat", got)
