@@ -3,10 +3,10 @@ id: TASK-167
 title: >-
   registry check gates: port fail-closed declared-test validation to sibling
   gates
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-12 13:32'
-updated_date: '2026-07-12 13:54'
+updated_date: '2026-07-12 14:24'
 labels: []
 dependencies: []
 priority: medium
@@ -21,13 +21,13 @@ Adversarial review of the write-discipline gate hardening found the same defect 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 check-registry-migration.sh no longer declares any nonexistent test; the mixed-file migration invariant is anchored by a real, executing test or explicitly flagged
-- [ ] #2 Both migration and rotation gates validate every declared name exists and executes, fail closed on renames/deletions/skips, and include the missing-name self-probe
-- [ ] #3 Registry gates and full herder go test suite pass
+- [x] #1 check-registry-migration.sh no longer declares any nonexistent test; the mixed-file migration invariant is anchored by a real, executing test or explicitly flagged
+- [x] #2 Both migration and rotation gates validate every declared name exists and executes, fail closed on renames/deletions/skips, and include the missing-name self-probe
+- [x] #3 Registry gates and full herder go test suite pass
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Optional hardening from the write-discipline delta review, fold in while porting the idiom: (1) declaration floor should count DISTINCT names, not entries (a duplicate entry keeping the count satisfied is never legitimate — refuse on any duplicate); (2) the evidence self-probe pins rejection of an absent name but not the PASS-evidence half — a probe with synthetic skip-shaped evidence (helper must reject a name that has RUN but no PASS) closes the sliver where the PASS grep is dropped and a t.Skip-ed test sails through.
+Merged c7b170c (worker commit 29f093a). Migration ghost replaced by the two refusal anchors (TestLockedWriteRefusesInjectedLegacyV1RowInBornV2Registry, TestLockedWriteRefusesLegacyV1RowInPlantedMigrationArchive) — reviewer traced the ghost's full lineage (renamed in f6fc2f2 leaving a prefix behind an anchored regex = ghost birth; deleted in 2fce98e) and confirmed the anchors are the ghost's direct descendants with the buggy accept-expectation inverted to refusal; no closer candidate among all 13 migration/legacy tests. Both folded residuals shipped on all three gates: distinct-name floor (duplicate declarations red) and skip-shaped evidence probe (dropping only the PASS grep goes red). Adversarial review (opus): 16/16 mutation matrix red both gates, cache-replay safe, empty -list fails closed, APPROVE zero fix rounds; 2 non-blocking P3 notes (RUN-grep boundary asymmetry - no constructible failure; undeclared refusal sibling TestLockedWriteRefusesLegacyV1AppendToMintedRegistry as optional future declaration; note: floors are equality pins - bump when adding anchors). Gates 53/53 independent + post-merge 53/53. Sweep clean.
 <!-- SECTION:NOTES:END -->
