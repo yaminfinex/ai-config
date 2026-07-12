@@ -355,7 +355,7 @@ func markDuplicateRebinds(results []result) {
 		}
 		for _, idx := range indexes {
 			results[idx].Outcome = "ambiguous"
-			results[idx].Detail = fmt.Sprintf("fallback candidate terminal %s is claimed by multiple seated sessions; refusing to guess", term)
+			results[idx].Detail = fmt.Sprintf("fallback candidate terminal %s is claimed by multiple non-retired sessions; refusing to guess", term)
 			results[idx].Write = "none"
 		}
 	}
