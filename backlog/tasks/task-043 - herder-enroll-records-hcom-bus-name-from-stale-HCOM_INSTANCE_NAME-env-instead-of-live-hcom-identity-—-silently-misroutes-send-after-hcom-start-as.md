@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-08 23:41'
+updated_date: '2026-07-12 06:52'
 labels: []
 dependencies: []
 priority: medium
@@ -39,3 +39,9 @@ created: 2026-07-08 10:19
 - [ ] #2 the corrective path needs no variant-label dance: fixing a wrong-name row does not require enrolling under a throwaway label first (or the constraint is documented in the refusal text)
 - [ ] #3 suite covers stale-env enroll and the mismatch refusal/warning
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+WRITE PATH NAMED (2026-07-12 investigation): enrollcmd.Run writes HcomName: os.Getenv("HCOM_INSTANCE_NAME") without consulting the live bus — confirmed as the minting site of the lale/viru poisoned coordinate (launch wrapper exported the stale name; enroll copied it). Downstream cost proven: compact --then armed with the poisoned name and dropped fail-closed after 15m (twice). Dispatching in identity-integrity unit A1 with TASK-065 + a compact-then arm-time preflight.
+<!-- SECTION:NOTES:END -->
