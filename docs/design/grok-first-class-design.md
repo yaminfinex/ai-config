@@ -36,9 +36,9 @@ Four cooperating parts per Grok seat, plus one durable store. Names used through
   machine. Survives every process in this diagram.
 - **Binder** — a per-seat herder-owned daemon. The only spool writer, enforced by an
   exclusive per-seat OS lock with generation fencing (DR-2). Binds the seat to hcom
-  (`hcom start` for identity, committed-cursor `hcom events` queries for inbound
-  pickup, `hcom send` for outbound), owns the receipt state machine, serves a per-seat
-  unix socket to the tap and the MCP server.
+  (`hcom start` for identity, anonymous committed-cursor `hcom events --full` drains
+  for inbound pickup, `hcom send` for outbound), owns the receipt state machine,
+  serves a per-seat unix socket to the tap and the MCP server.
 - **Tap** — `herder grok tap --seat <guid>`: the command Grok itself runs as a
   persistent monitor. A dumb pipe: connects to the binder socket and prints exactly the
   lines the binder hands it. Prints nothing else, ever.
@@ -50,8 +50,9 @@ Four cooperating parts per Grok seat, plus one durable store. Names used through
   that transport, not individually characterized vendor capabilities.
 
 ```text
-hcom bus (events store: id-addressed, non-destructive)
-   │  hcom events --wait, gated by binder-owned committed cursor (id > C)
+hcom bus (events store: id-addressed, non-destructive to anonymous reads)
+   │  anonymous `hcom events --full` DRAIN, gated by journal-derived cursor (id > C)
+   │  (anonymous `--wait` edge-trigger between empty drains — latency only)
    ▼
 binder ──────────────► spool (append-only journal; fsync before wake)
    │ per-seat unix socket
@@ -75,16 +76,48 @@ delivery bridge, receipts, lifecycle, observation. hcom is consumed exclusively 
 its public generic verbs, executed by the binder, a herder process:
 
 - `hcom start` — bus identity (adhoc registration; `--as` reclaim on restart);
-- `hcom events` — **the inbound pickup source of record.** The events store is
-  id-addressed, SQL-queryable, and **non-destructive**: querying it does not consume
-  unread state or advance any hcom-side cursor, and each row carries the full message
-  envelope (event id, sender, text, intent, thread, mentions, scope, delivered_to,
-  reply_to). All three properties were verified against installed hcom 0.7.23 on an
-  isolated scratch bus (§Design-time verification, V1–V4). The binder queries with its
-  **own committed cursor** — `--type message --sql "id > <C> AND (broadcast OR seat
-  mentioned)"` — in blocking `--wait` mode, so pickup is level-triggered against
-  durable state the binder alone paces.
-- `hcom send --name` — outbound.
+- `hcom events --full` — **the inbound pickup source of record, as an anonymous
+  non-wait DRAIN loop.** The events store is id-addressed, SQL-queryable, and — for
+  identity-free invocations — non-destructive, with each `--full` row carrying the
+  raw full envelope (event id, sender, text, intent, thread, mentions, scope,
+  `delivered_to`, `reply_to`/`reply_to_local`). Verified against installed hcom
+  0.7.23 on isolated scratch buses, as corrected by independent adversarial
+  reproduction (§Design-time verification, V1–V4). The pickup contract, exactly:
+
+  1. **Drain** (the only durable primitive): anonymous `hcom events --full --type
+     message --sql "id > <C> AND EXISTS (SELECT 1 FROM json_each(msg_delivered_to)
+     WHERE value='<seat>')"` — no `--wait`. Append+fsync every returned row to the
+     journal; derive C as the max journaled event id; repeat until the query returns
+     empty. `msg_delivered_to` is hcom's own canonical routing snapshot: it covers
+     direct, thread, tag, and broadcast fanout exactly as hcom routed them and
+     excludes the sender — a mention-or-broadcast predicate is wrong (it returns the
+     seat its **own** broadcasts, and thread fanout keeps the sender in `mentions`;
+     both self-delivery bugs reproduced, V3).
+  2. **Edge trigger** (latency optimization only, zero correctness weight): after a
+     drain returns empty, block on the same anonymous query with `--wait`. On any
+     wake **or timeout**, return to step 1. `--wait` is structurally unfit as the
+     durable primitive: it looks back only 10 seconds and then initializes a private
+     cursor to the database's current global max — a matching row older than 10s is
+     silently unreachable (reproduced: an 11s-aged message timed out; V4). Only the
+     drain reads from the binder's cursor, so backlog of any age is picked up.
+  3. **Identity-free reads, explicitly scrubbed**: every read invocation (drain and
+     wait) runs with **no hcom identity** — no `--name`, and an environment scrubbed
+     of hcom identity/session-detection variables (`HCOM_PROCESS_ID` and tool-session
+     markers). A read under a registered identity triggers hcom's post-dispatch
+     pending-message delivery: it appends formatted unread messages to stdout
+     (corrupting the machine-read output) and advances the seat's internal cursor
+     (reproduced: unread 2 → 0 from a named query; V1). Anonymous `--wait` polls
+     internally at ~500ms rather than holding a per-identity endpoint — accepted;
+     correctness never rides on the wait path. `--full` is mandatory on every
+     invocation: the plain output strips `scope`, `delivered_to`, and reply fields,
+     and no `--json` flag exists (V2). The raw full envelope is journaled as
+     returned — including both `reply_to` and `reply_to_local` — never reconstructed.
+- `hcom send --name` — outbound: the one identity-bearing verb the binder runs.
+  Because any named command may trigger hcom's post-dispatch pending delivery onto
+  stdout, the binder treats send output defensively (exit code plus tolerant parse)
+  — and an implicit drain there is harmless to pickup correctness, which rides
+  exclusively on the anonymous drain and the journal-derived cursor, never on hcom's
+  internal per-identity cursor.
 
 `hcom listen` is **explicitly rejected as a pickup source**: hcom advances the
 instance's internal `last_event_id` before printing, outside binder control — a
@@ -145,15 +178,17 @@ enforces this with a zero-byte-output test (§8, T17).
 
 **hcom-side "delivered" honesty.** Herder's spool receipt is the **only**
 authoritative delivery signal for Grok seats; every herder surface (send verification,
-registry, observer) reports from the spool. Because the binder never runs `hcom
-listen`, hcom's own unread counters for the seat are never consumed and will
-visibly drift upward — family documentation states plainly that hcom-native
-unread/read markers for Grok rows are meaningless and non-authoritative. Two
-non-blocking upstream niceties remain (owner decision, §10): a roster tool label for
-generically-started identities (an adhoc `hcom start` row labels itself from the
-detected calling environment, not the represented tool — §Design-time verification,
-V6), and optionally a native non-destructive fetch/commit API that would let the
-unread markers track reality.
+registry, observer) reports from the spool. hcom's own unread counters for the seat
+are meaningless for Grok rows and documented as non-authoritative: the binder's
+reads are anonymous and never consume them, while its named sends may incidentally
+clear them via hcom's post-dispatch delivery — so they can drift upward or vanish,
+correlated with nothing. Three non-blocking upstream niceties remain (owner
+decision, §10): a roster tool label for generically-started identities (an adhoc
+`hcom start` row labels itself from the detected calling environment, not the
+represented tool — §Design-time verification, V6); a machine-readable no-delivery
+read mode (so daemon reads would not depend on identity scrubbing, and blocking
+reads would not need the anonymous ~500ms poll); and a native non-destructive
+fetch/commit API that would let the unread markers track reality.
 
 ## DR-2 — The receipt state machine
 
@@ -570,6 +605,21 @@ Launch/lifecycle contract tests:
   change are fenced with reconnect errors; the journal shows no duplicate surfacing
   and no ack accepted by a stale generation.
 
+hcom surface contract tests — run against the **real installed hcom binary** on an
+isolated bus (not the stub), because they pin the exact 0.7.23 behaviors the pickup
+contract was corrected for:
+
+- **T24 stale backlog beyond the wait lookback** — a message delivered while the
+  binder is down, aged well past 10 seconds, is picked up by the restart drain (the
+  `--wait` path alone provably cannot return it; the drain must).
+- **T25 identity-free reads** — drain and wait invocations run with no `--name` and
+  a scrubbed environment; their stdout is exactly the `--full` event rows (no
+  post-dispatch message delivery appended); the seat's hcom unread state is unchanged
+  by reads.
+- **T26 self-delivery exclusion** — the seat's own broadcast and its own
+  thread-fanout sends never enter its spool (the `msg_delivered_to` predicate
+  excludes the sender); a peer's broadcast, thread, tag, and direct sends all do.
+
 **Live smoke (one, isolated, gated):** real Grok 0.2.93, throwaway `HOME`/`GROK_HOME`/
 `HCOM_DIR`/herder state, owner-authorized spend. Proves bidirectionally: an inbound
 message reaches `delivered` through the full correlated chain, and an outbound
@@ -585,9 +635,11 @@ the lifecycle and observer units land (§11, "Activation is its own gate").
   across binder restarts. (Registration itself, envelope, and pickup are settled —
   §Design-time verification.)
 - **P2** — *resolved at design time.* `hcom listen` is disqualified as pickup
-  (destructive internal cursor, `{from,text}`-only JSON) and `hcom events` is
-  qualified (non-destructive, id-addressed, full envelope, blocking `--wait`); see
-  §Design-time verification V1–V5. No implementation probe remains.
+  (destructive internal cursor, `{from,text}`-only JSON) and anonymous `hcom events
+  --full` draining is qualified as the source of record, with `--wait` demoted to a
+  post-drain edge trigger and reads required to be identity-free; see §Design-time
+  verification V1–V5 as corrected by independent reproduction. No implementation
+  probe remains.
 - **P3** Grok TUI positional initial-prompt argv: does it start turn 1 unattended?
   (Fallback path and its owner flag: DR-3.)
 - **P4** Bus MCP server child environment: does Grok pass `GROK_SESSION_ID` (or
@@ -617,7 +669,9 @@ the lifecycle and observer units land (§11, "Activation is its own gate").
    verification), so implementation is not blocked on upstream hcom. What remains is
    file-or-hold niceties: (a) a `grok` tool label for generically-started identities
    so the hcom roster can say what herder's registry says (adhoc rows currently label
-   from the detected environment — V6); (b) a native non-destructive fetch/commit API
+   from the detected environment — V6); (b) a machine-readable **no-delivery read
+   mode** for daemon consumers, removing the need for identity scrubbing and the
+   anonymous ~500ms wait poll (V1/V4); (c) a native non-destructive fetch/commit API
    so hcom's unread markers could track reality instead of being documented as
    non-authoritative for Grok rows (DR-1).
 5. **Boot-arming fallback (conditional)** — only if probe P3 falsifies the argv boot
@@ -632,7 +686,7 @@ nonfunctional family is forbidden until the live smoke is green.
 
 | # | Unit | Territory (fence) | Gate |
 |---|---|---|---|
-| U1 | **Transport core**: spool journal + state machine, binder (incl. supervision, seat lock/generation fencing, hcom generic binding), tap, bus MCP server, `herder grok <tap\|mcp\|bridge>` subcommands. No spawn wiring — nothing user-reachable changes. | New internal package(s) only (e.g. `tools/herder/internal/grokbridge/`) + `herder grok` command registration. | T1–T18 + T23 hermetic (mock Grok + isolated bus); probes P1/P4/P5/P7 answered and recorded. |
+| U1 | **Transport core**: spool journal + state machine, binder (incl. supervision, seat lock/generation fencing, hcom generic binding), tap, bus MCP server, `herder grok <tap\|mcp\|bridge>` subcommands. No spawn wiring — nothing user-reachable changes. | New internal package(s) only (e.g. `tools/herder/internal/grokbridge/`) + `herder grok` command registration. | T1–T18 + T23 hermetic (mock Grok + isolated bus); T24–T26 against the real hcom binary; probes P1/P4/P5/P7 answered and recorded. |
 | U2 | **Launch contract, behind an activation gate**: `launchcmd`/`spawncmd` family wiring, version/capability gate, dedicated `GROK_HOME` seeding, session preassign + verify, doctrine composition, flag mapping + refusals, boot arming prompt. `--agent grok` refuses with a clear "family not activated" error unless the explicit activation config/env is set — the smoke runs gated. | `launchcmd`, `spawncmd` grok branches; `grokbridge` consumed, not modified. | T19–T22 + the **isolated live smoke** (owner spend, §10.3) run under the activation flag. |
 | U3 | **Lifecycle & identity**: resume/fork/cull paths, subagent guards, registry capability flags, wake-degraded reporting. | `lifecyclecmd`, registry schema additions. | T14–T16 + resume/fork live re-check ridealong on the U2 smoke pattern. |
 | U4 | **Observer & transcript**: `chat_history.jsonl` adapter, `events.jsonl` labeled enrichment, honest-unknown reconciliation. | `observercmd` + transcript plumbing. | Adapter tests against recorded session fixtures; no synthesized status (assert `unknown` preserved). |
@@ -663,19 +717,42 @@ bus); Grok probes were `--version`/`--help` only — no session, no inference, s
 one broadcast between them; interleave `hcom list` (unread counts), `hcom events`
 queries, and one `hcom listen`.
 
-- **V1 — `hcom events` is non-destructive.** The recipient's unread count (`+1` in
-  `hcom list`) was unchanged after an events query that returned the message in full.
-- **V2 — events rows carry the full envelope.** `--json` rows include the event `id`,
-  `type`, `ts`, and `data` with `from`, `text`, `intent`, `mentions[]`, `thread`; the
-  documented `events_v` SQL view additionally exposes `msg_scope`,
-  `msg_delivered_to[]`, `msg_reply_to`.
-- **V3 — committed-cursor queries work.** `hcom events --type message --sql "id > <C>
-  AND (msg_scope='broadcast' OR EXISTS (SELECT 1 FROM json_each(msg_mentions) WHERE
-  value='<seat>'))"` returned exactly the direct-plus-broadcast set addressed to the
-  identity, in id order.
-- **V4 — `--wait` blocks and returns matches** (returned immediately when a matching
-  row already existed), giving the binder a blocking pickup with the same
-  non-destructive semantics.
+V1–V4 were first probed while drafting, then **corrected by an independent
+adversarial reproduction** (isolated buses, `env -i` identity scrubbing, real 0.7.23
+binary). The entries below state the corrected findings; where the original probe
+overclaimed, the correction is spelled out.
+
+- **V1 — `hcom events` is non-destructive for ANONYMOUS reads only.** The original
+  probe (a `--name`d query; unread `+1` unchanged) was condition-dependent luck. The
+  reproduction showed that a read under a registered identity triggers hcom's
+  post-dispatch pending delivery: formatted unread messages are appended to stdout
+  and the identity's internal cursor advances (unread observed going 2 → 0 from a
+  named query). Non-destructiveness — and clean machine output — hold only for
+  identity-free invocations, which DR-1 therefore mandates and T25 enforces.
+- **V2 — the full envelope requires `--full`; there is no `--json` flag.** `hcom
+  events --full` rows include the event `id`, `type`, `ts`, and `data` with `from`,
+  `text`, `intent`, `mentions[]`, `thread`, `scope`, `delivered_to[]`, and both
+  `reply_to` (string) and `reply_to_local` (numeric). Plain `hcom events` output is
+  streamlined and strips `scope`, `delivered_to`, and reply fields (and, for raw-SQL
+  queries, `mentions`). The original entry's "`--json` rows" phrasing was wrong.
+  DR-1 mandates `--full` on every invocation and journals the raw envelope.
+- **V3 — committed-cursor queries work; the routing predicate must be
+  `msg_delivered_to`.** `--sql "id > <C> AND EXISTS (SELECT 1 FROM
+  json_each(msg_delivered_to) WHERE value='<seat>')"` returns exactly what hcom
+  routed to the seat (direct, thread, tag, broadcast), in id order, excluding the
+  sender. The original mention-or-broadcast predicate was reproduced returning the
+  seat its **own** broadcast (`scope:"broadcast"` events match `msg_scope` regardless
+  of recipient), and thread fanout keeps the sender in `mentions` — both would feed a
+  seat its own outbound as inbound. T26 pins the corrected predicate.
+- **V4 — `--wait` blocks and returns FUTURE matches only; it cannot serve backlog.**
+  Reproduction: a message sent ~1s after an anonymous `--wait` started was returned
+  in ~1.5s; a message aged 11 seconds timed out (`--wait 2`, exit 1) despite matching
+  the SQL. Cause: the wait path looks back only 10 seconds, then initializes a
+  private cursor at the database's current global max — not at the caller's `id > C`
+  bound — so older matching rows are unreachable, and repeating the wait does not
+  help. The original entry ("returned immediately when a match already existed")
+  had not tested blocking on aged rows. Hence DR-1: drain is the source of record;
+  `--wait` is an edge trigger between empty drains; T24 pins the stale-backlog case.
 - **V5 — `hcom listen` is destructive and lossy, confirming its disqualification.**
   `listen --json` returned `{from,text}` only — no id, intent, or thread — and
   consumed the unread state (the `+1` cleared), i.e. the instance cursor advanced
