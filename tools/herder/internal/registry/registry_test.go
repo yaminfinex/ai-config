@@ -363,12 +363,13 @@ func TestLockedWriteRefusalIsAtomicAndReportedPerCandidate(t *testing.T) {
 		return []v2.SessionRecord{
 			{GUID: "guid-valid", Label: "valid", State: v2.StateSeated},
 			{GUID: "guid-refused", Label: "taken", State: v2.StateSeated},
+			{GUID: "guid-third", Label: "third", State: v2.StateSeated},
 		}, nil
 	})
 	if err != nil {
 		t.Fatalf("candidate refusal returned batch error: %v", err)
 	}
-	if len(outcomes) != 2 {
+	if len(outcomes) != 3 {
 		t.Fatalf("outcomes = %+v, want one per candidate", outcomes)
 	}
 	for i, outcome := range outcomes {
@@ -378,6 +379,9 @@ func TestLockedWriteRefusalIsAtomicAndReportedPerCandidate(t *testing.T) {
 	}
 	if !strings.Contains(outcomes[0].Reason, "batch refused atomically") || !strings.Contains(outcomes[1].Reason, `label "taken" already belongs`) {
 		t.Fatalf("outcomes = %+v, want atomic-block reason followed by candidate-specific reason", outcomes)
+	}
+	if !strings.Contains(outcomes[2].Reason, "candidate was not evaluated") {
+		t.Fatalf("outcomes[2] = %+v, want unevaluated reason", outcomes[2])
 	}
 	if got := mustReadFile(t, path); !bytes.Equal(got, before) {
 		t.Fatalf("registry changed after atomic refusal:\nbefore=%s\nafter=%s", before, got)
