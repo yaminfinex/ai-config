@@ -1,9 +1,10 @@
 ---
 id: TASK-150
 title: 'herder registry: typed per-candidate write outcomes'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-10 10:15'
+updated_date: '2026-07-12 07:53'
 labels: []
 dependencies: []
 references:
