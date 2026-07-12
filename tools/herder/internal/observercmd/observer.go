@@ -26,6 +26,7 @@ import (
 const (
 	defaultSweepInterval     = 30 * time.Second
 	defaultReconfirmInterval = time.Hour
+	doctrineReceiptRetention = 24 * time.Hour
 	lockFileName             = "observer.lock"
 )
 
@@ -213,8 +214,7 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 		st.ProtocolDetail = fmt.Sprintf("source=%s connection_gap=%t", firstNonEmpty(hd.source, "unknown"), hd.connectionGap)
 	}
 	bus := loadBusState()
-	liveTokens, authoritativeTokens := liveDoctrineTokens(hd, bus)
-	st.DoctrineDeliveries = priorDoctrineDeliveries(stateDir, liveTokens, authoritativeTokens)
+	st.DoctrineDeliveries = priorDoctrineDeliveries(stateDir, hd, bus, now)
 	cands := buildCandidates(proj, hd, bus, now)
 	doctrine := doctrineCandidates(proj, hd, bus, st.DoctrineDeliveries, joinedHcomRow)
 	flags := advisoryFlags(proj, hd)
@@ -235,19 +235,51 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 }
 
 // Receipt loss or status rotation deliberately fails toward re-delivery: informational doctrine spam is safer than silence.
-func priorDoctrineDeliveries(stateDir string, liveTokens map[string]bool, prune bool) map[string]string {
+func priorDoctrineDeliveries(stateDir string, hd herdrState, bus busState, now time.Time) map[string]string {
 	receipts := map[string]string{}
 	prior, err := observerstatus.Read(observerstatus.PathForStateDir(stateDir))
 	if err != nil {
 		return receipts
 	}
 	for token, stamp := range prior.DoctrineDeliveries {
-		if prune && !liveTokens[token] {
-			continue
+		if keepDoctrineReceipt(token, stamp, hd, bus, now) {
+			receipts[token] = stamp
 		}
-		receipts[token] = stamp
 	}
 	return receipts
+}
+
+func keepDoctrineReceipt(token, stamp string, hd herdrState, bus busState, now time.Time) bool {
+	if !hd.available || !bus.available {
+		return true
+	}
+	processID, sessionID, ok := strings.Cut(token, ":")
+	if !ok || processID == "" || sessionID == "" {
+		return false
+	}
+	sameProcess := false
+	sameSession := false
+	for _, row := range bus.rows {
+		if row.LaunchContext.ProcessID == processID && row.SessionID == sessionID {
+			return true
+		}
+		sameProcess = sameProcess || row.LaunchContext.ProcessID == processID
+		sameSession = sameSession || row.SessionID == sessionID
+	}
+	if sameProcess || sameSession {
+		return false
+	}
+	for _, pane := range hd.byTerm {
+		if pane.AgentSession == sessionID {
+			return true
+		}
+	}
+	deliveredAt, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		return false
+	}
+	age := now.Sub(deliveredAt)
+	return age < doctrineReceiptRetention || age < 0
 }
 
 func loadProjection(path string, stderr io.Writer) (*v2.Projection, error) {
@@ -489,17 +521,6 @@ func doctrineCorrelations(hd herdrState, bus busState) []doctrineCorrelation {
 		})
 	}
 	return out
-}
-
-func liveDoctrineTokens(hd herdrState, bus busState) (map[string]bool, bool) {
-	if !hd.available || !bus.available {
-		return nil, false
-	}
-	tokens := map[string]bool{}
-	for _, correlation := range doctrineCorrelations(hd, bus) {
-		tokens[correlation.token] = true
-	}
-	return tokens, true
 }
 
 func liveCodexPID(pi herdrcli.ProcessInfo) int {

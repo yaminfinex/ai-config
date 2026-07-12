@@ -196,22 +196,43 @@ func TestDoctrineReceiptTokenIgnoresCodexProcessOrdering(t *testing.T) {
 	}
 }
 
-func TestPriorDoctrineDeliveriesPrunesOnlyWhenLiveSnapshotIsAuthoritative(t *testing.T) {
+func TestPriorDoctrineDeliveriesRequiresPositiveEvidenceOrRetentionExpiry(t *testing.T) {
 	stateDir := t.TempDir()
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
 	status := observerstatus.Status{DoctrineDeliveries: map[string]string{
-		"live:sid": "2026-07-12T00:00:00Z",
-		"dead:sid": "2026-07-11T00:00:00Z",
+		"live-process:sid-live":          "2026-07-10T00:00:00Z",
+		"replaced-process:sid-old":       "2026-07-12T11:59:00Z",
+		"old-process:sid-moved":          "2026-07-12T11:59:00Z",
+		"recent-process:sid-unconfirmed": "2026-07-12T11:59:00Z",
+		"unconfirmed-process:sid-gone":   "2026-07-10T00:00:00Z",
 	}}
 	if err := observerstatus.WriteAtomic(observerstatus.PathForStateDir(stateDir), status); err != nil {
 		t.Fatal(err)
 	}
-	pruned := priorDoctrineDeliveries(stateDir, map[string]bool{"live:sid": true}, true)
-	if len(pruned) != 1 || pruned["live:sid"] == "" {
-		t.Fatalf("pruned receipts = %v, want only live:sid", pruned)
+	hd := herdrState{
+		available: true,
+		byTerm: map[string]herdrcli.Pane{
+			"term-live": {PaneID: "pane-live", TerminalID: "term-live", AgentSession: "sid-live"},
+		},
+		procs: map[string]herdrcli.ProcessInfo{}, // Per-pane process_info failed this sweep.
 	}
-	preserved := priorDoctrineDeliveries(stateDir, nil, false)
-	if len(preserved) != 2 {
-		t.Fatalf("receipts during transport gap = %v, want both preserved", preserved)
+	bus := busState{available: true, rows: map[string]hcomRow{
+		"replacement": {
+			Name: "replacement", Tool: "codex", SessionID: "sid-new", ProcessBound: boolPtr(true),
+			LaunchContext: hcomLaunchContext{PaneID: "pane-replaced", ProcessID: "replaced-process"},
+		},
+		"moved": {
+			Name: "moved", Tool: "codex", SessionID: "sid-moved", ProcessBound: boolPtr(true),
+			LaunchContext: hcomLaunchContext{PaneID: "pane-moved", ProcessID: "new-process"},
+		},
+	}}
+	pruned := priorDoctrineDeliveries(stateDir, hd, bus, now)
+	if len(pruned) != 2 || pruned["live-process:sid-live"] == "" || pruned["recent-process:sid-unconfirmed"] == "" {
+		t.Fatalf("pruned receipts = %v, want live and recently unconfirmed receipts preserved", pruned)
+	}
+	preserved := priorDoctrineDeliveries(stateDir, herdrState{}, busState{}, now)
+	if len(preserved) != 5 {
+		t.Fatalf("receipts during whole-transport gap = %v, want all preserved", preserved)
 	}
 }
 
