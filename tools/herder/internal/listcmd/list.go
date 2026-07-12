@@ -60,13 +60,20 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if opts.mode == "teams" {
 		return runTeams(stdout)
 	}
-	if opts.mode == "table" {
-		failures, err := continuationstate.Unresolved("")
+	var failures []continuationstate.Record
+	if opts.mode == "table" || opts.mode == "json" {
+		var warnings []error
+		var err error
+		failures, warnings, err = continuationstate.Unresolved("")
+		for _, warning := range warnings {
+			fmt.Fprintf(stderr, "herder list: ignoring continuation record: %v\n", warning)
+		}
 		if err != nil {
 			fmt.Fprintf(stderr, "herder list: continuation state unavailable: %v. Inspect %s for durable records.\n", err, continuationstate.DefaultDir())
-		} else {
-			renderContinuationFailures(stdout, failures)
 		}
+	}
+	if opts.mode == "table" {
+		renderContinuationFailures(stdout, failures)
 	}
 
 	registryPath := registry.DefaultPath()
@@ -123,7 +130,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			if !opts.includeAll && (rec.Status != "active" || rec.Archived) {
 				continue
 			}
-			fmt.Fprintln(stdout, string(reconciledJSON(rec, idx, observerAdviceFor(advice, ptrString(rec.GUID)))))
+			out := reconciledJSON(rec, idx, observerAdviceFor(advice, ptrString(rec.GUID)))
+			fmt.Fprintln(stdout, string(appendUnresolvedContinuations(out, failures)))
 		}
 		return 0
 	}
@@ -444,6 +452,17 @@ func reconciledJSON(rec registry.Record, idx liveIndex, advice []observerstatus.
 		`"live_matched_by":` + jsonString(matchedBy),
 	}, adviceFields...)
 	return appendJSONFields(rec.Raw, fields...)
+}
+
+func appendUnresolvedContinuations(out []byte, failures []continuationstate.Record) []byte {
+	if len(failures) == 0 {
+		return out
+	}
+	b, err := json.Marshal(failures)
+	if err != nil {
+		return out
+	}
+	return appendJSONFields(out, `"unresolved_continuations":`+string(b))
 }
 
 func loadObserverAdvice() map[string][]observerstatus.Flag {

@@ -212,7 +212,7 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 	doctrine := doctrineCandidates(proj, hd, bus, st.DoctrineDeliveries, joinedHcomRow)
 	flags := advisoryFlags(proj, hd)
 	flags = append(flags, epochFlags(proj, hd, bus)...)
-	flags = append(flags, continuationFailureFlags(stateDir, stderr)...)
+	flags = append(flags, continuationFailureFlags(proj, stateDir, stderr)...)
 	summary := applyCandidates(registryPath, cands, stderr)
 	deliverDoctrine(doctrine, st.DoctrineDeliveries, sendDoctrine, now)
 	for _, rec := range proj.Sessions() {
@@ -952,16 +952,24 @@ func advisoryFlags(proj *v2.Projection, hd herdrState) []observerstatus.Flag {
 	return flags
 }
 
-func continuationFailureFlags(stateDir string, stderr io.Writer) []observerstatus.Flag {
-	records, err := continuationstate.Unresolved(filepath.Join(stateDir, "continuations"))
+func continuationFailureFlags(proj *v2.Projection, stateDir string, stderr io.Writer) []observerstatus.Flag {
+	records, warnings, err := continuationstate.Unresolved(filepath.Join(stateDir, "continuations"))
+	for _, warning := range warnings {
+		fmt.Fprintf(stderr, "herder observer sweep: ignoring continuation record: %v\n", warning)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "herder observer sweep: continuation state unavailable: %v\n", err)
 		return nil
 	}
 	flags := make([]observerstatus.Flag, 0, len(records))
 	for _, rec := range records {
+		guid, label, ok := continuationTarget(proj, rec.Target)
+		if !ok {
+			continue
+		}
 		flags = append(flags, observerstatus.Flag{
-			Label:     "@" + rec.Target,
+			GUID:      guid,
+			Label:     label,
 			Type:      "failed-continuation",
 			Severity:  "warning",
 			Detail:    fmt.Sprintf("detached continuation %s failed at %s: %s (log: %s)", rec.ID, rec.UpdatedAt, rec.Reason, rec.LogPath),
@@ -969,6 +977,21 @@ func continuationFailureFlags(stateDir string, stderr io.Writer) []observerstatu
 		})
 	}
 	return flags
+}
+
+func continuationTarget(proj *v2.Projection, target string) (string, string, bool) {
+	var guid, label string
+	for _, rec := range proj.Sessions() {
+		if rec.Seat == nil || rec.Seat.HcomName != target {
+			continue
+		}
+		if guid != "" {
+			return "", "", false
+		}
+		guid = rec.GUID
+		label = rec.Label
+	}
+	return guid, label, guid != ""
 }
 
 func epochFlags(proj *v2.Projection, hd herdrState, bus busState) []observerstatus.Flag {

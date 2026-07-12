@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	Schema  = "herder.continuation.v1"
-	dirName = "continuations"
+	Schema         = "herder.continuation.v1"
+	dirName        = "continuations"
+	archiveDirName = "archive"
 )
 
 type Record struct {
@@ -101,35 +102,48 @@ func Advance(dir string, rec Record) error {
 	rec.Lifecycle = append(rec.Lifecycle, Transition{
 		Status: rec.Status, Timestamp: rec.UpdatedAt, Reason: rec.Reason,
 	})
-	return Write(dir, rec)
+	if err := Write(dir, rec); err != nil {
+		return err
+	}
+	if rec.Status == "delivered" || rec.Status == "queued" {
+		return archive(dir, rec.ID)
+	}
+	return nil
 }
 
-func ReadAll(dir string) ([]Record, error) {
+// ReadAll returns every parseable hot record. A malformed, foreign, or
+// unreadable individual JSON file is reported as a warning and skipped so it
+// cannot hide valid failures. Directory-level failures remain fatal.
+func ReadAll(dir string) ([]Record, []error, error) {
 	if dir == "" {
 		dir = DefaultDir()
 	}
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var records []Record
+	var warnings []error
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
-			return nil, err
+			warnings = append(warnings, fmt.Errorf("read continuation %s: %w", entry.Name(), err))
+			continue
 		}
 		var rec Record
 		if err := json.Unmarshal(b, &rec); err != nil {
-			return nil, fmt.Errorf("read continuation %s: %w", entry.Name(), err)
+			warnings = append(warnings, fmt.Errorf("read continuation %s: %w", entry.Name(), err))
+			continue
 		}
-		if rec.Schema != Schema || !safeID(rec.ID) {
-			return nil, fmt.Errorf("read continuation %s: unsupported or invalid record", entry.Name())
+		if rec.Schema != Schema || !safeID(rec.ID) || entry.Name() != rec.ID+".json" {
+			warnings = append(warnings, fmt.Errorf("read continuation %s: unsupported or invalid record", entry.Name()))
+			continue
 		}
 		records = append(records, rec)
 	}
@@ -139,13 +153,13 @@ func ReadAll(dir string) ([]Record, error) {
 		}
 		return records[i].UpdatedAt < records[j].UpdatedAt
 	})
-	return records, nil
+	return records, warnings, nil
 }
 
-func Unresolved(dir string) ([]Record, error) {
-	records, err := ReadAll(dir)
+func Unresolved(dir string) ([]Record, []error, error) {
+	records, warnings, err := ReadAll(dir)
 	if err != nil {
-		return nil, err
+		return nil, warnings, err
 	}
 	out := records[:0]
 	for _, rec := range records {
@@ -153,7 +167,7 @@ func Unresolved(dir string) ([]Record, error) {
 			out = append(out, rec)
 		}
 	}
-	return out, nil
+	return out, warnings, nil
 }
 
 func Acknowledge(dir, id string, now time.Time) (Record, error) {
@@ -183,7 +197,18 @@ func Acknowledge(dir, id string, now time.Time) (Record, error) {
 			return Record{}, err
 		}
 	}
+	if err := archive(dir, rec.ID); err != nil {
+		return Record{}, err
+	}
 	return rec, nil
+}
+
+func archive(dir, id string) error {
+	archiveDir := filepath.Join(dir, archiveDirName)
+	if err := os.MkdirAll(archiveDir, 0o700); err != nil {
+		return err
+	}
+	return os.Rename(filepath.Join(dir, id+".json"), filepath.Join(archiveDir, id+".json"))
 }
 
 func safeID(id string) bool {

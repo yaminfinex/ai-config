@@ -72,6 +72,14 @@ func TestApplyCandidatesRefusalLeavesBatchUnapplied(t *testing.T) {
 
 func TestContinuationFailureFindingRequiresExplicitAcknowledgement(t *testing.T) {
 	stateDir := t.TempDir()
+	projJSON := `{"kind":"session","guid":"guid-target","event":"seated","recorded_at":"2026-07-12T11:00:00Z","state":"seated","label":"target","seat":{"kind":"herdr","hcom_name":"worker-hone"}}
+{"kind":"session","guid":"guid-alpha","event":"seated","recorded_at":"2026-07-12T11:00:00Z","state":"seated","label":"alpha","seat":{"kind":"herdr","hcom_name":"alpha"}}
+{"kind":"session","guid":"guid-beta","event":"seated","recorded_at":"2026-07-12T11:00:00Z","state":"seated","label":"beta","seat":{"kind":"herdr","hcom_name":"beta"}}
+`
+	proj, err := v2.Load(bytes.NewBufferString(projJSON), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	rec := continuationstate.Record{
 		ID: "compact-then-self-42", Status: "failed", Target: "worker-hone",
 		UpdatedAt: "2026-07-12T12:00:00Z", Reason: "delivery budget exhausted",
@@ -80,23 +88,51 @@ func TestContinuationFailureFindingRequiresExplicitAcknowledgement(t *testing.T)
 	if err := continuationstate.Write(filepath.Join(stateDir, "continuations"), rec); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(stateDir, "continuations", "foreign.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var stderr bytes.Buffer
-	flags := continuationFailureFlags(stateDir, &stderr)
+	flags := continuationFailureFlags(proj, stateDir, &stderr)
 	if len(flags) != 1 || flags[0].Type != "failed-continuation" ||
 		!strings.Contains(flags[0].Suggested, "--ack-continuation "+rec.ID) {
 		t.Fatalf("flags = %+v; want actionable failed-continuation finding", flags)
 	}
+	byGUID := observerstatus.FlagsByGUID(observerstatus.Status{Flags: flags})
+	if len(byGUID["guid-target"]) != 1 || len(byGUID["guid-alpha"]) != 0 || len(byGUID["guid-beta"]) != 0 ||
+		len(observerstatus.GlobalFlags(observerstatus.Status{Flags: flags})) != 0 {
+		t.Fatalf("flags leaked beyond target row: %+v", byGUID)
+	}
+	if !strings.Contains(stderr.String(), "ignoring continuation record") {
+		t.Fatalf("observer did not warn about skipped foreign record: %s", stderr.String())
+	}
 
 	// Merely reading again (the equivalent of an observer restart/sweep) retains
 	// the finding; only the explicit acknowledgement mutates the record.
-	if again := continuationFailureFlags(stateDir, &stderr); len(again) != 1 {
+	if again := continuationFailureFlags(proj, stateDir, &stderr); len(again) != 1 {
 		t.Fatalf("finding cleared without acknowledgement: %+v", again)
 	}
 	if _, err := continuationstate.Acknowledge(filepath.Join(stateDir, "continuations"), rec.ID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if cleared := continuationFailureFlags(stateDir, &stderr); len(cleared) != 0 {
+	if cleared := continuationFailureFlags(proj, stateDir, &stderr); len(cleared) != 0 {
 		t.Fatalf("finding after acknowledgement = %+v, want cleared", cleared)
+	}
+}
+
+func TestContinuationFailureWithoutTargetRowDoesNotBecomeGlobal(t *testing.T) {
+	stateDir := t.TempDir()
+	if err := continuationstate.Write(filepath.Join(stateDir, "continuations"), continuationstate.Record{
+		ID: "failed", Status: "failed", Target: "missing", UpdatedAt: "2026-07-12T12:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	proj, err := v2.Load(bytes.NewReader(nil), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	if flags := continuationFailureFlags(proj, stateDir, &stderr); len(flags) != 0 {
+		t.Fatalf("unresolved target became global observer advice: %+v", flags)
 	}
 }
 

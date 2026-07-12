@@ -23,6 +23,9 @@ func TestFailedContinuationIsVisibleAndExplicitlyAcknowledged(t *testing.T) {
 	if err := continuationstate.Write("", rec); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(continuationstate.DefaultDir(), "foreign.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var visible bytes.Buffer
 	renderContinuationFailures(&visible, []continuationstate.Record{rec})
 	for _, want := range []string{rec.ID, "@worker-hone", rec.Reason, rec.RecoveryCommand, rec.LogPath, "--ack-continuation"} {
@@ -45,6 +48,9 @@ func TestFailedContinuationIsVisibleAndExplicitlyAcknowledged(t *testing.T) {
 	if !strings.Contains(stdout.String(), "UNRESOLVED DETACHED CONTINUATIONS") || !strings.Contains(stdout.String(), rec.ID) {
 		t.Fatalf("routine list surface omitted failure:\n%s", stdout.String())
 	}
+	if !strings.Contains(stderr.String(), "ignoring continuation record") {
+		t.Fatalf("list did not warn about skipped foreign record: %s", stderr.String())
+	}
 
 	stdout.Reset()
 	stderr.Reset()
@@ -54,9 +60,19 @@ func TestFailedContinuationIsVisibleAndExplicitlyAcknowledged(t *testing.T) {
 	if !strings.Contains(stdout.String(), "if recovery is still needed") {
 		t.Fatalf("ack output dropped recovery remedy: %s", stdout.String())
 	}
-	failed, err := continuationstate.Unresolved("")
-	if err != nil || len(failed) != 0 {
-		t.Fatalf("unresolved after ack = %+v, %v", failed, err)
+	failed, warnings, err := continuationstate.Unresolved("")
+	if err != nil || len(warnings) != 1 || len(failed) != 0 {
+		t.Fatalf("unresolved after ack = %+v, warnings=%v, err=%v; want only foreign-record warning", failed, warnings, err)
+	}
+}
+
+func TestUnresolvedContinuationJSONIsAdditive(t *testing.T) {
+	failure := continuationstate.Record{ID: "failed", Status: "failed", Target: "worker-hone"}
+	out := appendUnresolvedContinuations([]byte(`{"guid":"guid-worker"}`), []continuationstate.Record{failure})
+	for _, want := range []string{`"guid":"guid-worker"`, `"unresolved_continuations":[`, `"target":"worker-hone"`} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("JSON output missing %s: %s", want, out)
+		}
 	}
 }
 

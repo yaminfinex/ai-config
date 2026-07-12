@@ -1,0 +1,7 @@
+=== STDERR ===
+
+=== STDOUT ===
+acknowledged failed continuation compact-then-beta-42 for @beta-rive; if recovery is still needed, run:
+  herder send beta-rive -- continue
+=== EXIT ===
+0

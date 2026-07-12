@@ -2,6 +2,7 @@ package spawncmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -518,11 +519,19 @@ func TestThenLoopPersistsDetachedOutcomesWithoutRegistryWrites(t *testing.T) {
 			var log bytes.Buffer
 			runThenLoop(p, cfg, &log, clk.Now, clk.Sleep)
 
-			records, err := continuationstate.ReadAll(continuationstate.DefaultDir())
-			if err != nil || len(records) != 1 {
-				t.Fatalf("records = %+v, %v; want one", records, err)
+			var rec continuationstate.Record
+			if tc.wantStatus == "failed" {
+				records, warnings, err := continuationstate.ReadAll(continuationstate.DefaultDir())
+				if err != nil || len(warnings) != 0 || len(records) != 1 {
+					t.Fatalf("records = %+v, warnings=%v, err=%v; want one", records, warnings, err)
+				}
+				rec = records[0]
+			} else {
+				b, err := os.ReadFile(filepath.Join(continuationstate.DefaultDir(), "archive", cfg.RecordID+".json"))
+				if err != nil || json.Unmarshal(b, &rec) != nil {
+					t.Fatalf("archived outcome unreadable: %v", err)
+				}
 			}
-			rec := records[0]
 			if rec.Status != tc.wantStatus || rec.Target != cfg.BusName || rec.LogPath != cfg.LogPath {
 				t.Fatalf("record = %+v, want status=%s target/log preserved", rec, tc.wantStatus)
 			}
