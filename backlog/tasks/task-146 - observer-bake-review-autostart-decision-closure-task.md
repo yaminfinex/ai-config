@@ -4,7 +4,7 @@ title: 'observer: bake review + autostart decision (closure task)'
 status: In Progress
 assignee: []
 created_date: '2026-07-10 01:50'
-updated_date: '2026-07-10 21:22'
+updated_date: '2026-07-12 01:57'
 labels: []
 dependencies: []
 priority: high
@@ -38,4 +38,6 @@ Honest gap: the interesting write paths (corroborate-dead, dormant flagging, rec
 OWNER RULING (2026-07-10, chat): synthetic exercise FIRST, then autostart ON. Exercise = (a) kill an agent process without cull, watch corroborate-dead/dormant flagging fire correctly; (b) one herdr restart, watch reconnect/generation behavior. Cadence ruled in the same session: current 1h reconfirm interval stays (TASK-089 closed — bake showed zero reconfirm rows, volume concern empty). hera runs the exercise; autostart flips ON on a clean pass.
 
 SYNTHETIC EXERCISE part (a) PASSED (2026-07-10 21:22Z): throwaway bash probe 4fc253e1 spawned, its shell SIGKILLed without cull at 21:22:07Z; observer appended a typed unseated row IN THE SAME SECOND — close_result=observed_dead, reason "terminal_id absent after prior sighting on uninterrupted herdr socket connection", observed_via socket subscription sweep, sweep applied=1. Positive dead-detection write path proven live with honest evidence-citing output. Part (b) pending: one herdr restart to exercise reconnect/generation — needs an owner-picked moment (restart touches the live terminal host; kore mid-unit, mive live).
+
+OWNER (2026-07-12): part (b) herdr-restart exercise deferred to a NATURAL restart moment — the next herdr version bump. 146 stays open until then; observer continues as the manually-started instance; autostart flip waits for (b). TASK-145 implement leg is NOT blocked by this — its mechanism needs a running observer, which exists.
 <!-- SECTION:NOTES:END -->
