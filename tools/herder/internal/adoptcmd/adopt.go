@@ -21,17 +21,19 @@ import (
 	"ai-config/tools/herder/internal/retirecmd"
 )
 
+type options struct {
+	help        bool
+	target      string
+	confirmDead bool
+}
+
 func Run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
-		printHelp(stdout)
-		return 0
-	}
-	if len(args) != 1 {
-		die(stderr, "usage: herder adopt <old-target>")
-		return 1
+	opts, code := parseArgs(args, stdout, stderr)
+	if code != 0 || opts.help {
+		return code
 	}
 
-	old, err := loadOld(args[0])
+	old, err := loadOld(opts.target)
 	if err != nil {
 		die(stderr, err.Error())
 		return 1
@@ -48,14 +50,29 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		die(stderr, fmt.Sprintf("old target %s has no label to adopt; use 'herder enroll' for the replacement", old.GUID))
 		return 1
 	}
-
 	oldBus, oldBusDir := busCoordinates(old)
+	unseatReason := ""
+	expectedSourcePane := ""
+	if old.State == v2.StateSeated {
+		oldPane := ""
+		if old.Seat != nil {
+			oldPane = old.Seat.PaneID
+		}
+		expectedSourcePane = oldPane
+		liveCaller := hcomidentity.ResolveLive(oldBusDir, hcomidentity.CurrentEvidence(os.Getenv("HERDR_PANE_ID")))
+		var authErr error
+		unseatReason, authErr = adoptionUnseatReason(oldPane, liveCaller, opts.confirmDead)
+		if authErr != nil {
+			die(stderr, fmt.Sprintf("old target %s is seated on pane %s, but the caller's own pane is not proven to be the same (%s); refusing before enrollment so no replacement row is created. If the old transcript is dead, rerun 'herder adopt %s --confirm-dead'", old.GUID, displayPane(oldPane), authErr, old.GUID))
+			return 1
+		}
+	}
 	enrollArgs := []string{"--json"}
 	if old.Role != "" {
 		enrollArgs = append(enrollArgs, "--role", old.Role)
 	}
 	var enrollOut, enrollErr bytes.Buffer
-	if rc := enrollcmd.RunFresh(enrollArgs, &enrollOut, &enrollErr); rc != 0 {
+	if rc := enrollcmd.RunFreshForAdoption(enrollArgs, &enrollOut, &enrollErr, old.GUID); rc != 0 {
 		die(stderr, "enroll leg refused: "+oneLine(enrollErr.String()))
 		return 1
 	}
@@ -75,9 +92,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "adopt: enroll applied: new guid %s seated as %s\n", replacement.GUID, replacement.Label)
 	forwardWarnings(stderr, enrollErr.String())
 
-	var renameOut, renameErr bytes.Buffer
-	if rc := renamecmd.Run([]string{replacement.GUID, "--take-from", old.GUID}, &renameOut, &renameErr); rc != 0 {
-		failureAfter(stderr, "label-transfer", oneLine(renameErr.String()),
+	result, transferErr := transferForAdoption(registry.DefaultPath(), replacement.GUID, old.GUID, expectedSourcePane, unseatReason)
+	if transferErr != nil {
+		failureAfter(stderr, "label-transfer", transferErr.Error(),
 			[]string{"enroll applied for new guid " + replacement.GUID},
 			[]string{
 				fmt.Sprintf("herder rename %s --take-from %s", replacement.GUID, old.GUID),
@@ -86,7 +103,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			})
 		return 1
 	}
-	_, _ = io.Copy(stdout, &renameOut)
+	renamecmd.SyncHerdrName(result.TargetTerminalID, result.Label, stdout)
 	fmt.Fprintf(stderr, "adopt: label-transfer applied: %s now labels guid %s\n", old.Label, replacement.GUID)
 
 	var retireOut, retireErr bytes.Buffer
@@ -121,6 +138,54 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func adoptionUnseatReason(oldPane string, caller hcomidentity.Result, confirmDead bool) (string, error) {
+	if confirmDead {
+		return renamecmd.AdoptionReasonConfirmedDead, nil
+	}
+	if !caller.Verified {
+		return "", fmt.Errorf("live caller identity is unverified: %s", caller.Reason)
+	}
+	if caller.PaneID == "" {
+		return "", fmt.Errorf("live caller identity has no pane coordinate")
+	}
+	if oldPane == "" {
+		return "", fmt.Errorf("old seated row has no pane coordinate; caller pane is %s", caller.PaneID)
+	}
+	if caller.PaneID != oldPane {
+		return "", fmt.Errorf("caller occupies pane %s", caller.PaneID)
+	}
+	return renamecmd.AdoptionReasonSeatSuperseded, nil
+}
+
+func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
+	var opts options
+	for _, arg := range args {
+		switch arg {
+		case "-h", "--help":
+			printHelp(stdout)
+			opts.help = true
+			return opts, 0
+		case "--confirm-dead":
+			if opts.confirmDead {
+				die(stderr, "--confirm-dead may be specified only once")
+				return opts, 1
+			}
+			opts.confirmDead = true
+		default:
+			if opts.target != "" {
+				die(stderr, "unexpected arg: "+arg)
+				return opts, 1
+			}
+			opts.target = arg
+		}
+	}
+	if opts.target == "" {
+		die(stderr, "usage: herder adopt <old-target> [--confirm-dead]")
+		return opts, 1
+	}
+	return opts, 0
+}
+
 func loadOld(target string) (v2.SessionRecord, error) {
 	path := registry.DefaultPath()
 	if _, err := os.Stat(path); err != nil {
@@ -140,18 +205,36 @@ func loadOld(target string) (v2.SessionRecord, error) {
 	return *rec, nil
 }
 
-func busCoordinates(rec v2.SessionRecord) (string, string) {
-	if rec.Seat != nil {
-		return rec.Seat.HcomName, rec.Seat.Namespace
+func transferForAdoption(path, target, source, expectedSourcePane, unseatReason string) (renamecmd.TransferResult, error) {
+	if unseatReason != "" {
+		return renamecmd.TransferForAdoption(path, target, source, expectedSourcePane, unseatReason)
 	}
-	legacy := registry.LegacyFromV2(rec)
-	name := legacy.HcomName
+	return renamecmd.Transfer(path, target, source, false)
+}
+
+func displayPane(pane string) string {
+	if pane == "" {
+		return "<unknown>"
+	}
+	return pane
+}
+
+func busCoordinates(rec v2.SessionRecord) (string, string) {
+	name := ""
+	dir := ""
+	if rec.Seat != nil {
+		name = rec.Seat.HcomName
+		dir = rec.Seat.Namespace
+	} else {
+		legacy := registry.LegacyFromV2(rec)
+		name = legacy.HcomName
+		dir = legacy.HcomDir
+	}
 	if name == "" {
 		// Labels and bus names are normally aligned. An unseated row has released
 		// its seat coordinates, so the durable label is the only reclaim key left.
 		name = rec.Label
 	}
-	dir := legacy.HcomDir
 	if dir == "" {
 		dir = os.Getenv("HCOM_DIR")
 	}
@@ -258,12 +341,20 @@ func printHelp(stdout io.Writer) {
 	fmt.Fprint(stdout, `herder adopt — replace a restarted session without reusing its guid.
 
 Usage:
-  herder adopt <old-target>
+  herder adopt <old-target> [--confirm-dead]
 
 Run inside the replacement's live herdr pane. Adopt composes four explicit
 legs: enroll the replacement under a NEW guid, atomically take the old row's
 label, retire the old row, then reclaim or verify its hcom bus name. A restart
 is a new transcript, so the old guid is never moved or re-keyed.
+
+A seated old target in the caller's own pane is provably superseded: adopt
+atomically unseats it while moving its label, recording "seat superseded by
+replacement process in the same pane" as the reason. A seated target on a
+different pane refuses before enrollment unless --confirm-dead asserts that
+the old transcript is dead; that path records "operator confirmed old
+transcript dead". Plain rename --confirm-live has different semantics and is
+never used by adopt. Lost and retired old targets still refuse.
 
 If a later leg fails, adopt reports every applied leg and the exact remaining
 manual commands. It does not roll back an applied enrollment. A bus name held

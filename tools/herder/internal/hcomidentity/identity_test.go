@@ -58,7 +58,7 @@ func TestResolveAcceptsEitherRecordedOrCanonicalPane(t *testing.T) {
 	}}
 
 	got := Resolve(rows, Evidence{PaneIDs: []string{"pane-from-launch", "pane-canonical"}})
-	if !got.Verified || got.Name != "live-self" {
+	if !got.Verified || got.Name != "live-self" || got.PaneID != "pane-from-launch" {
 		t.Fatalf("Resolve = %+v, want launch-pane correlate to prove live-self", got)
 	}
 }

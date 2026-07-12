@@ -88,6 +88,105 @@ func TestTransferAllowsConfirmedSeatedSource(t *testing.T) {
 	}
 }
 
+func TestAdoptionTransferAtomicallyUnseatsSourceAndMovesLabel(t *testing.T) {
+	path := seedTransferRegistry(t,
+		v2.SessionRecord{GUID: "guid-replacement", State: v2.StateSeated, Label: "temporary", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_replacement", PaneID: "pane_replacement"}},
+		v2.SessionRecord{GUID: "guid-previous", State: v2.StateSeated, Label: "stable", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_previous", PaneID: "pane_replacement"}},
+	)
+	result, err := TransferForAdoption(path, "guid-replacement", "guid-previous", "pane_replacement", AdoptionReasonSeatSuperseded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Label != "stable" || result.SourceGUID != "guid-previous" || result.TargetGUID != "guid-replacement" {
+		t.Fatalf("result = %+v", result)
+	}
+	previous := latestTransferSession(t, path, "guid-previous")
+	if previous.Event != "adoption_source_released" || previous.State != v2.StateUnseated || previous.Label != "" || previous.Seat != nil {
+		t.Fatalf("source = %+v, want atomically unseated and unlabelled", previous)
+	}
+	if previous.CloseResult != "adopted" || previous.CloseReason != AdoptionReasonSeatSuperseded {
+		t.Fatalf("source evidence = %+v", previous)
+	}
+	replacement := latestTransferSession(t, path, "guid-replacement")
+	if replacement.State != v2.StateSeated || replacement.Label != "stable" || replacement.Seat == nil {
+		t.Fatalf("target = %+v, want seated stable replacement", replacement)
+	}
+	data := mustReadTransferFile(t, path)
+	if !strings.Contains(data, `"event":"adoption_source_released"`) || !strings.Contains(data, `"event":"label_transferred"`) {
+		t.Fatalf("registry lacks both atomic batch rows:\n%s", data)
+	}
+}
+
+func TestAdoptionTransferExposesNoIntermediateRelease(t *testing.T) {
+	path := seedTransferRegistry(t,
+		v2.SessionRecord{GUID: "guid-replacement", State: v2.StateSeated, Label: "temporary", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_replacement", PaneID: "pane_replacement"}},
+		v2.SessionRecord{GUID: "guid-previous", State: v2.StateSeated, Label: "stable", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_previous", PaneID: "pane_previous"}},
+	)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+			rows, _, candidateErr := transferCandidatesWithOptions(tx, "guid-replacement", "guid-previous", transferOptions{
+				unseatSource:       true,
+				expectedSourcePane: "pane_previous",
+				unseatReason:       AdoptionReasonConfirmedDead,
+			})
+			close(entered)
+			<-release
+			return rows, candidateErr
+		})
+		if err == nil {
+			for _, outcome := range outcomes {
+				if outcome.Status != registry.WriteApplied {
+					err = outcome.Err()
+					if err == nil {
+						err = &unexpectedOutcomeError{status: outcome.Status}
+					}
+					break
+				}
+			}
+		}
+		done <- err
+	}()
+	<-entered
+
+	before := latestTransferSession(t, path, "guid-previous")
+	if before.State != v2.StateSeated || before.Label != "stable" || before.Seat == nil {
+		t.Fatalf("source became observably partial before commit: %+v", before)
+	}
+	if target := latestTransferSession(t, path, "guid-replacement"); target.Label != "temporary" {
+		t.Fatalf("target changed before source release committed: %+v", target)
+	}
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	after := latestTransferSession(t, path, "guid-previous")
+	if after.State != v2.StateUnseated || after.Label != "" || after.Seat != nil {
+		t.Fatalf("source after commit = %+v", after)
+	}
+	if target := latestTransferSession(t, path, "guid-replacement"); target.Label != "stable" {
+		t.Fatalf("target after commit = %+v", target)
+	}
+}
+
+func TestAdoptionTransferRefusesChangedSourceSeat(t *testing.T) {
+	path := seedTransferRegistry(t,
+		v2.SessionRecord{GUID: "guid-replacement", State: v2.StateSeated, Label: "temporary", Seat: &v2.Seat{Kind: "herdr", PaneID: "pane_replacement"}},
+		v2.SessionRecord{GUID: "guid-previous", State: v2.StateSeated, Label: "stable", Seat: &v2.Seat{Kind: "herdr", PaneID: "pane_current"}},
+	)
+	before := mustReadTransferFile(t, path)
+	_, err := TransferForAdoption(path, "guid-replacement", "guid-previous", "pane_preflight", AdoptionReasonConfirmedDead)
+	if err == nil || !strings.Contains(err.Error(), "seat changed after adoption preflight") {
+		t.Fatalf("error = %v, want changed-seat refusal", err)
+	}
+	if after := mustReadTransferFile(t, path); after != before {
+		t.Fatalf("changed-seat refusal wrote registry\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
 func TestTransferHoldsLockAcrossBothCandidates(t *testing.T) {
 	path := seedTransferRegistry(t,
 		v2.SessionRecord{GUID: "guid-target", State: v2.StateUnseated, Label: "temporary"},

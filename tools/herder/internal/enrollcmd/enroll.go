@@ -22,17 +22,16 @@ type options struct {
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
-	return run(args, stdout, stderr, false)
+	return run(args, stdout, stderr, false, "")
 }
 
-// RunFresh enrolls the caller under a newly minted guid even if HERDER_GUID is
-// present. Composite replacement flows use it to preserve transcript identity:
-// a restarted process is a new session, never a re-keyed old guid.
-func RunFresh(args []string, stdout, stderr io.Writer) int {
-	return run(args, stdout, stderr, true)
+// RunFreshForAdoption enrolls a replacement with a new guid while preserving
+// the old row for adopt's subsequent atomic unseat-and-label-transfer batch.
+func RunFreshForAdoption(args []string, stdout, stderr io.Writer, oldGUID string) int {
+	return run(args, stdout, stderr, true, oldGUID)
 }
 
-func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool) int {
+func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveGUID string) int {
 	opts, code := parseArgs(args, stdout, stderr)
 	if code != 0 {
 		return code
@@ -120,7 +119,7 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool) int {
 		var rows []v2.SessionRecord
 		for _, priorV2 := range tx.Projection.Sessions() {
 			prior := registry.LegacyFromV2(priorV2)
-			if prior.Status != "active" || prior.PaneID != pane.PaneID || ptrString(prior.GUID) == guid {
+			if prior.Status != "active" || prior.PaneID != pane.PaneID || ptrString(prior.GUID) == guid || ptrString(prior.GUID) == preserveGUID {
 				continue
 			}
 			if !shouldRetirePriorRow(prior, pane.TerminalID, busJoined) {

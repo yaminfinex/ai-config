@@ -36,6 +36,7 @@ type Evidence struct {
 type Result struct {
 	Name      string
 	SessionID string
+	PaneID    string
 	Verified  bool
 	Reason    string
 }
@@ -139,7 +140,7 @@ func Resolve(rows []Row, evidence Evidence) Result {
 		return Result{Reason: "live identity correlates resolve to different bus rows"}
 	}
 	for name, row := range matched {
-		return Result{Name: name, SessionID: row.SessionID, Verified: true}
+		return Result{Name: name, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
 	}
 	return Result{Reason: "live bus identity is unknown"}
 }

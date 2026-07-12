@@ -18,7 +18,7 @@ cat >"$MOCKBIN/herdr" <<'MOCK_HERDR'
 set -euo pipefail
 case "${1:-} ${2:-}" in
   "pane get")
-    jq -n --arg pane "${3:-p_enroll}" '{result:{pane_id:$pane,terminal_id:"term_enroll",cwd:"/repo",workspace_id:"ws_1"}}';;
+    jq -n --arg pane "${3:-p_enroll}" '{result:{pane:{pane_id:$pane,terminal_id:"term_enroll",cwd:"/repo",workspace_id:"ws_1"}}}';;
   "agent rename")
     jq -n '{result:{type:"ok"}}';;
   "agent list")
@@ -158,10 +158,25 @@ new_case adopt_partial
 cat >>"$CASE/state/registry.jsonl" <<'JSONL'
 {"guid":"guid-live-old-0000","event":"registered","recorded_at":"2026-07-08T00:00:05Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"live-label","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","pane_id":"p_elsewhere","terminal_id":"term_elsewhere"}}
 JSONL
+adopt_partial_before="$(cksum "$CASE/state/registry.jsonl")"
 run_hr adopt live-label >/dev/null 2>"$CASE/adopt-partial.err"; adopt_partial_rc=$?
-assert "adopt partial failure is honest" bash -c 'test "$1" -ne 0 && grep -q "label-transfer leg failed" "$2" && grep -q "applied: enroll applied for new guid" "$2" && grep -q "remaining manual steps" "$2" && grep -q -- "--take-from guid-live-old-0000" "$2"' bash "$adopt_partial_rc" "$CASE/adopt-partial.err"
-assert "adopt partial failure keeps applied fresh enrollment" jq -se '
-  [.[] | select(.kind=="session" and .state=="seated" and (.label | startswith("manual-")))] | length == 1
+adopt_partial_after="$(cksum "$CASE/state/registry.jsonl")"
+assert "adopt different-pane target refuses before enrollment" bash -c 'test "$1" -ne 0 && grep -q "seated on pane p_elsewhere" "$2" && grep -q "caller occupies pane p_enroll" "$2" && grep -q "refusing before enrollment" "$2" && grep -q "herder adopt guid-live-old-0000 --confirm-dead" "$2" && ! grep -q "herder cull" "$2"' bash "$adopt_partial_rc" "$CASE/adopt-partial.err"
+assert "adopt seated pre-refusal writes no replacement row" test "$adopt_partial_before" = "$adopt_partial_after"
+run_hr adopt live-label --confirm-dead >/dev/null 2>"$CASE/adopt-confirmed.err"; adopt_confirmed_rc=$?
+assert "adopt confirm-dead remedy runs to completion" bash -c 'test "$1" -eq 0 && grep -q "adopt: retire applied" "$2" && grep -q "adopt: bus-name verified" "$2"' bash "$adopt_confirmed_rc" "$CASE/adopt-confirmed.err"
+assert "adopt confirm-dead records atomic source unseat" jq -se '
+  [.[] | select(.guid=="guid-live-old-0000" and .event=="adoption_source_released" and .state=="unseated" and .close_result=="adopted" and .close_reason=="operator confirmed old transcript dead" and (.seat|not) and (.label|not))] | length == 1
+' "$CASE/state/registry.jsonl"
+
+new_case adopt_same_pane
+cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"guid":"guid-same-pane-0000","event":"registered","recorded_at":"2026-07-08T00:00:05Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"same-label","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","pane_id":"p_enroll","terminal_id":"term_previous"}}
+JSONL
+run_hr adopt same-label >/dev/null 2>"$CASE/adopt-same.err"; adopt_same_rc=$?
+assert "adopt same-pane replacement needs no flag" bash -c 'test "$1" -eq 0 && grep -q "adopt: retire applied" "$2" && grep -q "adopt: bus-name verified" "$2"' bash "$adopt_same_rc" "$CASE/adopt-same.err"
+assert "adopt same-pane atomically unseats source with evidence" jq -se '
+  [.[] | select(.guid=="guid-same-pane-0000" and .event=="adoption_source_released" and .state=="unseated" and .close_reason=="seat superseded by replacement process in the same pane" and (.seat|not) and (.label|not))] | length == 1
 ' "$CASE/state/registry.jsonl"
 
 new_case adopt_bus_conflict
@@ -169,7 +184,7 @@ printf '%s\n' '[{"name":"replacement-temp","session_id":"sess-replacement","join
 run_hr adopt trap >/dev/null 2>"$CASE/adopt-bus.err"; adopt_bus_rc=$?
 assert "adopt refuses bus name held by another live session" bash -c 'test "$1" -ne 0 && grep -q "bus-name leg failed" "$2" && grep -q "held by a live different session" "$2" && grep -q "refusing to steal" "$2"' bash "$adopt_bus_rc" "$CASE/adopt-bus.err"
 assert "adopt bus refusal leaves the live holder untouched" jq -e 'map(select(.name=="trap" and .session_id=="sess-other")) | length == 1' "$CASE/hcom.json"
-assert "adopt bus refusal reports completed registry legs" bash -c 'grep -q "applied: enroll applied" "$1" && grep -q "applied: label-transfer applied" "$1" && grep -q "applied: retire applied" "$1"' bash "$CASE/adopt-bus.err"
+assert "adopt bus refusal reports completed and remaining legs" bash -c 'grep -q "applied: enroll applied" "$1" && grep -q "applied: label-transfer applied" "$1" && grep -q "applied: retire applied" "$1" && grep -q "remaining manual steps" "$1" && grep -q "hcom start --as trap" "$1"' bash "$CASE/adopt-bus.err"
 
 if [[ "$fail" -eq 0 ]]; then
   printf '\nALL GREEN — retire/reopen/adopt contract holds.\n'

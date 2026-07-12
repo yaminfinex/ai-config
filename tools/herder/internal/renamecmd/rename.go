@@ -28,6 +28,11 @@ type TransferResult struct {
 	TargetTerminalID string
 }
 
+const (
+	AdoptionReasonSeatSuperseded = "seat superseded by replacement process in the same pane"
+	AdoptionReasonConfirmedDead  = "operator confirmed old transcript dead"
+)
+
 func Run(args []string, stdout, stderr io.Writer) int {
 	opts, code := parseArgs(args, stdout, stderr)
 	if code != 0 || opts.help {
@@ -96,9 +101,33 @@ func Run(args []string, stdout, stderr io.Writer) int {
 // Transfer atomically releases the source label and assigns it to target. Both
 // candidates are decided and appended under one registry lock.
 func Transfer(registryPath, target, source string, confirmLive bool) (TransferResult, error) {
+	return transfer(registryPath, target, source, transferOptions{confirmLive: confirmLive})
+}
+
+// TransferForAdoption atomically unseats a still-seated source while moving
+// its label to the replacement. The caller must establish why that seat is
+// dead or superseded before invoking this lifecycle-specific form.
+func TransferForAdoption(registryPath, target, source, expectedSourcePane, unseatReason string) (TransferResult, error) {
+	if unseatReason != AdoptionReasonSeatSuperseded && unseatReason != AdoptionReasonConfirmedDead {
+		return TransferResult{}, fmt.Errorf("adoption transfer requires a recognized unseat reason")
+	}
+	if expectedSourcePane == "" {
+		return TransferResult{}, fmt.Errorf("adoption transfer requires the preflight source pane")
+	}
+	return transfer(registryPath, target, source, transferOptions{unseatSource: true, expectedSourcePane: expectedSourcePane, unseatReason: unseatReason})
+}
+
+type transferOptions struct {
+	confirmLive        bool
+	unseatSource       bool
+	expectedSourcePane string
+	unseatReason       string
+}
+
+func transfer(registryPath, target, source string, opts transferOptions) (TransferResult, error) {
 	var result TransferResult
 	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
-		rows, resolved, err := transferCandidates(tx, target, source, confirmLive)
+		rows, resolved, err := transferCandidatesWithOptions(tx, target, source, opts)
 		result = resolved
 		return rows, err
 	})
@@ -120,6 +149,10 @@ func Transfer(registryPath, target, source string, confirmLive bool) (TransferRe
 }
 
 func transferCandidates(tx registry.LockedUpdate, target, source string, confirmLive bool) ([]v2.SessionRecord, TransferResult, error) {
+	return transferCandidatesWithOptions(tx, target, source, transferOptions{confirmLive: confirmLive})
+}
+
+func transferCandidatesWithOptions(tx registry.LockedUpdate, target, source string, opts transferOptions) ([]v2.SessionRecord, TransferResult, error) {
 	targetRec := registry.V2Resolve(tx.Projection, target)
 	if targetRec == nil {
 		return nil, TransferResult{}, fmt.Errorf("unknown target: %s", target)
@@ -136,8 +169,15 @@ func transferCandidates(tx registry.LockedUpdate, target, source string, confirm
 	}
 	switch sourceRec.State {
 	case v2.StateSeated:
-		if !confirmLive {
+		if !opts.confirmLive && !opts.unseatSource {
 			return nil, TransferResult{}, fmt.Errorf("source %s is seated-and-live; rerun with --confirm-live to explicitly transfer its label, or cull it first", sourceRec.GUID)
+		}
+		if opts.unseatSource && (sourceRec.Seat == nil || sourceRec.Seat.PaneID != opts.expectedSourcePane) {
+			currentPane := ""
+			if sourceRec.Seat != nil {
+				currentPane = sourceRec.Seat.PaneID
+			}
+			return nil, TransferResult{}, fmt.Errorf("source %s seat changed after adoption preflight from pane %s to pane %s; refusing to unseat it", sourceRec.GUID, opts.expectedSourcePane, currentPane)
 		}
 	case v2.StateLost:
 		return nil, TransferResult{}, fmt.Errorf("source %s is lost; labels cannot be taken from LOST sessions", sourceRec.GUID)
@@ -167,9 +207,17 @@ func transferCandidates(tx registry.LockedUpdate, target, source string, confirm
 		TargetTerminalID: registry.LegacyFromV2(*targetRec).TerminalID,
 	}
 	released := *sourceRec
-	released.Event = "label_transferred"
 	released.RecordedAt = ""
 	released.Label = ""
+	if sourceRec.State == v2.StateSeated && opts.unseatSource {
+		released.Event = "adoption_source_released"
+		released.State = v2.StateUnseated
+		released.Seat = nil
+		released.CloseResult = "adopted"
+		released.CloseReason = opts.unseatReason
+	} else {
+		released.Event = "label_transferred"
+	}
 	claimed := *targetRec
 	claimed.Event = "label_transferred"
 	claimed.RecordedAt = ""
@@ -248,6 +296,12 @@ func syncHerdrName(terminalID, label string, stdout io.Writer) {
 		reason = fmt.Sprintf("exit %d", rc)
 	}
 	fmt.Fprintf(stdout, "herdr: rename failed (%s) — registry updated anyway\n", reason)
+}
+
+// SyncHerdrName mirrors an already-applied registry label to the live herdr
+// pane best-effort. Composite commands call it after their atomic write.
+func SyncHerdrName(terminalID, label string, stdout io.Writer) {
+	syncHerdrName(terminalID, label, stdout)
 }
 
 func printHelp(stdout io.Writer) {
