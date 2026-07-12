@@ -3,9 +3,11 @@ id: TASK-091
 title: >-
   registry: finish the legacy-view retirement — re-express consumers against the
   four-state machine, delete the two-state mapping
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - hera-run
 created_date: '2026-07-09 05:09'
+updated_date: '2026-07-12 10:16'
 labels: []
 dependencies: []
 priority: medium
