@@ -3,10 +3,10 @@ id: TASK-079
 title: >-
   Investigate: herdr plugin / socket-subscription API as replacement for
   herder's polling mechanics (beyond the seat observer)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-08 21:12'
-updated_date: '2026-07-08 23:43'
+updated_date: '2026-07-12 06:45'
 labels: []
 dependencies: []
 priority: medium
@@ -31,6 +31,12 @@ DELIVERABLE: a written findings memo (docs/ or the task itself) with a keep/repl
 - [ ] #2 Upstream API stability (versioning, channel, breakage policy) assessed with evidence, not assumption
 - [ ] #3 Any recommended build work exists as filed-ready task text with acceptance criteria
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Research unit dispatched 2026-07-12 (researcher, branch task-079-socket-research, gpt-5.6-sol high), brief napkins/run-herder-dx/task-079-research-brief.md. Deliverable: committed memo docs/design/2026-07-12-herdr-socket-subscriptions.md.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 

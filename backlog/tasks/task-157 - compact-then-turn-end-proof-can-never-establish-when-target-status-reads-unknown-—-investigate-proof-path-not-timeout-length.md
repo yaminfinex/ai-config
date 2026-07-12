@@ -3,9 +3,10 @@ id: TASK-157
 title: >-
   compact-then: turn-end proof can never establish when target status reads
   unknown — investigate proof path, not timeout length
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-12 01:57'
+updated_date: '2026-07-12 06:45'
 labels: []
 dependencies: []
 priority: medium
@@ -24,3 +25,9 @@ OWNER INCIDENT (relayed 2026-07-12, from another run): a compact --then was drop
 - [ ] #2 Fix or explicit wont-fix for the proof path; timeout default re-examined against findings (not blindly raised)
 - [ ] #3 Failure surfacing assessed: dropped continuation should be discoverable without reading sender logs
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Investigation unit dispatched 2026-07-12 (researcher, branch task-157-compactthen-proof, gpt-5.6-sol high), brief napkins/run-herder-dx/task-157-investigation-brief.md. Deliverable: root-cause report + filed-ready fix captures; fix itself is a separate unit.
+<!-- SECTION:NOTES:END -->

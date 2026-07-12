@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-10 01:41'
-updated_date: '2026-07-10 21:19'
+updated_date: '2026-07-12 06:45'
 labels: []
 dependencies: []
 priority: high
@@ -38,4 +38,6 @@ Research leg dispatched 2026-07-10 to gpt-5.6-sol (@researcher-todo, branch task
 Research leg DONE + merged (fbb378b --no-ff, docs-only): memo docs/design/2026-07-10-herder-instruction-injection.md. VERIFIED MATRIX: herder spawn/resume/fork inject the overlay for BOTH families (claude via SessionStart rewrite; codex via launch-time developer_instructions or post-bind verified bus re-delivery — the codex resume path warns, not fail-closed, on timeout). Raw claude: NOT covered (vendor binary shadows the herder shim; global hook gives only an availability hint). Raw codex fresh: NOT covered, and does NOT get the competing stock recipe either. Raw codex RESUME: the dangerous one — retains the historical stock hcom recipe from thread history while getting no overlay. hcom stock template is compiled into upstream src/bootstrap.rs — NO override mechanism; notes/codex_system_prompt cannot fix resume (preprocessing strips user developer_instructions). RECOMMENDATION (implement leg, awaiting owner ruling): observer delivers the existing CodexResumeAddendum as informational bus doctrine ONLY on authoritative correlation (live pane/process + tool session id + joined hcom row), no auto-enroll, no guessing on ambiguity; plus shim PATH repair and herder-resume-not-raw docs as defense in depth. Alternative: wait for upstream hcom seam (leaves the known path unsafe). Upstream draft candidate goes to the ledger with the implement leg.
 
 OWNER RULING (2026-07-10, chat): mechanism (a) chosen — observer delivers CodexResumeAddendum as informational bus doctrine ONLY on authoritative correlation (live pane/process + tool session id + joined hcom row), no auto-enroll, no guessing on ambiguity; plus shim PATH repair and herder-resume-not-raw docs as defense in depth. ADDED SCOPE (owner): capture the operating rule in the new-harness runbook (docs/new-harness-onboarding.md) — always herder resume, never raw codex resume, plus a pointer to the injection matrix memo. SEQUENCING: implement leg dispatches after the TASK-146 synthetic exercise + autostart flip (the mechanism rides a running observer).
+
+Implement leg dispatched 2026-07-12 (worker razu, branch task-145-injection-implement, gpt-5.6-sol high reasoning), brief napkins/run-herder-dx/task-145-implement-brief.md. TASK-156 docs fix bundled into the same unit.
 <!-- SECTION:NOTES:END -->
