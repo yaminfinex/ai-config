@@ -1,10 +1,10 @@
 ---
 id: TASK-170
 title: 'grok: first-class herder/hcom family (design first)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-12 22:46'
+updated_date: '2026-07-12 22:47'
 labels: []
 dependencies: []
 priority: medium
