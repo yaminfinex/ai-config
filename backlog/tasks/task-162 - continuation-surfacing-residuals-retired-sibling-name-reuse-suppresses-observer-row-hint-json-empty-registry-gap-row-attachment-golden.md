@@ -3,9 +3,10 @@ id: TASK-162
 title: >-
   continuation surfacing residuals: retired-sibling name-reuse suppresses
   observer row hint; --json empty-registry gap; row-attachment golden
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-12 09:14'
+updated_date: '2026-07-12 12:15'
 labels: []
 dependencies: []
 priority: low
@@ -24,3 +25,9 @@ Three Low residuals from the failed-continuation-surfacing delta review, none de
 - [ ] #2 --json surfaces unresolved failures with zero reconciled rows
 - [ ] #3 List-contract scenario pins observer-advice row attachment; ambiguous-target unit test added
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Dispatched to codex 5.6 worker on branch task-162-continuation-residuals; brief napkins/run-herder-dx/task-162-implement-brief.md. AC2 either/or SETTLED pre-dispatch (advisor-concurred): document-level kind-discriminated unresolved_continuation JSONL record; per-row attachment removed (no in-tree reader); no dual emission.
+<!-- SECTION:NOTES:END -->

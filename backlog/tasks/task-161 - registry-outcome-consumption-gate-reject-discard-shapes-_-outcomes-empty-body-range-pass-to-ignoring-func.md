@@ -3,9 +3,10 @@ id: TASK-161
 title: >-
   registry outcome-consumption gate: reject discard shapes (_ = outcomes,
   empty-body range, pass-to-ignoring-func)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-12 08:23'
+updated_date: '2026-07-12 12:15'
 labels: []
 dependencies: []
 priority: low
@@ -23,3 +24,9 @@ From the typed-write-outcomes adversarial review (non-blocking note): the outcom
 - [ ] #1 Blank-discard, empty-body-range, and bind-never-read shapes each have a negative fixture the gate rejects
 - [ ] #2 All current in-tree consumers still pass the gate (no false positives)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Dispatched to codex 5.6 worker on branch task-161-outcome-gate; brief napkins/run-herder-dx/task-161-implement-brief.md; readback verified.
+<!-- SECTION:NOTES:END -->
