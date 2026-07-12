@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 10:20'
-updated_date: '2026-07-08 23:42'
+updated_date: '2026-07-12 06:47'
 labels: []
 dependencies: []
 priority: medium
@@ -38,3 +38,9 @@ Fresh data point (TASK-072 bulk-retire sweep, 2026-07-08): row 275a4ac2 (comment
 - [ ] #2 If a gap remains: herder-side presentation fix implemented (undetected-with-matching-live-terminal rendered distinctly), or an explicit do-not-build verdict with reasons
 - [ ] #3 Upstream candidate (herdr tracker adoption of foreground agents) appended to the TASK-029 ledger with evidence
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+RE-GROUND COMPLETE (2026-07-12, hera, read-only): gap SURVIVES the observer. Live specimen: the orchestrator row (shell-relaunched claude, enrolled not spawned) is observer-CONFIRMED with a fresh sweep timestamp in observer.status.json, yet herder list shows LIVE=unknown and has NO advice/confirmation surface (checked --help and output — zero annotation). The 070 description said "observer advice now annotates herder list" — it does not, or not for this class. VERDICT: fix direction (b) — surface observer confirmations in herder list (distinct presentation for observer-confirmed-but-tracker-undetected), fold into the identity-cluster unit. Upstream candidate (a) (herdr agent adopt / tracker pickup of foreground agents) goes to the TASK-029 ledger at cluster closeout.
+<!-- SECTION:NOTES:END -->

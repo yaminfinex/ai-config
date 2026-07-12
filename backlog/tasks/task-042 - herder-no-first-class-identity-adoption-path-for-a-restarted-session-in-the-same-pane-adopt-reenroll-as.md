@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-08 23:41'
+updated_date: '2026-07-12 06:47'
 labels: []
 dependencies: []
 priority: medium
@@ -58,3 +58,9 @@ Spec-ravu ruling #11678 on the label-entombment blocker (surfaced by TASK-069 re
 - [ ] #2 enroll refusal against a label held by an unseated/dead row names the holder state and the concrete recovery steps (distinct from the active-holder refusal)
 - [ ] #3 suite covers the composite happy path and both refusal shapes
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+LIVE VALIDATION (2026-07-12, hera on own row): the exact composite this task wraps was run manually — retire <old-labeled-row> then rename <live-guid> <label> — and worked cleanly (label released, reassigned, herdr terminal renamed to match). The orchestrator itself was the specimen (label stranded on a dead TASK-050-era row while the live session ran unlabeled). Confirms the adopt wrapper design is sound and needed: the manual sequence requires knowing both guids and the verb order; the wrapper + dead-label enroll UX is the whole remaining scope.
+<!-- SECTION:NOTES:END -->
