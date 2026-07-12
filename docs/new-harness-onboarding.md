@@ -65,6 +65,7 @@ herder spawns default to skip-permissions unless `--safe`; it must know the flag
 ### 7. Fork / resume (or explicit non-support)
 
 - Required: resume-by-id; fork = resume-with-new-id; know whether headless resume works (cheap probes) and what state restores.
+- Operating rule: always resume Codex through `herder resume`, never raw `codex resume`, because the managed path re-delivers herder lifecycle doctrine after Codex rebuilds its bootstrap; see the [instruction-injection matrix](design/2026-07-10-herder-instruction-injection.md).
 - PROBE: run a session with a memorable action; `--resume <sid> -p "what did you do?"`; then fork and confirm the child has parent context under a new id.
 - GROK: ✅ all verified headlessly: `--resume <sid>` (recalled earlier commands), `-c` (continue latest in cwd), `--resume <sid> --fork-session [--session-id <new-uuid>]` (parent context, fresh id), `--restore-code` for worktree state; exit message advertises the resume command.
 

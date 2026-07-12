@@ -166,9 +166,10 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
    and apply it to a long-running worker at a unit boundary. Before any compaction, persist
    durable state — commit WIP + a progress report on the unit thread; whatever isn't persisted
    is lost. Then, in preference order: **compact in place** — `herder compact '<steer: what to
-   keep>'` queues a real `/compact <steer>` into the agent's own composer and fires at turn end.
-   `/compact` alone STOPS the turn; to keep a worker moving unattended add `--then
-   '<continuation>'` (claude-only) — after a verified compaction it is delivered to the worker's
+   keep>' --then '<continuation>'` queues a real `/compact <steer>` into the agent's own composer
+   and fires at turn end. Bare `herder compact '<steer>'` is refused; use `--then
+   '<continuation>'` for autonomous work or `--stop` for the interactive opt-out. After a
+   verified compaction, `--then` is delivered to the worker's
    own bus (e.g. `--then 'resume <unit>: run the gate, report DONE on <thread>'`), so the worker
    resumes without a nudge. Or **replace**: when the session is too far gone to steer, it writes
    a HANDOFF report on the unit thread (state + ordered remaining steps for an agent with zero

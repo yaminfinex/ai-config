@@ -24,6 +24,46 @@ type fakeProbe struct {
 	snapshotFailed bool
 }
 
+// coordinateProbe models a session whose registry row names one bus identity
+// while its live status and events are published under another. Production
+// hcom returns "not found" for the recorded name and an empty event history,
+// which listStatus/maxEventID expose as unknown plus a trusted zero watermark.
+type coordinateProbe struct {
+	recordedName string
+	actualName   string
+	statuses     map[string]string
+	events       map[string][]hcomEvent
+	deliverN     int
+}
+
+func (p *coordinateProbe) listStatus(busName, _ string) string {
+	return p.statuses[busName]
+}
+
+func (p *coordinateProbe) maxEventID(busName, _ string) (int64, bool) {
+	var max int64
+	for _, event := range p.events[busName] {
+		if event.ID > max {
+			max = event.ID
+		}
+	}
+	return max, true
+}
+
+func (p *coordinateProbe) turnEndedSince(busName, _ string, watermark int64) bool {
+	for _, event := range p.events[busName] {
+		if event.ID > watermark && event.Type == "status" && event.Data.Status == "listening" {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *coordinateProbe) deliver(_, _, _ string, _ int) string {
+	p.deliverN++
+	return "delivered"
+}
+
 func (f *fakeProbe) listStatus(_, _ string) string {
 	if f.idx < len(f.statuses) {
 		s := f.statuses[f.idx]
@@ -157,6 +197,67 @@ func TestThenLoopArmedLateDeliversOnEventProof(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "hcom events show a post-arm") {
 		t.Fatalf("log missing event-proof line:\n%s", log.String())
+	}
+}
+
+func TestThenLoopWrongBusCoordinateStallsUnknownDespiteRealTurnEnd(t *testing.T) {
+	turnEnd := hcomEvent{ID: 42, Type: "status"}
+	turnEnd.Data.Status = "listening"
+	p := &coordinateProbe{
+		recordedName: "stale-name",
+		actualName:   "live-name",
+		statuses: map[string]string{
+			"live-name": "listening",
+		},
+		events: map[string][]hcomEvent{
+			"live-name": {turnEnd},
+		},
+	}
+	cfg := baseCfg()
+	cfg.BusName = p.recordedName
+	cfg.PollMS = 1000
+	cfg.TimeoutMS = 5000
+	clk := &fakeClock{now: time.Unix(0, 0), step: 1000 * time.Millisecond}
+	var log bytes.Buffer
+
+	code := runThenLoop(p, cfg, &log, clk.Now, clk.Sleep)
+
+	if code != 1 {
+		t.Fatalf("wrong coordinate must fail closed, got exit %d; log:\n%s", code, log.String())
+	}
+	if p.deliverN != 0 {
+		t.Fatalf("wrong coordinate must not deliver, got %d deliveries", p.deliverN)
+	}
+	if !strings.Contains(log.String(), "arm event #0") ||
+		!strings.Contains(log.String(), `last status="unknown"`) ||
+		!strings.Contains(log.String(), "saw_active=false, event_proof=true") {
+		t.Fatalf("log does not reproduce the unknown-status stall signature:\n%s", log.String())
+	}
+	if !p.turnEndedSince(p.actualName, "", 0) {
+		t.Fatal("fixture error: the real session must have a post-arm turn-end event")
+	}
+}
+
+func TestThenLoopUnknownStatusDoesNotConsultAvailableEventProof(t *testing.T) {
+	p := &fakeProbe{
+		statuses:       []string{""},
+		armWatermark:   100,
+		turnEndEventID: 150,
+		deliverRet:     []string{"delivered"},
+	}
+	cfg := baseCfg()
+	cfg.PollMS = 1000
+	cfg.TimeoutMS = 5000
+	clk := &fakeClock{now: time.Unix(0, 0), step: 1000 * time.Millisecond}
+	var log bytes.Buffer
+
+	code := runThenLoop(p, cfg, &log, clk.Now, clk.Sleep)
+
+	if code != 1 || p.deliverN != 0 {
+		t.Fatalf("current loop must reproduce the gated fallback: exit=%d delivers=%d; log:\n%s", code, p.deliverN, log.String())
+	}
+	if !strings.Contains(log.String(), `last status="unknown"`) {
+		t.Fatalf("log missing unknown status:\n%s", log.String())
 	}
 }
 

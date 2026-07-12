@@ -18,6 +18,7 @@ type LaunchContext struct {
 
 type Row struct {
 	Name          string        `json:"name"`
+	Tool          string        `json:"tool"`
 	Status        string        `json:"status"`
 	Joined        *bool         `json:"joined,omitempty"`
 	SessionID     string        `json:"session_id"`

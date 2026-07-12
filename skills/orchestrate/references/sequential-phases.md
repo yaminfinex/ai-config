@@ -46,8 +46,9 @@ orchestrator itself replaceable.
 
 At the 200–250k-token band (invariant 3 — every time, not a judgment call): bring the journal
 fully current FIRST (compaction and respawn both lose anything unpersisted), then compact in
-place — `herder compact '<steer: run name, in-flight units, pending verdicts, journal path>'`
-queues a real `/compact` into your own composer and fires at turn end. Fall back to self-respawn
+place — `herder compact '<steer: run name, in-flight units, pending verdicts, journal path>'
+--then 'continue the run from the journal'` queues a real `/compact` into your own composer and
+fires at turn end. Fall back to self-respawn
 when the session is too incoherent to steer: write a HANDOFF entry (in flight / verified / next)
 and spawn a fresh orchestrator pointed at it — which culls this session before taking over the
 label (invariant 3). Either way the journal is the test: if a fresh orchestrator couldn't pick up

@@ -21,6 +21,7 @@ type Status struct {
 	ProtocolDetail     string            `json:"protocol_detail,omitempty"`
 	Flags              []Flag            `json:"flags,omitempty"`
 	Confirmed          map[string]string `json:"confirmed,omitempty"`
+	DoctrineDeliveries map[string]string `json:"doctrine_deliveries,omitempty"`
 }
 
 type Summary struct {

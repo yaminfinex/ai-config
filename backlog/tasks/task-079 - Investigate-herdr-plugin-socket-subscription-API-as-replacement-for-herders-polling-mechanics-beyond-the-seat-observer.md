@@ -3,10 +3,10 @@ id: TASK-079
 title: >-
   Investigate: herdr plugin / socket-subscription API as replacement for
   herder's polling mechanics (beyond the seat observer)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-08 21:12'
-updated_date: '2026-07-12 06:45'
+updated_date: '2026-07-12 06:54'
 labels: []
 dependencies: []
 priority: medium
@@ -36,6 +36,8 @@ DELIVERABLE: a written findings memo (docs/ or the task itself) with a keep/repl
 
 <!-- SECTION:NOTES:BEGIN -->
 Research unit dispatched 2026-07-12 (researcher, branch task-079-socket-research, gpt-5.6-sol high), brief napkins/run-herder-dx/task-079-research-brief.md. Deliverable: committed memo docs/design/2026-07-12-herdr-socket-subscriptions.md.
+
+Research complete, memo merged (docs/design/2026-07-12-herdr-socket-subscriptions.md). Verdict: observer hybrid is the only paying migration and already exists; all other loops stay with rationale per-site; two problem-statement assumptions falsified against the installed schema. Appendix capture filed as follow-up task. Docs-only merge (one file), content-reviewed by orchestrator per docs-only carve-out. (ACs verified manually — no CLI AC fields.)
 <!-- SECTION:NOTES:END -->
 
 ## Comments
