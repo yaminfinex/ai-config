@@ -137,6 +137,8 @@ run_case herdr_fail fail alpha alpha-new
 check_one herdr_fail
 run_case collision ok alpha beta
 check_one collision
+run_case atomic_take ok beta --take-from alpha
+check_one_with_list atomic_take
 run_case reuse_closed ok alpha old-closed
 check_one reuse_closed
 run_case legacy_migrates_dormant ok alpha alpha-legacy-new

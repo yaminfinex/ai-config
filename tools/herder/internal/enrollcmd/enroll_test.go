@@ -1,13 +1,28 @@
 package enrollcmd
 
 import (
+	"strings"
 	"testing"
 
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
 func rec(terminalID, hcomName string) registry.Record {
 	return registry.Record{TerminalID: terminalID, HcomName: hcomName}
+}
+
+func TestLabelOwnerErrorDistinguishesActiveAndDeadHolders(t *testing.T) {
+	active := labelOwnerError("stable", v2.SessionRecord{GUID: "guid-active", State: v2.StateSeated})
+	if !strings.Contains(active.Error(), "already belongs to active guid guid-active") || strings.Contains(active.Error(), "herder adopt") {
+		t.Fatalf("active error = %q", active)
+	}
+	dead := labelOwnerError("stable", v2.SessionRecord{GUID: "guid-dead", State: v2.StateUnseated})
+	for _, want := range []string{"state unseated", "dead/unseated", "herder adopt guid-dead", "herder retire guid-dead", "herder rename <target> stable"} {
+		if !strings.Contains(dead.Error(), want) {
+			t.Fatalf("dead error = %q, want %q", dead, want)
+		}
+	}
 }
 
 // TestShouldRetirePriorRow pins TASK-035 P1-b: retire-on-reenroll must not

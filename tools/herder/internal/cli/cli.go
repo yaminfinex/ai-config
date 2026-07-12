@@ -12,6 +12,7 @@ import (
 	"io"
 	"strings"
 
+	"ai-config/tools/herder/internal/adoptcmd"
 	"ai-config/tools/herder/internal/cullcmd"
 	"ai-config/tools/herder/internal/enrollcmd"
 	"ai-config/tools/herder/internal/hookcmd"
@@ -46,6 +47,7 @@ var commands = []command{
 	{"wait", "Block until an agent reaches a status, optionally read its screen", waitcmd.Run},
 	{"cull", "Close spawned agents and mark them closed in the registry", cullcmd.Run},
 	{"enroll", "Register the current herdr pane in the registry", enrollcmd.Run},
+	{"adopt", "Replace a restarted session with a fresh guid and its prior label", adoptcmd.Run},
 	{"rename", "Rename an enrolled agent label and sync herdr best-effort", renamecmd.Run},
 	{"retire", "Retire an unseated session and release its label", retirecmd.RunRetire},
 	{"reopen", "Reopen a retired session as unseated and unlabelled", retirecmd.RunReopen},

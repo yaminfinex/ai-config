@@ -513,6 +513,22 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 			return row, false, nil
 		}
 		row = carrySeatFields(row, *current)
+	case "adoption_source_released":
+		if current.State != v2.StateSeated {
+			return row, false, nil
+		}
+		if row.CloseResult != "adopted" {
+			return row, false, fmt.Errorf("adoption source release missing adopted result")
+		}
+		switch row.CloseReason {
+		case "seat superseded by replacement process in the same pane", "operator confirmed old transcript dead":
+		default:
+			return row, false, fmt.Errorf("adoption source release has unrecognized reason %q", row.CloseReason)
+		}
+		row = carryUnlabelledIdentityFields(row, *current)
+		row.State = v2.StateUnseated
+		row.Label = ""
+		row.Seat = nil
 	case "recognised", "reconciled", "seated":
 		if current.State == v2.StateRetired || current.State == v2.StateLost {
 			return row, false, nil

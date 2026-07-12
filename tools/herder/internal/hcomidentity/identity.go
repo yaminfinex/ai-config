@@ -36,6 +36,7 @@ type Evidence struct {
 type Result struct {
 	Name      string
 	SessionID string
+	PaneID    string
 	Verified  bool
 	Reason    string
 }
@@ -139,7 +140,7 @@ func Resolve(rows []Row, evidence Evidence) Result {
 		return Result{Reason: "live identity correlates resolve to different bus rows"}
 	}
 	for name, row := range matched {
-		return Result{Name: name, SessionID: row.SessionID, Verified: true}
+		return Result{Name: name, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
 	}
 	return Result{Reason: "live bus identity is unknown"}
 }
@@ -155,6 +156,17 @@ func ResolveLive(dir string, evidence Evidence) Result {
 func VerifyStored(rows []Row, evidence Evidence, stored string) (bool, Result) {
 	resolved := Resolve(rows, evidence)
 	return resolved.Verified && stored != "" && stored == resolved.Name, resolved
+}
+
+// JoinedNamed returns the live row holding name. Callers use this before an
+// explicit reclaim so a different live session is never displaced.
+func JoinedNamed(rows []Row, name string) (Row, bool) {
+	for _, row := range rows {
+		if row.Name == name && joined(row) {
+			return row, true
+		}
+	}
+	return Row{}, false
 }
 
 func joined(row Row) bool {
