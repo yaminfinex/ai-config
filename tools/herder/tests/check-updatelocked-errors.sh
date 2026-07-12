@@ -18,12 +18,16 @@
 # updateLocked wrapper, and AppendLegacySessionEvent: it must be bound to a named
 # local and consumed before overwrite. This keeps the typed per-candidate
 # confirmation contract distinct from merely checking the batch error.
+# Before a binding is overwritten, any recognized outcome discard dominates
+# otherwise meaningful reads and is reported at the discard site.
 # Outcome consumption remains intentionally syntactic: the scanner cannot prove
 # reads by imported, method, or generic callees, direct multi-result forwarding,
 # or calls through function-typed variables. It also does not follow aliases,
 # distinguish inspection inside non-empty range bodies, or recognize that a
-# package-level sink is write-only. These shapes require type or data-flow
-# analysis; locally visible blank/unnamed parameters are still rejected.
+# package-level sink is write-only. Reads flowing into any callee the scanner
+# cannot resolve, including builtins, are assumed meaningful, so derived-value
+# discards such as `_ = len(outcomes)` are accepted. These shapes require type
+# or data-flow analysis; locally visible blank/unnamed parameters are rejected.
 
 set -euo pipefail
 
@@ -73,6 +77,11 @@ const (
 	anyBindingRead bindingReadPolicy = iota
 	meaningfulOutcomeRead
 )
+
+type bindingReadResult struct {
+	consumed bool
+	discard  token.Pos
+}
 
 func main() {
 	if len(os.Args) != 2 {
@@ -266,8 +275,18 @@ func (s *scanner) checkAssign(as *ast.AssignStmt, callExpr ast.Expr) {
 		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned to _")
 		return
 	}
-	if !s.initOutcomeBindingConsumed(outcomeIdent, as) && !s.outcomeBindingConsumed(outcomeIdent, as) {
-		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned but never consumed; inspect each outcome or return the outcomes")
+	initResult := s.initOutcomeBindingConsumed(outcomeIdent, as)
+	result := s.outcomeBindingConsumed(outcomeIdent, as)
+	if !initResult.consumed && !result.consumed {
+		discard := initResult.discard
+		if discard == token.NoPos {
+			discard = result.discard
+		}
+		if discard != token.NoPos {
+			s.report(discard, "registry write outcomes are discarded here; remove the discard or consume every outcome")
+		} else {
+			s.report(outcomeIdent.Pos(), "registry write outcomes are assigned but never consumed; inspect each outcome or return the outcomes")
+		}
 	}
 }
 
@@ -293,8 +312,13 @@ func (s *scanner) checkValueSpec(vs *ast.ValueSpec, callExpr ast.Expr) {
 		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned to _")
 		return
 	}
-	if s.nearestFunc(vs) == nil || !s.outcomeBindingConsumed(outcomeIdent, vs) {
-		s.report(outcomeIdent.Pos(), "registry write outcomes are assigned but never consumed; inspect each outcome or return the outcomes")
+	result := s.outcomeBindingConsumed(outcomeIdent, vs)
+	if s.nearestFunc(vs) == nil || !result.consumed {
+		if result.discard != token.NoPos {
+			s.report(result.discard, "registry write outcomes are discarded here; remove the discard or consume every outcome")
+		} else {
+			s.report(outcomeIdent.Pos(), "registry write outcomes are assigned but never consumed; inspect each outcome or return the outcomes")
+		}
 	}
 }
 
@@ -343,20 +367,20 @@ func (s *scanner) contextParent(expr ast.Expr) (ast.Node, ast.Expr) {
 }
 
 func (s *scanner) errorBindingChecked(errIdent *ast.Ident, assigned ast.Node) bool {
-	return s.bindingReadAfter(errIdent, assigned, anyBindingRead)
+	return s.bindingReadAfter(errIdent, assigned, anyBindingRead).consumed
 }
 
-func (s *scanner) outcomeBindingConsumed(outcomeIdent *ast.Ident, assigned ast.Node) bool {
+func (s *scanner) outcomeBindingConsumed(outcomeIdent *ast.Ident, assigned ast.Node) bindingReadResult {
 	return s.bindingReadAfter(outcomeIdent, assigned, meaningfulOutcomeRead)
 }
 
-func (s *scanner) bindingReadAfter(target *ast.Ident, assigned ast.Node, policy bindingReadPolicy) bool {
+func (s *scanner) bindingReadAfter(target *ast.Ident, assigned ast.Node, policy bindingReadPolicy) bindingReadResult {
 	if target.Obj == nil {
-		return false
+		return bindingReadResult{}
 	}
 	root := s.nearestFunc(assigned)
 	if root == nil {
-		return false
+		return bindingReadResult{}
 	}
 	readStart := assigned.End()
 	excluded := s.siblingBranchExclusions(assigned)
@@ -378,9 +402,9 @@ func (s *scanner) bindingReadAfter(target *ast.Ident, assigned ast.Node, policy 
 		return true
 	})
 	found := false
-	discarded := false
+	discard := token.NoPos
 	ast.Inspect(root, func(n ast.Node) bool {
-		if discarded || (found && policy == anyBindingRead) {
+		if discard != token.NoPos || (found && policy == anyBindingRead) {
 			return false
 		}
 		if n == nil || n.Pos() <= readStart {
@@ -395,9 +419,9 @@ func (s *scanner) bindingReadAfter(target *ast.Ident, assigned ast.Node, policy 
 		if fl, ok := n.(*ast.FuncLit); ok && fl != root {
 			return false
 		}
-		consumed, discard := s.bindingReadDisposition(n, target, policy)
-		if discard {
-			discarded = true
+		consumed, discarded := s.bindingReadDisposition(n, target, policy)
+		if discarded {
+			discard = n.Pos()
 			return false
 		}
 		if !consumed {
@@ -406,18 +430,18 @@ func (s *scanner) bindingReadAfter(target *ast.Ident, assigned ast.Node, policy 
 		found = true
 		return policy == meaningfulOutcomeRead
 	})
-	return found && !discarded
+	return bindingReadResult{consumed: found && discard == token.NoPos, discard: discard}
 }
 
 func (s *scanner) initBindingChecked(errIdent *ast.Ident, assigned *ast.AssignStmt) bool {
-	return s.initBindingRead(errIdent, assigned, anyBindingRead)
+	return s.initBindingRead(errIdent, assigned, anyBindingRead).consumed
 }
 
-func (s *scanner) initOutcomeBindingConsumed(outcomeIdent *ast.Ident, assigned *ast.AssignStmt) bool {
+func (s *scanner) initOutcomeBindingConsumed(outcomeIdent *ast.Ident, assigned *ast.AssignStmt) bindingReadResult {
 	return s.initBindingRead(outcomeIdent, assigned, meaningfulOutcomeRead)
 }
 
-func (s *scanner) initBindingRead(target *ast.Ident, assigned *ast.AssignStmt, policy bindingReadPolicy) bool {
+func (s *scanner) initBindingRead(target *ast.Ident, assigned *ast.AssignStmt, policy bindingReadPolicy) bindingReadResult {
 	switch p := s.parents[assigned].(type) {
 	case *ast.IfStmt:
 		return s.bindingReadInNode(target, p, policy)
@@ -428,14 +452,14 @@ func (s *scanner) initBindingRead(target *ast.Ident, assigned *ast.AssignStmt, p
 	case *ast.TypeSwitchStmt:
 		return s.bindingReadInNode(target, p, policy)
 	}
-	return false
+	return bindingReadResult{}
 }
 
-func (s *scanner) bindingReadInNode(target *ast.Ident, node ast.Node, policy bindingReadPolicy) bool {
+func (s *scanner) bindingReadInNode(target *ast.Ident, node ast.Node, policy bindingReadPolicy) bindingReadResult {
 	found := false
-	discarded := false
+	discard := token.NoPos
 	ast.Inspect(node, func(n ast.Node) bool {
-		if discarded || (found && policy == anyBindingRead) {
+		if discard != token.NoPos || (found && policy == anyBindingRead) {
 			return false
 		}
 		if n == nil {
@@ -444,9 +468,9 @@ func (s *scanner) bindingReadInNode(target *ast.Ident, node ast.Node, policy bin
 		if fl, ok := n.(*ast.FuncLit); ok {
 			return fl == node
 		}
-		consumed, discard := s.bindingReadDisposition(n, target, policy)
-		if discard {
-			discarded = true
+		consumed, discarded := s.bindingReadDisposition(n, target, policy)
+		if discarded {
+			discard = n.Pos()
 			return false
 		}
 		if !consumed {
@@ -455,7 +479,7 @@ func (s *scanner) bindingReadInNode(target *ast.Ident, node ast.Node, policy bin
 		found = true
 		return policy == meaningfulOutcomeRead
 	})
-	return found && !discarded
+	return bindingReadResult{consumed: found && discard == token.NoPos, discard: discard}
 }
 
 func (s *scanner) bindingReadDisposition(node ast.Node, target *ast.Ident, policy bindingReadPolicy) (bool, bool) {
@@ -1173,6 +1197,21 @@ expect_violation() {
   fi
 }
 
+expect_violation_at() {
+  local name="$1" line="$2" want="$3" rc
+  set +e
+  updatelocked_gate "$neg_root/$name" >"$ROOT/negative-$name.out" 2>&1
+  rc=$?
+  set -e
+  if [[ "$rc" != "1" ]]; then
+    fail_case "UpdateLocked outcome/error gate negative demo catches $name" "want exit 1, got $rc: $(cat "$ROOT/negative-$name.out")"
+  elif ! grep -q "negative.go:$line: $want" "$ROOT/negative-$name.out"; then
+    fail_case "UpdateLocked outcome/error gate negative demo catches $name" "missing expected diagnostic at line $line: $want: $(cat "$ROOT/negative-$name.out")"
+  else
+    pass "UpdateLocked outcome/error gate negative demo catches $name at discard site"
+  fi
+}
+
 expect_violation blank 'registry write error result is assigned to _'
 expect_violation bare 'registry write call discards the error'
 expect_violation ignored 'registry write error result is assigned but never checked'
@@ -1196,11 +1235,11 @@ expect_violation switch_case_overwrite 'registry write error result is assigned 
 expect_violation sibling_branch_read 'registry write error result is assigned but never checked'
 expect_violation outcomes_blank 'registry write outcomes are assigned to _'
 expect_violation outcomes_unread 'registry write outcomes are assigned but never consumed'
-expect_violation outcomes_blank_after_bind 'registry write outcomes are assigned but never consumed'
-expect_violation outcomes_positional_blank 'registry write outcomes are assigned but never consumed'
-expect_violation outcomes_positional_blank_after_use 'registry write outcomes are assigned but never consumed'
-expect_violation outcomes_empty_range 'registry write outcomes are assigned but never consumed'
-expect_violation outcomes_ignored_argument 'registry write outcomes are assigned but never consumed'
+expect_violation_at outcomes_blank_after_bind 7 'registry write outcomes are discarded here; remove the discard or consume every outcome'
+expect_violation_at outcomes_positional_blank 8 'registry write outcomes are discarded here; remove the discard or consume every outcome'
+expect_violation_at outcomes_positional_blank_after_use 8 'registry write outcomes are discarded here; remove the discard or consume every outcome'
+expect_violation_at outcomes_empty_range 7 'registry write outcomes are discarded here; remove the discard or consume every outcome'
+expect_violation_at outcomes_ignored_argument 9 'registry write outcomes are discarded here; remove the discard or consume every outcome'
 expect_violation append_outcomes_blank 'registry write outcomes are assigned to _'
 expect_violation wrapper_outcomes_blank 'registry write outcomes are assigned to _'
 
@@ -1215,7 +1254,7 @@ else
 fi
 
 pos_root="$ROOT/positive"
-mkdir -p "$pos_root"/{branch_checked,return_forward,argument_forward,bound_argument_forward,positional_forward,aggregate,range_inspection,guarded_branch,error_wrap,switch_cases,select_cases}
+mkdir -p "$pos_root"/{branch_checked,return_forward,argument_forward,bound_argument_forward,positional_forward,derived_builtin_read,aggregate,range_inspection,guarded_branch,error_wrap,switch_cases,select_cases}
 
 cat >"$pos_root/branch_checked/positive.go" <<'GO'
 package positive
@@ -1286,6 +1325,18 @@ func positionalForward(keep []registry.WriteOutcome) error {
 	var sink, forwarded []registry.WriteOutcome
 	sink, forwarded = keep, outcomes
 	if len(sink)+len(forwarded) > 0 {}
+	return err
+}
+GO
+
+cat >"$pos_root/derived_builtin_read/positive.go" <<'GO'
+package positive
+
+import registry "ai-config/tools/herder/internal/registry"
+
+func derivedBuiltinRead() error {
+	outcomes, err := registry.UpdateLocked("registry.jsonl", nil)
+	_ = len(outcomes)
 	return err
 }
 GO
@@ -1389,7 +1440,7 @@ func selectCases(a, b <-chan struct{}) error {
 }
 GO
 
-for name in branch_checked return_forward argument_forward bound_argument_forward positional_forward aggregate range_inspection guarded_branch error_wrap switch_cases select_cases; do
+for name in branch_checked return_forward argument_forward bound_argument_forward positional_forward derived_builtin_read aggregate range_inspection guarded_branch error_wrap switch_cases select_cases; do
   if updatelocked_gate "$pos_root/$name" >"$ROOT/positive-$name.out" 2>&1; then
     pass "UpdateLocked outcome/error gate positive demo allows $name"
   else
