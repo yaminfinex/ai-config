@@ -1,0 +1,17 @@
+=== STDERR ===
+herder list: ignoring continuation record: read continuation foreign.json: unsupported or invalid record
+=== STDOUT ===
+UNRESOLVED DETACHED CONTINUATIONS
+  compact-then-beta-42  @beta-rive  failed 2026-07-12T12:00:00Z: delivery budget exhausted after 3 attempts
+    recovery: herder send beta-rive -- continue
+    log: /hfake/state/compact-then/compact-then-beta-42.log
+    after recovery: herder list --ack-continuation compact-then-beta-42
+
+GUID       LABEL                AGENT   PANE               LIVE      TEAM         BUS              CTX         ROLE
+alpha      alpha                claude  p_10               idle      global       -                unknown     worker
+beta       beta                 codex   p_99               working   blue         @beta-rive       unknown     reviewer
+gone       gone                 claude  p_30               gone      global       -                unknown     scout
+name       reborn               claude  p_55               idle      global       -                unknown     worker
+undet      undet                claude  p_60               undetected global       -                unknown     worker
+=== EXIT ===
+0

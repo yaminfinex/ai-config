@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"ai-config/tools/herder/internal/continuationstate"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/hookcmd"
@@ -146,9 +147,12 @@ Usage:
   herder observer stop             SIGTERM the lockfile pid
 
 The observer is advice until it appends a registry row: observer.status.json can
-flag dormant-live or epoch-doubt rows for operators, but the registry remains
-truth. Observation facts use the same locked registry writer as every CLI verb;
-there is no observer write service or IPC append surface.
+flag dormant-live, epoch-doubt, or failed-continuation findings for operators,
+but the registry remains truth. Recover a failed continuation with its suggested
+command, then clear the finding explicitly with
+herder list --ack-continuation ID. Observation facts use the same locked registry
+writer as every CLI verb; there is no observer write service or IPC append
+surface.
 `)
 }
 
@@ -208,6 +212,7 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 	doctrine := doctrineCandidates(proj, hd, bus, st.DoctrineDeliveries, joinedHcomRow)
 	flags := advisoryFlags(proj, hd)
 	flags = append(flags, epochFlags(proj, hd, bus)...)
+	flags = append(flags, continuationFailureFlags(proj, stateDir, stderr)...)
 	summary := applyCandidates(registryPath, cands, stderr)
 	deliverDoctrine(doctrine, st.DoctrineDeliveries, sendDoctrine, now)
 	for _, rec := range proj.Sessions() {
@@ -945,6 +950,48 @@ func advisoryFlags(proj *v2.Projection, hd herdrState) []observerstatus.Flag {
 		}
 	}
 	return flags
+}
+
+func continuationFailureFlags(proj *v2.Projection, stateDir string, stderr io.Writer) []observerstatus.Flag {
+	records, warnings, err := continuationstate.Unresolved(filepath.Join(stateDir, "continuations"))
+	for _, warning := range warnings {
+		fmt.Fprintf(stderr, "herder observer sweep: ignoring continuation record: %v\n", warning)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "herder observer sweep: continuation state unavailable: %v\n", err)
+		return nil
+	}
+	flags := make([]observerstatus.Flag, 0, len(records))
+	for _, rec := range records {
+		guid, label, ok := continuationTarget(proj, rec.Target)
+		if !ok {
+			continue
+		}
+		flags = append(flags, observerstatus.Flag{
+			GUID:      guid,
+			Label:     label,
+			Type:      "failed-continuation",
+			Severity:  "warning",
+			Detail:    fmt.Sprintf("detached continuation %s failed at %s: %s (log: %s)", rec.ID, rec.UpdatedAt, rec.Reason, rec.LogPath),
+			Suggested: rec.RecoveryCommand + "; then herder list --ack-continuation " + rec.ID,
+		})
+	}
+	return flags
+}
+
+func continuationTarget(proj *v2.Projection, target string) (string, string, bool) {
+	var guid, label string
+	for _, rec := range proj.Sessions() {
+		if rec.Seat == nil || rec.Seat.HcomName != target {
+			continue
+		}
+		if guid != "" {
+			return "", "", false
+		}
+		guid = rec.GUID
+		label = rec.Label
+	}
+	return guid, label, guid != ""
 }
 
 func epochFlags(proj *v2.Projection, hd herdrState, bus busState) []observerstatus.Flag {

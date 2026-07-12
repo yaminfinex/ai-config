@@ -35,9 +35,11 @@ import (
 	"syscall"
 	"time"
 
+	"ai-config/tools/herder/internal/continuationstate"
 	"ai-config/tools/herder/internal/herderpaths"
 	"ai-config/tools/herder/internal/registry"
 	"ai-config/tools/herder/internal/send"
+	"ai-config/tools/herder/internal/shellquote"
 )
 
 // thenConfig is the fully-resolved plan for one detached continuation: WHERE
@@ -52,6 +54,8 @@ type thenConfig struct {
 	TimeoutMS      int
 	RetryBackoffMS int // settling delay between transient send retries
 	DeliverdMS     int // per-send bus receipt window
+	RecordID       string
+	LogPath        string
 }
 
 // busProbe is the seam runThenLoop is tested against:
@@ -110,6 +114,7 @@ func RunCompactThen(args []string, stdout, stderr io.Writer) int {
 // recoverable (the user just re-sends), a mid-turn injection silently corrupts
 // the compaction it was meant to follow.
 func runThenLoop(p busProbe, cfg thenConfig, log io.Writer, now func() time.Time, sleep func(time.Duration)) int {
+	recordThenLifecycle(cfg, "armed", "", log, now())
 	watermark, snapOK := establishWatermark(p, cfg, now, sleep)
 	if snapOK {
 		fmt.Fprintf(log, "herder compact-then: armed for @%s (bus %s) — waiting for a PROVEN turn end before delivering %d chars (poll %dms, timeout %dms, arm event #%d)\n",
@@ -150,8 +155,10 @@ func runThenLoop(p busProbe, cfg thenConfig, log io.Writer, now func() time.Time
 			return thenDeliver(p, cfg, log, now, sleep, deadline)
 		}
 		if !now().Before(deadline) {
+			reason := fmt.Sprintf("turn end never proven within %dms (last status=%s)", cfg.TimeoutMS, statusLabel(status))
 			fmt.Fprintf(log, "herder compact-then: TIMEOUT after %dms — turn end never PROVEN (last status=%q, saw_active=%t, snapshot_established=%t, turn_end_event_found=%t); FAILING CLOSED, continuation NOT delivered (a dropped continuation beats a mid-turn injection). Deliver it manually once the session is idle:\n  herder send %s -- %s\n",
 				cfg.TimeoutMS, statusLabel(status), sawActive, snapOK, turnEndEventFound, cfg.BusName, shellPreview(cfg.Message))
+			recordThenLifecycle(cfg, "failed", reason, log, now())
 			return 1
 		}
 		sleep(time.Duration(cfg.PollMS) * time.Millisecond)
@@ -196,14 +203,18 @@ func thenDeliver(p busProbe, cfg thenConfig, log io.Writer, now func() time.Time
 		switch verdict {
 		case "delivered":
 			fmt.Fprintf(log, "herder compact-then: delivered on attempt %d — continuation is in @%s's queue post-compaction.\n", attempt, cfg.BusName)
+			recordThenLifecycle(cfg, "delivered", "", log, now())
 			return 0
 		case "queued":
 			fmt.Fprintf(log, "herder compact-then: queued on attempt %d — @%s was busy; the bus will inject the continuation at its next turn. NOT resending.\n", attempt, cfg.BusName)
+			recordThenLifecycle(cfg, "queued", "", log, now())
 			return 0
 		}
 		if !now().Before(deadline) {
+			reason := fmt.Sprintf("delivery budget exhausted after %d attempt(s) (last verdict: %s)", attempt, verdict)
 			fmt.Fprintf(log, "herder compact-then: FAILED to deliver within the --then-timeout budget after %d attempt(s) (last: %s); continuation NOT delivered. Deliver it manually:\n  herder send %s -- %s\n",
 				attempt, verdict, cfg.BusName, shellPreview(cfg.Message))
+			recordThenLifecycle(cfg, "failed", reason, log, now())
 			return 1
 		}
 		// Cap the backoff to the remaining budget so the last sleep lands exactly
@@ -462,6 +473,27 @@ func shellPreview(message string) string {
 	return "'" + single + "'"
 }
 
+// recordThenLifecycle wraps the delivery loop without participating in its
+// proof or transport decisions. Durable-state trouble is diagnostic only:
+// delivery remains primary and proceeds exactly as it would without the store.
+func recordThenLifecycle(cfg thenConfig, status, reason string, log io.Writer, at time.Time) {
+	if cfg.RecordID == "" {
+		return
+	}
+	rec := continuationstate.Record{
+		ID:              cfg.RecordID,
+		Status:          status,
+		Target:          cfg.BusName,
+		UpdatedAt:       at.UTC().Format(time.RFC3339),
+		Reason:          reason,
+		LogPath:         cfg.LogPath,
+		RecoveryCommand: "herder send " + shellquote.Quote(cfg.BusName) + " -- " + shellquote.Quote(cfg.Message),
+	}
+	if err := continuationstate.Advance("", rec); err != nil {
+		fmt.Fprintf(log, "herder compact-then: WARNING — durable continuation status %q could not be recorded: %v; delivery is continuing and diagnostics remain in %s\n", status, err, cfg.LogPath)
+	}
+}
+
 // armCompactThen launches the detached continuation sender AFTER the parent has
 // verified the /compact paste landed (AC#2 ordering floor). It never blocks the
 // compact verdict: any launch trouble WARNS and returns (the compact itself
@@ -481,7 +513,8 @@ func armCompactThen(stderr io.Writer, shortGUID, busName, busDir, message string
 		fmt.Fprintf(stderr, "herder compact: WARNING — --then NOT armed: cannot create diagnostics dir %s: %v. The /compact still fires; deliver the continuation manually: herder send %s -- %s\n", logDir, err, busName, shellPreview(message))
 		return
 	}
-	logPath := filepath.Join(logDir, fmt.Sprintf("compact-then-%s-%d.log", firstNonEmpty(shortGUID, "self"), os.Getpid()))
+	logPath := filepath.Join(logDir, fmt.Sprintf("compact-then-%s-%d-%d.log", firstNonEmpty(shortGUID, "self"), os.Getpid(), time.Now().UnixNano()))
+	recordID := strings.TrimSuffix(filepath.Base(logPath), filepath.Ext(logPath))
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		fmt.Fprintf(stderr, "herder compact: WARNING — --then NOT armed: cannot open diagnostics log %s: %v. Deliver the continuation manually: herder send %s -- %s\n", logPath, err, busName, shellPreview(message))
@@ -494,6 +527,8 @@ func armCompactThen(stderr io.Writer, shortGUID, busName, busDir, message string
 		"--dir", busDir,
 		"--message", message,
 		"--timeout-ms", strconv.Itoa(timeoutMS),
+		"--record-id", recordID,
+		"--log-path", logPath,
 	)
 	child.Stdout = logFile
 	child.Stderr = logFile
@@ -551,6 +586,10 @@ func parseThenArgs(args []string, stderr io.Writer) (thenConfig, int) {
 			var v string
 			v, i = nextValue(args, i)
 			cfg.PollMS = atoiOrDefault(v, cfg.PollMS)
+		case "--record-id":
+			cfg.RecordID, i = nextValue(args, i)
+		case "--log-path":
+			cfg.LogPath, i = nextValue(args, i)
 		default:
 			fmt.Fprintf(stderr, "herder compact-then: unknown arg: %s\n", args[i])
 			return cfg, 64

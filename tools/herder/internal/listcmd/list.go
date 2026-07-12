@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/continuationstate"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/registry"
@@ -27,9 +28,26 @@ type options struct {
 	mode       string
 	includeAll bool
 	targetGUID string
+	ackID      string
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
+	opts, code := parseArgs(args, stdout, stderr)
+	if code != 0 {
+		return code
+	}
+	if opts.help {
+		return 0
+	}
+	if opts.ackID != "" {
+		rec, err := continuationstate.Acknowledge("", opts.ackID, time.Now())
+		if err != nil {
+			fmt.Fprintf(stderr, "herder list: cannot acknowledge continuation %s: %v. Run `herder list` to inventory unresolved failures.\n", opts.ackID, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "acknowledged failed continuation %s for @%s; if recovery is still needed, run:\n  %s\n", rec.ID, rec.Target, rec.RecoveryCommand)
+		return 0
+	}
 	if _, err := exec.LookPath("herdr"); err != nil {
 		die(stderr, "herdr not on PATH")
 		return 1
@@ -39,16 +57,23 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	opts, code := parseArgs(args, stdout, stderr)
-	if code != 0 {
-		return code
-	}
-	if opts.help {
-		return 0
-	}
-
 	if opts.mode == "teams" {
 		return runTeams(stdout)
+	}
+	var failures []continuationstate.Record
+	if opts.mode == "table" || opts.mode == "json" {
+		var warnings []error
+		var err error
+		failures, warnings, err = continuationstate.Unresolved("")
+		for _, warning := range warnings {
+			fmt.Fprintf(stderr, "herder list: ignoring continuation record: %v\n", warning)
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "herder list: continuation state unavailable: %v. Inspect %s for durable records.\n", err, continuationstate.DefaultDir())
+		}
+	}
+	if opts.mode == "table" {
+		renderContinuationFailures(stdout, failures)
 	}
 
 	registryPath := registry.DefaultPath()
@@ -105,7 +130,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			if !opts.includeAll && (rec.Status != "active" || rec.Archived) {
 				continue
 			}
-			fmt.Fprintln(stdout, string(reconciledJSON(rec, idx, observerAdviceFor(advice, ptrString(rec.GUID)))))
+			out := reconciledJSON(rec, idx, observerAdviceFor(advice, ptrString(rec.GUID)))
+			fmt.Fprintln(stdout, string(appendUnresolvedContinuations(out, failures)))
 		}
 		return 0
 	}
@@ -172,6 +198,13 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		case "--teams":
 			opts.mode = "teams"
 			i++
+		case "--ack-continuation":
+			if i+1 >= len(args) {
+				die(stderr, "--ack-continuation requires an id")
+				return opts, 1
+			}
+			opts.ackID = args[i+1]
+			i += 2
 		case "-h", "--help":
 			printHelp(stdout)
 			opts.help = true
@@ -194,9 +227,28 @@ Usage:
   herder list --raw        raw registry JSONL, no reconciliation
   herder list --guid GUID  one record as full JSON (exit 1 if not found)
   herder list --teams      list team buses under $HERDER_TEAMS_ROOT
+  herder list --ack-continuation ID
+                           acknowledge a failed detached continuation after recovery
 
-Use --all to check whether a missing agent was culled.
+The table lists unresolved detached continuation failures before agent rows.
+Run the recorded recovery command, then use --ack-continuation to clear the
+failure from list and observer advice. Use --all to check whether a missing
+agent was culled.
 `)
+}
+
+func renderContinuationFailures(stdout io.Writer, failures []continuationstate.Record) {
+	if len(failures) == 0 {
+		return
+	}
+	fmt.Fprintln(stdout, "UNRESOLVED DETACHED CONTINUATIONS")
+	for _, rec := range failures {
+		fmt.Fprintf(stdout, "  %s  @%s  failed %s: %s\n", rec.ID, rec.Target, rec.UpdatedAt, rec.Reason)
+		fmt.Fprintf(stdout, "    recovery: %s\n", rec.RecoveryCommand)
+		fmt.Fprintf(stdout, "    log: %s\n", rec.LogPath)
+		fmt.Fprintf(stdout, "    after recovery: herder list --ack-continuation %s\n", rec.ID)
+	}
+	fmt.Fprintln(stdout)
 }
 
 func runTeams(stdout io.Writer) int {
@@ -400,6 +452,17 @@ func reconciledJSON(rec registry.Record, idx liveIndex, advice []observerstatus.
 		`"live_matched_by":` + jsonString(matchedBy),
 	}, adviceFields...)
 	return appendJSONFields(rec.Raw, fields...)
+}
+
+func appendUnresolvedContinuations(out []byte, failures []continuationstate.Record) []byte {
+	if len(failures) == 0 {
+		return out
+	}
+	b, err := json.Marshal(failures)
+	if err != nil {
+		return out
+	}
+	return appendJSONFields(out, `"unresolved_continuations":`+string(b))
 }
 
 func loadObserverAdvice() map[string][]observerstatus.Flag {

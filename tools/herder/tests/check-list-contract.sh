@@ -10,7 +10,8 @@
 #   collapse       — append-only registry collapses to latest-record-per-guid;
 #                    non-active latest rows are hidden unless --all.
 #   modes          — table (default), --all, --json, --raw, --guid (found +
-#                    missing), --teams, missing registry, herdr-list failure.
+#                    missing), --teams, missing registry, herdr-list failure,
+#                    unresolved continuation surfacing + acknowledgement.
 #   provenance     — raw/json modes pass provenance-bearing rows through.
 #
 # Usage:
@@ -121,6 +122,29 @@ CTX_SIZE=258400
 CTX_TS=1
 CTX_STALE
 
+# Failed-continuation scenarios: scratch-only durable state, including one
+# foreign record that must warn without hiding the valid failure.
+CONT_STATE="$ROOT/list-continuations-state"
+mkdir -p "$CONT_STATE/continuations"
+cp "$FIX/registry.jsonl" "$CONT_STATE/registry.jsonl"
+cat > "$CONT_STATE/continuations/compact-then-beta-42.json" <<'CONT_FAILURE'
+{
+  "schema": "herder.continuation.v1",
+  "id": "compact-then-beta-42",
+  "status": "failed",
+  "target": "beta-rive",
+  "updated_at": "2026-07-12T12:00:00Z",
+  "reason": "delivery budget exhausted after 3 attempts",
+  "log_path": "/hfake/state/compact-then/compact-then-beta-42.log",
+  "recovery_command": "herder send beta-rive -- continue",
+  "lifecycle": [
+    {"status":"armed","timestamp":"2026-07-12T11:59:00Z"},
+    {"status":"failed","timestamp":"2026-07-12T12:00:00Z","reason":"delivery budget exhausted after 3 attempts"}
+  ]
+}
+CONT_FAILURE
+printf '{}\n' > "$CONT_STATE/continuations/foreign.json"
+
 # scenario name | mock scenario | state dir | args
 SCENARIOS=(
   "table|normal|$FIX|"
@@ -139,6 +163,9 @@ SCENARIOS=(
   "guid_fork_shadow|normal|$TESTS_DIR/fixtures/list-guid-fork-shadow|--guid guid-parent-0000"
   "archive_all|normal|$TESTS_DIR/fixtures/list-archives|--all"
   "archive_json|normal|$TESTS_DIR/fixtures/list-archives|--json --all"
+  "continuations_table|normal|$CONT_STATE|"
+  "continuations_json|normal|$CONT_STATE|--json"
+  "continuations_ack|normal|$CONT_STATE|--ack-continuation compact-then-beta-42"
 )
 
 normalize() {  # make tempdir paths deterministic before diffing
