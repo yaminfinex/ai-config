@@ -25,6 +25,12 @@ test_names=(
   TestLockedWriterRefusesUnlocked
 )
 
+minimum_test_count=10
+if ((${#test_names[@]} < minimum_test_count)); then
+  printf 'REGISTRY GATE DECLARATION FLOOR VIOLATED — only %d tests remain, but at least %d invariant anchors are required; restore any removed declarations or replace them with the tests that now anchor those invariants in check-registry-write-discipline.sh.\n' "${#test_names[@]}" "$minimum_test_count" >&2
+  exit 1
+fi
+
 require_declared_tests() {
   local listed_tests="$1"
   shift
@@ -33,11 +39,19 @@ require_declared_tests() {
   local missing=0
   for test_name in "$@"; do
     if ! grep -Fxq "$test_name" <<<"$listed_tests"; then
-      printf 'DECLARED REGISTRY GATE TEST MISSING — "%s" does not exist; fix its name in check-registry-write-discipline.sh.\n' "$test_name" >&2
+      printf 'DECLARED REGISTRY GATE TEST MISSING — "%s" does not exist; fix its name, or replace it with the test that now anchors this invariant in check-registry-write-discipline.sh.\n' "$test_name" >&2
       missing=1
     fi
   done
   return "$missing"
+}
+
+test_executed_and_passed() {
+  local test_output="$1"
+  local test_name="$2"
+
+  grep -Fq -- "=== RUN   $test_name" <<<"$test_output" &&
+    grep -Fq -- "--- PASS: $test_name " <<<"$test_output"
 }
 
 if ! listed_tests="$(go test ./internal/registry -list '^Test')"; then
@@ -65,12 +79,22 @@ fi
 
 printf '%s\n' "$test_output"
 
+# Prove the execution-evidence check also rejects a known-absent test.
+if test_executed_and_passed "$test_output" "$missing_test_probe"; then
+  printf '\nREGISTRY WRITE-DISCIPLINE GATE SELF-CHECK FAILED — the absent test "%s" had RUN and PASS evidence; fix execution-evidence validation in check-registry-write-discipline.sh.\n' "$missing_test_probe"
+  exit 1
+fi
+
 for test_name in "${test_names[@]}"; do
-  if ! grep -Fq -- "=== RUN   $test_name" <<<"$test_output" ||
-    ! grep -Fq -- "--- PASS: $test_name " <<<"$test_output"; then
-    printf '\nDECLARED REGISTRY GATE TEST DID NOT EXECUTE AND PASS — "%s" lacks RUN or PASS output; fix its name or execution in check-registry-write-discipline.sh.\n' "$test_name"
-    exit 1
+  if test_executed_and_passed "$test_output" "$test_name"; then
+    continue
   fi
+  if ! grep -Fq -- "=== RUN   $test_name" <<<"$test_output"; then
+    printf '\nDECLARED REGISTRY GATE TEST DID NOT RUN — "%s" lacks RUN output; fix its name, or replace it with the test that now anchors this invariant in check-registry-write-discipline.sh.\n' "$test_name"
+  else
+    printf '\nDECLARED REGISTRY GATE TEST DID NOT PASS — "%s" may be skipped; un-skip it, or replace it with the test that now anchors this invariant in check-registry-write-discipline.sh.\n' "$test_name"
+  fi
+  exit 1
 done
 
 printf '\nALL GREEN — registry write-discipline invariants pass.\n'
