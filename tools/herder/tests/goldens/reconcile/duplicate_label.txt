@@ -2,8 +2,8 @@
 
 === STDOUT ===
 GUID       LABEL                OUTCOME                        DETAIL
-dupa       duplabel             ambiguous                      fallback candidate terminal term_DUPLIVE is claimed by multiple active rows; refusing to guess
-dupb       duplabel             ambiguous                      fallback candidate terminal term_DUPLIVE is claimed by multiple active rows; refusing to guess
+dupa       duplabel             ambiguous                      fallback candidate terminal term_DUPLIVE is claimed by multiple non-retired sessions; refusing to guess
+dupb       duplabel             ambiguous                      fallback candidate terminal term_DUPLIVE is claimed by multiple non-retired sessions; refusing to guess
 === EXIT ===
 1
 === REGISTRY ===

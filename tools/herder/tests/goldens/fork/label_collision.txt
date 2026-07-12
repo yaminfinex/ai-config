@@ -1,5 +1,5 @@
 === STDERR ===
-herder-lifecycle: label "taken" already belongs to active guid guid-other-0000
+herder-lifecycle: label "taken" already belongs to non-retired session guid-other-0000
 === STDOUT ===
 
 === EXIT ===

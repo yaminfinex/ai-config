@@ -253,7 +253,7 @@ func (r *runner) registerSpawn(registryPath string, record spawnRecord) error {
 	}
 	outcomes, err := r.updateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		if owner := registry.V2LabelOwner(tx.Projection, record.Label, record.GUID); owner != nil {
-			return nil, fmt.Errorf("label %q already belongs to active guid %s", record.Label, owner.GUID)
+			return nil, fmt.Errorf("label %q already belongs to non-retired session %s", record.Label, owner.GUID)
 		}
 		row := registry.V2FromRecord(regRec, "registered", v2.StateSeated, record.StartedAt)
 		row.Provenance.CWD = record.CWD
@@ -676,7 +676,7 @@ func (r *runner) run() int {
 		case name != "":
 			opts.NotifyBusName = name
 		case ambiguous:
-			// A reused pane holds several active rows and bus liveness can't
+			// A reused pane holds several seated sessions and bus liveness can't
 			// single one out (TASK-035) — resolveSpawnerBus already warned with
 			// the candidate list. Notify is best-effort (TASK-017
 			// warn-never-block): drop it and spawn the worker anyway rather than
@@ -1509,7 +1509,7 @@ func printHelp(stdout io.Writer) {
 		"  it needn't poll wait in a loop. The spawner's bus name resolves from the registry by its",
 		"  guid AND by its pane/terminal coordinates, so enrolled sessions (no $HERDER_GUID in their",
 		"  environment) route bus-native too. --notify-to may also name the target directly by its",
-		"  bus name: an active registry row's hcom_name matches, and an unregistered name is accepted",
+		"  bus name: a seated registry session's hcom_name matches, and an unregistered name is accepted",
 		"  if live on the bus the child will join (team-scoped — cross-bus names still refuse).",
 		"  A spawner that resolves to NO bus name is a hard error (the keystroke ring was removed).",
 		"  It is only a signal — send it once and stop.",
@@ -1827,7 +1827,7 @@ func firstNonEmpty(values ...string) string {
 // resolveSpawnerBus returns the notify target's hcom bus name so a finished
 // worker can report completion over the bus. It keys on a POSITIVE identity,
 // most explicit first: a --notify-to that names a registry peer (guid/short/
-// label, else that peer's live pane/terminal id, else an active row's recorded
+// label, else that peer's live pane/terminal id, else a seated session's recorded
 // hcom_name), a --notify-to that IS a literal bus name live on the bus the
 // child will join (TASK-023 — bus names are first-class addresses, consistent
 // with send's HERDER_BUS=hcom affordance), the spawner's own guid
@@ -1837,7 +1837,7 @@ func firstNonEmpty(values ...string) string {
 // its environment, so guid-only resolution misclassified it as bus-less).
 // Returns ("", false) when nothing matches (bus-less → hard error at the
 // caller) and ("", true) when a pane/terminal coordinate is AMBIGUOUS — a
-// reused pane holds several active rows and bus liveness can't single one out.
+// reused pane holds several seated sessions and bus liveness can't single one out.
 // The caller treats that second signal as warn-and-skip-notify (best-effort,
 // TASK-017), NOT a hard error: a stale-row-cluttered registry must not misroute
 // a completion report the way `herder send` used to (TASK-035), and must not
@@ -1883,9 +1883,9 @@ func resolveSpawnerBus(registryPath, notifyTo, spawnedBy, spawnerPane, spawnerTe
 
 // busNameByPaneLive resolves a pane_id/terminal_id to a notify bus name,
 // applying the same reused-pane discipline as `herder send` (TASK-035). A lone
-// active candidate resolves exactly as the old busNameByPane did — its
+// seated candidate resolves exactly as the old busNameByPane did — its
 // hcom_name, unprobed (bus-less rows return "", not-yet-joined rows still
-// resolve, so nothing that worked before breaks). Only when >1 active row holds
+// resolve, so nothing that worked before breaks). Only when >1 seated session holds
 // the coordinate is bus liveness on the CHILD's bus the tiebreaker: the single
 // joined row wins. When 0 or >1 are live it returns ("", true) — ambiguous —
 // after warning with the candidate list; the caller skips notify rather than
@@ -1911,7 +1911,7 @@ func busNameByPaneLive(recs []registry.Record, key, childHcomDir string, warn io
 			listRows = live
 		}
 		if warn != nil {
-			fmt.Fprintf(warn, "herder spawn: --notify pane %q is ambiguous (%d active rows, %s) — skipping notify rather than route a completion report to a guessed session. Candidates: %s\n", key, len(candidates), reason, candidateBusList(listRows))
+			fmt.Fprintf(warn, "herder spawn: --notify pane %q is ambiguous (%d seated sessions, %s) — skipping notify rather than route a completion report to a guessed session. Candidates: %s\n", key, len(candidates), reason, candidateBusList(listRows))
 		}
 		return "", true
 	}
@@ -1936,7 +1936,7 @@ func candidateBusList(recs []registry.Record) string {
 
 // seatedBusName reports whether name is the recorded hcom_name of a seated
 // registry row — --notify-to may address a peer directly by its bus name, not
-// only by guid/label/pane coordinates. Closed rows don't count: the bus
+// only by guid/label/pane coordinates. Non-seated sessions don't count: the bus
 // recycles names, so a stale row must not vouch for a live address.
 func seatedBusName(recs []registry.Record, name string) bool {
 	for _, rec := range registry.LatestByGUID(recs) {

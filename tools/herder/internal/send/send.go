@@ -178,7 +178,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return sender.send(target, rec.HcomName, rec.HcomDir, message, opts.TimeoutMS, opts.JSONOutput, stdout, stderr)
 }
 
-// disambiguatePane picks the single bus-live row among several active rows
+// disambiguatePane picks the single bus-live row among several seated sessions
 // that all claim one pane/terminal coordinate. Liveness is a TIEBREAKER, not a
 // gate: it runs ONLY when len(candidates) > 1 (the caller passes a lone
 // candidate straight through). It returns the chosen row, or (nil, exitCode)
@@ -194,7 +194,7 @@ func disambiguatePane(sender *busSender, candidates []registry.Record, target st
 		return chosen, 0
 	}
 	if len(live) == 0 {
-		fmt.Fprintf(stderr, "herder send: refused — %d active rows claim '%s' but none is joined on the bus; cannot tell which session owns the pane now. Candidates:\n%sAddress one directly by its guid or label. Nothing was sent.\n", len(candidates), target, formatCandidates(candidates))
+		fmt.Fprintf(stderr, "herder send: refused — %d seated sessions claim '%s' but none is joined on the bus; cannot tell which session owns the pane now. Candidates:\n%sAddress one directly by its guid or label. Nothing was sent.\n", len(candidates), target, formatCandidates(candidates))
 		return nil, 2
 	}
 	fmt.Fprintf(stderr, "herder send: refused — %d rows claiming '%s' are bus-live at once; refusing to guess which. Candidates:\n%sAddress one directly by its guid or label. Nothing was sent.\n", len(live), target, formatCandidates(live))
@@ -309,10 +309,10 @@ func printHelp(stdout io.Writer) {
 		"",
 		"<target> is a short-guid, full guid, label, terminal_id (term_*), or raw pane_id.",
 		"Every form resolves through the spawn registry to the agent's recorded bus name:",
-		"guid/label match the latest row; terminal/pane ids match the ACTIVE row(s) holding",
+		"guid/label match the latest row; terminal/pane ids match the seated session(s) holding",
 		"the coordinate (drift-proof across pane move re-keying). Terminal ids are run-scoped:",
 		"after a herdr restart resolution refuses rather than mis-sends; recover via reconcile.",
-		"A pane id is display-only, so one coordinate can match several active rows; resolution",
+		"A pane id is display-only, so one coordinate can match several seated sessions; resolution",
 		"then delivers to the single row currently JOINED on the bus and REFUSES (exit 2) with",
 		"the candidate list when the coordinate is ambiguous (0 or >1 rows bus-live) rather than",
 		"guessing. hcom is THE transport — a target with no bus-bound registry row is refused",

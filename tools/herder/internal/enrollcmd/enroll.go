@@ -95,11 +95,11 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 
 	// Unseat prior identities bound to this same pane. A herdr pane hosts
 	// exactly one live session at a time, but pane ids are display-only and
-	// can re-key on moves or reshuffle after restart — so any OTHER active row
+	// can re-key on moves or reshuffle after restart — so any OTHER seated session
 	// still claiming this pane_id is a stale identity from an earlier session.
-	// Left active its bus name lingers as a forever-'working' row, and pane-id
+	// Left seated its bus name lingers as a forever-'working' row, and pane-id
 	// send resolution could pick it over the live one (TASK-035). Mark each
-	// closed before appending this session's row.
+	// unseated before appending this session's row.
 	nowISO := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		var latest *v2.SessionRecord
@@ -131,7 +131,7 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 			next.RecordedAt = nowISO
 			next.Seat = nil
 			rows = append(rows, next)
-			fmt.Fprintf(stderr, "retired stale pane row %s (%s) superseded by re-enroll\n", priorV2.Label, priorV2.GUID)
+			fmt.Fprintf(stderr, "unseated stale pane session %s (%s) superseded by re-enroll\n", priorV2.Label, priorV2.GUID)
 		}
 
 		mechanism := "enroll"
@@ -222,7 +222,7 @@ func labelOwnerError(label string, owner v2.SessionRecord) error {
 	case v2.StateLost:
 		return fmt.Errorf("label %q is held by guid %s in state %s; LOST sessions cannot transfer or release labels automatically", label, owner.GUID, owner.State)
 	default:
-		return fmt.Errorf("label %q already belongs to active guid %s", label, owner.GUID)
+		return fmt.Errorf("label %q already belongs to seated session %s", label, owner.GUID)
 	}
 }
 
@@ -301,8 +301,8 @@ Records pane_id, terminal_id, workspace_id, cwd, and live-verified hcom
 coordinates so later
 resolution survives pane move re-keying within a server run. After restart,
 recorded terminal_id is dead until reconcile or re-enroll. A herdr pane hosts one live
-session at a time, so re-enrolling a reused pane RETIRES (closes) any prior
-active rows still claiming that pane_id — a dead session's row never lingers as
+session at a time, so re-enrolling a reused pane UNSEATS any prior seated
+sessions still claiming that pane_id — a dead session never lingers as
 LIVE=working. Must run inside a herdr pane (HERDR_ENV=1 and HERDR_PANE_ID set);
 refuses otherwise. The launch-time HCOM_INSTANCE_NAME is never trusted. If the
 current bus row cannot be proven from session/process/pane identity, hcom_name is
@@ -313,18 +313,18 @@ that belongs to another session is refused.
 `)
 }
 
-// shouldRetirePriorRow decides whether a prior active row that shares this
-// pane_id is a stale identity to close on re-enroll (TASK-035 AC#1). pane_id
+// shouldRetirePriorRow decides whether a prior seated session that shares this
+// pane_id is a stale identity to unseat on re-enroll (TASK-035 AC#1). pane_id
 // alone is NOT enough: pane ids can re-key on moves and all ids reshuffle
 // after restart, so a still-live session may no longer be at its recorded
-// pane_id — closing that row would corrupt a LIVE session (review P1-b). It
-// refuses to close a row that is plausibly a different, live session:
+// pane_id — unseating that session would corrupt a LIVE session (review P1-b). It
+// refuses to unseat a session that is plausibly a different, live session:
 //   - terminal_id is the move-stable coordinate within a herdr server run;
 //     when both rows carry one and they DIFFER, the prior row is another
 //     session merely sharing the recorded pane_id — leave it.
 //   - a row whose bus name is currently JOINED is by definition live, never
 //     stale. The probe is protective ONLY: an unavailable bus returns false so
-//     it can never FORCE a close, only prevent one.
+//     it can never FORCE an unseat, only prevent one.
 func shouldRetirePriorRow(prior registry.Record, paneTerminalID string, joined func(name, dir string) bool) bool {
 	if prior.TerminalID != "" && paneTerminalID != "" && prior.TerminalID != paneTerminalID {
 		return false

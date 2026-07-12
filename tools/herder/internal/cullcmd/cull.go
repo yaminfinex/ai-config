@@ -68,7 +68,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "no gone records to cull")
 			return 0
 		}
-		fmt.Fprintln(stderr, "no matching active records")
+		fmt.Fprintln(stderr, "no matching non-retired sessions")
 		return 1
 	}
 
@@ -134,30 +134,31 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 
 func printHelp(stdout io.Writer) {
 	lines := []string{
-		"herder cull — close a spawned agent's pane and mark its registry record closed.",
+		"herder cull — close a spawned agent's pane and unseat its registry session.",
 		"",
 		"Usage:",
 		"  herder cull --guid GUID      close the agent with this short or full guid",
 		"  herder cull --label LABEL    close the agent with this label",
 		"  herder cull --pane PANE_ID   close the agent at this pane id",
-		"  herder cull --gone           close registry records whose pane is no longer live",
+		"  herder cull --gone           unseat seated sessions whose pane is no longer live",
 		"",
 		"Options:",
-		"  --dry-run    print what would be closed without acting",
+		"  --dry-run    print what would be culled without acting",
 		"  --force      skip terminal_id verification — use ONLY when you've confirmed the",
-		"               agent is dead and just need to mark the registry row closed",
+		"               agent is dead and just need to unseat the registry session",
 		"",
 		"Behavior:",
 		"  Before closing, confirms the live pane's terminal_id matches the one recorded at",
 		"  spawn. Within one herdr server run a stale pane_id points at nothing, not another",
 		"  agent; after a restart, ids reshuffle. Within a run, cull retargets to the",
 		"  original agent's current pane (via terminal_id) so it never closes someone",
-		"  else's work. Each close appends a new closed record (the registry is append-only JSONL).",
+		"  else's work. Each cull appends an unseated session record (the registry is append-only JSONL).",
+		"  Unseating preserves the session's label lease and resume continuity; it does not retire it.",
 		"  A row with neither pane_id nor terminal_id has nothing to verify or close; cull",
-		"  records it closed without requiring --force, matching --gone recovery.",
+		"  records the session unseated without requiring --force, matching --gone recovery.",
 		"",
 		"If it fails:",
-		"  - \"not live anywhere\": the agent is already gone; the row is recorded closed.",
+		"  - \"not live anywhere\": the agent is already gone; the session is recorded unseated.",
 		"  - an identity mismatch you don't understand: run `herder list` to re-resolve the",
 		"    agent, and pass --force only once you've confirmed the target is truly dead.",
 	}
@@ -268,9 +269,9 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 					return true
 				}
 				if vrc == 1 {
-					fmt.Fprintf(stderr, "pane %s gone and terminal %s not live anywhere; recording closed without API call\n", pane, term)
+					fmt.Fprintf(stderr, "pane %s gone and terminal %s not live anywhere; recording session unseated without API call\n", pane, term)
 				} else {
-					fmt.Fprintf(stderr, "pane %s reassigned to another terminal and %s not live anywhere; recording closed\n", pane, term)
+					fmt.Fprintf(stderr, "pane %s reassigned to another terminal and %s not live anywhere; recording session unseated\n", pane, term)
 				}
 				closed, appended, err := appendClosed(registryPath, rec, nowISO, "already_gone", "source=cull-verification; terminal_id not in live agent list")
 				if err != nil {
@@ -296,7 +297,7 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 			return false
 		}
 		if appended {
-			fmt.Fprintf(stdout, "cull errored %s (%s) pane=%s → %s (still marked closed in registry)\n", label, guid, pane, reason)
+			fmt.Fprintf(stdout, "cull errored %s (%s) pane=%s → %s (session still recorded unseated)\n", label, guid, pane, reason)
 			dropBusEntry(closed, stdout)
 		} else {
 			reportClosedFact(stdout, closed, false, "error", label, guid, pane)
@@ -319,7 +320,7 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 
 func reportClosedFact(stdout io.Writer, rec registry.Record, appended bool, result, fallbackLabel, fallbackGUID, pane string) {
 	if appended {
-		fmt.Fprintf(stdout, "recorded closed %s (%s) pane=%s → %s\n", fallbackLabel, fallbackGUID, pane, result)
+		fmt.Fprintf(stdout, "recorded unseated %s (%s) pane=%s → %s\n", fallbackLabel, fallbackGUID, pane, result)
 		return
 	}
 	label := ptrString(rec.Label)
@@ -407,7 +408,7 @@ func appendClosed(path string, rec registry.Record, nowISO, result, reason strin
 	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		latest := registry.V2ByGUID(tx.Projection, guid)
 		if latest == nil {
-			return nil, fmt.Errorf("registry close failed for %s: latest record not found", guid)
+			return nil, fmt.Errorf("registry unseat failed for %s: latest session not found", guid)
 		}
 		if latest.State == v2.StateUnseated && latest.CloseResult != "" && !latest.LegacyV1 {
 			cp := *latest
@@ -441,7 +442,7 @@ func appendClosed(path string, rec registry.Record, nowISO, result, reason strin
 		return rec, false, err
 	}
 	if outcome.Status != registry.WriteApplied {
-		return rec, false, fmt.Errorf("registry close failed for %s: no close record appended", guid)
+		return rec, false, fmt.Errorf("registry unseat failed for %s: no unseated session record appended", guid)
 	}
 	rec.State = v2.StateUnseated
 	rec.CloseResult = result

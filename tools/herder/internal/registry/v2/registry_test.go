@@ -148,7 +148,7 @@ func TestLegacyV1RealShapesMapReadOnly(t *testing.T) {
 	}
 	corpse := byGUID["2447b0e6-5004-4aca-84cd-08d7798dad52"]
 	if corpse.State != StateUnseated || corpse.Tool != "claude" || corpse.Continuity != "assumed" {
-		t.Fatalf("corpse active = %+v, want unseated claude assumed", corpse)
+		t.Fatalf("corpse session = %+v, want unseated claude assumed", corpse)
 	}
 	closed := byGUID["366fb03a-2f91-47f8-8a6c-eee954e413a5"]
 	if closed.State != StateRetired || len(closed.SIDs) != 1 || closed.Continuity != "confirmed" {
@@ -156,7 +156,7 @@ func TestLegacyV1RealShapesMapReadOnly(t *testing.T) {
 	}
 	team := byGUID["24cb80b1-852f-4d30-8f78-e241aaf7c97e"]
 	if team.State != StateUnseated || team.Tool != "claude" || len(team.SIDs) != 1 {
-		t.Fatalf("teams-era active row = %+v, want unseated and sid-seeded", team)
+		t.Fatalf("teams-era session = %+v, want unseated and sid-seeded", team)
 	}
 	bash := byGUID["01b4c997-36b3-4684-9d99-8fd20c29889d"]
 	if bash.State != StateUnseated || bash.Tool != "bash" {

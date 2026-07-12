@@ -282,7 +282,7 @@ func resolveSelfRow(recs []registry.Record, pane herdrcli.Pane) (selfIdentity, s
 
 	row := registry.SeatedByPaneOrTerminal(recs, pane.TerminalID)
 	if row == nil {
-		return selfIdentity{positional: true}, "no registry row proves this pane is yours (no HERDER_GUID, no session match, no active row for terminal " + pane.TerminalID + ")."
+		return selfIdentity{positional: true}, "no registry row proves this pane is yours (no HERDER_GUID, no session match, no seated session for terminal " + pane.TerminalID + ")."
 	}
 	wd, _ := os.Getwd()
 	paneCWD := pane.ForegroundCWD
@@ -428,7 +428,7 @@ func printCompactHelp(stdout io.Writer) {
 		"This is input automation on your own pane, NOT message delivery — agent-to-agent",
 		"messaging stays on the hcom bus (`herder send`). There is no target argument and",
 		"no pane flag: the only pane herder compact can address is the one it PROVES to be",
-		"yours — via HERDER_GUID, else your recorded session id, else an active registry",
+		"yours — via HERDER_GUID, else your recorded session id, else a seated registry",
 		"row for your current terminal corroborated by matching cwd. If guid and session",
 		"id disagree, or your row's terminal disagrees with your live pane without a",
 		"session-id corroboration (a stale/inherited HERDER_GUID looks exactly like",

@@ -4,7 +4,7 @@
 herder reconcile — audit and repair registry coordinates after herdr handoff.
 
 Usage:
-  herder reconcile          dry-run latest active registry rows
+  herder reconcile          dry-run latest non-retired registry sessions
   herder reconcile --apply  append replacement rows for safe coordinate refreshes
   herder reconcile --json   emit JSONL instead of a table
 

@@ -237,7 +237,7 @@ SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-lead-0000","event":"seated",
 scenario notify_bus        ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
 unset SPAWN_HERDER_GUID SPAWN_SEED_REGISTRY
 # Enrolled-spawner notify: NO HERDER_GUID in the spawner's env, but the spawning
-# pane (HERDR_PANE_ID=p_orch) has an active registry row with a bus name — the
+# pane (HERDR_PANE_ID=p_orch) has a seated registry session with a bus name — the
 # appendix must route bus-native via pane/terminal resolution rather than
 # hard-erroring (TASK-005 resolution order, TASK-003 bus-only).
 SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-lead-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"orchestrator","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"lead-bus","namespace":"/hcom"},"provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-lead","tag":"orchestrator","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
@@ -278,7 +278,7 @@ SPAWN_HERDER_GUID="guid-parent-000"
 SPAWN_HERDER_SPAWNED_BY="guid-grandpa-00"
 scenario spawn_grandparent ready claude launchctx --role worker --agent claude --json
 unset SPAWN_HERDER_GUID SPAWN_HERDER_SPAWNED_BY
-# TASK-023: --notify-to as a bus name. An ACTIVE registry row's hcom_name
+# TASK-023: --notify-to as a bus name. A seated registry session's hcom_name
 # matches even when the value is not a guid/label/pane coordinate...
 SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-lead-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"orchestrator","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_OTHER","pane_id":"p_other","hcom_name":"lead-bus","namespace":"/hcom"},"provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-lead","tag":"orchestrator","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
 scenario notify_to_hcomname ready claude launchctx --role worker --agent claude --notify --notify-to lead-bus --prompt "do the thing" --json

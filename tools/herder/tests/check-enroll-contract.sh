@@ -139,11 +139,11 @@ JSONL
 }
 
 # TASK-035 AC#1: a reused pane accumulates a stale manual identity per prior
-# session; re-enrolling that pane must RETIRE (close) the prior active rows for
+# session; re-enrolling that pane must UNSEAT the prior seated sessions for
 # it so a dead session's row stops lingering as LIVE=working. Seed two stale
 # manual rows on p_self (the pane the mock reports) plus one on a DIFFERENT
 # pane that must be left untouched; enroll fresh and assert both p_self rows
-# gain a closed record while the other-pane row stays active.
+# gain an unseated record while the other-pane session stays seated.
 scenario_reenroll_reused_pane() {
   CASE="$ROOT/reenroll_reused_pane"
   mkdir -p "$CASE/home" "$CASE/state"
@@ -167,9 +167,9 @@ JSONL
 # TASK-035 P1-b: herdr COMPACTS pane ids, so a still-live session that moved can
 # keep an old pane_id that a NEW unrelated session now reuses. Retirement keys on
 # pane_id AND the durable terminal_id — a prior row whose terminal_id differs from
-# the enrolling pane's is a different session and must NOT be closed. Seed a row
+# the enrolling pane's is a different session and must NOT be unseated. Seed a row
 # on p_self but terminal_id=term_ELSEWHERE; enroll (pane terminal=term_SELF) and
-# assert that row is left ACTIVE (no closed record) while a same-terminal stale
+# assert that session is left SEATED (no unseated record) while a same-terminal stale
 # row IS retired.
 scenario_reenroll_compacted_pane() {
   CASE="$ROOT/reenroll_compacted_pane"
@@ -221,7 +221,7 @@ JSONL
     HERDER_STATE_DIR="$CASE/state" \
     "${HEN[@]}" --label taken 2>"$RUN_ERR_F")"
   RUN_RC=$?
-  if [[ "$RUN_RC" -eq 1 ]] && grep -q 'label "taken" already belongs to active guid guid-other-0000' "$RUN_ERR_F"; then
+  if [[ "$RUN_RC" -eq 1 ]] && grep -q 'label "taken" already belongs to seated session guid-other-0000' "$RUN_ERR_F"; then
     printf 'PASS  guard: active label collision refused\n'
   else
     printf 'FAIL  guard: active label collision refused — rc=%s err=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")"; fail=1

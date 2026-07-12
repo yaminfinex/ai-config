@@ -1747,7 +1747,7 @@ func TestRegisteredCarriesRecognisedHcomName(t *testing.T) {
 	}
 	latest := Resolve(recs, guid)
 	if latest == nil || latest.HcomName != "worker-rive" || latest.PaneID != "p_spawn" || latest.TerminalID != "term_spawn" {
-		t.Fatalf("latest legacy view = %+v, want registered seat with carried hcom_name and fresh spawn coordinates", latest)
+		t.Fatalf("latest seated view = %+v, want registered seat with carried hcom_name and fresh spawn coordinates", latest)
 	}
 	if latest.HcomVerified == nil || *latest.HcomVerified {
 		t.Fatalf("latest HcomVerified = %v, want explicit false after carry-forward", latest.HcomVerified)

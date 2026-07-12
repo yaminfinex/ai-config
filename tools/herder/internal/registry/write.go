@@ -170,7 +170,7 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([]WriteOutcome, error) {
 			continue
 		}
 		if owner := V2LabelOwner(proj, normalized.Label, normalized.GUID); owner != nil && isNonRetired(normalized.State) {
-			reason := fmt.Errorf("label %q already belongs to active guid %s", normalized.Label, owner.GUID)
+			reason := fmt.Errorf("label %q already belongs to non-retired session %s", normalized.Label, owner.GUID)
 			return refusedBatch(outcomes, len(rows), i, reason), nil
 		}
 		normalized, err = stampSessionNode(normalized, nodeID)

@@ -1,5 +1,5 @@
 === STDERR ===
-herder compact: refused — no registry row proves this pane is yours (no HERDER_GUID, no session match, no active row for terminal term_ME). herder compact only ever types into the caller's own pane; without proof of self-identity it refuses. Nothing was typed.
+herder compact: refused — no registry row proves this pane is yours (no HERDER_GUID, no session match, no seated session for terminal term_ME). herder compact only ever types into the caller's own pane; without proof of self-identity it refuses. Nothing was typed.
 === STDOUT ===
 
 === EXIT ===

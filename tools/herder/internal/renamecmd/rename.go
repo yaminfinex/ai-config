@@ -70,7 +70,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			return nil, fmt.Errorf("target %s is lost; lost sessions cannot be renamed", rec.GUID)
 		}
 		if owner := registry.V2LabelOwner(tx.Projection, opts.newLabel, guid); owner != nil {
-			return nil, fmt.Errorf("label %q already belongs to active guid %s", opts.newLabel, owner.GUID)
+			return nil, fmt.Errorf("label %q already belongs to non-retired session %s", opts.newLabel, owner.GUID)
 		}
 		if rec.Seat != nil {
 			terminalID = rec.Seat.TerminalID

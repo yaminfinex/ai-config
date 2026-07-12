@@ -35,8 +35,8 @@ func TestRunClosesSeatedPaneLessRowWithoutForce(t *testing.T) {
 	if got := registry.Resolve(recs, "guid-ghost"); got == nil || got.State != v2.StateUnseated {
 		t.Fatalf("latest = %+v, want unseated dormant row", got)
 	}
-	if !strings.Contains(stdout.String(), "recorded closed ghost (guid-ghost) pane= → already_gone") {
-		t.Fatalf("stdout = %q, want recorded-closed line", stdout.String())
+	if !strings.Contains(stdout.String(), "recorded unseated ghost (guid-ghost) pane= → already_gone") {
+		t.Fatalf("stdout = %q, want recorded-unseated line", stdout.String())
 	}
 }
 
@@ -54,13 +54,13 @@ func TestRunPaneLessUnannotatedCullAppendsOneVerifiedAnnotation(t *testing.T) {
 		t.Fatalf("Run rc = %d, want 0\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 	}
 	if after := closeRecordCount(t, registryPath, "guid-ghost"); after != before+1 {
-		t.Fatalf("close rows = %d, want %d", after, before+1)
+		t.Fatalf("unseated rows = %d, want %d", after, before+1)
 	}
 	if got := latestSession(t, registryPath, "guid-ghost"); got.State != v2.StateUnseated || got.CloseResult != "already_gone" || !strings.Contains(got.CloseReason, "source=cull-verification") || got.RecordedAt == "2026-07-08T00:00:00Z" {
 		t.Fatalf("latest row = %+v, want fresh verified already_gone annotation", got)
 	}
-	if !strings.Contains(stdout.String(), "recorded closed ghost (guid-ghost) pane= → already_gone") {
-		t.Fatalf("stdout = %q, want recorded-closed line", stdout.String())
+	if !strings.Contains(stdout.String(), "recorded unseated ghost (guid-ghost) pane= → already_gone") {
+		t.Fatalf("stdout = %q, want recorded-unseated line", stdout.String())
 	}
 
 	beforeBytes := mustReadFile(t, registryPath)
@@ -92,7 +92,7 @@ func TestRunPaneLessDifferingRepeatCullPreservesRecordedCloseResult(t *testing.T
 		t.Fatalf("appendClosed appended on already-unseated row")
 	}
 	if closed.CloseResult != "closed" || closed.CloseReason != "first observer" {
-		t.Fatalf("closed fact = %+v, want original close annotation", closed)
+		t.Fatalf("unseated fact = %+v, want original close annotation", closed)
 	}
 	if got := latestSession(t, registryPath, "guid-ghost"); got.CloseResult != "closed" || got.CloseReason != "first observer" {
 		t.Fatalf("latest row = %+v, want original close annotation", got)
@@ -173,14 +173,14 @@ func TestRunPaneLessCloseWriteFailureExitsNonzero(t *testing.T) {
 	if rc := Run([]string{"--label", "ghost"}, &stdout, &stderr); rc == 0 {
 		t.Fatalf("Run rc = 0, want nonzero\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
 	}
-	if strings.Contains(stdout.String(), "recorded closed") || strings.Contains(stdout.String(), "marked closed") {
+	if strings.Contains(stdout.String(), "recorded unseated") || strings.Contains(stdout.String(), "recorded closed") || strings.Contains(stdout.String(), "marked closed") {
 		t.Fatalf("stdout claims closure despite write failure: %q", stdout.String())
 	}
 	if !strings.Contains(stderr.String(), "registry lock unavailable") {
 		t.Fatalf("stderr = %q, want lock failure", stderr.String())
 	}
 	if got := closeRecordCount(t, registryPath, "guid-ghost"); got != 0 {
-		t.Fatalf("close records = %d, want no close row after write refusal", got)
+		t.Fatalf("unseated records = %d, want none after write refusal", got)
 	}
 }
 
@@ -198,7 +198,7 @@ func TestAppendClosedRecordsPaneNotFoundAsUnseated(t *testing.T) {
 		t.Fatalf("appendClosed appended = false, want true")
 	}
 	if closed.State != v2.StateUnseated || closed.CloseResult != "error" || closed.CloseReason != "pane_not_found" {
-		t.Fatalf("closed fact row = %+v", closed)
+		t.Fatalf("unseated fact row = %+v", closed)
 	}
 	if got := latestSession(t, registryPath, "guid-ghost"); got.Event != "unseated" || got.State != v2.StateUnseated || got.CloseResult != "error" || got.CloseReason != "pane_not_found" || got.Seat != nil {
 		t.Fatalf("latest row = %+v, want unseated pane_not_found without seat", got)

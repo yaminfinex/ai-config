@@ -173,7 +173,7 @@ func printHelp(stdout io.Writer) {
 	fmt.Fprint(stdout, `herder reconcile — audit and repair registry coordinates after herdr handoff.
 
 Usage:
-  herder reconcile          dry-run latest active registry rows
+  herder reconcile          dry-run latest non-retired registry sessions
   herder reconcile --apply  append replacement rows for safe coordinate refreshes
   herder reconcile --json   emit JSONL instead of a table
 
@@ -355,7 +355,7 @@ func markDuplicateRebinds(results []result) {
 		}
 		for _, idx := range indexes {
 			results[idx].Outcome = "ambiguous"
-			results[idx].Detail = fmt.Sprintf("fallback candidate terminal %s is claimed by multiple active rows; refusing to guess", term)
+			results[idx].Detail = fmt.Sprintf("fallback candidate terminal %s is claimed by multiple non-retired sessions; refusing to guess", term)
 			results[idx].Write = "none"
 		}
 	}
