@@ -1,0 +1,6 @@
+=== STDERR ===
+
+=== STDOUT ===
+{"kind":"session","guid":"guid-v2-0000","event":"seated","recorded_at":"2026-07-12T12:00:00Z","node":"node-fixture","state":"seated","label":"v2-row","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"node-fixture","terminal_id":"term_AAA","pane_id":"p_10","hcom_name":"v2-row"},"live":{"pane_id":"p_10","terminal_id":"term_AAA","agent":"claude","agent_status":"idle"},"live_pane":"p_10","live_status":"idle","live_matched_by":"terminal"}
+=== EXIT ===
+0
