@@ -4,6 +4,7 @@ title: 'registry: retire the legacy-shaped production write bridge (design first
 status: To Do
 assignee: []
 created_date: '2026-07-12 12:19'
+updated_date: '2026-07-12 13:44'
 labels: []
 dependencies: []
 priority: medium
@@ -22,3 +23,9 @@ DESIGN task. The read-side two-state view is retired, but lifecycle, sidecar, an
 - [ ] #2 Filed-ready implementation task(s) with settled-decisions lists produced
 - [ ] #3 Explicit ruling per compatibility surface: preserved, or changed with documented contract decision
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Additional evidence from the four-state wording review (verified independently): the legacy-v1 status mappings DISAGREE across paths — legacyV1State (registry.go:236) and the v2 projection ingest (v2/registry.go:~337) map v1 status:"active" -> unseated, while V2FromRecord's fallback (registry.go:~735) maps the same status -> seated. Observable today: cull on a legacy active row refuses with "already unseated (migrated corpse)" while list shows the same row seated. The design inventory must pick ONE mapping and eliminate the other path (removing the V2FromRecord fallback, already in scope, kills one side).
+<!-- SECTION:NOTES:END -->
