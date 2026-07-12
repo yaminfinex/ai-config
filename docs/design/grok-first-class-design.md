@@ -100,9 +100,18 @@ its public generic verbs, executed by the binder, a herder process:
             ORDER BY id ASC LIMIT 20)
      ```
 
-     Append+fsync every returned row to the journal; set C to the max id of the
-     page; repeat until a page comes back empty. A merely large `--last N` is **not**
-     a fix — it moves the loss threshold without removing it. `msg_delivered_to` is
+     The subquery controls page **membership only** — it does not control the order
+     hcom emits the page (the outer snapshot query emits id-descending; the CLI's
+     later sort is by timestamp, not id). Therefore, after parsing a drain page, the
+     binder **MUST sort the rows by numeric event id ascending before any journal
+     append**, then append+fsync in that order; only then is every crash-derived
+     prefix cursor safe. Without the sort, a crash after fsyncing the first emitted
+     (highest-id) row derives C past the rest of the page and strands it forever
+     (reproduced: page emitted `[42,40,…,4]`, crash after journaling id 42, replay
+     derived C=42, ids 4..40 permanently lost — V9). Set C to the max id of the
+     fully-journaled page; repeat until a page comes back empty. A merely large
+     `--last N` is **not** a fix for page loss — it moves the threshold without
+     removing it. `msg_delivered_to` is
      hcom's own canonical routing snapshot: it covers direct, thread, tag, and
      broadcast fanout exactly as hcom routed them and excludes the sender — a
      mention-or-broadcast predicate is wrong (it returns the seat its **own**
@@ -635,10 +644,14 @@ contract was corrected for:
 - **T26 self-delivery exclusion** — the seat's own broadcast and its own
   thread-fanout sends never enter its spool (the `msg_delivered_to` predicate
   excludes the sender); a peer's broadcast, thread, tag, and direct sends all do.
-- **T27 backlog beyond the snapshot page** — more than 20 matching messages queue
-  while the binder is down; the restart drain journals **every id and payload
-  exactly once**, oldest first, across multiple pages (pinning the oldest-first
-  paged query shape against hcom's newest-first `LIMIT 20` snapshot default).
+- **T27 backlog beyond the snapshot page, with a mid-page crash under hostile
+  ordering** — more than 20 matching messages queue while the binder is down, with
+  **equal/non-monotonic timestamps forced** on the page (a naturally-ordered run
+  passes accidentally, because timestamps usually rise with ids, and pins nothing);
+  the binder is crashed after K < page-size rows have been fsynced; on restart the
+  drain journals **every id and payload exactly once**, in ascending id order,
+  across multiple pages — pinning both the oldest-first paged membership query and
+  the mandatory binder-side id sort before append.
 
 **Live smoke (one, isolated, gated):** real Grok 0.2.93, throwaway `HOME`/`GROK_HOME`/
 `HCOM_DIR`/herder state, owner-authorized spend. Proves bidirectionally: an inbound
@@ -788,11 +801,17 @@ overclaimed, the correction is spelled out.
   0.2.93 `--help` lists `--no-subagents` ("Disable subagent spawning") and
   `--agents <JSON>` ("Inline subagent definitions as JSON") — the former is the DR-4
   enforcement vehicle; the latter is on the DR-3 refusal list.
-- **V9 — snapshot `events` pages newest-first, capped at 20 by default.** From
-  independent reproduction against installed 0.7.23 (source-confirmed:
-  `ORDER BY id DESC LIMIT last_n`, `last_n` defaulting to 20): with 25 direct
-  messages queued to one seat, a naive `id > C` drain returned only the newest 20;
-  deriving C from that page and repeating returned zero rows, permanently skipping
-  the oldest five. The corrected oldest-first paged shape (`id IN (SELECT id …
-  ORDER BY id ASC LIMIT 20)`, DR-1 step 1) returned 20 then 5 — all 25 exactly
-  once. A larger `--last N` only moves the loss threshold. T27 pins this.
+- **V9 — snapshot `events` pages newest-first, capped at 20 by default; the paged
+  subquery fixes membership, not emission order.** From independent reproduction
+  against installed 0.7.23 (source-confirmed: `ORDER BY id DESC LIMIT last_n`,
+  `last_n` defaulting to 20): with 25 direct messages queued to one seat, a naive
+  `id > C` drain returned only the newest 20; deriving C from that page and
+  repeating returned zero rows, permanently skipping the oldest five. The corrected
+  oldest-first paged shape (`id IN (SELECT id … ORDER BY id ASC LIMIT 20)`, DR-1
+  step 1) returned 20 then 5 — all 25 exactly once. A larger `--last N` only moves
+  the loss threshold. A follow-up reproduction with equal timestamps forced on the
+  page showed the outer query still **emits** the selected set id-descending
+  (`[42,40,…,4]`); a crash after fsyncing only the first emitted row derived C=42
+  and stranded ids 4..40. **Binder-side ascending-id sorting before any journal
+  append is therefore part of the correctness contract**, not a nicety. T27 pins
+  both facts.
