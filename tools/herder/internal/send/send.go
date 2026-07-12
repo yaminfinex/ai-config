@@ -66,6 +66,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	sender := &busSender{}
 
 	rec := registry.Resolve(recs, target)
+	var dormantCoordinate *registry.Record
 	if rec == nil {
 		// Pane targets are display coordinates and terminal targets are
 		// run-scoped coordinates, so a coordinate match can still be ambiguous
@@ -79,7 +80,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		candidates := registry.SeatedCandidatesByPaneOrTerminal(recs, target)
 		switch len(candidates) {
 		case 0:
-			// rec stays nil → unregistered-target path below.
+			dormantCoordinate = registry.UnseatedByPaneOrTerminal(recs, target)
 		case 1:
 			rec = &candidates[0]
 		default:
@@ -92,6 +93,23 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if rec == nil {
+		if dormantCoordinate != nil {
+			addressKind := "label"
+			address := ptrString(dormantCoordinate.Label)
+			if address == "" {
+				addressKind = "guid"
+				address = ptrString(dormantCoordinate.GUID)
+			}
+			if opts.DryRun {
+				fmt.Fprintf(stderr, "herder send --dry-run: would REFUSE (exit 2): coordinate %q matches an unseated registry row that holds no seat; pane/terminal resolution only reaches seated rows. Send by %s %q instead, or retry the coordinate after the session is re-recognized or enrolled.\n", target, addressKind, address)
+				if opts.JSONOutput {
+					writeCompactJSON(stdout, hcomDryRunRefuseRecord{Target: target, Transport: "hcom", Would: "refuse", DryRun: true})
+				}
+				return 2
+			}
+			fmt.Fprintf(stderr, "herder send: refused — coordinate %q matches an unseated registry row that holds no seat; pane/terminal resolution only reaches seated rows. Send by %s %q instead, or retry the coordinate after the session is re-recognized or enrolled. Nothing was typed or sent.\n", target, addressKind, address)
+			return 2
+		}
 		if forced {
 			// Forced-hcom debug affordance (unchanged from the driver era): an
 			// unregistered target is a literal bus name on the ambient HCOM_DIR.

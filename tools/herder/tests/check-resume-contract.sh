@@ -94,6 +94,11 @@ seed_registry() {
 {"guid":"guid-collide-0000","short_guid":"collide","label":"taken","role":"worker","agent":"claude","terminal_id":"term_COLLIDE","pane_id":"p_collide","hcom_dir":"/hcom","hcom_name":"collide-rive","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-collide","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
 {"guid":"guid-other-0000","short_guid":"other","label":"taken","role":"worker","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","status":"active"}
 JSONL
+  if [[ -n "${SEED_DORMANT:-}" ]]; then
+    cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"guid":"guid-dormant-0000","short_guid":"dormant","label":"dormant-live-terminal","role":"worker","agent":"claude","terminal_id":"term_ACTIVE","pane_id":"p_dormant","hcom_dir":"/hcom","hcom_name":"dormant-bus","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-dormant","tag":"worker","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
+JSONL
+  fi
   # TASK-017: resumable codex row, seeded only for the codex addendum cases so
   # the pre-existing goldens' REGISTRY sections stay byte-identical.
   if [[ -n "${SEED_CODEX:-}" ]]; then
@@ -178,6 +183,8 @@ run_case explicit_workspace 0 resume --workspace ws_target --json
 check_one explicit_workspace
 run_case refuse_live 1 active
 check_one refuse_live
+SEED_DORMANT=1 run_case dormant_live_terminal 1 dormant --json
+check_one dormant_live_terminal
 run_case label_collision 0 collide
 check_one label_collision
 run_case unknown 0 nope

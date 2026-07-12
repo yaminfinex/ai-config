@@ -141,6 +141,11 @@ seed_registry() {
 {"guid":"guid-nosess-0000","short_guid":"nosess","label":"no-session","role":"worker","agent":"codex","terminal_id":"term_NOSESS","pane_id":"p_nosess","hcom_dir":"/hcom","hcom_name":"","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"2026-07-03T00:00:00Z"}}
 {"guid":"guid-other-0000","short_guid":"other","label":"taken","role":"worker","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","status":"active"}
 JSONL
+  if [[ -n "${SEED_DORMANT:-}" ]]; then
+    cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"guid":"guid-dormant-0000","short_guid":"dormant","label":"dormant-parent","role":"worker","agent":"claude","terminal_id":"term_PARENT","pane_id":"p_dormant","hcom_dir":"/hcom","hcom_name":"dormant-bus","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-dormant","tag":"worker","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"2026-07-03T00:00:00Z"}}
+JSONL
+  fi
   # TASK-017: forkable codex parent, seeded only for the codex addendum case so
   # the pre-existing goldens' REGISTRY sections stay byte-identical.
   if [[ -n "${SEED_CODEX:-}" ]]; then
@@ -260,6 +265,8 @@ check_one() {
 
 run_case happy_live 1 parent --prompt "hello fork" --json
 check_one happy_live
+SEED_DORMANT=1 run_case dormant_live_terminal 1 dormant --json
+check_one dormant_live_terminal
 run_case closed_row 0 closed --label closed-fork --role reviewer-fork --json
 check_one closed_row
 run_case explicit_split 1 parent --split down --json

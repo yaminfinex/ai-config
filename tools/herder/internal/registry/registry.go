@@ -349,6 +349,26 @@ func SeatedByPaneOrTerminal(recs []Record, key string) *Record {
 	return hit
 }
 
+// UnseatedByPaneOrTerminal finds a dormant row that still carries a stale
+// pane or terminal coordinate. Normal v2 writes clear seats on unseat, but
+// migrated v1 rows and externally-authored rows can retain these coordinates;
+// callers use this only to explain why seated-only resolution refused them.
+func UnseatedByPaneOrTerminal(recs []Record, key string) *Record {
+	if key == "" {
+		return nil
+	}
+	collapsed := LatestByGUID(recs)
+	var hit *Record
+	for i := range collapsed {
+		rec := collapsed[i]
+		if rec.State == v2.StateUnseated && (rec.PaneID == key || rec.TerminalID == key) {
+			cp := rec
+			hit = &cp
+		}
+	}
+	return hit
+}
+
 // SeatedCandidatesByPaneOrTerminal returns EVERY latest seated row whose
 // pane_id or terminal_id equals key, in guid order (the same order
 // LatestByGUID yields). Pane ids are display-only and may have stale registry

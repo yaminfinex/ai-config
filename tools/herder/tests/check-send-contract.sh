@@ -68,6 +68,9 @@ BUS_DIR="$(mktemp -d)"
   jq -nc --arg dir "$BUS_DIR" \
     '{guid:"guid-legacy-0000", short_guid:"legacy", label:"legacy", role:"worker", agent:"claude",
       terminal_id:"term_DDD", pane_id:"p_40", hcom_dir:$dir, hcom_name:"legacy-bus", status:"active"}'
+  jq -nc --arg dir "$BUS_DIR" \
+    '{kind:"session", guid:"guid-dormant-0000", event:"unseated", state:"unseated", label:"dormant", role:"worker", tool:"claude",
+      seat:{kind:"herdr", terminal_id:"term_EEE", pane_id:"p_50", namespace:$dir, hcom_name:"dormant-bus"}}'
 } > "$REG_DIR/registry.jsonl"
 
 trap 'rm -rf "$MOCKBIN" "$REG_DIR" "$BUS_DIR"' EXIT
@@ -92,6 +95,7 @@ SCENARIOS=(
   "refuse_unknown|auto|delivered|--json ghost @MSG@"
   "refuse_closed_pane|auto|delivered|p_30 @MSG@"
   "refuse_legacy_active_term|auto|delivered|term_DDD @MSG@"
+  "refuse_v2_unseated_term|auto|delivered|term_EEE @MSG@"
   "dryrun_bus|auto|delivered|--dry-run --json alpha"
   "dryrun_busless|auto|delivered|--dry-run --json plain"
   "dryrun_unknown|auto|delivered|--dry-run --json ghost"
