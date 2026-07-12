@@ -116,6 +116,25 @@ func TestNewUsesOSUserDefaultsAndOwnerFlag(t *testing.T) {
 	}
 }
 
+func TestNewCreatesHelpSlugAndStillRefusesExtraArguments(t *testing.T) {
+	repo := t.TempDir()
+	cwd := t.TempDir()
+	d := newTestDeps(repo, cwd)
+
+	code, stdout, stderr := runNewForTest([]string{"new", "help"}, d)
+	if code != exitOK {
+		t.Fatalf("new help exit = %d, want 0; stderr=%s", code, stderr)
+	}
+	assertContains(t, stdout, "created mission help")
+	assertExactMissionTree(t, filepath.Join(repo, "missions", "help"))
+
+	code, _, stderr = runNewForTest([]string{"new", "another", "slug"}, d)
+	if code != exitUsage {
+		t.Fatalf("new with extra argument exit = %d, want usage; stderr=%s", code, stderr)
+	}
+	assertContains(t, stderr, "expected exactly one slug")
+}
+
 func TestNewRefusals(t *testing.T) {
 	t.Run("unset missions repo", func(t *testing.T) {
 		d := newTestDeps("", t.TempDir())

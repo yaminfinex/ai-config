@@ -107,7 +107,7 @@ func TestMultipleMarkersRefuseAndNameBothPaths(t *testing.T) {
 }
 
 func TestInvalidFlagSlugRefusesBeforePathResolution(t *testing.T) {
-	for _, slug := range []string{"", "../../etc/secret", "Upper", "a b"} {
+	for _, slug := range []string{"", "../../etc/secret", "Upper", "a b", "a--b", "x-"} {
 		t.Run(slug, func(t *testing.T) {
 			fsys := newMemFS()
 			fsys.addDir("/etc/secret")
@@ -129,7 +129,7 @@ func TestInvalidFlagSlugRefusesBeforePathResolution(t *testing.T) {
 }
 
 func TestInvalidMarkerSlugRefusesBeforePathResolution(t *testing.T) {
-	for _, slug := range []string{"", "../../etc/secret", "Upper", "a b"} {
+	for _, slug := range []string{"", "../../etc/secret", "Upper", "a b", "a--b", "x-"} {
 		t.Run(slug, func(t *testing.T) {
 			fsys := newMemFS()
 			fsys.addDir("/etc/secret")
@@ -138,6 +138,26 @@ func TestInvalidMarkerSlugRefusesBeforePathResolution(t *testing.T) {
 
 			_, err := Resolve(Options{
 				CWD: "/work/sub",
+				Env: env("/repo"),
+				FS:  fsys,
+			})
+			refusal := assertRefusal(t, err, RefusalInvalidSlug)
+			if refusal.Slug != slug || !strings.Contains(refusal.Reason, strconv.Quote(slug)) {
+				t.Fatalf("refusal = %#v, want offending slug named", refusal)
+			}
+		})
+	}
+}
+
+func TestInvalidCWDSlugRefusesBeforeReturningContext(t *testing.T) {
+	for _, slug := range []string{"a--b", "x-"} {
+		t.Run(slug, func(t *testing.T) {
+			fsys := newMemFS()
+			missionDir := filepath.Join("/repo/missions", slug)
+			fsys.addFile(filepath.Join(missionDir, "mission.md"), "mission: "+slug+"\n")
+
+			_, err := Resolve(Options{
+				CWD: filepath.Join(missionDir, "backlog/tasks"),
 				Env: env("/repo"),
 				FS:  fsys,
 			})

@@ -26,7 +26,7 @@ func newNewCommand(d deps) *cobra.Command {
 		SilenceUsage:       true,
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if slicesContains(args, "--help") || slicesContains(args, "-h") || slicesContains(args, "help") {
+			if slicesContains(args, "--help") || slicesContains(args, "-h") {
 				return cmd.Help()
 			}
 			parsed, slug, err := parseNewArgs(args)

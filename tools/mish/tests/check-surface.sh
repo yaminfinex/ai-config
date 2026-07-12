@@ -17,6 +17,12 @@ git -C "$MISSIONS_REPO_DIR" remote add origin "$origin"
 git -C "$MISSIONS_REPO_DIR" push -q -u origin HEAD:main
 
 step "AC-11 allowlist and passthrough surface"
+for help_args in "new -h" "new --help" "help new"; do
+  read -r -a args <<<"$help_args"
+  run_mish "$INVOKE_DIR" "new-help-${help_args// /-}" "${args[@]}"
+  assert_status 0
+  assert_contains "$LAST_OUT" "Usage: mish new <slug>"
+done
 for sub in init config agents future-subcommand; do
   run_mish "$INVOKE_DIR" "deny-$sub" backlog --mission surface-a "$sub" ${sub/config/set}
   assert_status 1
