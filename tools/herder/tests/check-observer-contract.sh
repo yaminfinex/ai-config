@@ -124,7 +124,7 @@ def response(req):
     if method == "events.subscribe":
         with open(os.path.join(state, "subscribed"), "w") as f:
             f.write(json.dumps(params, separators=(",", ":")))
-        return {"id": mid, "result": {"ok": True}}
+        return {"id": mid, "result": {"type": "subscription_started"}}
     return {"id": mid, "error": {"code": "unknown_method", "message": method or ""}}
 
 def handle(conn):
