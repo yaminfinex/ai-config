@@ -1,10 +1,10 @@
 ---
 id: TASK-163
 title: 'registry write-discipline gate: fail closed on renamed/deleted test names'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-12 12:19'
-updated_date: '2026-07-12 13:15'
+updated_date: '2026-07-12 13:41'
 labels: []
 dependencies: []
 priority: medium
@@ -19,7 +19,13 @@ The registry write-discipline check builds one go test -run alternation of expli
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The gate runs the four-state load/view test and the seated-versus-non-retired predicate test
-- [ ] #2 Every test name declared by the gate is proven to exist and execute; a deliberately nonexistent name makes the gate fail with a useful message
-- [ ] #3 No deleted/legacy test name remains in the gate; registry gate and full herder go test suite pass
+- [x] #1 The gate runs the four-state load/view test and the seated-versus-non-retired predicate test
+- [x] #2 Every test name declared by the gate is proven to exist and execute; a deliberately nonexistent name makes the gate fail with a useful message
+- [x] #3 No deleted/legacy test name remains in the gate; registry gate and full herder go test suite pass
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged 2a25124 (worker commits 6b525ee + ebf7983). Gate now: declared-name array validated against go test -list, missing-name self-probe, per-name RUN/PASS evidence with self-probed helper, declaration floor >=10, split skip/missing-RUN remedies, legacy name gone, run-identifier removed from header. Adversarial review (opus): full mutation matrix a-h all red with cause+remedy; fix round closed P2 (silent list shrink + remedy steering) and both P3s; delta APPROVE. Two informational residuals folded into TASK-167 (distinct-name floor, skip-shaped evidence probe). Sibling-gate ghost found during review -> TASK-167. Independent gates 53/53 x2 + post-merge 53/53. Identifier sweep clean.
+<!-- SECTION:NOTES:END -->
