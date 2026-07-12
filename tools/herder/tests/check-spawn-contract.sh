@@ -233,14 +233,14 @@ scenario notify            ready claude launchctx --role worker --agent claude -
 # Bus-native notify: the spawner (HERDER_GUID) has a recorded hcom_name, so the
 # --notify appendix routes completion over hcom.
 SPAWN_HERDER_GUID="guid-orch-0000"
-SPAWN_SEED_REGISTRY='{"guid":"guid-orch-0000","short_guid":"orch","label":"orchestrator","role":"orchestrator","agent":"claude","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_dir":"/hcom","hcom_name":"orchestrator-bumo","hcom_tag":"orchestrator","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-orch","tag":"orchestrator","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
+SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-lead-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"orchestrator","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"orchestrator-bus","namespace":"/hcom"},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-lead","tag":"orchestrator","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
 scenario notify_bus        ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
 unset SPAWN_HERDER_GUID SPAWN_SEED_REGISTRY
 # Enrolled-spawner notify: NO HERDER_GUID in the spawner's env, but the spawning
 # pane (HERDR_PANE_ID=p_orch) has an active registry row with a bus name — the
 # appendix must route bus-native via pane/terminal resolution rather than
 # hard-erroring (TASK-005 resolution order, TASK-003 bus-only).
-SPAWN_SEED_REGISTRY='{"guid":"guid-hera-0000","short_guid":"guid-her","label":"orchestrator","role":"orchestrator","agent":"claude","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_dir":"/hcom","hcom_name":"hera","hcom_tag":"orchestrator","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-hera","tag":"orchestrator","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
+SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-lead-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"orchestrator","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"lead-bus","namespace":"/hcom"},"provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-lead","tag":"orchestrator","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
 scenario notify_enrolled   ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
 unset SPAWN_SEED_REGISTRY
 # Promptless capture, no child-specific signal on the roster: TASK-033 makes both
@@ -280,8 +280,8 @@ scenario spawn_grandparent ready claude launchctx --role worker --agent claude -
 unset SPAWN_HERDER_GUID SPAWN_HERDER_SPAWNED_BY
 # TASK-023: --notify-to as a bus name. An ACTIVE registry row's hcom_name
 # matches even when the value is not a guid/label/pane coordinate...
-SPAWN_SEED_REGISTRY='{"guid":"guid-hera-0000","short_guid":"guid-her","label":"orchestrator","role":"orchestrator","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","hcom_dir":"/hcom","hcom_name":"hera","hcom_tag":"orchestrator","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-hera","tag":"orchestrator","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
-scenario notify_to_hcomname ready claude launchctx --role worker --agent claude --notify --notify-to hera --prompt "do the thing" --json
+SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-lead-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"orchestrator","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_OTHER","pane_id":"p_other","hcom_name":"lead-bus","namespace":"/hcom"},"provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-lead","tag":"orchestrator","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
+scenario notify_to_hcomname ready claude launchctx --role worker --agent claude --notify --notify-to lead-bus --prompt "do the thing" --json
 unset SPAWN_SEED_REGISTRY
 # ...and a name the registry doesn't know at all validates as a literal bus
 # name against the bus the child will join (decoy-yolo lives on the mock bus).

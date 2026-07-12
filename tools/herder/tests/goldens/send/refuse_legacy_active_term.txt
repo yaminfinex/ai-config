@@ -1,0 +1,11 @@
+=== STDERR ===
+herder send: refused — coordinate "term_DDD" matches an unseated registry row that holds no seat; pane/terminal resolution only reaches seated rows. Send by label "legacy" instead, or retry the coordinate after the session is re-recognized or enrolled. Nothing was typed or sent.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HCOM SEND ARGV ===
+
+=== HCOM EVENTS ARGV ===
+
+=== HCOM DIR ===

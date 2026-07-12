@@ -56,6 +56,7 @@ type Record struct {
 	HcomVerified *bool       `json:"hcom_verified,omitempty"`
 	HcomTag      string      `json:"hcom_tag"`
 	Status       string      `json:"status"`
+	State        string      `json:"state,omitempty"`
 	RecordedAt   string      `json:"recorded_at,omitempty"`
 	CloseResult  string      `json:"close_result,omitempty"`
 	CloseReason  string      `json:"close_reason,omitempty"`
@@ -171,7 +172,9 @@ func decode(r io.Reader, path string, archived bool) ([]Record, error) {
 							continue
 						}
 						if isV2SessionObject(obj) {
-							rec = legacyRecordFromV2Object(obj)
+							rec = recordFromV2SessionObject(obj)
+						} else {
+							rec.State = legacyV1State(rec.Status)
 						}
 						rec.Archived = archived
 						rec.Raw = bytes.Clone(raw)
@@ -194,15 +197,10 @@ func isV2SessionObject(obj map[string]json.RawMessage) bool {
 	return (kind == "" || kind == v2.KindSession) && rawString(obj["state"]) != ""
 }
 
-func legacyRecordFromV2Object(obj map[string]json.RawMessage) Record {
+func recordFromV2SessionObject(obj map[string]json.RawMessage) Record {
 	guid := rawString(obj["guid"])
 	short := ShortGUID(guid)
 	label := rawString(obj["label"])
-	state := rawString(obj["state"])
-	status := "active"
-	if state == v2.StateRetired || state == v2.StateLost {
-		status = "closed"
-	}
 	var seat v2.Seat
 	_ = json.Unmarshal(obj["seat"], &seat)
 	var prov Provenance
@@ -212,10 +210,11 @@ func legacyRecordFromV2Object(obj map[string]json.RawMessage) Record {
 		Agent:        rawString(obj["tool"]),
 		PaneID:       seat.PaneID,
 		TerminalID:   seat.TerminalID,
+		Team:         rawString(obj["team"]),
 		HcomDir:      seat.Namespace,
 		HcomName:     seat.HcomName,
 		HcomVerified: seat.HcomVerified,
-		Status:       status,
+		State:        rawString(obj["state"]),
 		CloseResult:  rawString(obj["close_result"]),
 		CloseReason:  rawString(obj["close_reason"]),
 		ObservedVia:  rawString(obj["observed_via"]),
@@ -232,6 +231,55 @@ func legacyRecordFromV2Object(obj map[string]json.RawMessage) Record {
 		rec.HcomTag = prov.Tag
 	}
 	return rec
+}
+
+func legacyV1State(status string) string {
+	switch status {
+	case "active":
+		return v2.StateUnseated
+	case "closed":
+		return v2.StateRetired
+	default:
+		return ""
+	}
+}
+
+// LegacyV1RawCompat contains only fields decoded from a legacy-v1 row's Raw
+// payload. It exists for migration compatibility where old seat coordinates
+// remain operationally relevant; it never derives a two-state status from a
+// v2 session state.
+type LegacyV1RawCompat struct {
+	PaneID       string
+	TerminalID   string
+	HcomDir      string
+	HcomName     string
+	HcomVerified *bool
+	V1Status     string
+}
+
+func DecodeLegacyV1Raw(rec v2.SessionRecord) (LegacyV1RawCompat, bool) {
+	if !rec.LegacyV1 || len(bytes.TrimSpace(rec.Raw)) == 0 {
+		return LegacyV1RawCompat{}, false
+	}
+	var raw struct {
+		PaneID       string `json:"pane_id"`
+		TerminalID   string `json:"terminal_id"`
+		HcomDir      string `json:"hcom_dir"`
+		HcomName     string `json:"hcom_name"`
+		HcomVerified *bool  `json:"hcom_verified,omitempty"`
+		Status       string `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Raw, &raw); err != nil {
+		return LegacyV1RawCompat{}, false
+	}
+	return LegacyV1RawCompat{
+		PaneID:       raw.PaneID,
+		TerminalID:   raw.TerminalID,
+		HcomDir:      raw.HcomDir,
+		HcomName:     raw.HcomName,
+		HcomVerified: raw.HcomVerified,
+		V1Status:     raw.Status,
+	}, true
 }
 
 func warnQuarantined(path string, lineNo int, err error) {
@@ -280,13 +328,13 @@ func Resolve(recs []Record, target string) *Record {
 	return hit
 }
 
-// ActiveByPaneOrTerminal resolves a pane_id/terminal_id to the latest ACTIVE
-// row holding it. Pane ids are display-only and terminal ids are run-scoped,
-// so unlike guid/label resolution this refuses closed rows; ties resolve last
+// SeatedByPaneOrTerminal resolves a pane_id/terminal_id to the latest seated
+// row holding it. Pane ids are display-only and terminal ids are run-scoped;
+// ties resolve last
 // in guid order, matching the registry's jq semantics. Used by bus-only send
 // to map term_*/pane targets to a registry row (and from there to a bus name)
 // now that keystroke delivery at raw coordinates is gone.
-func ActiveByPaneOrTerminal(recs []Record, key string) *Record {
+func SeatedByPaneOrTerminal(recs []Record, key string) *Record {
 	if key == "" {
 		return nil
 	}
@@ -294,22 +342,42 @@ func ActiveByPaneOrTerminal(recs []Record, key string) *Record {
 	var hit *Record
 	for i := range collapsed {
 		rec := &collapsed[i]
-		if rec.Status == "active" && (rec.PaneID == key || rec.TerminalID == key) {
+		if rec.State == v2.StateSeated && (rec.PaneID == key || rec.TerminalID == key) {
 			hit = rec
 		}
 	}
 	return hit
 }
 
-// ActiveCandidatesByPaneOrTerminal returns EVERY latest ACTIVE row whose
+// UnseatedByPaneOrTerminal finds a dormant row that still carries a stale
+// pane or terminal coordinate. Normal v2 writes clear seats on unseat, but
+// migrated v1 rows and externally-authored rows can retain these coordinates;
+// callers use this only to explain why seated-only resolution refused them.
+func UnseatedByPaneOrTerminal(recs []Record, key string) *Record {
+	if key == "" {
+		return nil
+	}
+	collapsed := LatestByGUID(recs)
+	var hit *Record
+	for i := range collapsed {
+		rec := collapsed[i]
+		if rec.State == v2.StateUnseated && (rec.PaneID == key || rec.TerminalID == key) {
+			cp := rec
+			hit = &cp
+		}
+	}
+	return hit
+}
+
+// SeatedCandidatesByPaneOrTerminal returns EVERY latest seated row whose
 // pane_id or terminal_id equals key, in guid order (the same order
 // LatestByGUID yields). Pane ids are display-only and may have stale registry
 // claimants, so one coordinate can accumulate several active rows (for
 // example, a stale manual-enroll identity per prior session). Unlike
-// ActiveByPaneOrTerminal, which silently keeps only the last, this exposes the
+// SeatedByPaneOrTerminal, which silently keeps only the last, this exposes the
 // full candidate set so a caller can disambiguate by bus liveness and refuse
 // to guess when more than one is live (TASK-035).
-func ActiveCandidatesByPaneOrTerminal(recs []Record, key string) []Record {
+func SeatedCandidatesByPaneOrTerminal(recs []Record, key string) []Record {
 	if key == "" {
 		return nil
 	}
@@ -317,7 +385,7 @@ func ActiveCandidatesByPaneOrTerminal(recs []Record, key string) []Record {
 	var out []Record
 	for i := range collapsed {
 		rec := collapsed[i]
-		if rec.Status == "active" && (rec.PaneID == key || rec.TerminalID == key) {
+		if rec.State == v2.StateSeated && (rec.PaneID == key || rec.TerminalID == key) {
 			out = append(out, rec)
 		}
 	}
@@ -345,20 +413,32 @@ func PickLiveCandidate(candidates []Record, isLive func(Record) bool) (chosen *R
 	return nil, live
 }
 
-// ActiveLabelOwner returns the active latest row that owns label, excluding
-// exceptGUID. Label writers use this as the registry-level uniqueness
+// NonRetiredLabelOwner returns the non-retired latest row that owns label,
+// excluding exceptGUID. Label writers use this as the registry-level uniqueness
 // invariant for rename, enroll, fork, and sidecar manual identity rows.
-func ActiveLabelOwner(recs []Record, label, exceptGUID string) *Record {
+func NonRetiredLabelOwner(recs []Record, label, exceptGUID string) *Record {
 	if label == "" {
 		return nil
 	}
 	for _, rec := range LatestByGUID(recs) {
-		if strEqual(rec.Label, label) && !strEqual(rec.GUID, exceptGUID) && rec.Status == "active" {
+		if strEqual(rec.Label, label) && !strEqual(rec.GUID, exceptGUID) && IsNonRetired(rec) {
 			cp := rec
 			return &cp
 		}
 	}
 	return nil
+}
+
+func IsNonRetired(rec Record) bool {
+	return rec.State == v2.StateSeated || rec.State == v2.StateUnseated
+}
+
+func IsSeated(rec Record) bool {
+	return rec.State == v2.StateSeated
+}
+
+func IsTerminal(rec Record) bool {
+	return rec.State == v2.StateRetired || rec.State == v2.StateLost
 }
 
 // ResolveByToolSessionID finds any row carrying provenance.tool_session_id and
@@ -473,7 +553,7 @@ func recordFromJSON(row []byte) (Record, error) {
 		return Record{}, err
 	}
 	if isV2SessionObject(obj) {
-		rec := legacyRecordFromV2Object(obj)
+		rec := recordFromV2SessionObject(obj)
 		overlayLegacyFields(&rec, obj)
 		return rec, nil
 	}
@@ -707,61 +787,6 @@ func V2FromRecord(rec Record, event, state, recordedAt string) v2.SessionRecord 
 			Namespace:    rec.HcomDir,
 			ConfirmedAt:  recordedAt,
 		}
-	}
-	return out
-}
-
-func LegacyFromV2(rec v2.SessionRecord) Record {
-	if rec.LegacyV1 && len(rec.Raw) > 0 {
-		if legacy, err := recordFromJSON(rec.Raw); err == nil {
-			return legacy
-		}
-	}
-	guid := rec.GUID
-	short := ShortGUID(guid)
-	label := rec.Label
-	status := "active"
-	if rec.State == v2.StateRetired || rec.State == v2.StateLost {
-		status = "closed"
-	}
-	prov := Provenance{
-		Mechanism:     rec.Provenance.Mechanism,
-		SpawnedBy:     rec.Provenance.SpawnedBy,
-		ToolSessionID: rec.Provenance.ToolSessionID,
-		Tag:           rec.Provenance.Tag,
-		BatchID:       rec.Provenance.BatchID,
-		CWD:           rec.Provenance.CWD,
-		WorkspaceID:   rec.Provenance.WorkspaceID,
-		Branch:        rec.Provenance.Branch,
-		TS:            rec.Provenance.TS,
-		ForkedFrom:    rec.Provenance.ForkedFrom,
-		ResumedAt:     rec.Provenance.ResumedAt,
-	}
-	out := Record{
-		GUID:        &guid,
-		ShortGUID:   &short,
-		Role:        rec.Role,
-		Agent:       rec.Tool,
-		Status:      status,
-		RecordedAt:  rec.RecordedAt,
-		CloseResult: rec.CloseResult,
-		CloseReason: rec.CloseReason,
-		ObservedVia: rec.ObservedVia,
-		Provenance:  &prov,
-	}
-	if label != "" {
-		out.Label = &label
-	}
-	if rec.Seat != nil {
-		out.PaneID = rec.Seat.PaneID
-		out.TerminalID = rec.Seat.TerminalID
-		out.HcomName = rec.Seat.HcomName
-		out.HcomVerified = rec.Seat.HcomVerified
-		out.HcomDir = rec.Seat.Namespace
-	}
-	out.HcomTag = prov.Tag
-	if len(rec.Raw) > 0 {
-		out.Raw = bytes.Clone(rec.Raw)
 	}
 	return out
 }

@@ -127,7 +127,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	collapsed := registry.LatestByGUID(recs)
 	if opts.mode == "json" {
 		for _, rec := range collapsed {
-			if !opts.includeAll && (rec.Status != "active" || rec.Archived) {
+			if !opts.includeAll && (!registry.IsNonRetired(rec) || rec.Archived) {
 				continue
 			}
 			out := reconciledJSON(rec, idx, observerAdviceFor(advice, ptrString(rec.GUID)))
@@ -140,7 +140,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-12s %-16s %-11s %s\n",
 		"GUID", "LABEL", "AGENT", "PANE", "LIVE", "TEAM", "BUS", "CTX", "ROLE")
 	for _, rec := range collapsed {
-		if !opts.includeAll && (rec.Status != "active" || rec.Archived) {
+		if !opts.includeAll && (!registry.IsNonRetired(rec) || rec.Archived) {
 			continue
 		}
 		live, _ := idx.match(rec)

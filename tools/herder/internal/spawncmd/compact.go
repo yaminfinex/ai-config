@@ -280,7 +280,7 @@ func resolveSelfRow(recs []registry.Record, pane herdrcli.Pane) (selfIdentity, s
 		return selfIdentity{row: row, corroborated: guidRow != nil && sessRow != nil}, ""
 	}
 
-	row := registry.ActiveByPaneOrTerminal(recs, pane.TerminalID)
+	row := registry.SeatedByPaneOrTerminal(recs, pane.TerminalID)
 	if row == nil {
 		return selfIdentity{positional: true}, "no registry row proves this pane is yours (no HERDER_GUID, no session match, no active row for terminal " + pane.TerminalID + ")."
 	}

@@ -72,7 +72,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		if owner := registry.V2LabelOwner(tx.Projection, opts.newLabel, guid); owner != nil {
 			return nil, fmt.Errorf("label %q already belongs to active guid %s", opts.newLabel, owner.GUID)
 		}
-		terminalID = registry.LegacyFromV2(*rec).TerminalID
+		if rec.Seat != nil {
+			terminalID = rec.Seat.TerminalID
+		} else if legacy, ok := registry.DecodeLegacyV1Raw(*rec); ok {
+			terminalID = legacy.TerminalID
+		}
 		next := *rec
 		next.Event = "labelled"
 		next.RecordedAt = ""
@@ -200,11 +204,17 @@ func transferCandidatesWithOptions(tx registry.LockedUpdate, target, source stri
 		return nil, TransferResult{}, fmt.Errorf("target %s is lost; lost sessions cannot be renamed", targetRec.GUID)
 	}
 
+	targetTerminalID := ""
+	if targetRec.Seat != nil {
+		targetTerminalID = targetRec.Seat.TerminalID
+	} else if legacy, ok := registry.DecodeLegacyV1Raw(*targetRec); ok {
+		targetTerminalID = legacy.TerminalID
+	}
 	result := TransferResult{
 		TargetGUID:       targetRec.GUID,
 		SourceGUID:       sourceRec.GUID,
 		Label:            sourceRec.Label,
-		TargetTerminalID: registry.LegacyFromV2(*targetRec).TerminalID,
+		TargetTerminalID: targetTerminalID,
 	}
 	released := *sourceRec
 	released.RecordedAt = ""

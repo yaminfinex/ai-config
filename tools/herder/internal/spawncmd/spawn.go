@@ -1858,7 +1858,7 @@ func resolveSpawnerBus(registryPath, notifyTo, spawnedBy, spawnerPane, spawnerTe
 		} else if ambiguous {
 			return "", true
 		}
-		if activeBusName(recs, notifyTo) || liveOnBus(childHcomDir, notifyTo) {
+		if seatedBusName(recs, notifyTo) || liveOnBus(childHcomDir, notifyTo) {
 			return notifyTo, false
 		}
 		// An EXPLICIT target that resolves nowhere is a hard error, not a
@@ -1891,7 +1891,7 @@ func resolveSpawnerBus(registryPath, notifyTo, spawnedBy, spawnerPane, spawnerTe
 // after warning with the candidate list; the caller skips notify rather than
 // route to a guessed session.
 func busNameByPaneLive(recs []registry.Record, key, childHcomDir string, warn io.Writer) (string, bool) {
-	candidates := registry.ActiveCandidatesByPaneOrTerminal(recs, key)
+	candidates := registry.SeatedCandidatesByPaneOrTerminal(recs, key)
 	switch len(candidates) {
 	case 0:
 		return "", false
@@ -1934,13 +1934,13 @@ func candidateBusList(recs []registry.Record) string {
 	return strings.Join(parts, ", ")
 }
 
-// activeBusName reports whether name is the recorded hcom_name of an ACTIVE
+// seatedBusName reports whether name is the recorded hcom_name of a seated
 // registry row — --notify-to may address a peer directly by its bus name, not
 // only by guid/label/pane coordinates. Closed rows don't count: the bus
 // recycles names, so a stale row must not vouch for a live address.
-func activeBusName(recs []registry.Record, name string) bool {
+func seatedBusName(recs []registry.Record, name string) bool {
 	for _, rec := range registry.LatestByGUID(recs) {
-		if rec.Status == "active" && rec.HcomName == name {
+		if registry.IsSeated(rec) && rec.HcomName == name {
 			return true
 		}
 	}
