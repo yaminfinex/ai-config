@@ -210,7 +210,7 @@ type runner struct {
 	stderr         io.Writer
 	herdr          herdrClient
 	paths          herderpaths.Paths
-	updateRegistry func(string, registry.LockedUpdateFunc) ([][]byte, error)
+	updateRegistry func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error)
 }
 
 type herdrClient interface {
@@ -219,7 +219,7 @@ type herdrClient interface {
 	Run(args ...string) (int, error)
 }
 
-func (r *runner) updateLocked(path string, fn registry.LockedUpdateFunc) ([][]byte, error) {
+func (r *runner) updateLocked(path string, fn registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
 	if r.updateRegistry != nil {
 		return r.updateRegistry(path, fn)
 	}
@@ -251,7 +251,7 @@ func (r *runner) registerSpawn(registryPath string, record spawnRecord) error {
 		Status:     record.Status,
 		Provenance: &record.Provenance,
 	}
-	_, err := r.updateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := r.updateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		if owner := registry.V2LabelOwner(tx.Projection, record.Label, record.GUID); owner != nil {
 			return nil, fmt.Errorf("label %q already belongs to active guid %s", record.Label, owner.GUID)
 		}
@@ -260,7 +260,14 @@ func (r *runner) registerSpawn(registryPath string, record spawnRecord) error {
 		row.Provenance.WorkspaceID = record.WorkspaceID
 		return []v2.SessionRecord{row}, nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil {
+		return err
+	}
+	return outcome.Err()
 }
 
 func (r *runner) registerSpawnOrRollback(registryPath string, record spawnRecord) int {
@@ -1058,7 +1065,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 				if name != "" {
 					record.HcomName = name
 					hcomCapture = "captured"
-					if _, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+					outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 						current := registry.V2ByGUID(tx.Projection, record.GUID)
 						if current == nil || current.State == v2.StateRetired || current.State == v2.StateLost {
 							return nil, nil
@@ -1073,7 +1080,15 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 						next.Seat.HcomName = name
 						next.Seat.ConfirmedAt = next.RecordedAt
 						return []v2.SessionRecord{next}, nil
-					}); err != nil {
+					})
+					if err == nil && len(outcomes) > 0 {
+						var outcome registry.WriteOutcome
+						outcome, err = registry.SingleOutcome(outcomes)
+						if err == nil {
+							err = outcome.Err()
+						}
+					}
+					if err != nil {
 						die(r.stderr, err.Error())
 						return 1
 					}

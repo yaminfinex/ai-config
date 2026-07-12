@@ -227,7 +227,7 @@ func seedAnnotatedUnseatedCullRow(t *testing.T, label, closeResult, closeReason 
 func seedUnseatedCullRows(t *testing.T, rows ...v2.SessionRecord) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	if _, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		out := make([]v2.SessionRecord, 0, len(rows))
 		for _, row := range rows {
 			row.Kind = v2.KindSession
@@ -239,16 +239,18 @@ func seedUnseatedCullRows(t *testing.T, rows ...v2.SessionRecord) string {
 			out = append(out, row)
 		}
 		return out, nil
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	assertWriteOutcomes(t, outcomes)
 	return path
 }
 
 func seedSeatedCullRow(t *testing.T, label, paneID, terminalID string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	if _, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{{
 			Kind:       v2.KindSession,
 			GUID:       "guid-ghost",
@@ -264,10 +266,21 @@ func seedSeatedCullRow(t *testing.T, label, paneID, terminalID string) string {
 				PaneID:     paneID,
 			},
 		}}, nil
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	assertWriteOutcomes(t, outcomes)
 	return path
+}
+
+func assertWriteOutcomes(t *testing.T, outcomes []registry.WriteOutcome) {
+	t.Helper()
+	for _, outcome := range outcomes {
+		if err := outcome.Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func installCullTestMocks(t *testing.T) (string, string) {

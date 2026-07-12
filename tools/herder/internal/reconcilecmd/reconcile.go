@@ -114,12 +114,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				res.Write = "error"
 				res.Detail = res.Detail + "; write failed: " + err.Error()
 				exit = 1
-			} else if err := registry.AppendLegacySessionEvent(registryPath, row, "reconciled", "seated"); err != nil {
+			} else if outcome, err := registry.AppendLegacySessionEvent(registryPath, row, "reconciled", "seated"); err != nil {
+				res.Write = "error"
+				res.Detail = res.Detail + "; write failed: " + err.Error()
+				exit = 1
+			} else if err := outcome.Err(); err != nil {
 				res.Write = "error"
 				res.Detail = res.Detail + "; write failed: " + err.Error()
 				exit = 1
 			} else {
-				res.Write = "applied"
+				res.Write = string(outcome.Status)
 			}
 			results[i] = res
 		}

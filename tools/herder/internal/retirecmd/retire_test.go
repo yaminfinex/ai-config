@@ -125,7 +125,7 @@ func TestReopenRetiredStripsLabelAndRefusesNonRetired(t *testing.T) {
 func seedRetireRegistry(t *testing.T, recs ...v2.SessionRecord) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	_, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		for i := range recs {
 			if recs[i].Kind == "" {
 				recs[i].Kind = v2.KindSession
@@ -141,6 +141,11 @@ func seedRetireRegistry(t *testing.T, recs ...v2.SessionRecord) string {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, outcome := range outcomes {
+		if err := outcome.Err(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return path
 }

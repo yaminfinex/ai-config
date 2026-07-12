@@ -24,6 +24,46 @@ type LockedUpdate struct {
 
 type LockedUpdateFunc func(LockedUpdate) ([]v2.SessionRecord, error)
 
+type WriteStatus string
+
+const (
+	WriteApplied WriteStatus = "applied"
+	WriteNoop    WriteStatus = "noop"
+	WriteRefused WriteStatus = "refused"
+)
+
+// WriteOutcome confirms what happened to one candidate returned by a
+// LockedUpdateFunc. Outcomes are positional: outcome i describes candidate i.
+// Applied outcomes carry the exact encoded session row appended to the registry;
+// refused outcomes carry a reason. Batch errors are reserved for failures where
+// the writer cannot confirm an outcome.
+type WriteOutcome struct {
+	Status WriteStatus
+	Row    []byte
+	Reason string
+	cause  error
+}
+
+func (o WriteOutcome) Err() error {
+	if o.Status != WriteRefused {
+		return nil
+	}
+	if o.Reason == "" {
+		return errors.New("registry write refused without a reason")
+	}
+	if o.cause != nil {
+		return o.cause
+	}
+	return errors.New(o.Reason)
+}
+
+func SingleOutcome(outcomes []WriteOutcome) (WriteOutcome, error) {
+	if len(outcomes) != 1 {
+		return WriteOutcome{}, fmt.Errorf("registry write returned %d outcomes for one candidate", len(outcomes))
+	}
+	return outcomes[0], nil
+}
+
 type LegacyV1AppendError struct {
 	GUID        string
 	ArchivePath string
@@ -43,7 +83,7 @@ func (e *LegacyV1AppendError) Error() string {
 // UpdateLocked is the single registry write path. It holds an exclusive flock
 // while it loads the v2 projection, validates the caller's session snapshots,
 // appends them, and fsyncs the live file before releasing the lock.
-func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
+func UpdateLocked(path string, fn LockedUpdateFunc) ([]WriteOutcome, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
@@ -110,29 +150,28 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var encoded [][]byte
-	if len(mintedRow) > 0 {
-		encoded = append(encoded, mintedRow)
-	}
-	encoded = append(encoded, migratedRows...)
-	encoded = append(encoded, rotationRows...)
-	var pending [][]byte
-	for _, row := range rows {
+	registryChanged := len(mintedRow) > 0 || len(migratedRows) > 0 || len(rotationRows) > 0
+	outcomes := make([]WriteOutcome, 0, len(rows))
+	hasApplied := false
+	for i, row := range rows {
 		if wasMinted && isLegacyV1SessionAppend(row) {
-			return nil, &LegacyV1AppendError{GUID: row.GUID}
+			return refusedBatch(outcomes, len(rows), i, &LegacyV1AppendError{GUID: row.GUID}), nil
 		}
 		if current := V2ByGUID(proj, row.GUID); current != nil && !sessionHasRegisteredNode(proj, *current) {
-			return nil, fmt.Errorf("registry refused to mutate guid %s: latest row is attributed to unknown node %s (no node_registered row)", current.GUID, current.Node)
+			reason := fmt.Errorf("registry refused to mutate guid %s: latest row is attributed to unknown node %s (no node_registered row)", current.GUID, current.Node)
+			return refusedBatch(outcomes, len(rows), i, reason), nil
 		}
 		normalized, ok, err := normalizeSessionAppend(proj, row)
 		if err != nil {
-			return nil, err
+			return refusedBatch(outcomes, len(rows), i, err), nil
 		}
 		if !ok {
+			outcomes = append(outcomes, WriteOutcome{Status: WriteNoop})
 			continue
 		}
 		if owner := V2LabelOwner(proj, normalized.Label, normalized.GUID); owner != nil && isNonRetired(normalized.State) {
-			return nil, fmt.Errorf("label %q already belongs to active guid %s", normalized.Label, owner.GUID)
+			reason := fmt.Errorf("label %q already belongs to active guid %s", normalized.Label, owner.GUID)
+			return refusedBatch(outcomes, len(rows), i, reason), nil
 		}
 		normalized, err = stampSessionNode(normalized, nodeID)
 		if err != nil {
@@ -146,26 +185,54 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([][]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		pending = append(pending, b)
+		outcomes = append(outcomes, WriteOutcome{Status: WriteApplied, Row: b})
+		hasApplied = true
 	}
-	if len(pending) > 0 {
+	if hasApplied {
 		if _, err := f.Seek(0, io.SeekEnd); err != nil {
 			return nil, err
 		}
-		for _, b := range pending {
-			if _, err := f.Write(append(bytes.TrimRight(b, "\n"), '\n')); err != nil {
+		for _, outcome := range outcomes {
+			if outcome.Status != WriteApplied {
+				continue
+			}
+			if _, err := f.Write(append(bytes.TrimRight(outcome.Row, "\n"), '\n')); err != nil {
 				return nil, err
 			}
+			registryChanged = true
 		}
-		encoded = append(encoded, pending...)
 	}
-	if len(encoded) == 0 {
-		return nil, nil
+	if !registryChanged {
+		return outcomes, nil
 	}
 	if err := f.Sync(); err != nil {
 		return nil, err
 	}
-	return encoded, nil
+	return outcomes, nil
+}
+
+func refusedBatch(prior []WriteOutcome, candidateCount, refusedAt int, cause error) []WriteOutcome {
+	outcomes := make([]WriteOutcome, candidateCount)
+	copy(outcomes, prior)
+	for i := range outcomes {
+		var reason string
+		switch {
+		case outcomes[i].Status == WriteApplied:
+			reason = fmt.Sprintf("batch refused atomically because candidate %d was refused: %v", refusedAt+1, cause)
+		case i == refusedAt:
+			reason = cause.Error()
+		case i > refusedAt:
+			reason = fmt.Sprintf("candidate was not evaluated because candidate %d refused the atomic batch: %v", refusedAt+1, cause)
+		default:
+			continue
+		}
+		var outcomeCause error = errors.New(reason)
+		if i == refusedAt {
+			outcomeCause = cause
+		}
+		outcomes[i] = WriteOutcome{Status: WriteRefused, Reason: reason, cause: outcomeCause}
+	}
+	return outcomes
 }
 
 func ensureLockedNode(path string, f *os.File, proj *v2.Projection) (string, []byte, *v2.Projection, error) {

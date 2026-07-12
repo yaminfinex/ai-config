@@ -29,7 +29,7 @@ func RunRetire(args []string, stdout, stderr io.Writer) int {
 	}
 
 	var guid, oldLabel string
-	encoded, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		rec := registry.V2Resolve(tx.Projection, target)
 		if rec == nil {
 			return nil, fmt.Errorf("unknown target: %s", target)
@@ -62,7 +62,19 @@ func RunRetire(args []string, stdout, stderr io.Writer) int {
 		die(stderr, "retire", err.Error())
 		return 1
 	}
-	row := transitionRow(encoded, guid, "retired")
+	var row []byte
+	if len(outcomes) > 0 {
+		outcome, oneErr := registry.SingleOutcome(outcomes)
+		if oneErr != nil {
+			die(stderr, "retire", oneErr.Error())
+			return 1
+		}
+		if refusal := outcome.Err(); refusal != nil {
+			die(stderr, "retire", refusal.Error())
+			return 1
+		}
+		row = outcome.Row
+	}
 	if row == nil {
 		fmt.Fprintf(stderr, "retired %s already retired (%s); no registry row appended\n", displayLabel(oldLabel), guid)
 		return 0
@@ -86,7 +98,7 @@ func RunReopen(args []string, stdout, stderr io.Writer) int {
 	}
 
 	var guid string
-	encoded, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		rec := registry.V2Resolve(tx.Projection, target)
 		if rec == nil {
 			return nil, fmt.Errorf("unknown target: %s", target)
@@ -107,7 +119,16 @@ func RunReopen(args []string, stdout, stderr io.Writer) int {
 		die(stderr, "reopen", err.Error())
 		return 1
 	}
-	row := transitionRow(encoded, guid, "reopened")
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil {
+		die(stderr, "reopen", err.Error())
+		return 1
+	}
+	if refusal := outcome.Err(); refusal != nil {
+		die(stderr, "reopen", refusal.Error())
+		return 1
+	}
+	row := outcome.Row
 	if row == nil {
 		die(stderr, "reopen", fmt.Sprintf("target %s was not reopened", target))
 		return 1
@@ -181,19 +202,6 @@ func displayLabel(label string) string {
 		return label
 	}
 	return string(b)
-}
-
-func transitionRow(rows [][]byte, guid, event string) []byte {
-	for _, row := range rows {
-		var rec v2.SessionRecord
-		if err := json.Unmarshal(row, &rec); err != nil {
-			continue
-		}
-		if rec.GUID == guid && rec.Event == event {
-			return row
-		}
-	}
-	return nil
 }
 
 func die(stderr io.Writer, verb, msg string) {
