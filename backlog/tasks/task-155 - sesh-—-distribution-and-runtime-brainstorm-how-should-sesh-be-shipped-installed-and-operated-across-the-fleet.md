@@ -3,7 +3,7 @@ id: TASK-155
 title: >-
   sesh — distribution and runtime brainstorm: how should sesh be shipped,
   installed, and operated across the fleet
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-12 00:47'
 labels:
@@ -52,8 +52,22 @@ An options memo (durable doc, backlog doc alongside doc-001) mapping the space p
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Options memo durable as a backlog doc: client distribution, backend hosting, deploy/upgrade, and onboarding each surveyed with honest trade-offs, including at least one option per axis beyond those seeded in the description
-- [ ] #2 The quick.infinex.xyz distribution channel is concretely assessed for sesh (what reusing the release/install.sh pattern takes, what differs for a service-carrying binary vs a plain CLI)
-- [ ] #3 Backend hosting options assessed against data gravity, backup, exposure (tailscale serve vs tsnet), and the tailnet-auth milestone
-- [ ] #4 Recommendations clearly separated from the survey; every recommendation carries filed-ready follow-up task text; no implementation or machine changes ride on this unit
+- [x] #1 Options memo durable as a backlog doc: client distribution, backend hosting, deploy/upgrade, and onboarding each surveyed with honest trade-offs, including at least one option per axis beyond those seeded in the description
+- [x] #2 The quick.infinex.xyz distribution channel is concretely assessed for sesh (what reusing the release/install.sh pattern takes, what differs for a service-carrying binary vs a plain CLI)
+- [x] #3 Backend hosting options assessed against data gravity, backup, exposure (tailscale serve vs tsnet), and the tailnet-auth milestone
+- [x] #4 Recommendations clearly separated from the survey; every recommendation carries filed-ready follow-up task text; no implementation or machine changes ride on this unit
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Delivered as doc-002 (sesh distribution and runtime options memo). Method: two
+independent researchers (one codex, one fable) surveyed without reading each
+other; synthesis preserves the one genuine disagreement (artifact channel:
+quick-host release path vs store-served /releases; quick site as zero-code
+interim). Four filed-ready follow-up tasks (T1 sesh setup, T2 release channel +
+sesh update, T3 quick-host store deployment, T4 fleet version visibility) are in
+the memo's recommendation section, unfiled — owner decides. No implementation,
+no machine changes.
+<!-- SECTION:NOTES:END -->
+
