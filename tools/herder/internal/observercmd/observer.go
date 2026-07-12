@@ -1,7 +1,6 @@
 package observercmd
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/hookcmd"
 	"ai-config/tools/herder/internal/observerstatus"
@@ -35,25 +35,13 @@ type options struct {
 	json bool
 }
 
-type hcomRow struct {
-	Name          string            `json:"name"`
-	Tool          string            `json:"tool"`
-	Status        string            `json:"status"`
-	Joined        bool              `json:"joined"`
-	SessionID     string            `json:"session_id"`
-	ProcessBound  *bool             `json:"process_bound"`
-	StatusAge     int               `json:"status_age"`
-	LaunchContext hcomLaunchContext `json:"launch_context"`
-}
-
-type hcomLaunchContext struct {
-	PaneID    string `json:"pane_id"`
-	ProcessID string `json:"process_id"`
-}
+type hcomRow = hcomidentity.Row
+type hcomLaunchContext = hcomidentity.LaunchContext
 
 type busState struct {
 	available bool
-	rows      map[string]hcomRow
+	rows      map[string]hcomidentity.Row
+	roster    []hcomidentity.Row
 	err       error
 }
 
@@ -79,6 +67,7 @@ type candidate struct {
 	guid string
 	row  v2.SessionRecord
 	sid  string
+	bus  hcomidentity.Result
 }
 
 type sweepResult struct {
@@ -437,32 +426,17 @@ func loadHerdrStateCLI(source string) herdrState {
 }
 
 func loadBusState() busState {
-	out, err := exec.Command("hcom", "list", "--json").Output()
+	listed, err := hcomidentity.List("")
 	if err != nil {
 		return busState{err: err}
 	}
-	rows := map[string]hcomRow{}
-	dec := json.NewDecoder(bytes.NewReader(out))
-	for {
-		var row hcomRow
-		if err := dec.Decode(&row); err != nil {
-			break
-		}
+	rows := map[string]hcomidentity.Row{}
+	for _, row := range listed {
 		if row.Name != "" {
 			rows[row.Name] = row
 		}
 	}
-	if len(rows) == 0 {
-		var arr []hcomRow
-		if err := json.Unmarshal(out, &arr); err == nil {
-			for _, row := range arr {
-				if row.Name != "" {
-					rows[row.Name] = row
-				}
-			}
-		}
-	}
-	return busState{available: true, rows: rows}
+	return busState{available: true, rows: rows, roster: listed}
 }
 
 // doctrineCandidates finds only unmanaged Codex sessions for which the live
@@ -612,7 +586,7 @@ func buildCandidates(proj *v2.Projection, hd herdrState, bus busState, now time.
 					continue
 				}
 				if shouldReconfirm(rec, now) {
-					out = append(out, reconfirmCandidate(rec, pane, now))
+					out = append(out, reconfirmCandidate(rec, pane, bus, now))
 				}
 				continue
 			}
@@ -644,13 +618,14 @@ func sidObservationCandidate(rec v2.SessionRecord, hd herdrState, bus busState, 
 	if priorSID == newSID {
 		return candidate{}, false
 	}
+	identity := resolveSeatBus(rec, newSID, bus)
 	if priorSID == "" {
-		return recognisedCandidate(rec, newSID, now), true
+		return recognisedCandidate(rec, newSID, identity, now), true
 	}
-	return turnoverCandidate(rec, newSID, now), true
+	return turnoverCandidate(rec, newSID, identity, now), true
 }
 
-func recognisedCandidate(rec v2.SessionRecord, newSID string, now time.Time) candidate {
+func recognisedCandidate(rec v2.SessionRecord, newSID string, identity hcomidentity.Result, now time.Time) candidate {
 	stamp := now.Format(time.RFC3339)
 	next := rec
 	next.Event = "recognised"
@@ -662,12 +637,13 @@ func recognisedCandidate(rec v2.SessionRecord, newSID string, now time.Time) can
 	if next.Seat != nil {
 		seat := *next.Seat
 		seat.ConfirmedAt = stamp
+		applyBusIdentity(&seat, identity)
 		next.Seat = &seat
 	}
-	return candidate{kind: "recognised", guid: rec.GUID, row: next, sid: newSID}
+	return candidate{kind: "recognised", guid: rec.GUID, row: next, sid: newSID, bus: identity}
 }
 
-func turnoverCandidate(rec v2.SessionRecord, newSID string, now time.Time) candidate {
+func turnoverCandidate(rec v2.SessionRecord, newSID string, identity hcomidentity.Result, now time.Time) candidate {
 	stamp := now.Format(time.RFC3339)
 	old := rec
 	old.Event = "unseated"
@@ -677,10 +653,10 @@ func turnoverCandidate(rec v2.SessionRecord, newSID string, now time.Time) candi
 	old.CloseResult = "displaced"
 	old.CloseReason = "observer detected sid turnover in sidecar-less seat"
 	old.ObservedVia = "observer turnover"
-	return candidate{kind: "turnover", guid: rec.GUID, row: old, sid: newSID}
+	return candidate{kind: "turnover", guid: rec.GUID, row: old, sid: newSID, bus: identity}
 }
 
-func turnoverRowsLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string, now time.Time) ([]v2.SessionRecord, bool) {
+func turnoverRowsLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string, identity hcomidentity.Result, now time.Time) ([]v2.SessionRecord, bool) {
 	current := registry.V2ByGUID(proj, rec.GUID)
 	if current == nil || current.State != v2.StateSeated || current.Seat == nil || !observerOwnedSeat(*current) {
 		return nil, false
@@ -697,6 +673,7 @@ func turnoverRowsLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string
 	childSeat := cloneSeat(current.Seat)
 	if childSeat != nil {
 		childSeat.ConfirmedAt = stamp
+		applyBusIdentity(childSeat, identity)
 	}
 	child := v2.SessionRecord{
 		Kind:       v2.KindSession,
@@ -730,7 +707,7 @@ func turnoverRowsLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string
 	return []v2.SessionRecord{child, old}, true
 }
 
-func recognisedRowLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string, now time.Time) (v2.SessionRecord, bool) {
+func recognisedRowLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string, identity hcomidentity.Result, now time.Time) (v2.SessionRecord, bool) {
 	current := registry.V2ByGUID(proj, rec.GUID)
 	if current == nil || current.State != v2.StateSeated || current.Seat == nil || !observerOwnedSeat(*current) {
 		return v2.SessionRecord{}, false
@@ -739,7 +716,7 @@ func recognisedRowLocked(proj *v2.Projection, rec v2.SessionRecord, newSID strin
 	if newSID == "" || priorSID == newSID || priorSID != "" {
 		return v2.SessionRecord{}, false
 	}
-	return recognisedCandidate(*current, newSID, now).row, true
+	return recognisedCandidate(*current, newSID, identity, now).row, true
 }
 
 func observerOwnedSeat(rec v2.SessionRecord) bool {
@@ -750,15 +727,38 @@ func observedSID(rec v2.SessionRecord, hd herdrState, bus busState) string {
 	if rec.Seat == nil {
 		return ""
 	}
-	if bus.available && rec.Seat.HcomName != "" {
-		if row, ok := bus.rows[rec.Seat.HcomName]; ok && row.SessionID != "" {
-			return row.SessionID
-		}
-	}
 	if pane, ok := hd.byTerm[rec.Seat.TerminalID]; ok && pane.AgentSession != "" {
 		return pane.AgentSession
 	}
+	if identity := resolveSeatBus(rec, "", bus); identity.Verified {
+		return identity.SessionID
+	}
 	return ""
+}
+
+func resolveSeatBus(rec v2.SessionRecord, sessionID string, bus busState) hcomidentity.Result {
+	if !bus.available || rec.Seat == nil {
+		return hcomidentity.Result{Reason: "live bus roster unavailable"}
+	}
+	rows := bus.roster
+	if rows == nil {
+		rows = make([]hcomidentity.Row, 0, len(bus.rows))
+		for _, row := range bus.rows {
+			rows = append(rows, row)
+		}
+	}
+	return hcomidentity.Resolve(rows, hcomidentity.Evidence{SessionID: sessionID, PaneIDs: []string{rec.Seat.PaneID}})
+}
+
+func applyBusIdentity(seat *v2.Seat, identity hcomidentity.Result) {
+	if seat == nil {
+		return
+	}
+	verified := identity.Verified
+	seat.HcomVerified = &verified
+	if identity.Verified {
+		seat.HcomName = identity.Name
+	}
 }
 
 func latestSID(rec v2.SessionRecord) string {
@@ -800,7 +800,7 @@ func unseatCandidate(rec v2.SessionRecord, now time.Time, reason, via string) ca
 	return candidate{kind: "unseat", guid: rec.GUID, row: next}
 }
 
-func reconfirmCandidate(rec v2.SessionRecord, pane herdrcli.Pane, now time.Time) candidate {
+func reconfirmCandidate(rec v2.SessionRecord, pane herdrcli.Pane, bus busState, now time.Time) candidate {
 	next := rec
 	next.Event = "reconciled"
 	next.State = v2.StateSeated
@@ -811,6 +811,12 @@ func reconfirmCandidate(rec v2.SessionRecord, pane herdrcli.Pane, now time.Time)
 		seat.ConfirmedAt = next.RecordedAt
 		if pane.PaneID != "" {
 			seat.PaneID = pane.PaneID
+		}
+		current := rec
+		current.Seat = &seat
+		identity := resolveSeatBus(current, latestSID(rec), bus)
+		if identity.Verified || seat.HcomName != "" {
+			applyBusIdentity(&seat, identity)
 		}
 		next.Seat = &seat
 	}
@@ -828,11 +834,11 @@ func applyCandidates(path string, cands []candidate, stderr io.Writer) observers
 		for _, cand := range cands {
 			switch cand.kind {
 			case "turnover":
-				if pair, ok := turnoverRowsLocked(tx.Projection, cand.row, cand.sid, now); ok {
+				if pair, ok := turnoverRowsLocked(tx.Projection, cand.row, cand.sid, cand.bus, now); ok {
 					rows = append(rows, pair...)
 				}
 			case "recognised":
-				if row, ok := recognisedRowLocked(tx.Projection, cand.row, cand.sid, now); ok {
+				if row, ok := recognisedRowLocked(tx.Projection, cand.row, cand.sid, cand.bus, now); ok {
 					rows = append(rows, row)
 				}
 			default:

@@ -258,7 +258,7 @@ $node_row
 $(session_row guid-old seated alpha t_old p_old bus-alpha enroll old-sid)
 JSONL
   snapshot '[{"pane_id":"p_old","terminal_id":"t_old","label":"alpha"}]' '[{"pane_id":"p_old","terminal_id":"t_old","agent":"claude","agent_status":"idle","name":"alpha"}]'
-  jq -cn '{name:"bus-alpha",status:"idle",session_id:"new-sid",process_bound:true,status_age:1}' >"$HCOM/hcom.jsonl"
+  jq -cn '{name:"bus-alpha",status:"idle",session_id:"new-sid",process_bound:true,status_age:1,launch_context:{pane_id:"p_old"}}' >"$HCOM/hcom.jsonl"
   run_sweep_json >"$CASE/out1.json" || fail_case "T-2 sweep" "command failed"
   if jq -s -e '[.[] | select(.event=="registered" or .event=="unseated")] | (.[-2].event=="registered" and .[-1].event=="unseated")' "$STATE/registry.jsonl" >/dev/null; then
     pass "T-2 child-first turnover pair"
@@ -266,6 +266,7 @@ JSONL
     fail_case "T-2 child-first turnover pair" "$(cat "$STATE/registry.jsonl")"
   fi
   assert_jq "T-2 child has cleared_from and new sid" 'select(.event=="registered" and .lineage.cleared_from=="guid-old" and .sids[-1].sid=="new-sid")' "$STATE/registry.jsonl"
+  assert_jq "T-2 child bus identity reverified" 'select(.event=="registered" and .lineage.cleared_from=="guid-old" and .seat.hcom_name=="bus-alpha" and .seat.hcom_verified==true)' "$STATE/registry.jsonl"
   run_sweep_json >"$CASE/out2.json" || fail_case "T-2 rerun" "command failed"
   [[ "$(jq -s '[.[] | select(.lineage.cleared_from=="guid-old")] | length' "$STATE/registry.jsonl")" == "1" ]] && pass "T-2 rerun idempotent" || fail_case "T-2 rerun idempotent" "$(cat "$STATE/registry.jsonl")"
 
@@ -275,7 +276,7 @@ $node_row
 $(session_row guid-first seated alpha t_first p_first bus-first enroll)
 JSONL
   snapshot '[{"pane_id":"p_first","terminal_id":"t_first","label":"alpha"}]' '[{"pane_id":"p_first","terminal_id":"t_first","agent":"claude","agent_status":"idle","name":"alpha"}]'
-  jq -cn '{name:"bus-first",status:"idle",session_id:"first-sid",process_bound:true,status_age:1}' >"$HCOM/hcom.jsonl"
+  jq -cn '{name:"bus-first",status:"idle",session_id:"first-sid",process_bound:true,status_age:1,launch_context:{pane_id:"p_first"}}' >"$HCOM/hcom.jsonl"
   run_sweep_json >"$CASE/out-first.json" || fail_case "T-2 first sid sweep" "command failed"
   assert_jq "T-2 first sid recognises same GUID" 'select(.guid=="guid-first" and .event=="recognised" and .state=="seated" and .sids[-1].sid=="first-sid" and .observed_via=="observer sid enrichment")' "$STATE/registry.jsonl"
   [[ "$(jq -s '[.[] | select(.lineage.cleared_from=="guid-first")] | length' "$STATE/registry.jsonl")" == "0" ]] && pass "T-2 first sid does not turnover" || fail_case "T-2 first sid child minted" "$(cat "$STATE/registry.jsonl")"
@@ -286,7 +287,7 @@ $node_row
 $(session_row guid-race seated alpha t_race p_race bus-race enroll old-sid)
 JSONL
   snapshot '[{"pane_id":"p_race","terminal_id":"t_race","label":"alpha"}]' '[{"pane_id":"p_race","terminal_id":"t_race","agent":"claude","agent_status":"idle","name":"alpha"}]'
-  jq -cn '{name:"bus-race",status:"idle",session_id:"new-sid",process_bound:true,status_age:1}' >"$HCOM/hcom.jsonl"
+  jq -cn '{name:"bus-race",status:"idle",session_id:"new-sid",process_bound:true,status_age:1,launch_context:{pane_id:"p_race"}}' >"$HCOM/hcom.jsonl"
   run_sweep_json >"$CASE/race1.json" &
   race1=$!
   run_sweep_json >"$CASE/race2.json" &

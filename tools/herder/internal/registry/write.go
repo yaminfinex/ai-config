@@ -487,6 +487,7 @@ func isLegacyV1SessionAppend(row v2.SessionRecord) bool {
 }
 
 func carryRegisteredFields(row, current v2.SessionRecord) v2.SessionRecord {
+	carriedHcomName := current.Seat != nil && current.Seat.HcomName != "" && (row.Seat == nil || row.Seat.HcomName == "")
 	if row.Seat == nil {
 		row.State = current.State
 	}
@@ -506,6 +507,10 @@ func carryRegisteredFields(row, current v2.SessionRecord) v2.SessionRecord {
 		row.Provenance = current.Provenance
 	}
 	row.Seat = mergeSeatFields(row.Seat, current.Seat)
+	if carriedHcomName && row.Seat != nil {
+		verified := false
+		row.Seat.HcomVerified = &verified
+	}
 	return row
 }
 
@@ -514,7 +519,9 @@ func mergeSeatFields(patch, current *v2.Seat) *v2.Seat {
 		return cloneSeat(current)
 	}
 	if current == nil {
-		return cloneSeat(patch)
+		seat := cloneSeat(patch)
+		defaultSeatVerification(seat)
+		return seat
 	}
 	seat := *current
 	if patch.Kind != "" {
@@ -534,6 +541,13 @@ func mergeSeatFields(patch, current *v2.Seat) *v2.Seat {
 	}
 	if patch.HcomName != "" {
 		seat.HcomName = patch.HcomName
+		if patch.HcomVerified == nil {
+			verified := false
+			seat.HcomVerified = &verified
+		}
+	}
+	if patch.HcomVerified != nil {
+		seat.HcomVerified = patch.HcomVerified
 	}
 	if patch.Namespace != "" {
 		seat.Namespace = patch.Namespace
@@ -548,6 +562,14 @@ func mergeSeatFields(patch, current *v2.Seat) *v2.Seat {
 		seat.ConfirmedAt = patch.ConfirmedAt
 	}
 	return &seat
+}
+
+func defaultSeatVerification(seat *v2.Seat) {
+	if seat == nil || seat.HcomName == "" || seat.HcomVerified != nil {
+		return
+	}
+	verified := false
+	seat.HcomVerified = &verified
 }
 
 func cloneSeat(seat *v2.Seat) *v2.Seat {
@@ -591,12 +613,13 @@ func carrySeatFields(row, current v2.SessionRecord) v2.SessionRecord {
 		if legacy.PaneID != "" || legacy.TerminalID != "" || legacy.HcomName != "" || legacy.HcomDir != "" {
 			row.State = v2.StateSeated
 			row.Seat = &v2.Seat{
-				Kind:        "herdr",
-				TerminalID:  legacy.TerminalID,
-				PaneID:      legacy.PaneID,
-				HcomName:    legacy.HcomName,
-				Namespace:   legacy.HcomDir,
-				ConfirmedAt: row.RecordedAt,
+				Kind:         "herdr",
+				TerminalID:   legacy.TerminalID,
+				PaneID:       legacy.PaneID,
+				HcomName:     legacy.HcomName,
+				HcomVerified: legacy.HcomVerified,
+				Namespace:    legacy.HcomDir,
+				ConfirmedAt:  row.RecordedAt,
 			}
 		}
 	}
@@ -640,10 +663,18 @@ func sameSeatFields(a, b *v2.Seat) bool {
 		a.PaneID == b.PaneID &&
 		a.PID == b.PID &&
 		a.HcomName == b.HcomName &&
+		sameOptionalBool(a.HcomVerified, b.HcomVerified) &&
 		a.Namespace == b.Namespace &&
 		a.HcomEpoch == b.HcomEpoch &&
 		a.HerdrEpoch == b.HerdrEpoch &&
 		a.ConfirmedAt == b.ConfirmedAt
+}
+
+func sameOptionalBool(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func sameSIDs(a, b []v2.SID) bool {

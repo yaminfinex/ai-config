@@ -2,8 +2,8 @@
 
 === STDOUT ===
 GUID       LABEL                OUTCOME                        DETAIL
-beta       beta                 re-confirm                     terminal live; pane refresh p_20 -> p_99
-delta      delta                re-bind (assumed-continuity)   one live name+agent-kind+cwd fallback match; identity assumed per D12
+beta       beta                 re-confirm                     terminal live; pane refresh p_20 -> p_99; bus identity verified as @beta-live
+delta      delta                re-bind (assumed-continuity)   one live name+agent-kind+cwd fallback match; identity assumed per D12; bus identity verified as @delta-live
 === EXIT ===
 0
 === REGISTRY ===

@@ -48,6 +48,16 @@ trap 'rm -rf "$ROOT"' EXIT
 ln -s "$TESTS_DIR/mock-herdr-compact" "$MOCKBIN/herdr"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$MOCKBIN/sleep"
 chmod +x "$MOCKBIN/sleep"
+cat >"$MOCKBIN/hcom" <<'MOCK_HCOM'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-} ${2:-}" == "list --json" ]]; then
+  printf '%s\n' "${MOCK_HCOM_ROWS:-[]}"
+  exit 0
+fi
+exit 64
+MOCK_HCOM
+chmod +x "$MOCKBIN/hcom"
 
 # Separate mock PATH for the detached-sender (`herder compact-then`) scenarios:
 # it needs a mock `hcom` (status polling + bus delivery) and no mock herdr.
@@ -87,6 +97,8 @@ run_compact() {
   mkdir -p "$CASE/state" "$CASE/mock" "$CASE/probe" "$CASE/cwd"
   [[ -n "${COMPACT_SEED_REGISTRY:-}" ]] && printf '%s\n' "$COMPACT_SEED_REGISTRY" >"$CASE/state/registry.jsonl"
   local guid="" sess="" herdrenv=1 paneid=p_env cwdval="$CASE/cwd"
+  local hcom_rows='[{"name":"me-bus","joined":true,"launch_context":{"pane_id":"w1-2"}}]'
+  [[ -n "${MOCK_HCOM_ROWS:-}" ]] && hcom_rows="$MOCK_HCOM_ROWS"
   case "$envmode" in
     guid)              guid="guid-me-0000";;
     session)           sess="sess-me";;
@@ -110,6 +122,7 @@ run_compact() {
     HERDER_GUID="$guid" HCOM_SESSION_ID="$sess" \
     HERDER_STATE_DIR="$CASE/state" \
     HERDER_COMPACT_THEN_DRYRUN=1 \
+    MOCK_HCOM_ROWS="$hcom_rows" \
     MOCK_COMPACT_SCENARIO="$scen" MOCK_COMPACT_STATE="$CASE/mock" \
     MOCK_PROBE_DIR="$CASE/probe" MOCK_COMPACT_CWD="$cwdval" \
     "${HC[@]}" "$@" 2>"$RUN_ERR_F")"
@@ -245,6 +258,8 @@ scenario usage_multiline     midturn         guid       $'line one\nline two'
 # deliver a continuation) and a codex self row (--then is claude-only).
 ROW_SELF_NOBUS='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"","hcom_tag":"worker","status":"active"}'
 ROW_SELF_CODEX='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"codex","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"me-bus","hcom_tag":"worker","status":"active"}'
+ROW_SELF_WRONG_STOPPED='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"stopped-name","hcom_tag":"worker","status":"active"}'
+ROW_SELF_WRONG_LIVE='{"guid":"guid-me-0000","short_guid":"guid-me","label":"me","role":"worker","agent":"claude","terminal_id":"term_ME","pane_id":"w1-2","hcom_dir":"","hcom_name":"live-neighbor","hcom_tag":"worker","status":"active"}'
 CONT='run the pinned gate, then report DONE on thread unit-w'
 
 # Parent arm/abort shapes (HERDER_COMPACT_THEN_DRYRUN=1 in run_compact keeps the
@@ -252,12 +267,21 @@ CONT='run the pinned gate, then report DONE on thread unit-w'
 COMPACT_SEED_REGISTRY="$ROW_SELF"
 scenario then_armed          midturn       guid   "$STEER" --then "$CONT"
 scenario then_dryrun         midturn       guid   --dry-run "$STEER" --then "$CONT"
+MOCK_HCOM_ROWS='[{"name":"me-bus","joined":true,"launch_context":{"pane_id":"p_env"}}]'
+scenario then_armed_rekeyed_pane midturn    guid   "$STEER" --then "$CONT"
+unset MOCK_HCOM_ROWS
 # Unverified /compact paste => --then must NOT arm (AC#2 ordering floor).
 scenario then_abort_unverified clear_landed guid  "$STEER" --then "$CONT"
 scenario then_abort_blocked  blocked       guid   "$STEER" --then "$CONT"
 # Preconditions refuse BEFORE anything is typed (no mutating herdr calls).
 COMPACT_SEED_REGISTRY="$ROW_SELF_NOBUS"
 scenario then_refuse_nobus   midturn       guid   "$STEER" --then "$CONT"
+COMPACT_SEED_REGISTRY="$ROW_SELF_WRONG_STOPPED"
+scenario then_refuse_stopped_name midturn  guid   "$STEER" --then "$CONT"
+COMPACT_SEED_REGISTRY="$ROW_SELF_WRONG_LIVE"
+MOCK_HCOM_ROWS='[{"name":"me-bus","joined":true,"launch_context":{"pane_id":"w1-2"}},{"name":"live-neighbor","joined":true,"session_id":"sess-neighbor","launch_context":{"pane_id":"p_other"}}]'
+scenario then_refuse_live_neighbor midturn guid   "$STEER" --then "$CONT"
+unset MOCK_HCOM_ROWS
 COMPACT_SEED_REGISTRY="$ROW_SELF_CODEX"
 scenario then_refuse_codex   midturn       guid   "$STEER" --then "$CONT"
 scenario codex_bare_refusal  midturn       guid   "$STEER"

@@ -9,7 +9,9 @@ Usage:
   herder reconcile --json   emit JSONL instead of a table
 
 Dry-run is the default. --apply is append-only: it writes full replacement rows
-through the registry, preserving unknown fields and never mutating old rows.
+through the registry, preserving unknown fields and never mutating old rows. Any
+carried bus name is re-verified from live session/pane evidence; a name that
+cannot be proven is explicitly marked unverified rather than trusted as clean.
 
 Outcomes follow herder-spec §8.3 decisions D11/D12:
   re-confirm                    stored terminal still identifies the same label

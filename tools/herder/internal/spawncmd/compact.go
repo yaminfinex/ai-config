@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
 )
@@ -124,6 +125,22 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		thenBusDir = row.HcomDir
+		rows, listErr := hcomidentity.List(thenBusDir)
+		if listErr != nil {
+			dieCompact(stderr, "refused — --then cannot verify that the stored bus name belongs to this calling session ("+listErr.Error()+"). Rerun `herder enroll` from this session to repair its bus binding, then retry. Nothing was typed.")
+			return 2
+		}
+		verified, live := hcomidentity.VerifyStored(rows, hcomidentity.CurrentEvidence(envPane, pane.PaneID), thenBusName)
+		if !verified {
+			cause := live.Reason
+			if live.Verified {
+				cause = fmt.Sprintf("registry has @%s but the calling session is live as @%s", thenBusName, live.Name)
+			} else if cause == "" {
+				cause = fmt.Sprintf("stored name @%s is not provably the calling session", thenBusName)
+			}
+			dieCompact(stderr, "refused — --then bus identity mismatch: "+cause+". Rerun `herder enroll` from this session to repair its bus binding, then retry. Nothing was typed.")
+			return 2
+		}
 	}
 
 	// Paste target: the CURRENT live pane holding our durable terminal_id —
@@ -404,6 +421,9 @@ func printCompactHelp(stdout io.Writer) {
 		"injection). The continuation targets the bus name proven for THIS session at",
 		"compact time — never re-resolved from a pane id. If the /compact paste does not",
 		"verify, nothing is armed. Codex is refused: its compaction semantics differ.",
+		"Before typing anything, --then also proves that the stored bus name is joined",
+		"and belongs to this calling session. A stopped name or a joined neighbor name",
+		"is refused. Rerun `herder enroll` from the session to repair the binding.",
 		"",
 		"This is input automation on your own pane, NOT message delivery — agent-to-agent",
 		"messaging stays on the hcom bus (`herder send`). There is no target argument and",

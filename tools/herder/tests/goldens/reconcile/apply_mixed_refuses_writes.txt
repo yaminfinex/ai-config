@@ -4,9 +4,9 @@
 GUID       LABEL                OUTCOME                        DETAIL
 alpha      alpha                re-confirm                     terminal live
 amb        amb                  ambiguous                      multiple fallback candidates; refusing to guess
-beta       beta                 re-confirm                     terminal live; pane refresh p_20 -> p_99
+beta       beta                 re-confirm                     terminal live; pane refresh p_20 -> p_99; bus identity verified as @beta-live
 conflict   gamma                conflict                       stored terminal is live as name="intruder"; D11 refuses to unseat, use manual adoption/enroll
-delta      delta                re-bind (assumed-continuity)   one live name+agent-kind+cwd fallback match; identity assumed per D12
+delta      delta                re-bind (assumed-continuity)   one live name+agent-kind+cwd fallback match; identity assumed per D12; bus identity verified as @delta-live
 gone       gone                 gone                           no live agent or pane matches
 undet      undet                undetected                     pane is alive, but agent list has no matching detection; restart or relaunch to restore status before rebinding
 === EXIT ===

@@ -35,6 +35,22 @@ esac
 MOCK_HERDR
 chmod +x "$MOCKBIN/herdr"
 
+cat >"$MOCKBIN/hcom" <<'MOCK_HCOM'
+#!/usr/bin/env bash
+set -euo pipefail
+rows="${MOCK_HCOM_ROWS:-[]}"
+if [[ "${1:-} ${2:-}" == "list --json" ]]; then
+  printf '%s\n' "$rows"
+  exit 0
+fi
+if [[ "${1:-}" == "list" && -n "${2:-}" ]]; then
+  jq -e --arg name "$2" 'map(select(.name==$name and (.joined // true))) | length == 1' <<<"$rows" >/dev/null
+  exit
+fi
+exit 64
+MOCK_HCOM
+chmod +x "$MOCKBIN/hcom"
+
 PATH_HERMETIC="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin"
 fail=0
 
@@ -95,7 +111,9 @@ scenario_default() {
 scenario_ambient() {
   run_case ambient env \
     HERDER_GUID=guid-existing-0000 HERDER_LABEL=env-label HERDER_ROLE=env-role \
-    HCOM_INSTANCE_NAME=bus-ambient HCOM_DIR=/hfake/.hcom HCOM_TAG=env-role HCOM_LAUNCH_BATCH_ID=batch-9 \
+    HCOM_INSTANCE_NAME=stale-launch-name HCOM_SESSION_ID=sess-live \
+    MOCK_HCOM_ROWS='[{"name":"bus-live","session_id":"sess-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+    HCOM_DIR=/hfake/.hcom HCOM_TAG=env-role HCOM_LAUNCH_BATCH_ID=batch-9 \
     "$@"
   check_one ambient
 }
@@ -104,7 +122,7 @@ scenario_reenroll_spawned() {
   CASE="$ROOT/reenroll_spawned"
   mkdir -p "$CASE/home" "$CASE/state"
   cat >"$CASE/state/registry.jsonl" <<'JSONL'
-{"guid":"guid-spawned-0000","short_guid":"guid","label":"spawned-old","role":"worker","agent":"codex","terminal_id":"term_OLD","pane_id":"p_old","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/old","workspace_id":"ws_old","branch":"","ts":"2026-07-03T00:00:00Z"}}
+{"guid":"guid-spawned-0000","short_guid":"guid","label":"spawned-old","role":"worker","agent":"codex","terminal_id":"term_OLD","pane_id":"p_old","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-spawn","tag":"worker","batch_id":"","cwd":"/old","workspace_id":"ws_old","branch":"","ts":"2026-07-03T00:00:00Z"}}
 JSONL
   RUN_ERR_F="$CASE/stderr"
   RUN_OUT="$(env -i \
@@ -113,6 +131,8 @@ JSONL
     HERDR_ENV=1 HERDR_PANE_ID=p_self \
     HERDER_STATE_DIR="$CASE/state" \
     HERDER_GUID=guid-spawned-0000 HERDER_ROLE=worker \
+    HCOM_SESSION_ID=sess-spawn \
+    MOCK_HCOM_ROWS='[{"name":"spawned-live","session_id":"sess-spawn","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
     "${HEN[@]}" --label spawned-new --json 2>"$RUN_ERR_F")"
   RUN_RC=$?
   check_one reenroll_spawned
@@ -203,6 +223,25 @@ JSONL
     printf 'PASS  guard: active label collision refused\n'
   else
     printf 'FAIL  guard: active label collision refused — rc=%s err=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")"; fail=1
+  fi
+
+  CASE="$ROOT/guid-mismatch"
+  mkdir -p "$CASE/home" "$CASE/state"
+  cat >"$CASE/state/registry.jsonl" <<'JSONL'
+{"guid":"guid-existing-0000","short_guid":"existing","label":"existing","role":"worker","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","hcom_name":"old-bus","status":"active","provenance":{"mechanism":"enroll","tool_session_id":"sess-old"}}
+JSONL
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i \
+    PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-existing-0000 \
+    HCOM_SESSION_ID=sess-new \
+    MOCK_HCOM_ROWS='[{"name":"new-bus","session_id":"sess-new","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+    "${HEN[@]}" --label existing 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+  if [[ "$RUN_RC" -eq 1 ]] && grep -q 'refused to re-enroll guid-existing-0000' "$RUN_ERR_F"; then
+    printf 'PASS  guard: inherited guid cannot re-key another session\n'
+  else
+    printf 'FAIL  guard: inherited guid cannot re-key another session — rc=%s err=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")"; fail=1
   fi
 fi
 

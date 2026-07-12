@@ -1596,9 +1596,38 @@ func TestRegisteredCarriesRecognisedHcomName(t *testing.T) {
 	if latest == nil || latest.HcomName != "worker-rive" || latest.PaneID != "p_spawn" || latest.TerminalID != "term_spawn" {
 		t.Fatalf("latest legacy view = %+v, want registered seat with carried hcom_name and fresh spawn coordinates", latest)
 	}
+	if latest.HcomVerified == nil || *latest.HcomVerified {
+		t.Fatalf("latest HcomVerified = %v, want explicit false after carry-forward", latest.HcomVerified)
+	}
 	collapsed := LatestByGUID(recs)
 	if len(collapsed) != 1 || collapsed[0].HcomName != "worker-rive" {
 		t.Fatalf("LatestByGUID = %+v, want bus-reachable hcom_name", collapsed)
+	}
+}
+
+func TestRegisteredReplacementNameWithoutProofDefaultsUnverified(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	verified := true
+	current := v2.SessionRecord{
+		GUID: "guid-replace-name", Event: "recognised", State: v2.StateSeated,
+		Seat: &v2.Seat{Kind: "herdr", HcomName: "old-name", HcomVerified: &verified},
+	}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{current}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	patch := current
+	patch.Event = "registered"
+	patch.Seat = &v2.Seat{Kind: "herdr", HcomName: "new-name"}
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{patch}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	latest := V2ByGUID(loadProjection(t, path), current.GUID)
+	if latest == nil || latest.Seat == nil || latest.Seat.HcomName != "new-name" || latest.Seat.HcomVerified == nil || *latest.Seat.HcomVerified {
+		t.Fatalf("latest seat = %+v, want replacement name explicitly unverified", latest)
 	}
 }
 
@@ -1717,7 +1746,7 @@ func TestRegisteredCarrySurvivesRotationReseed(t *testing.T) {
 	}
 }
 
-func TestRegisteredNoOpDoesNotAppend(t *testing.T) {
+func TestRegisteredCarryMarksUnverifiedThenNoOps(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	guid, label := "guid-noop", "worker"
 	row := v2.SessionRecord{
@@ -1746,7 +1775,6 @@ func TestRegisteredNoOpDoesNotAppend(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	before := registryRowCount(t, path)
 	repeat := row
 	repeat.RecordedAt = "2026-07-08T00:00:01Z"
 	repeat.Seat = cloneSeat(row.Seat)
@@ -1756,8 +1784,19 @@ func TestRegisteredNoOpDoesNotAppend(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	latest := V2ByGUID(loadProjection(t, path), guid)
+	if latest == nil || latest.Seat == nil || latest.Seat.HcomVerified == nil || *latest.Seat.HcomVerified {
+		t.Fatalf("latest = %+v, want carried bus name explicitly unverified", latest)
+	}
+	before := registryRowCount(t, path)
+	repeat.RecordedAt = "2026-07-08T00:00:02Z"
+	if _, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{repeat}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if after := registryRowCount(t, path); after != before {
-		t.Fatalf("row count = %d, want unchanged %d after no-op registered append", after, before)
+		t.Fatalf("row count = %d, want unchanged %d after repeated unverified carry", after, before)
 	}
 }
 

@@ -1,7 +1,8 @@
 === STDERR ===
+herder enroll: live bus identity could not be verified (no joined bus row matches the calling session, process, or pane); recording hcom_name as unknown. Join this session to hcom, then rerun `herder enroll` to repair the row.
 enrolled fresh-session (guid-fresh-0000) pane=p_self terminal=term_SELF
 === STDOUT ===
-{"kind":"session","guid":"guid-fresh-0000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"fresh-session","role":"manual","tool":"manual","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"enroll","spawned_by":"guid-fresh-0000","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}
+{"kind":"session","guid":"guid-fresh-0000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"fresh-session","role":"manual","tool":"manual","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","hcom_verified":false,"confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"enroll","spawned_by":"guid-fresh-0000","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}
 === EXIT ===
 0
 === REGISTRY ===
@@ -9,4 +10,4 @@ enrolled fresh-session (guid-fresh-0000) pane=p_self terminal=term_SELF
 {"kind":"session","guid":"guid-other-pane0","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"other-pane","role":"manual","tool":"claude","continuity":"assumed","lineage":{},"provenance":{}}
 {"kind":"session","guid":"guid-stale1-000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"stale-a","role":"manual","tool":"claude","continuity":"assumed","lineage":{},"provenance":{"mechanism":"enroll","spawned_by":"user","tag":"manual","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}
 {"kind":"session","guid":"guid-stale2-000","event":"migrated_v1","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"stale-b","role":"manual","tool":"claude","continuity":"assumed","lineage":{},"provenance":{"mechanism":"enroll","spawned_by":"user","tag":"manual","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}
-{"kind":"session","guid":"guid-fresh-0000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"fresh-session","role":"manual","tool":"manual","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"enroll","spawned_by":"guid-fresh-0000","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}
+{"kind":"session","guid":"guid-fresh-0000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"fresh-session","role":"manual","tool":"manual","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","hcom_verified":false,"confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"enroll","spawned_by":"guid-fresh-0000","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}
