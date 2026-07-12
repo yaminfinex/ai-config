@@ -1,9 +1,10 @@
 ---
 id: TASK-160
 title: 'live-contract: pin herdr subscription acknowledgement and schema shapes'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-12 06:54'
+updated_date: '2026-07-12 08:33'
 labels: []
 dependencies: []
 priority: medium

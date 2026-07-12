@@ -3,9 +3,10 @@ id: TASK-159
 title: >-
   compact-then: failed detached continuations are invisible — persist lifecycle
   and surface unresolved failures
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-12 06:52'
+updated_date: '2026-07-12 08:33'
 labels: []
 dependencies: []
 priority: medium
