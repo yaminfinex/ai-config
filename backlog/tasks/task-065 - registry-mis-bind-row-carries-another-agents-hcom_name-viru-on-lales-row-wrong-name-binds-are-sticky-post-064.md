@@ -3,11 +3,11 @@ id: TASK-065
 title: >-
   registry mis-bind: row carries another agent's hcom_name (@viru on lale's
   row); wrong-name binds are sticky post-064
-status: To Do
+status: Done
 assignee:
   - hera
 created_date: '2026-07-08 08:12'
-updated_date: '2026-07-12 06:52'
+updated_date: '2026-07-12 07:49'
 labels: []
 dependencies: []
 ordinal: 65000
@@ -32,17 +32,13 @@ lale field data (#11888): wrong-name carry-forward confirmed STICKY across a fre
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Root cause of the original wrong bind identified from the preserved rows history (named path, not speculation)
-- [ ] #2 The succession carry-forward path that preserves wrong names is identified and its fix decided (re-resolve live identity at seat time, or refuse to carry unverified hcom_name)
-- [ ] #3 Repair affordance decided (existing verb / new verb / observer lane) with filed-ready follow-up task text if build work results
+- [x] #1 Root cause of the original wrong bind identified from the preserved rows history (named path, not speculation)
+- [x] #2 The succession carry-forward path that preserves wrong names is identified and its fix decided (re-resolve live identity at seat time, or refuse to carry unverified hcom_name)
+- [x] #3 Repair affordance decided (existing verb / new verb / observer lane) with filed-ready follow-up task text if build work results
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Reported by lale (market-sim run, #9332, low priority): registry row lale-orchestrator (guid a9fcee3d) carries hcom_name @viru while the agent's actual bus name is @lale; the @lale row points at long-gone manual session edea1564. Suspected reconcile mis-bind. Observed impact: herder compact --then continuation addressed @viru instead of the orchestrator (harmless that run only because the primary wake was a direct worker report).
-
-Investigation angles: (1) reconcile re-bind path — can assumed-continuity re-binding attach the WRONG live agent's coordinates/name to a row (or vice versa) when multiple candidates exist? TASK-046 reconcile refuses ambiguity all-or-nothing, but name enrichment happens separately via sidecar; (2) post-064 carry semantics can now FAITHFULLY PRESERVE a wrong hcom_name once recorded — carry-forward makes a bad bind sticky, raising the cost of mis-binds (correct wrong names needs an owned-field write from the name owner, i.e. sidecar re-capture; verify that path exists for orchestrator rows without a sidecar); (3) is there a repair verb? rename fixes labels, not hcom_name; sidecar owns hcom_name (TASK-043) but manual/orchestrator sessions may have no sidecar to re-capture. May need herder-level "rebind bus name with verification" or reconcile extension. Related: TASK-060 (F1/F2 reconcile polish). Evidence to collect at fix time: the two rows' full history from lale's registry.
-
-CARRY-FORWARD CONFIRMED (2026-07-12 investigation): the successor row (8f1d10a3) carried hcom_name=viru through HOURLY RECONCILE EVENTS even after the original row unseated — carry semantics faithfully preserve the poison and nothing re-consults live bus identity. Minting site is enroll (TASK-043); this task owns the carry/reconcile re-verification + repair affordance. Dispatching in identity-integrity unit A1.
+SHIPPED in identity-integrity unit A1, merged a1c5acd (with TASK-043). AC1 root cause: minting site is enrollcmd.Run copying launch-time HCOM_INSTANCE_NAME (named by the compact-then investigation memo docs/design/2026-07-12-compact-then-proof-failure-investigation.md from the preserved lale/viru rows — launch wrapper exported the stale name, enroll copied it, hourly reconciles carried it). AC2 carry paths fixed: registered-row carry, observer SID-turnover/hourly reconfirm, reconcile --apply, and pane-correlated sidecar enrichment now re-verify hcom_name against the live bus or explicitly mark hcom_verified:false; new additive registry field hcom_verified (*bool, omitempty — old rows validate, nil-safe). Poison no longer survives succession. Reconcile distinguishes roster UNAVAILABLE (hcom list error → no writes, no mass downgrade) from unresolvable (genuine downgrade). AC3 repair affordance: re-enroll on the existing guid with live verification + SID corroboration (decided verb shape: no new verb, existing enroll is the honest surface). Defense in depth: compact --then arm-time preflight proves the stored name belongs to the CALLING session; stopped-wrong-name and live-neighbor both refuse with cause + herder enroll remedy (misdelivery-worse-than-drop honored). Adversarial review round-1 F1-F5 fixed, delta APPROVE; both batteries green.
 <!-- SECTION:NOTES:END -->

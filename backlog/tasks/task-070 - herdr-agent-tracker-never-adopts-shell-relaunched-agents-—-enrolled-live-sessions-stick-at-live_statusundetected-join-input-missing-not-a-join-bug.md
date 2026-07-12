@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 10:20'
-updated_date: '2026-07-12 06:47'
+updated_date: '2026-07-12 07:49'
 labels: []
 dependencies: []
 priority: medium
@@ -43,4 +43,6 @@ Fresh data point (TASK-072 bulk-retire sweep, 2026-07-08): row 275a4ac2 (comment
 
 <!-- SECTION:NOTES:BEGIN -->
 RE-GROUND COMPLETE (2026-07-12, hera, read-only): gap SURVIVES the observer. Live specimen: the orchestrator row (shell-relaunched claude, enrolled not spawned) is observer-CONFIRMED with a fresh sweep timestamp in observer.status.json, yet herder list shows LIVE=unknown and has NO advice/confirmation surface (checked --help and output — zero annotation). The 070 description said "observer advice now annotates herder list" — it does not, or not for this class. VERDICT: fix direction (b) — surface observer confirmations in herder list (distinct presentation for observer-confirmed-but-tracker-undetected), fold into the identity-cluster unit. Upstream candidate (a) (herdr agent adopt / tracker pickup of foreground agents) goes to the TASK-029 ledger at cluster closeout.
+
+A1 merge (a1c5acd) note: rows now carry hcom_verified (additive *bool) and all carry paths re-verify or mark — the presentation gap this task tracks (observer-confirmed liveness not surfaced in herder list, no advice surface) REMAINS open; A1 shipped the identity-integrity substrate, not the list/advice presentation. herdr-adopt upstream candidate still queued for the TASK-029 ledger.
 <!-- SECTION:NOTES:END -->

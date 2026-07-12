@@ -3,10 +3,10 @@ id: TASK-043
 title: >-
   herder enroll: records hcom bus name from stale HCOM_INSTANCE_NAME env instead
   of live hcom identity — silently misroutes send after hcom start --as
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-12 06:52'
+updated_date: '2026-07-12 07:49'
 labels: []
 dependencies: []
 priority: medium
@@ -35,13 +35,13 @@ created: 2026-07-08 10:19
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 enroll resolves the LIVE hcom bus identity (from hcom, not env) or cross-checks env vs live and refuses/warns on mismatch — repro from comment 2 passes: after hcom start --as X with stale HCOM_INSTANCE_NAME=Y, the row records hcom_name=X
-- [ ] #2 the corrective path needs no variant-label dance: fixing a wrong-name row does not require enrolling under a throwaway label first (or the constraint is documented in the refusal text)
-- [ ] #3 suite covers stale-env enroll and the mismatch refusal/warning
+- [x] #1 enroll resolves the LIVE hcom bus identity (from hcom, not env) or cross-checks env vs live and refuses/warns on mismatch — repro from comment 2 passes: after hcom start --as X with stale HCOM_INSTANCE_NAME=Y, the row records hcom_name=X
+- [x] #2 the corrective path needs no variant-label dance: fixing a wrong-name row does not require enrolling under a throwaway label first (or the constraint is documented in the refusal text)
+- [x] #3 suite covers stale-env enroll and the mismatch refusal/warning
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-WRITE PATH NAMED (2026-07-12 investigation): enrollcmd.Run writes HcomName: os.Getenv("HCOM_INSTANCE_NAME") without consulting the live bus — confirmed as the minting site of the lale/viru poisoned coordinate (launch wrapper exported the stale name; enroll copied it). Downstream cost proven: compact --then armed with the poisoned name and dropped fail-closed after 15m (twice). Dispatching in identity-integrity unit A1 with TASK-065 + a compact-then arm-time preflight.
+SHIPPED in identity-integrity unit A1, merged a1c5acd (branch task-a1-identity-integrity, commits 1c7ced2 + f210777). enroll now IGNORES launch-time HCOM_INSTANCE_NAME and resolves the joined live bus row from session/process/pane evidence (new internal/hcomidentity package); when live identity is unprovable it writes EMPTY hcom_name + hcom_verified:false + a repair instruction — never a guess. AC2: the variant-label dance is gone — re-running herder enroll on the EXISTING guid is the repair/rebind affordance (same label reusable), with SID corroboration so an inherited HERDER_GUID in a different session refuses rather than re-keying. Multi-correlate evidence (caller-own HCOM_PROCESS_ID + env HERDR_PANE_ID first + canonical pane second) matches what hcom actually records; conflicting correlates fail closed. AC3: stale-env enroll golden (records bus-live, not stale-launch-name), unprovable-identity golden, re-enroll refusal/repair goldens, hcomidentity unit tests. Adversarial review (opus): round-1 REQUEST-CHANGES F1-F5 all fixed, delta APPROVE; F1 blocker (canonical-vs-env pane false-refusal) was confirmed live on the orchestrator's own session before the fix round. Gates: independent 4-module + 53-script battery green from the worktree; post-merge battery green on main.
 <!-- SECTION:NOTES:END -->

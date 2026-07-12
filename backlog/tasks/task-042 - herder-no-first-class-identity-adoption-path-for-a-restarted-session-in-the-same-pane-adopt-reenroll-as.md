@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-12 06:47'
+updated_date: '2026-07-12 07:49'
 labels: []
 dependencies: []
 priority: medium
@@ -63,4 +63,6 @@ Spec-ravu ruling #11678 on the label-entombment blocker (surfaced by TASK-069 re
 
 <!-- SECTION:NOTES:BEGIN -->
 LIVE VALIDATION (2026-07-12, hera on own row): the exact composite this task wraps was run manually — retire <old-labeled-row> then rename <live-guid> <label> — and worked cleanly (label released, reassigned, herdr terminal renamed to match). The orchestrator itself was the specimen (label stranded on a dead TASK-050-era row while the live session ran unlabeled). Confirms the adopt wrapper design is sound and needed: the manual sequence requires knowing both guids and the verb order; the wrapper + dead-label enroll UX is the whole remaining scope.
+
+A1 merge (a1c5acd) live-validates the composite repair path this task designs around: retire+rename executed live on the orchestrator's own row 2026-07-12, and A1 added re-enroll-same-guid (SID-corroborated) as the bus-name rebind affordance. Label verbs remain this task's scope; identity evidence plumbing (hcomidentity package, multi-correlate) now exists to build on.
 <!-- SECTION:NOTES:END -->
