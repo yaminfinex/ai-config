@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -62,3 +63,140 @@ func TestApplyCandidatesRefusalLeavesBatchUnapplied(t *testing.T) {
 		t.Fatalf("registry changed after refused observer batch:\nbefore=%s\nafter=%s", before, after)
 	}
 }
+
+func TestDoctrineDeliveryRequiresFullUnmanagedCodexCorrelation(t *testing.T) {
+	proj, err := v2.Load(bytes.NewReader(nil), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseHD := herdrState{
+		available: true,
+		byTerm: map[string]herdrcli.Pane{
+			"term-1": {PaneID: "pane-1", TerminalID: "term-1", AgentSession: "sid-1"},
+		},
+		procs: map[string]herdrcli.ProcessInfo{
+			"term-1": {Processes: []herdrcli.Process{{PID: 4242, Argv: []string{"/usr/local/bin/codex", "resume"}}}},
+		},
+	}
+	baseBus := busState{available: true, rows: map[string]hcomRow{
+		"raw-codex": {
+			Name: "raw-codex", Tool: "codex", SessionID: "sid-1", ProcessBound: boolPtr(true),
+			LaunchContext: hcomLaunchContext{PaneID: "pane-1", ProcessID: "process-1"},
+		},
+	}}
+	joined := func(row hcomRow) bool { return row.Name == "raw-codex" && row.SessionID == "sid-1" }
+
+	tests := []struct {
+		name string
+		hd   herdrState
+		bus  busState
+		join func(hcomRow) bool
+		want int
+	}{
+		{name: "full correlation", hd: baseHD, bus: baseBus, join: joined, want: 1},
+		{name: "missing live pane and process", hd: herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}}, bus: baseBus, join: joined},
+		{name: "missing tool session id", hd: withPaneSession(baseHD, ""), bus: baseBus, join: joined},
+		{name: "missing joined hcom row", hd: baseHD, bus: baseBus, join: func(hcomRow) bool { return false }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := doctrineCandidates(proj, tc.hd, tc.bus, nil, tc.join)
+			if len(got) != tc.want {
+				t.Fatalf("doctrineCandidates() = %+v, want %d candidate(s)", got, tc.want)
+			}
+			sent := 0
+			deliverDoctrine(got, map[string]string{}, func(string) bool {
+				sent++
+				return true
+			}, time.Now())
+			if sent != tc.want {
+				t.Fatalf("delivery count = %d, want %d", sent, tc.want)
+			}
+		})
+	}
+}
+
+func TestDoctrineDeliverySuppressesManagedAmbiguousAndRepeatedSessions(t *testing.T) {
+	hd := herdrState{
+		available: true,
+		byTerm: map[string]herdrcli.Pane{
+			"term-1": {PaneID: "pane-1", TerminalID: "term-1", AgentSession: "sid-1"},
+		},
+		procs: map[string]herdrcli.ProcessInfo{
+			"term-1": {Processes: []herdrcli.Process{{PID: 4242, Argv: []string{"codex", "resume"}}}},
+		},
+	}
+	row := hcomRow{
+		Name: "raw-codex", Tool: "codex", SessionID: "sid-1", ProcessBound: boolPtr(true),
+		LaunchContext: hcomLaunchContext{PaneID: "pane-1", ProcessID: "process-1"},
+	}
+	joined := func(hcomRow) bool { return true }
+	empty, err := v2.Load(bytes.NewReader(nil), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := doctrineCandidates(empty, hd, busState{available: true, rows: map[string]hcomRow{row.Name: row}}, nil, joined)
+	if len(first) != 1 {
+		t.Fatalf("full correlation produced %d candidates, want 1", len(first))
+	}
+	receipts := map[string]string{first[0].Token: "already sent"}
+	if got := doctrineCandidates(empty, hd, busState{available: true, rows: map[string]hcomRow{row.Name: row}}, receipts, joined); len(got) != 0 {
+		t.Fatalf("repeat delivery candidates = %+v, want none", got)
+	}
+
+	other := row
+	other.Name = "other-codex"
+	other.LaunchContext.ProcessID = "process-2"
+	if got := doctrineCandidates(empty, hd, busState{available: true, rows: map[string]hcomRow{row.Name: row, other.Name: other}}, nil, joined); len(got) != 0 {
+		t.Fatalf("ambiguous correlation candidates = %+v, want none", got)
+	}
+
+	managedJSON := `{"kind":"session","guid":"managed-guid","event":"seated","recorded_at":"2026-07-12T00:00:00Z","state":"seated","tool":"codex","seat":{"kind":"herdr","terminal_id":"term-1","pane_id":"pane-1","hcom_name":"managed"},"sids":[{"sid":"sid-1"}]}`
+	managed, err := v2.Load(bytes.NewBufferString(managedJSON+"\n"), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := doctrineCandidates(managed, hd, busState{available: true, rows: map[string]hcomRow{row.Name: row}}, nil, joined); len(got) != 0 {
+		t.Fatalf("managed correlation candidates = %+v, want none", got)
+	}
+}
+
+func TestDoctrineDeliveryRecordsReceiptWithoutRegistryWrite(t *testing.T) {
+	registryPath := filepath.Join(t.TempDir(), "registry.jsonl")
+	before := []byte("registry sentinel\n")
+	if err := os.WriteFile(registryPath, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	receipts := map[string]string{}
+	sent := 0
+	deliverDoctrine([]doctrineCandidate{{Name: "raw-codex", Token: "incarnation"}}, receipts, func(name string) bool {
+		sent++
+		return name == "raw-codex"
+	}, time.Date(2026, 7, 12, 1, 2, 3, 0, time.UTC))
+	deliverDoctrine([]doctrineCandidate{{Name: "raw-codex", Token: "incarnation"}}, receipts, func(string) bool {
+		sent++
+		return true
+	}, time.Date(2026, 7, 12, 1, 2, 4, 0, time.UTC))
+	if sent != 1 || receipts["incarnation"] != "2026-07-12T01:02:03Z" {
+		t.Fatalf("sent=%d receipts=%v, want one recorded delivery", sent, receipts)
+	}
+	after, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("doctrine delivery changed registry:\nbefore=%q\nafter=%q", before, after)
+	}
+}
+
+func withPaneSession(hd herdrState, sid string) herdrState {
+	copyHD := hd
+	copyHD.byTerm = map[string]herdrcli.Pane{}
+	for term, pane := range hd.byTerm {
+		pane.AgentSession = sid
+		copyHD.byTerm[term] = pane
+	}
+	return copyHD
+}
+
+func boolPtr(v bool) *bool { return &v }

@@ -58,6 +58,6 @@ approaches the 200–250k band (invariant 3), then resets via the mid-leg handof
 a HANDOFF entry, stop, and
 a fresh copy continues the runbook (a chain of respawns over the same state files). Same state
 files, gate, and mechanics as any leg; the HANDOFF entries become the runbook's progress marks.
-In-place compaction (`herder compact '<steer>'`) is the cheaper reset when the soloist is still
-coherent: persist progress marks first, compact, continue — respawn only when steering would
-carry garbage forward.
+In-place compaction (`herder compact '<steer>' --then 'continue the runbook from the persisted
+progress marks'`) is the cheaper reset when the soloist is still coherent: persist progress
+marks first, compact, continue — respawn only when steering would carry garbage forward.
