@@ -419,20 +419,21 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 		base = registry.DropRawFields(base, "closed_at", "closed_by_pane", "close_result", "close_reason")
 	}
 	out, err := registry.UpdateRawObject(base, map[string]any{
-		"guid":         guid,
-		"short_guid":   short,
-		"label":        label,
-		"role":         role,
-		"agent":        agent,
-		"pane_id":      coords.PaneID,
-		"terminal_id":  coords.TerminalID,
-		"workspace_id": coords.WorkspaceID,
-		"cwd":          coords.CWD,
-		"hcom_dir":     os.Getenv("HCOM_DIR"),
-		"hcom_name":    row.Name,
-		"hcom_tag":     row.Tag,
-		"status":       "active",
-		"provenance":   prov,
+		"guid":          guid,
+		"short_guid":    short,
+		"label":         label,
+		"role":          role,
+		"agent":         agent,
+		"pane_id":       coords.PaneID,
+		"terminal_id":   coords.TerminalID,
+		"workspace_id":  coords.WorkspaceID,
+		"cwd":           coords.CWD,
+		"hcom_dir":      os.Getenv("HCOM_DIR"),
+		"hcom_name":     row.Name,
+		"hcom_verified": true,
+		"hcom_tag":      row.Tag,
+		"status":        "active",
+		"provenance":    prov,
 	})
 	if err == nil {
 		return registry.AppendLegacySessionEvent(s.registry, out, "recognised", "seated") == nil

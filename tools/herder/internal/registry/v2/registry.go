@@ -62,16 +62,17 @@ type SessionRecord struct {
 }
 
 type Seat struct {
-	Kind        string `json:"kind"`
-	Node        string `json:"node"`
-	TerminalID  string `json:"terminal_id,omitempty"`
-	PaneID      string `json:"pane_id,omitempty"`
-	PID         int    `json:"pid,omitempty"`
-	HcomName    string `json:"hcom_name,omitempty"`
-	Namespace   string `json:"namespace,omitempty"`
-	HcomEpoch   string `json:"hcom_epoch,omitempty"`
-	HerdrEpoch  string `json:"herdr_epoch,omitempty"`
-	ConfirmedAt string `json:"confirmed_at,omitempty"`
+	Kind         string `json:"kind"`
+	Node         string `json:"node"`
+	TerminalID   string `json:"terminal_id,omitempty"`
+	PaneID       string `json:"pane_id,omitempty"`
+	PID          int    `json:"pid,omitempty"`
+	HcomName     string `json:"hcom_name,omitempty"`
+	HcomVerified *bool  `json:"hcom_verified,omitempty"`
+	Namespace    string `json:"namespace,omitempty"`
+	HcomEpoch    string `json:"hcom_epoch,omitempty"`
+	HerdrEpoch   string `json:"herdr_epoch,omitempty"`
+	ConfirmedAt  string `json:"confirmed_at,omitempty"`
 }
 
 type SID struct {

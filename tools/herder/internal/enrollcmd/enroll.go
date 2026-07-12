@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"time"
 
+	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/observercmd"
 	"ai-config/tools/herder/internal/registry"
@@ -53,6 +54,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if pane.CWD == "" {
 		pane.CWD, _ = os.Getwd()
+	}
+	hcomDir := os.Getenv("HCOM_DIR")
+	liveBus := hcomidentity.ResolveLive(hcomDir, hcomidentity.CurrentEvidence(pane.PaneID))
+	if !liveBus.Verified {
+		fmt.Fprintf(stderr, "herder enroll: live bus identity could not be verified (%s); recording hcom_name as unknown. Join this session to hcom, then rerun `herder enroll` to repair the row.\n", liveBus.Reason)
 	}
 
 	guid := os.Getenv("HERDER_GUID")
@@ -121,19 +127,24 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			agent = firstNonEmpty(latest.Tool, agent)
 		}
 		prov := registry.BuildProvenance(mechanism, "", os.Getenv("HCOM_TAG"), pane.CWD, pane.WorkspaceID)
+		if liveBus.Verified && liveBus.SessionID != "" {
+			prov.ToolSessionID = liveBus.SessionID
+		}
+		verified := liveBus.Verified
 		rec := registry.Record{
-			GUID:       &guid,
-			ShortGUID:  &short,
-			Label:      &label,
-			Role:       role,
-			Agent:      agent,
-			PaneID:     pane.PaneID,
-			TerminalID: pane.TerminalID,
-			HcomDir:    os.Getenv("HCOM_DIR"),
-			HcomName:   os.Getenv("HCOM_INSTANCE_NAME"),
-			HcomTag:    os.Getenv("HCOM_TAG"),
-			Status:     "active",
-			Provenance: &prov,
+			GUID:         &guid,
+			ShortGUID:    &short,
+			Label:        &label,
+			Role:         role,
+			Agent:        agent,
+			PaneID:       pane.PaneID,
+			TerminalID:   pane.TerminalID,
+			HcomDir:      hcomDir,
+			HcomName:     liveBus.Name,
+			HcomVerified: &verified,
+			HcomTag:      os.Getenv("HCOM_TAG"),
+			Status:       "active",
+			Provenance:   &prov,
 		}
 		next := registry.V2FromRecord(rec, "seated", v2.StateSeated, nowISO)
 		next.Provenance.CWD = pane.CWD
@@ -207,13 +218,17 @@ Options:
   --role ROLE     role to record (default: $HERDER_ROLE, else "manual")
   --json          print the appended registry record as JSON on stdout
 
-Records pane_id, terminal_id, workspace_id, cwd, and hcom coordinates so later
+Records pane_id, terminal_id, workspace_id, cwd, and live-verified hcom
+coordinates so later
 resolution survives pane move re-keying within a server run. After restart,
 recorded terminal_id is dead until reconcile or re-enroll. A herdr pane hosts one live
 session at a time, so re-enrolling a reused pane RETIRES (closes) any prior
 active rows still claiming that pane_id — a dead session's row never lingers as
 LIVE=working. Must run inside a herdr pane (HERDR_ENV=1 and HERDR_PANE_ID set);
-refuses otherwise.
+refuses otherwise. The launch-time HCOM_INSTANCE_NAME is never trusted. If the
+current bus row cannot be proven from session/process/pane identity, hcom_name is
+recorded as unknown. Rerun herder enroll from the existing session to recapture
+and repair its bus binding; the same guid and label may be reused.
 `)
 }
 

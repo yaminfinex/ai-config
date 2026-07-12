@@ -331,6 +331,9 @@ func TestAppendEnrichmentCarriesPriorRowAndSessionID(t *testing.T) {
 	if latest.HcomName != "worker-rive" {
 		t.Fatalf("HcomName = %q, want worker-rive", latest.HcomName)
 	}
+	if latest.HcomVerified == nil || !*latest.HcomVerified {
+		t.Fatalf("HcomVerified = %v, want true for pane-correlated enrichment", latest.HcomVerified)
+	}
 	if latest.Provenance == nil || latest.Provenance.ToolSessionID != "sess-123" || latest.Provenance.Mechanism != "spawn" {
 		t.Fatalf("Provenance = %+v, want spawn with sess-123", latest.Provenance)
 	}

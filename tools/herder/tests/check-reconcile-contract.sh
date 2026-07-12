@@ -56,6 +56,20 @@ esac
 MOCK_HERDR
 chmod +x "$MOCKBIN/herdr"
 
+cat > "$MOCKBIN/hcom" <<'MOCK_HCOM'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-} ${2:-}" == "list --json" ]]; then
+  jq -cn '[
+    {name:"beta-live",joined:true,launch_context:{pane_id:"p_99"}},
+    {name:"delta-live",joined:true,launch_context:{pane_id:"p_55"}}
+  ]'
+  exit 0
+fi
+exit 64
+MOCK_HCOM
+chmod +x "$MOCKBIN/hcom"
+
 PATH_HERMETIC="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin"
 
 # scenario name | fixture dir | mutable registry? | args

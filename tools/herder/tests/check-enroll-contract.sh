@@ -35,6 +35,22 @@ esac
 MOCK_HERDR
 chmod +x "$MOCKBIN/herdr"
 
+cat >"$MOCKBIN/hcom" <<'MOCK_HCOM'
+#!/usr/bin/env bash
+set -euo pipefail
+rows="${MOCK_HCOM_ROWS:-[]}"
+if [[ "${1:-} ${2:-}" == "list --json" ]]; then
+  printf '%s\n' "$rows"
+  exit 0
+fi
+if [[ "${1:-}" == "list" && -n "${2:-}" ]]; then
+  jq -e --arg name "$2" 'map(select(.name==$name and (.joined // true))) | length == 1' <<<"$rows" >/dev/null
+  exit
+fi
+exit 64
+MOCK_HCOM
+chmod +x "$MOCKBIN/hcom"
+
 PATH_HERMETIC="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin"
 fail=0
 
@@ -95,7 +111,9 @@ scenario_default() {
 scenario_ambient() {
   run_case ambient env \
     HERDER_GUID=guid-existing-0000 HERDER_LABEL=env-label HERDER_ROLE=env-role \
-    HCOM_INSTANCE_NAME=bus-ambient HCOM_DIR=/hfake/.hcom HCOM_TAG=env-role HCOM_LAUNCH_BATCH_ID=batch-9 \
+    HCOM_INSTANCE_NAME=stale-launch-name HCOM_SESSION_ID=sess-live \
+    MOCK_HCOM_ROWS='[{"name":"bus-live","session_id":"sess-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+    HCOM_DIR=/hfake/.hcom HCOM_TAG=env-role HCOM_LAUNCH_BATCH_ID=batch-9 \
     "$@"
   check_one ambient
 }

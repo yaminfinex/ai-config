@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 
+	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
 )
@@ -29,6 +30,7 @@ type result struct {
 	PaneID     string      `json:"pane_id,omitempty"`
 	Write      string      `json:"write"`
 	Candidates []candidate `json:"candidates,omitempty"`
+	bus        hcomidentity.Result
 }
 
 type candidate struct {
@@ -44,6 +46,11 @@ type liveState struct {
 	byTerm    map[string]*herdrcli.Agent
 	paneTerms map[string]bool
 	panePanes map[string]bool
+}
+
+type busRoster struct {
+	rows []hcomidentity.Row
+	err  error
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -81,6 +88,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		results = append(results, res)
 	}
 	markDuplicateRebinds(results)
+	busRosters := map[string]busRoster{}
+	for i, rec := range active {
+		results[i] = reconcileBusIdentity(rec, results[i], busRosters)
+	}
 	for _, res := range results {
 		if res.Outcome == "ambiguous" {
 			hasAmbiguous = true
@@ -162,7 +173,9 @@ Usage:
   herder reconcile --json   emit JSONL instead of a table
 
 Dry-run is the default. --apply is append-only: it writes full replacement rows
-through the registry, preserving unknown fields and never mutating old rows.
+through the registry, preserving unknown fields and never mutating old rows. Any
+carried bus name is re-verified from live session/pane evidence; a name that
+cannot be proven is explicitly marked unverified rather than trusted as clean.
 
 Outcomes follow herder-spec §8.3 decisions D11/D12:
   re-confirm                    stored terminal still identifies the same label
@@ -370,7 +383,43 @@ func updateRow(raw []byte, res result) ([]byte, error) {
 	if res.PaneID != "" {
 		updates["pane_id"] = res.PaneID
 	}
+	verified := res.bus.Verified
+	updates["hcom_verified"] = verified
+	if res.bus.Verified {
+		updates["hcom_name"] = res.bus.Name
+	}
 	return registry.UpdateRawObject(raw, updates)
+}
+
+func reconcileBusIdentity(rec registry.Record, res result, rosters map[string]busRoster) result {
+	if res.Outcome != "re-confirm" && res.Outcome != "re-bind (assumed-continuity)" {
+		return res
+	}
+	roster, ok := rosters[rec.HcomDir]
+	if !ok {
+		roster.rows, roster.err = hcomidentity.List(rec.HcomDir)
+		rosters[rec.HcomDir] = roster
+	}
+	if roster.err != nil {
+		res.bus = hcomidentity.Result{Reason: roster.err.Error()}
+	} else {
+		sessionID := ""
+		if rec.Provenance != nil {
+			sessionID = rec.Provenance.ToolSessionID
+		}
+		res.bus = hcomidentity.Resolve(roster.rows, hcomidentity.Evidence{SessionID: sessionID, PaneID: res.PaneID})
+	}
+	needsWrite := res.bus.Verified && (rec.HcomName != res.bus.Name || rec.HcomVerified == nil || !*rec.HcomVerified)
+	needsDowngrade := !res.bus.Verified && rec.HcomName != "" && (rec.HcomVerified == nil || *rec.HcomVerified)
+	if needsWrite || needsDowngrade {
+		res.Write = "pending"
+		if res.bus.Verified {
+			res.Detail += fmt.Sprintf("; bus identity verified as @%s", res.bus.Name)
+		} else {
+			res.Detail += "; stored bus identity could not be re-verified and will be marked unverified"
+		}
+	}
+	return res
 }
 
 func rawStringField(raw []byte, key string) (string, bool) {

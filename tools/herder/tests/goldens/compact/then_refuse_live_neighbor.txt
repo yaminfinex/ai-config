@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: refused — --then bus identity mismatch: registry has @live-neighbor but the calling session is live as @me-bus. Rerun `herder enroll` from this session to repair its bus binding, then retry. Nothing was typed.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===
