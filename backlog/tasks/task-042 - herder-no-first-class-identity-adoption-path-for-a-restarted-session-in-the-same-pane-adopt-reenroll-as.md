@@ -3,11 +3,11 @@ id: TASK-042
 title: >-
   identity adoption for a restarted session: respec as enroll (new guid) +
   rename --take-from + retire — guid reuse violates spec D1
-status: In Progress
+status: Done
 assignee:
   - hera-run
 created_date: '2026-07-08 04:45'
-updated_date: '2026-07-12 09:22'
+updated_date: '2026-07-12 10:14'
 labels: []
 dependencies: []
 priority: medium
@@ -55,15 +55,13 @@ Spec-ravu ruling #11678 on the label-entombment blocker (surfaced by TASK-069 re
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 herder adopt (or the agreed composite wrapper) takes a restarted session from fresh-pane state to: new guid seated with live coordinates, old row retired, label reclaimed, bus name reclaimed-or-verified — one command, guid never re-keyed
-- [ ] #2 enroll refusal against a label held by an unseated/dead row names the holder state and the concrete recovery steps (distinct from the active-holder refusal)
-- [ ] #3 suite covers the composite happy path and both refusal shapes
+- [x] #1 herder adopt (or the agreed composite wrapper) takes a restarted session from fresh-pane state to: new guid seated with live coordinates, old row retired, label reclaimed, bus name reclaimed-or-verified — one command, guid never re-keyed
+- [x] #2 enroll refusal against a label held by an unseated/dead row names the holder state and the concrete recovery steps (distinct from the active-holder refusal)
+- [x] #3 suite covers the composite happy path and both refusal shapes
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-LIVE VALIDATION (2026-07-12, hera on own row): the exact composite this task wraps was run manually — retire <old-labeled-row> then rename <live-guid> <label> — and worked cleanly (label released, reassigned, herdr terminal renamed to match). The orchestrator itself was the specimen (label stranded on a dead TASK-050-era row while the live session ran unlabeled). Confirms the adopt wrapper design is sound and needed: the manual sequence requires knowing both guids and the verb order; the wrapper + dead-label enroll UX is the whole remaining scope.
-
-A1 merge (a1c5acd) live-validates the composite repair path this task designs around: retire+rename executed live on the orchestrator's own row 2026-07-12, and A1 added re-enroll-same-guid (SID-corroborated) as the bus-name rebind affordance. Label verbs remain this task's scope; identity evidence plumbing (hcomidentity package, multi-correlate) now exists to build on.
+Merged 4fca5dd. herder adopt <old-target>: fresh-guid enroll (guid never re-keyed — hard-refuses if enroll returns old guid), atomic adoption batch, retire, hcomidentity-backed bus verify/reclaim, one command. LIFECYCLE EXTENSION FLAGGED FOR OWNER: adopt is a new writer of the non-terminal unseated transition via guarded event adoption_source_released (normalizer accepts only current.State==seated + close_result=adopted + two documented evidence reasons; only TransferForAdoption emits it) — same-pane-proven source (caller pane == old seat pane via hcomidentity, fail-closed on unresolved/ambiguous) proceeds unflagged with reason 'seat superseded by replacement process in the same pane'; seated-elsewhere pre-refuses BEFORE enroll toward adopt --confirm-dead ('operator confirmed old transcript dead'). Under-lock source-pane revalidation refuses if the seat changed after preflight. Reviewer ran the exact emitted remedy end-to-end. No cull suggested for own-pane (would close the caller). enroll dead-holder refusal now distinct: names state=unseated + adopt + retire+rename recovery (contract assertions strengthened, verified tighter-not-looser). Review: round-1 P2 (half-apply with non-runnable remedy) fixed via the evidence-based-unseat ruling; delta APPROVE.
 <!-- SECTION:NOTES:END -->

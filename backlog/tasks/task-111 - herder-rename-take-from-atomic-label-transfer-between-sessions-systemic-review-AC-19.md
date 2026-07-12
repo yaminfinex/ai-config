@@ -3,11 +3,11 @@ id: TASK-111
 title: >-
   herder rename --take-from: atomic label transfer between sessions
   (systemic-review AC-19)
-status: In Progress
+status: Done
 assignee:
   - hera-run
 created_date: '2026-07-09 07:05'
-updated_date: '2026-07-12 09:22'
+updated_date: '2026-07-12 10:14'
 labels: []
 dependencies: []
 priority: medium
@@ -28,9 +28,15 @@ Adversarial review: mandatory (behavior-carrying registry write path).
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 herder rename <target> --take-from <other> transfers the label in one atomic locked registry update; no intermediate state (label free or doubly-held) is ever observable in the registry file
-- [ ] #2 Refusal paths: <other> seated-and-live refuses without explicit confirmation flag; <other> lost refuses; <other> retired refuses with guidance to use plain rename
-- [ ] #3 Both affected rows carry correct four-state status after transfer; herder list shows the label on <target> only
-- [ ] #4 Tests cover the transfer, each refusal path, and a concurrent-writer race (transfer holds the lock for the full two-row update)
-- [ ] #5 Full check suite ALL GREEN bare from repo root
+- [x] #1 herder rename <target> --take-from <other> transfers the label in one atomic locked registry update; no intermediate state (label free or doubly-held) is ever observable in the registry file
+- [x] #2 Refusal paths: <other> seated-and-live refuses without explicit confirmation flag; <other> lost refuses; <other> retired refuses with guidance to use plain rename
+- [x] #3 Both affected rows carry correct four-state status after transfer; herder list shows the label on <target> only
+- [x] #4 Tests cover the transfer, each refusal path, and a concurrent-writer race (transfer holds the lock for the full two-row update)
+- [x] #5 Full check suite ALL GREEN bare from repo root
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged 4fca5dd (branch task-a2-label-verbs, c78c2b8 + fix 94e6a31). rename --take-from: source-release + target-claim as two positional candidates in ONE UpdateLocked call, both required APPLIED (refused batch writes neither row; released-first ordering is load-bearing so the in-lock projection shows the source unlabeled before the claim). Refusals: seated-and-live needs explicit --confirm-live (gates ONLY seated; lost/retired refuse regardless, retired with plain-rename guidance). Concurrent-writer test races a real second UpdateLocked. Opus adversarial review: round-1 REQUEST-CHANGES (one P2, in adopt not this verb), delta APPROVE with adversarial end-to-end runs on a fresh binary. Independent gate + post-merge gate 53/53.
+<!-- SECTION:NOTES:END -->
