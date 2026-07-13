@@ -1,9 +1,11 @@
 ---
 id: TASK-190
 title: 'sesh — surface homepage must render bounded recency, not the whole corpus'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - mika
 created_date: '2026-07-13 10:30'
+updated_date: '2026-07-13 10:40'
 labels:
   - sesh
 dependencies: []
