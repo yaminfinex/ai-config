@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -251,11 +252,14 @@ func TestManualGrokWrapperSignalConvergesDetachedBridgeToRetired(t *testing.T) {
 
 func TestManualGrokBridgeHardKillFenceUsesParentDeathRetirement(t *testing.T) {
 	manual := grokBridgeProcessAttributes(true)
-	if !manual.Setsid || manual.Pdeathsig != syscall.SIGTERM {
+	if !manual.Setsid {
 		t.Fatalf("manual bridge attrs = %+v", manual)
 	}
+	if got, want := grokBridgeHardKillFenced(), runtime.GOOS == "linux"; got != want {
+		t.Fatalf("hard-kill fence=%v want=%v on %s", got, want, runtime.GOOS)
+	}
 	managed := grokBridgeProcessAttributes(false)
-	if !managed.Setsid || managed.Pdeathsig != 0 {
+	if !managed.Setsid {
 		t.Fatalf("managed bridge attrs = %+v", managed)
 	}
 }
@@ -296,21 +300,30 @@ func TestGrokCheckUsesLaunchGateWithoutActivationOrLiveHome(t *testing.T) {
 	root := t.TempDir()
 	liveHome := filepath.Join(root, "live-home")
 	liveGrok := filepath.Join(liveHome, ".grok")
+	liveState := filepath.Join(root, "live-state")
 	if err := os.MkdirAll(liveGrok, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(liveState, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	sentinel := filepath.Join(liveGrok, "sentinel")
 	if err := os.WriteFile(sentinel, []byte("untouched\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	stateSentinel := filepath.Join(liveState, "sentinel")
+	if err := os.WriteFile(stateSentinel, []byte("untouched\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv(grokActivationEnv, "")
 	t.Setenv("XAI_API_KEY", randomCredential(t))
 	t.Setenv("HOME", liveHome)
 	t.Setenv("GROK_HOME", liveGrok)
+	t.Setenv("HERDER_STATE_DIR", liveState)
 	t.Setenv("HERDER_GROK_BIN", mockGrokBinary(t, "0.2.93"))
 
 	var stdout, stderr bytes.Buffer
-	rc := RunGrokCheck([]string{"--state-dir", filepath.Join(root, "probe")}, &stdout, &stderr)
+	rc := RunGrokCheck(nil, &stdout, &stderr)
 	if rc != 0 || stderr.Len() != 0 {
 		t.Fatalf("check rc=%d stderr=%q", rc, stderr.String())
 	}
@@ -321,6 +334,9 @@ func TestGrokCheckUsesLaunchGateWithoutActivationOrLiveHome(t *testing.T) {
 	}
 	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "untouched\n" {
 		t.Fatalf("live Grok home changed: data=%q err=%v", data, err)
+	}
+	if data, err := os.ReadFile(stateSentinel); err != nil || string(data) != "untouched\n" {
+		t.Fatalf("live herder state changed: data=%q err=%v", data, err)
 	}
 }
 

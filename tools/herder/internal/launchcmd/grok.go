@@ -41,7 +41,7 @@ var grokMCPExecutable = os.Executable
 func GrokActivated() bool { return os.Getenv(grokActivationEnv) == "1" }
 
 func GrokActivationError() string {
-	return "Grok family is not activated; set HERDER_GROK_ACTIVATED=1 only for an isolated experimental launch after providing throwaway HOME, HCOM_DIR, and HERDER_STATE_DIR"
+	return "Grok family is not activated (HERDER_GROK_ACTIVATED unset); bare grok fails closed by design. Set HERDER_GROK_ACTIVATED=1 only for an isolated, throwaway-state session. For the unmanaged vendor CLI, set GROK=/absolute/path/to/grok."
 }
 
 func GrokAuthError() string {
@@ -55,7 +55,7 @@ func GrokAuthError() string {
 func RunGrokCheck(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("herder grok check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	stateDir := fs.String("state-dir", grokStateDir(), "throwaway root for the isolated capability probe")
+	stateDir := fs.String("state-dir", "", "throwaway root for the isolated capability probe")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -63,7 +63,17 @@ func RunGrokCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "herder grok check: unexpected arguments; pass only --state-dir <throwaway-root>")
 		return 2
 	}
-	path, version, err := gateGrokBinary(*stateDir)
+	probeRoot := *stateDir
+	if probeRoot == "" {
+		var err error
+		probeRoot, err = os.MkdirTemp("", "herder-grok-check-")
+		if err != nil {
+			fmt.Fprintf(stderr, "herder grok check: create throwaway probe root: %v\n", err)
+			return 1
+		}
+		defer os.RemoveAll(probeRoot)
+	}
+	path, version, err := gateGrokBinary(probeRoot)
 	if err != nil {
 		fmt.Fprintf(stderr, "herder grok check: %v\n", err)
 		return 1
@@ -527,18 +537,6 @@ func startGrokBridge(plan grokLaunchPlan, manual bool) (string, error) {
 	}
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 	return "", errors.New("Grok bridge did not become ready within 8s; inspect the seat bridge log, correct the hcom/state configuration, and retry")
-}
-
-func grokBridgeProcessAttributes(manual bool) *syscall.SysProcAttr {
-	attr := &syscall.SysProcAttr{Setsid: true}
-	if manual {
-		// The foreground manual wrapper normally sends a generation-fenced
-		// retire. Pdeathsig closes the one uncatchable gap: if the wrapper is
-		// SIGKILLed, Linux stops the detached supervisor, whose retire-on-stop
-		// policy then performs offline journal convergence after its binder exits.
-		attr.Pdeathsig = syscall.SIGTERM
-	}
-	return attr
 }
 
 func grokDoctrine(busName, seat, sessionID string) string {
