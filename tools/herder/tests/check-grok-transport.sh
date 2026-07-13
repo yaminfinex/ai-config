@@ -53,12 +53,15 @@ test_names=(
   TestT17IdleBinderAndTapEmitZeroModelFacingBytes
   TestT18ReportingClaimsDeliveredOnlyAfterMCPAck
   TestT23DualBinderLockAndGenerationFence
+  TestClientStraddlesBinderRestartReconnectsOnceAndDelivers
+  TestPersistentMCPServerStraddlesBinderRestart
   TestSurfaceFailureIsDiagnosedAndTapDroppedForRecovery
   TestTapClientPreservesImmediateRecoveryLine
   TestRetireUnackedTransitionsOnlyPendingMessages
   TestSocketPathLengthPreflightNamesRemedy
   TestDefaultWaitUsesHcomScaleWithoutCorrectnessWeight
   TestRealHcomBindIdentityUsesSeatOwnedProcessAndPreservesForeignBinding
+  TestReadInvocationChildEnvironmentScrubsPinnedIdentityInputs
   TestT24RealHcomStaleBacklogComesFromDrain
   TestT25RealHcomReadsAreIdentityFreeAndNonDestructive
   TestT26RealHcomDeliveredToRoutingExcludesSelf
@@ -73,7 +76,7 @@ for name in "${test_names[@]}"; do
   fi
   declared[$name]=1
 done
-minimum_test_count=30
+minimum_test_count=33
 if ((${#declared[@]} < minimum_test_count)); then
   printf 'GROK TRANSPORT GATE DECLARATION FLOOR VIOLATED — only %d distinct tests remain; restore the %d-test invariant floor.\n' "${#declared[@]}" "$minimum_test_count" >&2
   exit 1

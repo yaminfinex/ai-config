@@ -457,10 +457,87 @@ func TestT16SubagentBoundaryRejectsForeignAndUnownedSessionEvidence(t *testing.T
 	if got := m.b.journal.receipts[16].Status(); got != before {
 		t.Fatalf("foreign request changed state %s -> %s", before, got)
 	}
+	if _, err := dialClient(m.b.socket, ""); err == nil || !strings.Contains(err.Error(), "omitted session evidence") {
+		t.Fatalf("omitted evidence err=%v", err)
+	}
 	m.b.cfg.SessionID = ""
 	if _, err := dialClient(m.b.socket, "foreign"); err == nil || !strings.Contains(err.Error(), "no owning session") {
 		t.Fatalf("unowned bridge handshake err=%v", err)
 	}
+}
+
+func TestClientStraddlesBinderRestartReconnectsOnceAndDelivers(t *testing.T) {
+	state := t.TempDir()
+	m := startMockBridge(t, state, "owner")
+	client := m.client(t)
+	m.close()
+	m = startMockBridge(t, state, "owner")
+	defer m.close()
+	m.queue(t, 21, "after restart")
+	pending, err := client.Call(Request{Op: "pending"})
+	if err != nil || len(pending.Pending) != 1 {
+		t.Fatalf("pending=%+v err=%v", pending, err)
+	}
+	if _, err = client.Call(Request{Op: "fetch", ID: 21}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.Call(Request{Op: "ack", ID: 21}); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.b.journal.receipts[21].Status(); got != "delivered" {
+		t.Fatalf("status=%s", got)
+	}
+}
+
+func TestPersistentMCPServerStraddlesBinderRestart(t *testing.T) {
+	state := t.TempDir()
+	m := startMockBridge(t, state, "owner")
+	t.Setenv("HERDER_GROK_SESSION_ID", "owner")
+	inReader, inWriter := io.Pipe()
+	outReader, outWriter := io.Pipe()
+	done := make(chan error, 1)
+	go func() { err := ServeMCP(m.b.socket, inReader, outWriter); outWriter.Close(); done <- err }()
+	responses := bufio.NewReader(outReader)
+	call := func(payload string) {
+		t.Helper()
+		if _, err := io.WriteString(inWriter, payload+"\n"); err != nil {
+			t.Fatal(err)
+		}
+		line, err := responses.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response map[string]any
+		if err = json.Unmarshal([]byte(line), &response); err != nil {
+			t.Fatal(err)
+		}
+		if result, ok := response["result"].(map[string]any); ok {
+			if failed, _ := result["isError"].(bool); failed {
+				t.Fatalf("MCP error response: %s", line)
+			}
+		}
+	}
+	call(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_pending","arguments":{}}}`)
+	m.close()
+	m = startMockBridge(t, state, "owner")
+	defer m.close()
+	m.queue(t, 22, "persistent MCP")
+	call(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_pending","arguments":{}}}`)
+	call(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fetch_message","arguments":{"id":22}}}`)
+	call(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"ack_message","arguments":{"id":22}}}`)
+	if got := m.b.journal.receipts[22].Status(); got != "delivered" {
+		t.Fatalf("status=%s", got)
+	}
+	inWriter.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("MCP server did not stop")
+	}
+	outReader.Close()
 }
 
 func TestT17IdleBinderAndTapEmitZeroModelFacingBytes(t *testing.T) {

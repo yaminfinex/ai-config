@@ -9,9 +9,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type Client struct {
+	mu         sync.Mutex
 	socket     string
 	generation uint64
 	sessionID  string
@@ -66,6 +68,21 @@ func Tap(socket string, stdout io.Writer) error {
 }
 
 func (c *Client) Call(req Request) (Response, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	resp, err := c.call(req)
+	if err == nil || !strings.HasPrefix(resp.Error, "stale bridge generation ") {
+		return resp, err
+	}
+	fresh, reconnectErr := dialClient(c.socket, c.sessionID)
+	if reconnectErr != nil {
+		return resp, fmt.Errorf("%v; reconnect seat bridge: %w", err, reconnectErr)
+	}
+	c.generation = fresh.generation
+	return c.call(req)
+}
+
+func (c *Client) call(req Request) (Response, error) {
 	req.Generation = c.generation
 	req.SessionID = c.sessionID
 	return roundTrip(c.socket, req)

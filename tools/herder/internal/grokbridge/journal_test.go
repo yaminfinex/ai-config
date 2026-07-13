@@ -259,12 +259,16 @@ func TestT23DualBinderLockAndGenerationFence(t *testing.T) {
 	if m.b.generation != 2 {
 		t.Fatalf("generation=%d", m.b.generation)
 	}
-	if _, err := oldClient.Call(Request{Op: "pending"}); err == nil || !strings.Contains(err.Error(), "stale bridge generation") {
-		t.Fatalf("old client err=%v", err)
+	m.queue(t, 23, "fenced")
+	pending, err := oldClient.Call(Request{Op: "pending"})
+	if err != nil || len(pending.Pending) != 1 {
+		t.Fatalf("straddling client pending=%+v err=%v", pending, err)
 	}
-	fresh := m.client(t)
-	if _, err := fresh.Call(Request{Op: "pending"}); err != nil {
-		t.Fatalf("fresh client: %v", err)
+	if oldClient.generation != 2 {
+		t.Fatalf("client generation=%d", oldClient.generation)
+	}
+	if m.b.journal.receipts[23].Surfaces != 1 {
+		t.Fatalf("surfaces=%d, stale request may have executed", m.b.journal.receipts[23].Surfaces)
 	}
 }
 

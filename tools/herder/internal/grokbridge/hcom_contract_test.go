@@ -123,6 +123,34 @@ func TestRealHcomBindIdentityUsesSeatOwnedProcessAndPreservesForeignBinding(t *t
 		t.Fatalf("bindings after reclaim=%v, want both preserved", got)
 	}
 }
+
+func TestReadInvocationChildEnvironmentScrubsPinnedIdentityInputs(t *testing.T) {
+	capture := filepath.Join(t.TempDir(), "env")
+	bin := filepath.Join(t.TempDir(), "hcom")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n/usr/bin/env > \"$GROK_ENV_CAPTURE\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GROK_ENV_CAPTURE", capture)
+	t.Setenv("HCOM_PROCESS_ID", "ambient-process")
+	t.Setenv("CODEX_THREAD_ID", "ambient-thread")
+	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: shortState(t), HcomBin: bin, BusName: "seat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if _, err = b.events(context.Background(), false, 0); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "HCOM_PROCESS_ID=") || strings.HasPrefix(line, "CODEX_THREAD_ID=") {
+			t.Fatalf("identity input leaked into read child env: %q", line)
+		}
+	}
+}
 func hsend(t *testing.T, bin, dir, from string, to []string, extra []string, text string) {
 	t.Helper()
 	args := []string{"send"}

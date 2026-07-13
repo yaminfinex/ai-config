@@ -336,6 +336,9 @@ func (b *Binder) handleTap(c net.Conn, req Request) {
 
 func (b *Binder) validateSessionEvidence(presented string) error {
 	if presented == "" {
+		if b.cfg.SessionID != "" {
+			return errors.New("request omitted session evidence, but this bridge has an owning session; reconnect from the owning session so HERDER_GROK_SESSION_ID is present")
+		}
 		return nil
 	}
 	if b.cfg.SessionID == "" {
