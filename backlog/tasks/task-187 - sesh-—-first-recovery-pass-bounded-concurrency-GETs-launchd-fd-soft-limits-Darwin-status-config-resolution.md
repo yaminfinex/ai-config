@@ -31,4 +31,5 @@ Follow-ups from the Mac wedge investigation (branch mac-ship-wedge-fix): (1) fir
 
 <!-- SECTION:NOTES:BEGIN -->
 Reviewer-naze area-(d) note from the wedge-fix review: internal/update and cli/status still use bare http.DefaultClient (unbounded) — same wedge class as the fixed shipper fallback, milder because interactive. Bound them when doing item (1).
-<!-- SECTION:NOTES:END -->
+
+Owner concern (2026-07-13, raised alongside the surface-latency report): initial sync feels heavy and the fleet will have HEAVY consumers onboarding with 3-5k files each. Item (1) is the answer inside the wire — the first pass is RTT-serialized per file (177ms RTT from Sydney → ~10-15 min in round trips alone before transfer), so bounded-parallel recovery GETs AND pipelined/parallel initial PUTs both belong in this task's measurement. The rsync-instead question was assessed and declined (bulk throughput through the store measured fine at 2.6-4MB/s; the wire ships only appended tail bytes, which beats rsync rolling checksums for append-only files; rsync would need per-user ssh accounts on the shared prod VM and would lose grant identity, ACK durability, and index-on-ingest). If item (1) measurements still show unacceptable initial-sync times after parallelism, revisit transport with data.
