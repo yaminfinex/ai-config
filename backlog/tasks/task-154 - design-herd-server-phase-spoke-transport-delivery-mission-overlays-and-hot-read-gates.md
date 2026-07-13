@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-10 10:15'
-updated_date: '2026-07-13 01:44'
+updated_date: '2026-07-13 01:47'
 labels: []
 dependencies: []
 references:
@@ -42,4 +42,6 @@ Run a design unit for the remaining cross-component server tier before implement
 2026-07-13 delta (panu): P1-3/P1-4/P2-6/P2-7/P2-8 CLOSED (incarnation fencing, quarantine, delegation, U-GATE seam, failure-domain fence all verified); 3 P1 remain, all executability: journal needs exclusive load/validate/append transaction (multi-writer races: dual attempt-open, claim-vs-fence, duplicate n+1); ACK-loss cursor relation stated BACKWARDS + three offset cases missing vs frozen wire; A6 first-row header impossible on installed headerless registry (loader quarantines kind:file; U-CORE fence excludes required code) — one-shot locked migration + loader support + territory update prescribed. Fix round 2 to volu.
 
 2026-07-13 fix round 2 (volu, 88ba1cc, 1077 lines): exclusive journal transaction (load/validate/append under flock, execution outside lock, open-attempt recovery branch, fence-vs-claim by transaction not append order) + concurrency ACs; offset cases restated correctly (server ahead on lost ACK; three frozen-wire directions cited); A6 rewritten (KindFile loader + one-shot locked migration w/ digest-identity legacy archive + shared-writer territory). panu delta 2 requested.
+
+2026-07-13 delta 2 (panu): all three prescriptions landed correctly; ONE residual P1 — concurrent recovery can prematurely terminal-indeterminate a LIVE executor's open attempt (execution is outside the flock; lock proves no-double-execution, not executor death); two honest shapes offered (ownership+positive-fencing vs refinable-indeterminate). Fix round 3 to volu.
 <!-- SECTION:NOTES:END -->
