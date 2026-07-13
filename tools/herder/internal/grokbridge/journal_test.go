@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func rawEvent(t *testing.T, id int64, text string) json.RawMessage {
@@ -40,7 +41,7 @@ func queue(t *testing.T, j *Journal, id int64) Receipt {
 }
 
 func TestReceiptStateMachineContracts(t *testing.T) {
-	t.Run("T1_initial_delivery", func(t *testing.T) {
+	t.Run("journal_pending_fetch_ack", func(t *testing.T) {
 		j := openTestJournal(t)
 		queue(t, j, 1)
 		p, err := j.Pending(1, true)
@@ -57,7 +58,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatalf("status=%s", got)
 		}
 	})
-	t.Run("T2_idle_delivery", func(t *testing.T) {
+	t.Run("journal_idle_delivery", func(t *testing.T) {
 		j := openTestJournal(t)
 		queue(t, j, 2)
 		if err := j.Surface(2, "wake", 1); err != nil {
@@ -69,7 +70,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatal("not delivered")
 		}
 	})
-	t.Run("T3_busy_turn_no_blind_transition", func(t *testing.T) {
+	t.Run("journal_wake_does_not_advance_delivery", func(t *testing.T) {
 		j := openTestJournal(t)
 		queue(t, j, 3)
 		j.Surface(3, "wake", 1)
@@ -84,7 +85,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatal("wake advanced receipt")
 		}
 	})
-	t.Run("T4_duplicate_wake", func(t *testing.T) {
+	t.Run("journal_duplicate_surfaces", func(t *testing.T) {
 		j := openTestJournal(t)
 		queue(t, j, 4)
 		j.Surface(4, "wake", 1)
@@ -96,7 +97,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatalf("surfaces=%d", j.receipts[4].Surfaces)
 		}
 	})
-	t.Run("T5_duplicate_ack", func(t *testing.T) {
+	t.Run("journal_duplicate_ack", func(t *testing.T) {
 		j := openTestJournal(t)
 		queue(t, j, 5)
 		j.Fetch(5, 1)
@@ -105,7 +106,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	t.Run("T6_out_of_order", func(t *testing.T) {
+	t.Run("journal_out_of_order", func(t *testing.T) {
 		j := openTestJournal(t)
 		queue(t, j, 3)
 		queue(t, j, 5)
@@ -117,20 +118,20 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatal("independent ids did not deliver")
 		}
 	})
-	t.Run("T7_ack_before_fetch_rejected", func(t *testing.T) {
+	t.Run("journal_ack_before_fetch_rejected", func(t *testing.T) {
 		j := openTestJournal(t)
 		queue(t, j, 7)
 		if err := j.Ack(7, 1); err == nil || !strings.Contains(err.Error(), "fetch before ack") {
 			t.Fatalf("err=%v", err)
 		}
 	})
-	t.Run("T8_foreign_id_rejected", func(t *testing.T) {
+	t.Run("journal_foreign_id_rejected", func(t *testing.T) {
 		j := openTestJournal(t)
 		if _, err := j.Fetch(88, 1); err == nil {
 			t.Fatal("foreign fetch accepted")
 		}
 	})
-	t.Run("T9_restart_replays_queued", func(t *testing.T) {
+	t.Run("journal_restart_replays_queued", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "journal.jsonl")
 		j, _ := OpenJournal(path)
 		j.AdvanceGeneration()
@@ -142,7 +143,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatal("queued state not replayed")
 		}
 	})
-	t.Run("T10_restart_after_wake_recovers_pending", func(t *testing.T) {
+	t.Run("journal_restart_preserves_pending", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "journal.jsonl")
 		j, _ := OpenJournal(path)
 		j.AdvanceGeneration()
@@ -157,7 +158,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatal("pending not recovered")
 		}
 	})
-	t.Run("T11_tap_death_keeps_queue", func(t *testing.T) {
+	t.Run("journal_queue_independent_of_tap", func(t *testing.T) {
 		j := openTestJournal(t)
 		queue(t, j, 11)
 		p, _ := j.Pending(1, false)
@@ -165,7 +166,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatal("pending lost without tap")
 		}
 	})
-	t.Run("T12_failure_after_fetch_persists", func(t *testing.T) {
+	t.Run("journal_failure_after_fetch_persists", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "journal.jsonl")
 		j, _ := OpenJournal(path)
 		j.AdvanceGeneration()
@@ -178,7 +179,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatal("fetched state not preserved")
 		}
 	})
-	t.Run("T13_compaction_relist", func(t *testing.T) {
+	t.Run("journal_relist_surfaces", func(t *testing.T) {
 		j := openTestJournal(t)
 		queue(t, j, 13)
 		p, _ := j.Pending(1, true)
@@ -186,7 +187,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatal("re-list did not surface")
 		}
 	})
-	t.Run("T14_resume_same_spool", func(t *testing.T) {
+	t.Run("journal_reopen_same_spool", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "journal.jsonl")
 		j, _ := OpenJournal(path)
 		j.AdvanceGeneration()
@@ -198,7 +199,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatal("resume lost cursor")
 		}
 	})
-	t.Run("T15_fork_fresh_spool", func(t *testing.T) {
+	t.Run("journal_distinct_spool_isolation", func(t *testing.T) {
 		root := t.TempDir()
 		a, _ := OpenJournal(filepath.Join(root, "a", "journal.jsonl"))
 		defer a.Close()
@@ -211,7 +212,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatal("cross-seat fetch accepted")
 		}
 	})
-	t.Run("T16_stale_generation_rejected", func(t *testing.T) {
+	t.Run("journal_stale_generation_rejected", func(t *testing.T) {
 		j := openTestJournal(t)
 		queue(t, j, 16)
 		j.AdvanceGeneration()
@@ -219,7 +220,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatalf("err=%v", err)
 		}
 	})
-	t.Run("T17_silence_line_shapes", func(t *testing.T) {
+	t.Run("wake_line_excludes_payload", func(t *testing.T) {
 		j := openTestJournal(t)
 		r := queue(t, j, 17)
 		line := wakeLine(r)
@@ -227,7 +228,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 			t.Fatalf("line=%q", line)
 		}
 	})
-	t.Run("T18_delivered_only_after_ack", func(t *testing.T) {
+	t.Run("journal_delivered_only_after_ack", func(t *testing.T) {
 		j := openTestJournal(t)
 		queue(t, j, 18)
 		j.Surface(18, "wake", 1)
@@ -247,35 +248,23 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 
 func TestT23DualBinderLockAndGenerationFence(t *testing.T) {
 	state := t.TempDir()
-	bin := filepath.Join(t.TempDir(), "hcom")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	a, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: bin})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: bin}); err == nil {
+	m := startMockBridge(t, state, "owning-session")
+	oldClient := m.client(t)
+	if _, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: m.b.cfg.HcomBin}); err == nil {
 		t.Fatal("second binder acquired lock")
 	}
-	a.Close()
-	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: bin})
-	if err != nil {
-		t.Fatal(err)
+	m.close()
+	m = startMockBridge(t, state, "owning-session")
+	defer m.close()
+	if m.b.generation != 2 {
+		t.Fatalf("generation=%d", m.b.generation)
 	}
-	defer b.Close()
-	b.cfg.SessionID = "owning-session"
-	if b.generation != 2 {
-		t.Fatalf("generation=%d", b.generation)
+	if _, err := oldClient.Call(Request{Op: "pending"}); err == nil || !strings.Contains(err.Error(), "stale bridge generation") {
+		t.Fatalf("old client err=%v", err)
 	}
-	if b.execute(Request{Op: "pending", Generation: 1}).OK {
-		t.Fatal("stale request accepted")
-	}
-	if hello := b.execute(Request{Op: "handshake"}); !hello.OK || hello.Generation != 2 {
-		t.Fatalf("handshake=%+v", hello)
-	}
-	if got := b.execute(Request{Op: "pending", Generation: 2, SessionID: "different-session"}); got.OK || !strings.Contains(got.Error, "does not match") {
-		t.Fatalf("foreign session request=%+v", got)
+	fresh := m.client(t)
+	if _, err := fresh.Call(Request{Op: "pending"}); err != nil {
+		t.Fatalf("fresh client: %v", err)
 	}
 }
 
@@ -291,5 +280,51 @@ func TestTapFailureIsSilentAndDiagnosedToFile(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(state, "grok", "seat", "tap.log")); err != nil || len(data) == 0 {
 		t.Fatalf("diagnostic missing data=%q err=%v", data, err)
+	}
+}
+
+func TestRetireUnackedTransitionsOnlyPendingMessages(t *testing.T) {
+	j := openTestJournal(t)
+	queue(t, j, 1)
+	queue(t, j, 2)
+	if _, err := j.Fetch(1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Ack(1, 1); err != nil {
+		t.Fatal(err)
+	}
+	count, err := j.RetireUnacked(1)
+	if err != nil || count != 1 {
+		t.Fatalf("count=%d err=%v", count, err)
+	}
+	if j.receipts[1].Status() != "delivered" || j.receipts[2].Status() != "undeliverable" {
+		t.Fatalf("statuses=%s,%s", j.receipts[1].Status(), j.receipts[2].Status())
+	}
+}
+
+func TestSocketPathLengthPreflightNamesRemedy(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "hcom")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deep := filepath.Join(t.TempDir(), strings.Repeat("segment", 18))
+	_, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: deep, HcomBin: bin})
+	if err == nil || !strings.Contains(err.Error(), "shorten --state-dir") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestDefaultWaitUsesHcomScaleWithoutCorrectnessWeight(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "hcom")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: t.TempDir(), HcomBin: bin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if b.cfg.Wait != 60*time.Second {
+		t.Fatalf("wait=%s", b.cfg.Wait)
 	}
 }

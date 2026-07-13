@@ -36,6 +36,10 @@ var toolsList = []map[string]any{
 }
 
 func ServeMCP(socket string, in io.Reader, out io.Writer) error {
+	client, err := DialClient(socket)
+	if err != nil {
+		return err
+	}
 	s := bufio.NewScanner(in)
 	s.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	enc := json.NewEncoder(out)
@@ -59,7 +63,7 @@ func ServeMCP(socket string, in io.Reader, out io.Writer) error {
 			var p callParams
 			if err := json.Unmarshal(q.Params, &p); err != nil {
 				r.Error = &rpcError{-32602, "invalid tool parameters"}
-			} else if result, err := callTool(socket, p); err != nil {
+			} else if result, err := callTool(client, p); err != nil {
 				r.Result = map[string]any{"content": []map[string]any{{"type": "text", "text": err.Error()}}, "isError": true}
 			} else {
 				b, _ := json.Marshal(result)
@@ -75,7 +79,7 @@ func ServeMCP(socket string, in io.Reader, out io.Writer) error {
 	return s.Err()
 }
 
-func callTool(socket string, p callParams) (any, error) {
+func callTool(client *Client, p callParams) (any, error) {
 	switch p.Name {
 	case "fetch_message":
 		var a struct {
@@ -84,7 +88,7 @@ func callTool(socket string, p callParams) (any, error) {
 		if err := json.Unmarshal(p.Arguments, &a); err != nil {
 			return nil, err
 		}
-		r, err := Call(socket, Request{Op: "fetch", ID: a.ID})
+		r, err := client.Call(Request{Op: "fetch", ID: a.ID})
 		if err != nil {
 			return nil, err
 		}
@@ -96,13 +100,13 @@ func callTool(socket string, p callParams) (any, error) {
 		if err := json.Unmarshal(p.Arguments, &a); err != nil {
 			return nil, err
 		}
-		_, err := Call(socket, Request{Op: "ack", ID: a.ID})
+		_, err := client.Call(Request{Op: "ack", ID: a.ID})
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"id": a.ID, "status": "delivered"}, nil
 	case "list_pending":
-		r, err := Call(socket, Request{Op: "pending"})
+		r, err := client.Call(Request{Op: "pending"})
 		if err != nil {
 			return nil, err
 		}
@@ -121,7 +125,7 @@ func callTool(socket string, p callParams) (any, error) {
 		if err := json.Unmarshal(p.Arguments, &a); err != nil {
 			return nil, err
 		}
-		r, err := Call(socket, Request{Op: "send", To: a.To, Text: a.Text, Intent: a.Intent, Thread: a.Thread, ReplyTo: a.ReplyTo})
+		r, err := client.Call(Request{Op: "send", To: a.To, Text: a.Text, Intent: a.Intent, Thread: a.Thread, ReplyTo: a.ReplyTo})
 		if err != nil {
 			return nil, err
 		}

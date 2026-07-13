@@ -36,14 +36,15 @@ type BinderConfig struct {
 }
 
 type Binder struct {
-	cfg        BinderConfig
-	journal    *Journal
-	generation uint64
-	lock       *os.File
-	listener   net.Listener
-	socket     string
-	mu         sync.Mutex
-	taps       map[net.Conn]struct{}
+	cfg         BinderConfig
+	journal     *Journal
+	generation  uint64
+	lock        *os.File
+	listener    net.Listener
+	socket      string
+	mu          sync.Mutex
+	taps        map[net.Conn]struct{}
+	afterAppend func(int, Receipt) error
 }
 
 func SeatDir(stateDir, seat string) string { return filepath.Join(stateDir, "grok", seat) }
@@ -73,7 +74,7 @@ func OpenBinder(cfg BinderConfig) (*Binder, error) {
 	}
 	cfg.HcomBin = hcomPath
 	if cfg.Wait <= 0 {
-		cfg.Wait = 2 * time.Second
+		cfg.Wait = 60 * time.Second
 	}
 	if cfg.NudgeAfter <= 0 {
 		cfg.NudgeAfter = 30 * time.Second
@@ -82,6 +83,10 @@ func OpenBinder(cfg BinderConfig) (*Binder, error) {
 		cfg.MaxNudges = 2
 	}
 	dir := SeatDir(cfg.StateDir, cfg.Seat)
+	socket := SocketPath(cfg.StateDir, cfg.Seat)
+	if len(socket) >= 108 {
+		return nil, fmt.Errorf("seat bridge socket path is %d bytes, but Unix sockets require fewer than 108; shorten --state-dir or the seat identifier", len(socket))
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -106,7 +111,7 @@ func OpenBinder(cfg BinderConfig) (*Binder, error) {
 		lf.Close()
 		return nil, err
 	}
-	b := &Binder{cfg: cfg, journal: j, generation: gen, lock: lf, socket: SocketPath(cfg.StateDir, cfg.Seat), taps: make(map[net.Conn]struct{})}
+	b := &Binder{cfg: cfg, journal: j, generation: gen, lock: lf, socket: socket, taps: make(map[net.Conn]struct{})}
 	if err := writeAtomic(filepath.Join(dir, "hcom-bin"), []byte(cfg.HcomBin+"\n"), 0o600); err != nil {
 		b.Close()
 		return nil, err
@@ -174,7 +179,7 @@ func (b *Binder) bindIdentity(ctx context.Context) (string, error) {
 	if name != "" {
 		args = append(args, "--as", name)
 	}
-	out, err := b.runHcom(ctx, false, args...)
+	out, err := b.runHcomSeatIdentity(ctx, args...)
 	if err != nil {
 		return "", fmt.Errorf("bind hcom identity: %w", err)
 	}
@@ -245,8 +250,8 @@ func (b *Binder) handle(c net.Conn) {
 
 func (b *Binder) execute(req Request) Response {
 	r := Response{Generation: b.generation}
-	if req.SessionID != "" && b.cfg.SessionID != "" && req.SessionID != b.cfg.SessionID {
-		r.Error = "request session does not match this seat; reconnect through the owning session's MCP server"
+	if err := b.validateSessionEvidence(req.SessionID); err != nil {
+		r.Error = err.Error()
 		return r
 	}
 	if req.Op == "handshake" {
@@ -297,8 +302,8 @@ func (b *Binder) execute(req Request) Response {
 }
 
 func (b *Binder) handleTap(c net.Conn, req Request) {
-	if req.SessionID != "" && b.cfg.SessionID != "" && req.SessionID != b.cfg.SessionID {
-		json.NewEncoder(c).Encode(Response{Generation: b.generation, Error: "tap session does not match this seat; reconnect from the owning session"})
+	if err := b.validateSessionEvidence(req.SessionID); err != nil {
+		json.NewEncoder(c).Encode(Response{Generation: b.generation, Error: err.Error()})
 		return
 	}
 	if req.Generation != 0 && req.Generation != b.generation {
@@ -329,6 +334,19 @@ func (b *Binder) handleTap(c net.Conn, req Request) {
 	}
 }
 
+func (b *Binder) validateSessionEvidence(presented string) error {
+	if presented == "" {
+		return nil
+	}
+	if b.cfg.SessionID == "" {
+		return errors.New("request carries session evidence, but this bridge has no owning session; restart the bridge with --session-id before reconnecting")
+	}
+	if presented != b.cfg.SessionID {
+		return errors.New("request session does not match this seat; reconnect through the owning session's MCP server")
+	}
+	return nil
+}
+
 func wakeLine(r Receipt) string {
 	thread := r.Message.Thread
 	if thread == "" {
@@ -341,7 +359,7 @@ func wakeLine(r Receipt) string {
 	return fmt.Sprintf("HCOM id=%d from=%s intent=%s thread=%s h=%s", r.Event.ID, r.Message.From, intent, thread, r.Hash)
 }
 
-func (b *Binder) wake(r Receipt, kind string) {
+func (b *Binder) wake(r Receipt, kind string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for c := range b.taps {
@@ -352,8 +370,17 @@ func (b *Binder) wake(r Receipt, kind string) {
 			continue
 		}
 		_ = c.SetWriteDeadline(time.Time{})
-		_ = b.journal.Surface(r.Event.ID, kind, b.generation)
+		if err := b.journal.Surface(r.Event.ID, kind, b.generation); err != nil {
+			recordErr := fmt.Errorf("record %s surface for message %d: %w; tap dropped so reconnect recovery can re-list pending messages", kind, r.Event.ID, err)
+			c.Close()
+			delete(b.taps, c)
+			if diagErr := appendDiagnostic(filepath.Join(SeatDir(b.cfg.StateDir, b.cfg.Seat), "bridge.log"), recordErr); diagErr != nil {
+				return fmt.Errorf("%v; write bridge diagnostic: %w", recordErr, diagErr)
+			}
+			return recordErr
+		}
 	}
+	return nil
 }
 
 func (b *Binder) pickupLoop(ctx context.Context) error {
@@ -380,7 +407,7 @@ func (b *Binder) Drain(ctx context.Context) error {
 			return nil
 		}
 		sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
-		for _, row := range rows {
+		for pageIndex, row := range rows {
 			raw, err := eventRaw(row)
 			if err != nil {
 				return err
@@ -390,7 +417,14 @@ func (b *Binder) Drain(ctx context.Context) error {
 				return err
 			}
 			if added {
-				b.wake(r, "wake")
+				if b.afterAppend != nil {
+					if err := b.afterAppend(pageIndex+1, r); err != nil {
+						return err
+					}
+				}
+				if err := b.wake(r, "wake"); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -420,7 +454,9 @@ func (b *Binder) nudgeLoop(ctx context.Context) error {
 				return err
 			}
 			for _, r := range rows {
-				b.wake(r, "nudge")
+				if err := b.wake(r, "nudge"); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -509,13 +545,23 @@ func eventRaw(ev Event) (json.RawMessage, error) {
 }
 
 func (b *Binder) runHcom(ctx context.Context, anonymous bool, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, b.cfg.HcomBin, args...)
 	env := os.Environ()
-	if b.cfg.HcomDir != "" {
-		env = replaceEnv(env, "HCOM_DIR", b.cfg.HcomDir)
-	}
 	if anonymous {
 		env = scrubEnv(env, "HCOM_PROCESS_ID", "CODEX_THREAD_ID")
+	}
+	return b.runHcomEnv(ctx, env, args...)
+}
+
+func (b *Binder) runHcomSeatIdentity(ctx context.Context, args ...string) (string, error) {
+	env := scrubEnv(os.Environ(), "HCOM_PROCESS_ID", "CODEX_THREAD_ID")
+	env = replaceEnv(env, "HCOM_PROCESS_ID", b.cfg.Seat)
+	return b.runHcomEnv(ctx, env, args...)
+}
+
+func (b *Binder) runHcomEnv(ctx context.Context, env []string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, b.cfg.HcomBin, args...)
+	if b.cfg.HcomDir != "" {
+		env = replaceEnv(env, "HCOM_DIR", b.cfg.HcomDir)
 	}
 	cmd.Env = env
 	var out, stderr bytes.Buffer

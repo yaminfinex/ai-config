@@ -11,23 +11,33 @@ import (
 	"strings"
 )
 
-func currentGeneration(socket string) (uint64, error) {
+type Client struct {
+	socket     string
+	generation uint64
+	sessionID  string
+}
+
+func DialClient(socket string) (*Client, error) {
+	return dialClient(socket, processCapability("HERDER_GROK_SESSION_ID"))
+}
+
+func dialClient(socket, sessionID string) (*Client, error) {
 	c, err := net.Dial("unix", socket)
 	if err != nil {
-		return 0, fmt.Errorf("connect seat bridge: %w", err)
+		return nil, fmt.Errorf("connect seat bridge: %w", err)
 	}
 	defer c.Close()
-	if err = json.NewEncoder(c).Encode(Request{Op: "handshake", SessionID: processCapability("HERDER_GROK_SESSION_ID")}); err != nil {
-		return 0, err
+	if err = json.NewEncoder(c).Encode(Request{Op: "handshake", SessionID: sessionID}); err != nil {
+		return nil, err
 	}
 	var r Response
 	if err = json.NewDecoder(c).Decode(&r); err != nil {
-		return 0, err
+		return nil, err
 	}
 	if !r.OK {
-		return 0, fmt.Errorf("%s", r.Error)
+		return nil, fmt.Errorf("%s", r.Error)
 	}
-	return r.Generation, nil
+	return &Client{socket: socket, generation: r.Generation, sessionID: sessionID}, nil
 }
 
 func Tap(socket string, stdout io.Writer) error {
@@ -41,7 +51,11 @@ func Tap(socket string, stdout io.Writer) error {
 	}
 	br := bufio.NewReader(c)
 	var hello Response
-	if err = json.NewDecoder(br).Decode(&hello); err != nil {
+	line, err := br.ReadBytes('\n')
+	if err != nil {
+		return err
+	}
+	if err = json.Unmarshal(line, &hello); err != nil {
 		return err
 	}
 	if !hello.OK {
@@ -51,14 +65,10 @@ func Tap(socket string, stdout io.Writer) error {
 	return err
 }
 
-func Call(socket string, req Request) (Response, error) {
-	gen, err := currentGeneration(socket)
-	if err != nil {
-		return Response{}, err
-	}
-	req.Generation = gen
-	req.SessionID = processCapability("HERDER_GROK_SESSION_ID")
-	return roundTrip(socket, req)
+func (c *Client) Call(req Request) (Response, error) {
+	req.Generation = c.generation
+	req.SessionID = c.sessionID
+	return roundTrip(c.socket, req)
 }
 
 func processCapability(name string) string {
