@@ -5,7 +5,8 @@ Status: proposed design, revised four times after adversarial design review
 (round 1: sixteen items across two independent reviews; round 2: nine incumbent
 items; round 3: five consolidated residuals; round 4: launch-attempt fencing,
 the honest three-part plaintext invariant, full worst-case spool reserve with
-the nudge budget, and the rearm assignment sweep); pending delta review
+the nudge budget, and the rearm assignment sweep; round 5: attempt-scoped child
+process identity and the K=1 repeat-marker bound); pending delta review
 Subject: `@earendil-works/pi-coding-agent` 0.80.6 against herder + hcom 0.7.23
 
 Evidence base (cited throughout by path + section):
@@ -401,26 +402,38 @@ restart — runs the same protocol:
    monotonic **attempt generation** plus the launcher's pid/start-time and an
    activation deadline. From this record on, the attempt owns the seat's launch
    path; competing opens are refused under the lock.
-2. **Quiesce, exactly.** For a relaunch: with the attempt open (so no competitor
-   can slip in behind the kill), stop the recorded process — an explicit
-   no-more-turns mechanism: SIGTERM-then-KILL addressed to the **exact recorded
-   pid + start-time**, never a name or a guess — and wait until that exact
-   identity is provably gone. First boot skips this step by verifying no
-   recorded process exists.
-3. **Rekey once, attempt-keyed.** The pre-exec rekey runs inside the attempt:
-   the bootstrap file, the stored hash, the prepared epoch, and every cleanup
-   artifact are **keyed by the attempt generation**. Exec follows; the
-   extension's activation presents the bootstrap token **and the attempt
-   generation**, and `activate` consumes the attempt (`starting` → active)
-   only if it is still the highest, unconsumed generation.
-4. **Supersede, never share.** A competing launcher may supersede an open
-   attempt only after its activation deadline has passed with no consumption,
-   by opening a strictly higher generation (whose rekey replaces hash and
-   bootstrap). An activation presenting a superseded generation is refused.
-   Cleanup is generation-scoped: an abandoned or losing attempt's teardown can
-   remove **only artifacts keyed to its own generation** — it structurally
-   cannot touch the winner's bootstrap, hash, epoch, or process (T34f races
-   this).
+2. **Quiesce, exactly — every recorded process identity.** For a relaunch: with
+   the attempt open (so no competitor can slip in behind the kill), stop every
+   process the seat has recorded — the activation record's pid + start-time
+   **and any prior attempt's recorded child** (step 3) — an explicit
+   no-more-turns mechanism: SIGTERM-then-KILL addressed to each **exact
+   recorded pid + start-time**, never a name or a guess — and wait until each
+   exact identity is provably gone. First boot skips this step by verifying no
+   recorded process exists in either place.
+3. **Rekey once, attempt-keyed; record the child on exec.** The pre-exec rekey
+   runs inside the attempt: the bootstrap file, the stored hash, the prepared
+   epoch, and every cleanup artifact are **keyed by the attempt generation**.
+   Exec follows, and the launcher records the launched child's **pid +
+   start-time into the open attempt** — a generation-scoped process identity,
+   fsynced under the seat lock **before the launch step returns** — so the
+   exec→activate interval has an owner-of-record even though activation has
+   not yet published anything. The extension's activation presents the
+   bootstrap token **and the attempt generation**, and `activate` consumes the
+   attempt (`starting` → active) only if it is still the highest, unconsumed
+   generation.
+4. **Supersede, never share — and never orphan.** A competing launcher may
+   supersede an open attempt only after its activation deadline has passed
+   with no consumption, by opening a strictly higher generation (whose rekey
+   replaces hash and bootstrap). An activation presenting a superseded
+   generation is refused. The superseding attempt's quiesce (step 2) kills the
+   superseded attempt's **recorded child** by exact pid + start-time — a slow
+   launcher's Pi that execed but never activated is terminated, never left
+   running as a same-UID orphan holding the managed home and the provider
+   credential outside bind readiness, epoch fencing, and cull's reach. Cleanup
+   is generation-scoped: an abandoned or losing attempt's teardown can remove
+   **only artifacts and the process keyed to its own generation** — it
+   structurally cannot touch the winner's bootstrap, hash, epoch, or process
+   (T34f races this, including the exec-not-yet-activated branch).
 
 Prompt-induced tool code that knows every environment variable in the seat can
 satisfy neither lane: it has no token, and its ancestry includes a managed seat
@@ -509,9 +522,12 @@ event, injection without a settle) is ever reported as delivered (T26).
     Everything that must append after admission stops has reserved space, and
     the reserve is enumerated, not gestured at. **Per-id class:** live ids are
     capped, and each live id has a *provably* bounded record set — the state
-    transitions (queued/injected/delivered/undeliverable), repeat markers
-    (compacted at snapshot, only the compacted form surviving rotation), and
-    nudge records under the per-id **nudge budget** (nudge policy) — so the
+    transitions (queued/injected/delivered/undeliverable), repeat markers at
+    **at most K = 1 live repeat-marker record per id** (a duplicate observation
+    past K updates nothing and is refused/deduped without an append — the
+    pre-compaction bound is finite by construction, not only after snapshot
+    folding), and nudge records under the per-id **nudge budget** (nudge
+    policy) — so the
     per-id reserve is id cap × the enumerated per-id record maximum × max
     state-record size. **Fixed class:** the records retirement and control
     require regardless of load — the `retiring` fence, the **one**
@@ -665,7 +681,7 @@ never loops.
 | **Pi process exit or crash** (any point) | The extension dies with Pi — that is the design, not a failure of it (demo "Restart, crash, and message recovery"). Herder records the exit from process/pane evidence and relaunches via resume (DR-4). On the new `session_start` the extension activates a fresh epoch, replays the journal, and drains. Walked windows: *(a) crash after drain query, before journal fsync* — cursor never advanced; the non-destructive events store returns the rows again; deduped by event id. *(b) crash after queue, before inject* — replay finds queued-not-injected ids and injects them (exactly the demo's pending-replay clause). *(c) crash after the input event, before the injection record's fsync* — no durable injected record exists; replay treats the id as queued and **re-injects it with the same visible envelope (same id, same payload hash)** — the chosen at-least-once duplicate window, doctrine-framed so the model recognizes repeats (T30). *(d) crash after the durable injection record, before settle* — replay finds injected-unsettled ids; the extension issues one **nudge** turn per the nudge policy, whose settle delivers them. At-least-once into context, with duplicate-safe framing, per the demo's stated preference for at-least-once over loss. |
 | **Turn aborted after injection** (user interrupt, provider error) | Id stays *injected*. Any later settle in the session delivers it; if the seat idles with injected-unsettled ids past a threshold, the extension issues the same nudge turn. No hcom-level resend ever fires. |
 | **Extension handler throws** | Probe-proven containment: Pi emits `extension_error` and keeps serving (demo extension-lifecycle probe). The failing extension reports the error to seat diagnostics (log file) and the seat status degrades honestly (DR-6); Pi is not killed for it. |
-| **Duplicate drain rows / replayed events** | Journal is id-keyed; monotonic states; duplicates journaled as repeat markers, never re-injected (T5). |
+| **Duplicate drain rows / replayed events** | Journal is id-keyed; monotonic states; a duplicate journals at most one repeat marker per id (K = 1 — further duplicates deduped without append), never re-injected (T5). |
 | **Second Pi process on the same seat** (operator error, restart race) | `herder pi bus activate` refuses when a live activation exists: the activation record carries pid + process-start evidence, and it is stale only when that process is provably gone. A successful activation increments the epoch, so ops from the superseded process are rejected by the fence regardless of scheduling. Per-op flock serializes journal writers under any overlap (T10). |
 | **Session switched/replaced inside Pi** (new/switch/fork from within the TUI) | The extension treats every `session_start` as a rebinding event (demo extension rule 6): re-activate (fresh epoch), re-verify session identity against seat state, replay pending. A session the seat does not recognize flags the seat for reconciliation rather than guessing (DR-4). The shutdown→reload→start replacement sequence is API-inventory, not probed (assumption A4). |
 | **Rebind with an in-flight wait/drain child** | The prior epoch's wait or drain child may wake after the new activation. Its epoch is stale: any mutation it attempts is rejected under the lock and its output is discarded; the new driver's own drain picks the messages up from the cursor. Cancellation on rebind is attempted but carries no correctness weight (T32). |
@@ -788,7 +804,9 @@ ask, and owner-ruled acceptance. Per-workspace relaxation is an owner decision
    large/multiline prompts avoid argv entirely, and both messages get real delivery
    receipts through DR-2, mirroring grok's spool-borne initial prompt.
 4. Exec Pi (recorded Node runtime + pinned `dist/cli.js`) inside the pane with the
-   allowlist-built environment and explicit argv.
+   allowlist-built environment and explicit argv, recording the launched child's
+   pid + start-time into the open attempt (fsynced under the seat lock before
+   this step returns — DR-2 launch-attempt protocol step 3).
 5. `session_start` fires in the extension: `bus activate` (fresh epoch, process +
    session evidence, capability hash — DR-2 "Seat ownership"), journal replay,
    driver start and first drain, batch-inject doctrine + task. Spawn's bind capture
@@ -1126,8 +1144,8 @@ Delivery state machine and transport:
   settle boundary; no mid-turn `sendUserMessage`.
 - **T4 batch injection** — N pending ids, one injected message, per-id journal
   transitions, per-id delivered on the settle.
-- **T5 duplicate drain rows** — id-keyed dedupe; repeat markers journaled; single
-  injection.
+- **T5 duplicate drain rows** — id-keyed dedupe; at most one repeat marker per
+  id (K = 1), a duplicate flood past K appending nothing; single injection.
 - **T6 crash before inject** — restart replay injects queued ids exactly once.
 - **T7 crash after inject, before settle** — no re-injection; single nudge turn;
   delivered on its settle.
@@ -1282,7 +1300,13 @@ Inbound driver, fencing, and bounds (the fix-round additions):
   rekeys/restarts raced against one seat — exactly one attempt (the highest
   generation) is consumable, the superseded attempt's activation is refused,
   and the loser's cleanup, being generation-scoped, provably cannot remove or
-  alter the winner's bootstrap, hash, epoch, or process; plus the exact
+  alter the winner's bootstrap, hash, epoch, or process;
+  **exec-not-yet-activated branch**: the losing attempt's Pi is execed (its
+  child pid + start-time recorded in that attempt) but hangs before activation
+  and is superseded — after the winner activates, the test asserts **zero live
+  seat Pi processes except the winner's**, verified by pid + start-time
+  against the attempt records: no same-UID orphan holding the managed home and
+  the provider credential survives; plus the exact
   crash-restart sequence: process provably gone → outside-ancestry attempt +
   rekey → relaunch → token-authenticated activate consuming that attempt; a
   rekey attempted by an inside-ancestry caller, or against a live process, is
