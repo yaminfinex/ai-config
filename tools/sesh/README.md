@@ -129,9 +129,15 @@ seam; `surface.SQLStore` satisfies it from the live store DB + mirror, and
 (`--surface-addr`, default 127.0.0.1:8766 — the port the interim Tailscale Serve
 exposure proxies; ingest stays on `--addr`). The surface includes `/` recency,
 `/s/{tool}/{id}` transcript pages, `/s/{tool}/{id}/raw` raw mirror fallback,
-and `/nodes` last-PUT status. Gates: `tests/check-surface-fixtures.sh`
-(fixture-backed renders) and `tests/check-surface-live.sh` (real serve + ship,
-S2 renders once).
+and `/nodes` last-PUT status. The recency homepage is bounded: it renders the
+latest 50 logical sessions per page (the cut is a SQL `LIMIT` in the store
+query, never a truncated full scan — fleet corpora run to thousands of files
+per node), says so on the page ("showing latest N of Z sessions"), and older
+history stays reachable through `?page=N` pager links; the periodic refresh
+polls the page it is on. `/nodes` reads only the last-seen bookkeeping table
+and is unaffected by corpus size. Gates: `tests/check-surface-fixtures.sh`
+(fixture-backed renders, including the 5k-session bounded-homepage corpus
+test) and `tests/check-surface-live.sh` (real serve + ship, S2 renders once).
 
 ## Release channel
 
