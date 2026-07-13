@@ -651,7 +651,7 @@ func capMap(verbs ...string) tailcfg.PeerCapMap {
 	for _, verb := range verbs {
 		values = append(values, tailcfg.RawMessage(`{"verb":"`+verb+`"}`))
 	}
-	return tailcfg.PeerCapMap{TailnetCapabilitySeshStore: values}
+	return tailcfg.PeerCapMap{TailnetCapabilitySesh: values}
 }
 
 type readTrackingBody struct {

@@ -18,7 +18,7 @@ const (
 	CapabilityRead = "read"
 )
 
-const TailnetCapabilitySeshStore tailcfg.PeerCapability = "sesh.dev/cap/store"
+const TailnetCapabilitySesh tailcfg.PeerCapability = "infinex.xyz/cap/sesh"
 
 type contextKeyTailnetIdentity struct{}
 
@@ -48,7 +48,7 @@ type WhoIsResult struct {
 type WhoIsFunc func(context.Context, string) (WhoIsResult, error)
 
 // TailnetCapabilityGrant is the JSON value stored under
-// TailnetCapabilitySeshStore in Tailscale grants.
+// TailnetCapabilitySesh in Tailscale grants.
 type TailnetCapabilityGrant struct {
 	Verb  string   `json:"verb,omitempty"`
 	Verbs []string `json:"verbs,omitempty"`
@@ -77,7 +77,7 @@ func AuthHandler(next http.Handler, whois WhoIsFunc, capability string) http.Han
 			return
 		}
 		if !allowed {
-			writeGrantDenied(w, fmt.Sprintf("tailnet identity %q lacks %s verb in %s", result.Identity, capability, TailnetCapabilitySeshStore))
+			writeGrantDenied(w, fmt.Sprintf("tailnet identity %q lacks %s verb in %s", result.Identity, capability, TailnetCapabilitySesh))
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(withTailnetIdentity(r.Context(), result.Identity)))
@@ -85,9 +85,9 @@ func AuthHandler(next http.Handler, whois WhoIsFunc, capability string) http.Han
 }
 
 func allowsCapability(caps tailcfg.PeerCapMap, capability string) (bool, error) {
-	grants, err := tailcfg.UnmarshalCapJSON[TailnetCapabilityGrant](caps, TailnetCapabilitySeshStore)
+	grants, err := tailcfg.UnmarshalCapJSON[TailnetCapabilityGrant](caps, TailnetCapabilitySesh)
 	if err != nil {
-		return false, fmt.Errorf("invalid %s grant: %w", TailnetCapabilitySeshStore, err)
+		return false, fmt.Errorf("invalid %s grant: %w", TailnetCapabilitySesh, err)
 	}
 	for _, grant := range grants {
 		if grant.Verb == capability {

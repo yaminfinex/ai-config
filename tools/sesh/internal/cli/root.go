@@ -129,7 +129,7 @@ func newServe() *cobra.Command {
 	cmd.Flags().StringVar(&surfaceAddr, "surface-addr", "127.0.0.1:8766", "loopback address for the read-only surface listener")
 	cmd.Flags().StringVar(&dataDir, "data-dir", "", "store data directory")
 	cmd.Flags().BoolVar(&tsnetMode, "tsnet", false, "serve ingest and read listeners on tsnet with WhoIs grant checks")
-	cmd.Flags().StringVar(&tsnetHostname, "tsnet-hostname", "sesh-store", "tsnet node hostname")
+	cmd.Flags().StringVar(&tsnetHostname, "tsnet-hostname", "sesh", "tsnet node hostname")
 	cmd.Flags().StringVar(&tsnetDir, "tsnet-dir", "", "tsnet state directory; default is <data-dir>/tsnet")
 	cmd.Flags().StringVar(&tsnetAuthKey, "tsnet-auth-key", "", "tsnet auth key; empty lets tsnet use TS_AUTHKEY or stored state")
 	return cmd

@@ -103,14 +103,14 @@ Tailscale app-capability verb before ingest bytes or read handlers run.
 ```sh
 TS_AUTHKEY=tskey-auth-... \
 sesh serve --tsnet \
-  --tsnet-hostname sesh-store \
+  --tsnet-hostname sesh \
   --addr :8765 \
   --surface-addr :8766
 ```
 
 `--tsnet-dir` defaults to `<data-dir>/tsnet`; `--tsnet-auth-key` can be used
 instead of `TS_AUTHKEY`. The hard grant is the Tailscale app capability
-`sesh.dev/cap/store`; values grant one or both verbs:
+`infinex.xyz/cap/sesh`; values grant one or both verbs:
 
 - `{"verb":"ship"}` permits PUT ingest.
 - `{"verb":"read"}` permits the read-only surface.
@@ -122,23 +122,23 @@ the store:
 ```json
 {
   "tagOwners": {
-    "tag:sesh-store": ["autogroup:admin"]
+    "tag:sesh": ["autogroup:admin"]
   },
   "grants": [
     {
       "src": ["group:sesh-shippers", "tag:sesh-ci"],
-      "dst": ["tag:sesh-store"],
+      "dst": ["tag:sesh"],
       "ip": ["tcp:8765"],
       "app": {
-        "sesh.dev/cap/store": [{"verb": "ship"}]
+        "infinex.xyz/cap/sesh": [{"verb": "ship"}]
       }
     },
     {
       "src": ["group:sesh-readers"],
-      "dst": ["tag:sesh-store"],
+      "dst": ["tag:sesh"],
       "ip": ["tcp:8766"],
       "app": {
-        "sesh.dev/cap/store": [{"verb": "read"}]
+        "infinex.xyz/cap/sesh": [{"verb": "read"}]
       }
     }
   ]
@@ -162,7 +162,7 @@ where this repo lives.
 
 ```sh
 GOOS=linux GOARCH=amd64 go build ./cmd/sesh   # or the matching platform
-TS_AUTHKEY=tskey-auth-... sesh serve --tsnet --tsnet-hostname sesh-store \
+TS_AUTHKEY=tskey-auth-... sesh serve --tsnet --tsnet-hostname sesh \
   --addr :8765 --surface-addr :8766 --data-dir /var/lib/sesh
 ```
 
@@ -184,7 +184,7 @@ check runs, which proves nothing. From a tailnet device OUTSIDE the grant:
 ```sh
 SID=$(uuidgen); FID=$(uuidgen)
 curl -si -H 'X-Sesh-Wire-Version: 1' \
-  "http://sesh-store.<tailnet>.ts.net:8765/v1/files/claude/$SID/$FID"
+  "http://sesh.<tailnet>.ts.net:8765/v1/files/claude/$SID/$FID"
 # REQUIRED: 403 out_of_grant (or connection refused by ACL). Anything else
 # stops the rollout here.
 ```
@@ -202,7 +202,7 @@ onboarded a week late backfills its full local history (up to Claude's
 # install a matching-platform build into the user's GOBIN
 just install
 # service (Linux and macOS take the same command):
-just deploy http://sesh-store.<tailnet>.ts.net:8765
+just deploy http://sesh.<tailnet>.ts.net:8765
 ```
 
 For older installations pinned to `/usr/local/bin/sesh`, run `just deploy` and then `just restart`:
@@ -244,7 +244,7 @@ The store's tailnet identity IS its URL; move the identity, not the nodes.
    untouched, source files remain the buffer; nothing is lost while dark).
 3. Copy the whole data dir (mirror/ + store.sqlite + tsnet/) to the new
    host, e.g. `rsync -a /var/lib/sesh/ newhost:/var/lib/sesh/`. The tsnet
-   state dir carries the node key: the new host comes up AS `sesh-store`,
+   state dir carries the node key: the new host comes up AS `sesh`,
    same MagicDNS name, same grant.
 4. Start `sesh serve --tsnet ...` on the new host with the same flags.
    Decommission the old host's copy (never run two stores on one identity).
@@ -255,7 +255,7 @@ The store's tailnet identity IS its URL; move the identity, not the nodes.
    (`cmp`), and confirm `sesh status` is 0 fleet-wide.
 
 If step 3 cannot carry the tsnet dir, re-auth the new host with the same
-`--tsnet-hostname sesh-store`; the MagicDNS URL is preserved and nodes still
+`--tsnet-hostname sesh`; the MagicDNS URL is preserved and nodes still
 change nothing.
 
 ### Field failure signature: stale binary vs newer registry

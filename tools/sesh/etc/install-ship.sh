@@ -14,7 +14,7 @@ usage() {
   cat <<'USAGE'
 Usage: install-ship.sh --store-url URL [--binary /abs/path/sesh] [--dry-run] [--force]
 
-  --store-url URL   store base URL, e.g. http://sesh-store.<tailnet>.ts.net:8765
+  --store-url URL   store base URL, e.g. http://sesh.<tailnet>.ts.net:8765
                     (required; the ONLY coupling between a node and the store.
                     tsnet mode is plain http — the tailnet encrypts transport)
   --binary PATH     absolute path to the sesh binary

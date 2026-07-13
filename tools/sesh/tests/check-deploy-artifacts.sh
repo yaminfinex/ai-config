@@ -45,7 +45,7 @@ TMPL="$ETC_DIR/launchd/dev.sesh.ship.plist.tmpl"
 RENDERED="$WORK/dev.sesh.ship.plist"
 sed \
   -e "s|@SESH_BIN@|$BIN/sesh|g" \
-  -e "s|@SESH_STORE_URL@|http://sesh-store.example.ts.net:8765|g" \
+  -e "s|@SESH_STORE_URL@|http://sesh.example.ts.net:8765|g" \
   -e "s|@HOME@|$HOME_DIR|g" \
   "$TMPL" >"$RENDERED"
 grep -q '@' "$RENDERED" && fail "unrendered @TOKEN@ left in plist: $(grep -o '@[A-Z_]*@' "$RENDERED" | sort -u)"
@@ -63,10 +63,10 @@ ok "template renders to a valid launchd plist with restart-on-failure semantics"
 step "installer dry-run: correct drop-in rendered, nothing written"
 DRY_OUT="$WORK/dry-run.out"
 HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run \
-  --store-url http://sesh-store.example.ts.net:8765 \
+  --store-url http://sesh.example.ts.net:8765 \
   --binary "$BIN/sesh" >"$DRY_OUT" 2>&1 ||
   fail "install-ship.sh --dry-run exited nonzero: $(cat "$DRY_OUT")"
-grep -q "Environment=SESH_STORE_URL=http://sesh-store.example.ts.net:8765" "$DRY_OUT" ||
+grep -q "Environment=SESH_STORE_URL=http://sesh.example.ts.net:8765" "$DRY_OUT" ||
   fail "dry-run drop-in lacks the store URL"
 grep -q "ExecStart=$BIN/sesh ship" "$DRY_OUT" ||
   fail "dry-run unit lacks the rendered absolute binary path"
@@ -76,7 +76,7 @@ ok "dry-run renders the unit binary path and URL drop-in, and writes nothing"
 step "installer default: resolves a user-owned GOBIN path without sudo"
 DEFAULT_GOBIN="$WORK/gobin"
 HOME="$HOME_DIR" GOBIN="$DEFAULT_GOBIN" bash "$ETC_DIR/install-ship.sh" --dry-run \
-  --store-url http://sesh-store.example.ts.net:8765 >"$WORK/default-bin.out" 2>&1 ||
+  --store-url http://sesh.example.ts.net:8765 >"$WORK/default-bin.out" 2>&1 ||
   fail "installer could not resolve its GOBIN default: $(cat "$WORK/default-bin.out")"
 grep -q "ExecStart=$DEFAULT_GOBIN/sesh ship" "$WORK/default-bin.out" ||
   fail "installer did not render the GOBIN default into ExecStart"
@@ -110,7 +110,7 @@ printf '# operator-tuned\n[Service]\nEnvironment=SESH_STORE_URL=http://operator.
   >"$DROPIN_DIR/10-local.conf"
 DROPIN_SHA=$(sha256sum "$DROPIN_DIR/10-local.conf" | cut -d' ' -f1)
 if HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run \
-  --store-url http://sesh-store.example.ts.net:8765 --binary "$BIN/sesh" \
+  --store-url http://sesh.example.ts.net:8765 --binary "$BIN/sesh" \
   >"$WORK/clobber.out" 2>&1; then
   fail "installer did not refuse a differing existing drop-in without --force"
 fi
@@ -118,7 +118,7 @@ grep -q "refusing to overwrite" "$WORK/clobber.out" || fail "refusal message mis
 [ "$(sha256sum "$DROPIN_DIR/10-local.conf" | cut -d' ' -f1)" = "$DROPIN_SHA" ] ||
   fail "refusal path modified the operator drop-in"
 HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run --force \
-  --store-url http://sesh-store.example.ts.net:8765 --binary "$BIN/sesh" \
+  --store-url http://sesh.example.ts.net:8765 --binary "$BIN/sesh" \
   >/dev/null 2>&1 || fail "--force did not override the drop-in refusal"
 rm -rf "$HOME_DIR/.config"
 ok "differing drop-in refused untouched; --force overrides"

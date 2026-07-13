@@ -366,7 +366,7 @@ func testCapMap(verbs ...string) tailcfg.PeerCapMap {
 	for _, verb := range verbs {
 		values = append(values, tailcfg.RawMessage(`{"verb":"`+verb+`"}`))
 	}
-	return tailcfg.PeerCapMap{store.TailnetCapabilitySeshStore: values}
+	return tailcfg.PeerCapMap{store.TailnetCapabilitySesh: values}
 }
 
 func TestStatusReportsHealthyStore(t *testing.T) {
