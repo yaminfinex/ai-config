@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-13 01:45'
+updated_date: '2026-07-13 02:07'
 labels: []
 dependencies: []
 priority: medium
@@ -47,4 +47,6 @@ CORRECTION to U1 merge note: house battery count on main is 54 (53 + check-grok-
 2026-07-13: U2 launch contract dispatched — worker (codex 5.6 high) in worktree task-170-u2-launch, thread task170u2, brief napkins/run-herder-dx/task-170-u2-implement-brief.md. Scope: DR-3/DR-4 launch contract behind the activation gate (spawn --agent grok unchanged); owner rulings carried (Grok 4.5 pin w/ id resolution recorded, no bypass mapping, blanket smoke spend, boot-arming fallback pre-approved); U1-review context-hygiene item in scope (trim send result or doctrine line).
 
 2026-07-13 U2 deviation triage: brief said spawn behavior unchanged; design row says default REFUSES family-not-activated unless opt-in. RULED design-binding (refusal default) — brief paraphrase was hera's error; raw-launch-under-family-name is the demo-documented hazard the refusal closes. Worker proceeding per design.
+
+2026-07-13 U2 auth escalation RULED: direct gated-launch smoke GREEN end-to-end (0.2.93->grok-4.5, /proc scratch isolation, full inbound+outbound receipt cycle, clean teardown) — ACCEPTED as U2 acceptance evidence. Root cause of spawn-via-server bind-timeout = ENVIRONMENT PRECONDITION not a code/contract defect: herder spawn --agent grok creates its pane via the long-lived herdr SERVER (pid 434437) so the grok child inherits the SERVER env, not the CLI caller's; that server lacks XAI_API_KEY (symptom-confirmed: no herdr pane carries it, incl. hera's; server /proc environ read denied). Contract-clean seed = the herdr server's own process env (pure inheritance) -> requires (re)starting the live herdr daemon with the key exported = OWNER call (live infra; deferred-to-natural-restart) AND an activation precondition. U2 is activation-gated so this does NOT block U2 merge. U2 code deliverable added: fail-closed cause+remedy refusal at spawn entry when XAI_API_KEY absent (not bind-timeout), key by name never value, pinned by test. OWNER-DESK: seed the live herdr server env with XAI_API_KEY before Grok activation (pairs naturally with the herdr-restart moment that also exercises observer part (b)).
 <!-- SECTION:NOTES:END -->
