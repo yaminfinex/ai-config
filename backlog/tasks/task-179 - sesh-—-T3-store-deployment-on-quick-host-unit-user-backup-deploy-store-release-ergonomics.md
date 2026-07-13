@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-13 02:22'
-updated_date: '2026-07-13 02:53'
+updated_date: '2026-07-13 05:53'
 labels:
   - sesh
 dependencies: []
@@ -38,4 +38,8 @@ EXECUTION PHASE (owner-driven, after tailnet admin delivers the tag:sesh auth ke
 
 <!-- SECTION:NOTES:BEGIN -->
 BUILD PHASE complete on branch task-179-store-deployment (95938f8 ops/justfile/docs, d94a52e gate) — substance review by reviewer-sune: original report bus #54891 (1 P1), F1 closure + CLEAN/MERGE-READY verdict bus #54981; three recorded deviations explicitly ACCEPTED (ops/ placement, no auto-restore on empty data dir, sesh-owned backup timer). Explicit coverage gaps (all owner-runbook items, untestable without VM/tailnet/root): tsnet join + key handoff end-to-end; gcloud IAP scp/ssh + GCS rsync stub-asserted only; useradd/chown/setgid effects skipped under non-root test seam; sqlite3 CLI shimmed via python3 locally; ssh alias + IAP ProxyCommand documented not executed. AC6 = EXECUTION PHASE, owner-driven, blocked on tailnet admin delivering the tag:sesh auth key.
+
+EXECUTION LOG 2026-07-13: bootstrap run (owner), store deployed via just deploy-store, running image ab27900, node joined tailnet as sesh (100.110.7.46, tagged-devices). Auth key scrubbed from /etc/sesh/serve.env post-join. DENY-VERIFY out-of-grant half RECORDED: valid-UUID GET /v1/files/claude/<SID>/<FID> from tag:superset device (yamen-superset-f4-med-syd-1) → HTTP 403 {"wire_version":1,"error":"out_of_grant","message":"tailnet identity 'tagged-devices' lacks ship verb in infinex.xyz/cap/sesh"} — deny-before-body confirmed, grant is applied and enforcing. In-grant half pending (needs member device). OPERATIONAL FLAG: primary dev machine is tag:superset ⇒ out-of-grant under member-only src — grant needs tag:superset added to src before this machine can ship (admin follow-up drafted).
+
+DENY-VERIFY COMPLETE 2026-07-13: in-grant half recorded — same valid-UUID probe from owner member device → HTTP 404 {"error":"not_found","shipper_action":"start_from_zero"}. Pair (403 outside / 404 inside) satisfies rollout runbook step 3; owner ratified by driving the probe. Rollout may proceed to first release.
 <!-- SECTION:NOTES:END -->
