@@ -18,10 +18,8 @@ import (
 // PinConfigDir when hcom local mode would otherwise redirect it.
 func IsHcomCapable(agent string) bool {
 	switch agent {
-	case "claude", "codex", "gemini":
+	case "claude", "codex", "gemini", "grok":
 		return true
-	case "grok":
-		return GrokActivated()
 	default:
 		return false
 	}
@@ -347,7 +345,7 @@ Options:
   tool-args    everything after the tool is passed through to it
 
 hcom is a HARD dependency — supported families launch through hcom, except the
-activation-gated Grok family whose herder-owned bridge consumes the real hcom binary
+Grok family whose herder-owned bridge consumes the real hcom binary
 directly. Launch never falls back to a raw tool. HCOM_DIR (the team bus) is inherited from the environment, and
 each tool's real config dir is pinned so auth survives an isolated team bus. The
 claude pin also seeds ~/.claude/.claude.json from ~/.claude.json when missing, so

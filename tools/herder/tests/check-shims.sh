@@ -32,10 +32,10 @@ PRODUCT_GROK_REFUSAL="$(env -i PATH="$PATH_BASE" HOME="$ROOT/product-home" \
   XDG_CACHE_HOME="$ROOT/product-cache" HERDER_STATE_DIR="$ROOT/product-state" \
   AI_CONFIG_ROOT="$AI_CONFIG_ROOT" "$AI_CONFIG_ROOT/bin/herder" launch grok 2>&1)"
 PRODUCT_GROK_RC=$?
-if [[ "$PRODUCT_GROK_RC" -ne 0 && "$PRODUCT_GROK_REFUSAL" == *"HERDER_GROK_ACTIVATED unset"* ]]; then
-  ok "grok refusal drift guard: product constant captured"
+if [[ "$PRODUCT_GROK_RC" -ne 0 && "$PRODUCT_GROK_REFUSAL" == *"XAI_API_KEY is absent or empty"* ]]; then
+  ok "grok auth refusal drift guard: product constant captured"
 else
-  bad "grok refusal drift guard: product constant captured" "rc=$PRODUCT_GROK_RC output=$PRODUCT_GROK_REFUSAL"
+  bad "grok auth refusal drift guard: product constant captured" "rc=$PRODUCT_GROK_RC output=$PRODUCT_GROK_REFUSAL"
 fi
 
 assert_eq() {
@@ -86,8 +86,8 @@ printf '%s\n' "$@" >"$PROBE/herder_argv"
 # REAL hcom (not itself) before forwarding to `herder hook`.
 printf '%s\n' "${HERDER_HOOK_HCOM-}" >"$PROBE/herder_hook_hcom"
 if [[ "${MOCK_HERDER_REFUSE_GROK:-}" == "1" && "${1:-}" == "launch" && "${2:-}" == "grok" ]]; then
-  : "${MOCK_GROK_ACTIVATION_ERROR:?}"
-  printf '%s\n' "$MOCK_GROK_ACTIVATION_ERROR" >&2
+  : "${MOCK_GROK_AUTH_ERROR:?}"
+  printf '%s\n' "$MOCK_GROK_AUTH_ERROR" >&2
   exit 1
 fi
 MOCK_HERDER_LAUNCH
@@ -308,26 +308,26 @@ assert_file_eq "grok shim: routes to launch contract" "$PROBE/herder_argv" \
   "$(printf '%s\n' launch grok --model grok-4.5 "two words")"
 assert_file_missing "grok shim: vendor binary not invoked" "$PROBE/real_grok_count"
 
-# 12. Activation remains fail-closed through the shim with launch's exact
-#     cause+remedy refusal; a planted vendor binary is never used as fallback.
-make_case grok_inactive
+# 12. The pane credential precondition remains fail-closed through the shim
+#     with launch's exact cause+remedy refusal; no vendor fallback is attempted.
+make_case grok_missing_auth
 err="$PROBE/stderr"
 env -i PATH="$SHIM_CASE:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
-  MOCK_HERDER_REFUSE_GROK=1 MOCK_GROK_ACTIVATION_ERROR="$PRODUCT_GROK_REFUSAL" \
+  MOCK_HERDER_REFUSE_GROK=1 MOCK_GROK_AUTH_ERROR="$PRODUCT_GROK_REFUSAL" \
   "$SHIM_CASE/grok" hello 2>"$err"
 rc=$?
 if [[ "$rc" -ne 0 ]]; then
-  ok "grok inactive: nonzero exit"
+  ok "grok missing auth: nonzero exit"
 else
-  bad "grok inactive: nonzero exit" "rc=0"
+  bad "grok missing auth: nonzero exit" "rc=0"
 fi
-assert_file_eq "grok inactive: launch refusal byte-identical to product constant" "$err" "$PRODUCT_GROK_REFUSAL"
-if grep -Fq 'GROK=/absolute/path/to/grok' "$err"; then
-  ok "grok inactive: explicit vendor escape named"
+assert_file_eq "grok missing auth: launch refusal byte-identical to product constant" "$err" "$PRODUCT_GROK_REFUSAL"
+if grep -Fq 'login-shell profile such as $HOME/.profile' "$err"; then
+  ok "grok missing auth: login-profile remedy named"
 else
-  bad "grok inactive: explicit vendor escape named" "stderr=$(cat "$err" 2>/dev/null)"
+  bad "grok missing auth: login-profile remedy named" "stderr=$(cat "$err" 2>/dev/null)"
 fi
-assert_file_missing "grok inactive: no vendor fallback" "$PROBE/real_grok_count"
+assert_file_missing "grok missing auth: no vendor fallback" "$PROBE/real_grok_count"
 
 # 13. GROK is the explicit one-shot escape hatch. It must be absolute, invoke
 #     exactly that vendor binary, and never enter the managed contract.

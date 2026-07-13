@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/grokbridge"
 	"ai-config/tools/herder/internal/herderpaths"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
@@ -485,15 +486,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		die(stderr, "--agent required")
 		return opts, 1
 	}
-	if opts.Agent == "grok" && !launchcmd.GrokActivated() {
-		die(stderr, launchcmd.GrokActivationError())
-		return opts, 1
-	}
 	if opts.Agent == "grok" {
-		if os.Getenv("XAI_API_KEY") == "" {
-			die(stderr, launchcmd.GrokAuthError())
-			return opts, 1
-		}
 		if err := launchcmd.ValidateGrokExtraArgs(opts.ExtraArgs, opts.Model != ""); err != nil {
 			die(stderr, err.Error())
 			return opts, 1
@@ -847,8 +840,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		grokEnv = " HERDER_STATE_DIR=" + shellquote.Quote(stateDir) +
 			" HERDER_GROK_SESSION_ID=" + shellquote.Quote(grokSessionID) +
 			" HERDER_GROK_CHILD_HOME=" + shellquote.Quote(os.Getenv("HOME")) +
-			" HERDER_GROK_PREASSIGNED=1" +
-			" HERDER_GROK_ACTIVATED=1"
+			" HERDER_GROK_PREASSIGNED=1"
 		for _, key := range []string{"HERDER_GROK_BIN", "HERDER_GROK_SUPPORTED_VERSIONS", "HERDER_REAL_HCOM"} {
 			if value := os.Getenv(key); value != "" {
 				grokEnv += " " + key + "=" + shellquote.Quote(value)
@@ -874,7 +866,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			argv = append(argv, "HCOM_DIR="+hcomDirEff, "PATH="+r.paths.ShimsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 		}
 		if opts.Agent == "grok" {
-			argv = append(argv, "HERDER_STATE_DIR="+stateDir, "HERDER_GROK_SESSION_ID="+grokSessionID, "HERDER_GROK_CHILD_HOME="+os.Getenv("HOME"), "HERDER_GROK_PREASSIGNED=1", "HERDER_GROK_ACTIVATED=1")
+			argv = append(argv, "HERDER_STATE_DIR="+stateDir, "HERDER_GROK_SESSION_ID="+grokSessionID, "HERDER_GROK_CHILD_HOME="+os.Getenv("HOME"), "HERDER_GROK_PREASSIGNED=1")
 			for _, key := range []string{"HERDER_GROK_BIN", "HERDER_GROK_SUPPORTED_VERSIONS", "HERDER_REAL_HCOM"} {
 				if value := os.Getenv(key); value != "" {
 					argv = append(argv, key+"="+value)
@@ -1007,7 +999,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		// Bind is the delivery gate, so --no-ready-wait cannot skip this wait
 		// (ruling: it stays meaningful only for the paste path). The trust
 		// modal blocks BOOT itself — pre-bind — so awaitBind clears it too.
-		capturedName, readyReason, trustBlocked, modalCleared = r.awaitBind(&paneID, registryPath, guid, hcomDirEff, launchPaneID)
+		capturedName, readyReason, trustBlocked, modalCleared = r.awaitBind(&paneID, registryPath, guid, hcomDirEff, launchPaneID, grokSessionID)
 		_ = modalCleared
 	case opts.NoReadyWait:
 		readyReason = "ready-wait skipped (--no-ready-wait)"
@@ -1015,6 +1007,9 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		readyReason, trustBlocked, modalCleared = r.awaitReady(&paneID)
 		sleepMS(opts.SettleMS)
 		_ = modalCleared
+	}
+	if code := r.failUnboundGrok(capturedName, readyReason, paneID, termID); code != 0 {
+		return code
 	}
 
 	promptSent := false
@@ -1099,9 +1094,10 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		hcomCapture = "captured"
 	} else if isHcomAgent {
 		// Post-write row enrichment trusts CHILD-SPECIFIC signals ONLY, the same
-		// discipline the bus-first bind gate enforces (childBoundBusOnce, 222b1bb):
-		// this guid's sidecar registry enrichment, or the hcom roster entry whose
-		// launch_context matches the frozen launch pane. The tag+cwd-unique
+		// discipline the bus-first bind gate enforces: this guid's sidecar registry
+		// enrichment, Grok's live bridge status operation, or (for other families)
+		// the hcom roster entry whose launch_context matches the frozen launch pane.
+		// The tag+cwd-unique
 		// fallback is GONE (TASK-033): even a UNIQUE same-tag+cwd match can be a
 		// STALE pre-existing agent still on the bus, and enriching the row with
 		// its name would make a later `herder send <guid>` message the WRONG
@@ -1110,7 +1106,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		// EMPTY for sidecar enrichment to fill from the child's own pane row
 		// (findRowForPane) later — never guessed.
 		hcomCapture = "not_found"
-		if name := registryCapturedName(registryPath, guid); name != "" {
+		if name := registryCapturedName(registryPath, guid); opts.Agent != "grok" && name != "" {
 			// The sidecar already persisted this enrichment to the registry; the
 			// in-memory record just needs the name for the summary/JSON. No second
 			// append.
@@ -1119,10 +1115,14 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		} else {
 			for i := 0; i < 6; i++ {
 				name := ""
-				for _, entry := range hcomList(hcomDirEff) {
-					if entry.LaunchContext.PaneID == launchPaneID {
-						name = entry.Name
-						break
+				if opts.Agent == "grok" {
+					name = grokBoundBusOnce(filepath.Dir(registryPath), guid, grokSessionID)
+				} else {
+					for _, entry := range hcomList(hcomDirEff) {
+						if entry.LaunchContext.PaneID == launchPaneID {
+							name = entry.Name
+							break
+						}
 					}
 				}
 				if name != "" {
@@ -1281,7 +1281,7 @@ func (r *runner) awaitReady(paneID *string) (reason string, trustBlocked bool, m
 // tag+cwd registry enrichment, which under load can lag past any window
 // (TASK-036) — a codex bind_timeout is expected, and its recovery is the exact
 // verbatim resend command reported below.
-func (r *runner) awaitBind(paneID *string, registryPath, guid, hcomDir, launchPaneID string) (name, reason string, trustBlocked, modalCleared bool) {
+func (r *runner) awaitBind(paneID *string, registryPath, guid, hcomDir, launchPaneID, grokSessionID string) (name, reason string, trustBlocked, modalCleared bool) {
 	waited := 0
 	boundName := ""
 	for waited < r.opts.BindTimeoutMS {
@@ -1303,7 +1303,11 @@ func (r *runner) awaitBind(paneID *string, registryPath, guid, hcomDir, launchPa
 			continue
 		}
 		if boundName == "" {
-			boundName = childBoundBusOnce(registryPath, guid, hcomDir, launchPaneID)
+			if r.opts.Agent == "grok" {
+				boundName = grokBoundBusOnce(filepath.Dir(registryPath), guid, grokSessionID)
+			} else {
+				boundName = childBoundBusOnce(registryPath, guid, hcomDir, launchPaneID)
+			}
 		}
 		if boundName != "" && (r.opts.ReadyMatch == "" || strings.Contains(text, r.opts.ReadyMatch)) {
 			return boundName, "bound" + trustSuffix(modalCleared), false, modalCleared
@@ -1327,6 +1331,18 @@ func (r *runner) awaitBind(paneID *string, registryPath, guid, hcomDir, launchPa
 		}
 	}
 	return "", reason, false, modalCleared
+}
+
+func (r *runner) failUnboundGrok(name, reason, paneID, terminalID string) int {
+	if r.opts.Agent != "grok" || name != "" || !strings.HasPrefix(reason, "bind-timeout") {
+		return 0
+	}
+	return r.failAfterLaunch(
+		"Grok bridge did not report a live bound bus before "+reason+
+			"; inspect the seat bridge log under HERDER_STATE_DIR/grok/<seat>/bridge.log, correct the bridge or hcom configuration, then retry the spawn",
+		paneID,
+		terminalID,
+	)
 }
 
 func trustSuffix(modalCleared bool) string {
@@ -1511,7 +1527,7 @@ func printHelp(stdout io.Writer) {
 		"                    another registry row (guid, label, terminal_id, pane_id, or recorded hcom",
 		"                    name), else accepts TARGET as a literal bus name if live on the child's bus",
 		"  --extra-arg ARG   pass ARG through to the agent (repeatable)",
-		"  --model ID        pin the model for claude, codex, or activation-gated grok",
+		"  --model ID        pin the model for claude, codex, or grok",
 		"  --json            print the registry record as JSON on stdout",
 		"",
 		"Advanced:",
@@ -1849,6 +1865,25 @@ func childBoundBusOnce(registryPath, guid, hcomDir, launchPaneID string) string 
 		}
 	}
 	return ""
+}
+
+// grokBoundBusOnce makes one generation-fenced status request to the owning
+// seat bridge. A successful response proves both that the bridge is live now
+// and which bus it owns; hcom's derived roster status is never a Grok liveness
+// signal.
+func grokBoundBusOnce(stateDir, guid, sessionID string) string {
+	if stateDir == "" || guid == "" || sessionID == "" {
+		return ""
+	}
+	client, err := grokbridge.DialClientForSession(grokbridge.SocketPath(stateDir, guid), sessionID)
+	if err != nil {
+		return ""
+	}
+	resp, err := client.Call(grokbridge.Request{Op: "status"})
+	if err != nil || resp.Status == nil || resp.Status.PID <= 0 {
+		return ""
+	}
+	return strings.TrimSpace(resp.Status.Bus)
 }
 
 // resendCommand renders the exact, copy-pasteable recovery command for a prompt

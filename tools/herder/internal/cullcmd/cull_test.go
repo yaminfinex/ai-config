@@ -132,7 +132,7 @@ func TestGrokCullDeadBridgeConvergesOfflineAndDropsRosterEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	registryPath := seedSpawnShapedGrokCullRow(t, state, guid, sessionID, "dead-bus")
-	mockDir, killProbe := installHcomKillMock(t)
+	mockDir, stopProbe, rowState := installHcomGrokTeardownMock(t, "dead-bus")
 	t.Setenv("PATH", mockDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	recs, err := registry.Load(registryPath)
 	if err != nil {
@@ -154,10 +154,13 @@ func TestGrokCullDeadBridgeConvergesOfflineAndDropsRosterEntry(t *testing.T) {
 	if !strings.Contains(string(data), `"kind":"undeliverable"`) {
 		t.Fatalf("journal=%s, want undeliverable", data)
 	}
-	if got := strings.TrimSpace(string(mustReadFile(t, killProbe))); got != "dead-bus" {
-		t.Fatalf("hcom kill probe=%q", got)
+	if got := strings.TrimSpace(string(mustReadFile(t, stopProbe))); got != "dead-bus" {
+		t.Fatalf("hcom stop probe=%q", got)
 	}
-	if !strings.Contains(stdout.String(), "bus: dropped @dead-bus") {
+	if _, err := os.Stat(rowState); !os.IsNotExist(err) {
+		t.Fatalf("Grok bus row residue remains after cull: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "bus: stopped @dead-bus (row absence confirmed)") {
 		t.Fatalf("stdout=%q", stdout.String())
 	}
 }
@@ -237,6 +240,43 @@ func installHcomKillMock(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	return dir, probe
+}
+
+func installHcomGrokTeardownMock(t *testing.T, busName string) (string, string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	stopProbe := filepath.Join(dir, "hcom-stop")
+	rowState := filepath.Join(dir, "live-row")
+	if err := os.WriteFile(rowState, []byte(busName+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"  stop) printf '%s\\n' \"$2\" >>\"" + stopProbe + "\"; [ \"$(tr -d '\\n' <\"" + rowState + "\")\" = \"$2\" ] && rm -f \"" + rowState + "\"; exit 0;;\n" +
+		"  list) if [ -f \"" + rowState + "\" ]; then printf '[{\"name\":\"%s\"}]\\n' \"$(tr -d '\\n' <\"" + rowState + "\")\"; else printf '[]\\n'; fi; exit 0;;\n" +
+		"  kill) exit 65;;\n" +
+		"esac\n" +
+		"exit 64\n"
+	if err := os.WriteFile(filepath.Join(dir, "hcom"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir, stopProbe, rowState
+}
+
+func TestNonGrokBusTeardownKeepsKillPath(t *testing.T) {
+	mockDir, killProbe := installHcomKillMock(t)
+	t.Setenv("PATH", mockDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var stdout strings.Builder
+	rec := registry.Record{Agent: "codex", HcomName: "other-bus"}
+	if err := teardownBusEntry(rec, &stdout); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(mustReadFile(t, killProbe))); got != "other-bus" {
+		t.Fatalf("non-Grok hcom kill probe=%q", got)
+	}
+	if !strings.Contains(stdout.String(), "bus: dropped @other-bus") {
+		t.Fatalf("stdout=%q", stdout.String())
+	}
 }
 
 func waitForCullBridge(t *testing.T, socket string) {

@@ -83,6 +83,28 @@ func processBindings(t *testing.T, db string) map[string]string {
 	return got
 }
 
+func identityCursorAndRows(t *testing.T, db, name string) (int64, int) {
+	t.Helper()
+	cmd := exec.Command("python3", "-c", `import json,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); row=c.execute("select coalesce(max(last_event_id),0),count(*) from instances where name=?",(sys.argv[2],)).fetchone(); print(json.dumps(row))`, db, name)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("read identity state: %v: %s", err, out)
+	}
+	var got []int64
+	if err = json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	return got[0], int(got[1])
+}
+
+func ageIdentityPlaceholder(t *testing.T, db, name string) {
+	t.Helper()
+	cmd := exec.Command("python3", "-c", `import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("update instances set created_at='2000-01-01T00:00:00+00:00' where name=?",(sys.argv[2],)); c.commit()`, db, name)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("age identity placeholder: %v: %s", err, out)
+	}
+}
+
 func shortState(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "gbs-")
@@ -94,22 +116,27 @@ func shortState(t *testing.T) string {
 }
 
 func TestRealHcomBindIdentityUsesSeatOwnedProcessAndPreservesForeignBinding(t *testing.T) {
+	t.Setenv("HCOM_TAG", "ambient-parent-tag")
 	bin := installedHcom(t)
 	bus := t.TempDir()
 	foreignName := startName(t, hrunProcess(t, bin, bus, "foreign-process", "start"))
+	seatName := startName(t, hrunProcess(t, bin, bus, "seat-process", "start"))
+	peerName := startName(t, hrunProcess(t, bin, bus, "peer-process", "start"))
+	hsend(t, bin, bus, peerName, []string{seatName}, nil, "pending-before-rebind")
+	db := filepath.Join(bus, "hcom.db")
+	unreadBefore := unread(t, bin, bus, seatName)
+	cursorBefore, rowsBefore := identityCursorAndRows(t, db, seatName)
+	if unreadBefore == 0 || rowsBefore != 1 {
+		t.Fatalf("seeded identity unread=%d rows=%d, want pending message on exactly one row", unreadBefore, rowsBefore)
+	}
 	state := shortState(t)
-	b, err := OpenBinder(BinderConfig{Seat: "seat-guid", StateDir: state, HcomBin: bin, HcomDir: bus})
+	b, err := OpenBinder(BinderConfig{Seat: "seat-process", StateDir: state, HcomBin: bin, HcomDir: bus})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	seatName, err := b.bindIdentity(context.Background())
-	if err != nil {
+	if err = writeAtomic(filepath.Join(SeatDir(state, "seat-process"), "bus-name"), []byte(seatName+"\n"), 0o600); err != nil {
 		t.Fatal(err)
-	}
-	got := processBindings(t, filepath.Join(bus, "hcom.db"))
-	if got["foreign-process"] != foreignName || got["seat-guid"] != seatName {
-		t.Fatalf("bindings after start=%v, want foreign preserved and seat-owned binding", got)
 	}
 	reclaimed, err := b.bindIdentity(context.Background())
 	if err != nil {
@@ -118,10 +145,39 @@ func TestRealHcomBindIdentityUsesSeatOwnedProcessAndPreservesForeignBinding(t *t
 	if reclaimed != seatName {
 		t.Fatalf("reclaimed %q, want %q", reclaimed, seatName)
 	}
-	got = processBindings(t, filepath.Join(bus, "hcom.db"))
-	if got["foreign-process"] != foreignName || got["seat-guid"] != seatName {
+	got := processBindings(t, db)
+	if got["foreign-process"] != foreignName || got["seat-process"] != seatName {
+		t.Fatalf("bindings after start=%v, want foreign preserved and seat-owned binding", got)
+	}
+	unreadAfter := unread(t, bin, bus, seatName)
+	cursorAfter, rowsAfter := identityCursorAndRows(t, db, seatName)
+	if unreadAfter != unreadBefore || cursorAfter != cursorBefore {
+		t.Fatalf("identified stabilization consumed pending state: unread %d -> %d, cursor %d -> %d", unreadBefore, unreadAfter, cursorBefore, cursorAfter)
+	}
+	if rowsAfter != 1 {
+		t.Fatalf("seat roster rows=%d after bind, want exactly one", rowsAfter)
+	}
+	reclaimed, err = b.bindIdentity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed != seatName {
+		t.Fatalf("reclaimed %q, want %q", reclaimed, seatName)
+	}
+	got = processBindings(t, db)
+	if got["foreign-process"] != foreignName || got["seat-process"] != seatName {
 		t.Fatalf("bindings after reclaim=%v, want both preserved", got)
 	}
+	if _, rows := identityCursorAndRows(t, db, seatName); rows != 1 {
+		t.Fatalf("seat roster rows=%d after reclaim, want exactly one", rows)
+	}
+
+	// Force the same observer-timeout condition that used to derive
+	// launch_failed after 30 seconds, without making the test sleep. The
+	// identified read performed by bindIdentity must keep the row targetable.
+	ageIdentityPlaceholder(t, db, seatName)
+	_ = hrun(t, bin, bus, "list", "--json")
+	hsend(t, bin, bus, peerName, []string{seatName}, nil, "accepted-after-placeholder-timeout")
 }
 
 func TestReadInvocationChildEnvironmentScrubsPinnedIdentityInputs(t *testing.T) {

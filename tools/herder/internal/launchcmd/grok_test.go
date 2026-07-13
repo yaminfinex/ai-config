@@ -48,7 +48,6 @@ func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
 	hcom := filepath.Join(root, "hcom-real")
 	writeExecutable(t, hcom, "#!/bin/sh\nexit 0\n")
 	credential := randomCredential(t)
-	t.Setenv(grokActivationEnv, "1")
 	t.Setenv("XAI_API_KEY", credential)
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("HERDER_GROK_CHILD_HOME", filepath.Join(root, "child-home"))
@@ -73,29 +72,22 @@ func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
 	return plan, credential
 }
 
-func TestGrokActivationGateDefaultsClosed(t *testing.T) {
+func TestGrokFamilyDefaultsOnAndChecksAuthBeforeState(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, "state")
-	t.Setenv(grokActivationEnv, "")
+	t.Setenv("XAI_API_KEY", "")
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("HERDER_STATE_DIR", state)
 	t.Setenv("HERDER_GUID", "")
 	t.Setenv("HERDER_GROK_SESSION_ID", "")
-	if GrokActivated() || IsHcomCapable("grok") {
-		t.Fatal("Grok family activated without the explicit gate")
+	if !IsHcomCapable("grok") {
+		t.Fatal("Grok family is not available by default")
 	}
-	if !strings.Contains(GrokActivationError(), "HERDER_GROK_ACTIVATED=1") {
-		t.Fatalf("activation error lacks remedy: %s", GrokActivationError())
-	}
-	var stdout, stderr bytes.Buffer
-	if rc := Run([]string{"grok"}, &stdout, &stderr); rc == 0 {
-		t.Fatal("inactive manual launch unexpectedly succeeded")
-	}
-	if os.Getenv("HERDER_GUID") != "" || os.Getenv("HERDER_GROK_SESSION_ID") != "" {
-		t.Fatal("inactive manual launch minted identity before refusing")
+	if _, err := prepareGrokLaunch(nil); err == nil || err.Error() != GrokAuthError() {
+		t.Fatalf("default-on auth preflight error = %v", err)
 	}
 	if _, err := os.Stat(state); !os.IsNotExist(err) {
-		t.Fatalf("inactive manual launch wrote state before refusing: %v", err)
+		t.Fatalf("auth preflight wrote state before refusing: %v", err)
 	}
 }
 
@@ -151,7 +143,6 @@ func TestManualGrokLaunchRefusesForeignFamilyGUIDWithoutSeatState(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(state, "registry.jsonl"), []byte(row), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(grokActivationEnv, "1")
 	t.Setenv("HERDER_STATE_DIR", state)
 	t.Setenv("HERDER_GUID", foreign)
 	t.Setenv("HERDER_GROK_SESSION_ID", "inherited-claude-session")
@@ -175,7 +166,6 @@ func TestManualMintedIdentityUsesPreassignedPlanAndCollisionFence(t *testing.T) 
 	state := filepath.Join(root, "state")
 	hcom := filepath.Join(root, "hcom-real")
 	writeExecutable(t, hcom, "#!/bin/sh\nexit 0\n")
-	t.Setenv(grokActivationEnv, "1")
 	t.Setenv("XAI_API_KEY", randomCredential(t))
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("HERDER_STATE_DIR", state)
@@ -264,15 +254,19 @@ func TestManualGrokBridgeHardKillFenceUsesParentDeathRetirement(t *testing.T) {
 	}
 }
 
-func TestGrokAuthFailureIsSeatScopedAndNamesServerEnvironmentRemedy(t *testing.T) {
+func TestGrokAuthFailureIsSeatScopedAndNamesLoginProfileRemedy(t *testing.T) {
 	state := t.TempDir()
-	t.Setenv(grokActivationEnv, "1")
 	t.Setenv("XAI_API_KEY", "")
 	t.Setenv("HERDER_STATE_DIR", state)
 	t.Setenv("HERDER_GUID", "seat-neutral")
 	_, err := prepareGrokLaunch(nil)
 	if err == nil || err.Error() != GrokAuthError() {
 		t.Fatalf("auth preflight error = %v", err)
+	}
+	for _, want := range []string{"XAI_API_KEY", "$HOME/.profile", "fresh pane"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("auth refusal %q missing %q", err, want)
+		}
 	}
 	recordGrokLaunchFailure(err)
 	if got := ReadGrokLaunchFailure(state, "seat-neutral"); got != GrokAuthError() {
@@ -296,7 +290,7 @@ func TestT20ResolvedBinaryVersionAndCapabilityGate(t *testing.T) {
 	}
 }
 
-func TestGrokCheckUsesLaunchGateWithoutActivationOrLiveHome(t *testing.T) {
+func TestGrokCheckUsesLaunchGateWithoutCredentialsOrLiveHome(t *testing.T) {
 	root := t.TempDir()
 	liveHome := filepath.Join(root, "live-home")
 	liveGrok := filepath.Join(liveHome, ".grok")
@@ -315,7 +309,6 @@ func TestGrokCheckUsesLaunchGateWithoutActivationOrLiveHome(t *testing.T) {
 	if err := os.WriteFile(stateSentinel, []byte("untouched\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(grokActivationEnv, "")
 	t.Setenv("XAI_API_KEY", randomCredential(t))
 	t.Setenv("HOME", liveHome)
 	t.Setenv("GROK_HOME", liveGrok)
@@ -395,7 +388,6 @@ func TestGrokLaunchLayerRefusesOwnedArgCollisions(t *testing.T) {
 		{name: "safe always approve", args: []string{"--always-approve"}, safe: "1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(grokActivationEnv, "1")
 			t.Setenv("XAI_API_KEY", randomCredential(t))
 			t.Setenv("HERDER_GROK_SAFE", tc.safe)
 			if _, err := prepareGrokLaunch(tc.args); err == nil || !strings.Contains(err.Error(), "remove") {
@@ -484,7 +476,6 @@ func TestGrokLifecycleParserCarriesResumeAndForkTargetsAsOwnedModeData(t *testin
 		{name: "fork", args: []string{"--fork", "grok", parent, "--parent-session", parent}, sid: child},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(grokActivationEnv, "1")
 			t.Setenv("HERDER_GROK_SESSION_ID", tc.sid)
 			t.Setenv("XAI_API_KEY", "")
 			var stdout, stderr bytes.Buffer
@@ -567,7 +558,6 @@ func TestGrokProbeStripsCredentialAndSuppressesChildStderr(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", credential)
 	t.Setenv("ANTHROPIC_API_KEY", credential)
 	t.Setenv("HERDER_STATE_DIR", state)
-	t.Setenv(grokActivationEnv, "1")
 	t.Setenv("HERDER_GUID", "probe-seat")
 
 	// The normal mock exits if the probe inherits XAI_API_KEY. A successful

@@ -22,7 +22,6 @@ import (
 )
 
 const (
-	grokActivationEnv  = "HERDER_GROK_ACTIVATED"
 	grokPreassignedEnv = "HERDER_GROK_PREASSIGNED"
 	grokDefaultModel   = "grok-4.5"
 	grokBootPrompt     = "Start your monitor per your rules, then list pending messages and proceed."
@@ -35,17 +34,8 @@ var grokRequiredFlags = []string{"--no-subagents", "--session-id", "--rules"}
 
 var grokMCPExecutable = os.Executable
 
-// GrokActivated is deliberately narrow: U2 ships the launch contract for
-// isolated validation, while ordinary Grok spawns remain blocked until the
-// lifecycle and observer contracts land.
-func GrokActivated() bool { return os.Getenv(grokActivationEnv) == "1" }
-
-func GrokActivationError() string {
-	return "Grok family is not activated (HERDER_GROK_ACTIVATED unset); bare grok fails closed by design. Set HERDER_GROK_ACTIVATED=1 only for an isolated, throwaway-state session. For the unmanaged vendor CLI, set GROK=/absolute/path/to/grok."
-}
-
 func GrokAuthError() string {
-	return "XAI_API_KEY not present in the herder spawn environment; export it in the environment that launches the herdr server, then respawn"
+	return "XAI_API_KEY is absent or empty in the fresh Grok pane environment; export it from a login-shell profile such as $HOME/.profile, then spawn a fresh pane"
 }
 
 // RunGrokCheck runs the same isolated binary version/capability gate used by
@@ -162,11 +152,6 @@ func BuildGrokLifecyclePlan(mode, target, preassigned string) (GrokLifecyclePlan
 }
 
 func runGrokLaunch(mode, target string, rest []string, stderr io.Writer) int {
-	if !GrokActivated() {
-		err := errors.New(GrokActivationError())
-		die(stderr, err.Error())
-		return 1
-	}
 	manual := false
 	if mode == "launch" {
 		var err error
@@ -352,17 +337,13 @@ func prepareGrokLaunch(rest []string) (grokLaunchPlan, error) {
 }
 
 func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (grokLaunchPlan, error) {
-	if !GrokActivated() {
-		return grokLaunchPlan{}, errors.New(GrokActivationError())
-	}
 	if err := validatePreparedGrokArgs(rest, os.Getenv("HERDER_GROK_SAFE") == "1"); err != nil {
 		return grokLaunchPlan{}, err
 	}
-	// Herdr creates panes from its long-lived server, so process-only auth must
-	// be present in the environment that launched that server; a CLI caller's
-	// later environment cannot be handed across via argv or files without
-	// violating the credential contract. The seat-scoped failure marker below
-	// lets spawn surface this precondition immediately instead of timing out.
+	// Check auth inside the fresh pane, after its login shell has loaded the
+	// owner's profile. The seat-scoped failure marker lets spawn surface this
+	// precondition immediately instead of timing out. The value stays in the
+	// pane environment and is never copied into argv, config, registry, or logs.
 	if os.Getenv("XAI_API_KEY") == "" {
 		return grokLaunchPlan{}, errors.New(GrokAuthError())
 	}
@@ -459,7 +440,7 @@ func ReadGrokLaunchFailure(stateDir, seat string) string {
 }
 
 func recordGrokLaunchFailure(err error) {
-	if !GrokActivated() || err == nil {
+	if err == nil {
 		return
 	}
 	stateDir, seat := grokStateDir(), os.Getenv("HERDER_GUID")
@@ -811,7 +792,7 @@ func validateGrokArgs(args []string, firstClassModel, allowMappedPermission bool
 		case "--session-id", "-s":
 			return fmt.Errorf("Grok passthrough %s conflicts with the preassigned session identity; remove it and let herder mint the session id", name)
 		case "--resume", "-r", "--continue", "-c", "--fork-session":
-			return fmt.Errorf("Grok passthrough %s conflicts with the fresh-seat launch contract; remove it and use the lifecycle command after that contract is activated", name)
+			return fmt.Errorf("Grok passthrough %s conflicts with the fresh-seat launch contract; remove it and use the matching herder lifecycle command after launch", name)
 		case "--rules":
 			return errors.New("Grok passthrough --rules conflicts with the seat doctrine; remove it so herder can install the monitor and receipt rules")
 		case "--permission-mode", "--bypassPermissions":

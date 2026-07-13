@@ -322,10 +322,11 @@ That model creates three intentional differences from running the vendor CLI man
 |---|---|---|---|
 | Home | Uses the vendor's live user home, normally `~/.grok` | Uses `<herder-state>/grok-home` | Keeps hooks, sessions, updates, and bridge configuration isolated from personal CLI state |
 | Binary | Uses whichever vendor executable the shell resolves | Uses the explicit characterized binary (`HERDER_GROK_BIN`, or the pinned default) and refuses unsupported versions | Prevents a vendor auto-update or PATH change from silently changing the transport contract |
-| Authentication | Uses whatever auth sources the manual CLI accepts | Inherits `XAI_API_KEY` from the launch environment; herder checks presence by name and never copies a value into argv, config, registry, or logs | Keeps credentials outside the managed home and makes the process boundary explicit |
+| Authentication | Uses whatever auth sources the manual CLI accepts | Inherits `XAI_API_KEY` from the fresh pane's login-shell profile; herder checks nonempty presence by name and never copies a value into argv, config, registry, or logs | Keeps credentials outside the managed home and makes the process boundary explicit |
 
-The owner's manual-verification path is `herder launch grok`. Once the activation prerequisites
-are intentionally enabled, that command mints a fresh seat/session identity and exercises the
+The owner's manual-verification path is `herder launch grok`. The Grok family is available by
+default; `XAI_API_KEY` must be exported from a login-shell profile such as `$HOME/.profile` so a
+fresh pane inherits it. The command mints a fresh seat/session identity and exercises the
 launch-side pinned binary, managed home, config rewrite, update suppression, doctrine, bridge,
 and credential contract. It is a bounded manual guest, not a registered spawn: it does not appear
 in `herder list` and cannot be targeted by `herder cull`. Its foreground wrapper owns the bridge,
@@ -334,9 +335,10 @@ to converge after an uncatchable wrapper kill on Linux. Other Unix kernels canno
 at the wrapper boundary: stop any surviving bridge supervisor with `SIGTERM` (its stop policy
 retires the journal), or run `herder grok retire-offline --seat <guid> --state-dir <herder-state>`
 after the bridge stops.
-Testing the raw vendor executable does not verify the harness. While the activation gate is off,
-both `herder launch grok` and the `grok` PATH shim fail closed with a refusal that names the explicit
-unmanaged escape hatch; there is never an automatic raw-vendor fallback.
+Testing the raw vendor executable does not verify the harness. Both `herder launch grok` and the
+`grok` PATH shim enter the managed contract by default; an absent `XAI_API_KEY` refuses with a
+login-profile remedy, and there is never an automatic raw-vendor fallback. Use
+`GROK=/absolute/path/to/grok grok ...` only for an explicit unmanaged invocation.
 
 ## Activation And Usage
 

@@ -421,7 +421,6 @@ func TestT14GrokResumeKeepsSeatSessionSpoolAndBusIdentity(t *testing.T) {
 	}
 
 	configureLifecycleTest(t, state)
-	t.Setenv("HERDER_GROK_ACTIVATED", "1")
 	t.Setenv("HERDER_LIFECYCLE_SETTLE_MS", "1500")
 	fake := &grokLifecycleHerdr{mode: "resume", childSID: sid, paneID: "pane-resume", terminalID: "term-resume"}
 	var stdout, stderr strings.Builder
@@ -475,7 +474,6 @@ func TestT15GrokForkGetsFreshSeatSpoolNameAndLineage(t *testing.T) {
 	defer parentBridge.close()
 
 	configureLifecycleTest(t, state)
-	t.Setenv("HERDER_GROK_ACTIVATED", "1")
 	t.Setenv("HERDER_LIFECYCLE_SETTLE_MS", "1500")
 	fake := &grokLifecycleHerdr{mode: "fork", parentSID: parentSID, paneID: "pane-child", terminalID: "term-child"}
 	var childBridge *lifecycleBridge

@@ -86,8 +86,8 @@ if [ "$RC" -eq 0 ]; then
 else
   bad "doctor drift case: warnings do not auto-fix" "rc=$RC output=$OUT"
 fi
-assert_contains "doctor: activation gate is product-state only" "$OUT" "Grok family is not activated (HERDER_GROK_ACTIVATED unset); bare grok fails closed by design. Set HERDER_GROK_ACTIVATED=1 only for an isolated, throwaway-state session."
-assert_contains "doctor: auth precondition reported by name" "$OUT" "XAI_API_KEY is absent"
+assert_contains "doctor: auth precondition reported by name" "$OUT" "XAI_API_KEY is absent or empty"
+assert_contains "doctor: auth remedy names login profile" "$OUT" 'login-shell profile such as $HOME/.profile'
 assert_contains "doctor: live-home confusion reported" "$OUT" "GROK_HOME points at the live user home"
 assert_contains "doctor: managed-home symlink reported" "$OUT" "managed Grok home is a symlink"
 assert_contains "doctor: PATH wrong version reported" "$OUT" "Grok vendor binary on PATH is outside launch support"
