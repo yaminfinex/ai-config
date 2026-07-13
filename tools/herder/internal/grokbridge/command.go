@@ -1,0 +1,182 @@
+package grokbridge
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+)
+
+func Run(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+		printHelp(stdout)
+		return 0
+	}
+	switch args[0] {
+	case "tap":
+		return runTap(args[1:], stdout, stderr)
+	case "mcp":
+		return runMCP(args[1:], stdout, stderr)
+	case "bridge":
+		return runBridge(args[1:], stderr)
+	default:
+		fmt.Fprintf(stderr, "herder grok: unknown subcommand %q — use tap, mcp, or bridge\n", args[0])
+		return 2
+	}
+}
+
+func printHelp(w io.Writer) {
+	fmt.Fprint(w, "herder grok — internal transport for first-class Grok seats.\n\nUsage:\n  herder grok tap --seat <guid>\n  herder grok mcp --seat <guid>\n  herder grok bridge --seat <guid> --hcom-bin <path> [--hcom-dir <path>] [--supervise]\n")
+}
+func stateDefault() string {
+	if v := os.Getenv("HERDER_STATE_DIR"); v != "" {
+		return v
+	}
+	if v := os.Getenv("XDG_STATE_HOME"); v != "" {
+		return filepath.Join(v, "herder")
+	}
+	h, _ := os.UserHomeDir()
+	return filepath.Join(h, ".local", "state", "herder")
+}
+func seatDefault() string {
+	return processCapability("HERDER_GROK_SEAT")
+}
+func commonFS(name string, stderr io.Writer) (*flag.FlagSet, *string, *string) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	seat := fs.String("seat", seatDefault(), "seat guid")
+	state := fs.String("state-dir", stateDefault(), "herder state directory")
+	return fs, seat, state
+}
+func runTap(args []string, stdout, stderr io.Writer) int {
+	fs, seat, state := commonFS("herder grok tap", stderr)
+	fs.SetOutput(io.Discard)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *seat == "" {
+		return 2
+	}
+	if err := Tap(SocketPath(*state, *seat), stdout); err != nil {
+		_ = appendDiagnostic(filepath.Join(SeatDir(*state, *seat), "tap.log"), err)
+		return 1
+	}
+	return 0
+}
+
+func appendDiagnostic(path string, err error) error {
+	if mkErr := os.MkdirAll(filepath.Dir(path), 0o700); mkErr != nil {
+		return mkErr
+	}
+	f, openErr := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if openErr != nil {
+		return openErr
+	}
+	defer f.Close()
+	_, writeErr := fmt.Fprintf(f, "%s %v\n", time.Now().UTC().Format(time.RFC3339), err)
+	return writeErr
+}
+func runMCP(args []string, stdout, stderr io.Writer) int {
+	fs, seat, state := commonFS("herder grok mcp", stderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *seat == "" {
+		fmt.Fprintln(stderr, "herder grok mcp: seat is required; pass --seat or set HERDER_GROK_SEAT")
+		return 2
+	}
+	if err := ServeMCP(SocketPath(*state, *seat), os.Stdin, stdout); err != nil {
+		fmt.Fprintf(stderr, "herder grok mcp: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runBridge(args []string, stderr io.Writer) int {
+	fs, seat, state := commonFS("herder grok bridge", stderr)
+	hbin := fs.String("hcom-bin", os.Getenv("HERDER_REAL_HCOM"), "real hcom binary")
+	hdir := fs.String("hcom-dir", os.Getenv("HCOM_DIR"), "hcom state directory")
+	name := fs.String("name", "", "existing bus name")
+	sessionID := fs.String("session-id", processCapability("HERDER_GROK_SESSION_ID"), "owning Grok session id used for request fencing")
+	events := fs.String("session-events", "", "Grok session events.jsonl used for idle-aware nudges")
+	nudgeAfter := fs.Duration("nudge-after", 30*time.Second, "idle time before a bounded wake nudge")
+	maxNudges := fs.Int("max-nudges", 2, "maximum idle-aware nudges per message")
+	supervise := fs.Bool("supervise", false, "restart the bridge with capped backoff")
+	child := fs.Bool("child", false, "internal supervised child")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *seat == "" || *hbin == "" {
+		fmt.Fprintln(stderr, "herder grok bridge: --seat and --hcom-bin are required; provide the seat and the resolved real hcom binary")
+		return 2
+	}
+	if *supervise && !*child {
+		return superviseBridge(args, *state, *seat)
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	b, err := OpenBinder(BinderConfig{Seat: *seat, StateDir: *state, HcomBin: *hbin, HcomDir: *hdir, BusName: *name, SessionEvents: *events, NudgeAfter: *nudgeAfter, MaxNudges: *maxNudges, SessionID: *sessionID})
+	if err != nil {
+		fmt.Fprintf(stderr, "herder grok bridge: %v\n", err)
+		return 1
+	}
+	defer b.Close()
+	if err = b.Serve(ctx); err != nil {
+		fmt.Fprintf(stderr, "herder grok bridge: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func superviseBridge(args []string, state, seat string) int {
+	dir := SeatDir(state, seat)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return 1
+	}
+	log, err := os.OpenFile(filepath.Join(dir, "bridge.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return 1
+	}
+	defer log.Close()
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintln(log, err)
+		return 1
+	}
+	childArgs := []string{"grok", "bridge"}
+	for _, a := range args {
+		if !strings.HasPrefix(a, "--supervise") && !strings.HasPrefix(a, "--child") {
+			childArgs = append(childArgs, a)
+		}
+	}
+	childArgs = append(childArgs, "--child")
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	backoff := 100 * time.Millisecond
+	for {
+		cmd := exec.CommandContext(ctx, exe, childArgs...)
+		cmd.Stdout = log
+		cmd.Stderr = log
+		err = cmd.Run()
+		if ctx.Err() != nil {
+			return 0
+		}
+		fmt.Fprintf(log, "%s bridge exited: %v\n", time.Now().UTC().Format(time.RFC3339), err)
+		select {
+		case <-ctx.Done():
+			return 0
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+		if backoff > 5*time.Second {
+			backoff = 5 * time.Second
+		}
+	}
+}
