@@ -39,26 +39,35 @@ type Projection struct {
 }
 
 type SessionRecord struct {
-	Kind        string          `json:"kind,omitempty"`
-	GUID        string          `json:"guid"`
-	Event       string          `json:"event"`
-	RecordedAt  string          `json:"recorded_at"`
-	Node        string          `json:"node"`
-	State       string          `json:"state"`
-	Label       string          `json:"label,omitempty"`
-	Role        string          `json:"role,omitempty"`
-	Tool        string          `json:"tool,omitempty"`
-	Seat        *Seat           `json:"seat,omitempty"`
-	SIDs        []SID           `json:"sids,omitempty"`
-	Continuity  string          `json:"continuity,omitempty"`
-	Lineage     Lineage         `json:"lineage,omitempty"`
-	Provenance  Provenance      `json:"provenance,omitempty"`
-	CloseResult string          `json:"close_result,omitempty"`
-	CloseReason string          `json:"close_reason,omitempty"`
-	ObservedVia string          `json:"observed_via,omitempty"`
-	Raw         json.RawMessage `json:"-"`
-	Ordinal     int             `json:"-"`
-	LegacyV1    bool            `json:"-"`
+	Kind         string          `json:"kind,omitempty"`
+	GUID         string          `json:"guid"`
+	Event        string          `json:"event"`
+	RecordedAt   string          `json:"recorded_at"`
+	Node         string          `json:"node"`
+	State        string          `json:"state"`
+	Label        string          `json:"label,omitempty"`
+	Role         string          `json:"role,omitempty"`
+	Tool         string          `json:"tool,omitempty"`
+	Seat         *Seat           `json:"seat,omitempty"`
+	Capabilities *Capabilities   `json:"capabilities,omitempty"`
+	SIDs         []SID           `json:"sids,omitempty"`
+	Continuity   string          `json:"continuity,omitempty"`
+	Lineage      Lineage         `json:"lineage,omitempty"`
+	Provenance   Provenance      `json:"provenance,omitempty"`
+	CloseResult  string          `json:"close_result,omitempty"`
+	CloseReason  string          `json:"close_reason,omitempty"`
+	ObservedVia  string          `json:"observed_via,omitempty"`
+	Raw          json.RawMessage `json:"-"`
+	Ordinal      int             `json:"-"`
+	LegacyV1     bool            `json:"-"`
+}
+
+type Capabilities struct {
+	Bus           string `json:"bus"`
+	Wake          string `json:"wake"`
+	Pending       int    `json:"pending"`
+	BinderPID     int    `json:"binder_pid,omitempty"`
+	Undeliverable int    `json:"undeliverable,omitempty"`
 }
 
 type Seat struct {

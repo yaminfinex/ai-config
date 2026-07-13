@@ -1977,6 +1977,79 @@ func TestAppendLegacyRetiredPreservesCloseReason(t *testing.T) {
 	}
 }
 
+func TestBridgeCapabilitiesRoundTripCarryForwardAndValidate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	guid, err := NewGUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := v2.SessionRecord{
+		GUID: guid, Event: "registered", State: v2.StateSeated, Label: "bridge-seat", Tool: "grok",
+		Seat:         &v2.Seat{Kind: "herdr", PaneID: "pane", TerminalID: "terminal"},
+		Capabilities: &v2.Capabilities{Bus: "bound", Wake: "armed", Pending: 2, BinderPID: 4321},
+	}
+	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{initial}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := SingleOutcome(outcomes); err != nil || outcome.Err() != nil {
+		t.Fatalf("initial outcome=%+v err=%v", outcome, err)
+	}
+	outcomes, err = UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, guid)
+		next := *current
+		next.Event = "labelled"
+		next.Label = "renamed-seat"
+		next.Capabilities = nil
+		return []v2.SessionRecord{next}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := SingleOutcome(outcomes); err != nil || outcome.Err() != nil {
+		t.Fatalf("carry outcome=%+v err=%v", outcome, err)
+	}
+	proj, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	carried := V2ByGUID(proj, guid)
+	if carried == nil || carried.Capabilities == nil || *carried.Capabilities != *initial.Capabilities {
+		t.Fatalf("carried capabilities=%+v", carried)
+	}
+	outcomes, err = UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, guid)
+		next := *current
+		next.Event = "unseated"
+		next.State = v2.StateUnseated
+		next.Seat = nil
+		next.Capabilities = &v2.Capabilities{Wake: "down", Pending: 0, Undeliverable: 2}
+		return []v2.SessionRecord{next}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := SingleOutcome(outcomes); err != nil || outcome.Status != WriteApplied || outcome.Err() != nil {
+		t.Fatalf("down outcome=%+v err=%v", outcome, err)
+	}
+	outcomes, err = UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
+		current := V2ByGUID(tx.Projection, guid)
+		next := *current
+		next.Event = "unseated"
+		next.Capabilities = &v2.Capabilities{Wake: "invented", Pending: -1}
+		return []v2.SessionRecord{next}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := SingleOutcome(outcomes)
+	if err != nil || outcome.Status != WriteRefused || outcome.Err() == nil {
+		t.Fatalf("invalid outcome=%+v err=%v", outcome, err)
+	}
+}
+
 func TestLockedValidatorPreservesRenameAgainstStaleEnrichment(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	guid, oldLabel := "guid-stale", "old"

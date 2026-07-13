@@ -462,6 +462,21 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 	if row.GUID == "" {
 		return row, false, fmt.Errorf("session row missing guid")
 	}
+	if row.Capabilities != nil {
+		switch row.Capabilities.Bus {
+		case "", "bound":
+		default:
+			return row, false, fmt.Errorf("session %s has invalid bus capability %q", row.GUID, row.Capabilities.Bus)
+		}
+		switch row.Capabilities.Wake {
+		case "", "armed", "degraded", "down":
+		default:
+			return row, false, fmt.Errorf("session %s has invalid wake capability %q", row.GUID, row.Capabilities.Wake)
+		}
+		if row.Capabilities.Pending < 0 || row.Capabilities.BinderPID < 0 || row.Capabilities.Undeliverable < 0 {
+			return row, false, fmt.Errorf("session %s has negative bridge capability counts", row.GUID)
+		}
+	}
 	if row.RecordedAt == "" {
 		row.RecordedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	}
@@ -484,7 +499,8 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 	}
 	switch row.Event {
 	case "unseated":
-		if current.State == row.State && (current.CloseResult != "" || row.CloseResult == "") && !current.LegacyV1 {
+		capabilitiesUnchanged := row.Capabilities == nil || sameCapabilities(row.Capabilities, current.Capabilities)
+		if current.State == row.State && (current.CloseResult != "" || row.CloseResult == "") && capabilitiesUnchanged && !current.LegacyV1 {
 			return row, false, nil
 		}
 		if current.State == v2.StateRetired || current.State == v2.StateLost {
@@ -553,6 +569,7 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 		if row.Provenance == (v2.Provenance{}) {
 			row.Provenance = current.Provenance
 		}
+		row.Capabilities = carryCapabilities(row.Capabilities, current.Capabilities)
 	case "registered":
 		if (current.State == v2.StateRetired || current.State == v2.StateLost) && !current.LegacyV1 {
 			return row, false, nil
@@ -589,6 +606,7 @@ func carryRegisteredFields(row, current v2.SessionRecord) v2.SessionRecord {
 	if row.Provenance == (v2.Provenance{}) {
 		row.Provenance = current.Provenance
 	}
+	row.Capabilities = carryCapabilities(row.Capabilities, current.Capabilities)
 	row.Seat = mergeSeatFields(row.Seat, current.Seat)
 	if carriedHcomName && row.Seat != nil {
 		verified := false
@@ -663,6 +681,18 @@ func cloneSeat(seat *v2.Seat) *v2.Seat {
 	return &cp
 }
 
+func carryCapabilities(patch, current *v2.Capabilities) *v2.Capabilities {
+	if patch != nil {
+		cp := *patch
+		return &cp
+	}
+	if current == nil {
+		return nil
+	}
+	cp := *current
+	return &cp
+}
+
 func carryIdentityFields(row, current v2.SessionRecord) v2.SessionRecord {
 	row.Label = current.Label
 	return carryUnlabelledIdentityFields(row, current)
@@ -683,6 +713,7 @@ func carryUnlabelledIdentityFields(row, current v2.SessionRecord) v2.SessionReco
 	if row.Provenance == (v2.Provenance{}) {
 		row.Provenance = current.Provenance
 	}
+	row.Capabilities = carryCapabilities(row.Capabilities, current.Capabilities)
 	return row
 }
 
@@ -718,6 +749,7 @@ func carrySeatFields(row, current v2.SessionRecord) v2.SessionRecord {
 	if row.Provenance == (v2.Provenance{}) {
 		row.Provenance = current.Provenance
 	}
+	row.Capabilities = carryCapabilities(row.Capabilities, current.Capabilities)
 	return row
 }
 
@@ -733,8 +765,16 @@ func sameProjectedSession(a, b v2.SessionRecord) bool {
 		a.Continuity == b.Continuity &&
 		a.Lineage == b.Lineage &&
 		a.Provenance == b.Provenance &&
+		sameCapabilities(a.Capabilities, b.Capabilities) &&
 		a.CloseResult == b.CloseResult &&
 		a.CloseReason == b.CloseReason
+}
+
+func sameCapabilities(a, b *v2.Capabilities) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func sameSeatFields(a, b *v2.Seat) bool {
