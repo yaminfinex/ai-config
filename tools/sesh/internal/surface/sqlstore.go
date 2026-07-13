@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -32,23 +33,93 @@ type MirrorPath func(tool wire.Tool, sessionID, fileUUID string, generation int)
 // The recency ranking is a surface-owned projection: the complete ranked
 // (tool, logical) key list plus total, held in memory and rebuilt only when
 // the store's cheap version stamp moves. Request-time work therefore stays
-// proportional to the page — a stamp probe plus key-constrained hydration —
-// while the corpus-wide aggregation runs only when the store actually
-// changed, and the surface always reads its own store's writes (no staleness
-// window).
+// proportional to the page — a stamp probe plus key-constrained hydration.
+//
+// The rebuild is single-flighted and serve-stale: at most one rebuild runs
+// at a time, and a request that observes a moved stamp returns the existing
+// projection immediately while the refresh runs in the background. Only the
+// cold start (no projection yet) blocks, and every concurrent cold request
+// shares that one build. This deliberately supersedes the original
+// read-your-own-writes property (rebuild inline whenever the stamp moved):
+// under bulk ingest the stamp moves between every request, which degenerated
+// to a corpus-scale rebuild per page load. Only the ranked key list and its
+// total can lag — page hydration always reads the live tables — and every
+// request that sees a moved stamp triggers a refresh, which is what bounds
+// the lag for a watched page. The exact staleness bound — including the
+// first-request-after-idle exception and the churn-straddling-a-rebuild
+// interleaving — is stated in the README surface section and the delta in
+// docs/design/2026-07-13-sesh-store-read-write-split.md; this comment only
+// owes the mechanism.
 type SQLStore struct {
 	db         *sql.DB
 	mirrorPath MirrorPath
+
+	// refreshCtx owns every background rebuild; Close cancels it and waits,
+	// so no refresh goroutine outlives the component that owns the DB.
+	refreshCtx    context.Context
+	cancelRefresh context.CancelFunc
 
 	mu      sync.Mutex
 	built   bool
 	ranking []sessionKey
 	stamp   rankingStamp
+	// refresh is the in-flight single-flighted rebuild, nil when idle.
+	refresh *projectionRefresh
+	// rebuildHook, when non-nil, runs at each rebuildStage of every rebuild
+	// — a test-only choke point (export_test.go) that makes single-flight,
+	// serve-stale, and the failure edges provable without timing games. A
+	// returned error aborts the rebuild exactly like the query at that stage
+	// failing. Guarded by mu; captured into the refresh before its goroutine
+	// starts.
+	rebuildHook func(rebuildStage) error
+}
+
+// rebuildStage names the points in a projection rebuild where the test hook
+// interposes.
+type rebuildStage int
+
+const (
+	rebuildStart   rebuildStage = iota // before any query
+	rebuildStamped                     // after the stamp probe, before the ranking query
+)
+
+// projectionRefresh is one in-flight projection rebuild. err is set before
+// done closes; cold requests (nothing to serve yet) block on done, everyone
+// else serves the previous projection without waiting.
+type projectionRefresh struct {
+	done chan struct{}
+	err  error
+	hook func(rebuildStage) error
 }
 
 // NewSQLStore builds the live Store over the store's database and mirror.
+// Callers that shut the database down must Close this store first.
 func NewSQLStore(db *sql.DB, mirrorPath MirrorPath) *SQLStore {
-	return &SQLStore{db: db, mirrorPath: mirrorPath}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &SQLStore{db: db, mirrorPath: mirrorPath, refreshCtx: ctx, cancelRefresh: cancel}
+}
+
+// Close stops the background refresh machinery: it cancels the refresh
+// context and waits until no rebuild is in flight. Run it before closing
+// the database this store reads.
+func (s *SQLStore) Close() {
+	s.cancelRefresh()
+	s.waitProjectionIdle()
+}
+
+// waitProjectionIdle blocks until no rebuild is in flight. A refresh
+// triggered concurrently with Close fails fast on the canceled context and
+// clears itself, so the loop terminates.
+func (s *SQLStore) waitProjectionIdle() {
+	for {
+		s.mu.Lock()
+		run := s.refresh
+		s.mu.Unlock()
+		if run == nil {
+			return
+		}
+		<-run.done
+	}
 }
 
 // mirrorGen is one files-table generation row.
@@ -113,27 +184,106 @@ func (s *SQLStore) RecentSessions(ctx context.Context, limit, offset int) ([]Ses
 	return sums, total, nil
 }
 
-// rankedKeys returns the current recency projection, rebuilding it only when
-// the version stamp moved. Steady state (no new bytes since the last render)
-// costs one probe; under continuous ingest a rebuild can run per request,
-// but it is keys-only and milliseconds at fleet scale, and the page's 60s
-// poll cadence keeps it rare in practice.
+// rankedKeys returns the current recency projection. Steady state (no new
+// bytes since the last render) costs one probe; a moved stamp serves the
+// existing projection immediately and triggers the single-flighted
+// background refresh, so no request after the cold start ever waits on a
+// corpus-scale rebuild.
 func (s *SQLStore) rankedKeys(ctx context.Context) ([]sessionKey, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	var stamp rankingStamp
 	if err := s.db.QueryRowContext(ctx, rankingStampSQL).Scan(&stamp.indexMax, &stamp.filesMax); err != nil {
 		return nil, err
 	}
-	if s.built && stamp == s.stamp {
-		return s.ranking, nil
+	s.mu.Lock()
+	if s.built {
+		ranking := s.ranking
+		if stamp != s.stamp {
+			s.startRefreshLocked()
+		}
+		s.mu.Unlock()
+		return ranking, nil
 	}
-	ranking, err := s.rankSessionKeys(ctx)
-	if err != nil {
-		return nil, err
+	// Cold start: nothing to serve stale — join the single-flighted first
+	// build so concurrent cold requests share one rebuild.
+	run := s.startRefreshLocked()
+	s.mu.Unlock()
+	select {
+	case <-run.done:
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	s.built, s.ranking, s.stamp = true, ranking, stamp
-	return s.ranking, nil
+	if run.err != nil {
+		return nil, run.err
+	}
+	s.mu.Lock()
+	ranking := s.ranking
+	s.mu.Unlock()
+	return ranking, nil
+}
+
+// startRefreshLocked returns the in-flight rebuild, starting one when idle.
+// Callers hold s.mu.
+func (s *SQLStore) startRefreshLocked() *projectionRefresh {
+	if s.refresh != nil {
+		return s.refresh
+	}
+	run := &projectionRefresh{done: make(chan struct{}), hook: s.rebuildHook}
+	s.refresh = run
+	go s.runRefresh(run)
+	return run
+}
+
+// runRefresh executes one projection rebuild off the request path, on the
+// store-lifetime refresh context: the request that triggered it returns
+// (stale) long before the rebuild finishes, and Close — not request
+// lifetimes — owns the goroutine. The duration lands in the debug journal —
+// identifier-free by construction (a duration and a count), same contract
+// as the per-request timing.
+func (s *SQLStore) runRefresh(run *projectionRefresh) {
+	start := time.Now()
+	var stamp rankingStamp
+	var ranking []sessionKey
+	err := func() error {
+		if run.hook != nil {
+			if err := run.hook(rebuildStart); err != nil {
+				return err
+			}
+		}
+		// Stamp before ranking: a write landing between the two reads leaves
+		// the stored stamp conservative, so the next probe sees it as moved
+		// and refreshes again — changes are never silently absorbed (at the
+		// cost of one extra rebuild when churn straddles this gap).
+		if err := s.db.QueryRowContext(s.refreshCtx, rankingStampSQL).Scan(&stamp.indexMax, &stamp.filesMax); err != nil {
+			return err
+		}
+		if run.hook != nil {
+			if err := run.hook(rebuildStamped); err != nil {
+				return err
+			}
+		}
+		var err error
+		ranking, err = s.rankSessionKeys(s.refreshCtx)
+		return err
+	}()
+	s.mu.Lock()
+	if err == nil {
+		s.built, s.ranking, s.stamp = true, ranking, stamp
+	}
+	run.err = err
+	s.refresh = nil
+	s.mu.Unlock()
+	close(run.done)
+	switch {
+	case err == nil:
+		slog.Debug("recency projection rebuild", "duration", time.Since(start), "sessions", len(ranking))
+	case s.refreshCtx.Err() != nil:
+		// Shutdown races a triggered refresh by design; not a failure.
+		slog.Debug("recency projection rebuild canceled by close", "duration", time.Since(start))
+	default:
+		// Stale keeps serving; the next request that sees a moved stamp
+		// retries. Cold waiters got the error through run.err.
+		slog.Warn("recency projection rebuild failed", "duration", time.Since(start), "error", err)
+	}
 }
 
 // rankSessionKeys is the projection rebuild: every logical session ranked by

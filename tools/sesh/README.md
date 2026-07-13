@@ -133,9 +133,33 @@ and `/nodes` last-PUT status. The recency homepage is bounded: request-time
 work is proportional to the page, not the corpus (fleet corpora run to
 thousands of files per node). `surface.SQLStore` maintains a recency
 projection — the ranked session-key list, rebuilt only when a cheap store
-version stamp moves, so the surface always reads its own store's writes —
-and each request
-slices one page of it (latest 50 by default) and hydrates just those
+version stamp moves. The rebuild is single-flighted and
+serve-stale-while-revalidating: at most one rebuild runs at a time, a
+request that observes a moved stamp returns the previous projection
+immediately while the refresh runs in the background, and only the very
+first request after startup waits (all concurrent cold requests share that
+one build). This supersedes the projection's original read-your-own-writes
+property: under bulk ingest the stamp moves between every request, and
+rebuilding inline degenerated to a corpus-scale rebuild per page load.
+Staleness is bounded only while the page is watched, and the bound is: only
+the ranked list and its total can lag (session hydration always reads the
+live tables), every request that sees a moved stamp triggers a refresh, and
+the homepage polls every 60 s, so under continuous ingest a watched page
+serves a list at most one poll interval plus two rebuild durations behind
+the store (the poll that observes a completed rebuild serves that rebuild's
+snapshot and triggers the next). Once ingest quiesces, the list converges
+after any in-flight rebuild completes plus at most one more — writes landing
+between a rebuild's stamp probe and its ranking query are present in the
+published list but re-verified by one extra rebuild, never silently
+absorbed — surfaced by the next poll. Unwatched staleness is NOT bounded:
+the first request after an idle period serves the projection from the
+previous visit, however old, and its triggered refresh plus the page's own
+poll converge as above. That trade is deliberate — a page load never blocks
+on a corpus-scale rebuild, which is exactly the onboarding moment (bulk
+ingest plus first visits) that motivated this design. Rebuild duration
+lands in the `SESH_DEBUG` journal (identifier-free: a
+duration and a session count). Each request
+slices one page of the projection (latest 50 by default) and hydrates just those
 sessions through index-seeking, key-constrained queries (the per-page facts
 lookups seek the additive `fact_observations_session` bookkeeping index; the
 frozen wire-doc index schema is untouched). The page states its bound
@@ -153,8 +177,15 @@ serving time and per-phase append-index timing, the first stop for "where
 does store time go" on a live node. Gates: `tests/check-surface-fixtures.sh` (fixture-backed
 renders, plus the 5k-session corpus test proving bounded query plans — no
 corpus-table SCAN on the warm path, fixed per-request query count, amortized
-rebuilds — with a self-check that the plan gate catches reintroduced scans)
-and `tests/check-surface-live.sh` (real serve + ship, S2 renders once).
+rebuilds — with a self-check that the plan gate catches reintroduced scans,
+and the single-flight/serve-stale tests proving concurrent requests never
+duplicate a rebuild, return promptly with the previous projection while one
+runs, converge per the stated bound — including the one-extra-rebuild
+interleaving when churn straddles a rebuild's stamp probe — and that a
+failed rebuild clears the latch while stale keeps serving and a canceled
+cold waiter never wedges the shared build)
+and `tests/check-surface-live.sh` (real serve + ship, S2 renders once,
+recency page convergence within the serve-stale bound).
 
 ## Release channel
 

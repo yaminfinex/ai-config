@@ -66,13 +66,22 @@ FILES=$(dbq 'SELECT COUNT(DISTINCT file_uuid) FROM sesh_index_messages WHERE qua
 [ "$FILES" = "2" ] || fail "terminal index holds $FILES file_uuids, want 2"
 ok "one logical session ($LOGICAL) with 334 deduped rows across 2 files"
 
-# Everything below reads the terminal index state waited on above; the
-# surface serves from the same DB, so these are plain asserts, not waits.
-step "recency page lists exactly one session for the pair"
-page=$(curl -sf "$SURFACE_URL/") || fail "GET / failed"
-links=$(grep -o 'href="/s/claude/[0-9a-f-]*"' <<<"$page" | sort -u | wc -l)
-[ "$links" = "1" ] || fail "recency page shows $links claude session links, want 1"
-grep -q "$LOGICAL" <<<"$page" || fail "recency page does not link the logical session"
+# Everything below reads the terminal index state waited on above. The
+# transcript/raw routes hydrate live tables, so those are plain asserts —
+# but the recency LIST is a serve-stale projection: a page load may return
+# the previous (here: empty, built at boot) projection while the
+# single-flighted rebuild runs in the background, converging within any
+# in-flight rebuild plus at most one more once ingest quiesces (README
+# surface section; read-write-split design note delta). Ingest quiesced
+# above, so poll GET / until the rebuild(s) land — this consciously
+# replaces the old read-your-own-writes plain assert.
+step "recency page converges to exactly one session for the pair"
+recency_lists_pair() {
+  page=$(curl -sf "$SURFACE_URL/") || return 1
+  [ "$(grep -o 'href="/s/claude/[0-9a-f-]*"' <<<"$page" | sort -u | wc -l)" = "1" ] &&
+    grep -q "$LOGICAL" <<<"$page"
+}
+wait_for "recency projection to converge (serve-stale bound after quiescence)" 15 recency_lists_pair
 
 step "drill-down renders ONE transcript (no duplicated history)"
 transcript=$(curl -sf "$SURFACE_URL/s/claude/$LOGICAL") || fail "GET transcript failed"

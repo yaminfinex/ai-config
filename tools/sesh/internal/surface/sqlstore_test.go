@@ -205,6 +205,14 @@ func TestSQLStoreCollectsOwnerClaimsFromObservationLog(t *testing.T) {
 	if do := sum.DisplayOwner(); !do.Conflict || do.Name != "" {
 		t.Fatalf("display owner = %+v, want conflict with honest absence", do)
 	}
+	// The recency projection serves stale-while-revalidating: the earlier
+	// RecentSessions built it before the conflicted session's PUTs, so
+	// trigger the refresh and wait for convergence before asserting on the
+	// rendered list.
+	if _, _, err := live.RecentSessions(t.Context(), 10, 0); err != nil {
+		t.Fatal(err)
+	}
+	live.WaitProjectionIdle()
 	body := mustGet200(t, newServer(t, live), "/")
 	if !strings.Contains(body, "conflicting claims") {
 		t.Error("recency page must badge the conflicted session")
