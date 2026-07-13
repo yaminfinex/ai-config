@@ -348,10 +348,13 @@ truth:
    `file_generation` UUID stamped as its first record at creation and at
    every rotation-reseed (both happen under the registry write lock, so the
    stamp is atomic with file birth; requires the registry-format amendment
-   §8-A6; the delivery journal is a new format and simply starts with one).
-   Wire identity = (node, file class, file_generation), immutable and
-   available from byte 0. The head fingerprint is kept as a **cross-check**
-   on reconnect, never as identity.
+   §8-A6, including its one-shot migration for the installed headerless
+   live file; the delivery journal is a new format and simply starts with
+   one). Wire identity = (node, file class, file_generation), immutable and
+   available from byte 0 — except the one pre-amendment headerless archive
+   A6's migration preserves untouched, whose transport identity is its
+   content digest (immutable file, stable digest; §8-A6). The head
+   fingerprint is kept as a **cross-check** on reconnect, never as identity.
 
    Replay rules, adopted from the frozen wire by reference where they
    genuinely apply, defined explicitly where they do not:
@@ -359,11 +362,24 @@ truth:
      verbatim (`docs/specs/sesh-wire.md` §Invariants).
    - **Reconnect**: the node asks the server's high-water per
      file_generation (the recovery-lookup idiom) and resumes from it.
-   - **Byte-overlap validation after ACK loss**: when the node's cursor is
-     ahead of the server's high-water (an ACK was lost), the node re-ships
-     from the server's high-water; before appending, the server verifies the
-     re-shipped overlap window byte-matches its mirror. At-least-once
-     shipping plus overlap validation replaces the sesh tuple-dedup summary.
+   - **Offset handling on every shipped range** — the frozen wire's three
+     cases, adopted with their actual directions
+     (`docs/specs/sesh-wire.md` §Successful ACK, §Offset routing): a durable
+     `200` ACK covers the **full request range** — those bytes are fsynced
+     in the mirror before the ACK leaves. The lost-ACK case therefore leaves
+     the **server ahead of the node**: the server fsynced and its ACK
+     didn't arrive, so the node retries at its old cursor. Per request,
+     against the server's high-water for that file_generation:
+     - *offset < high_water* (the normal lost-ACK retry): the server
+       byte-compares the overlapping range against its mirror; on match it
+       appends only the excess beyond high_water and ACKs the full range;
+     - *offset == high_water*: plain append;
+     - *offset > high_water* (the node believes more was ACKed than the
+       server holds — server state loss or rollback): the server returns
+       its high-water; the node rewinds its cursor to it and re-ships.
+       Never an ACK for bytes the mirror doesn't hold.
+     At-least-once shipping plus this overlap validation replaces the sesh
+     tuple-dedup summary.
    - **Overlap mismatch or in-generation size regression** (source below
      cursor within one file_generation): within a generation, files are
      append-only by contract — rotation is the only sanctioned truncation
@@ -442,25 +458,48 @@ explicitly NOT claimed against the installed bus.**
   design can honestly promise exactly-once delivery, or receipt-correlated
   dedup across a crash, on the installed bus — and this design does not.
 - **The delivery journal is node truth, not observer state.** It lives in the
-  herder state dir beside the registry, appended with fsync discipline. The
-  spoke is merely its usual writer, exactly as the observer is an ordinary
-  peer writer of the registry (`docs/specs/herder-spec.md` §3.1-13); any
-  later spoke incarnation — or a CLI verb — can read and recover it. This
-  keeps the observer *process* disposable: kill it at any point and every
-  journal state below remains truthful. The journal carries a self-identity
-  header (§3.2) and ships upstream as a file-tail stream, so **receipts
-  replay losslessly by construction**: a receipt that raced a disconnect
-  arrives when the journal bytes do.
-- **Execution protocol**, per fetched command, in order:
-  1. dedup: `command_id` already journaled → no new attempt (redispatch is
-     re-offering, never re-execution by itself);
+  herder state dir beside the registry. The spoke is merely its usual writer,
+  exactly as the observer is an ordinary peer writer of the registry
+  (`docs/specs/herder-spec.md` §3.1-13); any later spoke incarnation — or a
+  CLI recovery verb — can read and recover it. This keeps the observer
+  *process* disposable: kill it at any point and every journal state below
+  remains truthful. The journal carries a self-identity header (§3.2) and
+  ships upstream as a file-tail stream, so **receipts replay losslessly by
+  construction**: a receipt that raced a disconnect arrives when the journal
+  bytes do.
+- **Every journal decision is an exclusive journal transaction.** A file with
+  multiple legitimate writers is safe only the way the installed registry is
+  safe: **load → validate → append atomically under one exclusive flock**
+  (`docs/specs/herder-spec.md` §5.2 — the same discipline, applied to the
+  journal). Append+fsync alone is not a fence: two writers that both read
+  "command C unseen" before either lands would both execute. So dedup, the
+  fence check, the deadline check, attempt-number allocation, and the
+  attempt-open append are **one transaction**; attempt-close and fence rows
+  are each their own transaction; the decision and its append are never
+  separated. Execution (the local send) runs *outside* the lock, strictly
+  after its attempt-open transaction committed — a hung send can never wedge
+  the journal. Recovery — whoever runs it — scans for open attempts under
+  the same lock **before accepting any new work**, so overlapping spoke
+  incarnations or a concurrent CLI recovery cannot double-resolve the same
+  open attempt or double-allocate attempt n+1.
+- **Execution protocol**, per fetched command. Steps 1–4 are a single
+  exclusive journal transaction; step 5 runs outside the lock only after
+  step 4 committed; step 6 is its own transaction:
+  1. dedup: `command_id` already journaled with a **closed** outcome (or a
+     fence, or `indeterminate`) → no new attempt, report the recorded state
+     (redispatch is re-offering, never re-execution by itself). Already
+     journaled with an **open** attempt → this is not fresh work: branch
+     into the mode-specific recovery path (at-most-once → resolve
+     `indeterminate`; at-least-once → allocate attempt n+1 here, under this
+     same transaction) — never a second attempt-open for the same attempt
+     number;
   2. fence: a journaled fence row for `command_id` → refuse, report fenced;
-  3. deadline: past deadline by the node clock → journal a fence row
+  3. deadline: past deadline by the node clock → append a fence row
      (reason: expired), never execute;
   4. attempt-open: `{command_id, attempt n, envelope hash, opened_at}`
-     appended and fsynced **before** any execution;
+     appended and fsynced, committing the transaction;
   5. execute: invoke the local send path;
-  6. attempt-close: the local verdict appended verbatim.
+  6. attempt-close: the local verdict appended verbatim (own transaction).
 - **Crash truth table** — the observer must be killable at any point with
   truth intact, so the gap is modeled, not papered over:
   - killed before attempt-open: nothing happened; a later redispatch finds no
@@ -515,8 +554,13 @@ explicitly NOT claimed against the installed bus.**
   dispatched, or the node has **fenced** it — on its next contact the spoke
   is told which in-flight command_ids are cancel/expiry-pending and journals
   a fence row for each it has not claimed, reporting the fence upstream.
-  Fence-vs-claim races resolve deterministically by journal append order:
-  whichever row landed first wins. Deadlines are enforced at both edges (the
+  Fence-vs-claim races are real races and are resolved by the exclusive
+  journal transaction, not by observed append order: the fence transaction
+  refuses when an attempt-open already exists (and reports claimed instead);
+  the claim transaction refuses when a fence row already exists. Whichever
+  transaction commits first wins, and the loser *observes* that it lost —
+  decision and append are never separated, so a claimant can never execute a
+  command whose fence landed first. Deadlines are enforced at both edges (the
   server stops offering by its clock; the node fences at claim time by its
   clock); skew therefore can only make expiry more conservative, and a node
   whose clock ran behind may still execute — in which case evidence
@@ -832,12 +876,38 @@ ratified document.
   named successor; status and wording owner-ruled.
 - **A6 — `docs/specs/herder-spec.md` §5.1 (registry file self-identity)**:
   the registry gains a `kind: file` self-identity record — a
-  `file_generation` UUID stamped as the first row of the live file at
-  creation and at every rotation-reseed, under the write lock — the spoke's
-  wire identity for file-tail streams (§3.2). Bookkeeping-kind like node and
-  epoch records: invisible to session resolution, one more row the loader
-  partitions away. Existing files without a header get one stamped at their
-  next locked write (their pre-header bytes ride the first generation).
+  `file_generation` UUID stamped as **row 1** of every live file at creation
+  and at every rotation-reseed, under the write lock — the spoke's wire
+  identity for file-tail streams (§3.2). This is a real format amendment
+  with three parts, none free:
+  - **Loader support**: the installed loader **quarantines** unknown kinds
+    (`tools/herder/internal/registry/v2/registry.go`, kind switch default),
+    so `kind: file` must become a first-class bookkeeping kind — partitioned
+    away from session resolution like node and epoch records, with
+    structural validation (`file_generation` UUID present; expected at
+    row 1 of post-amendment files; a file-row anywhere else, or a
+    duplicate, is a flagged anomaly).
+  - **One-shot locked migration** — an existing headerless live file cannot
+    be given a byte-0 header by appending, and rewriting it in place would
+    shift every offset. At the first locked write after upgrade, under the
+    exclusive registry lock, in order: (1) the untouched headerless live
+    file is preserved by rotation to an archive name, bytes unchanged;
+    (2) that legacy archive's transport identity is its content digest
+    (immutable from this moment, so the digest is stable), recorded as
+    `predecessor: {archive name, size, sha256}` in the new header row;
+    (3) a new live file is created by the standing reseed rule
+    (latest row per non-retired guid, §5.1) with the `kind: file` row as
+    row 1; (4) the triggering candidate row appends normally. The shape is
+    deliberately the D12 precedent — migrate by one-shot
+    rewrite-with-archive at first write, never in place
+    (`docs/specs/herder-spec.md` §5.4) — and the migration *is* a rotation,
+    so no new machinery class is introduced.
+  - **Ships with the write path**: creation, rotation, and first-write
+    stamping live in the shared locked writer, which every writer — CLI
+    verbs and observer alike — already routes through. This changes which
+    unit may touch that code (§9 U-CORE territory), and changes nothing
+    about who may write: no write routes through the observer or the
+    server, before or after.
 - **`docs/specs/session-service-spec.md`, `docs/specs/sesh-wire.md`,
   `docs/specs/mission-spec.md`**: **no change**, deliberately — the §4 audit
   is the evidence. If the owner wants a cross-reference, the store design's
@@ -853,14 +923,21 @@ docs discipline: its doc rows are acceptance criteria, not follow-ups.
 
 - **Type**: build. **Depends on**: owner rulings §7-1..4 (naming, grants,
   ask, hosting).
-- **Territory**: new server code; a spoke module inside the observer; no
-  changes to `tools/sesh/`, `tools/mish/`, hcom, or any registry write path.
+- **Territory**: new server code; a spoke module inside the observer; the
+  shared registry writer/loader for exactly the §8-A6 surface (`kind: file`
+  loader support and validation; header stamping at creation/rotation; the
+  one-shot locked migration). No changes to `tools/sesh/`, `tools/mish/`, or
+  hcom. The write-authority invariant is untouched: every write still routes
+  through the shared locked writer invoked by CLI verbs or the observer as a
+  peer — no write routes through the observer or the server.
 - **Settled by this design**: DECISION-1 (standalone), DECISION-2
   (first-binding registration, quarantine, succession re-bind, one active
   spoke channel), DECISION-3 (stream classes; explicit file_generation
-  identity per §8-A6; ACK-then-advance; overlap validation; quarantine on
-  in-generation mutation; outbound-only posture), §2.1 failure-domain fence,
-  §2.3 storage classes, §2.4 version-skew stance.
+  identity per §8-A6 including the one-shot headerless migration and
+  legacy-archive digest identity; ACK-then-advance; the three offset cases
+  with overlap validation; quarantine on in-generation mutation;
+  outbound-only posture), §2.1 failure-domain fence, §2.3 storage classes,
+  §2.4 version-skew stance.
 - **AC sketch**: (1) a node registers on first spoke connect; reconnect from
   the same identity refreshes; the same node_id from a different tailnet
   identity is refused and quarantined (no streams accepted, dispatch
@@ -868,18 +945,24 @@ docs discipline: its doc rows are acceptance criteria, not follow-ups.
   quarantine and records the succession; a re-minted node appears as a new,
   never-merged node; (2) registry live log + rotation archives mirror
   byte-faithfully keyed by file_generation header identity, with
-  ACK-then-advance cursors and reconnect overlap validation; kill -9 of
-  observer or server at any point loses nothing after reconnect (replay
-  test with injected failures, including lost-ACK re-ship); (3) rotation
-  mid-ship stamps and ships a new generation with no duplicate parsed rows;
-  in-generation size regression or overlap mismatch quarantines the
-  generation, preserves mirrored bytes, and stops ACKs; (4) server parse
+  ACK-then-advance cursors and all three offset cases exercised (lost-ACK
+  retry below high-water with overlap compare-and-append-excess; equal
+  append; above high-water rewind — never an ACK for unheld bytes); kill -9
+  of observer or server at any point loses nothing after reconnect (replay
+  test with injected failures); (3) the A6 one-shot migration: a headerless
+  installed registry is archived untouched under its digest identity, the
+  new live file carries `kind: file` at row 1 with predecessor lineage, the
+  triggering write lands, and the loader accepts file-rows while flagging
+  misplaced or duplicate ones; (4) rotation mid-ship stamps and ships a new
+  generation with no duplicate parsed rows; in-generation size regression
+  or overlap mismatch quarantines the generation, preserves mirrored bytes,
+  and stops ACKs; (5) server parse
   quarantines malformed rows and reindexing rebuilds the projection from
-  mirrors alone; (5) all local herder verbs pass their existing ACs with the
-  server absent; (6) failure-domain fence under fault injection: a stalled
+  mirrors alone; (6) all local herder verbs pass their existing ACs with the
+  server absent; (7) failure-domain fence under fault injection: a stalled
   server connection, a wedged spoke goroutine, or a slow scan never delays
   the registry observation loop or heartbeat beyond its normal cadence
-  bound, and spoke teardown/restart loses no facts; (7) docs rows: server
+  bound, and spoke teardown/restart loses no facts; (8) docs rows: server
   README + system-boundaries cross-ref (owner-gated wording).
 
 ### U-DELIVER — inbound delivery + receipt machine
@@ -890,27 +973,37 @@ docs discipline: its doc rows are acceptance criteria, not follow-ups.
   command queue + receipt journal; the local send path is *consumed*, never
   modified.
 - **Settled by this design**: DECISION-4 in full — single deliver verb,
-  node-local resolution, the journal as node truth with attempt-open /
-  attempt-close protocol, delivery modes with at-most-once default and
-  `indeterminate` as a first-class terminal state, no exactly-once claim on
-  the installed bus, cancel/expiry fencing handshake, evidence-dominates
-  rule, vocabulary-minimum rule.
+  node-local resolution, the journal as node truth with the exclusive
+  journal transaction (load → validate → append under one flock, execution
+  outside the lock after commit), attempt-open / attempt-close protocol
+  with open-attempt recovery branching, delivery modes with at-most-once
+  default and `indeterminate` as a first-class terminal state, no
+  exactly-once claim on the installed bus, cancel/expiry fencing handshake
+  resolved by the transaction, evidence-dominates rule, vocabulary-minimum
+  rule.
 - **AC sketch**: (1) redispatch under a durable journal never re-executes by
   itself (dedup-by-command_id with forced redispatch); at-most-once: a kill
   between attempt-open and attempt-close surfaces `indeterminate` with its
   evidence and is never re-executed; at-least-once: recovery re-executes as
-  attempt n+1, every attempt visible; (2) no receipt state ever regresses; a
-  receipt racing a disconnect arrives via journal replay; (3) `concluded`
-  verdicts are reported only from node-journal outcomes, verbatim — a wedged
-  node yields `dispatched`/unknown, never a verdict — and no verdict is ever
-  stronger than the local engine's own (`delivered` | `queued` | refusal);
-  (4) local refusals surface verbatim with resolved-guid correlation where
-  applicable; (5) cancel/expiry: a cancel racing an in-flight dispatch
-  finalizes only after the node fences it; a claim landing first beats the
-  fence and the display shows "cancel requested, executed anyway"; nothing
-  finalizes `expired` unfenced; fence-vs-claim ordering is deterministic by
-  journal append order (race test); (6) the node contains no path by which
-  an inbound envelope reaches a shell or any verb other than send.
+  attempt n+1, every attempt visible; (2) journal transaction under real
+  concurrency: a spoke and a concurrent CLI recovery (and two overlapping
+  spoke incarnations) racing the same command produce exactly one
+  attempt-open under at-most-once and never a duplicate attempt number
+  under at-least-once (concurrent race tests, not sequenced mocks); (3) no
+  receipt state ever regresses; a receipt racing a disconnect arrives via
+  journal replay; (4) `concluded` verdicts are reported only from
+  node-journal outcomes, verbatim — a wedged node yields
+  `dispatched`/unknown, never a verdict — and no verdict is ever stronger
+  than the local engine's own (`delivered` | `queued` | refusal); (5) local
+  refusals surface verbatim with resolved-guid correlation where
+  applicable; (6) cancel/expiry: a cancel racing an in-flight dispatch
+  finalizes only after the node fences it; a claim committing first beats
+  the fence and the display shows "cancel requested, executed anyway";
+  nothing finalizes `expired` unfenced; concurrent claim and fence
+  transactions on one command commit in some order and the loser observes
+  it — no interleaving executes a fenced command (race test); (7) the node
+  contains no path by which an inbound envelope reaches a shell or any verb
+  other than send.
 
 ### U-OVERLAY — mission-directory snapshot overlays
 
