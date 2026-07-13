@@ -2,6 +2,7 @@ package grokbridge
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -129,6 +130,9 @@ func runBridge(args []string, stderr io.Writer) int {
 	}
 	defer b.Close()
 	if err = b.Serve(ctx); err != nil {
+		if errors.Is(err, errSeatRetired) {
+			return 24
+		}
 		fmt.Fprintf(stderr, "herder grok bridge: %v\n", err)
 		return 1
 	}
@@ -166,6 +170,9 @@ func superviseBridge(args []string, state, seat string) int {
 		cmd.Stderr = log
 		err = cmd.Run()
 		if ctx.Err() != nil {
+			return 0
+		}
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 24 {
 			return 0
 		}
 		fmt.Fprintf(log, "%s bridge exited: %v\n", time.Now().UTC().Format(time.RFC3339), err)

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ai-config/tools/herder/internal/registry"
 )
 
 func rawEvent(t *testing.T, id int64, text string) json.RawMessage {
@@ -316,6 +318,27 @@ func TestSocketPathLengthPreflightNamesRemedy(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "shorten --state-dir") {
 		t.Fatalf("err=%v", err)
 	}
+}
+
+func TestRegistryMintedGUIDIsAcceptedAsSeatIdentity(t *testing.T) {
+	guid, err := registry.NewGUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "hcom")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	state, err := os.MkdirTemp("/tmp", "grok-seat-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(state) })
+	b, err := OpenBinder(BinderConfig{Seat: guid, StateDir: state, HcomBin: bin})
+	if err != nil {
+		t.Fatalf("registry-minted guid %q rejected: %v", guid, err)
+	}
+	b.Close()
 }
 
 func TestDefaultWaitUsesHcomScaleWithoutCorrectnessWeight(t *testing.T) {

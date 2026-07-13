@@ -23,9 +23,18 @@ type Response struct {
 	OK         bool          `json:"ok"`
 	Generation uint64        `json:"generation"`
 	Error      string        `json:"error,omitempty"`
+	Status     *BridgeStatus `json:"status,omitempty"`
+	Retired    int           `json:"retired,omitempty"`
 	Message    *ReceiptView  `json:"message,omitempty"`
 	Pending    []ReceiptView `json:"pending,omitempty"`
 	Result     string        `json:"result,omitempty"`
+}
+
+type BridgeStatus struct {
+	PID     int    `json:"pid"`
+	Bus     string `json:"bus"`
+	Wake    string `json:"wake"`
+	Pending int    `json:"pending"`
 }
 
 type ReceiptView struct {

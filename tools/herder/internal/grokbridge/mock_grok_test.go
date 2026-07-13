@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -463,6 +464,96 @@ func TestT16SubagentBoundaryRejectsForeignAndUnownedSessionEvidence(t *testing.T
 	m.b.cfg.SessionID = ""
 	if _, err := dialClient(m.b.socket, "foreign"); err == nil || !strings.Contains(err.Error(), "no owning session") {
 		t.Fatalf("unowned bridge handshake err=%v", err)
+	}
+}
+
+func TestLifecycleStatusAndRetirementUseGenerationFencedSocket(t *testing.T) {
+	m := startMockBridge(t, t.TempDir(), "owner")
+	defer m.close()
+	m.queue(t, 31, "delivered")
+	m.queue(t, 32, "pending")
+	if _, err := m.b.journal.Fetch(31, m.b.generation); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.b.journal.Ack(31, m.b.generation); err != nil {
+		t.Fatal(err)
+	}
+
+	c := m.client(t)
+	status, err := c.Call(Request{Op: "status"})
+	if err != nil || status.Status == nil || status.Status.PID != os.Getpid() || status.Status.Bus != "bound" || status.Status.Wake != "degraded" || status.Status.Pending != 1 {
+		t.Fatalf("degraded status=%+v err=%v", status.Status, err)
+	}
+	tap := connectTap(t, m.b.socket, "owner")
+	defer tap.close()
+	deadline := time.Now().Add(time.Second)
+	for {
+		status, err = c.Call(Request{Op: "status"})
+		if err == nil && status.Status != nil && status.Status.Wake == "armed" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("armed status=%+v err=%v", status.Status, err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	stale, err := roundTrip(m.b.socket, Request{Op: "retire", Generation: m.b.generation - 1, SessionID: "owner"})
+	if err == nil || !strings.HasPrefix(stale.Error, "stale bridge generation ") || m.b.journal.receipts[32].Retired {
+		t.Fatalf("stale retire response=%+v err=%v retired=%v", stale, err, m.b.journal.receipts[32].Retired)
+	}
+	retired, err := c.Call(Request{Op: "retire"})
+	if err != nil || retired.Retired != 1 {
+		t.Fatalf("retire response=%+v err=%v", retired, err)
+	}
+	select {
+	case <-m.b.retired:
+	case <-time.After(time.Second):
+		t.Fatal("binder did not receive orderly retirement request")
+	}
+	if m.b.journal.receipts[31].Status() != "delivered" || m.b.journal.receipts[32].Status() != "undeliverable" {
+		t.Fatalf("statuses=%s,%s", m.b.journal.receipts[31].Status(), m.b.journal.receipts[32].Status())
+	}
+}
+
+func TestRetirementResponseStopsServingBinderOrderly(t *testing.T) {
+	state := t.TempDir()
+	hcom := filepath.Join(t.TempDir(), "hcom")
+	if err := os.WriteFile(hcom, []byte("#!/bin/sh\nif [ \"$1\" = start ]; then printf '%s\\n' '[hcom:seat-bus]'; exit 0; fi\ncase \" $* \" in *' --wait '*) exec sleep 60;; esac\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: hcom, SessionID: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- b.Serve(context.Background()) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if st, statErr := os.Stat(b.socket); statErr == nil && st.Mode()&os.ModeSocket != 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("binder socket did not become ready")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	c, err := dialClient(b.socket, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Call(Request{Op: "retire"})
+	if err != nil || !resp.OK {
+		t.Fatalf("retirement response=%+v err=%v", resp, err)
+	}
+	select {
+	case err = <-serveErr:
+		if !errors.Is(err, errSeatRetired) {
+			t.Fatalf("serve error=%v, want retirement sentinel", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("binder continued serving after retirement response")
 	}
 }
 

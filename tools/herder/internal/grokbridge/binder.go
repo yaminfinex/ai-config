@@ -44,6 +44,8 @@ type Binder struct {
 	socket      string
 	mu          sync.Mutex
 	taps        map[net.Conn]struct{}
+	retireOnce  sync.Once
+	retired     chan struct{}
 	afterAppend func(int, Receipt) error
 }
 
@@ -53,7 +55,7 @@ func SocketPath(stateDir, seat string) string {
 }
 
 func OpenBinder(cfg BinderConfig) (*Binder, error) {
-	if cfg.Seat == "" || strings.ContainsAny(cfg.Seat, `/\\\x00`) {
+	if cfg.Seat == "" || strings.ContainsAny(cfg.Seat, "/\\\x00") {
 		return nil, errors.New("seat must be a non-empty path-safe identifier")
 	}
 	if cfg.StateDir == "" {
@@ -111,7 +113,7 @@ func OpenBinder(cfg BinderConfig) (*Binder, error) {
 		lf.Close()
 		return nil, err
 	}
-	b := &Binder{cfg: cfg, journal: j, generation: gen, lock: lf, socket: socket, taps: make(map[net.Conn]struct{})}
+	b := &Binder{cfg: cfg, journal: j, generation: gen, lock: lf, socket: socket, taps: make(map[net.Conn]struct{}), retired: make(chan struct{})}
 	if err := writeAtomic(filepath.Join(dir, "hcom-bin"), []byte(cfg.HcomBin+"\n"), 0o600); err != nil {
 		b.Close()
 		return nil, err
@@ -137,6 +139,8 @@ func (b *Binder) Close() error {
 }
 
 func (b *Binder) Serve(ctx context.Context) error {
+	serveCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	name, err := b.bindIdentity(ctx)
 	if err != nil {
 		return err
@@ -153,19 +157,26 @@ func (b *Binder) Serve(ctx context.Context) error {
 	if err := os.Chmod(b.socket, 0o600); err != nil {
 		return err
 	}
-	go func() { <-ctx.Done(); ln.Close() }()
+	go func() { <-serveCtx.Done(); ln.Close() }()
 	errch := make(chan error, 3)
-	go func() { errch <- b.acceptLoop(ctx) }()
-	go func() { errch <- b.pickupLoop(ctx) }()
+	go func() { errch <- b.acceptLoop(serveCtx) }()
+	go func() { errch <- b.pickupLoop(serveCtx) }()
 	if b.cfg.SessionEvents != "" {
-		go func() { errch <- b.nudgeLoop(ctx) }()
+		go func() { errch <- b.nudgeLoop(serveCtx) }()
 	}
-	err = <-errch
-	if ctx.Err() != nil {
+	select {
+	case <-b.retired:
+		cancel()
+		return errSeatRetired
+	case err = <-errch:
+	}
+	if serveCtx.Err() != nil {
 		return nil
 	}
 	return err
 }
+
+var errSeatRetired = errors.New("Grok seat retired")
 
 func (b *Binder) bindIdentity(ctx context.Context) (string, error) {
 	namePath := filepath.Join(SeatDir(b.cfg.StateDir, b.cfg.Seat), "bus-name")
@@ -245,7 +256,12 @@ func (b *Binder) handle(c net.Conn) {
 		return
 	}
 	resp := b.execute(req)
-	json.NewEncoder(c).Encode(resp)
+	if err := json.NewEncoder(c).Encode(resp); err != nil {
+		return
+	}
+	if req.Op == "retire" && resp.OK {
+		b.retireOnce.Do(func() { close(b.retired) })
+	}
 }
 
 func (b *Binder) execute(req Request) Response {
@@ -263,6 +279,26 @@ func (b *Binder) execute(req Request) Response {
 		return r
 	}
 	switch req.Op {
+	case "status":
+		pending, err := b.journal.Pending(req.Generation, false)
+		if err != nil {
+			r.Error = err.Error()
+			return r
+		}
+		b.mu.Lock()
+		wake := "degraded"
+		if len(b.taps) > 0 {
+			wake = "armed"
+		}
+		b.mu.Unlock()
+		r.Status = &BridgeStatus{PID: os.Getpid(), Bus: "bound", Wake: wake, Pending: len(pending)}
+	case "retire":
+		count, err := b.journal.RetireUnacked(req.Generation)
+		if err != nil {
+			r.Error = err.Error()
+			return r
+		}
+		r.Retired = count
 	case "pending":
 		p, err := b.journal.Pending(req.Generation, true)
 		if err != nil {
