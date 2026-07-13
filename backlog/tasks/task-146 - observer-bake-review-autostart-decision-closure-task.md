@@ -4,7 +4,7 @@ title: 'observer: bake review + autostart decision (closure task)'
 status: In Progress
 assignee: []
 created_date: '2026-07-10 01:50'
-updated_date: '2026-07-12 01:57'
+updated_date: '2026-07-13 00:13'
 labels: []
 dependencies: []
 priority: high
@@ -40,4 +40,6 @@ OWNER RULING (2026-07-10, chat): synthetic exercise FIRST, then autostart ON. Ex
 SYNTHETIC EXERCISE part (a) PASSED (2026-07-10 21:22Z): throwaway bash probe 4fc253e1 spawned, its shell SIGKILLed without cull at 21:22:07Z; observer appended a typed unseated row IN THE SAME SECOND — close_result=observed_dead, reason "terminal_id absent after prior sighting on uninterrupted herdr socket connection", observed_via socket subscription sweep, sweep applied=1. Positive dead-detection write path proven live with honest evidence-citing output. Part (b) pending: one herdr restart to exercise reconnect/generation — needs an owner-picked moment (restart touches the live terminal host; kore mid-unit, mive live).
 
 OWNER (2026-07-12): part (b) herdr-restart exercise deferred to a NATURAL restart moment — the next herdr version bump. 146 stays open until then; observer continues as the manually-started instance; autostart flip waits for (b). TASK-145 implement leg is NOT blocked by this — its mechanism needs a running observer, which exists.
+
+2026-07-13: owner approved a read-only bake-review UPDATE unit (bake now ~3.5d vs the 16h baseline above). Dispatched worker (codex 5.6 high, read-only, thread task146, brief napkins/run-herder-dx/task-146-bake-review-brief.md): re-reads all four watch items over the full bake window + quantifies running-binary staleness (merges since 07-09 incl. TASK-162 observercmd fix — 'flip ON' implies restart onto current build). Part (b) herdr-restart exercise remains deferred to a natural restart per the 07-12 owner ruling; unit instructed not to recommend forcing one.
 <!-- SECTION:NOTES:END -->
