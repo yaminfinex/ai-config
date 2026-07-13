@@ -403,8 +403,10 @@ type wireKey struct {
 	wireID string
 }
 
-// keyValuesClause renders a row-value IN list — `(VALUES (?, ?), …)` — plus
-// its bind args for a set of two-column keys.
+// keyValuesClause renders a requested-keys derived table — `(VALUES (?, ?),
+// …)` — plus its bind args for a set of two-column keys. Hydration queries
+// JOIN it (columns column1/column2) instead of using a row-value IN, so the
+// per-key equality terms reach the named index as a full-key seek.
 func keyValuesClause(pairs [][2]any) (string, []any) {
 	var b strings.Builder
 	args := make([]any, 0, 2*len(pairs))
@@ -442,28 +444,41 @@ func wireKeyValues(keys []wireKey) (string, []any) {
 // requested logical id, plus unindexed generations whose wire claim IS the
 // requested id (honest fallback, matches the schema rule — the mirror is
 // truth and the surface must never be blind to it; those render raw).
+//
+// INDEXED BY is load-bearing on every sesh_index_messages access here and in
+// the sibling hydration queries: without it (and without ANALYZE stats) the
+// optimizer has been observed picking another index whose projected columns
+// feed the later join — e.g. sesh_index_messages_file or _overlap — seeking
+// only its tool=? prefix and walking every message row of the tool per
+// request. Pinning the index keeps the plan a full-key seek per requested
+// key, and turns index drift into a hard query error instead of a silent
+// corpus walk. The large-corpus gate asserts the resulting plans
+// term-by-term.
 func (s *SQLStore) memberGenerations(ctx context.Context, keys []sessionKey) (map[sessionKey][]mirrorGen, error) {
 	mappedClause, mappedArgs := sessionKeyValues(keys)
 	wireClause, wireArgs := sessionKeyValues(keys)
 	rows, err := s.db.QueryContext(ctx, `SELECT mk.logical, f.tool, f.session_id, f.file_uuid, f.generation,
 			COALESCE(f.created_at, ''), COALESCE(f.last_put_at, '')
 		FROM (
-			SELECT DISTINCT tool, wire_session_id, file_uuid, generation, logical_session_id AS logical
-			FROM sesh_index_messages
-			WHERE (tool, logical_session_id) IN `+mappedClause+`
+			SELECT DISTINCT m.tool AS tool, m.wire_session_id AS wire_session_id,
+				m.file_uuid AS file_uuid, m.generation AS generation,
+				m.logical_session_id AS logical
+			FROM `+mappedClause+` AS k
+			JOIN sesh_index_messages m INDEXED BY sesh_index_messages_logical
+				ON m.tool = k.column1 AND m.logical_session_id = k.column2
 		) mk
 		JOIN files f ON f.tool = mk.tool AND f.session_id = mk.wire_session_id
 			AND f.file_uuid = mk.file_uuid AND f.generation = mk.generation
 		UNION ALL
 		SELECT f.session_id, f.tool, f.session_id, f.file_uuid, f.generation,
 			COALESCE(f.created_at, ''), COALESCE(f.last_put_at, '')
-		FROM files f
-		WHERE (f.tool, f.session_id) IN `+wireClause+`
-			AND NOT EXISTS (
-				SELECT 1 FROM sesh_index_messages m
-				WHERE m.tool = f.tool AND m.wire_session_id = f.session_id
-					AND m.file_uuid = f.file_uuid AND m.generation = f.generation
-			)`, append(mappedArgs, wireArgs...)...)
+		FROM `+wireClause+` AS k
+		JOIN files f ON f.tool = k.column1 AND f.session_id = k.column2
+		WHERE NOT EXISTS (
+			SELECT 1 FROM sesh_index_messages m INDEXED BY sesh_index_messages_file
+			WHERE m.tool = f.tool AND m.wire_session_id = f.session_id
+				AND m.file_uuid = f.file_uuid AND m.generation = f.generation
+		)`, append(mappedArgs, wireArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -490,12 +505,15 @@ type rowCount struct {
 
 func (s *SQLStore) rowCounts(ctx context.Context, keys []sessionKey) (map[string]rowCount, error) {
 	clause, args := sessionKeyValues(keys)
-	rows, err := s.db.QueryContext(ctx, `SELECT tool, logical_session_id,
-			COALESCE(SUM(CASE WHEN quarantine = 0 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN quarantine = 1 THEN 1 ELSE 0 END), 0)
-		FROM sesh_index_messages
-		WHERE (tool, logical_session_id) IN `+clause+`
-		GROUP BY tool, logical_session_id`, args...)
+	// Requested-keys join + INDEXED BY: full-key seeks only (see
+	// memberGenerations for why the pin is load-bearing).
+	rows, err := s.db.QueryContext(ctx, `SELECT m.tool, m.logical_session_id,
+			COALESCE(SUM(CASE WHEN m.quarantine = 0 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN m.quarantine = 1 THEN 1 ELSE 0 END), 0)
+		FROM `+clause+` AS k
+		JOIN sesh_index_messages m INDEXED BY sesh_index_messages_logical
+			ON m.tool = k.column1 AND m.logical_session_id = k.column2
+		GROUP BY m.tool, m.logical_session_id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -529,12 +547,17 @@ func (s *SQLStore) latestFacts(ctx context.Context, keys []wireKey) (map[string]
 		return nil, nil
 	}
 	clause, args := wireKeyValues(keys)
+	// Requested-keys join + INDEXED BY: full-key seeks only (see
+	// memberGenerations for why the pin is load-bearing); the outer lookup
+	// resolves each winning observation by rowid.
 	rows, err := s.db.QueryContext(ctx, `SELECT tool, session_id, hostname, os_user, COALESCE(tailnet_identity, ''), id
 		FROM fact_observations
 		WHERE id IN (
-			SELECT MAX(id) FROM fact_observations
-			WHERE (tool, session_id) IN `+clause+`
-			GROUP BY tool, session_id
+			SELECT MAX(fo.id)
+			FROM `+clause+` AS k
+			JOIN fact_observations fo INDEXED BY fact_observations_session
+				ON fo.tool = k.column1 AND fo.session_id = k.column2
+			GROUP BY fo.tool, fo.session_id
 		)`, args...)
 	if err != nil {
 		return nil, err
@@ -561,11 +584,14 @@ func (s *SQLStore) ownerClaims(ctx context.Context, keys []wireKey) (map[string]
 		return nil, nil
 	}
 	clause, args := wireKeyValues(keys)
-	rows, err := s.db.QueryContext(ctx, `SELECT tool, session_id, session_owner, MIN(id) AS first_id
-		FROM fact_observations
-		WHERE session_owner IS NOT NULL AND session_owner <> ''
-			AND (tool, session_id) IN `+clause+`
-		GROUP BY tool, session_id, session_owner
+	// Requested-keys join + INDEXED BY: full-key seeks only (see
+	// memberGenerations for why the pin is load-bearing).
+	rows, err := s.db.QueryContext(ctx, `SELECT fo.tool, fo.session_id, fo.session_owner, MIN(fo.id) AS first_id
+		FROM `+clause+` AS k
+		JOIN fact_observations fo INDEXED BY fact_observations_session
+			ON fo.tool = k.column1 AND fo.session_id = k.column2
+		WHERE fo.session_owner IS NOT NULL AND fo.session_owner <> ''
+		GROUP BY fo.tool, fo.session_id, fo.session_owner
 		ORDER BY first_id`, args...)
 	if err != nil {
 		return nil, err
@@ -587,15 +613,19 @@ func (s *SQLStore) ownerClaims(ctx context.Context, keys []wireKey) (map[string]
 
 func (s *SQLStore) maxTimestamps(ctx context.Context, keys []sessionKey) (map[string]*time.Time, error) {
 	clause, args := sessionKeyValues(keys)
+	// Requested-keys join + INDEXED BY: full-key seeks only (see
+	// memberGenerations for why the pin is load-bearing).
 	rows, err := s.db.QueryContext(ctx, `SELECT tool, logical_session_id, timestamp_utc FROM (
-			SELECT tool, logical_session_id, timestamp_utc,
+			SELECT m.tool AS tool, m.logical_session_id AS logical_session_id,
+				m.timestamp_utc AS timestamp_utc,
 				ROW_NUMBER() OVER (
-					PARTITION BY tool, logical_session_id
-					ORDER BY julianday(timestamp_utc) DESC, timestamp_utc DESC
+					PARTITION BY m.tool, m.logical_session_id
+					ORDER BY julianday(m.timestamp_utc) DESC, m.timestamp_utc DESC
 				) AS rn
-			FROM sesh_index_messages
-			WHERE quarantine = 0 AND timestamp_utc IS NOT NULL
-				AND (tool, logical_session_id) IN `+clause+`
+			FROM `+clause+` AS k
+			JOIN sesh_index_messages m INDEXED BY sesh_index_messages_logical
+				ON m.tool = k.column1 AND m.logical_session_id = k.column2
+			WHERE m.quarantine = 0 AND m.timestamp_utc IS NOT NULL
 		) WHERE rn = 1`, args...)
 	if err != nil {
 		return nil, err

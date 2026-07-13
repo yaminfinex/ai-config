@@ -6,8 +6,10 @@ package surface_test
 // evidence is structural, so a regression to corpus-wide scanning fails
 // loudly: a recording driver captures every SQL statement the seam runs, a
 // warm request must execute a fixed small number of queries with zero
-// projection rebuilds, and every hot-path query's EXPLAIN QUERY PLAN must
-// show index seeks — never a SCAN — over the corpus tables.
+// projection rebuilds, and every storage access in every hot-path query's
+// EXPLAIN QUERY PLAN must be a full-key seek on its pinned index — asserted
+// term-by-term, because a prefix-only SEARCH (tool=?) is a corpus walk
+// wearing a SEARCH costume.
 
 import (
 	"database/sql"
@@ -222,25 +224,48 @@ func openRecordingDB(t *testing.T, path string) (*sql.DB, *queryLog) {
 
 // rebuildMarker appears only in the projection rebuild's SQL; stampMarker
 // only in the cheap version probe. Everything else a warm request runs must
-// seek an index on the corpus tables.
+// full-key-seek a pinned index on the base tables.
 const (
 	rebuildMarker = "first_ingest_jd"
 	stampMarker   = "MAX(rowid) FROM files"
 )
 
-var corpusScanRe = regexp.MustCompile(`SCAN (files|sesh_index_messages|fact_observations)\b`)
+// allowedPlanRes are the only ways a hot-path statement may touch storage:
+// full-key seeks on the pinned indexes — $-anchored with every equality term
+// spelled out, so a prefix-only SEARCH (e.g. `(tool=?)` walking a whole
+// tool's rows through whichever index the optimizer fancied) fails the gate
+// — rowid lookups, and scans of bounded derived constructs (the
+// requested-keys VALUES table and subquery/co-routine materializations of
+// the queries we author). Plan text is tied to the shipped SQLite build; if
+// it drifts, this list fails loudly and gets re-derived, never loosened to
+// "any SEARCH".
+var allowedPlanRes = []*regexp.Regexp{
+	regexp.MustCompile(`^SEARCH \S+ USING (?:COVERING )?INDEX sesh_index_messages_logical \(tool=\? AND logical_session_id=\?\)$`),
+	regexp.MustCompile(`^SEARCH \S+ USING (?:COVERING )?INDEX sesh_index_messages_file \(tool=\? AND wire_session_id=\? AND file_uuid=\? AND generation=\?\)$`),
+	regexp.MustCompile(`^SEARCH \S+ USING (?:COVERING )?INDEX sqlite_autoindex_files_1 \(tool=\? AND session_id=\?(?: AND file_uuid=\?(?: AND generation=\?)?)?\)$`),
+	regexp.MustCompile(`^SEARCH \S+ USING (?:COVERING )?INDEX files_identity_fingerprint \(tool=\? AND session_id=\?(?: AND file_uuid=\?)?\)$`),
+	regexp.MustCompile(`^SEARCH \S+ USING (?:COVERING )?INDEX fact_observations_session \(tool=\? AND session_id=\?\)$`),
+	regexp.MustCompile(`^SEARCH \S+ USING INTEGER PRIMARY KEY \(rowid=\?\)$`),
+	regexp.MustCompile(`^SCAN (?:k|mk|\(subquery-\d+\)|\d+-ROW VALUES CLAUSE|CONSTANT ROW)$`),
+}
 
-// corpusScans runs EXPLAIN QUERY PLAN (through a plain, non-recording
-// handle) for each hot-path query and returns every corpus-table SCAN it
-// finds — the caller decides whether that is a failure (warm path) or the
-// expected detection (gate self-check). Bind values do not change SQLite's
-// plan shape for these queries, so dummies stand in for the recorded args.
-func corpusScans(t *testing.T, plain *sql.DB, queries []string) []string {
+var planOpRe = regexp.MustCompile(`^(?:SEARCH|SCAN) `)
+
+// planViolations runs EXPLAIN QUERY PLAN (through a plain, non-recording
+// handle) for each hot-path query and returns every SEARCH/SCAN line that is
+// not on the full-key allowlist — the caller decides whether that is a
+// failure (warm path) or the expected detection (gate self-check). Bind
+// values do not change SQLite's plan shape for these queries, so dummies
+// stand in for the recorded args.
+func planViolations(t *testing.T, plain *sql.DB, queries []string) []string {
 	t.Helper()
 	var found []string
 	for _, q := range queries {
 		if strings.Contains(q, stampMarker) {
 			continue // two b-tree MAX probes, O(log n) by construction
+		}
+		if strings.Contains(q, rebuildMarker) {
+			continue // corpus-wide by design; assertSeeksOnly flags its presence
 		}
 		args := make([]any, strings.Count(q, "?"))
 		for i := range args {
@@ -263,7 +288,17 @@ func corpusScans(t *testing.T, plain *sql.DB, queries []string) []string {
 				t.Fatal(err)
 			}
 			detail := fmt.Sprintf("%v", *vals[len(vals)-1].(*any))
-			if corpusScanRe.MatchString(detail) {
+			if !planOpRe.MatchString(detail) {
+				continue // structural lines: co-routines, temp b-trees, compound glue
+			}
+			allowed := false
+			for _, re := range allowedPlanRes {
+				if re.MatchString(detail) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
 				found = append(found, fmt.Sprintf("%s\nquery: %s", detail, q))
 			}
 		}
@@ -275,14 +310,15 @@ func corpusScans(t *testing.T, plain *sql.DB, queries []string) []string {
 	return found
 }
 
-// assertSeeksOnly is the warm-path posture: zero rebuilds, zero corpus scans.
+// assertSeeksOnly is the warm-path posture: zero rebuilds, and every storage
+// access a full-key seek on its pinned index.
 func assertSeeksOnly(t *testing.T, plain *sql.DB, queries []string) {
 	t.Helper()
 	if n := countMatching(queries, rebuildMarker); n != 0 {
 		t.Errorf("projection rebuild ran %d times on the warm path", n)
 	}
-	for _, scan := range corpusScans(t, plain, queries) {
-		t.Errorf("corpus table scan on the warm path: %s", scan)
+	for _, v := range planViolations(t, plain, queries) {
+		t.Errorf("non-full-key storage access on the warm path: %s", v)
 	}
 }
 
@@ -485,20 +521,37 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 		}
 	}
 
-	// Gate self-check: the plan evidence must actually catch a regression.
-	// Dropping the facts bookkeeping index forces the hydration lookups back
-	// to corpus scans; corpusScans must flag them or this whole gate is
-	// theater. Runs last — it degrades the DB it checks.
-	t.Run("plan gate catches a reintroduced corpus scan", func(t *testing.T) {
+	// Gate self-checks: the plan evidence must actually catch regressions,
+	// or this whole gate is theater.
+
+	// A prefix-only SEARCH — the shape the optimizer picks when a query
+	// stops forcing both key columns (walks every message row of a tool
+	// through whichever index feeds the next join) — must be flagged even
+	// though it is not a literal SCAN.
+	t.Run("plan gate flags a prefix-only search", func(t *testing.T) {
+		probe := `SELECT COUNT(*) FROM sesh_index_messages INDEXED BY sesh_index_messages_file WHERE tool = ?`
+		violations := planViolations(t, plain, []string{probe})
+		if len(violations) == 0 {
+			t.Fatal("a prefix-only (tool=?) SEARCH passed the plan gate; the full-key term assertion is broken")
+		}
+		if !strings.Contains(violations[0], "(tool=?)") {
+			t.Errorf("violation should carry the prefix-only terms, got: %s", violations[0])
+		}
+	})
+
+	// Removing the facts bookkeeping index must fail loudly at query time
+	// (INDEXED BY pins it), never degrade silently into a corpus scan. Runs
+	// last — it degrades the DB it checks.
+	t.Run("dropped facts index fails loudly, not silently", func(t *testing.T) {
 		if _, err := plain.Exec(`DROP INDEX fact_observations_session`); err != nil {
 			t.Fatal(err)
 		}
-		log.reset()
-		if _, ok, err := live.Session(t.Context(), wire.ToolClaude, corpusID(4950)); err != nil || !ok {
-			t.Fatalf("session lookup: ok=%v err=%v", ok, err)
+		_, _, err := live.Session(t.Context(), wire.ToolClaude, corpusID(4950))
+		if err == nil {
+			t.Fatal("session lookup succeeded without the pinned facts index; INDEXED BY is not protecting the plan")
 		}
-		if scans := corpusScans(t, plain, log.snapshot()); len(scans) == 0 {
-			t.Error("dropping the facts index produced no flagged corpus scan; the plan gate cannot catch regressions")
+		if !strings.Contains(err.Error(), "fact_observations_session") {
+			t.Errorf("error should name the missing index, got: %v", err)
 		}
 	})
 }
