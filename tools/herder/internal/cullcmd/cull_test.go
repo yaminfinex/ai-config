@@ -1,14 +1,124 @@
 package cullcmd
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"ai-config/tools/herder/internal/grokbridge"
+	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
+
+func TestGrokCullRetiresBridgeAndPendingMessages(t *testing.T) {
+	state, err := os.MkdirTemp("/tmp", "grok-cull-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(state) })
+	guid, err := registry.NewGUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := launchcmd.NewGrokSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seatDir := grokbridge.SeatDir(state, guid)
+	j, err := grokbridge.OpenJournal(filepath.Join(seatDir, "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := json.RawMessage(`{"id":41,"type":"message","data":{"from":"sender","text":"pending","intent":"request","delivered_to":["grok-cull-bus"]}}`)
+	if _, added, queueErr := j.Queue(event); queueErr != nil || !added {
+		t.Fatalf("queue added=%v err=%v", added, queueErr)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	hcom := filepath.Join(state, "hcom")
+	if err := os.WriteFile(hcom, []byte("#!/bin/sh\nif [ \"$1\" = start ]; then printf '%s\\n' '[hcom:grok-cull-bus]'; exit 0; fi\ncase \" $* \" in *' --wait '*) exec sleep 60;; esac\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, err := grokbridge.OpenBinder(grokbridge.BinderConfig{Seat: guid, StateDir: state, HcomBin: hcom, SessionID: sessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			_ = b.Close()
+		}
+	})
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- b.Serve(context.Background()) }()
+	waitForCullBridge(t, grokbridge.SocketPath(state, guid))
+
+	registryPath := filepath.Join(state, "registry.jsonl")
+	outcomes, err := registry.UpdateLocked(registryPath, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{
+			Kind: v2.KindSession, GUID: guid, Event: "registered", RecordedAt: "2026-07-13T00:00:00Z", State: v2.StateSeated,
+			Label: "grok-cull", Role: "worker", Tool: "grok",
+			Capabilities: &v2.Capabilities{Bus: "bound", Wake: "degraded", Pending: 1, BinderPID: os.Getpid()},
+			SIDs:         []v2.SID{{SID: sessionID, Source: "launch"}}, Provenance: v2.Provenance{ToolSessionID: sessionID},
+		}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertWriteOutcomes(t, outcomes)
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := registry.Resolve(recs, guid)
+	if rec == nil {
+		t.Fatal("missing seeded Grok row")
+	}
+	var stdout, stderr strings.Builder
+	if ok := processTarget(registryPath, *rec, nil, options{}, "2026-07-13T00:01:00Z", &stdout, &stderr); !ok {
+		t.Fatalf("processTarget failed\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	}
+	select {
+	case <-serveDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Grok binder did not stop after cull retirement")
+	}
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	closed = true
+	latest := latestSession(t, registryPath, guid)
+	if latest.State != v2.StateUnseated || latest.Capabilities == nil || latest.Capabilities.Bus != "" || latest.Capabilities.Wake != "down" || latest.Capabilities.Pending != 0 || latest.Capabilities.BinderPID != 0 || latest.Capabilities.Undeliverable != 1 {
+		t.Fatalf("latest row = %+v, want unseated/down with one undeliverable", latest)
+	}
+	journal, err := os.ReadFile(filepath.Join(seatDir, "journal.jsonl"))
+	if err != nil || !strings.Contains(string(journal), `"kind":"undeliverable","at":`) {
+		t.Fatalf("journal err=%v contents=%s, want durable undeliverable record", err, journal)
+	}
+	if !strings.Contains(stdout.String(), "grok bridge: retired 1 pending message(s) as undeliverable") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func waitForCullBridge(t *testing.T, socket string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if st, err := os.Stat(socket); err == nil && st.Mode()&os.ModeSocket != 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Grok bridge socket %s did not become ready", socket)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
 
 func TestRunClosesSeatedPaneLessRowWithoutForce(t *testing.T) {
 	registryPath := seedSeatedCullRow(t, "ghost", "", "")
