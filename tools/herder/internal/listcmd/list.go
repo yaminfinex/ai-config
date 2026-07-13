@@ -98,7 +98,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	idx := buildLiveIndex()
-	advice := loadObserverAdvice()
+	advice, observations := loadObserverState()
 
 	if opts.mode == "one" {
 		if opts.targetGUID == "" {
@@ -110,7 +110,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "no record for guid %s\n", opts.targetGUID)
 			return 1
 		}
-		out := reconciledJSON(rec, idx, observerAdviceFor(advice, ptrString(rec.GUID)))
+		out := reconciledJSON(rec, idx, observerAdviceFor(advice, ptrString(rec.GUID)), observations[ptrString(rec.GUID)])
 		var pretty bytes.Buffer
 		if err := json.Indent(&pretty, out, "", "  "); err != nil {
 			return 1
@@ -133,7 +133,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			if !opts.includeAll && (!registry.IsNonRetired(rec) || rec.Archived) {
 				continue
 			}
-			out := reconciledJSON(rec, idx, observerAdviceFor(advice, ptrString(rec.GUID)))
+			out := reconciledJSON(rec, idx, observerAdviceFor(advice, ptrString(rec.GUID)), observations[ptrString(rec.GUID)])
 			fmt.Fprintln(stdout, string(out))
 		}
 		renderJSONContinuationFailures(stdout, stderr, failures)
@@ -149,16 +149,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		}
 		live, _ := idx.match(rec)
 		livePane := rec.PaneID
-		liveStatus := idx.unmatchedStatus(rec)
-		if rec.Archived {
-			liveStatus = "ARCHIVED"
-		} else if live != nil {
+		liveStatus := reconciledLiveStatus(rec, idx, live)
+		if !rec.Archived && live != nil {
 			if pane, ok := rawStringField(live.Raw, "pane_id"); ok {
 				livePane = pane
-			}
-			liveStatus = "gone"
-			if status, ok := rawStringField(live.Raw, "agent_status"); ok {
-				liveStatus = status
 			}
 		}
 		team := rec.Team
@@ -172,6 +166,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		role := rec.Role
 		if flags := observerAdviceFor(advice, ptrString(rec.GUID)); len(flags) > 0 {
 			role = role + observerAdviceSuffix(flags)
+		}
+		if observation := observations[ptrString(rec.GUID)]; observation.EventStatus != "" {
+			role += " [status(" + observation.EventSource + "): " + observation.EventStatus + "]"
 		}
 		ctx := contextSnapshotDisplay(rec, now)
 		fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-12s %-16s %-11s %s\n",
@@ -418,11 +415,16 @@ func decodeRecord(line string) (registry.Record, error) {
 	return rec, nil
 }
 
-func reconciledJSON(rec registry.Record, idx liveIndex, advice []observerstatus.Flag) []byte {
+func reconciledJSON(rec registry.Record, idx liveIndex, advice []observerstatus.Flag, observation observerstatus.Observation) []byte {
 	var adviceFields []string
 	if len(advice) > 0 {
 		if b, err := json.Marshal(advice); err == nil {
 			adviceFields = append(adviceFields, `"observer_advice":`+string(b))
+		}
+	}
+	if observation != (observerstatus.Observation{}) {
+		if b, err := json.Marshal(observation); err == nil {
+			adviceFields = append(adviceFields, `"observer_enrichment":`+string(b))
 		}
 	}
 	if rec.Archived {
@@ -440,7 +442,7 @@ func reconciledJSON(rec registry.Record, idx liveIndex, advice []observerstatus.
 		fields := append([]string{
 			`"live":null`,
 			`"live_pane":null`,
-			`"live_status":` + jsonString(idx.unmatchedStatus(rec)),
+			`"live_status":` + jsonString(reconciledLiveStatus(rec, idx, nil)),
 			`"live_matched_by":null`,
 		}, adviceFields...)
 		return appendJSONFields(rec.Raw, fields...)
@@ -449,10 +451,7 @@ func reconciledJSON(rec registry.Record, idx liveIndex, advice []observerstatus.
 	if pane, ok := rawStringField(live.Raw, "pane_id"); ok {
 		livePane = jsonString(pane)
 	}
-	liveStatus := "gone"
-	if status, ok := rawStringField(live.Raw, "agent_status"); ok {
-		liveStatus = status
-	}
+	liveStatus := reconciledLiveStatus(rec, idx, live)
 	fields := append([]string{
 		`"live":` + string(live.Raw),
 		`"live_pane":` + livePane,
@@ -460,6 +459,30 @@ func reconciledJSON(rec registry.Record, idx liveIndex, advice []observerstatus.
 		`"live_matched_by":` + jsonString(matchedBy),
 	}, adviceFields...)
 	return appendJSONFields(rec.Raw, fields...)
+}
+
+// reconciledLiveStatus keeps Grok honest while herdr has no Grok integration
+// target. Its raw live object remains visible as evidence, but an agent_status
+// from the generic process row cannot become an authoritative live_status.
+// Source-labelled Grok events are attached separately as observer enrichment.
+func reconciledLiveStatus(rec registry.Record, idx liveIndex, live *herdrcli.Agent) string {
+	if rec.Archived {
+		return "ARCHIVED"
+	}
+	if live == nil {
+		if rec.Agent == "grok" && ((rec.TerminalID != "" && idx.paneTerms[rec.TerminalID]) ||
+			(rec.PaneID != "" && idx.panePanes[rec.PaneID])) {
+			return "unknown"
+		}
+		return idx.unmatchedStatus(rec)
+	}
+	if rec.Agent == "grok" {
+		return "unknown"
+	}
+	if status, ok := rawStringField(live.Raw, "agent_status"); ok {
+		return status
+	}
+	return "gone"
 }
 
 func renderJSONContinuationFailures(stdout, stderr io.Writer, failures []continuationstate.Record) {
@@ -480,16 +503,20 @@ func renderJSONContinuationFailuresWith(stdout, stderr io.Writer, failures []con
 	}
 }
 
-func loadObserverAdvice() map[string][]observerstatus.Flag {
+func loadObserverState() (map[string][]observerstatus.Flag, map[string]observerstatus.Observation) {
 	st, err := observerstatus.Read(observerstatus.DefaultPath())
 	if err != nil {
-		return map[string][]observerstatus.Flag{}
+		return map[string][]observerstatus.Flag{}, map[string]observerstatus.Observation{}
 	}
 	out := observerstatus.FlagsByGUID(st)
 	for _, flag := range observerstatus.GlobalFlags(st) {
 		out[observerGlobalAdviceKey] = append(out[observerGlobalAdviceKey], flag)
 	}
-	return out
+	observations := st.Observations
+	if observations == nil {
+		observations = map[string]observerstatus.Observation{}
+	}
+	return out, observations
 }
 
 func observerAdviceFor(advice map[string][]observerstatus.Flag, guid string) []observerstatus.Flag {

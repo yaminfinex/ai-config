@@ -60,6 +60,7 @@ type herdrState struct {
 type herdrContext struct {
 	client        *herdrSocketClient
 	seenTerms     map[string]bool
+	grokCursors   map[string]*grokArtifactCursor
 	connectionGap bool
 }
 
@@ -207,7 +208,16 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 		st.ProtocolDetail = fmt.Sprintf("source=%s connection_gap=%t", firstNonEmpty(hd.source, "unknown"), hd.connectionGap)
 	}
 	bus := loadBusState()
+	sessions := proj.Sessions()
 	st.DoctrineDeliveries = priorDoctrineDeliveries(stateDir, hd, bus, now)
+	var grokCursors map[string]*grokArtifactCursor
+	if hctx != nil {
+		if hctx.grokCursors == nil {
+			hctx.grokCursors = map[string]*grokArtifactCursor{}
+		}
+		grokCursors = hctx.grokCursors
+	}
+	st.Observations = grokObservations(sessions, stateDir, stderr, grokCursors)
 	cands := buildCandidates(proj, hd, bus, now)
 	doctrine := doctrineCandidates(proj, hd, bus, st.DoctrineDeliveries, joinedHcomRow)
 	flags := advisoryFlags(proj, hd)
@@ -215,7 +225,7 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 	flags = append(flags, continuationFailureFlags(proj, stateDir, stderr)...)
 	summary := applyCandidates(registryPath, cands, stderr)
 	deliverDoctrine(doctrine, st.DoctrineDeliveries, sendDoctrine, now)
-	for _, rec := range proj.Sessions() {
+	for _, rec := range sessions {
 		if rec.State == v2.StateSeated && rec.Seat != nil {
 			st.Confirmed[rec.GUID] = rec.Seat.ConfirmedAt
 		}
