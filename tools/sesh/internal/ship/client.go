@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"sesh/internal/wire"
 )
@@ -23,11 +25,34 @@ type Client struct {
 	OSUser     string
 }
 
+// defaultHTTPClient bounds every store round trip. http.DefaultClient has no
+// timeout at any layer, so a single stalled request (connection up, response
+// never delivered) parks the whole pass inside one round trip and the
+// unreachable-store reaction — hold position, jittered backoff (wire doc,
+// Error Catalog, store_unavailable) — never gets to run. Dial and
+// response-header stalls surface within seconds; the overall Timeout is the
+// hard cap sized so a full-size PUT body (wire.MaxPUTBody) still fits over a
+// slow relayed link.
+var defaultHTTPClient = &http.Client{
+	Timeout: 5 * time.Minute,
+	Transport: &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 15 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+	},
+}
+
 func (c *Client) httpClient() *http.Client {
 	if c.HTTPClient != nil {
 		return c.HTTPClient
 	}
-	return http.DefaultClient
+	return defaultHTTPClient
 }
 
 // PutBytes ships one raw byte range. fingerprint is empty while the source

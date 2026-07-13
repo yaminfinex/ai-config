@@ -38,6 +38,12 @@ type fakeStore struct {
 	// shipper's verbatim error-rewind tolerates a non-conforming store (U4
 	// review finding #1).
 	nonConformingFingerprintInform bool
+	// recoveryUnavailableFor makes selected identities' recovery GETs answer
+	// 503 so a recovery pass can be interrupted mid-way.
+	recoveryUnavailableFor map[string]bool
+	// recoveryLog counts recovery GETs per identity key, for assertions like
+	// "an interrupted recovery pass resumes instead of re-querying everything".
+	recoveryLog map[string]int
 	// putLog records every PUT offset per identity key, for assertions like
 	// "no re-ship from zero after a move".
 	putLog map[string][]int64
@@ -67,7 +73,7 @@ type fakeGen struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{files: map[string]*fakeFile{}, putLog: map[string][]int64{}, ownerLog: map[string][]string{}}
+	return &fakeStore{files: map[string]*fakeFile{}, recoveryLog: map[string]int{}, putLog: map[string][]int64{}, ownerLog: map[string][]string{}}
 }
 
 func (fs *fakeStore) server() *httptest.Server {
@@ -111,6 +117,13 @@ func (fs *fakeStore) puts(tool, sid, fuuid string) []int64 {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	return append([]int64(nil), fs.putLog[fs.key(tool, sid, fuuid)]...)
+}
+
+// recoveries returns how many recovery GETs an identity has received.
+func (fs *fakeStore) recoveries(tool, sid, fuuid string) int {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.recoveryLog[fs.key(tool, sid, fuuid)]
 }
 
 // owners returns the session-owner header value of every PUT, in order.
@@ -325,6 +338,11 @@ func (fs *fakeStore) writeAck(w http.ResponseWriter, tool, sid, fuuid string, ge
 }
 
 func (fs *fakeStore) handleRecovery(w http.ResponseWriter, tool, sid, fuuid string, writeErr func(int, wire.ErrorCode, int, int64)) {
+	fs.recoveryLog[fs.key(tool, sid, fuuid)]++
+	if fs.recoveryUnavailableFor[fs.key(tool, sid, fuuid)] {
+		writeErr(503, wire.ErrStoreUnavailable, 0, 0)
+		return
+	}
 	f := fs.files[fs.key(tool, sid, fuuid)]
 	if f == nil {
 		writeErr(404, wire.ErrNotFound, 0, 0)
