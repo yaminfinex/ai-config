@@ -127,7 +127,7 @@ func syncDir(dir string) error {
 // with the on-disk binary. Updated-but-not-restarted is failure, not success.
 func restartService(opts Options) error {
 	if opts.OS == "darwin" {
-		return opts.Runner.Run("launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/%s", opts.UID, setup.LaunchdLabel))
+		return opts.Runner.Run("launchctl", "kickstart", "-k", setup.LaunchdServiceTarget(opts.UID))
 	}
 	return opts.Runner.Run("systemctl", "--user", "restart", setup.ServiceName)
 }

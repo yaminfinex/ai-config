@@ -8,8 +8,8 @@ This note consolidates the July 2 exploration corpus, scenario pack, domain sket
 Normative sources:
 
 - `docs/specs/mission-spec.md` for missions and `mish`;
-- `docs/specs/session-service-spec.md` for the session service;
-- `docs/specs/sesh-wire.md` for the shipper/store contract;
+- `tools/sesh/docs/specs/session-service-spec.md` for the session service;
+- `tools/sesh/docs/specs/sesh-wire.md` for the shipper/store contract;
 - `docs/specs/herder-spec.md` for herder and the node observer.
 
 Where this map and a component spec disagree, the spec wins.

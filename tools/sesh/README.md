@@ -5,7 +5,15 @@ byte-faithfully to one central store, which parses on ingest and serves a team
 recency page.
 
 Authority chain: `docs/specs/session-service-spec.md` (product contract) >
-`docs/specs/sesh-wire.md` (wire and index contract).
+`docs/specs/sesh-wire.md` (wire and index contract). All sesh docs live
+under this module's `docs/` — spec, design, and ops docs travel with the
+code, so a checkout of `tools/sesh` alone is self-contained (doc paths in
+this module are module-root-relative). One deliberate exception: the spec's
+"Related ground truth" citations of `docs/design/*` boundary/prior-art docs
+refer to the monorepo-root historical corpus shared with the
+sessions/missions lanes — background reading, not part of sesh's operational
+docs, and not copied here (the gate `tests/check-docs-selfcontained.sh` pins
+their existence at repo root).
 
 ## Install (field nodes: one command, no repo, no toolchain)
 
@@ -58,6 +66,9 @@ internal/cli/    cobra command tree
 tests/fixtures/  real captured session JSONL (see tests/fixtures/README.md)
 tests/check-*.sh per-scenario gate harnesses (S1..S11)
 etc/             install-ship.sh deprecation pointer (absorbed by sesh setup)
+docs/specs/      frozen contracts: session-service-spec.md, sesh-wire.md
+docs/design/     store-served distribution design (release channel, setup, update)
+ops/             store-host machinery: bootstrap, deploy, backup (ops/README.md)
 ```
 
 ## Operator Surface
@@ -265,7 +276,15 @@ once it joins (standard for servers).
 Every member device can ship and read — right for an internal team;
 tightening later is an edit to that one grant, no sesh change. Tagged nodes
 are *not* `autogroup:member`, so any tagged node doubles as the out-of-grant
-deny probe for rollout verification. (If the owner prefers re-key
+deny probe for rollout verification.
+
+**Tagged fleet machines need their tag in the grant `src`** (first-rollout
+lesson). The flip side of tagged-nodes-are-not-members: any fleet machine
+that runs under a tag (e.g. a server tagged `tag:superset`) is excluded by a
+`src: ["autogroup:member"]` grant and gets 403 `out_of_grant` on every ship —
+correct denial, wrong machine. For each tagged machine that should ship or
+read, add its tag to the grant's `src` list alongside `autogroup:member`;
+that is the same one-grant edit as any other access change. (If the owner prefers re-key
 self-sufficiency, the alternative third item is an OAuth client with the
 auth-keys scope tagged `tag:sesh` — bigger ask once, zero asks after.)
 

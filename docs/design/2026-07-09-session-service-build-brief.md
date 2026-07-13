@@ -8,13 +8,13 @@ status: DISPATCH BRIEF — micro-decisions settled by owner 2026-07-09 (name `se
 
 # Brief: build `sesh` (the session service), spec-first
 
-You are implementing `docs/specs/session-service-spec.md` — read it in full first; it is
+You are implementing `tools/sesh/docs/specs/session-service-spec.md` — read it in full first; it is
 the contract. This brief adds working mode, reading order, verify-early items, and the
 task cut. Where this brief and the spec disagree, the spec wins.
 
 ## Read first, in order
 
-1. `docs/specs/session-service-spec.md` — the contract (invariants I1–I11 are binding;
+1. `tools/sesh/docs/specs/session-service-spec.md` — the contract (invariants I1–I11 are binding;
    acceptance scenarios §6 are the definition of done).
 2. `docs/design/2026-07-09-session-shipping-prior-art.md` — *why* each mechanism is shaped
    the way it is, with the upstream bug reports that will bite if you deviate

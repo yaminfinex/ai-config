@@ -13,7 +13,7 @@ plan_depth: deep
 
 ## Goal Capsule
 
-- **Objective:** Build `sesh` — per-user shippers that mirror Claude Code and Codex CLI session transcripts byte-faithfully to one central store with a parse-on-ingest index and one team recency page — to the eleven acceptance scenarios in `docs/specs/session-service-spec.md` §6.
+- **Objective:** Build `sesh` — per-user shippers that mirror Claude Code and Codex CLI session transcripts byte-faithfully to one central store with a parse-on-ingest index and one team recency page — to the eleven acceptance scenarios in `tools/sesh/docs/specs/session-service-spec.md` §6.
 - **Authority hierarchy:** the spec (invariants I1–I11) > the M0 wire-freeze doc once merged > this plan > implementer judgment. The settled decisions in `docs/design/2026-07-09-sesh-task-captures.md` are DO-NOT-REVERSE; deviation from any invariant is a stop condition, not a judgment call.
 - **Execution profile:** four board tasks (TASK-085 shipper, TASK-086 store, TASK-087 surface, TASK-088 deploy) executed by a dedicated orchestrator; units below are grouped into milestones M0–M4 and mapped to their owning task. M0 blocks parallelism; M2 is the first useful ship; M4 is done-per-spec.
 - **Stop conditions:** any change to the wire contract after the M0 freeze merges; any invariant deviation; any scope growth beyond the spec's §9 non-goals. Escalate to the board steward (@hera), who routes design questions to the design authority (tomo).
@@ -25,7 +25,7 @@ plan_depth: deep
 
 ### Summary
 
-`sesh` answers "what has everyone been working on?" for a team running AI coding agents across many machines. A per-OS-user shipper tails the JSONL transcript files the harnesses already write, ships raw byte ranges plus identity facts over an idempotent HTTP API to a central store, which keeps a byte-faithful mirror (the durable archive — it outlives the clients' ~30-day cleanup), parses centrally into a message index, and serves one read-only recency page. Product shape, invariants, and acceptance scenarios are ratified in `docs/specs/session-service-spec.md`; this plan carries the implementation contract.
+`sesh` answers "what has everyone been working on?" for a team running AI coding agents across many machines. A per-OS-user shipper tails the JSONL transcript files the harnesses already write, ships raw byte ranges plus identity facts over an idempotent HTTP API to a central store, which keeps a byte-faithful mirror (the durable archive — it outlives the clients' ~30-day cleanup), parses centrally into a message index, and serves one read-only recency page. Product shape, invariants, and acceptance scenarios are ratified in `tools/sesh/docs/specs/session-service-spec.md`; this plan carries the implementation contract.
 
 ### Problem Frame
 
@@ -72,7 +72,7 @@ Requirements restate the spec at implementation grain; spec references in parent
 - R21. One binary, `sesh`, subcommands `ship`, `serve`, `reindex`, `status`, `admin drop-file`; a conventional, self-contained Go module at `tools/sesh` with no imports from elsewhere in the repo — movable to its own repo by `git mv`.
 - R22. `sesh ship` runs under a per-user systemd unit (Linux) and launchd agent (macOS) that exec a pinned binary path and survive reboot; the only node config is the store URL (env var or flag).
 - R23. The cursor registry is a single per-user state file under `${SESH_STATE_DIR:-$XDG_STATE_HOME/sesh}`, written atomically (temp + fsync + rename) under an exclusive flock, carrying a schema generation; a writer older than the file's generation refuses with a typed error naming cause and remedy — an unreadable registry is treated as lost and rebuilt from rescan + recovery GETs.
-- R24. The wire API (`/v1` HTTP PUT byte ranges + recovery GET) is the only contract between shipper and store; M0 freezes its exact headers, error semantics, fingerprint algorithm, and index schema in `docs/specs/sesh-wire.md` before lanes parallelize.
+- R24. The wire API (`/v1` HTTP PUT byte ranges + recovery GET) is the only contract between shipper and store; M0 freezes its exact headers, error semantics, fingerprint algorithm, and index schema in `tools/sesh/docs/specs/sesh-wire.md` before lanes parallelize.
 - R25. Ingest publishes an internal append event (file identity, byte range, new index rows) consumed by the index writer — the enabling hook for a later SSE live-stream surface.
 
 ### Scope Boundaries
@@ -199,7 +199,7 @@ tools/sesh/
   go.mod  go.sum  README.md
   cmd/sesh/main.go
   internal/
-    wire/          # frozen types from docs/specs/sesh-wire.md (shared vocabulary, both sides)
+    wire/          # frozen types from tools/sesh/docs/specs/sesh-wire.md (shared vocabulary, both sides)
     ship/          # watcher, tailer, cursor registry, correlation (correlate_linux.go / _darwin.go)
     store/         # ingest handler, mirror, generations, recovery GET, last-seen
     index/         # parser, logical-session resolution, dedup, quarantine, reindex
@@ -211,7 +211,7 @@ tools/sesh/
   etc/
     systemd/sesh-ship.service   # per-user unit template
     launchd/dev.sesh.ship.plist.tmpl
-docs/specs/sesh-wire.md         # M0 freeze doc (U1)
+tools/sesh/docs/specs/sesh-wire.md         # M0 freeze doc (U1)
 ```
 
 Tree is the expected shape, not a straitjacket; per-unit Files stay authoritative.
@@ -222,7 +222,7 @@ Tree is the expected shape, not a straitjacket; per-unit Files stay authoritativ
 
 | U-ID | Title | Key files | Depends on |
 |---|---|---|---|
-| U1 | Wire + index-schema freeze doc | docs/specs/sesh-wire.md | — |
+| U1 | Wire + index-schema freeze doc | tools/sesh/docs/specs/sesh-wire.md | — |
 | U2 | Module scaffold + real-JSONL fixture corpus | tools/sesh/, tests/fixtures/ | U1 |
 | U3 | Store: mirror ingest + generations + recovery | internal/store/ | U1, U2 |
 | U4 | Shipper: discovery, cursors, tailing | internal/ship/ | U1, U2 |
@@ -241,7 +241,7 @@ Milestone mapping: M0 = U1–U2 · M1 = U3–U5 · M2 = U6–U8 · M3 = U9–U10
 
 - **Goal:** Freeze the only cross-service contract so lanes parallelize safely.
 - **Requirements:** R24; pins exact text for R6, R7, R12, R13 and the numeric defaults (KTD numbers).
-- **Dependencies:** none. **Files:** `docs/specs/sesh-wire.md`.
+- **Dependencies:** none. **Files:** `tools/sesh/docs/specs/sesh-wire.md`.
 - **Approach:** Co-authored by the 085 and 086 workers, design-authority sign-off before merge. Must pin: paths and header names; error catalog with the shipper's required reaction per error (conflict → recreate path; gap → rewind to returned high-water; out-of-grant → hold and surface); fingerprint algorithm/window; recovery GET (UUID-only lookup allowed pre-fingerprint, response includes stored fingerprint and per-generation high-waters); the index row schema (message uuid, logical session id, file uuid + generation, role, timestamp, ordinal, byte span, quarantine flag) that U6 writes and U7 reads.
 - **Test scenarios:** Test expectation: none — documentation unit; its "test" is that U3/U4/U6 cite it without amendment.
 - **Verification:** merged with sign-off recorded; `internal/wire/` types in U2 transcribe it 1:1.
@@ -388,7 +388,7 @@ The eleven spec §6 scenarios are the acceptance authority; the harness scripts 
 
 ## Sources & Research
 
-- `docs/specs/session-service-spec.md` — the contract (I1–I11, S1–S11); `docs/design/2026-07-09-sesh-task-captures.md` — per-lane settled decisions (DO-NOT-REVERSE); `docs/design/2026-07-09-sesh-ship-plan.md` — M0–M4 phasing this plan's unit grouping follows; `docs/design/2026-07-09-session-service-build-brief.md` — verify-early items (folded into U9, U11).
+- `tools/sesh/docs/specs/session-service-spec.md` — the contract (I1–I11, S1–S11); `docs/design/2026-07-09-sesh-task-captures.md` — per-lane settled decisions (DO-NOT-REVERSE); `docs/design/2026-07-09-sesh-ship-plan.md` — M0–M4 phasing this plan's unit grouping follows; `docs/design/2026-07-09-session-service-build-brief.md` — verify-early items (folded into U9, U11).
 - `docs/design/2026-07-09-session-shipping-prior-art.md` — external research (load-bearing): filebeat/vector/fluent-bit mechanism map (fingerprint identity, ACK-then-advance, reset-on-truncate, rescan-behind-inotify), verified Claude/Codex write semantics including the append-only exceptions that force R9's content-derived session identity.
 - Herder registry incidents and write discipline (on `main`): `docs/specs/herder-spec.md` §5.2/§5.4, backlog tasks 056–059, 083–084 — source of R23's flock/atomic/schema-generation/refuse-stale-writer requirements and the "error text must never advise deleting the guard artifact" rule.
 - Repo research (2026-07-09): no HTTP/SQLite/fsnotify precedent in-repo (sesh is first-of-kind); hermetic `check-*.sh` + goldens is the house gate pattern; `etc/launchd/*.tmpl` + installer is the existing daemon-install pattern to extend; owner ruling 2026-07-09 supersedes the self-building-launcher convention for this tool.

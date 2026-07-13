@@ -27,9 +27,15 @@ import (
 // 2 = check failed), stable for scripting.
 var ErrUpdateAvailable = errors.New("update available")
 
-// versionRE matches git-describe-shaped version strings; anything else from
-// the channel is rejected before it can reach a filesystem path.
-var versionRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+// versionRE pins the release version shape: git describe over sesh-v* tags
+// (optionally suffixed -N-g<hash>), a generic vX.Y.Z, or a bare commit
+// hash. Semver arity is exact — major.minor.patch, no more, no fewer.
+// Anything else from the channel — including shape-adjacent corruption like
+// the field bug's 'sesh-v0.1.0n' (a mangled publish; valid charset,
+// nonexistent version) — is rejected loudly before it can become a fetch
+// path or reach the filesystem. Kept in lockstep with scripts/release.sh
+// and internal/store/assets/install.sh.
+var versionRE = regexp.MustCompile(`^(sesh-)?v[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+-g[0-9a-f]+)?$|^[0-9a-f]{7,40}$`)
 
 // testHookAfterPrevLink runs between the prev-hardlink and the rename over
 // the target — the crash window the injected-failure tests exercise.
@@ -226,7 +232,7 @@ func fetchLatestVersion(client *http.Client, base string) (string, error) {
 	}
 	ver := strings.TrimSpace(string(b))
 	if !versionRE.MatchString(ver) {
-		return "", fmt.Errorf("invalid version string from the channel: %q", ver)
+		return "", fmt.Errorf("invalid version string from %s/releases/latest/VERSION: %q — refusing to build a download URL from it", base, ver)
 	}
 	return ver, nil
 }

@@ -14,9 +14,9 @@ Evidence base, cited throughout by path + section:
   observer invariants, non-goals;
 - `docs/design/2026-07-08-herder-node-daemon-designs.md` — the D-via-A
   decision record whose phase gates this design fills in;
-- `docs/design/2026-07-12-sesh-store-served-distribution.md` — the adjacent
+- `tools/sesh/docs/design/2026-07-12-sesh-store-served-distribution.md` — the adjacent
   central tier (owner-ratified); exposure and operations pattern precedent;
-- `docs/specs/sesh-wire.md` and `docs/specs/session-service-spec.md` —
+- `tools/sesh/docs/specs/sesh-wire.md` and `tools/sesh/docs/specs/session-service-spec.md` —
   ratified transport mechanics reused here as *pattern*, never as shared
   system;
 - `docs/design/grok-first-class-design.md` §DR-2 — the receipt-state-machine
@@ -52,7 +52,7 @@ these is dead on arrival, and this one is built to be checkable against them:
    graph. (`docs/specs/system-boundaries.md` §Boundary decision.)
 7. **Nodes ship facts, never verdicts**; interpretation is view-time and
    revisable centrally. (`docs/specs/system-boundaries.md` §Identity and
-   attribution; `docs/specs/session-service-spec.md` I1.)
+   attribution; `tools/sesh/docs/specs/session-service-spec.md` I1.)
 
 Equally dead on arrival, per the same record: a monolithic hub, a mission
 event log, node-side parsing verdicts, a daemon-authoritative registry, and
@@ -115,7 +115,7 @@ classes; the herd server becomes a reader of the session store's mirror.
 
 Strengths: the transport correctness this phase needs — fingerprint identity,
 ACK-then-advance cursors, truncation reset, at-least-once with ingest dedup —
-is already ratified *and implemented* (`docs/specs/sesh-wire.md`); telemetry
+is already ratified *and implemented* (`tools/sesh/docs/specs/sesh-wire.md`); telemetry
 would cost near-zero node work; mirror durability comes free. Weaknesses: it
 violates the session service's boundary rules verbatim ("no mission, herder,
 or hcom concept appears in the wire or node agent") and its frozen wire
@@ -276,7 +276,7 @@ identities share one claimed node_id.**
   OS user, herder build version, namespace/epoch anchors as locally observed,
   and the set of streams this node ships. Tailnet identity is stamped
   server-side from the connection (WhoIs), never claimed in the payload —
-  fact precedence is store logic (`docs/specs/session-service-spec.md` §3
+  fact precedence is store logic (`tools/sesh/docs/specs/session-service-spec.md` §3
   identity facts).
 - **First-binding, not blind upsert.** A copied state dir is a modeled
   condition, not a hypothetical: herder documents `node init --new` as the
@@ -339,7 +339,7 @@ truth:
 1. **File-tail streams** — the registry live log, its rotation archives, and
    the node delivery journal (§3.3). Sequence = (file generation, byte
    offset). The sesh wire's identity trick — filename UUID plus a fingerprint
-   that only exists past a 1 KiB head window (`docs/specs/sesh-wire.md` §File
+   that only exists past a 1 KiB head window (`tools/sesh/docs/specs/sesh-wire.md` §File
    Identity) — does **not** transfer here: registry live files have no
    filename UUID, rotation reseeds the live file in place under the same
    name, and a young file or journal is below any fingerprint window exactly
@@ -359,12 +359,12 @@ truth:
    Replay rules, adopted from the frozen wire by reference where they
    genuinely apply, defined explicitly where they do not:
    - **ACK-then-advance** and **durable ACK = fsynced mirror bytes**: adopted
-     verbatim (`docs/specs/sesh-wire.md` §Invariants).
+     verbatim (`tools/sesh/docs/specs/sesh-wire.md` §Invariants).
    - **Reconnect**: the node asks the server's high-water per
      file_generation (the recovery-lookup idiom) and resumes from it.
    - **Offset handling on every shipped range** — the frozen wire's three
      cases, adopted with their actual directions
-     (`docs/specs/sesh-wire.md` §Successful ACK, §Offset routing): a durable
+     (`tools/sesh/docs/specs/sesh-wire.md` §Successful ACK, §Offset routing): a durable
      `200` ACK covers the **full request range** — those bytes are fsynced
      in the mirror before the ACK leaves. The lost-ACK case therefore leaves
      the **server ahead of the node**: the server fsynced and its ACK
@@ -388,7 +388,7 @@ truth:
      mirrored bytes are preserved untouched, ACKs stop, the anomaly is
      flagged for operator repair. Never a silent reset, never an overwrite —
      the store's preserve-conflicting-histories stance
-     (`docs/specs/sesh-wire.md` §File Identity) applied with herder's
+     (`tools/sesh/docs/specs/sesh-wire.md` §File Identity) applied with herder's
      loud-anomaly doctrine.
    - **Rotation**: the reseeded live file is a new generation and ships as a
      new unit; the pre-rotation archive (carrying its own generation header)
@@ -849,7 +849,7 @@ needs it (§9 maps them).
 1. **Naming**: the server's tailnet node hostname, ACL tag, and capability
    name + verb set. Precedent to match or diverge from:
    `sesh` / `tag:sesh` / `infinex.xyz/cap/sesh` with verbs `ship`,`read`
-   (`docs/design/2026-07-12-sesh-store-served-distribution.md` §1). A
+   (`tools/sesh/docs/design/2026-07-12-sesh-store-served-distribution.md` §1). A
    parallel shape would be a short node name, matching tag, and a capability
    under `infinex.xyz/cap/` with verbs separating node telemetry+fetch,
    command submission, and human view — but naming is owner-ruled, not
@@ -945,7 +945,7 @@ ratified document.
     unit may touch that code (§9 U-CORE territory), and changes nothing
     about who may write: no write routes through the observer or the
     server, before or after.
-- **`docs/specs/session-service-spec.md`, `docs/specs/sesh-wire.md`,
+- **`tools/sesh/docs/specs/session-service-spec.md`, `tools/sesh/docs/specs/sesh-wire.md`,
   `docs/specs/mission-spec.md`**: **no change**, deliberately — the §4 audit
   is the evidence. If the owner wants a cross-reference, the store design's
   "informational, non-contract" note pattern is the precedent.
