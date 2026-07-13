@@ -84,12 +84,12 @@ func TestSQLStoreRendersResumePairOnceFromLiveIndex(t *testing.T) {
 	putFixture(t, st, idx, wire.ToolClaude, uuidResumeOrig, uuidResumeOrig, "claude-resume-original.jsonl", nil)
 	putFixture(t, st, idx, wire.ToolClaude, uuidResumeNew, uuidResumeNew, "claude-resume-new-file.jsonl", nil)
 
-	sums, err := live.Sessions(t.Context())
+	sums, total, err := live.RecentSessions(t.Context(), 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sums) != 1 {
-		t.Fatalf("resume pair produced %d sessions, want 1 (overlap unification)", len(sums))
+	if len(sums) != 1 || total != 1 {
+		t.Fatalf("resume pair produced %d sessions (total %d), want 1 (overlap unification)", len(sums), total)
 	}
 	sum := sums[0]
 	if sum.LogicalSessionID != uuidResumeOrig {
@@ -141,12 +141,12 @@ func TestSQLStoreListsMirroredButUnindexedSession(t *testing.T) {
 	fileUUID := "3f3f3f3f-4444-5555-6666-777777777777"
 	putFixture(t, st, idx, wire.ToolClaude, fileUUID, fileUUID, "", partial)
 
-	sums, err := live.Sessions(t.Context())
+	sums, total, err := live.RecentSessions(t.Context(), 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sums) != 1 {
-		t.Fatalf("mirrored-but-unindexed file produced %d sessions, want 1", len(sums))
+	if len(sums) != 1 || total != 1 {
+		t.Fatalf("mirrored-but-unindexed file produced %d sessions (total %d), want 1", len(sums), total)
 	}
 	if sums[0].MessageRows != 0 || !sums[0].FullyQuarantined() {
 		t.Errorf("summary %+v: want zero renderable rows forcing the raw fallback", sums[0])
@@ -173,7 +173,7 @@ func TestSQLStoreCollectsOwnerClaimsFromObservationLog(t *testing.T) {
 	// Two PUTs observing the same owner: one claim, attributed cleanly.
 	putBytesOwned(t, st, idx, wire.ToolClaude, uuidNormal, uuidNormal, "", raw[:cut], 0, "alice")
 	putBytesOwned(t, st, idx, wire.ToolClaude, uuidNormal, uuidNormal, "", raw[cut:], int64(cut), "alice")
-	sums, err := live.Sessions(t.Context())
+	sums, _, err := live.RecentSessions(t.Context(), 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestSQLStoreUsesStoreStampedTailnetIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sums, err := live.Sessions(t.Context())
+	sums, _, err := live.RecentSessions(t.Context(), 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

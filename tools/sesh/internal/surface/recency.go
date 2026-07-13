@@ -2,21 +2,42 @@ package surface
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"time"
 
 	"sesh/internal/wire"
 )
 
+// recencyPageLimit bounds every homepage render to the newest N logical
+// sessions, cut at the query level by the Store (never by truncating a full
+// listing here). Older history stays reachable through ?page=N links; with
+// fleet corpora of thousands of files per node, one unbounded render is one
+// browser tab OOM.
+const recencyPageLimit = 50
+
 // recencyPage is the template model for the one page (R14): person → nodes →
-// sessions, most recent first.
+// sessions, most recent first — bounded to one page of the corpus.
 type recencyPage struct {
 	Now time.Time
 	// PollSeconds drives the htmx refresh; pinned to the wire rescan
 	// interval so the page keeps up with shipping without hammering.
 	PollSeconds int
 	People      []personGroup
+
+	// Paging facts: sessions From–To of Total are on this page, most recent
+	// first. Page is 1-based.
+	Total    int
+	From, To int
+	Page     int
+	// FragmentURL is the htmx poll target for THIS page, so a periodic
+	// refresh never yanks a reader back to page one.
+	FragmentURL string
+	// NewerURL and OlderURL are the pager links; empty at the edges.
+	NewerURL string
+	OlderURL string
 }
 
 type personGroup struct {
@@ -47,16 +68,57 @@ type sessionItem struct {
 	URL   string
 }
 
-func (s *Server) recencyData(ctx context.Context) (recencyPage, error) {
-	sums, err := s.store.Sessions(ctx)
+// recencyPageParam reads the 1-based ?page= selector; anything absent or
+// malformed is page one.
+func recencyPageParam(r *http.Request) int {
+	n, err := strconv.Atoi(r.URL.Query().Get("page"))
+	if err != nil || n < 1 {
+		return 1
+	}
+	return n
+}
+
+func recencyPageURL(base string, page int) string {
+	if page <= 1 {
+		return base
+	}
+	return base + "?page=" + strconv.Itoa(page)
+}
+
+func (s *Server) recencyData(ctx context.Context, page int) (recencyPage, error) {
+	if page < 1 {
+		page = 1
+	}
+	offset := (page - 1) * recencyPageLimit
+	sums, total, err := s.store.RecentSessions(ctx, recencyPageLimit, offset)
 	if err != nil {
 		return recencyPage{}, err
 	}
-	return recencyPage{
+	data := recencyPage{
 		Now:         s.now(),
 		PollSeconds: int(wire.RescanInterval / time.Second),
 		People:      groupPeople(sums),
-	}, nil
+		Total:       total,
+		Page:        page,
+		FragmentURL: recencyPageURL("/fragments/recency", page),
+	}
+	if len(sums) > 0 {
+		data.From = offset + 1
+		data.To = offset + len(sums)
+	}
+	if page > 1 {
+		// A newer link past the last real page points at the last real page,
+		// not another empty one.
+		newer := page - 1
+		if lastPage := (total + recencyPageLimit - 1) / recencyPageLimit; lastPage > 0 && newer > lastPage {
+			newer = lastPage
+		}
+		data.NewerURL = recencyPageURL("/", newer)
+	}
+	if offset+len(sums) < total {
+		data.OlderURL = recencyPageURL("/", page+1)
+	}
+	return data, nil
 }
 
 // groupPeople builds person → nodes → sessions, each level ordered most
