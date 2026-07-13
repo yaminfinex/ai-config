@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-12 07:50'
+updated_date: '2026-07-13 00:22'
 labels:
   - run-herder-dx
 dependencies: []
@@ -118,5 +118,10 @@ Candidate 13 (2026-07-09, hera): Backlog.md CLI — `task view --plain` silently
 created: 2026-07-12 07:50
 ---
 hera (A1 closeout): two candidates. (1) hcom — roster launch_context.pane_id is captured from launch-time env HERDR_PANE_ID and diverges from the live canonical pane id after a herdr pane move/re-key; herder A1 now correlates on BOTH pane forms plus caller-own HCOM_PROCESS_ID to compensate, but an upstream live-refreshed pane coordinate (or a documented 'this field is launch-frozen' contract) would collapse that multi-correlate complexity. (2) herdr — no adopt/re-recognition path for shell-relaunched sessions: herdr tracker never adopts an agent it did not launch, so live_status stays undetected/unknown for legitimately live sessions (TASK-070 field evidence: observer-confirmed row shows unknown in herder list). A herdr-adopt affordance (bind an existing live pane/process to tracker state) is the upstream-shaped fix.
+---
+
+created: 2026-07-13 00:22
+---
+Candidate 14 (2026-07-13, hera, TASK-146 closeout sweep): hcom — agent removal never garbage-collects that agent's event subscriptions. herder cull drops the bus name ('@worker-X already gone') yet the culled agent's subs (thread-member + filter subs) persist indefinitely; our live sub table now carries hundreds of orphaned thread-member subs for long-gone agents, all still evaluated per event. Upstream ask: GC subs on agent removal/retirement, or expose a bulk 'unsub --for <name> --all'. Local practice until then: orchestrators unsub their own culled workers' subs at closeout (events unsub <id>).
 ---
 <!-- COMMENTS:END -->
