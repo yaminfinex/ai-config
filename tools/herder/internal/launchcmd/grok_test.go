@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -71,12 +74,193 @@ func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
 }
 
 func TestGrokActivationGateDefaultsClosed(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
 	t.Setenv(grokActivationEnv, "")
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("HERDER_STATE_DIR", state)
+	t.Setenv("HERDER_GUID", "")
+	t.Setenv("HERDER_GROK_SESSION_ID", "")
 	if GrokActivated() || IsHcomCapable("grok") {
 		t.Fatal("Grok family activated without the explicit gate")
 	}
 	if !strings.Contains(GrokActivationError(), "HERDER_GROK_ACTIVATED=1") {
 		t.Fatalf("activation error lacks remedy: %s", GrokActivationError())
+	}
+	var stdout, stderr bytes.Buffer
+	if rc := Run([]string{"grok"}, &stdout, &stderr); rc == 0 {
+		t.Fatal("inactive manual launch unexpectedly succeeded")
+	}
+	if os.Getenv("HERDER_GUID") != "" || os.Getenv("HERDER_GROK_SESSION_ID") != "" {
+		t.Fatal("inactive manual launch minted identity before refusing")
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("inactive manual launch wrote state before refusing: %v", err)
+	}
+}
+
+func TestManualGrokLaunchReplacesUnregisteredAmbientIdentity(t *testing.T) {
+	t.Setenv("HERDER_GUID", "")
+	t.Setenv("HERDER_GROK_SESSION_ID", "")
+	manual, err := ensureManualGrokIdentity()
+	if err != nil || !manual {
+		t.Fatal(err)
+	}
+	seat := os.Getenv("HERDER_GUID")
+	sid := os.Getenv("HERDER_GROK_SESSION_ID")
+	if !validGrokSeat(seat) || !isUUIDv7(sid) {
+		t.Fatalf("minted seat=%q sid=%q", seat, sid)
+	}
+	manual, err = ensureManualGrokIdentity()
+	if err != nil || !manual {
+		t.Fatal(err)
+	}
+	if os.Getenv("HERDER_GUID") == seat || os.Getenv("HERDER_GROK_SESSION_ID") == sid {
+		t.Fatal("unregistered ambient identity was silently adopted")
+	}
+}
+
+func TestManagedGrokPreassignmentIsPreservedBeforeRegistryBind(t *testing.T) {
+	seat, err := registry.NewGUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, err := NewGrokSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(grokPreassignedEnv, "1")
+	t.Setenv("HERDER_GUID", seat)
+	t.Setenv("HERDER_GROK_SESSION_ID", sid)
+	manual, err := ensureManualGrokIdentity()
+	if err != nil || manual {
+		t.Fatalf("managed preassignment: manual=%v err=%v", manual, err)
+	}
+	if os.Getenv("HERDER_GUID") != seat || os.Getenv("HERDER_GROK_SESSION_ID") != sid {
+		t.Fatal("managed identity changed before registry bind")
+	}
+}
+
+func TestManualGrokLaunchRefusesForeignFamilyGUIDWithoutSeatState(t *testing.T) {
+	state := t.TempDir()
+	foreign, err := registry.NewGUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := `{"guid":"` + foreign + `","short_guid":"` + registry.ShortGUID(foreign) + `","label":"claude-seat","agent":"claude","status":"active"}` + "\n"
+	if err := os.WriteFile(filepath.Join(state, "registry.jsonl"), []byte(row), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(grokActivationEnv, "1")
+	t.Setenv("HERDER_STATE_DIR", state)
+	t.Setenv("HERDER_GUID", foreign)
+	t.Setenv("HERDER_GROK_SESSION_ID", "inherited-claude-session")
+
+	var stdout, stderr bytes.Buffer
+	if rc := Run([]string{"grok"}, &stdout, &stderr); rc == 0 {
+		t.Fatal("foreign-family ambient GUID was adopted")
+	}
+	for _, want := range []string{"refused inherited HERDER_GUID", `tool "claude", not grok`, "unset HERDER_GUID"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("refusal %q missing %q", stderr.String(), want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(state, "grok", foreign)); !os.IsNotExist(err) {
+		t.Fatalf("foreign GUID acquired Grok state: %v", err)
+	}
+}
+
+func TestManualMintedIdentityUsesPreassignedPlanAndCollisionFence(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
+	hcom := filepath.Join(root, "hcom-real")
+	writeExecutable(t, hcom, "#!/bin/sh\nexit 0\n")
+	t.Setenv(grokActivationEnv, "1")
+	t.Setenv("XAI_API_KEY", randomCredential(t))
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("HERDER_STATE_DIR", state)
+	t.Setenv("HCOM_DIR", filepath.Join(root, "hcom"))
+	t.Setenv("HERDER_GROK_BIN", mockGrokBinary(t, "0.2.93"))
+	t.Setenv("HERDER_REAL_HCOM", hcom)
+	t.Setenv("HERDER_GUID", "")
+	t.Setenv("HERDER_GROK_SESSION_ID", "")
+
+	manual, err := ensureManualGrokIdentity()
+	if err != nil || !manual {
+		t.Fatal(err)
+	}
+	seat, sid := os.Getenv("HERDER_GUID"), os.Getenv("HERDER_GROK_SESSION_ID")
+	plan, err := prepareGrokLaunch(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Seat != seat || plan.SessionID != sid || plan.Mode != "launch" {
+		t.Fatalf("manual plan identity drifted: seat=%q sid=%q mode=%q", plan.Seat, plan.SessionID, plan.Mode)
+	}
+	if _, err := os.Stat(filepath.Join(state, "registry.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("manual plan wrote a half-registered row before bind: %v", err)
+	}
+
+	sessionDir := filepath.Join(plan.GrokHome, "sessions", "%2Fmanual", sid)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepareGrokLaunch(nil); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("manual minted sid bypassed collision fence: %v", err)
+	}
+}
+
+func TestManualGrokWrapperRetiresAfterNormalExit(t *testing.T) {
+	plan := grokLaunchPlan{Binary: "/bin/sh", Argv: []string{"grok", "-c", "exit 7"}}
+	retired := 0
+	rc := runManualGrokProcessWithSignals(plan, io.Discard, make(chan os.Signal), func(grokLaunchPlan) error {
+		retired++
+		return nil
+	})
+	if rc != 7 || retired != 1 {
+		t.Fatalf("rc=%d retired=%d", rc, retired)
+	}
+}
+
+func TestManualGrokWrapperSignalConvergesDetachedBridgeToRetired(t *testing.T) {
+	plan := grokLaunchPlan{Binary: "/bin/sh", Argv: []string{"grok", "-c", "trap 'exit 143' TERM; while :; do sleep 1; done"}}
+	signals := make(chan os.Signal, 1)
+	retired := make(chan struct{}, 1)
+	result := make(chan int, 1)
+	go func() {
+		result <- runManualGrokProcessWithSignals(plan, io.Discard, signals, func(grokLaunchPlan) error {
+			retired <- struct{}{}
+			return nil
+		})
+	}()
+	time.Sleep(100 * time.Millisecond)
+	signals <- syscall.SIGTERM
+	select {
+	case rc := <-result:
+		if rc != 143 {
+			t.Fatalf("signal exit rc=%d", rc)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("manual wrapper did not converge after SIGTERM")
+	}
+	select {
+	case <-retired:
+	default:
+		t.Fatal("manual wrapper left its detached bridge unretired")
+	}
+}
+
+func TestManualGrokBridgeHardKillFenceUsesParentDeathRetirement(t *testing.T) {
+	manual := grokBridgeProcessAttributes(true)
+	if !manual.Setsid {
+		t.Fatalf("manual bridge attrs = %+v", manual)
+	}
+	if got, want := grokBridgeHardKillFenced(), runtime.GOOS == "linux"; got != want {
+		t.Fatalf("hard-kill fence=%v want=%v on %s", got, want, runtime.GOOS)
+	}
+	managed := grokBridgeProcessAttributes(false)
+	if !managed.Setsid {
+		t.Fatalf("managed bridge attrs = %+v", managed)
 	}
 }
 
@@ -109,6 +293,50 @@ func TestT20ResolvedBinaryVersionAndCapabilityGate(t *testing.T) {
 	gotPath, gotVersion, err := gateGrokBinary(filepath.Join(root, "state"))
 	if err != nil || gotPath != path || gotVersion != "0.2.99" {
 		t.Fatalf("configured supported set: path=%q version=%q err=%v", gotPath, gotVersion, err)
+	}
+}
+
+func TestGrokCheckUsesLaunchGateWithoutActivationOrLiveHome(t *testing.T) {
+	root := t.TempDir()
+	liveHome := filepath.Join(root, "live-home")
+	liveGrok := filepath.Join(liveHome, ".grok")
+	liveState := filepath.Join(root, "live-state")
+	if err := os.MkdirAll(liveGrok, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(liveState, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(liveGrok, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("untouched\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stateSentinel := filepath.Join(liveState, "sentinel")
+	if err := os.WriteFile(stateSentinel, []byte("untouched\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(grokActivationEnv, "")
+	t.Setenv("XAI_API_KEY", randomCredential(t))
+	t.Setenv("HOME", liveHome)
+	t.Setenv("GROK_HOME", liveGrok)
+	t.Setenv("HERDER_STATE_DIR", liveState)
+	t.Setenv("HERDER_GROK_BIN", mockGrokBinary(t, "0.2.93"))
+
+	var stdout, stderr bytes.Buffer
+	rc := RunGrokCheck(nil, &stdout, &stderr)
+	if rc != 0 || stderr.Len() != 0 {
+		t.Fatalf("check rc=%d stderr=%q", rc, stderr.String())
+	}
+	for _, want := range []string{"path=", "version=0.2.93"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("check output %q missing %q", stdout.String(), want)
+		}
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "untouched\n" {
+		t.Fatalf("live Grok home changed: data=%q err=%v", data, err)
+	}
+	if data, err := os.ReadFile(stateSentinel); err != nil || string(data) != "untouched\n" {
+		t.Fatalf("live herder state changed: data=%q err=%v", data, err)
 	}
 }
 

@@ -814,6 +814,63 @@ func TestRetirementCountsReceiptQueuedByInFlightDrain(t *testing.T) {
 	waitForWakeCapability(t, state, "seat", "down", 0, 2)
 }
 
+func TestManualSupervisorStopConvergesPendingJournalToRetired(t *testing.T) {
+	state := t.TempDir()
+	seat := "manual-seat"
+	journal, err := OpenJournal(filepath.Join(SeatDir(state, seat), "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, added, queueErr := journal.Queue(rawEvent(t, 91, "pending when wrapper dies")); queueErr != nil || !added {
+		t.Fatalf("queue added=%v err=%v", added, queueErr)
+	}
+	if err = journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	marker := filepath.Join(t.TempDir(), "started")
+	child := filepath.Join(t.TempDir(), "bridge-child")
+	if err = os.WriteFile(child, []byte("#!/bin/sh\n: > \"$HERDER_TEST_SUPERVISOR_STARTED\"\nwhile :; do sleep 1; done\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_TEST_SUPERVISOR_STARTED", marker)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan int, 1)
+	go func() {
+		result <- superviseBridgeContext(ctx, []string{"--supervise", "--retire-on-stop"}, state, seat, true, child, io.Discard)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, statErr := os.Stat(marker); statErr == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("supervised bridge child did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case rc := <-result:
+		if rc != 0 {
+			t.Fatalf("supervisor stop rc=%d", rc)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("supervisor did not stop and retire")
+	}
+
+	journal, err = OpenJournal(filepath.Join(SeatDir(state, seat), "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	pending, retired := journal.Counts()
+	if pending != 0 || retired != 1 || journal.receipts[91].Status() != "undeliverable" {
+		t.Fatalf("pending=%d retired=%d receipt=%s", pending, retired, journal.receipts[91].Status())
+	}
+}
+
 func seedGrokRegistryRow(t *testing.T, state, seat, sessionID string) {
 	t.Helper()
 	path := filepath.Join(state, "registry.jsonl")

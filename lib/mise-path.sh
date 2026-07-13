@@ -260,6 +260,7 @@ mise_path_status() {
   mise_tool_resolution_message herder "$bin_dir/herder"
   mise_tool_resolution_message claude "$shims_dir/claude"
   mise_tool_resolution_message codex "$shims_dir/codex"
+  mise_tool_resolution_message grok "$shims_dir/grok"
 }
 
 mise_path_main() {

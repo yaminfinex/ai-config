@@ -27,14 +27,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runMCP(args[1:], stdout, stderr)
 	case "bridge":
 		return runBridge(args[1:], stderr)
+	case "retire-offline":
+		return runRetireOffline(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "herder grok: unknown subcommand %q — use tap, mcp, or bridge\n", args[0])
+		fmt.Fprintf(stderr, "herder grok: unknown subcommand %q — use check, tap, mcp, bridge, or retire-offline\n", args[0])
 		return 2
 	}
 }
 
 func printHelp(w io.Writer) {
-	fmt.Fprint(w, "herder grok — internal transport for first-class Grok seats.\n\nUsage:\n  herder grok tap --seat <guid>\n  herder grok mcp --seat <guid>\n  herder grok bridge --seat <guid> --hcom-bin <path> [--hcom-dir <path>] [--supervise]\n")
+	fmt.Fprint(w, "herder grok — health and transport for first-class Grok seats.\n\nUsage:\n  herder grok check [--state-dir <throwaway-root>]\n  herder grok tap --seat <guid>\n  herder grok mcp --seat <guid>\n  herder grok bridge --seat <guid> --hcom-bin <path> [--hcom-dir <path>] [--supervise]\n  herder grok retire-offline --seat <guid> [--state-dir <herder-state>]\n")
 }
 func stateDefault() string {
 	if v := os.Getenv("HERDER_STATE_DIR"); v != "" {
@@ -69,6 +71,24 @@ func runTap(args []string, stdout, stderr io.Writer) int {
 		_ = appendDiagnostic(filepath.Join(SeatDir(*state, *seat), "tap.log"), err)
 		return 1
 	}
+	return 0
+}
+
+func runRetireOffline(args []string, stdout, stderr io.Writer) int {
+	fs, seat, state := commonFS("herder grok retire-offline", stderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *seat == "" || fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "herder grok retire-offline: --seat is required and no positional arguments are accepted")
+		return 2
+	}
+	retired, err := RetireOffline(*state, *seat)
+	if err != nil {
+		fmt.Fprintf(stderr, "herder grok retire-offline: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "retired seat=%s undeliverable=%d\n", *seat, retired)
 	return 0
 }
 
@@ -110,6 +130,7 @@ func runBridge(args []string, stderr io.Writer) int {
 	nudgeAfter := fs.Duration("nudge-after", 30*time.Second, "idle time before a bounded wake nudge")
 	maxNudges := fs.Int("max-nudges", 2, "maximum idle-aware nudges per message")
 	supervise := fs.Bool("supervise", false, "restart the bridge with capped backoff")
+	retireOnStop := fs.Bool("retire-on-stop", false, "retire the journal when a supervised manual bridge is stopped")
 	child := fs.Bool("child", false, "internal supervised child")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -119,7 +140,7 @@ func runBridge(args []string, stderr io.Writer) int {
 		return 2
 	}
 	if *supervise && !*child {
-		return superviseBridge(args, *state, *seat)
+		return superviseBridge(args, *state, *seat, *retireOnStop)
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -139,7 +160,7 @@ func runBridge(args []string, stderr io.Writer) int {
 	return 0
 }
 
-func superviseBridge(args []string, state, seat string) int {
+func superviseBridge(args []string, state, seat string, retireOnStop bool) int {
 	dir := SeatDir(state, seat)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return 1
@@ -154,6 +175,12 @@ func superviseBridge(args []string, state, seat string) int {
 		fmt.Fprintln(log, err)
 		return 1
 	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	return superviseBridgeContext(ctx, args, state, seat, retireOnStop, exe, log)
+}
+
+func superviseBridgeContext(ctx context.Context, args []string, state, seat string, retireOnStop bool, exe string, log io.Writer) int {
 	childArgs := []string{"grok", "bridge"}
 	for _, a := range args {
 		if !strings.HasPrefix(a, "--supervise") && !strings.HasPrefix(a, "--child") {
@@ -161,16 +188,14 @@ func superviseBridge(args []string, state, seat string) int {
 		}
 	}
 	childArgs = append(childArgs, "--child")
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 	backoff := 100 * time.Millisecond
 	for {
 		cmd := exec.CommandContext(ctx, exe, childArgs...)
 		cmd.Stdout = log
 		cmd.Stderr = log
-		err = cmd.Run()
+		err := cmd.Run()
 		if ctx.Err() != nil {
-			return 0
+			return retireStoppedBridge(state, seat, retireOnStop, log)
 		}
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 24 {
 			return 0
@@ -178,7 +203,7 @@ func superviseBridge(args []string, state, seat string) int {
 		fmt.Fprintf(log, "%s bridge exited: %v\n", time.Now().UTC().Format(time.RFC3339), err)
 		select {
 		case <-ctx.Done():
-			return 0
+			return retireStoppedBridge(state, seat, retireOnStop, log)
 		case <-time.After(backoff):
 		}
 		backoff *= 2
@@ -186,4 +211,15 @@ func superviseBridge(args []string, state, seat string) int {
 			backoff = 5 * time.Second
 		}
 	}
+}
+
+func retireStoppedBridge(state, seat string, retireOnStop bool, log io.Writer) int {
+	if !retireOnStop {
+		return 0
+	}
+	if _, err := RetireOffline(state, seat); err != nil {
+		fmt.Fprintf(log, "%s retire-on-stop failed: %v\n", time.Now().UTC().Format(time.RFC3339), err)
+		return 1
+	}
+	return 0
 }
