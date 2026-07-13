@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-13 07:49'
+updated_date: '2026-07-13 10:07'
 labels:
   - sesh
 dependencies: []
@@ -25,3 +26,9 @@ Follow-ups from the Mac wedge investigation (branch mac-ship-wedge-fix): (1) fir
 - [ ] #2 launchd plist template sets SoftResourceLimits appropriate for kqueue watching; rendered by sesh setup
 - [ ] #3 sesh status on Darwin resolves the store URL from the installed plist; tested
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Reviewer-naze area-(d) note from the wedge-fix review: internal/update and cli/status still use bare http.DefaultClient (unbounded) — same wedge class as the fixed shipper fallback, milder because interactive. Bound them when doing item (1).
+<!-- SECTION:NOTES:END -->
