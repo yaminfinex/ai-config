@@ -4,7 +4,7 @@ title: 'pi agent family: characterization demo then design (blocked on Grok U3+U
 status: In Progress
 assignee: []
 created_date: '2026-07-13 06:07'
-updated_date: '2026-07-13 19:21'
+updated_date: '2026-07-13 19:59'
 labels: []
 dependencies: []
 priority: medium
@@ -19,7 +19,7 @@ Owner direction (2026-07-13): add the pi coding agent (multi-provider harness) a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Demo report merged answering the binding fork and behavioral clauses
+- [x] #1 Demo report merged answering the binding fork and behavioral clauses
 - [ ] #2 Design doc merged with owner rulings recorded
 <!-- AC:END -->
 
@@ -27,4 +27,6 @@ Owner direction (2026-07-13): add the pi coding agent (multi-provider harness) a
 
 <!-- SECTION:NOTES:BEGIN -->
 UNBLOCKED + DISPATCHED 2026-07-14: grok program complete (surface free). Owner rulings delta: install LATEST pi (delegated to the unit, isolated prefix, exact version recorded); provider env keys ready in ~/.profile; demo scope grew — cross-harness usage comparison (pi vs claude/codex/grok native CLIs for the same model families). Worker worker-luve (codex 5.6 high) in worktree task-183-pi-demo, thread task183pi, brief napkins/run-herder-dx/task-183-pi-demo-brief.md. Also instituted same day: GROK REVIEW CALIBRATION (owner directive) — grok reviewers run alongside incumbent cross-family reviewers on behavior diffs; ledger at napkins/run-herder-dx/grok-review-ledger.md; verdict authority stays with the incumbent during calibration.
+
+AC-1 DONE: demo report merged (docs/design/pi-demo-report-2026-07-13.md, commits 518482b+926283c+8d66d63). Binding fork ANSWERED with probe evidence: native TypeScript extension (sendUserMessage inject probe ran to agent_settled, source=extension; reply content honestly marked uncaptured). Key characterization: pi 0.80.6 (@earendil-works), PI_HOME NOT consumed — managed home rides PI_CODING_AGENT_DIR/SESSION_DIR + isolated HOME; PI_OFFLINE couples update-suppression; one-provider env routing (provider pin per seat); clause table earns/refuses grok-style clauses on pi-specific evidence (/proc ceremony CONDITIONAL pending herder launch-path characterization). Review: FIRST GROK CALIBRATION RUN — incumbent mage (opus) APPROVE-with-findings; calibration mudo (grok) 3 verified grok-only findings incl the inject evidence overclaim; both deltas APPROVE; identical residual P3 found independently by both. AC-2 (design unit) is next — design must treat /proc clause as conditional.
 <!-- SECTION:NOTES:END -->
