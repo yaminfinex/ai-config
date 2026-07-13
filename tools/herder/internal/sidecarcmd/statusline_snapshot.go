@@ -14,10 +14,12 @@ import (
 const statuslineSnapshotTickTolerance = 2 * time.Second
 
 type statuslineSnapshotWriter struct {
-	dir      string
-	cache    map[string]string
-	written  map[string]struct{}
-	collided map[string]struct{}
+	dir               string
+	cache             map[string]string
+	written           map[string]struct{}
+	collided          map[string]struct{}
+	transitionCleaned bool
+	stableKey         string
 }
 
 func newStatuslineSnapshotWriter(hcomDir string) *statuslineSnapshotWriter {
@@ -34,14 +36,6 @@ func newStatuslineSnapshotWriter(hcomDir string) *statuslineSnapshotWriter {
 
 func (w *statuslineSnapshotWriter) writeRows(rows []hcomRow, now time.Time) {
 	if w == nil || w.dir == "" || rows == nil {
-		return
-	}
-	if guid, row, ok := stableStatuslineSnapshotIdentity(rows); ok {
-		content := renderStatuslineSnapshot(row, now)
-		if err := w.writeIfChanged(guid, content); err == nil {
-			w.removeLegacyNames(row)
-		}
-		w.removeUnseen(map[string]struct{}{guid: {}})
 		return
 	}
 	collisions := statuslineSnapshotCollisions(rows)
@@ -63,24 +57,19 @@ func (w *statuslineSnapshotWriter) writeRows(rows []hcomRow, now time.Time) {
 	w.removeUnseen(seen)
 }
 
-func stableStatuslineSnapshotIdentity(rows []hcomRow) (string, hcomRow, bool) {
-	guid, guidOK := safeStatuslineName(os.Getenv("HERDER_GUID"))
-	paneID := os.Getenv("HERDR_PANE_ID")
-	processID := os.Getenv("HCOM_PROCESS_ID")
-	if !guidOK || (paneID == "" && processID == "") {
-		return "", hcomRow{}, false
+func (w *statuslineSnapshotWriter) writeCorrelated(row hcomRow, rows []hcomRow, now time.Time) {
+	processID, processOK := safeStatuslineName(row.LaunchContext.ProcessID)
+	if w == nil || w.dir == "" || !processOK {
+		return
 	}
-	for _, row := range rows {
-		paneMatch := paneID != "" && row.LaunchContext.PaneID == paneID
-		processMatch := processID != "" && row.LaunchContext.ProcessID == processID
-		if !paneMatch && !processMatch {
-			continue
-		}
-		if _, ok := statuslineSnapshotName(row); ok {
-			return guid, row, true
-		}
+	if err := w.writeIfChanged(processID, renderStatuslineSnapshot(row, now)); err != nil {
+		return
 	}
-	return "", hcomRow{}, false
+	w.stableKey = processID
+	if !w.transitionCleaned {
+		w.cleanupLegacySnapshot(row, rows)
+		w.transitionCleaned = true
+	}
 }
 
 func statuslineSnapshotCollisions(rows []hcomRow) map[string]struct{} {
@@ -116,10 +105,6 @@ func safeStatuslineName(name string) (string, bool) {
 		return "", false
 	}
 	return name, true
-}
-
-func defaultStatuslineInstanceName() string {
-	return firstNonEmpty(os.Getenv("HCOM_INSTANCE_NAME"), os.Getenv("HCOM_NAME"), "self")
 }
 
 func renderStatuslineSnapshot(row hcomRow, now time.Time) string {
@@ -194,13 +179,31 @@ func (w *statuslineSnapshotWriter) remove(name string) {
 	delete(w.cache, name)
 }
 
-func (w *statuslineSnapshotWriter) removeLegacyNames(row hcomRow) {
-	names := []string{row.Name, row.BaseName, defaultStatuslineInstanceName()}
-	for _, name := range names {
-		if safeName, ok := safeStatuslineName(name); ok {
-			w.remove(safeName)
+func (w *statuslineSnapshotWriter) cleanupLegacySnapshot(row hcomRow, rows []hcomRow) {
+	legacyName, ok := safeStatuslineName(row.Name)
+	if !ok || legacyName == row.LaunchContext.ProcessID || nameOwnedByAnotherRow(legacyName, row, rows) {
+		return
+	}
+	path := w.path(legacyName)
+	if _, tracked := w.written[legacyName]; !tracked {
+		existing, err := os.ReadFile(path)
+		if err != nil || parseStatuslineSnapshot(existing)["HCOM_LIVE_NAME"] != legacyName {
+			return
 		}
 	}
+	w.remove(legacyName)
+}
+
+func nameOwnedByAnotherRow(name string, own hcomRow, rows []hcomRow) bool {
+	for _, row := range rows {
+		if row.LaunchContext.ProcessID == own.LaunchContext.ProcessID {
+			continue
+		}
+		if liveName, ok := statuslineSnapshotName(row); ok && liveName == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *statuslineSnapshotWriter) removeUnseen(seen map[string]struct{}) {
@@ -214,15 +217,12 @@ func (w *statuslineSnapshotWriter) removeUnseen(seen map[string]struct{}) {
 	}
 }
 
-func (w *statuslineSnapshotWriter) removeInstance(name string) {
-	if guid, ok := safeStatuslineName(os.Getenv("HERDER_GUID")); ok {
-		w.remove(guid)
-	}
-	safeName, ok := safeStatuslineName(name)
-	if !ok {
+func (w *statuslineSnapshotWriter) removeOwned() {
+	if w == nil || w.stableKey == "" {
 		return
 	}
-	w.remove(safeName)
+	w.remove(w.stableKey)
+	w.stableKey = ""
 }
 
 func (w *statuslineSnapshotWriter) path(name string) string {

@@ -107,14 +107,18 @@ fi
 # HERDR_PANE_ID is set in every herdr pane; HERDER_* only on spawned agents.
 # Optional hcom bus snapshot. The event-driven herder sidecar updates this
 # file; this renderer only performs cheap file reads and omits the segment when
-# no snapshot exists. Spawned sessions use their stable GUID; other sessions
-# retain the name-keyed contract.
+# no snapshot exists. hcom-launched sessions use their stable process id;
+# other sessions retain the name-keyed contract.
 hcom_state_file="${HCOM_STATUSLINE_STATE:-}"
 if [ -z "$hcom_state_file" ] && [ -n "${HCOM_DIR:-}" ]; then
-  if [ -n "${HERDER_GUID:-}" ]; then
-    hcom_state_file="${HCOM_DIR%/}/statusline/${HERDER_GUID}.env"
+  hcom_name_state_file="${HCOM_DIR%/}/statusline/${HCOM_INSTANCE_NAME:-${HCOM_NAME:-self}}.env"
+  if [ -n "${HCOM_PROCESS_ID:-}" ]; then
+    hcom_state_file="${HCOM_DIR%/}/statusline/${HCOM_PROCESS_ID}.env"
+    if [ ! -r "$hcom_state_file" ]; then
+      hcom_state_file="$hcom_name_state_file"
+    fi
   else
-    hcom_state_file="${HCOM_DIR%/}/statusline/${HCOM_INSTANCE_NAME:-${HCOM_NAME:-self}}.env"
+    hcom_state_file="$hcom_name_state_file"
   fi
 fi
 hcom_live_name=""
