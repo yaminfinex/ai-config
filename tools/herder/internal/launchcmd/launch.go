@@ -162,11 +162,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if tool == "grok" {
-		if mode != "launch" {
-			die(stderr, "Grok resume and fork are not available until the family lifecycle contract is activated; start a fresh opt-in seat or use a supported family")
-			return 1
+		grokTarget := target
+		if mode == "fork" && parentSessionID != "" {
+			grokTarget = parentSessionID
 		}
-		return runGrokLaunch(tag, rest, stderr)
+		return runGrokLaunch(mode, grokTarget, rest, stderr)
 	}
 
 	hcomPath, err := exec.LookPath("hcom")

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/lifecyclecmd"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -236,6 +237,9 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 			return false
 		}
 		reportClosedFact(stdout, closed, appended, "already_gone", label, guid, pane)
+		if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
+			return false
+		}
 		if appended {
 			dropBusEntryIfGone(closed, opts.force, stdout)
 		}
@@ -249,6 +253,9 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 			return false
 		}
 		reportClosedFact(stdout, closed, appended, "already_gone", label, guid, pane)
+		if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
+			return false
+		}
 		if appended {
 			dropBusEntryIfGone(closed, opts.force, stdout)
 		}
@@ -279,6 +286,9 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 					return false
 				}
 				reportClosedFact(stdout, closed, appended, "already_gone", label, guid, pane)
+				if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
+					return false
+				}
 				if appended {
 					dropBusEntryIfGone(closed, opts.force, stdout)
 				}
@@ -298,9 +308,15 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 		}
 		if appended {
 			fmt.Fprintf(stdout, "cull errored %s (%s) pane=%s → %s (session still recorded unseated)\n", label, guid, pane, reason)
+			if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
+				return false
+			}
 			dropBusEntry(closed, stdout)
 		} else {
 			reportClosedFact(stdout, closed, false, "error", label, guid, pane)
+			if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
+				return false
+			}
 		}
 		return true
 	}
@@ -311,10 +327,29 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 	}
 	if appended {
 		fmt.Fprintf(stdout, "culled %s (%s) pane=%s → %s\n", label, guid, pane, closedOK)
+		if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
+			return false
+		}
 		dropBusEntry(closed, stdout)
 	} else {
 		reportClosedFact(stdout, closed, false, closedOK, label, guid, pane)
+		if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
+			return false
+		}
 	}
+	return true
+}
+
+func retireGrokAfterCull(registryPath string, rec registry.Record, stdout, stderr io.Writer) bool {
+	if rec.Agent != "grok" {
+		return true
+	}
+	retired, err := lifecyclecmd.RetireGrokForCull(registryPath, ptrString(rec.GUID))
+	if err != nil {
+		die(stderr, err.Error())
+		return false
+	}
+	fmt.Fprintf(stdout, "grok bridge: retired %d pending message(s) as undeliverable\n", retired)
 	return true
 }
 

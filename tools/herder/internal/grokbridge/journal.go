@@ -85,6 +85,9 @@ type Journal struct {
 	receipts   map[int64]*Receipt
 	generation uint64
 	cursor     int64
+	pending    int
+	retired    int
+	retiring   bool
 }
 
 func OpenJournal(path string) (*Journal, error) {
@@ -132,6 +135,12 @@ func (j *Journal) Close() error       { j.mu.Lock(); defer j.mu.Unlock(); return
 func (j *Journal) Cursor() int64      { j.mu.Lock(); defer j.mu.Unlock(); return j.cursor }
 func (j *Journal) Generation() uint64 { j.mu.Lock(); defer j.mu.Unlock(); return j.generation }
 
+func (j *Journal) Counts() (pending, retired int) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.pending, j.retired
+}
+
 func (j *Journal) replay() error {
 	if _, err := j.f.Seek(0, 0); err != nil {
 		return err
@@ -176,6 +185,7 @@ func (j *Journal) apply(rec Record) error {
 			return fmt.Errorf("decode queued message %d: %w", rec.ID, err)
 		}
 		j.receipts[rec.ID] = &Receipt{Event: ev, Raw: append(json.RawMessage(nil), rec.Event...), Message: msg, Hash: rec.Hash}
+		j.pending++
 		if rec.ID > j.cursor {
 			j.cursor = rec.ID
 		}
@@ -205,11 +215,20 @@ func (j *Journal) apply(rec Record) error {
 		if !r.Fetched {
 			return fmt.Errorf("ack for id %d has no fetch; restore a consistent journal", rec.ID)
 		}
+		if !r.Acked && !r.Retired {
+			j.pending--
+		}
 		r.Acked = true
 	case "undeliverable":
 		r, ok := j.receipts[rec.ID]
 		if !ok {
 			return fmt.Errorf("retirement references unknown id %d", rec.ID)
+		}
+		if !r.Retired {
+			if !r.Acked {
+				j.pending--
+			}
+			j.retired++
 		}
 		r.Retired = true
 	case "outbound":
@@ -250,29 +269,40 @@ func (j *Journal) AdvanceGeneration() (uint64, error) {
 }
 
 func (j *Journal) Queue(raw json.RawMessage) (Receipt, bool, error) {
+	receipt, added, _, err := j.queuePendingChange(raw)
+	return receipt, added, err
+}
+
+func (j *Journal) queuePendingChange(raw json.RawMessage) (Receipt, bool, bool, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	pendingBefore := j.pending
 	var ev Event
 	if err := json.Unmarshal(raw, &ev); err != nil {
-		return Receipt{}, false, fmt.Errorf("decode hcom event: %w", err)
+		return Receipt{}, false, false, fmt.Errorf("decode hcom event: %w", err)
 	}
 	if ev.ID <= 0 {
-		return Receipt{}, false, errors.New("hcom event is missing a positive numeric id")
+		return Receipt{}, false, false, errors.New("hcom event is missing a positive numeric id")
 	}
 	if existing, ok := j.receipts[ev.ID]; ok {
-		return *existing, false, nil
+		return *existing, false, false, nil
 	}
 	var msg Message
 	if err := json.Unmarshal(ev.Data, &msg); err != nil {
-		return Receipt{}, false, fmt.Errorf("decode hcom event %d data: %w", ev.ID, err)
+		return Receipt{}, false, false, fmt.Errorf("decode hcom event %d data: %w", ev.ID, err)
 	}
 	h := sha256.Sum256([]byte(msg.Text))
 	hash := hex.EncodeToString(h[:4])
 	copyRaw := append(json.RawMessage(nil), raw...)
 	if err := j.append(Record{Kind: "queued", ID: ev.ID, Event: copyRaw, Hash: hash}, true); err != nil {
-		return Receipt{}, false, err
+		return Receipt{}, false, false, err
 	}
-	return *j.receipts[ev.ID], true, nil
+	if j.retiring {
+		if err := j.append(Record{Kind: "undeliverable", ID: ev.ID, Generation: j.generation}, true); err != nil {
+			return Receipt{}, false, false, err
+		}
+	}
+	return *j.receipts[ev.ID], true, pendingBefore != j.pending, nil
 }
 
 func (j *Journal) Surface(id int64, kind string, gen uint64) error {
@@ -333,19 +363,28 @@ func (j *Journal) Fetch(id int64, gen uint64) (Receipt, error) {
 }
 
 func (j *Journal) Ack(id int64, gen uint64) error {
+	_, err := j.ackPendingChange(id, gen)
+	return err
+}
+
+func (j *Journal) ackPendingChange(id int64, gen uint64) (bool, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	pendingBefore := j.pending
 	if gen != j.generation {
-		return staleGeneration(gen, j.generation)
+		return false, staleGeneration(gen, j.generation)
 	}
 	r, ok := j.receipts[id]
 	if !ok {
-		return fmt.Errorf("message id %d is not queued for this seat", id)
+		return false, fmt.Errorf("message id %d is not queued for this seat", id)
 	}
 	if !r.Fetched {
-		return fmt.Errorf("message id %d: fetch before ack is required; call fetch_message first", id)
+		return false, fmt.Errorf("message id %d: fetch before ack is required; call fetch_message first", id)
 	}
-	return j.append(Record{Kind: "acked", ID: id, Generation: gen, Repeat: r.Acked}, true)
+	if err := j.append(Record{Kind: "acked", ID: id, Generation: gen, Repeat: r.Acked}, true); err != nil {
+		return false, err
+	}
+	return pendingBefore != j.pending, nil
 }
 
 func (j *Journal) RecordOutbound(result string) error {
@@ -360,6 +399,7 @@ func (j *Journal) RetireUnacked(gen uint64) (int, error) {
 	if gen != j.generation {
 		return 0, staleGeneration(gen, j.generation)
 	}
+	j.retiring = true
 	ids := make([]int64, 0)
 	for id, r := range j.receipts {
 		if !r.Acked && !r.Retired {

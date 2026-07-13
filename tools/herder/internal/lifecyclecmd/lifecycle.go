@@ -13,9 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/grokbridge"
 	"ai-config/tools/herder/internal/herderpaths"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/hookcmd"
+	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/observercmd"
 	"ai-config/tools/herder/internal/panecleanup"
 	"ai-config/tools/herder/internal/placement"
@@ -179,11 +181,18 @@ func (r *runner) fork(opts forkOptions) int {
 		return 1
 	}
 	sessionID := registry.ToolSessionIDForGUID(recs, parentGUID)
+	agent := firstNonEmpty(parent.Agent, "claude")
 	live := liveAgents(r.client())
 	liveParent := registry.IsSeated(*parent) && parent.TerminalID != "" && live[parent.TerminalID].TerminalID != nil
 
 	vehicleTarget := ""
-	if liveParent && parent.HcomName != "" {
+	if agent == "grok" {
+		if !launchcmd.GrokActivated() {
+			die(r.stderr, launchcmd.GrokActivationError())
+			return 1
+		}
+		vehicleTarget = sessionID
+	} else if liveParent && parent.HcomName != "" {
 		vehicleTarget = parent.HcomName
 	} else if sessionID != "" {
 		vehicleTarget = sessionID
@@ -223,6 +232,21 @@ func (r *runner) fork(opts forkOptions) int {
 	// forker's own spawner stays reachable transitively via the forker's row.
 	prov := registry.BuildProvenance("fork", firstNonEmpty(os.Getenv("HERDER_GUID"), "user"), role, cwd, workspace)
 	prov.ForkedFrom = parentGUID
+	grokSessionID := ""
+	if agent == "grok" {
+		grokSessionID, err = launchcmd.NewGrokSessionID()
+		if err != nil {
+			die(r.stderr, "preassign Grok fork session id: "+err.Error())
+			return 1
+		}
+		lifecycle, planErr := launchcmd.BuildGrokLifecyclePlan("fork", sessionID, grokSessionID)
+		if planErr != nil {
+			die(r.stderr, planErr.Error())
+			return 1
+		}
+		grokSessionID = lifecycle.SessionID
+		prov.ToolSessionID = grokSessionID
+	}
 
 	row, code := r.startAndAppend(startSpec{
 		Mode:          "fork",
@@ -230,10 +254,11 @@ func (r *runner) fork(opts forkOptions) int {
 		Short:         short,
 		Label:         label,
 		Role:          role,
-		Agent:         firstNonEmpty(parent.Agent, "claude"),
+		Agent:         agent,
 		HcomDir:       firstNonEmpty(parent.HcomDir, filepath.Join(os.Getenv("HOME"), ".hcom")),
 		VehicleTarget: vehicleTarget,
 		ParentSession: sessionID,
+		GrokSessionID: grokSessionID,
 		Prompt:        opts.prompt,
 		RegistryPath:  registryPath,
 		BaseRaw:       []byte(`{}`),
@@ -593,6 +618,16 @@ func (r *runner) resume(opts resumeOptions) int {
 		die(r.stderr, fmt.Sprintf("cannot resume %s: no tool_session_id recorded for this guid (never captured, or predates session capture) — spawn a fresh agent instead", opts.target))
 		return 1
 	}
+	if rec.Agent == "grok" {
+		if !launchcmd.GrokActivated() {
+			die(r.stderr, launchcmd.GrokActivationError())
+			return 1
+		}
+		if _, err := launchcmd.BuildGrokLifecyclePlan("resume", sessionID, sessionID); err != nil {
+			die(r.stderr, err.Error())
+			return 1
+		}
+	}
 	label := firstNonEmpty(ptrString(rec.Label), "resumed-"+registry.ShortGUID(guid))
 	if owner := registry.NonRetiredLabelOwner(recs, label, guid); owner != nil {
 		die(r.stderr, fmt.Sprintf("label %q already belongs to non-retired session %s", label, ptrString(owner.GUID)))
@@ -626,6 +661,10 @@ func (r *runner) resume(opts resumeOptions) int {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	prov.TS = now
 	prov.ResumedAt = now
+	grokSessionID := ""
+	if rec.Agent == "grok" {
+		grokSessionID = sessionID
+	}
 
 	base := rec.Raw
 	if len(bytes.TrimSpace(base)) == 0 {
@@ -641,6 +680,7 @@ func (r *runner) resume(opts resumeOptions) int {
 		Agent:         firstNonEmpty(rec.Agent, "claude"),
 		HcomDir:       firstNonEmpty(rec.HcomDir, filepath.Join(os.Getenv("HOME"), ".hcom")),
 		VehicleTarget: sessionID,
+		GrokSessionID: grokSessionID,
 		RegistryPath:  registryPath,
 		BaseRaw:       base,
 		Provenance:    prov,
@@ -674,6 +714,7 @@ type startSpec struct {
 	HcomDir       string
 	VehicleTarget string
 	ParentSession string
+	GrokSessionID string
 	Prompt        string
 	RegistryPath  string
 	BaseRaw       []byte
@@ -694,8 +735,10 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	split := firstNonEmpty(spec.Split, os.Getenv("HERDER_LIFECYCLE_SPLIT"), "right")
 	focusFlag := firstNonEmpty(os.Getenv("HERDER_LIFECYCLE_FOCUS"), "--no-focus")
 	extra := permissionArgs(spec.Agent)
-	extra = append(extra, "--go")
-	if spec.Prompt != "" {
+	if spec.Agent != "grok" {
+		extra = append(extra, "--go")
+	}
+	if spec.Prompt != "" && spec.Agent != "grok" {
 		extra = append(extra, "--hcom-prompt", spec.Prompt)
 	}
 	launchTokens := []string{paths.BinHerder, "launch", "--" + spec.Mode, spec.Agent, spec.VehicleTarget, "--tag", spec.Role}
@@ -707,8 +750,23 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	inner := shellCommand(launchTokens)
 	spawnedBy := firstNonEmpty(os.Getenv("HERDER_GUID"), "user")
 	shell := firstNonEmpty(os.Getenv("SHELL"), "/bin/zsh")
-	innerCmd := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s AI_CONFIG_ROOT=%s HCOM_DIR=%s PATH=%s:$PATH; exec %s",
-		shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(paths.BinHerder), shellquote.Quote(paths.RepoRoot), shellquote.Quote(spec.HcomDir), shellquote.Quote(paths.ShimsDir), inner)
+	grokEnv := ""
+	if spec.Agent == "grok" {
+		grokEnv = " HERDER_STATE_DIR=" + shellquote.Quote(filepath.Dir(spec.RegistryPath)) +
+			" HERDER_GROK_SESSION_ID=" + shellquote.Quote(spec.GrokSessionID) +
+			" HERDER_GROK_CHILD_HOME=" + shellquote.Quote(os.Getenv("HOME")) +
+			" HERDER_GROK_ACTIVATED=1"
+		for _, key := range []string{"HERDER_GROK_BIN", "HERDER_GROK_SUPPORTED_VERSIONS", "HERDER_REAL_HCOM"} {
+			if value := os.Getenv(key); value != "" {
+				grokEnv += " " + key + "=" + shellquote.Quote(value)
+			}
+		}
+		if os.Getenv("HERDER_GROK_SAFE") == "1" {
+			grokEnv += " HERDER_GROK_SAFE=1"
+		}
+	}
+	innerCmd := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s AI_CONFIG_ROOT=%s HCOM_DIR=%s PATH=%s:$PATH%s; exec %s",
+		shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(paths.BinHerder), shellquote.Quote(paths.RepoRoot), shellquote.Quote(spec.HcomDir), shellquote.Quote(paths.ShimsDir), grokEnv, inner)
 	argv := []string{shell, "-lic", innerCmd}
 	startArgs := []string{"agent", "start", spec.Label, focusFlag, "--split", split, "--cwd", cwd, "--", shell, "-lic", innerCmd}
 	if spec.Workspace != "" {
@@ -770,6 +828,16 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		r.failAfterLaunch("registry row encoding failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
 		return nil, 1
 	}
+	if spec.Agent == "grok" {
+		row, err = r.verifyGrokLifecycleIdentity(row, start.Agent.PaneID, start.Agent.TerminalID, spec)
+		if err != nil {
+			if spec.Mode == "fork" {
+				_, _ = grokBridgeCall(filepath.Dir(spec.RegistryPath), spec.GUID, spec.GrokSessionID, "retire")
+			}
+			r.failAfterLaunch(err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
+			return nil, 1
+		}
+	}
 	outcome, err := registry.AppendLegacySessionEvent(spec.RegistryPath, row, "registered", "seated")
 	if err == nil {
 		err = outcome.Err()
@@ -778,12 +846,246 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		r.failAfterLaunch("registry write refused: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
 		return nil, 1
 	}
-	if code := r.verifyLaunchStayedAlive(spec.RegistryPath, row, start.Agent.PaneID, spec, cwd); code != 0 {
-		return nil, code
+	if spec.Agent == "grok" {
+		if err = refreshGrokCapabilitiesAfterRegistration(spec.RegistryPath, spec.GUID, spec.GrokSessionID); err != nil {
+			r.failAfterLaunch("Grok capability registration failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
+			return nil, 1
+		}
+	} else {
+		if code := r.verifyLaunchStayedAlive(spec.RegistryPath, row, start.Agent.PaneID, spec, cwd); code != 0 {
+			return nil, code
+		}
 	}
 	var decoded map[string]any
 	_ = json.Unmarshal(row, &decoded)
 	return decoded, 0
+}
+
+func refreshGrokCapabilitiesAfterRegistration(registryPath, guid, sessionID string) error {
+	stateDir := filepath.Dir(registryPath)
+	status, err := grokBridgeCall(stateDir, guid, sessionID, "status")
+	if err != nil || status.Status == nil {
+		return fmt.Errorf("bridge status unavailable after registry bind: %s", errorText(err))
+	}
+	busData, err := os.ReadFile(filepath.Join(stateDir, "grok", guid, "bus-name"))
+	if err != nil {
+		return fmt.Errorf("read bridge bus identity after registry bind: %w", err)
+	}
+	busName := strings.TrimSpace(string(busData))
+	if busName == "" || status.Status.Bus != busName || status.Status.PID <= 0 {
+		return errors.New("bridge status does not match the recorded bus identity and live binder pid; inspect the seat bridge log and retry")
+	}
+	switch status.Status.Wake {
+	case "armed", "degraded":
+	default:
+		return fmt.Errorf("bridge reported invalid live wake capability %q", status.Status.Wake)
+	}
+	changed := false
+	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		latest := registry.V2ByGUID(tx.Projection, guid)
+		if latest == nil || latest.Tool != "grok" {
+			return nil, fmt.Errorf("latest Grok registry row %s is unavailable after bind", guid)
+		}
+		undeliverable := 0
+		if latest.Capabilities != nil {
+			undeliverable = latest.Capabilities.Undeliverable
+		}
+		capabilities := v2.Capabilities{Bus: "bound", Wake: status.Status.Wake, Pending: status.Status.Pending, BinderPID: status.Status.PID, Undeliverable: undeliverable}
+		if latest.Capabilities != nil && *latest.Capabilities == capabilities {
+			return nil, nil
+		}
+		next := *latest
+		next.Event = "registered"
+		next.RecordedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		next.Capabilities = &capabilities
+		changed = true
+		return []v2.SessionRecord{next}, nil
+	})
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil {
+		return err
+	}
+	if err = outcome.Err(); err != nil {
+		return err
+	}
+	if outcome.Status != registry.WriteApplied {
+		return errors.New("Grok capability refresh row was not appended")
+	}
+	return nil
+}
+
+func (r *runner) verifyGrokLifecycleIdentity(row []byte, paneID, terminalID string, spec startSpec) ([]byte, error) {
+	settle := lifecycleSettleMS()
+	if settle <= 0 {
+		return nil, errors.New("Grok lifecycle identity verification is disabled; set HERDER_LIFECYCLE_SETTLE_MS to a positive bounded window and retry")
+	}
+	deadline := time.Now().Add(time.Duration(settle) * time.Millisecond)
+	last := "no evidence sampled"
+	for {
+		paneOut, paneRC, paneErr := r.client().Combined("pane", "get", paneID)
+		pane, parsePaneErr := herdrcli.ParsePaneGet(paneOut)
+		if paneErr != nil || paneRC != 0 || parsePaneErr != nil || pane.PaneID != paneID || pane.TerminalID != terminalID {
+			last = fmt.Sprintf("pane evidence unavailable or mismatched (exit=%d)", paneRC)
+		} else {
+			processOut, processRC, processErr := r.client().Combined("pane", "process_info", paneID)
+			processes, parseProcessErr := herdrcli.ParseProcessInfo(processOut)
+			pid := matchingGrokProcess(processes.Processes, spec)
+			sessionMatches, _ := filepath.Glob(filepath.Join(filepath.Dir(spec.RegistryPath), "grok-home", "sessions", "*", spec.GrokSessionID))
+			status, statusErr := grokBridgeCall(filepath.Dir(spec.RegistryPath), spec.GUID, spec.GrokSessionID, "status")
+			busData, busErr := os.ReadFile(filepath.Join(filepath.Dir(spec.RegistryPath), "grok", spec.GUID, "bus-name"))
+			busName := strings.TrimSpace(string(busData))
+			switch {
+			case processErr != nil || processRC != 0 || parseProcessErr != nil:
+				last = fmt.Sprintf("process evidence unavailable (exit=%d)", processRC)
+			case pid == 0:
+				last = "no Grok process carried the herder-owned lifecycle identity arguments"
+			case len(sessionMatches) != 1:
+				last = fmt.Sprintf("expected one controlled session directory named %s, found %d", spec.GrokSessionID, len(sessionMatches))
+			case busErr != nil || busName == "":
+				last = "bridge bus name unavailable"
+			case statusErr != nil || status.Status == nil:
+				last = "bridge status unavailable: " + errorText(statusErr)
+			case status.Status.Bus != busName || status.Status.PID <= 0:
+				last = "bridge status did not prove the recorded bus identity and live binder pid"
+			default:
+				capabilities := v2.Capabilities{Bus: "bound", Wake: status.Status.Wake, Pending: status.Status.Pending, BinderPID: status.Status.PID}
+				return registry.UpdateRawObject(row, map[string]any{
+					"pid":           pid,
+					"hcom_name":     busName,
+					"hcom_verified": true,
+					"capabilities":  capabilities,
+				})
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return nil, fmt.Errorf("Grok %s identity did not bind within %dms: %s; inspect the isolated pane and seat bridge log, correct the process/session evidence, and retry", spec.Mode, settle, last)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func matchingGrokProcess(processes []herdrcli.Process, spec startSpec) int {
+	for _, process := range processes {
+		if process.PID <= 0 || len(process.Argv) == 0 || !strings.Contains(strings.ToLower(filepath.Base(process.Argv[0])), "grok") || !sliceHas(process.Argv, "--no-subagents") {
+			continue
+		}
+		switch spec.Mode {
+		case "resume":
+			if sliceHasPair(process.Argv, "--resume", spec.GrokSessionID) {
+				return process.PID
+			}
+		case "fork":
+			if sliceHasPair(process.Argv, "--resume", spec.ParentSession) && sliceHas(process.Argv, "--fork-session") && sliceHasPair(process.Argv, "--session-id", spec.GrokSessionID) {
+				return process.PID
+			}
+		}
+	}
+	return 0
+}
+
+func sliceHas(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func sliceHasPair(values []string, flag, want string) bool {
+	for i := 0; i+1 < len(values); i++ {
+		if values[i] == flag && values[i+1] == want {
+			return true
+		}
+	}
+	return false
+}
+
+func grokBridgeCall(stateDir, seat, sessionID, op string) (grokbridge.Response, error) {
+	client, err := grokbridge.DialClientForSession(grokbridge.SocketPath(stateDir, seat), sessionID)
+	if err != nil {
+		return grokbridge.Response{}, err
+	}
+	return client.Call(grokbridge.Request{Op: op})
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return "unknown error"
+	}
+	return err.Error()
+}
+
+func RetireGrokForCull(registryPath, guid string) (int, error) {
+	proj, err := v2.LoadFile(registryPath, v2.LoadOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("read Grok seat before cull retirement: %w", err)
+	}
+	current := registry.V2ByGUID(proj, guid)
+	if current == nil || current.Tool != "grok" {
+		return 0, fmt.Errorf("Grok cull retirement refused for %s: latest Grok registry row is unavailable; re-resolve the session and retry", guid)
+	}
+	if current.Capabilities != nil && current.Capabilities.Wake == "down" && current.Capabilities.Bus == "" && current.Capabilities.Pending == 0 && current.Capabilities.BinderPID == 0 {
+		return 0, nil
+	}
+	sessionID := current.Provenance.ToolSessionID
+	if len(current.SIDs) > 0 {
+		sessionID = current.SIDs[len(current.SIDs)-1].SID
+	}
+	if sessionID == "" {
+		return 0, fmt.Errorf("Grok cull retirement refused for %s: owning session id is absent; repair the registry identity before retrying", guid)
+	}
+	retired, err := grokBridgeCall(filepath.Dir(registryPath), guid, sessionID, "retire")
+	if err != nil {
+		offlineRetired, offlineErr := grokbridge.RetireOffline(filepath.Dir(registryPath), guid)
+		if offlineErr != nil {
+			return 0, fmt.Errorf("retire Grok seat bridge for %s: socket unavailable (%v); offline convergence refused: %w", guid, err, offlineErr)
+		}
+		retired.Retired = offlineRetired
+	}
+	alreadyRecorded := false
+	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		latest := registry.V2ByGUID(tx.Projection, guid)
+		if latest == nil || latest.Tool != "grok" {
+			return nil, fmt.Errorf("record Grok cull retirement for %s: latest Grok session disappeared", guid)
+		}
+		if latest.Capabilities != nil && latest.Capabilities.Wake == "down" && latest.Capabilities.Bus == "" && latest.Capabilities.Pending == 0 && latest.Capabilities.BinderPID == 0 && latest.Capabilities.Undeliverable >= retired.Retired {
+			alreadyRecorded = true
+			return nil, nil
+		}
+		next := *latest
+		next.Event = "unseated"
+		next.RecordedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		undeliverable := retired.Retired
+		if latest.Capabilities != nil && latest.Capabilities.Undeliverable > undeliverable {
+			undeliverable = latest.Capabilities.Undeliverable
+		}
+		next.Capabilities = &v2.Capabilities{Wake: "down", Pending: 0, Undeliverable: undeliverable}
+		return []v2.SessionRecord{next}, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if alreadyRecorded {
+		return retired.Retired, nil
+	}
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil {
+		return 0, err
+	}
+	if err := outcome.Err(); err != nil {
+		return 0, err
+	}
+	if outcome.Status != registry.WriteApplied {
+		return 0, fmt.Errorf("record Grok cull retirement for %s: capability row was not appended", guid)
+	}
+	return retired.Retired, nil
 }
 
 func (r *runner) verifyLaunchStayedAlive(registryPath string, row []byte, paneID string, spec startSpec, cwd string) int {

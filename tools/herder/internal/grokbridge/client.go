@@ -23,6 +23,13 @@ func DialClient(socket string) (*Client, error) {
 	return dialClient(socket, processCapability("HERDER_GROK_SESSION_ID"))
 }
 
+// DialClientForSession presents explicit owning-session evidence. Lifecycle
+// and cull callers use it so generation-fenced bridge operations never depend
+// on temporarily mutating process-wide environment state.
+func DialClientForSession(socket, sessionID string) (*Client, error) {
+	return dialClient(socket, sessionID)
+}
+
 func dialClient(socket, sessionID string) (*Client, error) {
 	c, err := net.Dial("unix", socket)
 	if err != nil {

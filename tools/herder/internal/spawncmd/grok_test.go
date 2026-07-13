@@ -10,7 +10,7 @@ import (
 
 func TestT19GrokPassthroughRefusals(t *testing.T) {
 	cases := []string{
-		"--session-id", "--session-id=value", "-s", "--resume", "-r", "--fork-session",
+		"--session-id", "--session-id=value", "-s", "--resume", "-r", "--continue", "-c", "--continue=1", "--fork-session",
 		"--rules", "--permission-mode", "--always-approve", "--bypassPermissions",
 		"--no-auto-update", "--auto-update", "--disable-auto-update", "--agents", "--agent", "--subagents",
 		"--no-subagents", "--no-no-subagents", "HOME=/tmp/elsewhere", "GROK_HOME=/tmp/elsewhere",

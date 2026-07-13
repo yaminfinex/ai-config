@@ -46,22 +46,24 @@ type Record struct {
 	ShortGUID *string `json:"short_guid"`
 	Label     *string `json:"label"`
 
-	Role         string      `json:"role"`
-	Agent        string      `json:"agent"`
-	PaneID       string      `json:"pane_id"`
-	TerminalID   string      `json:"terminal_id"`
-	Team         string      `json:"team"`
-	HcomDir      string      `json:"hcom_dir"`
-	HcomName     string      `json:"hcom_name"`
-	HcomVerified *bool       `json:"hcom_verified,omitempty"`
-	HcomTag      string      `json:"hcom_tag"`
-	Status       string      `json:"status"`
-	State        string      `json:"state,omitempty"`
-	RecordedAt   string      `json:"recorded_at,omitempty"`
-	CloseResult  string      `json:"close_result,omitempty"`
-	CloseReason  string      `json:"close_reason,omitempty"`
-	ObservedVia  string      `json:"observed_via,omitempty"`
-	Provenance   *Provenance `json:"provenance,omitempty"`
+	Role         string           `json:"role"`
+	Agent        string           `json:"agent"`
+	PaneID       string           `json:"pane_id"`
+	TerminalID   string           `json:"terminal_id"`
+	PID          int              `json:"pid,omitempty"`
+	Team         string           `json:"team"`
+	HcomDir      string           `json:"hcom_dir"`
+	HcomName     string           `json:"hcom_name"`
+	HcomVerified *bool            `json:"hcom_verified,omitempty"`
+	HcomTag      string           `json:"hcom_tag"`
+	Status       string           `json:"status"`
+	State        string           `json:"state,omitempty"`
+	RecordedAt   string           `json:"recorded_at,omitempty"`
+	CloseResult  string           `json:"close_result,omitempty"`
+	CloseReason  string           `json:"close_reason,omitempty"`
+	ObservedVia  string           `json:"observed_via,omitempty"`
+	Capabilities *v2.Capabilities `json:"capabilities,omitempty"`
+	Provenance   *Provenance      `json:"provenance,omitempty"`
 
 	Archived bool            `json:"-"`
 	Raw      json.RawMessage `json:"-"`
@@ -210,6 +212,7 @@ func recordFromV2SessionObject(obj map[string]json.RawMessage) Record {
 		Agent:        rawString(obj["tool"]),
 		PaneID:       seat.PaneID,
 		TerminalID:   seat.TerminalID,
+		PID:          seat.PID,
 		Team:         rawString(obj["team"]),
 		HcomDir:      seat.Namespace,
 		HcomName:     seat.HcomName,
@@ -219,6 +222,10 @@ func recordFromV2SessionObject(obj map[string]json.RawMessage) Record {
 		CloseReason:  rawString(obj["close_reason"]),
 		ObservedVia:  rawString(obj["observed_via"]),
 		Provenance:   &prov,
+	}
+	var capabilities v2.Capabilities
+	if json.Unmarshal(obj["capabilities"], &capabilities) == nil && capabilities != (v2.Capabilities{}) {
+		rec.Capabilities = &capabilities
 	}
 	if guid != "" {
 		rec.GUID = &guid
@@ -590,6 +597,9 @@ func overlayLegacyFields(rec *Record, obj map[string]json.RawMessage) {
 	if v := rawString(obj["terminal_id"]); v != "" {
 		rec.TerminalID = v
 	}
+	if raw, ok := obj["pid"]; ok {
+		_ = json.Unmarshal(raw, &rec.PID)
+	}
 	if v := rawString(obj["hcom_dir"]); v != "" {
 		rec.HcomDir = v
 	}
@@ -620,6 +630,10 @@ func overlayLegacyFields(rec *Record, obj map[string]json.RawMessage) {
 	var prov Provenance
 	if err := json.Unmarshal(obj["provenance"], &prov); err == nil && prov != (Provenance{}) {
 		rec.Provenance = &prov
+	}
+	var capabilities v2.Capabilities
+	if err := json.Unmarshal(obj["capabilities"], &capabilities); err == nil && capabilities != (v2.Capabilities{}) {
+		rec.Capabilities = &capabilities
 	}
 }
 
@@ -773,6 +787,10 @@ func V2FromRecord(rec Record, event, state, recordedAt string) v2.SessionRecord 
 		CloseReason: rec.CloseReason,
 		ObservedVia: rec.ObservedVia,
 	}
+	if rec.Capabilities != nil {
+		capabilities := *rec.Capabilities
+		out.Capabilities = &capabilities
+	}
 	if prov.ToolSessionID != "" {
 		out.SIDs = []v2.SID{{SID: prov.ToolSessionID, ObservedAt: firstNonEmpty(prov.TS, recordedAt), Source: "harvest"}}
 		out.Continuity = "confirmed"
@@ -782,6 +800,7 @@ func V2FromRecord(rec Record, event, state, recordedAt string) v2.SessionRecord 
 			Kind:         "herdr",
 			TerminalID:   rec.TerminalID,
 			PaneID:       rec.PaneID,
+			PID:          rec.PID,
 			HcomName:     rec.HcomName,
 			HcomVerified: rec.HcomVerified,
 			Namespace:    rec.HcomDir,

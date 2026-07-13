@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"ai-config/tools/herder/internal/grokbridge"
 )
 
 const (
@@ -63,32 +65,91 @@ func NewGrokSessionID() (string, error) {
 type grokLaunchPlan struct {
 	Binary    string
 	Version   string
+	Mode      string
 	StateDir  string
 	GrokHome  string
 	Seat      string
 	SessionID string
+	ParentSID string
 	HcomBin   string
 	HcomDir   string
 	Argv      []string
 	Env       []string
 }
 
-func runGrokLaunch(_ string, rest []string, stderr io.Writer) int {
-	plan, err := prepareGrokLaunch(rest)
+type GrokLifecyclePlan struct {
+	Mode      string
+	SessionID string
+	ParentSID string
+}
+
+func BuildGrokLifecyclePlan(mode, target, preassigned string) (GrokLifecyclePlan, error) {
+	switch mode {
+	case "launch":
+		if preassigned == "" {
+			return GrokLifecyclePlan{}, errors.New("fresh Grok launch is missing its preassigned session id; retry through herder spawn")
+		}
+		if !isUUIDv7(preassigned) {
+			return GrokLifecyclePlan{}, errors.New("fresh Grok launch session id is not a UUIDv7; retry through herder spawn")
+		}
+		return GrokLifecyclePlan{Mode: mode, SessionID: preassigned}, nil
+	case "resume":
+		if target == "" {
+			return GrokLifecyclePlan{}, errors.New("Grok resume is missing its recorded session id; choose a session with confirmed continuity")
+		}
+		if preassigned != "" && preassigned != target {
+			return GrokLifecyclePlan{}, errors.New("Grok resume session evidence disagrees with the requested session; retry from the recorded session identity")
+		}
+		if !isUUIDv7(target) {
+			return GrokLifecyclePlan{}, errors.New("recorded Grok resume session id is not a UUIDv7; choose a session with confirmed Grok identity")
+		}
+		return GrokLifecyclePlan{Mode: mode, SessionID: target}, nil
+	case "fork":
+		if target == "" {
+			return GrokLifecyclePlan{}, errors.New("Grok fork is missing its parent session id; choose a parent with confirmed continuity")
+		}
+		if preassigned == "" {
+			return GrokLifecyclePlan{}, errors.New("Grok fork is missing its fresh preassigned session id; retry through herder fork")
+		}
+		if preassigned == target {
+			return GrokLifecyclePlan{}, errors.New("Grok fork session id matches its parent; retry so herder can mint a fresh identity")
+		}
+		if !isUUIDv7(target) || !isUUIDv7(preassigned) {
+			return GrokLifecyclePlan{}, errors.New("Grok fork requires UUIDv7 parent and child session ids; choose a confirmed Grok parent and retry")
+		}
+		return GrokLifecyclePlan{Mode: mode, SessionID: preassigned, ParentSID: target}, nil
+	default:
+		return GrokLifecyclePlan{}, fmt.Errorf("unsupported Grok lifecycle mode %q; use launch, resume, or fork", mode)
+	}
+}
+
+func runGrokLaunch(mode, target string, rest []string, stderr io.Writer) int {
+	if !GrokActivated() {
+		err := errors.New(GrokActivationError())
+		die(stderr, err.Error())
+		return 1
+	}
+	lifecycle, err := BuildGrokLifecyclePlan(mode, target, os.Getenv("HERDER_GROK_SESSION_ID"))
+	if err != nil {
+		recordGrokLaunchFailure(err)
+		die(stderr, err.Error())
+		return 1
+	}
+	plan, err := prepareGrokLifecycleLaunch(rest, lifecycle)
 	if err != nil {
 		recordGrokLaunchFailure(err)
 		die(stderr, err.Error())
 		return 1
 	}
 	clearGrokLaunchFailure(plan.StateDir, plan.Seat)
-	busName, err := startGrokBridge(plan)
+	busName, err := ensureGrokBridge(plan)
 	if err != nil {
 		recordGrokLaunchFailure(err)
 		die(stderr, err.Error())
 		return 1
 	}
 	doctrine := grokDoctrine(busName, plan.Seat, plan.SessionID)
-	plan.Argv = append(plan.Argv, "--session-id", plan.SessionID, "--rules", doctrine, grokBootPrompt)
+	plan.Argv = appendGrokLifecycleArgs(plan, doctrine)
 	if err := syscall.Exec(plan.Binary, plan.Argv, plan.Env); err != nil {
 		recordGrokLaunchFailure(fmt.Errorf("exec Grok: %w", err))
 		die(stderr, "exec Grok: "+err.Error())
@@ -97,7 +158,36 @@ func runGrokLaunch(_ string, rest []string, stderr io.Writer) int {
 	return 0
 }
 
+func appendGrokLifecycleArgs(plan grokLaunchPlan, doctrine string) []string {
+	argv := append([]string(nil), plan.Argv...)
+	switch plan.Mode {
+	case "launch":
+		argv = append(argv, "--session-id", plan.SessionID)
+	case "resume":
+		argv = append(argv, "--resume", plan.SessionID)
+	case "fork":
+		argv = append(argv, "--resume", plan.ParentSID, "--fork-session", "--session-id", plan.SessionID)
+	}
+	return append(argv, "--rules", doctrine, grokBootPrompt)
+}
+
 func prepareGrokLaunch(rest []string) (grokLaunchPlan, error) {
+	sessionID := os.Getenv("HERDER_GROK_SESSION_ID")
+	if sessionID == "" {
+		var err error
+		sessionID, err = NewGrokSessionID()
+		if err != nil {
+			return grokLaunchPlan{}, fmt.Errorf("preassign Grok session id: %w", err)
+		}
+	}
+	lifecycle, err := BuildGrokLifecyclePlan("launch", "", sessionID)
+	if err != nil {
+		return grokLaunchPlan{}, err
+	}
+	return prepareGrokLifecycleLaunch(rest, lifecycle)
+}
+
+func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (grokLaunchPlan, error) {
 	if !GrokActivated() {
 		return grokLaunchPlan{}, errors.New(GrokActivationError())
 	}
@@ -125,13 +215,7 @@ func prepareGrokLaunch(rest []string) (grokLaunchPlan, error) {
 	if !validGrokSeat(seat) {
 		return grokLaunchPlan{}, errors.New("HERDER_GUID is missing or unsafe; launch Grok through `herder spawn` so the seat identity is preassigned")
 	}
-	sessionID := os.Getenv("HERDER_GROK_SESSION_ID")
-	if sessionID == "" {
-		sessionID, err = NewGrokSessionID()
-		if err != nil {
-			return grokLaunchPlan{}, fmt.Errorf("preassign Grok session id: %w", err)
-		}
-	}
+	sessionID := lifecycle.SessionID
 	if !isUUIDv7(sessionID) {
 		return grokLaunchPlan{}, errors.New("preassigned Grok session id is not a UUIDv7; launch through `herder spawn` or provide a valid HERDER_GROK_SESSION_ID")
 	}
@@ -139,8 +223,22 @@ func prepareGrokLaunch(rest []string) (grokLaunchPlan, error) {
 	if err := seedGrokHome(grokHome); err != nil {
 		return grokLaunchPlan{}, err
 	}
-	if matches, _ := filepath.Glob(filepath.Join(grokHome, "sessions", "*", sessionID)); len(matches) != 0 {
-		return grokLaunchPlan{}, fmt.Errorf("preassigned Grok session %s already exists; retry the spawn so herder can mint a fresh session id", sessionID)
+	matches, _ := filepath.Glob(filepath.Join(grokHome, "sessions", "*", sessionID))
+	if lifecycle.Mode == "resume" {
+		if len(matches) == 0 {
+			return grokLaunchPlan{}, fmt.Errorf("recorded Grok session %s is absent from the controlled home; restore that session under GROK_HOME or fork a session that still exists", sessionID)
+		}
+	} else if len(matches) != 0 {
+		if lifecycle.Mode == "launch" {
+			return grokLaunchPlan{}, fmt.Errorf("preassigned Grok session %s already exists; retry the spawn so herder can mint a fresh session id", sessionID)
+		}
+		return grokLaunchPlan{}, fmt.Errorf("preassigned Grok session %s already exists; retry the fork so herder can mint a fresh session id", sessionID)
+	}
+	if lifecycle.Mode == "fork" {
+		parents, _ := filepath.Glob(filepath.Join(grokHome, "sessions", "*", lifecycle.ParentSID))
+		if len(parents) == 0 {
+			return grokLaunchPlan{}, fmt.Errorf("parent Grok session %s is absent from the controlled home; restore that session before forking it", lifecycle.ParentSID)
+		}
 	}
 	hcomDir := os.Getenv("HCOM_DIR")
 	args := append([]string(nil), rest...)
@@ -166,7 +264,21 @@ func prepareGrokLaunch(rest []string) (grokLaunchPlan, error) {
 	if childHome := os.Getenv("HERDER_GROK_CHILD_HOME"); childHome != "" {
 		env = replaceLaunchEnv(env, map[string]string{"HOME": childHome})
 	}
-	return grokLaunchPlan{Binary: binary, Version: version, StateDir: stateDir, GrokHome: grokHome, Seat: seat, SessionID: sessionID, HcomBin: hcomBin, HcomDir: hcomDir, Argv: append([]string{"grok"}, args...), Env: env}, nil
+	return grokLaunchPlan{Binary: binary, Version: version, Mode: lifecycle.Mode, StateDir: stateDir, GrokHome: grokHome, Seat: seat, SessionID: sessionID, ParentSID: lifecycle.ParentSID, HcomBin: hcomBin, HcomDir: hcomDir, Argv: append([]string{"grok"}, args...), Env: env}, nil
+}
+
+func ensureGrokBridge(plan grokLaunchPlan) (string, error) {
+	if plan.Mode == "resume" {
+		client, err := grokbridge.DialClient(grokbridge.SocketPath(plan.StateDir, plan.Seat))
+		if err == nil {
+			if status, statusErr := client.Call(grokbridge.Request{Op: "status"}); statusErr == nil && status.Status != nil && status.Status.Bus == "bound" {
+				if data, readErr := os.ReadFile(filepath.Join(plan.StateDir, "grok", plan.Seat, "bus-name")); readErr == nil && strings.TrimSpace(string(data)) != "" {
+					return strings.TrimSpace(string(data)), nil
+				}
+			}
+		}
+	}
+	return startGrokBridge(plan)
 }
 
 // ReadGrokLaunchFailure returns a launch-side refusal for the preassigned seat.
@@ -531,7 +643,7 @@ func validateGrokArgs(args []string, firstClassModel, allowMappedPermission bool
 		switch name {
 		case "--session-id", "-s":
 			return fmt.Errorf("Grok passthrough %s conflicts with the preassigned session identity; remove it and let herder mint the session id", name)
-		case "--resume", "-r", "--fork-session":
+		case "--resume", "-r", "--continue", "-c", "--fork-session":
 			return fmt.Errorf("Grok passthrough %s conflicts with the fresh-seat launch contract; remove it and use the lifecycle command after that contract is activated", name)
 		case "--rules":
 			return errors.New("Grok passthrough --rules conflicts with the seat doctrine; remove it so herder can install the monitor and receipt rules")

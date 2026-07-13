@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ai-config/tools/herder/internal/registry"
 )
 
 func rawEvent(t *testing.T, id int64, text string) json.RawMessage {
@@ -306,6 +308,81 @@ func TestRetireUnackedTransitionsOnlyPendingMessages(t *testing.T) {
 	}
 }
 
+func TestQueueAfterRetirementIsImmediatelyUndeliverable(t *testing.T) {
+	j := openTestJournal(t)
+	queue(t, j, 1)
+	if count, err := j.RetireUnacked(1); err != nil || count != 1 {
+		t.Fatalf("initial retirement count=%d err=%v", count, err)
+	}
+	queue(t, j, 2)
+	if got := j.receipts[2].Status(); got != "undeliverable" {
+		t.Fatalf("queue-after-retire status=%s", got)
+	}
+	pending, retired := j.Counts()
+	if pending != 0 || retired != 2 {
+		t.Fatalf("counts pending=%d retired=%d, want 0/2", pending, retired)
+	}
+}
+
+func TestPendingChangeSignalsEveryCountMutation(t *testing.T) {
+	j := openTestJournal(t)
+	if _, added, changed, err := j.queuePendingChange(rawEvent(t, 31, "first")); err != nil || !added || !changed {
+		t.Fatalf("first queue added=%v changed=%v err=%v", added, changed, err)
+	}
+	if _, added, changed, err := j.queuePendingChange(rawEvent(t, 32, "second")); err != nil || !added || !changed {
+		t.Fatalf("second queue added=%v changed=%v err=%v", added, changed, err)
+	}
+	if _, err := j.Fetch(31, 1); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := j.ackPendingChange(31, 1); err != nil || !changed {
+		t.Fatalf("first ack changed=%v err=%v", changed, err)
+	}
+	if changed, err := j.ackPendingChange(31, 1); err != nil || changed {
+		t.Fatalf("repeat ack changed=%v err=%v", changed, err)
+	}
+	if _, err := j.Fetch(32, 1); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := j.ackPendingChange(32, 1); err != nil || !changed {
+		t.Fatalf("last ack changed=%v err=%v", changed, err)
+	}
+}
+
+func TestCountsAreRebuiltDuringJournalReplay(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "journal.jsonl")
+	j, err := OpenJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = j.AdvanceGeneration(); err != nil {
+		t.Fatal(err)
+	}
+	queue(t, j, 41)
+	queue(t, j, 42)
+	if _, err = j.Fetch(41, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = j.Ack(41, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = j.RetireUnacked(1); err != nil {
+		t.Fatal(err)
+	}
+	if err = j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	j, err = OpenJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	pending, retired := j.Counts()
+	if pending != 0 || retired != 1 {
+		t.Fatalf("replayed counts pending=%d retired=%d, want 0/1", pending, retired)
+	}
+}
+
 func TestSocketPathLengthPreflightNamesRemedy(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "hcom")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
@@ -316,6 +393,27 @@ func TestSocketPathLengthPreflightNamesRemedy(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "shorten --state-dir") {
 		t.Fatalf("err=%v", err)
 	}
+}
+
+func TestRegistryMintedGUIDIsAcceptedAsSeatIdentity(t *testing.T) {
+	guid, err := registry.NewGUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "hcom")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	state, err := os.MkdirTemp("/tmp", "grok-seat-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(state) })
+	b, err := OpenBinder(BinderConfig{Seat: guid, StateDir: state, HcomBin: bin})
+	if err != nil {
+		t.Fatalf("registry-minted guid %q rejected: %v", guid, err)
+	}
+	b.Close()
 }
 
 func TestDefaultWaitUsesHcomScaleWithoutCorrectnessWeight(t *testing.T) {

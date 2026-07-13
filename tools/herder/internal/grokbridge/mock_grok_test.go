@@ -5,13 +5,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
 type mockBridge struct {
@@ -25,7 +30,7 @@ func startMockBridge(t *testing.T, state string, session string) *mockBridge {
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: bin, SessionID: session})
+	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: bin, BusName: "seat-bus", SessionID: session})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +63,7 @@ func (m *mockBridge) client(t *testing.T) *Client {
 }
 func (m *mockBridge) queue(t *testing.T, id int64, text string) Receipt {
 	t.Helper()
-	r, added, err := m.b.journal.Queue(rawEvent(t, id, text))
+	r, added, err := m.b.queueReceipt(rawEvent(t, id, text))
 	if err != nil || !added {
 		t.Fatalf("queue added=%v err=%v", added, err)
 	}
@@ -463,6 +468,421 @@ func TestT16SubagentBoundaryRejectsForeignAndUnownedSessionEvidence(t *testing.T
 	m.b.cfg.SessionID = ""
 	if _, err := dialClient(m.b.socket, "foreign"); err == nil || !strings.Contains(err.Error(), "no owning session") {
 		t.Fatalf("unowned bridge handshake err=%v", err)
+	}
+}
+
+func TestLifecycleStatusAndRetirementUseGenerationFencedSocket(t *testing.T) {
+	m := startMockBridge(t, t.TempDir(), "owner")
+	defer m.close()
+	m.queue(t, 31, "delivered")
+	m.queue(t, 32, "pending")
+	if _, err := m.b.journal.Fetch(31, m.b.generation); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.b.journal.Ack(31, m.b.generation); err != nil {
+		t.Fatal(err)
+	}
+
+	c := m.client(t)
+	status, err := c.Call(Request{Op: "status"})
+	if err != nil || status.Status == nil || status.Status.PID != os.Getpid() || status.Status.Bus != "seat-bus" || status.Status.Wake != "degraded" || status.Status.Pending != 1 {
+		t.Fatalf("degraded status=%+v err=%v", status.Status, err)
+	}
+	tap := connectTap(t, m.b.socket, "owner")
+	defer tap.close()
+	deadline := time.Now().Add(time.Second)
+	for {
+		status, err = c.Call(Request{Op: "status"})
+		if err == nil && status.Status != nil && status.Status.Wake == "armed" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("armed status=%+v err=%v", status.Status, err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	stale, err := roundTrip(m.b.socket, Request{Op: "retire", Generation: m.b.generation - 1, SessionID: "owner"})
+	if err == nil || !strings.HasPrefix(stale.Error, "stale bridge generation ") || m.b.journal.receipts[32].Retired {
+		t.Fatalf("stale retire response=%+v err=%v retired=%v", stale, err, m.b.journal.receipts[32].Retired)
+	}
+	retired, err := c.Call(Request{Op: "retire"})
+	if err != nil || retired.Retired != 1 {
+		t.Fatalf("retire response=%+v err=%v", retired, err)
+	}
+	select {
+	case <-m.b.retired:
+	case <-time.After(time.Second):
+		t.Fatal("binder did not receive orderly retirement request")
+	}
+	if m.b.journal.receipts[31].Status() != "delivered" || m.b.journal.receipts[32].Status() != "undeliverable" {
+		t.Fatalf("statuses=%s,%s", m.b.journal.receipts[31].Status(), m.b.journal.receipts[32].Status())
+	}
+}
+
+func TestRetirementResponseStopsServingBinderOrderly(t *testing.T) {
+	state := t.TempDir()
+	hcom := filepath.Join(t.TempDir(), "hcom")
+	if err := os.WriteFile(hcom, []byte("#!/bin/sh\nif [ \"$1\" = start ]; then printf '%s\\n' '[hcom:seat-bus]'; exit 0; fi\ncase \" $* \" in *' --wait '*) exec sleep 60;; esac\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: hcom, SessionID: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- b.Serve(context.Background()) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if st, statErr := os.Stat(b.socket); statErr == nil && st.Mode()&os.ModeSocket != 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("binder socket did not become ready")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	c, err := dialClient(b.socket, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Call(Request{Op: "retire"})
+	if err != nil || !resp.OK {
+		t.Fatalf("retirement response=%+v err=%v", resp, err)
+	}
+	select {
+	case err = <-serveErr:
+		if !errors.Is(err, errSeatRetired) {
+			t.Fatalf("serve error=%v, want retirement sentinel", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("binder continued serving after retirement response")
+	}
+}
+
+func TestRetirementResponseArrivesBeforeBridgeSubprocessStops(t *testing.T) {
+	state := t.TempDir()
+	hcom := filepath.Join(t.TempDir(), "hcom")
+	if err := os.WriteFile(hcom, []byte("#!/bin/sh\nif [ \"$1\" = start ]; then printf '%s\\n' '[hcom:seat-bus]'; exit 0; fi\ncase \" $* \" in *' --wait '*) exec sleep 60;; esac\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestBridgeSubprocessHelper", "--", "--seat", "seat", "--state-dir", state, "--hcom-bin", hcom, "--session-id", "owner")
+	cmd.Env = append(os.Environ(), "HERDER_BRIDGE_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+		}
+	})
+	socket := SocketPath(state, "seat")
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if st, err := os.Stat(socket); err == nil && st.Mode()&os.ModeSocket != 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("bridge subprocess socket did not become ready")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	client, err := dialClient(socket, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Call(Request{Op: "retire"})
+	if err != nil || !resp.OK {
+		t.Fatalf("retirement response=%+v err=%v", resp, err)
+	}
+	err = cmd.Wait()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 24 {
+		t.Fatalf("bridge subprocess exit=%v, want code 24 after response", err)
+	}
+}
+
+func TestBridgeSubprocessHelper(t *testing.T) {
+	if os.Getenv("HERDER_BRIDGE_HELPER") != "1" {
+		return
+	}
+	separator := -1
+	for i, arg := range os.Args {
+		if arg == "--" {
+			separator = i
+			break
+		}
+	}
+	if separator < 0 {
+		os.Exit(125)
+	}
+	os.Exit(runBridge(os.Args[separator+1:], os.Stderr))
+}
+
+func TestBinderPublishesEventDrivenCapabilities(t *testing.T) {
+	state := t.TempDir()
+	seedGrokRegistryRow(t, state, "seat", "owner")
+	m := startMockBridge(t, state, "owner")
+	defer m.close()
+	m.queue(t, 71, "pending")
+	tap := connectTap(t, m.b.socket, "owner")
+	waitForWakeCapability(t, state, "seat", "armed", 1, 0)
+	tap.close()
+	waitForWakeCapability(t, state, "seat", "degraded", 1, 0)
+	client := m.client(t)
+	resp, err := client.Call(Request{Op: "retire"})
+	if err != nil || resp.Retired != 1 {
+		t.Fatalf("retire response=%+v err=%v", resp, err)
+	}
+	waitForWakeCapability(t, state, "seat", "down", 0, 1)
+	projection, err := v2.LoadFile(filepath.Join(state, "registry.jsonl"), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := registry.V2ByGUID(projection, "foreign-seat")
+	if foreign == nil || foreign.Capabilities != nil || foreign.RecordedAt != "2026-07-13T00:00:01Z" {
+		t.Fatalf("foreign row was changed by seat capability publication: %+v", foreign)
+	}
+}
+
+func TestArmedBinderPublishesExactPendingCountWithoutTapFlap(t *testing.T) {
+	state := t.TempDir()
+	seedGrokRegistryRow(t, state, "seat", "owner")
+	m := startMockBridge(t, state, "owner")
+	defer m.close()
+	tap := connectTap(t, m.b.socket, "owner")
+	tapClosed := false
+	defer func() {
+		if !tapClosed {
+			tap.close()
+		}
+	}()
+	waitForWakeCapability(t, state, "seat", "armed", 0, 0)
+	m.queue(t, 72, "first pending message")
+	waitForWakeCapability(t, state, "seat", "armed", 1, 0)
+	m.queue(t, 73, "second pending message")
+	m.queue(t, 74, "third pending message")
+	waitForWakeCapability(t, state, "seat", "armed", 3, 0)
+	client := m.client(t)
+	if _, err := client.Call(Request{Op: "fetch", ID: 72}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Call(Request{Op: "ack", ID: 72}); err != nil {
+		t.Fatal(err)
+	}
+	waitForWakeCapability(t, state, "seat", "armed", 2, 0)
+	for _, id := range []int64{73, 74} {
+		if _, err := client.Call(Request{Op: "fetch", ID: id}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.Call(Request{Op: "ack", ID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitForWakeCapability(t, state, "seat", "armed", 0, 0)
+	tap.close()
+	tapClosed = true
+	waitForWakeCapability(t, state, "seat", "degraded", 0, 0)
+}
+
+func TestRetirementPublishFailureIsDiagnosticAndStillStops(t *testing.T) {
+	state := shortState(t)
+	seedGrokRegistryRow(t, state, "seat", "owner")
+	retireGrokRegistryRow(t, state, "seat")
+	hcom := filepath.Join(t.TempDir(), "hcom")
+	if err := os.WriteFile(hcom, []byte("#!/bin/sh\nif [ \"$1\" = start ]; then printf '%s\\n' '[hcom:seat-bus]'; exit 0; fi\ncase \" $* \" in *' --wait '*) exec sleep 60;; esac\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: hcom, SessionID: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			_ = b.Close()
+		}
+	})
+	if _, added, queueErr := b.journal.Queue(rawEvent(t, 73, "retire despite registry")); queueErr != nil || !added {
+		t.Fatalf("queue added=%v err=%v", added, queueErr)
+	}
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- b.Serve(context.Background()) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if st, statErr := os.Stat(b.socket); statErr == nil && st.Mode()&os.ModeSocket != 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("binder socket did not become ready")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	client, err := dialClient(b.socket, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Call(Request{Op: "retire"})
+	if err != nil || !resp.OK || resp.Retired != 1 {
+		t.Fatalf("retirement response=%+v err=%v", resp, err)
+	}
+	select {
+	case err = <-serveErr:
+		if !errors.Is(err, errSeatRetired) {
+			t.Fatalf("serve error=%v, want retirement sentinel", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("binder became a zombie after failed capability publication")
+	}
+	diagnostic := filepath.Join(state, "grok", "seat", "bridge.log")
+	data, err := os.ReadFile(diagnostic)
+	if err != nil || !strings.Contains(string(data), "record down capability") {
+		t.Fatalf("diagnostic=%q err=%v", data, err)
+	}
+	if err = b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	closed = true
+	retired, err := RetireOffline(state, "seat")
+	if err != nil || retired != 1 {
+		t.Fatalf("offline convergence after orderly stop retired=%d err=%v", retired, err)
+	}
+}
+
+func TestWakeCapabilityPublishFailureIsDiagnosticAndBinderSurvives(t *testing.T) {
+	state := t.TempDir()
+	seedGrokRegistryRow(t, state, "seat", "owner")
+	retireGrokRegistryRow(t, state, "seat")
+	m := startMockBridge(t, state, "owner")
+	defer m.close()
+	server, peer := net.Pipe()
+	peer.Close()
+	defer server.Close()
+	m.b.mu.Lock()
+	m.b.taps[server] = struct{}{}
+	m.b.mu.Unlock()
+	receipt, added, err := m.b.journal.Queue(rawEvent(t, 74, "wake despite registry"))
+	if err != nil || !added {
+		t.Fatalf("queue added=%v err=%v", added, err)
+	}
+	if err = m.b.wake(receipt, "wake"); err != nil {
+		t.Fatalf("wake failed on derived registry publication: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(state, "grok", "seat", "bridge.log"))
+	if err != nil || !strings.Contains(string(data), "record degraded capability") {
+		t.Fatalf("diagnostic=%q err=%v", data, err)
+	}
+	if _, err = m.client(t).Call(Request{Op: "status"}); err != nil {
+		t.Fatalf("binder did not survive capability publication failure: %v", err)
+	}
+}
+
+func TestRetirementCountsReceiptQueuedByInFlightDrain(t *testing.T) {
+	state := t.TempDir()
+	seedGrokRegistryRow(t, state, "seat", "owner")
+	m := startMockBridge(t, state, "owner")
+	defer m.close()
+	m.queue(t, 81, "before retire")
+	m.b.drainMu.Lock()
+	response := make(chan Response, 1)
+	go func() {
+		response <- m.b.execute(Request{Op: "retire", Generation: m.b.generation, SessionID: "owner"})
+	}()
+	deadline := time.Now().Add(time.Second)
+	for !m.b.retiring.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("retirement did not begin")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, added, err := m.b.journal.Queue(rawEvent(t, 82, "in-flight after retire")); err != nil || !added {
+		t.Fatalf("in-flight queue added=%v err=%v", added, err)
+	}
+	m.b.drainMu.Unlock()
+	resp := <-response
+	if !resp.OK || resp.Retired != 2 {
+		t.Fatalf("retirement response=%+v, want both ids counted", resp)
+	}
+	if got := m.b.journal.receipts[82].Status(); got != "undeliverable" {
+		t.Fatalf("post-retire queued status=%s", got)
+	}
+	if err := m.b.publishCapabilities("armed"); err != nil {
+		t.Fatalf("late live capability publication after retire: %v", err)
+	}
+	waitForWakeCapability(t, state, "seat", "down", 0, 2)
+}
+
+func seedGrokRegistryRow(t *testing.T, state, seat, sessionID string) {
+	t.Helper()
+	path := filepath.Join(state, "registry.jsonl")
+	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{
+			{
+				Kind: v2.KindSession, GUID: seat, Event: "registered", RecordedAt: "2026-07-13T00:00:00Z", State: v2.StateSeated,
+				Label: "grok-seat", Role: "worker", Tool: "grok", SIDs: []v2.SID{{SID: sessionID}}, Provenance: v2.Provenance{ToolSessionID: sessionID},
+			},
+			{
+				Kind: v2.KindSession, GUID: "foreign-seat", Event: "registered", RecordedAt: "2026-07-13T00:00:01Z", State: v2.StateSeated,
+				Label: "foreign", Role: "worker", Tool: "grok", SIDs: []v2.SID{{SID: "foreign-session"}}, Provenance: v2.Provenance{ToolSessionID: "foreign-session"},
+			},
+		}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, outcome := range outcomes {
+		if err := outcome.Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func retireGrokRegistryRow(t *testing.T, state, seat string) {
+	t.Helper()
+	path := filepath.Join(state, "registry.jsonl")
+	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		latest := registry.V2ByGUID(tx.Projection, seat)
+		if latest == nil {
+			return nil, errors.New("seeded Grok row missing")
+		}
+		next := *latest
+		next.Event = "retired"
+		next.RecordedAt = "2026-07-13T00:00:02Z"
+		return []v2.SessionRecord{next}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, outcome := range outcomes {
+		if err := outcome.Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func waitForWakeCapability(t *testing.T, state, seat, wake string, pending, undeliverable int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		projection, err := v2.LoadFile(filepath.Join(state, "registry.jsonl"), v2.LoadOptions{})
+		if err == nil {
+			latest := registry.V2ByGUID(projection, seat)
+			if latest != nil && latest.Capabilities != nil && latest.Capabilities.Wake == wake && latest.Capabilities.Pending == pending && latest.Capabilities.Undeliverable == undeliverable {
+				if wake == "down" && (latest.Capabilities.Bus != "" || latest.Capabilities.BinderPID != 0) {
+					t.Fatalf("down capability retained live claims: %+v", latest.Capabilities)
+				}
+				if wake != "down" && (latest.Capabilities.Bus != "bound" || latest.Capabilities.BinderPID <= 0) {
+					t.Fatalf("live capability omitted bridge claims: %+v", latest.Capabilities)
+				}
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("capability did not reach wake=%s pending=%d undeliverable=%d", wake, pending, undeliverable)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
