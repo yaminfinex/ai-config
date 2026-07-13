@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -96,10 +98,11 @@ func TestGrokActivationGateDefaultsClosed(t *testing.T) {
 	}
 }
 
-func TestManualGrokLaunchMintsOnlyMissingIdentities(t *testing.T) {
+func TestManualGrokLaunchReplacesUnregisteredAmbientIdentity(t *testing.T) {
 	t.Setenv("HERDER_GUID", "")
 	t.Setenv("HERDER_GROK_SESSION_ID", "")
-	if err := ensureManualGrokIdentity(); err != nil {
+	manual, err := ensureManualGrokIdentity()
+	if err != nil || !manual {
 		t.Fatal(err)
 	}
 	seat := os.Getenv("HERDER_GUID")
@@ -107,11 +110,62 @@ func TestManualGrokLaunchMintsOnlyMissingIdentities(t *testing.T) {
 	if !validGrokSeat(seat) || !isUUIDv7(sid) {
 		t.Fatalf("minted seat=%q sid=%q", seat, sid)
 	}
-	if err := ensureManualGrokIdentity(); err != nil {
+	manual, err = ensureManualGrokIdentity()
+	if err != nil || !manual {
 		t.Fatal(err)
 	}
+	if os.Getenv("HERDER_GUID") == seat || os.Getenv("HERDER_GROK_SESSION_ID") == sid {
+		t.Fatal("unregistered ambient identity was silently adopted")
+	}
+}
+
+func TestManagedGrokPreassignmentIsPreservedBeforeRegistryBind(t *testing.T) {
+	seat, err := registry.NewGUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, err := NewGrokSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(grokPreassignedEnv, "1")
+	t.Setenv("HERDER_GUID", seat)
+	t.Setenv("HERDER_GROK_SESSION_ID", sid)
+	manual, err := ensureManualGrokIdentity()
+	if err != nil || manual {
+		t.Fatalf("managed preassignment: manual=%v err=%v", manual, err)
+	}
 	if os.Getenv("HERDER_GUID") != seat || os.Getenv("HERDER_GROK_SESSION_ID") != sid {
-		t.Fatal("manual identity helper replaced preassigned identity")
+		t.Fatal("managed identity changed before registry bind")
+	}
+}
+
+func TestManualGrokLaunchRefusesForeignFamilyGUIDWithoutSeatState(t *testing.T) {
+	state := t.TempDir()
+	foreign, err := registry.NewGUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := `{"guid":"` + foreign + `","short_guid":"` + registry.ShortGUID(foreign) + `","label":"claude-seat","agent":"claude","status":"active"}` + "\n"
+	if err := os.WriteFile(filepath.Join(state, "registry.jsonl"), []byte(row), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(grokActivationEnv, "1")
+	t.Setenv("HERDER_STATE_DIR", state)
+	t.Setenv("HERDER_GUID", foreign)
+	t.Setenv("HERDER_GROK_SESSION_ID", "inherited-claude-session")
+
+	var stdout, stderr bytes.Buffer
+	if rc := Run([]string{"grok"}, &stdout, &stderr); rc == 0 {
+		t.Fatal("foreign-family ambient GUID was adopted")
+	}
+	for _, want := range []string{"refused inherited HERDER_GUID", `tool "claude", not grok`, "unset HERDER_GUID"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("refusal %q missing %q", stderr.String(), want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(state, "grok", foreign)); !os.IsNotExist(err) {
+		t.Fatalf("foreign GUID acquired Grok state: %v", err)
 	}
 }
 
@@ -130,7 +184,8 @@ func TestManualMintedIdentityUsesPreassignedPlanAndCollisionFence(t *testing.T) 
 	t.Setenv("HERDER_GUID", "")
 	t.Setenv("HERDER_GROK_SESSION_ID", "")
 
-	if err := ensureManualGrokIdentity(); err != nil {
+	manual, err := ensureManualGrokIdentity()
+	if err != nil || !manual {
 		t.Fatal(err)
 	}
 	seat, sid := os.Getenv("HERDER_GUID"), os.Getenv("HERDER_GROK_SESSION_ID")
@@ -151,6 +206,57 @@ func TestManualMintedIdentityUsesPreassignedPlanAndCollisionFence(t *testing.T) 
 	}
 	if _, err := prepareGrokLaunch(nil); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("manual minted sid bypassed collision fence: %v", err)
+	}
+}
+
+func TestManualGrokWrapperRetiresAfterNormalExit(t *testing.T) {
+	plan := grokLaunchPlan{Binary: "/bin/sh", Argv: []string{"grok", "-c", "exit 7"}}
+	retired := 0
+	rc := runManualGrokProcessWithSignals(plan, io.Discard, make(chan os.Signal), func(grokLaunchPlan) error {
+		retired++
+		return nil
+	})
+	if rc != 7 || retired != 1 {
+		t.Fatalf("rc=%d retired=%d", rc, retired)
+	}
+}
+
+func TestManualGrokWrapperSignalConvergesDetachedBridgeToRetired(t *testing.T) {
+	plan := grokLaunchPlan{Binary: "/bin/sh", Argv: []string{"grok", "-c", "trap 'exit 143' TERM; while :; do sleep 1; done"}}
+	signals := make(chan os.Signal, 1)
+	retired := make(chan struct{}, 1)
+	result := make(chan int, 1)
+	go func() {
+		result <- runManualGrokProcessWithSignals(plan, io.Discard, signals, func(grokLaunchPlan) error {
+			retired <- struct{}{}
+			return nil
+		})
+	}()
+	time.Sleep(100 * time.Millisecond)
+	signals <- syscall.SIGTERM
+	select {
+	case rc := <-result:
+		if rc != 143 {
+			t.Fatalf("signal exit rc=%d", rc)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("manual wrapper did not converge after SIGTERM")
+	}
+	select {
+	case <-retired:
+	default:
+		t.Fatal("manual wrapper left its detached bridge unretired")
+	}
+}
+
+func TestManualGrokBridgeHardKillFenceUsesParentDeathRetirement(t *testing.T) {
+	manual := grokBridgeProcessAttributes(true)
+	if !manual.Setsid || manual.Pdeathsig != syscall.SIGTERM {
+		t.Fatalf("manual bridge attrs = %+v", manual)
+	}
+	managed := grokBridgeProcessAttributes(false)
+	if !managed.Setsid || managed.Pdeathsig != 0 {
+		t.Fatalf("managed bridge attrs = %+v", managed)
 	}
 }
 

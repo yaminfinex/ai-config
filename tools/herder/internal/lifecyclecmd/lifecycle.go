@@ -755,6 +755,7 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		grokEnv = " HERDER_STATE_DIR=" + shellquote.Quote(filepath.Dir(spec.RegistryPath)) +
 			" HERDER_GROK_SESSION_ID=" + shellquote.Quote(spec.GrokSessionID) +
 			" HERDER_GROK_CHILD_HOME=" + shellquote.Quote(os.Getenv("HOME")) +
+			" HERDER_GROK_PREASSIGNED=1" +
 			" HERDER_GROK_ACTIVATED=1"
 		for _, key := range []string{"HERDER_GROK_BIN", "HERDER_GROK_SUPPORTED_VERSIONS", "HERDER_REAL_HCOM"} {
 			if value := os.Getenv(key); value != "" {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -21,9 +22,10 @@ import (
 )
 
 const (
-	grokActivationEnv = "HERDER_GROK_ACTIVATED"
-	grokDefaultModel  = "grok-4.5"
-	grokBootPrompt    = "Start your monitor per your rules, then list pending messages and proceed."
+	grokActivationEnv  = "HERDER_GROK_ACTIVATED"
+	grokPreassignedEnv = "HERDER_GROK_PREASSIGNED"
+	grokDefaultModel   = "grok-4.5"
+	grokBootPrompt     = "Start your monitor per your rules, then list pending messages and proceed."
 )
 
 // --no-auto-update is intentionally absent from 0.2.93's help text, so its
@@ -155,8 +157,11 @@ func runGrokLaunch(mode, target string, rest []string, stderr io.Writer) int {
 		die(stderr, err.Error())
 		return 1
 	}
+	manual := false
 	if mode == "launch" {
-		if err := ensureManualGrokIdentity(); err != nil {
+		var err error
+		manual, err = ensureManualGrokIdentity()
+		if err != nil {
 			die(stderr, err.Error())
 			return 1
 		}
@@ -174,7 +179,7 @@ func runGrokLaunch(mode, target string, rest []string, stderr io.Writer) int {
 		return 1
 	}
 	clearGrokLaunchFailure(plan.StateDir, plan.Seat)
-	busName, err := ensureGrokBridge(plan)
+	busName, err := ensureGrokBridge(plan, manual)
 	if err != nil {
 		recordGrokLaunchFailure(err)
 		die(stderr, err.Error())
@@ -182,6 +187,9 @@ func runGrokLaunch(mode, target string, rest []string, stderr io.Writer) int {
 	}
 	doctrine := grokDoctrine(busName, plan.Seat, plan.SessionID)
 	plan.Argv = appendGrokLifecycleArgs(plan, doctrine)
+	if manual {
+		return runManualGrokProcess(plan, stderr)
+	}
 	if err := syscall.Exec(plan.Binary, plan.Argv, plan.Env); err != nil {
 		recordGrokLaunchFailure(fmt.Errorf("exec Grok: %w", err))
 		die(stderr, "exec Grok: "+err.Error())
@@ -190,30 +198,118 @@ func runGrokLaunch(mode, target string, rest []string, stderr io.Writer) int {
 	return 0
 }
 
-// ensureManualGrokIdentity makes `herder launch grok` (and the PATH shim that
-// enters it) a real owner-verification path outside spawn. Spawn-provided
-// identities are preserved byte-for-byte. This runs only after activation has
-// been checked, so an inactive family still refuses without minting anything.
-func ensureManualGrokIdentity() error {
-	if os.Getenv("HERDER_GUID") == "" {
-		seat, err := registry.NewGUID()
-		if err != nil {
-			return fmt.Errorf("mint manual Grok seat identity: %w", err)
+// ensureManualGrokIdentity distinguishes herder's two-phase managed spawn from
+// a hand-run launch. Managed spawn explicitly preassigns identities before its
+// registry row can exist. Every other ambient GUID must resolve to a Grok row;
+// a foreign-family row is refused and an unregistered value is replaced rather
+// than silently adopted. The bool reports whether this is a bounded manual
+// guest whose foreground wrapper must retire its bridge on exit.
+func ensureManualGrokIdentity() (bool, error) {
+	if os.Getenv(grokPreassignedEnv) == "1" {
+		if !validGrokSeat(os.Getenv("HERDER_GUID")) || !isUUIDv7(os.Getenv("HERDER_GROK_SESSION_ID")) {
+			return false, errors.New("managed Grok launch has invalid preassigned identity; retry through herder spawn")
 		}
-		if err := os.Setenv("HERDER_GUID", seat); err != nil {
-			return fmt.Errorf("set manual Grok seat identity: %w", err)
+		return false, nil
+	}
+
+	ambient := os.Getenv("HERDER_GUID")
+	if ambient != "" {
+		recs, err := registry.Load(registry.DefaultPath())
+		if err != nil && !os.IsNotExist(err) {
+			return false, fmt.Errorf("corroborate ambient HERDER_GUID against the registry: %w", err)
+		}
+		if row := registry.Resolve(recs, ambient); row != nil {
+			if row.Agent != "grok" {
+				return false, fmt.Errorf("refused inherited HERDER_GUID %s: registry row belongs to tool %q, not grok; unset HERDER_GUID and HERDER_GROK_SESSION_ID before a manual Grok launch, or use `herder spawn --agent grok`", ambient, row.Agent)
+			}
+			if sid := os.Getenv("HCOM_SESSION_ID"); sid != "" {
+				if sidRow := registry.ResolveByToolSessionID(recs, sid); sidRow != nil && !sameRegistryGUID(row, sidRow) {
+					return false, fmt.Errorf("refused inherited Grok identity: HERDER_GUID %s and HCOM_SESSION_ID %s resolve to different registry rows; clear inherited identity or launch through `herder spawn --agent grok`", ambient, sid)
+				}
+			}
+			return false, nil
 		}
 	}
-	if os.Getenv("HERDER_GROK_SESSION_ID") == "" {
-		sessionID, err := NewGrokSessionID()
-		if err != nil {
-			return fmt.Errorf("mint manual Grok session identity: %w", err)
-		}
-		if err := os.Setenv("HERDER_GROK_SESSION_ID", sessionID); err != nil {
-			return fmt.Errorf("set manual Grok session identity: %w", err)
-		}
+
+	seat, err := registry.NewGUID()
+	if err != nil {
+		return false, fmt.Errorf("mint manual Grok seat identity: %w", err)
 	}
-	return nil
+	sessionID, err := NewGrokSessionID()
+	if err != nil {
+		return false, fmt.Errorf("mint manual Grok session identity: %w", err)
+	}
+	if err := os.Setenv("HERDER_GUID", seat); err != nil {
+		return false, fmt.Errorf("set manual Grok seat identity: %w", err)
+	}
+	if err := os.Setenv("HERDER_GROK_SESSION_ID", sessionID); err != nil {
+		return false, fmt.Errorf("set manual Grok session identity: %w", err)
+	}
+	return true, nil
+}
+
+func sameRegistryGUID(a, b *registry.Record) bool {
+	return a != nil && b != nil && a.GUID != nil && b.GUID != nil && *a.GUID == *b.GUID
+}
+
+// runManualGrokProcess keeps the launch wrapper alive as the owner of a
+// registry-less manual guest. Normal exit and catchable termination signals
+// both converge through the same generation-fenced retire operation, so its
+// detached supervisor cannot become an unlistable phantom bridge.
+func runManualGrokProcess(plan grokLaunchPlan, stderr io.Writer) int {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(signals)
+	return runManualGrokProcessWithSignals(plan, stderr, signals, retireManualGrokSeat)
+}
+
+func runManualGrokProcessWithSignals(plan grokLaunchPlan, stderr io.Writer, signals <-chan os.Signal, retire func(grokLaunchPlan) error) int {
+	cmd := exec.Command(plan.Binary)
+	cmd.Args = append([]string(nil), plan.Argv...)
+	cmd.Env = plan.Env
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Start(); err != nil {
+		_ = retire(plan)
+		die(stderr, "exec Grok: "+err.Error())
+		return 1
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	var waitErr error
+	select {
+	case waitErr = <-done:
+	case sig := <-signals:
+		_ = cmd.Process.Signal(sig)
+		waitErr = <-done
+	}
+	if err := retire(plan); err != nil {
+		fmt.Fprintf(stderr, "herder launch: manual Grok bridge retirement failed: %v; retry `herder grok retire-offline --seat %s --state-dir %s` once the bridge is stopped\n", err, plan.Seat, plan.StateDir)
+		return 1
+	}
+	if waitErr == nil {
+		return 0
+	}
+	if exitErr, ok := waitErr.(*exec.ExitError); ok {
+		return exitErr.ExitCode()
+	}
+	fmt.Fprintf(stderr, "herder launch: wait for Grok: %v\n", waitErr)
+	return 1
+}
+
+func retireManualGrokSeat(plan grokLaunchPlan) error {
+	client, err := grokbridge.DialClientForSession(grokbridge.SocketPath(plan.StateDir, plan.Seat), plan.SessionID)
+	if err == nil {
+		_, err = client.Call(grokbridge.Request{Op: "retire"})
+	}
+	if err == nil {
+		return nil
+	}
+	if _, offlineErr := grokbridge.RetireOffline(plan.StateDir, plan.Seat); offlineErr == nil {
+		return nil
+	} else {
+		return fmt.Errorf("generation-fenced retire failed: %v; offline recovery failed: %w", err, offlineErr)
+	}
 }
 
 func appendGrokLifecycleArgs(plan grokLaunchPlan, doctrine string) []string {
@@ -325,7 +421,7 @@ func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (gro
 	return grokLaunchPlan{Binary: binary, Version: version, Mode: lifecycle.Mode, StateDir: stateDir, GrokHome: grokHome, Seat: seat, SessionID: sessionID, ParentSID: lifecycle.ParentSID, HcomBin: hcomBin, HcomDir: hcomDir, Argv: append([]string{"grok"}, args...), Env: env}, nil
 }
 
-func ensureGrokBridge(plan grokLaunchPlan) (string, error) {
+func ensureGrokBridge(plan grokLaunchPlan, manual bool) (string, error) {
 	if plan.Mode == "resume" {
 		client, err := grokbridge.DialClient(grokbridge.SocketPath(plan.StateDir, plan.Seat))
 		if err == nil {
@@ -336,7 +432,7 @@ func ensureGrokBridge(plan grokLaunchPlan) (string, error) {
 			}
 		}
 	}
-	return startGrokBridge(plan)
+	return startGrokBridge(plan, manual)
 }
 
 // ReadGrokLaunchFailure returns a launch-side refusal for the preassigned seat.
@@ -391,18 +487,21 @@ func clearGrokLaunchFailure(stateDir, seat string) {
 	}
 }
 
-func startGrokBridge(plan grokLaunchPlan) (string, error) {
+func startGrokBridge(plan grokLaunchPlan, manual bool) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve herder executable for Grok bridge: %w", err)
 	}
 	args := []string{"grok", "bridge", "--seat", plan.Seat, "--state-dir", plan.StateDir, "--hcom-bin", plan.HcomBin, "--session-id", plan.SessionID, "--supervise"}
+	if manual {
+		args = append(args, "--retire-on-stop")
+	}
 	if plan.HcomDir != "" {
 		args = append(args, "--hcom-dir", plan.HcomDir)
 	}
 	cmd := exec.Command(exe, args...)
 	cmd.Env = plan.Env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = grokBridgeProcessAttributes(manual)
 	devnull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		return "", err
@@ -428,6 +527,18 @@ func startGrokBridge(plan grokLaunchPlan) (string, error) {
 	}
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 	return "", errors.New("Grok bridge did not become ready within 8s; inspect the seat bridge log, correct the hcom/state configuration, and retry")
+}
+
+func grokBridgeProcessAttributes(manual bool) *syscall.SysProcAttr {
+	attr := &syscall.SysProcAttr{Setsid: true}
+	if manual {
+		// The foreground manual wrapper normally sends a generation-fenced
+		// retire. Pdeathsig closes the one uncatchable gap: if the wrapper is
+		// SIGKILLed, Linux stops the detached supervisor, whose retire-on-stop
+		// policy then performs offline journal convergence after its binder exits.
+		attr.Pdeathsig = syscall.SIGTERM
+	}
+	return attr
 }
 
 func grokDoctrine(busName, seat, sessionID string) string {
