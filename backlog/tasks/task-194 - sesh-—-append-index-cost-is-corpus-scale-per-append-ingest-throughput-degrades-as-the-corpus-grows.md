@@ -16,7 +16,9 @@ ordinal: 193000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Upstream finding from the store read/write-split work (evidence: tools/sesh/docs/design/2026-07-13-sesh-store-read-write-split.md): each index append pays unify/dedupe/inherit work that scales with the corpus, not the append (~0.5-0.6s per small append at a 1.3GB corpus on the prod VM; dedupe dominates at ~0.3s). The read/write split stopped this from blocking readers, but the write path itself will slow ingest as the fleet corpus grows — at 10x corpus this is seconds per append and shipper backpressure. SESH_DEBUG per-phase timing on the live node now shows the phase split for measurement. Constraint: frozen index schema and wire v1; the fix space is algorithmic/incremental (bounded dedupe windows, incremental unify, precomputed inheritance) or a sanctioned schema-forward migration proposed via design note first.
+Upstream finding from the store read/write-split work (evidence: tools/sesh/docs/design/2026-07-13-sesh-store-read-write-split.md): each index append pays logical-session maintenance that scales with corpus/session size, not append size — measured at a 1.3GB/~500k-row replay corpus: a 241-byte append holds the write connection ~0.45-0.63s (exclusive phases: dedupe ~0.30s, inherit ~0.07s, unify ~0.07s), ~2.1s on the slower store VM. Two shippers already saturate the single write connection; the read/write split protects readers, but ingest itself will degrade as the fleet corpus grows — at 10x corpus this is seconds per append and shipper backpressure. SESH_DEBUG=1 shows the phase split on the live node.
+
+Candidate angles from the finder: dedupeLogical/inheritFileLogicalSession query plans (write side has no INDEXED BY pins), incremental rather than whole-group dedupe, skip unify when the append introduces no new logical linkage. Constraint: frozen index schema and wire v1; the fix space is algorithmic/incremental, or a sanctioned schema-forward migration proposed via design note first.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

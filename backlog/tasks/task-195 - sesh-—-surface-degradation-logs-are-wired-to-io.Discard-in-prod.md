@@ -14,7 +14,7 @@ ordinal: 194000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Side observation from the read/write-split work: serve wires the surface logger to io.Discard, so writeDegraded paths and render failures are invisible on the live node — a degraded homepage looks healthy in the journal. Route surface logs to the service journal (identifier-free, consistent with the debug-timing no-identity contract in the read/write-split design note), keep volume bounded (degradation events, not per-request chatter).
+Side observation from the read/write-split work: surface.New defaults its logger to io.Discard and newSurfaceHandler passes no WithLogger option, so every degraded-render/lookup-failure line on the live store is dropped — a degraded homepage looks healthy in the journal. Likely a one-line wiring fix (surface.WithLogger over stderr/journal), plus deciding the log shape for session-scoped errors under the identifier-free journal contract (read/write-split design note); keep volume bounded (degradation events, not per-request chatter).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
