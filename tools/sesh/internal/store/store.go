@@ -41,9 +41,18 @@ type Config struct {
 type Store struct {
 	dir       string
 	mirrorDir string
-	db        *sql.DB
-	events    chan wire.AppendEvent
-	logger    *slog.Logger
+	// db is the single write connection: ingest, the index consumer, and
+	// admin mutations all serialize on it (SQLite single-writer discipline).
+	db *sql.DB
+	// readDB is a small read-only pool. WAL readers run concurrently with
+	// the writer, so read-serving paths (the surface, node status) must use
+	// this pool and never the write connection: an append transaction holds
+	// db for corpus-scale index work, and any read queued behind it pays
+	// that holding per query
+	// (docs/design/2026-07-13-sesh-store-read-write-split.md).
+	readDB *sql.DB
+	events chan wire.AppendEvent
+	logger *slog.Logger
 
 	mu             sync.Mutex
 	failAppendOnce bool
@@ -103,18 +112,37 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// Opened after initSchema so the WAL journal exists before the first
+	// read-only connection arrives. Pool size covers a page's sequential
+	// queries plus concurrent viewers; reads are bounded, so a small pool
+	// cannot starve WAL checkpointing.
+	readDB, err := sql.Open("sqlite", sqlitedsn.ReadOnly(filepath.Join(cfg.Dir, "store.sqlite")))
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	readDB.SetMaxOpenConns(4)
+	readDB.SetMaxIdleConns(4)
+	s.readDB = readDB
 	return s, nil
 }
 
-// Close closes the underlying database.
+// Close closes the underlying databases.
 func (s *Store) Close() error {
-	return s.db.Close()
+	return errors.Join(s.readDB.Close(), s.db.Close())
 }
 
-// DB exposes the store database to same-process store components such as the
-// indexer. The store remains the owner of closing it.
+// DB exposes the store write database to same-process store components such
+// as the indexer. The store remains the owner of closing it.
 func (s *Store) DB() *sql.DB {
 	return s.db
+}
+
+// ReadDB exposes the read-only pool. Read-serving paths (the surface seam,
+// node status) MUST read through this pool so they never queue behind the
+// write connection's append transactions.
+func (s *Store) ReadDB() *sql.DB {
+	return s.readDB
 }
 
 // WithWriteLock runs fn under the store write lock. Same-process components
@@ -305,13 +333,20 @@ func (s *Store) handlePUTBytes(w http.ResponseWriter, r *http.Request, rawTool, 
 		s.writeError(w, wire.ErrMalformedRequest, tool, sessionID, fileUUID, 0, 0, "", err.Error())
 		return
 	}
+	readStart := time.Now()
 	body, errCode, err := readBody(r)
 	if err != nil {
 		s.writeError(w, errCode, tool, sessionID, fileUUID, 0, 0, "", err.Error())
 		return
 	}
+	dbStart := time.Now()
 	tailnetIdentity := TailnetIdentityFromContext(r.Context())
 	resp, ev, code, msg, action := s.putBytes(r.Context(), tool, sessionID, fileUUID, fp, offset, body, hostname, osUser, r.Header.Get(wire.HeaderSessionOwner), tailnetIdentity)
+	// Identifier-free by design: session/file identities must not persist
+	// in journal logs (corpus leakage into a different retention domain).
+	s.logger.Debug("put bytes",
+		"tool", tool, "bytes", len(body),
+		"read_body", dbStart.Sub(readStart), "store", time.Since(dbStart))
 	if code != "" {
 		generation, highWater := 0, int64(0)
 		if resp != nil {

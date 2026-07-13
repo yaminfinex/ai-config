@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -27,6 +28,12 @@ import (
 // Execute runs the sesh command tree and returns its error, if any.
 // main translates a non-nil error into exit code 1.
 func Execute() error {
+	// SESH_DEBUG turns on debug-level logging (per-phase serving and index
+	// timing) without a config change; it is the supported way to see where
+	// store time goes on a live node.
+	if os.Getenv("SESH_DEBUG") != "" {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	}
 	return newRoot().Execute()
 }
 
@@ -91,7 +98,7 @@ func newServe() *cobra.Command {
 			}
 			consumer := startIndexConsumer(cmd.Context(), st, idx, slog.Default())
 			defer func() { _ = consumer.StopAndWait() }()
-			surfaceHandler := surface.New(surface.NewSQLStore(st.DB(), st.MirrorPath))
+			surfaceHandler := newSurfaceHandler(st)
 			if tsnetMode {
 				err = serveTSNet(serveCtx, st.Handler(), surfaceHandler, dataDir, addr, surfaceAddr, tsnetHostname, tsnetDir, tsnetAuthKey)
 				if consumerErr := consumer.StopAndWait(); consumerErr != nil {
@@ -135,6 +142,15 @@ func newServe() *cobra.Command {
 	cmd.Flags().StringVar(&tsnetDir, "tsnet-dir", "", "tsnet state directory; default is <data-dir>/tsnet")
 	cmd.Flags().StringVar(&tsnetAuthKey, "tsnet-auth-key", "", "tsnet auth key; empty lets tsnet use TS_AUTHKEY or stored state")
 	return cmd
+}
+
+// newSurfaceHandler wires the surface over the store's read-only pool: WAL
+// readers run concurrently with the writer, so page loads never queue behind
+// ingest/index append transactions on the single write connection (the
+// measured remote-TTFB pathology; the regression gate holds a write
+// transaction open and asserts surface reads still complete).
+func newSurfaceHandler(st *store.Store) http.Handler {
+	return surface.New(surface.NewSQLStore(st.ReadDB(), st.MirrorPath))
 }
 
 type tsnetServer interface {
@@ -205,11 +221,86 @@ type httpEndpoint struct {
 	handler  http.Handler
 }
 
+// timedHandler logs one debug line per served request: normalized route
+// class, status, and full server-side duration (auth + handler + response
+// write) — nothing else. With SESH_DEBUG set this is the first stop for
+// "where does request time go" on a live store. Paths are collapsed to a
+// route class so session and file identities never persist in the journal
+// (transcripts are exactly what sesh ships; identifiers in logs would leak
+// corpus into a different retention domain).
+func timedHandler(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w}
+		h.ServeHTTP(rec, r)
+		status := rec.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		slog.Debug("http request",
+			"method", r.Method, "route", routeClass(r.URL.Path),
+			"status", status, "duration", time.Since(start))
+	})
+}
+
+// statusRecorder captures the first status code written; it forwards Flush
+// so streaming handlers keep working behind the middleware.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	if sr.status == 0 {
+		sr.status = code
+	}
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+func (sr *statusRecorder) Flush() {
+	if f, ok := sr.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// routeClassFixed is the allowlist of identifier-free fixed routes that may
+// appear verbatim in debug logs. Everything else is either a known
+// parameterized template or collapses to "other": the raw path is
+// client-supplied input and must never reach the journal.
+var routeClassFixed = map[string]bool{
+	"/":                      true,
+	"/nodes":                 true,
+	"/fragments/recency":     true,
+	"/install.sh":            true,
+	wire.APIRoot + "/health": true,
+	wire.APIRoot + "/nodes":  true,
+}
+
+// routeClass maps a request path to a stable, identifier-free label for
+// debug logs: parameterized routes collapse to their template, allowlisted
+// fixed routes pass through, and anything unknown is "other".
+func routeClass(p string) string {
+	switch {
+	case strings.HasPrefix(p, wire.APIRoot+"/files/"):
+		return wire.APIRoot + "/files/*"
+	case strings.HasPrefix(p, "/s/"):
+		return "/s/*"
+	case strings.HasPrefix(p, "/releases/"):
+		return "/releases/*"
+	case strings.HasPrefix(p, "/assets/"):
+		return "/assets/*"
+	case routeClassFixed[p]:
+		return p
+	default:
+		return "other"
+	}
+}
+
 func serveHTTP(ctx context.Context, endpoints ...httpEndpoint) error {
 	servers := make([]*http.Server, len(endpoints))
 	errCh := make(chan error, len(endpoints))
 	for i, endpoint := range endpoints {
-		servers[i] = &http.Server{Handler: endpoint.handler}
+		servers[i] = &http.Server{Handler: timedHandler(endpoint.handler)}
 		go func(server *http.Server, listener net.Listener) {
 			errCh <- server.Serve(listener)
 		}(servers[i], endpoint.listener)
