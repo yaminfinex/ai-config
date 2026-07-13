@@ -50,6 +50,8 @@ func newRoot() *cobra.Command {
 		newReindex(),
 		newStatus(),
 		newAdmin(),
+		newSetup(),
+		newUpdate(),
 	)
 	return root
 }
@@ -129,7 +131,7 @@ func newServe() *cobra.Command {
 	cmd.Flags().StringVar(&surfaceAddr, "surface-addr", "127.0.0.1:8766", "loopback address for the read-only surface listener")
 	cmd.Flags().StringVar(&dataDir, "data-dir", "", "store data directory")
 	cmd.Flags().BoolVar(&tsnetMode, "tsnet", false, "serve ingest and read listeners on tsnet with WhoIs grant checks")
-	cmd.Flags().StringVar(&tsnetHostname, "tsnet-hostname", "sesh-store", "tsnet node hostname")
+	cmd.Flags().StringVar(&tsnetHostname, "tsnet-hostname", "sesh", "tsnet node hostname")
 	cmd.Flags().StringVar(&tsnetDir, "tsnet-dir", "", "tsnet state directory; default is <data-dir>/tsnet")
 	cmd.Flags().StringVar(&tsnetAuthKey, "tsnet-auth-key", "", "tsnet auth key; empty lets tsnet use TS_AUTHKEY or stored state")
 	return cmd
@@ -149,10 +151,23 @@ type tsnetServePlan struct {
 }
 
 func newTSNetServePlan(ts tsnetServer, ingestHandler, surfaceHandler http.Handler, addr, surfaceAddr string) tsnetServePlan {
+	// Route-scoped auth on the ingest listener (design §3): the distribution
+	// surface (/install.sh, /releases/) admits EITHER verb so read-only
+	// principals can install and update, while wire ingest stays ship-only.
+	// No-verb callers are denied on every route.
+	shipOnly := store.AuthHandler(ingestHandler, ts.WhoIs, store.CapabilityShip)
+	shipOrRead := store.AuthHandlerAnyOf(ingestHandler, ts.WhoIs, store.CapabilityShip, store.CapabilityRead)
+	ingest := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if store.IsDistributionPath(r.URL.Path) {
+			shipOrRead.ServeHTTP(w, r)
+			return
+		}
+		shipOnly.ServeHTTP(w, r)
+	})
 	return tsnetServePlan{
 		ingestAddr:     tsnetListenAddr(addr),
 		surfaceAddr:    tsnetListenAddr(surfaceAddr),
-		ingestHandler:  store.AuthHandler(ingestHandler, ts.WhoIs, store.CapabilityShip),
+		ingestHandler:  ingest,
 		surfaceHandler: store.AuthHandler(surfaceHandler, ts.WhoIs, store.CapabilityRead),
 	}
 }

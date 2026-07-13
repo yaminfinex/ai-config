@@ -231,6 +231,10 @@ func (s *Store) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET "+wire.APIRoot+"/nodes", s.handleNodes)
 	mux.Handle(wire.APIRoot+"/files/", http.HandlerFunc(s.handleFiles))
+	// Distribution surface (design §3): operator-only GET routes; the wire
+	// contract under /v1 is untouched.
+	mux.HandleFunc("GET /install.sh", s.handleInstallScript)
+	mux.HandleFunc("GET /releases/", s.handleReleases)
 	return mux
 }
 

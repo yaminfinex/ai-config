@@ -9,6 +9,11 @@ This document freezes the v1 HTTP wire, the file identity rules used on that wir
 store recovery shape, and the message index schema shared by the store and surface.
 Anything not named here is not part of the shipper/store contract.
 
+Informational, non-contract: the store also serves distribution endpoints
+(`/install.sh`, `/releases/…`) on the ingest listener — operator surface for install
+and self-update; no shipper *shipping* behavior switches on them (`sesh update` is an
+explicit operator verb, not part of the ship loop).
+
 The shipper stays dumb: it discovers files, ships bytes, and attaches facts. It never
 parses transcript JSONL and never computes display ownership. The store owns parsing,
 deduplication, facts interpretation, conflict generations, quarantine, and auth.

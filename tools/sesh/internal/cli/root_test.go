@@ -33,7 +33,7 @@ func TestHelpListsAllSubcommands(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("--help: unexpected error: %v", err)
 	}
-	for _, name := range []string{"ship", "serve", "reindex", "status", "admin"} {
+	for _, name := range []string{"ship", "serve", "reindex", "status", "admin", "setup", "update"} {
 		if !strings.Contains(out.String(), name) {
 			t.Errorf("--help output missing subcommand %q\n%s", name, out.String())
 		}
@@ -332,6 +332,59 @@ func TestTSNetServePlanWrapsHandlersWithTSNetWhoIs(t *testing.T) {
 	}
 }
 
+// TestTSNetDistributionRouteScopedAuth: design §3 — the distribution routes
+// on the ingest listener admit EITHER verb (ship or read), wire ingest stays
+// ship-only, and no-verb callers are denied everywhere.
+func TestTSNetDistributionRouteScopedAuth(t *testing.T) {
+	ts := &fakeTSNetServer{result: store.WhoIsResult{Identity: "alice@example.com"}}
+	ingest := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	surface := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	plan := newTSNetServePlan(ts, ingest, surface, ":8765", ":8766")
+
+	serve := func(method, path string, verbs ...string) int {
+		ts.result.CapMap = testCapMap(verbs...)
+		req := httptest.NewRequest(method, path, nil)
+		req.RemoteAddr = "100.64.0.9:4242"
+		rr := httptest.NewRecorder()
+		plan.ingestHandler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+	denied := wire.ErrOutOfGrant.HTTPStatus()
+
+	// Read-only callers reach the distribution surface on the ingest port…
+	if got := serve(http.MethodGet, "/install.sh", store.CapabilityRead); got != http.StatusOK {
+		t.Errorf("read-only GET /install.sh = %d, want 200", got)
+	}
+	if got := serve(http.MethodGet, "/releases/latest/VERSION", store.CapabilityRead); got != http.StatusOK {
+		t.Errorf("read-only GET /releases/latest/VERSION = %d, want 200", got)
+	}
+	// …but must not gain PUT ingest.
+	if got := serve(http.MethodPut, "/v1/files/claude/s/f/bytes?offset=0", store.CapabilityRead); got != denied {
+		t.Errorf("read-only PUT ingest = %d, want %d", got, denied)
+	}
+	// Ship-only callers keep both ingest and distribution.
+	if got := serve(http.MethodPut, "/v1/files/claude/s/f/bytes?offset=0", store.CapabilityShip); got != http.StatusOK {
+		t.Errorf("ship PUT ingest = %d, want 200", got)
+	}
+	if got := serve(http.MethodGet, "/releases/v1/sesh-linux-amd64", store.CapabilityShip); got != http.StatusOK {
+		t.Errorf("ship GET release asset = %d, want 200", got)
+	}
+	// No-verb callers are denied on every route, distribution included.
+	if got := serve(http.MethodGet, "/install.sh"); got != denied {
+		t.Errorf("no-verb GET /install.sh = %d, want %d", got, denied)
+	}
+	if got := serve(http.MethodGet, "/releases/latest/VERSION"); got != denied {
+		t.Errorf("no-verb GET /releases/latest/VERSION = %d, want %d", got, denied)
+	}
+	if got := serve(http.MethodPut, "/v1/files/claude/s/f/bytes?offset=0"); got != denied {
+		t.Errorf("no-verb PUT ingest = %d, want %d", got, denied)
+	}
+}
+
 func TestReindexRunsOnEmptyStore(t *testing.T) {
 	root := newRoot()
 	var out bytes.Buffer
@@ -366,7 +419,7 @@ func testCapMap(verbs ...string) tailcfg.PeerCapMap {
 	for _, verb := range verbs {
 		values = append(values, tailcfg.RawMessage(`{"verb":"`+verb+`"}`))
 	}
-	return tailcfg.PeerCapMap{store.TailnetCapabilitySeshStore: values}
+	return tailcfg.PeerCapMap{store.TailnetCapabilitySesh: values}
 }
 
 func TestStatusReportsHealthyStore(t *testing.T) {

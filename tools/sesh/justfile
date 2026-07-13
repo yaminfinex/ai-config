@@ -22,9 +22,18 @@ install:
     @echo "installed sesh  ({{version}})  ->  {{gobin}}/sesh"
 
 # Install the current binary and (re)configure the per-user shipper.
-# Pass --force after the URL only when replacing operator-owned configuration.
+# Delegates to `sesh setup` so the repo path and field onboarding (curl
+# install.sh) exercise identical code. --force is only needed when the
+# node-local config was operator-edited (broken/absent provenance digest).
 deploy store_url *args: install
-    etc/install-ship.sh --store-url {{store_url}} --binary {{gobin}}/sesh {{args}}
+    {{gobin}}/sesh setup --store-url {{store_url}} {{args}}
+
+# Publish a release to the store's channel (design §7, two-verb discipline:
+# publishing artifacts ≠ deploying the store). Matrix build, remote staging,
+# checksum verify, atomic promote (republish refused), durable latest flip.
+# dest example: sesh-host:/var/lib/sesh/releases
+release dest:
+    scripts/release.sh {{dest}}
 
 # Restart an already configured service after installing the current binary.
 restart: install

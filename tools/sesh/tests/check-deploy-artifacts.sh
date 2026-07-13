@@ -3,27 +3,31 @@
 # artifacts. The field halves (reboot survival, 30-day backfill, shared-node
 # uids, store migration) are runbook checklists executed at rollout; this
 # script proves the artifacts those checklists rely on: unit lints, plist
-# renders and parses, installer dry-run writes nothing and renders the right
-# drop-in, no repo-path leaks, and the R23 stale-binary refusal (simulated
-# with a real binary against a newer-generation registry).
+# renders and parses, `sesh setup` dry-run writes nothing and renders the
+# right drop-in, the DP-4b provenance rules on real writes, no repo-path
+# leaks, and the R23 stale-binary refusal (simulated with a real binary
+# against a newer-generation registry).
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 
 ETC_DIR="$SESH_MODULE_DIR/etc"
+TEMPLATES_DIR="$SESH_MODULE_DIR/internal/setup/templates"
+STORE_URL_A="http://sesh.example.ts.net:8765"
+STORE_URL_B="http://sesh-elsewhere.example.ts.net:8765"
 
 preflight
 command -v systemd-analyze >/dev/null 2>&1 || fail "harness dependency missing: systemd-analyze"
 setup_workspace
 build_binaries
 
-step "no repo-path assumptions in units or scripts"
-if grep -rnE 'ai-config|herdr|/home/[a-z]' "$ETC_DIR"; then
-  fail "etc/ artifacts reference a repo or user path (must move repos untouched)"
+step "no repo-path assumptions in templates or scripts"
+if grep -rnE 'ai-config|herdr|/home/[a-z]' "$ETC_DIR" "$TEMPLATES_DIR"; then
+  fail "packaging artifacts reference a repo or user path (must move repos untouched)"
 fi
-ok "etc/ artifacts are location-independent"
+ok "etc/ and embedded templates are location-independent"
 
-step "systemd unit: required directives present"
-UNIT_SRC="$ETC_DIR/systemd/sesh-ship.service"
+step "systemd unit template: required directives present"
+UNIT_SRC="$TEMPLATES_DIR/sesh-ship.service"
 grep -q '^Restart=on-failure$' "$UNIT_SRC" || fail "unit lacks Restart=on-failure"
 grep -qE '^ExecStart=/[^ ]+ ship$' "$UNIT_SRC" || fail "unit ExecStart is not a pinned absolute path"
 grep -q '^WantedBy=default.target$' "$UNIT_SRC" || fail "unit lacks [Install] WantedBy"
@@ -40,16 +44,19 @@ systemd-analyze --user verify "$WORK/units/sesh-ship.service" 2>"$WORK/verify.er
 [ -s "$WORK/verify.err" ] && fail "systemd-analyze verify warnings: $(cat "$WORK/verify.err")"
 ok "unit verifies clean"
 
-step "launchd template: tokens complete, render parses as a plist"
-TMPL="$ETC_DIR/launchd/dev.sesh.ship.plist.tmpl"
+step "launchd template: tokens complete, render parses, digest comment tolerated"
+TMPL="$TEMPLATES_DIR/dev.sesh.ship.plist.tmpl"
 RENDERED="$WORK/dev.sesh.ship.plist"
 sed \
   -e "s|@SESH_BIN@|$BIN/sesh|g" \
-  -e "s|@SESH_STORE_URL@|http://sesh-store.example.ts.net:8765|g" \
+  -e "s|@SESH_STORE_URL@|$STORE_URL_A|g" \
   -e "s|@HOME@|$HOME_DIR|g" \
   "$TMPL" >"$RENDERED"
 grep -q '@' "$RENDERED" && fail "unrendered @TOKEN@ left in plist: $(grep -o '@[A-Z_]*@' "$RENDERED" | sort -u)"
-python3 - "$RENDERED" <<'PY' || fail "rendered plist does not parse"
+# sesh setup stamps the plist with a trailing XML comment (DP-4b); prove the
+# plist parser tolerates it exactly as written.
+printf '<!-- sesh-setup: sha256=%064d -->\n' 0 >>"$RENDERED"
+python3 - "$RENDERED" <<'PY' || fail "rendered plist (with digest comment) does not parse"
 import plistlib, sys
 with open(sys.argv[1], "rb") as f:
     p = plistlib.load(f)
@@ -58,38 +65,70 @@ assert p["ProgramArguments"][1] == "ship", p["ProgramArguments"]
 assert p["EnvironmentVariables"]["SESH_STORE_URL"].startswith("http://"), p["EnvironmentVariables"]
 assert p["KeepAlive"] == {"SuccessfulExit": False}, p["KeepAlive"]
 PY
-ok "template renders to a valid launchd plist with restart-on-failure semantics"
+ok "template renders to a valid launchd plist; trailing digest comment parses"
 
-step "installer dry-run: correct drop-in rendered, nothing written"
+step "sesh setup dry-run: correct unit and drop-in rendered, nothing written"
 DRY_OUT="$WORK/dry-run.out"
-HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run \
-  --store-url http://sesh-store.example.ts.net:8765 \
-  --binary "$BIN/sesh" >"$DRY_OUT" 2>&1 ||
-  fail "install-ship.sh --dry-run exited nonzero: $(cat "$DRY_OUT")"
-grep -q "Environment=SESH_STORE_URL=http://sesh-store.example.ts.net:8765" "$DRY_OUT" ||
+HOME="$HOME_DIR" "$BIN/sesh" setup --dry-run --store-url "$STORE_URL_A" >"$DRY_OUT" 2>&1 ||
+  fail "sesh setup --dry-run exited nonzero: $(cat "$DRY_OUT")"
+grep -q "Environment=SESH_STORE_URL=$STORE_URL_A" "$DRY_OUT" ||
   fail "dry-run drop-in lacks the store URL"
 grep -q "ExecStart=$BIN/sesh ship" "$DRY_OUT" ||
-  fail "dry-run unit lacks the rendered absolute binary path"
+  fail "dry-run unit lacks the pinned absolute path of the running binary"
+grep -q "sesh-setup: sha256=" "$DRY_OUT" ||
+  fail "dry-run drop-in lacks the DP-4b provenance digest"
 [ -e "$HOME_DIR/.config" ] && fail "dry-run created files under HOME"
-ok "dry-run renders the unit binary path and URL drop-in, and writes nothing"
+ok "dry-run pins os.Executable, renders the URL drop-in + digest, writes nothing"
 
-step "installer default: resolves a user-owned GOBIN path without sudo"
-DEFAULT_GOBIN="$WORK/gobin"
-HOME="$HOME_DIR" GOBIN="$DEFAULT_GOBIN" bash "$ETC_DIR/install-ship.sh" --dry-run \
-  --store-url http://sesh-store.example.ts.net:8765 >"$WORK/default-bin.out" 2>&1 ||
-  fail "installer could not resolve its GOBIN default: $(cat "$WORK/default-bin.out")"
-grep -q "ExecStart=$DEFAULT_GOBIN/sesh ship" "$WORK/default-bin.out" ||
-  fail "installer did not render the GOBIN default into ExecStart"
-grep -nE '(^|[[:space:]])sudo([[:space:]]|$)' "$ETC_DIR/install-ship.sh" &&
-  fail "installer invokes sudo"
-ok "GOBIN becomes the pinned ExecStart and install uses no sudo"
+step "sesh setup argument validation and no-sudo"
+HOME="$HOME_DIR" "$BIN/sesh" setup --dry-run >/dev/null 2>&1 &&
+  fail "setup accepted a missing --store-url"
+grep -rnE '(^|[^a-z])sudo([^a-z]|$)' "$SESH_MODULE_DIR/internal/setup"/*.go &&
+  fail "setup invokes sudo"
+ok "setup refuses a missing store URL and uses no sudo"
 
-step "installer argument validation"
-HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run --binary relative/sesh \
-  --store-url https://x >/dev/null 2>&1 && fail "installer accepted a relative --binary"
-HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run >/dev/null 2>&1 &&
-  fail "installer accepted a missing --store-url"
-ok "installer refuses relative binary paths and missing store URL"
+step "DP-4b on real writes (stubbed systemctl): intact digest migrates, edits refuse"
+STUB_BIN="$WORK/stub-bin"
+mkdir -p "$STUB_BIN"
+printf '#!/usr/bin/env sh\nexit 0\n' >"$STUB_BIN/systemctl"
+printf '#!/usr/bin/env sh\necho yes\n' >"$STUB_BIN/loginctl"
+chmod +x "$STUB_BIN/systemctl" "$STUB_BIN/loginctl"
+DROPIN="$HOME_DIR/.config/systemd/user/sesh-ship.service.d/10-local.conf"
+
+HOME="$HOME_DIR" PATH="$STUB_BIN:$PATH" "$BIN/sesh" setup --store-url "$STORE_URL_A" \
+  >"$WORK/setup-a.out" 2>&1 || fail "first real setup failed: $(cat "$WORK/setup-a.out")"
+grep -q "SESH_STORE_URL=$STORE_URL_A" "$DROPIN" || fail "drop-in missing after install"
+grep -q "sesh-setup: sha256=" "$DROPIN" || fail "written drop-in lacks provenance digest"
+
+# One-command URL migration: digest intact → new explicit URL replaces, no --force.
+HOME="$HOME_DIR" PATH="$STUB_BIN:$PATH" "$BIN/sesh" setup --store-url "$STORE_URL_B" \
+  >"$WORK/setup-b.out" 2>&1 || fail "digest-intact URL migration refused: $(cat "$WORK/setup-b.out")"
+grep -q "SESH_STORE_URL=$STORE_URL_B" "$DROPIN" || fail "URL migration did not rewrite the drop-in"
+
+# Operator edit (URL-only — shape equality could not catch this) → refuse untouched.
+sed -i "s|$STORE_URL_B|$STORE_URL_A|" "$DROPIN"
+DROPIN_SHA=$(sha256sum "$DROPIN" | cut -d' ' -f1)
+if HOME="$HOME_DIR" PATH="$STUB_BIN:$PATH" "$BIN/sesh" setup --store-url "$STORE_URL_B" \
+  >"$WORK/clobber.out" 2>&1; then
+  fail "setup did not refuse an operator-edited drop-in without --force"
+fi
+grep -q "refusing to overwrite" "$WORK/clobber.out" || fail "refusal message missing: $(cat "$WORK/clobber.out")"
+[ "$(sha256sum "$DROPIN" | cut -d' ' -f1)" = "$DROPIN_SHA" ] ||
+  fail "refusal path modified the operator drop-in"
+HOME="$HOME_DIR" PATH="$STUB_BIN:$PATH" "$BIN/sesh" setup --force --store-url "$STORE_URL_B" \
+  >/dev/null 2>&1 || fail "--force did not override the drop-in refusal"
+grep -q "SESH_STORE_URL=$STORE_URL_B" "$DROPIN" || fail "--force did not rewrite the URL"
+rm -rf "$HOME_DIR/.config"
+ok "digest-intact drop-in migrates URL without --force; operator edit refused untouched; --force overrides"
+
+step "install-ship.sh is a deprecation pointer"
+if HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --store-url "$STORE_URL_A" \
+  >"$WORK/deprecated.out" 2>&1; then
+  fail "deprecated install-ship.sh still exits 0"
+fi
+grep -q "sesh setup" "$WORK/deprecated.out" || fail "deprecation message does not name sesh setup"
+[ -e "$HOME_DIR/.config" ] && fail "deprecated installer wrote files"
+ok "install-ship.sh refuses and points at sesh setup"
 
 step "runbook: no https against the tsnet ingest listener, no malformed DENY probe"
 # tsnet mode is plain HTTP over WireGuard; an https:// store URL fails at
@@ -102,26 +141,6 @@ if grep -nE '/v1/files/[a-z]+/[^$][^/]*/[^$"]*"?$' "$SESH_MODULE_DIR/README.md" 
   fail "README DENY probe uses non-UUID path segments (400s before the grant check)"
 fi
 ok "runbook URLs are tsnet-correct and the DENY probe reaches the grant check"
-
-step "installer preserves operator-edited drop-ins (refuse without --force)"
-DROPIN_DIR="$HOME_DIR/.config/systemd/user/sesh-ship.service.d"
-mkdir -p "$DROPIN_DIR"
-printf '# operator-tuned\n[Service]\nEnvironment=SESH_STORE_URL=http://operator.example:1\n' \
-  >"$DROPIN_DIR/10-local.conf"
-DROPIN_SHA=$(sha256sum "$DROPIN_DIR/10-local.conf" | cut -d' ' -f1)
-if HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run \
-  --store-url http://sesh-store.example.ts.net:8765 --binary "$BIN/sesh" \
-  >"$WORK/clobber.out" 2>&1; then
-  fail "installer did not refuse a differing existing drop-in without --force"
-fi
-grep -q "refusing to overwrite" "$WORK/clobber.out" || fail "refusal message missing: $(cat "$WORK/clobber.out")"
-[ "$(sha256sum "$DROPIN_DIR/10-local.conf" | cut -d' ' -f1)" = "$DROPIN_SHA" ] ||
-  fail "refusal path modified the operator drop-in"
-HOME="$HOME_DIR" bash "$ETC_DIR/install-ship.sh" --dry-run --force \
-  --store-url http://sesh-store.example.ts.net:8765 --binary "$BIN/sesh" \
-  >/dev/null 2>&1 || fail "--force did not override the drop-in refusal"
-rm -rf "$HOME_DIR/.config"
-ok "differing drop-in refused untouched; --force overrides"
 
 step "R23: stale binary vs newer registry refuses cleanly (simulated in the field shape)"
 R23_STATE="$WORK/r23-state"
