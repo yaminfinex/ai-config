@@ -36,6 +36,14 @@ func (w *statuslineSnapshotWriter) writeRows(rows []hcomRow, now time.Time) {
 	if w == nil || w.dir == "" || rows == nil {
 		return
 	}
+	if guid, row, ok := stableStatuslineSnapshotIdentity(rows); ok {
+		content := renderStatuslineSnapshot(row, now)
+		if err := w.writeIfChanged(guid, content); err == nil {
+			w.removeLegacyNames(row)
+		}
+		w.removeUnseen(map[string]struct{}{guid: {}})
+		return
+	}
 	collisions := statuslineSnapshotCollisions(rows)
 	seen := make(map[string]struct{})
 	for _, row := range rows {
@@ -52,14 +60,27 @@ func (w *statuslineSnapshotWriter) writeRows(rows []hcomRow, now time.Time) {
 		content := renderStatuslineSnapshot(row, now)
 		_ = w.writeIfChanged(name, content)
 	}
-	for name := range w.written {
-		if _, ok := seen[name]; ok {
+	w.removeUnseen(seen)
+}
+
+func stableStatuslineSnapshotIdentity(rows []hcomRow) (string, hcomRow, bool) {
+	guid, guidOK := safeStatuslineName(os.Getenv("HERDER_GUID"))
+	paneID := os.Getenv("HERDR_PANE_ID")
+	processID := os.Getenv("HCOM_PROCESS_ID")
+	if !guidOK || (paneID == "" && processID == "") {
+		return "", hcomRow{}, false
+	}
+	for _, row := range rows {
+		paneMatch := paneID != "" && row.LaunchContext.PaneID == paneID
+		processMatch := processID != "" && row.LaunchContext.ProcessID == processID
+		if !paneMatch && !processMatch {
 			continue
 		}
-		_ = os.Remove(w.path(name))
-		delete(w.written, name)
-		delete(w.cache, name)
+		if _, ok := statuslineSnapshotName(row); ok {
+			return guid, row, true
+		}
 	}
+	return "", hcomRow{}, false
 }
 
 func statuslineSnapshotCollisions(rows []hcomRow) map[string]struct{} {
@@ -111,7 +132,8 @@ func renderStatuslineSnapshot(row hcomRow, now time.Time) string {
 		age = 0
 	}
 	lastTS := now.Unix() - age
-	return fmt.Sprintf("HCOM_UNREAD=%d\nHCOM_LAST_TS=%d\nHCOM_LAST_AGE_S=%d\n", unread, lastTS, age)
+	liveName, _ := statuslineSnapshotName(row)
+	return fmt.Sprintf("HCOM_LIVE_NAME=%s\nHCOM_UNREAD=%d\nHCOM_LAST_TS=%d\nHCOM_LAST_AGE_S=%d\n", liveName, unread, lastTS, age)
 }
 
 func (w *statuslineSnapshotWriter) writeIfChanged(name, content string) error {
@@ -172,7 +194,30 @@ func (w *statuslineSnapshotWriter) remove(name string) {
 	delete(w.cache, name)
 }
 
+func (w *statuslineSnapshotWriter) removeLegacyNames(row hcomRow) {
+	names := []string{row.Name, row.BaseName, defaultStatuslineInstanceName()}
+	for _, name := range names {
+		if safeName, ok := safeStatuslineName(name); ok {
+			w.remove(safeName)
+		}
+	}
+}
+
+func (w *statuslineSnapshotWriter) removeUnseen(seen map[string]struct{}) {
+	for name := range w.written {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		_ = os.Remove(w.path(name))
+		delete(w.written, name)
+		delete(w.cache, name)
+	}
+}
+
 func (w *statuslineSnapshotWriter) removeInstance(name string) {
+	if guid, ok := safeStatuslineName(os.Getenv("HERDER_GUID")); ok {
+		w.remove(guid)
+	}
 	safeName, ok := safeStatuslineName(name)
 	if !ok {
 		return
@@ -187,6 +232,9 @@ func (w *statuslineSnapshotWriter) path(name string) string {
 func equivalentStatuslineSnapshot(existing, next []byte, tolerance time.Duration) bool {
 	oldVals := parseStatuslineSnapshot(existing)
 	newVals := parseStatuslineSnapshot(next)
+	if oldVals["HCOM_LIVE_NAME"] != newVals["HCOM_LIVE_NAME"] {
+		return false
+	}
 	if oldVals["HCOM_UNREAD"] == "" || newVals["HCOM_UNREAD"] == "" || oldVals["HCOM_UNREAD"] != newVals["HCOM_UNREAD"] {
 		return false
 	}
@@ -206,6 +254,9 @@ func mergeStatuslineSnapshot(existing, next []byte) string {
 	nextVals := parseStatuslineSnapshot(next)
 	existingVals := parseStatuslineSnapshot(existing)
 	var b strings.Builder
+	if v := nextVals["HCOM_LIVE_NAME"]; v != "" {
+		fmt.Fprintf(&b, "HCOM_LIVE_NAME=%s\n", v)
+	}
 	for _, key := range []string{"HCOM_UNREAD", "HCOM_LAST_TS", "HCOM_LAST_AGE_S"} {
 		if v := nextVals[key]; parseSnapshotUint(v) {
 			fmt.Fprintf(&b, "%s=%s\n", key, v)

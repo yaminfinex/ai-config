@@ -59,7 +59,7 @@ func TestStatuslineSnapshotWriterWritesAtomicallyShapedFile(t *testing.T) {
 
 	path := filepath.Join(root, "statusline", "worker-rive.env")
 	got := readFile(t, path)
-	want := "HCOM_UNREAD=3\nHCOM_LAST_TS=158\nHCOM_LAST_AGE_S=42\n"
+	want := "HCOM_LIVE_NAME=worker-rive\nHCOM_UNREAD=3\nHCOM_LAST_TS=158\nHCOM_LAST_AGE_S=42\n"
 	if got != want {
 		t.Fatalf("snapshot = %q, want %q", got, want)
 	}
@@ -118,7 +118,7 @@ func TestStatuslineSnapshotWriterSkipsTimestampDriftWithinTick(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(statusDir, "worker-rive.env")
-	original := "HCOM_UNREAD=5\nHCOM_LAST_TS=100\nHCOM_LAST_AGE_S=10\n"
+	original := "HCOM_LIVE_NAME=worker-rive\nHCOM_UNREAD=5\nHCOM_LAST_TS=100\nHCOM_LAST_AGE_S=10\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -276,6 +276,37 @@ func TestStatuslineSnapshotWriterRecreatesCachedFileWhenMissing(t *testing.T) {
 	}
 }
 
+func TestStatuslineSnapshotWriterUsesStableIdentityAndCleansLegacyNames(t *testing.T) {
+	root := t.TempDir()
+	statusDir := filepath.Join(root, "statusline")
+	if err := os.MkdirAll(statusDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"former.env", "current.env"} {
+		if err := os.WriteFile(filepath.Join(statusDir, name), []byte("stale\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HERDER_GUID", "guid-stable-0000")
+	t.Setenv("HERDR_PANE_ID", "pane-1")
+	t.Setenv("HCOM_INSTANCE_NAME", "former")
+
+	w := newStatuslineSnapshotWriter(root)
+	row := hcomRow{Name: "current", UnreadCount: 2, StatusAgeS: 5}
+	row.LaunchContext.PaneID = "pane-1"
+	w.writeRows([]hcomRow{row}, time.Unix(120, 0))
+
+	got := readFile(t, filepath.Join(statusDir, "guid-stable-0000.env"))
+	if !strings.Contains(got, "HCOM_LIVE_NAME=current\n") {
+		t.Fatalf("stable snapshot missing live name: %q", got)
+	}
+	for _, name := range []string{"former.env", "current.env"} {
+		if _, err := os.Stat(filepath.Join(statusDir, name)); !os.IsNotExist(err) {
+			t.Fatalf("legacy snapshot %s still exists: err=%v", name, err)
+		}
+	}
+}
+
 func TestSidecarReleaseRemovesOwnStatuslineSnapshot(t *testing.T) {
 	root := t.TempDir()
 	statusDir := filepath.Join(root, "statusline")
@@ -292,6 +323,11 @@ func TestSidecarReleaseRemovesOwnStatuslineSnapshot(t *testing.T) {
 	}
 	t.Setenv("HCOM_DIR", root)
 	t.Setenv("HCOM_INSTANCE_NAME", "sumo")
+	t.Setenv("HERDER_GUID", "guid-stable-0000")
+	stable := filepath.Join(statusDir, "guid-stable-0000.env")
+	if err := os.WriteFile(stable, []byte("owned\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	(&sidecar{}).removeOwnStatuslineSnapshot()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -299,6 +335,9 @@ func TestSidecarReleaseRemovesOwnStatuslineSnapshot(t *testing.T) {
 	}
 	if got := readFile(t, foreign); got != "keep\n" {
 		t.Fatalf("release cleanup changed foreign snapshot: %q", got)
+	}
+	if _, err := os.Stat(stable); !os.IsNotExist(err) {
+		t.Fatalf("stable statusline snapshot still exists after release cleanup: err=%v", err)
 	}
 }
 
