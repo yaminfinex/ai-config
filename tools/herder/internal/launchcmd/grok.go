@@ -643,7 +643,7 @@ func validateGrokArgs(args []string, firstClassModel, allowMappedPermission bool
 		switch name {
 		case "--session-id", "-s":
 			return fmt.Errorf("Grok passthrough %s conflicts with the preassigned session identity; remove it and let herder mint the session id", name)
-		case "--resume", "-r", "--fork-session":
+		case "--resume", "-r", "--continue", "-c", "--fork-session":
 			return fmt.Errorf("Grok passthrough %s conflicts with the fresh-seat launch contract; remove it and use the lifecycle command after that contract is activated", name)
 		case "--rules":
 			return errors.New("Grok passthrough --rules conflicts with the seat doctrine; remove it so herder can install the monitor and receipt rules")

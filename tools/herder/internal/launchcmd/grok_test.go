@@ -179,7 +179,7 @@ func TestGrokLaunchLayerRefusesOwnedArgCollisions(t *testing.T) {
 
 func TestGrokLaunchLayerMirrorsFullOwnedArgRefusals(t *testing.T) {
 	cases := []string{
-		"--session-id", "--session-id=value", "-s", "--resume", "-r", "--fork-session",
+		"--session-id", "--session-id=value", "-s", "--resume", "-r", "--continue", "-c", "--continue=1", "--fork-session",
 		"--rules", "--permission-mode", "--bypassPermissions",
 		"--no-auto-update", "--auto-update", "--disable-auto-update", "--agents", "--agent", "--subagents",
 		"--no-subagents", "--no-no-subagents", "HOME=/tmp/elsewhere", "GROK_HOME=/tmp/elsewhere",
@@ -222,6 +222,11 @@ func TestGrokLifecycleModesBuildOnlyHerderOwnedIdentityArgs(t *testing.T) {
 			want := append([]string{"grok", "--no-subagents"}, tc.wantSuffix...)
 			if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 				t.Fatalf("argv=%q, want %q", got, want)
+			}
+			for _, arg := range []string{"--continue", "-c", "--continue=1"} {
+				if err := validatePreparedGrokArgs([]string{arg}, false); err == nil || !strings.Contains(err.Error(), "remove") {
+					t.Fatalf("%s lifecycle passthrough %q was not refused at shared launch layer: %v", tc.mode, arg, err)
+				}
 			}
 		})
 	}
