@@ -2,6 +2,7 @@ package surface
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -85,9 +86,17 @@ func recencyPageURL(base string, page int) string {
 	return base + "?page=" + strconv.Itoa(page)
 }
 
+// maxRecencyPage caps the page selector so the offset arithmetic below (and
+// the pager's page+1) can never overflow, whatever absurd-but-parseable
+// value the query string carries.
+const maxRecencyPage = (math.MaxInt - recencyPageLimit) / recencyPageLimit
+
 func (s *Server) recencyData(ctx context.Context, page int) (recencyPage, error) {
 	if page < 1 {
 		page = 1
+	}
+	if page > maxRecencyPage {
+		page = maxRecencyPage
 	}
 	offset := (page - 1) * recencyPageLimit
 	sums, total, err := s.store.RecentSessions(ctx, recencyPageLimit, offset)

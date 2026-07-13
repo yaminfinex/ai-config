@@ -6,7 +6,7 @@
 <div id="recency" hx-get="{{.FragmentURL}}" hx-trigger="every {{.PollSeconds}}s" hx-swap="outerHTML">
 {{- if .Total}}
 <p class="pager secondary">
-{{- if eq .Page 1}}showing latest {{.To}} of {{.Total}} sessions{{else}}showing sessions {{.From}}–{{.To}} of {{.Total}}{{end}}
+{{- if eq .Page 1}}showing latest {{.To}} of {{.Total}} sessions{{else if .To}}showing sessions {{.From}}–{{.To}} of {{.Total}}{{else}}past the end — {{.Total}} sessions{{end}}
 {{- if .NewerURL}} <a href="{{.NewerURL}}">← newer</a>{{end}}
 {{- if .OlderURL}} <a href="{{.OlderURL}}">older →</a>{{end}}</p>
 {{- end}}

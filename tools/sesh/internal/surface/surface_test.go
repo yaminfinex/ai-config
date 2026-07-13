@@ -339,6 +339,47 @@ func TestUnknownSessionAndToolAre404(t *testing.T) {
 	}
 }
 
+// --- pager edge paths: absurd page values must not overflow or lie ---
+
+func TestRecencyPageParamAtMaxIntStaysSane(t *testing.T) {
+	srv := newServer(t, corpusStore(t))
+
+	// Exactly MaxInt64 parses, so it must be capped before the offset
+	// arithmetic: far past the 5-session corpus means an honest past-the-end
+	// notice, no negative ranges, zero session rows, no older link, and a
+	// newer link back to the last real page (page one renders at "/").
+	for _, path := range []string{
+		"/?page=9223372036854775807",
+		"/fragments/recency?page=9223372036854775807",
+	} {
+		body := mustGet200(t, srv, path)
+		if !strings.Contains(body, "past the end") {
+			t.Errorf("GET %s must say it is past the end", path)
+		}
+		if strings.Contains(body, "sessions -") || strings.Contains(body, "–-") {
+			t.Errorf("GET %s renders a negative session range", path)
+		}
+		if n := strings.Count(body, `href="/s/`); n != 0 {
+			t.Errorf("GET %s renders %d session links past the end", path, n)
+		}
+		if strings.Contains(body, "older →") {
+			t.Errorf("GET %s offers an older link past the end", path)
+		}
+		if !strings.Contains(body, `<a href="/">← newer</a>`) {
+			t.Errorf("GET %s must link back to the last real page", path)
+		}
+	}
+
+	// Past MaxInt64 (Atoi overflow), negative, and junk all fall back to
+	// page one.
+	for _, path := range []string{"/?page=99999999999999999999", "/?page=-7", "/?page=banana"} {
+		body := mustGet200(t, srv, path)
+		if !strings.Contains(body, "showing latest 5 of 5 sessions") {
+			t.Errorf("GET %s must fall back to page one", path)
+		}
+	}
+}
+
 // --- plumbing: fragment + embedded asset ---
 
 func TestRecencyFragmentAndAsset(t *testing.T) {
