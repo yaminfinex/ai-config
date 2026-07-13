@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-10 10:15'
-updated_date: '2026-07-13 01:47'
+updated_date: '2026-07-13 01:50'
 labels: []
 dependencies: []
 references:
@@ -44,4 +44,6 @@ Run a design unit for the remaining cross-component server tier before implement
 2026-07-13 fix round 2 (volu, 88ba1cc, 1077 lines): exclusive journal transaction (load/validate/append under flock, execution outside lock, open-attempt recovery branch, fence-vs-claim by transaction not append order) + concurrency ACs; offset cases restated correctly (server ahead on lost ACK; three frozen-wire directions cited); A6 rewritten (KindFile loader + one-shot locked migration w/ digest-identity legacy archive + shared-writer territory). panu delta 2 requested.
 
 2026-07-13 delta 2 (panu): all three prescriptions landed correctly; ONE residual P1 — concurrent recovery can prematurely terminal-indeterminate a LIVE executor's open attempt (execution is outside the flock; lock proves no-double-execution, not executor death); two honest shapes offered (ownership+positive-fencing vs refinable-indeterminate). Fix round 3 to volu.
+
+2026-07-13 fix round 3 (volu, c51eb98): shape 1 owner-fenced recovery — attempt-open records executor identity (spoke boot incarnation via observer singleton flock; CLI pid+start-time for pid-reuse guard); resolution only on positive death evidence, liveness check INSIDE the recovery transaction (blocked-on-lock => seen live => never resolved; committed resolution => owner provably dead => late attempt-close mutually exclusive); no timeout resolution anywhere (slow != dead; wedged-alive is an operator kill); race AC at the liveness/commit boundary. panu final delta requested.
 <!-- SECTION:NOTES:END -->
