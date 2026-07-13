@@ -299,6 +299,42 @@ func TestSeatIdentityInvocationUsesControlledAllowlist(t *testing.T) {
 	}
 }
 
+func TestOpenBinderPreservesArgv0DispatchShim(t *testing.T) {
+	dir := t.TempDir()
+	dispatcher := filepath.Join(dir, "dispatcher")
+	if err := os.WriteFile(dispatcher, []byte("#!/bin/sh\n[ \"${0##*/}\" = hcom ] || exit 97\nprintf 'shim-ok\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dispatchLink := filepath.Join(dir, "dispatch-link")
+	if err := os.Symlink(dispatcher, dispatchLink); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(dir, "hcom")
+	if err := os.Symlink(dispatchLink, shim); err != nil {
+		t.Fatal(err)
+	}
+
+	state := shortState(t)
+	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: shim})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if b.cfg.HcomBin != shim {
+		t.Fatalf("binder exec path = %q, want invoked shim %q", b.cfg.HcomBin, shim)
+	}
+	recorded, err := os.ReadFile(filepath.Join(SeatDir(state, "seat"), "hcom-bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(recorded)) != shim {
+		t.Fatalf("recorded hcom-bin = %q, want invoked shim %q", strings.TrimSpace(string(recorded)), shim)
+	}
+	if out, err := b.runHcomSeatIdentity(context.Background(), "list", "--json"); err != nil || strings.TrimSpace(out) != "shim-ok" {
+		t.Fatalf("exec preserved hcom shim: err=%v output=%q", err, out)
+	}
+}
+
 func TestReadInvocationChildEnvironmentScrubsPinnedIdentityInputs(t *testing.T) {
 	capture := filepath.Join(t.TempDir(), "env")
 	bin := filepath.Join(t.TempDir(), "hcom")

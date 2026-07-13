@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/grokbridge"
+	"ai-config/tools/herder/internal/hcombin"
 	"ai-config/tools/herder/internal/registry"
 )
 
@@ -696,44 +697,42 @@ func isUUIDv7(value string) bool { return uuidV7RE.MatchString(value) }
 
 func resolveRealHcom() string {
 	for _, key := range []string{"HERDER_REAL_HCOM", "HERDER_HOOK_HCOM"} {
-		if path := hcomCandidate(os.Getenv(key), true); path != "" {
+		if path, _ := hcomCandidate(os.Getenv(key)); path != "" {
 			return path
 		}
 	}
+	var argv0Fallback string
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		if dir == "" {
 			dir = "."
 		}
-		if path := hcomCandidate(filepath.Join(dir, "hcom"), false); path != "" {
-			return path
+		path, argv0Dispatch := hcomCandidate(filepath.Join(dir, "hcom"))
+		if path == "" {
+			continue
 		}
+		if argv0Dispatch {
+			if argv0Fallback == "" {
+				argv0Fallback = path
+			}
+			continue
+		}
+		return path
 	}
-	return ""
+	return argv0Fallback
 }
 
 // hcomCandidate resolves ordinary hcom symlinks but does not turn an argv0-
-// dispatch shim into its dispatcher. PATH discovery skips such shims and keeps
-// walking to the real binary. An explicit override instead preserves the
-// invoked symlink path so the dispatcher still receives argv[0] == "hcom".
-func hcomCandidate(path string, explicit bool) string {
+// dispatch shim into its dispatcher. The bool lets PATH discovery prefer a
+// later real binary while retaining the invoked shim as a safe last resort.
+func hcomCandidate(path string) (string, bool) {
 	if !executableFile(path) || herderShim(path) {
-		return ""
+		return "", false
 	}
-	abs, err := filepath.Abs(path)
+	resolved, argv0Dispatch, err := hcombin.ResolveExecPath(path)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return abs
-	}
-	if st, err := os.Lstat(abs); err == nil && st.Mode()&os.ModeSymlink != 0 && filepath.Base(resolved) != "hcom" {
-		if explicit {
-			return abs
-		}
-		return ""
-	}
-	return resolved
+	return resolved, argv0Dispatch
 }
 
 func executableFile(path string) bool {

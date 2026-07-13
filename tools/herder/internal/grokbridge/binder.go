@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"ai-config/tools/herder/internal/hcombin"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -71,12 +72,9 @@ func OpenBinder(cfg BinderConfig) (*Binder, error) {
 	if cfg.HcomBin == "" {
 		return nil, errors.New("real hcom binary is required; install hcom or pass --hcom-bin")
 	}
-	hcomPath, err := filepath.Abs(cfg.HcomBin)
+	hcomPath, _, err := hcombin.ResolveExecPath(cfg.HcomBin)
 	if err != nil {
 		return nil, fmt.Errorf("resolve hcom binary: %w", err)
-	}
-	if resolved, resolveErr := filepath.EvalSymlinks(hcomPath); resolveErr == nil {
-		hcomPath = resolved
 	}
 	if st, statErr := os.Stat(hcomPath); statErr != nil || st.IsDir() || st.Mode()&0o111 == 0 {
 		return nil, fmt.Errorf("hcom binary %s is not executable; pass the resolved real hcom 0.7.23 binary", hcomPath)

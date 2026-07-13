@@ -72,7 +72,7 @@ func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
 	return plan, credential
 }
 
-func TestResolveRealHcomSkipsArgv0DispatchSymlink(t *testing.T) {
+func TestResolveRealHcomPrefersRealThenFallsBackToArgv0DispatchShim(t *testing.T) {
 	dispatchDir := t.TempDir()
 	dispatcher := filepath.Join(dispatchDir, "dispatcher")
 	writeExecutable(t, dispatcher, "#!/bin/sh\n[ \"${0##*/}\" = hcom ] || exit 97\nprintf 'dispatch:%s\\n' \"$PWD\"\n")
@@ -101,6 +101,18 @@ func TestResolveRealHcomSkipsArgv0DispatchSymlink(t *testing.T) {
 	cmd.Dir = nonProjectDir
 	if out, err := cmd.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "real:"+nonProjectDir {
 		t.Fatalf("resolved hcom from non-project cwd: err=%v output=%q", err, out)
+	}
+
+	// A shim-only PATH must still launch successfully: keep the first dispatch
+	// shim as the last resort and preserve its invoked hcom name.
+	t.Setenv("PATH", shimDir)
+	if got := resolveRealHcom(); got != shim {
+		t.Fatalf("shim-only PATH resolved hcom = %q, want invoked shim %q", got, shim)
+	}
+	cmd = exec.Command(resolveRealHcom())
+	cmd.Dir = nonProjectDir
+	if out, err := cmd.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "dispatch:"+nonProjectDir {
+		t.Fatalf("shim-only PATH from non-project cwd: err=%v output=%q", err, out)
 	}
 
 	// The explicit escape hatch remains exact: preserving the invoked symlink
