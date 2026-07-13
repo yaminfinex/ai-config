@@ -1,0 +1,10 @@
+# /etc/systemd/system/sesh-backup.timer — installed by ops/bootstrap.sh.
+[Unit]
+Description=Run sesh-backup.service every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+
+[Install]
+WantedBy=timers.target

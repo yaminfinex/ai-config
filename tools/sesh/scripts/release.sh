@@ -67,7 +67,9 @@ case "$DEST" in
 esac
 
 if [ -z "$VERSION" ]; then
-  VERSION="$(cd "$MODULE_DIR" && git describe --tags --always --dirty)"
+  # Monorepo-prefixed release tags only (`just tag` creates sesh-vX.Y.Z);
+  # matches the justfile's version derivation.
+  VERSION="$(cd "$MODULE_DIR" && git describe --tags --match 'sesh-v*' --always --dirty)"
 fi
 case "$VERSION" in
   *-dirty) fail "refusing to publish a dirty-tree build ($VERSION): commit first" ;;
