@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-10 10:15'
-updated_date: '2026-07-13 01:02'
+updated_date: '2026-07-13 01:15'
 labels: []
 dependencies: []
 references:
@@ -29,3 +29,9 @@ Run a design unit for the remaining cross-component server tier before implement
 - [ ] #4 Phase 2 hot reads are explicitly gated on legacy-view retirement with cold parity
 - [ ] #5 Produces proposed spec amendments and filed-ready implementation tasks; no code ships in the design unit
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-07-13: design DONE (c000751, 701-line docs-only) — four shapes compared, standalone server + observer-carried spoke recommended; pinned semantics for registration/spoke-streams/delivery-receipts/overlays/delegation-lease; phase-2 hot reads gated on four preconditions; spec amendments A1-A5 as proposals; five filed-ready captures. Codex review dispatched (boundary conformance: observer disposability under spoke duty is the P1 lens; receipt crash windows; delegation-vs-label-lease trace; staging realism).
+<!-- SECTION:NOTES:END -->
