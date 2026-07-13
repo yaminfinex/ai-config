@@ -244,8 +244,12 @@ func (idx *Indexer) processAppend(ctx context.Context, ev wire.AppendEvent, rebu
 		_ = idx.markDirty(ctx, ev)
 		return normalizeDBError(err)
 	}
+	// Identifier-free by design: session/file identities must not persist
+	// in journal logs (corpus leakage into a different retention domain).
+	// The phase laps are mutually exclusive and sum (with tx_wait and
+	// commit) to total.
 	slog.Debug("index append",
-		"tool", ev.Tool, "file_uuid", ev.FileUUID, "generation", ev.Generation,
+		"tool", ev.Tool, "generation", ev.Generation,
 		"bytes", ev.ByteEnd-ev.ByteStart, "rows", txIdx.timing.rows,
 		"tx_wait", txAcquired.Sub(start),
 		"parse", txIdx.timing.parse, "inherit", txIdx.timing.inherit,
@@ -287,6 +291,11 @@ func (idx *Indexer) applyAppend(ctx context.Context, ev wire.AppendEvent, rebuil
 	if !rebuild {
 		err := idx.unifyConnectedLogicalSessions(ctx, ev)
 		phase(&idx.timing.unify)
+		if idx.timing != nil {
+			// dedupe runs inside the unify call but is lapped separately;
+			// subtract it so the reported phases are exclusive and additive.
+			idx.timing.unify -= idx.timing.dedupe
+		}
 		if err != nil {
 			return err
 		}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -220,16 +221,62 @@ type httpEndpoint struct {
 	handler  http.Handler
 }
 
-// timedHandler logs one debug line per served request with the full
-// server-side duration (auth + handler + response write). With SESH_DEBUG set
-// this is the first stop for "where does request time go" on a live store.
+// timedHandler logs one debug line per served request: normalized route
+// class, status, and full server-side duration (auth + handler + response
+// write) — nothing else. With SESH_DEBUG set this is the first stop for
+// "where does request time go" on a live store. Paths are collapsed to a
+// route class so session and file identities never persist in the journal
+// (transcripts are exactly what sesh ships; identifiers in logs would leak
+// corpus into a different retention domain).
 func timedHandler(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		h.ServeHTTP(w, r)
+		rec := &statusRecorder{ResponseWriter: w}
+		h.ServeHTTP(rec, r)
+		status := rec.status
+		if status == 0 {
+			status = http.StatusOK
+		}
 		slog.Debug("http request",
-			"method", r.Method, "path", r.URL.Path, "duration", time.Since(start))
+			"method", r.Method, "route", routeClass(r.URL.Path),
+			"status", status, "duration", time.Since(start))
 	})
+}
+
+// statusRecorder captures the first status code written; it forwards Flush
+// so streaming handlers keep working behind the middleware.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	if sr.status == 0 {
+		sr.status = code
+	}
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+func (sr *statusRecorder) Flush() {
+	if f, ok := sr.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// routeClass maps a request path to a stable, identifier-free label for
+// debug logs: routes that carry session or file identities collapse to their
+// template; fixed routes pass through unchanged.
+func routeClass(p string) string {
+	switch {
+	case strings.HasPrefix(p, wire.APIRoot+"/files/"):
+		return wire.APIRoot + "/files/*"
+	case strings.HasPrefix(p, "/s/"):
+		return "/s/*"
+	case strings.HasPrefix(p, "/releases/"):
+		return "/releases/*"
+	default:
+		return p
+	}
 }
 
 func serveHTTP(ctx context.Context, endpoints ...httpEndpoint) error {

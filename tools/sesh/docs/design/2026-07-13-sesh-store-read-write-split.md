@@ -22,9 +22,11 @@ capped at a single connection (`SetMaxOpenConns(1)`).
 
 Each append event is indexed inside one write transaction whose cost is
 corpus-scale, not append-scale: at a 1.3 GB / ~500 k-row corpus replayed on a
-fast dev box, a 241-byte append held the connection ~0.6 s
-(`unify` ~0.37 s + `dedupe` ~0.30 s + `inherit` ~0.06 s; visible via
-`SESH_DEBUG=1` per-phase timing). On the slower store VM the same holdings
+fast dev box, a 241-byte append held the connection ~0.5–0.6 s, dominated by
+logical-session maintenance (exclusive phases: `dedupe` ~0.30 s,
+connected-group `unify` ~0.07 s, `inherit` ~0.06 s, plus parse/insert/commit;
+visible via `SESH_DEBUG=1` per-phase timing, whose laps are mutually
+exclusive and additive). On the slower store VM the same holdings
 run ~2 s. With even two active shippers the write side saturates the single
 connection, so every read queues behind full append transactions — and a
 surface page issues several sequential queries, paying that queue repeatedly.
@@ -68,8 +70,10 @@ moves; it now neither blocks nor is blocked by ingest).
 transaction open on `Store.DB()` and asserts the surface pages and both
 nodes endpoints still serve real content. Wiring a read path back onto the
 write connection blocks the request and trips the gate. Not provable without
-a real tailnet: the remote-RTT numbers themselves; those are verified by
-before/after probes against the live store.
+a real tailnet: the remote-RTT numbers themselves. The live BEFORE figures
+(2026-07-13, ~180 ms-RTT client) are in the Symptom section; the AFTER
+figures are PENDING — they get measured from the same client against the
+live store after deploy, and the acceptance criterion stays open until then.
 
 ## Follow-up (out of scope here)
 

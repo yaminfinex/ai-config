@@ -342,8 +342,10 @@ func (s *Store) handlePUTBytes(w http.ResponseWriter, r *http.Request, rawTool, 
 	dbStart := time.Now()
 	tailnetIdentity := TailnetIdentityFromContext(r.Context())
 	resp, ev, code, msg, action := s.putBytes(r.Context(), tool, sessionID, fileUUID, fp, offset, body, hostname, osUser, r.Header.Get(wire.HeaderSessionOwner), tailnetIdentity)
+	// Identifier-free by design: session/file identities must not persist
+	// in journal logs (corpus leakage into a different retention domain).
 	s.logger.Debug("put bytes",
-		"tool", tool, "file_uuid", fileUUID, "bytes", len(body),
+		"tool", tool, "bytes", len(body),
 		"read_body", dbStart.Sub(readStart), "store", time.Since(dbStart))
 	if code != "" {
 		generation, highWater := 0, int64(0)
