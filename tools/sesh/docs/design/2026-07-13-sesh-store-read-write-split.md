@@ -98,14 +98,28 @@ previous projection immediately and trigger a background refresh, and only
 the cold start blocks (shared by all concurrent cold requests). This
 explicitly supersedes the read-your-own-writes property stated in the Fix
 section and in the original bounded-recency projection comment
-(`internal/surface/sqlstore.go`). The new bound: only the ranked list and
-its total can lag (page hydration always reads live tables); every request
-that sees a moved stamp triggers a refresh, so a watched page (60 s poll)
-lags the store by at most one poll interval plus one rebuild, and converges
-within one rebuild once ingest quiesces. Rebuild duration is journaled at
-debug level under the same identifier-free contract as the per-request
-timing. Gate: the single-flight/serve-stale test beside the large-corpus
-plan gate (`internal/surface`); the live surface check now waits for
+(`internal/surface/sqlstore.go`). The new bound, stated precisely: only the
+ranked list and its total can lag (page hydration always reads live
+tables), and every request that sees a moved stamp triggers a refresh.
+Under continuous ingest a watched page (60 s poll) serves a list at most
+one poll interval plus two rebuild durations behind the store — the poll
+that observes a completed rebuild serves that rebuild's start-of-rebuild
+snapshot and triggers the next one. Once ingest quiesces the list converges
+after any in-flight rebuild plus at most one more: the rebuild reads its
+stamp before its ranking query, so writes straddling that gap appear in the
+published list but leave the stamp conservative and force one re-verifying
+rebuild — never silent absorption. Unwatched staleness is NOT bounded: the
+first request after an idle period serves the previous visit's projection,
+however old, then converges as above. Deliberate trade — a page load never
+blocks on a corpus-scale rebuild, which is exactly the onboarding-click
+moment this regression fired on. The refresh goroutine is owned: it runs on
+a store-lifetime context and `SQLStore.Close` (wired before the DB pool
+closes in serve shutdown) cancels and drains it. Rebuild duration is
+journaled at debug level under the same identifier-free contract as the
+per-request timing. Gates: the single-flight/serve-stale tests beside the
+large-corpus plan gate (`internal/surface`) — including the
+churn-straddling-the-stamp interleaving, rebuild-failure latch clearing,
+and canceled-cold-waiter edges; the live surface check now waits for
 convergence instead of asserting read-your-own-writes.
 
 ## Follow-up (out of scope here)

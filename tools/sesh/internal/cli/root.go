@@ -98,7 +98,11 @@ func newServe() *cobra.Command {
 			}
 			consumer := startIndexConsumer(cmd.Context(), st, idx, slog.Default())
 			defer func() { _ = consumer.StopAndWait() }()
-			surfaceHandler := newSurfaceHandler(st)
+			surfaceHandler, surfaceStore := newSurfaceHandler(st)
+			// Deferred after st.Close, so it runs first: the projection
+			// refresh goroutine is cancelled and drained before the pool it
+			// reads shuts down.
+			defer surfaceStore.Close()
 			if tsnetMode {
 				err = serveTSNet(serveCtx, st.Handler(), surfaceHandler, dataDir, addr, surfaceAddr, tsnetHostname, tsnetDir, tsnetAuthKey)
 				if consumerErr := consumer.StopAndWait(); consumerErr != nil {
@@ -148,9 +152,12 @@ func newServe() *cobra.Command {
 // readers run concurrently with the writer, so page loads never queue behind
 // ingest/index append transactions on the single write connection (the
 // measured remote-TTFB pathology; the regression gate holds a write
-// transaction open and asserts surface reads still complete).
-func newSurfaceHandler(st *store.Store) http.Handler {
-	return surface.New(surface.NewSQLStore(st.ReadDB(), st.MirrorPath))
+// transaction open and asserts surface reads still complete). The returned
+// SQLStore owns the projection's background refresh goroutine; close it
+// before closing the store whose pool it reads.
+func newSurfaceHandler(st *store.Store) (http.Handler, *surface.SQLStore) {
+	surfaceStore := surface.NewSQLStore(st.ReadDB(), st.MirrorPath)
+	return surface.New(surfaceStore), surfaceStore
 }
 
 type tsnetServer interface {
