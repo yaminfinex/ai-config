@@ -482,6 +482,39 @@ explicitly NOT claimed against the installed bus.**
   the same lock **before accepting any new work**, so overlapping spoke
   incarnations or a concurrent CLI recovery cannot double-resolve the same
   open attempt or double-allocate attempt n+1.
+- **Open attempts are owned; recovery requires positive evidence the owner
+  is dead.** Because execution runs outside the lock, an open attempt alone
+  cannot distinguish "executor crashed" from "send still in flight" — and a
+  slow live send must never be resolved `indeterminate` under it, or its
+  real attempt-close would land after a state the server calls terminal.
+  Two honest shapes exist (owner-fenced recovery, or an indeterminate that
+  stays refinable by its own late close); this design pins **owner-fenced
+  recovery**: it composes with the incarnation machinery §3.4 already
+  requires, keeps `indeterminate` genuinely terminal, and matches the
+  spec's verdict discipline — positive evidence of death, never timeout
+  inference (`docs/specs/herder-spec.md` §8.4). Rules:
+  - the attempt-open row records its **executor identity**: the spoke's
+    boot incarnation id (§3.4's token), or, for a CLI executor, its
+    pid + process start time (start time guards pid reuse);
+  - an open attempt may be resolved — `indeterminate` under at-most-once,
+    attempt n+1 under at-least-once — **only with positive evidence that
+    the recorded executor is dead**: a spoke incarnation is dead when it no
+    longer holds the observer's singleton flock (the observer is
+    flock-elected per state dir, `docs/specs/herder-spec.md` §7, and a
+    flock releases on process death — a newer incarnation holding the lock,
+    or a free lock, is proof); a CLI executor is dead when its
+    pid + start time no longer exists;
+  - the owner-liveness check runs **inside the recovery transaction**,
+    which closes the last race: an executor that is alive but blocked on
+    the journal lock, about to append its close, is still seen live and is
+    never resolved; conversely, once a resolution commits, the owner was
+    provably dead at commit time and its attempt-close can never arrive —
+    resolution and late close are mutually exclusive by construction;
+  - **slow is not dead**: there is no timeout-based resolution, ever. While
+    the owner lives, recovery refuses and reports "attempt in flight by
+    that executor"; the server keeps showing `claimed`. A wedged-but-alive
+    executor is an operator decision — kill the process, and recovery then
+    has its evidence.
 - **Execution protocol**, per fetched command. Steps 1–4 are a single
   exclusive journal transaction; step 5 runs outside the lock only after
   step 4 committed; step 6 is its own transaction:
@@ -496,8 +529,8 @@ explicitly NOT claimed against the installed bus.**
   2. fence: a journaled fence row for `command_id` → refuse, report fenced;
   3. deadline: past deadline by the node clock → append a fence row
      (reason: expired), never execute;
-  4. attempt-open: `{command_id, attempt n, envelope hash, opened_at}`
-     appended and fsynced, committing the transaction;
+  4. attempt-open: `{command_id, attempt n, envelope hash, opened_at,
+     executor}` appended and fsynced, committing the transaction;
   5. execute: invoke the local send path;
   6. attempt-close: the local verdict appended verbatim (own transaction).
 - **Crash truth table** — the observer must be killable at any point with
@@ -506,12 +539,15 @@ explicitly NOT claimed against the installed bus.**
     journal entry and executes normally;
   - killed between attempt-open and attempt-close: the send may or may not
     have reached the bus — **indeterminate**. Recovery (the next spoke
-    incarnation, or a CLI recovery verb over the same journal) resolves it by
-    the command's mode: **at-most-once** (default) → append
-    `indeterminate` (terminal; never re-executed; ships upstream with its
-    evidence: attempt opened at T, no outcome); **at-least-once** → open
-    attempt n+1 (duplicate delivery is possible, and every attempt is
-    journaled and visible, never silent);
+    incarnation, or a CLI recovery verb over the same journal) first
+    establishes the recorded executor is dead — here the kill *is* the
+    evidence — then resolves by the command's mode: **at-most-once**
+    (default) → append `indeterminate` (terminal; never re-executed; ships
+    upstream with its evidence: attempt opened at T by that executor, no
+    outcome); **at-least-once** → open attempt n+1 (duplicate delivery is
+    possible, and every attempt is journaled and visible, never silent). A
+    merely *slow* executor is not this case: while it lives, recovery
+    refuses (owner fencing, above);
   - killed after attempt-close: the outcome is durable and ships on replay.
 
   At-most-once is the right default here: the payloads are instructions to
@@ -797,7 +833,8 @@ consumes.
 | Registry rotation mid-ship | Rotation is local and unaffected | New file_generation stamped and shipped as a new unit; archive ships once; parsed rows dedup by content | Automatic |
 | Command to a dark node | — | `accepted`, dispatch pending, honest age shown; `expired` if deadline passes unclaimed | Node reconnects and fetches, or submitter cancels |
 | Receipt raced a disconnect | Outcome sits in the durable node journal | `claimed`, awaiting journal bytes | Journal stream replay delivers the receipt losslessly |
-| Observer killed between attempt-open and attempt-close | Journal shows an open attempt; recovery resolves by mode (§3.3) | at-most-once: `indeterminate` with evidence; at-least-once: attempt n+1 visible | Operator resubmits explicitly (new command) if needed |
+| Observer killed between attempt-open and attempt-close | Journal shows an open attempt whose executor is provably dead; recovery resolves by mode (§3.3) | at-most-once: `indeterminate` with evidence; at-least-once: attempt n+1 visible | Operator resubmits explicitly (new command) if needed |
+| Slow live send + concurrent recovery | Owner fencing: recovery sees the executor alive (in-transaction liveness check) and refuses | `claimed` — attempt in flight, honestly aged | None needed; kill the executor to convert it to the row above |
 | Cancel/expiry raced an in-flight dispatch | Node fences unclaimed ids on next contact; a landed claim executes | `cancel_requested`/`expiry_reached` (non-terminal) until fenced; late evidence dominates and is flagged | Automatic — fence handshake (§3.3) |
 | Spoke wedged / slow scan (server up) | Registry observation loop and heartbeat unaffected (§2.1 fence); level-state coalesces | Streams age honestly | Spoke goroutine restart; cursors resume |
 | Observer rebuilt while server retains overlays | New incarnation; re-emits per retained-key listing, incl. tombstones | Old-incarnation snapshots fenced, keys pending-refresh until re-emission | Automatic (§3.4) |
@@ -976,11 +1013,13 @@ docs discipline: its doc rows are acceptance criteria, not follow-ups.
   node-local resolution, the journal as node truth with the exclusive
   journal transaction (load → validate → append under one flock, execution
   outside the lock after commit), attempt-open / attempt-close protocol
-  with open-attempt recovery branching, delivery modes with at-most-once
-  default and `indeterminate` as a first-class terminal state, no
-  exactly-once claim on the installed bus, cancel/expiry fencing handshake
-  resolved by the transaction, evidence-dominates rule, vocabulary-minimum
-  rule.
+  with open-attempt recovery branching, executor ownership on attempt-open
+  with owner-fenced recovery (positive evidence of death, in-transaction
+  liveness check, no timeout resolution ever), delivery modes with
+  at-most-once default and `indeterminate` as a first-class terminal state,
+  no exactly-once claim on the installed bus, cancel/expiry fencing
+  handshake resolved by the transaction, evidence-dominates rule,
+  vocabulary-minimum rule.
 - **AC sketch**: (1) redispatch under a durable journal never re-executes by
   itself (dedup-by-command_id with forced redispatch); at-most-once: a kill
   between attempt-open and attempt-close surfaces `indeterminate` with its
@@ -989,7 +1028,13 @@ docs discipline: its doc rows are acceptance criteria, not follow-ups.
   concurrency: a spoke and a concurrent CLI recovery (and two overlapping
   spoke incarnations) racing the same command produce exactly one
   attempt-open under at-most-once and never a duplicate attempt number
-  under at-least-once (concurrent race tests, not sequenced mocks); (3) no
+  under at-least-once (concurrent race tests, not sequenced mocks);
+  owner fencing: a deliberately slow live send with concurrent recovery is
+  refused ("attempt in flight", server stays `claimed`) and no
+  `indeterminate` is ever recorded while the executor lives — then killing
+  the executor mid-send lets recovery resolve, and no attempt-close can
+  land after the resolution (race test at the liveness/commit boundary);
+  (3) no
   receipt state ever regresses; a receipt racing a disconnect arrives via
   journal replay; (4) `concluded` verdicts are reported only from
   node-journal outcomes, verbatim — a wedged node yields
