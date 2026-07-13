@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-13 01:37'
+updated_date: '2026-07-13 01:41'
 labels: []
 dependencies: []
 priority: medium
@@ -41,4 +41,6 @@ OWNER RULINGS 2026-07-13 (recorded in design doc addendum): no bypassPermissions
 2026-07-13 U1 round 2 (moze, 384c190): re-dial+retry-once on explicit stale rejection (mutex-serialized, cached-generation fence retained — stale rejected pre-dispatch so no double-execution); straddle tests for direct Client AND persistent ServeMCP; T23 reuses pre-restart client w/ single-surfacing assertion; env-level read-scrub pin; strict omission rejection recorded as authorized tightening (design text untouched); gate floor 30->33. Worker battery 54/54. Independent re-gate running; mapo final delta requested.
 
 2026-07-13 U1 MERGED: final delta APPROVE (mapo re-ran the brick repro — repeatable recovery across two restarts, exactly one outbound copy; mutation battery 6/6 caught vs 2/6 at first commit; fence verified over the whole unit). Merge 5fbd991 --no-ff (12 files, +3098, additive; sweep clean — one English-substring false positive classified). Post-merge gate on main running. Pinned battery count is now 55 house-wide (check-grok-transport.sh joined). mapo U2 observation carried: binder named-send stdout carries other messages' bodies into context outside fetch/ack (harmless to correctness, context-hygiene wrinkle) — U2 doctrine line or trim send result to first line. NEXT: U2 launch contract (activation-gated, Grok 4.5 pin, blanket spend, boot-arming fallback pre-approved).
+
+CORRECTION to U1 merge note: house battery count on main is 54 (53 + check-grok-transport.sh), not 55.
 <!-- SECTION:NOTES:END -->

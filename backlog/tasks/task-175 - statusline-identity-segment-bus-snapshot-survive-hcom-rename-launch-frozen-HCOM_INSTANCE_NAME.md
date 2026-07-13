@@ -3,10 +3,10 @@ id: TASK-175
 title: >-
   statusline: identity segment + bus snapshot survive hcom rename (launch-frozen
   HCOM_INSTANCE_NAME)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-13 00:51'
-updated_date: '2026-07-13 01:31'
+updated_date: '2026-07-13 01:41'
 labels: []
 dependencies: []
 priority: low
@@ -31,11 +31,5 @@ Observed live on the orchestrator session: pane statusline shows @mono while the
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-2026-07-13: DONE received (4d411df) — GUID-keyed snapshots, HCOM_LIVE_NAME field for @name, one-time name-file cleanup on stable write, fallback preserved; worker battery 53/53. Harvest: independent gate running; opus reviewer dispatched (lenses incl. deletion-safety race on recycled names).
-
-2026-07-13 review round 1 (nave, opus; 6 executable adversarial proofs, all read-only): 2 P1 — fix missed the motivating session (hcom-launched, no HERDER_GUID; remedy = process-id keying, AC1 amended accordingly); GUID-keyed segment silently vanishes whenever the keyed file is absent (release path deletes on 5 transient list misses — single-writer SPOF replaced the old redundant fan-out). 2 P2 — unscoped delete-by-name (recycled-name live-session deletion horn + orphan-never-cleaned horn; shipped test injected a mock-only env var that hid both); correlation re-implemented instead of reusing the vetted correlator (fork guard + pane-first precedence dropped). 1 P3 — permanent create/delete churn vs legacy sidecars. Passing lenses: hot path zero-spawn, fallback byte-identical, GUID rename tracking, hygiene. Fix round 1 sent to raza; nave holds for delta.
-
-2026-07-13 fix round 1 delta (raza, 3af1471): renderer keys by HCOM_PROCESS_ID w/ name-keyed fallback; sidecar keys ONLY by correlated-row launch_context.process_id through findRowCorrelated (correlated required, fork exclusion + pane-first pinned); transient missing>=5 preserves snapshots (release(false)) vs genuine ppid death removes writer-owned file only; one-shot transition cleanup w/ roster-ownership refusal; live-env-shaped tests incl. recycled-name + post-rename orphan scenarios; churn pinned one-shot. Worker battery 53/53. Independent re-gate running; nave delta requested.
-
-2026-07-13 delta (nave): P1-1/P1-2/P2-4/P3-5 VERIFIED FIXED (side-by-side render proof on the motivating hcom-launched shape: @mono/wrong-file on main -> @hera/correlated-file on fix; fallback retains segment). Residual P2: cleanup keyed by row.Name but legacy writer keys by BaseName -> no-op for every tagged session, orphan reachable via boot-window fallback, one-shot burned on the no-op; hand-crafted fixture (not writeRows) hid it. Residual P3: correlation derived twice per tick (double /proc scan when uncorrelated). Fix round 2 to raza.
+MERGED 5569d45 (--no-ff) after two review rounds, final verdict APPROVE (opus, render-diff proof on the motivating renamed session: @mono/stale-file on main -> @hera/correlated-file on fix; fallback + no-process-id paths byte-identical to main). Snapshot keyed by launch-stable process id via the vetted correlator; live name carried in-file; roster-guarded retryable one-shot cleanup; transient list misses no longer delete. Accepted residuals (reviewer-recommended, recorded): pre-rename frozen-name file leak (rollout-only, self-heals on first correlated write; sweepable) and one-tick-stale first snapshot (nit). Follow-up filed: TASK-178 roster-checked orphan sweep (also cleans main's 3 pre-existing dead orphans). Post-merge gate running. NOTE correction: house battery count after U1 merge is 54, not 55 as an earlier note said.
 <!-- SECTION:NOTES:END -->
