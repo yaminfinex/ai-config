@@ -3,11 +3,11 @@ package observercmd
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +17,8 @@ import (
 )
 
 const grokJSONLMaxLine = 16 << 20
+
+var errGrokSessionUndiscovered = errors.New("Grok session directory was not discovered")
 
 type grokTranscriptEntry struct {
 	Type    string          `json:"type"`
@@ -42,27 +44,39 @@ type grokArtifactCursor struct {
 	transcriptPath   string
 	transcriptInfo   os.FileInfo
 	transcriptOffset int64
-	transcriptFence  []byte
+	transcriptFence  grokCursorFence
 	transcript       grokTranscriptSummary
 	eventsPath       string
 	eventsInfo       os.FileInfo
 	eventsOffset     int64
-	eventsFence      []byte
+	eventsFence      grokCursorFence
 	eventStatus      string
 }
 
-func grokSessionDir(grokHome, cwd, sessionID string) (string, error) {
+type grokCursorFence struct {
+	digest [sha256.Size]byte
+	valid  bool
+}
+
+func grokSessionDir(grokHome, sessionID string) (string, error) {
 	if !filepath.IsAbs(grokHome) {
 		return "", errors.New("Grok home is not absolute; run the observer with HERDER_STATE_DIR set to the seat's state root")
-	}
-	if !filepath.IsAbs(cwd) {
-		return "", errors.New("Grok workspace is not absolute; respawn the seat so its resolved workspace is recorded")
 	}
 	if !validGrokSessionID(sessionID) {
 		return "", errors.New("Grok session identity is missing or malformed; resume or respawn the seat so its explicit session id is recorded")
 	}
-	encodedCWD := url.PathEscape(filepath.Clean(cwd))
-	return filepath.Join(filepath.Clean(grokHome), "sessions", encodedCWD, sessionID), nil
+	matches, err := filepath.Glob(filepath.Join(filepath.Clean(grokHome), "sessions", "*", sessionID))
+	if err != nil {
+		return "", fmt.Errorf("discover Grok session directory: %w", err)
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("%w for explicit session id %s; verify GROK_HOME and resume or respawn the seat", errGrokSessionUndiscovered, sessionID)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("Grok session id %s matched %d directories; remove duplicate session artifacts and retry the observer sweep", sessionID, len(matches))
+	}
 }
 
 func validGrokSessionID(value string) bool {
@@ -84,8 +98,8 @@ func validGrokSessionID(value string) bool {
 	return true
 }
 
-func observeGrokSession(grokHome, cwd, sessionID string, cursor *grokArtifactCursor) (grokSessionObservation, error) {
-	dir, err := grokSessionDir(grokHome, cwd, sessionID)
+func observeGrokSession(grokHome, sessionID string, cursor *grokArtifactCursor) (grokSessionObservation, error) {
+	dir, err := grokSessionDir(grokHome, sessionID)
 	if err != nil {
 		return grokSessionObservation{}, err
 	}
@@ -101,12 +115,8 @@ func observeGrokSession(grokHome, cwd, sessionID string, cursor *grokArtifactCur
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return grokSessionObservation{}, fmt.Errorf("read Grok event enrichment: %w; verify the dedicated GROK_HOME session and retry the observer sweep", err)
 	}
-	if errors.Is(err, os.ErrNotExist) && cursor.eventsPath != eventsPath {
-		cursor.eventsPath = eventsPath
-		cursor.eventsInfo = nil
-		cursor.eventsOffset = 0
-		cursor.eventsFence = nil
-		cursor.eventStatus = ""
+	if errors.Is(err, os.ErrNotExist) {
+		clearGrokEventCursor(cursor)
 	}
 	obs := grokSessionObservation{
 		TranscriptPath: transcriptPath,
@@ -148,26 +158,37 @@ func updateGrokTranscript(path string, cursor *grokArtifactCursor) error {
 	}
 	scanner := bufio.NewScanner(io.NewSectionReader(f, offset, complete-offset))
 	scanner.Buffer(make([]byte, 64<<10), grokJSONLMaxLine)
-	for lineNo := 1; scanner.Scan(); lineNo++ {
+	for scanner.Scan() {
 		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 {
 			continue
 		}
 		var entry grokTranscriptEntry
 		if err := json.Unmarshal(line, &entry); err != nil {
-			return fmt.Errorf("line %d is not valid JSON: %w", lineNo, err)
-		}
-		if entry.Type == "" || len(entry.Content) == 0 {
-			return fmt.Errorf("line %d lacks the recorded type/content shape", lineNo)
+			summary.Entries++
+			summary.Other++
+			continue
 		}
 		summary.Entries++
 		switch entry.Type {
 		case "system":
-			summary.System++
+			if len(entry.Content) > 0 {
+				summary.System++
+			} else {
+				summary.Other++
+			}
 		case "user":
-			summary.User++
+			if len(entry.Content) > 0 {
+				summary.User++
+			} else {
+				summary.Other++
+			}
 		case "assistant":
-			summary.Assistant++
+			if len(entry.Content) > 0 {
+				summary.Assistant++
+			} else {
+				summary.Other++
+			}
 		default:
 			summary.Other++
 		}
@@ -232,7 +253,7 @@ func updateGrokEventStatus(path string, cursor *grokArtifactCursor) error {
 			if safeGrokEventLabel(event.Phase) {
 				status = event.Phase
 			}
-		case "turn_started", "turn_ended", "tool_started", "tool_completed", "permission_requested", "permission_resolved":
+		case "turn_started", "tool_started", "tool_completed", "permission_requested", "permission_resolved":
 			status = event.Type
 		}
 	}
@@ -250,21 +271,21 @@ func updateGrokEventStatus(path string, cursor *grokArtifactCursor) error {
 	return nil
 }
 
-func artifactCursorReset(f *os.File, path string, info os.FileInfo, priorPath string, priorInfo os.FileInfo, offset int64, fence []byte) (bool, error) {
+func artifactCursorReset(f *os.File, path string, info os.FileInfo, priorPath string, priorInfo os.FileInfo, offset int64, fence grokCursorFence) (bool, error) {
 	if priorInfo == nil || path != priorPath || !os.SameFile(priorInfo, info) || info.Size() < offset {
 		return true, nil
 	}
-	if offset == 0 || len(fence) == 0 {
+	if offset == 0 || !fence.valid {
 		return false, nil
 	}
 	current, err := readCursorFence(f, offset)
 	if err != nil {
 		return false, err
 	}
-	return !bytes.Equal(current, fence), nil
+	return current != fence, nil
 }
 
-func readCursorFence(f *os.File, offset int64) ([]byte, error) {
+func readCursorFence(f *os.File, offset int64) (grokCursorFence, error) {
 	const fenceSize int64 = 64
 	start := offset - fenceSize
 	if start < 0 {
@@ -272,12 +293,20 @@ func readCursorFence(f *os.File, offset int64) ([]byte, error) {
 	}
 	buf := make([]byte, offset-start)
 	if len(buf) == 0 {
-		return nil, nil
+		return grokCursorFence{}, nil
 	}
 	if _, err := f.ReadAt(buf, start); err != nil {
-		return nil, err
+		return grokCursorFence{}, err
 	}
-	return buf, nil
+	return grokCursorFence{digest: sha256.Sum256(buf), valid: true}, nil
+}
+
+func clearGrokEventCursor(cursor *grokArtifactCursor) {
+	cursor.eventsPath = ""
+	cursor.eventsInfo = nil
+	cursor.eventsOffset = 0
+	cursor.eventsFence = grokCursorFence{}
+	cursor.eventStatus = ""
 }
 
 func completeJSONLOffset(f *os.File, size int64) (int64, error) {
@@ -326,11 +355,12 @@ func safeGrokEventLabel(value string) bool {
 	return true
 }
 
-func grokObservations(records []v2.SessionRecord, stateDir string, stderr io.Writer, cursors map[string]*grokArtifactCursor) map[string]observerstatus.Observation {
+func grokObservations(records []v2.SessionRecord, stateDir string, stderr io.Writer, cursors map[string]*grokArtifactCursor) (map[string]observerstatus.Observation, []observerstatus.Flag) {
 	out := map[string]observerstatus.Observation{}
+	var flags []observerstatus.Flag
 	active := map[string]bool{}
 	for _, rec := range records {
-		if rec.State != v2.StateSeated || rec.Tool != "grok" || rec.GUID == "" || rec.Provenance.CWD == "" {
+		if rec.State != v2.StateSeated || rec.Tool != "grok" || rec.GUID == "" {
 			continue
 		}
 		sessionID := latestSID(rec)
@@ -346,7 +376,18 @@ func grokObservations(records []v2.SessionRecord, stateDir string, stderr io.Wri
 				cursor = cursors[rec.GUID]
 			}
 		}
-		obs, err := observeGrokSession(filepath.Join(stateDir, "grok-home"), rec.Provenance.CWD, sessionID, cursor)
+		obs, err := observeGrokSession(filepath.Join(stateDir, "grok-home"), sessionID, cursor)
+		if errors.Is(err, errGrokSessionUndiscovered) {
+			flags = append(flags, observerstatus.Flag{
+				GUID:      rec.GUID,
+				Label:     rec.Label,
+				Type:      "grok-session-undiscovered",
+				Severity:  "warning",
+				Detail:    "explicit Grok session id has no matching directory under the dedicated GROK_HOME; observer keeps live status unknown",
+				Suggested: "verify GROK_HOME and resume or respawn the seat",
+			})
+			continue
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -369,5 +410,5 @@ func grokObservations(records []v2.SessionRecord, stateDir string, stderr io.Wri
 			delete(cursors, guid)
 		}
 	}
-	return out
+	return out, flags
 }

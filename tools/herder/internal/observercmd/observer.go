@@ -217,10 +217,12 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 		}
 		grokCursors = hctx.grokCursors
 	}
-	st.Observations = grokObservations(sessions, stateDir, stderr, grokCursors)
+	grokObservationState, grokFlags := grokObservations(sessions, stateDir, stderr, grokCursors)
+	st.Observations = grokObservationState
 	cands := buildCandidates(proj, hd, bus, now)
 	doctrine := doctrineCandidates(proj, hd, bus, st.DoctrineDeliveries, joinedHcomRow)
 	flags := advisoryFlags(proj, hd)
+	flags = append(flags, grokFlags...)
 	flags = append(flags, epochFlags(proj, hd, bus)...)
 	flags = append(flags, continuationFailureFlags(proj, stateDir, stderr)...)
 	summary := applyCandidates(registryPath, cands, stderr)
