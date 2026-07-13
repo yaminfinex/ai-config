@@ -23,8 +23,11 @@ type MirrorPath func(tool wire.Tool, sessionID, fileUUID string, generation int)
 // observations) and the mirror tree. This is the M2 seam implementation; the
 // store process owns the DB handle and its lifecycle.
 //
-// The store DB runs a single connection, so no method here may start a query
-// while another result set is open — collect first, then query again.
+// The serve path hands this store the read-only pool (store.ReadDB), never
+// the write connection: append transactions hold the writer for corpus-scale
+// index work, and a read queued behind one pays that holding per query. The
+// methods still collect each result set fully before the next query so they
+// also run correctly on a single-connection handle (tests, admin tooling).
 //
 // The recency ranking is a surface-owned projection: the complete ranked
 // (tool, logical) key list plus total, held in memory and rebuilt only when

@@ -97,7 +97,7 @@ func newServe() *cobra.Command {
 			}
 			consumer := startIndexConsumer(cmd.Context(), st, idx, slog.Default())
 			defer func() { _ = consumer.StopAndWait() }()
-			surfaceHandler := surface.New(surface.NewSQLStore(st.DB(), st.MirrorPath))
+			surfaceHandler := newSurfaceHandler(st)
 			if tsnetMode {
 				err = serveTSNet(serveCtx, st.Handler(), surfaceHandler, dataDir, addr, surfaceAddr, tsnetHostname, tsnetDir, tsnetAuthKey)
 				if consumerErr := consumer.StopAndWait(); consumerErr != nil {
@@ -141,6 +141,15 @@ func newServe() *cobra.Command {
 	cmd.Flags().StringVar(&tsnetDir, "tsnet-dir", "", "tsnet state directory; default is <data-dir>/tsnet")
 	cmd.Flags().StringVar(&tsnetAuthKey, "tsnet-auth-key", "", "tsnet auth key; empty lets tsnet use TS_AUTHKEY or stored state")
 	return cmd
+}
+
+// newSurfaceHandler wires the surface over the store's read-only pool: WAL
+// readers run concurrently with the writer, so page loads never queue behind
+// ingest/index append transactions on the single write connection (the
+// measured remote-TTFB pathology; the regression gate holds a write
+// transaction open and asserts surface reads still complete).
+func newSurfaceHandler(st *store.Store) http.Handler {
+	return surface.New(surface.NewSQLStore(st.ReadDB(), st.MirrorPath))
 }
 
 type tsnetServer interface {

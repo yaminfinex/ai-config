@@ -13,9 +13,11 @@ import (
 	"sesh/internal/wire"
 )
 
-// Nodes returns last-PUT activity by hostname and OS user.
+// Nodes returns last-PUT activity by hostname and OS user. It reads through
+// the read-only pool: node status must stay responsive while the write
+// connection is held by append transactions.
 func (s *Store) Nodes(ctx context.Context, staleAfter time.Duration) ([]surface.NodeStatus, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT hostname, os_user, last_put_at FROM last_seen ORDER BY hostname, os_user`)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT hostname, os_user, last_put_at FROM last_seen ORDER BY hostname, os_user`)
 	if err != nil {
 		return nil, err
 	}

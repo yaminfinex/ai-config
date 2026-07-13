@@ -562,6 +562,91 @@ func TestIndexConsumerDrainsServeAppendEvents(t *testing.T) {
 	}
 }
 
+// TestReadPathsServeWhileWriteConnectionHeld is the serving-path regression
+// gate for the surface remote-TTFB pathology: append transactions hold the
+// store's single write connection for corpus-scale index work, so every
+// read-serving route (the surface pages, node status on both listeners) must
+// read through the store's read-only pool — WAL readers run concurrently
+// with the writer. The gate pins the property directly: with a write
+// transaction held open, the reads must still complete with real content. A
+// regression back onto the write connection blocks these requests (timeout)
+// or degrades the page (content assertion). What this cannot prove without a
+// real tailnet: the remote-RTT numbers themselves; those are verified by
+// before/after probes against the live store.
+func TestReadPathsServeWhileWriteConnectionHeld(t *testing.T) {
+	st, err := store.Open(t.Context(), store.Config{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	// index.New creates the index schema the recency queries read, exactly
+	// as serve does; the consumer itself is not needed here.
+	if _, err := index.New(t.Context(), st.DB(), st.MirrorPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// One mirrored line so the pages render real rows (raw fallback path;
+	// no index consumer needed).
+	body := []byte(`{"type":"user","uuid":"gate","sessionId":"11111111-1111-1111-1111-111111111111"}` + "\n")
+	put := httptest.NewRequest(http.MethodPut, "/v1/files/claude/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222/bytes?offset=0", bytes.NewReader(body))
+	put.Header.Set("Content-Type", wire.ContentTypeBytes)
+	put.Header.Set(wire.HeaderWireVersion, "1")
+	put.Header.Set(wire.HeaderHostname, "node-a")
+	put.Header.Set(wire.HeaderOSUser, "grace")
+	rr := httptest.NewRecorder()
+	st.Handler().ServeHTTP(rr, put)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Take the single write connection and hold it inside an open write
+	// transaction, the same state a long append transaction produces.
+	tx, err := st.DB().BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(t.Context(), `INSERT INTO last_seen(hostname, os_user, last_put_at) VALUES ('held-writer', 'held-writer', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+
+	surfaceHandler := newSurfaceHandler(st)
+	storeHandler := st.Handler()
+	checks := []struct {
+		name    string
+		handler http.Handler
+		target  string
+		want    string
+	}{
+		{"surface nodes", surfaceHandler, "/nodes", "node-a"},
+		{"surface recency", surfaceHandler, "/", "11111111-1111-1111-1111-111111111111"},
+		{"store nodes", storeHandler, "/v1/nodes", "node-a"},
+	}
+	for _, check := range checks {
+		type result struct {
+			code int
+			body string
+		}
+		done := make(chan result, 1)
+		go func() {
+			rec := httptest.NewRecorder()
+			check.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, check.target, nil))
+			done <- result{rec.Code, rec.Body.String()}
+		}()
+		select {
+		case got := <-done:
+			if got.code != http.StatusOK {
+				t.Errorf("%s: status %d while the write connection is held", check.name, got.code)
+			}
+			if !strings.Contains(got.body, check.want) {
+				t.Errorf("%s: response lacks %q while the write connection is held (degraded render?)\n%s", check.name, check.want, got.body)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s: read blocked behind the held write connection", check.name)
+		}
+	}
+}
+
 func TestIndexConsumerDrainsQueuedEventsBeforeStop(t *testing.T) {
 	st, err := store.Open(t.Context(), store.Config{Dir: t.TempDir(), AppendBuffer: 1})
 	if err != nil {

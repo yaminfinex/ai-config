@@ -142,7 +142,15 @@ frozen wire-doc index schema is untouched). The page states its bound
 ("showing latest N of Z sessions"), older history stays reachable through
 `?page=N` pager links, and the periodic refresh polls the page it is on.
 `/nodes` reads only the last-seen bookkeeping table and is unaffected by
-corpus size. Gates: `tests/check-surface-fixtures.sh` (fixture-backed
+corpus size. All read-serving paths (surface pages, `/nodes`, `/v1/nodes`)
+query through the store's read-only connection pool, so page loads run
+concurrently with ingest instead of queueing behind append-index write
+transactions on the single write connection
+(`docs/design/2026-07-13-sesh-store-read-write-split.md`; gate:
+`TestReadPathsServeWhileWriteConnectionHeld`). Set `SESH_DEBUG=1` on any
+sesh command for debug-level logs — `sesh serve` then logs per-request
+serving time and per-phase append-index timing, the first stop for "where
+does store time go" on a live node. Gates: `tests/check-surface-fixtures.sh` (fixture-backed
 renders, plus the 5k-session corpus test proving bounded query plans — no
 corpus-table SCAN on the warm path, fixed per-request query count, amortized
 rebuilds — with a self-check that the plan gate catches reintroduced scans)
