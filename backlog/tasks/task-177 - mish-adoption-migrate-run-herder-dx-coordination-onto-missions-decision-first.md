@@ -3,10 +3,10 @@ id: TASK-177
 title: >-
   mish adoption: migrate run-herder-dx coordination onto missions
   (decision-first)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-13 01:02'
-updated_date: '2026-07-13 01:31'
+updated_date: '2026-07-13 01:33'
 labels: []
 dependencies: []
 priority: high
@@ -22,15 +22,5 @@ mish shipped complete (its build run closed with all eleven units merged; binary
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-2026-07-13: decision DONE (76566bd) — adopts orchestration substrate into missions/<slug>/artifacts/, backlog stays sole task custodian, adopt=MOVE by hera at unit boundary w/ sha256 manifest + custody commit, napkins->tracked ruled IN w/ secret scan, slug herder-dx proposed. Owner flags: missions repo (dedicated recommended), MISSIONS_REPO provisioning, push authority, --owner value, slug, sibling lanes. Env correction: mish binary NOT on PATH, skill NOT symlinked (earlier claim stale) — mechanical preconditions. Codex review dispatched (DOA/live-run-safety/custody/owner-completeness/hygiene lenses).
-
-2026-07-13 review round 1 (kune, codex-high): pre-trace PASSED (built the CLI, ran the scaffold — flags/grammar/env facts all verified) but 2 P1: pointer stubs are plain files not redirects — compact continuations + in-flight workers with old-path references (transitively enumerated in the live tree) would lose instructions mid-unit; hash-verified MOVE does not prove tracked custody (destination ignore rules can silently drop files after source deletion; secret scan must precede the custody COMMIT). 4 P2 (identifier ruling oversteps the ratified mission-spec invariant — owner-only; mission board must stay empty incl. housekeeping; pull-before-scaffold + explicit status command; provisioning authority contradiction) + 1 P3 (quarantine leaks). Fix round 1 sent to zemu; kune holds for delta.
-
-2026-07-13 fix round 1 delta (zemu, c0eb7ad): whole-tree symlink supersedes stubs+deferred-adopt (one dir-level link covers the transitive closure; retirement journaled, AC7; cold-resume + dependency-walk drills as AC6); ordered custody-proof pipeline w/ secret-scan-before-commit and staged-blob-comparison-before-deletion (AC4); P2-1 deferred to owner (migration unit BLOCKED on that ruling, AC2); board empty full stop (AC8); sync-before-scaffold + exact status command (AC3/10); provisioning owner-only, unit installs nothing (AC1); quarantine rewritten project-agnostic. kune delta requested.
-
-2026-07-13 delta round (kune): board/mechanics/provisioning RESOLVED; symlink primitive confirmed right (no live-corpus find-dependence). Remaining: P1 continuity invariant DOA vs real corpus (pre-existing broken refs from historical archive moves; AC6 as worded must fail) — reworded to resolved-before==same-bytes-after w/ baseline/delta classes; P1 source deleted before REMOTE custody proven (no push pre-deletion; local clone insufficient) — pipeline reordered push→remote-clone→compare→delete, unconfirmed-authority branch removed; P2 option-(b) redaction precluded by residual verbatim rulings — parameterized; P2 staged-set equality impossible (manifest is an extra) — scoped to artifacts/**; P3 two quarantine leaks. Fix round 2 to zemu.
-
-2026-07-13 rev 3 (zemu, 04e5f9f): continuity invariant = resolved-before==same-governing-manifest-bytes-after w/ non-gating classes + temp-alias layout proof pre-deletion; pipeline reordered push->remote-clone->compare->delete w/ no local-only branch; governing-manifest parameterization for owner identifier ruling; comparison scoped to artifacts/orchestration/** w/ disjoint custody path; quarantine genericized. kune delta 2 requested.
-
-2026-07-13 delta 2 (kune): P1-1/P1-2/P2-1/P2-2/P3 ALL PASS (grep-verified quarantine; no local-only branch; corpus classes land correctly). One remaining P2: baseline must be TYPED (file/dir/absent — corpus has resolving directory references e.g. archive/) + explicit alias prefix-substitution rule for the temp proof. Fix round 3 (mechanical) to zemu.
+DECISION DELIVERED AND MERGED (951e1e9, docs/design/mish-run-migration-decision.md, docs-only). Four review rounds (kune, codex-high), final delta APPROVE. The migration unit is CAPTURED IN THE DOC and BLOCKED on owner rulings: (1) identifier boundary — mission-spec amendment exempting opaque artifacts/ contents (recommended) vs redaction manifest; (2) missions repo creation/hosting (dedicated repo recommended); (3) MISSIONS_REPO provisioning; (4) hera push authority on the missions repo; (5) slug confirm (herder-dx recommended); (6) mish binary + skills provisioning (owner precondition, unit installs nothing); (7) sibling-lane coordination. On rulings: file the migration task from the doc's capture (11 ACs incl. typed-baseline continuity gate + cold-resume drill + remote-custody pipeline).
 <!-- SECTION:NOTES:END -->
