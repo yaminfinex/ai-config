@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-13 01:02'
-updated_date: '2026-07-13 01:25'
+updated_date: '2026-07-13 01:29'
 labels: []
 dependencies: []
 priority: high
@@ -29,4 +29,6 @@ mish shipped complete (its build run closed with all eleven units merged; binary
 2026-07-13 fix round 1 delta (zemu, c0eb7ad): whole-tree symlink supersedes stubs+deferred-adopt (one dir-level link covers the transitive closure; retirement journaled, AC7; cold-resume + dependency-walk drills as AC6); ordered custody-proof pipeline w/ secret-scan-before-commit and staged-blob-comparison-before-deletion (AC4); P2-1 deferred to owner (migration unit BLOCKED on that ruling, AC2); board empty full stop (AC8); sync-before-scaffold + exact status command (AC3/10); provisioning owner-only, unit installs nothing (AC1); quarantine rewritten project-agnostic. kune delta requested.
 
 2026-07-13 delta round (kune): board/mechanics/provisioning RESOLVED; symlink primitive confirmed right (no live-corpus find-dependence). Remaining: P1 continuity invariant DOA vs real corpus (pre-existing broken refs from historical archive moves; AC6 as worded must fail) — reworded to resolved-before==same-bytes-after w/ baseline/delta classes; P1 source deleted before REMOTE custody proven (no push pre-deletion; local clone insufficient) — pipeline reordered push→remote-clone→compare→delete, unconfirmed-authority branch removed; P2 option-(b) redaction precluded by residual verbatim rulings — parameterized; P2 staged-set equality impossible (manifest is an extra) — scoped to artifacts/**; P3 two quarantine leaks. Fix round 2 to zemu.
+
+2026-07-13 rev 3 (zemu, 04e5f9f): continuity invariant = resolved-before==same-governing-manifest-bytes-after w/ non-gating classes + temp-alias layout proof pre-deletion; pipeline reordered push->remote-clone->compare->delete w/ no local-only branch; governing-manifest parameterization for owner identifier ruling; comparison scoped to artifacts/orchestration/** w/ disjoint custody path; quarantine genericized. kune delta 2 requested.
 <!-- SECTION:NOTES:END -->
