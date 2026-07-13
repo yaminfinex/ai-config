@@ -1,9 +1,10 @@
 ---
 id: TASK-183
 title: 'pi agent family: characterization demo then design (blocked on Grok U3+U4)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-13 06:07'
+updated_date: '2026-07-13 19:21'
 labels: []
 dependencies: []
 priority: medium
@@ -21,3 +22,9 @@ Owner direction (2026-07-13): add the pi coding agent (multi-provider harness) a
 - [ ] #1 Demo report merged answering the binding fork and behavioral clauses
 - [ ] #2 Design doc merged with owner rulings recorded
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+UNBLOCKED + DISPATCHED 2026-07-14: grok program complete (surface free). Owner rulings delta: install LATEST pi (delegated to the unit, isolated prefix, exact version recorded); provider env keys ready in ~/.profile; demo scope grew — cross-harness usage comparison (pi vs claude/codex/grok native CLIs for the same model families). Worker worker-luve (codex 5.6 high) in worktree task-183-pi-demo, thread task183pi, brief napkins/run-herder-dx/task-183-pi-demo-brief.md. Also instituted same day: GROK REVIEW CALIBRATION (owner directive) — grok reviewers run alongside incumbent cross-family reviewers on behavior diffs; ledger at napkins/run-herder-dx/grok-review-ledger.md; verdict authority stays with the incumbent during calibration.
+<!-- SECTION:NOTES:END -->
