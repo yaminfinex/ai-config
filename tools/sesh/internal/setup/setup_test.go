@@ -447,11 +447,71 @@ func TestDarwinFreshInstall(t *testing.T) {
 		t.Fatalf("plist exe = %q, %v", exe, ok)
 	}
 	want := []string{
-		"launchctl bootout gui/501/dev.sesh.ship",
-		"launchctl bootstrap gui/501 " + PlistPath(home),
+		"launchctl bootout " + LaunchdServiceTarget(501),
+		"launchctl bootstrap " + LaunchdDomain(501) + " " + PlistPath(home),
 	}
 	if strings.Join(runner.calls, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("call sequence:\n%s\nwant:\n%s", strings.Join(runner.calls, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// TestDarwinDefaultsUIDWhenCallerOmitsIt replays the field bug that blocked
+// the first real Mac onboarding: the CLI built Options without UID, the
+// documented os.Getuid() default was never applied, and launchctl was
+// bootstrapped into root's nonexistent gui/0 domain (exit 125). The default
+// must live inside Run so no caller can forget it.
+func TestDarwinDefaultsUIDWhenCallerOmitsIt(t *testing.T) {
+	uid := os.Getuid()
+	if uid == 0 {
+		t.Skip("running as root: the per-user gui domain default cannot be exercised")
+	}
+	home := t.TempDir()
+	runner := &fakeRunner{}
+	opts := Options{ // deliberately no UID — the caller-omission shape
+		StoreURL: urlA,
+		Home:     home,
+		OS:       "darwin",
+		Exe:      "/fake/bin/sesh",
+		Runner:   runner,
+		Out:      &bytes.Buffer{},
+	}
+	if err := Run(opts); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(runner.calls, "\n")
+	if !strings.Contains(joined, "launchctl bootstrap "+LaunchdDomain(uid)+" ") {
+		t.Fatalf("bootstrap not in the real user's gui domain:\n%s", joined)
+	}
+	if strings.Contains(joined, LaunchdDomain(0)) {
+		t.Fatalf("gui/0 reached launchctl:\n%s", joined)
+	}
+}
+
+// Root has no per-user gui domain and LaunchAgents are per-user by design:
+// a real uid of 0 on Darwin is refused before anything is written or run.
+func TestDarwinRefusesRoot(t *testing.T) {
+	home := t.TempDir()
+	runner := &fakeRunner{}
+	opts := Options{
+		StoreURL: urlA,
+		Home:     home,
+		OS:       "darwin",
+		Exe:      "/fake/bin/sesh",
+		Runner:   runner,
+		Out:      &bytes.Buffer{},
+	}
+	// Run's defaulting maps 0 to the test's real uid, so exercise the
+	// refusal at its seam: runDarwin sees uid 0 only when the process
+	// really runs as root.
+	err := runDarwin(opts)
+	if err == nil || !strings.Contains(err.Error(), "root") {
+		t.Fatalf("want a root refusal, got %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("refusal ran commands: %v", runner.calls)
+	}
+	if _, statErr := os.Stat(PlistPath(home)); !os.IsNotExist(statErr) {
+		t.Fatal("refusal wrote the plist")
 	}
 }
 

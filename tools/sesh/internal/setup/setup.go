@@ -34,6 +34,16 @@ const (
 	LaunchdLabel = "dev.sesh.ship"
 )
 
+// LaunchdDomain returns the per-user launchd GUI domain for uid.
+// LaunchdServiceTarget is that domain qualified with the job label. Every
+// launchctl invocation (setup's bootstrap/bootout, update's kickstart) AND
+// the tests asserting on those command lines derive from these helpers, so
+// the domain shape cannot drift between code and test fixtures.
+func LaunchdDomain(uid int) string { return fmt.Sprintf("gui/%d", uid) }
+
+// LaunchdServiceTarget returns the launchctl service target for uid.
+func LaunchdServiceTarget(uid int) string { return LaunchdDomain(uid) + "/" + LaunchdLabel }
+
 // ExecutablePath resolves the running binary, following symlinks so the unit
 // pins (and a later `sesh update` replaces) the real file, never a symlink
 // into it. A package var so tests can redirect it.
@@ -136,6 +146,13 @@ func Run(opts Options) error {
 	}
 	if opts.User == "" {
 		opts.User = os.Getenv("USER")
+	}
+	// The documented default, applied HERE so no caller can forget it: the
+	// zero value would otherwise reach launchctl as gui/0 (field bug — the
+	// CLI omitted UID and Darwin onboarding bootstrapped into root's
+	// nonexistent gui domain, launchctl exit 125).
+	if opts.UID == 0 {
+		opts.UID = os.Getuid()
 	}
 	switch opts.OS {
 	case "linux":
@@ -243,6 +260,12 @@ func runLinux(opts Options) error {
 }
 
 func runDarwin(opts Options) error {
+	// After Run's defaulting, uid 0 here means the process really runs as
+	// root: LaunchAgents are per-user by design and root has no gui domain,
+	// so there is nothing correct to bootstrap into.
+	if opts.UID == 0 {
+		return errors.New("sesh setup: refusing to run as root on macOS — the shipper is a per-user LaunchAgent and root has no gui launchd domain. Re-run as your login user, without privilege elevation")
+	}
 	plist := PlistPath(opts.Home)
 	existing, err := os.ReadFile(plist)
 	if err != nil {
@@ -275,13 +298,13 @@ func runDarwin(opts Options) error {
 	if err := opts.emit(plist, content); err != nil {
 		return err
 	}
-	domain := fmt.Sprintf("gui/%d", opts.UID)
+	domain := LaunchdDomain(opts.UID)
 	// bootout is idempotent cleanup for re-installs; first install has
 	// nothing to remove, so its failure is ignored.
 	if opts.DryRun {
-		fmt.Fprintf(opts.Out, "DRY-RUN: launchctl bootout %s/%s (failure ignored)\n", domain, LaunchdLabel)
+		fmt.Fprintf(opts.Out, "DRY-RUN: launchctl bootout %s (failure ignored)\n", LaunchdServiceTarget(opts.UID))
 	} else {
-		_ = opts.Runner.Run("launchctl", "bootout", domain+"/"+LaunchdLabel)
+		_ = opts.Runner.Run("launchctl", "bootout", LaunchdServiceTarget(opts.UID))
 	}
 	if err := opts.doit("launchctl", "bootstrap", domain, plist); err != nil {
 		return err

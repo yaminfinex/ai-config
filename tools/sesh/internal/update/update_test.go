@@ -532,7 +532,7 @@ func TestDarwinVerifyChecksOnDiskWithCaveat(t *testing.T) {
 		t.Fatalf("darwin update: %v\n%s", err, out.String())
 	}
 	joined := strings.Join(runner.calls, "\n")
-	if !strings.Contains(joined, "launchctl kickstart -k gui/501/dev.sesh.ship") {
+	if !strings.Contains(joined, "launchctl kickstart -k "+setup.LaunchdServiceTarget(501)) {
 		t.Fatalf("kickstart not called:\n%s", joined)
 	}
 	if !strings.Contains(out.String(), "verified on disk") {
