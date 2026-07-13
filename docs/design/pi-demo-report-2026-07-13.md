@@ -14,7 +14,7 @@ Pi is a viable herder-managed agent family. Its state roots are explicit, its se
 
 The recommended integration is a native TypeScript Pi extension, not an external transcript/RPC binder. The extension should claim a stable seat identity on `session_start`, replay pending inbound work, translate Pi lifecycle events into bus status, inject inbound messages with Pi's public extension API, and release resources idempotently on `session_shutdown`. Herder remains responsible for process supervision and restart.
 
-The demo did **not** earn a Grok-style per-launch config rewrite or `/proc` verification ceremony. It did earn strict managed-environment construction for every Pi invocation, offline startup, telemetry suppression, provider-specific credential filtering, install-time version and artifact verification, and integration tests that prove those properties.
+The demo did **not** earn a Grok-style per-launch config rewrite. The `/proc` verdict is conditional: direct probe processes were deterministic, but herder's pane-spawn/login-shell path has not yet been characterized for Pi. Retain a one-time post-spawn environment assertion until that path is proven to preserve the constructed environment, then remove the ceremony if Pi is direct-exec. The demo did earn strict managed-environment construction for every Pi invocation, offline startup, telemetry suppression, provider-specific credential filtering, install-time version and artifact verification, and integration tests that prove those properties.
 
 ## Installation provenance
 
@@ -26,7 +26,7 @@ The active package namespace is `@earendil-works/pi-coding-agent`. The similarly
 | Version | `0.80.6` |
 | Runtime | Node `v24.18.0`, npm `11.16.0` |
 | Declared Node floor | `>=22.19.0` |
-| Registry tarball | `pi-coding-agent-0.80.6.tgz` |
+| Packed artifact | `earendil-works-pi-coding-agent-0.80.6.tgz` |
 | Tarball size | `4,868,728` bytes |
 | Tarball SHA-256 | `2a77634640b2d86d90d24087bb67559ecf2366e0fb52a42c55eed416147da411` |
 | Registry SHA-1 | `8892736a2c7d01b5b95ac3dbc1752a5dbd517ba1` |
@@ -37,6 +37,54 @@ The active package namespace is `@earendil-works/pi-coding-agent`. The similarly
 The package was installed under an isolated prefix with an isolated home and npm cache. The installed `pi` executable resolved to the package's `dist/cli.js`; the packed registry artifact was then hashed independently.
 
 Herder should pin an explicitly reviewed version and integrity value in its installer. “Latest” is appropriate for characterization, not for routine managed launches.
+
+### Reproducible scratch layout and audit commands
+
+The isolated installation remains available at this exact scratch layout:
+
+```text
+/tmp/pi-characterization-20260713/
+├── home/
+├── npm-cache/
+├── latest-prefix/
+│   └── node_modules/@earendil-works/pi-coding-agent/
+└── package-artifact/
+    └── earendil-works-pi-coding-agent-0.80.6.tgz
+```
+
+The install used Node `v24.18.0` and npm `11.16.0`. Expressing the observed runtime path relative to the user home, the exact isolated install command was:
+
+```bash
+ROOT=/tmp/pi-characterization-20260713
+NODE_BIN="$HOME/.local/share/mise/installs/node/24.18.0/bin"
+
+env -i \
+  HOME="$ROOT/home" \
+  PATH="$NODE_BIN:/usr/bin:/bin" \
+  npm_config_cache="$ROOT/npm-cache" \
+  npm_config_prefix="$ROOT/latest-prefix" \
+  npm install \
+    --prefix "$ROOT/latest-prefix" \
+    '@earendil-works/pi-coding-agent@0.80.6'
+```
+
+The npm debug log records the same install argv and prefix. A second worker can repack and verify both the registry artifact and installed CLI with:
+
+```bash
+env -i \
+  HOME="$ROOT/home" \
+  PATH="$NODE_BIN:/usr/bin:/bin" \
+  npm_config_cache="$ROOT/npm-cache" \
+  npm pack \
+    '@earendil-works/pi-coding-agent@0.80.6' \
+    --pack-destination "$ROOT/package-artifact"
+
+sha256sum \
+  "$ROOT/package-artifact/earendil-works-pi-coding-agent-0.80.6.tgz" \
+  "$ROOT/latest-prefix/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+```
+
+Those hashes must match the values in the provenance table above. The packed filename differs from the registry URL basename because npm prefixes the package scope when it writes the local artifact.
 
 ## Managed home and state model
 
@@ -77,7 +125,9 @@ Pi has explicit self-update commands, but the observed CLI does not silently rep
 - check installed package updates; and
 - report install telemetry when `enableInstallTelemetry` remains enabled.
 
-The managed contract should set both `PI_OFFLINE=1` and `PI_TELEMETRY=0`. Offline mode also sets the internal version-check skip and disables startup network work while preserving provider inference calls. `PI_SKIP_VERSION_CHECK=1` alone is too narrow.
+The managed contract should set both `PI_OFFLINE=1` and `PI_TELEMETRY=0`. Offline mode also sets the internal version-check skip and disables Pi's documented startup network work while preserving provider inference calls. `PI_SKIP_VERSION_CHECK=1` alone is too narrow.
+
+A fresh Anthropic model call was also traced with `strace -ff -s 256 -e trace=connect,sendto,sendmsg` under the full isolated environment and offline flags. The trace showed resolver activity and one TLS connection to `160.79.104.10`; an independent lookup returned that address for `api.anthropic.com`. It showed no other internet connection and no `pi.dev` connection. This directly demonstrates provider-only network activity for that one offline Anthropic call. It does not by itself prove the same property for every provider implementation. The trace files are `/tmp/pi-characterization-20260713/offline-network-probe/network.trace.*`.
 
 Fresh-root syscall observation produced these results:
 
@@ -85,7 +135,7 @@ Fresh-root syscall observation produced these results:
 |---|---|---|---|
 | `pi --version` | None | No `connect` or `send` syscall | Exits before migrations and session setup |
 | `pi --help` | Empty `auth.json`; transient trust lock | No `connect` or `send` syscall | Help still initializes mutable runtime state |
-| Managed model call with offline mode | Empty `auth.json`; session JSONL | Only the selected provider request | Offline mode does not block inference |
+| Traced Anthropic model call with offline mode | Empty `auth.json`; no session (`--no-session`) | DNS plus one TLS connection to the resolved `api.anthropic.com` address; no other internet connection | Provider inference works while Pi startup traffic remains absent in this probe |
 
 Because even `--help` writes state, **every** Pi invocation—including probing, help, version, and model listing—must receive the managed environment. The installer may run `--version` as an artifact check, but it must do so inside a scratch home.
 
@@ -93,25 +143,28 @@ Because even `--help` writes state, **every** Pi invocation—including probing,
 
 ### Evidence from the extension lifecycle
 
-Pi loads TypeScript extensions directly and exposes lifecycle events that align with a managed bus seat:
+Pi loads TypeScript extensions directly and exposes lifecycle events that align with a managed bus seat. The evidence column distinguishes behavior exercised by the probes from surfaces found only in the installed API and documentation inventory:
 
-| Integration need | Pi surface |
-|---|---|
-| Claim resources after runtime construction | `session_start` |
-| Release resources | `session_shutdown` |
-| Observe session replacement | shutdown, extension reload/rebind, then a new start |
-| Observe work | `before_agent_start`, `agent_start`, `agent_end`, `agent_settled` |
-| Observe or constrain models | `model_select`, `thinking_level_change` |
-| Observe tool activity | `tool_call`, `tool_result`, execution events |
-| Inject inbound user work | `pi.sendUserMessage(...)` |
-| Add steering or follow-up during streaming | `pi.sendUserMessage(...)` with steering/follow-up behavior |
-| Add durable integration entries | custom session entries and messages |
-| Inspect session identity/state | extension context and session manager |
-| Run hcom commands | extension execution API or a carefully scrubbed child process |
+| Integration need | Pi surface | Evidence basis |
+|---|---|---|
+| Claim resources after runtime construction | `session_start` | Probe-demonstrated |
+| Release resources | `session_shutdown` | Probe-demonstrated |
+| Observe session replacement | shutdown, extension reload/rebind, then a new start | API/documentation inventory; replacement sequence not directly probed |
+| Observe work | `before_agent_start`, `agent_start`, `agent_end`, `agent_settled` | Probe-demonstrated |
+| Observe or constrain models | `model_select`, `thinking_level_change` | API/documentation inventory |
+| Observe tool activity | `tool_call`, `tool_result`, execution events | API/documentation inventory |
+| Inject inbound user work | `pi.sendUserMessage(...)` | Probe-demonstrated for an idle RPC session |
+| Add steering or follow-up during streaming | `pi.sendUserMessage(...)` delivery options | API/documentation inventory; streaming delivery modes not directly probed |
+| Add custom contextual messages | `pi.sendMessage(...)` | API/documentation inventory; not directly probed |
+| Add durable integration entries | custom session entries | API/documentation inventory |
+| Inspect session identity/state | extension context and session manager | API inventory plus independently observed session files |
+| Run hcom commands | extension execution API or a carefully scrubbed child process | API/documentation inventory; hcom binding not implemented in this demo |
 
-The same extension contract works in `tui`, `rpc`, `json`, and `print` modes. UI availability differs by mode, but lifecycle delivery does not depend on scraping the TUI.
+The installed API documentation states that the same extension contract loads in `tui`, `rpc`, `json`, and `print` modes. UI availability differs by mode, but lifecycle integration does not require transcript scraping. Only RPC mode was exercised by the extension probes.
 
 An isolated probe confirmed the ordering `factory -> session_start -> work -> session_shutdown` in RPC mode. A handler deliberately throwing during `session_start` produced an `extension_error` event while Pi continued serving RPC requests. Extension handler failure is therefore contained by Pi; whole-process failure remains herder's supervision responsibility.
+
+A second fresh extension called `pi.sendUserMessage("Reply exactly INJECT-OK.")` immediately after `session_start` in an otherwise idle RPC session. Pi emitted an `input` event with source `extension`, started the model turn, returned exactly `INJECT-OK`, reached `agent_settled`, and then emitted `session_shutdown` when the controller closed stdin. This directly validates the primary inbound-injection path. `sendMessage` and mid-stream steering/follow-up remain API-inventory findings pending dedicated probes. The probe source and event log are `/tmp/pi-characterization-20260713/injection-probe.ts` and `/tmp/pi-characterization-20260713/injection-probe/extension.jsonl`.
 
 A complete RPC prompt reached `before_agent_start`, `agent_start`, `agent_end`, and `agent_settled` before clean shutdown. Closing RPC stdin immediately after prompt acceptance shut the session down while the turn was still completing and later emitted a stale-extension-context error. Any RPC controller must keep the stream open until `agent_settled` or confirmed abort completion.
 
@@ -125,7 +178,7 @@ The extension should:
 2. Reclaim the stable managed identity and query pending work on every start.
 3. Persist or recover the inbound cursor through durable hcom state rather than process memory.
 4. Translate Pi start/end/settled and tool events into bus-visible status.
-5. Inject routed messages through `sendUserMessage`/`sendMessage`, not terminal input or transcript parsing.
+5. Inject routed user work through the demonstrated `sendUserMessage` path, not terminal input or transcript parsing. Use `sendMessage` only for custom contextual messages after a dedicated integration probe.
 6. Treat session switch, new, resume, fork, extension reload, and process restart as normal rebinding events.
 7. Make shutdown cleanup idempotent.
 8. Scrub provider credentials from any child process it spawns unless that child explicitly requires one.
@@ -193,9 +246,9 @@ Each harness received the same workspace file and instruction: read the file and
 
 Cold-run measurements are directional rather than a benchmark: provider latency varies, and harnesses do different startup work.
 
-| Harness | Requested model | Exact answer | Elapsed | Max RSS | Cold-state observation |
+| Harness | Requested model | Exact answer | Elapsed | Max RSS | State artifact observation |
 |---|---|---:|---:|---:|---|
-| Pi / Anthropic | `claude-sonnet-5` | Yes | 3.16 s | 171,984 KB | Empty auth file plus 2,276-byte session |
+| Pi / Anthropic | `claude-sonnet-5` | Yes | 3.16 s | 171,984 KB | Empty auth file plus 3,056-byte original session after the later resume exercise; the fork is 4,005 bytes |
 | Claude Code `2.1.207` | `claude-sonnet-5` | Yes | 7.82 s | 294,388 KB | Config, backup, policy/remote metadata, and a roughly 16 KB project session |
 | Pi / OpenAI | `gpt-5.3-codex:low` | Yes | 3.51 s | 173,048 KB | Empty auth file plus 3,827-byte session |
 | Codex CLI `0.144.1` | `gpt-5.3-codex` | Yes | 3.63 s | 110,028 KB | Config, SQLite state, rollout, install identity, copied system skills, and roughly 21 MB of cloned marketplace data |
@@ -215,14 +268,14 @@ Important qualifications:
 |---|---|---|
 | Dedicated managed `PI_HOME` concept | Required | Pi exposes agent and session roots separately; `HOME` and XDG isolation capture remaining homedir consumers |
 | Managed environment on every invocation | Required | `--help` creates state even though `--version` does not |
-| `PI_OFFLINE=1` | Required | Suppresses version/package/telemetry startup network work without blocking provider calls |
+| `PI_OFFLINE=1` | Required | Suppresses documented Pi startup network work without blocking the traced Anthropic call; provider-specific residual-network checks remain integration-test work |
 | `PI_TELEMETRY=0` | Required | Makes telemetry intent explicit even if settings drift |
 | Provider-specific environment filtering | Required | Tools and extensions inherit the Pi process environment |
 | Provider pin per seat | Required | Cross-provider in-process switching conflicts with one-key least privilege |
 | Pinned package version and integrity | Required at install/provision | Extension compatibility and supply-chain reproducibility |
 | Per-launch binary hash gate | Not earned | Provisioning verification plus an immutable managed install is sufficient |
 | Per-launch config rewrite | Not earned | Settings can be seeded once; environment flags provide stable startup suppression |
-| Per-launch `/proc` environment ceremony | Not earned | Deterministic direct-child construction is sufficient when covered by integration tests |
+| Per-launch `/proc` environment ceremony | Conditional | Retain a one-time post-spawn assertion until the Pi pane-spawn/login-shell path is characterized; remove it only if the path is verified direct-exec and preserves the constructed environment |
 | Native managed extension | Required | Best lifecycle fidelity, inbound injection, session awareness, and restart recovery |
 | External binder process | Not earned | Adds lifecycle and crash coordination without demonstrated benefit |
 | Pending-message replay on every start | Required | Whole-process crash removes the in-process extension |
@@ -232,17 +285,18 @@ Important qualifications:
 
 1. Add a pinned Pi installer that verifies package version and registry integrity inside a scratch home.
 2. Construct a dedicated managed root per seat and export the Pi, home, and XDG mappings above for every command path.
-3. Seed immutable or owner-controlled settings and the managed hcom extension during provisioning.
-4. Launch with offline startup, telemetry disabled, an explicit session directory, an explicit provider/model, and exactly one provider credential.
-5. Have the extension reclaim stable identity, replay pending work, publish lifecycle state, and bind session metadata.
-6. Treat provider-family changes as supervised relaunches with a rebuilt environment.
-7. Index Pi JSONL headers for resume and fork; keep bus reconciliation state independently durable.
-8. Test cold launch, resume, fork, extension reload, handler failure, whole-process crash, duplicate replay, provider switching, and RPC shutdown ordering.
-9. Keep project `.pi` trust behavior intact rather than silently copying project resources into the managed user root.
+3. Until the real Pi pane-spawn path is characterized, assert the post-spawn environment once per launch; retire that assertion only after a direct-exec/preservation test passes.
+4. Seed immutable or owner-controlled settings and the managed hcom extension during provisioning.
+5. Launch with offline startup, telemetry disabled, an explicit session directory, an explicit provider/model, and exactly one provider credential.
+6. Have the extension reclaim stable identity, replay pending work, publish lifecycle state, and bind session metadata.
+7. Treat provider-family changes as supervised relaunches with a rebuilt environment.
+8. Index Pi JSONL headers for resume and fork; keep bus reconciliation state independently durable.
+9. Test cold launch, resume, fork, extension reload, handler failure, whole-process crash, duplicate replay, provider switching, streaming injection modes, and RPC shutdown ordering.
+10. Keep project `.pi` trust behavior intact rather than silently copying project resources into the managed user root.
 
 ## Safety and teardown
 
-All Pi probes—including version and help—used scratch homes, explicit state directories, and isolated npm caches/prefixes. Provider calls received only the credential name required by that provider. No credential values are recorded here.
+All Pi probes—including version, help, extension injection, and the traced offline model call—used scratch homes, explicit state directories, and isolated npm caches/prefixes. Provider calls received only the credential name required by that provider. No credential values are recorded here.
 
 The native Grok comparison used its managed launch contract and scratch state/bus roots. A failed exploratory help launch was also contained within those roots. Post-run inspection found no remaining characterization processes and no recent writes to live vendor state.
 
