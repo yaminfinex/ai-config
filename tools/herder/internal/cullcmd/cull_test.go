@@ -132,7 +132,7 @@ func TestGrokCullDeadBridgeConvergesOfflineAndDropsRosterEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	registryPath := seedSpawnShapedGrokCullRow(t, state, guid, sessionID, "dead-bus")
-	mockDir, stopProbe, rowState := installHcomGrokTeardownMock(t, "dead-bus")
+	mockDir, stopProbe, rowState := installHcomGrokTeardownMock(t, "dead-bus", true)
 	t.Setenv("PATH", mockDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	recs, err := registry.Load(registryPath)
 	if err != nil {
@@ -242,7 +242,7 @@ func installHcomKillMock(t *testing.T) (string, string) {
 	return dir, probe
 }
 
-func installHcomGrokTeardownMock(t *testing.T, busName string) (string, string, string) {
+func installHcomGrokTeardownMock(t *testing.T, busName string, removeOnStop bool) (string, string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	stopProbe := filepath.Join(dir, "hcom-stop")
@@ -250,9 +250,13 @@ func installHcomGrokTeardownMock(t *testing.T, busName string) (string, string, 
 	if err := os.WriteFile(rowState, []byte(busName+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	remove := ""
+	if removeOnStop {
+		remove = "[ \"$(tr -d '\\n' <\"" + rowState + "\")\" = \"$2\" ] && rm -f \"" + rowState + "\"; "
+	}
 	script := "#!/bin/sh\n" +
 		"case \"$1\" in\n" +
-		"  stop) printf '%s\\n' \"$2\" >>\"" + stopProbe + "\"; [ \"$(tr -d '\\n' <\"" + rowState + "\")\" = \"$2\" ] && rm -f \"" + rowState + "\"; exit 0;;\n" +
+		"  stop) printf '%s\\n' \"$2\" >>\"" + stopProbe + "\"; " + remove + "exit 0;;\n" +
 		"  list) if [ -f \"" + rowState + "\" ]; then printf '[{\"name\":\"%s\"}]\\n' \"$(tr -d '\\n' <\"" + rowState + "\")\"; else printf '[]\\n'; fi; exit 0;;\n" +
 		"  kill) exit 65;;\n" +
 		"esac\n" +
@@ -261,6 +265,25 @@ func installHcomGrokTeardownMock(t *testing.T, busName string) (string, string, 
 		t.Fatal(err)
 	}
 	return dir, stopProbe, rowState
+}
+
+func TestGrokBusTeardownRejectsSuccessfulStopWithRowResidue(t *testing.T) {
+	mockDir, stopProbe, rowState := installHcomGrokTeardownMock(t, "sticky-bus", false)
+	t.Setenv("PATH", mockDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var stdout strings.Builder
+	err := stopGrokBusEntry(registry.Record{Agent: "grok", HcomName: "sticky-bus"}, &stdout)
+	if err == nil || !strings.Contains(err.Error(), "row is still present") {
+		t.Fatalf("stopGrokBusEntry() error = %v, want row-residue refusal", err)
+	}
+	if got := strings.TrimSpace(string(mustReadFile(t, stopProbe))); got != "sticky-bus" {
+		t.Fatalf("hcom stop probe=%q", got)
+	}
+	if _, statErr := os.Stat(rowState); statErr != nil {
+		t.Fatalf("sticky row was unexpectedly removed: %v", statErr)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout=%q, must not claim confirmed absence", stdout.String())
+	}
 }
 
 func TestNonGrokBusTeardownKeepsKillPath(t *testing.T) {

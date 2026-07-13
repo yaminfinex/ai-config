@@ -579,7 +579,7 @@ func stopGrokBusEntry(rec registry.Record, stdout io.Writer) error {
 		return fmt.Errorf("cannot stop Grok bus @%s: hcom is unavailable", hcomName)
 	}
 	cmd := exec.Command("hcom", "stop", hcomName)
-	if rec.HcomDir != "" {
+	if rec.HcomDir != "" && rec.HcomDir != "null" {
 		cmd.Env = setEnv(os.Environ(), "HCOM_DIR", rec.HcomDir)
 	}
 	out, stopErr := cmd.CombinedOutput()

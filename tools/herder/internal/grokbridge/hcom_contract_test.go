@@ -99,7 +99,7 @@ func identityCursorAndRows(t *testing.T, db, name string) (int64, int) {
 
 func ageIdentityPlaceholder(t *testing.T, db, name string) {
 	t.Helper()
-	cmd := exec.Command("python3", "-c", `import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("update instances set created_at='2000-01-01T00:00:00+00:00' where name=?",(sys.argv[2],)); c.commit()`, db, name)
+	cmd := exec.Command("python3", "-c", `import sqlite3,sys,time; c=sqlite3.connect(sys.argv[1]); c.execute("update instances set created_at=? where name=?",(time.time()-31,sys.argv[2])); c.commit()`, db, name)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("age identity placeholder: %v: %s", err, out)
 	}
@@ -172,9 +172,9 @@ func TestRealHcomBindIdentityUsesSeatOwnedProcessAndPreservesForeignBinding(t *t
 		t.Fatalf("seat roster rows=%d after reclaim, want exactly one", rows)
 	}
 
-	// Force the same observer-timeout condition that used to derive
-	// launch_failed after 30 seconds, without making the test sleep. The
-	// identified read performed by bindIdentity must keep the row targetable.
+	// Age the numeric epoch beyond hcom's 30-second placeholder timeout, then
+	// force an observer pass without sleeping. The identified read performed by
+	// bindIdentity must keep the row targetable.
 	ageIdentityPlaceholder(t, db, seatName)
 	_ = hrun(t, bin, bus, "list", "--json")
 	hsend(t, bin, bus, peerName, []string{seatName}, nil, "accepted-after-placeholder-timeout")
