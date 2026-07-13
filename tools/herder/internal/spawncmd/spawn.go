@@ -3,6 +3,7 @@ package spawncmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -485,8 +486,22 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		die(stderr, "--agent required")
 		return opts, 1
 	}
-	if opts.Model != "" && opts.Agent != "claude" && opts.Agent != "codex" {
-		die(stderr, "--model is supported only for --agent claude or --agent codex; use --extra-arg for another agent's model option")
+	if opts.Agent == "grok" && !launchcmd.GrokActivated() {
+		die(stderr, launchcmd.GrokActivationError())
+		return opts, 1
+	}
+	if opts.Agent == "grok" {
+		if os.Getenv("XAI_API_KEY") == "" {
+			die(stderr, launchcmd.GrokAuthError())
+			return opts, 1
+		}
+		if err := validateGrokExtraArgs(opts.ExtraArgs, opts.Model != ""); err != nil {
+			die(stderr, err.Error())
+			return opts, 1
+		}
+	}
+	if opts.Model != "" && opts.Agent != "claude" && opts.Agent != "codex" && opts.Agent != "grok" {
+		die(stderr, "--model is supported only for --agent claude, codex, or grok; use --extra-arg for another agent's model option")
 		return opts, 1
 	}
 	if opts.Model != "" && hasModelExtraArg(opts.Agent, opts.ExtraArgs) {
@@ -695,6 +710,14 @@ func (r *runner) run() int {
 	}
 	short := registry.ShortGUID(guid)
 	label := spawnLabel(opts.Role, opts.LabelPrefix, short)
+	grokSessionID := ""
+	if opts.Agent == "grok" {
+		grokSessionID, err = launchcmd.NewGrokSessionID()
+		if err != nil {
+			die(r.stderr, "preassign Grok session id: "+err.Error())
+			return 1
+		}
+	}
 
 	isHcomAgent := launchcmd.IsHcomCapable(opts.Agent)
 	if isHcomAgent {
@@ -820,12 +843,27 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		hcomEnv = " HCOM_DIR=" + shellquote.Quote(hcomDirEff) +
 			" PATH=" + shellquote.Quote(r.paths.ShimsDir) + ":$PATH"
 	}
+	grokEnv := ""
+	if opts.Agent == "grok" {
+		grokEnv = " HERDER_STATE_DIR=" + shellquote.Quote(stateDir) +
+			" HERDER_GROK_SESSION_ID=" + shellquote.Quote(grokSessionID) +
+			" HERDER_GROK_CHILD_HOME=" + shellquote.Quote(os.Getenv("HOME")) +
+			" HERDER_GROK_ACTIVATED=1"
+		for _, key := range []string{"HERDER_GROK_BIN", "HERDER_GROK_SUPPORTED_VERSIONS", "HERDER_REAL_HCOM"} {
+			if value := os.Getenv(key); value != "" {
+				grokEnv += " " + key + "=" + shellquote.Quote(value)
+			}
+		}
+		if opts.Safe {
+			grokEnv += " HERDER_GROK_SAFE=1"
+		}
+	}
 	rootExport := " AI_CONFIG_ROOT=" + shellquote.Quote(childEnvRoot)
 	argv := []string{}
 	if opts.LoginShell {
 		innerCmd := shellCommand(launchTokens)
-		inner := fmt.Sprintf("%sexport HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s%s%s; exec %s",
-			misePathFix, shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(childEnvBin), rootExport, hcomEnv, innerCmd)
+		inner := fmt.Sprintf("%sexport HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s%s%s%s; exec %s",
+			misePathFix, shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(childEnvBin), rootExport, hcomEnv, grokEnv, innerCmd)
 		argv = []string{opts.LoginShellBin, "-lic", inner}
 	} else {
 		// The env form has no shell, so it gets the spawner herder pin but not
@@ -834,6 +872,17 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		argv = append(argv, "AI_CONFIG_ROOT="+childEnvRoot)
 		if isHcomAgent {
 			argv = append(argv, "HCOM_DIR="+hcomDirEff, "PATH="+r.paths.ShimsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		}
+		if opts.Agent == "grok" {
+			argv = append(argv, "HERDER_STATE_DIR="+stateDir, "HERDER_GROK_SESSION_ID="+grokSessionID, "HERDER_GROK_CHILD_HOME="+os.Getenv("HOME"), "HERDER_GROK_ACTIVATED=1")
+			for _, key := range []string{"HERDER_GROK_BIN", "HERDER_GROK_SUPPORTED_VERSIONS", "HERDER_REAL_HCOM"} {
+				if value := os.Getenv(key); value != "" {
+					argv = append(argv, key+"="+value)
+				}
+			}
+			if opts.Safe {
+				argv = append(argv, "HERDER_GROK_SAFE=1")
+			}
 		}
 		argv = append(argv, launchTokens...)
 	}
@@ -954,7 +1003,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	modalCleared := false
 	capturedName := ""
 	switch {
-	case busPrompt:
+	case busPrompt || opts.Agent == "grok":
 		// Bind is the delivery gate, so --no-ready-wait cannot skip this wait
 		// (ruling: it stays meaningful only for the paste path). The trust
 		// modal blocks BOOT itself — pre-bind — so awaitBind clears it too.
@@ -981,6 +1030,8 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			}
 		} else if strings.HasPrefix(readyReason, "bound-but-ready-match-timeout") {
 			deliveryResult = "ready_match_timeout"
+		} else if strings.HasPrefix(readyReason, "launch-refused: ") {
+			deliveryResult = "launch_refused"
 		} else {
 			deliveryResult = "bind_timeout"
 		}
@@ -996,11 +1047,23 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			pasteNotes = append(pasteNotes, "composer_cleared")
 		}
 	}
+	if opts.Agent == "grok" && strings.HasPrefix(readyReason, "launch-refused: ") {
+		deliveryResult = "launch_refused"
+	}
+	if deliveryResult == "launch_refused" {
+		_ = panecleanup.CloseConfirmed(r.herdr, paneID, termID)
+		die(r.stderr, strings.TrimPrefix(readyReason, "launch-refused: "))
+		return 1
+	}
 
 	hcomDirRec, hcomTagRec := "", ""
 	if isHcomAgent {
 		hcomDirRec = hcomDirEff
 		hcomTagRec = opts.Role
+	}
+	provenance := registry.BuildProvenance("spawn", spawnedBy, opts.Role, resolvedCWD, wsID)
+	if grokSessionID != "" {
+		provenance.ToolSessionID = grokSessionID
 	}
 	record := spawnRecord{
 		GUID:                 guid,
@@ -1023,7 +1086,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		HcomName:             capturedName,
 		HcomTag:              hcomTagRec,
 		Status:               "active",
-		Provenance:           registry.BuildProvenance("spawn", spawnedBy, opts.Role, resolvedCWD, wsID),
+		Provenance:           provenance,
 	}
 	if code := r.registerSpawnOrRollback(registryPath, record); code != 0 {
 		return code
@@ -1222,6 +1285,11 @@ func (r *runner) awaitBind(paneID *string, registryPath, guid, hcomDir, launchPa
 	waited := 0
 	boundName := ""
 	for waited < r.opts.BindTimeoutMS {
+		if r.opts.Agent == "grok" {
+			if failure := launchcmd.ReadGrokLaunchFailure(filepath.Dir(registryPath), guid); failure != "" {
+				return "", "launch-refused: " + failure, false, modalCleared
+			}
+		}
 		text := r.paneText(*paneID)
 		visible := r.paneVisibleText(*paneID)
 		if trustModalRE.MatchString(text) || trustModalRE.MatchString(visible) {
@@ -1443,7 +1511,7 @@ func printHelp(stdout io.Writer) {
 		"                    another registry row (guid, label, terminal_id, pane_id, or recorded hcom",
 		"                    name), else accepts TARGET as a literal bus name if live on the child's bus",
 		"  --extra-arg ARG   pass ARG through to the agent (repeatable)",
-		"  --model ID        pin the model for claude or codex (maps to the agent's --model flag)",
+		"  --model ID        pin the model for claude, codex, or activation-gated grok",
 		"  --json            print the registry record as JSON on stdout",
 		"",
 		"Advanced:",
@@ -1540,6 +1608,8 @@ func defaultPermFlag(agent string) string {
 		return "--dangerously-skip-permissions"
 	case "codex":
 		return "--dangerously-bypass-approvals-and-sandbox"
+	case "grok":
+		return "--always-approve"
 	default:
 		return ""
 	}
@@ -1549,7 +1619,7 @@ func hasExplicitPermFlag(args []string) bool {
 	for _, arg := range args {
 		switch arg {
 		case "--dangerously-skip-permissions", "--permission-mode", "--permission-prompt-tool",
-			"--dangerously-bypass-approvals-and-sandbox", "--full-auto", "-a", "--ask-for-approval", "-s", "--sandbox":
+			"--dangerously-bypass-approvals-and-sandbox", "--full-auto", "-a", "--ask-for-approval", "-s", "--sandbox", "--always-approve":
 			return true
 		}
 	}
@@ -1587,6 +1657,44 @@ func hasModelExtraArg(agent string, args []string) bool {
 		}
 	}
 	return false
+}
+
+func validateGrokExtraArgs(args []string, firstClassModel bool) error {
+	for _, arg := range args {
+		name := arg
+		if before, _, ok := strings.Cut(arg, "="); ok {
+			name = before
+		}
+		switch name {
+		case "--session-id", "-s":
+			return fmt.Errorf("Grok passthrough %s conflicts with the preassigned session identity; remove it and let herder mint the session id", name)
+		case "--resume", "-r", "--fork-session":
+			return fmt.Errorf("Grok passthrough %s conflicts with the fresh-seat launch contract; remove it and use the lifecycle command after that contract is activated", name)
+		case "--rules":
+			return errors.New("Grok passthrough --rules conflicts with the seat doctrine; remove it so herder can install the monitor and receipt rules")
+		case "--permission-mode", "--always-approve", "--bypassPermissions":
+			return fmt.Errorf("Grok passthrough %s conflicts with herder's permission mapping; remove it, then use normal launch for --always-approve or pass --safe for ask mode", name)
+		case "--no-auto-update", "--auto-update":
+			return fmt.Errorf("Grok passthrough %s conflicts with mandatory update suppression; remove it because herder supplies both update controls", name)
+		case "--agents", "--agent", "--subagents", "--no-subagents", "--no-no-subagents":
+			return fmt.Errorf("Grok passthrough %s conflicts with the enforced subagent boundary; remove it because first-class seats always disable subagents", name)
+		case "--model", "-m":
+			if firstClassModel {
+				return errors.New("--model conflicts with a model pin in --extra-arg; use the first-class --model flag or the passthrough form, not both")
+			}
+		}
+		upper := strings.ToUpper(arg)
+		if strings.HasPrefix(upper, "HOME=") || strings.HasPrefix(upper, "GROK_HOME=") || name == "--home" || name == "--grok-home" {
+			return fmt.Errorf("Grok passthrough %s attempts to re-point an owned home; remove it because herder pins GROK_HOME to the isolated seat state", name)
+		}
+		if strings.Contains(strings.ToLower(name), "subagent") {
+			return fmt.Errorf("Grok passthrough %s could change the enforced subagent boundary; remove it because first-class seats always disable subagents", name)
+		}
+		if strings.Contains(strings.ToLower(name), "auto-update") {
+			return fmt.Errorf("Grok passthrough %s could change mandatory update suppression; remove it because herder supplies both update controls", name)
+		}
+	}
+	return nil
 }
 
 func isModelConfigOverride(arg string) bool {
