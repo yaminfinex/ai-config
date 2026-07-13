@@ -279,29 +279,20 @@ func TestStatuslineSnapshotWriterRecreatesCachedFileWhenMissing(t *testing.T) {
 func TestStatuslineSnapshotWriterUsesStableIdentityAndCleansLegacyNames(t *testing.T) {
 	root := t.TempDir()
 	statusDir := filepath.Join(root, "statusline")
-	if err := os.MkdirAll(statusDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"former.env", "current.env"} {
-		if err := os.WriteFile(filepath.Join(statusDir, name), []byte("HCOM_LIVE_NAME="+strings.TrimSuffix(name, ".env")+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	w := newStatuslineSnapshotWriter(root)
-	row := hcomRow{Name: "former", BaseName: "current", UnreadCount: 2, StatusAgeS: 5}
+	row := hcomRow{Name: "group-current", BaseName: "current", UnreadCount: 2, StatusAgeS: 5}
 	row.LaunchContext.PaneID = "pane-1"
 	row.LaunchContext.ProcessID = "process-stable-0000"
+	newStatuslineSnapshotWriter(root).writeRows([]hcomRow{row}, time.Unix(119, 0))
+
+	w := newStatuslineSnapshotWriter(root)
 	w.writeCorrelated(row, []hcomRow{row}, time.Unix(120, 0))
 
 	got := readFile(t, filepath.Join(statusDir, "process-stable-0000.env"))
 	if !strings.Contains(got, "HCOM_LIVE_NAME=current\n") {
 		t.Fatalf("stable snapshot missing live name: %q", got)
 	}
-	if _, err := os.Stat(filepath.Join(statusDir, "former.env")); !os.IsNotExist(err) {
-		t.Fatalf("owned pre-rename snapshot still exists: err=%v", err)
-	}
-	if _, err := os.Stat(filepath.Join(statusDir, "current.env")); err != nil {
-		t.Fatalf("unowned current-name snapshot was removed: %v", err)
+	if _, err := os.Stat(filepath.Join(statusDir, "current.env")); !os.IsNotExist(err) {
+		t.Fatalf("tagged legacy snapshot still exists: err=%v", err)
 	}
 }
 
@@ -311,34 +302,30 @@ func TestStatuslineSnapshotWriterDoesNotDeleteRecycledName(t *testing.T) {
 	if err := os.MkdirAll(statusDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	victim := filepath.Join(statusDir, "former.env")
-	if err := os.WriteFile(victim, []byte("HCOM_LIVE_NAME=former\nCTX_PCT=63\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	mine := hcomRow{Name: "former", BaseName: "current"}
+	mine := hcomRow{Name: "group-current", BaseName: "current"}
 	mine.LaunchContext.ProcessID = "process-mine"
-	other := hcomRow{Name: "former", BaseName: "former"}
+	other := hcomRow{Name: "other-current", BaseName: "current"}
 	other.LaunchContext.ProcessID = "process-other"
+	victim := filepath.Join(statusDir, "current.env")
 
 	w := newStatuslineSnapshotWriter(root)
-	w.writeRows([]hcomRow{mine, other}, time.Unix(99, 0))
+	w.writeRows([]hcomRow{other}, time.Unix(99, 0))
 	w.writeCorrelated(mine, []hcomRow{mine, other}, time.Unix(100, 0))
-	if got := readFile(t, victim); !strings.Contains(got, "CTX_PCT=63\n") {
-		t.Fatalf("recycled-name snapshot changed: %q", got)
+	if got := readFile(t, victim); !strings.Contains(got, "HCOM_LIVE_NAME=current\n") {
+		t.Fatalf("tagged recycled-name snapshot changed: %q", got)
 	}
 }
 
 func TestStatuslineSnapshotWriterCleansTransitionOnlyOnce(t *testing.T) {
 	root := t.TempDir()
 	w := newStatuslineSnapshotWriter(root)
-	row := hcomRow{Name: "former", BaseName: "current"}
+	row := hcomRow{Name: "group-current", BaseName: "current"}
 	row.LaunchContext.ProcessID = "process-mine"
+	newStatuslineSnapshotWriter(root).writeRows([]hcomRow{row}, time.Unix(99, 0))
 	w.writeCorrelated(row, []hcomRow{row}, time.Unix(100, 0))
 
-	legacy := filepath.Join(root, "statusline", "former.env")
-	if err := os.WriteFile(legacy, []byte("HCOM_LIVE_NAME=former\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	legacy := filepath.Join(root, "statusline", "current.env")
+	newStatuslineSnapshotWriter(root).writeRows([]hcomRow{row}, time.Unix(100, 0))
 	w.writeCorrelated(row, []hcomRow{row}, time.Unix(101, 0))
 	if _, err := os.Stat(legacy); err != nil {
 		t.Fatalf("later tick repeated transition cleanup: %v", err)
@@ -358,7 +345,9 @@ func TestSidecarSnapshotCorrelationSkipsForkParent(t *testing.T) {
 	parent.LaunchContext.ProcessID = "process-parent"
 	parent.LaunchContext.PaneID = "pane-parent"
 
-	s.writeStatuslineSnapshots([]hcomRow{parent})
+	rows := []hcomRow{parent}
+	row, correlated := s.findRowCorrelated(rows)
+	s.writeStatuslineSnapshots(rows, row, correlated)
 	if _, err := os.Stat(filepath.Join(root, "statusline", "process-parent.env")); !os.IsNotExist(err) {
 		t.Fatalf("fork child wrote parent-keyed snapshot: err=%v", err)
 	}
@@ -377,7 +366,9 @@ func TestSidecarSnapshotCorrelationPrefersPane(t *testing.T) {
 	mine.LaunchContext.PaneID = "pane-mine"
 	mine.LaunchContext.ProcessID = "process-current"
 
-	s.writeStatuslineSnapshots([]hcomRow{stale, mine})
+	rows := []hcomRow{stale, mine}
+	row, correlated := s.findRowCorrelated(rows)
+	s.writeStatuslineSnapshots(rows, row, correlated)
 	got := readFile(t, filepath.Join(root, "statusline", "process-current.env"))
 	if !strings.Contains(got, "HCOM_LIVE_NAME=current\n") {
 		t.Fatalf("pane-correlated snapshot has wrong identity: %q", got)

@@ -67,8 +67,7 @@ func (w *statuslineSnapshotWriter) writeCorrelated(row hcomRow, rows []hcomRow, 
 	}
 	w.stableKey = processID
 	if !w.transitionCleaned {
-		w.cleanupLegacySnapshot(row, rows)
-		w.transitionCleaned = true
+		w.transitionCleaned = w.cleanupLegacySnapshot(row, rows)
 	}
 }
 
@@ -170,28 +169,35 @@ func (w *statuslineSnapshotWriter) removeCollided(name string) {
 	w.collided[name] = struct{}{}
 }
 
-func (w *statuslineSnapshotWriter) remove(name string) {
+func (w *statuslineSnapshotWriter) remove(name string) bool {
 	if w == nil || w.dir == "" {
-		return
+		return false
 	}
-	_ = os.Remove(w.path(name))
+	err := os.Remove(w.path(name))
+	if err != nil && !os.IsNotExist(err) {
+		return false
+	}
 	delete(w.written, name)
 	delete(w.cache, name)
+	return true
 }
 
-func (w *statuslineSnapshotWriter) cleanupLegacySnapshot(row hcomRow, rows []hcomRow) {
-	legacyName, ok := safeStatuslineName(row.Name)
+func (w *statuslineSnapshotWriter) cleanupLegacySnapshot(row hcomRow, rows []hcomRow) bool {
+	legacyName, ok := statuslineSnapshotName(row)
 	if !ok || legacyName == row.LaunchContext.ProcessID || nameOwnedByAnotherRow(legacyName, row, rows) {
-		return
+		return ok
 	}
 	path := w.path(legacyName)
 	if _, tracked := w.written[legacyName]; !tracked {
 		existing, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			return true
+		}
 		if err != nil || parseStatuslineSnapshot(existing)["HCOM_LIVE_NAME"] != legacyName {
-			return
+			return false
 		}
 	}
-	w.remove(legacyName)
+	return w.remove(legacyName)
 }
 
 func nameOwnedByAnotherRow(name string, own hcomRow, rows []hcomRow) bool {

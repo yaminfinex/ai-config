@@ -139,10 +139,10 @@ func (s *sidecar) run() int {
 
 	row, paneCorrelated := s.discoverRow()
 	rows := hcomList()
-	s.writeStatuslineSnapshots(rows)
 	if row == nil {
 		row, paneCorrelated = s.findRowCorrelated(rows)
 	}
+	s.writeStatuslineSnapshots(rows, row, paneCorrelated)
 	s.enrichDiscovered(row, paneCorrelated)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -174,16 +174,15 @@ func (s *sidecar) run() int {
 		}
 		<-ticker.C
 		rows = hcomList()
-		s.writeStatuslineSnapshots(rows)
 		row, paneCorrelated = s.findRowCorrelated(rows)
+		s.writeStatuslineSnapshots(rows, row, paneCorrelated)
 	}
 }
 
-func (s *sidecar) writeStatuslineSnapshots(rows []hcomRow) {
+func (s *sidecar) writeStatuslineSnapshots(rows []hcomRow, row *hcomRow, correlated bool) {
 	if s.statuslineSnapshots == nil {
 		s.statuslineSnapshots = newStatuslineSnapshotWriter(os.Getenv("HCOM_DIR"))
 	}
-	row, correlated := s.findRowCorrelated(rows)
 	if correlated && row != nil && row.LaunchContext.ProcessID != "" {
 		s.statuslineSnapshots.writeCorrelated(*row, rows, time.Now())
 		return
