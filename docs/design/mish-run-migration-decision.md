@@ -23,10 +23,13 @@ the coordination writer (mission authority) during and after migration.
 **Migrates (into `missions/<slug>/artifacts/orchestration/`, a single-writer subtree written
 only by the mission authority):**
 
-- The entire napkin tree, verbatim and layout-preserving: the standing-orders digest, the
-  playbook, the run journal, per-unit briefs and memos live and archived, including the
-  archive subdirectory — provenance is part of the substrate. Wholesale movement keeps
-  intra-file line citations and intra-tree relative references valid.
+- The entire napkin tree, layout-preserving: the standing-orders digest, the playbook, the
+  run journal, per-unit briefs and memos live and archived, including the archive
+  subdirectory — provenance is part of the substrate. Wholesale movement keeps intra-file
+  line citations and intra-tree relative references valid. Whether file *contents* transfer
+  verbatim or through an owner-defined transformation is set by the owner's identifier
+  ruling (decision point 1); nothing in this record presupposes either answer outside that
+  point's recommendation.
 - As a prose act (not a file move): the playbook's settled-decisions list graduates into
   `mission.md` § Decisions, per the spec's manifest shape — distilled and rewritten by the
   authority to the durable-artifact standard; the raw list stays in the adopted playbook.
@@ -47,7 +50,8 @@ only by the mission authority):**
   suite before either board trusts the new version.
 - **Already-durable artifacts** — design memos, specs, skills in the project repo. They are
   harvest *destinations*, not mission contents. Napkin files that were previously copied to
-  durable homes as single-copy hedges are adopted verbatim anyway: duplication between a
+  durable homes as single-copy hedges are adopted anyway (contents per decision point 1):
+  duplication between a
   mission and a durable home is the normal shape under harvest-copy semantics (the mission
   stays self-contained). Deduplication is optional post-adopt hygiene, never a cutover step.
 - **Bus history, agent registry, pane/statusline state** — machine-local infrastructure.
@@ -69,26 +73,46 @@ machinery). Applied live:
    digest, or playbook during the move. In-flight lanes are not quiesced or messaged; their
    continuity is *proven* by the drills in step 5, not assumed.
 3. **Custody-proof pipeline, in this order** — byte-preservation alone does not prove tracked
-   custody (staging obeys the destination repo's ignore rules; a matching local hash manifest
-   only proves files exist on one machine):
-   1. Capture a sha256 manifest of every file in the source tree (path + content hash). The
-      manifest itself becomes a mission artifact.
+   custody (staging obeys the destination repo's ignore rules; a local clone check only
+   proves local git custody; only the confirmed remote proves team-visible custody). Source
+   deletion is the **last** mutation, after remote custody is proven. The hash proof is
+   parameterized on the owner's identifier ruling: under option (a) the **governing
+   manifest** is the source manifest (verbatim transfer); under option (b) it is a
+   destination manifest derived by applying the owner's transformation manifest to the
+   source. Push authority (decision point 4) is a hard precondition of the unit; there is no
+   local-only execution branch.
+   1. Capture a sha256 manifest of every file in the source tree (path + content hash).
    2. **Secret-scan the source tree now** — before any commit, not merely before push: a
       committed secret is a durable git object even unpushed. Any hit stops the unit.
-   3. **Preflight destination ignore rules**: feed every destination-relative path from the
-      manifest through the missions repo's ignore check (`git check-ignore --stdin` or
-      equivalent); any match stops the unit until the rule is resolved.
-   4. Copy the tree into `missions/<slug>/artifacts/orchestration/`, layout preserved.
-   5. Stage, then **compare staged custody to the manifest**: the staged path set under the
-      mission dir must equal the manifest's path set exactly, and each staged blob's content
-      (e.g. `git cat-file blob` piped to sha256) must match its manifest hash. Any gap stops
-      the unit. The source tree still exists at this point.
-   6. Make the adopt custody commit (`mission(<slug>): adopt <summary>`) with a
+   3. **Capture the continuity baseline** (step 5's procedure) — the set of old-path
+      references that actually resolve, with content hashes, classified before anything
+      moves.
+   4. **Preflight destination ignore rules**: feed every destination-relative path from the
+      governing manifest through the missions repo's ignore check (`git check-ignore
+      --stdin` or equivalent); any match stops the unit until the rule is resolved.
+   5. Copy the tree into `missions/<slug>/artifacts/orchestration/`, layout preserved —
+      verbatim under option (a); through the owner's transformation (then derive the
+      destination manifest) under option (b). The governing manifest itself lands under a
+      disjoint custody path (e.g. `artifacts/custody/`), outside the comparison scope below.
+   6. **Temporary-alias layout proof**: point a temporary symlink alias at the copied tree
+      and re-resolve the continuity baseline through it — every baseline reference must
+      resolve to the governing-manifest bytes. This proves the post-cutover layout while the
+      source is still intact.
+   7. Stage, then **compare staged custody to the governing manifest**: the staged path set
+      under `artifacts/orchestration/**` must equal the governing manifest's path set
+      exactly, and each staged blob's content (e.g. `git cat-file blob` piped to sha256)
+      must match its manifest hash. The custody-manifest file (and any explicitly enumerated
+      generated extras) is verified separately: present, staged, correct. Any gap stops the
+      unit. The source tree still exists at this point.
+   8. Make the adopt custody commit (`mission(<slug>): adopt <summary>`) with a
       `Mission-Source:` trailer naming the source checkout.
-   7. **Verify a clean clone reproduces the manifest**: clone the missions repo fresh and
-      re-run the manifest comparison against the clone. Only a passing clone check declares
-      shared custody.
-   8. Only now delete the source tree and install the compatibility symlink (step 4).
+   9. **Push the adopt commit** under the owner-confirmed push authority.
+   10. **Verify remote custody**: clone the **confirmed remote** fresh at that exact commit
+       and re-run the governing-manifest comparison against the clone. Only a passing
+       remote-clone check declares shared custody.
+   11. Only now delete the source tree and install the compatibility symlink (step 4). Any
+       commit, push, or remote-clone failure above leaves the source tree intact.
+   12. Post-link: re-run the continuity checks (step 5) through the real symlink.
 4. **Compatibility symlink — the one mechanism keeping pre-cutover contexts alive.** After
    the pipeline passes, replace the source directory with a single symlink:
    `<old napkin dir> → $MISSIONS_REPO/missions/<slug>/artifacts/orchestration`. Because the
@@ -105,18 +129,30 @@ machinery). Applied live:
    cutover is closed and no live continuation steer names old paths, as confirmed from the
    board and journal — or at run close, whichever comes first; the removal is recorded in the
    journal. This mechanism supersedes any per-file stub or deferred-adopt scheme.
-5. **Continuity is gated by two drills, not claimed:**
-   - *Cold-resume drill:* execute the read sequence of an already-minted pre-cutover resume
-     steer — reading the digest, journal, and playbook in full via their **old** paths — and
-     confirm full content (not a pointer line) is returned.
-   - *Dependency walk:* enumerate every old-path reference in the moved corpus (grep for the
-     old directory's absolute and relative path forms across the adopted tree), then open
-     each referenced target via its old path. Every one must resolve to full content.
-   Both drills run post-cutover, before the unit reports. Zero writes to any worktree.
+5. **Continuity is gated by a baseline/delta check against the real corpus, not a blanket
+   claim.** A live corpus legitimately contains references that do *not* resolve — targets
+   historically relocated into the archive, and write-destination paths that never existed —
+   so "every found reference opens" is the wrong invariant and would fail on honest input.
+   The invariant is: **every reference that resolved immediately before cutover resolves to
+   the same governing-manifest bytes after cutover.**
+   - *Baseline (pre-copy):* enumerate every old-path reference in the corpus (grep the old
+     directory's absolute and relative path forms), attempt to resolve each, and record the
+     **resolving set** with content hashes. Classify the non-resolving remainder into two
+     non-gating classes, recorded with the baseline: *pre-existing broken* (target since
+     relocated or deleted) and *write-destination* (a path named as somewhere to write,
+     legitimately absent).
+   - *Layout proof (pre-deletion):* re-resolve the resolving set through the temporary
+     symlink alias (pipeline step 3.vi) — same bytes, every entry — while the source is
+     still intact.
+   - *Post-link re-check:* after the real symlink is installed, re-resolve the resolving set
+     once more, and run the *cold-resume drill*: execute the read sequence of an
+     already-minted pre-cutover resume steer — digest, journal, playbook in full via their
+     **old** paths — confirming full content, not a pointer line.
+   Zero writes to any worktree throughout.
 6. **Journal continuity.** Appends continue at the mission path immediately. Commit rhythm
    mirrors the existing board rhythm: commit at dispatch/verdict boundaries, push when a unit
-   of work lands. Until the owner confirms push authority on the missions repo, commits stay
-   local and the unit stops-and-reports before any push.
+   of work lands. Push authority on the missions repo is a hard precondition of the unit
+   (decision point 4), so no local-only mode exists to fall back to.
 
 ## Ruling C — slug and scaffold
 
@@ -151,8 +187,8 @@ machinery). Applied live:
   (owner decision point below; this node's verified facts are in the appendix).
 - **Manifest seeding:** Purpose (one durable paragraph), Scope (repos/branches touched),
   Decisions (the graduated settled-decisions list, rewritten durably). Manifest prose is
-  written to the durable-artifact standard; raw run identifiers stay in adopted artifacts —
-  subject to the owner ruling on identifier custody below.
+  written to the durable-artifact standard; what identifier content resides in the adopted
+  artifacts is set entirely by the owner's identifier ruling (decision point 1).
 - **The scaffolded board stays empty** (Ruling A). Artifact layout: everything adopted lands
   under `artifacts/orchestration/`, the authority's disjoint path; any future non-authority
   writer gets its own disjoint subtree per the spec's multi-writer doctrine.
@@ -162,7 +198,8 @@ machinery). Applied live:
 - **The single-copy risk is the payoff.** Machine-local, gitignored substrate dies with the
   machine; mission custody makes it durable and team-visible — resolving the run's own logged
   risk on exactly the files it named. Custody is *proven* by the Ruling B pipeline (staged
-  comparison + clean-clone check), never inferred from local byte preservation.
+  comparison, push, and a fresh clone of the confirmed remote), never inferred from local
+  byte preservation — and the source is deleted only after remote custody is proven.
 - **Tracked means shared: secret-scan before the custody commit** (Ruling B step 3.ii). A hit
   blocks the commit, not just the push.
 - **Identifier custody is NOT ruled here — it is an owner decision** (point 1 below). The
@@ -176,20 +213,26 @@ machinery). Applied live:
 1. **Identifier custody vs the ratified spec.** The spec (its herder-unawareness invariant)
    says no herder concept — guid, seat, label lease, run reference — appears in *any* mission
    file. The substrate to be adopted is saturated with exactly that vocabulary. Two conforming
-   options: **(a)** amend the spec through its living decision record to exempt *opaque
-   adopted contents under `artifacts/`* — nothing mission-side reads, resolves, or joins them,
-   which is the invariant's operative concern; or **(b)** define a redaction/transformation
-   boundary applied at adopt time. **Recommendation: (a)** — the spec already treats artifacts
-   as free-form and never-interpreted, and redaction would destroy the journal's evidentiary
-   value; but this is the owner's ruling to make, and the migration unit is blocked on it.
+   options, and the design is parameterized on the choice: **(a)** amend the spec through its
+   living decision record to exempt *opaque adopted contents under `artifacts/`* — nothing
+   mission-side reads, resolves, or joins them, which is the invariant's operative concern;
+   contents then transfer verbatim and the custody proof compares against the source
+   manifest. Or **(b)** define a redaction/transformation boundary applied at adopt time —
+   the owner supplies a transformation manifest, the copy step applies it, and the custody
+   proof compares against the derived destination manifest (Ruling B.3).
+   **Recommendation: (a)** — the spec already treats artifacts as free-form and
+   never-interpreted, and redaction would destroy the journal's evidentiary value; but this
+   is the owner's ruling to make, and the migration unit is blocked on it.
 2. **Create/choose the missions repo and its hosting/access.** Recommendation: a dedicated
    repo, not the project repo — keeps board nesting trivial and decouples mission push rhythm
    from the project repo's ship discipline. Nesting inside the project repo is spec-legal if
    preferred.
 3. **Provision `$MISSIONS_REPO`** across surfaces (shell profile / tool config / agent env).
    Machine-level changes are escalate-only under the run protocol.
-4. **Push authority** for the orchestrator on the missions repo (the project repo's
-   agents-don't-ship rule needs an explicit mission-repo counterpart).
+4. **Push authority** for the executing agent on the missions repo — explicit owner
+   confirmation that the migration unit may push there. A hard precondition: the custody
+   pipeline pushes before source deletion, so there is no local-only mode. (Why this needs
+   an explicit ruling for this run is project-local policy — see the appendix.)
 5. **The `--owner` attribution value** (see Ruling C; node facts in the appendix).
 6. **Slug confirm** (recommendation in the appendix).
 7. **Provision the mission CLI binary and companion skill on the executing node.** This is an
@@ -206,8 +249,9 @@ machinery). Applied live:
 
 **Title:** adopt the live run's coordination substrate into mission custody (execute this
 record). **Type:** implement (scaffold + file ops; no behavior code). **Executor:** the
-orchestrator/authority itself (Ruling B.1) — flagged for owner confirm since the run
-convention is that the orchestrator holds no unit work. **Gate:** the acceptance criteria
+orchestrator/authority itself (Ruling B.1) — flagged for owner confirmation wherever local
+convention reserves unit execution away from the orchestrator (this run's convention is in
+the appendix). **Gate:** the acceptance criteria
 below are the gate; there is no code battery to run. **Blocked on:** owner decision points
 1–7 (identifier ruling, repo, env, push authority, owner value, slug, node provisioning).
 
@@ -223,18 +267,25 @@ below are the gate; there is no code battery to run. **Blocked on:** owner decis
 3. Scaffold per Ruling C (sync, `mish new … --no-marker`, custody commit); the `new` commit
    parses under the custody grammar; `mish status --mission <slug>` after the commit shows
    zero format warnings (sync-staleness line permitted until final push).
-4. Custody-proof pipeline passes in Ruling B order: manifest captured and retained as a
-   mission artifact; secret scan clean **before** the adopt commit; destination ignore-rule
-   preflight matches zero manifest paths; staged path set and blob contents equal the
-   manifest exactly **before** source deletion; adopt custody commit with `Mission-Source:`
-   trailer; a fresh clone of the missions repo reproduces the manifest. Any failure stops the
-   unit with the source tree intact.
-5. Compatibility symlink installed only after AC 4 passes: the old napkin directory path is a
-   single symlink resolving into the mission's `artifacts/orchestration/` subtree.
-6. Continuity drills pass post-cutover (Ruling B.5): the cold-resume drill returns full
-   content for digest, journal, and playbook via old paths; the dependency walk resolves
-   every old-path reference found in the adopted corpus. Zero messages to in-flight workers;
-   zero writes to any worktree.
+4. Custody-proof pipeline passes in Ruling B order: source manifest captured; secret scan
+   clean **before** the adopt commit; destination ignore-rule preflight matches zero
+   governing-manifest paths; staged path set under `artifacts/orchestration/**` equals the
+   governing manifest's path set exactly, with blob contents matching, **before** source
+   deletion — the custody-manifest file (and any explicitly enumerated generated extras)
+   verified separately; adopt custody commit with `Mission-Source:` trailer; **push under
+   the owner-confirmed authority; a fresh clone of the confirmed remote at that exact commit
+   reproduces the governing manifest.** Any commit, push, or remote-clone failure leaves the
+   source tree intact and stops the unit.
+5. Compatibility symlink installed only after AC 4 passes in full (remote custody proven):
+   the old napkin directory path is a single symlink resolving into the mission's
+   `artifacts/orchestration/` subtree.
+6. Continuity invariant holds (Ruling B.5): every reference that resolved immediately before
+   cutover resolves to the same governing-manifest bytes after cutover. Evidence: baseline
+   resolving set captured pre-copy with pre-existing-broken and write-destination references
+   classified into recorded non-gating classes; temporary-alias layout proof passes before
+   source deletion; post-link re-check and the cold-resume drill (digest, journal, playbook
+   in full via old paths) pass. Zero messages to in-flight workers; zero writes to any
+   worktree.
 7. Symlink retirement is captured, not performed: a journal entry records the retirement
    criterion (all pre-cutover contexts closed, or run close) and the explicit removal action.
 8. The mission board contains **zero tasks** at unit close — scaffolded empty, still empty;
@@ -242,9 +293,9 @@ below are the gate; there is no code battery to run. **Blocked on:** owner decis
    metadata/prose lives only in manifest and artifacts.
 9. `mission.md` seeded per Ruling C (Purpose / Scope / graduated Decisions; durable-standard
    prose).
-10. Push only under confirmed push authority; after the final push,
-    `mish status --mission <slug>` reports fully clean, including the staleness line.
-    Authority unconfirmed → stop-and-report with commits local.
+10. After the pipeline's final push, `mish status --mission <slug>` reports fully clean,
+    including the sync-staleness line. (Push authority is a hard precondition — AC 4 pushes
+    before source deletion; no local-only completion exists.)
 11. Custody trail greppable in the missions repo: `git log --grep 'mission(<slug>):'` shows
     the `new` and `adopt` commits.
 
@@ -271,7 +322,12 @@ Everything run-specific lives here and nowhere else in this document.
   brief/memo set and `archive/` — ~40 files at decision time; the executing unit re-lists at
   execution (this inventory is descriptive, not the manifest). Review confirmed transitive
   old-path references inside the corpus (briefs referencing sibling briefs, the journal, the
-  playbook, and archived material by old absolute paths) — the evidence behind Ruling B.4.
+  playbook, and archived material by old absolute paths) — the evidence behind Ruling B.4 —
+  and also confirmed the corpus already contains **pre-existing broken references** (targets
+  since relocated into `archive/`, e.g. wave playbooks and retired briefs cited at their old
+  top-level paths) and **write-destination references** (paths named as report destinations
+  that never existed) — the evidence behind Ruling B.5's resolved-before-cutover invariant
+  and its non-gating classes.
 - **Destination and names:** recommended slug `herder-dx` (names the herder
   developer-experience effort; the "run-" prefix is protocol dialect — Ruling C); authority
   `hera` (the run's orchestrator, who remains coordination writer per the task constraint);
@@ -282,12 +338,14 @@ Everything run-specific lives here and nowhere else in this document.
   OS username is not the human — the default owner chain would stamp a wrong owner;
   Backlog.md 1.47.1 present and pinned via mise (that precondition already holds). The task
   file's claim that binary and skill were already installed is stale on this node.
-- **Run precedents informing the rulings:** a logged single-copy-risk rule for durable napkin
-  memos (the migration's payoff); one contained incident where a broad search read credential
-  values into a local transcript (why the secret scan is mandatory and early); the project
-  repo's standing rule that agents don't ship (why mission-repo push authority is decision
-  point 4); the run's board rhythm of commit-per-move, push-per-unit (mirrored in Ruling
-  B.6).
+- **Run precedents and local policy informing the rulings:** a logged single-copy-risk rule
+  for durable napkin memos (the migration's payoff); one contained incident where a broad
+  search read credential values into a local transcript (why the secret scan is mandatory
+  and early); the project repo's standing rule that agents don't ship — the user pushes —
+  which is why mission-repo push authority needs the explicit owner ruling of decision
+  point 4; the run's standing convention that the orchestrator holds no unit work — why the
+  executor choice in the unit capture is flagged for owner confirmation; and the run's board
+  rhythm of commit-per-move, push-per-unit (mirrored in Ruling B.6).
 - **Not migrating, per Ruling A:** the project board at `backlog/` (sole task custodian,
   shared with the sesh lane under labeled-disjoint custody), durable memos already in
   `docs/design/`, bus/registry state, and the napkin directories of the bootstrap, sesh, and
