@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-13 00:51'
-updated_date: '2026-07-13 01:27'
+updated_date: '2026-07-13 01:31'
 labels: []
 dependencies: []
 priority: low
@@ -36,4 +36,6 @@ Observed live on the orchestrator session: pane statusline shows @mono while the
 2026-07-13 review round 1 (nave, opus; 6 executable adversarial proofs, all read-only): 2 P1 — fix missed the motivating session (hcom-launched, no HERDER_GUID; remedy = process-id keying, AC1 amended accordingly); GUID-keyed segment silently vanishes whenever the keyed file is absent (release path deletes on 5 transient list misses — single-writer SPOF replaced the old redundant fan-out). 2 P2 — unscoped delete-by-name (recycled-name live-session deletion horn + orphan-never-cleaned horn; shipped test injected a mock-only env var that hid both); correlation re-implemented instead of reusing the vetted correlator (fork guard + pane-first precedence dropped). 1 P3 — permanent create/delete churn vs legacy sidecars. Passing lenses: hot path zero-spawn, fallback byte-identical, GUID rename tracking, hygiene. Fix round 1 sent to raza; nave holds for delta.
 
 2026-07-13 fix round 1 delta (raza, 3af1471): renderer keys by HCOM_PROCESS_ID w/ name-keyed fallback; sidecar keys ONLY by correlated-row launch_context.process_id through findRowCorrelated (correlated required, fork exclusion + pane-first pinned); transient missing>=5 preserves snapshots (release(false)) vs genuine ppid death removes writer-owned file only; one-shot transition cleanup w/ roster-ownership refusal; live-env-shaped tests incl. recycled-name + post-rename orphan scenarios; churn pinned one-shot. Worker battery 53/53. Independent re-gate running; nave delta requested.
+
+2026-07-13 delta (nave): P1-1/P1-2/P2-4/P3-5 VERIFIED FIXED (side-by-side render proof on the motivating hcom-launched shape: @mono/wrong-file on main -> @hera/correlated-file on fix; fallback retains segment). Residual P2: cleanup keyed by row.Name but legacy writer keys by BaseName -> no-op for every tagged session, orphan reachable via boot-window fallback, one-shot burned on the no-op; hand-crafted fixture (not writeRows) hid it. Residual P3: correlation derived twice per tick (double /proc scan when uncorrelated). Fix round 2 to raza.
 <!-- SECTION:NOTES:END -->
