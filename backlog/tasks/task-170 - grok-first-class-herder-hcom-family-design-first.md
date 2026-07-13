@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-13 01:41'
+updated_date: '2026-07-13 01:43'
 labels: []
 dependencies: []
 priority: medium
@@ -43,4 +43,6 @@ OWNER RULINGS 2026-07-13 (recorded in design doc addendum): no bypassPermissions
 2026-07-13 U1 MERGED: final delta APPROVE (mapo re-ran the brick repro — repeatable recovery across two restarts, exactly one outbound copy; mutation battery 6/6 caught vs 2/6 at first commit; fence verified over the whole unit). Merge 5fbd991 --no-ff (12 files, +3098, additive; sweep clean — one English-substring false positive classified). Post-merge gate on main running. Pinned battery count is now 55 house-wide (check-grok-transport.sh joined). mapo U2 observation carried: binder named-send stdout carries other messages' bodies into context outside fetch/ack (harmless to correctness, context-hygiene wrinkle) — U2 doctrine line or trim send result to first line. NEXT: U2 launch contract (activation-gated, Grok 4.5 pin, blanket spend, boot-arming fallback pre-approved).
 
 CORRECTION to U1 merge note: house battery count on main is 54 (53 + check-grok-transport.sh), not 55.
+
+2026-07-13: U2 launch contract dispatched — worker (codex 5.6 high) in worktree task-170-u2-launch, thread task170u2, brief napkins/run-herder-dx/task-170-u2-implement-brief.md. Scope: DR-3/DR-4 launch contract behind the activation gate (spawn --agent grok unchanged); owner rulings carried (Grok 4.5 pin w/ id resolution recorded, no bypass mapping, blanket smoke spend, boot-arming fallback pre-approved); U1-review context-hygiene item in scope (trim send result or doctrine line).
 <!-- SECTION:NOTES:END -->
