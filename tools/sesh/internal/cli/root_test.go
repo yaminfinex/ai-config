@@ -562,6 +562,37 @@ func TestIndexConsumerDrainsServeAppendEvents(t *testing.T) {
 	}
 }
 
+// TestRouteClassNeverJournalsIdentifiers pins the debug-log redaction
+// contract: parameterized routes collapse to their template, only the finite
+// fixed-route allowlist passes through verbatim, and every unknown path —
+// client-controlled input, possibly identifier-bearing — collapses to
+// "other".
+func TestRouteClassNeverJournalsIdentifiers(t *testing.T) {
+	cases := []struct{ path, want string }{
+		{"/", "/"},
+		{"/nodes", "/nodes"},
+		{"/fragments/recency", "/fragments/recency"},
+		{"/install.sh", "/install.sh"},
+		{"/v1/health", "/v1/health"},
+		{"/v1/nodes", "/v1/nodes"},
+		{"/v1/files/claude/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222/bytes", "/v1/files/*"},
+		{"/s/claude/11111111-1111-1111-1111-111111111111", "/s/*"},
+		{"/s/claude/11111111-1111-1111-1111-111111111111/raw", "/s/*"},
+		{"/releases/sesh-v0.1.2/sesh-linux-amd64", "/releases/*"},
+		{"/assets/htmx.min.js", "/assets/*"},
+		// Unknown paths are input-controlled and may carry identifiers;
+		// they must never journal verbatim.
+		{"/probe/11111111-1111-1111-1111-111111111111", "other"},
+		{"/v1/unknown", "other"},
+		{"/nodes/extra", "other"},
+	}
+	for _, c := range cases {
+		if got := routeClass(c.path); got != c.want {
+			t.Errorf("routeClass(%q) = %q, want %q", c.path, got, c.want)
+		}
+	}
+}
+
 // TestReadPathsServeWhileWriteConnectionHeld is the serving-path regression
 // gate for the surface remote-TTFB pathology: append transactions hold the
 // store's single write connection for corpus-scale index work, so every

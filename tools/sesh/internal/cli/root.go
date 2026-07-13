@@ -263,9 +263,22 @@ func (sr *statusRecorder) Flush() {
 	}
 }
 
+// routeClassFixed is the allowlist of identifier-free fixed routes that may
+// appear verbatim in debug logs. Everything else is either a known
+// parameterized template or collapses to "other": the raw path is
+// client-supplied input and must never reach the journal.
+var routeClassFixed = map[string]bool{
+	"/":                      true,
+	"/nodes":                 true,
+	"/fragments/recency":     true,
+	"/install.sh":            true,
+	wire.APIRoot + "/health": true,
+	wire.APIRoot + "/nodes":  true,
+}
+
 // routeClass maps a request path to a stable, identifier-free label for
-// debug logs: routes that carry session or file identities collapse to their
-// template; fixed routes pass through unchanged.
+// debug logs: parameterized routes collapse to their template, allowlisted
+// fixed routes pass through, and anything unknown is "other".
 func routeClass(p string) string {
 	switch {
 	case strings.HasPrefix(p, wire.APIRoot+"/files/"):
@@ -274,8 +287,12 @@ func routeClass(p string) string {
 		return "/s/*"
 	case strings.HasPrefix(p, "/releases/"):
 		return "/releases/*"
-	default:
+	case strings.HasPrefix(p, "/assets/"):
+		return "/assets/*"
+	case routeClassFixed[p]:
 		return p
+	default:
+		return "other"
 	}
 }
 
