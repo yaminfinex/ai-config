@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-13 07:37'
+updated_date: '2026-07-13 08:43'
 labels: []
 dependencies: []
 priority: medium
@@ -63,4 +63,6 @@ CORRECTION (2026-07-13): XAI_API_KEY has been exported in ~/.bashrc for days (li
 CREDENTIAL NUANCE (2026-07-13, fula probe + hera fresh-pane test reconciled): XAI_API_KEY reaches INTERACTIVE shells (bashrc line 126 is below the interactive guard) but NOT the spawn-via-server pane env (non-interactive chain returns at the guard; probe wrote SERVER_KEY_ABSENT). Direct `herder launch grok` from an interactive pane: WORKS (U2+U3 smokes). `herder spawn --agent grok`: credential precondition FAILS today. Candidate fixes for the activation unit, in preference order: (1) owner moves the export to ~/.profile (login-shell-wide, zero code) — TEST at activation; (2) DR-3 exec-time injection from a 0600 owner key file; (3) server env seeding at a herdr restart. claude/codex are immune (file-based auth in live homes, not env keys).
 
 U4 (observer & transcript) MERGED 629de2e (branch head 9001d7b, 3 commits). Reviewer semi: round1 CHANGES REQUIRED (P1 discovery re-derived vendor cwd escaping w/ url.PathEscape — outlier encoder, silent-miss; 2xP2 fail-closed breadth + unpinned reset guards; 3xP3) -> fix 9d6205c -> APPROVE w/ 2 nits -> polish 9001d7b -> SIGHT-APPROVE, 10/10 mutations killed. Honest-unknown principle held under mutation from round 1. Independent gates 56/56 per round; post-merge on main 57/57. Discovery now sid-glob (matches U2), boot-grace fails open toward flagging. U3 fix round in flight (navu 1xP1+3xP2+2xP3); activation unit next after U3.
+
+U3 (lifecycle & identity) MERGED 79bcb7c (branch head d23e42d, 7 commits incl. authorized seams). Reviewer navu: 3 rounds, 9 findings closed + mutation-pinned (r1: P1 spawn-shaped cull no-op, dead-bridge wedge, --continue gap, one-shot capability snapshot, 2xP3 pins; r2: pending edge-freshness, zombie latch; polish: exact pending counts per DR-5). Fork preassignment tightening recorded as DR-4 erratum in the design doc. Latent U1 raw-string bug fixed + swept. Independent gates 56/56 per round; post-merge 57/57. U1+U2+U3+U4 ALL MERGED. REMAINING: U5 (shim/setup/doctor/docs), then the ACTIVATION UNIT (hard ACs: real e2e spawn; XAI export to ~/.profile or exec-time injection; boot-grace + version-skew notes on record).
 <!-- SECTION:NOTES:END -->

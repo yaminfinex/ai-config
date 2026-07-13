@@ -533,6 +533,20 @@ directory / session listing and binds it with process/pane evidence before the s
 declared bound. New spool, new bus name, registry lineage (forked-from GUID + parent
 sid). Parent's unacked messages never migrate.
 
+> **Erratum (U3 implementation, 2026-07-13).** The "assigns rather than accepting
+> preassignment" premise above is falsified by the pinned 0.2.93 CLI itself:
+> `--fork-session` "create a new session ID instead of reusing the original
+> (optionally set via `--session-id`)", and `-s, --session-id` "With `--resume`/
+> `--continue`, only valid together with `--fork-session` (names the forked
+> session)". U3 therefore forks with a herder-minted UUIDv7 preassigned via
+> `--resume <parent> --fork-session --session-id <fresh>`, run through the same
+> cwd-agnostic `sessions/*/<sid>` collision check as launch, with process/pane
+> AND session-directory evidence required before bound. This is a strict
+> tightening — preassignment is DR-4's preferred identity model; the post-boot
+> capture path described above is superseded. All three vendor flags remain
+> refused as user passthrough in every mode (herder-owned mode data only).
+> Authorized on the U3 thread; evidence quoted in the U3 DONE record.
+
 ## DR-5 — Observability honesty
 
 **DECISION.** Every observation surface reports only what its evidence supports, with
