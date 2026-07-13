@@ -49,6 +49,7 @@ type Binder struct {
 	mu          sync.Mutex
 	taps        map[net.Conn]struct{}
 	drainMu     sync.Mutex
+	capMu       sync.Mutex
 	retiring    atomic.Bool
 	retireOnce  sync.Once
 	retired     chan struct{}
@@ -308,9 +309,7 @@ func (b *Binder) execute(req Request) Response {
 		b.drainMu.Lock()
 		_, count := b.journal.Counts()
 		if err = b.publishCapabilities("down"); err != nil {
-			b.drainMu.Unlock()
-			r.Error = err.Error()
-			return r
+			b.recordCapabilityDiagnostic("down", err)
 		}
 		b.drainMu.Unlock()
 		r.Retired = count
@@ -333,9 +332,15 @@ func (b *Binder) execute(req Request) Response {
 		v := view(x, true)
 		r.Message = &v
 	case "ack":
-		if err := b.journal.Ack(req.ID, req.Generation); err != nil {
+		pendingCrossedZero, err := b.journal.ackPendingEdge(req.ID, req.Generation)
+		if err != nil {
 			r.Error = err.Error()
 			return r
+		}
+		if pendingCrossedZero {
+			if err = b.publishPendingCapability(); err != nil {
+				b.recordCapabilityDiagnostic("pending", err)
+			}
 		}
 	case "send":
 		out, err := b.send(req)
@@ -372,7 +377,7 @@ func (b *Binder) handleTap(c net.Conn, req Request) {
 	b.taps[c] = struct{}{}
 	b.mu.Unlock()
 	if err := b.publishCapabilities("armed"); err != nil {
-		_ = appendDiagnostic(filepath.Join(SeatDir(b.cfg.StateDir, b.cfg.Seat), "bridge.log"), fmt.Errorf("record armed tap capability: %w", err))
+		b.recordCapabilityDiagnostic("armed tap", err)
 	}
 	defer func() {
 		b.mu.Lock()
@@ -381,7 +386,7 @@ func (b *Binder) handleTap(c net.Conn, req Request) {
 		b.mu.Unlock()
 		if degraded {
 			if err := b.publishCapabilities("degraded"); err != nil {
-				_ = appendDiagnostic(filepath.Join(SeatDir(b.cfg.StateDir, b.cfg.Seat), "bridge.log"), fmt.Errorf("record degraded tap capability: %w", err))
+				b.recordCapabilityDiagnostic("degraded tap", err)
 			}
 		}
 	}()
@@ -458,7 +463,7 @@ func (b *Binder) wake(r Receipt, kind string) error {
 	b.mu.Unlock()
 	if droppedLast && !b.retiring.Load() {
 		if err := b.publishCapabilities("degraded"); err != nil {
-			return fmt.Errorf("record degraded tap capability: %w", err)
+			b.recordCapabilityDiagnostic("degraded", err)
 		}
 	}
 	return nil
@@ -501,7 +506,7 @@ func (b *Binder) Drain(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			r, added, err := b.journal.Queue(raw)
+			r, added, err := b.queueReceipt(raw)
 			if err != nil {
 				return err
 			}
@@ -519,6 +524,19 @@ func (b *Binder) Drain(ctx context.Context) error {
 	}
 }
 
+func (b *Binder) queueReceipt(raw json.RawMessage) (Receipt, bool, error) {
+	receipt, added, pendingCrossedZero, err := b.journal.queuePendingEdge(raw)
+	if err != nil {
+		return Receipt{}, false, err
+	}
+	if pendingCrossedZero {
+		if err = b.publishPendingCapability(); err != nil {
+			b.recordCapabilityDiagnostic("pending", err)
+		}
+	}
+	return receipt, added, nil
+}
+
 func (b *Binder) publishCapabilities(wake string) error {
 	switch wake {
 	case "armed", "degraded", "down":
@@ -528,12 +546,8 @@ func (b *Binder) publishCapabilities(wake string) error {
 	if wake != "down" && b.retiring.Load() {
 		return nil
 	}
-	registryPath := filepath.Join(b.cfg.StateDir, "registry.jsonl")
-	if _, err := os.Stat(registryPath); os.IsNotExist(err) {
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("inspect Grok registry before capability update: %w", err)
-	}
+	b.capMu.Lock()
+	defer b.capMu.Unlock()
 	pending, retired := b.journal.Counts()
 	capabilities := v2.Capabilities{Bus: "bound", Wake: wake, Pending: pending, BinderPID: os.Getpid(), Undeliverable: retired}
 	if wake == "down" {
@@ -541,13 +555,55 @@ func (b *Binder) publishCapabilities(wake string) error {
 		capabilities.Pending = 0
 		capabilities.BinderPID = 0
 	}
+	return b.updateCapabilities(wake, func(*v2.SessionRecord) (v2.Capabilities, bool) {
+		if wake != "down" && b.retiring.Load() {
+			return v2.Capabilities{}, false
+		}
+		return capabilities, true
+	})
+}
+
+func (b *Binder) publishPendingCapability() error {
+	if b.retiring.Load() {
+		return nil
+	}
+	b.capMu.Lock()
+	defer b.capMu.Unlock()
+	pending, retired := b.journal.Counts()
+	b.mu.Lock()
+	wake := "degraded"
+	if len(b.taps) > 0 {
+		wake = "armed"
+	}
+	b.mu.Unlock()
+	return b.updateCapabilities("pending", func(latest *v2.SessionRecord) (v2.Capabilities, bool) {
+		if b.retiring.Load() {
+			return v2.Capabilities{}, false
+		}
+		if latest.Capabilities != nil {
+			capabilities := *latest.Capabilities
+			capabilities.Pending = pending
+			return capabilities, true
+		}
+		return v2.Capabilities{Bus: "bound", Wake: wake, Pending: pending, BinderPID: os.Getpid(), Undeliverable: retired}, true
+	})
+}
+
+func (b *Binder) updateCapabilities(label string, build func(*v2.SessionRecord) (v2.Capabilities, bool)) error {
+	registryPath := filepath.Join(b.cfg.StateDir, "registry.jsonl")
+	if _, err := os.Stat(registryPath); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect Grok registry before capability update: %w", err)
+	}
 	changed := false
 	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
-		if wake != "down" && b.retiring.Load() {
-			return nil, nil
-		}
 		latest := registry.V2ByGUID(tx.Projection, b.cfg.Seat)
 		if latest == nil || latest.Tool != "grok" {
+			return nil, nil
+		}
+		capabilities, ok := build(latest)
+		if !ok {
 			return nil, nil
 		}
 		if latest.Capabilities != nil && *latest.Capabilities == capabilities {
@@ -561,22 +617,26 @@ func (b *Binder) publishCapabilities(wake string) error {
 		return []v2.SessionRecord{next}, nil
 	})
 	if err != nil {
-		return fmt.Errorf("record Grok %s capability: %w", wake, err)
+		return fmt.Errorf("record Grok %s capability: %w", label, err)
 	}
 	if !changed {
 		return nil
 	}
 	outcome, err := registry.SingleOutcome(outcomes)
 	if err != nil {
-		return fmt.Errorf("record Grok %s capability: %w", wake, err)
+		return fmt.Errorf("record Grok %s capability: %w", label, err)
 	}
 	if err = outcome.Err(); err != nil {
-		return fmt.Errorf("record Grok %s capability: %w", wake, err)
+		return fmt.Errorf("record Grok %s capability: %w", label, err)
 	}
 	if outcome.Status != registry.WriteApplied {
-		return fmt.Errorf("record Grok %s capability: registry row was not appended", wake)
+		return fmt.Errorf("record Grok %s capability: registry row was not appended", label)
 	}
 	return nil
+}
+
+func (b *Binder) recordCapabilityDiagnostic(label string, err error) {
+	_ = appendDiagnostic(filepath.Join(SeatDir(b.cfg.StateDir, b.cfg.Seat), "bridge.log"), fmt.Errorf("record %s capability: %w", label, err))
 }
 
 func (b *Binder) nudgeLoop(ctx context.Context) error {

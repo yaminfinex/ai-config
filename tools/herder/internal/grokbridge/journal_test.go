@@ -324,6 +324,62 @@ func TestQueueAfterRetirementIsImmediatelyUndeliverable(t *testing.T) {
 	}
 }
 
+func TestPendingEdgeSignalsOnlyZeroCrossings(t *testing.T) {
+	j := openTestJournal(t)
+	if _, added, crossed, err := j.queuePendingEdge(rawEvent(t, 31, "first")); err != nil || !added || !crossed {
+		t.Fatalf("first queue added=%v crossed=%v err=%v", added, crossed, err)
+	}
+	if _, added, crossed, err := j.queuePendingEdge(rawEvent(t, 32, "second")); err != nil || !added || crossed {
+		t.Fatalf("second queue added=%v crossed=%v err=%v", added, crossed, err)
+	}
+	if _, err := j.Fetch(31, 1); err != nil {
+		t.Fatal(err)
+	}
+	if crossed, err := j.ackPendingEdge(31, 1); err != nil || crossed {
+		t.Fatalf("first ack crossed=%v err=%v", crossed, err)
+	}
+	if _, err := j.Fetch(32, 1); err != nil {
+		t.Fatal(err)
+	}
+	if crossed, err := j.ackPendingEdge(32, 1); err != nil || !crossed {
+		t.Fatalf("last ack crossed=%v err=%v", crossed, err)
+	}
+}
+
+func TestCountsAreRebuiltDuringJournalReplay(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "journal.jsonl")
+	j, err := OpenJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = j.AdvanceGeneration(); err != nil {
+		t.Fatal(err)
+	}
+	queue(t, j, 41)
+	queue(t, j, 42)
+	if _, err = j.Fetch(41, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = j.Ack(41, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = j.RetireUnacked(1); err != nil {
+		t.Fatal(err)
+	}
+	if err = j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	j, err = OpenJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	pending, retired := j.Counts()
+	if pending != 0 || retired != 1 {
+		t.Fatalf("replayed counts pending=%d retired=%d, want 0/1", pending, retired)
+	}
+}
+
 func TestSocketPathLengthPreflightNamesRemedy(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "hcom")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
