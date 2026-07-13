@@ -11,11 +11,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"ai-config/tools/herder/internal/observerstatus"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
+// Records above this bound deliberately fail closed: advancing would discard
+// unparsed evidence, while retaining the cursor makes the condition visible.
 const grokJSONLMaxLine = 16 << 20
 
 var errGrokSessionUndiscovered = errors.New("Grok session directory was not discovered")
@@ -75,7 +78,7 @@ func grokSessionDir(grokHome, sessionID string) (string, error) {
 	case 1:
 		return matches[0], nil
 	default:
-		return "", fmt.Errorf("Grok session id %s matched %d directories; remove duplicate session artifacts and retry the observer sweep", sessionID, len(matches))
+		return "", fmt.Errorf("Grok session id %s matched %d directories; resolve duplicate session artifacts and retry the observer sweep", sessionID, len(matches))
 	}
 }
 
@@ -356,6 +359,10 @@ func safeGrokEventLabel(value string) bool {
 }
 
 func grokObservations(records []v2.SessionRecord, stateDir string, stderr io.Writer, cursors map[string]*grokArtifactCursor) (map[string]observerstatus.Observation, []observerstatus.Flag) {
+	return grokObservationsAt(records, stateDir, stderr, cursors, time.Now().UTC())
+}
+
+func grokObservationsAt(records []v2.SessionRecord, stateDir string, stderr io.Writer, cursors map[string]*grokArtifactCursor, now time.Time) (map[string]observerstatus.Observation, []observerstatus.Flag) {
 	out := map[string]observerstatus.Observation{}
 	var flags []observerstatus.Flag
 	active := map[string]bool{}
@@ -378,13 +385,16 @@ func grokObservations(records []v2.SessionRecord, stateDir string, stderr io.Wri
 		}
 		obs, err := observeGrokSession(filepath.Join(stateDir, "grok-home"), sessionID, cursor)
 		if errors.Is(err, errGrokSessionUndiscovered) {
+			if grokSeatWithinBootWindow(rec, now) {
+				continue
+			}
 			flags = append(flags, observerstatus.Flag{
 				GUID:      rec.GUID,
 				Label:     rec.Label,
 				Type:      "grok-session-undiscovered",
 				Severity:  "warning",
 				Detail:    "explicit Grok session id has no matching directory under the dedicated GROK_HOME; observer keeps live status unknown",
-				Suggested: "verify GROK_HOME and resume or respawn the seat",
+				Suggested: "verify the dedicated GROK_HOME and wait for the seat's first completed turn; then inspect grok sessions for the recorded id",
 			})
 			continue
 		}
@@ -411,4 +421,16 @@ func grokObservations(records []v2.SessionRecord, stateDir string, stderr io.Wri
 		}
 	}
 	return out, flags
+}
+
+func grokSeatWithinBootWindow(rec v2.SessionRecord, now time.Time) bool {
+	if rec.Seat == nil || rec.Seat.ConfirmedAt == "" {
+		return false
+	}
+	confirmedAt, err := time.Parse(time.RFC3339, rec.Seat.ConfirmedAt)
+	if err != nil {
+		return false
+	}
+	age := now.Sub(confirmedAt)
+	return age >= 0 && age < sweepInterval()
 }

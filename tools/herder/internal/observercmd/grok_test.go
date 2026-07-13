@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
@@ -51,22 +52,52 @@ func TestGrokSessionAdapterDiscoversOpaqueCWDAndUsesRecordedChatHistory(t *testi
 	}
 }
 
-func TestGrokDiscoveryMissProducesLabelledFlag(t *testing.T) {
+func TestGrokSessionDirRefusesDuplicateSIDMatches(t *testing.T) {
+	grokHome := filepath.Join(t.TempDir(), "grok-home")
+	sid := newTestGUID(t)
+	for _, opaqueCWD := range []string{"opaque-a", "opaque-b"} {
+		if err := os.MkdirAll(filepath.Join(grokHome, "sessions", opaqueCWD, sid), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir, err := grokSessionDir(grokHome, sid)
+	if err == nil || dir != "" {
+		t.Fatalf("duplicate SID discovery = %q, %v; want cause+remedy refusal", dir, err)
+	}
+	if !strings.Contains(err.Error(), "matched 2 directories") || !strings.Contains(err.Error(), "resolve duplicate session artifacts and retry") {
+		t.Fatalf("duplicate SID error = %q, want match count and safe remedy", err)
+	}
+}
+
+func TestGrokDiscoveryMissWaitsOneSweepThenProducesSafeFlag(t *testing.T) {
+	t.Setenv("HERDER_OBSERVER_SWEEP_INTERVAL", "30s")
 	guid := newTestGUID(t)
 	sid := newTestGUID(t)
+	now := time.Date(2026, 7, 13, 7, 30, 0, 0, time.UTC)
 	rec := v2.SessionRecord{
 		GUID:  guid,
 		Label: "neutral-seat",
 		Tool:  "grok",
 		State: v2.StateSeated,
+		Seat:  &v2.Seat{ConfirmedAt: now.Add(-sweepInterval() / 2).Format(time.RFC3339)},
 		SIDs:  []v2.SID{{SID: sid}},
 	}
-	observations, flags := grokObservations([]v2.SessionRecord{rec}, t.TempDir(), nil, nil)
+	stateDir := t.TempDir()
+	observations, flags := grokObservationsAt([]v2.SessionRecord{rec}, stateDir, nil, nil, now)
+	if len(observations) != 0 || len(flags) != 0 {
+		t.Fatalf("fresh-seat observations/flags = %+v/%+v, want boot-window silence", observations, flags)
+	}
+
+	rec.Seat.ConfirmedAt = now.Add(-sweepInterval() - time.Second).Format(time.RFC3339)
+	observations, flags = grokObservationsAt([]v2.SessionRecord{rec}, stateDir, nil, nil, now)
 	if len(observations) != 0 {
 		t.Fatalf("observations = %+v, want none for missing artifacts", observations)
 	}
 	if len(flags) != 1 || flags[0].GUID != guid || flags[0].Type != "grok-session-undiscovered" || flags[0].Severity != "warning" {
 		t.Fatalf("flags = %+v, want labelled discovery-miss warning", flags)
+	}
+	if strings.Contains(flags[0].Suggested, "respawn") || !strings.Contains(flags[0].Suggested, "first completed turn") {
+		t.Fatalf("suggested remedy = %q, want non-destructive first-turn guidance", flags[0].Suggested)
 	}
 }
 
