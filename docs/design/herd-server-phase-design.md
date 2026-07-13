@@ -205,6 +205,20 @@ mission dirs (read-only scan)                   on boot) ──▶ view surface 
   node-daemon decision record, "Phase 1b"). Outbound-only dialer. Its death is
   a local non-event; a node without a running observer is simply dark at the
   server.
+- **Failure-domain fence (architecture constraint, not an implementation
+  hint).** The installed observer is a single synchronous
+  reconnect/observe/sweep loop whose backoff and heartbeat freshness are
+  driven by sweep outcomes (`tools/herder/internal/observercmd/`). The spoke
+  duties — server network I/O, file shipping, mission scans — must run in
+  goroutines independent of that loop, connected only by bounded queues:
+  file-tail streams take backpressure through their cursors (the file is the
+  buffer, so queues never grow); level-state coalesces under backpressure
+  (only the newest snapshot per key is ever queued). A slow scan, a wedged
+  server connection, or a full queue may never block, delay, or fail the
+  registry observation loop or its heartbeat; spoke goroutine teardown and
+  restart lose no required facts (files and ACKed cursors are the durable
+  state). Server outage degrades exactly the spoke — nothing else — and that
+  is an acceptance criterion (§9 U-CORE), not an aspiration.
 - **Inbound execution** — structurally delivery-only (§3.3): the node contains
   no command interpreter; the only thing the spoke does with an inbound
   envelope is map it, by code, onto the local send path.
@@ -249,35 +263,68 @@ applied to herder's own format.
 
 ### 3.1 Node registration (DECISION-2)
 
-**DECISION: registration is an idempotent, outbound, fact-bearing upsert —
-the server records identity, never assigns it.**
+**DECISION: registration is an outbound, fact-bearing FIRST-BINDING — the
+server records identity, never assigns it, and never lets two stamped
+identities share one claimed node_id.**
 
 - **Identity**: `node_id` is minted locally, lazily, and lives with the node's
   state (`docs/specs/herder-spec.md` §2 "node", §6.1). The server's
   registration row records the id it was shown. There is no server-issued
   node identity and no enrollment ceremony.
-- **Mechanics**: the spoke registers on every connect (level-triggered
-  upsert); first contact creates the row. Payload is facts only: `node_id`,
-  hostname, OS user, herder build version, namespace/epoch anchors as locally
-  observed, and the set of streams this node ships. Tailnet identity is
-  stamped server-side from the connection (WhoIs), never claimed in the
-  payload — fact precedence is store logic
-  (`docs/specs/session-service-spec.md` §3 identity facts).
+- **Mechanics**: the spoke registers on every connect (level-triggered);
+  first contact creates the row. Payload is facts only: `node_id`, hostname,
+  OS user, herder build version, namespace/epoch anchors as locally observed,
+  and the set of streams this node ships. Tailnet identity is stamped
+  server-side from the connection (WhoIs), never claimed in the payload —
+  fact precedence is store logic (`docs/specs/session-service-spec.md` §3
+  identity facts).
+- **First-binding, not blind upsert.** A copied state dir is a modeled
+  condition, not a hypothetical: herder documents `node init --new` as the
+  clone repair (`tools/herder/internal/nodecmd/node.go`), and a clone that
+  missed repair presents a duplicate `node_id`. Rules:
+  - first contact **binds** `node_id` ↔ stamped tailnet identity;
+  - the same `node_id` from the **same** identity refreshes normally;
+  - the same `node_id` from a **different** identity is **refused and
+    quarantined**: the conflicting registration is flagged loudly, no stream
+    from the new identity is accepted under that `node_id`, and command
+    dispatch to that `node_id` suspends until an operator resolves it — the
+    registry's own anomaly doctrine ("unknown-node rows are anomalies, not
+    peers", `docs/specs/herder-spec.md` §3.1-12) applied at the server tier.
+    Merging two real nodes' streams or delivering one node's commands to its
+    clone is the failure this rule exists to make impossible.
+- **Succession (legitimate host move)**: the state dir travels with the home
+  directory by design (`docs/specs/herder-spec.md` §2 "state dir"), so a
+  moved node presents its old `node_id` from a new tailnet identity. That is
+  the quarantine case above until an operator with the appropriate grant
+  executes an explicit **re-bind** at the server, which records succession
+  `{node_id, from identity, to identity, at, by}` as server truth. Until
+  re-bound, the moved node is refused — visibly, never silently. The
+  clone-repair path stays what it is today: `node init --new` mints a new
+  identity that registers as a brand-new node.
+- **One active spoke channel per node_id.** The server accepts one live spoke
+  session per bound `node_id` (newest connect wins; the older channel is
+  closed politely). Two live spokes alternating under one binding — the
+  same-identity clone case — surfaces as an incarnation flip-flop anomaly
+  (§3.4's incarnation fencing makes it visible) and is flagged, never
+  silently interleaved.
 - **Lifecycle**: nodes are never deleted, mirroring "sessions are never
   deleted" (`docs/specs/herder-spec.md` §3.1-3). Staleness is displayed
-  (last-contact timestamp), never inferred into a verdict. A locally re-minted
-  node (`node init --new`) registers as a brand-new node; the old row goes
-  permanently stale; the server never merges node identities. An operator may
-  record a succession annotation at the server (server truth, display-tier).
+  (last-contact timestamp), never inferred into a verdict. A re-minted node
+  registers as new; the old row goes permanently stale; the server never
+  merges node identities — succession annotations link them for display only.
 - **Admission**: holding the spoke capability on the tailnet grant *is* the
   admission control, exactly the store's posture; tightening is a grant edit,
   not a server change. Registration is attribution, never authentication
-  (`docs/specs/system-boundaries.md` §Identity and attribution).
+  (`docs/specs/system-boundaries.md` §Identity and attribution) — but the
+  binding rule above means attribution conflicts fail closed for streams and
+  commands rather than being displayed-and-accepted.
 
 ### 3.2 Spoke transport: streams, reconnect, replay (DECISION-3)
 
 **DECISION: outbound-only spoke; three stream classes with per-class
-sequencing; ACK-then-advance cursors; at-least-once with server dedup.**
+sequencing — explicit file-generation identity with overlap validation for
+file tails, epoch-keyed dedup for bus events, incarnation-fenced replacement
+for level state; ACK-then-advance cursors; at-least-once shipping.**
 
 Posture first, because it shapes everything: **nodes are outbound-only**. No
 fleet feature may require a node to run an inbound listener. The spoke dials
@@ -290,26 +337,60 @@ Three stream classes, because the payloads have three different shapes of
 truth:
 
 1. **File-tail streams** — the registry live log, its rotation archives, and
-   the node delivery journal (§3.3). Sequence = (file identity, byte offset);
-   file identity = name/uuid + content fingerprint. Mechanics adopted from
-   the ratified wire (`docs/specs/sesh-wire.md`): fingerprint over the head
-   window, cursor advances only on durable ACK (server fsyncs mirror bytes
-   before ACKing), size-regression reset, at-least-once shipping, server
-   dedup by (node, file identity, offset). Registry rotation reseeds the live
-   file (`docs/specs/herder-spec.md` §5.1), which presents as a new
-   fingerprint generation: the reseeded file ships as a new unit, the
-   pre-rotation archive ships once and is immutable, and the server's parsed
-   projection dedups rows across generations by their content (rows are
-   self-contained snapshots), so rotation costs bytes, never correctness.
+   the node delivery journal (§3.3). Sequence = (file generation, byte
+   offset). The sesh wire's identity trick — filename UUID plus a fingerprint
+   that only exists past a 1 KiB head window (`docs/specs/sesh-wire.md` §File
+   Identity) — does **not** transfer here: registry live files have no
+   filename UUID, rotation reseeds the live file in place under the same
+   name, and a young file or journal is below any fingerprint window exactly
+   when identity matters most. So identity is made **explicit instead of
+   content-derived**: every shipped file carries a self-identity header — a
+   `file_generation` UUID stamped as its first record at creation and at
+   every rotation-reseed (both happen under the registry write lock, so the
+   stamp is atomic with file birth; requires the registry-format amendment
+   §8-A6; the delivery journal is a new format and simply starts with one).
+   Wire identity = (node, file class, file_generation), immutable and
+   available from byte 0. The head fingerprint is kept as a **cross-check**
+   on reconnect, never as identity.
+
+   Replay rules, adopted from the frozen wire by reference where they
+   genuinely apply, defined explicitly where they do not:
+   - **ACK-then-advance** and **durable ACK = fsynced mirror bytes**: adopted
+     verbatim (`docs/specs/sesh-wire.md` §Invariants).
+   - **Reconnect**: the node asks the server's high-water per
+     file_generation (the recovery-lookup idiom) and resumes from it.
+   - **Byte-overlap validation after ACK loss**: when the node's cursor is
+     ahead of the server's high-water (an ACK was lost), the node re-ships
+     from the server's high-water; before appending, the server verifies the
+     re-shipped overlap window byte-matches its mirror. At-least-once
+     shipping plus overlap validation replaces the sesh tuple-dedup summary.
+   - **Overlap mismatch or in-generation size regression** (source below
+     cursor within one file_generation): within a generation, files are
+     append-only by contract — rotation is the only sanctioned truncation
+     and it mints a new generation — so either signal means in-place
+     mutation or corruption. The server **quarantines the generation**:
+     mirrored bytes are preserved untouched, ACKs stop, the anomaly is
+     flagged for operator repair. Never a silent reset, never an overwrite —
+     the store's preserve-conflicting-histories stance
+     (`docs/specs/sesh-wire.md` §File Identity) applied with herder's
+     loud-anomaly doctrine.
+   - **Rotation**: the reseeded live file is a new generation and ships as a
+     new unit; the pre-rotation archive (carrying its own generation header)
+     ships once, immutable. The server's parsed projection dedups rows
+     across generations by content — rows are self-contained snapshots — so
+     rotation costs bytes, never correctness.
 2. **Bus-event streams** — hcom events, keyed (namespace_id, epoch_id,
    event_id) per the epoch model (`docs/specs/herder-spec.md` §6.2–6.3).
    Cursor = last-ACKed event id per (namespace, epoch); an epoch change is a
    legitimate new stream, never a replay anomaly; at-least-once, server dedup
    on the triple.
 3. **Level-state streams** — mission overlays (§3.4) and node status.
-   Idempotent full-replace snapshots keyed per subject, carrying a node-minted
-   monotonic generation number; the server discards stale generations. No
-   replay exists or is needed: on reconnect the node ships current state once.
+   Idempotent full-replace snapshots keyed per subject, ordered by an
+   incarnation-fenced token `(spoke incarnation, counter)` — §3.4 defines the
+   token and its recovery rules, because a "node-minted monotonic counter"
+   alone cannot survive a disposable observer's rebuild. No replay exists or
+   is needed: on reconnect the node re-emits current state per the server's
+   retained-key listing (§3.4).
 
 **Reconnect**: the node asks the server for its high-water per stream (the
 recovery-lookup idiom from the sesh wire) and resumes from there. A server
@@ -329,79 +410,186 @@ fleet delivery — and repair by reconnect + replay with no operator ceremony.
 
 ### 3.3 Inbound delivery and receipts (DECISION-4)
 
-**DECISION: structurally delivery-only inbound; node-local resolution;
-node-journaled claims; a monotonic receipt state machine whose "delivered" is
-never stronger than correlated node-side evidence.**
+**DECISION: structurally delivery-only inbound; node-local resolution; a
+node-owned durable delivery journal; a per-command delivery mode —
+at-most-once by default, at-least-once by explicit choice — with
+"indeterminate after claim" as a first-class terminal state. Exactly-once is
+explicitly NOT claimed against the installed bus.**
 
 - **Command model**: a typed envelope `{command_id (server-minted, unique),
   target node_id, verb, payload}`. The phase-1b verb set is exactly one verb:
   **deliver** `{target session (label | guid), text, sender attribution,
-  optional deadline}`. There is no shell, no argv passthrough, no interpreter
-  on the node: the spoke maps the envelope by code onto the local send path —
-  remote sends can never be more permitted than local ones (the
-  delivery-only-by-structure framing the decision record kept from its
-  design C).
+  optional deadline, mode: at-most-once | at-least-once}`. There is no shell,
+  no argv passthrough, no interpreter on the node: the spoke maps the
+  envelope by code onto the local send path — remote sends can never be more
+  permitted than local ones (the delivery-only-by-structure framing the
+  decision record kept from its design C).
 - **Resolution is node-local.** The node resolves the target against its own
   registry with its own refusal semantics (`docs/specs/herder-spec.md` §7
   `send`, §3.1-4/5/11). The server never resolves against its mirror —
   server-side resolution is the resolver-drift failure the node-daemon pass
   rejected. Server pre-checks against its projection are advisory warnings to
   the submitting operator, never verdicts.
-- **Node journal**: before executing anything, the spoke appends
-  `{command_id, envelope hash, claimed_at}` to a durable node-local delivery
-  journal (fsync before execution; a node file in the herder state dir, *not*
-  the registry — it is delivery bookkeeping, not seat truth). Execution
-  outcome is appended after, verbatim from the local send receipt. Dedup by
-  `command_id` makes redispatch harmless — at-least-once dispatch plus a
-  journaled claim yields exactly-once execution. The journal is itself a
-  file-tail stream (§3.2), so **receipts replay losslessly by construction**:
-  a receipt that raced a disconnect arrives when the journal bytes do.
+- **What the installed bus can evidence** (verified design input, not an
+  assumption): `hcom send` returns no message id, and delivery receipts carry
+  no message correlate — the local send engine
+  (`tools/herder/internal/send/hcom.go`) exists in its current shape
+  precisely because of this: it serializes a snapshot → send → receipt-wait
+  window under an inter-process lock and reports
+  `delivered | queued | not_joined | send_failed`, where `delivered` means "a
+  strictly-newer receipt appeared inside my serialized window". No durable
+  artifact ties a specific bus message to a specific caller. Therefore no
+  design can honestly promise exactly-once delivery, or receipt-correlated
+  dedup across a crash, on the installed bus — and this design does not.
+- **The delivery journal is node truth, not observer state.** It lives in the
+  herder state dir beside the registry, appended with fsync discipline. The
+  spoke is merely its usual writer, exactly as the observer is an ordinary
+  peer writer of the registry (`docs/specs/herder-spec.md` §3.1-13); any
+  later spoke incarnation — or a CLI verb — can read and recover it. This
+  keeps the observer *process* disposable: kill it at any point and every
+  journal state below remains truthful. The journal carries a self-identity
+  header (§3.2) and ships upstream as a file-tail stream, so **receipts
+  replay losslessly by construction**: a receipt that raced a disconnect
+  arrives when the journal bytes do.
+- **Execution protocol**, per fetched command, in order:
+  1. dedup: `command_id` already journaled → no new attempt (redispatch is
+     re-offering, never re-execution by itself);
+  2. fence: a journaled fence row for `command_id` → refuse, report fenced;
+  3. deadline: past deadline by the node clock → journal a fence row
+     (reason: expired), never execute;
+  4. attempt-open: `{command_id, attempt n, envelope hash, opened_at}`
+     appended and fsynced **before** any execution;
+  5. execute: invoke the local send path;
+  6. attempt-close: the local verdict appended verbatim.
+- **Crash truth table** — the observer must be killable at any point with
+  truth intact, so the gap is modeled, not papered over:
+  - killed before attempt-open: nothing happened; a later redispatch finds no
+    journal entry and executes normally;
+  - killed between attempt-open and attempt-close: the send may or may not
+    have reached the bus — **indeterminate**. Recovery (the next spoke
+    incarnation, or a CLI recovery verb over the same journal) resolves it by
+    the command's mode: **at-most-once** (default) → append
+    `indeterminate` (terminal; never re-executed; ships upstream with its
+    evidence: attempt opened at T, no outcome); **at-least-once** → open
+    attempt n+1 (duplicate delivery is possible, and every attempt is
+    journaled and visible, never silent);
+  - killed after attempt-close: the outcome is durable and ships on replay.
+
+  At-most-once is the right default here: the payloads are instructions to
+  live agents, where a duplicated instruction is worse than a stranded one,
+  and the bus doctrine is already "never blind-resend". At-least-once is the
+  submitter's explicit opt-in for idempotent payloads.
 - **Receipt state machine** (server-side, per command_id, strictly monotonic,
   duplicates recorded never regressed — the doctrine of
   `docs/design/grok-first-class-design.md` §DR-2 generalized):
 
   ```text
-  accepted ──► dispatched ──► claimed ──► concluded(outcome)
-      │             │             │
-      └─────────────┴─────────────┴──► expired | cancelled     (terminal)
+  accepted ──► dispatched ──► claimed ──► concluded(outcome)   (terminal)
+      │             │             └─────► indeterminate        (terminal;
+      │             │                      at-most-once crash gap, evidence shown)
+      │             ▼
+      ├──► cancel_requested | expiry_reached      (NON-terminal: stop offering)
+      │             │
+      └─────────────┴──► cancelled | expired      (terminal; only once FENCED)
   ```
 
   - **accepted** — durably journaled in the server log before any dispatch or
     any acknowledgement to the submitter.
   - **dispatched** — handed to a node fetch response; may repeat; repeats are
     journaled, never assumed delivered.
-  - **claimed** — the node's shipped journal shows the claim row.
+  - **claimed** — the node's shipped journal shows the attempt-open row.
   - **concluded** — the node's journal shows the outcome, surfaced verbatim:
-    the local send receipt with its resolved guid when resolution succeeded,
+    the local send verdict with its resolved guid when resolution succeeded,
     or the local refusal named (unseated with eviction record, unreconciled
     binding, unknown target — the local vocabulary, unmodified).
-  - **expired** — deadline passed before a claim; terminal; never dispatched
-    again. **cancelled** — submitter withdrew before a claim; terminal.
+  - **indeterminate** — the node's journal shows an attempt-open resolved
+    under at-most-once with no outcome; terminal; displayed with its
+    evidence, never as failure or success. Resubmission is an explicit
+    operator act minting a new command_id — the fleet-tier analog of "read
+    the pane before retrying".
+- **Cancel and expiry cannot lie** (fencing): `cancel_requested` (submitter)
+  and `expiry_reached` (server clock) immediately stop the envelope from
+  being offered in any future fetch — but they are **non-terminal**, because
+  a dispatch may already be in flight. The server finalizes to `cancelled` /
+  `expired` only when no claim can ever arrive: either the command was never
+  dispatched, or the node has **fenced** it — on its next contact the spoke
+  is told which in-flight command_ids are cancel/expiry-pending and journals
+  a fence row for each it has not claimed, reporting the fence upstream.
+  Fence-vs-claim races resolve deterministically by journal append order:
+  whichever row landed first wins. Deadlines are enforced at both edges (the
+  server stops offering by its clock; the node fences at claim time by its
+  clock); skew therefore can only make expiry more conservative, and a node
+  whose clock ran behind may still execute — in which case evidence
+  dominates, below.
+- **Evidence dominates bookkeeping.** A claim or outcome arriving for a
+  command in `cancel_requested` / `expiry_reached` moves it to `claimed` /
+  `concluded`: the cancellation simply failed, and the display says so
+  ("cancel requested at T; executed anyway at T′"). If server bookkeeping
+  ever finalized early against later journal evidence, the display reconciles
+  to the evidence and flags the disagreement loudly — the server never
+  defends a false terminal state. This is legal monotonicity because
+  cancel_requested/expiry_reached are defined as non-terminal.
 - **Honesty rules** (doctrine): a delivery claim is never stronger than its
   correlated evidence chain; "no receipt yet" is displayed as *unknown /
   node dark*, which is a display state, not a verdict; timeouts never
   fabricate failure or success; nothing is blindly re-sent — redispatch only
-  re-offers an envelope the journal dedups. Where a seat has a full ack-chain
+  re-offers an envelope the journal dedups, and re-execution happens only
+  under an explicit at-least-once mode. Where a seat has a full ack-chain
   receipt machine, "delivered" surfaces that chain; where local semantics top
-  out at queued-for-next-turn, the server reports **queued-at-seat** and
-  never upgrades it. The server's vocabulary is the minimum of the node's,
-  never the maximum.
+  out at the installed engine's vocabulary, the server reports that verdict
+  verbatim (`delivered` meaning window-correlated receipt, `queued` meaning
+  submitted-no-receipt) and never upgrades it. The server's vocabulary is the
+  minimum of the node's, never the maximum.
+- **Upstream option, recorded not assumed**: if the bus ever returns a
+  durable per-send message id (or accepts a client-supplied idempotency key),
+  the crash gap closes — attempt-open records the correlate, recovery can
+  distinguish sent from not-sent, `indeterminate` collapses into
+  `concluded`/safe-retry, and exactly-once *effect* becomes claimable. That
+  is an upstream bus change; whether to file the ask is an owner decision
+  (§7-8). Nothing in phase 1b depends on it.
 
 ### 3.4 Mission overlay reconciliation (DECISION-5)
 
 **DECISION: overlays are idempotent full-replace photographs keyed
-(node, mission directory), anchored to a git base commit; latest generation
-wins per key; cross-node same-slug is surfaced, never merged; nothing ever
-reconciles back into mission files.**
+(node, mission directory), anchored to a git base commit; ordered by an
+incarnation-fenced (spoke incarnation, counter) token; cross-node same-slug
+is surfaced, never merged; nothing ever reconciles back into mission
+files.**
 
 - **Payload**: `{mission slug + directory path, git base commit sha, the set
   of dirty/untracked files under the mission directory with full contents,
-  captured_at, generation}` — the settled ruling's shape verbatim
+  captured_at, ordering token}` — the settled ruling's shape verbatim
   (`docs/specs/system-boundaries.md` §Settled rulings: "idempotent
   mission-directory snapshot overlays, not mission dual-writes"). Payloads
   carry an explicit size ceiling and an honest `truncated` marker when a
   mission exceeds it — owning the ceiling is the lesson from rejecting
   payload-capped transports, inverted.
+- **Ordering token: (spoke incarnation, counter), incarnation-fenced at the
+  server.** A disposable observer cannot carry a durable counter — anything
+  generation-bearing living only in observer-owned state would make that
+  state load-bearing, which is exactly the forbidden shape. So: the spoke
+  mints a fresh random **incarnation id at every boot** (ephemeral by
+  design, nothing persisted); within an incarnation the counter is a plain
+  in-memory monotonic. The **server** orders incarnations per node by
+  first-observed succession (server truth, recorded at connect) and fences:
+  a snapshot from the node's newest incarnation always supersedes any
+  retained snapshot from an earlier incarnation regardless of counters; a
+  snapshot from a superseded incarnation is discarded. A rebuilt observer at
+  counter 0 therefore beats a retained counter 100 — stale mission content
+  can never be resurrected by a restart.
+- **Reconnect recovery, both loss directions**:
+  - *observer state lost (restart/rebuild)* — on connect under a new
+    incarnation, the server returns its **retained-key listing** for this
+    node (every (mission directory) key it holds). The node re-emits current
+    state for every retained key — a fresh overlay where the directory
+    exists, a **tombstone re-emission** where it does not — plus overlays
+    for any new keys its scan finds. Retained keys are marked
+    *pending-refresh* on the server from the moment the new incarnation is
+    observed until their re-emission arrives, so the display never presents
+    a superseded-incarnation snapshot as current;
+  - *server state lost* — the retained-key listing is empty; the node ships
+    its current scan; the view rebuilds from level state alone. Nothing can
+    be resurrected because nothing was retained.
 - **Production**: observer-side, strictly read-only — read-only git queries
   only (the `mish status` precedent, `docs/specs/mission-spec.md`), no locks,
   no writes, ever. Discovery is by node-configured mission roots, best-effort:
@@ -413,8 +601,10 @@ reconciles back into mission files.**
   overlay-plus-metadata — a failure to enrich never changes the underlying
   truth (`docs/specs/system-boundaries.md` §Identity and attribution).
 - **Reconciliation rules**:
-  - per (node, mission directory) key: highest generation wins; lower or
-    equal generations are discarded (idempotent replace);
+  - per (node, mission directory) key: within the current incarnation,
+    highest counter wins and lower or equal counters are discarded
+    (idempotent replace); across incarnations, the fencing rule above is
+    absolute;
   - an overlay with an empty dirty set replaces prior state — clean is also a
     state;
   - a mission directory observed absent produces a tombstone overlay
@@ -437,16 +627,36 @@ reconciles back into mission files.**
 semantics — explicit grant, explicit transfer naming the current holder,
 explicit release, no expiry — consumed downstream only as advice.**
 
-- **Shape**: `{subject: node (by node_id) | mission (by slug, label-grade),
-  holder: human label-grade name, granted_by, since}`. One tenure vocabulary
-  across the system: like a herder label, a lease is released only by
-  explicit release or transfer naming the current holder — never by
-  liveness, TTL, or inference (`docs/specs/herder-spec.md` §2 "label",
-  "lease / transfer").
+- **Shape**: `{subject, holder: human label-grade name, granted_by, since}`.
+  One tenure vocabulary across the system: like a herder label, a lease is
+  released only by explicit release or transfer naming the current holder —
+  never by liveness, TTL, or inference (`docs/specs/herder-spec.md` §2
+  "label", "lease / transfer").
+- **Subject identity — composite, because a bare slug aliases what the
+  overlay model keeps distinct.** Mission identity is the slug in the
+  ratified mission spec, but slug uniqueness is per-clone directory
+  existence and a rename is a directory rename
+  (`docs/specs/mission-spec.md` §2 "slug", §4.3): two nodes can legitimately
+  hold different missions under one slug — exactly the case §3.4 refuses to
+  merge — so a slug-keyed lease would silently attribute both. Subjects are
+  therefore:
+  - **node** — by `node_id` (under §3.1's binding rules);
+  - **mission** — composite `(node_id, mission directory path)`, the
+    overlay's own key, with the slug carried as descriptive display. A
+    directory move or slug rename **orphans** the lease: orphaned leases
+    stay visible as orphaned and are never auto-reattached; re-grant is an
+    explicit act, consistent with lease tenure never being inferred;
+  - **slug-group** (explicit variant, never a default) — a lease declared
+    over "every mission currently bearing slug S". It attaches at display
+    time to whatever rows currently carry the slug, and the display always
+    shows its current capture set; a rename detaches a mission from the
+    group, and a later slug reuse is captured by it — that reuse hazard is
+    precisely why group scope must be an explicit declaration by the
+    grantor, marked as such wherever it renders.
 - **Meaning**: responsibility and attribution routing for team views, and a
   `SESSION_OWNER` source. **Never authentication, never access control**
   (`docs/specs/system-boundaries.md`: attribution is never authentication).
-  Mission subjects are opaque label-grade strings; joins from them are
+  Holder names are opaque label-grade strings; joins from them are
   best-effort and view-time, per the label doctrine.
 - **Write path**: leases are written at the server via an authenticated
   server verb. Who may grant, transfer, and release is admission policy —
@@ -500,17 +710,26 @@ viewport.
 
 **The gate.** No hot-read work may begin until all of these hold:
 
-1. **Legacy-view retirement**: the legacy two-state registry view is retired
-   from every read path; the daemon's projection is only ever built against
-   the v2 four-state machine (seated / unseated / retired / lost) — the
-   decision record's memo-derived invariant 3, restated here as a
-   precondition rather than a promise.
-2. **Cold parity harness**: an automated harness compares hot and cold
-   answers over identical registries, including adversarial interleavings,
-   and runs in CI; parity failures block release. Cold reads from the file
-   remain the parity oracle permanently — the harness is a standing tax
-   accepted knowingly (Design D's own stated price), not scaffolding to
-   delete later.
+1. **Legacy-view retirement — landed, so the precondition is verification,
+   not work.** Retirement of the legacy two-state registry view has already
+   shipped on main (commits `8af91d2` "retire legacy registry state view"
+   and `75ab144` "teach four-state session vocabulary": read paths consume
+   the four-state machine — seated / unseated / retired / lost — and v1
+   status survives only in migration compatibility). The precondition is
+   therefore a standing **verification** that this stays true: no read path
+   consumes a two-state view, asserted by test and grep, and the daemon's
+   projection is only ever built against the four-state machine — the
+   decision record's memo-derived invariant 3.
+2. **Cold parity harness over a test-only seam**: a parity harness needs a
+   hot answer to compare, and nothing before phase 2 may serve one — so the
+   harness exercises a **test-only projection seam**: the incremental
+   projection builder a future hot daemon would serve, instantiated
+   in-process by the harness (never wired to any verb, socket, or view) and
+   compared against cold file reads over identical registries, including
+   adversarial interleavings, in CI; parity failures block merge. Cold
+   reads from the file remain the parity oracle permanently — the harness
+   is a standing tax accepted knowingly (Design D's own stated price), not
+   scaffolding to delete later.
 3. **Phase 1b baked**: the observer-with-spoke has run in live herds long
    enough to demonstrate disposability under kill-and-rebuild with zero
    correctness loss, per its ACs.
@@ -531,9 +750,14 @@ consumes.
 | Server dead / unreachable | Nothing blocked; spoke retries with backoff; commands cannot be submitted | — | Server restart; nodes re-register and resume; mirrors re-fill from node retention |
 | Server data dir lost | Nothing | Rebuilt from re-shipped node state; server truths (leases, command history) lost to the backup horizon — backup is the durability story, as with the store | Restore data-dir backup, then replay |
 | Node re-minted (`node init --new`) | New node_id registers fresh | Old node permanently stale; optional succession annotation | Operator annotates at server if desired |
-| Registry rotation mid-ship | Rotation is local and unaffected | New fingerprint generation; archive ships once; parsed rows dedup by content | Automatic |
+| Registry rotation mid-ship | Rotation is local and unaffected | New file_generation stamped and shipped as a new unit; archive ships once; parsed rows dedup by content | Automatic |
 | Command to a dark node | — | `accepted`, dispatch pending, honest age shown; `expired` if deadline passes unclaimed | Node reconnects and fetches, or submitter cancels |
 | Receipt raced a disconnect | Outcome sits in the durable node journal | `claimed`, awaiting journal bytes | Journal stream replay delivers the receipt losslessly |
+| Observer killed between attempt-open and attempt-close | Journal shows an open attempt; recovery resolves by mode (§3.3) | at-most-once: `indeterminate` with evidence; at-least-once: attempt n+1 visible | Operator resubmits explicitly (new command) if needed |
+| Cancel/expiry raced an in-flight dispatch | Node fences unclaimed ids on next contact; a landed claim executes | `cancel_requested`/`expiry_reached` (non-terminal) until fenced; late evidence dominates and is flagged | Automatic — fence handshake (§3.3) |
+| Spoke wedged / slow scan (server up) | Registry observation loop and heartbeat unaffected (§2.1 fence); level-state coalesces | Streams age honestly | Spoke goroutine restart; cursors resume |
+| Observer rebuilt while server retains overlays | New incarnation; re-emits per retained-key listing, incl. tombstones | Old-incarnation snapshots fenced, keys pending-refresh until re-emission | Automatic (§3.4) |
+| Duplicate node_id (clone missed `node init --new`) | The refused clone's spoke gets a loud refusal | Quarantine: no stream accepted, dispatch suspended, anomaly flagged | Clone repair (`node init --new`) or explicit succession re-bind (§3.1) |
 | Mission dir moved/deleted | — | Tombstone overlay (observed-absent), aged out of active display | Next scan of the new location produces a fresh overlay |
 
 ## 7. Owner decisions required
@@ -569,8 +793,14 @@ needs it (§9 maps them).
 7. **Spec homing**: whether the ratified form of this design becomes a new
    component spec or an amendment section of `docs/specs/herder-spec.md`;
    status lines are owner territory either way.
+8. **Optional upstream bus ask**: `hcom send` returning a durable per-send
+   message id (or accepting a client-supplied idempotency key) would close
+   the delivery crash gap and collapse `indeterminate` (§3.3's recorded
+   upstream option). Phase 1b is designed to not depend on it; whether the
+   ask is worth filing upstream is the owner's call.
 
-No upstream asks are required by this design.
+No upstream asks are *required* by this design; item 8 is the one optional
+ask it records.
 
 ## 8. Proposed spec amendments (proposals only, clearly marked)
 
@@ -600,6 +830,14 @@ ratified document.
 - **A5 — `docs/specs/system-boundaries.md` §Remaining architecture work**:
   point the herd-server paragraph at the ratified form of this design as its
   named successor; status and wording owner-ruled.
+- **A6 — `docs/specs/herder-spec.md` §5.1 (registry file self-identity)**:
+  the registry gains a `kind: file` self-identity record — a
+  `file_generation` UUID stamped as the first row of the live file at
+  creation and at every rotation-reseed, under the write lock — the spoke's
+  wire identity for file-tail streams (§3.2). Bookkeeping-kind like node and
+  epoch records: invisible to session resolution, one more row the loader
+  partitions away. Existing files without a header get one stamped at their
+  next locked write (their pre-header bytes ride the first generation).
 - **`docs/specs/session-service-spec.md`, `docs/specs/sesh-wire.md`,
   `docs/specs/mission-spec.md`**: **no change**, deliberately — the §4 audit
   is the evidence. If the owner wants a cross-reference, the store design's
@@ -618,17 +856,30 @@ docs discipline: its doc rows are acceptance criteria, not follow-ups.
 - **Territory**: new server code; a spoke module inside the observer; no
   changes to `tools/sesh/`, `tools/mish/`, hcom, or any registry write path.
 - **Settled by this design**: DECISION-1 (standalone), DECISION-2
-  (registration semantics), DECISION-3 (stream classes, ACK-then-advance,
-  outbound-only posture), §2.3 storage classes, §2.4 version-skew stance.
-- **AC sketch**: (1) a node registers on first spoke connect; re-connect and
-  re-registration are idempotent; a re-minted node appears as a new,
+  (first-binding registration, quarantine, succession re-bind, one active
+  spoke channel), DECISION-3 (stream classes; explicit file_generation
+  identity per §8-A6; ACK-then-advance; overlap validation; quarantine on
+  in-generation mutation; outbound-only posture), §2.1 failure-domain fence,
+  §2.3 storage classes, §2.4 version-skew stance.
+- **AC sketch**: (1) a node registers on first spoke connect; reconnect from
+  the same identity refreshes; the same node_id from a different tailnet
+  identity is refused and quarantined (no streams accepted, dispatch
+  suspended, anomaly flagged); an explicit succession re-bind lifts the
+  quarantine and records the succession; a re-minted node appears as a new,
   never-merged node; (2) registry live log + rotation archives mirror
-  byte-faithfully with ACK-then-advance cursors; kill -9 of observer or
-  server at any point loses nothing after reconnect (replay test with
-  injected failures); (3) rotation mid-ship produces a new generation and no
-  duplicate parsed rows; (4) server parse quarantines malformed rows and
-  reindexing rebuilds the projection from mirrors alone; (5) all local herder
-  verbs pass their existing ACs with the server absent; (6) docs rows: server
+  byte-faithfully keyed by file_generation header identity, with
+  ACK-then-advance cursors and reconnect overlap validation; kill -9 of
+  observer or server at any point loses nothing after reconnect (replay
+  test with injected failures, including lost-ACK re-ship); (3) rotation
+  mid-ship stamps and ships a new generation with no duplicate parsed rows;
+  in-generation size regression or overlap mismatch quarantines the
+  generation, preserves mirrored bytes, and stops ACKs; (4) server parse
+  quarantines malformed rows and reindexing rebuilds the projection from
+  mirrors alone; (5) all local herder verbs pass their existing ACs with the
+  server absent; (6) failure-domain fence under fault injection: a stalled
+  server connection, a wedged spoke goroutine, or a slow scan never delays
+  the registry observation loop or heartbeat beyond its normal cadence
+  bound, and spoke teardown/restart loses no facts; (7) docs rows: server
   README + system-boundaries cross-ref (owner-gated wording).
 
 ### U-DELIVER — inbound delivery + receipt machine
@@ -639,18 +890,27 @@ docs discipline: its doc rows are acceptance criteria, not follow-ups.
   command queue + receipt journal; the local send path is *consumed*, never
   modified.
 - **Settled by this design**: DECISION-4 in full — single deliver verb,
-  node-local resolution, journaled claim before execution, monotonic receipt
-  states, evidence-correlated `delivered`, vocabulary-minimum rule, expiry
-  and cancel semantics.
-- **AC sketch**: (1) exactly-once execution under repeated dispatch
-  (dedup-by-command_id test with forced redispatch); (2) no receipt state ever
-  regresses; a receipt racing a disconnect arrives via journal replay; (3)
-  `delivered` is reported only when the node journal shows the local receipt
-  — a wedged node yields `dispatched`/unknown, never a verdict; (4) local
-  refusals surface verbatim with resolved-guid correlation where applicable;
-  (5) expired and cancelled are terminal and never dispatch afterward; (6)
-  the node contains no path by which an inbound envelope reaches a shell or
-  any verb other than send.
+  node-local resolution, the journal as node truth with attempt-open /
+  attempt-close protocol, delivery modes with at-most-once default and
+  `indeterminate` as a first-class terminal state, no exactly-once claim on
+  the installed bus, cancel/expiry fencing handshake, evidence-dominates
+  rule, vocabulary-minimum rule.
+- **AC sketch**: (1) redispatch under a durable journal never re-executes by
+  itself (dedup-by-command_id with forced redispatch); at-most-once: a kill
+  between attempt-open and attempt-close surfaces `indeterminate` with its
+  evidence and is never re-executed; at-least-once: recovery re-executes as
+  attempt n+1, every attempt visible; (2) no receipt state ever regresses; a
+  receipt racing a disconnect arrives via journal replay; (3) `concluded`
+  verdicts are reported only from node-journal outcomes, verbatim — a wedged
+  node yields `dispatched`/unknown, never a verdict — and no verdict is ever
+  stronger than the local engine's own (`delivered` | `queued` | refusal);
+  (4) local refusals surface verbatim with resolved-guid correlation where
+  applicable; (5) cancel/expiry: a cancel racing an in-flight dispatch
+  finalizes only after the node fences it; a claim landing first beats the
+  fence and the display shows "cancel requested, executed anyway"; nothing
+  finalizes `expired` unfenced; fence-vs-claim ordering is deterministic by
+  journal append order (race test); (6) the node contains no path by which
+  an inbound envelope reaches a shell or any verb other than send.
 
 ### U-OVERLAY — mission-directory snapshot overlays
 
@@ -659,15 +919,23 @@ docs discipline: its doc rows are acceptance criteria, not follow-ups.
   store + view. Mission files, `tools/mish/`, and the mission spec are
   untouchable.
 - **Settled by this design**: DECISION-5 in full — payload shape anchored to
-  git base sha, full-replace idempotence, generation guards, tombstones,
-  never-merge cross-node slugs, read-only production, size ceiling with
-  honest truncation.
+  git base sha, full-replace idempotence, the (spoke incarnation, counter)
+  ordering token with server-side incarnation fencing, retained-key recovery
+  listing with tombstone re-emission, tombstones, never-merge cross-node
+  slugs, read-only production, size ceiling with honest truncation.
 - **AC sketch**: (1) overlay round-trip: dirty mission dir → server view
-  equals base + dirty contents; (2) out-of-order generations never regress
-  the view; (3) clean-state and absent-dir snapshots replace and tombstone
-  respectively; (4) two nodes with one slug render as flagged distinct rows;
-  (5) a strace-level check (or equivalent test) that production performs no
-  write and no non-read git subcommand against the mission dir; (6) payloads
+  equals base + dirty contents; (2) ordering: within an incarnation,
+  out-of-order counters never regress the view; across incarnations, a
+  rebuilt observer at counter 0 supersedes a retained counter 100, and
+  stale-incarnation snapshots are discarded (both directions tested); (3)
+  reconnect recovery: retained keys are pending-refresh from new-incarnation
+  contact until re-emitted; a retained key absent from the current scan gets
+  a tombstone re-emission — stale mission content is never displayed as
+  current after a rebuild; server state loss rebuilds the view from one full
+  scan; (4) clean-state and absent-dir snapshots replace and tombstone
+  respectively; (5) two nodes with one slug render as flagged distinct rows;
+  (6) a strace-level check (or equivalent test) that production performs no
+  write and no non-read git subcommand against the mission dir; (7) payloads
   over the ceiling arrive marked truncated, never silently clipped.
 
 ### U-DELEGATE — delegation leases + SESSION_OWNER advice
@@ -676,26 +944,41 @@ docs discipline: its doc rows are acceptance criteria, not follow-ups.
 - **Territory**: server lease verbs + store; spoke advice cache; the launch
   choke point's env stamping. No session-service or mission change.
 - **Settled by this design**: DECISION-6 in full — lease tenure semantics,
+  composite mission subject (node_id + directory; slug descriptive) with
+  orphan-on-move/rename, slug-group as an explicit marked variant,
   attribution-never-authentication, stamping precedence (explicit env >
   mission owner > node lease > honest absence), advice-tier distribution.
 - **AC sketch**: (1) grant/transfer/release follow label-lease rules
-  (transfer names the holder; bare collision refuses); (2) spawn stamping
-  honors the pinned precedence, including absence; (3) a dark spoke serves
-  stale advice and blocks nothing; (4) leases never gate any verb anywhere
-  (grep-level and test-level assertion); (5) interim static-env provisioning
-  keeps working unchanged.
+  (transfer names the holder; bare collision refuses); (2) subject identity:
+  a mission lease never attaches across nodes or directories sharing a slug;
+  a directory move/rename orphans the lease, displayed as orphaned and never
+  auto-reattached; a slug-group lease renders its current capture set and is
+  visibly marked group-scoped; (3) spawn stamping honors the pinned
+  precedence, including absence; (4) a dark spoke serves stale advice and
+  blocks nothing; (5) leases never gate any verb anywhere (grep-level and
+  test-level assertion); (6) interim static-env provisioning keeps working
+  unchanged.
 
 ### U-GATE — phase-2 prerequisites (enabler, not hot reads)
 
 - **Type**: enabler. **Depends on**: none of the above (may proceed in
   parallel); blocks any future hot-read unit.
-- **Territory**: read-path code retiring the legacy two-state view; a
-  hot/cold parity harness in CI. Explicitly does **not** implement hot reads,
-  the mode shim, or `watch`.
-- **Settled by this design**: §5's four gate preconditions; the harness is a
-  permanent tax, not scaffolding; `--cold` is forever.
-- **AC sketch**: (1) no read path consumes the legacy two-state view
-  (asserted by test, verified by grep across verbs); (2) the parity harness
-  runs in CI over recorded and fuzzed registries and fails the build on
-  divergence; (3) a written go/no-go checklist instantiating §5's four
-  preconditions exists for the owner to exercise when phase 2 is proposed.
+- **Territory**: a standing verification of the already-landed four-state
+  invariant; the test-only projection seam and its hot/cold parity harness
+  in CI. Explicitly does **not** implement hot reads, the mode shim,
+  `watch`, or any serving path for the seam — the seam is instantiated only
+  by tests.
+- **Settled by this design**: §5's four gate preconditions, with
+  legacy-view retirement recognized as landed on main (`8af91d2`,
+  `75ab144`) and converted to verification; the parity harness runs against
+  the test-only seam; the harness is a permanent tax, not scaffolding;
+  `--cold` is forever.
+- **AC sketch**: (1) a standing assertion (test + grep across verbs) that no
+  read path consumes a two-state view and v1 status appears only in
+  migration compatibility — codifying the landed invariant so it cannot
+  silently regress; (2) the test-only projection seam exists, is wired to
+  no verb, socket, or view (asserted), and the parity harness exercises it
+  in CI over recorded and fuzzed registries, failing the build on any
+  hot/cold divergence; (3) a written go/no-go checklist instantiating §5's
+  four preconditions exists for the owner to exercise when phase 2 is
+  proposed.
