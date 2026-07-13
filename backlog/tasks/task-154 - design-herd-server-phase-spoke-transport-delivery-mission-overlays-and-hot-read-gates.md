@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-10 10:15'
-updated_date: '2026-07-13 01:39'
+updated_date: '2026-07-13 01:44'
 labels: []
 dependencies: []
 references:
@@ -40,4 +40,6 @@ Run a design unit for the remaining cross-component server tier before implement
 2026-07-13 fix round 1 (volu, 8d43400, 984 lines): exactly-once WITHDRAWN — per-command at-most-once (first-class indeterminate, evidence-shipped, never re-executed) / at-least-once (attempts visible); journal re-scoped to NODE truth (observer killable anywhere); cancel/expiry non-terminal until fenced w/ evidence-dominates rule; overlay token (incarnation, counter) + first-observed-succession server fencing; first-binding registration w/ quarantine + succession verb; A6 file_generation header row + wire rules by reference; composite delegation subject; U-GATE converted to verification of landed four-state work + defined test-only parity seam; independent-goroutine/bounded-queue fence AC. panu delta requested.
 
 2026-07-13 delta (panu): P1-3/P1-4/P2-6/P2-7/P2-8 CLOSED (incarnation fencing, quarantine, delegation, U-GATE seam, failure-domain fence all verified); 3 P1 remain, all executability: journal needs exclusive load/validate/append transaction (multi-writer races: dual attempt-open, claim-vs-fence, duplicate n+1); ACK-loss cursor relation stated BACKWARDS + three offset cases missing vs frozen wire; A6 first-row header impossible on installed headerless registry (loader quarantines kind:file; U-CORE fence excludes required code) — one-shot locked migration + loader support + territory update prescribed. Fix round 2 to volu.
+
+2026-07-13 fix round 2 (volu, 88ba1cc, 1077 lines): exclusive journal transaction (load/validate/append under flock, execution outside lock, open-attempt recovery branch, fence-vs-claim by transaction not append order) + concurrency ACs; offset cases restated correctly (server ahead on lost ACK; three frozen-wire directions cited); A6 rewritten (KindFile loader + one-shot locked migration w/ digest-identity legacy archive + shared-writer territory). panu delta 2 requested.
 <!-- SECTION:NOTES:END -->
