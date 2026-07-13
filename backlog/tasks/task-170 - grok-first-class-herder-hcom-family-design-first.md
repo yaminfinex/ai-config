@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-13 11:29'
+updated_date: '2026-07-13 11:48'
 labels: []
 dependencies: []
 priority: medium
@@ -69,4 +69,6 @@ U3 (lifecycle & identity) MERGED 79bcb7c (branch head d23e42d, 7 commits incl. a
 U5 (shim/setup/doctor/docs) MERGED to main as e258b87 (merge --no-ff of task-170-u5-shim, worker mupo-implemented rove... CORRECTION: worker rove, reviewer mupo). Reviewer mupo (opus): round-1 NOT-APPROVE (2xP1 manual-launch seat registration/foreign-GUID adoption, 4xP2, 2xP3), round-2 fixes verified, polish SIGHT-APPROVE at 0bd3e17. Delivered: grok PATH shim (no-vendor-fallback + GROK=/abs/path escape hatch), ai-doctor grok family checks (report-only, isolated probe roots), bounded-guest manual launch (mint-unless-grok-row identity, foreground wrapper, --retire-on-stop, herder grok retire-offline), managed-home docs (TASK-182 content), check-shims.sh + check-grok-doctor.sh (house battery 57->58). Post-merge gate on main: 58/58 ALL GREEN rc=0. ALL GROK STAGING UNITS U1-U5 NOW MERGED (U1 5fbd991, U2 c3a9702, U3 79bcb7c, U4 629de2e, U5 e258b87). ONLY REMAINDER: the activation unit (lean; hard ACs in earlier notes; blocked on owner XAI one-liner - export to ~/.profile or above the .bashrc interactive guard).
 
 ACTIVATION UNIT DISPATCHED 2026-07-13: owner moved API key exports to ~/.profile (verified: non-interactive login shell sees XAI_API_KEY by name, nonempty). Worker worker-pore (codex 5.6 high) spawned in worktree task-170-activation, thread task170act, brief napkins/run-herder-dx/task-170-activation-implement-brief.md.
+
+ACTIVATION DEVIATION (2026-07-13, ruled in-unit): first real e2e spawn exposed a staged integration gap — hcom v0.7.23 one-shot generic start leaves the bridge's bus row as a 'new' placeholder; hcom finalizes it launch_failed at 30s (herder's own awaitBind poll triggers the observation); send then excludes the row so the live bridge is unreachable; spawn returned rc=0 with hcom_capture:not_found (childBoundBusOnce cannot identify grok rows). Phase 1 diagnosis (worker-pore) confirmed derived-row-state gating authoritative bridge liveness + silent green. Phase 2 authorized with conditions: seam A binder.go bindIdentity identified read-only call to de-placeholder the row (pinned: no second identity, no unread-state advance, single roster row, send-accepted); seam B spawncmd status-op-authoritative bind capture + no-bind hard-fail with confirmed cleanup, non-grok behavior byte-identical. Upstream ledger candidate: hcom has no identified-one-shot path to mark an externally-supervised binder ready.
 <!-- SECTION:NOTES:END -->
