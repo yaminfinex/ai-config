@@ -68,12 +68,49 @@ func hcomContractEnv(dir string) []string {
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, item := range os.Environ() {
 		key, _, _ := strings.Cut(item, "=")
-		if key == "HCOM" || key == "CODEX_THREAD_ID" || strings.HasPrefix(key, "HCOM_") {
+		if isHcomContractIdentityEnv(key) {
 			continue
 		}
 		env = append(env, item)
 	}
 	return append(env, "HCOM_DIR="+dir)
+}
+
+func isHcomContractIdentityEnv(key string) bool {
+	return key == "HCOM" || key == "CODEX_THREAD_ID" ||
+		strings.HasPrefix(key, "HCOM_") || strings.HasPrefix(key, "CLAUDE")
+}
+
+func unsetHcomContractIdentityEnv(t *testing.T) {
+	t.Helper()
+	type entry struct{ key, value string }
+	saved := make([]entry, 0)
+	for _, item := range os.Environ() {
+		key, value, _ := strings.Cut(item, "=")
+		if isHcomContractIdentityEnv(key) {
+			saved = append(saved, entry{key: key, value: value})
+		}
+	}
+	t.Cleanup(func() {
+		for _, item := range os.Environ() {
+			key, _, _ := strings.Cut(item, "=")
+			if isHcomContractIdentityEnv(key) {
+				if err := os.Unsetenv(key); err != nil {
+					t.Errorf("clear contract identity env %s: %v", key, err)
+				}
+			}
+		}
+		for _, item := range saved {
+			if err := os.Setenv(item.key, item.value); err != nil {
+				t.Errorf("restore contract identity env %s: %v", item.key, err)
+			}
+		}
+	})
+	for _, item := range saved {
+		if err := os.Unsetenv(item.key); err != nil {
+			t.Fatalf("unset contract identity env %s: %v", item.key, err)
+		}
+	}
 }
 
 func hstart(t *testing.T, bin, dir string) string {
@@ -128,10 +165,11 @@ func shortState(t *testing.T) string {
 }
 
 func TestRealHcomBindIdentityUsesSeatOwnedProcessAndPreservesForeignBinding(t *testing.T) {
-	// The helper-created scratch identities are deliberately tool-neutral; keep
-	// the direct binder invocation in the same deterministic contract.
+	// Keep both helper subprocesses and the binder's process-level environment
+	// free of parent-agent identity signals. The adhoc tool path suppresses hook
+	// installation while allowing the identified read to stabilize the aged row.
+	unsetHcomContractIdentityEnv(t)
 	t.Setenv("HCOM_TOOL", "adhoc")
-	t.Setenv("HCOM_TAG", "ambient-parent-tag")
 	bin := installedHcom(t)
 	bus := t.TempDir()
 	foreignName := startName(t, hrunProcess(t, bin, bus, "foreign-process", "start"))
