@@ -139,17 +139,17 @@ func (s *sidecar) run() int {
 
 	row, paneCorrelated := s.discoverRow()
 	rows := hcomList()
-	s.writeStatuslineSnapshots(rows)
 	if row == nil {
 		row, paneCorrelated = s.findRowCorrelated(rows)
 	}
+	s.writeStatuslineSnapshots(rows, row, paneCorrelated)
 	s.enrichDiscovered(row, paneCorrelated)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		if os.Getppid() != s.ppid0 {
-			s.release()
+			s.release(true)
 			return 0
 		}
 		if row == nil {
@@ -169,19 +169,23 @@ func (s *sidecar) run() int {
 			}
 		}
 		if s.missing >= 5 {
-			s.release()
+			s.release(false)
 			return 0
 		}
 		<-ticker.C
 		rows = hcomList()
-		s.writeStatuslineSnapshots(rows)
 		row, paneCorrelated = s.findRowCorrelated(rows)
+		s.writeStatuslineSnapshots(rows, row, paneCorrelated)
 	}
 }
 
-func (s *sidecar) writeStatuslineSnapshots(rows []hcomRow) {
+func (s *sidecar) writeStatuslineSnapshots(rows []hcomRow, row *hcomRow, correlated bool) {
 	if s.statuslineSnapshots == nil {
 		s.statuslineSnapshots = newStatuslineSnapshotWriter(os.Getenv("HCOM_DIR"))
+	}
+	if correlated && row != nil && row.LaunchContext.ProcessID != "" {
+		s.statuslineSnapshots.writeCorrelated(*row, rows, time.Now())
+		return
 	}
 	s.statuslineSnapshots.writeRows(rows, time.Now())
 }
@@ -190,7 +194,7 @@ func (s *sidecar) removeOwnStatuslineSnapshot() {
 	if s.statuslineSnapshots == nil {
 		s.statuslineSnapshots = newStatuslineSnapshotWriter(os.Getenv("HCOM_DIR"))
 	}
-	s.statuslineSnapshots.removeInstance(defaultStatuslineInstanceName())
+	s.statuslineSnapshots.removeOwned()
 }
 
 // enrichDiscovered writes the initial registry enrichment for a freshly
@@ -234,7 +238,7 @@ func (s *sidecar) appendCorrelatedEnrichment(row *hcomRow) bool {
 func (s *sidecar) discoverRow() (*hcomRow, bool) {
 	for i := 0; i < 90; i++ {
 		if os.Getppid() != s.ppid0 {
-			s.release()
+			s.release(true)
 			return nil, false
 		}
 		if row, paneCorrelated := s.findRowCorrelated(hcomList()); row != nil {
@@ -695,8 +699,10 @@ func (s *sidecar) reportAgentSession(row *hcomRow, paneCorrelated bool) {
 	s.lastReportedSID = row.SessionID
 }
 
-func (s *sidecar) release() {
-	s.removeOwnStatuslineSnapshot()
+func (s *sidecar) release(removeSnapshot bool) {
+	if removeSnapshot {
+		s.removeOwnStatuslineSnapshot()
+	}
 	_ = s.send("pane.release_agent", map[string]any{
 		"pane_id": s.paneID,
 		"source":  "herder:sidecar",

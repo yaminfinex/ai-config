@@ -37,7 +37,48 @@ render_ctx() {
 JSON
 }
 
+render_process() {
+  env -i \
+    PATH="/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin" \
+    HERDR_ENV=1 HERDR_PANE_ID="pane-1" HCOM_PROCESS_ID="process-stable-0000" \
+    HCOM_DIR="$ROOT/hcom" HCOM_INSTANCE_NAME="former" "$STATUSLINE" <<'JSON'
+{"workspace":{"project_dir":"/tmp/statusline-project"},"model":{"display_name":"Test Model"},"session_id":"sess-1"}
+JSON
+}
+
 mkdir -p "$ROOT/hcom/statusline"
+
+cat > "$ROOT/hcom/statusline/process-stable-0000.env" <<'EOF'
+HCOM_LIVE_NAME=current
+HCOM_UNREAD=2
+HCOM_LAST_AGE_S=5
+EOF
+OUT="$(render_process 2>&1)"
+case "$OUT" in
+  *"@current"*) ok "stable snapshot live name overrides launch name" ;;
+  *) bad "stable snapshot live name overrides launch name" "out=$OUT" ;;
+esac
+case "$OUT" in
+  *"@former"*) bad "stable snapshot hides launch name after rename" "out=$OUT" ;;
+  *) ok "stable snapshot hides launch name after rename" ;;
+esac
+if grep -q '✉ 2' <<<"$OUT"; then
+  ok "stable snapshot shows bus segment"
+else
+  bad "stable snapshot shows bus segment" "out=$OUT"
+fi
+rm -f "$ROOT/hcom/statusline/process-stable-0000.env"
+cat > "$ROOT/hcom/statusline/former.env" <<'EOF'
+HCOM_UNREAD=6
+HCOM_LAST_AGE_S=7
+EOF
+OUT="$(render_process 2>&1)"
+if grep -q '✉ 6' <<<"$OUT"; then
+  ok "missing process snapshot falls back to name snapshot"
+else
+  bad "missing process snapshot falls back to name snapshot" "out=$OUT"
+fi
+rm -f "$ROOT/hcom/statusline/former.env"
 
 OUT="$(render 2>&1)"
 case "$OUT" in

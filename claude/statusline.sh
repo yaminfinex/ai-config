@@ -70,9 +70,11 @@ write_context_snapshot() {
   hcom_unread=""
   hcom_last_ts=""
   hcom_last_age_s=""
+  hcom_live_name=""
   if [ -r "$hcom_state_file" ]; then
     while IFS='=' read -r key value; do
       case "$key" in
+        HCOM_LIVE_NAME) hcom_live_name="$value" ;;
         HCOM_UNREAD) hcom_unread="$value" ;;
         HCOM_LAST_TS) hcom_last_ts="$value" ;;
         HCOM_LAST_AGE_S) hcom_last_age_s="$value" ;;
@@ -83,6 +85,7 @@ write_context_snapshot() {
   state_dir="$(dirname -- "$hcom_state_file")" || return 0
   tmp="$(mktemp "${state_dir}/.$(basename -- "$hcom_state_file").tmp.XXXXXX" 2>/dev/null)" || return 0
   {
+    if [ -n "$hcom_live_name" ]; then printf 'HCOM_LIVE_NAME=%s\n' "$hcom_live_name"; fi
     if small_uint "$hcom_unread"; then printf 'HCOM_UNREAD=%s\n' "$hcom_unread"; fi
     if small_uint "$hcom_last_ts"; then printf 'HCOM_LAST_TS=%s\n' "$hcom_last_ts"; fi
     if small_uint "$hcom_last_age_s"; then printf 'HCOM_LAST_AGE_S=%s\n' "$hcom_last_age_s"; fi
@@ -102,6 +105,31 @@ fi
 
 # herder/herdr identity — pure env, no `herdr` call (statusline renders often).
 # HERDR_PANE_ID is set in every herdr pane; HERDER_* only on spawned agents.
+# Optional hcom bus snapshot. The event-driven herder sidecar updates this
+# file; this renderer only performs cheap file reads and omits the segment when
+# no snapshot exists. hcom-launched sessions use their stable process id;
+# other sessions retain the name-keyed contract.
+hcom_state_file="${HCOM_STATUSLINE_STATE:-}"
+if [ -z "$hcom_state_file" ] && [ -n "${HCOM_DIR:-}" ]; then
+  hcom_name_state_file="${HCOM_DIR%/}/statusline/${HCOM_INSTANCE_NAME:-${HCOM_NAME:-self}}.env"
+  if [ -n "${HCOM_PROCESS_ID:-}" ]; then
+    hcom_state_file="${HCOM_DIR%/}/statusline/${HCOM_PROCESS_ID}.env"
+    if [ ! -r "$hcom_state_file" ]; then
+      hcom_state_file="$hcom_name_state_file"
+    fi
+  else
+    hcom_state_file="$hcom_name_state_file"
+  fi
+fi
+hcom_live_name=""
+if [ -n "$hcom_state_file" ] && [ -r "$hcom_state_file" ]; then
+  while IFS='=' read -r key value; do
+    case "$key" in
+      HCOM_LIVE_NAME) hcom_live_name="$value" ;;
+    esac
+  done < "$hcom_state_file"
+fi
+
 if [ "${HERDR_ENV:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
   herder_seg="${BLUE}⬡ ${HERDR_PANE_ID}${RESET}"
   if [ -n "${HERDER_LABEL:-}" ]; then
@@ -110,20 +138,13 @@ if [ "${HERDR_ENV:-}" = "1" ] && [ -n "${HERDR_PANE_ID:-}" ]; then
   if [ -n "${HERDER_ROLE:-}" ]; then
     herder_seg="${herder_seg} ${BLUE}[${HERDER_ROLE}]${RESET}"
   fi
-  hcom_name="${HCOM_INSTANCE_NAME:-${HCOM_NAME:-}}"
+  hcom_name="${hcom_live_name:-${HCOM_INSTANCE_NAME:-${HCOM_NAME:-}}}"
   if [ -n "$hcom_name" ]; then
     herder_seg="${herder_seg} ${BLUE}@${hcom_name}${RESET}"
   fi
   line1="${line1} ・ ${herder_seg}"
 fi
 
-# Optional hcom bus snapshot. The event-driven herder sidecar updates this
-# file; this renderer only performs cheap file reads and omits the segment when
-# no snapshot exists.
-hcom_state_file="${HCOM_STATUSLINE_STATE:-}"
-if [ -z "$hcom_state_file" ] && [ -n "${HCOM_DIR:-}" ]; then
-  hcom_state_file="${HCOM_DIR%/}/statusline/${HCOM_INSTANCE_NAME:-${HCOM_NAME:-self}}.env"
-fi
 write_context_snapshot
 if [ -n "$hcom_state_file" ] && [ -r "$hcom_state_file" ]; then
   hcom_unread=""
