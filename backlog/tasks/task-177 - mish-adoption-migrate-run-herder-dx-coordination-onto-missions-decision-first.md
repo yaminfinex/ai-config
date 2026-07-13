@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-13 01:02'
-updated_date: '2026-07-13 01:21'
+updated_date: '2026-07-13 01:25'
 labels: []
 dependencies: []
 priority: high
@@ -27,4 +27,6 @@ mish shipped complete (its build run closed with all eleven units merged; binary
 2026-07-13 review round 1 (kune, codex-high): pre-trace PASSED (built the CLI, ran the scaffold — flags/grammar/env facts all verified) but 2 P1: pointer stubs are plain files not redirects — compact continuations + in-flight workers with old-path references (transitively enumerated in the live tree) would lose instructions mid-unit; hash-verified MOVE does not prove tracked custody (destination ignore rules can silently drop files after source deletion; secret scan must precede the custody COMMIT). 4 P2 (identifier ruling oversteps the ratified mission-spec invariant — owner-only; mission board must stay empty incl. housekeeping; pull-before-scaffold + explicit status command; provisioning authority contradiction) + 1 P3 (quarantine leaks). Fix round 1 sent to zemu; kune holds for delta.
 
 2026-07-13 fix round 1 delta (zemu, c0eb7ad): whole-tree symlink supersedes stubs+deferred-adopt (one dir-level link covers the transitive closure; retirement journaled, AC7; cold-resume + dependency-walk drills as AC6); ordered custody-proof pipeline w/ secret-scan-before-commit and staged-blob-comparison-before-deletion (AC4); P2-1 deferred to owner (migration unit BLOCKED on that ruling, AC2); board empty full stop (AC8); sync-before-scaffold + exact status command (AC3/10); provisioning owner-only, unit installs nothing (AC1); quarantine rewritten project-agnostic. kune delta requested.
+
+2026-07-13 delta round (kune): board/mechanics/provisioning RESOLVED; symlink primitive confirmed right (no live-corpus find-dependence). Remaining: P1 continuity invariant DOA vs real corpus (pre-existing broken refs from historical archive moves; AC6 as worded must fail) — reworded to resolved-before==same-bytes-after w/ baseline/delta classes; P1 source deleted before REMOTE custody proven (no push pre-deletion; local clone insufficient) — pipeline reordered push→remote-clone→compare→delete, unconfirmed-authority branch removed; P2 option-(b) redaction precluded by residual verbatim rulings — parameterized; P2 staged-set equality impossible (manifest is an extra) — scoped to artifacts/**; P3 two quarantine leaks. Fix round 2 to zemu.
 <!-- SECTION:NOTES:END -->
