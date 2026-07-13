@@ -3,9 +3,11 @@ id: TASK-192
 title: >-
   sesh — surface remote requests pay seconds of TTFB; root-cause and fix the
   :8766 serving path
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - mika
 created_date: '2026-07-13 19:24'
+updated_date: '2026-07-13 20:35'
 labels:
   - sesh
 dependencies: []
@@ -27,8 +29,14 @@ Investigation plan for the builder: add cheap per-phase timing (WhoIs, handler, 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Root cause identified and written down (task note or design-doc note per decision-001) with evidence, not conjecture
-- [ ] #2 Remote TTFB for / and /nodes within small constant multiples of RTT (target: /nodes under 1s, / under 1.5s from a ~180ms-RTT node) measured against the live store after deploy
-- [ ] #3 A regression gate covers the serving-path property the root cause violated, to the extent it is testable without a real tailnet (document honestly what is not)
-- [ ] #4 Docs current per decision-001 (README/ops notes if operational behavior or wiring changed)
+- [x] #1 Root cause identified and written down (task note or design-doc note per decision-001) with evidence, not conjecture
+- [x] #2 Remote TTFB for / and /nodes within small constant multiples of RTT (target: /nodes under 1s, / under 1.5s from a ~180ms-RTT node) measured against the live store after deploy
+- [x] #3 A regression gate covers the serving-path property the root cause violated, to the extent it is testable without a real tailnet (document honestly what is not)
+- [x] #4 Docs current per decision-001 (README/ops notes if operational behavior or wiring changed)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC2 live evidence (2026-07-13, this ~180ms-RTT Sydney node, store sesh-v0.1.3, both fleet shippers active): / ttfb 8.5-10.5s BEFORE -> 1.41s steady AFTER (first hit 3.55s = projection rebuild under ingest, the documented residual); /nodes 1.8-2.5s BEFORE -> 0.36s AFTER (== install.sh control, pure RTT floor); /?page=48 8.5s BEFORE -> 0.38s AFTER. Root cause + fix merged as 12b2f63; design note docs/design/2026-07-13-sesh-store-read-write-split.md. Residual rebuild-under-ingest cost is the append-index corpus-cost follow-up's territory.
+<!-- SECTION:NOTES:END -->
