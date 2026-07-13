@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-12 12:32'
+updated_date: '2026-07-13 01:05'
 labels: []
 dependencies: []
 priority: low
@@ -23,3 +24,9 @@ When an agent dies without a cull, its registry row stays SEATED and keeps holdi
 - [ ] #1 A decision is recorded: disambiguate via liveness, or ratify no-flag-on-ambiguity with the operator remedy documented
 - [ ] #2 If disambiguation: the stale-seated name-reuse scenario attaches the flag to the live row, pinned by a test driving the real write path
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-07-13 staleness audit: KEEP — capture re-verified accurate against main (evidence in run journal / audit report #52404).
+<!-- SECTION:NOTES:END -->

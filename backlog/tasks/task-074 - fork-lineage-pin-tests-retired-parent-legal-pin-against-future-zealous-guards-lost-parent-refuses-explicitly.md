@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 11:53'
-updated_date: '2026-07-08 23:42'
+updated_date: '2026-07-13 01:05'
 labels: []
 dependencies: []
 priority: low
@@ -28,3 +28,9 @@ Scope (tiny, bundle-eligible into any lifecyclecmd-adjacent unit):
 - [ ] #1 Pin test: fork of a RETIRED parent succeeds — child registered with forked_from=<retired guid>, child seats, parent row count unchanged and state still retired
 - [ ] #2 Fork of a LOST parent (transcript verified gone) refuses explicitly, naming the lost verification; zero rows appended anywhere
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-07-13 staleness audit: KEEP — capture re-verified accurate against main (evidence in run journal / audit report #52404).
+<!-- SECTION:NOTES:END -->

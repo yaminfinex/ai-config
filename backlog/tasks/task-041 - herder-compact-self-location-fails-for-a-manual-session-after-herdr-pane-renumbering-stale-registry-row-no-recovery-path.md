@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:34'
-updated_date: '2026-07-08 23:36'
+updated_date: '2026-07-13 01:05'
 labels: []
 dependencies: []
 priority: medium
@@ -58,3 +58,9 @@ lale field data (#11888), second refusal mode (benign): herder compact also refu
 - [ ] #3 compact invoked from a subdirectory of the pane foreground cwd is accepted
 - [ ] #4 contract suite covers the fallback path, the refusal wording, and the subdirectory case
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-07-13 staleness audit (read-only, evidence-verified): AMEND not close. compact --then shipped but self-location remains: paste target resolved only from herdr agent list with refusal when absent (spawncmd/compact.go:146-164, hera spot-verified), wd must equal paneCWD exactly (287-295), early self-row refusal lacks concrete recovery (91-94). Pane re-key/durable-key correlation DID improve (69-83, 250-280; f210777). Remaining scope: pane-list fallback + recovery wording + subdir corroboration.
+<!-- SECTION:NOTES:END -->

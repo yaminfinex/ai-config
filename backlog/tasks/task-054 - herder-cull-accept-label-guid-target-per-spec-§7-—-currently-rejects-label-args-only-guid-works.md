@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:29'
-updated_date: '2026-07-08 23:42'
+updated_date: '2026-07-13 01:05'
 labels: []
 dependencies: []
 priority: low
@@ -26,3 +26,9 @@ Reported by spec-ravu (bus #6043, applied by hera): herder cull rejects a bare l
 - [ ] #3 ambiguous label refuses with candidates named, consistent with resolver discipline elsewhere
 - [ ] #4 suite covers label cull and the ambiguity refusal
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-07-13 staleness audit: KEEP — capture re-verified accurate against main (evidence in run journal / audit report #52404).
+<!-- SECTION:NOTES:END -->

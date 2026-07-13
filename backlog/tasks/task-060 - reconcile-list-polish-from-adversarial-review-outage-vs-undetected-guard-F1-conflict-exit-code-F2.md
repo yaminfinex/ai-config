@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 05:59'
-updated_date: '2026-07-08 23:42'
+updated_date: '2026-07-13 01:05'
 labels: []
 dependencies: []
 priority: low
@@ -25,3 +25,9 @@ From opus review of TASK-046 (#6436, both low, non-blocking): F1 — list.go bui
 - [ ] #2 reconcile: conflict (stored terminal live as a DIFFERENT agent) exits non-zero, distinct from the ambiguous exit; semantics stated in help text
 - [ ] #3 existing goldens (livefail, json_mixed) extended to pin both
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-07-13 staleness audit: KEEP — capture re-verified accurate against main (evidence in run journal / audit report #52404).
+<!-- SECTION:NOTES:END -->

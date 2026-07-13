@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 10:20'
-updated_date: '2026-07-12 07:49'
+updated_date: '2026-07-13 01:05'
 labels: []
 dependencies: []
 priority: medium
@@ -45,4 +45,6 @@ Fresh data point (TASK-072 bulk-retire sweep, 2026-07-08): row 275a4ac2 (comment
 RE-GROUND COMPLETE (2026-07-12, hera, read-only): gap SURVIVES the observer. Live specimen: the orchestrator row (shell-relaunched claude, enrolled not spawned) is observer-CONFIRMED with a fresh sweep timestamp in observer.status.json, yet herder list shows LIVE=unknown and has NO advice/confirmation surface (checked --help and output — zero annotation). The 070 description said "observer advice now annotates herder list" — it does not, or not for this class. VERDICT: fix direction (b) — surface observer confirmations in herder list (distinct presentation for observer-confirmed-but-tracker-undetected), fold into the identity-cluster unit. Upstream candidate (a) (herdr agent adopt / tracker pickup of foreground agents) goes to the TASK-029 ledger at cluster closeout.
 
 A1 merge (a1c5acd) note: rows now carry hcom_verified (additive *bool) and all carry paths re-verify or mark — the presentation gap this task tracks (observer-confirmed liveness not surfaced in herder list, no advice surface) REMAINS open; A1 shipped the identity-integrity substrate, not the list/advice presentation. herdr-adopt upstream candidate still queued for the TASK-029 ledger.
+
+2026-07-13 staleness audit: AMEND — split scopes. Upstream tracker-adoption ask stays on the TASK-029 ledger (candidate recorded). LOCAL residue is real and stays here: observer records per-guid Confirmed timestamps (observerstatus/status.go:12-24; observercmd/observer.go:218-221) but list renders only Flags, never Confirmed (listcmd/list.go:483-512, hera spot-verified) and unmatched live panes stay undetected (378-386). Rescope this task to: surface observer confirmation in list output.
 <!-- SECTION:NOTES:END -->

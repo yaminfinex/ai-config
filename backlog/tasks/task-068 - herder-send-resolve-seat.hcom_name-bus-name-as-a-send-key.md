@@ -4,7 +4,7 @@ title: 'herder send: resolve seat.hcom_name (bus name) as a send key'
 status: To Do
 assignee: []
 created_date: '2026-07-08 10:03'
-updated_date: '2026-07-08 23:42'
+updated_date: '2026-07-13 01:05'
 labels:
   - herder
   - dx
@@ -27,3 +27,9 @@ Reported by vibe during TASK-063 round-3 hand-back (bus #10730).
 - [ ] #2 duplicate hcom_name across live rows refuses with candidates named (same discipline as label ambiguity)
 - [ ] #3 resolver order documented in send --help; suite covers resolution and refusal
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-07-13 staleness audit: KEEP, capture real. Resolve matches guid/short-guid/label only (registry.go:319-328); send help/refusal omits hcom_name (send.go:139,303-318). The HERDER_BUS=hcom debug literal path is NOT hcom_name resolution (no namespace routing, no duplicate-name refusal).
+<!-- SECTION:NOTES:END -->

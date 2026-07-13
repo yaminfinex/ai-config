@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-10 10:15'
+updated_date: '2026-07-13 01:05'
 labels: []
 dependencies: []
 references:
@@ -28,3 +29,9 @@ Reconcile standing herder-spec promises that have no complete implementation or 
 - [ ] #4 A verified missing transcript can produce LOST, with lineage/refusal behavior tested, or LOST is removed from the v1 contract
 - [ ] #5 Send output reports the resolved guid and specific unseated/continuity state required by the final contract
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-07-13 staleness audit: KEEP; narrow the send sub-scope — send now has verified/queued bus receipts, so AC5 should target the missing identity/continuity fields (resolved guid, unseating, continuity) rather than receipts generally. resolve dispatch + LOST transition still unimplemented (spec herder-spec.md:439,445-446 vs repo search); process seats only in observer logic (observercmd/observer.go:728,1017-1045).
+<!-- SECTION:NOTES:END -->
