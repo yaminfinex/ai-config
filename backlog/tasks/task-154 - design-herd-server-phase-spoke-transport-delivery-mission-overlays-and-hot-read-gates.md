@@ -3,9 +3,10 @@ id: TASK-154
 title: >-
   design herd-server phase: spoke transport, delivery, mission overlays, and
   hot-read gates
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-10 10:15'
+updated_date: '2026-07-13 01:02'
 labels: []
 dependencies: []
 references:
