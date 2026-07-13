@@ -10,7 +10,7 @@ created_date: '2026-07-12 01:30'
 Research memo, not an exercised decision. Two independent researchers (one codex,
 one fable) surveyed the space without reading each other; this synthesis preserves
 their disagreements. Frozen constraints treated as binding throughout: wire v1
-(docs/specs/sesh-wire.md), ACK durability, R23 stale-registry refusal, drop-in
+(tools/sesh/docs/specs/sesh-wire.md), ACK durability, R23 stale-registry refusal, drop-in
 preservation, user-owned per-user shipper (no sudo), I1–I11, store-URL-only
 node→store coupling.
 
@@ -381,7 +381,7 @@ runtime config surface with its preservation rule unchanged.
 
 > **Owner decision (2026-07-12):** store-served distribution (option 1c)
 > sanctioned; full design pass filed as TASK-168 and delivered in
-> `docs/design/2026-07-12-sesh-store-served-distribution.md`. tsnet day 1
+> `tools/sesh/docs/design/2026-07-12-sesh-store-served-distribution.md`. tsnet day 1
 > accepted with a Tier-B admin ask (one tag + one grant, owner self-issues
 > keys). Naming ruled: node `sesh`, `tag:sesh`, capability
 > `infinex.xyz/cap/sesh` (the `sesh-store` / `sesh.dev/cap/store` names in

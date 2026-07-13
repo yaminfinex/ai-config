@@ -95,7 +95,14 @@ Host sesh-host
     User <your VM login>
     IdentityFile ~/.ssh/google_compute_engine
     ProxyCommand gcloud compute start-iap-tunnel quick-host %p --listen-on-stdin --zone northamerica-south1-c --project prod-infinex-687a
+    StrictHostKeyChecking accept-new
 ```
+
+`accept-new` matters on the FIRST publish (first-rollout lesson): the VM's
+host key is not in `known_hosts` yet, and release.sh drives ssh/rsync
+non-interactively, so a default TOFU prompt stalls or aborts the publish.
+`accept-new` pins the key on first contact and still refuses a later key
+change (unlike `no`, which would accept silently).
 
 (`gcloud compute config-ssh` generates the key pair if you have never
 ssh'd to the VM.) On the VM, one-time, add your login to the `sesh` group so

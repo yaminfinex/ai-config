@@ -19,7 +19,7 @@ touches and updates them within the same unit of work. Doc updates are
 acceptance criteria, not follow-ups. Design passes must include an explicit
 docs plan (doc → change → owning task) that hands each follow-up task its doc
 rows as ACs (first instance: the docs plan in
-docs/design/2026-07-12-sesh-store-served-distribution.md §10).
+tools/sesh/docs/design/2026-07-12-sesh-store-served-distribution.md §10).
 
 "Relevant docs" includes at minimum: the component README and runbooks, spec
 documents (including informational notes where contracts are unchanged),

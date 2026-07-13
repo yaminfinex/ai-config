@@ -33,7 +33,7 @@ One shared doc PR, authored jointly by the 085+086 workers, sign-off by design a
   timestamp, ordinal, byte span, quarantine flag) — this is what lane 3 codes against,
   so freezing it here unblocks 087 at M0, against fixtures, before the store exists.
 
-Deliverable: `docs/specs/sesh-wire.md` (or spec §8 amendment). Everything below
+Deliverable: `tools/sesh/docs/specs/sesh-wire.md` (or spec §8 amendment). Everything below
 parallelizes after this merges.
 
 ## M1 — walking skeleton: bytes flow (localhost, one node, mirror only)
