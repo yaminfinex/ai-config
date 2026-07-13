@@ -3,9 +3,10 @@ id: TASK-184
 title: >-
   sesh — setup bootstraps launchd into gui/0: Options.UID default never applied
   (Darwin onboarding blocked)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-13 06:15'
+updated_date: '2026-07-13 06:41'
 labels:
   - sesh
 dependencies: []
@@ -21,7 +22,13 @@ FIELD BUG, first real Darwin onboarding 2026-07-13: install.sh → sesh setup re
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 setup.Run defaults UID from os.Getuid() when unset; caller-omission regression test asserts gui/<real-uid>, not gui/0
-- [ ] #2 Darwin path refuses uid 0 with a clear message
-- [ ] #3 launchctl invocation lines in tests derive from the same domain helper the code uses (no fixture drift)
+- [x] #1 setup.Run defaults UID from os.Getuid() when unset; caller-omission regression test asserts gui/<real-uid>, not gui/0
+- [x] #2 Darwin path refuses uid 0 with a clear message
+- [x] #3 launchctl invocation lines in tests derive from the same domain helper the code uses (no fixture drift)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Done commit 251684c. UID default inside setup.Run, Darwin refuses uid 0 pre-write, shared LaunchdDomain helper at all launchctl sites incl. tests. Reviewer-novu: CLEAN first pass (#56443). Field workaround used on owner Mac pre-fix: manual launchctl bootstrap gui/$(id -u).
+<!-- SECTION:NOTES:END -->

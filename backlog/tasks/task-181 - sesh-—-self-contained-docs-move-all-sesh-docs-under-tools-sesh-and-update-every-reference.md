@@ -3,9 +3,10 @@ id: TASK-181
 title: >-
   sesh — self-contained docs: move all sesh docs under tools/sesh and update
   every reference
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-13 06:03'
+updated_date: '2026-07-13 06:41'
 labels:
   - sesh
 dependencies: []
@@ -21,7 +22,13 @@ Owner ruling 2026-07-13: sesh must be self-contained — all its docs live under
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 git mv preserves history; zero dangling references to old paths (grep gate)
-- [ ] #2 tools/sesh is fully self-contained: a checkout of tools/sesh alone carries spec, design, ops and field docs
-- [ ] #3 Execution-lesson doc top-ups landed (grant src for tagged fleet, ssh accept-new)
+- [x] #1 git mv preserves history; zero dangling references to old paths (grep gate)
+- [x] #2 tools/sesh is fully self-contained: a checkout of tools/sesh alone carries spec, design, ops and field docs
+- [x] #3 Execution-lesson doc top-ups landed (grant src for tagged fleet, ssh accept-new)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Done commit 976f7be. All three docs R100 byte-identical (blob-verified), zero-dangling gate with scan() error discrimination + existence assertions for the three spec-cited shared-corpus files. SCOPE RULING recorded: sesh operational docs in-module; spec citations of shared sessions/missions corpus stay repo-root as provenance (mission-spec + herder docs cite them). Review closures #56603/#56607.
+<!-- SECTION:NOTES:END -->

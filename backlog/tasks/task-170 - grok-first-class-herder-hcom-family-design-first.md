@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-13 06:21'
+updated_date: '2026-07-13 06:35'
 labels: []
 dependencies: []
 priority: medium
@@ -57,4 +57,6 @@ ACTIVATION UNIT HARD AC (adopted from U2 delta review, reviewer-zula #55688): a 
 U2 (launch contract) MERGED c3a9702 (branch head 8f692f2, 3 commits). Two review rounds by zula: round1 2xP1 (raw-string seat guard rejecting 85.5% of real GUIDs; credential in ungated probe env + stderr persisted) + P2 (refusals not at argv-building layer) + P3 (ambient-PATH MCP seeding); round2 new P2 (seedGrokHome compare-refuse wedge) -> unconditional atomic rewrite + probe-env allowlist + remedy nit. APPROVE at 8f692f2 (#55864). Independent gates 55/55 per round; post-merge on main 56/56. Activation still OFF. Next: U3 (lifecycle) + U4 (observer) in parallel; activation unit hard ACs on record (real spawn e2e; zula also flagged version-skew config rewrite note + rename-without-dir-fsync as known choices).
 
 PANE-ENV TEST PROVEN (2026-07-13): a new export appended to ~/.bashrc reaches a freshly spawned herder pane (bash agent echoed the marker). Credential path for activation = owner adds XAI_API_KEY export to ~/.bashrc; no herdr restart, no server seeding, no key file required (0600-file injection remains an optional tightening, not a blocker). The activation-unit credential precondition should assert key presence in the pane env by name.
+
+CORRECTION (2026-07-13): XAI_API_KEY has been exported in ~/.bashrc for days (line 126, valued); fresh-pane check confirms PRESENT_NONEMPTY by name. My earlier "absent" reading was hera-session stale process env (predates the export line). Credential precondition for activation is ALREADY SATISFIED in any fresh pane — zero owner action needed. Lesson: an agent process env is frozen at launch; test credentials in a FRESH pane, never from a long-lived session env.
 <!-- SECTION:NOTES:END -->

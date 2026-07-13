@@ -3,9 +3,10 @@ id: TASK-180
 title: >-
   sesh — release.sh ssh-mode latest flip wrote literal 'n' (escaping through
   just→ssh); harden VERSION parsing both sides
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-13 06:03'
+updated_date: '2026-07-13 06:41'
 labels:
   - sesh
 dependencies: []
@@ -21,7 +22,13 @@ FIELD BUG, first live publish 2026-07-13: the remote latest flip's printf lost i
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Remote latest flip produces byte-exact version + newline, proven by a gate that runs release.sh through an ssh shim
-- [ ] #2 install.sh and sesh update reject malformed VERSION loudly (tested with the literal 'sesh-v0.1.0n' regression bytes)
-- [ ] #3 Docs current: ops/README publishing section notes the quoting hazard class
+- [x] #1 Remote latest flip produces byte-exact version + newline, proven by a gate that runs release.sh through an ssh shim
+- [x] #2 install.sh and sesh update reject malformed VERSION loudly (tested with the literal 'sesh-v0.1.0n' regression bytes)
+- [x] #3 Docs current: ops/README publishing section notes the quoting hazard class
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Done on branch task-180-181-release-fix-docs-move commit 6be764d. Escaping-proof flip (one remote parse, stdin write), strict X.Y.Z arity at 4 lockstep sites, ssh-shim gate reproduces the original failure mode (reviewer replayed old string → literal trailing 6e byte). Review: reviewer-novu #56435 finding closed #56610.
+<!-- SECTION:NOTES:END -->
