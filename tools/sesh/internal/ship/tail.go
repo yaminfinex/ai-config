@@ -115,6 +115,10 @@ func (s *Shipper) RunOnce(ctx context.Context) (runErr error) {
 	}
 
 	if s.Registry.NeedsRecovery {
+		// One recovery GET per discovered identity is a long, otherwise
+		// silent stretch on a fresh registry over a large corpus; say so
+		// before it starts instead of looking wedged.
+		s.logger().Info("cursor registry missing or unreadable; recovering positions from store", "files", len(discovered))
 		for _, d := range discovered {
 			if err := s.recoverCursor(ctx, d); err != nil {
 				return fmt.Errorf("cursor recovery for %s: %w", d.Identity.Key(), err)
@@ -198,7 +202,11 @@ func (s *Shipper) recoverCursor(ctx context.Context, d Discovered) error {
 	if werr != nil {
 		switch werr.Code {
 		case wire.ErrNotFound:
-			return nil // no mirror state: the normal new-file path from 0
+			// No mirror state: the normal new-file path from 0. The zero
+			// cursor is recorded so an interrupted recovery pass resumes
+			// behind the identities the store already answered instead of
+			// re-querying all of them — each is a full store round trip.
+			return s.Registry.Put(Cursor{Tool: d.Identity.Tool, SessionID: d.Identity.SessionID, FileUUID: d.Identity.FileUUID, Path: d.Path})
 		case wire.ErrOutOfGrant, wire.ErrStoreUnavailable, wire.ErrMirrorWriteFailed:
 			return fmt.Errorf("%w: recovery GET %s", errHold, werr.Code)
 		default:
