@@ -101,8 +101,16 @@ func (s SessionSummary) Recency() time.Time {
 // with a fixture-driven fake until then. Implementations may return rows in
 // any order — the surface applies the frozen transcript ordering itself.
 type Store interface {
-	// Sessions lists every logical session the index or mirror knows.
-	Sessions(ctx context.Context) ([]SessionSummary, error)
+	// RecentSessions lists one page of logical sessions ordered most recent
+	// first by the R14 instant (max parsed timestamp, first-ingest when
+	// none), with a deterministic tie-break. The bound is part of the
+	// contract: request-time work must stay proportional to the page — the
+	// fleet ships thousands of files per node, so implementations keep a
+	// bounded recency projection (keys only, rebuilt amortized) or an
+	// equivalent request-time-bounded plan, and never materialize summaries
+	// for the whole corpus per request. total is the corpus-wide logical
+	// session count.
+	RecentSessions(ctx context.Context, limit, offset int) (page []SessionSummary, total int, err error)
 	// Session resolves one logical session; ok=false when unknown.
 	Session(ctx context.Context, tool wire.Tool, logicalSessionID string) (sum SessionSummary, ok bool, err error)
 	// Rows returns the session's sesh_index_messages rows.
@@ -246,7 +254,7 @@ func (s *Server) render(w http.ResponseWriter, tmpl *template.Template, name str
 }
 
 func (s *Server) handleRecency(w http.ResponseWriter, r *http.Request) {
-	data, err := s.recencyData(r.Context())
+	data, err := s.recencyData(r.Context(), recencyPageParam(r))
 	if err != nil {
 		s.log.Printf("surface: recency: %v", err)
 		s.writeDegraded(w, "session listing unavailable")
@@ -259,7 +267,7 @@ func (s *Server) handleRecency(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRecencyFragment(w http.ResponseWriter, r *http.Request) {
-	data, err := s.recencyData(r.Context())
+	data, err := s.recencyData(r.Context(), recencyPageParam(r))
 	if err != nil {
 		s.log.Printf("surface: recency fragment: %v", err)
 		s.writeDegraded(w, "session listing unavailable")

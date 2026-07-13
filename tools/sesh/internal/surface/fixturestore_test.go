@@ -18,6 +18,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -73,8 +74,30 @@ func mirrorKey(tool wire.Tool, wireSessionID, fileUUID string, gen int) string {
 	return fmt.Sprintf("%s/%s/%s/%d", tool, wireSessionID, fileUUID, gen)
 }
 
-func (f *fakeStore) Sessions(context.Context) ([]surface.SessionSummary, error) {
-	return append([]surface.SessionSummary(nil), f.sessions...), nil
+// RecentSessions mirrors the seam contract on fixture data: most recent
+// first by the R14 instant, logical id tie-break, one page. The fake may
+// slice in Go — proving the LIMIT is SQL-side is the live SQLStore's gate.
+func (f *fakeStore) RecentSessions(_ context.Context, limit, offset int) ([]surface.SessionSummary, int, error) {
+	sums := append([]surface.SessionSummary(nil), f.sessions...)
+	sort.Slice(sums, func(i, j int) bool {
+		a, b := sums[i].Recency(), sums[j].Recency()
+		if !a.Equal(b) {
+			return a.After(b)
+		}
+		return sums[i].LogicalSessionID < sums[j].LogicalSessionID
+	})
+	total := len(sums)
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(sums) {
+		return nil, total, nil
+	}
+	sums = sums[offset:]
+	if limit >= 0 && len(sums) > limit {
+		sums = sums[:limit]
+	}
+	return sums, total, nil
 }
 
 func (f *fakeStore) Session(_ context.Context, tool wire.Tool, id string) (surface.SessionSummary, bool, error) {
