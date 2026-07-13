@@ -214,6 +214,67 @@ func TestCheckReportsWithoutDownloading(t *testing.T) {
 	}
 }
 
+// TestMalformedLatestRefusedBeforeAnyFetch replays the first-live-publish
+// field bug: a mangled publish served the literal bytes 'sesh-v0.1.0n' (no
+// trailing newline) as latest — valid charset, nonexistent version. The
+// updater must refuse it loudly at the VERSION read instead of building a
+// 404 asset URL, for both update and --check.
+func TestMalformedLatestRefusedBeforeAnyFetch(t *testing.T) {
+	var otherRequests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/releases/latest/VERSION" {
+			_, _ = w.Write([]byte("sesh-v0.1.0n")) // the literal regression bytes, raw
+			return
+		}
+		otherRequests = append(otherRequests, r.URL.Path)
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	home, target := installedNode(t, srv.URL)
+	var out bytes.Buffer
+	opts := baseOpts(home, target, &fakeRunner{}, &out)
+
+	for _, check := range []bool{false, true} {
+		opts.Check = check
+		err := Run(opts)
+		if err == nil || !strings.Contains(err.Error(), `"sesh-v0.1.0n"`) ||
+			!strings.Contains(err.Error(), "invalid version string") {
+			t.Fatalf("check=%v: want a loud invalid-version error naming the bytes, got %v", check, err)
+		}
+	}
+	if len(otherRequests) != 0 {
+		t.Fatalf("malformed latest still led to fetches: %v", otherRequests)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "old-binary" {
+		t.Fatal("malformed latest replaced the binary")
+	}
+}
+
+// The channel version shape is a cross-side contract with scripts/release.sh
+// and install.sh; this pins the Go side of it.
+func TestVersionShape(t *testing.T) {
+	accept := []string{
+		"sesh-v0.1.0", "sesh-v0.1.0-3-gab12cd3", "v1.1.0", "v99.0.1",
+		"abcdef1", "f3a4c51deadbeef",
+	}
+	reject := []string{
+		"sesh-v0.1.0n", "v1.1.0n", "sesh-v0.1.0-dirty", "latest",
+		"sesh-v0.1.0 extra", "", "../v1.1.0", "vTEST-1",
+		// arity is exactly major.minor.patch
+		"v1", "v1.1", "sesh-v0.1", "sesh-v1.2.3.4",
+	}
+	for _, v := range accept {
+		if !versionRE.MatchString(v) {
+			t.Errorf("versionRE rejected valid version %q", v)
+		}
+	}
+	for _, v := range reject {
+		if versionRE.MatchString(v) {
+			t.Errorf("versionRE accepted malformed version %q", v)
+		}
+	}
+}
+
 // TestLatestRollbackPropagatesAsVisibleDowngrade: equality-only semantics —
 // an operator rewriting latest to an older version converges the fleet
 // down, and the from -> to line makes it visible (design §6.2, AC#5).

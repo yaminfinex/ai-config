@@ -105,6 +105,22 @@ the publish path needs no sudo — `releases/` is group-writable with setgid:
 sudo usermod -aG sesh $USER
 ```
 
+**Quoting hazard (field bug, first live publish).** Every command
+`scripts/release.sh` sends over ssh crosses one extra shell parse on the
+remote side. An earlier `sh -c '...'` wrapper added a second quoting layer;
+the command's own single quotes then split the wrapper's, an embedded
+`printf '%s\n'` lost its backslash, and the store served `latest` as
+`sesh-v0.1.0n` — installers built a 404 URL from it. The hazard is a class,
+not a one-off: any backslash escape or nested quoting in a remotely executed
+command string is at the mercy of however many shell parses sit between
+writer and executor. The script now sends command strings through exactly
+one remote parse, keeps them free of backslash sequences, and moves byte
+payloads (the `latest` contents) over stdin; the release gate
+(`tests/check-release-publish.sh`) replays the ssh path through a shim, and
+both consumers (`install.sh`, `sesh update`) refuse any version string that
+fails the release shape instead of 404ing. Keep all four in lockstep when
+touching the publish path.
+
 ## Backup and restore
 
 `backup.sh` runs every 15 minutes as user `sesh` (RPO = 15 min). Bucket

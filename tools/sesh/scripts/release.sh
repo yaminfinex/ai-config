@@ -57,12 +57,24 @@ say()  { echo "release: $*"; }
 fail() { echo "release: FAIL: $*" >&2; exit 1; }
 
 # run_dest executes a shell command at the channel root (ssh for host:path
-# DESTs, local sh otherwise — the local form is what the gate script tests).
+# DESTs, local sh otherwise); write_dest streams stdin into a file there.
+#
+# QUOTING HAZARD (field bug, first live publish): ssh applies exactly ONE
+# remote shell parse to the command string. An earlier `sh -c '$*'` wrapper
+# added a second quoting layer; the command's own single quotes then split
+# the wrapper's, a `printf '%s\n'` format ended up unquoted, the remote
+# shell ate the backslash, and `latest` was served as 'sesh-v0.1.0n'.
+# Rules: pass the command string to ssh bare (one parse each side, matching
+# the local `sh -c`), never rely on backslash escapes inside it, and move
+# byte payloads over stdin (write_dest), never through embedded formats.
+# The gate replays this path through an ssh shim (check-release-publish.sh).
 case "$DEST" in
   *:*) DEST_HOST="${DEST%%:*}"; DEST_ROOT="${DEST#*:}"
-       run_dest() { ssh "$DEST_HOST" "sh -c '$*'"; } ;;
+       run_dest()   { ssh "$DEST_HOST" "$*"; }
+       write_dest() { ssh "$DEST_HOST" "cat >'$1'"; } ;;
   /*)  DEST_HOST=""; DEST_ROOT="$DEST"
-       run_dest() { sh -c "$*"; } ;;
+       run_dest()   { sh -c "$*"; }
+       write_dest() { cat >"$1"; } ;;
   *)   fail "DEST must be host:/abs/path or a local absolute path (got: $DEST)" ;;
 esac
 
@@ -73,8 +85,15 @@ if [ -z "$VERSION" ]; then
 fi
 case "$VERSION" in
   *-dirty) fail "refusing to publish a dirty-tree build ($VERSION): commit first" ;;
-  ''|*[!A-Za-z0-9._-]*) fail "unusable version string: '$VERSION'" ;;
 esac
+# The version shape is a cross-side contract: install.sh and `sesh update`
+# refuse anything else (so a mangled `latest` fails loudly instead of
+# becoming a 404 URL), which means publishing a nonconforming version would
+# strand the fleet. Keep the three definitions in lockstep:
+# internal/store/assets/install.sh, internal/update/update.go (versionRE).
+VERSION_SHAPE='^(sesh-)?v[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+-g[0-9a-f]+)?$|^[0-9a-f]{7,40}$'
+printf '%s' "$VERSION" | grep -Eq "$VERSION_SHAPE" ||
+  fail "unusable version string: '$VERSION' (want [sesh-]vX.Y.Z — exactly major.minor.patch — optionally -N-g<hash>, or a bare commit hash)"
 
 OUT_DIR="$MODULE_DIR/releases/$VERSION"
 say "building $VERSION into $OUT_DIR"
@@ -126,6 +145,9 @@ run_dest "test ! -e '$DEST_ROOT/$VERSION' && mv '$STAGING' '$DEST_ROOT/$VERSION'
   fail "$DEST_ROOT/$VERSION appeared during publish — refusing to overwrite"
 
 say "flipping latest -> $VERSION (temp + rename + sync)"
-run_dest "printf '%s\n' '$VERSION' >'$DEST_ROOT/.latest.tmp' && sync '$DEST_ROOT/.latest.tmp' && mv '$DEST_ROOT/.latest.tmp' '$DEST_ROOT/latest' && sync '$DEST_ROOT'"
+# The version bytes are produced LOCALLY and travel over stdin: no format
+# string or backslash escape crosses the remote parse (see QUOTING HAZARD).
+printf '%s\n' "$VERSION" | write_dest "$DEST_ROOT/.latest.tmp"
+run_dest "sync '$DEST_ROOT/.latest.tmp' && mv '$DEST_ROOT/.latest.tmp' '$DEST_ROOT/latest' && sync '$DEST_ROOT'"
 
 say "published $VERSION"

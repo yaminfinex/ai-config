@@ -26,11 +26,22 @@ esac
 
 # latest is read exactly once; every fetch below uses immutable
 # /releases/<ver>/ paths, so a `latest` flip mid-download cannot mix
-# artifacts from two releases.
-VER=$(curl -fsSL "$BASE/releases/latest/VERSION" | tr -d '[:space:]')
+# artifacts from two releases. Edge whitespace is trimmed (never interior —
+# deleting bytes would hide corruption), then the value must match the
+# release shape exactly, kept in lockstep with scripts/release.sh and
+# internal/update/update.go (versionRE): a corrupt channel value (field bug:
+# a mangled publish served 'sesh-v0.1.0n') must fail HERE, loudly, instead
+# of becoming a 404 download URL.
+VER=$(curl -fsSL "$BASE/releases/latest/VERSION" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 case "$VER" in
-  ''|*[!A-Za-z0-9._-]*) echo "sesh: invalid version string from $BASE: '$VER'" >&2; exit 1 ;;
+  ''|*[!A-Za-z0-9._-]*)
+    echo "sesh: malformed version from $BASE/releases/latest/VERSION: '$VER' — refusing to build a download URL from it" >&2
+    exit 1 ;;
 esac
+printf '%s' "$VER" | grep -Eq '^(sesh-)?v[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+-g[0-9a-f]+)?$|^[0-9a-f]{7,40}$' || {
+  echo "sesh: malformed version from $BASE/releases/latest/VERSION: '$VER' (want [sesh-]vX.Y.Z[-N-g<hash>] or a commit hash) — refusing to build a download URL from it" >&2
+  exit 1
+}
 echo "installing sesh $VER ($OS-$ARCH) from $BASE ..."
 
 SUMS=$(mktemp)
