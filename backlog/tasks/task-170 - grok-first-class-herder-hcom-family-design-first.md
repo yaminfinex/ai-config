@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-13 01:30'
+updated_date: '2026-07-13 01:37'
 labels: []
 dependencies: []
 priority: medium
@@ -39,4 +39,6 @@ OWNER RULINGS 2026-07-13 (recorded in design doc addendum): no bypassPermissions
 2026-07-13 U1 delta review (mapo): NOT approve — all 10 round-1 findings CONFIRMED FIXED by re-running each mutation (incl. the hijack mutant leaking the reviewer's own live pane process id — caught by the new foreign-binding test; T27 faithful crash prints the V9 hazard id-list verbatim; gate hard-blocks + version-pins). Self-found tap read-ahead regression verified real + correctly fixed (mutation hangs the pinned test). ONE NEW P1 introduced by the P3-2 fix: MCP client caches generation, never re-dials — any binder restart permanently bricks fetch/ack/pending/send (reproduced e2e; design DR-2 requires restart recovery; round-1 per-call handshake was vacuous-but-healing, fix made fence real but lost healing — both halves needed). Fix round 2 dispatched: re-dial+retry-once on stale rejection (safe: fence rejects pre-execution), straddle-restart client test, P3-a env-level scrub pin, P3-b omission-bypass tightening authorized as recorded implementation-tier strictness beyond design T16 wording.
 
 2026-07-13 U1 round 2 (moze, 384c190): re-dial+retry-once on explicit stale rejection (mutex-serialized, cached-generation fence retained — stale rejected pre-dispatch so no double-execution); straddle tests for direct Client AND persistent ServeMCP; T23 reuses pre-restart client w/ single-surfacing assertion; env-level read-scrub pin; strict omission rejection recorded as authorized tightening (design text untouched); gate floor 30->33. Worker battery 54/54. Independent re-gate running; mapo final delta requested.
+
+2026-07-13 U1 MERGED: final delta APPROVE (mapo re-ran the brick repro — repeatable recovery across two restarts, exactly one outbound copy; mutation battery 6/6 caught vs 2/6 at first commit; fence verified over the whole unit). Merge 5fbd991 --no-ff (12 files, +3098, additive; sweep clean — one English-substring false positive classified). Post-merge gate on main running. Pinned battery count is now 55 house-wide (check-grok-transport.sh joined). mapo U2 observation carried: binder named-send stdout carries other messages' bodies into context outside fetch/ack (harmless to correctness, context-hygiene wrinkle) — U2 doctrine line or trim send result to first line. NEXT: U2 launch contract (activation-gated, Grok 4.5 pin, blanket spend, boot-arming fallback pre-approved).
 <!-- SECTION:NOTES:END -->
