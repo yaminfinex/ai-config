@@ -380,7 +380,7 @@ check_grok_family() {
   fi
 
   if [ "${HERDER_GROK_ACTIVATED:-}" != "1" ]; then
-    warn "Grok family is not activated; bare grok fails closed. Keep HERDER_GROK_ACTIVATED unset until the real spawn acceptance path is approved"
+    warn "Grok family is not activated (HERDER_GROK_ACTIVATED unset); bare grok fails closed by design. Set HERDER_GROK_ACTIVATED=1 only for an isolated, throwaway-state session."
   fi
   if [ -z "${XAI_API_KEY:-}" ]; then
     warn "Grok activation precondition missing: XAI_API_KEY is absent from this environment; export it by name in the environment inherited by fresh herder panes before activation"

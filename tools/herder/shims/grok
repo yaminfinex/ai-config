@@ -3,10 +3,9 @@
 #
 # grok shim - daily entry point for the first-class, herder-managed Grok family.
 #
-# This shim never resolves or invokes a vendor binary. It enters the launch
-# contract, which selects and capability-gates an explicit absolute binary
-# under isolated probe roots before exec. That separation prevents PATH
-# recursion and keeps a vendor executable earlier on PATH authoritative.
+# The explicit GROK=/absolute/vendor/binary escape hatch bypasses herder. With
+# no override, this enters the managed launch contract, which selects and
+# capability-gates an explicit binary under isolated probe roots before exec.
 
 set -euo pipefail
 
@@ -32,6 +31,22 @@ shim_path="$(canonical_path "${BASH_SOURCE[0]}")" || die "cannot resolve shim pa
 shim_dir="$(dirname "$shim_path")"
 repo_root="$(cd "$shim_dir/../../.." 2>/dev/null && pwd -P)" || die "cannot resolve repo root"
 herder_launch="$repo_root/bin/herder"
+
+is_herder_shim() {
+  LC_ALL=C head -c 512 -- "$1" 2>/dev/null | grep -Fq 'herder-path-shim'
+}
+
+if [[ -n "${GROK:-}" ]]; then
+  case "$GROK" in
+    /*) ;;
+    *) die "GROK vendor bypass must be an absolute executable path (got: $GROK)" ;;
+  esac
+  vendor="$(canonical_path "$GROK" 2>/dev/null || true)"
+  [[ -n "$vendor" && -x "$vendor" && ! -d "$vendor" ]] || \
+    die "GROK vendor bypass is not an executable file: $GROK"
+  ! is_herder_shim "$vendor" || die "GROK vendor bypass points to a managed shim, not a vendor binary"
+  exec "$vendor" "$@"
+fi
 
 [[ -x "$herder_launch" && ! -d "$herder_launch" ]] || \
   die "missing executable bin/herder at $herder_launch"

@@ -25,6 +25,19 @@ fail=0
 ok()  { printf 'PASS  %s\n' "$1"; }
 bad() { printf 'FAIL  %s - %s\n' "$1" "$2"; fail=1; }
 
+# Keep the shell mock's refusal byte-identical to the product constant. This
+# probe is fail-closed before identity/state work and runs under throwaway roots.
+mkdir -p "$ROOT/product-home" "$ROOT/product-state" "$ROOT/product-cache"
+PRODUCT_GROK_REFUSAL="$(env -i PATH="$PATH_BASE" HOME="$ROOT/product-home" \
+  XDG_CACHE_HOME="$ROOT/product-cache" HERDER_STATE_DIR="$ROOT/product-state" \
+  AI_CONFIG_ROOT="$AI_CONFIG_ROOT" "$AI_CONFIG_ROOT/bin/herder" launch grok 2>&1)"
+PRODUCT_GROK_RC=$?
+if [[ "$PRODUCT_GROK_RC" -ne 0 && "$PRODUCT_GROK_REFUSAL" == *"HERDER_GROK_ACTIVATED unset"* ]]; then
+  ok "grok refusal drift guard: product constant captured"
+else
+  bad "grok refusal drift guard: product constant captured" "rc=$PRODUCT_GROK_RC output=$PRODUCT_GROK_REFUSAL"
+fi
+
 assert_eq() {
   local name="$1" got="$2" want="$3"
   if [[ "$got" == "$want" ]]; then
@@ -73,7 +86,8 @@ printf '%s\n' "$@" >"$PROBE/herder_argv"
 # REAL hcom (not itself) before forwarding to `herder hook`.
 printf '%s\n' "${HERDER_HOOK_HCOM-}" >"$PROBE/herder_hook_hcom"
 if [[ "${MOCK_HERDER_REFUSE_GROK:-}" == "1" && "${1:-}" == "launch" && "${2:-}" == "grok" ]]; then
-  printf '%s\n' 'herder launch: Grok family is not activated; set HERDER_GROK_ACTIVATED=1 only for an isolated experimental launch after providing throwaway HOME, HCOM_DIR, and HERDER_STATE_DIR' >&2
+  : "${MOCK_GROK_ACTIVATION_ERROR:?}"
+  printf '%s\n' "$MOCK_GROK_ACTIVATION_ERROR" >&2
   exit 1
 fi
 MOCK_HERDER_LAUNCH
@@ -299,21 +313,35 @@ assert_file_missing "grok shim: vendor binary not invoked" "$PROBE/real_grok_cou
 make_case grok_inactive
 err="$PROBE/stderr"
 env -i PATH="$SHIM_CASE:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
-  MOCK_HERDER_REFUSE_GROK=1 "$SHIM_CASE/grok" hello 2>"$err"
+  MOCK_HERDER_REFUSE_GROK=1 MOCK_GROK_ACTIVATION_ERROR="$PRODUCT_GROK_REFUSAL" \
+  "$SHIM_CASE/grok" hello 2>"$err"
 rc=$?
 if [[ "$rc" -ne 0 ]]; then
   ok "grok inactive: nonzero exit"
 else
   bad "grok inactive: nonzero exit" "rc=0"
 fi
-if grep -Fq 'Grok family is not activated; set HERDER_GROK_ACTIVATED=1 only for an isolated experimental launch after providing throwaway HOME, HCOM_DIR, and HERDER_STATE_DIR' "$err"; then
-  ok "grok inactive: launch refusal preserved"
+assert_file_eq "grok inactive: launch refusal byte-identical to product constant" "$err" "$PRODUCT_GROK_REFUSAL"
+if grep -Fq 'GROK=/absolute/path/to/grok' "$err"; then
+  ok "grok inactive: explicit vendor escape named"
 else
-  bad "grok inactive: launch refusal preserved" "stderr=$(cat "$err" 2>/dev/null)"
+  bad "grok inactive: explicit vendor escape named" "stderr=$(cat "$err" 2>/dev/null)"
 fi
 assert_file_missing "grok inactive: no vendor fallback" "$PROBE/real_grok_count"
 
-# 13. PATH retains ordinary shadowing semantics: an explicit vendor directory
+# 13. GROK is the explicit one-shot escape hatch. It must be absolute, invoke
+#     exactly that vendor binary, and never enter the managed contract.
+make_case grok_explicit_bypass
+env -i PATH="$SHIM_CASE:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
+  GROK="$REALBIN/grok" "$SHIM_CASE/grok" --raw-vendor
+rc=$?
+assert_eq "grok explicit bypass: exit 0" "$rc" "0"
+assert_file_eq "grok explicit bypass: vendor invoked once" "$PROBE/real_grok_count" "1"
+assert_file_eq "grok explicit bypass: argv preserved" "$PROBE/real_grok_argv" \
+  "$(printf '%s\n' --raw-vendor)"
+assert_file_missing "grok explicit bypass: launch contract not entered" "$PROBE/herder_argv"
+
+# 14. PATH retains ordinary shadowing semantics: an explicit vendor directory
 #     placed before the managed shim wins, so the shim cannot steal an intended
 #     raw vendor invocation.
 make_case grok_vendor_first
@@ -326,7 +354,7 @@ assert_file_eq "grok vendor first: argv preserved" "$PROBE/real_grok_argv" \
   "$(printf '%s\n' --raw-vendor)"
 assert_file_missing "grok vendor first: launch contract not entered" "$PROBE/herder_argv"
 
-# 14. Multiple checkout shim dirs cannot recurse: the selected shim uses only
+# 15. Multiple checkout shim dirs cannot recurse: the selected shim uses only
 #     its repository-local herder, and never resolves a sibling as a vendor.
 make_case grok_sibling
 SIBLING_REPO="$CASE_DIR/sibling"
