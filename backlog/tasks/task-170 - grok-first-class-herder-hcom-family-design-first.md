@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-13 08:43'
+updated_date: '2026-07-13 10:38'
 labels: []
 dependencies: []
 priority: medium
@@ -65,4 +65,6 @@ CREDENTIAL NUANCE (2026-07-13, fula probe + hera fresh-pane test reconciled): XA
 U4 (observer & transcript) MERGED 629de2e (branch head 9001d7b, 3 commits). Reviewer semi: round1 CHANGES REQUIRED (P1 discovery re-derived vendor cwd escaping w/ url.PathEscape — outlier encoder, silent-miss; 2xP2 fail-closed breadth + unpinned reset guards; 3xP3) -> fix 9d6205c -> APPROVE w/ 2 nits -> polish 9001d7b -> SIGHT-APPROVE, 10/10 mutations killed. Honest-unknown principle held under mutation from round 1. Independent gates 56/56 per round; post-merge on main 57/57. Discovery now sid-glob (matches U2), boot-grace fails open toward flagging. U3 fix round in flight (navu 1xP1+3xP2+2xP3); activation unit next after U3.
 
 U3 (lifecycle & identity) MERGED 79bcb7c (branch head d23e42d, 7 commits incl. authorized seams). Reviewer navu: 3 rounds, 9 findings closed + mutation-pinned (r1: P1 spawn-shaped cull no-op, dead-bridge wedge, --continue gap, one-shot capability snapshot, 2xP3 pins; r2: pending edge-freshness, zombie latch; polish: exact pending counts per DR-5). Fork preassignment tightening recorded as DR-4 erratum in the design doc. Latent U1 raw-string bug fixed + swept. Independent gates 56/56 per round; post-merge 57/57. U1+U2+U3+U4 ALL MERGED. REMAINING: U5 (shim/setup/doctor/docs), then the ACTIVATION UNIT (hard ACs: real e2e spawn; XAI export to ~/.profile or exec-time injection; boot-grace + version-skew notes on record).
+
+U5 (shim/setup/doctor/docs) MERGED to main as e258b87 (merge --no-ff of task-170-u5-shim, worker mupo-implemented rove... CORRECTION: worker rove, reviewer mupo). Reviewer mupo (opus): round-1 NOT-APPROVE (2xP1 manual-launch seat registration/foreign-GUID adoption, 4xP2, 2xP3), round-2 fixes verified, polish SIGHT-APPROVE at 0bd3e17. Delivered: grok PATH shim (no-vendor-fallback + GROK=/abs/path escape hatch), ai-doctor grok family checks (report-only, isolated probe roots), bounded-guest manual launch (mint-unless-grok-row identity, foreground wrapper, --retire-on-stop, herder grok retire-offline), managed-home docs (TASK-182 content), check-shims.sh + check-grok-doctor.sh (house battery 57->58). Post-merge gate on main: 58/58 ALL GREEN rc=0. ALL GROK STAGING UNITS U1-U5 NOW MERGED (U1 5fbd991, U2 c3a9702, U3 79bcb7c, U4 629de2e, U5 e258b87). ONLY REMAINDER: the activation unit (lean; hard ACs in earlier notes; blocked on owner XAI one-liner - export to ~/.profile or above the .bashrc interactive guard).
 <!-- SECTION:NOTES:END -->
