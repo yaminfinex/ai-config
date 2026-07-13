@@ -72,8 +72,12 @@ nodes endpoints still serve real content. Wiring a read path back onto the
 write connection blocks the request and trips the gate. Not provable without
 a real tailnet: the remote-RTT numbers themselves. The live BEFORE figures
 (2026-07-13, ~180 ms-RTT client) are in the Symptom section; the AFTER
-figures are PENDING — they get measured from the same client against the
-live store after deploy, and the acceptance criterion stays open until then.
+figures, measured from the same client against the live store immediately
+after deploy (2026-07-13, both fleet shippers active): `/` ttfb 1.41 s
+steady (first hit 3.55 s — projection rebuild under ingest, the documented
+residual), `/nodes` 0.36 s (equal to the `install.sh` no-DB control, i.e.
+the RTT floor), `/?page=48` 0.38 s. BEFORE → AFTER: `/` 8.5–10.5 s → 1.41 s;
+`/nodes` 1.8–2.5 s → 0.36 s.
 
 ## Follow-up (out of scope here)
 
