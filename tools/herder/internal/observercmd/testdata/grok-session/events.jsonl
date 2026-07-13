@@ -1,0 +1,5 @@
+{"ts":"2026-07-09T21:14:07.911Z","type":"turn_started","turn_number":0,"model_id":"model-sample","yolo_mode":true,"conversation_message_count":3,"session_relationship":"primary","schema_version":"1.0"}
+{"ts":"2026-07-09T21:14:07.911Z","type":"loop_started","loop_index":0}
+{"ts":"2026-07-09T21:14:07.911Z","type":"phase_changed","phase":"waiting_for_model"}
+{"ts":"2026-07-09T21:14:08.708Z","type":"first_token"}
+{"ts":"2026-07-09T21:14:08.725Z","type":"phase_changed","phase":"tool_execution"}

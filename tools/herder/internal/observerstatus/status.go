@@ -10,18 +10,19 @@ import (
 const FileName = "observer.status.json"
 
 type Status struct {
-	Schema             string            `json:"schema"`
-	Advice             bool              `json:"advice"`
-	PID                int               `json:"pid,omitempty"`
-	BuildHash          string            `json:"build_hash,omitempty"`
-	HeartbeatAt        string            `json:"heartbeat_at,omitempty"`
-	LastSweepAt        string            `json:"last_sweep_at,omitempty"`
-	LastSweepSummary   Summary           `json:"last_sweep_summary"`
-	ProtocolCompatible bool              `json:"protocol_compatible"`
-	ProtocolDetail     string            `json:"protocol_detail,omitempty"`
-	Flags              []Flag            `json:"flags,omitempty"`
-	Confirmed          map[string]string `json:"confirmed,omitempty"`
-	DoctrineDeliveries map[string]string `json:"doctrine_deliveries,omitempty"`
+	Schema             string                 `json:"schema"`
+	Advice             bool                   `json:"advice"`
+	PID                int                    `json:"pid,omitempty"`
+	BuildHash          string                 `json:"build_hash,omitempty"`
+	HeartbeatAt        string                 `json:"heartbeat_at,omitempty"`
+	LastSweepAt        string                 `json:"last_sweep_at,omitempty"`
+	LastSweepSummary   Summary                `json:"last_sweep_summary"`
+	ProtocolCompatible bool                   `json:"protocol_compatible"`
+	ProtocolDetail     string                 `json:"protocol_detail,omitempty"`
+	Flags              []Flag                 `json:"flags,omitempty"`
+	Confirmed          map[string]string      `json:"confirmed,omitempty"`
+	DoctrineDeliveries map[string]string      `json:"doctrine_deliveries,omitempty"`
+	Observations       map[string]Observation `json:"observations,omitempty"`
 }
 
 type Summary struct {
@@ -39,6 +40,17 @@ type Flag struct {
 	Suggested  string `json:"suggested,omitempty"`
 	TerminalID string `json:"terminal_id,omitempty"`
 	PaneID     string `json:"pane_id,omitempty"`
+}
+
+// Observation is secondary, source-labelled evidence gathered by the
+// observer. It is deliberately separate from herdr's live status: consumers
+// may display this evidence, but must never promote it into live_status.
+type Observation struct {
+	TranscriptPath    string `json:"transcript_path,omitempty"`
+	TranscriptSource  string `json:"transcript_source,omitempty"`
+	TranscriptEntries int    `json:"transcript_entries,omitempty"`
+	EventStatus       string `json:"event_status,omitempty"`
+	EventSource       string `json:"event_source,omitempty"`
 }
 
 func PathForStateDir(stateDir string) string {

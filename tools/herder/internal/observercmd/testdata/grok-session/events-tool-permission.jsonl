@@ -1,0 +1,4 @@
+{"ts":"2026-07-09T21:14:08.726Z","type":"tool_started","tool_name":"sample-tool","tool_call_id":"call-sample"}
+{"ts":"2026-07-09T21:14:08.727Z","type":"tool_completed","tool_name":"sample-tool","tool_call_id":"call-sample","success":true}
+{"ts":"2026-07-09T21:14:08.728Z","type":"permission_requested","permission_id":"permission-sample","permission_type":"tool"}
+{"ts":"2026-07-09T21:14:08.729Z","type":"permission_resolved","permission_id":"permission-sample","resolution":"approved"}

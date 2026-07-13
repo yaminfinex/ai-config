@@ -1,0 +1,3 @@
+{"type":"system","content":"Follow the recorded session rules."}
+{"type":"user","content":[{"type":"text","text":"Inspect the sample workspace."}]}
+{"type":"assistant","content":"The sample workspace is ready.","model_id":"model-sample","model_fingerprint":"fingerprint-sample"}
