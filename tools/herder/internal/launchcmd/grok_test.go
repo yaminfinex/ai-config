@@ -1,6 +1,7 @@
 package launchcmd
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"os"
@@ -189,6 +190,139 @@ func TestGrokLaunchLayerMirrorsFullOwnedArgRefusals(t *testing.T) {
 				t.Fatalf("validatePreparedGrokArgs(%q) = %v, want targeted refusal", arg, err)
 			}
 		})
+	}
+}
+
+func TestGrokLifecycleModesBuildOnlyHerderOwnedIdentityArgs(t *testing.T) {
+	parent, err := NewGrokSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := NewGrokSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		mode       string
+		target     string
+		preassign  string
+		wantSuffix []string
+	}{
+		{mode: "launch", preassign: child, wantSuffix: []string{"--session-id", child, "--rules", "doctrine", grokBootPrompt}},
+		{mode: "resume", target: parent, preassign: parent, wantSuffix: []string{"--resume", parent, "--rules", "doctrine", grokBootPrompt}},
+		{mode: "fork", target: parent, preassign: child, wantSuffix: []string{"--resume", parent, "--fork-session", "--session-id", child, "--rules", "doctrine", grokBootPrompt}},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			lifecycle, err := BuildGrokLifecyclePlan(tc.mode, tc.target, tc.preassign)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan := grokLaunchPlan{Mode: lifecycle.Mode, SessionID: lifecycle.SessionID, ParentSID: lifecycle.ParentSID, Argv: []string{"grok", "--no-subagents"}}
+			got := appendGrokLifecycleArgs(plan, "doctrine")
+			want := append([]string{"grok", "--no-subagents"}, tc.wantSuffix...)
+			if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+				t.Fatalf("argv=%q, want %q", got, want)
+			}
+		})
+	}
+
+	for _, arg := range []string{"--resume", "--fork-session", "--session-id"} {
+		if err := validatePreparedGrokArgs([]string{arg}, false); err == nil || !strings.Contains(err.Error(), "remove") {
+			t.Fatalf("lifecycle passthrough %q was not refused at launch layer: %v", arg, err)
+		}
+	}
+}
+
+func TestGrokLifecycleParserCarriesResumeAndForkTargetsAsOwnedModeData(t *testing.T) {
+	parent, err := NewGrokSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := NewGrokSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		sid  string
+	}{
+		{name: "resume", args: []string{"--resume", "grok", parent}, sid: parent},
+		{name: "fork", args: []string{"--fork", "grok", parent, "--parent-session", parent}, sid: child},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(grokActivationEnv, "1")
+			t.Setenv("HERDER_GROK_SESSION_ID", tc.sid)
+			t.Setenv("XAI_API_KEY", "")
+			var stdout, stderr bytes.Buffer
+			if rc := Run(tc.args, &stdout, &stderr); rc == 0 || !strings.Contains(stderr.String(), GrokAuthError()) {
+				t.Fatalf("rc=%d stderr=%q", rc, stderr.String())
+			}
+		})
+	}
+}
+
+func TestGrokForkPreassignmentChecksAllSessionDirectoriesAndPreservesParent(t *testing.T) {
+	base, _ := prepareTestGrok(t, "0.2.93")
+	parent, err := NewGrokSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := NewGrokSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentDir := filepath.Join(base.GrokHome, "sessions", "%2Fparent-cwd", parent)
+	if err := os.MkdirAll(parentDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	parentHistory := filepath.Join(parentDir, "chat_history.jsonl")
+	const sentinel = "parent-history-must-stay-byte-identical\n"
+	if err := os.WriteFile(parentHistory, []byte(sentinel), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, err := BuildGrokLifecyclePlan("fork", parent, child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := prepareGrokLifecycleLaunch(nil, lifecycle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.SessionID != child || plan.ParentSID != parent || plan.Mode != "fork" {
+		t.Fatalf("fork plan=%+v", plan)
+	}
+	if got, err := os.ReadFile(parentHistory); err != nil || string(got) != sentinel {
+		t.Fatalf("parent history=%q err=%v", got, err)
+	}
+	childDir := filepath.Join(base.GrokHome, "sessions", "%2Fanother-cwd", child)
+	if err := os.MkdirAll(childDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepareGrokLifecycleLaunch(nil, lifecycle); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("fork collision error=%v", err)
+	}
+}
+
+func TestGrokResumeRequiresRecordedSessionInControlledHome(t *testing.T) {
+	base, _ := prepareTestGrok(t, "0.2.93")
+	sid, err := NewGrokSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, err := BuildGrokLifecyclePlan("resume", sid, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepareGrokLifecycleLaunch(nil, lifecycle); err == nil || !strings.Contains(err.Error(), "absent from the controlled home") {
+		t.Fatalf("missing resume error=%v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(base.GrokHome, "sessions", "%2Fresume-cwd", sid), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := prepareGrokLifecycleLaunch(nil, lifecycle)
+	if err != nil || plan.SessionID != sid || plan.Mode != "resume" {
+		t.Fatalf("resume plan=%+v err=%v", plan, err)
 	}
 }
 
