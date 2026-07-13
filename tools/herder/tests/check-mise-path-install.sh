@@ -101,6 +101,7 @@ assert_contains "status installed: shim path count" "$RUN_OUT" "PATH entries for
 assert_contains "status installed: herder first" "$RUN_OUT" "herder: expected first"
 assert_contains "status installed: claude first" "$RUN_OUT" "claude: expected first"
 assert_contains "status installed: codex first" "$RUN_OUT" "codex: expected first"
+assert_contains "status installed: grok first" "$RUN_OUT" "grok: expected first"
 
 # 4. status warns when another executable shadows a managed path entry.
 OTHERBIN="$CASE_DIR/otherbin"

@@ -28,13 +28,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "bridge":
 		return runBridge(args[1:], stderr)
 	default:
-		fmt.Fprintf(stderr, "herder grok: unknown subcommand %q — use tap, mcp, or bridge\n", args[0])
+		fmt.Fprintf(stderr, "herder grok: unknown subcommand %q — use check, tap, mcp, or bridge\n", args[0])
 		return 2
 	}
 }
 
 func printHelp(w io.Writer) {
-	fmt.Fprint(w, "herder grok — internal transport for first-class Grok seats.\n\nUsage:\n  herder grok tap --seat <guid>\n  herder grok mcp --seat <guid>\n  herder grok bridge --seat <guid> --hcom-bin <path> [--hcom-dir <path>] [--supervise]\n")
+	fmt.Fprint(w, "herder grok — health and transport for first-class Grok seats.\n\nUsage:\n  herder grok check --state-dir <throwaway-root>\n  herder grok tap --seat <guid>\n  herder grok mcp --seat <guid>\n  herder grok bridge --seat <guid> --hcom-bin <path> [--hcom-dir <path>] [--supervise]\n")
 }
 func stateDefault() string {
 	if v := os.Getenv("HERDER_STATE_DIR"); v != "" {

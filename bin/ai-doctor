@@ -15,8 +15,9 @@ for arg in "$@"; do
 Usage: ai-doctor [--quick] [--strict]
 
 Checks ai-config repository health, link drift, local-only skills, secrets,
-machine-specific absolute home paths, and claude config divergence
-(~/.claude/.claude.json vs ~/.claude.json).
+machine-specific absolute home paths, Claude config divergence, and Grok
+activation/home/binary drift. Findings are reported only; Grok state is never
+repaired automatically.
 
 --quick skips network freshness checks.
 USAGE
@@ -348,10 +349,10 @@ check_mise_path() {
     warn "herder shim dir should appear on PATH exactly once; found $count: $shims_dir"
   fi
 
-  for tool in herder claude codex; do
+  for tool in herder claude codex grok; do
     case "$tool" in
       herder) expected="$bin_dir/herder" ;;
-      claude|codex) expected="$shims_dir/$tool" ;;
+      claude|codex|grok) expected="$shims_dir/$tool" ;;
     esac
     resolution="$(mise_tool_resolution_message "$tool" "$expected")"
     case "$resolution" in
@@ -359,6 +360,65 @@ check_mise_path() {
       *) warn "$resolution" ;;
     esac
   done
+}
+
+check_grok_family() {
+  source "$AI_CONFIG_ROOT/lib/grok-health.sh"
+
+  local managed_home
+  local live_home="$HOME/.grok"
+  local configured_home="${GROK_HOME:-}"
+  local contract_binary
+  local contract_canonical
+  local vendor_binary
+  local probe
+
+  managed_home="$(grok_managed_home)"
+
+  if [ ! -x "$AI_CONFIG_ROOT/tools/herder/shims/grok" ]; then
+    err "Grok PATH shim missing or not executable: $AI_CONFIG_ROOT/tools/herder/shims/grok; restore the checkout and rerun bin/ai-setup"
+  fi
+
+  if [ "${HERDER_GROK_ACTIVATED:-}" != "1" ]; then
+    warn "Grok family is not activated; bare grok fails closed. Keep HERDER_GROK_ACTIVATED unset until the real spawn acceptance path is approved"
+  fi
+  if [ -z "${XAI_API_KEY:-}" ]; then
+    warn "Grok activation precondition missing: XAI_API_KEY is absent from this environment; export it by name in the environment inherited by fresh herder panes before activation"
+  fi
+
+  if [ -n "$configured_home" ] && [ "$configured_home" != "$managed_home" ]; then
+    if [ "$configured_home" = "$live_home" ]; then
+      warn "GROK_HOME points at the live user home $live_home, but herder launches use $managed_home; unset GROK_HOME and verify with herder launch grok"
+    else
+      warn "GROK_HOME points at $configured_home, but herder launches use the managed home $managed_home; unset the override before verification"
+    fi
+  fi
+  if [ -L "$managed_home" ]; then
+    warn "managed Grok home is a symlink: $managed_home -> $(readlink "$managed_home"); replace it with a dedicated directory before activation (ai-doctor will not change it)"
+  fi
+
+  contract_binary="$(grok_contract_binary)"
+  contract_canonical="$(grok_canonical_path "$contract_binary" 2>/dev/null || true)"
+  if [ -z "$contract_canonical" ] || [ ! -x "$contract_canonical" ]; then
+    warn "Grok launch binary is missing or not executable: $contract_binary; set HERDER_GROK_BIN to the characterized 0.2.93 executable"
+  else
+    if probe="$(grok_check_binary "$contract_canonical")"; then
+      [ "$quick" -eq 1 ] || log_info "Grok launch binary passes the isolated gate: $(printf '%s\n' "$probe" | sed -n '1p')"
+    else
+      warn "Grok launch binary failed the isolated version/capability gate: $probe"
+    fi
+  fi
+
+  vendor_binary="$(grok_vendor_on_path || true)"
+  if [ -z "$vendor_binary" ]; then
+    warn "no Grok vendor binary found behind the managed PATH shim; install the characterized binary or set HERDER_GROK_BIN before activation"
+  elif [ "$vendor_binary" = "$contract_canonical" ] && [ -n "$contract_canonical" ]; then
+    [ "$quick" -eq 1 ] || log_info "Grok vendor binary on PATH matches the launch contract: $vendor_binary"
+  elif probe="$(grok_check_binary "$vendor_binary")"; then
+    [ "$quick" -eq 1 ] || log_info "Grok vendor binary on PATH passes the isolated gate but differs from the pinned launch path: $vendor_binary"
+  else
+    warn "Grok vendor binary on PATH is outside launch support: $probe"
+  fi
 }
 
 check_git
@@ -369,6 +429,7 @@ check_claude_statusline_settings
 check_claude_shared_settings
 check_claude_config_divergence
 check_mise_path
+check_grok_family
 check_secret_scan
 check_portability_scan
 

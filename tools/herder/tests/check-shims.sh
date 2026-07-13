@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# check-shims.sh - hermetic contract tests for the W4 claude/codex PATH shims.
+# check-shims.sh - hermetic contract tests for the herder PATH shims.
 #
-# No live hcom, claude, codex, or herder calls. Each scenario copies the real shim scripts
+# No live hcom, claude, codex, grok, or herder calls. Each scenario copies the real shim scripts
 # into a temp repo layout, installs mock bin/herder and real binaries, then drives the shim
 # through env -i.
 
@@ -61,6 +61,7 @@ make_case() {
   mkdir -p "$SHIM_CASE" "$HERDER_BIN" "$REALBIN" "$OTHERBIN" "$PROBE"
   cp "$SHIMS_DIR/claude" "$SHIM_CASE/claude"
   cp "$SHIMS_DIR/codex" "$SHIM_CASE/codex"
+  cp "$SHIMS_DIR/grok" "$SHIM_CASE/grok"
   cp "$SHIMS_DIR/hcom" "$SHIM_CASE/hcom"
 
   cat > "$HERDER_BIN/herder" <<'MOCK_HERDER_LAUNCH'
@@ -71,6 +72,10 @@ printf '%s\n' "$@" >"$PROBE/herder_argv"
 # Record the recursion-guard handoff so tests can assert the shim resolved the
 # REAL hcom (not itself) before forwarding to `herder hook`.
 printf '%s\n' "${HERDER_HOOK_HCOM-}" >"$PROBE/herder_hook_hcom"
+if [[ "${MOCK_HERDER_REFUSE_GROK:-}" == "1" && "${1:-}" == "launch" && "${2:-}" == "grok" ]]; then
+  printf '%s\n' 'herder launch: Grok family is not activated; set HERDER_GROK_ACTIVATED=1 only for an isolated experimental launch after providing throwaway HOME, HCOM_DIR, and HERDER_STATE_DIR' >&2
+  exit 1
+fi
 MOCK_HERDER_LAUNCH
 
   cat > "$REALBIN/claude" <<'MOCK_REAL_CLAUDE'
@@ -100,8 +105,18 @@ set -euo pipefail
 printf '%s\n' "$@" >"$PROBE/real_hcom_argv"
 MOCK_REAL_HCOM
 
-  chmod +x "$SHIM_CASE/claude" "$SHIM_CASE/codex" "$SHIM_CASE/hcom" "$HERDER_BIN/herder" \
-    "$REALBIN/claude" "$REALBIN/codex" "$REALBIN/hcom"
+  cat > "$REALBIN/grok" <<'MOCK_REAL_GROK'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${PROBE:?}"
+count="$(cat "$PROBE/real_grok_count" 2>/dev/null || printf '0')"
+count=$((count + 1))
+printf '%s\n' "$count" >"$PROBE/real_grok_count"
+printf '%s\n' "$@" >"$PROBE/real_grok_argv"
+MOCK_REAL_GROK
+
+  chmod +x "$SHIM_CASE/claude" "$SHIM_CASE/codex" "$SHIM_CASE/grok" "$SHIM_CASE/hcom" "$HERDER_BIN/herder" \
+    "$REALBIN/claude" "$REALBIN/codex" "$REALBIN/grok" "$REALBIN/hcom"
 }
 
 run_with_timeout() {
@@ -267,6 +282,66 @@ assert_file_eq "claude sibling inflight: real binary called once" "$PROBE/real_c
 assert_file_eq "claude sibling inflight: real argv preserved" "$PROBE/real_claude_argv" \
   "$(printf '%s\n' --real)"
 assert_file_missing "claude sibling inflight: herder launch not called" "$PROBE/herder_argv"
+
+# 11. A bare Grok resolved to the shim enters only the launch contract. The shim
+#     never searches for or invokes a vendor binary itself.
+make_case grok_plain
+env -i PATH="$SHIM_CASE:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
+  "$SHIM_CASE/grok" --model grok-4.5 "two words"
+rc=$?
+assert_eq "grok shim: exit 0" "$rc" "0"
+assert_file_eq "grok shim: routes to launch contract" "$PROBE/herder_argv" \
+  "$(printf '%s\n' launch grok --model grok-4.5 "two words")"
+assert_file_missing "grok shim: vendor binary not invoked" "$PROBE/real_grok_count"
+
+# 12. Activation remains fail-closed through the shim with launch's exact
+#     cause+remedy refusal; a planted vendor binary is never used as fallback.
+make_case grok_inactive
+err="$PROBE/stderr"
+env -i PATH="$SHIM_CASE:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
+  MOCK_HERDER_REFUSE_GROK=1 "$SHIM_CASE/grok" hello 2>"$err"
+rc=$?
+if [[ "$rc" -ne 0 ]]; then
+  ok "grok inactive: nonzero exit"
+else
+  bad "grok inactive: nonzero exit" "rc=0"
+fi
+if grep -Fq 'Grok family is not activated; set HERDER_GROK_ACTIVATED=1 only for an isolated experimental launch after providing throwaway HOME, HCOM_DIR, and HERDER_STATE_DIR' "$err"; then
+  ok "grok inactive: launch refusal preserved"
+else
+  bad "grok inactive: launch refusal preserved" "stderr=$(cat "$err" 2>/dev/null)"
+fi
+assert_file_missing "grok inactive: no vendor fallback" "$PROBE/real_grok_count"
+
+# 13. PATH retains ordinary shadowing semantics: an explicit vendor directory
+#     placed before the managed shim wins, so the shim cannot steal an intended
+#     raw vendor invocation.
+make_case grok_vendor_first
+env -i PATH="$REALBIN:$SHIM_CASE:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
+  /bin/bash -c 'grok --raw-vendor'
+rc=$?
+assert_eq "grok vendor first: exit 0" "$rc" "0"
+assert_file_eq "grok vendor first: vendor invoked once" "$PROBE/real_grok_count" "1"
+assert_file_eq "grok vendor first: argv preserved" "$PROBE/real_grok_argv" \
+  "$(printf '%s\n' --raw-vendor)"
+assert_file_missing "grok vendor first: launch contract not entered" "$PROBE/herder_argv"
+
+# 14. Multiple checkout shim dirs cannot recurse: the selected shim uses only
+#     its repository-local herder, and never resolves a sibling as a vendor.
+make_case grok_sibling
+SIBLING_REPO="$CASE_DIR/sibling"
+SIBLING_SHIMS="$SIBLING_REPO/tools/herder/shims"
+mkdir -p "$SIBLING_SHIMS"
+cp "$SHIMS_DIR/grok" "$SIBLING_SHIMS/grok"
+chmod +x "$SIBLING_SHIMS/grok"
+run_with_timeout 5 env -i \
+  PATH="$SHIM_CASE:$SIBLING_SHIMS:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
+  "$SHIM_CASE/grok" --contract
+rc=$?
+assert_eq "grok sibling: exit 0 (no loop)" "$rc" "0"
+assert_file_eq "grok sibling: repo-local launch contract used" "$PROBE/herder_argv" \
+  "$(printf '%s\n' launch grok --contract)"
+assert_file_missing "grok sibling: vendor binary not invoked" "$PROBE/real_grok_count"
 
 echo
 if [[ "$fail" -eq 0 ]]; then

@@ -186,6 +186,38 @@ func TestT20ResolvedBinaryVersionAndCapabilityGate(t *testing.T) {
 	}
 }
 
+func TestGrokCheckUsesLaunchGateWithoutActivationOrLiveHome(t *testing.T) {
+	root := t.TempDir()
+	liveHome := filepath.Join(root, "live-home")
+	liveGrok := filepath.Join(liveHome, ".grok")
+	if err := os.MkdirAll(liveGrok, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(liveGrok, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("untouched\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(grokActivationEnv, "")
+	t.Setenv("XAI_API_KEY", randomCredential(t))
+	t.Setenv("HOME", liveHome)
+	t.Setenv("GROK_HOME", liveGrok)
+	t.Setenv("HERDER_GROK_BIN", mockGrokBinary(t, "0.2.93"))
+
+	var stdout, stderr bytes.Buffer
+	rc := RunGrokCheck([]string{"--state-dir", filepath.Join(root, "probe")}, &stdout, &stderr)
+	if rc != 0 || stderr.Len() != 0 {
+		t.Fatalf("check rc=%d stderr=%q", rc, stderr.String())
+	}
+	for _, want := range []string{"path=", "version=0.2.93"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("check output %q missing %q", stdout.String(), want)
+		}
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "untouched\n" {
+		t.Fatalf("live Grok home changed: data=%q err=%v", data, err)
+	}
+}
+
 func TestT20LaunchArgvAndControlledHomePinBothUpdateSuppressors(t *testing.T) {
 	plan, _ := prepareTestGrok(t, "0.2.93")
 	joined := strings.Join(plan.Argv, "\n")

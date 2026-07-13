@@ -44,7 +44,7 @@ Pinned for reproducibility — bump the version in `lib/mise-path.sh`. (Homebrew
 `brew install aannoo/hcom/hcom`, the `hcom-installer.sh` script, and `uv tool install hcom` also
 work, but sit outside mise's management.)
 
-Restart the shell after setup so `ai-setup`, `ai-doctor`, `herder`, `claude`, `codex`, and `hcom`
+Restart the shell after setup so `ai-setup`, `ai-doctor`, `herder`, `claude`, `codex`, `grok`, and `hcom`
 resolve from the managed PATH entries.
 
 ## Optional hcom Hooks
@@ -63,24 +63,24 @@ Run:
 
 ```sh
 bin/ai-doctor
-type -a herder claude codex hcom
+type -a herder claude codex grok hcom
 herder spawn --role smoke --agent codex --cwd "$PWD" \
   --prompt 'Reply exactly PONG MACHINE-SETUP, then wait idle.'
 ```
 
 `type -a` should show this repo's `bin/herder` before any other `herder`, and this repo's
-`tools/herder/shims/{claude,codex}` before real tool binaries. `ai-doctor` warns if the mise file
+`tools/herder/shims/{claude,codex,grok}` before real tool binaries. `ai-doctor` warns if the mise file
 is missing, unmanaged, incomplete, duplicated on PATH, or shadowed by aliases/functions/earlier
 executables.
 
 Aliases and shell functions beat PATH shims. Find old overrides with:
 
 ```sh
-grep -RInE '^[[:space:]]*(alias[[:space:]]+(claude|codex|herder)=|(function[[:space:]]+)?(claude|codex|herder)[[:space:]]*\(\))' \
+grep -RInE '^[[:space:]]*(alias[[:space:]]+(claude|codex|grok|herder)=|(function[[:space:]]+)?(claude|codex|grok|herder)[[:space:]]*\(\))' \
   "$HOME/.zshrc" "$HOME/.zshenv" "$HOME/.zprofile" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.config" 2>/dev/null
 ```
 
-Remove or rename any `herder`, `claude`, or `codex` alias or function that should no longer shadow
+Remove or rename any `herder`, `claude`, `codex`, or `grok` alias or function that should no longer shadow
 the managed paths.
 
 **PATH-order shadowing (interactive shells).** If mise activation runs in `~/.zshenv`, any PATH

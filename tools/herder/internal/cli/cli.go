@@ -57,10 +57,17 @@ var commands = []command{
 	{"compact", "Queue a steered /compact into the caller's own pane (self only)", spawncmd.RunCompact},
 	{"node", "Manage the local herder node id", nodecmd.Run},
 	{"observer", "Observe seated sessions and surface observer advice", observercmd.Run},
-	{"grok", "Run the Grok seat transport bridge, tap, or MCP server", grokbridge.Run},
+	{"grok", "Run Grok health checks or seat transport", runGrok},
 	{"launch", "Launch an hcom-bound tool in the current pane", launchcmd.Run},
 	{"hook", "(internal) Shim hcom hook calls; rewrite the spawn bootstrap", hookcmd.Run},
 	{"sidecar", "(internal) Bridge hcom status to herdr pane status", sidecarcmd.Run},
+}
+
+func runGrok(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "check" {
+		return launchcmd.RunGrokCheck(args[1:], stdout, stderr)
+	}
+	return grokbridge.Run(args, stdout, stderr)
 }
 
 // notPorted builds the stub for a subcommand whose port has not landed yet.

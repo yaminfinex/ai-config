@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# herder-path-shim: grok — sibling herder shims detect this marker line and skip it.
+#
+# grok shim - daily entry point for the first-class, herder-managed Grok family.
+#
+# This shim never resolves or invokes a vendor binary. It enters the launch
+# contract, which selects and capability-gates an explicit absolute binary
+# under isolated probe roots before exec. That separation prevents PATH
+# recursion and keeps a vendor executable earlier on PATH authoritative.
+
+set -euo pipefail
+
+TOOL="grok"
+
+die() { printf '%s shim: %s\n' "$TOOL" "$*" >&2; exit 1; }
+
+canonical_path() {
+  local path="$1" dir base
+  case "$path" in
+    */*) ;;
+    *) path="$(command -v -- "$path" 2>/dev/null || true)" ;;
+  esac
+  [[ -n "$path" ]] || return 1
+  dir="$(dirname "$path")"
+  base="$(basename "$path")"
+  [[ "$dir" = /* ]] || dir="$PWD/$dir"
+  dir="$(cd "$dir" 2>/dev/null && pwd -P)" || return 1
+  printf '%s/%s\n' "$dir" "$base"
+}
+
+shim_path="$(canonical_path "${BASH_SOURCE[0]}")" || die "cannot resolve shim path"
+shim_dir="$(dirname "$shim_path")"
+repo_root="$(cd "$shim_dir/../../.." 2>/dev/null && pwd -P)" || die "cannot resolve repo root"
+herder_launch="$repo_root/bin/herder"
+
+[[ -x "$herder_launch" && ! -d "$herder_launch" ]] || \
+  die "missing executable bin/herder at $herder_launch"
+
+export HERDER_SHIM=1
+exec "$herder_launch" launch "$TOOL" "$@"

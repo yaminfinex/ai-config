@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -43,6 +44,30 @@ func GrokActivationError() string {
 
 func GrokAuthError() string {
 	return "XAI_API_KEY not present in the herder spawn environment; export it in the environment that launches the herdr server, then respawn"
+}
+
+// RunGrokCheck runs the same isolated binary version/capability gate used by
+// launch, without activating a seat, starting a bridge, seeding GROK_HOME, or
+// requiring credentials. It exists for ai-doctor; callers must not probe the
+// vendor binary directly because even --version has mutated vendor state.
+func RunGrokCheck(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("herder grok check", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	stateDir := fs.String("state-dir", grokStateDir(), "throwaway root for the isolated capability probe")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "herder grok check: unexpected arguments; pass only --state-dir <throwaway-root>")
+		return 2
+	}
+	path, version, err := gateGrokBinary(*stateDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "herder grok check: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "path=%s\nversion=%s\n", path, version)
+	return 0
 }
 
 // NewGrokSessionID returns the UUIDv7 shape required by Grok's --session-id.
