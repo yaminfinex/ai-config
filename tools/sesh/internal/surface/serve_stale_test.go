@@ -353,16 +353,25 @@ func TestProjectionCanceledColdWaiterDoesNotWedgeSharedBuild(t *testing.T) {
 	barrier := newStageBarrier(t, surface.RebuildStart)
 	fx.live.SetRebuildHook(barrier.hook)
 
+	// The to-be-canceled request runs ALONE first, so it is the request that
+	// starts the shared build: the stamp probe happens strictly before the
+	// rebuild goroutine (and its barrier) can start, so once entered fires
+	// this request has passed its probe un-canceled and the only place its
+	// context error can surface is the cold-wait on the shared build. The
+	// asserted path cannot false-pass via a canceled probe or a survivor
+	// having triggered the rebuild.
 	canceledCtx, cancel := context.WithCancel(t.Context())
 	canceledDone := make(chan error, 1)
-	var wg sync.WaitGroup
-	const survivors = 3
-	totals := make([]int, survivors)
-	errs := make([]error, survivors)
 	go func() {
 		_, _, err := fx.live.RecentSessions(canceledCtx, 5, 0)
 		canceledDone <- err
 	}()
+	<-barrier.entered // the canceled request's own build is provably in flight
+
+	var wg sync.WaitGroup
+	const survivors = 3
+	totals := make([]int, survivors)
+	errs := make([]error, survivors)
 	for i := 0; i < survivors; i++ {
 		wg.Add(1)
 		go func(i int) {
@@ -370,10 +379,10 @@ func TestProjectionCanceledColdWaiterDoesNotWedgeSharedBuild(t *testing.T) {
 			_, totals[i], errs[i] = fx.live.RecentSessions(t.Context(), 5, 0)
 		}(i)
 	}
-	<-barrier.entered // the one shared build is provably in flight
 	cancel()
-	// The canceled waiter returns while the build is still held — it waited
-	// on the result, never owned the rebuild.
+	// The canceled waiter returns while the build is still held (run.done
+	// cannot close before release) — it abandoned the wait, it never owned
+	// or canceled the rebuild itself.
 	if err := <-canceledDone; !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled cold waiter returned err %v, want context.Canceled", err)
 	}
