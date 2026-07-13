@@ -20,6 +20,8 @@ func IsHcomCapable(agent string) bool {
 	switch agent {
 	case "claude", "codex", "gemini":
 		return true
+	case "grok":
+		return GrokActivated()
 	default:
 		return false
 	}
@@ -157,6 +159,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	// before the hcom check: a print one-shot works without hcom installed.
 	if mode == "launch" && isPrintInvocation(tool, rest) {
 		return execPrintBypass(tool, rest, stderr)
+	}
+
+	if tool == "grok" {
+		if mode != "launch" {
+			die(stderr, "Grok resume and fork are not available until the family lifecycle contract is activated; start a fresh opt-in seat or use a supported family")
+			return 1
+		}
+		return runGrokLaunch(tag, rest, stderr)
 	}
 
 	hcomPath, err := exec.LookPath("hcom")
@@ -336,8 +346,9 @@ Options:
   --tag TAG    hcom tag; names the instance <tag>-<random> so @<tag>- fan-out works
   tool-args    everything after the tool is passed through to it
 
-hcom is a HARD dependency — launch execs 'hcom <tool> --run-here' and never falls
-back to a raw tool. HCOM_DIR (the team bus) is inherited from the environment, and
+hcom is a HARD dependency — supported families launch through hcom, except the
+activation-gated Grok family whose herder-owned bridge consumes the real hcom binary
+directly. Launch never falls back to a raw tool. HCOM_DIR (the team bus) is inherited from the environment, and
 each tool's real config dir is pinned so auth survives an isolated team bus. The
 claude pin also seeds ~/.claude/.claude.json from ~/.claude.json when missing, so
 pinned launches keep onboarding/identity state instead of bootstrapping fresh
