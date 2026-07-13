@@ -602,8 +602,9 @@ func TestRouteClassNeverJournalsIdentifiers(t *testing.T) {
 // transaction held open, the reads must still complete with real content. A
 // regression back onto the write connection blocks these requests (timeout)
 // or degrades the page (content assertion). What this cannot prove without a
-// real tailnet: the remote-RTT numbers themselves; those are verified by
-// before/after probes against the live store.
+// real tailnet: the remote-RTT numbers themselves; those come from probes
+// against the live store (the post-deploy AFTER probe is pending — see the
+// read/write-split design note).
 func TestReadPathsServeWhileWriteConnectionHeld(t *testing.T) {
 	st, err := store.Open(t.Context(), store.Config{Dir: t.TempDir()})
 	if err != nil {
