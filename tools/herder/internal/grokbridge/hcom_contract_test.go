@@ -36,8 +36,7 @@ func installedHcom(t *testing.T) string {
 func hrunProcess(t *testing.T, bin, dir, processID string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
-	env := scrubEnv(os.Environ(), "HCOM_PROCESS_ID", "CODEX_THREAD_ID")
-	env = replaceEnv(env, "HCOM_DIR", dir)
+	env := hcomContractEnv(dir)
 	env = replaceEnv(env, "HCOM_PROCESS_ID", processID)
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
@@ -57,13 +56,26 @@ func startName(t *testing.T, out string) string {
 func hrun(t *testing.T, bin, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
-	cmd.Env = replaceEnv(os.Environ(), "HCOM_DIR", dir)
+	cmd.Env = hcomContractEnv(dir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("hcom %v: %v: %s", args, err, out)
 	}
 	return string(out)
 }
+
+func hcomContractEnv(dir string) []string {
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, item := range os.Environ() {
+		key, _, _ := strings.Cut(item, "=")
+		if key == "HCOM" || key == "CODEX_THREAD_ID" || strings.HasPrefix(key, "HCOM_") {
+			continue
+		}
+		env = append(env, item)
+	}
+	return append(env, "HCOM_DIR="+dir)
+}
+
 func hstart(t *testing.T, bin, dir string) string {
 	t.Helper()
 	return startName(t, hrun(t, bin, dir, "start"))
@@ -116,6 +128,9 @@ func shortState(t *testing.T) string {
 }
 
 func TestRealHcomBindIdentityUsesSeatOwnedProcessAndPreservesForeignBinding(t *testing.T) {
+	// The helper-created scratch identities are deliberately tool-neutral; keep
+	// the direct binder invocation in the same deterministic contract.
+	t.Setenv("HCOM_TOOL", "adhoc")
 	t.Setenv("HCOM_TAG", "ambient-parent-tag")
 	bin := installedHcom(t)
 	bus := t.TempDir()
