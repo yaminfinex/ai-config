@@ -165,11 +165,15 @@ func shortState(t *testing.T) string {
 }
 
 func TestRealHcomBindIdentityUsesSeatOwnedProcessAndPreservesForeignBinding(t *testing.T) {
-	// Keep both helper subprocesses and the binder's process-level environment
-	// free of parent-agent identity signals. The adhoc tool path suppresses hook
-	// installation while allowing the identified read to stabilize the aged row.
+	// Helpers stay neutral, while the binder's parent environment deliberately
+	// carries the foreign tool signals that would select hcom's hook-install path
+	// if the identity invocation inherited them.
 	unsetHcomContractIdentityEnv(t)
-	t.Setenv("HCOM_TOOL", "adhoc")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	t.Setenv("HCOM_TOOL", "foreign-tool")
+	t.Setenv("HCOM_TAG", "foreign-tag")
 	bin := installedHcom(t)
 	bus := t.TempDir()
 	foreignName := startName(t, hrunProcess(t, bin, bus, "foreign-process", "start"))
@@ -231,6 +235,68 @@ func TestRealHcomBindIdentityUsesSeatOwnedProcessAndPreservesForeignBinding(t *t
 	ageIdentityPlaceholder(t, db, seatName)
 	_ = hrun(t, bin, bus, "list", "--json")
 	hsend(t, bin, bus, peerName, []string{seatName}, nil, "accepted-after-placeholder-timeout")
+}
+
+func TestSeatIdentityInvocationUsesControlledAllowlist(t *testing.T) {
+	unsetHcomContractIdentityEnv(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	t.Setenv("CODEX_THREAD_ID", "foreign-thread")
+	t.Setenv("HCOM", "foreign-command")
+	t.Setenv("HCOM_DIR", "foreign-bus")
+	t.Setenv("HCOM_LAUNCHED", "foreign-launch")
+	t.Setenv("HCOM_PROCESS_ID", "foreign-process")
+	t.Setenv("HCOM_TAG", "foreign-tag")
+	t.Setenv("HCOM_TOOL", "foreign-tool")
+	t.Setenv("PARENT_ONLY", "must-not-cross")
+
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "identity-env")
+	bin := filepath.Join(dir, "hcom")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n/usr/bin/env > \"${0%/*}/identity-env\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bus := t.TempDir()
+	b, err := OpenBinder(BinderConfig{Seat: "seat-process", StateDir: shortState(t), HcomBin: bin, HcomDir: bus})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if _, err = b.runHcomSeatIdentity(context.Background(), "list", "--json"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if ok {
+			got[key] = value
+		}
+	}
+	for key := range got {
+		foreign := key == "HCOM" || key == "CODEX_THREAD_ID" || key == "PARENT_ONLY" || strings.HasPrefix(key, "CLAUDE")
+		ambientHcom := strings.HasPrefix(key, "HCOM_") && key != "HCOM_DIR" && key != "HCOM_PROCESS_ID" && key != "HCOM_TOOL"
+		if foreign || ambientHcom {
+			t.Fatalf("parent signal %s crossed identity environment allowlist", key)
+		}
+	}
+	for key, want := range map[string]string{
+		"HOME":            home,
+		"HCOM_DIR":        bus,
+		"HCOM_PROCESS_ID": "seat-process",
+		"HCOM_TOOL":       "adhoc",
+	} {
+		if got[key] != want {
+			t.Errorf("identity env %s = %q, want %q", key, got[key], want)
+		}
+	}
 }
 
 func TestReadInvocationChildEnvironmentScrubsPinnedIdentityInputs(t *testing.T) {

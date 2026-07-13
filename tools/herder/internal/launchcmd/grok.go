@@ -696,20 +696,44 @@ func isUUIDv7(value string) bool { return uuidV7RE.MatchString(value) }
 
 func resolveRealHcom() string {
 	for _, key := range []string{"HERDER_REAL_HCOM", "HERDER_HOOK_HCOM"} {
-		if path := os.Getenv(key); executableFile(path) && !herderShim(path) {
-			return canonicalFile(path)
+		if path := hcomCandidate(os.Getenv(key), true); path != "" {
+			return path
 		}
 	}
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		if dir == "" {
 			dir = "."
 		}
-		path := filepath.Join(dir, "hcom")
-		if executableFile(path) && !herderShim(path) {
-			return canonicalFile(path)
+		if path := hcomCandidate(filepath.Join(dir, "hcom"), false); path != "" {
+			return path
 		}
 	}
 	return ""
+}
+
+// hcomCandidate resolves ordinary hcom symlinks but does not turn an argv0-
+// dispatch shim into its dispatcher. PATH discovery skips such shims and keeps
+// walking to the real binary. An explicit override instead preserves the
+// invoked symlink path so the dispatcher still receives argv[0] == "hcom".
+func hcomCandidate(path string, explicit bool) string {
+	if !executableFile(path) || herderShim(path) {
+		return ""
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return abs
+	}
+	if st, err := os.Lstat(abs); err == nil && st.Mode()&os.ModeSymlink != 0 && filepath.Base(resolved) != "hcom" {
+		if explicit {
+			return abs
+		}
+		return ""
+	}
+	return resolved
 }
 
 func executableFile(path string) bool {
@@ -718,14 +742,6 @@ func executableFile(path string) bool {
 	}
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir() && st.Mode()&0o111 != 0
-}
-
-func canonicalFile(path string) string {
-	abs, _ := filepath.Abs(path)
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return resolved
-	}
-	return abs
 }
 
 func herderShim(path string) bool {

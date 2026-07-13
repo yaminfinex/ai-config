@@ -324,6 +324,11 @@ That model creates three intentional differences from running the vendor CLI man
 | Binary | Uses whichever vendor executable the shell resolves | Uses the explicit characterized binary (`HERDER_GROK_BIN`, or the pinned default) and refuses unsupported versions | Prevents a vendor auto-update or PATH change from silently changing the transport contract |
 | Authentication | Uses whatever auth sources the manual CLI accepts | Inherits `XAI_API_KEY` from the fresh pane's login-shell profile; herder checks nonempty presence by name and never copies a value into argv, config, registry, or logs | Keeps credentials outside the managed home and makes the process boundary explicit |
 
+Herder normally finds the real `hcom` by walking PATH, skipping both herder's hook shim and
+argv0-dispatch shims, then pins the result in the Grok seat state. `HERDER_REAL_HCOM` is the
+explicit escape hatch when that discovery is unsuitable: set it to an executable path for the
+launch, and herder invokes that path as provided so symlink-manager dispatch still works.
+
 The owner's manual-verification path is `herder launch grok`. The Grok family is available by
 default; `XAI_API_KEY` must be exported from a login-shell profile such as `$HOME/.profile` so a
 fresh pane inherits it. The command mints a fresh seat/session identity and exercises the

@@ -772,11 +772,36 @@ func (b *Binder) runHcom(ctx context.Context, anonymous bool, args ...string) (s
 }
 
 func (b *Binder) runHcomSeatIdentity(ctx context.Context, args ...string) (string, error) {
-	// A parent agent's tag must not rewrite `start --as <durable-name>` into a
-	// second, tag-prefixed identity when the bridge reclaims its seat.
-	env := scrubEnv(os.Environ(), "HCOM_PROCESS_ID", "CODEX_THREAD_ID", "HCOM_TAG")
-	env = replaceEnv(env, "HCOM_PROCESS_ID", b.cfg.Seat)
+	env := hcomSeatIdentityEnv(b.cfg.Seat)
 	return b.runHcomEnv(ctx, env, args...)
+}
+
+var hcomSeatIdentityEnvAllowlist = [...]string{
+	"HOME",
+	"LANG",
+	"LC_ALL",
+	"LC_CTYPE",
+	"PATH",
+	"TMPDIR",
+	"TZ",
+	"XDG_CONFIG_HOME",
+	"XDG_DATA_HOME",
+	"XDG_RUNTIME_DIR",
+	"XDG_STATE_HOME",
+}
+
+// hcomSeatIdentityEnv is a security boundary between the launching pane and
+// hcom's identity selection. Only process-runtime basics cross it; tool and
+// identity signals are generated here so CLAUDE*/CODEX*/ambient HCOM_* values
+// cannot select hcom's hook-install path or rewrite the bridge-owned identity.
+func hcomSeatIdentityEnv(seat string) []string {
+	env := make([]string, 0, len(hcomSeatIdentityEnvAllowlist)+2)
+	for _, key := range hcomSeatIdentityEnvAllowlist {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	return append(env, "HCOM_PROCESS_ID="+seat, "HCOM_TOOL=adhoc")
 }
 
 func (b *Binder) runHcomEnv(ctx context.Context, env []string, args ...string) (string, error) {
