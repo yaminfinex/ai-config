@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-13 00:51'
-updated_date: '2026-07-13 00:57'
+updated_date: '2026-07-13 01:06'
 labels: []
 dependencies: []
 priority: low
@@ -26,3 +26,9 @@ Observed live on the orchestrator session: pane statusline shows @mono while the
 - [ ] #3 Sessions without HERDER_GUID (manual/non-herder) keep current behavior; no orphaned snapshot files accumulate from the migration
 - [ ] #4 Full pinned battery green from the worktree; statusline.sh passes bash -n; snapshot writer changes covered by unit tests
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-07-13: DONE received (4d411df) — GUID-keyed snapshots, HCOM_LIVE_NAME field for @name, one-time name-file cleanup on stable write, fallback preserved; worker battery 53/53. Harvest: independent gate running; opus reviewer dispatched (lenses incl. deletion-safety race on recycled names).
+<!-- SECTION:NOTES:END -->
