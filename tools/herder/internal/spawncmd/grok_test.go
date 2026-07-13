@@ -302,7 +302,7 @@ func TestGrokSpawnFlowNeverEnrichesNameFromRegistryCapture(t *testing.T) {
 			return outcomes, err
 		}
 		injected = true
-		_, err = registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		injectedOutcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 			current := registry.V2ByGUID(tx.Projection, guid)
 			if current == nil {
 				return nil, fmt.Errorf("registered Grok row %s missing", guid)
@@ -318,7 +318,16 @@ func TestGrokSpawnFlowNeverEnrichesNameFromRegistryCapture(t *testing.T) {
 			next.RecordedAt = "2026-07-13T00:00:01Z"
 			return []v2.SessionRecord{next}, nil
 		})
-		return outcomes, err
+		if err != nil {
+			return outcomes, err
+		}
+		if len(injectedOutcomes) != 1 || injectedOutcomes[0].Status != registry.WriteApplied {
+			return outcomes, fmt.Errorf("registry poison write outcomes=%+v, want one applied row", injectedOutcomes)
+		}
+		if err := injectedOutcomes[0].Err(); err != nil {
+			return outcomes, err
+		}
+		return outcomes, nil
 	}
 	if code := r.run(); code != 0 {
 		t.Fatalf("Grok spawn flow rc=%d stderr=%q", code, stderr.String())
