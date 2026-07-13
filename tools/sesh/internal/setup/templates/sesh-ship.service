@@ -1,8 +1,8 @@
 # sesh-ship.service — per-user shipper unit (systemd --user).
 #
-# Fleet-identical source: installation renders the node-local absolute binary
+# Fleet-identical source: `sesh setup` renders the node-local absolute binary
 # path into this unit. The node-local store URL stays in the 10-local.conf
-# drop-in written by etc/install-ship.sh.
+# drop-in written by `sesh setup`.
 # Installs to ~/.config/systemd/user/sesh-ship.service.
 #
 # Reboot survival on a node nobody logs into requires lingering:
@@ -16,7 +16,7 @@ Description=sesh shipper — mirror this user's session transcripts to the team 
 # network is up is safe and simpler than ordering against it.
 
 [Service]
-# Pinned absolute path, never a $PATH lookup. The install script replaces
+# Pinned absolute path, never a $PATH lookup. `sesh setup` replaces
 # this portable placeholder path with the resolved GOBIN path.
 ExecStart=/usr/local/bin/sesh ship
 # SESH_STORE_URL arrives via drop-in (Environment=), never baked here: the

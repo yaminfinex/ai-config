@@ -32,10 +32,11 @@ internal/ship/   watcher, tailer, cursor registry, correlation
 internal/store/  ingest handler, mirror, generations, recovery
 internal/index/  parser, logical-session resolution, dedup, quarantine
 internal/surface/ recency + transcript pages
+internal/setup/  sesh setup engine + embedded systemd unit / launchd templates
 internal/cli/    cobra command tree
 tests/fixtures/  real captured session JSONL (see tests/fixtures/README.md)
 tests/check-*.sh per-scenario gate harnesses (S1..S11)
-etc/             systemd unit, launchd template, install-ship.sh
+etc/             install-ship.sh deprecation pointer (absorbed by sesh setup)
 ```
 
 ## Operator Surface
@@ -46,10 +47,21 @@ Implemented commands:
 sesh ship --store-url http://127.0.0.1:8765
 sesh serve --addr 127.0.0.1:8765 --surface-addr 127.0.0.1:8766
 sesh serve --tsnet
+sesh setup --store-url http://sesh.<tailnet>.ts.net:8765
 sesh reindex
 sesh status
 sesh admin drop-file <tool> <session_id> <file_uuid> --yes
 ```
+
+`sesh setup` installs (or reconfigures) the per-user shipper service to run
+the binary executing the command: it pins the resolved absolute binary path
+into the unit, writes the store URL into the node-local config (Linux: systemd
+user drop-in; macOS: launchd plist), preflights the user bus before any write,
+and warns when linger is off. Files it writes carry a provenance digest: a
+file that still matches its digest is replaced on re-run (URL changes
+included — that is the one-command store migration); an operator-edited or
+pre-digest file is never overwritten without `--force`, and a `--force`
+rewrite still preserves operator env keys other than `SESH_STORE_URL`.
 
 `sesh status` reports cursor offsets, poisoned files, last ACK age, and store
 reachability. It exits nonzero when the configured store is unreachable or any
@@ -205,20 +217,21 @@ just install
 just deploy http://sesh.<tailnet>.ts.net:8765
 ```
 
-For older installations pinned to `/usr/local/bin/sesh`, run `just deploy` and then `just restart`:
-the installer renders the resolved, absolute GOBIN path into the user unit, and the restart completes
-the migration. `just versions` reports cleanly once the new binary is running; the old binary
-predates the version command. Remove the root-owned copy after that check. Install and upgrade do
-not require sudo.
+`just deploy` delegates to `sesh setup`, which pins the resolved absolute
+path of the binary it runs as into the user unit. For older installations
+pinned to `/usr/local/bin/sesh`, run `just deploy` and then `just restart`;
+the restart completes the migration. `just versions` reports cleanly once the
+new binary is running; the old binary predates the version command. Remove
+the root-owned copy after that check. Install and upgrade do not require sudo.
 
 Linux reboot survival on nodes nobody logs into additionally requires
-lingering — the installer warns when it is off:
+lingering — `sesh setup` warns when it is off:
 
 ```sh
 loginctl enable-linger $USER
 ```
 
-Shared multi-user node: run `install-ship.sh` once per OS user (each gets
+Shared multi-user node: run `sesh setup` once per OS user (each gets
 its own unit, registry, and uid; the cursor-registry flock refuses a second
 shipper per user). Verify with `systemctl --user status sesh-ship` under
 each uid and two distinct `X-Sesh-OS-User` values in the store's `last_seen`.

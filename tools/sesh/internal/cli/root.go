@@ -50,6 +50,7 @@ func newRoot() *cobra.Command {
 		newReindex(),
 		newStatus(),
 		newAdmin(),
+		newSetup(),
 	)
 	return root
 }
