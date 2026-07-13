@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/grokbridge"
+	"ai-config/tools/herder/internal/hcombin"
 	"ai-config/tools/herder/internal/registry"
 )
 
@@ -696,20 +697,42 @@ func isUUIDv7(value string) bool { return uuidV7RE.MatchString(value) }
 
 func resolveRealHcom() string {
 	for _, key := range []string{"HERDER_REAL_HCOM", "HERDER_HOOK_HCOM"} {
-		if path := os.Getenv(key); executableFile(path) && !herderShim(path) {
-			return canonicalFile(path)
+		if path, _ := hcomCandidate(os.Getenv(key)); path != "" {
+			return path
 		}
 	}
+	var argv0Fallback string
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		if dir == "" {
 			dir = "."
 		}
-		path := filepath.Join(dir, "hcom")
-		if executableFile(path) && !herderShim(path) {
-			return canonicalFile(path)
+		path, argv0Dispatch := hcomCandidate(filepath.Join(dir, "hcom"))
+		if path == "" {
+			continue
 		}
+		if argv0Dispatch {
+			if argv0Fallback == "" {
+				argv0Fallback = path
+			}
+			continue
+		}
+		return path
 	}
-	return ""
+	return argv0Fallback
+}
+
+// hcomCandidate resolves ordinary hcom symlinks but does not turn an argv0-
+// dispatch shim into its dispatcher. The bool lets PATH discovery prefer a
+// later real binary while retaining the invoked shim as a safe last resort.
+func hcomCandidate(path string) (string, bool) {
+	if !executableFile(path) || herderShim(path) {
+		return "", false
+	}
+	resolved, argv0Dispatch, err := hcombin.ResolveExecPath(path)
+	if err != nil {
+		return "", false
+	}
+	return resolved, argv0Dispatch
 }
 
 func executableFile(path string) bool {
@@ -718,14 +741,6 @@ func executableFile(path string) bool {
 	}
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir() && st.Mode()&0o111 != 0
-}
-
-func canonicalFile(path string) string {
-	abs, _ := filepath.Abs(path)
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return resolved
-	}
-	return abs
 }
 
 func herderShim(path string) bool {

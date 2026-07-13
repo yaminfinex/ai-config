@@ -72,6 +72,62 @@ func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
 	return plan, credential
 }
 
+func TestResolveRealHcomPrefersRealThenFallsBackToArgv0DispatchShim(t *testing.T) {
+	dispatchDir := t.TempDir()
+	dispatcher := filepath.Join(dispatchDir, "dispatcher")
+	writeExecutable(t, dispatcher, "#!/bin/sh\n[ \"${0##*/}\" = hcom ] || exit 97\nprintf 'dispatch:%s\\n' \"$PWD\"\n")
+	shimDir := t.TempDir()
+	dispatchLink := filepath.Join(shimDir, "dispatch-link")
+	if err := os.Symlink(dispatcher, dispatchLink); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(shimDir, "hcom")
+	if err := os.Symlink(dispatchLink, shim); err != nil {
+		t.Fatal(err)
+	}
+
+	realDir := t.TempDir()
+	realHcom := filepath.Join(realDir, "hcom")
+	writeExecutable(t, realHcom, "#!/bin/sh\nprintf 'real:%s\\n' \"$PWD\"\n")
+	t.Setenv("HERDER_REAL_HCOM", "")
+	t.Setenv("HERDER_HOOK_HCOM", "")
+	t.Setenv("PATH", strings.Join([]string{shimDir, realDir}, string(os.PathListSeparator)))
+
+	if got := resolveRealHcom(); got != realHcom {
+		t.Fatalf("resolved hcom = %q, want real binary %q after argv0 shim", got, realHcom)
+	}
+	nonProjectDir := t.TempDir()
+	cmd := exec.Command(resolveRealHcom())
+	cmd.Dir = nonProjectDir
+	if out, err := cmd.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "real:"+nonProjectDir {
+		t.Fatalf("resolved hcom from non-project cwd: err=%v output=%q", err, out)
+	}
+
+	// A shim-only PATH must still launch successfully: keep the first dispatch
+	// shim as the last resort and preserve its invoked hcom name.
+	t.Setenv("PATH", shimDir)
+	if got := resolveRealHcom(); got != shim {
+		t.Fatalf("shim-only PATH resolved hcom = %q, want invoked shim %q", got, shim)
+	}
+	cmd = exec.Command(resolveRealHcom())
+	cmd.Dir = nonProjectDir
+	if out, err := cmd.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "dispatch:"+nonProjectDir {
+		t.Fatalf("shim-only PATH from non-project cwd: err=%v output=%q", err, out)
+	}
+
+	// The explicit escape hatch remains exact: preserving the invoked symlink
+	// lets an argv0 dispatcher see the hcom tool name instead of its own target.
+	t.Setenv("HERDER_REAL_HCOM", shim)
+	if got := resolveRealHcom(); got != shim {
+		t.Fatalf("explicit override = %q, want invoked path %q", got, shim)
+	}
+	cmd = exec.Command(resolveRealHcom())
+	cmd.Dir = nonProjectDir
+	if out, err := cmd.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "dispatch:"+nonProjectDir {
+		t.Fatalf("explicit argv0 override from non-project cwd: err=%v output=%q", err, out)
+	}
+}
+
 func TestGrokFamilyDefaultsOnAndChecksAuthBeforeState(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, "state")
