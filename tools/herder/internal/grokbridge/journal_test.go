@@ -324,25 +324,28 @@ func TestQueueAfterRetirementIsImmediatelyUndeliverable(t *testing.T) {
 	}
 }
 
-func TestPendingEdgeSignalsOnlyZeroCrossings(t *testing.T) {
+func TestPendingChangeSignalsEveryCountMutation(t *testing.T) {
 	j := openTestJournal(t)
-	if _, added, crossed, err := j.queuePendingEdge(rawEvent(t, 31, "first")); err != nil || !added || !crossed {
-		t.Fatalf("first queue added=%v crossed=%v err=%v", added, crossed, err)
+	if _, added, changed, err := j.queuePendingChange(rawEvent(t, 31, "first")); err != nil || !added || !changed {
+		t.Fatalf("first queue added=%v changed=%v err=%v", added, changed, err)
 	}
-	if _, added, crossed, err := j.queuePendingEdge(rawEvent(t, 32, "second")); err != nil || !added || crossed {
-		t.Fatalf("second queue added=%v crossed=%v err=%v", added, crossed, err)
+	if _, added, changed, err := j.queuePendingChange(rawEvent(t, 32, "second")); err != nil || !added || !changed {
+		t.Fatalf("second queue added=%v changed=%v err=%v", added, changed, err)
 	}
 	if _, err := j.Fetch(31, 1); err != nil {
 		t.Fatal(err)
 	}
-	if crossed, err := j.ackPendingEdge(31, 1); err != nil || crossed {
-		t.Fatalf("first ack crossed=%v err=%v", crossed, err)
+	if changed, err := j.ackPendingChange(31, 1); err != nil || !changed {
+		t.Fatalf("first ack changed=%v err=%v", changed, err)
+	}
+	if changed, err := j.ackPendingChange(31, 1); err != nil || changed {
+		t.Fatalf("repeat ack changed=%v err=%v", changed, err)
 	}
 	if _, err := j.Fetch(32, 1); err != nil {
 		t.Fatal(err)
 	}
-	if crossed, err := j.ackPendingEdge(32, 1); err != nil || !crossed {
-		t.Fatalf("last ack crossed=%v err=%v", crossed, err)
+	if changed, err := j.ackPendingChange(32, 1); err != nil || !changed {
+		t.Fatalf("last ack changed=%v err=%v", changed, err)
 	}
 }
 

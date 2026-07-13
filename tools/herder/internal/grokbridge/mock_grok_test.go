@@ -647,7 +647,7 @@ func TestBinderPublishesEventDrivenCapabilities(t *testing.T) {
 	}
 }
 
-func TestArmedBinderPublishesPendingZeroCrossingsWithoutTapFlap(t *testing.T) {
+func TestArmedBinderPublishesExactPendingCountWithoutTapFlap(t *testing.T) {
 	state := t.TempDir()
 	seedGrokRegistryRow(t, state, "seat", "owner")
 	m := startMockBridge(t, state, "owner")
@@ -660,14 +660,26 @@ func TestArmedBinderPublishesPendingZeroCrossingsWithoutTapFlap(t *testing.T) {
 		}
 	}()
 	waitForWakeCapability(t, state, "seat", "armed", 0, 0)
-	m.queue(t, 72, "pending transition")
+	m.queue(t, 72, "first pending message")
 	waitForWakeCapability(t, state, "seat", "armed", 1, 0)
+	m.queue(t, 73, "second pending message")
+	m.queue(t, 74, "third pending message")
+	waitForWakeCapability(t, state, "seat", "armed", 3, 0)
 	client := m.client(t)
 	if _, err := client.Call(Request{Op: "fetch", ID: 72}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.Call(Request{Op: "ack", ID: 72}); err != nil {
 		t.Fatal(err)
+	}
+	waitForWakeCapability(t, state, "seat", "armed", 2, 0)
+	for _, id := range []int64{73, 74} {
+		if _, err := client.Call(Request{Op: "fetch", ID: id}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.Call(Request{Op: "ack", ID: id}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	waitForWakeCapability(t, state, "seat", "armed", 0, 0)
 	tap.close()

@@ -332,12 +332,12 @@ func (b *Binder) execute(req Request) Response {
 		v := view(x, true)
 		r.Message = &v
 	case "ack":
-		pendingCrossedZero, err := b.journal.ackPendingEdge(req.ID, req.Generation)
+		pendingChanged, err := b.journal.ackPendingChange(req.ID, req.Generation)
 		if err != nil {
 			r.Error = err.Error()
 			return r
 		}
-		if pendingCrossedZero {
+		if pendingChanged {
 			if err = b.publishPendingCapability(); err != nil {
 				b.recordCapabilityDiagnostic("pending", err)
 			}
@@ -525,11 +525,11 @@ func (b *Binder) Drain(ctx context.Context) error {
 }
 
 func (b *Binder) queueReceipt(raw json.RawMessage) (Receipt, bool, error) {
-	receipt, added, pendingCrossedZero, err := b.journal.queuePendingEdge(raw)
+	receipt, added, pendingChanged, err := b.journal.queuePendingChange(raw)
 	if err != nil {
 		return Receipt{}, false, err
 	}
-	if pendingCrossedZero {
+	if pendingChanged {
 		if err = b.publishPendingCapability(); err != nil {
 			b.recordCapabilityDiagnostic("pending", err)
 		}

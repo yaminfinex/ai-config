@@ -269,11 +269,11 @@ func (j *Journal) AdvanceGeneration() (uint64, error) {
 }
 
 func (j *Journal) Queue(raw json.RawMessage) (Receipt, bool, error) {
-	receipt, added, _, err := j.queuePendingEdge(raw)
+	receipt, added, _, err := j.queuePendingChange(raw)
 	return receipt, added, err
 }
 
-func (j *Journal) queuePendingEdge(raw json.RawMessage) (Receipt, bool, bool, error) {
+func (j *Journal) queuePendingChange(raw json.RawMessage) (Receipt, bool, bool, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	pendingBefore := j.pending
@@ -302,7 +302,7 @@ func (j *Journal) queuePendingEdge(raw json.RawMessage) (Receipt, bool, bool, er
 			return Receipt{}, false, false, err
 		}
 	}
-	return *j.receipts[ev.ID], true, pendingBefore == 0 && j.pending > 0, nil
+	return *j.receipts[ev.ID], true, pendingBefore != j.pending, nil
 }
 
 func (j *Journal) Surface(id int64, kind string, gen uint64) error {
@@ -363,11 +363,11 @@ func (j *Journal) Fetch(id int64, gen uint64) (Receipt, error) {
 }
 
 func (j *Journal) Ack(id int64, gen uint64) error {
-	_, err := j.ackPendingEdge(id, gen)
+	_, err := j.ackPendingChange(id, gen)
 	return err
 }
 
-func (j *Journal) ackPendingEdge(id int64, gen uint64) (bool, error) {
+func (j *Journal) ackPendingChange(id int64, gen uint64) (bool, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	pendingBefore := j.pending
@@ -384,7 +384,7 @@ func (j *Journal) ackPendingEdge(id int64, gen uint64) (bool, error) {
 	if err := j.append(Record{Kind: "acked", ID: id, Generation: gen, Repeat: r.Acked}, true); err != nil {
 		return false, err
 	}
-	return pendingBefore > 0 && j.pending == 0, nil
+	return pendingBefore != j.pending, nil
 }
 
 func (j *Journal) RecordOutbound(result string) error {
