@@ -1,6 +1,15 @@
 # sesh — local builds and user-owned installs are independent copies.
 
-version := `git describe --tags --always --dirty`
+# --- store host (quick-host VM; override via env) ---
+project := env_var_or_default("SESH_GCP_PROJECT", "prod-infinex-687a")
+zone    := env_var_or_default("SESH_GCP_ZONE", "northamerica-south1-c")
+vm      := env_var_or_default("SESH_STORE_VM", "quick-host")
+release_dest := env_var_or_default("SESH_RELEASE_DEST", "sesh-host:/var/lib/sesh/releases")
+
+# canonical version: git-describe against the monorepo-prefixed release tags
+# (`just tag` creates sesh-vX.Y.Z; other repo tags are ignored), falling back
+# to the bare commit hash before the first tag exists
+version := `git describe --tags --match 'sesh-v*' --always --dirty`
 ldflags := "-s -w -X sesh/internal/buildinfo.Version=" + version
 gobin := `bin="$(go env GOBIN)"; if [ -z "$bin" ]; then bin="$(go env GOPATH)/bin"; fi; printf '%s' "$bin"`
 
@@ -28,12 +37,31 @@ install:
 deploy store_url *args: install
     {{gobin}}/sesh setup --store-url {{store_url}} {{args}}
 
+# Tag a release: `just tag 0.1.0` creates the monorepo-prefixed tag
+# sesh-v0.1.0 on the current commit. Push is manual.
+tag semver:
+    @case '{{semver}}' in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "usage: just tag X.Y.Z (numeric, no leading v — the tag becomes sesh-vX.Y.Z)" >&2; exit 2 ;; esac
+    git tag 'sesh-v{{semver}}'
+    @echo "tagged sesh-v{{semver}} — push with: git push origin sesh-v{{semver}}"
+
 # Publish a release to the store's channel (design §7, two-verb discipline:
 # publishing artifacts ≠ deploying the store). Matrix build, remote staging,
 # checksum verify, atomic promote (republish refused), durable latest flip.
-# dest example: sesh-host:/var/lib/sesh/releases
-release dest:
+# Default dest is the quick-host deployment; `sesh-host` is an ssh alias
+# (ops/README.md shows the IAP ProxyCommand config and group membership).
+release dest=release_dest:
     scripts/release.sh {{dest}}
+
+# Upgrade the LIVE store on the VM (publish ≠ deploy: `just release` ships
+# artifacts to the channel; this restarts prod). quick's deploy-server shape:
+# static linux/amd64 build, gcloud IAP scp, then ops/deploy-remote.sh swaps
+# the binary crash-safely (sesh.prev retained via hardlink, atomic rename —
+# the only known-good binary is never overwritten in place), restarts
+# sesh-serve, and prints the version of the RUNNING image.
+deploy-store:
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '{{ldflags}}' -o /tmp/sesh-linux-amd64 ./cmd/sesh
+    gcloud compute scp --tunnel-through-iap --zone {{zone}} --project {{project}} /tmp/sesh-linux-amd64 ops/deploy-remote.sh {{vm}}:/tmp/
+    gcloud compute ssh {{vm}} --tunnel-through-iap --zone {{zone}} --project {{project}} --command 'sudo sh /tmp/deploy-remote.sh /tmp/sesh-linux-amd64'
 
 # Restart an already configured service after installing the current binary.
 restart: install

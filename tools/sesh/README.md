@@ -142,11 +142,19 @@ route: readers take `latest/VERSION` once, then immutable paths, so a flip
 mid-download cannot mix two releases. In tsnet mode these routes accept
 **either** grant verb (`ship` or `read`); no-verb callers are denied.
 
-Publishing is owner-side, two verbs like quick (publish ≠ deploy-server):
+Publishing is owner-side, two verbs like quick (publish ≠ deploy-store):
 
 ```sh
-just release sesh-host:/var/lib/sesh/releases
+just tag 0.1.0      # monorepo-prefixed tag sesh-v0.1.0; push manually
+just release        # defaults to sesh-host:/var/lib/sesh/releases
 ```
+
+Versions are git-describe strings over the `sesh-v*` tags only (other tags
+in the monorepo are ignored), so a tagged release publishes as `sesh-v0.1.0`
+and an untagged commit as `sesh-v0.1.0-3-g<hash>` — equality-only semantics,
+no ordering invented. The default publish dest is the quick-host deployment;
+`sesh-host` is an ssh alias (`ops/README.md` has the IAP ProxyCommand block
+and the group membership publishing needs — no sudo in the publish path).
 
 Matrix build (CGO_ENABLED=0, darwin/linux × arm64/amd64, -trimpath, stamped
 version, dirty trees refused) → rsync to a remote **staging** dir → remote
@@ -158,6 +166,30 @@ staging dirs are cleaned by the next run. Rollback = rewrite `latest` to the
 previous version string: nodes converge down on their next `sesh update`, a
 deliberate and visible fleet downgrade. Gate:
 `tests/check-release-publish.sh`.
+
+## Store hosting and deployment (quick-host)
+
+The standing deployment rides the quick-host VM as a sibling service:
+dedicated `sesh` system user, system unit `sesh-serve.service` running
+`sesh serve --tsnet` with data under `/var/lib/sesh`, and GCS backups every
+15 minutes under a sesh-only bucket prefix. The store embeds tsnet as its
+own tailnet node, so quickd, Caddy, and the VM's tailscaled are untouched
+and restarts are independent. Everything lives in `ops/`:
+
+- `ops/bootstrap.sh` — idempotent VM bring-up (user, dirs, units,
+  TS_AUTHKEY first-start handoff); a re-run with nothing changed is a no-op
+- `just deploy-store` — build → IAP scp → crash-safe binary swap
+  (`sesh.prev` retained via hardlink, atomic rename; the only known-good
+  binary is never overwritten in place) → restart → prints the version of
+  the **running** store image
+- `ops/backup.sh` + timer — sqlite snapshot-API copy (never the live file),
+  upload ordering that keeps the backup restorable, tsnet identity included
+- `ops/README.md` — the owner execution runbook (admin key → bootstrap →
+  deploy → deny-verify → first tagged release → announcement), the restore
+  drill, the escape triggers for leaving the shared host, and the
+  version-skew policy
+
+Gate: `tests/check-store-deploy.sh`.
 
 ## Interim read-only exposure runbook
 
@@ -250,7 +282,9 @@ where this repo lives.
 
 ### Order: store first, then nodes in any order
 
-**1. Store up.** On the store host (any convenient host; it can move later):
+**1. Store up.** On quick-host (the standing deployment) this step is
+`ops/bootstrap.sh` + `just deploy-store` — the full owner runbook, including
+the backup restore drill, is `ops/README.md`. On any other host:
 
 ```sh
 GOOS=linux GOARCH=amd64 go build ./cmd/sesh   # or the matching platform

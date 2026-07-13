@@ -1,0 +1,23 @@
+# /etc/systemd/system/sesh-serve.service — installed by ops/bootstrap.sh.
+# The store embeds tsnet: it joins the tailnet as its own node (`sesh`) with
+# identity state under /var/lib/sesh/tsnet. The VM's tailscaled, quickd, and
+# Caddy are untouched — no unit ordering against them, restarts independent.
+[Unit]
+Description=sesh store — transcript ingest + read surface (tsnet node "sesh")
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=sesh
+# TS_AUTHKEY handoff: read at the first start to join the tailnet; ignored
+# once tsnet state exists. The file is root-only (0600) and optional (-).
+EnvironmentFile=-/etc/sesh/serve.env
+ExecStart=/usr/local/bin/sesh serve --tsnet --tsnet-hostname sesh --addr :8765 --surface-addr :8766 --data-dir /var/lib/sesh
+Restart=always
+RestartSec=2
+# SIGTERM is the drain signal (in-flight PUTs finish or fail without false
+# ACKs); give the drain time before systemd escalates to SIGKILL.
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

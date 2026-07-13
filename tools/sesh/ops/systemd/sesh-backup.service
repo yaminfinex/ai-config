@@ -1,0 +1,11 @@
+# /etc/systemd/system/sesh-backup.service — installed by ops/bootstrap.sh.
+# Triggered by sesh-backup.timer every 15 min as user `sesh`. RPO = 15 min.
+[Unit]
+Description=sesh backup — sqlite VACUUM INTO snapshot + GCS rsync
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=sesh
+ExecStart=/usr/local/bin/sesh-backup.sh
