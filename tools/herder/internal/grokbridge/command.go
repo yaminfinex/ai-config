@@ -175,6 +175,12 @@ func superviseBridge(args []string, state, seat string, retireOnStop bool) int {
 		fmt.Fprintln(log, err)
 		return 1
 	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	return superviseBridgeContext(ctx, args, state, seat, retireOnStop, exe, log)
+}
+
+func superviseBridgeContext(ctx context.Context, args []string, state, seat string, retireOnStop bool, exe string, log io.Writer) int {
 	childArgs := []string{"grok", "bridge"}
 	for _, a := range args {
 		if !strings.HasPrefix(a, "--supervise") && !strings.HasPrefix(a, "--child") {
@@ -182,22 +188,14 @@ func superviseBridge(args []string, state, seat string, retireOnStop bool) int {
 		}
 	}
 	childArgs = append(childArgs, "--child")
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 	backoff := 100 * time.Millisecond
 	for {
 		cmd := exec.CommandContext(ctx, exe, childArgs...)
 		cmd.Stdout = log
 		cmd.Stderr = log
-		err = cmd.Run()
+		err := cmd.Run()
 		if ctx.Err() != nil {
-			if retireOnStop {
-				if _, retireErr := RetireOffline(state, seat); retireErr != nil {
-					fmt.Fprintf(log, "%s retire-on-stop failed: %v\n", time.Now().UTC().Format(time.RFC3339), retireErr)
-					return 1
-				}
-			}
-			return 0
+			return retireStoppedBridge(state, seat, retireOnStop, log)
 		}
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 24 {
 			return 0
@@ -205,7 +203,7 @@ func superviseBridge(args []string, state, seat string, retireOnStop bool) int {
 		fmt.Fprintf(log, "%s bridge exited: %v\n", time.Now().UTC().Format(time.RFC3339), err)
 		select {
 		case <-ctx.Done():
-			return 0
+			return retireStoppedBridge(state, seat, retireOnStop, log)
 		case <-time.After(backoff):
 		}
 		backoff *= 2
@@ -213,4 +211,15 @@ func superviseBridge(args []string, state, seat string, retireOnStop bool) int {
 			backoff = 5 * time.Second
 		}
 	}
+}
+
+func retireStoppedBridge(state, seat string, retireOnStop bool, log io.Writer) int {
+	if !retireOnStop {
+		return 0
+	}
+	if _, err := RetireOffline(state, seat); err != nil {
+		fmt.Fprintf(log, "%s retire-on-stop failed: %v\n", time.Now().UTC().Format(time.RFC3339), err)
+		return 1
+	}
+	return 0
 }
