@@ -3,7 +3,7 @@ id: TASK-179
 title: >-
   sesh — T3: store deployment on quick-host (unit, user, backup, deploy-store,
   release ergonomics)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-13 02:22'
 updated_date: '2026-07-13 02:53'
