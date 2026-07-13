@@ -1,8 +1,9 @@
 <!-- Provenance: design record, 2026-07-14. Design only; implementation is staged separately (§Staging). -->
 # Pi as a first-class herder/hcom family — design
 
-Status: proposed design, revised once after adversarial design review (fix round 1,
-sixteen items across two independent reviews); pending delta review
+Status: proposed design, revised twice after adversarial design review (round 1:
+sixteen items across two independent reviews; round 2: nine items from the
+incumbent delta); pending delta review
 Subject: `@earendil-works/pi-coding-agent` 0.80.6 against herder + hcom 0.7.23
 
 Evidence base (cited throughout by path + section):
@@ -59,7 +60,7 @@ outside Pi itself**:
   DR-2), injects via `pi.sendUserMessage`, translates Pi lifecycle events into seat
   status, releases idempotently on `session_shutdown`. Lives and dies with the Pi
   process; herder supervises Pi, not the extension.
-- **Bus ops** — `herder pi bus <reserve|activate|drain|wait|pending|send|status|retire>`:
+- **Bus ops** — `herder pi bus <reserve|activate|rearm|drain|wait|pending|send|status|retire>`:
   short-lived, bounded CLI invocations made by herder (reserve, at launch) and by
   the extension (everything else). All hcom mechanics — identity + de-placeholder,
   drain paging/sorting, journal append+fsync, cursor derivation, outbound send —
@@ -188,13 +189,23 @@ post-activation; Pi ships with them):
   reservation record — including the bus name the retry will reclaim by — is
   persisted and fsynced under the seat lock *before* the identity invocation runs,
   so death between `hcom start` and the de-latch (or between either and a
-  name-persist) cannot lose the reclaim key or mint a second row on retry. The
-  preferred shape is a herder-minted name reserved up front and passed via `--as`;
-  whether the pinned hcom mints a fresh identity from `--as` (versus only
-  reclaiming) is verified in U1 (register P2, §7) — the fallback, if it only
-  reclaims, journals a `reserving` marker first and treats an orphaned
-  never-de-latched placeholder as inert (it ages to `launch_failed` and is never
-  referenced), with the retry minting fresh and superseding it explicitly (T12).
+  name-persist) cannot lose the reclaim key — **in the preferred shape**, where
+  the name is herder-minted up front and passed via `--as`, and the guarantee of
+  no second row is claimed for that shape only. Whether the pinned hcom mints a
+  fresh identity from `--as` (versus only reclaiming) is register P2 (§7). The
+  reclaim-only **fallback has a real window**, stated honestly: a random-name
+  `hcom start` that dies before name capture leaves an orphan placeholder whose
+  name nobody holds, and until hcom's ~30 s finalizer that row **may be inside
+  tag/broadcast routing fanout** — a message routed to it in that window would
+  never reach the live seat's spool. The P2 probe therefore must also establish
+  whether a never-de-latched placeholder is routable at all. If it is not, the
+  fallback (journal a `reserving` marker, retry mints fresh, orphan ages out
+  inert) stands. If it **is** routable, the retry must identify and stop
+  candidate orphans before minting fresh — roster diff of placeholder-state rows
+  created since the `reserving` marker, stopped via hcom's row-stop — and if the
+  pinned surface cannot support reliable identification-plus-stop, the fallback
+  is **blocked for a design delta** before U1 completes; U1 does not improvise a
+  reconciliation (T12).
 - **Explicit minimal environment for every extension-spawned bus op.** Pi's own
   process environment necessarily carries the seat's provider credential (DR-5),
   and the extension lives inside that process. The extension therefore never lets
@@ -208,9 +219,11 @@ post-activation; Pi ships with them):
 
 **Outbound.** The model sends through `herder pi send` (doctrine-mandated), which:
 journals the outbound intent, executes `hcom send --name <busname>` with the pinned
-binary and allowlisted env, **scrubs the seat's provider credential from the child
-environment** (demo extension rule 8 — hcom does not need it), returns hcom's actual
-result, and **trims stdout to the send receipt line**. The trim matters: any named
+binary and allowlisted env, **scrubs the seat's provider credential from the hcom
+child's environment** (demo extension rule 8 — hcom does not need it; the helper
+process itself, being a model tool child, inherits the seat env inside the accepted
+model-tool boundary — DR-5), returns hcom's actual result, and **trims stdout to
+the send receipt line**. The trim matters: any named
 hcom command may trigger post-dispatch pending delivery, appending other messages'
 bodies to stdout — for Pi that stdout lands in the model's tool result, creating a
 second, uncontrolled delivery path for content the extension will also inject
@@ -260,35 +273,90 @@ Seat ownership is three distinct facts, established in order, never conflated:
 2. **Runtime activation (extension-side, at `session_start`).** `herder pi bus
    activate` records the live Pi pid + process-start evidence + the session UUID
    (DR-4) and increments the seat's **monotonic ownership epoch**, persisted and
-   fsynced under the seat lock. Activation also stores the hash of the per-launch
-   **control capability** (below). Each restart, resume, and in-TUI rebind
-   activates a fresh epoch; retirement writes a terminal epoch (recovery matrix).
+   fsynced under the seat lock. Activation verifies and rotates the **control
+   capability** (full lifecycle below). Each restart, resume, and in-TUI rebind
+   activates a fresh epoch; retirement runs the two-phase `retiring` → `retired`
+   fence (recovery matrix).
 3. **Bind readiness.** The seat is *bound* if and only if (a) a status read-back
    returns the current runtime epoch, and (b) the **inbound driver is armed** —
-   it has completed its first drain at that epoch and is in its drain/wait cycle.
+   it has completed its first drain at that epoch AND its liveness lease is
+   fresh (bounded age; the driver spec below) — armed is a decaying lease, never
+   a latched historical fact.
    Spawn's bind capture, `herder` status surfaces, and activation AC 3 (§10) all
    key on this definition — never on the roster row or the de-latch alone, which
    prove reservation, not a live seat.
 
 **Epoch fencing.** Every mutating bus op carries the epoch it was issued under.
-Each op takes the seat flock, re-reads the persisted epoch, and **rejects** any
-mutation carrying a stale or terminal (retired) epoch before touching the journal
-or hcom. A wait/drain child spawned under a superseded epoch — a prior session, a
+Each op takes the seat flock, re-reads the persisted epoch **and lifecycle phase**,
+and **rejects** — before touching the journal or hcom — any mutation carrying a
+stale epoch, any non-retirement mutation while the seat is `retiring`, and every
+mutation after the terminal `retired` record. A wait/drain child spawned under a superseded epoch — a prior session, a
 prior process, a pre-retirement loop — is thereby discarded structurally, not by
 politeness; the extension additionally cancels such children on rebind, but
 correctness never depends on the cancellation winning the race (T31, T32).
 
-**Control capability.** Seat coordinates (state dir, seat GUID) necessarily sit in
-the seat's environment, which model tool code inherits — so coordinates must not
-be sufficient to drive the control plane. At each activation the extension
-generates a random capability token held **in process memory only**; `activate`
-persists its hash (never the token) under the seat lock; every subsequent
-control-plane op (drain, wait, pending, retire, re-activate) must present the
-token, delivered to the bus-op child **over stdin** — never argv, never the
-environment — and verified against the stored hash under the lock. Prompt-induced
-tool code that knows every environment variable in the seat still cannot mint
-control-plane operations (T34). The deliberately model-reachable surfaces remain
-exactly `herder pi send` and read-only `status` (DR-1). This is an in-band
+**Control capability — two authority lanes, full lifecycle.** Seat coordinates
+(state dir, seat GUID) necessarily sit in the seat's environment, which model tool
+code inherits — so coordinates must not be sufficient to drive the control plane.
+Control-plane authority comes in exactly two lanes, and every op declares which
+lane(s) accept it:
+
+- **Token lane** (the live extension): ops issued from inside the Pi process —
+  drain, wait, pending, rotate-on-activate, extension-initiated retire — present a
+  capability token over the bus-op child's **stdin** (never argv, never env),
+  verified against a stored hash under the seat lock.
+- **External lane** (herder outside the seat): reserve (pre-exec), dead-process
+  takeover, re-arm, and cull/retire are additionally executable **without** a
+  token by a caller whose process ancestry contains **no registry-recorded managed
+  seat process** — checked by ancestor walk against the registry's live pid set.
+  Model tool code always runs beneath its seat's Pi process (that is how Pi runs
+  tools), so it can never satisfy the external-lane check for any seat, its own or
+  a sibling's; an operator shell or herder itself trivially does.
+
+Token lifecycle, every branch specified:
+
+1. **Trust root (first activation).** Launch — herder code running *before* Pi
+   execs — mints the initial token, persists its hash in seat state, and writes
+   the plaintext to a one-time **bootstrap file** (0600, seat dir). The extension
+   consumes it (read + unlink) during its first `session_start`, **before any
+   model turn has ever run in this process**, and presents it to `activate`. A
+   missing or already-consumed bootstrap at first activate is a hard launch
+   failure with cleanup — never a fall-through to tokenless activation. The
+   bootstrap file's exposure window (exec → session_start) is protected only by
+   the cooperative same-UID model, and the threat-model section says so.
+2. **Rotation on every activation.** `activate` verifies the presented token
+   against the stored hash under the lock, then rotates: a fresh token returns to
+   the extension on the op's stdout pipe, and the new hash is stored atomically.
+   A same-process rebind (in-TUI session switch, same extension instance) is the
+   ordinary case: present current token, rotate, fresh epoch.
+3. **Extension reload with memory lost, Pi alive.** Whether Pi extension reload
+   preserves module memory is registered in A4's probe scope; if the new instance
+   has no token, it cannot activate in-band — by design. The seat flips
+   `control-degraded` (status-derivable: activation attempts failing token
+   verification are journaled), and recovery is an external-lane **re-arm**:
+   `herder pi bus rearm` verifies the recorded Pi process is still the live one
+   (pid + start-time evidence) and mints a fresh bootstrap through the same
+   hash-then-one-time-file mechanism, which the extension consumes on its next
+   activation attempt. No stored-hash replacement is ever accepted from inside a
+   live seat without the current token.
+4. **Dead-process takeover.** Tokenless `activate`/`reserve`/`retire` is
+   permitted iff the recorded process is provably gone (pid + start-time) AND the
+   caller passes the external-lane ancestry check; it mints a fresh epoch and a
+   fresh bootstrap chain. This is the whole-process-crash restart path (recovery
+   matrix) — the old plaintext token died with the process, and nothing needs it.
+5. **Cull, graceful or offline.** External cull needs **no channel to the
+   extension and no token**: it is external-lane. It writes the durable
+   `retiring` phase under the lock (below), which every token-lane op observes as
+   a fence — a live extension's in-flight ops are rejected from that moment and
+   the extension stands down; a dead or hung extension simply never contends.
+   Cull then executes the retirement sequence itself as external-lane ops,
+   killing the Pi process on process evidence where needed. The extension is a
+   convenience participant in retirement, never a dependency.
+
+Prompt-induced tool code that knows every environment variable in the seat can
+satisfy neither lane: it has no token, and its ancestry includes a managed seat
+process (T34 tests each branch above). The deliberately model-reachable surfaces
+remain exactly `herder pi send` and read-only `status` (DR-1). This is an in-band
 boundary within the house's cooperative same-UID trust model — see "Threat model"
 below for what it does and does not claim.
 
@@ -349,11 +417,20 @@ event, injection without a settle) is ever reported as delivered (T26).
   match hcom's native delivery style), **bounded by configured count and byte
   caps** per batch; the remainder stays queued and injects at the next settle
   boundary. A bus flood therefore costs bounded context per turn, never an
-  unbounded composed message (T4, T35). The spool itself is quota-bounded: past
-  the configured journal/pending quota, newly drained messages are journaled
-  directly as `undeliverable(quota)` — terminal, counted, visible in the registry
-  (`spool-quota` state) — rather than growing disk without bound. Honest refusal
-  over silent exhaustion (T35).
+  unbounded composed message (T4, T35). The spool itself is **truly bounded, by
+  back-pressure rather than by writing rejection records** (a rejection record
+  per flooded message would itself grow the append-only journal without bound):
+  quota is measured on live (non-terminal) id count and journal on-disk bytes;
+  **at quota the driver stops draining entirely** — zero journal growth — and
+  the excess stays where it already sits durably, in hcom's non-destructive,
+  id-addressed events store, deferred rather than rejected or lost. The seat
+  flips `spool-quota` with an honest backlog count (anonymous count query);
+  draining resumes when deliveries bring live-pending under a low-watermark. The
+  on-disk bound is made real by the snapshot mechanism: the journal rotates in
+  segments, and a segment fully covered by a snapshot whose ids are all terminal
+  is deleted per retention config. Default caps, pinned in family config and
+  tuned in U1: 256 live-pending ids, 64 MiB journal on disk, low-watermark at
+  half the id cap. Honest deferral over silent exhaustion (T35).
 - **No blind re-injection — of durably injected ids.** An id with a **durable
   injected record** is never re-injected on the strength of a missing settle
   alone; recovery for those uses a nudge turn (below). Ids caught in the
@@ -369,13 +446,29 @@ prose about the extension "owning timing". One driver instance per activation
 epoch, started by the extension after `activate` succeeds:
 
 ```text
-armed := first drain at this epoch completed
+armed := first drain at this epoch completed AND lease established
 loop:
-  drain until an empty page            (bus drain, epoch + capability via stdin)
-  if turn active: park until agent_settled   (no wait child while parked)
-  spawn ONE bounded `bus wait` child   (anonymous --wait edge trigger; epoch-stamped)
+  drain until an empty page                 (bus drain; epoch + token via stdin)
+  while undelivered pending ids exist:
+    if turn active: park until agent_settled   (no wait child while parked)
+    batch := next pending ids under the count/byte caps (injection policy)
+    pi.sendUserMessage(batch envelope)
+      → await the matching source=extension input event
+      → journal `injected` for the batch's ids (bus op, fsync)
+    await agent_settled → journal `delivered` for those ids
+    drain once (pick up arrivals routed during the turn); remaining pending
+      ids loop back for the next bounded batch
+  spawn ONE bounded `bus wait` child        (anonymous --wait edge trigger)
   on child exit (wake, timeout, error) OR cancellation → back to drain
+
+independently: a lease timer renews the driver's bounded-age heartbeat
 ```
+
+The loop **is** the delivery path end to end: drain → pending selection → bounded
+batch → injection → input-event correlation → durable injected record → settle →
+delivered record → residual drain — a message can sit `queued` only while a batch
+ahead of it is in flight or the turn is parked, never because no code path leads
+from the spool to `sendUserMessage`.
 
 - **Child discipline.** At most one wait child exists per driver; it is spawned
   asynchronously (never blocking a Pi lifecycle handler), tracked by pid+promise,
@@ -391,6 +484,21 @@ loop:
   halted — undrained messages wait safely in hcom's non-destructive events store,
   not in a fictional queue) while Pi itself stays healthy; recovery is driver
   restart at the same epoch or seat relaunch.
+- **Supervision and liveness — `armed` is a lease, not a latch.** A first drain
+  proves the driver *was* alive; status must prove it *is*. Two mechanisms, both
+  required: (a) the driver's top-level task runs under a supervisor in the
+  extension — an unexpected resolve or rejection of the driver promise is
+  journaled to diagnostics and restarted with bounded backoff at the same epoch,
+  degrading honestly when the backoff exhausts (silent top-level exit cannot
+  leave a green status); (b) a **bounded-age lease**: an independent extension
+  timer renews a heartbeat record (cheap bus op) on an interval sized well under
+  the lease TTL (TTL itself sized to the wait-child timeout plus margin, pinned
+  in family config). `herder pi bus status` treats `driver: armed` as true only
+  while the lease age is inside the TTL — a hung driver (blocked anywhere
+  outside the wait child), a killed timer, or a wedged extension stops renewing
+  and status decays to `driver-degraded` by observation alone, with no writer
+  needed on the failure path (T29). Bind readiness (above) requires the fresh
+  lease, not the historical first drain.
 - **Correctness split.** Only the drain is durable (journal + derived cursor);
   the wait child is the inherited anonymous `--wait` edge trigger with zero
   correctness weight (grok V4). A dead driver loses no messages — the events
@@ -434,7 +542,7 @@ only on settle-after-durable-injection) hold under either outcome.
 | **Second Pi process on the same seat** (operator error, restart race) | `herder pi bus activate` refuses when a live activation exists: the activation record carries pid + process-start evidence, and it is stale only when that process is provably gone. A successful activation increments the epoch, so ops from the superseded process are rejected by the fence regardless of scheduling. Per-op flock serializes journal writers under any overlap (T10). |
 | **Session switched/replaced inside Pi** (new/switch/fork from within the TUI) | The extension treats every `session_start` as a rebinding event (demo extension rule 6): re-activate (fresh epoch), re-verify session identity against seat state, replay pending. A session the seat does not recognize flags the seat for reconciliation rather than guessing (DR-4). The shutdown→reload→start replacement sequence is API-inventory, not probed (assumption A4). |
 | **Rebind with an in-flight wait/drain child** | The prior epoch's wait or drain child may wake after the new activation. Its epoch is stale: any mutation it attempts is rejected under the lock and its output is discarded; the new driver's own drain picks the messages up from the cursor. Cancellation on rebind is attempted but carries no correctness weight (T32). |
-| **Seat cull/retirement with undelivered ids** | Retirement sequence, in order: (1) cancel and reap the driver's in-flight children; (2) stop the bus row (no new routing); (3) **final drain** — events hcom already routed to the seat but not yet drained are journaled and counted, so the undeliverable count is exact rather than a snapshot of an incomplete journal (the exact-counts lesson, T33); (4) persist the terminal retired epoch under the seat lock — from here every mutating op is rejected (T31); (5) mark all non-delivered ids `undeliverable` (terminal, journaled, exact counts to the registry); (6) read-back confirm the row's absence (the proven grok activation pattern); (7) tear down pane and processes on process evidence (T24). |
+| **Seat cull/retirement with undelivered ids** | Two-phase, crash-recoverable, in order: (1) persist the durable **`retiring`** phase under the seat lock — from here competing activations and all **non-retirement** mutations are rejected, while retirement's own steps remain permitted and idempotent, so a crash at any later point is recovered by re-entering `retiring` and completing (T31); (2) cancel and reap the driver's in-flight children (a live extension observes `retiring` and stands down; a dead one never contends); (3) stop the bus row and read-back confirm its absence (the proven grok activation pattern); (4) **final drain** — events hcom already routed to the seat but not yet drained are journaled and counted, so the undeliverable count is exact rather than a snapshot of an incomplete journal (the exact-counts lesson, T33); (5) mark all non-delivered ids `undeliverable` (terminal, journaled, exact counts to the registry); (6) append the terminal **`retired`** record **last** — only now is every mutation rejected outright; (7) tear down pane and processes on process evidence (T24). |
 | **Wake latency when idle** | The inbound driver's bounded `bus wait` child (anonymous `--wait` edge trigger; correctness never rides it — inherited grok V4). On wake or timeout the driver returns to drain. No daemon exists to die; a stuck `wait` child is a timeout, a fence-discarded straggler, and a fresh drain. |
 
 ### Reporting vocabulary
@@ -443,10 +551,12 @@ only on settle-after-durable-injection) hold under either outcome.
 |---|---|---|
 | `queued` | Durably journaled for the seat | journal append + fsync |
 | `delivered` | The definition above — nothing weaker | settle observed after journaled injection |
-| `undeliverable` | Terminal non-delivery (retirement, or `quota` variant) | retirement sequence step 5; spool quota exceeded |
+| `undeliverable` | Terminal non-delivery | retirement sequence step 5 |
 | `inject-degraded` | Extension cannot currently inject (extension error, no session) | extension diagnostics / activation state |
-| `driver-degraded` | Inbound pickup halted; queueing claims suspended honestly | driver failure backoff exhausted |
-| `spool-quota` | Spool at quota; new inbound journaled `undeliverable(quota)` | quota check at drain |
+| `driver-degraded` | Inbound pickup halted; reported from supervision or stale lease | backoff exhausted, top-level exit, or lease expiry |
+| `control-degraded` | Live extension lacks the capability token; external re-arm needed | failed token verification journaled |
+| `auth-drift` | Persistent auth store became non-empty (DR-5) | store digest check |
+| `spool-quota` | Draining paused at quota; backlog deferred in hcom, counted | quota check at drain |
 
 ### Persistence format
 
@@ -526,10 +636,14 @@ resources (tools, extensions) that would load into a process holding the seat's
 provider credential and control coordinates; the demo characterized the state
 layout, not the trust lifecycle's behavior under autonomous launches. Until probe
 P6 (§7) characterizes the pinned CLI's trust controls, launch must ensure project
-`.pi` resources are not loaded (trust withheld / disabled by whatever mechanism
-the pinned surface provides, verified in U2), and the seat runs on managed
-user-level resources only. Per-workspace relaxation is an owner decision (§9),
-made on the characterization evidence — never a silent default.
+`.pi` resources are not loaded (trust withheld / disabled by an **enforceable**
+mechanism of the pinned surface, verified in U2), and the seat runs on managed
+user-level resources only. **Falsification branch, explicit as A9's:** if P6
+finds no enforceable suppression surface in the pinned CLI, that is a design
+delta — U2 neither invents cwd/resource isolation nor quietly weakens the
+default; the delta decides among blocking activation on the gap, an upstream
+ask, and owner-ruled acceptance. Per-workspace relaxation is an owner decision
+(§9), made on the characterization evidence — never a silent default.
 
 ### Launch sequence (ordering: the bus name must exist before doctrine can name it)
 
@@ -653,12 +767,14 @@ registry — pending work stops injecting until reconciled — rather than silen
 adopting an identity (the falsified-registration lesson generalized: presence of a
 session is not seat identity).
 
-**Cull/retire**: the seven-step fenced retirement sequence of DR-2's recovery
-matrix — child cancel/reap, row-stop, **final drain for exact counts**, terminal
-retired epoch under the lock, undeliverable marking, read-back row-absence confirm
-(proven live in grok activation), process/pane teardown. Seat state is retained
-for audit. Registry lifecycle transitions require process-level evidence (pid
-exit, pane death), never session events.
+**Cull/retire**: the two-phase fenced retirement sequence of DR-2's recovery
+matrix — durable `retiring` first, then child cancel/reap, row-stop + read-back
+row-absence confirm (proven live in grok activation), **final drain for exact
+counts**, undeliverable marking, terminal `retired` last, process/pane teardown.
+Cull is external-lane: it needs neither the capability token nor a live
+extension (DR-2 lifecycle item 5). Seat state is retained for audit. Registry
+lifecycle transitions require process-level evidence (pid exit, pane death),
+never session events.
 
 **Subagents.** Pi's extension API inventories tool/subagent-adjacent events, but the
 demo recorded no subagent lifecycle hazard and no subagent kill-switch flag. Unlike
@@ -703,9 +819,35 @@ relaunches. Nothing guesses.
 credential name from the provider table — by name, value never inspected beyond
 nonempty, never logged. Pi's tools and extension children inherit the Pi process
 environment (demo: "a seat must receive only the credential required for its
-selected provider"), so the one-key rule is the whole containment story inside the
-seat; the two herder-controlled child paths that don't need the key (`herder pi
-bus`, `herder pi send`) additionally scrub it (DR-1).
+selected provider"). Scrub claims, stated exactly: bus-op children **spawned by
+the extension** are built with an explicit env excluding the credential (DR-1);
+the model-run `herder pi send` helper, by contrast, is a tool child like any
+other — it **inherits** the seat's provider key, sits inside the accepted
+model-tool credential boundary (threat model), and excludes the key only from the
+**hcom child it spawns** (asserted in T16 on the hcom child, not on the helper).
+An extension-registered send tool that would close even that inheritance is a
+possible refinement behind a tool-registration probe, not a shipped claim.
+
+**Env-only managed auth — the store must stay empty.** Pi resolves credentials
+from an explicit CLI key, `agent/auth.json`, environment variables, or
+custom-provider config (demo "Provider routing"), and the persistent store ranks
+**ahead of** the environment — so a populated auth store would silently defeat
+per-seat provider pinning: an interactive `/login`, or a resumed seat carrying a
+populated `auth.json`, could hold a *different provider's* credential and make an
+in-process cross-provider switch succeed despite the env filter. The demo proved
+only that its scratch stores stayed empty under env routing. The managed contract
+is therefore explicit:
+
+- **Provision/launch gate:** `agent/auth.json` must be absent or credential-empty
+  (the demo's observed empty `{}` at mode 0600) at every launch; any credential
+  entry refuses the launch, naming the store path (T21).
+- **Runtime detection:** the extension digests the auth store at activation and
+  at every settle boundary; a store that becomes non-empty flips `auth-drift`
+  (registry-visible), blocks provider-change relaunches until cleared, and the
+  next launch refuses per the gate above. Detection is unconditional.
+- **Prevention where the surface allows:** whether the pinned CLI can disable
+  `/login`/auth mutation outright is probe **P7** (§7); if it can, launch pins it
+  in addition to — never instead of — the detection.
 
 **Cross-provider change = controlled relaunch** (settled). Herder-side: a relaunch
 op that retires the running process (resume semantics, same seat), rebuilds the
@@ -753,7 +895,8 @@ with the source labeled — grok DR-5, applied to Pi's surfaces.
   `bus: reserved|bound` (bound = the DR-2 bind-readiness definition: current
   runtime epoch read back + driver armed; reserved = roster row only),
   `pending: <n>` (queued/injected not yet delivered, exact counts),
-  `inject: ready|degraded`, `driver: armed|degraded`, `spool: ok|quota`,
+  `inject: ready|degraded`, `driver: armed|degraded` (lease-derived — DR-2),
+  `spool: ok|quota`, `control: ok|degraded`, `auth: ok|drift`,
   `provider: <family>`, and `session-drift` when DR-4 flags it. A row never
   implies capability the seat has not proven.
 - **Diagnostics** (extension errors, bus-op failures, nudge history) go to seat log
@@ -778,7 +921,13 @@ necessarily appear in the environment. That is the DR-2 control capability
 deliberate reachability split (send + read-only status, nothing else). Stated
 plainly: the boundary defends against prompt-induced misuse of herder's own
 surfaces, not against arbitrary same-UID code, and every honesty claim in DR-2/DR-6
-is scoped accordingly.
+is scoped accordingly. Two residuals of the capability lifecycle are inside the
+same concession and named here rather than hidden: the bootstrap file's
+exec-to-`session_start` window (readable by hostile same-UID code that is not this
+seat's model — no model turn exists in the seat yet), and the external lane's
+ancestry check, which admits any same-UID process outside managed-seat trees —
+that admission *is* the operator/herder path, not a defect, and it is exactly as
+strong as the cooperative model it lives in.
 
 ---
 
@@ -792,17 +941,18 @@ None may silently become load-bearing beyond its stated fallback.
 | A1 | **Reply-content capture**: the demo validated injection to `agent_settled` but did not capture the reply. | `delivered` claims turn completion over a context containing the message — nothing about the reply (DR-2). | U1 probe: capture the injected turn's reply via the extension event/message stream; if capturable, add reply-hash journaling as an audit nicety (not a delivery precondition). |
 | A2 | **Steering/mid-stream delivery**: `sendUserMessage` delivery options are API-inventory only. | Idle-gated injection; mid-turn arrivals hold to the settle boundary. | U1 probe: exercise streaming delivery options; if proven, a later unit may relax the idle gate as its own reviewed change. |
 | A3 | **Injected input persists in the session JSONL** (crash/resume durability of injected content). | The id-only nudge is safe **only if A3 holds** — the nudge policy (DR-2) is explicitly conditional on this verification's outcome; if falsified, nudges re-carry content with the same envelope. | U1 probe (before the nudge wording freezes): inject, then inspect the session file for the entry; resume and confirm the content survives. |
-| A4 | **Session replacement sequence** (shutdown → reload → start) is inventory, not probed. | Every `session_start` is a rebinding event; unrecognized sessions go to `session-drift`, never adopt. | U1/U3 probe: in-TUI new/switch/fork while bound. |
+| A4 | **Session replacement sequence** (shutdown → reload → start) is inventory, not probed; so is whether extension reload preserves module memory. | Every `session_start` is a rebinding event; unrecognized sessions go to `session-drift`, never adopt. Memory-lost reload is designed for either way (`control-degraded` → external re-arm, DR-2); the probe determines how often that path fires. | U1/U3 probe: in-TUI new/switch/fork while bound; extension reload with token-retention check. |
 | A5 | **Extension can read the live session UUID** from its context. | Used only if P1 (preassignment) fails; sid-glob fallback behind it. | U1 probe alongside P1. |
 | A6 | **Pi's interactive approval/autonomy surface** is uncharacterized. | Autonomy mapping left unmapped; seat runs Pi defaults until characterized (DR-3). | U2 probe: pinned-version approval surface inventory; owner ruling for any bypass-like mode (§9). |
 | A7 | **TUI-mode extension parity**: probes ran in RPC mode; docs state the same extension contract loads in tui/rpc/json/print. | Design assumes parity for lifecycle + injection only (the documented contract), nothing UI-dependent. | U1's first TUI-mode extension smoke — before anything else builds on it. |
 | A8 | **Extension child-process control**: the extension can spawn bus-op children with an **explicitly constructed env object** (no inheritance — DR-1: no provider credential, no tool signals), feed stdin (capability token), kill, and reap them. | Every extension→bus-op spawn uses the explicit-env + stdin-token shape; T13/T17 assert against the bus-op process itself. | U1 unit test in TUI mode, asserting the bus-op child's actual environ and stdin handling. |
 | A9 | **Inbound driver runtime viability**: a Pi extension may run long-lived async work across turns in TUI mode — the DR-2 driver loop with child spawn, cancellation, reaping. All post-boot delivery rides this. | The driver is specified as a component (DR-2); **U1's first gate** — nothing else in U1 builds on an unverified driver. Falsification triggers the herder-supervised-waiter fallback via delta review, never a silent swerve. | U1 FIRST-GATE probe: TUI seat, isolated bus, idle across ≥2 full `--wait` timeout cycles + 10-minute soak, real end-to-end delivery without restart; then extension reload, session shutdown, forced loop failure while Pi lives (T28, T29). |
 | P1 | **New-session UUID preassignment** at launch (and composition with `--fork`). | DR-4 resolution order: preassign if supported, else A5 publication, else sid-glob. | U2 probe against the pinned CLI (`--help`/docs inspection first; scratch-home execution if needed — managed env always). |
-| P2 | **`hcom start --as <name>` fresh-mint behavior**: does the pinned hcom mint a new identity from `--as`, or only reclaim? | Write-ahead reservation prefers a herder-minted name via `--as` (DR-1); the reclaim-only fallback (inert orphan placeholder + explicit supersede) is specified. | U1 probe on an isolated scratch bus. |
+| P2 | **`hcom start --as <name>` fresh-mint behavior** — and, if reclaim-only, **whether a never-de-latched placeholder is routable** (tag/broadcast fanout) before the ~30 s finalizer. | Write-ahead reservation prefers herder-minted `--as` (no-second-row claimed for that shape only); the reclaim-only fallback requires proven non-routability, or identification-plus-stop of candidate orphans, or it **blocks for a design delta** (DR-1). | U1 probe on an isolated scratch bus, both questions. |
 | P4 | **Subagent surface inventory** at the pinned version. | No soundness dependency (DR-4); disable flag adopted as hardening if present. | U2 probe. |
 | P5 | **Per-provider residual network** under `PI_OFFLINE=1` (strace-proven for one Anthropic call only). | Offline flags required regardless; claim scoped to the demo's one-provider evidence. | Activation-unit integration check per activated provider. |
-| P6 | **Project `.pi` trust surface**: what mechanism the pinned CLI offers to withhold/disable project-resource loading, and what an autonomous launch does by default. | Managed seats must not load project `.pi` resources until characterized (DR-3); per-workspace relaxation is an owner decision (§9). | U2 probe against the pinned CLI in a scratch workspace carrying decoy `.pi` resources. |
+| P6 | **Project `.pi` trust surface**: what mechanism the pinned CLI offers to withhold/disable project-resource loading, and what an autonomous launch does by default. | Managed seats must not load project `.pi` resources until characterized (DR-3); per-workspace relaxation is an owner decision (§9). **Falsification branch:** no enforceable suppression surface → design delta (block activation / upstream ask / owner ruling), never U2 improvisation (DR-3). | U2 probe against the pinned CLI in a scratch workspace carrying decoy `.pi` resources. |
+| P7 | **Auth-mutation prevention surface**: can the pinned CLI disable `/login`/auth-store writes? | Detection (store digest at activation + every settle) ships unconditionally (DR-5); prevention is pinned additionally if the surface exists — never instead. | U2 probe against the pinned CLI. |
 
 Scratch probes that require running the Pi binary happen inside the implement units
 under managed scratch environments (settled: every invocation gets the managed env);
@@ -848,7 +998,10 @@ Delivery state machine and transport:
   send-accepted immediately after); a reservation left as a bare one-shot start
   provably gets finalized `launch_failed` by hcom (the hazard pinned, not just
   the fix); crash injected between `hcom start` and the de-latch recovers by the
-  reserved name without minting a second row (P2-dependent shape).
+  reserved name without minting a second row **in the preferred fresh-mint
+  shape**; the reclaim-only branch is tested per the P2 outcome (proven-inert
+  orphan, or identification-plus-stop of placeholder rows, else the branch is
+  blocked for delta and the test asserts the block).
 - **T13 identity env allowlist, both layers** — (a) bus ops invoked from an
   environment carrying hostile `CLAUDE*`/`CLAUDECODE`/`HCOM_PROCESS_ID`/
   `CODEX_THREAD_ID` still bind adhoc, never trigger hcom hook installation, and
@@ -883,9 +1036,13 @@ Launch/lifecycle/observation contracts:
   no per-launch hash gate exists.
 - **T20 passthrough refusals** — every colliding passthrough from the DR-3 list is
   refused with a targeted error (finalized against the pinned CLI surface).
-- **T21 provider filtering** — unknown `--provider` refused naming the set;
-  cross-provider credential never present; provider relaunch rebuilds the env;
-  in-process cross-provider `model_select` flags provider-drift.
+- **T21 provider filtering + env-only auth** — unknown `--provider` refused
+  naming the set; cross-provider credential never present in env; provider
+  relaunch rebuilds the env; in-process cross-provider `model_select` flags
+  provider-drift. Auth-store branch: alternate-provider credentials planted in
+  `agent/auth.json` pre-launch → launch refuses naming the store; planted
+  mid-run → `auth-drift` flagged at the next settle-boundary digest,
+  provider-change relaunch blocked, next launch refuses.
 - **T22 identity binding** — session evidence + process/pane evidence both required
   before bound; a second session in the same cwd cannot claim the seat; no cwd-keyed
   path exists to exercise.
@@ -908,34 +1065,54 @@ Inbound driver, fencing, and bounds (the fix-round additions):
 - **T28 long-idle pickup (A9 probe, part 1)** — TUI seat idle across ≥2 full
   `--wait` timeout cycles including a 10+ minute soak; a message then arrives and
   delivers end-to-end without any restart.
-- **T29 driver lifecycle (A9 probe, part 2)** — wait child cancelled and reaped on
-  `agent_start` and `session_shutdown`; exactly one wait child at any time;
-  extension reload and in-TUI session switch rebuild the driver at a fresh epoch;
-  forced repeated loop failure flips `driver-degraded` while Pi stays healthy;
-  recovery re-arms.
+- **T29 driver lifecycle and liveness (A9 probe, part 2)** — wait child cancelled
+  and reaped on `agent_start` and `session_shutdown`; exactly one wait child at
+  any time; extension reload and in-TUI session switch rebuild the driver at a
+  fresh epoch; forced repeated loop failure flips `driver-degraded` while Pi
+  stays healthy; recovery re-arms. Liveness branch: **abrupt top-level driver
+  exit** (unexpected promise resolve/reject) is journaled, supervisor-restarted,
+  and degrades on exhausted backoff — never a silent green; **hung driver after
+  bind** (blocked outside the wait child, lease timer stopped) decays status to
+  `driver-degraded` by lease expiry alone, with no failure-path writer.
 - **T30 injection crash window** — crash injected between the observed input event
   and the injection record's fsync: replay re-injects with the same visible
   envelope (id + payload hash); with the record fsynced, replay provably does not
   re-inject and uses the nudge path.
-- **T31 retirement fencing** — wait child wakes after row-stop/retire: its drain
-  attempt is rejected at the terminal epoch; nothing lands in the journal after
-  the retired epoch; sequence order (final drain before terminal epoch before
-  undeliverable marking) asserted from the journal.
+- **T31 retirement fencing (two-phase)** — from the `retiring` record onward, no
+  non-retirement mutation lands (a woken stale wait child's drain is rejected)
+  and no competing activation succeeds; retirement's own records (final-drain
+  queues, undeliverable marks) land **between** `retiring` and `retired`; nothing
+  whatsoever lands after `retired`; a crash injected between any two retirement
+  steps is recovered by idempotent re-entry that completes the sequence — no id
+  left neither delivered nor undeliverable, no retry rejected by its own fence.
 - **T32 rebind with in-flight wait** — a prior epoch's wait/drain child straddles
   an in-TUI session switch: stale-epoch rejection, output discarded, no duplicate
   queue records; the new driver drains the same messages exactly once.
 - **T33 cull final drain** — messages routed to the seat but not yet drained at
   cull time are drained, counted, and reported in the exact undeliverable count;
   a cull skipping the final drain provably undercounts (mutation).
-- **T34 control-plane capability** — a process holding the seat's full environment
-  (coordinates included) but not the memory-held token cannot execute
-  drain/wait/pending/retire/activate: wrong or absent stdin token rejected against
-  the stored hash; token absent from argv, env, and any tool-readable file;
-  `herder pi send` and read-only `status` remain reachable without it.
-- **T35 bounds** — batch injection respects count/byte caps with the remainder
-  queued and delivered at subsequent boundaries; spool at quota journals new
-  inbound as `undeliverable(quota)` with exact counts and flips `spool-quota`;
-  under quota, behavior is unchanged.
+- **T34 control-plane capability, every lifecycle branch** — (a) tokenless or
+  wrong-token control ops from inside a live seat are rejected against the stored
+  hash (token via stdin only; absent from argv, env, and any persistent file —
+  the bootstrap file is proven consumed/unlinked after first activation); (b)
+  first activation succeeds only via the launch-minted bootstrap, and a missing/
+  pre-consumed bootstrap hard-fails the launch with cleanup; (c) activation
+  rotates the token and stores the new hash atomically; (d) memory-lost reload
+  flips `control-degraded` and only an external-lane `rearm` (with live-process
+  evidence) restores token-lane operation; (e) dead-process takeover: tokenless
+  activate succeeds only with pid+start-time provably gone AND
+  outside-managed-ancestry caller; (f) external cull proceeds with a live but
+  unresponsive extension (no token, no extension cooperation) via the `retiring`
+  fence; (g) a caller whose ancestry includes any registry-recorded managed seat
+  process is refused the external lane; `herder pi send` and read-only `status`
+  remain reachable without any of it.
+- **T35 bounds under sustained flood** — batch injection respects count/byte caps
+  with the remainder queued and delivered at subsequent boundaries. Flood branch:
+  under a sustained flood well past the caps, draining pauses at quota, journal
+  **on-disk size stays bounded** (asserted in bytes, snapshot/segment rotation
+  included), `spool-quota` reports an honest hcom backlog count, no message is
+  lost (all eventually delivered after drain-down resumes below the
+  low-watermark), and under quota behavior is byte-identical to before.
 
 **Live smokes (isolated, gated, owner spend per §9):** the launch unit's smoke
 proves one provider end-to-end under the activation flag: spawn → status-op bind →
@@ -975,7 +1152,7 @@ gate battery apply to every behavior diff (house rules).
 | # | Unit | Territory (fence) | Gate |
 |---|---|---|---|
 | U1 | **Transport core + extension**: spool/state machine, `herder pi bus` ops (reserve/de-latch, activate, drain, wait, pending, send, status, retire; epoch fencing + control capability), the TypeScript extension (lifecycle handlers, the DR-2 inbound driver, idle-gated bounded batch injection, replay, nudge), `herder pi send` wrapper. The `grokbridge` extraction follows the **DR-1 reuse boundary exactly** — transport-neutral primitives only; grok's state types, receipt machine, and generation fencing are not touched or reused; the entire grok battery stays green unchanged (any grok behavior diff is a stop-and-flag). Nothing user-reachable changes. | New internal package(s) (e.g. `tools/herder/internal/pibridge/` + the shared primitives package) + `herder pi` command registration + extension artifact in-repo. | **FIRST GATE: the A9 driver probe (T28, T29) — run before any other U1 work is built on the driver.** Then T1–T16, T25, T26, T30–T35 hermetic (mock Pi event harness + isolated bus); T15 against real hcom 0.7.23; grok battery green post-extraction; assumptions A1–A5, A7–A9 and probe P2 verified and recorded (scratch managed envs; inference-bearing probes under the §9.2 ruling). |
-| U2 | **Install + launch contract, behind an activation gate**: pinned installer + hash verification, seat/managed-home provisioning and seeding, allowlist env construction, provider table + filtering, flag mapping + refusals, spool-borne doctrine/prompt, status-op bind capture with hard-fail cleanup, conditional `/proc` assertion. `--agent pi` refuses with a family-not-activated cause+remedy error unless the explicit activation config/env is set. | `launchcmd`/`spawncmd` pi branches + `herder pi install`; `pibridge` consumed, not modified. | T17–T21 + probes P1/P4/P6/A6 answered and recorded + the isolated **live smoke** (one provider, §9.2 spend) under the activation flag. |
+| U2 | **Install + launch contract, behind an activation gate**: pinned installer + hash verification, seat/managed-home provisioning and seeding, allowlist env construction, provider table + filtering, flag mapping + refusals, spool-borne doctrine/prompt, status-op bind capture with hard-fail cleanup, conditional `/proc` assertion. `--agent pi` refuses with a family-not-activated cause+remedy error unless the explicit activation config/env is set. | `launchcmd`/`spawncmd` pi branches + `herder pi install`; `pibridge` consumed, not modified. | T17–T21 + probes P1/P4/P6/P7/A6 answered and recorded + the isolated **live smoke** (one provider, §9.2 spend) under the activation flag. |
 | U3 | **Lifecycle & identity**: resume/fork/cull/relaunch-on-provider-change, session-drift handling, registry capability flags (`bus`, `pending`, `inject`, `driver`, `spool`, `provider`), retirement reporting. | `lifecyclecmd`/`cullcmd` pi branches, registry schema additions. | T9, T22–T24 + T31/T33 re-run through the cull command path + resume/fork live re-check riding the U2 smoke pattern. |
 | U4 | **Observer, transcript & sesh**: session-JSONL adapter (header index, branch-aware rendering), sesh identifier/lineage wiring, labeled `status(pi-ext)` enrichment, honest-unknown reconciliation. | `observercmd` + transcript/sesh plumbing. | T27 against recorded fixtures; `unknown` preserved under mutation. |
 | U5 | **Shim/setup/doctor/docs**: `pi` PATH shim (no-vendor-fallback + escape hatch, per the grok shim pattern), ai-setup/ai-doctor family checks (report-only, isolated probe roots), managed-home and family docs. | shims + setup/doctor scripts + docs. | Ships only after U2's live smoke is green; shadowing/recursion checks; doctor probes prove no live-state writes (T18 posture). |
