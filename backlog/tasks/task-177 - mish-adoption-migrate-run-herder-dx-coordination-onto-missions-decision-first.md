@@ -3,9 +3,10 @@ id: TASK-177
 title: >-
   mish adoption: migrate run-herder-dx coordination onto missions
   (decision-first)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-13 01:02'
+updated_date: '2026-07-13 01:03'
 labels: []
 dependencies: []
 priority: high
