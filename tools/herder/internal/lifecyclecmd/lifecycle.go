@@ -846,7 +846,12 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		r.failAfterLaunch("registry write refused: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
 		return nil, 1
 	}
-	if spec.Agent != "grok" {
+	if spec.Agent == "grok" {
+		if err = refreshGrokCapabilitiesAfterRegistration(spec.RegistryPath, spec.GUID, spec.GrokSessionID); err != nil {
+			r.failAfterLaunch("Grok capability registration failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
+			return nil, 1
+		}
+	} else {
 		if code := r.verifyLaunchStayedAlive(spec.RegistryPath, row, start.Agent.PaneID, spec, cwd); code != 0 {
 			return nil, code
 		}
@@ -854,6 +859,65 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	var decoded map[string]any
 	_ = json.Unmarshal(row, &decoded)
 	return decoded, 0
+}
+
+func refreshGrokCapabilitiesAfterRegistration(registryPath, guid, sessionID string) error {
+	stateDir := filepath.Dir(registryPath)
+	status, err := grokBridgeCall(stateDir, guid, sessionID, "status")
+	if err != nil || status.Status == nil {
+		return fmt.Errorf("bridge status unavailable after registry bind: %s", errorText(err))
+	}
+	busData, err := os.ReadFile(filepath.Join(stateDir, "grok", guid, "bus-name"))
+	if err != nil {
+		return fmt.Errorf("read bridge bus identity after registry bind: %w", err)
+	}
+	busName := strings.TrimSpace(string(busData))
+	if busName == "" || status.Status.Bus != busName || status.Status.PID <= 0 {
+		return errors.New("bridge status does not match the recorded bus identity and live binder pid; inspect the seat bridge log and retry")
+	}
+	switch status.Status.Wake {
+	case "armed", "degraded":
+	default:
+		return fmt.Errorf("bridge reported invalid live wake capability %q", status.Status.Wake)
+	}
+	changed := false
+	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		latest := registry.V2ByGUID(tx.Projection, guid)
+		if latest == nil || latest.Tool != "grok" {
+			return nil, fmt.Errorf("latest Grok registry row %s is unavailable after bind", guid)
+		}
+		undeliverable := 0
+		if latest.Capabilities != nil {
+			undeliverable = latest.Capabilities.Undeliverable
+		}
+		capabilities := v2.Capabilities{Bus: "bound", Wake: status.Status.Wake, Pending: status.Status.Pending, BinderPID: status.Status.PID, Undeliverable: undeliverable}
+		if latest.Capabilities != nil && *latest.Capabilities == capabilities {
+			return nil, nil
+		}
+		next := *latest
+		next.Event = "registered"
+		next.RecordedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		next.Capabilities = &capabilities
+		changed = true
+		return []v2.SessionRecord{next}, nil
+	})
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil {
+		return err
+	}
+	if err = outcome.Err(); err != nil {
+		return err
+	}
+	if outcome.Status != registry.WriteApplied {
+		return errors.New("Grok capability refresh row was not appended")
+	}
+	return nil
 }
 
 func (r *runner) verifyGrokLifecycleIdentity(row []byte, paneID, terminalID string, spec startSpec) ([]byte, error) {
@@ -883,14 +947,14 @@ func (r *runner) verifyGrokLifecycleIdentity(row []byte, paneID, terminalID stri
 				last = "no Grok process carried the herder-owned lifecycle identity arguments"
 			case len(sessionMatches) != 1:
 				last = fmt.Sprintf("expected one controlled session directory named %s, found %d", spec.GrokSessionID, len(sessionMatches))
-			case statusErr != nil || status.Status == nil:
-				last = "bridge status unavailable: " + errorText(statusErr)
-			case status.Status.Bus != "bound" || status.Status.PID <= 0:
-				last = "bridge did not prove a bound identity and live binder pid"
 			case busErr != nil || busName == "":
 				last = "bridge bus name unavailable"
+			case statusErr != nil || status.Status == nil:
+				last = "bridge status unavailable: " + errorText(statusErr)
+			case status.Status.Bus != busName || status.Status.PID <= 0:
+				last = "bridge status did not prove the recorded bus identity and live binder pid"
 			default:
-				capabilities := v2.Capabilities{Bus: status.Status.Bus, Wake: status.Status.Wake, Pending: status.Status.Pending, BinderPID: status.Status.PID}
+				capabilities := v2.Capabilities{Bus: "bound", Wake: status.Status.Wake, Pending: status.Status.Pending, BinderPID: status.Status.PID}
 				return registry.UpdateRawObject(row, map[string]any{
 					"pid":           pid,
 					"hcom_name":     busName,
@@ -979,25 +1043,37 @@ func RetireGrokForCull(registryPath, guid string) (int, error) {
 	}
 	retired, err := grokBridgeCall(filepath.Dir(registryPath), guid, sessionID, "retire")
 	if err != nil {
-		return 0, fmt.Errorf("retire Grok seat bridge for %s: %w; inspect the seat bridge log and retry the cull", guid, err)
+		offlineRetired, offlineErr := grokbridge.RetireOffline(filepath.Dir(registryPath), guid)
+		if offlineErr != nil {
+			return 0, fmt.Errorf("retire Grok seat bridge for %s: socket unavailable (%v); offline convergence refused: %w", guid, err, offlineErr)
+		}
+		retired.Retired = offlineRetired
 	}
+	alreadyRecorded := false
 	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		latest := registry.V2ByGUID(tx.Projection, guid)
 		if latest == nil || latest.Tool != "grok" {
 			return nil, fmt.Errorf("record Grok cull retirement for %s: latest Grok session disappeared", guid)
 		}
+		if latest.Capabilities != nil && latest.Capabilities.Wake == "down" && latest.Capabilities.Bus == "" && latest.Capabilities.Pending == 0 && latest.Capabilities.BinderPID == 0 && latest.Capabilities.Undeliverable >= retired.Retired {
+			alreadyRecorded = true
+			return nil, nil
+		}
 		next := *latest
 		next.Event = "unseated"
 		next.RecordedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
 		undeliverable := retired.Retired
-		if latest.Capabilities != nil {
-			undeliverable += latest.Capabilities.Undeliverable
+		if latest.Capabilities != nil && latest.Capabilities.Undeliverable > undeliverable {
+			undeliverable = latest.Capabilities.Undeliverable
 		}
 		next.Capabilities = &v2.Capabilities{Wake: "down", Pending: 0, Undeliverable: undeliverable}
 		return []v2.SessionRecord{next}, nil
 	})
 	if err != nil {
 		return 0, err
+	}
+	if alreadyRecorded {
+		return retired.Retired, nil
 	}
 	outcome, err := registry.SingleOutcome(outcomes)
 	if err != nil {

@@ -341,11 +341,7 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 }
 
 func retireGrokAfterCull(registryPath string, rec registry.Record, stdout, stderr io.Writer) bool {
-	if rec.Agent != "grok" || rec.Capabilities == nil {
-		return true
-	}
-	caps := rec.Capabilities
-	if caps.Bus == "" && caps.Wake != "armed" && caps.Wake != "degraded" && caps.BinderPID == 0 && caps.Pending == 0 {
+	if rec.Agent != "grok" {
 		return true
 	}
 	retired, err := lifecyclecmd.RetireGrokForCull(registryPath, ptrString(rec.GUID))

@@ -16,8 +16,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
+
+	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
 const pageSize = 20
@@ -44,6 +48,8 @@ type Binder struct {
 	socket      string
 	mu          sync.Mutex
 	taps        map[net.Conn]struct{}
+	drainMu     sync.Mutex
+	retiring    atomic.Bool
 	retireOnce  sync.Once
 	retired     chan struct{}
 	afterAppend func(int, Receipt) error
@@ -291,13 +297,22 @@ func (b *Binder) execute(req Request) Response {
 			wake = "armed"
 		}
 		b.mu.Unlock()
-		r.Status = &BridgeStatus{PID: os.Getpid(), Bus: "bound", Wake: wake, Pending: len(pending)}
+		r.Status = &BridgeStatus{PID: os.Getpid(), Bus: b.cfg.BusName, Wake: wake, Pending: len(pending)}
 	case "retire":
-		count, err := b.journal.RetireUnacked(req.Generation)
+		b.retiring.Store(true)
+		_, err := b.journal.RetireUnacked(req.Generation)
 		if err != nil {
 			r.Error = err.Error()
 			return r
 		}
+		b.drainMu.Lock()
+		_, count := b.journal.Counts()
+		if err = b.publishCapabilities("down"); err != nil {
+			b.drainMu.Unlock()
+			r.Error = err.Error()
+			return r
+		}
+		b.drainMu.Unlock()
 		r.Retired = count
 	case "pending":
 		p, err := b.journal.Pending(req.Generation, true)
@@ -350,9 +365,26 @@ func (b *Binder) handleTap(c net.Conn, req Request) {
 		return
 	}
 	b.mu.Lock()
+	if b.retiring.Load() {
+		b.mu.Unlock()
+		return
+	}
 	b.taps[c] = struct{}{}
 	b.mu.Unlock()
-	defer func() { b.mu.Lock(); delete(b.taps, c); b.mu.Unlock() }()
+	if err := b.publishCapabilities("armed"); err != nil {
+		_ = appendDiagnostic(filepath.Join(SeatDir(b.cfg.StateDir, b.cfg.Seat), "bridge.log"), fmt.Errorf("record armed tap capability: %w", err))
+	}
+	defer func() {
+		b.mu.Lock()
+		delete(b.taps, c)
+		degraded := len(b.taps) == 0 && !b.retiring.Load()
+		b.mu.Unlock()
+		if degraded {
+			if err := b.publishCapabilities("degraded"); err != nil {
+				_ = appendDiagnostic(filepath.Join(SeatDir(b.cfg.StateDir, b.cfg.Seat), "bridge.log"), fmt.Errorf("record degraded tap capability: %w", err))
+			}
+		}
+	}()
 	pending, err := b.journal.Pending(b.generation, false)
 	if err != nil {
 		return
@@ -400,12 +432,13 @@ func wakeLine(r Receipt) string {
 
 func (b *Binder) wake(r Receipt, kind string) error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	droppedLast := false
 	for c := range b.taps {
 		_ = c.SetWriteDeadline(time.Now().Add(2 * time.Second))
 		if _, err := fmt.Fprintln(c, wakeLine(r)); err != nil {
 			c.Close()
 			delete(b.taps, c)
+			droppedLast = len(b.taps) == 0
 			continue
 		}
 		_ = c.SetWriteDeadline(time.Time{})
@@ -413,10 +446,19 @@ func (b *Binder) wake(r Receipt, kind string) error {
 			recordErr := fmt.Errorf("record %s surface for message %d: %w; tap dropped so reconnect recovery can re-list pending messages", kind, r.Event.ID, err)
 			c.Close()
 			delete(b.taps, c)
+			droppedLast = len(b.taps) == 0
 			if diagErr := appendDiagnostic(filepath.Join(SeatDir(b.cfg.StateDir, b.cfg.Seat), "bridge.log"), recordErr); diagErr != nil {
+				b.mu.Unlock()
 				return fmt.Errorf("%v; write bridge diagnostic: %w", recordErr, diagErr)
 			}
+			b.mu.Unlock()
 			return recordErr
+		}
+	}
+	b.mu.Unlock()
+	if droppedLast && !b.retiring.Load() {
+		if err := b.publishCapabilities("degraded"); err != nil {
+			return fmt.Errorf("record degraded tap capability: %w", err)
 		}
 	}
 	return nil
@@ -437,6 +479,11 @@ func (b *Binder) pickupLoop(ctx context.Context) error {
 }
 
 func (b *Binder) Drain(ctx context.Context) error {
+	b.drainMu.Lock()
+	defer b.drainMu.Unlock()
+	if b.retiring.Load() {
+		return nil
+	}
 	for {
 		rows, err := b.events(ctx, false, b.journal.Cursor())
 		if err != nil {
@@ -447,6 +494,9 @@ func (b *Binder) Drain(ctx context.Context) error {
 		}
 		sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
 		for pageIndex, row := range rows {
+			if b.retiring.Load() {
+				return nil
+			}
 			raw, err := eventRaw(row)
 			if err != nil {
 				return err
@@ -467,6 +517,66 @@ func (b *Binder) Drain(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (b *Binder) publishCapabilities(wake string) error {
+	switch wake {
+	case "armed", "degraded", "down":
+	default:
+		return fmt.Errorf("refuse invalid Grok wake capability %q", wake)
+	}
+	if wake != "down" && b.retiring.Load() {
+		return nil
+	}
+	registryPath := filepath.Join(b.cfg.StateDir, "registry.jsonl")
+	if _, err := os.Stat(registryPath); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect Grok registry before capability update: %w", err)
+	}
+	pending, retired := b.journal.Counts()
+	capabilities := v2.Capabilities{Bus: "bound", Wake: wake, Pending: pending, BinderPID: os.Getpid(), Undeliverable: retired}
+	if wake == "down" {
+		capabilities.Bus = ""
+		capabilities.Pending = 0
+		capabilities.BinderPID = 0
+	}
+	changed := false
+	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		if wake != "down" && b.retiring.Load() {
+			return nil, nil
+		}
+		latest := registry.V2ByGUID(tx.Projection, b.cfg.Seat)
+		if latest == nil || latest.Tool != "grok" {
+			return nil, nil
+		}
+		if latest.Capabilities != nil && *latest.Capabilities == capabilities {
+			return nil, nil
+		}
+		next := *latest
+		next.Event = "registered"
+		next.RecordedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		next.Capabilities = &capabilities
+		changed = true
+		return []v2.SessionRecord{next}, nil
+	})
+	if err != nil {
+		return fmt.Errorf("record Grok %s capability: %w", wake, err)
+	}
+	if !changed {
+		return nil
+	}
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil {
+		return fmt.Errorf("record Grok %s capability: %w", wake, err)
+	}
+	if err = outcome.Err(); err != nil {
+		return fmt.Errorf("record Grok %s capability: %w", wake, err)
+	}
+	if outcome.Status != registry.WriteApplied {
+		return fmt.Errorf("record Grok %s capability: registry row was not appended", wake)
+	}
+	return nil
 }
 
 func (b *Binder) nudgeLoop(ctx context.Context) error {

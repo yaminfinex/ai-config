@@ -64,8 +64,7 @@ func TestGrokCullRetiresBridgeAndPendingMessages(t *testing.T) {
 		return []v2.SessionRecord{{
 			Kind: v2.KindSession, GUID: guid, Event: "registered", RecordedAt: "2026-07-13T00:00:00Z", State: v2.StateSeated,
 			Label: "grok-cull", Role: "worker", Tool: "grok",
-			Capabilities: &v2.Capabilities{Bus: "bound", Wake: "degraded", Pending: 1, BinderPID: os.Getpid()},
-			SIDs:         []v2.SID{{SID: sessionID, Source: "launch"}}, Provenance: v2.Provenance{ToolSessionID: sessionID},
+			SIDs: []v2.SID{{SID: sessionID, Source: "launch"}}, Provenance: v2.Provenance{ToolSessionID: sessionID},
 		}}, nil
 	})
 	if err != nil {
@@ -79,6 +78,9 @@ func TestGrokCullRetiresBridgeAndPendingMessages(t *testing.T) {
 	rec := registry.Resolve(recs, guid)
 	if rec == nil {
 		t.Fatal("missing seeded Grok row")
+	}
+	if rec.Capabilities != nil {
+		t.Fatalf("spawn-shaped Grok row unexpectedly has capabilities: %+v", rec.Capabilities)
 	}
 	var stdout, stderr strings.Builder
 	if ok := processTarget(registryPath, *rec, nil, options{}, "2026-07-13T00:01:00Z", &stdout, &stderr); !ok {
@@ -104,6 +106,137 @@ func TestGrokCullRetiresBridgeAndPendingMessages(t *testing.T) {
 	if !strings.Contains(stdout.String(), "grok bridge: retired 1 pending message(s) as undeliverable") {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
+}
+
+func TestGrokCullDeadBridgeConvergesOfflineAndDropsRosterEntry(t *testing.T) {
+	state := shortCullStateDir(t)
+	guid, err := registry.NewGUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := launchcmd.NewGrokSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := grokbridge.OpenJournal(filepath.Join(grokbridge.SeatDir(state, guid), "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = journal.AdvanceGeneration(); err != nil {
+		t.Fatal(err)
+	}
+	if _, added, queueErr := journal.Queue(json.RawMessage(`{"id":51,"type":"message","data":{"from":"sender","text":"pending","intent":"request","delivered_to":["dead-bus"]}}`)); queueErr != nil || !added {
+		t.Fatalf("queue added=%v err=%v", added, queueErr)
+	}
+	if err = journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	registryPath := seedSpawnShapedGrokCullRow(t, state, guid, sessionID, "dead-bus")
+	mockDir, killProbe := installHcomKillMock(t)
+	t.Setenv("PATH", mockDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := registry.Resolve(recs, guid)
+	if rec == nil || rec.Capabilities != nil {
+		t.Fatalf("spawn-shaped row=%+v", rec)
+	}
+	var stdout, stderr strings.Builder
+	if ok := processTarget(registryPath, *rec, nil, options{}, "2026-07-13T00:01:00Z", &stdout, &stderr); !ok {
+		t.Fatalf("dead bridge cull failed\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	}
+	latest := latestSession(t, registryPath, guid)
+	if latest.State != v2.StateUnseated || latest.Capabilities == nil || latest.Capabilities.Wake != "down" || latest.Capabilities.Pending != 0 || latest.Capabilities.Undeliverable != 1 {
+		t.Fatalf("latest=%+v, want converged down row", latest)
+	}
+	data := mustReadFile(t, filepath.Join(grokbridge.SeatDir(state, guid), "journal.jsonl"))
+	if !strings.Contains(string(data), `"kind":"undeliverable"`) {
+		t.Fatalf("journal=%s, want undeliverable", data)
+	}
+	if got := strings.TrimSpace(string(mustReadFile(t, killProbe))); got != "dead-bus" {
+		t.Fatalf("hcom kill probe=%q", got)
+	}
+	if !strings.Contains(stdout.String(), "bus: dropped @dead-bus") {
+		t.Fatalf("stdout=%q", stdout.String())
+	}
+}
+
+func TestGrokCullHeldLockReportsAliveButUnservedBridge(t *testing.T) {
+	state := shortCullStateDir(t)
+	guid, err := registry.NewGUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := launchcmd.NewGrokSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcom := filepath.Join(state, "hcom")
+	if err = os.WriteFile(hcom, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	binder, err := grokbridge.OpenBinder(grokbridge.BinderConfig{Seat: guid, StateDir: state, HcomBin: hcom, SessionID: sessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer binder.Close()
+	registryPath := seedSpawnShapedGrokCullRow(t, state, guid, sessionID, "wedged-bus")
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := registry.Resolve(recs, guid)
+	var stdout, stderr strings.Builder
+	if ok := processTarget(registryPath, *rec, nil, options{}, "2026-07-13T00:01:00Z", &stdout, &stderr); ok {
+		t.Fatalf("wedged bridge cull unexpectedly succeeded\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	}
+	if got := stderr.String(); !strings.Contains(got, "binder is alive but not serving") || !strings.Contains(got, "inspect the seat bridge log") || !strings.Contains(got, "retry the cull") {
+		t.Fatalf("stderr=%q, want honest cause and remedy", got)
+	}
+	if latest := latestSession(t, registryPath, guid); latest.State != v2.StateUnseated {
+		t.Fatalf("latest=%+v, want cull fact recorded before retirement error", latest)
+	}
+}
+
+func shortCullStateDir(t *testing.T) string {
+	t.Helper()
+	state, err := os.MkdirTemp("/tmp", "gc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(state) })
+	return state
+}
+
+func seedSpawnShapedGrokCullRow(t *testing.T, state, guid, sessionID, busName string) string {
+	t.Helper()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	verified := true
+	outcomes, err := registry.UpdateLocked(registryPath, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{
+			Kind: v2.KindSession, GUID: guid, Event: "registered", RecordedAt: "2026-07-13T00:00:00Z", State: v2.StateSeated,
+			Label: "grok-cull", Role: "worker", Tool: "grok",
+			Seat: &v2.Seat{Kind: "herdr", HcomName: busName, HcomVerified: &verified},
+			SIDs: []v2.SID{{SID: sessionID, Source: "launch"}}, Provenance: v2.Provenance{ToolSessionID: sessionID},
+		}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertWriteOutcomes(t, outcomes)
+	return registryPath
+}
+
+func installHcomKillMock(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	probe := filepath.Join(dir, "hcom-kill")
+	script := "#!/bin/sh\nif [ \"$1\" = kill ]; then printf '%s\\n' \"$2\" >>\"" + probe + "\"; exit 0; fi\nexit 64\n"
+	if err := os.WriteFile(filepath.Join(dir, "hcom"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir, probe
 }
 
 func waitForCullBridge(t *testing.T, socket string) {

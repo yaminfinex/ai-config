@@ -85,6 +85,7 @@ type Journal struct {
 	receipts   map[int64]*Receipt
 	generation uint64
 	cursor     int64
+	retiring   bool
 }
 
 func OpenJournal(path string) (*Journal, error) {
@@ -131,6 +132,19 @@ func OpenJournal(path string) (*Journal, error) {
 func (j *Journal) Close() error       { j.mu.Lock(); defer j.mu.Unlock(); return j.f.Close() }
 func (j *Journal) Cursor() int64      { j.mu.Lock(); defer j.mu.Unlock(); return j.cursor }
 func (j *Journal) Generation() uint64 { j.mu.Lock(); defer j.mu.Unlock(); return j.generation }
+
+func (j *Journal) Counts() (pending, retired int) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, receipt := range j.receipts {
+		if receipt.Retired {
+			retired++
+		} else if !receipt.Acked {
+			pending++
+		}
+	}
+	return pending, retired
+}
 
 func (j *Journal) replay() error {
 	if _, err := j.f.Seek(0, 0); err != nil {
@@ -272,6 +286,11 @@ func (j *Journal) Queue(raw json.RawMessage) (Receipt, bool, error) {
 	if err := j.append(Record{Kind: "queued", ID: ev.ID, Event: copyRaw, Hash: hash}, true); err != nil {
 		return Receipt{}, false, err
 	}
+	if j.retiring {
+		if err := j.append(Record{Kind: "undeliverable", ID: ev.ID, Generation: j.generation}, true); err != nil {
+			return Receipt{}, false, err
+		}
+	}
 	return *j.receipts[ev.ID], true, nil
 }
 
@@ -360,6 +379,7 @@ func (j *Journal) RetireUnacked(gen uint64) (int, error) {
 	if gen != j.generation {
 		return 0, staleGeneration(gen, j.generation)
 	}
+	j.retiring = true
 	ids := make([]int64, 0)
 	for id, r := range j.receipts {
 		if !r.Acked && !r.Retired {

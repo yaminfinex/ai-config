@@ -308,6 +308,22 @@ func TestRetireUnackedTransitionsOnlyPendingMessages(t *testing.T) {
 	}
 }
 
+func TestQueueAfterRetirementIsImmediatelyUndeliverable(t *testing.T) {
+	j := openTestJournal(t)
+	queue(t, j, 1)
+	if count, err := j.RetireUnacked(1); err != nil || count != 1 {
+		t.Fatalf("initial retirement count=%d err=%v", count, err)
+	}
+	queue(t, j, 2)
+	if got := j.receipts[2].Status(); got != "undeliverable" {
+		t.Fatalf("queue-after-retire status=%s", got)
+	}
+	pending, retired := j.Counts()
+	if pending != 0 || retired != 2 {
+		t.Fatalf("counts pending=%d retired=%d, want 0/2", pending, retired)
+	}
+}
+
 func TestSocketPathLengthPreflightNamesRemedy(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "hcom")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
