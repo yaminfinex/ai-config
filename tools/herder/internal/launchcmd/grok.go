@@ -27,6 +27,8 @@ const (
 // the flag. The visible contract flags remain pinned from --help.
 var grokRequiredFlags = []string{"--no-subagents", "--session-id", "--rules"}
 
+var grokMCPExecutable = os.Executable
+
 // GrokActivated is deliberately narrow: U2 ships the launch contract for
 // isolated validation, while ordinary Grok spawns remain blocked until the
 // lifecycle and observer contracts land.
@@ -279,7 +281,7 @@ func grokStateDir() string {
 }
 
 func seedGrokHome(home string) error {
-	herderBin, err := os.Executable()
+	herderBin, err := grokMCPExecutable()
 	if err != nil {
 		return fmt.Errorf("resolve herder executable for Grok MCP config: %w", err)
 	}
@@ -287,6 +289,10 @@ func seedGrokHome(home string) error {
 	if err != nil {
 		return fmt.Errorf("resolve absolute herder executable for Grok MCP config: %w", err)
 	}
+	return seedGrokHomeForExecutable(home, herderBin)
+}
+
+func seedGrokHomeForExecutable(home, herderBin string) error {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return fmt.Errorf("create dedicated GROK_HOME: %w", err)
 	}
@@ -311,26 +317,30 @@ command = ` + strconv.Quote(herderBin) + `
 args = ["grok", "mcp"]
 enabled = true
 `
-	if data, readErr := os.ReadFile(config); readErr == nil {
-		if string(data) != controlled {
-			return fmt.Errorf("dedicated GROK_HOME config %s is not the herder-controlled launch config; point HERDER_STATE_DIR at a fresh isolated state root and retry", config)
-		}
-		return nil
-	} else if !os.IsNotExist(readErr) {
-		return readErr
-	}
-	f, err := os.OpenFile(config, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	tmp, err := os.CreateTemp(home, ".config.toml-")
 	if err != nil {
-		return err
+		return fmt.Errorf("create controlled Grok config: %w", err)
 	}
-	if _, err = io.WriteString(f, controlled); err == nil {
-		err = f.Sync()
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return fmt.Errorf("set controlled Grok config permissions: %w", err)
 	}
-	closeErr := f.Close()
+	if _, err = io.WriteString(tmp, controlled); err == nil {
+		err = tmp.Sync()
+	}
+	closeErr := tmp.Close()
 	if err != nil {
-		return err
+		return fmt.Errorf("write controlled Grok config: %w", err)
 	}
-	return closeErr
+	if closeErr != nil {
+		return fmt.Errorf("close controlled Grok config: %w", closeErr)
+	}
+	if err := os.Rename(tmpName, config); err != nil {
+		return fmt.Errorf("install controlled Grok config: %w", err)
+	}
+	return nil
 }
 
 func gateGrokBinary(stateDir string) (string, string, error) {
@@ -357,7 +367,7 @@ func gateGrokBinary(stateDir string) (string, string, error) {
 		return "", "", fmt.Errorf("create Grok capability probe root: %w", err)
 	}
 	defer os.RemoveAll(probeHome)
-	env := replaceLaunchEnv(withoutCredentialEnv(os.Environ()), map[string]string{"HOME": probeHome, "GROK_HOME": filepath.Join(probeHome, "grok-home")})
+	env := grokProbeEnv(os.Environ(), probeHome)
 	versionOut, err := commandOutput(abs, env, "--no-auto-update", "--version")
 	if err != nil {
 		return "", "", fmt.Errorf("read Grok version from %s: %w", abs, err)
@@ -403,9 +413,9 @@ func commandOutput(path string, env []string, args ...string) (string, error) {
 	cmd.Stdout, cmd.Stderr = &stdout, io.Discard
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return stdout.String(), fmt.Errorf("probe %s exited with code %d (child stderr suppressed)", path, exitErr.ExitCode())
+			return stdout.String(), fmt.Errorf("probe %s exited with code %d (child stderr suppressed); run it by hand to see why, then set HERDER_GROK_BIN to a characterized supported executable", path, exitErr.ExitCode())
 		}
-		return stdout.String(), fmt.Errorf("run probe %s: %w", path, err)
+		return stdout.String(), fmt.Errorf("run probe %s: %w; run it by hand to see why, then set HERDER_GROK_BIN to a characterized supported executable", path, err)
 	}
 	return stdout.String(), nil
 }
@@ -483,23 +493,19 @@ func replaceLaunchEnv(env []string, values map[string]string) []string {
 	return out
 }
 
-func withoutCredentialEnv(env []string) []string {
+func grokProbeEnv(env []string, probeHome string) []string {
 	out := make([]string, 0, len(env))
 	for _, item := range env {
 		key, _, _ := strings.Cut(item, "=")
-		upper := strings.ToUpper(key)
-		if strings.HasSuffix(upper, "_API_KEY") ||
-			strings.HasSuffix(upper, "_ACCESS_KEY") ||
-			strings.HasSuffix(upper, "_PRIVATE_KEY") ||
-			strings.HasSuffix(upper, "_TOKEN") ||
-			strings.HasSuffix(upper, "_SECRET") ||
-			strings.HasSuffix(upper, "_PASSWORD") ||
-			strings.Contains(upper, "CREDENTIAL") {
-			continue
+		switch {
+		case key == "PATH", key == "HOME", key == "GROK_HOME", key == "LANG", key == "TERM", key == "TMPDIR", strings.HasPrefix(key, "LC_"):
+			out = append(out, item)
 		}
-		out = append(out, item)
 	}
-	return out
+	return replaceLaunchEnv(out, map[string]string{
+		"HOME":      probeHome,
+		"GROK_HOME": filepath.Join(probeHome, "grok-home"),
+	})
 }
 
 func validGrokSeat(seat string) bool {

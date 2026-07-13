@@ -216,7 +216,7 @@ func TestGrokProbeStripsCredentialAndSuppressesChildStderr(t *testing.T) {
 	writeExecutable(t, evil, "#!/bin/sh\nprintf '%s\\n' '"+sentinel+"' >&2\nexit 37\n")
 	t.Setenv("HERDER_GROK_BIN", evil)
 	_, _, err := gateGrokBinary(state)
-	if err == nil || strings.Contains(err.Error(), sentinel) || !strings.Contains(err.Error(), "code 37") || !strings.Contains(err.Error(), evil) {
+	if err == nil || strings.Contains(err.Error(), sentinel) || !strings.Contains(err.Error(), "code 37") || !strings.Contains(err.Error(), evil) || !strings.Contains(err.Error(), "run it by hand") {
 		t.Fatalf("scrubbed probe error = %v", err)
 	}
 	recordGrokLaunchFailure(err)
@@ -227,8 +227,15 @@ func TestGrokProbeStripsCredentialAndSuppressesChildStderr(t *testing.T) {
 }
 
 func TestGrokProbeEnvironmentContainsNoAPIKeys(t *testing.T) {
-	env := withoutCredentialEnv([]string{
+	root := t.TempDir()
+	env := grokProbeEnv([]string{
 		"PATH=/bin",
+		"HOME=/live/home",
+		"GROK_HOME=/live/grok",
+		"LANG=C.UTF-8",
+		"LC_ALL=C",
+		"TERM=xterm",
+		"TMPDIR=/tmp",
 		"XAI_API_KEY=one",
 		"OPENAI_API_KEY=two",
 		"ANTHROPIC_API_KEY=three",
@@ -236,15 +243,59 @@ func TestGrokProbeEnvironmentContainsNoAPIKeys(t *testing.T) {
 		"CLIENT_SECRET=five",
 		"DB_PASSWORD=six",
 		"CREDENTIAL_FILE=seven",
-	})
-	for _, item := range env {
-		key, _, _ := strings.Cut(item, "=")
-		if strings.HasSuffix(strings.ToUpper(key), "_API_KEY") {
-			t.Fatalf("probe environment retained credential-shaped name %q", key)
-		}
+		"UNRELATED=value",
+	}, root)
+	allowed := map[string]string{
+		"PATH": "/bin", "HOME": root, "GROK_HOME": filepath.Join(root, "grok-home"),
+		"LANG": "C.UTF-8", "LC_ALL": "C", "TERM": "xterm", "TMPDIR": "/tmp",
 	}
-	if got := strings.Join(env, "\n"); got != "PATH=/bin" {
-		t.Fatalf("probe credential scrub retained unexpected entries: %q", got)
+	for _, item := range env {
+		key, value, _ := strings.Cut(item, "=")
+		if want, ok := allowed[key]; !ok || value != want {
+			t.Fatalf("probe environment retained non-allowlisted entry %q", key)
+		}
+		delete(allowed, key)
+	}
+	if len(allowed) != 0 {
+		t.Fatalf("probe environment omitted allowlisted entries: %v", allowed)
+	}
+}
+
+func TestSeedGrokHomeRewritesChangedExecutablePath(t *testing.T) {
+	original := grokMCPExecutable
+	t.Cleanup(func() { grokMCPExecutable = original })
+	first := filepath.Join(t.TempDir(), "herder-a")
+	second := filepath.Join(t.TempDir(), "herder-b")
+	grokMCPExecutable = func() (string, error) { return first, nil }
+	plan, _ := prepareTestGrok(t, "0.2.93")
+	grokMCPExecutable = func() (string, error) { return second, nil }
+	if _, err := prepareGrokLaunch(nil); err != nil {
+		t.Fatalf("second launch path rewrite failed: %v", err)
+	}
+	config, err := os.ReadFile(filepath.Join(plan.GrokHome, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(config), `command = `+strconv.Quote(second)) || strings.Contains(string(config), first) {
+		t.Fatalf("controlled config did not move to second executable: %s", config)
+	}
+}
+
+func TestSeedGrokHomeReenforcesControlledConfigAfterTamper(t *testing.T) {
+	plan, _ := prepareTestGrok(t, "0.2.93")
+	configPath := filepath.Join(plan.GrokHome, "config.toml")
+	if err := os.WriteFile(configPath, []byte("[cli]\nauto_update = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepareGrokLaunch(nil); err != nil {
+		t.Fatalf("relaunch after tamper failed: %v", err)
+	}
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(config), "auto_update = true") || !strings.Contains(string(config), "auto_update = false") || !strings.Contains(string(config), "hooks = false") {
+		t.Fatalf("controlled config was not re-enforced: %s", config)
 	}
 }
 
