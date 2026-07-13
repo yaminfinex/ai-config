@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"ai-config/tools/herder/internal/launchcmd"
 )
 
 func TestT19GrokPassthroughRefusals(t *testing.T) {
@@ -15,7 +17,7 @@ func TestT19GrokPassthroughRefusals(t *testing.T) {
 	}
 	for _, arg := range cases {
 		t.Run(strings.TrimLeft(strings.ReplaceAll(arg, "=", "_"), "-"), func(t *testing.T) {
-			if err := validateGrokExtraArgs([]string{arg}, false); err == nil || !strings.Contains(err.Error(), "remove") {
+			if err := launchcmd.ValidateGrokExtraArgs([]string{arg}, false); err == nil || !strings.Contains(err.Error(), "remove") {
 				t.Fatalf("validateGrokExtraArgs(%q) = %v, want targeted refusal with remedy", arg, err)
 			}
 		})
@@ -23,10 +25,10 @@ func TestT19GrokPassthroughRefusals(t *testing.T) {
 }
 
 func TestT19GrokModelPassthroughOnlyConflictsWithFirstClassModel(t *testing.T) {
-	if err := validateGrokExtraArgs([]string{"--model", "grok-4.5"}, false); err != nil {
+	if err := launchcmd.ValidateGrokExtraArgs([]string{"--model", "grok-4.5"}, false); err != nil {
 		t.Fatalf("passthrough-only model refused: %v", err)
 	}
-	if err := validateGrokExtraArgs([]string{"--model=grok-4.5"}, true); err == nil || !strings.Contains(err.Error(), "--model conflicts") {
+	if err := launchcmd.ValidateGrokExtraArgs([]string{"--model=grok-4.5"}, true); err == nil || !strings.Contains(err.Error(), "--model conflicts") {
 		t.Fatalf("first-class model collision = %v", err)
 	}
 }

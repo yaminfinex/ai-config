@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ai-config/tools/herder/internal/registry"
 )
 
 func writeExecutable(t *testing.T, path, body string) {
@@ -31,7 +33,7 @@ func randomCredential(t *testing.T) string {
 func mockGrokBinary(t *testing.T, version string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "grok-build")
-	body := "#!/bin/sh\ncase \"$*\" in\n  *--version*) printf 'grok " + version + " (build)\\n' ;;\n  *--help*) printf '%s\\n' '--no-subagents --session-id --rules' ;;\n  *) exit 0 ;;\nesac\n"
+	body := "#!/bin/sh\nif [ \"${XAI_API_KEY+x}\" = x ] || [ \"${OPENAI_API_KEY+x}\" = x ] || [ \"${ANTHROPIC_API_KEY+x}\" = x ]; then printf '%s\\n' 'credential-shaped probe env present' >&2; exit 91; fi\ncase \"$*\" in\n  *--version*) printf 'grok " + version + " (build)\\n' ;;\n  *--help*) printf '%s\\n' '--no-subagents --session-id --rules' ;;\n  *) exit 0 ;;\nesac\n"
 	writeExecutable(t, path, body)
 	return path
 }
@@ -48,7 +50,11 @@ func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
 	t.Setenv("HERDER_GROK_CHILD_HOME", filepath.Join(root, "child-home"))
 	t.Setenv("HERDER_STATE_DIR", filepath.Join(root, "state"))
 	t.Setenv("HCOM_DIR", filepath.Join(root, "hcom"))
-	t.Setenv("HERDER_GUID", "seat-neutral")
+	seat, err := registry.NewGUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_GUID", seat)
 	t.Setenv("HERDER_GROK_BIN", mockGrokBinary(t, version))
 	t.Setenv("HERDER_REAL_HCOM", hcom)
 	sid, err := NewGrokSessionID()
@@ -117,11 +123,139 @@ func TestT20LaunchArgvAndControlledHomePinBothUpdateSuppressors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"auto_update = false", "hooks = false", `command = "herder"`, `args = ["grok", "mcp"]`} {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	exe, err = filepath.Abs(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"auto_update = false", "hooks = false", `command = ` + strconv.Quote(exe), `args = ["grok", "mcp"]`} {
 		if !strings.Contains(string(config), want) {
 			t.Errorf("controlled config missing %q: %s", want, config)
 		}
 	}
+}
+
+func TestSpawnMintedGUIDDrivesRealLaunchBuilder(t *testing.T) {
+	plan, _ := prepareTestGrok(t, "0.2.93")
+	if !validGrokSeat(plan.Seat) {
+		t.Fatalf("registry-minted seat rejected by launch builder: %q", plan.Seat)
+	}
+	if got := envValue(plan.Env, "HERDER_GROK_SEAT"); got != plan.Seat {
+		t.Fatalf("spawn-shaped child seat = %q, want %q", got, plan.Seat)
+	}
+}
+
+func TestGrokSeatGuardRejectsPathAndNUL(t *testing.T) {
+	for _, seat := range []string{"", "bad/seat", `bad\seat`, "bad\x00seat"} {
+		if validGrokSeat(seat) {
+			t.Errorf("unsafe seat accepted: %q", seat)
+		}
+	}
+}
+
+func TestGrokLaunchLayerRefusesOwnedArgCollisions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		safe string
+	}{
+		{name: "agents object", args: []string{"--agents", `{"evil":{}}`}},
+		{name: "safe always approve", args: []string{"--always-approve"}, safe: "1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(grokActivationEnv, "1")
+			t.Setenv("XAI_API_KEY", randomCredential(t))
+			t.Setenv("HERDER_GROK_SAFE", tc.safe)
+			if _, err := prepareGrokLaunch(tc.args); err == nil || !strings.Contains(err.Error(), "remove") {
+				t.Fatalf("prepareGrokLaunch(%q) = %v, want launch-layer refusal", tc.args, err)
+			}
+		})
+	}
+}
+
+func TestGrokLaunchLayerMirrorsFullOwnedArgRefusals(t *testing.T) {
+	cases := []string{
+		"--session-id", "--session-id=value", "-s", "--resume", "-r", "--fork-session",
+		"--rules", "--permission-mode", "--bypassPermissions",
+		"--no-auto-update", "--auto-update", "--disable-auto-update", "--agents", "--agent", "--subagents",
+		"--no-subagents", "--no-no-subagents", "HOME=/tmp/elsewhere", "GROK_HOME=/tmp/elsewhere",
+	}
+	for _, arg := range cases {
+		t.Run(strings.TrimLeft(strings.ReplaceAll(arg, "=", "_"), "-"), func(t *testing.T) {
+			if err := validatePreparedGrokArgs([]string{arg}, false); err == nil || !strings.Contains(err.Error(), "remove") {
+				t.Fatalf("validatePreparedGrokArgs(%q) = %v, want targeted refusal", arg, err)
+			}
+		})
+	}
+}
+
+func TestGrokProbeStripsCredentialAndSuppressesChildStderr(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
+	credential := "probe-credential-must-not-escape"
+	t.Setenv("XAI_API_KEY", credential)
+	t.Setenv("OPENAI_API_KEY", credential)
+	t.Setenv("ANTHROPIC_API_KEY", credential)
+	t.Setenv("HERDER_STATE_DIR", state)
+	t.Setenv(grokActivationEnv, "1")
+	t.Setenv("HERDER_GUID", "probe-seat")
+
+	// The normal mock exits if the probe inherits XAI_API_KEY. A successful
+	// gate therefore proves the probe environment omitted the key by name.
+	path := mockGrokBinary(t, "0.2.93")
+	t.Setenv("HERDER_GROK_BIN", path)
+	if _, _, err := gateGrokBinary(state); err != nil {
+		t.Fatalf("credential-free probe failed: %v", err)
+	}
+
+	sentinel := "XAI_API_KEY=env-shaped-sentinel"
+	evil := filepath.Join(root, "grok-stderr")
+	writeExecutable(t, evil, "#!/bin/sh\nprintf '%s\\n' '"+sentinel+"' >&2\nexit 37\n")
+	t.Setenv("HERDER_GROK_BIN", evil)
+	_, _, err := gateGrokBinary(state)
+	if err == nil || strings.Contains(err.Error(), sentinel) || !strings.Contains(err.Error(), "code 37") || !strings.Contains(err.Error(), evil) {
+		t.Fatalf("scrubbed probe error = %v", err)
+	}
+	recordGrokLaunchFailure(err)
+	marker := ReadGrokLaunchFailure(state, "probe-seat")
+	if strings.Contains(marker, sentinel) || !strings.Contains(marker, "code 37") {
+		t.Fatalf("scrubbed launch marker = %q", marker)
+	}
+}
+
+func TestGrokProbeEnvironmentContainsNoAPIKeys(t *testing.T) {
+	env := withoutCredentialEnv([]string{
+		"PATH=/bin",
+		"XAI_API_KEY=one",
+		"OPENAI_API_KEY=two",
+		"ANTHROPIC_API_KEY=three",
+		"SERVICE_TOKEN=four",
+		"CLIENT_SECRET=five",
+		"DB_PASSWORD=six",
+		"CREDENTIAL_FILE=seven",
+	})
+	for _, item := range env {
+		key, _, _ := strings.Cut(item, "=")
+		if strings.HasSuffix(strings.ToUpper(key), "_API_KEY") {
+			t.Fatalf("probe environment retained credential-shaped name %q", key)
+		}
+	}
+	if got := strings.Join(env, "\n"); got != "PATH=/bin" {
+		t.Fatalf("probe credential scrub retained unexpected entries: %q", got)
+	}
+}
+
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			return strings.TrimPrefix(item, prefix)
+		}
+	}
+	return ""
 }
 
 func TestT21ChildEnvironmentPinsIsolationWithoutPersistingCredential(t *testing.T) {

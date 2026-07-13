@@ -3,7 +3,6 @@ package spawncmd
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -495,7 +494,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			die(stderr, launchcmd.GrokAuthError())
 			return opts, 1
 		}
-		if err := validateGrokExtraArgs(opts.ExtraArgs, opts.Model != ""); err != nil {
+		if err := launchcmd.ValidateGrokExtraArgs(opts.ExtraArgs, opts.Model != ""); err != nil {
 			die(stderr, err.Error())
 			return opts, 1
 		}
@@ -1657,44 +1656,6 @@ func hasModelExtraArg(agent string, args []string) bool {
 		}
 	}
 	return false
-}
-
-func validateGrokExtraArgs(args []string, firstClassModel bool) error {
-	for _, arg := range args {
-		name := arg
-		if before, _, ok := strings.Cut(arg, "="); ok {
-			name = before
-		}
-		switch name {
-		case "--session-id", "-s":
-			return fmt.Errorf("Grok passthrough %s conflicts with the preassigned session identity; remove it and let herder mint the session id", name)
-		case "--resume", "-r", "--fork-session":
-			return fmt.Errorf("Grok passthrough %s conflicts with the fresh-seat launch contract; remove it and use the lifecycle command after that contract is activated", name)
-		case "--rules":
-			return errors.New("Grok passthrough --rules conflicts with the seat doctrine; remove it so herder can install the monitor and receipt rules")
-		case "--permission-mode", "--always-approve", "--bypassPermissions":
-			return fmt.Errorf("Grok passthrough %s conflicts with herder's permission mapping; remove it, then use normal launch for --always-approve or pass --safe for ask mode", name)
-		case "--no-auto-update", "--auto-update":
-			return fmt.Errorf("Grok passthrough %s conflicts with mandatory update suppression; remove it because herder supplies both update controls", name)
-		case "--agents", "--agent", "--subagents", "--no-subagents", "--no-no-subagents":
-			return fmt.Errorf("Grok passthrough %s conflicts with the enforced subagent boundary; remove it because first-class seats always disable subagents", name)
-		case "--model", "-m":
-			if firstClassModel {
-				return errors.New("--model conflicts with a model pin in --extra-arg; use the first-class --model flag or the passthrough form, not both")
-			}
-		}
-		upper := strings.ToUpper(arg)
-		if strings.HasPrefix(upper, "HOME=") || strings.HasPrefix(upper, "GROK_HOME=") || name == "--home" || name == "--grok-home" {
-			return fmt.Errorf("Grok passthrough %s attempts to re-point an owned home; remove it because herder pins GROK_HOME to the isolated seat state", name)
-		}
-		if strings.Contains(strings.ToLower(name), "subagent") {
-			return fmt.Errorf("Grok passthrough %s could change the enforced subagent boundary; remove it because first-class seats always disable subagents", name)
-		}
-		if strings.Contains(strings.ToLower(name), "auto-update") {
-			return fmt.Errorf("Grok passthrough %s could change mandatory update suppression; remove it because herder supplies both update controls", name)
-		}
-	}
-	return nil
 }
 
 func isModelConfigOverride(arg string) bool {

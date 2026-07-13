@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -98,6 +99,9 @@ func prepareGrokLaunch(rest []string) (grokLaunchPlan, error) {
 	if !GrokActivated() {
 		return grokLaunchPlan{}, errors.New(GrokActivationError())
 	}
+	if err := validatePreparedGrokArgs(rest, os.Getenv("HERDER_GROK_SAFE") == "1"); err != nil {
+		return grokLaunchPlan{}, err
+	}
 	// Herdr creates panes from its long-lived server, so process-only auth must
 	// be present in the environment that launched that server; a CLI caller's
 	// later environment cannot be handed across via argv or files without
@@ -116,7 +120,7 @@ func prepareGrokLaunch(rest []string) (grokLaunchPlan, error) {
 		return grokLaunchPlan{}, errors.New("real hcom 0.7.23 binary was not found; install the pinned hcom or set HERDER_REAL_HCOM to its executable path")
 	}
 	seat := os.Getenv("HERDER_GUID")
-	if seat == "" || strings.ContainsAny(seat, `/\\\x00`) {
+	if !validGrokSeat(seat) {
 		return grokLaunchPlan{}, errors.New("HERDER_GUID is missing or unsafe; launch Grok through `herder spawn` so the seat identity is preassigned")
 	}
 	sessionID := os.Getenv("HERDER_GROK_SESSION_ID")
@@ -166,7 +170,7 @@ func prepareGrokLaunch(rest []string) (grokLaunchPlan, error) {
 // ReadGrokLaunchFailure returns a launch-side refusal for the preassigned seat.
 // It never contains credential values; launch writes only cause+remedy text.
 func ReadGrokLaunchFailure(stateDir, seat string) string {
-	if seat == "" || strings.ContainsAny(seat, `/\\\x00`) {
+	if !validGrokSeat(seat) {
 		return ""
 	}
 	data, err := os.ReadFile(filepath.Join(stateDir, "grok", seat, "launch-error"))
@@ -181,7 +185,7 @@ func recordGrokLaunchFailure(err error) {
 		return
 	}
 	stateDir, seat := grokStateDir(), os.Getenv("HERDER_GUID")
-	if seat == "" || strings.ContainsAny(seat, `/\\\x00`) {
+	if !validGrokSeat(seat) {
 		return
 	}
 	dir := filepath.Join(stateDir, "grok", seat)
@@ -210,7 +214,7 @@ func recordGrokLaunchFailure(err error) {
 }
 
 func clearGrokLaunchFailure(stateDir, seat string) {
-	if seat != "" && !strings.ContainsAny(seat, `/\\\x00`) {
+	if validGrokSeat(seat) {
 		_ = os.Remove(filepath.Join(stateDir, "grok", seat, "launch-error"))
 	}
 }
@@ -275,6 +279,14 @@ func grokStateDir() string {
 }
 
 func seedGrokHome(home string) error {
+	herderBin, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve herder executable for Grok MCP config: %w", err)
+	}
+	herderBin, err = filepath.Abs(herderBin)
+	if err != nil {
+		return fmt.Errorf("resolve absolute herder executable for Grok MCP config: %w", err)
+	}
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return fmt.Errorf("create dedicated GROK_HOME: %w", err)
 	}
@@ -288,14 +300,14 @@ func seedGrokHome(home string) error {
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	config := filepath.Join(home, "config.toml")
-	const controlled = `[cli]
+	controlled := `[cli]
 auto_update = false
 
 [compat.claude]
 hooks = false
 
 [mcp_servers.hcom]
-command = "herder"
+command = ` + strconv.Quote(herderBin) + `
 args = ["grok", "mcp"]
 enabled = true
 `
@@ -345,7 +357,7 @@ func gateGrokBinary(stateDir string) (string, string, error) {
 		return "", "", fmt.Errorf("create Grok capability probe root: %w", err)
 	}
 	defer os.RemoveAll(probeHome)
-	env := replaceLaunchEnv(os.Environ(), map[string]string{"HOME": probeHome, "GROK_HOME": filepath.Join(probeHome, "grok-home")})
+	env := replaceLaunchEnv(withoutCredentialEnv(os.Environ()), map[string]string{"HOME": probeHome, "GROK_HOME": filepath.Join(probeHome, "grok-home")})
 	versionOut, err := commandOutput(abs, env, "--no-auto-update", "--version")
 	if err != nil {
 		return "", "", fmt.Errorf("read Grok version from %s: %w", abs, err)
@@ -387,10 +399,13 @@ func supportedGrokVersions() []string {
 func commandOutput(path string, env []string, args ...string) (string, error) {
 	cmd := exec.Command(path, args...)
 	cmd.Env = env
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	var stdout bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, io.Discard
 	if err := cmd.Run(); err != nil {
-		return stdout.String(), fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return stdout.String(), fmt.Errorf("probe %s exited with code %d (child stderr suppressed)", path, exitErr.ExitCode())
+		}
+		return stdout.String(), fmt.Errorf("run probe %s: %w", path, err)
 	}
 	return stdout.String(), nil
 }
@@ -466,6 +481,81 @@ func replaceLaunchEnv(env []string, values map[string]string) []string {
 		out = append(out, key+"="+value)
 	}
 	return out
+}
+
+func withoutCredentialEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, item := range env {
+		key, _, _ := strings.Cut(item, "=")
+		upper := strings.ToUpper(key)
+		if strings.HasSuffix(upper, "_API_KEY") ||
+			strings.HasSuffix(upper, "_ACCESS_KEY") ||
+			strings.HasSuffix(upper, "_PRIVATE_KEY") ||
+			strings.HasSuffix(upper, "_TOKEN") ||
+			strings.HasSuffix(upper, "_SECRET") ||
+			strings.HasSuffix(upper, "_PASSWORD") ||
+			strings.Contains(upper, "CREDENTIAL") {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func validGrokSeat(seat string) bool {
+	return seat != "" && !strings.ContainsAny(seat, "/\\\x00")
+}
+
+// ValidateGrokExtraArgs rejects passthrough that collides with the launch
+// contract before spawn creates a pane.
+func ValidateGrokExtraArgs(args []string, firstClassModel bool) error {
+	return validateGrokArgs(args, firstClassModel, false)
+}
+
+func validatePreparedGrokArgs(args []string, safe bool) error {
+	return validateGrokArgs(args, false, !safe)
+}
+
+func validateGrokArgs(args []string, firstClassModel, allowMappedPermission bool) error {
+	for _, arg := range args {
+		name := arg
+		if before, _, ok := strings.Cut(arg, "="); ok {
+			name = before
+		}
+		switch name {
+		case "--session-id", "-s":
+			return fmt.Errorf("Grok passthrough %s conflicts with the preassigned session identity; remove it and let herder mint the session id", name)
+		case "--resume", "-r", "--fork-session":
+			return fmt.Errorf("Grok passthrough %s conflicts with the fresh-seat launch contract; remove it and use the lifecycle command after that contract is activated", name)
+		case "--rules":
+			return errors.New("Grok passthrough --rules conflicts with the seat doctrine; remove it so herder can install the monitor and receipt rules")
+		case "--permission-mode", "--bypassPermissions":
+			return fmt.Errorf("Grok passthrough %s conflicts with herder's permission mapping; remove it, then use normal launch for --always-approve or pass --safe for ask mode", name)
+		case "--always-approve":
+			if !allowMappedPermission {
+				return errors.New("Grok passthrough --always-approve conflicts with herder's permission mapping; remove it, then use normal launch for --always-approve or pass --safe for ask mode")
+			}
+		case "--no-auto-update", "--auto-update", "--disable-auto-update":
+			return fmt.Errorf("Grok passthrough %s conflicts with mandatory update suppression; remove it because herder supplies both update controls", name)
+		case "--agents", "--agent", "--subagents", "--no-subagents", "--no-no-subagents":
+			return fmt.Errorf("Grok passthrough %s conflicts with the enforced subagent boundary; remove it because first-class seats always disable subagents", name)
+		case "--model", "-m":
+			if firstClassModel {
+				return errors.New("--model conflicts with a model pin in --extra-arg; use the first-class --model flag or the passthrough form, not both")
+			}
+		}
+		upper := strings.ToUpper(arg)
+		if strings.HasPrefix(upper, "HOME=") || strings.HasPrefix(upper, "GROK_HOME=") || name == "--home" || name == "--grok-home" {
+			return fmt.Errorf("Grok passthrough %s attempts to re-point an owned home; remove it because herder pins GROK_HOME to the isolated seat state", name)
+		}
+		if strings.Contains(strings.ToLower(name), "subagent") {
+			return fmt.Errorf("Grok passthrough %s could change the enforced subagent boundary; remove it because first-class seats always disable subagents", name)
+		}
+		if strings.Contains(strings.ToLower(name), "auto-update") {
+			return fmt.Errorf("Grok passthrough %s could change mandatory update suppression; remove it because herder supplies both update controls", name)
+		}
+	}
+	return nil
 }
 
 func hasArg(args []string, target string) bool {
