@@ -305,13 +305,18 @@ func (s *Store) handlePUTBytes(w http.ResponseWriter, r *http.Request, rawTool, 
 		s.writeError(w, wire.ErrMalformedRequest, tool, sessionID, fileUUID, 0, 0, "", err.Error())
 		return
 	}
+	readStart := time.Now()
 	body, errCode, err := readBody(r)
 	if err != nil {
 		s.writeError(w, errCode, tool, sessionID, fileUUID, 0, 0, "", err.Error())
 		return
 	}
+	dbStart := time.Now()
 	tailnetIdentity := TailnetIdentityFromContext(r.Context())
 	resp, ev, code, msg, action := s.putBytes(r.Context(), tool, sessionID, fileUUID, fp, offset, body, hostname, osUser, r.Header.Get(wire.HeaderSessionOwner), tailnetIdentity)
+	s.logger.Debug("put bytes",
+		"tool", tool, "file_uuid", fileUUID, "bytes", len(body),
+		"read_body", dbStart.Sub(readStart), "store", time.Since(dbStart))
 	if code != "" {
 		generation, highWater := 0, int64(0)
 		if resp != nil {

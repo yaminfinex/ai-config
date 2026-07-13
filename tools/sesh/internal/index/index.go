@@ -45,6 +45,22 @@ type Indexer struct {
 	failWriteOnce bool
 
 	migrationReindexed bool
+
+	// timing collects per-phase durations for one append transaction; nil
+	// outside a processAppend call. Debug-level observability only.
+	timing *appendTiming
+}
+
+// appendTiming is the per-phase cost breakdown of one append transaction,
+// logged at debug level so a live store can show where its single write
+// connection's hold time goes.
+type appendTiming struct {
+	parse   time.Duration
+	inherit time.Duration
+	insert  time.Duration
+	unify   time.Duration
+	dedupe  time.Duration
+	rows    int
 }
 
 // New initializes index tables on the store database.
@@ -207,31 +223,46 @@ func (idx *Indexer) processAppend(ctx context.Context, ev wire.AppendEvent, rebu
 		_ = idx.markDirty(ctx, ev)
 		return errors.New("injected index write failure")
 	}
+	start := time.Now()
 	tx, err := idx.db.BeginTx(ctx, nil)
 	if err != nil {
 		_ = idx.markDirty(ctx, ev)
 		return normalizeDBError(err)
 	}
+	txAcquired := time.Now()
 	// The applyAppend call tree must not mutate Indexer fields: txIdx is a shallow copy.
 	txIdx := *idx
 	txIdx.tx = tx
+	txIdx.timing = &appendTiming{}
 	if err := txIdx.applyAppend(ctx, ev, rebuild); err != nil {
 		_ = tx.Rollback()
 		_ = idx.markDirty(ctx, ev)
 		return normalizeDBError(err)
 	}
+	commitStart := time.Now()
 	if err := tx.Commit(); err != nil {
 		_ = idx.markDirty(ctx, ev)
 		return normalizeDBError(err)
 	}
+	slog.Debug("index append",
+		"tool", ev.Tool, "file_uuid", ev.FileUUID, "generation", ev.Generation,
+		"bytes", ev.ByteEnd-ev.ByteStart, "rows", txIdx.timing.rows,
+		"tx_wait", txAcquired.Sub(start),
+		"parse", txIdx.timing.parse, "inherit", txIdx.timing.inherit,
+		"insert", txIdx.timing.insert, "unify", txIdx.timing.unify,
+		"dedupe", txIdx.timing.dedupe,
+		"commit", time.Since(commitStart), "total", time.Since(start))
 	return nil
 }
 
 func (idx *Indexer) applyAppend(ctx context.Context, ev wire.AppendEvent, rebuild bool) error {
+	phase := idx.timing.phaseClock()
 	rows, complete, err := idx.parseComplete(ctx, ev)
+	phase(&idx.timing.parse)
 	if err != nil {
 		return err
 	}
+	idx.timing.rows = len(rows)
 	if len(rows) == 0 {
 		if err := idx.setCompleteOffset(ctx, ev, complete); err != nil {
 			return err
@@ -239,22 +270,41 @@ func (idx *Indexer) applyAppend(ctx context.Context, ev wire.AppendEvent, rebuil
 		return idx.clearDirty(ctx, ev)
 	}
 	if !rebuild {
-		if err := idx.inheritFileLogicalSession(ctx, ev, rows); err != nil {
+		err := idx.inheritFileLogicalSession(ctx, ev, rows)
+		phase(&idx.timing.inherit)
+		if err != nil {
 			return err
 		}
 	}
-	if err := idx.insertRows(ctx, rows); err != nil {
+	err = idx.insertRows(ctx, rows)
+	phase(&idx.timing.insert)
+	if err != nil {
 		return err
 	}
 	if err := idx.setCompleteOffset(ctx, ev, complete); err != nil {
 		return err
 	}
 	if !rebuild {
-		if err := idx.unifyConnectedLogicalSessions(ctx, ev); err != nil {
+		err := idx.unifyConnectedLogicalSessions(ctx, ev)
+		phase(&idx.timing.unify)
+		if err != nil {
 			return err
 		}
 	}
 	return idx.clearDirty(ctx, ev)
+}
+
+// phaseClock returns a lap timer: each call stores the time since the
+// previous call into the given slot. Safe on a nil receiver (no-op).
+func (t *appendTiming) phaseClock() func(*time.Duration) {
+	last := time.Now()
+	return func(slot *time.Duration) {
+		now := time.Now()
+		if t != nil {
+			*slot = now.Sub(last)
+		}
+		last = now
+	}
 }
 
 // Reindex rebuilds disposable index rows from the mirror and store registry.
@@ -813,7 +863,12 @@ func (idx *Indexer) unifyConnectedLogicalSessions(ctx context.Context, ev wire.A
 	if err := idx.updateFileOrdinalsForFiles(ctx, group); err != nil {
 		return err
 	}
-	return idx.dedupeLogical(ctx, group[0].tool, canonical)
+	dedupeStart := time.Now()
+	err = idx.dedupeLogical(ctx, group[0].tool, canonical)
+	if idx.timing != nil {
+		idx.timing.dedupe = time.Since(dedupeStart)
+	}
+	return err
 }
 
 func (idx *Indexer) connectedFiles(ctx context.Context, start fileSummary) ([]fileSummary, error) {

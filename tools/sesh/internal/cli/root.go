@@ -27,6 +27,12 @@ import (
 // Execute runs the sesh command tree and returns its error, if any.
 // main translates a non-nil error into exit code 1.
 func Execute() error {
+	// SESH_DEBUG turns on debug-level logging (per-phase serving and index
+	// timing) without a config change; it is the supported way to see where
+	// store time goes on a live node.
+	if os.Getenv("SESH_DEBUG") != "" {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	}
 	return newRoot().Execute()
 }
 
@@ -205,11 +211,23 @@ type httpEndpoint struct {
 	handler  http.Handler
 }
 
+// timedHandler logs one debug line per served request with the full
+// server-side duration (auth + handler + response write). With SESH_DEBUG set
+// this is the first stop for "where does request time go" on a live store.
+func timedHandler(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		h.ServeHTTP(w, r)
+		slog.Debug("http request",
+			"method", r.Method, "path", r.URL.Path, "duration", time.Since(start))
+	})
+}
+
 func serveHTTP(ctx context.Context, endpoints ...httpEndpoint) error {
 	servers := make([]*http.Server, len(endpoints))
 	errCh := make(chan error, len(endpoints))
 	for i, endpoint := range endpoints {
-		servers[i] = &http.Server{Handler: endpoint.handler}
+		servers[i] = &http.Server{Handler: timedHandler(endpoint.handler)}
 		go func(server *http.Server, listener net.Listener) {
 			errCh <- server.Serve(listener)
 		}(servers[i], endpoint.listener)
