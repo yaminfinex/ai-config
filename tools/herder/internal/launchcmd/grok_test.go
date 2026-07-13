@@ -71,12 +71,86 @@ func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
 }
 
 func TestGrokActivationGateDefaultsClosed(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
 	t.Setenv(grokActivationEnv, "")
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("HERDER_STATE_DIR", state)
+	t.Setenv("HERDER_GUID", "")
+	t.Setenv("HERDER_GROK_SESSION_ID", "")
 	if GrokActivated() || IsHcomCapable("grok") {
 		t.Fatal("Grok family activated without the explicit gate")
 	}
 	if !strings.Contains(GrokActivationError(), "HERDER_GROK_ACTIVATED=1") {
 		t.Fatalf("activation error lacks remedy: %s", GrokActivationError())
+	}
+	var stdout, stderr bytes.Buffer
+	if rc := Run([]string{"grok"}, &stdout, &stderr); rc == 0 {
+		t.Fatal("inactive manual launch unexpectedly succeeded")
+	}
+	if os.Getenv("HERDER_GUID") != "" || os.Getenv("HERDER_GROK_SESSION_ID") != "" {
+		t.Fatal("inactive manual launch minted identity before refusing")
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("inactive manual launch wrote state before refusing: %v", err)
+	}
+}
+
+func TestManualGrokLaunchMintsOnlyMissingIdentities(t *testing.T) {
+	t.Setenv("HERDER_GUID", "")
+	t.Setenv("HERDER_GROK_SESSION_ID", "")
+	if err := ensureManualGrokIdentity(); err != nil {
+		t.Fatal(err)
+	}
+	seat := os.Getenv("HERDER_GUID")
+	sid := os.Getenv("HERDER_GROK_SESSION_ID")
+	if !validGrokSeat(seat) || !isUUIDv7(sid) {
+		t.Fatalf("minted seat=%q sid=%q", seat, sid)
+	}
+	if err := ensureManualGrokIdentity(); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("HERDER_GUID") != seat || os.Getenv("HERDER_GROK_SESSION_ID") != sid {
+		t.Fatal("manual identity helper replaced preassigned identity")
+	}
+}
+
+func TestManualMintedIdentityUsesPreassignedPlanAndCollisionFence(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
+	hcom := filepath.Join(root, "hcom-real")
+	writeExecutable(t, hcom, "#!/bin/sh\nexit 0\n")
+	t.Setenv(grokActivationEnv, "1")
+	t.Setenv("XAI_API_KEY", randomCredential(t))
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("HERDER_STATE_DIR", state)
+	t.Setenv("HCOM_DIR", filepath.Join(root, "hcom"))
+	t.Setenv("HERDER_GROK_BIN", mockGrokBinary(t, "0.2.93"))
+	t.Setenv("HERDER_REAL_HCOM", hcom)
+	t.Setenv("HERDER_GUID", "")
+	t.Setenv("HERDER_GROK_SESSION_ID", "")
+
+	if err := ensureManualGrokIdentity(); err != nil {
+		t.Fatal(err)
+	}
+	seat, sid := os.Getenv("HERDER_GUID"), os.Getenv("HERDER_GROK_SESSION_ID")
+	plan, err := prepareGrokLaunch(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Seat != seat || plan.SessionID != sid || plan.Mode != "launch" {
+		t.Fatalf("manual plan identity drifted: seat=%q sid=%q mode=%q", plan.Seat, plan.SessionID, plan.Mode)
+	}
+	if _, err := os.Stat(filepath.Join(state, "registry.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("manual plan wrote a half-registered row before bind: %v", err)
+	}
+
+	sessionDir := filepath.Join(plan.GrokHome, "sessions", "%2Fmanual", sid)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepareGrokLaunch(nil); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("manual minted sid bypassed collision fence: %v", err)
 	}
 }
 

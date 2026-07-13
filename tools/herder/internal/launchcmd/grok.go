@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/grokbridge"
+	"ai-config/tools/herder/internal/registry"
 )
 
 const (
@@ -129,6 +130,12 @@ func runGrokLaunch(mode, target string, rest []string, stderr io.Writer) int {
 		die(stderr, err.Error())
 		return 1
 	}
+	if mode == "launch" {
+		if err := ensureManualGrokIdentity(); err != nil {
+			die(stderr, err.Error())
+			return 1
+		}
+	}
 	lifecycle, err := BuildGrokLifecyclePlan(mode, target, os.Getenv("HERDER_GROK_SESSION_ID"))
 	if err != nil {
 		recordGrokLaunchFailure(err)
@@ -156,6 +163,32 @@ func runGrokLaunch(mode, target string, rest []string, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// ensureManualGrokIdentity makes `herder launch grok` (and the PATH shim that
+// enters it) a real owner-verification path outside spawn. Spawn-provided
+// identities are preserved byte-for-byte. This runs only after activation has
+// been checked, so an inactive family still refuses without minting anything.
+func ensureManualGrokIdentity() error {
+	if os.Getenv("HERDER_GUID") == "" {
+		seat, err := registry.NewGUID()
+		if err != nil {
+			return fmt.Errorf("mint manual Grok seat identity: %w", err)
+		}
+		if err := os.Setenv("HERDER_GUID", seat); err != nil {
+			return fmt.Errorf("set manual Grok seat identity: %w", err)
+		}
+	}
+	if os.Getenv("HERDER_GROK_SESSION_ID") == "" {
+		sessionID, err := NewGrokSessionID()
+		if err != nil {
+			return fmt.Errorf("mint manual Grok session identity: %w", err)
+		}
+		if err := os.Setenv("HERDER_GROK_SESSION_ID", sessionID); err != nil {
+			return fmt.Errorf("set manual Grok session identity: %w", err)
+		}
+	}
+	return nil
 }
 
 func appendGrokLifecycleArgs(plan grokLaunchPlan, doctrine string) []string {
