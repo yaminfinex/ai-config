@@ -15,6 +15,7 @@ import (
 	"ai-config/tools/herder/internal/adoptcmd"
 	"ai-config/tools/herder/internal/cullcmd"
 	"ai-config/tools/herder/internal/enrollcmd"
+	"ai-config/tools/herder/internal/grokbridge"
 	"ai-config/tools/herder/internal/hookcmd"
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/lifecyclecmd"
@@ -56,6 +57,7 @@ var commands = []command{
 	{"compact", "Queue a steered /compact into the caller's own pane (self only)", spawncmd.RunCompact},
 	{"node", "Manage the local herder node id", nodecmd.Run},
 	{"observer", "Observe seated sessions and surface observer advice", observercmd.Run},
+	{"grok", "Run the Grok seat transport bridge, tap, or MCP server", grokbridge.Run},
 	{"launch", "Launch an hcom-bound tool in the current pane", launchcmd.Run},
 	{"hook", "(internal) Shim hcom hook calls; rewrite the spawn bootstrap", hookcmd.Run},
 	{"sidecar", "(internal) Bridge hcom status to herdr pane status", sidecarcmd.Run},
