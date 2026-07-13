@@ -129,15 +129,24 @@ seam; `surface.SQLStore` satisfies it from the live store DB + mirror, and
 (`--surface-addr`, default 127.0.0.1:8766 — the port the interim Tailscale Serve
 exposure proxies; ingest stays on `--addr`). The surface includes `/` recency,
 `/s/{tool}/{id}` transcript pages, `/s/{tool}/{id}/raw` raw mirror fallback,
-and `/nodes` last-PUT status. The recency homepage is bounded: it renders the
-latest 50 logical sessions per page (the cut is a SQL `LIMIT` in the store
-query, never a truncated full scan — fleet corpora run to thousands of files
-per node), says so on the page ("showing latest N of Z sessions"), and older
-history stays reachable through `?page=N` pager links; the periodic refresh
-polls the page it is on. `/nodes` reads only the last-seen bookkeeping table
-and is unaffected by corpus size. Gates: `tests/check-surface-fixtures.sh`
-(fixture-backed renders, including the 5k-session bounded-homepage corpus
-test) and `tests/check-surface-live.sh` (real serve + ship, S2 renders once).
+and `/nodes` last-PUT status. The recency homepage is bounded: request-time
+work is proportional to the page, not the corpus (fleet corpora run to
+thousands of files per node). `surface.SQLStore` maintains a recency
+projection — the ranked session-key list, rebuilt only when a cheap store
+version stamp moves, so the surface always reads its own store's writes —
+and each request
+slices one page of it (latest 50 by default) and hydrates just those
+sessions through index-seeking, key-constrained queries (the per-page facts
+lookups seek the additive `fact_observations_session` bookkeeping index; the
+frozen wire-doc index schema is untouched). The page states its bound
+("showing latest N of Z sessions"), older history stays reachable through
+`?page=N` pager links, and the periodic refresh polls the page it is on.
+`/nodes` reads only the last-seen bookkeeping table and is unaffected by
+corpus size. Gates: `tests/check-surface-fixtures.sh` (fixture-backed
+renders, plus the 5k-session corpus test proving bounded query plans — no
+corpus-table SCAN on the warm path, fixed per-request query count, amortized
+rebuilds — with a self-check that the plan gate catches reintroduced scans)
+and `tests/check-surface-live.sh` (real serve + ship, S2 renders once).
 
 ## Release channel
 

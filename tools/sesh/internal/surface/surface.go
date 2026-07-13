@@ -104,10 +104,12 @@ type Store interface {
 	// RecentSessions lists one page of logical sessions ordered most recent
 	// first by the R14 instant (max parsed timestamp, first-ingest when
 	// none), with a deterministic tie-break. The bound is part of the
-	// contract: implementations cut the page inside the query (LIMIT), never
-	// by materializing the whole corpus first — the fleet ships thousands of
-	// files per node and the homepage must stay proportional to the page.
-	// total is the corpus-wide logical session count.
+	// contract: request-time work must stay proportional to the page — the
+	// fleet ships thousands of files per node, so implementations keep a
+	// bounded recency projection (keys only, rebuilt amortized) or an
+	// equivalent request-time-bounded plan, and never materialize summaries
+	// for the whole corpus per request. total is the corpus-wide logical
+	// session count.
 	RecentSessions(ctx context.Context, limit, offset int) (page []SessionSummary, total int, err error)
 	// Session resolves one logical session; ok=false when unknown.
 	Session(ctx context.Context, tool wire.Tool, logicalSessionID string) (sum SessionSummary, ok bool, err error)

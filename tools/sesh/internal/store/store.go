@@ -176,6 +176,11 @@ func (s *Store) initSchema(ctx context.Context) error {
 			os_user TEXT NOT NULL,
 			session_owner TEXT NULL
 		)`,
+		// Additive, forward-only: the surface's per-page facts lookups seek
+		// this bookkeeping index instead of scanning the per-PUT observation
+		// log. Existing stores create it on next start; no data rewrite.
+		`CREATE INDEX IF NOT EXISTS fact_observations_session
+			ON fact_observations(tool, session_id)`,
 		`CREATE TABLE IF NOT EXISTS drop_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			dropped_at TEXT NOT NULL,

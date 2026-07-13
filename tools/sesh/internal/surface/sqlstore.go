@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"sesh/internal/wire"
@@ -24,9 +25,22 @@ type MirrorPath func(tool wire.Tool, sessionID, fileUUID string, generation int)
 //
 // The store DB runs a single connection, so no method here may start a query
 // while another result set is open — collect first, then query again.
+//
+// The recency ranking is a surface-owned projection: the complete ranked
+// (tool, logical) key list plus total, held in memory and rebuilt only when
+// the store's cheap version stamp moves. Request-time work therefore stays
+// proportional to the page — a stamp probe plus key-constrained hydration —
+// while the corpus-wide aggregation runs only when the store actually
+// changed, and the surface always reads its own store's writes (no staleness
+// window).
 type SQLStore struct {
 	db         *sql.DB
 	mirrorPath MirrorPath
+
+	mu      sync.Mutex
+	built   bool
+	ranking []sessionKey
+	stamp   rankingStamp
 }
 
 // NewSQLStore builds the live Store over the store's database and mirror.
@@ -50,65 +64,97 @@ type sessionKey struct {
 	logical string
 }
 
-// genLogicalCTE maps every mirrored file generation to its logical session:
-// the index's mapping when one exists, else the wire session claim (honest
-// fallback, matches the schema rule). The mirror is truth and the surface
-// must never be blind to it — unindexed generations still list, and render
-// raw.
-const genLogicalCTE = `WITH mapped AS (
-		SELECT DISTINCT tool, wire_session_id, file_uuid, generation, logical_session_id
-		FROM sesh_index_messages
-	), gen AS (
-		SELECT f.tool AS tool,
-			COALESCE(m.logical_session_id, f.session_id) AS logical,
-			f.session_id AS wire_id,
-			f.file_uuid AS file_uuid,
-			f.generation AS generation,
-			COALESCE(f.created_at, '') AS created_at,
-			COALESCE(f.last_put_at, '') AS last_put_at
-		FROM files f
-		LEFT JOIN mapped m
-			ON m.tool = f.tool AND m.wire_session_id = f.session_id
-			AND m.file_uuid = f.file_uuid AND m.generation = f.generation
-	)`
+// rankingStamp is the cheap store version probe guarding the projection:
+// ranking inputs only ever arrive as INSERTs (index rows are appended, file
+// generations are new rows; the drop-file repair runs with serve stopped),
+// so two b-tree MAX lookups detect every change the ranking can see.
+type rankingStamp struct {
+	indexMax int64
+	filesMax int64
+}
+
+// rankingStampSQL reads both MAX probes in one round trip. Keep the text
+// distinctive: the large-corpus gate whitelists it when proving that warm
+// requests never scan a corpus table.
+const rankingStampSQL = `SELECT
+	COALESCE((SELECT MAX(id) FROM sesh_index_messages), 0),
+	COALESCE((SELECT MAX(rowid) FROM files), 0)`
 
 // RecentSessions returns one page of logical sessions, most recent first by
-// the R14 instant. The page is cut by LIMIT inside SQLite — the fleet's
-// corpus (thousands of files per node) must never be materialized per
-// request — and only the page's sessions are hydrated afterwards.
+// the R14 instant. The page is a slice of the maintained recency projection
+// — the fleet's corpus (thousands of files per node) is never materialized
+// per request — and only the page's sessions are hydrated, by key.
 func (s *SQLStore) RecentSessions(ctx context.Context, limit, offset int) ([]SessionSummary, int, error) {
+	ranking, err := s.rankedKeys(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	total := len(ranking)
 	if limit < 0 {
 		limit = 0
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	keys, err := s.recentSessionKeys(ctx, limit, offset)
-	if err != nil {
-		return nil, 0, err
+	if offset > total {
+		offset = total
 	}
-	total, err := s.sessionCount(ctx)
-	if err != nil {
-		return nil, 0, err
+	page := ranking[offset:]
+	if len(page) > limit {
+		page = page[:limit]
 	}
-	sums, err := s.hydrateSessions(ctx, keys)
+	sums, err := s.hydrateSessions(ctx, page)
 	if err != nil {
 		return nil, 0, err
 	}
 	return sums, total, nil
 }
 
-// recentSessionKeys ranks every logical session by the R14 recency instant —
-// max parsed non-quarantined timestamp, first-ingest when none — entirely in
-// SQL and returns only the requested page of keys. julianday keeps the
-// comparison temporal across RFC3339 fractional-precision variants (same
-// posture as the max-timestamp lookup below); the tool+logical tie-break
-// keeps page cuts deterministic.
-func (s *SQLStore) recentSessionKeys(ctx context.Context, limit, offset int) ([]sessionKey, error) {
-	rows, err := s.db.QueryContext(ctx, genLogicalCTE+`,
+// rankedKeys returns the current recency projection, rebuilding it only when
+// the version stamp moved. Steady state (no new bytes since the last render)
+// costs one probe; under continuous ingest a rebuild can run per request,
+// but it is keys-only and milliseconds at fleet scale, and the page's 60s
+// poll cadence keeps it rare in practice.
+func (s *SQLStore) rankedKeys(ctx context.Context) ([]sessionKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var stamp rankingStamp
+	if err := s.db.QueryRowContext(ctx, rankingStampSQL).Scan(&stamp.indexMax, &stamp.filesMax); err != nil {
+		return nil, err
+	}
+	if s.built && stamp == s.stamp {
+		return s.ranking, nil
+	}
+	ranking, err := s.rankSessionKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.built, s.ranking, s.stamp = true, ranking, stamp
+	return s.ranking, nil
+}
+
+// rankSessionKeys is the projection rebuild: every logical session ranked by
+// the R14 recency instant — max parsed non-quarantined timestamp,
+// first-ingest when none — entirely in SQL, keys only. This is the one
+// deliberately corpus-wide read on the surface, and it runs amortized
+// (stamp + floor), never per request. julianday keeps the comparison
+// temporal across RFC3339 fractional-precision variants (same posture as
+// the max-timestamp lookup below); the tool+logical tie-break keeps page
+// cuts deterministic.
+func (s *SQLStore) rankSessionKeys(ctx context.Context) ([]sessionKey, error) {
+	rows, err := s.db.QueryContext(ctx, `WITH mapped AS (
+			SELECT DISTINCT tool, wire_session_id, file_uuid, generation, logical_session_id
+			FROM sesh_index_messages
+		),
 		sess AS (
-			SELECT tool, logical, MIN(julianday(created_at)) AS first_ingest_jd
-			FROM gen GROUP BY tool, logical
+			SELECT f.tool AS tool,
+				COALESCE(m.logical_session_id, f.session_id) AS logical,
+				MIN(julianday(f.created_at)) AS first_ingest_jd
+			FROM files f
+			LEFT JOIN mapped m
+				ON m.tool = f.tool AND m.wire_session_id = f.session_id
+				AND m.file_uuid = f.file_uuid AND m.generation = f.generation
+			GROUP BY f.tool, COALESCE(m.logical_session_id, f.session_id)
 		),
 		ts AS (
 			SELECT tool, logical_session_id AS logical, MAX(julianday(timestamp_utc)) AS max_ts_jd
@@ -119,8 +165,7 @@ func (s *SQLStore) recentSessionKeys(ctx context.Context, limit, offset int) ([]
 		SELECT sess.tool, sess.logical
 		FROM sess
 		LEFT JOIN ts ON ts.tool = sess.tool AND ts.logical = sess.logical
-		ORDER BY COALESCE(ts.max_ts_jd, sess.first_ingest_jd) DESC, sess.tool, sess.logical
-		LIMIT ? OFFSET ?`, limit, offset)
+		ORDER BY COALESCE(ts.max_ts_jd, sess.first_ingest_jd) DESC, sess.tool, sess.logical`)
 	if err != nil {
 		return nil, err
 	}
@@ -134,14 +179,6 @@ func (s *SQLStore) recentSessionKeys(ctx context.Context, limit, offset int) ([]
 		out = append(out, k)
 	}
 	return out, rows.Err()
-}
-
-// sessionCount is the corpus-wide logical session count for the paging label.
-func (s *SQLStore) sessionCount(ctx context.Context) (int, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, genLogicalCTE+`
-		SELECT COUNT(*) FROM (SELECT DISTINCT tool, logical FROM gen)`).Scan(&n)
-	return n, err
 }
 
 // Session resolves one logical session by hydrating exactly that key —
@@ -400,12 +437,33 @@ func wireKeyValues(keys []wireKey) (string, []any) {
 }
 
 // memberGenerations returns the mirrored file generations of exactly the
-// given sessions, keyed back to their session.
+// given sessions, keyed back to their session. Two index-driven branches
+// instead of a corpus-wide mapping pass: generations the index maps to a
+// requested logical id, plus unindexed generations whose wire claim IS the
+// requested id (honest fallback, matches the schema rule — the mirror is
+// truth and the surface must never be blind to it; those render raw).
 func (s *SQLStore) memberGenerations(ctx context.Context, keys []sessionKey) (map[sessionKey][]mirrorGen, error) {
-	clause, args := sessionKeyValues(keys)
-	rows, err := s.db.QueryContext(ctx, genLogicalCTE+`
-		SELECT tool, logical, wire_id, file_uuid, generation, created_at, last_put_at
-		FROM gen WHERE (tool, logical) IN `+clause, args...)
+	mappedClause, mappedArgs := sessionKeyValues(keys)
+	wireClause, wireArgs := sessionKeyValues(keys)
+	rows, err := s.db.QueryContext(ctx, `SELECT mk.logical, f.tool, f.session_id, f.file_uuid, f.generation,
+			COALESCE(f.created_at, ''), COALESCE(f.last_put_at, '')
+		FROM (
+			SELECT DISTINCT tool, wire_session_id, file_uuid, generation, logical_session_id AS logical
+			FROM sesh_index_messages
+			WHERE (tool, logical_session_id) IN `+mappedClause+`
+		) mk
+		JOIN files f ON f.tool = mk.tool AND f.session_id = mk.wire_session_id
+			AND f.file_uuid = mk.file_uuid AND f.generation = mk.generation
+		UNION ALL
+		SELECT f.session_id, f.tool, f.session_id, f.file_uuid, f.generation,
+			COALESCE(f.created_at, ''), COALESCE(f.last_put_at, '')
+		FROM files f
+		WHERE (f.tool, f.session_id) IN `+wireClause+`
+			AND NOT EXISTS (
+				SELECT 1 FROM sesh_index_messages m
+				WHERE m.tool = f.tool AND m.wire_session_id = f.session_id
+					AND m.file_uuid = f.file_uuid AND m.generation = f.generation
+			)`, append(mappedArgs, wireArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -414,7 +472,7 @@ func (s *SQLStore) memberGenerations(ctx context.Context, keys []sessionKey) (ma
 	for rows.Next() {
 		var g mirrorGen
 		var logical, created, lastPut string
-		if err := rows.Scan(&g.tool, &logical, &g.wireID, &g.fileUUID, &g.gen, &created, &lastPut); err != nil {
+		if err := rows.Scan(&logical, &g.tool, &g.wireID, &g.fileUUID, &g.gen, &created, &lastPut); err != nil {
 			return nil, err
 		}
 		g.createdAt = parseStoreTime(created)
