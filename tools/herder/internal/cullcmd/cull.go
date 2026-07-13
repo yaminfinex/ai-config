@@ -241,7 +241,10 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 			return false
 		}
 		if appended {
-			dropBusEntryIfGone(closed, opts.force, stdout)
+			if err := teardownBusEntryIfGone(closed, opts.force, stdout); err != nil {
+				die(stderr, err.Error())
+				return false
+			}
 		}
 		return true
 	}
@@ -257,7 +260,10 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 			return false
 		}
 		if appended {
-			dropBusEntryIfGone(closed, opts.force, stdout)
+			if err := teardownBusEntryIfGone(closed, opts.force, stdout); err != nil {
+				die(stderr, err.Error())
+				return false
+			}
 		}
 		return true
 	}
@@ -290,7 +296,10 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 					return false
 				}
 				if appended {
-					dropBusEntryIfGone(closed, opts.force, stdout)
+					if err := teardownBusEntryIfGone(closed, opts.force, stdout); err != nil {
+						die(stderr, err.Error())
+						return false
+					}
 				}
 				return true
 			}
@@ -311,7 +320,10 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 			if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
 				return false
 			}
-			dropBusEntry(closed, stdout)
+			if err := teardownBusEntry(closed, stdout); err != nil {
+				die(stderr, err.Error())
+				return false
+			}
 		} else {
 			reportClosedFact(stdout, closed, false, "error", label, guid, pane)
 			if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
@@ -330,7 +342,10 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 		if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
 			return false
 		}
-		dropBusEntry(closed, stdout)
+		if err := teardownBusEntry(closed, stdout); err != nil {
+			die(stderr, err.Error())
+			return false
+		}
 	} else {
 		reportClosedFact(stdout, closed, false, closedOK, label, guid, pane)
 		if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
@@ -547,12 +562,78 @@ func dropBusEntry(rec registry.Record, stdout io.Writer) {
 	fmt.Fprintf(stdout, "bus: drop failed (%s) — pane closed anyway\n", reason)
 }
 
-func dropBusEntryIfGone(rec registry.Record, force bool, stdout io.Writer) {
-	if !force && busEntryJoined(rec) {
-		fmt.Fprintf(stdout, "bus: @%s still joined; not dropped without --force\n", rec.HcomName)
-		return
+func teardownBusEntry(rec registry.Record, stdout io.Writer) error {
+	if rec.Agent == "grok" {
+		return stopGrokBusEntry(rec, stdout)
 	}
 	dropBusEntry(rec, stdout)
+	return nil
+}
+
+func stopGrokBusEntry(rec registry.Record, stdout io.Writer) error {
+	hcomName := rec.HcomName
+	if hcomName == "" {
+		return nil
+	}
+	if _, err := exec.LookPath("hcom"); err != nil {
+		return fmt.Errorf("cannot stop Grok bus @%s: hcom is unavailable", hcomName)
+	}
+	cmd := exec.Command("hcom", "stop", hcomName)
+	if rec.HcomDir != "" && rec.HcomDir != "null" {
+		cmd.Env = setEnv(os.Environ(), "HCOM_DIR", rec.HcomDir)
+	}
+	out, stopErr := cmd.CombinedOutput()
+	present, err := busRowPresent(rec)
+	if err != nil {
+		return fmt.Errorf("confirm Grok bus @%s stopped: %w", hcomName, err)
+	}
+	if !present {
+		fmt.Fprintf(stdout, "bus: stopped @%s (row absence confirmed)\n", hcomName)
+		return nil
+	}
+	if stopErr != nil {
+		reason := strings.Join(strings.Fields(string(out)), " ")
+		if reason == "" {
+			reason = stopErr.Error()
+		}
+		return fmt.Errorf("stop Grok bus @%s: %s; row is still present", hcomName, reason)
+	}
+	return fmt.Errorf("confirm Grok bus @%s stopped: row is still present", hcomName)
+}
+
+func busRowPresent(rec registry.Record) (bool, error) {
+	cmd := exec.Command("hcom", "list", "--json")
+	if rec.HcomDir != "" && rec.HcomDir != "null" {
+		cmd.Env = setEnv(os.Environ(), "HCOM_DIR", rec.HcomDir)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+	var rows []struct {
+		Name string `json:"name"`
+	}
+	if err = json.Unmarshal(out, &rows); err != nil {
+		return false, fmt.Errorf("parse hcom list: %w", err)
+	}
+	for _, row := range rows {
+		if row.Name == rec.HcomName {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func teardownBusEntryIfGone(rec registry.Record, force bool, stdout io.Writer) error {
+	if rec.Agent == "grok" {
+		return stopGrokBusEntry(rec, stdout)
+	}
+	if !force && busEntryJoined(rec) {
+		fmt.Fprintf(stdout, "bus: @%s still joined; not dropped without --force\n", rec.HcomName)
+		return nil
+	}
+	dropBusEntry(rec, stdout)
+	return nil
 }
 
 func busEntryJoined(rec registry.Record) bool {

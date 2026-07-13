@@ -16,7 +16,7 @@ Usage: ai-doctor [--quick] [--strict]
 
 Checks ai-config repository health, link drift, local-only skills, secrets,
 machine-specific absolute home paths, Claude config divergence, and Grok
-activation/home/binary drift. Findings are reported only; Grok state is never
+credential/home/binary drift. Findings are reported only; Grok state is never
 repaired automatically.
 
 --quick skips network freshness checks.
@@ -379,11 +379,8 @@ check_grok_family() {
     err "Grok PATH shim missing or not executable: $AI_CONFIG_ROOT/tools/herder/shims/grok; restore the checkout and rerun bin/ai-setup"
   fi
 
-  if [ "${HERDER_GROK_ACTIVATED:-}" != "1" ]; then
-    warn "Grok family is not activated (HERDER_GROK_ACTIVATED unset); bare grok fails closed by design. Set HERDER_GROK_ACTIVATED=1 only for an isolated, throwaway-state session."
-  fi
   if [ -z "${XAI_API_KEY:-}" ]; then
-    warn "Grok activation precondition missing: XAI_API_KEY is absent from this environment; export it by name in the environment inherited by fresh herder panes before activation"
+    warn "Grok credential precondition missing: XAI_API_KEY is absent or empty in this environment; export it from a login-shell profile such as \$HOME/.profile, then verify in a fresh herder pane"
   fi
 
   if [ -n "$configured_home" ] && [ "$configured_home" != "$managed_home" ]; then
@@ -394,7 +391,7 @@ check_grok_family() {
     fi
   fi
   if [ -L "$managed_home" ]; then
-    warn "managed Grok home is a symlink: $managed_home -> $(readlink "$managed_home"); replace it with a dedicated directory before activation (ai-doctor will not change it)"
+    warn "managed Grok home is a symlink: $managed_home -> $(readlink "$managed_home"); replace it with a dedicated directory before launch (ai-doctor will not change it)"
   fi
 
   contract_binary="$(grok_contract_binary)"
@@ -411,7 +408,7 @@ check_grok_family() {
 
   vendor_binary="$(grok_vendor_on_path || true)"
   if [ -z "$vendor_binary" ]; then
-    warn "no Grok vendor binary found behind the managed PATH shim; install the characterized binary or set HERDER_GROK_BIN before activation"
+    warn "no Grok vendor binary found behind the managed PATH shim; install the characterized binary or set HERDER_GROK_BIN before launch"
   elif [ "$vendor_binary" = "$contract_canonical" ] && [ -n "$contract_canonical" ]; then
     [ "$quick" -eq 1 ] || log_info "Grok vendor binary on PATH matches the launch contract: $vendor_binary"
   elif probe="$(grok_check_binary "$vendor_binary")"; then

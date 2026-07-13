@@ -211,6 +211,16 @@ func (b *Binder) bindIdentity(ctx context.Context) (string, error) {
 	if err := writeAtomic(namePath, []byte(name+"\n"), 0o600); err != nil {
 		return "", err
 	}
+	// hcom start creates a process-bound identity as an inactive launch
+	// placeholder. Grok has no vendor hook that later replaces that placeholder,
+	// so an observer would otherwise age it into launch_failed even while this
+	// bridge remains live. An identified JSON list is the smallest read-only hcom
+	// command: it stabilizes the existing process-bound row without delivering or
+	// acknowledging pending messages. Keep the bus-name durable before this call
+	// so a retry reclaims the same identity rather than minting another one.
+	if _, err := b.runHcomSeatIdentity(ctx, "list", "--name", name, "--json"); err != nil {
+		return "", fmt.Errorf("stabilize hcom identity: %w", err)
+	}
 	return name, nil
 }
 
@@ -762,7 +772,9 @@ func (b *Binder) runHcom(ctx context.Context, anonymous bool, args ...string) (s
 }
 
 func (b *Binder) runHcomSeatIdentity(ctx context.Context, args ...string) (string, error) {
-	env := scrubEnv(os.Environ(), "HCOM_PROCESS_ID", "CODEX_THREAD_ID")
+	// A parent agent's tag must not rewrite `start --as <durable-name>` into a
+	// second, tag-prefixed identity when the bridge reclaims its seat.
+	env := scrubEnv(os.Environ(), "HCOM_PROCESS_ID", "CODEX_THREAD_ID", "HCOM_TAG")
 	env = replaceEnv(env, "HCOM_PROCESS_ID", b.cfg.Seat)
 	return b.runHcomEnv(ctx, env, args...)
 }

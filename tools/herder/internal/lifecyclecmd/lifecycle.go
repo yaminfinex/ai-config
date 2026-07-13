@@ -187,10 +187,6 @@ func (r *runner) fork(opts forkOptions) int {
 
 	vehicleTarget := ""
 	if agent == "grok" {
-		if !launchcmd.GrokActivated() {
-			die(r.stderr, launchcmd.GrokActivationError())
-			return 1
-		}
 		vehicleTarget = sessionID
 	} else if liveParent && parent.HcomName != "" {
 		vehicleTarget = parent.HcomName
@@ -619,10 +615,6 @@ func (r *runner) resume(opts resumeOptions) int {
 		return 1
 	}
 	if rec.Agent == "grok" {
-		if !launchcmd.GrokActivated() {
-			die(r.stderr, launchcmd.GrokActivationError())
-			return 1
-		}
 		if _, err := launchcmd.BuildGrokLifecyclePlan("resume", sessionID, sessionID); err != nil {
 			die(r.stderr, err.Error())
 			return 1
@@ -755,8 +747,7 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		grokEnv = " HERDER_STATE_DIR=" + shellquote.Quote(filepath.Dir(spec.RegistryPath)) +
 			" HERDER_GROK_SESSION_ID=" + shellquote.Quote(spec.GrokSessionID) +
 			" HERDER_GROK_CHILD_HOME=" + shellquote.Quote(os.Getenv("HOME")) +
-			" HERDER_GROK_PREASSIGNED=1" +
-			" HERDER_GROK_ACTIVATED=1"
+			" HERDER_GROK_PREASSIGNED=1"
 		for _, key := range []string{"HERDER_GROK_BIN", "HERDER_GROK_SUPPORTED_VERSIONS", "HERDER_REAL_HCOM"} {
 			if value := os.Getenv(key); value != "" {
 				grokEnv += " " + key + "=" + shellquote.Quote(value)

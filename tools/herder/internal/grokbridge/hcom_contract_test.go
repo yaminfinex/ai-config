@@ -36,8 +36,7 @@ func installedHcom(t *testing.T) string {
 func hrunProcess(t *testing.T, bin, dir, processID string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
-	env := scrubEnv(os.Environ(), "HCOM_PROCESS_ID", "CODEX_THREAD_ID")
-	env = replaceEnv(env, "HCOM_DIR", dir)
+	env := hcomContractEnv(dir)
 	env = replaceEnv(env, "HCOM_PROCESS_ID", processID)
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
@@ -57,13 +56,63 @@ func startName(t *testing.T, out string) string {
 func hrun(t *testing.T, bin, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
-	cmd.Env = replaceEnv(os.Environ(), "HCOM_DIR", dir)
+	cmd.Env = hcomContractEnv(dir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("hcom %v: %v: %s", args, err, out)
 	}
 	return string(out)
 }
+
+func hcomContractEnv(dir string) []string {
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, item := range os.Environ() {
+		key, _, _ := strings.Cut(item, "=")
+		if isHcomContractIdentityEnv(key) {
+			continue
+		}
+		env = append(env, item)
+	}
+	return append(env, "HCOM_DIR="+dir)
+}
+
+func isHcomContractIdentityEnv(key string) bool {
+	return key == "HCOM" || key == "CODEX_THREAD_ID" ||
+		strings.HasPrefix(key, "HCOM_") || strings.HasPrefix(key, "CLAUDE")
+}
+
+func unsetHcomContractIdentityEnv(t *testing.T) {
+	t.Helper()
+	type entry struct{ key, value string }
+	saved := make([]entry, 0)
+	for _, item := range os.Environ() {
+		key, value, _ := strings.Cut(item, "=")
+		if isHcomContractIdentityEnv(key) {
+			saved = append(saved, entry{key: key, value: value})
+		}
+	}
+	t.Cleanup(func() {
+		for _, item := range os.Environ() {
+			key, _, _ := strings.Cut(item, "=")
+			if isHcomContractIdentityEnv(key) {
+				if err := os.Unsetenv(key); err != nil {
+					t.Errorf("clear contract identity env %s: %v", key, err)
+				}
+			}
+		}
+		for _, item := range saved {
+			if err := os.Setenv(item.key, item.value); err != nil {
+				t.Errorf("restore contract identity env %s: %v", item.key, err)
+			}
+		}
+	})
+	for _, item := range saved {
+		if err := os.Unsetenv(item.key); err != nil {
+			t.Fatalf("unset contract identity env %s: %v", item.key, err)
+		}
+	}
+}
+
 func hstart(t *testing.T, bin, dir string) string {
 	t.Helper()
 	return startName(t, hrun(t, bin, dir, "start"))
@@ -83,6 +132,28 @@ func processBindings(t *testing.T, db string) map[string]string {
 	return got
 }
 
+func identityCursorAndRows(t *testing.T, db, name string) (int64, int) {
+	t.Helper()
+	cmd := exec.Command("python3", "-c", `import json,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); row=c.execute("select coalesce(max(last_event_id),0),count(*) from instances where name=?",(sys.argv[2],)).fetchone(); print(json.dumps(row))`, db, name)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("read identity state: %v: %s", err, out)
+	}
+	var got []int64
+	if err = json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	return got[0], int(got[1])
+}
+
+func ageIdentityPlaceholder(t *testing.T, db, name string) {
+	t.Helper()
+	cmd := exec.Command("python3", "-c", `import sqlite3,sys,time; c=sqlite3.connect(sys.argv[1]); c.execute("update instances set created_at=? where name=?",(time.time()-31,sys.argv[2])); c.commit()`, db, name)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("age identity placeholder: %v: %s", err, out)
+	}
+}
+
 func shortState(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "gbs-")
@@ -94,22 +165,31 @@ func shortState(t *testing.T) string {
 }
 
 func TestRealHcomBindIdentityUsesSeatOwnedProcessAndPreservesForeignBinding(t *testing.T) {
+	// Keep both helper subprocesses and the binder's process-level environment
+	// free of parent-agent identity signals. The adhoc tool path suppresses hook
+	// installation while allowing the identified read to stabilize the aged row.
+	unsetHcomContractIdentityEnv(t)
+	t.Setenv("HCOM_TOOL", "adhoc")
 	bin := installedHcom(t)
 	bus := t.TempDir()
 	foreignName := startName(t, hrunProcess(t, bin, bus, "foreign-process", "start"))
+	seatName := startName(t, hrunProcess(t, bin, bus, "seat-process", "start"))
+	peerName := startName(t, hrunProcess(t, bin, bus, "peer-process", "start"))
+	hsend(t, bin, bus, peerName, []string{seatName}, nil, "pending-before-rebind")
+	db := filepath.Join(bus, "hcom.db")
+	unreadBefore := unread(t, bin, bus, seatName)
+	cursorBefore, rowsBefore := identityCursorAndRows(t, db, seatName)
+	if unreadBefore == 0 || rowsBefore != 1 {
+		t.Fatalf("seeded identity unread=%d rows=%d, want pending message on exactly one row", unreadBefore, rowsBefore)
+	}
 	state := shortState(t)
-	b, err := OpenBinder(BinderConfig{Seat: "seat-guid", StateDir: state, HcomBin: bin, HcomDir: bus})
+	b, err := OpenBinder(BinderConfig{Seat: "seat-process", StateDir: state, HcomBin: bin, HcomDir: bus})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	seatName, err := b.bindIdentity(context.Background())
-	if err != nil {
+	if err = writeAtomic(filepath.Join(SeatDir(state, "seat-process"), "bus-name"), []byte(seatName+"\n"), 0o600); err != nil {
 		t.Fatal(err)
-	}
-	got := processBindings(t, filepath.Join(bus, "hcom.db"))
-	if got["foreign-process"] != foreignName || got["seat-guid"] != seatName {
-		t.Fatalf("bindings after start=%v, want foreign preserved and seat-owned binding", got)
 	}
 	reclaimed, err := b.bindIdentity(context.Background())
 	if err != nil {
@@ -118,10 +198,39 @@ func TestRealHcomBindIdentityUsesSeatOwnedProcessAndPreservesForeignBinding(t *t
 	if reclaimed != seatName {
 		t.Fatalf("reclaimed %q, want %q", reclaimed, seatName)
 	}
-	got = processBindings(t, filepath.Join(bus, "hcom.db"))
-	if got["foreign-process"] != foreignName || got["seat-guid"] != seatName {
+	got := processBindings(t, db)
+	if got["foreign-process"] != foreignName || got["seat-process"] != seatName {
+		t.Fatalf("bindings after start=%v, want foreign preserved and seat-owned binding", got)
+	}
+	unreadAfter := unread(t, bin, bus, seatName)
+	cursorAfter, rowsAfter := identityCursorAndRows(t, db, seatName)
+	if unreadAfter != unreadBefore || cursorAfter != cursorBefore {
+		t.Fatalf("identified stabilization consumed pending state: unread %d -> %d, cursor %d -> %d", unreadBefore, unreadAfter, cursorBefore, cursorAfter)
+	}
+	if rowsAfter != 1 {
+		t.Fatalf("seat roster rows=%d after bind, want exactly one", rowsAfter)
+	}
+	reclaimed, err = b.bindIdentity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed != seatName {
+		t.Fatalf("reclaimed %q, want %q", reclaimed, seatName)
+	}
+	got = processBindings(t, db)
+	if got["foreign-process"] != foreignName || got["seat-process"] != seatName {
 		t.Fatalf("bindings after reclaim=%v, want both preserved", got)
 	}
+	if _, rows := identityCursorAndRows(t, db, seatName); rows != 1 {
+		t.Fatalf("seat roster rows=%d after reclaim, want exactly one", rows)
+	}
+
+	// Age the numeric epoch beyond hcom's 30-second placeholder timeout, then
+	// force an observer pass without sleeping. The identified read performed by
+	// bindIdentity must keep the row targetable.
+	ageIdentityPlaceholder(t, db, seatName)
+	_ = hrun(t, bin, bus, "list", "--json")
+	hsend(t, bin, bus, peerName, []string{seatName}, nil, "accepted-after-placeholder-timeout")
 }
 
 func TestReadInvocationChildEnvironmentScrubsPinnedIdentityInputs(t *testing.T) {
