@@ -1,11 +1,11 @@
 ---
 id: TASK-190
 title: 'sesh — surface homepage must render bounded recency, not the whole corpus'
-status: In Progress
+status: Done
 assignee:
   - mika
 created_date: '2026-07-13 10:30'
-updated_date: '2026-07-13 10:40'
+updated_date: '2026-07-13 11:38'
 labels:
   - sesh
 dependencies: []
@@ -21,8 +21,8 @@ With the fleet onboarding (~3-5k files per node already), the surface '/' recenc
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Homepage renders bounded recent sessions with request-time query work genuinely bounded (projection slice or LIMITed query — bounded work is the substance, per review closure); no corpus-wide scan or unbounded render on any surface route
-- [ ] #2 Older history reachable (pagination or load-more); /nodes unaffected and cheap
-- [ ] #3 Fixture gate covers a 5k-file corpus: bounded rows, bounded query time
-- [ ] #4 Docs current per decision-001 (README surface section)
+- [x] #1 Homepage renders bounded recent sessions with request-time query work genuinely bounded (projection slice or LIMITed query — bounded work is the substance, per review closure); no corpus-wide scan or unbounded render on any surface route
+- [x] #2 Older history reachable (pagination or load-more); /nodes unaffected and cheap
+- [x] #3 Fixture gate covers a 5k-file corpus: bounded rows, bounded query time
+- [x] #4 Docs current per decision-001 (README surface section)
 <!-- AC:END -->
