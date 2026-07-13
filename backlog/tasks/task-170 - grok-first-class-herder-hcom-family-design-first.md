@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-13 01:43'
+updated_date: '2026-07-13 01:45'
 labels: []
 dependencies: []
 priority: medium
@@ -45,4 +45,6 @@ OWNER RULINGS 2026-07-13 (recorded in design doc addendum): no bypassPermissions
 CORRECTION to U1 merge note: house battery count on main is 54 (53 + check-grok-transport.sh), not 55.
 
 2026-07-13: U2 launch contract dispatched — worker (codex 5.6 high) in worktree task-170-u2-launch, thread task170u2, brief napkins/run-herder-dx/task-170-u2-implement-brief.md. Scope: DR-3/DR-4 launch contract behind the activation gate (spawn --agent grok unchanged); owner rulings carried (Grok 4.5 pin w/ id resolution recorded, no bypass mapping, blanket smoke spend, boot-arming fallback pre-approved); U1-review context-hygiene item in scope (trim send result or doctrine line).
+
+2026-07-13 U2 deviation triage: brief said spawn behavior unchanged; design row says default REFUSES family-not-activated unless opt-in. RULED design-binding (refusal default) — brief paraphrase was hera's error; raw-launch-under-family-name is the demo-documented hazard the refusal closes. Worker proceeding per design.
 <!-- SECTION:NOTES:END -->
