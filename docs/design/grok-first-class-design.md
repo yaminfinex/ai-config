@@ -815,3 +815,27 @@ overclaimed, the correction is spelled out.
   and stranded ids 4..40. **Binder-side ascending-id sorting before any journal
   append is therefore part of the correctness contract**, not a nicety. T27 pins
   both facts.
+
+---
+
+## Addendum — owner rulings (2026-07-13)
+
+1. **bypassPermissions**: no mapping ruled in; ships as designed (normal →
+   `--always-approve`, `--safe` → ask-mode). Standing default unless the owner
+   explicitly rules otherwise.
+2. **Default model**: RULED — the production default model is **Grok 4.5**. The launch
+   contract resolves the exact model identifier from the CLI's model list at
+   implementation time and pins it as the family default; `--model` passthrough still
+   overrides per-spawn. The live smoke runs the pinned model.
+3. **Inference spend**: blanket-approved for all implementation-unit smokes in this
+   design's staging plan; spend is not a per-unit consideration.
+4. **Upstream hcom asks**: HOLD — do not file. Watch item instead: upstream PR
+   aannoo/hcom#81 (open) adds a first-class `hcom grok` launcher with hooks, resume/
+   fork, and transcript parsing — but its delivery strategy is plain-text PTY body
+   injection + Enter, the mechanism this design's provenance explicitly rejected for
+   delivery. If that PR merges, the activation unit must ensure hcom's injection path
+   and this design's binder NEVER both deliver to one seat (double-delivery race);
+   the roster-label nicety (a) may arrive for free with it.
+5. **Boot-arming fallback**: PRE-APPROVED — if the argv boot-prompt probe fails, one
+   constant arming line via composer boot-paste at launch is authorized (launch
+   arming only; never message content).

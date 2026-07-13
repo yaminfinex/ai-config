@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-12 23:32'
+updated_date: '2026-07-13 00:00'
 labels: []
 dependencies: []
 priority: medium
@@ -29,4 +29,6 @@ Design, then separately implement, Grok as an explicit herder/hcom family. The h
 
 <!-- SECTION:NOTES:BEGIN -->
 DESIGN PHASE COMPLETE, merged (docs/design/grok-first-class-design.md, 817 lines, commit 0988318 via --no-ff). Claude designer + codex 5.6 adversarial design review, FOUR fix rounds, final APPROVE — every round grounded in independent scratch-bus reproduction against real hcom 0.7.23: (r1) listen is destructive/envelope-poor -> pickup respecced onto the events surface; (r2) events --wait 10s-lookback loss, named-read post-dispatch drain, self-broadcast predicate bug -> anonymous --full drain as sole durable primitive, identity-free reads, canonical delivered_to; (r3) newest-first LIMIT 20 default silently drops backlog >20 -> oldest-page-above-C subselect; (r4) page membership != emission order -> mandatory ascending-id sort before journal append. Also enforced: --no-subagents always-on, flock+generation fencing, resolved-binary capability gate (refuses the 0.2.99 the PATH points at today), activation-gated staging U1-U5. IMPLEMENTATION NOT STARTED — awaiting owner rulings on design section 10 (bypassPermissions mapping, model pin, per-unit smoke spend, conditional upstream hcom niceties a/b/c, conditional boot-arming fallback). U1 (transport core) is dispatchable on owner go.
+
+OWNER RULINGS 2026-07-13 (recorded in design doc addendum): no bypassPermissions mapping; default model PINNED = Grok 4.5 (exact id resolved at implementation, smoke runs it); blanket spend approval for staging smokes; upstream asks HOLD + watch aannoo/hcom PR#81 (open: first-class hcom grok launcher, but delivery = PTY injection which our design rejected — activation must prevent double-delivery if it merges); boot-arming fallback pre-approved. U1 transport core DISPATCHED.
 <!-- SECTION:NOTES:END -->
