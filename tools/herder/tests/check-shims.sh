@@ -341,7 +341,47 @@ assert_file_eq "grok explicit bypass: argv preserved" "$PROBE/real_grok_argv" \
   "$(printf '%s\n' --raw-vendor)"
 assert_file_missing "grok explicit bypass: launch contract not entered" "$PROBE/herder_argv"
 
-# 14. PATH retains ordinary shadowing semantics: an explicit vendor directory
+# 14. A relative GROK bypass is ambiguous and must refuse before either herder
+#     or a vendor executable is invoked.
+make_case grok_bypass_relative
+err="$PROBE/stderr"
+env -i PATH="$SHIM_CASE:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
+  GROK="relative/grok" "$SHIM_CASE/grok" --raw-vendor 2>"$err"
+rc=$?
+if [[ "$rc" -ne 0 ]]; then
+  ok "grok relative bypass: nonzero exit"
+else
+  bad "grok relative bypass: nonzero exit" "rc=0"
+fi
+if grep -Fq 'must be an absolute executable path' "$err"; then
+  ok "grok relative bypass: absolute-path remedy"
+else
+  bad "grok relative bypass: absolute-path remedy" "stderr=$(cat "$err" 2>/dev/null)"
+fi
+assert_file_missing "grok relative bypass: launch contract not entered" "$PROBE/herder_argv"
+assert_file_missing "grok relative bypass: vendor not invoked" "$PROBE/real_grok_count"
+
+# 15. Pointing GROK at the selected shim itself must refuse instead of execing
+#     back into an infinite recursion loop.
+make_case grok_bypass_self
+err="$PROBE/stderr"
+run_with_timeout 5 env -i PATH="$SHIM_CASE:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
+  GROK="$SHIM_CASE/grok" "$SHIM_CASE/grok" --raw-vendor 2>"$err"
+rc=$?
+if [[ "$rc" -ne 0 ]]; then
+  ok "grok self bypass: nonzero exit"
+else
+  bad "grok self bypass: nonzero exit" "rc=0"
+fi
+if grep -Fq 'points to a managed shim, not a vendor binary' "$err"; then
+  ok "grok self bypass: recursion refusal"
+else
+  bad "grok self bypass: recursion refusal" "stderr=$(cat "$err" 2>/dev/null)"
+fi
+assert_file_missing "grok self bypass: launch contract not entered" "$PROBE/herder_argv"
+assert_file_missing "grok self bypass: vendor not invoked" "$PROBE/real_grok_count"
+
+# 16. PATH retains ordinary shadowing semantics: an explicit vendor directory
 #     placed before the managed shim wins, so the shim cannot steal an intended
 #     raw vendor invocation.
 make_case grok_vendor_first
@@ -354,7 +394,7 @@ assert_file_eq "grok vendor first: argv preserved" "$PROBE/real_grok_argv" \
   "$(printf '%s\n' --raw-vendor)"
 assert_file_missing "grok vendor first: launch contract not entered" "$PROBE/herder_argv"
 
-# 15. Multiple checkout shim dirs cannot recurse: the selected shim uses only
+# 17. Multiple checkout shim dirs cannot recurse: the selected shim uses only
 #     its repository-local herder, and never resolves a sibling as a vendor.
 make_case grok_sibling
 SIBLING_REPO="$CASE_DIR/sibling"
