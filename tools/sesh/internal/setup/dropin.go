@@ -166,3 +166,20 @@ func dropinProvenance(existing []byte) Provenance {
 	_, prov := unitCommentStyle.split(existing)
 	return prov
 }
+
+// UnitExecPath extracts the pinned binary path from a rendered unit's
+// ExecStart= line ("ExecStart=<abs path> ship"). `sesh update` replaces
+// exactly this file — never a binary the service does not actually run.
+func UnitExecPath(content []byte) (string, bool) {
+	for _, line := range strings.Split(string(content), "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "ExecStart=")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) > 0 {
+			return fields[0], true
+		}
+	}
+	return "", false
+}

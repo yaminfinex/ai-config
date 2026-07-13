@@ -52,6 +52,11 @@ type Runner interface {
 	Output(name string, args ...string) (string, error)
 }
 
+// NewExecRunner returns the Runner that executes commands for real. Shared
+// with `sesh update`, whose service restart and verification go through the
+// same seam.
+func NewExecRunner() Runner { return execRunner{} }
+
 type execRunner struct{}
 
 func (execRunner) Run(name string, args ...string) error {

@@ -28,6 +28,13 @@ install:
 deploy store_url *args: install
     {{gobin}}/sesh setup --store-url {{store_url}} {{args}}
 
+# Publish a release to the store's channel (design §7, two-verb discipline:
+# publishing artifacts ≠ deploying the store). Matrix build, remote staging,
+# checksum verify, atomic promote (republish refused), durable latest flip.
+# dest example: sesh-host:/var/lib/sesh/releases
+release dest:
+    scripts/release.sh {{dest}}
+
 # Restart an already configured service after installing the current binary.
 restart: install
     @case "$(uname -s)" in Linux) systemctl --user restart sesh-ship.service ;; Darwin) launchctl kickstart -k "gui/$(id -u)/dev.sesh.ship" ;; *) echo "unsupported platform" >&2; exit 2 ;; esac

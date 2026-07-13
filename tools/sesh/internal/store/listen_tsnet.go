@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
@@ -58,6 +59,14 @@ type TailnetCapabilityGrant struct {
 // before delegating. It is used for both ship and read listeners; loopback dev
 // mode bypasses it entirely.
 func AuthHandler(next http.Handler, whois WhoIsFunc, capability string) http.Handler {
+	return AuthHandlerAnyOf(next, whois, capability)
+}
+
+// AuthHandlerAnyOf admits a caller holding ANY of the given verbs. The
+// distribution routes on the ingest listener use it with (ship, read) —
+// design §3's route-scoped any-of-verbs auth — so read-only principals can
+// fetch the installer and releases without gaining PUT ingest.
+func AuthHandlerAnyOf(next http.Handler, whois WhoIsFunc, verbs ...string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if whois == nil {
 			writeGrantDenied(w, "tailnet identity unavailable")
@@ -71,31 +80,33 @@ func AuthHandler(next http.Handler, whois WhoIsFunc, capability string) http.Han
 			writeGrantDenied(w, err.Error())
 			return
 		}
-		allowed, err := allowsCapability(result.CapMap, capability)
+		allowed, err := allowsAnyCapability(result.CapMap, verbs)
 		if err != nil {
 			writeGrantDenied(w, err.Error())
 			return
 		}
 		if !allowed {
-			writeGrantDenied(w, fmt.Sprintf("tailnet identity %q lacks %s verb in %s", result.Identity, capability, TailnetCapabilitySesh))
+			writeGrantDenied(w, fmt.Sprintf("tailnet identity %q lacks %s verb in %s", result.Identity, strings.Join(verbs, "|"), TailnetCapabilitySesh))
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(withTailnetIdentity(r.Context(), result.Identity)))
 	})
 }
 
-func allowsCapability(caps tailcfg.PeerCapMap, capability string) (bool, error) {
+func allowsAnyCapability(caps tailcfg.PeerCapMap, verbs []string) (bool, error) {
 	grants, err := tailcfg.UnmarshalCapJSON[TailnetCapabilityGrant](caps, TailnetCapabilitySesh)
 	if err != nil {
 		return false, fmt.Errorf("invalid %s grant: %w", TailnetCapabilitySesh, err)
 	}
 	for _, grant := range grants {
-		if grant.Verb == capability {
-			return true, nil
-		}
-		for _, verb := range grant.Verbs {
-			if verb == capability {
+		for _, verb := range verbs {
+			if grant.Verb == verb {
 				return true, nil
+			}
+			for _, granted := range grant.Verbs {
+				if granted == verb {
+					return true, nil
+				}
 			}
 		}
 	}
