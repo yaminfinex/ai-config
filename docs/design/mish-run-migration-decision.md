@@ -135,17 +135,24 @@ machinery). Applied live:
    so "every found reference opens" is the wrong invariant and would fail on honest input.
    The invariant is: **every reference that resolved immediately before cutover resolves to
    the same governing-manifest bytes after cutover.**
-   - *Baseline (pre-copy):* enumerate every old-path reference in the corpus (grep the old
-     directory's absolute and relative path forms), attempt to resolve each, and record the
-     **resolving set** with content hashes. Classify the non-resolving remainder into two
-     non-gating classes, recorded with the baseline: *pre-existing broken* (target since
-     relocated or deleted) and *write-destination* (a path named as somewhere to write,
-     legitimately absent).
+   - *Baseline (pre-copy), typed and executable:* enumerate every old-path reference in the
+     corpus (grep the old directory's absolute and relative path forms), attempt to resolve
+     each, and record the **resolving set** with each entry typed: a **file** target records
+     `type=file` plus its content hash; a **directory** target records `type=dir` plus a
+     normalized descendant path/hash set (or records type-and-existence only and relies
+     explicitly on the governing whole-tree manifest for descendant content). An **absent**
+     target is classified into one of exactly two non-gating classes, recorded with the
+     baseline: *pre-existing broken* (target since relocated or deleted) and
+     *write-destination* (a path named as somewhere to write, legitimately absent).
    - *Layout proof (pre-deletion):* re-resolve the resolving set through the temporary
-     symlink alias (pipeline step 3.vi) — same bytes, every entry — while the source is
-     still intact.
+     symlink alias (pipeline step 3.vi), **substituting the old-root prefix with the alias
+     prefix for absolute and project-relative references** — resolving them unchanged would
+     hit the still-intact source and produce a false green. Every entry must match its
+     typed baseline record while the source is still intact.
    - *Post-link re-check:* after the real symlink is installed, re-resolve the resolving set
-     once more, and run the *cold-resume drill*: execute the read sequence of an
+     once more **using the original paths unchanged** (the real symlink now occupies the old
+     root, so no substitution applies), and run the *cold-resume drill*: execute the read
+     sequence of an
      already-minted pre-cutover resume steer — digest, journal, playbook in full via their
      **old** paths — confirming full content, not a pointer line.
    Zero writes to any worktree throughout.
@@ -280,12 +287,14 @@ below are the gate; there is no code battery to run. **Blocked on:** owner decis
    the old napkin directory path is a single symlink resolving into the mission's
    `artifacts/orchestration/` subtree.
 6. Continuity invariant holds (Ruling B.5): every reference that resolved immediately before
-   cutover resolves to the same governing-manifest bytes after cutover. Evidence: baseline
-   resolving set captured pre-copy with pre-existing-broken and write-destination references
-   classified into recorded non-gating classes; temporary-alias layout proof passes before
-   source deletion; post-link re-check and the cold-resume drill (digest, journal, playbook
-   in full via old paths) pass. Zero messages to in-flight workers; zero writes to any
-   worktree.
+   cutover resolves to the same governing-manifest bytes after cutover. Evidence: **typed**
+   baseline resolving set captured pre-copy (file → content hash; dir → descendant path/hash
+   set or type-and-existence backed by the governing manifest), with pre-existing-broken and
+   write-destination references classified into recorded non-gating classes; temporary-alias
+   layout proof passes before source deletion with the old-root prefix substituted by the
+   alias for absolute and project-relative references; post-link re-check passes on original
+   paths unchanged, plus the cold-resume drill (digest, journal, playbook in full via old
+   paths). Zero messages to in-flight workers; zero writes to any worktree.
 7. Symlink retirement is captured, not performed: a journal entry records the retirement
    criterion (all pre-cutover contexts closed, or run close) and the explicit removal action.
 8. The mission board contains **zero tasks** at unit close — scaffolded empty, still empty;
