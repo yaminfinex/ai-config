@@ -4,7 +4,7 @@ title: 'observer: bake review + autostart decision (closure task)'
 status: In Progress
 assignee: []
 created_date: '2026-07-10 01:50'
-updated_date: '2026-07-13 00:13'
+updated_date: '2026-07-13 00:20'
 labels: []
 dependencies: []
 priority: high
@@ -42,4 +42,6 @@ SYNTHETIC EXERCISE part (a) PASSED (2026-07-10 21:22Z): throwaway bash probe 4fc
 OWNER (2026-07-12): part (b) herdr-restart exercise deferred to a NATURAL restart moment — the next herdr version bump. 146 stays open until then; observer continues as the manually-started instance; autostart flip waits for (b). TASK-145 implement leg is NOT blocked by this — its mechanism needs a running observer, which exists.
 
 2026-07-13: owner approved a read-only bake-review UPDATE unit (bake now ~3.5d vs the 16h baseline above). Dispatched worker (codex 5.6 high, read-only, thread task146, brief napkins/run-herder-dx/task-146-bake-review-brief.md): re-reads all four watch items over the full bake window + quantifies running-binary staleness (merges since 07-09 incl. TASK-162 observercmd fix — 'flip ON' implies restart onto current build). Part (b) herdr-restart exercise remains deferred to a natural restart per the 07-12 owner ruling; unit instructed not to recommend forcing one.
+
+2026-07-13 bake UPDATE (86.6h, read-only unit, report napkins/run-herder-dx/observer-bake-review-2026-07-13.md; central numbers independently re-verified by hera): dead detection exercised-clean (12 observed_dead/10 GUIDs in-window, positive socket path fired naturally once post-probe, 0 overreach); part (b) reconnect/generation STILL unexercised (no herdr restart occurred; one transient socket timeout recovered in place); BASELINE CORRECTION — the 16h 'zero reconfirm registry rows' claim was false: 707 hourly reconciled rows at cutoff (~196/day historical, ~312/day at current 13 seats) — reconfirmCandidate appends event=reconciled rows (observer.go:808-828); 1h-cadence ruling premise therefore needs owner re-review. 0 misflags across 178 created sessions. Running binary stale (b7c784f90ae7fd69 vs 981e809bd807e887): TASK-145/150/159/162 + write-spine hardening inactive until observer restart. Unit recommendation: Option B — keep manual until the natural herdr restart, then start CURRENT build, verify generation recovery, flip ON if clean; revisit cadence then. Awaiting owner ruling.
 <!-- SECTION:NOTES:END -->
