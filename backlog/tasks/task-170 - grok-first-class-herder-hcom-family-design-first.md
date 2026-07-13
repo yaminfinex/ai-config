@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-13 00:00'
+updated_date: '2026-07-13 00:29'
 labels: []
 dependencies: []
 priority: medium
@@ -31,4 +31,6 @@ Design, then separately implement, Grok as an explicit herder/hcom family. The h
 DESIGN PHASE COMPLETE, merged (docs/design/grok-first-class-design.md, 817 lines, commit 0988318 via --no-ff). Claude designer + codex 5.6 adversarial design review, FOUR fix rounds, final APPROVE — every round grounded in independent scratch-bus reproduction against real hcom 0.7.23: (r1) listen is destructive/envelope-poor -> pickup respecced onto the events surface; (r2) events --wait 10s-lookback loss, named-read post-dispatch drain, self-broadcast predicate bug -> anonymous --full drain as sole durable primitive, identity-free reads, canonical delivered_to; (r3) newest-first LIMIT 20 default silently drops backlog >20 -> oldest-page-above-C subselect; (r4) page membership != emission order -> mandatory ascending-id sort before journal append. Also enforced: --no-subagents always-on, flock+generation fencing, resolved-binary capability gate (refuses the 0.2.99 the PATH points at today), activation-gated staging U1-U5. IMPLEMENTATION NOT STARTED — awaiting owner rulings on design section 10 (bypassPermissions mapping, model pin, per-unit smoke spend, conditional upstream hcom niceties a/b/c, conditional boot-arming fallback). U1 (transport core) is dispatchable on owner go.
 
 OWNER RULINGS 2026-07-13 (recorded in design doc addendum): no bypassPermissions mapping; default model PINNED = Grok 4.5 (exact id resolved at implementation, smoke runs it); blanket spend approval for staging smokes; upstream asks HOLD + watch aannoo/hcom PR#81 (open: first-class hcom grok launcher, but delivery = PTY injection which our design rejected — activation must prevent double-delivery if it merges); boot-arming fallback pre-approved. U1 transport core DISPATCHED.
+
+2026-07-13: U1 transport core DONE report received (commit 2972946, worktree task-170-u1-transport, +2038 additive across 11 files — grokbridge package + herder grok tap|mcp|bridge + 1 new check script + PROBES.md). Worker reports T1-T18+T23 hermetic PASS, T24-T27 vs real hcom 0.7.23 PASS, full pinned battery 54/54 (new script joins the count), probes P1/P4/P5/P7 answered. Harvest under way: independent gate running from the worktree; opus adversarial reviewer dispatched (brief napkins/run-herder-dx/review-170-u1-brief.md — drain-contract mutation testing, identity-free reads, DR-2 crash matrix, generation fencing, delivered predicate, silent-idle, fence/hygiene, mock-vs-live shape). Late worker additions flagged for first-class review: owning-session evidence fencing on MCP/tap, journal directory durability.
 <!-- SECTION:NOTES:END -->
