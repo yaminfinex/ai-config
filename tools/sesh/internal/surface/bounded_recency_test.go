@@ -470,8 +470,10 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 		t.Error("deep page's poll must refresh its own page, not page one")
 	}
 
-	// A new session arriving moves the stamp: the next request rebuilds
-	// exactly once and surfaces it.
+	// A new session arriving moves the stamp: the next request serves the
+	// previous projection immediately (serve-stale-while-revalidate) and
+	// triggers exactly one background rebuild, after which the session is
+	// surfaced.
 	newest := bigCorpusSessions
 	at := corpusInstant(newest).Format(time.RFC3339Nano)
 	id := corpusID(newest)
@@ -488,8 +490,13 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 	}
 	log.reset()
 	body = mustGet200(t, srv, "/")
+	if strings.Contains(body, id) {
+		t.Error("request observing the moved stamp must serve the previous projection, not block on the rebuild")
+	}
+	live.WaitProjectionIdle()
+	body = mustGet200(t, srv, "/")
 	if !strings.Contains(body, id) {
-		t.Error("fresh session must appear once the stamp moves")
+		t.Error("fresh session must appear once the triggered refresh lands")
 	}
 	if !strings.Contains(body, fmt.Sprintf("showing latest 50 of %d sessions", bigCorpusSessions+1)) {
 		t.Error("total must follow the corpus")

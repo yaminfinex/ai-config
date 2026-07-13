@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -32,10 +33,22 @@ type MirrorPath func(tool wire.Tool, sessionID, fileUUID string, generation int)
 // The recency ranking is a surface-owned projection: the complete ranked
 // (tool, logical) key list plus total, held in memory and rebuilt only when
 // the store's cheap version stamp moves. Request-time work therefore stays
-// proportional to the page — a stamp probe plus key-constrained hydration —
-// while the corpus-wide aggregation runs only when the store actually
-// changed, and the surface always reads its own store's writes (no staleness
-// window).
+// proportional to the page — a stamp probe plus key-constrained hydration.
+//
+// The rebuild is single-flighted and serve-stale: at most one rebuild runs
+// at a time, and a request that observes a moved stamp returns the existing
+// projection immediately while the refresh runs in the background. Only the
+// cold start (no projection yet) blocks, and every concurrent cold request
+// shares that one build. This deliberately supersedes the original
+// read-your-own-writes property (rebuild inline whenever the stamp moved):
+// under bulk ingest the stamp moves between every request, which degenerated
+// to a corpus-scale rebuild per page load. Only the ranked key list and its
+// total can lag — page hydration always reads the live tables — and the lag
+// is bounded for any watched page because every request that sees a moved
+// stamp triggers a refresh: at most one poll interval plus one rebuild
+// behind the store, converging within one rebuild once ingest quiesces (see
+// the README surface section and the delta in
+// docs/design/2026-07-13-sesh-store-read-write-split.md).
 type SQLStore struct {
 	db         *sql.DB
 	mirrorPath MirrorPath
@@ -44,6 +57,22 @@ type SQLStore struct {
 	built   bool
 	ranking []sessionKey
 	stamp   rankingStamp
+	// refresh is the in-flight single-flighted rebuild, nil when idle.
+	refresh *projectionRefresh
+	// rebuildBarrier, when non-nil, runs at the start of every rebuild —
+	// a test-only choke point (export_test.go) that makes the single-flight
+	// and serve-stale behavior provable without timing games. Guarded by mu;
+	// captured into the refresh before its goroutine starts.
+	rebuildBarrier func()
+}
+
+// projectionRefresh is one in-flight projection rebuild. err is set before
+// done closes; cold requests (nothing to serve yet) block on done, everyone
+// else serves the previous projection without waiting.
+type projectionRefresh struct {
+	done    chan struct{}
+	err     error
+	barrier func()
 }
 
 // NewSQLStore builds the live Store over the store's database and mirror.
@@ -113,27 +142,90 @@ func (s *SQLStore) RecentSessions(ctx context.Context, limit, offset int) ([]Ses
 	return sums, total, nil
 }
 
-// rankedKeys returns the current recency projection, rebuilding it only when
-// the version stamp moved. Steady state (no new bytes since the last render)
-// costs one probe; under continuous ingest a rebuild can run per request,
-// but it is keys-only and milliseconds at fleet scale, and the page's 60s
-// poll cadence keeps it rare in practice.
+// rankedKeys returns the current recency projection. Steady state (no new
+// bytes since the last render) costs one probe; a moved stamp serves the
+// existing projection immediately and triggers the single-flighted
+// background refresh, so no request after the cold start ever waits on a
+// corpus-scale rebuild.
 func (s *SQLStore) rankedKeys(ctx context.Context) ([]sessionKey, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	var stamp rankingStamp
 	if err := s.db.QueryRowContext(ctx, rankingStampSQL).Scan(&stamp.indexMax, &stamp.filesMax); err != nil {
 		return nil, err
 	}
-	if s.built && stamp == s.stamp {
-		return s.ranking, nil
+	s.mu.Lock()
+	if s.built {
+		ranking := s.ranking
+		if stamp != s.stamp {
+			s.startRefreshLocked()
+		}
+		s.mu.Unlock()
+		return ranking, nil
 	}
-	ranking, err := s.rankSessionKeys(ctx)
+	// Cold start: nothing to serve stale — join the single-flighted first
+	// build so concurrent cold requests share one rebuild.
+	run := s.startRefreshLocked()
+	s.mu.Unlock()
+	select {
+	case <-run.done:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if run.err != nil {
+		return nil, run.err
+	}
+	s.mu.Lock()
+	ranking := s.ranking
+	s.mu.Unlock()
+	return ranking, nil
+}
+
+// startRefreshLocked returns the in-flight rebuild, starting one when idle.
+// Callers hold s.mu.
+func (s *SQLStore) startRefreshLocked() *projectionRefresh {
+	if s.refresh != nil {
+		return s.refresh
+	}
+	run := &projectionRefresh{done: make(chan struct{}), barrier: s.rebuildBarrier}
+	s.refresh = run
+	go s.runRefresh(run)
+	return run
+}
+
+// runRefresh executes one projection rebuild off the request path. It runs
+// on context.Background deliberately: the request that triggered it returns
+// (stale) long before the rebuild finishes, and the refresh must outlive it.
+// The duration lands in the debug journal — identifier-free by construction
+// (a duration and a count), same contract as the per-request timing.
+func (s *SQLStore) runRefresh(run *projectionRefresh) {
+	if run.barrier != nil {
+		run.barrier()
+	}
+	ctx := context.Background()
+	start := time.Now()
+	// Stamp before ranking: a write landing between the two reads leaves the
+	// stored stamp conservative, so the next probe sees it as moved and
+	// refreshes again — changes are never silently absorbed.
+	var stamp rankingStamp
+	err := s.db.QueryRowContext(ctx, rankingStampSQL).Scan(&stamp.indexMax, &stamp.filesMax)
+	var ranking []sessionKey
+	if err == nil {
+		ranking, err = s.rankSessionKeys(ctx)
+	}
+	s.mu.Lock()
+	if err == nil {
+		s.built, s.ranking, s.stamp = true, ranking, stamp
+	}
+	run.err = err
+	s.refresh = nil
+	s.mu.Unlock()
+	close(run.done)
 	if err != nil {
-		return nil, err
+		// Stale keeps serving; the next request that sees a moved stamp
+		// retries. Cold waiters got the error through run.err.
+		slog.Warn("recency projection rebuild failed", "duration", time.Since(start), "error", err)
+		return
 	}
-	s.built, s.ranking, s.stamp = true, ranking, stamp
-	return s.ranking, nil
+	slog.Debug("recency projection rebuild", "duration", time.Since(start), "sessions", len(ranking))
 }
 
 // rankSessionKeys is the projection rebuild: every logical session ranked by
