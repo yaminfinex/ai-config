@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-13 05:53'
+updated_date: '2026-07-13 06:12'
 labels: []
 dependencies: []
 priority: medium
@@ -53,4 +53,6 @@ CORRECTION to U1 merge note: house battery count on main is 54 (53 + check-grok-
 2026-07-13 U2 DONE (63628da, main ff'd in first, 55/55 battery): default --agent grok fails closed (family-not-activated cause+remedy); HERDER_GROK_ACTIVATED=1 opt-in; version gate defaults 0.2.93 refusing unsupported resolved binaries; dedicated GROK_HOME (both update suppressors + hooks off + MCP registered); --no-auto-update + --no-subagents always; UUIDv7 preassign + collision check; --always-approve autonomy / --safe ask / NO bypass; --model passthrough default grok-4.5 (resolved via pinned 0.2.93 models list + live TUI/argv, no inference); T19 refuses all auto-update forms + home repoints + subagent forms; herdr-server-env auth precondition fail-closed w/ seat-scoped launch-error marker (no value recorded); context-hygiene = first-send-line-only doctrine. Independent gate running; opus reviewer dispatched (brief review-170-u2-brief.md — isolation-gate mutation testing as the P1 lens since the hazard RECURRED this unit, activation integrity, auth value-leak grep, version resolution-past-shims, permission mapping, DR-4 identity, territory). OWNER: herdr server live-handoff is NOT functional on this build (owner-confirmed; help lists it but it does not work) — owner will WAIT FOR A HERDR RELEASE to seed the server env; Grok activation server-seeding therefore deferred to that release (fine: activation is post-U3/U4 regardless).
 
 ACTIVATION UNIT HARD AC (adopted from U2 delta review, reviewer-zula #55688): a real end-to-end `herder spawn --agent grok` must run and pass BEFORE the activation gate flips — the direct-launch smoke does not exercise the spawn path (P1-A hid there a full unit). Precondition: XAI_API_KEY reachable in panes (owner ruling pending: bashrc export vs 0600 key file injected at exec; server-env seeding no longer believed necessary — verify with the pane-env test).
+
+U2 (launch contract) MERGED c3a9702 (branch head 8f692f2, 3 commits). Two review rounds by zula: round1 2xP1 (raw-string seat guard rejecting 85.5% of real GUIDs; credential in ungated probe env + stderr persisted) + P2 (refusals not at argv-building layer) + P3 (ambient-PATH MCP seeding); round2 new P2 (seedGrokHome compare-refuse wedge) -> unconditional atomic rewrite + probe-env allowlist + remedy nit. APPROVE at 8f692f2 (#55864). Independent gates 55/55 per round; post-merge on main 56/56. Activation still OFF. Next: U3 (lifecycle) + U4 (observer) in parallel; activation unit hard ACs on record (real spawn e2e; zula also flagged version-skew config rewrite note + rename-without-dir-fsync as known choices).
 <!-- SECTION:NOTES:END -->
