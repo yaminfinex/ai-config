@@ -3,9 +3,11 @@ id: TASK-196
 title: >-
   sesh — surface projection rebuild must be single-flight and serve-stale; bulk
   ingest makes every page load pay a full rebuild
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - mika
 created_date: '2026-07-13 21:54'
+updated_date: '2026-07-13 21:55'
 labels:
   - sesh
 dependencies: []
