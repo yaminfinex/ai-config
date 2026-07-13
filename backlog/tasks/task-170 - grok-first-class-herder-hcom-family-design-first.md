@@ -4,7 +4,7 @@ title: 'grok: first-class herder/hcom family (design first)'
 status: In Progress
 assignee: []
 created_date: '2026-07-12 21:03'
-updated_date: '2026-07-13 00:29'
+updated_date: '2026-07-13 00:46'
 labels: []
 dependencies: []
 priority: medium
@@ -33,4 +33,6 @@ DESIGN PHASE COMPLETE, merged (docs/design/grok-first-class-design.md, 817 lines
 OWNER RULINGS 2026-07-13 (recorded in design doc addendum): no bypassPermissions mapping; default model PINNED = Grok 4.5 (exact id resolved at implementation, smoke runs it); blanket spend approval for staging smokes; upstream asks HOLD + watch aannoo/hcom PR#81 (open: first-class hcom grok launcher, but delivery = PTY injection which our design rejected — activation must prevent double-delivery if it merges); boot-arming fallback pre-approved. U1 transport core DISPATCHED.
 
 2026-07-13: U1 transport core DONE report received (commit 2972946, worktree task-170-u1-transport, +2038 additive across 11 files — grokbridge package + herder grok tap|mcp|bridge + 1 new check script + PROBES.md). Worker reports T1-T18+T23 hermetic PASS, T24-T27 vs real hcom 0.7.23 PASS, full pinned battery 54/54 (new script joins the count), probes P1/P4/P5/P7 answered. Harvest under way: independent gate running from the worktree; opus adversarial reviewer dispatched (brief napkins/run-herder-dx/review-170-u1-brief.md — drain-contract mutation testing, identity-free reads, DR-2 crash matrix, generation fencing, delivered predicate, silent-idle, fence/hygiene, mock-vs-live shape). Late worker additions flagged for first-class review: owning-session evidence fencing on MCP/tap, journal directory durability.
+
+2026-07-13 U1 review round 1 (reviewer-mapo, opus, all findings empirically reproduced on scratch bus): CHANGES REQUIRED — 2 P1 / 3 P2 / 5 P3. P1-1 binder's hcom start runs identity-UNSCRUBBED: ambient HCOM_PROCESS_ID lets the Grok seat HIJACK the host pane agent's hcom process binding (reclaim --as even deletes the seat's own binding) — fix: seat-owned process id (seat GUID) + real-hcom foreign-binding-survives test. P1-2 the round-4 ascending-sort contract is unpinned: sort deletion stays GREEN (T27 pre-sorts test-side + asserts via independently-sorted Pending) — fix: crash in binder's own append order, assert raw journal. P2-1 new check script is aspirational-SKIP (gate green with all real-hcom tests skipped). P2-2 MCP/tap/socket surface has zero tests; design's mock-Grok harness missing; T16/T17 misnamed vs design (traceability break). P2-3 owning-session fence fails OPEN when binder SessionID unset. P3: --full unpinned, generation fence vacuous through real client, discarded Surface error, 2s wait churn, raw sun_path error. Positive: end-to-end transport driven live and CORRECT (idle silence 0 bytes, wake line exact, recovery aggregation, fetch-before-ack enforced); territory/naming/credentials clean. All 10 findings + RetireUnacked note sent as fix round 1; moze acked. Delta review returns to mapo (seat held).
 <!-- SECTION:NOTES:END -->
