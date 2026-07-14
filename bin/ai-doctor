@@ -16,7 +16,7 @@ Usage: ai-doctor [--quick] [--strict]
 
 Checks ai-config repository health, link drift, local-only skills, secrets,
 machine-specific absolute home paths, Claude config divergence, and Grok
-credential/home/binary drift. Findings are reported only; Grok state is never
+credential/home/PATH-resolution drift. Findings are reported only; Grok state is never
 repaired automatically.
 
 --quick skips network freshness checks.
@@ -365,15 +365,8 @@ check_mise_path() {
 check_grok_family() {
   source "$AI_CONFIG_ROOT/lib/grok-health.sh"
 
-  local managed_home
-  local live_home="$HOME/.grok"
   local configured_home="${GROK_HOME:-}"
-  local contract_binary
-  local contract_canonical
   local vendor_binary
-  local probe
-
-  managed_home="$(grok_managed_home)"
 
   if [ ! -x "$AI_CONFIG_ROOT/tools/herder/shims/grok" ]; then
     err "Grok PATH shim missing or not executable: $AI_CONFIG_ROOT/tools/herder/shims/grok; restore the checkout and rerun bin/ai-setup"
@@ -383,38 +376,15 @@ check_grok_family() {
     warn "Grok credential precondition missing: XAI_API_KEY is absent or empty in this environment; export it from a login-shell profile such as \$HOME/.profile, then verify in a fresh herder pane"
   fi
 
-  if [ -n "$configured_home" ] && [ "$configured_home" != "$managed_home" ]; then
-    if [ "$configured_home" = "$live_home" ]; then
-      warn "GROK_HOME points at the live user home $live_home, but herder launches use $managed_home; unset GROK_HOME and verify with herder launch grok"
-    else
-      warn "GROK_HOME points at $configured_home, but herder launches use the managed home $managed_home; unset the override before verification"
-    fi
-  fi
-  if [ -L "$managed_home" ]; then
-    warn "managed Grok home is a symlink: $managed_home -> $(readlink "$managed_home"); replace it with a dedicated directory before launch (ai-doctor will not change it)"
-  fi
-
-  contract_binary="$(grok_contract_binary)"
-  contract_canonical="$(grok_canonical_path "$contract_binary" 2>/dev/null || true)"
-  if [ -z "$contract_canonical" ] || [ ! -x "$contract_canonical" ]; then
-    warn "Grok launch binary is missing or not executable: $contract_binary; set HERDER_GROK_BIN to the characterized 0.2.93 executable"
-  else
-    if probe="$(grok_check_binary "$contract_canonical")"; then
-      [ "$quick" -eq 1 ] || log_info "Grok launch binary passes the isolated gate: $(printf '%s\n' "$probe" | sed -n '1p')"
-    else
-      warn "Grok launch binary failed the isolated version/capability gate: $probe"
-    fi
+  if [ -n "$configured_home" ]; then
+    warn "GROK_HOME is set to $configured_home, but herder launches deliberately unset it so Grok uses the vendor default $HOME/.grok"
   fi
 
   vendor_binary="$(grok_vendor_on_path || true)"
   if [ -z "$vendor_binary" ]; then
-    warn "no Grok vendor binary found behind the managed PATH shim; install the characterized binary or set HERDER_GROK_BIN before launch"
-  elif [ "$vendor_binary" = "$contract_canonical" ] && [ -n "$contract_canonical" ]; then
-    [ "$quick" -eq 1 ] || log_info "Grok vendor binary on PATH matches the launch contract: $vendor_binary"
-  elif probe="$(grok_check_binary "$vendor_binary")"; then
-    [ "$quick" -eq 1 ] || log_info "Grok vendor binary on PATH passes the isolated gate but differs from the pinned launch path: $vendor_binary"
+    warn "no Grok vendor binary found on PATH after herder shims; install Grok Build before launch"
   else
-    warn "Grok vendor binary on PATH is outside launch support: $probe"
+    [ "$quick" -eq 1 ] || log_info "Grok vendor binary resolved after herder PATH shims (not executed): $vendor_binary"
   fi
 }
 

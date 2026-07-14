@@ -300,31 +300,28 @@ as single constants with byte-identity drift guards.
 
 ## Agent Home Models
 
-Herder supports two deliberate configuration models. Claude and Codex share the user's live homes:
-their existing configuration, installed skills, and login state are load-bearing inputs, so
-`CLAUDE_CONFIG_DIR` and `CODEX_HOME` continue to point at the normal user-owned locations. Grok
-uses the fully herder-managed model instead. A future managed mode for `herder launch claude` or
-`herder launch codex` could provide multi-account isolation, but it would be an explicit option,
-not a silent change to today's shared-home contract.
+Claude, Codex, and Grok share the user's live homes. Their existing configuration, installed
+skills, login state, sessions, and vendor-managed updates are load-bearing inputs. Grok launches
+therefore use the live vendor home at `~/.grok`: launch removes an ambient `GROK_HOME` override
+and never rewrites the owner's `~/.grok/config.toml` or another owner configuration file. A future
+managed mode could provide multi-account isolation, but it would be an explicit option, not a
+silent change to today's shared-home contract.
 
-For Grok, the managed home is `<herder-state>/grok-home` (normally
-`${XDG_STATE_HOME:-$HOME/.local/state}/herder/grok-home`). Its `config.toml` is the launch contract
-rendered as config, not user configuration. Every launch takes the seed lock and atomically
-rewrites the whole controlled file with auto-update disabled, Claude-compatible hooks disabled,
-and the herder bus MCP server registered. The launch environment also pins
-`GROK_CLAUDE_HOOKS_ENABLED=0`, so the Claude compatibility scanner cannot import ambient hooks.
-Local edits to the controlled config are therefore intentionally replaced at the next launch.
-Herder never merges it with or writes to the user's live `~/.grok`. Sessions created under the
-harness also stay under this managed home, which gives the observer a single owned transcript
-layout.
+The Grok PATH shim still enters the first-class herder transport. Launch walks `PATH` in order and
+selects the first executable after all herder shims (identified by their marker). It preserves the
+selected invoked path rather than resolving through vendor symlinks,
+so installer wrappers and vendor auto-updates retain their normal semantics. Neither launch nor
+`ai-doctor` invokes `--version` or `--help` as a gate; `herder grok check` only reports the path it
+would select and does not execute it.
 
-That model creates three intentional differences from running the vendor CLI manually:
-
-| Dimension | Manual `grok` | `herder launch grok` | Why herder differs |
-|---|---|---|---|
-| Home | Uses the vendor's live user home, normally `~/.grok` | Uses `<herder-state>/grok-home` | Keeps hooks, sessions, updates, and bridge configuration isolated from personal CLI state |
-| Binary | Uses whichever vendor executable the shell resolves | Uses the explicit characterized binary (`HERDER_GROK_BIN`, or the pinned default) and refuses unsupported versions | Prevents a vendor auto-update or PATH change from silently changing the transport contract |
-| Authentication | Uses whatever auth sources the manual CLI accepts | Inherits `XAI_API_KEY` from the fresh pane's login-shell profile; herder checks nonempty presence by name and never copies a value into argv, config, registry, or logs | Keeps credentials outside the managed home and makes the process boundary explicit |
+The hcom MCP transport no longer requires a user-home config entry. Each launch renders a
+seat-bound plugin under `<herder-state>/grok/<seat>/plugin` and passes it with `--plugin-dir`. The
+plugin contains only the herder executable path and `grok mcp` arguments; it carries no credential.
+The bridge, doctrine, preassigned session identity, and subagent/permission boundaries otherwise
+remain unchanged. `GROK_CLAUDE_HOOKS_ENABLED=0` is forced in the launch environment so Grok does
+not execute ambient Claude hooks even though it reads the live home. Authentication remains
+process-scoped: the fresh pane inherits `XAI_API_KEY`, herder checks nonempty presence by name, and
+no value is copied into argv, plugin/config files, registry rows, or logs.
 
 Herder normally finds the real `hcom` by walking PATH, skipping herder's hook shim and preferring
 a real binary after any argv0-dispatch shim. If no real binary survives, it pins the first dispatch
@@ -336,8 +333,8 @@ symlink-manager dispatch still works.
 The owner's manual-verification path is `herder launch grok`. The Grok family is available by
 default; `XAI_API_KEY` must be exported from a login-shell profile such as `$HOME/.profile` so a
 fresh pane inherits it. The command mints a fresh seat/session identity and exercises the
-launch-side pinned binary, managed home, config rewrite, update suppression, doctrine, bridge,
-and credential contract. It is a bounded manual guest, not a registered spawn: it does not appear
+vendor PATH resolution, default home, seat-bound plugin, hook suppression, doctrine, bridge, and
+credential contract. It is a bounded manual guest, not a registered spawn: it does not appear
 in `herder list` and cannot be targeted by `herder cull`. Its foreground wrapper owns the bridge,
 sends a generation-fenced retirement on normal or signalled exit, and uses parent-death retirement
 to converge after an uncatchable wrapper kill on Linux. Other Unix kernels cannot trap `SIGKILL`
@@ -345,7 +342,7 @@ at the wrapper boundary: stop any surviving bridge supervisor with `SIGTERM` (it
 retires the journal), or run `herder grok retire-offline --seat <guid> --state-dir <herder-state>`
 after the bridge stops.
 Testing the raw vendor executable does not verify the harness. Both `herder launch grok` and the
-`grok` PATH shim enter the managed contract by default; an absent `XAI_API_KEY` refuses with a
+`grok` PATH shim enter the first-class contract by default; an absent `XAI_API_KEY` refuses with a
 login-profile remedy, and there is never an automatic raw-vendor fallback. Use
 `GROK=/absolute/path/to/grok grok ...` only for an explicit unmanaged invocation.
 
@@ -356,7 +353,7 @@ mise. Restart the shell, then verify with `ai-doctor`. This is a machine-wide ta
 shims are on PATH, *every* interactive `claude`/`codex`/`grok` launch in a mise-activated shell — hand-
 launched ones included, not just herder-spawned panes — routes through `herder launch` and gets
 the herder-native bootstrap. `HCOM=/abs/path` bypasses the hcom PATH shim when you need stock
-behavior; `GROK=/absolute/path/to/grok grok ...` explicitly bypasses the managed Grok shim for one
+behavior; `GROK=/absolute/path/to/grok grok ...` explicitly bypasses the Grok shim for one
 unmanaged vendor invocation. Neither bypass is selected automatically. Non-mise contexts (GUI
 editors, launchd) simply never see the shims.
 

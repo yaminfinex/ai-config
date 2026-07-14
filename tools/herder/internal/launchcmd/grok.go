@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -12,7 +11,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -28,48 +26,27 @@ const (
 	grokBootPrompt     = "Start your monitor per your rules, then list pending messages and proceed."
 )
 
-// --no-auto-update is intentionally absent from 0.2.93's help text, so its
-// capability probe is the successful version invocation that already carries
-// the flag. The visible contract flags remain pinned from --help.
-var grokRequiredFlags = []string{"--no-subagents", "--session-id", "--rules"}
-
 var grokMCPExecutable = os.Executable
 
 func GrokAuthError() string {
 	return "XAI_API_KEY is absent or empty in the fresh Grok pane environment; export it from a login-shell profile such as $HOME/.profile, then spawn a fresh pane"
 }
 
-// RunGrokCheck runs the same isolated binary version/capability gate used by
-// launch, without activating a seat, starting a bridge, seeding GROK_HOME, or
-// requiring credentials. It exists for ai-doctor; callers must not probe the
-// vendor binary directly because even --version has mutated vendor state.
+// RunGrokCheck reports the vendor executable that launch would resolve after
+// skipping herder's own PATH shim. It deliberately does not execute the vendor
+// binary: a default doctor/check must remain observational even when a vendor
+// version command has side effects.
 func RunGrokCheck(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("herder grok check", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	stateDir := fs.String("state-dir", "", "throwaway root for the isolated capability probe")
-	if err := fs.Parse(args); err != nil {
+	if len(args) != 0 {
+		fmt.Fprintln(stderr, "herder grok check: unexpected arguments; this check only resolves the vendor executable on PATH")
 		return 2
 	}
-	if fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "herder grok check: unexpected arguments; pass only --state-dir <throwaway-root>")
-		return 2
-	}
-	probeRoot := *stateDir
-	if probeRoot == "" {
-		var err error
-		probeRoot, err = os.MkdirTemp("", "herder-grok-check-")
-		if err != nil {
-			fmt.Fprintf(stderr, "herder grok check: create throwaway probe root: %v\n", err)
-			return 1
-		}
-		defer os.RemoveAll(probeRoot)
-	}
-	path, version, err := gateGrokBinary(probeRoot)
+	path, err := resolveGrokBinary()
 	if err != nil {
 		fmt.Fprintf(stderr, "herder grok check: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "path=%s\nversion=%s\n", path, version)
+	fmt.Fprintf(stdout, "path=%s\n", path)
 	return 0
 }
 
@@ -93,7 +70,6 @@ func NewGrokSessionID() (string, error) {
 
 type grokLaunchPlan struct {
 	Binary    string
-	Version   string
 	Mode      string
 	StateDir  string
 	GrokHome  string
@@ -349,7 +325,7 @@ func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (gro
 		return grokLaunchPlan{}, errors.New(GrokAuthError())
 	}
 	stateDir := grokStateDir()
-	binary, version, err := gateGrokBinary(stateDir)
+	binary, err := resolveGrokBinary()
 	if err != nil {
 		return grokLaunchPlan{}, err
 	}
@@ -365,14 +341,18 @@ func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (gro
 	if !isUUIDv7(sessionID) {
 		return grokLaunchPlan{}, errors.New("preassigned Grok session id is not a UUIDv7; launch through `herder spawn` or provide a valid HERDER_GROK_SESSION_ID")
 	}
-	grokHome := filepath.Join(stateDir, "grok-home")
-	if err := seedGrokHome(grokHome); err != nil {
+	grokHome, err := defaultGrokHome()
+	if err != nil {
+		return grokLaunchPlan{}, err
+	}
+	pluginDir, err := ensureGrokBridgePlugin(stateDir, seat)
+	if err != nil {
 		return grokLaunchPlan{}, err
 	}
 	matches, _ := filepath.Glob(filepath.Join(grokHome, "sessions", "*", sessionID))
 	if lifecycle.Mode == "resume" {
 		if len(matches) == 0 {
-			return grokLaunchPlan{}, fmt.Errorf("recorded Grok session %s is absent from the controlled home; restore that session under GROK_HOME or fork a session that still exists", sessionID)
+			return grokLaunchPlan{}, fmt.Errorf("recorded Grok session %s is absent from the default Grok home; restore that session under ~/.grok or fork a session that still exists", sessionID)
 		}
 	} else if len(matches) != 0 {
 		if lifecycle.Mode == "launch" {
@@ -383,14 +363,11 @@ func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (gro
 	if lifecycle.Mode == "fork" {
 		parents, _ := filepath.Glob(filepath.Join(grokHome, "sessions", "*", lifecycle.ParentSID))
 		if len(parents) == 0 {
-			return grokLaunchPlan{}, fmt.Errorf("parent Grok session %s is absent from the controlled home; restore that session before forking it", lifecycle.ParentSID)
+			return grokLaunchPlan{}, fmt.Errorf("parent Grok session %s is absent from the default Grok home; restore that session before forking it", lifecycle.ParentSID)
 		}
 	}
 	hcomDir := os.Getenv("HCOM_DIR")
 	args := append([]string(nil), rest...)
-	if !hasArg(args, "--no-auto-update") {
-		args = append(args, "--no-auto-update")
-	}
 	if !hasArg(args, "--no-subagents") {
 		args = append(args, "--no-subagents")
 	}
@@ -400,18 +377,16 @@ func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (gro
 	if !hasArg(args, "--model") && !hasPrefixArg(args, "--model=") && !hasArg(args, "-m") {
 		args = append(args, "--model", grokDefaultModel)
 	}
+	args = append(args, "--plugin-dir", pluginDir)
 	env := replaceLaunchEnv(os.Environ(), map[string]string{
-		"GROK_HOME":                 grokHome,
 		"GROK_CLAUDE_HOOKS_ENABLED": "0",
 		"HERDER_STATE_DIR":          stateDir,
 		"HERDER_GROK_SEAT":          seat,
 		"HERDER_GROK_SESSION_ID":    sessionID,
 		"HERDER_REAL_HCOM":          hcomBin,
 	})
-	if childHome := os.Getenv("HERDER_GROK_CHILD_HOME"); childHome != "" {
-		env = replaceLaunchEnv(env, map[string]string{"HOME": childHome})
-	}
-	return grokLaunchPlan{Binary: binary, Version: version, Mode: lifecycle.Mode, StateDir: stateDir, GrokHome: grokHome, Seat: seat, SessionID: sessionID, ParentSID: lifecycle.ParentSID, HcomBin: hcomBin, HcomDir: hcomDir, Argv: append([]string{"grok"}, args...), Env: env}, nil
+	env = removeLaunchEnv(env, "GROK_HOME")
+	return grokLaunchPlan{Binary: binary, Mode: lifecycle.Mode, StateDir: stateDir, GrokHome: grokHome, Seat: seat, SessionID: sessionID, ParentSID: lifecycle.ParentSID, HcomBin: hcomBin, HcomDir: hcomDir, Argv: append([]string{"grok"}, args...), Env: env}, nil
 }
 
 func ensureGrokBridge(plan grokLaunchPlan, manual bool) (string, error) {
@@ -542,154 +517,88 @@ func grokStateDir() string {
 	return filepath.Join(home, ".local", "state", "herder")
 }
 
-func seedGrokHome(home string) error {
+func defaultGrokHome() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", errors.New("resolve default Grok home: HOME is unavailable")
+	}
+	return filepath.Join(home, ".grok"), nil
+}
+
+// ensureGrokBridgePlugin gives the vendor CLI the seat-bound hcom MCP server
+// without writing ~/.grok or any project config. The plugin lives with the
+// bridge's herder-owned runtime state and is selected for this launch only.
+func ensureGrokBridgePlugin(stateDir, seat string) (string, error) {
 	herderBin, err := grokMCPExecutable()
 	if err != nil {
-		return fmt.Errorf("resolve herder executable for Grok MCP config: %w", err)
+		return "", fmt.Errorf("resolve herder executable for Grok MCP config: %w", err)
 	}
 	herderBin, err = filepath.Abs(herderBin)
 	if err != nil {
-		return fmt.Errorf("resolve absolute herder executable for Grok MCP config: %w", err)
+		return "", fmt.Errorf("resolve absolute herder executable for Grok MCP config: %w", err)
 	}
-	return seedGrokHomeForExecutable(home, herderBin)
+	pluginDir := filepath.Join(stateDir, "grok", seat, "plugin")
+	manifestDir := filepath.Join(pluginDir, ".grok-plugin")
+	if err := os.MkdirAll(manifestDir, 0o700); err != nil {
+		return "", fmt.Errorf("create Grok bridge plugin directory: %w", err)
+	}
+	manifest := fmt.Sprintf(`{
+  "name": "herder-hcom",
+  "version": "1.0.0",
+  "description": "Seat-bound hcom transport for herder Grok sessions",
+  "mcpServers": {
+    "hcom": {
+      "command": %q,
+      "args": ["grok", "mcp"]
+    }
+  }
 }
-
-func seedGrokHomeForExecutable(home, herderBin string) error {
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		return fmt.Errorf("create dedicated GROK_HOME: %w", err)
-	}
-	lock, err := os.OpenFile(filepath.Join(home, ".seed.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+`, herderBin)
+	tmp, err := os.CreateTemp(manifestDir, ".plugin.json-")
 	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		return err
-	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	config := filepath.Join(home, "config.toml")
-	controlled := `[cli]
-auto_update = false
-
-[compat.claude]
-hooks = false
-
-[mcp_servers.hcom]
-command = ` + strconv.Quote(herderBin) + `
-args = ["grok", "mcp"]
-enabled = true
-`
-	tmp, err := os.CreateTemp(home, ".config.toml-")
-	if err != nil {
-		return fmt.Errorf("create controlled Grok config: %w", err)
+		return "", fmt.Errorf("create Grok bridge plugin manifest: %w", err)
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
-		return fmt.Errorf("set controlled Grok config permissions: %w", err)
+		return "", fmt.Errorf("set Grok bridge plugin permissions: %w", err)
 	}
-	if _, err = io.WriteString(tmp, controlled); err == nil {
+	if _, err = io.WriteString(tmp, manifest); err == nil {
 		err = tmp.Sync()
 	}
 	closeErr := tmp.Close()
 	if err != nil {
-		return fmt.Errorf("write controlled Grok config: %w", err)
+		return "", fmt.Errorf("write Grok bridge plugin manifest: %w", err)
 	}
 	if closeErr != nil {
-		return fmt.Errorf("close controlled Grok config: %w", closeErr)
+		return "", fmt.Errorf("close Grok bridge plugin manifest: %w", closeErr)
 	}
-	if err := os.Rename(tmpName, config); err != nil {
-		return fmt.Errorf("install controlled Grok config: %w", err)
+	if err := os.Rename(tmpName, filepath.Join(manifestDir, "plugin.json")); err != nil {
+		return "", fmt.Errorf("install Grok bridge plugin manifest: %w", err)
 	}
-	return nil
+	return pluginDir, nil
 }
 
-func gateGrokBinary(stateDir string) (string, string, error) {
-	path := os.Getenv("HERDER_GROK_BIN")
-	if path == "" {
-		home, _ := os.UserHomeDir()
-		path = filepath.Join(home, ".grok", "downloads", "grok-linux-x86_64")
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve Grok binary: %w", err)
-	}
-	if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
-		abs = resolved
-	}
-	if st, statErr := os.Stat(abs); statErr != nil || st.IsDir() || st.Mode()&0o111 == 0 {
-		return "", "", fmt.Errorf("Grok binary %s is not executable; set HERDER_GROK_BIN to the characterized 0.2.93 executable", abs)
-	}
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		return "", "", fmt.Errorf("create Grok capability state root: %w", err)
-	}
-	probeHome, err := os.MkdirTemp(stateDir, ".grok-capability-")
-	if err != nil {
-		return "", "", fmt.Errorf("create Grok capability probe root: %w", err)
-	}
-	defer os.RemoveAll(probeHome)
-	env := grokProbeEnv(os.Environ(), probeHome)
-	versionOut, err := commandOutput(abs, env, "--no-auto-update", "--version")
-	if err != nil {
-		return "", "", fmt.Errorf("read Grok version from %s: %w", abs, err)
-	}
-	version := parseGrokVersion(versionOut)
-	supported := supportedGrokVersions()
-	if !containsString(supported, version) {
-		return "", "", fmt.Errorf("Grok binary %s reports version %s, supported versions are %s; set HERDER_GROK_BIN to a characterized supported executable", abs, version, strings.Join(supported, ", "))
-	}
-	help, err := commandOutput(abs, env, "--no-auto-update", "--help")
-	if err != nil {
-		return "", "", fmt.Errorf("read Grok capabilities from %s: %w", abs, err)
-	}
-	for _, flag := range grokRequiredFlags {
-		if !strings.Contains(help, flag) {
-			return "", "", fmt.Errorf("Grok binary %s version %s lacks required capability %s; use a characterized supported executable", abs, version, flag)
+// resolveGrokBinary follows normal PATH order while skipping every herder shim
+// to avoid recursing back into `herder launch grok`. The selected vendor entry
+// is not canonicalized through symlinks, preserving installer/wrapper semantics.
+func resolveGrokBinary() (string, error) {
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			dir = "."
 		}
-	}
-	return abs, version, nil
-}
-
-func supportedGrokVersions() []string {
-	raw := os.Getenv("HERDER_GROK_SUPPORTED_VERSIONS")
-	if raw == "" {
-		return []string{"0.2.93"}
-	}
-	var out []string
-	for _, item := range strings.Split(raw, ",") {
-		if item = strings.TrimSpace(item); item != "" {
-			out = append(out, item)
+		candidate := filepath.Join(dir, "grok")
+		if !executableFile(candidate) || herderShim(candidate) {
+			continue
 		}
-	}
-	if len(out) == 0 {
-		return []string{"0.2.93"}
-	}
-	return out
-}
-
-func commandOutput(path string, env []string, args ...string) (string, error) {
-	cmd := exec.Command(path, args...)
-	cmd.Env = env
-	var stdout bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, io.Discard
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return stdout.String(), fmt.Errorf("probe %s exited with code %d (child stderr suppressed); run it by hand to see why, then set HERDER_GROK_BIN to a characterized supported executable", path, exitErr.ExitCode())
+		path, err := filepath.Abs(candidate)
+		if err != nil {
+			return "", fmt.Errorf("resolve Grok vendor executable: %w", err)
 		}
-		return stdout.String(), fmt.Errorf("run probe %s: %w; run it by hand to see why, then set HERDER_GROK_BIN to a characterized supported executable", path, err)
+		return path, nil
 	}
-	return stdout.String(), nil
-}
-
-var grokVersionRE = regexp.MustCompile(`(?m)\bgrok\s+([0-9]+\.[0-9]+\.[0-9]+)\b`)
-
-func parseGrokVersion(out string) string {
-	match := grokVersionRE.FindStringSubmatch(out)
-	if len(match) == 2 {
-		return match[1]
-	}
-	return "unknown"
+	return "", errors.New("no Grok vendor executable found on PATH after herder shims; install Grok Build and retry")
 }
 
 var uuidV7RE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
@@ -769,19 +678,19 @@ func replaceLaunchEnv(env []string, values map[string]string) []string {
 	return out
 }
 
-func grokProbeEnv(env []string, probeHome string) []string {
+func removeLaunchEnv(env []string, names ...string) []string {
+	removed := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		removed[name] = struct{}{}
+	}
 	out := make([]string, 0, len(env))
 	for _, item := range env {
 		key, _, _ := strings.Cut(item, "=")
-		switch {
-		case key == "PATH", key == "HOME", key == "GROK_HOME", key == "LANG", key == "TERM", key == "TMPDIR", strings.HasPrefix(key, "LC_"):
+		if _, drop := removed[key]; !drop {
 			out = append(out, item)
 		}
 	}
-	return replaceLaunchEnv(out, map[string]string{
-		"HOME":      probeHome,
-		"GROK_HOME": filepath.Join(probeHome, "grok-home"),
-	})
+	return out
 }
 
 func validGrokSeat(seat string) bool {
@@ -818,7 +727,9 @@ func validateGrokArgs(args []string, firstClassModel, allowMappedPermission bool
 				return errors.New("Grok passthrough --always-approve conflicts with herder's permission mapping; remove it, then use normal launch for --always-approve or pass --safe for ask mode")
 			}
 		case "--no-auto-update", "--auto-update", "--disable-auto-update":
-			return fmt.Errorf("Grok passthrough %s conflicts with mandatory update suppression; remove it because herder supplies both update controls", name)
+			return fmt.Errorf("Grok passthrough %s conflicts with the vendor-managed update contract; remove it so the installed CLI keeps its normal update behavior", name)
+		case "--plugin-dir":
+			return errors.New("Grok passthrough --plugin-dir conflicts with the seat-bound hcom bridge plugin; remove it so herder can install the transport")
 		case "--agents", "--agent", "--subagents", "--no-subagents", "--no-no-subagents":
 			return fmt.Errorf("Grok passthrough %s conflicts with the enforced subagent boundary; remove it because first-class seats always disable subagents", name)
 		case "--model", "-m":
@@ -828,13 +739,13 @@ func validateGrokArgs(args []string, firstClassModel, allowMappedPermission bool
 		}
 		upper := strings.ToUpper(arg)
 		if strings.HasPrefix(upper, "HOME=") || strings.HasPrefix(upper, "GROK_HOME=") || name == "--home" || name == "--grok-home" {
-			return fmt.Errorf("Grok passthrough %s attempts to re-point an owned home; remove it because herder pins GROK_HOME to the isolated seat state", name)
+			return fmt.Errorf("Grok passthrough %s attempts to re-point the user home; remove it because herder seats use the vendor's default ~/.grok home", name)
 		}
 		if strings.Contains(strings.ToLower(name), "subagent") {
 			return fmt.Errorf("Grok passthrough %s could change the enforced subagent boundary; remove it because first-class seats always disable subagents", name)
 		}
 		if strings.Contains(strings.ToLower(name), "auto-update") {
-			return fmt.Errorf("Grok passthrough %s could change mandatory update suppression; remove it because herder supplies both update controls", name)
+			return fmt.Errorf("Grok passthrough %s could change the vendor-managed update contract; remove it so the installed CLI keeps its normal update behavior", name)
 		}
 	}
 	return nil

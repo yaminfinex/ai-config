@@ -36,32 +36,20 @@ func randomCredential(t *testing.T) string {
 	return hex.EncodeToString(b)
 }
 
-func mockGrokBinary(t *testing.T, version string) string {
+func mockGrokBinary(t *testing.T, _ string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "grok-build")
-	body := "#!/bin/sh\nif [ \"${XAI_API_KEY+x}\" = x ] || [ \"${OPENAI_API_KEY+x}\" = x ] || [ \"${ANTHROPIC_API_KEY+x}\" = x ]; then printf '%s\\n' 'credential-shaped probe env present' >&2; exit 91; fi\ncase \"$*\" in\n  *--version*) printf 'grok " + version + " (build)\\n' ;;\n  *--help*) printf '%s\\n' '--no-subagents --session-id --rules' ;;\n  *) exit 0 ;;\nesac\n"
+	path := filepath.Join(t.TempDir(), "grok")
+	body := "#!/bin/sh\nexit 0\n"
 	writeExecutable(t, path, body)
 	return path
 }
 
 func mockGrokCompatHookBinary(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "grok-build")
+	path := filepath.Join(t.TempDir(), "grok")
 	body := `#!/bin/sh
-case " $* " in
-  *" --version "*)
-    [ "${XAI_API_KEY+x}" != x ] || exit 91
-    printf '%s\n' 'grok 0.2.93 (build)'
-    exit 0
-    ;;
-  *" --help "*)
-    [ "${XAI_API_KEY+x}" != x ] || exit 91
-    printf '%s\n' '--no-subagents --session-id --rules'
-    exit 0
-    ;;
-esac
-
-session="$GROK_HOME/sessions/%2Fisolation/$HERDER_GROK_SESSION_ID"
+grok_home="${GROK_HOME:-$HOME/.grok}"
+session="$grok_home/sessions/%2Fisolation/$HERDER_GROK_SESSION_ID"
 mkdir -p "$session"
 if [ -f "$HOME/.claude/settings.json" ] && [ "${GROK_CLAUDE_HOOKS_ENABLED:-1}" != 0 ]; then
   printf '%s\n' '{"timestamp":"2026-01-01T00:00:00Z","method":"session/update","params":{"update":{"sessionUpdate":"hook_execution","runs":[{"name":"global/settings:session_start[0].hooks[0]"}]}}}' > "$session/updates.jsonl"
@@ -123,7 +111,7 @@ func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
 	credential := randomCredential(t)
 	t.Setenv("XAI_API_KEY", credential)
 	t.Setenv("HOME", filepath.Join(root, "home"))
-	t.Setenv("HERDER_GROK_CHILD_HOME", filepath.Join(root, "child-home"))
+	t.Setenv("GROK_HOME", filepath.Join(root, "ambient-grok-home"))
 	t.Setenv("HERDER_STATE_DIR", filepath.Join(root, "state"))
 	t.Setenv("HCOM_DIR", filepath.Join(root, "hcom"))
 	seat, err := registry.NewGUID()
@@ -131,7 +119,8 @@ func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
 		t.Fatal(err)
 	}
 	t.Setenv("HERDER_GUID", seat)
-	t.Setenv("HERDER_GROK_BIN", mockGrokBinary(t, version))
+	grok := mockGrokBinary(t, version)
+	t.Setenv("PATH", filepath.Dir(grok)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HERDER_REAL_HCOM", hcom)
 	sid, err := NewGrokSessionID()
 	if err != nil {
@@ -299,7 +288,8 @@ func TestManualMintedIdentityUsesPreassignedPlanAndCollisionFence(t *testing.T) 
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("HERDER_STATE_DIR", state)
 	t.Setenv("HCOM_DIR", filepath.Join(root, "hcom"))
-	t.Setenv("HERDER_GROK_BIN", mockGrokBinary(t, "0.2.93"))
+	grok := mockGrokBinary(t, "")
+	t.Setenv("PATH", filepath.Dir(grok)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HERDER_REAL_HCOM", hcom)
 	t.Setenv("HERDER_GUID", "")
 	t.Setenv("HERDER_GROK_SESSION_ID", "")
@@ -403,23 +393,26 @@ func TestGrokAuthFailureIsSeatScopedAndNamesLoginProfileRemedy(t *testing.T) {
 	}
 }
 
-func TestT20ResolvedBinaryVersionAndCapabilityGate(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("HERDER_STATE_DIR", filepath.Join(root, "state"))
-	path := mockGrokBinary(t, "0.2.99")
-	t.Setenv("HERDER_GROK_BIN", path)
-	_, _, err := gateGrokBinary(filepath.Join(root, "state"))
-	if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "0.2.99") || !strings.Contains(err.Error(), "0.2.93") {
-		t.Fatalf("unsupported gate error = %v", err)
+func TestT20ResolvedBinaryUsesNormalPathAfterHerderShimsWithoutExecution(t *testing.T) {
+	shimDir := t.TempDir()
+	shim := filepath.Join(shimDir, "grok")
+	writeExecutable(t, shim, "#!/bin/sh\n# herder-path-shim\nexit 88\n")
+	vendorDir := t.TempDir()
+	vendor := filepath.Join(vendorDir, "grok")
+	marker := filepath.Join(vendorDir, "executed")
+	writeExecutable(t, vendor, "#!/bin/sh\nprintf ran > \""+marker+"\"\n")
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+vendorDir)
+
+	got, err := resolveGrokBinary()
+	if err != nil || got != vendor {
+		t.Fatalf("resolved vendor=%q err=%v, want %q", got, err, vendor)
 	}
-	t.Setenv("HERDER_GROK_SUPPORTED_VERSIONS", "0.2.99")
-	gotPath, gotVersion, err := gateGrokBinary(filepath.Join(root, "state"))
-	if err != nil || gotPath != path || gotVersion != "0.2.99" {
-		t.Fatalf("configured supported set: path=%q version=%q err=%v", gotPath, gotVersion, err)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("binary resolution executed vendor: %v", err)
 	}
 }
 
-func TestGrokCheckUsesLaunchGateWithoutCredentialsOrLiveHome(t *testing.T) {
+func TestGrokCheckReportsPathWithoutExecutingVendorOrTouchingLiveHome(t *testing.T) {
 	root := t.TempDir()
 	liveHome := filepath.Join(root, "live-home")
 	liveGrok := filepath.Join(liveHome, ".grok")
@@ -442,17 +435,19 @@ func TestGrokCheckUsesLaunchGateWithoutCredentialsOrLiveHome(t *testing.T) {
 	t.Setenv("HOME", liveHome)
 	t.Setenv("GROK_HOME", liveGrok)
 	t.Setenv("HERDER_STATE_DIR", liveState)
-	t.Setenv("HERDER_GROK_BIN", mockGrokBinary(t, "0.2.93"))
+	vendorDir := t.TempDir()
+	vendor := filepath.Join(vendorDir, "grok")
+	executed := filepath.Join(vendorDir, "executed")
+	writeExecutable(t, vendor, "#!/bin/sh\nprintf ran > \""+executed+"\"\n")
+	t.Setenv("PATH", vendorDir)
 
 	var stdout, stderr bytes.Buffer
 	rc := RunGrokCheck(nil, &stdout, &stderr)
 	if rc != 0 || stderr.Len() != 0 {
 		t.Fatalf("check rc=%d stderr=%q", rc, stderr.String())
 	}
-	for _, want := range []string{"path=", "version=0.2.93"} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("check output %q missing %q", stdout.String(), want)
-		}
+	if got := stdout.String(); got != "path="+vendor+"\n" {
+		t.Fatalf("check output = %q", got)
 	}
 	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "untouched\n" {
 		t.Fatalf("live Grok home changed: data=%q err=%v", data, err)
@@ -460,17 +455,27 @@ func TestGrokCheckUsesLaunchGateWithoutCredentialsOrLiveHome(t *testing.T) {
 	if data, err := os.ReadFile(stateSentinel); err != nil || string(data) != "untouched\n" {
 		t.Fatalf("live herder state changed: data=%q err=%v", data, err)
 	}
+	if _, err := os.Stat(executed); !os.IsNotExist(err) {
+		t.Fatalf("doctor check executed vendor: %v", err)
+	}
 }
 
-func TestT20LaunchArgvAndControlledHomePinBothUpdateSuppressors(t *testing.T) {
+func TestT20LaunchUsesDefaultHomeVendorUpdatesAndSeatBridgePlugin(t *testing.T) {
 	plan, _ := prepareTestGrok(t, "0.2.93")
 	joined := strings.Join(plan.Argv, "\n")
-	for _, want := range []string{"--no-auto-update", "--no-subagents", "--always-approve", "--model", grokDefaultModel} {
+	for _, want := range []string{"--no-subagents", "--always-approve", "--model", grokDefaultModel, "--plugin-dir"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("argv missing %q: %q", want, plan.Argv)
 		}
 	}
-	config, err := os.ReadFile(filepath.Join(plan.GrokHome, "config.toml"))
+	if strings.Contains(joined, "--no-auto-update") {
+		t.Fatalf("launch suppressed vendor updates: %q", plan.Argv)
+	}
+	if want := filepath.Join(os.Getenv("HOME"), ".grok"); plan.GrokHome != want {
+		t.Fatalf("Grok home=%q want default %q", plan.GrokHome, want)
+	}
+	pluginDir := plan.Argv[len(plan.Argv)-1]
+	manifest, err := os.ReadFile(filepath.Join(pluginDir, ".grok-plugin", "plugin.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,14 +487,17 @@ func TestT20LaunchArgvAndControlledHomePinBothUpdateSuppressors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"auto_update = false", "hooks = false", `command = ` + strconv.Quote(exe), `args = ["grok", "mcp"]`} {
-		if !strings.Contains(string(config), want) {
-			t.Errorf("controlled config missing %q: %s", want, config)
+	for _, want := range []string{`"name": "herder-hcom"`, `"command": "` + exe + `"`, `"args": ["grok", "mcp"]`} {
+		if !strings.Contains(string(manifest), want) {
+			t.Errorf("bridge plugin missing %q: %s", want, manifest)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(plan.GrokHome, "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("launch wrote default-home config: %v", err)
 	}
 }
 
-func TestManagedGrokSessionRecordsNoClaudeCompatHookExecutions(t *testing.T) {
+func TestDefaultHomeGrokSessionRecordsNoClaudeCompatHookExecutions(t *testing.T) {
 	root := t.TempDir()
 	ownerHome := filepath.Join(root, "owner-home")
 	settings := filepath.Join(ownerHome, ".claude", "settings.json")
@@ -509,13 +517,14 @@ func TestManagedGrokSessionRecordsNoClaudeCompatHookExecutions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", filepath.Join(root, "shell-home"))
-	t.Setenv("HERDER_GROK_CHILD_HOME", ownerHome)
+	t.Setenv("HOME", ownerHome)
+	t.Setenv("GROK_HOME", filepath.Join(root, "ambient-managed-home"))
 	t.Setenv("HERDER_STATE_DIR", filepath.Join(root, "state"))
 	t.Setenv("HCOM_DIR", filepath.Join(root, "hcom"))
 	t.Setenv("HERDER_GUID", seat)
 	t.Setenv("HERDER_GROK_SESSION_ID", sid)
-	t.Setenv("HERDER_GROK_BIN", mockGrokCompatHookBinary(t))
+	grok := mockGrokCompatHookBinary(t)
+	t.Setenv("PATH", filepath.Dir(grok)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HERDER_REAL_HCOM", hcom)
 	t.Setenv("GROK_CLAUDE_HOOKS_ENABLED", "1")
 	t.Setenv("XAI_API_KEY", randomCredential(t))
@@ -523,6 +532,9 @@ func TestManagedGrokSessionRecordsNoClaudeCompatHookExecutions(t *testing.T) {
 	plan, err := prepareGrokLaunch(nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if envValue(plan.Env, "GROK_HOME") != "" {
+		t.Fatalf("default-home launch retained GROK_HOME=%q", envValue(plan.Env, "GROK_HOME"))
 	}
 	runSession := func(env []string) {
 		t.Helper()
@@ -596,7 +608,7 @@ func TestGrokLaunchLayerMirrorsFullOwnedArgRefusals(t *testing.T) {
 	cases := []string{
 		"--session-id", "--session-id=value", "-s", "--resume", "-r", "--continue", "-c", "--continue=1", "--fork-session",
 		"--rules", "--permission-mode", "--bypassPermissions",
-		"--no-auto-update", "--auto-update", "--disable-auto-update", "--agents", "--agent", "--subagents",
+		"--no-auto-update", "--auto-update", "--disable-auto-update", "--plugin-dir", "--agents", "--agent", "--subagents",
 		"--no-subagents", "--no-no-subagents", "HOME=/tmp/elsewhere", "GROK_HOME=/tmp/elsewhere",
 	}
 	for _, arg := range cases {
@@ -733,7 +745,7 @@ func TestGrokResumeRequiresRecordedSessionInControlledHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := prepareGrokLifecycleLaunch(nil, lifecycle); err == nil || !strings.Contains(err.Error(), "absent from the controlled home") {
+	if _, err := prepareGrokLifecycleLaunch(nil, lifecycle); err == nil || !strings.Contains(err.Error(), "absent from the default Grok home") {
 		t.Fatalf("missing resume error=%v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(base.GrokHome, "sessions", "%2Fresume-cwd", sid), 0o700); err != nil {
@@ -745,75 +757,7 @@ func TestGrokResumeRequiresRecordedSessionInControlledHome(t *testing.T) {
 	}
 }
 
-func TestGrokProbeStripsCredentialAndSuppressesChildStderr(t *testing.T) {
-	root := t.TempDir()
-	state := filepath.Join(root, "state")
-	credential := "probe-credential-must-not-escape"
-	t.Setenv("XAI_API_KEY", credential)
-	t.Setenv("OPENAI_API_KEY", credential)
-	t.Setenv("ANTHROPIC_API_KEY", credential)
-	t.Setenv("HERDER_STATE_DIR", state)
-	t.Setenv("HERDER_GUID", "probe-seat")
-
-	// The normal mock exits if the probe inherits XAI_API_KEY. A successful
-	// gate therefore proves the probe environment omitted the key by name.
-	path := mockGrokBinary(t, "0.2.93")
-	t.Setenv("HERDER_GROK_BIN", path)
-	if _, _, err := gateGrokBinary(state); err != nil {
-		t.Fatalf("credential-free probe failed: %v", err)
-	}
-
-	sentinel := "XAI_API_KEY=env-shaped-sentinel"
-	evil := filepath.Join(root, "grok-stderr")
-	writeExecutable(t, evil, "#!/bin/sh\nprintf '%s\\n' '"+sentinel+"' >&2\nexit 37\n")
-	t.Setenv("HERDER_GROK_BIN", evil)
-	_, _, err := gateGrokBinary(state)
-	if err == nil || strings.Contains(err.Error(), sentinel) || !strings.Contains(err.Error(), "code 37") || !strings.Contains(err.Error(), evil) || !strings.Contains(err.Error(), "run it by hand") {
-		t.Fatalf("scrubbed probe error = %v", err)
-	}
-	recordGrokLaunchFailure(err)
-	marker := ReadGrokLaunchFailure(state, "probe-seat")
-	if strings.Contains(marker, sentinel) || !strings.Contains(marker, "code 37") {
-		t.Fatalf("scrubbed launch marker = %q", marker)
-	}
-}
-
-func TestGrokProbeEnvironmentContainsNoAPIKeys(t *testing.T) {
-	root := t.TempDir()
-	env := grokProbeEnv([]string{
-		"PATH=/bin",
-		"HOME=/live/home",
-		"GROK_HOME=/live/grok",
-		"LANG=C.UTF-8",
-		"LC_ALL=C",
-		"TERM=xterm",
-		"TMPDIR=/tmp",
-		"XAI_API_KEY=one",
-		"OPENAI_API_KEY=two",
-		"ANTHROPIC_API_KEY=three",
-		"SERVICE_TOKEN=four",
-		"CLIENT_SECRET=five",
-		"DB_PASSWORD=six",
-		"CREDENTIAL_FILE=seven",
-		"UNRELATED=value",
-	}, root)
-	allowed := map[string]string{
-		"PATH": "/bin", "HOME": root, "GROK_HOME": filepath.Join(root, "grok-home"),
-		"LANG": "C.UTF-8", "LC_ALL": "C", "TERM": "xterm", "TMPDIR": "/tmp",
-	}
-	for _, item := range env {
-		key, value, _ := strings.Cut(item, "=")
-		if want, ok := allowed[key]; !ok || value != want {
-			t.Fatalf("probe environment retained non-allowlisted entry %q", key)
-		}
-		delete(allowed, key)
-	}
-	if len(allowed) != 0 {
-		t.Fatalf("probe environment omitted allowlisted entries: %v", allowed)
-	}
-}
-
-func TestSeedGrokHomeRewritesChangedExecutablePath(t *testing.T) {
+func TestGrokBridgePluginRewritesChangedExecutablePath(t *testing.T) {
 	original := grokMCPExecutable
 	t.Cleanup(func() { grokMCPExecutable = original })
 	first := filepath.Join(t.TempDir(), "herder-a")
@@ -824,18 +768,22 @@ func TestSeedGrokHomeRewritesChangedExecutablePath(t *testing.T) {
 	if _, err := prepareGrokLaunch(nil); err != nil {
 		t.Fatalf("second launch path rewrite failed: %v", err)
 	}
-	config, err := os.ReadFile(filepath.Join(plan.GrokHome, "config.toml"))
+	pluginDir := plan.Argv[len(plan.Argv)-1]
+	manifest, err := os.ReadFile(filepath.Join(pluginDir, ".grok-plugin", "plugin.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(config), `command = `+strconv.Quote(second)) || strings.Contains(string(config), first) {
-		t.Fatalf("controlled config did not move to second executable: %s", config)
+	if !strings.Contains(string(manifest), `"command": "`+second+`"`) || strings.Contains(string(manifest), first) {
+		t.Fatalf("bridge plugin did not move to second executable: %s", manifest)
 	}
 }
 
-func TestSeedGrokHomeReenforcesControlledConfigAfterTamper(t *testing.T) {
+func TestGrokLaunchNeverRewritesOwnerConfig(t *testing.T) {
 	plan, _ := prepareTestGrok(t, "0.2.93")
 	configPath := filepath.Join(plan.GrokHome, "config.toml")
+	if err := os.MkdirAll(plan.GrokHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(configPath, []byte("[cli]\nauto_update = true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -846,8 +794,8 @@ func TestSeedGrokHomeReenforcesControlledConfigAfterTamper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(config), "auto_update = true") || !strings.Contains(string(config), "auto_update = false") || !strings.Contains(string(config), "hooks = false") {
-		t.Fatalf("controlled config was not re-enforced: %s", config)
+	if string(config) != "[cli]\nauto_update = true\n" {
+		t.Fatalf("owner config was rewritten: %s", config)
 	}
 }
 
@@ -861,25 +809,29 @@ func envValue(env []string, key string) string {
 	return ""
 }
 
-func TestT21ChildEnvironmentPinsIsolationWithoutPersistingCredential(t *testing.T) {
+func TestT21ChildEnvironmentUsesDefaultHomeWithoutPersistingCredential(t *testing.T) {
 	plan, credential := prepareTestGrok(t, "0.2.93")
 	env := strings.Join(plan.Env, "\n")
-	for _, want := range []string{"HOME=" + filepath.Dir(plan.StateDir) + "/child-home", "GROK_HOME=" + plan.GrokHome, "GROK_CLAUDE_HOOKS_ENABLED=0", "HERDER_STATE_DIR=" + plan.StateDir, "HERDER_GROK_SEAT=" + plan.Seat, "HERDER_GROK_SESSION_ID=" + plan.SessionID, "HERDER_REAL_HCOM=" + plan.HcomBin} {
+	for _, want := range []string{"HOME=" + os.Getenv("HOME"), "GROK_CLAUDE_HOOKS_ENABLED=0", "HERDER_STATE_DIR=" + plan.StateDir, "HERDER_GROK_SEAT=" + plan.Seat, "HERDER_GROK_SESSION_ID=" + plan.SessionID, "HERDER_REAL_HCOM=" + plan.HcomBin} {
 		if !strings.Contains(env, want) {
 			t.Errorf("child environment missing %q", want)
 		}
 	}
+	if strings.Contains(env, "GROK_HOME=") {
+		t.Errorf("child environment retained a home override")
+	}
 	argv := strings.Join(plan.Argv, "\n")
-	config, err := os.ReadFile(filepath.Join(plan.GrokHome, "config.toml"))
+	pluginDir := plan.Argv[len(plan.Argv)-1]
+	manifest, err := os.ReadFile(filepath.Join(pluginDir, ".grok-plugin", "plugin.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(argv, credential) || strings.Contains(string(config), credential) {
+	if strings.Contains(argv, credential) || strings.Contains(string(manifest), credential) {
 		t.Fatal("inherited credential persisted outside the process environment")
 	}
 }
 
-func TestT21ProcEnvironmentIsIsolatedBeforeAnyModelPrompt(t *testing.T) {
+func TestT21ProcEnvironmentUsesDefaultHomeBeforeAnyModelPrompt(t *testing.T) {
 	plan, _ := prepareTestGrok(t, "0.2.93")
 	cmd := exec.Command("sleep", "30")
 	cmd.Env = plan.Env
@@ -895,7 +847,7 @@ func TestT21ProcEnvironmentIsIsolatedBeforeAnyModelPrompt(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		data, err = os.ReadFile(filepath.Join("/proc", strconv.Itoa(cmd.Process.Pid), "environ"))
-		if err == nil && strings.Contains(string(data), "GROK_HOME="+plan.GrokHome+"\x00") {
+		if err == nil && strings.Contains(string(data), "GROK_CLAUDE_HOOKS_ENABLED=0\x00") {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -904,14 +856,13 @@ func TestT21ProcEnvironmentIsIsolatedBeforeAnyModelPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := strings.ReplaceAll(string(data), "\x00", "\n")
-	wantHome := os.Getenv("HERDER_GROK_CHILD_HOME")
-	for _, want := range []string{"HOME=" + wantHome, "GROK_HOME=" + plan.GrokHome, "GROK_CLAUDE_HOOKS_ENABLED=0", "HCOM_DIR=" + plan.HcomDir, "HERDER_STATE_DIR=" + plan.StateDir} {
+	for _, want := range []string{"HOME=" + os.Getenv("HOME"), "GROK_CLAUDE_HOOKS_ENABLED=0", "HCOM_DIR=" + plan.HcomDir, "HERDER_STATE_DIR=" + plan.StateDir} {
 		if !strings.Contains(env, want+"\n") {
 			t.Errorf("/proc child environment missing %q", want)
 		}
 	}
-	if inherited := os.Getenv("HOME"); inherited != wantHome && strings.Contains(env, "HOME="+inherited+"\n") {
-		t.Fatalf("/proc child environment leaked reset HOME %q", inherited)
+	if strings.Contains(env, "GROK_HOME=") {
+		t.Fatalf("/proc child environment retained a Grok home override: %q", env)
 	}
 }
 

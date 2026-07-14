@@ -330,7 +330,7 @@ fi
 assert_file_missing "grok missing auth: no vendor fallback" "$PROBE/real_grok_count"
 
 # 13. GROK is the explicit one-shot escape hatch. It must be absolute, invoke
-#     exactly that vendor binary, and never enter the managed contract.
+#     exactly that vendor binary, and never enter the herder contract.
 make_case grok_explicit_bypass
 env -i PATH="$SHIM_CASE:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
   GROK="$REALBIN/grok" "$SHIM_CASE/grok" --raw-vendor
@@ -373,7 +373,7 @@ if [[ "$rc" -ne 0 ]]; then
 else
   bad "grok self bypass: nonzero exit" "rc=0"
 fi
-if grep -Fq 'points to a managed shim, not a vendor binary' "$err"; then
+if grep -Fq 'points to a herder shim, not a vendor binary' "$err"; then
   ok "grok self bypass: recursion refusal"
 else
   bad "grok self bypass: recursion refusal" "stderr=$(cat "$err" 2>/dev/null)"
@@ -382,7 +382,7 @@ assert_file_missing "grok self bypass: launch contract not entered" "$PROBE/herd
 assert_file_missing "grok self bypass: vendor not invoked" "$PROBE/real_grok_count"
 
 # 16. PATH retains ordinary shadowing semantics: an explicit vendor directory
-#     placed before the managed shim wins, so the shim cannot steal an intended
+#     placed before the herder shim wins, so the shim cannot steal an intended
 #     raw vendor invocation.
 make_case grok_vendor_first
 env -i PATH="$REALBIN:$SHIM_CASE:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # herder-path-shim: grok — sibling herder shims detect this marker line and skip it.
 #
-# grok shim - daily entry point for the first-class, herder-managed Grok family.
+# grok shim - daily entry point for the first-class Grok family.
 #
 # The explicit GROK=/absolute/vendor/binary escape hatch bypasses herder. With
-# no override, this enters the managed launch contract, which selects and
-# capability-gates an explicit binary under isolated probe roots before exec.
+# no override, this enters the herder launch contract, which skips this shim
+# and resolves the next vendor executable using normal PATH order.
 
 set -euo pipefail
 
@@ -44,7 +44,7 @@ if [[ -n "${GROK:-}" ]]; then
   vendor="$(canonical_path "$GROK" 2>/dev/null || true)"
   [[ -n "$vendor" && -x "$vendor" && ! -d "$vendor" ]] || \
     die "GROK vendor bypass is not an executable file: $GROK"
-  ! is_herder_shim "$vendor" || die "GROK vendor bypass points to a managed shim, not a vendor binary"
+  ! is_herder_shim "$vendor" || die "GROK vendor bypass points to a herder shim, not a vendor binary"
   exec "$vendor" "$@"
 fi
 

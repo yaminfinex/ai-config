@@ -15,7 +15,7 @@ import (
 
 func TestGrokSessionAdapterDiscoversOpaqueCWDAndUsesRecordedChatHistory(t *testing.T) {
 	stateDir := t.TempDir()
-	grokHome := filepath.Join(stateDir, "grok-home")
+	grokHome := filepath.Join(stateDir, ".grok")
 	sid := newTestGUID(t)
 	// Node's encodeURIComponent escapes @ while Go's url.PathEscape does not.
 	// Treat the vendor's cwd directory as opaque and discover solely by SID.
@@ -53,7 +53,7 @@ func TestGrokSessionAdapterDiscoversOpaqueCWDAndUsesRecordedChatHistory(t *testi
 }
 
 func TestGrokSessionDirRefusesDuplicateSIDMatches(t *testing.T) {
-	grokHome := filepath.Join(t.TempDir(), "grok-home")
+	grokHome := filepath.Join(t.TempDir(), ".grok")
 	sid := newTestGUID(t)
 	for _, opaqueCWD := range []string{"opaque-a", "opaque-b"} {
 		if err := os.MkdirAll(filepath.Join(grokHome, "sessions", opaqueCWD, sid), 0o755); err != nil {
@@ -233,7 +233,7 @@ func TestGrokCursorStoresDigestNotRawTranscriptBytes(t *testing.T) {
 }
 
 func TestGrokEventStatusClearsWhenArtifactDisappears(t *testing.T) {
-	grokHome := filepath.Join(t.TempDir(), "grok-home")
+	grokHome := filepath.Join(t.TempDir(), ".grok")
 	sid := newTestGUID(t)
 	sessionDir := filepath.Join(grokHome, "sessions", "opaque-cwd", sid)
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {

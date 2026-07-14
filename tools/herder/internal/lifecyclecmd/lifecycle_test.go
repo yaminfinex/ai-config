@@ -399,6 +399,8 @@ func shortLifecycleState(t *testing.T) string {
 
 func TestT14GrokResumeKeepsSeatSessionSpoolAndBusIdentity(t *testing.T) {
 	state := shortLifecycleState(t)
+	ownerHome := filepath.Join(state, "owner-home")
+	t.Setenv("HOME", ownerHome)
 	registryPath := filepath.Join(state, "registry.jsonl")
 	guid, err := registry.NewGUID()
 	if err != nil {
@@ -409,7 +411,7 @@ func TestT14GrokResumeKeepsSeatSessionSpoolAndBusIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	appendGrokSession(t, registryPath, guid, "resume-grok", sid)
-	if err := os.MkdirAll(filepath.Join(state, "grok-home", "sessions", "%2Fresume", sid), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(ownerHome, ".grok", "sessions", "%2Fresume", sid), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	seedPendingJournal(t, state, guid, 14)
@@ -451,6 +453,8 @@ func TestT14GrokResumeKeepsSeatSessionSpoolAndBusIdentity(t *testing.T) {
 
 func TestT15GrokForkGetsFreshSeatSpoolNameAndLineage(t *testing.T) {
 	state := shortLifecycleState(t)
+	ownerHome := filepath.Join(state, "owner-home")
+	t.Setenv("HOME", ownerHome)
 	registryPath := filepath.Join(state, "registry.jsonl")
 	parentGUID, err := registry.NewGUID()
 	if err != nil {
@@ -461,7 +465,7 @@ func TestT15GrokForkGetsFreshSeatSpoolNameAndLineage(t *testing.T) {
 		t.Fatal(err)
 	}
 	appendGrokSession(t, registryPath, parentGUID, "parent-grok", parentSID)
-	parentDir := filepath.Join(state, "grok-home", "sessions", "%2Fparent", parentSID)
+	parentDir := filepath.Join(ownerHome, ".grok", "sessions", "%2Fparent", parentSID)
 	if err := os.MkdirAll(parentDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +485,7 @@ func TestT15GrokForkGetsFreshSeatSpoolNameAndLineage(t *testing.T) {
 		if guid == "" || sid == "" {
 			return errors.New("missing preassigned child identity")
 		}
-		if err := os.MkdirAll(filepath.Join(state, "grok-home", "sessions", "%2Fchild", sid), 0o700); err != nil {
+		if err := os.MkdirAll(filepath.Join(ownerHome, ".grok", "sessions", "%2Fchild", sid), 0o700); err != nil {
 			return err
 		}
 		childBridge = startLifecycleBridge(t, state, guid, sid, "child-bus")
