@@ -63,6 +63,10 @@ type MirrorPath func(tool wire.Tool, sessionID, fileUUID string, generation int)
 type SQLStore struct {
 	db         *sql.DB
 	mirrorPath MirrorPath
+	// log carries the projection rebuild lines under the same identifier-free
+	// journal contract (and the same log-contract gate) as the Server's
+	// degradation events.
+	log *slog.Logger
 
 	// refreshCtx owns every background rebuild; Close cancels it and waits,
 	// so no refresh goroutine outlives the component that owns the DB.
@@ -117,11 +121,25 @@ type projectionRefresh struct {
 	hook func(rebuildStage) error
 }
 
+// SQLStoreOption configures a SQLStore.
+type SQLStoreOption func(*SQLStore)
+
+// WithSQLStoreLogger routes the projection rebuild logs (tests). The default
+// is the process-default slog logger — the service journal path, same as the
+// Server's degradation events.
+func WithSQLStoreLogger(l *slog.Logger) SQLStoreOption {
+	return func(s *SQLStore) { s.log = l }
+}
+
 // NewSQLStore builds the live Store over the store's database and mirror.
 // Callers that shut the database down must Close this store first.
-func NewSQLStore(db *sql.DB, mirrorPath MirrorPath) *SQLStore {
+func NewSQLStore(db *sql.DB, mirrorPath MirrorPath, opts ...SQLStoreOption) *SQLStore {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &SQLStore{db: db, mirrorPath: mirrorPath, refreshCtx: ctx, cancelRefresh: cancel}
+	s := &SQLStore{db: db, mirrorPath: mirrorPath, refreshCtx: ctx, cancelRefresh: cancel, log: slog.Default()}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Close stops the background refresh machinery: it cancels the refresh
@@ -439,14 +457,16 @@ func (s *SQLStore) runRefresh(run *projectionRefresh) {
 	close(run.done)
 	switch {
 	case err == nil:
-		slog.Debug("recency projection rebuild", "duration", time.Since(start), "sessions", len(ranking))
+		s.log.Debug("recency projection rebuild", "duration", time.Since(start), "sessions", len(ranking))
 	case s.refreshCtx.Err() != nil:
 		// Shutdown races a triggered refresh by design; not a failure.
-		slog.Debug("recency projection rebuild canceled by close", "duration", time.Since(start))
+		s.log.Debug("recency projection rebuild canceled by close", "duration", time.Since(start))
 	default:
 		// Stale keeps serving; the next request that sees a moved stamp
-		// retries. Cold waiters got the error through run.err.
-		slog.Warn("recency projection rebuild failed", "duration", time.Since(start), "error", err)
+		// retries. Cold waiters got the error through run.err. The error is
+		// journaled as a class, never verbatim: a SQL/pool error can embed
+		// the DB path, which on a live node carries the OS user's home.
+		s.log.Warn("recency projection rebuild failed", "duration", time.Since(start), "error_class", errClass(err))
 	}
 }
 

@@ -120,7 +120,8 @@ per-request timing. Surface degradation events (degraded-page fallbacks,
 session lookup failures, mirror read errors) reach the journal at warn level
 under that same contract — a fixed message vocabulary with route/error
 classes and counts only, per-row/per-file repeats aggregated to one line per
-request — pinned by the log-contract gate in `internal/surface`. Gates: the single-flight/serve-stale tests beside the
+request — pinned, together with the rebuild lines themselves, by the
+log-contract gate in `internal/surface`. Gates: the single-flight/serve-stale tests beside the
 large-corpus plan gate (`internal/surface`) — including the
 churn-straddling-the-stamp interleaving, rebuild-failure latch clearing,
 and canceled-cold-waiter edges; the live surface check now waits for

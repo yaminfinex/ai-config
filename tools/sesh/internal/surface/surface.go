@@ -280,7 +280,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		Nodes []nodeRow
 	}{Now: s.now(), Nodes: rows}
 	if err := s.render(w, s.nodesTmpl, "nodes.html", data); err != nil {
-		s.log.Warn("surface: page render failed", "route", "/", "error_class", errClass(err))
+		s.logRenderFailure("/", err)
 		s.writeDegraded(w, "node status render failed")
 	}
 }
@@ -355,6 +355,14 @@ func logRoute(p string) string {
 	}
 }
 
+// logRenderFailure is the ONE journal path for template-execution failures.
+// Every render branch routes through it — the log-contract gate drives this
+// path with a deliberately failing, identifier-carrying template, so a
+// branch hand-rolling its own message or attrs would sit outside the gate.
+func (s *Server) logRenderFailure(route string, err error) {
+	s.log.Warn("surface: page render failed", "route", route, "error_class", errClass(err))
+}
+
 // writeDegraded is the render floor: a plain 200 notice, so an operator sees
 // the failure without the page ever going fully blind or 500ing.
 func (s *Server) writeDegraded(w http.ResponseWriter, reason string) {
@@ -385,7 +393,7 @@ func (s *Server) handleRecency(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.render(w, s.recencyTmpl, "recency.html", data); err != nil {
-		s.log.Warn("surface: page render failed", "route", "/sessions", "error_class", errClass(err))
+		s.logRenderFailure("/sessions", err)
 		s.writeDegraded(w, "recency render failed")
 	}
 }
@@ -398,7 +406,7 @@ func (s *Server) handleRecencyFragment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.render(w, s.recencyTmpl, "recencyBody", data); err != nil {
-		s.log.Warn("surface: page render failed", "route", "/fragments/recency", "error_class", errClass(err))
+		s.logRenderFailure("/fragments/recency", err)
 		s.writeDegraded(w, "recency render failed")
 	}
 }
@@ -445,7 +453,7 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 	}
 	page := s.transcriptData(r.Context(), sum, rows, pageParam(r))
 	if err := s.render(w, s.transcriptTmpl, "transcript.html", page); err != nil {
-		s.log.Warn("surface: page render failed", "route", "/s/*", "error_class", errClass(err))
+		s.logRenderFailure("/s/*", err)
 		s.serveRawFallback(w, r, sum, "transcript render failed — raw mirror lines")
 	}
 }

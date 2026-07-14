@@ -14,15 +14,19 @@ package surface_test
 import (
 	"context"
 	"fmt"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"sesh/internal/index"
+	"sesh/internal/store"
 	"sesh/internal/surface"
 	"sesh/internal/wire"
 )
@@ -60,19 +64,24 @@ func (h *captureHandler) records() []capturedRecord {
 	return append([]capturedRecord(nil), h.recs...)
 }
 
-// The pinned journal vocabulary: a surface degradation line's message must
-// be one of these constants. A new event means consciously extending this
-// list, not interpolating data into a message.
-var journalMessages = map[string]bool{
-	"surface: nodes query failed":              true,
-	"surface: page render failed":              true,
-	"surface: panic recovered":                 true,
-	"surface: session listing failed":          true,
-	"surface: session lookup failed":           true,
-	"surface: index rows read failed":          true,
-	"surface: mirror range read failed":        true,
-	"surface: raw fallback mirror open failed": true,
-	"surface: raw fallback mirror read failed": true,
+// The pinned journal vocabulary, message → exact level: a surface journal
+// line's message must be one of these constants at its pinned level (a
+// degradation demoted to debug would silently vanish from the default
+// journal; a debug timing line promoted would flood it). A new event means
+// consciously extending this list, not interpolating data into a message.
+var journalMessages = map[string]slog.Level{
+	"surface: nodes query failed":                  slog.LevelWarn,
+	"surface: page render failed":                  slog.LevelWarn,
+	"surface: panic recovered":                     slog.LevelError,
+	"surface: session listing failed":              slog.LevelWarn,
+	"surface: session lookup failed":               slog.LevelWarn,
+	"surface: index rows read failed":              slog.LevelWarn,
+	"surface: mirror range read failed":            slog.LevelWarn,
+	"surface: raw fallback mirror open failed":     slog.LevelWarn,
+	"surface: raw fallback mirror read failed":     slog.LevelWarn,
+	"recency projection rebuild":                   slog.LevelDebug,
+	"recency projection rebuild canceled by close": slog.LevelDebug,
+	"recency projection rebuild failed":            slog.LevelWarn,
 }
 
 // The pinned attribute allowlist, with per-key value contracts below.
@@ -83,7 +92,15 @@ var journalAttrKeys = map[string]bool{
 	"panic_type":  true,
 	"rows":        true,
 	"files":       true,
+	"duration":    true,
+	"sessions":    true,
 }
+
+// classShape pins error_class/panic_type values to bare Go-type-name syntax:
+// bounded length, no path separators, no spaces, no dashes. An unseeded
+// identifier (uuid, hostname, path, raw error text) under an allowlisted key
+// fails on shape even when no needle knows it.
+var classShape = regexp.MustCompile(`^[A-Za-z0-9_.*\[\]]{1,64}$`)
 
 var journalRoutes = map[string]bool{
 	"/": true, "/nodes": true, "/sessions": true, "/fragments/recency": true,
@@ -108,11 +125,12 @@ func journalNeedles() []string {
 // checkJournalRecord is the detector: one degradation record against the
 // contract.
 func checkJournalRecord(rec capturedRecord, needles []string) error {
-	if rec.level < slog.LevelWarn {
-		return fmt.Errorf("level %v: degradation events log at warn or above so the default journal threshold cannot drop them", rec.level)
-	}
-	if !journalMessages[rec.msg] {
+	wantLevel, known := journalMessages[rec.msg]
+	if !known {
 		return fmt.Errorf("message %q is not in the pinned journal vocabulary", rec.msg)
+	}
+	if rec.level != wantLevel {
+		return fmt.Errorf("message %q at level %v, pinned at %v", rec.msg, rec.level, wantLevel)
 	}
 	for _, needle := range needles {
 		if strings.Contains(rec.msg, needle) {
@@ -133,9 +151,17 @@ func checkJournalRecord(rec capturedRecord, needles []string) error {
 			if !journalTools[v.String()] {
 				return fmt.Errorf("tool %q is not a tool enum value", v.String())
 			}
-		case "rows", "files":
+		case "rows", "files", "sessions":
 			if v.Kind() != slog.KindInt64 {
 				return fmt.Errorf("%s must be a count, got kind %v", a.Key, v.Kind())
+			}
+		case "duration":
+			if v.Kind() != slog.KindDuration {
+				return fmt.Errorf("duration must be a time.Duration, got kind %v", v.Kind())
+			}
+		case "error_class", "panic_type":
+			if !classShape.MatchString(v.String()) {
+				return fmt.Errorf("%s %q is not a bare class/type name", a.Key, v.String())
 			}
 		}
 		for _, needle := range needles {
@@ -370,6 +396,18 @@ func TestSurfaceJournalDetectorTrips(t *testing.T) {
 		{"debug-level degradation the default journal would drop", func(l *slog.Logger) {
 			l.Debug("surface: nodes query failed", "error_class", "none")
 		}},
+		{"UNSEEDED uuid under an allowlisted key fails on shape", func(l *slog.Logger) {
+			l.Warn("surface: session lookup failed", "error_class", "9d1f2a3b-0000-4000-8000-123456789abc")
+		}},
+		{"unseeded path under panic_type fails on shape", func(l *slog.Logger) {
+			l.Error("surface: panic recovered", "route", "/s/*", "panic_type", "/home/someone/.local/state/sesh")
+		}},
+		{"raw error text under error_class fails on shape", func(l *slog.Logger) {
+			l.Warn("recency projection rebuild failed", "duration", time.Second, "error_class", "database is locked (5) (SQLITE_BUSY)")
+		}},
+		{"rebuild timing promoted above its pinned debug level", func(l *slog.Logger) {
+			l.Warn("recency projection rebuild", "duration", time.Second, "sessions", 3)
+		}},
 	}
 	for _, tc := range trips {
 		t.Run(tc.name, func(t *testing.T) {
@@ -379,13 +417,23 @@ func TestSurfaceJournalDetectorTrips(t *testing.T) {
 		})
 	}
 
-	// And a well-formed record passes, so the trips above fail for the
+	// And well-formed records pass, so the trips above fail for the
 	// right reason rather than the detector rejecting everything.
-	ok := emit(func(l *slog.Logger) {
-		l.Warn("surface: mirror range read failed", "tool", "claude", "error_class", "*errors.errorString", "rows", 7)
-	})
-	if err := checkJournalRecord(ok, needles); err != nil {
-		t.Fatalf("detector rejected a contract-conforming record: %v", err)
+	passes := []func(l *slog.Logger){
+		func(l *slog.Logger) {
+			l.Warn("surface: mirror range read failed", "tool", "claude", "error_class", "*errors.errorString", "rows", 7)
+		},
+		func(l *slog.Logger) {
+			l.Debug("recency projection rebuild", "duration", 1500*time.Millisecond, "sessions", 42)
+		},
+		func(l *slog.Logger) {
+			l.Warn("recency projection rebuild failed", "duration", time.Second, "error_class", "canceled")
+		},
+	}
+	for i, fn := range passes {
+		if err := checkJournalRecord(emit(fn), needles); err != nil {
+			t.Fatalf("detector rejected contract-conforming record %d: %v", i, err)
+		}
 	}
 }
 
@@ -411,4 +459,158 @@ func TestSurfaceDefaultLoggerReachesProcessDefault(t *testing.T) {
 		}
 	}
 	t.Fatal("degradation event did not reach the process-default logger; the journal would show a degraded page as healthy")
+}
+
+// TestSurfaceJournalRenderFailurePath drives the shared render-failure
+// logging path — the one journal path every template-execution branch routes
+// through — with a deliberately failing template whose name carries a
+// session id (template exec errors embed the template name verbatim), and
+// pins the emitted record to the contract.
+func TestSurfaceJournalRenderFailurePath(t *testing.T) {
+	needles := journalNeedles()
+	srv, h := capturingServer(t, &failingStore{fakeStore: corpusStore(t)})
+	bad := template.Must(template.New(uuidNormal + ".html").Parse(`{{.NoSuchField}}`))
+	srv.SetRecencyTemplateForTest(bad)
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sessions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /sessions = %d, want 200 (render failure must degrade, not 500)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "temporarily unable to render") {
+		t.Fatal("render failure did not reach the degraded page; the failing-template seam is not driving the branch")
+	}
+
+	recs := h.records()
+	found := false
+	for _, r := range recs {
+		if r.msg != "surface: page render failed" {
+			continue
+		}
+		found = true
+		if err := checkJournalRecord(r, needles); err != nil {
+			t.Errorf("render-failure record violates the journal contract: %v", err)
+		}
+		for _, a := range r.attrs {
+			if a.Key == "route" && a.Value.String() != "/sessions" {
+				t.Errorf("render-failure route = %q, want /sessions", a.Value.String())
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no render-failure journal record; the branch would be invisible (got %+v)", recs)
+	}
+}
+
+// TestProjectionRebuildJournalContract observes the ACTUAL projection
+// rebuild records over the live SQLStore: a cold rebuild forced to fail with
+// an identifier-carrying error must journal the pinned warn line with an
+// error class, and a successful rebuild the pinned debug timing line — both
+// under the same contract as the Server's degradation events.
+func TestProjectionRebuildJournalContract(t *testing.T) {
+	needles := journalNeedles()
+	h := &captureHandler{}
+	st, err := store.Open(t.Context(), store.Config{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	idx, err := index.New(t.Context(), st.DB(), st.MirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := surface.NewSQLStore(st.DB(), st.MirrorPath, surface.WithSQLStoreLogger(slog.New(h)))
+	t.Cleanup(live.Close)
+	putFixture(t, st, idx, wire.ToolClaude, uuidNormal, uuidNormal, "claude-normal.jsonl", nil)
+
+	// The rebuild goroutine journals after it publishes its result, so the
+	// record can land shortly after the request returns; poll with a bound.
+	waitForRecord := func(msg string) capturedRecord {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			for _, r := range h.records() {
+				if r.msg == msg {
+					return r
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("no %q journal record within bound (got %+v)", msg, h.records())
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	live.SetRebuildHook(func(stage surface.RebuildStage) error {
+		if stage == surface.RebuildStamped {
+			return fmt.Errorf("stamp probe for %s on workstation: SECRET pool closed", uuidNormal)
+		}
+		return nil
+	})
+	if _, _, err := live.RecentSessions(t.Context(), 5, 0); err == nil {
+		t.Fatal("cold rebuild with a failing hook must surface the error to the cold waiter")
+	}
+	waitForRecord("recency projection rebuild failed")
+
+	live.SetRebuildHook(nil)
+	if _, total, err := live.RecentSessions(t.Context(), 5, 0); err != nil || total != 1 {
+		t.Fatalf("rebuild after clearing the hook: total=%d err=%v, want 1 session", total, err)
+	}
+	waitForRecord("recency projection rebuild")
+
+	for _, r := range h.records() {
+		if err := checkJournalRecord(r, needles); err != nil {
+			t.Errorf("rebuild record %q violates the journal contract: %v", r.msg, err)
+		}
+	}
+}
+
+// TestSurfaceJournalConcurrentDegradedRenders pins request isolation of the
+// aggregation maps under concurrent degraded renders on ONE Server and one
+// logger: N concurrent transcript loads over an unreadable mirror generation
+// journal exactly N aggregated lines, each carrying the full per-request row
+// count — and the -race package run covers this path.
+func TestSurfaceJournalConcurrentDegradedRenders(t *testing.T) {
+	fs := &failingStore{fakeStore: corpusStore(t), failMirrorRange: true}
+	srv, h := capturingServer(t, fs)
+	wantRows := int64(len(fs.fakeStore.rows[sessionKey(wire.ToolClaude, uuidNormal)]))
+	if wantRows < 2 {
+		t.Fatalf("fixture session has %d rows; the scenario needs several", wantRows)
+	}
+
+	const requests = 16
+	var wg sync.WaitGroup
+	for i := 0; i < requests; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/s/claude/"+uuidNormal, nil))
+			if rec.Code != http.StatusOK {
+				t.Errorf("concurrent GET = %d, want 200", rec.Code)
+			}
+		}()
+	}
+	wg.Wait()
+
+	var mirror []capturedRecord
+	for _, r := range h.records() {
+		if r.msg == "surface: mirror range read failed" {
+			mirror = append(mirror, r)
+		}
+	}
+	if len(mirror) != requests {
+		t.Fatalf("got %d aggregated mirror-range lines for %d concurrent requests, want one per request", len(mirror), requests)
+	}
+	for _, r := range mirror {
+		var got int64 = -1
+		for _, a := range r.attrs {
+			if a.Key == "rows" {
+				got = a.Value.Int64()
+			}
+		}
+		if got != wantRows {
+			t.Errorf("aggregated line reports rows=%d, want %d (cross-request bleed or split)", got, wantRows)
+		}
+	}
 }

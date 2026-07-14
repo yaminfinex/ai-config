@@ -2,6 +2,7 @@ package surface
 
 import (
 	"context"
+	"html/template"
 
 	"sesh/internal/wire"
 )
@@ -35,6 +36,11 @@ func (s *SQLStore) SetRebuildHook(fn func(RebuildStage) error) {
 func (s *SQLStore) WaitProjectionIdle() {
 	s.waitProjectionIdle()
 }
+
+// SetRecencyTemplateForTest swaps the recency page template — the
+// log-contract gate's seam for driving the shared render-failure logging
+// path with a deliberately failing, identifier-carrying template.
+func (s *Server) SetRecencyTemplateForTest(t *template.Template) { s.recencyTmpl = t }
 
 // TranscriptWindowMessages re-exports the transcript window bound so the
 // external tests assert against the one constant instead of a copied magic

@@ -84,7 +84,7 @@ func (s *Server) serveRawFallback(w http.ResponseWriter, r *http.Request, sum Se
 		s.log.Warn("surface: raw fallback mirror read failed", "tool", string(sum.Tool), "error_class", class, "files", n)
 	}
 	if err := s.render(w, s.rawTmpl, "raw.html", page); err != nil {
-		s.log.Warn("surface: page render failed", "route", "/s/*", "error_class", errClass(err))
+		s.logRenderFailure("/s/*", err)
 		s.writeDegraded(w, "raw fallback render failed")
 	}
 }
