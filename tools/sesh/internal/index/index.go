@@ -619,6 +619,22 @@ func parseToolLine(tool wire.Tool, line []byte) (parsedLine, error) {
 				}
 			}
 		}
+	case wire.ToolGrok:
+		// grok chat_history lines carry no session id, message uuid, or
+		// timestamp field — the generic fields above parse empty, so
+		// logical_session_id falls back to the wire claim, message_uuid stays
+		// empty (empty uuids never dedupe or unify, per the frozen schema),
+		// and timestamp_utc is null (recency falls back to first-ingest).
+		// The role derives from the entry type: reasoning is the assistant
+		// thinking, tool_result is tool output.
+		switch out.EntryType {
+		case "system", "user", "assistant":
+			out.Role = out.EntryType
+		case "reasoning":
+			out.Role = "assistant"
+		case "tool_result":
+			out.Role = "tool"
+		}
 	case wire.ToolCodex:
 		if payload, ok := raw["payload"]; ok {
 			var p map[string]json.RawMessage
