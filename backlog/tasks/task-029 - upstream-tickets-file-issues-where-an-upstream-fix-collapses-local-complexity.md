@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-13 13:26'
+updated_date: '2026-07-14 01:19'
 labels:
   - run-herder-dx
 dependencies: []
@@ -50,6 +50,8 @@ BODY: Backlog.md 1.47.1 accepts reserved structured-section markers inside --des
 OWNER (2026-07-10, chat): HOLD the filing batch — do not commission the verdict/drafting pass yet. Ledger stays open for closeout appends; nested-marker Backlog.md draft remains ready-to-paste in notes.
 
 Two hcom upstream candidates from the grok activation unit (2026-07-13, evidence on thread task170act + scratch repros): (15) hcom has no identified-one-shot path to mark an externally-supervised binder ready — generic 'hcom start' leaves an adhoc row as a 'new' placeholder which instance_lifecycle finalizes launch_failed at 30s even though the supervised process is alive and serving; downstream send excludes the row. Ask: a start/ready op (or flag) for processes whose supervisor is external. (16) 'hcom start' silently installs claude hooks AND exits 1 when CLAUDE*/CLAUDECODE env vars are present without a launched/adhoc suppression signal — a side-effecting, failing path for any embedded/binder invocation that inherits a claude pane's env. Ask: hook installation should be an explicit opt-in, never triggered by ambient env detection inside 'start'.
+
+hera (TASK-199 closeout): upstream hcom candidate — the pi extension acks the bus cursor at injection time (pi_plugin/hcom.ts deliverPending: sendUserMessage then immediate ackPending; agent_end used only for status/drain), so a crash between injection and turn settlement leaves a falsely-complete durable receipt with nothing to replay (empirically reproduced: unread=0 + transcript ends at interrupted toolCall). Upstream settlement-correlated ack (defer ack to agent_end/turn_end, or per-batch settled marker) would close the serialized crash window for ALL hcom pi users; note it narrows but does not collapse herder's DR-2 (multi-batch followUp correlation + authority gaps remain).
 <!-- SECTION:NOTES:END -->
 
 ## Comments
