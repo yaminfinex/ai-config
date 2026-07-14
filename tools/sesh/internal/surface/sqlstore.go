@@ -34,10 +34,14 @@ type MirrorPath func(tool wire.Tool, sessionID, fileUUID string, generation int)
 // The recency ranking is a surface-owned projection: the complete ranked
 // (tool, logical) key list — each entry carrying the session's node label
 // (hostname, OS user) so the per-node sessions view slices the same list
-// instead of growing its own SQL ranking path — plus total, held in memory
-// and rebuilt only when the store's cheap version stamp moves. Request-time
-// work therefore stays proportional to the page — a stamp probe plus
-// key-constrained hydration.
+// instead of growing its own SQL ranking path, its row-count/max-timestamp
+// aggregates, and its member file-generation keys, so listing never walks
+// a listed session's index rows at request time — plus total, held in
+// memory and rebuilt only when the store's cheap version stamp moves.
+// Request-time work therefore stays proportional to the page — a stamp
+// probe plus key-constrained hydration of per-request data (file
+// bookkeeping times, node facts, owner claims), independent of how large
+// the listed sessions are.
 //
 // The rebuild is single-flighted and serve-stale: at most one rebuild runs
 // at a time, and a request that observes a moved stamp returns the existing
@@ -46,8 +50,10 @@ type MirrorPath func(tool wire.Tool, sessionID, fileUUID string, generation int)
 // shares that one build. This deliberately supersedes the original
 // read-your-own-writes property (rebuild inline whenever the stamp moved):
 // under bulk ingest the stamp moves between every request, which degenerated
-// to a corpus-scale rebuild per page load. Only the ranked key list and its
-// total can lag — page hydration always reads the live tables — and every
+// to a corpus-scale rebuild per page load. The ranked list, its total, and
+// everything a projection entry carries (node label, row-count/timestamp
+// aggregates, membership) can lag; page hydration reads live tables only
+// for per-request data (file bookkeeping times, facts, claims). Every
 // request that sees a moved stamp triggers a refresh, which is what bounds
 // the lag for a watched page. The exact staleness bound — including the
 // first-request-after-idle exception and the churn-straddling-a-rebuild
@@ -157,15 +163,41 @@ type sessionKey struct {
 	logical string
 }
 
-// rankedSession is one projection entry: the session key plus the node
-// label the per-node filter selects on. The label is the ranking-time latest
-// fact; like the ranked order itself it can lag under serve-stale — page
-// hydration always reads the live tables (except the filtered view's node
-// label, which renders the selection snapshot; see RecentSessionsByNode).
+// rankedSession is one projection entry: the session key, the node label
+// the per-node filter selects on, the session's row-count/max-timestamp
+// aggregates, and its member file-generation keys. Everything here is the
+// ranking-time snapshot; like the ranked order itself it can lag under
+// serve-stale (staleness bound: the delta in
+// docs/design/2026-07-13-sesh-store-read-write-split.md). The aggregates
+// and membership ride the projection deliberately: computing them live
+// walked every index row of every listed session per render, and page one
+// lists the most recent = largest sessions, so the first page paid
+// hundreds of thousands of row visits per render. Page hydration reads
+// live tables only for genuinely per-request data — file-generation
+// bookkeeping times, node facts, owner claims — each a full-key seek per
+// page item, never a per-session row walk.
 type rankedSession struct {
 	key      sessionKey
 	hostname string
 	osUser   string
+	// messageRows/quarantinedRows/maxTimestampUTC are the rebuild-time
+	// per-session aggregates over sesh_index_messages; maxTimestampUTC is
+	// nil when no non-quarantined row carries a parsed timestamp.
+	messageRows     int
+	quarantinedRows int
+	maxTimestampUTC *time.Time
+	// members are the session's mirrored file generations as of the rebuild
+	// (indexed mapping, wire-claim fallback for unindexed generations) —
+	// the keys page hydration seeks the files table with.
+	members []memberGen
+}
+
+// memberGen names one member file generation of a ranked session; the tool
+// lives on the session key.
+type memberGen struct {
+	wireID   string
+	fileUUID string
+	gen      int
 }
 
 // projectionNodeKey addresses one node's ranked slice.
@@ -241,12 +273,12 @@ func (s *SQLStore) RecentSessions(ctx context.Context, limit, offset int) ([]Ses
 //
 // Filter/display consistency: the filter selected on the projection's node
 // label, so the response RENDERS that label too — one snapshot for select
-// and display. Hydration reads live facts, which can have moved since the
-// snapshot (serve-stale); without this override one response could list a
-// session under node A while labeling its row B. The stale read has already
-// triggered the refresh that re-homes the session on a later request. The
-// unfiltered list keeps live-hydrated labels — it has no filter invariant
-// to hold.
+// and display. Label hydration reads live facts, which can have moved since
+// the snapshot (serve-stale); without this override one response could list
+// a session under node A while labeling its row B. The stale read has
+// already triggered the refresh that re-homes the session on a later
+// request. The unfiltered list keeps live-hydrated labels — it has no
+// filter invariant to hold.
 func (s *SQLStore) RecentSessionsByNode(ctx context.Context, hostname, osUser string, limit, offset int) ([]SessionSummary, int, error) {
 	_, byNode, err := s.projectionSnapshot(ctx)
 	if err != nil {
@@ -263,7 +295,7 @@ func (s *SQLStore) RecentSessionsByNode(ctx context.Context, hostname, osUser st
 }
 
 // pageOf slices one page out of a ranked list and hydrates exactly those
-// sessions.
+// sessions from their projection entries.
 func (s *SQLStore) pageOf(ctx context.Context, ranking []rankedSession, limit, offset int) ([]SessionSummary, int, error) {
 	total := len(ranking)
 	if limit < 0 {
@@ -279,12 +311,12 @@ func (s *SQLStore) pageOf(ctx context.Context, ranking []rankedSession, limit, o
 	if len(page) > limit {
 		page = page[:limit]
 	}
+	// One charge per page entry per request: this covers every examination
+	// of these entries downstream (key collection and assembly in
+	// hydrateRankedPage receive exactly this slice and can touch nothing
+	// beyond it), so the work-scaling gate's bound stays the slice size.
 	s.inspectRanked(len(page))
-	keys := make([]sessionKey, len(page))
-	for i, r := range page {
-		keys[i] = r.key
-	}
-	sums, err := s.hydrateSessions(ctx, keys)
+	sums, err := s.hydrateRankedPage(ctx, page)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -375,6 +407,20 @@ func (s *SQLStore) runRefresh(run *projectionRefresh) {
 		if err != nil {
 			return err
 		}
+		// Membership snapshot in the same work phase. The two corpus reads
+		// are not one transaction; a write landing between them can leave a
+		// ranked session without members (hydration then skips it, honest
+		// absence) or an orphan membership (ignored) for one projection
+		// lifetime — the conservative stamp above already forces the
+		// re-verifying rebuild that converges it, same doctrine as churn
+		// straddling the stamp/ranking gap.
+		members, err := s.projectionMembers(s.refreshCtx)
+		if err != nil {
+			return err
+		}
+		for i := range ranking {
+			ranking[i].members = members[ranking[i].key]
+		}
 		byNode, err = s.deriveNodeSlices(run, ranking)
 		return err
 	}()
@@ -404,16 +450,24 @@ func (s *SQLStore) runRefresh(run *projectionRefresh) {
 	}
 }
 
-// rankSessions is the projection rebuild: every logical session ranked by
-// the R14 recency instant — max parsed non-quarantined timestamp,
-// first-ingest when none — entirely in SQL, keys plus node label only. The
-// node label is the latest fact observation across the session's member
-// wire sessions, the same winner the page hydration picks. This is the one
-// deliberately corpus-wide read on the surface, and it runs amortized
-// (stamp + floor), never per request. julianday keeps the comparison
-// temporal across RFC3339 fractional-precision variants (same posture as
-// the max-timestamp lookup below); the tool+logical tie-break keeps page
-// cuts deterministic.
+// rankSessions is the projection rebuild's ranking pass: every logical
+// session ranked by the R14 recency instant — max parsed non-quarantined
+// timestamp, first-ingest when none — entirely in SQL, each row carrying
+// the key, the node label, and the per-session aggregates the sessions
+// list renders (row counts, max timestamp). The node label is the latest
+// fact observation across the session's member wire sessions, the same
+// winner the page hydration picks. This is a deliberately corpus-wide read
+// on the surface (its sibling projectionMembers is the other), and it runs
+// amortized (stamp + floor), never per request. julianday keeps the
+// comparison temporal across RFC3339 fractional-precision variants (same
+// posture as the single-session max-timestamp lookup below); the
+// tool+logical tie-break keeps page cuts deterministic. The ts CTE reads
+// the max-timestamp ROW's string (not just its julianday, which lacks the
+// precision to reconstruct a nanosecond instant) through SQLite's
+// documented bare-column-with-a-single-MAX behavior — a window function
+// gives an explicit tie-break but measurably slows the corpus pass, and a
+// tie on the julian instant can only waver the DISPLAYED timestamp within
+// the julianday resolution, never the ranked order (jd ties rank equal).
 func (s *SQLStore) rankSessions(ctx context.Context) ([]rankedSession, error) {
 	rows, err := s.db.QueryContext(ctx, `WITH mapped AS (
 			SELECT DISTINCT tool, wire_session_id, file_uuid, generation, logical_session_id
@@ -441,17 +495,28 @@ func (s *SQLStore) rankSessions(ctx context.Context) ([]rankedSession, error) {
 				ON fo.tool = mb.tool AND fo.session_id = mb.wire_session_id
 			GROUP BY mb.tool, mb.logical
 		),
+		counts AS (
+			SELECT tool, logical_session_id AS logical,
+				SUM(CASE WHEN quarantine = 0 THEN 1 ELSE 0 END) AS message_rows,
+				SUM(CASE WHEN quarantine = 1 THEN 1 ELSE 0 END) AS quarantined_rows
+			FROM sesh_index_messages
+			GROUP BY tool, logical_session_id
+		),
 		ts AS (
-			SELECT tool, logical_session_id AS logical, MAX(julianday(timestamp_utc)) AS max_ts_jd
+			SELECT tool, logical_session_id AS logical, timestamp_utc,
+				MAX(julianday(timestamp_utc)) AS max_ts_jd
 			FROM sesh_index_messages
 			WHERE quarantine = 0 AND timestamp_utc IS NOT NULL
 			GROUP BY tool, logical_session_id
 		)
 		SELECT sess.tool, sess.logical,
-			COALESCE(fo.hostname, ''), COALESCE(fo.os_user, '')
+			COALESCE(fo.hostname, ''), COALESCE(fo.os_user, ''),
+			COALESCE(c.message_rows, 0), COALESCE(c.quarantined_rows, 0),
+			COALESCE(ts.timestamp_utc, '')
 		FROM sess
 		LEFT JOIN node_fact nf ON nf.tool = sess.tool AND nf.logical = sess.logical
 		LEFT JOIN fact_observations fo ON fo.id = nf.fact_id
+		LEFT JOIN counts c ON c.tool = sess.tool AND c.logical = sess.logical
 		LEFT JOIN ts ON ts.tool = sess.tool AND ts.logical = sess.logical
 		ORDER BY COALESCE(ts.max_ts_jd, sess.first_ingest_jd) DESC, sess.tool, sess.logical`)
 	if err != nil {
@@ -461,10 +526,55 @@ func (s *SQLStore) rankSessions(ctx context.Context) ([]rankedSession, error) {
 	var out []rankedSession
 	for rows.Next() {
 		var r rankedSession
-		if err := rows.Scan(&r.key.tool, &r.key.logical, &r.hostname, &r.osUser); err != nil {
+		var maxTS string
+		if err := rows.Scan(&r.key.tool, &r.key.logical, &r.hostname, &r.osUser,
+			&r.messageRows, &r.quarantinedRows, &maxTS); err != nil {
 			return nil, err
 		}
+		if maxTS != "" {
+			// Unparseable timestamps degrade to the first-ingest fallback,
+			// the same posture as the live max-timestamp lookup.
+			if t, err := time.Parse(time.RFC3339Nano, maxTS); err == nil {
+				u := t.UTC()
+				r.maxTimestampUTC = &u
+			}
+		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// projectionMembers is the projection rebuild's membership pass: every
+// mirrored file generation resolved to its logical session — the indexed
+// mapping when the index holds rows for the generation, the wire claim
+// otherwise (honest fallback, same rule as the live memberGenerations) —
+// so page hydration seeks the files table by exact generation keys instead
+// of re-deriving membership from a per-session index-row walk. Corpus-wide
+// by design, amortized exactly like rankSessions; the member_of_logical
+// alias is the marker the plan gate whitelists rebuild SQL by.
+func (s *SQLStore) projectionMembers(ctx context.Context) (map[sessionKey][]memberGen, error) {
+	rows, err := s.db.QueryContext(ctx, `WITH mapped AS (
+			SELECT DISTINCT tool, wire_session_id, file_uuid, generation, logical_session_id
+			FROM sesh_index_messages
+		)
+		SELECT f.tool, COALESCE(m.logical_session_id, f.session_id) AS member_of_logical,
+			f.session_id, f.file_uuid, f.generation
+		FROM files f
+		LEFT JOIN mapped m
+			ON m.tool = f.tool AND m.wire_session_id = f.session_id
+			AND m.file_uuid = f.file_uuid AND m.generation = f.generation`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[sessionKey][]memberGen{}
+	for rows.Next() {
+		var key sessionKey
+		var g memberGen
+		if err := rows.Scan(&key.tool, &key.logical, &g.wireID, &g.fileUUID, &g.gen); err != nil {
+			return nil, err
+		}
+		out[key] = append(out[key], g)
 	}
 	return out, rows.Err()
 }
@@ -483,9 +593,13 @@ func (s *SQLStore) Session(ctx context.Context, tool wire.Tool, logicalSessionID
 }
 
 // hydrateSessions assembles full summaries for exactly the given keys, in
-// key order. Every query below is constrained to the keys (or their wire
-// session ids), so the work per request is proportional to the page, not the
-// corpus.
+// key order, entirely from the live tables. This is the single-session
+// path (Session, i.e. the transcript route): its per-key queries walk the
+// one session's index rows, which is fine there — the transcript renders
+// those rows anyway. The sessions LIST must never take this path for its
+// page: page one lists the largest sessions, and per-listed-session row
+// walks are exactly the cost the projection-carried aggregates removed
+// (hydrateRankedPage; the max-size-sessions fixture gate pins it).
 func (s *SQLStore) hydrateSessions(ctx context.Context, keys []sessionKey) ([]SessionSummary, error) {
 	if len(keys) == 0 {
 		return nil, nil
@@ -528,45 +642,7 @@ func (s *SQLStore) hydrateSessions(ctx context.Context, keys []sessionKey) ([]Se
 		if len(gens) == 0 {
 			continue // unknown session: lookup miss, honest absence
 		}
-		sort.Slice(gens, func(i, j int) bool {
-			a, b := gens[i], gens[j]
-			if !a.createdAt.Equal(b.createdAt) {
-				return a.createdAt.Before(b.createdAt)
-			}
-			if a.fileUUID != b.fileUUID {
-				return a.fileUUID < b.fileUUID
-			}
-			return a.gen < b.gen
-		})
-		sum := SessionSummary{
-			Tool:             key.tool,
-			LogicalSessionID: key.logical,
-			FirstIngestAt:    gens[0].createdAt,
-		}
-		var factID int64 = -1
-		seenClaim := map[string]bool{}
-		for _, g := range gens {
-			sum.Files = append(sum.Files, FileRef{
-				WireSessionID: g.wireID,
-				FileUUID:      g.fileUUID,
-				Generation:    g.gen,
-				FirstIngestAt: g.createdAt,
-			})
-			if g.lastPutAt.After(sum.MirroredAt) {
-				sum.MirroredAt = g.lastPutAt
-			}
-			if f, ok := facts[factKey(g.tool, g.wireID)]; ok && f.id > factID {
-				factID = f.id
-				sum.Hostname, sum.OSUser = f.hostname, f.osUser
-				sum.TailnetIdentity = f.tailnetIdentity
-			}
-			for _, c := range claims[factKey(g.tool, g.wireID)] {
-				if !seenClaim[c] {
-					seenClaim[c] = true
-					sum.OwnerClaims = append(sum.OwnerClaims, c)
-				}
-			}
-		}
+		sum := assembleSummary(key, gens, facts, claims)
 		if c, ok := counts[countKey(key.tool, key.logical)]; ok {
 			sum.MessageRows, sum.QuarantinedRows = c.messages, c.quarantined
 		}
@@ -576,6 +652,122 @@ func (s *SQLStore) hydrateSessions(ctx context.Context, keys []sessionKey) ([]Se
 		out = append(out, sum)
 	}
 	return out, nil
+}
+
+// hydrateRankedPage assembles summaries for one page of projection entries.
+// The aggregates (row counts, max timestamp) and the membership come from
+// the entries themselves — the ranking-time snapshot, staleness bounded by
+// the serve-stale doctrine — and only genuinely per-request data is read
+// live: file-generation bookkeeping times (last_put_at moves on every
+// accepted PUT and renders as "mirrored at"), node facts, owner claims.
+// Every live read is a full-key seek per page item; nothing here touches
+// sesh_index_messages, so the page's cost is independent of how large its
+// listed sessions are (the max-size-sessions fixture gate pins exactly
+// that).
+func (s *SQLStore) hydrateRankedPage(ctx context.Context, page []rankedSession) ([]SessionSummary, error) {
+	if len(page) == 0 {
+		return nil, nil
+	}
+	var fileKeys []fileGenKey
+	seenFile := map[fileGenKey]bool{}
+	var wires []wireKey
+	seenWire := map[wireKey]bool{}
+	for _, r := range page {
+		for _, m := range r.members {
+			fk := fileGenKey{r.key.tool, m.wireID, m.fileUUID, m.gen}
+			if !seenFile[fk] {
+				seenFile[fk] = true
+				fileKeys = append(fileKeys, fk)
+			}
+			wk := wireKey{r.key.tool, m.wireID}
+			if !seenWire[wk] {
+				seenWire[wk] = true
+				wires = append(wires, wk)
+			}
+		}
+	}
+	gens, err := s.fileGenerations(ctx, fileKeys)
+	if err != nil {
+		return nil, err
+	}
+	facts, err := s.latestFacts(ctx, wires)
+	if err != nil {
+		return nil, err
+	}
+	claims, err := s.ownerClaims(ctx, wires)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []SessionSummary
+	for _, r := range page {
+		var mgens []mirrorGen
+		for _, m := range r.members {
+			if g, ok := gens[fileGenKey{r.key.tool, m.wireID, m.fileUUID, m.gen}]; ok {
+				mgens = append(mgens, g)
+			}
+			// A member the files table no longer holds vanished since the
+			// rebuild (drop-file repair runs with serve stopped, but stay
+			// honest): skip it rather than render bookkeeping we don't have.
+		}
+		if len(mgens) == 0 {
+			continue // session vanished since the rebuild: honest absence
+		}
+		sum := assembleSummary(r.key, mgens, facts, claims)
+		sum.MessageRows, sum.QuarantinedRows = r.messageRows, r.quarantinedRows
+		sum.MaxTimestampUTC = r.maxTimestampUTC
+		out = append(out, sum)
+	}
+	return out, nil
+}
+
+// assembleSummary builds the summary fields both hydration paths share from
+// a session's member generations plus the facts/claims lookups: the file
+// list in first-ingest order, the ingest/mirror instants, the node facts
+// winner (max fact id), and the deduplicated owner claims. Row-count and
+// max-timestamp aggregates are the caller's to fill — live queries on the
+// single-session path, the projection snapshot on the page path.
+func assembleSummary(key sessionKey, gens []mirrorGen, facts map[string]factRow, claims map[string][]string) SessionSummary {
+	sort.Slice(gens, func(i, j int) bool {
+		a, b := gens[i], gens[j]
+		if !a.createdAt.Equal(b.createdAt) {
+			return a.createdAt.Before(b.createdAt)
+		}
+		if a.fileUUID != b.fileUUID {
+			return a.fileUUID < b.fileUUID
+		}
+		return a.gen < b.gen
+	})
+	sum := SessionSummary{
+		Tool:             key.tool,
+		LogicalSessionID: key.logical,
+		FirstIngestAt:    gens[0].createdAt,
+	}
+	var factID int64 = -1
+	seenClaim := map[string]bool{}
+	for _, g := range gens {
+		sum.Files = append(sum.Files, FileRef{
+			WireSessionID: g.wireID,
+			FileUUID:      g.fileUUID,
+			Generation:    g.gen,
+			FirstIngestAt: g.createdAt,
+		})
+		if g.lastPutAt.After(sum.MirroredAt) {
+			sum.MirroredAt = g.lastPutAt
+		}
+		if f, ok := facts[factKey(g.tool, g.wireID)]; ok && f.id > factID {
+			factID = f.id
+			sum.Hostname, sum.OSUser = f.hostname, f.osUser
+			sum.TailnetIdentity = f.tailnetIdentity
+		}
+		for _, c := range claims[factKey(g.tool, g.wireID)] {
+			if !seenClaim[c] {
+				seenClaim[c] = true
+				sum.OwnerClaims = append(sum.OwnerClaims, c)
+			}
+		}
+	}
+	return sum
 }
 
 // Rows returns the session's index rows in storage order; the surface
@@ -724,6 +916,64 @@ func wireKeyValues(keys []wireKey) (string, []any) {
 		pairs[i] = [2]any{string(k.tool), k.wireID}
 	}
 	return keyValuesClause(pairs)
+}
+
+// fileGenKey addresses one mirrored file generation — the files table's
+// primary key.
+type fileGenKey struct {
+	tool     wire.Tool
+	wireID   string
+	fileUUID string
+	gen      int
+}
+
+// fileKeyValues is keyValuesClause for the four-column generation keys
+// (columns column1..column4).
+func fileKeyValues(keys []fileGenKey) (string, []any) {
+	var b strings.Builder
+	args := make([]any, 0, 4*len(keys))
+	b.WriteString("(VALUES ")
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString("(?, ?, ?, ?)")
+		args = append(args, string(k.tool), k.wireID, k.fileUUID, k.gen)
+	}
+	b.WriteString(")")
+	return b.String(), args
+}
+
+// fileGenerations reads the bookkeeping times of exactly the given file
+// generations — one full-key seek on the files primary key per requested
+// generation (the plan gate asserts the seek). This is the page path's only
+// files access: membership itself came from the projection snapshot.
+func (s *SQLStore) fileGenerations(ctx context.Context, keys []fileGenKey) (map[fileGenKey]mirrorGen, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	clause, args := fileKeyValues(keys)
+	rows, err := s.db.QueryContext(ctx, `SELECT f.tool, f.session_id, f.file_uuid, f.generation,
+			COALESCE(f.created_at, ''), COALESCE(f.last_put_at, '')
+		FROM `+clause+` AS k
+		JOIN files f ON f.tool = k.column1 AND f.session_id = k.column2
+			AND f.file_uuid = k.column3 AND f.generation = k.column4`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[fileGenKey]mirrorGen{}
+	for rows.Next() {
+		var g mirrorGen
+		var created, lastPut string
+		if err := rows.Scan(&g.tool, &g.wireID, &g.fileUUID, &g.gen, &created, &lastPut); err != nil {
+			return nil, err
+		}
+		g.createdAt = parseStoreTime(created)
+		g.lastPutAt = parseStoreTime(lastPut)
+		out[fileGenKey{g.tool, g.wireID, g.fileUUID, g.gen}] = g
+	}
+	return out, rows.Err()
 }
 
 // memberGenerations returns the mirrored file generations of exactly the

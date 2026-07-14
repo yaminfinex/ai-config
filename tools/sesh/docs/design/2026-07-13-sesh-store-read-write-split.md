@@ -148,6 +148,59 @@ serve-stale, the staleness bound — is untouched and now also covers the
 filtered view (a lagging node label can only lag the filtered view's
 membership and node column until the triggered refresh lands).
 
+### Delta: projection-carried aggregates and membership (2026-07-14)
+
+The staleness bound above said "page hydration always reads live tables".
+That liveness is what page one was paying for: hydration recomputed each
+listed session's aggregates — message row counts, max activity timestamp —
+and its file membership by walking the session's `sesh_index_messages`
+rows per render (full-key seeks on `sesh_index_messages_logical`, but that
+index covers only `(tool, logical_session_id)`, so every one of the
+session's rows costs a table lookup). Page one lists the most recent =
+largest sessions, so the first page paid hundreds of thousands of row
+visits per render (measured post-quiesce: `/sessions` page 1 2.1–2.6 s
+steady from a ~180 ms client vs 0.83–0.94 s for a deep page of small
+sessions, corpus 5193; store-side page work on a fixture of fifty
+2000-row sessions: ~430 ms). Node-filtered page one paid the same.
+
+Each projection entry now carries, from the same rebuild snapshot: the
+session's non-quarantined/quarantined row counts, its max parsed
+non-quarantined timestamp (the row's string via SQLite's single-MAX
+bare-column read — a julianday alone cannot reconstruct a nanosecond
+instant), and its member file-generation keys (indexed mapping, wire-claim
+fallback for unindexed generations — the same membership rule the live
+path applies). The rebuild runs two corpus passes (ranking+aggregates,
+then membership; ~150 ms at a 5k corpus, amortized exactly as before) and
+the two passes are not one transaction: churn straddling them can leave a
+ranked entry without members (skipped: honest absence) or an orphan
+membership (ignored) for one projection lifetime, converged by the same
+conservative-stamp re-verifying rebuild that already covers churn
+straddling the stamp/ranking gap.
+
+Page hydration now reads live tables only for genuinely per-request data,
+each a full-key seek per page item: file bookkeeping times (`files` by its
+4-column primary key — `last_put_at` moves on every accepted PUT and
+renders as "mirrored at"), node facts, owner claims. Nothing on the
+sessions-list hot path touches `sesh_index_messages` at all. The
+staleness bound therefore restates as: the ranked list, its total, and
+everything an entry carries — node label, row counts, max timestamp,
+membership — serve the rebuild snapshot and can lag within the exact same
+serve-stale bound as the list itself (a row count is at most one
+triggered-refresh behind for a watched page; unwatched staleness remains
+unbounded until the first request's refresh lands). The single-session
+path (`Session`, i.e. the transcript route) keeps fully live hydration —
+it renders that one session's rows anyway.
+
+Gates: the max-size-sessions fixture (fifty 2000-row sessions on page
+one) asserts the warm page runs a fixed handful of full-key-seek queries,
+zero statements against `sesh_index_messages` outside the stamp probe and
+the rebuild passes — the structural form of "no per-listed-session row
+walks" — plus the serve-stale behavior of a lagging count, and proves the
+detector against the deliberately regressed live-hydration shape. The 5k
+plan gate covers the new files-by-generation-key query shape term-by-term.
+Measured store-side warm page work on the max-size fixture: ~430 ms →
+~0.6 ms; on the 5k small-session fixture: ~1.8 ms → ~0.7 ms.
+
 ## Follow-up (out of scope here)
 
 Write-side append cost still grows with corpus/session size

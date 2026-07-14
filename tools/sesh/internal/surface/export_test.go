@@ -1,5 +1,11 @@
 package surface
 
+import (
+	"context"
+
+	"sesh/internal/wire"
+)
+
 // Test-only seams for the projection single-flight/serve-stale gates: the
 // staged hook makes "a rebuild is in flight right now" (and "this rebuild
 // fails") provable states instead of timing guesses, and the idle wait makes
@@ -52,6 +58,21 @@ func (s *SQLStore) ClearGlobalRankingForTest() {
 // page size.
 func (s *SQLStore) RankedInspected() int64 {
 	return s.rankedInspected.Load()
+}
+
+// HydrateLiveForTest runs the live single-session hydration shape over a
+// LIST of keys — the deliberately regressed page-hydration path, whose
+// per-key queries walk every index row of every listed session. The
+// max-size-sessions gate's negative self-check proves its no-row-walks
+// detector actually flags this shape's SQL; without that proof the
+// detector is assumed, not tested.
+func (s *SQLStore) HydrateLiveForTest(ctx context.Context, tool wire.Tool, logicalIDs []string) (int, error) {
+	keys := make([]sessionKey, len(logicalIDs))
+	for i, id := range logicalIDs {
+		keys[i] = sessionKey{tool, id}
+	}
+	sums, err := s.hydrateSessions(ctx, keys)
+	return len(sums), err
 }
 
 // WalkFilteredForTest is the deliberately regressed selection shape — the
