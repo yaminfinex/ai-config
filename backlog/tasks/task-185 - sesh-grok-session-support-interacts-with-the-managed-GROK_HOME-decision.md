@@ -1,8 +1,9 @@
 ---
 id: TASK-185
 title: 'sesh: grok session support (interacts with the managed GROK_HOME decision)'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - mika
 created_date: '2026-07-13 06:21'
 labels: []
 dependencies: []
