@@ -26,7 +26,7 @@ ws_1
 if [ -d "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" ]; then export PATH="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO>; exec bash
 === HERDR MUTATING CALLS ===
 agent start worker-<SHORT>
-pane move p_50 --new-tab --label worker-<SHORT>
+pane move p_50 --new-tab --no-focus --label worker-<SHORT>
 agent send p_50 do the thing
 pane send-keys p_50 Enter
 === HCOM DIR ===

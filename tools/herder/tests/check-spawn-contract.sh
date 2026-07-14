@@ -189,6 +189,7 @@ scenario claude_prompt     ready claude launchctx --role worker --agent claude -
 scenario claude_modal      modal claude launchctx --role worker --agent claude --prompt "do the thing" --json
 scenario claude_modal_safe modal claude launchctx --role worker --agent claude --safe --prompt "do the thing" --json
 scenario claude_newtab     ready claude launchctx --role worker --agent claude --new-tab --json
+scenario claude_newtab_focus ready claude launchctx --role worker --agent claude --new-tab --focus --json
 scenario newtab_movefail   newtab_movefail claude launchctx --role worker --agent claude --new-tab --json
 # Multiline codex brief rides the bus WHOLE (TASK-032) — no brief-file staging,
 # no one-line pointer; the full text appears in the hcom send argv.

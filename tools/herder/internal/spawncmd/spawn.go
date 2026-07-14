@@ -278,6 +278,10 @@ func (r *runner) registerSpawnOrRollback(registryPath string, record spawnRecord
 	return 0
 }
 
+func newTabMoveArgs(paneID, label, focusFlag string) []string {
+	return []string{"pane", "move", paneID, "--new-tab", firstNonEmpty(focusFlag, "--no-focus"), "--label", label}
+}
+
 func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 	opts := options{
 		Split:         "right",
@@ -916,7 +920,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	newTabResult := ""
 
 	if opts.NewTab {
-		moveArgs := []string{"pane", "move", paneID, "--new-tab", "--label", label}
+		moveArgs := newTabMoveArgs(paneID, label, opts.FocusFlag)
 		if out, rc, _ := r.herdr.Combined(moveArgs...); rc == 0 {
 			newTabResult = "moved"
 		} else {
@@ -1506,7 +1510,7 @@ func printHelp(stdout io.Writer) {
 		"  herder spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]",
 		"               [--team NAME] [--split right|down] [--workspace ID | --from-pane PANE_ID]",
 		"               [--tab ID | --new-tab | --worktree BRANCH [--base REF]] [--cwd PATH] [--safe]",
-		"               [--notify | --notify-to TARGET] [--model ID] [--extra-arg ARG]... [--no-focus] [--json]",
+		"               [--notify | --notify-to TARGET] [--model ID] [--extra-arg ARG]... [--focus] [--json]",
 		"",
 		"Options:",
 		"  --role R          agent role; becomes the hcom --tag and label prefix (required)",
@@ -1521,6 +1525,7 @@ func printHelp(stdout io.Writer) {
 		"                    spawn into its workspace in one step; --base REF picks the start point",
 		"  --cwd PATH        working directory for the agent (default: current)",
 		"  --safe            keep the agent's default ask-mode (default: autonomous/skip-permissions)",
+		"  --focus           focus the new pane or tab (default: keep the current pane focused)",
 		"  --notify          worker reports to the spawner over the hcom bus on done (requires --prompt",
 		"                    and a bus-bound spawner); --notify-to TARGET resolves the bus name from",
 		"                    another registry row (guid, label, terminal_id, pane_id, or recorded hcom",

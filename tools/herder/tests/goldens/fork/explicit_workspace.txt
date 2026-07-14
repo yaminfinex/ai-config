@@ -7,7 +7,7 @@ forked parent -> parent-fork-<SHORT> (<GUID>) pane=p_child from=guid-parent-0000
 === HERDR START ARGV ===
 agent start parent-fork-<SHORT> --no-focus --split right --workspace ws_target --cwd <REPO> -- /bin/zsh -lic export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=parent-fork-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --fork claude parent-rive --tag worker --parent-session sess-parent --dangerously-skip-permissions --go
 === HERDR MOVE ARGV ===
-pane move p_child --new-tab --label parent-fork-<SHORT>
+pane move p_child --new-tab --no-focus --label parent-fork-<SHORT>
 === REGISTRY ===
 {"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
 {"kind":"namespace","event":"namespace_observed","namespace_id":"<GUID>","node":"<GUID>","path":"/hcom","recorded_at":"<TS>"}

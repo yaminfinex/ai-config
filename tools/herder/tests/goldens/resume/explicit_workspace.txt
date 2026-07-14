@@ -7,7 +7,7 @@ resumed resume-me (guid-resume-0000) pane=p_resumed
 === HERDR START ARGV ===
 agent start resume-me --no-focus --split right --workspace ws_target --cwd <REPO> -- /bin/zsh -lic export HERDER_GUID=guid-resume-0000 HERDER_ROLE=worker HERDER_LABEL=resume-me HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --resume claude sess-resume --tag worker --dangerously-skip-permissions --go
 === HERDR MOVE ARGV ===
-pane move p_resumed --new-tab --label resume-me
+pane move p_resumed --new-tab --no-focus --label resume-me
 === REGISTRY ===
 {"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
 {"kind":"namespace","event":"namespace_observed","namespace_id":"<GUID>","node":"<GUID>","path":"/hcom","recorded_at":"<TS>"}

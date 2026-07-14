@@ -126,6 +126,7 @@ run_case() {
     HERDR_ENV=1 HERDR_PANE_ID=p_self \
     HERDER_STATE_DIR="$CASE/state" \
     HERDER_LIFECYCLE_SETTLE_MS=0 \
+    HERDER_LIFECYCLE_FOCUS="${HERDER_LIFECYCLE_FOCUS:-}" \
     HERDER_ADDENDUM_SETTLE_MS="${HERDER_ADDENDUM_SETTLE_MS:-10000}" \
     MOCK_PROBE_DIR="$CASE/probe" \
     MOCK_LIVE_TARGET="$live" \
@@ -175,6 +176,8 @@ check_one() {
 
 run_case happy 0 resume --json
 check_one happy
+HERDER_LIFECYCLE_FOCUS=--focus run_case explicit_focus 0 resume --json
+check_one explicit_focus
 run_case closed_row_full_guid 0 guid-resume-0000 --json
 check_one closed_row_full_guid
 run_case explicit_split 0 resume --split down --json

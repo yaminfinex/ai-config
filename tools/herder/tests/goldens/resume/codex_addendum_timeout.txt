@@ -8,7 +8,7 @@ herder-lifecycle: WARNING — herder addendum NOT delivered to codex-me: no bus 
 === HERDR START ARGV ===
 agent start codex-me --no-focus --split right --workspace ws_1 --cwd <REPO> -- /bin/zsh -lic export HERDER_GUID=guid-codex-0000 HERDER_ROLE=worker HERDER_LABEL=codex-me HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --resume codex sess-codex --tag worker --dangerously-bypass-approvals-and-sandbox --go
 === HERDR MOVE ARGV ===
-pane move p_resumed --new-tab --label codex-me
+pane move p_resumed --new-tab --no-focus --label codex-me
 === REGISTRY ===
 {"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
 {"kind":"namespace","event":"namespace_observed","namespace_id":"<GUID>","node":"<GUID>","path":"/hcom","recorded_at":"<TS>"}
