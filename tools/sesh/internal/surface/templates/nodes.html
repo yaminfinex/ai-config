@@ -3,7 +3,7 @@
 {{define "main"}}
 <h1>Nodes</h1>
 <table class="sessions">
-  <thead><tr><th>Node</th><th>Last PUT</th><th>Age</th><th>Status</th><th>Sessions</th></tr></thead>
+  <thead><tr><th>Node</th><th>Last PUT</th><th>Age</th><th>Status</th><th>Version</th><th>Sessions</th></tr></thead>
   <tbody>
   {{range .Nodes}}
     <tr>
@@ -11,10 +11,11 @@
       <td>{{fmtTime .LastPutAt}}</td>
       <td>{{.Age}}</td>
       <td>{{if .Stale}}<span class="badge warn">stale &gt;48h</span>{{else}}<span class="badge">fresh</span>{{end}}</td>
+      <td>{{if .ShipperVersion}}{{.ShipperVersion}}{{end}}{{if .VersionBehind}} <span class="badge warn">out of window</span>{{else if .VersionUnknown}}{{if .ShipperVersion}} {{end}}<span class="badge">unknown</span>{{end}}</td>
       <td><a href="{{.SessionsURL}}">sessions →</a></td>
     </tr>
   {{else}}
-    <tr><td colspan="5" class="empty">No nodes have shipped bytes yet.</td></tr>
+    <tr><td colspan="6" class="empty">No nodes have shipped bytes yet.</td></tr>
   {{end}}
   </tbody>
 </table>

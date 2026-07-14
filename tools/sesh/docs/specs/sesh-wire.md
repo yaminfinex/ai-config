@@ -92,6 +92,13 @@ In tailnet-native mode, the store stamps tailnet identity from the connection. A
 tailnet identity or display-owner header is ignored and must not affect storage,
 auth, or rendering.
 
+Informational, non-contract: the shipper sets the standard `User-Agent` header to
+`sesh-ship/<build version>` and the store may record it as version-census bookkeeping
+(the nodes view's version column). No routing, auth, or storage semantics may ever
+attach to `User-Agent`; its absence or any unrecognized value never blocks shipping
+(the store records "unknown"), and this paragraph is not an amendment surface — the
+header may change or disappear without one.
+
 Facts are append-only observations. Omitting `X-Sesh-Session-Owner` on a later PUT
 never retracts a previously shipped observation; the store must not interpret absence
 as a change of owner.

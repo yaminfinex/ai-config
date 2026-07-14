@@ -144,7 +144,13 @@ recency-ordered table. The surface includes `/` — the nodes entry point
 `/sessions` (the flat all-nodes recency list, stable URL; `?node=` filters
 it to one node with identical pagination), `/s/{tool}/{id}` transcript
 pages, and `/s/{tool}/{id}/raw` raw mirror fallback (`/nodes` redirects to
-`/`). Transcript pages are windowed: one page renders the newest 200 index
+`/`). The nodes entry point also carries the version census: each row shows
+the version the node's shipper last self-reported via its `User-Agent`
+(informational only, never load-bearing), flagged `out of window` when it
+falls below the current+previous-release support window anchored to the
+running store's own build version, or `unknown` when the node has never
+reported a parseable one (ops/README "Version-skew policy" has the operator
+playbook: `sesh update` the lagging node). Transcript pages are windowed: one page renders the newest 200 index
 rows (`?page=N` walks older windows, same pager idiom as the sessions
 list), the byte-level display budget stays as the in-window backstop, and
 the raw route still serves the whole file. The sessions list is bounded:

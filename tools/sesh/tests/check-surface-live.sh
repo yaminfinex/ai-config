@@ -93,6 +93,17 @@ grep -q "$LOGICAL" <<<"$filtered" || fail "node-filtered sessions view does not 
   fail "node-filtered view lists more than the node's one session"
 ok "nodes-first navigation: / → filtered sessions view lists the pair"
 
+step "version census: node row shows the shipper's self-reported version"
+grep -q '<th>Version</th>' <<<"$nodes_page" || fail "nodes page lacks the Version column"
+# The real shipper sends User-Agent: sesh-ship/<its build version>; the store
+# records it at PUT time and the nodes view renders it (an untagged `go build`
+# reports "dev", which correctly flags as unknown — the assertion is only
+# that the census captured the self-report verbatim).
+SHIP_VER=$("$BIN/sesh" version)
+grep -qF "<td>$SHIP_VER" <<<"$nodes_page" ||
+  fail "nodes page does not show the shipper's self-reported version ($SHIP_VER)"
+ok "version census records and renders the shipper version ($SHIP_VER)"
+
 step "drill-down renders ONE windowed transcript (no duplicated history)"
 # 334 deduped rows span two 200-message windows; the union must tile the
 # session exactly, with no uuid rendered twice across windows.

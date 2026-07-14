@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"sesh/internal/buildinfo"
 	"sesh/internal/httpx"
 	"sesh/internal/wire"
 )
@@ -66,6 +67,10 @@ func (c *Client) PutBytes(ctx context.Context, id Identity, offset int64, body [
 		return nil, nil, err
 	}
 	req.Header.Set("Content-Type", wire.ContentTypeBytes)
+	// Informational only (the version census): the store may record it, but
+	// no routing/auth/storage semantics attach and no peer requires it —
+	// standard header hygiene, not a wire contract change.
+	req.Header.Set("User-Agent", "sesh-ship/"+buildinfo.Version)
 	req.Header.Set(wire.HeaderWireVersion, strconv.Itoa(wire.Version))
 	req.Header.Set(wire.HeaderHostname, c.Hostname)
 	req.Header.Set(wire.HeaderOSUser, c.OSUser)

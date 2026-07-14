@@ -227,6 +227,13 @@ func (s *Store) initSchema(ctx context.Context) error {
 	if err := s.ensureColumn(ctx, "fact_observations", "tailnet_identity", "TEXT NULL"); err != nil {
 		return err
 	}
+	// Version census: store bookkeeping, not the frozen
+	// wire-visible index schema — same additive class as
+	// fact_observations_session above. Rows written before the column
+	// existed stay NULL and render as "unknown".
+	if err := s.ensureColumn(ctx, "last_seen", "shipper_version", "TEXT NULL"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -341,7 +348,8 @@ func (s *Store) handlePUTBytes(w http.ResponseWriter, r *http.Request, rawTool, 
 	}
 	dbStart := time.Now()
 	tailnetIdentity := TailnetIdentityFromContext(r.Context())
-	resp, ev, code, msg, action := s.putBytes(r.Context(), tool, sessionID, fileUUID, fp, offset, body, hostname, osUser, r.Header.Get(wire.HeaderSessionOwner), tailnetIdentity)
+	shipperVersion := shipperVersionFromUA(r.UserAgent())
+	resp, ev, code, msg, action := s.putBytes(r.Context(), tool, sessionID, fileUUID, fp, offset, body, hostname, osUser, r.Header.Get(wire.HeaderSessionOwner), tailnetIdentity, shipperVersion)
 	// Identifier-free by design: session/file identities must not persist
 	// in journal logs (corpus leakage into a different retention domain).
 	s.logger.Debug("put bytes",
@@ -411,7 +419,7 @@ func (s *Store) handleRecovery(w http.ResponseWriter, r *http.Request, rawTool, 
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Store) putBytes(ctx context.Context, tool wire.Tool, sessionID, fileUUID string, fp *string, offset int64, body []byte, hostname, osUser, owner, tailnetIdentity string) (*wire.Ack, *wire.AppendEvent, wire.ErrorCode, string, string) {
+func (s *Store) putBytes(ctx context.Context, tool wire.Tool, sessionID, fileUUID string, fp *string, offset int64, body []byte, hostname, osUser, owner, tailnetIdentity, shipperVersion string) (*wire.Ack, *wire.AppendEvent, wire.ErrorCode, string, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -433,7 +441,7 @@ func (s *Store) putBytes(ctx context.Context, tool wire.Tool, sessionID, fileUUI
 	}
 
 	if offset < target.HighWater {
-		ev, code, msg, action, err := s.handleOverlap(ctx, &target, offset, body, hostname, osUser, owner, tailnetIdentity)
+		ev, code, msg, action, err := s.handleOverlap(ctx, &target, offset, body, hostname, osUser, owner, tailnetIdentity, shipperVersion)
 		ack := s.ack(target)
 		if err != nil {
 			return &ack, nil, classifyStoreError(err), err.Error(), ""
@@ -444,7 +452,7 @@ func (s *Store) putBytes(ctx context.Context, tool wire.Tool, sessionID, fileUUI
 		return &ack, ev, "", "", ""
 	}
 
-	ev, err := s.appendAtHighWater(ctx, &target, body, hostname, osUser, owner, tailnetIdentity)
+	ev, err := s.appendAtHighWater(ctx, &target, body, hostname, osUser, owner, tailnetIdentity, shipperVersion)
 	ack := s.ack(target)
 	if err != nil {
 		return &ack, nil, classifyStoreError(err), err.Error(), ""
@@ -485,7 +493,7 @@ func (s *Store) selectGeneration(ctx context.Context, tool wire.Tool, sessionID,
 	return gens[len(gens)-1], "", "", "", nil
 }
 
-func (s *Store) handleOverlap(ctx context.Context, target *fileState, offset int64, body []byte, hostname, osUser, owner, tailnetIdentity string) (*wire.AppendEvent, wire.ErrorCode, string, string, error) {
+func (s *Store) handleOverlap(ctx context.Context, target *fileState, offset int64, body []byte, hostname, osUser, owner, tailnetIdentity, shipperVersion string) (*wire.AppendEvent, wire.ErrorCode, string, string, error) {
 	overlap := min(int64(len(body)), target.HighWater-offset)
 	matches, err := s.compareMirror(*target, offset, body[:overlap])
 	if err != nil {
@@ -496,13 +504,13 @@ func (s *Store) handleOverlap(ctx context.Context, target *fileState, offset int
 		return nil, code, msg, "", err
 	}
 	if int64(len(body)) == overlap {
-		if err := s.recordSuccess(ctx, target, hostname, osUser, owner, tailnetIdentity); err != nil {
+		if err := s.recordSuccess(ctx, target, hostname, osUser, owner, tailnetIdentity, shipperVersion); err != nil {
 			return nil, "", "", "", fmt.Errorf("%w: %v", errStoreState, err)
 		}
 		return nil, "", "", "", nil
 	}
 	body = body[overlap:]
-	ev, err := s.appendAtHighWater(ctx, target, body, hostname, osUser, owner, tailnetIdentity)
+	ev, err := s.appendAtHighWater(ctx, target, body, hostname, osUser, owner, tailnetIdentity, shipperVersion)
 	return ev, "", "", "", err
 }
 
@@ -543,9 +551,9 @@ func (s *Store) handleDivergence(ctx context.Context, target *fileState) (wire.E
 	return wire.ErrGenerationOpened, "opened new generation after repeated divergence", nil
 }
 
-func (s *Store) appendAtHighWater(ctx context.Context, target *fileState, body []byte, hostname, osUser, owner, tailnetIdentity string) (*wire.AppendEvent, error) {
+func (s *Store) appendAtHighWater(ctx context.Context, target *fileState, body []byte, hostname, osUser, owner, tailnetIdentity, shipperVersion string) (*wire.AppendEvent, error) {
 	if len(body) == 0 {
-		if err := s.recordSuccess(ctx, target, hostname, osUser, owner, tailnetIdentity); err != nil {
+		if err := s.recordSuccess(ctx, target, hostname, osUser, owner, tailnetIdentity, shipperVersion); err != nil {
 			return nil, fmt.Errorf("%w: %v", errStoreState, err)
 		}
 		return nil, nil
@@ -562,7 +570,7 @@ func (s *Store) appendAtHighWater(ctx context.Context, target *fileState, body [
 	if err := s.updateFingerprintFromMirror(ctx, target); err != nil {
 		return nil, fmt.Errorf("%w: %v", errStoreState, err)
 	}
-	if err := s.recordSuccess(ctx, target, hostname, osUser, owner, tailnetIdentity); err != nil {
+	if err := s.recordSuccess(ctx, target, hostname, osUser, owner, tailnetIdentity, shipperVersion); err != nil {
 		return nil, fmt.Errorf("%w: %v", errStoreState, err)
 	}
 	return &wire.AppendEvent{
@@ -790,7 +798,7 @@ func (s *Store) setConflictPending(ctx context.Context, st *fileState, pending b
 	return nil
 }
 
-func (s *Store) recordSuccess(ctx context.Context, st *fileState, hostname, osUser, owner, tailnetIdentity string) error {
+func (s *Store) recordSuccess(ctx context.Context, st *fileState, hostname, osUser, owner, tailnetIdentity, shipperVersion string) error {
 	now := time.Now().UTC()
 	_, err := s.db.ExecContext(ctx, `UPDATE files SET high_water = ?, last_put_at = ?, conflict_pending = 0, updated_at = ?
 		WHERE tool = ? AND session_id = ? AND file_uuid = ? AND generation = ?`,
@@ -800,9 +808,21 @@ func (s *Store) recordSuccess(ctx context.Context, st *fileState, hostname, osUs
 	}
 	st.LastPutAt = now
 	st.ConflictPending = false
-	_, err = s.db.ExecContext(ctx, `INSERT INTO last_seen(hostname, os_user, last_put_at) VALUES (?, ?, ?)
-		ON CONFLICT(hostname, os_user) DO UPDATE SET last_put_at = excluded.last_put_at`,
-		hostname, osUser, formatTime(now))
+	// The version census rides the existing last_seen upsert: last_put_at
+	// changes on every PUT so this row write is never redundant, and folding
+	// the version into the same statement costs zero extra write-conn round
+	// trips (a separate <>-guarded UPDATE — the index maintenance no-op-free
+	// shape — would add one per PUT). An unknown version (NULL) overwrites a
+	// previously known one deliberately: the census reports what the node
+	// runs now, and a shipper that stopped identifying itself is unknown,
+	// not its last known version.
+	var versionValue any
+	if shipperVersion != "" {
+		versionValue = shipperVersion
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO last_seen(hostname, os_user, last_put_at, shipper_version) VALUES (?, ?, ?, ?)
+		ON CONFLICT(hostname, os_user) DO UPDATE SET last_put_at = excluded.last_put_at, shipper_version = excluded.shipper_version`,
+		hostname, osUser, formatTime(now), versionValue)
 	if err != nil {
 		return err
 	}
@@ -822,6 +842,37 @@ func (s *Store) recordSuccess(ctx context.Context, st *fileState, hostname, osUs
 		return err
 	}
 	return nil
+}
+
+// shipperVersionFromUA extracts the shipper's self-reported version from a
+// User-Agent of the product-token form "sesh-ship/<version>". Anything else
+// — Go's default UA from shippers predating the census, curl, empty — yields
+// "" and is recorded as unknown, never rejected: User-Agent is informational
+// only, no routing/auth/storage semantics may ever attach to it, and its
+// absence never blocks shipping (doc-002 T4). The token is bounded and
+// charset-restricted because it is remote input headed for durable
+// bookkeeping.
+func shipperVersionFromUA(ua string) string {
+	const prefix = "sesh-ship/"
+	if !strings.HasPrefix(ua, prefix) {
+		return ""
+	}
+	v := ua[len(prefix):]
+	if i := strings.IndexByte(v, ' '); i >= 0 {
+		v = v[:i]
+	}
+	if v == "" || len(v) > 64 {
+		return ""
+	}
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '-', r == '_', r == '+':
+		default:
+			return ""
+		}
+	}
+	return v
 }
 
 // MarkDirtyForReindex records that a durable append event was not indexed.

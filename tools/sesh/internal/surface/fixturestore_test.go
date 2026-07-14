@@ -347,9 +347,12 @@ func corpusStore(t *testing.T) *fakeStore {
 	})
 	// The two fixture nodes, for the '/' entry point (last-seen bookkeeping
 	// in the live store).
+	// Version census: workstation runs the (pinned, see newServer) current
+	// release; laptop lags below the current+previous window and renders
+	// the out-of-window flag in the golden.
 	f.nodes = []surface.NodeStatus{
-		{Hostname: "workstation", OSUser: "grace", LastPutAt: day("2026-07-06T12:01:00Z"), Age: "23h59m0s", Stale: false},
-		{Hostname: "laptop", OSUser: "alice", LastPutAt: day("2026-07-05T08:10:00Z"), Age: "51h50m0s", Stale: true},
+		{Hostname: "workstation", OSUser: "grace", LastPutAt: day("2026-07-06T12:01:00Z"), Age: "23h59m0s", Stale: false, ShipperVersion: "sesh-v0.3.2"},
+		{Hostname: "laptop", OSUser: "alice", LastPutAt: day("2026-07-05T08:10:00Z"), Age: "51h50m0s", Stale: true, ShipperVersion: "sesh-v0.2.9"},
 	}
 	return f
 }

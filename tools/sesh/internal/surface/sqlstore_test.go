@@ -343,3 +343,31 @@ func TestSQLStoreNodesFlagsStaleLastPut(t *testing.T) {
 		t.Fatal("stale-host should be stale")
 	}
 }
+
+// The nodes read path hydrates the shipper version from last_seen and keeps
+// pre-census rows (NULL column, written before the version census) rendering
+// as unknown instead of erroring.
+func TestSQLStoreNodesReadsShipperVersion(t *testing.T) {
+	st, _, live := openLiveStore(t)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := st.DB().ExecContext(t.Context(), `INSERT INTO last_seen(hostname, os_user, last_put_at, shipper_version) VALUES ('versioned-host', 'grace', ?, 'sesh-v0.1.9')`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().ExecContext(t.Context(), `INSERT INTO last_seen(hostname, os_user, last_put_at) VALUES ('precensus-host', 'grace', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := live.Nodes(t.Context(), 48*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions := map[string]string{}
+	for _, node := range nodes {
+		versions[node.Hostname] = node.ShipperVersion
+	}
+	if versions["versioned-host"] != "sesh-v0.1.9" {
+		t.Fatalf("versioned-host version = %q, want sesh-v0.1.9", versions["versioned-host"])
+	}
+	if versions["precensus-host"] != "" {
+		t.Fatalf("precensus-host version = %q, want empty (unknown)", versions["precensus-host"])
+	}
+}
