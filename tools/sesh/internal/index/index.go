@@ -44,6 +44,14 @@ type Indexer struct {
 
 	failWriteOnce bool
 
+	// naiveMaintenance routes logical-session maintenance through the
+	// pre-optimization statement shapes (unpinned corpus-walking plans,
+	// unconditional whole-group rewrites). Test-only reference oracle: the
+	// differential equivalence gate replays a churned corpus through both
+	// shapes and requires byte-identical index outcomes, and the
+	// bounded-append gates prove their detectors against this path.
+	naiveMaintenance bool
+
 	migrationReindexed bool
 
 	// timing collects per-phase durations for one append transaction; nil
@@ -61,6 +69,27 @@ type appendTiming struct {
 	unify   time.Duration
 	dedupe  time.Duration
 	rows    int
+	// maintRows counts rows the logical-session maintenance actually wrote
+	// (relabel + ordinal updates, dedupe deletes). A steady-state append —
+	// no new logical linkage — writes at most the appended rows (stitching a
+	// new row's file_ordinal), never the group or session: the regression
+	// gate for per-append session-scale rewrites observes this seam.
+	maintRows int64
+}
+
+// execMaintenance runs a maintenance write and records how many rows it
+// actually changed (see appendTiming.maintRows).
+func (idx *Indexer) execMaintenance(ctx context.Context, query string, args ...any) error {
+	res, err := idx.execContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	if idx.timing != nil {
+		if n, err := res.RowsAffected(); err == nil {
+			idx.timing.maintRows += n
+		}
+	}
+	return nil
 }
 
 // New initializes index tables on the store database.
@@ -254,7 +283,7 @@ func (idx *Indexer) processAppend(ctx context.Context, ev wire.AppendEvent, rebu
 		"tx_wait", txAcquired.Sub(start),
 		"parse", txIdx.timing.parse, "inherit", txIdx.timing.inherit,
 		"insert", txIdx.timing.insert, "unify", txIdx.timing.unify,
-		"dedupe", txIdx.timing.dedupe,
+		"dedupe", txIdx.timing.dedupe, "maint_rows", txIdx.timing.maintRows,
 		"commit", time.Since(commitStart), "total", time.Since(start))
 	return nil
 }
@@ -788,12 +817,30 @@ func (idx *Indexer) inheritFileLogicalSession(ctx context.Context, ev wire.Appen
 	return nil
 }
 
-func (idx *Indexer) fileLogicalSessions(ctx context.Context, ev wire.AppendEvent) ([]string, error) {
-	rows, err := idx.queryContext(ctx, `SELECT DISTINCT logical_session_id FROM sesh_index_messages
+// INDEXED BY is load-bearing: without it the planner prefers the logical
+// index to satisfy DISTINCT/ORDER BY and walks every row of the tool — a
+// corpus scan per append (see the write-side plan gate). The naive shape is
+// the pre-optimization reference oracle (see Indexer.naiveMaintenance).
+const (
+	fileLogicalSessionsSQL = `SELECT DISTINCT logical_session_id
+		FROM sesh_index_messages INDEXED BY sesh_index_messages_file
 		WHERE quarantine = 0 AND tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?
 			AND logical_session_id <> parsed_logical_session_id
 			AND parsed_logical_session_id <> ''
-		ORDER BY logical_session_id`, ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
+		ORDER BY logical_session_id`
+	naiveFileLogicalSessionsSQL = `SELECT DISTINCT logical_session_id FROM sesh_index_messages
+		WHERE quarantine = 0 AND tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?
+			AND logical_session_id <> parsed_logical_session_id
+			AND parsed_logical_session_id <> ''
+		ORDER BY logical_session_id`
+)
+
+func (idx *Indexer) fileLogicalSessions(ctx context.Context, ev wire.AppendEvent) ([]string, error) {
+	query := fileLogicalSessionsSQL
+	if idx.naiveMaintenance {
+		query = naiveFileLogicalSessionsSQL
+	}
+	rows, err := idx.queryContext(ctx, query, ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
 	if err != nil {
 		return nil, err
 	}
@@ -863,8 +910,7 @@ func (idx *Indexer) unifyConnectedLogicalSessions(ctx context.Context, ev wire.A
 	}
 	if len(group) > 1 {
 		for _, f := range group {
-			if _, err := idx.execContext(ctx, `UPDATE sesh_index_messages SET logical_session_id = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,
-				canonical, f.tool, f.wireID, f.fileUUID, f.generation); err != nil {
+			if err := idx.relabelFile(ctx, canonical, f); err != nil {
 				return err
 			}
 		}
@@ -910,14 +956,31 @@ func (idx *Indexer) connectedFiles(ctx context.Context, start fileSummary) ([]fi
 	return out, nil
 }
 
-func (idx *Indexer) sameLogicalFiles(ctx context.Context, f fileSummary) ([]fileSummary, error) {
-	rows, err := idx.queryContext(ctx, `SELECT m.tool, m.wire_session_id, m.file_uuid, m.generation,
+// INDEXED BY is load-bearing: without it the planner prefers the file index
+// to satisfy GROUP BY and walks every row of the tool instead of seeking the
+// logical session (see the write-side plan gate). The naive shape is the
+// pre-optimization reference oracle (see Indexer.naiveMaintenance).
+const (
+	sameLogicalFilesSQL = `SELECT m.tool, m.wire_session_id, m.file_uuid, m.generation,
+		MIN(m.logical_session_id), COALESCE(f.created_at, ''), MIN(m.byte_start)
+		FROM sesh_index_messages m INDEXED BY sesh_index_messages_logical
+		LEFT JOIN files f ON f.tool = m.tool AND f.session_id = m.wire_session_id AND f.file_uuid = m.file_uuid AND f.generation = m.generation
+		WHERE m.quarantine = 0 AND m.tool = ? AND m.logical_session_id = ?
+		GROUP BY m.tool, m.wire_session_id, m.file_uuid, m.generation`
+	naiveSameLogicalFilesSQL = `SELECT m.tool, m.wire_session_id, m.file_uuid, m.generation,
 		MIN(m.logical_session_id), COALESCE(f.created_at, ''), MIN(m.byte_start)
 		FROM sesh_index_messages m
 		LEFT JOIN files f ON f.tool = m.tool AND f.session_id = m.wire_session_id AND f.file_uuid = m.file_uuid AND f.generation = m.generation
 		WHERE m.quarantine = 0 AND m.tool = ? AND m.logical_session_id = ?
-		GROUP BY m.tool, m.wire_session_id, m.file_uuid, m.generation`,
-		f.tool, f.logicalID)
+		GROUP BY m.tool, m.wire_session_id, m.file_uuid, m.generation`
+)
+
+func (idx *Indexer) sameLogicalFiles(ctx context.Context, f fileSummary) ([]fileSummary, error) {
+	query := sameLogicalFilesSQL
+	if idx.naiveMaintenance {
+		query = naiveSameLogicalFilesSQL
+	}
+	rows, err := idx.queryContext(ctx, query, f.tool, f.logicalID)
 	if err != nil {
 		return nil, err
 	}
@@ -1044,10 +1107,33 @@ func (idx *Indexer) updateFileOrdinals(ctx context.Context) error {
 	return nil
 }
 
+// relabelFile and updateFileOrdinalsForFiles carry a final predicate that
+// excludes rows already at the target value, so a steady-state append — no
+// new logical linkage — rewrites zero rows instead of rewriting the whole
+// group per append. The resulting table state is identical either way: both
+// target columns are NOT NULL in the frozen schema, so <> cannot filter an
+// old NULL that the unconditional UPDATE would repair. The naive shapes are
+// the pre-optimization reference oracle (see Indexer.naiveMaintenance).
+func (idx *Indexer) relabelFile(ctx context.Context, canonical string, f fileSummary) error {
+	if idx.naiveMaintenance {
+		return idx.execMaintenance(ctx, `UPDATE sesh_index_messages SET logical_session_id = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,
+			canonical, f.tool, f.wireID, f.fileUUID, f.generation)
+	}
+	return idx.execMaintenance(ctx, `UPDATE sesh_index_messages SET logical_session_id = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ? AND logical_session_id <> ?`,
+		canonical, f.tool, f.wireID, f.fileUUID, f.generation, canonical)
+}
+
 func (idx *Indexer) updateFileOrdinalsForFiles(ctx context.Context, group []fileSummary) error {
 	for ordinal, f := range group {
-		if _, err := idx.execContext(ctx, `UPDATE sesh_index_messages SET file_ordinal = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,
-			ordinal, f.tool, f.wireID, f.fileUUID, f.generation); err != nil {
+		if idx.naiveMaintenance {
+			if err := idx.execMaintenance(ctx, `UPDATE sesh_index_messages SET file_ordinal = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,
+				ordinal, f.tool, f.wireID, f.fileUUID, f.generation); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := idx.execMaintenance(ctx, `UPDATE sesh_index_messages SET file_ordinal = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ? AND file_ordinal <> ?`,
+			ordinal, f.tool, f.wireID, f.fileUUID, f.generation, ordinal); err != nil {
 			return err
 		}
 	}
@@ -1071,8 +1157,25 @@ func (idx *Indexer) dedupeAll(ctx context.Context) error {
 	return err
 }
 
-func (idx *Indexer) dedupeLogical(ctx context.Context, tool wire.Tool, logical string) error {
-	_, err := idx.execContext(ctx, `DELETE FROM sesh_index_messages
+// INDEXED BY is load-bearing: without it the planner feeds the window from
+// the overlap index at its tool=? prefix — a corpus scan per append (see the
+// write-side plan gate). The naive shape is the pre-optimization reference
+// oracle (see Indexer.naiveMaintenance).
+const (
+	dedupeLogicalSQL = `DELETE FROM sesh_index_messages
+		WHERE id IN (
+			SELECT id FROM (
+				SELECT id,
+					ROW_NUMBER() OVER (
+						PARTITION BY tool, logical_session_id, entry_type, message_uuid
+						ORDER BY timestamp_utc IS NULL, timestamp_utc, file_ordinal, line_ordinal, file_uuid, generation, id
+					) AS rn
+				FROM sesh_index_messages INDEXED BY sesh_index_messages_logical
+				WHERE quarantine = 0 AND message_uuid <> '' AND tool = ? AND logical_session_id = ?
+			)
+			WHERE rn > 1
+		)`
+	naiveDedupeLogicalSQL = `DELETE FROM sesh_index_messages
 		WHERE id IN (
 			SELECT id FROM (
 				SELECT id,
@@ -1084,8 +1187,15 @@ func (idx *Indexer) dedupeLogical(ctx context.Context, tool wire.Tool, logical s
 				WHERE quarantine = 0 AND message_uuid <> '' AND tool = ? AND logical_session_id = ?
 			)
 			WHERE rn > 1
-		)`, tool, logical)
-	return err
+		)`
+)
+
+func (idx *Indexer) dedupeLogical(ctx context.Context, tool wire.Tool, logical string) error {
+	query := dedupeLogicalSQL
+	if idx.naiveMaintenance {
+		query = naiveDedupeLogicalSQL
+	}
+	return idx.execMaintenance(ctx, query, tool, logical)
 }
 
 type fileSummary struct {

@@ -210,9 +210,21 @@ query through the store's read-only connection pool, so page loads run
 concurrently with ingest instead of queueing behind append-index write
 transactions on the single write connection
 (`docs/design/2026-07-13-sesh-store-read-write-split.md`; gate:
-`TestReadPathsServeWhileWriteConnectionHeld`). Set `SESH_DEBUG=1` on any
-sesh command for debug-level logs — `sesh serve` then logs per-request
-serving time and per-phase append-index timing, the first stop for "where
+`TestReadPathsServeWhileWriteConnectionHeld`). Append-index maintenance on
+the write side is bounded too: steady-state appends (no new logical
+linkage — the shipper's continuous case) write at most the appended rows; a
+linkage-creating append (resume/overlap merge) additionally rewrites the
+touched connected component once at merge time, bounded by the sizes of the
+logical sessions being unified; reads stay bounded by the touched component
+— never the corpus in either case, so ingest throughput does not degrade as
+the fleet corpus grows (write-side
+plan gate + append-bounded maintenance gate in `internal/index`, differential
+old-vs-new equivalence over a churned corpus; see the bounded append-time
+maintenance delta in
+`docs/design/2026-07-13-sesh-store-read-write-split.md`). Set `SESH_DEBUG=1`
+on any sesh command for debug-level logs — `sesh serve` then logs per-request
+serving time and per-phase append-index timing (including `maint_rows`, the
+rows maintenance actually wrote), the first stop for "where
 does store time go" on a live node. Gates: `tests/check-surface-fixtures.sh` (fixture-backed
 renders, plus the 5k-session corpus test proving bounded query plans — no
 corpus-table SCAN on the warm path, fixed per-request query count, amortized

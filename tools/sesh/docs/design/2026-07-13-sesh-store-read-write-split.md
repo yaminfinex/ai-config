@@ -210,3 +210,95 @@ Write-side append cost still grows with corpus/session size
 (`unify`/`dedupe`/`inherit` are corpus-scale per append). The read split
 removes readers from that queue, but ingest throughput itself will degrade
 as the corpus grows; that is index-consumer work, not serving-path work.
+(Since addressed — see the bounded append-time maintenance delta below.)
+
+## Delta: bounded append-time index maintenance (2026-07-14)
+
+The follow-up above is closed. The corpus-scale cost was not the maintenance
+algorithm but its query plans: with no INDEXED BY pins on the write side,
+SQLite planned three of the per-append maintenance queries as prefix-only
+index walks — `(tool=?)` over every row of the tool, a corpus scan wearing a
+SEARCH costume. Specifically: the inherit lookup preferred the logical index
+to satisfy its DISTINCT/ORDER BY, the connected-group same-logical query
+preferred the file index to satisfy its GROUP BY (ignoring the
+logical-session equality term), and the dedupe window fed from the overlap
+index at its tool prefix. Measured on the corpus-scaling fixture
+(`BenchmarkAppendCostAtCorpusScale`, 20-row sessions, one ~130-byte tail
+append to a unified resume pair) the phase split grew linearly with corpus
+size — at 2.5k/5k/10k sessions (50k/100k/200k rows): inherit 13/26/51 ms,
+unify 31/57/109 ms, dedupe 16/30/60 ms, total 61/114/222 ms per append —
+exactly the live shape this note's Root cause section measured at the 500k-row
+replay (~0.5 s dev box, ~2.1 s store VM).
+
+Two changes, both inside the frozen index schema (no DDL, no new indexes,
+wire v1 untouched, one transaction per append as before):
+
+- INDEXED BY pins on the three walking queries (`sesh_index_messages_file`
+  for inherit, `sesh_index_messages_logical` for the same-logical group query
+  and the dedupe window). Pure plan change; the write side now carries the
+  same plan-gate discipline the surface read side already had.
+- No-op-free maintenance rewrites: the unify relabel and file-ordinal
+  UPDATEs carry a final `<> ?` predicate excluding rows already at their
+  target value, so a steady-state append (no new logical linkage) rewrites
+  zero rows instead of rewriting every row of every file in the connected
+  group per append. Identical resulting table state by construction.
+
+New cost shape, stated precisely: steady-state maintenance writes — an
+append that introduces no new logical linkage, the shipper's continuous
+case — are bounded by the appended rows (the only write is stitching a new
+row's file_ordinal to its group ordinal). A linkage-creating append (a
+resume or overlap merge) additionally rewrites the touched connected
+component once at merge time — the losing sessions' rows take the canonical
+label and their ordinals — bounded by the sizes of the logical sessions
+being unified, never corpus-scale; that one-time rewrite is the index's
+core semantic (logical-session identity must land atomically in the same
+transaction) and is not deferrable inside the frozen contracts.
+Maintenance READS are bounded by the touched connected component (the
+group walk, its overlap probes, and the dedupe window seek the component's
+rows) in both cases, independent of corpus size.
+After the fix the same fixture measures the tail append flat across
+2.5k/5k/10k sessions: total ~3.5 ms (inherit ~0.1 ms, unify ~2.3 ms, dedupe
+~0.7 ms), a ~63x reduction at the 4x corpus and no growth with corpus scale;
+a fresh-session first append is ~1.2 ms flat. The residual is session-scale,
+which is the index's core semantic (logical-session identity) and grows only
+with the session being appended to.
+
+Correctness evidence, in the order the constraints demand:
+
+- Differential equivalence: the pre-optimization statement shapes are kept
+  in the package as a reference oracle (`naiveMaintenance`), and
+  `TestOptimizedMaintenanceMatchesNaiveReferenceOverChurnedCorpus` replays a
+  churned corpus — resume unification, transitive chains, canonical-order
+  stress, codex meta inheritance, quarantine, generation churn, trailing
+  partials, near-miss overlaps — through both paths and requires identical
+  resulting tables (index checksum plus file-state and quarantine-ledger
+  dumps), then requires the incremental result to match a full `Reindex`.
+- Restore/reindex: the fix adds no persisted incremental state — it relies
+  only on the labels already in the index — so restore + reindex interactions
+  are unchanged by construction.
+- Gates (`TestAppendMaintenanceBoundedOnCorpus`): a recording driver captures
+  every statement one steady-state append runs against a corpus-backed store;
+  every EXPLAIN QUERY PLAN storage access must be a full-key seek on its
+  pinned index ($-anchored allowlist, term-by-term), and the journaled
+  `maint_rows` seam must stay within the appended-row bound. A
+  linkage-creating append is gated two-sided: `maint_rows` must exceed the
+  appended rows (the seam is alive) and stay within three times the
+  PRE-maintenance touched cardinality — the component before the merge plus
+  the appended rows, since a merge legitimately relabels, re-ordinals, and
+  dedupe-deletes rows that then no longer survive; a post-dedupe survivor
+  denominator would falsely reject duplicate-heavy merges. An M*U bridge
+  fixture (M settled sessions sharing one below-threshold row, unified by
+  one bridge append whose rows all die in dedupe) asserts BOTH sides:
+  maintenance stays within the pre-work bound and exceeds three times the
+  survivor count, so a denominator regression fails loudly. All detectors
+  are proven: the naive shapes trip the plan gate (corpus-walk negative),
+  the naive maintenance run trips the steady-state rewrite bound, and a
+  deliberate corpus-walk write trips the component bounds.
+
+Operator surface: the `SESH_DEBUG` per-append journal line gains
+`maint_rows` (rows the maintenance actually wrote) beside the existing
+per-phase laps, same identifier-free contract. The live BEFORE evidence is
+already on record above (Root cause section: ~0.5 s dev box / ~2.1 s store
+VM per 241-byte append, SESH_DEBUG phase timing, 2026-07-13); the live
+AFTER capture from the store journal is pending the next deploy — until it
+lands, the fixture figures above are the after-side baseline of record.
