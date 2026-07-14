@@ -127,6 +127,24 @@ var allowedWritePlanRes = []*regexp.Regexp{
 
 var writePlanOpRe = regexp.MustCompile(`^(?:SEARCH|SCAN) `)
 
+// touchedComponentRows counts the rows already carrying the labels of the
+// logical sessions an append is about to unify — the pre-maintenance half of
+// the component-bound denominator (the appended rows are added after the
+// append reports them).
+func touchedComponentRows(t *testing.T, db *sql.DB, sessions ...string) int64 {
+	t.Helper()
+	var total int64
+	for _, session := range sessions {
+		var n int64
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND logical_session_id = ?`,
+			wire.ToolClaude, session).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		total += n
+	}
+	return total
+}
+
 // writePlanViolations runs EXPLAIN QUERY PLAN (through a plain,
 // non-recording handle) for each statement and returns every SEARCH/SCAN
 // line that is not on the full-key allowlist — the caller decides whether
@@ -213,6 +231,19 @@ func TestAppendMaintenanceBoundedOnCorpus(t *testing.T) {
 	linkBody := syntheticResumeBody(linkSession, "gate-link", []string{"gate-orig-04", "gate-orig-05"}, 3, time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC))
 	putBytes(t, st, linkSession, linkFile, 0, linkBody)
 	linkEv := <-st.AppendEvents()
+	// A heavy-dedupe linkage: every appended row duplicates a component row,
+	// so dedupe deletes as many rows as arrived. Legitimate maintenance here
+	// approaches the accounting ceiling — the case a post-dedupe denominator
+	// would eventually falsely reject.
+	heavySession := syntheticUUID(75_003)
+	heavyFile := syntheticUUID(76_003)
+	heavyShared := make([]string, 10)
+	for i := range heavyShared {
+		heavyShared[i] = fmt.Sprintf("gate-orig-%02d", i)
+	}
+	heavyBody := syntheticResumeBody(heavySession, "gate-heavy", heavyShared, 0, time.Date(2026, 7, 11, 12, 30, 0, 0, time.UTC))
+	putBytes(t, st, heavySession, heavyFile, 0, heavyBody)
+	heavyEv := <-st.AppendEvents()
 	mirrorPath := st.MirrorPath
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
@@ -260,27 +291,59 @@ func TestAppendMaintenanceBoundedOnCorpus(t *testing.T) {
 	// rewrites the losing session's rows once (canonical label + ordinals,
 	// plus dedupe deletes), so its writes are bounded by the touched
 	// connected component — at most one relabel, one ordinal write, and one
-	// delete per component row — never the corpus. The lower side proves the
-	// seam is alive, not trivially zero.
+	// delete per row that existed pre-maintenance or arrived in the append.
+	// The denominator is therefore the PRE-maintenance touched cardinality
+	// (component before the merge plus pending appended rows), NOT the
+	// post-dedupe survivor count: a duplicate-heavy merge deletes most of
+	// what it touched, and a survivor denominator would falsely reject it.
+	// The lower side proves the seam is alive, not trivially zero.
+	linkTouched := touchedComponentRows(t, plain, origSession, linkSession)
 	capture.reset()
 	log.reset()
 	if err := recIdx.ProcessAppend(t.Context(), linkEv); err != nil {
 		t.Fatal(err)
 	}
 	linkMaint := capture.intSum("maint_rows")
+	linkTouched += capture.intSum("rows")
 	if linkAppended := capture.intSum("rows"); linkMaint <= linkAppended {
 		t.Errorf("linkage-creating append reported %d maintenance writes for %d appended rows; the maint_rows seam is dead", linkMaint, linkAppended)
 	}
-	var componentRows int64
-	if err := plain.QueryRow(`SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND logical_session_id = ?`,
-		wire.ToolClaude, origSession).Scan(&componentRows); err != nil {
-		t.Fatal(err)
-	}
-	if linkMaint > 3*componentRows {
-		t.Errorf("linkage append wrote %d maintenance rows for a %d-row component; maintenance must stay component-bounded", linkMaint, componentRows)
+	if linkMaint > 3*linkTouched {
+		t.Errorf("linkage append wrote %d maintenance rows for a %d-row touched component; maintenance must stay component-bounded", linkMaint, linkTouched)
 	}
 	for _, v := range writePlanViolations(t, plain, log.snapshot()) {
 		t.Errorf("non-full-key storage access on the linkage append path: %s", v)
+	}
+
+	// Duplicate-heavy merge: every appended row dies in dedupe (M*U pre-work
+	// against U survivors), so maintenance approaches the accounting ceiling
+	// while staying perfectly legitimate — the shape a survivor-count
+	// denominator would falsely reject must pass the pre-work bound.
+	heavyTouched := touchedComponentRows(t, plain, origSession, heavySession)
+	capture.reset()
+	log.reset()
+	if err := recIdx.ProcessAppend(t.Context(), heavyEv); err != nil {
+		t.Fatal(err)
+	}
+	heavyMaint := capture.intSum("maint_rows")
+	heavyAppended := capture.intSum("rows")
+	heavyTouched += heavyAppended
+	if heavyMaint <= heavyAppended {
+		t.Errorf("heavy-dedupe merge reported %d maintenance writes for %d appended rows; the maint_rows seam is dead", heavyMaint, heavyAppended)
+	}
+	var heavySurvivors int64
+	if err := plain.QueryRow(`SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND wire_session_id = ?`,
+		wire.ToolClaude, heavySession).Scan(&heavySurvivors); err != nil {
+		t.Fatal(err)
+	}
+	if heavySurvivors != 0 {
+		t.Fatalf("heavy-dedupe fixture drifted: %d appended rows survived, want 0 (all duplicates)", heavySurvivors)
+	}
+	if heavyMaint > 3*heavyTouched {
+		t.Errorf("heavy-dedupe merge wrote %d maintenance rows for a %d-row touched component; maintenance must stay component-bounded", heavyMaint, heavyTouched)
+	}
+	for _, v := range writePlanViolations(t, plain, log.snapshot()) {
+		t.Errorf("non-full-key storage access on the heavy-dedupe append path: %s", v)
 	}
 
 	// The component bound only gates anything if it sits far below the
@@ -290,8 +353,10 @@ func TestAppendMaintenanceBoundedOnCorpus(t *testing.T) {
 	if err := plain.QueryRow(`SELECT COUNT(*) FROM sesh_index_messages`).Scan(&corpusRows); err != nil {
 		t.Fatal(err)
 	}
-	if 3*componentRows >= corpusRows {
-		t.Fatalf("fixture too small to discriminate: component bound %d vs corpus %d rows", 3*componentRows, corpusRows)
+	for name, touched := range map[string]int64{"linkage": linkTouched, "heavy-dedupe": heavyTouched} {
+		if 3*touched >= corpusRows {
+			t.Fatalf("fixture too small to discriminate: %s bound %d vs corpus %d rows", name, 3*touched, corpusRows)
+		}
 	}
 
 	// Corpus-charge negative: a deliberate corpus-walk write shape must trip
@@ -302,8 +367,8 @@ func TestAppendMaintenanceBoundedOnCorpus(t *testing.T) {
 	if err := scratch.execMaintenance(t.Context(), `UPDATE sesh_index_messages SET file_ordinal = file_ordinal WHERE tool = ?`, wire.ToolClaude); err != nil {
 		t.Fatal(err)
 	}
-	if scratchTiming.maintRows <= 3*componentRows {
-		t.Errorf("maint_rows detector missed a deliberate corpus-walk write (%d rows charged, bound %d)", scratchTiming.maintRows, 3*componentRows)
+	if scratchTiming.maintRows <= 3*linkTouched || scratchTiming.maintRows <= 3*heavyTouched {
+		t.Errorf("maint_rows detector missed a deliberate corpus-walk write (%d rows charged, bounds %d/%d)", scratchTiming.maintRows, 3*linkTouched, 3*heavyTouched)
 	}
 
 	// Corpus-walk negative: the naive pre-optimization statement shapes must
