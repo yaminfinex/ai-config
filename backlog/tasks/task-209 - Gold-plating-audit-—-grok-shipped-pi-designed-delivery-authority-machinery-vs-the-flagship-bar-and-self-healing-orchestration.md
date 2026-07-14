@@ -3,10 +3,10 @@ id: TASK-209
 title: >-
   Gold-plating audit — grok (shipped) + pi (designed) delivery/authority
   machinery vs the flagship bar and self-healing orchestration
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-14 21:03'
-updated_date: '2026-07-14 21:15'
+updated_date: '2026-07-14 21:25'
 labels: []
 dependencies: []
 ordinal: 208000
@@ -20,8 +20,14 @@ OWNER-DIRECTED (2026-07-14): full complexity review of BOTH the grok family's SH
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every grok-shipped and pi-designed delivery/authority mechanism enumerated with failure class, flagship-bar comparison, self-healing coverage, and cost
-- [ ] #2 Per-mechanism KEEP/SIMPLIFY/DELETE verdict table, evidence-cited, with migration cost for shipped grok code and amendment scope for the pi design
-- [ ] #3 hcom-native grok integration status checked and the native-vs-custom question answered for the grok bridge
-- [ ] #4 Dated identifier-free memo merged-ready in docs/design/ with filed-ready simplification candidates for owner ruling
+- [x] #1 Every grok-shipped and pi-designed delivery/authority mechanism enumerated with failure class, flagship-bar comparison, self-healing coverage, and cost
+- [x] #2 Per-mechanism KEEP/SIMPLIFY/DELETE verdict table, evidence-cited, with migration cost for shipped grok code and amendment scope for the pi design
+- [x] #3 hcom-native grok integration status checked and the native-vs-custom question answered for the grok bridge
+- [x] #4 Dated identifier-free memo merged-ready in docs/design/ with filed-ready simplification candidates for owner ruling
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+MERGED (docs-only, head 1003404). Verdict split: GROK = parity plumbing, not gold-plating (hcom 0.7.23 has NO grok integration — verified at gate; drain/spool/fencing/identity guard reproduced class-b failures, no native substitute); genuine fat = idle-nudge machinery (PROVEN INERT on launched path — launch never passes --session-events; verified at gate binder.go:178 + grok.go:489) and ~200-line manual-guest path. PI = DR-2/DR-3 almost entirely above the flagship bar; DELETE via flagship-parity design amendment (zero migration, nothing built); settlement receipt honestly noted as closing a real report-wrong window with the native-fork as cheap hedge. Addresses the keep-custom characterization decision squarely (its decisive leg cites properties no flagship has). 4 filed-ready candidates for owner ruling. Gate: orchestrator full line-level read + independent verification of both decisive claims; identifier sweep all-FP (rato-in-orchestrator/operator class).
+<!-- SECTION:NOTES:END -->
