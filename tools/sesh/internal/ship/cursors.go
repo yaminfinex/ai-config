@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -84,8 +85,11 @@ func (e *LockedRegistryError) Error() string {
 
 // Registry is the single per-user cursor state file: JSON, written
 // atomically (temp + fsync + rename) while an exclusive flock on a sidecar
-// lock file is held for the daemon's lifetime.
+// lock file is held for the daemon's lifetime. Methods are safe for
+// concurrent use: an authoritative pass runs its per-file work on bounded
+// parallel workers that all record cursor movement here.
 type Registry struct {
+	mu                  sync.Mutex
 	dir                 string
 	lockFile            *os.File
 	cursors             map[string]Cursor
@@ -164,12 +168,16 @@ func (r *Registry) Close() {
 
 // Get returns the cursor for an identity.
 func (r *Registry) Get(id Identity) (Cursor, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	c, ok := r.cursors[id.Key()]
 	return c, ok
 }
 
 // All returns a snapshot of every cursor.
 func (r *Registry) All() []Cursor {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	out := make([]Cursor, 0, len(r.cursors))
 	for _, c := range r.cursors {
 		out = append(out, c)
@@ -205,12 +213,16 @@ func LoadSnapshot(dir string) ([]Cursor, error) {
 // mutations remain immediately visible in memory; callers must only make
 // authoritative state transitions before invoking Put or Delete.
 func (r *Registry) beginBatch() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.batchDepth++
 }
 
 // endBatch closes one batch and durably persists all accumulated mutations
 // when the outermost batch ends.
 func (r *Registry) endBatch() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.batchDepth == 0 {
 		return errors.New("cursor registry batch ended without a matching begin")
 	}
@@ -218,32 +230,42 @@ func (r *Registry) endBatch() error {
 	if r.batchDepth > 0 {
 		return nil
 	}
-	return r.flush()
+	return r.flushLocked()
 }
 
 // Put upserts a cursor. Outside a batch it persists immediately; inside a
 // batch the outermost endBatch performs the durable replacement.
 func (r *Registry) Put(c Cursor) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.cursors[c.Identity().Key()] = c
 	r.dirty = true
 	if r.batchDepth > 0 {
 		return nil
 	}
-	return r.flush()
+	return r.flushLocked()
 }
 
 // Delete GCs a cursor (file deletion; the mirror retains). Persistence uses
 // the same immediate-or-batched rule as Put.
 func (r *Registry) Delete(id Identity) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	delete(r.cursors, id.Key())
 	r.dirty = true
 	if r.batchDepth > 0 {
 		return nil
 	}
-	return r.flush()
+	return r.flushLocked()
 }
 
 func (r *Registry) flush() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.flushLocked()
+}
+
+func (r *Registry) flushLocked() error {
 	if !r.dirty {
 		return nil
 	}

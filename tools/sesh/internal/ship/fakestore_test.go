@@ -50,6 +50,18 @@ type fakeStore struct {
 	// ownerLog records the X-Sesh-Session-Owner header of every PUT per
 	// identity key ("" when absent) — the facts observation surface (U9).
 	ownerLog map[string][]string
+
+	// handleDelay holds every request open before touching store state so
+	// parallel shipper workers actually overlap in the concurrency tests.
+	handleDelay time.Duration
+	// inflight / maxInflight / inflightByKey observe request concurrency for
+	// the bounded-parallel pass invariants: total in-flight never exceeds the
+	// shipper's bound, and no identity ever has two operations in flight
+	// (sameKeyOverlap latches the violation).
+	inflight       int
+	maxInflight    int
+	inflightByKey  map[string]int
+	sameKeyOverlap bool
 }
 
 type fakeFile struct {
@@ -73,7 +85,7 @@ type fakeGen struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{files: map[string]*fakeFile{}, recoveryLog: map[string]int{}, putLog: map[string][]int64{}, ownerLog: map[string][]string{}}
+	return &fakeStore{files: map[string]*fakeFile{}, recoveryLog: map[string]int{}, putLog: map[string][]int64{}, ownerLog: map[string][]string{}, inflightByKey: map[string]int{}}
 }
 
 func (fs *fakeStore) server() *httptest.Server {
@@ -162,6 +174,48 @@ func (fs *fakeStore) setPoisoned(tool, sid, fuuid string) {
 
 func (fs *fakeStore) handle(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, wire.APIRoot+"/files/"), "/")
+	if len(parts) >= 3 {
+		key := fs.key(parts[0], parts[1], parts[2])
+		fs.trackEnter(key)
+		defer fs.trackExit(key)
+	}
+	fs.dispatch(w, r, parts)
+}
+
+// trackEnter/trackExit bracket one request for the concurrency observations;
+// the delay runs OUTSIDE fs.mu so overlapping requests really overlap here
+// (the store logic below serializes on the mutex).
+func (fs *fakeStore) trackEnter(key string) {
+	fs.mu.Lock()
+	fs.inflight++
+	if fs.inflight > fs.maxInflight {
+		fs.maxInflight = fs.inflight
+	}
+	fs.inflightByKey[key]++
+	if fs.inflightByKey[key] > 1 {
+		fs.sameKeyOverlap = true
+	}
+	delay := fs.handleDelay
+	fs.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+}
+
+func (fs *fakeStore) trackExit(key string) {
+	fs.mu.Lock()
+	fs.inflight--
+	fs.inflightByKey[key]--
+	fs.mu.Unlock()
+}
+
+func (fs *fakeStore) concurrencyObserved() (maxInflight int, sameKeyOverlap bool) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.maxInflight, fs.sameKeyOverlap
+}
+
+func (fs *fakeStore) dispatch(w http.ResponseWriter, r *http.Request, parts []string) {
 	writeErr := func(status int, code wire.ErrorCode, gen int, highWater int64) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
