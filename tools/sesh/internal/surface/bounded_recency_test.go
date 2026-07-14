@@ -229,11 +229,13 @@ func openRecordingDB(t *testing.T, path string) (*sql.DB, *queryLog) {
 
 // --- plan evidence ---
 
-// rebuildMarker appears only in the projection rebuild's SQL; stampMarker
-// only in the cheap version probe. Everything else a warm request runs must
-// full-key-seek a pinned index on the base tables.
+// rebuildMarker appears only in the projection rebuild's ranking SQL and
+// memberMarker only in its membership pass; stampMarker only in the cheap
+// version probe. Everything else a warm request runs must full-key-seek a
+// pinned index on the base tables.
 const (
 	rebuildMarker = "first_ingest_jd"
+	memberMarker  = "member_of_logical"
 	stampMarker   = "MAX(rowid) FROM files"
 )
 
@@ -271,7 +273,7 @@ func planViolations(t *testing.T, plain *sql.DB, queries []string) []string {
 		if strings.Contains(q, stampMarker) {
 			continue // two b-tree MAX probes, O(log n) by construction
 		}
-		if strings.Contains(q, rebuildMarker) {
+		if strings.Contains(q, rebuildMarker) || strings.Contains(q, memberMarker) {
 			continue // corpus-wide by design; assertSeeksOnly flags its presence
 		}
 		args := make([]any, strings.Count(q, "?"))
@@ -323,6 +325,9 @@ func assertSeeksOnly(t *testing.T, plain *sql.DB, queries []string) {
 	t.Helper()
 	if n := countMatching(queries, rebuildMarker); n != 0 {
 		t.Errorf("projection rebuild ran %d times on the warm path", n)
+	}
+	if n := countMatching(queries, memberMarker); n != 0 {
+		t.Errorf("projection membership pass ran %d times on the warm path", n)
 	}
 	for _, v := range planViolations(t, plain, queries) {
 		t.Errorf("non-full-key storage access on the warm path: %s", v)
@@ -402,9 +407,12 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 	if !full.Recency().Equal(corpusInstant(4950)) {
 		t.Errorf("session 4950 recency = %v, want max parsed timestamp %v", full.Recency(), corpusInstant(4950))
 	}
-	// Generous ceiling: the real cost is milliseconds; a corpus scan storm
-	// blows straight through it.
-	if elapsed > 5*time.Second {
+	// Generous ceiling: the real cost is ~150ms (the rebuild's two amortized
+	// corpus passes — ranking with projection-carried aggregates, then
+	// membership — inflated ~30x under the race detector); a per-request
+	// corpus scan storm costs seconds PER PAGE locally and blows straight
+	// through it.
+	if elapsed > 10*time.Second {
 		t.Errorf("cold RecentSessions took %v on a %d-session corpus", elapsed, bigCorpusSessions)
 	}
 

@@ -143,11 +143,16 @@ the raw route still serves the whole file. The sessions list is bounded:
 request-time work is proportional to the page, not the corpus (fleet
 corpora run to thousands of files per node). `surface.SQLStore` maintains a
 recency projection — the ranked session-key list, each entry carrying the
-session's node label, plus per-node ranked slices derived in the same
-rebuild and swapped atomically with it, so the per-node view pages a
-prebuilt slice instead of adding a SQL ranking path or walking the corpus
-per request — rebuilt only when a cheap store version stamp (index rows,
-file generations, fact observations — all INSERT-only) moves. The rebuild is single-flighted and
+session's node label, its row-count/max-timestamp aggregates, and its
+member file-generation keys (so listing never walks a listed session's
+index rows at request time: page one lists the most recent = largest
+sessions, and recomputing those aggregates live paid hundreds of
+thousands of row visits per render), plus per-node ranked slices derived
+in the same rebuild and swapped atomically with it, so the per-node view
+pages a prebuilt slice instead of adding a SQL ranking path or walking
+the corpus per request — rebuilt only when a cheap store version stamp
+(index rows, file generations, fact observations — all INSERT-only)
+moves. The rebuild is single-flighted and
 serve-stale-while-revalidating: at most one rebuild runs at a time, a
 request that observes a moved stamp returns the previous projection
 immediately while the refresh runs in the background, and only the very
@@ -155,9 +160,17 @@ first request after startup waits (all concurrent cold requests share that
 one build). This supersedes the projection's original read-your-own-writes
 property: under bulk ingest the stamp moves between every request, and
 rebuilding inline degenerated to a corpus-scale rebuild per page load.
-Staleness is bounded only while the page is watched, and the bound is: only
-the ranked list and its total can lag (session hydration always reads the
-live tables), every request that sees a moved stamp triggers a refresh, and
+Staleness is bounded only while the page is watched, and the bound is: the
+ranked list, its total, and everything a projection entry carries (row
+counts, max timestamp, membership, and the node label the per-node filter
+selects on) serve the rebuild snapshot and can lag — hydration reads live
+tables for per-request data: file bookkeeping times, node facts, owner
+claims. Rendered node labels keep their established split: the unfiltered
+list renders live-hydrated labels while the filtered view renders its
+selection snapshot's label (one snapshot for select and display, so a
+response never lists a row under one node while labeling it another), and
+the transcript route's single-session lookup stays fully live. Every
+request that sees a moved stamp triggers a refresh, and
 the sessions page polls every 60 s, so under continuous ingest a watched page
 serves a list at most one poll interval plus two rebuild durations behind
 the store (the poll that observes a completed rebuild serves that rebuild's
@@ -175,9 +188,12 @@ lands in the `SESH_DEBUG` journal (identifier-free: a
 duration and a session count). Each request
 slices one page of the projection (latest 50 by default; the `?node=` filter
 pages its node's prebuilt slice) and hydrates just those
-sessions through index-seeking, key-constrained queries (the per-page facts
-lookups seek the additive `fact_observations_session` bookkeeping index; the
-frozen wire-doc index schema is untouched). The page states its bound
+sessions through index-seeking, key-constrained queries — full-key seeks
+per page item on the files primary key and the additive
+`fact_observations_session` bookkeeping index; the sessions-list hot path
+runs no query against the message index at all, so its cost is independent
+of how large the listed sessions are (the frozen wire-doc index schema is
+untouched). The page states its bound
 ("showing latest N of Z sessions"), older history stays reachable through
 `?page=N` pager links, and the periodic refresh polls the page — and node
 filter — it is on. The `/` nodes entry point reads only the last-seen
@@ -193,6 +209,9 @@ does store time go" on a live node. Gates: `tests/check-surface-fixtures.sh` (fi
 renders, plus the 5k-session corpus test proving bounded query plans — no
 corpus-table SCAN on the warm path, fixed per-request query count, amortized
 rebuilds — with a self-check that the plan gate catches reintroduced scans,
+the max-size-sessions test proving page cost independent of listed-session
+sizes — zero message-index statements on the warm page, detector proven
+against the deliberately regressed live-hydration shape —
 and the single-flight/serve-stale tests proving concurrent requests never
 duplicate a rebuild, return promptly with the previous projection while one
 runs, converge per the stated bound — including the one-extra-rebuild
