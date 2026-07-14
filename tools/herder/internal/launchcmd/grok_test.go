@@ -64,7 +64,7 @@ esac
 session="$GROK_HOME/sessions/%2Fisolation/$HERDER_GROK_SESSION_ID"
 mkdir -p "$session"
 if [ -f "$HOME/.claude/settings.json" ] && [ "${GROK_CLAUDE_HOOKS_ENABLED:-1}" != 0 ]; then
-  printf '%s\n' '{"sessionUpdate":"hook_execution","runs":[{"name":"global/settings:session_start[0].hooks[0]"}]}' > "$session/updates.jsonl"
+  printf '%s\n' '{"timestamp":"2026-01-01T00:00:00Z","method":"session/update","params":{"update":{"sessionUpdate":"hook_execution","runs":[{"name":"global/settings:session_start[0].hooks[0]"}]}}}' > "$session/updates.jsonl"
 else
   : > "$session/updates.jsonl"
 fi
@@ -73,20 +73,27 @@ fi
 	return path
 }
 
+const realShapedGrokHookUpdate = `{"timestamp":"2026-01-01T00:00:00Z","method":"session/update","params":{"update":{"sessionUpdate":"hook_execution","runs":[{"name":"global/settings:session_start[0].hooks[0]"}]}}}`
+
 func countGlobalSettingsHookExecutions(t *testing.T, data []byte) int {
 	t.Helper()
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	count := 0
 	for scanner.Scan() {
-		var update struct {
-			SessionUpdate string `json:"sessionUpdate"`
-			Runs          []struct {
-				Name string `json:"name"`
-			} `json:"runs"`
+		var envelope struct {
+			Params struct {
+				Update struct {
+					SessionUpdate string `json:"sessionUpdate"`
+					Runs          []struct {
+						Name string `json:"name"`
+					} `json:"runs"`
+				} `json:"update"`
+			} `json:"params"`
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &update); err != nil {
+		if err := json.Unmarshal(scanner.Bytes(), &envelope); err != nil {
 			t.Fatalf("decode Grok update %q: %v", scanner.Bytes(), err)
 		}
+		update := envelope.Params.Update
 		if update.SessionUpdate != "hook_execution" {
 			continue
 		}
@@ -100,6 +107,12 @@ func countGlobalSettingsHookExecutions(t *testing.T, data []byte) int {
 		t.Fatalf("scan Grok updates: %v", err)
 	}
 	return count
+}
+
+func TestCountGlobalSettingsHookExecutionsMatchesRealEnvelope(t *testing.T) {
+	if got := countGlobalSettingsHookExecutions(t, []byte(realShapedGrokHookUpdate+"\n")); got != 1 {
+		t.Fatalf("real-shaped hook update count = %d, want 1", got)
+	}
 }
 
 func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
