@@ -76,13 +76,6 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 		j := openTestJournal(t)
 		queue(t, j, 3)
 		j.Surface(3, "wake", 1)
-		events := filepath.Join(t.TempDir(), "events.jsonl")
-		if err := os.WriteFile(events, []byte("{\"event\":\"phase_changed\",\"phase\":\"tool_execution\"}\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if idle, err := sessionIdle(events); err != nil || idle {
-			t.Fatalf("busy phase idle=%v err=%v", idle, err)
-		}
 		if j.receipts[3].Fetched || j.receipts[3].Acked {
 			t.Fatal("wake advanced receipt")
 		}
@@ -91,7 +84,7 @@ func TestReceiptStateMachineContracts(t *testing.T) {
 		j := openTestJournal(t)
 		queue(t, j, 4)
 		j.Surface(4, "wake", 1)
-		j.Surface(4, "nudge", 1)
+		j.Surface(4, "wake", 1)
 		j.Fetch(4, 1)
 		j.Fetch(4, 1)
 		j.Ack(4, 1)

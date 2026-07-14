@@ -36,7 +36,6 @@ test_names=(
   TestReceiptStateMachineContracts
   TestT1InitialDeliveryThroughPendingFetchAck
   TestT2IdleDeliveryThroughTapFetchAck
-  TestT3BusyTurnDefersIdleAwareNudge
   TestT4DuplicateWakeThroughTapIsIdempotent
   TestT5DuplicateAckThroughMCPIsIdempotent
   TestT6OutOfOrderMessagesDeliverIndependentlyThroughMCP
@@ -82,7 +81,7 @@ for name in "${test_names[@]}"; do
   fi
   declared[$name]=1
 done
-minimum_test_count=39
+minimum_test_count=38
 if ((${#declared[@]} < minimum_test_count)); then
   printf 'GROK TRANSPORT GATE DECLARATION FLOOR VIOLATED — only %d distinct tests remain; restore the %d-test invariant floor.\n' "${#declared[@]}" "$minimum_test_count" >&2
   exit 1

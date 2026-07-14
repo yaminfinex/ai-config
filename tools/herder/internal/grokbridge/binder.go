@@ -37,9 +37,6 @@ type BinderConfig struct {
 	HcomDir         string
 	BusName         string
 	Wait            time.Duration
-	SessionEvents   string
-	NudgeAfter      time.Duration
-	MaxNudges       int
 	SessionID       string
 	IdentityRefresh time.Duration
 }
@@ -87,12 +84,6 @@ func OpenBinder(cfg BinderConfig) (*Binder, error) {
 	cfg.HcomBin = hcomPath
 	if cfg.Wait <= 0 {
 		cfg.Wait = 60 * time.Second
-	}
-	if cfg.NudgeAfter <= 0 {
-		cfg.NudgeAfter = 30 * time.Second
-	}
-	if cfg.MaxNudges <= 0 {
-		cfg.MaxNudges = 2
 	}
 	if cfg.IdentityRefresh <= 0 {
 		cfg.IdentityRefresh = defaultIdentityRefreshInterval
@@ -171,13 +162,10 @@ func (b *Binder) Serve(ctx context.Context) error {
 		return err
 	}
 	go func() { <-serveCtx.Done(); ln.Close() }()
-	errch := make(chan error, 4)
+	errch := make(chan error, 3)
 	go func() { errch <- b.acceptLoop(serveCtx) }()
 	go func() { errch <- b.pickupLoop(serveCtx) }()
 	go func() { errch <- b.identityLoop(serveCtx) }()
-	if b.cfg.SessionEvents != "" {
-		go func() { errch <- b.nudgeLoop(serveCtx) }()
-	}
 	select {
 	case <-b.retired:
 		cancel()
@@ -736,76 +724,6 @@ func (b *Binder) updateCapabilities(label string, build func(*v2.SessionRecord) 
 
 func (b *Binder) recordCapabilityDiagnostic(label string, err error) {
 	_ = appendDiagnostic(filepath.Join(SeatDir(b.cfg.StateDir, b.cfg.Seat), "bridge.log"), fmt.Errorf("record %s capability: %w", label, err))
-}
-
-func (b *Binder) nudgeLoop(ctx context.Context) error {
-	interval := b.cfg.NudgeAfter / 2
-	if interval > time.Second {
-		interval = time.Second
-	}
-	if interval < 50*time.Millisecond {
-		interval = 50 * time.Millisecond
-	}
-	tick := time.NewTicker(interval)
-	defer tick.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-tick.C:
-			idle, err := sessionIdle(b.cfg.SessionEvents)
-			if err != nil || !idle {
-				continue
-			}
-			rows, err := b.journal.NudgeCandidates(b.generation, time.Now().Add(-b.cfg.NudgeAfter), b.cfg.MaxNudges)
-			if err != nil {
-				return err
-			}
-			for _, r := range rows {
-				if err := b.wake(r, "nudge"); err != nil {
-					return err
-				}
-			}
-		}
-	}
-}
-
-func sessionIdle(path string) (bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return false, err
-	}
-	defer f.Close()
-	s := bufio.NewScanner(f)
-	var last map[string]any
-	for s.Scan() {
-		var row map[string]any
-		if json.Unmarshal(s.Bytes(), &row) == nil {
-			last = row
-		}
-	}
-	if err := s.Err(); err != nil {
-		return false, err
-	}
-	if last == nil {
-		return false, nil
-	}
-	event, _ := last["event"].(string)
-	if event == "" {
-		event, _ = last["type"].(string)
-	}
-	phase, _ := last["phase"].(string)
-	switch event {
-	case "turn_completed", "stop", "idle":
-		return true, nil
-	}
-	switch phase {
-	case "idle", "listening", "waiting_for_user":
-		return true, nil
-	case "waiting_for_model", "tool_execution", "permission_prompt":
-		return false, nil
-	}
-	return false, nil
 }
 
 func sqlQuote(s string) string { return strings.ReplaceAll(s, "'", "''") }
