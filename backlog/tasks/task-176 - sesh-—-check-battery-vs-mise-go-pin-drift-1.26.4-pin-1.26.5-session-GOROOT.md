@@ -1,7 +1,7 @@
 ---
 id: TASK-176
 title: 'sesh — check battery vs mise go pin drift (1.26.4 pin, 1.26.5 session GOROOT)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-13 01:01'
 labels:
