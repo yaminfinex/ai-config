@@ -3,10 +3,10 @@ id: TASK-211
 title: >-
   Grok margin cleanup — delete inert idle-nudge machinery and retire the
   manual-guest launch path
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-14 22:26'
-updated_date: '2026-07-14 22:28'
+updated_date: '2026-07-14 23:03'
 labels: []
 dependencies: []
 ordinal: 210000
@@ -20,7 +20,13 @@ OWNER RULING 2026-07-14 (gold-plating audit candidates 3+4, ruled IN; one unit �
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Nudge machinery fully removed (code + flags + tests + docs); no launched-seat behavior change (goldens/battery prove it)
-- [ ] #2 Manual-guest path dependency pre-check performed and reported; path retired to cause+remedy refusal (or stop-and-report if entangled)
-- [ ] #3 All load-bearing mechanisms untouched; full house battery green
+- [x] #1 Nudge machinery fully removed (code + flags + tests + docs); no launched-seat behavior change (goldens/battery prove it)
+- [x] #2 Manual-guest path dependency pre-check performed and reported; path retired to cause+remedy refusal (or stop-and-report if entangled)
+- [x] #3 All load-bearing mechanisms untouched; full house battery green
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+MERGED bd1829f (head 7cf9a66, +24/-187). Part A: nudge machinery deleted (proven inert on launched path); old spool journals replay clean — removed fields were never serialized, probe-verified independently by BOTH reviewers (mixed-version journal replay). Part B: entanglement pre-check found the manual-guest path is the grok shim product behavior + owner-documented verification affordance + battery-covered — retirement REJECTED on evidence, existing fence sufficient, zero change (the audit's own fallback arm). DUAL APPROVE: codex incumbent (authority; also flagged pre-existing T2 handshake race, non-blocking, reproduced at merge-base) + grok calibration (zero findings, high probe quality). Worktree gate 58/58 + post-merge 58/58.
+<!-- SECTION:NOTES:END -->
