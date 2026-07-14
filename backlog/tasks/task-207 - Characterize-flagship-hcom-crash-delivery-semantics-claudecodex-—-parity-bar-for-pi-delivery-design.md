@@ -3,10 +3,10 @@ id: TASK-207
 title: >-
   Characterize flagship hcom crash/delivery semantics (claude+codex) — parity
   bar for pi delivery design
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-14 07:51'
-updated_date: '2026-07-14 07:52'
+updated_date: '2026-07-14 21:13'
 labels: []
 dependencies: []
 ordinal: 206000
@@ -20,8 +20,14 @@ OWNER-DIRECTED PREMISE RE-CHECK (2026-07-14) before pi design sign-off: the pi d
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Crash probe executed against real claude and real codex under isolated HCOM_DIR, mirroring the pi probe method; cursor-advance timing and post-crash replay behavior established with evidence for both
-- [ ] #2 Four-column parity table (native-claude, native-codex, native-pi, DR-2 design) over delivery/crash/recovery/authority properties, each cell evidence-backed or marked unverified
-- [ ] #3 Flagship-parity costing for pi: what herder-wraps-hcom-pi requires, what DR-2/DR-3 machinery it deletes, what is retained (credential scoping stays)
-- [ ] #4 Dated identifier-free memo merged-ready in docs/design/ with an explicit recommendation for the owner ruling
+- [x] #1 Crash probe executed against real claude and real codex under isolated HCOM_DIR, mirroring the pi probe method; cursor-advance timing and post-crash replay behavior established with evidence for both
+- [x] #2 Four-column parity table (native-claude, native-codex, native-pi, DR-2 design) over delivery/crash/recovery/authority properties, each cell evidence-backed or marked unverified
+- [x] #3 Flagship-parity costing for pi: what herder-wraps-hcom-pi requires, what DR-2/DR-3 machinery it deletes, what is retained (credential scoping stays)
+- [x] #4 Dated identifier-free memo merged-ready in docs/design/ with an explicit recommendation for the owner ruling
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+MERGED 4dd8848 (docs-only, memo ba89866). DECISIVE: flagships share native-pi crash window via shared commit_delivery_ack (claude.rs:135/codex.rs:427, ack at hook injection pre-settlement); reproduced SIGKILL strand both harnesses; codex battery full (115ms idle wake, mid-turn busy injection, batch ordering, burst dedupe). Parity table: flagships match native-pi on all five delivery/recovery rows; epochs/lease/lanes absent from ALL native integrations. Costing: flagship-parity pi = few launch-contract lines, deletes DR-2 delivery machinery. Recommendation: flagship parity unless non-delivery properties independently required. Seat continuity: first prober (codex) stalled on usage limits after decisive claude column; second seat (opus) verified from persisted artifacts + ran codex battery. One gate fix round (memo aligned to default-homes ruling). Owner ruling next; gold-plating audit dispatches on this evidence.
+<!-- SECTION:NOTES:END -->
