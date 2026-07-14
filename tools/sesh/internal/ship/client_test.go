@@ -13,34 +13,46 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"sesh/internal/httpx"
 )
 
 // The nil-HTTPClient fallback must never regress to the timeout-less
 // http.DefaultClient: with no bound on a round trip, the hold-position state
-// machine is unreachable when a response simply never arrives.
+// machine is unreachable when a response simply never arrives. The bound
+// must be progress-sensitive, though — a wall-clock cap kills a legitimately
+// slow full-size PUT that is still moving bytes, and the retry then dies the
+// same way at the same offset forever (the wedge reborn as a livelock).
 func TestClientFallbackBoundsRoundTrips(t *testing.T) {
 	hc := (&Client{}).httpClient()
 	if hc == http.DefaultClient {
 		t.Fatal("nil-HTTPClient fallback is http.DefaultClient, which never times out")
 	}
-	if hc.Timeout <= 0 {
-		t.Fatal("fallback client has no overall round-trip timeout")
+	if hc.Timeout != 0 {
+		t.Fatalf("fallback client carries a wall-clock cap (%v); a slow progressing PUT would be killed and retried at the same offset forever", hc.Timeout)
 	}
-	tr, ok := hc.Transport.(*http.Transport)
+	wd, ok := hc.Transport.(*httpx.IdleWatchdogTransport)
 	if !ok {
-		t.Fatalf("fallback transport is %T, want *http.Transport", hc.Transport)
+		t.Fatalf("fallback transport is %T, want the idle-progress watchdog", hc.Transport)
+	}
+	if wd.Idle <= 0 {
+		t.Fatal("watchdog transport has no idle bound; a zero-progress mid-body stall would hang forever")
+	}
+	tr, ok := wd.Base.(*http.Transport)
+	if !ok {
+		t.Fatalf("watchdog base transport is %T, want *http.Transport", wd.Base)
 	}
 	if tr.ResponseHeaderTimeout <= 0 {
 		t.Fatal("fallback transport has no response-header timeout")
 	}
 }
 
-// A stalled store (request delivered, response withheld) must surface from
-// RunOnce as a hold within the fallback client's bound, on the same
-// recovery-GET path a fresh registry takes at daemon start. HTTPClient stays
-// nil here so the round trip runs through the production fallback — the
-// package fallback's own round-trip bound is what fires, shortened in place
-// for the test and restored afterwards.
+// A stalled store (request delivered, response withheld — zero bytes moving)
+// must surface from RunOnce as a hold within the fallback client's idle
+// bound, on the same recovery-GET path a fresh registry takes at daemon
+// start. HTTPClient stays nil here so the round trip runs through the
+// production fallback; the package fallback is swapped for a short-idle
+// twin of itself for the test and restored afterwards.
 func TestStalledStoreSurfacesAsHold(t *testing.T) {
 	h := newHarness(t)
 	h.writeClaude("proj", uuidNormal, fixture(t, "claude-normal.jsonl"))
@@ -50,13 +62,12 @@ func TestStalledStoreSurfacesAsHold(t *testing.T) {
 	}))
 	t.Cleanup(stalled.Close)
 
-	fallback := (&Client{}).httpClient()
-	if fallback == http.DefaultClient {
+	if (&Client{}).httpClient() == http.DefaultClient {
 		t.Fatal("nil-HTTPClient fallback is http.DefaultClient; a stalled store would park RunOnce forever")
 	}
-	prevTimeout := fallback.Timeout
-	fallback.Timeout = 250 * time.Millisecond
-	t.Cleanup(func() { fallback.Timeout = prevTimeout })
+	prev := defaultHTTPClient
+	defaultHTTPClient = httpx.NewBulkClient(250*time.Millisecond, 1)
+	t.Cleanup(func() { defaultHTTPClient = prev })
 
 	h.shipper.Client = &Client{
 		BaseURL:  stalled.URL,

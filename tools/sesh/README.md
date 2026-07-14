@@ -90,7 +90,11 @@ sesh admin drop-file <tool> <session_id> <file_uuid> --yes
 the binary executing the command: it pins the resolved absolute binary path
 into the unit, writes the store URL into the node-local config (Linux: systemd
 user drop-in; macOS: launchd plist), preflights the user bus before any write,
-and warns when linger is off. Files it writes carry a provenance digest: a
+and warns when linger is off. The launchd plist raises the agent's file-
+descriptor soft limit (`SoftResourceLimits` / `NumberOfFiles` 8192): launchd's
+256-fd default starves kqueue-based fsnotify over a large session corpus, and
+re-running setup inserts the block into plists rendered before it existed.
+Files it writes carry a provenance digest: a
 file that still matches its digest is replaced on re-run (URL changes
 included — that is the one-command store migration); an operator-edited or
 pre-digest file is never overwritten without `--force`, and a `--force`
@@ -114,7 +118,11 @@ migrated the cursor registry). `--check` exit codes, stable for scripting:
 
 `sesh status` reports cursor offsets, poisoned files, last ACK age, and store
 reachability. It exits nonzero when the configured store is unreachable or any
-cursor is poisoned.
+cursor is poisoned. The store URL resolves like `sesh update`'s: `--store-url`,
+else `SESH_STORE_URL`, else the installed service config (drop-in / plist) —
+interactive shells don't carry the service's environment, so without that
+last step status would report a correctly-installed macOS node as
+"not configured".
 
 `sesh admin drop-file` is an irreversible operator repair. It refuses to run
 without `--yes`, removes exactly one mirrored file identity plus its index rows,
@@ -431,8 +439,16 @@ the rollout log; the owner ratifies field readiness against them.
 **4. Nodes, any order.** Late nodes need no special handling: the shipper's
 first pass is the same authoritative rescan as every later one, so a node
 onboarded a week late backfills its full local history (up to Claude's
-30-day retention) unaided. Per node, per shipping user — one command, no
-repo, no toolchain (Linux and macOS take the same command):
+30-day retention) unaided. The pass runs its per-file work (recovery GETs,
+PUT streams) on bounded parallel workers — 8, chosen so a several-thousand-
+file first pass is no longer serialized on WAN round trips while this node's
+standing demand on the store's single write connection stays capped
+(docs/design/2026-07-13-sesh-store-read-write-split.md); per-file PUT order
+stays strictly sequential. Measured on a 3,000-file corpus against a store
+answering after an injected 10 ms delay: 61.7 s serialized → 7.9 s bounded
+(7.8×; the ratio is the RTT-bound one, so a ~177 ms WAN link comes down from
+~18 min of round trips to ~2.3 min). Per node, per shipping user — one
+command, no repo, no toolchain (Linux and macOS take the same command):
 
 ```sh
 curl http://sesh.<tailnet>.ts.net:8765/install.sh | sh

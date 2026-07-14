@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"os"
+	"sync"
 	"time"
 
 	"sesh/internal/wire"
@@ -40,6 +41,24 @@ type Shipper struct {
 	// admitted by filesystem hints. Tests shorten it; zero uses the default.
 	hintInterval time.Duration
 
+	// fileConcurrency bounds the parallel per-file workers within one
+	// authoritative pass. Zero uses defaultFileConcurrency; tests set 1 to
+	// characterize the serialized baseline. Deliberately not a config knob:
+	// the default is chosen against the shared store, not a node property.
+	fileConcurrency int
+
+	// passMu enforces the pass-level half of the ordering invariant inside
+	// Shipper itself: RunOnce is exclusive, so "passes never overlap" holds
+	// for any caller, not as an assumption about the sequential daemon loop
+	// in Run. A re-entrant RunOnce would otherwise hand one identity to two
+	// workers and race on NeedsRecovery. A mutex rather than a refusal: a
+	// concurrent caller gets the correct serialized pass instead of a new
+	// error path to handle.
+	passMu sync.Mutex
+
+	// heldMu guards held: parallel workers within a pass record and consult
+	// non-retryable refusals concurrently.
+	heldMu sync.Mutex
 	// held parks identities that hit a non-retryable error
 	// (malformed_request, unknown_tool) until the process restarts: no retry
 	// loop, surfaced loudly instead.
@@ -47,6 +66,25 @@ type Shipper struct {
 }
 
 const defaultHintInterval = 2 * time.Second
+
+// defaultFileConcurrency bounds simultaneous per-file operations (recovery
+// GETs, PUT streams) in one pass. The first pass over a fresh corpus is
+// RTT-serialized per file without it (3-5k files at WAN RTT = 10+ minutes in
+// round trips alone), so single-file latency wants a high bound — but every
+// PUT lands in one write transaction on the store's single write connection
+// (docs/design/2026-07-13-sesh-store-read-write-split.md: an append at corpus
+// scale can hold that connection ~0.5s), so a large bound just moves the
+// queue server-side and starves the other shippers sharing the store. 8 keeps
+// the RTT component of a 3k-file first pass under a couple of minutes while
+// capping this node's standing demand on the shared write path.
+const defaultFileConcurrency = 8
+
+func (s *Shipper) concurrency() int {
+	if s.fileConcurrency > 0 {
+		return s.fileConcurrency
+	}
+	return defaultFileConcurrency
+}
 
 func (s *Shipper) minHintInterval() time.Duration {
 	if s.hintInterval > 0 {
@@ -98,6 +136,8 @@ func (s *Shipper) logger() *slog.Logger {
 // then ship every discovered file to quiescence. Hold-class conditions come
 // back errHold-wrapped; the pass still visits every other file first.
 func (s *Shipper) RunOnce(ctx context.Context) (runErr error) {
+	s.passMu.Lock()
+	defer s.passMu.Unlock()
 	s.Registry.beginBatch()
 	defer func() {
 		if err := s.Registry.endBatch(); err != nil {
@@ -109,6 +149,18 @@ func (s *Shipper) RunOnce(ctx context.Context) (runErr error) {
 	if err != nil {
 		return err
 	}
+	// Ordering invariant under the bounded-parallel pass: at most one
+	// in-flight operation per file identity, ever. Across identities the wire
+	// is order-independent (each PUT/recovery GET carries only that
+	// identity's offset and fingerprint; the store keys all state per
+	// identity), but WITHIN an identity the append protocol assumes strictly
+	// sequential PUTs against a known high-water. Both are guaranteed by
+	// construction: passes never overlap (RunOnce serializes on passMu),
+	// and within a pass each identity is handed to exactly one worker — which
+	// requires deduping here, because Discover can return the same identity
+	// at two paths (a copied project directory). The serial code tolerated
+	// duplicates by shipping them back to back; parallel workers must not.
+	discovered = dedupeByIdentity(discovered)
 	present := make(map[string]bool, len(discovered))
 	for _, d := range discovered {
 		present[d.Identity.Key()] = true
@@ -119,10 +171,15 @@ func (s *Shipper) RunOnce(ctx context.Context) (runErr error) {
 		// silent stretch on a fresh registry over a large corpus; say so
 		// before it starts instead of looking wedged.
 		s.logger().Info("cursor registry missing or unreadable; recovering positions from store", "files", len(discovered))
-		for _, d := range discovered {
+		if err := s.forEachFile(ctx, discovered, func(d Discovered) error {
 			if err := s.recoverCursor(ctx, d); err != nil {
 				return fmt.Errorf("cursor recovery for %s: %w", d.Identity.Key(), err)
 			}
+			return nil
+		}); err != nil {
+			// NeedsRecovery stays set: recovered identities have cursors, so
+			// the retried pass resumes behind them instead of restarting.
+			return err
 		}
 		// All discovered identities recovered; the registry is authoritative
 		// again.
@@ -148,13 +205,54 @@ func (s *Shipper) RunOnce(ctx context.Context) (runErr error) {
 		return err
 	}
 
-	var holds []error
-	for _, d := range discovered {
+	return s.forEachFile(ctx, discovered, func(d Discovered) error {
 		if err := s.shipFile(ctx, d); err != nil {
-			holds = append(holds, fmt.Errorf("%s: %w", d.Identity.Key(), err))
+			return fmt.Errorf("%s: %w", d.Identity.Key(), err)
 		}
+		return nil
+	})
+}
+
+// forEachFile runs fn once per discovered file on at most concurrency()
+// workers and joins every error: one file's failure never aborts the pass
+// for the others (the joined result still errors.Is-matches errHold when any
+// hold occurred). Callers must have deduped by identity — one worker owns an
+// identity for the whole pass.
+func (s *Shipper) forEachFile(ctx context.Context, files []Discovered, fn func(Discovered) error) error {
+	sem := make(chan struct{}, s.concurrency())
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errs []error
+	for _, d := range files {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := fn(d); err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+		}()
 	}
-	return errors.Join(holds...)
+	wg.Wait()
+	return errors.Join(errs...)
+}
+
+// dedupeByIdentity keeps the first discovery of each identity, preserving
+// walk order. See the ordering invariant in RunOnce.
+func dedupeByIdentity(files []Discovered) []Discovered {
+	seen := make(map[string]bool, len(files))
+	out := files[:0]
+	for _, d := range files {
+		if seen[d.Identity.Key()] {
+			continue
+		}
+		seen[d.Identity.Key()] = true
+		out = append(out, d)
+	}
+	return out
 }
 
 func (s *Shipper) recordOwnerObservations(discovered []Discovered) error {
@@ -250,7 +348,7 @@ func (s *Shipper) recoverCursor(ctx context.Context, d Discovered) error {
 // diagram literally: size regression before fingerprint comparison, cursor
 // advance only on durable ACK, and the frozen error-catalog reactions.
 func (s *Shipper) shipFile(ctx context.Context, d Discovered) error {
-	if reason, ok := s.held[d.Identity.Key()]; ok {
+	if reason, ok := s.heldReason(d.Identity.Key()); ok {
 		s.logger().Warn("file held (non-retryable store refusal); restart after remedy", "identity", d.Identity.Key(), "reason", reason)
 		return nil
 	}
@@ -406,15 +504,28 @@ func (s *Shipper) shipFile(ctx context.Context, d Discovered) error {
 			maxBody /= 2
 			continue
 		default: // malformed_request, unknown_tool, anything unrecognized
-			if s.held == nil {
-				s.held = map[string]string{}
-			}
-			s.held[d.Identity.Key()] = string(werr.Code)
+			s.holdFile(d.Identity.Key(), string(werr.Code))
 			s.logger().Error("non-retryable store refusal; holding file until restart",
 				"identity", d.Identity.Key(), "code", werr.Code, "message", werr.Message)
 			return nil
 		}
 	}
+}
+
+func (s *Shipper) heldReason(key string) (string, bool) {
+	s.heldMu.Lock()
+	defer s.heldMu.Unlock()
+	reason, ok := s.held[key]
+	return reason, ok
+}
+
+func (s *Shipper) holdFile(key, reason string) {
+	s.heldMu.Lock()
+	defer s.heldMu.Unlock()
+	if s.held == nil {
+		s.held = map[string]string{}
+	}
+	s.held[key] = reason
 }
 
 func readRange(path string, offset int64, n int) ([]byte, error) {

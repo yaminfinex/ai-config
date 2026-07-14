@@ -545,3 +545,100 @@ func TestDarwinRefusalBeforeAnyAction(t *testing.T) {
 		t.Fatalf("forced plist URL = %q, %v", url, ok)
 	}
 }
+
+// --- launchd fd soft limits ----------------------------------------------------
+
+// launchd's default 256-fd soft limit starves kqueue-based fsnotify over a
+// large session corpus, so every rendered plist must raise it — including
+// rewrites of plists rendered before the key existed.
+
+func softLimitCount(content []byte) int {
+	return strings.Count(string(content), "<key>SoftResourceLimits</key>")
+}
+
+func TestPlistFreshRenderSetsSoftResourceLimits(t *testing.T) {
+	content, err := RenderPlist(nil, "/Users/u/.local/bin/sesh", urlA, "/Users/u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if softLimitCount(content) != 1 {
+		t.Fatalf("fresh plist SoftResourceLimits blocks = %d, want 1:\n%s", softLimitCount(content), content)
+	}
+	if !strings.Contains(string(content), "<key>NumberOfFiles</key>") ||
+		!strings.Contains(string(content), "<integer>8192</integer>") {
+		t.Fatalf("fresh plist missing NumberOfFiles 8192:\n%s", content)
+	}
+}
+
+func TestPlistRewriteInsertsSoftResourceLimitsWhenMissing(t *testing.T) {
+	fresh, err := RenderPlist(nil, "/Users/u/.local/bin/sesh", urlA, "/Users/u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A plist rendered before the SoftResourceLimits key existed.
+	old := strings.Replace(string(fresh),
+		"    <key>SoftResourceLimits</key>\n    <dict>\n        <key>NumberOfFiles</key>\n        <integer>8192</integer>\n    </dict>\n", "", 1)
+	if softLimitCount([]byte(old)) != 0 {
+		t.Fatalf("test setup: old-style plist still carries the block:\n%s", old)
+	}
+
+	rewritten, err := RenderPlist([]byte(old), "/Users/u/.local/bin/sesh", urlB, "/Users/u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if softLimitCount(rewritten) != 1 {
+		t.Fatalf("rewrite SoftResourceLimits blocks = %d, want 1:\n%s", softLimitCount(rewritten), rewritten)
+	}
+	if url, ok := PlistStoreURL(rewritten); !ok || url != urlB {
+		t.Fatalf("rewritten plist URL = %q, %v", url, ok)
+	}
+	if exe, ok := PlistExecPath(rewritten); !ok || exe != "/Users/u/.local/bin/sesh" {
+		t.Fatalf("rewritten plist exe = %q, %v", exe, ok)
+	}
+	// The block must land inside the top-level dict, i.e. before </plist>'s
+	// closing </dict>, and a further rewrite must not duplicate it.
+	body := string(rewritten)
+	if strings.Index(body, "<key>SoftResourceLimits</key>") > strings.LastIndex(body, "</dict>") {
+		t.Fatalf("SoftResourceLimits inserted outside the top-level dict:\n%s", body)
+	}
+	again, err := RenderPlist(rewritten, "/Users/u/.local/bin/sesh", urlB, "/Users/u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if softLimitCount(again) != 1 {
+		t.Fatalf("second rewrite duplicated SoftResourceLimits:\n%s", again)
+	}
+}
+
+// --- installed store-URL resolution --------------------------------------------
+
+func TestInstalledStoreURLDarwinReadsPlist(t *testing.T) {
+	home := t.TempDir()
+	content, err := RenderPlist(nil, "/usr/local/bin/sesh", urlA, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(PlistPath(home)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(PlistPath(home), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	url, path, ok := InstalledStoreURL("darwin", home)
+	if !ok || url != urlA {
+		t.Fatalf("InstalledStoreURL(darwin) = %q, %v; want %q", url, ok, urlA)
+	}
+	if path != PlistPath(home) {
+		t.Fatalf("consulted path = %q, want the plist %q", path, PlistPath(home))
+	}
+}
+
+func TestInstalledStoreURLNamesPathWhenAbsent(t *testing.T) {
+	home := t.TempDir()
+	if url, path, ok := InstalledStoreURL("darwin", home); ok || path != PlistPath(home) {
+		t.Fatalf("absent plist: got %q, %q, %v; want ok=false naming the plist path", url, path, ok)
+	}
+	if url, path, ok := InstalledStoreURL("linux", home); ok || path != DropinPath(home) {
+		t.Fatalf("absent drop-in: got %q, %q, %v; want ok=false naming the drop-in path", url, path, ok)
+	}
+}

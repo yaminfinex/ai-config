@@ -18,7 +18,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
+	"sesh/internal/httpx"
 	"sesh/internal/setup"
 )
 
@@ -67,7 +69,12 @@ func Run(opts Options) error {
 		opts.Out = os.Stdout
 	}
 	if opts.Client == nil {
-		opts.Client = http.DefaultClient
+		// Bounded, never http.DefaultClient: a stalled release fetch would
+		// otherwise hang the updater forever (the shipper-fallback wedge
+		// class). Progress-sensitive, not wall-clock: the binary download is
+		// the largest transfer in the codebase and must survive a slow
+		// relayed link at any speed; only a zero-progress minute cuts it.
+		opts.Client = httpx.NewBulkClient(time.Minute, 2)
 	}
 	if opts.Runner == nil {
 		opts.Runner = setup.NewExecRunner()
@@ -161,23 +168,11 @@ func resolveBaseURL(opts Options) (string, error) {
 	if opts.StoreURL != "" {
 		return strings.TrimRight(opts.StoreURL, "/"), nil
 	}
-	var content []byte
-	var path string
-	switch opts.OS {
-	case "darwin":
-		path = setup.PlistPath(opts.Home)
-		content, _ = os.ReadFile(path)
-		if url, ok := setup.PlistStoreURL(content); ok {
-			return strings.TrimRight(url, "/"), nil
-		}
-	default:
-		path = setup.DropinPath(opts.Home)
-		content, _ = os.ReadFile(path)
-		if url, ok := setup.DropinStoreURL(content); ok {
-			return strings.TrimRight(url, "/"), nil
-		}
+	url, path, ok := setup.InstalledStoreURL(opts.OS, opts.Home)
+	if !ok {
+		return "", fmt.Errorf("no store URL: %s has none and --store-url was not passed (run `sesh setup` first)", path)
 	}
-	return "", fmt.Errorf("no store URL: %s has none and --store-url was not passed (run `sesh setup` first)", path)
+	return strings.TrimRight(url, "/"), nil
 }
 
 // resolveTarget returns the file `sesh update` may replace: the service's

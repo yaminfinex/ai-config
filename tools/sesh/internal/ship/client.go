@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
 
+	"sesh/internal/httpx"
 	"sesh/internal/wire"
 )
 
@@ -25,28 +25,26 @@ type Client struct {
 	OSUser     string
 }
 
-// defaultHTTPClient bounds every store round trip. http.DefaultClient has no
-// timeout at any layer, so a single stalled request (connection up, response
-// never delivered) parks the whole pass inside one round trip and the
-// unreachable-store reaction — hold position, jittered backoff (wire doc,
-// Error Catalog, store_unavailable) — never gets to run. Dial and
-// response-header stalls surface within seconds; the overall Timeout is the
-// hard cap sized so a full-size PUT body (wire.MaxPUTBody) still fits over a
-// slow relayed link.
-var defaultHTTPClient = &http.Client{
-	Timeout: 5 * time.Minute,
-	Transport: &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 15 * time.Second,
-		}).DialContext,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		IdleConnTimeout:       90 * time.Second,
-	},
-}
+// defaultHTTPClient bounds every store round trip. An unbounded client would
+// let a single stalled request (connection up, response never delivered) park
+// the whole pass inside one round trip so the unreachable-store reaction —
+// hold position, jittered backoff (wire doc, Error Catalog,
+// store_unavailable) — never gets to run. The bound is progress-sensitive,
+// not wall-clock: a full-size PUT body (wire.MaxPUTBody) on a slow relayed
+// link may legitimately take longer than any fixed cap, and a cap-killed PUT
+// is retried at the same offset with the same body — the same wedge as a
+// time-based livelock. Only a zero-progress stall (no byte moved for
+// idleProgressTimeout) cuts the request; idle connections match the pass's
+// file-level concurrency bound so parallel workers reuse connections to the
+// one store host.
+var defaultHTTPClient = httpx.NewBulkClient(idleProgressTimeout, defaultFileConcurrency)
+
+// idleProgressTimeout is how long a store round trip may move no bytes in
+// either direction before it is cut as a zero-progress stall. Generous
+// against ingest pauses (a corpus-scale append transaction holds the store's
+// write connection ~0.5s, queueing multiplies that under load) while still
+// unwedging a dead-but-connected store within a minute.
+const idleProgressTimeout = time.Minute
 
 func (c *Client) httpClient() *http.Client {
 	if c.HTTPClient != nil {

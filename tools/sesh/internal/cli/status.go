@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"sesh/internal/httpx"
+	"sesh/internal/setup"
 	"sesh/internal/ship"
 )
 
@@ -30,6 +33,21 @@ func newStatus() *cobra.Command {
 			}
 			if storeURL == "" {
 				storeURL = os.Getenv("SESH_STORE_URL")
+			}
+			configPath := ""
+			if storeURL == "" {
+				// Interactive shells don't carry SESH_STORE_URL — the URL
+				// lives in the installed service config only (the launchd
+				// plist on macOS, the systemd drop-in on Linux). Resolve it
+				// the way `sesh update` does so status stops reporting a
+				// correctly-installed node as "not configured".
+				if home, herr := os.UserHomeDir(); herr == nil {
+					var url string
+					var ok bool
+					if url, configPath, ok = setup.InstalledStoreURL(runtime.GOOS, home); ok {
+						storeURL = url
+					}
+				}
 			}
 			cursors, err := ship.LoadSnapshot(stateDir)
 			if err != nil {
@@ -70,7 +88,7 @@ func newStatus() *cobra.Command {
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), "store: reachable")
 			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "store: not configured")
+				fmt.Fprintf(cmd.OutOrStdout(), "store: not configured (no --store-url or SESH_STORE_URL, and %s carries none)\n", configPath)
 			}
 			if poisoned > 0 {
 				return fmt.Errorf("%d poisoned file(s)", poisoned)
@@ -83,12 +101,16 @@ func newStatus() *cobra.Command {
 	return cmd
 }
 
+// pingClient is bounded, never http.DefaultClient: an interactive status
+// must fail within seconds when the store stalls, not hang the terminal.
+var pingClient = httpx.NewClient(15*time.Second, 2)
+
 func pingStore(ctx context.Context, baseURL string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/v1/health", nil)
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := pingClient.Do(req)
 	if err != nil {
 		return err
 	}

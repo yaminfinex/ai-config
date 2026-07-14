@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"sesh/internal/index"
+	"sesh/internal/setup"
 	"sesh/internal/ship"
 	"sesh/internal/store"
 	"sesh/internal/wire"
@@ -471,7 +472,68 @@ func TestStatusFailsOnUnreachableStore(t *testing.T) {
 	}
 }
 
+func TestStatusResolvesStoreURLFromInstalledConfig(t *testing.T) {
+	// No --store-url and no SESH_STORE_URL: interactive status must resolve
+	// the URL from the installed service config the way `sesh update` does
+	// (on macOS the URL lives only in the launchd plist the service reads;
+	// this exercises the same resolution seam through the drop-in on the
+	// test platform — setup.InstalledStoreURL's darwin branch is unit-tested
+	// beside it).
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SESH_STORE_URL", "")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/health" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	dropin := setup.DropinPath(home)
+	if err := os.MkdirAll(filepath.Dir(dropin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dropin, setup.RenderDropin(nil, server.URL), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := newRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"status", "--state-dir", t.TempDir()})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("status with installed config: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "store: reachable") {
+		t.Fatalf("status did not resolve the store URL from the installed config:\n%s", out.String())
+	}
+}
+
+func TestStatusNamesConfigPathWhenUnconfigured(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SESH_STORE_URL", "")
+
+	root := newRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"status", "--state-dir", t.TempDir()})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("status unconfigured: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "store: not configured") || !strings.Contains(out.String(), setup.DropinPath(home)) {
+		t.Fatalf("unconfigured status must name the consulted config path:\n%s", out.String())
+	}
+}
+
 func TestStatusFailsOnPoisonedCursor(t *testing.T) {
+	// HOME is pinned to keep the test off any real installed service config
+	// on the machine running it (status would otherwise ping a live store).
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("SESH_STORE_URL", "")
 	stateDir := t.TempDir()
 	writeCursor(t, stateDir, ship.Cursor{
 		Tool:      wire.ToolClaude,
