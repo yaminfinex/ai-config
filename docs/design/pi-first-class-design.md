@@ -15,9 +15,18 @@ external lane is operator-capability-bearing — location checks demoted to
 defense-in-depth after the brokered-launch counterexample; round 9: explicit
 stdin presentation — herder never auto-acquires operator authority from
 caller-controlled context, and the same-UID concession is stated as
-load-bearing with owner sign-off), pending re-certification on the amendment
-diff
-Subject: `@earendil-works/pi-coding-agent` 0.80.6 against herder + hcom 0.7.23
+load-bearing with owner sign-off; round 10, 2026-07-14: the owner
+**default-homes ruling** (standing-orders 20.8) — the per-seat managed home
+and the pinned isolated install dissolve to the **live default Pi home and
+the vendor-updated default install with a recorded vendor version**;
+credential scoping in launch env construction is retained, the DR-2
+delivery/authority machinery stands unchanged per the keep-custom decision
+(`docs/design/2026-07-14-hcom-native-pi-characterization.md`), and every
+property the ruling weakens is recorded for sign-off in §12 item 9), pending
+re-certification on the amendment diff
+Subject: `@earendil-works/pi-coding-agent` against herder + hcom 0.7.23 —
+characterized at 0.80.6; deployed vendor-updated at the default install per
+the 2026-07-14 ruling
 
 Evidence base (cited throughout by path + section):
 
@@ -32,6 +41,10 @@ Evidence base (cited throughout by path + section):
   design-time verification V1–V9), the launch-contract shape (its DR-3), the identity
   rules and fork-preassignment erratum (its DR-4), the observability-honesty rules
   (its DR-5), and the staging/activation discipline (its §11).
+- `docs/design/2026-07-14-hcom-native-pi-characterization.md` — the hcom-native
+  Pi integration probe record. Its decision ("keep the custom DR-2 inbound state
+  machine; the Pi design stands unchanged") is the standing delivery ruling this
+  amendment does not reopen: delivery is orthogonal to home location.
 - Grok family activation and hardening evidence (hcom 0.7.23; recorded in the grok
   program's backlog notes and review threads; mechanism-level facts restated inline
   where cited): the one-shot `hcom start` placeholder latch and its de-placeholder
@@ -43,15 +56,20 @@ Evidence base (cited throughout by path + section):
 
 ## 1. Settled ground (binding; not relitigated here)
 
+Rows superseded by the 2026-07-14 default-homes ruling are rewritten in place;
+the round-10 header entry and §12 item 9 record what changed and what it costs.
+The demo report's findings remain valid characterization evidence throughout —
+what changed is the deployment posture ruled on top of them.
+
 | Constraint | Source |
 |---|---|
-| Pi is **fully herder-managed**: a dedicated managed home per seat under the herder state root. Pi does not consume `PI_HOME`; herder defines the concept and translates it into `HOME`, `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, and the four XDG roots. | owner ruling; demo "Managed home and state model" |
+| Pi seats run against the **live default Pi home and the vendor-updated default install**: `HOME` is the operator's real home; Pi's agent dir, session root, and XDG roots resolve to their defaults. The former per-seat managed home (the `PI_HOME` translation under the herder state root) is **dissolved**. Ruling context, binding: single-purpose machines; ringfencing expressly not required; the claude/codex live-home fleet norm extends to Pi; seat-scoped behavior deltas ride **launch env only**, never owner config writes. The family remains herder-owned end-to-end (DR-1) — what dissolves is state isolation, not lifecycle authority. Herder's own seat state (spool, journal, reservation/activation records) stays under the herder state root as before. | owner ruling 2026-07-14 (standing-orders 20.8; supersedes the earlier managed-home ruling); demo "Managed home and state model" retained as characterization evidence |
 | Binding is a **native TypeScript Pi extension** — no external bridge process. The probe-proven inject path is `pi.sendUserMessage(...)` producing an `input` event with `source=extension` and a turn that runs to `agent_settled`. | owner ruling; demo "Binding fork", injection probe |
 | Offline/update suppression: `PI_OFFLINE=1` (couples the version-check skip) plus `PI_TELEMETRY=0`. `PI_SKIP_VERSION_CHECK=1` alone is too narrow. Inference is not gated by offline mode (strace-backed for one Anthropic call; per-provider residual-network checks remain integration-test work). | demo "Startup network and update behavior" |
 | Credentials: **one provider per seat**, routed by environment, referenced **by name only** — never in argv, config, registry, logs, doctrine, or reports. A cross-provider model change is a controlled relaunch with a re-filtered environment. | owner ruling; demo "Provider routing and least privilege" |
-| Pinned install integrity: explicit version plus tarball and CLI-entry hashes, verified with the demo's audit commands at provision time. A per-launch binary hash gate is **not earned**. | demo "Installation provenance", clause table |
-| **Every** Pi invocation receives the managed environment — `--help` creates mutable state even though `--version` does not. Installer checks run inside a scratch home. | demo "Startup network and update behavior" |
-| Per-launch config rewrite is **not earned**: settings are seeded once; environment flags provide stable startup suppression. Pi has no observed config-drift surface. | demo clause table |
+| Install integrity under the ruling: the install is the **vendor-updated default**; herder records the **observed vendor version** at provision and at every launch — no hash gate, no supported-version refusal. The demo's 0.80.6 tarball/CLI-entry hashes remain as characterization provenance, not a gate. Version-drift consequences are an owner-signed delta (§12 item 9). | owner ruling 2026-07-14; demo "Installation provenance" retained as evidence |
+| Every **seat launch** receives the herder-constructed environment (env deltas + exactly one named provider credential — DR-3). The former every-invocation scratch-home ceremony dissolves with the pinned installer; Pi's `--help`-creates-state behavior now writes ordinary default-home state (delta recorded, §12 item 9). | owner ruling 2026-07-14; demo "Startup network and update behavior" retained as evidence |
+| Herder writes **no owner Pi config, ever**: the former settings seeding dissolves with the managed home; startup suppression rides `PI_OFFLINE=1`/`PI_TELEMETRY=0` in the launch env (seat-scoped deltas ride launch env only). The one herder-owned artifact in the default home is the managed extension in `agent/extensions/` (the native-extension binding is settled; hcom's own native Pi integration uses the same surface), version-recorded and inert without seat launch-env coordinates (DR-3). | owner ruling 2026-07-14; demo clause table |
 | The `/proc` post-spawn environment ceremony is **CONDITIONAL, not settled**: retain a one-time post-spawn environment assertion until herder's actual pane-spawn path for Pi is characterized as env-preserving direct-exec. This design carries the conditionality forward (§DR-3, §13 activation unit); it is not resolved on paper. | owner ruling; demo clause table |
 | Pi sessions are versioned JSONL trees: header carries format version, session UUID, timestamp, cwd, optional parent-session reference; `--fork` creates a parent-linked file; `--session-dir`/`PI_CODING_AGENT_SESSION_DIR` force the root. | demo "Session compatibility" |
 | hcom 0.7.23 pickup contract (proven for grok, adopted verbatim): anonymous `hcom events --full` oldest-first paged drain above a journal-derived cursor with mandatory binder-side ascending-id sort before append; `--wait` demoted to an edge trigger; identity-free reads with a scrubbed environment; `msg_delivered_to` as the routing predicate; `hcom listen` rejected. | grok design DR-1 + V1–V5, V9 |
@@ -67,8 +85,10 @@ outside Pi itself**:
 - **Spool** — the seat's durable message journal (append-only JSONL under
   `<HERDER_STATE_DIR>/pi/<seat-guid>/journal.jsonl`), same house pattern as grok's.
   Single source of truth for delivery state; survives every process here.
-- **Extension** — the herder-managed Pi extension installed in the seat's
-  `agent/extensions/`. The binder-owner: activates the seat's ownership epoch on
+- **Extension** — the herder-managed Pi extension installed once in the default
+  home's `agent/extensions/` (shared across seats and the owner's interactive Pi
+  runs under the default-homes ruling; it activates only under seat launch-env
+  coordinates and is inert otherwise — DR-3). The binder-owner: activates the seat's ownership epoch on
   `session_start`, runs the **inbound driver** (the specified drain/wait loop —
   DR-2), injects via `pi.sendUserMessage`, translates Pi lifecycle events into seat
   status, releases idempotently on `session_shutdown`. Lives and dies with the Pi
@@ -186,8 +206,8 @@ post-activation; Pi ships with them):
   signals; the recorded hardening direction is allowlists on security boundaries.
   `herder pi bus` therefore constructs the hcom child environment from an explicit
   allowlist (`HOME`, `PATH` floor, `HCOM_DIR`, and nothing tool-signal-shaped),
-  regardless of what its own process inherited. Pi's managed process environment is
-  itself allowlist-built (DR-3), so no `CLAUDE*` signal should exist to leak — the
+  regardless of what its own process inherited. Pi's seat process environment is
+  itself launch-constructed (DR-3), so no `CLAUDE*` signal should exist to leak — the
   allowlist makes that true even for hostile or foreign launch contexts (T13).
 - **Pinned absolute hcom binary.** Live grok evidence: resolving `hcom` through
   ambient PATH hit a cwd-sensitive version-manager shim and failed `hcom start`
@@ -265,8 +285,14 @@ reflects the detected calling environment, not `pi` (grok design V6); the regist
 `tool: pi` row is authoritative, and the upstream label nicety stays on the same
 HOLD the owner already ruled for grok.
 
-**Alternatives considered** (beyond the three-way fork above): an upstream `hcom pi`
-launcher — hcom 0.7.23 has no pi row and waiting on upstream blocks the family;
+**Alternatives considered** (beyond the three-way fork above): the native `hcom pi`
+launcher/extension — hcom 0.7.23 ships one, and it was probed head-on: its receipt
+is the `sendUserMessage` call, not a settled turn, it has no ownership epochs,
+driver lease, capability lanes, or herder lifecycle authority, and a better native
+receipt would add none of those — kept as compatibility evidence and a reference
+implementation, ruled out as the production delivery boundary
+(`docs/design/2026-07-14-hcom-native-pi-characterization.md`, the standing
+keep-custom decision);
 RPC-mode external controller as binder — explicitly rejected by the demo (weaker
 session-transition access, second crash protocol; demo "Binding fork: Decision");
 transcript scraping — rejected by the demo (the extension API removes the need).
@@ -379,15 +405,20 @@ lane(s) accept it:
 
 - **Mint (human-shell bootstrap).** Minted once at family provisioning
   (`herder pi operator init`, a step of the same owner-run, non-seat setup
-  that installs the pinned Pi), **interactively** — the command prompts for
+  that provisions the Pi family), **interactively** — the command prompts for
   confirmation on a terminal, so a brokered non-interactive invocation fails
   on the missing interaction, not on environment heuristics. The mint writes
   the hash into family state and the plaintext credential to a 0600 file the
   **operator chooses and owns** (conventionally
   `~/.config/herder/pi-operator`); herder records only the hash, never the
   location. Re-bootstrap after loss is the same owner-run command. The
-  managed-home and seat-cgroup refusals remain as **belt**, relabeled as
-  such — they are not the boundary.
+  seat-cgroup refusal remains as **belt**, relabeled as such — it is not the
+  boundary. The former managed-home belt refusal **dissolved with managed
+  homes**: under the default-homes ruling every seat shares the operator's
+  live home, so a home-based origin check no longer distinguishes anything —
+  and the conventional credential path now sits inside that shared home
+  (delta recorded, §12 item 9; reading it remains the conceded
+  deliberate-acquisition class).
 - **Presentation — never resolution.** Herder has **no code path that locates
   or reads the operator credential**. Every external-lane op takes the
   capability from **its own stdin, supplied by the caller**; empty or invalid
@@ -516,7 +547,7 @@ restart — runs the same protocol:
    generation is refused. The superseding attempt's quiesce (step 2) kills the
    superseded attempt's **recorded child** by exact pid + start-time — a slow
    launcher's Pi that execed but never activated is terminated, never left
-   running as a same-UID orphan holding the managed home and the provider
+   running as a same-UID orphan holding the seat's provider
    credential outside bind readiness, epoch fencing, and cull's reach. Cleanup
    is generation-scoped: an abandoned or losing attempt's teardown can remove
    **only artifacts and the process keyed to its own generation** — it
@@ -803,7 +834,6 @@ never loops.
 | `inject-degraded` | Extension cannot currently inject (extension error, no session) | extension diagnostics / activation state |
 | `driver-degraded` | Inbound pickup halted; reported from supervision or stale lease | backoff exhausted, top-level exit, or lease expiry |
 | `control-degraded` | Live extension lacks the capability token; recovery is a controlled relaunch (attempt-protocol pre-exec rekey — never a live handoff) | failed token verification journaled |
-| `auth-drift` | Persistent auth store became non-empty (DR-5) | store digest check |
 | `spool-quota` | Draining paused at quota; backlog deferred in hcom, counted | quota check at drain |
 
 ### Persistence format
@@ -835,65 +865,86 @@ are structurally impossible with disjoint key spaces.
 
 **DECISION.** `herder spawn --agent pi` becomes a first-class family with a
 herder-owned launch path in `launchcmd` (joining `claude|codex|gemini|grok`), execing
-the pinned Pi CLI directly with a fully explicit, allowlist-built child environment
-and argv. Nothing routes through an `hcom <tool>` launcher (none exists for pi).
+the provisioning-recorded vendor Pi entry point directly with a fully explicit,
+constructed child environment
+and argv. Nothing routes through an `hcom <tool>` launcher (hcom 0.7.23 does ship
+a native `hcom pi` launcher — characterized and ruled out for production seats;
+the keep-custom decision, evidence base above).
 
-### Provisioning (once per pinned version, not per launch)
+### Provisioning (vendor install resolved and recorded — not pinned)
 
-1. **Pinned install.** `herder pi install` (provisioning surface) installs
-   `@earendil-works/pi-coding-agent` at the pinned version into an immutable shared
-   prefix `<HERDER_STATE_DIR>/pi/install/<version>/`, using the demo's isolated
-   `env -i` npm procedure (scratch HOME, isolated npm cache — demo "Reproducible
-   scratch layout and audit commands"), then verifies: package version, tarball
-   SHA-256 `2a77634640b2d86d90d24087bb67559ecf2366e0fb52a42c55eed416147da411`,
-   registry integrity, and CLI-entry SHA-256
-   `af302f231437eaf6f37691bce4b34234fcb626bcb5eb3910d4fc3f6519bf78ca` for the initial
-   pin 0.80.6. Mismatch refuses provisioning with the observed and expected values.
-   No per-launch hash gate (not earned — demo clause table). Version verification
-   reads the installed `package.json` rather than executing `pi --version`, so the
-   gate itself creates no state; any check that must execute Pi runs inside a
-   scratch home (demo: even `--version` is run in scratch as an artifact check).
-2. **Node runtime pin.** The install records the absolute Node binary used
-   (declared floor `>=22.19.0` from the package manifest; the observed install
-   runtime was Node 24.18.0 — demo provenance table). Launch uses the recorded
-   runtime, not ambient PATH — the same determinism rule as the pinned hcom binary
-   (DR-1).
-3. **Version gate at launch.** Family config carries the supported-version set
-   (initially `{0.80.6}`). Launch resolves the seat's install, reads its recorded
-   version, and refuses anything outside the set with an error naming the install
-   path, version, and supported set. A new Pi version enters the set only via a
-   characterization pass (extension API compatibility is exactly the surface that
-   can drift), never by assumption. `PI_OFFLINE=1` on every launch means the gated
-   install cannot drift under a running family.
+The former machinery here — pinned install into an immutable
+`<HERDER_STATE_DIR>/pi/install/<version>/` prefix, tarball + CLI-entry hash
+verification, Node runtime pin, supported-version launch gate — is **dissolved
+by the 2026-07-14 default-homes ruling** (default install location,
+vendor-updated). What replaces it:
+
+1. **Vendor install, default location.** Pi is installed and updated by its
+   vendor mechanism at the default install location — the operator's normal
+   `@earendil-works/pi-coding-agent` install. Herder does not install, pin,
+   hash-verify, or version-gate it. `herder pi provision` (the provisioning
+   surface) resolves the vendor Pi entry point normally — PATH/shim resolution
+   semantics are decided in the implement unit and documented, the same pattern
+   the grok default-homes unit follows — records the resolved path and the
+   **observed vendor version** in family state, and refuses only when no Pi is
+   resolvable at all (cause+remedy naming the vendor install step). The demo's
+   0.80.6 tarball hash
+   `2a77634640b2d86d90d24087bb67559ecf2366e0fb52a42c55eed416147da411` and
+   CLI-entry hash
+   `af302f231437eaf6f37691bce4b34234fcb626bcb5eb3910d4fc3f6519bf78ca` remain in
+   this document as characterization provenance only.
+2. **Version recording at launch.** Every launch re-reads the installed version
+   (from the installed `package.json` — reading it creates no state) and records
+   it in the seat's registry row and journal. There is no supported-version
+   refusal: vendor updates land when the vendor lands them (the claude/codex
+   fleet norm the ruling extends). Compatibility protection moves to the binding
+   surface: the managed extension records the Pi extension-API surface it was
+   built against and **refuses to claim** on mismatch — the seat flips a legible
+   incompatibility state and the launch hard-fails with a cause+remedy error —
+   rather than half-binding against a drifted API. The drift consequence
+   (characterization pins can be silently invalidated between launches by a
+   vendor update) is stated honestly in §12 item 9, not papered over.
+3. **Extension install** (once per extension version): the managed extension is
+   installed into the default home's `agent/extensions/` — the same surface
+   hcom's native Pi integration uses — with its version recorded in family
+   state. It activates only under seat launch-env coordinates and is provably
+   inert in the owner's interactive Pi runs (T18, re-scoped). This is the one
+   herder-owned artifact in the default home; herder writes no other owner Pi
+   state (§1).
 4. **Operator capability mint** (once per family): `herder pi operator init`,
-   run from the same owner-run non-seat context as the install, per the DR-2
+   run from the same owner-run non-seat context as provisioning, per the DR-2
    operator-capability lifecycle. External-lane ops fail closed with a
    cause+remedy error until it exists.
 
 ### Seat construction (per seat, at spawn)
 
-`PI_HOME` is a herder concept translated per the demo's proven mapping:
+There is no per-seat Pi home. The former `PI_HOME` translation (per-seat `HOME`,
+`PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, XDG roots under the herder
+state root) is dissolved by the ruling; the demo's mapping remains valid
+evidence that those variables work, and herder deliberately does not set them.
+A seat is exactly:
 
-```text
-PI_HOME = <HERDER_STATE_DIR>/pi/<seat-guid>
-HOME=$PI_HOME/home
-PI_CODING_AGENT_DIR=$PI_HOME/agent
-PI_CODING_AGENT_SESSION_DIR=$PI_HOME/sessions
-XDG_CONFIG_HOME=$PI_HOME/xdg/config   (+ cache/data/state)
-```
-
-Seeded at seat provisioning, before first launch:
-
-- `agent/settings.json` — owner-controlled seed, telemetry off; **seed once, never
-  rewritten at launch** (per-launch rewrite not earned — demo clause table).
-- `agent/extensions/<herder-hcom-extension>` — the managed extension, copied from
-  the version-matched artifact herder ships (Pi loads TypeScript directly — demo
-  "Binding fork"). The extension version is recorded in seat state; a
-  version-mismatched extension refuses to claim rather than half-binding.
-- `agent/models.json` — only if the seat's provider/model requires a custom entry;
-  never contains secrets (demo state table).
-- Seat bus state: recorded absolute hcom path, reservation record, journal,
-  activation/epoch records (DR-2 persistence).
+- **Herder seat state** under `<HERDER_STATE_DIR>/pi/<seat-guid>/`: recorded
+  absolute hcom path, reservation record, journal, activation/epoch records
+  (DR-2 persistence) — unchanged; this is herder state, not Pi state.
+- **Pi state = the live default home**, shared with every other seat and with
+  the owner's interactive Pi use: default agent dir, default session root,
+  default XDG roots. Consequences, stated rather than assumed away:
+  - Sessions land in Pi's **shared default session root**. Seat↔session binding
+    rides the recorded session UUID plus process evidence (DR-4); the former
+    forced per-seat session root — and with it the sid-glob discovery
+    fallback — dissolves (DR-4; delta in §12 item 9).
+  - **No owner-config writes**: no `agent/settings.json` seeding (env flags
+    carry startup suppression), no `agent/models.json` writes (a
+    provider/model needing a custom entry is owner-managed state; an absent
+    entry fails at Pi level with Pi's own error).
+  - The **extension** is the shared default-home install (provisioning item 3);
+    the seat records the extension version it launched against, and a
+    version-mismatched extension refuses to claim rather than half-binding.
+  - The owner's own **user-level resources** in the default home (their
+    extensions, tools, settings) load into seat processes as a matter of
+    course — owner-trusted per the fleet norm the ruling extends, recorded as
+    a delta (§12 item 9).
 
 Project `.pi/` resources stay untouched in the workspace (demo: they are project
 content, not seat state) — but **managed seats do not load them until the trust
@@ -901,11 +952,11 @@ surface is characterized**. A workspace-local `.pi/` can carry executable
 resources (tools, extensions) that would load into a process holding the seat's
 provider credential and control coordinates; the demo characterized the state
 layout, not the trust lifecycle's behavior under autonomous launches. Until probe
-P6 (§10) characterizes the pinned CLI's trust controls, launch must ensure project
+P6 (§10) characterizes the installed CLI's trust controls, launch must ensure project
 `.pi` resources are not loaded (trust withheld / disabled by an **enforceable**
-mechanism of the pinned surface, verified in U2), and the seat runs on managed
-user-level resources only. **Falsification branch, explicit as A9's:** if P6
-finds no enforceable suppression surface in the pinned CLI, that is a design
+mechanism of the installed surface, verified in U2), and the seat runs on the
+default home's user-level resources only (owner-trusted — above). **Falsification branch, explicit as A9's:** if P6
+finds no enforceable suppression surface in the installed CLI, that is a design
 delta — U2 neither invents cwd/resource isolation nor quietly weakens the
 default; the delta decides among blocking activation on the gap, an upstream
 ask, and owner-ruled acceptance. Per-workspace relaxation is an owner decision
@@ -917,8 +968,9 @@ ask, and owner-ruled acceptance. Per-workspace relaxation is an owner decision
    subsequent step, including the capability bootstrap, is attempt-keyed). Mint
    seat GUID; resolve session identity per DR-4. The GUID is always recorded in
    the registry pre-launch; the session UUID is recorded pre-launch only on
-   DR-4's preassignment branch — on the capture branches (extension-published
-   or sid-glob) it is recorded at activation, when it first exists.
+   DR-4's preassignment branch — on the extension-published capture branch it
+   is recorded at activation, when it first exists (the sid-glob branch is
+   dissolved — DR-4).
 2. Reserve the bus identity via `herder pi bus reserve` (write-ahead reservation,
    `hcom start`, pinned de-latch — DR-1). Reservation proves a roster row exists;
    it claims nothing about a live seat. Restarts reclaim by the reserved name.
@@ -930,8 +982,8 @@ ask, and owner-ruled acceptance. Per-workspace relaxation is an owner decision
    derivation or bus dedupe). Argv carries no prompt content — large/multiline
    prompts avoid argv entirely, and both messages get real delivery receipts
    through DR-2, mirroring grok's spool-borne initial prompt.
-4. Exec Pi (recorded Node runtime + pinned `dist/cli.js`) inside the pane with the
-   allowlist-built environment and explicit argv, **gated**: the child's pid +
+4. Exec Pi (the provisioning-recorded vendor entry point) inside the pane with the
+   constructed environment and explicit argv, **gated**: the child's pid +
    start-time is recorded into the open attempt (fsynced under the seat lock)
    and the child is placed into the per-seat cgroup **before its exec
    proceeds** — DR-2 launch-attempt protocol step 3; no live seat process ever
@@ -951,10 +1003,19 @@ ask, and owner-ruled acceptance. Per-workspace relaxation is an owner decision
 The launch process (running inside the pane, as `launchcmd` does for other
 families) **constructs** the child environment rather than filtering its own:
 
-- The `PI_HOME` mapping above; `PATH` floor containing the recorded Node runtime
-  and herder shims; `HCOM_DIR`; herder seat/state variables (`HERDER_STATE_DIR`,
-  seat GUID, bus name for the wrapper).
-- `PI_OFFLINE=1`, `PI_TELEMETRY=0` — required on every invocation (settled).
+- `HOME` = the operator's live home (the default-homes ruling): **no Pi
+  state re-points** — no `PI_CODING_AGENT_DIR`, no
+  `PI_CODING_AGENT_SESSION_DIR`, no XDG overrides; Pi resolves its defaults.
+  Plus a `PATH` floor and herder shims; `HCOM_DIR`; herder seat/state
+  variables (`HERDER_STATE_DIR`, seat GUID, bus name for the wrapper) — the
+  coordinates the shared extension keys its seat activation on.
+- `PI_OFFLINE=1`, `PI_TELEMETRY=0` — retained as **seat-scoped launch-env
+  deltas**, the mechanism the ruling expressly permits. Their meaning under
+  vendor-updated installs is narrower than before and stated exactly: they
+  suppress in-process update checks and telemetry for the seat, so the
+  version recorded at launch stays true for that process's life. They do not
+  — and are not meant to — keep the vendor install from updating between
+  launches.
 - **Exactly one provider credential, by name**, per DR-5. Herder verifies presence
   by name pre-launch — in the environment the pane process actually receives, not
   the CLI caller's (grok activation lesson: interactive-shell exports do not reach
@@ -969,8 +1030,10 @@ path delivers this constructed environment intact to the Pi process is exactly t
 uncharacterized link (demo clause table: CONDITIONAL). Until herder's actual Pi
 pane-spawn path is characterized as env-preserving direct-exec, every launch
 performs a **one-time post-spawn assertion**: read the live Pi process environment
-(`/proc/<pid>/environ`) and verify the managed mapping (variable names and managed
-paths; never credential values). Assertion failure is a launch failure with
+(`/proc/<pid>/environ`) and verify the constructed environment (the env-delta
+flags, exactly the one named provider credential by name, the seat coordinates,
+and the **absence** of Pi state re-point variables; never credential values).
+Assertion failure is a launch failure with
 teardown, not a warning. The activation unit (§13) owns producing the
 characterization evidence; only after it shows direct-exec preservation may the
 ceremony be removed, as its own reviewed change. This design does not resolve the
@@ -981,7 +1044,7 @@ conditional on paper.
 | herder intent | Pi argv / mechanism |
 |---|---|
 | always | explicit session selection per DR-4; `--session-dir` implied by env; no prompt in argv |
-| `--model X` | Pi model selection for the pinned provider (exact argv per the pinned version's CLI; recorded at implementation) |
+| `--model X` | Pi model selection for the seat's provider (exact argv per the installed version's CLI; recorded at implementation) |
 | resume | exact session selection (`--session`/`--session-id` family — demo session table) |
 | fork | `--fork` with parent session (demo session table) |
 | autonomy modes | **unmapped pending characterization** — the demo did not characterize Pi's interactive approval surface; probe A6 (§10) answers it; any bypass-like mapping is an owner decision (§12), per the grok precedent |
@@ -991,17 +1054,21 @@ silently reconciled**: anything selecting or re-pointing sessions or session
 directories, `HOME`/state-root re-points, offline/telemetry/update-behavior
 overrides, credential or auth-file arguments, extension-path arguments, and
 `--no-session` (a first-class seat is always a durable session; DR-4 depends on it).
-The refusal list is finalized against the pinned version's full CLI surface in the
-launch unit and pinned by test (T20), exactly as grok's T19.
+The refusal list is finalized against the full CLI surface of the vendor version
+current at the launch unit and pinned by test (T20), exactly as grok's T19; a
+later vendor version can introduce flags the list does not know (the §12 item 9
+drift delta — new flags are not auto-refused).
 
 ## DR-4 — Identity, sessions, lifecycle
 
 **DECISION.** Seat identity binds on **seat GUID + process/pane evidence + session
 identity**, never on cwd. Pi's session files are cwd-labeled in their headers, and
-herder forces the session root per seat, so no cwd-keyed claim path may exist in any
-code path (the grok DR-4 rule, inherited).
+under the default-homes ruling **all seats and the owner's interactive use share
+one default session root** — so no cwd-keyed and no root-keyed claim path may
+exist in any code path (the grok DR-4 rule, inherited and tightened: the shared
+root makes location-based claims strictly less meaningful than before).
 
-**Session identity: preassign if the pinned CLI allows it; otherwise
+**Session identity: preassign if the installed CLI allows it; otherwise
 extension-published capture.** The demo proved exact resume (`--session`,
 `--session-id`), forking (`--fork`, parent-linked), and forced session roots — but
 did not probe whether a **new** session's UUID can be preassigned at launch. The
@@ -1009,15 +1076,20 @@ grok fork erratum is the precedent in both directions: preassignment is the
 preferred identity model, and vendor flag surfaces can turn out to support it on
 inspection. Resolution order, decided here:
 
-1. Probe the pinned CLI for new-session preassignment (P1, §10). If supported,
+1. Probe the installed CLI for new-session preassignment (P1, §10). If supported,
    launch mints a UUIDv7, records it pre-launch, and verifies it post-boot — the
    grok model.
 2. If not supported, the extension **publishes** the session identity: on
    `session_start` it reads the live session UUID from its extension context
    (API-inventory surface, assumption A5) and writes it to seat state through a bus
-   op; spawn's status-op read-back binds it with process/pane evidence. Fallback if
-   A5 also fails: sid-glob discovery under the seat's forced `sessions/` root —
-   viable only because the root contains exactly this seat's sessions.
+   op. spawn's status-op read-back binds it with process/pane evidence. The
+   former third fallback — sid-glob discovery under a forced per-seat
+   `sessions/` root — is **dissolved by the default-homes ruling**: it was
+   viable only because that root contained exactly this seat's sessions, and
+   the shared default root contains every seat's and the owner's sessions, so
+   a glob cannot identify this seat's new session. If P1 and A5 both fail,
+   session identity is **blocked for a design delta** — no unit improvises
+   discovery against the shared root (§12 item 9).
 
 Either way the binding requires process/pane **and** session evidence before the
 seat is declared bound; a same-cwd or same-directory session can never claim an
@@ -1060,7 +1132,7 @@ is extension-observed — so a subagent cannot forge a delivered receipt. The re
 risks are context/credential shaped (a child inherits the provider key: inherent,
 demo-documented) and identity-shaped (a subagent session must not rebind the seat —
 covered by the session-drift rule above). Probe P4 (§10) inventories Pi's actual
-subagent surface at the pinned version; if a disable flag exists, the launch unit
+subagent surface at the installed version; if a disable flag exists, the launch unit
 adds it to the always-argv as hardening, with a design note, not a soundness
 requirement.
 
@@ -1105,46 +1177,40 @@ model-tool credential boundary (threat model), and excludes the key only from th
 An extension-registered send tool that would close even that inheritance is a
 possible refinement behind a tool-registration probe, not a shipped claim.
 
-**Env-only managed auth — the store must stay empty.** Pi resolves credentials
-from an explicit CLI key, `agent/auth.json`, environment variables, or
-custom-provider config (demo "Provider routing"); the demo observed those
-sources against empty stores only. Note the threat does **not** hinge on
-same-provider precedence: a planted *alternate-provider* credential has no env
-competitor on a single-provider seat, so a populated store could serve
-cross-provider inference whichever way a same-name collision resolves. That
-exploitability question is register **A10** (§10), and this contract
-conservatively assumes the planted credential is usable: an interactive
-`/login`, or a resumed seat carrying a populated `auth.json`, could hold a
-*different provider's* credential and make an in-process cross-provider switch
-succeed despite the env filter. The managed contract is therefore explicit:
+**The credential store under the default-homes ruling — the env channel is the
+scoped channel; the store is owner state.** Pi resolves credentials from an
+explicit CLI key, `agent/auth.json`, environment variables, or custom-provider
+config (demo "Provider routing"). Under the managed home this design required
+the store credential-empty at launch, digest-checked it at bounded runtime
+checkpoints, and terminated the seat on drift. That contract **dissolves with
+the managed home**: `agent/auth.json` is now the owner's live store in the
+shared default home. The owner may legitimately populate it at any time
+(interactive `/login`), so a launch gate on store contents would refuse seats
+because of ordinary owner action, and terminate-on-drift would kill healthy
+seats when the owner logs in — machinery that polices the owner's own state is
+not retained. What remains is stated exactly, delta included:
 
-- **Provision/launch gate:** `agent/auth.json` must be absent or credential-empty
-  (the demo's observed empty `{}` at mode 0600) at every launch; any credential
-  entry refuses the launch, naming the store path (T21).
-- **Runtime detection AND containment:** the extension digests the auth store at
-  every bounded checkpoint it provably has — activation, `before_agent_start`
-  (probe-proven event), every settle boundary, and tool boundaries once U1
-  proves tool events. A store that becomes non-empty flips `auth-drift`
-  (registry-visible) **and terminates the seat**: drift is a seat-integrity
-  failure, so herder quiesces/kills the Pi process on process evidence before
-  it can issue further provider requests — not merely a relaunch block. The
-  next launch refuses per the gate above until the store is clean. Detection
-  and termination are unconditional.
-- **The residual window, stated exactly — width included:** a mid-turn plant
-  can serve cross-provider inference **between the plant and the next
-  checkpoint**. Until tool-event checkpoints are proven (a post-U1 fact), the
-  next checkpoint after a mid-turn plant is the **settle boundary** — and a
-  single agentic turn can span many provider calls, so the window's real width
-  is plant-to-settle, potentially covering multiple inferences within that one
-  turn, not one call. It is one bounded window, not an ongoing capability; the
-  design claims launch-empty + checkpoint-detected + terminate-on-detection,
-  nothing stronger, and the owner acceptance (§12 item 7) is framed on this
-  width, not a flattering narrower one.
-- **Prevention where the surface allows:** whether the pinned CLI can disable
-  `/login`/auth mutation outright is probe **P7** (§10); if it can, launch pins
-  it in addition to — never instead of — the detection, and the residual window
-  closes. **If P7 is falsified**, the residual window goes to the owner as an
-  explicit acceptance decision at activation (§12) — it does not ship silently.
+- **Env-channel scoping — retained by the ruling.** The launch env carries
+  exactly one provider credential, by name (the DR-3 construction; T17, T21).
+  Through the environment, a cross-provider switch still cannot obtain a
+  credential. This property is unweakened.
+- **Store-channel honesty — the delta, owner-signed (§12 item 9).** Whatever
+  credentials the owner's live store holds are reachable by every seat process
+  through Pi's own resolution order — **in-band, through the vendor's normal
+  credential lookup, with no deliberate acquisition required**. On a machine
+  whose store holds other providers' credentials, single-provider-per-seat is
+  a policy honored on the env channel only, not a property of the seat. The
+  design does not claim otherwise anywhere. Whether Pi actually prefers a
+  store credential over the env credential, and whether in-process
+  cross-provider selection succeeds, is register **A10** (§10) — retained to
+  **size** this delta for the owner, no longer to calibrate a termination
+  machinery.
+- **Tightening where the surface allows (P7, re-scoped).** If the installed
+  CLI offers a **per-invocation** surface that disables store reads or auth
+  mutation (an env flag or argv switch — a seat-scoped launch-env delta, the
+  mechanism the ruling permits), launch pins it and the store channel closes
+  for seats without touching owner state. If no such surface exists, the
+  delta stands as ruled; there is no fallback machinery to reintroduce.
 
 **Cross-provider change = controlled relaunch** (settled). Herder-side: a relaunch
 op that retires the running process (resume semantics, same seat), rebuilds the
@@ -1156,11 +1222,11 @@ never two provider credentials in one process environment, ever. Extension-side:
 provider families is flagged to the registry as a provider-drift warning, making
 the outcome legible either way. Through the **environment** such a switch cannot
 obtain a credential (the env filter is the demo's least-privilege observation);
-through a **drifted auth store** it could — the design does **not** claim
-cross-provider inference "cannot succeed" in-process; it claims the exact
-contract above: launch-empty store, drift detected at bounded checkpoints, and
-the seat **terminated** on detection, leaving at most the stated
-plant-to-checkpoint window. Credential-name mapping stays per-harness (the demo's
+through the **owner's live store** it can, whenever that store holds such a
+credential — the design does **not** claim cross-provider inference "cannot
+succeed" in-process; it claims exactly the contract above: env-channel scoping,
+store-channel delta stated and owner-signed (§12 item 9), P7 tightening if the
+surface exists. Credential-name mapping stays per-harness (the demo's
 Codex `CODEX_API_KEY` lesson):
 the table above maps names for **Pi**, and no name aliasing for other harnesses
 leaks into a Pi seat.
@@ -1170,8 +1236,9 @@ leaks into a Pi seat.
 **DECISION.** Every observation surface reports only what its evidence supports,
 with the source labeled — grok DR-5, applied to Pi's surfaces.
 
-- **Transcript** = the seat's session JSONL under `$PI_HOME/sessions/`, located by
-  session UUID from seat state. The observer gets a Pi adapter for the JSONL tree
+- **Transcript** = the seat's session JSONL under Pi's default session root
+  (shared under the default-homes ruling), located by
+  session UUID from seat state — the UUID, never a root scan, is the locator. The observer gets a Pi adapter for the JSONL tree
   format (header + parent-linked entries — demo "Session compatibility"). Entries
   are id/parent-id linked (branching), so the adapter renders the active branch and
   labels branch points rather than flattening silently.
@@ -1198,8 +1265,10 @@ with the source labeled — grok DR-5, applied to Pi's surfaces.
   runtime epoch read back + driver armed; reserved = roster row only),
   `pending: <n>` (queued/injected not yet delivered, exact counts),
   `inject: ready|degraded`, `driver: armed|degraded` (lease-derived — DR-2),
-  `spool: ok|quota`, `control: ok|degraded`, `auth: ok|drift`,
-  `provider: <family>`, and `session-drift` when DR-4 flags it. A row never
+  `spool: ok|quota`, `control: ok|degraded`,
+  `provider: <family>`, and `session-drift` when DR-4 flags it. (The former
+  `auth: ok|drift` flag is removed with the DR-5 store contract — it policed
+  what is now the owner's live store.) A row never
   implies capability the seat has not proven.
 - **Diagnostics** (extension errors, bus-op failures, nudge history) go to seat log
   files under the seat dir, never to the pane or the model context (T25).
@@ -1233,10 +1302,18 @@ process's life), so **this seat's model can never be the reader**, and the
 residual reader is hostile same-UID code from outside the seat during that
 pre-model window; and the external lane's **operator capability**, whose
 boundary is explicit possession, stated exactly: the supported surface refuses
-**naive/direct self-operation** — no capability in any seat's env, home, or
-state; **no herder surface auto-acquires operator authority from
-caller-controlled context** (the caller pipes the credential to stdin, or the
-op refuses on empty stdin); and the direct in-cgroup path is belt-refused.
+**naive/direct self-operation** — no capability in any seat's env or herder
+seat state, and no herder-issued context names its location; **no herder
+surface auto-acquires operator authority from caller-controlled context** (the
+caller pipes the credential to stdin, or the op refuses on empty stdin); and
+the direct in-cgroup path is belt-refused. One honesty correction under the
+default-homes ruling: the earlier "not in any seat's home" clause no longer
+holds — every seat's `HOME` **is** the operator's live home, so the credential
+file sits inside it at an owner-chosen (conventionally well-known) path, and
+the former managed-home belt refusal is gone (§12 item 9). Reading that file
+by path remains the conceded deliberate-acquisition class below; the boundary
+(possession + no auto-acquisition) is unchanged, but the acquisition the
+concession covers got mechanically easier, and sign-off covers that.
 What it does **not** claim: that brokered launches are refused as a class. A
 model that deliberately composes a broker with a credential-path redirect —
 or reads the credential file by absolute path, or exfiltrates it — is
@@ -1258,30 +1335,38 @@ it lives in.
 Every entry is conservative in the design above and carries a named verification.
 None may silently become load-bearing beyond its stated fallback.
 
+Under the vendor-updated ruling there is no pinned version: every probe result
+below is evidence about the vendor version **observed and recorded at probe
+time**, and a vendor update re-opens the probes whose surfaces it touches (the
+§12 item 9 drift delta). "The installed CLI" below means exactly that.
+
 | # | Assumption / gap | Design posture | Verify |
 |---|---|---|---|
 | A1 | **Reply-content capture**: the demo validated injection to `agent_settled` but did not capture the reply. | `delivered` claims turn completion over a context containing the message — nothing about the reply (DR-2). | U1 probe: capture the injected turn's reply via the extension event/message stream; if capturable, add reply-hash journaling as an audit nicety (not a delivery precondition). |
 | A2 | **Steering/mid-stream delivery**: `sendUserMessage` delivery options are API-inventory only. | Idle-gated injection; mid-turn arrivals hold to the settle boundary. | U1 probe: exercise streaming delivery options; if proven, a later unit may relax the idle gate as its own reviewed change. |
 | A3 | **Injected input persists in the session JSONL** (crash/resume durability of injected content). | The id-only nudge is safe **only if A3 holds** — the nudge policy (DR-2) is explicitly conditional on this verification's outcome; if falsified, nudges re-carry content with the same envelope. | U1 probe (before the nudge wording freezes): inject, then inspect the session file for the entry; resume and confirm the content survives. |
 | A4 | **Session replacement sequence** (shutdown → reload → start) is inventory, not probed; so is whether extension reload preserves module memory. | Every `session_start` is a rebinding event; unrecognized sessions go to `session-drift`, never adopt. Memory-lost reload is designed for either way (`control-degraded` → controlled relaunch under the launch-attempt protocol, DR-2 — never a live handoff); the probe determines how often that path fires. | U1/U3 probe: in-TUI new/switch/fork while bound; extension reload with token-retention check. |
-| A5 | **Extension can read the live session UUID** from its context. | Used only if P1 (preassignment) fails; sid-glob fallback behind it. | U1 probe (an extension-surface question, answerable in U1's harness) — run regardless of P1's outcome so the fallback provably exists before U2 resolves P1, which is a U2 CLI probe. |
-| A6 | **Pi's interactive approval/autonomy surface** is uncharacterized. | Autonomy mapping left unmapped; seat runs Pi defaults until characterized (DR-3). | U2 probe: pinned-version approval surface inventory; owner ruling for any bypass-like mode (§12). |
+| A5 | **Extension can read the live session UUID** from its context. | Used only if P1 (preassignment) fails; **no fallback behind it** — the former sid-glob fallback dissolved with the per-seat session root (DR-4), so P1 and A5 both failing blocks session identity for a design delta. | U1 probe (an extension-surface question, answerable in U1's harness) — run regardless of P1's outcome so the fallback provably exists before U2 resolves P1, which is a U2 CLI probe. |
+| A6 | **Pi's interactive approval/autonomy surface** is uncharacterized. | Autonomy mapping left unmapped; seat runs Pi defaults until characterized (DR-3). | U2 probe: installed-version approval surface inventory; owner ruling for any bypass-like mode (§12). |
 | A7 | **TUI-mode extension parity**: probes ran in RPC mode; docs state the same extension contract loads in tui/rpc/json/print. | Design assumes parity for lifecycle + injection only (the documented contract), nothing UI-dependent. | U1's first TUI-mode extension smoke — before anything else builds on it. |
 | A8 | **Extension child-process control**: the extension can spawn bus-op children with an **explicitly constructed env object** (no inheritance — DR-1: no provider credential, no tool signals), feed stdin (capability token), kill, and reap them. | Every extension→bus-op spawn uses the explicit-env + stdin-token shape; T13/T17 assert against the bus-op process itself. | U1 unit test in TUI mode, asserting the bus-op child's actual environ and stdin handling. |
 | A9 | **Inbound driver runtime viability**: a Pi extension may run long-lived async work across turns in TUI mode — the DR-2 driver loop with child spawn, cancellation, reaping. All post-boot delivery rides this. | The driver is specified as a component (DR-2); **U1's first gate** — nothing else in U1 builds on an unverified driver. Falsification triggers the herder-supervised-waiter fallback via delta review, never a silent swerve. | U1 FIRST-GATE probe: TUI seat, isolated bus, idle across ≥2 full `--wait` timeout cycles + 10-minute soak, real end-to-end delivery without restart; then extension reload, session shutdown, forced loop failure while Pi lives (T28, T29). |
-| P1 | **New-session UUID preassignment** at launch (and composition with `--fork`). | DR-4 resolution order: preassign if supported, else A5 publication, else sid-glob. | U2 probe against the pinned CLI (`--help`/docs inspection first; scratch-home execution if needed — managed env always). |
+| P1 | **New-session UUID preassignment** at launch (and composition with `--fork`). | DR-4 resolution order: preassign if supported, else A5 publication; both failing blocks for a design delta (sid-glob dissolved — DR-4). | U2 probe against the installed CLI (`--help`/docs inspection first; execution probes under the seat launch env shape). |
 | P2 | **`hcom start --as <name>` fresh-mint behavior** — and, if reclaim-only, **whether a never-de-latched placeholder is routable** (tag/broadcast fanout) before the ~30 s finalizer. | Write-ahead reservation prefers herder-minted `--as` (no-second-row claimed for that shape only); the reclaim-only fallback requires proven non-routability, or identification-plus-stop of candidate orphans, or it **blocks for a design delta** (DR-1). | U1 probe on an isolated scratch bus, both questions. |
 | P3 | *(retired during drafting — number retained so later probe cross-references stay stable; no open question lives here.)* | — | — |
-| P4 | **Subagent surface inventory** at the pinned version. | No soundness dependency (DR-4); disable flag adopted as hardening if present. | U2 probe. |
+| P4 | **Subagent surface inventory** at the installed version. | No soundness dependency (DR-4); disable flag adopted as hardening if present. | U2 probe. |
 | P5 | **Per-provider residual network** under `PI_OFFLINE=1` (strace-proven for one Anthropic call only). | Offline flags required regardless; claim scoped to the demo's one-provider evidence. | Activation-unit integration check per activated provider. |
-| P6 | **Project `.pi` trust surface**: what mechanism the pinned CLI offers to withhold/disable project-resource loading, and what an autonomous launch does by default. | Managed seats must not load project `.pi` resources until characterized (DR-3); per-workspace relaxation is an owner decision (§12). **Falsification branch:** no enforceable suppression surface → design delta (block activation / upstream ask / owner ruling), never U2 improvisation (DR-3). | U2 probe against the pinned CLI in a scratch workspace carrying decoy `.pi` resources. |
-| P7 | **Auth-mutation prevention surface**: can the pinned CLI disable `/login`/auth-store writes? | Detection + terminate-on-drift at bounded checkpoints ships unconditionally (DR-5); prevention is pinned additionally if the surface exists — never instead. **Falsification branch:** the plant-to-checkpoint residual window goes to the owner as an explicit acceptance decision at activation (§12); it never ships silently. | U2 probe against the pinned CLI. |
-| A10 | **Auth-store exploitability on a pinned seat**: the demo enumerated Pi's credential sources against *empty* stores. Same-provider precedence is **not the question that matters** — a planted *alternate-provider* credential has no env competitor on a single-provider seat, so it can serve cross-provider inference regardless of who wins a same-name collision. | DR-5's contract conservatively assumes the planted store credential is usable — that assumption calibrates terminate-on-drift and owner item 7. **Demotion (softened termination, dissolved owner item 7) is permitted only if the probe proves the store is globally ignored while a managed env credential exists, or that cross-provider selection is hard-blocked by the pinned CLI.** Any weaker result — including "env wins same-provider collisions" — leaves termination and the owner acceptance standing. | U2 probe riding P7: with the managed env key present, plant an **alternate-provider** store credential and attempt selection + inference on that provider; record which of the two demotion conditions, if either, is proven. |
+| P6 | **Project `.pi` trust surface**: what mechanism the installed CLI offers to withhold/disable project-resource loading, and what an autonomous launch does by default. | Managed seats must not load project `.pi` resources until characterized (DR-3); per-workspace relaxation is an owner decision (§12). **Falsification branch:** no enforceable suppression surface → design delta (block activation / upstream ask / owner ruling), never U2 improvisation (DR-3). | U2 probe against the installed CLI in a scratch workspace carrying decoy `.pi` resources. |
+| P7 | **Store-channel tightening surface** (re-scoped by the default-homes ruling): does the installed CLI offer a **per-invocation** way — env flag or argv — to disable auth-store reads and/or `/login`/auth mutation for one process? | Env-channel scoping ships regardless (DR-5). If the surface exists, launch pins it as a seat-scoped launch-env delta and the store channel closes for seats without touching owner state. If not, the store-channel delta stands as ruled (§12 item 9) — the former detect/terminate machinery is not reintroduced. | U2 probe against the installed CLI. |
+| A10 | **Store-vs-env resolution on a live seat** (re-scoped): the demo enumerated Pi's credential sources against *empty* stores; under the default-homes ruling the store is the owner's live `auth.json` and may legitimately hold other providers' credentials. The questions: does Pi prefer a store credential over the managed env credential, and does in-process cross-provider selection from the store succeed? | The DR-5 delta conservatively assumes store credentials are usable by the seat. The probe **sizes the delta for owner sign-off** (§12 item 9): a proof that the store is ignored while an env credential exists, or that cross-provider selection is hard-blocked, shrinks the stated delta; any weaker result — including "env wins same-provider collisions" — leaves it stated at full width. No termination machinery hangs on this any more. | U2 probe riding P7: with the managed env key present, place an **alternate-provider** store credential (scratch store shape mirroring the live one) and attempt selection + inference on that provider; record the result against the delta statement. |
 | A11 | **Per-seat cgroup scope availability — for accounting, not authorization**: cgroup v2 per-seat scopes on the deployment platform (seat processes placed into a dedicated cgroup at the launch gate; membership readable from `/proc/<pid>/cgroup`). Authorization does **not** ride this — cgroup membership is location, not causal origin (a same-UID launch broker exits it freely); the external lane rides the operator capability (DR-2 lanes). | Used for: the cgroup-empty quiesce sweep (reparented-straggler kill correctness), process accounting, and the defense-in-depth belt refusal of direct in-target-cgroup callers. **If falsified:** quiesce degrades to recorded-pid-only kills with the straggler residual named in the registry — a design delta on the quiesce contract only; the authorization boundary is unaffected. | U1 probe on the real spawn path: launched seat lands in its scope; the sweep sees a double-forked descendant; the belt refusal fires for in-cgroup callers. |
 
-Scratch probes that require running the Pi binary happen inside the implement units
-under managed scratch environments (settled: every invocation gets the managed env);
-probes that require inference additionally need the owner spend ruling (§12).
+Probes that require running the Pi binary happen inside the implement units under
+the seat launch-env shape (env deltas + scoped credential — DR-3); default-home
+state writes from probe runs are ordinary under the ruling, and probes that would
+mutate owner-meaningful state (auth store, settings) use scratch stand-ins for
+that state rather than the live files. Probes that require inference additionally
+need the owner spend ruling (§12).
 
 ## 11. Test and gate plan (contracts the implementation units must ship)
 
@@ -1347,30 +1432,40 @@ Delivery state machine and transport:
 
 Launch/lifecycle/observation contracts:
 
-- **T17 child environment** — allowlist-only construction: exactly one provider
-  credential by name; `PI_OFFLINE=1`/`PI_TELEMETRY=0` present; managed mapping
-  correct in the live process env (`/proc`, one-time post-spawn assertion —
-  conditional clause active); no credential value in argv, files, registry, or
-  logs; and the extension's bus-op children provably exclude the provider
-  credential (the T13(b) assertion, exercised on the launch path).
-- **T18 managed env on every invocation** — installer artifact checks and any
-  probing execution run inside scratch/managed homes; a test asserts no writes
-  outside the provided roots (the demo's `--help`-writes-state hazard, pinned).
-- **T19 install gate** — version + tarball + CLI-entry hash verification; refusal
-  on mismatch names observed/expected; supported-version set enforced at launch;
-  no per-launch hash gate exists.
+- **T17 child environment** — constructed, not inherited: exactly one provider
+  credential by name; `PI_OFFLINE=1`/`PI_TELEMETRY=0` present; **no Pi state
+  re-point variables** (`PI_CODING_AGENT_DIR`/`PI_CODING_AGENT_SESSION_DIR`/XDG
+  overrides absent) so the default home resolves, verified in the live process
+  env (`/proc`, one-time post-spawn assertion — conditional clause active); no
+  credential value in argv, files, registry, or logs; and the extension's
+  bus-op children provably exclude the provider credential (the T13(b)
+  assertion, exercised on the launch path).
+- **T18 default-home hygiene** (re-scoped from the dissolved scratch-home
+  ceremony) — herder writes no owner Pi config on any code path (no
+  `settings.json`/`models.json` writes exist to exercise); the managed
+  extension in the default `agent/extensions/` is provably **inert without
+  seat launch-env coordinates** (an owner-interactive-shaped Pi run: no seat
+  claim, no bus ops, no journal writes, no pane/log output); extension
+  install/update touches only `agent/extensions/` and family state.
+- **T19 vendor resolution + recorded version** (replaces the dissolved install
+  gate) — provisioning resolves the vendor entry and records path + observed
+  version; launch re-records the version in the registry row and journal; **no
+  hash gate and no supported-version refusal exist** (asserted absent — the
+  ruling's shape is pinned, not just permitted); an extension-API mismatch
+  refuses to claim with a legible seat state and a launch hard-fail naming
+  cause+remedy.
 - **T20 passthrough refusals** — every colliding passthrough from the DR-3 list is
-  refused with a targeted error (finalized against the pinned CLI surface).
-- **T21 provider filtering + env-only auth** — unknown `--provider` refused
+  refused with a targeted error (finalized against the CLI surface of the vendor
+  version current at the launch unit).
+- **T21 provider filtering, env channel** — unknown `--provider` refused
   naming the set; cross-provider credential never present in env; provider
   relaunch rebuilds the env; in-process cross-provider `model_select` flags
-  provider-drift. Auth-store branch: alternate-provider credentials planted in
-  `agent/auth.json` pre-launch → launch refuses naming the store; planted
-  mid-run → the test **attempts cross-provider inference from the planted
-  credential**, not merely asserts a flag: any success is confined to the
-  plant-to-next-checkpoint window, `auth-drift` flips at that checkpoint, the
-  seat is terminated before any subsequent provider request, and the next
-  launch refuses.
+  provider-drift. Store branch, re-scoped to the DR-5 contract: **no launch
+  refusal on store contents and no drift-termination path exists** (asserted
+  absent — seats must survive ordinary owner `/login` state); if the P7
+  tightening surface was adopted, the store-read disablement is asserted on
+  the seat process; the A10 sizing probe's recorded result is referenced, not
+  re-run, here.
 - **T22 identity binding** — session evidence + process/pane evidence both required
   before bound; a second session in the same cwd cannot claim the seat; no cwd-keyed
   path exists to exercise.
@@ -1461,8 +1556,8 @@ Inbound driver, fencing, and bounds (the fix-round additions):
   child pid + start-time recorded in that attempt) but hangs before activation
   and is superseded — after the winner activates, the test asserts **zero live
   seat Pi processes except the winner's**, verified by pid + start-time
-  against the attempt records: no same-UID orphan holding the managed home and
-  the provider credential survives; plus the exact
+  against the attempt records: no same-UID orphan holding the seat's
+  provider credential survives; plus the exact
   crash-restart sequence: process provably gone → attempt + rekey by an
   operator-capability-bearing caller → relaunch → seat-token-authenticated
   activate consuming that attempt; a rekey attempted without the capability,
@@ -1493,7 +1588,9 @@ Inbound driver, fencing, and bounds (the fix-round additions):
   its first instruction, so there is no live-before-record instant to
   exploit. Capability lifecycle branches: mint and rotate require interactive
   confirmation (brokered non-interactive invocation fails on the missing
-  interaction) with the managed-home/cgroup refusals pinned as belt; rotate
+  interaction) with the cgroup refusal pinned as belt (the former managed-home
+  refusal is asserted **absent** — under the ruling it would misfire on every
+  legitimate caller sharing the live home); rotate
   additionally requires the old capability on stdin; rotation invalidates old
   material immediately (an op presenting pre-rotation material is refused);
   the credential provably never appears in argv, env, logs, or seat state. (i) **renew is token-lane**: a tokenless or wrong-token
@@ -1535,23 +1632,23 @@ repeated per activated provider.
    precedent: no bypass mapping ruled in).
 4. **Provider activation set**: which of anthropic/openai/xai activate at the
    activation unit (each adds a credential precondition and a smoke).
-5. **Version-pin refresh policy**: 0.80.6 is the characterized pin; adopting a newer
-   Pi requires a re-characterization pass (extension API + offline/state behavior).
-   Owner sets the cadence/appetite; the design only requires that the gate exists.
+5. **Re-characterization appetite under vendor updates** (the former
+   version-pin refresh policy is superseded by the ruling — no pin or gate
+   exists). Vendor updates land on the vendor's cadence; 0.80.6 is the
+   characterized baseline. The owner sets when a recorded-version change
+   triggers a re-characterization pass (extension API + offline/state
+   behavior) versus riding on the extension's refuse-to-claim guard alone
+   (item 9b carries the honesty statement of what drift can invalidate).
 6. **Project `.pi` resources in managed seats**: they ship disabled (DR-3) pending
    the P6 trust-surface characterization; whether and where to relax (per-workspace
    allowlist, global off, trust-prompt passthrough) is an owner ruling on that
    evidence.
-7. **Auth-drift residual window (only if P7 is falsified)**: with no prevention
-   surface, the plant-to-checkpoint window (DR-5) needs an explicit owner
-   acceptance — or a blocked activation — before the family activates. The
-   acceptance is framed on the window's real width (plant-to-settle until
-   tool-event checkpoints are proven: potentially multiple provider calls in
-   one agentic turn), and its severity calibration rests on A10's unverified
-   store exploitability. This item dissolves **only** on A10's demotion
-   conditions — store proven globally ignored while a managed env credential
-   exists, or cross-provider selection hard-blocked; any weaker probe result
-   (same-provider precedence included) leaves it standing.
+7. **Superseded by the default-homes ruling.** This item conditioned an
+   acceptance on the launch-empty-store contract's residual
+   plant-to-checkpoint window; that contract dissolved with the managed home
+   (DR-5). The credential-store surface is now item 9(a) — a standing delta,
+   not a conditional window. (Number retained so cross-references stay
+   stable.)
 8. **The same-UID concession, made load-bearing for lifecycle authority.** The
    operator capability's boundary (DR-2, Threat model) refuses naive/direct
    self-operation only; deliberate credential acquisition — broker plus
@@ -1560,6 +1657,53 @@ repeated per activated provider.
    control plane included) already ships under. This design makes that
    concession carry **lifecycle authority** for Pi seats; owner sign-off on
    this design explicitly covers that sentence.
+9. **Default-homes ruling deltas (amendment round 10) — the honesty register
+   this sign-off covers.** The 2026-07-14 ruling (standing-orders 20.8) trades
+   previously stated properties for fleet-norm operation on single-purpose
+   machines. Each place the ruling **weakens** a property this design used to
+   claim is listed here explicitly, per the amendment's honesty duty — signed
+   as deltas, never silently relabeled:
+   - **(a) Credential store channel is open.** The former guarantee — seat
+     `auth.json` launch-empty, drift detected at bounded checkpoints, seat
+     terminated on drift — is gone. Seats read the owner's live store through
+     Pi's normal credential resolution; on a machine whose store holds other
+     providers' credentials, single-provider-per-seat holds on the **env
+     channel only**, and cross-provider access via the store is **in-band**
+     (no deliberate acquisition required — Pi's own lookup does it). A10 sizes
+     this; P7's per-invocation disablement, if it exists, closes it (DR-5).
+   - **(b) Version drift is unfenced.** No pin, no hash gate, no
+     supported-version refusal: a vendor update between launches can silently
+     invalidate every probe result and pinned behavior in this document.
+     Remaining guards: recorded version at provision and every launch,
+     extension refuse-to-claim on API mismatch, and `PI_OFFLINE=1` making the
+     version stable for each process's lifetime only. Item 5 owns the
+     re-characterization appetite.
+   - **(c) The operator credential file sits inside every seat's home.** Seat
+     `HOME` is the operator's live home, so the conventional
+     `~/.config/herder/pi-operator` path is inside it, and the managed-home
+     belt refusal on the external lane dissolved (only the cgroup belt,
+     interactive mint/rotate, and no-auto-acquisition remain). The
+     authorization boundary — explicit possession, stdin presentation — is
+     unchanged, but the deliberate acquisition item 8 concedes got
+     mechanically easier: a well-known in-home path instead of a path outside
+     every seat's view.
+   - **(d) One shared state surface.** All seats and the owner's interactive
+     Pi share one home: seat session files intermix with each other's and the
+     owner's (in-band readable through Pi's own surfaces, e.g. session
+     pickers); the managed extension loads into the owner's interactive runs
+     (inert by design — T18); the owner's user-level `.pi` resources load
+     into credentialed seat processes (owner-trusted per fleet norm). The
+     sid-glob session-identity fallback dissolved with the shared root —
+     session identity now stands on P1 or A5 alone, with a design-delta block
+     behind them (DR-4).
+   - **(e) State hygiene is fleet-norm, not fenced.** Any Pi invocation
+     writes ordinary default-home state (the demo's `--help`-creates-state
+     observation is no longer guarded by scratch homes); installer/scratch
+     ceremony and the immutable install prefix are gone.
+   Retained and expressly not weakened, for contrast: the entire DR-2
+   delivery/authority machinery (keep-custom ruling), credential scoping in
+   launch env construction, the identity-env allowlist and pinned hcom binary
+   for bus ops, and the same-UID concession framework (item 8).
 
 ## 13. Staging (mergeable units, territory fences, gates)
 
@@ -1571,10 +1715,10 @@ gate battery apply to every behavior diff (house rules).
 | # | Unit | Territory (fence) | Gate |
 |---|---|---|---|
 | U1 | **Transport core + extension**: spool/state machine, `herder pi bus` ops (reserve/de-latch, activate, **rearm** [pre-exec rekey], **renew** [lease checkpoint carrier], drain, wait, pending, send, status, retire; epoch fencing, seat token + **operator capability** lanes incl. `herder pi operator <init|rotate>`, **launch-attempt protocol**), the TypeScript extension (lifecycle handlers, the DR-2 inbound driver, idle-gated bounded batch injection, replay, nudge with per-id budget), `herder pi send` wrapper. The `grokbridge` extraction follows the **DR-1 reuse boundary exactly** — transport-neutral primitives only; grok's state types, receipt machine, and generation fencing are not touched or reused; the entire grok battery stays green unchanged (any grok behavior diff is a stop-and-flag). Nothing user-reachable changes. | New internal package(s) (e.g. `tools/herder/internal/pibridge/` + the shared primitives package) + `herder pi` command registration + extension artifact in-repo. | **FIRST GATE: the A9 driver probe (T28, T29) — run before any other U1 work is built on the driver.** Then T1–T16, T25, T26, T30–T35 hermetic (mock Pi event harness + isolated bus); T15 against real hcom 0.7.23; grok battery green post-extraction; assumptions A1–A5, A7–A9, A11 and probe P2 verified and recorded (scratch managed envs; inference-bearing probes under the §12.2 ruling). |
-| U2 | **Install + launch contract, behind an activation gate**: pinned installer + hash verification, seat/managed-home provisioning and seeding, allowlist env construction, provider table + filtering, flag mapping + refusals, spool-borne doctrine/prompt, status-op bind capture with hard-fail cleanup, conditional `/proc` assertion. `--agent pi` refuses with a family-not-activated cause+remedy error unless the explicit activation config/env is set. | `launchcmd`/`spawncmd` pi branches + `herder pi install`; `pibridge` consumed, not modified. | T17–T21 + probes P1/P4/P6/P7/A6 answered and recorded + the isolated **live smoke** (one provider, §12.2 spend) under the activation flag. |
-| U3 | **Lifecycle & identity**: resume/fork/cull/relaunch-on-provider-change, session-drift handling, registry capability flags (`bus`, `pending`, `inject`, `driver`, `spool`, `control`, `auth`, `provider` — the full DR-6 set), retirement reporting. | `lifecyclecmd`/`cullcmd` pi branches, registry schema additions. | T9, T22–T24 + T31/T33 re-run through the cull command path + resume/fork live re-check riding the U2 smoke pattern. |
+| U2 | **Vendor resolution + launch contract, behind an activation gate**: vendor entry resolution + recorded version (provision and per-launch), extension install into the default `agent/extensions/` + seat-keyed activation/inertness, launch env construction with credential scoping (no state re-points — DR-3), provider table + filtering, flag mapping + refusals, spool-borne doctrine/prompt, status-op bind capture with hard-fail cleanup, conditional `/proc` assertion. `--agent pi` refuses with a family-not-activated cause+remedy error unless the explicit activation config/env is set. | `launchcmd`/`spawncmd` pi branches + `herder pi provision`; `pibridge` consumed, not modified. | T17–T21 (re-scoped forms) + probes P1/P4/P6/P7/A6 answered and recorded + the isolated **live smoke** (one provider, §12.2 spend) under the activation flag. |
+| U3 | **Lifecycle & identity**: resume/fork/cull/relaunch-on-provider-change, session-drift handling, registry capability flags (`bus`, `pending`, `inject`, `driver`, `spool`, `control`, `provider` — the full DR-6 set), retirement reporting. | `lifecyclecmd`/`cullcmd` pi branches, registry schema additions. | T9, T22–T24 + T31/T33 re-run through the cull command path + resume/fork live re-check riding the U2 smoke pattern. |
 | U4 | **Observer, transcript & sesh**: session-JSONL adapter (header index, branch-aware rendering), sesh identifier/lineage wiring, labeled `status(pi-ext)` enrichment, honest-unknown reconciliation. | `observercmd` + transcript/sesh plumbing. | T27 against recorded fixtures; `unknown` preserved under mutation. |
-| U5 | **Shim/setup/doctor/docs**: `pi` PATH shim (no-vendor-fallback + escape hatch, per the grok shim pattern), ai-setup/ai-doctor family checks (report-only, isolated probe roots), managed-home and family docs. | shims + setup/doctor scripts + docs. | Ships only after U2's live smoke is green; shadowing/recursion checks; doctor probes prove no live-state writes (T18 posture). |
+| U5 | **Shim/setup/doctor/docs**: `pi` PATH/shim semantics per the default-homes fleet norm (decided in-unit and documented — the grok default-homes unit's pattern; the quarantine-era no-vendor-fallback shim shape does not apply), ai-setup/ai-doctor family checks (report-only; a default doctor run reports the Pi binary/version without surprising side effects), family docs (default-home operation per the ruling). | shims + setup/doctor scripts + docs. | Ships only after U2's live smoke is green; shadowing/recursion checks; doctor checks provably report-only (T18 posture, re-scoped). |
 | A | **Activation unit** (own change, last): flip the default. | Activation config + any final wiring. | Hard ACs below. |
 
 U1 → U2 strictly ordered; U3 and U4 parallel after U2; U5 after U2's smoke;
@@ -1610,19 +1754,21 @@ Until the activation change, the family is explicitly experimental and opt-in.
 ## 14. Earned-clause disposition (carried forward from the demo)
 
 The demo's clause verdicts (demo "Earned launch-contract clauses"), with where each
-lands in this design:
+lands in this design. Where the 2026-07-14 default-homes ruling supersedes a demo
+"Required" verdict, that is recorded here as the ruling's disposition — the demo
+report itself is not rewritten:
 
 | Clause | Demo verdict | Design disposition |
 |---|---|---|
-| Dedicated managed `PI_HOME` concept | Required | DR-3 seat construction (exact demo mapping) |
-| Managed environment on every invocation | Required | DR-3 allowlist + T18 (installer/probes included) |
-| `PI_OFFLINE=1` | Required | DR-3 always-env + activation AC 6 per-provider check |
-| `PI_TELEMETRY=0` | Required | DR-3 always-env + seeded settings |
-| Provider-specific environment filtering | Required | DR-5 + T17/T21 |
+| Dedicated managed `PI_HOME` concept | Required | **Superseded by owner ruling 2026-07-14**: live default home (§1, DR-3 seat construction); the demo mapping stays as evidence that the translation variables work |
+| Managed environment on every invocation | Required | Re-scoped by the ruling: herder-constructed env on every **seat launch** (DR-3); the every-invocation scratch ceremony dissolved (§12 item 9e) |
+| `PI_OFFLINE=1` | Required | DR-3 launch-env delta (per-process version stability) + activation AC 6 per-provider check |
+| `PI_TELEMETRY=0` | Required | DR-3 launch-env delta (no settings seeding exists) |
+| Provider-specific environment filtering | Required | DR-5 + T17/T21 (env channel; retained by the ruling) |
 | Provider pin per seat | Required | DR-5 (relaunch on cross-provider change) |
-| Pinned package version and integrity | Required at install/provision | DR-3 provisioning + T19 |
-| Per-launch binary hash gate | Not earned | Not designed; immutable install + provision-time verification only |
-| Per-launch config rewrite | Not earned | Not designed; settings seeded once (DR-3) |
+| Pinned package version and integrity | Required at install/provision | **Superseded by owner ruling 2026-07-14**: vendor-updated default install, observed version recorded, no gate (DR-3 provisioning + T19 re-scoped; drift delta §12 item 9b) |
+| Per-launch binary hash gate | Not earned | Not designed; no provision-time gate remains either (ruling) |
+| Per-launch config rewrite | Not earned | Not designed; no owner-config writes at all under the ruling (env-only — §1) |
 | Per-launch `/proc` environment ceremony | **Conditional** | Carried conditionally: one-time post-spawn assertion every launch (DR-3) until activation AC 5 characterizes the pane-spawn path; resolution only by that evidence |
 | Native managed extension | Required | DR-1/DR-2 (the binder-owner) |
 | External binder process | Not earned | Not designed; DR-1 fork explicitly keeps all persistent logic inside Pi or in bounded CLI ops |
@@ -1632,9 +1778,13 @@ lands in this design:
 ## 15. Design-time verification note
 
 Per the docs-only constraint of this unit, **no new probes of the Pi binary or of
-hcom were run while writing this design**. Every behavioral claim cites either the
+hcom were run while writing this design**. Amendment round 10 is likewise
+docs-only: it records the 2026-07-14 owner ruling and its deltas (§12 item 9)
+without new probes; the hcom-native characterization it cites ran as its own
+probed unit. Every behavioral claim cites either the
 double-reviewed demo report, the grok design's independently reproduced hcom 0.7.23
-verification (V1–V9), or mechanism-level grok activation evidence. Where the demo's
+verification (V1–V9), the hcom-native Pi characterization, or mechanism-level
+grok activation evidence. Where the demo's
 evidence basis was API/documentation inventory rather than probe, the claim is
 registered in §10 with a conservative posture and a named verification owner. The
 first implement unit (U1) begins by discharging the §10 register — in particular
