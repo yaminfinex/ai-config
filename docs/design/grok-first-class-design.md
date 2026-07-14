@@ -1,8 +1,23 @@
 <!-- Provenance: design record, 2026-07-12. Design only; implementation is staged separately (§Staging). -->
 # Grok as a first-class herder/hcom family — design
 
-Status: proposed design, revised once after adversarial review; pending delta review
-Subject: xAI Grok CLI 0.2.93 (`f00f96316d`) against herder + hcom 0.7.23
+Status: implemented design record; home/binary portions superseded by the 2026-07-14 owner amendment below
+Subject: Grok Build against herder + hcom (original characterization used CLI 0.2.93)
+
+> **Owner amendment — 2026-07-14 (binding):** Grok seats now use the live default
+> `~/.grok` home and the vendor-installed, vendor-updated executable. Herder no longer
+> pins `GROK_HOME`, seeds or rewrites a Grok home, suppresses updates, accepts a pinned
+> binary/version set, or executes the binary for version/capability gating. Launch walks
+> `PATH`, skips herder's own shims, and selects the first vendor executable. The hcom MCP
+> server is registered through a seat-worktree `.grok/config.toml` project layer using the
+> characterized `[mcp_servers.hcom]` surface; launch refuses `--cwd` so that config directory
+> and Grok's effective cwd cannot diverge. The owner's `~/.grok/config.toml` remains untouched.
+> The identity-env
+> allowlist, credential-by-name/process-env boundary, and
+> `GROK_CLAUDE_HOOKS_ENABLED=0` launch override remain binding. Session discovery and
+> lifecycle evidence now read `~/.grok/sessions`. Conflicting home, update, binary, and
+> version-pin language below records the original design and is superseded by this ruling;
+> its transport, receipt, identity, lifecycle, and observability decisions remain current.
 
 Evidence base (cited throughout by path + section):
 

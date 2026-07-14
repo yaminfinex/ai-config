@@ -63,7 +63,7 @@ type grokCursorFence struct {
 
 func grokSessionDir(grokHome, sessionID string) (string, error) {
 	if !filepath.IsAbs(grokHome) {
-		return "", errors.New("Grok home is not absolute; run the observer with HERDER_STATE_DIR set to the seat's state root")
+		return "", errors.New("default Grok home is not absolute; verify HOME for the observer process")
 	}
 	if !validGrokSessionID(sessionID) {
 		return "", errors.New("Grok session identity is missing or malformed; resume or respawn the seat so its explicit session id is recorded")
@@ -74,7 +74,7 @@ func grokSessionDir(grokHome, sessionID string) (string, error) {
 	}
 	switch len(matches) {
 	case 0:
-		return "", fmt.Errorf("%w for explicit session id %s; verify GROK_HOME and resume or respawn the seat", errGrokSessionUndiscovered, sessionID)
+		return "", fmt.Errorf("%w for explicit session id %s; verify the default ~/.grok home and resume or respawn the seat", errGrokSessionUndiscovered, sessionID)
 	case 1:
 		return matches[0], nil
 	default:
@@ -111,12 +111,12 @@ func observeGrokSession(grokHome, sessionID string, cursor *grokArtifactCursor) 
 	}
 	transcriptPath := filepath.Join(dir, "chat_history.jsonl")
 	if err := updateGrokTranscript(transcriptPath, cursor); err != nil {
-		return grokSessionObservation{}, fmt.Errorf("read Grok chat history: %w; verify the dedicated GROK_HOME session and retry the observer sweep", err)
+		return grokSessionObservation{}, fmt.Errorf("read Grok chat history: %w; verify the default-home session and retry the observer sweep", err)
 	}
 	eventsPath := filepath.Join(dir, "events.jsonl")
 	err = updateGrokEventStatus(eventsPath, cursor)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return grokSessionObservation{}, fmt.Errorf("read Grok event enrichment: %w; verify the dedicated GROK_HOME session and retry the observer sweep", err)
+		return grokSessionObservation{}, fmt.Errorf("read Grok event enrichment: %w; verify the default-home session and retry the observer sweep", err)
 	}
 	if errors.Is(err, os.ErrNotExist) {
 		clearGrokEventCursor(cursor)
@@ -362,10 +362,12 @@ func grokObservations(records []v2.SessionRecord, stateDir string, stderr io.Wri
 	return grokObservationsAt(records, stateDir, stderr, cursors, time.Now().UTC())
 }
 
-func grokObservationsAt(records []v2.SessionRecord, stateDir string, stderr io.Writer, cursors map[string]*grokArtifactCursor, now time.Time) (map[string]observerstatus.Observation, []observerstatus.Flag) {
+func grokObservationsAt(records []v2.SessionRecord, _ string, stderr io.Writer, cursors map[string]*grokArtifactCursor, now time.Time) (map[string]observerstatus.Observation, []observerstatus.Flag) {
 	out := map[string]observerstatus.Observation{}
 	var flags []observerstatus.Flag
 	active := map[string]bool{}
+	ownerHome, _ := os.UserHomeDir()
+	grokHome := filepath.Join(ownerHome, ".grok")
 	for _, rec := range records {
 		if rec.State != v2.StateSeated || rec.Tool != "grok" || rec.GUID == "" {
 			continue
@@ -383,7 +385,7 @@ func grokObservationsAt(records []v2.SessionRecord, stateDir string, stderr io.W
 				cursor = cursors[rec.GUID]
 			}
 		}
-		obs, err := observeGrokSession(filepath.Join(stateDir, "grok-home"), sessionID, cursor)
+		obs, err := observeGrokSession(grokHome, sessionID, cursor)
 		if errors.Is(err, errGrokSessionUndiscovered) {
 			if grokSeatWithinBootWindow(rec, now) {
 				continue
@@ -393,8 +395,8 @@ func grokObservationsAt(records []v2.SessionRecord, stateDir string, stderr io.W
 				Label:     rec.Label,
 				Type:      "grok-session-undiscovered",
 				Severity:  "warning",
-				Detail:    "explicit Grok session id has no matching directory under the dedicated GROK_HOME; observer keeps live status unknown",
-				Suggested: "verify the dedicated GROK_HOME and wait for the seat's first completed turn; then inspect grok sessions for the recorded id",
+				Detail:    "explicit Grok session id has no matching directory under the default ~/.grok home; observer keeps live status unknown",
+				Suggested: "verify the default Grok home and wait for the seat's first completed turn; then inspect grok sessions for the recorded id",
 			})
 			continue
 		}

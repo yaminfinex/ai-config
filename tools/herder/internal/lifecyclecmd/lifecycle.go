@@ -746,9 +746,8 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	if spec.Agent == "grok" {
 		grokEnv = " HERDER_STATE_DIR=" + shellquote.Quote(filepath.Dir(spec.RegistryPath)) +
 			" HERDER_GROK_SESSION_ID=" + shellquote.Quote(spec.GrokSessionID) +
-			" HERDER_GROK_CHILD_HOME=" + shellquote.Quote(os.Getenv("HOME")) +
 			" HERDER_GROK_PREASSIGNED=1"
-		for _, key := range []string{"HERDER_GROK_BIN", "HERDER_GROK_SUPPORTED_VERSIONS", "HERDER_REAL_HCOM"} {
+		for _, key := range []string{"HERDER_REAL_HCOM"} {
 			if value := os.Getenv(key); value != "" {
 				grokEnv += " " + key + "=" + shellquote.Quote(value)
 			}
@@ -928,7 +927,8 @@ func (r *runner) verifyGrokLifecycleIdentity(row []byte, paneID, terminalID stri
 			processOut, processRC, processErr := r.client().Combined("pane", "process_info", paneID)
 			processes, parseProcessErr := herdrcli.ParseProcessInfo(processOut)
 			pid := matchingGrokProcess(processes.Processes, spec)
-			sessionMatches, _ := filepath.Glob(filepath.Join(filepath.Dir(spec.RegistryPath), "grok-home", "sessions", "*", spec.GrokSessionID))
+			ownerHome, _ := os.UserHomeDir()
+			sessionMatches, _ := filepath.Glob(filepath.Join(ownerHome, ".grok", "sessions", "*", spec.GrokSessionID))
 			status, statusErr := grokBridgeCall(filepath.Dir(spec.RegistryPath), spec.GUID, spec.GrokSessionID, "status")
 			busData, busErr := os.ReadFile(filepath.Join(filepath.Dir(spec.RegistryPath), "grok", spec.GUID, "bus-name"))
 			busName := strings.TrimSpace(string(busData))
@@ -938,7 +938,7 @@ func (r *runner) verifyGrokLifecycleIdentity(row []byte, paneID, terminalID stri
 			case pid == 0:
 				last = "no Grok process carried the herder-owned lifecycle identity arguments"
 			case len(sessionMatches) != 1:
-				last = fmt.Sprintf("expected one controlled session directory named %s, found %d", spec.GrokSessionID, len(sessionMatches))
+				last = fmt.Sprintf("expected one default-home session directory named %s, found %d", spec.GrokSessionID, len(sessionMatches))
 			case busErr != nil || busName == "":
 				last = "bridge bus name unavailable"
 			case statusErr != nil || status.Status == nil:

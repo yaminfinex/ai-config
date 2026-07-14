@@ -147,8 +147,8 @@ func TestT19GrokPassthroughRefusals(t *testing.T) {
 	cases := []string{
 		"--session-id", "--session-id=value", "-s", "--resume", "-r", "--continue", "-c", "--continue=1", "--fork-session",
 		"--rules", "--permission-mode", "--always-approve", "--bypassPermissions",
-		"--no-auto-update", "--auto-update", "--disable-auto-update", "--agents", "--agent", "--subagents",
-		"--no-subagents", "--no-no-subagents", "HOME=/tmp/elsewhere", "GROK_HOME=/tmp/elsewhere",
+		"--no-auto-update", "--auto-update", "--disable-auto-update", "--plugin-dir", "--agents", "--agent", "--subagents",
+		"--no-subagents", "--no-no-subagents", "--cwd", "--cwd=/tmp/elsewhere", "HOME=/tmp/elsewhere", "GROK_HOME=/tmp/elsewhere",
 	}
 	for _, arg := range cases {
 		t.Run(strings.TrimLeft(strings.ReplaceAll(arg, "=", "_"), "-"), func(t *testing.T) {

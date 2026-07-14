@@ -35,7 +35,7 @@ func TestGrokEventEnrichmentPreservesUnknownLiveStatusEndToEnd(t *testing.T) {
 		panePanes: map[string]bool{},
 	}
 	observation := observerstatus.Observation{
-		TranscriptPath:    "/state/grok-home/sessions/%2Fworkspace/session/chat_history.jsonl",
+		TranscriptPath:    "/home/.grok/sessions/%2Fworkspace/session/chat_history.jsonl",
 		TranscriptSource:  "grok-chat-history",
 		TranscriptEntries: 3,
 		EventStatus:       "tool_execution",

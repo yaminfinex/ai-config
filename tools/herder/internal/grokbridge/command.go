@@ -36,7 +36,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func printHelp(w io.Writer) {
-	fmt.Fprint(w, "herder grok — health and transport for first-class Grok seats.\n\nUsage:\n  herder grok check [--state-dir <throwaway-root>]\n  herder grok tap --seat <guid>\n  herder grok mcp --seat <guid>\n  herder grok bridge --seat <guid> --hcom-bin <path> [--hcom-dir <path>] [--supervise]\n  herder grok retire-offline --seat <guid> [--state-dir <herder-state>]\n")
+	fmt.Fprint(w, "herder grok — health and transport for first-class Grok seats.\n\nUsage:\n  herder grok check\n  herder grok tap --seat <guid>\n  herder grok mcp --seat <guid>\n  herder grok bridge --seat <guid> --hcom-bin <path> [--hcom-dir <path>] [--supervise]\n  herder grok retire-offline --seat <guid> [--state-dir <herder-state>]\n")
 }
 func stateDefault() string {
 	if v := os.Getenv("HERDER_STATE_DIR"); v != "" {

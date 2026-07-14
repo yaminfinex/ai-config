@@ -839,9 +839,8 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	if opts.Agent == "grok" {
 		grokEnv = " HERDER_STATE_DIR=" + shellquote.Quote(stateDir) +
 			" HERDER_GROK_SESSION_ID=" + shellquote.Quote(grokSessionID) +
-			" HERDER_GROK_CHILD_HOME=" + shellquote.Quote(os.Getenv("HOME")) +
 			" HERDER_GROK_PREASSIGNED=1"
-		for _, key := range []string{"HERDER_GROK_BIN", "HERDER_GROK_SUPPORTED_VERSIONS", "HERDER_REAL_HCOM"} {
+		for _, key := range []string{"HERDER_REAL_HCOM"} {
 			if value := os.Getenv(key); value != "" {
 				grokEnv += " " + key + "=" + shellquote.Quote(value)
 			}
@@ -866,8 +865,8 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			argv = append(argv, "HCOM_DIR="+hcomDirEff, "PATH="+r.paths.ShimsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 		}
 		if opts.Agent == "grok" {
-			argv = append(argv, "HERDER_STATE_DIR="+stateDir, "HERDER_GROK_SESSION_ID="+grokSessionID, "HERDER_GROK_CHILD_HOME="+os.Getenv("HOME"), "HERDER_GROK_PREASSIGNED=1")
-			for _, key := range []string{"HERDER_GROK_BIN", "HERDER_GROK_SUPPORTED_VERSIONS", "HERDER_REAL_HCOM"} {
+			argv = append(argv, "HERDER_STATE_DIR="+stateDir, "HERDER_GROK_SESSION_ID="+grokSessionID, "HERDER_GROK_PREASSIGNED=1")
+			for _, key := range []string{"HERDER_REAL_HCOM"} {
 				if value := os.Getenv(key); value != "" {
 					argv = append(argv, key+"="+value)
 				}
