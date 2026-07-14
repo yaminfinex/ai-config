@@ -463,13 +463,27 @@ func TestSurfaceDefaultLoggerReachesProcessDefault(t *testing.T) {
 
 // TestSurfaceJournalRenderFailurePath drives the shared render-failure
 // logging path — the one journal path every template-execution branch routes
-// through — with a deliberately failing template whose name carries a
-// session id (template exec errors embed the template name verbatim), and
-// pins the emitted record to the contract.
+// through — with a template that executes and fails with an error carrying a
+// session id, and pins the emitted record to the contract.
 func TestSurfaceJournalRenderFailurePath(t *testing.T) {
 	needles := journalNeedles()
 	srv, h := capturingServer(t, &failingStore{fakeStore: corpusStore(t)})
-	bad := template.Must(template.New(uuidNormal + ".html").Parse(`{{.NoSuchField}}`))
+	// The template must exist under the exact name production executes
+	// ("recency.html") and fail DURING execution, so the identifier rides
+	// the real ExecError — a missing definition would fail with just
+	// `"recency.html" is undefined` and prove nothing.
+	bad := template.Must(template.New("recency.html").Funcs(template.FuncMap{
+		"boom": func() (string, error) {
+			return "", fmt.Errorf("render %s on workstation: SECRET template exploded", uuidNormal)
+		},
+	}).Parse(`{{boom}}`))
+	// Self-check: the error this template hands the render path really does
+	// carry the seeded identifier — otherwise the strip-proof below would be
+	// assumed, not tested.
+	execErr := bad.ExecuteTemplate(io.Discard, "recency.html", nil)
+	if execErr == nil || !strings.Contains(execErr.Error(), uuidNormal) || !strings.Contains(execErr.Error(), "SECRET") {
+		t.Fatalf("self-check: constructed template error does not carry the seeded identifiers: %v", execErr)
+	}
 	srv.SetRecencyTemplateForTest(bad)
 
 	rec := httptest.NewRecorder()
