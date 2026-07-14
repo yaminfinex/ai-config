@@ -50,8 +50,10 @@ policy, live relay, per-session ACLs, OTel.
 - **Store** — the central service: byte-faithful **mirror** (raw bytes as shipped, the
   durable archive) + parse-on-ingest **index** (per-message rows for rendering) + the
   ingest and read APIs.
-- **Surface** — the one team-facing page: people-first recency (person → nodes → sessions),
-  with read-only transcript drill-down.
+- **Surface** — the team-facing read-only pages: a nodes entry point over one FLAT
+  recency-ordered sessions table (node and person are columns, not groupings — owner
+  ruling 2026-07-14; the list is filterable to one node), with read-only transcript
+  drill-down in bounded message windows.
 - **Cursor** — per-(session-file) shipper state: file identity + last-ACKed byte offset.
   Lives in the node's **cursor registry**, which also remembers observed SESSION_OWNER
   correlations.
@@ -194,14 +196,22 @@ stamps the session:
 
 ### 4.4 Surface
 
-One page, people-first recency:
+Nodes-first navigation over one flat sessions list (owner ruling 2026-07-14: "node is a
+column, not a grouping" — grouping sections fought pagination, so page cuts fell
+mid-group):
 
-- **Rows**: person (display owner per §3.2, with its source visible) → their nodes → their
-  sessions, most-recently-active first. Sessions with no owner claim group under
-  node/OS-user honestly.
+- **Entry point**: a per-node last-activity table; each node links its sessions view —
+  the same flat list filtered to that node, paginated identically. The all-nodes list
+  stays reachable at a stable URL.
+- **Rows**: one recency-ordered table, most-recently-active first, with node
+  (OS-user@host) and person (display owner per §3.2, with its source visible) as
+  columns. Sessions with no owner claim render an absent person column honestly; the
+  node column always identifies the row.
 - **Drill-down**: read-only transcript render from the index (roles, text, tool calls
-  collapsed sensibly). A render-failure fallback shows raw JSONL lines from the mirror —
-  the surface must never be fully blind to a session the mirror holds.
+  collapsed sensibly), windowed — one page renders a bounded newest message window with
+  older/newer links; the raw mirror view stays whole-file. A render-failure fallback
+  shows raw JSONL lines from the mirror — the surface must never be fully blind to a
+  session the mirror holds.
 - **No search** (killed, S9). No write actions of any kind.
 
 ## 5. Expected behaviour

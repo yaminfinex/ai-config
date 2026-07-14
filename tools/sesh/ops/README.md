@@ -186,7 +186,7 @@ binary is deployed):
      the matching mirror file sizes (same verification shape as the README's
      store host migration drill);
    - byte-compare one mirrored file against its source on a node (`cmp`);
-   - shippers resume on their own: `/nodes` shows fresh last-PUT times and
+   - shippers resume on their own: the nodes view at `/` shows fresh last-PUT times and
      `sesh status` exits 0 on a spot-checked node;
    - one live session keeps appending end-to-end.
 6. Record the drill (date, identities verified, any gaps) in the rollout log.
@@ -229,6 +229,9 @@ own migration — never an incidental side effect of a deploy. **Schema moves
 forward-only**: the store's index schema and the node-local cursor-registry
 generation never downgrade; an older binary against newer state refuses
 cleanly (the README's "Field failure signature") instead of touching data.
-The **support window is current + previous release**: `/nodes` version
-visibility plus one-command `sesh update` keep the fleet within one release
-of latest, and anything older gets upgraded, not accommodated.
+The **support window is current + previous release**: one-command
+`sesh update` keeps the fleet within one release of latest, and anything
+older gets upgraded, not accommodated. Per-node version visibility on the
+nodes view is DEFERRED, not present: the read side carries no version facts
+today, and adding them is a write-path change owned by the
+fleet-version-visibility task (User-Agent census) on the board.

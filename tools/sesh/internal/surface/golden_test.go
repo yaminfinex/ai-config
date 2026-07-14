@@ -43,7 +43,9 @@ func checkGolden(t *testing.T, name, got string) {
 func TestGoldenSnapshots(t *testing.T) {
 	srv := newServer(t, corpusStore(t))
 	pages := map[string]string{
-		"recency.html":                  "/",
+		"nodes.html":                    "/",
+		"recency.html":                  "/sessions",
+		"recency-node-filtered.html":    "/sessions?node=grace@workstation",
 		"recency-fragment.html":         "/fragments/recency",
 		"transcript-claude-normal.html": "/s/claude/" + uuidNormal,
 		"transcript-resume-pair.html":   "/s/claude/" + uuidResumeOrig,

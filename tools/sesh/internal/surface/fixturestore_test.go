@@ -77,8 +77,24 @@ func mirrorKey(tool wire.Tool, wireSessionID, fileUUID string, gen int) string {
 // RecentSessions mirrors the seam contract on fixture data: most recent
 // first by the R14 instant, logical id tie-break, one page. The fake may
 // slice in Go — proving the LIMIT is SQL-side is the live SQLStore's gate.
-func (f *fakeStore) RecentSessions(_ context.Context, limit, offset int) ([]surface.SessionSummary, int, error) {
-	sums := append([]surface.SessionSummary(nil), f.sessions...)
+func (f *fakeStore) RecentSessions(ctx context.Context, limit, offset int) ([]surface.SessionSummary, int, error) {
+	return pageSums(f.sessions, limit, offset)
+}
+
+// RecentSessionsByNode mirrors the node-filtered contract: the same
+// ordering and paging over just the node's sessions.
+func (f *fakeStore) RecentSessionsByNode(_ context.Context, hostname, osUser string, limit, offset int) ([]surface.SessionSummary, int, error) {
+	var filtered []surface.SessionSummary
+	for _, s := range f.sessions {
+		if s.Hostname == hostname && s.OSUser == osUser {
+			filtered = append(filtered, s)
+		}
+	}
+	return pageSums(filtered, limit, offset)
+}
+
+func pageSums(all []surface.SessionSummary, limit, offset int) ([]surface.SessionSummary, int, error) {
+	sums := append([]surface.SessionSummary(nil), all...)
 	sort.Slice(sums, func(i, j int) bool {
 		a, b := sums[i].Recency(), sums[j].Recency()
 		if !a.Equal(b) {
@@ -292,7 +308,7 @@ func corpusStore(t *testing.T) *fakeStore {
 		}
 		return ts
 	}
-	return buildStore(t, []sessionSpec{
+	f := buildStore(t, []sessionSpec{
 		{
 			tool: wire.ToolClaude, logicalID: uuidNormal,
 			hostname: "workstation", osUser: "grace",
@@ -329,6 +345,13 @@ func corpusStore(t *testing.T) *fakeStore {
 			files: []fixtureFile{{name: "claude-trailing-partial.jsonl", fileUUID: uuidPartial, firstIngest: day("2026-07-06T12:00:00Z")}},
 		},
 	})
+	// The two fixture nodes, for the '/' entry point (last-seen bookkeeping
+	// in the live store).
+	f.nodes = []surface.NodeStatus{
+		{Hostname: "workstation", OSUser: "grace", LastPutAt: day("2026-07-06T12:01:00Z"), Age: "23h59m0s", Stale: false},
+		{Hostname: "laptop", OSUser: "alice", LastPutAt: day("2026-07-05T08:10:00Z"), Age: "51h50m0s", Stale: true},
+	}
+	return f
 }
 
 // inflatedLine re-marshals a real claude-normal user entry with its text
@@ -378,7 +401,8 @@ func giantLineStore(t *testing.T) *fakeStore {
 }
 
 // manyLargeLinesStore: n distinct-uuid lines of ~contentSize each — the
-// adversarially large mirrored session for the display-budget scenarios.
+// adversarially large mirrored session for the display-budget and
+// transcript-window scenarios.
 func manyLargeLinesStore(t *testing.T, n, contentSize int, quarantineAll bool) *fakeStore {
 	t.Helper()
 	line := inflatedLine(t, contentSize)
@@ -390,4 +414,41 @@ func manyLargeLinesStore(t *testing.T, n, contentSize int, quarantineAll bool) *
 		data = append(data, '\n')
 	}
 	return oneFileStore(t, data, quarantineAll)
+}
+
+// manyMultiBlockLinesStore: n distinct-uuid lines whose content is `blocks`
+// text blocks of blockSize bytes each. One transcript window of such lines
+// can exceed the byte budget even though every block obeys the per-block
+// cap — the shape the budget backstop exists for.
+func manyMultiBlockLinesStore(t *testing.T, n, blocks, blockSize int) *fakeStore {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(fixturesDir(), "claude-normal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(raw, []byte("\n"))
+	var entry map[string]any
+	if err := json.Unmarshal(lines[2], &entry); err != nil { // line 3: plain user text entry
+		t.Fatal(err)
+	}
+	msg, ok := entry["message"].(map[string]any)
+	if !ok {
+		t.Fatal("claude-normal line 3 has no message object")
+	}
+	content := make([]map[string]any, blocks)
+	for i := range content {
+		content[i] = map[string]any{"type": "text", "text": string(bytes.Repeat([]byte("x"), blockSize))}
+	}
+	msg["content"] = content
+	var data []byte
+	for i := 0; i < n; i++ {
+		entry["uuid"] = fmt.Sprintf("%08d-aaaa-4000-8000-000000000000", i)
+		line, err := json.Marshal(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = append(data, line...)
+		data = append(data, '\n')
+	}
+	return oneFileStore(t, data, false)
 }

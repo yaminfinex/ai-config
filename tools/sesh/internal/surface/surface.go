@@ -1,6 +1,8 @@
-// Package surface serves the one read-only team page: people-first recency
-// (person → nodes → sessions), transcript drill-down rendered from the
-// message index, and a raw-JSONL fallback from the mirror whenever the index
+// Package surface serves the read-only team pages: a nodes entry point, one
+// flat recency-ordered sessions table (node and person are COLUMNS, not
+// groupings — owner ruling 2026-07-14 — optionally filtered to one node),
+// transcript drill-down rendered from the message index in bounded message
+// windows, and a raw-JSONL fallback from the mirror whenever the index
 // cannot render (spec §4.4; plan U7; R14, R16, R17).
 //
 // The surface reads the frozen index schema of docs/specs/sesh-wire.md
@@ -111,6 +113,13 @@ type Store interface {
 	// for the whole corpus per request. total is the corpus-wide logical
 	// session count.
 	RecentSessions(ctx context.Context, limit, offset int) (page []SessionSummary, total int, err error)
+	// RecentSessionsByNode is RecentSessions filtered to one node label
+	// (hostname, OS user) — same ordering, same bound contract; total is the
+	// node's session count. Implementations must not pay corpus-scale work
+	// per request for the filter, in SQL or in memory (the live store pages
+	// a per-node ranked slice prebuilt during the same single-flighted
+	// projection rebuild and swapped atomically with the global ranking).
+	RecentSessionsByNode(ctx context.Context, hostname, osUser string, limit, offset int) (page []SessionSummary, total int, err error)
 	// Session resolves one logical session; ok=false when unknown.
 	Session(ctx context.Context, tool wire.Tool, logicalSessionID string) (sum SessionSummary, ok bool, err error)
 	// Rows returns the session's sesh_index_messages rows.
@@ -177,14 +186,31 @@ func New(store Store, opts ...Option) *Server {
 	s.rawTmpl = mustPage("raw.html")
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", s.handleRecency)
-	mux.HandleFunc("GET /nodes", s.handleNodes)
+	// '/' is the nodes entry point; the flat all-nodes sessions list lives at
+	// the stable /sessions URL (?node= filters it, ?page= pages it), and the
+	// htmx poll target /fragments/recency takes the same selectors. /nodes
+	// redirects to '/' so pre-rework links keep working.
+	mux.HandleFunc("GET /{$}", s.handleNodes)
+	mux.Handle("GET /nodes", http.RedirectHandler("/", http.StatusMovedPermanently))
+	mux.HandleFunc("GET /sessions", s.handleRecency)
 	mux.HandleFunc("GET /fragments/recency", s.handleRecencyFragment)
 	mux.HandleFunc("GET /s/{tool}/{session}", s.handleTranscript)
 	mux.HandleFunc("GET /s/{tool}/{session}/raw", s.handleRaw)
 	mux.Handle("GET /assets/", http.FileServerFS(assetFS))
 	s.mux = mux
 	return s
+}
+
+// nodeRow is one entry-point row: the node's last-PUT status plus the link
+// into its filtered sessions view.
+type nodeRow struct {
+	NodeStatus
+	// Node is the display label (os_user@hostname) shared with the sessions
+	// table's node column.
+	Node string
+	// SessionsURL is the node's flat recency view — the same list as
+	// /sessions, filtered to this node, paginated identically.
+	SessionsURL string
 }
 
 func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
@@ -199,10 +225,19 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		s.writeDegraded(w, "node status unavailable")
 		return
 	}
+	rows := make([]nodeRow, 0, len(nodes))
+	for _, n := range nodes {
+		label := nodeLabel(n.Hostname, n.OSUser)
+		rows = append(rows, nodeRow{
+			NodeStatus:  n,
+			Node:        label,
+			SessionsURL: sessionsURL("/sessions", label, 1),
+		})
+	}
 	data := struct {
 		Now   time.Time
-		Nodes []NodeStatus
-	}{Now: s.now(), Nodes: nodes}
+		Nodes []nodeRow
+	}{Now: s.now(), Nodes: rows}
 	if err := s.render(w, s.nodesTmpl, "nodes.html", data); err != nil {
 		s.log.Printf("surface: nodes render: %v", err)
 		s.writeDegraded(w, "node status render failed")
@@ -236,7 +271,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) writeDegraded(w http.ResponseWriter, reason string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>sesh — degraded</title></head><body><p>sesh surface: temporarily unable to render this view (%s). The mirror is unaffected; retry or check store logs.</p><p><a href="/">back to recency</a></p></body></html>`,
+	fmt.Fprintf(w, `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>sesh — degraded</title></head><body><p>sesh surface: temporarily unable to render this view (%s). The mirror is unaffected; retry or check store logs.</p><p><a href="/">back to nodes</a> · <a href="/sessions">all sessions</a></p></body></html>`,
 		template.HTMLEscapeString(reason))
 }
 
@@ -254,7 +289,7 @@ func (s *Server) render(w http.ResponseWriter, tmpl *template.Template, name str
 }
 
 func (s *Server) handleRecency(w http.ResponseWriter, r *http.Request) {
-	data, err := s.recencyData(r.Context(), recencyPageParam(r))
+	data, err := s.recencyData(r.Context(), pageParam(r), r.URL.Query().Get("node"))
 	if err != nil {
 		s.log.Printf("surface: recency: %v", err)
 		s.writeDegraded(w, "session listing unavailable")
@@ -267,7 +302,7 @@ func (s *Server) handleRecency(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRecencyFragment(w http.ResponseWriter, r *http.Request) {
-	data, err := s.recencyData(r.Context(), recencyPageParam(r))
+	data, err := s.recencyData(r.Context(), pageParam(r), r.URL.Query().Get("node"))
 	if err != nil {
 		s.log.Printf("surface: recency fragment: %v", err)
 		s.writeDegraded(w, "session listing unavailable")
@@ -319,11 +354,7 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 		s.serveRawFallback(w, r, sum, "no renderable index rows (quarantined or unindexed) — raw mirror lines")
 		return
 	}
-	page := transcriptPage{
-		Session: sum,
-		RawURL:  s.rawURL(sum),
-	}
-	page.Entries, page.OmittedRows = s.buildEntries(r.Context(), sum.Tool, rows)
+	page := s.transcriptData(r.Context(), sum, rows, pageParam(r))
 	if err := s.render(w, s.transcriptTmpl, "transcript.html", page); err != nil {
 		s.log.Printf("surface: transcript render %s/%s: %v", sum.Tool, sum.LogicalSessionID, err)
 		s.serveRawFallback(w, r, sum, "transcript render failed — raw mirror lines")
@@ -350,6 +381,10 @@ func renderableFromIndex(rows []wire.IndexMessage) bool {
 	return false
 }
 
+func (s *Server) transcriptURL(sum SessionSummary) string {
+	return "/s/" + url.PathEscape(string(sum.Tool)) + "/" + url.PathEscape(sum.LogicalSessionID)
+}
+
 func (s *Server) rawURL(sum SessionSummary) string {
-	return "/s/" + url.PathEscape(string(sum.Tool)) + "/" + url.PathEscape(sum.LogicalSessionID) + "/raw"
+	return s.transcriptURL(sum) + "/raw"
 }

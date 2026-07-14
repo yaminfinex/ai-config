@@ -114,11 +114,14 @@ func TestSQLStoreRendersResumePairOnceFromLiveIndex(t *testing.T) {
 		t.Errorf("message rows = %d, want 334", sum.MessageRows)
 	}
 
-	// Render through the real seam: one transcript, no duplicated uuids.
+	// Render through the real seam: one WINDOWED transcript — the newest
+	// 200-row window plus one older window tiling the 334 deduped rows — and
+	// no duplicated uuids across the windows.
 	srv := newServer(t, live)
-	body := mustGet200(t, srv, "/s/claude/"+uuidResumeOrig)
+	page1 := mustGet200(t, srv, "/s/claude/"+uuidResumeOrig)
+	page2 := mustGet200(t, srv, "/s/claude/"+uuidResumeOrig+"?page=2")
 	seen := map[string]int{}
-	for _, m := range dataUUIDRe.FindAllStringSubmatch(body, -1) {
+	for _, m := range dataUUIDRe.FindAllStringSubmatch(page1+page2, -1) {
 		seen[m[1]]++
 	}
 	for uuid, n := range seen {
@@ -126,10 +129,75 @@ func TestSQLStoreRendersResumePairOnceFromLiveIndex(t *testing.T) {
 			t.Errorf("uuid %s rendered %d times from the live index (S2)", uuid, n)
 		}
 	}
-	if n := strings.Count(body, `<li class="entry`); n != 334 {
-		t.Errorf("rendered %d entries from the live index, want 334", n)
+	if n := strings.Count(page1, `<li class="entry`); n != surface.TranscriptWindowMessages {
+		t.Errorf("newest window rendered %d entries, want %d", n, surface.TranscriptWindowMessages)
+	}
+	if !strings.Contains(page1, "messages 135–334 of 334") {
+		t.Error("newest window must label its slice of the session")
+	}
+	if n := strings.Count(page2, `<li class="entry`); n != 334-surface.TranscriptWindowMessages {
+		t.Errorf("older window rendered %d entries, want %d", n, 334-surface.TranscriptWindowMessages)
 	}
 	mustGet200(t, srv, "/s/claude/"+uuidResumeOrig+"/raw")
+}
+
+// TestNodeFilterLabelConsistentUnderServeStale pins the filter/display
+// invariant on the node-filtered view: the filter selects on the
+// projection's node label and the response renders that same label — one
+// snapshot per response — even while a later fact observation has re-homed
+// the session and the projection is serving stale. After the triggered
+// refresh, the session appears only under its new node, live-labeled.
+func TestNodeFilterLabelConsistentUnderServeStale(t *testing.T) {
+	st, idx, live := openLiveStore(t)
+	putFixture(t, st, idx, wire.ToolClaude, uuidNormal, uuidNormal, "claude-normal.jsonl", nil)
+
+	// Cold build: the session lists under its shipping node, labeled so.
+	sums, total, err := live.RecentSessionsByNode(t.Context(), "gate-node", "grace", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(sums) != 1 || sums[0].Hostname != "gate-node" || sums[0].OSUser != "grace" {
+		t.Fatalf("cold filtered page = %d sums (total %d, label %s@%s), want 1 labeled gate-node/grace",
+			len(sums), total, sums[0].OSUser, sums[0].Hostname)
+	}
+
+	// The node facts move: a later observation re-homes the wire session.
+	// Facts are an append-only log, so this is a plain INSERT (the same
+	// shape a PUT from the new node records).
+	if _, err := st.DB().ExecContext(t.Context(), `INSERT INTO fact_observations
+		(observed_at, tool, session_id, file_uuid, generation, hostname, os_user, session_owner)
+		VALUES (?, ?, ?, ?, 0, 'moved-node', 'grace', NULL)`,
+		time.Now().UTC().Format(time.RFC3339Nano), wire.ToolClaude, uuidNormal, uuidNormal); err != nil {
+		t.Fatal(err)
+	}
+
+	// Warm request on the OLD node observes the moved stamp, serves the
+	// stale projection (membership includes the session), and must label
+	// every row with the REQUESTED node — never the live moved-to label.
+	sums, total, err = live.RecentSessionsByNode(t.Context(), "gate-node", "grace", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(sums) != 1 {
+		t.Fatalf("stale filtered page = %d sums (total %d), want the serve-stale membership of 1", len(sums), total)
+	}
+	if sums[0].Hostname != "gate-node" || sums[0].OSUser != "grace" {
+		t.Errorf("stale filtered row labeled %s@%s; the filtered response must render its filter's label",
+			sums[0].OSUser, sums[0].Hostname)
+	}
+
+	// Converged: the old node is empty; the new node lists it, live-labeled.
+	live.WaitProjectionIdle()
+	if _, total, err = live.RecentSessionsByNode(t.Context(), "gate-node", "grace", 10, 0); err != nil || total != 0 {
+		t.Fatalf("after refresh, old node total = %d (err %v), want 0", total, err)
+	}
+	sums, total, err = live.RecentSessionsByNode(t.Context(), "moved-node", "grace", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(sums) != 1 || sums[0].Hostname != "moved-node" {
+		t.Fatalf("after refresh, new node page = %d sums (total %d), want 1 labeled moved-node", len(sums), total)
+	}
 }
 
 func TestSQLStoreListsMirroredButUnindexedSession(t *testing.T) {
@@ -213,12 +281,12 @@ func TestSQLStoreCollectsOwnerClaimsFromObservationLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	live.WaitProjectionIdle()
-	body := mustGet200(t, newServer(t, live), "/")
+	body := mustGet200(t, newServer(t, live), "/sessions")
 	if !strings.Contains(body, "conflicting claims") {
-		t.Error("recency page must badge the conflicted session")
+		t.Error("sessions page must badge the conflicted session")
 	}
-	if !strings.Contains(body, `<h2>alice <span class="source">SESSION_OWNER fact</span></h2>`) {
-		t.Error("cleanly claimed session must group under alice with its source")
+	if !strings.Contains(body, `<td>alice <span class="source">SESSION_OWNER fact</span></td>`) {
+		t.Error("cleanly claimed session must fill the person column with alice and its source")
 	}
 }
 

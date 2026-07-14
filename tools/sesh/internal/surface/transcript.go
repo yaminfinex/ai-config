@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"time"
 
 	"sesh/internal/wire"
@@ -29,15 +31,86 @@ const (
 	// without bound; past the budget the page stops with an honest
 	// omitted-rows notice and points at the raw view.
 	transcriptDisplayBudgetBytes = 8 << 20
+	// transcriptWindowMessages bounds one transcript page to a window of the
+	// session's index rows, newest window first — the same pager idiom as
+	// the sessions list. A session renders whole only when it fits one
+	// window; older history stays reachable through ?page=N links, and the
+	// raw route stays whole-file. The display budget above remains the
+	// byte-level backstop within a window.
+	transcriptWindowMessages = 200
 )
 
-// transcriptPage is the template model for drill-down (R16).
+// maxTranscriptPage caps the ?page= selector so the window arithmetic can
+// never overflow (same posture as maxRecencyPage).
+const maxTranscriptPage = (math.MaxInt - transcriptWindowMessages) / transcriptWindowMessages
+
+// transcriptPage is the template model for drill-down (R16), one message
+// window at a time.
 type transcriptPage struct {
 	Session SessionSummary
 	RawURL  string
 	Entries []displayEntry
 	// OmittedRows counts index rows the display budget kept off the page.
 	OmittedRows int
+
+	// Window pager: index rows From–To of Total (1-based, oldest-first
+	// numbering) are on this page. Page 1 is the NEWEST window; OlderURL and
+	// NewerURL walk the history and are empty at the edges.
+	Total    int
+	From, To int
+	Page     int
+	NewerURL string
+	OlderURL string
+}
+
+// transcriptData windows the session's sorted index rows to one page and
+// builds its display entries. Page numbers past the last real window clamp
+// to the oldest window — the page stays honest about what it shows and the
+// never-500 contract holds for any ?page= value.
+func (s *Server) transcriptData(ctx context.Context, sum SessionSummary, rows []wire.IndexMessage, pageN int) transcriptPage {
+	sortTranscript(rows)
+	total := len(rows)
+	lastPage := (total + transcriptWindowMessages - 1) / transcriptWindowMessages
+	if lastPage < 1 {
+		lastPage = 1
+	}
+	switch {
+	case pageN < 1:
+		pageN = 1
+	case pageN > maxTranscriptPage:
+		pageN = maxTranscriptPage
+	}
+	if pageN > lastPage {
+		pageN = lastPage
+	}
+	end := total - (pageN-1)*transcriptWindowMessages
+	start := end - transcriptWindowMessages
+	if start < 0 {
+		start = 0
+	}
+	page := transcriptPage{
+		Session: sum,
+		RawURL:  s.rawURL(sum),
+		Total:   total,
+		From:    start + 1,
+		To:      end,
+		Page:    pageN,
+	}
+	if pageN > 1 {
+		page.NewerURL = transcriptPageURL(s.transcriptURL(sum), pageN-1)
+	}
+	if start > 0 {
+		page.OlderURL = transcriptPageURL(s.transcriptURL(sum), pageN+1)
+	}
+	page.Entries, page.OmittedRows = s.buildEntries(ctx, sum.Tool, rows[start:end])
+	return page
+}
+
+func transcriptPageURL(base string, page int) string {
+	if page <= 1 {
+		return base
+	}
+	return base + "?page=" + strconv.Itoa(page)
 }
 
 // displayEntry renders one index row.
@@ -93,13 +166,12 @@ func sortTranscript(rows []wire.IndexMessage) {
 	})
 }
 
-// buildEntries turns index rows into display entries, reading each row's
-// line bytes back from the mirror. Every step is defensive: a row that
-// cannot be read or parsed renders as a raw excerpt, never an error page.
-// It stops once rendered text exceeds the display budget and reports how
-// many rows were left off the page.
+// buildEntries turns already-sorted index rows into display entries, reading
+// each row's line bytes back from the mirror. Every step is defensive: a row
+// that cannot be read or parsed renders as a raw excerpt, never an error
+// page. It stops once rendered text exceeds the display budget and reports
+// how many rows were left off the page.
 func (s *Server) buildEntries(ctx context.Context, tool wire.Tool, rows []wire.IndexMessage) (entries []displayEntry, omitted int) {
-	sortTranscript(rows)
 	entries = make([]displayEntry, 0, len(rows))
 	var spent int64
 	for i, row := range rows {

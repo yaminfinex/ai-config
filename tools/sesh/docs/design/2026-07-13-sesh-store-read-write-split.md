@@ -122,6 +122,32 @@ churn-straddling-the-stamp interleaving, rebuild-failure latch clearing,
 and canceled-cold-waiter edges; the live surface check now waits for
 convergence instead of asserting read-your-own-writes.
 
+### Delta to the delta: node label in the projection (2026-07-14)
+
+The surface IA rework (nodes-first navigation, flat sessions table per the
+owner ruling "node is a column, not a grouping") added a per-node filtered
+sessions view. To keep that filter inside this design's bounds — no corpus
+scans, no per-request rebuilds, no per-request corpus walks in SQL or in
+memory, no second SQL ranking path — each projection entry now carries the
+session's node label (hostname, OS user: the latest fact observation across
+its member wire sessions, the same winner page hydration picks), the
+rebuild also derives per-node ranked slices from that list, and the global
+ranking, the per-node slices, and the stamp swap atomically as one
+snapshot. A filtered request pages its node's prebuilt slice — O(page)
+work — at the cost of duplicating key tuples per node (~a hundred bytes per
+session; single-digit MB at a 10^5-session fleet corpus). Because node
+labels now feed the projection, the version stamp gained a third b-tree MAX
+probe over `fact_observations` (append-only, so the INSERT-only stamp
+argument holds unchanged). Hydration divergence, stated: the FILTERED view
+renders the selection snapshot's node label — one snapshot for select and
+display, so a response can never list a row under node A while labeling it
+B mid-migration — while the unfiltered list keeps live-hydrated labels (it
+has no filter invariant to hold); all other row fields hydrate live on both
+views. Read-side only; everything else in this note — single-flight,
+serve-stale, the staleness bound — is untouched and now also covers the
+filtered view (a lagging node label can only lag the filtered view's
+membership and node column until the triggered refresh lands).
+
 ## Follow-up (out of scope here)
 
 Write-side append cost still grows with corpus/session size

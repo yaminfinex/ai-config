@@ -75,23 +75,40 @@ ok "one logical session ($LOGICAL) with 334 deduped rows across 2 files"
 # surface section; read-write-split design note delta). Ingest quiesced
 # above, so poll GET / until the rebuild(s) land — this consciously
 # replaces the old read-your-own-writes plain assert.
-step "recency page converges to exactly one session for the pair"
+step "sessions list converges to exactly one session for the pair"
 recency_lists_pair() {
-  page=$(curl -sf "$SURFACE_URL/") || return 1
+  page=$(curl -sf "$SURFACE_URL/sessions") || return 1
   [ "$(grep -o 'href="/s/claude/[0-9a-f-]*"' <<<"$page" | sort -u | wc -l)" = "1" ] &&
     grep -q "$LOGICAL" <<<"$page"
 }
 wait_for "recency projection to converge (serve-stale bound after quiescence)" 15 recency_lists_pair
 
-step "drill-down renders ONE transcript (no duplicated history)"
+step "nodes entry point links the node's filtered sessions view"
+nodes_page=$(curl -sf "$SURFACE_URL/") || fail "GET / (nodes entry) failed"
+grep -q 'href="/sessions?node=' <<<"$nodes_page" || fail "nodes entry page lacks a filtered sessions link"
+NODE_URL=$(grep -o 'href="/sessions?node=[^"]*"' <<<"$nodes_page" | head -1 | sed 's/^href="//;s/"$//')
+filtered=$(curl -sf "$SURFACE_URL$NODE_URL") || fail "GET filtered sessions view failed"
+grep -q "$LOGICAL" <<<"$filtered" || fail "node-filtered sessions view does not list the pair"
+[ "$(grep -o 'href="/s/claude/[0-9a-f-]*"' <<<"$filtered" | sort -u | wc -l)" = "1" ] ||
+  fail "node-filtered view lists more than the node's one session"
+ok "nodes-first navigation: / → filtered sessions view lists the pair"
+
+step "drill-down renders ONE windowed transcript (no duplicated history)"
+# 334 deduped rows span two 200-message windows; the union must tile the
+# session exactly, with no uuid rendered twice across windows.
 transcript=$(curl -sf "$SURFACE_URL/s/claude/$LOGICAL") || fail "GET transcript failed"
 entries=$(grep -c '<li class="entry' <<<"$transcript" || true)
-[ "$entries" = "334" ] || fail "transcript renders $entries entries, want 334"
-dup=$(grep -o 'data-uuid="[^"]*"' <<<"$transcript" | sort | uniq -d | head -3)
-[ -z "$dup" ] || fail "duplicated message uuids in the rendered transcript: $dup"
+[ "$entries" = "200" ] || fail "newest window renders $entries entries, want the 200-message window"
+grep -q 'showing the latest window — messages 135–334 of 334' <<<"$transcript" ||
+  fail "transcript page must label its window of the session"
+older=$(curl -sf "$SURFACE_URL/s/claude/$LOGICAL?page=2") || fail "GET transcript page 2 failed"
+entries2=$(grep -c '<li class="entry' <<<"$older" || true)
+[ "$entries2" = "134" ] || fail "older window renders $entries2 entries, want 134"
+dup=$(printf '%s\n%s' "$transcript" "$older" | grep -o 'data-uuid="[^"]*"' | sort | uniq -d | head -3)
+[ -z "$dup" ] || fail "duplicated message uuids across transcript windows: $dup"
 grep -q "${ORIG_UUID:0:8}" <<<"$transcript" || fail "transcript does not list the original file"
 grep -q "${NEW_UUID:0:8}" <<<"$transcript" || fail "transcript does not list the resumed file"
-ok "one transcript, both files, no duplicates"
+ok "one transcript across two bounded windows, both files, no duplicates"
 
 step "raw fallback reachable; zero write surface"
 curl -sf "$SURFACE_URL/s/claude/$LOGICAL/raw" >/dev/null || fail "raw fallback GET failed"
