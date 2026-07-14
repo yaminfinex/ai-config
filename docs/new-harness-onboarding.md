@@ -1,10 +1,42 @@
 # New-harness onboarding and characterization playbook
 
-Date: 2026-07-09 · Updated: 2026-07-10 · Status: current characterization checklist
+Date: 2026-07-09 · Updated: 2026-07-14 · Status: current characterization checklist
 
 Purpose: the checklist any future CLI coding agent ("harness") must satisfy to become a first-class herder/hcom citizen — spawnable, bus-bound from birth, deliverable-to, observable, forkable/resumable. Written harness-agnostically; **grok CLI 0.2.93 is the worked example** (full evidence in `docs/grok-integration-characterization.md`).
 
-How to use it: characterize the candidate harness against §1–§9 first (each has a concrete probe you can run in an hour). The answers pick one of the three integration shapes in §10, which in turn determines the herder/hcom work items in §11. A future implement task should execute §11 against a filled-in copy of the §1–§9 table.
+How to use it: run §0 FIRST, then characterize the candidate harness against §1–§9 (each has a concrete probe you can run in an hour). The answers pick one of the three integration shapes in §10, which in turn determines the herder/hcom work items in §11. A future implement task should execute §11 against a filled-in copy of the §1–§9 table.
+
+---
+
+## 0. Before anything: does hcom already integrate this harness?
+
+Run this BEFORE §1. It costs five minutes and, when skipped, can cost an entire design
+shape.
+
+- **WHY**: hcom ships automatic integrations for a growing list of harnesses (hooks
+  recording to its store; inbound messages injected mid-turn or waking idle agents;
+  identity, status, and transcript for free). The fleet's claude and codex seats run on
+  exactly this split: herder owns launch/lifecycle, hcom's native integration owns
+  delivery. A custom binding (bridge process, delivery journal, injection driver) is a
+  large, review-expensive machine — it is justified only against a RECORDED evaluation
+  of the native path, never by pattern-matching a previous harness that lacked one.
+- **PROBE**: (a) `hcom --help` launch list plus the hcom README supported-tools table —
+  is the harness listed, and as "automatic" or manual-`hcom start`? (b) If listed:
+  characterize the native integration empirically in full isolation (isolated
+  `HCOM_DIR`, isolated harness home — never the live `~/.hcom`): what mechanism it uses
+  (hooks, extension, wrapper), whether inbound delivery actually works against the
+  CURRENT harness version (mid-turn injection, idle wake, ordering), what identity and
+  crash/restart behavior it exhibits, and where it falls short of the durability,
+  credential-scoping, and lifecycle requirements herder adds.
+- **OUTPUT**: a native-vs-custom decision record with the native evaluation attached.
+  "Native integration under herder's launch contract" is the default shape when the
+  native path passes; custom machinery gets built only for the documented gaps.
+- **LESSON (both directions)**: the grok integration built a custom bridge — correctly,
+  because grok is absent from hcom's tool list. The next harness onboarded then
+  inherited that custom-machinery pattern and rebuilt inbound delivery from scratch
+  through a long adversarial design chain before anyone checked that the harness was
+  already an advertised automatic hcom integration. Absence justified the first;
+  presence was never checked for the second.
 
 ---
 
