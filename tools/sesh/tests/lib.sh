@@ -168,6 +168,15 @@ codex_tree() {
   echo "$dir"
 }
 
+# grok_tree <session-uuid> — session dir under a url-encoded cwd group
+# matching the grok discovery layout; echoes its path (the transcript inside
+# is always named chat_history.jsonl).
+grok_tree() {
+  local dir="$HOME_DIR/.grok/sessions/%2Fhome%2Fharness%2Fproj/$1"
+  mkdir -p "$dir"
+  echo "$dir"
+}
+
 # fresh_uuid — filename plumbing for harness-created source files (file
 # CONTENT always comes from the real fixture corpus; the name is not content).
 fresh_uuid() {
