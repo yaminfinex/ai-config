@@ -3,7 +3,7 @@ id: TASK-136
 title: >-
   sesh — arrival-order dedup diverges from Reindex preference order (insert-time
   keeps first-arrived; reindex keeps files-table order)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-10 00:11'
 labels:
