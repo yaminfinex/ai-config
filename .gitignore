@@ -33,6 +33,9 @@ vendor/*/coverage/
 # hcom worktree-local bus state
 .hcom/
 
+# Grok project-scope runtime config for herder-owned seat worktrees
+.grok/
+
 # claude runtime cruft from isolated CLAUDE_CONFIG_DIR spikes
 .agents/plugins/
 .agents/projects/

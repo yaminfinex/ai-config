@@ -69,17 +69,19 @@ func NewGrokSessionID() (string, error) {
 }
 
 type grokLaunchPlan struct {
-	Binary    string
-	Mode      string
-	StateDir  string
-	GrokHome  string
-	Seat      string
-	SessionID string
-	ParentSID string
-	HcomBin   string
-	HcomDir   string
-	Argv      []string
-	Env       []string
+	Binary        string
+	Mode          string
+	StateDir      string
+	GrokHome      string
+	LaunchCWD     string
+	MCPConfigPath string
+	Seat          string
+	SessionID     string
+	ParentSID     string
+	HcomBin       string
+	HcomDir       string
+	Argv          []string
+	Env           []string
 }
 
 type GrokLifecyclePlan struct {
@@ -146,6 +148,11 @@ func runGrokLaunch(mode, target string, rest []string, stderr io.Writer) int {
 	}
 	plan, err := prepareGrokLifecycleLaunch(rest, lifecycle)
 	if err != nil {
+		recordGrokLaunchFailure(err)
+		die(stderr, err.Error())
+		return 1
+	}
+	if err := validateGrokLaunchCWD(plan); err != nil {
 		recordGrokLaunchFailure(err)
 		die(stderr, err.Error())
 		return 1
@@ -239,6 +246,7 @@ func runManualGrokProcessWithSignals(plan grokLaunchPlan, stderr io.Writer, sign
 	cmd := exec.Command(plan.Binary)
 	cmd.Args = append([]string(nil), plan.Argv...)
 	cmd.Env = plan.Env
+	cmd.Dir = plan.LaunchCWD
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		_ = retire(plan)
@@ -345,9 +353,9 @@ func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (gro
 	if err != nil {
 		return grokLaunchPlan{}, err
 	}
-	pluginDir, err := ensureGrokBridgePlugin(stateDir, seat)
+	launchCWD, err := filepath.Abs(".")
 	if err != nil {
-		return grokLaunchPlan{}, err
+		return grokLaunchPlan{}, fmt.Errorf("resolve absolute Grok launch cwd: %w", err)
 	}
 	matches, _ := filepath.Glob(filepath.Join(grokHome, "sessions", "*", sessionID))
 	if lifecycle.Mode == "resume" {
@@ -366,6 +374,13 @@ func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (gro
 			return grokLaunchPlan{}, fmt.Errorf("parent Grok session %s is absent from the default Grok home; restore that session before forking it", lifecycle.ParentSID)
 		}
 	}
+	mcpConfigPath, err := ensureGrokProjectMCPConfig(launchCWD)
+	if err != nil {
+		return grokLaunchPlan{}, err
+	}
+	if configDir := filepath.Dir(filepath.Dir(mcpConfigPath)); configDir != launchCWD {
+		return grokLaunchPlan{}, fmt.Errorf("Grok project MCP config directory %s differs from effective launch cwd %s", configDir, launchCWD)
+	}
 	hcomDir := os.Getenv("HCOM_DIR")
 	args := append([]string(nil), rest...)
 	if !hasArg(args, "--no-subagents") {
@@ -377,7 +392,6 @@ func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (gro
 	if !hasArg(args, "--model") && !hasPrefixArg(args, "--model=") && !hasArg(args, "-m") {
 		args = append(args, "--model", grokDefaultModel)
 	}
-	args = append(args, "--plugin-dir", pluginDir)
 	env := replaceLaunchEnv(os.Environ(), map[string]string{
 		"GROK_CLAUDE_HOOKS_ENABLED": "0",
 		"HERDER_STATE_DIR":          stateDir,
@@ -386,7 +400,19 @@ func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (gro
 		"HERDER_REAL_HCOM":          hcomBin,
 	})
 	env = removeLaunchEnv(env, "GROK_HOME")
-	return grokLaunchPlan{Binary: binary, Mode: lifecycle.Mode, StateDir: stateDir, GrokHome: grokHome, Seat: seat, SessionID: sessionID, ParentSID: lifecycle.ParentSID, HcomBin: hcomBin, HcomDir: hcomDir, Argv: append([]string{"grok"}, args...), Env: env}, nil
+	return grokLaunchPlan{Binary: binary, Mode: lifecycle.Mode, StateDir: stateDir, GrokHome: grokHome, LaunchCWD: launchCWD, MCPConfigPath: mcpConfigPath, Seat: seat, SessionID: sessionID, ParentSID: lifecycle.ParentSID, HcomBin: hcomBin, HcomDir: hcomDir, Argv: append([]string{"grok"}, args...), Env: env}, nil
+}
+
+func validateGrokLaunchCWD(plan grokLaunchPlan) error {
+	current, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("verify absolute Grok launch cwd: %w", err)
+	}
+	configDir := filepath.Dir(filepath.Dir(plan.MCPConfigPath))
+	if current != plan.LaunchCWD || configDir != plan.LaunchCWD {
+		return fmt.Errorf("Grok effective cwd changed after project MCP registration: current=%s configured=%s config-dir=%s; retry the launch from the seat worktree", current, plan.LaunchCWD, configDir)
+	}
+	return nil
 }
 
 func ensureGrokBridge(plan grokLaunchPlan, manual bool) (string, error) {
@@ -525,10 +551,11 @@ func defaultGrokHome() (string, error) {
 	return filepath.Join(home, ".grok"), nil
 }
 
-// ensureGrokBridgePlugin gives the vendor CLI the seat-bound hcom MCP server
-// without writing ~/.grok or any project config. The plugin lives with the
-// bridge's herder-owned runtime state and is selected for this launch only.
-func ensureGrokBridgePlugin(stateDir, seat string) (string, error) {
+// ensureGrokProjectMCPConfig registers the seat-bound hcom MCP server on the
+// vendor's characterized project-config surface. Grok resolves project config
+// from its effective cwd, so callers must keep this directory identical to the
+// launch cwd and must not pass Grok a separate --cwd.
+func ensureGrokProjectMCPConfig(launchCWD string) (string, error) {
 	herderBin, err := grokMCPExecutable()
 	if err != nil {
 		return "", fmt.Errorf("resolve herder executable for Grok MCP config: %w", err)
@@ -537,47 +564,97 @@ func ensureGrokBridgePlugin(stateDir, seat string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve absolute herder executable for Grok MCP config: %w", err)
 	}
-	pluginDir := filepath.Join(stateDir, "grok", seat, "plugin")
-	manifestDir := filepath.Join(pluginDir, ".grok-plugin")
-	if err := os.MkdirAll(manifestDir, 0o700); err != nil {
-		return "", fmt.Errorf("create Grok bridge plugin directory: %w", err)
+	configDir := filepath.Join(launchCWD, ".grok")
+	configDirInfo, err := os.Lstat(configDir)
+	if os.IsNotExist(err) {
+		if err := os.Mkdir(configDir, 0o700); err != nil {
+			return "", fmt.Errorf("create Grok project config directory: %w", err)
+		}
+	} else if err != nil {
+		return "", fmt.Errorf("inspect Grok project config directory: %w", err)
+	} else if configDirInfo.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("refuse symlinked Grok project config directory %s", configDir)
+	} else if !configDirInfo.IsDir() {
+		return "", fmt.Errorf("Grok project config path %s is not a directory", configDir)
 	}
-	manifest := fmt.Sprintf(`{
-  "name": "herder-hcom",
-  "version": "1.0.0",
-  "description": "Seat-bound hcom transport for herder Grok sessions",
-  "mcpServers": {
-    "hcom": {
-      "command": %q,
-      "args": ["grok", "mcp"]
-    }
-  }
-}
-`, herderBin)
-	tmp, err := os.CreateTemp(manifestDir, ".plugin.json-")
+	configPath := filepath.Join(configDir, "config.toml")
+	configInfo, statErr := os.Lstat(configPath)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return "", fmt.Errorf("inspect Grok project config: %w", statErr)
+	}
+	if statErr == nil && configInfo.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("refuse symlinked Grok project config %s", configPath)
+	}
+	if statErr == nil && !configInfo.Mode().IsRegular() {
+		return "", fmt.Errorf("Grok project config %s is not a regular file", configPath)
+	}
+	block := fmt.Sprintf("[mcp_servers.hcom]\ncommand = %q\nargs = [\"grok\", \"mcp\"]\nenabled = true\n", herderBin)
+	existing, readErr := os.ReadFile(configPath)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return "", fmt.Errorf("read Grok project config: %w", readErr)
+	}
+	config := upsertGrokProjectMCPSection(existing, block)
+	if bytes.Equal(existing, config) && configInfo != nil && configInfo.Mode().Perm() == 0o600 {
+		return configPath, nil
+	}
+	tmp, err := os.CreateTemp(configDir, ".config.toml-")
 	if err != nil {
-		return "", fmt.Errorf("create Grok bridge plugin manifest: %w", err)
+		return "", fmt.Errorf("create Grok project config: %w", err)
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
-		return "", fmt.Errorf("set Grok bridge plugin permissions: %w", err)
+		return "", fmt.Errorf("set Grok project config permissions: %w", err)
 	}
-	if _, err = io.WriteString(tmp, manifest); err == nil {
+	if _, err = tmp.Write(config); err == nil {
 		err = tmp.Sync()
 	}
 	closeErr := tmp.Close()
 	if err != nil {
-		return "", fmt.Errorf("write Grok bridge plugin manifest: %w", err)
+		return "", fmt.Errorf("write Grok project config: %w", err)
 	}
 	if closeErr != nil {
-		return "", fmt.Errorf("close Grok bridge plugin manifest: %w", closeErr)
+		return "", fmt.Errorf("close Grok project config: %w", closeErr)
 	}
-	if err := os.Rename(tmpName, filepath.Join(manifestDir, "plugin.json")); err != nil {
-		return "", fmt.Errorf("install Grok bridge plugin manifest: %w", err)
+	if err := os.Rename(tmpName, configPath); err != nil {
+		return "", fmt.Errorf("install Grok project config: %w", err)
 	}
-	return pluginDir, nil
+	return configPath, nil
+}
+
+var (
+	tomlSectionHeaderRE     = regexp.MustCompile(`^\s*\[\[?[^]]+\]\]?\s*(?:#.*)?$`)
+	grokHCOMSectionHeaderRE = regexp.MustCompile(`^\[\s*mcp_servers\s*\.\s*(?:hcom|"hcom"|'hcom')\s*\]\s*(?:#.*)?$`)
+)
+
+func upsertGrokProjectMCPSection(existing []byte, block string) []byte {
+	lines := strings.SplitAfter(string(existing), "\n")
+	start, end := -1, len(lines)
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(strings.TrimSuffix(line, "\n"))
+		if start < 0 {
+			if grokHCOMSectionHeaderRE.MatchString(trimmed) {
+				start = i
+			}
+			continue
+		}
+		if tomlSectionHeaderRE.MatchString(trimmed) {
+			end = i
+			break
+		}
+	}
+	if start >= 0 {
+		return []byte(strings.Join(lines[:start], "") + block + strings.Join(lines[end:], ""))
+	}
+	prefix := string(existing)
+	if prefix != "" && !strings.HasSuffix(prefix, "\n") {
+		prefix += "\n"
+	}
+	if prefix != "" && !strings.HasSuffix(prefix, "\n\n") {
+		prefix += "\n"
+	}
+	return []byte(prefix + block)
 }
 
 // resolveGrokBinary follows normal PATH order while skipping every herder shim
@@ -729,7 +806,9 @@ func validateGrokArgs(args []string, firstClassModel, allowMappedPermission bool
 		case "--no-auto-update", "--auto-update", "--disable-auto-update":
 			return fmt.Errorf("Grok passthrough %s conflicts with the vendor-managed update contract; remove it so the installed CLI keeps its normal update behavior", name)
 		case "--plugin-dir":
-			return errors.New("Grok passthrough --plugin-dir conflicts with the seat-bound hcom bridge plugin; remove it so herder can install the transport")
+			return errors.New("Grok passthrough --plugin-dir is unsupported by the interactive TUI; remove it because herder registers hcom through the cwd-local project config")
+		case "--cwd":
+			return errors.New("Grok passthrough --cwd conflicts with cwd-local hcom registration; remove it because the project config and effective Grok cwd must remain identical")
 		case "--agents", "--agent", "--subagents", "--no-subagents", "--no-no-subagents":
 			return fmt.Errorf("Grok passthrough %s conflicts with the enforced subagent boundary; remove it because first-class seats always disable subagents", name)
 		case "--model", "-m":

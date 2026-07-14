@@ -28,3 +28,16 @@ bus/state directories were used; no live registry, bus, or model session was tou
   exact row every 15 minutes, reclaims it on absence, and drains the durable event log
   immediately after recovery. Status is healthy only after exact-row verification or
   successful recovery.
+- Project MCP registration was re-characterized against the real Grok 0.2.99 binary
+  under throwaway homes and working directories. A cwd-local `.grok/config.toml` with
+  `[mcp_servers.hcom]`, an absolute herder command, `args = ["grok", "mcp"]`, and
+  `enabled = true` appears in `grok inspect --json` as a `project` config layer and in
+  `grok mcp list` as an `hcom` project server even when user `~/.grok/config.toml` is
+  absent. The server-level `source.path` can incorrectly name that nonexistent user
+  file, so the checked contract uses `configSources.layers` as authoritative provenance.
+  Project discovery follows Grok's effective `--cwd`: moving `--cwd` away from the
+  config directory resolves zero project layers. A bounded empty-home TUI launch reached
+  the same project discovery path but did not reach MCP subprocess activation before its
+  authentication/startup timeout. The evidence therefore proves the real vendor's
+  resolved set through `inspect` and `mcp list`; it does not claim observed live-TUI tool
+  activation.

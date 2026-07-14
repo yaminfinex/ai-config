@@ -75,7 +75,7 @@ HERDER_DOC="$(cat "$REPO/tools/herder/README.md")"
 assert_contains "docs: default home named" "$HERDER_DOC" 'live vendor home at `~/.grok`'
 assert_contains "docs: owner config never rewritten" "$HERDER_DOC" 'never rewrites the owner'
 assert_contains "docs: PATH resolution named" "$HERDER_DOC" 'first executable after all herder shims'
-assert_contains "docs: bridge plugin named" "$HERDER_DOC" 'seat-bound plugin'
+assert_contains "docs: project MCP config named" "$HERDER_DOC" 'cwd-bound project MCP config'
 assert_contains "docs: owner verification path" "$HERDER_DOC" 'manual-verification path is `herder launch grok`'
 assert_contains "docs: shared-home fleet" "$HERDER_DOC" "Claude, Codex, and Grok share the user's live homes"
 assert_contains "docs: future isolation option" "$HERDER_DOC" 'could provide multi-account isolation'

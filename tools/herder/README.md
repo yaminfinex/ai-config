@@ -314,14 +314,17 @@ so installer wrappers and vendor auto-updates retain their normal semantics. Nei
 `ai-doctor` invokes `--version` or `--help` as a gate; `herder grok check` only reports the path it
 would select and does not execute it.
 
-The hcom MCP transport no longer requires a user-home config entry. Each launch renders a
-seat-bound plugin under `<herder-state>/grok/<seat>/plugin` and passes it with `--plugin-dir`. The
-plugin contains only the herder executable path and `grok mcp` arguments; it carries no credential.
-The bridge, doctrine, preassigned session identity, and subagent/permission boundaries otherwise
-remain unchanged. `GROK_CLAUDE_HOOKS_ENABLED=0` is forced in the launch environment so Grok does
-not execute ambient Claude hooks even though it reads the live home. Authentication remains
-process-scoped: the fresh pane inherits `XAI_API_KEY`, herder checks nonempty presence by name, and
-no value is copied into argv, plugin/config files, registry rows, or logs.
+The hcom MCP transport no longer requires a user-home config entry. Each launch writes a
+seat-local `.grok/config.toml` in the seat worktree with the characterized
+`[mcp_servers.hcom]` project block. It contains only the absolute herder executable path and
+`grok mcp` arguments; it carries no credential. Grok resolves project config from its effective
+cwd, so launch pins the config directory to the inherited process cwd and refuses passthrough
+`--cwd`; moving them apart would silently drop the MCP server. The bridge, doctrine, preassigned
+session identity, and subagent/permission boundaries otherwise remain unchanged.
+`GROK_CLAUDE_HOOKS_ENABLED=0` is forced in the launch environment so Grok does not execute
+ambient Claude hooks even though it reads the live home. Authentication remains process-scoped:
+the fresh pane inherits `XAI_API_KEY`, herder checks nonempty presence by name, and no value is
+copied into argv, project config, registry rows, or logs.
 
 Herder normally finds the real `hcom` by walking PATH, skipping herder's hook shim and preferring
 a real binary after any argv0-dispatch shim. If no real binary survives, it pins the first dispatch
@@ -333,7 +336,7 @@ symlink-manager dispatch still works.
 The owner's manual-verification path is `herder launch grok`. The Grok family is available by
 default; `XAI_API_KEY` must be exported from a login-shell profile such as `$HOME/.profile` so a
 fresh pane inherits it. The command mints a fresh seat/session identity and exercises the
-vendor PATH resolution, default home, seat-bound plugin, hook suppression, doctrine, bridge, and
+vendor PATH resolution, default home, cwd-bound project MCP config, hook suppression, doctrine, bridge, and
 credential contract. It is a bounded manual guest, not a registered spawn: it does not appear
 in `herder list` and cannot be targeted by `herder cull`. Its foreground wrapper owns the bridge,
 sends a generation-fenced retirement on normal or signalled exit, and uses parent-death retirement

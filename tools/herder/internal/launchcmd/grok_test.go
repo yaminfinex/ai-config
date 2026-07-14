@@ -106,6 +106,11 @@ func TestCountGlobalSettingsHookExecutionsMatchesRealEnvelope(t *testing.T) {
 func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
 	t.Helper()
 	root := t.TempDir()
+	workdir := filepath.Join(root, "worktree")
+	if err := os.MkdirAll(workdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workdir)
 	hcom := filepath.Join(root, "hcom-real")
 	writeExecutable(t, hcom, "#!/bin/sh\nexit 0\n")
 	credential := randomCredential(t)
@@ -460,13 +465,16 @@ func TestGrokCheckReportsPathWithoutExecutingVendorOrTouchingLiveHome(t *testing
 	}
 }
 
-func TestT20LaunchUsesDefaultHomeVendorUpdatesAndSeatBridgePlugin(t *testing.T) {
+func TestT20LaunchUsesDefaultHomeVendorUpdatesAndProjectMCPConfig(t *testing.T) {
 	plan, _ := prepareTestGrok(t, "0.2.93")
 	joined := strings.Join(plan.Argv, "\n")
-	for _, want := range []string{"--no-subagents", "--always-approve", "--model", grokDefaultModel, "--plugin-dir"} {
+	for _, want := range []string{"--no-subagents", "--always-approve", "--model", grokDefaultModel} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("argv missing %q: %q", want, plan.Argv)
 		}
+	}
+	if strings.Contains(joined, "--plugin-dir") {
+		t.Fatalf("interactive TUI launch retained unsupported --plugin-dir: %q", plan.Argv)
 	}
 	if strings.Contains(joined, "--no-auto-update") {
 		t.Fatalf("launch suppressed vendor updates: %q", plan.Argv)
@@ -474,8 +482,7 @@ func TestT20LaunchUsesDefaultHomeVendorUpdatesAndSeatBridgePlugin(t *testing.T) 
 	if want := filepath.Join(os.Getenv("HOME"), ".grok"); plan.GrokHome != want {
 		t.Fatalf("Grok home=%q want default %q", plan.GrokHome, want)
 	}
-	pluginDir := plan.Argv[len(plan.Argv)-1]
-	manifest, err := os.ReadFile(filepath.Join(pluginDir, ".grok-plugin", "plugin.json"))
+	config, err := os.ReadFile(plan.MCPConfigPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -487,9 +494,9 @@ func TestT20LaunchUsesDefaultHomeVendorUpdatesAndSeatBridgePlugin(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"name": "herder-hcom"`, `"command": "` + exe + `"`, `"args": ["grok", "mcp"]`} {
-		if !strings.Contains(string(manifest), want) {
-			t.Errorf("bridge plugin missing %q: %s", want, manifest)
+	for _, want := range []string{`[mcp_servers.hcom]`, `command = "` + exe + `"`, `args = ["grok", "mcp"]`, `enabled = true`} {
+		if !strings.Contains(string(config), want) {
+			t.Errorf("project MCP config missing %q: %s", want, config)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(plan.GrokHome, "config.toml")); !os.IsNotExist(err) {
@@ -523,6 +530,11 @@ func TestDefaultHomeGrokSessionRecordsNoClaudeCompatHookExecutions(t *testing.T)
 	t.Setenv("HCOM_DIR", filepath.Join(root, "hcom"))
 	t.Setenv("HERDER_GUID", seat)
 	t.Setenv("HERDER_GROK_SESSION_ID", sid)
+	workdir := filepath.Join(root, "seat-worktree")
+	if err := os.MkdirAll(workdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workdir)
 	grok := mockGrokCompatHookBinary(t)
 	t.Setenv("PATH", filepath.Dir(grok)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HERDER_REAL_HCOM", hcom)
@@ -609,7 +621,7 @@ func TestGrokLaunchLayerMirrorsFullOwnedArgRefusals(t *testing.T) {
 		"--session-id", "--session-id=value", "-s", "--resume", "-r", "--continue", "-c", "--continue=1", "--fork-session",
 		"--rules", "--permission-mode", "--bypassPermissions",
 		"--no-auto-update", "--auto-update", "--disable-auto-update", "--plugin-dir", "--agents", "--agent", "--subagents",
-		"--no-subagents", "--no-no-subagents", "HOME=/tmp/elsewhere", "GROK_HOME=/tmp/elsewhere",
+		"--no-subagents", "--no-no-subagents", "--cwd", "--cwd=/tmp/elsewhere", "HOME=/tmp/elsewhere", "GROK_HOME=/tmp/elsewhere",
 	}
 	for _, arg := range cases {
 		t.Run(strings.TrimLeft(strings.ReplaceAll(arg, "=", "_"), "-"), func(t *testing.T) {
@@ -757,7 +769,7 @@ func TestGrokResumeRequiresRecordedSessionInControlledHome(t *testing.T) {
 	}
 }
 
-func TestGrokBridgePluginRewritesChangedExecutablePath(t *testing.T) {
+func TestGrokProjectConfigRewritesChangedExecutablePath(t *testing.T) {
 	original := grokMCPExecutable
 	t.Cleanup(func() { grokMCPExecutable = original })
 	first := filepath.Join(t.TempDir(), "herder-a")
@@ -765,16 +777,97 @@ func TestGrokBridgePluginRewritesChangedExecutablePath(t *testing.T) {
 	grokMCPExecutable = func() (string, error) { return first, nil }
 	plan, _ := prepareTestGrok(t, "0.2.93")
 	grokMCPExecutable = func() (string, error) { return second, nil }
-	if _, err := prepareGrokLaunch(nil); err != nil {
+	plan, err := prepareGrokLaunch(nil)
+	if err != nil {
 		t.Fatalf("second launch path rewrite failed: %v", err)
 	}
-	pluginDir := plan.Argv[len(plan.Argv)-1]
-	manifest, err := os.ReadFile(filepath.Join(pluginDir, ".grok-plugin", "plugin.json"))
+	config, err := os.ReadFile(plan.MCPConfigPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(manifest), `"command": "`+second+`"`) || strings.Contains(string(manifest), first) {
-		t.Fatalf("bridge plugin did not move to second executable: %s", manifest)
+	if !strings.Contains(string(config), `command = "`+second+`"`) || strings.Contains(string(config), first) {
+		t.Fatalf("project MCP config did not move to second executable: %s", config)
+	}
+}
+
+func TestGrokProjectConfigAndEffectiveCWDCannotDiverge(t *testing.T) {
+	plan, _ := prepareTestGrok(t, "0.2.93")
+	if configDir := filepath.Dir(filepath.Dir(plan.MCPConfigPath)); configDir != plan.LaunchCWD {
+		t.Fatalf("config dir=%q launch cwd=%q", configDir, plan.LaunchCWD)
+	}
+	if err := validateGrokLaunchCWD(plan); err != nil {
+		t.Fatalf("matching launch cwd rejected: %v", err)
+	}
+	other := t.TempDir()
+	t.Chdir(other)
+	if err := validateGrokLaunchCWD(plan); err == nil || !strings.Contains(err.Error(), "effective cwd changed") {
+		t.Fatalf("divergent launch cwd error=%v", err)
+	}
+}
+
+func TestGrokProjectConfigPreservesUnrelatedSettings(t *testing.T) {
+	original := grokMCPExecutable
+	t.Cleanup(func() { grokMCPExecutable = original })
+	workdir := t.TempDir()
+	configDir := filepath.Join(workdir, ".grok")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(configDir, "config.toml")
+	const existing = "[ui]\nscreen_mode = \"minimal\"\n\n[mcp_servers.hcom] # replace this managed table\ncommand = \"/old/herder\"\nargs = []\n\n[permission]\nallow = [\"read\"]\n"
+	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wantExecutable := filepath.Join(workdir, "herder")
+	grokMCPExecutable = func() (string, error) { return wantExecutable, nil }
+	if _, err := ensureGrokProjectMCPConfig(workdir); err != nil {
+		t.Fatal(err)
+	}
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(config)
+	for _, want := range []string{"[ui]\nscreen_mode = \"minimal\"", "[permission]\nallow = [\"read\"]", `command = "` + wantExecutable + `"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("updated config missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "/old/herder") || strings.Count(got, "[mcp_servers.hcom]") != 1 {
+		t.Fatalf("hcom section was not replaced cleanly: %s", got)
+	}
+}
+
+func TestGrokProjectConfigRefusesSymlinkOutsideWorktree(t *testing.T) {
+	original := grokMCPExecutable
+	t.Cleanup(func() { grokMCPExecutable = original })
+	root := t.TempDir()
+	workdir := filepath.Join(root, "worktree")
+	ownerConfigDir := filepath.Join(root, "owner-home", ".grok")
+	if err := os.MkdirAll(workdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(ownerConfigDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ownerConfig := filepath.Join(ownerConfigDir, "config.toml")
+	const sentinel = "[cli]\nauto_update = true\n"
+	if err := os.WriteFile(ownerConfig, []byte(sentinel), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(ownerConfigDir, filepath.Join(workdir, ".grok")); err != nil {
+		t.Fatal(err)
+	}
+	grokMCPExecutable = func() (string, error) { return filepath.Join(root, "herder"), nil }
+	if _, err := ensureGrokProjectMCPConfig(workdir); err == nil || !strings.Contains(err.Error(), "symlinked") {
+		t.Fatalf("symlinked project config error=%v", err)
+	}
+	data, err := os.ReadFile(ownerConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != sentinel {
+		t.Fatalf("owner config changed through project symlink: %s", data)
 	}
 }
 
@@ -821,12 +914,11 @@ func TestT21ChildEnvironmentUsesDefaultHomeWithoutPersistingCredential(t *testin
 		t.Errorf("child environment retained a home override")
 	}
 	argv := strings.Join(plan.Argv, "\n")
-	pluginDir := plan.Argv[len(plan.Argv)-1]
-	manifest, err := os.ReadFile(filepath.Join(pluginDir, ".grok-plugin", "plugin.json"))
+	config, err := os.ReadFile(plan.MCPConfigPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(argv, credential) || strings.Contains(string(manifest), credential) {
+	if strings.Contains(argv, credential) || strings.Contains(string(config), credential) {
 		t.Fatal("inherited credential persisted outside the process environment")
 	}
 }

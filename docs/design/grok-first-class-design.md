@@ -8,8 +8,11 @@ Subject: Grok Build against herder + hcom (original characterization used CLI 0.
 > `~/.grok` home and the vendor-installed, vendor-updated executable. Herder no longer
 > pins `GROK_HOME`, seeds or rewrites a Grok home, suppresses updates, accepts a pinned
 > binary/version set, or executes the binary for version/capability gating. Launch walks
-> `PATH`, skips herder's own shims, and selects the first vendor executable. The bridge is
-> injected through a seat-bound `--plugin-dir` outside the user home. The identity-env
+> `PATH`, skips herder's own shims, and selects the first vendor executable. The hcom MCP
+> server is registered through a seat-worktree `.grok/config.toml` project layer using the
+> characterized `[mcp_servers.hcom]` surface; launch refuses `--cwd` so that config directory
+> and Grok's effective cwd cannot diverge. The owner's `~/.grok/config.toml` remains untouched.
+> The identity-env
 > allowlist, credential-by-name/process-env boundary, and
 > `GROK_CLAUDE_HOOKS_ENABLED=0` launch override remain binding. Session discovery and
 > lifecycle evidence now read `~/.grok/sessions`. Conflicting home, update, binary, and
