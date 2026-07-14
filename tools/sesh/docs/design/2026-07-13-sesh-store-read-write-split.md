@@ -282,11 +282,18 @@ Correctness evidence, in the order the constraints demand:
   pinned index ($-anchored allowlist, term-by-term), and the journaled
   `maint_rows` seam must stay within the appended-row bound. A
   linkage-creating append is gated two-sided: `maint_rows` must exceed the
-  appended rows (the seam is alive) and stay within the touched connected
-  component's row count (never corpus-charged). All detectors are proven:
-  the naive shapes trip the plan gate (corpus-walk negative), and the naive
-  maintenance run trips both the steady-state rewrite bound and the linkage
-  component bound on the same appends.
+  appended rows (the seam is alive) and stay within three times the
+  PRE-maintenance touched cardinality — the component before the merge plus
+  the appended rows, since a merge legitimately relabels, re-ordinals, and
+  dedupe-deletes rows that then no longer survive; a post-dedupe survivor
+  denominator would falsely reject duplicate-heavy merges. An M*U bridge
+  fixture (M settled sessions sharing one below-threshold row, unified by
+  one bridge append whose rows all die in dedupe) asserts BOTH sides:
+  maintenance stays within the pre-work bound and exceeds three times the
+  survivor count, so a denominator regression fails loudly. All detectors
+  are proven: the naive shapes trip the plan gate (corpus-walk negative),
+  the naive maintenance run trips the steady-state rewrite bound, and a
+  deliberate corpus-walk write trips the component bounds.
 
 Operator surface: the `SESH_DEBUG` per-append journal line gains
 `maint_rows` (rows the maintenance actually wrote) beside the existing

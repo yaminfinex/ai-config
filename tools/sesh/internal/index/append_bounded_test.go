@@ -12,6 +12,7 @@ package index
 // proven against the naive pre-optimization shapes.
 
 import (
+	"bytes"
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
@@ -231,19 +232,35 @@ func TestAppendMaintenanceBoundedOnCorpus(t *testing.T) {
 	linkBody := syntheticResumeBody(linkSession, "gate-link", []string{"gate-orig-04", "gate-orig-05"}, 3, time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC))
 	putBytes(t, st, linkSession, linkFile, 0, linkBody)
 	linkEv := <-st.AppendEvents()
-	// A heavy-dedupe linkage: every appended row duplicates a component row,
-	// so dedupe deletes as many rows as arrived. Legitimate maintenance here
-	// approaches the accounting ceiling — the case a post-dedupe denominator
-	// would eventually falsely reject.
-	heavySession := syntheticUUID(75_003)
-	heavyFile := syntheticUUID(76_003)
-	heavyShared := make([]string, 10)
-	for i := range heavyShared {
-		heavyShared[i] = fmt.Sprintf("gate-orig-%02d", i)
+	// The duplicate-heavy M*U spokes: M settled sessions each carry one copy
+	// of a common row X (a single shared pair sits below the two-pair
+	// unification threshold, so they stay separate) plus a distinct row Y_i.
+	// One bridge append carrying X and every Y_i then unifies all of them
+	// while every one of its rows dies in dedupe — maintenance touches
+	// M*U pre-work rows against U survivors, the shape that discriminates
+	// the pre-work denominator from a post-dedupe survivor count.
+	const spokeCount = 4
+	spokeSessions := make([]string, spokeCount)
+	for i := range spokeSessions {
+		spokeSessions[i] = syntheticUUID(75_010 + i)
+		body := []byte(fmt.Sprintf(
+			`{"type":"message","uuid":"gate-x","sessionId":"%s","timestamp":"2026-07-11T10:0%d:00Z","message":{"role":"user"}}`+"\n"+
+				`{"type":"message","uuid":"gate-y-%d","sessionId":"%s","timestamp":"2026-07-11T10:0%d:01Z","message":{"role":"assistant"}}`+"\n",
+			spokeSessions[i], i, i, spokeSessions[i], i))
+		putBytes(t, st, spokeSessions[i], spokeSessions[i], 0, body)
+		if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+			t.Fatal(err)
+		}
 	}
-	heavyBody := syntheticResumeBody(heavySession, "gate-heavy", heavyShared, 0, time.Date(2026, 7, 11, 12, 30, 0, 0, time.UTC))
-	putBytes(t, st, heavySession, heavyFile, 0, heavyBody)
-	heavyEv := <-st.AppendEvents()
+	bridgeSession := syntheticUUID(75_020)
+	bridgeFile := syntheticUUID(76_020)
+	var bridgeBuf bytes.Buffer
+	fmt.Fprintf(&bridgeBuf, `{"type":"message","uuid":"gate-x","sessionId":"%s","timestamp":"2026-07-11T13:00:00Z","message":{"role":"user"}}`+"\n", bridgeSession)
+	for i := 0; i < spokeCount; i++ {
+		fmt.Fprintf(&bridgeBuf, `{"type":"message","uuid":"gate-y-%d","sessionId":"%s","timestamp":"2026-07-11T13:00:%02dZ","message":{"role":"user"}}`+"\n", i, bridgeSession, i+1)
+	}
+	putBytes(t, st, bridgeSession, bridgeFile, 0, bridgeBuf.Bytes())
+	bridgeEv := <-st.AppendEvents()
 	mirrorPath := st.MirrorPath
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
@@ -315,35 +332,49 @@ func TestAppendMaintenanceBoundedOnCorpus(t *testing.T) {
 		t.Errorf("non-full-key storage access on the linkage append path: %s", v)
 	}
 
-	// Duplicate-heavy merge: every appended row dies in dedupe (M*U pre-work
-	// against U survivors), so maintenance approaches the accounting ceiling
-	// while staying perfectly legitimate — the shape a survivor-count
-	// denominator would falsely reject must pass the pre-work bound.
-	heavyTouched := touchedComponentRows(t, plain, origSession, heavySession)
+	// M*U bridge merge, asserted on BOTH sides of the denominator choice.
+	// The bridge unifies the spokes while every one of its rows dies in
+	// dedupe, so legitimate maintenance (relabel + ordinals over the losing
+	// spokes and the bridge, plus the collapse deletes) exceeds three times
+	// the SURVIVOR count — the rejected post-dedupe denominator would
+	// falsely fail this merge, and the second assertion keeps any
+	// denominator regression loud — while staying within three times the
+	// pre-work touched cardinality.
+	bridgeTouched := touchedComponentRows(t, plain, append(append([]string{}, spokeSessions...), bridgeSession)...)
 	capture.reset()
 	log.reset()
-	if err := recIdx.ProcessAppend(t.Context(), heavyEv); err != nil {
+	if err := recIdx.ProcessAppend(t.Context(), bridgeEv); err != nil {
 		t.Fatal(err)
 	}
-	heavyMaint := capture.intSum("maint_rows")
-	heavyAppended := capture.intSum("rows")
-	heavyTouched += heavyAppended
-	if heavyMaint <= heavyAppended {
-		t.Errorf("heavy-dedupe merge reported %d maintenance writes for %d appended rows; the maint_rows seam is dead", heavyMaint, heavyAppended)
+	bridgeMaint := capture.intSum("maint_rows")
+	bridgeAppended := capture.intSum("rows")
+	bridgeTouched += bridgeAppended
+	if bridgeMaint <= bridgeAppended {
+		t.Errorf("bridge merge reported %d maintenance writes for %d appended rows; the maint_rows seam is dead", bridgeMaint, bridgeAppended)
 	}
-	var heavySurvivors int64
-	if err := plain.QueryRow(`SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND wire_session_id = ?`,
-		wire.ToolClaude, heavySession).Scan(&heavySurvivors); err != nil {
+	var bridgeFileSurvivors, bridgeSurvivors int64
+	if err := plain.QueryRow(`SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND file_uuid = ?`,
+		wire.ToolClaude, bridgeFile).Scan(&bridgeFileSurvivors); err != nil {
 		t.Fatal(err)
 	}
-	if heavySurvivors != 0 {
-		t.Fatalf("heavy-dedupe fixture drifted: %d appended rows survived, want 0 (all duplicates)", heavySurvivors)
+	if bridgeFileSurvivors != 0 {
+		t.Fatalf("bridge fixture drifted: %d bridge rows survived dedupe, want 0 (all duplicates)", bridgeFileSurvivors)
 	}
-	if heavyMaint > 3*heavyTouched {
-		t.Errorf("heavy-dedupe merge wrote %d maintenance rows for a %d-row touched component; maintenance must stay component-bounded", heavyMaint, heavyTouched)
+	if err := plain.QueryRow(`SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND logical_session_id = ?`,
+		wire.ToolClaude, spokeSessions[0]).Scan(&bridgeSurvivors); err != nil {
+		t.Fatal(err)
+	}
+	if bridgeSurvivors != spokeCount+1 {
+		t.Fatalf("bridge fixture drifted: merged component holds %d rows, want %d (spokes did not unify or dedupe missed)", bridgeSurvivors, spokeCount+1)
+	}
+	if bridgeMaint > 3*bridgeTouched {
+		t.Errorf("bridge merge wrote %d maintenance rows for a %d-row touched component; maintenance must stay component-bounded", bridgeMaint, bridgeTouched)
+	}
+	if bridgeMaint <= 3*bridgeSurvivors {
+		t.Errorf("bridge fixture no longer discriminates the denominators: maintenance %d does not exceed 3x the %d survivors", bridgeMaint, bridgeSurvivors)
 	}
 	for _, v := range writePlanViolations(t, plain, log.snapshot()) {
-		t.Errorf("non-full-key storage access on the heavy-dedupe append path: %s", v)
+		t.Errorf("non-full-key storage access on the bridge merge path: %s", v)
 	}
 
 	// The component bound only gates anything if it sits far below the
@@ -353,7 +384,7 @@ func TestAppendMaintenanceBoundedOnCorpus(t *testing.T) {
 	if err := plain.QueryRow(`SELECT COUNT(*) FROM sesh_index_messages`).Scan(&corpusRows); err != nil {
 		t.Fatal(err)
 	}
-	for name, touched := range map[string]int64{"linkage": linkTouched, "heavy-dedupe": heavyTouched} {
+	for name, touched := range map[string]int64{"linkage": linkTouched, "bridge": bridgeTouched} {
 		if 3*touched >= corpusRows {
 			t.Fatalf("fixture too small to discriminate: %s bound %d vs corpus %d rows", name, 3*touched, corpusRows)
 		}
@@ -367,8 +398,8 @@ func TestAppendMaintenanceBoundedOnCorpus(t *testing.T) {
 	if err := scratch.execMaintenance(t.Context(), `UPDATE sesh_index_messages SET file_ordinal = file_ordinal WHERE tool = ?`, wire.ToolClaude); err != nil {
 		t.Fatal(err)
 	}
-	if scratchTiming.maintRows <= 3*linkTouched || scratchTiming.maintRows <= 3*heavyTouched {
-		t.Errorf("maint_rows detector missed a deliberate corpus-walk write (%d rows charged, bounds %d/%d)", scratchTiming.maintRows, 3*linkTouched, 3*heavyTouched)
+	if scratchTiming.maintRows <= 3*linkTouched || scratchTiming.maintRows <= 3*bridgeTouched {
+		t.Errorf("maint_rows detector missed a deliberate corpus-walk write (%d rows charged, bounds %d/%d)", scratchTiming.maintRows, 3*linkTouched, 3*bridgeTouched)
 	}
 
 	// Corpus-walk negative: the naive pre-optimization statement shapes must
