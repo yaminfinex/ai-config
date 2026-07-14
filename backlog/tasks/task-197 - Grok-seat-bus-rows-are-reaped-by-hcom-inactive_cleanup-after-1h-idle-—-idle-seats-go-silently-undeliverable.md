@@ -3,10 +3,10 @@ id: TASK-197
 title: >-
   Grok seat bus rows are reaped by hcom inactive_cleanup after 1h idle — idle
   seats go silently undeliverable
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-13 22:37'
-updated_date: '2026-07-14 01:22'
+updated_date: '2026-07-14 02:01'
 labels: []
 dependencies: []
 ordinal: 196000
@@ -21,5 +21,5 @@ LIVE EVIDENCE 2026-07-14: a grok reviewer seat idle ~1h after delivering its rep
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Dispatched worker-lovi (codex 5.6 high, worktree task-197, thread task197). Territory: grokbridge steady-state; launch-env seam fenced to TASK-198 lane.
+MERGED 01e5662 (head 0fdb8e0). Bridge steady-state keepalive: 15m identified exact-row refresh, serialized same-name rebind on reap, post-rebind durable drain, status/send row-validation. Root cause proven in isolation (hcom list runs cleanup_stale_instances at 3600s; bridge identified once at bind). Dual APPROVE zero fix rounds (incumbent gamu + calibration selu). Orchestrator battery 58/58 at head; post-merge 58/58 on main. Upstream candidate: hcom keepalive/socket-liveness affordance before ad-hoc row reap. Non-blocking note on record: transient refresh error escalates to supervised restart (defensible; watch for flap under fleet-scale SQLite BUSY).
 <!-- SECTION:NOTES:END -->

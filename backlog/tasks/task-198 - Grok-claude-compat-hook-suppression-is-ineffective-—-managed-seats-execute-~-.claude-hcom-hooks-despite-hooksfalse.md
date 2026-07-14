@@ -3,10 +3,10 @@ id: TASK-198
 title: >-
   Grok claude-compat hook suppression is ineffective — managed seats execute
   ~/.claude hcom hooks despite hooks=false
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-13 22:49'
-updated_date: '2026-07-14 01:22'
+updated_date: '2026-07-14 02:01'
 labels: []
 dependencies: []
 ordinal: 197000
@@ -21,5 +21,5 @@ VERIFIED 2026-07-14 in a live managed grok reviewer session: updates.jsonl recor
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Dispatched worker-zuru (codex 5.6 high, worktree task-198, thread task198). Territory: launchcmd grok home/env seeding + zero-hook_execution test; bridge steady-state seam fenced to TASK-197 lane.
+MERGED 57656fc (head 90efd19, 3 commits). Managed grok seats: GROK_CLAUDE_HOOKS_ENABLED=0 forced in launch env (replace not append) — 0.2.93 ignores the [compat.claude] hooks=false config toggle (upstream candidate recorded). Acceptance test hardened through TWO calibration-driven fix rounds: mock+matcher now pinned to the REAL wire envelope (params.update.sessionUpdate + runs[].name; verified 89-94 matches on a live session file where the original matcher counted 0) with positive control + independent real-shaped exemplar. Dual APPROVE at 90efd19. Full battery at final head + post-merge 58/58. Fix is home-agnostic — survives the default-homes ruling; zero-hook test to be revalidated in the dissolution task.
 <!-- SECTION:NOTES:END -->
