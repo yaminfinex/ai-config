@@ -305,26 +305,14 @@ HCOM_RECOVER pending=<n>
 Doctrine: on `HCOM_RECOVER`, call `list_pending` and work the ids. These two are the
 only line shapes the tap ever prints.
 
-### Nudge policy (bounded, journaled, never blind)
-
-A wake may go unfetched for a legitimate reason: the message landed mid-turn and is
-buffered to the boundary (characterization "Persistent monitor: interactive TUI").
-The binder is therefore turn-aware before it nudges: it reads the session's
-`events.jsonl` phase records (characterization "Session files") and only counts
-fetch-latency while the session is idle. If a surfaced id stays unfetched past the
-idle threshold, the binder re-emits the wake line — at most N times (default 2) with
-backoff, each journaled as a surfacing event — then declares the wake channel suspect
-and degrades (below). No hcom-level resend is ever triggered by this machinery;
-"queued is never blindly resent" holds end-to-end.
-
 ### Failure and recovery matrix
 
 | Scenario | Behavior |
 |---|---|
 | **Binder crash/restart** (any point) | Supervisor restarts it; it acquires the seat lock (below), replays the journal, derives the committed cursor, reclaims its bus identity (`hcom start --as <name>`), reopens the socket, and re-queries `hcom events` from the derived cursor. The crash windows, walked: *(a) crash after events query, before journal append+fsync* — the cursor never advanced (it is derived from the journal), and the events store is non-destructive, so the re-query returns the same message again; at-least-once into the spool, deduped by event id. *(b) crash after append, before wake* — replay finds the id queued-but-unsurfaced; `HCOM_RECOVER` covers it. *(c) crash after wake* — unacked ids are re-surfaced via a single `HCOM_RECOVER` on tap reconnect, never re-woken individually. No hcom-internal cursor participates in correctness at any point (DR-1). |
-| **Duplicate wake** (nudge, tap restart race) | States are monotonic; double fetch is idempotent; one delivery results. |
+| **Duplicate wake** (tap restart race) | States are monotonic; double fetch is idempotent; one delivery results. |
 | **Out-of-order fetch/ack** across ids | Allowed. Ids are independent; ordering is advisory (wake-line order, `list_pending` queue order). No global ordering requirement. |
-| **Auth/rate failure (429) mid-turn** after fetch, before ack | Id remains `fetched`, journal intact (persisted before inference). Doctrine: at the start of any turn following an error, call `list_pending`. The idle-aware nudge also re-surfaces. Delivery completes on the retried turn. API-key auth does not self-refresh — repeated auth failures degrade the seat honestly (DR-5) rather than looping. |
+| **Auth/rate failure (429) mid-turn** after fetch, before ack | Id remains `fetched`, journal intact (persisted before inference). Doctrine: at the start of any turn following an error, call `list_pending`. Delivery completes on the retried turn. API-key auth does not self-refresh — repeated auth failures degrade the seat honestly (DR-5) rather than looping. |
 | **Tap death** (monitor stopped, EOF on socket) | Binder marks the seat **wake-degraded** in the registry; messages continue to queue durably. Recovery: the model restarts the tap (doctrine: "if your monitor task is not running, restart it"), or the heavy path below. |
 | **Compaction** | Monitor survival across compaction is an explicitly open question (characterization "Open questions" #2) — probe P5 (§9) resolves it before the transport unit is accepted. Defensively the design already covers both answers: if the monitor dies, tap-death handling applies; if it survives, nothing changes. Doctrine additionally mandates `list_pending` after any compaction the model is aware of. |
 | **Resume** (`--resume <sid>`) | Same seat, same session id, same spool, same bus name (binder persists or reclaims via `--as`). The relaunch re-passes doctrine and the boot arming prompt (DR-3); first turn restarts the tap and calls `list_pending`, which re-surfaces everything unacked. |
@@ -346,7 +334,7 @@ outcome synchronously and decides about retries itself.
 | `queued` | Durably journaled for the seat | journal append + fsync |
 | `delivered` | The definition above — nothing weaker | `acked` |
 | `undeliverable` | Terminal non-delivery | seat retired with id unacked |
-| `wake-degraded` | Seat reachable only via recovery listing | tap down / nudges exhausted |
+| `wake-degraded` | Seat reachable only via recovery listing | tap down |
 
 ### Persistence format
 
@@ -603,9 +591,7 @@ Receipt state machine cases (each is an explicit named test):
 - **T1 initial delivery** — spawn prompt enqueued pre-boot, surfaced on turn 1 via
   `list_pending`, fetched, acked; herder reports queued → delivered.
 - **T2 idle delivery** — queued → wake → fetch → ack while idle.
-- **T3 busy-turn delivery** — wake emitted mid-turn; fetch happens post-boundary; no
-  nudge fires (turn-aware idle detection honors `events.jsonl` phase).
-- **T4 duplicate wake** — nudge or tap restart causes a second wake; double fetch;
+- **T4 duplicate wake** — tap restart causes a second wake; double fetch;
   exactly one delivered.
 - **T5 duplicate ack** — idempotent; state unchanged; repeat journaled.
 - **T6 out-of-order** — fetch/ack id 5 before id 3; both deliver independently.
@@ -619,8 +605,8 @@ Receipt state machine cases (each is an explicit named test):
   single `HCOM_RECOVER`; delivered via re-list.
 - **T11 tap death** — seat flips wake-degraded; messages keep queueing; tap restart →
   `HCOM_RECOVER` → drained.
-- **T12 mid-turn 429/auth failure** — fetched-not-acked persists; idle-aware nudge or
-  next-turn `list_pending` completes delivery; zero hcom-level resends.
+- **T12 mid-turn 429/auth failure** — fetched-not-acked persists; next-turn
+  `list_pending` completes delivery; zero hcom-level resends.
 - **T13 compaction** — policy test for whichever behavior probe P5 establishes
   (monitor survives → no-op; dies → tap-death path), plus doctrine-mandated re-list.
 - **T14 resume** — same seat/sid/spool/name; re-armed; pending re-listed; no receipt
@@ -712,8 +698,8 @@ the lifecycle and observer units land (§11, "Activation is its own gate").
   threshold under line volume (characterization "Open questions" #2–3).
 - **P6** `--rules` on `--resume`: accepted? duplicated into context? (Doctrine
   re-arm wording depends on it.)
-- **P7** Wake-line rate/size tolerance of the monitor channel (flood behavior feeds
-  the nudge caps).
+- **P7** Wake-line rate/size tolerance of the monitor channel (flood behavior bounds
+  structural wake-line output).
 
 ## 10. Owner decisions required
 

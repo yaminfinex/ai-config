@@ -49,17 +49,15 @@ type Record struct {
 }
 
 type Receipt struct {
-	Event       Event
-	Raw         json.RawMessage
-	Message     Message
-	Hash        string
-	Surfaced    bool
-	Fetched     bool
-	Acked       bool
-	Retired     bool
-	Surfaces    int
-	Nudges      int
-	LastSurface time.Time
+	Event    Event
+	Raw      json.RawMessage
+	Message  Message
+	Hash     string
+	Surfaced bool
+	Fetched  bool
+	Acked    bool
+	Retired  bool
+	Surfaces int
 }
 
 func (r Receipt) Status() string {
@@ -195,12 +193,6 @@ func (j *Journal) apply(rec Record) error {
 			return fmt.Errorf("surface references unknown id %d; restore a consistent journal", rec.ID)
 		}
 		r.Surfaced, r.Surfaces = true, r.Surfaces+1
-		if rec.Surface == "nudge" {
-			r.Nudges++
-		}
-		if at, err := time.Parse(time.RFC3339Nano, rec.At); err == nil {
-			r.LastSurface = at
-		}
 	case "fetched":
 		r, ok := j.receipts[rec.ID]
 		if !ok {
@@ -413,22 +405,6 @@ func (j *Journal) RetireUnacked(gen uint64) (int, error) {
 		}
 	}
 	return len(ids), nil
-}
-
-func (j *Journal) NudgeCandidates(gen uint64, olderThan time.Time, max int) ([]Receipt, error) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if gen != j.generation {
-		return nil, staleGeneration(gen, j.generation)
-	}
-	var out []Receipt
-	for _, r := range j.receipts {
-		if r.Surfaced && !r.Fetched && !r.Acked && !r.Retired && r.Nudges < max && !r.LastSurface.After(olderThan) {
-			out = append(out, *r)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Event.ID < out[j].Event.ID })
-	return out, nil
 }
 
 func staleGeneration(got, current uint64) error {

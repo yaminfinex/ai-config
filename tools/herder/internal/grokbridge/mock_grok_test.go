@@ -321,37 +321,6 @@ func TestT2IdleDeliveryThroughTapFetchAck(t *testing.T) {
 	}
 }
 
-func TestT3BusyTurnDefersIdleAwareNudge(t *testing.T) {
-	state := t.TempDir()
-	m := startMockBridge(t, state, "owner")
-	defer m.close()
-	tap := connectTap(t, m.b.socket, "owner")
-	defer tap.close()
-	events := filepath.Join(state, "events.jsonl")
-	if err := os.WriteFile(events, []byte("{\"event\":\"phase_changed\",\"phase\":\"tool_execution\"}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	m.b.cfg.SessionEvents = events
-	m.b.cfg.NudgeAfter = 60 * time.Millisecond
-	m.b.cfg.MaxNudges = 2
-	m.queue(t, 3, "busy")
-	if _, ok := tap.next(time.Second); !ok {
-		t.Fatal("initial wake missing")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = m.b.nudgeLoop(ctx) }()
-	if line, ok := tap.next(180 * time.Millisecond); ok {
-		t.Fatalf("busy turn received nudge %q", line)
-	}
-	if err := os.WriteFile(events, []byte("{\"event\":\"phase_changed\",\"phase\":\"idle\"}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if line, ok := tap.next(time.Second); !ok || !strings.HasPrefix(line, "HCOM id=3 ") {
-		t.Fatalf("idle nudge line=%q ok=%v", line, ok)
-	}
-}
-
 func TestT4DuplicateWakeThroughTapIsIdempotent(t *testing.T) {
 	m := startMockBridge(t, t.TempDir(), "owner")
 	defer m.close()
@@ -362,7 +331,7 @@ func TestT4DuplicateWakeThroughTapIsIdempotent(t *testing.T) {
 	if !ok {
 		t.Fatal("first wake missing")
 	}
-	if err := m.b.wake(r, "nudge"); err != nil {
+	if err := m.b.wake(r, "wake"); err != nil {
 		t.Fatal(err)
 	}
 	second, ok := tap.next(time.Second)

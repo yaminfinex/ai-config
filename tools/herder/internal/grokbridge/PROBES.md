@@ -17,9 +17,8 @@ bus/state directories were used; no live registry, bus, or model session was tou
   has zero correctness weight.
 - P7: no inference-free probe establishes a vendor model-context flood threshold, so
   the transport assumes no safe unbounded rate. Output is capped structurally to one
-  compact payload-free line per newly queued message, at most two idle-aware nudges
-  when session phase evidence is available, no idle output, and one aggregate recovery
-  line on reconnect instead of wake replay. Correctness never depends on a nudge.
+  compact payload-free line per newly queued message, no idle output, and one aggregate
+  recovery line on reconnect instead of wake replay.
 - P8: hcom 0.7.23 runs its one-hour inactive-row cleanup before `list` resolves an
   explicitly named identity. Anonymous bridge event polling does not refresh the
   bridge-owned row's activity clock. An identified exact-row read does refresh it;

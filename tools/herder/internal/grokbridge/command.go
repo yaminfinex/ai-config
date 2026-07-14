@@ -126,9 +126,6 @@ func runBridge(args []string, stderr io.Writer) int {
 	hdir := fs.String("hcom-dir", os.Getenv("HCOM_DIR"), "hcom state directory")
 	name := fs.String("name", "", "existing bus name")
 	sessionID := fs.String("session-id", processCapability("HERDER_GROK_SESSION_ID"), "owning Grok session id used for request fencing")
-	events := fs.String("session-events", "", "Grok session events.jsonl used for idle-aware nudges")
-	nudgeAfter := fs.Duration("nudge-after", 30*time.Second, "idle time before a bounded wake nudge")
-	maxNudges := fs.Int("max-nudges", 2, "maximum idle-aware nudges per message")
 	supervise := fs.Bool("supervise", false, "restart the bridge with capped backoff")
 	retireOnStop := fs.Bool("retire-on-stop", false, "retire the journal when a supervised manual bridge is stopped")
 	child := fs.Bool("child", false, "internal supervised child")
@@ -144,7 +141,7 @@ func runBridge(args []string, stderr io.Writer) int {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	b, err := OpenBinder(BinderConfig{Seat: *seat, StateDir: *state, HcomBin: *hbin, HcomDir: *hdir, BusName: *name, SessionEvents: *events, NudgeAfter: *nudgeAfter, MaxNudges: *maxNudges, SessionID: *sessionID})
+	b, err := OpenBinder(BinderConfig{Seat: *seat, StateDir: *state, HcomBin: *hbin, HcomDir: *hdir, BusName: *name, SessionID: *sessionID})
 	if err != nil {
 		fmt.Fprintf(stderr, "herder grok bridge: %v\n", err)
 		return 1
