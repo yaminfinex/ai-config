@@ -154,6 +154,28 @@ func ageIdentityPlaceholder(t *testing.T, db, name string) {
 	}
 }
 
+func ageIdentityActivity(t *testing.T, db, name string, age time.Duration) {
+	t.Helper()
+	cmd := exec.Command("python3", "-c", `import sqlite3,sys,time; c=sqlite3.connect(sys.argv[1]); c.execute("update instances set status='active', status_time=?, status_context='tool:list', last_stop=0 where name=?",(int(time.time())-int(sys.argv[3]),sys.argv[2])); c.commit()`, db, name, strconv.FormatInt(int64(age/time.Second), 10))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("age identity activity: %v: %s", err, out)
+	}
+}
+
+func identityStatusTime(t *testing.T, db, name string) int64 {
+	t.Helper()
+	cmd := exec.Command("python3", "-c", `import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute("select status_time from instances where name=?",(sys.argv[2],)).fetchone()[0])`, db, name)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("read identity status time: %v: %s", err, out)
+	}
+	got, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil {
+		t.Fatalf("parse identity status time %q: %v", out, err)
+	}
+	return got
+}
+
 func shortState(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "gbs-")
@@ -235,6 +257,60 @@ func TestRealHcomBindIdentityUsesSeatOwnedProcessAndPreservesForeignBinding(t *t
 	ageIdentityPlaceholder(t, db, seatName)
 	_ = hrun(t, bin, bus, "list", "--json")
 	hsend(t, bin, bus, peerName, []string{seatName}, nil, "accepted-after-placeholder-timeout")
+}
+
+func TestRealHcomReapedRowRebindPreservesQueuedDelivery(t *testing.T) {
+	unsetHcomContractIdentityEnv(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	bin := installedHcom(t)
+	bus := t.TempDir()
+	seat := startName(t, hrunProcess(t, bin, bus, "seat-process", "start"))
+	peer := startName(t, hrunProcess(t, bin, bus, "peer-process", "start"))
+	_ = hrunProcess(t, bin, bus, "seat-process", "list", seat, "--name", seat, "--json")
+	_ = hrunProcess(t, bin, bus, "peer-process", "list", peer, "--name", peer, "--json")
+	hsend(t, bin, bus, peer, []string{seat}, nil, "queued-before-row-reap")
+
+	state := shortState(t)
+	b, err := OpenBinder(BinderConfig{Seat: "seat-process", StateDir: state, HcomBin: bin, HcomDir: bus, BusName: seat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	db := filepath.Join(bus, "hcom.db")
+	ageIdentityActivity(t, db, seat, 30*time.Minute)
+	statusBefore := identityStatusTime(t, db, seat)
+	rebound, err := b.refreshIdentity(context.Background())
+	if err != nil || rebound {
+		t.Fatalf("identified keepalive rebound=%v err=%v", rebound, err)
+	}
+	if statusAfter := identityStatusTime(t, db, seat); statusAfter <= statusBefore {
+		t.Fatalf("identified keepalive did not advance activity: %d -> %d", statusBefore, statusAfter)
+	}
+	ageIdentityActivity(t, db, seat, 3601*time.Second)
+	_ = hrunProcess(t, bin, bus, "peer-process", "list", peer, "--name", peer, "--json")
+
+	check := exec.Command(bin, "list", seat, "--json")
+	check.Env = hcomContractEnv(bus)
+	if out, checkErr := check.CombinedOutput(); checkErr == nil {
+		t.Fatalf("aged row survived cleanup: %s", out)
+	}
+	if err = b.refreshAndRecover(context.Background()); err != nil {
+		t.Fatalf("refresh and recover: %v", err)
+	}
+	if got := processBindings(t, db)["seat-process"]; got != seat {
+		t.Fatalf("rebound process owns %q, want durable row %q", got, seat)
+	}
+	pending, err := b.journal.Pending(b.generation, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].Message.Text != "queued-before-row-reap" {
+		t.Fatalf("pending after row recovery=%+v", pending)
+	}
 }
 
 func TestSeatIdentityInvocationUsesControlledAllowlist(t *testing.T) {
