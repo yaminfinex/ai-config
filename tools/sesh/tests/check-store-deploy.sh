@@ -229,9 +229,9 @@ exit 0
 EOF
 chmod 755 "$DR_STUBS/systemctl"
 (cd "$SESH_MODULE_DIR" && go build -ldflags '-X sesh/internal/buildinfo.Version=vDEPLOY-1' \
-  -o "$WORK/upload-1" ./cmd/sesh) || fail "stamped build 1"
+  -o "$WORK/upload-1" ./cmd/sesh-store) || fail "stamped build 1"
 (cd "$SESH_MODULE_DIR" && go build -ldflags '-X sesh/internal/buildinfo.Version=vDEPLOY-2' \
-  -o "$WORK/upload-2" ./cmd/sesh) || fail "stamped build 2"
+  -o "$WORK/upload-2" ./cmd/sesh-store) || fail "stamped build 2"
 run_dr() { SESH_OPS_ROOT="$DR_ROOT" PATH="$DR_STUBS:$PATH" sh "$OPS_SRC/deploy-remote.sh" "$@"; }
 
 run_dr "$WORK/upload-1" >"$WORK/dr1.out" 2>&1 || fail "fresh deploy failed: $(cat "$WORK/dr1.out")"

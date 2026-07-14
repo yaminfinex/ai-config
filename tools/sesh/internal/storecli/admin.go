@@ -1,4 +1,4 @@
-package cli
+package storecli
 
 import (
 	"database/sql"

@@ -51,7 +51,9 @@ tailnet-admin ask from the README ("The tailnet-admin ask") answered — one
    The key lands in `/etc/sesh/serve.env` (root-only) for the first service
    start; sesh-serve stays stopped until a binary is deployed.
 
-3. **Deploy the store**: `just deploy-store`. Builds linux/amd64, ships via
+3. **Deploy the store**: `just deploy-store`. Builds linux/amd64 from
+   `./cmd/sesh-store` (the FULL build — the release channel publishes only
+   the slim client, which cannot serve), ships via
    IAP, swaps the binary crash-safely, restarts, and prints the version of
    the **running** image. On the first start the store joins the tailnet as
    node `sesh`. Then:
@@ -231,7 +233,11 @@ generation never downgrade; an older binary against newer state refuses
 cleanly (the README's "Field failure signature") instead of touching data.
 The **support window is current + previous release**: one-command
 `sesh update` keeps the fleet within one release of latest, and anything
-older gets upgraded, not accommodated.
+older gets upgraded, not accommodated. **Never run `sesh update` on the
+store host itself**: the channel serves the slim client artifacts, so an
+update there would replace the full store binary with a client that cannot
+serve (recovery: `just deploy-store`, or the retained `sesh.prev`). The
+store converges by `just deploy-store` only.
 
 Per-node version visibility (the User-Agent census): each shipper
 self-reports its build version on every PUT (`User-Agent:
