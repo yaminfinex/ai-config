@@ -22,7 +22,7 @@ deduplication, facts interpretation, conflict generations, quarantine, and auth.
 
 - Wire version: `1`.
 - API root: `/v1`.
-- Allowed tools: `claude`, `codex`. Unknown tools are rejected.
+- Allowed tools: `claude`, `codex`, `grok` (Amendment 3). Unknown tools are rejected.
 - Rescan interval (shipper-local default, NOT wire contract): 60 seconds — tunable per
   node; fsnotify-coverage calibration may adjust it without a wire amendment.
 - Maximum PUT body: 4 MiB.
@@ -39,9 +39,12 @@ deduplication, facts interpretation, conflict generations, quarantine, and auth.
 
 Every shipped file is identified by:
 
-- `tool`: closed enum, `claude` or `codex`.
+- `tool`: closed enum, `claude`, `codex`, or `grok` (Amendment 3).
 - `session_id`: the session id claim carried by the filename/path convention.
-- `file_uuid`: the UUID portion of the transcript filename.
+- `file_uuid`: the UUID portion of the transcript filename. For `grok` the transcript
+  filename is fixed (`chat_history.jsonl`) and carries no UUID; the session directory's
+  UUID is the filename-convention claim and serves as both `session_id` and `file_uuid`
+  (Amendment 3) — the same one-file-per-session shape as `claude`.
 - `fingerprint`: optional lowercase hex SHA-256 over the first 1024 file bytes.
 
 The path and inode are never identity. The `session_id` in the URL is a wire claim; the
@@ -308,7 +311,7 @@ Table: `sesh_index_messages`
 | Column | Meaning |
 |---|---|
 | `id` | Store-local integer primary key |
-| `tool` | `claude` or `codex` |
+| `tool` | `claude`, `codex`, or `grok` (Amendment 3) |
 | `logical_session_id` | Store-derived logical session id after content-id/link-field or overlap unification; falls back to `wire_session_id` only when unavailable |
 | `wire_session_id` | Session id claim from the PUT URL |
 | `entry_type` | Parsed transcript entry type; opaque string allowed |
@@ -354,6 +357,18 @@ same `sesh_index_messages` content aside from store-local primary keys.
 
 ## Changelog
 
+- 2026-07-14 — Amendment 3: add `grok` to the closed tool enum (Constants, File
+  Identity, and the index `tool` column); record that grok's fixed transcript filename
+  makes the session directory's UUID both `session_id` and `file_uuid`. Nothing else
+  changes: PUT/ACK semantics, headers, error catalog, and shipper reactions are
+  byte-untouched. Mixed-fleet compatibility: rollout order is store before clients (the
+  deploy pipeline guarantees it — the store deploys before release publication). A
+  grok-shipping client against a pre-amendment store receives `400 unknown_tool` per the
+  existing catalog row and applies its frozen reaction — hold every grok file quietly
+  (no retry loop, no crash, cursor untouched, nothing dropped) while every other tool
+  keeps shipping; resolution is the store upgrade. This reaction applies to the recovery
+  GET exactly as to PUT: a non-retryable refusal during recovery parks that file and
+  never blocks the rest of the pass.
 - 2026-07-09 — Amendment 2: fingerprint-bearing PUTs silently route to the
   highest-numbered generation with the matching recorded fingerprint; `fingerprint_conflict`
   is only returned when opening a new empty generation for a new fingerprint.

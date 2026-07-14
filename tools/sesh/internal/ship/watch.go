@@ -89,11 +89,11 @@ func (s *Shipper) Run(ctx context.Context) error {
 	}
 }
 
-// watchDirs (re-)registers every directory under both roots. It runs when the
+// watchDirs (re-)registers every directory under the roots. It runs when the
 // watcher is armed and on periodic rescans. Create events add new directories
-// between rescans without making every hint re-walk both trees.
+// between rescans without making every hint re-walk the trees.
 func (s *Shipper) watchDirs(w *fsnotify.Watcher) {
-	for _, root := range []string{s.Roots.Claude, s.Roots.Codex} {
+	for _, root := range s.Roots.All() {
 		resolved, err := filepath.EvalSymlinks(root)
 		if err != nil {
 			continue

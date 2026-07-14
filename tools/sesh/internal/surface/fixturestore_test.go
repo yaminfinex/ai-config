@@ -36,6 +36,7 @@ const (
 	uuidResumeNew  = "e1be75ad-151b-47fa-9d69-46de1c117843"
 	uuidInterleave = "e4578030-c4a9-493f-82e6-de6156d0179a"
 	uuidCodexMeta  = "019f01cf-3d22-7ea0-923e-e463b90ea31e"
+	uuidGrokChat   = "71ebdd45-2641-49e8-87f5-b8d9f3706714"
 	// The trailing-partial fixture is a byte prefix of claude-normal; as a
 	// distinct session in the fake it needs its own file identity.
 	uuidPartial = "0f0f0f0f-1111-2222-3333-444444444444"
@@ -283,6 +284,18 @@ func parseIndexRow(spec sessionSpec, fileUUID string, fileOrd, lineOrd, byteStar
 	case meta.Payload != nil && meta.Payload.Role != "":
 		row.Role = meta.Payload.Role
 	}
+	if spec.tool == wire.ToolGrok {
+		// grok lines carry no role field; the indexer derives it from the
+		// entry type (U6 rule, mirrored here).
+		switch meta.Type {
+		case "system", "user", "assistant":
+			row.Role = meta.Type
+		case "reasoning":
+			row.Role = "assistant"
+		case "tool_result":
+			row.Role = "tool"
+		}
+	}
 	if meta.Timestamp != "" {
 		if ts, err := time.Parse(time.RFC3339Nano, meta.Timestamp); err == nil {
 			ts = ts.UTC()
@@ -336,6 +349,14 @@ func corpusStore(t *testing.T) *fakeStore {
 			ownerClaims: []string{"alice"},
 			mirroredAt:  day("2026-07-05T08:10:00Z"),
 			files:       []fixtureFile{{name: "codex-rollout-meta.jsonl", fileUUID: uuidCodexMeta, firstIngest: day("2026-07-05T08:00:00Z")}},
+		},
+		{
+			// No parsed timestamps anywhere in a grok transcript: recency is
+			// the first-ingest instant (frozen fallback), not message time.
+			tool: wire.ToolGrok, logicalID: uuidGrokChat,
+			hostname: "workstation", osUser: "grace",
+			mirroredAt: day("2026-07-05T20:10:00Z"),
+			files:      []fixtureFile{{name: "grok-chat-history.jsonl", fileUUID: uuidGrokChat, firstIngest: day("2026-07-05T20:00:00Z")}},
 		},
 		{
 			tool: wire.ToolClaude, logicalID: uuidPartial,

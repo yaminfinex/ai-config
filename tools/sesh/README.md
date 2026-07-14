@@ -1,8 +1,41 @@
 # sesh — session-transcript mirroring service
 
-Per-user shippers mirror Claude Code and Codex CLI session transcripts
-byte-faithfully to one central store, which parses on ingest and serves a team
-recency page.
+Per-user shippers mirror Claude Code, Codex CLI, and Grok CLI session
+transcripts byte-faithfully to one central store, which parses on ingest and
+serves a team recency page.
+
+## Supported tools
+
+| Tool | Watched root | Ships | Identity (`session_id` = `file_uuid`) |
+|---|---|---|---|
+| `claude` | `~/.claude/projects` | `<uuid>.jsonl` | filename UUID |
+| `codex` | `~/.codex/sessions` | `rollout-*-<uuid>.jsonl` | filename UUID |
+| `grok` | `~/.grok/sessions` | `<cwd-group>/<uuid>/chat_history.jsonl` | session directory UUID |
+
+Grok ships **exactly one file per session: `chat_history.jsonl`** (the
+transcript), admitted by exact shape — fixed name, directly under a
+UUID-named session directory, exactly one url-encoded-cwd group below the
+root. Everything else is deliberately excluded, and the exclusion is a
+security boundary pinned by a proven-detector test (the ~/.grok top level
+holds `config.toml`, credentials, and runtime state):
+
+- `events.jsonl`, `updates.jsonl` — high-churn operational event streams, not
+  transcript; they carry no message rows for the index and would dominate
+  corpus weight. Live seat status already reads them in place (herder
+  observer); mirroring adds nothing the surface can render.
+- `prompt_context.json`, `resources_state.json`, `signals.json`,
+  `summary.json` — state files rewritten in place; a rewriting file fights
+  the wire's append semantics for zero index value.
+- `rewind_points.jsonl`, `recap_requests/`, `terminal/`, `system_prompt.txt`
+  — session bookkeeping, prompts, and raw terminal output; not messages.
+
+Grok transcript lines carry no timestamps and no message uuids, so on the
+frozen index schema a grok session's recency is its first-ingest time (badge
+on the sessions page), rows never dedup, and its logical session is the wire
+session id — a stored grok session is located by plain session id, matching
+`~/.grok/sessions/*/<sid>` existence semantics. A grok rewind that truncates
+and rewrites the transcript lands as a new store generation (the standard
+conflict path); both histories render, generation 0 first.
 
 Authority chain: `docs/specs/session-service-spec.md` (product contract) >
 `docs/specs/sesh-wire.md` (wire and index contract). All sesh docs live

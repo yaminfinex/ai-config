@@ -85,3 +85,21 @@ hold the fixture back (playbook rule).
   timestamp, cwd, originator, cli_version, source, thread_source,
   model_provider, base_instructions, git). Then event_msg/response_item/
   turn_context lines; all valid JSON, ends with `\n`.
+
+### grok-chat-history.jsonl — Grok CLI session transcript
+
+- Source: `~/.grok/sessions/<url-encoded scratchpad cwd>/71ebdd45-2641-49e8-87f5-b8d9f3706714/chat_history.jsonl`
+  (verbatim copy; source mtime 2026-07-09; a grok characterization session
+  run on grace's linux workstation — captured 2026-07-14 by the grok adapter
+  lane worker). The session directory UUID is v4 here; live grok default is
+  uuidv7 — both occur on this machine and discovery accepts any UUID.
+- 26 lines, 26,457 bytes, every line valid JSON, ends with `\n`.
+- Entry mix: 1 system, 7 user, 6 reasoning, 7 assistant (5 with
+  `tool_calls`), 5 tool_result — the full type spread observed live. NO
+  timestamps and NO message uuids anywhere (verified property: grok index
+  rows never dedup; recency falls back to first-ingest).
+- Scrub result: checklist run 2026-07-14; one case-insensitive `authorization`
+  pattern hit is prose inside the grok system prompt (false positive);
+  high-entropy hits are paths and call ids (known-benign classes). No
+  credentials found. User prompts are characterization test prompts; tool
+  calls are `echo`/`sleep`/`grep` only.

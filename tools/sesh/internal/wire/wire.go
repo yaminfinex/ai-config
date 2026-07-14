@@ -26,6 +26,7 @@ type Tool string
 const (
 	ToolClaude Tool = "claude"
 	ToolCodex  Tool = "codex"
+	ToolGrok   Tool = "grok" // Amendment 3
 )
 
 // Request headers (wire doc "PUT Bytes"). Fingerprint headers are present

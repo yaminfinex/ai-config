@@ -432,10 +432,10 @@ func TestNodeFilteredSessionsView(t *testing.T) {
 		t.Error("filtered page must state its node")
 	}
 
-	// grace@workstation holds the other four fixture sessions.
+	// grace@workstation holds the other five fixture sessions.
 	body = mustGet200(t, srv, "/sessions?node=grace@workstation")
-	if !strings.Contains(body, "showing latest 4 of 4 sessions") {
-		t.Errorf("node-filtered list must count grace@workstation's 4 sessions")
+	if !strings.Contains(body, "showing latest 5 of 5 sessions") {
+		t.Errorf("node-filtered list must count grace@workstation's 5 sessions")
 	}
 
 	// A node label that matches nothing renders an honest empty page.
@@ -536,12 +536,29 @@ func TestNever500OnMirroredSession(t *testing.T) {
 		srv := newServer(t, &erroringStore{Store: base, lookupErr: true})
 		mustGet200(t, srv, "/s/claude/"+uuidNormal)
 	})
+
+	t.Run("grok index unavailable falls back to raw", func(t *testing.T) {
+		srv := newServer(t, &erroringStore{Store: base, rowsErr: true})
+		body := mustGet200(t, srv, "/s/grok/"+uuidGrokChat)
+		if !strings.Contains(body, "raw mirror lines") {
+			t.Error("grok index failure must render the raw fallback")
+		}
+	})
+
+	t.Run("grok index and mirror both unavailable degrades to a 200 notice", func(t *testing.T) {
+		srv := newServer(t, &erroringStore{Store: base, rowsErr: true, mirrorErr: true})
+		body := mustGet200(t, srv, "/s/grok/"+uuidGrokChat)
+		if !strings.Contains(body, "unreadable") && !strings.Contains(body, "unable to render") {
+			t.Errorf("grok total failure must still render an honest notice, got:\n%.300s", body)
+		}
+	})
 }
 
 func TestUnknownSessionAndToolAre404(t *testing.T) {
 	srv := newServer(t, corpusStore(t))
 	for _, path := range []string{
 		"/s/claude/no-such-session",
+		"/s/grok/no-such-session",
 		"/s/vim/" + uuidNormal, // unknown tool: not in the closed enum
 		"/nope",
 	} {
@@ -587,7 +604,7 @@ func TestRecencyPageParamAtMaxIntStaysSane(t *testing.T) {
 	// page one.
 	for _, path := range []string{"/sessions?page=99999999999999999999", "/sessions?page=-7", "/sessions?page=banana"} {
 		body := mustGet200(t, srv, path)
-		if !strings.Contains(body, "showing latest 5 of 5 sessions") {
+		if !strings.Contains(body, "showing latest 6 of 6 sessions") {
 			t.Errorf("GET %s must fall back to page one", path)
 		}
 	}
