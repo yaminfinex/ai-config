@@ -840,7 +840,10 @@ func (s *SQLStore) MirrorFile(_ context.Context, tool wire.Tool, wireSessionID, 
 
 // Nodes returns last-PUT activity by hostname and OS user for the nodes view.
 func (s *SQLStore) Nodes(ctx context.Context, staleAfter time.Duration) ([]NodeStatus, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT hostname, os_user, last_put_at FROM last_seen ORDER BY hostname, os_user`)
+	// Small-table class: last_seen is one row per node, so the full scan +
+	// sort stays proportional to fleet size, not the corpus. COALESCE keeps
+	// pre-census NULL rows scanning as "" (rendered unknown).
+	rows, err := s.db.QueryContext(ctx, `SELECT hostname, os_user, last_put_at, COALESCE(shipper_version, '') FROM last_seen ORDER BY hostname, os_user`)
 	if err != nil {
 		return nil, err
 	}
@@ -850,7 +853,7 @@ func (s *SQLStore) Nodes(ctx context.Context, staleAfter time.Duration) ([]NodeS
 	for rows.Next() {
 		var n NodeStatus
 		var raw string
-		if err := rows.Scan(&n.Hostname, &n.OSUser, &raw); err != nil {
+		if err := rows.Scan(&n.Hostname, &n.OSUser, &raw, &n.ShipperVersion); err != nil {
 			return nil, err
 		}
 		t, err := time.Parse(time.RFC3339Nano, raw)

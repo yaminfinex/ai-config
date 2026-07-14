@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"time"
 
+	"sesh/internal/buildinfo"
 	"sesh/internal/wire"
 )
 
@@ -141,6 +142,11 @@ type NodeStatus struct {
 	LastPutAt time.Time `json:"last_put_at"`
 	Age       string    `json:"age"`
 	Stale     bool      `json:"stale"`
+	// ShipperVersion is the version the node's shipper last self-reported
+	// via its User-Agent ("" = unknown: rows predating the census or a
+	// client that does not identify itself). omitempty keeps the store's
+	// /v1/nodes JSON byte-identical for producers that never populate it.
+	ShipperVersion string `json:"shipper_version,omitempty"`
 }
 
 // Server renders the surface. All handlers are GET-only; the page carries no
@@ -150,6 +156,13 @@ type Server struct {
 	now   func() time.Time
 	log   *log.Logger
 	mux   *http.ServeMux
+
+	// currentVersion anchors the nodes view's support window (current +
+	// previous release). It is the running store's own build version — never
+	// a hardcoded release string — and may be an untagged/dev form, in which
+	// case no node is flagged out of window (the window is unknowable, and
+	// a wrong flag is worse than none).
+	currentVersion string
 
 	recencyTmpl    *template.Template
 	nodesTmpl      *template.Template
@@ -170,12 +183,19 @@ func WithLogger(l *log.Logger) Option {
 	return func(s *Server) { s.log = l }
 }
 
+// WithCurrentVersion overrides the build version anchoring the nodes view's
+// support window (tests; production uses buildinfo.Version).
+func WithCurrentVersion(v string) Option {
+	return func(s *Server) { s.currentVersion = v }
+}
+
 // New builds the surface handler over a Store.
 func New(store Store, opts ...Option) *Server {
 	s := &Server{
-		store: store,
-		now:   time.Now,
-		log:   log.New(io.Discard, "", 0),
+		store:          store,
+		now:            time.Now,
+		log:            log.New(io.Discard, "", 0),
+		currentVersion: buildinfo.Version,
 	}
 	for _, o := range opts {
 		o(s)
@@ -211,6 +231,13 @@ type nodeRow struct {
 	// SessionsURL is the node's flat recency view — the same list as
 	// /sessions, filtered to this node, paginated identically.
 	SessionsURL string
+	// VersionUnknown marks a node whose shipper version cannot be judged:
+	// nothing recorded, or a token that does not parse as a release version.
+	VersionUnknown bool
+	// VersionBehind marks a node outside the support window (current +
+	// previous release, ops/README version-skew policy). Only ever set when
+	// the running store's own version pins the window.
+	VersionBehind bool
 }
 
 func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
@@ -225,14 +252,21 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		s.writeDegraded(w, "node status unavailable")
 		return
 	}
+	floor, windowKnown := supportWindowFloor(s.currentVersion)
 	rows := make([]nodeRow, 0, len(nodes))
 	for _, n := range nodes {
 		label := nodeLabel(n.Hostname, n.OSUser)
-		rows = append(rows, nodeRow{
+		row := nodeRow{
 			NodeStatus:  n,
 			Node:        label,
 			SessionsURL: sessionsURL("/sessions", label, 1),
-		})
+		}
+		if v, ok := parseVersion(n.ShipperVersion); !ok {
+			row.VersionUnknown = true
+		} else if windowKnown && compareVersions(v, floor) < 0 {
+			row.VersionBehind = true
+		}
+		rows = append(rows, row)
 	}
 	data := struct {
 		Now   time.Time

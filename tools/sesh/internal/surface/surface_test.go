@@ -20,7 +20,12 @@ var testNow = time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
 
 func newServer(t *testing.T, store surface.Store) *surface.Server {
 	t.Helper()
-	return surface.New(store, surface.WithClock(func() time.Time { return testNow }))
+	// The current version is pinned so the nodes view's support window is
+	// deterministic under `go test` (buildinfo.Version is "dev" there,
+	// which would leave the window unknowable and the goldens flag-free).
+	return surface.New(store,
+		surface.WithClock(func() time.Time { return testNow }),
+		surface.WithCurrentVersion("sesh-v0.3.2"))
 }
 
 func get(t *testing.T, h http.Handler, path string) (int, string) {
@@ -314,6 +319,65 @@ func TestNodesPageFlagsStaleLastPut(t *testing.T) {
 	}
 	if !strings.Contains(body, "stale &gt;48h") || !strings.Contains(body, "fresh") {
 		t.Fatalf("nodes page missing freshness badges:\n%s", body)
+	}
+}
+
+// The version census column (task-204): each node shows its shipper's
+// last-reported version against the support window (current + previous
+// release) pinned by the running store's own build version. Out-of-window
+// nodes are visibly flagged; unknown or unparsable versions flag as unknown
+// and must never 500.
+func TestNodesPageVersionColumn(t *testing.T) {
+	store := corpusStore(t)
+	store.nodes = []surface.NodeStatus{
+		{Hostname: "current-host", OSUser: "grace", LastPutAt: testNow.Add(-time.Hour), Age: "1h0m0s", ShipperVersion: "sesh-v0.3.2"},
+		{Hostname: "previous-host", OSUser: "grace", LastPutAt: testNow.Add(-time.Hour), Age: "1h0m0s", ShipperVersion: "sesh-v0.3.1"},
+		{Hostname: "behind-host", OSUser: "grace", LastPutAt: testNow.Add(-time.Hour), Age: "1h0m0s", ShipperVersion: "sesh-v0.2.9"},
+		{Hostname: "ahead-host", OSUser: "grace", LastPutAt: testNow.Add(-time.Hour), Age: "1h0m0s", ShipperVersion: "sesh-v0.3.3"},
+		{Hostname: "precensus-host", OSUser: "grace", LastPutAt: testNow.Add(-time.Hour), Age: "1h0m0s"},
+		{Hostname: "devbuild-host", OSUser: "grace", LastPutAt: testNow.Add(-time.Hour), Age: "1h0m0s", ShipperVersion: "dev"},
+	}
+	srv := surface.New(store,
+		surface.WithClock(func() time.Time { return testNow }),
+		surface.WithCurrentVersion("sesh-v0.3.2"))
+	body := mustGet200(t, srv, "/")
+	rows := strings.Split(body, "<tr>")
+	badges := map[string]string{}
+	for _, row := range rows {
+		for _, host := range []string{"current-host", "previous-host", "behind-host", "ahead-host", "precensus-host", "devbuild-host"} {
+			if strings.Contains(row, host) {
+				badges[host] = row
+			}
+		}
+	}
+	for _, host := range []string{"current-host", "previous-host", "ahead-host"} {
+		if strings.Contains(badges[host], "out of window") || strings.Contains(badges[host], ">unknown<") {
+			t.Errorf("%s is in-window but flagged:\n%s", host, badges[host])
+		}
+	}
+	if !strings.Contains(badges["behind-host"], "out of window") {
+		t.Errorf("behind-host (0.2.9 vs window 0.3.1+) not flagged:\n%s", badges["behind-host"])
+	}
+	for _, host := range []string{"precensus-host", "devbuild-host"} {
+		if !strings.Contains(badges[host], ">unknown<") {
+			t.Errorf("%s must flag as unknown:\n%s", host, badges[host])
+		}
+		if strings.Contains(badges[host], "out of window") {
+			t.Errorf("%s must not be flagged out of window:\n%s", host, badges[host])
+		}
+	}
+	if !strings.Contains(badges["devbuild-host"], "dev") {
+		t.Errorf("an unparsable version token must still be displayed:\n%s", badges["devbuild-host"])
+	}
+
+	// A dev/untagged store cannot pin the window: same fleet, no out-of-window
+	// flags, and the page still renders (never 500 over a version string).
+	devSrv := surface.New(store,
+		surface.WithClock(func() time.Time { return testNow }),
+		surface.WithCurrentVersion("dev"))
+	devBody := mustGet200(t, devSrv, "/")
+	if strings.Contains(devBody, "out of window") {
+		t.Errorf("dev store flagged nodes out of an unknowable window:\n%s", devBody)
 	}
 }
 
