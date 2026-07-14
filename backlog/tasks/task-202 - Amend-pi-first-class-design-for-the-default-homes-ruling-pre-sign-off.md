@@ -4,7 +4,7 @@ title: Amend pi first-class design for the default-homes ruling (pre-sign-off)
 status: In Progress
 assignee: []
 created_date: '2026-07-14 01:47'
-updated_date: '2026-07-14 01:49'
+updated_date: '2026-07-14 02:08'
 labels: []
 dependencies: []
 ordinal: 201000
@@ -19,5 +19,5 @@ TYPE: design (docs-only). OWNER RULING 2026-07-14 (standing-orders 20.8): pi sea
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Dispatched designer-temi (claude/Fable-lane, worktree task-202, thread task202). Amendment against standing-orders 20.8 ruling.
+DONE 0fae1a6 (docs-only, +360/-210, round 10): default-home DR-3 rewrite, full-document sweep, honesty duty discharged as owner item 9 a-e (store channel in-band, version drift unfenced, operator credential in seat HOME, shared-home effects, state hygiene). Review dispatched: incumbent codex reviewer-ganu + grok calibration rako (brief: review-202-brief.md). Owner sign-off follows review.
 <!-- SECTION:NOTES:END -->
