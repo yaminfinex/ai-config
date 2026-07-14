@@ -231,7 +231,28 @@ generation never downgrade; an older binary against newer state refuses
 cleanly (the README's "Field failure signature") instead of touching data.
 The **support window is current + previous release**: one-command
 `sesh update` keeps the fleet within one release of latest, and anything
-older gets upgraded, not accommodated. Per-node version visibility on the
-nodes view is DEFERRED, not present: the read side carries no version facts
-today, and adding them is a write-path change owned by the
-fleet-version-visibility task (User-Agent census) on the board.
+older gets upgraded, not accommodated.
+
+Per-node version visibility (the User-Agent census): each shipper
+self-reports its build version on every PUT (`User-Agent:
+sesh-ship/<version>`, informational only — never required, never load-bearing),
+the store records the last-seen version per node in `last_seen` bookkeeping,
+and the nodes view renders it as a **Version** column. The support window is
+anchored to the running store's own build version — current plus the previous
+patch release; after a minor/major bump only current is in-window until the
+fleet converges.
+
+What the flags mean, and what to do:
+
+- **`out of window`** — the node's shipper is older than the previous
+  release. Run `sesh update` on that node (or wait for its self-update timer
+  if one is installed); the flag clears on its next PUT.
+- **`unknown`** — the node has never reported a parseable version: a shipper
+  predating the census, a dev/untagged build, or a row written before the
+  census column existed. Treat it like out-of-window: `sesh update` the node,
+  after which it self-reports. A store running a dev/untagged build cannot
+  anchor the window and flags nobody out-of-window (versions still display).
+
+The census is bookkeeping, not contract: absence of the header never blocks
+shipping, and version facts never appear in journal logs (identifier-free
+logging holds — versions are aggregate-safe, node identities are not).
