@@ -473,23 +473,27 @@ Token lifecycle, every branch specified:
    token, it cannot activate in-band — by design, and it makes **no attempt**:
    a tokenless instance is provenance-indistinguishable from a model tool
    child, so it stays control-plane inert like any other unauthenticated
-   caller (DR-3 predicate note). `control-degraded` is instead **derived,
-   write-free, from the authenticated side's silence**: every signal of seat
-   health is token-gated (lease renewal and every token-lane journal write —
-   T34(i)), so token loss shows up as the one thing no tokenless caller can
-   forge — **absence**. `herder pi bus status` derives it as: current
-   activation's recorded process **alive** (pid + start-time) AND the
-   progress lease expired AND **no authenticated token-lane record since**
-   (an authenticated `driver-degraded` record proves the token is still
-   held and caps the state at driver-degraded instead) AND that silence has
-   persisted past a **control-loss escalation threshold** — pinned in family
-   config, sized above one lease TTL plus the driver supervisor's full
-   bounded backoff, so a hung-but-token-holding driver either recovers or
-   writes its authenticated degrade record before escalation ever fires.
-   Detection latency is therefore **bounded but not immediate** (TTL +
-   threshold), stated honestly; nothing is journaled to produce the state
-   and no tokenless write path exists (T34(e)).
-   Recovery is a **controlled relaunch**, not a
+   caller (DR-3 predicate note). Detection claims nothing finer than the
+   existing lease machinery, and the limit is stated plainly for sign-off:
+   **write-free observation cannot distinguish a lost token from a hung
+   driver.** Both causes present identical observables — recorded process
+   alive (pid + start-time), progress lease expired, no authenticated
+   token-lane record after — because T29's hung-driver branch is precisely a
+   never-resolving await with **no guaranteed failure-path writer**: no
+   authenticated degrade record can be relied on to separate the cases, and
+   no threshold sizing can conjure the distinction (the contradiction fix
+   round 4 closed). The two causes therefore **deliberately share one
+   derived state — `driver-degraded`, by ordinary lease expiry — and one
+   recovery**. No token-loss-specific status exists: `control-degraded` is
+   **retired from the vocabulary** — a silence-reachable version would claim
+   token-loss knowledge the write-free evidence cannot carry, and no
+   positive authenticated trigger for it currently exists; reintroducing it
+   would require one. Nothing is journaled to produce the shared state and
+   no tokenless write path exists (T34(e)).
+   Recovery — the same for both causes, which is why the collapse loses
+   nothing operationally (an in-band driver restart at the same epoch may
+   additionally clear a hung-with-token driver first, per the driver spec) —
+   is a **controlled relaunch**, not a
    live handoff — executed under the launch-attempt protocol below: open the
    attempt, quiesce and terminate the exact recorded process (model tool code
    dies with it), attempt-keyed pre-exec rekey, relaunch via the standard
@@ -854,9 +858,12 @@ never loops.
 | `delivered` | The definition above — nothing weaker | settle observed after journaled injection |
 | `undeliverable` | Terminal non-delivery (`stalled` variant: nudge budget exhausted) | retirement sequence step 5; nudge-budget exhaustion |
 | `inject-degraded` | Extension cannot currently inject (extension error, no session) | extension diagnostics / activation state |
-| `driver-degraded` | Inbound pickup halted; reported from supervision or stale lease | backoff exhausted, top-level exit, or lease expiry |
-| `control-degraded` | Live extension lacks the capability token; recovery is a controlled relaunch (attempt-protocol pre-exec rekey — never a live handoff) | status-derived, write-free: live recorded process + expired lease + no authenticated token-lane record, persisting past the escalation threshold (DR-2 item 4) |
+| `driver-degraded` | Inbound pickup halted; reported from supervision or stale lease. Covers **both** stale-lease causes — hung driver and token lost after a memory-lost reload — which are write-free indistinguishable and deliberately share this state and the controlled-relaunch recovery (DR-2 item 4) | backoff exhausted, top-level exit, or lease expiry |
 | `spool-quota` | Draining paused at quota; backlog deferred in hcom, counted | quota check at drain |
+
+(The former `control-degraded` state is retired: it had no honest trigger
+distinct from `driver-degraded` — write-free evidence cannot prove token
+loss — and no positive authenticated trigger exists; DR-2 item 4.)
 
 ### Persistence format
 
@@ -964,9 +971,10 @@ diagnostic write authorized by such a proof would be a tokenless
 seat-mutation path a model tool could take verbatim (exec `herder pi bus
 activate` from an in-seat shell). The reloaded instance therefore behaves
 exactly like every other unauthenticated caller: **fully inert on the
-control plane** — no activation attempt, no write, nothing. Detection of the
-lost token is **external and write-free**, from the authenticated side's
-silence: DR-2 item 4's lease-decay derivation. There is **no code path by
+control plane** — no activation attempt, no write, nothing. The seat then
+simply decays to `driver-degraded` through ordinary lease expiry — a state
+deliberately shared with the hung-driver cause, which is write-free
+indistinguishable from token loss (DR-2 item 4). There is **no code path by
 which any tokenless caller — whatever its provenance — causes any journal
 append or seat-status transition** (T34(a), T34(e) spoof branch).
 
@@ -1352,10 +1360,13 @@ with the source labeled — grok DR-5, applied to Pi's surfaces.
   runtime epoch read back + driver armed; reserved = roster row only),
   `pending: <n>` (queued/injected not yet delivered, exact counts),
   `inject: ready|degraded`, `driver: armed|degraded` (lease-derived — DR-2),
-  `spool: ok|quota`, `control: ok|degraded`,
+  `spool: ok|quota`,
   `provider: <family>`, and `session-drift` when DR-4 flags it. (The former
   `auth: ok|drift` flag is removed with the DR-5 store contract — it policed
-  what is now the owner's live store.) A row never
+  what is now the owner's live store. The former `control: ok|degraded` flag
+  is retired with the `control-degraded` state — token loss is write-free
+  indistinguishable from a hung driver and reports as `driver: degraded`,
+  DR-2 item 4.) A row never
   implies capability the seat has not proven.
 - **Diagnostics** (extension errors, bus-op failures, nudge history) go to seat log
   files under the seat dir, never to the pane or the model context (T25).
@@ -1432,7 +1443,7 @@ time**, and a vendor update re-opens the probes whose surfaces it touches (the
 | A1 | **Reply-content capture**: the demo validated injection to `agent_settled` but did not capture the reply. | `delivered` claims turn completion over a context containing the message — nothing about the reply (DR-2). | U1 probe: capture the injected turn's reply via the extension event/message stream; if capturable, add reply-hash journaling as an audit nicety (not a delivery precondition). |
 | A2 | **Steering/mid-stream delivery**: `sendUserMessage` delivery options are API-inventory only. | Idle-gated injection; mid-turn arrivals hold to the settle boundary. | U1 probe: exercise streaming delivery options; if proven, a later unit may relax the idle gate as its own reviewed change. |
 | A3 | **Injected input persists in the session JSONL** (crash/resume durability of injected content). | The id-only nudge is safe **only if A3 holds** — the nudge policy (DR-2) is explicitly conditional on this verification's outcome; if falsified, nudges re-carry content with the same envelope. | U1 probe (before the nudge wording freezes): inject, then inspect the session file for the entry; resume and confirm the content survives. |
-| A4 | **Session replacement sequence** (shutdown → reload → start) is inventory, not probed; so is whether extension reload preserves module memory. | Every `session_start` is a rebinding event; unrecognized sessions go to `session-drift`, never adopt. Memory-lost reload is designed for either way (`control-degraded` → controlled relaunch under the launch-attempt protocol, DR-2 — never a live handoff); the probe determines how often that path fires. | U1/U3 probe: in-TUI new/switch/fork while bound; extension reload with token-retention check. |
+| A4 | **Session replacement sequence** (shutdown → reload → start) is inventory, not probed; so is whether extension reload preserves module memory. | Every `session_start` is a rebinding event; unrecognized sessions go to `session-drift`, never adopt. Memory-lost reload is designed for either way (decays to `driver-degraded` by lease expiry → controlled relaunch under the launch-attempt protocol, DR-2 item 4 — never a live handoff); the probe determines how often that path fires. | U1/U3 probe: in-TUI new/switch/fork while bound; extension reload with token-retention check. |
 | A5 | **Extension can read the live session UUID** from its context. | Used only if P1 (preassignment) fails; **no fallback behind it** — the former sid-glob fallback dissolved with the per-seat session root (DR-4), so P1 and A5 both failing blocks session identity for a design delta. | U1 probe (an extension-surface question, answerable in U1's harness) — run regardless of P1's outcome so the fallback provably exists before U2 resolves P1, which is a U2 CLI probe. |
 | A6 | **Pi's interactive approval/autonomy surface** is uncharacterized. | Autonomy mapping left unmapped; seat runs Pi defaults until characterized (DR-3). | U2 probe: installed-version approval surface inventory; owner ruling for any bypass-like mode (§12). |
 | A7 | **TUI-mode extension parity**: probes ran in RPC mode; docs state the same extension contract loads in tui/rpc/json/print. | Design assumes parity for lifecycle + injection only (the documented contract), nothing UI-dependent. | U1's first TUI-mode extension smoke — before anything else builds on it. |
@@ -1545,8 +1556,9 @@ Launch/lifecycle/observation contracts:
   unlink) and that launch still activates; (e) complete tuple + live
   **current activation** + no held token (memory-lost
   reload, DR-2 item 4) → inert exactly like (b)–(d) — no activation
-  attempt, no journal write; the seat's `control-degraded` then derives
-  write-free from lease decay past the escalation threshold (asserted on
+  attempt, no journal write; the seat then decays to `driver-degraded` by
+  ordinary lease expiry, and **no token-loss-specific status appears**
+  (asserted on
   the status op's output and on the journal's unchanged byte length).
   Inert means: no seat claim, no bus
   ops, no seat-state or journal writes, no bootstrap access, zero bytes to
@@ -1649,12 +1661,12 @@ Inbound driver, fencing, and bounds (the fix-round additions):
   consumed/unlinked before the first model turn, (iii) after first successful
   activation no plaintext exists on disk for the life of that process — the
   test does **not** assert an existence property the green launch path
-  violates; (e) memory-lost reload → `control-degraded` **derives
-  write-free from authenticated silence** (DR-2 item 4): with the recorded
-  process alive, the lease expired, and no authenticated token-lane record,
-  status flips the derived state only after the escalation threshold — and
-  an authenticated `driver-degraded` record written before the threshold
-  provably caps the state at driver-degraded (token still held). **Spoof
+  violates; (e) memory-lost reload → the seat decays to `driver-degraded`
+  by ordinary lease expiry **with no journal write** (DR-2 item 4: the
+  token-lost and hung-driver causes are write-free indistinguishable and
+  deliberately share the state and the recovery — the test asserts **no
+  token-loss-specific status exists to appear**, and does not attempt to
+  distinguish the causes). **Spoof
   branch:** an exec'd model-tool child from inside the seat — full seat
   coordinates, matching Pi ancestry/provenance, any declared identity —
   invoking `activate` (or any control op) tokenless is **refused with no
@@ -1853,7 +1865,7 @@ gate battery apply to every behavior diff (house rules).
 |---|---|---|---|
 | U1 | **Transport core + extension**: spool/state machine, `herder pi bus` ops (reserve/de-latch, activate, **rearm** [pre-exec rekey], **renew** [lease checkpoint carrier], drain, wait, pending, send, status, retire; epoch fencing, seat token + **operator capability** lanes incl. `herder pi operator <init|rotate>`, **launch-attempt protocol**), the TypeScript extension (lifecycle handlers, the DR-2 inbound driver, idle-gated bounded batch injection, replay, nudge with per-id budget), `herder pi send` wrapper. The `grokbridge` extraction follows the **DR-1 reuse boundary exactly** — transport-neutral primitives only; grok's state types, receipt machine, and generation fencing are not touched or reused; the entire grok battery stays green unchanged (any grok behavior diff is a stop-and-flag). Nothing user-reachable changes. | New internal package(s) (e.g. `tools/herder/internal/pibridge/` + the shared primitives package) + `herder pi` command registration + extension artifact in-repo. | **FIRST GATE: the A9 driver probe (T28, T29) — run before any other U1 work is built on the driver.** Then T1–T16, T25, T26, T30–T35 hermetic (mock Pi event harness + isolated bus); T15 against real hcom 0.7.23; grok battery green post-extraction; assumptions A1–A5, A7–A9, A11 and probe P2 verified and recorded (the §10 probe posture: hermetic fixtures and isolated buses where no Pi runs; Pi executions under the real default-home seat launch-env shape; scratch stand-ins only for owner-meaningful mutable files; inference-bearing probes under the §12.2 ruling). |
 | U2 | **Vendor resolution + launch contract, behind an activation gate**: vendor entry resolution + recorded version (provision and per-launch), extension install into the default `agent/extensions/` + seat-keyed activation/inertness, launch env construction with credential scoping (no state re-points — DR-3), provider table + filtering, flag mapping + refusals, spool-borne doctrine/prompt, status-op bind capture with hard-fail cleanup, conditional `/proc` assertion. `--agent pi` refuses with a family-not-activated cause+remedy error unless the explicit activation config/env is set. | `launchcmd`/`spawncmd` pi branches + `herder pi provision`; `pibridge` consumed, not modified. | T17–T21 (re-scoped forms) + probes P1/P4/P6/P7/A6 answered and recorded + the isolated **live smoke** (one provider, §12.2 spend) under the activation flag. |
-| U3 | **Lifecycle & identity**: resume/fork/cull/relaunch-on-provider-change, session-drift handling, registry capability flags (`bus`, `pending`, `inject`, `driver`, `spool`, `control`, `provider` — the full DR-6 set), retirement reporting. | `lifecyclecmd`/`cullcmd` pi branches, registry schema additions. | T9, T22–T24 + T31/T33 re-run through the cull command path + resume/fork live re-check riding the U2 smoke pattern. |
+| U3 | **Lifecycle & identity**: resume/fork/cull/relaunch-on-provider-change, session-drift handling, registry capability flags (`bus`, `pending`, `inject`, `driver`, `spool`, `provider` — the full DR-6 set), retirement reporting. | `lifecyclecmd`/`cullcmd` pi branches, registry schema additions. | T9, T22–T24 + T31/T33 re-run through the cull command path + resume/fork live re-check riding the U2 smoke pattern. |
 | U4 | **Observer, transcript & sesh**: session-JSONL adapter (header index, branch-aware rendering), sesh identifier/lineage wiring, labeled `status(pi-ext)` enrichment, honest-unknown reconciliation. | `observercmd` + transcript/sesh plumbing. | T27 against recorded fixtures; `unknown` preserved under mutation. |
 | U5 | **Shim/setup/doctor/docs**: `pi` PATH/shim semantics per the default-homes fleet norm (decided in-unit and documented — the grok default-homes unit's pattern; the quarantine-era no-vendor-fallback shim shape does not apply), ai-setup/ai-doctor family checks (report-only; a default doctor run reports the Pi binary/version without surprising side effects), family docs (default-home operation per the ruling). | shims + setup/doctor scripts + docs. | Ships only after U2's live smoke is green; shadowing/recursion checks; doctor checks provably report-only (T18 posture, re-scoped). |
 | A | **Activation unit** (own change, last): flip the default. | Activation config + any final wiring. | Hard ACs below. |
