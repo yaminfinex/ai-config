@@ -3,8 +3,9 @@ id: TASK-187
 title: >-
   sesh — first recovery pass: bounded-concurrency GETs + launchd fd soft limits
   + Darwin status config resolution
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - mika
 created_date: '2026-07-13 07:49'
 updated_date: '2026-07-13 10:07'
 labels:
