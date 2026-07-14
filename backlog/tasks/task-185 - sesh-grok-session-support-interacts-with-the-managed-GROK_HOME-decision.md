@@ -1,7 +1,7 @@
 ---
 id: TASK-185
 title: 'sesh: grok session support (interacts with the managed GROK_HOME decision)'
-status: In Progress
+status: Done
 assignee:
   - mika
 created_date: '2026-07-13 06:21'
@@ -54,8 +54,45 @@ auxiliary jsonl/json files against the index contract).
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 sesh discovers and ships grok sessions from ~/.grok/sessions/*/<uuidv7-sid>/ (shipped-file set explicitly decided and documented); top-level ~/.grok config/creds/runtime state provably never ships (test pins the exclusion)
-- [ ] #2 Grok transcripts index and render on the surface (tool=grok end to end); never-500 holds for grok sessions
-- [ ] #3 Resume surface: a stored grok session can be located by session id consistent with plain ~/.grok/sessions existence semantics
-- [ ] #4 Docs current per decision-001 (README tool support matrix; wire/index notes if the adapter needed any)
+- [x] #1 sesh discovers and ships grok sessions from ~/.grok/sessions/*/<uuidv7-sid>/ (shipped-file set explicitly decided and documented); top-level ~/.grok config/creds/runtime state provably never ships (test pins the exclusion)
+- [x] #2 Grok transcripts index and render on the surface (tool=grok end to end); never-500 holds for grok sessions
+- [x] #3 Resume surface: a stored grok session can be located by session id consistent with plain ~/.grok/sessions existence semantics
+- [x] #4 Docs current per decision-001 (README tool support matrix; wire/index notes if the adapter needed any)
 <!-- AC:END -->
+
+## Evidence (Done, 2026-07-14)
+
+Merged to main at 72a63d4 (--no-ff, 9 linear commits, 29 files), pushed;
+deployed live as sesh-v0.1.11 (store/release string carries a
+git-describe suffix from unrelated same-day main commits — zero touch
+tools/sesh, binary equivalent to the tag).
+
+Live verification from this node (real ~/.grok): 10 grok session cursors
+shipping, grok sessions rendering on the flat sessions list, a real grok
+transcript page served 200 in 0.38s (252KB), census reporting the new
+version. Wire Amendment 3 (grok into the closed tool enum) landed as the
+FIRST commit per the STOP-gate ruling, protocol otherwise byte-untouched,
+with a mixed-fleet compatibility clause.
+
+Shape: chat_history.jsonl only (structural identity: session-dir UUID =
+session_id = file_uuid); auxiliaries excluded with reasons; exclusion is
+exact-shape admission proven against symlink/traversal/case/depth
+evasions with a 4-negative detector. Empty message_uuid = non-participant
+in all five dedupe/unify paths (independently probed: identical opening
+lines never unify sessions). Grok rewinds ride the existing
+byte-conflict -> generation flow; duplicated-prefix degraded floor
+documented. Bonus fix: the recovery-GET path previously ABORTED the whole
+pass on an unrecognized tool — a mixed-fleet wedge affecting all tools —
+now parks per-file and re-ships after store upgrade.
+
+Review: codex reviewer stalled on usage limits mid-review (partials
+recorded, one finding closed: boundary-test detector evadable);
+continuation on claude-opus with mandatory probe reproduction (same-family
+noted), APPROVE with both corruption/security dimensions reproduced from
+scratch; hera added her own domain spot-checks at the gate. Fixture
+identity question dispositioned as conforms-to-documented-precedent;
+corpus-wide owner decision filed separately (fixture identity policy
+task). Post-merge battery 58/58 green.
+
+Flagged for post-deploy (accepted): real-Mac discovery verification, live
+grok process correlation, real rewind capture.
