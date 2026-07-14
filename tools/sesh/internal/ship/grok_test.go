@@ -82,9 +82,12 @@ func writeGrokHome(t *testing.T, base string, transcript []byte) (home string, f
 			write(dir+"/terminal/call-0.txt", "terminal output\n"),
 			// Project-scope .grok/config.toml is config wherever it appears.
 			write(dir+"/.grok/config.toml", "api_key = \"grok-fake-key-must-never-ship\"\n"),
-			// Shape traps: the transcript name at the wrong depth, and a
-			// session-shaped dir without a UUID name.
+			// Shape traps: the transcript name at the wrong depth, a
+			// session-shaped dir without a UUID name, and the named evasion
+			// shape — the right filename under an EXTRA UUID-shaped parent,
+			// which fools a basename+uuid-parent check that forgets depth.
 			write(dir+"/recap_requests/"+grokTranscriptName, `{"type":"user","content":"nested decoy"}`+"\n"),
+			write(dir+"/"+uuidGrokA+"/"+grokTranscriptName, `{"type":"user","content":"extra-uuid-parent decoy"}`+"\n"),
 		)
 	}
 	forbidden = append(forbidden,
@@ -96,9 +99,12 @@ func writeGrokHome(t *testing.T, base string, transcript []byte) (home string, f
 }
 
 // assertGrokBoundary is the exclusion detector: every discovered grok path
-// must be exactly a UUID session directory's chat_history.jsonl, and no
-// discovered path may be one of the forbidden fixtures.
-func assertGrokBoundary(t *testing.T, discovered []Discovered, forbidden []string) (violations int) {
+// must be exactly the production shape — <root>/<cwd-group>/<uuid>/
+// chat_history.jsonl, three components below the sessions root — and no
+// discovered path may be one of the forbidden fixtures. The depth check is
+// load-bearing: basename + UUID-parent alone is evadable by a leak under an
+// extra UUID-shaped parent (the fourth widened matcher below).
+func assertGrokBoundary(t *testing.T, root string, discovered []Discovered, forbidden []string) (violations int) {
 	t.Helper()
 	forbiddenSet := map[string]bool{}
 	for _, p := range forbidden {
@@ -109,7 +115,13 @@ func assertGrokBoundary(t *testing.T, discovered []Discovered, forbidden []strin
 			violations++
 			continue
 		}
-		if filepath.Base(d.Path) != grokTranscriptName || !uuidName.MatchString(filepath.Base(filepath.Dir(d.Path))) {
+		rel, err := filepath.Rel(root, d.Path)
+		if err != nil {
+			violations++
+			continue
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) != 3 || parts[0] == ".." || parts[2] != grokTranscriptName || !uuidName.MatchString(parts[1]) {
 			violations++
 		}
 	}
@@ -140,7 +152,7 @@ func TestGrokDiscoveryShipsOnlySessionTranscripts(t *testing.T) {
 			t.Fatalf("grok identity must be (grok, sid, sid): %+v", d.Identity)
 		}
 	}
-	if v := assertGrokBoundary(t, discovered, forbidden); v != 0 {
+	if v := assertGrokBoundary(t, roots.Grok, discovered, forbidden); v != 0 {
 		t.Fatalf("exclusion boundary violated by real discovery: %d violations", v)
 	}
 }
@@ -173,9 +185,20 @@ func TestGrokBoundaryDetectorProven(t *testing.T) {
 		"everything": func(rel string, d fs.DirEntry) (string, bool) {
 			return uuidGrokA, true
 		},
+		// The named evasion shape (review finding): basename + UUID-parent
+		// without a depth bound admits a transcript under an EXTRA UUID
+		// parent. A detector that only checks basename and parent misses
+		// exactly this leak; the depth check is what catches it.
+		"uuid-parent-any-depth": func(rel string, d fs.DirEntry) (string, bool) {
+			if d.Name() == grokTranscriptName && uuidName.MatchString(filepath.Base(filepath.Dir(rel))) {
+				return uuidGrokA, true
+			}
+			return "", false
+		},
 	}
+	sessionsRoot := filepath.Join(home, "sessions")
 	for name, match := range widened {
-		root := filepath.Join(home, "sessions")
+		root := sessionsRoot
 		if name == "everything" {
 			root = home
 		}
@@ -183,7 +206,7 @@ func TestGrokBoundaryDetectorProven(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if v := assertGrokBoundary(t, discovered, forbidden); v == 0 {
+		if v := assertGrokBoundary(t, sessionsRoot, discovered, forbidden); v == 0 {
 			t.Fatalf("widened glob %q did not trip the exclusion detector: the boundary test proves nothing", name)
 		}
 	}
