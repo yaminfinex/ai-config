@@ -1,7 +1,6 @@
 # hcom-native Pi integration characterization
 
 Date: 2026-07-14  
-Task: TASK-199  
 Subjects: hcom 0.7.23 and `@earendil-works/pi-coding-agent` 0.80.6  
 Status: investigation complete; no production integration code changed
 
@@ -15,20 +14,27 @@ identity to the Pi session, wakes an idle agent promptly, queues a busy delivery
 follow-up turn, preserves event order, reports useful status, parses the transcript,
 and resumes the same session and hcom name.
 
-It is not an adequate delivery owner under herder's launch contract. Its receipt is
-the successful call to `pi.sendUserMessage`, not evidence that the corresponding Pi
-turn settled. The probe killed Pi after that receipt and before the turn completed;
-the hcom cursor remained acknowledged, resume did not replay the item, and the
-transcript reported the request with no response. The integration also has no durable
-delivery journal, ownership epoch, progress-attested driver lease, or capability
-separation, and it inherits the launcher's ambient environment rather than enforcing
-provider-scoped credentials.
+As shipped, its receipt is the successful call to `pi.sendUserMessage`, not evidence
+that the corresponding Pi turn settled. One isolated crash probe reproduced the
+resulting loss of automatic replay. That placement is not an immutable native
+limitation: the production extension is herder-owned TypeScript, and moving the ack
+to a correlated settle event is a small fork for a serialized, single-batch case.
 
-Consequently, native delivery cannot replace the journal, fencing, recovery, and
+The decision therefore does **not** rest on the current ack placement alone. A
+production implementation must correlate multiple injected and busy/follow-up
+batches with their actual settle events across crashes. Doing that honestly requires
+durable per-message injected → settled state, replay reconciliation, and bounded
+nudge policy — the core of DR-2. More decisively, hcom-native Pi has no ownership
+epochs, progress-attested driver lease, capability-separated control lanes, or model
+in which herder remains the sole lifecycle authority. A better native receipt would
+not add any of those properties.
+
+Consequently, native delivery cannot replace the recovery, readiness, fencing, and
 authority machinery in [Pi first-class design](pi-first-class-design.md#dr-2--inbound-delivery-state-machine-and-recovery).
 The native extension is compatibility evidence for the Pi extension API and a useful
 reference implementation, but it should not become the production delivery boundary.
-Everything outside DR-2 remains unaffected, as TASK-199 anticipated.
+Provider credential scoping remains an independent launch-contract requirement, not
+a reason for the DR-2 choice.
 
 ## Section 0 evaluation
 
@@ -46,8 +52,8 @@ This is the filled evaluation required by
 | Duplicate behavior | A burst of two TCP wakes while delivery was in flight produced one visible batch. Deduplication is extension-memory state, not durable state. | Pass in-process only |
 | Identity and status | The generated name, Pi session UUID, cwd, transcript path, active tool status, and listening status were reported correctly. Resume reclaimed the same name and UUID. | Mostly pass |
 | Transcript | While the resumed seat was live, `hcom transcript` parsed the Pi JSONL faithfully, including the ordered idle batch, the busy follow-up, and the crashed request as `(no response)`. A stopped-seat lookup briefly lost the Pi parser classification. | Mostly pass |
-| Crash and restart | A crash after injection-time ack lost automatic completion and replay. Resume restored context but did not restart the interrupted turn. | Fail for durable delivery |
-| Credential hygiene | The isolated Pi `auth.json` stayed empty and no credential value was persisted. The credential name appeared only in hcom's forwarded-key log. However, native launch forwards ambient non-hcom variables rather than enforcing a provider allowlist. | Mechanically private, not policy-scoped |
+| Crash and restart | A crash after injection-time ack lost automatic completion and replay. Resume restored context but did not restart the interrupted turn. A small extension fork can close this serialized single-batch window, but not the full recovery contract. | Fail as shipped |
+| Credential hygiene (launch contract, outside DR-2) | The isolated Pi `auth.json` stayed empty and no credential value was persisted. The credential name appeared only in hcom's forwarded-key log. However, native launch forwards ambient non-hcom variables rather than enforcing a provider allowlist. | Mechanically private, not policy-scoped |
 | Lifecycle authority | hcom reserves, launches, binds, resumes, and cleans up the process identity. There are no herder epochs or capability lanes. | Fail for DR-2 |
 
 ## Probe setup and isolation
@@ -153,32 +159,40 @@ The logs confirmed this ordering. The idle batch's unread cursor advanced second
 before the model completed. The busy event was likewise acknowledged when queued as
 a follow-up, before its later model turn settled.
 
+This is the behavior of the shipped extension, not a claim that an ack must always
+live there. Because herder owns the production TypeScript extension, it can move or
+replace this ack boundary. The alternatives and remaining requirements are evaluated
+below.
+
 ## Crash and resume probe
 
-The decisive probe sent event 26 to an idle seat, asking Pi to run a 15-second tool
-before responding. The observed sequence was:
+In one isolated run of hcom 0.7.23 with Pi 0.80.6, the crash probe sent event 26 to an
+idle seat, asking Pi to run a 15-second tool before responding. The observed sequence
+was:
 
 1. the extension injected event 26 and logged `plugin.deferred_ack` up to 26;
 2. Pi began the requested tool;
 3. the Pi process was killed before tool or assistant completion;
 4. hcom reported zero unread items and removed the live roster row;
-5. `hcom r muna --go` reclaimed the original hcom name and Pi session UUID;
+5. `hcom r <seat> --go` reclaimed the original hcom name and Pi session UUID;
 6. the restored transcript contained event 26 and the interrupted tool call, but Pi
    did not resume the tool or start an automatic response;
-7. `hcom transcript muna --json` reported that exchange as `(no response)`.
+7. `hcom transcript <seat> --json` reported that exchange as `(no response)`.
 
 This is neither message loss from the transcript nor duplicate delivery. It is the
-more important failure for DR-2: **the durable bus receipt claims completion that the
+important as-shipped failure: **the durable bus receipt claims completion that the
 runtime evidence cannot support**. Since the unread cursor is already advanced, a
 restart has no hcom item to replay. Human or orchestrator intervention must invent a
-new prompt to continue.
+new prompt to continue. This single run establishes the concrete crash window for the
+exact version pair; it does not establish that a herder-owned fork cannot change the
+receipt boundary.
 
 Resume otherwise showed useful fidelity: the same name, UUID, cwd, and transcript
 were recovered. Immediately after resume the roster transiently reported
 `blocked: launch_blocked` despite `hooks_bound: true`; later Pi events can refresh
 status, so this is an observability blemish rather than the decisive delivery gap.
 
-## Credential and lifecycle findings
+## Credential hygiene (launch contract, outside DR-2)
 
 The narrow mechanical hygiene was good in the isolated run:
 
@@ -195,26 +209,85 @@ those values. Privacy of transport is not provider scoping. A correctly construc
 caller can supply only one provider credential, as this probe did, but native hcom
 does not enforce that allowlist and the Pi process plus model tools inherit the result.
 
+This remains a launch-contract finding whichever inbound delivery implementation is
+chosen. It is not part of the DR-2 decision.
+
+## Lifecycle authority
+
 Lifecycle ownership is also the wrong shape for production. The native integration
 expects hcom to reserve and launch the process and gives the extension broad access to
 the ordinary hcom CLI. It has no monotonic seat epoch, activation fencing, durable
 armed-driver lease, token-authenticated extension lane, or separately presented
 operator lane. Letting herder invoke this launcher would divide lifecycle authority;
 reproducing hcom's private process binding from a direct herder launch would itself be
-custom integration work without fixing the receipt semantics.
+custom integration work without supplying those missing authority and readiness
+properties.
+
+## Native modification and partial-adoption alternatives
+
+### Herder-owned settlement-ack fork
+
+Moving `ackPending` from immediately after `sendUserMessage` to a settle handler is a
+small and worthwhile fork to consider. In a strictly serialized single-batch flow,
+the hcom unread cursor could then serve as a coarse settlement marker and would close
+the exact crash-after-ack loss window reproduced above.
+
+That edit is not the complete production state machine. A busy delivery is registered
+as a follow-up while another turn is active: the next `turn_end` belongs to the current
+turn, while a later `agent_end` can cover a chain of queued follow-ups without saying
+which hcom batch participated in which settled turn. The extension must correlate each
+hcom event or batch with the Pi input and the later settle event that actually covers
+it. If Pi crashes after persisting the injected user entry but before settlement, the
+unadvanced hcom cursor causes replay; deciding whether to re-inject, recognize a
+duplicate, or issue a nudge requires durable injected-versus-settled state. Multiple
+arrivals, batching, aborts, provider errors, and repeated restart add the same need for
+bounded replay and nudge budgets. An in-memory map improves the happy path but loses
+the very correlation recovery needs.
+
+The small fork therefore fixes the shipped extension's premature receipt for the
+simple case. Extending it to the required multi-message, busy/follow-up, crash-safe
+contract recreates DR-2's core journal and recovery policy. The decision keeps that
+state explicit rather than hiding it behind the hcom cursor.
+
+### Upstream hcom fix
+
+The injection-time ack is a plausible upstream hcom issue: reporting the reproduced
+version-pinned crash window and proposing settlement-correlated acknowledgement would
+improve the automatic integration. If upstream implemented the full correlation, it
+could remove or reduce herder's receipt shim.
+
+Even an ideal upstream receipt does not establish a herder seat's ownership epoch,
+fence stale runtimes, prove the inbound driver is currently making progress, separate
+extension and operator capabilities, or leave herder as the sole lifecycle authority.
+Those residual requirements stand independently of where hcom advances its cursor,
+so an upstream fix would narrow DR-2 rather than collapse it.
+
+### Partial adoption: native observation, custom delivery
+
+Native identity, status, resume, and transcript behavior are useful seams. The design
+already adopts them **in effect at the API boundary**, not by loading hcom's extension:
+the herder-owned extension uses Pi lifecycle and `sendUserMessage`, the observer uses
+Pi's session JSONL, and bus identity uses generic pinned hcom operations. This
+characterization supplies compatibility evidence and behavior tests for those seams.
+
+Loading the native extension alongside custom delivery would create two readers and
+two injectors, while its status lacks the epoch and progress lease needed for bind
+readiness. Copying only its identity/status/transcript code would not remove the
+custom control plane that makes those facts authoritative. Selective source ideas and
+compatibility tests are worth reusing; the production delivery boundary still belongs
+to the herder-owned extension and journal.
 
 ## Gap analysis against DR-2
 
 | DR-2 property | Native hcom Pi | Consequence |
 |---|---|---|
-| Durable queued → injected → settled journal | Only hcom unread cursor plus Pi transcript | Ack can survive while response does not |
-| Receipt correlated to Pi turn settlement | Ack immediately after `sendUserMessage` | Crash window is falsely complete |
-| Exactly-once-ish recovery | In-memory wake dedupe only | No durable replay decision or completion proof |
+| Durable queued → injected → settled journal | As shipped, only the hcom unread cursor plus Pi transcript; a settlement-ack fork can improve the cursor | Full crash-safe correlation still requires per-message durable state |
+| Receipt correlated to Pi turn settlement | As shipped, ack immediately follows `sendUserMessage`; the boundary is movable in a fork | Small fork closes the demonstrated serialized crash window, not multi-turn recovery |
+| Exactly-once-ish recovery | In-memory wake dedupe only | No durable replay, duplicate-reconciliation, or nudge decision |
 | Ordering | Ascending unread batch order | Sufficient in the normal running process |
-| Crash replay | None after injection-time ack | Interrupted item requires a new external prompt |
+| Crash replay | None after the shipped injection-time ack; a fork can retain unread for retry | Transcript-versus-replay reconciliation remains unspecified without a journal |
 | Epoch fencing | None | Old and new runtime ownership is not structurally fenced |
 | Armed driver / progress lease | TCP server plus polling, no persisted lease | Readiness is historical bind state, not progress-attested |
-| Provider credential scope | Ambient inheritance, private sidecar | Correct scope depends entirely on caller discipline |
 | Token and operator capability lanes | None | Model-visible hcom access is not separated from lifecycle authority |
 | Herder lifecycle authority | hcom owns reserve/launch/bind/resume cleanup | Cannot be adopted unchanged under one lifecycle owner |
 
@@ -222,8 +295,8 @@ custom integration work without fixing the receipt semantics.
 
 Proceed with Pi U1 against the existing design:
 
-- keep the managed Pi home, pinned install, provider pinning, and herder launch
-  contract;
+- independently keep the managed Pi home, pinned install, provider pinning, and
+  herder launch contract;
 - keep DR-2's durable journal, settlement-correlated receipts, epoch fencing, driver
   lease, spool bounds, crash recovery, and capability lanes;
 - use the native extension only as evidence that Pi 0.80.6 supports the necessary
@@ -231,4 +304,4 @@ Proceed with Pi U1 against the existing design:
 - do not claim native hcom “mid-turn injection” for Pi; describe its actual behavior
   as idle wake plus busy follow-up delivery.
 
-No design amendment follows from TASK-199.
+The existing Pi design stands without amendment.
