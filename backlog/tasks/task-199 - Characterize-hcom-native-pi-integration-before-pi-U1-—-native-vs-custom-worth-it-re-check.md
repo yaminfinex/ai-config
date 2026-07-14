@@ -3,9 +3,10 @@ id: TASK-199
 title: >-
   Characterize hcom-native pi integration before pi U1 — native-vs-custom
   worth-it re-check
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-14 00:44'
+updated_date: '2026-07-14 00:45'
 labels: []
 dependencies: []
 ordinal: 198000
