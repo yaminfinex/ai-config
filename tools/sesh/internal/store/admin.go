@@ -17,7 +17,7 @@ import (
 // the read-only pool: node status must stay responsive while the write
 // connection is held by append transactions.
 func (s *Store) Nodes(ctx context.Context, staleAfter time.Duration) ([]surface.NodeStatus, error) {
-	rows, err := s.readDB.QueryContext(ctx, `SELECT hostname, os_user, last_put_at FROM last_seen ORDER BY hostname, os_user`)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT hostname, os_user, last_put_at, COALESCE(shipper_version, '') FROM last_seen ORDER BY hostname, os_user`)
 	if err != nil {
 		return nil, err
 	}
@@ -27,7 +27,7 @@ func (s *Store) Nodes(ctx context.Context, staleAfter time.Duration) ([]surface.
 	for rows.Next() {
 		var n surface.NodeStatus
 		var raw string
-		if err := rows.Scan(&n.Hostname, &n.OSUser, &raw); err != nil {
+		if err := rows.Scan(&n.Hostname, &n.OSUser, &raw, &n.ShipperVersion); err != nil {
 			return nil, err
 		}
 		t, err := time.Parse(time.RFC3339Nano, raw)

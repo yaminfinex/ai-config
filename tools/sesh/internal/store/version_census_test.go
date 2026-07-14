@@ -8,6 +8,7 @@ package store
 import (
 	"bytes"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -134,5 +135,57 @@ func TestShipperVersionFromUA(t *testing.T) {
 		if got := shipperVersionFromUA(ua); got != want {
 			t.Errorf("shipperVersionFromUA(%q) = %q, want %q", ua, got, want)
 		}
+	}
+}
+
+// The machine-readable /v1/nodes endpoint carries the census as an additive
+// omitempty field: present for nodes that self-reported, absent (old JSON
+// shape) for pre-UA/NULL rows. The hostile-string case guards the JSON
+// encoder on the direct-insert path — capture-time bounding/allowlisting
+// means such a value cannot arrive over the wire, but a row is durable and
+// the encoder must stay safe regardless of how it got there.
+func TestNodesEndpointCarriesShipperVersion(t *testing.T) {
+	st := newTestStore(t, new(bytes.Buffer))
+	if rr := putReqUA(t, st, "sesh-ship/sesh-v0.1.9", 0, []byte("hello\n")); rr.Code != http.StatusOK {
+		t.Fatalf("PUT = %d body %s", rr.Code, rr.Body)
+	}
+	now := "2026-07-14T00:00:00Z"
+	if _, err := st.db.Exec(`INSERT INTO last_seen(hostname, os_user, last_put_at) VALUES ('pre-census-node', 'bob', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	hostile := `"</script><img src=x>&` + " "
+	if _, err := st.db.Exec(`INSERT INTO last_seen(hostname, os_user, last_put_at, shipper_version) VALUES ('hostile-node', 'mallory', ?, ?)`, now, hostile); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/nodes", nil)
+	rr := httptest.NewRecorder()
+	st.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /v1/nodes = %d body %s", rr.Code, rr.Body)
+	}
+	var resp struct {
+		Nodes []map[string]any `json:"nodes"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response is not valid JSON: %v\n%s", err, rr.Body)
+	}
+	byHost := map[string]map[string]any{}
+	for _, n := range resp.Nodes {
+		byHost[n["hostname"].(string)] = n
+	}
+	if v, ok := byHost["node-a"]["shipper_version"]; !ok || v != "sesh-v0.1.9" {
+		t.Fatalf("populated row: shipper_version = %v (present=%v), want sesh-v0.1.9", v, ok)
+	}
+	if _, ok := byHost["pre-census-node"]["shipper_version"]; ok {
+		t.Fatalf("pre-census row must keep the old JSON shape (no shipper_version key): %v", byHost["pre-census-node"])
+	}
+	if v := byHost["hostile-node"]["shipper_version"]; v != hostile {
+		t.Fatalf("hostile value must round-trip exactly through the encoder: %q != %q", v, hostile)
+	}
+	// encoding/json HTML-escapes <, >, & (and U+2028/29), so a hostile row
+	// cannot smuggle markup into any consumer that sniffs the raw body.
+	if bytes.Contains(rr.Body.Bytes(), []byte("</script>")) || bytes.Contains(rr.Body.Bytes(), []byte("<img")) {
+		t.Fatalf("raw /v1/nodes body carries unescaped markup:\n%s", rr.Body)
 	}
 }

@@ -144,8 +144,9 @@ type NodeStatus struct {
 	Stale     bool      `json:"stale"`
 	// ShipperVersion is the version the node's shipper last self-reported
 	// via its User-Agent ("" = unknown: rows predating the census or a
-	// client that does not identify itself). omitempty keeps the store's
-	// /v1/nodes JSON byte-identical for producers that never populate it.
+	// client that does not identify itself). Additive omitempty field on
+	// the /v1/nodes JSON: absent for unknown, so pre-census node objects
+	// keep their old shape.
 	ShipperVersion string `json:"shipper_version,omitempty"`
 }
 
