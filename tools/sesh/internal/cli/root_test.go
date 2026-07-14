@@ -571,6 +571,7 @@ func TestRouteClassNeverJournalsIdentifiers(t *testing.T) {
 	cases := []struct{ path, want string }{
 		{"/", "/"},
 		{"/nodes", "/nodes"},
+		{"/sessions", "/sessions"},
 		{"/fragments/recency", "/fragments/recency"},
 		{"/install.sh", "/install.sh"},
 		{"/v1/health", "/v1/health"},
@@ -651,8 +652,8 @@ func TestReadPathsServeWhileWriteConnectionHeld(t *testing.T) {
 		target  string
 		want    string
 	}{
-		{"surface nodes", surfaceHandler, "/nodes", "node-a"},
-		{"surface recency", surfaceHandler, "/", "11111111-1111-1111-1111-111111111111"},
+		{"surface nodes", surfaceHandler, "/", "node-a"},
+		{"surface recency", surfaceHandler, "/sessions", "11111111-1111-1111-1111-111111111111"},
 		{"store nodes", storeHandler, "/v1/nodes", "node-a"},
 	}
 	for _, check := range checks {

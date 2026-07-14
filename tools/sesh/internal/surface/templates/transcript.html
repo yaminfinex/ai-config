@@ -1,7 +1,7 @@
 {{template "layout" .}}
 {{define "title"}}sesh — session {{printf "%.8s" .Session.LogicalSessionID}}{{end}}
 {{define "main" -}}
-<p class="crumbs"><a href="/">← recency</a> · <a href="{{.RawURL}}">raw JSONL from mirror</a></p>
+<p class="crumbs"><a href="/">← nodes</a> · <a href="/sessions">all sessions</a> · <a href="{{.RawURL}}">raw JSONL from mirror</a></p>
 <h2>{{.Session.Tool}} session <code>{{.Session.LogicalSessionID}}</code></h2>
 <dl class="meta">
 {{- $owner := .Session.DisplayOwner}}
@@ -20,6 +20,7 @@
 <dt>quarantined</dt><dd>{{.Session.QuarantinedRows}} lines held out of render — see raw view</dd>
 {{- end}}
 </dl>
+{{- template "transcriptPager" .}}
 <ol class="transcript">
 {{- range .Entries}}
 <li class="entry role-{{.Role}}{{if .Quarantined}} quarantined{{end}}"{{with .MessageUUID}} data-uuid="{{.}}"{{end}}>
@@ -40,5 +41,15 @@
 </ol>
 {{- if .OmittedRows}}
 <p class="notice">display budget reached — {{.OmittedRows}} further lines omitted from this render; the full bytes are in the <a href="{{.RawURL}}">raw view</a> and the mirror.</p>
+{{- end}}
+{{- template "transcriptPager" .}}
+{{- end}}
+
+{{define "transcriptPager" -}}
+{{- if or .NewerURL .OlderURL}}
+<p class="pager secondary">
+{{- if eq .Page 1}}showing the latest window — messages {{.From}}–{{.To}} of {{.Total}}{{else}}showing messages {{.From}}–{{.To}} of {{.Total}}{{end}}
+{{- if .NewerURL}} <a href="{{.NewerURL}}">← newer</a>{{end}}
+{{- if .OlderURL}} <a href="{{.OlderURL}}">older →</a>{{end}}</p>
 {{- end}}
 {{- end}}

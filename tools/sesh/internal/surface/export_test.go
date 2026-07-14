@@ -28,3 +28,8 @@ func (s *SQLStore) SetRebuildHook(fn func(RebuildStage) error) {
 func (s *SQLStore) WaitProjectionIdle() {
 	s.waitProjectionIdle()
 }
+
+// TranscriptWindowMessages re-exports the transcript window bound so the
+// external tests assert against the one constant instead of a copied magic
+// number.
+const TranscriptWindowMessages = transcriptWindowMessages

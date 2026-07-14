@@ -277,6 +277,7 @@ func (sr *statusRecorder) Flush() {
 var routeClassFixed = map[string]bool{
 	"/":                      true,
 	"/nodes":                 true,
+	"/sessions":              true,
 	"/fragments/recency":     true,
 	"/install.sh":            true,
 	wire.APIRoot + "/health": true,

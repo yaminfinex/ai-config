@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>sesh — who's been working on what</title>
+<title>sesh — nodes</title>
 <script src="/assets/htmx.min.js"></script>
 <style>
 :root { color-scheme: light dark; }
@@ -44,61 +44,31 @@ dl.meta dd { margin: 0; }
 <body>
 <header class="site"><a href="/">sesh</a><a href="/sessions">sessions</a><span class="tagline">team session mirror — read-only</span></header>
 <main>
-<div id="recency" hx-get="/fragments/recency" hx-trigger="every 60s" hx-swap="outerHTML">
-<p class="pager secondary">showing latest 5 of 5 sessions</p>
+
+<h1>Nodes</h1>
 <table class="sessions">
-<tr><th>session</th><th>tool</th><th>node</th><th>person</th><th>last activity</th><th>mirrored at</th><th>rows</th></tr>
-<tr>
-<td><a href="/s/claude/0f0f0f0f-1111-2222-3333-444444444444" title="0f0f0f0f-1111-2222-3333-444444444444"><code>0f0f0f0f</code></a><span class="badge warn">quarantined — raw only</span></td>
-<td>claude</td>
-<td><a href="/sessions?node=grace%40workstation">grace@workstation</a></td>
-<td><span class="secondary" title="OS user (no owner claim)">—</span></td>
-<td>2026-07-06 12:00:00 UTC <span class="secondary">24h ago</span> <span class="badge">first-ingest time</span></td>
-<td class="secondary">2026-07-06 12:01:00 UTC</td>
-<td class="secondary">0 (+5 quarantined)</td>
-</tr>
-<tr>
-<td><a href="/s/claude/e4578030-c4a9-493f-82e6-de6156d0179a" title="e4578030-c4a9-493f-82e6-de6156d0179a"><code>e4578030</code></a></td>
-<td>claude</td>
-<td><a href="/sessions?node=grace%40workstation">grace@workstation</a></td>
-<td><span class="secondary" title="OS user (no owner claim)">—</span></td>
-<td>2026-07-02 10:55:43 UTC <span class="secondary">5d ago</span></td>
-<td class="secondary">2026-07-05 15:00:00 UTC</td>
-<td class="secondary">90</td>
-</tr>
-<tr>
-<td><a href="/s/claude/45308169-72e6-4cbe-a05c-2a0025db055e" title="45308169-72e6-4cbe-a05c-2a0025db055e"><code>45308169</code></a></td>
-<td>claude</td>
-<td><a href="/sessions?node=grace%40workstation">grace@workstation</a></td>
-<td><span class="secondary" title="OS user (no owner claim)">—</span></td>
-<td>2026-07-02 01:30:29 UTC <span class="secondary">5d ago</span></td>
-<td class="secondary">2026-07-03 10:05:00 UTC</td>
-<td class="secondary">25</td>
-</tr>
-<tr>
-<td><a href="/s/claude/2c387aef-72ac-46bc-8ea5-e3b68690a937" title="2c387aef-72ac-46bc-8ea5-e3b68690a937"><code>2c387aef</code></a></td>
-<td>claude</td>
-<td><a href="/sessions?node=grace%40workstation">grace@workstation</a></td>
-<td><span class="secondary" title="OS user (no owner claim)">—</span></td>
-<td>2026-06-28 00:20:28 UTC <span class="secondary">9d ago</span></td>
-<td class="secondary">2026-07-04 09:02:00 UTC</td>
-<td class="secondary">334</td>
-</tr>
-<tr>
-<td><a href="/s/codex/019f01cf-3d22-7ea0-923e-e463b90ea31e" title="019f01cf-3d22-7ea0-923e-e463b90ea31e"><code>019f01cf</code></a></td>
-<td>codex</td>
-<td><a href="/sessions?node=alice%40laptop">alice@laptop</a></td>
-<td>alice <span class="source">SESSION_OWNER fact</span></td>
-<td>2026-06-26 02:43:10 UTC <span class="secondary">11d ago</span></td>
-<td class="secondary">2026-07-05 08:10:00 UTC</td>
-<td class="secondary">11</td>
-</tr>
+  <thead><tr><th>Node</th><th>Last PUT</th><th>Age</th><th>Status</th><th>Sessions</th></tr></thead>
+  <tbody>
+  
+    <tr>
+      <td><a href="/sessions?node=grace%40workstation">grace@workstation</a></td>
+      <td>2026-07-06 12:01:00 UTC</td>
+      <td>23h59m0s</td>
+      <td><span class="badge">fresh</span></td>
+      <td><a href="/sessions?node=grace%40workstation">sessions →</a></td>
+    </tr>
+  
+    <tr>
+      <td><a href="/sessions?node=alice%40laptop">alice@laptop</a></td>
+      <td>2026-07-05 08:10:00 UTC</td>
+      <td>51h50m0s</td>
+      <td><span class="badge warn">stale &gt;48h</span></td>
+      <td><a href="/sessions?node=alice%40laptop">sessions →</a></td>
+    </tr>
+  
+  </tbody>
 </table>
-</div>
+
 </main>
 </body>
 </html>
-
-
-
-

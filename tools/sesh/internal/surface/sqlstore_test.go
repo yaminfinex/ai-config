@@ -114,11 +114,14 @@ func TestSQLStoreRendersResumePairOnceFromLiveIndex(t *testing.T) {
 		t.Errorf("message rows = %d, want 334", sum.MessageRows)
 	}
 
-	// Render through the real seam: one transcript, no duplicated uuids.
+	// Render through the real seam: one WINDOWED transcript — the newest
+	// 200-row window plus one older window tiling the 334 deduped rows — and
+	// no duplicated uuids across the windows.
 	srv := newServer(t, live)
-	body := mustGet200(t, srv, "/s/claude/"+uuidResumeOrig)
+	page1 := mustGet200(t, srv, "/s/claude/"+uuidResumeOrig)
+	page2 := mustGet200(t, srv, "/s/claude/"+uuidResumeOrig+"?page=2")
 	seen := map[string]int{}
-	for _, m := range dataUUIDRe.FindAllStringSubmatch(body, -1) {
+	for _, m := range dataUUIDRe.FindAllStringSubmatch(page1+page2, -1) {
 		seen[m[1]]++
 	}
 	for uuid, n := range seen {
@@ -126,8 +129,14 @@ func TestSQLStoreRendersResumePairOnceFromLiveIndex(t *testing.T) {
 			t.Errorf("uuid %s rendered %d times from the live index (S2)", uuid, n)
 		}
 	}
-	if n := strings.Count(body, `<li class="entry`); n != 334 {
-		t.Errorf("rendered %d entries from the live index, want 334", n)
+	if n := strings.Count(page1, `<li class="entry`); n != surface.TranscriptWindowMessages {
+		t.Errorf("newest window rendered %d entries, want %d", n, surface.TranscriptWindowMessages)
+	}
+	if !strings.Contains(page1, "messages 135–334 of 334") {
+		t.Error("newest window must label its slice of the session")
+	}
+	if n := strings.Count(page2, `<li class="entry`); n != 334-surface.TranscriptWindowMessages {
+		t.Errorf("older window rendered %d entries, want %d", n, 334-surface.TranscriptWindowMessages)
 	}
 	mustGet200(t, srv, "/s/claude/"+uuidResumeOrig+"/raw")
 }
@@ -213,12 +222,12 @@ func TestSQLStoreCollectsOwnerClaimsFromObservationLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	live.WaitProjectionIdle()
-	body := mustGet200(t, newServer(t, live), "/")
+	body := mustGet200(t, newServer(t, live), "/sessions")
 	if !strings.Contains(body, "conflicting claims") {
-		t.Error("recency page must badge the conflicted session")
+		t.Error("sessions page must badge the conflicted session")
 	}
-	if !strings.Contains(body, `<h2>alice <span class="source">SESSION_OWNER fact</span></h2>`) {
-		t.Error("cleanly claimed session must group under alice with its source")
+	if !strings.Contains(body, `<td>alice <span class="source">SESSION_OWNER fact</span></td>`) {
+		t.Error("cleanly claimed session must fill the person column with alice and its source")
 	}
 }
 

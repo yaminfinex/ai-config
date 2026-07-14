@@ -31,9 +31,12 @@ type MirrorPath func(tool wire.Tool, sessionID, fileUUID string, generation int)
 // also run correctly on a single-connection handle (tests, admin tooling).
 //
 // The recency ranking is a surface-owned projection: the complete ranked
-// (tool, logical) key list plus total, held in memory and rebuilt only when
-// the store's cheap version stamp moves. Request-time work therefore stays
-// proportional to the page — a stamp probe plus key-constrained hydration.
+// (tool, logical) key list — each entry carrying the session's node label
+// (hostname, OS user) so the per-node sessions view slices the same list
+// instead of growing its own SQL ranking path — plus total, held in memory
+// and rebuilt only when the store's cheap version stamp moves. Request-time
+// work therefore stays proportional to the page — a stamp probe plus
+// key-constrained hydration.
 //
 // The rebuild is single-flighted and serve-stale: at most one rebuild runs
 // at a time, and a request that observes a moved stamp returns the existing
@@ -61,7 +64,7 @@ type SQLStore struct {
 
 	mu      sync.Mutex
 	built   bool
-	ranking []sessionKey
+	ranking []rankedSession
 	stamp   rankingStamp
 	// refresh is the in-flight single-flighted rebuild, nil when idle.
 	refresh *projectionRefresh
@@ -138,21 +141,35 @@ type sessionKey struct {
 	logical string
 }
 
+// rankedSession is one projection entry: the session key plus the node
+// label the per-node filter slices on. The label is the ranking-time latest
+// fact; like the ranked order itself it can lag under serve-stale — page
+// hydration always reads the live tables.
+type rankedSession struct {
+	key      sessionKey
+	hostname string
+	osUser   string
+}
+
 // rankingStamp is the cheap store version probe guarding the projection:
 // ranking inputs only ever arrive as INSERTs (index rows are appended, file
-// generations are new rows; the drop-file repair runs with serve stopped),
-// so two b-tree MAX lookups detect every change the ranking can see.
+// generations are new rows, fact observations are an append-only log; the
+// drop-file repair runs with serve stopped), so three b-tree MAX lookups
+// detect every change the ranking can see — facts included, because the
+// projection carries each session's node label for the per-node filter.
 type rankingStamp struct {
 	indexMax int64
 	filesMax int64
+	factsMax int64
 }
 
-// rankingStampSQL reads both MAX probes in one round trip. Keep the text
+// rankingStampSQL reads the MAX probes in one round trip. Keep the text
 // distinctive: the large-corpus gate whitelists it when proving that warm
 // requests never scan a corpus table.
 const rankingStampSQL = `SELECT
 	COALESCE((SELECT MAX(id) FROM sesh_index_messages), 0),
-	COALESCE((SELECT MAX(rowid) FROM files), 0)`
+	COALESCE((SELECT MAX(rowid) FROM files), 0),
+	COALESCE((SELECT MAX(id) FROM fact_observations), 0)`
 
 // RecentSessions returns one page of logical sessions, most recent first by
 // the R14 instant. The page is a slice of the maintained recency projection
@@ -163,6 +180,31 @@ func (s *SQLStore) RecentSessions(ctx context.Context, limit, offset int) ([]Ses
 	if err != nil {
 		return nil, 0, err
 	}
+	return s.pageOf(ctx, ranking, limit, offset)
+}
+
+// RecentSessionsByNode is RecentSessions filtered to one node label
+// (hostname, OS user). It slices the same in-memory projection — the entry
+// carries its node label precisely so this filter adds no SQL ranking path
+// and no corpus scan; a projection walk is bounded by the session count the
+// rebuild already paid for. total is the node's session count.
+func (s *SQLStore) RecentSessionsByNode(ctx context.Context, hostname, osUser string, limit, offset int) ([]SessionSummary, int, error) {
+	ranking, err := s.rankedKeys(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	var filtered []rankedSession
+	for _, r := range ranking {
+		if r.hostname == hostname && r.osUser == osUser {
+			filtered = append(filtered, r)
+		}
+	}
+	return s.pageOf(ctx, filtered, limit, offset)
+}
+
+// pageOf slices one page out of a ranked list and hydrates exactly those
+// sessions.
+func (s *SQLStore) pageOf(ctx context.Context, ranking []rankedSession, limit, offset int) ([]SessionSummary, int, error) {
 	total := len(ranking)
 	if limit < 0 {
 		limit = 0
@@ -177,7 +219,11 @@ func (s *SQLStore) RecentSessions(ctx context.Context, limit, offset int) ([]Ses
 	if len(page) > limit {
 		page = page[:limit]
 	}
-	sums, err := s.hydrateSessions(ctx, page)
+	keys := make([]sessionKey, len(page))
+	for i, r := range page {
+		keys[i] = r.key
+	}
+	sums, err := s.hydrateSessions(ctx, keys)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -189,9 +235,9 @@ func (s *SQLStore) RecentSessions(ctx context.Context, limit, offset int) ([]Ses
 // existing projection immediately and triggers the single-flighted
 // background refresh, so no request after the cold start ever waits on a
 // corpus-scale rebuild.
-func (s *SQLStore) rankedKeys(ctx context.Context) ([]sessionKey, error) {
+func (s *SQLStore) rankedKeys(ctx context.Context) ([]rankedSession, error) {
 	var stamp rankingStamp
-	if err := s.db.QueryRowContext(ctx, rankingStampSQL).Scan(&stamp.indexMax, &stamp.filesMax); err != nil {
+	if err := s.db.QueryRowContext(ctx, rankingStampSQL).Scan(&stamp.indexMax, &stamp.filesMax, &stamp.factsMax); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
@@ -242,7 +288,7 @@ func (s *SQLStore) startRefreshLocked() *projectionRefresh {
 func (s *SQLStore) runRefresh(run *projectionRefresh) {
 	start := time.Now()
 	var stamp rankingStamp
-	var ranking []sessionKey
+	var ranking []rankedSession
 	err := func() error {
 		if run.hook != nil {
 			if err := run.hook(rebuildStart); err != nil {
@@ -253,7 +299,7 @@ func (s *SQLStore) runRefresh(run *projectionRefresh) {
 		// the stored stamp conservative, so the next probe sees it as moved
 		// and refreshes again — changes are never silently absorbed (at the
 		// cost of one extra rebuild when churn straddles this gap).
-		if err := s.db.QueryRowContext(s.refreshCtx, rankingStampSQL).Scan(&stamp.indexMax, &stamp.filesMax); err != nil {
+		if err := s.db.QueryRowContext(s.refreshCtx, rankingStampSQL).Scan(&stamp.indexMax, &stamp.filesMax, &stamp.factsMax); err != nil {
 			return err
 		}
 		if run.hook != nil {
@@ -262,7 +308,7 @@ func (s *SQLStore) runRefresh(run *projectionRefresh) {
 			}
 		}
 		var err error
-		ranking, err = s.rankSessionKeys(s.refreshCtx)
+		ranking, err = s.rankSessions(s.refreshCtx)
 		return err
 	}()
 	s.mu.Lock()
@@ -286,28 +332,42 @@ func (s *SQLStore) runRefresh(run *projectionRefresh) {
 	}
 }
 
-// rankSessionKeys is the projection rebuild: every logical session ranked by
+// rankSessions is the projection rebuild: every logical session ranked by
 // the R14 recency instant — max parsed non-quarantined timestamp,
-// first-ingest when none — entirely in SQL, keys only. This is the one
+// first-ingest when none — entirely in SQL, keys plus node label only. The
+// node label is the latest fact observation across the session's member
+// wire sessions, the same winner the page hydration picks. This is the one
 // deliberately corpus-wide read on the surface, and it runs amortized
 // (stamp + floor), never per request. julianday keeps the comparison
 // temporal across RFC3339 fractional-precision variants (same posture as
 // the max-timestamp lookup below); the tool+logical tie-break keeps page
 // cuts deterministic.
-func (s *SQLStore) rankSessionKeys(ctx context.Context) ([]sessionKey, error) {
+func (s *SQLStore) rankSessions(ctx context.Context) ([]rankedSession, error) {
 	rows, err := s.db.QueryContext(ctx, `WITH mapped AS (
 			SELECT DISTINCT tool, wire_session_id, file_uuid, generation, logical_session_id
 			FROM sesh_index_messages
 		),
-		sess AS (
+		members AS (
 			SELECT f.tool AS tool,
 				COALESCE(m.logical_session_id, f.session_id) AS logical,
-				MIN(julianday(f.created_at)) AS first_ingest_jd
+				f.session_id AS wire_session_id,
+				f.created_at AS created_at
 			FROM files f
 			LEFT JOIN mapped m
 				ON m.tool = f.tool AND m.wire_session_id = f.session_id
 				AND m.file_uuid = f.file_uuid AND m.generation = f.generation
-			GROUP BY f.tool, COALESCE(m.logical_session_id, f.session_id)
+		),
+		sess AS (
+			SELECT tool, logical, MIN(julianday(created_at)) AS first_ingest_jd
+			FROM members
+			GROUP BY tool, logical
+		),
+		node_fact AS (
+			SELECT mb.tool AS tool, mb.logical AS logical, MAX(fo.id) AS fact_id
+			FROM (SELECT DISTINCT tool, logical, wire_session_id FROM members) mb
+			JOIN fact_observations fo
+				ON fo.tool = mb.tool AND fo.session_id = mb.wire_session_id
+			GROUP BY mb.tool, mb.logical
 		),
 		ts AS (
 			SELECT tool, logical_session_id AS logical, MAX(julianday(timestamp_utc)) AS max_ts_jd
@@ -315,21 +375,24 @@ func (s *SQLStore) rankSessionKeys(ctx context.Context) ([]sessionKey, error) {
 			WHERE quarantine = 0 AND timestamp_utc IS NOT NULL
 			GROUP BY tool, logical_session_id
 		)
-		SELECT sess.tool, sess.logical
+		SELECT sess.tool, sess.logical,
+			COALESCE(fo.hostname, ''), COALESCE(fo.os_user, '')
 		FROM sess
+		LEFT JOIN node_fact nf ON nf.tool = sess.tool AND nf.logical = sess.logical
+		LEFT JOIN fact_observations fo ON fo.id = nf.fact_id
 		LEFT JOIN ts ON ts.tool = sess.tool AND ts.logical = sess.logical
 		ORDER BY COALESCE(ts.max_ts_jd, sess.first_ingest_jd) DESC, sess.tool, sess.logical`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []sessionKey
+	var out []rankedSession
 	for rows.Next() {
-		var k sessionKey
-		if err := rows.Scan(&k.tool, &k.logical); err != nil {
+		var r rankedSession
+		if err := rows.Scan(&r.key.tool, &r.key.logical, &r.hostname, &r.osUser); err != nil {
 			return nil, err
 		}
-		out = append(out, k)
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

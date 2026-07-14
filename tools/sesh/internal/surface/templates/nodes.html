@@ -3,15 +3,15 @@
 {{define "main"}}
 <h1>Nodes</h1>
 <table class="sessions">
-  <thead><tr><th>Host</th><th>OS user</th><th>Last PUT</th><th>Age</th><th>Status</th></tr></thead>
+  <thead><tr><th>Node</th><th>Last PUT</th><th>Age</th><th>Status</th><th>Sessions</th></tr></thead>
   <tbody>
   {{range .Nodes}}
     <tr>
-      <td>{{.Hostname}}</td>
-      <td>{{.OSUser}}</td>
+      <td><a href="{{.SessionsURL}}">{{.Node}}</a></td>
       <td>{{fmtTime .LastPutAt}}</td>
       <td>{{.Age}}</td>
       <td>{{if .Stale}}<span class="badge warn">stale &gt;48h</span>{{else}}<span class="badge">fresh</span>{{end}}</td>
+      <td><a href="{{.SessionsURL}}">sessions →</a></td>
     </tr>
   {{else}}
     <tr><td colspan="5" class="empty">No nodes have shipped bytes yet.</td></tr>

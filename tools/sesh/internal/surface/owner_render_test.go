@@ -1,8 +1,9 @@
 package surface_test
 
-// R15 render half: precedence verdicts on the actual pages — person
-// grouping, source labels, conflict badges, honest absence. The precedence
-// table itself is pinned in owner_test.go (package surface).
+// R15 render half: precedence verdicts on the actual pages — the person
+// COLUMN of the flat sessions table (owner ruling 2026-07-14: node is a
+// column, not a grouping), source labels, conflict badges, honest absence.
+// The precedence table itself is pinned in owner_test.go (package surface).
 
 import (
 	"strings"
@@ -30,11 +31,11 @@ func ownerSpec(t *testing.T, claims []string, tailnet string) sessionSpec {
 	}
 }
 
-func TestOwnerClaimGroupsPersonWithSource(t *testing.T) {
+func TestOwnerClaimFillsPersonColumnWithSource(t *testing.T) {
 	srv := newServer(t, buildStore(t, []sessionSpec{ownerSpec(t, []string{"alice"}, "")}))
-	page := mustGet200(t, srv, "/")
-	if !strings.Contains(page, "<h2>alice <span class=\"source\">SESSION_OWNER fact</span></h2>") {
-		t.Error("claimed session must group under the owner with the SESSION_OWNER source label")
+	page := mustGet200(t, srv, "/sessions")
+	if !strings.Contains(page, `<td>alice <span class="source">SESSION_OWNER fact</span></td>`) {
+		t.Error("claimed session must fill the person column with the owner and the SESSION_OWNER source label")
 	}
 	transcript := mustGet200(t, srv, "/s/claude/"+uuidNormal)
 	if !strings.Contains(transcript, "alice") || !strings.Contains(transcript, "SESSION_OWNER fact") {
@@ -44,16 +45,16 @@ func TestOwnerClaimGroupsPersonWithSource(t *testing.T) {
 
 func TestConflictingClaimsRenderHonestAbsence(t *testing.T) {
 	srv := newServer(t, buildStore(t, []sessionSpec{ownerSpec(t, []string{"carol", "dave"}, "")}))
-	page := mustGet200(t, srv, "/")
-	// Absence: neither claimant becomes a person; the session groups under
-	// its node with the conflicting-claims badge.
+	page := mustGet200(t, srv, "/sessions")
+	// Absence: neither claimant fills the person column; the node column
+	// keeps the row identifiable and the conflict badges honestly.
 	for _, name := range []string{"carol", "dave"} {
 		if strings.Contains(page, name) {
-			t.Errorf("conflicting claimant %q rendered on the recency page; conflict must render absence", name)
+			t.Errorf("conflicting claimant %q rendered on the sessions page; conflict must render absence", name)
 		}
 	}
 	if !strings.Contains(page, "grace@workstation") {
-		t.Error("conflicted session must group under node/OS-user")
+		t.Error("conflicted session row must carry its node column")
 	}
 	if !strings.Contains(page, "conflicting claims") {
 		t.Error("conflicted session row must carry the conflicting-claims badge")
@@ -69,21 +70,25 @@ func TestConflictingClaimsRenderHonestAbsence(t *testing.T) {
 
 func TestTailnetIdentityTierWinsWhenNoClaim(t *testing.T) {
 	// AC3, M4 half: a facts-only session (macOS shape — no SESSION_OWNER)
-	// with a store-stamped tailnet identity groups under that identity.
+	// with a store-stamped tailnet identity fills the person column.
 	srv := newServer(t, buildStore(t, []sessionSpec{ownerSpec(t, nil, "bob@tailnet")}))
-	page := mustGet200(t, srv, "/")
-	if !strings.Contains(page, "<h2>bob@tailnet <span class=\"source\">tailnet identity</span></h2>") {
+	page := mustGet200(t, srv, "/sessions")
+	if !strings.Contains(page, `<td>bob@tailnet <span class="source">tailnet identity</span></td>`) {
 		t.Error("tailnet identity must win and be labeled when no SESSION_OWNER claim exists")
 	}
 }
 
-func TestUnclaimedFallsThroughToNodeGrouping(t *testing.T) {
-	// AC3, pre-M4 half: no claim, no tailnet identity → the session groups
-	// honestly under node/OS-user; the OS-user tier labels the transcript.
+func TestUnclaimedRendersAbsentPersonWithNodeColumn(t *testing.T) {
+	// AC3, pre-M4 half: no claim, no tailnet identity → the person column
+	// renders honest absence (never a guessed name); the node column carries
+	// the OS-user@host identity, and the OS-user tier labels the transcript.
 	srv := newServer(t, buildStore(t, []sessionSpec{ownerSpec(t, nil, "")}))
-	page := mustGet200(t, srv, "/")
-	if !strings.Contains(page, "<h2>grace@workstation <span class=\"source\">no owner claim — OS user @ host</span></h2>") {
-		t.Error("unclaimed session must group under node/OS-user with the honest label")
+	page := mustGet200(t, srv, "/sessions")
+	if !strings.Contains(page, `<span class="secondary" title="OS user (no owner claim)">—</span>`) {
+		t.Error("unclaimed session must render an absent person column with the honest tier label")
+	}
+	if !strings.Contains(page, "grace@workstation") {
+		t.Error("unclaimed session row must carry its node column")
 	}
 	transcript := mustGet200(t, srv, "/s/claude/"+uuidNormal)
 	if !strings.Contains(transcript, "OS user (no owner claim)") {

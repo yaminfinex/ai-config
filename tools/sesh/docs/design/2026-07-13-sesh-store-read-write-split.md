@@ -122,6 +122,22 @@ churn-straddling-the-stamp interleaving, rebuild-failure latch clearing,
 and canceled-cold-waiter edges; the live surface check now waits for
 convergence instead of asserting read-your-own-writes.
 
+### Delta to the delta: node label in the projection (2026-07-14)
+
+The surface IA rework (nodes-first navigation, flat sessions table per the
+owner ruling "node is a column, not a grouping") added a per-node filtered
+sessions view. To keep that filter inside this design's bounds — no corpus
+scans, no per-request rebuilds, no second SQL ranking path — each projection
+entry now carries the session's node label (hostname, OS user: the latest
+fact observation across its member wire sessions, the same winner page
+hydration picks), and the node-filtered page slices the same in-memory
+list. Because node labels now feed the projection, the version stamp gained
+a third b-tree MAX probe over `fact_observations` (append-only, so the
+INSERT-only stamp argument holds unchanged). Read-side only; everything
+else in this note — single-flight, serve-stale, the staleness bound — is
+untouched and now also covers the filtered view (a lagging node label can
+only lag the filtered LIST membership; the rendered rows hydrate live).
+
 ## Follow-up (out of scope here)
 
 Write-side append cost still grows with corpus/session size

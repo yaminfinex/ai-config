@@ -127,13 +127,26 @@ queued append-index events.
 seam; `surface.SQLStore` satisfies it from the live store DB + mirror, and
 `sesh serve` runs the surface on its own loopback read listener
 (`--surface-addr`, default 127.0.0.1:8766 — the port the interim Tailscale Serve
-exposure proxies; ingest stays on `--addr`). The surface includes `/` recency,
-`/s/{tool}/{id}` transcript pages, `/s/{tool}/{id}/raw` raw mirror fallback,
-and `/nodes` last-PUT status. The recency homepage is bounded: request-time
-work is proportional to the page, not the corpus (fleet corpora run to
-thousands of files per node). `surface.SQLStore` maintains a recency
-projection — the ranked session-key list, rebuilt only when a cheap store
-version stamp moves. The rebuild is single-flighted and
+exposure proxies; ingest stays on `--addr`). Navigation is nodes-first, and
+the sessions list is FLAT — per the owner ruling (2026-07-14) "node is a
+column, not a grouping": grouping sections fought pagination (page cuts fell
+mid-group), so node (os_user@host) and person are table columns on one
+recency-ordered table. The surface includes `/` — the nodes entry point
+(last-PUT status per node, each row linking that node's sessions) —
+`/sessions` (the flat all-nodes recency list, stable URL; `?node=` filters
+it to one node with identical pagination), `/s/{tool}/{id}` transcript
+pages, and `/s/{tool}/{id}/raw` raw mirror fallback (`/nodes` redirects to
+`/`). Transcript pages are windowed: one page renders the newest 200 index
+rows (`?page=N` walks older windows, same pager idiom as the sessions
+list), the byte-level display budget stays as the in-window backstop, and
+the raw route still serves the whole file. The sessions list is bounded:
+request-time work is proportional to the page, not the corpus (fleet
+corpora run to thousands of files per node). `surface.SQLStore` maintains a
+recency projection — the ranked session-key list, each entry carrying the
+session's node label so the per-node view slices the same projection
+instead of adding a SQL ranking path — rebuilt only when a cheap store
+version stamp (index rows, file generations, fact observations — all
+INSERT-only) moves. The rebuild is single-flighted and
 serve-stale-while-revalidating: at most one rebuild runs at a time, a
 request that observes a moved stamp returns the previous projection
 immediately while the refresh runs in the background, and only the very
@@ -144,7 +157,7 @@ rebuilding inline degenerated to a corpus-scale rebuild per page load.
 Staleness is bounded only while the page is watched, and the bound is: only
 the ranked list and its total can lag (session hydration always reads the
 live tables), every request that sees a moved stamp triggers a refresh, and
-the homepage polls every 60 s, so under continuous ingest a watched page
+the sessions page polls every 60 s, so under continuous ingest a watched page
 serves a list at most one poll interval plus two rebuild durations behind
 the store (the poll that observes a completed rebuild serves that rebuild's
 snapshot and triggers the next). Once ingest quiesces, the list converges
@@ -159,14 +172,15 @@ on a corpus-scale rebuild, which is exactly the onboarding moment (bulk
 ingest plus first visits) that motivated this design. Rebuild duration
 lands in the `SESH_DEBUG` journal (identifier-free: a
 duration and a session count). Each request
-slices one page of the projection (latest 50 by default) and hydrates just those
+slices one page of the projection (latest 50 by default; the `?node=` filter
+slices the same in-memory list) and hydrates just those
 sessions through index-seeking, key-constrained queries (the per-page facts
 lookups seek the additive `fact_observations_session` bookkeeping index; the
 frozen wire-doc index schema is untouched). The page states its bound
 ("showing latest N of Z sessions"), older history stays reachable through
-`?page=N` pager links, and the periodic refresh polls the page it is on.
-`/nodes` reads only the last-seen bookkeeping table and is unaffected by
-corpus size. All read-serving paths (surface pages, `/nodes`, `/v1/nodes`)
+`?page=N` pager links, and the periodic refresh polls the page — and node
+filter — it is on. The `/` nodes entry point reads only the last-seen
+bookkeeping table and is unaffected by corpus size. All read-serving paths (surface pages, `/nodes`, `/v1/nodes`)
 query through the store's read-only connection pool, so page loads run
 concurrently with ingest instead of queueing behind append-index write
 transactions on the single write connection

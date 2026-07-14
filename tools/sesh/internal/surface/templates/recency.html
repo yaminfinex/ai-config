@@ -1,6 +1,11 @@
 {{template "layout" .}}
 {{define "title"}}sesh — who's been working on what{{end}}
-{{define "main"}}{{template "recencyBody" .}}{{end}}
+{{define "main"}}
+{{- if .Node}}
+<p class="crumbs"><a href="/">← nodes</a> · <a href="/sessions">all sessions</a></p>
+<h2>sessions on {{.Node}}</h2>
+{{- end}}
+{{- template "recencyBody" .}}{{end}}
 
 {{define "recencyBody" -}}
 <div id="recency" hx-get="{{.FragmentURL}}" hx-trigger="every {{.PollSeconds}}s" hx-swap="outerHTML">
@@ -10,24 +15,19 @@
 {{- if .NewerURL}} <a href="{{.NewerURL}}">← newer</a>{{end}}
 {{- if .OlderURL}} <a href="{{.OlderURL}}">older →</a>{{end}}</p>
 {{- end}}
-{{- if not .People}}
-<p class="empty">{{if .Total}}Nothing on this page — follow the newer link.{{else}}No sessions mirrored yet.{{end}}</p>
-{{- end}}
-{{- range .People}}
-<section class="person">
-<h2>{{.Label}} <span class="source">{{.Source}}</span></h2>
-{{- range .Nodes}}
-<div class="node">
-<h3>{{.OSUser}}@{{.Hostname}}</h3>
+{{- if not .Sessions}}
+<p class="empty">{{if .Total}}Nothing on this page — follow the newer link.{{else if .Node}}No sessions mirrored for this node.{{else}}No sessions mirrored yet.{{end}}</p>
+{{- else}}
 <table class="sessions">
-<tr><th>session</th><th>tool</th><th>last activity</th><th>mirrored at</th><th>rows</th></tr>
-{{- $now := $.Now}}
+<tr><th>session</th><th>tool</th><th>node</th><th>person</th><th>last activity</th><th>mirrored at</th><th>rows</th></tr>
+{{- $now := .Now}}
 {{- range .Sessions}}
 <tr>
 <td><a href="{{.URL}}" title="{{.LogicalSessionID}}"><code>{{printf "%.8s" .LogicalSessionID}}</code></a>
-{{- if .FullyQuarantined}}<span class="badge warn">quarantined — raw only</span>{{end}}
-{{- if .Owner.Conflict}}<span class="badge warn">conflicting claims</span>{{end}}</td>
+{{- if .FullyQuarantined}}<span class="badge warn">quarantined — raw only</span>{{end}}</td>
 <td>{{.Tool}}</td>
+<td><a href="{{.NodeURL}}">{{.Node}}</a></td>
+<td>{{if .Owner.Conflict}}<span class="badge warn">conflicting claims</span>{{else if .Owner.Claimed}}{{.Owner.Name}} <span class="source">{{.Owner.Source}}</span>{{else}}<span class="secondary" title="{{.Owner.Source}}">—</span>{{end}}</td>
 <td>{{fmtTime .At}} <span class="secondary">{{fmtAge $now .At}}</span>
 {{- if not .MaxTimestampUTC}} <span class="badge">first-ingest time</span>{{end}}</td>
 <td class="secondary">{{fmtTime .MirroredAt}}</td>
@@ -35,9 +35,6 @@
 </tr>
 {{- end}}
 </table>
-</div>
-{{- end}}
-</section>
 {{- end}}
 {{- if or .NewerURL .OlderURL}}
 <p class="pager secondary">

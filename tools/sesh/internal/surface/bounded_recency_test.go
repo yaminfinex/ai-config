@@ -440,23 +440,44 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 	}
 	assertSeeksOnly(t, plain, log.snapshot())
 
-	// The rendered homepage stays bounded: one page of session links, the
-	// honest bound label, history reachable, poll pinned to its page.
+	// The node-filtered route slices the same in-memory projection: warm
+	// work is the same stamp probe plus page hydration — zero rebuilds, zero
+	// new query shapes, full-key seeks only, whatever the corpus size.
+	log.reset()
+	filtered, filteredTotal, err := live.RecentSessionsByNode(t.Context(), "fleet-node", "grace", 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filteredTotal != bigCorpusSessions {
+		t.Errorf("node-filtered total = %d, want %d (every corpus session is on fleet-node/grace)", filteredTotal, bigCorpusSessions)
+	}
+	if len(filtered) != 50 || filtered[0].LogicalSessionID != corpusID(bigCorpusSessions-1) {
+		t.Errorf("node-filtered page = %d sessions starting %s, want 50 from the newest", len(filtered), filtered[0].LogicalSessionID)
+	}
+	warmFiltered := log.snapshot()
+	if len(warmFiltered) > 7 {
+		t.Errorf("warm node-filtered request ran %d queries, want a fixed handful (<=7):\n%s",
+			len(warmFiltered), strings.Join(warmFiltered, "\n---\n"))
+	}
+	assertSeeksOnly(t, plain, warmFiltered)
+
+	// The rendered sessions list stays bounded: one page of session links,
+	// the honest bound label, history reachable, poll pinned to its page.
 	srv := newServer(t, live)
-	body := mustGet200(t, srv, "/")
+	body := mustGet200(t, srv, "/sessions")
 	if n := strings.Count(body, `href="/s/`); n != 50 {
-		t.Errorf("homepage links %d sessions, want exactly the page's 50", n)
+		t.Errorf("sessions page links %d sessions, want exactly the page's 50", n)
 	}
 	if !strings.Contains(body, fmt.Sprintf("showing latest 50 of %d sessions", bigCorpusSessions)) {
-		t.Error("homepage must state the bound (showing latest N of Z sessions)")
+		t.Error("sessions page must state the bound (showing latest N of Z sessions)")
 	}
-	if !strings.Contains(body, `href="/?page=2"`) {
-		t.Error("homepage must link the older history")
+	if !strings.Contains(body, `href="/sessions?page=2"`) {
+		t.Error("sessions page must link the older history")
 	}
 	if len(body) > 256<<10 {
-		t.Errorf("homepage is %d bytes for a %d-session corpus; render is not bounded", len(body), bigCorpusSessions)
+		t.Errorf("sessions page is %d bytes for a %d-session corpus; render is not bounded", len(body), bigCorpusSessions)
 	}
-	body = mustGet200(t, srv, "/?page=100")
+	body = mustGet200(t, srv, "/sessions?page=100")
 	if !strings.Contains(body, fmt.Sprintf("showing sessions 4951–%d of %d", bigCorpusSessions, bigCorpusSessions)) {
 		t.Error("deep page must label its slice of the corpus")
 	}
@@ -468,6 +489,22 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 	}
 	if !strings.Contains(body, `hx-get="/fragments/recency?page=100"`) {
 		t.Error("deep page's poll must refresh its own page, not page one")
+	}
+
+	// The rendered node-filtered view is the SAME flat recency view — same
+	// bound, same pager — with the filter carried by every link and poll.
+	body = mustGet200(t, srv, "/sessions?node=grace@fleet-node")
+	if n := strings.Count(body, `href="/s/`); n != 50 {
+		t.Errorf("node-filtered page links %d sessions, want 50", n)
+	}
+	if !strings.Contains(body, fmt.Sprintf("showing latest 50 of %d sessions", bigCorpusSessions)) {
+		t.Error("node-filtered page must state its bound")
+	}
+	if !strings.Contains(body, `href="/sessions?node=grace%40fleet-node&amp;page=2"`) {
+		t.Error("node-filtered pager must keep the filter on the older link")
+	}
+	if !strings.Contains(body, `hx-get="/fragments/recency?node=grace%40fleet-node"`) {
+		t.Error("node-filtered poll must refresh the filtered fragment")
 	}
 
 	// A new session arriving moves the stamp: the next request serves the
@@ -489,12 +526,12 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 		t.Fatal(err)
 	}
 	log.reset()
-	body = mustGet200(t, srv, "/")
+	body = mustGet200(t, srv, "/sessions")
 	if strings.Contains(body, id) {
 		t.Error("request observing the moved stamp must serve the previous projection, not block on the rebuild")
 	}
 	live.WaitProjectionIdle()
-	body = mustGet200(t, srv, "/")
+	body = mustGet200(t, srv, "/sessions")
 	if !strings.Contains(body, id) {
 		t.Error("fresh session must appear once the triggered refresh lands")
 	}
@@ -509,7 +546,7 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 	// with one cheap probe each and zero rebuilds.
 	log.reset()
 	for i := 0; i < 5; i++ {
-		mustGet200(t, srv, "/")
+		mustGet200(t, srv, "/sessions")
 	}
 	burst := log.snapshot()
 	if countMatching(burst, rebuildMarker) != 0 {
@@ -519,12 +556,13 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 		t.Errorf("burst of 5 renders ran %d queries; per-request work is not fixed", len(burst))
 	}
 
-	// /nodes reads bookkeeping only, whatever the corpus size.
+	// The '/' nodes entry point reads bookkeeping only, whatever the corpus
+	// size.
 	log.reset()
-	mustGet200(t, srv, "/nodes")
+	mustGet200(t, srv, "/")
 	for _, q := range log.snapshot() {
 		if strings.Contains(q, "sesh_index_messages") {
-			t.Errorf("/nodes queried the message index: %s", q)
+			t.Errorf("the nodes entry point queried the message index: %s", q)
 		}
 	}
 
