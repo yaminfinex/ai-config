@@ -717,6 +717,10 @@ type startSpec struct {
 	NewTab        bool
 }
 
+func newTabMoveArgs(paneID, label, focusFlag string) []string {
+	return []string{"pane", "move", paneID, "--new-tab", firstNonEmpty(focusFlag, "--no-focus"), "--label", label}
+}
+
 func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	paths, err := herderpaths.Resolve()
 	if err != nil {
@@ -774,7 +778,7 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		return nil, 1
 	}
 	if spec.NewTab {
-		moveOut, moveRC, moveErr := r.client().Combined("pane", "move", start.Agent.PaneID, "--new-tab", "--label", spec.Label)
+		moveOut, moveRC, moveErr := r.client().Combined(newTabMoveArgs(start.Agent.PaneID, spec.Label, focusFlag)...)
 		if moveErr != nil || moveRC != 0 {
 			reason := compactLifecycleMessage(string(moveOut))
 			if moveErr != nil {

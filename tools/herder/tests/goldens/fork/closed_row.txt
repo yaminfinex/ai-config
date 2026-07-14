@@ -7,7 +7,7 @@ forked closed-parent -> closed-fork (<GUID>) pane=p_child from=guid-closed-0000
 === HERDR START ARGV ===
 agent start closed-fork --no-focus --split right --workspace ws_1 --cwd <REPO> -- /bin/zsh -lic export HERDER_GUID=<GUID> HERDER_ROLE=reviewer-fork HERDER_LABEL=closed-fork HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --fork claude sess-closed --tag reviewer-fork --parent-session sess-closed --dangerously-skip-permissions --go
 === HERDR MOVE ARGV ===
-pane move p_child --new-tab --label closed-fork
+pane move p_child --new-tab --no-focus --label closed-fork
 === REGISTRY ===
 {"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
 {"kind":"namespace","event":"namespace_observed","namespace_id":"<GUID>","node":"<GUID>","path":"/hcom","recorded_at":"<TS>"}

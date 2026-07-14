@@ -8,7 +8,7 @@ sent 2575 chars to <GUID> (hcom @codexfork-vibe), submitted, verify=delivered
 === HERDR START ARGV ===
 agent start codex-parent-fork-<SHORT> --no-focus --split right --workspace ws_1 --cwd <REPO> -- /bin/zsh -lic export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=codex-parent-fork-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --fork codex sess-codexp --tag worker --parent-session sess-codexp --dangerously-bypass-approvals-and-sandbox --go
 === HERDR MOVE ARGV ===
-pane move p_child --new-tab --label codex-parent-fork-<SHORT>
+pane move p_child --new-tab --no-focus --label codex-parent-fork-<SHORT>
 === REGISTRY ===
 {"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
 {"kind":"namespace","event":"namespace_observed","namespace_id":"<GUID>","node":"<GUID>","path":"/hcom","recorded_at":"<TS>"}

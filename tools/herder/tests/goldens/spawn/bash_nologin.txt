@@ -30,7 +30,7 @@ AI_CONFIG_ROOT=<REPO>
 bash
 === HERDR MUTATING CALLS ===
 agent start worker-<SHORT>
-pane move p_50 --new-tab --label worker-<SHORT>
+pane move p_50 --new-tab --no-focus --label worker-<SHORT>
 === HCOM DIR ===
 === REGISTRY ===
 {"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}

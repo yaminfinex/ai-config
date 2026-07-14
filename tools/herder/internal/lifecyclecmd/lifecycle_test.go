@@ -125,6 +125,25 @@ func TestSettleFailureIncludesLaunchAndExitDiagnostics(t *testing.T) {
 	}
 }
 
+func TestNewTabMoveArgsCarryResolvedFocus(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		focusFlag string
+		wantFocus string
+	}{
+		{name: "default", wantFocus: "--no-focus"},
+		{name: "explicit focus", focusFlag: "--focus", wantFocus: "--focus"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := strings.Join(newTabMoveArgs("pane-1", "worker", tc.focusFlag), " ")
+			want := "pane move pane-1 --new-tab " + tc.wantFocus + " --label worker"
+			if got != want {
+				t.Fatalf("move args = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestResolveTargetWithArchiveFallbackSkipsArchivesOnLiveHit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "registry.jsonl")

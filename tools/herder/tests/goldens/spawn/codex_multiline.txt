@@ -28,7 +28,7 @@ ws_1
 if [ -d "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" ]; then export PATH="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=<CASE>/home/.hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch codex --tag worker --dangerously-bypass-approvals-and-sandbox
 === HERDR MUTATING CALLS ===
 agent start worker-<SHORT>
-pane move p_50 --new-tab --label worker-<SHORT>
+pane move p_50 --new-tab --no-focus --label worker-<SHORT>
 === HCOM DIR ===
 <CASE>/home/.hcom
 === REGISTRY ===

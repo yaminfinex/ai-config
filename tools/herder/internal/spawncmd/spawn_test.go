@@ -103,6 +103,30 @@ func TestSpawnLabelPrefixReplacement(t *testing.T) {
 	}
 }
 
+func TestNewTabMoveArgsCarryResolvedFocus(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		focusArgs []string
+		wantFocus string
+	}{
+		{name: "default", wantFocus: "--no-focus"},
+		{name: "explicit focus", focusArgs: []string{"--focus"}, wantFocus: "--focus"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"--role", "worker", "--agent", "codex", "--new-tab"}, tc.focusArgs...)
+			opts, code := parseArgs(args, io.Discard, io.Discard)
+			if code != 0 {
+				t.Fatalf("parseArgs() code = %d, want 0", code)
+			}
+			got := strings.Join(newTabMoveArgs("pane-1", "worker", opts.FocusFlag), " ")
+			want := "pane move pane-1 --new-tab " + tc.wantFocus + " --label worker"
+			if got != want {
+				t.Fatalf("move args = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestResolveSpawnerBusMatchesEnrolledPane(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	rows := []string{
