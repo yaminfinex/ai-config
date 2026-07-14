@@ -4,7 +4,7 @@ title: 'pi agent family: characterization demo then design (blocked on Grok U3+U
 status: Done
 assignee: []
 created_date: '2026-07-13 06:07'
-updated_date: '2026-07-13 23:14'
+updated_date: '2026-07-14 00:37'
 labels: []
 dependencies: []
 priority: medium
@@ -31,4 +31,6 @@ UNBLOCKED + DISPATCHED 2026-07-14: grok program complete (surface free). Owner r
 AC-1 DONE: demo report merged (docs/design/pi-demo-report-2026-07-13.md, commits 518482b+926283c+8d66d63). Binding fork ANSWERED with probe evidence: native TypeScript extension (sendUserMessage inject probe ran to agent_settled, source=extension; reply content honestly marked uncaptured). Key characterization: pi 0.80.6 (@earendil-works), PI_HOME NOT consumed — managed home rides PI_CODING_AGENT_DIR/SESSION_DIR + isolated HOME; PI_OFFLINE couples update-suppression; one-provider env routing (provider pin per seat); clause table earns/refuses grok-style clauses on pi-specific evidence (/proc ceremony CONDITIONAL pending herder launch-path characterization). Review: FIRST GROK CALIBRATION RUN — incumbent mage (opus) APPROVE-with-findings; calibration mudo (grok) 3 verified grok-only findings incl the inject evidence overclaim; both deltas APPROVE; identical residual P3 found independently by both. AC-2 (design unit) is next — design must treat /proc clause as conditional.
 
 AC-2 CLOSED 2026-07-14: pi first-class design merged 7abce59 (docs/design/pi-first-class-design.md, 1443 lines, 6 commits 5024141..b3ea6cf). Five adversarial fix rounds, dual independent APPROVE (codex incumbent + grok calibration) at b3ea6cf. Review chain highlights: both reviewers independently converged on the no-daemon-shape P1s (r1), the T29 premise-smuggle (r3), and the plaintext-invariant overclaim (r4); calibration lane caught the exec-window orphan-process hole AFTER incumbent approval (r5, orchestrator-verified). Owner rulings recorded in DR-5/owner-decision items 1-7 (incl. new item 7: P7-falsified auth acceptance). /proc clause stays CONDITIONAL, resolved only by activation evidence. Staged implementation units U1-U3+activation defined in the doc; filing follows owner sign-off (fresh-eyes offer outstanding per doctrine).
+
+AMENDMENT MERGED 2026-07-14 (post-Done): owner-invoked fresh-eyes pass found 1 P1 + 2 P2 + 10 P3 ALL missed by the original chain; the P1 (external-lane predicate locked out fleet orchestrators) opened a four-round re-cert chain that successively defeated ancestry (reparenting bypass), cgroup-origin (systemd-run --user broker), and auto-resolved capability (HOME inheritance) — final authority model: operator capability, caller-supplied stdin ONLY, no herder auto-acquisition (mutation-pinned), naive/direct self-operation refused, deliberate broker+redirect composition expressly conceded to the fleet-wide same-UID class (owner decision item 8 makes that concession load-bearing at sign-off). Dual APPROVE at f1af746 (codex incumbent-class + grok calibration), merged as amendment commits 8405de4..f1af746. Fresh-eyes effectiveness: ledger row 1; operability-lens doctrine candidate journaled.
 <!-- SECTION:NOTES:END -->
