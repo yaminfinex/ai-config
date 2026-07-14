@@ -1,8 +1,9 @@
 ---
 id: TASK-204
 title: sesh — fleet version visibility on the nodes view (User-Agent census)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - mika
 created_date: '2026-07-14 02:00'
 labels:
   - sesh
