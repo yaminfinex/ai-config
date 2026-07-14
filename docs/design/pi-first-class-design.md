@@ -111,11 +111,11 @@ for claude and codex today:
 herder spawn --agent pi --provider <family> [--model <id>]
    │  launchcmd: IsHcomCapable gate (launch.go:19-26)
    │  env construction: exactly one named provider credential (DR-5);
-   │    PI_OFFLINE=1, PI_TELEMETRY=0; Pi-home pin beside the existing
-   │    config-dir pins (launch.go:28-48) when HCOM_DIR is isolated;
+   │    PI_OFFLINE=1, PI_TELEMETRY=0; HCOM_NOTES doctrine (item 8);
+   │    global bus only — --team refuses, no Pi-home pin ships (item 2);
    │    HCOM_LAUNCH_INFLIGHT=1; sidecar started
    ▼
-syscall.Exec → `hcom pi --run-here`          (launch.go:203-216; resume/fork
+syscall.Exec → `hcom pi --run-here`          (launch.go:192-216; resume/fork
    │                                          via `hcom r|f <target>`)
    ▼
 hcom: reserves the identity, writes its Pi extension
@@ -144,28 +144,41 @@ existing families (parity memo "Costing", verified against this repository):
 1. **Capability gate.** Add `pi` to `IsHcomCapable`
    (`tools/herder/internal/launchcmd/launch.go:19-26`) — the single source of
    truth routing `herder spawn --agent pi` through the exec-into-hcom path.
-2. **Pi-home env pin.** A `setEnvDefault` pin for Pi's home variable
-   (`PI_CODING_AGENT_DIR`, pinned to Pi's **default** agent dir) beside the
-   existing `CLAUDE_CONFIG_DIR`/`CODEX_HOME`/`GEMINI_CLI_HOME` pins in
-   `PinConfigDir` (`launch.go:28-48`). Two pinned constraints from the Pi
-   record govern this line:
-   - **Placement coupling.** hcom honors `PI_CODING_AGENT_DIR` only when its
-     derived tool-config root equals `HOME`; otherwise the extension is
-     written below the tool-config root, where Pi will not load it
-     (characterization, `src/hooks/pi.rs:350-362` at hcom 0.7.23). On the
-     default bus (`HCOM_DIR=$HOME/.hcom`) the lineup holds by construction —
-     and `PinConfigDir` does not fire there at all. On an **isolated bus**
-     (`HCOM_DIR` re-pointed — the only case where the pin fires) the pin
-     alone may not restore the lineup; probe P8 (§10) characterizes the
-     isolated-bus launch and fixes the working env shape before the build
-     unit closes.
-   - **Session-root non-pin.** hcom deliberately clears
+2. **Bus layout — global bus only in v1, decided here (no Pi-home pin
+   ships).** The placement coupling is hcom-side and env cannot fix it:
+   hcom derives the Pi tool-config root as the **parent of `HCOM_DIR`** and
+   honors `PI_CODING_AGENT_DIR` only when that root equals `HOME`; otherwise
+   the extension is written below the tool-config root, where Pi will not
+   load it (characterization, `src/hooks/pi.rs:350-362` at hcom 0.7.23).
+   Herder's team buses live at `$HOME/.hcom/teams/<team>`
+   (`spawncmd/spawn.go:662-670`), whose parent is `$HOME/.hcom/teams` ≠
+   `HOME` — so on the standard team layout a `setEnvDefault` pin in
+   `PinConfigDir` (`launch.go:28-48`, which fires only when `HCOM_DIR` is
+   non-default — exactly the team case) is **ineffective**: the extension
+   installs where Pi will not load it and the seat never binds. No
+   compliant env-only shape exists for the team path, because the root
+   derivation is hcom's, not the environment's. Decision, least machinery:
+   - **Pi v1 is global-bus only.** `herder spawn --agent pi --team <name>`
+     **refuses** with a cause+remedy error naming this limitation (gate L2).
+     On the global bus (`HCOM_DIR=$HOME/.hcom`, which the spawn path itself
+     pins — `spawn.go:662-670`) the coupling holds by construction, and no
+     `PI_CODING_AGENT_DIR` pin ships at all — the `IsHcomCapable` comment's
+     pin obligation is discharged by the refusal instead (asserted absent,
+     L2). P8 (§10) narrows to verifying the global layout's coupling on the
+     real spawn path.
+   - **Registered limitation + reopen conditions.** Team-bus Pi seats are an
+     explicit v1 non-goal, reopened only by: (a) an upstream hcom change
+     deriving the Pi root from `HOME` (or honoring `PI_CODING_AGENT_DIR`
+     unconditionally), or (b) a sibling bus layout whose parent directory is
+     `HOME`. Either reopen is its own reviewed design delta, not a build-unit
+     swerve.
+   - **Session-root non-pin (unchanged).** hcom deliberately clears
      `PI_CODING_AGENT_SESSION_DIR` for the child (characterization,
      `src/shared/tool_detection.rs:174-178`); no session-root pin exists or
      is wanted — sessions land under the default agent dir, consistent with
      the default-homes ruling.
 3. **Exec wiring.** Reuse the existing exec path unchanged
-   (`launch.go:203-216`): `hcom pi --run-here` for spawn, `hcom r|f <target>`
+   (`launch.go:192-216`): `hcom pi --run-here` for spawn, `hcom r|f <target>`
    for resume/fork, `HCOM_LAUNCH_INFLIGHT=1`, sidecar start, tag passthrough.
 4. **Credential scoping (DR-5, retained).** The pi branch constructs the
    child environment before the exec: exactly one provider credential, by
@@ -176,28 +189,100 @@ existing families (parity memo "Costing", verified against this repository):
    mechanically private (0600 sidecar, sourced and removed — characterization
    "Launch mechanism") but not policy-scoped; the policy lives upstream in
    herder's construction, which is why scoping survives the ruling intact.
-5. **PATH floor.** The directory containing the hcom executable must be on
-   the child `PATH`: the native extension invokes `spawn("hcom", ...)`
-   (characterization, `src/pi_plugin/hcom.ts:39`); without it the extension
-   emits `spawn hcom ENOENT` and never binds. Probe P9 (§10) pins this on the
-   real spawn path.
-6. **Recorded vendor version.** The launch/bind path reads the installed
-   `package.json` (reading it creates no state) and records the observed
-   version in the seat's registry row — install-latest, recorded not pinned
-   (§12 item 9b). No provisioning ceremony exists or is needed.
-7. **Bind capture.** Spawn confirms the seat from hcom's roster exactly as
-   for the flagships: `tool: pi`, `hooks_bound: true`, the session UUID and
-   transcript path (all demonstrated in the characterization). No-bind within
-   the window fails the spawn legibly — the standard family behavior, no
-   Pi-specific machinery.
-8. **Doctrine.** Content retained (addressing rules, send discipline, the
-   credential never-print rule, and the crash-window framing: a re-prompted
-   request may repeat content already in context). Carriage rides the same
-   bootstrap seam the flagships use — hcom's native Pi extension injects
-   bootstrap doctrine at bind (characterization "Launch mechanism", layer 3),
-   and the initial task prompt rides herder's standard verified spawn-prompt
-   delivery. The exact wiring against the installed hcom's bootstrap surface
-   is a build-unit detail (§13), not new machinery.
+5. **PATH chain — shim first, real hcom behind it.** The native extension
+   invokes `spawn("hcom", ...)` through `PATH` (characterization,
+   `src/pi_plugin/hcom.ts:39`); without a resolvable `hcom` it emits
+   `spawn hcom ENOENT` and never binds. The launched seat's chain is the
+   standard herder shape (`spawncmd/spawn.go:826-836`): **herder's shim dir
+   is prepended**, so every hcom invocation from inside the seat — the
+   extension's spawns and the model's own CLI — resolves to the shim, which
+   forwards to real hcom (`hookcmd` resolves the real binary itself). A real
+   hcom dir ahead of the shim would bypass herder's only interception point
+   on the seat's hcom traffic; the chain order is therefore an invariant
+   (P9, §10), not a convenience — even though doctrine carriage (item 8)
+   rides the env surface, the shim seam is the named fallback and must stay
+   intact.
+6. **Recorded vendor version.** The launch/bind path records the observed
+   vendor version in the seat's registry row — install-latest, recorded not
+   pinned (§12 item 9b). No provisioning ceremony exists or is needed. The
+   observation is defined exactly, and it never executes Pi (any Pi
+   invocation writes default-home state — §12 item 9e):
+   - **Resolution.** Resolve the `pi` executable the launch will use through
+     the same `PATH` the child receives, follow symlinks to the real CLI
+     entry (`EvalSymlinks`), then walk up from the resolved entry to the
+     nearest `package.json` whose `name` is the vendor package
+     (`@earendil-works/pi-coding-agent`) and read its `version` — a pure
+     file read of the package root that owns the resolved binary.
+     Unresolvable `pi`, or no owning `package.json`, refuses the launch with
+     cause+remedy (naming the vendor install step); an unparseable version
+     records as `unknown` rather than blocking (honest-unknown).
+   - **Refresh + provenance.** Re-observed on **every** launch — spawn,
+     resume, and fork alike. The registry keeps the minimal honest shape:
+     **current + previous observation, each with its timestamp** (chosen
+     over an append-bounded history: two slots are enough to make drift
+     between launches legible — §12 item 9b — without a growing record
+     class). The registry field lands with the provider/model additions
+     (§13 B1 item 1).
+7. **Bind capture — the pi bind predicate, defined from facts that will
+   exist.** Today's spawn/sidecar surfaces do not carry what a pi bind
+   claim needs: spawn's roster poll type has name/tag/directory/pane only
+   (`spawn.go:155-163`), the sidecar row has `tool`/`status`/`session_id`
+   but no hook-bind or transcript fact (`sidecarcmd/sidecar.go:25-40`), the
+   bind wait checks no hook bind (`spawn.go:1266-1332`), promptless spawns
+   await no bind at all (`spawn.go:983-1009`), and hard bind-timeout
+   cleanup is grok-only (`spawn.go:1335-1344`). The predicate and its
+   additive surface (enumerated for build in §13 B1 item 4):
+   > a pi seat is **bound** iff the pane/process-correlated roster row shows
+   > `tool == "pi"` **and** `hooks_bound == true` **and** a nonempty Pi
+   > session UUID. A pane-correlated roster **name alone is never bound**.
+   The transcript path is captured with those facts (all four demonstrated
+   in the characterization's roster). No-bind within the window hard-fails
+   the spawn with cause+remedy and cleanup for **both prompted and
+   promptless** pi spawns, mirroring the grok failure shape. Captured facts
+   persist to the v2 registry row (§13 B1 item 1).
+8. **Doctrine — content named, seam decided.** The retained doctrine
+   content, exactly: the seat's bus name and addressing rules; outbound send
+   discipline (ordinary `hcom send` — the wrapper is gone); the credential
+   rule (never print or persist key material); the crash-window framing (a
+   re-prompt may repeat content already in context — recognize repeats,
+   don't re-execute blindly); and the **silence expectation** (respond when
+   addressed or requested; no speculative chatter, no filler turns).
+   Carriage: hcom's native Pi extension injects its bootstrap as a hidden
+   message at bind, obtained from the `hcom pi-start` JSON response
+   (characterization "Launch mechanism", layer 3) — but that is hcom's
+   stock bootstrap, and no existing herder seam covers pi: the shim rewrite
+   intercepts only the claude `sessionstart` verb (`hookcmd/hook.go:100-115`)
+   and launch-arg doctrine threading is codex-only (`launch.go:176-190`).
+   Two candidate pi seams, evaluated:
+   - **`notes`/`HCOM_NOTES` (ADOPTED, gated on P10).** hcom documents notes
+     as one-time text appended to the bootstrap; the env value propagates
+     into launched processes and the generic bootstrap renderer appends it
+     (upstream `src/launcher.rs:1762-1783`, `src/bootstrap.rs:510-515` at
+     0.7.23; local injection-seam memo,
+     `docs/design/2026-07-10-herder-instruction-injection.md`). Herder pins
+     `HCOM_NOTES` to the doctrine block in the §2 item 4 env construction —
+     which runs on spawn, resume, **and** fork alike, so one line covers all
+     three modes with zero interception machinery and no coupling to hcom's
+     internal `pi-start` JSON shape. Why gated: the codex launcher passes
+     **empty** notes to its renderer (the precedent that forced codex onto
+     launch-arg threading), so whether the **Pi** bootstrap path consumes
+     notes is probe P10 (§10) — verified before the build unit closes,
+     never assumed.
+   - **Shim `pi-start` bootstrap transform (FALLBACK).** The extension
+     resolves `hcom` through the shim-first PATH chain (item 5), so the
+     shim can forward `pi-start` to real hcom and rewrite the bootstrap
+     field of the JSON response. Grounded (the interception point provably
+     exists — P9) but couples herder to an internal response shape and adds
+     a verb handler; adopted only if P10 falsifies the notes surface, as a
+     reviewed fallback, not a swerve.
+   One-line why: the notes surface is a documented env-riding seam that
+   covers spawn/resume/fork through the env construction herder already
+   owns, at zero new machinery — the shim transform stays as the grounded
+   fallback. Delivery is **tested per mode** (gate L7): fresh spawn, resume,
+   and fork each assert the herder doctrine block (including the silence
+   rule) present in the seat's first-turn context, and stock-bootstrap-only
+   is red. The initial task prompt rides herder's standard verified
+   spawn-prompt delivery, unchanged.
 
 ---
 
@@ -290,10 +375,11 @@ an `hcom <tool>` launcher") was the keep-custom decision's, and is superseded
 with it.
 
 The launch contract is now the flagship shape, specified in full in §2:
-capability-gate line, Pi-home env pin (with the placement-coupling and
-session-root constraints), exec into `hcom pi`, credential scoping in env
-construction (DR-5, retained), PATH floor, recorded vendor version, bind
-capture, doctrine carriage. Retained from this DR **unchanged in substance**
+capability-gate line, the global-bus-only decision (placement coupling;
+no Pi-home pin ships; session-root non-pin), exec into `hcom pi`,
+credential scoping in env construction (DR-5, retained), shim-first PATH
+chain, recorded vendor version, bind predicate + capture, doctrine
+carriage. Retained from this DR **unchanged in substance**
 and re-homed there: credential env scoping; the offline/telemetry launch-env
 deltas; recorded-vendor-version discipline (install-latest, recorded not
 pinned); launch refusal with cause+remedy when no Pi is resolvable or the
@@ -344,11 +430,18 @@ and the two-phase fenced retirement — attached to the deleted herder-owned
 delivery machinery and is superseded with it (round 11). hcom owns session
 binding on the native path; herder does not re-derive it.
 
-**Subagents.** Delivery receipts on the native path are extension-observed
-(hcom's extension), not model-acked, so a subagent cannot forge a delivery
-receipt. The residual risk is credential-shaped (a child inherits the
-provider key — inherent, demo-documented) and is inside the accepted
-model-tool boundary (DR-5, §9).
+**Subagents and receipt reachability — no forgery guarantee is claimed.**
+On the native path the receipt surfaces are ordinary CLI: the extension
+drains and acks with `hcom pi-read --ack --up-to`, and any model tool child
+in the seat holds the same ordinary hcom CLI (§9) — so in-seat code,
+subagents included, **can** move the unread cursor or otherwise mutate
+receipt state. That reachability is part of the accepted flagship shape
+(capability lanes are deleted; no flagship separates its hooks' CLI from
+the model's — parity memo table) and is registered with the item-10 delta
+(§12 item 10d), inside the cooperative same-UID trust model. The residual
+subagent risks are that reachability plus the credential-shaped one (a
+child inherits the provider key — inherent, demo-documented, the accepted
+model-tool boundary of DR-5).
 
 ## DR-5 — Multi-provider surface and least privilege
 
@@ -360,8 +453,10 @@ relaunches. Nothing guesses.
 **Spawn syntax.** `herder spawn --agent pi --provider <family> [--model <id>]`.
 
 - `--provider` is **required** (no default pending the owner ruling, §12
-  item 1). The provider table is family config, initially exactly the
-  demo-proven rows:
+  item 1): a missing, empty, or unknown provider at spawn is a **refusal
+  with cause+remedy** naming the supported set — never a guess, never a
+  fallthrough to ambient env. The provider table is family config,
+  initially exactly the demo-proven rows:
 
   | Provider family | Credential name routed | Demo evidence |
   |---|---|---|
@@ -416,6 +511,16 @@ them at any time, so no launch gate or drift-termination polices them
   pins it as a seat-scoped env delta — per-source, never rounded up to
   "closed". If none exists, the delta stands as ruled.
 
+**Resume and fork reconstruct scoping from registry facts — never ambient
+env.** The seat's provider (and model) are registry facts written at spawn
+(§13 B1 item 1). A resume or fork rebuilds the launch environment by reading
+the **registry row's** provider selection and filtering to that same single
+credential — the reconstruction path (lifecycle's argv/env rebuild) consumes
+herder-owned facts, not whatever the resuming shell's environment happens to
+carry. A registry row with no provider fact (pre-family rows cannot exist
+for pi; a corrupted row can) refuses the resume with cause+remedy rather
+than guessing (gate L3).
+
 **Cross-provider change = controlled relaunch** (settled). Retire the running
 seat and respawn/resume with a rebuilt environment for the new provider,
 through the standard herder paths. Herder's contract is only: never two
@@ -445,7 +550,10 @@ source labeled (grok DR-5, applied to Pi's surfaces).
   stable session identifier, and records fork lineage from the parent-session
   link — no SQLite, no scraping. (hcom's own `hcom transcript` also parses Pi
   JSONL faithfully — characterization — a useful cross-check, not the
-  adapter's substrate.)
+  adapter's substrate.) "Friendly case" describes the format, not the
+  integration: sesh's tool catalog is a closed wire enum, so the full
+  surface — wire amendment first, then shipper/store/index/surface deltas —
+  is enumerated in §13 B2.
 - **Live status:** roster facts (tool `pi`, `hooks_bound`, active-tool and
   listening state) are hcom's, surfaced as hcom's — labeled by source, never
   re-synthesized into herdr's native vocabulary. herdr-reconciled
@@ -511,8 +619,9 @@ probes whose surfaces it touches (§12 item 9b).
 | P7 | **open** | Per-invocation surface disabling credential-bearing file sources (DR-5 tightening). Build-unit probe, per source. |
 | A10 | **open** | File-source-vs-env credential resolution on a live seat — sizes the §12 item 9a delta per source. Build-unit probe riding P7, scratch stand-ins for owner-meaningful files. |
 | A11 | retired (round 11) | Per-seat cgroup scopes — the quiesce sweep and belt refusal they served are deleted. |
-| P8 | **new (round 11), open** | **Isolated-bus placement coupling**: with `HCOM_DIR` re-pointed (the only case where the §2 Pi-home pin fires), does the pinned env shape keep hcom's extension write location and Pi's load location lined up (`src/hooks/pi.rs:350-362` coupling)? Probe on the real spawn path; fix the working env shape before the build unit closes. The default-bus production path lines up by construction. |
-| P9 | **new (round 11), open** | **PATH floor**: the launched seat's `PATH` carries the hcom executable's directory (the native extension `spawn("hcom", ...)` — `src/pi_plugin/hcom.ts:39`), asserted on the environment the pane process actually receives. |
+| P8 | **new (round 11), narrowed** | **Global-layout placement coupling.** The team-bus question is **decided, not probed** (§2 item 2: global-bus only in v1; `--team` refuses; no env-only shape exists). P8 verifies the remaining claim on the real spawn path: on the global bus (`HCOM_DIR=$HOME/.hcom`), hcom's extension write location and Pi's load location line up (`src/hooks/pi.rs:350-362` coupling) and the extension actually loads — the by-construction argument, exercised once. |
+| P9 | **new (round 11), open** | **Shim-first PATH chain as the interception invariant.** The launched seat's `PATH` resolves `hcom` to **herder's shim first** (`spawncmd/spawn.go:826-836`), with the real hcom resolvable **by the shim**, asserted on the environment the pane process actually receives AND on the extension's `spawn("hcom", ...)` resolution (`src/pi_plugin/hcom.ts:39`). A bare "real hcom dir on PATH" is not sufficient and would bypass herder's only interception point on the seat's hcom traffic (§2 items 5, 8). |
+| P10 | **new (round 11), open** | **Notes surface reaches the Pi bootstrap.** Does hcom's Pi launch path render `notes`/`HCOM_NOTES` into the bootstrap the extension injects (§2 item 8)? The codex launcher passes empty notes (upstream `src/launcher.rs:2029-2058`), so consumption must be proven per-tool. Verify on spawn, resume, and fork, with size/placement recorded. Falsified → the shim `pi-start` transform fallback, as a reviewed delta (§2 item 8). |
 
 ## 11. Test and gate plan (contracts the build units must ship)
 
@@ -525,17 +634,25 @@ flagship families' launch-contract coverage plus the retained adapter:
   `IsHcomCapable` into the exec-into-hcom path; spawn/resume/fork produce the
   `hcom pi` / `hcom r|f` argv shapes; the live contract suite tier pins the
   installed hcom's `pi` launch line (any hcom upgrade re-opens the pin).
-- **L2 — env pin + placement coupling.** The Pi-home pin lands beside the
-  existing pins and fires only on isolated `HCOM_DIR`; P8's characterized env
-  shape is asserted; `PI_CODING_AGENT_SESSION_DIR` is not set on any path.
+- **L2 — bus-layout refusal + placement.** `herder spawn --agent pi --team
+  <name>` refuses with the cause+remedy error naming the global-bus-only
+  limitation (§2 item 2); no `PI_CODING_AGENT_DIR` pin exists on any path
+  (asserted absent); P8's global-layout coupling is exercised on the real
+  spawn path; `PI_CODING_AGENT_SESSION_DIR` is not set on any path.
 - **L3 — credential scoping on the launch path** (re-scoped T17/T21 core,
   retained): exactly one provider credential by name in the environment the
   pane process actually receives (fresh-pane truth); `PI_OFFLINE=1`/
-  `PI_TELEMETRY=0` present; unknown `--provider` refused naming the set;
-  cross-provider credential never present; no credential value in argv or in
-  anything herder writes; no launch refusal on owner-file contents and no
-  drift-termination path exists (asserted absent — seats must survive
-  ordinary owner `/login` and custom-provider state).
+  `PI_TELEMETRY=0` present; missing/empty/unknown `--provider` refused
+  naming the set; cross-provider credential never present; no credential
+  value in argv or in anything herder writes; no launch refusal on
+  owner-file contents and no drift-termination path exists (asserted
+  absent — seats must survive ordinary owner `/login` and custom-provider
+  state). **Resume/fork branch:** the reconstruction path reads provider
+  (and model) from the **registry row** and rebuilds the same single
+  credential — asserted with a deliberately polluted ambient environment
+  (foreign provider credential present in the resuming shell: it must not
+  reach the seat); a row missing the provider fact refuses with
+  cause+remedy (DR-5).
 - **L4 — recorded vendor version** (re-scoped T19, retained): launch/bind
   records the observed version in the registry row; **no hash gate and no
   supported-version refusal exist** (asserted absent — the ruling's shape is
@@ -545,16 +662,28 @@ flagship families' launch-contract coverage plus the retained adapter:
   credential/auth-file arguments) are refused with targeted errors, finalized
   against the `hcom pi` surface of the vendor version current at the build
   unit; new vendor flags are not auto-refused (§12 item 9b drift honesty).
-- **L6 — bind capture + lifecycle.** Spawn bind capture from hcom's roster
-  (tool `pi`, hooks_bound, session UUID); no-bind fails the spawn legibly;
-  resume reclaims name + session; fork records lineage; cull row-stops via
-  the standard path (re-scoped T22–T24 essences through the standard family
-  machinery, not Pi-specific code).
+- **L6 — bind capture + lifecycle, full-field.** The pi bind predicate (§2
+  item 7) is asserted on its **fields**: bound requires `tool == "pi"` AND
+  `hooks_bound == true` AND a nonempty session UUID on the pane/process-
+  correlated roster row — a pane-correlated **name alone must not green a
+  pi bind** (asserted as a negative case: name present, hook bind absent →
+  not bound); transcript path captured with them; the captured facts land
+  in the v2 registry row. Bind-timeout hard-fails with cleanup for **both
+  prompted and promptless** spawns (the grok cleanup shape, asserted on
+  both paths). Resume reclaims name + session; fork records lineage; cull
+  row-stops via the standard path (re-scoped T22–T24 essences through the
+  standard family machinery, not Pi-specific code).
+- **L7 — doctrine carriage, per mode.** Fresh spawn, resume, and fork each
+  deliver the herder doctrine block (§2 item 8 content, the silence rule
+  included) into the seat's first-turn context; a seat that received only
+  hcom's stock bootstrap is red. Rides P10's verified seam (or the reviewed
+  fallback).
 - **T27 — observer/sesh adapter (retained unchanged).** Header index (UUID,
   cwd, parent link) against recorded session fixtures, including a branched
   session; herdr `live_status` stays `unknown` under mutation; roster-derived
   status is labeled by source.
-- **PATH floor** (P9) asserted on the launched pane's environment.
+- **Shim-first PATH chain** (P9) asserted on the launched pane's environment
+  and the extension's `hcom` resolution.
 
 **Live smoke (isolated, gated, owner spend per §12 item 2):** one provider
 end-to-end through the real spawn path — spawn → roster bind → doctrine +
@@ -672,8 +801,14 @@ at activation (§13).
       driver lease, no capability lanes.** The authority shape is the
       flagship shape: hcom owns the process binding; the extension holds the
       ordinary hcom CLI; no flagship has any of these properties either
-      (parity memo table, bottom rows). Second-process-per-seat is prevented
-      operationally by herder being the sole spawner.
+      (parity memo table, bottom rows). That ordinary-CLI reachability
+      **includes the receipt surfaces**: any model tool child in the seat
+      can invoke receipt-mutating verbs (`hcom pi-read --ack --up-to` among
+      them) and move the unread cursor — no forgery-resistance claim exists
+      anywhere in this design (DR-4), exactly as none exists for claude or
+      codex seats, inside the cooperative same-UID trust model (§9).
+      Second-process-per-seat is prevented operationally by herder being
+      the sole spawner.
     What heals the weakened window, and the blast radius: the stranded
     request is a liveness stall — the orchestration layer notices silence and
     re-prompts (the fleet's production recovery for claude/codex, which have
@@ -697,34 +832,84 @@ at activation (§13).
 
 The staged five-unit program (U1–U5 + activation) attached to the deleted
 machinery and is retired with it (round 11; the unit table is preserved in
-git history at the round-10 revision). What remains is deliberately small —
-the audit's costing: a few launch-contract lines plus the observer adapter.
+git history at the round-10 revision). What remains is small relative to the
+deleted build, but honestly larger than the audit's "a few launch-contract
+lines" headline: the feasibility enumeration below names the full additive
+surface — spawn/registry/sidecar fields, the bind predicate and its cleanup
+path, the doctrine seam, and a sesh wire amendment — each a bounded delta to
+an existing mechanism, none of it new machinery.
 
-**B1 — launch contract.** The complete implementation surface:
+**B1 — launch contract.** The complete implementation surface, additive
+territory enumerated against the repository as it stands:
 
-1. the capability-gate line: `pi` added to `IsHcomCapable`
-   (`tools/herder/internal/launchcmd/launch.go:19-26`);
-2. the Pi-home env pin: `PI_CODING_AGENT_DIR` → Pi's default agent dir via
-   `setEnvDefault` in `PinConfigDir` (`launch.go:28-48`), under the P8
-   placement-coupling characterization;
-3. launch wiring: the existing exec-into-`hcom pi` path reused
-   (`launch.go:203-216`) with the pi env-construction branch (exactly one
-   named provider credential — DR-5; `PI_OFFLINE=1`/`PI_TELEMETRY=0`; PATH
-   floor carrying hcom's directory — P9), recorded vendor version at
-   launch/bind, passthrough refusals (L5), and doctrine/prompt carriage over
-   the native bootstrap seam (§2 item 8);
-4. bind capture: roster-derived (tool `pi`, hooks_bound, session UUID,
-   transcript path) into the registry row via the standard sidecar path;
-   no-bind fails legibly;
-5. tests: L1–L6 (§11) + probes P8/P9 discharged and recorded + A6/P5/P6/P7/
-   A10 answered where the unit's surfaces expose them + the isolated live
-   smoke (§11) under owner spend (§12 item 2).
+1. **Registry + spawn facts (additive fields).** The v2 record
+   (`registry/v2/registry.go:41-60`) carries no provider, model, or
+   vendor-version slot; spawn's option parser has no `--provider` field and
+   refuses `--model` outside claude/codex/grok (`spawn.go:495-504`). Add:
+   `--provider` (required for pi; missing/empty/unknown refuses with
+   cause+remedy — DR-5) and pi to the `--model` allowlist; seat-record
+   fields `provider`, `model`, and the vendor-version observation (current +
+   previous, timestamped — §2 item 6), written at spawn/bind and re-observed
+   on every launch.
+2. **Bus-layout refusal (replaces the pin).** `--team` with `--agent pi`
+   refuses with the §2 item 2 cause+remedy; **no** `PI_CODING_AGENT_DIR`
+   pin is added to `PinConfigDir` (`launch.go:28-48`) — the gate comment's
+   pin obligation is discharged by the refusal (L2).
+3. **Capability gate + launch wiring.** `pi` added to `IsHcomCapable`
+   (`tools/herder/internal/launchcmd/launch.go:19-26`); the existing
+   exec-into-`hcom pi` path reused (`launch.go:192-216`) with the pi
+   env-construction branch: exactly one named provider credential (DR-5),
+   `PI_OFFLINE=1`/`PI_TELEMETRY=0`, `HCOM_NOTES` doctrine (P10; §2 item 8),
+   shim-first PATH chain (P9); passthrough refusals (L5); the vendor-version
+   observation (§2 item 6: PATH-resolve → `EvalSymlinks` → owning
+   `package.json` read, never executing Pi).
+4. **Bind capture (additive roster/sidecar fields + predicate + cleanup).**
+   Extend spawn's roster poll type (`spawn.go:155-163`) and the sidecar row
+   (`sidecarcmd/sidecar.go:25-40`) with the pi bind fields (`tool`,
+   `hooks_bound`, session UUID, transcript path — `hooks_bound` and
+   transcript are new to both); wire the §2 item 7 bind predicate into the
+   bind wait (`spawn.go:1266-1332`) **and** into a promptless-spawn bind
+   check (`spawn.go:983-1009` currently awaits none); add the pi hard
+   bind-timeout failure/cleanup mirroring the grok shape
+   (`spawn.go:1335-1344`); persist the captured facts to the registry row.
+5. **Lifecycle reconstruction.** Resume/fork rebuild argv and environment
+   from **registry facts** — provider, model, vendor-version re-observation —
+   never from ambient env (DR-5; L3 resume/fork branch); a row missing the
+   provider fact refuses with cause+remedy.
+6. **Tests.** L1–L7 (§11) + probes P8/P9/P10 discharged and recorded +
+   A6/P5/P6/P7/A10 answered where the unit's surfaces expose them + the
+   isolated live smoke (§11) under owner spend (§12 item 2).
 
-**B2 — observer/sesh adapter** (retained scope, unchanged by the ruling):
-the session-JSONL adapter (header index, branch-aware rendering), sesh
-identifier/lineage wiring, source-labeled status surfacing, honest-unknown
-reconciliation. Gate: T27 against recorded fixtures, including a branched
-session; `unknown` preserved under mutation.
+**B2 — observer/sesh adapter.** The retained DR-6 scope, with its real
+integration surface named honestly — sesh's contract is a **closed wire
+enum** (`tools/sesh/internal/wire/wire.go`: claude/codex/grok only; "adding
+one requires a wire amendment before code lands"), so this is not a
+drop-in adapter:
+
+1. **Wire-spec amendment first** — add the pi tool to the frozen
+   shipper/store contract before any code, store-before-clients rollout
+   order; the grok adapter's amendment (wire Amendment 3) is the template.
+2. **Shipper**: pi session-root discovery (the default agent dir's session
+   tree) + the exclusion boundary (what is deliberately not shipped) stated
+   in the amendment.
+3. **Store admission** of the pi tool kind (store/index/surface each reject
+   or omit unknown tools today).
+4. **Index parsing of the pi entry shape** — header id, entry
+   id/`parentId`, role nested under `message` (demo report "Session
+   compatibility") — generic parsing fails on it; a pi-specific parser with
+   committed fixtures (identity-policy compliant), including a branched
+   session.
+5. **Surface rendering**: branch-aware active-branch view with labeled
+   branch points, or the honest lesser claim (recency view with an explicit
+   branched-session marker) — never silent flattening; the claim shipped is
+   the claim tested.
+6. **Gates**: T27 against the fixtures; wire compatibility gates green;
+   `unknown` preserved under mutation.
+
+Territory note: B2 lands in the **sesh lane's territory** (wire spec,
+shipper, store, index, surface are that program's fenced surfaces) and is
+coordinated with the sesh lane's orchestrator at filing — it is enumerated
+here so the build unit can be cut, not to claim the territory.
 
 B1 and B2 are independent and may land in either order. Activation follows
 the house pattern: the family is opt-in until a real end-to-end
