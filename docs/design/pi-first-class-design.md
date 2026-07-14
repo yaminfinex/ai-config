@@ -12,8 +12,11 @@ target-scoped external lane, local-id namespace, auth-precedence register
 demotion, and a consistency sweep; round 7: gated child record, A10
 cross-provider exploitability probe, renew pinned token-lane; round 8: the
 external lane is operator-capability-bearing — location checks demoted to
-defense-in-depth after the brokered-launch counterexample), pending
-re-certification on the amendment diff
+defense-in-depth after the brokered-launch counterexample; round 9: explicit
+stdin presentation — herder never auto-acquires operator authority from
+caller-controlled context, and the same-UID concession is stated as
+load-bearing with owner sign-off), pending re-certification on the amendment
+diff
 Subject: `@earendil-works/pi-coding-agent` 0.80.6 against herder + hcom 0.7.23
 
 Evidence base (cited throughout by path + section):
@@ -334,55 +337,71 @@ lane(s) accept it:
   process-launch broker (`systemd-run --user herder pi bus cull <own seat>`
   lands the op in a fresh transient-unit cgroup, passing any
   membership check without a single privileged write). Authority therefore
-  rides possession of the capability, which the target seat's model **lacks by
-  default**: the credential lives outside every seat's environment, managed
-  home, and seat state, and a managed Pi seat cannot even resolve its location
-  (its `HOME` is the managed home — DR-3), while operator shells and
-  live-home orchestrator seats resolve it transparently through the herder
-  CLI. The boundary statement, honest: the supported surface refuses the
-  seat's own model **by default**; it does not defend against same-UID
-  **theft** of operator material (reading the credential file by absolute
-  path, exfiltrating it via a broker) — that is the house-wide conceded
-  out-of-band class (Threat model below). **Defense in depth retained:** the
-  per-seat cgroup, the gated record-before-exec, and the cgroup-empty quiesce
-  sweep all stay (A11) — as process accounting and straggler-kill correctness,
-  and as a belt: an op whose own cgroup **is** the target seat's cgroup is
-  refused even with a valid capability (there is no legitimate
-  operate-your-own-seat-from-inside case) — but none of it is the
-  authorization boundary. The lane stays **target-scoped in intent**: the
-  fenced threat is the target seat's own model driving its own control plane.
-  A herder-spawned orchestrator resolves the capability through its real home
-  and operates every seat but its own refused-by-cgroup one — the fleet's
-  operating norm; a Pi seat, whose home is managed, cannot operate Pi
-  lifecycles unless the owner explicitly provisions the credential to it (an
-  owner act, recorded). A target model *asking* a sibling to operate its seat
-  rides that same conceded in-band path. `activate` is **never** in this
-  lane: activation is always seat-token-authenticated and always
-  extension-side, because only the extension can truthfully publish the live
-  pid/session runtime facts — a capability holder outside the process cannot,
-  so a capability-bearing external activate still does not exist.
+  rides possession of the capability — **presented explicitly by the caller,
+  never acquired by herder**. The composition rule that makes this hold: any
+  acquisition herder automates from caller-controlled context, a brokered
+  command can cause (a broker inherits or trivially sets `HOME`, so an
+  auto-resolving herder would fetch the credential *for* the broker). Herder
+  therefore **never locates or reads the operator credential itself**; the
+  caller pipes it to the op's stdin (`herder pi bus cull <seat>
+  < ~/.config/herder/pi-operator` from a human shell; an orchestrator reads
+  its own config and pipes — normal live-`HOME` agent behavior). A brokered
+  bare command arrives with **empty stdin** and is refused. The boundary
+  statement, honest and exact: the supported surface refuses **naive/direct
+  self-operation** — the own-cgroup belt, the empty-stdin refusal, and no
+  auto-acquisition anywhere in herder — while a model that deliberately
+  *composes* broker plus credential-path redirect is executing **deliberate
+  credential acquisition**, the same conceded cooperative same-UID class as
+  absolute-path theft and journal forgery (fleet-wide, predating this family;
+  the grok control plane ships under it — Threat model below). The claim is
+  precisely: **no herder surface auto-acquires operator authority from
+  caller-controlled context** — not that brokered launches are refused as a
+  class. **Defense in depth retained:** the per-seat cgroup, the gated
+  record-before-exec, and the cgroup-empty quiesce sweep all stay (A11) — as
+  process accounting and straggler-kill correctness, and as a belt: an op
+  whose own cgroup **is** the target seat's cgroup is refused even with a
+  valid capability (there is no legitimate operate-your-own-seat-from-inside
+  case) — but none of it is the authorization boundary. The lane stays
+  **target-scoped in intent**: the fenced threat is the target seat's own
+  model *naively* driving its own control plane. A herder-spawned
+  orchestrator pipes the capability from its own live-home config and
+  operates every seat but its own refused-by-cgroup one — the fleet's
+  operating norm; a managed Pi seat's doctrine and default context carry no
+  capability and no path to one short of the conceded acquisition class. A
+  target model *asking* a sibling to operate its seat rides that same
+  conceded in-band path. `activate` is **never** in this lane: activation is
+  always seat-token-authenticated and always extension-side, because only the
+  extension can truthfully publish the live pid/session runtime facts — a
+  capability holder outside the process cannot, so a capability-bearing
+  external activate still does not exist.
 
 **Operator capability lifecycle — specified, not left to U1:**
 
 - **Mint (human-shell bootstrap).** Minted once at family provisioning
   (`herder pi operator init`, a step of the same owner-run, non-seat setup
-  that installs the pinned Pi). The mint writes the hash into family state
-  and the plaintext credential to a 0600 file under the **operator's real
-  configuration home** (`~/.config/herder/pi-operator`, resolved through the
-  invoking user's real `HOME`). Minting refuses from inside any managed seat
-  (managed-home detection + seat-cgroup check); re-bootstrap after loss is
-  the same owner-run command.
-- **Resolution.** `herder` resolves the credential via the caller's `HOME` at
-  op time and presents it over stdin; it never lands in argv, env, logs, or
-  seat state. A managed Pi seat's `HOME` is its managed home, which never
-  contains the credential — resolution fails closed with a cause+remedy error
-  naming the operator-context requirement.
-- **Rotation.** `herder pi operator rotate` (same non-seat refusals as mint):
-  new material minted, family-state hash swapped atomically under the family
-  lock; old material is invalid from that instant. Rotation cadence is owner
-  policy; loss or suspected exposure → rotate, nothing else to clean up.
-- **Verification.** Ops verify capability-hash match under the family lock
-  before touching any seat, then proceed under the seat lock as before.
+  that installs the pinned Pi), **interactively** — the command prompts for
+  confirmation on a terminal, so a brokered non-interactive invocation fails
+  on the missing interaction, not on environment heuristics. The mint writes
+  the hash into family state and the plaintext credential to a 0600 file the
+  **operator chooses and owns** (conventionally
+  `~/.config/herder/pi-operator`); herder records only the hash, never the
+  location. Re-bootstrap after loss is the same owner-run command. The
+  managed-home and seat-cgroup refusals remain as **belt**, relabeled as
+  such — they are not the boundary.
+- **Presentation — never resolution.** Herder has **no code path that locates
+  or reads the operator credential**. Every external-lane op takes the
+  capability from **its own stdin, supplied by the caller**; empty or invalid
+  stdin refuses with a cause+remedy error naming the explicit-presentation
+  requirement. The material never lands in argv, env, logs, or seat state.
+- **Rotation.** `herder pi operator rotate` requires the **old capability on
+  stdin** (plus the same interactive confirmation as mint): new material is
+  minted, the family-state hash swaps atomically under the family lock, and
+  old material is invalid from that instant. A brokered rotate fails on empty
+  stdin. Rotation cadence is owner policy; loss or suspected exposure →
+  rotate, nothing else to clean up.
+- **Verification.** Ops verify the presented capability against the
+  family-state hash under the family lock before touching any seat, then
+  proceed under the seat lock as before.
 
 Token lifecycle, every branch specified:
 
@@ -505,11 +524,12 @@ restart — runs the same protocol:
    (T34f races this, including the exec-not-yet-activated branch).
 
 Prompt-induced tool code that knows every environment variable in the seat can
-satisfy neither lane **for its own seat**: it has no seat token, it holds no
-operator capability by default (its managed `HOME` cannot even resolve the
-credential's location), and the direct in-cgroup path is belt-refused
-regardless — while brokered escape from the cgroup buys nothing without the
-capability (T34 tests each branch above). The deliberately model-reachable surfaces
+satisfy neither lane **naively, for its own seat**: it has no seat token, no
+operator capability arrives on its ops' stdin by default (herder never
+auto-acquires one on any code path), and the direct in-cgroup path is
+belt-refused regardless. Deliberately composing a broker with a
+credential-path redirect is the conceded deliberate-acquisition class, not a
+defeated boundary (T34 tests each branch above). The deliberately model-reachable surfaces
 remain exactly `herder pi send` and read-only `status` (DR-1). This is an in-band
 boundary within the house's cooperative same-UID trust model — see "Threat model"
 below for what it does and does not claim.
@@ -1212,20 +1232,24 @@ only until consumption before any model turn, absent for the rest of the
 process's life), so **this seat's model can never be the reader**, and the
 residual reader is hostile same-UID code from outside the seat during that
 pre-model window; and the external lane's **operator capability**, whose
-boundary is possession, stated exactly: the supported surface refuses the
-target seat's own model **by default** — no capability in any seat's env,
-home, or state; a managed Pi seat cannot resolve its location; the direct
-in-cgroup path is belt-refused; and a brokered launch (`systemd-run --user`
-or any same-UID process-launch broker) escapes the cgroup but arrives
-capability-less and is refused. What it does **not** defend against is
-same-UID **theft** of operator material — reading the credential file by
-absolute path, or exfiltrating it through a broker — which is the same
-house-wide out-of-band class as journal forgery, conceded once, here too.
-Sanctioned use is the fleet's norm: operator shells and live-home
-orchestrator seats resolve the capability transparently and operate other
-agents' lifecycles through the herder CLI; a target model persuading a
-sibling to operate its lifecycle rides that same conceded path. All of it is
-exactly as strong as the cooperative model it lives in.
+boundary is explicit possession, stated exactly: the supported surface refuses
+**naive/direct self-operation** — no capability in any seat's env, home, or
+state; **no herder surface auto-acquires operator authority from
+caller-controlled context** (the caller pipes the credential to stdin, or the
+op refuses on empty stdin); and the direct in-cgroup path is belt-refused.
+What it does **not** claim: that brokered launches are refused as a class. A
+model that deliberately composes a broker with a credential-path redirect —
+or reads the credential file by absolute path, or exfiltrates it — is
+executing **deliberate credential acquisition**, the same house-wide
+cooperative same-UID out-of-band class as journal forgery, conceded once,
+fleet-wide, predating this family (the grok control plane ships under the
+same model), and made **load-bearing for lifecycle authority here** (owner
+sign-off covers this explicitly — §12 item 8). Sanctioned use is the fleet's
+norm: operator shells and live-home orchestrator seats pipe the capability
+from their own config and operate other agents' lifecycles through the herder
+CLI; a target model persuading a sibling to operate its lifecycle rides that
+same conceded path. All of it is exactly as strong as the cooperative model
+it lives in.
 
 ---
 
@@ -1447,27 +1471,32 @@ Inbound driver, fencing, and bounds (the fix-round additions):
   (activate without a valid seat token fails in every state) pins that;
   (g) external, capability-authorized cull proceeds with a live but
   unresponsive extension (no seat token, no extension cooperation) via the
-  `retiring` fence; (h) **operator-capability external
-  lane**, branches keyed to capability presence/absence: with a **valid
-  capability** — an operator shell is allowed; a live-home orchestrator seat
-  operating a *different* seat is allowed (the fleet's operating norm, pinned
-  as a positive test, not an accident); a fresh reserve with no seat process
-  yet is allowed; and a caller whose own cgroup **is** the target seat's
-  cgroup is refused regardless (the defense-in-depth belt — no
-  operate-your-own-seat-from-inside case exists). With **no capability** —
-  every external op is refused, including the **brokered-launch negative**:
-  target tool code launching the op through `systemd-run --user` (or any
-  same-UID process-launch broker), landing in a fresh transient-unit cgroup
-  with ancestry clean of the target pid, is **refused for lacking the
-  capability** — the branch location checks provably cannot carry. A managed
-  Pi seat invoking the lane fails closed at credential resolution (managed
-  `HOME`), cause+remedy error pinned. The pre-activation window stays
-  covered: the gated child's record and cgroup membership exist from its
-  first instruction, so there is no live-before-record instant to exploit.
-  Capability lifecycle branches: mint and rotate refuse from inside any
-  managed seat; rotation invalidates old material immediately (an op
-  presenting pre-rotation material is refused); the credential provably never
-  appears in argv, env, logs, or seat state. (i) **renew is token-lane**: a tokenless or wrong-token
+  `retiring` fence; (h) **operator-capability external lane — testing the
+  real claims**: **no-auto-resolution pins** — no herder code path locates or
+  reads the operator credential store (pinned statically/by mutation: adding
+  an auto-resolver fails the test), and every external op takes the
+  capability from caller-supplied stdin only. With **valid stdin
+  capability** — an operator shell piping its credential is allowed; a
+  live-home orchestrator seat piping from its own config against a
+  *different* seat is allowed (the fleet's operating norm, pinned as a
+  positive test); a fresh reserve with no seat process yet is allowed; and a
+  caller whose own cgroup **is** the target seat's cgroup is refused
+  regardless (the defense-in-depth belt — no
+  operate-your-own-seat-from-inside case exists). With **empty stdin** — in a
+  **real user-manager environment**: brokered bare `cull`, `rearm`, and
+  `rotate` via `systemd-run --user` (inherited or `--setenv` real `HOME`,
+  fresh transient-unit cgroup, clean ancestry) are each **refused on empty
+  stdin**, with the cause+remedy error naming explicit presentation — no
+  branch asserts brokered launches are refused as a class, and no
+  "arrives capability-less" claim exists to test. The pre-activation window
+  stays covered: the gated child's record and cgroup membership exist from
+  its first instruction, so there is no live-before-record instant to
+  exploit. Capability lifecycle branches: mint and rotate require interactive
+  confirmation (brokered non-interactive invocation fails on the missing
+  interaction) with the managed-home/cgroup refusals pinned as belt; rotate
+  additionally requires the old capability on stdin; rotation invalidates old
+  material immediately (an op presenting pre-rotation material is refused);
+  the credential provably never appears in argv, env, logs, or seat state. (i) **renew is token-lane**: a tokenless or wrong-token
   `renew` is refused and advances nothing — a same-UID process cannot keep a
   dead driver's lease green — and a valid-token renew advances the lease only
   when its reported state passes journal validation under the lock. `herder pi
@@ -1523,6 +1552,14 @@ repeated per activated provider.
    conditions — store proven globally ignored while a managed env credential
    exists, or cross-provider selection hard-blocked; any weaker probe result
    (same-provider precedence included) leaves it standing.
+8. **The same-UID concession, made load-bearing for lifecycle authority.** The
+   operator capability's boundary (DR-2, Threat model) refuses naive/direct
+   self-operation only; deliberate credential acquisition — broker plus
+   credential-path redirect, absolute-path reads, exfiltration — is inside the
+   fleet-wide cooperative same-UID concession that every family (grok's
+   control plane included) already ships under. This design makes that
+   concession carry **lifecycle authority** for Pi seats; owner sign-off on
+   this design explicitly covers that sentence.
 
 ## 13. Staging (mergeable units, territory fences, gates)
 
