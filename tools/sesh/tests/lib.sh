@@ -41,15 +41,19 @@ step() { echo "--- $*"; }
 # Toolchain preflight: go.mod's `go` directive is the AUTHORITATIVE pin, and
 # the harness enforces it instead of trusting the caller's shell. Ambient
 # GOROOT is cleared above, GOTOOLCHAIN=local is forced (the gate must not
-# silently download a different toolchain), and the pinned toolchain is
-# resolved deterministically: the mise install of the exact pin, else an
-# exact-match go already on PATH. Anything else fails loudly with the fix —
-# never a silent run on a different toolchain, never a confusing compile
-# error.
+# silently download a different toolchain), a `toolchain` directive may only
+# restate the pin (a differing one is a conflict, not a second authority),
+# and the pinned toolchain is resolved deterministically: the mise install of
+# the exact pin, else an exact-match go already on PATH. Anything else fails
+# loudly through fail() with the fix — never a silent run on a different
+# toolchain, never a mute exit, never a confusing compile error.
 preflight() {
-  local need root have dep
-  need=$(awk '/^go /{print $2; exit}' "$SESH_MODULE_DIR/go.mod")
+  local need tdecl root have dep
+  need=$(awk '$1 == "go" {print $2; exit}' "$SESH_MODULE_DIR/go.mod")
   [ -n "$need" ] || fail "cannot read the toolchain pin ('go X.Y.Z') from $SESH_MODULE_DIR/go.mod"
+  tdecl=$(awk '$1 == "toolchain" {print $2; exit}' "$SESH_MODULE_DIR/go.mod")
+  [ -z "$tdecl" ] || [ "$tdecl" = "go$need" ] ||
+    fail "go.mod declares toolchain ${tdecl} but pins go ${need}; the go directive is the authority — align or drop the toolchain directive"
   root=""
   if command -v mise >/dev/null 2>&1; then
     root=$(mise where "go@$need" 2>/dev/null) || root=""
@@ -61,7 +65,9 @@ preflight() {
     export PATH="$root/bin:$PATH"
   fi
   if command -v go >/dev/null 2>&1; then
-    have=$(go env GOVERSION); have=${have#go}
+    have=$(go env GOVERSION 2>/dev/null) || have=""
+    have=${have#go}
+    [ -n "$have" ] || have="unreadable ('go env GOVERSION' failed)"
   else
     have="none (no 'go' on PATH)"
   fi
