@@ -139,9 +139,14 @@ ok "store serves VERSION/install.sh/assets from the published channel"
 
 step "one-curl onboarding: fresh node, no repo, no toolchain (stubbed systemctl)"
 # Republish the channel with a REAL linux binary so the installed node runs.
+# It must be the CLIENT build (./cmd/sesh) exactly as release.sh publishes:
+# the battery's $BIN/sesh is the full store build, whose updater refuses —
+# correctly — to converge to client artifacts.
+(cd "$SESH_MODULE_DIR" && go build -o "$WORK/client-artifact" ./cmd/sesh) ||
+  fail "client artifact build failed"
 rm -rf "$STORE_DIR/releases"
 mkdir -p "$STORE_DIR/releases/v99.1.1"
-cp "$BIN/sesh" "$STORE_DIR/releases/v99.1.1/sesh-linux-amd64"
+cp "$WORK/client-artifact" "$STORE_DIR/releases/v99.1.1/sesh-linux-amd64"
 (cd "$STORE_DIR/releases/v99.1.1" && sha256sum sesh-linux-amd64 >SHA256SUMS)
 printf 'v99.1.1\n' >"$STORE_DIR/releases/latest"
 
@@ -155,7 +160,7 @@ HOME="$HOME_DIR" PATH="$STUB_BIN:$PATH" sh -c "curl -fsSL '$BASE/install.sh' | s
   >"$WORK/onboard.out" 2>&1 || fail "one-curl onboarding failed: $(cat "$WORK/onboard.out")"
 INSTALLED="$HOME_DIR/.local/bin/sesh"
 [ -x "$INSTALLED" ] || fail "installer did not place the binary"
-cmp -s "$INSTALLED" "$BIN/sesh" || fail "installed binary differs from the published artifact"
+cmp -s "$INSTALLED" "$WORK/client-artifact" || fail "installed binary differs from the published artifact"
 DROPIN="$HOME_DIR/.config/systemd/user/sesh-ship.service.d/10-local.conf"
 grep -q "SESH_STORE_URL=$BASE" "$DROPIN" || fail "onboarding drop-in lacks the fetched base URL"
 grep -q "sesh-setup: sha256=" "$DROPIN" || fail "onboarding drop-in lacks the provenance digest"

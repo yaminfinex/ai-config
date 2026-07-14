@@ -7,8 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"sesh/internal/setup"
 	"sesh/internal/ship"
@@ -61,6 +64,70 @@ func TestStoreStubsNameTheStoreArtifact(t *testing.T) {
 		if strings.Contains(err.Error(), "\n") {
 			t.Errorf("client %v error is not one line: %q", args, err)
 		}
+	}
+}
+
+// TestUpdateFailsClosedOnStoreBuild pins the store-side updater contract:
+// the release channel serves only fleet client artifacts, so on the store
+// build the mutating update path must refuse BEFORE any download — zero
+// requests reach the channel — with the line naming `just deploy-store`.
+// --check stays a read-only skew probe and must still reach the channel.
+func TestUpdateFailsClosedOnStoreBuild(t *testing.T) {
+	// HOME is pinned off the real machine config so the updater sees a
+	// never-installed node, not this host's live service pin.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("SESH_STORE_URL", "")
+	var hits atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	// Any non-empty store command set marks the root as the store build,
+	// exactly how cmd/sesh-store assembles it.
+	storeMarker := func() *cobra.Command { return &cobra.Command{Use: "serve"} }
+
+	root := newRoot(storeMarker())
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"update", "--store-url", server.URL})
+	err := root.Execute()
+	if err == nil || ExitCode(err) != 1 {
+		t.Fatalf("store-build update: err=%v exit=%d, want refusal with exit 1", err, ExitCode(err))
+	}
+	if !strings.Contains(out.String(), "deploy-store") {
+		t.Fatalf("store-build update refusal does not name deploy-store:\n%s", out.String())
+	}
+	if got := hits.Load(); got != 0 {
+		t.Fatalf("store-build update touched the channel %d times before refusing, want 0", got)
+	}
+
+	// --check is read-only and stays allowed: it must reach the channel.
+	root = newRoot(storeMarker())
+	out.Reset()
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"update", "--check", "--store-url", server.URL})
+	_ = root.Execute()
+	if got := hits.Load(); got == 0 {
+		t.Fatalf("store-build update --check never queried the channel; --check must stay a live skew probe\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "refusing on the store build") {
+		t.Fatalf("--check hit the store-build refusal:\n%s", out.String())
+	}
+
+	// The client build keeps the full mutating path (it fails later here —
+	// 404 channel — but must get past the store guard and onto the wire).
+	hits.Store(0)
+	root = newRoot()
+	out.Reset()
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"update", "--store-url", server.URL})
+	_ = root.Execute()
+	if got := hits.Load(); got == 0 {
+		t.Fatal("client-build update never reached the channel; guard is over-broad")
 	}
 }
 

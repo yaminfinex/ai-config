@@ -233,10 +233,12 @@ generation never downgrade; an older binary against newer state refuses
 cleanly (the README's "Field failure signature") instead of touching data.
 The **support window is current + previous release**: one-command
 `sesh update` keeps the fleet within one release of latest, and anything
-older gets upgraded, not accommodated. **Never run `sesh update` on the
-store host itself**: the channel serves the slim client artifacts, so an
-update there would replace the full store binary with a client that cannot
-serve (recovery: `just deploy-store`, or the retained `sesh.prev`). The
+older gets upgraded, not accommodated. The store binary itself is NOT
+updated this way: the channel serves the slim client artifacts, so the
+store build's `sesh update` fails closed before any download (one line
+naming `just deploy-store`; `update --check` stays available as a read-only
+skew probe). Belt-and-braces if that guard ever regresses: `sesh.prev` is
+retained on the host and `just deploy-store` restores the full build. The
 store converges by `just deploy-store` only.
 
 Per-node version visibility (the User-Agent census): each shipper

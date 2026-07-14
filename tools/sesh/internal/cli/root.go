@@ -38,7 +38,8 @@ func newRoot(storeCommands ...*cobra.Command) *cobra.Command {
 		Short:        "sesh mirrors Claude Code and Codex CLI session transcripts to a central store",
 		SilenceUsage: true,
 	}
-	if len(storeCommands) == 0 {
+	storeBuild := len(storeCommands) > 0
+	if !storeBuild {
 		storeCommands = storeStubs()
 	}
 	root.AddCommand(
@@ -53,7 +54,7 @@ func newRoot(storeCommands ...*cobra.Command) *cobra.Command {
 		newShip(),
 		newStatus(),
 		newSetup(),
-		newUpdate(),
+		newUpdate(storeBuild),
 	)
 	root.AddCommand(storeCommands...)
 	return root

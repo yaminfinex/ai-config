@@ -100,23 +100,42 @@ checksum, or version-shape change. The version stamp
 builds `./cmd/sesh-store` and installs it on the store host under the same
 `/usr/local/bin/sesh` path as before.
 
-New hazard, documented in ops/README.md: `sesh update` run ON the store host
-would replace the full binary with a slim client (the channel only carries
-clients). The store converges by `just deploy-store` only; `sesh.prev` and a
-redeploy are the recovery.
+The one asymmetry the split creates is guarded in code: the channel only
+carries clients, so on the store build the mutating `sesh update` path fails
+closed BEFORE any download, with one line naming `just deploy-store`
+(`update --check` stays allowed as a read-only skew probe). The flavor is
+determined by command-tree assembly — a non-empty store command set marks
+the store build. Regression coverage: a unit test asserts zero channel
+requests before the refusal, and the battery gate drives the real store
+binary against a real client-only channel over HTTP and byte-compares the
+target afterwards. ops/README.md keeps the `sesh.prev` / redeploy recovery
+as belt-and-braces.
 
 ## 4. Gate
 
 `tests/check-client-slim.sh` asserts on every battery run:
 
-- the built client artifact's `go version -m` module list is free of
-  tailscale.com / modernc.org / wireguard / gvisor;
-- the store artifact still CONTAINS those modules (probe self-check: a
-  module rename or regex typo fails loudly instead of passing silently);
-- the client is under half the store's size;
+- the built client artifact's `go version -m` external module list equals
+  the ALLOWLIST exactly (fsnotify, cobra, pflag, x/sys) — any new module
+  fails by default and growing the list is a deliberate act in the same
+  change that imports it;
+- `go list -deps ./cmd/sesh` contains none of internal/store, index,
+  surface, storecli, sqlitedsn — internal machinery is gated independently
+  of module names;
+- the store artifact still CONTAINS the heavy modules and internal/store
+  (probe self-check: a rename or probe typo fails loudly instead of passing
+  silently);
+- the client is under half the store's size AND under a 12 MB absolute
+  ceiling (embed/stdlib drift alarm);
 - each store-only command name on the client exits nonzero with the single
   line naming sesh-store;
-- both builds report the same stamped version.
+- both builds report the same stamped version;
+- the store build's `update` refuses against a real client-only channel
+  with zero requests hitting it and the target byte-identical after, while
+  `update --check` still reaches the channel.
 
-The detector is proven: a deliberately re-added `internal/store` import in
-`cmd/sesh` trips the first assertion with the offending module list.
+The detector is proven three ways: a new module outside the original
+denylist families (klauspost/compress via zstd) trips the allowlist; a
+re-added `internal/store` import trips it with the full module diff; a
+module-free internal package (sqlitedsn) slips the allowlist by design and
+trips the package-graph deny.

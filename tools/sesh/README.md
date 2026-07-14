@@ -131,8 +131,11 @@ serve/reindex/admin on top of every client command; `just deploy-store`
 ships it to the store host, where it is still installed as
 `/usr/local/bin/sesh` (so `sesh serve` above reads as written there).
 Invoking a store-only command on the fleet client fails with one line naming
-the sesh-store binary. `tests/check-client-slim.sh` gates the client's
-dependency graph.
+the sesh-store binary. The inverse is guarded too: the release channel
+serves only client artifacts, so the store build's mutating `sesh update`
+fails closed before any download (`--check` stays available); the store
+converges via `just deploy-store` only. `tests/check-client-slim.sh` gates
+the client's dependency graph and the store-update refusal.
 
 `sesh setup` installs (or reconfigures) the per-user shipper service to run
 the binary executing the command: it pins the resolved absolute binary path
