@@ -401,11 +401,12 @@ func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (gro
 		args = append(args, "--model", grokDefaultModel)
 	}
 	env := replaceLaunchEnv(os.Environ(), map[string]string{
-		"GROK_HOME":              grokHome,
-		"HERDER_STATE_DIR":       stateDir,
-		"HERDER_GROK_SEAT":       seat,
-		"HERDER_GROK_SESSION_ID": sessionID,
-		"HERDER_REAL_HCOM":       hcomBin,
+		"GROK_HOME":                 grokHome,
+		"GROK_CLAUDE_HOOKS_ENABLED": "0",
+		"HERDER_STATE_DIR":          stateDir,
+		"HERDER_GROK_SEAT":          seat,
+		"HERDER_GROK_SESSION_ID":    sessionID,
+		"HERDER_REAL_HCOM":          hcomBin,
 	})
 	if childHome := os.Getenv("HERDER_GROK_CHILD_HOME"); childHome != "" {
 		env = replaceLaunchEnv(env, map[string]string{"HOME": childHome})

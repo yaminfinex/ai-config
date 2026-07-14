@@ -42,6 +42,35 @@ func mockGrokBinary(t *testing.T, version string) string {
 	return path
 }
 
+func mockGrokCompatHookBinary(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "grok-build")
+	body := `#!/bin/sh
+case " $* " in
+  *" --version "*)
+    [ "${XAI_API_KEY+x}" != x ] || exit 91
+    printf '%s\n' 'grok 0.2.93 (build)'
+    exit 0
+    ;;
+  *" --help "*)
+    [ "${XAI_API_KEY+x}" != x ] || exit 91
+    printf '%s\n' '--no-subagents --session-id --rules'
+    exit 0
+    ;;
+esac
+
+session="$GROK_HOME/sessions/%2Fisolation/$HERDER_GROK_SESSION_ID"
+mkdir -p "$session"
+if [ -f "$HOME/.claude/settings.json" ] && [ "${GROK_CLAUDE_HOOKS_ENABLED:-1}" != 0 ]; then
+  printf '%s\n' '{"type":"hook_execution","name":"global/settings:session_start[0].hooks[0]"}' > "$session/updates.jsonl"
+else
+  : > "$session/updates.jsonl"
+fi
+`
+	writeExecutable(t, path, body)
+	return path
+}
+
 func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -416,6 +445,56 @@ func TestT20LaunchArgvAndControlledHomePinBothUpdateSuppressors(t *testing.T) {
 	}
 }
 
+func TestManagedGrokSessionRecordsNoClaudeCompatHookExecutions(t *testing.T) {
+	root := t.TempDir()
+	ownerHome := filepath.Join(root, "owner-home")
+	settings := filepath.Join(ownerHome, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"true"}]}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hcom := filepath.Join(root, "hcom-real")
+	writeExecutable(t, hcom, "#!/bin/sh\nexit 0\n")
+	seat, err := registry.NewGUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, err := NewGrokSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", filepath.Join(root, "shell-home"))
+	t.Setenv("HERDER_GROK_CHILD_HOME", ownerHome)
+	t.Setenv("HERDER_STATE_DIR", filepath.Join(root, "state"))
+	t.Setenv("HCOM_DIR", filepath.Join(root, "hcom"))
+	t.Setenv("HERDER_GUID", seat)
+	t.Setenv("HERDER_GROK_SESSION_ID", sid)
+	t.Setenv("HERDER_GROK_BIN", mockGrokCompatHookBinary(t))
+	t.Setenv("HERDER_REAL_HCOM", hcom)
+	t.Setenv("GROK_CLAUDE_HOOKS_ENABLED", "1")
+	t.Setenv("XAI_API_KEY", randomCredential(t))
+
+	plan, err := prepareGrokLaunch(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(plan.Binary, plan.Argv[1:]...)
+	cmd.Env = plan.Env
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("managed mock session failed: %v output=%q", err, output)
+	}
+	updates := filepath.Join(plan.GrokHome, "sessions", "%2Fisolation", sid, "updates.jsonl")
+	data, err := os.ReadFile(updates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bytes.Count(data, []byte(`"type":"hook_execution"`)); got != 0 {
+		t.Fatalf("managed session recorded %d hook_execution event(s): %s", got, data)
+	}
+}
+
 func TestSpawnMintedGUIDDrivesRealLaunchBuilder(t *testing.T) {
 	plan, _ := prepareTestGrok(t, "0.2.93")
 	if !validGrokSeat(plan.Seat) {
@@ -725,7 +804,7 @@ func envValue(env []string, key string) string {
 func TestT21ChildEnvironmentPinsIsolationWithoutPersistingCredential(t *testing.T) {
 	plan, credential := prepareTestGrok(t, "0.2.93")
 	env := strings.Join(plan.Env, "\n")
-	for _, want := range []string{"HOME=" + filepath.Dir(plan.StateDir) + "/child-home", "GROK_HOME=" + plan.GrokHome, "HERDER_STATE_DIR=" + plan.StateDir, "HERDER_GROK_SEAT=" + plan.Seat, "HERDER_GROK_SESSION_ID=" + plan.SessionID, "HERDER_REAL_HCOM=" + plan.HcomBin} {
+	for _, want := range []string{"HOME=" + filepath.Dir(plan.StateDir) + "/child-home", "GROK_HOME=" + plan.GrokHome, "GROK_CLAUDE_HOOKS_ENABLED=0", "HERDER_STATE_DIR=" + plan.StateDir, "HERDER_GROK_SEAT=" + plan.Seat, "HERDER_GROK_SESSION_ID=" + plan.SessionID, "HERDER_REAL_HCOM=" + plan.HcomBin} {
 		if !strings.Contains(env, want) {
 			t.Errorf("child environment missing %q", want)
 		}
@@ -766,7 +845,7 @@ func TestT21ProcEnvironmentIsIsolatedBeforeAnyModelPrompt(t *testing.T) {
 	}
 	env := strings.ReplaceAll(string(data), "\x00", "\n")
 	wantHome := os.Getenv("HERDER_GROK_CHILD_HOME")
-	for _, want := range []string{"HOME=" + wantHome, "GROK_HOME=" + plan.GrokHome, "HCOM_DIR=" + plan.HcomDir, "HERDER_STATE_DIR=" + plan.StateDir} {
+	for _, want := range []string{"HOME=" + wantHome, "GROK_HOME=" + plan.GrokHome, "GROK_CLAUDE_HOOKS_ENABLED=0", "HCOM_DIR=" + plan.HcomDir, "HERDER_STATE_DIR=" + plan.StateDir} {
 		if !strings.Contains(env, want+"\n") {
 			t.Errorf("/proc child environment missing %q", want)
 		}
