@@ -71,9 +71,10 @@ func Run(opts Options) error {
 	if opts.Client == nil {
 		// Bounded, never http.DefaultClient: a stalled release fetch would
 		// otherwise hang the updater forever (the shipper-fallback wedge
-		// class). 5 minutes caps the largest fetch, the binary itself, over
-		// a slow relayed link.
-		opts.Client = httpx.NewClient(5*time.Minute, 2)
+		// class). Progress-sensitive, not wall-clock: the binary download is
+		// the largest transfer in the codebase and must survive a slow
+		// relayed link at any speed; only a zero-progress minute cuts it.
+		opts.Client = httpx.NewBulkClient(time.Minute, 2)
 	}
 	if opts.Runner == nil {
 		opts.Runner = setup.NewExecRunner()

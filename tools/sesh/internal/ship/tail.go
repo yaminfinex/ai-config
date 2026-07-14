@@ -47,6 +47,15 @@ type Shipper struct {
 	// the default is chosen against the shared store, not a node property.
 	fileConcurrency int
 
+	// passMu enforces the pass-level half of the ordering invariant inside
+	// Shipper itself: RunOnce is exclusive, so "passes never overlap" holds
+	// for any caller, not as an assumption about the sequential daemon loop
+	// in Run. A re-entrant RunOnce would otherwise hand one identity to two
+	// workers and race on NeedsRecovery. A mutex rather than a refusal: a
+	// concurrent caller gets the correct serialized pass instead of a new
+	// error path to handle.
+	passMu sync.Mutex
+
 	// heldMu guards held: parallel workers within a pass record and consult
 	// non-retryable refusals concurrently.
 	heldMu sync.Mutex
@@ -127,6 +136,8 @@ func (s *Shipper) logger() *slog.Logger {
 // then ship every discovered file to quiescence. Hold-class conditions come
 // back errHold-wrapped; the pass still visits every other file first.
 func (s *Shipper) RunOnce(ctx context.Context) (runErr error) {
+	s.passMu.Lock()
+	defer s.passMu.Unlock()
 	s.Registry.beginBatch()
 	defer func() {
 		if err := s.Registry.endBatch(); err != nil {
@@ -144,7 +155,7 @@ func (s *Shipper) RunOnce(ctx context.Context) (runErr error) {
 	// identity's offset and fingerprint; the store keys all state per
 	// identity), but WITHIN an identity the append protocol assumes strictly
 	// sequential PUTs against a known high-water. Both are guaranteed by
-	// construction: passes never overlap (Run drives RunOnce sequentially),
+	// construction: passes never overlap (RunOnce serializes on passMu),
 	// and within a pass each identity is handed to exactly one worker — which
 	// requires deduping here, because Discover can return the same identity
 	// at two paths (a copied project directory). The serial code tolerated

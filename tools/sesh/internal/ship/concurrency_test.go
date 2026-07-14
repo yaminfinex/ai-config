@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -149,6 +150,76 @@ func TestDuplicateIdentityDiscoveriesCollapseToOneWorker(t *testing.T) {
 		if offsets[j] <= offsets[j-1] {
 			t.Fatalf("PUT offsets for duplicated identity not strictly increasing: %v", offsets)
 		}
+	}
+}
+
+// TestConcurrentRunOnceCallsSerialize pins the pass-level half of the
+// ordering invariant inside Shipper itself: RunOnce is exclusive (passMu),
+// so two synchronized calls on one Shipper — a re-entry no production caller
+// performs today — must serialize rather than hand one identity to two
+// workers or race on Registry.NeedsRecovery (the -race run of this test is
+// the proof for the latter).
+func TestConcurrentRunOnceCallsSerialize(t *testing.T) {
+	h := newHarness(t)
+	data := fixture(t, "claude-normal.jsonl")
+	const files = 8
+	for i := range files {
+		h.writeClaude("proj", corpusUUID(i), data)
+	}
+	h.store.handleDelay = 10 * time.Millisecond
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = h.shipper.RunOnce(context.Background())
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent RunOnce call %d: %v", i, err)
+		}
+	}
+	if _, sameKeyOverlap := h.store.concurrencyObserved(); sameKeyOverlap {
+		t.Fatal("re-entrant RunOnce put one identity on two workers; the pass mutex is not serializing")
+	}
+	for i := range files {
+		h.assertMirror("claude", corpusUUID(i), data)
+	}
+}
+
+// TestSameKeyOverlapDetectorFires is the negative self-check for the
+// fake-store latch every ordering-invariant test above relies on: a
+// deliberate same-key overlap at the instrumentation boundary must trip it,
+// and sequential enters must not. The full-stack proof was run externally
+// (dedupe disabled in a scratch copy: TestDuplicateIdentityDiscoveries-
+// CollapseToOneWorker failed with the latch set and duplicated PUT offsets
+// [0 0 8192 8192 ...]); this test preserves that proof in-tree so a future
+// change cannot neuter the latch while every positive test stays green.
+func TestSameKeyOverlapDetectorFires(t *testing.T) {
+	fs := newFakeStore()
+	fs.trackEnter("claude/a/a")
+	fs.trackEnter("claude/a/a") // deliberate same-key overlap
+	fs.trackExit("claude/a/a")
+	fs.trackExit("claude/a/a")
+	maxInflight, sameKeyOverlap := fs.concurrencyObserved()
+	if !sameKeyOverlap {
+		t.Fatal("deliberate same-key overlap did not trip the latch")
+	}
+	if maxInflight != 2 {
+		t.Fatalf("max in-flight = %d, want 2", maxInflight)
+	}
+
+	sequential := newFakeStore()
+	sequential.trackEnter("claude/a/a")
+	sequential.trackExit("claude/a/a")
+	sequential.trackEnter("claude/a/a")
+	sequential.trackExit("claude/a/a")
+	if _, overlap := sequential.concurrencyObserved(); overlap {
+		t.Fatal("latch tripped on strictly sequential same-key operations")
 	}
 }
 
