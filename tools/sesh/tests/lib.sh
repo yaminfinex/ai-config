@@ -15,6 +15,11 @@ SESH_TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SESH_MODULE_DIR="$(cd "$SESH_TESTS_DIR/.." && pwd)"
 FIXTURES="$SESH_TESTS_DIR/fixtures"
 
+# The caller's shell must not steer the toolchain: a session GOROOT (e.g. from
+# a mise-activated shell) poisons builds against the pinned go, and
+# GOTOOLCHAIN=local keeps go from silently downloading a different toolchain.
+# preflight() resolves and verifies the pin itself.
+unset GOROOT
 export GOTOOLCHAIN=local
 
 fail() {
@@ -33,21 +38,41 @@ step() { echo "--- $*"; }
 
 # --- preflight ---------------------------------------------------------------
 
-# Toolchain preflight (check-surface-fixtures.sh precedent): GOTOOLCHAIN=local
-# is deliberate — the gate must not silently download a different toolchain —
-# so the go on PATH must itself satisfy go.mod. Fail with the fix instead of a
-# confusing compile error.
+# Toolchain preflight: go.mod's `go` directive is the AUTHORITATIVE pin, and
+# the harness enforces it instead of trusting the caller's shell. Ambient
+# GOROOT is cleared above, GOTOOLCHAIN=local is forced (the gate must not
+# silently download a different toolchain), a `toolchain` directive may only
+# restate the pin (a differing one is a conflict, not a second authority),
+# and the pinned toolchain is resolved deterministically: the mise install of
+# the exact pin, else an exact-match go already on PATH. Anything else fails
+# loudly through fail() with the fix — never a silent run on a different
+# toolchain, never a mute exit, never a confusing compile error.
 preflight() {
-  local PINNED_EXPORT='export PATH=/home/grace/.local/share/mise/installs/go/1.26.4/bin:$PATH && export GOTOOLCHAIN=local'
-  local need have
-  need=$(awk '/^go /{print $2; exit}' "$SESH_MODULE_DIR/go.mod")
-  command -v go >/dev/null 2>&1 ||
-    fail "no 'go' on PATH; this module needs go >= ${need}. Playbook-pinned toolchain: ${PINNED_EXPORT}"
-  have=$(go env GOVERSION); have=${have#go}
-  if [ "$(printf '%s\n' "$need" "$have" | sort -V | head -n1)" != "$need" ]; then
-    fail "go ${have} on PATH is older than the go.mod requirement (${need}) and GOTOOLCHAIN=local forbids auto-download. Playbook-pinned toolchain: ${PINNED_EXPORT}"
+  local need tdecl root have dep
+  need=$(awk '$1 == "go" {print $2; exit}' "$SESH_MODULE_DIR/go.mod")
+  [ -n "$need" ] || fail "cannot read the toolchain pin ('go X.Y.Z') from $SESH_MODULE_DIR/go.mod"
+  tdecl=$(awk '$1 == "toolchain" {print $2; exit}' "$SESH_MODULE_DIR/go.mod")
+  [ -z "$tdecl" ] || [ "$tdecl" = "go$need" ] ||
+    fail "go.mod declares toolchain ${tdecl} but pins go ${need}; the go directive is the authority — align or drop the toolchain directive"
+  root=""
+  if command -v mise >/dev/null 2>&1; then
+    root=$(mise where "go@$need" 2>/dev/null) || root=""
   fi
-  local dep
+  if [ -z "$root" ] || [ ! -x "$root/bin/go" ]; then
+    root="${HOME:-}/.local/share/mise/installs/go/$need"
+  fi
+  if [ -n "$root" ] && [ -x "$root/bin/go" ]; then
+    export PATH="$root/bin:$PATH"
+  fi
+  if command -v go >/dev/null 2>&1; then
+    have=$(go env GOVERSION 2>/dev/null) || have=""
+    have=${have#go}
+    [ -n "$have" ] || have="unreadable ('go env GOVERSION' failed)"
+  else
+    have="none (no 'go' on PATH)"
+  fi
+  [ "$have" = "$need" ] ||
+    fail "go toolchain resolves to ${have}, but the gate pins go ${need} (go.mod); fix: mise install go@${need}"
   for dep in curl jq python3 cmp truncate; do
     command -v "$dep" >/dev/null 2>&1 || fail "harness dependency missing: $dep"
   done
