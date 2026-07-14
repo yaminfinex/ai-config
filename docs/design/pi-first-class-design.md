@@ -9,8 +9,10 @@ the rearm assignment sweep; round 5: attempt-scoped child process identity and
 the K=1 repeat-marker bound), dual-APPROVEd and merged at round 5; this text
 additionally carries an owner-invoked fresh-eyes amendment (round 6:
 target-scoped external lane, local-id namespace, auth-precedence register
-demotion, and a consistency sweep), pending re-certification on the amendment
-diff
+demotion, and a consistency sweep; round 7 re-cert fixes: origin-carried
+external lane on the per-seat cgroup primitive with the gated child record,
+the A10 cross-provider exploitability probe, and renew pinned token-lane),
+pending re-certification on the amendment diff
 Subject: `@earendil-works/pi-coding-agent` 0.80.6 against herder + hcom 0.7.23
 
 Evidence base (cited throughout by path + section):
@@ -313,31 +315,50 @@ Control-plane authority comes in exactly two lanes, and every op declares which
 lane(s) accept it:
 
 - **Token lane** (the live extension): ops issued from inside the Pi process —
-  drain, wait, pending, rotate-on-activate, extension-initiated retire — present a
-  capability token over the bus-op child's **stdin** (never argv, never env),
-  verified against a stored hash under the seat lock.
-- **External lane** (any caller outside the *target* seat): reserve (pre-exec),
-  **pre-exec rekey** (`rearm`), and cull/retire are executable **without** a
-  token by a caller whose process ancestry contains **no process of the target
-  seat's recorded process set** — the attempt-keyed child pid+start-time, the
-  activation-recorded pid, and their process trees. The predicate is
-  **target-scoped, not fleet-scoped**: the threat it fences is the target
-  seat's *own* model driving its *own* control plane, and nothing else. A
-  herder-spawned orchestrator — itself a registry-recorded seat — passes the
-  check for every seat but its own, which is exactly the fleet's operating
-  norm: agents spawn, cull, and recover other agents through the herder CLI.
-  The cross-seat residual is stated honestly: a model in seat A operating seat
-  B's lifecycle is in-band herder CLI usage under the house cooperative
-  same-UID model (Threat model below) — orchestrators doing precisely that is
-  the point, not a leak. `activate` is **never** in this lane: activation is
-  always token-authenticated and always extension-side, because only the
-  extension can truthfully publish the live pid/session runtime facts (an
-  external caller cannot; once the new Pi exists, its extension is inside the
-  target's process set — so a tokenless external activate is neither safe nor
-  executable, and the design does not contain one). The target seat's model
-  tool code always runs beneath that seat's Pi process (that is how Pi runs
-  tools), so it can never satisfy the external-lane check for its own seat; an
-  operator shell, herder itself, and any *other* agent's seat trivially do.
+  drain, wait, pending, **renew**, rotate-on-activate, extension-initiated
+  retire — present a capability token over the bus-op child's **stdin** (never
+  argv, never env), verified against a stored hash under the seat lock. The
+  enumeration is authoritative: `renew` in particular is token-authenticated —
+  an unauthenticated renew would let any same-UID process keep a dead driver's
+  lease green, defeating the progress-attested lease outright (T34i).
+- **External lane** (any caller of provably non-target *origin*): reserve
+  (pre-exec), **pre-exec rekey** (`rearm`), and cull/retire are executable
+  **without** a token by a caller that did not originate inside the target
+  seat. Origin — not ancestry — carries this boundary, because ancestry does
+  not survive reparenting: tool code that daemonizes (double-fork/setsid)
+  before invoking herder sheds the target pid from its ancestor chain while
+  remaining, in every sense that matters, the target seat's own model acting
+  in-band. The origin primitive is **per-seat cgroup membership**: every
+  managed seat process is launched inside a dedicated per-seat cgroup (scope),
+  which its descendants cannot leave without privilege — reparenting moves a
+  process in the pid tree, never out of its cgroup. The external-lane check
+  reads the invoking op's own cgroup path: membership in the **target** seat's
+  cgroup → refused, however reparented; membership in a *different* seat's
+  cgroup, or in none, → allowed. Availability of the primitive on the
+  deployment platform (cgroup v2 per-seat scopes under the user session) is
+  register **A11** (§10) — **if A11 falsifies, the tokenless external lane is
+  a design delta before U1 completes** (candidate shapes there: a
+  capability-bearing operator lane, or refuse-when-indeterminate with its
+  operability cost) — U1 does not ship an ancestry-only lane. The predicate
+  stays **target-scoped, not fleet-scoped**: the threat it fences is the
+  target seat's *own* model driving its *own* control plane, and nothing else.
+  A herder-spawned orchestrator — itself in a seat cgroup, but not the
+  target's — passes the check for every seat but its own, which is exactly the
+  fleet's operating norm: agents spawn, cull, and recover other agents through
+  the herder CLI. The cross-seat residual is stated honestly: a model in seat
+  A operating seat B's lifecycle is in-band herder CLI usage under the house
+  cooperative same-UID model (Threat model below) — orchestrators doing
+  precisely that is the point, not a leak; and a target model *asking* a
+  sibling to operate its seat is that same conceded in-band path, not a
+  boundary defect. `activate` is **never** in this lane: activation is always
+  token-authenticated and always extension-side, because only the extension
+  can truthfully publish the live pid/session runtime facts (an external
+  caller cannot; once the new Pi exists, its extension is inside the target's
+  cgroup — so a tokenless external activate is neither safe nor executable,
+  and the design does not contain one). The target seat's model tool code
+  starts beneath that seat's Pi process and therefore inside its cgroup, which
+  it cannot shed; an operator shell, herder itself, and any *other* agent's
+  seat trivially pass.
 
 Token lifecycle, every branch specified:
 
@@ -389,7 +410,7 @@ Token lifecycle, every branch specified:
    capability handoff at any point after model execution has begun.
 5. **Dead-process takeover — the exact crash-restart sequence.** The
    launch-attempt protocol (below), external-lane: (i) the caller — outside the
-   target seat's recorded process set — opens the attempt under the seat lock,
+   target seat's origin (cgroup check, DR-2 lanes) — opens the attempt under the seat lock,
    verifying the recorded process
    is provably gone (pid + start-time); (ii) the attempt-keyed pre-exec rekey
    mints the fresh hash + bootstrap and prepares the fresh epoch; (iii) relaunch
@@ -426,17 +447,21 @@ restart — runs the same protocol:
    process the seat has recorded — the activation record's pid + start-time
    **and any prior attempt's recorded child** (step 3) — an explicit
    no-more-turns mechanism: SIGTERM-then-KILL addressed to each **exact
-   recorded pid + start-time**, never a name or a guess — and wait until each
-   exact identity is provably gone. First boot skips this step by verifying no
-   recorded process exists in either place.
-3. **Rekey once, attempt-keyed; record the child on exec.** The pre-exec rekey
+   recorded pid + start-time**, never a name or a guess — then a **final sweep
+   of any remaining members of the seat's cgroup** (catching reparented
+   stragglers no pid record names) — and wait until each exact identity is
+   provably gone and the cgroup is empty. First boot skips this step by
+   verifying no recorded process exists and the seat cgroup is empty.
+3. **Rekey once, attempt-keyed; gate the child.** The pre-exec rekey
    runs inside the attempt: the bootstrap file, the stored hash, the prepared
    epoch, and every cleanup artifact are **keyed by the attempt generation**.
-   Exec follows, and the launcher records the launched child's **pid +
-   start-time into the open attempt** — a generation-scoped process identity,
-   fsynced under the seat lock **before the launch step returns** — so the
-   exec→activate interval has an owner-of-record even though activation has
-   not yet published anything. The extension's activation presents the
+   The child is **gated**: it is created without executing Pi (fork before
+   exec, or spawned suspended), its **pid + start-time is recorded into the
+   open attempt and fsynced under the seat lock, and it is placed into the
+   per-seat cgroup, before its exec is allowed to proceed** — so no live
+   target process ever exists ahead of its durable record, and the
+   exec→activate interval has an owner-of-record from the child's first
+   instruction. The extension's activation presents the
    bootstrap token **and the attempt generation**, and `activate` consumes the
    attempt (`starting` → active) only if it is still the highest, unconsumed
    generation.
@@ -455,8 +480,9 @@ restart — runs the same protocol:
    (T34f races this, including the exec-not-yet-activated branch).
 
 Prompt-induced tool code that knows every environment variable in the seat can
-satisfy neither lane **for its own seat**: it has no token, and its ancestry
-includes its own seat's recorded process set (T34 tests each branch above). The deliberately model-reachable surfaces
+satisfy neither lane **for its own seat**: it has no token, and it is of its
+own seat's origin — cgroup membership it cannot shed unprivileged, however it
+reparents (T34 tests each branch above). The deliberately model-reachable surfaces
 remain exactly `herder pi send` and read-only `status` (DR-1). This is an in-band
 boundary within the house's cooperative same-UID trust model — see "Threat model"
 below for what it does and does not claim.
@@ -854,9 +880,11 @@ ask, and owner-ruled acceptance. Per-workspace relaxation is an owner decision
    prompts avoid argv entirely, and both messages get real delivery receipts
    through DR-2, mirroring grok's spool-borne initial prompt.
 4. Exec Pi (recorded Node runtime + pinned `dist/cli.js`) inside the pane with the
-   allowlist-built environment and explicit argv, recording the launched child's
-   pid + start-time into the open attempt (fsynced under the seat lock before
-   this step returns — DR-2 launch-attempt protocol step 3).
+   allowlist-built environment and explicit argv, **gated**: the child's pid +
+   start-time is recorded into the open attempt (fsynced under the seat lock)
+   and the child is placed into the per-seat cgroup **before its exec
+   proceeds** — DR-2 launch-attempt protocol step 3; no live seat process ever
+   precedes its record.
 5. `session_start` fires in the extension: `bus activate` (fresh epoch, process +
    session evidence, capability hash — DR-2 "Seat ownership"), journal replay,
    driver start and first drain, batch-inject doctrine + task. Spawn's bind capture
@@ -1028,15 +1056,16 @@ possible refinement behind a tool-registration probe, not a shipped claim.
 
 **Env-only managed auth — the store must stay empty.** Pi resolves credentials
 from an explicit CLI key, `agent/auth.json`, environment variables, or
-custom-provider config (demo "Provider routing"). Whether the persistent store
-ranks **ahead of** the environment is **not demo-proven** — the demo enumerated
-the sources against empty stores only; the precedence itself is register **A10**
-(§10), and this contract conservatively assumes the store *can* win. Under that
-assumption a populated auth store would silently defeat per-seat provider
-pinning: an interactive `/login`, or a resumed seat carrying a populated
-`auth.json`, could hold a *different provider's* credential and make an
-in-process cross-provider switch succeed despite the env filter. The managed
-contract is therefore explicit:
+custom-provider config (demo "Provider routing"); the demo observed those
+sources against empty stores only. Note the threat does **not** hinge on
+same-provider precedence: a planted *alternate-provider* credential has no env
+competitor on a single-provider seat, so a populated store could serve
+cross-provider inference whichever way a same-name collision resolves. That
+exploitability question is register **A10** (§10), and this contract
+conservatively assumes the planted credential is usable: an interactive
+`/login`, or a resumed seat carrying a populated `auth.json`, could hold a
+*different provider's* credential and make an in-process cross-provider switch
+succeed despite the env filter. The managed contract is therefore explicit:
 
 - **Provision/launch gate:** `agent/auth.json` must be absent or credential-empty
   (the demo's observed empty `{}` at mode 0600) at every launch; any credential
@@ -1151,12 +1180,16 @@ invariant (DR-2 lifecycle item 3: written only into a seatless window, existing
 only until consumption before any model turn, absent for the rest of the
 process's life), so **this seat's model can never be the reader**, and the
 residual reader is hostile same-UID code from outside the seat during that
-pre-model window; and the external lane's ancestry check, which is
-target-scoped and therefore admits any same-UID process outside the **target
-seat's** process tree — including other managed seats. That admission *is* the
+pre-model window; and the external lane's origin check, which is target-scoped
+and therefore admits any same-UID process outside the **target seat's** cgroup
+— including other managed seats. That admission *is* the
 operator/herder/orchestrator path: agents operating other agents' lifecycles
-through the herder CLI is the fleet's norm, not a defect, and it is exactly as
-strong as the cooperative model it lives in.
+through the herder CLI is the fleet's norm, not a defect — a target model
+persuading a sibling seat to operate its lifecycle rides that same conceded
+path — and it is exactly as strong as the cooperative model it lives in. The
+origin boundary itself holds against unprivileged evasion (cgroup membership
+survives reparenting); privileged escape is same-UID-plus, outside this model
+entirely.
 
 ---
 
@@ -1183,7 +1216,8 @@ None may silently become load-bearing beyond its stated fallback.
 | P5 | **Per-provider residual network** under `PI_OFFLINE=1` (strace-proven for one Anthropic call only). | Offline flags required regardless; claim scoped to the demo's one-provider evidence. | Activation-unit integration check per activated provider. |
 | P6 | **Project `.pi` trust surface**: what mechanism the pinned CLI offers to withhold/disable project-resource loading, and what an autonomous launch does by default. | Managed seats must not load project `.pi` resources until characterized (DR-3); per-workspace relaxation is an owner decision (§12). **Falsification branch:** no enforceable suppression surface → design delta (block activation / upstream ask / owner ruling), never U2 improvisation (DR-3). | U2 probe against the pinned CLI in a scratch workspace carrying decoy `.pi` resources. |
 | P7 | **Auth-mutation prevention surface**: can the pinned CLI disable `/login`/auth-store writes? | Detection + terminate-on-drift at bounded checkpoints ships unconditionally (DR-5); prevention is pinned additionally if the surface exists — never instead. **Falsification branch:** the plant-to-checkpoint residual window goes to the owner as an explicit acceptance decision at activation (§12); it never ships silently. | U2 probe against the pinned CLI. |
-| A10 | **Auth-store-over-environment precedence**: the demo enumerated Pi's credential sources against *empty* stores; that the store outranks the env was never probed. | DR-5's contract conservatively assumes the store can win — that assumption calibrates the terminate-on-drift severity and owner item 7. **If falsified (env wins):** drift becomes non-exploitable for provider pinning; termination softens to flag + relaunch-block, and owner item 7 dissolves — a recorded design amendment, not a silent relaxation. | U2 probe riding P7: plant an alternate-provider store credential with the env key present and observe which one inference uses. |
+| A10 | **Auth-store exploitability on a pinned seat**: the demo enumerated Pi's credential sources against *empty* stores. Same-provider precedence is **not the question that matters** — a planted *alternate-provider* credential has no env competitor on a single-provider seat, so it can serve cross-provider inference regardless of who wins a same-name collision. | DR-5's contract conservatively assumes the planted store credential is usable — that assumption calibrates terminate-on-drift and owner item 7. **Demotion (softened termination, dissolved owner item 7) is permitted only if the probe proves the store is globally ignored while a managed env credential exists, or that cross-provider selection is hard-blocked by the pinned CLI.** Any weaker result — including "env wins same-provider collisions" — leaves termination and the owner acceptance standing. | U2 probe riding P7: with the managed env key present, plant an **alternate-provider** store credential and attempt selection + inference on that provider; record which of the two demotion conditions, if either, is proven. |
+| A11 | **Per-seat cgroup origin primitive availability**: the external lane's reparenting-proof origin check needs cgroup v2 per-seat scopes on the deployment platform (seat processes placed into a dedicated cgroup at the launch gate; membership readable from `/proc/<pid>/cgroup`; unprivileged processes cannot leave). | The tokenless external lane rides this primitive (DR-2 lanes); ancestry alone is known-unsound (reparenting bypass). **If falsified:** the tokenless external lane is a **design delta before U1 completes** — candidate shapes: capability-bearing operator lane, or refuse-when-indeterminate with its operability cost; U1 never ships an ancestry-only lane. | U1 probe on the real spawn path: launched seat lands in its scope; a double-forked/setsid descendant still reads as target-origin; a sibling seat and an operator shell do not. |
 
 Scratch probes that require running the Pi binary happen inside the implement units
 under managed scratch environments (settled: every invocation gets the managed env);
@@ -1370,22 +1404,31 @@ Inbound driver, fencing, and bounds (the fix-round additions):
   against the attempt records: no same-UID orphan holding the managed home and
   the provider credential survives; plus the exact
   crash-restart sequence: process provably gone → attempt + rekey by a caller
-  outside the target's process set → relaunch → token-authenticated activate
+  of non-target origin → relaunch → token-authenticated activate
   consuming that attempt; a rekey attempted from inside the target's process
   tree, or against a live process, is refused; there is no tokenless activate
   to exercise, and a test proving its absence (activate without a valid token
   fails in every state) pins that; (g) external
   cull proceeds with a live but unresponsive extension (no token, no extension
-  cooperation) via the `retiring` fence; (h) **target-scoped external lane**,
-  three branches: a caller under the target seat's own recorded process tree
-  (its model's tool code) is **refused**; a caller under a *different* managed
-  seat — a herder-spawned orchestrator running `herder spawn/cull/rearm`
-  against this seat — is **allowed** (the fleet's operating norm, pinned as a
-  positive test, not an accident); and the walk itself is proven
-  target-scoped: it matches against the target's recorded process set
-  (attempt-keyed child + activation pid + trees), not the global registry pid
-  set. `herder pi send` and read-only `status` remain reachable without any of
-  it.
+  cooperation) via the `retiring` fence; (h) **target-scoped external lane,
+  origin-carried**, six branches: a fresh reserve with no seat process yet is
+  **allowed**; the pre-activation window is covered — the gated child's record
+  and cgroup membership exist from its first instruction, so there is no
+  live-before-record instant to exploit; a caller running directly under the
+  target seat's live process is **refused**; a **detached caller of
+  target origin** — tool code that double-forked/setsid before invoking herder,
+  ancestry clean of the target pid — is **refused** (cgroup membership
+  persists across reparenting; this is the branch ancestry alone provably
+  fails); a caller under a *different* managed seat — a herder-spawned
+  orchestrator running `herder spawn/cull/rearm` against this seat — is
+  **allowed** (the fleet's operating norm, pinned as a positive test, not an
+  accident); and the check is proven target-scoped: it matches the caller's
+  cgroup against the **target's** seat cgroup, never against the global set of
+  seat cgroups. (i) **renew is token-lane**: a tokenless or wrong-token
+  `renew` is refused and advances nothing — a same-UID process cannot keep a
+  dead driver's lease green — and a valid-token renew advances the lease only
+  when its reported state passes journal validation under the lock. `herder pi
+  send` and read-only `status` remain reachable without any of it.
 - **T35 bounds under sustained flood** — batch injection respects count/byte caps
   with the remainder queued and delivered at subsequent boundaries. Flood branch:
   under a sustained flood well past the caps, admission stops **before** any
@@ -1433,7 +1476,10 @@ repeated per activated provider.
    acceptance is framed on the window's real width (plant-to-settle until
    tool-event checkpoints are proven: potentially multiple provider calls in
    one agentic turn), and its severity calibration rests on A10's unverified
-   store-over-env precedence — if A10 falsifies, this item dissolves.
+   store exploitability. This item dissolves **only** on A10's demotion
+   conditions — store proven globally ignored while a managed env credential
+   exists, or cross-provider selection hard-blocked; any weaker probe result
+   (same-provider precedence included) leaves it standing.
 
 ## 13. Staging (mergeable units, territory fences, gates)
 
@@ -1444,7 +1490,7 @@ gate battery apply to every behavior diff (house rules).
 
 | # | Unit | Territory (fence) | Gate |
 |---|---|---|---|
-| U1 | **Transport core + extension**: spool/state machine, `herder pi bus` ops (reserve/de-latch, activate, **rearm** [pre-exec rekey], **renew** [lease checkpoint carrier], drain, wait, pending, send, status, retire; epoch fencing, control capability, **launch-attempt protocol**), the TypeScript extension (lifecycle handlers, the DR-2 inbound driver, idle-gated bounded batch injection, replay, nudge with per-id budget), `herder pi send` wrapper. The `grokbridge` extraction follows the **DR-1 reuse boundary exactly** — transport-neutral primitives only; grok's state types, receipt machine, and generation fencing are not touched or reused; the entire grok battery stays green unchanged (any grok behavior diff is a stop-and-flag). Nothing user-reachable changes. | New internal package(s) (e.g. `tools/herder/internal/pibridge/` + the shared primitives package) + `herder pi` command registration + extension artifact in-repo. | **FIRST GATE: the A9 driver probe (T28, T29) — run before any other U1 work is built on the driver.** Then T1–T16, T25, T26, T30–T35 hermetic (mock Pi event harness + isolated bus); T15 against real hcom 0.7.23; grok battery green post-extraction; assumptions A1–A5, A7–A9 and probe P2 verified and recorded (scratch managed envs; inference-bearing probes under the §12.2 ruling). |
+| U1 | **Transport core + extension**: spool/state machine, `herder pi bus` ops (reserve/de-latch, activate, **rearm** [pre-exec rekey], **renew** [lease checkpoint carrier], drain, wait, pending, send, status, retire; epoch fencing, control capability, **launch-attempt protocol**), the TypeScript extension (lifecycle handlers, the DR-2 inbound driver, idle-gated bounded batch injection, replay, nudge with per-id budget), `herder pi send` wrapper. The `grokbridge` extraction follows the **DR-1 reuse boundary exactly** — transport-neutral primitives only; grok's state types, receipt machine, and generation fencing are not touched or reused; the entire grok battery stays green unchanged (any grok behavior diff is a stop-and-flag). Nothing user-reachable changes. | New internal package(s) (e.g. `tools/herder/internal/pibridge/` + the shared primitives package) + `herder pi` command registration + extension artifact in-repo. | **FIRST GATE: the A9 driver probe (T28, T29) — run before any other U1 work is built on the driver.** Then T1–T16, T25, T26, T30–T35 hermetic (mock Pi event harness + isolated bus); T15 against real hcom 0.7.23; grok battery green post-extraction; assumptions A1–A5, A7–A9, A11 and probe P2 verified and recorded (scratch managed envs; inference-bearing probes under the §12.2 ruling). |
 | U2 | **Install + launch contract, behind an activation gate**: pinned installer + hash verification, seat/managed-home provisioning and seeding, allowlist env construction, provider table + filtering, flag mapping + refusals, spool-borne doctrine/prompt, status-op bind capture with hard-fail cleanup, conditional `/proc` assertion. `--agent pi` refuses with a family-not-activated cause+remedy error unless the explicit activation config/env is set. | `launchcmd`/`spawncmd` pi branches + `herder pi install`; `pibridge` consumed, not modified. | T17–T21 + probes P1/P4/P6/P7/A6 answered and recorded + the isolated **live smoke** (one provider, §12.2 spend) under the activation flag. |
 | U3 | **Lifecycle & identity**: resume/fork/cull/relaunch-on-provider-change, session-drift handling, registry capability flags (`bus`, `pending`, `inject`, `driver`, `spool`, `control`, `auth`, `provider` — the full DR-6 set), retirement reporting. | `lifecyclecmd`/`cullcmd` pi branches, registry schema additions. | T9, T22–T24 + T31/T33 re-run through the cull command path + resume/fork live re-check riding the U2 smoke pattern. |
 | U4 | **Observer, transcript & sesh**: session-JSONL adapter (header index, branch-aware rendering), sesh identifier/lineage wiring, labeled `status(pi-ext)` enrichment, honest-unknown reconciliation. | `observercmd` + transcript/sesh plumbing. | T27 against recorded fixtures; `unknown` preserved under mutation. |
