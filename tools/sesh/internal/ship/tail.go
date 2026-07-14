@@ -307,8 +307,16 @@ func (s *Shipper) recoverCursor(ctx context.Context, d Discovered) error {
 			return s.Registry.Put(Cursor{Tool: d.Identity.Tool, SessionID: d.Identity.SessionID, FileUUID: d.Identity.FileUUID, Path: d.Path})
 		case wire.ErrOutOfGrant, wire.ErrStoreUnavailable, wire.ErrMirrorWriteFailed:
 			return fmt.Errorf("%w: recovery GET %s", errHold, werr.Code)
-		default:
-			return fmt.Errorf("recovery GET refused: %s (%s)", werr.Code, werr.Message)
+		default: // malformed_request, unknown_tool, anything unrecognized
+			// Same reaction as the PUT path: park the identity until restart
+			// and let the pass continue. Returning an error here would abort
+			// the whole recovery pass and, with NeedsRecovery still set, block
+			// every other tool from shipping — the mixed-fleet wedge when a
+			// grok-shipping node meets a store predating wire Amendment 3.
+			s.holdFile(d.Identity.Key(), string(werr.Code))
+			s.logger().Error("non-retryable store refusal during recovery; holding file until restart",
+				"identity", d.Identity.Key(), "code", werr.Code, "message", werr.Message)
+			return nil
 		}
 	}
 

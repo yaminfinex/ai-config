@@ -219,6 +219,40 @@ func TestGrokBackfillShipsFixture(t *testing.T) {
 	}
 }
 
+// TestPreAmendmentStoreParksGrokWithoutBlockingOthers pins the mixed-fleet
+// reality: a grok-shipping node against a store predating wire Amendment 3
+// gets 400 unknown_tool. The frozen reaction — hold that tool's files, no
+// retry loop, nothing dropped — must apply on the recovery GET exactly as on
+// PUT: a fresh registry recovers through per-identity GETs, and a refused
+// grok identity must not wedge claude/codex shipping for the whole pass.
+func TestPreAmendmentStoreParksGrokWithoutBlockingOthers(t *testing.T) {
+	h := newHarness(t)
+	h.store.preAmendment3 = true
+	claude := fixture(t, "claude-normal.jsonl")
+	grok := fixture(t, "grok-chat-history.jsonl")
+	h.writeClaude("-home-user-proj-a", uuidNormal, claude)
+	h.writeGrok(grokCwdGroup, uuidGrokB, grok)
+
+	// Fresh registry: the pass starts with per-identity recovery GETs.
+	h.runOnce()
+	h.runOnce() // parked files must stay parked, not retry-loop
+
+	h.assertMirror("claude", uuidNormal, claude)
+	if puts := h.store.puts("grok", uuidGrokB, uuidGrokB); len(puts) != 0 {
+		t.Fatalf("pre-amendment store received %d grok PUTs, want none", len(puts))
+	}
+	if _, ok := h.cursor(wire.ToolGrok, uuidGrokB); ok {
+		t.Fatal("held grok identity must not record a cursor (nothing was ACKed)")
+	}
+
+	// Resolution is the store upgrade plus a shipper restart: the grok bytes
+	// were never dropped and ship in full.
+	h.store.preAmendment3 = false
+	h.restart()
+	h.runOnce()
+	h.assertMirror("grok", uuidGrokB, grok)
+}
+
 // TestGrokAppendShipsTail proves per-file append semantics: new bytes ship
 // from the cursor, not from zero.
 func TestGrokAppendShipsTail(t *testing.T) {
