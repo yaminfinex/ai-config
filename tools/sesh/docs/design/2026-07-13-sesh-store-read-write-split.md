@@ -183,13 +183,16 @@ each a full-key seek per page item: file bookkeeping times (`files` by its
 renders as "mirrored at"), node facts, owner claims. Nothing on the
 sessions-list hot path touches `sesh_index_messages` at all. The
 staleness bound therefore restates as: the ranked list, its total, and
-everything an entry carries — node label, row counts, max timestamp,
-membership — serve the rebuild snapshot and can lag within the exact same
-serve-stale bound as the list itself (a row count is at most one
-triggered-refresh behind for a watched page; unwatched staleness remains
-unbounded until the first request's refresh lands). The single-session
-path (`Session`, i.e. the transcript route) keeps fully live hydration —
-it renders that one session's rows anyway.
+everything an entry carries — row counts, max timestamp, membership, and
+the node label the per-node filter selects on — serve the rebuild snapshot
+and can lag within the exact same serve-stale bound as the list itself (a
+row count is at most one triggered-refresh behind for a watched page;
+unwatched staleness remains unbounded until the first request's refresh
+lands). Rendered node labels keep the node-label delta's split untouched:
+the unfiltered list renders live-hydrated labels, the filtered view
+renders its selection snapshot's label (one snapshot for select and
+display). The single-session path (`Session`, i.e. the transcript route)
+keeps fully live hydration — it renders that one session's rows anyway.
 
 Gates: the max-size-sessions fixture (fifty 2000-row sessions on page
 one) asserts the warm page runs a fixed handful of full-key-seek queries,

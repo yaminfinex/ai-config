@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -140,6 +141,61 @@ func indexRowWalkQueries(queries []string) []string {
 	return out
 }
 
+// fileGenMarker appears only in the page path's files-by-generation-key
+// query (the 4-column requested-keys join).
+const fileGenMarker = "k.column4"
+
+// filesFullKeySeekRe is the ONLY way the files-by-generation-key query may
+// touch the files table: the exact four-term primary-key seek. Deliberately
+// stricter than the shared allowlist, whose files-PK pattern tolerates
+// shorter prefixes that older query shapes legitimately use — a prefix seek
+// here costs work growing with generations per wire session.
+var filesFullKeySeekRe = regexp.MustCompile(
+	`^SEARCH \S+ USING (?:COVERING )?INDEX sqlite_autoindex_files_1 \(tool=\? AND session_id=\? AND file_uuid=\? AND generation=\?\)$`)
+
+// fileGenSeekViolations EXPLAINs one files-by-generation-key query and
+// returns every base-table access line that is not the exact four-term
+// primary-key seek (requested-keys VALUES scans and co-routine glue are
+// structural, not storage).
+func fileGenSeekViolations(t *testing.T, plain *sql.DB, query string) []string {
+	t.Helper()
+	structuralRe := regexp.MustCompile(`^SCAN (?:k|\(subquery-\d+\)|\d+-ROW VALUES CLAUSE|CONSTANT ROW)$`)
+	args := make([]any, strings.Count(query, "?"))
+	for i := range args {
+		args[i] = "x"
+	}
+	rows, err := plain.Query("EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatalf("explain: %v\nquery: %s", err, query)
+	}
+	defer rows.Close()
+	var found []string
+	for rows.Next() {
+		cols, err := rows.Columns()
+		if err != nil {
+			t.Fatal(err)
+		}
+		vals := make([]any, len(cols))
+		for i := range vals {
+			vals[i] = new(any)
+		}
+		if err := rows.Scan(vals...); err != nil {
+			t.Fatal(err)
+		}
+		detail := fmt.Sprintf("%v", *vals[len(vals)-1].(*any))
+		if !planOpRe.MatchString(detail) || structuralRe.MatchString(detail) {
+			continue
+		}
+		if !filesFullKeySeekRe.MatchString(detail) {
+			found = append(found, detail)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return found
+}
+
 func TestSessionsPageIndependentOfListedSessionSizes(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(t.Context(), store.Config{Dir: dir})
@@ -217,6 +273,23 @@ func TestSessionsPageIndependentOfListedSessionSizes(t *testing.T) {
 		t.Errorf("warm max-size page walked listed sessions' index rows:\n%s", strings.Join(walks, "\n---\n"))
 	}
 	assertSeeksOnly(t, plain, warm)
+	// Query-specific plan pin for the files-by-generation-key seek: exactly
+	// one such statement on the warm page, and its every files access is the
+	// full FOUR-term primary-key seek — the shared allowlist alone would
+	// tolerate a regression to a shorter files-PK prefix.
+	var fileGenQueries []string
+	for _, q := range warm {
+		if strings.Contains(q, fileGenMarker) {
+			fileGenQueries = append(fileGenQueries, q)
+		}
+	}
+	if len(fileGenQueries) != 1 {
+		t.Fatalf("warm page ran %d files-by-generation-key queries, want exactly 1:\n%s",
+			len(fileGenQueries), strings.Join(fileGenQueries, "\n---\n"))
+	}
+	for _, v := range fileGenSeekViolations(t, plain, fileGenQueries[0]) {
+		t.Errorf("files-by-generation-key access is not the four-term primary-key seek: %s", v)
+	}
 	// Generous wall ceiling — the structural assertions above carry the
 	// proof; this only keeps "renders within budget" honest against a
 	// pathological plan the recorder cannot see.
@@ -254,6 +327,27 @@ func TestSessionsPageIndependentOfListedSessionSizes(t *testing.T) {
 		t.Errorf("after the triggered refresh: count %d recency %v, want %d and %v",
 			fresh[0].MessageRows, fresh[0].Recency(), rowsPerSession+1, aggInstant(maxSizeSessions))
 	}
+
+	// Negative self-check: a files-by-generation-key variant that stops
+	// forcing the trailing key terms — the regression shape where the
+	// optimizer seeks a shorter files prefix and per-key work grows with
+	// generations per wire session — must trip the four-term pin, or the pin
+	// is theater. The shared allowlist ACCEPTS this shape (older queries use
+	// legitimate shorter files-PK prefixes), which is exactly why the pin is
+	// query-specific.
+	t.Run("files-seek pin flags a prefix seek", func(t *testing.T) {
+		prefix := `SELECT f.tool, f.session_id, f.file_uuid, f.generation,
+				COALESCE(f.created_at, ''), COALESCE(f.last_put_at, '')
+			FROM (VALUES (?, ?, ?, ?)) AS k
+			JOIN files f ON f.tool = k.column1 AND f.session_id = k.column2`
+		violations := fileGenSeekViolations(t, plain, prefix)
+		if len(violations) == 0 {
+			t.Fatal("a two-term files prefix seek passed the four-term pin; the query-specific plan assertion is broken")
+		}
+		if !strings.Contains(violations[0], "(tool=? AND session_id=?)") {
+			t.Errorf("violation should carry the prefix-only terms, got: %s", violations[0])
+		}
+	})
 
 	// Negative self-check: the deliberately regressed hydration shape — the
 	// live per-key path the page USED to take, which walks every index row

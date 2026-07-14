@@ -946,8 +946,14 @@ func fileKeyValues(keys []fileGenKey) (string, []any) {
 
 // fileGenerations reads the bookkeeping times of exactly the given file
 // generations — one full-key seek on the files primary key per requested
-// generation (the plan gate asserts the seek). This is the page path's only
-// files access: membership itself came from the projection snapshot.
+// generation. This is the page path's only files access: membership itself
+// came from the projection snapshot. INDEXED BY pins the primary-key
+// autoindex so the optimizer can never drift to files_identity_fingerprint
+// and seek a 3-column prefix whose cost grows with generations per wire
+// session (see memberGenerations for the pin rationale); the max-size
+// fixture gate asserts this exact plan term-by-term, all four key columns,
+// with a query-specific check — the shared allowlist tolerates shorter
+// files-PK prefixes that older shapes legitimately use.
 func (s *SQLStore) fileGenerations(ctx context.Context, keys []fileGenKey) (map[fileGenKey]mirrorGen, error) {
 	if len(keys) == 0 {
 		return nil, nil
@@ -956,7 +962,8 @@ func (s *SQLStore) fileGenerations(ctx context.Context, keys []fileGenKey) (map[
 	rows, err := s.db.QueryContext(ctx, `SELECT f.tool, f.session_id, f.file_uuid, f.generation,
 			COALESCE(f.created_at, ''), COALESCE(f.last_put_at, '')
 		FROM `+clause+` AS k
-		JOIN files f ON f.tool = k.column1 AND f.session_id = k.column2
+		JOIN files f INDEXED BY sqlite_autoindex_files_1
+			ON f.tool = k.column1 AND f.session_id = k.column2
 			AND f.file_uuid = k.column3 AND f.generation = k.column4`, args...)
 	if err != nil {
 		return nil, err

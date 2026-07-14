@@ -161,12 +161,16 @@ one build). This supersedes the projection's original read-your-own-writes
 property: under bulk ingest the stamp moves between every request, and
 rebuilding inline degenerated to a corpus-scale rebuild per page load.
 Staleness is bounded only while the page is watched, and the bound is: the
-ranked list, its total, and everything a projection entry carries (node
-label, row counts, max timestamp, membership) serve the rebuild snapshot
-and can lag — hydration reads live tables only for per-request data: file
-bookkeeping times, node facts, owner claims (the transcript route's
-single-session lookup stays fully live) — every request that sees a moved
-stamp triggers a refresh, and
+ranked list, its total, and everything a projection entry carries (row
+counts, max timestamp, membership, and the node label the per-node filter
+selects on) serve the rebuild snapshot and can lag — hydration reads live
+tables for per-request data: file bookkeeping times, node facts, owner
+claims. Rendered node labels keep their established split: the unfiltered
+list renders live-hydrated labels while the filtered view renders its
+selection snapshot's label (one snapshot for select and display, so a
+response never lists a row under one node while labeling it another), and
+the transcript route's single-session lookup stays fully live. Every
+request that sees a moved stamp triggers a refresh, and
 the sessions page polls every 60 s, so under continuous ingest a watched page
 serves a list at most one poll interval plus two rebuild durations behind
 the store (the poll that observes a completed rebuild serves that rebuild's
