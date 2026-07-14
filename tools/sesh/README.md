@@ -88,14 +88,18 @@ matrix `just release` builds).
 ## Layout
 
 ```
-cmd/sesh/        entry point
+cmd/sesh/        fleet client entry point (slim: no store/tsnet/sqlite —
+                 the artifact install.sh and `sesh update` distribute)
+cmd/sesh-store/  full store-side entry point (client + serve/reindex/admin;
+                 built by `just deploy-store`, never published to the channel)
 internal/wire/   frozen types transcribing docs/specs/sesh-wire.md 1:1
 internal/ship/   watcher, tailer, cursor registry, correlation
 internal/store/  ingest handler, mirror, generations, recovery
 internal/index/  parser, logical-session resolution, dedup, quarantine
 internal/surface/ recency + transcript pages
 internal/setup/  sesh setup engine + embedded systemd unit / launchd templates
-internal/cli/    cobra command tree
+internal/cli/    cobra command tree (client commands + store-command stubs)
+internal/storecli/ store-side commands, linked only by cmd/sesh-store
 tests/fixtures/  real captured session JSONL (see tests/fixtures/README.md)
 tests/check-*.sh per-scenario gate harnesses (S1..S11)
 etc/             install-ship.sh deprecation pointer (absorbed by sesh setup)
@@ -118,6 +122,20 @@ sesh reindex
 sesh status
 sesh admin drop-file <tool> <session_id> <file_uuid> --yes
 ```
+
+The command tree is one program built two ways. `./cmd/sesh` is the slim
+fleet client — the artifact install.sh and `sesh update` distribute — and
+carries only ship/status/setup/update/version (no store, no tsnet, no
+sqlite: ~7 MB instead of ~32 MB). `./cmd/sesh-store` is the full build with
+serve/reindex/admin on top of every client command; `just deploy-store`
+ships it to the store host, where it is still installed as
+`/usr/local/bin/sesh` (so `sesh serve` above reads as written there).
+Invoking a store-only command on the fleet client fails with one line naming
+the sesh-store binary. The inverse is guarded too: the release channel
+serves only client artifacts, so the store build's mutating `sesh update`
+fails closed before any download (`--check` stays available); the store
+converges via `just deploy-store` only. `tests/check-client-slim.sh` gates
+the client's dependency graph and the store-update refusal.
 
 `sesh setup` installs (or reconfigures) the per-user shipper service to run
 the binary executing the command: it pins the resolved absolute binary path
@@ -456,8 +474,8 @@ where this repo lives.
 the backup restore drill, is `ops/README.md`. On any other host:
 
 ```sh
-GOOS=linux GOARCH=amd64 go build ./cmd/sesh   # or the matching platform
-TS_AUTHKEY=tskey-auth-... sesh serve --tsnet --tsnet-hostname sesh \
+GOOS=linux GOARCH=amd64 go build ./cmd/sesh-store   # or the matching platform
+TS_AUTHKEY=tskey-auth-... sesh-store serve --tsnet --tsnet-hostname sesh \
   --addr :8765 --surface-addr :8766 --data-dir /var/lib/sesh
 ```
 

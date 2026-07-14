@@ -30,7 +30,13 @@ func ExitCode(err error) int {
 	return 0
 }
 
-func newUpdate() *cobra.Command {
+// newUpdate builds the update command. storeBuild marks the full store-side
+// binary: there the mutating path fails closed BEFORE any download, because
+// the release channel serves only fleet client artifacts — converging the
+// store binary to one would leave a serve-less store at the next restart.
+// --check stays allowed: it is read-only and version-skew visibility is
+// useful on the store host too.
+func newUpdate(storeBuild bool) *cobra.Command {
 	var storeURL string
 	var check bool
 	cmd := &cobra.Command{
@@ -55,6 +61,10 @@ Exit codes with --check (stable for scripting): 0 already up to date,
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if storeBuild && !check {
+				fmt.Fprintln(cmd.ErrOrStderr(), "sesh update: refusing on the store build — the release channel serves fleet client artifacts that cannot serve; converge the store with `just deploy-store` (update --check remains available)")
+				return exitCodeError{code: 1}
+			}
 			err := update.Run(update.Options{
 				StoreURL: storeURL,
 				Check:    check,

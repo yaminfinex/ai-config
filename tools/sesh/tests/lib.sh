@@ -83,7 +83,11 @@ cleanup_workspace() {
 }
 
 build_binaries() {
-  (cd "$SESH_MODULE_DIR" && go build -o "$BIN/sesh" ./cmd/sesh && go build -o "$BIN/dbq" ./tests/dbq) ||
+  # The scenarios drive serve and ship through one binary, so this is the
+  # FULL store-side build (./cmd/sesh-store): the client commands it carries
+  # are the same packages the slim fleet client (./cmd/sesh) links, and
+  # check-client-slim.sh gates the slim artifact's dependency graph itself.
+  (cd "$SESH_MODULE_DIR" && go build -o "$BIN/sesh" ./cmd/sesh-store && go build -o "$BIN/dbq" ./tests/dbq) ||
     fail "go build of sesh/dbq"
 }
 

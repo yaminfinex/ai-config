@@ -20,6 +20,12 @@ build:
     go build -ldflags '{{ldflags}}' -o sesh ./cmd/sesh
     @echo "built ./sesh  ({{version}})"
 
+# The full store-side binary (client commands + serve/reindex/admin, tsnet,
+# sqlite). Never published to the release channel; deploy-store ships it.
+build-store:
+    go build -ldflags '{{ldflags}}' -o sesh-store ./cmd/sesh-store
+    @echo "built ./sesh-store  ({{version}})"
+
 run *args: build
     ./sesh {{args}}
 
@@ -59,7 +65,7 @@ release dest=release_dest:
 # the only known-good binary is never overwritten in place), restarts
 # sesh-serve, and prints the version of the RUNNING image.
 deploy-store:
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '{{ldflags}}' -o /tmp/sesh-linux-amd64 ./cmd/sesh
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '{{ldflags}}' -o /tmp/sesh-linux-amd64 ./cmd/sesh-store
     gcloud compute scp --tunnel-through-iap --zone {{zone}} --project {{project}} /tmp/sesh-linux-amd64 ops/deploy-remote.sh {{vm}}:/tmp/
     gcloud compute ssh {{vm}} --tunnel-through-iap --zone {{zone}} --project {{project}} --command 'sudo sh /tmp/deploy-remote.sh /tmp/sesh-linux-amd64'
 
@@ -75,4 +81,4 @@ versions:
     @if [ "$(uname -s)" = Linux ]; then pid="$(systemctl --user show sesh-ship.service --property=MainPID --value 2>/dev/null || true)"; if [ -n "$pid" ] && [ "$pid" != 0 ] && [ -x "/proc/$pid/exe" ]; then printf 'running  '; "/proc/$pid/exe" version; else echo "running  (not running)"; fi; else label="gui/$(id -u)/dev.sesh.ship"; pid="$(launchctl print "$label" 2>/dev/null | awk '/pid =/{print $3; exit}')"; if [ -n "$pid" ]; then executable="$(ps -p "$pid" -o comm=)"; printf 'on-disk  '; "$executable" version; else echo "on-disk  (not running)"; fi; fi
 
 clean:
-    rm -f sesh
+    rm -f sesh sesh-store
