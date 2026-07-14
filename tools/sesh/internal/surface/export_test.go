@@ -33,3 +33,15 @@ func (s *SQLStore) WaitProjectionIdle() {
 // external tests assert against the one constant instead of a copied magic
 // number.
 const TranscriptWindowMessages = transcriptWindowMessages
+
+// ClearGlobalRankingForTest empties the all-nodes ranked list while leaving
+// the per-node slices, built flag, and stamp in place. The work-scaling
+// gate uses it to prove filtered paging reads the PREBUILT per-node slice
+// and never derives pages from the global ranking at request time: an
+// in-memory per-request corpus walk over the ranking fails deterministically
+// under this hook, where SQL-shape and allocation evidence are both blind.
+func (s *SQLStore) ClearGlobalRankingForTest() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ranking = nil
+}

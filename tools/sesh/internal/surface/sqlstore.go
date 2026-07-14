@@ -65,7 +65,14 @@ type SQLStore struct {
 	mu      sync.Mutex
 	built   bool
 	ranking []rankedSession
-	stamp   rankingStamp
+	// byNode holds the per-node ranked slices, derived from ranking during
+	// the same rebuild and swapped with it under mu — one atomic projection.
+	// Filtered requests page a prebuilt slice; they never walk the corpus,
+	// not even in memory. The tuples are duplicated (~a hundred bytes per
+	// session; single-digit MB at a 10^5-session fleet corpus) — a deliberate
+	// trade for O(page) filtered requests.
+	byNode map[string][]rankedSession
+	stamp  rankingStamp
 	// refresh is the in-flight single-flighted rebuild, nil when idle.
 	refresh *projectionRefresh
 	// rebuildHook, when non-nil, runs at each rebuildStage of every rebuild
@@ -142,13 +149,30 @@ type sessionKey struct {
 }
 
 // rankedSession is one projection entry: the session key plus the node
-// label the per-node filter slices on. The label is the ranking-time latest
+// label the per-node filter selects on. The label is the ranking-time latest
 // fact; like the ranked order itself it can lag under serve-stale — page
-// hydration always reads the live tables.
+// hydration always reads the live tables (except the filtered view's node
+// label, which renders the selection snapshot; see RecentSessionsByNode).
 type rankedSession struct {
 	key      sessionKey
 	hostname string
 	osUser   string
+}
+
+// projectionNodeKey addresses one node's ranked slice.
+func projectionNodeKey(hostname, osUser string) string {
+	return hostname + "\x00" + osUser
+}
+
+// nodeSlices derives the per-node ranked slices from the freshly built
+// ranking — rebuild-time work, amortized exactly like the ranking query.
+func nodeSlices(ranking []rankedSession) map[string][]rankedSession {
+	out := map[string][]rankedSession{}
+	for _, r := range ranking {
+		k := projectionNodeKey(r.hostname, r.osUser)
+		out[k] = append(out[k], r)
+	}
+	return out
 }
 
 // rankingStamp is the cheap store version probe guarding the projection:
@@ -176,7 +200,7 @@ const rankingStampSQL = `SELECT
 // — the fleet's corpus (thousands of files per node) is never materialized
 // per request — and only the page's sessions are hydrated, by key.
 func (s *SQLStore) RecentSessions(ctx context.Context, limit, offset int) ([]SessionSummary, int, error) {
-	ranking, err := s.rankedKeys(ctx)
+	ranking, _, err := s.projectionSnapshot(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -184,22 +208,33 @@ func (s *SQLStore) RecentSessions(ctx context.Context, limit, offset int) ([]Ses
 }
 
 // RecentSessionsByNode is RecentSessions filtered to one node label
-// (hostname, OS user). It slices the same in-memory projection — the entry
-// carries its node label precisely so this filter adds no SQL ranking path
-// and no corpus scan; a projection walk is bounded by the session count the
-// rebuild already paid for. total is the node's session count.
+// (hostname, OS user). It pages the node's PREBUILT ranked slice — derived
+// during the same single-flighted rebuild and swapped atomically with the
+// global ranking — so the filter adds no SQL ranking path, no corpus scan,
+// and no per-request corpus walk, in SQL or in memory. total is the node's
+// session count.
+//
+// Filter/display consistency: the filter selected on the projection's node
+// label, so the response RENDERS that label too — one snapshot for select
+// and display. Hydration reads live facts, which can have moved since the
+// snapshot (serve-stale); without this override one response could list a
+// session under node A while labeling its row B. The stale read has already
+// triggered the refresh that re-homes the session on a later request. The
+// unfiltered list keeps live-hydrated labels — it has no filter invariant
+// to hold.
 func (s *SQLStore) RecentSessionsByNode(ctx context.Context, hostname, osUser string, limit, offset int) ([]SessionSummary, int, error) {
-	ranking, err := s.rankedKeys(ctx)
+	_, byNode, err := s.projectionSnapshot(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
-	var filtered []rankedSession
-	for _, r := range ranking {
-		if r.hostname == hostname && r.osUser == osUser {
-			filtered = append(filtered, r)
-		}
+	sums, total, err := s.pageOf(ctx, byNode[projectionNodeKey(hostname, osUser)], limit, offset)
+	if err != nil {
+		return nil, 0, err
 	}
-	return s.pageOf(ctx, filtered, limit, offset)
+	for i := range sums {
+		sums[i].Hostname, sums[i].OSUser = hostname, osUser
+	}
+	return sums, total, nil
 }
 
 // pageOf slices one page out of a ranked list and hydrates exactly those
@@ -230,24 +265,25 @@ func (s *SQLStore) pageOf(ctx context.Context, ranking []rankedSession, limit, o
 	return sums, total, nil
 }
 
-// rankedKeys returns the current recency projection. Steady state (no new
-// bytes since the last render) costs one probe; a moved stamp serves the
-// existing projection immediately and triggers the single-flighted
-// background refresh, so no request after the cold start ever waits on a
-// corpus-scale rebuild.
-func (s *SQLStore) rankedKeys(ctx context.Context) ([]rankedSession, error) {
+// projectionSnapshot returns the current recency projection: the global
+// ranked list and the per-node ranked slices, one consistent snapshot.
+// Steady state (no new bytes since the last render) costs one probe; a
+// moved stamp serves the existing projection immediately and triggers the
+// single-flighted background refresh, so no request after the cold start
+// ever waits on a corpus-scale rebuild.
+func (s *SQLStore) projectionSnapshot(ctx context.Context) ([]rankedSession, map[string][]rankedSession, error) {
 	var stamp rankingStamp
 	if err := s.db.QueryRowContext(ctx, rankingStampSQL).Scan(&stamp.indexMax, &stamp.filesMax, &stamp.factsMax); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	s.mu.Lock()
 	if s.built {
-		ranking := s.ranking
+		ranking, byNode := s.ranking, s.byNode
 		if stamp != s.stamp {
 			s.startRefreshLocked()
 		}
 		s.mu.Unlock()
-		return ranking, nil
+		return ranking, byNode, nil
 	}
 	// Cold start: nothing to serve stale — join the single-flighted first
 	// build so concurrent cold requests share one rebuild.
@@ -256,15 +292,15 @@ func (s *SQLStore) rankedKeys(ctx context.Context) ([]rankedSession, error) {
 	select {
 	case <-run.done:
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
 	if run.err != nil {
-		return nil, run.err
+		return nil, nil, run.err
 	}
 	s.mu.Lock()
-	ranking := s.ranking
+	ranking, byNode := s.ranking, s.byNode
 	s.mu.Unlock()
-	return ranking, nil
+	return ranking, byNode, nil
 }
 
 // startRefreshLocked returns the in-flight rebuild, starting one when idle.
@@ -313,7 +349,9 @@ func (s *SQLStore) runRefresh(run *projectionRefresh) {
 	}()
 	s.mu.Lock()
 	if err == nil {
-		s.built, s.ranking, s.stamp = true, ranking, stamp
+		// One atomic swap under mu: the global ranking, its per-node
+		// slices, and the stamp always describe the same snapshot.
+		s.built, s.ranking, s.byNode, s.stamp = true, ranking, nodeSlices(ranking), stamp
 	}
 	run.err = err
 	s.refresh = nil

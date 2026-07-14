@@ -117,19 +117,20 @@ ok "ship.log clean of environ errors"
 # --- U10: render half — view-time precedence on the live page (R15) --------
 step "surface renders attribution per view-time precedence"
 wait_for "surface to accept connections" 10 surface_up
-page=$(curl -sf "$SURFACE_URL/") || fail "GET surface recency page failed"
+page=$(curl -sf "$SURFACE_URL/sessions") || fail "GET flat sessions list failed"
 grep -q 'alice <span class="source">SESSION_OWNER fact</span>' <<<"$page" ||
-  fail "alice's stamped session must group under alice labeled with its source"
+  fail "alice's stamped session must fill the person column labeled with its source"
 grep -q 'bob <span class="source">SESSION_OWNER fact</span>' <<<"$page" ||
-  fail "bob's stamped session must group under bob labeled with its source"
+  fail "bob's stamped session must fill the person column labeled with its source"
 # The collided cohorts stamped nothing (set-time refusal): those sessions
-# must group under node/OS-user with no guessed person — carol and dave
-# exist only in fake process environs and may appear nowhere on the page.
+# render an ABSENT person column (node stays its own column on the flat
+# table) with no guessed person — carol and dave exist only in fake process
+# environs and may appear nowhere on the page.
 if grep -qE '\b(carol|dave)\b' <<<"$page"; then
   fail "unstamped cohort owner leaked onto the page (honest absence violated)"
 fi
 grep -q 'no owner claim' <<<"$page" ||
-  fail "unclaimed sessions must group under node/OS-user with the honest label"
+  fail "unclaimed sessions must render an absent person column with the honest tier label"
 ok "page attributes alice and bob by SESSION_OWNER fact; absence stays absent"
 
 all_green

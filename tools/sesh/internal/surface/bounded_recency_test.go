@@ -70,7 +70,14 @@ func insertCorpusSession(t *testing.T, ins corpusInserters, i int) (files, msgs 
 		}
 		msgs++
 	}
-	if _, err := ins.fact.Exec(at, wire.ToolClaude, id, id, 0, "fleet-node", "grace"); err != nil {
+	// Most of the corpus ships from one busy node; a 5-session pocket node
+	// gives the per-node filter a small slice to prove page-proportional
+	// work against.
+	host := "fleet-node"
+	if i%1000 == 500 {
+		host = "pocket-node"
+	}
+	if _, err := ins.fact.Exec(at, wire.ToolClaude, id, id, 0, host, "grace"); err != nil {
 		t.Fatal(err)
 	}
 	if i%25 == 0 {
@@ -440,16 +447,17 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 	}
 	assertSeeksOnly(t, plain, log.snapshot())
 
-	// The node-filtered route slices the same in-memory projection: warm
-	// work is the same stamp probe plus page hydration — zero rebuilds, zero
-	// new query shapes, full-key seeks only, whatever the corpus size.
+	// The node-filtered route pages a prebuilt per-node slice of the same
+	// projection: warm work is the same stamp probe plus page hydration —
+	// zero rebuilds, zero new query shapes, full-key seeks only, whatever
+	// the corpus size.
 	log.reset()
 	filtered, filteredTotal, err := live.RecentSessionsByNode(t.Context(), "fleet-node", "grace", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filteredTotal != bigCorpusSessions {
-		t.Errorf("node-filtered total = %d, want %d (every corpus session is on fleet-node/grace)", filteredTotal, bigCorpusSessions)
+	if want := bigCorpusSessions - 5; filteredTotal != want {
+		t.Errorf("node-filtered total = %d, want %d (the corpus minus the pocket node's 5)", filteredTotal, want)
 	}
 	if len(filtered) != 50 || filtered[0].LogicalSessionID != corpusID(bigCorpusSessions-1) {
 		t.Errorf("node-filtered page = %d sessions starting %s, want 50 from the newest", len(filtered), filtered[0].LogicalSessionID)
@@ -497,8 +505,8 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 	if n := strings.Count(body, `href="/s/`); n != 50 {
 		t.Errorf("node-filtered page links %d sessions, want 50", n)
 	}
-	if !strings.Contains(body, fmt.Sprintf("showing latest 50 of %d sessions", bigCorpusSessions)) {
-		t.Error("node-filtered page must state its bound")
+	if !strings.Contains(body, fmt.Sprintf("showing latest 50 of %d sessions", bigCorpusSessions-5)) {
+		t.Error("node-filtered page must state its bound (the node's own total)")
 	}
 	if !strings.Contains(body, `href="/sessions?node=grace%40fleet-node&amp;page=2"`) {
 		t.Error("node-filtered pager must keep the filter on the older link")
@@ -564,6 +572,44 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 		if strings.Contains(q, "sesh_index_messages") {
 			t.Errorf("the nodes entry point queried the message index: %s", q)
 		}
+	}
+
+	// Per-node slices page independent of corpus size — the work-scaling
+	// half of the filter gate. First the correctness: the 5-session pocket
+	// node's filtered view serves exactly its slice, in recency order, with
+	// the same fixed query count and full-key seeks as every warm request.
+	log.reset()
+	pocket, pocketTotal, err := live.RecentSessionsByNode(t.Context(), "pocket-node", "grace", 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pocketTotal != 5 || len(pocket) != 5 {
+		t.Fatalf("pocket-node filtered page = %d sessions (total %d), want all 5", len(pocket), pocketTotal)
+	}
+	if pocket[0].LogicalSessionID != corpusID(4500) || pocket[4].LogicalSessionID != corpusID(500) {
+		t.Errorf("pocket-node slice out of recency order: %s … %s", pocket[0].LogicalSessionID, pocket[4].LogicalSessionID)
+	}
+	warmPocket := log.snapshot()
+	if len(warmPocket) > 7 {
+		t.Errorf("small-node filtered request ran %d queries, want a fixed handful (<=7):\n%s",
+			len(warmPocket), strings.Join(warmPocket, "\n---\n"))
+	}
+	assertSeeksOnly(t, plain, warmPocket)
+	// Then the scaling evidence: clearing the GLOBAL ranking (test hook;
+	// per-node slices stay) must not change the filtered result. An
+	// implementation that walks the corpus ranking per request — the
+	// in-memory O(corpus) shape the SQL plan gate is blind to — returns
+	// nothing here and fails deterministically. Runs after every all-nodes
+	// assertion: the cleared ranking empties the unfiltered list until the
+	// next rebuild.
+	live.ClearGlobalRankingForTest()
+	pocket, pocketTotal, err = live.RecentSessionsByNode(t.Context(), "pocket-node", "grace", 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pocketTotal != 5 || len(pocket) != 5 {
+		t.Fatalf("filtered paging derives from the global ranking at request time (a corpus walk): got %d sessions (total %d) with the ranking cleared, want the prebuilt slice's 5",
+			len(pocket), pocketTotal)
 	}
 
 	// Gate self-checks: the plan evidence must actually catch regressions,

@@ -143,10 +143,11 @@ the raw route still serves the whole file. The sessions list is bounded:
 request-time work is proportional to the page, not the corpus (fleet
 corpora run to thousands of files per node). `surface.SQLStore` maintains a
 recency projection — the ranked session-key list, each entry carrying the
-session's node label so the per-node view slices the same projection
-instead of adding a SQL ranking path — rebuilt only when a cheap store
-version stamp (index rows, file generations, fact observations — all
-INSERT-only) moves. The rebuild is single-flighted and
+session's node label, plus per-node ranked slices derived in the same
+rebuild and swapped atomically with it, so the per-node view pages a
+prebuilt slice instead of adding a SQL ranking path or walking the corpus
+per request — rebuilt only when a cheap store version stamp (index rows,
+file generations, fact observations — all INSERT-only) moves. The rebuild is single-flighted and
 serve-stale-while-revalidating: at most one rebuild runs at a time, a
 request that observes a moved stamp returns the previous projection
 immediately while the refresh runs in the background, and only the very
@@ -173,7 +174,7 @@ ingest plus first visits) that motivated this design. Rebuild duration
 lands in the `SESH_DEBUG` journal (identifier-free: a
 duration and a session count). Each request
 slices one page of the projection (latest 50 by default; the `?node=` filter
-slices the same in-memory list) and hydrates just those
+pages its node's prebuilt slice) and hydrates just those
 sessions through index-seeking, key-constrained queries (the per-page facts
 lookups seek the additive `fact_observations_session` bookkeeping index; the
 frozen wire-doc index schema is untouched). The page states its bound

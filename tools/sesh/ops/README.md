@@ -229,6 +229,9 @@ own migration — never an incidental side effect of a deploy. **Schema moves
 forward-only**: the store's index schema and the node-local cursor-registry
 generation never downgrade; an older binary against newer state refuses
 cleanly (the README's "Field failure signature") instead of touching data.
-The **support window is current + previous release**: node version
-visibility plus one-command `sesh update` keep the fleet within one release
-of latest, and anything older gets upgraded, not accommodated.
+The **support window is current + previous release**: one-command
+`sesh update` keeps the fleet within one release of latest, and anything
+older gets upgraded, not accommodated. Per-node version visibility on the
+nodes view is DEFERRED, not present: the read side carries no version facts
+today, and adding them is a write-path change owned by the
+fleet-version-visibility task (User-Agent census) on the board.

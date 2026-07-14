@@ -116,8 +116,9 @@ type Store interface {
 	// RecentSessionsByNode is RecentSessions filtered to one node label
 	// (hostname, OS user) — same ordering, same bound contract; total is the
 	// node's session count. Implementations must not pay corpus-scale work
-	// per request for the filter (the live store slices its in-memory
-	// recency projection, which carries the node label per entry).
+	// per request for the filter, in SQL or in memory (the live store pages
+	// a per-node ranked slice prebuilt during the same single-flighted
+	// projection rebuild and swapped atomically with the global ranking).
 	RecentSessionsByNode(ctx context.Context, hostname, osUser string, limit, offset int) (page []SessionSummary, total int, err error)
 	// Session resolves one logical session; ok=false when unknown.
 	Session(ctx context.Context, tool wire.Tool, logicalSessionID string) (sum SessionSummary, ok bool, err error)
