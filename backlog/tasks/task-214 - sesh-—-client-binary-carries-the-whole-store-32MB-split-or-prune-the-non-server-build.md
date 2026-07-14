@@ -1,5 +1,5 @@
 ---
-id: TASK-210
+id: TASK-214
 title: sesh — client binary carries the whole store (32MB); split or prune the non-server build
 status: In Progress
 assignee: []
