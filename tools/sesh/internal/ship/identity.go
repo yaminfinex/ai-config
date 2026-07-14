@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"sesh/internal/wire"
 )
@@ -31,11 +32,12 @@ func (id Identity) Key() string {
 	return string(id.Tool) + "/" + id.SessionID + "/" + id.FileUUID
 }
 
-// Roots are the two watched session roots. Either may itself be a symlink
+// Roots are the watched session roots. Any may itself be a symlink
 // (resolved before walking); symlinks below a root are not followed.
 type Roots struct {
 	Claude string // ~/.claude/projects
 	Codex  string // ~/.codex/sessions
+	Grok   string // ~/.grok/sessions
 }
 
 // DefaultRoots derives the watched roots from the home directory.
@@ -43,7 +45,13 @@ func DefaultRoots(home string) Roots {
 	return Roots{
 		Claude: filepath.Join(home, ".claude", "projects"),
 		Codex:  filepath.Join(home, ".codex", "sessions"),
+		Grok:   filepath.Join(home, ".grok", "sessions"),
 	}
+}
+
+// All returns the roots in walk order.
+func (r Roots) All() []string {
+	return []string{r.Claude, r.Codex, r.Grok}
 }
 
 const uuidPattern = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
@@ -51,7 +59,15 @@ const uuidPattern = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
 var (
 	claudeName = regexp.MustCompile(`^(` + uuidPattern + `)\.jsonl$`)
 	codexName  = regexp.MustCompile(`^rollout-.+-(` + uuidPattern + `)\.jsonl$`)
+	uuidName   = regexp.MustCompile(`^` + uuidPattern + `$`)
 )
+
+// grokTranscriptName is the one file that ships from a grok session
+// directory. Everything else in the directory is runtime state, not
+// transcript, and everything above the sessions root is config/credentials —
+// the exclusion is a security boundary, so admission is by exact shape, not
+// by blocklist.
+const grokTranscriptName = "chat_history.jsonl"
 
 // Discovered is one matched session file at its current path. The path is
 // where the identity lives right now; it is never part of the identity.
@@ -60,55 +76,103 @@ type Discovered struct {
 	Path     string
 }
 
-// Discover walks both roots and returns every session file matching the
+// Discover walks the roots and returns every session file matching the
 // discovery globs: <uuid>.jsonl under the Claude root, rollout-*-<uuid>.jsonl
-// under the Codex root. Everything else is ignored. A missing root is not an
-// error (the tool may not be installed on this box).
+// under the Codex root, <cwd-group>/<uuid>/chat_history.jsonl under the Grok
+// root. Everything else is ignored. A missing root is not an error (the tool
+// may not be installed on this box).
 func Discover(roots Roots) ([]Discovered, error) {
 	var out []Discovered
-	walk := func(root string, tool wire.Tool, name *regexp.Regexp) error {
-		resolved, err := filepath.EvalSymlinks(root)
+	for _, w := range []struct {
+		root  string
+		tool  wire.Tool
+		match func(rel string, d fs.DirEntry) (string, bool)
+	}{
+		{roots.Claude, wire.ToolClaude, nameMatch(claudeName)},
+		{roots.Codex, wire.ToolCodex, nameMatch(codexName)},
+		{roots.Grok, wire.ToolGrok, grokMatch},
+	} {
+		found, err := walkRoot(w.root, w.tool, w.match)
 		if err != nil {
+			return nil, err
+		}
+		out = append(out, found...)
+	}
+	return out, nil
+}
+
+// walkRoot walks one root with one admission matcher. It is the seam the
+// exclusion-boundary test uses to prove its detector: the same walk with a
+// deliberately widened matcher must trip the test's assertions.
+func walkRoot(root string, tool wire.Tool, match func(rel string, d fs.DirEntry) (string, bool)) ([]Discovered, error) {
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []Discovered
+	err = filepath.WalkDir(resolved, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			// A directory vanishing mid-walk is normal churn.
 			if os.IsNotExist(err) {
 				return nil
 			}
 			return err
 		}
-		return filepath.WalkDir(resolved, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				// A directory vanishing mid-walk is normal churn.
-				if os.IsNotExist(err) {
-					return nil
-				}
-				return err
-			}
-			if d.Type()&fs.ModeSymlink != 0 {
-				if d.IsDir() {
-					return fs.SkipDir
-				}
-				return nil
-			}
+		if d.Type()&fs.ModeSymlink != 0 {
 			if d.IsDir() {
-				return nil
+				return fs.SkipDir
 			}
-			m := name.FindStringSubmatch(d.Name())
-			if m == nil {
-				return nil
-			}
-			out = append(out, Discovered{
-				Identity: Identity{Tool: tool, SessionID: m[1], FileUUID: m[1]},
-				Path:     path,
-			})
 			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(resolved, path)
+		if err != nil {
+			return nil
+		}
+		uuid, ok := match(rel, d)
+		if !ok {
+			return nil
+		}
+		out = append(out, Discovered{
+			Identity: Identity{Tool: tool, SessionID: uuid, FileUUID: uuid},
+			Path:     path,
 		})
-	}
-	if err := walk(roots.Claude, wire.ToolClaude, claudeName); err != nil {
-		return nil, err
-	}
-	if err := walk(roots.Codex, wire.ToolCodex, codexName); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func nameMatch(name *regexp.Regexp) func(string, fs.DirEntry) (string, bool) {
+	return func(_ string, d fs.DirEntry) (string, bool) {
+		m := name.FindStringSubmatch(d.Name())
+		if m == nil {
+			return "", false
+		}
+		return m[1], true
+	}
+}
+
+// grokMatch admits exactly <cwd-group>/<session-uuid>/chat_history.jsonl
+// relative to the grok sessions root — the fixed transcript name, directly
+// under a UUID-named session directory, exactly one cwd group deep. Depth and
+// name are both load-bearing: session directories hold non-transcript runtime
+// state (events, prompts, resources, rewind points, recap subdirectories) and
+// the shape gate is what keeps any of it, or anything nested deeper, from
+// ever shipping.
+func grokMatch(rel string, _ fs.DirEntry) (string, bool) {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) != 3 || parts[2] != grokTranscriptName || !uuidName.MatchString(parts[1]) {
+		return "", false
+	}
+	return parts[1], true
 }
 
 // Fingerprint computes the wire fingerprint of the file at path: lowercase

@@ -27,6 +27,11 @@ type fakeStore struct {
 
 	// unavailable makes every PUT answer 503.
 	unavailable bool
+	// preAmendment3 simulates a store predating wire Amendment 3: grok is not
+	// in its tool enum, so every grok call (PUT and recovery GET alike)
+	// answers 400 unknown_tool — the mixed-fleet reality while nodes update
+	// ahead of a lagging store.
+	preAmendment3 bool
 	// unavailableFor makes selected identities answer 503 so a pass can
 	// exercise successful and held files together.
 	unavailableFor map[string]bool
@@ -229,7 +234,9 @@ func (fs *fakeStore) dispatch(w http.ResponseWriter, r *http.Request, parts []st
 		return
 	}
 	tool, sid, fuuid := parts[0], parts[1], parts[2]
-	if tool != string(wire.ToolClaude) && tool != string(wire.ToolCodex) {
+	allowed := tool == string(wire.ToolClaude) || tool == string(wire.ToolCodex) ||
+		(tool == string(wire.ToolGrok) && !fs.preAmendment3)
+	if !allowed {
 		writeErr(400, wire.ErrUnknownTool, 0, 0)
 		return
 	}
