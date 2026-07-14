@@ -4,6 +4,18 @@ Date: 2026-07-14
 Subjects: hcom 0.7.23 and `@earendil-works/pi-coding-agent` 0.80.6  
 Status: investigation complete; no production integration code changed
 
+> **Decision superseded, 2026-07-14 (owner flagship-parity ruling).** The
+> decision below — keep the custom DR-2 inbound state machine — is superseded:
+> Pi adopts flagship-parity delivery (herder wraps `hcom pi` exactly as
+> claude/codex), and the DR-2/DR-3 machinery is deleted from the Pi design.
+> Ruling evidence: `2026-07-14-flagship-hcom-crash-parity.md` and
+> `2026-07-14-delivery-machinery-gold-plating-audit.md` (candidate 1); the
+> ruling and its accepted crash window are registered in
+> `pi-first-class-design.md` §12 item 10 (amendment round 11). This record is
+> preserved unchanged below as provenance; its probe **evidence** (extension
+> compatibility, placement coupling, PATH constraint, crash window) remains
+> valid and load-bearing.
+
 ## Decision
 
 **Keep the custom DR-2 inbound state machine. The Pi design stands unchanged.**
