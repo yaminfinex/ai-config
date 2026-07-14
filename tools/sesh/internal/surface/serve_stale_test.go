@@ -399,3 +399,79 @@ func TestProjectionCanceledColdWaiterDoesNotWedgeSharedBuild(t *testing.T) {
 	barrier.assertNoExtraRebuild(t, "canceled waiter")
 	fx.live.WaitProjectionIdle()
 }
+
+// TestWarmRequestsServeStaleWhileNodeSlicesBuild pins the publication-phase
+// boundary: per-node slice construction is corpus-scale rebuild work and
+// must run OFF the projection mutex. With a rebuild provably parked inside
+// that phase, warm requests — filtered and unfiltered — must return the
+// previous snapshot promptly. If slice construction ever moves under the
+// request mutex, the parked rebuild holds it and this gate times out loudly
+// instead of passing.
+func TestWarmRequestsServeStaleWhileNodeSlicesBuild(t *testing.T) {
+	fx := openStaleFixture(t)
+	if _, _, err := fx.live.RecentSessions(t.Context(), 5, 0); err != nil {
+		t.Fatal(err) // cold build, no hook installed yet
+	}
+	fx.live.WaitProjectionIdle()
+	barrier := newStageBarrier(t, surface.RebuildNodeSlices)
+	fx.live.SetRebuildHook(barrier.hook)
+
+	// Move the stamp; the next request serves stale and triggers the
+	// refresh, which parks at the node-slice construction phase.
+	insertFreshSession(t, fx.plain, staleCorpusSessions)
+	if _, total, err := fx.live.RecentSessions(t.Context(), 5, 0); err != nil || total != staleCorpusSessions {
+		t.Fatalf("trigger request: total=%d err=%v, want the stale %d", total, err, staleCorpusSessions)
+	}
+	<-barrier.entered // slice construction is provably in flight, off-lock
+
+	const half = 4
+	totals := make([]int, 2*half)
+	errs := make([]error, 2*half)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		for i := 0; i < half; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				_, totals[i], errs[i] = fx.live.RecentSessions(t.Context(), 5, 0)
+			}(i)
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				_, totals[half+i], errs[half+i] = fx.live.RecentSessionsByNode(t.Context(), "fleet-node", "grace", 5, 0)
+			}(i)
+		}
+		wg.Wait()
+	}()
+	select {
+	case <-done:
+		// All requests completed while the barrier is still held — the
+		// promptness proof: nothing on the request path waited on the
+		// parked slice construction.
+	case <-time.After(10 * time.Second):
+		t.Fatal("warm requests blocked while node-slice construction was parked; publication work is holding the request mutex")
+	}
+	for i := 0; i < 2*half; i++ {
+		if errs[i] != nil {
+			t.Fatalf("request %d during parked slice build: %v", i, errs[i])
+		}
+		if totals[i] != staleCorpusSessions {
+			t.Fatalf("request %d saw total %d, want the previous snapshot's %d", i, totals[i], staleCorpusSessions)
+		}
+	}
+	barrier.assertNoExtraRebuild(t, "parked slice build")
+
+	// Release: the swap publishes ranking + slices + stamp together and the
+	// fresh session appears on both views' totals (it shipped no facts, so
+	// it lands under the empty node label, not fleet-node).
+	barrier.release <- struct{}{}
+	fx.live.WaitProjectionIdle()
+	if _, total, err := fx.live.RecentSessions(t.Context(), 5, 0); err != nil || total != staleCorpusSessions+1 {
+		t.Fatalf("converged unfiltered total = %d (err %v), want %d", total, err, staleCorpusSessions+1)
+	}
+	if _, total, err := fx.live.RecentSessionsByNode(t.Context(), "fleet-node", "grace", 5, 0); err != nil || total != staleCorpusSessions {
+		t.Fatalf("converged fleet-node total = %d (err %v), want %d", total, err, staleCorpusSessions)
+	}
+}

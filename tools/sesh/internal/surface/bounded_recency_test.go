@@ -575,10 +575,15 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 	}
 
 	// Per-node slices page independent of corpus size — the work-scaling
-	// half of the filter gate. First the correctness: the 5-session pocket
-	// node's filtered view serves exactly its slice, in recency order, with
-	// the same fixed query count and full-key seeks as every warm request.
+	// half of the filter gate, measured through the inspected-entries seam
+	// (SQL plan evidence is blind to in-memory walks). First correctness
+	// plus the WORK bound: the 5-session pocket node's filtered view serves
+	// exactly its slice, in recency order, with the same fixed query count
+	// and full-key seeks as every warm request, and it may examine no more
+	// ranked entries than that node's slice holds — on a 5000-session
+	// corpus.
 	log.reset()
+	inspectedBefore := live.RankedInspected()
 	pocket, pocketTotal, err := live.RecentSessionsByNode(t.Context(), "pocket-node", "grace", 50, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -589,26 +594,43 @@ func TestHomepageBoundedOnLargeCorpus(t *testing.T) {
 	if pocket[0].LogicalSessionID != corpusID(4500) || pocket[4].LogicalSessionID != corpusID(500) {
 		t.Errorf("pocket-node slice out of recency order: %s … %s", pocket[0].LogicalSessionID, pocket[4].LogicalSessionID)
 	}
+	if inspected := live.RankedInspected() - inspectedBefore; inspected > 5 {
+		t.Errorf("filtered request examined %d ranked entries for a 5-session node on a %d-session corpus; work must be bounded by the node's slice",
+			inspected, bigCorpusSessions)
+	}
 	warmPocket := log.snapshot()
 	if len(warmPocket) > 7 {
 		t.Errorf("small-node filtered request ran %d queries, want a fixed handful (<=7):\n%s",
 			len(warmPocket), strings.Join(warmPocket, "\n---\n"))
 	}
 	assertSeeksOnly(t, plain, warmPocket)
-	// Then the scaling evidence: clearing the GLOBAL ranking (test hook;
-	// per-node slices stay) must not change the filtered result. An
-	// implementation that walks the corpus ranking per request — the
-	// in-memory O(corpus) shape the SQL plan gate is blind to — returns
-	// nothing here and fails deterministically. Runs after every all-nodes
-	// assertion: the cleared ranking empties the unfiltered list until the
-	// next rebuild.
+
+	// Negative self-check: the deliberately regressed selection shape — a
+	// per-request walk over the global ranking, wired through the same
+	// inspection seam — must trip the bound above, or the detector is
+	// theater (house rule: detectors get proven, not assumed).
+	t.Run("work gate flags a per-request corpus walk", func(t *testing.T) {
+		before := live.RankedInspected()
+		if matches := live.WalkFilteredForTest("pocket-node", "grace"); matches != 5 {
+			t.Fatalf("walking self-check found %d pocket-node sessions, want 5 (harness broke)", matches)
+		}
+		if inspected := live.RankedInspected() - before; inspected <= 5 {
+			t.Fatalf("deliberate corpus walk charged %d inspected entries and would pass the <=5 bound; the work seam is not observing selection", inspected)
+		}
+	})
+
+	// Provenance: clearing the GLOBAL ranking (test hook; per-node slices
+	// stay) must not change the filtered result — filtered paging reads the
+	// prebuilt slice, never the global list, at request time. Runs after
+	// every all-nodes assertion: the cleared ranking empties the unfiltered
+	// list until the next rebuild.
 	live.ClearGlobalRankingForTest()
 	pocket, pocketTotal, err = live.RecentSessionsByNode(t.Context(), "pocket-node", "grace", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pocketTotal != 5 || len(pocket) != 5 {
-		t.Fatalf("filtered paging derives from the global ranking at request time (a corpus walk): got %d sessions (total %d) with the ranking cleared, want the prebuilt slice's 5",
+		t.Fatalf("filtered paging derives from the global ranking at request time: got %d sessions (total %d) with the ranking cleared, want the prebuilt slice's 5",
 			len(pocket), pocketTotal)
 	}
 

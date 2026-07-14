@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"sesh/internal/wire"
@@ -73,6 +74,13 @@ type SQLStore struct {
 	// trade for O(page) filtered requests.
 	byNode map[string][]rankedSession
 	stamp  rankingStamp
+	// rankedInspected counts every ranked entry a request examines during
+	// selection and paging — the work-scaling seam the large-corpus gate
+	// reads (SQL plans cannot see in-memory walks). Prod cost: one atomic
+	// add per request. Any code that iterates ranked entries on the request
+	// path MUST charge inspectRanked, or the gate's corpus-walk self-check
+	// is the only thing standing between it and silence.
+	rankedInspected atomic.Int64
 	// refresh is the in-flight single-flighted rebuild, nil when idle.
 	refresh *projectionRefresh
 	// rebuildHook, when non-nil, runs at each rebuildStage of every rebuild
@@ -89,8 +97,9 @@ type SQLStore struct {
 type rebuildStage int
 
 const (
-	rebuildStart   rebuildStage = iota // before any query
-	rebuildStamped                     // after the stamp probe, before the ranking query
+	rebuildStart      rebuildStage = iota // before any query
+	rebuildStamped                        // after the stamp probe, before the ranking query
+	rebuildNodeSlices                     // before per-node slice construction (off-lock publication phase)
 )
 
 // projectionRefresh is one in-flight projection rebuild. err is set before
@@ -164,15 +173,31 @@ func projectionNodeKey(hostname, osUser string) string {
 	return hostname + "\x00" + osUser
 }
 
-// nodeSlices derives the per-node ranked slices from the freshly built
-// ranking — rebuild-time work, amortized exactly like the ranking query.
-func nodeSlices(ranking []rankedSession) map[string][]rankedSession {
+// inspectRanked charges n ranked entries against the request-path work
+// counter (see the rankedInspected field).
+func (s *SQLStore) inspectRanked(n int) {
+	s.rankedInspected.Add(int64(n))
+}
+
+// deriveNodeSlices builds the per-node ranked slices from the freshly built
+// ranking — rebuild-time work, amortized exactly like the ranking query,
+// and one publication phase with its hook: it must run OFF the projection
+// mutex (the choke gate parks rebuilds here; if this phase ever moves under
+// s.mu, parked rebuilds hold the request mutex and the serve-stale gates
+// hang loudly instead of passing — verified by running exactly that
+// regression against the gate).
+func (s *SQLStore) deriveNodeSlices(run *projectionRefresh, ranking []rankedSession) (map[string][]rankedSession, error) {
+	if run.hook != nil {
+		if err := run.hook(rebuildNodeSlices); err != nil {
+			return nil, err
+		}
+	}
 	out := map[string][]rankedSession{}
 	for _, r := range ranking {
 		k := projectionNodeKey(r.hostname, r.osUser)
 		out[k] = append(out[k], r)
 	}
-	return out
+	return out, nil
 }
 
 // rankingStamp is the cheap store version probe guarding the projection:
@@ -254,6 +279,7 @@ func (s *SQLStore) pageOf(ctx context.Context, ranking []rankedSession, limit, o
 	if len(page) > limit {
 		page = page[:limit]
 	}
+	s.inspectRanked(len(page))
 	keys := make([]sessionKey, len(page))
 	for i, r := range page {
 		keys[i] = r.key
@@ -325,6 +351,7 @@ func (s *SQLStore) runRefresh(run *projectionRefresh) {
 	start := time.Now()
 	var stamp rankingStamp
 	var ranking []rankedSession
+	var byNode map[string][]rankedSession
 	err := func() error {
 		if run.hook != nil {
 			if err := run.hook(rebuildStart); err != nil {
@@ -345,13 +372,20 @@ func (s *SQLStore) runRefresh(run *projectionRefresh) {
 		}
 		var err error
 		ranking, err = s.rankSessions(s.refreshCtx)
+		if err != nil {
+			return err
+		}
+		byNode, err = s.deriveNodeSlices(run, ranking)
 		return err
 	}()
 	s.mu.Lock()
 	if err == nil {
 		// One atomic swap under mu: the global ranking, its per-node
-		// slices, and the stamp always describe the same snapshot.
-		s.built, s.ranking, s.byNode, s.stamp = true, ranking, nodeSlices(ranking), stamp
+		// slices, and the stamp always describe the same snapshot. ONLY the
+		// pointer/header assignments happen under the mutex — every
+		// corpus-scale phase, slice construction included, ran above,
+		// outside the lock warm requests take.
+		s.built, s.ranking, s.byNode, s.stamp = true, ranking, byNode, stamp
 	}
 	run.err = err
 	s.refresh = nil
