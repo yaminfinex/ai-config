@@ -211,9 +211,13 @@ concurrently with ingest instead of queueing behind append-index write
 transactions on the single write connection
 (`docs/design/2026-07-13-sesh-store-read-write-split.md`; gate:
 `TestReadPathsServeWhileWriteConnectionHeld`). Append-index maintenance on
-the write side is bounded too: per-append writes stay proportional to the
-appended rows and reads to the touched logical session, never the corpus, so
-ingest throughput does not degrade as the fleet corpus grows (write-side
+the write side is bounded too: steady-state appends (no new logical
+linkage — the shipper's continuous case) write at most the appended rows; a
+linkage-creating append (resume/overlap merge) additionally rewrites the
+touched connected component once at merge time, bounded by the sizes of the
+logical sessions being unified; reads stay bounded by the touched component
+— never the corpus in either case, so ingest throughput does not degrade as
+the fleet corpus grows (write-side
 plan gate + append-bounded maintenance gate in `internal/index`, differential
 old-vs-new equivalence over a churned corpus; see the bounded append-time
 maintenance delta in

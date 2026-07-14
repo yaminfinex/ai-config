@@ -256,18 +256,54 @@ func TestAppendMaintenanceBoundedOnCorpus(t *testing.T) {
 		t.Errorf("non-full-key storage access on the append path: %s", v)
 	}
 
-	// Linkage-creating append: the maint_rows seam must observe real
-	// maintenance writes — the counter is alive, not trivially zero.
+	// Linkage-creating append, gated two-sided. A merge legitimately
+	// rewrites the losing session's rows once (canonical label + ordinals,
+	// plus dedupe deletes), so its writes are bounded by the touched
+	// connected component — at most one relabel, one ordinal write, and one
+	// delete per component row — never the corpus. The lower side proves the
+	// seam is alive, not trivially zero.
 	capture.reset()
 	log.reset()
 	if err := recIdx.ProcessAppend(t.Context(), linkEv); err != nil {
 		t.Fatal(err)
 	}
-	if got := capture.intSum("maint_rows"); got == 0 {
-		t.Error("linkage-creating append reported zero maintenance writes; the maint_rows seam is dead")
+	linkMaint := capture.intSum("maint_rows")
+	if linkAppended := capture.intSum("rows"); linkMaint <= linkAppended {
+		t.Errorf("linkage-creating append reported %d maintenance writes for %d appended rows; the maint_rows seam is dead", linkMaint, linkAppended)
+	}
+	var componentRows int64
+	if err := plain.QueryRow(`SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND logical_session_id = ?`,
+		wire.ToolClaude, origSession).Scan(&componentRows); err != nil {
+		t.Fatal(err)
+	}
+	if linkMaint > 3*componentRows {
+		t.Errorf("linkage append wrote %d maintenance rows for a %d-row component; maintenance must stay component-bounded", linkMaint, componentRows)
 	}
 	for _, v := range writePlanViolations(t, plain, log.snapshot()) {
 		t.Errorf("non-full-key storage access on the linkage append path: %s", v)
+	}
+
+	// The component bound only gates anything if it sits far below the
+	// corpus; a fixture drift that grows the component to corpus size would
+	// make the assertion vacuous.
+	var corpusRows int64
+	if err := plain.QueryRow(`SELECT COUNT(*) FROM sesh_index_messages`).Scan(&corpusRows); err != nil {
+		t.Fatal(err)
+	}
+	if 3*componentRows >= corpusRows {
+		t.Fatalf("fixture too small to discriminate: component bound %d vs corpus %d rows", 3*componentRows, corpusRows)
+	}
+
+	// Corpus-charge negative: a deliberate corpus-walk write shape must trip
+	// the component bound, or the detector is theater. The self-assigning
+	// UPDATE touches every row of the tool without changing any value.
+	scratchTiming := &appendTiming{}
+	scratch := &Indexer{db: db, timing: scratchTiming}
+	if err := scratch.execMaintenance(t.Context(), `UPDATE sesh_index_messages SET file_ordinal = file_ordinal WHERE tool = ?`, wire.ToolClaude); err != nil {
+		t.Fatal(err)
+	}
+	if scratchTiming.maintRows <= 3*componentRows {
+		t.Errorf("maint_rows detector missed a deliberate corpus-walk write (%d rows charged, bound %d)", scratchTiming.maintRows, 3*componentRows)
 	}
 
 	// Corpus-walk negative: the naive pre-optimization statement shapes must

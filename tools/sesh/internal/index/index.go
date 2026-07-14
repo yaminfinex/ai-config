@@ -1110,9 +1110,10 @@ func (idx *Indexer) updateFileOrdinals(ctx context.Context) error {
 // relabelFile and updateFileOrdinalsForFiles carry a final predicate that
 // excludes rows already at the target value, so a steady-state append — no
 // new logical linkage — rewrites zero rows instead of rewriting the whole
-// group per append. The resulting table state is identical either way; the
-// naive shapes are the pre-optimization reference oracle (see
-// Indexer.naiveMaintenance).
+// group per append. The resulting table state is identical either way: both
+// target columns are NOT NULL in the frozen schema, so <> cannot filter an
+// old NULL that the unconditional UPDATE would repair. The naive shapes are
+// the pre-optimization reference oracle (see Indexer.naiveMaintenance).
 func (idx *Indexer) relabelFile(ctx context.Context, canonical string, f fileSummary) error {
 	if idx.naiveMaintenance {
 		return idx.execMaintenance(ctx, `UPDATE sesh_index_messages SET logical_session_id = ? WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,

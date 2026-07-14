@@ -243,11 +243,19 @@ wire v1 untouched, one transaction per append as before):
   zero rows instead of rewriting every row of every file in the connected
   group per append. Identical resulting table state by construction.
 
-New cost shape, stated precisely: per-append maintenance WRITES are bounded
-by the appended rows (the only steady-state write is stitching a new row's
-file_ordinal to its group ordinal); maintenance READS are bounded by the
-touched logical session (the connected-group walk, its overlap probes, and
-the dedupe window seek the session's rows), independent of corpus size.
+New cost shape, stated precisely: steady-state maintenance writes — an
+append that introduces no new logical linkage, the shipper's continuous
+case — are bounded by the appended rows (the only write is stitching a new
+row's file_ordinal to its group ordinal). A linkage-creating append (a
+resume or overlap merge) additionally rewrites the touched connected
+component once at merge time — the losing sessions' rows take the canonical
+label and their ordinals — bounded by the sizes of the logical sessions
+being unified, never corpus-scale; that one-time rewrite is the index's
+core semantic (logical-session identity must land atomically in the same
+transaction) and is not deferrable inside the frozen contracts.
+Maintenance READS are bounded by the touched connected component (the
+group walk, its overlap probes, and the dedupe window seek the component's
+rows) in both cases, independent of corpus size.
 After the fix the same fixture measures the tail append flat across
 2.5k/5k/10k sessions: total ~3.5 ms (inherit ~0.1 ms, unify ~2.3 ms, dedupe
 ~0.7 ms), a ~63x reduction at the 4x corpus and no growth with corpus scale;
@@ -272,12 +280,18 @@ Correctness evidence, in the order the constraints demand:
   every statement one steady-state append runs against a corpus-backed store;
   every EXPLAIN QUERY PLAN storage access must be a full-key seek on its
   pinned index ($-anchored allowlist, term-by-term), and the journaled
-  `maint_rows` seam must stay within the appended-row bound. Both detectors
-  are proven: the naive shapes trip the plan gate (corpus-walk negative), and
-  the naive maintenance run trips the rewrite bound on the same append.
+  `maint_rows` seam must stay within the appended-row bound. A
+  linkage-creating append is gated two-sided: `maint_rows` must exceed the
+  appended rows (the seam is alive) and stay within the touched connected
+  component's row count (never corpus-charged). All detectors are proven:
+  the naive shapes trip the plan gate (corpus-walk negative), and the naive
+  maintenance run trips both the steady-state rewrite bound and the linkage
+  component bound on the same appends.
 
 Operator surface: the `SESH_DEBUG` per-append journal line gains
 `maint_rows` (rows the maintenance actually wrote) beside the existing
-per-phase laps, same identifier-free contract. Live before/after phase-split
-capture from the store journal is pending the next deploy; the fixture
-figures above are the baseline of record until then.
+per-phase laps, same identifier-free contract. The live BEFORE evidence is
+already on record above (Root cause section: ~0.5 s dev box / ~2.1 s store
+VM per 241-byte append, SESH_DEBUG phase timing, 2026-07-13); the live
+AFTER capture from the store journal is pending the next deploy — until it
+lands, the fixture figures above are the after-side baseline of record.
