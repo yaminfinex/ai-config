@@ -16,12 +16,15 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
-	"log"
+	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"sesh/internal/buildinfo"
@@ -155,7 +158,7 @@ type NodeStatus struct {
 type Server struct {
 	store Store
 	now   func() time.Time
-	log   *log.Logger
+	log   *slog.Logger
 	mux   *http.ServeMux
 
 	// currentVersion anchors the nodes view's support window (current +
@@ -179,8 +182,11 @@ func WithClock(now func() time.Time) Option {
 	return func(s *Server) { s.now = now }
 }
 
-// WithLogger routes surface degradation logs.
-func WithLogger(l *log.Logger) Option {
+// WithLogger routes surface degradation logs (tests). The default is the
+// process-default slog logger, which is what reaches the service journal on
+// the live deployment shape (stderr → journald), same as the per-request
+// timing and projection-rebuild lines.
+func WithLogger(l *slog.Logger) Option {
 	return func(s *Server) { s.log = l }
 }
 
@@ -195,7 +201,7 @@ func New(store Store, opts ...Option) *Server {
 	s := &Server{
 		store:          store,
 		now:            time.Now,
-		log:            log.New(io.Discard, "", 0),
+		log:            slog.Default(),
 		currentVersion: buildinfo.Version,
 	}
 	for _, o := range opts {
@@ -249,7 +255,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	nodes, err := ns.Nodes(r.Context(), 48*time.Hour)
 	if err != nil {
-		s.log.Printf("surface: nodes: %v", err)
+		s.log.Warn("surface: nodes query failed", "error_class", errClass(err))
 		s.writeDegraded(w, "node status unavailable")
 		return
 	}
@@ -274,7 +280,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		Nodes []nodeRow
 	}{Now: s.now(), Nodes: rows}
 	if err := s.render(w, s.nodesTmpl, "nodes.html", data); err != nil {
-		s.log.Printf("surface: nodes render: %v", err)
+		s.logRenderFailure("/", err)
 		s.writeDegraded(w, "node status render failed")
 	}
 }
@@ -294,11 +300,67 @@ func mustPage(page string) *template.Template {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			s.log.Printf("surface: panic serving %s: %v", r.URL.Path, rec)
+			// The panic value is arbitrary and may embed page data; only its
+			// type and the route class reach the journal.
+			s.log.Error("surface: panic recovered", "route", logRoute(r.URL.Path), "panic_type", fmt.Sprintf("%T", rec))
 			s.writeDegraded(w, "renderer panic")
 		}
 	}()
 	s.mux.ServeHTTP(w, r)
+}
+
+// errClass collapses an error to an identifier-free class label for the
+// journal. Raw error strings are off-limits: mirror and SQL errors embed
+// paths built from session and file identities, and transcripts are exactly
+// what sesh ships — identifiers in logs would leak corpus into a different
+// retention domain (the same contract as the per-request timing lines).
+// Known conditions get stable names; anything else reports the innermost
+// error's Go type, which is source text, never user data.
+func errClass(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, fs.ErrNotExist):
+		return "not_exist"
+	}
+	root := err
+	for {
+		u := errors.Unwrap(root)
+		if u == nil {
+			break
+		}
+		root = u
+	}
+	return fmt.Sprintf("%T", root)
+}
+
+// logRoute maps a request path to the surface's own identifier-free route
+// classes for journal lines: parameterized routes collapse to their pattern
+// and anything unknown is "other" — the raw path is client-supplied input
+// and must never reach the journal.
+func logRoute(p string) string {
+	switch {
+	case p == "/" || p == "/nodes" || p == "/sessions" || p == "/fragments/recency":
+		return p
+	case strings.HasPrefix(p, "/s/"):
+		return "/s/*"
+	case strings.HasPrefix(p, "/assets/"):
+		return "/assets/*"
+	default:
+		return "other"
+	}
+}
+
+// logRenderFailure is the ONE journal path for template-execution failures.
+// Every render branch routes through it — the log-contract gate drives this
+// path with a deliberately failing, identifier-carrying template, so a
+// branch hand-rolling its own message or attrs would sit outside the gate.
+func (s *Server) logRenderFailure(route string, err error) {
+	s.log.Warn("surface: page render failed", "route", route, "error_class", errClass(err))
 }
 
 // writeDegraded is the render floor: a plain 200 notice, so an operator sees
@@ -326,12 +388,12 @@ func (s *Server) render(w http.ResponseWriter, tmpl *template.Template, name str
 func (s *Server) handleRecency(w http.ResponseWriter, r *http.Request) {
 	data, err := s.recencyData(r.Context(), pageParam(r), r.URL.Query().Get("node"))
 	if err != nil {
-		s.log.Printf("surface: recency: %v", err)
+		s.log.Warn("surface: session listing failed", "route", "/sessions", "error_class", errClass(err))
 		s.writeDegraded(w, "session listing unavailable")
 		return
 	}
 	if err := s.render(w, s.recencyTmpl, "recency.html", data); err != nil {
-		s.log.Printf("surface: recency render: %v", err)
+		s.logRenderFailure("/sessions", err)
 		s.writeDegraded(w, "recency render failed")
 	}
 }
@@ -339,12 +401,12 @@ func (s *Server) handleRecency(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRecencyFragment(w http.ResponseWriter, r *http.Request) {
 	data, err := s.recencyData(r.Context(), pageParam(r), r.URL.Query().Get("node"))
 	if err != nil {
-		s.log.Printf("surface: recency fragment: %v", err)
+		s.log.Warn("surface: session listing failed", "route", "/fragments/recency", "error_class", errClass(err))
 		s.writeDegraded(w, "session listing unavailable")
 		return
 	}
 	if err := s.render(w, s.recencyTmpl, "recencyBody", data); err != nil {
-		s.log.Printf("surface: recency fragment render: %v", err)
+		s.logRenderFailure("/fragments/recency", err)
 		s.writeDegraded(w, "recency render failed")
 	}
 }
@@ -363,7 +425,7 @@ func (s *Server) resolveSession(w http.ResponseWriter, r *http.Request) (Session
 	if err != nil {
 		// Cannot even tell whether the session is mirrored; degrade rather
 		// than guess a 404 or throw a 500.
-		s.log.Printf("surface: session lookup %s/%s: %v", tool, id, err)
+		s.log.Warn("surface: session lookup failed", "tool", string(tool), "error_class", errClass(err))
 		s.writeDegraded(w, "session lookup failed")
 		return SessionSummary{}, false
 	}
@@ -382,7 +444,7 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.store.Rows(r.Context(), sum.Tool, sum.LogicalSessionID)
 	switch {
 	case err != nil:
-		s.log.Printf("surface: rows %s/%s: %v", sum.Tool, sum.LogicalSessionID, err)
+		s.log.Warn("surface: index rows read failed", "tool", string(sum.Tool), "error_class", errClass(err))
 		s.serveRawFallback(w, r, sum, "index unavailable — raw mirror lines")
 		return
 	case !renderableFromIndex(rows):
@@ -391,7 +453,7 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 	}
 	page := s.transcriptData(r.Context(), sum, rows, pageParam(r))
 	if err := s.render(w, s.transcriptTmpl, "transcript.html", page); err != nil {
-		s.log.Printf("surface: transcript render %s/%s: %v", sum.Tool, sum.LogicalSessionID, err)
+		s.logRenderFailure("/s/*", err)
 		s.serveRawFallback(w, r, sum, "transcript render failed — raw mirror lines")
 	}
 }

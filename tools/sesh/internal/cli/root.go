@@ -154,7 +154,9 @@ func newServe() *cobra.Command {
 // measured remote-TTFB pathology; the regression gate holds a write
 // transaction open and asserts surface reads still complete). The returned
 // SQLStore owns the projection's background refresh goroutine; close it
-// before closing the store whose pool it reads.
+// before closing the store whose pool it reads. Surface degradation events
+// log through the process-default slog logger (surface.New's default), the
+// same stderr → journald path as the timing and rebuild lines.
 func newSurfaceHandler(st *store.Store) (http.Handler, *surface.SQLStore) {
 	surfaceStore := surface.NewSQLStore(st.ReadDB(), st.MirrorPath)
 	return surface.New(surfaceStore), surfaceStore
