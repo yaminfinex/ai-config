@@ -322,7 +322,7 @@ func TestNodesPageFlagsStaleLastPut(t *testing.T) {
 	}
 }
 
-// The version census column (task-204): each node shows its shipper's
+// The version census column: each node shows its shipper's
 // last-reported version against the support window (current + previous
 // release) pinned by the running store's own build version. Out-of-window
 // nodes are visibly flagged; unknown or unparsable versions flag as unknown

@@ -227,7 +227,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 	if err := s.ensureColumn(ctx, "fact_observations", "tailnet_identity", "TEXT NULL"); err != nil {
 		return err
 	}
-	// Version census (task-204): store bookkeeping, not the frozen
+	// Version census: store bookkeeping, not the frozen
 	// wire-visible index schema — same additive class as
 	// fact_observations_session above. Rows written before the column
 	// existed stay NULL and render as "unknown".

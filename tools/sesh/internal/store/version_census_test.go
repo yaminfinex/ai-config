@@ -1,6 +1,6 @@
 package store
 
-// Version census (task-204): the store records each shipper's self-reported
+// Version census: the store records each shipper's self-reported
 // version from the wire User-Agent into last_seen bookkeeping at PUT time.
 // Informational only — a client that sends no UA, a pre-census Go default
 // UA, or garbage ships exactly as before and is recorded as unknown.

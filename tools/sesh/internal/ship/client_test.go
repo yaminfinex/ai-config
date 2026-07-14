@@ -92,7 +92,7 @@ func TestStalledStoreSurfacesAsHold(t *testing.T) {
 }
 
 // Every PUT self-identifies via User-Agent ("sesh-ship/<version>") so the
-// store's version census (task-204) can record what each node runs. The
+// store's version census can record what each node runs. The
 // header is informational only: no shipping behavior may ever depend on the
 // store reading it, so this asserts only that it is sent.
 func TestPutBytesSendsVersionedUserAgent(t *testing.T) {
