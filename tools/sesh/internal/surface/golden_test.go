@@ -51,6 +51,7 @@ func TestGoldenSnapshots(t *testing.T) {
 		"transcript-resume-pair.html":   "/s/claude/" + uuidResumeOrig,
 		"transcript-interleaved.html":   "/s/claude/" + uuidInterleave,
 		"transcript-codex.html":         "/s/codex/" + uuidCodexMeta,
+		"transcript-grok.html":          "/s/grok/" + uuidGrokChat,
 		"fallback-quarantined-raw.html": "/s/claude/" + uuidPartial,
 		"raw-claude-normal.html":        "/s/claude/" + uuidNormal + "/raw",
 	}

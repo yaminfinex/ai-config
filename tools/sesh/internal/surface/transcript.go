@@ -259,6 +259,8 @@ func renderLine(tool wire.Tool, line []byte, totalBytes int64) []displayBlock {
 		blocks = claudeBlocks(line)
 	case wire.ToolCodex:
 		blocks = codexBlocks(line)
+	case wire.ToolGrok:
+		blocks = grokBlocks(line)
 	}
 	if len(blocks) == 0 {
 		b := rawExcerptBlock(line, totalBytes, "unrecognized entry")
@@ -424,6 +426,101 @@ func codexText(payload map[string]any) string {
 			}
 			buf.WriteString(t)
 		}
+	}
+	return buf.String()
+}
+
+// --- Grok chat_history line shapes ---
+
+type grokEntry struct {
+	Type      string          `json:"type"`
+	Content   json.RawMessage `json:"content"`
+	Summary   json.RawMessage `json:"summary"`
+	ToolCalls []struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	} `json:"tool_calls"`
+}
+
+func grokBlocks(line []byte) []displayBlock {
+	var e grokEntry
+	if err := json.Unmarshal(line, &e); err != nil || e.Type == "" {
+		return nil
+	}
+	var out []displayBlock
+	switch e.Type {
+	case "system":
+		if text := grokText(e.Content); text != "" {
+			b := textBlock("text", "system prompt", text)
+			b.Collapsed = true
+			out = append(out, b)
+		}
+	case "user", "assistant":
+		if text := grokText(e.Content); text != "" {
+			out = append(out, textBlock("text", "", text))
+		}
+	case "reasoning":
+		if text := grokText(e.Summary); text != "" {
+			b := textBlock("thinking", "thinking", text)
+			b.Collapsed = true
+			out = append(out, b)
+		}
+	case "tool_result":
+		if text := grokText(e.Content); text != "" {
+			b := textBlock("tool_result", "tool result", text)
+			b.Collapsed = true
+			out = append(out, b)
+		}
+	default:
+		return nil // unrecognized type: raw excerpt fallback
+	}
+	for _, tc := range e.ToolCalls {
+		// arguments arrive as a JSON-encoded string; unwrap before pretty-
+		// printing so the block shows the call, not an escaped blob.
+		var args string
+		pretty := ""
+		if json.Unmarshal(tc.Arguments, &args) == nil {
+			pretty = prettyJSON(json.RawMessage(args))
+		} else {
+			pretty = prettyJSON(tc.Arguments)
+		}
+		b := textBlock("tool_use", "tool: "+tc.Name, pretty)
+		b.Collapsed = true
+		out = append(out, b)
+	}
+	if len(out) == 0 {
+		// A recognized type with an empty body (assistant lines that only
+		// carry tool calls parse above; this is truly empty) stays honest.
+		out = append(out, displayBlock{Kind: "meta", Title: e.Type})
+	}
+	return out
+}
+
+// grokText renders a grok content carrier: a plain string, or a list of typed
+// parts carrying "text" (user content and reasoning summaries).
+func grokText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	var parts []struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return prettyJSON(raw)
+	}
+	var buf bytes.Buffer
+	for _, p := range parts {
+		if p.Text == "" {
+			continue
+		}
+		if buf.Len() > 0 {
+			buf.WriteString("\n")
+		}
+		buf.WriteString(p.Text)
 	}
 	return buf.String()
 }

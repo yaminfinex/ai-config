@@ -416,7 +416,7 @@ func (s *Server) handleRecencyFragment(w http.ResponseWriter, r *http.Request) {
 // covers sessions the mirror holds, not arbitrary URLs.
 func (s *Server) resolveSession(w http.ResponseWriter, r *http.Request) (SessionSummary, bool) {
 	tool := wire.Tool(r.PathValue("tool"))
-	if tool != wire.ToolClaude && tool != wire.ToolCodex {
+	if tool != wire.ToolClaude && tool != wire.ToolCodex && tool != wire.ToolGrok {
 		http.NotFound(w, r)
 		return SessionSummary{}, false
 	}
