@@ -470,13 +470,26 @@ Token lifecycle, every branch specified:
    the invariant above is the designed, testable contract (T34d).
 4. **Extension reload with memory lost, Pi alive.** Whether reload preserves
    module memory is registered in A4's probe scope; if the new instance has no
-   token, it cannot activate in-band — by design. The DR-3 activation
-   predicate routes this case explicitly (its current-activation branch:
-   this process's pid + start-time matches the recorded live activation, no
-   token held), so the path below is reachable, not fenced out. The seat flips
-   `control-degraded` (status-derivable: the one refused activation attempt
-   failing token verification is journaled, from the matching process only),
-   and recovery is a **controlled relaunch**, not a
+   token, it cannot activate in-band — by design, and it makes **no attempt**:
+   a tokenless instance is provenance-indistinguishable from a model tool
+   child, so it stays control-plane inert like any other unauthenticated
+   caller (DR-3 predicate note). `control-degraded` is instead **derived,
+   write-free, from the authenticated side's silence**: every signal of seat
+   health is token-gated (lease renewal and every token-lane journal write —
+   T34(i)), so token loss shows up as the one thing no tokenless caller can
+   forge — **absence**. `herder pi bus status` derives it as: current
+   activation's recorded process **alive** (pid + start-time) AND the
+   progress lease expired AND **no authenticated token-lane record since**
+   (an authenticated `driver-degraded` record proves the token is still
+   held and caps the state at driver-degraded instead) AND that silence has
+   persisted past a **control-loss escalation threshold** — pinned in family
+   config, sized above one lease TTL plus the driver supervisor's full
+   bounded backoff, so a hung-but-token-holding driver either recovers or
+   writes its authenticated degrade record before escalation ever fires.
+   Detection latency is therefore **bounded but not immediate** (TTL +
+   threshold), stated honestly; nothing is journaled to produce the state
+   and no tokenless write path exists (T34(e)).
+   Recovery is a **controlled relaunch**, not a
    live handoff — executed under the launch-attempt protocol below: open the
    attempt, quiesce and terminate the exact recorded process (model tool code
    dies with it), attempt-keyed pre-exec rekey, relaunch via the standard
@@ -668,7 +681,12 @@ event, injection without a settle) is ever reported as delivered (T26).
     require regardless of load — the `retiring` fence, the **one**
     deferred-summary record, the `retired` fence, activation/epoch/lease
     records, and a bounded count of snapshot records — each of bounded size
-    and fixed count, summed at worst case. The hard cap = admission cap +
+    and fixed count, summed at worst case. The enumeration is **closed under
+    adversarial callers**: no journal record class is writable by an
+    unauthenticated caller — tokenless or invalid-token ops of any
+    provenance are refused **without any append** (T34a, T34e spoof
+    branch) — so nothing outside the two authenticated lanes can grow
+    either reserve class. The hard cap = admission cap +
     per-id reserve at worst case + fixed reserve at worst case, so
     cull-while-paused with **every reserve class at its worst case** still
     completes `retiring` → summary/marks → `retired` without crossing the
@@ -837,7 +855,7 @@ never loops.
 | `undeliverable` | Terminal non-delivery (`stalled` variant: nudge budget exhausted) | retirement sequence step 5; nudge-budget exhaustion |
 | `inject-degraded` | Extension cannot currently inject (extension error, no session) | extension diagnostics / activation state |
 | `driver-degraded` | Inbound pickup halted; reported from supervision or stale lease | backoff exhausted, top-level exit, or lease expiry |
-| `control-degraded` | Live extension lacks the capability token; recovery is a controlled relaunch (attempt-protocol pre-exec rekey — never a live handoff) | failed token verification journaled |
+| `control-degraded` | Live extension lacks the capability token; recovery is a controlled relaunch (attempt-protocol pre-exec rekey — never a live handoff) | status-derived, write-free: live recorded process + expired lease + no authenticated token-lane record, persisting past the escalation threshold (DR-2 item 4) |
 | `spool-quota` | Draining paused at quota; backlog deferred in hcom, counted | quota check at drain |
 
 ### Persistence format
@@ -924,45 +942,43 @@ vendor-updated). What replaces it:
 **The extension activation predicate — specified, not asserted.** The shared
 extension loads into every Pi process in the home, including the owner's
 interactive runs, so "inert without seat coordinates" is load-bearing and gets
-an exact predicate. On `session_start` the extension **engages the seat**
-(anything other than staying inert) **iff all of** the following hold — and
-which of the two engagement outcomes follows (activation, or the reload
-degrade signal) is fixed by which record matched in condition 2:
+an exact predicate. On `session_start` the extension activates **iff both
+of**:
 
 1. the **complete** seat coordinate tuple is present in its process
    environment — `HERDER_STATE_DIR` **and** the seat GUID variable (the exact
    variable names are fixed in U1 and recorded in family docs; the tuple is
    closed, not open-ended); **and**
-2. the tuple resolves to existing herder seat state that records **this very
-   process** — by pid + start-time — in one of exactly two places:
-   - the **open launch attempt** (the DR-2 gated-child record): the normal
-     first-activation path, proceeding to bootstrap consumption and
-     token-authenticated `activate`; or
-   - the **current activation record** while this extension instance holds
-     **no token**: the memory-lost reload case of DR-2 lifecycle item 4 — a
-     live, bound seat whose extension reloaded inside the same Pi process.
-     This branch does **not** proceed to activation: the extension makes
-     exactly **one in-band activation attempt presenting no token**, which
-     the `activate` op **refuses and journals** — the refusal record carries
-     the caller's verified process identity, and repeats at the same epoch
-     update the one record rather than appending (the K = 1 house bound, in
-     the fixed reserve class) — flipping the seat `control-degraded` exactly
-     as DR-2 item 4 specifies. No tokenless control mutation opens: the op
-     refuses; the journaled refusal is a diagnostic record, written only
-     when the caller's process identity matches the recorded live
-     activation (a non-matching caller gets the plain T34(a) refusal with
-     no seat-status effect). Recovery remains the controlled relaunch.
-   A same-process rebind with the token held is authenticated by that token
-   per DR-2 lifecycle item 2 and does not re-evaluate the environment.
+2. the tuple resolves to existing herder seat state whose **open launch
+   attempt records this very process** — the DR-2 gated-child record's pid +
+   start-time equals the extension's own process identity — proceeding to
+   bootstrap consumption and token-authenticated `activate`. A same-process
+   rebind with the token held is authenticated by that token per DR-2
+   lifecycle item 2 and does not re-evaluate the environment.
+
+**The memory-lost reload (DR-2 item 4) is deliberately NOT a predicate
+branch.** A reloaded, tokenless extension instance is
+provenance-indistinguishable from a model tool child: both descend from the
+same Pi process, so **no process-identity proof can separate them**, and any
+diagnostic write authorized by such a proof would be a tokenless
+seat-mutation path a model tool could take verbatim (exec `herder pi bus
+activate` from an in-seat shell). The reloaded instance therefore behaves
+exactly like every other unauthenticated caller: **fully inert on the
+control plane** — no activation attempt, no write, nothing. Detection of the
+lost token is **external and write-free**, from the authenticated side's
+silence: DR-2 item 4's lease-decay derivation. There is **no code path by
+which any tokenless caller — whatever its provenance — causes any journal
+append or seat-status transition** (T34(a), T34(e) spoof branch).
 
 The predicate is evaluated **before the bootstrap file is touched**: a process
 that fails it never reads or unlinks a bootstrap, so an ambient-coordinate
 interloper cannot consume an in-flight launch's trust root even accidentally.
 Every failure mode is **inert, fail-closed, and silent in-process**: no
 coordinates, a **partial** tuple, a tuple that does not resolve, no open
-attempt or matching activation, or records naming a **different** process
+attempt, an open attempt recording a **different** process
 (the stale `HERDER_*` exports of an owner shell that previously operated
-seats — the ambient case) all behave identically — no seat claim, no
+seats — the ambient case), or a live activation with the token lost (the
+reload case above) all behave identically — no seat claim, no
 `activate`, no bus
 ops, no seat-state or journal writes, no bootstrap read/unlink, and zero bytes
 to the model context or pane (T25). Silent non-activation cannot mask a broken
@@ -1522,18 +1538,17 @@ Launch/lifecycle/observation contracts:
   tuple + this process is the open attempt's recorded gated child →
   activates; (b) no coordinates (owner-interactive shape) → inert; (c)
   **partial** tuple → inert; (d) complete tuple but stale/ambient — resolving
-  to seat state where **neither** the open attempt **nor** the current
-  activation records this process's pid + start-time (an owner shell's
-  leftover `HERDER_*`
+  to seat state whose open attempt does not record this process's pid +
+  start-time (an owner shell's leftover `HERDER_*`
   exports, raced against a genuinely in-flight launch) → inert **and** the
   in-flight launch's bootstrap file is provably untouched (no read, no
-  unlink) and that launch still activates; (e) complete tuple + the
-  **current activation** records this process + no held token (memory-lost
-  reload, DR-2 item 4) → **not** silent inertness: exactly one refused,
-  journaled activation attempt from the matching process flips
-  `control-degraded` (repeat attempts update, never append — K = 1), no
-  bootstrap access, and no tokenless mutation lands (the T34(e) path is
-  reachable through the predicate). Inert means: no seat claim, no bus
+  unlink) and that launch still activates; (e) complete tuple + live
+  **current activation** + no held token (memory-lost
+  reload, DR-2 item 4) → inert exactly like (b)–(d) — no activation
+  attempt, no journal write; the seat's `control-degraded` then derives
+  write-free from lease decay past the escalation threshold (asserted on
+  the status op's output and on the journal's unchanged byte length).
+  Inert means: no seat claim, no bus
   ops, no seat-state or journal writes, no bootstrap access, zero bytes to
   model context or pane.
 - **T19 vendor resolution + recorded version** (replaces the dissolved install
@@ -1634,12 +1649,18 @@ Inbound driver, fencing, and bounds (the fix-round additions):
   consumed/unlinked before the first model turn, (iii) after first successful
   activation no plaintext exists on disk for the life of that process — the
   test does **not** assert an existence property the green launch path
-  violates; (e) memory-lost reload flips `control-degraded` **via the DR-3
-  predicate's current-activation branch** — the reloaded instance (matching
-  pid + start-time, no token) reaches `activate`, is refused, and the refusal
-  is journaled; a failed-token attempt from a **non-matching** process is
-  refused without any seat-status effect (no foreign process can degrade a
-  healthy seat); and recovery is
+  violates; (e) memory-lost reload → `control-degraded` **derives
+  write-free from authenticated silence** (DR-2 item 4): with the recorded
+  process alive, the lease expired, and no authenticated token-lane record,
+  status flips the derived state only after the escalation threshold — and
+  an authenticated `driver-degraded` record written before the threshold
+  provably caps the state at driver-degraded (token still held). **Spoof
+  branch:** an exec'd model-tool child from inside the seat — full seat
+  coordinates, matching Pi ancestry/provenance, any declared identity —
+  invoking `activate` (or any control op) tokenless is **refused with no
+  seat-status effect and no journal append** (asserted on the journal's
+  byte length and the status output: no tokenless caller of any provenance
+  can degrade, mutate, or signal on a healthy seat); and recovery is
   the controlled relaunch under the launch-attempt protocol:
   open attempt → quiesce/terminate the exact pid+start-time → attempt-keyed
   pre-exec rekey → relaunch → token-authenticated activation restores
