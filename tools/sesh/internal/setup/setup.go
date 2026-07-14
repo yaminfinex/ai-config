@@ -112,6 +112,27 @@ func PlistPath(home string) string {
 	return filepath.Join(home, "Library", "LaunchAgents", LaunchdLabel+".plist")
 }
 
+// InstalledStoreURL resolves the store URL this node's installed service
+// couples on: SESH_STORE_URL from the launchd plist on darwin, from the
+// systemd drop-in elsewhere. It always returns the config path consulted so
+// callers can name it in errors. Both `sesh update` and interactive `sesh
+// status` resolve through here — on macOS the URL lives ONLY in the plist
+// the service reads, so a status that consulted just the environment
+// reported "not configured" on every correctly-installed node.
+func InstalledStoreURL(osName, home string) (url, path string, ok bool) {
+	switch osName {
+	case "darwin":
+		path = PlistPath(home)
+		content, _ := os.ReadFile(path)
+		url, ok = PlistStoreURL(content)
+	default:
+		path = DropinPath(home)
+		content, _ := os.ReadFile(path)
+		url, ok = DropinStoreURL(content)
+	}
+	return url, path, ok
+}
+
 // RenderUnit renders the systemd unit with the pinned absolute binary path.
 func RenderUnit(exePath string) string {
 	return strings.ReplaceAll(unitTemplate, unitPlaceholderExec, "ExecStart="+exePath+" ship")

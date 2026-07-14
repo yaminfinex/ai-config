@@ -7,7 +7,8 @@ import (
 
 // The macOS node-local config surface is a single launchd plist that carries
 // BOTH the pinned executable path (ProgramArguments[0]) and SESH_STORE_URL.
-// A rewrite is surgical: it replaces exactly those two <string> values and
+// A rewrite is surgical: it replaces exactly those two <string> values,
+// inserts the SoftResourceLimits block when an older render lacks it, and
 // leaves every other byte of the plist untouched — the ProgramArguments
 // array's structure and its "ship" argument are never disturbed. The
 // provenance digest rides as a trailing XML comment after </plist> (valid
@@ -33,7 +34,47 @@ func RenderPlist(existing []byte, exePath, storeURL, home string) ([]byte, error
 	if err := replacePlistString(lines, "<key>ProgramArguments</key>", exePath); err != nil {
 		return nil, err
 	}
+	lines, err := insertPlistSoftLimits(lines)
+	if err != nil {
+		return nil, err
+	}
 	return plistCommentStyle.stamp([]byte(strings.Join(lines, "\n") + "\n")), nil
+}
+
+// insertPlistSoftLimits adds the SoftResourceLimits block to a rewritten
+// plist that predates it, before the top-level </dict>. launchd's default
+// 256-fd soft limit starves kqueue-based fsnotify over a large session corpus
+// (one fd per watched directory plus the shipper's own files; 4k+ fds
+// observed on a heavy node running foreground), so setup raises it — on
+// re-runs too, not just fresh renders, or already-onboarded Macs would never
+// gain the limit.
+func insertPlistSoftLimits(lines []string) ([]string, error) {
+	for _, l := range lines {
+		if strings.Contains(l, "<key>SoftResourceLimits</key>") {
+			return lines, nil
+		}
+	}
+	last := -1
+	for i, l := range lines {
+		if strings.Contains(l, "</dict>") {
+			last = i
+		}
+	}
+	if last < 0 {
+		return nil, fmt.Errorf("plist: no closing </dict> to insert SoftResourceLimits before")
+	}
+	block := []string{
+		"    <key>SoftResourceLimits</key>",
+		"    <dict>",
+		"        <key>NumberOfFiles</key>",
+		"        <integer>8192</integer>",
+		"    </dict>",
+	}
+	out := make([]string, 0, len(lines)+len(block))
+	out = append(out, lines[:last]...)
+	out = append(out, block...)
+	out = append(out, lines[last:]...)
+	return out, nil
 }
 
 // replacePlistString finds the marker line and replaces the content of the
