@@ -1,7 +1,7 @@
 ---
 id: TASK-210
 title: sesh — client binary carries the whole store (32MB); split or prune the non-server build
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-14 11:05'
 labels:
