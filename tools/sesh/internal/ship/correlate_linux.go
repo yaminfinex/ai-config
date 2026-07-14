@@ -3,6 +3,7 @@
 package ship
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -92,6 +93,8 @@ func (c *procCorrelator) CorrelateAll(discovered []Discovered) map[string]string
 				owner, ok = c.codexOwner(entries, d.Path)
 			case wire.ToolClaude:
 				owner, ok = c.claudeOwner(entries, d.Path)
+			case wire.ToolGrok:
+				owner, ok = c.grokOwner(entries, d.Path)
 			}
 			if ok {
 				owners[d.Identity.Key()] = owner
@@ -251,6 +254,32 @@ func (c *procCorrelator) claudeOwner(entries []procEntry, path string) (string, 
 			return "", false
 		}
 		cwd = e.cwd
+		o := c.environOwner(e.pid)
+		if o == "" || (owner != "" && o != owner) {
+			return "", false // a candidate without the variable, or a collision
+		}
+		owner = o
+	}
+	return owner, owner != ""
+}
+
+// grokOwner is the cwd-cohort join for grok: the session path's cwd group
+// (the transcript's grandparent directory name) is the percent-ENCODED
+// working directory, so unlike the claude munge the decode is exact and the
+// lossy-slug collision class does not exist. Candidate grok processes whose
+// cwd equals the decoded group must be unanimous on one SESSION_OWNER, else
+// honest absence — several grok runs share one cwd group by design (the
+// group is not a seat-vs-manual discriminator).
+func (c *procCorrelator) grokOwner(entries []procEntry, path string) (string, bool) {
+	cwd, err := url.PathUnescape(filepath.Base(filepath.Dir(filepath.Dir(path))))
+	if err != nil || cwd == "" {
+		return "", false
+	}
+	owner := ""
+	for _, e := range entries {
+		if e.comm != "grok" || e.cwd != cwd {
+			continue
+		}
 		o := c.environOwner(e.pid)
 		if o == "" || (owner != "" && o != owner) {
 			return "", false // a candidate without the variable, or a collision

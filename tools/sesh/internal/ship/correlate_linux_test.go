@@ -10,6 +10,7 @@ package ship
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -208,6 +209,74 @@ func TestClaudeCohortUnanimousOrAbsent(t *testing.T) {
 		fp.add(102, 1, os.Getuid(), "vim", cwd, map[string]string{"SESSION_OWNER": "dave"})
 		if got := fp.correlator().CorrelateAll([]Discovered{d})[d.Identity.Key()]; got != "bob" {
 			t.Fatalf("owner = %q, want bob (cohort excludes other cwd/comm)", got)
+		}
+	})
+}
+
+// --- grok cohort: exact percent-decoded cwd, unanimous-or-absent -------------
+
+// discoveredGrok places a session transcript under a percent-encoded cwd
+// group, the live ~/.grok/sessions layout.
+func discoveredGrok(t *testing.T, base, cohortCwd string) Discovered {
+	t.Helper()
+	dir := filepath.Join(base, url.PathEscape(cohortCwd), uuidGrokB)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, grokTranscriptName)
+	if err := os.WriteFile(p, fixture(t, "grok-chat-history.jsonl"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return Discovered{Identity: Identity{Tool: wire.ToolGrok, SessionID: uuidGrokB, FileUUID: uuidGrokB}, Path: p}
+}
+
+func TestGrokCohortUnanimousOrAbsentOnExactCwd(t *testing.T) {
+	base := t.TempDir()
+	cwd := filepath.Join(t.TempDir(), "work.tree")
+	d := discoveredGrok(t, base, cwd)
+
+	t.Run("single candidate stamps", func(t *testing.T) {
+		fp := newFakeProc(t)
+		fp.add(100, 1, os.Getuid(), "grok", cwd, map[string]string{"SESSION_OWNER": "bob"})
+		if got := fp.correlator().CorrelateAll([]Discovered{d})[d.Identity.Key()]; got != "bob" {
+			t.Fatalf("owner = %q, want bob", got)
+		}
+	})
+	t.Run("disagreeing candidates yield absence", func(t *testing.T) {
+		fp := newFakeProc(t)
+		fp.add(100, 1, os.Getuid(), "grok", cwd, map[string]string{"SESSION_OWNER": "carol"})
+		fp.add(101, 1, os.Getuid(), "grok", cwd, map[string]string{"SESSION_OWNER": "dave"})
+		if got, ok := fp.correlator().CorrelateAll([]Discovered{d})[d.Identity.Key()]; ok {
+			t.Fatalf("owner = %q, want honest absence (same-cwd collision)", got)
+		}
+	})
+	t.Run("candidate without the variable breaks unanimity", func(t *testing.T) {
+		fp := newFakeProc(t)
+		fp.add(100, 1, os.Getuid(), "grok", cwd, map[string]string{"SESSION_OWNER": "carol"})
+		fp.add(101, 1, os.Getuid(), "grok", cwd, map[string]string{"HOME": "/home/x"})
+		if got, ok := fp.correlator().CorrelateAll([]Discovered{d})[d.Identity.Key()]; ok {
+			t.Fatalf("owner = %q, want absence", got)
+		}
+	})
+	t.Run("munge-colliding cwd is NOT a grok collision (encoding is exact)", func(t *testing.T) {
+		// /x/work.tree and /x/work-tree collide under the claude slug but
+		// percent-encode distinctly; the grok cohort keys on the exact
+		// decoded cwd, so the other directory's process is simply not a
+		// candidate and the real cohort stamps.
+		other := strings.Replace(cwd, ".", "-", 1)
+		fp := newFakeProc(t)
+		fp.add(100, 1, os.Getuid(), "grok", cwd, map[string]string{"SESSION_OWNER": "erin"})
+		fp.add(101, 1, os.Getuid(), "grok", other, map[string]string{"SESSION_OWNER": "frank"})
+		if got := fp.correlator().CorrelateAll([]Discovered{d})[d.Identity.Key()]; got != "erin" {
+			t.Fatalf("owner = %q, want erin (exact-cwd cohort excludes the lookalike)", got)
+		}
+	})
+	t.Run("other comm is not a candidate", func(t *testing.T) {
+		fp := newFakeProc(t)
+		fp.add(100, 1, os.Getuid(), "grok", cwd, map[string]string{"SESSION_OWNER": "bob"})
+		fp.add(101, 1, os.Getuid(), "vim", cwd, map[string]string{"SESSION_OWNER": "carol"})
+		if got := fp.correlator().CorrelateAll([]Discovered{d})[d.Identity.Key()]; got != "bob" {
+			t.Fatalf("owner = %q, want bob (cohort excludes other comm)", got)
 		}
 	})
 }
