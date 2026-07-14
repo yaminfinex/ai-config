@@ -3,10 +3,10 @@ id: TASK-199
 title: >-
   Characterize hcom-native pi integration before pi U1 — native-vs-custom
   worth-it re-check
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-14 00:44'
-updated_date: '2026-07-14 01:05'
+updated_date: '2026-07-14 01:18'
 labels: []
 dependencies: []
 ordinal: 198000
@@ -21,5 +21,5 @@ BLOCKING pi implementation (U1 does not file until this lands). hcom 0.7.23 adve
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-DONE received #63982: commit 3289df8 (docs-only, +234), decision = keep DR-2 custom delivery; native hcom-pi works (idle wake, ordered batches, busy follow-up, identity/transcript/resume) but acks at sendUserMessage injection — crash-after-ack verified: unread=0 + transcript ends at interrupted toolCall, no replay. Orchestrator independently verified source claims (pi_plugin/hcom.ts ack-at-injection, pinned 4cef94de) AND runtime evidence (probe2 log deferred_ack 26 / JSONL / rematerialized row unread=0). Adversarial review dispatched: incumbent opus reviewer-zunu + grok calibration rafo (brief: napkins/run-herder-dx/review-199-brief.md).
+MERGED a1e8c49 (head 0f4fbcd, 2 commits, docs-only +307). Decision: keep DR-2 custom delivery — native hcom-pi (0.7.23 x pi 0.80.6) verified working for idle wake/ordering/identity/transcript/resume but acks at injection; crash-after-ack = falsely-complete receipt, no replay (orchestrator-verified: source 4cef94de + probe2 artifacts). Fix round 1 re-grounded the decision per incumbent P1: settlement-ack fork disclosed and defeated (multi-turn correlation needs DR-2's journal), decision re-anchored on native-absent herder-specific gaps (epoch fencing, progress lease, capability lanes, lifecycle authority); provider scope moved to launch contract; hygiene applied. Dual APPROVE at 0f4fbcd (incumbent zunu + calibration rafo). pi U1 now gates ONLY on owner sign-off (items 7+8). Upstream candidate: hcom pi extension acks at injection not settlement.
 <!-- SECTION:NOTES:END -->
