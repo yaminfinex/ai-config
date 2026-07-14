@@ -311,10 +311,12 @@ For Grok, the managed home is `<herder-state>/grok-home` (normally
 `${XDG_STATE_HOME:-$HOME/.local/state}/herder/grok-home`). Its `config.toml` is the launch contract
 rendered as config, not user configuration. Every launch takes the seed lock and atomically
 rewrites the whole controlled file with auto-update disabled, Claude-compatible hooks disabled,
-and the herder bus MCP server registered. Local edits to that file are therefore intentionally
-replaced at the next launch. Herder never merges it with or writes to the user's live `~/.grok`.
-Sessions created under the harness also stay under this managed home, which gives the observer a
-single owned transcript layout.
+and the herder bus MCP server registered. The launch environment also pins
+`GROK_CLAUDE_HOOKS_ENABLED=0`, so the Claude compatibility scanner cannot import ambient hooks.
+Local edits to the controlled config are therefore intentionally replaced at the next launch.
+Herder never merges it with or writes to the user's live `~/.grok`. Sessions created under the
+harness also stay under this managed home, which gives the observer a single owned transcript
+layout.
 
 That model creates three intentional differences from running the vendor CLI manually:
 
