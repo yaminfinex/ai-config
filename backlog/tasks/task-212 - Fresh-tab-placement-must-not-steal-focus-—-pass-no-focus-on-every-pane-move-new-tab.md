@@ -3,10 +3,10 @@ id: TASK-212
 title: >-
   Fresh-tab placement must not steal focus — pass --no-focus on every pane move
   --new-tab
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-14 22:43'
-updated_date: '2026-07-14 22:44'
+updated_date: '2026-07-14 23:24'
 labels: []
 dependencies: []
 ordinal: 211000
@@ -20,7 +20,13 @@ OWNER UX DEFECT (2026-07-14): every herder spawn/resume/fork yanks terminal focu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Both pane move --new-tab call sites pass --no-focus by default; tests pin the argv
-- [ ] #2 Explicit focus opt-in preserved or added where a flag surface exists; help/goldens updated
-- [ ] #3 Full house battery green
+- [x] #1 Both pane move --new-tab call sites pass --no-focus by default; tests pin the argv
+- [x] #2 Explicit focus opt-in preserved or added where a flag surface exists; help/goldens updated
+- [x] #3 Full house battery green
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+MERGED 77b7d51 (head 86a48ce). Both new-tab move sites carry resolved focus flag, --no-focus default; --focus opt-in wiring-pinned (mutation-verified red at both sites); help corrected. Review: opus, exemplary (mutation testing + e2e mock drive + numstat golden audit); delta re-cert APPROVE, fork path chased to shared call site. Worktree gate 58/58 + post-merge 58/58. OWNER RELIEF lands at next herder rebuild/deploy.
+<!-- SECTION:NOTES:END -->
