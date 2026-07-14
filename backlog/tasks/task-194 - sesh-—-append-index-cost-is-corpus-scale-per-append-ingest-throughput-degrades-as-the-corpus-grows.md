@@ -3,8 +3,9 @@ id: TASK-194
 title: >-
   sesh — append-index cost is corpus-scale per append; ingest throughput
   degrades as the corpus grows
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - mika
 created_date: '2026-07-13 20:22'
 labels:
   - sesh
