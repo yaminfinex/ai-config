@@ -1,10 +1,10 @@
 ---
 id: TASK-202
 title: Amend pi first-class design for the default-homes ruling (pre-sign-off)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-14 01:47'
-updated_date: '2026-07-14 02:08'
+updated_date: '2026-07-14 02:52'
 labels: []
 dependencies: []
 ordinal: 201000
@@ -19,5 +19,10 @@ TYPE: design (docs-only). OWNER RULING 2026-07-14 (standing-orders 20.8): pi sea
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-DONE 0fae1a6 (docs-only, +360/-210, round 10): default-home DR-3 rewrite, full-document sweep, honesty duty discharged as owner item 9 a-e (store channel in-band, version drift unfenced, operator credential in seat HOME, shared-home effects, state hygiene). Review dispatched: incumbent codex reviewer-ganu + grok calibration rako (brief: review-202-brief.md). Owner sign-off follows review.
+MERGED 73da70e (docs-only, one file, 523+/224-). Round 10 (0fae1a6) then FOUR fix rounds under incumbent codex re-cert + grok calibration:
+- R1 (6 items): default-home fidelity gaps.
+- R2 (3 items): activation predicate broke the memory-lost reload branch.
+- R3 (2 items): reload branch re-opened a tokenless mutation forgeable by a model-tool child — closed by deleting the branch (provenance-indistinguishable from a model-tool child, so no process-identity proof authorizes a write).
+- R4 (1 item, ganu P1 orchestrator-confirmed against the artifact): the round-3 control-degraded-from-authenticated-silence derivation contradicted T29 (hung driver = never-resolving await, NO failure-path writer), so no record/threshold could distinguish lost-token from hung-driver. CLOSED BY DELETION: control-degraded retired from the vocabulary entirely; both stale-lease causes collapse to lease-derived driver-degraded with one controlled-relaunch recovery; indistinguishability stated plainly for owner sign-off.
+Final APPROVE at 02e5dc5 (ganu re-cert; orchestrator grep-verified retirement). Owner item 9 a-e honesty register intact. Reviews: review-202-brief.md. NEXT: owner SIGN-OFF of the amended design (owner-desk item 1b) — pi U1 gates on it.
 <!-- SECTION:NOTES:END -->
