@@ -94,7 +94,7 @@ evidence throughout — what changed is the machinery ruled on top of them.
 | The delivery receipt is the **flagship injection-time receipt**: the unread cursor advances when the message is injected, before the turn settles — the same placement claude and codex commit through the shared `commit_delivery_ack` boundary. The mid-turn crash window this carries is an **owner-accepted, registered delta** (§12 item 10). | owner ruling 2026-07-14 (flagship parity); parity memo "Source: where the flagship cursor advances"; characterization crash probe |
 | Offline/update suppression: `PI_OFFLINE=1` (couples the version-check skip) plus `PI_TELEMETRY=0`, carried as seat-scoped launch-env deltas. `PI_SKIP_VERSION_CHECK=1` alone is too narrow. Inference is not gated by offline mode. | demo "Startup network and update behavior" |
 | Credentials, **env-channel scoped**: herder routes **one provider per seat**, by environment, referenced **by name only** — never in argv or in anything herder writes (registry, logs, doctrine, reports). A cross-provider model change is a controlled relaunch with a re-filtered environment. This claim scopes the **herder-routed channel only**: Pi's own resolution can also reach credential-bearing owner config in the live home (DR-5; §12 item 9a). **Retained unchanged by the flagship-parity ruling.** | owner rulings (credential scoping settled; retained through both 2026-07-14 rulings); demo "Provider routing and least privilege" |
-| Install integrity: the install is the **vendor-updated default**; herder records the **observed vendor version** at provision and at every launch — no hash gate, no supported-version refusal. Version-drift consequences are an owner-signed delta (§12 item 9b). **Retained unchanged by the flagship-parity ruling.** | owner ruling 2026-07-14 (default homes); demo "Installation provenance" retained as evidence |
+| Install integrity: the install is the **vendor-updated default**; herder records the **observed vendor version at every launch/bind** — the single recording point (install-latest, recorded not pinned): under flagship parity herder never installs Pi, so no provision moment exists to record at, and the binary can change between launches — launch-time is the only honest record. No hash gate, no supported-version refusal. Version-drift consequences are an owner-signed delta (§12 item 9b). **Retained by the flagship-parity ruling; recording point re-scoped to launch/bind (§2 item 6, §13 B1).** | owner ruling 2026-07-14 (default homes); demo "Installation provenance" retained as evidence |
 | Every **seat launch** receives the herder-constructed environment (env deltas + exactly one named provider credential — DR-5), built by the launch wrapper before it execs into `hcom pi` (§2). | owner rulings; demo evidence retained |
 | Herder writes **no owner Pi config, ever**. Under the native path herder writes **no artifact in the Pi home at all**: the extension in `agent/extensions/hcom.ts` is hcom's own, installed and refreshed by hcom's launcher (replaced when its contents differ from the bundled source). The former herder-managed extension is deleted (round 11). | owner rulings 2026-07-14; characterization "Launch mechanism" |
 | The former per-launch `/proc` environment ceremony (CONDITIONAL under the demo) is **dissolved with the direct-exec launch path** (round 11): Pi launches ride the identical exec-into-`hcom <tool>` chain the flagships use, which carries no such ceremony anywhere in the fleet. Env delivery assurance for Pi seats is exactly the flagship bar. | owner ruling 2026-07-14 (flagship parity); parity memo "Costing" |
@@ -299,8 +299,8 @@ deltas; recorded-vendor-version discipline (install-latest, recorded not
 pinned); launch refusal with cause+remedy when no Pi is resolvable or the
 named credential is absent from the environment the pane actually receives
 (fresh-pane truth — the grok activation lesson). Passthrough refusals are
-finalized against the `hcom pi` launch surface at the build unit (§11), per
-the family norm.
+finalized against the `hcom pi` launch surface at the build unit (§13 B1,
+gate L5), per the family norm.
 
 The former `/proc` ceremony conditional is **dissolved**, not resolved: it
 attached to the deleted direct-exec path. Pi launches now ride the identical
@@ -615,7 +615,8 @@ at activation (§13).
    - **(b) Version drift is unfenced.** No pin, no hash gate, no
      supported-version refusal: a vendor update between launches can silently
      invalidate probe results and pinned behavior in this document. Remaining
-     guards: recorded version at provision and every launch, and
+     guards: recorded version at every launch/bind (the single recording
+     point — §2 item 6), and
      `PI_OFFLINE=1` making the version stable for each process's lifetime
      only. Item 5 owns the re-characterization appetite. *(Round-11 note: the
      former extension refuse-to-claim guard listed here dissolved with the
