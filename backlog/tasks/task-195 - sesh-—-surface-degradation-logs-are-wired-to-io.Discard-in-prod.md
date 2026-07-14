@@ -1,8 +1,9 @@
 ---
 id: TASK-195
 title: sesh — surface degradation logs are wired to io.Discard in prod
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - mika
 created_date: '2026-07-13 20:22'
 labels:
   - sesh
