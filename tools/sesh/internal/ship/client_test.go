@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"sesh/internal/buildinfo"
 	"sesh/internal/httpx"
 )
 
@@ -87,5 +88,27 @@ func TestStalledStoreSurfacesAsHold(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		cancel() // release the withheld handler so the server can close
 		t.Fatal("RunOnce still blocked after 5s; the fallback round-trip bound did not fire")
+	}
+}
+
+// Every PUT self-identifies via User-Agent ("sesh-ship/<version>") so the
+// store's version census (task-204) can record what each node runs. The
+// header is informational only: no shipping behavior may ever depend on the
+// store reading it, so this asserts only that it is sent.
+func TestPutBytesSendsVersionedUserAgent(t *testing.T) {
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.UserAgent()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"generation":0,"high_water":6}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := &Client{BaseURL: srv.URL, Hostname: "testhost", OSUser: "testuser"}
+	id := Identity{Tool: "claude", SessionID: "2c387aef-72ac-46bc-8ea5-e3b68690a937", FileUUID: "2c387aef-72ac-46bc-8ea5-e3b68690a937"}
+	if _, _, err := c.PutBytes(context.Background(), id, 0, []byte("hello\n"), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if want := "sesh-ship/" + buildinfo.Version; gotUA != want {
+		t.Fatalf("PUT User-Agent = %q, want %q", gotUA, want)
 	}
 }
