@@ -116,7 +116,11 @@ moment this regression fired on. The refresh goroutine is owned: it runs on
 a store-lifetime context and `SQLStore.Close` (wired before the DB pool
 closes in serve shutdown) cancels and drains it. Rebuild duration is
 journaled at debug level under the same identifier-free contract as the
-per-request timing. Gates: the single-flight/serve-stale tests beside the
+per-request timing. Surface degradation events (degraded-page fallbacks,
+session lookup failures, mirror read errors) reach the journal at warn level
+under that same contract — a fixed message vocabulary with route/error
+classes and counts only, per-row/per-file repeats aggregated to one line per
+request — pinned by the log-contract gate in `internal/surface`. Gates: the single-flight/serve-stale tests beside the
 large-corpus plan gate (`internal/surface`) — including the
 churn-straddling-the-stamp interleaving, rebuild-failure latch clearing,
 and canceled-cold-waiter edges; the live surface check now waits for

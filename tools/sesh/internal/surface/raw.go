@@ -50,6 +50,9 @@ type rawLine struct {
 func (s *Server) serveRawFallback(w http.ResponseWriter, r *http.Request, sum SessionSummary, reason string) {
 	page := rawPage{Session: sum, Reason: reason}
 	budget := int64(rawDisplayBudgetBytes)
+	// Per-file mirror failures repeat across a many-file session, so they
+	// aggregate to one journal line per error class per request.
+	openFails, readFails := map[string]int{}, map[string]int{}
 	for _, ref := range sessionFilesFirstIngest(sum) {
 		if budget <= 0 {
 			page.BudgetExhausted = true
@@ -58,7 +61,7 @@ func (s *Server) serveRawFallback(w http.ResponseWriter, r *http.Request, sum Se
 		rf := rawFile{FileUUID: ref.FileUUID, Generation: ref.Generation}
 		rc, err := s.store.MirrorFile(r.Context(), sum.Tool, ref.WireSessionID, ref.FileUUID, ref.Generation)
 		if err != nil {
-			s.log.Printf("surface: raw fallback %s/%s gen %d: %v", sum.Tool, ref.FileUUID, ref.Generation, err)
+			openFails[errClass(err)]++
 			rf.Err = "mirror file unreadable"
 			page.Files = append(page.Files, rf)
 			continue
@@ -69,13 +72,19 @@ func (s *Server) serveRawFallback(w http.ResponseWriter, r *http.Request, sum Se
 			page.BudgetExhausted = true
 		}
 		if err != nil {
-			s.log.Printf("surface: raw fallback read %s/%s gen %d: %v", sum.Tool, ref.FileUUID, ref.Generation, err)
+			readFails[errClass(err)]++
 			rf.Err = "mirror read failed mid-file; partial lines shown"
 		}
 		page.Files = append(page.Files, rf)
 	}
+	for class, n := range openFails {
+		s.log.Warn("surface: raw fallback mirror open failed", "tool", string(sum.Tool), "error_class", class, "files", n)
+	}
+	for class, n := range readFails {
+		s.log.Warn("surface: raw fallback mirror read failed", "tool", string(sum.Tool), "error_class", class, "files", n)
+	}
 	if err := s.render(w, s.rawTmpl, "raw.html", page); err != nil {
-		s.log.Printf("surface: raw render %s/%s: %v", sum.Tool, sum.LogicalSessionID, err)
+		s.log.Warn("surface: page render failed", "route", "/s/*", "error_class", errClass(err))
 		s.writeDegraded(w, "raw fallback render failed")
 	}
 }

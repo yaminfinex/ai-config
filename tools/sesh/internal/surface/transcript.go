@@ -172,13 +172,22 @@ func sortTranscript(rows []wire.IndexMessage) {
 // page. It stops once rendered text exceeds the display budget and reports
 // how many rows were left off the page.
 func (s *Server) buildEntries(ctx context.Context, tool wire.Tool, rows []wire.IndexMessage) (entries []displayEntry, omitted int) {
+	// Mirror-range failures repeat per row when a whole generation is
+	// unreadable, so they aggregate to one journal line per error class per
+	// request (up to a window of them) instead of a line per row.
+	mirrorFails := map[string]int{}
+	defer func() {
+		for class, n := range mirrorFails {
+			s.log.Warn("surface: mirror range read failed", "tool", string(tool), "error_class", class, "rows", n)
+		}
+	}()
 	entries = make([]displayEntry, 0, len(rows))
 	var spent int64
 	for i, row := range rows {
 		if spent > transcriptDisplayBudgetBytes {
 			return entries, len(rows) - i
 		}
-		entry := s.buildEntry(ctx, tool, row)
+		entry := s.buildEntry(ctx, tool, row, mirrorFails)
 		for _, b := range entry.Blocks {
 			spent += int64(len(b.Text))
 		}
@@ -187,7 +196,7 @@ func (s *Server) buildEntries(ctx context.Context, tool wire.Tool, rows []wire.I
 	return entries, 0
 }
 
-func (s *Server) buildEntry(ctx context.Context, tool wire.Tool, row wire.IndexMessage) displayEntry {
+func (s *Server) buildEntry(ctx context.Context, tool wire.Tool, row wire.IndexMessage, mirrorFails map[string]int) displayEntry {
 	entry := displayEntry{
 		Role:             row.Role,
 		EntryType:        row.EntryType,
@@ -207,8 +216,7 @@ func (s *Server) buildEntry(ctx context.Context, tool wire.Tool, row wire.IndexM
 	}
 	line, err := s.store.MirrorRange(ctx, tool, row.WireSessionID, row.FileUUID, row.Generation, row.ByteStart, readEnd)
 	if err != nil {
-		s.log.Printf("surface: mirror range %s/%s gen %d [%d,%d): %v",
-			tool, row.FileUUID, row.Generation, row.ByteStart, readEnd, err)
+		mirrorFails[errClass(err)]++
 		entry.Blocks = []displayBlock{{
 			Kind:      "raw",
 			Title:     "mirror line unavailable",

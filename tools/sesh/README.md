@@ -199,7 +199,10 @@ poll converge as above. That trade is deliberate — a page load never blocks
 on a corpus-scale rebuild, which is exactly the onboarding moment (bulk
 ingest plus first visits) that motivated this design. Rebuild duration
 lands in the `SESH_DEBUG` journal (identifier-free: a
-duration and a session count). Each request
+duration and a session count). Surface degradation events (render
+fallbacks, session lookup failures, mirror read errors) reach the journal
+at warn level without `SESH_DEBUG`, under the same identifier-free
+contract. Each request
 slices one page of the projection (latest 50 by default; the `?node=` filter
 pages its node's prebuilt slice) and hydrates just those
 sessions through index-seeking, key-constrained queries — full-key seeks
