@@ -24,10 +24,14 @@ type mockBridge struct {
 	cancel context.CancelFunc
 }
 
+const servingHcomScript = "#!/bin/sh\nif [ \"$1\" = start ]; then printf '%s\\n' '[hcom:seat-bus]'; exit 0; fi\nif [ \"$1\" = list ]; then printf '%s\\n' '{\"name\":\"seat-bus\"}'; exit 0; fi\ncase \" $* \" in *' --wait '*) exec sleep 60;; esac\nexit 0\n"
+
+const repairingHcomScript = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HCOM_DIR/calls\"\ncase \"$1\" in\n  list) [ -f \"$HCOM_DIR/joined\" ] || exit 1; printf '%s\\n' '{\"name\":\"seat-bus\"}' ;;\n  start) : > \"$HCOM_DIR/joined\"; printf '%s\\n' '[hcom:seat-bus]' ;;\n  send) printf '%s\\n' sent ;;\nesac\n"
+
 func startMockBridge(t *testing.T, state string, session string) *mockBridge {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "hcom")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+	if err := os.WriteFile(bin, []byte(servingHcomScript), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: bin, BusName: "seat-bus", SessionID: session})
@@ -46,6 +50,131 @@ func startMockBridge(t *testing.T, state string, session string) *mockBridge {
 	go func() { _ = b.acceptLoop(ctx) }()
 	return &mockBridge{b: b, cancel: cancel}
 }
+
+func TestStatusRepairsMissingBusRowBeforeReportingHealthy(t *testing.T) {
+	state := t.TempDir()
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "joined")
+	bin := filepath.Join(dir, "hcom")
+	if err := os.WriteFile(bin, []byte(repairingHcomScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: bin, HcomDir: dir, BusName: "seat-bus", SessionID: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	resp := b.execute(Request{Op: "status", Generation: b.generation, SessionID: "owner"})
+	if !resp.OK || resp.Status == nil || resp.Status.Bus != "seat-bus" {
+		t.Fatalf("status after row repair=%+v", resp)
+	}
+	if _, err = os.Stat(marker); err != nil {
+		t.Fatalf("status did not rebind missing row: %v", err)
+	}
+}
+
+func TestStatusRefusesHealthyClaimWhenBusRowCannotBeRebound(t *testing.T) {
+	state := t.TempDir()
+	bin := filepath.Join(t.TempDir(), "hcom")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: bin, BusName: "seat-bus", SessionID: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	resp := b.execute(Request{Op: "status", Generation: b.generation, SessionID: "owner"})
+	if resp.OK || resp.Status != nil || !strings.Contains(resp.Error, "rebind") {
+		t.Fatalf("status claimed health without a bus row: %+v", resp)
+	}
+}
+
+func TestOutboundSendRepairsMissingBusRowBeforeSending(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "hcom")
+	if err := os.WriteFile(bin, []byte(repairingHcomScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: t.TempDir(), HcomBin: bin, HcomDir: dir, BusName: "seat-bus", SessionID: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	resp := b.execute(Request{Op: "send", Generation: b.generation, SessionID: "owner", To: []string{"peer"}, Text: "report"})
+	if !resp.OK || resp.Result != "sent" {
+		t.Fatalf("send after row repair=%+v", resp)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "calls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := string(data)
+	if !strings.Contains(calls, "start --as seat-bus") || !strings.Contains(calls, "send @peer --name seat-bus -- report") {
+		t.Fatalf("row repair/send calls=%q", calls)
+	}
+}
+
+func TestIdentityLoopRefreshesExactBusRow(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls")
+	bin := filepath.Join(dir, "hcom")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = list ]; then printf '%s\\n' \"$*\" >> \"$HCOM_DIR/calls\"; printf '%s\\n' '{\"name\":\"seat-bus\"}'; fi\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: t.TempDir(), HcomBin: bin, HcomDir: dir, BusName: "seat-bus", IdentityRefresh: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- b.identityLoop(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		data, _ := os.ReadFile(logPath)
+		if strings.Contains(string(data), "list seat-bus --name seat-bus --json") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("identity loop did not refresh exact row; calls=%q", data)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	if err = <-done; err != nil {
+		t.Fatalf("identity loop stop: %v", err)
+	}
+}
+
+func TestIdentityLoopTreatsRetirementAsOrderlyStop(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "hcom")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: t.TempDir(), HcomBin: bin, BusName: "seat-bus", IdentityRefresh: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	b.retiring.Store(true)
+	done := make(chan error, 1)
+	go func() { done <- b.identityLoop(context.Background()) }()
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatalf("identity loop retirement: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("identity loop did not stop after retirement")
+	}
+}
+
 func (m *mockBridge) close() {
 	m.cancel()
 	if m.b.listener != nil {
@@ -523,7 +652,7 @@ func TestLifecycleStatusAndRetirementUseGenerationFencedSocket(t *testing.T) {
 func TestRetirementResponseStopsServingBinderOrderly(t *testing.T) {
 	state := t.TempDir()
 	hcom := filepath.Join(t.TempDir(), "hcom")
-	if err := os.WriteFile(hcom, []byte("#!/bin/sh\nif [ \"$1\" = start ]; then printf '%s\\n' '[hcom:seat-bus]'; exit 0; fi\ncase \" $* \" in *' --wait '*) exec sleep 60;; esac\nexit 0\n"), 0o700); err != nil {
+	if err := os.WriteFile(hcom, []byte(servingHcomScript), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: hcom, SessionID: "owner"})
@@ -564,7 +693,7 @@ func TestRetirementResponseStopsServingBinderOrderly(t *testing.T) {
 func TestRetirementResponseArrivesBeforeBridgeSubprocessStops(t *testing.T) {
 	state := t.TempDir()
 	hcom := filepath.Join(t.TempDir(), "hcom")
-	if err := os.WriteFile(hcom, []byte("#!/bin/sh\nif [ \"$1\" = start ]; then printf '%s\\n' '[hcom:seat-bus]'; exit 0; fi\ncase \" $* \" in *' --wait '*) exec sleep 60;; esac\nexit 0\n"), 0o700); err != nil {
+	if err := os.WriteFile(hcom, []byte(servingHcomScript), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=TestBridgeSubprocessHelper", "--", "--seat", "seat", "--state-dir", state, "--hcom-bin", hcom, "--session-id", "owner")
@@ -692,7 +821,7 @@ func TestRetirementPublishFailureIsDiagnosticAndStillStops(t *testing.T) {
 	seedGrokRegistryRow(t, state, "seat", "owner")
 	retireGrokRegistryRow(t, state, "seat")
 	hcom := filepath.Join(t.TempDir(), "hcom")
-	if err := os.WriteFile(hcom, []byte("#!/bin/sh\nif [ \"$1\" = start ]; then printf '%s\\n' '[hcom:seat-bus]'; exit 0; fi\ncase \" $* \" in *' --wait '*) exec sleep 60;; esac\nexit 0\n"), 0o700); err != nil {
+	if err := os.WriteFile(hcom, []byte(servingHcomScript), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: hcom, SessionID: "owner"})
@@ -1020,7 +1149,7 @@ func TestPersistentMCPServerStraddlesBinderRestart(t *testing.T) {
 func TestT17IdleBinderAndTapEmitZeroModelFacingBytes(t *testing.T) {
 	state := t.TempDir()
 	bin := filepath.Join(t.TempDir(), "hcom")
-	script := "#!/bin/sh\nif [ \"$1\" = events ]; then\n  case \" $* \" in *\" --wait \"*) sleep 10; exit 1;; *) exit 0;; esac\nfi\nexit 0\n"
+	script := "#!/bin/sh\nif [ \"$1\" = list ]; then printf '%s\\n' '{\"name\":\"bound\"}'; exit 0; fi\nif [ \"$1\" = events ]; then\n  case \" $* \" in *\" --wait \"*) sleep 10; exit 1;; *) exit 0;; esac\nfi\nexit 0\n"
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

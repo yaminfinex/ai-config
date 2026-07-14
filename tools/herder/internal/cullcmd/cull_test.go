@@ -42,7 +42,7 @@ func TestGrokCullRetiresBridgeAndPendingMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 	hcom := filepath.Join(state, "hcom")
-	if err := os.WriteFile(hcom, []byte("#!/bin/sh\nif [ \"$1\" = start ]; then printf '%s\\n' '[hcom:grok-cull-bus]'; exit 0; fi\ncase \" $* \" in *' --wait '*) exec sleep 60;; esac\nexit 0\n"), 0o700); err != nil {
+	if err := os.WriteFile(hcom, []byte("#!/bin/sh\nif [ \"$1\" = start ]; then printf '%s\\n' '[hcom:grok-cull-bus]'; exit 0; fi\nif [ \"$1\" = list ]; then printf '%s\\n' '{\"name\":\"grok-cull-bus\"}'; exit 0; fi\ncase \" $* \" in *' --wait '*) exec sleep 60;; esac\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	b, err := grokbridge.OpenBinder(grokbridge.BinderConfig{Seat: guid, StateDir: state, HcomBin: hcom, SessionID: sessionID})

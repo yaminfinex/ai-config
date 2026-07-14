@@ -20,3 +20,11 @@ bus/state directories were used; no live registry, bus, or model session was tou
   compact payload-free line per newly queued message, at most two idle-aware nudges
   when session phase evidence is available, no idle output, and one aggregate recovery
   line on reconnect instead of wake replay. Correctness never depends on a nudge.
+- P8: hcom 0.7.23 runs its one-hour inactive-row cleanup before `list` resolves an
+  explicitly named identity. Anonymous bridge event polling does not refresh the
+  bridge-owned row's activity clock. An identified exact-row read does refresh it;
+  after forced cleanup, `start --as <durable-name>` recreates the same coordinate and
+  messages queued before cleanup remain queryable. The bridge therefore refreshes the
+  exact row every 15 minutes, reclaims it on absence, and drains the durable event log
+  immediately after recovery. Status is healthy only after exact-row verification or
+  successful recovery.

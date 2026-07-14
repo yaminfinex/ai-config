@@ -250,7 +250,7 @@ type lifecycleBridge struct {
 func startLifecycleBridge(t *testing.T, state, seat, sessionID, busName string) *lifecycleBridge {
 	t.Helper()
 	hcom := filepath.Join(t.TempDir(), "hcom")
-	body := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = start ]; then printf '%%s\\n' '[hcom:%s]'; exit 0; fi\ncase \" $* \" in *' --wait '*) exec sleep 60;; esac\nexit 0\n", busName)
+	body := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = start ]; then printf '%%s\\n' '[hcom:%[1]s]'; exit 0; fi\nif [ \"$1\" = list ]; then printf '%%s\\n' '{\"name\":\"%[1]s\"}'; exit 0; fi\ncase \" $* \" in *' --wait '*) exec sleep 60;; esac\nexit 0\n", busName)
 	if err := os.WriteFile(hcom, []byte(body), 0o700); err != nil {
 		t.Fatal(err)
 	}

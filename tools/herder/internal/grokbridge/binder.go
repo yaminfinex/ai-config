@@ -25,19 +25,23 @@ import (
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
-const pageSize = 20
+const (
+	pageSize                       = 20
+	defaultIdentityRefreshInterval = 15 * time.Minute
+)
 
 type BinderConfig struct {
-	Seat          string
-	StateDir      string
-	HcomBin       string
-	HcomDir       string
-	BusName       string
-	Wait          time.Duration
-	SessionEvents string
-	NudgeAfter    time.Duration
-	MaxNudges     int
-	SessionID     string
+	Seat            string
+	StateDir        string
+	HcomBin         string
+	HcomDir         string
+	BusName         string
+	Wait            time.Duration
+	SessionEvents   string
+	NudgeAfter      time.Duration
+	MaxNudges       int
+	SessionID       string
+	IdentityRefresh time.Duration
 }
 
 type Binder struct {
@@ -51,6 +55,7 @@ type Binder struct {
 	taps        map[net.Conn]struct{}
 	drainMu     sync.Mutex
 	capMu       sync.Mutex
+	identityMu  sync.Mutex
 	retiring    atomic.Bool
 	retireOnce  sync.Once
 	retired     chan struct{}
@@ -88,6 +93,9 @@ func OpenBinder(cfg BinderConfig) (*Binder, error) {
 	}
 	if cfg.MaxNudges <= 0 {
 		cfg.MaxNudges = 2
+	}
+	if cfg.IdentityRefresh <= 0 {
+		cfg.IdentityRefresh = defaultIdentityRefreshInterval
 	}
 	dir := SeatDir(cfg.StateDir, cfg.Seat)
 	socket := SocketPath(cfg.StateDir, cfg.Seat)
@@ -163,9 +171,10 @@ func (b *Binder) Serve(ctx context.Context) error {
 		return err
 	}
 	go func() { <-serveCtx.Done(); ln.Close() }()
-	errch := make(chan error, 3)
+	errch := make(chan error, 4)
 	go func() { errch <- b.acceptLoop(serveCtx) }()
 	go func() { errch <- b.pickupLoop(serveCtx) }()
+	go func() { errch <- b.identityLoop(serveCtx) }()
 	if b.cfg.SessionEvents != "" {
 		go func() { errch <- b.nudgeLoop(serveCtx) }()
 	}
@@ -212,14 +221,92 @@ func (b *Binder) bindIdentity(ctx context.Context) (string, error) {
 	// hcom start creates a process-bound identity as an inactive launch
 	// placeholder. Grok has no vendor hook that later replaces that placeholder,
 	// so an observer would otherwise age it into launch_failed even while this
-	// bridge remains live. An identified JSON list is the smallest read-only hcom
-	// command: it stabilizes the existing process-bound row without delivering or
-	// acknowledging pending messages. Keep the bus-name durable before this call
-	// so a retry reclaims the same identity rather than minting another one.
-	if _, err := b.runHcomSeatIdentity(ctx, "list", "--name", name, "--json"); err != nil {
+	// bridge remains live. An identified exact-row JSON list is the smallest
+	// read-only hcom command: it stabilizes the existing process-bound row without
+	// delivering or acknowledging pending messages, and proves the durable row is
+	// still present. Keep the bus-name durable before this call so a retry reclaims
+	// the same identity rather than minting another one.
+	if err := b.verifyIdentity(ctx, name); err != nil {
 		return "", fmt.Errorf("stabilize hcom identity: %w", err)
 	}
 	return name, nil
+}
+
+func (b *Binder) verifyIdentity(ctx context.Context, name string) error {
+	out, err := b.runHcomSeatIdentity(ctx, "list", name, "--name", name, "--json")
+	if err != nil {
+		return fmt.Errorf("verify hcom row %s: %w", name, err)
+	}
+	var row struct {
+		Name string `json:"name"`
+	}
+	if err = json.Unmarshal([]byte(strings.TrimSpace(out)), &row); err != nil {
+		return fmt.Errorf("verify hcom row %s JSON: %w", name, err)
+	}
+	if row.Name != name {
+		return fmt.Errorf("verify hcom row %s: exact query returned %q", name, row.Name)
+	}
+	return nil
+}
+
+// refreshIdentity treats exact hcom row presence as the bus-liveness authority.
+// The identified read refreshes hcom's status clock before its one-hour reaper
+// window. If the row is already gone, the durable name is reclaimed under the
+// bridge-owned process identity instead of minting a replacement coordinate.
+func (b *Binder) refreshIdentity(ctx context.Context) (bool, error) {
+	b.identityMu.Lock()
+	defer b.identityMu.Unlock()
+	if b.retiring.Load() {
+		return false, errors.New("refresh hcom identity: Grok seat is retiring")
+	}
+	name := b.cfg.BusName
+	if name == "" {
+		return false, errors.New("refresh hcom identity: bridge has no durable bus name")
+	}
+	presenceErr := b.verifyIdentity(ctx, name)
+	if presenceErr == nil {
+		return false, nil
+	}
+	rebound, err := b.bindIdentity(ctx)
+	if err != nil {
+		return false, fmt.Errorf("refresh hcom identity after row presence failure (%v): rebind %s: %w", presenceErr, name, err)
+	}
+	if rebound != name {
+		return false, fmt.Errorf("refresh hcom identity: rebind returned %q, want durable row %q", rebound, name)
+	}
+	return true, nil
+}
+
+func (b *Binder) refreshAndRecover(ctx context.Context) error {
+	rebound, err := b.refreshIdentity(ctx)
+	if err != nil {
+		return err
+	}
+	if !rebound {
+		return nil
+	}
+	if err = b.Drain(ctx); err != nil {
+		return fmt.Errorf("drain queued messages after hcom row rebind: %w", err)
+	}
+	return nil
+}
+
+func (b *Binder) identityLoop(ctx context.Context) error {
+	tick := time.NewTicker(b.cfg.IdentityRefresh)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-tick.C:
+			if err := b.refreshAndRecover(ctx); err != nil {
+				if ctx.Err() != nil || b.retiring.Load() {
+					return nil
+				}
+				return err
+			}
+		}
+	}
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {
@@ -295,6 +382,10 @@ func (b *Binder) execute(req Request) Response {
 	}
 	switch req.Op {
 	case "status":
+		if err := b.refreshAndRecover(context.Background()); err != nil {
+			r.Error = err.Error()
+			return r
+		}
 		pending, err := b.journal.Pending(req.Generation, false)
 		if err != nil {
 			r.Error = err.Error()
@@ -839,6 +930,9 @@ func replaceEnv(env []string, k, v string) []string {
 func (b *Binder) send(req Request) (string, error) {
 	if len(req.To) == 0 {
 		return "", errors.New("send_message requires at least one recipient")
+	}
+	if err := b.refreshAndRecover(context.Background()); err != nil {
+		return "", err
 	}
 	args := []string{"send"}
 	for _, to := range req.To {
