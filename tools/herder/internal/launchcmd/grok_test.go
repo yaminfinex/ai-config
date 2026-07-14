@@ -1,9 +1,11 @@
 package launchcmd
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -62,13 +64,42 @@ esac
 session="$GROK_HOME/sessions/%2Fisolation/$HERDER_GROK_SESSION_ID"
 mkdir -p "$session"
 if [ -f "$HOME/.claude/settings.json" ] && [ "${GROK_CLAUDE_HOOKS_ENABLED:-1}" != 0 ]; then
-  printf '%s\n' '{"type":"hook_execution","name":"global/settings:session_start[0].hooks[0]"}' > "$session/updates.jsonl"
+  printf '%s\n' '{"sessionUpdate":"hook_execution","runs":[{"name":"global/settings:session_start[0].hooks[0]"}]}' > "$session/updates.jsonl"
 else
   : > "$session/updates.jsonl"
 fi
 `
 	writeExecutable(t, path, body)
 	return path
+}
+
+func countGlobalSettingsHookExecutions(t *testing.T, data []byte) int {
+	t.Helper()
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	count := 0
+	for scanner.Scan() {
+		var update struct {
+			SessionUpdate string `json:"sessionUpdate"`
+			Runs          []struct {
+				Name string `json:"name"`
+			} `json:"runs"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &update); err != nil {
+			t.Fatalf("decode Grok update %q: %v", scanner.Bytes(), err)
+		}
+		if update.SessionUpdate != "hook_execution" {
+			continue
+		}
+		for _, run := range update.Runs {
+			if strings.HasPrefix(run.Name, "global/settings:") {
+				count++
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan Grok updates: %v", err)
+	}
+	return count
 }
 
 func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
@@ -480,17 +511,33 @@ func TestManagedGrokSessionRecordsNoClaudeCompatHookExecutions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(plan.Binary, plan.Argv[1:]...)
-	cmd.Env = plan.Env
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("managed mock session failed: %v output=%q", err, output)
+	runSession := func(env []string) {
+		t.Helper()
+		cmd := exec.Command(plan.Binary, plan.Argv[1:]...)
+		cmd.Env = env
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("managed mock session failed: %v output=%q", err, output)
+		}
 	}
 	updates := filepath.Join(plan.GrokHome, "sessions", "%2Fisolation", sid, "updates.jsonl")
+
+	// Prove the mock and matcher can observe the vendor's real hook event shape
+	// before testing the managed launch's suppression branch.
+	runSession(replaceLaunchEnv(plan.Env, map[string]string{"GROK_CLAUDE_HOOKS_ENABLED": "1"}))
 	data, err := os.ReadFile(updates)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := bytes.Count(data, []byte(`"type":"hook_execution"`)); got != 0 {
+	if got := countGlobalSettingsHookExecutions(t, data); got == 0 {
+		t.Fatalf("enabled Claude hook scanner recorded no real-shaped hook_execution event: %s", data)
+	}
+
+	runSession(plan.Env)
+	data, err = os.ReadFile(updates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := countGlobalSettingsHookExecutions(t, data); got != 0 {
 		t.Fatalf("managed session recorded %d hook_execution event(s): %s", got, data)
 	}
 }
