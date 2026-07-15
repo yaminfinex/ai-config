@@ -137,6 +137,20 @@ assert_rc "identity shell strict: situational warning does not fail repo health"
 assert_contains "identity shell strict: warning remains visible" "$OUT" "WARN current shell carries managed-agent identity"
 assert_contains "identity shell strict: warning count remains visible" "$OUT" "WARN ai-doctor found 1 warning(s)"
 
+OUT="$(doctor_strict GROK_HOME=present)"
+RC=$?
+assert_rc "repo warning strict: actionable warning fails" "$RC" 1
+assert_contains "repo warning strict: ordinary warning remains visible" "$OUT" "WARN GROK_HOME is set"
+assert_not_contains "repo warning strict: no identity warning involved" "$OUT" "current shell carries managed-agent identity"
+assert_contains "repo warning strict: counted as one warning" "$OUT" "WARN ai-doctor found 1 warning(s)"
+
+OUT="$(doctor_strict GROK_HOME=present HCOM_SESSION_ID=present HERDER_GUID=present HERDR_PANE_ID=present)"
+RC=$?
+assert_rc "mixed warnings strict: actionable warning still fails" "$RC" 1
+assert_contains "mixed warnings strict: ordinary warning remains visible" "$OUT" "WARN GROK_HOME is set"
+assert_contains "mixed warnings strict: identity nudge remains visible" "$OUT" "WARN current shell carries managed-agent identity"
+assert_contains "mixed warnings strict: both warnings counted" "$OUT" "WARN ai-doctor found 2 warning(s)"
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf 'ALL GREEN - identity-bearing-shell doctor contract holds.\n'

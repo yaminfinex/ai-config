@@ -252,6 +252,11 @@ func TestPiPreBindDeathLeavesCallerBusRowUntouched(t *testing.T) {
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("read hcom lifecycle recorder: %v", err)
 	}
+	for _, call := range client.calls {
+		if strings.Contains(call, " stop") || strings.Contains(call, " delete") {
+			t.Fatalf("pre-bind cleanup attempted caller lifecycle mutation through herdr: %q", call)
+		}
+	}
 }
 
 func realHcomForPiCleanupTest(t *testing.T) string {
@@ -268,6 +273,7 @@ func realHcomForPiCleanupTest(t *testing.T) string {
 			return bin
 		}
 	}
+	// Never skip: a missing binary must loudly expose loss of the only real-bus anti-hijack evidence.
 	t.Fatal("real hcom binary unavailable; install the pinned hcom or set HERDER_TEST_HCOM_BIN")
 	return ""
 }
