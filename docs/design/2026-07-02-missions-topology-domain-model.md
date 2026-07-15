@@ -19,7 +19,8 @@ pending:
 > survey remain valid as revealed requirements. §9 has marked PENDING fold-ins from the hcom build.
 >
 > **Superseded bus model:** §9's per-team ringfence is historical exploration only. Herder now
-> spawns every agent on the node's global bus; mission attribution uses registry membership and tags.
+> spawns every agent on the node's global bus; mission attribution uses registry membership and tags,
+> and unresolved question 6's mission=team leaning is retired too.
 
 ## 0. Invariants (non-negotiable, everything else is)
 
