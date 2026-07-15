@@ -3,7 +3,8 @@ id: TASK-149
 title: >-
   sesh — index ingest algorithmic residuals (pre-large-fleet): per-group append
   cost, oversized-line alloc churn, reindex observed_at crash window
-status: In Progress
+status: Done
+updated_date: '2026-07-15'
 assignee: []
 created_date: '2026-07-10 10:13'
 labels:
