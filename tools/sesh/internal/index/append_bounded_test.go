@@ -300,6 +300,21 @@ func TestAppendMaintenanceBoundedOnCorpus(t *testing.T) {
 	if steadyMaint > appended {
 		t.Errorf("steady-state append wrote %d maintenance rows for %d appended rows; maintenance must stay append-bounded", steadyMaint, appended)
 	}
+	var targetedDedupe, wholePartitionDedupe bool
+	for _, query := range steadyQueries {
+		switch strings.TrimSpace(query) {
+		case strings.TrimSpace(dedupeLogicalKeySQL):
+			targetedDedupe = true
+		case strings.TrimSpace(dedupeLogicalSQL):
+			wholePartitionDedupe = true
+		}
+	}
+	if !targetedDedupe {
+		t.Error("steady-state append did not dedupe its appended key through the overlap index")
+	}
+	if wholePartitionDedupe {
+		t.Error("steady-state append re-deduped the unchanged logical partition")
+	}
 	for _, v := range writePlanViolations(t, plain, steadyQueries) {
 		t.Errorf("non-full-key storage access on the append path: %s", v)
 	}

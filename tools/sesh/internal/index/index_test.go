@@ -1,6 +1,7 @@
 package index
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -357,6 +358,43 @@ func TestQuarantineObservedAtSurvivesReindex(t *testing.T) {
 	}
 	if regenerated.Before(start) || regenerated.After(end) {
 		t.Fatalf("regenerated observed_at = %s, want between %s and %s", regenerated, start, end)
+	}
+}
+
+func TestReindexLedgerSwapFailurePreservesObservedAt(t *testing.T) {
+	st, idx := newHarness(t)
+	body := []byte("not-json\n")
+	putBytes(t, st, testSession, testFile, 0, body)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	original := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	if _, err := st.DB().ExecContext(t.Context(), `UPDATE quarantine_ledger SET observed_at = ?, day = ?`, formatTime(original), original.Format("2006-01-02")); err != nil {
+		t.Fatal(err)
+	}
+
+	idx.InjectReindexLedgerSwapFailureOnce()
+	if err := idx.Reindex(t.Context()); err == nil {
+		t.Fatal("reindex succeeded despite injected ledger swap failure")
+	}
+
+	var observed string
+	if err := st.DB().QueryRowContext(t.Context(), `SELECT observed_at FROM quarantine_ledger WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = 0 AND line_ordinal = 0`,
+		wire.ToolClaude, testSession, testFile).Scan(&observed); err != nil {
+		t.Fatalf("durable quarantine observation was lost at the ledger swap boundary: %v", err)
+	}
+	if observed != formatTime(original) {
+		t.Fatalf("observed_at after interrupted reindex = %q want %q", observed, formatTime(original))
+	}
+	if err := idx.Reindex(t.Context()); err != nil {
+		t.Fatalf("reindex retry after interrupted ledger swap: %v", err)
+	}
+	if err := st.DB().QueryRowContext(t.Context(), `SELECT observed_at FROM quarantine_ledger WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = 0 AND line_ordinal = 0`,
+		wire.ToolClaude, testSession, testFile).Scan(&observed); err != nil {
+		t.Fatalf("quarantine observation missing after reindex retry: %v", err)
+	}
+	if observed != formatTime(original) {
+		t.Fatalf("observed_at after reindex retry = %q want %q", observed, formatTime(original))
 	}
 }
 
@@ -1072,6 +1110,21 @@ func TestLargeTrailingPartialDoesNotAllocateWholeRange(t *testing.T) {
 		t.Fatal(err)
 	} else if got != 0 {
 		t.Fatalf("trailing partial indexed %d rows, want 0", got)
+	}
+}
+
+func BenchmarkReadCompleteLineLargeBase64(b *testing.B) {
+	line := append(bytes.Repeat([]byte("A"), 1<<20), '\n')
+	b.ReportAllocs()
+	b.SetBytes(int64(len(line)))
+	b.ResetTimer()
+	for range b.N {
+		reader := bufio.NewReaderSize(bytes.NewReader(line), 64<<10)
+		got, _, ok, err := readCompleteLine(reader)
+		if err != nil || !ok || len(got) != len(line)-1 {
+			b.Fatalf("readCompleteLine = len %d, ok %v, err %v", len(got), ok, err)
+		}
+		runtime.KeepAlive(got)
 	}
 }
 
