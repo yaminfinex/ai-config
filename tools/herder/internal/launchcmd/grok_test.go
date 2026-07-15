@@ -923,6 +923,51 @@ func TestT21ChildEnvironmentUsesDefaultHomeWithoutPersistingCredential(t *testin
 	}
 }
 
+func TestGrokChildEnvironmentScrubsCallerIdentityBeforeSeatOverlay(t *testing.T) {
+	_, _ = prepareTestGrok(t, "0.2.93")
+	for key, value := range map[string]string{
+		"HCOM_PROCESS_ID":    "ambient-process",
+		"HCOM_INSTANCE_NAME": "ambient-name",
+		"HCOM_SESSION_ID":    "ambient-session",
+		"HCOM_TOOL":          "ambient-tool",
+		"HCOM_LAUNCHED":      "1",
+		"HCOM_FUTUREKEY":     "ambient-future",
+		"HERDER_LABEL":       "worker-child",
+		"HERDR_ENV":          "1",
+		"HERDR_PANE_ID":      "child-pane",
+	} {
+		t.Setenv(key, value)
+	}
+
+	plan, err := prepareGrokLaunch(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{
+		"HCOM_PROCESS_ID", "HCOM_INSTANCE_NAME", "HCOM_SESSION_ID",
+		"HCOM_TOOL", "HCOM_LAUNCHED", "HCOM_FUTUREKEY",
+	} {
+		if value := envValue(plan.Env, key); value != "" {
+			t.Errorf("ambient identity %s crossed Grok launch boundary as %q", key, value)
+		}
+	}
+	for key, want := range map[string]string{
+		"HCOM_DIR":               plan.HcomDir,
+		"HERDER_GUID":            plan.Seat,
+		"HERDER_GROK_SEAT":       plan.Seat,
+		"HERDER_GROK_SESSION_ID": plan.SessionID,
+		"HERDER_STATE_DIR":       plan.StateDir,
+		"HERDER_REAL_HCOM":       plan.HcomBin,
+		"HERDER_LABEL":           "worker-child",
+		"HERDR_ENV":              "1",
+		"HERDR_PANE_ID":          "child-pane",
+	} {
+		if value := envValue(plan.Env, key); value != want {
+			t.Errorf("Grok child input %s = %q, want %q", key, value, want)
+		}
+	}
+}
+
 func TestT21ProcEnvironmentUsesDefaultHomeBeforeAnyModelPrompt(t *testing.T) {
 	plan, _ := prepareTestGrok(t, "0.2.93")
 	cmd := exec.Command("sleep", "30")

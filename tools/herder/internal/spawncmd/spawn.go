@@ -1491,7 +1491,8 @@ func (r *runner) failUnboundPi(name, reason, paneID, terminalID string) int {
 	}
 	return r.failAfterLaunch(
 		"Pi did not satisfy the full hcom bind predicate (tool=pi, hooks bound, nonempty session UUID) before "+reason+
-			"; inspect the pane and hcom roster, correct the Pi extension or PATH configuration, then retry the spawn",
+			"; diagnosis: the hcom launch wrapper may still be in its pre-child update check (an empty roster confirms that Pi has not connected). "+
+			"Remedy: restore GitHub reachability or retry after that check completes; if a Pi row exists, inspect the pane and roster, correct the Pi extension or PATH configuration, then retry the spawn",
 		paneID,
 		terminalID,
 	)

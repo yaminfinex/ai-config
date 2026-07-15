@@ -156,12 +156,45 @@ func TestPiBindTimeoutHardFailsWithConfirmedCleanup(t *testing.T) {
 			if !client.closed {
 				t.Fatal("Pi bind timeout did not close pane")
 			}
-			for _, want := range []string{"Pi", "hooks", "session", "cleanup confirmed"} {
+			for _, want := range []string{"Pi", "hooks", "session", "update check", "GitHub reachability", "cleanup confirmed"} {
 				if !strings.Contains(stderr.String(), want) {
 					t.Errorf("stderr missing %q: %s", want, stderr.String())
 				}
 			}
 		})
+	}
+}
+
+func TestPiPreBindDeathLeavesCallerBusRowUntouched(t *testing.T) {
+	busDir := t.TempDir()
+	t.Setenv("HCOM_DIR", busDir)
+	t.Setenv("HERDER_STATE_DIR", t.TempDir())
+	rowPath := filepath.Join(busDir, "caller-row.json")
+	before := []byte(`{"name":"caller-seat","tool":"claude","session_id":"caller-session","status":"listening"}`)
+	if err := os.WriteFile(rowPath, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &cleanupHerdr{}
+	var stderr strings.Builder
+	r := &runner{opts: options{Agent: "pi"}, herdr: client, stderr: &stderr}
+	if code := r.failUnboundPi("", "bind-timeout(1ms)", "p_new", "term_new"); code != 1 {
+		t.Fatalf("failUnboundPi() = %d, want hard failure", code)
+	}
+	after, err := os.ReadFile(rowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("caller bus row changed during pre-bind cleanup:\n before: %s\n  after: %s", before, after)
+	}
+	if !client.closed {
+		t.Fatal("dead Pi pane was not cleaned up")
+	}
+	for _, call := range client.calls {
+		if strings.Contains(call, "hcom") || strings.Contains(call, " stop") || strings.Contains(call, " delete") {
+			t.Fatalf("pre-bind cleanup attempted caller lifecycle mutation: %q", call)
+		}
 	}
 }
 

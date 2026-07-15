@@ -16,8 +16,9 @@ Usage: ai-doctor [--quick] [--strict]
 
 Checks ai-config repository health, link drift, local-only skills, secrets,
 machine-specific absolute home paths, Claude config divergence, and Grok
-credential/home/PATH-resolution drift. Findings are reported only; Grok state is never
-repaired automatically.
+credential/home/PATH-resolution drift. It also warns when the current shell carries
+managed-agent identity that makes direct vendor CLI probes unsafe. Findings are
+reported only; Grok state is never repaired automatically.
 
 --quick skips network freshness checks.
 USAGE
@@ -388,6 +389,20 @@ check_grok_family() {
   fi
 }
 
+check_identity_bearing_shell() {
+  local key
+  local present=()
+
+  for key in HCOM_PROCESS_ID HCOM_INSTANCE_NAME HCOM_SESSION_ID HERDER_GUID HERDR_PANE_ID; do
+    if [ -n "${!key:-}" ]; then
+      present+=("$key")
+    fi
+  done
+  [ "${#present[@]}" -gt 0 ] || return 0
+
+  warn "current shell carries managed-agent identity (${present[*]}); never invoke a vendor agent CLI directly here — use herder, or run probes under env -i with an isolated HOME/state and no HCOM_*/HERDER_*/HERDR_* values"
+}
+
 check_git
 check_portable_links
 check_skill_links
@@ -397,6 +412,7 @@ check_claude_shared_settings
 check_claude_config_divergence
 check_mise_path
 check_grok_family
+check_identity_bearing_shell
 check_secret_scan
 check_portability_scan
 
