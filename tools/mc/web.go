@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,18 +18,24 @@ import (
 // lossless). No client-side state, no JS.
 
 type Web struct {
-	store     *Store
-	bus       *Bus
-	ing       *Ingestor
-	user      string // default from-name; Tailscale-User-Login overrides
-	seat      string
-	herderBin string
-	missions  *missionResolver
-	tpl       *template.Template
+	store      *Store
+	bus        *Bus
+	ing        *Ingestor
+	user       string // default from-name; Tailscale-User-Login overrides
+	seat       string
+	herderBin  string
+	missions   *missionResolver
+	tpl        *template.Template
+	graphCache graphCache
+	now        func() time.Time
 }
 
 func NewWeb(store *Store, bus *Bus, ing *Ingestor, user, seat, herderBin string, missions *missionResolver) *Web {
-	w := &Web{store: store, bus: bus, ing: ing, user: user, seat: seat, herderBin: herderBin, missions: missions}
+	w := &Web{
+		store: store, bus: bus, ing: ing, user: user, seat: seat,
+		herderBin: herderBin, missions: missions, now: time.Now,
+		graphCache: graphCache{entries: map[string]graphCacheEntry{}},
+	}
 	w.tpl = template.Must(template.New("").Funcs(template.FuncMap{
 		"ago":            ago,
 		"hasHumanPrefix": func(s string) bool { return strings.HasPrefix(s, "human-") },
@@ -51,6 +58,7 @@ func (w *Web) Routes() http.Handler {
 	mux.HandleFunc("POST /thread/{id}/reopen", w.reopen)
 	mux.HandleFunc("POST /thread/{id}/retitle", w.retitle)
 	mux.HandleFunc("GET /roster", w.roster)
+	mux.HandleFunc("GET /graph", w.graph)
 	return securityHeaders(mux)
 }
 
@@ -123,6 +131,9 @@ type pageData struct {
 	TalkAction string
 	// roster
 	Groups []rosterGroup
+	// graph
+	Graph *graphPage
+	Auto  int
 }
 
 func (w *Web) data(r *http.Request, page string) *pageData {
@@ -472,6 +483,59 @@ func (w *Web) roster(rw http.ResponseWriter, r *http.Request) {
 	d.ShowClosed = showAll // reuse: roster "show all" toggle
 	d.Groups, d.Error = w.rosterGroups(showAll)
 	w.render(rw, 200, d)
+}
+
+func (w *Web) graph(rw http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	window := q.Get("window")
+	if window == "" {
+		window = "30m"
+	}
+	if _, ok := graphWindows[window]; !ok {
+		http.Error(rw, "window must be one of 10m, 30m, 2h, or 8h", http.StatusBadRequest)
+		return
+	}
+	view := q.Get("view")
+	if view == "" {
+		view = "map"
+	}
+	if view != "map" && view != "matrix" {
+		http.Error(rw, "view must be map or matrix", http.StatusBadRequest)
+		return
+	}
+	auto := 0
+	if raw := q.Get("auto"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 || value > 3600 {
+			http.Error(rw, "auto must be a positive number of seconds up to 3600", http.StatusBadRequest)
+			return
+		}
+		auto = value
+	}
+
+	model := w.graphData(window, w.now())
+	d := w.data(r, "graph")
+	d.Auto = auto
+	d.Graph = &graphPage{
+		Window: window, View: view, Mission: q.Get("mission"), Focus: cleanGraphName(q.Get("focus")),
+		AsOf: model.AsOf.UTC().Format(time.RFC3339), Warning: strings.Join(model.Warnings, " · "),
+	}
+	autoOff := cloneValues(q)
+	autoOff.Del("auto")
+	auto10 := cloneValues(q)
+	auto10.Set("auto", "10")
+	d.Graph.AutoOffURL = "/graph"
+	if encoded := autoOff.Encode(); encoded != "" {
+		d.Graph.AutoOffURL += "?" + encoded
+	}
+	d.Graph.Auto10URL = "/graph?" + auto10.Encode()
+	d.Graph.WindowLinks, d.Graph.ViewLinks = graphPageLinks(q, window, view)
+	if view == "matrix" {
+		d.Graph.Content = renderGraphMatrix(model, d.Graph.Mission, d.Graph.Focus)
+	} else {
+		d.Graph.Content = renderGraphSVG(model, d.Graph.Mission, d.Graph.Focus, d.User, q)
+	}
+	w.render(rw, http.StatusOK, d)
 }
 
 func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {

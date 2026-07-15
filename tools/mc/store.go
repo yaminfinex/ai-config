@@ -242,6 +242,27 @@ func (s *Store) List(status, grade string) []*Thread {
 	return out
 }
 
+// GraphSnapshot exposes only the read-only projections needed by /graph.
+// It deliberately derives them from the in-memory store and never appends a
+// journal operation.
+func (s *Store) GraphSnapshot() (map[int64]string, map[string]graphThreadInfo, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	authors := map[int64]string{}
+	threads := map[string]graphThreadInfo{}
+	yourTurn := 0
+	for id, t := range s.threads {
+		threads[id] = graphThreadInfo{Grade: t.Grade, Title: t.Title}
+		if t.Status == "open" && t.Grade == "managed" && t.Turn == "owner" {
+			yourTurn++
+		}
+		for _, msg := range t.Msgs {
+			authors[msg.BusID] = msg.From
+		}
+	}
+	return authors, threads, yourTurn
+}
+
 func (s *Store) Open(id, title, context, expects, weight, home, by string, with []string, turn, grade string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
