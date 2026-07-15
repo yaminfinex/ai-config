@@ -5,6 +5,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,6 +21,14 @@ type Ingestor struct {
 	user  string // the human's from-name (e.g. human-yamen)
 	seat  string // the addressable seat agents raise items to (e.g. owner)
 	kick  chan struct{}
+	mu    sync.RWMutex
+	stall *ingestStall
+}
+
+type ingestStall struct {
+	eventID int64
+	since   time.Time
+	err     string
 }
 
 func NewIngestor(store *Store, bus *Bus, user, seat string) *Ingestor {
@@ -32,6 +41,31 @@ func (in *Ingestor) Kick() {
 	case in.kick <- struct{}{}:
 	default:
 	}
+}
+
+func (in *Ingestor) StallWarning() string {
+	in.mu.RLock()
+	defer in.mu.RUnlock()
+	if in.stall == nil {
+		return ""
+	}
+	return fmt.Sprintf("ingest stalled at #%d since %s: %s", in.stall.eventID, in.stall.since.Format(time.RFC3339), in.stall.err)
+}
+
+func (in *Ingestor) recordStall(eventID int64, err error) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if in.stall == nil || in.stall.eventID != eventID {
+		in.stall = &ingestStall{eventID: eventID, since: time.Now(), err: err.Error()}
+		return
+	}
+	in.stall.err = err.Error()
+}
+
+func (in *Ingestor) clearStall() {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.stall = nil
 }
 
 func (in *Ingestor) Run(stop <-chan struct{}) {
@@ -57,6 +91,7 @@ func (in *Ingestor) Tick() error {
 		return err
 	}
 	if len(evs) == 0 {
+		in.clearStall()
 		return nil
 	}
 	head := evs[len(evs)-1].ID
@@ -93,16 +128,25 @@ func (in *Ingestor) Tick() error {
 			continue
 		}
 		if err := in.fold(ev); err != nil {
+			foldErr := fmt.Errorf("fold #%d: %w", ev.ID, err)
 			if cursorErr := in.store.SetCursor(processed); cursorErr != nil {
-				return fmt.Errorf("fold #%d: %v (also failed to save cursor %d: %w)", ev.ID, err, processed, cursorErr)
+				foldErr = fmt.Errorf("fold #%d: %v (also failed to save cursor %d: %w)", ev.ID, err, processed, cursorErr)
 			}
-			return fmt.Errorf("fold #%d: %w", ev.ID, err)
+			if in.store.Cursor() == cursor {
+				in.recordStall(ev.ID, foldErr)
+			} else {
+				in.clearStall()
+			}
+			return foldErr
 		}
 		processed = ev.ID
 	}
 	if processed > cursor {
-		return in.store.SetCursor(processed)
+		if err := in.store.SetCursor(processed); err != nil {
+			return err
+		}
 	}
+	in.clearStall()
 	return nil
 }
 
@@ -110,6 +154,12 @@ func (in *Ingestor) fold(ev BusEvent) error {
 	d := ev.Data
 	tid := d.Thread
 	raised := contains(d.Mentions, in.seat)
+	// Synthesize the desk id BEFORE the lookup so a refolded threadless raise
+	// finds its existing thread instead of blindly re-opening it. Refolds happen
+	// whenever a crash lands between a fold and the tick's cursor write.
+	if tid == "" && raised {
+		tid = fmt.Sprintf("desk-%d", ev.ID)
+	}
 
 	var t *Thread
 	if tid != "" {
@@ -135,9 +185,6 @@ func (in *Ingestor) fold(ev BusEvent) error {
 		// A raise on an unknown thread auto-opens it managed: the agent's
 		// message IS the cold-open context. This is the dogfood loop —
 		// orchestrators put items on the desk by opening threads at the seat.
-		if tid == "" {
-			tid = fmt.Sprintf("desk-%d", ev.ID)
-		}
 		if err := in.store.Open(tid, titleFrom(d.Text), d.Text, expects, "moment", "", d.From, nil, "owner", "managed"); err != nil {
 			return err
 		}

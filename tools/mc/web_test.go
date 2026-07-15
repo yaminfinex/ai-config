@@ -37,6 +37,29 @@ func TestTalkFormCarriesTargetInURLAndKeepsTitleVisible(t *testing.T) {
 	}
 }
 
+func TestInboxShowsIngestStall(t *testing.T) {
+	hcom, _ := fakePagedHcom(t, 1)
+	s, err := OpenStore(filepath.Join(t.TempDir(), "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	in := NewIngestor(s, &Bus{Hcom: hcom}, "human-yamen", "owner")
+	if err := in.Tick(); err == nil {
+		t.Fatal("Tick succeeded with a closed journal")
+	}
+
+	w := NewWeb(s, &Bus{}, in, "human-yamen", "owner", "", nil)
+	rw := httptest.NewRecorder()
+	w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := rw.Body.String()
+	if !strings.Contains(body, "ingest stalled at #1 since ") || !strings.Contains(body, "file already closed") {
+		t.Fatalf("root page missing ingest stall warning: %s", body)
+	}
+}
+
 func TestHumanTalkDerivesMetadataAndSendsMessageVerbatim(t *testing.T) {
 	dir := t.TempDir()
 	journal := filepath.Join(dir, "journal.jsonl")

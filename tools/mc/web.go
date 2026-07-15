@@ -85,6 +85,7 @@ type pageData struct {
 	Waiting    []*Thread
 	Closed     []*Thread
 	ShowClosed bool
+	IngestWarn string
 	// all threads (observed grade — tracked bus traffic, never Your turn)
 	Observed []*Thread
 	// across-mission home and in-mission page
@@ -119,6 +120,9 @@ func (w *Web) render(rw http.ResponseWriter, code int, d *pageData) {
 func (w *Web) inbox(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "inbox")
 	d.Error = r.URL.Query().Get("err")
+	if w.ing != nil {
+		d.IngestWarn = w.ing.StallWarning()
+	}
 	if w.missions != nil {
 		d.Missions, d.MissionListErr = w.missions.AllStatuses()
 	}

@@ -59,6 +59,7 @@ th{color:var(--dim);font-weight:500}
 {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
 
 {{if eq .Page "inbox"}}
+  {{if .IngestWarn}}<div class="warning">{{.IngestWarn}}</div>{{end}}
   <h2>Missions</h2>
   {{if .MissionListErr}}<div class="warning">{{.MissionListErr}}</div>{{end}}
   {{range .Missions}}

@@ -110,6 +110,26 @@ func TestMentionsSincePagesForwardWithoutSkipping(t *testing.T) {
 	}
 }
 
+func TestLatestEventIDReadsHeadWithoutDraining(t *testing.T) {
+	hcom, logPath := fakePagedHcom(t, 1205)
+	b := &Bus{Hcom: hcom}
+
+	head, err := b.LatestEventID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head != 1205 {
+		t.Fatalf("head = %d, want 1205", head)
+	}
+	queries, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(strings.TrimSpace(string(queries)), "\n") + 1; got != 1 {
+		t.Fatalf("latest head lookup made %d queries:\n%s", got, queries)
+	}
+}
+
 func TestTickDrainsBacklogAndLandsCursorOnHead(t *testing.T) {
 	hcom, logPath := fakePagedHcom(t, 1205)
 	s, err := OpenStore(filepath.Join(t.TempDir(), "journal.jsonl"))
@@ -131,4 +151,44 @@ func TestTickDrainsBacklogAndLandsCursorOnHead(t *testing.T) {
 	if !strings.Contains(string(queries), "id <= 1205") {
 		t.Fatalf("mention enrichment was not bounded to captured head:\n%s", queries)
 	}
+}
+
+func TestRealHcomSupportsForwardMembershipSchema(t *testing.T) {
+	hcom := installedRealHcom(t)
+	b := &Bus{Hcom: hcom, Dir: t.TempDir()}
+
+	if _, err := b.EventsSince(0, 2); err != nil {
+		t.Fatalf("events_v forward membership query: %v", err)
+	}
+	if _, err := b.MentionsSince(0, 2, "owner"); err != nil {
+		t.Fatalf("events_v msg_mentions membership query: %v", err)
+	}
+}
+
+func installedRealHcom(t *testing.T) string {
+	t.Helper()
+	for _, key := range []string{"MC_TEST_HCOM_BIN", "HERDER_TEST_HCOM_BIN"} {
+		if path := os.Getenv(key); path != "" {
+			return path
+		}
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		path := filepath.Join(dir, "hcom")
+		info, err := os.Stat(path)
+		if err != nil || info.Mode()&0o111 == 0 {
+			continue
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		head := make([]byte, 512)
+		n, _ := f.Read(head)
+		_ = f.Close()
+		if !strings.Contains(string(head[:n]), "herder-path-shim") {
+			return path
+		}
+	}
+	t.Skip("real hcom binary unavailable; set MC_TEST_HCOM_BIN")
+	return ""
 }

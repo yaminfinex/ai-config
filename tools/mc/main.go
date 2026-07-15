@@ -41,10 +41,10 @@ func main() {
 	// A fresh journal starts ingesting from NOW: replaying the bus's whole
 	// history would open a desk thread for every past @mention of the seat.
 	if store.Cursor() == 0 && !*fromStart {
-		if evs, err := bus.EventsSince(0, 1); err != nil {
+		if head, err := bus.LatestEventID(); err != nil {
 			log.Fatalf("cursor init: %v", err)
-		} else if len(evs) > 0 {
-			if err := store.SetCursor(evs[len(evs)-1].ID); err != nil {
+		} else if head > 0 {
+			if err := store.SetCursor(head); err != nil {
 				log.Fatalf("cursor init: %v", err)
 			}
 			log.Printf("fresh journal: ingest starts at bus event %d", store.Cursor())

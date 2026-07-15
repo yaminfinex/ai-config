@@ -88,17 +88,28 @@ func (b *Bus) Send(from string, to []string, thread, replyTo, intent, text strin
 	return err
 }
 
-// EventsSince returns bus events with id > cursor, ascending (NDJSON).
+// EventsSince drains all bus events with id > cursor, ascending (NDJSON).
+// limit is the forward page size, not a maximum total result count.
 // NOTE: this output shape omits the mentions field — hcom only includes it
 // when a --mention filter is present. Use MentionsSince for raise detection.
 func (b *Bus) EventsSince(cursor int64, limit int) ([]BusEvent, error) {
 	return b.eventsSince(cursor, 0, limit, nil, "")
 }
 
-// MentionsSince returns events since cursor that @mention any of names
+// MentionsSince drains all events since cursor that @mention any of names
 // (same flag repeated = OR in hcom), with the mentions field populated.
+// limit is the forward page size, not a maximum total result count.
 func (b *Bus) MentionsSince(cursor int64, limit int, names ...string) ([]BusEvent, error) {
 	return b.mentionsSince(cursor, 0, limit, names...)
+}
+
+// LatestEventID returns the current bus head without draining history.
+func (b *Bus) LatestEventID() (int64, error) {
+	evs, err := b.query("events", "--last", "1")
+	if err != nil || len(evs) == 0 {
+		return 0, err
+	}
+	return evs[0].ID, nil
 }
 
 // MentionsThrough is MentionsSince bounded to an already captured generic
