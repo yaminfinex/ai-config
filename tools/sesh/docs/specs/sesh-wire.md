@@ -52,8 +52,9 @@ Every shipped file is identified by:
   `session_id` and `file_uuid` (Amendment 4), again a one-file-per-session shape.
 - `fingerprint`: optional lowercase hex SHA-256 over the first 1024 file bytes.
 
-Pi admission is exact-shape, never a blocklist: only regular, non-symlink transcript
-files at `$HOME/.pi/agent/sessions/<cwd-key>/<timestamp>_<session-uuid>.jsonl` ship.
+Pi admission is exact-shape, never a blocklist: the default session root itself MUST be
+a real directory, not a symlink, and only regular, non-symlink transcript files at
+`$HOME/.pi/agent/sessions/<cwd-key>/<timestamp>_<session-uuid>.jsonl` ship.
 Everything else is outside the wire surface, including the Pi agent root's config,
 credentials, extensions, models, settings, runtime state, non-matching session-root
 files, deeper paths, and symlinks. This exclusion boundary is a security property.

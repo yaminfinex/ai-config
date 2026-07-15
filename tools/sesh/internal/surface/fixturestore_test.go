@@ -234,6 +234,7 @@ func (f *fakeStore) addSession(t *testing.T, spec sessionSpec) {
 		MirroredAt:       spec.mirroredAt,
 		MessageRows:      msgN,
 		QuarantinedRows:  quarN,
+		IndexVersion:     int64(len(rows)),
 		Files:            files,
 	})
 }

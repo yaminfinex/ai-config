@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"sesh/internal/buildinfo"
@@ -81,6 +82,10 @@ type SessionSummary struct {
 
 	MessageRows     int // non-quarantined index rows
 	QuarantinedRows int
+	// IndexVersion is the maximum append-only index row id in this logical
+	// session's projection snapshot. Pi uses it only as a branch-cache stamp;
+	// it is not rendered and does not alter the frozen index schema.
+	IndexVersion int64
 
 	// Files in first-ingest order; the raw fallback renders them in this
 	// order (R14's fully-quarantined ordering rule).
@@ -172,6 +177,16 @@ type Server struct {
 	nodesTmpl      *template.Template
 	transcriptTmpl *template.Template
 	rawTmpl        *template.Template
+
+	// Pi branch trees are an amortized read projection. Rebuilds run outside
+	// this mutex and publish atomically; warm requests serve the last complete
+	// projection while a changed mirror/index stamp rebuilds in the background.
+	piProjectionMu     sync.Mutex
+	piProjections      map[string]*piProjectionEntry
+	piProjectionCtx    context.Context
+	cancelPiProjection context.CancelFunc
+	piProjectionWG     sync.WaitGroup
+	piProjectionClosed bool
 }
 
 // Option configures a Server.
@@ -198,11 +213,15 @@ func WithCurrentVersion(v string) Option {
 
 // New builds the surface handler over a Store.
 func New(store Store, opts ...Option) *Server {
+	projectionCtx, cancelProjection := context.WithCancel(context.Background())
 	s := &Server{
-		store:          store,
-		now:            time.Now,
-		log:            slog.Default(),
-		currentVersion: buildinfo.Version,
+		store:              store,
+		now:                time.Now,
+		log:                slog.Default(),
+		currentVersion:     buildinfo.Version,
+		piProjections:      map[string]*piProjectionEntry{},
+		piProjectionCtx:    projectionCtx,
+		cancelPiProjection: cancelProjection,
 	}
 	for _, o := range opts {
 		o(s)
@@ -226,6 +245,18 @@ func New(store Store, opts ...Option) *Server {
 	mux.Handle("GET /assets/", http.FileServerFS(assetFS))
 	s.mux = mux
 	return s
+}
+
+// Close cancels and drains Pi projection rebuilds. Call it after the HTTP
+// server has stopped accepting requests and before closing the backing Store.
+func (s *Server) Close() {
+	s.piProjectionMu.Lock()
+	if !s.piProjectionClosed {
+		s.piProjectionClosed = true
+		s.cancelPiProjection()
+	}
+	s.piProjectionMu.Unlock()
+	s.piProjectionWG.Wait()
 }
 
 // nodeRow is one entry-point row: the node's last-PUT status plus the link
@@ -441,7 +472,17 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.store.Rows(r.Context(), sum.Tool, sum.LogicalSessionID)
+	var (
+		rows         []wire.IndexMessage
+		markers      map[transcriptRowKey]piBranchMarker
+		branchNotice string
+		err          error
+	)
+	if sum.Tool == wire.ToolPi {
+		rows, markers, branchNotice, err = s.piProjectionSnapshot(r.Context(), sum)
+	} else {
+		rows, err = s.store.Rows(r.Context(), sum.Tool, sum.LogicalSessionID)
+	}
 	switch {
 	case err != nil:
 		s.log.Warn("surface: index rows read failed", "tool", string(sum.Tool), "error_class", errClass(err))
@@ -451,7 +492,7 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 		s.serveRawFallback(w, r, sum, "no renderable index rows (quarantined or unindexed) — raw mirror lines")
 		return
 	}
-	page := s.transcriptData(r.Context(), sum, rows, pageParam(r))
+	page := s.transcriptData(r.Context(), sum, rows, markers, branchNotice, pageParam(r))
 	if err := s.render(w, s.transcriptTmpl, "transcript.html", page); err != nil {
 		s.logRenderFailure("/s/*", err)
 		s.serveRawFallback(w, r, sum, "transcript render failed — raw mirror lines")

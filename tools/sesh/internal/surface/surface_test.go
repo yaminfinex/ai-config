@@ -23,9 +23,11 @@ func newServer(t *testing.T, store surface.Store) *surface.Server {
 	// The current version is pinned so the nodes view's support window is
 	// deterministic under `go test` (buildinfo.Version is "dev" there,
 	// which would leave the window unknowable and the goldens flag-free).
-	return surface.New(store,
+	srv := surface.New(store,
 		surface.WithClock(func() time.Time { return testNow }),
 		surface.WithCurrentVersion("sesh-v0.3.2"))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 func get(t *testing.T, h http.Handler, path string) (int, string) {

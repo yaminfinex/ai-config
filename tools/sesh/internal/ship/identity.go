@@ -32,8 +32,10 @@ func (id Identity) Key() string {
 	return string(id.Tool) + "/" + id.SessionID + "/" + id.FileUUID
 }
 
-// Roots are the watched session roots. Any may itself be a symlink
-// (resolved before walking); symlinks below a root are not followed.
+// Roots are the watched session roots. The legacy Claude, Codex, and Grok
+// roots may themselves be symlinks (resolved before walking); symlinks below
+// a root are not followed. Pi is deliberately stricter: its default session
+// root is a security boundary and must itself be a real directory.
 type Roots struct {
 	Claude string // ~/.claude/projects
 	Codex  string // ~/.codex/sessions
@@ -97,13 +99,38 @@ func Discover(roots Roots) ([]Discovered, error) {
 		{roots.Grok, wire.ToolGrok, grokMatch},
 		{roots.Pi, wire.ToolPi, piMatch},
 	} {
-		found, err := walkRoot(w.root, w.tool, w.match)
+		var found []Discovered
+		var err error
+		if w.tool == wire.ToolPi {
+			found, err = walkPiRoot(w.root, w.match)
+		} else {
+			found, err = walkRoot(w.root, w.tool, w.match)
+		}
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, found...)
 	}
 	return out, nil
+}
+
+// walkPiRoot enforces the Pi-only root policy before the legacy walker gets
+// any opportunity to resolve it. A symlink at ~/.pi/agent/sessions could
+// otherwise repoint the exact-shape allowlist at arbitrary same-shape files
+// outside the agent root. Missing roots and rejected non-directory/symlink
+// roots mean "Pi is not discoverable here", not a shipper-wide failure.
+func walkPiRoot(root string, match func(rel string, d fs.DirEntry) (string, bool)) ([]Discovered, error) {
+	info, err := os.Lstat(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if info.Mode()&fs.ModeSymlink != 0 || !info.IsDir() {
+		return nil, nil
+	}
+	return walkRoot(root, wire.ToolPi, match)
 }
 
 // walkRoot walks one root with one admission matcher. It is the seam the

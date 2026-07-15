@@ -83,7 +83,11 @@ type SQLStore struct {
 	// session; single-digit MB at a 10^5-session fleet corpus) — a deliberate
 	// trade for O(page) filtered requests.
 	byNode map[string][]rankedSession
-	stamp  rankingStamp
+	// byKey is the O(1) single-session lookup over the same snapshot. Pi
+	// transcript requests use it so resolving one session does not rescan its
+	// complete index before consulting the branch projection.
+	byKey map[sessionKey]rankedSession
+	stamp rankingStamp
 	// rankedInspected counts every ranked entry a request examines during
 	// selection and paging — the work-scaling seam the large-corpus gate
 	// reads (SQL plans cannot see in-memory walks). Prod cost: one atomic
@@ -203,6 +207,7 @@ type rankedSession struct {
 	// nil when no non-quarantined row carries a parsed timestamp.
 	messageRows     int
 	quarantinedRows int
+	indexVersion    int64
 	maxTimestampUTC *time.Time
 	// members are the session's mirrored file generations as of the rebuild
 	// (indexed mapping, wire-claim fallback for unindexed generations) —
@@ -402,6 +407,7 @@ func (s *SQLStore) runRefresh(run *projectionRefresh) {
 	var stamp rankingStamp
 	var ranking []rankedSession
 	var byNode map[string][]rankedSession
+	var byKey map[sessionKey]rankedSession
 	err := func() error {
 		if run.hook != nil {
 			if err := run.hook(rebuildStart); err != nil {
@@ -440,7 +446,14 @@ func (s *SQLStore) runRefresh(run *projectionRefresh) {
 			ranking[i].members = members[ranking[i].key]
 		}
 		byNode, err = s.deriveNodeSlices(run, ranking)
-		return err
+		if err != nil {
+			return err
+		}
+		byKey = make(map[sessionKey]rankedSession, len(ranking))
+		for _, ranked := range ranking {
+			byKey[ranked.key] = ranked
+		}
+		return nil
 	}()
 	s.mu.Lock()
 	if err == nil {
@@ -449,7 +462,7 @@ func (s *SQLStore) runRefresh(run *projectionRefresh) {
 		// pointer/header assignments happen under the mutex — every
 		// corpus-scale phase, slice construction included, ran above,
 		// outside the lock warm requests take.
-		s.built, s.ranking, s.byNode, s.stamp = true, ranking, byNode, stamp
+		s.built, s.ranking, s.byNode, s.byKey, s.stamp = true, ranking, byNode, byKey, stamp
 	}
 	run.err = err
 	s.refresh = nil
@@ -518,7 +531,8 @@ func (s *SQLStore) rankSessions(ctx context.Context) ([]rankedSession, error) {
 		counts AS (
 			SELECT tool, logical_session_id AS logical,
 				SUM(CASE WHEN quarantine = 0 THEN 1 ELSE 0 END) AS message_rows,
-				SUM(CASE WHEN quarantine = 1 THEN 1 ELSE 0 END) AS quarantined_rows
+				SUM(CASE WHEN quarantine = 1 THEN 1 ELSE 0 END) AS quarantined_rows,
+				MAX(id) AS index_version
 			FROM sesh_index_messages
 			GROUP BY tool, logical_session_id
 		),
@@ -532,6 +546,7 @@ func (s *SQLStore) rankSessions(ctx context.Context) ([]rankedSession, error) {
 		SELECT sess.tool, sess.logical,
 			COALESCE(fo.hostname, ''), COALESCE(fo.os_user, ''),
 			COALESCE(c.message_rows, 0), COALESCE(c.quarantined_rows, 0),
+			COALESCE(c.index_version, 0),
 			COALESCE(ts.timestamp_utc, '')
 		FROM sess
 		LEFT JOIN node_fact nf ON nf.tool = sess.tool AND nf.logical = sess.logical
@@ -548,7 +563,7 @@ func (s *SQLStore) rankSessions(ctx context.Context) ([]rankedSession, error) {
 		var r rankedSession
 		var maxTS string
 		if err := rows.Scan(&r.key.tool, &r.key.logical, &r.hostname, &r.osUser,
-			&r.messageRows, &r.quarantinedRows, &maxTS); err != nil {
+			&r.messageRows, &r.quarantinedRows, &r.indexVersion, &maxTS); err != nil {
 			return nil, err
 		}
 		if maxTS != "" {
@@ -602,6 +617,26 @@ func (s *SQLStore) projectionMembers(ctx context.Context) (map[sessionKey][]memb
 // Session resolves one logical session by hydrating exactly that key —
 // never the full listing.
 func (s *SQLStore) Session(ctx context.Context, tool wire.Tool, logicalSessionID string) (SessionSummary, bool, error) {
+	if tool == wire.ToolPi {
+		if _, _, err := s.projectionSnapshot(ctx); err != nil {
+			return SessionSummary{}, false, err
+		}
+		key := sessionKey{tool, logicalSessionID}
+		s.mu.Lock()
+		ranked, ok := s.byKey[key]
+		s.mu.Unlock()
+		if !ok {
+			return SessionSummary{}, false, nil
+		}
+		sums, err := s.hydrateRankedPage(ctx, []rankedSession{ranked})
+		if err != nil {
+			return SessionSummary{}, false, err
+		}
+		if len(sums) == 0 {
+			return SessionSummary{}, false, nil
+		}
+		return sums[0], true, nil
+	}
 	sums, err := s.hydrateSessions(ctx, []sessionKey{{tool, logicalSessionID}})
 	if err != nil {
 		return SessionSummary{}, false, err
@@ -614,12 +649,13 @@ func (s *SQLStore) Session(ctx context.Context, tool wire.Tool, logicalSessionID
 
 // hydrateSessions assembles full summaries for exactly the given keys, in
 // key order, entirely from the live tables. This is the single-session
-// path (Session, i.e. the transcript route): its per-key queries walk the
-// one session's index rows, which is fine there — the transcript renders
-// those rows anyway. The sessions LIST must never take this path for its
-// page: page one lists the largest sessions, and per-listed-session row
-// walks are exactly the cost the projection-carried aggregates removed
-// (hydrateRankedPage; the max-size-sessions fixture gate pins it).
+// path for the legacy transcript adapters: its per-key queries walk the one
+// session's index rows. Pi instead resolves from the projection because its
+// active branch can be much smaller than the full tree. The sessions LIST
+// must never take this path for its page: page one lists the largest sessions,
+// and per-listed-session row walks are exactly the cost the projection-carried
+// aggregates removed (hydrateRankedPage; the max-size-sessions fixture gate
+// pins it).
 func (s *SQLStore) hydrateSessions(ctx context.Context, keys []sessionKey) ([]SessionSummary, error) {
 	if len(keys) == 0 {
 		return nil, nil
@@ -735,6 +771,7 @@ func (s *SQLStore) hydrateRankedPage(ctx context.Context, page []rankedSession) 
 		}
 		sum := assembleSummary(r.key, mgens, facts, claims)
 		sum.MessageRows, sum.QuarantinedRows = r.messageRows, r.quarantinedRows
+		sum.IndexVersion = r.indexVersion
 		sum.MaxTimestampUTC = r.maxTimestampUTC
 		out = append(out, sum)
 	}

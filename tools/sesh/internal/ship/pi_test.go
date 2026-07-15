@@ -117,6 +117,44 @@ func TestPiBoundaryDetectorProven(t *testing.T) {
 	}
 }
 
+func TestPiDiscoveryRejectsSymlinkedSessionRoot(t *testing.T) {
+	base := t.TempDir()
+	agent := filepath.Join(base, ".pi", "agent")
+	outRoot := filepath.Join(base, "outside")
+	outside := filepath.Join(outRoot, piCwdKey, "2026-07-15T12-34-56-789Z_"+piSID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(outside), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, fixture(t, "pi-branched-session.jsonl"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(agent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(agent, "sessions")
+	if err := os.Symlink(outRoot, root); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Discover(Roots{Pi: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Pi discovery followed a symlinked session root: %+v", got)
+	}
+
+	// Detector premise: the deliberately widened legacy policy follows the
+	// root and must expose the outside file, proving this negative is live.
+	mutant, err := walkRoot(root, wire.ToolPi, piMatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mutant) != 1 || mutant[0].Path != outside {
+		t.Fatalf("root-policy mutant did not trip detector: %+v", mutant)
+	}
+}
+
 func TestPiBackfillShipsFixture(t *testing.T) {
 	h := newHarness(t)
 	raw := fixture(t, "pi-branched-session.jsonl")

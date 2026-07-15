@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"sesh/internal/wire"
@@ -71,13 +73,16 @@ type transcriptPage struct {
 // builds its display entries. Page numbers past the last real window clamp
 // to the oldest window — the page stays honest about what it shows and the
 // never-500 contract holds for any ?page= value.
-func (s *Server) transcriptData(ctx context.Context, sum SessionSummary, rows []wire.IndexMessage, pageN int) transcriptPage {
-	markers := map[transcriptRowKey]piBranchMarker{}
-	branchNotice := ""
-	if sum.Tool == wire.ToolPi {
-		rows, markers, branchNotice = s.piActiveBranch(ctx, rows)
+func (s *Server) transcriptData(ctx context.Context, sum SessionSummary, rows []wire.IndexMessage, markers map[transcriptRowKey]piBranchMarker, branchNotice string, pageN int) transcriptPage {
+	if markers == nil {
+		markers = map[transcriptRowKey]piBranchMarker{}
 	}
-	sortTranscript(rows)
+	// Pi projections are sorted once, off the request path, before atomic
+	// publication. Re-sorting here would walk the entire active branch for
+	// every bounded page. Legacy adapters still arrive unsorted.
+	if sum.Tool != wire.ToolPi {
+		sortTranscript(rows)
+	}
 	total := len(rows)
 	lastPage := (total + transcriptWindowMessages - 1) / transcriptWindowMessages
 	if lastPage < 1 {
@@ -312,16 +317,214 @@ type piTreeLine struct {
 }
 
 type piTreeNode struct {
-	row    wire.IndexMessage
 	parent string
 }
 
-// piActiveBranch resolves Pi's append-only id/parentId tree using mirrored
-// line bytes. The last valid tree entry is Pi's active leaf (the vendor
-// SessionManager uses the same rule). Only its root-to-leaf path renders;
-// nodes with multiple children are explicitly labeled. The frozen index has
-// no parent column, so this remains a read-side adapter and changes no DDL.
-func (s *Server) piActiveBranch(ctx context.Context, rows []wire.IndexMessage) ([]wire.IndexMessage, map[transcriptRowKey]piBranchMarker, string) {
+// piProjectionStamp identifies every input that can change a session's
+// branch projection: mirrored member generations/order, mirror append time,
+// and the indexed/renderable row counts. The latter matters because mirror
+// acceptance and asynchronous indexing can advance in separate steps.
+type piProjectionStamp struct {
+	mirroredAt      int64
+	messageRows     int
+	quarantinedRows int
+	indexVersion    int64
+	members         string
+}
+
+type piBranchProjection struct {
+	stamp   piProjectionStamp
+	rows    []wire.IndexMessage
+	markers map[transcriptRowKey]piBranchMarker
+	notice  string
+}
+
+type piProjectionBuild struct {
+	done       chan struct{}
+	projection *piBranchProjection
+	err        error
+}
+
+type piProjectionEntry struct {
+	current *piBranchProjection
+	build   *piProjectionBuild
+}
+
+func piStamp(sum SessionSummary) piProjectionStamp {
+	var members strings.Builder
+	for _, f := range sum.Files {
+		fmt.Fprintf(&members, "%d:%s:%s:%d;", f.FirstIngestAt.UnixNano(), f.WireSessionID, f.FileUUID, f.Generation)
+	}
+	return piProjectionStamp{
+		mirroredAt:      sum.MirroredAt.UnixNano(),
+		messageRows:     sum.MessageRows,
+		quarantinedRows: sum.QuarantinedRows,
+		indexVersion:    sum.IndexVersion,
+		members:         members.String(),
+	}
+}
+
+// piProjectionSnapshot follows the surface's existing projection discipline:
+// the cold request joins one single-flighted build; warm requests serve the
+// last complete projection immediately while a changed mirror/index stamp
+// rebuilds outside the publication mutex. A page therefore performs mirror
+// range reads only for its bounded display window, never once per graph row.
+func (s *Server) piProjectionSnapshot(ctx context.Context, sum SessionSummary) ([]wire.IndexMessage, map[transcriptRowKey]piBranchMarker, string, error) {
+	key := string(sum.Tool) + "\x00" + sum.LogicalSessionID
+	stamp := piStamp(sum)
+	s.piProjectionMu.Lock()
+	if s.piProjectionClosed {
+		s.piProjectionMu.Unlock()
+		return nil, nil, "", context.Canceled
+	}
+	entry := s.piProjections[key]
+	if entry == nil {
+		entry = &piProjectionEntry{}
+		s.piProjections[key] = entry
+	}
+	if entry.current != nil && entry.current.stamp == stamp {
+		current := entry.current
+		s.piProjectionMu.Unlock()
+		return current.rows, current.markers, current.notice, nil
+	}
+	if entry.build == nil {
+		build := &piProjectionBuild{done: make(chan struct{})}
+		entry.build = build
+		s.piProjectionWG.Add(1)
+		go s.rebuildPiProjection(key, sum, stamp, build)
+	}
+	build := entry.build
+	if entry.current != nil {
+		current := entry.current
+		s.piProjectionMu.Unlock()
+		return current.rows, current.markers, current.notice, nil
+	}
+	s.piProjectionMu.Unlock()
+	select {
+	case <-build.done:
+	case <-ctx.Done():
+		return nil, nil, "", ctx.Err()
+	}
+	if build.err != nil {
+		return nil, nil, "", build.err
+	}
+	return build.projection.rows, build.projection.markers, build.projection.notice, nil
+}
+
+func (s *Server) rebuildPiProjection(key string, sum SessionSummary, stamp piProjectionStamp, build *piProjectionBuild) {
+	defer s.piProjectionWG.Done()
+	projection, err := s.buildPiProjection(s.piProjectionCtx, sum, stamp)
+	s.piProjectionMu.Lock()
+	entry := s.piProjections[key]
+	if entry != nil && entry.build == build {
+		if err == nil {
+			entry.current = projection
+		}
+		entry.build = nil
+	}
+	build.projection, build.err = projection, err
+	close(build.done)
+	s.piProjectionMu.Unlock()
+}
+
+func (s *Server) buildPiProjection(ctx context.Context, sum SessionSummary, stamp piProjectionStamp) (*piBranchProjection, error) {
+	rows, err := s.store.Rows(ctx, wire.ToolPi, sum.LogicalSessionID)
+	if err != nil {
+		return nil, err
+	}
+	sortPiAppend(rows)
+	reader := piMirrorCursor{store: s.store, ctx: ctx}
+	defer reader.close()
+	selected, markers, notice := resolvePiActiveBranch(rows, reader.read)
+	// Published projections are immutable and display-sorted once here. Warm
+	// page requests only slice the requested window; they never clone or sort
+	// the complete active branch.
+	sortTranscript(selected)
+	return &piBranchProjection{stamp: stamp, rows: selected, markers: markers, notice: notice}, nil
+}
+
+// sortPiAppend is Pi's canonical persisted append order. Store.Rows may
+// return any slice order, so leaf selection must use the index coordinates:
+// file_ordinal (member ingest order), then line_ordinal (mirror byte order),
+// with the frozen file/generation tie-breakers for deterministic corruption
+// handling. Timestamp order is display policy and is deliberately not leaf
+// policy.
+func sortPiAppend(rows []wire.IndexMessage) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if a.FileOrdinal != b.FileOrdinal {
+			return a.FileOrdinal < b.FileOrdinal
+		}
+		if a.LineOrdinal != b.LineOrdinal {
+			return a.LineOrdinal < b.LineOrdinal
+		}
+		if a.FileUUID != b.FileUUID {
+			return a.FileUUID < b.FileUUID
+		}
+		if a.Generation != b.Generation {
+			return a.Generation < b.Generation
+		}
+		return a.ByteStart < b.ByteStart
+	})
+}
+
+type piMirrorCursor struct {
+	store Store
+	ctx   context.Context
+	key   string
+	file  io.ReadCloser
+	pos   int64
+}
+
+func (c *piMirrorCursor) close() {
+	if c.file != nil {
+		_ = c.file.Close()
+		c.file = nil
+	}
+}
+
+// read streams each mirrored generation once in canonical byte order. The
+// amortized projection build never pays SQLStore's open/stat/read/close
+// MirrorRange path per graph row; page rendering retains that path for at
+// most transcriptWindowMessages selected rows.
+func (c *piMirrorCursor) read(row wire.IndexMessage) ([]byte, error) {
+	key := fmt.Sprintf("%s\x00%s\x00%s\x00%d", row.WireSessionID, row.FileUUID, row.Tool, row.Generation)
+	if key != c.key {
+		c.close()
+		file, err := c.store.MirrorFile(c.ctx, wire.ToolPi, row.WireSessionID, row.FileUUID, row.Generation)
+		if err != nil {
+			return nil, err
+		}
+		c.key, c.file, c.pos = key, file, 0
+	}
+	if row.ByteStart < c.pos {
+		return nil, fmt.Errorf("Pi projection mirror order moved backwards")
+	}
+	if skip := row.ByteStart - c.pos; skip > 0 {
+		if _, err := io.CopyN(io.Discard, c.file, skip); err != nil {
+			return nil, err
+		}
+		c.pos += skip
+	}
+	span := row.ByteEnd - row.ByteStart
+	if span < 0 {
+		return nil, fmt.Errorf("Pi projection row has negative byte span")
+	}
+	line := make([]byte, span)
+	if _, err := io.ReadFull(c.file, line); err != nil {
+		return nil, err
+	}
+	c.pos += span
+	return line, nil
+}
+
+// resolvePiActiveBranch resolves Pi's append-only id/parentId tree using
+// mirrored line bytes. The last valid tree entry is Pi's active leaf (the
+// vendor SessionManager uses the same rule). Only its root-to-leaf path
+// renders; nodes with multiple children are explicitly labeled. The frozen
+// index has no parent column, so this remains a read-side adapter and changes
+// no DDL.
+func resolvePiActiveBranch(rows []wire.IndexMessage, readLine func(wire.IndexMessage) ([]byte, error)) ([]wire.IndexMessage, map[transcriptRowKey]piBranchMarker, string) {
 	nodes := map[string]piTreeNode{}
 	children := map[string][]string{}
 	labels := map[string]string{}
@@ -333,7 +536,7 @@ func (s *Server) piActiveBranch(ctx context.Context, rows []wire.IndexMessage) (
 			malformed = true
 			continue
 		}
-		line, err := s.store.MirrorRange(ctx, wire.ToolPi, row.WireSessionID, row.FileUUID, row.Generation, row.ByteStart, row.ByteEnd)
+		line, err := readLine(row)
 		if err != nil {
 			malformed = true
 			continue
@@ -359,7 +562,7 @@ func (s *Server) piActiveBranch(ctx context.Context, rows []wire.IndexMessage) (
 		if entry.ParentID != nil {
 			parent = *entry.ParentID
 		}
-		nodes[entry.ID] = piTreeNode{row: row, parent: parent}
+		nodes[entry.ID] = piTreeNode{parent: parent}
 		children[parent] = append(children[parent], entry.ID)
 		leaf = entry.ID
 		if entry.Type == "label" && entry.TargetID != "" {
