@@ -3,10 +3,10 @@ id: TASK-222
 title: >-
   herder adopt leaves rows bus-unbound — compact --then and bus-delivery verbs
   refuse on adopted sessions
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-15 01:22'
-updated_date: '2026-07-15 01:23'
+updated_date: '2026-07-15 03:27'
 labels: []
 dependencies: []
 ordinal: 221500
@@ -27,3 +27,9 @@ SCOPE:
 
 Regression tests pinning the adopt->reclaim->bound sequence + the refusal text. Full house battery + adversarial review. No agent names/task numbers in durable strings.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged 02971fe at head 1a3a97c. Root cause: adopt enrolled replacements before a hand-resumed process had any identity proof, and reclaim never appended the live bus row to the replacement GUID. Fix: adoption-time binding — source-row durable SID harvested first, operation-scoped hcom start --as as proof, exactly-one-joined-row fail-closed guard, and (review-driven F1 blocker) resumed-SID claims now REQUIRE caller authorization: pane match, or --confirm-resumed-session for pane-less rows, preflight + post-reclaim recheck both mutation-pinned. hcomidentity.Resolve proof classes untouched (additive helper only). Refusal prints cause + exact pinned re-enroll remedy + where to find the transcript SID; compact --then verifies repaired rows from the recorded SID; --dry-run proves zero mutating calls. Upstream husk behavior ledgered in TASK-029 as HYPOTHESIS (no standalone repro). LIVE incident row was never mutated — owner repair runbook is the printed re-enroll remedy. Grok calibration seat ran (ledger row 13). Post-merge battery 60/60 green, pushed in the 485ec9f train.
+<!-- SECTION:NOTES:END -->
