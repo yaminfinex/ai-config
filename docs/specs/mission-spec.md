@@ -416,6 +416,10 @@ The default single-mission JSON object is the mission-control read model:
 
 Counts preserve board-config order; tasks are ordered by ordinal then id. Every task object
 always carries `id`, `title`, `status`, `ordinal`, and `labels` (an empty array when absent).
+Task frontmatter is decoded as a complete YAML document first, preserving Backlog.md's native
+block-style sequences. If a malformed field makes the document fail, status recovers each
+field independently so valid id/status values still count the task and emits a warning for
+every field it cannot recover.
 `status --all` returns an array of these same objects sorted by slug. A mission that cannot
 be read degrades to its own object with `ok:false` and warnings; one bad mission never aborts
 the array. Bare JSON `status` without mission context refuses with `no_context` and guidance

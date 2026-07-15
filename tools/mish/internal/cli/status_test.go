@@ -486,6 +486,13 @@ func TestStatusWarnings(t *testing.T) {
 			want: "warning: malformed task frontmatter: backlog/tasks/stray.md",
 		},
 		{
+			name: "malformed task field",
+			mutate: func(t *testing.T, missionDir string) {
+				writeFile(t, filepath.Join(missionDir, "backlog", "tasks", "bad-title.md"), "---\nid: TASK-1\ntitle: Ship: now\nstatus: To Do\nordinal: 1000\nlabels: []\n---\n")
+			},
+			want: "warning: malformed task field: title (backlog/tasks/bad-title.md)",
+		},
+		{
 			name: "unknown task status",
 			mutate: func(t *testing.T, missionDir string) {
 				writeTaskFile(t, missionDir, "tasks/task-1.md", "TASK-1", "Blocked")

@@ -172,6 +172,7 @@ Warnings mean:
   mission: frontmatter does not match the directory slug
   mission.md has unknown keys or status is not active/closed
   duplicate task IDs appear on the board
+  task frontmatter or an individual task field is malformed
   board or artifacts/ is missing
   mission subtree has uncommitted or unpushed git changes
 

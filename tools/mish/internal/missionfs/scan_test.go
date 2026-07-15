@@ -73,7 +73,8 @@ id: TASK-1
 title: Ship: now
 status: To Do
 ordinal: 1000
-labels: [release]
+labels:
+  - release
 ---
 `)
 	writeFile(t, filepath.Join(boardDir, "tasks", "scalar-labels.md"), `---
@@ -95,11 +96,38 @@ labels: infra
 	if len(scan.Tasks) != 2 {
 		t.Fatalf("tasks = %#v, want 2", scan.Tasks)
 	}
-	if scan.Tasks[0].ID != "TASK-1" || scan.Tasks[0].Status != "To Do" || scan.Tasks[0].Title != "" {
+	if scan.Tasks[0].ID != "TASK-1" || scan.Tasks[0].Status != "To Do" || scan.Tasks[0].Title != "" || !equalStrings(scan.Tasks[0].Labels, []string{"release"}) {
 		t.Fatalf("bad-title task = %#v", scan.Tasks[0])
 	}
 	if scan.Tasks[1].ID != "TASK-2" || scan.Tasks[1].Status != "In Progress" || scan.Tasks[1].Labels == nil || len(scan.Tasks[1].Labels) != 0 {
 		t.Fatalf("scalar-labels task = %#v", scan.Tasks[1])
+	}
+	assertFinding(t, scan.Findings, FindingMalformedTask, "title")
+	assertFinding(t, scan.Findings, FindingMalformedTask, "labels")
+}
+
+func TestScanTasksPreservesBlockStyleLabels(t *testing.T) {
+	boardDir := testBoardDir(t)
+	writeFile(t, filepath.Join(boardDir, "tasks", "block-labels.md"), `---
+id: TASK-1
+title: Labelled task
+status: To Do
+ordinal: 1000
+labels:
+  - backend
+  - urgent
+---
+`)
+
+	scan, err := ScanTasks(boardDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scan.Tasks) != 1 || !equalStrings(scan.Tasks[0].Labels, []string{"backend", "urgent"}) {
+		t.Fatalf("tasks = %#v, want block-style labels preserved", scan.Tasks)
+	}
+	if len(scan.Findings) != 0 {
+		t.Fatalf("findings = %#v, want none", scan.Findings)
 	}
 }
 

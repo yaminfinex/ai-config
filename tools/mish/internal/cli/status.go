@@ -622,7 +622,11 @@ func formatFindings(missionDir string, findings []missionfs.Finding) []string {
 		case missionfs.FindingMissingArtifacts:
 			warnings = append(warnings, "artifacts missing: artifacts/")
 		case missionfs.FindingMalformedTask:
-			warnings = append(warnings, fmt.Sprintf("malformed task frontmatter: %s", relativeFindingPath(missionDir, finding.Path)))
+			if finding.Key != "" {
+				warnings = append(warnings, fmt.Sprintf("malformed task field: %s (%s)", finding.Key, relativeFindingPath(missionDir, finding.Path)))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("malformed task frontmatter: %s", relativeFindingPath(missionDir, finding.Path)))
+			}
 		case missionfs.FindingMissingTaskID:
 			warnings = append(warnings, fmt.Sprintf("task missing id: %s", relativeFindingPath(missionDir, finding.Path)))
 		case missionfs.FindingUnknownTaskStatus:
