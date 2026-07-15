@@ -18,10 +18,12 @@ import (
 // just means "no mission" — grouping falls back gracefully.
 
 type missionResolver struct {
-	bin  string
-	repo string // MISSIONS_REPO for the subprocess; empty = inherit
-	mu   sync.Mutex
-	hit  map[string]missionHit
+	bin        string
+	repo       string // MISSIONS_REPO for the subprocess; empty = inherit
+	mu         sync.Mutex
+	slugHits   map[string]missionHit
+	statusHits map[string]missionStatusHit
+	allHit     missionListHit
 }
 
 type missionHit struct {
@@ -83,26 +85,24 @@ type missionListHit struct {
 }
 
 func newMissionResolver(bin, repo string) *missionResolver {
-	return &missionResolver{bin: bin, repo: repo, hit: map[string]missionHit{}}
+	return &missionResolver{
+		bin:        bin,
+		repo:       repo,
+		slugHits:   map[string]missionHit{},
+		statusHits: map[string]missionStatusHit{},
+	}
 }
-
-var statusCache = struct {
-	sync.Mutex
-	byMission map[string]missionStatusHit
-	all       map[*missionResolver]missionListHit
-}{byMission: map[string]missionStatusHit{}, all: map[*missionResolver]missionListHit{}}
 
 func (m *missionResolver) Status(slug string) missionStatus {
 	if m == nil || m.bin == "" {
 		return missionStatus{Reason: "mission status is unavailable: mish is disabled"}
 	}
-	key := m.bin + "\x00" + m.repo + "\x00" + slug
-	statusCache.Lock()
-	if h, ok := statusCache.byMission[key]; ok && time.Since(h.at) < time.Minute {
-		statusCache.Unlock()
+	m.mu.Lock()
+	if h, ok := m.statusHits[slug]; ok && time.Since(h.at) < time.Minute {
+		m.mu.Unlock()
 		return h.status
 	}
-	statusCache.Unlock()
+	m.mu.Unlock()
 
 	var status missionStatus
 	out, runErr := m.run("status", "--mission", slug)
@@ -112,9 +112,9 @@ func (m *missionResolver) Status(slug string) missionStatus {
 			status.Reason = "mish status failed: " + runErr.Error()
 		}
 	}
-	statusCache.Lock()
-	statusCache.byMission[key] = missionStatusHit{status: status, at: time.Now()}
-	statusCache.Unlock()
+	m.mu.Lock()
+	m.statusHits[slug] = missionStatusHit{status: status, at: time.Now()}
+	m.mu.Unlock()
 	return status
 }
 
@@ -122,26 +122,53 @@ func (m *missionResolver) AllStatuses() ([]missionStatus, string) {
 	if m == nil || m.bin == "" {
 		return nil, "mission list is unavailable: mish is disabled"
 	}
-	statusCache.Lock()
-	if h, ok := statusCache.all[m]; ok && time.Since(h.at) < time.Minute {
-		statusCache.Unlock()
+	m.mu.Lock()
+	if time.Since(m.allHit.at) < time.Minute {
+		h := m.allHit
+		m.mu.Unlock()
 		return h.statuses, h.warning
 	}
-	statusCache.Unlock()
+	m.mu.Unlock()
 
 	var statuses []missionStatus
 	out, runErr := m.run("status", "--all")
 	warning := ""
 	if err := json.Unmarshal(bytes.TrimSpace(out), &statuses); err != nil {
-		warning = "mish status --all returned unreadable JSON"
-		if runErr != nil {
-			warning = "mish status --all failed: " + runErr.Error()
+		var refusal missionStatus
+		if objectErr := json.Unmarshal(bytes.TrimSpace(out), &refusal); objectErr == nil && !refusal.OK && refusal.Refusal != "" {
+			warning = formatMissionRefusal(refusal)
+		} else {
+			warning = "mish status --all returned unreadable JSON"
+			if runErr != nil {
+				warning = "mish status --all failed: " + runErr.Error()
+			}
 		}
 	}
-	statusCache.Lock()
-	statusCache.all[m] = missionListHit{statuses: statuses, warning: warning, at: time.Now()}
-	statusCache.Unlock()
+	m.mu.Lock()
+	m.allHit = missionListHit{statuses: statuses, warning: warning, at: time.Now()}
+	m.mu.Unlock()
 	return statuses, warning
+}
+
+func formatMissionRefusal(refusal missionStatus) string {
+	warning := "mission list unavailable (" + refusal.Refusal + ")"
+	if refusal.Reason != "" {
+		warning += ": " + refusal.Reason
+	}
+	if refusal.Remedy != "" {
+		warning += " — " + refusal.Remedy
+	}
+	return warning
+}
+
+func (s missionStatus) CardWarning() string {
+	if s.Reason != "" {
+		return s.Reason
+	}
+	if len(s.Warnings) > 0 {
+		return s.Warnings[0]
+	}
+	return "mission status unavailable"
 }
 
 func (m *missionResolver) run(args ...string) ([]byte, error) {
@@ -163,7 +190,7 @@ func (m *missionResolver) Slug(dir string) string {
 		return ""
 	}
 	m.mu.Lock()
-	if h, ok := m.hit[dir]; ok && time.Since(h.at) < 5*time.Minute {
+	if h, ok := m.slugHits[dir]; ok && time.Since(h.at) < 5*time.Minute {
 		m.mu.Unlock()
 		return h.slug
 	}
@@ -184,7 +211,7 @@ func (m *missionResolver) Slug(dir string) string {
 		slug = r.Slug
 	}
 	m.mu.Lock()
-	m.hit[dir] = missionHit{slug: slug, at: time.Now()}
+	m.slugHits[dir] = missionHit{slug: slug, at: time.Now()}
 	m.mu.Unlock()
 	return slug
 }

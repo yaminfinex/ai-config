@@ -64,7 +64,7 @@ th{color:var(--dim);font-weight:500}
   {{range .Missions}}
     <div class="card"><a class="title" href="/mission/{{.Slug}}">{{.Slug}}</a>
       {{if .OK}}<div class="meta">{{.Board.Total}} tasks{{range .Board.Counts}} · {{.Status}} {{.Count}}{{end}}</div>
-      {{else}}<div class="meta"><span class="badge">degraded</span>{{with .Reason}}{{.}}{{else}}mission status unavailable{{end}}</div>{{end}}
+      {{else}}<div class="meta"><span class="badge">degraded</span>{{.CardWarning}}</div>{{end}}
     </div>
   {{else}}{{if not .MissionListErr}}<div class="empty">no missions visible</div>{{end}}{{end}}
   <h2>Your turn</h2>

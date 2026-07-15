@@ -1,0 +1,1 @@
+{"ok":false,"verb":"status","refusal":"missions_repo_unset","reason":"$MISSIONS_REPO is not set","remedy":"set MISSIONS_REPO to the shared missions repo"}
