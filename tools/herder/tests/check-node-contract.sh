@@ -17,7 +17,9 @@ ROOT="$(mktemp -d)"
 mkdir -p "$GOLDENS"
 trap 'rm -rf "$ROOT"' EXIT
 
-PATH_HERMETIC="/home/grace/.local/share/mise/installs/go/1.26.4/bin:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin"
+GO_VERSION="$(awk '/^go /{print $2; exit}' "$REPO_ROOT/tools/herder/go.mod")"
+GO_BIN="$(mise where "go@$GO_VERSION")/bin"
+PATH_HERMETIC="$GO_BIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin"
 HN=("$REPO_ROOT/bin/herder" node)
 HRN=("$REPO_ROOT/bin/herder" rename)
 NODE_A="11111111-1111-4111-8111-111111111111"

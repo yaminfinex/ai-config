@@ -66,7 +66,9 @@ esac
 MOCK_HCOM
 chmod +x "$MOCKBIN/hcom"
 
-PATH_HERMETIC="/home/grace/.local/share/mise/installs/go/1.26.4/bin:$MOCKBIN:/usr/bin:/bin:/usr/local/bin:$HOME/.local/bin"
+GO_VERSION="$(awk '/^go /{print $2; exit}' "$REPO_ROOT/tools/herder/go.mod")"
+GO_BIN="$(mise where "go@$GO_VERSION")/bin"
+PATH_HERMETIC="$GO_BIN:$MOCKBIN:/usr/bin:/bin:/usr/local/bin:$HOME/.local/bin"
 fail=0
 SELECTOR="${1:-${OBSERVER_CONTRACT_STEP:-all}}"
 case "$SELECTOR" in

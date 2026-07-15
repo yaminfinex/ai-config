@@ -10,7 +10,8 @@ set -uo pipefail
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$TESTS_DIR/../../.." && pwd -P)"
 AI_DOCTOR="$REPO/bin/ai-doctor"
-GO_BIN="$(mise where go@1.26.5)/bin"
+GO_VERSION="$(awk '/^go /{print $2; exit}' "$REPO/tools/herder/go.mod")"
+GO_BIN="$(mise where "go@$GO_VERSION")/bin"
 ROOT="$(mktemp -d)"
 cleanup() { rm -rf "$ROOT"; }
 trap cleanup EXIT
