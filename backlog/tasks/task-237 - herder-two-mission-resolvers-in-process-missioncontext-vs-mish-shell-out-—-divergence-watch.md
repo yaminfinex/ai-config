@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-15 08:16'
+updated_date: '2026-07-15 09:58'
 labels:
   - herder
 dependencies: []
@@ -23,3 +24,13 @@ Reviewer observation from the raise unit: herder now resolves missions two ways 
 <!-- AC:BEGIN -->
 - [ ] #1 A mechanism exists that fails loudly when the two resolvers diverge on the same cwd/fixture tree
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: hera
+created: 2026-07-15 09:58
+---
+Concrete instance from the spawn-mission review (incumbent observation, separate-filing per shared-code rule): herder raise --mission resolves through the mish CLI shell-out into a payload string, while spawn --mission and join resolve through in-process missioncontext into registry membership — one flag name, two resolvers, two meanings across verbs. Any behavioral divergence between the two resolution paths shows up as verb-dependent mission semantics. Fix direction when staffed: single resolution authority (or a pinned equivalence contract test across all --mission-bearing verbs).
+---
+<!-- COMMENTS:END -->
