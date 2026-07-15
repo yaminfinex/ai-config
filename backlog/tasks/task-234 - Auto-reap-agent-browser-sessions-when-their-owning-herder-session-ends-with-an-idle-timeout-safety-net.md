@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-15 07:14'
-updated_date: '2026-07-15 10:42'
+updated_date: '2026-07-15 12:25'
 labels:
   - herder
 dependencies: []
@@ -34,10 +34,10 @@ Design checkpoint required before implementation: notice delivery mechanism + ac
 - [ ] #2 Crash/SIGKILL simulation reaped by the safety net after grace period; active owners/clients never reaped
 - [ ] #3 Repeated cleanup safe; auditable structured logs
 - [ ] #4 Integration tests: multi-session agent, normal close, crash, stale sidecars, PID-reuse protection, persistent opt-out
-- [ ] #5 Worker-brief/spawn doctrine text: close external resources before DONE (run-local now; evergreen via owner-reviewed skill harvest)
-- [ ] #6 herder cull sends a generic release notice and waits a bounded ack/idle window before proceeding; never hangs; --now bypass
+- [x] #5 Worker-brief/spawn doctrine text: close external resources before DONE (run-local now; evergreen via owner-reviewed skill harvest)
+- [x] #6 herder cull sends a generic release notice and waits a bounded ack/idle window before proceeding; never hangs; --now bypass
 - [ ] #7 Doctor/host sweep for agent-browser orphans with the proven guards (owner-absent + grace + no live client, never age alone)
-- [ ] #8 Herder core contains zero resource-type-specific close logic
+- [x] #8 Herder core contains zero resource-type-specific close logic
 <!-- AC:END -->
 
 ## Comments
@@ -47,5 +47,11 @@ author: hera
 created: 2026-07-15 10:42
 ---
 Split at dispatch: UNIT 1 (protocol — ACs 5/6/8) dispatched NOW as an A/B implementation trial per owner ruling (grok seat vs codex gpt-5.6 seat, separate worktrees task-234-grok / task-234-codex, same brief, independent design checkpoints, cross-family review both; comparison logged to the impl-calibration ledger). UNIT 2 (browser/orphan safety-net sweep — ACs 1/2/3/4/7) queued behind unit 1's merge.
+---
+
+author: hera
+created: 2026-07-15 12:25
+---
+UNIT 1 (protocol) COMPLETE — merged as the codex A/B lane (three commits + one union-golden fix, post-merge 61/61, pushed). AC5: doctrine text on the shared spawn/resume/fork bootstrap surface, golden-pinned. AC6: live cull sends one generic release notice under the culling caller's real verified bus identity (--name, wire-verified for tagged agents end-to-end incl. base-name event attribution), waits a bounded 120s default (--grace-timeout-ms override, queued delivery enters the window, ack on protocol thread or reply-to, working-to-idle transition only), single absolute deadline spans identity proof through polling with WaitDelay fd-leak protection and a deadline-bounded send-window lock; --now full bypass; undeliverable classes proceed immediately with honest reasons (roster_timeout distinct from not_joined); post-grace terminal re-verification never closes a reassigned pane. AC8: zero resource-type knowledge in core. A/B trial outcome: codex lane merged; grok lane reached APPROVE-equivalent state and closed unmerged — full comparison in the impl-calibration ledger. UNIT 2 (browser/orphan safety-net sweep — ACs 1/2/3/4/7) remains; unstaffed.
 ---
 <!-- COMMENTS:END -->
