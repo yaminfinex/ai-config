@@ -92,6 +92,14 @@ func TestHerderAgentsSection_SharedAcrossSurfaces(t *testing.T) {
 	}
 }
 
+func TestHerderAgentsSection_RequiresResourceReleaseBeforeDone(t *testing.T) {
+	doctrine := strings.ToLower(herderAgentsSection)
+	if !strings.Contains(doctrine, "release external resources") ||
+		!strings.Contains(doctrine, "before reporting done") {
+		t.Fatalf("shared agent doctrine must require external-resource release before DONE:\n%s", herderAgentsSection)
+	}
+}
+
 // TASK-017 pins: resumed/forked codex sessions get the addendum re-delivered
 // as a bus MESSAGE (hcom strips user developer_instructions on those paths),
 // so the variant differs from the launch block ONLY in its preamble — the

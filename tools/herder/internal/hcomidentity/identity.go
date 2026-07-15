@@ -3,12 +3,14 @@ package hcomidentity
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type LaunchContext struct {
@@ -18,6 +20,7 @@ type LaunchContext struct {
 
 type Row struct {
 	Name          string        `json:"name"`
+	BaseName      string        `json:"base_name"`
 	Tool          string        `json:"tool"`
 	Status        string        `json:"status"`
 	Joined        *bool         `json:"joined,omitempty"`
@@ -35,6 +38,7 @@ type Evidence struct {
 
 type Result struct {
 	Name      string
+	BaseName  string
 	SessionID string
 	PaneID    string
 	Verified  bool
@@ -60,6 +64,22 @@ func CurrentEvidence(paneIDs ...string) Evidence {
 // List reads the live hcom roster in the requested namespace.
 func List(dir string) ([]Row, error) {
 	cmd := exec.Command("hcom", "list", "--json")
+	cmd.Env = os.Environ()
+	if dir != "" && dir != "null" {
+		cmd.Env = setEnv(cmd.Env, "HCOM_DIR", dir)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("hcom list --json failed: %w", err)
+	}
+	return Decode(out)
+}
+
+// ListContext is List with a caller-owned deadline. Lifecycle protocols use
+// it when a dead bus process must not make an otherwise bounded operation hang.
+func ListContext(ctx context.Context, dir string) ([]Row, error) {
+	cmd := exec.CommandContext(ctx, "hcom", "list", "--json")
+	cmd.WaitDelay = 100 * time.Millisecond
 	cmd.Env = os.Environ()
 	if dir != "" && dir != "null" {
 		cmd.Env = setEnv(cmd.Env, "HCOM_DIR", dir)
@@ -140,13 +160,25 @@ func Resolve(rows []Row, evidence Evidence) Result {
 		return Result{Reason: "live identity correlates resolve to different bus rows"}
 	}
 	for name, row := range matched {
-		return Result{Name: name, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
+		baseName := row.BaseName
+		if baseName == "" {
+			baseName = row.Name
+		}
+		return Result{Name: name, BaseName: baseName, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
 	}
 	return Result{Reason: "live bus identity is unknown"}
 }
 
 func ResolveLive(dir string, evidence Evidence) Result {
 	rows, err := List(dir)
+	if err != nil {
+		return Result{Reason: err.Error()}
+	}
+	return Resolve(rows, evidence)
+}
+
+func ResolveLiveContext(ctx context.Context, dir string, evidence Evidence) Result {
+	rows, err := ListContext(ctx, dir)
 	if err != nil {
 		return Result{Reason: err.Error()}
 	}
@@ -172,6 +204,23 @@ func JoinedNamedCount(rows []Row, name string) (Row, int) {
 	count := 0
 	for _, row := range rows {
 		if row.Name == name && joined(row) {
+			if count == 0 {
+				found = row
+			}
+			count++
+		}
+	}
+	return found, count
+}
+
+// JoinedStoredCount resolves a stored bus coordinate whether it recorded the
+// roster's tagged full name or its base name. The returned row is the source
+// of truth for both forms; callers must not derive one form from the other.
+func JoinedStoredCount(rows []Row, stored string) (Row, int) {
+	var found Row
+	count := 0
+	for _, row := range rows {
+		if joined(row) && stored != "" && (row.Name == stored || row.BaseName == stored) {
 			if count == 0 {
 				found = row
 			}

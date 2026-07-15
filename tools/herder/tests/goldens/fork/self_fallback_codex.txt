@@ -1,6 +1,6 @@
 === STDERR ===
 spawn-handoff: spawn --role fork-codex --agent codex --cwd /mock/foreground --no-focus --json --from-pane p_self --split down --extra-arg fork --extra-arg --last
-sent 2561 chars to <GUID> (hcom @codexfb-vibe), submitted, verify=delivered
+sent 2624 chars to <GUID> (hcom @codexfb-vibe), submitted, verify=delivered
 === STDOUT ===
 {"guid":"<GUID>","short_guid":"<SHORT>","label":"codex-fallback-child","agent":"codex","status":"active"}
 === EXIT ===
@@ -32,6 +32,8 @@ Provision and manage agent sessions through herder. Do NOT spawn with `hcom <n> 
 - Cull:   herder cull --guid GUID              # close the pane + unseat the session (label stays leased)
 - Fork:   herder fork <guid> [--prompt P] [--workspace ID] [--split right|down] # fresh tab by default
 - Resume: herder resume <guid> [--cwd PATH] [--workspace ID] [--split right|down] # fresh tab by default
+
+Before reporting DONE, release external resources you opened.
 
 Delivery is verified: "queued" injects at the target's next turn (do NOT resend); "NOT confirmed" means read the pane (`herder wait <guid> --read`) before retrying — a blind resend double-submits.
 If unsure about syntax, always run `herder <command> --help` (or `hcom <command> --help`) FIRST. Do not guess.
