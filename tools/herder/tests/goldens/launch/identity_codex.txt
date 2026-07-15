@@ -23,6 +23,8 @@ Provision and manage agent sessions through herder. Do NOT spawn with `hcom <n> 
 - Fork:   herder fork <guid> [--prompt P] [--workspace ID] [--split right|down] # fresh tab by default
 - Resume: herder resume <guid> [--cwd PATH] [--workspace ID] [--split right|down] # fresh tab by default
 
+Before reporting DONE, release external resources you opened.
+
 Delivery is verified: "queued" injects at the target's next turn (do NOT resend); "NOT confirmed" means read the pane (`herder wait <guid> --read`) before retrying — a blind resend double-submits.
 If unsure about syntax, always run `herder <command> --help` (or `hcom <command> --help`) FIRST. Do not guess.
 
