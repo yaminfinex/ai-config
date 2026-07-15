@@ -115,7 +115,8 @@ type pageData struct {
 	FileRefusal    string
 	FileReason     string
 	// thread
-	T *Thread
+	T                *Thread
+	ParticipantState string
 	// open form
 	F          map[string]string
 	TalkKind   string
@@ -338,6 +339,7 @@ func (w *Web) thread(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "thread")
 	d.T = t
 	d.Error = r.URL.Query().Get("err")
+	d.ParticipantState = w.participantState(t, d.User)
 	w.render(rw, 200, d)
 }
 
@@ -394,7 +396,12 @@ func (w *Web) close(rw http.ResponseWriter, r *http.Request) {
 		http.Redirect(rw, r, "/thread/"+id+"?err="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
 		return
 	}
-	if targets := agentTargets(t, user); len(targets) > 0 {
+	if targets, err := w.liveAgentTargets(t, user); err != nil {
+		// The close is durable even when liveness cannot be inspected. Do not
+		// risk a mixed live/dead send, and do not present lookup failure as a
+		// delivery failure.
+		log.Printf("close notice liveness for %s: %v", id, err)
+	} else if len(targets) > 0 {
 		if err := w.bus.Send(user, targets, id, "", "inform", "[thread closed] "+res); err != nil {
 			log.Printf("close notice for %s: %v", id, err)
 			w.ing.Kick()
@@ -617,6 +624,59 @@ func agentTargets(t *Thread, user string) []string {
 		out = append(out, name)
 	}
 	return out
+}
+
+func liveBusStatus(status string) bool {
+	switch status {
+	case "active", "listening", "blocked":
+		return true
+	default:
+		return false
+	}
+}
+
+func (w *Web) liveAgentTargets(t *Thread, user string) ([]string, error) {
+	wanted := agentTargets(t, user)
+	if len(wanted) == 0 {
+		return nil, nil
+	}
+	agents, err := w.bus.List()
+	if err != nil {
+		return nil, err
+	}
+	live := make(map[string]bool, len(agents)*2)
+	for _, a := range agents {
+		if !liveBusStatus(a.Status) {
+			continue
+		}
+		live[a.Name] = true
+		live[a.BaseName] = true
+	}
+	var out []string
+	for _, name := range wanted {
+		if live[name] {
+			out = append(out, name)
+		}
+	}
+	return out, nil
+}
+
+func (w *Web) participantState(t *Thread, user string) string {
+	wanted := agentTargets(t, user)
+	if len(wanted) == 0 {
+		return ""
+	}
+	live, err := w.liveAgentTargets(t, user)
+	if err != nil {
+		return "participant liveness unavailable"
+	}
+	if len(live) == 0 {
+		return "all agent participants gone"
+	}
+	if len(live) < len(wanted) {
+		return fmt.Sprintf("%d of %d agent participants live", len(live), len(wanted))
+	}
+	return fmt.Sprintf("%d agent participants live", len(live))
 }
 
 func splitNames(s string) []string {

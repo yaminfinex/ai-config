@@ -146,6 +146,7 @@ th{color:var(--dim);font-weight:500}
     opened by {{.OpenedBy}}{{with .With}} · with {{range $i, $w := .}}{{if $i}}, {{end}}{{$w}}{{end}}{{end}}
     {{with .Home}} · home {{.}}{{end}} · updated {{ago .Updated}} ago · id {{.ID}}
   </p>
+  {{with $.ParticipantState}}<p class="meta">{{.}}</p>{{end}}
   {{if eq .Grade "managed"}}
     <details>
       <summary>Retitle</summary>

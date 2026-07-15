@@ -156,6 +156,89 @@ func TestHumanCloseDefaultsResolutionButAgentCloseStillRequiresOne(t *testing.T)
 	}
 }
 
+func TestCloseNoticesOnlyLiveParticipantsAndSurfacesOrphans(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "sends.txt")
+	hcom := writeExecutable(t, dir, "hcom", fmt.Sprintf(`#!/bin/sh
+if [ "$1" = list ]; then
+  printf '%%s\n' '[{"name":"builder-live","status":"listening"},{"name":"builder-dead","status":"inactive"}]'
+  exit 0
+fi
+printf '%%s\n' "$*" >> %q
+`, capture))
+	ing, s := testIngestor(t)
+	for _, id := range []string{"partly-live", "orphaned"} {
+		with := []string{"builder-dead"}
+		if id == "partly-live" {
+			with = append(with, "builder-live")
+		}
+		if err := s.Open(id, id, "ctx", "reply", "moment", "", "human-yamen", with, strings.Join(with, ","), "managed"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := NewWeb(s, &Bus{Hcom: hcom}, ing, "human-yamen", "owner", "", nil)
+
+	for path, want := range map[string]string{
+		"/thread/partly-live": "1 of 2 agent participants live",
+		"/thread/orphaned":    "all agent participants gone",
+	} {
+		rw := httptest.NewRecorder()
+		w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, path, nil))
+		if !strings.Contains(rw.Body.String(), want) {
+			t.Errorf("GET %s missing %q: %s", path, want, rw.Body.String())
+		}
+	}
+
+	closeThread := func(id string) *httptest.ResponseRecorder {
+		t.Helper()
+		form := url.Values{"resolution": {"done"}}
+		req := httptest.NewRequest(http.MethodPost, "/thread/"+id+"/close", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rw := httptest.NewRecorder()
+		w.Routes().ServeHTTP(rw, req)
+		return rw
+	}
+	if got := closeThread("partly-live").Header().Get("Location"); got != "/" {
+		t.Fatalf("partly-live close Location = %q", got)
+	}
+	if got := closeThread("orphaned").Header().Get("Location"); got != "/" {
+		t.Fatalf("orphaned close Location = %q", got)
+	}
+	raw, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sends := string(raw)
+	if !strings.Contains(sends, "@builder-live") || strings.Contains(sends, "@builder-dead") || strings.Contains(sends, "orphaned") {
+		t.Fatalf("filtered close sends = %q", sends)
+	}
+}
+
+func TestCloseReportsFailureForRecipientConfirmedLive(t *testing.T) {
+	dir := t.TempDir()
+	hcom := writeExecutable(t, dir, "hcom", `#!/bin/sh
+if [ "$1" = list ]; then
+  printf '%s\n' '[{"name":"builder-live","status":"active"}]'
+  exit 0
+fi
+printf '%s\n' 'live delivery broke' >&2
+exit 1
+`)
+	ing, s := testIngestor(t)
+	if err := s.Open("live-failure", "live failure", "ctx", "reply", "moment", "", "human-yamen", []string{"builder-live"}, "builder-live", "managed"); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWeb(s, &Bus{Hcom: hcom}, ing, "human-yamen", "owner", "", nil)
+	form := url.Values{"resolution": {"done"}}
+	req := httptest.NewRequest(http.MethodPost, "/thread/live-failure/close", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rw := httptest.NewRecorder()
+	w.Routes().ServeHTTP(rw, req)
+	if got := rw.Header().Get("Location"); !strings.Contains(got, "closed%2C+but+the+bus+notice+failed") {
+		t.Fatalf("live delivery failure Location = %q", got)
+	}
+}
+
 func TestRetitleIsManagedOnlyAndReplays(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "journal.jsonl")
 	s, err := OpenStore(path)
