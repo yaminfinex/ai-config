@@ -3,10 +3,10 @@ id: TASK-210
 title: >-
   Amend pi design to flagship-parity delivery — delete DR-2/DR-3
   delivery+authority machinery
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-14 22:26'
-updated_date: '2026-07-14 22:28'
+updated_date: '2026-07-15 00:52'
 labels: []
 dependencies: []
 ordinal: 209000
@@ -24,3 +24,9 @@ OWNER RULING 2026-07-14 (gold-plating audit candidate 1, ruled IN): amend docs/d
 - [ ] #2 Owner-signed crash-window delta registered with evidence citations; superseded keep-custom decision marked with provenance, not erased
 - [ ] #3 Implementation surface after amendment is explicitly enumerated (expected: a few launch-contract lines + observer adapter) so the build unit can be filed directly
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged c18488e (docs-only, battery-skip per doctrine). Design amended to flagship parity per owner ruling: DR-2/DR-3 machinery deleted with provenance stubs, owner-signed crash-window delta (§12 item 10), global-bus-only decided with real-bus smoke, HCOM_NOTES doctrine seam gated on P10, bind predicate + version recording at launch/bind, §13 build units B1/B2 dispatch-ready. Review: codex consolidated re-cert across 11 rounds — 8 findings + addendum + 2 residual contradictions + T27 gate mismatch, all closed; hash-pinned APPROVE at 29fe793.
+<!-- SECTION:NOTES:END -->
