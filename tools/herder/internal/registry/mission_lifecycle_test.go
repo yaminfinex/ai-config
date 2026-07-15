@@ -1,11 +1,42 @@
 package registry
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
+
+func TestLockedWriteRefusesInvalidDurableMission(t *testing.T) {
+	tests := []struct {
+		name        string
+		mission     v2.Mission
+		wantErrText string
+	}{
+		{"cwd source", v2.Mission{Slug: "alpha", Source: "cwd"}, "invalid durable mission source"},
+		{"marker source", v2.Mission{Slug: "alpha", Source: "marker"}, "invalid durable mission source"},
+		{"empty slug", v2.Mission{Source: "explicit"}, "mission membership without a slug"},
+		{"invalid slug", v2.Mission{Slug: "bad--slug", Source: "explicit"}, "invalid mission membership"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outcomes, err := UpdateLocked(filepath.Join(t.TempDir(), "registry.jsonl"), func(LockedUpdate) ([]v2.SessionRecord, error) {
+				return []v2.SessionRecord{{GUID: "guid-invalid-mission", Event: "registered", State: v2.StateSeated, Mission: &tt.mission}}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			outcome, err := SingleOutcome(outcomes)
+			if err != nil || outcome.Status != WriteRefused || outcome.Err() == nil {
+				t.Fatalf("outcome=%+v err=%v, want refused", outcome, err)
+			}
+			if !strings.Contains(outcome.Err().Error(), tt.wantErrText) {
+				t.Fatalf("outcome error = %q, want text %q", outcome.Err(), tt.wantErrText)
+			}
+		})
+	}
+}
 
 func TestMissionCarriesAcrossSameGUIDSuccessors(t *testing.T) {
 	base := missionProjection(t, `{"kind":"session","guid":"guid-live","event":"registered","recorded_at":"2026-07-15T00:00:00Z","state":"seated","label":"worker","role":"worker","tool":"codex","seat":{"kind":"herdr","terminal_id":"term-live"},"mission":{"slug":"alpha","source":"explicit"}}`)
