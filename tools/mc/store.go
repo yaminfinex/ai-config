@@ -20,7 +20,7 @@ import (
 
 type Entry struct {
 	TS         string   `json:"ts"`
-	Op         string   `json:"op"` // open | link | turn | close | reopen | promote | cursor
+	Op         string   `json:"op"` // open | link | turn | close | reopen | promote | retitle | cursor
 	Thread     string   `json:"thread,omitempty"`
 	Title      string   `json:"title,omitempty"`
 	Grade      string   `json:"grade,omitempty"` // managed | observed; absent (pre-grade journals) = managed
@@ -180,6 +180,11 @@ func (s *Store) apply(e *Entry) {
 			}
 			t.Updated = ts
 		}
+	case "retitle":
+		if t := s.threads[e.Thread]; t != nil && t.Grade == "managed" && e.Title != "" {
+			t.Title = e.Title
+			t.Updated = ts
+		}
 	}
 }
 
@@ -310,6 +315,25 @@ func (s *Store) Reopen(thread string) error {
 		return fmt.Errorf("thread %s is observed; lifecycle writes are refused", thread)
 	}
 	return s.append(&Entry{Op: "reopen", Thread: thread})
+}
+
+func (s *Store) Retitle(thread, title string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.threads[thread]
+	if t == nil {
+		return fmt.Errorf("no thread %s", thread)
+	}
+	if t.Grade != "managed" {
+		return fmt.Errorf("thread %s is observed; lifecycle writes are refused", thread)
+	}
+	if title == "" {
+		return fmt.Errorf("thread %s needs a title", thread)
+	}
+	if title == t.Title {
+		return nil
+	}
+	return s.append(&Entry{Op: "retitle", Thread: thread, Title: title})
 }
 
 func contains(ss []string, s string) bool {

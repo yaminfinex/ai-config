@@ -236,7 +236,7 @@ func TestObservedLifecycleWritesAreRefused(t *testing.T) {
 	w := NewWeb(s, &Bus{}, nil, "human-yamen", "owner", "", nil)
 	get := httptest.NewRecorder()
 	w.Routes().ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/thread/task-read-only", nil))
-	for _, action := range []string{"/reply", "/close", "/reopen"} {
+	for _, action := range []string{"/reply", "/close", "/reopen", "/retitle"} {
 		if strings.Contains(get.Body.String(), action) {
 			t.Errorf("observed thread page exposes lifecycle action %q", action)
 		}
@@ -249,6 +249,7 @@ func TestObservedLifecycleWritesAreRefused(t *testing.T) {
 		{"/thread/task-read-only/reply", url.Values{"text": {"bypass reply"}}},
 		{"/thread/task-read-only/close", url.Values{"resolution": {"bypass close"}}},
 		{"/thread/task-read-only/reopen", nil},
+		{"/thread/task-read-only/retitle", url.Values{"title": {"bypass retitle"}}},
 	}
 	for _, tt := range tests {
 		req := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.form.Encode()))

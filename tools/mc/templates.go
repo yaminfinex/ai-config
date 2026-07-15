@@ -36,6 +36,8 @@ button.quiet{background:#fff;color:var(--fg);border-color:var(--line)}
 .rowform{display:flex;gap:.6em;align-items:flex-start;margin-top:1em}
 .rowform textarea{flex:1;min-height:3.4em}
 .rowform button{margin-top:0}
+details{margin:.8em 0}
+summary{cursor:pointer;color:var(--dim)}
 .empty{color:var(--dim);font-style:italic;padding:.6em 0}
 table{border-collapse:collapse;width:100%}
 td,th{text-align:left;padding:.3em .6em;border-bottom:1px solid var(--line);font-size:.9em}
@@ -47,7 +49,7 @@ th{color:var(--dim);font-weight:500}
   <a href="/" {{if eq .Page "inbox"}}class="on"{{end}}>inbox</a>
   <a href="/threads" {{if eq .Page "threads"}}class="on"{{end}}>all threads</a>
   <a href="/roster" {{if eq .Page "roster"}}class="on"{{end}}>roster</a>
-  <a href="/open" {{if eq .Page "open"}}class="on"{{end}}>open thread</a>
+  <a href="/talk" {{if eq .Page "talk"}}class="on"{{end}}>talk to…</a>
   <span class="who">{{.User}} · seat @{{.Seat}}{{if .BusDir}} · LAB BUS{{end}}</span>
 </header>
 <main>
@@ -77,6 +79,15 @@ th{color:var(--dim);font-weight:500}
     opened by {{.OpenedBy}}{{with .With}} · with {{range $i, $w := .}}{{if $i}}, {{end}}{{$w}}{{end}}{{end}}
     {{with .Home}} · home {{.}}{{end}} · updated {{ago .Updated}} ago · id {{.ID}}
   </p>
+  {{if eq .Grade "managed"}}
+    <details>
+      <summary>Retitle</summary>
+      <form class="rowform" method="post" action="/thread/{{.ID}}/retitle">
+        <input type="text" name="title" value="{{.Title}}" aria-label="New title">
+        <button class="quiet">Save title</button>
+      </form>
+    </details>
+  {{end}}
   <div class="ctx">{{.Context}}</div>
   {{if .Resolution}}<div class="card"><strong>Resolution:</strong> {{.Resolution}}</div>{{end}}
   {{range .Msgs}}
@@ -117,40 +128,55 @@ th{color:var(--dim);font-weight:500}
   {{else}}<div class="empty">no observed bus threads yet</div>{{end}}
 {{end}}
 
-{{if eq .Page "open"}}
-  <h1>Open a thread</h1>
-  <form class="stack" method="post" action="/open">
-    <label>title</label><input type="text" name="title" value="{{index .F "title"}}">
-    <label>to (agent names, space or comma separated)</label><input type="text" name="to" value="{{index .F "to"}}">
-    <label>expects</label>
-    <select name="expects">
-      {{$e := index .F "expects"}}
-      <option {{if eq $e "decide"}}selected{{end}}>decide</option>
-      <option {{if eq $e "act"}}selected{{end}}>act</option>
-      <option {{if eq $e "reply"}}selected{{end}}>reply</option>
-      <option {{if eq $e "read"}}selected{{end}}>read</option>
-    </select>
-    <label>weight</label>
-    <select name="weight">
-      {{$w := index .F "weight"}}
-      <option {{if eq $w "rule"}}selected{{end}}>rule</option>
-      <option {{if eq $w "signoff"}}selected{{end}}>signoff</option>
-      <option {{if eq $w "provision"}}selected{{end}}>provision</option>
-      <option {{if eq $w "moment"}}selected{{end}}>moment</option>
-      <option {{if eq $w "ack"}}selected{{end}}>ack</option>
-    </select>
-    <label>cold-open context (required — the server refuses without it)</label>
-    <textarea name="context">{{index .F "context"}}</textarea>
-    <label>home folder (optional)</label><input type="text" name="home" value="{{index .F "home"}}">
-    <button>Open thread</button>
-  </form>
+{{if eq .Page "talk"}}
+  <h1>Talk to an agent or mission</h1>
+  {{if .TalkTarget}}
+    <p class="meta">To {{if eq .TalkKind "agent"}}@{{end}}{{.TalkTarget}} · <a href="/talk">change target</a></p>
+    <form class="stack" method="post" action="{{.TalkAction}}">
+      <label>message</label>
+      <textarea name="message" autofocus>{{index .F "message"}}</textarea>
+      <label>title (optional)</label>
+      <input type="text" name="title" value="{{index .F "title"}}" placeholder="Defaults to the first sentence, up to 80 characters">
+      <details>
+        <summary>Advanced</summary>
+        <label>expects</label>
+        <select name="expects">
+          {{$e := index .F "expects"}}
+          <option {{if eq $e "decide"}}selected{{end}}>decide</option>
+          <option {{if eq $e "act"}}selected{{end}}>act</option>
+          <option {{if eq $e "reply"}}selected{{end}}>reply</option>
+          <option {{if eq $e "read"}}selected{{end}}>read</option>
+        </select>
+        <label>weight</label>
+        <select name="weight">
+          {{$w := index .F "weight"}}
+          <option {{if eq $w "rule"}}selected{{end}}>rule</option>
+          <option {{if eq $w "signoff"}}selected{{end}}>signoff</option>
+          <option {{if eq $w "provision"}}selected{{end}}>provision</option>
+          <option {{if eq $w "moment"}}selected{{end}}>moment</option>
+          <option {{if eq $w "ack"}}selected{{end}}>ack</option>
+        </select>
+      </details>
+      <button>Send</button>
+    </form>
+  {{else}}
+    <p class="meta">Choose one. Roster links preselect the exact agent or mission.</p>
+    <form class="stack" method="get" action="/talk">
+      <label>agent seat</label><input type="text" name="agent" placeholder="for example: vile">
+      <button>Talk to agent</button>
+    </form>
+    <form class="stack" method="get" action="/talk">
+      <label>mission</label><input type="text" name="mission" placeholder="mission slug">
+      <button class="quiet">Talk to mission</button>
+    </form>
+  {{end}}
 {{end}}
 
 {{if eq .Page "roster"}}
   <h1>Roster</h1>
   <p class="meta">{{if .ShowClosed}}<a href="/roster">active only</a>{{else}}<a href="/roster?all=1">show all (incl. unseated/inactive)</a>{{end}}</p>
   {{range .Groups}}
-    <h2>{{.Dir}}</h2>
+    <h2>{{.Dir}}{{with .Mission}} · <a href="/talk?mission={{.}}">talk to mission</a>{{end}}</h2>
     <table>
       <tr><th>name</th><th>tool</th><th>status</th><th>role</th><th>branch</th><th>unread</th><th></th></tr>
       {{range .Agents}}
@@ -158,7 +184,7 @@ th{color:var(--dim);font-weight:500}
         <td><strong>{{.Name}}</strong></td><td>{{.Tool}}</td>
         <td>{{.Status}}{{with .Detail}} <span class="meta">({{.}})</span>{{end}}</td>
         <td>{{.Role}}</td><td>{{.Branch}}</td><td>{{if .Unread}}{{.Unread}}{{end}}</td>
-        <td><a href="/open?to={{.Name}}">open thread</a></td>
+        <td><a href="/talk?agent={{.Name}}">talk to</a></td>
       </tr>
       {{end}}
     </table>

@@ -36,13 +36,15 @@ func NewWeb(store *Store, bus *Bus, ing *Ingestor, user, seat, herderBin string,
 func (w *Web) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", w.inbox)
-	mux.HandleFunc("GET /open", w.openForm)
-	mux.HandleFunc("POST /open", w.openPost)
+	mux.HandleFunc("GET /talk", w.talkForm)
+	mux.HandleFunc("POST /talk", w.talkPost)
+	mux.HandleFunc("GET /open", w.openRedirect)
 	mux.HandleFunc("GET /threads", w.threads)
 	mux.HandleFunc("GET /thread/{id}", w.thread)
 	mux.HandleFunc("POST /thread/{id}/reply", w.reply)
 	mux.HandleFunc("POST /thread/{id}/close", w.close)
 	mux.HandleFunc("POST /thread/{id}/reopen", w.reopen)
+	mux.HandleFunc("POST /thread/{id}/retitle", w.retitle)
 	mux.HandleFunc("GET /roster", w.roster)
 	return mux
 }
@@ -87,7 +89,10 @@ type pageData struct {
 	// thread
 	T *Thread
 	// open form
-	F map[string]string
+	F          map[string]string
+	TalkKind   string
+	TalkTarget string
+	TalkAction string
 	// roster
 	Groups []rosterGroup
 }
@@ -130,40 +135,51 @@ func (w *Web) threads(rw http.ResponseWriter, r *http.Request) {
 	w.render(rw, 200, d)
 }
 
-func (w *Web) openForm(rw http.ResponseWriter, r *http.Request) {
-	d := w.data(r, "open")
-	d.F["to"] = r.URL.Query().Get("to")
+func (w *Web) talkForm(rw http.ResponseWriter, r *http.Request) {
+	d := w.data(r, "talk")
+	w.setTalkTarget(d, r)
 	d.F["expects"] = "reply"
 	d.F["weight"] = "moment"
 	w.render(rw, 200, d)
 }
 
-func (w *Web) openPost(rw http.ResponseWriter, r *http.Request) {
-	d := w.data(r, "open")
-	for _, k := range []string{"title", "to", "context", "expects", "weight", "home"} {
+func (w *Web) talkPost(rw http.ResponseWriter, r *http.Request) {
+	d := w.data(r, "talk")
+	w.setTalkTarget(d, r)
+	for _, k := range []string{"title", "message", "expects", "weight"} {
 		d.F[k] = strings.TrimSpace(r.FormValue(k))
 	}
-	targets := splitNames(d.F["to"])
-	// The refusal doctrine: a thread without cold-open context does not open.
+	if d.F["expects"] == "" {
+		d.F["expects"] = "reply"
+	}
+	if d.F["weight"] == "" {
+		d.F["weight"] = "moment"
+	}
+	targets, home, targetErr := w.resolveTalkTarget(d.TalkKind, d.TalkTarget)
 	switch {
-	case d.F["title"] == "":
-		d.Error = "refused: a thread needs a title"
-	case len(targets) == 0:
-		d.Error = "refused: a thread needs at least one recipient"
-	case d.F["context"] == "":
-		d.Error = "refused: no thread opens without cold-open context — write what a person switching back in needs to know"
+	case d.TalkKind == "" || d.TalkTarget == "":
+		d.Error = "choose an agent or mission to talk to"
+	case targetErr != nil:
+		d.Error = targetErr.Error()
+	case d.F["message"] == "":
+		d.Error = "write a message before sending"
 	}
 	if d.Error != "" {
 		w.render(rw, 422, d)
 		return
 	}
-	id := slug(d.F["title"])
-	if w.store.Has(id) {
-		id = fmt.Sprintf("%s-%d", id, time.Now().Unix()%100000)
+	title := d.F["title"]
+	if title == "" {
+		title = derivedTitle(d.F["message"])
+	}
+	baseID := slug(title)
+	id := baseID
+	for suffix := 2; w.store.Has(id); suffix++ {
+		id = fmt.Sprintf("%s-%d", baseID, suffix)
 	}
 	user := w.userFor(r)
 	turn := strings.Join(targets, ",")
-	if err := w.store.Open(id, d.F["title"], d.F["context"], d.F["expects"], d.F["weight"], d.F["home"], user, targets, turn, "managed"); err != nil {
+	if err := w.store.Open(id, title, d.F["message"], d.F["expects"], d.F["weight"], home, user, targets, turn, "managed"); err != nil {
 		d.Error = err.Error()
 		w.render(rw, 500, d)
 		return
@@ -172,8 +188,7 @@ func (w *Web) openPost(rw http.ResponseWriter, r *http.Request) {
 	if d.F["expects"] == "read" {
 		intent = "inform"
 	}
-	body := d.F["title"] + "\n\n" + d.F["context"] + "\n\n[expects: " + d.F["expects"] + " — reply on this thread]"
-	if err := w.bus.Send(user, targets, id, "", intent, body); err != nil {
+	if err := w.bus.Send(user, targets, id, "", intent, d.F["message"]); err != nil {
 		// Store opened but delivery refused (e.g. unknown agent): close the
 		// record honestly rather than leave a phantom open thread.
 		_ = w.store.Close(id, "delivery failed: "+err.Error())
@@ -183,6 +198,32 @@ func (w *Web) openPost(rw http.ResponseWriter, r *http.Request) {
 	}
 	w.ing.Kick()
 	http.Redirect(rw, r, "/thread/"+id, http.StatusSeeOther)
+}
+
+func (w *Web) openRedirect(rw http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	if q.Get("agent") == "" && q.Get("to") != "" {
+		q.Set("agent", q.Get("to"))
+		q.Del("to")
+	}
+	dest := "/talk"
+	if encoded := q.Encode(); encoded != "" {
+		dest += "?" + encoded
+	}
+	http.Redirect(rw, r, dest, http.StatusSeeOther)
+}
+
+func (w *Web) setTalkTarget(d *pageData, r *http.Request) {
+	switch {
+	case strings.TrimSpace(r.URL.Query().Get("agent")) != "":
+		d.TalkKind = "agent"
+		d.TalkTarget = strings.TrimSpace(r.URL.Query().Get("agent"))
+		d.TalkAction = "/talk?agent=" + template.URLQueryEscaper(d.TalkTarget)
+	case strings.TrimSpace(r.URL.Query().Get("mission")) != "":
+		d.TalkKind = "mission"
+		d.TalkTarget = strings.TrimSpace(r.URL.Query().Get("mission"))
+		d.TalkAction = "/talk?mission=" + template.URLQueryEscaper(d.TalkTarget)
+	}
 }
 
 func (w *Web) thread(rw http.ResponseWriter, r *http.Request) {
@@ -274,6 +315,24 @@ func (w *Web) reopen(rw http.ResponseWriter, r *http.Request) {
 	http.Redirect(rw, r, "/thread/"+id, http.StatusSeeOther)
 }
 
+func (w *Web) retitle(rw http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	t := w.store.Get(id)
+	if t == nil {
+		http.NotFound(rw, r)
+		return
+	}
+	if !w.requireManaged(rw, r, t) {
+		return
+	}
+	title := strings.TrimSpace(r.FormValue("title"))
+	if err := w.store.Retitle(id, title); err != nil {
+		http.Redirect(rw, r, "/thread/"+id+"?err="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(rw, r, "/thread/"+id, http.StatusSeeOther)
+}
+
 func (w *Web) requireManaged(rw http.ResponseWriter, r *http.Request, t *Thread) bool {
 	if t.Grade == "managed" {
 		return true
@@ -283,8 +342,9 @@ func (w *Web) requireManaged(rw http.ResponseWriter, r *http.Request, t *Thread)
 }
 
 type rosterGroup struct {
-	Dir    string
-	Agents []rosterAgent
+	Dir     string
+	Mission string
+	Agents  []rosterAgent
 }
 
 type rosterAgent struct {
@@ -302,13 +362,19 @@ func (w *Web) roster(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "roster")
 	showAll := r.URL.Query().Get("all") == "1"
 	d.ShowClosed = showAll // reuse: roster "show all" toggle
+	d.Groups, d.Error = w.rosterGroups(showAll)
+	w.render(rw, 200, d)
+}
+
+func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {
 	busAgents, err := w.bus.List()
+	errText := ""
 	if err != nil {
-		d.Error = err.Error()
+		errText = err.Error()
 	}
 	herderRows, herr := HerderList(w.herderBin)
-	if herr != nil && d.Error == "" {
-		d.Error = herr.Error()
+	if herr != nil && errText == "" {
+		errText = herr.Error()
 	}
 	byName := map[string]HerderRow{}
 	bySID := map[string]HerderRow{}
@@ -322,10 +388,19 @@ func (w *Web) roster(rw http.ResponseWriter, r *http.Request) {
 	}
 	groups := map[string]*rosterGroup{}
 	add := func(dir string, a rosterAgent) {
-		key := w.missions.groupKey(dir)
+		key := dir
+		if w.missions != nil {
+			key = w.missions.groupKey(dir)
+		}
+		if key == "" {
+			key = "(no directory)"
+		}
 		g := groups[key]
 		if g == nil {
 			g = &rosterGroup{Dir: key}
+			if mission, ok := strings.CutPrefix(key, "mission: "); ok {
+				g.Mission = mission
+			}
 			groups[key] = g
 		}
 		g.Agents = append(g.Agents, a)
@@ -363,11 +438,51 @@ func (w *Web) roster(rw http.ResponseWriter, r *http.Request) {
 		}
 		add(h.Cwd, rosterAgent{Name: h.Label, Tool: h.Agent, Status: h.Status, Role: h.Role, Branch: h.Branch, GUID: h.GUID})
 	}
+	var out []rosterGroup
 	for _, g := range groups {
-		d.Groups = append(d.Groups, *g)
+		out = append(out, *g)
 	}
-	sortGroups(d.Groups)
-	w.render(rw, 200, d)
+	sortGroups(out)
+	return out, errText
+}
+
+func (w *Web) resolveTalkTarget(kind, target string) ([]string, string, error) {
+	groups, errText := w.rosterGroups(false)
+	switch kind {
+	case "agent":
+		for _, g := range groups {
+			for _, a := range g.Agents {
+				if a.Name == target {
+					return []string{target}, g.Mission, nil
+				}
+			}
+		}
+		// Let hcom remain the authority for an agent name even when roster
+		// enrichment is unavailable or briefly stale.
+		return []string{target}, "", nil
+	case "mission":
+		for _, g := range groups {
+			if g.Mission != target {
+				continue
+			}
+			var targets []string
+			for _, a := range g.Agents {
+				if a.Name != "" && a.Name != w.seat && !contains(targets, a.Name) {
+					targets = append(targets, a.Name)
+				}
+			}
+			if len(targets) == 0 {
+				return nil, "", fmt.Errorf("mission %s has no active agents", target)
+			}
+			return targets, target, nil
+		}
+		if errText != "" {
+			return nil, "", fmt.Errorf("cannot resolve mission %s: %s", target, errText)
+		}
+		return nil, "", fmt.Errorf("mission %s has no active agents", target)
+	default:
+		return nil, "", fmt.Errorf("choose an agent or mission to talk to")
+	}
 }
 
 func sortGroups(gs []rosterGroup) {
@@ -421,6 +536,26 @@ func slug(title string) string {
 		}
 	}
 	return strings.TrimSuffix(b.String(), "-")
+}
+
+func derivedTitle(message string) string {
+	message = strings.TrimSpace(message)
+	end := len(message)
+	for i, r := range message {
+		if r == '\n' || r == '.' || r == '!' || r == '?' {
+			end = i
+			break
+		}
+	}
+	title := strings.TrimSpace(message[:end])
+	if title == "" {
+		title = message
+	}
+	runes := []rune(title)
+	if len(runes) > 80 {
+		title = strings.TrimSpace(string(runes[:80]))
+	}
+	return title
 }
 
 func ago(t time.Time) string {
