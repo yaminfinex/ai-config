@@ -1,10 +1,10 @@
 ---
 id: TASK-232
 title: 'sesh shipper v0.1.17: silent 100% CPU spin from service start'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-15 06:57'
-updated_date: '2026-07-15 07:07'
+updated_date: '2026-07-15 07:41'
 labels:
   - sesh
 dependencies: []
@@ -29,3 +29,9 @@ Investigation notes: ptrace blocked on this box; use a debug/pprof surface if th
 - [ ] #3 Red-first regression test on the spin path
 - [ ] #4 Verify shipping progress was/was not occurring during the spin; data-loss statement in the DONE record
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged 43cad00 (--no-ff, 2 commits: a6b7e1a fix + dafb84c doc line). Root cause: Codex SESSION_OWNER correlation walked every same-UID /proc/<pid>/fd table once PER transcript — O(transcripts x processes x FDs), silent one-core spin before any log/store call; LATENT (predates v0.1.17; corpus scale exposed it). Fix: per-sweep path->identity index, each FD table read once, attribution semantics preserved (incumbent replayed old impl over 18 shapes: 17 identical; the 1 divergence — dup UUID at two paths w/ conflicting owners — old was order-dependent arbitrary stamp, new is unanimity absence, ruled better + documented). Measured 82x at 200 transcripts; extrapolates ~6.2s -> ~20ms per sweep at field scale. NO DATA LOSS: shipping progressed during the spin (high_water advanced +109KB in sample; cursors advance only on durable ACK) — CPU amplification, not stall. Red-first FD-read-once regression + healthy/unresponsive-store process verification. Review: opus incumbent APPROVE (1 required doc line, discharged, delta confirmed) + grok calibration APPROVE (ledger row 17). Gates: independent 60/60 at fix head, post-merge 60/60 on main. Fix rides v0.1.18 — DEPLOY PENDING: live shippers keep spinning until the next sesh release+deploy; follow-up TASK-235 (codex benchmark arm) filed.
+<!-- SECTION:NOTES:END -->
