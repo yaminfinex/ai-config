@@ -65,7 +65,7 @@ func TestImplicitBigbossOpensObserved(t *testing.T) {
 
 func TestExplicitSeatRaiseOpensManaged(t *testing.T) {
 	in, s := testIngestor(t)
-	fold(t, in, busEvent(2, "vile", "task-1-review", "need a decision on the journal format.", "request", "owner", "bigboss"))
+	fold(t, in, busEvent(2, "vile", "task-1-review", "@owner need a decision on the journal format.", "request", "owner", "bigboss"))
 
 	th := s.Get("task-1-review")
 	if th == nil {
@@ -84,7 +84,7 @@ func TestExplicitSeatRaiseOpensManaged(t *testing.T) {
 
 func TestThreadlessRaiseOpensDeskThread(t *testing.T) {
 	in, s := testIngestor(t)
-	fold(t, in, busEvent(7, "vile", "", "ping the owner directly.", "inform", "owner"))
+	fold(t, in, busEvent(7, "vile", "", "ping @owner directly.", "inform", "owner"))
 
 	th := s.Get("desk-7")
 	if th == nil {
@@ -108,7 +108,7 @@ func TestExplicitRaisePromotesObservedPreservingHistory(t *testing.T) {
 	in, s := testIngestor(t)
 	fold(t, in, busEvent(10, "builder-gemi", "task-9-work", "step one done.", "inform", "bigboss"))
 	fold(t, in, busEvent(11, "worker-vele", "task-9-work", "picking up step two.", "inform", "bigboss"))
-	fold(t, in, busEvent(12, "builder-gemi", "task-9-work", "blocked — need the owner to decide.", "request", "owner"))
+	fold(t, in, busEvent(12, "builder-gemi", "task-9-work", "blocked — need @owner to decide.", "request", "owner"))
 
 	th := s.Get("task-9-work")
 	if th.Grade != "managed" {
@@ -126,6 +126,55 @@ func TestExplicitRaisePromotesObservedPreservingHistory(t *testing.T) {
 	// Participants accreted while observed survive promotion.
 	if !contains(th.With, "worker-vele") {
 		t.Fatalf("with = %v, want worker-vele preserved", th.With)
+	}
+}
+
+// Event #87580 had this exact defect shape: a mention-free worker ack was
+// stamped mentions:[owner] by hcom. The wire field alone must not promote the
+// observed thread or make it the owner's turn.
+func TestImplicitOwnerMentionDoesNotPromoteObserved(t *testing.T) {
+	in, s := testIngestor(t)
+	fold(t, in, busEvent(87579, "reviewer-gini", "task-26-membership-grouping", "reviewing the grouping.", "inform", "bigboss"))
+	fold(t, in, busEvent(87580, "builder-luga", "task-26-membership-grouping", "ACK: I will implement the requested fix.", "ack", "owner"))
+
+	th := s.Get("task-26-membership-grouping")
+	if th.Grade != "observed" || th.Turn == "owner" {
+		t.Fatalf("grade=%q turn=%q, want observed and not owner's turn", th.Grade, th.Turn)
+	}
+	if len(th.Msgs) != 2 {
+		t.Fatalf("msgs = %d, want both observed messages preserved", len(th.Msgs))
+	}
+}
+
+func TestRaiseVerbExplicitTargetPromotes(t *testing.T) {
+	in, s := testIngestor(t)
+	fold(t, in, busEvent(90, "builder-gemi", "task-raise", "working normally.", "inform", "bigboss"))
+	fold(t, in, busEvent(91, "builder-gemi", "task-raise", "@owner\nCONTEXT: the build gate needs a ruling\nEXPECTS: decide", "request", "owner"))
+
+	th := s.Get("task-raise")
+	if th.Grade != "managed" || th.Turn != "owner" {
+		t.Fatalf("grade=%q turn=%q, want managed/owner", th.Grade, th.Turn)
+	}
+}
+
+func TestExplicitSeatMentionAliases(t *testing.T) {
+	tests := []struct {
+		text string
+		seat string
+		want bool
+	}{
+		{"please decide @human", "human", true},
+		{"please decide @owner", "human", true},
+		{"please decide @bigboss", "human", true},
+		{"mention supplied only on the wire", "human", false},
+		{"wrong case @OWNER", "human", false},
+		{"different target @owner-helper", "human", false},
+		{"remote target @owner:BOXE", "human", false},
+	}
+	for _, tt := range tests {
+		if got := explicitSeatMention(tt.text, tt.seat); got != tt.want {
+			t.Errorf("explicitSeatMention(%q, %q) = %v, want %v", tt.text, tt.seat, got, tt.want)
+		}
 	}
 }
 
@@ -149,7 +198,7 @@ func TestObservedStaysObservedAcrossTraffic(t *testing.T) {
 
 func TestManagedThreadLinksMentionFreeFollowups(t *testing.T) {
 	in, s := testIngestor(t)
-	fold(t, in, busEvent(30, "vile", "task-5-run", "raised at the seat.", "request", "owner"))
+	fold(t, in, busEvent(30, "vile", "task-5-run", "raised at @owner.", "request", "owner"))
 	fold(t, in, busEvent(31, "vile", "task-5-run", "follow-up detail, no mentions.", "inform", "bigboss"))
 
 	th := s.Get("task-5-run")
@@ -163,7 +212,7 @@ func TestManagedThreadLinksMentionFreeFollowups(t *testing.T) {
 
 func TestHumanReplyFlipsTurn(t *testing.T) {
 	in, s := testIngestor(t)
-	fold(t, in, busEvent(40, "vile", "task-6-turn", "your call.", "request", "owner"))
+	fold(t, in, busEvent(40, "vile", "task-6-turn", "your call, @owner.", "request", "owner"))
 	fold(t, in, busEvent(41, "human-yamen", "task-6-turn", "approved.", "inform"))
 
 	if th := s.Get("task-6-turn"); th.Turn == "owner" {
@@ -283,7 +332,7 @@ func TestExplicitRaiseReopensSyntheticClosedObservedThread(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := &Ingestor{store: s, user: "human-yamen", seat: "owner"}
-	fold(t, in, busEvent(60, "builder-gemi", "task-corrupt", "explicit raise", "request", "owner"))
+	fold(t, in, busEvent(60, "builder-gemi", "task-corrupt", "explicit raise @owner", "request", "owner"))
 
 	th := s.Get("task-corrupt")
 	if th.Grade != "managed" || th.Status != "open" || th.Resolution != "" || th.Turn != "owner" {

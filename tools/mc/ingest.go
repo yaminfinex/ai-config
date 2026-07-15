@@ -153,7 +153,7 @@ func (in *Ingestor) Tick() error {
 func (in *Ingestor) fold(ev BusEvent) error {
 	d := ev.Data
 	tid := d.Thread
-	raised := contains(d.Mentions, in.seat)
+	raised := contains(d.Mentions, in.seat) && explicitSeatMention(d.Text, in.seat)
 	// Synthesize the desk id BEFORE the lookup so a refolded threadless raise
 	// finds its existing thread instead of blindly re-opening it. Refolds happen
 	// whenever a crash lands between a fold and the tick's cursor write.
@@ -217,6 +217,42 @@ func (in *Ingestor) fold(ev BusEvent) error {
 		return in.store.SetTurn(tid, turn)
 	}
 	return in.store.SetTurn(tid, "owner")
+}
+
+// explicitSeatMention distinguishes a deliberate raise from hcom's implicit
+// default delivery. hcom currently writes both shapes as mentions:[seat], so
+// the message text is the only surviving evidence that the sender typed a
+// target. Keep the stable owner aliases valid if the configured seat renames.
+func explicitSeatMention(text, seat string) bool {
+	for _, name := range []string{seat, "owner", "bigboss"} {
+		if literalMention(text, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func literalMention(text, name string) bool {
+	if name == "" {
+		return false
+	}
+	needle := "@" + name
+	for offset := 0; offset < len(text); {
+		i := strings.Index(text[offset:], needle)
+		if i < 0 {
+			return false
+		}
+		end := offset + i + len(needle)
+		if end == len(text) || !mentionNameByte(text[end]) {
+			return true
+		}
+		offset = end
+	}
+	return false
+}
+
+func mentionNameByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-' || b == '_' || b == ':'
 }
 
 func titleFrom(text string) string {

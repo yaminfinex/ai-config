@@ -23,7 +23,7 @@ func TestRefoldAfterCrashBeforeCursorIsIdempotent(t *testing.T) {
 	hcom := writeExecutable(t, dir, "hcom", `#!/bin/sh
 cursor=$(printf '%s\n' "$*" | sed -n 's/.*id > \([0-9][0-9]*\).*/\1/p')
 [ -z "$cursor" ] && cursor=0
-[ "$cursor" -lt 10 ] && printf '%s\n' '{"id":10,"type":"message","ts":"2026-07-15T00:00:00Z","data":{"from":"agent-a","text":"please look","mentions":["owner"],"intent":"request"}}'
+[ "$cursor" -lt 10 ] && printf '%s\n' '{"id":10,"type":"message","ts":"2026-07-15T00:00:00Z","data":{"from":"agent-a","text":"please look @owner","mentions":["owner"],"intent":"request"}}'
 [ "$cursor" -lt 11 ] && printf '%s\n' '{"id":11,"type":"message","ts":"2026-07-15T00:00:01Z","data":{"from":"agent-a","text":"follow up","mentions":["owner"],"intent":"inform","thread":"desk-10"}}'
 exit 0
 `)

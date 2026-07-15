@@ -47,7 +47,7 @@ last=$((cursor + limit))
 i=$last
 while [ "$i" -gt "$cursor" ]; do
   if [ -n "$mention" ]; then
-    printf '{"id":%%d,"type":"message","data":{"mentions":["%%s"]}}\n' "$i" "$mention"
+    printf '{"id":%%d,"type":"message","data":{"text":"@%%s","mentions":["%%s"]}}\n' "$i" "$mention" "$mention"
   else
     printf '{"id":%%d,"type":"message","data":{"mentions":[]}}\n' "$i"
   fi
