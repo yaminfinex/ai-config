@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -142,23 +143,8 @@ func TestPeriodicWatchRewalkRegistersNestedDirectory(t *testing.T) {
 	// This is the periodic-rescan registration path that closes any race
 	// between burst directory creation and per-Create watch registration.
 	s.watchDirs(w)
-	session := filepath.Join(nested, "rollout.jsonl")
-	if err := os.WriteFile(session, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	deadline := time.After(time.Second)
-	for {
-		select {
-		case ev := <-w.Events:
-			if ev.Name == session {
-				return
-			}
-		case err := <-w.Errors:
-			t.Fatal(err)
-		case <-deadline:
-			t.Fatal("periodic watch rewalk did not register the nested directory")
-		}
+	if watched := w.WatchList(); !slices.Contains(watched, nested) {
+		t.Fatalf("periodic watch rewalk did not register %s; watches: %v", nested, watched)
 	}
 }
 

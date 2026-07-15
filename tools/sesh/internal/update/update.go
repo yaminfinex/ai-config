@@ -199,14 +199,23 @@ func resolveTarget(opts Options) (target string, hasService bool, err error) {
 	if !ok {
 		return "", false, fmt.Errorf("installed service config carries no executable path; re-run `sesh setup`")
 	}
-	resolved, err := filepath.EvalSymlinks(pinned)
+	resolvedPinned, err := filepath.EvalSymlinks(pinned)
 	if err != nil {
 		return "", false, fmt.Errorf("cannot resolve the service's pinned executable %s: %w", pinned, err)
 	}
-	if resolved != opts.Exe {
-		return "", false, fmt.Errorf("refusing to update: this binary (%s) is not the service's pinned executable (%s) — run that binary's `sesh update`, or re-run `sesh setup` to repin", opts.Exe, resolved)
+	resolvedRunning, err := filepath.EvalSymlinks(opts.Exe)
+	if err != nil {
+		return "", false, fmt.Errorf("cannot resolve the running executable %s: %w", opts.Exe, err)
 	}
-	return resolved, true, nil
+	// Executable identity is compared after resolving both path spellings.
+	// Setup normally pins an already-resolved path, but older pins and paths
+	// beneath symlinked temporary roots must remain valid without rewriting the
+	// installed service config. Resolution failure is a closed guard: an
+	// unprovable identity must never authorize replacement of the pinned file.
+	if resolvedPinned != resolvedRunning {
+		return "", false, fmt.Errorf("refusing to update: this binary (%s) is not the service's pinned executable (%s) — run that binary's `sesh update`, or re-run `sesh setup` to repin", resolvedRunning, resolvedPinned)
+	}
+	return resolvedPinned, true, nil
 }
 
 func fetchLatestVersion(client *http.Client, base string) (string, error) {

@@ -446,6 +446,77 @@ func TestRefusesWhenNotTheServicePinnedBinary(t *testing.T) {
 	}
 }
 
+func TestAcceptsSameBinaryThroughSymlinkedParent(t *testing.T) {
+	ch := newTestChannel(t, "")
+	ch.publish("v1.1.0", []byte("new-binary"))
+
+	base := t.TempDir()
+	realTemp := filepath.Join(base, "real")
+	linkedTemp := filepath.Join(base, "linked")
+	if err := os.Mkdir(realTemp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realTemp, linkedTemp); err != nil {
+		t.Fatal(err)
+	}
+	home, err := os.MkdirTemp(linkedTemp, "home-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	target := filepath.Join(home, ".local", "bin", "sesh")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(setup.UnitPath(home)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(setup.UnitPath(home), []byte(setup.RenderUnit(target)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(setup.DropinPath(home)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(setup.DropinPath(home), setup.RenderDropin(nil, ch.srv.URL), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedTarget == target {
+		t.Fatalf("fixture does not exercise distinct path spellings: %s", target)
+	}
+
+	var out bytes.Buffer
+	if err := Run(baseOpts(home, target, verifiedRunner("4242", "v1.1.0"), &out)); err != nil {
+		t.Fatalf("same binary through symlinked parent refused: %v", err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "new-binary" {
+		t.Fatal("same-binary update did not replace the target")
+	}
+}
+
+func TestRefusesWhenRunningBinaryCannotBeResolved(t *testing.T) {
+	ch := newTestChannel(t, "")
+	ch.publish("v1.1.0", []byte("new-binary"))
+	home, target := installedNode(t, ch.srv.URL)
+
+	var out bytes.Buffer
+	opts := baseOpts(home, target, &fakeRunner{}, &out)
+	opts.Exe = filepath.Join(home, "missing-sesh")
+	err := Run(opts)
+	if err == nil || !strings.Contains(err.Error(), "cannot resolve the running executable") {
+		t.Fatalf("want closed-guard resolution error, got %v", err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "old-binary" {
+		t.Fatal("resolution failure replaced the target")
+	}
+}
+
 func TestPreSetupUseWithExplicitURLSkipsService(t *testing.T) {
 	ch := newTestChannel(t, "")
 	ch.publish("v1.1.0", []byte("new-binary"))

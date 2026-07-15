@@ -32,6 +32,14 @@ run *args: build
 test:
     go test ./...
 
+# Owner-run portability check. This is intentionally manual: the project has
+# no macOS CI runner, and a laptop cron would produce unactionable noise.
+test-darwin:
+    @test "$(uname -s)" = Darwin || { echo "test-darwin must run on macOS" >&2; exit 2; }
+    go test ./...
+    go test -race ./internal/update ./internal/ship
+    go test ./internal/ship -run '^TestPeriodicWatchRewalkRegistersNestedDirectory$' -count=200
+
 install:
     go install -ldflags '{{ldflags}}' ./cmd/sesh
     @echo "installed sesh  ({{version}})  ->  {{gobin}}/sesh"
