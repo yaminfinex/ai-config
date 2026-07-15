@@ -883,7 +883,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	hcomEnv := ""
 	if isHcomAgent {
 		hcomEnv = " HCOM_DIR=" + shellquote.Quote(hcomDirEff) +
-			" PATH=" + shellquote.Quote(agentPathPrefix(r.paths.ShimsDir, opts.Agent, r.piBinDir)) + ":$PATH"
+			" PATH=" + agentLoginPathExpression(r.paths.ShimsDir, opts.Agent, r.piBinDir)
 	}
 	grokEnv := ""
 	if opts.Agent == "grok" {
@@ -912,7 +912,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SPAWNED_BY=" + spawnedBy, "HERDER_BIN=" + childEnvBin}
 		argv = append(argv, "AI_CONFIG_ROOT="+childEnvRoot)
 		if isHcomAgent {
-			argv = append(argv, "HCOM_DIR="+hcomDirEff, "PATH="+agentPathPrefix(r.paths.ShimsDir, opts.Agent, r.piBinDir)+string(os.PathListSeparator)+os.Getenv("PATH"))
+			argv = append(argv, "HCOM_DIR="+hcomDirEff, "PATH="+agentPathValue(r.paths.ShimsDir, os.Getenv("PATH"), opts.Agent, r.piBinDir))
 		}
 		if opts.Agent == "grok" {
 			argv = append(argv, "HERDER_STATE_DIR="+stateDir, "HERDER_GROK_SESSION_ID="+grokSessionID, "HERDER_GROK_PREASSIGNED=1")
@@ -1270,12 +1270,23 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	return 0
 }
 
-func agentPathPrefix(shimsDir, agent, piBinDir string) string {
-	prefix := shimsDir
+func agentLoginPathExpression(shimsDir, agent, piBinDir string) string {
+	expression := shellquote.Quote(shimsDir) + ":$PATH"
 	if agent == "pi" && piBinDir != "" {
-		prefix += string(os.PathListSeparator) + piBinDir
+		expression += ":" + shellquote.Quote(piBinDir)
 	}
-	return prefix
+	return expression
+}
+
+func agentPathValue(shimsDir, inherited, agent, piBinDir string) string {
+	value := shimsDir
+	if inherited != "" {
+		value += string(os.PathListSeparator) + inherited
+	}
+	if agent == "pi" && piBinDir != "" {
+		value += string(os.PathListSeparator) + piBinDir
+	}
+	return value
 }
 
 func (r *runner) awaitReady(paneID *string) (reason string, trustBlocked bool, modalCleared bool) {

@@ -75,7 +75,7 @@ func TestResumePiMissingRegistryProviderRefusesBeforePaneCreation(t *testing.T) 
 	}
 }
 
-func TestPreparePiLifecycleReconstructsRegistryFactsAndReobservesVendor(t *testing.T) {
+func TestPreparePiLifecycleRecordsVersionDriftWithoutTermination(t *testing.T) {
 	installLifecyclePi(t, "0.80.6")
 	t.Setenv("OPENAI_API_KEY", "selected")
 	t.Setenv("ANTHROPIC_API_KEY", "ambient-wrong-provider")
@@ -117,13 +117,12 @@ func TestPiLifecycleLaunchTokensUseReconstructedFacts(t *testing.T) {
 func TestPiLifecycleCarriesResolvedExecutableDirectoryIntoLoginPath(t *testing.T) {
 	const shims = "/repo/tools/herder/shims"
 	const piBin = "/custom-prefix/node_modules/.bin"
-	got := lifecyclePathPrefix(shims, startSpec{Agent: "pi", PiBinDir: piBin})
-	for _, want := range []string{shims, piBin} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("lifecyclePathPrefix(pi) = %q, missing %q", got, want)
-		}
+	got := lifecyclePathExpression(shims, startSpec{Agent: "pi", PiBinDir: piBin})
+	want := shims + ":$PATH:" + piBin
+	if got != want {
+		t.Fatalf("lifecyclePathExpression(pi) = %q, want trailing Pi fallback %q", got, want)
 	}
-	if got := lifecyclePathPrefix(shims, startSpec{Agent: "claude", PiBinDir: piBin}); strings.Contains(got, piBin) {
-		t.Fatalf("lifecyclePathPrefix(claude) leaked Pi path: %q", got)
+	if got := lifecyclePathExpression(shims, startSpec{Agent: "claude", PiBinDir: piBin}); strings.Contains(got, piBin) {
+		t.Fatalf("lifecyclePathExpression(claude) leaked Pi path: %q", got)
 	}
 }

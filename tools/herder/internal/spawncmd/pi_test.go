@@ -3,6 +3,7 @@ package spawncmd
 import (
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,6 +34,34 @@ func TestPiSpawnRequiresProviderAndAllowsModel(t *testing.T) {
 	}
 	if opts.Provider != "openai" || opts.Model != "gpt-test" || len(opts.ExtraArgs) < 2 || opts.ExtraArgs[0] != "--model" {
 		t.Fatalf("opts = %+v", opts)
+	}
+}
+
+func TestPiSpawnParseCallSiteRefusesOwnedPassthrough(t *testing.T) {
+	var stderr strings.Builder
+	args := []string{"--role", "worker", "--agent", "pi", "--provider", "openai", "--extra-arg", "--api-key=stand-in"}
+	if _, code := parseArgs(args, io.Discard, &stderr); code == 0 {
+		t.Fatal("Pi spawn parse boundary accepted an owned credential passthrough")
+	}
+	for _, want := range []string{"--api-key", "refused", "environment"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("spawn refusal missing %q: %s", want, stderr.String())
+		}
+	}
+}
+
+func TestNonPiSpawnProviderRefusesWithTypedMessage(t *testing.T) {
+	for _, agent := range []string{"claude", "codex"} {
+		t.Run(agent, func(t *testing.T) {
+			var stderr strings.Builder
+			args := []string{"--role", "worker", "--agent", agent, "--provider", "openai"}
+			if _, code := parseArgs(args, io.Discard, &stderr); code == 0 {
+				t.Fatalf("non-Pi agent %s accepted --provider", agent)
+			}
+			if got, want := strings.TrimSpace(stderr.String()), "herder spawn: --provider is supported only for --agent pi"; got != want {
+				t.Fatalf("refusal = %q, want %q", got, want)
+			}
+		})
 	}
 }
 
@@ -70,15 +99,45 @@ func TestPiBindPredicateRequiresAllRosterFacts(t *testing.T) {
 	}
 }
 
-func TestPiSpawnCarriesResolvedExecutableDirectoryIntoChildPath(t *testing.T) {
-	const shims = "/repo/tools/herder/shims"
-	const piBin = "/custom-prefix/node_modules/.bin"
-	want := shims + string(os.PathListSeparator) + piBin
-	if got := agentPathPrefix(shims, "pi", piBin); got != want {
-		t.Fatalf("agentPathPrefix(pi) = %q, want %q", got, want)
+func TestPiSpawnAppendsMultiBinaryDirectoryAfterInheritedPath(t *testing.T) {
+	root := t.TempDir()
+	shims := filepath.Join(root, "shims")
+	systemBin := filepath.Join(root, "system-bin")
+	piBin := filepath.Join(root, "node_modules", ".bin")
+	for _, dir := range []string{shims, systemBin, piBin} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if got := agentPathPrefix(shims, "codex", piBin); got != shims {
-		t.Fatalf("agentPathPrefix(codex) = %q, want no Pi path leakage", got)
+	for _, path := range []string{
+		filepath.Join(shims, "hcom"),
+		filepath.Join(systemBin, "git"),
+		filepath.Join(piBin, "git"),
+		filepath.Join(piBin, "pi"),
+	} {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pathValue := agentPathValue(shims, systemBin, "pi", piBin)
+	t.Setenv("PATH", pathValue)
+	if got, err := exec.LookPath("hcom"); err != nil || got != filepath.Join(shims, "hcom") {
+		t.Fatalf("shim lookup = (%q, %v), want shim-first hcom", got, err)
+	}
+	if got, err := exec.LookPath("git"); err != nil || got != filepath.Join(systemBin, "git") {
+		t.Fatalf("git lookup = (%q, %v), Pi dependency directory shadowed inherited command", got, err)
+	}
+	if got, err := exec.LookPath("pi"); err != nil || got != filepath.Join(piBin, "pi") {
+		t.Fatalf("Pi lookup = (%q, %v), want trailing Pi fallback", got, err)
+	}
+
+	wantLogin := shims + ":$PATH:" + piBin
+	if got := agentLoginPathExpression(shims, "pi", piBin); got != wantLogin {
+		t.Fatalf("login PATH = %q, want %q", got, wantLogin)
+	}
+	if got := agentPathValue(shims, systemBin, "codex", piBin); strings.Contains(got, piBin) {
+		t.Fatalf("non-Pi PATH leaked Pi directory: %q", got)
 	}
 }
 

@@ -22,10 +22,12 @@ location coincide. It does not weaken the team-bus refusal.
 
 ## P9 — shim-first PATH
 
-Discharged. The generated launch environment put the Pi executable directory
-first and the repository's `tools/herder/shims` directory before the real hcom
-directory. An `execve` trace of the loaded native extension's bare
-`spawn("hcom", ...)` call showed this chain:
+Discharged. The generated launch environment puts the repository's
+`tools/herder/shims` directory first, retains the inherited login path next,
+and appends the observed Pi executable directory as a final fallback. This
+keeps bare hcom calls shim-first without letting unrelated executables beside
+Pi shadow inherited system commands. An `execve` trace of the loaded native
+extension's bare `spawn("hcom", ...)` call showed this chain:
 
 1. `$SCRATCH/bin/hcom` was absent.
 2. `tools/herder/shims/hcom pi-start ...` executed successfully.
@@ -72,8 +74,22 @@ row-stopped audit history.
 The installed Pi package lived in a nonstandard prefix. The smoke exposed that
 caller-visible `PATH` could pass preflight but be lost by a child login shell.
 Spawn, resume, and fork now carry the observed pre-symlink executable directory
-into the child `PATH`, after the herder shim directory. Regression tests pin the
-Pi-only scope so that path does not leak into other tool families.
+as a trailing child-`PATH` fallback, after both the herder shim and inherited
+login path. Regression tests pin the Pi-only scope and prove that another
+binary beside Pi cannot shadow an inherited command.
+
+## L5 — vendor flag surface
+
+The Pi 0.80.6 `--help` surface was enumerated without inference. The owned
+credential/session/network flags present at this version are `--provider`,
+`--model`, `--api-key`, `--continue`, `--resume`, `--session`, `--session-id`,
+`--fork`, `--session-dir`, `--no-session`, and `--offline`; the launch policy
+refuses their colliding passthrough forms. There is no telemetry CLI flag and
+no auth-file CLI flag at this vendor version. Telemetry is exposed only as
+`PI_TELEMETRY`, whose passthrough assignment is already refused; the default
+auth store has no per-invocation disable surface, as recorded under P7 below.
+Extension-defined future flags remain outside the automatic refusal set until
+the vendor surface is re-characterized.
 
 ## Adjacent build-unit probes
 

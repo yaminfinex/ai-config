@@ -1,8 +1,11 @@
 package launchcmd
 
 import (
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +32,9 @@ func TestConfigurePiEnvironmentRoutesExactlyOneCredential(t *testing.T) {
 	t.Setenv("XAI_API_KEY", "xai-secret")
 	t.Setenv("PI_CODING_AGENT_DIR", "/ambient/config-pin")
 	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "/ambient/session-pin")
+	t.Setenv("PI_OFFLINE", "ambient-offline")
+	t.Setenv("PI_TELEMETRY", "ambient-telemetry")
+	t.Setenv("HCOM_NOTES", "ambient-notes")
 
 	if err := ConfigurePiEnvironment("openai"); err != nil {
 		t.Fatal(err)
@@ -93,6 +99,20 @@ func TestValidatePiExtraArgsRefusesOwnedSurfaces(t *testing.T) {
 	}
 	if err := ValidatePiExtraArgs([]string{"--model", "x"}, false); err != nil {
 		t.Fatalf("passthrough model without first-class pin rejected: %v", err)
+	}
+}
+
+func TestPiLaunchRunCallSiteRefusesOwnedPassthrough(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "selected")
+	t.Setenv("PATH", t.TempDir()) // a removed call-site guard fails safely at Pi observation, never execs hcom
+	var stderr strings.Builder
+	if code := Run([]string{"pi", "--provider", "openai", "--api-key", "stand-in"}, io.Discard, &stderr); code == 0 {
+		t.Fatal("Pi launch accepted an owned credential passthrough")
+	}
+	for _, want := range []string{"--api-key", "refused", "environment"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("launch refusal missing %q: %s", want, stderr.String())
+		}
 	}
 }
 
@@ -177,5 +197,72 @@ func TestRefreshPiVendorVersionKeepsCurrentAndPrevious(t *testing.T) {
 	history = RefreshPiVendorVersion(history, second)
 	if history == nil || history.Current != second || history.Previous == nil || *history.Previous != first {
 		t.Fatalf("history = %+v, want current second / previous first", history)
+	}
+}
+
+func TestPiLaunchBoundaryDoesNotGateVersionHashOrDrift(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		versionJSON string
+		wantVersion string
+	}{
+		{name: "old-version", versionJSON: `"0.0.1"`, wantVersion: "0.0.1"},
+		{name: "future-version", versionJSON: `"999.999.999"`, wantVersion: "999.999.999"},
+		{name: "unparseable-version", versionJSON: `17`, wantVersion: "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			pkg := filepath.Join(root, "node_modules", "@earendil-works", "pi-coding-agent")
+			entry := filepath.Join(pkg, "dist", "cli.js")
+			if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(entry, []byte("arbitrary executable contents are observed, never hashed or run\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			manifest := `{"name":"@earendil-works/pi-coding-agent","version":` + tc.versionJSON + `}`
+			if err := os.WriteFile(filepath.Join(pkg, "package.json"), []byte(manifest), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			bin := filepath.Join(root, "bin")
+			if err := os.MkdirAll(bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(entry, filepath.Join(bin, "pi")); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin) // deliberately no hcom: a policy-free launch reaches that boundary
+			t.Setenv("OPENAI_API_KEY", "selected")
+			t.Setenv("ANTHROPIC_API_KEY", "foreign")
+			t.Setenv("XAI_API_KEY", "foreign")
+			t.Setenv("PI_OFFLINE", "ambient")
+			t.Setenv("PI_TELEMETRY", "ambient")
+			t.Setenv("HCOM_NOTES", "ambient")
+
+			observation, err := ObservePiVendorVersion(time.Now())
+			if err != nil || observation.Version != tc.wantVersion {
+				t.Fatalf("observation = (%+v, %v), want version %q without refusal", observation, err, tc.wantVersion)
+			}
+			payload, err := json.Marshal(observation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, forbidden := range []string{"hash", "digest", "checksum"} {
+				if strings.Contains(strings.ToLower(string(payload)), forbidden) {
+					t.Fatalf("vendor observation grew a forbidden integrity gate field: %s", payload)
+				}
+			}
+			if typ := reflect.TypeOf(observation); typ.NumField() != 2 {
+				t.Fatalf("vendor observation has %d fields, want version + observed_at only (no hash contract)", typ.NumField())
+			}
+
+			var stderr strings.Builder
+			if code := Run([]string{"pi", "--provider", "openai"}, io.Discard, &stderr); code == 0 {
+				t.Fatal("launch unexpectedly succeeded without hcom")
+			}
+			if !strings.Contains(stderr.String(), "hcom not on PATH") {
+				t.Fatalf("launch terminated before hcom resolution, indicating a version/hash/drift gate: %s", stderr.String())
+			}
+		})
 	}
 }

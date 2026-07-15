@@ -792,12 +792,12 @@ func lifecycleLaunchTokens(herderBin string, spec startSpec, extra []string) []s
 	return append(tokens, extra...)
 }
 
-func lifecyclePathPrefix(shimsDir string, spec startSpec) string {
-	prefix := shellquote.Quote(shimsDir)
+func lifecyclePathExpression(shimsDir string, spec startSpec) string {
+	expression := shellquote.Quote(shimsDir) + ":$PATH"
 	if spec.Agent == "pi" && spec.PiBinDir != "" {
-		prefix += ":" + shellquote.Quote(spec.PiBinDir)
+		expression += ":" + shellquote.Quote(spec.PiBinDir)
 	}
-	return prefix
+	return expression
 }
 
 func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
@@ -835,8 +835,8 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 			grokEnv += " HERDER_GROK_SAFE=1"
 		}
 	}
-	innerCmd := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s AI_CONFIG_ROOT=%s HCOM_DIR=%s PATH=%s:$PATH%s; exec %s",
-		shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(paths.BinHerder), shellquote.Quote(paths.RepoRoot), shellquote.Quote(spec.HcomDir), lifecyclePathPrefix(paths.ShimsDir, spec), grokEnv, inner)
+	innerCmd := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s AI_CONFIG_ROOT=%s HCOM_DIR=%s PATH=%s%s; exec %s",
+		shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(paths.BinHerder), shellquote.Quote(paths.RepoRoot), shellquote.Quote(spec.HcomDir), lifecyclePathExpression(paths.ShimsDir, spec), grokEnv, inner)
 	argv := []string{shell, "-lic", innerCmd}
 	startArgs := []string{"agent", "start", spec.Label, focusFlag, "--split", split, "--cwd", cwd, "--", shell, "-lic", innerCmd}
 	if spec.Workspace != "" {
