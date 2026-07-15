@@ -625,17 +625,21 @@ func (s *SQLStore) Session(ctx context.Context, tool wire.Tool, logicalSessionID
 		s.mu.Lock()
 		ranked, ok := s.byKey[key]
 		s.mu.Unlock()
-		if !ok {
-			return SessionSummary{}, false, nil
+		if ok {
+			sums, err := s.hydrateRankedPage(ctx, []rankedSession{ranked})
+			if err != nil {
+				return SessionSummary{}, false, err
+			}
+			if len(sums) == 0 {
+				return SessionSummary{}, false, nil
+			}
+			return sums[0], true, nil
 		}
-		sums, err := s.hydrateRankedPage(ctx, []rankedSession{ranked})
-		if err != nil {
-			return SessionSummary{}, false, err
-		}
-		if len(sums) == 0 {
-			return SessionSummary{}, false, nil
-		}
-		return sums[0], true, nil
+		// A moved stamp deliberately serves the previous projection while
+		// refreshing. A miss in that stale snapshot is not authoritative: a
+		// newly indexed direct link must use the exact-key live lookup below
+		// instead of becoming a false 404. Known projected sessions retain the
+		// stale O(1) fast path above.
 	}
 	sums, err := s.hydrateSessions(ctx, []sessionKey{{tool, logicalSessionID}})
 	if err != nil {
@@ -701,6 +705,7 @@ func (s *SQLStore) hydrateSessions(ctx context.Context, keys []sessionKey) ([]Se
 		sum := assembleSummary(key, gens, facts, claims)
 		if c, ok := counts[countKey(key.tool, key.logical)]; ok {
 			sum.MessageRows, sum.QuarantinedRows = c.messages, c.quarantined
+			sum.IndexVersion = c.indexVersion
 		}
 		if ts, ok := maxTimestamps[countKey(key.tool, key.logical)]; ok {
 			sum.MaxTimestampUTC = ts
@@ -1104,8 +1109,9 @@ func (s *SQLStore) memberGenerations(ctx context.Context, keys []sessionKey) (ma
 }
 
 type rowCount struct {
-	messages    int
-	quarantined int
+	messages     int
+	quarantined  int
+	indexVersion int64
 }
 
 func (s *SQLStore) rowCounts(ctx context.Context, keys []sessionKey) (map[string]rowCount, error) {
@@ -1114,7 +1120,8 @@ func (s *SQLStore) rowCounts(ctx context.Context, keys []sessionKey) (map[string
 	// memberGenerations for why the pin is load-bearing).
 	rows, err := s.db.QueryContext(ctx, `SELECT m.tool, m.logical_session_id,
 			COALESCE(SUM(CASE WHEN m.quarantine = 0 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN m.quarantine = 1 THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN m.quarantine = 1 THEN 1 ELSE 0 END), 0),
+			COALESCE(MAX(m.id), 0)
 		FROM `+clause+` AS k
 		JOIN sesh_index_messages m INDEXED BY sesh_index_messages_logical
 			ON m.tool = k.column1 AND m.logical_session_id = k.column2
@@ -1128,7 +1135,7 @@ func (s *SQLStore) rowCounts(ctx context.Context, keys []sessionKey) (map[string
 		var tool wire.Tool
 		var logical string
 		var c rowCount
-		if err := rows.Scan(&tool, &logical, &c.messages, &c.quarantined); err != nil {
+		if err := rows.Scan(&tool, &logical, &c.messages, &c.quarantined, &c.indexVersion); err != nil {
 			return nil, err
 		}
 		out[countKey(tool, logical)] = c
