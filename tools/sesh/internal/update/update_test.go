@@ -509,8 +509,40 @@ func TestRefusesWhenRunningBinaryCannotBeResolved(t *testing.T) {
 	opts := baseOpts(home, target, &fakeRunner{}, &out)
 	opts.Exe = filepath.Join(home, "missing-sesh")
 	err := Run(opts)
-	if err == nil || !strings.Contains(err.Error(), "cannot resolve the running executable") {
+	if err == nil || !strings.Contains(err.Error(), "cannot resolve the running path") {
 		t.Fatalf("want closed-guard resolution error, got %v", err)
+	}
+	for _, want := range []string{opts.Exe, target, "re-run `sesh setup` to repin"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("resolution error %q does not contain %q", err, want)
+		}
+	}
+	if got, _ := os.ReadFile(target); string(got) != "old-binary" {
+		t.Fatal("resolution failure replaced the target")
+	}
+}
+
+func TestRefusesWithRemedyWhenPinnedBinaryIsDangling(t *testing.T) {
+	ch := newTestChannel(t, "")
+	ch.publish("v1.1.0", []byte("new-binary"))
+	home, target := installedNode(t, ch.srv.URL)
+	dangling := filepath.Join(home, "dangling-sesh")
+	if err := os.Symlink(filepath.Join(home, "deleted-sesh"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(setup.UnitPath(home), []byte(setup.RenderUnit(dangling)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := Run(baseOpts(home, target, &fakeRunner{}, &out))
+	if err == nil || !strings.Contains(err.Error(), "cannot resolve the pinned path") {
+		t.Fatalf("want closed-guard pinned-path error, got %v", err)
+	}
+	for _, want := range []string{target, dangling, "re-run `sesh setup` to repin"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("resolution error %q does not contain %q", err, want)
+		}
 	}
 	if got, _ := os.ReadFile(target); string(got) != "old-binary" {
 		t.Fatal("resolution failure replaced the target")

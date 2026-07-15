@@ -201,11 +201,11 @@ func resolveTarget(opts Options) (target string, hasService bool, err error) {
 	}
 	resolvedPinned, err := filepath.EvalSymlinks(pinned)
 	if err != nil {
-		return "", false, fmt.Errorf("cannot resolve the service's pinned executable %s: %w", pinned, err)
+		return "", false, fmt.Errorf("refusing to update: cannot prove this binary (%s) matches the service's pinned executable (%s): cannot resolve the pinned path: %w — re-run `sesh setup` to repin", opts.Exe, pinned, err)
 	}
 	resolvedRunning, err := filepath.EvalSymlinks(opts.Exe)
 	if err != nil {
-		return "", false, fmt.Errorf("cannot resolve the running executable %s: %w", opts.Exe, err)
+		return "", false, fmt.Errorf("refusing to update: cannot prove this binary (%s) matches the service's pinned executable (%s): cannot resolve the running path: %w — re-run `sesh setup` to repin", opts.Exe, pinned, err)
 	}
 	// Executable identity is compared after resolving both path spellings.
 	// Setup normally pins an already-resolved path, but older pins and paths

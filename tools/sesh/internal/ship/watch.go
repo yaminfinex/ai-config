@@ -19,9 +19,17 @@ func (s *Shipper) Run(ctx context.Context) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		s.logger().Warn("fsnotify unavailable; rescan-only mode", "err", err)
-		watcher = nil
-	} else {
-		defer watcher.Close()
+		return s.runWithWatcher(ctx, nil)
+	}
+	defer watcher.Close()
+	return s.runWithWatcher(ctx, watcher)
+}
+
+// runWithWatcher is the daemon composition after watcher construction. Keeping
+// the periodic rewalk here gives tests a real watcher whose registered paths
+// are observable while exercising the exact ticker wiring used by Run.
+func (s *Shipper) runWithWatcher(ctx context.Context, watcher *fsnotify.Watcher) error {
+	if watcher != nil {
 		s.watchDirs(watcher)
 	}
 
