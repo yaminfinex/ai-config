@@ -49,6 +49,7 @@ set -uo pipefail
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/../../.." && pwd)"
+INVOKING_CWD="$(pwd -P)"
 # Env hygiene (TASK-019): herder-spawned agents export HERDER_BIN/AI_CONFIG_ROOT
 # pointing at the spawner's checkout — honoring them silently drives another
 # tree's wrapper/sources. Ignore the binary override; pin the root to THIS tree.
@@ -126,7 +127,7 @@ run_spawn() {
     HERDER_SPAWN_BIND_MS="${SPAWN_BIND_MS:-60000}" \
     HERDER_SPAWN_VERIFY_MS="${SPAWN_VERIFY_MS:-1000}" \
     MOCK_SPAWN_SCENARIO="$herdr_scen" MOCK_SPAWN_AGENT="$agent_kind" \
-    MOCK_SPAWN_STATE="$CASE/mock" MOCK_PROBE_DIR="$CASE/probe" MOCK_SPAWNER_CWD="$REPO_ROOT/tools/herder" \
+    MOCK_SPAWN_STATE="$CASE/mock" MOCK_PROBE_DIR="$CASE/probe" MOCK_SPAWNER_CWD="$INVOKING_CWD" \
     MOCK_SPAWNER_BUS="$sender_bus" \
     MOCK_HCOM_SPAWN_SCENARIO="$hcom_scen" \
     "${HSP[@]}" "$@" 2>"$RUN_ERR_F")"

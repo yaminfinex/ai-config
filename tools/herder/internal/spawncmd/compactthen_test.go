@@ -21,6 +21,7 @@ type fakeProbe struct {
 	idx         int
 	deliverRet  []string
 	deliverN    int
+	lastSender  string
 	lastMessage string
 	// Event-history proof: the arm-time watermark and the id of a post-arm
 	// turn-end event (0 = no such event exists). snapshotFailed makes the arm
@@ -97,7 +98,8 @@ func (f *fakeProbe) turnEndedSince(_, _ string, watermark int64) bool {
 	return f.turnEndEventID != 0 && f.turnEndEventID > watermark
 }
 
-func (f *fakeProbe) deliver(_, _, _, message string, _ int) string {
+func (f *fakeProbe) deliver(sender, _, _, message string, _ int) string {
+	f.lastSender = sender
 	f.lastMessage = message
 	ret := "send_failed"
 	if f.deliverN < len(f.deliverRet) {
@@ -161,6 +163,25 @@ func TestThenLoopWaitsThroughActiveThenDelivers(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "delivered") {
 		t.Fatalf("log missing delivered line:\n%s", log.String())
+	}
+}
+
+func TestThenLoopDeliversWithArmedSenderIdentity(t *testing.T) {
+	p := &fakeProbe{
+		statuses:   []string{"active", "listening"},
+		deliverRet: []string{"delivered"},
+	}
+	cfg := baseCfg()
+	cfg.SenderName = "dispatcher-full-name"
+	cfg.BusName = "target-coordinate"
+	clk := &fakeClock{now: time.Unix(0, 0), step: 100 * time.Millisecond}
+	var log bytes.Buffer
+
+	if code := runThenLoop(p, cfg, &log, clk.Now, clk.Sleep); code != 0 {
+		t.Fatalf("want exit 0, got %d; log:\n%s", code, log.String())
+	}
+	if p.lastSender != cfg.SenderName {
+		t.Fatalf("deliver sender = %q, want armed --sender %q", p.lastSender, cfg.SenderName)
 	}
 }
 
@@ -622,10 +643,17 @@ func TestHcomAgentKnownShapes(t *testing.T) {
 	}
 }
 
-func TestParseThenArgsRequiresNameAndMessage(t *testing.T) {
+func TestParseThenArgsRequiresSenderNameAndMessage(t *testing.T) {
 	var errb bytes.Buffer
 	if _, code := parseThenArgs([]string{"--sender", "me-bus", "--name", "me-bus"}, &errb); code != 64 {
 		t.Fatalf("want usage exit 64 without --message, got %d", code)
+	}
+	errb.Reset()
+	if _, code := parseThenArgs([]string{"--name", "me-bus", "--message", "go"}, &errb); code != 64 {
+		t.Fatalf("want usage exit 64 without --sender, got %d", code)
+	}
+	if !strings.Contains(errb.String(), "--sender") {
+		t.Fatalf("missing-sender error does not name --sender: %s", errb.String())
 	}
 	errb.Reset()
 	cfg, code := parseThenArgs([]string{"--sender", "me-bus", "--name", "me-bus", "--message", "go", "--timeout-ms", "1234", "--poll-ms", "7"}, &errb)
