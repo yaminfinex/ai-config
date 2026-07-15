@@ -18,7 +18,8 @@ from a real source and update this README instead.
    `toolu_*` ids, file paths).
 3. Human-authored surface review: every user prompt, every Bash `command`
    string, and codex `user_message` events read by the reviewer.
-4. Result for all six fixtures: **no credentials found.** One pattern hit was
+4. Result for the captured fixtures and sanitized structural stand-ins: **no
+   credentials found.** One pattern hit was
    a false positive — a case-insensitive `eyJ` substring inside a
    `message.content[].signature` field (Anthropic's opaque thinking-block
    signature, part of the transcript format, kept intact).
@@ -29,6 +30,20 @@ is private. A leaked secret in fixtures is a repo incident — when in doubt,
 hold the fixture back (playbook rule).
 
 ## Fixtures
+
+### claude-sidecar-entry-types.jsonl — sanitized Claude sidecar census stand-in
+
+- Shape source: the top-level type/key-set census of all live
+  `$HOME/.claude/projects/*/*.jsonl` files on 2026-07-15. The committed file
+  is a minimal sanitized stand-in, following the existing Pi precedent: it
+  preserves every observed Claude sidecar type and its real key shape but
+  replaces values with fixture-only UUIDs, labels, URLs, and content.
+- 16 valid JSONL lines ending in `\n`: two real-shape conversation messages,
+  all 13 observed sidecar/state types, and one invented
+  `future-sidecar-probe` silent-drop detector.
+- The fixture contains no captured prompts, paths, repository URLs,
+  credentials, model output, or opaque signatures. Pattern and entropy scans
+  are therefore clean by construction; every string value was reviewed.
 
 ### claude-normal.jsonl — normal Claude Code session
 

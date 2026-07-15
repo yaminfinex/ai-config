@@ -20,6 +20,9 @@
 <dt>quarantined</dt><dd>{{.Session.QuarantinedRows}} lines held out of render — see raw view</dd>
 {{- end}}
 </dl>
+{{- if .KnownMetaRows}}
+<p class="secondary"><span class="badge">{{.KnownMetaRows}} known metadata lines excluded from this window</span> · full bytes remain in the <a href="{{.RawURL}}">raw view</a></p>
+{{- end}}
 {{- template "transcriptPager" .}}
 {{- if .BranchNotice}}<p class="notice">{{.BranchNotice}}</p>{{end}}
 <ol class="transcript">

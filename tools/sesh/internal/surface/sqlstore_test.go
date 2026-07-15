@@ -107,21 +107,19 @@ func TestSQLStoreRendersResumePairOnceFromLiveIndex(t *testing.T) {
 	if sum.MaxTimestampUTC == nil || !strings.HasPrefix(sum.MaxTimestampUTC.Format("2006-01-02"), "2026-06-28") {
 		t.Errorf("max parsed timestamp = %v, want the pair's real last activity on 2026-06-28", sum.MaxTimestampUTC)
 	}
-	// 206 + 269 lines - 141 overlapping (entry_type, uuid) pairs = 334,
-	// the corpus README's verified S2 arithmetic. Drift here means the live
-	// indexer and the frozen dedup rule disagree.
-	if sum.MessageRows != 334 {
-		t.Errorf("message rows = %d, want 334", sum.MessageRows)
+	// 206 + 269 lines - 141 overlapping (entry_type, uuid) pairs = 334 index
+	// rows. Of those, 143 empty-uuid Claude sidecars are deliberately not
+	// conversation messages, leaving 191 renderable rows.
+	if sum.MessageRows != 191 {
+		t.Errorf("message rows = %d, want 191 renderable conversation rows", sum.MessageRows)
 	}
 
-	// Render through the real seam: one WINDOWED transcript — the newest
-	// 200-row window plus one older window tiling the 334 deduped rows — and
-	// no duplicated uuids across the windows.
+	// Render through the real seam: the 191 conversation rows fit one bounded
+	// window, while the excluded sidecars remain byte-faithful in raw.
 	srv := newServer(t, live)
 	page1 := mustGet200(t, srv, "/s/claude/"+uuidResumeOrig)
-	page2 := mustGet200(t, srv, "/s/claude/"+uuidResumeOrig+"?page=2")
 	seen := map[string]int{}
-	for _, m := range dataUUIDRe.FindAllStringSubmatch(page1+page2, -1) {
+	for _, m := range dataUUIDRe.FindAllStringSubmatch(page1, -1) {
 		seen[m[1]]++
 	}
 	for uuid, n := range seen {
@@ -129,17 +127,49 @@ func TestSQLStoreRendersResumePairOnceFromLiveIndex(t *testing.T) {
 			t.Errorf("uuid %s rendered %d times from the live index (S2)", uuid, n)
 		}
 	}
-	if n := strings.Count(page1, `<li class="entry`); n != surface.TranscriptWindowMessages {
-		t.Errorf("newest window rendered %d entries, want %d", n, surface.TranscriptWindowMessages)
+	if n := strings.Count(page1, `<li class="entry`); n != 191 {
+		t.Errorf("newest window rendered %d entries, want 191 conversation rows", n)
 	}
-	if !strings.Contains(page1, "messages 135–334 of 334") {
-		t.Error("newest window must label its slice of the session")
+	if !strings.Contains(page1, "143 known metadata lines excluded") {
+		t.Error("transcript must badge the known sidecars excluded from its window")
 	}
-	if n := strings.Count(page2, `<li class="entry`); n != 334-surface.TranscriptWindowMessages {
-		t.Errorf("older window rendered %d entries, want %d", n, 334-surface.TranscriptWindowMessages)
+	for _, typ := range []string{"ai-title", "mode", "permission-mode", "last-prompt", "queue-operation"} {
+		if strings.Contains(page1, `<span class="etype">`+typ+`</span>`) {
+			t.Errorf("known sidecar %s leaked into the conversation window", typ)
+		}
 	}
-	mustGet200(t, srv, "/s/claude/"+uuidResumeOrig+"/raw")
+	raw := mustGet200(t, srv, "/s/claude/"+uuidResumeOrig+"/raw")
+	if !strings.Contains(raw, "permission-mode") || !strings.Contains(raw, "last-prompt") {
+		t.Error("raw view lost excluded Claude sidecar bytes")
+	}
 }
+
+func TestSQLStoreKeepsUnknownClaudeTypeDegradedVisible(t *testing.T) {
+	st, idx, live := openLiveStore(t)
+	putFixture(t, st, idx, wire.ToolClaude, sidecarFixtureSessionID, sidecarFixtureSessionID,
+		"claude-sidecar-entry-types.jsonl", nil)
+	// Simulate a row written by an older parser that blindly inherited the
+	// nested message role. Unknown entry types remain visible even when a
+	// pre-upgrade index already stamped role=meta.
+	if _, err := st.DB().ExecContext(t.Context(), `UPDATE sesh_index_messages SET role = 'meta'
+		WHERE tool = ? AND entry_type = 'future-sidecar-probe'`, wire.ToolClaude); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newServer(t, live)
+	body := mustGet200(t, srv, "/s/claude/"+sidecarFixtureSessionID)
+	if n := strings.Count(body, `<li class="entry`); n != 3 {
+		t.Fatalf("rendered %d entries, want two messages plus the unknown-type probe", n)
+	}
+	if !strings.Contains(body, `<span class="etype">future-sidecar-probe</span>`) {
+		t.Fatal("invented future Claude type was silently dropped")
+	}
+	if !strings.Contains(body, "13 known metadata lines excluded") {
+		t.Fatal("known sidecar exclusion count is missing")
+	}
+}
+
+const sidecarFixtureSessionID = "10000000-0000-0000-0000-000000000000"
 
 // TestNodeFilterLabelConsistentUnderServeStale pins the filter/display
 // invariant on the node-filtered view: the filter selects on the

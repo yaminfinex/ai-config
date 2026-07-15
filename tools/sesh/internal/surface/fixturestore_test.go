@@ -72,6 +72,15 @@ type fakeStore struct {
 }
 
 func sessionKey(tool wire.Tool, id string) string { return string(tool) + "/" + id }
+func renderableRowCount(tool wire.Tool, rows []wire.IndexMessage) int {
+	n := 0
+	for _, row := range rows {
+		if !(tool == wire.ToolClaude && row.Role == "meta") {
+			n++
+		}
+	}
+	return n
+}
 func mirrorKey(tool wire.Tool, wireSessionID, fileUUID string, gen int) string {
 	return fmt.Sprintf("%s/%s/%s/%d", tool, wireSessionID, fileUUID, gen)
 }
@@ -211,7 +220,7 @@ func (f *fakeStore) addSession(t *testing.T, spec sessionSpec) {
 			}
 			if row.Quarantine {
 				quarN++
-			} else {
+			} else if !(row.Tool == wire.ToolClaude && row.Role == "meta") {
 				msgN++
 				if row.TimestampUTC != nil && (maxTS == nil || row.TimestampUTC.After(*maxTS)) {
 					ts := *row.TimestampUTC
@@ -280,6 +289,9 @@ func parseIndexRow(spec sessionSpec, fileUUID string, fileOrd, lineOrd, byteStar
 	}
 	if spec.tool == wire.ToolClaude {
 		row.MessageUUID = meta.UUID
+		if fixtureClaudeSidecarType(meta.Type) {
+			row.Role = "meta"
+		}
 	}
 	if spec.tool == wire.ToolPi && meta.Type != "session" {
 		row.MessageUUID = meta.ID
@@ -289,6 +301,14 @@ func parseIndexRow(spec sessionSpec, fileUUID string, fileOrd, lineOrd, byteStar
 		row.Role = meta.Message.Role
 	case meta.Payload != nil && meta.Payload.Role != "":
 		row.Role = meta.Payload.Role
+	}
+	if spec.tool == wire.ToolClaude {
+		switch {
+		case fixtureClaudeSidecarType(meta.Type):
+			row.Role = "meta"
+		case !fixtureClaudeConversationType(meta.Type):
+			row.Role = "unknown"
+		}
 	}
 	if spec.tool == wire.ToolGrok {
 		// grok lines carry no role field; the indexer derives it from the
@@ -309,6 +329,26 @@ func parseIndexRow(spec sessionSpec, fileUUID string, fileOrd, lineOrd, byteStar
 		}
 	}
 	return row
+}
+
+func fixtureClaudeConversationType(entryType string) bool {
+	switch entryType {
+	case "assistant", "attachment", "message", "system", "user":
+		return true
+	default:
+		return false
+	}
+}
+
+func fixtureClaudeSidecarType(entryType string) bool {
+	switch entryType {
+	case "agent-name", "ai-title", "bridge-session", "file-history-snapshot",
+		"fork-context-ref", "last-prompt", "mode", "permission-mode", "pr-link",
+		"queue-operation", "result", "started", "worktree-state":
+		return true
+	default:
+		return false
+	}
 }
 
 // corpusStore builds the standard five-session store over the full fixture

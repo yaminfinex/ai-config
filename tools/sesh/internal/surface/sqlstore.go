@@ -530,7 +530,9 @@ func (s *SQLStore) rankSessions(ctx context.Context) ([]rankedSession, error) {
 		),
 		counts AS (
 			SELECT tool, logical_session_id AS logical,
-				SUM(CASE WHEN quarantine = 0 THEN 1 ELSE 0 END) AS message_rows,
+				SUM(CASE WHEN quarantine = 0 AND NOT (tool = 'claude' AND role = 'meta' AND entry_type IN
+					('agent-name', 'ai-title', 'bridge-session', 'file-history-snapshot', 'fork-context-ref', 'last-prompt', 'mode',
+					 'permission-mode', 'pr-link', 'queue-operation', 'result', 'started', 'worktree-state')) THEN 1 ELSE 0 END) AS message_rows,
 				SUM(CASE WHEN quarantine = 1 THEN 1 ELSE 0 END) AS quarantined_rows,
 				MAX(id) AS index_version
 			FROM sesh_index_messages
@@ -1119,7 +1121,9 @@ func (s *SQLStore) rowCounts(ctx context.Context, keys []sessionKey) (map[string
 	// Requested-keys join + INDEXED BY: full-key seeks only (see
 	// memberGenerations for why the pin is load-bearing).
 	rows, err := s.db.QueryContext(ctx, `SELECT m.tool, m.logical_session_id,
-			COALESCE(SUM(CASE WHEN m.quarantine = 0 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN m.quarantine = 0 AND NOT (m.tool = 'claude' AND m.role = 'meta' AND m.entry_type IN
+				('agent-name', 'ai-title', 'bridge-session', 'file-history-snapshot', 'fork-context-ref', 'last-prompt', 'mode',
+				 'permission-mode', 'pr-link', 'queue-operation', 'result', 'started', 'worktree-state')) THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN m.quarantine = 1 THEN 1 ELSE 0 END), 0),
 			COALESCE(MAX(m.id), 0)
 		FROM `+clause+` AS k
