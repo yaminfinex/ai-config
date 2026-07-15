@@ -22,7 +22,8 @@
   },
   "live_pane": "p_99",
   "live_status": "working",
-  "live_matched_by": "terminal"
+  "live_matched_by": "terminal",
+  "mission": null
 }
 === EXIT ===
 0

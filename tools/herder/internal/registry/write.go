@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"ai-config/tools/herder/internal/missioncontext"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
@@ -477,6 +478,9 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 			return row, false, fmt.Errorf("session %s has negative bridge capability counts", row.GUID)
 		}
 	}
+	if err := validateDurableMission(row); err != nil {
+		return row, false, err
+	}
 	if row.RecordedAt == "" {
 		row.RecordedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	}
@@ -495,7 +499,26 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 	}
 	current := V2ByGUID(proj, row.GUID)
 	if current == nil {
+		if row.Lineage.ClearedFrom != "" && row.Mission == nil {
+			if displaced := V2ByGUID(proj, row.Lineage.ClearedFrom); displaced != nil {
+				row.Mission = cloneMission(displaced.Mission)
+			}
+		}
+		if err := validateDurableMission(row); err != nil {
+			return row, false, err
+		}
 		return row, true, nil
+	}
+	if !missionChangeEvent(row) && row.Mission != nil && !sameMission(row.Mission, current.Mission) {
+		return row, false, fmt.Errorf("session %s event %q cannot change explicit mission membership", row.GUID, row.Event)
+	}
+	if clearsMission(row) {
+		row.Mission = nil
+	} else if row.Mission == nil {
+		row.Mission = cloneMission(current.Mission)
+	}
+	if err := validateDurableMission(row); err != nil {
+		return row, false, err
 	}
 	switch row.Event {
 	case "unseated":
@@ -545,6 +568,22 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 		row.State = v2.StateUnseated
 		row.Label = ""
 		row.Seat = nil
+	case "mission_joined":
+		if current.State != v2.StateSeated || row.Mission == nil {
+			return row, false, fmt.Errorf("mission join requires a seated session and explicit membership")
+		}
+		if sameMission(row.Mission, current.Mission) {
+			return row, false, nil
+		}
+		row = carrySeatFields(row, *current)
+	case "mission_left":
+		if current.State != v2.StateSeated {
+			return row, false, fmt.Errorf("mission leave requires a seated session")
+		}
+		if current.Mission == nil {
+			return row, false, nil
+		}
+		row = carrySeatFields(row, *current)
 	case "recognised", "reconciled", "seated":
 		if current.State == v2.StateRetired || current.State == v2.StateLost {
 			return row, false, nil
@@ -581,6 +620,36 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 		}
 	}
 	return row, true, nil
+}
+
+func validateDurableMission(row v2.SessionRecord) error {
+	if row.Mission == nil {
+		return nil
+	}
+	if row.Mission.Slug == "" {
+		return fmt.Errorf("session %s has mission membership without a slug", row.GUID)
+	}
+	if err := missioncontext.ValidateSlug(row.Mission.Slug); err != nil {
+		return fmt.Errorf("session %s has invalid mission membership: %w", row.GUID, err)
+	}
+	if row.Mission.Source != "explicit" {
+		return fmt.Errorf("session %s has invalid durable mission source %q", row.GUID, row.Mission.Source)
+	}
+	return nil
+}
+
+func clearsMission(row v2.SessionRecord) bool {
+	if row.Event == "mission_left" || row.Event == "adoption_source_released" {
+		return true
+	}
+	return row.Event == "unseated" && row.Lineage.DisplacedBy != ""
+}
+
+func missionChangeEvent(row v2.SessionRecord) bool {
+	if row.Event == "mission_joined" || row.Event == "mission_left" || row.Event == "adoption_source_released" {
+		return true
+	}
+	return row.Event == "unseated" && row.Lineage.DisplacedBy != ""
 }
 
 func isLegacyV1SessionAppend(row v2.SessionRecord) bool {
@@ -773,8 +842,24 @@ func sameProjectedSession(a, b v2.SessionRecord) bool {
 		a.Lineage == b.Lineage &&
 		a.Provenance == b.Provenance &&
 		sameCapabilities(a.Capabilities, b.Capabilities) &&
+		sameMission(a.Mission, b.Mission) &&
 		a.CloseResult == b.CloseResult &&
 		a.CloseReason == b.CloseReason
+}
+
+func sameMission(a, b *v2.Mission) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func cloneMission(mission *v2.Mission) *v2.Mission {
+	if mission == nil {
+		return nil
+	}
+	cp := *mission
+	return &cp
 }
 
 func sameCapabilities(a, b *v2.Capabilities) bool {
