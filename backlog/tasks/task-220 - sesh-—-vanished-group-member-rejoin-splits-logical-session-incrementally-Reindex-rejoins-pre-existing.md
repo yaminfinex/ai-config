@@ -3,7 +3,7 @@ id: TASK-220
 title: >-
   sesh — vanished group member rejoin splits logical session incrementally;
   Reindex rejoins (pre-existing)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 09:10'
 labels:
