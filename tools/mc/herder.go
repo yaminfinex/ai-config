@@ -19,6 +19,7 @@ type HerderRow struct {
 	Status string
 	Cwd    string
 	Branch string
+	SIDs   []string // tool session ids — the reliable join to hcom rows
 }
 
 func HerderList(bin string) ([]HerderRow, error) {
@@ -54,6 +55,18 @@ func HerderList(bin string) ([]HerderRow, error) {
 			row.Cwd = str(prov, "cwd")
 			if row.Branch == "" {
 				row.Branch = str(prov, "branch")
+			}
+			if sid := str(prov, "tool_session_id"); sid != "" {
+				row.SIDs = append(row.SIDs, sid)
+			}
+		}
+		if sids, ok := r["sids"].([]any); ok {
+			for _, e := range sids {
+				if m, ok := e.(map[string]any); ok {
+					if sid := str(m, "sid"); sid != "" && !contains(row.SIDs, sid) {
+						row.SIDs = append(row.SIDs, sid)
+					}
+				}
 			}
 		}
 		if row.Cwd == "" {

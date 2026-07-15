@@ -129,6 +129,7 @@ func (b *Bus) query(args ...string) ([]BusEvent, error) {
 type BusAgent struct {
 	Name      string  `json:"name"`
 	BaseName  string  `json:"base_name"`
+	SessionID string  `json:"session_id"`
 	Status    string  `json:"status"`
 	StatusCtx string  `json:"status_context"`
 	Directory string  `json:"directory"`

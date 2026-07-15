@@ -277,9 +277,13 @@ func (w *Web) roster(rw http.ResponseWriter, r *http.Request) {
 		d.Error = herr.Error()
 	}
 	byName := map[string]HerderRow{}
+	bySID := map[string]HerderRow{}
 	for _, h := range herderRows {
 		if h.Label != "" {
 			byName[h.Label] = h
+		}
+		for _, sid := range h.SIDs {
+			bySID[sid] = h
 		}
 	}
 	groups := map[string]*rosterGroup{}
@@ -298,14 +302,23 @@ func (w *Web) roster(rw http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		ra := rosterAgent{Name: a.Name, Tool: a.Tool, Status: a.Status, Detail: a.StatusCtx, Unread: int(a.Unread)}
-		if h, ok := byName[a.Name]; ok {
-			ra.Role, ra.Branch, ra.GUID = h.Role, h.Branch, h.GUID
-			seen[a.Name] = true
-		} else if h, ok := byName[a.BaseName]; ok {
-			ra.Role, ra.Branch, ra.GUID = h.Role, h.Branch, h.GUID
-			seen[a.BaseName] = true
+		// Group by spawn-grain cwd (declared intent) when herder knows the
+		// session; the bus directory tracks the live shell as it wanders.
+		dir := a.Directory
+		h, ok := bySID[a.SessionID]
+		if !ok {
+			if h, ok = byName[a.Name]; !ok {
+				h, ok = byName[a.BaseName]
+			}
 		}
-		add(a.Directory, ra)
+		if ok {
+			ra.Role, ra.Branch, ra.GUID = h.Role, h.Branch, h.GUID
+			seen[h.Label] = true
+			if h.Cwd != "" {
+				dir = h.Cwd
+			}
+		}
+		add(dir, ra)
 	}
 	for _, h := range herderRows {
 		if h.Label == "" || seen[h.Label] {
