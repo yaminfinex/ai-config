@@ -68,7 +68,7 @@ func (p *coordinateProbe) turnEndedSince(busName, _ string, watermark int64) boo
 	return false
 }
 
-func (p *coordinateProbe) deliver(_, _, _ string, _ int) string {
+func (p *coordinateProbe) deliver(_, _, _, _ string, _ int) string {
 	p.deliverN++
 	return "delivered"
 }
@@ -97,7 +97,7 @@ func (f *fakeProbe) turnEndedSince(_, _ string, watermark int64) bool {
 	return f.turnEndEventID != 0 && f.turnEndEventID > watermark
 }
 
-func (f *fakeProbe) deliver(_, _, message string, _ int) string {
+func (f *fakeProbe) deliver(_, _, _, message string, _ int) string {
 	f.lastMessage = message
 	ret := "send_failed"
 	if f.deliverN < len(f.deliverRet) {
@@ -127,6 +127,7 @@ func (c *fakeClock) Sleep(d time.Duration) {
 
 func baseCfg() thenConfig {
 	return thenConfig{
+		SenderName:     "me-bus",
 		BusName:        "me-bus",
 		BusDir:         "",
 		Message:        "continue: run the gate, then report DONE",
@@ -623,15 +624,15 @@ func TestHcomAgentKnownShapes(t *testing.T) {
 
 func TestParseThenArgsRequiresNameAndMessage(t *testing.T) {
 	var errb bytes.Buffer
-	if _, code := parseThenArgs([]string{"--name", "me-bus"}, &errb); code != 64 {
+	if _, code := parseThenArgs([]string{"--sender", "me-bus", "--name", "me-bus"}, &errb); code != 64 {
 		t.Fatalf("want usage exit 64 without --message, got %d", code)
 	}
 	errb.Reset()
-	cfg, code := parseThenArgs([]string{"--name", "me-bus", "--message", "go", "--timeout-ms", "1234", "--poll-ms", "7"}, &errb)
+	cfg, code := parseThenArgs([]string{"--sender", "me-bus", "--name", "me-bus", "--message", "go", "--timeout-ms", "1234", "--poll-ms", "7"}, &errb)
 	if code != 0 {
 		t.Fatalf("want exit 0, got %d (%s)", code, errb.String())
 	}
-	if cfg.BusName != "me-bus" || cfg.Message != "go" || cfg.TimeoutMS != 1234 || cfg.PollMS != 7 {
+	if cfg.SenderName != "me-bus" || cfg.BusName != "me-bus" || cfg.Message != "go" || cfg.TimeoutMS != 1234 || cfg.PollMS != 7 {
 		t.Fatalf("parsed cfg wrong: %+v", cfg)
 	}
 }

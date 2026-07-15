@@ -232,6 +232,86 @@ func TestSpawnMissionRefusalStopsBeforePaneCreation(t *testing.T) {
 	}
 }
 
+func TestPromptSenderProofAcceptsLivePaneWhenRecordedSessionIsStale(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	stateDir := filepath.Join(root, "state")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stub := `#!/bin/sh
+printf '%s\n' '[{"name":"live-self","session_id":"current-session","joined":true,"launch_context":{"pane_id":"pane-self"}}]'
+`
+	if err := os.WriteFile(filepath.Join(binDir, "hcom"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HERDR_ENV", "1")
+	t.Setenv("HERDR_PANE_ID", "pane-self")
+	t.Setenv("HERDER_GUID", "guid-self")
+	t.Setenv("HCOM_SESSION_ID", "stale-session")
+
+	registryPath := filepath.Join(stateDir, "registry.jsonl")
+	if err := registry.Append(registryPath, []byte(`{"guid":"guid-self","short_guid":"guid-sel","label":"dispatcher","pane_id":"pane-self","terminal_id":"term-self","hcom_dir":"/bus","hcom_name":"live-self","status":"active"}`)); err != nil {
+		t.Fatal(err)
+	}
+	client := &scriptedSpawnClient{responses: []spawnResponse{{
+		want: "pane get pane-self",
+		out:  []byte(`{"result":{"pane":{"pane_id":"pane-self","terminal_id":"term-self","foreground_cwd":"/repo"}}}`),
+	}}}
+	r := &runner{herdr: client}
+	got, err := r.verifyPromptSender(registryPath, "/bus")
+	if err != nil || got != "live-self" {
+		t.Fatalf("verifyPromptSender = (%q, %v), want pane-proven live-self", got, err)
+	}
+	assertSpawnScriptConsumed(t, client)
+}
+
+func TestPromptSenderRefusalStopsBeforeChildCreation(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	stateDir := filepath.Join(root, "state")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "hcom"), []byte("#!/bin/sh\nprintf '[]\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HOME", root)
+	t.Setenv("HERDER_STATE_DIR", stateDir)
+	t.Setenv("HERDR_ENV", "1")
+	t.Setenv("HERDR_PANE_ID", "pane-self")
+	t.Setenv("HERDER_GUID", "guid-self")
+	t.Setenv("HCOM_SESSION_ID", "stale-session")
+	t.Setenv("HCOM_PROCESS_ID", "")
+
+	registryPath := filepath.Join(stateDir, "registry.jsonl")
+	if err := registry.Append(registryPath, []byte(`{"guid":"guid-self","short_guid":"guid-sel","label":"dispatcher","pane_id":"pane-self","terminal_id":"term-self","hcom_dir":"/bus","hcom_name":"missing-self","status":"active"}`)); err != nil {
+		t.Fatal(err)
+	}
+	client := &scriptedSpawnClient{responses: []spawnResponse{{
+		want: "pane get pane-self",
+		out:  []byte(`{"result":{"pane":{"pane_id":"pane-self","terminal_id":"term-self","foreground_cwd":"/repo"}}}`),
+	}}}
+	var stderr strings.Builder
+	r := &runner{
+		opts:   options{Role: "worker", Agent: "codex", Prompt: "prompt", Worktree: "branch"},
+		herdr:  client,
+		stdout: io.Discard,
+		stderr: &stderr,
+	}
+	if code := r.run(); code != 2 {
+		t.Fatalf("run() code = %d, want sender refusal exit 2; stderr=%s", code, stderr.String())
+	}
+	assertSpawnScriptConsumed(t, client)
+	for _, want := range []string{"sender identity is not verified", "Run `herder enroll`", "Nothing was launched"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+		}
+	}
+}
+
 func TestRegisterSpawnWritesInitialExplicitMission(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	record := missionSpawnRecord(&v2.Mission{Slug: "alpha", Source: missioncontext.SourceExplicit})

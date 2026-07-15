@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
 )
 
@@ -125,7 +127,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				}
 				return 0
 			}
-			return sender.send(target, target, "", message, opts.TimeoutMS, opts.JSONOutput, stdout, stderr)
+			senderName, err := verifiedCallerSender(recs, "")
+			if err != nil {
+				writeSenderRefusal(stderr, err)
+				return 2
+			}
+			return sender.send(senderName, target, target, "", message, opts.TimeoutMS, opts.JSONOutput, stdout, stderr)
 		}
 		if opts.DryRun {
 			fmt.Fprintf(stderr, "herder send --dry-run: would REFUSE (exit 2): no registry row matches %s — bus-only (keystroke transport removed)\n", target)
@@ -168,7 +175,128 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	return sender.send(target, rec.HcomName, rec.HcomDir, message, opts.TimeoutMS, opts.JSONOutput, stdout, stderr)
+	senderName, err := verifiedCallerSender(recs, rec.HcomDir)
+	if err != nil {
+		writeSenderRefusal(stderr, err)
+		return 2
+	}
+	return sender.send(senderName, target, rec.HcomName, rec.HcomDir, message, opts.TimeoutMS, opts.JSONOutput, stdout, stderr)
+}
+
+func verifiedCallerSender(recs []registry.Record, busDir string) (string, error) {
+	paneIDs, keys := currentCallerCoordinates()
+	evidence := hcomidentity.CurrentEvidence(paneIDs...)
+	liveName, err := ResolveLiveSender(busDir, evidence)
+	if err != nil {
+		return "", err
+	}
+
+	if guid := os.Getenv("HERDER_GUID"); guid != "" {
+		row := registry.Resolve(recs, guid)
+		if row == nil {
+			return "", &SenderIdentityRefusal{
+				Cause:  "HERDER_GUID does not resolve to a registry row for the calling session",
+				Remedy: "Run `herder enroll` from this session to restore its registry binding, then retry",
+			}
+		}
+		return requireStoredSender(row, liveName)
+	}
+	if sid := os.Getenv("HCOM_SESSION_ID"); sid != "" {
+		if row := registry.ResolveByToolSessionID(recs, sid); row != nil {
+			// A stale session correlate may still point at an unseated predecessor.
+			// Let current pane/terminal evidence recover the seated caller; a
+			// conflicting seated row remains a hard refusal below.
+			if registry.IsSeated(*row) {
+				return requireStoredSender(row, liveName)
+			}
+		}
+	}
+
+	var matched *registry.Record
+	for _, key := range keys {
+		for _, candidate := range registry.SeatedCandidatesByPaneOrTerminal(recs, key) {
+			if candidate.HcomName != liveName {
+				continue
+			}
+			if matched != nil && !sameRecordIdentity(matched, &candidate) {
+				return "", &SenderIdentityRefusal{
+					Cause:  "multiple seated registry rows match the caller's live bus identity and pane/terminal evidence",
+					Remedy: "Reconcile or re-enroll this session so one seated row owns the live bus identity, then retry",
+				}
+			}
+			copy := candidate
+			matched = &copy
+		}
+	}
+	if matched == nil {
+		return "", &SenderIdentityRefusal{
+			Cause:  fmt.Sprintf("live caller evidence proves @%s, but no seated registry row with that bus name matches the caller's pane or terminal", liveName),
+			Remedy: "Run `herder enroll` from this session to restore its registry binding, then retry",
+		}
+	}
+	return liveName, nil
+}
+
+func currentCallerCoordinates() (paneIDs, registryKeys []string) {
+	envPane := os.Getenv("HERDR_PANE_ID")
+	paneIDs = []string{envPane}
+	registryKeys = []string{envPane}
+	if envPane == "" {
+		return uniqueNonEmpty(paneIDs), uniqueNonEmpty(registryKeys)
+	}
+	client := &herdrcli.Client{}
+	if out, err := client.Output("pane", "get", envPane); err == nil {
+		if pane, parseErr := herdrcli.ParsePaneGet(out); parseErr == nil {
+			paneIDs = append(paneIDs, pane.PaneID)
+			registryKeys = append(registryKeys, pane.PaneID, pane.TerminalID)
+		}
+	}
+	return uniqueNonEmpty(paneIDs), uniqueNonEmpty(registryKeys)
+}
+
+func uniqueNonEmpty(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != "" && !seen[value] {
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func requireStoredSender(row *registry.Record, liveName string) (string, error) {
+	if !registry.IsSeated(*row) {
+		return "", &SenderIdentityRefusal{
+			Cause:  "the calling session's registry row is not seated",
+			Remedy: "Run `herder enroll` from this session to restore its live registry seat, then retry",
+		}
+	}
+	if row.HcomName == liveName {
+		return liveName, nil
+	}
+	stored := row.HcomName
+	if stored == "" || stored == "null" {
+		stored = "(none)"
+	} else {
+		stored = "@" + stored
+	}
+	return "", &SenderIdentityRefusal{
+		Cause:  fmt.Sprintf("the calling session's registry row records %s but live evidence proves @%s", stored, liveName),
+		Remedy: "Run `herder enroll` from this session to repair its registry bus binding, then retry",
+	}
+}
+
+func sameRecordIdentity(a, b *registry.Record) bool {
+	if a == nil || b == nil || a.GUID == nil || b.GUID == nil {
+		return false
+	}
+	return *a.GUID == *b.GUID
+}
+
+func writeSenderRefusal(stderr io.Writer, err error) {
+	fmt.Fprintf(stderr, "herder send: refused — sender identity is not verified: %s. Nothing was sent.\n", err)
 }
 
 // disambiguatePane picks the single bus-live row among several seated sessions
@@ -310,6 +438,9 @@ func printHelp(stdout io.Writer) {
 		"the candidate list when the coordinate is ambiguous (0 or >1 rows bus-live) rather than",
 		"guessing. hcom is THE transport — a target with no bus-bound registry row is refused",
 		"(exit 2); nothing is ever typed into a pane.",
+		"The caller must also prove its own joined bus identity from live session/process/pane",
+		"evidence matching its registry row. Missing or conflicting sender proof refuses with",
+		"an enroll/repair remedy; no user-facing label or synthetic sender is substituted.",
 		"(The herdr keystroke transport was removed. The one surviving keystroke path is",
 		"spawn's boot-time initial-prompt paste, owned by `herder spawn`.)",
 		"",
@@ -323,8 +454,8 @@ func printHelp(stdout io.Writer) {
 		"      normal for a busy target; the bus injects the message at its next turn boundary.",
 		"      Do NOT resend; a resend double-delivers.",
 		"  1   hcom send itself failed (transient — the bus errored).",
-		"  2   refused: target is not bus-bound (no registry row, or a row without a recorded",
-		"      bus name), or not joined on its recorded bus. Nothing was sent.",
+		"  2   refused: sender identity is not verified, target is not bus-bound (no registry row",
+		"      or recorded bus name), or target is not joined on its recorded bus. Nothing was sent.",
 		"  64  usage error.",
 		"",
 		"If it fails:",

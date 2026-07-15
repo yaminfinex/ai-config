@@ -47,6 +47,7 @@ import (
 // the timing bounds. Every field is captured by the parent at compact time so
 // the child re-resolves nothing.
 type thenConfig struct {
+	SenderName     string
 	BusName        string
 	BusDir         string
 	Message        string
@@ -78,7 +79,7 @@ type busProbe interface {
 	listStatus(busName, busDir string) string
 	maxEventID(busName, busDir string) (int64, bool)
 	turnEndedSince(busName, busDir string, watermark int64) bool
-	deliver(busName, busDir, message string, timeoutMS int) string
+	deliver(senderName, busName, busDir, message string, timeoutMS int) string
 }
 
 // RunCompactThen is the detached child entry point (`herder compact-then …`).
@@ -199,7 +200,7 @@ func thenDeliver(p busProbe, cfg thenConfig, log io.Writer, now func() time.Time
 		// Cap the receipt window to the budget actually left (viro P2 nit): a
 		// 3s receipt wait must not overshoot a near-exhausted --then-timeout.
 		perSend := capMS(cfg.DeliverdMS, deadline, now)
-		verdict := p.deliver(cfg.BusName, cfg.BusDir, cfg.Message, perSend)
+		verdict := p.deliver(cfg.SenderName, cfg.BusName, cfg.BusDir, cfg.Message, perSend)
 		switch verdict {
 		case "delivered":
 			fmt.Fprintf(log, "herder compact-then: delivered on attempt %d — continuation is in @%s's queue post-compaction.\n", attempt, cfg.BusName)
@@ -340,8 +341,8 @@ func hcomAgentKnown(raw []byte, busName string) bool {
 	return false
 }
 
-func (hcomProbe) deliver(busName, busDir, message string, timeoutMS int) string {
-	return send.DeliverBus(busName, busDir, message, timeoutMS)
+func (hcomProbe) deliver(senderName, busName, busDir, message string, timeoutMS int) string {
+	return send.DeliverBus(senderName, busName, busDir, message, timeoutMS)
 }
 
 // hcomEvent is the subset of an `hcom events` record turn-end detection reads:
@@ -500,7 +501,7 @@ func recordThenLifecycle(cfg thenConfig, status, reason string, log io.Writer, a
 // already succeeded; the continuation is the best-effort side channel, TASK-017
 // warn-never-block precedent). In HERDER_COMPACT_THEN_DRYRUN mode it describes
 // the armed sender deterministically and forks nothing (hermetic goldens).
-func armCompactThen(stderr io.Writer, shortGUID, busName, busDir, message string, timeoutMS int) {
+func armCompactThen(stderr io.Writer, shortGUID, senderName, busName, busDir, message string, timeoutMS int) {
 	logDir := compactThenLogDir()
 	if os.Getenv("HERDER_COMPACT_THEN_DRYRUN") == "1" {
 		fmt.Fprintf(stderr, "herder compact: --then armed (dry-run) — after this turn ends, the continuation (%d chars) delivers to @%s on bus %s (timeout %dms); diagnostics under %s/\n",
@@ -523,6 +524,7 @@ func armCompactThen(stderr io.Writer, shortGUID, busName, busDir, message string
 	defer logFile.Close()
 
 	child := exec.Command(bin, "compact-then",
+		"--sender", senderName,
 		"--name", busName,
 		"--dir", busDir,
 		"--message", message,
@@ -572,6 +574,8 @@ func parseThenArgs(args []string, stderr io.Writer) (thenConfig, int) {
 	}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--sender":
+			cfg.SenderName, i = nextValue(args, i)
 		case "--name":
 			cfg.BusName, i = nextValue(args, i)
 		case "--dir":
@@ -595,8 +599,8 @@ func parseThenArgs(args []string, stderr io.Writer) (thenConfig, int) {
 			return cfg, 64
 		}
 	}
-	if cfg.BusName == "" || cfg.Message == "" {
-		fmt.Fprintf(stderr, "herder compact-then: --name and --message are required (internal subcommand; use `herder compact --then`)\n")
+	if cfg.SenderName == "" || cfg.BusName == "" || cfg.Message == "" {
+		fmt.Fprintf(stderr, "herder compact-then: --sender, --name, and --message are required (internal subcommand; use `herder compact --then`)\n")
 		return cfg, 64
 	}
 	if cfg.PollMS <= 0 {

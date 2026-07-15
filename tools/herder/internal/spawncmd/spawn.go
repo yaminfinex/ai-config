@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/grokbridge"
+	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herderpaths"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
@@ -854,6 +855,21 @@ func (r *runner) run() int {
 	// Every spawned hcom-capable child joins the node's global bus. Resolve it
 	// early because --notify-to validation is scoped to the bus the child joins.
 	hcomDirEff := filepath.Join(os.Getenv("HOME"), ".hcom")
+	isHcomAgent := launchcmd.IsHcomCapable(opts.Agent)
+	if isHcomAgent {
+		if _, err := exec.LookPath("hcom"); err != nil {
+			die(r.stderr, "hcom is required to spawn '"+opts.Agent+"' (launch-through-hcom); install hcom or spawn --agent bash")
+			return 1
+		}
+	}
+	promptSender := ""
+	if isHcomAgent && opts.Prompt != "" {
+		promptSender, err = r.verifyPromptSender(registryPath, hcomDirEff)
+		if err != nil {
+			fmt.Fprintf(r.stderr, "herder spawn: refused — initial prompt sender identity is not verified: %s. Nothing was launched.\n", err)
+			return 2
+		}
+	}
 
 	// Notify is bus-native ONLY (TASK-003): the spawner must resolve to a
 	// recorded hcom name — via --notify-to (a registry row, or a bus name
@@ -891,14 +907,6 @@ func (r *runner) run() int {
 		grokSessionID, err = launchcmd.NewGrokSessionID()
 		if err != nil {
 			die(r.stderr, "preassign Grok session id: "+err.Error())
-			return 1
-		}
-	}
-
-	isHcomAgent := launchcmd.IsHcomCapable(opts.Agent)
-	if isHcomAgent {
-		if _, err := exec.LookPath("hcom"); err != nil {
-			die(r.stderr, "hcom is required to spawn '"+opts.Agent+"' (launch-through-hcom); install hcom or spawn --agent bash")
 			return 1
 		}
 	}
@@ -1182,7 +1190,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		deliveryResult = "blocked_trust_modal"
 	} else if busPrompt {
 		if capturedName != "" {
-			deliveryResult = send.DeliverBus(capturedName, hcomDirEff, opts.Prompt, opts.VerifyMS)
+			deliveryResult = send.DeliverBus(promptSender, capturedName, hcomDirEff, opts.Prompt, opts.VerifyMS)
 			if deliveryResult == "delivered" || deliveryResult == "queued" {
 				promptSent = true
 			}
@@ -1677,7 +1685,9 @@ func printHelp(stdout io.Writer) {
 		"  --role R          agent role; becomes the hcom --tag and label prefix (required)",
 		"  --agent A         tool to run: claude, codex, gemini, bash, ... (required)",
 		"  --prompt TEXT     initial prompt (or --prompt-file F): bus-capable agents get it as a",
-		"                    verified hcom message once their bus name binds; bash gets it typed",
+		"                    verified hcom message once their bus name binds; the spawner's live",
+		"                    bus identity is proven before child creation and stamped as sender;",
+		"                    an unverified spawner refuses with an enroll/repair remedy; bash gets it typed",
 		"  --split D         opt into the current tab with a right or down split",
 		"  --workspace ID    place in this workspace; --from-pane PANE_ID copies another pane's",
 		"  --tab ID          add to an existing tab; --new-tab explicitly selects the default fresh-tab placement",
@@ -2101,6 +2111,46 @@ func envInt(name string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+func (r *runner) verifyPromptSender(registryPath, busDir string) (string, error) {
+	envPane := os.Getenv("HERDR_PANE_ID")
+	if os.Getenv("HERDR_ENV") != "1" || envPane == "" {
+		return "", &send.SenderIdentityRefusal{
+			Cause:  "the spawning process is not inside a herdr pane with a provable session identity",
+			Remedy: "Run the spawn from a bus-bound herder session, or run `herder enroll` there first, then retry",
+		}
+	}
+	out, err := r.herdr.Output("pane", "get", envPane)
+	if err != nil {
+		return "", &send.SenderIdentityRefusal{
+			Cause:  "the spawning pane cannot be resolved from live herdr state",
+			Remedy: "Restore the herdr pane or re-enter the dispatcher session, then retry",
+		}
+	}
+	pane, err := herdrcli.ParsePaneGet(out)
+	if err != nil || pane.TerminalID == "" {
+		return "", &send.SenderIdentityRefusal{
+			Cause:  "the spawning pane has no live terminal identity",
+			Remedy: "Restore the herdr pane or re-enter the dispatcher session, then retry",
+		}
+	}
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		return "", &send.SenderIdentityRefusal{
+			Cause:  "the spawning session registry is not readable: " + err.Error(),
+			Remedy: "Restore the herder registry or run `herder enroll` from this session, then retry",
+		}
+	}
+	self, refuse := resolveSelfRow(recs, pane)
+	if self.row == nil {
+		return "", &send.SenderIdentityRefusal{
+			Cause:  "the spawning registry row is not provable: " + strings.TrimSuffix(strings.TrimSpace(refuse), "."),
+			Remedy: "Run `herder enroll` from this session to restore its registry and bus binding, then retry",
+		}
+	}
+	evidence := hcomidentity.CurrentEvidence(envPane, pane.PaneID)
+	return send.VerifyStoredSender(self.row.HcomName, busDir, evidence)
 }
 
 func firstNonEmpty(values ...string) string {

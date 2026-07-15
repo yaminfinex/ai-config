@@ -47,28 +47,37 @@ case "${1:-} ${2:-}" in
   "list --json")
     case "$SCEN" in
       launchctx*)
-        jq -n '[
+        jq -n --arg sender "${MOCK_SPAWNER_BUS:-dispatcher-rive}" '[
+          {name:$sender, joined:true, session_id:"current-session",
+           created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_orch"}},
           {name:"decoy-yolo",  tag:"other",  directory:"/elsewhere",
            created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_99"}},
           {name:"worker-rive", tag:"worker", directory:"/elsewhere",
            created_at:"2026-01-01T00:00:01Z", launch_context:{pane_id:"p_50"}}
         ]';;
       fallback)
-        jq -n '[
+        jq -n --arg sender "${MOCK_SPAWNER_BUS:-dispatcher-rive}" '[
+          {name:$sender, joined:true, session_id:"current-session",
+           created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_orch"}},
           {name:"decoy-dir",   tag:"worker", directory:"/elsewhere",
            created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_98"}},
           {name:"worker-nova", tag:"worker", directory:"/mock/cwd",
            created_at:"2026-01-01T00:00:01Z", launch_context:{pane_id:"p_99"}}
         ]';;
       fallback_ambiguous)
-        jq -n '[
+        jq -n --arg sender "${MOCK_SPAWNER_BUS:-dispatcher-rive}" '[
+          {name:$sender, joined:true, session_id:"current-session",
+           created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_orch"}},
           {name:"worker-old",  tag:"worker", directory:"/mock/cwd",
            created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_98"}},
           {name:"worker-nova", tag:"worker", directory:"/mock/cwd",
            created_at:"2026-01-01T00:00:01Z", launch_context:{pane_id:"p_99"}}
         ]';;
       *)
-        jq -n '[]';;
+        jq -n --arg sender "${MOCK_SPAWNER_BUS:-dispatcher-rive}" '[
+          {name:$sender, joined:true, session_id:"current-session",
+           created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_orch"}}
+        ]';;
     esac;;
   "list "*)
     # hcom list <bus_name> — the bus send's target-joined precheck

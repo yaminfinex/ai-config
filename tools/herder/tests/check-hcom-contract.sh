@@ -35,8 +35,8 @@ HS=("$REPO_ROOT/bin/herder" send)
 [[ -n "${HERDER_CMD_SEND_BIN:-}" ]] && HS=("$HERDER_CMD_SEND_BIN")
 
 # Hermetic bin: mock `hcom` first on PATH, real jq/date/bash behind it.
-# Deliberately NO herdr — bus-only send must never invoke one; a lingering
-# keystroke path would fail loudly here.
+# Deliberately NO herdr — optional caller-coordinate expansion may fail soft,
+# while transport must remain bus-only; a lingering keystroke path fails loudly.
 MOCKBIN="$(mktemp -d)"
 ln -s "$TESTS_DIR/mock-hcom" "$MOCKBIN/hcom"
 
@@ -47,6 +47,9 @@ ln -s "$TESTS_DIR/mock-hcom" "$MOCKBIN/hcom"
 REG_DIR="$(mktemp -d)"
 BUS_DIR="$(mktemp -d)"   # stands in for the team's HCOM_DIR
 {
+	jq -nc --arg dir "$BUS_DIR" \
+	  '{kind:"session", guid:"g-sender", event:"seated", state:"seated", label:"sender", role:"lead", tool:"claude",
+	    seat:{kind:"herdr", terminal_id:"term_SENDER", pane_id:"p_sender", namespace:$dir, hcom_name:"sender-bus"}}'
   jq -nc --arg dir "$BUS_DIR" \
     '{guid:"g-bus", short_guid:"busagent", label:"busagent", role:"reviewer", agent:"claude",
       terminal_id:"term_BUS", pane_id:"p_10",
@@ -75,13 +78,13 @@ run_send() {
   if [[ -n "$ambient_dir" ]]; then
     RUN_OUT="$(env -i \
       PATH="$PATH_HERMETIC" HOME="$HOME" HCOM_DIR="$ambient_dir" \
-      HERDR_ENV=1 HERDER_STATE_DIR="$REG_DIR" HERDER_BUS="$bus" HERDER_LABEL="orchestrator" \
+	  HERDR_ENV=1 HERDR_PANE_ID=p_sender HERDER_GUID=g-sender HERDER_STATE_DIR="$REG_DIR" HERDER_BUS="$bus" \
       MOCK_HCOM_SCENARIO="$scen" MOCK_HCOM_PROBE="$probe" \
       "${HS[@]}" "$@" 2>"$errf")"
   else
     RUN_OUT="$(env -i \
       PATH="$PATH_HERMETIC" HOME="$HOME" \
-      HERDR_ENV=1 HERDER_STATE_DIR="$REG_DIR" HERDER_BUS="$bus" HERDER_LABEL="orchestrator" \
+	  HERDR_ENV=1 HERDR_PANE_ID=p_sender HERDER_GUID=g-sender HERDER_STATE_DIR="$REG_DIR" HERDER_BUS="$bus" \
       MOCK_HCOM_SCENARIO="$scen" MOCK_HCOM_PROBE="$probe" \
       "${HS[@]}" "$@" 2>"$errf")"
   fi
@@ -116,15 +119,15 @@ grep -q 'verify=delivered' <<<"$RUN_ERR" && ok "delivered: verify=delivered" || 
 grep -q '@busagent-rive'   <<<"$RUN_ERR" && ok "delivered: reports bus name" || bad "delivered: reports bus name" "err=$RUN_ERR"
 # scoping: mock recorded the effective HCOM_DIR == the peer's recorded hcom_dir
 [[ "$(cat "$P/hcom_dir" 2>/dev/null)" == "$BUS_DIR" ]] && ok "scoping: HCOM_DIR pinned to recorded bus" || bad "scoping: HCOM_DIR pinned" "got '$(cat "$P/hcom_dir" 2>/dev/null)' want '$BUS_DIR'"
-# addressing: send used @<hcom_name>, --from orchestrator, -- <message>
+# addressing: send used @<hcom_name>, --from the verified live sender, -- <message>
 SARGV="$(cat "$P/send_argv" 2>/dev/null || true)"
-grep -q -- '--from orchestrator' <<<"$SARGV" && ok "addressing: --from sender" || bad "addressing: --from sender" "argv='$SARGV'"
+grep -q -- '--from sender-bus' <<<"$SARGV" && ok "addressing: --from sender" || bad "addressing: --from sender" "argv='$SARGV'"
 grep -q -- '@busagent-rive'       <<<"$SARGV" && ok "addressing: @hcom_name recipient" || bad "addressing: @hcom_name" "argv='$SARGV'"
 grep -q -- '-- hello world'        <<<"$SARGV" && ok "addressing: message after --" || bad "addressing: message after --" "argv='$SARGV'"
 # verify probe correlated on the RECEIVER instance + the sender's receipt
 # context (receipts land as instance=<target>, context=deliver:<sender>)
 grep -q -- '--agent busagent-rive' "$P/events_argv" 2>/dev/null && ok "verify: ack keyed on receiver instance" || bad "verify: ack keyed on receiver instance" "$(cat "$P/events_argv" 2>/dev/null)"
-grep -q 'deliver:orchestrator' "$P/events_argv" 2>/dev/null && ok "verify: ack keyed on sender receipt context" || bad "verify: ack keyed on sender receipt context" "$(cat "$P/events_argv" 2>/dev/null)"
+grep -q 'deliver:sender-bus' "$P/events_argv" 2>/dev/null && ok "verify: ack keyed on sender receipt context" || bad "verify: ack keyed on sender receipt context" "$(cat "$P/events_argv" 2>/dev/null)"
 # JSON record shape
 grep -q '"hcom_name":"busagent-rive"' <<<"$RUN_OUT" && ok "json: hcom_name field" || bad "json: hcom_name field" "out='$RUN_OUT'"
 

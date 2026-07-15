@@ -8,8 +8,8 @@
 # force/modal*/timeout/dryrun_*) was removed; the one surviving keystroke path
 # is spawn's boot-time initial-prompt paste, exercised by
 # check-spawn-contract.sh, not here. Proof the transport is gone: this suite
-# puts NO herdr on the hermetic PATH — a send that still tried keystrokes
-# would fail loudly.
+# puts NO herdr on the hermetic PATH. Optional caller-coordinate expansion may
+# fail soft; a send that still tried to use herdr for transport would fail loudly.
 #
 # Drives the REAL herder send CLI against a hermetic mock `hcom` and diffs the
 # stderr human line, the --json record, exit code, AND the recorded hcom argv
@@ -44,7 +44,8 @@ WRITE=0
 [[ "${1:-}" == "--write" ]] && WRITE=1
 
 # Hermetic bin dir: mock `hcom` first on PATH, real jq/awk/grep behind it.
-# Deliberately NO herdr here — bus-only send must never need one.
+# Deliberately NO herdr here: the env pane is sufficient sender proof, and the
+# bus-only delivery path must not depend on herdr transport.
 MOCKBIN="$(mktemp -d)"
 ln -s "$TESTS_DIR/mock-hcom" "$MOCKBIN/hcom"
 
@@ -54,6 +55,9 @@ ln -s "$TESTS_DIR/mock-hcom" "$MOCKBIN/hcom"
 REG_DIR="$(mktemp -d)"
 BUS_DIR="$(mktemp -d)"
 {
+	jq -nc --arg dir "$BUS_DIR" \
+	  '{kind:"session", guid:"guid-sender-0000", event:"seated", state:"seated", label:"sender", role:"lead", tool:"claude",
+	    seat:{kind:"herdr", terminal_id:"term_SENDER", pane_id:"p_sender", namespace:$dir, hcom_name:"sender-bus"}}'
   jq -nc --arg dir "$BUS_DIR" \
     '{kind:"session", guid:"guid-alpha-0000", event:"seated", state:"seated", label:"alpha", role:"reviewer", tool:"claude", team:"alpha-team",
       seat:{kind:"herdr", terminal_id:"term_AAA", pane_id:"p_10", namespace:$dir, hcom_name:"alpha-rive"},
@@ -112,7 +116,7 @@ run_one() {  # $1=HERDER_BUS ('auto' → unset-equivalent), $2=mock scenario, re
   out="$(env -i \
     PATH="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin" \
     HOME="$HOME" \
-    HERDR_ENV=1 HERDER_BUS="$bus" HERDER_LABEL="orchestrator" \
+	HERDR_ENV=1 HERDR_PANE_ID=p_sender HERDER_GUID=guid-sender-0000 HERDER_BUS="$bus" \
     HERDER_STATE_DIR="$REG_DIR" \
     MOCK_HCOM_SCENARIO="$scen" MOCK_HCOM_PROBE="$probe" \
     "${HS[@]}" "$@" 2>"$err")"

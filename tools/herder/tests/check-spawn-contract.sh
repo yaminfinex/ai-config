@@ -98,9 +98,18 @@ fail=0
 run_spawn() {
   local herdr_scen="$1" agent_kind="$2" hcom_scen="$3"; shift 3
   mkdir -p "$CASE/home" "$CASE/state" "$CASE/mock" "$CASE/probe"
+	local needs_sender=0 arg default_sender sender_bus
+	if [[ "$agent_kind" != "bash" ]]; then
+		for arg in "$@"; do [[ "$arg" == "--prompt" ]] && needs_sender=1; done
+	fi
+	sender_bus="${SPAWN_SENDER_BUS:-dispatcher-rive}"
+	default_sender="{\"kind\":\"session\",\"guid\":\"${SPAWN_HERDER_GUID:-guid-dispatcher}\",\"event\":\"seated\",\"state\":\"seated\",\"label\":\"dispatcher\",\"role\":\"lead\",\"tool\":\"claude\",\"seat\":{\"kind\":\"herdr\",\"terminal_id\":\"term_ORCH\",\"pane_id\":\"p_orch\",\"hcom_name\":\"$sender_bus\",\"namespace\":\"$CASE/home/.hcom\"}}"
   # Optional pre-seed so a scenario can give the spawner a registry identity
   # (e.g. a bus-bound orchestrator row that --notify resolves against).
-  [[ -n "${SPAWN_SEED_REGISTRY:-}" ]] && printf '%s\n' "$SPAWN_SEED_REGISTRY" >"$CASE/state/registry.jsonl"
+	if [[ "$needs_sender" -eq 1 && -z "${SPAWN_NO_DEFAULT_SENDER:-}" && -z "${SPAWN_SEED_IS_SELF:-}" ]]; then
+		printf '%s\n' "$default_sender" >"$CASE/state/registry.jsonl"
+	fi
+	[[ -n "${SPAWN_SEED_REGISTRY:-}" ]] && printf '%s\n' "$SPAWN_SEED_REGISTRY" >>"$CASE/state/registry.jsonl"
   RUN_ERR_F="$CASE/stderr"
   RUN_OUT="$(env -i \
     PATH="$PATH_HERMETIC" \
@@ -117,7 +126,8 @@ run_spawn() {
     HERDER_SPAWN_BIND_MS="${SPAWN_BIND_MS:-60000}" \
     HERDER_SPAWN_VERIFY_MS="${SPAWN_VERIFY_MS:-1000}" \
     MOCK_SPAWN_SCENARIO="$herdr_scen" MOCK_SPAWN_AGENT="$agent_kind" \
-    MOCK_SPAWN_STATE="$CASE/mock" MOCK_PROBE_DIR="$CASE/probe" \
+    MOCK_SPAWN_STATE="$CASE/mock" MOCK_PROBE_DIR="$CASE/probe" MOCK_SPAWNER_CWD="$REPO_ROOT/tools/herder" \
+    MOCK_SPAWNER_BUS="$sender_bus" \
     MOCK_HCOM_SPAWN_SCENARIO="$hcom_scen" \
     "${HSP[@]}" "$@" 2>"$RUN_ERR_F")"
   RUN_RC=$?
@@ -231,20 +241,26 @@ unset SPAWN_BIND_MS
 # Bus-less spawner: notify is bus-native ONLY (TASK-003) — a spawner that
 # resolves to no hcom name is a hard error BEFORE any pane is created (no
 # keystroke ring exists to fall back to).
+SPAWN_NO_DEFAULT_SENDER=1
 scenario notify            ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
+unset SPAWN_NO_DEFAULT_SENDER
 # Bus-native notify: the spawner (HERDER_GUID) has a recorded hcom_name, so the
 # --notify appendix routes completion over hcom.
 SPAWN_HERDER_GUID="guid-orch-0000"
-SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-lead-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"orchestrator","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"orchestrator-bus","namespace":"/hcom"},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-lead","tag":"orchestrator","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
+SPAWN_SENDER_BUS="orchestrator-bus"
+SPAWN_SEED_IS_SELF=1
+SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-orch-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"orchestrator","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"orchestrator-bus","namespace":"/hcom"},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-lead","tag":"orchestrator","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
 scenario notify_bus        ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
-unset SPAWN_HERDER_GUID SPAWN_SEED_REGISTRY
+unset SPAWN_HERDER_GUID SPAWN_SENDER_BUS SPAWN_SEED_IS_SELF SPAWN_SEED_REGISTRY
 # Enrolled-spawner notify: NO HERDER_GUID in the spawner's env, but the spawning
 # pane (HERDR_PANE_ID=p_orch) has a seated registry session with a bus name — the
 # appendix must route bus-native via pane/terminal resolution rather than
 # hard-erroring (TASK-005 resolution order, TASK-003 bus-only).
+SPAWN_SENDER_BUS="lead-bus"
+SPAWN_SEED_IS_SELF=1
 SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-lead-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"orchestrator","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"lead-bus","namespace":"/hcom"},"provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-lead","tag":"orchestrator","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
 scenario notify_enrolled   ready claude launchctx --role worker --agent claude --notify --prompt "do the thing" --json
-unset SPAWN_SEED_REGISTRY
+unset SPAWN_SENDER_BUS SPAWN_SEED_IS_SELF SPAWN_SEED_REGISTRY
 # Promptless capture, no child-specific signal on the roster: TASK-033 makes both
 # a UNIQUE tag+cwd match (fallback) and an AMBIGUOUS one (fallback_ambiguous)
 # leave the row empty (hcom_capture:"not_found") — the tag+cwd guess is gone, so
@@ -483,7 +499,8 @@ if [[ "$WRITE" -eq 0 ]]; then
   if [[ "$RUN_RC" -eq 1 ]] \
     && grep -q 'as registry row and as bus name' "$RUN_ERR_F" \
     && [[ ! -f "$CASE/probe/agent_start_argv" ]] \
-    && [[ ! -s "$CASE/state/registry.jsonl" ]]; then
+    && [[ "$(wc -l <"$CASE/state/registry.jsonl")" -eq 1 ]] \
+    && grep -q '"guid":"guid-dispatcher"' "$CASE/state/registry.jsonl"; then
     ok "notify-to unresolvable: hard error before pane creation"
   else
     bad "notify-to unresolvable: hard error before pane creation" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"

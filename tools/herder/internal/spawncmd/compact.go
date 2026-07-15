@@ -239,7 +239,7 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		// it safe to arm the continuation — an unverified /compact must never
 		// have a continuation fired behind it into an uncompacted session.
 		if opts.ThenSet {
-			armCompactThen(stderr, ptrOrEmpty(row.ShortGUID), thenBusName, thenBusDir, opts.Then, int(opts.ThenTimeout/time.Millisecond))
+			armCompactThen(stderr, ptrOrEmpty(row.ShortGUID), thenBusName, thenBusName, thenBusDir, opts.Then, int(opts.ThenTimeout/time.Millisecond))
 		}
 		return 0
 	case verify == "not_landed":

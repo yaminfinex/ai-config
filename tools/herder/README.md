@@ -128,7 +128,10 @@ hcom is THE transport (TASK-003, locked): `herder send` resolves every target fo
 recorded bus name and delivers over the hcom bus, scoped to the row's recorded `hcom_dir` (team
 buses cross correctly), then polls for a `deliver:` receipt — ack ⇒ `delivered`, none in the
 window ⇒ `queued` (do NOT resend). A target with no bus-bound registry row is refused with exit 2;
-keystrokes are never typed. Exit codes and target forms: `herder send --help`. Contract pinned by
+keystrokes are never typed. The sender is proven independently from the caller's registry row and
+the joined live hcom roster (session, process, or pane evidence), then stamped with that real bus
+name. Missing or conflicting proof refuses with a repair remedy; no label or synthetic sender is
+substituted. Exit codes and target forms: `herder send --help`. Contract pinned by
 `tests/check-send-contract.sh` (bus-only goldens) + `check-hcom-contract.sh` (scoping/addressing).
 
 Pane ids are display-only and terminal ids are run-scoped, so one coordinate can match several
@@ -145,7 +148,10 @@ dead session's forever-`working` row. Pinned by `tests/check-send-resolution.sh`
 (claude/codex/gemini) waits for the child to BIND its bus name — positively observable (sidecar
 registry enrichment, or the hcom roster correlated by frozen launch pane_id) and
 early in boot, well before the TUI is interactive — then sends the FULL prompt (multiline included)
-as a verified hcom message and reports the receipt. Verify vocabulary: `delivered` (receipt seen),
+as a verified hcom message and reports the receipt. Before any child or worktree is created, spawn
+also proves its own live bus identity and uses that real name as the message sender, so a worker's
+reply routes back to the dispatcher. A spawner without a verified joined bus row is refused with a
+cause and enrollment/repair remedy; there is no synthetic fallback. Verify vocabulary: `delivered` (receipt seen),
 `queued` (sent, no receipt in the window — it injects the moment the agent is deliverable; do NOT
 resend), `send_failed`/`not_joined` (nothing delivered — a retry via `herder send` is safe),
 `bind_timeout` (nothing went on the wire — resend once `herder list` shows the bus name). On

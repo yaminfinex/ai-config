@@ -153,6 +153,14 @@ JSONL
 {"guid":"guid-codexp-0000","short_guid":"codexp","label":"codex-parent","role":"worker","agent":"codex","terminal_id":"term_CODEXP","pane_id":"p_codexp","hcom_dir":"/hcom","hcom_name":"codexp-vibe","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-codexp","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"fixture-branch","ts":"2026-07-03T00:00:00Z"}}
 JSONL
   fi
+	# Addendum delivery now proves the caller's real bus identity before invoking
+	# `herder send`. Seed that caller only in addendum cases so unrelated fork
+	# goldens remain byte-identical.
+	if [[ -n "${SEED_SENDER:-}" ]]; then
+		cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"session","guid":"guid-sender-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"sender","role":"dispatcher","tool":"codex","seat":{"kind":"herdr","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"dispatcher-rive","namespace":"/hcom"},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-sender","tag":"dispatcher","cwd":"/repo","workspace_id":"ws_self","branch":"fixture-branch","ts":"2026-07-03T00:00:00Z"}}
+JSONL
+	fi
 	sed -i "s#\"cwd\":\"/repo\"#\"cwd\":\"$REPO\"#g" "$CASE/state/registry.jsonl"
 }
 
@@ -175,6 +183,7 @@ run_case() {
     MOCK_PROBE_DIR="$CASE/probe" \
     MOCK_LIVE_PARENT="$live" \
     MOCK_BIND_NAME="${MOCK_BIND_NAME:-}" \
+    MOCK_HCOM_IDENTITY="${MOCK_HCOM_IDENTITY:-}" \
     HERDER_GUID="${HERDER_GUID:-}" \
     HERDER_SPAWNED_BY="${HERDER_SPAWNED_BY:-}" \
     "${HFK[@]}" "$@" 2>"$RUN_ERR_F")"
@@ -282,7 +291,8 @@ check_one missing_session
 # TASK-017: a forked codex child loses the launch-seam addendum (hcom strips
 # user developer_instructions on resume/fork), so the native fork path
 # re-delivers it over the bus once the sidecar binds the child's bus name.
-SEED_CODEX=1 MOCK_BIND_NAME=codexfork-vibe \
+SEED_CODEX=1 SEED_SENDER=1 MOCK_BIND_NAME=codexfork-vibe \
+  MOCK_HCOM_IDENTITY='[{"name":"dispatcher-rive","launch_context":{"pane_id":"p_self"}}]' \
   run_case codex_addendum 0 codexp --json
 check_one codex_addendum
 # provenance: a fork run BY a spawned session records THAT session as the child's
@@ -310,6 +320,8 @@ check_one self_fallback_claude
 # HCOM SEND ARGV section pins the delivered addendum. --json also verifies the
 # fork caller forwards spawn's record to stdout.
 CODEX_HOME=/mock/codex \
+  SEED_SENDER=1 \
+  MOCK_HCOM_IDENTITY='[{"name":"dispatcher-rive","launch_context":{"pane_id":"p_self"}}]' \
   MOCK_SPAWN_GUID=abcdef12-0027-0027-0027-000000000027 MOCK_SPAWN_BIND=codexfb-vibe \
   run_self_case self_fallback_codex 0 --self --split down --json
 check_one self_fallback_codex
