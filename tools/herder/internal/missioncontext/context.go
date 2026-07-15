@@ -2,7 +2,9 @@
 package missioncontext
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -28,6 +30,19 @@ type Refusal struct {
 }
 
 func (r *Refusal) Error() string { return r.Reason }
+
+func WriteRefusal(stderr io.Writer, verb string, err error) int {
+	var refusal *Refusal
+	if !errors.As(err, &refusal) {
+		refusal = &Refusal{
+			Kind:   "mission_lookup_failed",
+			Reason: err.Error(),
+			Remedy: "fix the mission repository and retry",
+		}
+	}
+	fmt.Fprintf(stderr, "herder %s: refused [%s]: %s — remedy: %s\n", verb, refusal.Kind, refusal.Reason, refusal.Remedy)
+	return 1
+}
 
 type FS interface {
 	Stat(name string) (fs.FileInfo, error)
