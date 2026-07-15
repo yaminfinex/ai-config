@@ -36,8 +36,9 @@ from the design before any build**. The flagship crash window
 (injection-time receipt, no replay, re-prompt recovery) is an owner-accepted,
 registered delta (§12 item 10). The hcom-native Pi characterization's
 keep-custom decision is **superseded** by this ruling — its probe evidence
-stands. Retained unchanged: credential env scoping, launch-contract env
-pinning + recorded vendor version, herder as spawner/registry owner, the
+stands. Retained unchanged: credential env scoping, the launch-contract
+env deltas (offline/telemetry, doctrine notes — no Pi-home pin ships, §2
+item 2) + recorded vendor version, herder as spawner/registry owner, the
 DR-6 observer/sesh session-JSONL adapter, and doctrine content), pending
 re-certification on the round-11 amendment diff
 Subject: `@earendil-works/pi-coding-agent` against herder + hcom 0.7.23 —
@@ -685,11 +686,19 @@ flagship families' launch-contract coverage plus the retained adapter:
 - **Shim-first PATH chain** (P9) asserted on the launched pane's environment
   and the extension's `hcom` resolution.
 
-**Live smoke (isolated, gated, owner spend per §12 item 2):** one provider
-end-to-end through the real spawn path — spawn → roster bind → doctrine +
-prompt delivered (real inference) → outbound `hcom send` lands on an isolated
-bus → resume reclaims name + session → cull. Repeated per activated provider
-at activation (§13).
+**Live smoke (real global bus, gated, owner spend per §12 item 2):** one
+provider end-to-end through the real spawn path **on the real global bus and
+the real `HOME`** — by this design's own placement proof (§2 item 2), a
+re-pointed `HCOM_DIR` is exactly the shape that does not bind, and a
+synthetic `HOME` would contradict the §1 live-default-home ruling, so an
+isolated-bus smoke cannot exercise the shipped path. Test effects are
+**collision-safe and cleaned up**: a reserved disposable test label/name
+prefix that cannot collide with live seats, messages addressed only between
+the smoke's own seats, and teardown that culls the seat with row-stop
+confirm and removes the test rows/records it created. Sequence: spawn →
+roster bind (full predicate) → doctrine + prompt delivered (real inference)
+→ outbound `hcom send` between smoke seats → resume reclaims name + session
+→ cull with confirm. Repeated per activated provider at activation (§13).
 
 ## 12. Owner decisions required
 
@@ -878,7 +887,8 @@ territory enumerated against the repository as it stands:
    provider fact refuses with cause+remedy.
 6. **Tests.** L1–L7 (§11) + probes P8/P9/P10 discharged and recorded +
    A6/P5/P6/P7/A10 answered where the unit's surfaces expose them + the
-   isolated live smoke (§11) under owner spend (§12 item 2).
+   real-global-bus live smoke (§11 — collision-safe naming + cleanup) under
+   owner spend (§12 item 2).
 
 **B2 — observer/sesh adapter.** The retained DR-6 scope, with its real
 integration surface named honestly — sesh's contract is a **closed wire
@@ -899,12 +909,15 @@ drop-in adapter:
    compatibility") — generic parsing fails on it; a pi-specific parser with
    committed fixtures (identity-policy compliant), including a branched
    session.
-5. **Surface rendering**: branch-aware active-branch view with labeled
-   branch points, or the honest lesser claim (recency view with an explicit
-   branched-session marker) — never silent flattening; the claim shipped is
-   the claim tested.
-6. **Gates**: T27 against the fixtures; wire compatibility gates green;
-   `unknown` preserved under mutation.
+5. **Surface rendering — branch-aware, the single contract.** The adapter
+   renders the **active branch and labels branch points** — exactly the
+   retained DR-6 behavior (§1, DR-6), no lesser alternative: DR-6 is
+   expressly retained unchanged by the ruling, so weakening it here would
+   need owner sign-off this unit does not carry. Never silent flattening.
+6. **Gates**: T27 against the fixtures asserts that single contract
+   (active-branch rendering + labeled branch points on the branched
+   fixture); wire compatibility gates green; `unknown` preserved under
+   mutation.
 
 Territory note: B2 lands in the **sesh lane's territory** (wire spec,
 shipper, store, index, surface are that program's fenced surfaces) and is
