@@ -40,10 +40,19 @@ done
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 COPY="$WORK/repo"
-cp -a "$REPO_ROOT" "$COPY"
-# Nothing here needs history, and the copy must not reach the real repository
-# through git.
-rm -rf "$COPY/.git"
+mkdir -p "$COPY"
+# Copy the tracked files only, read from the working tree so local edits to them
+# are still under test. Copying the directory wholesale would drag in whatever
+# untracked build output the checkout happens to hold — on a working checkout
+# that is gigabytes of release artifacts against ~13M of tracked source, a cost
+# that grows with local history and buys nothing: the gates read go.mod and the
+# scripts, and nothing here needs .git, which this way is never copied at all.
+git -C "$REPO_ROOT" ls-files -z >"$WORK/tracked" 2>/dev/null ||
+  { printf 'FAIL  cannot list tracked files from %s\n' "$REPO_ROOT"; exit 1; }
+[ -s "$WORK/tracked" ] ||
+  { printf 'FAIL  no tracked files found under %s\n' "$REPO_ROOT"; exit 1; }
+( cd "$REPO_ROOT" && xargs -0 -a "$WORK/tracked" cp -a --parents -t "$COPY" ) ||
+  { printf 'FAIL  could not copy the tracked tree into %s\n' "$COPY"; exit 1; }
 
 # Keep every trace of this run inside the trapped temp root. A config outside its
 # trusted path makes `mise where` fail for a reason unrelated to the probe, which
