@@ -44,7 +44,7 @@ func TestCullTaggedWireAttribution(t *testing.T) {
 	req := CullRequest{
 		Sender: caller.Name, SenderBase: caller.BaseName,
 		Target: target.Name, TargetBase: target.BaseName,
-		BusDir: os.Getenv("HCOM_DIR"), Thread: "task234-tagged-wire",
+		BusDir: os.Getenv("HCOM_DIR"), Thread: "graceful-cull-tagged-wire",
 		Message: "release external resources, then acknowledge", Deadline: time.Now().Add(3 * time.Second),
 	}
 	delivery := DeliverCullRequest(req)
