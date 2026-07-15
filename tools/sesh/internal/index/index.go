@@ -523,7 +523,7 @@ func readCompleteLine(r *bufio.Reader) ([]byte, int64, bool, error) {
 func appendLineFragment(line, fragment []byte) []byte {
 	needed := len(line) + len(fragment)
 	if needed > cap(line) {
-		capacity := cap(line) * 8
+		capacity := cap(line) * 2
 		if capacity == 0 {
 			capacity = needed * 2
 		}
