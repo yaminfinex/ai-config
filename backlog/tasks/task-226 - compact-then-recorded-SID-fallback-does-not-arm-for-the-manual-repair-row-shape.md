@@ -3,9 +3,10 @@ id: TASK-226
 title: >-
   compact --then: recorded-SID fallback does not arm for the manual-repair row
   shape
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 04:48'
+updated_date: '2026-07-15 04:49'
 labels: []
 dependencies: []
 priority: medium
