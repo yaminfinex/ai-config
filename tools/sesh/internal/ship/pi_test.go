@@ -56,8 +56,9 @@ func writePiAgent(t *testing.T, base string, transcript []byte) (string, []strin
 
 func assertPiBoundary(t *testing.T, root string, discovered []Discovered, forbidden []string) int {
 	t.Helper()
+	root = canonicalPath(t, root)
 	bad := map[string]bool{}
-	for _, path := range forbidden {
+	for _, path := range canonicalPaths(t, forbidden) {
 		bad[path] = true
 	}
 	violations := 0
@@ -72,21 +73,24 @@ func assertPiBoundary(t *testing.T, root string, discovered []Discovered, forbid
 }
 
 func TestPiDiscoveryExactShapeAndIdentity(t *testing.T) {
-	agent, forbidden := writePiAgent(t, t.TempDir(), fixture(t, "pi-branched-session.jsonl"))
-	root := filepath.Join(agent, "sessions")
-	got, err := Discover(Roots{Pi: root})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0].Identity != (Identity{Tool: wire.ToolPi, SessionID: piSID, FileUUID: piSID}) {
-		t.Fatalf("pi discovery = %+v", got)
-	}
-	if n := assertPiBoundary(t, root, got, forbidden); n != 0 {
-		t.Fatalf("pi exclusion boundary violations = %d", n)
-	}
-	if _, ok := piMatch("../outside/2026-07-15T12-34-56-789Z_"+piSID+".jsonl", fakeDirEntry{}); ok {
-		t.Fatal("pi matcher admitted traversal-shaped relative path")
-	}
+	forEachFixtureRoot(t, func(t *testing.T, base string) {
+		agent, forbidden := writePiAgent(t, base, fixture(t, "pi-branched-session.jsonl"))
+		root := filepath.Join(agent, "sessions")
+		got, err := Discover(Roots{Pi: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].Identity != (Identity{Tool: wire.ToolPi, SessionID: piSID, FileUUID: piSID}) {
+			t.Fatalf("pi discovery = %+v", got)
+		}
+		assertDiscoveredPaths(t, got, []string{filepath.Join(root, piCwdKey, "2026-07-15T12-34-56-789Z_"+piSID+".jsonl")})
+		if n := assertPiBoundary(t, root, got, forbidden); n != 0 {
+			t.Fatalf("pi exclusion boundary violations = %d", n)
+		}
+		if _, ok := piMatch("../outside/2026-07-15T12-34-56-789Z_"+piSID+".jsonl", fakeDirEntry{}); ok {
+			t.Fatal("pi matcher admitted traversal-shaped relative path")
+		}
+	})
 }
 
 func TestPiBoundaryDetectorProven(t *testing.T) {
@@ -118,41 +122,40 @@ func TestPiBoundaryDetectorProven(t *testing.T) {
 }
 
 func TestPiDiscoveryRejectsSymlinkedSessionRoot(t *testing.T) {
-	base := t.TempDir()
-	agent := filepath.Join(base, ".pi", "agent")
-	outRoot := filepath.Join(base, "outside")
-	outside := filepath.Join(outRoot, piCwdKey, "2026-07-15T12-34-56-789Z_"+piSID+".jsonl")
-	if err := os.MkdirAll(filepath.Dir(outside), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(outside, fixture(t, "pi-branched-session.jsonl"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(agent, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	root := filepath.Join(agent, "sessions")
-	if err := os.Symlink(outRoot, root); err != nil {
-		t.Fatal(err)
-	}
+	forEachFixtureRoot(t, func(t *testing.T, base string) {
+		agent := filepath.Join(base, ".pi", "agent")
+		outRoot := filepath.Join(base, "outside")
+		outside := filepath.Join(outRoot, piCwdKey, "2026-07-15T12-34-56-789Z_"+piSID+".jsonl")
+		if err := os.MkdirAll(filepath.Dir(outside), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(outside, fixture(t, "pi-branched-session.jsonl"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(agent, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		root := filepath.Join(agent, "sessions")
+		if err := os.Symlink(outRoot, root); err != nil {
+			t.Fatal(err)
+		}
 
-	got, err := Discover(Roots{Pi: root})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("Pi discovery followed a symlinked session root: %+v", got)
-	}
+		got, err := Discover(Roots{Pi: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("Pi discovery followed a symlinked session root: %+v", got)
+		}
 
-	// Detector premise: the deliberately widened legacy policy follows the
-	// root and must expose the outside file, proving this negative is live.
-	mutant, err := walkRoot(root, wire.ToolPi, piMatch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(mutant) != 1 || mutant[0].Path != outside {
-		t.Fatalf("root-policy mutant did not trip detector: %+v", mutant)
-	}
+		// Detector premise: the deliberately widened legacy policy follows the
+		// root and must expose the outside file, proving this negative is live.
+		mutant, err := walkRoot(root, wire.ToolPi, piMatch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertDiscoveredPaths(t, mutant, []string{outside})
+	})
 }
 
 func TestPiBackfillShipsFixture(t *testing.T) {

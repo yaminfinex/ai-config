@@ -66,6 +66,11 @@ type fakeRunner struct {
 }
 
 func (f *fakeRunner) key(name string, args ...string) string {
+	if filepath.IsAbs(name) {
+		if resolved, err := filepath.EvalSymlinks(name); err == nil {
+			name = resolved
+		}
+	}
 	return strings.Join(append([]string{name}, args...), " ")
 }
 
@@ -606,13 +611,33 @@ func TestDarwinVerifyChecksOnDiskWithCaveat(t *testing.T) {
 	ch.assets["v1.1.0/SHA256SUMS"] = []byte(hex.EncodeToString(sum[:]) + "  sesh-darwin-arm64\n")
 	ch.latest = "v1.1.0"
 
-	home := t.TempDir()
+	base := t.TempDir()
+	realTemp := filepath.Join(base, "real")
+	linkedTemp := filepath.Join(base, "linked")
+	if err := os.Mkdir(realTemp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realTemp, linkedTemp); err != nil {
+		t.Fatal(err)
+	}
+	home, err := os.MkdirTemp(linkedTemp, "home-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	target := filepath.Join(home, ".local", "bin", "sesh")
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
+	}
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedTarget == target {
+		t.Fatalf("fixture does not exercise distinct path spellings: %s", target)
 	}
 	plist, err := setup.RenderPlist(nil, target, ch.srv.URL, home)
 	if err != nil {
@@ -625,7 +650,8 @@ func TestDarwinVerifyChecksOnDiskWithCaveat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runner := &fakeRunner{outputs: map[string]string{target + " version": "v1.1.0"}}
+	runner := &fakeRunner{outputs: map[string]string{}}
+	runner.outputs[runner.key(target, "version")] = "v1.1.0"
 	var out bytes.Buffer
 	opts := Options{
 		OS: "darwin", Arch: "arm64", Home: home, Exe: target,

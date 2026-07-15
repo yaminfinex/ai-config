@@ -61,6 +61,12 @@ func (f *fakeProc) add(pid, ppid, uid int, comm, cwd string, env map[string]stri
 		}
 	}
 	for i, of := range openFiles {
+		// Linux /proc/<pid>/fd links expose the kernel-resolved spelling of an
+		// open file. Mirror that behavior when TMPDIR itself is a symlink so
+		// the fake does not manufacture a correlation miss.
+		if resolved, err := filepath.EvalSymlinks(of); err == nil {
+			of = resolved
+		}
 		if err := os.Symlink(of, filepath.Join(dir, "fd", fmt.Sprint(3+i))); err != nil {
 			f.t.Fatal(err)
 		}
