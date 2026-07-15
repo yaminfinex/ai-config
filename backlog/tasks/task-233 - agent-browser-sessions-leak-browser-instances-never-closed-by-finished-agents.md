@@ -1,10 +1,10 @@
 ---
 id: TASK-233
 title: 'agent-browser sessions leak: browser instances never closed by finished agents'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-15 07:08'
-updated_date: '2026-07-15 07:08'
+updated_date: '2026-07-15 07:14'
 labels:
   - infra
 dependencies: []
@@ -26,3 +26,9 @@ Investigate: (1) which tool/wrapper launches these (~/.agent-browser layout sugg
 - [ ] #2 Leak mechanism identified: which launcher, why close is skipped, written up
 - [ ] #3 Prevention path decided (auto-reap tied to session liveness, or sweep) and filed as an implement task with settled decisions
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Investigation + cleanup complete (worker report on thread task233, full socket-level evidence). Launcher: agent-browser 0.31.1 (mise node global) — one detached Rust daemon per named session (PPID=1, unix sock + loopback IPC + CDP), persists by design; close is cooperative only; idle timeout disabled by default. Leak mechanism: nothing connects herder lifecycle end to agent-browser close — 5 sessions from one ended reviewer, 1 from another (both long-culled). Cleanup: all 6 instances proven client-less at socket level (only connection on each CDP port was the session's own daemon), closed via the public close contract, rc=0 each: daemons 6->0, Chrome roots 6->0, chrome processes 84->0, no listeners/sockets/sidecars/temp profiles remain. Prevention filed as TASK-234 (ownership-record close on cull/retire + doctor sweep safety net + finite default idle timeout).
+<!-- SECTION:NOTES:END -->
