@@ -62,6 +62,37 @@ func TestStatusAllDefaultsToArrayOfMissionObjects(t *testing.T) {
 	if len(got) != 2 || got[0].Slug != "alpha" || got[1].Slug != "beta" {
 		t.Fatalf("status --all = %+v", got)
 	}
+	if !got[0].Addressable || !got[1].Addressable {
+		t.Fatalf("valid mission rows must be addressable: %+v", got)
+	}
+}
+
+func TestStatusAllMarksArchiveDirectoryUnaddressable(t *testing.T) {
+	repo, _ := makeStatusMission(t, "alpha")
+	if err := os.MkdirAll(filepath.Join(repo, "missions", ".archive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s stdout=%s", err, stderr, stdout)
+	}
+	var got []struct {
+		Slug        string `json:"slug"`
+		Addressable *bool  `json:"addressable"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not JSON array: %v\n%s", err, stdout)
+	}
+	if len(got) != 2 || got[0].Slug != ".archive" || got[1].Slug != "alpha" {
+		t.Fatalf("status --all did not retain archive directory: %+v", got)
+	}
+	if got[0].Addressable == nil || *got[0].Addressable {
+		t.Fatalf("archive row addressable = %v, want explicit false", got[0].Addressable)
+	}
+	if got[1].Addressable == nil || !*got[1].Addressable {
+		t.Fatalf("mission row addressable = %v, want explicit true", got[1].Addressable)
+	}
 }
 
 func TestStatusAllJSONDegradesUnreadableMissionWithoutAbortingBatch(t *testing.T) {

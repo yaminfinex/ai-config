@@ -411,7 +411,7 @@ success envelope: Backlog.md's bytes and exit code remain the complete result.
 The default single-mission JSON object is the mission-control read model:
 
 ```json
-{"ok":true,"slug":"perf-regression","mission_dir":"/srv/missions/missions/perf-regression","manifest":{"mission":"perf-regression","authority":"hera","owner":"riley","status":"active","created":"2026-07-08"},"board":{"available":true,"counts":[{"status":"To Do","count":3},{"status":"In Progress","count":2},{"status":"Done","count":7}],"total":12,"tasks":[{"id":"TASK-7","title":"Find hot path","status":"In Progress","ordinal":7000,"labels":["performance"]}]},"artifacts":{"missing":false,"count":9,"newest_path":"analysis/flamegraph-0708.html","newest_time":"2026-07-08T14:00:00Z"},"warnings":[]}
+{"ok":true,"addressable":true,"slug":"perf-regression","mission_dir":"/srv/missions/missions/perf-regression","manifest":{"mission":"perf-regression","authority":"hera","owner":"riley","status":"active","created":"2026-07-08"},"board":{"available":true,"counts":[{"status":"To Do","count":3},{"status":"In Progress","count":2},{"status":"Done","count":7}],"total":12,"tasks":[{"id":"TASK-7","title":"Find hot path","status":"In Progress","ordinal":7000,"labels":["performance"]}]},"artifacts":{"missing":false,"count":9,"newest_path":"analysis/flamegraph-0708.html","newest_time":"2026-07-08T14:00:00Z"},"warnings":[]}
 ```
 
 Counts preserve board-config order; tasks are ordered by ordinal then id. Every task object
@@ -420,9 +420,12 @@ Task frontmatter is decoded as a complete YAML document first, preserving Backlo
 block-style sequences. If a malformed field makes the document fail, status recovers each
 field independently so valid id/status values still count the task and emits a warning for
 every field it cannot recover.
-`status --all` returns an array of these same objects sorted by slug. A mission that cannot
-be read degrades to its own object with `ok:false` and warnings; one bad mission never aborts
-the array. Bare JSON `status` without mission context refuses with `no_context` and guidance
+Every status object carries `addressable`: `true` when its directory name is a valid mission
+slug and can therefore be passed to `--mission`, otherwise `false`. `status --all` returns an
+array of these same objects sorted by slug and retains non-slug directories (for example,
+`.archive`) with `addressable:false` rather than hiding them. A mission that cannot be read
+degrades to its own object with `ok:false` and warnings; one bad mission never aborts the
+array. Bare JSON `status` without mission context refuses with `no_context` and guidance
 for both `--mission <slug>` and `--all`; therefore an object is always single-mission status
 and an array is always explicit `--all`. `--text` restores the prior formats below exactly,
 including the friendly overview fallback from inside the missions repo.
@@ -704,8 +707,9 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
   subtree hash is identical); with the missions repo git-backed and the subtree carrying
   uncommitted or unpushed work, the one-line staleness warning appears.
 - **AC-13 status overview** — `mish status --all` returns every mission dir including closed
-  ones as an array of §6.3 objects, degrading an unreadable mission to a warning-bearing row
-  without aborting the array. Bare JSON status with no mission context refuses `no_context`;
+  ones and non-slug directories as an array of §6.3 objects; non-slug rows carry
+  `addressable:false`, and unreadable missions degrade to warning-bearing rows without
+  aborting the array. Bare JSON status with no mission context refuses `no_context`;
   from the missions repo root, `--text` keeps the prior one-per-line fallback table. From an
   unrelated directory with no context it refuses rather than showing the overview.
 - **AC-14 no git mutation, no bus, no herder** — a full `new` + passthrough + `status` session
