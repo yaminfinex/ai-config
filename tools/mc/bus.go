@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
@@ -91,18 +92,77 @@ func (b *Bus) Send(from string, to []string, thread, replyTo, intent, text strin
 // NOTE: this output shape omits the mentions field — hcom only includes it
 // when a --mention filter is present. Use MentionsSince for raise detection.
 func (b *Bus) EventsSince(cursor int64, limit int) ([]BusEvent, error) {
-	return b.query("events", "--sql", fmt.Sprintf("id > %d", cursor), "--last", fmt.Sprint(limit))
+	return b.eventsSince(cursor, 0, limit, nil, "")
 }
 
 // MentionsSince returns events since cursor that @mention any of names
 // (same flag repeated = OR in hcom), with the mentions field populated.
 func (b *Bus) MentionsSince(cursor int64, limit int, names ...string) ([]BusEvent, error) {
-	args := []string{"events"}
+	return b.mentionsSince(cursor, 0, limit, names...)
+}
+
+// MentionsThrough is MentionsSince bounded to an already captured generic
+// event head. That keeps mention enrichment from moving an ingest cursor past
+// traffic created between the two queries.
+func (b *Bus) MentionsThrough(cursor, head int64, limit int, names ...string) ([]BusEvent, error) {
+	return b.mentionsSince(cursor, head, limit, names...)
+}
+
+func (b *Bus) mentionsSince(cursor, head int64, limit int, names ...string) ([]BusEvent, error) {
+	var args []string
+	var predicates []string
 	for _, n := range names {
 		args = append(args, "--mention", n)
+		predicates = append(predicates, fmt.Sprintf("EXISTS (SELECT 1 FROM json_each(msg_mentions) WHERE value='%s')", sqlQuote(n)))
 	}
-	args = append(args, "--sql", fmt.Sprintf("id > %d", cursor), "--last", fmt.Sprint(limit))
-	return b.query(args...)
+	return b.eventsSince(cursor, head, limit, args, strings.Join(predicates, " OR "))
+}
+
+// eventsSince drains oldest-first pages. hcom's normal --last limit is applied
+// newest-first, so using it with id > cursor can jump the cursor over an
+// arbitrarily large middle of the backlog. The membership subquery chooses the
+// oldest matching IDs even though hcom renders each page newest-first.
+func (b *Bus) eventsSince(cursor, head int64, limit int, filterArgs []string, predicate string) ([]BusEvent, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("event page limit must be positive")
+	}
+
+	var all []BusEvent
+	next := cursor
+	for {
+		where := fmt.Sprintf("id IN (SELECT id FROM events_v WHERE id > %d", next)
+		if head > 0 {
+			where += fmt.Sprintf(" AND id <= %d", head)
+		}
+		if predicate != "" {
+			where += " AND (" + predicate + ")"
+		}
+		where += fmt.Sprintf(" ORDER BY id ASC LIMIT %d)", limit)
+
+		args := append([]string{"events"}, filterArgs...)
+		// --last controls only the outer snapshot size here. Page membership is
+		// already restricted to the oldest IDs by the subquery, so it cannot
+		// turn this into a newest-first tail grab.
+		args = append(args, "--sql", where, "--last", fmt.Sprint(limit))
+		page, err := b.query(args...)
+		if err != nil {
+			return nil, err
+		}
+		sort.Slice(page, func(i, j int) bool { return page[i].ID < page[j].ID })
+		all = append(all, page...)
+		if len(page) < limit {
+			return all, nil
+		}
+		last := page[len(page)-1].ID
+		if last <= next {
+			return nil, fmt.Errorf("event page made no progress past cursor %d", next)
+		}
+		next = last
+	}
+}
+
+func sqlQuote(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
 }
 
 func (b *Bus) query(args ...string) ([]BusEvent, error) {

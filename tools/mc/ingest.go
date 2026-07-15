@@ -56,12 +56,19 @@ func (in *Ingestor) Tick() error {
 	if err != nil {
 		return err
 	}
+	if len(evs) == 0 {
+		return nil
+	}
+	head := evs[len(evs)-1].ID
 	// The generic query omits mentions; fetch raise events separately and
 	// let their rows (which carry mentions) win the merge. Only the seat is
 	// queried: hcom stamps an implicit @bigboss on every mention-free send,
 	// so a bigboss mention is indistinguishable from plain chatter and must
 	// never count as a raise.
-	raises, err := in.bus.MentionsSince(cursor, 500, in.seat)
+	// Bound enrichment to the generic query's captured head. Otherwise a send
+	// between these calls could appear only in the mention result and move the
+	// cursor past intervening generic events that this tick never saw.
+	raises, err := in.bus.MentionsThrough(cursor, head, 500, in.seat)
 	if err != nil {
 		return err
 	}
@@ -78,21 +85,23 @@ func (in *Ingestor) Tick() error {
 		byID[ev.ID] = ev
 	}
 	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
-	var max int64
+	processed := cursor
 	for _, id := range order {
 		ev := byID[id]
-		if ev.ID > max {
-			max = ev.ID
-		}
 		if ev.Type != "message" {
+			processed = ev.ID
 			continue
 		}
 		if err := in.fold(ev); err != nil {
-			log.Printf("ingest fold #%d: %v", ev.ID, err)
+			if cursorErr := in.store.SetCursor(processed); cursorErr != nil {
+				return fmt.Errorf("fold #%d: %v (also failed to save cursor %d: %w)", ev.ID, err, processed, cursorErr)
+			}
+			return fmt.Errorf("fold #%d: %w", ev.ID, err)
 		}
+		processed = ev.ID
 	}
-	if max > 0 {
-		return in.store.SetCursor(max)
+	if processed > cursor {
+		return in.store.SetCursor(processed)
 	}
 	return nil
 }
