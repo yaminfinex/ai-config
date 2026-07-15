@@ -681,8 +681,10 @@ flagship families' launch-contract coverage plus the retained adapter:
   fallback).
 - **T27 — observer/sesh adapter (retained unchanged).** Header index (UUID,
   cwd, parent link) against recorded session fixtures, including a branched
-  session; herdr `live_status` stays `unknown` under mutation; roster-derived
-  status is labeled by source.
+  session; on the branched fixture the adapter renders the **active branch
+  and labels branch points** — the single retained DR-6 rendering contract
+  (§13 B2 items 5–6), never silent flattening; herdr `live_status` stays
+  `unknown` under mutation; roster-derived status is labeled by source.
 - **Shim-first PATH chain** (P9) asserted on the launched pane's environment
   and the extension's `hcom` resolution.
 
