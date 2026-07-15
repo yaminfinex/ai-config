@@ -130,6 +130,119 @@ func TestRetitleIsManagedOnlyAndReplays(t *testing.T) {
 	}
 }
 
+func TestMissionPageRendersStatusWarningsThreadsAndRoster(t *testing.T) {
+	dir := t.TempDir()
+	journal := filepath.Join(dir, "journal.jsonl")
+	s, err := OpenStore(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ id, grade string }{{"managed-thread", "managed"}, {"observed-thread", "observed"}} {
+		if err := s.Open(tc.id, tc.id+" title", "ctx", "reply", "moment", "mission-one", "vile", nil, "vile", tc.grade); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Open("other", "other title", "ctx", "reply", "moment", "mission-two", "vile", nil, "vile", "managed"); err != nil {
+		t.Fatal(err)
+	}
+	agentDir := filepath.Join(dir, "agent")
+	if err := os.Mkdir(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hcom := writeExecutable(t, dir, "hcom", fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' '[{"name":"builder-dunu","status":"active","directory":%q,"tool":"codex"}]'
+`, agentDir))
+	herder := writeExecutable(t, dir, "herder", "#!/bin/sh\nexit 0\n")
+	mish := writeExecutable(t, dir, "mish", `#!/bin/sh
+if [ "$1" = "resolve" ]; then
+  printf '%s\n' '{"ok":true,"slug":"mission-one"}'
+else
+  printf '%s\n' '{"ok":true,"slug":"mission-one","mission_dir":"/missions/mission-one","manifest":{"mission":"mission-one","authority":"hera","owner":"riley","status":"active","created":"2026-07-08"},"board":{"available":true,"counts":[{"status":"To Do","count":1},{"status":"Done","count":2}],"total":3,"tasks":[{"id":"TASK-7","title":"Ship page","status":"To Do","labels":["ui","high"]}]},"warnings":["git is behind upstream"]}'
+fi
+`)
+	w := NewWeb(s, &Bus{Hcom: hcom}, nil, "human-yamen", "owner", herder, newMissionResolver(mish, ""))
+	rw := httptest.NewRecorder()
+	w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/mission/mission-one", nil))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("GET mission = %d: %s", rw.Code, rw.Body.String())
+	}
+	body := rw.Body.String()
+	for _, want := range []string{
+		"Goal / manifest", "authority hera", "owner riley", "/missions/mission-one",
+		"Board", "To Do 1", "TASK-7", "Ship page", "git is behind upstream",
+		"managed-thread title", "observed-thread title", "managed", "observed",
+		"Seated agents", "builder-dunu", "/talk?mission=mission-one",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("mission page missing %q", want)
+		}
+	}
+	if strings.Contains(body, "other title") {
+		t.Fatal("mission page included a thread homed on another mission")
+	}
+}
+
+func TestMissionPageRendersTypedRefusalAsWarning(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStore(filepath.Join(dir, "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mish := writeExecutable(t, dir, "mish", `#!/bin/sh
+printf '%s\n' '{"ok":false,"refusal":"unknown_mission","slug":"ghost","reason":"mission ghost not found","remedy":"choose a known slug"}'
+exit 1
+`)
+	w := NewWeb(s, &Bus{Hcom: "/missing/hcom"}, nil, "human-yamen", "owner", "/missing/herder", newMissionResolver(mish, ""))
+	rw := httptest.NewRecorder()
+	w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/mission/ghost", nil))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("typed refusal status = %d, want 200", rw.Code)
+	}
+	for _, want := range []string{"Mission data unavailable", "unknown_mission", "mission ghost not found", "choose a known slug", "board unavailable"} {
+		if !strings.Contains(rw.Body.String(), want) {
+			t.Errorf("refusal page missing %q", want)
+		}
+	}
+}
+
+func TestMissionEntryPointsLinkToMissionPage(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStore(filepath.Join(dir, "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentDir := filepath.Join(dir, "agent")
+	if err := os.Mkdir(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hcom := writeExecutable(t, dir, "hcom", fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' '[{\"name\":\"builder-dunu\",\"status\":\"active\",\"directory\":%q}]'\n", agentDir))
+	herder := writeExecutable(t, dir, "herder", "#!/bin/sh\nexit 0\n")
+	mish := writeExecutable(t, dir, "mish", `#!/bin/sh
+if [ "$1" = "resolve" ]; then
+  printf '%s\n' '{"ok":true,"slug":"mission-one"}'
+elif [ "$3" = "--all" ] || [ "$2" = "--all" ]; then
+  printf '%s\n' '[{"ok":true,"slug":"mission-one","manifest":{"status":"active","owner":"riley"},"board":{"total":3,"counts":[]},"warnings":[]},{"ok":false,"slug":"mission-broken","reason":"board unreadable","board":{"total":0,"counts":[]},"warnings":["board unreadable"]}]'
+else
+  exit 1
+fi
+`)
+	w := NewWeb(s, &Bus{Hcom: hcom}, nil, "human-yamen", "owner", herder, newMissionResolver(mish, ""))
+	for _, path := range []string{"/", "/roster"} {
+		rw := httptest.NewRecorder()
+		w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, path, nil))
+		if !strings.Contains(rw.Body.String(), `href="/mission/mission-one"`) {
+			t.Errorf("%s missing mission-page entry point: %s", path, rw.Body.String())
+		}
+		if path == "/" {
+			for _, want := range []string{`href="/mission/mission-broken"`, "degraded", "board unreadable"} {
+				if !strings.Contains(rw.Body.String(), want) {
+					t.Errorf("root missing isolated degraded card %q", want)
+				}
+			}
+		}
+	}
+}
+
 func writeExecutable(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)

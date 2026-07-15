@@ -29,8 +29,133 @@ type missionHit struct {
 	at   time.Time
 }
 
+// missionStatus is mc's read-only view of the stable `mish status` JSON
+// contract. Keep this local instead of importing mish internals: the CLI is
+// the one mission data boundary shared by installed and scratch binaries.
+type missionStatus struct {
+	OK         bool            `json:"ok"`
+	Slug       string          `json:"slug"`
+	MissionDir string          `json:"mission_dir"`
+	Manifest   missionManifest `json:"manifest"`
+	Board      missionBoard    `json:"board"`
+	Warnings   []string        `json:"warnings"`
+	Refusal    string          `json:"refusal"`
+	Reason     string          `json:"reason"`
+	Remedy     string          `json:"remedy"`
+}
+
+type missionManifest struct {
+	Mission   string `json:"mission"`
+	Authority string `json:"authority"`
+	Owner     string `json:"owner"`
+	Status    string `json:"status"`
+	Created   string `json:"created"`
+}
+
+type missionBoard struct {
+	Available bool                 `json:"available"`
+	Counts    []missionStatusCount `json:"counts"`
+	Total     int                  `json:"total"`
+	Tasks     []missionTask        `json:"tasks"`
+}
+
+type missionStatusCount struct {
+	Status string `json:"status"`
+	Count  int    `json:"count"`
+}
+
+type missionTask struct {
+	ID     string   `json:"id"`
+	Title  string   `json:"title"`
+	Status string   `json:"status"`
+	Labels []string `json:"labels"`
+}
+
+type missionStatusHit struct {
+	status missionStatus
+	at     time.Time
+}
+
+type missionListHit struct {
+	statuses []missionStatus
+	warning  string
+	at       time.Time
+}
+
 func newMissionResolver(bin, repo string) *missionResolver {
 	return &missionResolver{bin: bin, repo: repo, hit: map[string]missionHit{}}
+}
+
+var statusCache = struct {
+	sync.Mutex
+	byMission map[string]missionStatusHit
+	all       map[*missionResolver]missionListHit
+}{byMission: map[string]missionStatusHit{}, all: map[*missionResolver]missionListHit{}}
+
+func (m *missionResolver) Status(slug string) missionStatus {
+	if m == nil || m.bin == "" {
+		return missionStatus{Reason: "mission status is unavailable: mish is disabled"}
+	}
+	key := m.bin + "\x00" + m.repo + "\x00" + slug
+	statusCache.Lock()
+	if h, ok := statusCache.byMission[key]; ok && time.Since(h.at) < time.Minute {
+		statusCache.Unlock()
+		return h.status
+	}
+	statusCache.Unlock()
+
+	var status missionStatus
+	out, runErr := m.run("status", "--mission", slug)
+	if err := json.Unmarshal(bytes.TrimSpace(out), &status); err != nil {
+		status.Reason = "mish status returned unreadable JSON"
+		if runErr != nil {
+			status.Reason = "mish status failed: " + runErr.Error()
+		}
+	}
+	statusCache.Lock()
+	statusCache.byMission[key] = missionStatusHit{status: status, at: time.Now()}
+	statusCache.Unlock()
+	return status
+}
+
+func (m *missionResolver) AllStatuses() ([]missionStatus, string) {
+	if m == nil || m.bin == "" {
+		return nil, "mission list is unavailable: mish is disabled"
+	}
+	statusCache.Lock()
+	if h, ok := statusCache.all[m]; ok && time.Since(h.at) < time.Minute {
+		statusCache.Unlock()
+		return h.statuses, h.warning
+	}
+	statusCache.Unlock()
+
+	var statuses []missionStatus
+	out, runErr := m.run("status", "--all")
+	warning := ""
+	if err := json.Unmarshal(bytes.TrimSpace(out), &statuses); err != nil {
+		warning = "mish status --all returned unreadable JSON"
+		if runErr != nil {
+			warning = "mish status --all failed: " + runErr.Error()
+		}
+	}
+	statusCache.Lock()
+	statusCache.all[m] = missionListHit{statuses: statuses, warning: warning, at: time.Now()}
+	statusCache.Unlock()
+	return statuses, warning
+}
+
+func (m *missionResolver) run(args ...string) ([]byte, error) {
+	cmd := exec.Command(m.bin, args...)
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "MISSIONS_REPO=") {
+			continue
+		}
+		cmd.Env = append(cmd.Env, kv)
+	}
+	if m.repo != "" {
+		cmd.Env = append(cmd.Env, "MISSIONS_REPO="+m.repo)
+	}
+	return cmd.Output()
 }
 
 func (m *missionResolver) Slug(dir string) string {

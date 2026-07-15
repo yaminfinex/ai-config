@@ -41,6 +41,7 @@ func (w *Web) Routes() http.Handler {
 	mux.HandleFunc("GET /open", w.openRedirect)
 	mux.HandleFunc("GET /threads", w.threads)
 	mux.HandleFunc("GET /thread/{id}", w.thread)
+	mux.HandleFunc("GET /mission/{slug}", w.mission)
 	mux.HandleFunc("POST /thread/{id}/reply", w.reply)
 	mux.HandleFunc("POST /thread/{id}/close", w.close)
 	mux.HandleFunc("POST /thread/{id}/reopen", w.reopen)
@@ -86,6 +87,12 @@ type pageData struct {
 	ShowClosed bool
 	// all threads (observed grade — tracked bus traffic, never Your turn)
 	Observed []*Thread
+	// across-mission home and in-mission page
+	Missions       []missionStatus
+	MissionListErr string
+	Mission        missionStatus
+	MissionThreads []*Thread
+	MissionAgents  []rosterAgent
 	// thread
 	T *Thread
 	// open form
@@ -112,6 +119,9 @@ func (w *Web) render(rw http.ResponseWriter, code int, d *pageData) {
 func (w *Web) inbox(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "inbox")
 	d.Error = r.URL.Query().Get("err")
+	if w.missions != nil {
+		d.Missions, d.MissionListErr = w.missions.AllStatuses()
+	}
 	for _, t := range w.store.List("open", "managed") {
 		if t.Turn == "owner" {
 			d.YourTurn = append(d.YourTurn, t)
@@ -124,6 +134,34 @@ func (w *Web) inbox(rw http.ResponseWriter, r *http.Request) {
 		d.Closed = w.store.List("closed", "managed")
 	}
 	w.render(rw, 200, d)
+}
+
+func (w *Web) mission(rw http.ResponseWriter, r *http.Request) {
+	d := w.data(r, "mission")
+	slug := r.PathValue("slug")
+	d.Mission = w.missions.Status(slug)
+	if d.Mission.Slug == "" {
+		d.Mission.Slug = slug
+	}
+	for _, t := range w.store.List("", "") {
+		if t.Home == slug {
+			d.MissionThreads = append(d.MissionThreads, t)
+		}
+	}
+	groups, rosterErr := w.rosterGroups(false)
+	for _, g := range groups {
+		if g.Mission == slug {
+			d.MissionAgents = g.Agents
+			break
+		}
+	}
+	if rosterErr != "" {
+		d.Error = "roster: " + rosterErr
+	}
+	// A typed unknown_mission (and every other refusal) deliberately remains
+	// HTTP 200: this is a useful, refreshable warning page rather than a blank
+	// 404 or a server error, and matches degraded status payload handling.
+	w.render(rw, http.StatusOK, d)
 }
 
 // threads is the All-threads view: observed bus traffic mc tracks but does

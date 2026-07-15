@@ -22,8 +22,11 @@ h2{font-size:1em;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);
 .badge.decide{border-color:#b3261e;color:#b3261e}
 .badge.act{border-color:#7b4a00;color:#7b4a00}
 .badge.reply{border-color:var(--accent);color:var(--accent)}
+.badge.managed{border-color:var(--accent);color:var(--accent)}
+.badge.observed{border-style:dashed;color:var(--dim)}
 .badge.yourturn{background:var(--accent);border-color:var(--accent);color:#fff}
 .err{background:#fdeceb;border:1px solid var(--warn);color:var(--warn);padding:.6em 1em;border-radius:8px;margin:.8em 0}
+.warning{background:#fff7e0;border:1px solid #d7a600;color:#654b00;padding:.6em 1em;border-radius:8px;margin:.8em 0}
 .ctx{background:#fffbe8;border:1px solid #e6d9a0;border-radius:8px;padding:.8em 1em;margin:.8em 0;white-space:pre-wrap}
 .msg{border-left:3px solid var(--line);padding:.3em .9em;margin:.7em 0;white-space:pre-wrap}
 .msg .from{font-weight:600;white-space:normal}
@@ -56,6 +59,14 @@ th{color:var(--dim);font-weight:500}
 {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
 
 {{if eq .Page "inbox"}}
+  <h2>Missions</h2>
+  {{if .MissionListErr}}<div class="warning">{{.MissionListErr}}</div>{{end}}
+  {{range .Missions}}
+    <div class="card"><a class="title" href="/mission/{{.Slug}}">{{.Slug}}</a>
+      {{if .OK}}<div class="meta">{{.Board.Total}} tasks{{range .Board.Counts}} · {{.Status}} {{.Count}}{{end}}</div>
+      {{else}}<div class="meta"><span class="badge">degraded</span>{{with .Reason}}{{.}}{{else}}mission status unavailable{{end}}</div>{{end}}
+    </div>
+  {{else}}{{if not .MissionListErr}}<div class="empty">no missions visible</div>{{end}}{{end}}
   <h2>Your turn</h2>
   {{range .YourTurn}}{{template "card" .}}{{else}}<div class="empty">nothing needs you</div>{{end}}
   <h2>Waiting on them</h2>
@@ -67,6 +78,44 @@ th{color:var(--dim);font-weight:500}
   {{else}}
     <p class="meta"><a href="/?closed=1">show closed</a></p>
   {{end}}
+{{end}}
+
+{{if eq .Page "mission"}}
+  {{$m := .Mission}}
+  <p class="meta"><a href="/">&larr; all missions</a></p>
+  <h1 style="margin:.2em 0">{{$m.Slug}}</h1>
+  <p><a href="/talk?mission={{$m.Slug}}">Talk to this mission</a></p>
+
+  <h2>Goal / manifest</h2>
+  {{if not $m.OK}}
+    <div class="warning"><strong>Mission data unavailable{{with $m.Refusal}} ({{.}}){{end}}</strong>{{with $m.Reason}}<br>{{.}}{{end}}{{with $m.Remedy}}<br><span class="meta">{{.}}</span>{{end}}</div>
+  {{else}}
+    <div class="card"><strong>{{$m.Manifest.Mission}}</strong>
+      <div class="meta">authority {{$m.Manifest.Authority}} · owner {{$m.Manifest.Owner}} · <span class="badge">{{$m.Manifest.Status}}</span> · created {{$m.Manifest.Created}}</div>
+      <div class="meta">{{$m.MissionDir}}</div>
+    </div>
+  {{end}}
+
+  <h2>Board</h2>
+  {{range $m.Warnings}}<div class="warning">{{.}}</div>{{end}}
+  {{if $m.OK}}
+    <p>{{range $m.Board.Counts}}<span class="badge">{{.Status}} {{.Count}}</span>{{end}} <span class="meta">{{$m.Board.Total}} total</span></p>
+    {{if $m.Board.Available}}
+      <table><tr><th>task</th><th>status</th><th>labels</th></tr>
+      {{range $m.Board.Tasks}}<tr><td><strong>{{.ID}}</strong> {{.Title}}</td><td><span class="badge">{{.Status}}</span></td><td>{{range .Labels}}<span class="badge">{{.}}</span>{{end}}</td></tr>{{else}}<tr><td colspan="3" class="empty">no tasks</td></tr>{{end}}
+      </table>
+    {{else}}<div class="warning">Board data is unavailable.</div>{{end}}
+  {{else}}<div class="empty">board unavailable until mission status recovers</div>{{end}}
+
+  <h2>Threads</h2>
+  {{range .MissionThreads}}<div class="card"><a class="title" href="/thread/{{.ID}}">{{.Title}}</a>
+    <div class="meta"><span class="badge {{.Grade}}">{{.Grade}}</span><span class="badge">{{.Status}}</span>{{.ID}} · {{len .Msgs}} msg · {{ago .Updated}} ago</div></div>
+  {{else}}<div class="empty">no threads homed here</div>{{end}}
+
+  <h2>Seated agents</h2>
+  {{if .MissionAgents}}<table><tr><th>name</th><th>tool</th><th>status</th><th>role</th><th></th></tr>
+    {{range .MissionAgents}}<tr><td><strong>{{.Name}}</strong></td><td>{{.Tool}}</td><td>{{.Status}}</td><td>{{.Role}}</td><td><a href="/talk?agent={{.Name}}">talk to</a></td></tr>{{end}}
+  </table>{{else}}<div class="empty">no seated agents</div>{{end}}
 {{end}}
 
 {{if eq .Page "thread"}}{{with .T}}
@@ -176,7 +225,7 @@ th{color:var(--dim);font-weight:500}
   <h1>Roster</h1>
   <p class="meta">{{if .ShowClosed}}<a href="/roster">active only</a>{{else}}<a href="/roster?all=1">show all (incl. unseated/inactive)</a>{{end}}</p>
   {{range .Groups}}
-    <h2>{{.Dir}}{{with .Mission}} · <a href="/talk?mission={{.}}">talk to mission</a>{{end}}</h2>
+    <h2>{{with .Mission}}<a href="/mission/{{.}}">mission: {{.}}</a> · <a href="/talk?mission={{.}}">talk to mission</a>{{else}}{{.Dir}}{{end}}</h2>
     <table>
       <tr><th>name</th><th>tool</th><th>status</th><th>role</th><th>branch</th><th>unread</th><th></th></tr>
       {{range .Agents}}
