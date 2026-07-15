@@ -1,10 +1,10 @@
 ---
 id: TASK-228
 title: 'herder join/leave: declare mission membership for a running agent'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-15 05:02'
-updated_date: '2026-07-15 05:03'
+updated_date: '2026-07-15 08:06'
 labels:
   - herder
 dependencies: []
@@ -27,9 +27,25 @@ Mechanics (registry event shape, storage, verb ergonomics) are the herder lane's
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 herder join <mission-slug> records explicit membership for the calling/target agent; herder leave removes it
-- [ ] #2 Membership surfaces on herder list --json rows (field shape documented in the DONE report for the mc lane)
-- [ ] #3 Explicit membership wins over cwd marker inference; absent membership falls back to inference
-- [ ] #4 Refusals are typed cause+remedy (unknown slug shape, no live row, double-join semantics defined and tested)
-- [ ] #5 Unit tests cover join, leave, precedence over inference, and list --json surfacing
+- [x] #1 herder join <mission-slug> records explicit membership for the calling/target agent; herder leave removes it
+- [x] #2 Membership surfaces on herder list --json rows (field shape documented in the DONE report for the mc lane)
+- [x] #3 Explicit membership wins over cwd marker inference; absent membership falls back to inference
+- [x] #4 Refusals are typed cause+remedy (unknown slug shape, no live row, double-join semantics defined and tested)
+- [x] #5 Unit tests cover join, leave, precedence over inference, and list --json surfacing
 <!-- AC:END -->
+
+
+
+
+
+
+
+
+
+
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged 0b0b3b4 (--no-ff, 2 commits: e644e85 feature + 5db13fb validation tripwire). Design-first checkpoint ran pre-code (design doc merged at docs/design/2026-07-15-herder-mission-membership.md incl. adjudicated lifecycle rider). Shipped: join/leave verbs (self via HERDER_GUID or --target), explicit membership durable (mission:{slug,source:explicit} only), inference view-only at list render (explicit > cwd > marker > null), leave-by-omission resumes inference, lifecycle matrix pinned by mutation (same-guid carry; fork/adoption no-inherit; observer turnover transfer; ordinary events cannot silently change membership), 7 typed refusals all mutation-red, list --json additive-only (pure mission:null additions in goldens). Review: opus incumbent — cross-binary byte-identity rotation proof for scope-leak (gold standard), 1 required fix (validateDurableMission untested; 3 surviving mutants -> all red after fix, incumbent re-ran battery), calibration P1 (V2Resolve last-wins) adjudicated OUT as pre-existing shared-resolver behavior -> TASK-236. Gates: independent 60/60 at e644e85, re-gate 60/60 at 5db13fb, post-merge 60/60 on main. mc-side consumer: group on mission.slug; mission:{} additive-extensible; marker-source rows need MISSIONS_REPO in the listing caller env (design-consistent, flagged to mc).
+<!-- SECTION:NOTES:END -->
