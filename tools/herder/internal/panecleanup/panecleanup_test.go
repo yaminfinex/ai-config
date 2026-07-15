@@ -3,6 +3,7 @@ package panecleanup
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,13 @@ func assertScriptConsumed(t *testing.T, client *scriptedClient) {
 	}
 }
 
+func assertCalls(t *testing.T, client *scriptedClient, want ...string) {
+	t.Helper()
+	if !slices.Equal(client.calls, want) {
+		t.Fatalf("calls = %v, want %v", client.calls, want)
+	}
+}
+
 func TestClosePreservingFocusToleratesFocusCommandErrorAfterMovement(t *testing.T) {
 	client := &scriptedClient{
 		responses: []response{
@@ -71,6 +79,7 @@ func TestClosePreservingFocusDoesNotRefocusWhenFocusStayedPut(t *testing.T) {
 		t.Fatalf("ClosePreservingFocus() rc=%d err=%v, want success", rc, err)
 	}
 	assertScriptConsumed(t, client)
+	assertCalls(t, client, "pane list", "pane close p_target", "pane list")
 }
 
 func TestClosePreservingFocusDoesNotRefocusClosedPriorPane(t *testing.T) {
@@ -85,6 +94,7 @@ func TestClosePreservingFocusDoesNotRefocusClosedPriorPane(t *testing.T) {
 		t.Fatalf("ClosePreservingFocus() rc=%d err=%v, want success", rc, err)
 	}
 	assertScriptConsumed(t, client)
+	assertCalls(t, client, "pane list", "pane close p_target")
 }
 
 func TestClosePreservingFocusDoesNotRefocusMissingPriorPane(t *testing.T) {
