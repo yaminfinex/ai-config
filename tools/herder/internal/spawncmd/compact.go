@@ -122,7 +122,7 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		}
 		thenBusName = row.HcomName
 		if thenBusName == "" || thenBusName == "null" {
-			dieCompact(stderr, "refused — --then needs your own bus name to deliver the continuation, but your registry row records none (this session is not bus-bound). The bus can be live while an adopted row remains unbound when a hand-resumed process has no ambient identity proof. From this pane, replace <resumed-session-id> in this repair command with the transcript session id, then run it: "+pinnedBusRepair(row)+". Retry --then afterward. Nothing was typed.")
+			dieCompact(stderr, "refused — --then needs your own bus name to deliver the continuation, but your registry row records none (this session is not bus-bound). The bus can be live while an adopted row remains unbound when a hand-resumed process has no ambient identity proof. Find the transcript session id in the resumed agent's session metadata (the id used by its resume command). From this pane, replace <resumed-session-id> in this repair command with that id, then run it: "+pinnedBusRepair(row)+". Retry --then afterward. Nothing was typed.")
 			return 2
 		}
 		thenBusDir = row.HcomDir

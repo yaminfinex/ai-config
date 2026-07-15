@@ -45,11 +45,17 @@ case "${1:-} ${2:-}" in
     if [[ "${MOCK_HCOM_NO_CONTEXT:-}" == "1" ]]; then
       pane=""
     fi
-    jq -n \
-      --arg name "$name" \
-      --arg sid "${HCOM_SESSION_ID:-}" \
-      --arg pane "$pane" \
-      '[{name:$name,session_id:$sid,joined:true,launch_context:{pane_id:$pane}}]' >"$state";;
+    if [[ "${MOCK_HCOM_DUPLICATE_NAME:-}" == "1" ]]; then
+      jq -n \
+        --arg name "$name" \
+        '[{name:$name,session_id:"sess-first",joined:true,launch_context:{}},{name:$name,session_id:"sess-second",joined:true,launch_context:{}}]' >"$state"
+    else
+      jq -n \
+        --arg name "$name" \
+        --arg sid "${HCOM_SESSION_ID:-}" \
+        --arg pane "$pane" \
+        '[{name:$name,session_id:$sid,joined:true,launch_context:{pane_id:$pane}}]' >"$state"
+    fi;;
   *)
     exit 64;;
 esac
@@ -189,6 +195,28 @@ assert "adopt binds a newly reclaimed name without ambient bus correlates" bash 
   '\'' "$2"
 ' bash "$adopt_no_identity_rc" "$CASE/state/registry.jsonl"
 
+new_case adopt_resumed_session_unasserted
+cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"guid":"guid-old-0000","event":"unseated","recorded_at":"2026-07-08T00:00:05Z","node":"11111111-1111-1111-1111-111111111111","state":"unseated","label":"trap","role":"worker","tool":"codex","sids":[{"sid":"sess-resumed","observed_at":"2026-07-08T00:00:05Z","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sess-resumed"}}
+JSONL
+printf '[{"name":"restored-live","session_id":"sess-resumed","joined":true,"launch_context":{}}]\n' >"$CASE/hcom.json"
+adopt_unasserted_before="$(cksum "$CASE/state/registry.jsonl")"
+env -i \
+  PATH="$PATH_HERMETIC" \
+  HOME="$CASE/home" \
+  HERDER_STATE_DIR="$CASE/state" \
+  HERDR_ENV=1 \
+  HERDR_PANE_ID=p_enroll \
+  MOCK_HCOM_STATE="$CASE/hcom.json" \
+  MOCK_HCOM_NO_CONTEXT=1 \
+  "$REPO_ROOT/bin/herder" adopt trap >/dev/null 2>"$CASE/adopt.err"
+adopt_unasserted_rc=$?
+adopt_unasserted_after="$(cksum "$CASE/state/registry.jsonl")"
+assert "adopt requires an operator assertion for a resumed SID with no launch pane" bash -c '
+  test "$1" -ne 0 && grep -q -- "--confirm-resumed-session" "$2"
+' bash "$adopt_unasserted_rc" "$CASE/adopt.err"
+assert "unasserted resumed SID refusal happens before enrollment" test "$adopt_unasserted_before" = "$adopt_unasserted_after"
+
 new_case adopt_resumed_session
 cat >>"$CASE/state/registry.jsonl" <<'JSONL'
 {"guid":"guid-old-0000","event":"unseated","recorded_at":"2026-07-08T00:00:05Z","node":"11111111-1111-1111-1111-111111111111","state":"unseated","label":"trap","role":"worker","tool":"codex","sids":[{"sid":"sess-resumed","observed_at":"2026-07-08T00:00:05Z","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sess-resumed"}}
@@ -202,7 +230,7 @@ env -i \
   HERDR_PANE_ID=p_enroll \
   MOCK_HCOM_STATE="$CASE/hcom.json" \
   MOCK_HCOM_NO_CONTEXT=1 \
-  "$REPO_ROOT/bin/herder" adopt trap >/dev/null 2>"$CASE/adopt.err"
+  "$REPO_ROOT/bin/herder" adopt trap --confirm-resumed-session >/dev/null 2>"$CASE/adopt.err"
 adopt_resumed_rc=$?
 assert "adopt harvests the resumed transcript identity without minting a husk" bash -c '
   test "$1" -eq 0 &&
@@ -217,6 +245,57 @@ assert "adopt harvests the resumed transcript identity without minting a husk" b
       and .[0].value.sids[-1].sid == "sess-resumed"
   '\'' "$3" >/dev/null
 ' bash "$adopt_resumed_rc" "$CASE/hcom.json" "$CASE/state/registry.jsonl"
+assert "adopt reports a substituted resumed bus name as adopted, not reclaimed" bash -c '
+  grep -q "requested @trap was not reclaimed" "$1" &&
+  grep -q "bus identity ADOPTED as @restored-live" "$1"
+' bash "$CASE/adopt.err"
+
+new_case adopt_foreign_resumed_session
+cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"guid":"guid-old-0000","event":"unseated","recorded_at":"2026-07-08T00:00:05Z","node":"11111111-1111-1111-1111-111111111111","state":"unseated","label":"trap","role":"worker","tool":"codex","sids":[{"sid":"sess-victim","observed_at":"2026-07-08T00:00:05Z","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sess-victim"}}
+JSONL
+printf '[{"name":"victim-live","session_id":"sess-victim","joined":true,"launch_context":{"pane_id":"p_victim"}}]\n' >"$CASE/hcom.json"
+adopt_foreign_before="$(cksum "$CASE/state/registry.jsonl")"
+env -i \
+  PATH="$PATH_HERMETIC" \
+  HOME="$CASE/home" \
+  HERDER_STATE_DIR="$CASE/state" \
+  HERDR_ENV=1 \
+  HERDR_PANE_ID=p_enroll \
+  MOCK_HCOM_STATE="$CASE/hcom.json" \
+  MOCK_HCOM_NO_CONTEXT=1 \
+  "$REPO_ROOT/bin/herder" adopt trap >/dev/null 2>"$CASE/adopt.err"
+adopt_foreign_rc=$?
+adopt_foreign_after="$(cksum "$CASE/state/registry.jsonl")"
+assert "adopt refuses a source SID owned by a live session in another pane" bash -c '
+  test "$1" -ne 0 &&
+  grep -q "p_victim" "$2" &&
+  grep -q "p_enroll" "$2"
+' bash "$adopt_foreign_rc" "$CASE/adopt.err"
+assert "foreign resumed SID refusal happens before enrollment" test "$adopt_foreign_before" = "$adopt_foreign_after"
+
+new_case adopt_ambiguous_reclaim
+printf '[{"name":"replacement-temp","session_id":"","joined":true,"launch_context":{}}]\n' >"$CASE/hcom.json"
+env -i \
+  PATH="$PATH_HERMETIC" \
+  HOME="$CASE/home" \
+  HERDER_STATE_DIR="$CASE/state" \
+  HERDR_ENV=1 \
+  HERDR_PANE_ID=p_enroll \
+  MOCK_HCOM_STATE="$CASE/hcom.json" \
+  MOCK_HCOM_NO_CONTEXT=1 \
+  MOCK_HCOM_DUPLICATE_NAME=1 \
+  "$REPO_ROOT/bin/herder" adopt trap >/dev/null 2>"$CASE/adopt.err"
+adopt_ambiguous_rc=$?
+assert "adopt refuses ambiguous operation-scoped bus-name proof" bash -c '
+  test "$1" -ne 0 && grep -q "matches multiple joined bus rows" "$2"
+' bash "$adopt_ambiguous_rc" "$CASE/adopt.err"
+assert "ambiguous bus-name proof is not persisted as verified" jq -se '
+  reduce (.[] | select(.kind=="session")) as $row ({}; .[$row.guid]=$row)
+  | [to_entries[] | select(.key != "guid-old-0000" and .value.label == "trap")] as $replacement
+  | $replacement | length == 1
+    and (.[0].value.seat.hcom_verified // false) == false
+' "$CASE/state/registry.jsonl"
 
 new_case repair_unbound
 cat >>"$CASE/state/registry.jsonl" <<'JSONL'
