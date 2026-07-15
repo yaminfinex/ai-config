@@ -51,7 +51,10 @@ git -C "$REPO_ROOT" ls-files -z >"$WORK/tracked" 2>/dev/null ||
   { printf 'FAIL  cannot list tracked files from %s\n' "$REPO_ROOT"; exit 1; }
 [ -s "$WORK/tracked" ] ||
   { printf 'FAIL  no tracked files found under %s\n' "$REPO_ROOT"; exit 1; }
-( cd "$REPO_ROOT" && xargs -0 -a "$WORK/tracked" cp -a --parents -t "$COPY" ) ||
+# The trailing -- matters: NUL delimiters carry spaces and newlines through
+# intact, but a tracked path starting with a dash would still be read as cp
+# options and abort the copy.
+( cd "$REPO_ROOT" && xargs -0 -a "$WORK/tracked" cp -a --parents -t "$COPY" -- ) ||
   { printf 'FAIL  could not copy the tracked tree into %s\n' "$COPY"; exit 1; }
 
 # Keep every trace of this run inside the trapped temp root. A config outside its
