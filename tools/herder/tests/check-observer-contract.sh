@@ -9,6 +9,11 @@ unset HERDER_BIN
 export AI_CONFIG_ROOT="$REPO_ROOT"
 HERDER=("$REPO_ROOT/bin/herder")
 
+toolchain_fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
 ROOT="$(mktemp -d)"
 MOCKBIN="$ROOT/bin"
 mkdir -p "$MOCKBIN"
@@ -66,8 +71,20 @@ esac
 MOCK_HCOM
 chmod +x "$MOCKBIN/hcom"
 
-GO_VERSION="$(awk '/^go /{print $2; exit}' "$REPO_ROOT/tools/herder/go.mod")"
-GO_BIN="$(mise where "go@$GO_VERSION")/bin"
+GO_MOD="$REPO_ROOT/tools/herder/go.mod"
+GO_VERSION="$(awk '$1 == "go" {print $2; exit}' "$GO_MOD")"
+[ -n "$GO_VERSION" ] || toolchain_fail "cannot read the toolchain pin ('go X.Y.Z') from $GO_MOD"
+TOOLCHAIN="$(awk '$1 == "toolchain" {print $2; exit}' "$GO_MOD")"
+[ -z "$TOOLCHAIN" ] || [ "$TOOLCHAIN" = "go$GO_VERSION" ] ||
+  toolchain_fail "go.mod declares toolchain ${TOOLCHAIN} but pins go ${GO_VERSION}; the go directive is the authority — align or drop the toolchain directive"
+GO_ROOT="$(mise where "go@$GO_VERSION" 2>/dev/null)" ||
+  toolchain_fail "go ${GO_VERSION} is not installed; fix: mise install go@${GO_VERSION}"
+GO_BIN="$GO_ROOT/bin"
+GO_HAVE="$(env -u GOROOT GOTOOLCHAIN=local "$GO_BIN/go" env GOVERSION 2>/dev/null)" ||
+  toolchain_fail "cannot execute the pinned go toolchain at $GO_BIN/go"
+GO_HAVE="${GO_HAVE#go}"
+[ "$GO_HAVE" = "$GO_VERSION" ] ||
+  toolchain_fail "go toolchain resolves to ${GO_HAVE:-unknown}, but go.mod pins go ${GO_VERSION}"
 PATH_HERMETIC="$GO_BIN:$MOCKBIN:/usr/bin:/bin:/usr/local/bin:$HOME/.local/bin"
 fail=0
 SELECTOR="${1:-${OBSERVER_CONTRACT_STEP:-all}}"
