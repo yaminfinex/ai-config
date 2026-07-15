@@ -137,13 +137,14 @@ type statusReport struct {
 }
 
 type statusOutput struct {
-	OK         bool               `json:"ok"`
-	Slug       string             `json:"slug"`
-	MissionDir string             `json:"mission_dir"`
-	Manifest   missionfs.Manifest `json:"manifest"`
-	Board      statusBoardOutput  `json:"board"`
-	Artifacts  statusArtifacts    `json:"artifacts"`
-	Warnings   []string           `json:"warnings"`
+	OK          bool               `json:"ok"`
+	Addressable bool               `json:"addressable"`
+	Slug        string             `json:"slug"`
+	MissionDir  string             `json:"mission_dir"`
+	Manifest    missionfs.Manifest `json:"manifest"`
+	Board       statusBoardOutput  `json:"board"`
+	Artifacts   statusArtifacts    `json:"artifacts"`
+	Warnings    []string           `json:"warnings"`
 }
 
 type statusBoardOutput struct {
@@ -223,7 +224,8 @@ func makeStatusOutput(result resolve.Result, report statusReport) statusOutput {
 		sort.Strings(warnings)
 	}
 	return statusOutput{
-		OK: true, Slug: result.Slug, MissionDir: result.MissionDir, Manifest: report.Manifest,
+		OK: true, Addressable: missionfs.ValidateSlug(result.Slug) == nil,
+		Slug: result.Slug, MissionDir: result.MissionDir, Manifest: report.Manifest,
 		Board:     statusBoardOutput{Available: report.BoardOK, Counts: counts, Total: totalTasks(counts), Tasks: tasks},
 		Artifacts: statusArtifacts{Missing: report.Artifacts.Missing, Count: report.Artifacts.Count, NewestPath: report.Artifacts.NewestPath, NewestTime: newest},
 		Warnings:  warnings,
