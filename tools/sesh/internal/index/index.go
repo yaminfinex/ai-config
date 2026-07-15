@@ -303,18 +303,27 @@ func (idx *Indexer) applyAppend(ctx context.Context, ev wire.AppendEvent, rebuil
 	if err != nil {
 		return err
 	}
+	var surviving map[fileRowSpan]bool
 	if !rebuild && start > 0 {
 		var present int
 		err := idx.queryRowContext(ctx, `SELECT 1
 			FROM sesh_index_messages INDEXED BY sesh_index_messages_file
 			WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?
+				AND quarantine = 0
 			LIMIT 1`, ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation).Scan(&present)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
-			// Dedupe can remove every indexed row from a file. Its prior
-			// placement then exists only in the mirrored overlap history, so
-			// replay that one file before admitting its new tail. The work is
-			// bounded by the rejoining file and the component its keys touch.
+			// Dedupe can remove every placement-bearing row from a file while
+			// quarantine rows remain. Its prior placement then exists only in
+			// the mirrored overlap history, so replay that one file before
+			// admitting its new tail. Existing row spans are skipped after
+			// parsing so non-participating rows and their durable observations
+			// are not duplicated. The work is bounded by the rejoining file and
+			// the component its keys touch.
+			surviving, err = idx.fileRowSpans(ctx, ev)
+			if err != nil {
+				return err
+			}
 			start = 0
 		case err != nil:
 			return err
@@ -324,6 +333,16 @@ func (idx *Indexer) applyAppend(ctx context.Context, ev wire.AppendEvent, rebuil
 	phase(&idx.timing.parse)
 	if err != nil {
 		return err
+	}
+	if surviving != nil {
+		filtered := rows[:0]
+		for _, row := range rows {
+			span := fileRowSpan{start: row.ByteStart, end: row.ByteEnd}
+			if !surviving[span] {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
 	}
 	idx.timing.rows = len(rows)
 	if len(rows) == 0 {
@@ -362,6 +381,31 @@ func (idx *Indexer) applyAppend(ctx context.Context, ev wire.AppendEvent, rebuil
 		}
 	}
 	return idx.clearDirty(ctx, ev)
+}
+
+type fileRowSpan struct {
+	start int64
+	end   int64
+}
+
+func (idx *Indexer) fileRowSpans(ctx context.Context, ev wire.AppendEvent) (map[fileRowSpan]bool, error) {
+	rows, err := idx.queryContext(ctx, `SELECT byte_start, byte_end
+		FROM sesh_index_messages INDEXED BY sesh_index_messages_file
+		WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?`,
+		ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	spans := map[fileRowSpan]bool{}
+	for rows.Next() {
+		var span fileRowSpan
+		if err := rows.Scan(&span.start, &span.end); err != nil {
+			return nil, err
+		}
+		spans[span] = true
+	}
+	return spans, rows.Err()
 }
 
 // phaseClock returns a lap timer: each call stores the time since the

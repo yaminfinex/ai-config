@@ -32,13 +32,15 @@ equivalence oracle for the covered append histories.
 
 The vanished-member equivalence hole is closed without extending the frozen
 schema. Before parsing an incremental append, the indexer performs a full-key
-seek for prior rows from that exact file generation. A positive complete
-offset with no remaining rows is the narrow rejoin predicate: dedupe removed
-the file's entire disposable placement, while the durable mirror still holds
-the overlap history. Only then does parsing restart at byte zero for that one
-file. The replayed keys reconnect it to the touched logical component before
-dedupe removes the historical duplicates again; the new tail inherits the
-same label and ordinal that Reindex derives.
+seek for placement-bearing rows from that exact file generation. A positive
+complete offset with no remaining non-quarantine rows is the narrow rejoin
+predicate: dedupe removed the file's entire disposable placement, while the
+durable mirror still holds the overlap history. Only then does parsing restart
+at byte zero for that one file. Already-indexed byte spans are filtered from
+the replay, so a surviving quarantine message and its ledger observation are
+not inserted again. The replayed keys reconnect the file to the touched
+logical component before dedupe removes the historical duplicates again; the
+new tail inherits the same label and ordinal that Reindex derives.
 
 Ordinary settled appends retain the targeted-key fast path and its
 approximately appended-row cost. A rejoin candidate pays for its own mirrored
@@ -47,8 +49,11 @@ large-corpus plan gate proves that candidate detection is a pinned full-key
 seek and that maintenance writes stay bounded by the replayed file and touched
 component. Property fixtures cover both arrival orders, multiple vanished
 members, overlap keys split across append passes, an ordinal-compacted group,
-and a process restart after the dedupe deletion. Incremental checksum equality
-with Reindex and a second-Reindex fixed point remain the state oracles.
+a surviving quarantine row, and a process restart after the dedupe deletion.
+Junk-only history, a quarantined later generation, and a Pi header-only file
+pin the non-participating-row and empty-UUID boundaries. Incremental checksum
+equality with Reindex and a second-Reindex fixed point remain the state
+oracles.
 
 ## Oversized complete lines
 
