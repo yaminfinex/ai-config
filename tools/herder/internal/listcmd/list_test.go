@@ -3,6 +3,7 @@ package listcmd
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +65,14 @@ func TestFailedContinuationIsVisibleAndExplicitlyAcknowledged(t *testing.T) {
 	failed, warnings, err := continuationstate.Unresolved("")
 	if err != nil || len(warnings) != 1 || len(failed) != 0 {
 		t.Fatalf("unresolved after ack = %+v, warnings=%v, err=%v; want only foreign-record warning", failed, warnings, err)
+	}
+}
+
+func TestRemovedTeamsFlagIsUnknown(t *testing.T) {
+	var stderr bytes.Buffer
+	_, code := parseArgs([]string{"--teams"}, io.Discard, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "unknown arg: --teams") {
+		t.Fatalf("parseArgs() code=%d stderr=%q, want unknown-arg refusal", code, stderr.String())
 	}
 }
 

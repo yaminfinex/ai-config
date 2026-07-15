@@ -52,10 +52,9 @@ Record in the playbook's run-shape header (`references/state-files.md`):
    before the run consumes it; decant later as the user's proxy (`references/adversarial.md`).
 6. **Backlog (if present).** If the project uses Backlog.md (`command -v backlog` + a `backlog/`
    dir), lean on it as the durable unit ledger — `references/backlog-integration.md`. Absent → skip.
-7. **Bus scoping + observability.** On a machine running several orchestrations, a per-run team
-   (`herder spawn --team <run-slug>`) keeps their traffic from interleaving (caveats: `herder spawn
-   --help`). Own-tab-per-agent (`herder spawn --new-tab`) is a preference for humans watching the
-   run, not a correctness rule.
+7. **Bus observability.** Herder-spawned agents share the node's global bus; use stable role tags,
+   registry identities, and run-log state to keep concurrent orchestrations legible. Own-tab-per-agent
+   (`herder spawn --new-tab`) is a preference for humans watching the run, not a correctness rule.
 8. **Local planning disciplines.** Check the available-skills listing before inventing process:
    where the `ce-plan` and `ce-doc-review` skills exist (compound-engineering plugin), use them —
    `ce-plan` discipline for writing implementation plans and substantial unit briefs, and

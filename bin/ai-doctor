@@ -260,7 +260,7 @@ check_claude_shared_settings() {
 
 print_claude_config_divergence_options() {
   cat >&2 <<'OPTIONS'
-  pinned (team-bus) claude sessions read ~/.claude/.claude.json; plain sessions
+  pinned non-default-bus claude sessions read ~/.claude/.claude.json; plain sessions
   read ~/.claude.json — while they differ the two run with different
   identity/config state. Your call (ai-doctor never fixes this itself):
     re-align: cp ~/.claude.json ~/.claude/.claude.json

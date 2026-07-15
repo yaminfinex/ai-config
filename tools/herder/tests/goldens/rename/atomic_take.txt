@@ -14,6 +14,6 @@ herdr: rename skipped (registry row has no terminal_id)
 {"kind":"session","guid":"guid-alpha-0000","event":"label_transferred","recorded_at":"<TS>","node":"<GUID>","state":"unseated","role":"worker","tool":"codex","sids":[{"sid":"sess-alpha","observed_at":"<TS>","source":"harvest"}],"continuity":"confirmed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-alpha","tag":"worker","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
 {"kind":"session","guid":"guid-beta-0000","event":"label_transferred","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"alpha","role":"reviewer","tool":"claude","continuity":"assumed","lineage":{},"provenance":{}}
 === LIST ===
-GUID       LABEL                AGENT   PANE               LIVE      TEAM         BUS              CTX         ROLE
-guid                            codex                      gone      global       -                unknown     worker
-guid       alpha                claude                     gone      global       -                unknown     reviewer
+GUID       LABEL                AGENT   PANE               LIVE      BUS              CTX         ROLE
+guid                            codex                      gone      -                unknown     worker
+guid       alpha                claude                     gone      -                unknown     reviewer

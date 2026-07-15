@@ -7,8 +7,8 @@
 # mock-hcom-spawn; no live session, no live bus), covering:
 #   argv        — the exact `herdr agent start` argv: login-shell wrapping
 #                 ($SHELL -lic 'export HERDER_*…; exec …'), --no-login-shell env
-#                 form, herder launch routing with the role as --tag, HCOM_DIR
-#                 team-bus pinning, HERDER_BIN export.
+#                 form, herder launch routing with the role as --tag, global
+#                 HCOM_DIR pinning, HERDER_BIN export.
 #   permissions — per-agent autonomous-mode flag injection (claude/codex),
 #                 suppression under --safe or an explicit caller perm flag.
 #   readiness   — trust-modal clearing (Enter) vs --safe refusal; the
@@ -111,6 +111,7 @@ run_spawn() {
     HERDR_ENV=1 HERDR_PANE_ID=p_orch \
     HERDER_GUID="${SPAWN_HERDER_GUID:-}" \
     HERDER_SPAWNED_BY="${SPAWN_HERDER_SPAWNED_BY:-}" \
+    HERDER_TEAM="${SPAWN_HERDER_TEAM:-}" \
     HERDER_STATE_DIR="$CASE/state" \
     HERDER_SPAWN_SHELL=/bin/zsh \
     HERDER_SPAWN_BIND_MS="${SPAWN_BIND_MS:-60000}" \
@@ -255,7 +256,6 @@ scenario capture_fail      ready claude fail --role worker --agent claude --json
 scenario perm_explicit     ready claude launchctx --role worker --agent claude --extra-arg --dangerously-skip-permissions --json
 scenario model_claude     ready claude launchctx --role worker --agent claude --model claude-opus-test --json
 scenario model_codex      ready codex launchctx --role worker --agent codex --model gpt-test --json
-scenario team              ready claude launchctx --role worker --agent claude --team smoke --json
 scenario start_fail        startfail claude launchctx --role worker --agent claude --json
 # (TASK-024's claude_echoloss paste-race scenario retired with the paste path
 # itself — bus prompts have no Enter/echo to race. The composer-evidence rules
@@ -298,10 +298,22 @@ if [[ "$WRITE" -eq 0 ]]; then
   [[ "$RUN_RC" -eq 1 ]] && grep -q -- '--role required' "$RUN_ERR_F" \
     && ok "usage: --role required" || bad "usage: --role required" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
 
-  CASE="$ROOT/usage_team"
-  run_spawn ready claude launchctx --role worker --agent bash --team 'bad/slash'
-  [[ "$RUN_RC" -eq 1 ]] && grep -q -- '--team must be a single safe path segment' "$RUN_ERR_F" \
-    && ok "usage: unsafe --team refused" || bad "usage: unsafe --team refused" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  CASE="$ROOT/usage_removed_team"
+  run_spawn ready claude launchctx --role worker --agent bash --team smoke
+  [[ "$RUN_RC" -eq 1 ]] && grep -q -- 'unknown arg: --team' "$RUN_ERR_F" \
+    && ok "usage: removed --team is unknown" || bad "usage: removed --team is unknown" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+
+  CASE="$ROOT/removed_team_env"
+  SPAWN_HERDER_TEAM=smoke
+  run_spawn ready claude launchctx --role worker --agent claude --json
+  unset SPAWN_HERDER_TEAM
+  if [[ "$RUN_RC" -eq 0 ]] \
+    && [[ "$(cat "$CASE/probe/hcom_dir" 2>/dev/null)" == "$CASE/home/.hcom" ]] \
+    && ! grep -q '"team"' <<<"$RUN_OUT"; then
+    ok "environment: retired HERDER_TEAM is ignored"
+  else
+    bad "environment: retired HERDER_TEAM is ignored" "rc=$RUN_RC hcom_dir=$(cat "$CASE/probe/hcom_dir" 2>/dev/null) out=$RUN_OUT"
+  fi
 
   CASE="$ROOT/usage_role"
   run_spawn ready claude launchctx --role 'phase_3' --agent claude
@@ -323,7 +335,7 @@ if [[ "$WRITE" -eq 0 ]]; then
     bad "label-prefix: replaces role prefix" "rc=$RUN_RC out=$RUN_OUT err=$(cat "$RUN_ERR_F")"
   fi
 
-  trailing_value_flags=(--split --workspace --from-pane --tab --cwd --label-prefix --extra-arg --model --wait-timeout-ms --ready-match --login-shell --team --notify-to --worktree --base)
+  trailing_value_flags=(--split --workspace --from-pane --tab --cwd --label-prefix --extra-arg --model --wait-timeout-ms --ready-match --login-shell --notify-to --worktree --base)
   trailing_ok=1
   trailing_detail=""
   for flag in "${trailing_value_flags[@]}"; do

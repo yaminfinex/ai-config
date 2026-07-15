@@ -9,6 +9,10 @@ plan_depth: deep
 
 # feat: herder → Go — 1:1 port, goldens as the spec
 
+> Historical port plan. Its per-team bus compatibility requirement is superseded: herder now
+> spawns only on the node's global bus. The old contract below remains as port provenance, not
+> current CLI or operational guidance.
+
 ## Why
 
 ~2,200 lines of bash whose core is no longer orchestration: send/verify state machine,

@@ -68,7 +68,6 @@ type options struct {
 	LoginShell    bool
 	LoginShellBin string
 	Safe          bool
-	Team          string
 	Notify        bool
 	NotifyTo      string
 	NotifyBusName string
@@ -91,7 +90,6 @@ type spawnRecord struct {
 	StartedAt            string              `json:"started_at"`
 	StartedByPane        string              `json:"started_by_pane"`
 	InitialPromptPresent bool                `json:"initial_prompt_present"`
-	Team                 string              `json:"team"`
 	HcomDir              string              `json:"hcom_dir"`
 	HcomName             string              `json:"hcom_name"`
 	HcomTag              string              `json:"hcom_tag"`
@@ -115,7 +113,6 @@ type spawnJSONRecord struct {
 	StartedAt            string              `json:"started_at"`
 	StartedByPane        string              `json:"started_by_pane"`
 	InitialPromptPresent bool                `json:"initial_prompt_present"`
-	Team                 string              `json:"team"`
 	HcomDir              string              `json:"hcom_dir"`
 	HcomName             string              `json:"hcom_name"`
 	HcomTag              string              `json:"hcom_tag"`
@@ -292,7 +289,6 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		LoginShell:    true,
 		LoginShellBin: firstNonEmpty(os.Getenv("HERDER_SPAWN_SHELL"), os.Getenv("SHELL"), "/bin/bash"),
 		SettleMS:      envInt("HERDER_SPAWN_SETTLE_MS", 1500),
-		Team:          os.Getenv("HERDER_TEAM"),
 	}
 	for i := 0; i < len(args); {
 		arg := args[i]
@@ -454,13 +450,6 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		case "--safe":
 			opts.Safe = true
 			i++
-		case "--team":
-			v, ok := value()
-			if !ok {
-				return opts, 1
-			}
-			opts.Team = v
-			i += 2
 		case "--notify":
 			opts.Notify = true
 			i++
@@ -506,10 +495,6 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 	}
 	if opts.Model != "" {
 		opts.ExtraArgs = append([]string{"--model", opts.Model}, opts.ExtraArgs...)
-	}
-	if opts.Team != "" && !regexp.MustCompile(`^[A-Za-z0-9._-]+$`).MatchString(opts.Team) {
-		die(stderr, "--team must be a single safe path segment (letters/digits/._- only): "+opts.Team)
-		return opts, 1
 	}
 	if launchcmd.IsHcomCapable(opts.Agent) && !regexp.MustCompile(`^[A-Za-z0-9-]+$`).MatchString(opts.Role) {
 		die(stderr, "--role must contain only letters, digits, and hyphens (it becomes the hcom --tag): "+opts.Role)
@@ -663,17 +648,9 @@ func (r *runner) run() int {
 		spawnedBy = "user"
 	}
 
-	// The child's bus dir (team or global) is resolved early because --notify-to
-	// validation is scoped to the bus the CHILD will join; the team dir itself is
-	// only created later, after the notify hard-error gate has passed.
-	teamsRoot := os.Getenv("HERDER_TEAMS_ROOT")
-	if teamsRoot == "" {
-		teamsRoot = filepath.Join(os.Getenv("HOME"), ".hcom", "teams")
-	}
+	// Every spawned hcom-capable child joins the node's global bus. Resolve it
+	// early because --notify-to validation is scoped to the bus the child joins.
 	hcomDirEff := filepath.Join(os.Getenv("HOME"), ".hcom")
-	if opts.Team != "" {
-		hcomDirEff = filepath.Join(teamsRoot, opts.Team)
-	}
 
 	// Notify is bus-native ONLY (TASK-003): the spawner must resolve to a
 	// recorded hcom name — via --notify-to (a registry row, or a bus name
@@ -721,10 +698,6 @@ func (r *runner) run() int {
 			die(r.stderr, "hcom is required to spawn '"+opts.Agent+"' (launch-through-hcom); install hcom or spawn --agent bash")
 			return 1
 		}
-	}
-
-	if opts.Team != "" {
-		_ = os.MkdirAll(hcomDirEff, 0o755)
 	}
 
 	// --worktree: drive `herdr worktree create` and spawn into the resulting
@@ -1079,7 +1052,6 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		StartedAt:            time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		StartedByPane:        firstNonEmpty(os.Getenv("HERDR_PANE_ID"), "unknown"),
 		InitialPromptPresent: opts.Prompt != "",
-		Team:                 opts.Team,
 		HcomDir:              hcomDirRec,
 		HcomName:             capturedName,
 		HcomTag:              hcomTagRec,
@@ -1183,7 +1155,6 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			StartedAt:            record.StartedAt,
 			StartedByPane:        record.StartedByPane,
 			InitialPromptPresent: record.InitialPromptPresent,
-			Team:                 record.Team,
 			HcomDir:              record.HcomDir,
 			HcomName:             record.HcomName,
 			HcomTag:              record.HcomTag,
@@ -1449,10 +1420,10 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 	}
 	if isHcomAgent {
 		if hcomCapture == "captured" {
-			fmt.Fprintf(r.stderr, "  bus:    %s @%s  (team: %s)\n", firstNonEmpty(record.Team, "global"), record.HcomName, teamSummary(record.Team))
+			fmt.Fprintf(r.stderr, "  bus:    global @%s\n", record.HcomName)
 			fmt.Fprintf(r.stderr, "          HCOM_DIR=%s\n", record.HcomDir)
 		} else {
-			fmt.Fprintf(r.stderr, "  bus:    %s — name NOT captured (%s); herder send cannot reach it (bus-only) — inspect the pane directly\n", firstNonEmpty(record.Team, "global"), hcomCapture)
+			fmt.Fprintf(r.stderr, "  bus:    global — name NOT captured (%s); herder send cannot reach it (bus-only) — inspect the pane directly\n", hcomCapture)
 			fmt.Fprintf(r.stderr, "          HCOM_DIR=%s\n", record.HcomDir)
 		}
 	} else {
@@ -1508,7 +1479,7 @@ func printHelp(stdout io.Writer) {
 		"",
 		"Usage:",
 		"  herder spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]",
-		"               [--team NAME] [--split right|down] [--workspace ID | --from-pane PANE_ID]",
+		"               [--split right|down] [--workspace ID | --from-pane PANE_ID]",
 		"               [--tab ID | --new-tab | --worktree BRANCH [--base REF]] [--cwd PATH] [--safe]",
 		"               [--notify | --notify-to TARGET] [--model ID] [--extra-arg ARG]... [--focus] [--json]",
 		"",
@@ -1517,7 +1488,6 @@ func printHelp(stdout io.Writer) {
 		"  --agent A         tool to run: claude, codex, gemini, bash, ... (required)",
 		"  --prompt TEXT     initial prompt (or --prompt-file F): bus-capable agents get it as a",
 		"                    verified hcom message once their bus name binds; bash gets it typed",
-		"  --team NAME       join the bus at $HERDER_TEAMS_ROOT/<NAME> (default: global ~/.hcom)",
 		"  --split D         opt into the current tab with a right or down split",
 		"  --workspace ID    place in this workspace; --from-pane PANE_ID copies another pane's",
 		"  --tab ID          add to an existing tab; --new-tab explicitly selects the default fresh-tab placement",
@@ -1554,7 +1524,7 @@ func printHelp(stdout io.Writer) {
 		"  claude/codex/gemini launch THROUGH hcom (via `herder launch`) so they bind to the",
 		"  message bus from birth — hcom is a HARD dependency for them; other agents exec raw",
 		"  and get no bus name, so `herder send` (bus-only) cannot reach them after spawn.",
-		"  The assigned bus name, team, and hcom coordinates are captured into the registry",
+		"  The assigned bus name and hcom coordinates are captured into the registry",
 		"  so send/wait/cull can resolve this agent.",
 		"",
 		"  A fresh/untrusted directory opens claude's first-run trust dialog before the",
@@ -1598,7 +1568,7 @@ func printHelp(stdout io.Writer) {
 		"  guid AND by its pane/terminal coordinates, so enrolled sessions (no $HERDER_GUID in their",
 		"  environment) route bus-native too. --notify-to may also name the target directly by its",
 		"  bus name: a seated registry session's hcom_name matches, and an unregistered name is accepted",
-		"  if live on the bus the child will join (team-scoped — cross-bus names still refuse).",
+		"  if live on the global bus the child will join (cross-bus names still refuse).",
 		"  A spawner that resolves to NO bus name is a hard error (the keystroke ring was removed).",
 		"  It is only a signal — send it once and stop.",
 		"",
@@ -1613,11 +1583,6 @@ func printHelp(stdout io.Writer) {
 		"  spawner build rather than an older child worktree. To deliberately run herder from the",
 		"  child checkout, override the pin explicitly: `env -u AI_CONFIG_ROOT -u HERDER_BIN",
 		"  ./bin/herder ...` or `AI_CONFIG_ROOT=$PWD ./bin/herder ...`.",
-		"",
-		"  --team caveat: team-bus launches pin claude's config dir and seed its state from",
-		"  ~/.claude.json, so an onboarded machine skips claude's one-time onboarding; only a",
-		"  never-onboarded machine (no ~/.claude.json) sees it once in the pane, and it persists",
-		"  machine-wide after that. The global bus pins nothing and is unaffected.",
 	}
 	fmt.Fprint(stdout, strings.Join(lines, "\n")+"\n")
 }
@@ -1682,13 +1647,6 @@ func hasModelExtraArg(agent string, args []string) bool {
 func isModelConfigOverride(arg string) bool {
 	key, _, ok := strings.Cut(arg, "=")
 	return ok && strings.TrimSpace(key) == "model"
-}
-
-func teamSummary(team string) string {
-	if team == "" {
-		return "global (~/.hcom)"
-	}
-	return team
 }
 
 func shellCommand(args []string) string {
@@ -2059,8 +2017,8 @@ func seatedBusName(recs []registry.Record, name string) bool {
 // liveOnBus reports whether name is currently joined on the bus at hcomDir —
 // the bus the CHILD will send its notify on. This validates a literal
 // --notify-to bus name that the registry doesn't know (e.g. an agent launched
-// outside herder), while keeping cross-bus names (a global-bus peer for a
-// --team child) a hard error: the child could never reach them anyway.
+// outside herder), while keeping names on another bus a hard error: the child
+// could never reach them anyway.
 func liveOnBus(hcomDir, name string) bool {
 	for _, entry := range hcomList(hcomDir) {
 		if entry.Name == name {

@@ -1,6 +1,6 @@
 === STDERR ===
 forked codex-parent -> codex-parent-fork-<SHORT> (<GUID>) pane=p_child from=guid-codexp-0000
-sent 2575 chars to <GUID> (hcom @codexfork-vibe), submitted, verify=delivered
+sent 2561 chars to <GUID> (hcom @codexfork-vibe), submitted, verify=delivered
 === STDOUT ===
 {"agent":"codex","argv":["/bin/zsh","-lic","export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=codex-parent-fork-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --fork codex sess-codexp --tag worker --parent-session sess-codexp --dangerously-bypass-approvals-and-sandbox --go"],"cwd":"/mock/cwd","guid":"<GUID>","hcom_dir":"/hcom","hcom_name":"","hcom_tag":"worker","label":"codex-parent-fork-<SHORT>","pane_id":"p_child","provenance":{"batch_id":"","branch":"<BRANCH>","cwd":"/mock/cwd","forked_from":"guid-codexp-0000","mechanism":"fork","spawned_by":"user","tag":"worker","tool_session_id":"","ts":"<TS>","workspace_id":"ws_1"},"role":"worker","short_guid":"<SHORT>","started_at":"<TS>","started_by_pane":"p_self","status":"active","terminal_id":"term_CHILD","workspace_id":"ws_1"}
 === EXIT ===
@@ -24,7 +24,7 @@ Session doctrine, not a task: do NOT reply to this message. This session was res
 
 Provision and manage agent sessions through herder. Do NOT spawn with `hcom <n> claude`, stop with `hcom kill`, or drive raw `herdr agent start/send` — those bypass the registry or write text without submitting it. herder-spawned claude/codex bind to the bus from birth, so once running you message them with `hcom send`.
 
-- Spawn:  herder spawn --role R --agent <claude|codex|bash|...> --prompt 'short task (or a one-line pointer to a brief file)' [--team NAME] [--workspace ID] [--split right|down] [--cwd PATH]
+- Spawn:  herder spawn --role R --agent <claude|codex|bash|...> --prompt 'short task (or a one-line pointer to a brief file)' [--workspace ID] [--split right|down] [--cwd PATH]
 - List:   herder list [--all]                 # default: seated + unseated; --all adds retired + lost
 - Wait:   herder wait <guid> [--read]          # boot-settle / post-send check — NOT for watching long work
 - Send:   herder send <guid> 'msg'             # verified delivery to a spawned agent (guid/label, drift-proof)

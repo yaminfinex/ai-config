@@ -57,9 +57,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	if opts.mode == "teams" {
-		return runTeams(stdout)
-	}
 	var failures []continuationstate.Record
 	if opts.mode == "table" || opts.mode == "json" {
 		var warnings []error
@@ -141,8 +138,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	now := time.Now()
-	fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-12s %-16s %-11s %s\n",
-		"GUID", "LABEL", "AGENT", "PANE", "LIVE", "TEAM", "BUS", "CTX", "ROLE")
+	fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-16s %-11s %s\n",
+		"GUID", "LABEL", "AGENT", "PANE", "LIVE", "BUS", "CTX", "ROLE")
 	for _, rec := range collapsed {
 		if !opts.includeAll && (!registry.IsNonRetired(rec) || rec.Archived) {
 			continue
@@ -154,10 +151,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			if pane, ok := rawStringField(live.Raw, "pane_id"); ok {
 				livePane = pane
 			}
-		}
-		team := rec.Team
-		if team == "" {
-			team = "global"
 		}
 		bus := "-"
 		if rec.HcomName != "" && rec.HcomName != "null" {
@@ -171,8 +164,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			role += " [status(" + observation.EventSource + "): " + observation.EventStatus + "]"
 		}
 		ctx := contextSnapshotDisplay(rec, now)
-		fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-12s %-16s %-11s %s\n",
-			ptrString(rec.ShortGUID), ptrString(rec.Label), rec.Agent, livePane, liveStatus, team, bus, ctx, role)
+		fmt.Fprintf(stdout, "%-10s %-20s %-7s %-18s %-9s %-16s %-11s %s\n",
+			ptrString(rec.ShortGUID), ptrString(rec.Label), rec.Agent, livePane, liveStatus, bus, ctx, role)
 	}
 	return 0
 }
@@ -196,9 +189,6 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 				opts.targetGUID = args[i+1]
 			}
 			i += 2
-		case "--teams":
-			opts.mode = "teams"
-			i++
 		case "--ack-continuation":
 			if i+1 >= len(args) {
 				die(stderr, "--ack-continuation requires an id")
@@ -227,7 +217,6 @@ Usage:
   herder list --json       reconciled sessions and unresolved failures as JSONL
   herder list --raw        raw registry JSONL, no reconciliation
   herder list --guid GUID  one record as full JSON (exit 1 if not found)
-  herder list --teams      list team buses under $HERDER_TEAMS_ROOT
   herder list --ack-continuation ID
                            acknowledge a failed detached continuation after recovery
 
@@ -254,27 +243,6 @@ func renderContinuationFailures(stdout io.Writer, failures []continuationstate.R
 		fmt.Fprintf(stdout, "    after recovery: herder list --ack-continuation %s\n", rec.ID)
 	}
 	fmt.Fprintln(stdout)
-}
-
-func runTeams(stdout io.Writer) int {
-	home, _ := os.UserHomeDir()
-	root := os.Getenv("HERDER_TEAMS_ROOT")
-	if root == "" {
-		root = filepath.Join(home, ".hcom", "teams")
-	}
-	fmt.Fprintf(stdout, "%-20s %s\n", "TEAM", "HCOM_DIR")
-	fmt.Fprintf(stdout, "%-20s %s\n", "global", filepath.Join(home, ".hcom"))
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return 0
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		fmt.Fprintf(stdout, "%-20s %s\n", entry.Name(), filepath.Join(root, entry.Name()))
-	}
-	return 0
 }
 
 // liveIndex resolves registry rows to live herdr agents. Terminal ids are the

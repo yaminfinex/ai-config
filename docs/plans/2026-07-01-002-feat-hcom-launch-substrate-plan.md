@@ -10,6 +10,10 @@ plan_depth: deep
 
 # feat: hcom-owned launch substrate — herder launches *through* hcom
 
+> Historical implementation plan. The per-team spawn surface described below is superseded:
+> herder now spawns only on the node's global bus and no longer derives `HCOM_DIR` from a team.
+> The retired details remain here solely as provenance for the original substrate.
+
 ## Why this supersedes plan 001
 
 Plan 001 (KTD4) kept herder ignorant of hcom ("herder launches, hcom is a pure bus"). Spikes proved

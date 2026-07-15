@@ -17,6 +17,9 @@ pending:
 > Draft for adversarial review (holes, elegance, YAGNI). Supersedes the architecture sections
 > (§3c graph, §4 roles) of the session-management snapshot; that doc's pain inventory + prior-art
 > survey remain valid as revealed requirements. §9 has marked PENDING fold-ins from the hcom build.
+>
+> **Superseded bus model:** §9's per-team ringfence is historical exploration only. Herder now
+> spawns every agent on the node's global bus; mission attribution uses registry membership and tags.
 
 ## 0. Invariants (non-negotiable, everything else is)
 

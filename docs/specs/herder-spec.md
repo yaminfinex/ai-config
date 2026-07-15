@@ -663,10 +663,9 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
   (hcom relay is unused and unmodelled). Herder keeps only zero-cost residue: the node
   attribution stamp (§3.1-10), the §6.1 gate, and the namespace anchor.
 - **Teams** — dropped from the model. hcom has no team concept (its `tag` is a soft label on
-  one shared bus); herder's former HCOM_DIR-per-team construct is retired. Posture: one
-  namespace per node; per-run traffic grouping uses hcom tags. Removal-day requirements
-  (recorded from the live survey, 2026-07-08): the spawn hook template and the orchestrate
-  skill stop advertising `--team`; legacy `team` row keys keep parsing (§5.4); the tag
+  one shared bus); herder's former HCOM_DIR-per-team construct and spawn flag are retired.
+  Posture: one namespace per node; per-run traffic grouping uses hcom tags. Legacy `team`
+  row keys keep parsing (§5.4); the tag
   replacement needs spawn-time tag propagation, tag-filtered list/events ergonomics, and a
   name-collision story — hard message isolation is explicitly not reproduced.
 - **sqlite / hybrid registry store** — considered and rejected (§5.1). A rebuildable

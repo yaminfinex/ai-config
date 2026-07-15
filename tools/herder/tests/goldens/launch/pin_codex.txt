@@ -15,7 +15,7 @@ The [HCOM SESSION] context above is hcom's own bootstrap. Your name, first-respo
 
 Provision and manage agent sessions through herder. Do NOT spawn with `hcom <n> claude`, stop with `hcom kill`, or drive raw `herdr agent start/send` — those bypass the registry or write text without submitting it. herder-spawned claude/codex bind to the bus from birth, so once running you message them with `hcom send`.
 
-- Spawn:  herder spawn --role R --agent <claude|codex|bash|...> --prompt 'short task (or a one-line pointer to a brief file)' [--team NAME] [--workspace ID] [--split right|down] [--cwd PATH]
+- Spawn:  herder spawn --role R --agent <claude|codex|bash|...> --prompt 'short task (or a one-line pointer to a brief file)' [--workspace ID] [--split right|down] [--cwd PATH]
 - List:   herder list [--all]                 # default: seated + unseated; --all adds retired + lost
 - Wait:   herder wait <guid> [--read]          # boot-settle / post-send check — NOT for watching long work
 - Send:   herder send <guid> 'msg'             # verified delivery to a spawned agent (guid/label, drift-proof)

@@ -54,4 +54,4 @@ change with `/context` in a fresh session.
   Claude Code already defers their schemas; each costs one name-only line, so
   there is nothing meaningful to reclaim. Much of the article's per-tool
   advice predates deferred tool loading.
-- hcom session injection (~900 tokens) — load-bearing for the team-bus setup.
+- hcom session injection (~900 tokens) — load-bearing for bus-native agent coordination.

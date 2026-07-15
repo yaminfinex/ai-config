@@ -1,7 +1,7 @@
 === STDERR ===
-herder send --dry-run: alpha -> hcom bus @alpha-rive (team: alpha-team, HCOM_DIR=<BUS>)
+herder send --dry-run: alpha -> hcom bus @alpha-rive (HCOM_DIR=<BUS>)
 === STDOUT ===
-{"target":"alpha","transport":"hcom","hcom_name":"alpha-rive","hcom_dir":"<BUS>","team":"alpha-team","dry_run":true}
+{"target":"alpha","transport":"hcom","hcom_name":"alpha-rive","hcom_dir":"<BUS>","dry_run":true}
 === EXIT ===
 0
 === HCOM SEND ARGV ===
