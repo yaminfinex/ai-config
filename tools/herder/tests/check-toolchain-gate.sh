@@ -17,7 +17,11 @@
 # never been shown to fail proves nothing, so failing to notice a removed guard
 # is itself a failure here.
 #
-# Everything runs against a throwaway copy; the real tree is never written to.
+# Everything runs against a throwaway copy; the real tree is never written to,
+# and nothing copy-specific outlives the run — no record naming a deleted temp
+# path is left in the caller's global state. Ordinary Go build and module caches
+# from the child builds are not in that class: every suite that builds warms
+# them, and they are keyed by content rather than by this run's temp paths.
 
 set -uo pipefail
 
@@ -40,9 +44,18 @@ cp -a "$REPO_ROOT" "$COPY"
 # Nothing here needs history, and the copy must not reach the real repository
 # through git.
 rm -rf "$COPY/.git"
-# A config file outside its trusted path makes `mise where` fail for a reason
-# unrelated to the probe, which looks exactly like the gate refusing.
-( cd "$COPY" && mise trust --quiet >/dev/null 2>&1 )
+
+# Keep every trace of this run inside the trapped temp root. A config outside its
+# trusted path makes `mise where` fail for a reason unrelated to the probe, which
+# looks exactly like the gate refusing — but `mise trust` would buy that by
+# writing a permanent record into the caller's global state naming a path this
+# suite is about to delete, and registering a config likewise leaves a per-copy
+# entry in the state dir and prunable cache state. Point all three at $WORK and
+# nothing copy-specific outlives the run. Exported so the gates under test
+# inherit them.
+export MISE_TRUSTED_CONFIG_PATHS="$COPY"
+export MISE_STATE_DIR="$WORK/mise-state"
+export MISE_CACHE_DIR="$WORK/mise-cache"
 
 # Gates under test: every suite that derives its toolchain from a go.mod.
 # key|script (repo-relative)|module dir
@@ -103,7 +116,10 @@ gate_pins() {
   # Put the pinned toolchain on PATH for this probe. One gate enforces a floor
   # against the caller's go rather than resolving the pin itself, so without this
   # the probe would be measuring the ambient shell instead of the parser.
-  root="$(mise where "go@$pin" 2>/dev/null)" || root=""
+  # Resolve from the copy: it is the path this run trusts, whereas the outer
+  # checkout is untrusted under the isolated state above and would fail here,
+  # silently dropping the pinned toolchain from PATH.
+  root="$(cd "$COPY" && mise where "go@$pin" 2>/dev/null)" || root=""
   run_path="$PATH"
   [ -n "$root" ] && run_path="$root/bin:$PATH"
   cp "$COPY/$module/go.mod" "$WORK/gomod.bak"
