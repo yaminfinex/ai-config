@@ -3,7 +3,8 @@ id: TASK-219
 title: >-
   sesh — pi session adapter: wire amendment first, shipper discovery +
   exclusion boundary, store admission, pi entry parser, branch-aware surface
-status: In Progress
+status: Done
+updated_date: '2026-07-15'
 assignee: []
 created_date: '2026-07-15 07:40'
 labels:
@@ -60,9 +61,55 @@ non-participation semantics preserved for whatever pi ids map to.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Wire amendment (pi in the closed enum) merged as the FIRST commit of the lane, byte-untouched elsewhere, mixed-fleet compat paragraph included
-- [ ] #2 Shipper discovers pi sessions with the exclusion boundary proven by a tripwire-tested detector (config/creds/runtime state provably never ship)
-- [ ] #3 Store/index/surface accept tool=pi end to end; pi entry shape (header id, entry id/parentId, nested role) parsed by a pi-specific parser with committed fixtures incl. a branched session
-- [ ] #4 Surface renders the active branch and labels branch points (DR-6 single contract, T27 gate green on the branched fixture); never-500 floor holds for pi
-- [ ] #5 Full pinned gate green; wire compat gates green; unknown-tool preserved under mutation
+- [x] #1 Wire amendment (pi in the closed enum) merged as the FIRST commit of the lane, byte-untouched elsewhere, mixed-fleet compat paragraph included
+- [x] #2 Shipper discovers pi sessions with the exclusion boundary proven by a tripwire-tested detector (config/creds/runtime state provably never ship)
+- [x] #3 Store/index/surface accept tool=pi end to end; pi entry shape (header id, entry id/parentId, nested role) parsed by a pi-specific parser with committed fixtures incl. a branched session
+- [x] #4 Surface renders the active branch and labels branch points (DR-6 single contract, T27 gate green on the branched fixture); never-500 floor holds for pi
+- [x] #5 Full pinned gate green; wire compat gates green; unknown-tool preserved under mutation
 <!-- AC:END -->
+
+## Evidence (Done, 2026-07-15)
+
+Lane: branch task-219-pi-adapter (builder-gemi, codex gpt-5.6-sol; sole
+substance reviewer reviewer-kiru, codex; gate cleared by hera, merge +
+post-merge battery + push delegated to mika under hera's convention).
+6 linear commits, 29 files; merge 62c4ab3 --no-ff.
+
+- AC1: wire Amendment 4 first commit (77775e9): pi in the closed enum,
+  File Identity (+ real-directory root clause from review), index tool
+  column, dated note, mixed-fleet PUT/recovery-GET paragraph. Frozen
+  sections hash-verified byte-identical by builder AND reviewer.
+- AC2: exact-shape admission ($HOME/.pi/agent/sessions/<cwd-key>/
+  <timestamp>_<uuid>.jsonl, Lstat-rejected symlink root, pi-specific
+  policy — legacy tools byte-unchanged); boundary suite with decoys,
+  depth, traversal, symlinks, root-symlink negative; widened-mutant
+  detector proven live.
+- AC3: store parseTool + wire + index pi parser (header id = session
+  identity w/ empty message_uuid non-participant; entry id ->
+  message_uuid; parentId in immutable mirror, no DDL); branched fixture
+  committed (synthetic, private-repo policy, TASK-208 pending).
+- AC4: DR-6 active-branch + labeled branch points via version-keyed
+  single-flight projection; canonical append-order leaf (shuffled-store
+  T27 regression); window-bounded (1,000-row chain: exactly 200
+  MirrorRange reads/page, warm page 0 rescans; work-counter mutant
+  gate); adversarial cycles/dangling/duplicate/forest/10k-depth
+  degrade non-500; label-as-active-leaf handled.
+- Review: 4x P1 found, all FIXED + independently re-verified
+  (#78411 root-symlink exfiltration, order-dependent leaf, per-request
+  corpus-scale reads; #79502 stale-projection false-404 on new pi
+  session — audited pi-only, legacy paths unaffected). VERDICT PASS
+  #80011 at 0207d70.
+- AC5: full uncached race suite green at final head; slim-client
+  allowlist unchanged (client 7,286,946 B); unknown-tool preserved
+  under mutation; post-merge house battery BY MIKA per hera convention
+  (#80127): 4 module gates (herder/bottle/sesh/mish) + 59/59 checks,
+  no TempDir flake; author-check clean; pushed.
+- Deploy (store-before-clients per amendment): tag sesh-v0.1.15 exact;
+  store live "sesh-v0.1.15"; LIVE differential probe: GET tool=pi
+  clears enum (fails only on probe's missing wire version) vs
+  tool=bogus -> unknown_tool; release published clean; this node
+  v0.1.14 -> v0.1.15, shipping healthy, nodes page 200/0.36s.
+- Accepted post-deploy gaps: no real-Mac pi discovery yet; no live pi
+  corpus on this box (fixture-verified end to end; first real pi
+  session on any fleet node is the live proof); activation (herder
+  spawn --agent pi) is explicitly out of scope per design §12.
