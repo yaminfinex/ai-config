@@ -20,7 +20,7 @@ func TestDeliverCullRequestBoundsHungBusProbe(t *testing.T) {
 	t.Setenv("HCOM_DIR", t.TempDir())
 	start := time.Now()
 	got := DeliverCullRequest(CullRequest{
-		Sender: "caller-seat", Target: "peer-seat", BusDir: os.Getenv("HCOM_DIR"),
+		Sender: "worker-caller-seat", SenderBase: "caller-seat", Target: "worker-peer-seat", TargetBase: "peer-seat", BusDir: os.Getenv("HCOM_DIR"),
 		Thread: "herder-cull-deadline", Message: "release external resources, then acknowledge", Deadline: time.Now().Add(40 * time.Millisecond),
 	})
 	if got.Verdict != "roster_timeout" {
@@ -72,7 +72,7 @@ esac
 	t.Setenv("CULL_CHILD_PID_LOG", pidLog)
 	start := time.Now()
 	_ = DeliverCullRequest(CullRequest{
-		Sender: "caller-seat", Target: "peer-seat", BusDir: os.Getenv("HCOM_DIR"),
+		Sender: "worker-caller-seat", SenderBase: "caller-seat", Target: "worker-peer-seat", TargetBase: "peer-seat", BusDir: os.Getenv("HCOM_DIR"),
 		Thread: "herder-cull-fd-bound", Message: "release external resources, then acknowledge", Deadline: time.Now().Add(100 * time.Millisecond),
 	})
 	if elapsed := time.Since(start); elapsed > time.Second {

@@ -33,20 +33,32 @@ func gracefulRelease(rec registry.Record, pane, term string, opts options, stdou
 
 	deadline := time.Now().Add(time.Duration(opts.graceTimeoutMS) * time.Millisecond)
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
-	sender := hcomidentity.ResolveLiveContext(ctx, rec.HcomDir, hcomidentity.CurrentEvidence(os.Getenv("HERDR_PANE_ID")))
+	rows, rosterErr := hcomidentity.ListContext(ctx, rec.HcomDir)
 	cancel()
+	if rosterErr != nil {
+		fmt.Fprintf(stdout, "release notice: skipped (caller bus identity unverified: %s); proceeding\n", rosterErr)
+		return
+	}
+	sender := hcomidentity.Resolve(rows, hcomidentity.CurrentEvidence(os.Getenv("HERDR_PANE_ID")))
 	if !sender.Verified {
 		fmt.Fprintf(stdout, "release notice: skipped (caller bus identity unverified: %s); proceeding\n", sender.Reason)
 		return
 	}
+	target, targetCount := hcomidentity.JoinedStoredCount(rows, rec.HcomName)
+	if targetCount != 1 || target.Name == "" || target.BaseName == "" {
+		fmt.Fprintln(stdout, "release notice: skipped (target bus identity is unavailable or ambiguous); proceeding")
+		return
+	}
 
 	request := send.CullRequest{
-		Sender:   sender.Name,
-		Target:   rec.HcomName,
-		BusDir:   rec.HcomDir,
-		Thread:   newCullThread(),
-		Message:  releaseNotice,
-		Deadline: deadline,
+		Sender:     sender.Name,
+		SenderBase: sender.BaseName,
+		Target:     target.Name,
+		TargetBase: target.BaseName,
+		BusDir:     rec.HcomDir,
+		Thread:     newCullThread(),
+		Message:    releaseNotice,
+		Deadline:   deadline,
 	}
 	delivery := send.DeliverCullRequest(request)
 	switch delivery.Verdict {

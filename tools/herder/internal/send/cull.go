@@ -20,16 +20,18 @@ const (
 	cullCommandWaitDelay  = 100 * time.Millisecond
 )
 
-// CullRequest is the cull-only request envelope. Sender is supplied by the
-// caller after live bus-identity verification; this path never invents a
-// synthetic sender.
+// CullRequest is the cull-only request envelope. Full names drive --name and
+// routing; roster-derived base names match the identity hcom stamps on message
+// events. This path never invents or parses either identity form.
 type CullRequest struct {
-	Sender   string
-	Target   string
-	BusDir   string
-	Thread   string
-	Message  string
-	Deadline time.Time
+	Sender     string
+	SenderBase string
+	Target     string
+	TargetBase string
+	BusDir     string
+	Thread     string
+	Message    string
+	Deadline   time.Time
 }
 
 // CullDelivery reports whether the one permitted notice send was received or
@@ -61,7 +63,7 @@ type cullBusEvent struct {
 // sends once. A queued verdict is success: the caller must keep waiting for
 // the target's later protocol acknowledgement.
 func DeliverCullRequest(req CullRequest) CullDelivery {
-	if req.Sender == "" || req.Target == "" || req.Thread == "" || !time.Now().Before(req.Deadline) {
+	if req.Sender == "" || req.SenderBase == "" || req.Target == "" || req.TargetBase == "" || req.Thread == "" || !time.Now().Before(req.Deadline) {
 		return CullDelivery{Verdict: "send_failed"}
 	}
 	env := cullBusEnv(req.BusDir)
@@ -106,7 +108,7 @@ func DeliverCullRequest(req CullRequest) CullDelivery {
 	for time.Now().Before(verifyDeadline) {
 		probeCtx, probeCancel := context.WithDeadline(context.Background(), verifyDeadline)
 		receiptOut, receiptRC := outputCullCommand(probeCtx, env, receiptArgs...)
-		noticeOut, noticeRC := outputCullCommand(probeCtx, env, "events", "--full", "--last", "20", "--from", req.Sender, "--thread", req.Thread)
+		noticeOut, noticeRC := outputCullCommand(probeCtx, env, "events", "--full", "--last", "20", "--from", req.SenderBase, "--thread", req.Thread)
 		probeCancel()
 		if noticeRC == 0 {
 			for _, event := range decodeCullEvents(noticeOut) {
@@ -142,7 +144,7 @@ func CullAckObserved(req CullRequest, delivery CullDelivery) (bool, int64) {
 
 	noticeID := delivery.NoticeID
 	if noticeID == 0 {
-		out, rc := outputCullCommand(ctx, env, "events", "--full", "--last", "20", "--from", req.Sender, "--thread", req.Thread)
+		out, rc := outputCullCommand(ctx, env, "events", "--full", "--last", "20", "--from", req.SenderBase, "--thread", req.Thread)
 		if rc == 0 {
 			for _, event := range decodeCullEvents(out) {
 				if event.ID > delivery.NoticeFloor && isCullNotice(event, req) && event.ID > noticeID {
@@ -152,7 +154,7 @@ func CullAckObserved(req CullRequest, delivery CullDelivery) (bool, int64) {
 		}
 	}
 
-	out, rc := outputCullCommand(ctx, env, "events", "--full", "--last", "100", "--from", req.Target, "--intent", "ack")
+	out, rc := outputCullCommand(ctx, env, "events", "--full", "--last", "100", "--from", req.TargetBase, "--intent", "ack")
 	if rc != 0 {
 		return false, noticeID
 	}
@@ -161,7 +163,7 @@ func CullAckObserved(req CullRequest, delivery CullDelivery) (bool, int64) {
 		if noticeID > floor {
 			floor = noticeID
 		}
-		if event.ID <= floor || event.Type != "message" || event.Data.From != req.Target || event.Data.Intent != "ack" {
+		if event.ID <= floor || event.Type != "message" || !cullWireNameMatches(event.Data.From, req.Target, req.TargetBase) || event.Data.Intent != "ack" {
 			continue
 		}
 		onThread := event.Data.Thread == req.Thread
@@ -174,7 +176,11 @@ func CullAckObserved(req CullRequest, delivery CullDelivery) (bool, int64) {
 }
 
 func isCullNotice(event cullBusEvent, req CullRequest) bool {
-	return event.Type == "message" && event.Data.From == req.Sender && event.Data.Intent == "request" && event.Data.Thread == req.Thread
+	return event.Type == "message" && cullWireNameMatches(event.Data.From, req.Sender, req.SenderBase) && event.Data.Intent == "request" && event.Data.Thread == req.Thread
+}
+
+func cullWireNameMatches(got, full, base string) bool {
+	return got != "" && (got == full || got == base)
 }
 
 func cullBusEnv(busDir string) []string {

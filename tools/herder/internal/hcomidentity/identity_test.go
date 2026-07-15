@@ -6,16 +6,26 @@ func boolPtr(v bool) *bool { return &v }
 
 func TestResolvePrefersLiveSessionIdentityOverStoredName(t *testing.T) {
 	rows := []Row{
-		{Name: "live-self", SessionID: "sess-self", Joined: boolPtr(true)},
+		{Name: "worker-live-self", BaseName: "live-self", SessionID: "sess-self", Joined: boolPtr(true)},
 		{Name: "live-neighbor", SessionID: "sess-other", Joined: boolPtr(true)},
 	}
 
 	got := Resolve(rows, Evidence{SessionID: "sess-self"})
-	if !got.Verified || got.Name != "live-self" {
-		t.Fatalf("Resolve = %+v, want verified live-self", got)
+	if !got.Verified || got.Name != "worker-live-self" || got.BaseName != "live-self" {
+		t.Fatalf("Resolve = %+v, want verified tagged identity with base name", got)
 	}
 	if ok, _ := VerifyStored(rows, Evidence{SessionID: "sess-self"}, "stale-launch-name"); ok {
 		t.Fatal("VerifyStored accepted a stopped stale name")
+	}
+}
+
+func TestJoinedStoredCountResolvesTaggedFullOrBaseName(t *testing.T) {
+	rows := []Row{{Name: "worker-peer-seat", BaseName: "peer-seat", Joined: boolPtr(true)}}
+	for _, stored := range []string{"worker-peer-seat", "peer-seat"} {
+		row, count := JoinedStoredCount(rows, stored)
+		if count != 1 || row.Name != "worker-peer-seat" || row.BaseName != "peer-seat" {
+			t.Fatalf("JoinedStoredCount(%q) = (%+v, %d), want tagged row", stored, row, count)
+		}
 	}
 }
 

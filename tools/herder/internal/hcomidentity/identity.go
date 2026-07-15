@@ -20,6 +20,7 @@ type LaunchContext struct {
 
 type Row struct {
 	Name          string        `json:"name"`
+	BaseName      string        `json:"base_name"`
 	Tool          string        `json:"tool"`
 	Status        string        `json:"status"`
 	Joined        *bool         `json:"joined,omitempty"`
@@ -37,6 +38,7 @@ type Evidence struct {
 
 type Result struct {
 	Name      string
+	BaseName  string
 	SessionID string
 	PaneID    string
 	Verified  bool
@@ -158,7 +160,11 @@ func Resolve(rows []Row, evidence Evidence) Result {
 		return Result{Reason: "live identity correlates resolve to different bus rows"}
 	}
 	for name, row := range matched {
-		return Result{Name: name, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
+		baseName := row.BaseName
+		if baseName == "" {
+			baseName = row.Name
+		}
+		return Result{Name: name, BaseName: baseName, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
 	}
 	return Result{Reason: "live bus identity is unknown"}
 }
@@ -198,6 +204,23 @@ func JoinedNamedCount(rows []Row, name string) (Row, int) {
 	count := 0
 	for _, row := range rows {
 		if row.Name == name && joined(row) {
+			if count == 0 {
+				found = row
+			}
+			count++
+		}
+	}
+	return found, count
+}
+
+// JoinedStoredCount resolves a stored bus coordinate whether it recorded the
+// roster's tagged full name or its base name. The returned row is the source
+// of truth for both forms; callers must not derive one form from the other.
+func JoinedStoredCount(rows []Row, stored string) (Row, int) {
+	var found Row
+	count := 0
+	for _, row := range rows {
+		if joined(row) && stored != "" && (row.Name == stored || row.BaseName == stored) {
 			if count == 0 {
 				found = row
 			}
