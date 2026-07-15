@@ -3,9 +3,10 @@ id: TASK-216
 title: >-
   Kill the --team flag — retire team-bus spawning completely (flag, env, docs,
   help)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 00:02'
+updated_date: '2026-07-15 00:02'
 labels: []
 dependencies: []
 ordinal: 214000
