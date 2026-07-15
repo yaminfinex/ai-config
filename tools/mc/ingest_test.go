@@ -65,7 +65,7 @@ func TestImplicitBigbossOpensObserved(t *testing.T) {
 
 func TestExplicitSeatRaiseOpensManaged(t *testing.T) {
 	in, s := testIngestor(t)
-	fold(t, in, busEvent(2, "vile", "task-1-review", "@owner need a decision on the journal format.", "request", "owner", "bigboss"))
+	fold(t, in, busEvent(2, "vile", "task-1-review", "need a decision on the journal format.", "request", "owner", "bigboss"))
 
 	th := s.Get("task-1-review")
 	if th == nil {
@@ -84,7 +84,7 @@ func TestExplicitSeatRaiseOpensManaged(t *testing.T) {
 
 func TestThreadlessRaiseOpensDeskThread(t *testing.T) {
 	in, s := testIngestor(t)
-	fold(t, in, busEvent(7, "vile", "", "ping @owner directly.", "inform", "owner"))
+	fold(t, in, busEvent(7, "vile", "", "ping the owner directly.", "inform", "owner"))
 
 	th := s.Get("desk-7")
 	if th == nil {
@@ -108,7 +108,7 @@ func TestExplicitRaisePromotesObservedPreservingHistory(t *testing.T) {
 	in, s := testIngestor(t)
 	fold(t, in, busEvent(10, "builder-gemi", "task-9-work", "step one done.", "inform", "bigboss"))
 	fold(t, in, busEvent(11, "worker-vele", "task-9-work", "picking up step two.", "inform", "bigboss"))
-	fold(t, in, busEvent(12, "builder-gemi", "task-9-work", "blocked — need @owner to decide.", "request", "owner"))
+	fold(t, in, busEvent(12, "builder-gemi", "task-9-work", "blocked — need the owner to decide.", "request", "owner"))
 
 	th := s.Get("task-9-work")
 	if th.Grade != "managed" {
@@ -129,13 +129,14 @@ func TestExplicitRaisePromotesObservedPreservingHistory(t *testing.T) {
 	}
 }
 
-// Event #87580 had this exact defect shape: a mention-free worker ack was
-// stamped mentions:[owner] by hcom. The wire field alone must not promote the
-// observed thread or make it the owner's turn.
-func TestImplicitOwnerMentionDoesNotPromoteObserved(t *testing.T) {
+// Event #87580: even a seat-addressed ack is only delivery bookkeeping. It
+// stays linked to the observed thread without promoting or flipping turn.
+func TestSeatAddressedAckDoesNotPromoteObserved(t *testing.T) {
 	in, s := testIngestor(t)
 	fold(t, in, busEvent(87579, "reviewer-gini", "task-26-membership-grouping", "reviewing the grouping.", "inform", "bigboss"))
-	fold(t, in, busEvent(87580, "builder-luga", "task-26-membership-grouping", "ACK: I will implement the requested fix.", "ack", "owner"))
+	ack := busEvent(87580, "lade", "task-26-membership-grouping", "Ack task 26. I am reading the playbook and applicable skill instructions in full, then will execute membership grouping.", "ack", "owner")
+	ack.Data.ReplyTo = 87548
+	fold(t, in, ack)
 
 	th := s.Get("task-26-membership-grouping")
 	if th.Grade != "observed" || th.Turn == "owner" {
@@ -146,35 +147,81 @@ func TestImplicitOwnerMentionDoesNotPromoteObserved(t *testing.T) {
 	}
 }
 
-func TestRaiseVerbExplicitTargetPromotes(t *testing.T) {
+func TestSeatAddressedThreadlessAckDoesNotColdOpen(t *testing.T) {
 	in, s := testIngestor(t)
-	fold(t, in, busEvent(90, "builder-gemi", "task-raise", "working normally.", "inform", "bigboss"))
-	fold(t, in, busEvent(91, "builder-gemi", "task-raise", "@owner\nCONTEXT: the build gate needs a ruling\nEXPECTS: decide", "request", "owner"))
+	fold(t, in, busEvent(87580, "lade", "", "Ack task 26.", "ack", "owner"))
 
-	th := s.Get("task-raise")
-	if th.Grade != "managed" || th.Turn != "owner" {
-		t.Fatalf("grade=%q turn=%q, want managed/owner", th.Grade, th.Turn)
+	if got := s.List("", ""); len(got) != 0 {
+		t.Fatalf("tracked %d threads for threadless seat-addressed ack, want 0", len(got))
 	}
 }
 
-func TestExplicitSeatMentionAliases(t *testing.T) {
-	tests := []struct {
-		text string
-		seat string
-		want bool
-	}{
-		{"please decide @human", "human", true},
-		{"please decide @owner", "human", true},
-		{"please decide @bigboss", "human", true},
-		{"mention supplied only on the wire", "human", false},
-		{"wrong case @OWNER", "human", false},
-		{"different target @owner-helper", "human", false},
-		{"remote target @owner:BOXE", "human", false},
+func TestSeatAddressedAckDoesNotFlipManagedTurn(t *testing.T) {
+	in, s := testIngestor(t)
+	fold(t, in, busEvent(80, "vile", "task-ack-turn", "please decide.", "request", "owner"))
+	fold(t, in, busEvent(81, "human-yamen", "task-ack-turn", "approved.", "inform"))
+	before := s.Get("task-ack-turn").Turn
+	fold(t, in, busEvent(82, "lade", "task-ack-turn", "acknowledged.", "ack", "owner"))
+
+	if got := s.Get("task-ack-turn").Turn; got != before {
+		t.Fatalf("turn = %q after ack, want preserved %q", got, before)
 	}
-	for _, tt := range tests {
-		if got := explicitSeatMention(tt.text, tt.seat); got != tt.want {
-			t.Errorf("explicitSeatMention(%q, %q) = %v, want %v", tt.text, tt.seat, got, tt.want)
-		}
+}
+
+// Event #72529 is the canonical threadless desk raise. Its explicit target is
+// present only in mentions:[owner], not repeated in the text.
+func TestRealThreadlessRequestColdOpensDeskThread(t *testing.T) {
+	in, s := testIngestor(t)
+	fold(t, in, busEvent(72529, "vile", "", "First real desk raise: mc is live on 127.0.0.1:8390 — this message should appear as an open thread in your inbox, expects reply, your turn.", "request", "owner"))
+
+	th := s.Get("desk-72529")
+	if th == nil || th.Grade != "managed" || th.Expects != "reply" || th.Turn != "owner" {
+		t.Fatalf("thread=%#v, want managed desk thread expecting reply on owner's turn", th)
+	}
+}
+
+// Event #83720 promoted an existing observed thread without spelling @owner
+// in its text. The wire mention is the explicit address.
+func TestRealThreadedRequestPromotesAndFlipsTurn(t *testing.T) {
+	in, s := testIngestor(t)
+	fold(t, in, busEvent(83719, "worker-vele", "task-18-adjudication", "design work complete.", "inform", "bigboss"))
+	const text = `Adjudicate the mc UI design pass (mission tasks 18+19; both design docs are DONE and verified). TWO DECISIONS, both yours:
+
+DECISION 1 — layout family (doc: artifacts/ui-design-pass.md, §3-§4, §6):
+- LEDGER: reading column done properly; inline triage in the inbox; phone free; smallest build.
+- COCKPIT: split-pane workbench; conversation >=70% of pixels structurally; peek-vs-inhabit as URLs. RECOMMENDED.
+- WIRE: real-time spine with a true "you last looked" rule line; best return-orientation; no WORK mode of its own.
+- DECK: object board — presented and argued AGAINST (fights two standing constraints).
+
+DECISION 2 — client-side tech (same doc, §5):
+(a) pure-CSS zero-JS — but your #1 pain (refresh-only liveness) is unfixable on any page with a composer.
+(b) <=400 lines dependency-free vanilla JS over unchanged server pages, shipped as a separate DELETABLE commit, "works with JS off or review blocker" rule. RECOMMENDED, staged after an (a) pass.
+(c) htmx-class layer — argued against at this scale (dependency + erosion of the JS-off guarantee).
+
+The graph view (artifacts/graph-view-design.md) survives every outcome: server-rendered SVG, deterministic clustering, matrix variant; its implement task files the moment you rule.
+
+Read the docs rendered: https://github.com/yaminfinex/missions/blob/main/missions/2026-07-15-mission-control/artifacts/ui-design-pass.md and https://github.com/yaminfinex/missions/blob/main/missions/2026-07-15-mission-control/artifacts/graph-view-design.md — an in-mc artifact viewer is building right now (task 20) so the next adjudication won't need GitHub.
+
+Expects: DECIDE (family + tech level). Reply on this thread from mc; implementation tasks A/B are pre-written in the docs with your two slots marked.
+`
+	fold(t, in, busEvent(83720, "vile", "task-18-adjudication", text, "request", "owner"))
+
+	th := s.Get("task-18-adjudication")
+	if th.Grade != "managed" || th.Expects != "reply" || th.Turn != "owner" || len(th.Msgs) != 2 {
+		t.Fatalf("grade=%q expects=%q turn=%q msgs=%d, want managed/reply/owner/2", th.Grade, th.Expects, th.Turn, len(th.Msgs))
+	}
+}
+
+// herder raise maps read/act raises to intent=inform. They must still promote
+// when explicitly addressed to the seat, with or without a literal mention.
+func TestSeatAddressedInformPromotes(t *testing.T) {
+	in, s := testIngestor(t)
+	fold(t, in, busEvent(90, "builder-gemi", "task-raise", "working normally.", "inform", "bigboss"))
+	fold(t, in, busEvent(91, "builder-gemi", "task-raise", "CONTEXT: the build gate needs a ruling\nEXPECTS: read", "inform", "owner"))
+
+	th := s.Get("task-raise")
+	if th.Grade != "managed" || th.Expects != "read" || th.Turn != "owner" {
+		t.Fatalf("grade=%q expects=%q turn=%q, want managed/read/owner", th.Grade, th.Expects, th.Turn)
 	}
 }
 
@@ -198,7 +245,7 @@ func TestObservedStaysObservedAcrossTraffic(t *testing.T) {
 
 func TestManagedThreadLinksMentionFreeFollowups(t *testing.T) {
 	in, s := testIngestor(t)
-	fold(t, in, busEvent(30, "vile", "task-5-run", "raised at @owner.", "request", "owner"))
+	fold(t, in, busEvent(30, "vile", "task-5-run", "raised at the owner.", "request", "owner"))
 	fold(t, in, busEvent(31, "vile", "task-5-run", "follow-up detail, no mentions.", "inform", "bigboss"))
 
 	th := s.Get("task-5-run")
@@ -212,7 +259,7 @@ func TestManagedThreadLinksMentionFreeFollowups(t *testing.T) {
 
 func TestHumanReplyFlipsTurn(t *testing.T) {
 	in, s := testIngestor(t)
-	fold(t, in, busEvent(40, "vile", "task-6-turn", "your call, @owner.", "request", "owner"))
+	fold(t, in, busEvent(40, "vile", "task-6-turn", "your call.", "request", "owner"))
 	fold(t, in, busEvent(41, "human-yamen", "task-6-turn", "approved.", "inform"))
 
 	if th := s.Get("task-6-turn"); th.Turn == "owner" {
@@ -262,7 +309,7 @@ func TestGradeSurvivesReplay(t *testing.T) {
 	in := &Ingestor{store: s, user: "human-yamen", seat: "owner"}
 	fold(t, in, busEvent(50, "builder-gemi", "task-r-one", "obs.", "inform", "bigboss"))
 	fold(t, in, busEvent(51, "builder-gemi", "task-r-two", "obs then raised.", "inform", "bigboss"))
-	fold(t, in, busEvent(52, "builder-gemi", "task-r-two", "now raised @owner.", "request", "owner"))
+	fold(t, in, busEvent(52, "builder-gemi", "task-r-two", "now raised.", "request", "owner"))
 
 	s2, err := OpenStore(path)
 	if err != nil {
@@ -332,7 +379,7 @@ func TestExplicitRaiseReopensSyntheticClosedObservedThread(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := &Ingestor{store: s, user: "human-yamen", seat: "owner"}
-	fold(t, in, busEvent(60, "builder-gemi", "task-corrupt", "explicit raise @owner", "request", "owner"))
+	fold(t, in, busEvent(60, "builder-gemi", "task-corrupt", "explicit raise", "request", "owner"))
 
 	th := s.Get("task-corrupt")
 	if th.Grade != "managed" || th.Status != "open" || th.Resolution != "" || th.Turn != "owner" {
