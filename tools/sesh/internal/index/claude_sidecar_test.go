@@ -11,20 +11,24 @@ import (
 
 const sidecarSessionID = "10000000-0000-0000-0000-000000000000"
 
-var claudeSidecarTypes = []string{
+var claudeMetadataTypes = []string{
 	"agent-name",
 	"ai-title",
 	"bridge-session",
 	"file-history-snapshot",
-	"fork-context-ref",
 	"last-prompt",
 	"mode",
 	"permission-mode",
 	"pr-link",
 	"queue-operation",
+	"worktree-state",
+}
+
+var claudeUnknownVisibleTypes = []string{
+	"fork-context-ref",
 	"result",
 	"started",
-	"worktree-state",
+	"future-sidecar-probe",
 }
 
 func TestClaudeSidecarFixturePremiseAndClassification(t *testing.T) {
@@ -34,8 +38,8 @@ func TestClaudeSidecarFixturePremiseAndClassification(t *testing.T) {
 	}
 	defer raw.Close()
 
-	wantTypes := map[string]bool{"user": true, "assistant": true, "future-sidecar-probe": true}
-	for _, typ := range claudeSidecarTypes {
+	wantTypes := map[string]bool{"user": true, "assistant": true}
+	for _, typ := range append(append([]string{}, claudeMetadataTypes...), claudeUnknownVisibleTypes...) {
 		wantTypes[typ] = true
 	}
 	scanner := bufio.NewScanner(raw)
@@ -58,7 +62,7 @@ func TestClaudeSidecarFixturePremiseAndClassification(t *testing.T) {
 	st, idx := newHarness(t)
 	processFixture(t, st, idx, sidecarSessionID, sidecarSessionID, "claude-sidecar-entry-types.jsonl")
 
-	for _, typ := range claudeSidecarTypes {
+	for _, typ := range claudeMetadataTypes {
 		var role, messageUUID string
 		if err := st.DB().QueryRow(`SELECT role, message_uuid FROM sesh_index_messages
 			WHERE tool = ? AND entry_type = ?`, wire.ToolClaude, typ).Scan(&role, &messageUUID); err != nil {
@@ -69,13 +73,15 @@ func TestClaudeSidecarFixturePremiseAndClassification(t *testing.T) {
 		}
 	}
 
-	var futureRole string
-	if err := st.DB().QueryRow(`SELECT role FROM sesh_index_messages
-		WHERE tool = ? AND entry_type = 'future-sidecar-probe'`, wire.ToolClaude).Scan(&futureRole); err != nil {
-		t.Fatal(err)
-	}
-	if futureRole != "unknown" {
-		t.Fatalf("future type role=%q, want degraded-visible unknown", futureRole)
+	for _, typ := range claudeUnknownVisibleTypes {
+		var role string
+		if err := st.DB().QueryRow(`SELECT role FROM sesh_index_messages
+			WHERE tool = ? AND entry_type = ?`, wire.ToolClaude, typ).Scan(&role); err != nil {
+			t.Fatalf("query %s: %v", typ, err)
+		}
+		if role != "unknown" {
+			t.Errorf("non-admitted type %s role=%q, want degraded-visible unknown", typ, role)
+		}
 	}
 }
 

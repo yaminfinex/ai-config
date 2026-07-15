@@ -158,22 +158,20 @@ func knownTranscriptMeta(tool wire.Tool, row wire.IndexMessage) bool {
 }
 
 // isClaudeSidecarEntryType mirrors the indexer's deliberately exact
-// allowlist. Checking both role and entry type keeps rows written by an older
-// parser degraded-visible if they happened to inherit message.role=meta.
+// admitted-population allowlist. Checking both role and entry type keeps rows
+// written by an older parser degraded-visible if they happened to inherit
+// message.role=meta.
 func isClaudeSidecarEntryType(entryType string) bool {
 	switch entryType {
 	case "agent-name",
 		"ai-title",
 		"bridge-session",
 		"file-history-snapshot",
-		"fork-context-ref",
 		"last-prompt",
 		"mode",
 		"permission-mode",
 		"pr-link",
 		"queue-operation",
-		"result",
-		"started",
 		"worktree-state":
 		return true
 	default:

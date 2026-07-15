@@ -158,13 +158,15 @@ func TestSQLStoreKeepsUnknownClaudeTypeDegradedVisible(t *testing.T) {
 
 	srv := newServer(t, live)
 	body := mustGet200(t, srv, "/s/claude/"+sidecarFixtureSessionID)
-	if n := strings.Count(body, `<li class="entry`); n != 3 {
-		t.Fatalf("rendered %d entries, want two messages plus the unknown-type probe", n)
+	if n := strings.Count(body, `<li class="entry`); n != 6 {
+		t.Fatalf("rendered %d entries, want two messages plus four unknown-visible probes", n)
 	}
-	if !strings.Contains(body, `<span class="etype">future-sidecar-probe</span>`) {
-		t.Fatal("invented future Claude type was silently dropped")
+	for _, typ := range []string{"fork-context-ref", "result", "started", "future-sidecar-probe"} {
+		if !strings.Contains(body, `<span class="etype">`+typ+`</span>`) {
+			t.Fatalf("unknown-visible Claude type %s was silently dropped", typ)
+		}
 	}
-	if !strings.Contains(body, "13 known metadata lines excluded") {
+	if !strings.Contains(body, "10 known metadata lines excluded") {
 		t.Fatal("known sidecar exclusion count is missing")
 	}
 }

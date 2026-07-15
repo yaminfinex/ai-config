@@ -343,8 +343,8 @@ func fixtureClaudeConversationType(entryType string) bool {
 func fixtureClaudeSidecarType(entryType string) bool {
 	switch entryType {
 	case "agent-name", "ai-title", "bridge-session", "file-history-snapshot",
-		"fork-context-ref", "last-prompt", "mode", "permission-mode", "pr-link",
-		"queue-operation", "result", "started", "worktree-state":
+		"last-prompt", "mode", "permission-mode", "pr-link", "queue-operation",
+		"worktree-state":
 		return true
 	default:
 		return false

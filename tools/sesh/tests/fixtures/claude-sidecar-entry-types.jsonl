@@ -12,5 +12,5 @@
 {"type":"fork-context-ref","agentId":"scrubbed-agent","contextLength":1,"parentLastUuid":"10000000-0000-0000-0000-000000000002","parentSessionId":"10000000-0000-0000-0000-000000000000"}
 {"type":"bridge-session","bridgeSessionId":"20000000-0000-0000-0000-000000000000","lastSequenceNum":1,"sessionId":"10000000-0000-0000-0000-000000000000"}
 {"type":"started","agentId":"scrubbed-agent","key":"scrubbed-key"}
-{"type":"result","agentId":"scrubbed-agent","key":"scrubbed-key","result":{"confidence":"high","evidence":[],"refuted":false}}
+{"type":"result","agentId":"scrubbed-agent","key":"scrubbed-key","result":{"summary":"sole generated workflow analysis","findings":[{"title":"scrubbed substantive finding","evidence":["scrubbed evidence"]}],"recommendation":"keep this output visible"}}
 {"type":"future-sidecar-probe","sessionId":"10000000-0000-0000-0000-000000000000","value":"must remain visible","message":{"role":"meta","content":"must not inherit the exclusion sentinel"}}

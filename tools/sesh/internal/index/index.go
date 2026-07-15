@@ -802,23 +802,22 @@ func isClaudeConversationType(entryType string) bool {
 }
 
 // isClaudeSidecarType is the deliberately enumerated non-conversation set
-// observed in the local Claude corpus. Do not replace this allowlist with a
-// broad "not a known message type" rule: unknown future records must remain
-// visible on the transcript's degraded floor until they are understood.
+// observed and audited in the Claude session files sesh currently admits. Do
+// not replace this allowlist with a broad "not a known message type" rule:
+// recursively observed or future records must remain visible on the
+// transcript's degraded floor until admitted-population evidence justifies
+// excluding them.
 func isClaudeSidecarType(entryType string) bool {
 	switch entryType {
 	case "agent-name",
 		"ai-title",
 		"bridge-session",
 		"file-history-snapshot",
-		"fork-context-ref",
 		"last-prompt",
 		"mode",
 		"permission-mode",
 		"pr-link",
 		"queue-operation",
-		"result",
-		"started",
 		"worktree-state":
 		return true
 	default:

@@ -31,16 +31,20 @@ hold the fixture back (playbook rule).
 
 ## Fixtures
 
-### claude-sidecar-entry-types.jsonl — sanitized Claude sidecar census stand-in
+### claude-sidecar-entry-types.jsonl — sanitized Claude census stand-in
 
-- Shape source: the top-level type/key-set census of all live
-  `$HOME/.claude/projects/*/*.jsonl` files on 2026-07-15. The committed file
-  is a minimal sanitized stand-in, following the existing Pi precedent: it
-  preserves every observed Claude sidecar type and its real key shape but
-  replaces values with fixture-only UUIDs, labels, URLs, and content.
+- Shape source: a recursive top-level type/key-set census below
+  `$HOME/.claude/projects/` on 2026-07-15, followed by a separate audit of the
+  direct UUID-named session files that sesh discovery admits. The committed
+  file is a minimal sanitized stand-in, following the existing Pi precedent:
+  it preserves the audited shapes but replaces values with fixture-only
+  UUIDs, labels, URLs, and content.
 - 16 valid JSONL lines ending in `\n`: two real-shape conversation messages,
-  all 13 observed sidecar/state types, and one invented
-  `future-sidecar-probe` silent-drop detector.
+  the 10 metadata types observed and audited in admitted session files, three
+  synthesized unknown-visible probes (`result`, `started`, and
+  `fork-context-ref`) whose shapes were observed only in recursively found
+  workflow journals, and one invented `future-sidecar-probe` silent-drop
+  detector. The `result` probe is deliberately substantive sole-output data.
 - The fixture contains no captured prompts, paths, repository URLs,
   credentials, model output, or opaque signatures. Pattern and entropy scans
   are therefore clean by construction; every string value was reviewed.
