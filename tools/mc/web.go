@@ -6,9 +6,11 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,7 +41,9 @@ func NewWeb(store *Store, bus *Bus, ing *Ingestor, user, seat, herderBin string,
 		graphCache: graphCache{entries: map[string]graphCacheEntry{}},
 	}
 	w.tpl = template.Must(template.New("").Funcs(template.FuncMap{
-		"ago":            ago,
+		"lower":          strings.ToLower,
+		"stateURL":       stateURL,
+		"stampTime":      func(at time.Time) timestamp { return formatTimestamp(at, w.now()) },
 		"hasHumanPrefix": func(s string) bool { return strings.HasPrefix(s, "human-") },
 	}).Parse(pageTpl))
 	return w
@@ -137,10 +141,286 @@ type pageData struct {
 	// graph
 	Graph *graphPage
 	Auto  int
+	// cockpit shell: URL-carried state and persistent navigation.
+	MissionFilter string
+	CurrentPath   string
+	StateFields   []stateField
+	RailYourTurn  []*Thread
+	RailWaiting   []*Thread
+	RailThreads   []*Thread
+	RailAgents    []rosterAgent
+	Peek          bool
+	Inhabit       bool
+	View          string
+	ThreadStamp   timestamp
+	ReturnURL     string
+	ContextHTML   template.HTML
+	Messages      []messageView
+	Object        objectPanel
+}
+
+type stateField struct{ Name, Value string }
+
+type timestamp struct {
+	Absolute string
+	Relative string
+	DateTime string
+}
+
+type messageView struct {
+	Msg
+	Stamp     timestamp
+	Day       string
+	DayBreak  bool
+	Preview   template.HTML
+	Remainder template.HTML
+	Folded    bool
+}
+
+type objectRef struct {
+	Label string
+	URL   string
+}
+
+type objectPanel struct {
+	Tasks     []objectRef
+	Files     []objectRef
+	Backlinks []objectRef
 }
 
 func (w *Web) data(r *http.Request, page string) *pageData {
-	return &pageData{Page: page, User: w.userFor(r), Seat: w.seat, BusDir: w.bus.Dir, Cursor: w.store.Cursor(), F: map[string]string{}}
+	d := &pageData{
+		Page: page, User: w.userFor(r), Seat: w.seat, BusDir: w.bus.Dir,
+		Cursor: w.store.Cursor(), F: map[string]string{}, MissionFilter: r.URL.Query().Get("mission"),
+		CurrentPath: r.URL.Path, View: r.URL.Query().Get("view"),
+	}
+	for _, name := range []string{"peek", "view", "window", "focus", "auto", "all", "closed"} {
+		if value := r.URL.Query().Get(name); value != "" {
+			d.StateFields = append(d.StateFields, stateField{Name: name, Value: value})
+		}
+	}
+	for _, t := range w.store.List("open", "managed") {
+		if d.MissionFilter != "" && t.Home != d.MissionFilter {
+			continue
+		}
+		if t.Turn == "owner" {
+			d.RailYourTurn = append(d.RailYourTurn, t)
+		} else {
+			d.RailWaiting = append(d.RailWaiting, t)
+		}
+	}
+	for _, t := range w.store.List("", "") {
+		if d.MissionFilter == "" || t.Home == d.MissionFilter {
+			d.RailThreads = append(d.RailThreads, t)
+		}
+		if len(d.RailThreads) == 12 {
+			break
+		}
+	}
+	groups, _ := w.rosterGroups(false)
+	for _, group := range groups {
+		if d.MissionFilter != "" && group.Mission != d.MissionFilter {
+			continue
+		}
+		d.RailAgents = append(d.RailAgents, group.Agents...)
+		for _, repo := range group.Repos {
+			for _, branch := range repo.Branches {
+				d.RailAgents = append(d.RailAgents, branch.Agents...)
+			}
+		}
+	}
+	return d
+}
+
+func (w *Web) prepareThread(d *pageData, t *Thread) {
+	d.T = t
+	if d.Peek {
+		d.ReturnURL = addQuery(stateURL("/", d.MissionFilter), "peek", t.ID) + "#rail-" + url.PathEscape(t.ID)
+	}
+	d.ThreadStamp = formatTimestamp(t.Updated, w.now())
+	d.ContextHTML = renderRichText(t.Context, t.Home)
+	previousDay := ""
+	for _, msg := range t.Msgs {
+		at := parseTimestamp(msg.TS)
+		stamp := formatTimestamp(at, w.now())
+		day := at.UTC().Format("Monday, 2 January 2006")
+		lines := strings.Split(strings.ReplaceAll(msg.Text, "\r\n", "\n"), "\n")
+		view := messageView{Msg: msg, Stamp: stamp, Day: day, DayBreak: day != previousDay}
+		if len(lines) > 30 {
+			view.Folded = true
+			view.Preview = renderRichText(strings.Join(lines[:10], "\n"), t.Home)
+			view.Remainder = renderRichText(strings.Join(lines[10:], "\n"), t.Home)
+		} else {
+			view.Preview = renderRichText(msg.Text, t.Home)
+		}
+		d.Messages = append(d.Messages, view)
+		previousDay = day
+	}
+	d.Object = w.objectPanel(t)
+}
+
+var richRefPattern = regexp.MustCompile(`(?i)\bTASK-[0-9]+\b|(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md\b`)
+
+func renderRichText(text, mission string) template.HTML {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	var out strings.Builder
+	inCode := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			if inCode {
+				out.WriteString("</code></pre>")
+			} else {
+				out.WriteString("<pre><code>")
+			}
+			inCode = !inCode
+			continue
+		}
+		if inCode || strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
+			if !inCode {
+				out.WriteString("<pre><code>")
+			}
+			out.WriteString(template.HTMLEscapeString(strings.TrimPrefix(strings.TrimPrefix(line, "    "), "\t")))
+			out.WriteByte('\n')
+			if !inCode {
+				out.WriteString("</code></pre>")
+			}
+			continue
+		}
+		out.WriteString(linkRichLine(line, mission))
+		out.WriteString("<br>")
+	}
+	if inCode {
+		out.WriteString("</code></pre>")
+	}
+	return template.HTML(out.String()) // text is escaped; hrefs are built from escaped path/query components
+}
+
+func linkRichLine(line, mission string) string {
+	if mission == "" {
+		return template.HTMLEscapeString(line)
+	}
+	matches := richRefPattern.FindAllStringIndex(line, -1)
+	if len(matches) == 0 {
+		return template.HTMLEscapeString(line)
+	}
+	var out strings.Builder
+	last := 0
+	for _, match := range matches {
+		out.WriteString(template.HTMLEscapeString(line[last:match[0]]))
+		label := line[match[0]:match[1]]
+		href := ""
+		if strings.HasPrefix(strings.ToUpper(label), "TASK-") {
+			href = "/mission/" + url.PathEscape(mission) + "#" + strings.ToLower(label)
+		} else {
+			href = "/mission/" + url.PathEscape(mission) + "/file/" + strings.TrimLeft(label, "/")
+		}
+		out.WriteString(`<a href="` + template.HTMLEscapeString(href) + `">` + template.HTMLEscapeString(label) + `</a>`)
+		last = match[1]
+	}
+	out.WriteString(template.HTMLEscapeString(line[last:]))
+	return out.String()
+}
+
+func (w *Web) objectPanel(t *Thread) objectPanel {
+	var panel objectPanel
+	seen := map[string]bool{}
+	collect := func(text string) {
+		for _, label := range richRefPattern.FindAllString(text, -1) {
+			key := strings.ToLower(label)
+			if seen[key] || t.Home == "" {
+				continue
+			}
+			seen[key] = true
+			if strings.HasPrefix(strings.ToUpper(label), "TASK-") {
+				panel.Tasks = append(panel.Tasks, objectRef{Label: label, URL: "/mission/" + url.PathEscape(t.Home) + "#" + strings.ToLower(label)})
+			} else {
+				panel.Files = append(panel.Files, objectRef{Label: label, URL: "/mission/" + url.PathEscape(t.Home) + "/file/" + strings.TrimLeft(label, "/")})
+			}
+		}
+	}
+	collect(strings.ToUpper(t.ID))
+	collect(t.Context)
+	for _, msg := range t.Msgs {
+		collect(msg.Text)
+	}
+	for _, candidate := range w.store.List("", "") {
+		if candidate.ID == t.ID {
+			continue
+		}
+		mentions := strings.Contains(candidate.Context, t.ID)
+		for _, msg := range candidate.Msgs {
+			mentions = mentions || strings.Contains(msg.Text, t.ID)
+		}
+		if mentions {
+			panel.Backlinks = append(panel.Backlinks, objectRef{Label: candidate.Title, URL: "/thread/" + url.PathEscape(candidate.ID)})
+		}
+	}
+	return panel
+}
+
+func parseTimestamp(raw string) time.Time {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05"} {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
+}
+
+func formatTimestamp(at, now time.Time) timestamp {
+	if at.IsZero() {
+		return timestamp{Absolute: "time unavailable", Relative: "time unavailable"}
+	}
+	at = at.UTC()
+	d := now.Sub(at)
+	if d < 0 {
+		d = 0
+	}
+	relative := "now"
+	switch {
+	case d >= 24*time.Hour:
+		relative = fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	case d >= time.Hour:
+		relative = fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d >= time.Minute:
+		relative = fmt.Sprintf("%dm ago", int(d.Minutes()))
+	}
+	return timestamp{
+		Absolute: at.Format("2006-01-02 15:04:05 MST"),
+		Relative: relative,
+		DateTime: at.Format(time.RFC3339),
+	}
+}
+
+func stateURL(path, mission string) string {
+	if mission == "" {
+		return path
+	}
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + "mission=" + url.QueryEscape(mission)
+}
+
+func safeReturnTarget(raw string) string {
+	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") && !strings.ContainsAny(raw, "\r\n") {
+		return raw
+	}
+	return ""
+}
+
+func addQuery(target, key, value string) string {
+	fragment := ""
+	if i := strings.IndexByte(target, '#'); i >= 0 {
+		fragment, target = target[i:], target[:i]
+	}
+	separator := "?"
+	if strings.Contains(target, "?") {
+		separator = "&"
+	}
+	return target + separator + url.QueryEscape(key) + "=" + url.QueryEscape(value) + fragment
 }
 
 func (w *Web) render(rw http.ResponseWriter, code int, d *pageData) {
@@ -171,12 +451,35 @@ func (w *Web) inbox(rw http.ResponseWriter, r *http.Request) {
 		d.ShowClosed = true
 		d.Closed = w.store.List("closed", "managed")
 	}
+	if id := strings.TrimSpace(r.URL.Query().Get("peek")); id != "" {
+		t := w.store.Get(id)
+		if t == nil {
+			http.NotFound(rw, r)
+			return
+		}
+		d.Peek = true
+		w.prepareThread(d, t)
+	}
+	if d.View == "graph" {
+		model := w.graphData("30m", w.now())
+		d.Graph = &graphPage{
+			Window: "30m", View: "map", Mission: d.MissionFilter,
+			AsOf:         formatTimestamp(model.AsOf, w.now()).Absolute,
+			AsOfRelative: formatTimestamp(model.AsOf, w.now()).Relative,
+			Warning:      strings.Join(model.Warnings, " · "),
+			Content:      renderGraphSVG(model, d.MissionFilter, "", d.User, r.URL.Query()),
+		}
+	}
 	w.render(rw, 200, d)
 }
 
 func (w *Web) mission(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "mission")
 	slug := r.PathValue("slug")
+	if d.MissionFilter == "" {
+		d.MissionFilter = slug
+		filterRailToMission(d, slug)
+	}
 	d.Mission = w.missions.Status(slug)
 	if d.Mission.Slug == "" {
 		d.Mission.Slug = slug
@@ -201,6 +504,21 @@ func (w *Web) mission(rw http.ResponseWriter, r *http.Request) {
 	// HTTP 200: this is a useful, refreshable warning page rather than a blank
 	// 404 or a server error, and matches degraded status payload handling.
 	w.render(rw, http.StatusOK, d)
+}
+
+func filterRailToMission(d *pageData, mission string) {
+	filter := func(threads []*Thread) []*Thread {
+		out := threads[:0]
+		for _, thread := range threads {
+			if thread.Home == mission {
+				out = append(out, thread)
+			}
+		}
+		return out
+	}
+	d.RailYourTurn = filter(d.RailYourTurn)
+	d.RailWaiting = filter(d.RailWaiting)
+	d.RailThreads = filter(d.RailThreads)
 }
 
 func (w *Web) missionFile(rw http.ResponseWriter, r *http.Request) {
@@ -349,7 +667,8 @@ func (w *Web) thread(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d := w.data(r, "thread")
-	d.T = t
+	d.Inhabit = true
+	w.prepareThread(d, t)
 	d.Error = r.URL.Query().Get("err")
 	d.ParticipantState = w.participantState(t, d.User)
 	w.render(rw, 200, d)
@@ -377,6 +696,13 @@ func (w *Web) reply(rw http.ResponseWriter, r *http.Request) {
 	}
 	w.ing.Kick()
 	time.Sleep(300 * time.Millisecond) // let the kick land so the redirect shows the message
+	if target := safeReturnTarget(r.URL.Query().Get("return")); target != "" {
+		if warn != "" {
+			target = addQuery(target, "err", warn)
+		}
+		http.Redirect(rw, r, target, http.StatusSeeOther)
+		return
+	}
 	redirectThread(rw, r, id, warn)
 }
 
@@ -392,6 +718,9 @@ func (w *Web) close(rw http.ResponseWriter, r *http.Request) {
 	}
 	user := w.userFor(r)
 	res := strings.TrimSpace(r.FormValue("resolution"))
+	if res == "" {
+		res = strings.TrimSpace(r.FormValue("text"))
+	}
 	if res == "" {
 		if strings.HasPrefix(user, "human-") {
 			res = "closed by " + user
@@ -417,6 +746,18 @@ func (w *Web) close(rw http.ResponseWriter, r *http.Request) {
 	}
 	w.ing.Kick()
 	dest := "/"
+	if target := safeReturnTarget(r.URL.Query().Get("return")); target != "" {
+		dest = target
+	} else if r.URL.Query().Get("cockpit") == "1" {
+		mission := r.URL.Query().Get("mission")
+		dest = stateURL("/", mission)
+		for _, next := range w.store.List("open", "managed") {
+			if next.Turn == "owner" && (mission == "" || next.Home == mission) {
+				dest = addQuery(stateURL("/", mission), "peek", next.ID) + "#rail-" + url.PathEscape(next.ID)
+				break
+			}
+		}
+	}
 	if warn != "" {
 		dest += "?err=" + template.URLQueryEscaper(warn)
 	}
@@ -437,6 +778,10 @@ func (w *Web) reopen(rw http.ResponseWriter, r *http.Request) {
 		http.Redirect(rw, r, "/thread/"+id+"?err="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
 		return
 	}
+	if target := safeReturnTarget(r.URL.Query().Get("return")); target != "" {
+		http.Redirect(rw, r, target, http.StatusSeeOther)
+		return
+	}
 	http.Redirect(rw, r, "/thread/"+id, http.StatusSeeOther)
 }
 
@@ -453,6 +798,10 @@ func (w *Web) retitle(rw http.ResponseWriter, r *http.Request) {
 	title := strings.TrimSpace(r.FormValue("title"))
 	if err := w.store.Retitle(id, title); err != nil {
 		http.Redirect(rw, r, "/thread/"+id+"?err="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
+		return
+	}
+	if target := safeReturnTarget(r.URL.Query().Get("return")); target != "" {
+		http.Redirect(rw, r, target, http.StatusSeeOther)
 		return
 	}
 	http.Redirect(rw, r, "/thread/"+id, http.StatusSeeOther)
@@ -540,7 +889,8 @@ func (w *Web) graph(rw http.ResponseWriter, r *http.Request) {
 	d.Auto = auto
 	d.Graph = &graphPage{
 		Window: window, View: view, Mission: q.Get("mission"), Focus: cleanGraphName(q.Get("focus")),
-		AsOf: model.AsOf.UTC().Format(time.RFC3339), Warning: strings.Join(model.Warnings, " · "),
+		AsOf: model.AsOf.UTC().Format(time.RFC3339), AsOfRelative: formatTimestamp(model.AsOf, w.now()).Relative,
+		Warning: strings.Join(model.Warnings, " · "),
 	}
 	autoOff := cloneValues(q)
 	autoOff.Del("auto")
@@ -947,18 +1297,4 @@ func derivedTitle(message string) string {
 		title = strings.TrimSpace(string(runes[:80]))
 	}
 	return title
-}
-
-func ago(t time.Time) string {
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	}
 }

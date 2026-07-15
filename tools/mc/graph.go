@@ -64,6 +64,7 @@ type graphCache struct {
 type graphPage struct {
 	Window, View, Mission, Focus string
 	AsOf                         string
+	AsOfRelative                 string
 	Warning                      string
 	AutoOffURL, Auto10URL        string
 	Content                      template.HTML

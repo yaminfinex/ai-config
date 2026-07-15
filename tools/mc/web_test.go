@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +24,156 @@ func TestDerivedTitleUsesFirstSentenceAndCapsAt80Runes(t *testing.T) {
 	if got := derivedTitle(long); len([]rune(got)) != 80 {
 		t.Fatalf("derived title has %d runes, want 80", len([]rune(got)))
 	}
+}
+
+func TestFormatTimestampIncludesAbsoluteAndRelativeWithoutNowAgo(t *testing.T) {
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	stamp := formatTimestamp(time.Date(2026, 7, 15, 11, 58, 30, 0, time.UTC), now)
+	if stamp.Absolute != "2026-07-15 11:58:30 UTC" || stamp.Relative != "1m ago" || stamp.DateTime != "2026-07-15T11:58:30Z" {
+		t.Fatalf("timestamp = %#v", stamp)
+	}
+	if got := formatTimestamp(now, now).Relative; got != "now" {
+		t.Fatalf("current relative time = %q, want now", got)
+	}
+}
+
+func TestRichMessageEscapesMarkupBeforeLinkifyingRefs(t *testing.T) {
+	got := string(renderRichText(`<img src=x onerror=alert(1)> TASK-22`, "mission-control"))
+	if strings.Contains(got, "<img") || !strings.Contains(got, "&lt;img src=x onerror=alert(1)&gt;") {
+		t.Fatalf("rich message did not escape markup: %s", got)
+	}
+	if !strings.Contains(got, `href="/mission/mission-control#task-22"`) {
+		t.Fatalf("rich message did not retain safe task link: %s", got)
+	}
+}
+
+func TestCockpitPeekRendersURLStateResponsiveShellAndRichMessages(t *testing.T) {
+	dir := t.TempDir()
+	journal := filepath.Join(dir, "journal.jsonl")
+	long := strings.Join(append([]string{"See TASK-22 and artifacts/ui-design-pass.md", "```go", "fmt.Println(\"safe\")", "```"}, make([]string, 31)...), "\n")
+	openLine := `{"ts":"2026-07-15T11:00:00Z","op":"open","thread":"task-cockpit","title":"Cockpit shell","grade":"managed","context":"Owner asks for TASK-22","expects":"decide","weight":"moment","home":"mission-control","by":"vile","with":["human-yamen"],"turn":"owner"}`
+	msgLine, err := json.Marshal(Entry{TS: "2026-07-15T11:30:00Z", Op: "link", Thread: "task-cockpit", BusID: 42, From: "vile", Text: long, Intent: "request", MsgTS: "2026-07-15T11:29:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(journal, []byte(openLine+"\n"+string(msgLine)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenStore(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := NewWeb(s, &Bus{}, nil, "human-yamen", "owner", "", nil)
+	w.now = func() time.Time { return time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC) }
+
+	rw := httptest.NewRecorder()
+	w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/?peek=task-cockpit&mission=mission-control", nil))
+	body := rw.Body.String()
+	for _, want := range []string{
+		`class="cockpit"`, `class="rail`, `class="canvas conversation"`, `class="object-panel"`,
+		`body>header{position:fixed`,
+		`grid-template-columns:minmax(10rem,15vw) minmax(0,1fr) minmax(11rem,15vw)`,
+		`@media(max-width:899px)`, `name="mission" value="mission-control"`,
+		`/?mission=mission-control&amp;peek=task-cockpit#rail-task-cockpit`,
+		`<details class="message-fold">`, `<pre><code>fmt.Println(&#34;safe&#34;)`,
+		`href="/mission/mission-control#task-22"`, `href="/mission/mission-control/file/artifacts/ui-design-pass.md"`,
+		`2026-07-15 11:29:00 UTC`, `1m ago`, `Send &amp; close`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("cockpit peek missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(strings.ToLower(body), "<script") || strings.Contains(body, "now ago") {
+		t.Fatalf("cockpit violated zero-JS/time contract:\n%s", body)
+	}
+}
+
+func TestPeekReplyRedirectPreservesBrowseAnchor(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStore(filepath.Join(dir, "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Open("task-cockpit", "Cockpit", "ctx", "reply", "moment", "mission-control", "vile", []string{"vile"}, "owner", "managed"); err != nil {
+		t.Fatal(err)
+	}
+	capture := filepath.Join(dir, "send.txt")
+	hcom := writeExecutable(t, dir, "hcom", fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = list ]; then printf '[]\\n'; else printf '%%s\\n' \"$*\" >> %q; fi\n", capture))
+	w := NewWeb(s, &Bus{Hcom: hcom}, &Ingestor{}, "human-yamen", "owner", "", nil)
+	form := url.Values{"text": {"answer"}}
+	req := httptest.NewRequest(http.MethodPost, "/thread/task-cockpit/reply?return=%2F%3Fpeek%3Dtask-cockpit%26mission%3Dmission-control%23rail-task-cockpit", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rw := httptest.NewRecorder()
+	w.Routes().ServeHTTP(rw, req)
+	if got := rw.Header().Get("Location"); got != "/?peek=task-cockpit&mission=mission-control#rail-task-cockpit" {
+		t.Fatalf("peek reply Location = %q", got)
+	}
+}
+
+func TestSendAndCloseUsesComposerTextAsOptionalResolution(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStore(filepath.Join(dir, "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Open("task-cockpit", "Cockpit", "ctx", "reply", "moment", "mission-control", "human-yamen", nil, "owner", "managed"); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWeb(s, &Bus{}, &Ingestor{}, "human-yamen", "owner", "", nil)
+	form := url.Values{"text": {"Decision recorded"}}
+	req := httptest.NewRequest(http.MethodPost, "/thread/task-cockpit/close?cockpit=1&mission=mission-control", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rw := httptest.NewRecorder()
+	w.Routes().ServeHTTP(rw, req)
+	if got := s.Get("task-cockpit"); got.Status != "closed" || got.Resolution != "Decision recorded" {
+		t.Fatalf("send-and-close thread = %#v", got)
+	}
+	if got := rw.Header().Get("Location"); got != "/?mission=mission-control" {
+		t.Fatalf("send-and-close Location = %q", got)
+	}
+}
+
+func TestCockpitPeekGolden(t *testing.T) {
+	dir := t.TempDir()
+	journal := filepath.Join(dir, "journal.jsonl")
+	fixture := strings.Join([]string{
+		`{"ts":"2026-07-15T11:00:00Z","op":"open","thread":"task-cockpit","title":"Cockpit shell","grade":"managed","context":"Decide TASK-22 using artifacts/ui-design-pass.md","expects":"decide","weight":"moment","home":"mission-control","by":"vile","with":["human-yamen"],"turn":"owner"}`,
+		`{"ts":"2026-07-15T11:30:00Z","op":"link","thread":"task-cockpit","bus_id":42,"from":"vile","text":"Build the server-rendered shell.","intent":"request","msg_ts":"2026-07-15T11:29:00Z"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(journal, []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenStore(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := NewWeb(s, &Bus{}, nil, "human-yamen", "owner", "", nil)
+	w.now = func() time.Time { return time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC) }
+	rw := httptest.NewRecorder()
+	w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/?peek=task-cockpit&mission=mission-control", nil))
+	got := normalizeGoldenHTML(rw.Body.String())
+
+	path := filepath.Join("testdata", "cockpit-peek.golden")
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal([]byte(got), want) {
+		t.Fatalf("cockpit render differs from %s; run UPDATE_GOLDEN=1 go test -run TestCockpitPeekGolden", path)
+	}
+}
+
+func normalizeGoldenHTML(body string) string {
+	lines := strings.Split(body, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " \t")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func TestGraphRendersContractSignalsAndURLState(t *testing.T) {
@@ -871,11 +1023,11 @@ fi
 	for _, path := range []string{"/", "/roster"} {
 		rw := httptest.NewRecorder()
 		w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, path, nil))
-		if !strings.Contains(rw.Body.String(), `href="/mission/mission-one"`) {
+		if !strings.Contains(rw.Body.String(), `href="/mission/mission-one?mission=mission-one"`) {
 			t.Errorf("%s missing mission-page entry point: %s", path, rw.Body.String())
 		}
 		if path == "/" {
-			for _, want := range []string{`href="/mission/mission-broken"`, "degraded", "artifacts missing: artifacts/", `href="/mission/mission-one"`} {
+			for _, want := range []string{`href="/mission/mission-broken?mission=mission-broken"`, "degraded", "artifacts missing: artifacts/", `href="/mission/mission-one?mission=mission-one"`} {
 				if !strings.Contains(rw.Body.String(), want) {
 					t.Errorf("root missing isolated degraded card %q", want)
 				}

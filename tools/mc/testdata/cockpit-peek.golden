@@ -1,0 +1,139 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>mc — inbox</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+:root{--fg:#1a1a1a;--dim:#777;--line:#e2e2e2;--accent:#0b57d0;--bg:#fafaf8;--card:#fff;--warn:#b3261e}
+*{box-sizing:border-box}
+body{font:15px/1.5 system-ui,sans-serif;color:var(--fg);background:var(--bg);margin:0}
+body>header{position:fixed;inset:0 0 auto 0;z-index:5;min-height:3.4rem;display:flex;gap:1.2em;align-items:center;padding:.7em 1.2em;border-bottom:1px solid var(--line);background:var(--card)}
+body>header .brand{font-weight:700}
+body>header a{color:var(--fg);text-decoration:none}
+body>header a.on{color:var(--accent);font-weight:600}
+body>header .who{margin-left:auto;color:var(--dim);font-size:.85em}
+.mission-filter{display:flex;gap:.4em;align-items:center;margin:0}.mission-filter label{font-size:.78em;color:var(--dim)}.mission-filter input{width:13em}.mission-filter button{margin:0;padding:.32em .7em}
+.cockpit{display:grid;grid-template-columns:minmax(10rem,15vw) minmax(0,1fr) minmax(11rem,15vw);min-height:100vh;padding-top:3.4rem}
+.rail,.object-panel{background:var(--card);padding:.8em;border-right:1px solid var(--line);min-width:0;overflow-wrap:anywhere}.object-panel{border-right:0;border-left:1px solid var(--line)}
+.rail{max-height:calc(100vh - 3.4rem);position:sticky;top:3.4rem;overflow:auto;align-self:start}.rail h2,.object-panel h2{font-size:.72em;margin:1.1em 0 .35em}.rail-list{list-style:none;padding:0;margin:0}.rail-list a{display:block;color:var(--fg);text-decoration:none;padding:.24em .35em;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.rail-list a:hover,.rail-list a.on{background:#eef3fc;color:var(--accent)}.rail-agent{display:flex;gap:.35em;align-items:center;padding:.18em .35em}.status-dot{color:#27873f}.status-dot.idle{color:var(--dim)}
+main.canvas{min-width:0;margin:0;padding:1.2em clamp(1em,2vw,2.4em)}main.canvas.conversation{width:100%}
+.object-details>summary{display:none}.object-details:not([open])>:not(summary){display:block}.object-group{margin-bottom:1.2em}.object-group a{display:block;overflow-wrap:anywhere}
+h2{font-size:1em;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:1.4em 0 .5em}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:.8em 1em;margin:.5em 0}
+.card a.title{font-weight:600;color:var(--fg);text-decoration:none}
+.meta{color:var(--dim);font-size:.85em}
+.badge{display:inline-block;font-size:.75em;padding:.05em .5em;border-radius:99px;border:1px solid var(--line);color:var(--dim);margin-right:.4em}
+.badge.decide{border-color:#b3261e;color:#b3261e}
+.badge.act{border-color:#7b4a00;color:#7b4a00}
+.badge.reply{border-color:var(--accent);color:var(--accent)}
+.badge.managed{border-color:var(--accent);color:var(--accent)}
+.badge.observed{border-style:dashed;color:var(--dim)}
+.badge.yourturn{background:var(--accent);border-color:var(--accent);color:#fff}
+.err{background:#fdeceb;border:1px solid var(--warn);color:var(--warn);padding:.6em 1em;border-radius:8px;margin:.8em 0}
+.warning{background:#fff7e0;border:1px solid #d7a600;color:#654b00;padding:.6em 1em;border-radius:8px;margin:.8em 0}
+.ctx{position:sticky;top:4.4rem;z-index:2;background:#fffbe8;border:1px solid #e6d9a0;border-radius:8px;padding:.8em 1em;margin:.8em 0;max-height:12em;overflow:auto}
+.msg{border-left:3px solid var(--line);padding:.3em .9em;margin:.7em 0}.msg-body{overflow-wrap:anywhere}.msg-body pre{font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;background:#f5f5f3;padding:.7em;border-radius:6px;overflow:auto}.message-fold{border:1px solid var(--line);border-radius:6px;padding:.5em}.day-separator{display:flex;align-items:center;gap:.7em;color:var(--dim);font-size:.75em;text-transform:uppercase;letter-spacing:.05em;margin:1.4em 0}.day-separator:before,.day-separator:after{content:"";height:1px;background:var(--line);flex:1}
+.msg .from{font-weight:600;white-space:normal}
+.msg.human{border-left-color:var(--accent)}
+form.stack label{display:block;margin:.7em 0 .2em;font-size:.85em;color:var(--dim)}
+input[type=text],textarea,select{width:100%;padding:.45em .6em;border:1px solid var(--line);border-radius:6px;font:inherit;background:#fff}
+textarea{min-height:6em}
+button{font:inherit;padding:.45em 1.1em;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;margin-top:.8em}
+button.quiet{background:#fff;color:var(--fg);border-color:var(--line)}
+.rowform{display:flex;gap:.6em;align-items:flex-start;margin-top:1em}
+.rowform textarea{flex:1;min-height:3.4em}
+.rowform button{margin-top:0}
+.composer{position:sticky;bottom:0;z-index:3;background:linear-gradient(transparent,var(--bg) 18%);padding-top:1.2em}.composer-actions{display:flex;gap:.5em;align-self:stretch}.composer-actions button{white-space:nowrap}
+details{margin:.8em 0}
+summary{cursor:pointer;color:var(--dim)}
+.empty{color:var(--dim);font-style:italic;padding:.6em 0}
+table{border-collapse:collapse;width:100%}
+td,th{text-align:left;padding:.3em .6em;border-bottom:1px solid var(--line);font-size:.9em}
+th{color:var(--dim);font-weight:500}
+.footer{color:var(--dim);font-size:.8em;margin:2em 0;text-align:center}
+.document{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:1em 1.2em;overflow-wrap:anywhere}
+.document pre{font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;overflow:auto;background:#f5f5f3;padding:.8em;border-radius:6px}
+.document code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.graph-controls{display:flex;gap:1em;align-items:center;flex-wrap:wrap;margin:.7em 0}.graph-controls a.on{font-weight:700;color:var(--accent)}
+.graph-frame{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:auto}.mc-graph{display:block;width:100%;min-width:720px;height:auto}
+.graph-matrix{overflow:auto}.graph-matrix caption{text-align:left;padding:.7em .6em;color:var(--dim)}.graph-matrix th{white-space:nowrap}.graph-matrix td{text-align:center}.graph-cell.managed{font-weight:700;color:var(--accent)}.graph-cell.observed{border-left:1px dashed var(--line);color:var(--dim)}.graph-cell.raise{color:var(--warn)}.graph-cell.cool2{opacity:.6}.graph-cell.cool3{opacity:.3}.graph-empty{color:var(--line)}.graph-dim{opacity:.15!important}
+@media(max-width:899px){body>header{position:static;flex-wrap:wrap;gap:.7em}body>header>a:not(.brand-link){font-size:.85em}.mission-filter{order:3;width:100%}.mission-filter input{flex:1}.cockpit{display:block;min-height:0;padding-top:0}.rail{position:static;max-height:none;border-right:0;border-bottom:1px solid var(--line);overflow-x:auto}.rail h2{display:inline;margin-right:.4em}.rail-list{display:inline-flex;gap:.25em;margin-right:.8em}.rail-list a{max-width:12em}.rail-agents{display:none}main.canvas{padding:1em}.object-panel{border-left:0;border-top:1px solid var(--line)}.object-details>summary{display:list-item}.object-details:not([open])>:not(summary){display:none}.ctx{position:static;max-height:none}.composer{position:static}.rowform{display:block}.composer-actions{margin-top:.5em}.mc-graph{min-width:620px}}
+</style></head><body>
+<header>
+  <a class="brand brand-link" href="/?mission=mission-control">mc</a>
+  <a href="/?mission=mission-control" class="on">inbox</a>
+  <a href="/threads?mission=mission-control" >all threads</a>
+  <a href="/roster?mission=mission-control" >roster</a>
+  <a href="/graph?mission=mission-control" >graph</a>
+  <a href="/talk?mission=mission-control" >talk to…</a>
+  <form class="mission-filter" method="get" action="/">
+    <label for="mission-filter">mission</label><input id="mission-filter" type="text" name="mission" value="mission-control" placeholder="all">
+    <input type="hidden" name="peek" value="task-cockpit"><button class="quiet">Filter</button>
+  </form>
+  <span class="who">human-yamen · seat @owner</span>
+</header>
+<div class="cockpit">
+<aside class="rail" aria-label="Cockpit navigation">
+
+    <h2>Your turn</h2><ul class="rail-list"><li id="rail-task-cockpit"><a class="on" href="/?mission=mission-control&amp;peek=task-cockpit#rail-task-cockpit"><span class="badge yourturn">decide</span>Cockpit shell</a></li></ul>
+    <h2>Waiting</h2><ul class="rail-list"><li class="empty">none</li></ul>
+    <h2>Threads</h2><ul class="rail-list"><li><a href="/thread/task-cockpit?mission=mission-control">Cockpit shell</a></li></ul>
+    <div class="rail-agents"><h2>Agents</h2><div class="empty">none visible</div></div>
+    <p><a href="/?view=graph&amp;mission=mission-control">⌗ graph</a></p>
+
+</aside>
+<main class="canvas conversation">
+
+
+
+
+
+
+
+
+
+  <p class="meta">peek · <a href="/thread/task-cockpit?mission=mission-control">inhabit thread</a></p>
+  <h1 style="margin:.2em 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="Cockpit shell">Cockpit shell</h1>
+  <p class="meta">
+    <span class="badge decide">decide</span><span class="badge">moment</span><span class="badge managed">managed</span>
+    <span class="badge yourturn">your turn</span>
+    opened by vile · with human-yamen · home mission-control · updated
+    <time datetime="2026-07-15T11:30:00Z" title="30m ago">2026-07-15 11:30:00 UTC</time> (30m ago) · id task-cockpit
+  </p>
+
+  <details><summary>Retitle</summary><form class="rowform" method="post" action="/thread/task-cockpit/retitle?return=%2F%3Fmission%3Dmission-control%26peek%3Dtask-cockpit%23rail-task-cockpit"><input type="text" name="title" value="Cockpit shell" aria-label="New title"><button class="quiet">Save title</button></form></details>
+  <div class="ctx">Decide <a href="/mission/mission-control#task-22">TASK-22</a> using <a href="/mission/mission-control/file/artifacts/ui-design-pass.md">artifacts/ui-design-pass.md</a><br></div>
+
+
+    <div class="day-separator">Wednesday, 15 July 2026</div>
+    <article class="msg"><header class="from">vile <span class="meta">#42 · request · <time datetime="2026-07-15T11:29:00Z" title="31m ago">2026-07-15 11:29:00 UTC</time> (31m ago)</span></header>
+      <div class="msg-body">Build the server-rendered shell.<br></div>
+    </article>
+
+
+    <form class="rowform composer" method="post" action="/thread/task-cockpit/reply?return=%2F%3Fmission%3Dmission-control%26peek%3Dtask-cockpit%23rail-task-cockpit">
+      <textarea name="text" placeholder="reply on this thread…"></textarea><div class="composer-actions"><button>Send</button><button class="quiet" formaction="/thread/task-cockpit/close?cockpit=1&amp;mission=mission-control">Send &amp; close</button></div>
+    </form>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="footer">mc · bus cursor 0 · refresh for updates</div>
+</main>
+<aside class="object-panel" aria-label="About this view"><details class="object-details"><summary>About this thread</summary>
+
+    <div class="object-group"><h2>Mission</h2><a href="/mission/mission-control?mission=mission-control">mission-control</a></div>
+    <div class="object-group"><h2>Task</h2><a href="/mission/mission-control#task-22">TASK-22</a></div>
+    <div class="object-group"><h2>Files / refs</h2><a href="/mission/mission-control/file/artifacts/ui-design-pass.md">artifacts/ui-design-pass.md</a></div>
+    <div class="object-group"><h2>Backlinks</h2><span class="empty">none</span></div>
+
+</details></aside>
+</div></body></html>
