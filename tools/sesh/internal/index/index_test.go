@@ -587,6 +587,90 @@ func TestDuplicateSurvivorMatchesReindexInBothArrivalOrders(t *testing.T) {
 	}
 }
 
+func TestLaterPreferredDuplicateMatchesReindexAfterLosingFilesDisappear(t *testing.T) {
+	const sessionID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	files := []string{
+		"11111111-1111-1111-1111-111111111111",
+		"55555555-5555-5555-5555-555555555555",
+		"99999999-9999-9999-9999-999999999999",
+	}
+	st, idx := newHarness(t)
+	for i, fileUUID := range files {
+		body := []byte(fmt.Sprintf(
+			`{"type":"message","uuid":"shared","sessionId":"%s","timestamp":"2026-07-09T12:00:00Z","message":{"role":"%s"}}`+"\n",
+			sessionID, fileUUID))
+		putBytes(t, st, sessionID, fileUUID, 0, body)
+		if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+			t.Fatal(err)
+		}
+		createdAt := fmt.Sprintf("2026-07-09T12:00:0%dZ", i)
+		if _, err := st.DB().Exec(`UPDATE files SET created_at = ? WHERE file_uuid = ?`, createdAt, fileUUID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var registeredFiles int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM files WHERE session_id = ?`, sessionID).Scan(&registeredFiles); err != nil {
+		t.Fatal(err)
+	}
+	if registeredFiles != len(files) {
+		t.Fatalf("fixture premise failed: registered files = %d, want %d", registeredFiles, len(files))
+	}
+
+	tail := []byte(fmt.Sprintf(
+		`{"type":"message","uuid":"shared","sessionId":"%s","timestamp":"2026-07-09T11:00:00Z","message":{"role":"preferred"}}`+"\n",
+		sessionID))
+	last := files[len(files)-1]
+	var offset int64
+	if err := st.DB().QueryRow(`SELECT high_water FROM files WHERE file_uuid = ?`, last).Scan(&offset); err != nil {
+		t.Fatal(err)
+	}
+	putBytes(t, st, sessionID, last, offset, tail)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+
+	var survivor string
+	var incrementalOrdinal int
+	if err := st.DB().QueryRow(`SELECT file_uuid, file_ordinal FROM sesh_index_messages
+		WHERE quarantine = 0 AND message_uuid = 'shared'`).Scan(&survivor, &incrementalOrdinal); err != nil {
+		t.Fatal(err)
+	}
+	if survivor != last {
+		t.Fatalf("incremental survivor = %q, want later preferred row from %q", survivor, last)
+	}
+	incrementalSum, incrementalRows, err := idx.Checksum(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	reindexedSum, reindexedRows, err := idx.Checksum(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if incrementalSum != reindexedSum || incrementalRows != reindexedRows {
+		var reindexedOrdinal int
+		if err := st.DB().QueryRow(`SELECT file_ordinal FROM sesh_index_messages
+			WHERE quarantine = 0 AND message_uuid = 'shared'`).Scan(&reindexedOrdinal); err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("incremental checksum %s/%d (ordinal %d) does not match reindex %s/%d (ordinal %d)",
+			incrementalSum, incrementalRows, incrementalOrdinal, reindexedSum, reindexedRows, reindexedOrdinal)
+	}
+	if err := idx.Reindex(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	fixedSum, fixedRows, err := idx.Checksum(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fixedSum != reindexedSum || fixedRows != reindexedRows {
+		t.Fatalf("second reindex checksum %s/%d does not match first %s/%d", fixedSum, fixedRows, reindexedSum, reindexedRows)
+	}
+}
+
 func TestPostUnifyAppendStaysInCurrentLogicalSession(t *testing.T) {
 	for _, tc := range []struct {
 		name          string

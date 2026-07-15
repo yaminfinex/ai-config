@@ -923,10 +923,27 @@ func (idx *Indexer) unifyConnectedLogicalSessions(ctx context.Context, ev wire.A
 	}
 	dedupeStart := time.Now()
 	err = idx.dedupeLogical(ctx, group[0].tool, canonical)
+	if err == nil {
+		err = idx.compactLogicalFileOrdinals(ctx, group[0].tool, canonical)
+	}
 	if idx.timing != nil {
 		idx.timing.dedupe = time.Since(dedupeStart)
 	}
 	return err
+}
+
+func (idx *Indexer) compactLogicalFileOrdinals(ctx context.Context, tool wire.Tool, logical string) error {
+	group, err := idx.sameLogicalFiles(ctx, fileSummary{tool: tool, logicalID: logical})
+	if err != nil {
+		return err
+	}
+	sort.Slice(group, func(i, j int) bool {
+		if group[i].firstIngest != group[j].firstIngest {
+			return group[i].firstIngest < group[j].firstIngest
+		}
+		return group[i].key < group[j].key
+	})
+	return idx.updateFileOrdinalsForFiles(ctx, group)
 }
 
 func (idx *Indexer) connectedFiles(ctx context.Context, start fileSummary) ([]fileSummary, error) {
@@ -1083,7 +1100,12 @@ func (idx *Indexer) unifyLogicalSessions(ctx context.Context) error {
 	if err := idx.updateFileOrdinals(ctx); err != nil {
 		return err
 	}
-	return idx.dedupeAll(ctx)
+	if err := idx.dedupeAll(ctx); err != nil {
+		return err
+	}
+	// Dedupe can remove every row contributed by a file. Compact afterward
+	// so replay and incremental maintenance both number only surviving files.
+	return idx.updateFileOrdinals(ctx)
 }
 
 func (idx *Indexer) updateFileOrdinals(ctx context.Context) error {
