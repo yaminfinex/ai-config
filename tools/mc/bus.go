@@ -126,6 +126,49 @@ func (b *Bus) MentionsThrough(cursor, head int64, limit int, names ...string) ([
 	return b.mentionsSince(cursor, head, limit, names...)
 }
 
+// RecentMessages performs the graph view's two bounded snapshots: a generic
+// message window and a mention-enriched copy of that same window. hcom omits
+// mentions from generic event output, so the results are merged by event id.
+func (b *Bus) RecentMessages(after time.Time, limit int, names ...string) ([]BusEvent, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("event limit must be positive")
+	}
+	base := []string{"events", "--type", "message", "--after", after.UTC().Format(time.RFC3339), "--last", fmt.Sprint(limit)}
+	generic, err := b.query(base...)
+	if err != nil {
+		return nil, err
+	}
+	enrichedArgs := append([]string{}, base...)
+	for _, name := range names {
+		if name != "" {
+			enrichedArgs = append(enrichedArgs, "--mention", name)
+		}
+	}
+	enriched, err := b.query(enrichedArgs...)
+	if err != nil {
+		return generic, err
+	}
+
+	byID := make(map[int64]BusEvent, len(generic)+len(enriched))
+	for _, ev := range generic {
+		byID[ev.ID] = ev
+	}
+	for _, ev := range enriched {
+		if existing, ok := byID[ev.ID]; ok {
+			existing.Data.Mentions = append([]string(nil), ev.Data.Mentions...)
+			byID[ev.ID] = existing
+		} else {
+			byID[ev.ID] = ev
+		}
+	}
+	out := make([]BusEvent, 0, len(byID))
+	for _, ev := range byID {
+		out = append(out, ev)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
 func (b *Bus) mentionsSince(cursor, head int64, limit int, names ...string) ([]BusEvent, error) {
 	var args []string
 	var predicates []string

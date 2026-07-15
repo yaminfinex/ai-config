@@ -4,6 +4,7 @@ const pageTpl = `
 {{define "page"}}<!doctype html>
 <html><head><meta charset="utf-8"><title>mc — {{.Page}}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{{if .Auto}}<meta http-equiv="refresh" content="{{.Auto}}">{{end}}
 <style>
 :root{--fg:#1a1a1a;--dim:#777;--line:#e2e2e2;--accent:#0b57d0;--bg:#fafaf8;--card:#fff;--warn:#b3261e}
 *{box-sizing:border-box}
@@ -49,12 +50,16 @@ th{color:var(--dim);font-weight:500}
 .document{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:1em 1.2em;overflow-wrap:anywhere}
 .document pre{font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;overflow:auto;background:#f5f5f3;padding:.8em;border-radius:6px}
 .document code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.graph-controls{display:flex;gap:1em;align-items:center;flex-wrap:wrap;margin:.7em 0}.graph-controls a.on{font-weight:700;color:var(--accent)}
+.graph-frame{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:auto}.mc-graph{display:block;width:100%;min-width:720px;height:auto}
+.graph-matrix{overflow:auto}.graph-matrix caption{text-align:left;padding:.7em .6em;color:var(--dim)}.graph-matrix th{white-space:nowrap}.graph-matrix td{text-align:center}.graph-cell.managed{font-weight:700;color:var(--accent)}.graph-cell.observed{border-left:1px dashed var(--line);color:var(--dim)}.graph-cell.raise{color:var(--warn)}.graph-cell.cool2{opacity:.6}.graph-cell.cool3{opacity:.3}.graph-empty{color:var(--line)}.graph-dim{opacity:.15!important}
 </style></head><body>
 <header>
   <span class="brand">mc</span>
   <a href="/" {{if eq .Page "inbox"}}class="on"{{end}}>inbox</a>
   <a href="/threads" {{if eq .Page "threads"}}class="on"{{end}}>all threads</a>
   <a href="/roster" {{if eq .Page "roster"}}class="on"{{end}}>roster</a>
+  <a href="/graph" {{if eq .Page "graph"}}class="on"{{end}}>graph</a>
   <a href="/talk" {{if eq .Page "talk"}}class="on"{{end}}>talk to…</a>
   <span class="who">{{.User}} · seat @{{.Seat}}{{if .BusDir}} · LAB BUS{{end}}</span>
 </header>
@@ -88,7 +93,7 @@ th{color:var(--dim);font-weight:500}
   {{$m := .Mission}}
   <p class="meta"><a href="/">&larr; all missions</a></p>
   <h1 style="margin:.2em 0">{{$m.Slug}}</h1>
-  <p><a href="/talk?mission={{$m.Slug}}">Talk to this mission</a></p>
+  <p><a href="/talk?mission={{$m.Slug}}">Talk to this mission</a> · <a href="/graph?mission={{$m.Slug}}">View agent graph</a></p>
 
   <h2>Goal / manifest</h2>
   {{if not $m.OK}}
@@ -176,6 +181,20 @@ th{color:var(--dim);font-weight:500}
       <form method="post" action="/thread/{{.ID}}/reopen"><button class="quiet">Reopen</button></form>
     {{end}}
   {{end}}
+{{end}}{{end}}
+
+{{if eq .Page "graph"}}{{with .Graph}}
+  <h1 style="margin:.2em 0">Live agent map</h1>
+  <div class="graph-controls">
+    <span>window: {{range .WindowLinks}}<a href="{{.URL}}" {{if .On}}class="on"{{end}}>{{.Label}}</a> {{end}}</span>
+    <span>view: {{range .ViewLinks}}<a href="{{.URL}}" {{if .On}}class="on"{{end}}>{{.Label}}</a> {{end}}</span>
+    <span>auto: <a href="{{.AutoOffURL}}">off</a> <a href="{{.Auto10URL}}">10s</a></span>
+    {{with .Mission}}<span>mission: <strong>{{.}}</strong></span>{{end}}
+    {{with .Focus}}<span>focus: <strong>{{.}}</strong></span>{{end}}
+  </div>
+  {{if .Warning}}<div class="warning">{{.Warning}}</div>{{end}}
+  <p class="meta">as of {{.AsOf}} · read-only bus view</p>
+  <div class="graph-frame">{{.Content}}</div>
 {{end}}{{end}}
 
 {{if eq .Page "threads"}}

@@ -1,0 +1,9 @@
+view-height 420
+node builder-lobo  494  56 190 54
+node ghost-guri     38  56 190 54
+node owner         355 314 250 60
+node reviewer-meze 701  56 190 54
+node worker-kolu    38 192 190 54
+cluster (no mission)  24  24 426 100
+cluster mission-one  480  24 426 100
+cluster mission-two   24 160 426 100
