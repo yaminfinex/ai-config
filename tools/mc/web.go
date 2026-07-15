@@ -868,22 +868,27 @@ func (w *Web) participantState(t *Thread, user string) string {
 }
 
 // sendToThread is the only outbound bus-send path. It resolves canonical bus
-// names, removes dead mentions, and always attempts a thread-only post when
-// liveness is unavailable or a participant dies between the check and send.
+// names, removes dead mentions, and always attempts a seat-addressed thread
+// post when liveness is unavailable or a participant dies between the check
+// and send. The seat is kept alive by EnsureSeat and SeatKeepalive.
 func (w *Web) sendToThread(user string, wanted []string, thread, intent, text string) (string, error) {
 	targets, lookupErr := w.participantTargets(wanted)
 	if lookupErr != nil {
-		if err := w.bus.Send(user, nil, thread, "", intent, text); err != nil {
+		if err := w.bus.Send(user, []string{w.seat}, thread, "", intent, text); err != nil {
 			return "", err
 		}
 		return "message posted to thread; participant liveness unavailable", nil
 	}
+	if len(targets.live) == 0 {
+		if err := w.bus.Send(user, []string{w.seat}, thread, "", intent, text); err != nil {
+			return "", err
+		}
+		return "", nil
+	}
 	if err := w.bus.Send(user, targets.live, thread, "", intent, text); err == nil {
 		return "", nil
-	} else if len(targets.live) == 0 {
-		return "", err
 	}
-	if err := w.bus.Send(user, nil, thread, "", intent, text); err != nil {
+	if err := w.bus.Send(user, []string{w.seat}, thread, "", intent, text); err != nil {
 		return "", err
 	}
 	return "message posted to thread; participant delivery changed before send", nil

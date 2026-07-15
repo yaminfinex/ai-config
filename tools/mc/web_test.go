@@ -468,8 +468,49 @@ printf '%%s\n' "$*" >> %q
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sent := string(raw); strings.Contains(sent, "@builder-dead") || !strings.Contains(sent, "--thread orphan") || !strings.Contains(sent, "record this") {
-		t.Fatalf("thread-only reply = %q", sent)
+	if sent := string(raw); !strings.Contains(sent, "@owner") || strings.Contains(sent, "@builder-dead") || !strings.Contains(sent, "--thread orphan") || !strings.Contains(sent, "record this") {
+		t.Fatalf("seat-addressed thread reply = %q", sent)
+	}
+}
+
+func TestReplyAllDeadPostsViaSeatWithRealHcom(t *testing.T) {
+	hcom, err := exec.LookPath("hcom")
+	if err != nil {
+		t.Skip("real hcom binary not available")
+	}
+
+	bus := &Bus{Hcom: hcom, Dir: t.TempDir()}
+	if err := bus.EnsureSeat("owner"); err != nil {
+		t.Fatalf("register owner seat: %v", err)
+	}
+	if _, err := bus.run("start", "--as", "builder-dead"); err != nil {
+		t.Fatalf("register thread member: %v", err)
+	}
+	if err := bus.Send("human-yamen", []string{"builder-dead"}, "all-dead-contract", "", "inform", "seed"); err != nil {
+		t.Fatalf("seed thread: %v", err)
+	}
+	if _, err := bus.run("stop", "builder-dead"); err != nil {
+		t.Fatalf("stop thread member: %v", err)
+	}
+
+	w := NewWeb(nil, bus, nil, "human-yamen", "owner", "", nil)
+	if _, err := w.sendToThread("human-yamen", []string{"builder-dead"}, "all-dead-contract", "inform", "after everyone left"); err != nil {
+		t.Fatalf("all-dead reply: %v", err)
+	}
+
+	out, err := bus.run("events", "--thread", "all-dead-contract", "--mention", "owner", "--last", "20")
+	if err != nil {
+		t.Fatalf("read thread events: %v", err)
+	}
+	found := false
+	for _, ev := range parseBusEvents(out) {
+		if ev.Data.From == "human-yamen" && ev.Data.Thread == "all-dead-contract" && ev.Data.Text == "after everyone left" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("seat-addressed reply was not posted to thread:\n%s", out)
 	}
 }
 
@@ -495,8 +536,8 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sends := strings.TrimSpace(string(raw)); strings.Count(sends, "\n") != 1 || !strings.Contains(sends, "@builder-live") || !strings.Contains(sends, "--thread race") {
-		t.Fatalf("race sends = %q, want addressed attempt plus thread-only fallback", sends)
+	if sends := strings.TrimSpace(string(raw)); strings.Count(sends, "\n") != 1 || !strings.Contains(sends, "@builder-live") || !strings.Contains(sends, "@owner") || !strings.Contains(sends, "--thread race") {
+		t.Fatalf("race sends = %q, want addressed attempt plus seat-addressed fallback", sends)
 	}
 }
 
