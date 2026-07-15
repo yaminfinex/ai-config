@@ -31,9 +31,13 @@ step() { echo "--- $*"; }
 all_green() { echo "ALL GREEN"; }
 
 preflight() {
-  local pinned_export='export PATH="$(mise where go@1.26.4)/bin:$PATH" && export GOTOOLCHAIN=local'
-  local need have dep version
-  need=$(awk '/^go /{print $2; exit}' "$MISH_MODULE_DIR/go.mod")
+  local need tdecl have dep version
+  need=$(awk '$1 == "go" {print $2; exit}' "$MISH_MODULE_DIR/go.mod")
+  [ -n "$need" ] || fail "cannot read the toolchain pin ('go X.Y.Z') from $MISH_MODULE_DIR/go.mod"
+  tdecl=$(awk '$1 == "toolchain" {print $2; exit}' "$MISH_MODULE_DIR/go.mod")
+  [ -z "$tdecl" ] || [ "$tdecl" = "go$need" ] ||
+    fail "go.mod declares toolchain ${tdecl} but pins go ${need}; the go directive is the authority — align or drop the toolchain directive"
+  local pinned_export="export PATH=\"\$(mise where go@${need})/bin:\$PATH\" && export GOTOOLCHAIN=local"
   command -v go >/dev/null 2>&1 ||
     fail "no go on PATH; this module needs go >= ${need}. Playbook-pinned toolchain: ${pinned_export}"
   have=$(go env GOVERSION); have=${have#go}
