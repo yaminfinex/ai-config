@@ -204,6 +204,9 @@ func (w *Web) reply(rw http.ResponseWriter, r *http.Request) {
 		http.NotFound(rw, r)
 		return
 	}
+	if !w.requireManaged(rw, r, t) {
+		return
+	}
 	text := strings.TrimSpace(r.FormValue("text"))
 	if text == "" {
 		http.Redirect(rw, r, "/thread/"+id+"?err=refused:+empty+reply", http.StatusSeeOther)
@@ -230,6 +233,9 @@ func (w *Web) close(rw http.ResponseWriter, r *http.Request) {
 		http.NotFound(rw, r)
 		return
 	}
+	if !w.requireManaged(rw, r, t) {
+		return
+	}
 	res := strings.TrimSpace(r.FormValue("resolution"))
 	if res == "" {
 		http.Redirect(rw, r, "/thread/"+id+"?err=refused:+no+close+without+a+resolution", http.StatusSeeOther)
@@ -253,11 +259,27 @@ func (w *Web) close(rw http.ResponseWriter, r *http.Request) {
 
 func (w *Web) reopen(rw http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := w.store.Reopen(id); err != nil {
+	t := w.store.Get(id)
+	if t == nil {
 		http.NotFound(rw, r)
 		return
 	}
+	if !w.requireManaged(rw, r, t) {
+		return
+	}
+	if err := w.store.Reopen(id); err != nil {
+		http.Redirect(rw, r, "/thread/"+id+"?err="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
+		return
+	}
 	http.Redirect(rw, r, "/thread/"+id, http.StatusSeeOther)
+}
+
+func (w *Web) requireManaged(rw http.ResponseWriter, r *http.Request, t *Thread) bool {
+	if t.Grade == "managed" {
+		return true
+	}
+	http.Redirect(rw, r, "/thread/"+t.ID+"?err=refused:+observed+threads+are+read-only", http.StatusSeeOther)
+	return false
 }
 
 type rosterGroup struct {

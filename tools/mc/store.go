@@ -167,11 +167,14 @@ func (s *Store) apply(e *Entry) {
 	case "reopen":
 		if t := s.threads[e.Thread]; t != nil {
 			t.Status = "open"
+			t.Resolution = ""
 			t.Updated = ts
 		}
 	case "promote":
 		if t := s.threads[e.Thread]; t != nil {
 			t.Grade = "managed"
+			t.Status = "open"
+			t.Resolution = ""
 			if e.Expects != "" {
 				t.Expects = e.Expects
 			}
@@ -244,8 +247,9 @@ func (s *Store) Open(id, title, context, expects, weight, home, by string, with 
 		Expects: expects, Weight: weight, Home: home, By: by, With: with, Turn: turn, Grade: grade})
 }
 
-// Promote lifts an observed thread onto the desk. Linked history is kept —
-// promotion changes grade, never messages. No-op if already managed.
+// Promote lifts an observed thread onto the desk. Linked history is kept, but
+// stale lifecycle state is not: corrupt/pre-guard journals must not let an
+// observed close hide a later explicit raise. No-op if already managed.
 func (s *Store) Promote(thread, expects string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -285,8 +289,12 @@ func (s *Store) SetTurn(thread, turn string) error {
 func (s *Store) Close(thread, resolution string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.threads[thread] == nil {
+	t := s.threads[thread]
+	if t == nil {
 		return fmt.Errorf("no thread %s", thread)
+	}
+	if t.Grade != "managed" {
+		return fmt.Errorf("thread %s is observed; lifecycle writes are refused", thread)
 	}
 	return s.append(&Entry{Op: "close", Thread: thread, Resolution: resolution})
 }
@@ -294,8 +302,12 @@ func (s *Store) Close(thread, resolution string) error {
 func (s *Store) Reopen(thread string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.threads[thread] == nil {
+	t := s.threads[thread]
+	if t == nil {
 		return fmt.Errorf("no thread %s", thread)
+	}
+	if t.Grade != "managed" {
+		return fmt.Errorf("thread %s is observed; lifecycle writes are refused", thread)
 	}
 	return s.append(&Entry{Op: "reopen", Thread: thread})
 }

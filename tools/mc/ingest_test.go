@@ -1,8 +1,12 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -221,5 +225,77 @@ func TestGradeSurvivesReplay(t *testing.T) {
 	two := s2.Get("task-r-two")
 	if two.Grade != "managed" || len(two.Msgs) != 2 {
 		t.Fatalf("task-r-two replayed grade=%q msgs=%d, want managed/2", two.Grade, len(two.Msgs))
+	}
+}
+
+func TestObservedLifecycleWritesAreRefused(t *testing.T) {
+	_, s := testIngestor(t)
+	if err := s.Open("task-read-only", "observed", "ctx", "read", "moment", "", "worker", nil, "worker", "observed"); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWeb(s, &Bus{}, nil, "human-yamen", "owner", "", nil)
+	get := httptest.NewRecorder()
+	w.Routes().ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/thread/task-read-only", nil))
+	for _, action := range []string{"/reply", "/close", "/reopen"} {
+		if strings.Contains(get.Body.String(), action) {
+			t.Errorf("observed thread page exposes lifecycle action %q", action)
+		}
+	}
+
+	tests := []struct {
+		path string
+		form url.Values
+	}{
+		{"/thread/task-read-only/reply", url.Values{"text": {"bypass reply"}}},
+		{"/thread/task-read-only/close", url.Values{"resolution": {"bypass close"}}},
+		{"/thread/task-read-only/reopen", nil},
+	}
+	for _, tt := range tests {
+		req := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rw := httptest.NewRecorder()
+		w.Routes().ServeHTTP(rw, req)
+		if rw.Code != http.StatusSeeOther || !strings.Contains(rw.Header().Get("Location"), "observed+threads+are+read-only") {
+			t.Errorf("POST %s = %d Location %q, want refused redirect", tt.path, rw.Code, rw.Header().Get("Location"))
+		}
+	}
+
+	th := s.Get("task-read-only")
+	if th.Status != "open" || th.Grade != "observed" || th.Resolution != "" {
+		t.Fatalf("refused writes changed thread: status=%q grade=%q resolution=%q", th.Status, th.Grade, th.Resolution)
+	}
+	if err := s.Close(th.ID, "direct bypass"); err == nil {
+		t.Fatal("store accepted a direct close of an observed thread")
+	}
+}
+
+func TestExplicitRaiseReopensSyntheticClosedObservedThread(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "journal.jsonl")
+	journal := `{"ts":"2026-07-15T09:00:00Z","op":"open","thread":"task-corrupt","title":"observed","grade":"observed","expects":"read","by":"worker","turn":"worker"}
+{"ts":"2026-07-15T09:01:00Z","op":"close","thread":"task-corrupt","resolution":"stale synthetic close"}
+`
+	if err := os.WriteFile(path, []byte(journal), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := &Ingestor{store: s, user: "human-yamen", seat: "owner"}
+	fold(t, in, busEvent(60, "builder-gemi", "task-corrupt", "explicit raise", "request", "owner"))
+
+	th := s.Get("task-corrupt")
+	if th.Grade != "managed" || th.Status != "open" || th.Resolution != "" || th.Turn != "owner" {
+		t.Fatalf("promoted thread grade=%q status=%q resolution=%q turn=%q, want managed/open/empty/owner", th.Grade, th.Status, th.Resolution, th.Turn)
+	}
+
+	// Recovery is journaled, not merely repaired in memory.
+	s2, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed := s2.Get("task-corrupt")
+	if replayed.Grade != "managed" || replayed.Status != "open" || replayed.Resolution != "" {
+		t.Fatalf("replayed promotion grade=%q status=%q resolution=%q", replayed.Grade, replayed.Status, replayed.Resolution)
 	}
 }

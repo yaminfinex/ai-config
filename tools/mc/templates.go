@@ -83,17 +83,19 @@ th{color:var(--dim);font-weight:500}
     <div class="msg{{if hasHumanPrefix .From}} human{{end}}"><span class="from">{{.From}}</span> <span class="meta">#{{.BusID}}{{with .Intent}} · {{.}}{{end}} · {{.TS}}</span>
 {{.Text}}</div>
   {{else}}<div class="empty">no messages linked yet</div>{{end}}
-  {{if eq .Status "open"}}
-    <form class="rowform" method="post" action="/thread/{{.ID}}/reply">
-      <textarea name="text" placeholder="reply on this thread…"></textarea>
-      <button>Send</button>
-    </form>
-    <form class="rowform" method="post" action="/thread/{{.ID}}/close">
-      <textarea name="resolution" placeholder="resolution — required to close"></textarea>
-      <button class="quiet">Close</button>
-    </form>
-  {{else}}
-    <form method="post" action="/thread/{{.ID}}/reopen"><button class="quiet">Reopen</button></form>
+  {{if eq .Grade "managed"}}
+    {{if eq .Status "open"}}
+      <form class="rowform" method="post" action="/thread/{{.ID}}/reply">
+        <textarea name="text" placeholder="reply on this thread…"></textarea>
+        <button>Send</button>
+      </form>
+      <form class="rowform" method="post" action="/thread/{{.ID}}/close">
+        <textarea name="resolution" placeholder="resolution — required to close"></textarea>
+        <button class="quiet">Close</button>
+      </form>
+    {{else}}
+      <form method="post" action="/thread/{{.ID}}/reopen"><button class="quiet">Reopen</button></form>
+    {{end}}
   {{end}}
 {{end}}{{end}}
 
