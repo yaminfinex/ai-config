@@ -260,7 +260,10 @@ ROW_SELF_NOBUS='{"kind":"session","guid":"guid-me-0000","event":"seated","state"
 ROW_SELF_CODEX='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"codex","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"me-bus"},"provenance":{"tag":"worker"}}'
 ROW_SELF_WRONG_STOPPED='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"stopped-name"},"provenance":{"tag":"worker"}}'
 ROW_SELF_WRONG_LIVE='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"live-neighbor"},"provenance":{"tag":"worker"}}'
-ROW_SELF_REPAIRED='{"kind":"session","guid":"guid-me-0000","event":"recognised","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"me-bus","hcom_verified":true},"sids":[{"sid":"sess-me","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"enroll","tool_session_id":"sess-me","tag":"worker"}}'
+# Field shape: a manual pinned-env re-enroll written by the older repair path,
+# then recognised without launch_context or the newer hcom_verified seat bit.
+ROW_SELF_REPAIRED='{"kind":"session","guid":"guid-me-0000","event":"recognised","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"me-bus","confirmed_at":"2026-07-15T04:00:00Z"},"sids":[{"sid":"sess-me","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"enroll","tool_session_id":"sess-me","tag":"worker"}}'
+ROW_SELF_BOUND_UNVERIFIED='{"kind":"session","guid":"guid-me-0000","event":"recognised","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"me-bus","hcom_verified":false},"sids":[{"sid":"sess-me","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"enroll","tool_session_id":"sess-me","tag":"worker"}}'
 CONT='run the pinned gate, then report DONE on thread unit-w'
 
 # Parent arm/abort shapes (HERDER_COMPACT_THEN_DRYRUN=1 in run_compact keeps the
@@ -271,6 +274,10 @@ scenario then_dryrun         midturn       guid   --dry-run "$STEER" --then "$CO
 COMPACT_SEED_REGISTRY="$ROW_SELF_REPAIRED"
 MOCK_HCOM_ROWS='[{"name":"me-bus","joined":true,"session_id":"sess-me","launch_context":{}}]'
 scenario then_dryrun_repaired midturn      guid   --dry-run "$STEER" --then "$CONT"
+unset MOCK_HCOM_ROWS
+COMPACT_SEED_REGISTRY="$ROW_SELF_BOUND_UNVERIFIED"
+MOCK_HCOM_ROWS='[{"name":"me-bus","joined":true,"session_id":"sess-me","launch_context":{}}]'
+scenario then_refuse_bound_unverified midturn guid --dry-run "$STEER" --then "$CONT"
 unset MOCK_HCOM_ROWS
 COMPACT_SEED_REGISTRY="$ROW_SELF"
 MOCK_HCOM_ROWS='[{"name":"me-bus","joined":true,"launch_context":{"pane_id":"p_env"}}]'

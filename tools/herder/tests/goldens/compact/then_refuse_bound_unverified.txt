@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: refused — --then row is bus-bound as @me-bus, but recorded-SID verification cannot arm: seat.hcom_verified is explicitly false; ambient live evidence also failed (no joined bus row matches the calling session, process, or pane). Supply HCOM_SESSION_ID for this invocation or repair that recorded proof, then retry. Nothing was typed.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===

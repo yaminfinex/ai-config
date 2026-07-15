@@ -14,6 +14,7 @@ package spawncmd
 // check-compact-contract.sh grep gates pin.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -128,26 +129,39 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		thenBusDir = row.HcomDir
 		rows, listErr := hcomidentity.List(thenBusDir)
 		if listErr != nil {
-			dieCompact(stderr, "refused — --then cannot verify that the stored bus name belongs to this calling session ("+listErr.Error()+"). Rerun `herder enroll` from this session to repair its bus binding, then retry. Nothing was typed.")
+			dieCompact(stderr, fmt.Sprintf("refused — --then row is bus-bound as @%s, but the live bus roster is unavailable (%s). Restore roster access for bus %s, then retry; re-enrolling cannot fix an unavailable roster. Nothing was typed.", thenBusName, listErr.Error(), busDirLabel(thenBusDir)))
 			return 2
 		}
 		busEvidence := hcomidentity.CurrentEvidence(envPane, pane.PaneID)
 		// A pinned re-enroll can repair a hand-resumed row even though it cannot
 		// retroactively inject HCOM_SESSION_ID into the already-running parent
-		// process. Once self-row identity is proven above, a verified row's
-		// recorded tool session id is durable evidence for the live roster check.
-		if busEvidence.SessionID == "" && row.HcomVerified != nil && *row.HcomVerified && row.Provenance != nil {
-			busEvidence.SessionID = row.Provenance.ToolSessionID
+		// process. Once self-row identity is proven above, the repair's recorded
+		// session proof is durable evidence for the live roster check. Older
+		// repair writers omitted hcom_verified; accept only their complete,
+		// internally consistent enroll proof bundle, never an explicit false bit.
+		recordedSID, recordedUnavailable := "", ""
+		if busEvidence.SessionID == "" {
+			recordedSID, recordedUnavailable = recordedBusSessionEvidence(row)
+			if recordedSID != "" {
+				busEvidence.SessionID = recordedSID
+			}
 		}
 		verified, live := hcomidentity.VerifyStored(rows, busEvidence, thenBusName)
 		if !verified {
 			cause := live.Reason
 			if live.Verified {
 				cause = fmt.Sprintf("registry has @%s but the calling session is live as @%s", thenBusName, live.Name)
+				dieCompact(stderr, "refused — --then bus identity mismatch: "+cause+". Rerun `herder enroll` from this session to repair its bus binding, then retry. Nothing was typed.")
+			} else if recordedUnavailable != "" {
+				dieCompact(stderr, fmt.Sprintf("refused — --then row is bus-bound as @%s, but recorded-SID verification cannot arm: %s; ambient live evidence also failed (%s). Supply HCOM_SESSION_ID for this invocation or repair that recorded proof, then retry. Nothing was typed.", thenBusName, recordedUnavailable, cause))
+			} else if recordedSID != "" {
+				dieCompact(stderr, fmt.Sprintf("refused — --then row is bus-bound as @%s and recorded-SID verification armed with %q, but %s. Restore the matching joined bus row, or re-enroll if the stored binding is stale, then retry. Nothing was typed.", thenBusName, recordedSID, cause))
 			} else if cause == "" {
 				cause = fmt.Sprintf("stored name @%s is not provably the calling session", thenBusName)
+				dieCompact(stderr, "refused — --then bus identity mismatch: "+cause+". Rerun `herder enroll` from this session to repair its bus binding, then retry. Nothing was typed.")
+			} else {
+				dieCompact(stderr, "refused — --then bus identity mismatch: "+cause+". Rerun `herder enroll` from this session to repair its bus binding, then retry. Nothing was typed.")
 			}
-			dieCompact(stderr, "refused — --then bus identity mismatch: "+cause+". Rerun `herder enroll` from this session to repair its bus binding, then retry. Nothing was typed.")
 			return 2
 		}
 	}
@@ -235,6 +249,65 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		thenAbortNote(stderr, opts.ThenSet)
 		return 1
 	}
+}
+
+// recordedBusSessionEvidence returns the durable session correlate captured
+// when a bus binding was proven. Newer writers persist hcom_verified=true.
+// The older manual-repair shape omitted that bit, so it is accepted only when
+// all other persisted facts agree: a seated enroll row, confirmed continuity,
+// and a harvest SID equal to provenance.tool_session_id. Explicit false stays
+// fail-closed because it records a negative verification verdict.
+func recordedBusSessionEvidence(row *registry.Record) (string, string) {
+	if row.HcomVerified != nil && !*row.HcomVerified {
+		return "", "seat.hcom_verified is explicitly false"
+	}
+	if row.Provenance == nil || row.Provenance.ToolSessionID == "" {
+		return "", "the row has no provenance.tool_session_id"
+	}
+	sid := row.Provenance.ToolSessionID
+	if row.HcomVerified != nil && *row.HcomVerified {
+		return sid, ""
+	}
+
+	var persisted struct {
+		State      string `json:"state"`
+		Continuity string `json:"continuity"`
+		Seat       struct {
+			HcomName string `json:"hcom_name"`
+		} `json:"seat"`
+		SIDs []struct {
+			SID    string `json:"sid"`
+			Source string `json:"source"`
+		} `json:"sids"`
+		Provenance struct {
+			Mechanism     string `json:"mechanism"`
+			ToolSessionID string `json:"tool_session_id"`
+		} `json:"provenance"`
+	}
+	if err := json.Unmarshal(row.Raw, &persisted); err != nil {
+		return "", "the compatibility proof row cannot be decoded"
+	}
+	if persisted.State != "seated" {
+		return "", fmt.Sprintf("seat.hcom_verified is absent and row state is %q, not seated", persisted.State)
+	}
+	if persisted.Seat.HcomName == "" || persisted.Seat.HcomName != row.HcomName {
+		return "", "seat.hcom_verified is absent and the persisted bus name is missing or inconsistent"
+	}
+	if persisted.Provenance.Mechanism != "enroll" {
+		return "", fmt.Sprintf("seat.hcom_verified is absent and provenance.mechanism is %q, not enroll", persisted.Provenance.Mechanism)
+	}
+	if persisted.Continuity != "confirmed" {
+		return "", fmt.Sprintf("seat.hcom_verified is absent and continuity is %q, not confirmed", persisted.Continuity)
+	}
+	if persisted.Provenance.ToolSessionID != sid {
+		return "", "seat.hcom_verified is absent and provenance.tool_session_id is inconsistent"
+	}
+	for _, recorded := range persisted.SIDs {
+		if recorded.SID == sid && recorded.Source == "harvest" {
+			return sid, ""
+		}
+	}
+	return "", "seat.hcom_verified is absent and no harvest SID matches provenance.tool_session_id"
 }
 
 func pinnedBusRepair(row *registry.Record) string {
