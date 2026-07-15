@@ -1158,7 +1158,7 @@ func BenchmarkReadCompleteLineLargeBase64(b *testing.B) {
 	}
 }
 
-func TestVanishedGroupMemberDoesNotWidenReferenceDivergence(t *testing.T) {
+func TestVanishedGroupMemberRejoinsAfterLaterAppend(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		vanishedFirst bool
@@ -1171,7 +1171,7 @@ func TestVanishedGroupMemberDoesNotWidenReferenceDivergence(t *testing.T) {
 				digest string
 				rows   int
 			}
-			drive := func(naive bool) (checksum, checksum) {
+			drive := func(naive bool) (checksum, checksum, checksum) {
 				t.Helper()
 				st, idx := newHarness(t)
 				idx.naiveMaintenance = naive
@@ -1225,21 +1225,31 @@ func TestVanishedGroupMemberDoesNotWidenReferenceDivergence(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				return checksum{incrementalDigest, incrementalRows}, checksum{reindexedDigest, reindexedRows}
+				if err := idx.Reindex(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				fixedDigest, fixedRows, err := idx.Checksum(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				return checksum{incrementalDigest, incrementalRows}, checksum{reindexedDigest, reindexedRows}, checksum{fixedDigest, fixedRows}
 			}
 
-			optimized, optimizedReindex := drive(false)
-			reference, referenceReindex := drive(true)
+			optimized, optimizedReindex, optimizedFixed := drive(false)
+			reference, referenceReindex, referenceFixed := drive(true)
 			if optimized != reference {
 				t.Fatalf("optimized incremental checksum = %+v, reference behavior = %+v", optimized, reference)
 			}
 			if optimizedReindex != referenceReindex {
 				t.Fatalf("optimized reindex checksum = %+v, reference reindex = %+v", optimizedReindex, referenceReindex)
 			}
-			if optimized == optimizedReindex {
-				t.Fatal("fixture no longer demonstrates the known vanished-member rejoin divergence")
+			if optimizedReindex != optimizedFixed || referenceReindex != referenceFixed {
+				t.Fatalf("reindex is not a fixed point: optimized %+v then %+v; reference %+v then %+v", optimizedReindex, optimizedFixed, referenceReindex, referenceFixed)
 			}
-			t.Logf("incremental checksum %s/%d; reindex checksum %s/%d", optimized.digest, optimized.rows, optimizedReindex.digest, optimizedReindex.rows)
+			if optimized != optimizedReindex {
+				t.Fatalf("incremental checksum %s/%d; reindex checksum %s/%d", optimized.digest, optimized.rows, optimizedReindex.digest, optimizedReindex.rows)
+			}
+			t.Logf("incremental and reindex checksum %s/%d", optimized.digest, optimized.rows)
 		})
 	}
 }
