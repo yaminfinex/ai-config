@@ -3,10 +3,10 @@ id: TASK-221
 title: >-
   check-toolchain-gate.sh — regression coverage for the fail-closed toolchain
   guards
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-15 01:14'
-updated_date: '2026-07-15 01:14'
+updated_date: '2026-07-15 03:27'
 labels: []
 dependencies: []
 ordinal: 220500
@@ -30,3 +30,9 @@ Acceptance:
 - AC2: full house battery 60/60 green.
 - AC3: script runs from a clean shell (the sesh-preflight env class) and leaves no artifacts.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged 1b12b31 + fix merge 485ec9f (cceacb6) at head cceacb6. House battery count 59 -> 60 — check-toolchain-gate.sh joined (count is derived from the glob; no live surface pins it). Suite proves the four toolchain-gate guard classes discriminating on EVERY run via removal self-checks that fail loud on unapplied mutations. Codex adversarial review drove: mise global-state isolation (trust + tracked stores + cache proven flat across real batteries), tracked-files-only sandbox copies (1.8G -> 13M on main), end-of-options hardening against dash-leading paths. Machine debt cleaned: 318 stale mise store symlinks removed (broken-target-only, delete-time evaluation; live entries preserved). AC3 interpretation recorded: no copy-specific stale artifacts in global/caller state; content-keyed Go caches out of scope. Grok calibration seat ran (ledger row 15). Post-merge batteries 60/60 green, pushed in the 485ec9f train.
+<!-- SECTION:NOTES:END -->
