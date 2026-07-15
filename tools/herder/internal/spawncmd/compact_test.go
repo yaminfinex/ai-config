@@ -24,7 +24,7 @@ func TestRecordedBusSessionEvidenceAcceptsFieldRepairShapeThroughWriterAndLoader
 
 func TestRecordedBusSessionEvidenceAcceptsCurrentWriterVerifiedShape(t *testing.T) {
 	verified := true
-	row := writerLoadedRepairRecord(t, &verified, "seated", "enroll")
+	row := writerLoadedRepairRecord(t, &verified, "seated", "spawn")
 
 	sid, reason := recordedBusSessionEvidence(&row)
 	if sid != "sess-me" || reason != "" {
