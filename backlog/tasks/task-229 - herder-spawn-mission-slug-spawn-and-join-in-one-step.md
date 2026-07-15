@@ -1,9 +1,10 @@
 ---
 id: TASK-229
 title: 'herder spawn --mission <slug>: spawn and join in one step'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 05:02'
+updated_date: '2026-07-15 08:06'
 labels:
   - herder
 dependencies:
