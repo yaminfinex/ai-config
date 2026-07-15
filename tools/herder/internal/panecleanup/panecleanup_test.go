@@ -40,14 +40,15 @@ func assertScriptConsumed(t *testing.T, client *scriptedClient) {
 	}
 }
 
-func TestClosePreservingFocusRestoresSurvivingPriorPaneAfterMovement(t *testing.T) {
+func TestClosePreservingFocusToleratesFocusCommandErrorAfterMovement(t *testing.T) {
 	client := &scriptedClient{
 		responses: []response{
 			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
-			{want: "pane close p_target", out: []byte(`{"result":{"type":"closed"}}`)},
+			{want: "pane close p_target", out: []byte(`{"result":{"type":"ok"}}`)},
 			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_other","focused":true}]}}`)},
 			{want: "pane get p_owner", out: []byte(`{"result":{"pane":{"pane_id":"p_owner"}}}`)},
-			{want: "agent focus p_owner", out: []byte(`{"result":{"type":"focused"}}`)},
+			// Live herdr moves focus to an unlabelled pane but still reports agent_not_found.
+			{want: "agent focus p_owner", out: []byte(`{"error":{"code":"agent_not_found"}}`), rc: 1},
 		},
 	}
 	_, rc, err := ClosePreservingFocus(client, "p_target")
@@ -61,7 +62,7 @@ func TestClosePreservingFocusDoesNotRefocusWhenFocusStayedPut(t *testing.T) {
 	client := &scriptedClient{
 		responses: []response{
 			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
-			{want: "pane close p_target", out: []byte(`{"result":{"type":"closed"}}`)},
+			{want: "pane close p_target", out: []byte(`{"result":{"type":"ok"}}`)},
 			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
 		},
 	}
@@ -76,7 +77,7 @@ func TestClosePreservingFocusDoesNotRefocusClosedPriorPane(t *testing.T) {
 	client := &scriptedClient{
 		responses: []response{
 			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_target","focused":true}]}}`)},
-			{want: "pane close p_target", out: []byte(`{"result":{"type":"closed"}}`)},
+			{want: "pane close p_target", out: []byte(`{"result":{"type":"ok"}}`)},
 		},
 	}
 	_, rc, err := ClosePreservingFocus(client, "p_target")
@@ -90,9 +91,9 @@ func TestClosePreservingFocusDoesNotRefocusMissingPriorPane(t *testing.T) {
 	client := &scriptedClient{
 		responses: []response{
 			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
-			{want: "pane close p_target", out: []byte(`{"result":{"type":"closed"}}`)},
+			{want: "pane close p_target", out: []byte(`{"result":{"type":"ok"}}`)},
 			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_other","focused":true}]}}`)},
-			{want: "pane get p_owner", out: []byte(`{"error":{"code":"pane_not_found"}}`), rc: 4},
+			{want: "pane get p_owner", out: []byte(`{"error":{"code":"pane_not_found"}}`), rc: 1},
 		},
 	}
 	_, rc, err := ClosePreservingFocus(client, "p_target")
@@ -142,15 +143,16 @@ func TestCloseConfirmationAcceptsAbsentLookupShapes(t *testing.T) {
 	}
 	for _, after := range tests {
 		client := &scriptedClient{responses: []response{
-			{out: []byte(`{"result":{"pane":{"pane_id":"p_new","terminal_id":"term_new"}}}`)},
-			{out: []byte(`{"result":{"panes":[]}}`)},
-			{out: []byte(`{"result":{"type":"closed"}}`)},
-			after,
+			{want: "pane get p_new", out: []byte(`{"result":{"pane":{"pane_id":"p_new","terminal_id":"term_new"}}}`)},
+			{want: "pane list", out: []byte(`{"result":{"panes":[]}}`)},
+			{want: "pane close p_new", out: []byte(`{"result":{"type":"ok"}}`)},
+			{want: "pane get p_new", out: after.out, rc: after.rc, err: after.err},
 		}}
 		got := CloseConfirmed(client, "p_new", "term_new")
 		if !got.Confirmed || got.Detail != "pane close confirmed" {
 			t.Fatalf("CloseConfirmed() with after=%s rc=%d = %+v, want confirmed close", after.out, after.rc, got)
 		}
+		assertScriptConsumed(t, client)
 	}
 }
 

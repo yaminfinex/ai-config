@@ -25,6 +25,9 @@ type Result struct {
 // discovery and restoration are best-effort: they never replace the close
 // command's result.
 func ClosePreservingFocus(client Client, paneID string) ([]byte, int, error) {
+	// A deliberate operator focus change during these API round trips is
+	// indistinguishable from close-induced movement. Prefer restoring the
+	// pre-close target so ordinary background closes never steal focus.
 	prior := focusedPane(client)
 	closeOut, closeRC, closeErr := client.Combined("pane", "close", paneID)
 	if closeErr != nil || closeRC != 0 || prior == "" {
