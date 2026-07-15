@@ -3,9 +3,10 @@ id: TASK-242
 title: >-
   Rightful-owner re-proof after session turnover: enroll refuses guid reuse
   despite full seat corroboration; no repair verb; compact --then unarmable
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 09:03'
+updated_date: '2026-07-15 10:42'
 labels: []
 dependencies: []
 ordinal: 241500

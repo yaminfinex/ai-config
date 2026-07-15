@@ -1,10 +1,10 @@
 ---
 id: TASK-230
 title: pi spawn leaks calling-session hcom identity env into the child
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 05:23'
-updated_date: '2026-07-15 05:36'
+updated_date: '2026-07-15 10:42'
 labels:
   - herder
 dependencies: []

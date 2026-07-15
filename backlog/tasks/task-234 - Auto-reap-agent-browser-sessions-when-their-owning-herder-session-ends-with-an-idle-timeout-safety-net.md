@@ -3,10 +3,10 @@ id: TASK-234
 title: >-
   Graceful cull: pre-cull release notice + ack window; resource cleanup is the
   agent's job
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 07:14'
-updated_date: '2026-07-15 07:17'
+updated_date: '2026-07-15 10:42'
 labels:
   - herder
 dependencies: []
@@ -39,3 +39,13 @@ Design checkpoint required before implementation: notice delivery mechanism + ac
 - [ ] #7 Doctor/host sweep for agent-browser orphans with the proven guards (owner-absent + grace + no live client, never age alone)
 - [ ] #8 Herder core contains zero resource-type-specific close logic
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: hera
+created: 2026-07-15 10:42
+---
+Split at dispatch: UNIT 1 (protocol — ACs 5/6/8) dispatched NOW as an A/B implementation trial per owner ruling (grok seat vs codex gpt-5.6 seat, separate worktrees task-234-grok / task-234-codex, same brief, independent design checkpoints, cross-family review both; comparison logged to the impl-calibration ledger). UNIT 2 (browser/orphan safety-net sweep — ACs 1/2/3/4/7) queued behind unit 1's merge.
+---
+<!-- COMMENTS:END -->

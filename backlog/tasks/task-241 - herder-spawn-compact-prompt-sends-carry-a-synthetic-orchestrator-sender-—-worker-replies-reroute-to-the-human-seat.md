@@ -3,9 +3,10 @@ id: TASK-241
 title: >-
   herder spawn/compact prompt sends carry a synthetic 'orchestrator' sender —
   worker replies reroute to the human seat
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 09:00'
+updated_date: '2026-07-15 10:42'
 labels: []
 dependencies: []
 ordinal: 240500
