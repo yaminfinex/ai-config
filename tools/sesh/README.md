@@ -1,6 +1,6 @@
 # sesh — session-transcript mirroring service
 
-Per-user shippers mirror Claude Code, Codex CLI, and Grok CLI session
+Per-user shippers mirror Claude Code, Codex CLI, Grok CLI, and Pi session
 transcripts byte-faithfully to one central store, which parses on ingest and
 serves a team recency page.
 
@@ -11,6 +11,7 @@ serves a team recency page.
 | `claude` | `~/.claude/projects` | `<uuid>.jsonl` | filename UUID |
 | `codex` | `~/.codex/sessions` | `rollout-*-<uuid>.jsonl` | filename UUID |
 | `grok` | `~/.grok/sessions` | `<cwd-group>/<uuid>/chat_history.jsonl` | session directory UUID |
+| `pi` | `~/.pi/agent/sessions` | `<cwd-key>/<timestamp>_<uuid>.jsonl` | filename UUID |
 
 Grok ships **exactly one file per session: `chat_history.jsonl`** (the
 transcript), admitted by exact shape — fixed name, directly under a
@@ -36,6 +37,16 @@ session id — a stored grok session is located by plain session id, matching
 `~/.grok/sessions/*/<sid>` existence semantics. A grok rewind that truncates
 and rewrites the transcript lands as a new store generation (the standard
 conflict path); both histories render, generation 0 first.
+
+Pi ships only regular, non-symlink files matching the exact two-level shape
+shown above. The rest of `~/.pi/agent` (auth, settings, models, extensions,
+and runtime state), non-matching session files, and deeper paths never ship.
+Pi's v3 header UUID is the logical session identity; every tree entry becomes
+one index row, with its short entry id in `message_uuid` and its nested
+`message.role` preserved. The frozen schema has no lineage column, so the
+surface reads `parentId` from mirrored rows, renders only the last-leaf active
+branch, and explicitly labels branch points; malformed trees fall back to a
+labeled degraded view rather than a 500.
 
 Authority chain: `docs/specs/session-service-spec.md` (product contract) >
 `docs/specs/sesh-wire.md` (wire and index contract). All sesh docs live

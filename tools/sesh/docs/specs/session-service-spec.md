@@ -16,7 +16,7 @@ Related ground truth:
 
 The session service answers one question for a team: **"what has everyone been working
 on?"** — by mirroring every harness session transcript (Claude Code, Codex CLI, Grok
-CLI) from every node to one central, durable, browsable store.
+CLI, Pi) from every node to one central, durable, browsable store.
 
 It is the **visibility component** of the three-component boundary (sessions / missions /
 herder) and sits at the bottom: it depends on nothing, and nothing about missions, herder,
@@ -37,7 +37,9 @@ policy, live relay, per-session ACLs, OTel.
   `~/.claude/projects/<project-slug>/<session-uuid>.jsonl`. Codex CLI:
   `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl`. Grok CLI
   (wire Amendment 3):
-  `~/.grok/sessions/<url-encoded-cwd>/<session-uuid>/chat_history.jsonl`. The formats are
+  `~/.grok/sessions/<url-encoded-cwd>/<session-uuid>/chat_history.jsonl`. Pi (wire
+  Amendment 4):
+  `~/.pi/agent/sessions/<cwd-key>/<timestamp>_<session-uuid>.jsonl`. The formats are
   upstream-internal and version-unstable; the service treats their **bytes** as the
   contract, not their schema.
 - **Session** — the logical unit identified by `(tool, logical_session_id)`. The store derives
@@ -144,7 +146,7 @@ session service defines only the read side.
 One binary, cross-platform (Linux servers + macOS laptops), running per OS user
 (user-level systemd unit / launchd agent).
 
-- **Discovery**: watches the Claude, Codex, and Grok session roots. fsnotify events are a hint;
+- **Discovery**: watches the Claude, Codex, Grok, and Pi session roots. fsnotify events are a hint;
   a periodic full rescan is the guarantee (catches queue overflows, moves, files created
   while the shipper was down). New file → new cursor at offset 0.
 - **Tailing**: reads from the cursor offset, ships raw byte ranges. Partial trailing
