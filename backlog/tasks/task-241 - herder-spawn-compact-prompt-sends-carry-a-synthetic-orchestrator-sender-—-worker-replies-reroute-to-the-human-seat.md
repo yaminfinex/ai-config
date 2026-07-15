@@ -3,10 +3,10 @@ id: TASK-241
 title: >-
   herder spawn/compact prompt sends carry a synthetic 'orchestrator' sender —
   worker replies reroute to the human seat
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-15 09:00'
-updated_date: '2026-07-15 11:46'
+updated_date: '2026-07-15 12:10'
 labels: []
 dependencies: []
 ordinal: 240500
@@ -21,6 +21,12 @@ FIX SHAPE: spawn/compact prompt sends must carry the SPAWNING session's real bus
 
 AC sketch: (1) spawn prompt message sender == spawner's live bus name, receipt-verified; (2) worker --reply-to on that message routes to the spawner, proven by test through the real reply-resolution path; (3) no synthetic sender literal remains in the send path; (4) spawner-has-no-bus-row refuses typed with remedy, no silent synthetic fallback; (5) red-first regression for the owner-desk reroute. Peer tool note: mission-control is intent-gating promotion desk-side (acks never promote) as defense in depth — that does not replace this fix.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged 6ec0417 (--no-ff, clean three-way union with the re-proof and launch-isolation merges), post-merge battery 61/61 green on main, pushed. The synthetic 'orchestrator' sender and its helper are DELETED tree-wide; every production bus send requires an explicit verified sender (spawn proves the spawner BEFORE any side effect; compact --then carries the armed sender without re-resolution; explicit send verifies the caller). Refusals typed cause+remedy, no fallback of any kind; degraded-but-legitimate dispatcher seats accepted via pane/terminal evidence (do-not-brick pinned at two layers, and live-verified post-merge: a herder send through the new gate from the field-repaired orchestrator seat delivered). Wire-honest evidence: tagged-dispatcher case proves --from stamps FULL verbatim + deliver:<FULL> receipt + @full reply routes only to the dispatcher; mock receipt now echoes the real sender (synthetic token residue removed); spawn contract passes from repo root (fixture cwd honesty). SCOPE-HONEST RESIDUAL (incumbent-proven, filed separately): bare --reply-to acks are broadcasts and can still reach the owner seat — this unit's guarantee is an ADDRESSABLE stamp + correct explicit-reply routing, not full desk protection. Reviews: incumbent opus fix-list(3)→delta APPROVE with full round-1 mutation battery re-run all-red; grok calibration fix-list→delta APPROVE (found the mock receipt residue + tagged fixture need independently).
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 
