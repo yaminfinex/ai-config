@@ -38,6 +38,17 @@ set -euo pipefail
 state="${MOCK_HCOM_STATE:?}"
 case "${1:-} ${2:-}" in
   "list --json")
+    # Opt-in roster race: the FIRST list (adopt's pre-enrollment preflight) sees
+    # $MOCK_HCOM_STATE; every later list (the post-reclaim recheck) sees
+    # $MOCK_HCOM_RACE_AFTER. Without MOCK_HCOM_RACE_COUNTER the roster is static.
+    if [[ -n "${MOCK_HCOM_RACE_COUNTER:-}" ]]; then
+      n=$(( $(cat "$MOCK_HCOM_RACE_COUNTER" 2>/dev/null || echo 0) + 1 ))
+      printf '%s\n' "$n" >"$MOCK_HCOM_RACE_COUNTER"
+      if [[ "$n" -gt 1 ]]; then
+        cat "${MOCK_HCOM_RACE_AFTER:?}"
+        exit 0
+      fi
+    fi
     cat "$state";;
   "start --as")
     name="${3:?}"
@@ -295,6 +306,40 @@ assert "ambiguous bus-name proof is not persisted as verified" jq -se '
   | [to_entries[] | select(.key != "guid-old-0000" and .value.label == "trap")] as $replacement
   | $replacement | length == 1
     and (.[0].value.seat.hcom_verified // false) == false
+' "$CASE/state/registry.jsonl"
+
+# The roster can change between adopt's pre-enrollment preflight and the moment it
+# persists a binding, so the authorization is repeated after reclaim. Here the
+# preflight sees a pane-less row (which --confirm-resumed-session may assert), and
+# by the time adopt would persist, that same SID is owned on a foreign pane. Only
+# the post-reclaim recheck can catch this; a preflight-only guard binds the wrong row.
+new_case adopt_resumed_session_races_after_preflight
+cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"guid":"guid-old-0000","event":"unseated","recorded_at":"2026-07-08T00:00:05Z","node":"11111111-1111-1111-1111-111111111111","state":"unseated","label":"trap","role":"worker","tool":"claude","sids":[{"sid":"sess-resumed","observed_at":"2026-07-08T00:00:05Z","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sess-resumed"}}
+JSONL
+printf '[{"name":"restored-live","session_id":"sess-resumed","joined":true,"launch_context":{}}]\n' >"$CASE/hcom.json"
+printf '[{"name":"restored-live","session_id":"sess-resumed","joined":true,"launch_context":{"pane_id":"p_elsewhere"}}]\n' >"$CASE/hcom-after.json"
+printf '0\n' >"$CASE/race-counter"
+env -i \
+  PATH="$PATH_HERMETIC" \
+  HOME="$CASE/home" \
+  HERDER_STATE_DIR="$CASE/state" \
+  HERDR_ENV=1 \
+  HERDR_PANE_ID=p_enroll \
+  MOCK_HCOM_STATE="$CASE/hcom.json" \
+  MOCK_HCOM_RACE_COUNTER="$CASE/race-counter" \
+  MOCK_HCOM_RACE_AFTER="$CASE/hcom-after.json" \
+  "$REPO_ROOT/bin/herder" adopt trap --confirm-resumed-session >/dev/null 2>"$CASE/adopt.err"
+adopt_race_rc=$?
+assert "adopt rechecks the resumed claim against the roster it is about to persist" bash -c '
+  test "$1" -ne 0 && grep -q "p_elsewhere" "$2"
+' bash "$adopt_race_rc" "$CASE/adopt.err"
+assert "a resumed claim that changes after preflight is never persisted as verified" jq -se '
+  reduce (.[] | select(.kind=="session")) as $row ({}; .[$row.guid]=$row)
+  | [to_entries[] | select(.key != "guid-old-0000" and .value.label == "trap")] as $replacement
+  | $replacement | length == 1
+    and (.[0].value.seat.hcom_verified // false) == false
+    and (.[0].value.seat.hcom_name // "") != "restored-live"
 ' "$CASE/state/registry.jsonl"
 
 new_case repair_unbound
