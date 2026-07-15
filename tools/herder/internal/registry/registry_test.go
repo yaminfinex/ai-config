@@ -318,6 +318,36 @@ func TestResolveByToolSessionIDPrefersCurrentNonTerminalOwnership(t *testing.T) 
 			t.Fatalf("hit = %+v, want retired fallback", hit)
 		}
 	})
+
+	t.Run("seated latest row with absent sid keeps historical fallback", func(t *testing.T) {
+		path := writeRegistry(t,
+			`{"kind":"session","guid":"guid-seated","event":"seated","state":"seated","label":"current","seat":{"terminal_id":"term-current"},"provenance":{"mechanism":"spawn","tool_session_id":"sid-historical"}}`,
+			`{"kind":"session","guid":"guid-seated","event":"recognised","state":"seated","label":"current","seat":{"terminal_id":"term-current"},"provenance":{"mechanism":"spawn"}}`,
+		)
+		recs, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hit := ResolveByToolSessionID(recs, "sid-historical")
+		if hit == nil || ptrString(hit.GUID) != "guid-seated" || hit.Provenance == nil || hit.Provenance.ToolSessionID != "" {
+			t.Fatalf("hit = %+v, want latest seated row through historical fallback", hit)
+		}
+	})
+
+	t.Run("seated current owner beats unseated current owner", func(t *testing.T) {
+		path := writeRegistry(t,
+			`{"kind":"session","guid":"guid-seated","event":"seated","state":"seated","label":"current","seat":{"terminal_id":"term-current"},"provenance":{"mechanism":"spawn","tool_session_id":"sid-shared"}}`,
+			`{"kind":"session","guid":"guid-dormant","event":"unseated","state":"unseated","label":"dormant","provenance":{"mechanism":"spawn","tool_session_id":"sid-shared"}}`,
+		)
+		recs, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hit := ResolveByToolSessionID(recs, "sid-shared")
+		if hit == nil || ptrString(hit.GUID) != "guid-seated" {
+			t.Fatalf("hit = %+v, want seated owner over unseated owner", hit)
+		}
+	})
 }
 
 func TestAppend(t *testing.T) {

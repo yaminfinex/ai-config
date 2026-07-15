@@ -471,7 +471,9 @@ func IsTerminal(rec Record) bool {
 // by a latest unseated row that currently records it. Terminal historical
 // observations remain a fallback for resume/archive lookup, but a retired or
 // lost row can never shadow a current non-terminal owner. Historical ids on a
-// currently seated/unseated row do not count as current corroboration.
+// currently seated/unseated row do not count as current corroboration, but if
+// the latest row lost its SID they remain eligible at the historical fallback
+// tier so resume/fork lookup is not stranded.
 // Equal-rank ties retain the old last-observation/file-order behavior.
 func ResolveByToolSessionID(recs []Record, sessionID string) *Record {
 	if sessionID == "" {
@@ -524,9 +526,15 @@ func toolSessionResolutionRank(current Record, sessionID string) int {
 		if currentSID == sessionID {
 			return 3
 		}
+		if currentSID == "" {
+			return 1
+		}
 	case v2.StateUnseated:
 		if currentSID == sessionID {
 			return 2
+		}
+		if currentSID == "" {
+			return 1
 		}
 	case v2.StateRetired, v2.StateLost:
 		return 1
