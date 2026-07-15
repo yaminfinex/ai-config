@@ -39,27 +39,30 @@ type Projection struct {
 }
 
 type SessionRecord struct {
-	Kind         string          `json:"kind,omitempty"`
-	GUID         string          `json:"guid"`
-	Event        string          `json:"event"`
-	RecordedAt   string          `json:"recorded_at"`
-	Node         string          `json:"node"`
-	State        string          `json:"state"`
-	Label        string          `json:"label,omitempty"`
-	Role         string          `json:"role,omitempty"`
-	Tool         string          `json:"tool,omitempty"`
-	Seat         *Seat           `json:"seat,omitempty"`
-	Capabilities *Capabilities   `json:"capabilities,omitempty"`
-	SIDs         []SID           `json:"sids,omitempty"`
-	Continuity   string          `json:"continuity,omitempty"`
-	Lineage      Lineage         `json:"lineage,omitempty"`
-	Provenance   Provenance      `json:"provenance,omitempty"`
-	CloseResult  string          `json:"close_result,omitempty"`
-	CloseReason  string          `json:"close_reason,omitempty"`
-	ObservedVia  string          `json:"observed_via,omitempty"`
-	Raw          json.RawMessage `json:"-"`
-	Ordinal      int             `json:"-"`
-	LegacyV1     bool            `json:"-"`
+	Kind          string                `json:"kind,omitempty"`
+	GUID          string                `json:"guid"`
+	Event         string                `json:"event"`
+	RecordedAt    string                `json:"recorded_at"`
+	Node          string                `json:"node"`
+	State         string                `json:"state"`
+	Label         string                `json:"label,omitempty"`
+	Role          string                `json:"role,omitempty"`
+	Tool          string                `json:"tool,omitempty"`
+	Provider      string                `json:"provider,omitempty"`
+	Model         string                `json:"model,omitempty"`
+	VendorVersion *VendorVersionHistory `json:"vendor_version,omitempty"`
+	Seat          *Seat                 `json:"seat,omitempty"`
+	Capabilities  *Capabilities         `json:"capabilities,omitempty"`
+	SIDs          []SID                 `json:"sids,omitempty"`
+	Continuity    string                `json:"continuity,omitempty"`
+	Lineage       Lineage               `json:"lineage,omitempty"`
+	Provenance    Provenance            `json:"provenance,omitempty"`
+	CloseResult   string                `json:"close_result,omitempty"`
+	CloseReason   string                `json:"close_reason,omitempty"`
+	ObservedVia   string                `json:"observed_via,omitempty"`
+	Raw           json.RawMessage       `json:"-"`
+	Ordinal       int                   `json:"-"`
+	LegacyV1      bool                  `json:"-"`
 }
 
 type Capabilities struct {
@@ -71,17 +74,29 @@ type Capabilities struct {
 }
 
 type Seat struct {
-	Kind         string `json:"kind"`
-	Node         string `json:"node"`
-	TerminalID   string `json:"terminal_id,omitempty"`
-	PaneID       string `json:"pane_id,omitempty"`
-	PID          int    `json:"pid,omitempty"`
-	HcomName     string `json:"hcom_name,omitempty"`
-	HcomVerified *bool  `json:"hcom_verified,omitempty"`
-	Namespace    string `json:"namespace,omitempty"`
-	HcomEpoch    string `json:"hcom_epoch,omitempty"`
-	HerdrEpoch   string `json:"herdr_epoch,omitempty"`
-	ConfirmedAt  string `json:"confirmed_at,omitempty"`
+	Kind           string `json:"kind"`
+	Node           string `json:"node"`
+	TerminalID     string `json:"terminal_id,omitempty"`
+	PaneID         string `json:"pane_id,omitempty"`
+	PID            int    `json:"pid,omitempty"`
+	HcomName       string `json:"hcom_name,omitempty"`
+	HcomVerified   *bool  `json:"hcom_verified,omitempty"`
+	HooksBound     bool   `json:"hooks_bound,omitempty"`
+	TranscriptPath string `json:"transcript_path,omitempty"`
+	Namespace      string `json:"namespace,omitempty"`
+	HcomEpoch      string `json:"hcom_epoch,omitempty"`
+	HerdrEpoch     string `json:"herdr_epoch,omitempty"`
+	ConfirmedAt    string `json:"confirmed_at,omitempty"`
+}
+
+type VendorVersionHistory struct {
+	Current  VendorVersionObservation  `json:"current"`
+	Previous *VendorVersionObservation `json:"previous,omitempty"`
+}
+
+type VendorVersionObservation struct {
+	Version    string `json:"version"`
+	ObservedAt string `json:"observed_at"`
 }
 
 type SID struct {
@@ -359,12 +374,18 @@ func legacySession(obj map[string]json.RawMessage, raw []byte, lineNo int) (Sess
 		Label:      rawString(obj["label"]),
 		Role:       rawString(obj["role"]),
 		Tool:       rawString(obj["agent"]),
+		Provider:   rawString(obj["provider"]),
+		Model:      rawString(obj["model"]),
 		Continuity: "assumed",
 		Lineage:    Lineage{ForkedFrom: firstNonEmpty(prov.ForkedFrom, rawString(obj["forked_from"]))},
 		Provenance: prov,
 		Raw:        bytes.Clone(raw),
 		Ordinal:    lineNo,
 		LegacyV1:   true,
+	}
+	var vendorVersion VendorVersionHistory
+	if json.Unmarshal(obj["vendor_version"], &vendorVersion) == nil && vendorVersion.Current != (VendorVersionObservation{}) {
+		rec.VendorVersion = &vendorVersion
 	}
 	if prov.ToolSessionID != "" {
 		rec.SIDs = []SID{{SID: prov.ToolSessionID, ObservedAt: prov.TS, Source: "harvest"}}

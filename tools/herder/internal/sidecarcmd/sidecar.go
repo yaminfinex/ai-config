@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/registry"
 )
 
@@ -23,17 +24,19 @@ type options struct {
 }
 
 type hcomRow struct {
-	Name          string           `json:"name"`
-	BaseName      string           `json:"base_name"`
-	Tag           string           `json:"tag"`
-	Directory     string           `json:"directory"`
-	Tool          string           `json:"tool"`
-	Status        string           `json:"status"`
-	StatusAgeS    int64            `json:"status_age_seconds"`
-	SessionID     string           `json:"session_id"`
-	UnreadCount   int64            `json:"unread_count"`
-	CreatedAt     flexibleJSONText `json:"created_at"`
-	LaunchContext struct {
+	Name           string           `json:"name"`
+	BaseName       string           `json:"base_name"`
+	Tag            string           `json:"tag"`
+	Directory      string           `json:"directory"`
+	Tool           string           `json:"tool"`
+	Status         string           `json:"status"`
+	StatusAgeS     int64            `json:"status_age_seconds"`
+	SessionID      string           `json:"session_id"`
+	HooksBound     bool             `json:"hooks_bound"`
+	TranscriptPath string           `json:"transcript_path"`
+	UnreadCount    int64            `json:"unread_count"`
+	CreatedAt      flexibleJSONText `json:"created_at"`
+	LaunchContext  struct {
 		PaneID    string `json:"pane_id"`
 		ProcessID string `json:"process_id"`
 	} `json:"launch_context"`
@@ -330,6 +333,9 @@ func (s *sidecar) findRow(rows []hcomRow) *hcomRow {
 }
 
 func (s *sidecar) appendEnrichment(row *hcomRow) bool {
+	if s.tool == "pi" && !piRowBound(row) {
+		return false
+	}
 	guid, hadGUID := os.LookupEnv("HERDER_GUID")
 	recs, _ := registry.Load(s.registry)
 	resumed := false
@@ -364,6 +370,9 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 	}
 	if latest == nil {
 		latest = s.archivedLatest(guid)
+	}
+	if s.tool == "pi" && (latest == nil || latest.Provider == "") {
+		return false
 	}
 	if latest != nil && registry.IsTerminal(*latest) {
 		return false
@@ -414,6 +423,14 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 	if resumed {
 		prov.ResumedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	}
+	var vendorVersion any
+	if s.tool == "pi" {
+		observation, observeErr := launchcmd.ObservePiVendorVersion(time.Now())
+		if observeErr != nil {
+			return false
+		}
+		vendorVersion = launchcmd.RefreshPiVendorVersion(latest.VendorVersion, observation)
+	}
 
 	base := []byte(`{}`)
 	if latest != nil && len(bytes.TrimSpace(latest.Raw)) > 0 {
@@ -423,27 +440,40 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 		base = registry.DropRawFields(base, "closed_at", "closed_by_pane", "close_result", "close_reason")
 	}
 	out, err := registry.UpdateRawObject(base, map[string]any{
-		"guid":          guid,
-		"short_guid":    short,
-		"label":         label,
-		"role":          role,
-		"agent":         agent,
-		"pane_id":       coords.PaneID,
-		"terminal_id":   coords.TerminalID,
-		"workspace_id":  coords.WorkspaceID,
-		"cwd":           coords.CWD,
-		"hcom_dir":      os.Getenv("HCOM_DIR"),
-		"hcom_name":     row.Name,
-		"hcom_verified": true,
-		"hcom_tag":      row.Tag,
-		"status":        "active",
-		"provenance":    prov,
+		"guid":            guid,
+		"short_guid":      short,
+		"label":           label,
+		"role":            role,
+		"agent":           agent,
+		"pane_id":         coords.PaneID,
+		"terminal_id":     coords.TerminalID,
+		"workspace_id":    coords.WorkspaceID,
+		"cwd":             coords.CWD,
+		"hcom_dir":        os.Getenv("HCOM_DIR"),
+		"hcom_name":       row.Name,
+		"hcom_verified":   true,
+		"hooks_bound":     row.HooksBound,
+		"transcript_path": row.TranscriptPath,
+		"hcom_tag":        row.Tag,
+		"status":          "active",
+		"provenance":      prov,
 	})
+	if err == nil && s.tool == "pi" {
+		out, err = registry.UpdateRawObject(out, map[string]any{
+			"provider":       latest.Provider,
+			"model":          latest.Model,
+			"vendor_version": vendorVersion,
+		})
+	}
 	if err == nil {
 		outcome, writeErr := registry.AppendLegacySessionEvent(s.registry, out, "recognised", "seated")
 		return writeErr == nil && outcome.Err() == nil
 	}
 	return false
+}
+
+func piRowBound(row *hcomRow) bool {
+	return row != nil && row.Tool == "pi" && row.HooksBound && strings.TrimSpace(row.SessionID) != ""
 }
 
 type paneCoordinates struct {

@@ -700,6 +700,19 @@ func turnoverRowsLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string
 		State:      v2.StateSeated,
 		Role:       current.Role,
 		Tool:       current.Tool,
+		Provider:   current.Provider,
+		Model:      current.Model,
+		VendorVersion: func() *v2.VendorVersionHistory {
+			if current.VendorVersion == nil {
+				return nil
+			}
+			cloned := *current.VendorVersion
+			if cloned.Previous != nil {
+				previous := *cloned.Previous
+				cloned.Previous = &previous
+			}
+			return &cloned
+		}(),
 		Seat:       childSeat,
 		SIDs:       []v2.SID{{SID: newSID, ObservedAt: stamp, Source: "harvest"}},
 		Continuity: "confirmed",

@@ -557,6 +557,7 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 		}
 		row.Role = firstNonEmpty(row.Role, current.Role)
 		row.Tool = firstNonEmpty(row.Tool, current.Tool)
+		row = carryPiFacts(row, *current)
 		if len(row.SIDs) == 0 {
 			row.SIDs = current.SIDs
 		}
@@ -594,6 +595,7 @@ func carryRegisteredFields(row, current v2.SessionRecord) v2.SessionRecord {
 	row.Label = firstNonEmpty(row.Label, current.Label)
 	row.Role = firstNonEmpty(row.Role, current.Role)
 	row.Tool = firstNonEmpty(row.Tool, current.Tool)
+	row = carryPiFacts(row, current)
 	if len(row.SIDs) == 0 {
 		row.SIDs = current.SIDs
 	}
@@ -701,6 +703,7 @@ func carryIdentityFields(row, current v2.SessionRecord) v2.SessionRecord {
 func carryUnlabelledIdentityFields(row, current v2.SessionRecord) v2.SessionRecord {
 	row.Role = firstNonEmpty(row.Role, current.Role)
 	row.Tool = firstNonEmpty(row.Tool, current.Tool)
+	row = carryPiFacts(row, current)
 	if len(row.SIDs) == 0 {
 		row.SIDs = current.SIDs
 	}
@@ -720,6 +723,7 @@ func carryUnlabelledIdentityFields(row, current v2.SessionRecord) v2.SessionReco
 func carrySeatFields(row, current v2.SessionRecord) v2.SessionRecord {
 	row.Role = firstNonEmpty(row.Role, current.Role)
 	row.Tool = firstNonEmpty(row.Tool, current.Tool)
+	row = carryPiFacts(row, current)
 	row.State = current.State
 	row.Seat = current.Seat
 	if row.Seat == nil && current.LegacyV1 {
@@ -760,6 +764,9 @@ func sameProjectedSession(a, b v2.SessionRecord) bool {
 		a.Label == b.Label &&
 		a.Role == b.Role &&
 		a.Tool == b.Tool &&
+		a.Provider == b.Provider &&
+		a.Model == b.Model &&
+		sameVendorVersion(a.VendorVersion, b.VendorVersion) &&
 		sameSeatFields(a.Seat, b.Seat) &&
 		sameSIDs(a.SIDs, b.SIDs) &&
 		a.Continuity == b.Continuity &&
@@ -787,10 +794,34 @@ func sameSeatFields(a, b *v2.Seat) bool {
 		a.PID == b.PID &&
 		a.HcomName == b.HcomName &&
 		sameOptionalBool(a.HcomVerified, b.HcomVerified) &&
+		a.HooksBound == b.HooksBound &&
+		a.TranscriptPath == b.TranscriptPath &&
 		a.Namespace == b.Namespace &&
 		a.HcomEpoch == b.HcomEpoch &&
 		a.HerdrEpoch == b.HerdrEpoch &&
 		a.ConfirmedAt == b.ConfirmedAt
+}
+
+func carryPiFacts(row, current v2.SessionRecord) v2.SessionRecord {
+	row.Provider = firstNonEmpty(row.Provider, current.Provider)
+	row.Model = firstNonEmpty(row.Model, current.Model)
+	if row.VendorVersion == nil {
+		row.VendorVersion = cloneVendorVersion(current.VendorVersion)
+	}
+	return row
+}
+
+func sameVendorVersion(a, b *v2.VendorVersionHistory) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if a.Current != b.Current {
+		return false
+	}
+	if a.Previous == nil || b.Previous == nil {
+		return a.Previous == nil && b.Previous == nil
+	}
+	return *a.Previous == *b.Previous
 }
 
 func sameOptionalBool(a, b *bool) bool {

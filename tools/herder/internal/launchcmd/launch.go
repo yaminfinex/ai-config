@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"ai-config/tools/herder/internal/hookcmd"
 	"ai-config/tools/herder/internal/registry"
@@ -18,7 +19,7 @@ import (
 // PinConfigDir when hcom local mode would otherwise redirect it.
 func IsHcomCapable(agent string) bool {
 	switch agent {
-	case "claude", "codex", "gemini", "grok":
+	case "claude", "codex", "gemini", "grok", "pi":
 		return true
 	default:
 		return false
@@ -115,6 +116,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	tag := ""
+	provider := ""
 	var rest []string
 	for i := 0; i < len(args); {
 		arg := args[i]
@@ -133,11 +135,35 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			}
 			parentSessionID = args[i+1]
 			i += 2
+		case arg == "--provider":
+			if tool != "pi" {
+				rest = append(rest, arg)
+				i++
+				continue
+			}
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				die(stderr, "--provider needs a non-empty value")
+				return 1
+			}
+			provider = args[i+1]
+			i += 2
 		case len(arg) >= len("--tag=") && arg[:len("--tag=")] == "--tag=":
 			tag = arg[len("--tag="):]
 			i++
 		case len(arg) >= len("--parent-session=") && arg[:len("--parent-session=")] == "--parent-session=":
 			parentSessionID = arg[len("--parent-session="):]
+			i++
+		case strings.HasPrefix(arg, "--provider="):
+			if tool != "pi" {
+				rest = append(rest, arg)
+				i++
+				continue
+			}
+			provider = strings.TrimSpace(strings.TrimPrefix(arg, "--provider="))
+			if provider == "" {
+				die(stderr, "--provider needs a non-empty value")
+				return 1
+			}
 			i++
 		case arg == "--":
 			rest = append(rest, args[i+1:]...)
@@ -165,6 +191,21 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			grokTarget = parentSessionID
 		}
 		return runGrokLaunch(mode, grokTarget, rest, stderr)
+	}
+	if tool == "pi" {
+		if err := ValidatePiExtraArgs(rest, false); err != nil {
+			die(stderr, err.Error())
+			return 1
+		}
+		if err := ConfigurePiEnvironment(provider); err != nil {
+			die(stderr, err.Error())
+			return 1
+		}
+		if _, err := ObservePiVendorVersion(time.Now()); err != nil {
+			die(stderr, err.Error())
+			return 1
+		}
+		rest = append([]string{"--provider", provider}, rest...)
 	}
 
 	hcomPath, err := exec.LookPath("hcom")

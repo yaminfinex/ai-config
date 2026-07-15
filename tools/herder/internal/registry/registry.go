@@ -46,24 +46,29 @@ type Record struct {
 	ShortGUID *string `json:"short_guid"`
 	Label     *string `json:"label"`
 
-	Role         string           `json:"role"`
-	Agent        string           `json:"agent"`
-	PaneID       string           `json:"pane_id"`
-	TerminalID   string           `json:"terminal_id"`
-	PID          int              `json:"pid,omitempty"`
-	Team         string           `json:"team"`
-	HcomDir      string           `json:"hcom_dir"`
-	HcomName     string           `json:"hcom_name"`
-	HcomVerified *bool            `json:"hcom_verified,omitempty"`
-	HcomTag      string           `json:"hcom_tag"`
-	Status       string           `json:"status"`
-	State        string           `json:"state,omitempty"`
-	RecordedAt   string           `json:"recorded_at,omitempty"`
-	CloseResult  string           `json:"close_result,omitempty"`
-	CloseReason  string           `json:"close_reason,omitempty"`
-	ObservedVia  string           `json:"observed_via,omitempty"`
-	Capabilities *v2.Capabilities `json:"capabilities,omitempty"`
-	Provenance   *Provenance      `json:"provenance,omitempty"`
+	Role           string                   `json:"role"`
+	Agent          string                   `json:"agent"`
+	Provider       string                   `json:"provider,omitempty"`
+	Model          string                   `json:"model,omitempty"`
+	VendorVersion  *v2.VendorVersionHistory `json:"vendor_version,omitempty"`
+	PaneID         string                   `json:"pane_id"`
+	TerminalID     string                   `json:"terminal_id"`
+	PID            int                      `json:"pid,omitempty"`
+	Team           string                   `json:"team"`
+	HcomDir        string                   `json:"hcom_dir"`
+	HcomName       string                   `json:"hcom_name"`
+	HcomVerified   *bool                    `json:"hcom_verified,omitempty"`
+	HooksBound     *bool                    `json:"hooks_bound,omitempty"`
+	TranscriptPath string                   `json:"transcript_path,omitempty"`
+	HcomTag        string                   `json:"hcom_tag"`
+	Status         string                   `json:"status"`
+	State          string                   `json:"state,omitempty"`
+	RecordedAt     string                   `json:"recorded_at,omitempty"`
+	CloseResult    string                   `json:"close_result,omitempty"`
+	CloseReason    string                   `json:"close_reason,omitempty"`
+	ObservedVia    string                   `json:"observed_via,omitempty"`
+	Capabilities   *v2.Capabilities         `json:"capabilities,omitempty"`
+	Provenance     *Provenance              `json:"provenance,omitempty"`
 
 	Archived bool            `json:"-"`
 	Raw      json.RawMessage `json:"-"`
@@ -208,20 +213,28 @@ func recordFromV2SessionObject(obj map[string]json.RawMessage) Record {
 	var prov Provenance
 	_ = json.Unmarshal(obj["provenance"], &prov)
 	rec := Record{
-		Role:         rawString(obj["role"]),
-		Agent:        rawString(obj["tool"]),
-		PaneID:       seat.PaneID,
-		TerminalID:   seat.TerminalID,
-		PID:          seat.PID,
-		Team:         rawString(obj["team"]),
-		HcomDir:      seat.Namespace,
-		HcomName:     seat.HcomName,
-		HcomVerified: seat.HcomVerified,
-		State:        rawString(obj["state"]),
-		CloseResult:  rawString(obj["close_result"]),
-		CloseReason:  rawString(obj["close_reason"]),
-		ObservedVia:  rawString(obj["observed_via"]),
-		Provenance:   &prov,
+		Role:           rawString(obj["role"]),
+		Agent:          rawString(obj["tool"]),
+		Provider:       rawString(obj["provider"]),
+		Model:          rawString(obj["model"]),
+		PaneID:         seat.PaneID,
+		TerminalID:     seat.TerminalID,
+		PID:            seat.PID,
+		Team:           rawString(obj["team"]),
+		HcomDir:        seat.Namespace,
+		HcomName:       seat.HcomName,
+		HcomVerified:   seat.HcomVerified,
+		HooksBound:     boolPointer(seat.HooksBound),
+		TranscriptPath: seat.TranscriptPath,
+		State:          rawString(obj["state"]),
+		CloseResult:    rawString(obj["close_result"]),
+		CloseReason:    rawString(obj["close_reason"]),
+		ObservedVia:    rawString(obj["observed_via"]),
+		Provenance:     &prov,
+	}
+	var vendorVersion v2.VendorVersionHistory
+	if json.Unmarshal(obj["vendor_version"], &vendorVersion) == nil && vendorVersion.Current != (v2.VendorVersionObservation{}) {
+		rec.VendorVersion = &vendorVersion
 	}
 	var capabilities v2.Capabilities
 	if json.Unmarshal(obj["capabilities"], &capabilities) == nil && capabilities != (v2.Capabilities{}) {
@@ -591,6 +604,18 @@ func overlayLegacyFields(rec *Record, obj map[string]json.RawMessage) {
 	if v := rawString(obj["tool"]); v != "" && rec.Agent == "" {
 		rec.Agent = v
 	}
+	if v := rawString(obj["provider"]); v != "" {
+		rec.Provider = v
+	}
+	if v := rawString(obj["model"]); v != "" {
+		rec.Model = v
+	}
+	if raw, ok := obj["vendor_version"]; ok {
+		var history v2.VendorVersionHistory
+		if json.Unmarshal(raw, &history) == nil && history.Current != (v2.VendorVersionObservation{}) {
+			rec.VendorVersion = &history
+		}
+	}
 	if v := rawString(obj["pane_id"]); v != "" {
 		rec.PaneID = v
 	}
@@ -611,6 +636,15 @@ func overlayLegacyFields(rec *Record, obj map[string]json.RawMessage) {
 		if json.Unmarshal(raw, &verified) == nil {
 			rec.HcomVerified = &verified
 		}
+	}
+	if raw, ok := obj["hooks_bound"]; ok {
+		var bound bool
+		if json.Unmarshal(raw, &bound) == nil {
+			rec.HooksBound = &bound
+		}
+	}
+	if v := rawString(obj["transcript_path"]); v != "" {
+		rec.TranscriptPath = v
 	}
 	if v := rawString(obj["hcom_tag"]); v != "" {
 		rec.HcomTag = v
@@ -772,20 +806,23 @@ func V2FromRecord(rec Record, event, state, recordedAt string) v2.SessionRecord 
 		}
 	}
 	out := v2.SessionRecord{
-		Kind:        v2.KindSession,
-		GUID:        guid,
-		Event:       event,
-		RecordedAt:  recordedAt,
-		State:       state,
-		Label:       ptrValue(rec.Label),
-		Role:        rec.Role,
-		Tool:        rec.Agent,
-		Continuity:  "assumed",
-		Lineage:     v2.Lineage{ForkedFrom: firstNonEmpty(prov.ForkedFrom)},
-		Provenance:  prov,
-		CloseResult: rec.CloseResult,
-		CloseReason: rec.CloseReason,
-		ObservedVia: rec.ObservedVia,
+		Kind:          v2.KindSession,
+		GUID:          guid,
+		Event:         event,
+		RecordedAt:    recordedAt,
+		State:         state,
+		Label:         ptrValue(rec.Label),
+		Role:          rec.Role,
+		Tool:          rec.Agent,
+		Provider:      rec.Provider,
+		Model:         rec.Model,
+		VendorVersion: cloneVendorVersion(rec.VendorVersion),
+		Continuity:    "assumed",
+		Lineage:       v2.Lineage{ForkedFrom: firstNonEmpty(prov.ForkedFrom)},
+		Provenance:    prov,
+		CloseResult:   rec.CloseResult,
+		CloseReason:   rec.CloseReason,
+		ObservedVia:   rec.ObservedVia,
 	}
 	if rec.Capabilities != nil {
 		capabilities := *rec.Capabilities
@@ -797,17 +834,39 @@ func V2FromRecord(rec Record, event, state, recordedAt string) v2.SessionRecord 
 	}
 	if state == v2.StateSeated {
 		out.Seat = &v2.Seat{
-			Kind:         "herdr",
-			TerminalID:   rec.TerminalID,
-			PaneID:       rec.PaneID,
-			PID:          rec.PID,
-			HcomName:     rec.HcomName,
-			HcomVerified: rec.HcomVerified,
-			Namespace:    rec.HcomDir,
-			ConfirmedAt:  recordedAt,
+			Kind:           "herdr",
+			TerminalID:     rec.TerminalID,
+			PaneID:         rec.PaneID,
+			PID:            rec.PID,
+			HcomName:       rec.HcomName,
+			HcomVerified:   rec.HcomVerified,
+			HooksBound:     rec.HooksBound != nil && *rec.HooksBound,
+			TranscriptPath: rec.TranscriptPath,
+			Namespace:      rec.HcomDir,
+			ConfirmedAt:    recordedAt,
 		}
 	}
 	return out
+}
+
+func boolPointer(value bool) *bool {
+	if !value {
+		return nil
+	}
+	v := true
+	return &v
+}
+
+func cloneVendorVersion(history *v2.VendorVersionHistory) *v2.VendorVersionHistory {
+	if history == nil {
+		return nil
+	}
+	copy := *history
+	if history.Previous != nil {
+		previous := *history.Previous
+		copy.Previous = &previous
+	}
+	return &copy
 }
 
 func rawString(raw json.RawMessage) string {
