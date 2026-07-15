@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-14 02:01'
+updated_date: '2026-07-15 11:01'
 labels:
   - run-herder-dx
 dependencies: []
@@ -131,6 +131,12 @@ hera (A1 closeout): two candidates. (1) hcom — roster launch_context.pane_id i
 created: 2026-07-13 00:22
 ---
 Candidate 14 (2026-07-13, hera, TASK-146 closeout sweep): hcom — agent removal never garbage-collects that agent's event subscriptions. herder cull drops the bus name ('@worker-X already gone') yet the culled agent's subs (thread-member + filter subs) persist indefinitely; our live sub table now carries hundreds of orphaned thread-member subs for long-gone agents, all still evaluated per event. Upstream ask: GC subs on agent removal/retirement, or expose a bulk 'unsub --for <name> --all'. Local practice until then: orchestrators unsub their own culled workers' subs at closeout (events unsub <id>).
+---
+
+author: hera
+created: 2026-07-15 11:01
+---
+Upstream candidate (hcom): the generated pi wrapper runs a SYNCHRONOUS 'git ls-remote --tags' update check BEFORE launching the child ('/hcom pty pi'), with no timeout — under slow/blocked network the child never launches within any spawner's bind window (roster stays empty, no process), and the caller-side cleanup makes it look like the pane died. Reproduced hermetically; pre-seeding the private update-check flag bypasses it (not shippable — private state). Fix there: async/backgrounded update check, a timeout, or a supported env knob to skip it in managed launches.
 ---
 <!-- COMMENTS:END -->
 
