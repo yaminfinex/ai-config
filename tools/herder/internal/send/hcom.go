@@ -62,10 +62,14 @@ func (h *busSender) now() time.Time {
 
 // deliver is the transport core: scope to busDir, confirm the target is joined,
 // send, poll for the receipt. Returns "delivered" | "queued" | "not_joined" |
-// "send_failed" — the caller maps these onto its own reporting/exit contract.
-func (h *busSender) deliver(busName, busDir, message string, timeoutMS int) string {
+// "send_failed" | "sender_unverified" — the caller maps these onto its own
+// reporting/exit contract.
+func (h *busSender) deliver(sender, busName, busDir, message string, timeoutMS int) string {
 	if timeoutMS == 0 {
 		timeoutMS = 3000
+	}
+	if sender == "" {
+		return "sender_unverified"
 	}
 
 	env := os.Environ()
@@ -77,7 +81,6 @@ func (h *busSender) deliver(busName, busDir, message string, timeoutMS int) stri
 		return "not_joined"
 	}
 
-	sender := senderIdentity()
 	// The snapshot-and-send sequence below is only honest when one send at a
 	// time runs per (bus, sender, target): two concurrent sends would both
 	// snapshot BEFORE either receipt, and the first wake's receipt would
@@ -134,28 +137,29 @@ func (h *busSender) joined(busName, busDir string) bool {
 
 // DeliverBus delivers message to a KNOWN bus coordinate (name + bus dir) and
 // returns the transport verdict: "delivered" (receipt seen), "queued" (sent,
-// no receipt in the window — do NOT resend), "not_joined", or "send_failed".
+// no receipt in the window — do NOT resend), "not_joined", "send_failed", or
+// "sender_unverified".
 // In-process caller: herder spawn's initial-prompt delivery (TASK-032) — spawn
 // resolved the coordinate itself from the bind it just observed, so the CLI
 // layer's registry resolution would only re-derive the same values.
-func DeliverBus(busName, busDir, message string, timeoutMS int) string {
-	return (&busSender{}).deliver(busName, busDir, message, timeoutMS)
+func DeliverBus(sender, busName, busDir, message string, timeoutMS int) string {
+	return (&busSender{}).deliver(sender, busName, busDir, message, timeoutMS)
 }
 
 // send delivers message to busName (scoping every hcom call to busDir when the
 // registry recorded one) and polls for a delivery receipt. Exit contract is
 // unchanged from the driver era: 0 delivered/queued, 1 send failed, 2 target
 // not joined on its bus.
-func (h *busSender) send(target, busName, busDir, message string, timeoutMS int, jsonOut bool, stdout, stderr io.Writer) int {
-	verdict := h.deliver(busName, busDir, message, timeoutMS)
+func (h *busSender) send(sender, target, busName, busDir, message string, timeoutMS int, jsonOut bool, stdout, stderr io.Writer) int {
+	verdict := h.deliver(sender, busName, busDir, message, timeoutMS)
 	if verdict == "not_joined" {
 		fmt.Fprintf(stderr, "hcom_send: target %s (@%s) not found on bus (not joined or does not exist)\n", target, busName)
 		return 2
 	}
 
-	submitted := verdict != "send_failed"
+	submitted := verdict != "send_failed" && verdict != "sender_unverified"
 	verifyResult := verdict
-	if verdict == "send_failed" {
+	if verdict == "send_failed" || verdict == "sender_unverified" {
 		verifyResult = "not_delivered"
 	}
 
@@ -214,16 +218,6 @@ func (h *busSender) waitForAck(env []string, receiptArgs []string, preMax int64,
 		}
 		h.sleep(250 * time.Millisecond)
 	}
-}
-
-// senderIdentity is the --from identity a send is stamped with — the receipt's
-// deliver:<sender> context echoes it verbatim, which is what waitForAck keys on.
-func senderIdentity() string {
-	sender := os.Getenv("HERDER_LABEL")
-	if sender == "" {
-		sender = "orchestrator"
-	}
-	return sender
 }
 
 // lockSendWindow takes an exclusive inter-process lock over the

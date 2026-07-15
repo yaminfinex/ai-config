@@ -29,6 +29,10 @@ printf '%s' "${HCOM_DIR:-<unset>}" > "$PROBE/hcom_dir"
 
 case "${1:-}" in
   list)
+	if [[ "${2:-}" == "--json" ]]; then
+	  jq -n '[{name:"sender-bus", joined:true, launch_context:{pane_id:"p_sender"}}]'
+	  exit 0
+	fi
     # hcom list <bus_name>
     printf '%s' "${2:-}" > "$PROBE/list_target"
     [[ "$SCEN" == "notjoined" ]] && exit 1
@@ -53,7 +57,7 @@ case "${1:-}" in
         # post-send polls see THIS send's receipt, id strictly newer than the
         # snapshot — mirrors a live instant wake.
         if [[ -f "$PROBE/events_polled" ]]; then
-          jq -cn '{id:42, data:{context:"deliver:orchestrator"}, instance:"receiver", type:"status"}'
+		  jq -cn '{id:42, data:{context:"deliver:sender-bus"}, instance:"receiver", type:"status"}'
         else
           : > "$PROBE/events_polled"
         fi;;
@@ -61,7 +65,7 @@ case "${1:-}" in
         # A receipt from a PREVIOUS same-sender send sits inside the backdated
         # window on EVERY call: the snapshot pins id 41 and nothing strictly
         # newer ever appears — verify must NOT claim delivered (codex P2).
-        jq -cn '{id:41, data:{context:"deliver:orchestrator"}, instance:"receiver", type:"status"}';;
+		jq -cn '{id:41, data:{context:"deliver:sender-bus"}, instance:"receiver", type:"status"}';;
     esac
     exit 0
     ;;

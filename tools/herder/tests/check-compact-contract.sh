@@ -149,8 +149,8 @@ run_then_child() {
     HERDER_COMPACT_THEN_GRACE_MS=0 \
     HERDER_COMPACT_THEN_TIMEOUT_MS="${THEN_TIMEOUT_MS:-2000}" \
     MOCK_THEN_SCENARIO="$scen" MOCK_THEN_STATE="$CASE/hcomstate" \
-    "$REPO_ROOT/bin/herder" compact-then \
-      --name me-bus --message 'continue: run the gate, then report DONE' "$@" 2>"$RUN_ERR_F")"
+	"$REPO_ROOT/bin/herder" compact-then \
+	  --sender me-bus --name me-bus --message 'continue: run the gate, then report DONE' "$@" 2>"$RUN_ERR_F")"
   RUN_RC=$?
 }
 

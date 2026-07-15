@@ -56,7 +56,11 @@ case "${1:-} ${2:-}" in
 		printf '%s\n' "$*" >>"$PROBE/herdr_move_argv"
 		jq -n '{result:{type:"pane_moved"}}';;
 	"pane get")
-		jq -n --arg ws "$(cat "$PROBE/agent_workspace" 2>/dev/null || printf ws_resumed)" '{result:{pane:{pane_id:"p_resumed",terminal_id:"term_RESUMED",workspace_id:$ws,tab_id:"tab_new",cwd:"/mock/cwd"}}}';;
+		if [[ "${3:-}" == "p_self" ]]; then
+			jq -n '{result:{pane:{pane_id:"p_self",terminal_id:"term_SELF",workspace_id:"ws_self",cwd:"/mock/cwd"}}}'
+		else
+			jq -n --arg ws "$(cat "$PROBE/agent_workspace" 2>/dev/null || printf ws_resumed)" '{result:{pane:{pane_id:"p_resumed",terminal_id:"term_RESUMED",workspace_id:$ws,tab_id:"tab_new",cwd:"/mock/cwd"}}}'
+		fi;;
   *)
     printf 'mock herdr (resume suite): unhandled: %s\n' "$*" >&2
     exit 64;;
@@ -71,6 +75,10 @@ chmod +x "$MOCKBIN/herdr"
 # grows per call (snapshot sees N, the first poll sees N+1 ⇒ delivered).
 cat >"$MOCKBIN/hcom" <<'MOCK_HCOM'
 #!/usr/bin/env bash
+if [[ "${1:-} ${2:-}" == "list --json" ]]; then
+  printf '%s\n' "${MOCK_HCOM_IDENTITY:-[]}"
+  exit 0
+fi
 case "${1:-}" in
   send)   printf '%s\n' "$*" >>"${MOCK_PROBE_DIR:?}/hcom_send_argv" ;;
   events) n=$(( $(cat "${MOCK_PROBE_DIR:?}/events_calls" 2>/dev/null || echo 0) + 1 ))
@@ -106,6 +114,11 @@ JSONL
 {"guid":"guid-codex-0000","short_guid":"codex","label":"codex-me","role":"worker","agent":"codex","terminal_id":"term_CODEX","pane_id":"p_codex","hcom_dir":"/hcom","hcom_name":"codex-vibe","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-codex","tag":"worker","batch_id":"","cwd":"/repo","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
 JSONL
   fi
+	if [[ -n "${SEED_SENDER:-}" ]]; then
+		cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"session","guid":"guid-sender-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"sender","role":"dispatcher","tool":"codex","seat":{"kind":"herdr","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"dispatcher-rive","namespace":"/hcom"},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-sender","tag":"dispatcher","cwd":"/repo","workspace_id":"ws_self","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
+JSONL
+	fi
 	# Recorded cwd values are real directories so the preflight tests the normal
 	# launch path. Individual refusal cases replace one with a missing path.
 	sed -i "s#\"cwd\":\"/repo\"#\"cwd\":\"$REPO\"#g" "$CASE/state/registry.jsonl"
@@ -131,6 +144,7 @@ run_case() {
     MOCK_PROBE_DIR="$CASE/probe" \
     MOCK_LIVE_TARGET="$live" \
     MOCK_BIND_NAME="${MOCK_BIND_NAME:-}" \
+    MOCK_HCOM_IDENTITY="${MOCK_HCOM_IDENTITY:-}" \
     "${HRS[@]}" "$@" 2>"$RUN_ERR_F")"
   RUN_RC=$?
 }
@@ -197,7 +211,8 @@ check_one missing_session
 # TASK-017: resumed codex sessions lose the launch-seam addendum (hcom strips
 # user developer_instructions on resume/fork), so resume re-delivers it over
 # the bus once the sidecar binds the new instance's bus name in the registry.
-SEED_CODEX=1 MOCK_BIND_NAME=codex-vibe \
+SEED_CODEX=1 SEED_SENDER=1 MOCK_BIND_NAME=codex-vibe \
+  MOCK_HCOM_IDENTITY='[{"name":"dispatcher-rive","launch_context":{"pane_id":"p_self"}}]' \
   run_case codex_addendum 0 codex --json
 check_one codex_addendum
 # No bind inside the window -> WARN with the manual remedy, but the resume

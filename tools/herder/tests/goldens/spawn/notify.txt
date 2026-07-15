@@ -1,9 +1,9 @@
 === STDERR ===
-herder spawn: --notify: spawner does not resolve to a bus-bound agent (tried --notify-to "" as registry row and as bus name, spawner guid "user", pane "p_orch", terminal "term_ORCH") — the keystroke ring was removed; spawn from a bus-bound session, or point --notify-to at a bus-bound registry row or a live bus name on the child's bus
+herder spawn: refused — initial prompt sender identity is not verified: the spawning session registry is not readable: open <CASE>/state/registry.jsonl: no such file or directory. Restore the herder registry or run `herder enroll` from this session, then retry. Nothing was launched.
 === STDOUT ===
 
 === EXIT ===
-1
+2
 === AGENT START ARGV ===
 === HERDR MUTATING CALLS ===
 === HCOM DIR ===

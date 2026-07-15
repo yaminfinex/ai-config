@@ -158,7 +158,7 @@ emit_read() { jq -n --arg t "$1" '{result:{read:{text:$t}}}'; }
 case "${1:-} ${2:-}" in
   "pane get")
     case "${3:-}" in
-      p_orch)     jq -n '{result:{pane:{pane_id:"p_orch", terminal_id:"term_ORCH", workspace_id:"ws_1", tab_id:"tab_1"}}}';;
+      p_orch)     jq -n --arg cwd "${MOCK_SPAWNER_CWD:-/mock/cwd}" '{result:{pane:{pane_id:"p_orch", terminal_id:"term_ORCH", workspace_id:"ws_1", tab_id:"tab_1", foreground_cwd:$cwd}}}';;
       p_60)       jq -n '{result:{pane:{pane_id:"p_60", terminal_id:"term_WTROOT", workspace_id:"w_WT", tab_id:"tab_WT"}}}';;
       p_50|p_41)  if agent_closed; then jq -n '{error:{code:"pane_not_found"}}'; exit 1; fi
                    jq -n --arg p "$(agent_pane)" --arg tab "$(agent_tab)" --arg ws "$(cat "$STATE/agent_workspace" 2>/dev/null || printf ws_1)" '{result:{pane:{pane_id:$p, terminal_id:"term_AGENT", workspace_id:$ws, tab_id:$tab}}}';;

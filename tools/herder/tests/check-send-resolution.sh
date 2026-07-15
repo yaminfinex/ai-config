@@ -38,6 +38,10 @@ PROBE="${MOCK_PROBE:-/tmp/mock-send-resolution}"
 mkdir -p "$PROBE"
 case "${1:-}" in
   list)
+	if [[ "${2:-}" == "--json" ]]; then
+	  jq -cn '[{name:"sender-bus", joined:true, launch_context:{pane_id:"p_sender"}}]'
+	  exit 0
+	fi
     # joined iff the queried name is listed in STUB_JOINED (space-separated)
     for n in ${STUB_JOINED:-}; do [[ "$n" == "${2:-}" ]] && exit 0; done
     exit 1;;
@@ -48,7 +52,7 @@ case "${1:-}" in
     # Stateful ack, mirroring mock-hcom: snapshot (first call) sees nothing,
     # later polls see this send's receipt — but only when STUB_ACK=1.
     if [[ "${STUB_ACK:-0}" == "1" && -f "$PROBE/polled" ]]; then
-      jq -cn '{id:42, data:{context:"deliver:orchestrator"}, type:"status"}'
+	  jq -cn '{id:42, data:{context:"deliver:sender-bus"}, type:"status"}'
     else
       : >"$PROBE/polled"
     fi
@@ -62,6 +66,7 @@ chmod +x "$MOCKBIN/hcom"
 # each bus-bound. pane p_solo carries exactly ONE seated bus-bound row (single-
 # candidate path). pane p_bash carries one seated BUS-LESS row.
 {
+	jq -nc --arg d "$BUS_DIR" '{kind:"session", guid:"guid-sender-0000", event:"seated", state:"seated", label:"sender", role:"lead", tool:"claude", seat:{kind:"herdr", pane_id:"p_sender", terminal_id:"term_sender", namespace:$d, hcom_name:"sender-bus"}}'
   jq -nc --arg d "$BUS_DIR" '{kind:"session", guid:"guid-alpha-0000", event:"seated", state:"seated", label:"alpha", role:"lead", tool:"claude", seat:{kind:"herdr", pane_id:"p_reuse", terminal_id:"term_reuse", namespace:$d, hcom_name:"alpha-bus"}}'
   jq -nc --arg d "$BUS_DIR" '{kind:"session", guid:"guid-beta-0000", event:"seated", state:"seated", label:"beta", role:"worker", tool:"claude", seat:{kind:"herdr", pane_id:"p_reuse", terminal_id:"term_reuse", namespace:$d, hcom_name:"beta-bus"}}'
   jq -nc --arg d "$BUS_DIR" '{kind:"session", guid:"guid-gamma-0000", event:"seated", state:"seated", label:"gamma", role:"worker", tool:"claude", seat:{kind:"herdr", pane_id:"p_reuse", terminal_id:"term_reuse", namespace:$d, hcom_name:"gamma-bus"}}'
@@ -76,7 +81,7 @@ run_send() {  # $1=joined-names $2=ack(0/1); rest=send args -> sets RC/ERR
   OUT="$(env -i \
     PATH="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin" \
     HOME="$HOME" \
-    HERDR_ENV=1 HERDER_LABEL="orchestrator" \
+	HERDR_ENV=1 HERDR_PANE_ID=p_sender HERDER_GUID=guid-sender-0000 \
     HERDER_STATE_DIR="$REG_DIR" \
     STUB_JOINED="$joined" STUB_ACK="$ack" MOCK_PROBE="$PROBE" \
     "${HS[@]}" "$@" 2>"$ERR")"

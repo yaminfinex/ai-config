@@ -5,8 +5,8 @@ sent 21 chars to alpha (hcom @alpha-rive), verify=not_delivered
 === EXIT ===
 1
 === HCOM SEND ARGV ===
-send --from orchestrator @alpha-rive -- ring: alpha unit DONE
+send --from sender-bus @alpha-rive -- ring: alpha unit DONE
 === HCOM EVENTS ARGV ===
-events --last 50 --agent alpha-rive --context deliver:orchestrator --after <TS>
+events --last 50 --agent alpha-rive --context deliver:sender-bus --after <TS>
 === HCOM DIR ===
 <BUS>
