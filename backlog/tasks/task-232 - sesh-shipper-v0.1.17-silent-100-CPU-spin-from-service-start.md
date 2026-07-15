@@ -1,9 +1,10 @@
 ---
 id: TASK-232
 title: 'sesh shipper v0.1.17: silent 100% CPU spin from service start'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 06:57'
+updated_date: '2026-07-15 07:07'
 labels:
   - sesh
 dependencies: []
@@ -14,11 +15,11 @@ ordinal: 231500
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Field observation (owner-reported CPU usage, 2026-07-15): the per-user sesh-ship.service process spins at 100% of one core continuously from process start, while logging NOTHING after systemd's Started line. Environment: the shipper restarted at 05:49:07 during the v0.1.17 deploy (binary replaced 05:49, sesh version reports sesh-v0.1.17); the store was mid-reindex (down) at restart time and became healthy shortly after (health probe 200 in 0.36s). Evidence at capture: 66+ min at 100% CPU, 38 threads, near-zero context switches on the main sample (tight CPU-bound loop, not syscall churn), zero journal entries post-start (the PRE-restart process logged loud hold-position retry warnings against the down store, then was stopped by the deploy).
+Field observation (owner-reported CPU usage, 2026-07-15): the per-user sesh-ship.service process spins at ~100% of one core continuously from process start while logging NOTHING after systemd's Started line. CRITICAL UPDATE: the owner restarted the service with the store HEALTHY (health 200 in 0.36s) and the fresh process (new pid) was back at 103% CPU within 2 minutes — the spin is UNCONDITIONAL in v0.1.17 on this node, not a boot-into-down-store transient.
 
-Control comparison: the second user's shipper on the same box runs a pre-v0.1.17 binary (installed Jul 13), started Jul 13, averages ~4% CPU with normal behavior — same machine, same store. Strong signal the spin is new in v0.1.17 (candidate areas: the resume/recovery path when the store is unavailable at boot, or the TASK-188-era rewalk/watch changes) rather than environmental.
+Original context: first spin observed from the 05:49:07 restart during the v0.1.17 deploy (binary replaced 05:49; store mid-reindex at the time). 38 threads, near-zero context switches (tight CPU loop, not syscall/retry churn), zero journal output. Control: the second user's shipper on the same box runs a pre-v0.1.17 binary (Jul 13), same store, ~4% CPU normal — regression is in v0.1.17. Candidate areas: shipper resume/recovery loop, or the rewalk/watch changes in the recent test-hardening era releases.
 
-Investigation notes: ptrace is not permitted on the box (no live strace); consider a debug/pprof endpoint or SIGQUIT goroutine dump (kills the process — capture on a sacrificial restart), and reproduce by starting a v0.1.17 shipper against an unreachable store. Whether shipping is actually functioning despite the spin was not yet determined — check store-side byte progress for this node before assuming it is only a CPU bug.
+Investigation notes: ptrace blocked on this box; use a debug/pprof surface if the binary has one, else SIGQUIT goroutine dump on a sacrificial restart (capture stderr via journal), else reproduce locally from source (repo tools/sesh) with a store stub. MUST determine whether shipping actually progresses during the spin (store-side byte offsets for this node) — CPU bug vs data-stall changes severity.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
