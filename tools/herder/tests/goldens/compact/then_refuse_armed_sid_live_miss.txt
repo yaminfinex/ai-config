@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: refused — --then row is bus-bound as @me-bus and recorded-SID verification armed with "sess-me", but no joined bus row matches the calling session, process, or pane. Restore the matching joined bus row, or re-enroll if the stored binding is stale, then retry. Nothing was typed.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===

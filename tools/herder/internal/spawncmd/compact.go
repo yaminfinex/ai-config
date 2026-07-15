@@ -136,9 +136,11 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		// A pinned re-enroll can repair a hand-resumed row even though it cannot
 		// retroactively inject HCOM_SESSION_ID into the already-running parent
 		// process. Once self-row identity is proven above, the repair's recorded
-		// session proof is durable evidence for the live roster check. Older
-		// repair writers omitted hcom_verified; accept only their complete,
-		// internally consistent enroll proof bundle, never an explicit false bit.
+		// session id can drive the live roster check. Older repair writers omitted
+		// hcom_verified, so their other persisted fields must match the exact old
+		// enroll shape before the id is used. Some are writer-derived consistency
+		// and drift checks, not independent corroboration; the joined live roster
+		// match below remains the proof that arms delivery.
 		recordedSID, recordedUnavailable := "", ""
 		if busEvidence.SessionID == "" {
 			recordedSID, recordedUnavailable = recordedBusSessionEvidence(row)
@@ -156,10 +158,10 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 				dieCompact(stderr, fmt.Sprintf("refused — --then row is bus-bound as @%s, but recorded-SID verification cannot arm: %s; ambient live evidence also failed (%s). Supply HCOM_SESSION_ID for this invocation or repair that recorded proof, then retry. Nothing was typed.", thenBusName, recordedUnavailable, cause))
 			} else if recordedSID != "" {
 				dieCompact(stderr, fmt.Sprintf("refused — --then row is bus-bound as @%s and recorded-SID verification armed with %q, but %s. Restore the matching joined bus row, or re-enroll if the stored binding is stale, then retry. Nothing was typed.", thenBusName, recordedSID, cause))
-			} else if cause == "" {
-				cause = fmt.Sprintf("stored name @%s is not provably the calling session", thenBusName)
-				dieCompact(stderr, "refused — --then bus identity mismatch: "+cause+". Rerun `herder enroll` from this session to repair its bus binding, then retry. Nothing was typed.")
 			} else {
+				if cause == "" {
+					cause = fmt.Sprintf("stored name @%s is not provably the calling session", thenBusName)
+				}
 				dieCompact(stderr, "refused — --then bus identity mismatch: "+cause+". Rerun `herder enroll` from this session to repair its bus binding, then retry. Nothing was typed.")
 			}
 			return 2
@@ -252,11 +254,15 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 }
 
 // recordedBusSessionEvidence returns the durable session correlate captured
-// when a bus binding was proven. Newer writers persist hcom_verified=true.
+// when a bus binding was proven. Newer repair writers mark that proof with
+// hcom_verified=true.
 // The older manual-repair shape omitted that bit, so it is accepted only when
-// all other persisted facts agree: a seated enroll row, confirmed continuity,
-// and a harvest SID equal to provenance.tool_session_id. Explicit false stays
-// fail-closed because it records a negative verification verdict.
+// its persisted seated/enroll shape is internally consistent. V2FromRecord
+// derives both confirmed continuity and the harvest SID from
+// provenance.tool_session_id; those checks defend compatibility and writer
+// drift, but do not provide independent corroboration. Explicit false stays
+// fail-closed because it means the binding was not proven, whether written by
+// a failed verification or by a conservative default/carry path.
 func recordedBusSessionEvidence(row *registry.Record) (string, string) {
 	if row.HcomVerified != nil && !*row.HcomVerified {
 		return "", "seat.hcom_verified is explicitly false"
@@ -271,6 +277,7 @@ func recordedBusSessionEvidence(row *registry.Record) (string, string) {
 
 	var persisted struct {
 		State      string `json:"state"`
+		Status     string `json:"status"`
 		Continuity string `json:"continuity"`
 		Seat       struct {
 			HcomName string `json:"hcom_name"`
@@ -286,6 +293,9 @@ func recordedBusSessionEvidence(row *registry.Record) (string, string) {
 	}
 	if err := json.Unmarshal(row.Raw, &persisted); err != nil {
 		return "", "the compatibility proof row cannot be decoded"
+	}
+	if persisted.State == "" && persisted.Status != "" {
+		return "", "seat.hcom_verified is absent and legacy-v1 rows do not carry the v2 recorded-SID repair proof"
 	}
 	if persisted.State != "seated" {
 		return "", fmt.Sprintf("seat.hcom_verified is absent and row state is %q, not seated", persisted.State)
