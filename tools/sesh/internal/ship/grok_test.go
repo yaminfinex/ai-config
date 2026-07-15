@@ -106,8 +106,9 @@ func writeGrokHome(t *testing.T, base string, transcript []byte) (home string, f
 // extra UUID-shaped parent (the fourth widened matcher below).
 func assertGrokBoundary(t *testing.T, root string, discovered []Discovered, forbidden []string) (violations int) {
 	t.Helper()
+	root = canonicalPath(t, root)
 	forbiddenSet := map[string]bool{}
-	for _, p := range forbidden {
+	for _, p := range canonicalPaths(t, forbidden) {
 		forbiddenSet[p] = true
 	}
 	for _, d := range discovered {
@@ -129,32 +130,37 @@ func assertGrokBoundary(t *testing.T, root string, discovered []Discovered, forb
 }
 
 func TestGrokDiscoveryShipsOnlySessionTranscripts(t *testing.T) {
-	base := t.TempDir()
-	transcript := fixture(t, "grok-chat-history.jsonl")
-	home, forbidden := writeGrokHome(t, base, transcript)
+	forEachFixtureRoot(t, func(t *testing.T, base string) {
+		transcript := fixture(t, "grok-chat-history.jsonl")
+		home, forbidden := writeGrokHome(t, base, transcript)
 
-	roots := Roots{Grok: filepath.Join(home, "sessions")}
-	discovered, err := Discover(roots)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]bool{uuidGrokA: false, uuidGrokB: false}
-	if len(discovered) != len(want) {
-		t.Fatalf("discovered %d files, want %d: %+v", len(discovered), len(want), discovered)
-	}
-	for _, d := range discovered {
-		seen, ok := want[d.Identity.SessionID]
-		if !ok || seen {
-			t.Fatalf("unexpected or duplicate discovery: %+v", d)
+		roots := Roots{Grok: filepath.Join(home, "sessions")}
+		discovered, err := Discover(roots)
+		if err != nil {
+			t.Fatal(err)
 		}
-		want[d.Identity.SessionID] = true
-		if d.Identity.Tool != wire.ToolGrok || d.Identity.FileUUID != d.Identity.SessionID {
-			t.Fatalf("grok identity must be (grok, sid, sid): %+v", d.Identity)
+		want := map[string]bool{uuidGrokA: false, uuidGrokB: false}
+		if len(discovered) != len(want) {
+			t.Fatalf("discovered %d files, want %d: %+v", len(discovered), len(want), discovered)
 		}
-	}
-	if v := assertGrokBoundary(t, roots.Grok, discovered, forbidden); v != 0 {
-		t.Fatalf("exclusion boundary violated by real discovery: %d violations", v)
-	}
+		for _, d := range discovered {
+			seen, ok := want[d.Identity.SessionID]
+			if !ok || seen {
+				t.Fatalf("unexpected or duplicate discovery: %+v", d)
+			}
+			want[d.Identity.SessionID] = true
+			if d.Identity.Tool != wire.ToolGrok || d.Identity.FileUUID != d.Identity.SessionID {
+				t.Fatalf("grok identity must be (grok, sid, sid): %+v", d.Identity)
+			}
+		}
+		assertDiscoveredPaths(t, discovered, []string{
+			filepath.Join(roots.Grok, grokCwdGroup, uuidGrokA, grokTranscriptName),
+			filepath.Join(roots.Grok, grokCwdGroup, uuidGrokB, grokTranscriptName),
+		})
+		if v := assertGrokBoundary(t, roots.Grok, discovered, forbidden); v != 0 {
+			t.Fatalf("exclusion boundary violated by real discovery: %d violations", v)
+		}
+	})
 }
 
 // TestGrokBoundaryDetectorProven drives the same walk with deliberately

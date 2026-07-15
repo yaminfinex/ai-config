@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -199,10 +200,7 @@ func TestStatusFailsOnUnreachableStore(t *testing.T) {
 func TestStatusResolvesStoreURLFromInstalledConfig(t *testing.T) {
 	// No --store-url and no SESH_STORE_URL: interactive status must resolve
 	// the URL from the installed service config the way `sesh update` does
-	// (on macOS the URL lives only in the launchd plist the service reads;
-	// this exercises the same resolution seam through the drop-in on the
-	// test platform — setup.InstalledStoreURL's darwin branch is unit-tested
-	// beside it).
+	// (on macOS the URL lives only in the launchd plist the service reads).
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("SESH_STORE_URL", "")
@@ -214,12 +212,12 @@ func TestStatusResolvesStoreURLFromInstalledConfig(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(server.Close)
-	dropin := setup.DropinPath(home)
-	if err := os.MkdirAll(filepath.Dir(dropin), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dropin, setup.RenderDropin(nil, server.URL), 0o644); err != nil {
-		t.Fatal(err)
+	configPath := writeInstalledStoreConfig(t, home, server.URL)
+	parsedURL, consultedPath, parsed := setup.InstalledStoreURL(runtime.GOOS, home)
+	if !parsed || parsedURL != server.URL || consultedPath != configPath {
+		content, readErr := os.ReadFile(configPath)
+		t.Fatalf("installed config precondition: os=%s consulted=%q parsed=(url=%q ok=%v), want path=%q url=%q; read err=%v; content:\n%s",
+			runtime.GOOS, consultedPath, parsedURL, parsed, configPath, server.URL, readErr, content)
 	}
 
 	root := newRoot()
@@ -240,6 +238,11 @@ func TestStatusNamesConfigPathWhenUnconfigured(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("SESH_STORE_URL", "")
 
+	_, configPath, parsed := setup.InstalledStoreURL(runtime.GOOS, home)
+	if parsed {
+		t.Fatalf("empty installed config precondition unexpectedly parsed: os=%s path=%q", runtime.GOOS, configPath)
+	}
+
 	root := newRoot()
 	var out bytes.Buffer
 	root.SetOut(&out)
@@ -248,9 +251,31 @@ func TestStatusNamesConfigPathWhenUnconfigured(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("status unconfigured: %v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "store: not configured") || !strings.Contains(out.String(), setup.DropinPath(home)) {
-		t.Fatalf("unconfigured status must name the consulted config path:\n%s", out.String())
+	if !strings.Contains(out.String(), "store: not configured") || !strings.Contains(out.String(), configPath) {
+		t.Fatalf("unconfigured status must name the consulted config path %q (os=%s, parsed=%v):\n%s",
+			configPath, runtime.GOOS, parsed, out.String())
 	}
+}
+
+func writeInstalledStoreConfig(t *testing.T, home, storeURL string) string {
+	t.Helper()
+	path := setup.DropinPath(home)
+	content := setup.RenderDropin(nil, storeURL)
+	if runtime.GOOS == "darwin" {
+		path = setup.PlistPath(home)
+		var err error
+		content, err = setup.RenderPlist(nil, filepath.Join(home, ".local", "bin", "sesh"), storeURL, home)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestStatusFailsOnPoisonedCursor(t *testing.T) {
