@@ -133,3 +133,11 @@ created: 2026-07-13 00:22
 Candidate 14 (2026-07-13, hera, TASK-146 closeout sweep): hcom — agent removal never garbage-collects that agent's event subscriptions. herder cull drops the bus name ('@worker-X already gone') yet the culled agent's subs (thread-member + filter subs) persist indefinitely; our live sub table now carries hundreds of orphaned thread-member subs for long-gone agents, all still evaluated per event. Upstream ask: GC subs on agent removal/retirement, or expose a bulk 'unsub --for <name> --all'. Local practice until then: orchestrators unsub their own culled workers' subs at closeout (events unsub <id>).
 ---
 <!-- COMMENTS:END -->
+
+hera (pi identity-hijack incident, 2026-07-15): two hcom candidates. (1) `hcom start --as <name>`
+refuses reclaim on latest-identity tool mismatch with NO recovery verb for the rightful owner — after a
+cross-tool identity theft (a child process inheriting the caller's identity env connected as the caller,
+flipped the row's tool, and its exit archived the row), the victim session is permanently locked out
+(kill/config say not-found on the stopped row; --orphan has no record; archive is whole-db only). An
+owner-side override (e.g. --force with process-continuity proof, or a tool-mismatch repair verb) would
+close the strand. (2) The same refusal exits rc=0 — scripted callers read success on a hard failure.
