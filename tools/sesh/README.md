@@ -103,6 +103,21 @@ just versions
 Cross-compiles: `CGO_ENABLED=0`, darwin/linux × arm64/amd64 (the release
 matrix `just release` builds).
 
+## Testing
+
+The regular local gate is `just test`. On request, the owner runs the macOS
+portability check manually from `tools/sesh`:
+
+```sh
+just test-darwin
+```
+
+It is green when the full suite, race-enabled update and ship packages, and
+200 consecutive periodic-watch rewalk checks all print `ok` and the command
+exits zero. This stays an explicit owner check rather than a cron job: there
+is no macOS CI runner, and failures from an unattended laptop are noise rather
+than an actionable gate.
+
 ## Layout
 
 ```

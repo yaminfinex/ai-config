@@ -446,6 +446,109 @@ func TestRefusesWhenNotTheServicePinnedBinary(t *testing.T) {
 	}
 }
 
+func TestAcceptsSameBinaryThroughSymlinkedParent(t *testing.T) {
+	ch := newTestChannel(t, "")
+	ch.publish("v1.1.0", []byte("new-binary"))
+
+	base := t.TempDir()
+	realTemp := filepath.Join(base, "real")
+	linkedTemp := filepath.Join(base, "linked")
+	if err := os.Mkdir(realTemp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realTemp, linkedTemp); err != nil {
+		t.Fatal(err)
+	}
+	home, err := os.MkdirTemp(linkedTemp, "home-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	target := filepath.Join(home, ".local", "bin", "sesh")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(setup.UnitPath(home)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(setup.UnitPath(home), []byte(setup.RenderUnit(target)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(setup.DropinPath(home)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(setup.DropinPath(home), setup.RenderDropin(nil, ch.srv.URL), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedTarget == target {
+		t.Fatalf("fixture does not exercise distinct path spellings: %s", target)
+	}
+
+	var out bytes.Buffer
+	if err := Run(baseOpts(home, target, verifiedRunner("4242", "v1.1.0"), &out)); err != nil {
+		t.Fatalf("same binary through symlinked parent refused: %v", err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "new-binary" {
+		t.Fatal("same-binary update did not replace the target")
+	}
+}
+
+func TestRefusesWhenRunningBinaryCannotBeResolved(t *testing.T) {
+	ch := newTestChannel(t, "")
+	ch.publish("v1.1.0", []byte("new-binary"))
+	home, target := installedNode(t, ch.srv.URL)
+
+	var out bytes.Buffer
+	opts := baseOpts(home, target, &fakeRunner{}, &out)
+	opts.Exe = filepath.Join(home, "missing-sesh")
+	err := Run(opts)
+	if err == nil || !strings.Contains(err.Error(), "cannot resolve the running path") {
+		t.Fatalf("want closed-guard resolution error, got %v", err)
+	}
+	for _, want := range []string{opts.Exe, target, "re-run `sesh setup` to repin"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("resolution error %q does not contain %q", err, want)
+		}
+	}
+	if got, _ := os.ReadFile(target); string(got) != "old-binary" {
+		t.Fatal("resolution failure replaced the target")
+	}
+}
+
+func TestRefusesWithRemedyWhenPinnedBinaryIsDangling(t *testing.T) {
+	ch := newTestChannel(t, "")
+	ch.publish("v1.1.0", []byte("new-binary"))
+	home, target := installedNode(t, ch.srv.URL)
+	dangling := filepath.Join(home, "dangling-sesh")
+	if err := os.Symlink(filepath.Join(home, "deleted-sesh"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(setup.UnitPath(home), []byte(setup.RenderUnit(dangling)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := Run(baseOpts(home, target, &fakeRunner{}, &out))
+	if err == nil || !strings.Contains(err.Error(), "cannot resolve the pinned path") {
+		t.Fatalf("want closed-guard pinned-path error, got %v", err)
+	}
+	for _, want := range []string{target, dangling, "re-run `sesh setup` to repin"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("resolution error %q does not contain %q", err, want)
+		}
+	}
+	if got, _ := os.ReadFile(target); string(got) != "old-binary" {
+		t.Fatal("resolution failure replaced the target")
+	}
+}
+
 func TestPreSetupUseWithExplicitURLSkipsService(t *testing.T) {
 	ch := newTestChannel(t, "")
 	ch.publish("v1.1.0", []byte("new-binary"))

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -117,47 +118,94 @@ func TestPeriodicAdmissionRunsRegistrationCallback(t *testing.T) {
 }
 
 func TestPeriodicWatchRewalkRegistersNestedDirectory(t *testing.T) {
-	base := t.TempDir()
+	fixtureRoot := t.TempDir()
+	realBase := filepath.Join(fixtureRoot, "real")
+	linkedBase := filepath.Join(fixtureRoot, "linked")
+	if err := os.Mkdir(realBase, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realBase, linkedBase); err != nil {
+		t.Fatal(err)
+	}
+	base, err := os.MkdirTemp(linkedBase, "shipper-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
 	s := &Shipper{Roots: Roots{
 		Claude: filepath.Join(base, "claude"),
 		Codex:  filepath.Join(base, "codex"),
-	}}
+		Grok:   filepath.Join(base, "missing-grok"),
+		Pi:     filepath.Join(base, "missing-pi"),
+	}, Rescan: 10 * time.Millisecond}
 	if err := os.MkdirAll(s.Roots.Claude, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(s.Roots.Codex, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	reg, err := OpenRegistry(filepath.Join(base, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(reg.Close)
+	s.Registry = reg
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer w.Close()
-	s.watchDirs(w)
+	t.Cleanup(func() { _ = w.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.runWithWatcher(ctx, w) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Errorf("shipper shutdown: %v", err)
+		}
+	})
 
-	nested := filepath.Join(s.Roots.Codex, "2026", "07", "10")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
+	resolvedRoot, err := filepath.EvalSymlinks(s.Roots.Codex)
+	if err != nil {
 		t.Fatal(err)
 	}
-	// This is the periodic-rescan registration path that closes any race
-	// between burst directory creation and per-Create watch registration.
-	s.watchDirs(w)
-	session := filepath.Join(nested, "rollout.jsonl")
-	if err := os.WriteFile(session, []byte("x"), 0o644); err != nil {
+	waitForWatch(t, w, resolvedRoot)
+
+	stagedYear := filepath.Join(fixtureRoot, "staged", "2026")
+	stagedNested := filepath.Join(stagedYear, "07", "10")
+	if err := os.MkdirAll(stagedNested, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Rename(stagedYear, filepath.Join(s.Roots.Codex, "2026")); err != nil {
+		t.Fatal(err)
+	}
+	unresolvedNested := filepath.Join(s.Roots.Codex, "2026", "07", "10")
+	resolvedNested, err := filepath.EvalSymlinks(unresolvedNested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unresolvedNested == resolvedNested {
+		t.Fatalf("fixture does not exercise distinct path spellings: %s", unresolvedNested)
+	}
+	// Moving a prebuilt tree generates at most a Create hint for its top
+	// directory. Only the production periodic rewalk registers its descendants.
+	waitForWatch(t, w, resolvedNested)
+}
 
-	deadline := time.After(time.Second)
+func waitForWatch(t *testing.T, w *fsnotify.Watcher, path string) {
+	t.Helper()
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(time.Millisecond)
+	defer poll.Stop()
 	for {
+		if watched := w.WatchList(); slices.Contains(watched, path) {
+			return
+		}
 		select {
-		case ev := <-w.Events:
-			if ev.Name == session {
-				return
-			}
-		case err := <-w.Errors:
-			t.Fatal(err)
-		case <-deadline:
-			t.Fatal("periodic watch rewalk did not register the nested directory")
+		case <-poll.C:
+		case <-deadline.C:
+			t.Fatalf("periodic watch rewalk did not register %s; watches: %v", path, w.WatchList())
 		}
 	}
 }
