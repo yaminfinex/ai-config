@@ -380,17 +380,22 @@ func (w *Web) close(rw http.ResponseWriter, r *http.Request) {
 	if !w.requireManaged(rw, r, t) {
 		return
 	}
+	user := w.userFor(r)
 	res := strings.TrimSpace(r.FormValue("resolution"))
 	if res == "" {
-		http.Redirect(rw, r, "/thread/"+id+"?err=refused:+no+close+without+a+resolution", http.StatusSeeOther)
-		return
+		if strings.HasPrefix(user, "human-") {
+			res = "closed by " + user
+		} else {
+			http.Redirect(rw, r, "/thread/"+id+"?err=refused:+no+close+without+a+resolution", http.StatusSeeOther)
+			return
+		}
 	}
 	if err := w.store.Close(id, res); err != nil {
 		http.Redirect(rw, r, "/thread/"+id+"?err="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
 		return
 	}
-	if targets := agentTargets(t, w.userFor(r)); len(targets) > 0 {
-		if err := w.bus.Send(w.userFor(r), targets, id, "", "inform", "[thread closed] "+res); err != nil {
+	if targets := agentTargets(t, user); len(targets) > 0 {
+		if err := w.bus.Send(user, targets, id, "", "inform", "[thread closed] "+res); err != nil {
 			log.Printf("close notice for %s: %v", id, err)
 			w.ing.Kick()
 			http.Redirect(rw, r, "/?err="+template.URLQueryEscaper("closed, but the bus notice failed: "+err.Error()), http.StatusSeeOther)

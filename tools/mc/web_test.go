@@ -124,6 +124,38 @@ printf '%%s\n' "$@" > %q
 	}
 }
 
+func TestHumanCloseDefaultsResolutionButAgentCloseStillRequiresOne(t *testing.T) {
+	ing, s := testIngestor(t)
+	if err := s.Open("managed-close", "close me", "ctx", "reply", "moment", "", "human-yamen", nil, "owner", "managed"); err != nil {
+		t.Fatal(err)
+	}
+
+	postEmptyClose := func(user string) *httptest.ResponseRecorder {
+		t.Helper()
+		w := NewWeb(s, &Bus{}, ing, user, "owner", "", nil)
+		rw := httptest.NewRecorder()
+		w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodPost, "/thread/managed-close/close", nil))
+		return rw
+	}
+
+	agent := postEmptyClose("builder-dunu")
+	if got := agent.Header().Get("Location"); agent.Code != http.StatusSeeOther || !strings.Contains(got, "no+close+without+a+resolution") {
+		t.Fatalf("agent close = %d Location %q, want missing-resolution refusal", agent.Code, got)
+	}
+	if got := s.Get("managed-close").Status; got != "open" {
+		t.Fatalf("agent close changed status to %q, want open", got)
+	}
+
+	human := postEmptyClose("human-yamen")
+	if got := human.Header().Get("Location"); human.Code != http.StatusSeeOther || got != "/" {
+		t.Fatalf("human close = %d Location %q, want successful inbox redirect", human.Code, got)
+	}
+	thread := s.Get("managed-close")
+	if thread.Status != "closed" || thread.Resolution != "closed by human-yamen" {
+		t.Fatalf("human close = status %q resolution %q", thread.Status, thread.Resolution)
+	}
+}
+
 func TestRetitleIsManagedOnlyAndReplays(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "journal.jsonl")
 	s, err := OpenStore(path)

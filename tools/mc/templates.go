@@ -168,7 +168,7 @@ th{color:var(--dim);font-weight:500}
         <button>Send</button>
       </form>
       <form class="rowform" method="post" action="/thread/{{.ID}}/close">
-        <textarea name="resolution" placeholder="resolution — required to close"></textarea>
+        <textarea name="resolution" placeholder="resolution (optional — defaults to closed by you)"></textarea>
         <button class="quiet">Close</button>
       </form>
     {{else}}
