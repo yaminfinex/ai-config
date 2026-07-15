@@ -68,6 +68,7 @@ type Record struct {
 	CloseReason    string                   `json:"close_reason,omitempty"`
 	ObservedVia    string                   `json:"observed_via,omitempty"`
 	Capabilities   *v2.Capabilities         `json:"capabilities,omitempty"`
+	Mission        *v2.Mission              `json:"mission,omitempty"`
 	Provenance     *Provenance              `json:"provenance,omitempty"`
 
 	Archived bool            `json:"-"`
@@ -239,6 +240,10 @@ func recordFromV2SessionObject(obj map[string]json.RawMessage) Record {
 	var capabilities v2.Capabilities
 	if json.Unmarshal(obj["capabilities"], &capabilities) == nil && capabilities != (v2.Capabilities{}) {
 		rec.Capabilities = &capabilities
+	}
+	var mission v2.Mission
+	if json.Unmarshal(obj["mission"], &mission) == nil && mission.Slug != "" {
+		rec.Mission = &mission
 	}
 	if guid != "" {
 		rec.GUID = &guid
@@ -669,6 +674,10 @@ func overlayLegacyFields(rec *Record, obj map[string]json.RawMessage) {
 	if err := json.Unmarshal(obj["capabilities"], &capabilities); err == nil && capabilities != (v2.Capabilities{}) {
 		rec.Capabilities = &capabilities
 	}
+	var mission v2.Mission
+	if err := json.Unmarshal(obj["mission"], &mission); err == nil && mission.Slug != "" {
+		rec.Mission = &mission
+	}
 }
 
 func NewGUID() (string, error) {
@@ -817,6 +826,7 @@ func V2FromRecord(rec Record, event, state, recordedAt string) v2.SessionRecord 
 		Provider:      rec.Provider,
 		Model:         rec.Model,
 		VendorVersion: cloneVendorVersion(rec.VendorVersion),
+		Mission:       cloneMission(rec.Mission),
 		Continuity:    "assumed",
 		Lineage:       v2.Lineage{ForkedFrom: firstNonEmpty(prov.ForkedFrom)},
 		Provenance:    prov,

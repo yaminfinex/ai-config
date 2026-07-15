@@ -53,6 +53,7 @@ type SessionRecord struct {
 	VendorVersion *VendorVersionHistory `json:"vendor_version,omitempty"`
 	Seat          *Seat                 `json:"seat,omitempty"`
 	Capabilities  *Capabilities         `json:"capabilities,omitempty"`
+	Mission       *Mission              `json:"mission,omitempty"`
 	SIDs          []SID                 `json:"sids,omitempty"`
 	Continuity    string                `json:"continuity,omitempty"`
 	Lineage       Lineage               `json:"lineage,omitempty"`
@@ -63,6 +64,11 @@ type SessionRecord struct {
 	Raw           json.RawMessage       `json:"-"`
 	Ordinal       int                   `json:"-"`
 	LegacyV1      bool                  `json:"-"`
+}
+
+type Mission struct {
+	Slug   string `json:"slug"`
+	Source string `json:"source"`
 }
 
 type Capabilities struct {

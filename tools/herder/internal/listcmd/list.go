@@ -16,6 +16,7 @@ import (
 
 	"ai-config/tools/herder/internal/continuationstate"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/missioncontext"
 	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/registry"
 )
@@ -228,6 +229,8 @@ session is retired or lost.
 In --json output, select kind=="session" for session rows; for compatibility,
 a row without kind is also a session row. Unresolved failures have
 kind=="unresolved_continuation" and are independent of session-row filters.
+Session rows carry mission:{slug,source} or mission:null. Source is explicit,
+cwd, or marker; explicit membership wins over cwd and .mission inference.
 `)
 }
 
@@ -385,6 +388,17 @@ func decodeRecord(line string) (registry.Record, error) {
 
 func reconciledJSON(rec registry.Record, idx liveIndex, advice []observerstatus.Flag, observation observerstatus.Observation) []byte {
 	var adviceFields []string
+	if rec.Mission == nil {
+		missionValue := "null"
+		if rec.Provenance != nil {
+			if mission, err := missioncontext.ResolveCWD(missioncontext.Options{CWD: rec.Provenance.CWD}); err == nil {
+				if b, marshalErr := json.Marshal(mission); marshalErr == nil {
+					missionValue = string(b)
+				}
+			}
+		}
+		adviceFields = append(adviceFields, `"mission":`+missionValue)
+	}
 	if len(advice) > 0 {
 		if b, err := json.Marshal(advice); err == nil {
 			adviceFields = append(adviceFields, `"observer_advice":`+string(b))

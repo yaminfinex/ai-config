@@ -24,7 +24,8 @@
   "live": null,
   "live_pane": null,
   "live_status": "gone",
-  "live_matched_by": null
+  "live_matched_by": null,
+  "mission": null
 }
 === EXIT ===
 0

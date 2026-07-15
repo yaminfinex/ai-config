@@ -2,6 +2,7 @@ package listcmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -11,8 +12,102 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/continuationstate"
+	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 )
+
+func TestReconciledJSONMissionPrecedenceAndInference(t *testing.T) {
+	t.Run("explicit wins over marker", func(t *testing.T) {
+		root := t.TempDir()
+		cwd := filepath.Join(root, "work", "nested")
+		if err := os.MkdirAll(cwd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "work", ".mission"), []byte("beta\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		missionsRepo := filepath.Join(root, "mission-repo")
+		if err := os.MkdirAll(filepath.Join(missionsRepo, "missions", "beta"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("MISSIONS_REPO", missionsRepo)
+		rec := registry.Record{
+			Mission:    &v2.Mission{Slug: "alpha", Source: "explicit"},
+			Provenance: &registry.Provenance{CWD: cwd},
+			Raw:        []byte(`{"kind":"session","guid":"guid-explicit","state":"seated","mission":{"slug":"alpha","source":"explicit"}}`),
+		}
+		mission := renderedMission(t, reconciledJSON(rec, liveIndex{}, nil, observerstatus.Observation{}))
+		if mission == nil || mission.Slug != "alpha" || mission.Source != "explicit" {
+			t.Fatalf("mission = %+v", mission)
+		}
+	})
+
+	t.Run("cwd mission directory fallback", func(t *testing.T) {
+		root := t.TempDir()
+		missionDir := filepath.Join(root, "missions", "alpha")
+		cwd := filepath.Join(missionDir, "work")
+		if err := os.MkdirAll(cwd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(missionDir, "mission.md"), []byte("mission: alpha\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rec := registry.Record{
+			Provenance: &registry.Provenance{CWD: cwd},
+			Raw:        []byte(`{"kind":"session","guid":"guid-cwd","state":"seated"}`),
+		}
+		mission := renderedMission(t, reconciledJSON(rec, liveIndex{}, nil, observerstatus.Observation{}))
+		if mission == nil || mission.Slug != "alpha" || mission.Source != "cwd" {
+			t.Fatalf("mission = %+v", mission)
+		}
+	})
+
+	t.Run("marker fallback", func(t *testing.T) {
+		root := t.TempDir()
+		cwd := filepath.Join(root, "work", "nested")
+		if err := os.MkdirAll(cwd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "work", ".mission"), []byte("beta\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		missionsRepo := filepath.Join(root, "mission-repo")
+		if err := os.MkdirAll(filepath.Join(missionsRepo, "missions", "beta"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("MISSIONS_REPO", missionsRepo)
+		rec := registry.Record{
+			Provenance: &registry.Provenance{CWD: cwd},
+			Raw:        []byte(`{"kind":"session","guid":"guid-marker","state":"seated"}`),
+		}
+		mission := renderedMission(t, reconciledJSON(rec, liveIndex{}, nil, observerstatus.Observation{}))
+		if mission == nil || mission.Slug != "beta" || mission.Source != "marker" {
+			t.Fatalf("mission = %+v", mission)
+		}
+	})
+
+	t.Run("no context renders null", func(t *testing.T) {
+		rec := registry.Record{
+			Provenance: &registry.Provenance{CWD: t.TempDir()},
+			Raw:        []byte(`{"kind":"session","guid":"guid-none","state":"seated"}`),
+		}
+		if mission := renderedMission(t, reconciledJSON(rec, liveIndex{}, nil, observerstatus.Observation{})); mission != nil {
+			t.Fatalf("mission = %+v, want nil", mission)
+		}
+	})
+}
+
+func renderedMission(t *testing.T, raw []byte) *v2.Mission {
+	t.Helper()
+	var row struct {
+		Mission *v2.Mission `json:"mission"`
+	}
+	if err := json.Unmarshal(raw, &row); err != nil {
+		t.Fatalf("decode %s: %v", raw, err)
+	}
+	return row.Mission
+}
 
 func TestFailedContinuationIsVisibleAndExplicitlyAcknowledged(t *testing.T) {
 	stateDir := t.TempDir()
