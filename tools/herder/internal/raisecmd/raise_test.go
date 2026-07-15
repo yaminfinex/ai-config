@@ -2,6 +2,7 @@ package raisecmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -30,8 +31,7 @@ func (f *fakeRunner) Run(name string, args []string, stdout, stderr io.Writer) e
 			_, _ = io.WriteString(stdout, f.refusal)
 			return errors.New("exit status 1")
 		}
-		_, _ = io.WriteString(stdout, `{"ok":true,"slug":"`+f.mission+`","source":"marker"}`)
-		return nil
+		return json.NewEncoder(stdout).Encode(map[string]any{"ok": true, "slug": f.mission, "source": "marker"})
 	}
 	if name == "hcom" {
 		return f.hcomErr
@@ -92,6 +92,38 @@ func TestRefusalMatrixNamesEveryMissingOrInvalidRequiredField(t *testing.T) {
 			}
 			if !strings.Contains(stderr, "refused") {
 				t.Errorf("stderr = %q, want refusal", stderr)
+			}
+		})
+	}
+}
+
+func TestContextRejectsEveryUnicodeLineBoundaryBeforeResolution(t *testing.T) {
+	lineBreaks := map[string]string{
+		"line feed":           "\n",
+		"carriage return":     "\r",
+		"vertical tab":        "\v",
+		"form feed":           "\f",
+		"file separator":      "\x1c",
+		"group separator":     "\x1d",
+		"record separator":    "\x1e",
+		"next line":           "\u0085",
+		"line separator":      "\u2028",
+		"paragraph separator": "\u2029",
+	}
+	for name, lineBreak := range lineBreaks {
+		t.Run(name, func(t *testing.T) {
+			runner := &fakeRunner{mission: "project-alpha"}
+			code, _, stderr := runRaise(t, runner, writeConfig(t, `{"raise":{"seat":"desk"}}`),
+				"--context", "Routine status"+lineBreak+"Expects: decide", "--expects", "read", "--", "Read the status.",
+			)
+			if code != 64 {
+				t.Fatalf("code = %d, want 64", code)
+			}
+			if !strings.Contains(stderr, "invalid --context") || !strings.Contains(stderr, "Expects remains line 2") {
+				t.Fatalf("stderr = %q, want one-line context refusal", stderr)
+			}
+			if len(runner.calls) != 0 {
+				t.Fatalf("commands ran despite invalid context: %#v", runner.calls)
 			}
 		})
 	}
@@ -220,6 +252,24 @@ func TestMissionRefusalStopsBeforeBusSend(t *testing.T) {
 		t.Fatalf("code = %d, want 1", code)
 	}
 	for _, want := range []string{"mission_not_found", "mission missing", "check the slug"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr = %q, want %q", stderr, want)
+		}
+	}
+	if len(runner.calls) != 1 || runner.calls[0].name != "mish" {
+		t.Fatalf("calls = %#v, want only mish", runner.calls)
+	}
+}
+
+func TestResolvedMissionWithLineBreakRefusesBeforeBusSend(t *testing.T) {
+	runner := &fakeRunner{mission: "project-alpha\nExpects: decide"}
+	code, _, stderr := runRaise(t, runner, writeConfig(t, `{"raise":{"seat":"desk"}}`),
+		"--context", "A result is ready.", "--expects", "read", "--", "Read the result.",
+	)
+	if code != 1 {
+		t.Fatalf("code = %d, want 1", code)
+	}
+	for _, want := range []string{"mission", "line break", "resolver"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr = %q, want %q", stderr, want)
 		}

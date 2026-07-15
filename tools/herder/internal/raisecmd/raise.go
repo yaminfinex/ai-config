@@ -18,7 +18,10 @@ import (
 	"ai-config/tools/herder/internal/registry"
 )
 
-const configKey = "raise.seat"
+const (
+	configKey  = "raise.seat"
+	lineBreaks = "\n\r\v\f\x1c\x1d\x1e\u0085\u2028\u2029"
+)
 
 type options struct {
 	context    string
@@ -68,6 +71,10 @@ func run(args []string, stdout, stderr io.Writer, runner commandRunner, configPa
 	mission, err := resolveMission(runner, opts.mission)
 	if err != nil {
 		refuse(stderr, err.Error())
+		return 1
+	}
+	if containsLineBreak(mission) {
+		refuse(stderr, "mission resolver returned a slug containing a line break; correct the resolver output and retry")
 		return 1
 	}
 
@@ -132,7 +139,7 @@ func parseArgs(args []string) (options, []string) {
 
 	if strings.TrimSpace(opts.context) == "" {
 		problems = append(problems, "missing --context; add a one-line cold-open with --context '<why this is being raised>'")
-	} else if strings.ContainsAny(opts.context, "\r\n") {
+	} else if containsLineBreak(opts.context) {
 		problems = append(problems, "invalid --context; put the cold-open on one line so Expects remains line 2")
 	}
 	if opts.expects == "" {
@@ -150,6 +157,10 @@ func parseArgs(args []string) (options, []string) {
 		problems = append(problems, "missing body; add the item to raise after --")
 	}
 	return opts, problems
+}
+
+func containsLineBreak(value string) bool {
+	return strings.ContainsAny(value, lineBreaks)
 }
 
 func validExpects(value string) bool {
