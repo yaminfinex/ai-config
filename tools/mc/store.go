@@ -77,11 +77,12 @@ func (t *Thread) HasBusID(id int64) bool {
 }
 
 type Store struct {
-	mu      sync.Mutex
-	path    string
-	f       *os.File
-	threads map[string]*Thread
-	cursor  int64
+	mu         sync.Mutex
+	path       string
+	f          *os.File
+	threads    map[string]*Thread
+	cursor     int64
+	generation uint64
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -123,6 +124,7 @@ func (s *Store) append(e *Entry) error {
 }
 
 func (s *Store) apply(e *Entry) {
+	s.generation++
 	ts, _ := time.Parse(time.RFC3339, e.TS)
 	switch e.Op {
 	case "cursor":
@@ -192,6 +194,15 @@ func (s *Store) Cursor() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.cursor
+}
+
+// Version is the cheap cache-validator input for server-rendered pages. It
+// deliberately exposes only projection metadata: conditional GETs do not
+// need to copy or inspect any thread state.
+func (s *Store) Version() (int64, uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cursor, s.generation
 }
 
 func (s *Store) SetCursor(id int64) error {

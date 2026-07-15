@@ -160,7 +160,7 @@ Refused: <javascript:alert(1)>, <vbscript:msgbox(1)>, <data:text/html;base64,PHN
 		t.Run(tc.path, func(t *testing.T) {
 			rw := httptest.NewRecorder()
 			w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, tc.path, nil))
-			const wantCSP = "script-src 'none'; object-src 'none'; base-uri 'none'"
+			const wantCSP = "script-src 'self'; object-src 'none'; base-uri 'none'"
 			if got := rw.Header().Get("Content-Security-Policy"); got != wantCSP {
 				t.Errorf("GET %s Content-Security-Policy = %q, want %q", tc.path, got, wantCSP)
 			}
@@ -168,13 +168,14 @@ Refused: <javascript:alert(1)>, <vbscript:msgbox(1)>, <data:text/html;base64,PHN
 				t.Fatalf("GET %s = %d, want %d: %s", tc.path, rw.Code, tc.status, rw.Body.String())
 			}
 			body := rw.Body.String()
+			bodyWithoutProgressiveHook := strings.Replace(body, `<script src="/mc.js" defer></script>`, "", 1)
 			for _, want := range tc.contains {
 				if !strings.Contains(body, want) {
 					t.Errorf("GET %s missing %q: %s", tc.path, want, body)
 				}
 			}
 			for _, unwanted := range tc.notContain {
-				if strings.Contains(body, unwanted) {
+				if strings.Contains(bodyWithoutProgressiveHook, unwanted) {
 					t.Errorf("GET %s unexpectedly contains %q: %s", tc.path, unwanted, body)
 				}
 			}

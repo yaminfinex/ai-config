@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -47,6 +48,185 @@ func TestRichMessageEscapesMarkupBeforeLinkifyingRefs(t *testing.T) {
 	}
 }
 
+func TestProgressiveEnhancementAssetCSPAndConditionalPages(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStore(filepath.Join(dir, "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Open("task-live", "Live task", "ctx", "reply", "moment", "", "vile", nil, "owner", "managed"); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWeb(s, &Bus{}, nil, "human-yamen", "owner", "", nil)
+	handler := w.Routes()
+
+	asset := httptest.NewRecorder()
+	handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/mc.js", nil))
+	if got := asset.Header().Get("Content-Type"); got != "application/javascript; charset=utf-8" {
+		t.Fatalf("GET /mc.js Content-Type = %q", got)
+	}
+	if asset.Code != http.StatusOK || !strings.Contains(asset.Body.String(), "If-None-Match") {
+		t.Fatalf("GET /mc.js = %d, missing progressive layer: %s", asset.Code, asset.Body.String())
+	}
+	const wantCSP = "script-src 'self'; object-src 'none'; base-uri 'none'"
+	if got := asset.Header().Get("Content-Security-Policy"); got != wantCSP {
+		t.Fatalf("GET /mc.js CSP = %q, want %q", got, wantCSP)
+	}
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/thread/task-live", nil))
+	if got := first.Header().Get("Content-Security-Policy"); got != wantCSP {
+		t.Fatalf("page CSP = %q, want %q", got, wantCSP)
+	}
+	etag := first.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("page response has no ETag")
+	}
+
+	conditionalRequest := httptest.NewRequest(http.MethodGet, "/thread/task-live", nil)
+	conditionalRequest.Header.Set("If-None-Match", etag)
+	notModified := httptest.NewRecorder()
+	handler.ServeHTTP(notModified, conditionalRequest)
+	if notModified.Code != http.StatusNotModified || notModified.Body.Len() != 0 {
+		t.Fatalf("conditional GET = %d with %d body bytes, want cheap 304", notModified.Code, notModified.Body.Len())
+	}
+
+	otherURLRequest := httptest.NewRequest(http.MethodGet, "/?peek=task-live", nil)
+	otherURLRequest.Header.Set("If-None-Match", etag)
+	otherURL := httptest.NewRecorder()
+	handler.ServeHTTP(otherURL, otherURLRequest)
+	if otherURL.Code != http.StatusOK {
+		t.Fatalf("validator leaked across URL state: GET /?peek = %d", otherURL.Code)
+	}
+
+	if err := s.Retitle("task-live", "Changed on server"); err != nil {
+		t.Fatal(err)
+	}
+	changedRequest := httptest.NewRequest(http.MethodGet, "/thread/task-live", nil)
+	changedRequest.Header.Set("If-None-Match", etag)
+	changed := httptest.NewRecorder()
+	handler.ServeHTTP(changed, changedRequest)
+	if changed.Code != http.StatusOK || changed.Header().Get("ETag") == etag || !strings.Contains(changed.Body.String(), "Changed on server") {
+		t.Fatalf("changed projection did not invalidate ETag: code=%d etag=%q", changed.Code, changed.Header().Get("ETag"))
+	}
+}
+
+func TestProgressiveEnhancementKeepsJavaScriptOffControlsNative(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStore(filepath.Join(dir, "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Open("task-native", "Native controls", "ctx", "reply", "moment", "mission-one", "vile", nil, "owner", "managed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Link("task-native", Msg{BusID: 7, From: "vile", Text: "Server-rendered tail", TS: "2026-07-15T12:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWeb(s, &Bus{}, nil, "human-yamen", "owner", "", nil)
+	rw := httptest.NewRecorder()
+	w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/?peek=task-native&mission=mission-one", nil))
+	body := rw.Body.String()
+
+	for _, want := range []string{
+		`<script src="/mc.js" defer></script>`,
+		`data-live="thread-tail-task-native"`, `Server-rendered tail`,
+		`href="/?mission=mission-one&amp;peek=task-native#rail-task-native"`,
+		`method="post" action="/thread/task-native/reply?return=`,
+		`formaction="/thread/task-native/close?cockpit=1&amp;mission=mission-one"`,
+		`<textarea name="text"`, `<time data-relative datetime=`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("JS-off page missing native contract %q", want)
+		}
+	}
+	for _, forbidden := range []string{"onclick=", "onsubmit=", "javascript:", "<script>"} {
+		if strings.Contains(strings.ToLower(body), forbidden) {
+			t.Errorf("JS-off page contains JS-only control marker %q", forbidden)
+		}
+	}
+}
+
+func TestProgressiveEnhancementBrowserSmoke(t *testing.T) {
+	chrome := os.Getenv("MC_CHROME")
+	if chrome == "" {
+		for _, name := range []string{"chromium", "chromium-browser", "google-chrome", "chrome"} {
+			if path, err := exec.LookPath(name); err == nil {
+				chrome = path
+				break
+			}
+		}
+	}
+	if chrome == "" {
+		matches, _ := filepath.Glob(filepath.Join(os.Getenv("HOME"), ".cache", "ms-playwright", "chromium-*", "chrome-linux64", "chrome"))
+		if len(matches) > 0 {
+			chrome = matches[len(matches)-1]
+		}
+	}
+	if chrome == "" {
+		t.Skip("headless Chrome not installed; set MC_CHROME in CI")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed; browser smoke requires Node's built-in WebSocket client")
+	}
+
+	dir := t.TempDir()
+	s, err := OpenStore(filepath.Join(dir, "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Open("smoke", "Browser smoke", "ctx", "reply", "moment", "", "vile", nil, "owner", "managed"); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWeb(s, &Bus{}, nil, "human-yamen", "owner", "", nil)
+	nextBusID := int64(100)
+	app := w.Routes()
+	handler := http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/__smoke/append" {
+			nextBusID++
+			if err := r.ParseForm(); err != nil {
+				http.Error(rw, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := s.Link("smoke", Msg{BusID: nextBusID, From: "vile", Text: r.FormValue("text"), TS: time.Now().Format(time.RFC3339)}); err != nil {
+				http.Error(rw, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			rw.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/thread/smoke/reply" {
+			nextBusID++
+			if err := r.ParseForm(); err != nil {
+				http.Error(rw, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := s.Link("smoke", Msg{BusID: nextBusID, From: "human-yamen", Text: r.FormValue("text"), TS: time.Now().Format(time.RFC3339)}); err != nil {
+				http.Error(rw, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			target := safeReturnTarget(r.URL.Query().Get("return"))
+			if target == "" {
+				target = "/thread/smoke"
+			}
+			http.Redirect(rw, r, target, http.StatusSeeOther)
+			return
+		}
+		app.ServeHTTP(rw, r)
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+	script := filepath.Join("testdata", "progressive-smoke.mjs")
+	output, err := exec.CommandContext(ctx, node, script, chrome, server.URL).CombinedOutput()
+	if err != nil {
+		t.Fatalf("browser smoke failed: %v\n%s", err, output)
+	}
+}
+
 func TestCockpitPeekRendersURLStateResponsiveShellAndRichMessages(t *testing.T) {
 	dir := t.TempDir()
 	journal := filepath.Join(dir, "journal.jsonl")
@@ -83,8 +263,8 @@ func TestCockpitPeekRendersURLStateResponsiveShellAndRichMessages(t *testing.T) 
 			t.Errorf("cockpit peek missing %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(strings.ToLower(body), "<script") || strings.Contains(body, "now ago") {
-		t.Fatalf("cockpit violated zero-JS/time contract:\n%s", body)
+	if !strings.Contains(body, `<script src="/mc.js" defer></script>`) || strings.Contains(body, "now ago") {
+		t.Fatalf("cockpit violated progressive-enhancement/time contract:\n%s", body)
 	}
 }
 
@@ -243,8 +423,8 @@ esac
 			t.Errorf("graph page missing %q", want)
 		}
 	}
-	if strings.Contains(strings.ToLower(body), "<script") {
-		t.Fatal("graph page contains a script element")
+	if strings.Contains(body, "<script>") || !strings.Contains(body, `<script src="/mc.js" defer></script>`) {
+		t.Fatal("graph page does not contain exactly the external progressive-enhancement hook")
 	}
 	if strings.Contains(body, "bigboss") {
 		t.Fatal("implicit bigboss mention produced graph output")

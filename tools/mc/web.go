@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	_ "embed"
 	"errors"
 	"fmt"
 	"html/template"
@@ -19,7 +21,7 @@ import (
 
 // The web surface is server-rendered with plain forms and 303 redirects:
 // the URL is the state carrier (ship requirement — refresh and back must be
-// lossless). No client-side state, no JS.
+// lossless). The optional JS layer only swaps HTML rendered by these routes.
 
 type Web struct {
 	store      *Store
@@ -51,6 +53,7 @@ func NewWeb(store *Store, bus *Bus, ing *Ingestor, user, seat, herderBin string,
 
 func (w *Web) Routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /mc.js", serveProgressiveJS)
 	mux.HandleFunc("GET /{$}", w.inbox)
 	mux.HandleFunc("GET /talk", w.talkForm)
 	mux.HandleFunc("POST /talk", w.talkPost)
@@ -65,10 +68,38 @@ func (w *Web) Routes() http.Handler {
 	mux.HandleFunc("POST /thread/{id}/retitle", w.retitle)
 	mux.HandleFunc("GET /roster", w.roster)
 	mux.HandleFunc("GET /graph", w.graph)
-	return securityHeaders(mux)
+	return securityHeaders(w.conditionalPages(mux))
 }
 
-const contentSecurityPolicy = "script-src 'none'; object-src 'none'; base-uri 'none'"
+//go:embed mc.js
+var progressiveJS []byte
+
+const contentSecurityPolicy = "script-src 'self'; object-src 'none'; base-uri 'none'"
+
+func serveProgressiveJS(rw http.ResponseWriter, _ *http.Request) {
+	rw.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	rw.Header().Set("Cache-Control", "no-cache")
+	_, _ = rw.Write(progressiveJS)
+}
+
+func (w *Web) conditionalPages(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path == "/mc.js" || w.store == nil {
+			next.ServeHTTP(rw, r)
+			return
+		}
+		cursor, generation := w.store.Version()
+		state := sha256.Sum256([]byte(r.URL.RequestURI()))
+		etag := fmt.Sprintf(`"%d-%d-%x"`, cursor, generation, state[:6])
+		rw.Header().Set("ETag", etag)
+		rw.Header().Set("Cache-Control", "no-cache")
+		if r.Header.Get("If-None-Match") == etag {
+			rw.WriteHeader(http.StatusNotModified)
+			return
+		}
+		next.ServeHTTP(rw, r)
+	})
+}
 
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {

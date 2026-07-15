@@ -60,7 +60,7 @@ th{color:var(--dim);font-weight:500}
 .graph-frame{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:auto}.mc-graph{display:block;width:100%;min-width:720px;height:auto}
 .graph-matrix{overflow:auto}.graph-matrix caption{text-align:left;padding:.7em .6em;color:var(--dim)}.graph-matrix th{white-space:nowrap}.graph-matrix td{text-align:center}.graph-cell.managed{font-weight:700;color:var(--accent)}.graph-cell.observed{border-left:1px dashed var(--line);color:var(--dim)}.graph-cell.raise{color:var(--warn)}.graph-cell.cool2{opacity:.6}.graph-cell.cool3{opacity:.3}.graph-empty{color:var(--line)}.graph-dim{opacity:.15!important}
 @media(max-width:899px){body>header{position:static;flex-wrap:wrap;gap:.7em}body>header>a:not(.brand-link){font-size:.85em}.mission-filter{order:3;width:100%}.mission-filter input{flex:1}.cockpit{display:block;min-height:0;padding-top:0}.rail{position:static;max-height:none;border-right:0;border-bottom:1px solid var(--line);overflow-x:auto}.rail h2{display:inline;margin-right:.4em}.rail-list{display:inline-flex;gap:.25em;margin-right:.8em}.rail-list a{max-width:12em}.rail-agents{display:none}main.canvas{padding:1em}.object-panel{border-left:0;border-top:1px solid var(--line)}.object-details>summary{display:list-item}.object-details:not([open])>:not(summary){display:none}.ctx{position:static;max-height:none}.composer{position:static}.rowform{display:block}.composer-actions{margin-top:.5em}.mc-graph{min-width:620px}}
-</style></head><body>
+</style><script src="/mc.js" defer></script></head><body data-view="{{.Page}}{{with .T}}:thread:{{.ID}}{{if $.Peek}}:peek{{end}}{{end}}{{if .Graph}}:graph{{end}}">
 <header>
   <a class="brand brand-link" href="{{stateURL "/" .MissionFilter}}">mc</a>
   <a href="{{stateURL "/" .MissionFilter}}" {{if eq .Page "inbox"}}class="on"{{end}}>inbox</a>
@@ -79,7 +79,7 @@ th{color:var(--dim);font-weight:500}
 <main class="canvas{{if .T}} conversation{{end}}">
 {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
 
-{{if and (eq .Page "inbox") (not .T) (not .Graph)}}
+{{if and (eq .Page "inbox") (not .T) (not .Graph)}}<section data-live="inbox">
   {{if .IngestWarn}}<div class="warning">{{.IngestWarn}}</div>{{end}}
   <h2>Missions</h2>
   {{if .MissionListErr}}<div class="warning">{{.MissionListErr}}</div>{{end}}
@@ -100,7 +100,7 @@ th{color:var(--dim);font-weight:500}
   {{else}}
     <p class="meta"><a href="/?closed=1">show closed</a></p>
   {{end}}
-{{end}}
+</section>{{end}}
 
 {{if eq .Page "mission"}}
   {{$m := .Mission}}
@@ -136,7 +136,7 @@ th{color:var(--dim);font-weight:500}
 
   <h2>Threads</h2>
   {{range .MissionThreads}}<div class="card"><a class="title" href="/thread/{{.ID}}?mission={{$m.Slug}}">{{.Title}}</a>
-    <div class="meta"><span class="badge {{.Grade}}">{{.Grade}}</span><span class="badge">{{.Status}}</span>{{.ID}} · {{len .Msgs}} msg · {{$stamp := stampTime .Updated}}<time datetime="{{$stamp.DateTime}}" title="{{$stamp.Absolute}}">{{$stamp.Relative}}</time></div></div>
+    <div class="meta"><span class="badge {{.Grade}}">{{.Grade}}</span><span class="badge">{{.Status}}</span>{{.ID}} · {{len .Msgs}} msg · {{$stamp := stampTime .Updated}}<time data-relative datetime="{{$stamp.DateTime}}" title="{{$stamp.Absolute}}">{{$stamp.Relative}}</time></div></div>
   {{else}}<div class="empty">no threads homed here</div>{{end}}
 
   <h2>Seated agents</h2>
@@ -156,12 +156,12 @@ th{color:var(--dim);font-weight:500}
 
 {{if .T}}{{template "conversation" .}}{{end}}
 
-{{if and (eq .Page "inbox") .Graph}}{{with .Graph}}
+{{if and (eq .Page "inbox") .Graph}}<section data-live="graph">{{with .Graph}}
   <h1 style="margin:.2em 0">Live agent map</h1>
   {{if .Warning}}<div class="warning">{{.Warning}}</div>{{end}}
   <p class="meta">as of {{.AsOf}} ({{.AsOfRelative}}) · read-only bus view · <a href="{{stateURL "/graph" $.MissionFilter}}">open full graph</a></p>
   <div class="graph-frame">{{.Content}}</div>
-{{end}}{{end}}
+{{end}}</section>{{end}}
 
 {{if eq .Page "graph"}}{{with .Graph}}
   <h1 style="margin:.2em 0">Live agent map</h1>
@@ -188,7 +188,7 @@ th{color:var(--dim);font-weight:500}
       <td><a href="/thread/{{.ID}}{{with .Home}}?mission={{.}}{{end}}">{{.ID}}</a></td>
       <td>{{.OpenedBy}}{{range .With}}, {{.}}{{end}}</td>
       <td>{{len .Msgs}}</td>
-      <td>{{$stamp := stampTime .Updated}}<time datetime="{{$stamp.DateTime}}" title="{{$stamp.Absolute}}">{{$stamp.Relative}}</time></td>
+      <td>{{$stamp := stampTime .Updated}}<time data-relative datetime="{{$stamp.DateTime}}" title="{{$stamp.Absolute}}">{{$stamp.Relative}}</time></td>
     </tr>
     {{end}}
   </table>
@@ -241,7 +241,7 @@ th{color:var(--dim);font-weight:500}
 {{template "objectPanel" .}}
 </div></body></html>{{end}}
 
-{{define "rail"}}<aside class="rail{{if .Inhabit}} thread-local{{end}}" aria-label="{{if .Inhabit}}Thread context{{else}}Cockpit navigation{{end}}">
+{{define "rail"}}<aside class="rail{{if .Inhabit}} thread-local{{end}}" data-live="rail" aria-label="{{if .Inhabit}}Thread context{{else}}Cockpit navigation{{end}}">
   {{if .Inhabit}}{{with .T}}
     <h2>Pinned ask</h2><div class="meta">{{$.ContextHTML}}</div>
     <h2>Refs</h2><ul class="rail-list">{{range $.Object.Tasks}}<li><a href="{{.URL}}">{{.Label}}</a></li>{{end}}{{range $.Object.Files}}<li><a href="{{.URL}}">{{.Label}}</a></li>{{end}}{{if and (not $.Object.Tasks) (not $.Object.Files)}}<li class="empty">none</li>{{end}}</ul>
@@ -256,7 +256,7 @@ th{color:var(--dim);font-weight:500}
   {{end}}
 </aside>{{end}}
 
-{{define "objectPanel"}}<aside class="object-panel" aria-label="About this view"><details class="object-details"><summary>About this thread</summary>
+{{define "objectPanel"}}<aside class="object-panel" data-live="object-panel" aria-label="About this view"><details class="object-details"><summary>About this thread</summary>
   {{if .T}}
     {{with .T.Home}}<div class="object-group"><h2>Mission</h2><a href="/mission/{{.}}?mission={{.}}">{{.}}</a></div>{{end}}
     <div class="object-group"><h2>Task</h2>{{range .Object.Tasks}}<a href="{{.URL}}">{{.Label}}</a>{{else}}<span class="empty">no task ref</span>{{end}}</div>
@@ -268,29 +268,33 @@ th{color:var(--dim);font-weight:500}
 </details></aside>{{end}}
 
 {{define "conversation"}}{{with .T}}
+  <section data-live="thread-head-{{.ID}}">
   <p class="meta">{{if $.Peek}}peek · <a href="{{stateURL (printf "/thread/%s" .ID) $.MissionFilter}}">inhabit thread</a>{{else}}inhabiting thread · <a href="{{stateURL "/" $.MissionFilter}}">cockpit</a>{{end}}</p>
   <h1 style="margin:.2em 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="{{.Title}}">{{.Title}}</h1>
   <p class="meta">
     <span class="badge {{.Expects}}">{{.Expects}}</span><span class="badge">{{.Weight}}</span><span class="badge {{.Grade}}">{{.Grade}}</span>
     {{if eq .Grade "observed"}}{{else if eq .Status "closed"}}<span class="badge">closed</span>{{else if eq .Turn "owner"}}<span class="badge yourturn">your turn</span>{{else}}<span class="badge">waiting on {{.Turn}}</span>{{end}}
     opened by {{.OpenedBy}}{{with .With}} · with {{range $i, $w := .}}{{if $i}}, {{end}}{{$w}}{{end}}{{end}}{{with .Home}} · home {{.}}{{end}} · updated
-    <time datetime="{{$.ThreadStamp.DateTime}}" title="{{$.ThreadStamp.Relative}}">{{$.ThreadStamp.Absolute}}</time> ({{$.ThreadStamp.Relative}}) · id {{.ID}}
+    <time datetime="{{$.ThreadStamp.DateTime}}" title="{{$.ThreadStamp.Relative}}">{{$.ThreadStamp.Absolute}}</time> (<time data-relative datetime="{{$.ThreadStamp.DateTime}}">{{$.ThreadStamp.Relative}}</time>) · id {{.ID}}
   </p>
   {{with $.ParticipantState}}<p class="meta">{{.}}</p>{{end}}
   {{if eq .Grade "managed"}}<details><summary>Retitle</summary><form class="rowform" method="post" action="/thread/{{.ID}}/retitle{{with $.ReturnURL}}?return={{urlquery .}}{{end}}"><input type="text" name="title" value="{{.Title}}" aria-label="New title"><button class="quiet">Save title</button></form></details>{{end}}
   <div class="ctx">{{$.ContextHTML}}</div>
   {{if .Resolution}}<div class="card"><strong>Resolution:</strong> {{.Resolution}}</div>{{end}}
+  </section>
+  <section data-live="thread-tail-{{.ID}}">
   {{range $.Messages}}
     {{if .DayBreak}}<div class="day-separator">{{.Day}}</div>{{end}}
-    <article class="msg{{if hasHumanPrefix .From}} human{{end}}"><header class="from">{{.From}} <span class="meta">#{{.BusID}}{{with .Intent}} · {{.}}{{end}} · <time datetime="{{.Stamp.DateTime}}" title="{{.Stamp.Relative}}">{{.Stamp.Absolute}}</time> ({{.Stamp.Relative}})</span></header>
+    <article class="msg{{if hasHumanPrefix .From}} human{{end}}"><header class="from">{{.From}} <span class="meta">#{{.BusID}}{{with .Intent}} · {{.}}{{end}} · <time datetime="{{.Stamp.DateTime}}" title="{{.Stamp.Relative}}">{{.Stamp.Absolute}}</time> (<time data-relative datetime="{{.Stamp.DateTime}}">{{.Stamp.Relative}}</time>)</span></header>
       <div class="msg-body">{{if .Folded}}<div class="message-preview">{{.Preview}}</div><details class="message-fold"><summary>Show remaining lines</summary><div class="message-rest">{{.Remainder}}</div></details>{{else}}{{.Preview}}{{end}}</div>
     </article>
   {{else}}<div class="empty">no messages linked yet</div>{{end}}
-  {{if eq .Grade "managed"}}{{if eq .Status "open"}}
+  </section>
+  <div data-live="thread-controls-{{.ID}}">{{if eq .Grade "managed"}}{{if eq .Status "open"}}
     <form class="rowform composer" method="post" action="/thread/{{.ID}}/reply{{with $.ReturnURL}}?return={{urlquery .}}{{end}}">
       <textarea name="text" placeholder="reply on this thread…"></textarea><div class="composer-actions"><button>Send</button><button class="quiet" formaction="/thread/{{.ID}}/close?cockpit=1{{with $.MissionFilter}}&amp;mission={{.}}{{end}}">Send &amp; close</button></div>
     </form>
-  {{else}}<form method="post" action="/thread/{{.ID}}/reopen{{with $.ReturnURL}}?return={{urlquery .}}{{end}}"><button class="quiet">Reopen</button></form>{{end}}{{end}}
+  {{else}}<form method="post" action="/thread/{{.ID}}/reopen{{with $.ReturnURL}}?return={{urlquery .}}{{end}}"><button class="quiet">Reopen</button></form>{{end}}{{end}}</div>
 {{end}}{{end}}
 
 {{define "rosterAgents"}}
@@ -315,7 +319,7 @@ th{color:var(--dim);font-weight:500}
     <span class="badge">{{.Weight}}</span>
     {{if eq .Turn "owner"}}<span class="badge yourturn">your turn</span>{{end}}
     {{.OpenedBy}}{{with .With}} ⇄ {{range $i, $w := .}}{{if $i}}, {{end}}{{$w}}{{end}}{{end}}
-    · {{len .Msgs}} msg · {{$stamp := stampTime .Updated}}<time datetime="{{$stamp.DateTime}}" title="{{$stamp.Absolute}}">{{$stamp.Relative}}</time>{{with .Home}} · {{.}}{{end}}
+    · {{len .Msgs}} msg · {{$stamp := stampTime .Updated}}<time data-relative datetime="{{$stamp.DateTime}}" title="{{$stamp.Absolute}}">{{$stamp.Relative}}</time>{{with .Home}} · {{.}}{{end}}
   </div>
 </div>
 {{end}}

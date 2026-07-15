@@ -57,7 +57,7 @@ th{color:var(--dim);font-weight:500}
 .graph-frame{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:auto}.mc-graph{display:block;width:100%;min-width:720px;height:auto}
 .graph-matrix{overflow:auto}.graph-matrix caption{text-align:left;padding:.7em .6em;color:var(--dim)}.graph-matrix th{white-space:nowrap}.graph-matrix td{text-align:center}.graph-cell.managed{font-weight:700;color:var(--accent)}.graph-cell.observed{border-left:1px dashed var(--line);color:var(--dim)}.graph-cell.raise{color:var(--warn)}.graph-cell.cool2{opacity:.6}.graph-cell.cool3{opacity:.3}.graph-empty{color:var(--line)}.graph-dim{opacity:.15!important}
 @media(max-width:899px){body>header{position:static;flex-wrap:wrap;gap:.7em}body>header>a:not(.brand-link){font-size:.85em}.mission-filter{order:3;width:100%}.mission-filter input{flex:1}.cockpit{display:block;min-height:0;padding-top:0}.rail{position:static;max-height:none;border-right:0;border-bottom:1px solid var(--line);overflow-x:auto}.rail h2{display:inline;margin-right:.4em}.rail-list{display:inline-flex;gap:.25em;margin-right:.8em}.rail-list a{max-width:12em}.rail-agents{display:none}main.canvas{padding:1em}.object-panel{border-left:0;border-top:1px solid var(--line)}.object-details>summary{display:list-item}.object-details:not([open])>:not(summary){display:none}.ctx{position:static;max-height:none}.composer{position:static}.rowform{display:block}.composer-actions{margin-top:.5em}.mc-graph{min-width:620px}}
-</style></head><body>
+</style><script src="/mc.js" defer></script></head><body data-view="inbox:thread:task-cockpit:peek">
 <header>
   <a class="brand brand-link" href="/?mission=mission-control">mc</a>
   <a href="/?mission=mission-control" class="on">inbox</a>
@@ -72,7 +72,7 @@ th{color:var(--dim);font-weight:500}
   <span class="who">human-yamen · seat @owner</span>
 </header>
 <div class="cockpit">
-<aside class="rail" aria-label="Cockpit navigation">
+<aside class="rail" data-live="rail" aria-label="Cockpit navigation">
 
     <h2>Your turn</h2><ul class="rail-list"><li id="rail-task-cockpit"><a class="on" href="/?mission=mission-control&amp;peek=task-cockpit#rail-task-cockpit"><span class="badge yourturn">decide</span>Cockpit shell</a></li></ul>
     <h2>Waiting</h2><ul class="rail-list"><li class="empty">none</li></ul>
@@ -91,29 +91,33 @@ th{color:var(--dim);font-weight:500}
 
 
 
+  <section data-live="thread-head-task-cockpit">
   <p class="meta">peek · <a href="/thread/task-cockpit?mission=mission-control">inhabit thread</a></p>
   <h1 style="margin:.2em 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="Cockpit shell">Cockpit shell</h1>
   <p class="meta">
     <span class="badge decide">decide</span><span class="badge">moment</span><span class="badge managed">managed</span>
     <span class="badge yourturn">your turn</span>
     opened by vile · with human-yamen · home mission-control · updated
-    <time datetime="2026-07-15T11:30:00Z" title="30m ago">2026-07-15 11:30:00 UTC</time> (30m ago) · id task-cockpit
+    <time datetime="2026-07-15T11:30:00Z" title="30m ago">2026-07-15 11:30:00 UTC</time> (<time data-relative datetime="2026-07-15T11:30:00Z">30m ago</time>) · id task-cockpit
   </p>
 
   <details><summary>Retitle</summary><form class="rowform" method="post" action="/thread/task-cockpit/retitle?return=%2F%3Fmission%3Dmission-control%26peek%3Dtask-cockpit%23rail-task-cockpit"><input type="text" name="title" value="Cockpit shell" aria-label="New title"><button class="quiet">Save title</button></form></details>
   <div class="ctx">Decide <a href="/mission/mission-control#task-22">TASK-22</a> using <a href="/mission/mission-control/file/artifacts/ui-design-pass.md">artifacts/ui-design-pass.md</a><br></div>
 
+  </section>
+  <section data-live="thread-tail-task-cockpit">
 
     <div class="day-separator">Wednesday, 15 July 2026</div>
-    <article class="msg"><header class="from">vile <span class="meta">#42 · request · <time datetime="2026-07-15T11:29:00Z" title="31m ago">2026-07-15 11:29:00 UTC</time> (31m ago)</span></header>
+    <article class="msg"><header class="from">vile <span class="meta">#42 · request · <time datetime="2026-07-15T11:29:00Z" title="31m ago">2026-07-15 11:29:00 UTC</time> (<time data-relative datetime="2026-07-15T11:29:00Z">31m ago</time>)</span></header>
       <div class="msg-body">Build the server-rendered shell.<br></div>
     </article>
 
-
+  </section>
+  <div data-live="thread-controls-task-cockpit">
     <form class="rowform composer" method="post" action="/thread/task-cockpit/reply?return=%2F%3Fmission%3Dmission-control%26peek%3Dtask-cockpit%23rail-task-cockpit">
       <textarea name="text" placeholder="reply on this thread…"></textarea><div class="composer-actions"><button>Send</button><button class="quiet" formaction="/thread/task-cockpit/close?cockpit=1&amp;mission=mission-control">Send &amp; close</button></div>
     </form>
-
+  </div>
 
 
 
@@ -128,7 +132,7 @@ th{color:var(--dim);font-weight:500}
 
 <div class="footer">mc · bus cursor 0 · refresh for updates</div>
 </main>
-<aside class="object-panel" aria-label="About this view"><details class="object-details"><summary>About this thread</summary>
+<aside class="object-panel" data-live="object-panel" aria-label="About this view"><details class="object-details"><summary>About this thread</summary>
 
     <div class="object-group"><h2>Mission</h2><a href="/mission/mission-control?mission=mission-control">mission-control</a></div>
     <div class="object-group"><h2>Task</h2><a href="/mission/mission-control#task-22">TASK-22</a></div>
