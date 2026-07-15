@@ -1,10 +1,10 @@
 ---
 id: TASK-218
 title: pi build unit B1 — launch contract (flagship parity)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-15 00:52'
-updated_date: '2026-07-15 00:53'
+updated_date: '2026-07-15 03:21'
 labels: []
 dependencies: []
 ordinal: 216000
@@ -28,3 +28,9 @@ Scope = §13 B1 items 1-6 verbatim: (1) registry+spawn additive fields (provider
 
 Probes use isolated scratch state; NEVER touch the live hcom database, registry, or fleet seats. Full house battery + adversarial review. Activation stays OPT-IN (§13 closing paragraph) — this unit does not activate the family.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged 5c0bef5 at head cb6db1c. Opus adversarial review: 7 findings across the arc (6 + delta D1), ZERO correctness bugs — all coverage/evidence hardening; scope-leak-into-non-pi-records lens clean first pass to last; grok calibration seat ran in parallel (ledger row 14). Owner-authorized anthropic smoke green: live bind predicate satisfied, resume reclaimed same GUID/session UUID with provider reconstructed from registry, cull clean. Smoke-driven PATH-carry fix reshaped to trailing fallback after review (no binary shadowing). Vendor flag surface verified by orchestrator directly at pi 0.80.6 (--help): no telemetry/auth-file CLI flags; --api-key refused. Post-merge house battery 60/60 green, pushed 485ec9f train. OWNER ITEM OUTSTANDING: pi 0.80.6 project-trust --approve/--no-approve autonomy mapping deliberately unmapped — needs owner disposition.
+<!-- SECTION:NOTES:END -->
