@@ -23,6 +23,7 @@ import (
 	"ai-config/tools/herder/internal/missioncmd"
 	"ai-config/tools/herder/internal/nodecmd"
 	"ai-config/tools/herder/internal/observercmd"
+	"ai-config/tools/herder/internal/raisecmd"
 	"ai-config/tools/herder/internal/reconcilecmd"
 	"ai-config/tools/herder/internal/renamecmd"
 	"ai-config/tools/herder/internal/retirecmd"
@@ -44,6 +45,7 @@ type command struct {
 var commands = []command{
 	{"spawn", "Spawn a named, GUID-tagged agent in a herdr pane", spawncmd.Run},
 	{"send", "Deliver a message to a spawned agent over the hcom bus (bus-only)", send.Run},
+	{"raise", "Open a structured item at the configured human seat", raisecmd.Run},
 	{"list", "Show spawned agents, reconciled with live herdr state", listcmd.Run},
 	{"join", "Declare mission membership for a running agent", missioncmd.RunJoin},
 	{"leave", "Remove explicit mission membership from a running agent", missioncmd.RunLeave},
