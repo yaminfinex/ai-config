@@ -206,6 +206,13 @@ grok_tree() {
   echo "$dir"
 }
 
+# pi_tree — cwd-key dir under Pi's default agent session root.
+pi_tree() {
+  local dir="$HOME_DIR/.pi/agent/sessions/--home-harness-proj--"
+  mkdir -p "$dir"
+  echo "$dir"
+}
+
 # fresh_uuid — filename plumbing for harness-created source files (file
 # CONTENT always comes from the real fixture corpus; the name is not content).
 fresh_uuid() {

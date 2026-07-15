@@ -55,6 +55,7 @@ func newHarness(t *testing.T) *harness {
 		Claude: filepath.Join(base, "claude-projects"),
 		Codex:  filepath.Join(base, "codex-sessions"),
 		Grok:   filepath.Join(base, "grok-home", "sessions"),
+		Pi:     filepath.Join(base, "pi-agent", "sessions"),
 	}
 	h.stateDir = filepath.Join(base, "state")
 	h.openShipper()
@@ -117,6 +118,19 @@ func (h *harness) writeGrok(cwdGroup, uuid string, data []byte) string {
 		h.t.Fatal(err)
 	}
 	p := filepath.Join(dir, grokTranscriptName)
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		h.t.Fatal(err)
+	}
+	return p
+}
+
+func (h *harness) writePi(cwdKey, uuid string, data []byte) string {
+	h.t.Helper()
+	dir := filepath.Join(h.roots.Pi, cwdKey)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		h.t.Fatal(err)
+	}
+	p := filepath.Join(dir, "2026-07-15T12-34-56-789Z_"+uuid+".jsonl")
 	if err := os.WriteFile(p, data, 0o644); err != nil {
 		h.t.Fatal(err)
 	}

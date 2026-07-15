@@ -1,0 +1,11 @@
+{"type":"session","version":3,"id":"019f64a0-1111-7222-8333-444444444444","timestamp":"2026-07-15T12:34:56.789Z","cwd":"/workspace/pi-fixture"}
+{"type":"model_change","id":"root0001","parentId":null,"timestamp":"2026-07-15T12:34:56.790Z","provider":"fixture","modelId":"fixture-model"}
+{"type":"thinking_level_change","id":"think001","parentId":"root0001","timestamp":"2026-07-15T12:34:56.791Z","thinkingLevel":"low"}
+{"type":"message","id":"shared01","parentId":"think001","timestamp":"2026-07-15T12:34:57.000Z","message":{"role":"user","content":[{"type":"text","text":"Choose a route."}],"timestamp":1784118897000}}
+{"type":"message","id":"shared02","parentId":"shared01","timestamp":"2026-07-15T12:34:58.000Z","message":{"role":"assistant","content":[{"type":"text","text":"I can take either route."}],"timestamp":1784118898000}}
+{"type":"message","id":"oldbr001","parentId":"shared02","timestamp":"2026-07-15T12:34:59.000Z","message":{"role":"user","content":[{"type":"text","text":"Take the abandoned route."}],"timestamp":1784118899000}}
+{"type":"message","id":"oldbr002","parentId":"oldbr001","timestamp":"2026-07-15T12:35:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ABANDONED-BRANCH-CONTENT"}],"timestamp":1784118900000}}
+{"type":"label","id":"oldlabel","parentId":"oldbr002","timestamp":"2026-07-15T12:35:00.100Z","targetId":"oldbr001","label":"abandoned option"}
+{"type":"message","id":"active01","parentId":"shared02","timestamp":"2026-07-15T12:35:01.000Z","message":{"role":"user","content":[{"type":"text","text":"Take the active route."}],"timestamp":1784118901000}}
+{"type":"message","id":"active02","parentId":"active01","timestamp":"2026-07-15T12:35:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"ACTIVE-BRANCH-CONTENT"}],"timestamp":1784118902000}}
+{"type":"label","id":"newlabel","parentId":"active02","timestamp":"2026-07-15T12:35:02.100Z","targetId":"active01","label":"chosen option"}

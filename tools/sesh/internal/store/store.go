@@ -945,7 +945,7 @@ func classifyStoreError(err error) wire.ErrorCode {
 
 func parseTool(raw string) (wire.Tool, bool) {
 	switch wire.Tool(raw) {
-	case wire.ToolClaude, wire.ToolCodex, wire.ToolGrok:
+	case wire.ToolClaude, wire.ToolCodex, wire.ToolGrok, wire.ToolPi:
 		return wire.Tool(raw), true
 	default:
 		return wire.Tool(raw), false
