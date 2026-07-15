@@ -160,9 +160,11 @@ const statusHelpText = `Usage: mish status [--mission <slug> | --all] [--text]
 
 Read mission state without mutating files. Output defaults to JSON shaped for machine consumers:
 slug, mission_dir, manifest, board counts and tasks, artifacts, and warnings. --all emits an
-array of the same mission objects. --text restores the human detail block or overview table.
-With --all, or from inside $MISSIONS_REPO with no specific context, status scans every mission
-directory including closed missions. Refusals are JSON on stdout plus prose on stderr unless
+array of the same mission objects. An unreadable mission degrades to its own warning-bearing
+object instead of aborting the array. --text restores the human detail block or overview table.
+Only --all produces the JSON array; bare JSON status without mission context refuses and names
+--mission and --all. In --text mode, status from inside $MISSIONS_REPO with no specific context
+keeps the friendly overview fallback. Refusals are JSON on stdout plus prose on stderr unless
 --text is set.
 
 Warnings mean:
@@ -170,8 +172,12 @@ Warnings mean:
   mission: frontmatter does not match the directory slug
   mission.md has unknown keys or status is not active/closed
   duplicate task IDs appear on the board
+  task frontmatter or an individual task field is malformed
   board or artifacts/ is missing
   mission subtree has uncommitted or unpushed git changes
+
+Single-mission warnings include git staleness. --all warnings are filesystem/mission health
+only; the overview never invokes git. JSON warning arrays are sorted deterministically.
 
 Git staleness:
   The git signal is read-only and silently skipped when the missions repo is not git or has

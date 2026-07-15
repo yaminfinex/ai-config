@@ -78,7 +78,7 @@ func runWithDeps(args []string, d deps) int {
 		if errors.As(err, &refusal) {
 			if !refusal.text && !refusal.emitted {
 				emitJSON(d.stdout, refusalOutput{
-					OK: false, Refusal: refusal.kind, Slug: refusal.slug,
+					OK: false, Verb: refusal.verb, Refusal: refusal.kind, Slug: refusal.slug,
 					Reason: refusal.message, Remedy: refusal.remedy, Paths: refusal.paths,
 				})
 			}
@@ -96,14 +96,9 @@ func runWithDeps(args []string, d deps) int {
 	return exitOK
 }
 
-type refusalOutput struct {
-	OK      bool     `json:"ok"`
-	Refusal string   `json:"refusal"`
-	Slug    string   `json:"slug,omitempty"`
-	Reason  string   `json:"reason"`
-	Remedy  string   `json:"remedy,omitempty"`
-	Paths   []string `json:"paths,omitempty"`
-}
+// All operation refusals share the resolve contract exactly. Keeping one type
+// prevents field/tag drift between resolve and the other verbs.
+type refusalOutput = resolveOutput
 
 func emitJSON(w io.Writer, value any) {
 	encoded, err := json.Marshal(value)

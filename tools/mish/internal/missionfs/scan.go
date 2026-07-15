@@ -99,7 +99,7 @@ func scanTaskDir(dir string, scan *TaskScan, seen map[string][]string) error {
 		if d.IsDir() || filepath.Ext(path) != ".md" {
 			return nil
 		}
-		task, err := readTaskFrontmatter(path)
+		task, taskFindings, err := readTaskFrontmatter(path)
 		if err != nil {
 			scan.Findings = append(scan.Findings, Finding{
 				Kind:   FindingMalformedTask,
@@ -108,6 +108,7 @@ func scanTaskDir(dir string, scan *TaskScan, seen map[string][]string) error {
 			})
 			return nil
 		}
+		scan.Findings = append(scan.Findings, taskFindings...)
 		if task.Status != "" {
 			scan.Counts[task.Status]++
 			scan.StatusPaths[task.Status] = append(scan.StatusPaths[task.Status], path)
@@ -133,20 +134,92 @@ func scanTaskDir(dir string, scan *TaskScan, seen map[string][]string) error {
 	return err
 }
 
-func readTaskFrontmatter(path string) (Task, error) {
+func readTaskFrontmatter(path string) (Task, []Finding, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Task{}, err
+		return Task{}, nil, err
 	}
 	frontmatter, err := splitFrontmatter(data)
 	if err != nil {
-		return Task{}, fmt.Errorf("%s: %w", path, err)
+		return Task{}, nil, fmt.Errorf("%s: %w", path, err)
 	}
+
+	// Prefer the complete YAML document. This is the producer-compatible path
+	// and preserves block collections such as the labels sequences Backlog.md
+	// writes. Fall back only when one malformed field breaks the whole document.
 	var task Task
-	if err := yaml.Unmarshal(frontmatter, &task); err != nil {
-		return Task{}, fmt.Errorf("%s: parse frontmatter: %w", path, err)
+	documentErr := yaml.Unmarshal(frontmatter, &task)
+	if documentErr == nil {
+		return task, nil, nil
 	}
-	return task, nil
+
+	// Decode each top-level field independently so valid id/status values still
+	// count the task. Report every field that cannot be recovered; degraded
+	// agent-facing fields must never become silently empty.
+	task = Task{}
+	var findings []Finding
+	lines := strings.Split(string(frontmatter), "\n")
+	for i := 0; i < len(lines); {
+		line := lines[i]
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			i++
+			continue
+		}
+		key, _, ok := strings.Cut(line, ":")
+		if !ok {
+			i++
+			continue
+		}
+		key = strings.TrimSpace(key)
+		end := i + 1
+		for end < len(lines) && (strings.TrimSpace(lines[end]) == "" || strings.HasPrefix(lines[end], " ") || strings.HasPrefix(lines[end], "\t")) {
+			end++
+		}
+		fieldErr, known := decodeTaskField(key, strings.Join(lines[i:end], "\n"), &task)
+		i = end
+		if !known {
+			continue
+		}
+		if fieldErr != nil {
+			findings = append(findings, Finding{
+				Kind:   FindingMalformedTask,
+				Key:    key,
+				Path:   path,
+				Actual: fieldErr.Error(),
+			})
+		}
+	}
+	if len(findings) == 0 {
+		findings = append(findings, Finding{
+			Kind: FindingMalformedTask, Path: path, Actual: documentErr.Error(),
+		})
+	}
+	return task, findings, nil
+}
+
+func decodeTaskField(key, fieldYAML string, task *Task) (error, bool) {
+	var field Task
+	switch key {
+	case "id", "title", "status", "ordinal", "labels":
+		if err := yaml.Unmarshal([]byte(fieldYAML), &field); err != nil {
+			return err, true
+		}
+	default:
+		return nil, false
+	}
+	switch key {
+	case "id":
+		task.ID = field.ID
+	case "title":
+		task.Title = field.Title
+	case "status":
+		task.Status = field.Status
+	case "ordinal":
+		task.Ordinal = field.Ordinal
+	case "labels":
+		task.Labels = field.Labels
+	}
+	return nil, true
 }
 
 // ArtifactScan summarizes artifacts without interpreting their contents.

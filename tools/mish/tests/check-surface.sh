@@ -8,8 +8,12 @@ build_mish
 
 git_init_repo "$MISSIONS_REPO_DIR"
 new_mission surface-a --authority hera
-run_mish "$INVOKE_DIR" "surface-task" backlog --mission surface-a task create "Surface task"
+run_mish "$INVOKE_DIR" "surface-task" backlog --mission surface-a task create "Surface task" --labels backend,urgent
 assert_status 0
+surface_task_file=$(single_task_file surface-a)
+assert_contains "$surface_task_file" "labels:"
+assert_contains "$surface_task_file" "  - backend"
+assert_contains "$surface_task_file" "  - urgent"
 git_commit_all "$MISSIONS_REPO_DIR" "seed surface"
 origin="$WORK/surface-origin.git"
 git_init_bare_origin "$origin"
@@ -49,6 +53,7 @@ assert_status 0
 assert_contains "$LAST_OUT" '"slug":"surface-a"'
 assert_contains "$LAST_OUT" '"board":{'
 assert_contains "$LAST_OUT" '"artifacts":{'
+assert_contains "$LAST_OUT" '"labels":["backend","urgent"]'
 after=$(tree_hash "$(mission_dir surface-a)")
 assert_eq "$after" "$before" "status subtree hash"
 replace_in_file "$(mission_dir surface-a)/backlog/config.yml" "auto_commit: false" "auto_commit: true"
@@ -79,7 +84,15 @@ assert_contains "$LAST_OUT" "board:"
 step "AC-13 status overview"
 new_mission surface-closed --authority hera
 replace_in_file "$(mission_dir surface-closed)/mission.md" "status: active" "status: closed"
-run_mish "$MISSIONS_REPO_DIR" "overview-root" status
+run_mish "$MISSIONS_REPO_DIR" "overview-root" status --all
+assert_status 0
+assert_contains "$LAST_OUT" "surface-a"
+assert_contains "$LAST_OUT" "surface-closed"
+run_mish "$MISSIONS_REPO_DIR" "overview-root-bare-json" status
+assert_status 1
+assert_contains "$LAST_OUT" '"refusal":"no_context"'
+assert_contains "$LAST_OUT" "--all"
+run_mish "$MISSIONS_REPO_DIR" "overview-root-text" status --text
 assert_status 0
 assert_contains "$LAST_OUT" "surface-a"
 assert_contains "$LAST_OUT" "surface-closed"
