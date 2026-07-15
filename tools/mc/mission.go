@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -214,38 +213,4 @@ func (m *missionResolver) Slug(dir string) string {
 	m.slugHits[dir] = missionHit{slug: slug, at: time.Now()}
 	m.mu.Unlock()
 	return slug
-}
-
-// groupKey names the roster group for a directory: mission slug when one
-// resolves, collapsed worktree identity next, raw path last.
-func (m *missionResolver) groupKey(dir string) string {
-	if dir == "" {
-		return "(no directory)"
-	}
-	if slug := m.Slug(dir); slug != "" {
-		return "mission: " + slug
-	}
-	home, err := os.UserHomeDir()
-	if err == nil {
-		wt := filepath.Join(home, ".herdr", "worktrees") + string(filepath.Separator)
-		if rest, ok := strings.CutPrefix(dir, wt); ok {
-			parts := strings.SplitN(rest, string(filepath.Separator), 3)
-			if len(parts) >= 2 {
-				return "worktree: " + parts[0] + " @ " + parts[1]
-			}
-		}
-	}
-	return dir
-}
-
-// groupRank orders roster sections: missions, then worktrees, then paths.
-func groupRank(key string) int {
-	switch {
-	case strings.HasPrefix(key, "mission: "):
-		return 0
-	case strings.HasPrefix(key, "worktree: "):
-		return 1
-	default:
-		return 2
-	}
 }

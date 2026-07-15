@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -236,6 +237,72 @@ exit 1
 	w.Routes().ServeHTTP(rw, req)
 	if got := rw.Header().Get("Location"); !strings.Contains(got, "closed%2C+but+the+bus+notice+failed") {
 		t.Fatalf("live delivery failure Location = %q", got)
+	}
+}
+
+func TestRosterHygieneAndMissionlessRepoBranchGrouping(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "parent-repo")
+	worktree := filepath.Join(dir, "feature-worktree")
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=MC Test", "GIT_AUTHOR_EMAIL=mc@example.test", "GIT_COMMITTER_NAME=MC Test", "GIT_COMMITTER_EMAIL=mc@example.test")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	runGit("init", "-b", "main", repo)
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("-C", repo, "add", "README.md")
+	runGit("-C", repo, "commit", "-m", "fixture")
+	runGit("-C", repo, "worktree", "add", "-b", "feature", worktree)
+
+	hcom := writeExecutable(t, dir, "hcom", fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' '[{"name":"owner","base_name":"owner","status":"listening","directory":%q},{"name":"builder-main","status":"active","session_id":"sid-main","directory":%q},{"name":"builder-feature","status":"listening","session_id":"sid-feature","directory":%q},{"name":"unmanaged-husk","status":"active","directory":%q}]'
+`, repo, repo, worktree, repo))
+	herder := writeExecutable(t, dir, "herder", fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' '{"kind":"session","label":"builder-main","guid":"g-main","tool":"codex","role":"builder","state":"seated","provenance":{"cwd":%q,"branch":"main","tool_session_id":"sid-main"}}'
+printf '%%s\n' '{"kind":"session","label":"builder-feature","guid":"g-feature","tool":"codex","role":"builder","state":"seated","provenance":{"cwd":%q,"branch":"feature","tool_session_id":"sid-feature"}}'
+`, repo, worktree))
+	mish := writeExecutable(t, dir, "mish", "#!/bin/sh\nprintf '%s\\n' '{\"ok\":false}'\nexit 1\n")
+	_, s := testIngestor(t)
+	w := NewWeb(s, &Bus{Hcom: hcom}, nil, "human-yamen", "owner", herder, newMissionResolver(mish, ""))
+
+	groups, errText := w.rosterGroups(false)
+	if errText != "" {
+		t.Fatalf("roster error = %q", errText)
+	}
+	if len(groups) != 1 || groups[0].Dir != "no mission" || len(groups[0].Repos) != 1 {
+		t.Fatalf("missionless groups = %#v", groups)
+	}
+	rg := groups[0].Repos[0]
+	if rg.Repo != "parent-repo" || len(rg.Branches) != 2 || rg.Branches[0].Branch != "feature" || rg.Branches[1].Branch != "main" {
+		t.Fatalf("repo/branch grouping = %#v", rg)
+	}
+	var unmanagedFound, ownerFound bool
+	for _, branch := range rg.Branches {
+		for _, a := range branch.Agents {
+			ownerFound = ownerFound || a.Name == "owner"
+			unmanagedFound = unmanagedFound || (a.Name == "unmanaged-husk" && a.Unmanaged)
+		}
+	}
+	if ownerFound || !unmanagedFound {
+		t.Fatalf("ownerFound=%v unmanagedFound=%v", ownerFound, unmanagedFound)
+	}
+
+	rw := httptest.NewRecorder()
+	w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/roster", nil))
+	body := rw.Body.String()
+	for _, want := range []string{"<h2>no mission</h2>", "repo: parent-repo", "branch: feature", "branch: main", "unmanaged-husk", "unmanaged"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("roster missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "<strong>owner</strong>") {
+		t.Fatal("roster rendered mc's own seat")
 	}
 }
 

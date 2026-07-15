@@ -123,7 +123,7 @@ th{color:var(--dim);font-weight:500}
 
   <h2>Seated agents</h2>
   {{if .MissionAgents}}<table><tr><th>name</th><th>tool</th><th>status</th><th>role</th><th></th></tr>
-    {{range .MissionAgents}}<tr><td><strong>{{.Name}}</strong></td><td>{{.Tool}}</td><td>{{.Status}}</td><td>{{.Role}}</td><td><a href="/talk?agent={{.Name}}">talk to</a></td></tr>{{end}}
+    {{range .MissionAgents}}<tr><td><strong>{{.Name}}</strong>{{if .Unmanaged}} <span class="badge">unmanaged</span>{{end}}</td><td>{{.Tool}}</td><td>{{.Status}}</td><td>{{.Role}}</td><td><a href="/talk?agent={{.Name}}">talk to</a></td></tr>{{end}}
   </table>{{else}}<div class="empty">no seated agents</div>{{end}}
 {{end}}
 
@@ -225,22 +225,34 @@ th{color:var(--dim);font-weight:500}
   <p class="meta">{{if .ShowClosed}}<a href="/roster">active only</a>{{else}}<a href="/roster?all=1">show all (incl. unseated/inactive)</a>{{end}}</p>
   {{range .Groups}}
     <h2>{{with .Mission}}<a href="/mission/{{.}}">mission: {{.}}</a> · <a href="/talk?mission={{.}}">talk to mission</a>{{else}}{{.Dir}}{{end}}</h2>
-    <table>
-      <tr><th>name</th><th>tool</th><th>status</th><th>role</th><th>branch</th><th>unread</th><th></th></tr>
-      {{range .Agents}}
-      <tr>
-        <td><strong>{{.Name}}</strong></td><td>{{.Tool}}</td>
-        <td>{{.Status}}{{with .Detail}} <span class="meta">({{.}})</span>{{end}}</td>
-        <td>{{.Role}}</td><td>{{.Branch}}</td><td>{{if .Unread}}{{.Unread}}{{end}}</td>
-        <td><a href="/talk?agent={{.Name}}">talk to</a></td>
-      </tr>
+    {{if .Repos}}
+      {{range .Repos}}
+        <h3>repo: {{.Repo}}</h3>
+        {{range .Branches}}
+          <h4>branch: {{.Branch}}</h4>
+          {{template "rosterAgents" .Agents}}
+        {{end}}
       {{end}}
-    </table>
+    {{else}}{{template "rosterAgents" .Agents}}{{end}}
   {{else}}<div class="empty">no agents visible</div>{{end}}
 {{end}}
 
 <div class="footer">mc · bus cursor {{.Cursor}} · refresh for updates</div>
 </main></body></html>{{end}}
+
+{{define "rosterAgents"}}
+<table>
+  <tr><th>name</th><th>tool</th><th>status</th><th>role</th><th>branch</th><th>unread</th><th></th></tr>
+  {{range .}}
+  <tr>
+    <td><strong>{{.Name}}</strong>{{if .Unmanaged}} <span class="badge">unmanaged</span>{{end}}</td><td>{{.Tool}}</td>
+    <td>{{.Status}}{{with .Detail}} <span class="meta">({{.}})</span>{{end}}</td>
+    <td>{{.Role}}</td><td>{{.Branch}}</td><td>{{if .Unread}}{{.Unread}}{{end}}</td>
+    <td><a href="/talk?agent={{.Name}}">talk to</a></td>
+  </tr>
+  {{end}}
+</table>
+{{end}}
 
 {{define "card"}}
 <div class="card">

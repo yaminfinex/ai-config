@@ -7,7 +7,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -460,6 +462,17 @@ type rosterGroup struct {
 	Dir     string
 	Mission string
 	Agents  []rosterAgent
+	Repos   []rosterRepoGroup
+}
+
+type rosterRepoGroup struct {
+	Repo     string
+	Branches []rosterBranchGroup
+}
+
+type rosterBranchGroup struct {
+	Branch string
+	Agents []rosterAgent
 }
 
 type rosterAgent struct {
@@ -471,6 +484,8 @@ type rosterAgent struct {
 	Role   string
 	Branch string
 	GUID   string
+	// Unmanaged means hcom knows this row but the herder registry does not.
+	Unmanaged bool
 }
 
 func (w *Web) roster(rw http.ResponseWriter, r *http.Request) {
@@ -501,27 +516,36 @@ func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {
 			bySID[sid] = h
 		}
 	}
-	groups := map[string]*rosterGroup{}
+	missionGroups := map[string]*rosterGroup{}
+	missionless := map[string]map[string][]rosterAgent{}
 	add := func(dir string, a rosterAgent) {
-		key := dir
 		if w.missions != nil {
-			key = w.missions.groupKey(dir)
-		}
-		if key == "" {
-			key = "(no directory)"
-		}
-		g := groups[key]
-		if g == nil {
-			g = &rosterGroup{Dir: key}
-			if mission, ok := strings.CutPrefix(key, "mission: "); ok {
-				g.Mission = mission
+			if mission := w.missions.Slug(dir); mission != "" {
+				g := missionGroups[mission]
+				if g == nil {
+					g = &rosterGroup{Dir: "mission: " + mission, Mission: mission}
+					missionGroups[mission] = g
+				}
+				g.Agents = append(g.Agents, a)
+				return
 			}
-			groups[key] = g
 		}
-		g.Agents = append(g.Agents, a)
+		repo := repoIdentity(dir)
+		branch := a.Branch
+		if branch == "" {
+			branch = liveGitBranch(dir)
+		}
+		a.Branch = branch
+		if missionless[repo] == nil {
+			missionless[repo] = map[string][]rosterAgent{}
+		}
+		missionless[repo][branch] = append(missionless[repo][branch], a)
 	}
 	seen := map[string]bool{}
 	for _, a := range busAgents {
+		if a.Name == w.seat || a.BaseName == w.seat {
+			continue
+		}
 		if !showAll && a.Status == "inactive" {
 			continue
 		}
@@ -541,11 +565,13 @@ func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {
 			if h.Cwd != "" {
 				dir = h.Cwd
 			}
+		} else {
+			ra.Unmanaged = true
 		}
 		add(dir, ra)
 	}
 	for _, h := range herderRows {
-		if h.Label == "" || seen[h.Label] {
+		if h.Label == "" || h.Label == w.seat || seen[h.Label] {
 			continue
 		}
 		if !showAll && h.Status != "seated" {
@@ -554,11 +580,67 @@ func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {
 		add(h.Cwd, rosterAgent{Name: h.Label, Tool: h.Agent, Status: h.Status, Role: h.Role, Branch: h.Branch, GUID: h.GUID})
 	}
 	var out []rosterGroup
-	for _, g := range groups {
+	for _, g := range missionGroups {
 		out = append(out, *g)
+	}
+	if len(missionless) > 0 {
+		noMission := rosterGroup{Dir: "no mission"}
+		for repo, branches := range missionless {
+			rg := rosterRepoGroup{Repo: repo}
+			for branch, agents := range branches {
+				sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
+				rg.Branches = append(rg.Branches, rosterBranchGroup{Branch: branch, Agents: agents})
+			}
+			sort.Slice(rg.Branches, func(i, j int) bool { return rg.Branches[i].Branch < rg.Branches[j].Branch })
+			noMission.Repos = append(noMission.Repos, rg)
+		}
+		sort.Slice(noMission.Repos, func(i, j int) bool { return noMission.Repos[i].Repo < noMission.Repos[j].Repo })
+		out = append(out, noMission)
 	}
 	sortGroups(out)
 	return out, errText
+}
+
+func repoIdentity(dir string) string {
+	if dir == "" {
+		return "(unknown repo)"
+	}
+	if common, err := gitOutput(dir, "rev-parse", "--git-common-dir"); err == nil && common != "" {
+		if !filepath.IsAbs(common) {
+			common = filepath.Join(dir, common)
+		}
+		common = filepath.Clean(common)
+		if filepath.Base(common) == ".git" {
+			return filepath.Base(filepath.Dir(common))
+		}
+		return strings.TrimSuffix(filepath.Base(common), ".git")
+	}
+	if remote, err := gitOutput(dir, "remote", "get-url", "origin"); err == nil && remote != "" {
+		remote = strings.TrimSuffix(strings.TrimRight(remote, "/"), ".git")
+		if i := strings.LastIndexAny(remote, "/:"); i >= 0 {
+			remote = remote[i+1:]
+		}
+		if remote != "" {
+			return remote
+		}
+	}
+	return filepath.Clean(dir)
+}
+
+func liveGitBranch(dir string) string {
+	if branch, err := gitOutput(dir, "rev-parse", "--abbrev-ref", "HEAD"); err == nil && branch != "" {
+		if branch == "HEAD" {
+			return "(detached)"
+		}
+		return branch
+	}
+	return "(unknown branch)"
+}
+
+func gitOutput(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.Output()
+	return strings.TrimSpace(string(out)), err
 }
 
 func (w *Web) resolveTalkTarget(kind, target string) ([]string, string, error) {
@@ -601,14 +683,12 @@ func (w *Web) resolveTalkTarget(kind, target string) ([]string, string, error) {
 }
 
 func sortGroups(gs []rosterGroup) {
-	for i := range gs {
-		for j := i + 1; j < len(gs); j++ {
-			ri, rj := groupRank(gs[i].Dir), groupRank(gs[j].Dir)
-			if rj < ri || (rj == ri && gs[j].Dir < gs[i].Dir) {
-				gs[i], gs[j] = gs[j], gs[i]
-			}
+	sort.Slice(gs, func(i, j int) bool {
+		if (gs[i].Mission != "") != (gs[j].Mission != "") {
+			return gs[i].Mission != ""
 		}
-	}
+		return gs[i].Dir < gs[j].Dir
+	})
 }
 
 // agentTargets is who a bus send from the human should address: every
