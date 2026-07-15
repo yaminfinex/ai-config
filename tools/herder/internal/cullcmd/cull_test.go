@@ -3,6 +3,8 @@ package cullcmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,58 @@ import (
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
+
+type cullResponse struct {
+	want string
+	out  []byte
+	rc   int
+	err  error
+}
+
+type scriptedCullClient struct {
+	responses []cullResponse
+	calls     []string
+}
+
+func (c *scriptedCullClient) Combined(args ...string) ([]byte, int, error) {
+	call := strings.Join(args, " ")
+	c.calls = append(c.calls, call)
+	if len(c.responses) == 0 {
+		return nil, 64, errors.New("unexpected call")
+	}
+	r := c.responses[0]
+	c.responses = c.responses[1:]
+	if call != r.want {
+		return nil, 64, fmt.Errorf("call = %q, want %q", call, r.want)
+	}
+	return r.out, r.rc, r.err
+}
+
+func assertCullScriptConsumed(t *testing.T, client *scriptedCullClient) {
+	t.Helper()
+	if len(client.responses) != 0 {
+		t.Fatalf("%d scripted response(s) were not consumed; calls = %v", len(client.responses), client.calls)
+	}
+}
+
+func TestProcessTargetPreservesFocusWhenClosingPane(t *testing.T) {
+	registryPath := seedSeatedCullRow(t, "worker", "p_target", "term_target")
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := registry.Resolve(recs, "guid-ghost")
+	client := &scriptedCullClient{responses: []cullResponse{
+		{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
+		{want: "pane close p_target", out: []byte(`{"result":{"type":"ok"}}`)},
+		{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
+	}}
+	var stdout, stderr strings.Builder
+	if ok := processTargetWithClient(registryPath, *rec, nil, options{force: true}, "2026-07-15T00:00:00Z", &stdout, &stderr, client); !ok {
+		t.Fatalf("processTargetWithClient failed\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	}
+	assertCullScriptConsumed(t, client)
+}
 
 func TestGrokCullRetiresBridgeAndPendingMessages(t *testing.T) {
 	state, err := os.MkdirTemp("/tmp", "grok-cull-")

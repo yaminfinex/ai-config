@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,6 +18,63 @@ import (
 type cleanupHerdr struct {
 	closed bool
 	calls  []string
+}
+
+type spawnResponse struct {
+	want string
+	out  []byte
+	rc   int
+	err  error
+}
+
+type scriptedSpawnClient struct {
+	responses []spawnResponse
+	calls     []string
+}
+
+func (c *scriptedSpawnClient) next(args ...string) (spawnResponse, error) {
+	call := strings.Join(args, " ")
+	c.calls = append(c.calls, call)
+	if len(c.responses) == 0 {
+		return spawnResponse{}, errors.New("unexpected call")
+	}
+	r := c.responses[0]
+	c.responses = c.responses[1:]
+	if call != r.want {
+		return spawnResponse{}, fmt.Errorf("call = %q, want %q", call, r.want)
+	}
+	return r, nil
+}
+
+func (c *scriptedSpawnClient) Combined(args ...string) ([]byte, int, error) {
+	r, err := c.next(args...)
+	if err != nil {
+		return nil, 64, err
+	}
+	return r.out, r.rc, r.err
+}
+
+func (c *scriptedSpawnClient) Output(args ...string) ([]byte, error) {
+	r, err := c.next(args...)
+	if err != nil {
+		return nil, err
+	}
+	return r.out, r.err
+}
+
+func (c *scriptedSpawnClient) Run(args ...string) (int, error) {
+	r, err := c.next(args...)
+	if err != nil {
+		return 64, err
+	}
+	return r.rc, r.err
+}
+
+func assertSpawnScriptConsumed(t *testing.T, client *scriptedSpawnClient) {
+	t.Helper()
+	if len(client.responses) != 0 {
+		t.Fatalf("%d scripted response(s) were not consumed; calls = %v", len(client.responses), client.calls)
+	}
 }
 
 func (f *cleanupHerdr) Combined(args ...string) ([]byte, int, error) {
@@ -38,7 +96,13 @@ func (f *cleanupHerdr) Output(args ...string) ([]byte, error) { return nil, erro
 func (f *cleanupHerdr) Run(args ...string) (int, error)       { return 64, errors.New("unused") }
 
 func TestRegistryRefusalClosesAndConfirmsLaunchedPane(t *testing.T) {
-	client := &cleanupHerdr{}
+	client := &scriptedSpawnClient{responses: []spawnResponse{
+		{want: "pane get p_new", out: []byte(`{"result":{"pane":{"pane_id":"p_new","terminal_id":"term_new"}}}`)},
+		{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
+		{want: "pane close p_new", out: []byte(`{"result":{"type":"ok"}}`)},
+		{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
+		{want: "pane get p_new", out: []byte(`{"error":{"code":"pane_not_found"}}`), rc: 1},
+	}}
 	var stderr strings.Builder
 	r := &runner{
 		herdr:  client,
@@ -62,18 +126,28 @@ func TestRegistryRefusalClosesAndConfirmsLaunchedPane(t *testing.T) {
 	if code := r.registerSpawnOrRollback(path, record); code != 1 {
 		t.Fatalf("registerSpawnOrRollback() = %d, want 1", code)
 	}
-	if !client.closed {
-		t.Fatal("launched pane was not closed")
-	}
-	if got := strings.Join(client.calls, "\n"); !strings.Contains(got, "pane close p_new") {
-		t.Fatalf("calls missing close:\n%s", got)
-	}
+	assertSpawnScriptConsumed(t, client)
 	if !strings.Contains(stderr.String(), "registry write refused: lock refused") || !strings.Contains(stderr.String(), "cleanup confirmed") {
 		t.Fatalf("stderr = %q, want refusal plus confirmed cleanup", stderr.String())
 	}
 	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("registry path exists after refused write: %v", statErr)
 	}
+}
+
+func TestSeedPaneClosePreservesFocus(t *testing.T) {
+	client := &scriptedSpawnClient{responses: []spawnResponse{
+		{want: "pane get p_seed", out: []byte(`{"result":{"pane":{"pane_id":"p_seed","terminal_id":"term_seed"}}}`)},
+		{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
+		{want: "pane close p_seed", out: []byte(`{"result":{"type":"ok"}}`)},
+		{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
+	}}
+	var stderr strings.Builder
+	r := &runner{herdr: client, stderr: &stderr}
+	if !r.closeSeedPane("p_seed", "term_seed", "term_agent") {
+		t.Fatalf("closeSeedPane returned false; stderr = %q", stderr.String())
+	}
+	assertSpawnScriptConsumed(t, client)
 }
 
 // resolveBus calls resolveSpawnerBus discarding the ambiguity signal + warning,

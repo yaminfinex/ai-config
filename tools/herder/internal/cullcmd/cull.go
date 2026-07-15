@@ -12,6 +12,7 @@ import (
 
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/lifecyclecmd"
+	"ai-config/tools/herder/internal/panecleanup"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -220,6 +221,10 @@ func selectTargets(recs []registry.Record, proj *v2.Projection, live map[string]
 }
 
 func processTarget(registryPath string, rec registry.Record, live map[string]herdrcli.Agent, opts options, nowISO string, stdout, stderr io.Writer) bool {
+	return processTargetWithClient(registryPath, rec, live, opts, nowISO, stdout, stderr, &herdrcli.Client{})
+}
+
+func processTargetWithClient(registryPath string, rec registry.Record, live map[string]herdrcli.Agent, opts options, nowISO string, stdout, stderr io.Writer, closeClient panecleanup.Client) bool {
 	guid := ptrString(rec.GUID)
 	label := ptrString(rec.Label)
 	pane := rec.PaneID
@@ -306,7 +311,7 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 		}
 	}
 
-	result, _, _ := (&herdrcli.Client{}).Combined("pane", "close", pane)
+	result, _, _ := panecleanup.ClosePreservingFocus(closeClient, pane)
 	closedOK := closeResultType(result)
 	if closedOK == "error" {
 		reason := closeErrorReason(result)

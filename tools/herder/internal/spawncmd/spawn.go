@@ -234,6 +234,31 @@ func (r *runner) failAfterLaunch(reason, paneID, terminalID string) int {
 	return 1
 }
 
+func (r *runner) closeSeedPane(rootPaneID, rootTerm, agentTerm string) bool {
+	if rootTerm == agentTerm {
+		fmt.Fprintf(r.stderr, "herder spawn: refusing to close root pane — terminal_id matches the agent (%s)\n", agentTerm)
+		return false
+	}
+	out, err := r.herdr.Output("pane", "get", rootPaneID)
+	liveRootTerm := ""
+	if err == nil {
+		pane, parseErr := herdrcli.ParsePaneGet(out)
+		if parseErr == nil {
+			liveRootTerm = pane.TerminalID
+		}
+	}
+	if liveRootTerm != rootTerm {
+		now := liveRootTerm
+		if now == "" {
+			now = "gone"
+		}
+		fmt.Fprintf(r.stderr, "herder spawn: skipped root-pane close — %s no longer holds terminal %s (now %s)\n", rootPaneID, rootTerm, now)
+		return false
+	}
+	_, rc, _ := panecleanup.ClosePreservingFocus(r.herdr, rootPaneID)
+	return rc == 0
+}
+
 func (r *runner) registerSpawn(registryPath string, record spawnRecord) error {
 	regRec := registry.Record{
 		GUID:       &record.GUID,
@@ -920,29 +945,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	// seed shell.
 	rootClosed := false
 	if rootPaneID != "" && rootTerm != "" {
-		if rootTerm == termID {
-			fmt.Fprintf(r.stderr, "herder spawn: refusing to close root pane — terminal_id matches the agent (%s)\n", termID)
-		} else {
-			out, err := r.herdr.Output("pane", "get", rootPaneID)
-			liveRootTerm := ""
-			if err == nil {
-				pane, parseErr := herdrcli.ParsePaneGet(out)
-				if parseErr == nil {
-					liveRootTerm = pane.TerminalID
-				}
-			}
-			if liveRootTerm == rootTerm {
-				if rc, _ := r.herdr.Run("pane", "close", rootPaneID); rc == 0 {
-					rootClosed = true
-				}
-			} else {
-				now := liveRootTerm
-				if now == "" {
-					now = "gone"
-				}
-				fmt.Fprintf(r.stderr, "herder spawn: skipped root-pane close — %s no longer holds terminal %s (now %s)\n", rootPaneID, rootTerm, now)
-			}
-		}
+		rootClosed = r.closeSeedPane(rootPaneID, rootTerm, termID)
 		if rootClosed {
 			if out, err := r.herdr.Output("pane", "list"); err == nil {
 				if panes, parseErr := herdrcli.ParsePaneList(out); parseErr == nil {

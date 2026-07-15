@@ -110,6 +110,7 @@ type Pane struct {
 	TerminalID    string `json:"terminal_id"`
 	WorkspaceID   string `json:"workspace_id"`
 	TabID         string `json:"tab_id"`
+	Focused       bool   `json:"focused"`
 	CWD           string `json:"cwd"`
 	ForegroundCWD string `json:"foreground_cwd"`
 	Label         string `json:"label"`
