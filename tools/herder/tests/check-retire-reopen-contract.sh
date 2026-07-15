@@ -342,9 +342,9 @@ assert "a resumed claim that changes after preflight is never persisted as verif
     and (.[0].value.seat.hcom_name // "") != "restored-live"
 ' "$CASE/state/registry.jsonl"
 
-new_case repair_unbound
+new_case repair_missing_sid
 cat >>"$CASE/state/registry.jsonl" <<'JSONL'
-{"guid":"guid-unbound-0000","event":"registered","recorded_at":"2026-07-08T00:00:05Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"restored","role":"designer","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","pane_id":"p_enroll","terminal_id":"term_enroll","hcom_verified":false,"namespace":"/hcom"}}
+{"guid":"guid-unbound-0000","event":"registered","recorded_at":"2026-07-08T00:00:05Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"restored","role":"designer","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","pane_id":"p_enroll","terminal_id":"term_enroll","hcom_name":"restored-bus","hcom_verified":true,"namespace":"/hcom"},"provenance":{"mechanism":"clear"}}
 JSONL
 printf '[{"name":"restored-bus","session_id":"sess-replacement","joined":true,"launch_context":{}}]\n' >"$CASE/hcom.json"
 env -i \
@@ -360,7 +360,7 @@ env -i \
   MOCK_HCOM_STATE="$CASE/hcom.json" \
   "$REPO_ROOT/bin/herder" enroll >/dev/null 2>"$CASE/repair.err"
 repair_rc=$?
-assert "pinned re-enroll repairs an existing unbound row" bash -c '
+assert "pinned re-enroll repairs an existing bus-bound row missing sid proof" bash -c '
   test "$1" -eq 0 && jq -se '\''
     reduce (.[] | select(.kind=="session")) as $row ({}; .[$row.guid]=$row)
     | .["guid-unbound-0000"].seat.hcom_name == "restored-bus"

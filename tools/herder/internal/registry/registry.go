@@ -466,42 +466,72 @@ func IsTerminal(rec Record) bool {
 	return rec.State == v2.StateRetired || rec.State == v2.StateLost
 }
 
-// ResolveByToolSessionID finds any row carrying provenance.tool_session_id and
-// returns the latest row for that guid. It intentionally scans all rows, not
-// only LatestByGUID, because later append-only rows can temporarily or
-// permanently lose the session id while the older session-bearing row remains
-// the durable resume/fork key.
+// ResolveByToolSessionID finds the strongest current owner of a recorded tool
+// session id. A latest seated row that currently records the id wins, followed
+// by a latest unseated row that currently records it. Terminal historical
+// observations remain a fallback for resume/archive lookup, but a retired or
+// lost row can never shadow a current non-terminal owner. Historical ids on a
+// currently seated/unseated row do not count as current corroboration.
+// Equal-rank ties retain the old last-observation/file-order behavior.
 func ResolveByToolSessionID(recs []Record, sessionID string) *Record {
 	if sessionID == "" {
 		return nil
 	}
-	var matchedGUID string
+	latest := LatestByGUID(recs)
+	latestByGUID := make(map[string]Record, len(latest))
+	for _, rec := range latest {
+		if rec.GUID != nil && *rec.GUID != "" {
+			latestByGUID[*rec.GUID] = rec
+		}
+	}
+
+	bestRank := 0
 	var matched *Record
 	for i := range recs {
 		rec := &recs[i]
 		if rec.Provenance == nil || rec.Provenance.ToolSessionID != sessionID {
 			continue
 		}
-		if rec.GUID != nil && *rec.GUID != "" {
-			matchedGUID = *rec.GUID
+		if rec.GUID == nil || *rec.GUID == "" {
+			if bestRank == 0 {
+				cp := *rec
+				matched = &cp
+			}
+			continue
 		}
-		matched = rec
-	}
-	if matchedGUID == "" {
-		if matched == nil {
-			return nil
+		current, ok := latestByGUID[*rec.GUID]
+		if !ok {
+			continue
 		}
-		cp := *matched
-		return &cp
-	}
-	for _, rec := range LatestByGUID(recs) {
-		if strEqual(rec.GUID, matchedGUID) {
-			cp := rec
-			return &cp
+		rank := toolSessionResolutionRank(current, sessionID)
+		if rank == 0 || rank < bestRank {
+			continue
 		}
+		bestRank = rank
+		cp := current
+		matched = &cp
 	}
-	cp := *matched
-	return &cp
+	return matched
+}
+
+func toolSessionResolutionRank(current Record, sessionID string) int {
+	currentSID := ""
+	if current.Provenance != nil {
+		currentSID = current.Provenance.ToolSessionID
+	}
+	switch current.State {
+	case v2.StateSeated:
+		if currentSID == sessionID {
+			return 3
+		}
+	case v2.StateUnseated:
+		if currentSID == sessionID {
+			return 2
+		}
+	case v2.StateRetired, v2.StateLost:
+		return 1
+	}
+	return 0
 }
 
 // ToolSessionIDForGUID returns the last non-empty session id recorded for a

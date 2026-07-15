@@ -23,12 +23,16 @@ func TestRecordedBusSessionEvidenceAcceptsFieldRepairShapeThroughWriterAndLoader
 }
 
 func TestRecordedBusSessionEvidenceAcceptsCurrentWriterVerifiedShape(t *testing.T) {
-	verified := true
-	row := writerLoadedRepairRecord(t, &verified, "seated", "spawn")
+	for _, mechanism := range []string{"spawn", "clear"} {
+		t.Run(mechanism, func(t *testing.T) {
+			verified := true
+			row := writerLoadedRepairRecord(t, &verified, "seated", mechanism)
 
-	sid, reason := recordedBusSessionEvidence(&row)
-	if sid != "sess-me" || reason != "" {
-		t.Fatalf("recordedBusSessionEvidence = (%q, %q), want verified writer SID accepted", sid, reason)
+			sid, reason := recordedBusSessionEvidence(&row)
+			if sid != "sess-me" || reason != "" {
+				t.Fatalf("recordedBusSessionEvidence = (%q, %q), want verified %s writer SID accepted", sid, reason, mechanism)
+			}
+		})
 	}
 }
 

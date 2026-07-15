@@ -122,8 +122,10 @@ scenario_reenroll_spawned() {
   CASE="$ROOT/reenroll_spawned"
   mkdir -p "$CASE/home" "$CASE/state"
   cat >"$CASE/state/registry.jsonl" <<'JSONL'
-{"guid":"guid-spawned-0000","short_guid":"guid","label":"spawned-old","role":"worker","agent":"codex","terminal_id":"term_OLD","pane_id":"p_old","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-spawn","tag":"worker","batch_id":"","cwd":"/old","workspace_id":"ws_old","branch":"","ts":"2026-07-03T00:00:00Z"}}
+{"kind":"node","event":"node_registered","node_id":"11111111-1111-1111-1111-111111111111","recorded_at":"2026-07-12T00:00:00Z"}
+{"kind":"session","guid":"guid-spawned-0000","event":"seated","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"spawned-old","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_OLD","pane_id":"p_old","hcom_name":"spawned-live","hcom_verified":true},"sids":[{"sid":"sess-spawn","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-spawn","tag":"worker","cwd":"/old","workspace_id":"ws_old","ts":"2026-07-03T00:00:00Z"}}
 JSONL
+  printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
   RUN_ERR_F="$CASE/stderr"
   RUN_OUT="$(env -i \
     PATH="$PATH_HERMETIC" \
@@ -197,6 +199,79 @@ scenario_reenroll_reused_pane
 scenario_reenroll_compacted_pane
 
 if [[ "$WRITE" -eq 0 ]]; then
+	HELP_OUT="$("${HEN[@]}" --help 2>/dev/null | tr '\n' ' ')"
+	if grep -q 'stored bus name' <<<"$HELP_OUT" \
+	  && grep -q 'exact recorded/live session id match' <<<"$HELP_OUT" \
+	  && grep -q 'unchanged terminal and unchanged label' <<<"$HELP_OUT"; then
+		printf 'PASS  help: guid reuse states the exact ownership proof\n'
+	else
+		printf 'FAIL  help: guid reuse does not state stored-bus AND (session OR terminal+label) proof\n'; fail=1
+	fi
+
+	CASE="$ROOT/stale-sid-full-seat"
+	mkdir -p "$CASE/home" "$CASE/state"
+	cat >"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"node","event":"node_registered","node_id":"11111111-1111-1111-1111-111111111111","recorded_at":"2026-07-12T00:00:00Z"}
+{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true,"namespace":"/hfake/.hcom"},"sids":[{"sid":"sid-recorded","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"clear","spawned_by":"user","tool_session_id":"sid-recorded","tag":"worker","cwd":"/old","workspace_id":"ws_self","ts":"2026-07-12T00:00:01Z"}}
+JSONL
+	printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
+	RUN_ERR_F="$CASE/stderr"
+	RUN_OUT="$(env -i \
+	  PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+	  HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-existing-0000 HERDER_ROLE=worker \
+	  HCOM_SESSION_ID=sid-live HCOM_DIR=/hfake/.hcom HCOM_TAG=worker \
+	  MOCK_HCOM_ROWS='[{"name":"stable-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+	  "${HEN[@]}" --label stable --json 2>"$RUN_ERR_F")"
+	RUN_RC=$?
+	if [[ "$RUN_RC" -eq 0 ]] \
+	  && jq -s -e '
+		[.[] | select(.kind=="session") | .guid] | unique | length == 1
+	  ' "$CASE/state/registry.jsonl" >/dev/null \
+	  && tail -n1 "$CASE/state/registry.jsonl" | jq -e '
+		.guid == "guid-existing-0000" and .state == "seated" and .label == "stable" and
+		.seat.terminal_id == "term_SELF" and .seat.pane_id == "p_self" and
+		.seat.hcom_name == "stable-bus" and .seat.hcom_verified == true and
+		.provenance.mechanism == "clear" and .provenance.tool_session_id == "sid-live" and
+		(.provenance | has("spawned_by") and has("tag") and has("cwd") and has("workspace_id") and has("ts")) and
+		.continuity == "confirmed" and (.sids | length == 1 and .[0].sid == "sid-live" and .[0].source == "harvest")
+	  ' >/dev/null; then
+		printf 'PASS  repair: stale sid accepts full seated proof and records the live sid\n'
+	else
+		printf 'FAIL  repair: stale sid full-seat proof — rc=%s err=%s out=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")" "$RUN_OUT"; fail=1
+	fi
+
+	check_guid_reuse_refusal() {
+		local name="$1" terminal="$2" label="$3" rows="$4"
+		CASE="$ROOT/$name"
+		mkdir -p "$CASE/home" "$CASE/state"
+		cat >"$CASE/state/registry.jsonl" <<JSONL
+{"kind":"node","event":"node_registered","node_id":"11111111-1111-1111-1111-111111111111","recorded_at":"2026-07-12T00:00:00Z"}
+{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"$terminal","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true},"sids":[{"sid":"sid-recorded","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"clear","tool_session_id":"sid-recorded"}}
+JSONL
+		printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
+		cp "$CASE/state/registry.jsonl" "$CASE/before.jsonl"
+		RUN_ERR_F="$CASE/stderr"
+		RUN_OUT="$(env -i \
+		  PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+		  HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-existing-0000 HERDER_ROLE=worker \
+		  HCOM_SESSION_ID=sid-live MOCK_HCOM_ROWS="$rows" \
+		  "${HEN[@]}" --label "$label" 2>"$RUN_ERR_F")"
+		RUN_RC=$?
+		if [[ "$RUN_RC" -eq 1 ]] \
+		  && cmp -s "$CASE/before.jsonl" "$CASE/state/registry.jsonl" \
+		  && grep -q 'refused to re-enroll' "$RUN_ERR_F" \
+		  && grep -q 'retry' "$RUN_ERR_F" \
+		  && ! grep -q 'under its own guid' "$RUN_ERR_F"; then
+			printf 'PASS  guard: %s refuses without mutating or minting identity\n' "$name"
+		else
+			printf 'FAIL  guard: %s — rc=%s err=%s\n' "$name" "$RUN_RC" "$(cat "$RUN_ERR_F")"; fail=1
+		fi
+	}
+
+	check_guid_reuse_refusal inherited-guid term_OTHER stable '[]'
+	check_guid_reuse_refusal different-live-bus term_SELF stable '[{"name":"other-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]'
+	check_guid_reuse_refusal changed-label term_SELF changed '[{"name":"stable-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]'
+
   RUN_ERR_F="$ROOT/outside-stderr"
   RUN_OUT="$(env -i PATH="$PATH_HERMETIC" HOME="$ROOT/home" HERDER_STATE_DIR="$ROOT/state" "${HEN[@]}" 2>"$RUN_ERR_F")"
   RUN_RC=$?

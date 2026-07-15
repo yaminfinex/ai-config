@@ -258,6 +258,68 @@ func TestResolveByToolSessionIDScansClosedAndOlderRows(t *testing.T) {
 	}
 }
 
+func TestResolveByToolSessionIDPrefersCurrentNonTerminalOwnership(t *testing.T) {
+	t.Run("seated current sid beats later retired observation", func(t *testing.T) {
+		path := writeRegistry(t,
+			`{"kind":"session","guid":"guid-seated","event":"seated","state":"seated","label":"current","seat":{"terminal_id":"term-current"},"provenance":{"mechanism":"clear","tool_session_id":"sid-shared"}}`,
+			`{"kind":"session","guid":"guid-retired","event":"retired","state":"retired","provenance":{"mechanism":"enroll","tool_session_id":"sid-shared"}}`,
+		)
+		recs, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hit := ResolveByToolSessionID(recs, "sid-shared")
+		if hit == nil || ptrString(hit.GUID) != "guid-seated" {
+			t.Fatalf("hit = %+v, want current seated owner", hit)
+		}
+	})
+
+	t.Run("unseated beats retired historical observation", func(t *testing.T) {
+		path := writeRegistry(t,
+			`{"kind":"session","guid":"guid-dormant","event":"unseated","state":"unseated","label":"dormant","provenance":{"mechanism":"spawn","tool_session_id":"sid-shared"}}`,
+			`{"kind":"session","guid":"guid-retired","event":"retired","state":"retired","provenance":{"mechanism":"enroll","tool_session_id":"sid-shared"}}`,
+		)
+		recs, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hit := ResolveByToolSessionID(recs, "sid-shared")
+		if hit == nil || ptrString(hit.GUID) != "guid-dormant" {
+			t.Fatalf("hit = %+v, want unseated owner", hit)
+		}
+	})
+
+	t.Run("historical sid on seated row is not current corroboration", func(t *testing.T) {
+		path := writeRegistry(t,
+			`{"kind":"session","guid":"guid-retired","event":"retired","state":"retired","provenance":{"mechanism":"enroll","tool_session_id":"sid-shared"}}`,
+			`{"kind":"session","guid":"guid-seated","event":"seated","state":"seated","label":"current","seat":{"terminal_id":"term-current"},"provenance":{"mechanism":"spawn","tool_session_id":"sid-shared"}}`,
+			`{"kind":"session","guid":"guid-seated","event":"recognised","state":"seated","label":"current","seat":{"terminal_id":"term-current"},"provenance":{"mechanism":"spawn","tool_session_id":"sid-other"}}`,
+		)
+		recs, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hit := ResolveByToolSessionID(recs, "sid-shared")
+		if hit == nil || ptrString(hit.GUID) != "guid-retired" {
+			t.Fatalf("hit = %+v, want terminal historical owner", hit)
+		}
+	})
+
+	t.Run("retired-only lookup remains available", func(t *testing.T) {
+		path := writeRegistry(t,
+			`{"kind":"session","guid":"guid-retired","event":"retired","state":"retired","provenance":{"mechanism":"spawn","tool_session_id":"sid-only"}}`,
+		)
+		recs, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hit := ResolveByToolSessionID(recs, "sid-only")
+		if hit == nil || ptrString(hit.GUID) != "guid-retired" {
+			t.Fatalf("hit = %+v, want retired fallback", hit)
+		}
+	})
+}
+
 func TestAppend(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", "registry.jsonl")
 	if err := Append(path, []byte(`{"guid":"g-1","status":"active"}`)); err != nil {
