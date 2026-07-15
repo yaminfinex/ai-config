@@ -265,6 +265,7 @@ ROW_SELF_WRONG_LIVE='{"kind":"session","guid":"guid-me-0000","event":"seated","s
 ROW_SELF_REPAIRED='{"kind":"session","guid":"guid-me-0000","event":"recognised","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"me-bus","confirmed_at":"2026-07-15T04:00:00Z"},"sids":[{"sid":"sess-me","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"enroll","tool_session_id":"sess-me","tag":"worker"}}'
 ROW_SELF_REPAIRED_VERIFIED='{"kind":"session","guid":"guid-me-0000","event":"recognised","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"me-bus","hcom_verified":true},"sids":[{"sid":"sess-me","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"enroll","tool_session_id":"sess-me","tag":"worker"}}'
 ROW_SELF_BOUND_UNVERIFIED='{"kind":"session","guid":"guid-me-0000","event":"recognised","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"me-bus","hcom_verified":false},"sids":[{"sid":"sess-me","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"enroll","tool_session_id":"sess-me","tag":"worker"}}'
+ROW_RETIRED_SID='{"kind":"session","guid":"guid-retired-0000","event":"retired","state":"retired","provenance":{"mechanism":"enroll","tool_session_id":"sess-me"}}'
 CONT='run the pinned gate, then report DONE on thread unit-w'
 
 # Parent arm/abort shapes (HERDER_COMPACT_THEN_DRYRUN=1 in run_compact keeps the
@@ -279,6 +280,10 @@ unset MOCK_HCOM_ROWS
 COMPACT_SEED_REGISTRY="$ROW_SELF_REPAIRED_VERIFIED"
 MOCK_HCOM_ROWS='[{"name":"me-bus","joined":true,"session_id":"sess-me","launch_context":{}}]'
 scenario then_dryrun_verified midturn      guid   --dry-run "$STEER" --then "$CONT"
+unset MOCK_HCOM_ROWS
+COMPACT_SEED_REGISTRY="$ROW_SELF_REPAIRED_VERIFIED"$'\n'"$ROW_RETIRED_SID"
+MOCK_HCOM_ROWS='[{"name":"me-bus","joined":true,"session_id":"sess-me","launch_context":{"pane_id":"w1-2"}}]'
+scenario then_dryrun_retired_sid_shadow midturn guid_session --dry-run "$STEER" --then "$CONT"
 unset MOCK_HCOM_ROWS
 COMPACT_SEED_REGISTRY="$ROW_SELF_BOUND_UNVERIFIED"
 MOCK_HCOM_ROWS='[{"name":"me-bus","joined":true,"session_id":"sess-me","launch_context":{}}]'

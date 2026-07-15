@@ -2,9 +2,12 @@ package enrollcmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
+	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -45,6 +48,128 @@ func TestLabelOwnerErrorDistinguishesSeatedAndUnseatedHolders(t *testing.T) {
 		if !strings.Contains(dead.Error(), want) {
 			t.Fatalf("dead error = %q, want %q", dead, want)
 		}
+	}
+}
+
+func TestVerifyExistingGUIDOwnerRequiresStoredBusAndEitherSessionOrFullSeatProof(t *testing.T) {
+	for _, sidMatches := range []bool{false, true} {
+		for _, terminalMatches := range []bool{false, true} {
+			for _, storedBusMatches := range []bool{false, true} {
+				for _, labelMatches := range []bool{false, true} {
+					name := fmt.Sprintf("sid=%t/terminal=%t/bus=%t/label=%t", sidMatches, terminalMatches, storedBusMatches, labelMatches)
+					t.Run(name, func(t *testing.T) {
+						terminalID := "term-other"
+						if terminalMatches {
+							terminalID = "term-live"
+						}
+						liveName := "bus-other"
+						if storedBusMatches {
+							liveName = "bus-stored"
+						}
+						liveSID := "sid-new"
+						if sidMatches {
+							liveSID = "sid-recorded"
+						}
+						label := "different-label"
+						if labelMatches {
+							label = "stable-label"
+						}
+
+						current := &v2.SessionRecord{
+							GUID:  "guid-existing",
+							State: v2.StateSeated,
+							Label: "stable-label",
+							Seat: &v2.Seat{
+								TerminalID: "term-live",
+								HcomName:   "bus-stored",
+							},
+							SIDs: []v2.SID{{SID: "sid-recorded"}},
+						}
+						pane := herdrcli.Pane{TerminalID: terminalID}
+						live := hcomidentity.Result{Name: liveName, SessionID: liveSID, Verified: true}
+
+						err := verifyExistingGUIDOwner(current, pane, live, label)
+						wantAccept := storedBusMatches && (sidMatches || (terminalMatches && labelMatches))
+						if wantAccept && err != nil {
+							t.Fatalf("full proof refused: %v", err)
+						}
+						if !wantAccept && err == nil {
+							t.Fatal("incomplete ownership proof accepted")
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestVerifyExistingGUIDOwnerTreatsUnverifiedMatchingSessionAsNoBusProof(t *testing.T) {
+	current := &v2.SessionRecord{
+		GUID:  "guid-existing",
+		State: v2.StateSeated,
+		Label: "stable-label",
+		Seat:  &v2.Seat{TerminalID: "term-live", HcomName: "bus-stored"},
+		SIDs:  []v2.SID{{SID: "sid-recorded"}},
+	}
+	live := hcomidentity.Result{Name: "bus-stored", SessionID: "sid-recorded", Verified: false}
+	if err := verifyExistingGUIDOwner(current, herdrcli.Pane{TerminalID: "term-live"}, live, "stable-label"); err == nil {
+		t.Fatal("unverified bus result accepted despite matching session id")
+	}
+}
+
+func TestVerifyExistingGUIDOwnerBootstrapsAbsentStoredBusName(t *testing.T) {
+	tests := []struct {
+		name        string
+		recordedSID string
+		liveSID     string
+		terminalID  string
+		label       string
+		wantAccept  bool
+	}{
+		{
+			name:        "matching session alone",
+			recordedSID: "sid-recorded",
+			liveSID:     "sid-recorded",
+			terminalID:  "term-other",
+			label:       "different-label",
+			wantAccept:  true,
+		},
+		{
+			name:       "matching terminal and label without recorded session",
+			liveSID:    "sid-live",
+			terminalID: "term-live",
+			label:      "stable-label",
+			wantAccept: true,
+		},
+		{
+			name:        "neither session nor full seat proof",
+			recordedSID: "sid-recorded",
+			liveSID:     "sid-other",
+			terminalID:  "term-other",
+			label:       "different-label",
+			wantAccept:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			current := &v2.SessionRecord{
+				GUID:  "guid-existing",
+				State: v2.StateSeated,
+				Label: "stable-label",
+				Seat:  &v2.Seat{TerminalID: "term-live"},
+			}
+			if tt.recordedSID != "" {
+				current.SIDs = []v2.SID{{SID: tt.recordedSID}}
+			}
+			live := hcomidentity.Result{Name: "bus-live", SessionID: tt.liveSID, Verified: true}
+			err := verifyExistingGUIDOwner(current, herdrcli.Pane{TerminalID: tt.terminalID}, live, tt.label)
+			if tt.wantAccept && err != nil {
+				t.Fatalf("bootstrap proof refused: %v", err)
+			}
+			if !tt.wantAccept && err == nil {
+				t.Fatal("incomplete bootstrap proof accepted")
+			}
+		})
 	}
 }
 

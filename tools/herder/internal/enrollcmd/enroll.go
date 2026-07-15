@@ -92,6 +92,14 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 
 	registryPath := registry.DefaultPath()
 	var appendedRow []byte
+	// PreserveToolSessionID needs the append-only history when another writer's
+	// latest row dropped its SID. The locked latest projection is appended to
+	// this snapshot below so a concurrent current fact wins the fallback scan.
+	priorRecords, loadErr := registry.Load(registryPath)
+	if loadErr != nil && !os.IsNotExist(loadErr) {
+		die(stderr, loadErr.Error())
+		return 1
+	}
 
 	// Unseat prior identities bound to this same pane. A herdr pane hosts
 	// exactly one live session at a time, but pane ids are display-only and
@@ -110,7 +118,7 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 				break
 			}
 		}
-		if err := verifyExistingGUIDOwner(latest, pane, liveBus); err != nil {
+		if err := verifyExistingGUIDOwner(latest, pane, liveBus, label); err != nil {
 			return nil, err
 		}
 		if owner := registry.V2LabelOwner(tx.Projection, label, guid); owner != nil {
@@ -145,6 +153,17 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 		prov := registry.BuildProvenance(mechanism, "", os.Getenv("HCOM_TAG"), pane.CWD, pane.WorkspaceID)
 		if liveBus.Verified && liveBus.SessionID != "" {
 			prov.ToolSessionID = liveBus.SessionID
+		}
+		if prov.ToolSessionID == "" && latest != nil {
+			priorGUID := latest.GUID
+			priorSID := latest.Provenance.ToolSessionID
+			if len(latest.SIDs) > 0 {
+				priorSID = latest.SIDs[len(latest.SIDs)-1].SID
+			}
+			priorProv := registry.Provenance{ToolSessionID: priorSID}
+			recordsForPreservation := append([]registry.Record(nil), priorRecords...)
+			recordsForPreservation = append(recordsForPreservation, registry.Record{GUID: &priorGUID, Provenance: &priorProv})
+			prov = registry.PreserveToolSessionID(prov, recordsForPreservation, guid)
 		}
 		verified := liveBus.Verified
 		rec := registry.Record{
@@ -226,27 +245,60 @@ func labelOwnerError(label string, owner v2.SessionRecord) error {
 	}
 }
 
-func verifyExistingGUIDOwner(current *v2.SessionRecord, pane herdrcli.Pane, live hcomidentity.Result) error {
+func verifyExistingGUIDOwner(current *v2.SessionRecord, pane herdrcli.Pane, live hcomidentity.Result, label string) error {
 	if current == nil {
 		return nil
 	}
+	switch current.State {
+	case v2.StateRetired:
+		return fmt.Errorf("refused to re-enroll %s: the existing identity is retired; run 'herder reopen %s' first, then retry the pinned re-enroll", current.GUID, current.GUID)
+	case v2.StateLost:
+		return fmt.Errorf("refused to re-enroll %s: the existing identity is lost and cannot be re-enrolled automatically; use the explicit lost-session recovery or adoption flow, then retry", current.GUID)
+	}
+	stored, claimsSeat := staleSeatClaim(*current)
+	if !claimsSeat && current.State != v2.StateUnseated {
+		return fmt.Errorf("refused to re-enroll %s: the existing identity has unsupported state %q and no seat evidence; repair the registry state explicitly, then retry", current.GUID, current.State)
+	}
+	if !live.Verified {
+		return fmt.Errorf("refused to re-enroll %s: stored bus name %q cannot be corroborated because live bus identity proof is unavailable (%s); restore or join that existing bus identity, then retry the same pinned re-enroll", current.GUID, stored.HcomName, live.Reason)
+	}
+	storedBusCaptured := stored.HcomName != "" && stored.HcomName != "null"
+	if storedBusCaptured && live.Name != stored.HcomName {
+		return fmt.Errorf("refused to re-enroll %s: calling live bus @%s does not match stored bus name @%s; restore or join @%s from the existing session, then retry the same pinned re-enroll", current.GUID, live.Name, stored.HcomName, stored.HcomName)
+	}
+
 	recordedSID := current.Provenance.ToolSessionID
 	if len(current.SIDs) > 0 {
 		recordedSID = current.SIDs[len(current.SIDs)-1].SID
 	}
+	if recordedSID != "" && recordedSID == live.SessionID {
+		return nil
+	}
+
+	terminalMatches := stored.TerminalID != "" && stored.TerminalID == pane.TerminalID
+	labelMatches := current.Label != "" && current.Label == label
+	if terminalMatches && labelMatches {
+		return nil
+	}
+
+	sidCause := "no recorded/live session id match"
 	if recordedSID != "" {
-		if live.SessionID == "" {
-			return fmt.Errorf("refused to re-enroll %s: recorded session %q cannot be corroborated from the live bus; restore live bus identity proof, then retry", current.GUID, recordedSID)
-		}
-		if recordedSID != live.SessionID {
-			return fmt.Errorf("refused to re-enroll %s: calling live session %q does not match recorded session %q; enroll the caller under its own guid", current.GUID, live.SessionID, recordedSID)
-		}
-		return nil
+		sidCause = fmt.Sprintf("calling live session %q does not match recorded session %q", live.SessionID, recordedSID)
 	}
-	if current.Seat != nil && current.Seat.TerminalID != "" && current.Seat.TerminalID == pane.TerminalID {
-		return nil
+	seatCause := ""
+	if !terminalMatches {
+		seatCause = fmt.Sprintf("live terminal %q does not match recorded terminal %q", pane.TerminalID, stored.TerminalID)
 	}
-	return fmt.Errorf("refused to re-enroll %s: its recorded seat is not the calling session and no matching live session id corroborates ownership; enroll the caller under its own guid", current.GUID)
+	if !labelMatches {
+		if seatCause != "" {
+			seatCause += "; "
+		}
+		seatCause += fmt.Sprintf("requested label %q does not match recorded label %q", label, current.Label)
+	}
+	if !storedBusCaptured {
+		return fmt.Errorf("refused to re-enroll %s: the existing seat has no stored bus name and bootstrap ownership proof failed: %s; %s; restore either the recorded session id or both the recorded terminal and label, then retry from a verified live bus row (bare enroll will not mint a replacement)", current.GUID, sidCause, seatCause)
+	}
+	return fmt.Errorf("refused to re-enroll %s: %s, and full seat corroboration failed (%s); restore the recorded terminal and label while joined as @%s, then retry the same pinned re-enroll (bare enroll will not mint a replacement)", current.GUID, sidCause, seatCause, stored.HcomName)
 }
 
 func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
@@ -307,9 +359,14 @@ LIVE=working. Must run inside a herdr pane (HERDR_ENV=1 and HERDR_PANE_ID set);
 refuses otherwise. The launch-time HCOM_INSTANCE_NAME is never trusted. If the
 current bus row cannot be proven from session/process/pane identity, hcom_name is
 recorded as unknown. Rerun herder enroll from the existing session to recapture
-and repair its bus binding; the same guid and label may be reused only when the
-live session id or unchanged terminal corroborates ownership. An inherited guid
-that belongs to another session is refused.
+and repair its bus binding. Reusing an existing guid always requires the caller's
+verified live bus name to equal the stored bus name. With that proof, ownership
+requires either an exact recorded/live session id match, or both unchanged
+terminal and unchanged label. If an older or adopted seated row has no stored bus
+name, a verified live caller may bootstrap it with the same session-or-seat proof;
+the successful repair captures its live name and session id, so later re-enrolls
+use the strict stored-name rule. An inherited guid that belongs to another
+session is refused; bare enroll never mints a replacement as a refusal remedy.
 `)
 }
 
