@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-15 11:25'
-updated_date: '2026-07-15 20:28'
+updated_date: '2026-07-15 20:34'
 labels: []
 dependencies: []
 ordinal: 242500
@@ -26,5 +26,11 @@ Fix directions to evaluate (design checkpoint first): (a) treat stored-but-unver
 <!-- AC:BEGIN -->
 - [ ] #1 Red-first fixture: downgraded shape (stored name kept, hcom_verified=false) — repair path proven; strict-branch refusal for verified stored names unchanged (mutation-armed)
 - [ ] #2 Red-first fixture: enroll on a matching terminal+pane+hcom_name repairs or refuses with real escape hatch — never mints a duplicate seated row
-- [ ] #3 A cleanup path exists for a duplicate seated row on a live pane (unseat-without-close or equivalent); the live specimen pair is cleaned with it
+- [ ] #3 A cleanup path exists for a duplicate seated row on a live pane (unseat-without-close or equivalent); the live specimen pair is cleaned with it — ORDERING: the duplicate is load-bearing for the victim's bare identity-correlated verbs (pane match), so repair + re-verify the ORIGINAL row first, then clean the duplicate; cleaning first re-strands the victim
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+CLEANUP ORDERING UPDATE (2026-07-15, wire-proven): the duplicate specimen row is now LOAD-BEARING for the victim — their bare identity-correlated verbs (compact) succeed via the duplicate row pane match while the original downgraded row still refuses. Cleanup must therefore repair and re-verify the ORIGINAL row first (bare-verb path proven), and only then clean the duplicate — cleaning first re-strands the victim. AC #3 is to be read with this ordering.
+<!-- SECTION:NOTES:END -->
