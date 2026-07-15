@@ -23,7 +23,7 @@
 # HERDER_CMD_SEND_BIN may point at ANY executable honouring the herder send
 # CLI; it is exec'd directly, so the same suite gates any implementation.
 #
-# Determinism: the registry + team bus dir are per-run tempdirs normalized to
+# Determinism: the registry + recorded bus dir are per-run tempdirs normalized to
 # <BUS>, and the --after ISO timestamp in the recorded events argv is
 # normalized to <TS>.
 
@@ -48,7 +48,7 @@ WRITE=0
 MOCKBIN="$(mktemp -d)"
 ln -s "$TESTS_DIR/mock-hcom" "$MOCKBIN/hcom"
 
-# Registry: a bus-bound peer (team bus), a bus-less peer (bash pane), and a
+# Registry: a bus-bound peer, a bus-less peer (bash pane), and a
 # RETIRED bus-bound session — its pane/terminal coordinates must NOT resolve
 # (coordinates are positional; retired sessions are refused on that path).
 REG_DIR="$(mktemp -d)"

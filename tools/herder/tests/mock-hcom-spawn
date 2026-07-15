@@ -32,7 +32,7 @@
 #       *_sendfail          — `hcom send` exits 1 → verify: send_failed
 #   MOCK_PROBE_DIR   probe dir; every invocation records the effective
 #                    HCOM_DIR to hcom_dir (proves capture AND delivery are
-#                    scoped to the resolved team bus); send/events argv are
+#                    scoped to the global bus); send/events argv are
 #                    recorded to send_argv/events_argv for the goldens
 
 set -euo pipefail

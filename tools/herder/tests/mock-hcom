@@ -15,7 +15,7 @@
 #                       assert bus scoping + recipient addressing.
 #
 # It records the HCOM_DIR it was invoked under on EVERY call, proving the driver
-# scoped the send to the peer's recorded team bus.
+# scoped the send to the peer's recorded bus.
 
 set -euo pipefail
 

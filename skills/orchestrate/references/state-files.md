@@ -23,7 +23,7 @@ not the whole doc>.
 - Liveness: <per role — cull-on-done / keep-open for interrogation>
 - Models: <per role>
 - Report to: <orchestrator hcom name — DONE/BLOCKED go there, one thread per unit (`--thread <unit-slug>`, members seeded on the first send) | none — relay/soloist self-spawn>
-- Bus: <global (default) | team `<run-slug>` when the machine runs several orchestrations>
+- Bus: global
 - Golden agent: <bottle name + what it holds | none>
 - Worktree(s) / branch / workspace: <...>
 - Registered panes: <whether hand-launched panes should run `herder enroll`; whether culled panes may be reopened with `herder resume <guid>`>

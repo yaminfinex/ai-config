@@ -90,6 +90,9 @@ pass) · `contested` (survived/changed under review) · `unreviewed` (post-revie
 Confirmed / high-confidence:
 - Commit shas inside events can't survive `pull --rebase` — sha-based freshness structurally broken (3 reviewers, independently). *(Moot if #9 adopted — but #9 unreviewed.)*
 - Sequential NNN ids collide across offline nodes → dir merge → silent mission loss (confidence 100).
+> **Outcome note:** Herder's team surface has been removed; the finding below is preserved verbatim
+> because its failure mode motivated that decision.
+
 - Per-mission team buses: cross-bus `resolve` returns Not-found → **silent fallback to brittle keystroke transport** for standing/cross-mission agents; transcripts don't partition by team anyway (config-dir pinned to real ~/.claude); membership would exist in two authorities.
 - session_id capture: absent everywhere today; the join everything assumes (see #14).
 - Archive labeled "durable" while mechanism = single machine + backup cadence; daemon-down = unbounded unshipped window; disk-full converts deferred-retention into the data-loss path.

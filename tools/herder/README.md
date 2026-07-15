@@ -96,8 +96,8 @@ knowing when working across checkouts and worktrees:
 coordinates, so enrolled sessions (no `$HERDER_GUID` in their environment) get bus-native
 completion reports. `--notify-to` additionally accepts the target's bus name directly: a seated
 session's `hcom_name` matches, and a name the registry doesn't know is accepted if it is
-live on the bus the child will join (team-scoped — a global-bus peer for a `--team` child still
-refuses, since the child couldn't reach it anyway). Notify is bus-native ONLY: a spawner that
+live on the global bus the child will join. A name on another bus refuses, since the child
+couldn't reach it anyway. Notify is bus-native ONLY: a spawner that
 resolves to no bus name is a hard error before any pane is created (the keystroke ring went with
 the herdr delivery transport, TASK-003). Pane/terminal notify resolution shares `herder send`'s
 reused-pane discipline (TASK-035): a lone seated session resolves as before, but when a coordinate
@@ -241,18 +241,12 @@ this path and hcom need not be installed. Claude-only: codex `-p` is `--profile`
 one-shots (`codex exec`) still ride the hcom path. Applies to fresh launches only — `--resume`/
 `--fork` stay on hcom.
 
-**Team buses (opt-in ringfence):** the bus is scoped by `HCOM_DIR`, pinned into the child's env at
-spawn: `--team <name>` (else `$HERDER_TEAM`, else the global `~/.hcom` bus) →
-`HCOM_DIR=$HERDER_TEAMS_ROOT/<name>` (default root `~/.hcom/teams`). The global bus is the normal
-operating mode — registry addressing already gives per-agent targeting. Config-dir pin:
-`PinConfigDir` (`internal/launchcmd`) pins `CLAUDE_CONFIG_DIR`/`CODEX_HOME`/`GEMINI_CLI_HOME` only
-when `HCOM_DIR` is set and ≠ `~/.hcom` (hcom's local-mode condition; pinning on the global bus
-would move Claude's JSON state for no reason). Pinning `CLAUDE_CONFIG_DIR=~/.claude` re-roots
-claude's top-level config from `~/.claude.json` to `~/.claude/.claude.json`, so the pin also seeds
-that file by copying `~/.claude.json` when the target is missing (never overwritten; any failure
-silently falls back to fresh state). An onboarded machine therefore skips claude's one-time
-onboarding on team buses; only a never-onboarded machine (no `~/.claude.json`) sees it once, and it
-persists machine-wide after that.
+**Bus scope:** every herder spawn joins the node's global `~/.hcom` bus and pins that `HCOM_DIR`
+into the child environment. Herder does not create or select per-run bus directories; registry
+addressing and hcom tags provide per-agent and per-role targeting on the shared bus. `herder launch`
+still inherits an explicitly supplied `HCOM_DIR` for direct upstream hcom use. Its `PinConfigDir`
+helper pins `CLAUDE_CONFIG_DIR`/`CODEX_HOME`/`GEMINI_CLI_HOME` only for a non-default bus, preserving
+auth without moving tool state during ordinary global-bus launches.
 
 Without the seed, claude treats a pinned launch as a fresh install and prints an alarming triple to
 stderr — `Claude configuration file not found at: ~/.claude/.claude.json` / `A backup file exists

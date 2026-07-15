@@ -346,8 +346,8 @@ Options:
 
 hcom is a HARD dependency — supported families launch through hcom, except the
 Grok family whose herder-owned bridge consumes the real hcom binary
-directly. Launch never falls back to a raw tool. HCOM_DIR (the team bus) is inherited from the environment, and
-each tool's real config dir is pinned so auth survives an isolated team bus. The
+directly. Launch never falls back to a raw tool. HCOM_DIR is inherited from the environment, and
+each tool's real config dir is pinned so auth survives a non-default bus. The
 claude pin also seeds ~/.claude/.claude.json from ~/.claude.json when missing, so
 pinned launches keep onboarding/identity state instead of bootstrapping fresh
 (and don't print claude's "configuration file not found / backup exists" stderr

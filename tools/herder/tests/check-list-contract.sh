@@ -10,7 +10,7 @@
 #   collapse       — append-only registry collapses to latest-record-per-guid;
 #                    retired and lost sessions are hidden unless --all.
 #   modes          — table (default), --all, --json, --raw, --guid (found +
-#                    missing), --teams, missing registry, herdr-list failure,
+#                    missing), missing registry, herdr-list failure,
 #                    unresolved continuation surfacing + acknowledgement.
 #   provenance     — raw/json modes pass provenance-bearing rows through.
 #
@@ -23,9 +23,8 @@
 # (the bash script or the Go `bin/herder list` shim); it is exec'd directly,
 # not via `bash`, so the same suite gates either implementation.
 #
-# Determinism: HOME is a fixed fake path (never touched), the registry is a
-# committed fixture, and the only tempdir that can leak into output (the teams
-# root) is normalized to <ROOT> before diffing.
+# Determinism: HOME is a fixed fake path (never touched), and the registry is a
+# committed fixture.
 
 set -uo pipefail
 
@@ -88,10 +87,6 @@ MOCK_HERDR
 chmod +x "$MOCKBIN/herdr"
 
 PATH_HERMETIC="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin"
-
-# Teams root for the --teams scenario (filesystem-driven enumeration).
-TEAMS_ROOT="$ROOT/teams"
-mkdir -p "$TEAMS_ROOT/blue" "$TEAMS_ROOT/red"
 
 # Context snapshot scenario: scratch-only state, never the live registry/bus.
 CTX_STATE="$ROOT/list-ctx-state"
@@ -184,7 +179,6 @@ SCENARIOS=(
   "guid_full|normal|$FIX|--guid guid-beta-0000"
   "guid_short|normal|$FIX|--guid dupe"
   "guid_missing|normal|$FIX|--guid nope"
-  "teams|normal|$FIX|--teams"
   "noregistry|normal|/hfake/absent-state|"
   "livefail|fail|$FIX|"
   "provenance_raw|normal|$TESTS_DIR/fixtures/list-provenance|--raw"
@@ -212,7 +206,6 @@ run_one() {  # $1=mock scenario, $2=state dir, rest=args → prints normalized b
     PATH="$PATH_HERMETIC" \
     HOME="/hfake" \
     HERDER_STATE_DIR="$state" \
-    HERDER_TEAMS_ROOT="$TEAMS_ROOT" \
     MOCK_LIST_SCENARIO="$scen" \
     "${HL[@]}" "$@" 2>"$err")"
   code=$?

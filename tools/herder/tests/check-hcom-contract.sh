@@ -10,7 +10,7 @@
 #                name; a bus-less row (and its term_* coordinates) REFUSES
 #                with exit 2 (no keystroke fallback exists).
 #   scoping    — the send scopes every hcom call to the peer's recorded hcom_dir
-#                (proves team-bus isolation) and never leaks HCOM_DIR to the caller.
+#                (proves recorded-bus isolation) and never leaks HCOM_DIR to the caller.
 #   addressing — the send goes to @<hcom_name> (the recorded bus name), not the
 #                user-facing guid/label, with --from <sender>.
 #   verify     — deliver: ack in the window ⇒ verify=delivered/exit 0; no ack ⇒
@@ -115,7 +115,7 @@ run_send hcom delivered "$P" "" --json busagent "hello world"
 grep -q 'verify=delivered' <<<"$RUN_ERR" && ok "delivered: verify=delivered" || bad "delivered: verify=delivered" "err=$RUN_ERR"
 grep -q '@busagent-rive'   <<<"$RUN_ERR" && ok "delivered: reports bus name" || bad "delivered: reports bus name" "err=$RUN_ERR"
 # scoping: mock recorded the effective HCOM_DIR == the peer's recorded hcom_dir
-[[ "$(cat "$P/hcom_dir" 2>/dev/null)" == "$BUS_DIR" ]] && ok "scoping: HCOM_DIR pinned to team bus" || bad "scoping: HCOM_DIR pinned" "got '$(cat "$P/hcom_dir" 2>/dev/null)' want '$BUS_DIR'"
+[[ "$(cat "$P/hcom_dir" 2>/dev/null)" == "$BUS_DIR" ]] && ok "scoping: HCOM_DIR pinned to recorded bus" || bad "scoping: HCOM_DIR pinned" "got '$(cat "$P/hcom_dir" 2>/dev/null)' want '$BUS_DIR'"
 # addressing: send used @<hcom_name>, --from orchestrator, -- <message>
 SARGV="$(cat "$P/send_argv" 2>/dev/null || true)"
 grep -q -- '--from orchestrator' <<<"$SARGV" && ok "addressing: --from sender" || bad "addressing: --from sender" "argv='$SARGV'"

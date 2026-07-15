@@ -24,7 +24,6 @@ type hcomDryRunRecord struct {
 	Transport string `json:"transport"`
 	HcomName  string `json:"hcom_name"`
 	HcomDir   string `json:"hcom_dir"`
-	Team      string `json:"team"`
 	DryRun    bool   `json:"dry_run"`
 }
 
@@ -114,14 +113,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			// Forced-hcom debug affordance (unchanged from the driver era): an
 			// unregistered target is a literal bus name on the ambient HCOM_DIR.
 			if opts.DryRun {
-				fmt.Fprintf(stderr, "herder send --dry-run: %s -> hcom bus @%s (team: global, HCOM_DIR=%s)\n", target, target, ambientHcomDir())
+				fmt.Fprintf(stderr, "herder send --dry-run: %s -> hcom bus @%s (HCOM_DIR=%s)\n", target, target, ambientHcomDir())
 				if opts.JSONOutput {
 					writeCompactJSON(stdout, hcomDryRunRecord{
 						Target:    target,
 						Transport: "hcom",
 						HcomName:  target,
 						HcomDir:   ambientHcomDir(),
-						Team:      "global",
 						DryRun:    true,
 					})
 				}
@@ -153,22 +151,17 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if opts.DryRun {
-		team := rec.Team
-		if team == "" {
-			team = "global"
-		}
 		dir := rec.HcomDir
 		if dir == "" || dir == "null" {
 			dir = ambientHcomDir()
 		}
-		fmt.Fprintf(stderr, "herder send --dry-run: %s -> hcom bus @%s (team: %s, HCOM_DIR=%s)\n", target, rec.HcomName, team, dir)
+		fmt.Fprintf(stderr, "herder send --dry-run: %s -> hcom bus @%s (HCOM_DIR=%s)\n", target, rec.HcomName, dir)
 		if opts.JSONOutput {
 			writeCompactJSON(stdout, hcomDryRunRecord{
 				Target:    target,
 				Transport: "hcom",
 				HcomName:  rec.HcomName,
 				HcomDir:   rec.HcomDir,
-				Team:      rec.Team,
 				DryRun:    true,
 			})
 		}

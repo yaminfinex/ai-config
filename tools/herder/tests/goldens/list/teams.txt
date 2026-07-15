@@ -1,9 +1,0 @@
-=== STDERR ===
-
-=== STDOUT ===
-TEAM                 HCOM_DIR
-global               /hfake/.hcom
-blue                 <ROOT>/teams/blue
-red                  <ROOT>/teams/red
-=== EXIT ===
-0
