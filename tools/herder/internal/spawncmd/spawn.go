@@ -62,6 +62,7 @@ type options struct {
 	Model         string
 	Provider      string
 	MissionSlug   string
+	MissionSet    bool
 	JSONOutput    bool
 	WaitTimeoutMS int
 	BindTimeoutMS int
@@ -153,6 +154,60 @@ type worktreeInfo struct {
 	Base         string `json:"base,omitempty"`
 	CheckoutPath string `json:"checkout_path"`
 	WorkspaceID  string `json:"workspace_id"`
+}
+
+type spawnJSONDetails struct {
+	PromptSent     bool
+	DeliveryResult string
+	Prompt         string
+	PasteNotes     []string
+	PermInjected   string
+	NewTab         bool
+	RootPaneClosed bool
+	NewTabResult   string
+	HcomCapture    string
+	Worktree       *worktreeInfo
+}
+
+func newSpawnJSONRecord(record spawnRecord, details spawnJSONDetails) spawnJSONRecord {
+	return spawnJSONRecord{
+		GUID:                 record.GUID,
+		ShortGUID:            record.ShortGUID,
+		Label:                record.Label,
+		Role:                 record.Role,
+		Agent:                record.Agent,
+		Provider:             record.Provider,
+		Model:                record.Model,
+		VendorVersion:        record.VendorVersion,
+		ExtraArgs:            record.ExtraArgs,
+		Argv:                 record.Argv,
+		PaneID:               record.PaneID,
+		WorkspaceID:          record.WorkspaceID,
+		TabID:                record.TabID,
+		TerminalID:           record.TerminalID,
+		CWD:                  record.CWD,
+		StartedAt:            record.StartedAt,
+		StartedByPane:        record.StartedByPane,
+		InitialPromptPresent: record.InitialPromptPresent,
+		HcomDir:              record.HcomDir,
+		HcomName:             record.HcomName,
+		HcomTag:              record.HcomTag,
+		HooksBound:           record.HooksBound,
+		TranscriptPath:       record.TranscriptPath,
+		Status:               record.Status,
+		Mission:              record.Mission,
+		Provenance:           record.Provenance,
+		PromptSent:           details.PromptSent,
+		DeliveryResult:       details.DeliveryResult,
+		ResendCommand:        resendCommandFor(details.DeliveryResult, record.Label, details.Prompt),
+		PasteNotes:           details.PasteNotes,
+		PermInjected:         details.PermInjected,
+		NewTab:               details.NewTab,
+		RootPaneClosed:       details.RootPaneClosed,
+		NewTabResult:         details.NewTabResult,
+		HcomCapture:          details.HcomCapture,
+		Worktree:             details.Worktree,
+	}
 }
 
 type workspace struct {
@@ -517,11 +572,8 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			if !ok {
 				return opts, 1
 			}
-			if v == "" {
-				die(stderr, "--mission requires a non-empty mission slug")
-				return opts, 1
-			}
 			opts.MissionSlug = v
+			opts.MissionSet = true
 			i += 2
 		case "--json":
 			opts.JSONOutput = true
@@ -672,7 +724,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 
 func (r *runner) run() int {
 	var mission *v2.Mission
-	if r.opts.MissionSlug != "" {
+	if r.opts.MissionSet {
 		resolved, err := missioncontext.ResolveExplicit(r.opts.MissionSlug, missioncontext.Options{})
 		if err != nil {
 			return missioncontext.WriteRefusal(r.stderr, "spawn", err)
@@ -1261,44 +1313,18 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 
 	r.writeSummary(record, wtInfo, isHcomAgent, rootClosed, newTabResult, permInjected, hcomCapture, busPrompt, promptSent, deliveryResult, readyReason, trustBlocked, pasteNotes)
 	if opts.JSONOutput {
-		outRecord := spawnJSONRecord{
-			GUID:                 record.GUID,
-			ShortGUID:            record.ShortGUID,
-			Label:                record.Label,
-			Role:                 record.Role,
-			Agent:                record.Agent,
-			Provider:             record.Provider,
-			Model:                record.Model,
-			VendorVersion:        record.VendorVersion,
-			ExtraArgs:            record.ExtraArgs,
-			Argv:                 record.Argv,
-			PaneID:               record.PaneID,
-			WorkspaceID:          record.WorkspaceID,
-			TabID:                record.TabID,
-			TerminalID:           record.TerminalID,
-			CWD:                  record.CWD,
-			StartedAt:            record.StartedAt,
-			StartedByPane:        record.StartedByPane,
-			InitialPromptPresent: record.InitialPromptPresent,
-			HcomDir:              record.HcomDir,
-			HcomName:             record.HcomName,
-			HcomTag:              record.HcomTag,
-			HooksBound:           record.HooksBound,
-			TranscriptPath:       record.TranscriptPath,
-			Status:               record.Status,
-			Mission:              record.Mission,
-			Provenance:           record.Provenance,
-			PromptSent:           promptSent,
-			DeliveryResult:       deliveryResult,
-			ResendCommand:        resendCommandFor(deliveryResult, record.Label, opts.Prompt),
-			PasteNotes:           pasteNotes,
-			PermInjected:         permInjected,
-			NewTab:               opts.NewTab,
-			RootPaneClosed:       rootClosed,
-			NewTabResult:         newTabResult,
-			HcomCapture:          hcomCapture,
-			Worktree:             wtInfo,
-		}
+		outRecord := newSpawnJSONRecord(record, spawnJSONDetails{
+			PromptSent:     promptSent,
+			DeliveryResult: deliveryResult,
+			Prompt:         opts.Prompt,
+			PasteNotes:     pasteNotes,
+			PermInjected:   permInjected,
+			NewTab:         opts.NewTab,
+			RootPaneClosed: rootClosed,
+			NewTabResult:   newTabResult,
+			HcomCapture:    hcomCapture,
+			Worktree:       wtInfo,
+		})
 		b, _ := json.Marshal(outRecord)
 		fmt.Fprintln(r.stdout, string(b))
 	}

@@ -144,8 +144,37 @@ func TestParseArgsAcceptsMission(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("parseArgs() code = %d, want 0", code)
 	}
-	if opts.MissionSlug != "alpha" {
-		t.Fatalf("MissionSlug = %q, want alpha", opts.MissionSlug)
+	if opts.MissionSlug != "alpha" || !opts.MissionSet {
+		t.Fatalf("mission options = (%q, %v), want (alpha, true)", opts.MissionSlug, opts.MissionSet)
+	}
+}
+
+func TestSpawnJSONMissionWireShape(t *testing.T) {
+	withMission, err := json.Marshal(newSpawnJSONRecord(
+		missionSpawnRecord(&v2.Mission{Slug: "alpha", Source: missioncontext.SourceExplicit}),
+		spawnJSONDetails{},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(withMission, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(fields["mission"]); got != `{"slug":"alpha","source":"explicit"}` {
+		t.Fatalf("mission JSON = %s, want exact slug+source wire shape", got)
+	}
+
+	withoutMission, err := json.Marshal(newSpawnJSONRecord(missionSpawnRecord(nil), spawnJSONDetails{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields = nil
+	if err := json.Unmarshal(withoutMission, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["mission"]; ok {
+		t.Fatalf("mission field present without --mission: %s", withoutMission)
 	}
 }
 
@@ -169,14 +198,20 @@ func TestSpawnMissionRefusalStopsBeforePaneCreation(t *testing.T) {
 	tests := []struct {
 		name       string
 		slug       string
+		unsetRepo  bool
 		wantCause  string
 		wantRemedy string
 	}{
-		{"invalid slug", "bad--slug", "invalid_mission_slug", "use lowercase letters, digits, and single hyphens, with no trailing hyphen"},
-		{"missing mission", "missing", "mission_not_found", "check the slug or create the mission"},
+		{name: "invalid slug", slug: "bad--slug", wantCause: "invalid_mission_slug", wantRemedy: "use lowercase letters, digits, and single hyphens, with no trailing hyphen"},
+		{name: "empty slug", slug: "", wantCause: "invalid_mission_slug", wantRemedy: "use lowercase letters, digits, and single hyphens, with no trailing hyphen"},
+		{name: "missing mission", slug: "missing", wantCause: "mission_not_found", wantRemedy: "check the slug or create the mission"},
+		{name: "missions repo unset", slug: "alpha", unsetRepo: true, wantCause: "missions_repo_unset", wantRemedy: "set MISSIONS_REPO to the shared missions repository"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.unsetRepo {
+				t.Setenv("MISSIONS_REPO", "")
+			}
 			if err := os.Remove(called); err != nil && !errors.Is(err, os.ErrNotExist) {
 				t.Fatal(err)
 			}
@@ -309,8 +344,24 @@ func TestSpawnMissionSurvivesRotation(t *testing.T) {
 		}
 	}
 	t.Setenv("HERDER_REGISTRY_ROTATE_BYTES", strconv.Itoa(len(beforeNoise)+512))
-	if _, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) { return nil, nil }); err != nil {
+	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		current := registry.V2ByGUID(tx.Projection, record.GUID)
+		if current == nil {
+			t.Fatal("spawn row missing during rotation")
+		}
+		next := *current
+		next.Event = "registered"
+		return []v2.SessionRecord{next}, nil
+	})
+	if err != nil {
 		t.Fatal(err)
+	}
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil || outcome.Err() != nil {
+		t.Fatalf("rotation successor outcome = %+v, err = %v", outcome, err)
+	}
+	if outcome.Status != registry.WriteNoop {
+		t.Fatalf("rotation successor outcome = %+v, want checked no-op", outcome)
 	}
 	after, err := v2.LoadFile(path, v2.LoadOptions{})
 	if err != nil {
