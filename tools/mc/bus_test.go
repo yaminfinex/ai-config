@@ -130,6 +130,14 @@ func TestLatestEventIDReadsHeadWithoutDraining(t *testing.T) {
 	}
 }
 
+func TestLatestEventIDAllowsGenuinelyEmptyBus(t *testing.T) {
+	hcom := writeExecutable(t, t.TempDir(), "hcom", "#!/bin/sh\nexit 0\n")
+	head, err := (&Bus{Hcom: hcom}).LatestEventID()
+	if err != nil || head != 0 {
+		t.Fatalf("empty bus head = %d, err = %v; want 0, nil", head, err)
+	}
+}
+
 func TestTickDrainsBacklogAndLandsCursorOnHead(t *testing.T) {
 	hcom, logPath := fakePagedHcom(t, 1205)
 	s, err := OpenStore(filepath.Join(t.TempDir(), "journal.jsonl"))

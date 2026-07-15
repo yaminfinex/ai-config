@@ -105,9 +105,16 @@ func (b *Bus) MentionsSince(cursor int64, limit int, names ...string) ([]BusEven
 
 // LatestEventID returns the current bus head without draining history.
 func (b *Bus) LatestEventID() (int64, error) {
-	evs, err := b.query("events", "--last", "1")
-	if err != nil || len(evs) == 0 {
+	out, err := b.run("events", "--last", "1")
+	if err != nil {
 		return 0, err
+	}
+	evs := parseBusEvents(out)
+	if len(evs) == 0 && len(bytes.TrimSpace(out)) > 0 {
+		return 0, fmt.Errorf("unparseable bus head: %.80q", out)
+	}
+	if len(evs) == 0 {
+		return 0, nil
 	}
 	return evs[0].ID, nil
 }
@@ -181,6 +188,10 @@ func (b *Bus) query(args ...string) ([]BusEvent, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseBusEvents(out), nil
+}
+
+func parseBusEvents(out []byte) []BusEvent {
 	var evs []BusEvent
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
@@ -194,7 +205,7 @@ func (b *Bus) query(args ...string) ([]BusEvent, error) {
 			evs = append(evs, e)
 		}
 	}
-	return evs, nil
+	return evs
 }
 
 type BusAgent struct {

@@ -40,15 +40,8 @@ func main() {
 
 	// A fresh journal starts ingesting from NOW: replaying the bus's whole
 	// history would open a desk thread for every past @mention of the seat.
-	if store.Cursor() == 0 && !*fromStart {
-		if head, err := bus.LatestEventID(); err != nil {
-			log.Fatalf("cursor init: %v", err)
-		} else if head > 0 {
-			if err := store.SetCursor(head); err != nil {
-				log.Fatalf("cursor init: %v", err)
-			}
-			log.Printf("fresh journal: ingest starts at bus event %d", store.Cursor())
-		}
+	if err := initializeCursor(store, bus, *fromStart); err != nil {
+		log.Fatalf("cursor init: %v", err)
 	}
 
 	ing := NewIngestor(store, bus, *user, *seat)
@@ -63,6 +56,24 @@ func main() {
 	if err := http.ListenAndServe(*addr, web.Routes()); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func initializeCursor(store *Store, bus *Bus, fromStart bool) error {
+	if store.Cursor() != 0 || fromStart {
+		return nil
+	}
+	head, err := bus.LatestEventID()
+	if err != nil {
+		return err
+	}
+	if head == 0 {
+		return nil
+	}
+	if err := store.SetCursor(head); err != nil {
+		return err
+	}
+	log.Printf("fresh journal: ingest starts at bus event %d", store.Cursor())
+	return nil
 }
 
 func defaultJournal() string {
