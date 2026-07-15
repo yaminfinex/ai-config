@@ -3,7 +3,7 @@ id: TASK-188
 title: >-
   sesh — Darwin test health: internal/update /var/folders symlink comparison
   fails; fsnotify rewalk flake
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-13 07:49'
 labels:
