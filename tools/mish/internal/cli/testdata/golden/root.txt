@@ -15,6 +15,7 @@ Verbs:
   new       scaffold a mission and stamp authority/owner
   backlog   run allowlisted Backlog.md commands in one mission
   status    report mission health and overview read-only
+  resolve   print the resolved mission context as JSON
 
 Git rhythm: pull before creating missions, task creation, board restructuring, or manifest
 edits; commit early at the mission-subtree grain; push when a unit lands. mish never writes git.

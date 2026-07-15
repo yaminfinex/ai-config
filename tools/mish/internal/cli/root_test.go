@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestRootSurfaceHasExactlyThreeSubcommands(t *testing.T) {
+func TestRootSurfaceHasExactlyFourSubcommands(t *testing.T) {
 	root := newRoot(testDeps())
 	got := make([]string, 0, len(root.Commands()))
 	for _, cmd := range root.Commands() {
@@ -18,7 +18,7 @@ func TestRootSurfaceHasExactlyThreeSubcommands(t *testing.T) {
 		}
 		got = append(got, cmd.Name())
 	}
-	want := []string{"backlog", "new", "status"}
+	want := []string{"backlog", "new", "resolve", "status"}
 	slices.Sort(got)
 	if !slices.Equal(got, want) {
 		t.Fatalf("registered commands = %v, want %v", got, want)

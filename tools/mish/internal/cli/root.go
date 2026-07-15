@@ -97,6 +97,7 @@ func newRoot(d deps) *cobra.Command {
 		newNewCommand(d),
 		newBacklogCommand(d),
 		newStatusCommand(d),
+		newResolveCommand(d),
 	)
 	return root
 }

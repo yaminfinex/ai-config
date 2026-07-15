@@ -18,6 +18,7 @@ var rootHelpVerbs = []verbHelpRow{
 	{name: "new", summary: "scaffold a mission and stamp authority/owner"},
 	{name: "backlog", summary: "run allowlisted Backlog.md commands in one mission"},
 	{name: "status", summary: "report mission health and overview read-only"},
+	{name: "resolve", summary: "print the resolved mission context as JSON"},
 }
 
 const rootHelpText = `Usage: mish <verb> [args]
@@ -37,6 +38,7 @@ Verbs:
   new       scaffold a mission and stamp authority/owner
   backlog   run allowlisted Backlog.md commands in one mission
   status    report mission health and overview read-only
+  resolve   print the resolved mission context as JSON
 
 Git rhythm: pull before creating missions, task creation, board restructuring, or manifest
 edits; commit early at the mission-subtree grain; push when a unit lands. mish never writes git.
@@ -127,6 +129,23 @@ Git rhythm and custody:
   Pull before board restructuring or task creation, commit early at mission-subtree grain,
   and push when a unit lands. External effects such as a PR merged or deploy shipped belong
   in task notes plus references. mish never writes git.
+`
+
+const resolveHelpText = `Usage: mish resolve [--mission <slug>]
+
+Print the resolved mission context as one line of JSON on stdout. This is the agent-first
+resolution surface: machine consumers (mc, herder, orchestrators) call it instead of
+re-implementing marker walking. Resolution order is --mission flag, then cwd inside
+$MISSIONS_REPO/missions/<slug>/, then the nearest .mission marker on the cwd-to-root chain.
+
+Success (exit 0):
+  {"ok":true,"slug":...,"mission_dir":...,"source":"flag|cwd|marker",
+   "marker_path":...,"missions_repo":...}
+
+Refusal (exit 1): the same JSON shape with ok:false plus refusal (a stable kind such as
+no_context, mission_not_found, multiple_markers, missions_repo_unset), reason, remedy, and
+paths where relevant. The refusal is also printed as prose on stderr. resolve never mutates
+files and never writes git.
 `
 
 const statusHelpText = `Usage: mish status [--mission <slug> | --all]

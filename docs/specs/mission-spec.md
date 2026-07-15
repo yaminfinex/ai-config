@@ -99,7 +99,7 @@ deletion is a repo-hygiene decision made by humans with git, outside this spec.
    no behaviour change in any repo that has no mission context. A `mish` command without
    resolvable context refuses with guidance; it never creates anything implicitly.
 4. **The CLI never mutates git.** No verb commits, stages, pushes, or otherwise writes git
-   state — the one reserved exception is the explicit per-invocation auto-commit flag (§6.4),
+   state — the one reserved exception is the explicit per-invocation auto-commit flag (§6.5),
    opt-in and off by default. `mish status`, and only it, may make **read-only** git
    queries to surface sync staleness (§6.3; the M6 read amendment, §12.8). Everything works —
    degraded to single-node, no staleness signal — when the repo is not git at all. Git write
@@ -294,14 +294,17 @@ guesses.
 
 ## 6. Command surface — expected behaviour
 
-Three verbs, nothing else (Q12 as amended by Q15). `new` is the only write verb the CLI owns;
-`backlog` delegates writes to Backlog.md inside the pinned sandbox; `status` is read-only.
+Four verbs, nothing else (Q12 as amended by Q15; `resolve` added 2026-07-15 by the mish
+authority when the surface shipped — see §6.4). `new` is the only write verb the CLI owns;
+`backlog` delegates writes to Backlog.md inside the pinned sandbox; `status` and `resolve`
+are read-only.
 
 | Command | Behaviour |
 |---|---|
 | `mish new <slug> [--title T] [--authority A] [--owner O] [--no-marker]` | Scaffold `missions/<slug>/` (§6.1): manifest, pinned board, empty artifacts; write the context marker into cwd. Refuses on existing slug, invalid slug, unset `$MISSIONS_REPO`, or a conflicting existing marker. |
 | `mish backlog [--mission S] <backlog-args…>` | Resolve context (§5.3), guard the board's existence (invariant 6), check the allowlist, then exec the Backlog.md CLI with cwd pinned to the mission dir, forwarding arguments, stdio, and exit code verbatim (§6.2). |
 | `mish status [--mission S \| --all]` | Read-only report: single-mission detail when context resolves, repo-wide overview with `--all` or when invoked with no resolvable context from inside the missions repo (§6.3). |
+| `mish resolve [--mission S]` | Read-only, agent-first: print the resolved mission context (§5.3 order) as one line of JSON on stdout — success `{ok:true, slug, mission_dir, source, marker_path, missions_repo}` exit 0, refusal `{ok:false, refusal:<kind>, reason, remedy, paths}` exit 1 with prose mirrored to stderr (§6.4). |
 
 ### 6.1 `mish new`
 
@@ -406,7 +409,18 @@ vocabulary (statuses are authority-tunable, §4.4). UPDATED is the node-local re
 above: when changes reached this clone. Invoked with no context *outside* the missions repo,
 `status` refuses with the §5.3 guidance rather than guessing that an overview was wanted.
 
-### 6.4 Reserved: per-invocation auto-commit (`--commit`) — designed, not in v1
+### 6.4 `mish resolve`
+
+The machine-readable resolution surface, so consumers (mission-control's `mc`, herder's
+join fallback, orchestrators) call one place instead of re-implementing marker walking.
+Runs the §5.3 resolution exactly as `status` does, mutates nothing, writes no git. Output
+is JSON by default and only — this is an agent-first tool; the refusal `kind` values are
+the stable machine vocabulary (`no_context`, `mission_not_found`, `multiple_markers`,
+`missions_repo_unset`, `marker_points_at_missing_mission`, `invalid_slug`,
+`marker_unreadable`). Refusals additionally print the standard prose line on stderr and
+exit 1, so humans and pipelines see the same failure.
+
+### 6.5 Reserved: per-invocation auto-commit (`--commit`) — designed, not in v1
 
 Q12 reserves an opt-in auto-commit marker on write verbs. Proposed design, recorded here so
 ratification can accept or strike it as a unit:
@@ -549,7 +563,7 @@ in words (completed, cancelled and why, parked with what's still worth harvestin
 record, pointers outward; (4) frontmatter `status: closed`; (5) custody-rhythm review — the
 authority skims `git log -- missions/<slug>/` for custody-grammar coverage, records gaps in
 the Closeout section, and notes whether the manual commit rhythm held (this is the evidence
-stream the §6.4 reserved design's implementation decision consumes); (6) the `close`
+stream the §6.5 reserved design's implementation decision consumes); (6) the `close`
 custody commit. The dir then rests in place: greppable, browsable, cheap. Deletion, when it
 ever happens, is a git operation recorded by a `delete` custody commit.
 
@@ -705,7 +719,7 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 | M3 | Pinned config = `check_active_branches`, `remote_operations`, `auto_commit`, `auto_open_browser` (false) + `filesystem_only` (true — Backlog's native git-disable, added at ratification); invariant for the mission's life; drift warned by `status` | Q12 + verification + owner 2026-07-09 | §4.4, invariant 7, AC-12 |
 | M4 | Verb set closed at `new` / `backlog` / `status`; `new` is the CLI's only owned write | Q12 as cut by Q15 | §6, §10 |
 | M5 | Passthrough = cwd-pinned, board-guarded, **allowlist posture** (`task/tasks, draft, board, search, overview, sequence, doc, decision, milestone/milestones, cleanup`); `browser` dropped at ratification (verified pin-rewrite hazard); future subcommands excluded until deliberately added; top-level help is wrapper-owned so the help surface equals the invocable surface | Q12 + owner rulings 2026-07-09 | §6.2, invariant 6, AC-11 |
-| M6 | CLI never **mutates** git (amended at ratification: `status` may make read-only queries for the staleness signal, §12.8); git write doctrine is skill prose; opt-in `--commit` design recorded but reserved out of v1 | Q12 + owner 2026-07-09 | Invariant 4, §6.3, §6.4, §8.1, AC-14 |
+| M6 | CLI never **mutates** git (amended at ratification: `status` may make read-only queries for the staleness signal, §12.8); git write doctrine is skill prose; opt-in `--commit` design recorded but reserved out of v1 | Q12 + owner 2026-07-09 | Invariant 4, §6.3, §6.5, §8.1, AC-14 |
 | M7 | events.jsonl killed with full cascade (no log verb, custody → commits + board notes) | Q15 | §8.2, §10 |
 | M8 | Manifest authority: advisory `authority:` label-grade field, stamped by `new`; transfer = editing the field; conflict on mission.md = violation, authority wins | Q16 | §4.2, invariant 8, §7.2, AC-16 |
 | M9 | Mission↔herder contract = board assignee holding an opaque label-grade name; every richer join herder-side at view time; missions herder-unaware, herder may be very mission-aware | Q17 | Invariant 2, §2, §10 |
@@ -715,7 +729,7 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 | M13 | Missions strictly opt-in; missionless path costs zero | S2 | Invariant 3, AC-10 |
 | M14 | Custody-commit grammar `mission(<slug>): <verb> <summary>` with an open, documented verb vocabulary (new/adopt/harvest/delete/rename/close) and optional trailers | Q13 amendment surviving Q15 | §8.2, AC-17 |
 | M15 | Human attribution: `owner:` distinct from `authority:` (owner = human, meant to be read as a person; authority = write authority, opaque interpretation); owner stamped `--owner` → `$SESSION_OWNER` → OS user and echoed with its source at `new`; `SESSION_OWNER` is the one cross-surface env name (shared with herder + session shipping); git identity is a provisioning suggestion, never canonical | Owner rulings 2026-07-09 | §2, §4.2, §6.1, §8.1, AC-1 |
-| M16 | Renames are expected but stay out of the CLI: authority skill procedure (git mv + two fields + markers + `rename` custody commit); slug-equals-dirname re-established by the procedure; verb set stays closed. `--commit` ratified as reserved (design of record, not v1). Backlog.md floor: ≥ 1.47 + stated behavioural assumptions, re-verified via AC-5..7 + AC-19 on every version change; CLI presence is install-tooling business. Board tuning beyond the pins is per-mission, authority-owned | Owner rulings 2026-07-09 | §4.3, §4.4, §6.4, §8.5, AC-18 |
+| M16 | Renames are expected but stay out of the CLI: authority skill procedure (git mv + two fields + markers + `rename` custody commit); slug-equals-dirname re-established by the procedure; verb set stays closed. `--commit` ratified as reserved (design of record, not v1). Backlog.md floor: ≥ 1.47 + stated behavioural assumptions, re-verified via AC-5..7 + AC-19 on every version change; CLI presence is install-tooling business. Board tuning beyond the pins is per-mission, authority-owned | Owner rulings 2026-07-09 | §4.3, §4.4, §6.5, §8.5, AC-18 |
 | M17 | Skill delivery: mission-owned, agent-targeted CLI help (top-level + per-verb) with a light companion skill — the herder precedent; the orchestrate skill covers only orchestrate's own mission interaction, never general mission doctrine | Owner ruling 2026-07-09 | §8, §8.3 |
 | M18 | Cross-references: where a task's work happened or landed rides Backlog.md's native per-task `references` field, written via the passthrough (`--ref`); open documented vocabulary (`<repo>@<sha>`, `branch:`, `pr:`, `session:`, `agent:` — label-grade, opaque); replace-not-append edge documented; verified on 1.47.1 | Owner ruling 2026-07-09 (post-ratification) | §2, §4.4, §8.3, AC-19 |
 | M19 | The CLI binary is `mish` (beside `sesh`); the format vocabulary stays *mission*: `missions/`, `mission.md`, `.mission` marker, custody grammar `mission(<slug>):` | Owner ruling 2026-07-09 (post-ratification) | §2, §6, §12.10 |
@@ -726,8 +740,8 @@ Rulings land here as they happen. This spec is ratified, not frozen: implementat
 differences against this document as it finds them, so dumb requirements can evolve — flag the
 divergence, get the ruling, amend the line.
 
-1. **`--commit` reserved design (§6.4):** ~~ratify, strike, or defer?~~ **Resolved 2026-07-09:
-   ratified as reserved** — §6.4 stands as the design of record, out of v1; implementation
+1. **`--commit` reserved design (§6.5):** ~~ratify, strike, or defer?~~ **Resolved 2026-07-09:
+   ratified as reserved** — §6.5 stands as the design of record, out of v1; implementation
    waits on the manual commit rhythm demonstrating the need.
 2. **Authority default at `new`:** ~~OS username acceptable, or mandatory flag?~~ **Resolved
    with the owner 2026-07-09** as part of the human-attribution design (M15): authority keeps
