@@ -176,6 +176,9 @@ func (c *procCorrelator) statusIdentity(pid int) (uid, ppid int, ok bool) {
 // When an inherited fd makes several processes hold the file, the leaf of
 // the holder tree (the codex process itself, not its parent shell) names
 // the owner; several distinct leaves must agree or nothing is stamped.
+// Holders are grouped by identity, not discovery path: when one UUID appears
+// at multiple paths, their holders merge and owner disagreement yields absence
+// under the unanimous-or-absent rule, never an order-dependent arbitrary stamp.
 // Each process FD table is read once per sweep, independent of corpus size.
 func (c *procCorrelator) codexOwners(entries []procEntry, discovered []Discovered) map[string]string {
 	identitiesByPath := map[string][]string{}
