@@ -1,6 +1,7 @@
 package spawncmd
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"os/exec"
@@ -156,13 +157,125 @@ func TestPiBindTimeoutHardFailsWithConfirmedCleanup(t *testing.T) {
 			if !client.closed {
 				t.Fatal("Pi bind timeout did not close pane")
 			}
-			for _, want := range []string{"Pi", "hooks", "session", "cleanup confirmed"} {
+			for _, want := range []string{"Pi", "hooks", "session", "update check", "GitHub reachability", "cleanup confirmed"} {
 				if !strings.Contains(stderr.String(), want) {
 					t.Errorf("stderr missing %q: %s", want, stderr.String())
 				}
 			}
 		})
 	}
+}
+
+func TestPiPreBindDeathLeavesCallerBusRowUntouched(t *testing.T) {
+	busDir := t.TempDir()
+	homeDir := t.TempDir()
+	hcomBin := realHcomForPiCleanupTest(t)
+	processID, err := registry.NewGUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedEnv := []string{
+		"HOME=" + homeDir,
+		"PATH=" + os.Getenv("PATH"),
+		"HCOM_DIR=" + busDir,
+		"HCOM_PROCESS_ID=" + processID,
+		"XDG_CACHE_HOME=" + filepath.Join(homeDir, "cache"),
+		"XDG_CONFIG_HOME=" + filepath.Join(homeDir, "config"),
+		"XDG_STATE_HOME=" + filepath.Join(homeDir, "state"),
+	}
+	start := exec.Command(hcomBin, "start")
+	start.Env = seedEnv
+	startOut, err := start.CombinedOutput()
+	if err != nil {
+		t.Fatalf("seed disposable hcom bus: %v: %s", err, startOut)
+	}
+	marker := strings.Index(string(startOut), "[hcom:")
+	if marker < 0 {
+		t.Fatalf("hcom start did not return a caller identity: %s", startOut)
+	}
+	nameStart := marker + len("[hcom:")
+	nameEnd := strings.Index(string(startOut)[nameStart:], "]")
+	if nameEnd < 0 {
+		t.Fatalf("hcom start returned a malformed caller identity: %s", startOut)
+	}
+	callerName := string(startOut)[nameStart : nameStart+nameEnd]
+	verify := exec.Command(hcomBin, "list", "self", "--json")
+	verify.Env = append(append([]string(nil), seedEnv...), "HCOM_INSTANCE_NAME="+callerName)
+	verifyOut, err := verify.CombinedOutput()
+	if err != nil || !strings.Contains(string(verifyOut), callerName) {
+		t.Fatalf("verify disposable caller row: err=%v output=%s", err, verifyOut)
+	}
+	dbPath := filepath.Join(busDir, "hcom.db")
+	before, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatalf("read seeded hcom.db: %v", err)
+	}
+	if len(before) == 0 {
+		t.Fatal("real hcom created an empty hcom.db")
+	}
+
+	recordDir := t.TempDir()
+	recordPath := filepath.Join(recordDir, "hcom-calls")
+	stubDir := filepath.Join(recordDir, "bin")
+	if err := os.MkdirAll(stubDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stub := filepath.Join(stubDir, "hcom")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HCOM_LIFECYCLE_LOG\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HCOM_DIR", busDir)
+	t.Setenv("HERDER_STATE_DIR", t.TempDir())
+	t.Setenv("HCOM_PROCESS_ID", processID)
+	t.Setenv("HCOM_INSTANCE_NAME", callerName)
+	t.Setenv("HCOM_LIFECYCLE_LOG", recordPath)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &cleanupHerdr{}
+	var stderr strings.Builder
+	r := &runner{opts: options{Agent: "pi"}, herdr: client, stderr: &stderr}
+	if code := r.failUnboundPi("", "bind-timeout(1ms)", "p_new", "term_new"); code != 1 {
+		t.Fatalf("failUnboundPi() = %d, want hard failure", code)
+	}
+	after, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("real hcom.db changed during pre-bind cleanup")
+	}
+	if !client.closed {
+		t.Fatal("dead Pi pane was not cleaned up")
+	}
+	if calls, err := os.ReadFile(recordPath); err == nil {
+		t.Fatalf("pre-bind cleanup invoked hcom outside the herdr client: %s", calls)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("read hcom lifecycle recorder: %v", err)
+	}
+	for _, call := range client.calls {
+		if strings.Contains(call, " stop") || strings.Contains(call, " delete") {
+			t.Fatalf("pre-bind cleanup attempted caller lifecycle mutation through herdr: %q", call)
+		}
+	}
+}
+
+func realHcomForPiCleanupTest(t *testing.T) string {
+	t.Helper()
+	if bin := os.Getenv("HERDER_TEST_HCOM_BIN"); bin != "" {
+		return bin
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if strings.Contains(dir, filepath.Join("tools", "herder", "shims")) {
+			continue
+		}
+		bin := filepath.Join(dir, "hcom")
+		if info, err := os.Stat(bin); err == nil && info.Mode()&0o111 != 0 {
+			return bin
+		}
+	}
+	// Never skip: a missing binary must loudly expose loss of the only real-bus anti-hijack evidence.
+	t.Fatal("real hcom binary unavailable; install the pinned hcom or set HERDER_TEST_HCOM_BIN")
+	return ""
 }
 
 func TestPiSpawnRegistryPersistsLaunchAndBindFacts(t *testing.T) {

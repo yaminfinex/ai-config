@@ -392,7 +392,12 @@ func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (gro
 	if !hasArg(args, "--model") && !hasPrefixArg(args, "--model=") && !hasArg(args, "-m") {
 		args = append(args, "--model", grokDefaultModel)
 	}
-	env := replaceLaunchEnv(os.Environ(), map[string]string{
+	// Grok bypasses the hcom launcher, but it shares the same identity boundary:
+	// discard every ambient HCOM_* value before adding only the child bus scope.
+	env := buildHcomLaunchEnv(os.Environ(), map[string]string{
+		"HCOM_DIR": hcomDir,
+	})
+	env = replaceLaunchEnv(env, map[string]string{
 		"GROK_CLAUDE_HOOKS_ENABLED": "0",
 		"HERDER_STATE_DIR":          stateDir,
 		"HERDER_GROK_SEAT":          seat,

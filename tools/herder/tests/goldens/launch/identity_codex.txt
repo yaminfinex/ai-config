@@ -1,0 +1,42 @@
+=== STDERR ===
+
+=== STDOUT ===
+
+=== EXIT ===
+0
+=== HCOM ARGV ===
+codex
+--run-here
+-c
+developer_instructions=[HERDER SESSION ADDENDUM]
+The [HCOM SESSION] context above is hcom's own bootstrap. Your name, first-response marker, messaging syntax, response rules, delivery, and waiting rules all stand. Its agent lifecycle guidance is SUPERSEDED: ignore its 'Spawn agents' recipe (`hcom <n> claude` etc), `hcom r`/`hcom f` resume/fork, `hcom kill`, and `run <script>` workflows — on this machine agent sessions are provisioned through herder so they land in the session registry.
+
+## AGENTS (herder lifecycle)
+
+Provision and manage agent sessions through herder. Do NOT spawn with `hcom <n> claude`, stop with `hcom kill`, or drive raw `herdr agent start/send` — those bypass the registry or write text without submitting it. herder-spawned claude/codex bind to the bus from birth, so once running you message them with `hcom send`.
+
+- Spawn:  herder spawn --role R --agent <claude|codex|bash|...> --prompt 'short task (or a one-line pointer to a brief file)' [--workspace ID] [--split right|down] [--cwd PATH]
+- List:   herder list [--all]                 # default: seated + unseated; --all adds retired + lost
+- Wait:   herder wait <guid> [--read]          # boot-settle / post-send check — NOT for watching long work
+- Send:   herder send <guid> 'msg'             # verified delivery to a spawned agent (guid/label, drift-proof)
+- Cull:   herder cull --guid GUID              # close the pane + unseat the session (label stays leased)
+- Fork:   herder fork <guid> [--prompt P] [--workspace ID] [--split right|down] # fresh tab by default
+- Resume: herder resume <guid> [--cwd PATH] [--workspace ID] [--split right|down] # fresh tab by default
+
+Delivery is verified: "queued" injects at the target's next turn (do NOT resend); "NOT confirmed" means read the pane (`herder wait <guid> --read`) before retrying — a blind resend double-submits.
+If unsure about syntax, always run `herder <command> --help` (or `hcom <command> --help`) FIRST. Do not guess.
+
+## SUBAGENTS
+
+Codex has no Task/subagent tool. Fan out sub-work by spawning peer sessions with `herder spawn` (above). Spawned agents bind to the hcom bus from birth — coordinate via `hcom send`, check with `herder wait <guid> --read`, reap with `herder cull --guid GUID` when done.
+=== ENV PROBES ===
+HCOM_LAUNCH_INFLIGHT=1
+CLAUDE_CONFIG_DIR=
+CODEX_HOME=
+GEMINI_CLI_HOME=
+HCOM_DIR=<CASE>/home/.hcom
+IDENTITY_SCRUB=clean
+PREEXPORTED_SEAT_CONTEXT=passed-through
+=== TOOL ARGV ===
+
+=== TOOL ENV ===

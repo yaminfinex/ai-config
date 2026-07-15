@@ -9,6 +9,57 @@ import (
 	"ai-config/tools/herder/internal/hookcmd"
 )
 
+func TestBuildHcomLaunchEnvDropsAmbientHcomAndPassesPreExportedSeatContext(t *testing.T) {
+	ambient := []string{
+		"HOME=/scratch/home",
+		"PATH=/scratch/bin",
+		"HERDER_GUID=child-guid",
+		"HERDER_ROLE=worker",
+		"HERDER_LABEL=worker-child",
+		"HERDR_ENV=1",
+		"HERDR_PANE_ID=child-pane",
+		"HCOM_PROCESS_ID=caller-process",
+		"HCOM_INSTANCE_NAME=caller-name",
+		"HCOM_SESSION_ID=caller-session",
+		"HCOM_TOOL=caller-tool",
+		"HCOM_LAUNCHED=1",
+		"HCOM_FUTUREKEY=caller-future",
+	}
+	overlays := map[string]string{
+		"HCOM_DIR":             "/scratch/home/.hcom",
+		"HCOM_LAUNCH_INFLIGHT": "1",
+		"HCOM_NOTES":           "child doctrine",
+	}
+
+	got := buildHcomLaunchEnv(ambient, overlays)
+	for _, key := range []string{
+		"HCOM_PROCESS_ID", "HCOM_INSTANCE_NAME", "HCOM_SESSION_ID",
+		"HCOM_TOOL", "HCOM_LAUNCHED", "HCOM_FUTUREKEY",
+	} {
+		if value := envValue(got, key); value != "" {
+			t.Errorf("ambient identity %s crossed launch boundary as %q", key, value)
+		}
+	}
+	// HERDER_*/HERDR_* ownership is established by spawn before this boundary.
+	// The launcher only passes that already-exported seat context through.
+	for key, want := range map[string]string{
+		"HOME":                 "/scratch/home",
+		"PATH":                 "/scratch/bin",
+		"HERDER_GUID":          "child-guid",
+		"HERDER_ROLE":          "worker",
+		"HERDER_LABEL":         "worker-child",
+		"HERDR_ENV":            "1",
+		"HERDR_PANE_ID":        "child-pane",
+		"HCOM_DIR":             "/scratch/home/.hcom",
+		"HCOM_LAUNCH_INFLIGHT": "1",
+		"HCOM_NOTES":           "child doctrine",
+	} {
+		if value := envValue(got, key); value != want {
+			t.Errorf("launch env %s = %q, want %q", key, value, want)
+		}
+	}
+}
+
 func TestThreadCodexBootstrapBlock_AddsFlagWhenAbsent(t *testing.T) {
 	got := threadCodexBootstrapBlock([]string{"--model", "gpt-5"})
 	if len(got) != 4 {

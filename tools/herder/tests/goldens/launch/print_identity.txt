@@ -1,0 +1,16 @@
+=== STDERR ===
+
+=== STDOUT ===
+
+=== EXIT ===
+0
+=== HCOM ARGV ===
+
+=== ENV PROBES ===
+
+=== TOOL ARGV ===
+-p
+hello
+=== TOOL ENV ===
+HCOM_LAUNCH_INFLIGHT=1
+IDENTITY_SCRUB=clean

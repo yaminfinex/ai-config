@@ -47,8 +47,13 @@ orchestrator's shell). The probe itself was the destructive act.
 
 ## Status of mechanical fixes (the doctrine should not be load-bearing)
 
-Tracked on the board: scrub caller identity env in the managed pi launch path and
-pin all launcher families clean (red-first tests); add a doctor/wrapper guard for
-the direct-invocation case. Upstream candidates ledgered: the extension honors
-inherited cross-tool identity without continuity checks; the reclaim guard strands
-the rightful owner with no recovery verb; the refusal exits rc=0.
+Managed herder launches discard every ambient `HCOM_*` value and rebuild only the
+child-owned bus scope. Launcher-family tests pin that scrub and separately show
+that spawn's pre-exported `HERDER_*`/`HERDR_*` seat context passes through; this
+launch boundary does not establish ownership of those values. `ai-doctor` warns
+when it runs inside an identity-bearing shell so direct vendor probes are not
+mistaken for harmless diagnostics.
+
+Upstream candidates remain: the extension honors inherited cross-tool identity
+without continuity checks; the reclaim guard strands the rightful owner with no
+recovery verb; the refusal exits rc=0.

@@ -247,10 +247,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		_ = os.Setenv("HERDER_LIFECYCLE_MODE", mode)
 		_ = os.Setenv("HERDER_PARENT_SESSION_ID", parentSessionID)
 	}
-	startSidecar(tool)
+	launchEnv := hcomLaunchEnv(tool)
+	startSidecar(tool, launchEnv)
 
 	argv := append([]string{"hcom"}, hcomArgs...)
-	if err := syscall.Exec(hcomPath, argv, os.Environ()); err != nil {
+	if err := syscall.Exec(hcomPath, argv, launchEnv); err != nil {
 		die(stderr, "exec hcom: "+err.Error())
 		return 1
 	}
@@ -288,7 +289,7 @@ func execPrintBypass(tool string, args []string, stderr io.Writer) int {
 	}
 	_ = os.Setenv("HCOM_LAUNCH_INFLIGHT", "1")
 	argv := append([]string{tool}, args...)
-	if err := syscall.Exec(toolPath, argv, os.Environ()); err != nil {
+	if err := syscall.Exec(toolPath, argv, hcomLaunchEnv(tool)); err != nil {
 		die(stderr, "exec "+tool+": "+err.Error())
 		return 1
 	}
@@ -338,7 +339,37 @@ func threadCodexBootstrapBlock(args []string) []string {
 	return append(out, "-c", "developer_instructions="+hookcmd.CodexBootstrapBlock)
 }
 
-func startSidecar(tool string) {
+// buildHcomLaunchEnv creates the security boundary between an identity-bearing
+// caller and a newly launched agent. HCOM_* is an open namespace owned by the
+// bus implementation, so an allowlist is safer than chasing today's identity
+// keys: unknown future values are dropped automatically. The caller supplies
+// the complete set of child-owned overlays that may cross the boundary.
+func buildHcomLaunchEnv(env []string, overlays map[string]string) []string {
+	out := make([]string, 0, len(env)+len(overlays))
+	for _, item := range env {
+		key, _, _ := strings.Cut(item, "=")
+		if !strings.HasPrefix(key, "HCOM_") {
+			out = append(out, item)
+		}
+	}
+	for key, value := range overlays {
+		out = append(out, key+"="+value)
+	}
+	return out
+}
+
+func hcomLaunchEnv(tool string) []string {
+	overlays := map[string]string{
+		"HCOM_DIR":             os.Getenv("HCOM_DIR"),
+		"HCOM_LAUNCH_INFLIGHT": "1",
+	}
+	if tool == "pi" {
+		overlays["HCOM_NOTES"] = os.Getenv("HCOM_NOTES")
+	}
+	return buildHcomLaunchEnv(os.Environ(), overlays)
+}
+
+func startSidecar(tool string, launchEnv []string) {
 	if os.Getenv("HERDR_ENV") != "1" || os.Getenv("HERDR_SOCKET_PATH") == "" || os.Getenv("HERDR_PANE_ID") == "" {
 		return
 	}
@@ -347,7 +378,7 @@ func startSidecar(tool string) {
 		return
 	}
 	cmd := exec.Command(exe, "sidecar", "--tool", tool)
-	cmd.Env = os.Environ()
+	cmd.Env = launchEnv
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	logFile, err := sidecarLogFile()
 	if err == nil {
