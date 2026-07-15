@@ -38,6 +38,7 @@ func (w *Web) Routes() http.Handler {
 	mux.HandleFunc("GET /{$}", w.inbox)
 	mux.HandleFunc("GET /open", w.openForm)
 	mux.HandleFunc("POST /open", w.openPost)
+	mux.HandleFunc("GET /threads", w.threads)
 	mux.HandleFunc("GET /thread/{id}", w.thread)
 	mux.HandleFunc("POST /thread/{id}/reply", w.reply)
 	mux.HandleFunc("POST /thread/{id}/close", w.close)
@@ -81,6 +82,8 @@ type pageData struct {
 	Waiting    []*Thread
 	Closed     []*Thread
 	ShowClosed bool
+	// all threads (observed grade — tracked bus traffic, never Your turn)
+	Observed []*Thread
 	// thread
 	T *Thread
 	// open form
@@ -104,7 +107,7 @@ func (w *Web) render(rw http.ResponseWriter, code int, d *pageData) {
 func (w *Web) inbox(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "inbox")
 	d.Error = r.URL.Query().Get("err")
-	for _, t := range w.store.List("open") {
+	for _, t := range w.store.List("open", "managed") {
 		if t.Turn == "owner" {
 			d.YourTurn = append(d.YourTurn, t)
 		} else {
@@ -113,8 +116,17 @@ func (w *Web) inbox(rw http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Query().Get("closed") == "1" {
 		d.ShowClosed = true
-		d.Closed = w.store.List("closed")
+		d.Closed = w.store.List("closed", "managed")
 	}
+	w.render(rw, 200, d)
+}
+
+// threads is the All-threads view: observed bus traffic mc tracks but does
+// not manage. These never enter Your turn; an explicit raise at the seat
+// promotes them onto the desk.
+func (w *Web) threads(rw http.ResponseWriter, r *http.Request) {
+	d := w.data(r, "threads")
+	d.Observed = w.store.List("", "observed")
 	w.render(rw, 200, d)
 }
 
@@ -151,7 +163,7 @@ func (w *Web) openPost(rw http.ResponseWriter, r *http.Request) {
 	}
 	user := w.userFor(r)
 	turn := strings.Join(targets, ",")
-	if err := w.store.Open(id, d.F["title"], d.F["context"], d.F["expects"], d.F["weight"], d.F["home"], user, targets, turn); err != nil {
+	if err := w.store.Open(id, d.F["title"], d.F["context"], d.F["expects"], d.F["weight"], d.F["home"], user, targets, turn, "managed"); err != nil {
 		d.Error = err.Error()
 		w.render(rw, 500, d)
 		return

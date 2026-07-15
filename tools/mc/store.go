@@ -20,9 +20,10 @@ import (
 
 type Entry struct {
 	TS         string   `json:"ts"`
-	Op         string   `json:"op"` // open | link | turn | close | reopen | cursor
+	Op         string   `json:"op"` // open | link | turn | close | reopen | promote | cursor
 	Thread     string   `json:"thread,omitempty"`
 	Title      string   `json:"title,omitempty"`
+	Grade      string   `json:"grade,omitempty"` // managed | observed; absent (pre-grade journals) = managed
 	Context    string   `json:"context,omitempty"`
 	Expects    string   `json:"expects,omitempty"`
 	Weight     string   `json:"weight,omitempty"`
@@ -52,6 +53,7 @@ type Thread struct {
 	ID         string
 	Title      string
 	Status     string // open | closed
+	Grade      string // managed (on the desk, full lifecycle) | observed (bus thread we merely track)
 	Expects    string // decide | act | reply | read
 	Weight     string
 	Context    string
@@ -131,8 +133,12 @@ func (s *Store) apply(e *Entry) {
 		if _, ok := s.threads[e.Thread]; ok {
 			return
 		}
+		grade := e.Grade
+		if grade == "" {
+			grade = "managed" // pre-grade journal lines predate observed tracking
+		}
 		s.threads[e.Thread] = &Thread{
-			ID: e.Thread, Title: e.Title, Status: "open",
+			ID: e.Thread, Title: e.Title, Status: "open", Grade: grade,
 			Expects: e.Expects, Weight: e.Weight, Context: e.Context,
 			Home: e.Home, OpenedBy: e.By, With: e.With, Turn: e.Turn,
 			Created: ts, Updated: ts,
@@ -161,6 +167,14 @@ func (s *Store) apply(e *Entry) {
 	case "reopen":
 		if t := s.threads[e.Thread]; t != nil {
 			t.Status = "open"
+			t.Updated = ts
+		}
+	case "promote":
+		if t := s.threads[e.Thread]; t != nil {
+			t.Grade = "managed"
+			if e.Expects != "" {
+				t.Expects = e.Expects
+			}
 			t.Updated = ts
 		}
 	}
@@ -200,12 +214,12 @@ func (s *Store) Has(id string) bool {
 
 var expectsRank = map[string]int{"decide": 0, "act": 1, "reply": 2, "read": 3}
 
-func (s *Store) List(status string) []*Thread {
+func (s *Store) List(status, grade string) []*Thread {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []*Thread
 	for _, t := range s.threads {
-		if status == "" || t.Status == status {
+		if (status == "" || t.Status == status) && (grade == "" || t.Grade == grade) {
 			cp := *t
 			out = append(out, &cp)
 		}
@@ -220,14 +234,29 @@ func (s *Store) List(status string) []*Thread {
 	return out
 }
 
-func (s *Store) Open(id, title, context, expects, weight, home, by string, with []string, turn string) error {
+func (s *Store) Open(id, title, context, expects, weight, home, by string, with []string, turn, grade string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.threads[id]; ok {
 		return fmt.Errorf("thread %s already exists", id)
 	}
 	return s.append(&Entry{Op: "open", Thread: id, Title: title, Context: context,
-		Expects: expects, Weight: weight, Home: home, By: by, With: with, Turn: turn})
+		Expects: expects, Weight: weight, Home: home, By: by, With: with, Turn: turn, Grade: grade})
+}
+
+// Promote lifts an observed thread onto the desk. Linked history is kept —
+// promotion changes grade, never messages. No-op if already managed.
+func (s *Store) Promote(thread, expects string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.threads[thread]
+	if t == nil {
+		return fmt.Errorf("no thread %s", thread)
+	}
+	if t.Grade == "managed" {
+		return nil
+	}
+	return s.append(&Entry{Op: "promote", Thread: thread, Expects: expects})
 }
 
 func (s *Store) Link(thread string, m Msg) error {

@@ -45,6 +45,7 @@ th{color:var(--dim);font-weight:500}
 <header>
   <span class="brand">mc</span>
   <a href="/" {{if eq .Page "inbox"}}class="on"{{end}}>inbox</a>
+  <a href="/threads" {{if eq .Page "threads"}}class="on"{{end}}>all threads</a>
   <a href="/roster" {{if eq .Page "roster"}}class="on"{{end}}>roster</a>
   <a href="/open" {{if eq .Page "open"}}class="on"{{end}}>open thread</a>
   <span class="who">{{.User}} · seat @{{.Seat}}{{if .BusDir}} · LAB BUS{{end}}</span>
@@ -72,7 +73,7 @@ th{color:var(--dim);font-weight:500}
   <p class="meta">
     <span class="badge {{.Expects}}">{{.Expects}}</span>
     <span class="badge">{{.Weight}}</span>
-    {{if eq .Status "closed"}}<span class="badge">closed</span>{{else if eq .Turn "owner"}}<span class="badge yourturn">your turn</span>{{else}}<span class="badge">waiting on {{.Turn}}</span>{{end}}
+    {{if eq .Grade "observed"}}<span class="badge">observed</span>{{else if eq .Status "closed"}}<span class="badge">closed</span>{{else if eq .Turn "owner"}}<span class="badge yourturn">your turn</span>{{else}}<span class="badge">waiting on {{.Turn}}</span>{{end}}
     opened by {{.OpenedBy}}{{with .With}} · with {{range $i, $w := .}}{{if $i}}, {{end}}{{$w}}{{end}}{{end}}
     {{with .Home}} · home {{.}}{{end}} · updated {{ago .Updated}} ago · id {{.ID}}
   </p>
@@ -95,6 +96,24 @@ th{color:var(--dim);font-weight:500}
     <form method="post" action="/thread/{{.ID}}/reopen"><button class="quiet">Reopen</button></form>
   {{end}}
 {{end}}{{end}}
+
+{{if eq .Page "threads"}}
+  <h1>All threads</h1>
+  <p class="meta">bus threads mc tracks but does not manage — an explicit @{{.Seat}} raise promotes one onto the desk</p>
+  {{if .Observed}}
+  <table>
+    <tr><th>thread</th><th>participants</th><th>msgs</th><th>last activity</th></tr>
+    {{range .Observed}}
+    <tr>
+      <td><a href="/thread/{{.ID}}">{{.ID}}</a></td>
+      <td>{{.OpenedBy}}{{range .With}}, {{.}}{{end}}</td>
+      <td>{{len .Msgs}}</td>
+      <td>{{ago .Updated}} ago</td>
+    </tr>
+    {{end}}
+  </table>
+  {{else}}<div class="empty">no observed bus threads yet</div>{{end}}
+{{end}}
 
 {{if eq .Page "open"}}
   <h1>Open a thread</h1>

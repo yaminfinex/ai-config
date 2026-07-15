@@ -57,8 +57,11 @@ func (in *Ingestor) Tick() error {
 		return err
 	}
 	// The generic query omits mentions; fetch raise events separately and
-	// let their rows (which carry mentions) win the merge.
-	raises, err := in.bus.MentionsSince(cursor, 500, in.seat, "bigboss")
+	// let their rows (which carry mentions) win the merge. Only the seat is
+	// queried: hcom stamps an implicit @bigboss on every mention-free send,
+	// so a bigboss mention is indistinguishable from plain chatter and must
+	// never count as a raise.
+	raises, err := in.bus.MentionsSince(cursor, 500, in.seat)
 	if err != nil {
 		return err
 	}
@@ -97,37 +100,55 @@ func (in *Ingestor) Tick() error {
 func (in *Ingestor) fold(ev BusEvent) error {
 	d := ev.Data
 	tid := d.Thread
-	known := tid != "" && in.store.Has(tid)
-	raised := contains(d.Mentions, in.seat) || contains(d.Mentions, "bigboss")
+	raised := contains(d.Mentions, in.seat)
 
-	if !known && !raised {
-		return nil // coordination noise; not ours
+	var t *Thread
+	if tid != "" {
+		t = in.store.Get(tid)
 	}
 
-	// A raise on an unknown thread auto-opens it: the agent's message IS the
-	// cold-open context. This is the dogfood loop — orchestrators put items
-	// on the desk by opening threads at the seat.
-	if !known {
+	if t == nil && !raised && tid == "" {
+		return nil // mention-free, threadless chatter; nothing to track
+	}
+
+	// The grade the thread holds once this event folds in: an explicit raise
+	// at the seat makes (or keeps) it managed; otherwise it is managed only
+	// if it already was.
+	managed := raised || (t != nil && t.Grade == "managed")
+
+	expects := "read"
+	if d.Intent == "request" {
+		expects = "reply"
+	}
+
+	switch {
+	case t == nil && raised:
+		// A raise on an unknown thread auto-opens it managed: the agent's
+		// message IS the cold-open context. This is the dogfood loop —
+		// orchestrators put items on the desk by opening threads at the seat.
 		if tid == "" {
 			tid = fmt.Sprintf("desk-%d", ev.ID)
 		}
-		expects := "read"
-		if d.Intent == "request" {
-			expects = "reply"
+		if err := in.store.Open(tid, titleFrom(d.Text), d.Text, expects, "moment", "", d.From, nil, "owner", "managed"); err != nil {
+			return err
 		}
-		title := d.Text
-		if i := strings.IndexAny(title, ".!?\n"); i > 0 && i < 80 {
-			title = title[:i]
-		} else if len(title) > 80 {
-			title = title[:80]
+	case t == nil:
+		// A bus thread never raised at the seat: track it observed — visible
+		// under All threads, never on the desk.
+		if err := in.store.Open(tid, titleFrom(d.Text), d.Text, "", "", "", d.From, nil, "", "observed"); err != nil {
+			return err
 		}
-		if err := in.store.Open(tid, title, d.Text, expects, "moment", "", d.From, nil, "owner"); err != nil {
+	case t.Grade == "observed" && raised:
+		if err := in.store.Promote(tid, expects); err != nil {
 			return err
 		}
 	}
 
 	if err := in.store.Link(tid, Msg{BusID: ev.ID, From: d.From, Text: d.Text, Intent: d.Intent, ReplyTo: d.ReplyTo, TS: ev.TS}); err != nil {
 		return err
+	}
+	if !managed {
+		return nil // observed threads carry no turn — they are never "your turn"
 	}
 
 	// Whose turn: the human spoke → theirs; anyone else spoke → owner's.
@@ -140,4 +161,14 @@ func (in *Ingestor) fold(ev BusEvent) error {
 		return in.store.SetTurn(tid, turn)
 	}
 	return in.store.SetTurn(tid, "owner")
+}
+
+func titleFrom(text string) string {
+	if i := strings.IndexAny(text, ".!?\n"); i > 0 && i < 80 {
+		return text[:i]
+	}
+	if len(text) > 80 {
+		return text[:80]
+	}
+	return text
 }
