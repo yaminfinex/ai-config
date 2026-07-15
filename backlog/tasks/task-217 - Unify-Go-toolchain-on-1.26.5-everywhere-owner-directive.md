@@ -1,10 +1,10 @@
 ---
 id: TASK-217
 title: Unify Go toolchain on 1.26.5 everywhere (owner directive)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-15 00:34'
-updated_date: '2026-07-15 00:36'
+updated_date: '2026-07-15 01:14'
 labels: []
 dependencies: []
 ordinal: 215000
@@ -32,3 +32,9 @@ Acceptance:
 - AC3: bin/herder wrapper still builds (its go.mod parse handles exact patch directive).
 - AC4: no dependency/vendor changes; diff is version pins + script strings only.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged 70d717f (head e1f70ad), independent gate 59/59 + post-merge 59/59, pushed. One version everywhere: mise.toml + 4 go.mods pinned exactly 1.26.5; 4 scripts derive the pin from go.mod with fail-closed guards (mise-resolution guard + GOVERSION readback, tab-tolerant parser + empty-parse refusal, toolchain-directive conflict refusal, honest diagnostics with mise stderr). Review: opus adversarial with discriminating probe harness (3/14 red on unfixed head, 14/14 green on final); 2 fix rounds. Follow-up filed for guard regression coverage (harness parked in napkins).
+<!-- SECTION:NOTES:END -->
