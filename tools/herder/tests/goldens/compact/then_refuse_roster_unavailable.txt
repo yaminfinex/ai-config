@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: refused — --then row is bus-bound as @me-bus, but the live bus roster is unavailable (invalid character 'h' in literal true (expecting 'r')). Restore roster access for bus default, then retry; re-enrolling cannot fix an unavailable roster. Nothing was typed.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===
