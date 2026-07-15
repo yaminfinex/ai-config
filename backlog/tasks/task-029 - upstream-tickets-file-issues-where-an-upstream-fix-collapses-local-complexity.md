@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-15 11:01'
+updated_date: '2026-07-15 11:34'
 labels:
   - run-herder-dx
 dependencies: []
@@ -137,6 +137,12 @@ author: hera
 created: 2026-07-15 11:01
 ---
 Upstream candidate (hcom): the generated pi wrapper runs a SYNCHRONOUS 'git ls-remote --tags' update check BEFORE launching the child ('/hcom pty pi'), with no timeout — under slow/blocked network the child never launches within any spawner's bind window (roster stays empty, no process), and the caller-side cleanup makes it look like the pane died. Reproduced hermetically; pre-seeding the private update-check flag bypasses it (not shippable — private state). Fix there: async/backgrounded update check, a timeout, or a supported env knob to skip it in managed launches.
+---
+
+author: hera
+created: 2026-07-15 11:34
+---
+Upstream candidate (hcom): send/query name-form asymmetry is a footgun. 'hcom send --name <full-name>' stamps the resulting message event data.from with the roster-resolved BASE name; '--from X' stamps verbatim; 'hcom events --from X' filters by exact match. Consequence: event anchors, receipt queries, or audit filters keyed on the full name a caller just passed to --name silently never match for tagged agents (name != base_name) — cost a P1 in a downstream consumer today (ack-recognition anchor never pinned; protocol feature dead for all tagged agents while every suite stayed green, because hermetic fixtures stamped the full name where the wire stamps base). Fix there: stamp consistently (or expose base_name in send output), and/or make events --from match either form.
 ---
 <!-- COMMENTS:END -->
 
