@@ -141,7 +141,7 @@ th{color:var(--dim);font-weight:500}
 
   <h2>Seated agents</h2>
   {{if .MissionAgents}}<table><tr><th>name</th><th>tool</th><th>status</th><th>role</th><th></th></tr>
-    {{range .MissionAgents}}<tr><td><strong>{{.Name}}</strong>{{if .Unmanaged}} <span class="badge">unmanaged</span>{{end}}</td><td>{{.Tool}}</td><td>{{.Status}}</td><td>{{.Role}}</td><td><a href="/talk?agent={{.Name}}">talk to</a></td></tr>{{end}}
+    {{range .MissionAgents}}<tr><td><strong>{{.Name}}</strong>{{if .Unmanaged}} <span class="badge">unmanaged</span>{{end}}{{with .MissionSource}} <span class="badge" title="mission membership source">mission: {{.}}</span>{{end}}</td><td>{{.Tool}}</td><td>{{.Status}}</td><td>{{.Role}}</td><td><a href="/talk?agent={{.Name}}">talk to</a></td></tr>{{end}}
   </table>{{else}}<div class="empty">no seated agents</div>{{end}}
 {{end}}
 
@@ -302,7 +302,7 @@ th{color:var(--dim);font-weight:500}
   <tr><th>name</th><th>tool</th><th>status</th><th>role</th><th>branch</th><th>unread</th><th></th></tr>
   {{range .}}
   <tr>
-    <td><strong>{{.Name}}</strong>{{if .Unmanaged}} <span class="badge">unmanaged</span>{{end}}</td><td>{{.Tool}}</td>
+    <td><strong>{{.Name}}</strong>{{if .Unmanaged}} <span class="badge">unmanaged</span>{{end}}{{with .MissionSource}} <span class="badge" title="mission membership source">mission: {{.}}</span>{{end}}</td><td>{{.Tool}}</td>
     <td>{{.Status}}{{with .Detail}} <span class="meta">({{.}})</span>{{end}}</td>
     <td>{{.Role}}</td><td>{{.Branch}}</td><td>{{if .Unread}}{{.Unread}}{{end}}</td>
     <td><a href="/talk?agent={{.Name}}">talk to</a></td>

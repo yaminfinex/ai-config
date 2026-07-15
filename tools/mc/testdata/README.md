@@ -14,3 +14,11 @@ directory. Only the temporary repo prefix was normalized to `/missions-repo`.
 
 Keep these producer-shaped. In particular, degraded `--all` entries put their
 diagnostics in `warnings`; they do not carry `refusal`, `reason`, or `remedy`.
+
+# herder list fixture
+
+`herder-list-missions.jsonl` contains three complete rows captured from the
+real `herder list --json` producer on 2026-07-15: marker inference, cwd
+inference, and `mission:null`. The final row is a producer-shaped
+forward-compatibility mutation with an unknown `mission.seat` key; it pins the
+contract that additions inside `mission` do not change parsing or grouping.

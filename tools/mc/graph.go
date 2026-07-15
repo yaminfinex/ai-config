@@ -26,9 +26,9 @@ type graphThreadInfo struct {
 }
 
 type graphNode struct {
-	Name, Kind, Mission, Tool, Status, Detail, Role, Branch, GUID string
-	Unread, Activity                                              int
-	X, Y, W, H                                                    float64
+	Name, Kind, Mission, MissionSource, Tool, Status, Detail, Role, Branch, GUID string
+	Unread, Activity                                                             int
+	X, Y, W, H                                                                   float64
 }
 
 type graphEdge struct {
@@ -83,7 +83,7 @@ func (w *Web) graphData(window string, now time.Time) *graphModel {
 	w.graphCache.mu.Lock()
 	defer w.graphCache.mu.Unlock()
 	if hit, ok := w.graphCache.entries[window]; ok && now.Sub(hit.at) >= 0 && now.Sub(hit.at) < 3*time.Second {
-		return hit.model
+		return w.refreshGraphRoster(hit.model)
 	}
 
 	model := w.buildGraphModel(window, now)
@@ -98,48 +98,7 @@ func (w *Web) buildGraphModel(window string, now time.Time) *graphModel {
 		m.Warnings = append(m.Warnings, "roster: "+rosterWarning)
 	}
 
-	nodes := map[string]*graphNode{}
-	mentionNames := []string{w.seat}
-	for _, group := range groups {
-		mission := group.Mission
-		if mission == "" {
-			mission = "(no mission)"
-		}
-		// Bus events identify agents by their canonical bus name, so nodes
-		// and mention fan-out must key on Address (falling back to Name for
-		// bus-only rows where they coincide) or edges would never match.
-		addAgent := func(agent rosterAgent) {
-			name := cleanGraphName(agent.Address)
-			if name == "" {
-				name = cleanGraphName(agent.Name)
-			}
-			if name == "" {
-				return
-			}
-			if !contains(mentionNames, name) {
-				mentionNames = append(mentionNames, name)
-			}
-			if name == w.seat {
-				return
-			}
-			nodes[name] = &graphNode{
-				Name: name, Kind: "agent", Mission: mission, Tool: agent.Tool,
-				Status: agent.Status, Detail: agent.Detail, Unread: agent.Unread,
-				Role: agent.Role, Branch: agent.Branch, GUID: agent.GUID,
-			}
-		}
-		for _, agent := range group.Agents {
-			addAgent(agent)
-		}
-		// Missionless agents sit nested repo → branch, not in the flat list.
-		for _, repo := range group.Repos {
-			for _, branch := range repo.Branches {
-				for _, agent := range branch.Agents {
-					addAgent(agent)
-				}
-			}
-		}
-	}
+	nodes, mentionNames := graphRosterNodes(groups, w.seat)
 	nodes[w.seat] = &graphNode{Name: w.seat, Kind: "desk", Status: "active"}
 
 	authors, threadInfo, yourTurn := w.store.GraphSnapshot()
@@ -255,6 +214,109 @@ func (w *Web) buildGraphModel(window string, now time.Time) *graphModel {
 	for _, node := range nodes {
 		m.Nodes = append(m.Nodes, *node)
 	}
+	sortGraphModel(m)
+	return m
+}
+
+func graphRosterNodes(groups []rosterGroup, seat string) (map[string]*graphNode, []string) {
+	nodes := map[string]*graphNode{}
+	mentionNames := []string{seat}
+	for _, group := range groups {
+		mission := group.Mission
+		if mission == "" {
+			mission = "(no mission)"
+		}
+		// Bus events identify agents by their canonical bus name, so nodes
+		// and mention fan-out must key on Address (falling back to Name for
+		// bus-only rows where they coincide) or edges would never match.
+		addAgent := func(agent rosterAgent) {
+			name := cleanGraphName(agent.Address)
+			if name == "" {
+				name = cleanGraphName(agent.Name)
+			}
+			if name == "" {
+				return
+			}
+			if !contains(mentionNames, name) {
+				mentionNames = append(mentionNames, name)
+			}
+			if name == seat {
+				return
+			}
+			nodes[name] = &graphNode{
+				Name: name, Kind: "agent", Mission: mission, Tool: agent.Tool,
+				Status: agent.Status, Detail: agent.Detail, Unread: agent.Unread,
+				MissionSource: agent.MissionSource, Role: agent.Role, Branch: agent.Branch, GUID: agent.GUID,
+			}
+		}
+		for _, agent := range group.Agents {
+			addAgent(agent)
+		}
+		// Missionless agents sit nested repo → branch, not in the flat list.
+		for _, repo := range group.Repos {
+			for _, branch := range repo.Branches {
+				for _, agent := range branch.Agents {
+					addAgent(agent)
+				}
+			}
+		}
+	}
+	return nodes, mentionNames
+}
+
+// refreshGraphRoster keeps the short-lived communication snapshot but never
+// carries herder membership across renders. Successors and forks therefore
+// move clusters as soon as the producer row changes.
+func (w *Web) refreshGraphRoster(cached *graphModel) *graphModel {
+	groups, rosterWarning := w.rosterGroups(false)
+	fresh, _ := graphRosterNodes(groups, w.seat)
+	out := &graphModel{
+		AsOf: cached.AsOf, Window: cached.Window, YourTurn: cached.YourTurn,
+		Edges: append([]graphEdge(nil), cached.Edges...),
+	}
+	for _, warning := range cached.Warnings {
+		if !strings.HasPrefix(warning, "roster: ") {
+			out.Warnings = append(out.Warnings, warning)
+		}
+	}
+	if rosterWarning != "" {
+		out.Warnings = append(out.Warnings, "roster: "+rosterWarning)
+	}
+
+	old := map[string]graphNode{}
+	referenced := map[string]bool{}
+	for _, node := range cached.Nodes {
+		old[node.Name] = node
+	}
+	for _, edge := range cached.Edges {
+		referenced[edge.A], referenced[edge.B] = true, true
+	}
+	for name, node := range fresh {
+		if previous, ok := old[name]; ok {
+			node.Activity = previous.Activity
+		}
+		out.Nodes = append(out.Nodes, *node)
+	}
+	for _, node := range cached.Nodes {
+		if node.Kind == "desk" {
+			out.Nodes = append(out.Nodes, node)
+			continue
+		}
+		if fresh[node.Name] != nil {
+			continue
+		}
+		if node.Kind == "ghost" || referenced[node.Name] {
+			node.Kind, node.Mission, node.MissionSource = "ghost", "(no mission)", ""
+			node.Tool, node.Role, node.Branch, node.GUID, node.Detail = "", "", "", "", ""
+			node.Status = "gone"
+			out.Nodes = append(out.Nodes, node)
+		}
+	}
+	sortGraphModel(out)
+	return out
+}
+
+func sortGraphModel(m *graphModel) {
 	sort.Slice(m.Nodes, func(i, j int) bool {
 		if m.Nodes[i].Mission != m.Nodes[j].Mission {
 			return m.Nodes[i].Mission < m.Nodes[j].Mission
@@ -270,7 +332,6 @@ func (w *Web) buildGraphModel(window string, now time.Time) *graphModel {
 		}
 		return m.Edges[i].B < m.Edges[j].B
 	})
-	return m
 }
 
 func decorateGraphEdge(edge *graphEdge, thread string, info map[string]graphThreadInfo) {
@@ -562,6 +623,9 @@ func graphStatusGlyph(node graphNode) string {
 
 func graphNodeTitle(node graphNode) string {
 	parts := []string{node.Name, node.Tool, node.Status, node.Role, node.Branch, node.Detail}
+	if node.MissionSource != "" {
+		parts = append(parts, "mission: "+node.MissionSource)
+	}
 	return strings.Join(nonempty(parts...), " · ")
 }
 

@@ -867,14 +867,15 @@ type rosterAgent struct {
 	Name string
 	// Address is hcom's canonical bus name. Name remains the descriptive
 	// herder label rendered in the roster (for example builder-nezi).
-	Address string
-	Tool    string
-	Status  string
-	Detail  string
-	Unread  int
-	Role    string
-	Branch  string
-	GUID    string
+	Address       string
+	Tool          string
+	Status        string
+	Detail        string
+	Unread        int
+	Role          string
+	Branch        string
+	GUID          string
+	MissionSource string
 	// Unmanaged means hcom knows this row but the herder registry does not.
 	Unmanaged bool
 }
@@ -963,7 +964,17 @@ func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {
 	}
 	missionGroups := map[string]*rosterGroup{}
 	missionless := map[string]map[string][]rosterAgent{}
-	add := func(dir string, a rosterAgent) {
+	add := func(dir string, declared *HerderMission, a rosterAgent) {
+		if declared != nil {
+			g := missionGroups[declared.Slug]
+			if g == nil {
+				g = &rosterGroup{Dir: "mission: " + declared.Slug, Mission: declared.Slug}
+				missionGroups[declared.Slug] = g
+			}
+			a.MissionSource = declared.Source
+			g.Agents = append(g.Agents, a)
+			return
+		}
 		if w.missions != nil {
 			if mission := w.missions.Slug(dir); mission != "" {
 				g := missionGroups[mission]
@@ -998,6 +1009,7 @@ func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {
 		// Group by spawn-grain cwd (declared intent) when herder knows the
 		// session; the bus directory tracks the live shell as it wanders.
 		dir := a.Directory
+		var declared *HerderMission
 		h, ok := bySID[a.SessionID]
 		if !ok {
 			if h, ok = byName[a.Name]; !ok {
@@ -1006,6 +1018,7 @@ func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {
 		}
 		if ok {
 			ra.Role, ra.Branch, ra.GUID = h.Role, h.Branch, h.GUID
+			declared = h.Mission
 			seen[h.Label] = true
 			if h.Cwd != "" {
 				dir = h.Cwd
@@ -1013,7 +1026,7 @@ func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {
 		} else {
 			ra.Unmanaged = true
 		}
-		add(dir, ra)
+		add(dir, declared, ra)
 	}
 	for _, h := range herderRows {
 		if h.Label == "" || h.Label == w.seat || seen[h.Label] {
@@ -1022,7 +1035,7 @@ func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {
 		if !showAll && h.Status != "seated" {
 			continue
 		}
-		add(h.Cwd, rosterAgent{Name: h.Label, Address: h.Label, Tool: h.Agent, Status: h.Status, Role: h.Role, Branch: h.Branch, GUID: h.GUID})
+		add(h.Cwd, h.Mission, rosterAgent{Name: h.Label, Address: h.Label, Tool: h.Agent, Status: h.Status, Role: h.Role, Branch: h.Branch, GUID: h.GUID})
 	}
 	var out []rosterGroup
 	for _, g := range missionGroups {

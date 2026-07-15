@@ -12,14 +12,20 @@ import (
 // defensively (map[string]any) so mc never breaks on registry additions.
 
 type HerderRow struct {
-	Label  string
-	GUID   string
-	Agent  string
-	Role   string
-	Status string
-	Cwd    string
-	Branch string
-	SIDs   []string // tool session ids — the reliable join to hcom rows
+	Label   string
+	GUID    string
+	Agent   string
+	Role    string
+	Status  string
+	Cwd     string
+	Branch  string
+	SIDs    []string // tool session ids — the reliable join to hcom rows
+	Mission *HerderMission
+}
+
+type HerderMission struct {
+	Slug   string
+	Source string
 }
 
 func HerderList(bin string) ([]HerderRow, error) {
@@ -71,6 +77,12 @@ func HerderList(bin string) ([]HerderRow, error) {
 		}
 		if row.Cwd == "" {
 			row.Cwd = str(r, "cwd")
+		}
+		if mission, ok := r["mission"].(map[string]any); ok {
+			row.Mission = &HerderMission{
+				Slug:   str(mission, "slug"),
+				Source: str(mission, "source"),
+			}
 		}
 		rows = append(rows, row)
 	}
