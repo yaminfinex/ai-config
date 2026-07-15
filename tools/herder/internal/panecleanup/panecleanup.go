@@ -42,6 +42,7 @@ func ClosePreservingFocus(client Client, paneID string) ([]byte, int, error) {
 		return closeOut, closeRC, closeErr
 	}
 	priorOut, priorRC, priorErr := client.Combined("pane", "get", prior)
+	// Live herdr returns rc=1 for a missing pane; the payload check is defensive for success-shaped absence.
 	if priorErr != nil || priorRC != 0 || paneLookupAbsent(priorOut) {
 		return closeOut, closeRC, closeErr
 	}

@@ -97,6 +97,44 @@ func TestClosePreservingFocusDoesNotRefocusClosedPriorPane(t *testing.T) {
 	assertCalls(t, client, "pane list", "pane close p_target")
 }
 
+func TestClosePreservingFocusDoesNotInspectFocusAfterCloseFailure(t *testing.T) {
+	tests := []struct {
+		name string
+		fail response
+	}{
+		{name: "command error", fail: response{want: "pane close p_target", err: errors.New("close could not run")}},
+		{name: "nonzero exit", fail: response{want: "pane close p_target", out: []byte(`{"error":{"code":"close_failed"}}`), rc: 1}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &scriptedClient{responses: []response{
+				{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
+				tt.fail,
+			}}
+			_, rc, err := ClosePreservingFocus(client, "p_target")
+			if rc != tt.fail.rc || !errors.Is(err, tt.fail.err) {
+				t.Fatalf("ClosePreservingFocus() rc=%d err=%v, want rc=%d err=%v", rc, err, tt.fail.rc, tt.fail.err)
+			}
+			assertScriptConsumed(t, client)
+			assertCalls(t, client, "pane list", "pane close p_target")
+		})
+	}
+}
+
+func TestClosePreservingFocusDoesNotRefocusAfterFailedCurrentFocusRead(t *testing.T) {
+	client := &scriptedClient{responses: []response{
+		{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
+		{want: "pane close p_target", out: []byte(`{"result":{"type":"ok"}}`)},
+		{want: "pane list", out: []byte(`{"error":{"code":"unavailable"}}`), rc: 1},
+	}}
+	_, rc, err := ClosePreservingFocus(client, "p_target")
+	if err != nil || rc != 0 {
+		t.Fatalf("ClosePreservingFocus() rc=%d err=%v, want close success", rc, err)
+	}
+	assertScriptConsumed(t, client)
+	assertCalls(t, client, "pane list", "pane close p_target", "pane list")
+}
+
 func TestClosePreservingFocusDoesNotRefocusMissingPriorPane(t *testing.T) {
 	client := &scriptedClient{
 		responses: []response{
