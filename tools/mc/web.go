@@ -246,22 +246,21 @@ func (w *Web) threads(rw http.ResponseWriter, r *http.Request) {
 func (w *Web) talkForm(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "talk")
 	w.setTalkTarget(d, r)
-	d.F["expects"] = "reply"
-	d.F["weight"] = "moment"
 	w.render(rw, 200, d)
 }
+
+// Human-authored talk always opens a managed request at moment weight. These
+// agent-shaped journal fields are derived here rather than exposed by the form.
+const (
+	humanTalkExpects = "reply"
+	humanTalkWeight  = "moment"
+)
 
 func (w *Web) talkPost(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "talk")
 	w.setTalkTarget(d, r)
-	for _, k := range []string{"title", "message", "expects", "weight"} {
+	for _, k := range []string{"title", "message"} {
 		d.F[k] = strings.TrimSpace(r.FormValue(k))
-	}
-	if d.F["expects"] == "" {
-		d.F["expects"] = "reply"
-	}
-	if d.F["weight"] == "" {
-		d.F["weight"] = "moment"
 	}
 	targets, home, targetErr := w.resolveTalkTarget(d.TalkKind, d.TalkTarget)
 	switch {
@@ -287,16 +286,12 @@ func (w *Web) talkPost(rw http.ResponseWriter, r *http.Request) {
 	}
 	user := w.userFor(r)
 	turn := strings.Join(targets, ",")
-	if err := w.store.Open(id, title, d.F["message"], d.F["expects"], d.F["weight"], home, user, targets, turn, "managed"); err != nil {
+	if err := w.store.Open(id, title, d.F["message"], humanTalkExpects, humanTalkWeight, home, user, targets, turn, "managed"); err != nil {
 		d.Error = err.Error()
 		w.render(rw, 500, d)
 		return
 	}
-	intent := "request"
-	if d.F["expects"] == "read" {
-		intent = "inform"
-	}
-	if err := w.bus.Send(user, targets, id, "", intent, d.F["message"]); err != nil {
+	if err := w.bus.Send(user, targets, id, "", "request", d.F["message"]); err != nil {
 		// Store opened but delivery refused (e.g. unknown agent): close the
 		// record honestly rather than leave a phantom open thread.
 		_ = w.store.Close(id, "delivery failed: "+err.Error())

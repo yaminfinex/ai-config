@@ -204,26 +204,6 @@ th{color:var(--dim);font-weight:500}
       <textarea name="message" autofocus>{{index .F "message"}}</textarea>
       <label>title (optional)</label>
       <input type="text" name="title" value="{{index .F "title"}}" placeholder="Defaults to the first sentence, up to 80 characters">
-      <details>
-        <summary>Advanced</summary>
-        <label>expects</label>
-        <select name="expects">
-          {{$e := index .F "expects"}}
-          <option {{if eq $e "decide"}}selected{{end}}>decide</option>
-          <option {{if eq $e "act"}}selected{{end}}>act</option>
-          <option {{if eq $e "reply"}}selected{{end}}>reply</option>
-          <option {{if eq $e "read"}}selected{{end}}>read</option>
-        </select>
-        <label>weight</label>
-        <select name="weight">
-          {{$w := index .F "weight"}}
-          <option {{if eq $w "rule"}}selected{{end}}>rule</option>
-          <option {{if eq $w "signoff"}}selected{{end}}>signoff</option>
-          <option {{if eq $w "provision"}}selected{{end}}>provision</option>
-          <option {{if eq $w "moment"}}selected{{end}}>moment</option>
-          <option {{if eq $w "ack"}}selected{{end}}>ack</option>
-        </select>
-      </details>
       <button>Send</button>
     </form>
   {{else}}

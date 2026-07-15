@@ -27,9 +27,14 @@ func TestTalkFormCarriesTargetInURLAndKeepsTitleVisible(t *testing.T) {
 	rw := httptest.NewRecorder()
 	w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/talk?agent=builder-dunu", nil))
 	body := rw.Body.String()
-	for _, want := range []string{`action="/talk?agent=builder-dunu"`, `name="message"`, `title (optional)`, `>Advanced<`} {
+	for _, want := range []string{`action="/talk?agent=builder-dunu"`, `name="message"`, `title (optional)`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("talk form missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{`name="expects"`, `name="weight"`, `>Advanced<`} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("talk form exposes agent-shaped field %q", unwanted)
 		}
 	}
 	if strings.Contains(body, "Open a thread") || strings.Contains(body, "cold-open") {
