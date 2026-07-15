@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"html"
 	"html/template"
 	"io/fs"
 	"net/url"
@@ -163,7 +164,7 @@ func (linkSchemeFilter) Transform(document *ast.Document, reader text.Reader, _ 
 }
 
 func allowedLinkDestination(destination []byte) bool {
-	parsed, err := url.Parse(string(destination))
+	parsed, err := url.Parse(html.UnescapeString(string(destination)))
 	if err != nil {
 		return false
 	}

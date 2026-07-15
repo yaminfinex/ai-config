@@ -78,6 +78,12 @@ Refused: <javascript:alert(1)>, <vbscript:msgbox(1)>, <data:text/html;base64,PHN
 	if err := os.WriteFile(filepath.Join(artifacts, "wire frame.md"), []byte(markdown), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(missionDir, "artifacts", "decimal-entity.md"), []byte("[poison](&#106;avascript:alert(1))\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(missionDir, "artifacts", "hex-entity.md"), []byte("[poison](&#x6a;avascript:alert(1))\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(missionDir, "artifacts", "raw.txt"), []byte("<script>not executable</script>"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -111,6 +117,16 @@ Refused: <javascript:alert(1)>, <vbscript:msgbox(1)>, <data:text/html;base64,PHN
 				`href="mailto:friend@example.com"`, `href="../next"`},
 			notContain: []string{"<script", "alert('no')", `href="javascript:`,
 				`href="vbscript:`, `href="data:`, `href="ftp:`},
+		},
+		{
+			path:       "/mission/mission-one/file/artifacts/decimal-entity.md",
+			status:     http.StatusOK,
+			notContain: []string{`href="javascript:`},
+		},
+		{
+			path:       "/mission/mission-one/file/artifacts/hex-entity.md",
+			status:     http.StatusOK,
+			notContain: []string{`href="javascript:`},
 		},
 		{
 			path:       "/mission/mission-one/file/artifacts/raw.txt",
