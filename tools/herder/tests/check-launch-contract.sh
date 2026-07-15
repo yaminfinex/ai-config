@@ -36,10 +36,29 @@ printf '%s\n' "$@" >"$PROBE/argv"
   printf 'CODEX_HOME=%s\n' "${CODEX_HOME-}"
   printf 'GEMINI_CLI_HOME=%s\n' "${GEMINI_CLI_HOME-}"
   printf 'HCOM_DIR=%s\n' "${HCOM_DIR-}"
+  if [[ "${PI_OFFLINE-}" == 1 ]]; then
+    printf 'ANTHROPIC_API_KEY=%s\n' "${ANTHROPIC_API_KEY:+present}"
+    printf 'OPENAI_API_KEY=%s\n' "${OPENAI_API_KEY:+present}"
+    printf 'XAI_API_KEY=%s\n' "${XAI_API_KEY:+present}"
+    printf 'PI_OFFLINE=%s\n' "${PI_OFFLINE-}"
+    printf 'PI_TELEMETRY=%s\n' "${PI_TELEMETRY-}"
+    printf 'PI_CODING_AGENT_DIR=%s\n' "${PI_CODING_AGENT_DIR-}"
+    printf 'PI_CODING_AGENT_SESSION_DIR=%s\n' "${PI_CODING_AGENT_SESSION_DIR-}"
+    case "${HCOM_NOTES-}" in
+      *'hcom send'*'Never print'*'repeat'*'silence is expected'*) printf 'HCOM_NOTES=herder-doctrine\n' ;;
+      *) printf 'HCOM_NOTES=missing-or-incomplete\n' ;;
+    esac
+  fi
 } >"$PROBE/env"
 exit "${MOCK_HCOM_RC:-0}"
 MOCK_HCOM
 chmod +x "$MOCKBIN/hcom"
+PI_PACKAGE="$ROOT/pi-package/node_modules/@earendil-works/pi-coding-agent"
+mkdir -p "$PI_PACKAGE/dist"
+printf '%s\n' '{"name":"@earendil-works/pi-coding-agent","version":"0.80.6"}' >"$PI_PACKAGE/package.json"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 99' >"$PI_PACKAGE/dist/cli.js"
+chmod +x "$PI_PACKAGE/dist/cli.js"
+ln -s "$PI_PACKAGE/dist/cli.js" "$MOCKBIN/pi"
 # Mock claude lives in BASEBIN (present in BOTH path modes): the print bypass
 # execs the PATH-resolved tool directly and must work with hcom absent.
 cat >"$BASEBIN/claude" <<'MOCK_CLAUDE'
@@ -51,10 +70,8 @@ printf 'HCOM_LAUNCH_INFLIGHT=%s\n' "${HCOM_LAUNCH_INFLIGHT-}" >"$PROBE/tool_env"
 exit 0
 MOCK_CLAUDE
 chmod +x "$BASEBIN/claude"
-cat >"$BASEBIN/go" <<'MOCK_GO'
-#!/usr/bin/env bash
-exec /opt/homebrew/bin/go "$@"
-MOCK_GO
+REAL_GO="$(command -v go)"
+printf '%s\n' '#!/usr/bin/env bash' "exec \"$REAL_GO\" \"\$@\"" >"$BASEBIN/go"
 chmod +x "$BASEBIN/go"
 
 PATH_BASE="$BASEBIN:/usr/bin:/bin:/sbin"
@@ -122,6 +139,7 @@ scenario no_tool          with-hcom '<case-home>' ''          ''
 scenario leading_dash     with-hcom '<case-home>' ''          ''                                     --model opus
 scenario hcom_missing     no-hcom   '<case-home>' ''          ''                                     claude --model opus
 scenario plain_claude     with-hcom '<case-home>' ''          ''                                     claude --model opus
+scenario nonpi_provider   with-hcom '<case-home>' ''          ''                                     claude --provider tool-owned
 scenario tag_space        with-hcom '<case-home>' ''          ''                                     claude --model opus --tag worker
 scenario tag_equals       with-hcom '<case-home>' ''          ''                                     claude --tag=worker --model opus
 scenario tag_missing      with-hcom '<case-home>' ''          ''                                     claude --tag
@@ -132,7 +150,10 @@ scenario pin_gemini       with-hcom '<case-home>' '<case-team>' ''              
 scenario preset_claude    with-hcom '<case-home>' '<case-team>' 'CLAUDE_CONFIG_DIR=/custom/claude'  claude
 scenario global_unset     with-hcom '<case-home>' ''          ''                                     claude
 scenario global_home      with-hcom '<case-home>' '<case-home>/.hcom' ''                            claude
-scenario unknown_tool     with-hcom '<case-home>' '<case-team>' ''                                  pi --flag
+scenario unknown_tool     with-hcom '<case-home>' '<case-team>' ''                                  futuretool --flag
+scenario pi_spawn         with-hcom '<case-home>' '<case-home>/.hcom' 'OPENAI_API_KEY=test-only ANTHROPIC_API_KEY=foreign XAI_API_KEY=foreign' pi --tag worker --provider openai --model model-one
+scenario pi_resume        with-hcom '<case-home>' '<case-home>/.hcom' 'OPENAI_API_KEY=test-only ANTHROPIC_API_KEY=foreign XAI_API_KEY=foreign' --resume pi session-one --tag worker --provider openai --model model-one
+scenario pi_fork          with-hcom '<case-home>' '<case-home>/.hcom' 'OPENAI_API_KEY=test-only ANTHROPIC_API_KEY=foreign XAI_API_KEY=foreign' --fork pi session-one --tag worker --provider openai --model model-one
 # TASK-010 print bypass: claude -p/--print one-shots skip hcom and exec the
 # PATH-resolved tool with the shim recursion guard set.
 scenario print_p          with-hcom '<case-home>' ''          ''                                     claude -p hello

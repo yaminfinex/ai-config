@@ -1,0 +1,33 @@
+=== STDERR ===
+
+=== STDOUT ===
+
+=== EXIT ===
+0
+=== HCOM ARGV ===
+r
+session-one
+--run-here
+--tag
+worker
+--provider
+openai
+--model
+model-one
+=== ENV PROBES ===
+HCOM_LAUNCH_INFLIGHT=1
+CLAUDE_CONFIG_DIR=
+CODEX_HOME=
+GEMINI_CLI_HOME=
+HCOM_DIR=<CASE>/home/.hcom
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=present
+XAI_API_KEY=
+PI_OFFLINE=1
+PI_TELEMETRY=0
+PI_CODING_AGENT_DIR=
+PI_CODING_AGENT_SESSION_DIR=
+HCOM_NOTES=herder-doctrine
+=== TOOL ARGV ===
+
+=== TOOL ENV ===

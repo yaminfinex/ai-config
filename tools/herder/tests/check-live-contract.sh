@@ -588,6 +588,22 @@ check_snapshot_negative_demo() {
   fi
 }
 
+check_hcom_pi_launch_line() {
+  local hcom_bin="$1" out
+  if ! out="$(HOME="$ROOT/pi-home" HCOM_DIR="$ROOT/pi-home/.hcom" run_live "$hcom_bin" pi --help 2>"$ROOT/hcom-pi-help.err")"; then
+    fail "hcom Pi launch line" "hcom pi --help failed: $(cat "$ROOT/hcom-pi-help.err")"
+    return
+  fi
+  if grep -qF 'hcom [N] pi [args...]' <<<"$out" &&
+     grep -qF 'HCOM_NOTES' <<<"$out" &&
+     grep -qF 'hcom r <target>' <<<"$out" &&
+     grep -qF 'hcom f <target>' <<<"$out"; then
+    pass "hcom Pi launch line pins launch, lifecycle, and notes surfaces"
+  else
+    fail "hcom Pi launch line" "installed hcom no longer advertises the pinned Pi launch/lifecycle/notes surface"
+  fi
+}
+
 if have_cmd jq && have_cmd python3 && have_cmd timeout; then
   :
 else
@@ -600,10 +616,12 @@ if hcom_bin="$(real_hcom)" && [[ -n "$hcom_bin" && -x "$hcom_bin" ]]; then
   check_hcom_bootstrap "$hcom_bin"
   check_hcom_list_shape "$hcom_bin"
   check_hcom_roster_launch_context "$hcom_bin"
+  check_hcom_pi_launch_line "$hcom_bin"
 else
   skip "hcom bootstrap extraction" "installed hcom not found"
   skip "hcom list self --json shape" "installed hcom not found"
   skip "hcom roster launch_context fields" "installed hcom not found"
+  skip "hcom Pi launch line" "installed hcom not found"
 fi
 
 if herdr_bin="$(real_herdr)" && [[ -n "$herdr_bin" && -x "$herdr_bin" ]]; then

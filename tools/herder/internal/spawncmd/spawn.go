@@ -59,6 +59,7 @@ type options struct {
 	LabelPrefix   string
 	ExtraArgs     []string
 	Model         string
+	Provider      string
 	JSONOutput    bool
 	WaitTimeoutMS int
 	BindTimeoutMS int
@@ -75,59 +76,69 @@ type options struct {
 }
 
 type spawnRecord struct {
-	GUID                 string              `json:"guid"`
-	ShortGUID            string              `json:"short_guid"`
-	Label                string              `json:"label"`
-	Role                 string              `json:"role"`
-	Agent                string              `json:"agent"`
-	ExtraArgs            []string            `json:"extra_args"`
-	Argv                 []string            `json:"argv"`
-	PaneID               string              `json:"pane_id"`
-	WorkspaceID          string              `json:"workspace_id"`
-	TabID                string              `json:"tab_id"`
-	TerminalID           string              `json:"terminal_id"`
-	CWD                  string              `json:"cwd"`
-	StartedAt            string              `json:"started_at"`
-	StartedByPane        string              `json:"started_by_pane"`
-	InitialPromptPresent bool                `json:"initial_prompt_present"`
-	HcomDir              string              `json:"hcom_dir"`
-	HcomName             string              `json:"hcom_name"`
-	HcomTag              string              `json:"hcom_tag"`
-	Status               string              `json:"status"`
-	Provenance           registry.Provenance `json:"provenance"`
+	GUID                 string                   `json:"guid"`
+	ShortGUID            string                   `json:"short_guid"`
+	Label                string                   `json:"label"`
+	Role                 string                   `json:"role"`
+	Agent                string                   `json:"agent"`
+	Provider             string                   `json:"provider,omitempty"`
+	Model                string                   `json:"model,omitempty"`
+	VendorVersion        *v2.VendorVersionHistory `json:"vendor_version,omitempty"`
+	ExtraArgs            []string                 `json:"extra_args"`
+	Argv                 []string                 `json:"argv"`
+	PaneID               string                   `json:"pane_id"`
+	WorkspaceID          string                   `json:"workspace_id"`
+	TabID                string                   `json:"tab_id"`
+	TerminalID           string                   `json:"terminal_id"`
+	CWD                  string                   `json:"cwd"`
+	StartedAt            string                   `json:"started_at"`
+	StartedByPane        string                   `json:"started_by_pane"`
+	InitialPromptPresent bool                     `json:"initial_prompt_present"`
+	HcomDir              string                   `json:"hcom_dir"`
+	HcomName             string                   `json:"hcom_name"`
+	HcomTag              string                   `json:"hcom_tag"`
+	HooksBound           bool                     `json:"hooks_bound,omitempty"`
+	TranscriptPath       string                   `json:"transcript_path,omitempty"`
+	Status               string                   `json:"status"`
+	Provenance           registry.Provenance      `json:"provenance"`
 }
 
 type spawnJSONRecord struct {
-	GUID                 string              `json:"guid"`
-	ShortGUID            string              `json:"short_guid"`
-	Label                string              `json:"label"`
-	Role                 string              `json:"role"`
-	Agent                string              `json:"agent"`
-	ExtraArgs            []string            `json:"extra_args"`
-	Argv                 []string            `json:"argv"`
-	PaneID               string              `json:"pane_id"`
-	WorkspaceID          string              `json:"workspace_id"`
-	TabID                string              `json:"tab_id"`
-	TerminalID           string              `json:"terminal_id"`
-	CWD                  string              `json:"cwd"`
-	StartedAt            string              `json:"started_at"`
-	StartedByPane        string              `json:"started_by_pane"`
-	InitialPromptPresent bool                `json:"initial_prompt_present"`
-	HcomDir              string              `json:"hcom_dir"`
-	HcomName             string              `json:"hcom_name"`
-	HcomTag              string              `json:"hcom_tag"`
-	Status               string              `json:"status"`
-	Provenance           registry.Provenance `json:"provenance"`
-	PromptSent           bool                `json:"prompt_sent"`
-	DeliveryResult       string              `json:"delivery_result"`
-	ResendCommand        string              `json:"resend_command,omitempty"`
-	PasteNotes           []string            `json:"paste_notes,omitempty"`
-	PermInjected         string              `json:"perm_injected"`
-	NewTab               bool                `json:"new_tab"`
-	RootPaneClosed       bool                `json:"root_pane_closed"`
-	NewTabResult         string              `json:"new_tab_result,omitempty"`
-	HcomCapture          string              `json:"hcom_capture"`
-	Worktree             *worktreeInfo       `json:"worktree,omitempty"`
+	GUID                 string                   `json:"guid"`
+	ShortGUID            string                   `json:"short_guid"`
+	Label                string                   `json:"label"`
+	Role                 string                   `json:"role"`
+	Agent                string                   `json:"agent"`
+	Provider             string                   `json:"provider,omitempty"`
+	Model                string                   `json:"model,omitempty"`
+	VendorVersion        *v2.VendorVersionHistory `json:"vendor_version,omitempty"`
+	ExtraArgs            []string                 `json:"extra_args"`
+	Argv                 []string                 `json:"argv"`
+	PaneID               string                   `json:"pane_id"`
+	WorkspaceID          string                   `json:"workspace_id"`
+	TabID                string                   `json:"tab_id"`
+	TerminalID           string                   `json:"terminal_id"`
+	CWD                  string                   `json:"cwd"`
+	StartedAt            string                   `json:"started_at"`
+	StartedByPane        string                   `json:"started_by_pane"`
+	InitialPromptPresent bool                     `json:"initial_prompt_present"`
+	HcomDir              string                   `json:"hcom_dir"`
+	HcomName             string                   `json:"hcom_name"`
+	HcomTag              string                   `json:"hcom_tag"`
+	HooksBound           bool                     `json:"hooks_bound,omitempty"`
+	TranscriptPath       string                   `json:"transcript_path,omitempty"`
+	Status               string                   `json:"status"`
+	Provenance           registry.Provenance      `json:"provenance"`
+	PromptSent           bool                     `json:"prompt_sent"`
+	DeliveryResult       string                   `json:"delivery_result"`
+	ResendCommand        string                   `json:"resend_command,omitempty"`
+	PasteNotes           []string                 `json:"paste_notes,omitempty"`
+	PermInjected         string                   `json:"perm_injected"`
+	NewTab               bool                     `json:"new_tab"`
+	RootPaneClosed       bool                     `json:"root_pane_closed"`
+	NewTabResult         string                   `json:"new_tab_result,omitempty"`
+	HcomCapture          string                   `json:"hcom_capture"`
+	Worktree             *worktreeInfo            `json:"worktree,omitempty"`
 }
 
 // worktreeInfo is the --worktree coordinate block surfaced in the summary and
@@ -150,11 +161,15 @@ type workspace struct {
 }
 
 type hcomEntry struct {
-	Name          string        `json:"name"`
-	Tag           string        `json:"tag"`
-	Directory     string        `json:"directory"`
-	CreatedAt     hcomCreatedAt `json:"created_at"`
-	LaunchContext struct {
+	Name           string        `json:"name"`
+	Tool           string        `json:"tool"`
+	HooksBound     bool          `json:"hooks_bound"`
+	SessionID      string        `json:"session_id"`
+	TranscriptPath string        `json:"transcript_path"`
+	Tag            string        `json:"tag"`
+	Directory      string        `json:"directory"`
+	CreatedAt      hcomCreatedAt `json:"created_at"`
+	LaunchContext  struct {
 		PaneID string `json:"pane_id"`
 	} `json:"launch_context"`
 }
@@ -203,12 +218,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 type runner struct {
-	opts           options
-	stdout         io.Writer
-	stderr         io.Writer
-	herdr          herdrClient
-	paths          herderpaths.Paths
-	updateRegistry func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error)
+	opts            options
+	stdout          io.Writer
+	stderr          io.Writer
+	herdr           herdrClient
+	paths           herderpaths.Paths
+	updateRegistry  func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error)
+	piVendorVersion *v2.VendorVersionHistory
+	piBinDir        string
+	piBind          hcomEntry
 }
 
 type herdrClient interface {
@@ -235,19 +253,25 @@ func (r *runner) failAfterLaunch(reason, paneID, terminalID string) int {
 }
 
 func (r *runner) registerSpawn(registryPath string, record spawnRecord) error {
+	hooksBound := record.HooksBound
 	regRec := registry.Record{
-		GUID:       &record.GUID,
-		ShortGUID:  &record.ShortGUID,
-		Label:      &record.Label,
-		Role:       record.Role,
-		Agent:      record.Agent,
-		PaneID:     record.PaneID,
-		TerminalID: record.TerminalID,
-		HcomDir:    record.HcomDir,
-		HcomName:   record.HcomName,
-		HcomTag:    record.HcomTag,
-		Status:     record.Status,
-		Provenance: &record.Provenance,
+		GUID:           &record.GUID,
+		ShortGUID:      &record.ShortGUID,
+		Label:          &record.Label,
+		Role:           record.Role,
+		Agent:          record.Agent,
+		Provider:       record.Provider,
+		Model:          record.Model,
+		VendorVersion:  record.VendorVersion,
+		PaneID:         record.PaneID,
+		TerminalID:     record.TerminalID,
+		HcomDir:        record.HcomDir,
+		HcomName:       record.HcomName,
+		HcomTag:        record.HcomTag,
+		HooksBound:     &hooksBound,
+		TranscriptPath: record.TranscriptPath,
+		Status:         record.Status,
+		Provenance:     &record.Provenance,
 	}
 	outcomes, err := r.updateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		if owner := registry.V2LabelOwner(tx.Projection, record.Label, record.GUID); owner != nil {
@@ -289,6 +313,10 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		LoginShell:    true,
 		LoginShellBin: firstNonEmpty(os.Getenv("HERDER_SPAWN_SHELL"), os.Getenv("SHELL"), "/bin/bash"),
 		SettleMS:      envInt("HERDER_SPAWN_SETTLE_MS", 1500),
+	}
+	if piTeamRequested(args) {
+		die(stderr, "Pi v1 supports the global bus only; remove --team and retry so hcom can install and load its Pi extension from the default home")
+		return opts, 1
 	}
 	for i := 0; i < len(args); {
 		arg := args[i]
@@ -412,6 +440,17 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			}
 			opts.Model = v
 			i += 2
+		case "--provider":
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			if strings.TrimSpace(v) == "" {
+				die(stderr, "--provider requires a non-empty provider; choose one of: anthropic, openai, xai")
+				return opts, 1
+			}
+			opts.Provider = v
+			i += 2
 		case "--json":
 			opts.JSONOutput = true
 			i++
@@ -485,8 +524,21 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			return opts, 1
 		}
 	}
-	if opts.Model != "" && opts.Agent != "claude" && opts.Agent != "codex" && opts.Agent != "grok" {
-		die(stderr, "--model is supported only for --agent claude, codex, or grok; use --extra-arg for another agent's model option")
+	if opts.Agent == "pi" {
+		if _, err := launchcmd.PiCredentialName(strings.TrimSpace(opts.Provider)); err != nil {
+			die(stderr, err.Error()+"; pass --provider <family>")
+			return opts, 1
+		}
+		if err := launchcmd.ValidatePiExtraArgs(opts.ExtraArgs, opts.Model != ""); err != nil {
+			die(stderr, err.Error())
+			return opts, 1
+		}
+	} else if opts.Provider != "" {
+		die(stderr, "--provider is supported only for --agent pi")
+		return opts, 1
+	}
+	if opts.Model != "" && opts.Agent != "claude" && opts.Agent != "codex" && opts.Agent != "grok" && opts.Agent != "pi" {
+		die(stderr, "--model is supported only for --agent claude, codex, grok, or pi; use --extra-arg for another agent's model option")
 		return opts, 1
 	}
 	if opts.Model != "" && hasModelExtraArg(opts.Agent, opts.ExtraArgs) {
@@ -552,6 +604,24 @@ func (r *runner) run() int {
 	if err != nil {
 		die(r.stderr, err.Error())
 		return 1
+	}
+	if r.opts.Agent == "pi" {
+		if _, err := launchcmd.ValidatePiCredential(r.opts.Provider); err != nil {
+			die(r.stderr, err.Error())
+			return 1
+		}
+		observation, err := launchcmd.ObservePiVendorVersion(time.Now())
+		if err != nil {
+			die(r.stderr, err.Error())
+			return 1
+		}
+		piBinDir, err := launchcmd.PiExecutableDir()
+		if err != nil {
+			die(r.stderr, err.Error())
+			return 1
+		}
+		r.piBinDir = piBinDir
+		r.piVendorVersion = launchcmd.RefreshPiVendorVersion(nil, observation)
 	}
 
 	opts := &r.opts
@@ -783,6 +853,9 @@ func (r *runner) run() int {
 	launchTokens := []string{}
 	if isHcomAgent {
 		launchTokens = append(launchTokens, r.paths.BinHerder, "launch", opts.Agent, "--tag", opts.Role)
+		if opts.Agent == "pi" {
+			launchTokens = append(launchTokens, "--provider", opts.Provider)
+		}
 		launchTokens = append(launchTokens, opts.ExtraArgs...)
 	} else {
 		launchTokens = append(launchTokens, opts.Agent)
@@ -810,7 +883,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	hcomEnv := ""
 	if isHcomAgent {
 		hcomEnv = " HCOM_DIR=" + shellquote.Quote(hcomDirEff) +
-			" PATH=" + shellquote.Quote(r.paths.ShimsDir) + ":$PATH"
+			" PATH=" + shellquote.Quote(agentPathPrefix(r.paths.ShimsDir, opts.Agent, r.piBinDir)) + ":$PATH"
 	}
 	grokEnv := ""
 	if opts.Agent == "grok" {
@@ -839,7 +912,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SPAWNED_BY=" + spawnedBy, "HERDER_BIN=" + childEnvBin}
 		argv = append(argv, "AI_CONFIG_ROOT="+childEnvRoot)
 		if isHcomAgent {
-			argv = append(argv, "HCOM_DIR="+hcomDirEff, "PATH="+r.paths.ShimsDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			argv = append(argv, "HCOM_DIR="+hcomDirEff, "PATH="+agentPathPrefix(r.paths.ShimsDir, opts.Agent, r.piBinDir)+string(os.PathListSeparator)+os.Getenv("PATH"))
 		}
 		if opts.Agent == "grok" {
 			argv = append(argv, "HERDER_STATE_DIR="+stateDir, "HERDER_GROK_SESSION_ID="+grokSessionID, "HERDER_GROK_PREASSIGNED=1")
@@ -971,7 +1044,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	modalCleared := false
 	capturedName := ""
 	switch {
-	case busPrompt || opts.Agent == "grok":
+	case busPrompt || opts.Agent == "grok" || opts.Agent == "pi":
 		// Bind is the delivery gate, so --no-ready-wait cannot skip this wait
 		// (ruling: it stays meaningful only for the paste path). The trust
 		// modal blocks BOOT itself — pre-bind — so awaitBind clears it too.
@@ -985,6 +1058,9 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		_ = modalCleared
 	}
 	if code := r.failUnboundGrok(capturedName, readyReason, paneID, termID); code != 0 {
+		return code
+	}
+	if code := r.failUnboundPi(capturedName, readyReason, paneID, termID); code != 0 {
 		return code
 	}
 
@@ -1036,12 +1112,17 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	if grokSessionID != "" {
 		provenance.ToolSessionID = grokSessionID
 	}
+	if opts.Agent == "pi" {
+		provenance.ToolSessionID = r.piBind.SessionID
+	}
 	record := spawnRecord{
 		GUID:                 guid,
 		ShortGUID:            short,
 		Label:                label,
 		Role:                 opts.Role,
 		Agent:                opts.Agent,
+		Provider:             opts.Provider,
+		VendorVersion:        r.piVendorVersion,
 		ExtraArgs:            recordExtraArgs(opts.ExtraArgs),
 		Argv:                 argv,
 		PaneID:               paneID,
@@ -1055,8 +1136,13 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		HcomDir:              hcomDirRec,
 		HcomName:             capturedName,
 		HcomTag:              hcomTagRec,
+		HooksBound:           r.piBind.HooksBound,
+		TranscriptPath:       r.piBind.TranscriptPath,
 		Status:               "active",
 		Provenance:           provenance,
+	}
+	if opts.Agent == "pi" {
+		record.Model = opts.Model
 	}
 	if code := r.registerSpawnOrRollback(registryPath, record); code != 0 {
 		return code
@@ -1145,6 +1231,9 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			Label:                record.Label,
 			Role:                 record.Role,
 			Agent:                record.Agent,
+			Provider:             record.Provider,
+			Model:                record.Model,
+			VendorVersion:        record.VendorVersion,
 			ExtraArgs:            record.ExtraArgs,
 			Argv:                 record.Argv,
 			PaneID:               record.PaneID,
@@ -1158,6 +1247,8 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			HcomDir:              record.HcomDir,
 			HcomName:             record.HcomName,
 			HcomTag:              record.HcomTag,
+			HooksBound:           record.HooksBound,
+			TranscriptPath:       record.TranscriptPath,
 			Status:               record.Status,
 			Provenance:           record.Provenance,
 			PromptSent:           promptSent,
@@ -1177,6 +1268,14 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	spawnCompleted = true
 	observercmd.NudgeIfConfigured(r.stderr)
 	return 0
+}
+
+func agentPathPrefix(shimsDir, agent, piBinDir string) string {
+	prefix := shimsDir
+	if agent == "pi" && piBinDir != "" {
+		prefix += string(os.PathListSeparator) + piBinDir
+	}
+	return prefix
 }
 
 func (r *runner) awaitReady(paneID *string) (reason string, trustBlocked bool, modalCleared bool) {
@@ -1279,6 +1378,11 @@ func (r *runner) awaitBind(paneID *string, registryPath, guid, hcomDir, launchPa
 		if boundName == "" {
 			if r.opts.Agent == "grok" {
 				boundName = grokBoundBusOnce(filepath.Dir(registryPath), guid, grokSessionID)
+			} else if r.opts.Agent == "pi" {
+				if capture := piBoundBusOnce(hcomDir, launchPaneID); piBindReady(capture) {
+					r.piBind = capture
+					boundName = capture.Name
+				}
 			} else {
 				boundName = childBoundBusOnce(registryPath, guid, hcomDir, launchPaneID)
 			}
@@ -1305,6 +1409,18 @@ func (r *runner) awaitBind(paneID *string, registryPath, guid, hcomDir, launchPa
 		}
 	}
 	return "", reason, false, modalCleared
+}
+
+func (r *runner) failUnboundPi(name, reason, paneID, terminalID string) int {
+	if r.opts.Agent != "pi" || name != "" || !strings.HasPrefix(reason, "bind-timeout") {
+		return 0
+	}
+	return r.failAfterLaunch(
+		"Pi did not satisfy the full hcom bind predicate (tool=pi, hooks bound, nonempty session UUID) before "+reason+
+			"; inspect the pane and hcom roster, correct the Pi extension or PATH configuration, then retry the spawn",
+		paneID,
+		terminalID,
+	)
 }
 
 func (r *runner) failUnboundGrok(name, reason, paneID, terminalID string) int {
@@ -1481,7 +1597,7 @@ func printHelp(stdout io.Writer) {
 		"  herder spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]",
 		"               [--split right|down] [--workspace ID | --from-pane PANE_ID]",
 		"               [--tab ID | --new-tab | --worktree BRANCH [--base REF]] [--cwd PATH] [--safe]",
-		"               [--notify | --notify-to TARGET] [--model ID] [--extra-arg ARG]... [--focus] [--json]",
+		"               [--notify | --notify-to TARGET] [--provider FAMILY] [--model ID] [--extra-arg ARG]... [--focus] [--json]",
 		"",
 		"Options:",
 		"  --role R          agent role; becomes the hcom --tag and label prefix (required)",
@@ -1501,7 +1617,8 @@ func printHelp(stdout io.Writer) {
 		"                    another registry row (guid, label, terminal_id, pane_id, or recorded hcom",
 		"                    name), else accepts TARGET as a literal bus name if live on the child's bus",
 		"  --extra-arg ARG   pass ARG through to the agent (repeatable)",
-		"  --model ID        pin the model for claude, codex, or grok",
+		"  --provider FAMILY  required for pi: anthropic, openai, or xai",
+		"  --model ID        pin the model for claude, codex, grok, or pi",
 		"  --json            print the registry record as JSON on stdout",
 		"",
 		"Advanced:",
@@ -1827,6 +1944,35 @@ func childBoundBusOnce(registryPath, guid, hcomDir, launchPaneID string) string 
 		}
 	}
 	return ""
+}
+
+func piBoundBusOnce(hcomDir, launchPaneID string) hcomEntry {
+	for _, entry := range hcomList(hcomDir) {
+		if entry.LaunchContext.PaneID == launchPaneID {
+			return entry
+		}
+	}
+	return hcomEntry{}
+}
+
+func piBindReady(entry hcomEntry) bool {
+	return entry.Name != "" && entry.Tool == "pi" && entry.HooksBound && strings.TrimSpace(entry.SessionID) != ""
+}
+
+func piTeamRequested(args []string) bool {
+	pi := false
+	team := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--agent":
+			if i+1 < len(args) && args[i+1] == "pi" {
+				pi = true
+			}
+		case "--team":
+			team = true
+		}
+	}
+	return pi && team
 }
 
 // grokBoundBusOnce makes one generation-fenced status request to the owning

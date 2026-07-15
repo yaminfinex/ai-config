@@ -112,6 +112,24 @@ func preflightCWD(mode, cwd string) error {
 	return nil
 }
 
+func preparePiLifecycle(agent string, rec *registry.Record, now time.Time) (string, string, *v2.VendorVersionHistory, error) {
+	if agent != "pi" {
+		return "", "", nil, nil
+	}
+	provider := strings.TrimSpace(rec.Provider)
+	if provider == "" {
+		return "", "", nil, errors.New("Pi lifecycle refused: the registry row has no provider fact, so provider identity cannot be reconstructed; spawn a fresh Pi session with --provider")
+	}
+	if _, err := launchcmd.ValidatePiCredential(provider); err != nil {
+		return "", "", nil, err
+	}
+	observed, err := launchcmd.ObservePiVendorVersion(now)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return provider, rec.Model, launchcmd.RefreshPiVendorVersion(rec.VendorVersion, observed), nil
+}
+
 func placementDecision(split string, splitExplicit, newTab bool) (placement.Decision, error) {
 	return placement.Resolve(placement.Flags{
 		Split:         split,
@@ -182,6 +200,19 @@ func (r *runner) fork(opts forkOptions) int {
 	}
 	sessionID := registry.ToolSessionIDForGUID(recs, parentGUID)
 	agent := firstNonEmpty(parent.Agent, "claude")
+	provider, model, vendorVersion, err := preparePiLifecycle(agent, parent, time.Now())
+	if err != nil {
+		die(r.stderr, err.Error())
+		return 1
+	}
+	piBinDir := ""
+	if agent == "pi" {
+		piBinDir, err = launchcmd.PiExecutableDir()
+		if err != nil {
+			die(r.stderr, err.Error())
+			return 1
+		}
+	}
 	live := liveAgents(r.client())
 	liveParent := registry.IsSeated(*parent) && parent.TerminalID != "" && live[parent.TerminalID].TerminalID != nil
 
@@ -255,6 +286,10 @@ func (r *runner) fork(opts forkOptions) int {
 		VehicleTarget: vehicleTarget,
 		ParentSession: sessionID,
 		GrokSessionID: grokSessionID,
+		Provider:      provider,
+		Model:         model,
+		VendorVersion: vendorVersion,
+		PiBinDir:      piBinDir,
 		Prompt:        opts.prompt,
 		RegistryPath:  registryPath,
 		BaseRaw:       []byte(`{}`),
@@ -620,6 +655,20 @@ func (r *runner) resume(opts resumeOptions) int {
 			return 1
 		}
 	}
+	agent := firstNonEmpty(rec.Agent, "claude")
+	provider, model, vendorVersion, err := preparePiLifecycle(agent, rec, time.Now())
+	if err != nil {
+		die(r.stderr, err.Error())
+		return 1
+	}
+	piBinDir := ""
+	if agent == "pi" {
+		piBinDir, err = launchcmd.PiExecutableDir()
+		if err != nil {
+			die(r.stderr, err.Error())
+			return 1
+		}
+	}
 	label := firstNonEmpty(ptrString(rec.Label), "resumed-"+registry.ShortGUID(guid))
 	if owner := registry.NonRetiredLabelOwner(recs, label, guid); owner != nil {
 		die(r.stderr, fmt.Sprintf("label %q already belongs to non-retired session %s", label, ptrString(owner.GUID)))
@@ -669,10 +718,14 @@ func (r *runner) resume(opts resumeOptions) int {
 		Short:         firstNonEmpty(ptrString(rec.ShortGUID), registry.ShortGUID(guid)),
 		Label:         label,
 		Role:          firstNonEmpty(rec.Role, rec.HcomTag, "worker"),
-		Agent:         firstNonEmpty(rec.Agent, "claude"),
+		Agent:         agent,
 		HcomDir:       firstNonEmpty(rec.HcomDir, filepath.Join(os.Getenv("HOME"), ".hcom")),
 		VehicleTarget: sessionID,
 		GrokSessionID: grokSessionID,
+		Provider:      provider,
+		Model:         model,
+		VendorVersion: vendorVersion,
+		PiBinDir:      piBinDir,
 		RegistryPath:  registryPath,
 		BaseRaw:       base,
 		Provenance:    prov,
@@ -707,6 +760,10 @@ type startSpec struct {
 	VehicleTarget string
 	ParentSession string
 	GrokSessionID string
+	Provider      string
+	Model         string
+	VendorVersion *v2.VendorVersionHistory
+	PiBinDir      string
 	Prompt        string
 	RegistryPath  string
 	BaseRaw       []byte
@@ -719,6 +776,28 @@ type startSpec struct {
 
 func newTabMoveArgs(paneID, label, focusFlag string) []string {
 	return []string{"pane", "move", paneID, "--new-tab", firstNonEmpty(focusFlag, "--no-focus"), "--label", label}
+}
+
+func lifecycleLaunchTokens(herderBin string, spec startSpec, extra []string) []string {
+	tokens := []string{herderBin, "launch", "--" + spec.Mode, spec.Agent, spec.VehicleTarget, "--tag", spec.Role}
+	if spec.Agent == "pi" {
+		tokens = append(tokens, "--provider", spec.Provider)
+		if spec.Model != "" {
+			tokens = append(tokens, "--model", spec.Model)
+		}
+	}
+	if spec.Mode == "fork" && spec.ParentSession != "" {
+		tokens = append(tokens, "--parent-session", spec.ParentSession)
+	}
+	return append(tokens, extra...)
+}
+
+func lifecyclePathPrefix(shimsDir string, spec startSpec) string {
+	prefix := shellquote.Quote(shimsDir)
+	if spec.Agent == "pi" && spec.PiBinDir != "" {
+		prefix += ":" + shellquote.Quote(spec.PiBinDir)
+	}
+	return prefix
 }
 
 func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
@@ -737,11 +816,7 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	if spec.Prompt != "" && spec.Agent != "grok" {
 		extra = append(extra, "--hcom-prompt", spec.Prompt)
 	}
-	launchTokens := []string{paths.BinHerder, "launch", "--" + spec.Mode, spec.Agent, spec.VehicleTarget, "--tag", spec.Role}
-	if spec.Mode == "fork" && spec.ParentSession != "" {
-		launchTokens = append(launchTokens, "--parent-session", spec.ParentSession)
-	}
-	launchTokens = append(launchTokens, extra...)
+	launchTokens := lifecycleLaunchTokens(paths.BinHerder, spec, extra)
 
 	inner := shellCommand(launchTokens)
 	spawnedBy := firstNonEmpty(os.Getenv("HERDER_GUID"), "user")
@@ -761,7 +836,7 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		}
 	}
 	innerCmd := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s AI_CONFIG_ROOT=%s HCOM_DIR=%s PATH=%s:$PATH%s; exec %s",
-		shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(paths.BinHerder), shellquote.Quote(paths.RepoRoot), shellquote.Quote(spec.HcomDir), shellquote.Quote(paths.ShimsDir), grokEnv, inner)
+		shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(paths.BinHerder), shellquote.Quote(paths.RepoRoot), shellquote.Quote(spec.HcomDir), lifecyclePathPrefix(paths.ShimsDir, spec), grokEnv, inner)
 	argv := []string{shell, "-lic", innerCmd}
 	startArgs := []string{"agent", "start", spec.Label, focusFlag, "--split", split, "--cwd", cwd, "--", shell, "-lic", innerCmd}
 	if spec.Workspace != "" {
@@ -800,7 +875,7 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	}
 	spec.Provenance.CWD = firstNonEmpty(start.Agent.CWD, cwd)
 	spec.Provenance.WorkspaceID = start.Agent.WorkspaceID
-	row, err := registry.UpdateRawObject(spec.BaseRaw, map[string]any{
+	updates := map[string]any{
 		"guid":            spec.GUID,
 		"short_guid":      spec.Short,
 		"label":           spec.Label,
@@ -818,7 +893,15 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		"hcom_tag":        spec.Role,
 		"status":          "active",
 		"provenance":      spec.Provenance,
-	})
+	}
+	if spec.Agent == "pi" {
+		updates["provider"] = spec.Provider
+		updates["model"] = spec.Model
+		updates["vendor_version"] = spec.VendorVersion
+		updates["hooks_bound"] = false
+		updates["transcript_path"] = ""
+	}
+	row, err := registry.UpdateRawObject(spec.BaseRaw, updates)
 	if err != nil {
 		r.failAfterLaunch("registry row encoding failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
 		return nil, 1
