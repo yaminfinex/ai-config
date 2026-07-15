@@ -142,6 +142,83 @@ esac
 	}
 }
 
+func TestGraphKeysLabeledRosterAgentByCanonicalAddress(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStore(filepath.Join(dir, "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentDir := filepath.Join(dir, "agent")
+	if err := os.Mkdir(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(dir, "event-calls")
+	hcom := writeExecutable(t, dir, "hcom", fmt.Sprintf(`#!/bin/sh
+if [ "$1" = list ]; then
+  printf '%%s\n' '[{"name":"builder-nezi","base_name":"nezi","status":"active","directory":%q,"tool":"codex"}]'
+  exit 0
+fi
+printf '%%s\n' "$*" >> %q
+case " $* " in
+  *" --mention "*) cat <<'EOF'
+{"id":900,"ts":"2026-07-15T05:40:00Z","type":"message","data":{"from":"human-yamen","text":"question","mentions":["nezi"]}}
+{"id":901,"ts":"2026-07-15T05:41:00Z","type":"message","data":{"from":"nezi","text":"answer","reply_to_local":900}}
+EOF
+    ;;
+  *) cat <<'EOF'
+{"id":900,"ts":"2026-07-15T05:40:00Z","type":"message","data":{"from":"human-yamen","text":"question"}}
+{"id":901,"ts":"2026-07-15T05:41:00Z","type":"message","data":{"from":"nezi","text":"answer","reply_to_local":900}}
+EOF
+    ;;
+esac
+`, agentDir, calls))
+	herder := writeExecutable(t, dir, "herder", "#!/bin/sh\nexit 0\n")
+	w := NewWeb(s, &Bus{Hcom: hcom}, nil, "human-yamen", "owner", herder, nil)
+	model := w.buildGraphModel("30m", time.Date(2026, 7, 15, 5, 50, 0, 0, time.UTC))
+
+	var canonical *graphNode
+	for i := range model.Nodes {
+		switch model.Nodes[i].Name {
+		case "nezi":
+			canonical = &model.Nodes[i]
+		case "builder-nezi":
+			t.Fatalf("graph contains node keyed by full roster name: %#v", model.Nodes[i])
+		}
+	}
+	if canonical == nil {
+		t.Fatal("graph has no node keyed by canonical base name nezi")
+	}
+	if canonical.Kind != "agent" {
+		t.Fatalf("canonical nezi node kind = %q, want agent (not ghost)", canonical.Kind)
+	}
+
+	var attached bool
+	for _, edge := range model.Edges {
+		if edge.A == "nezi" && edge.B == "owner" && edge.AB == 1 && edge.BA == 1 {
+			attached = true
+			break
+		}
+	}
+	if !attached {
+		t.Fatalf("canonical agent edge did not attach to nezi: %#v", model.Edges)
+	}
+	if svg := string(renderGraphSVG(model, "", "", "human-yamen", nil)); !strings.Contains(svg, "nezi → owner: 1") {
+		t.Fatalf("rendered graph missing canonical nezi edge: %s", svg)
+	}
+
+	rawCalls, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queries := string(rawCalls)
+	if !strings.Contains(queries, "--mention nezi") {
+		t.Fatalf("graph queries do not mention canonical base name:\n%s", queries)
+	}
+	if strings.Contains(queries, "--mention builder-nezi") {
+		t.Fatalf("graph queries mention full roster name instead of base name:\n%s", queries)
+	}
+}
+
 func TestGraphFailureRendersWarningAndPartialDataWithHTTP200(t *testing.T) {
 	dir := t.TempDir()
 	s, err := OpenStore(filepath.Join(dir, "journal.jsonl"))
