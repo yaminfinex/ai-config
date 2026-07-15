@@ -3,10 +3,10 @@ id: TASK-243
 title: >-
   Row with kept bus name but hcom_verified=false is unrepairable by enroll —
   reconcile-downgrade shape needs an escape hatch
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 11:25'
-updated_date: '2026-07-15 20:34'
+updated_date: '2026-07-15 23:34'
 labels: []
 dependencies: []
 ordinal: 242500
