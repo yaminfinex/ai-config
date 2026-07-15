@@ -13,6 +13,10 @@ import (
 	"strings"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
 
 type missionArtifact struct {
@@ -122,8 +126,51 @@ func listMissionArtifacts(status missionStatus) ([]missionArtifact, string) {
 
 func renderMarkdown(source []byte) (template.HTML, error) {
 	var out bytes.Buffer
-	if err := goldmark.Convert(source, &out); err != nil {
+	markdown := goldmark.New(goldmark.WithParserOptions(parser.WithASTTransformers(
+		util.Prioritized(linkSchemeFilter{}, 100),
+	)))
+	if err := markdown.Convert(source, &out); err != nil {
 		return "", err
 	}
 	return template.HTML(out.String()), nil // goldmark omits raw HTML by default.
+}
+
+type linkSchemeFilter struct{}
+
+func (linkSchemeFilter) Transform(document *ast.Document, reader text.Reader, _ parser.Context) {
+	source := reader.Source()
+	var refusedAutoLinks []*ast.AutoLink
+	_ = ast.Walk(document, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		switch link := node.(type) {
+		case *ast.Link:
+			if !allowedLinkDestination(link.Destination) {
+				link.Destination = nil
+			}
+		case *ast.AutoLink:
+			if !allowedLinkDestination(link.URL(source)) {
+				refusedAutoLinks = append(refusedAutoLinks, link)
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	for _, link := range refusedAutoLinks {
+		parent := link.Parent()
+		parent.ReplaceChild(parent, link, ast.NewString(link.Label(source)))
+	}
+}
+
+func allowedLinkDestination(destination []byte) bool {
+	parsed, err := url.Parse(string(destination))
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "", "http", "https", "mailto":
+		return true
+	default:
+		return false
+	}
 }

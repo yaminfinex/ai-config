@@ -51,7 +51,16 @@ func (w *Web) Routes() http.Handler {
 	mux.HandleFunc("POST /thread/{id}/reopen", w.reopen)
 	mux.HandleFunc("POST /thread/{id}/retitle", w.retitle)
 	mux.HandleFunc("GET /roster", w.roster)
-	return mux
+	return securityHeaders(mux)
+}
+
+const contentSecurityPolicy = "script-src 'none'; object-src 'none'; base-uri 'none'"
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		rw.Header().Set("Content-Security-Policy", contentSecurityPolicy)
+		next.ServeHTTP(rw, r)
+	})
 }
 
 // userFor derives the human identity. Tailnet identities rule: when the

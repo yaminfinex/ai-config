@@ -65,7 +65,16 @@ func TestMissionArtifactPageAndViewer(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(missionDir, "mission.md"), []byte("# Mission\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	markdown := "# Design\n\n```text\n+-----+\n| <safe> |\n+-----+\n```\n\n<script>alert('no')</script>\n"
+	markdown := `# Design
+
+` + "```text\n+-----+\n| <safe> |\n+-----+\n```" + `
+
+<script>alert('no')</script>
+
+Allowed: <https://example.com>, <http://example.com>, <friend@example.com>, [relative](../next).
+
+Refused: <javascript:alert(1)>, <vbscript:msgbox(1)>, <data:text/html;base64,PHNjcmlwdD4=>, [ftp](ftp://example.com).
+`
 	if err := os.WriteFile(filepath.Join(artifacts, "wire frame.md"), []byte(markdown), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -95,10 +104,13 @@ func TestMissionArtifactPageAndViewer(t *testing.T) {
 			notContain: []string{"escape.txt", "<script"},
 		},
 		{
-			path:       "/mission/mission-one/file/artifacts/design%20docs/wire%20frame.md",
-			status:     http.StatusOK,
-			contains:   []string{"<h1>Design</h1>", "<pre><code", "+-----+", "&lt;safe&gt;"},
-			notContain: []string{"<script", "alert('no')"},
+			path:   "/mission/mission-one/file/artifacts/design%20docs/wire%20frame.md",
+			status: http.StatusOK,
+			contains: []string{"<h1>Design</h1>", "<pre><code", "+-----+", "&lt;safe&gt;",
+				`href="https://example.com"`, `href="http://example.com"`,
+				`href="mailto:friend@example.com"`, `href="../next"`},
+			notContain: []string{"<script", "alert('no')", `href="javascript:`,
+				`href="vbscript:`, `href="data:`, `href="ftp:`},
 		},
 		{
 			path:       "/mission/mission-one/file/artifacts/raw.txt",
@@ -132,6 +144,10 @@ func TestMissionArtifactPageAndViewer(t *testing.T) {
 		t.Run(tc.path, func(t *testing.T) {
 			rw := httptest.NewRecorder()
 			w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			const wantCSP = "script-src 'none'; object-src 'none'; base-uri 'none'"
+			if got := rw.Header().Get("Content-Security-Policy"); got != wantCSP {
+				t.Errorf("GET %s Content-Security-Policy = %q, want %q", tc.path, got, wantCSP)
+			}
 			if rw.Code != tc.status {
 				t.Fatalf("GET %s = %d, want %d: %s", tc.path, rw.Code, tc.status, rw.Body.String())
 			}
