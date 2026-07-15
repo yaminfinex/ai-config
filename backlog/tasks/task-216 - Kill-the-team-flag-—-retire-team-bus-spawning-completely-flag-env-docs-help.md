@@ -3,10 +3,10 @@ id: TASK-216
 title: >-
   Kill the --team flag — retire team-bus spawning completely (flag, env, docs,
   help)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-15 00:02'
-updated_date: '2026-07-15 00:02'
+updated_date: '2026-07-15 00:42'
 labels: []
 dependencies: []
 ordinal: 214000
@@ -24,3 +24,9 @@ OWNER DIRECTIVE (2026-07-15, HIGH PRIORITY): 'kill the --team flag and retire it
 - [ ] #2 Docs/help/README/goldens scrubbed; repo-wide sweep done (historical hazard records marked superseded, not erased)
 - [ ] #3 Full house battery green (59); pi-design interaction noted in DONE report
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged c76d270, post-merge house 59/59 green, pushed. Full removal: --team unknown flag, HERDER_TEAM ignored, teams root/list surface gone, docs/skills/goldens scrubbed. Legacy registry team keys still parse; recorded HCOM_DIR routing preserved. Review: opus adversarial, fix round (2 blocking prose: skill template + provenance restore), delta APPROVE on fe67b95 with byte-for-byte restore verified. TASK-205 superseded-flip rode the merge.
+<!-- SECTION:NOTES:END -->
