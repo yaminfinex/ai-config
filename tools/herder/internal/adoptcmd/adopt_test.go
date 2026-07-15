@@ -109,6 +109,14 @@ func TestDifferentPaneRemedyIsAcceptedByParser(t *testing.T) {
 	}
 }
 
+func TestResumedSessionAssertionIsAcceptedByParser(t *testing.T) {
+	var stdout, stderr strings.Builder
+	opts, code := parseArgs([]string{"guid-previous", "--confirm-resumed-session"}, &stdout, &stderr)
+	if code != 0 || opts.target != "guid-previous" || !opts.confirmResumedSession {
+		t.Fatalf("parseArgs = %+v, code %d, stderr %q", opts, code, stderr.String())
+	}
+}
+
 func seedAdoptRegistry(t *testing.T, recs ...v2.SessionRecord) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "registry.jsonl")

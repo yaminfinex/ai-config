@@ -24,6 +24,7 @@ import (
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
+	"ai-config/tools/herder/internal/shellquote"
 )
 
 type compactOptions struct {
@@ -121,7 +122,7 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		}
 		thenBusName = row.HcomName
 		if thenBusName == "" || thenBusName == "null" {
-			dieCompact(stderr, "refused — --then needs your own bus name to deliver the continuation, but your registry row records none (this session is not bus-bound). Re-run without --then, or enroll on the bus first. Nothing was typed.")
+			dieCompact(stderr, "refused — --then needs your own bus name to deliver the continuation, but your registry row records none (this session is not bus-bound). The bus can be live while an adopted row remains unbound when a hand-resumed process has no ambient identity proof. Find the transcript session id in the resumed agent's session metadata (the id used by its resume command). From this pane, replace <resumed-session-id> in this repair command with that id, then run it: "+pinnedBusRepair(row)+". Retry --then afterward. Nothing was typed.")
 			return 2
 		}
 		thenBusDir = row.HcomDir
@@ -130,7 +131,15 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 			dieCompact(stderr, "refused — --then cannot verify that the stored bus name belongs to this calling session ("+listErr.Error()+"). Rerun `herder enroll` from this session to repair its bus binding, then retry. Nothing was typed.")
 			return 2
 		}
-		verified, live := hcomidentity.VerifyStored(rows, hcomidentity.CurrentEvidence(envPane, pane.PaneID), thenBusName)
+		busEvidence := hcomidentity.CurrentEvidence(envPane, pane.PaneID)
+		// A pinned re-enroll can repair a hand-resumed row even though it cannot
+		// retroactively inject HCOM_SESSION_ID into the already-running parent
+		// process. Once self-row identity is proven above, a verified row's
+		// recorded tool session id is durable evidence for the live roster check.
+		if busEvidence.SessionID == "" && row.HcomVerified != nil && *row.HcomVerified && row.Provenance != nil {
+			busEvidence.SessionID = row.Provenance.ToolSessionID
+		}
+		verified, live := hcomidentity.VerifyStored(rows, busEvidence, thenBusName)
 		if !verified {
 			cause := live.Reason
 			if live.Verified {
@@ -226,6 +235,14 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		thenAbortNote(stderr, opts.ThenSet)
 		return 1
 	}
+}
+
+func pinnedBusRepair(row *registry.Record) string {
+	return "HCOM_SESSION_ID='<resumed-session-id>'" +
+		" HERDER_GUID=" + shellquote.Quote(ptrOrEmpty(row.GUID)) +
+		" HERDER_LABEL=" + shellquote.Quote(ptrOrEmpty(row.Label)) +
+		" HERDER_ROLE=" + shellquote.Quote(row.Role) +
+		" herder enroll"
 }
 
 // thenAbortNote states plainly that --then armed nothing when the /compact

@@ -161,12 +161,24 @@ func VerifyStored(rows []Row, evidence Evidence, stored string) (bool, Result) {
 // JoinedNamed returns the live row holding name. Callers use this before an
 // explicit reclaim so a different live session is never displaced.
 func JoinedNamed(rows []Row, name string) (Row, bool) {
+	row, count := JoinedNamedCount(rows, name)
+	return row, count > 0
+}
+
+// JoinedNamedCount returns one matching live row plus the total match count so
+// callers creating operation-scoped proof can fail closed on name ambiguity.
+func JoinedNamedCount(rows []Row, name string) (Row, int) {
+	var found Row
+	count := 0
 	for _, row := range rows {
 		if row.Name == name && joined(row) {
-			return row, true
+			if count == 0 {
+				found = row
+			}
+			count++
 		}
 	}
-	return Row{}, false
+	return found, count
 }
 
 func joined(row Row) bool {
