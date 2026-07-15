@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,45 @@ import (
 
 	"mish/internal/missionfs"
 )
+
+func TestNewDefaultsToAgentJSON(t *testing.T) {
+	repo := t.TempDir()
+	cwd := t.TempDir()
+	d := newTestDeps(repo, cwd)
+	d.env = func(key string) string {
+		if key == "SESSION_OWNER" {
+			return "riley"
+		}
+		return ""
+	}
+	code, stdout, stderr := runNewForTest([]string{"new", "perf-regression", "--authority", "hera"}, d)
+	if code != exitOK || stderr != "" {
+		t.Fatalf("exit=%d stderr=%s", code, stderr)
+	}
+	var got newOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
+	}
+	if !got.OK || got.Slug != "perf-regression" || got.Manifest.Authority != "hera" || got.Manifest.Owner != "riley" {
+		t.Fatalf("new JSON = %+v", got)
+	}
+}
+
+func TestNewRefusalDefaultsToAgentJSON(t *testing.T) {
+	d := newTestDeps("", t.TempDir())
+	code, stdout, stderr := runNewForTest([]string{"new", "perf-regression"}, d)
+	if code != exitRefuse {
+		t.Fatalf("exit=%d", code)
+	}
+	var got refusalOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
+	}
+	if got.OK || got.Refusal != "missions_repo_unset" || !strings.Contains(got.Reason, "$MISSIONS_REPO") {
+		t.Fatalf("refusal JSON = %+v", got)
+	}
+	assertContains(t, stderr, "mish new: $MISSIONS_REPO is not set")
+}
 
 func TestNewScaffoldsMissionTreeManifestBoardArtifactsMarkerAndEcho(t *testing.T) {
 	repo := t.TempDir()
@@ -28,7 +68,7 @@ func TestNewScaffoldsMissionTreeManifestBoardArtifactsMarkerAndEcho(t *testing.T
 	var stdout, stderr bytes.Buffer
 	d.stdout = &stdout
 	d.stderr = &stderr
-	code := runWithDeps([]string{"new", "perf-regression", "--authority", "hera"}, d)
+	code := runWithDeps([]string{"new", "--text", "perf-regression", "--authority", "hera"}, d)
 	if code != exitOK {
 		t.Fatalf("new exit = %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -91,7 +131,7 @@ func TestNewUsesOSUserDefaultsAndOwnerFlag(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	d.stdout = &stdout
 	d.stderr = &stderr
-	code := runWithDeps([]string{"new", "ops-handoff", "--owner", "bigboss", "--title", "Ops Handoff"}, d)
+	code := runWithDeps([]string{"new", "--text", "ops-handoff", "--owner", "bigboss", "--title", "Ops Handoff"}, d)
 	if code != exitOK {
 		t.Fatalf("new exit = %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -121,14 +161,14 @@ func TestNewCreatesHelpSlugAndStillRefusesExtraArguments(t *testing.T) {
 	cwd := t.TempDir()
 	d := newTestDeps(repo, cwd)
 
-	code, stdout, stderr := runNewForTest([]string{"new", "help"}, d)
+	code, stdout, stderr := runNewForTest([]string{"new", "--text", "help"}, d)
 	if code != exitOK {
 		t.Fatalf("new help exit = %d, want 0; stderr=%s", code, stderr)
 	}
 	assertContains(t, stdout, "created mission help")
 	assertExactMissionTree(t, filepath.Join(repo, "missions", "help"))
 
-	code, _, stderr = runNewForTest([]string{"new", "another", "slug"}, d)
+	code, _, stderr = runNewForTest([]string{"new", "--text", "another", "slug"}, d)
 	if code != exitUsage {
 		t.Fatalf("new with extra argument exit = %d, want usage; stderr=%s", code, stderr)
 	}
@@ -138,7 +178,7 @@ func TestNewCreatesHelpSlugAndStillRefusesExtraArguments(t *testing.T) {
 func TestNewRefusals(t *testing.T) {
 	t.Run("unset missions repo", func(t *testing.T) {
 		d := newTestDeps("", t.TempDir())
-		code, _, stderr := runNewForTest([]string{"new", "perf-regression"}, d)
+		code, _, stderr := runNewForTest([]string{"new", "--text", "perf-regression"}, d)
 		if code != exitRefuse {
 			t.Fatalf("exit = %d, want refusal", code)
 		}
@@ -149,7 +189,7 @@ func TestNewRefusals(t *testing.T) {
 		repo := t.TempDir()
 		mkdir(t, filepath.Join(repo, "missions", "perf-regression"))
 		d := newTestDeps(repo, t.TempDir())
-		code, _, stderr := runNewForTest([]string{"new", "perf-regression"}, d)
+		code, _, stderr := runNewForTest([]string{"new", "--text", "perf-regression"}, d)
 		if code != exitRefuse {
 			t.Fatalf("exit = %d, want refusal", code)
 		}
@@ -159,7 +199,7 @@ func TestNewRefusals(t *testing.T) {
 	for _, slug := range []string{"Perf_Regression", "-x", "a--b", "x-", strings.Repeat("a", 65)} {
 		t.Run("invalid "+slug, func(t *testing.T) {
 			d := newTestDeps(t.TempDir(), t.TempDir())
-			code, _, stderr := runNewForTest([]string{"new", slug}, d)
+			code, _, stderr := runNewForTest([]string{"new", "--text", slug}, d)
 			if code != exitRefuse {
 				t.Fatalf("exit = %d, want refusal", code)
 			}
@@ -177,7 +217,7 @@ func TestNewMarkerMatrix(t *testing.T) {
 		writeFileForTest(t, filepath.Join(base, ".mission"), "other\n")
 		d := newTestDeps(repo, cwd)
 
-		code, _, stderr := runNewForTest([]string{"new", "perf-regression"}, d)
+		code, _, stderr := runNewForTest([]string{"new", "--text", "perf-regression"}, d)
 		if code != exitRefuse {
 			t.Fatalf("exit = %d, want refusal", code)
 		}
@@ -194,7 +234,7 @@ func TestNewMarkerMatrix(t *testing.T) {
 		writeFileForTest(t, filepath.Join(cwd, ".mission"), "perf-regression\n")
 		d := newTestDeps(repo, cwd)
 
-		code, _, stderr := runNewForTest([]string{"new", "perf-regression"}, d)
+		code, _, stderr := runNewForTest([]string{"new", "--text", "perf-regression"}, d)
 		if code != exitOK {
 			t.Fatalf("exit = %d, want ok; stderr=%s", code, stderr)
 		}
@@ -212,7 +252,7 @@ func TestNewMarkerMatrix(t *testing.T) {
 		writeFileForTest(t, filepath.Join(cwd, ".mission"), "perf-regression\n")
 		d := newTestDeps(repo, cwd)
 
-		code, _, stderr := runNewForTest([]string{"new", "perf-regression"}, d)
+		code, _, stderr := runNewForTest([]string{"new", "--text", "perf-regression"}, d)
 		if code != exitRefuse {
 			t.Fatalf("exit = %d, want refusal", code)
 		}
@@ -228,7 +268,7 @@ func TestNewMarkerMatrix(t *testing.T) {
 		mkdir(t, cwd)
 		d := newTestDeps(repo, cwd)
 
-		code, _, stderr := runNewForTest([]string{"new", "perf-regression", "--no-marker"}, d)
+		code, _, stderr := runNewForTest([]string{"new", "--text", "perf-regression", "--no-marker"}, d)
 		if code != exitOK {
 			t.Fatalf("exit = %d, want ok; stderr=%s", code, stderr)
 		}
@@ -243,7 +283,7 @@ func TestNewMarkerMatrix(t *testing.T) {
 		writeFileForTest(t, filepath.Join(base, ".mission"), "other\n")
 		d := newTestDeps(repo, cwd)
 
-		code, _, stderr := runNewForTest([]string{"new", "perf-regression", "--no-marker"}, d)
+		code, _, stderr := runNewForTest([]string{"new", "--text", "perf-regression", "--no-marker"}, d)
 		if code != exitOK {
 			t.Fatalf("exit = %d, want ok; stderr=%s", code, stderr)
 		}
@@ -259,7 +299,7 @@ func TestNewMarkerMatrix(t *testing.T) {
 		mkdir(t, cwd)
 		d := newTestDeps(repo, cwd)
 
-		code, _, stderr := runNewForTest([]string{"new", "perf-regression"}, d)
+		code, _, stderr := runNewForTest([]string{"new", "--text", "perf-regression"}, d)
 		if code != exitOK {
 			t.Fatalf("exit = %d, want ok; stderr=%s", code, stderr)
 		}

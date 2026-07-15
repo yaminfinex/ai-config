@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -35,8 +36,13 @@ func (e usageError) Error() string {
 
 type refusalError struct {
 	verb    string
+	kind    string
 	message string
 	remedy  string
+	slug    string
+	paths   []string
+	text    bool
+	emitted bool
 }
 
 func (e refusalError) Error() string {
@@ -44,6 +50,15 @@ func (e refusalError) Error() string {
 		return fmt.Sprintf("mish %s: %s", e.verb, e.message)
 	}
 	return fmt.Sprintf("mish %s: %s \u2014 %s", e.verb, e.message, e.remedy)
+}
+
+func withRefusalText(err error, text bool) error {
+	var refusal refusalError
+	if text && errors.As(err, &refusal) {
+		refusal.text = true
+		return refusal
+	}
+	return err
 }
 
 // Run executes the mish command tree and returns the process exit code.
@@ -61,6 +76,12 @@ func runWithDeps(args []string, d deps) int {
 		}
 		var refusal refusalError
 		if errors.As(err, &refusal) {
+			if !refusal.text && !refusal.emitted {
+				emitJSON(d.stdout, refusalOutput{
+					OK: false, Refusal: refusal.kind, Slug: refusal.slug,
+					Reason: refusal.message, Remedy: refusal.remedy, Paths: refusal.paths,
+				})
+			}
 			fmt.Fprintln(d.stderr, err)
 			return exitRefuse
 		}
@@ -73,6 +94,24 @@ func runWithDeps(args []string, d deps) int {
 		return exitUsage
 	}
 	return exitOK
+}
+
+type refusalOutput struct {
+	OK      bool     `json:"ok"`
+	Refusal string   `json:"refusal"`
+	Slug    string   `json:"slug,omitempty"`
+	Reason  string   `json:"reason"`
+	Remedy  string   `json:"remedy,omitempty"`
+	Paths   []string `json:"paths,omitempty"`
+}
+
+func emitJSON(w io.Writer, value any) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		fmt.Fprintln(w, `{"ok":false,"refusal":"encoding_error","reason":"could not encode output"}`)
+		return
+	}
+	fmt.Fprintln(w, string(encoded))
 }
 
 func newRoot(d deps) *cobra.Command {

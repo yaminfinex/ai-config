@@ -53,10 +53,10 @@ if grep -R -n -E '^(<<<<<<<|=======|>>>>>>>)' "$WORK/node-a/missions/union-demo"
 fi
 MISSIONS_REPO_DIR="$WORK/node-a" run_mish "$WORK/node-a/missions/union-demo" "union-status" status
 assert_status 0
-assert_contains "$LAST_OUT" "2 task"
+assert_contains "$LAST_OUT" '"total":2'
 MISSIONS_REPO_DIR="$WORK/node-b" run_mish "$WORK/node-b/missions/union-demo" "union-status-node-b" status
 assert_status 0
-assert_contains "$LAST_OUT" "2 task"
+assert_contains "$LAST_OUT" '"total":2'
 MISSIONS_REPO_DIR="$WORK/node-b" run_mish "$WORK/node-b/missions/union-demo" "union-list-node-b" backlog task list
 assert_status 0
 assert_contains "$LAST_OUT" "Node A task"

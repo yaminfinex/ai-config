@@ -301,10 +301,32 @@ are read-only.
 
 | Command | Behaviour |
 |---|---|
-| `mish new <slug> [--title T] [--authority A] [--owner O] [--no-marker]` | Scaffold `missions/<slug>/` (§6.1): manifest, pinned board, empty artifacts; write the context marker into cwd. Refuses on existing slug, invalid slug, unset `$MISSIONS_REPO`, or a conflicting existing marker. |
-| `mish backlog [--mission S] <backlog-args…>` | Resolve context (§5.3), guard the board's existence (invariant 6), check the allowlist, then exec the Backlog.md CLI with cwd pinned to the mission dir, forwarding arguments, stdio, and exit code verbatim (§6.2). |
-| `mish status [--mission S \| --all]` | Read-only report: single-mission detail when context resolves, repo-wide overview with `--all` or when invoked with no resolvable context from inside the missions repo (§6.3). |
+| `mish new <slug> [--title T] [--authority A] [--owner O] [--no-marker] [--text]` | Scaffold `missions/<slug>/` (§6.1): manifest, pinned board, empty artifacts; write the context marker into cwd. Refuses on existing slug, invalid slug, unset `$MISSIONS_REPO`, or a conflicting existing marker. |
+| `mish backlog [--mission S] [--text] <backlog-args…>` | Resolve context (§5.3), guard the board's existence (invariant 6), check the allowlist, then exec the Backlog.md CLI with cwd pinned to the mission dir, forwarding arguments, stdio, and exit code verbatim (§6.2). |
+| `mish status [--mission S \| --all] [--text]` | Read-only report: single-mission detail when context resolves, repo-wide overview with `--all` or when invoked with no resolvable context from inside the missions repo (§6.3). |
 | `mish resolve [--mission S]` | Read-only, agent-first: print the resolved mission context (§5.3 order) as one line of JSON on stdout — success `{ok:true, slug, mission_dir, source, marker_path, missions_repo}` exit 0, refusal `{ok:false, refusal:<kind>, reason, remedy, paths}` exit 1 with prose mirrored to stderr (§6.4). |
+
+**Agent-first output contract.** `new` and `status` default to exactly one JSON value on
+stdout; `status --all` is a JSON array of the same per-mission objects. `--text` restores the
+previous human output byte-for-byte. `backlog` applies this default only while mish owns the
+operation: wrapper refusals are JSON, but after the guard succeeds Backlog.md owns stdout,
+stderr, and the exit code verbatim and mish adds nothing. For `backlog`, `--text` is
+wrapper-owned only before the subcommand; the same token after the subcommand is forwarded.
+Help and usage errors remain human help/usage, not operation results.
+
+All operation refusals exit 1, write one object
+`{"ok":false,"refusal":<kind>,"reason":<prose>,"remedy":<guidance>}` to stdout by
+default, and mirror the established `mish <verb>: …` prose to stderr. With `--text`, stdout
+is empty and the prior stderr prose is byte-compatible. Optional `slug` and `paths` fields
+carry condition-specific context. These refusal kinds are the frozen machine vocabulary:
+
+| Source | Stable refusal kinds |
+|---|---|
+| Context and marker resolution (reused by verbs where applicable) | `no_context`, `mission_not_found`, `multiple_markers`, `missions_repo_unset`, `marker_points_at_missing_mission`, `invalid_slug`, `marker_unreadable` |
+| Common/internal boundary | `cwd_unavailable`, `resolution_failed`, `encoding_error` |
+| `new` | `mission_already_exists`, `mission_inspection_failed`, `marker_conflict`, `mission_scaffold_failed` |
+| `backlog` guard | `board_missing`, `board_inspection_failed`, `subcommand_not_allowed`, `backlog_cli_not_found` |
+| `status` read | `status_read_failed`, `mission_overview_read_failed` |
 
 ### 6.1 `mish new`
 
@@ -335,6 +357,16 @@ Given a valid, unclaimed slug:
 
 `new` performs no git operations (invariant 4): committing the scaffold is the first custody
 commit, made by the caller per the skill (§8).
+
+Success defaults to a one-line object carrying the created identity, the stamped manifest and
+the attribution source strings. For example (paths are illustrative):
+
+```json
+{"ok":true,"slug":"perf-regression","mission_dir":"/srv/missions/missions/perf-regression","manifest":{"mission":"perf-regression","authority":"hera","owner":"riley","status":"active","created":"2026-07-08"},"authority_source":"flag","owner_source":"env","marker_path":"/work/api/.mission"}
+```
+
+`--text` restores the three prior success lines (`created mission …`, `authority: …`,
+`owner: …`) exactly.
 
 ### 6.2 `mish backlog` — the pinned passthrough
 
@@ -371,7 +403,21 @@ full help, so what help advertises is exactly what's invocable. Per-subcommand h
 through: `mish backlog task --help` returns Backlog.md's own help for `task`. A refused
 subcommand's error names the allowlist.
 
+Guard refusals follow the agent-first JSON contract above. A successful guard emits no mish
+success envelope: Backlog.md's bytes and exit code remain the complete result.
+
 ### 6.3 `mish status`
+
+The default single-mission JSON object is the mission-control read model:
+
+```json
+{"ok":true,"slug":"perf-regression","mission_dir":"/srv/missions/missions/perf-regression","manifest":{"mission":"perf-regression","authority":"hera","owner":"riley","status":"active","created":"2026-07-08"},"board":{"available":true,"counts":[{"status":"To Do","count":3},{"status":"In Progress","count":2},{"status":"Done","count":7}],"total":12,"tasks":[{"id":"TASK-7","title":"Find hot path","status":"In Progress","ordinal":7000,"labels":["performance"]}]},"artifacts":{"missing":false,"count":9,"newest_path":"analysis/flamegraph-0708.html","newest_time":"2026-07-08T14:00:00Z"},"warnings":[]}
+```
+
+Counts preserve board-config order; tasks are ordered by ordinal then id. Every task object
+always carries `id`, `title`, `status`, `ordinal`, and `labels` (an empty array when absent).
+`status --all` returns an array of these same objects sorted by slug. `--text` restores the
+prior formats below exactly.
 
 Single-mission mode (context resolved):
 
@@ -595,13 +641,13 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
 - **AC-1 new** — `MISSIONS_REPO` set, `mish new perf-regression --authority hera` run from a
   code worktree: the §4.1 tree exists; `mission.md` carries the five frontmatter keys with
   `status: active` and `owner:` stamped per the §6.1 chain (from `$SESSION_OWNER` when set,
-  else the OS user), with authority and owner + the source of each echoed in `new`'s output;
+  else the OS user), with authority and owner + the source of each present in `new`'s JSON;
   `backlog/config.yml` carries the five pins + `project_name: perf-regression`; `.mission`
   containing `perf-regression` appears in the invoking cwd; no git command was executed
   anywhere.
 - **AC-2 slug rules** — `new` refuses: an existing slug, `Perf_Regression`, `-x`, `a--b`,
-  `x-`, a 65-char slug — each with a one-line reason. `mission` frontmatter ≠ dir name is
-  reported by `status` as a warning.
+  `x-`, a 65-char slug — each with refusal JSON plus the one-line stderr reason. `mission`
+  frontmatter ≠ dir name is reported by `status` as a warning.
 - **AC-3 marker safety** — `new` with a `.mission` for a *different* slug anywhere on the
   cwd→root chain refuses (markers never nest); same slug on the chain → no-op; with
   `--no-marker`, or from inside the missions repo, no marker is written.
@@ -629,7 +675,7 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
   absent the flag, cwd-inside-mission-dir wins over a marker higher up; absent both, the
   single chain marker resolves — and two markers on one ancestor chain refuse, naming both
   paths (markers never shadow).
-- **AC-10 refusals** — no context anywhere → refusal naming flag, cwd, and marker; marker
+- **AC-10 refusals** — no context anywhere → typed refusal JSON naming flag, cwd, and marker; marker
   pointing at a missing mission → refusal naming the slug; `$MISSIONS_REPO` unset where needed
   → setup guidance. No command scans for candidate missions.
 
@@ -639,13 +685,15 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
   unknown/future subcommand each refuse, naming the allowlist; `… board` and `… task edit`
   pass through verbatim with Backlog.md's own exit code; bare `mish backlog` (or `… help`)
   prints the wrapper's allowlist summary, while `… task --help` returns Backlog.md's own help.
-- **AC-12 status detail** — `mish status` in a resolved context prints the §6.3 block;
+- **AC-12 status detail** — `mish status` in a resolved context emits the §6.3 JSON object
+  (and `--text` prints the prior block byte-compatibly);
   hand-editing a pinned key, breaking the frontmatter/dirname match, or deleting `artifacts/`
   each produce their one-line warning on the next run; nothing is modified (a before/after
   subtree hash is identical); with the missions repo git-backed and the subtree carrying
   uncommitted or unpushed work, the one-line staleness warning appears.
 - **AC-13 status overview** — from the missions repo root with no marker, `mish status`
-  lists every mission dir one-per-line including closed ones; from an unrelated directory with
+  returns every mission dir including closed ones as an array of §6.3 objects (`--text` keeps
+  the prior one-per-line table); from an unrelated directory with
   no context it refuses rather than showing the overview.
 - **AC-14 no git mutation, no bus, no herder** — a full `new` + passthrough + `status` session
   on a machine with no herder, no hcom, and `$MISSIONS_REPO` pointing at a plain non-git

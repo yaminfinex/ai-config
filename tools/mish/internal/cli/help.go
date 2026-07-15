@@ -40,6 +40,9 @@ Verbs:
   status    report mission health and overview read-only
   resolve   print the resolved mission context as JSON
 
+Agent-facing operation results default to JSON; new, status, and backlog accept --text for
+their prior human output. Successful backlog commands remain verbatim Backlog.md passthrough.
+
 Git rhythm: pull before creating missions, task creation, board restructuring, or manifest
 edits; commit early at the mission-subtree grain; push when a unit lands. mish never writes git.
 
@@ -50,7 +53,7 @@ Mission-Source, Mission-Dest, Mission-Agent.
 Run 'mish <verb> --help' for the working doctrine on each verb.
 `
 
-const newHelpText = `Usage: mish new <slug> [--title T] [--authority A] [--owner O] [--no-marker]
+const newHelpText = `Usage: mish new <slug> [--title T] [--authority A] [--owner O] [--no-marker] [--text]
 
 Use 'mish new -h' or 'mish new --help' for this help; 'mish help new' is also available.
 
@@ -62,8 +65,10 @@ Authority and owner:
   authority  --authority, else the invoking OS user
   owner      --owner, else SESSION_OWNER, else the invoking OS user
 
-On success, mish prints both stamped values and their source so a wrong stamp is visible at
-birth. Correcting one later is an ordinary manifest edit owned by the authority.
+Output defaults to one JSON object on stdout containing ok, slug, mission_dir, manifest,
+authority_source, owner_source, and marker_path when written. --text restores the prior human
+lines, including both stamped values and their source. Refusals are JSON on stdout plus prose
+on stderr unless --text is set.
 
 Markers:
   new writes .mission in the invoking cwd unless --no-marker is set or cwd is inside the
@@ -83,11 +88,14 @@ Closeout, rename, and marker hygiene:
   make one rename custody commit.
 `
 
-const backlogHelpText = `Usage: mish backlog [--mission <slug>] <subcommand> [args...]
+const backlogHelpText = `Usage: mish backlog [--mission <slug>] [--text] <subcommand> [args...]
 
 Resolve one mission, verify backlog/config.yml exists, check the first forwarded subcommand
 against this closed allowlist, then exec Backlog.md with cwd pinned to the mission directory.
 Arguments, stdin/stdout/stderr, and exit code pass through verbatim after the guard.
+Wrapper refusals default to JSON on stdout plus prose on stderr; --text before the subcommand
+restores prose-only refusals. Successful Backlog.md output is always passed through unchanged.
+A --text after the subcommand belongs to Backlog.md and is forwarded untouched.
 
 Allowed subcommands:
   task        Task CRUD, notes, status, and references (--ref)
@@ -148,12 +156,14 @@ paths where relevant. The refusal is also printed as prose on stderr. resolve ne
 files and never writes git.
 `
 
-const statusHelpText = `Usage: mish status [--mission <slug> | --all]
+const statusHelpText = `Usage: mish status [--mission <slug> | --all] [--text]
 
-Read mission state without mutating files. With a resolved context, status prints one mission:
-manifest status/authority/owner/created, task counts in the board's configured status order,
-artifact count/newest file, and warnings. With --all, or from inside $MISSIONS_REPO with no
-specific context, it scans every mission directory including closed missions.
+Read mission state without mutating files. Output defaults to JSON shaped for machine consumers:
+slug, mission_dir, manifest, board counts and tasks, artifacts, and warnings. --all emits an
+array of the same mission objects. --text restores the human detail block or overview table.
+With --all, or from inside $MISSIONS_REPO with no specific context, status scans every mission
+directory including closed missions. Refusals are JSON on stdout plus prose on stderr unless
+--text is set.
 
 Warnings mean:
   pinned board key drifted from the mission invariants

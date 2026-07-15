@@ -48,8 +48,10 @@ for pin in \
   "filesystem_only: true"; do
   assert_contains "$mission/backlog/config.yml" "$pin"
 done
-assert_contains "$LAST_OUT" "authority: hera (source: flag)"
-assert_contains "$LAST_OUT" "owner: env-owner (source: env)"
+assert_contains "$LAST_OUT" '"authority":"hera"'
+assert_contains "$LAST_OUT" '"owner":"env-owner"'
+assert_contains "$LAST_OUT" '"authority_source":"flag"'
+assert_contains "$LAST_OUT" '"owner_source":"env"'
 find "$MISSIONS_REPO_DIR" -name AGENTS.md -print -quit | grep -q . && fail "scaffold wrote AGENTS.md"
 top_listing=$(cd "$mission" && find . -mindepth 1 -maxdepth 2 -print | sort)
 assert_contains <(printf '%s\n' "$top_listing") "./artifacts"
@@ -60,13 +62,15 @@ step "AC-1 owner falls back when SESSION_OWNER is unset"
 SESSION_OWNER_VALUE="" new_mission owner-fallback --authority sesh
 os_owner=$(id -un)
 assert_contains "$(mission_dir owner-fallback)/mission.md" "owner: $os_owner"
-assert_contains "$LAST_OUT" "owner: $os_owner (source: OS user)"
+assert_contains "$LAST_OUT" "\"owner\":\"$os_owner\""
+assert_contains "$LAST_OUT" '"owner_source":"OS user"'
 
 step "AC-2 slug rules and existing slug refusal"
 run_mish "$INVOKE_DIR" "help-slug" new help --no-marker
 assert_status 0
 assert_dir "$(mission_dir help)"
-assert_contains "$LAST_OUT" "created mission help"
+assert_contains "$LAST_OUT" '"ok":true'
+assert_contains "$LAST_OUT" '"slug":"help"'
 run_mish "$INVOKE_DIR" "extra-slug-refuses" new another slug
 assert_status 2
 assert_contains "$LAST_ERR" "expected exactly one slug"
@@ -78,7 +82,7 @@ done
 replace_in_file "$mission/mission.md" "mission: perf-regression" "mission: old-name"
 run_mish "$mission" "status-slug-mismatch" status
 assert_status 0
-assert_contains "$LAST_OUT" 'warning: mission frontmatter "old-name" does not match directory "perf-regression"'
+assert_contains "$LAST_OUT" 'mission frontmatter \"old-name\" does not match directory \"perf-regression\"'
 replace_in_file "$mission/mission.md" "mission: old-name" "mission: perf-regression"
 
 step "AC-3 marker safety"
@@ -105,5 +109,18 @@ step "AC-4 board ready"
 run_mish "$INVOKE_DIR" "task-create" backlog task create "First task"
 assert_status 0
 assert_file "$(single_task_file perf-regression)"
+
+step "--text restores prior human output"
+text_cwd="$WORK/text-cwd"
+mkdir -p "$text_cwd"
+run_mish "$text_cwd" "new-text-mode" new text-mode --authority hera --owner riley --text
+assert_status 0
+assert_contains "$LAST_OUT" "created mission text-mode"
+assert_contains "$LAST_OUT" "authority: hera (source: flag)"
+assert_contains "$LAST_OUT" "owner: riley (source: flag)"
+run_mish "$(mission_dir text-mode)" "status-text-mode" status --text
+assert_status 0
+assert_contains "$LAST_OUT" "mission: text-mode"
+assert_contains "$LAST_OUT" "board:"
 
 all_green

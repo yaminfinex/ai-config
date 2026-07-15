@@ -50,7 +50,7 @@ func newResolveCommand(d deps) *cobra.Command {
 func runResolve(cmd *cobra.Command, d deps, missionFlag string, missionFlagSet bool) error {
 	cwd, err := d.cwd()
 	if err != nil {
-		return refusalError{verb: "resolve", message: "could not determine current directory", remedy: err.Error()}
+		return refusalError{verb: "resolve", kind: "cwd_unavailable", message: "could not determine current directory", remedy: err.Error()}
 	}
 	result, err := resolve.Resolve(resolve.Options{
 		MissionFlagSet: missionFlagSet,
@@ -75,9 +75,9 @@ func runResolve(cmd *cobra.Command, d deps, missionFlag string, missionFlagSet b
 				Remedy:  refusal.Remedy,
 				Paths:   refusal.Paths,
 			})
-			return refusalError{verb: "resolve", message: refusal.Reason, remedy: refusal.Remedy}
+			return refusalError{verb: "resolve", kind: string(refusal.Kind), message: refusal.Reason, remedy: refusal.Remedy, slug: refusal.Slug, paths: refusal.Paths, emitted: true}
 		}
-		return refusalError{verb: "resolve", message: err.Error()}
+		return refusalError{verb: "resolve", kind: "resolution_failed", message: err.Error()}
 	}
 	emitResolveJSON(cmd, resolveOutput{
 		OK:           true,

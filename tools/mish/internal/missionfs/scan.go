@@ -1,26 +1,37 @@
 package missionfs
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // StatusCount is a count in the board's configured status order.
 type StatusCount struct {
-	Status string
-	Count  int
+	Status string `json:"status"`
+	Count  int    `json:"count"`
+}
+
+// Task is the agent-facing subset of Backlog.md task frontmatter.
+type Task struct {
+	ID      string   `json:"id" yaml:"id"`
+	Title   string   `json:"title" yaml:"title"`
+	Status  string   `json:"status" yaml:"status"`
+	Ordinal int      `json:"ordinal" yaml:"ordinal"`
+	Labels  []string `json:"labels" yaml:"labels"`
 }
 
 // TaskScan summarizes task frontmatter without invoking Backlog.md.
 type TaskScan struct {
 	Counts      map[string]int
 	StatusPaths map[string][]string
+	Tasks       []Task
 	Findings    []Finding
 }
 
@@ -71,6 +82,12 @@ func ScanTasks(boardDir string) (TaskScan, error) {
 			})
 		}
 	}
+	sort.Slice(scan.Tasks, func(i, j int) bool {
+		if scan.Tasks[i].Ordinal != scan.Tasks[j].Ordinal {
+			return scan.Tasks[i].Ordinal < scan.Tasks[j].Ordinal
+		}
+		return scan.Tasks[i].ID < scan.Tasks[j].ID
+	})
 	return scan, nil
 }
 
@@ -104,6 +121,10 @@ func scanTaskDir(dir string, scan *TaskScan, seen map[string][]string) error {
 				Path: path,
 			})
 		}
+		if task.Labels == nil {
+			task.Labels = []string{}
+		}
+		scan.Tasks = append(scan.Tasks, task)
 		return nil
 	})
 	if os.IsNotExist(err) {
@@ -112,38 +133,18 @@ func scanTaskDir(dir string, scan *TaskScan, seen map[string][]string) error {
 	return err
 }
 
-type taskFrontmatter struct {
-	ID     string
-	Status string
-}
-
-func readTaskFrontmatter(path string) (taskFrontmatter, error) {
+func readTaskFrontmatter(path string) (Task, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return taskFrontmatter{}, err
+		return Task{}, err
 	}
 	frontmatter, err := splitFrontmatter(data)
 	if err != nil {
-		return taskFrontmatter{}, fmt.Errorf("%s: %w", path, err)
+		return Task{}, fmt.Errorf("%s: %w", path, err)
 	}
-	var task taskFrontmatter
-	scanner := bufio.NewScanner(bytes.NewReader(frontmatter))
-	for scanner.Scan() {
-		line := scanner.Text()
-		key, value, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		value = strings.Trim(strings.TrimSpace(value), `"'`)
-		switch strings.TrimSpace(key) {
-		case "id":
-			task.ID = value
-		case "status":
-			task.Status = value
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return taskFrontmatter{}, err
+	var task Task
+	if err := yaml.Unmarshal(frontmatter, &task); err != nil {
+		return Task{}, fmt.Errorf("%s: parse frontmatter: %w", path, err)
 	}
 	return task, nil
 }
