@@ -1,10 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -42,6 +45,7 @@ func (w *Web) Routes() http.Handler {
 	mux.HandleFunc("GET /threads", w.threads)
 	mux.HandleFunc("GET /thread/{id}", w.thread)
 	mux.HandleFunc("GET /mission/{slug}", w.mission)
+	mux.HandleFunc("GET /mission/{slug}/file/{rel...}", w.missionFile)
 	mux.HandleFunc("POST /thread/{id}/reply", w.reply)
 	mux.HandleFunc("POST /thread/{id}/close", w.close)
 	mux.HandleFunc("POST /thread/{id}/reopen", w.reopen)
@@ -94,6 +98,13 @@ type pageData struct {
 	Mission        missionStatus
 	MissionThreads []*Thread
 	MissionAgents  []rosterAgent
+	Artifacts      []missionArtifact
+	ArtifactWarn   string
+	FilePath       string
+	FileHTML       template.HTML
+	FilePlain      string
+	FileRefusal    string
+	FileReason     string
 	// thread
 	T *Thread
 	// open form
@@ -162,9 +173,55 @@ func (w *Web) mission(rw http.ResponseWriter, r *http.Request) {
 	if rosterErr != "" {
 		d.Error = "roster: " + rosterErr
 	}
+	d.Artifacts, d.ArtifactWarn = listMissionArtifacts(d.Mission)
 	// A typed unknown_mission (and every other refusal) deliberately remains
 	// HTTP 200: this is a useful, refreshable warning page rather than a blank
 	// 404 or a server error, and matches degraded status payload handling.
+	w.render(rw, http.StatusOK, d)
+}
+
+func (w *Web) missionFile(rw http.ResponseWriter, r *http.Request) {
+	d := w.data(r, "file")
+	slug := r.PathValue("slug")
+	d.Mission = w.missions.Status(slug)
+	if d.Mission.Slug == "" {
+		d.Mission.Slug = slug
+	}
+	d.FilePath = r.PathValue("rel")
+	if !d.Mission.OK || d.Mission.MissionDir == "" {
+		d.FileRefusal = "mission_unreadable"
+		d.FileReason = "mission file is unavailable until mission status recovers"
+		w.render(rw, http.StatusOK, d)
+		return
+	}
+	name, err := missionFilePath(d.Mission.MissionDir, d.FilePath)
+	if err != nil {
+		var refusal *fileRefusal
+		if errors.As(err, &refusal) {
+			d.FileRefusal, d.FileReason = refusal.kind, refusal.reason
+			w.render(rw, refusal.status, d)
+			return
+		}
+		d.FileRefusal, d.FileReason = "file_unreadable", "mission file is unreadable"
+		w.render(rw, http.StatusOK, d)
+		return
+	}
+	contents, err := os.ReadFile(name)
+	if err != nil {
+		d.FileRefusal, d.FileReason = "file_unreadable", "mission file is unreadable"
+		w.render(rw, http.StatusOK, d)
+		return
+	}
+	if strings.EqualFold(filepath.Ext(name), ".md") || strings.EqualFold(filepath.Ext(name), ".markdown") {
+		d.FileHTML, err = renderMarkdown(contents)
+		if err != nil {
+			d.FileRefusal, d.FileReason = "markdown_render_failed", "markdown could not be rendered"
+			w.render(rw, http.StatusOK, d)
+			return
+		}
+	} else {
+		d.FilePlain = string(contents)
+	}
 	w.render(rw, http.StatusOK, d)
 }
 

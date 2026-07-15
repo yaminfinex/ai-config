@@ -46,6 +46,9 @@ table{border-collapse:collapse;width:100%}
 td,th{text-align:left;padding:.3em .6em;border-bottom:1px solid var(--line);font-size:.9em}
 th{color:var(--dim);font-weight:500}
 .footer{color:var(--dim);font-size:.8em;margin:2em 0;text-align:center}
+.document{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:1em 1.2em;overflow-wrap:anywhere}
+.document pre{font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;overflow:auto;background:#f5f5f3;padding:.8em;border-radius:6px}
+.document code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
 </style></head><body>
 <header>
   <span class="brand">mc</span>
@@ -108,6 +111,11 @@ th{color:var(--dim);font-weight:500}
     {{else}}<div class="warning">Board data is unavailable.</div>{{end}}
   {{else}}<div class="empty">board unavailable until mission status recovers</div>{{end}}
 
+  <h2>Artifacts</h2>
+  {{if .ArtifactWarn}}<div class="warning">{{.ArtifactWarn}}</div>{{end}}
+  {{range .Artifacts}}<div class="card"><a class="title" href="{{.URL}}">{{.Path}}</a></div>
+  {{else}}{{if not .ArtifactWarn}}<div class="empty">no readable artifacts</div>{{end}}{{end}}
+
   <h2>Threads</h2>
   {{range .MissionThreads}}<div class="card"><a class="title" href="/thread/{{.ID}}">{{.Title}}</a>
     <div class="meta"><span class="badge {{.Grade}}">{{.Grade}}</span><span class="badge">{{.Status}}</span>{{.ID}} · {{len .Msgs}} msg · {{ago .Updated}} ago</div></div>
@@ -117,6 +125,15 @@ th{color:var(--dim);font-weight:500}
   {{if .MissionAgents}}<table><tr><th>name</th><th>tool</th><th>status</th><th>role</th><th></th></tr>
     {{range .MissionAgents}}<tr><td><strong>{{.Name}}</strong></td><td>{{.Tool}}</td><td>{{.Status}}</td><td>{{.Role}}</td><td><a href="/talk?agent={{.Name}}">talk to</a></td></tr>{{end}}
   </table>{{else}}<div class="empty">no seated agents</div>{{end}}
+{{end}}
+
+{{if eq .Page "file"}}
+  <p class="meta"><a href="/mission/{{.Mission.Slug}}">&larr; {{.Mission.Slug}} artifacts</a></p>
+  <h1 style="margin:.2em 0">{{.FilePath}}</h1>
+  {{if .FileRefusal}}
+    <div class="warning"><strong>File unavailable ({{.FileRefusal}})</strong><br>{{.FileReason}}</div>
+  {{else if .FileHTML}}<article class="document">{{.FileHTML}}</article>
+  {{else}}<pre class="document">{{.FilePlain}}</pre>{{end}}
 {{end}}
 
 {{if eq .Page "thread"}}{{with .T}}
