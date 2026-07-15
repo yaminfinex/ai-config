@@ -136,6 +136,9 @@ func TestPiSpawnAppendsMultiBinaryDirectoryAfterInheritedPath(t *testing.T) {
 	if got := agentLoginPathExpression(shims, "pi", piBin); got != wantLogin {
 		t.Fatalf("login PATH = %q, want %q", got, wantLogin)
 	}
+	if got := agentLoginPathExpression(shims, "codex", piBin); strings.Contains(got, piBin) {
+		t.Fatalf("non-Pi login PATH leaked Pi directory: %q", got)
+	}
 	if got := agentPathValue(shims, systemBin, "codex", piBin); strings.Contains(got, piBin) {
 		t.Fatalf("non-Pi PATH leaked Pi directory: %q", got)
 	}
