@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,54 @@ func TestGracefulCullTimeoutIsBoundedAndStillCloses(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "release notice: grace window expired") {
 		t.Fatalf("stdout=%q, want bounded-timeout outcome", stdout)
+	}
+}
+
+func TestGracefulCullCallerRosterChildHoldingStdoutIsBounded(t *testing.T) {
+	h := installGracefulHarness(t, "caller_fd_leak", true)
+	start := time.Now()
+	stdout, stderr, rc := h.run(t, "--label", "peer", "--grace-timeout-ms", "100")
+	if rc != 0 {
+		t.Fatalf("cull rc=%d\nstdout:\n%s\nstderr:\n%s", rc, stdout, stderr)
+	}
+	h.assertClosed(t)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("caller roster child-held stdout escaped bound: %s", elapsed)
+	}
+	if !strings.Contains(stdout, "caller bus identity unverified") {
+		t.Fatalf("stdout=%q, want caller roster failure outcome", stdout)
+	}
+}
+
+func TestGracefulCullStatusProbeChildHoldingStdoutIsBounded(t *testing.T) {
+	h := installGracefulHarness(t, "status_fd_leak", true)
+	start := time.Now()
+	stdout, stderr, rc := h.run(t, "--label", "peer", "--grace-timeout-ms", "100")
+	if rc != 0 {
+		t.Fatalf("cull rc=%d\nstdout:\n%s\nstderr:\n%s", rc, stdout, stderr)
+	}
+	h.assertClosed(t)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("status probe child-held stdout escaped bound: %s", elapsed)
+	}
+}
+
+func TestGracefulCullRosterTimeoutReportsHonestReason(t *testing.T) {
+	h := installGracefulHarness(t, "roster_timeout", true)
+	start := time.Now()
+	stdout, stderr, rc := h.run(t, "--label", "peer", "--grace-timeout-ms", "40")
+	if rc != 0 {
+		t.Fatalf("cull rc=%d\nstdout:\n%s\nstderr:\n%s", rc, stdout, stderr)
+	}
+	h.assertClosed(t)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("roster timeout escaped grace bound: %s", elapsed)
+	}
+	if !strings.Contains(stdout, "target roster probe exceeded grace deadline") {
+		t.Fatalf("stdout=%q, want honest roster-timeout reason", stdout)
+	}
+	if strings.Contains(stdout, "target is not joined") {
+		t.Fatalf("stdout=%q, deadline must not be reported as a genuine roster miss", stdout)
 	}
 }
 
@@ -146,6 +195,39 @@ func TestGracefulCullAlreadyIdleDoesNotSatisfyTransition(t *testing.T) {
 	}
 }
 
+func TestGracefulCullRejectsUnrelatedAcknowledgements(t *testing.T) {
+	for _, mode := range []string{"foreign_ack", "inform_ack", "pre_notice_ack", "wrong_thread_ack"} {
+		t.Run(mode, func(t *testing.T) {
+			h := installGracefulHarness(t, mode, true)
+			stdout, stderr, rc := h.run(t, "--label", "peer", "--grace-timeout-ms", "100")
+			if rc != 0 {
+				t.Fatalf("cull rc=%d\nstdout:\n%s\nstderr:\n%s", rc, stdout, stderr)
+			}
+			h.assertClosed(t)
+			if !strings.Contains(stdout, "release notice: grace window expired") {
+				t.Fatalf("stdout=%q, %s must not satisfy acknowledgement", stdout, mode)
+			}
+		})
+	}
+}
+
+func TestGracefulCullUnverifiedCallerSkipsNotice(t *testing.T) {
+	h := installGracefulHarness(t, "timeout", true)
+	t.Setenv("HCOM_SESSION_ID", "not-the-live-caller")
+	t.Setenv("HERDR_PANE_ID", "pane-not-in-roster")
+	stdout, stderr, rc := h.run(t, "--label", "peer", "--grace-timeout-ms", "100")
+	if rc != 0 {
+		t.Fatalf("cull rc=%d\nstdout:\n%s\nstderr:\n%s", rc, stdout, stderr)
+	}
+	h.assertClosed(t)
+	if _, err := os.Stat(h.sendLog); !os.IsNotExist(err) {
+		t.Fatalf("unverified caller send log stat=%v, want no release notice", err)
+	}
+	if !strings.Contains(stdout, "caller bus identity unverified") {
+		t.Fatalf("stdout=%q, want verified-caller failure reason", stdout)
+	}
+}
+
 func TestGracefulCullHelpDocumentsBoundsAndBypass(t *testing.T) {
 	var stdout, stderr strings.Builder
 	if rc := Run([]string{"--help"}, &stdout, &stderr); rc != 0 {
@@ -155,6 +237,29 @@ func TestGracefulCullHelpDocumentsBoundsAndBypass(t *testing.T) {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("help missing %q:\n%s", want, stdout.String())
 		}
+	}
+}
+
+func TestGracefulCullRejectsInvalidGraceTimeouts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "zero", args: []string{"--grace-timeout-ms", "0"}},
+		{name: "negative", args: []string{"--grace-timeout-ms", "-1"}},
+		{name: "non_integer", args: []string{"--grace-timeout-ms", "soon"}},
+		{name: "missing", args: []string{"--grace-timeout-ms"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr strings.Builder
+			_, rc := parseArgs(tc.args, &stdout, &stderr)
+			if rc == 0 {
+				t.Fatalf("parseArgs(%q) rc=0, want rejection", tc.args)
+			}
+			if !strings.Contains(stderr.String(), "requires a positive integer") {
+				t.Fatalf("stderr=%q, want positive-integer explanation", stderr.String())
+			}
+		})
 	}
 }
 
@@ -229,6 +334,10 @@ case "${1:-} ${2:-}" in
     if [[ "$GRACE_MODE" == idle && "$n" -ge 3 ]]; then status=idle; fi
     if [[ "$GRACE_MODE" == idle_static ]]; then status=idle; fi
     printf '{"result":{"agents":[{"terminal_id":"term-peer","pane_id":"pane-peer","agent":"codex","agent_status":"%s"}]}}\n' "$status"
+    if [[ "$GRACE_MODE" == status_fd_leak && "$n" -ge 2 ]]; then
+      sleep 5 &
+      printf '%s\n' "$!" >>"$GRACE_CHILD_PID_LOG"
+    fi
     ;;
   "pane get")
     n=0
@@ -259,7 +368,14 @@ case "${1:-}" in
   list)
     if [[ "${2:-}" == --json ]]; then
       printf '[{"name":"caller-seat","status":"active","session_id":"caller-session","launch_context":{"pane_id":"pane-caller"}},{"name":"peer-seat","status":"active","session_id":"peer-session","launch_context":{"pane_id":"pane-peer"}}]\n'
+      if [[ "$GRACE_MODE" == caller_fd_leak ]]; then
+        sleep 5 &
+        printf '%s\n' "$!" >>"$GRACE_CHILD_PID_LOG"
+      fi
       exit 0
+    fi
+    if [[ "$GRACE_MODE" == roster_timeout ]]; then
+      sleep 5
     fi
     [[ "${2:-}" == peer-seat ]]
     ;;
@@ -289,6 +405,18 @@ case "${1:-}" in
     printf '{"id":41,"type":"message","data":{"from":"caller-seat","text":"release","intent":"request","thread":"%s","mentions":["peer-seat"],"delivered_to":["peer-seat"]}}\n' "$thread"
     if [[ "$GRACE_MODE" == ack || "$GRACE_MODE" == reassigned || ( "$GRACE_MODE" == queued_ack && "$n" -ge 5 ) ]]; then
       printf '{"id":43,"type":"message","data":{"from":"peer-seat","text":"released","intent":"ack","thread":"%s","mentions":["caller-seat"]}}\n' "$thread"
+    fi
+    if [[ "$GRACE_MODE" == foreign_ack ]]; then
+      printf '{"id":43,"type":"message","data":{"from":"other-seat","text":"released","intent":"ack","thread":"%s","mentions":["caller-seat"]}}\n' "$thread"
+    fi
+    if [[ "$GRACE_MODE" == inform_ack ]]; then
+      printf '{"id":43,"type":"message","data":{"from":"peer-seat","text":"released","intent":"inform","thread":"%s","mentions":["caller-seat"]}}\n' "$thread"
+    fi
+    if [[ "$GRACE_MODE" == pre_notice_ack ]]; then
+      printf '{"id":40,"type":"message","data":{"from":"peer-seat","text":"released","intent":"ack","thread":"%s","mentions":["caller-seat"]}}\n' "$thread"
+    fi
+    if [[ "$GRACE_MODE" == wrong_thread_ack ]]; then
+      printf '{"id":43,"type":"message","data":{"from":"peer-seat","text":"released","intent":"ack","thread":"unrelated-thread","mentions":["caller-seat"]}}\n'
     fi
     if [[ "$GRACE_MODE" == reply_ack ]]; then
       printf '{"id":44,"type":"message","data":{"from":"peer-seat","text":"released","intent":"ack","reply_to":"41","reply_to_local":41,"mentions":["caller-seat"]}}\n'
@@ -324,8 +452,27 @@ esac
 	t.Setenv("GRACE_SEND_LOG", h.sendLog)
 	t.Setenv("GRACE_THREAD_FILE", filepath.Join(root, "thread"))
 	t.Setenv("GRACE_SENT_FILE", filepath.Join(root, "sent"))
+	childPIDLog := filepath.Join(root, "child-pids")
+	t.Setenv("GRACE_CHILD_PID_LOG", childPIDLog)
+	t.Cleanup(func() { killGraceChildren(childPIDLog) })
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return h
+}
+
+func killGraceChildren(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	for _, field := range strings.Fields(string(data)) {
+		pid, err := strconv.Atoi(field)
+		if err != nil {
+			continue
+		}
+		if process, err := os.FindProcess(pid); err == nil {
+			_ = process.Kill()
+		}
+	}
 }
 
 func seedGracefulTarget(t *testing.T, path, busDir string, busBound bool) {

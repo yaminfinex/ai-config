@@ -57,6 +57,9 @@ func gracefulRelease(rec registry.Record, pane, term string, opts options, stdou
 	case "not_joined":
 		fmt.Fprintln(stdout, "release notice: target is not joined; proceeding")
 		return
+	case "roster_timeout":
+		fmt.Fprintln(stdout, "release notice: target roster probe exceeded grace deadline; proceeding")
+		return
 	default:
 		fmt.Fprintln(stdout, "release notice: delivery failed; proceeding")
 		return
@@ -90,6 +93,7 @@ func liveStatusForTerminal(term string, deadline time.Time) (string, bool) {
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "herdr", "agent", "list")
+	cmd.WaitDelay = 100 * time.Millisecond
 	out, err := cmd.Output()
 	if err != nil {
 		return "", false

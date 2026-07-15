@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type LaunchContext struct {
@@ -60,13 +61,23 @@ func CurrentEvidence(paneIDs ...string) Evidence {
 
 // List reads the live hcom roster in the requested namespace.
 func List(dir string) ([]Row, error) {
-	return ListContext(context.Background(), dir)
+	cmd := exec.Command("hcom", "list", "--json")
+	cmd.Env = os.Environ()
+	if dir != "" && dir != "null" {
+		cmd.Env = setEnv(cmd.Env, "HCOM_DIR", dir)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("hcom list --json failed: %w", err)
+	}
+	return Decode(out)
 }
 
 // ListContext is List with a caller-owned deadline. Lifecycle protocols use
 // it when a dead bus process must not make an otherwise bounded operation hang.
 func ListContext(ctx context.Context, dir string) ([]Row, error) {
 	cmd := exec.CommandContext(ctx, "hcom", "list", "--json")
+	cmd.WaitDelay = 100 * time.Millisecond
 	cmd.Env = os.Environ()
 	if dir != "" && dir != "null" {
 		cmd.Env = setEnv(cmd.Env, "HCOM_DIR", dir)

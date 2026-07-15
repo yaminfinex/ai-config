@@ -15,7 +15,10 @@ import (
 	"time"
 )
 
-const cullDeliveryVerifyMax = 3 * time.Second
+const (
+	cullDeliveryVerifyMax = 3 * time.Second
+	cullCommandWaitDelay  = 100 * time.Millisecond
+)
 
 // CullRequest is the cull-only request envelope. Sender is supplied by the
 // caller after live bus-identity verification; this path never invents a
@@ -65,6 +68,9 @@ func DeliverCullRequest(req CullRequest) CullDelivery {
 	ctx, cancel := context.WithDeadline(context.Background(), req.Deadline)
 	defer cancel()
 	if rc := runCullCommand(ctx, env, "list", req.Target); rc != 0 {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return CullDelivery{Verdict: "roster_timeout"}
+		}
 		return CullDelivery{Verdict: "not_joined"}
 	}
 
@@ -196,6 +202,7 @@ func runCullCommand(ctx context.Context, env []string, args ...string) int {
 func outputCullCommand(ctx context.Context, env []string, args ...string) ([]byte, int) {
 	cmd := exec.CommandContext(ctx, "hcom", args...)
 	cmd.Env = env
+	cmd.WaitDelay = cullCommandWaitDelay
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	err := cmd.Run()
