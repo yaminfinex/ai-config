@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-15 09:00'
-updated_date: '2026-07-15 10:42'
+updated_date: '2026-07-15 11:46'
 labels: []
 dependencies: []
 ordinal: 240500
@@ -21,3 +21,13 @@ FIX SHAPE: spawn/compact prompt sends must carry the SPAWNING session's real bus
 
 AC sketch: (1) spawn prompt message sender == spawner's live bus name, receipt-verified; (2) worker --reply-to on that message routes to the spawner, proven by test through the real reply-resolution path; (3) no synthetic sender literal remains in the send path; (4) spawner-has-no-bus-row refuses typed with remedy, no silent synthetic fallback; (5) red-first regression for the owner-desk reroute. Peer tool note: mission-control is intent-gating promotion desk-side (acks never promote) as defense in depth — that does not replace this fix.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: hera
+created: 2026-07-15 11:46
+---
+Incumbent review adjudication (binding on the DONE claim): the fix makes the prompt sender an ADDRESSABLE live bus name — a real narrowing — but does NOT close the incident fully: bare --reply-to acks (no @target) are broadcasts and still reach the owner seat. Residual filed as its own task (bare-reply-to broadcast); upstream candidate ledgered. This task's scope remains the synthetic-sender deletion + verified stamping.
+---
+<!-- COMMENTS:END -->

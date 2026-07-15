@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-15 11:34'
+updated_date: '2026-07-15 11:46'
 labels:
   - run-herder-dx
 dependencies: []
@@ -143,6 +143,12 @@ author: hera
 created: 2026-07-15 11:34
 ---
 Upstream candidate (hcom): send/query name-form asymmetry is a footgun. 'hcom send --name <full-name>' stamps the resulting message event data.from with the roster-resolved BASE name; '--from X' stamps verbatim; 'hcom events --from X' filters by exact match. Consequence: event anchors, receipt queries, or audit filters keyed on the full name a caller just passed to --name silently never match for tagged agents (name != base_name) — cost a P1 in a downstream consumer today (ack-recognition anchor never pinned; protocol feature dead for all tagged agents while every suite stayed green, because hermetic fixtures stamped the full name where the wire stamps base). Fix there: stamp consistently (or expose base_name in send output), and/or make events --from match either form.
+---
+
+author: hera
+created: 2026-07-15 11:46
+---
+Upstream candidate (hcom): bare --reply-to reply semantics. reply_to is envelope-only metadata — a send with --reply-to <id> and no @target BROADCASTS to every instance instead of routing to the replied message's sender. Wire-proven with three live identities: the owner-side peer receives the worker's ack in delivered_to. Surprising default that turns every polite un-@'d ack into desk spam; suggested fix there: no-target + reply_to routes to the replied message's sender (or at minimum warns).
 ---
 <!-- COMMENTS:END -->
 
