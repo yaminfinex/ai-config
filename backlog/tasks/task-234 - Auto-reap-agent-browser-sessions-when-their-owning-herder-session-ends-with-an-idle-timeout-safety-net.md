@@ -1,11 +1,12 @@
 ---
 id: TASK-234
 title: >-
-  Auto-reap agent-browser sessions when their owning herder session ends, with
-  an idle-timeout safety net
+  Graceful cull: pre-cull release notice + ack window; resource cleanup is the
+  agent's job
 status: To Do
 assignee: []
 created_date: '2026-07-15 07:14'
+updated_date: '2026-07-15 07:17'
 labels:
   - herder
 dependencies: []
@@ -16,13 +17,15 @@ ordinal: 233500
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Prevention follow-up from a field cleanup (6 orphaned agent-browser daemons + full Chrome trees, 84 processes, leaked by two ended reviewer sessions; all reaped after socket-level proof of no live client). Problem: agent-browser daemons detach to PPID 1 and are intentionally persistent; agent termination never closes them — cleanup is cooperative via 'agent-browser --session <name> close', and nothing connects herder lifecycle termination to it. Idle timeout (AGENT_BROWSER_IDLE_TIMEOUT_MS) is disabled by default.
+Owner-corrected design (2026-07-15) after a field cleanup (6 orphaned agent-browser daemons, 84 chrome processes, leaked by two culled reviewers). REJECTED shape: herder closing agent-owned resources on cull (close-on-cull per resource type) — that is an overstep; herder cannot know every resource class agents acquire (browsers, tunnels, containers, temp cloud resources), and per-resource close logic in the lifecycle layer does not generalize.
 
-Settled design (from the investigation, design-first checkpoint still applies for the ownership-record shape):
-1. PRIMARY: record launched agent-browser session names against the launching HERDER_GUID; every normal cull/retire/terminal-close path calls close for them (idempotent, bounded) before the session record retires.
-2. SAFETY NET: periodic orphan sweep (ai-doctor/host maintenance): enumerate .pid/.sock sidecars, read daemon HERDER_GUID from environ, reap only when owner GUID absent from liveness state AND grace period exceeded AND IPC socket has no external client; structured logs before/after.
-3. Finite default AGENT_BROWSER_IDLE_TIMEOUT_MS for herder-launched agents (30-60 min; refreshed by use) with explicit opt-out for intentionally persistent sessions.
-4. Never kill solely by age; live client or live owner always preserved and surfaced.
+RULED shape — protocol over knowledge:
+1. DOCTRINE (cheapest, immediate): agents close their own external resources before reporting DONE, and orchestrator briefs say so. Spawn-context/skill text carries it (evergreen skill wording rides the owner-reviewed harvest path).
+2. GRACEFUL CULL PROTOCOL (herder's actual lane): cull gains a pre-cull release notice — deliver 'release external resources, then ack' to the target, wait a BOUNDED window for ack (or observed idle-after-notice), then cull regardless. Cull must never hang on an unresponsive/context-dead agent; --now skips the notice for emergencies. The notice is generic — herder names no resource types.
+3. SAFETY NET for crashed/never-acked agents: a periodic host-maintenance/doctor sweep OUTSIDE herder core, per resource class, with the proven guards (owner GUID absent from liveness + grace period + no live client at socket level + never age alone). The agent-browser sweep is the first instance; others follow the same pattern.
+4. Optional belt-and-braces: finite default AGENT_BROWSER_IDLE_TIMEOUT_MS in herder-launched agent env (self-heal without anyone knowing about the resource) — env-level, not lifecycle-level.
+
+Design checkpoint required before implementation: notice delivery mechanism + ack shape + window bounds + interaction with retire/adopt/compact paths.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -31,4 +34,8 @@ Settled design (from the investigation, design-first checkpoint still applies fo
 - [ ] #2 Crash/SIGKILL simulation reaped by the safety net after grace period; active owners/clients never reaped
 - [ ] #3 Repeated cleanup safe; auditable structured logs
 - [ ] #4 Integration tests: multi-session agent, normal close, crash, stale sidecars, PID-reuse protection, persistent opt-out
+- [ ] #5 Worker-brief/spawn doctrine text: close external resources before DONE (run-local now; evergreen via owner-reviewed skill harvest)
+- [ ] #6 herder cull sends a generic release notice and waits a bounded ack/idle window before proceeding; never hangs; --now bypass
+- [ ] #7 Doctor/host sweep for agent-browser orphans with the proven guards (owner-absent + grace + no live client, never age alone)
+- [ ] #8 Herder core contains zero resource-type-specific close logic
 <!-- AC:END -->
