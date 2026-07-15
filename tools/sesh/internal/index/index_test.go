@@ -1,6 +1,7 @@
 package index
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -357,6 +358,43 @@ func TestQuarantineObservedAtSurvivesReindex(t *testing.T) {
 	}
 	if regenerated.Before(start) || regenerated.After(end) {
 		t.Fatalf("regenerated observed_at = %s, want between %s and %s", regenerated, start, end)
+	}
+}
+
+func TestReindexLedgerSwapFailurePreservesObservedAt(t *testing.T) {
+	st, idx := newHarness(t)
+	body := []byte("not-json\n")
+	putBytes(t, st, testSession, testFile, 0, body)
+	if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+		t.Fatal(err)
+	}
+	original := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	if _, err := st.DB().ExecContext(t.Context(), `UPDATE quarantine_ledger SET observed_at = ?, day = ?`, formatTime(original), original.Format("2006-01-02")); err != nil {
+		t.Fatal(err)
+	}
+
+	idx.InjectReindexLedgerSwapFailureOnce()
+	if err := idx.Reindex(t.Context()); err == nil {
+		t.Fatal("reindex succeeded despite injected ledger swap failure")
+	}
+
+	var observed string
+	if err := st.DB().QueryRowContext(t.Context(), `SELECT observed_at FROM quarantine_ledger WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = 0 AND line_ordinal = 0`,
+		wire.ToolClaude, testSession, testFile).Scan(&observed); err != nil {
+		t.Fatalf("durable quarantine observation was lost at the ledger swap boundary: %v", err)
+	}
+	if observed != formatTime(original) {
+		t.Fatalf("observed_at after interrupted reindex = %q want %q", observed, formatTime(original))
+	}
+	if err := idx.Reindex(t.Context()); err != nil {
+		t.Fatalf("reindex retry after interrupted ledger swap: %v", err)
+	}
+	if err := st.DB().QueryRowContext(t.Context(), `SELECT observed_at FROM quarantine_ledger WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = 0 AND line_ordinal = 0`,
+		wire.ToolClaude, testSession, testFile).Scan(&observed); err != nil {
+		t.Fatalf("quarantine observation missing after reindex retry: %v", err)
+	}
+	if observed != formatTime(original) {
+		t.Fatalf("observed_at after reindex retry = %q want %q", observed, formatTime(original))
 	}
 }
 
@@ -1065,13 +1103,144 @@ func TestLargeTrailingPartialDoesNotAllocateWholeRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime.ReadMemStats(&after)
-	if delta := after.TotalAlloc - before.TotalAlloc; delta > 12<<20 {
-		t.Fatalf("ProcessAppend allocated %d bytes for a %d-byte trailing partial; want bounded under 12MiB", delta, size)
+	// Geometric copies may cumulatively allocate just under twice the 8 MiB
+	// line cap before the remainder is discarded. The capacity-ratio test owns
+	// the retained peak bound; this guards against allocation by the 30 MiB
+	// section length.
+	if delta := after.TotalAlloc - before.TotalAlloc; delta > 20<<20 {
+		t.Fatalf("ProcessAppend allocated %d bytes for a %d-byte trailing partial; want bounded under 20MiB", delta, size)
 	}
 	if got, err := idx.RowCount(t.Context()); err != nil {
 		t.Fatal(err)
 	} else if got != 0 {
 		t.Fatalf("trailing partial indexed %d rows, want 0", got)
+	}
+}
+
+func TestCompleteLineCapacityStaysProportionalAcrossGrowthBoundaries(t *testing.T) {
+	var line []byte
+	fragment := make([]byte, 64<<10)
+	for size := len(fragment); size <= maxIndexedLineBytes; size += len(fragment) {
+		line = appendLineFragment(line, fragment)
+		if cap(line) > 2*len(line) {
+			t.Fatalf("line length %d retained capacity %d; want at most 2x", len(line), cap(line))
+		}
+	}
+}
+
+func BenchmarkReadCompleteLineLargeBase64(b *testing.B) {
+	for _, size := range []int{
+		64 << 10,
+		(64 << 10) + 1,
+		1 << 20,
+		(1 << 20) + 1,
+		(1 << 20) + (64 << 10),
+		2 << 20,
+		(2 << 20) + 1,
+		4 << 20,
+		(4 << 20) + 1,
+		maxIndexedLineBytes,
+	} {
+		b.Run(fmt.Sprintf("bytes_%d", size), func(b *testing.B) {
+			line := append(bytes.Repeat([]byte("A"), size), '\n')
+			b.ReportAllocs()
+			b.SetBytes(int64(len(line)))
+			b.ResetTimer()
+			for range b.N {
+				reader := bufio.NewReaderSize(bytes.NewReader(line), 64<<10)
+				got, _, ok, err := readCompleteLine(reader)
+				if err != nil || !ok || len(got) != size {
+					b.Fatalf("readCompleteLine = len %d, ok %v, err %v", len(got), ok, err)
+				}
+				runtime.KeepAlive(got)
+			}
+		})
+	}
+}
+
+func TestVanishedGroupMemberDoesNotWidenReferenceDivergence(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		vanishedFirst bool
+	}{
+		{name: "survivor arrives first"},
+		{name: "vanished member arrives first", vanishedFirst: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			type checksum struct {
+				digest string
+				rows   int
+			}
+			drive := func(naive bool) (checksum, checksum) {
+				t.Helper()
+				st, idx := newHarness(t)
+				idx.naiveMaintenance = naive
+				survivorSession := syntheticUUID(98_000)
+				vanishedSession := syntheticUUID(98_001)
+				survivorFile := syntheticUUID(98_100)
+				vanishedFile := syntheticUUID(98_101)
+				survivorBody := syntheticSessionBody(survivorSession, "vanished-shared", 2, time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC))
+				vanishedBody := syntheticSessionBody(vanishedSession, "vanished-shared", 2, time.Date(2026, 7, 1, 11, 0, 0, 0, time.UTC))
+
+				appendFile := func(session, file string, body []byte) {
+					t.Helper()
+					putBytes(t, st, session, file, 0, body)
+					if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if tc.vanishedFirst {
+					appendFile(vanishedSession, vanishedFile, vanishedBody)
+					if _, err := st.DB().ExecContext(t.Context(), `UPDATE files SET created_at = '9999-01-01T00:00:00Z' WHERE tool = ? AND session_id = ? AND file_uuid = ? AND generation = 0`, wire.ToolClaude, vanishedSession, vanishedFile); err != nil {
+						t.Fatal(err)
+					}
+					appendFile(survivorSession, survivorFile, survivorBody)
+				} else {
+					appendFile(survivorSession, survivorFile, survivorBody)
+					appendFile(vanishedSession, vanishedFile, vanishedBody)
+				}
+
+				var vanishedRows int
+				if err := st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = 0`,
+					wire.ToolClaude, vanishedSession, vanishedFile).Scan(&vanishedRows); err != nil {
+					t.Fatal(err)
+				}
+				if vanishedRows != 0 {
+					t.Fatalf("vanished member retained %d rows; fixture must remove all rows", vanishedRows)
+				}
+
+				tail := []byte(`{"type":"message","uuid":"vanished-tail","sessionId":"` + vanishedSession + `","timestamp":"2026-07-01T12:00:00Z","message":{"role":"user"}}` + "\n")
+				putBytes(t, st, vanishedSession, vanishedFile, int64(len(vanishedBody)), tail)
+				if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+					t.Fatal(err)
+				}
+				incrementalDigest, incrementalRows, err := idx.Checksum(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := idx.Reindex(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				reindexedDigest, reindexedRows, err := idx.Checksum(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				return checksum{incrementalDigest, incrementalRows}, checksum{reindexedDigest, reindexedRows}
+			}
+
+			optimized, optimizedReindex := drive(false)
+			reference, referenceReindex := drive(true)
+			if optimized != reference {
+				t.Fatalf("optimized incremental checksum = %+v, reference behavior = %+v", optimized, reference)
+			}
+			if optimizedReindex != referenceReindex {
+				t.Fatalf("optimized reindex checksum = %+v, reference reindex = %+v", optimizedReindex, referenceReindex)
+			}
+			if optimized == optimizedReindex {
+				t.Fatal("fixture no longer demonstrates the known vanished-member rejoin divergence")
+			}
+			t.Logf("incremental checksum %s/%d; reindex checksum %s/%d", optimized.digest, optimized.rows, optimizedReindex.digest, optimizedReindex.rows)
+		})
 	}
 }
 

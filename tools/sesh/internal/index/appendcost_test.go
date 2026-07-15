@@ -69,6 +69,49 @@ func buildAppendCostCorpus(tb testing.TB, db *sql.DB, sessions, rowsPerSession i
 	}
 }
 
+func buildSettledLogicalGroup(tb testing.TB, db *sql.DB, files, rowsPerFile int) (string, string) {
+	tb.Helper()
+	tx, err := db.Begin()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	logical := syntheticUUID(90_000)
+	target := syntheticUUID(90_001)
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	for file := 0; file < files; file++ {
+		wireID := syntheticUUID(90_001 + file)
+		fileID := wireID
+		created := base.Add(time.Duration(file) * time.Minute).Format(time.RFC3339Nano)
+		if _, err := tx.Exec(`INSERT INTO files
+			(tool, session_id, file_uuid, generation, high_water, created_at, updated_at)
+			VALUES (?, ?, ?, 0, 0, ?, ?)`, wire.ToolClaude, wireID, fileID, created, created); err != nil {
+			tb.Fatal(err)
+		}
+		if _, err := tx.Exec(`INSERT INTO index_file_state
+			(tool, wire_session_id, file_uuid, generation, complete_offset)
+			VALUES (?, ?, ?, 0, 0)`, wire.ToolClaude, wireID, fileID); err != nil {
+			tb.Fatal(err)
+		}
+		for line := 0; line < rowsPerFile; line++ {
+			messageID := fmt.Sprintf("settled-%02d-%05d", file, line)
+			if _, err := tx.Exec(`INSERT INTO sesh_index_messages
+				(tool, logical_session_id, parsed_logical_session_id, wire_session_id, entry_type,
+				 message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal,
+				 line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
+				VALUES (?, ?, ?, ?, 'message', ?, ?, 0, 'user', ?, ?, ?, ?, ?, 0, '')`,
+				wire.ToolClaude, logical, wireID, wireID, messageID, fileID,
+				base.Add(time.Duration(line)*time.Second).Format(time.RFC3339Nano), file, line, line*120, (line+1)*120); err != nil {
+				tb.Fatal(err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		tb.Fatal(err)
+	}
+	return target, logical
+}
+
 // phaseCapture is a slog handler that collects the per-phase durations and
 // integer counters the index journals for each append transaction.
 type phaseCapture struct {
@@ -194,6 +237,38 @@ func BenchmarkAppendCostAtCorpusScale(b *testing.B) {
 			reportPhases(b, capture)
 		})
 	}
+}
+
+// BenchmarkSettledLogicalGroupAppend measures the residual group-local work
+// after corpus-wide append maintenance was bounded. The fixture is a settled
+// 10-file logical session with 10,000 existing rows; each append adds a unique
+// key to one member and therefore requires no relabel, ordinal rewrite, or
+// duplicate collapse.
+func BenchmarkSettledLogicalGroupAppend(b *testing.B) {
+	st, idx := newBenchHarness(b)
+	defer func() { _ = st.Close() }()
+	target, _ := buildSettledLogicalGroup(b, st.DB(), 10, 1000)
+
+	capture := &phaseCapture{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(capture))
+	defer slog.SetDefault(prev)
+
+	var offset int64
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tail := []byte(fmt.Sprintf(
+			`{"type":"message","uuid":"settled-tail-%08d","sessionId":"%s","timestamp":"2026-07-01T12:00:00Z","message":{"role":"user"}}`+"\n",
+			i, target))
+		putBytesBench(b, st, target, target, offset, tail)
+		offset += int64(len(tail))
+		if err := idx.ProcessAppend(b.Context(), <-st.AppendEvents()); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	reportPhases(b, capture)
+	b.ReportMetric(float64(capture.intSum("maint_rows"))/float64(b.N), "maint-rows/append")
 }
 
 func reportPhases(b *testing.B, capture *phaseCapture) {

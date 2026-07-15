@@ -41,8 +41,10 @@ type Indexer struct {
 	tx                 *sql.Tx
 	mirrorPath         MirrorPath
 	quarantineObserved map[quarantineKey]time.Time
+	reindexLedger      *[]quarantineLedgerRow
 
-	failWriteOnce bool
+	failWriteOnce             bool
+	failReindexLedgerSwapOnce bool
 
 	// naiveMaintenance routes logical-session maintenance through the
 	// pre-optimization statement shapes (unpinned corpus-walking plans,
@@ -108,6 +110,13 @@ func New(ctx context.Context, db *sql.DB, mirrorPath MirrorPath) (*Indexer, erro
 // used to prove dirty-for-reindex behavior.
 func (idx *Indexer) InjectWriteFailureOnce() {
 	idx.failWriteOnce = true
+}
+
+// InjectReindexLedgerSwapFailureOnce makes the next reindex stop immediately
+// after clearing the quarantine ledger. It exercises the crash boundary where
+// durable observation history must remain recoverable.
+func (idx *Indexer) InjectReindexLedgerSwapFailureOnce() {
+	idx.failReindexLedgerSwapOnce = true
 }
 
 func (idx *Indexer) execContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
@@ -302,8 +311,10 @@ func (idx *Indexer) applyAppend(ctx context.Context, ev wire.AppendEvent, rebuil
 		}
 		return idx.clearDirty(ctx, ev)
 	}
+	var placement filePlacement
+	var settled bool
 	if !rebuild {
-		err := idx.inheritFileLogicalSession(ctx, ev, rows)
+		placement, settled, err = idx.inheritFilePlacement(ctx, ev, rows)
 		phase(&idx.timing.inherit)
 		if err != nil {
 			return err
@@ -318,7 +329,7 @@ func (idx *Indexer) applyAppend(ctx context.Context, ev wire.AppendEvent, rebuil
 		return err
 	}
 	if !rebuild {
-		err := idx.unifyConnectedLogicalSessions(ctx, ev)
+		err := idx.unifyConnectedLogicalSessions(ctx, ev, rows, placement, settled)
 		phase(&idx.timing.unify)
 		if idx.timing != nil {
 			// dedupe runs inside the unify call but is lapped separately;
@@ -352,13 +363,15 @@ func (idx *Indexer) Reindex(ctx context.Context) error {
 		return normalizeDBError(err)
 	}
 	idx.quarantineObserved = observed
+	rebuiltLedger := []quarantineLedgerRow{}
+	idx.reindexLedger = &rebuiltLedger
 	defer func() {
 		idx.quarantineObserved = nil
+		idx.reindexLedger = nil
 	}()
 	for _, stmt := range []string{
 		`DELETE FROM sesh_index_messages`,
 		`DELETE FROM index_file_state`,
-		`DELETE FROM quarantine_ledger`,
 	} {
 		if _, err := idx.execContext(ctx, stmt); err != nil {
 			return normalizeDBError(err)
@@ -387,7 +400,7 @@ func (idx *Indexer) Reindex(ctx context.Context) error {
 	if err := idx.unifyLogicalSessions(ctx); err != nil {
 		return normalizeDBError(err)
 	}
-	return nil
+	return normalizeDBError(idx.swapQuarantineLedger(ctx, rebuiltLedger))
 }
 
 type generation struct {
@@ -489,7 +502,7 @@ func readCompleteLine(r *bufio.Reader) ([]byte, int64, bool, error) {
 			if tooLong || len(line)+len(body) > maxIndexedLineBytes {
 				return nil, lineBytes, true, nil
 			}
-			line = append(line, body...)
+			line = appendLineFragment(line, body)
 			return line, lineBytes, true, nil
 		case errors.Is(err, bufio.ErrBufferFull):
 			lineBytes += int64(len(frag))
@@ -498,16 +511,33 @@ func readCompleteLine(r *bufio.Reader) ([]byte, int64, bool, error) {
 				line = nil
 				continue
 			}
-			if line == nil {
-				line = make([]byte, 0, maxIndexedLineBytes)
-			}
-			line = append(line, frag...)
+			line = appendLineFragment(line, frag)
 		case errors.Is(err, io.EOF):
 			return nil, 0, false, nil
 		default:
 			return nil, 0, false, err
 		}
 	}
+}
+
+func appendLineFragment(line, fragment []byte) []byte {
+	needed := len(line) + len(fragment)
+	if needed > cap(line) {
+		capacity := cap(line) * 2
+		if capacity == 0 {
+			capacity = needed * 2
+		}
+		if capacity < needed {
+			capacity = needed
+		}
+		if capacity > maxIndexedLineBytes {
+			capacity = maxIndexedLineBytes
+		}
+		grown := make([]byte, len(line), capacity)
+		copy(grown, line)
+		line = grown
+	}
+	return append(line, fragment...)
 }
 
 func lineOrdinalAt(f *os.File, offset int64) (int64, error) {
@@ -746,9 +776,53 @@ func (idx *Indexer) insertQuarantine(ctx context.Context, messageStmt, ledgerStm
 			observed = t
 		}
 	}
-	_, err = ledgerStmt.ExecContext(ctx,
+	ledgerRow := quarantineLedgerRow{observed: observed, message: row}
+	if idx.reindexLedger != nil {
+		*idx.reindexLedger = append(*idx.reindexLedger, ledgerRow)
+		return nil
+	}
+	return insertQuarantineLedgerRow(ctx, ledgerStmt, ledgerRow)
+}
+
+type quarantineLedgerRow struct {
+	observed time.Time
+	message  wire.IndexMessage
+}
+
+func insertQuarantineLedgerRow(ctx context.Context, stmt *sql.Stmt, ledger quarantineLedgerRow) error {
+	row := ledger.message
+	observed := ledger.observed
+	_, err := stmt.ExecContext(ctx,
 		formatTime(observed), observed.Format("2006-01-02"), row.Tool, row.WireSessionID, row.FileUUID, row.Generation, row.LineOrdinal, row.QuarantineReason)
 	return err
+}
+
+func (idx *Indexer) swapQuarantineLedger(ctx context.Context, rebuilt []quarantineLedgerRow) error {
+	tx, err := idx.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM quarantine_ledger`); err != nil {
+		return err
+	}
+	if idx.failReindexLedgerSwapOnce {
+		idx.failReindexLedgerSwapOnce = false
+		return errors.New("injected reindex ledger swap failure")
+	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO quarantine_ledger
+		(observed_at, day, tool, wire_session_id, file_uuid, generation, line_ordinal, reason)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, ledger := range rebuilt {
+		if err := insertQuarantineLedgerRow(ctx, stmt, ledger); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 type quarantineKey struct {
@@ -804,20 +878,47 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
-func (idx *Indexer) inheritFileLogicalSession(ctx context.Context, ev wire.AppendEvent, rows []indexedMessage) error {
-	existing, err := idx.fileLogicalSessions(ctx, ev)
-	if err != nil {
-		return err
+type filePlacement struct {
+	logical string
+	ordinal int64
+}
+
+func (idx *Indexer) inheritFilePlacement(ctx context.Context, ev wire.AppendEvent, rows []indexedMessage) (filePlacement, bool, error) {
+	var placement filePlacement
+	err := idx.queryRowContext(ctx, `SELECT logical_session_id, file_ordinal
+		FROM sesh_index_messages INDEXED BY sesh_index_messages_file
+		WHERE quarantine = 0 AND tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?
+			AND logical_session_id <> parsed_logical_session_id
+			AND parsed_logical_session_id <> ''
+		LIMIT 1`, ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation).Scan(&placement.logical, &placement.ordinal)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = idx.queryRowContext(ctx, `SELECT MIN(logical_session_id), MIN(file_ordinal)
+			FROM sesh_index_messages INDEXED BY sesh_index_messages_file
+			WHERE quarantine = 0 AND tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?
+			HAVING COUNT(DISTINCT logical_session_id) = 1 AND COUNT(DISTINCT file_ordinal) = 1`,
+			ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation).Scan(&placement.logical, &placement.ordinal)
+		if errors.Is(err, sql.ErrNoRows) {
+			return filePlacement{}, false, nil
+		}
+		if err != nil {
+			return filePlacement{}, false, err
+		}
+		for _, row := range rows {
+			if !row.Quarantine && row.LogicalSessionID != placement.logical {
+				return filePlacement{}, false, nil
+			}
+		}
 	}
-	if len(existing) != 1 || existing[0] == ev.WireSessionID {
-		return nil
+	if err != nil {
+		return filePlacement{}, false, err
 	}
 	for i := range rows {
 		if !rows[i].Quarantine {
-			rows[i].LogicalSessionID = existing[0]
+			rows[i].LogicalSessionID = placement.logical
+			rows[i].FileOrdinal = placement.ordinal
 		}
 	}
-	return nil
+	return placement, true, nil
 }
 
 // INDEXED BY is load-bearing: without it the planner prefers the logical
@@ -889,10 +990,34 @@ func (idx *Indexer) clearDirty(ctx context.Context, ev wire.AppendEvent) error {
 	return err
 }
 
-func (idx *Indexer) unifyConnectedLogicalSessions(ctx context.Context, ev wire.AppendEvent) error {
+func (idx *Indexer) unifyConnectedLogicalSessions(ctx context.Context, ev wire.AppendEvent, appended []indexedMessage, placement filePlacement, settled bool) error {
 	start, ok, err := idx.fileSummary(ctx, ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation)
 	if err != nil || !ok {
 		return err
+	}
+	if settled && !idx.naiveMaintenance {
+		overlaps, err := idx.overlappingFiles(ctx, start)
+		if err != nil {
+			return err
+		}
+		crossesLogicalBoundary := false
+		for _, f := range overlaps {
+			if f.logicalID != placement.logical {
+				crossesLogicalBoundary = true
+				break
+			}
+		}
+		if !crossesLogicalBoundary {
+			dedupeStart := time.Now()
+			deleted, err := idx.dedupeAppendedKeys(ctx, ev.Tool, placement.logical, appended)
+			if err == nil && deleted > 0 {
+				err = idx.compactLogicalFileOrdinals(ctx, ev.Tool, placement.logical)
+			}
+			if idx.timing != nil {
+				idx.timing.dedupe = time.Since(dedupeStart)
+			}
+			return err
+		}
 	}
 	group, err := idx.connectedFiles(ctx, start)
 	if err != nil {
@@ -1221,6 +1346,48 @@ func (idx *Indexer) dedupeLogical(ctx context.Context, tool wire.Tool, logical s
 		query = naiveDedupeLogicalSQL
 	}
 	return idx.execMaintenance(ctx, query, tool, logical)
+}
+
+const dedupeLogicalKeySQL = `DELETE FROM sesh_index_messages
+	WHERE id IN (
+		SELECT id FROM (
+			SELECT id,
+				ROW_NUMBER() OVER (
+					PARTITION BY tool, logical_session_id, entry_type, message_uuid
+					ORDER BY timestamp_utc IS NULL, timestamp_utc, file_ordinal, line_ordinal, file_uuid, generation, id
+				) AS rn
+			FROM sesh_index_messages INDEXED BY sesh_index_messages_overlap
+			WHERE quarantine = 0 AND tool = ? AND entry_type = ? AND message_uuid = ? AND logical_session_id = ?
+		)
+		WHERE rn > 1
+	)`
+
+func (idx *Indexer) dedupeAppendedKeys(ctx context.Context, tool wire.Tool, logical string, appended []indexedMessage) (int64, error) {
+	seen := map[string]bool{}
+	var deleted int64
+	for _, row := range appended {
+		if row.Quarantine || row.MessageUUID == "" {
+			continue
+		}
+		key := row.EntryType + "\x00" + row.MessageUUID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		res, err := idx.execContext(ctx, dedupeLogicalKeySQL, tool, row.EntryType, row.MessageUUID, logical)
+		if err != nil {
+			return deleted, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return deleted, err
+		}
+		deleted += n
+	}
+	if idx.timing != nil {
+		idx.timing.maintRows += deleted
+	}
+	return deleted, nil
 }
 
 type fileSummary struct {
