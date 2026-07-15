@@ -3,6 +3,7 @@ package hcomidentity
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,7 +60,13 @@ func CurrentEvidence(paneIDs ...string) Evidence {
 
 // List reads the live hcom roster in the requested namespace.
 func List(dir string) ([]Row, error) {
-	cmd := exec.Command("hcom", "list", "--json")
+	return ListContext(context.Background(), dir)
+}
+
+// ListContext is List with a caller-owned deadline. Lifecycle protocols use
+// it when a dead bus process must not make an otherwise bounded operation hang.
+func ListContext(ctx context.Context, dir string) ([]Row, error) {
+	cmd := exec.CommandContext(ctx, "hcom", "list", "--json")
 	cmd.Env = os.Environ()
 	if dir != "" && dir != "null" {
 		cmd.Env = setEnv(cmd.Env, "HCOM_DIR", dir)
@@ -147,6 +154,14 @@ func Resolve(rows []Row, evidence Evidence) Result {
 
 func ResolveLive(dir string, evidence Evidence) Result {
 	rows, err := List(dir)
+	if err != nil {
+		return Result{Reason: err.Error()}
+	}
+	return Resolve(rows, evidence)
+}
+
+func ResolveLiveContext(ctx context.Context, dir string, evidence Evidence) Result {
+	rows, err := ListContext(ctx, dir)
 	if err != nil {
 		return Result{Reason: err.Error()}
 	}

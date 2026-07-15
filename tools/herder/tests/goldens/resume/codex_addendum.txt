@@ -1,6 +1,6 @@
 === STDERR ===
 resumed codex-me (guid-codex-0000) pane=p_resumed
-sent 2561 chars to guid-codex-0000 (hcom @codex-vibe), submitted, verify=delivered
+sent 2624 chars to guid-codex-0000 (hcom @codex-vibe), submitted, verify=delivered
 === STDOUT ===
 {"agent":"codex","argv":["/bin/zsh","-lic","export HERDER_GUID=guid-codex-0000 HERDER_ROLE=worker HERDER_LABEL=codex-me HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --resume codex sess-codex --tag worker --dangerously-bypass-approvals-and-sandbox --go"],"cwd":"/mock/cwd","guid":"guid-codex-0000","hcom_dir":"/hcom","hcom_name":"","hcom_tag":"worker","label":"codex-me","pane_id":"p_resumed","provenance":{"batch_id":"","branch":"feat/herder-go-port","cwd":"/mock/cwd","mechanism":"spawn","resumed_at":"<TS>","spawned_by":"user","tag":"worker","tool_session_id":"sess-codex","ts":"<TS>","workspace_id":"ws_1"},"role":"worker","short_guid":"codex","started_at":"<TS>","started_by_pane":"p_self","status":"active","terminal_id":"term_RESUMED","workspace_id":"ws_1"}
 === EXIT ===
@@ -31,6 +31,8 @@ Provision and manage agent sessions through herder. Do NOT spawn with `hcom <n> 
 - Cull:   herder cull --guid GUID              # close the pane + unseat the session (label stays leased)
 - Fork:   herder fork <guid> [--prompt P] [--workspace ID] [--split right|down] # fresh tab by default
 - Resume: herder resume <guid> [--cwd PATH] [--workspace ID] [--split right|down] # fresh tab by default
+
+Before reporting DONE, release external resources you opened.
 
 Delivery is verified: "queued" injects at the target's next turn (do NOT resend); "NOT confirmed" means read the pane (`herder wait <guid> --read`) before retrying — a blind resend double-submits.
 If unsure about syntax, always run `herder <command> --help` (or `hcom <command> --help`) FIRST. Do not guess.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,12 +19,14 @@ import (
 )
 
 type options struct {
-	help     bool
-	selector string
-	value    string
-	goneOnly bool
-	dryRun   bool
-	force    bool
+	help           bool
+	selector       string
+	value          string
+	goneOnly       bool
+	dryRun         bool
+	force          bool
+	now            bool
+	graceTimeoutMS int
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -88,7 +91,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
-	var opts options
+	opts := options{graceTimeoutMS: defaultGraceTimeoutMS}
 	for i := 0; i < len(args); {
 		switch args[i] {
 		case "--guid":
@@ -118,6 +121,21 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		case "--force":
 			opts.force = true
 			i++
+		case "--now":
+			opts.now = true
+			i++
+		case "--grace-timeout-ms":
+			if i+1 >= len(args) {
+				die(stderr, "--grace-timeout-ms requires a positive integer")
+				return opts, 1
+			}
+			value, err := strconv.Atoi(args[i+1])
+			if err != nil || value <= 0 {
+				die(stderr, "--grace-timeout-ms requires a positive integer")
+				return opts, 1
+			}
+			opts.graceTimeoutMS = value
+			i += 2
 		case "-h", "--help":
 			printHelp(stdout)
 			opts.help = true
@@ -148,6 +166,9 @@ func printHelp(stdout io.Writer) {
 		"  --dry-run    print what would be culled without acting",
 		"  --force      skip terminal_id verification — use ONLY when you've confirmed the",
 		"               agent is dead and just need to unseat the registry session",
+		"  --now        bypass the release notice and grace window for emergencies",
+		"  --grace-timeout-ms MS",
+		"               bounded release grace window (default 120000)",
 		"",
 		"Behavior:",
 		"  Before closing, confirms the live pane's terminal_id matches the one recorded at",
@@ -231,7 +252,11 @@ func processTargetWithClient(registryPath string, rec registry.Record, live map[
 	term := rec.TerminalID
 
 	if opts.dryRun {
-		fmt.Fprintf(stdout, "would cull %s (%s) pane=%s\n", label, guid, pane)
+		if opts.now || rec.HcomName == "" || rec.HcomName == "null" {
+			fmt.Fprintf(stdout, "would cull %s (%s) pane=%s\n", label, guid, pane)
+		} else {
+			fmt.Fprintf(stdout, "would request external-resource release from %s (%s), wait up to %dms, then cull pane=%s\n", label, guid, opts.graceTimeoutMS, pane)
+		}
 		return true
 	}
 
@@ -292,6 +317,37 @@ func processTargetWithClient(registryPath string, rec registry.Record, live map[
 					fmt.Fprintf(stderr, "pane %s reassigned to another terminal and %s not live anywhere; recording session unseated\n", pane, term)
 				}
 				closed, appended, err := appendClosed(registryPath, rec, nowISO, "already_gone", "source=cull-verification; terminal_id not in live agent list")
+				if err != nil {
+					die(stderr, err.Error())
+					return false
+				}
+				reportClosedFact(stdout, closed, appended, "already_gone", label, guid, pane)
+				if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
+					return false
+				}
+				if appended {
+					if err := teardownBusEntryIfGone(closed, opts.force, stdout); err != nil {
+						die(stderr, err.Error())
+						return false
+					}
+				}
+				return true
+			}
+		}
+	}
+
+	gracefulRelease(rec, pane, term, opts, stdout)
+	if !opts.force && term != "" {
+		vrc := verifyPaneIdentity(pane, term)
+		if vrc == 1 || vrc == 2 {
+			livePane := livePaneForTerm(liveAgents(), term)
+			if livePane != "" {
+				fmt.Fprintf(stderr, "pane id changed during release grace for %s (%s): registry=%s, terminal %s now live at %s — retargeting\n",
+					label, guid, pane, term, livePane)
+				pane = livePane
+			} else {
+				fmt.Fprintf(stderr, "pane %s no longer belongs to terminal %s after release grace; recording session unseated without API call\n", pane, term)
+				closed, appended, err := appendClosed(registryPath, rec, nowISO, "already_gone", "source=cull-post-grace-verification; terminal_id not in live agent list")
 				if err != nil {
 					die(stderr, err.Error())
 					return false
