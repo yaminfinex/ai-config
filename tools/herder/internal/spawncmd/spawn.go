@@ -17,6 +17,7 @@ import (
 	"ai-config/tools/herder/internal/herderpaths"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
+	"ai-config/tools/herder/internal/missioncontext"
 	"ai-config/tools/herder/internal/observercmd"
 	"ai-config/tools/herder/internal/panecleanup"
 	"ai-config/tools/herder/internal/placement"
@@ -60,6 +61,8 @@ type options struct {
 	ExtraArgs     []string
 	Model         string
 	Provider      string
+	MissionSlug   string
+	MissionSet    bool
 	JSONOutput    bool
 	WaitTimeoutMS int
 	BindTimeoutMS int
@@ -100,6 +103,7 @@ type spawnRecord struct {
 	HooksBound           bool                     `json:"hooks_bound,omitempty"`
 	TranscriptPath       string                   `json:"transcript_path,omitempty"`
 	Status               string                   `json:"status"`
+	Mission              *v2.Mission              `json:"mission,omitempty"`
 	Provenance           registry.Provenance      `json:"provenance"`
 }
 
@@ -128,6 +132,7 @@ type spawnJSONRecord struct {
 	HooksBound           bool                     `json:"hooks_bound,omitempty"`
 	TranscriptPath       string                   `json:"transcript_path,omitempty"`
 	Status               string                   `json:"status"`
+	Mission              *v2.Mission              `json:"mission,omitempty"`
 	Provenance           registry.Provenance      `json:"provenance"`
 	PromptSent           bool                     `json:"prompt_sent"`
 	DeliveryResult       string                   `json:"delivery_result"`
@@ -149,6 +154,60 @@ type worktreeInfo struct {
 	Base         string `json:"base,omitempty"`
 	CheckoutPath string `json:"checkout_path"`
 	WorkspaceID  string `json:"workspace_id"`
+}
+
+type spawnJSONDetails struct {
+	PromptSent     bool
+	DeliveryResult string
+	Prompt         string
+	PasteNotes     []string
+	PermInjected   string
+	NewTab         bool
+	RootPaneClosed bool
+	NewTabResult   string
+	HcomCapture    string
+	Worktree       *worktreeInfo
+}
+
+func newSpawnJSONRecord(record spawnRecord, details spawnJSONDetails) spawnJSONRecord {
+	return spawnJSONRecord{
+		GUID:                 record.GUID,
+		ShortGUID:            record.ShortGUID,
+		Label:                record.Label,
+		Role:                 record.Role,
+		Agent:                record.Agent,
+		Provider:             record.Provider,
+		Model:                record.Model,
+		VendorVersion:        record.VendorVersion,
+		ExtraArgs:            record.ExtraArgs,
+		Argv:                 record.Argv,
+		PaneID:               record.PaneID,
+		WorkspaceID:          record.WorkspaceID,
+		TabID:                record.TabID,
+		TerminalID:           record.TerminalID,
+		CWD:                  record.CWD,
+		StartedAt:            record.StartedAt,
+		StartedByPane:        record.StartedByPane,
+		InitialPromptPresent: record.InitialPromptPresent,
+		HcomDir:              record.HcomDir,
+		HcomName:             record.HcomName,
+		HcomTag:              record.HcomTag,
+		HooksBound:           record.HooksBound,
+		TranscriptPath:       record.TranscriptPath,
+		Status:               record.Status,
+		Mission:              record.Mission,
+		Provenance:           record.Provenance,
+		PromptSent:           details.PromptSent,
+		DeliveryResult:       details.DeliveryResult,
+		ResendCommand:        resendCommandFor(details.DeliveryResult, record.Label, details.Prompt),
+		PasteNotes:           details.PasteNotes,
+		PermInjected:         details.PermInjected,
+		NewTab:               details.NewTab,
+		RootPaneClosed:       details.RootPaneClosed,
+		NewTabResult:         details.NewTabResult,
+		HcomCapture:          details.HcomCapture,
+		Worktree:             details.Worktree,
+	}
 }
 
 type workspace struct {
@@ -296,6 +355,7 @@ func (r *runner) registerSpawn(registryPath string, record spawnRecord) error {
 		HooksBound:     &hooksBound,
 		TranscriptPath: record.TranscriptPath,
 		Status:         record.Status,
+		Mission:        record.Mission,
 		Provenance:     &record.Provenance,
 	}
 	outcomes, err := r.updateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
@@ -320,6 +380,37 @@ func (r *runner) registerSpawn(registryPath string, record spawnRecord) error {
 func (r *runner) registerSpawnOrRollback(registryPath string, record spawnRecord) int {
 	if err := r.registerSpawn(registryPath, record); err != nil {
 		return r.failAfterLaunch("registry write refused: "+err.Error(), record.PaneID, record.TerminalID)
+	}
+	return 0
+}
+
+func (r *runner) persistCapturedHcomName(registryPath, guid, name string) int {
+	outcomes, err := r.updateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		current := registry.V2ByGUID(tx.Projection, guid)
+		if current == nil || current.State == v2.StateRetired || current.State == v2.StateLost {
+			return nil, nil
+		}
+		next := *current
+		next.Event = "recognised"
+		next.State = v2.StateSeated
+		next.RecordedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		if next.Seat == nil {
+			next.Seat = &v2.Seat{Kind: "herdr"}
+		}
+		next.Seat.HcomName = name
+		next.Seat.ConfirmedAt = next.RecordedAt
+		return []v2.SessionRecord{next}, nil
+	})
+	if err == nil && len(outcomes) > 0 {
+		var outcome registry.WriteOutcome
+		outcome, err = registry.SingleOutcome(outcomes)
+		if err == nil {
+			err = outcome.Err()
+		}
+	}
+	if err != nil {
+		die(r.stderr, err.Error())
+		return 1
 	}
 	return 0
 }
@@ -476,6 +567,14 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			}
 			opts.Provider = v
 			i += 2
+		case "--mission":
+			v, ok := value()
+			if !ok {
+				return opts, 1
+			}
+			opts.MissionSlug = v
+			opts.MissionSet = true
+			i += 2
 		case "--json":
 			opts.JSONOutput = true
 			i++
@@ -624,6 +723,15 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 }
 
 func (r *runner) run() int {
+	var mission *v2.Mission
+	if r.opts.MissionSet {
+		resolved, err := missioncontext.ResolveExplicit(r.opts.MissionSlug, missioncontext.Options{})
+		if err != nil {
+			return missioncontext.WriteRefusal(r.stderr, "spawn", err)
+		}
+		mission = &resolved
+	}
+
 	var err error
 	r.paths, err = herderpaths.Resolve()
 	if err != nil {
@@ -1142,6 +1250,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		HooksBound:           r.piBind.HooksBound,
 		TranscriptPath:       r.piBind.TranscriptPath,
 		Status:               "active",
+		Mission:              mission,
 		Provenance:           provenance,
 	}
 	if opts.Agent == "pi" {
@@ -1192,32 +1301,8 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 				if name != "" {
 					record.HcomName = name
 					hcomCapture = "captured"
-					outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
-						current := registry.V2ByGUID(tx.Projection, record.GUID)
-						if current == nil || current.State == v2.StateRetired || current.State == v2.StateLost {
-							return nil, nil
-						}
-						next := *current
-						next.Event = "recognised"
-						next.State = v2.StateSeated
-						next.RecordedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
-						if next.Seat == nil {
-							next.Seat = &v2.Seat{Kind: "herdr"}
-						}
-						next.Seat.HcomName = name
-						next.Seat.ConfirmedAt = next.RecordedAt
-						return []v2.SessionRecord{next}, nil
-					})
-					if err == nil && len(outcomes) > 0 {
-						var outcome registry.WriteOutcome
-						outcome, err = registry.SingleOutcome(outcomes)
-						if err == nil {
-							err = outcome.Err()
-						}
-					}
-					if err != nil {
-						die(r.stderr, err.Error())
-						return 1
+					if code := r.persistCapturedHcomName(registryPath, record.GUID, name); code != 0 {
+						return code
 					}
 					break
 				}
@@ -1228,43 +1313,18 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 
 	r.writeSummary(record, wtInfo, isHcomAgent, rootClosed, newTabResult, permInjected, hcomCapture, busPrompt, promptSent, deliveryResult, readyReason, trustBlocked, pasteNotes)
 	if opts.JSONOutput {
-		outRecord := spawnJSONRecord{
-			GUID:                 record.GUID,
-			ShortGUID:            record.ShortGUID,
-			Label:                record.Label,
-			Role:                 record.Role,
-			Agent:                record.Agent,
-			Provider:             record.Provider,
-			Model:                record.Model,
-			VendorVersion:        record.VendorVersion,
-			ExtraArgs:            record.ExtraArgs,
-			Argv:                 record.Argv,
-			PaneID:               record.PaneID,
-			WorkspaceID:          record.WorkspaceID,
-			TabID:                record.TabID,
-			TerminalID:           record.TerminalID,
-			CWD:                  record.CWD,
-			StartedAt:            record.StartedAt,
-			StartedByPane:        record.StartedByPane,
-			InitialPromptPresent: record.InitialPromptPresent,
-			HcomDir:              record.HcomDir,
-			HcomName:             record.HcomName,
-			HcomTag:              record.HcomTag,
-			HooksBound:           record.HooksBound,
-			TranscriptPath:       record.TranscriptPath,
-			Status:               record.Status,
-			Provenance:           record.Provenance,
-			PromptSent:           promptSent,
-			DeliveryResult:       deliveryResult,
-			ResendCommand:        resendCommandFor(deliveryResult, record.Label, opts.Prompt),
-			PasteNotes:           pasteNotes,
-			PermInjected:         permInjected,
-			NewTab:               opts.NewTab,
-			RootPaneClosed:       rootClosed,
-			NewTabResult:         newTabResult,
-			HcomCapture:          hcomCapture,
-			Worktree:             wtInfo,
-		}
+		outRecord := newSpawnJSONRecord(record, spawnJSONDetails{
+			PromptSent:     promptSent,
+			DeliveryResult: deliveryResult,
+			Prompt:         opts.Prompt,
+			PasteNotes:     pasteNotes,
+			PermInjected:   permInjected,
+			NewTab:         opts.NewTab,
+			RootPaneClosed: rootClosed,
+			NewTabResult:   newTabResult,
+			HcomCapture:    hcomCapture,
+			Worktree:       wtInfo,
+		})
 		b, _ := json.Marshal(outRecord)
 		fmt.Fprintln(r.stdout, string(b))
 	}
@@ -1611,7 +1671,7 @@ func printHelp(stdout io.Writer) {
 		"  herder spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]",
 		"               [--split right|down] [--workspace ID | --from-pane PANE_ID]",
 		"               [--tab ID | --new-tab | --worktree BRANCH [--base REF]] [--cwd PATH] [--safe]",
-		"               [--notify | --notify-to TARGET] [--provider FAMILY] [--model ID] [--extra-arg ARG]... [--focus] [--json]",
+		"               [--notify | --notify-to TARGET] [--mission SLUG] [--provider FAMILY] [--model ID] [--extra-arg ARG]... [--focus] [--json]",
 		"",
 		"Options:",
 		"  --role R          agent role; becomes the hcom --tag and label prefix (required)",
@@ -1630,6 +1690,7 @@ func printHelp(stdout io.Writer) {
 		"                    and a bus-bound spawner); --notify-to TARGET resolves the bus name from",
 		"                    another registry row (guid, label, terminal_id, pane_id, or recorded hcom",
 		"                    name), else accepts TARGET as a literal bus name if live on the child's bus",
+		"  --mission SLUG    record explicit mission membership on the initial spawn row",
 		"  --extra-arg ARG   pass ARG through to the agent (repeatable)",
 		"  --provider FAMILY  required for pi: anthropic, openai, or xai",
 		"  --model ID        pin the model for claude, codex, grok, or pi",

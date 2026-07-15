@@ -8,10 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"ai-config/tools/herder/internal/missioncontext"
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/shellquote"
 )
 
@@ -121,6 +124,7 @@ func TestRegistryRefusalClosesAndConfirmsLaunchedPane(t *testing.T) {
 		TerminalID: "term_new",
 		Status:     "active",
 		StartedAt:  "2026-07-10T00:00:00Z",
+		Mission:    &v2.Mission{Slug: "alpha", Source: missioncontext.SourceExplicit},
 	}
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	if code := r.registerSpawnOrRollback(path, record); code != 1 {
@@ -132,6 +136,260 @@ func TestRegistryRefusalClosesAndConfirmsLaunchedPane(t *testing.T) {
 	}
 	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("registry path exists after refused write: %v", statErr)
+	}
+}
+
+func TestParseArgsAcceptsMission(t *testing.T) {
+	opts, code := parseArgs([]string{"--role", "worker", "--agent", "bash", "--mission", "alpha"}, io.Discard, io.Discard)
+	if code != 0 {
+		t.Fatalf("parseArgs() code = %d, want 0", code)
+	}
+	if opts.MissionSlug != "alpha" || !opts.MissionSet {
+		t.Fatalf("mission options = (%q, %v), want (alpha, true)", opts.MissionSlug, opts.MissionSet)
+	}
+}
+
+func TestSpawnJSONMissionWireShape(t *testing.T) {
+	withMission, err := json.Marshal(newSpawnJSONRecord(
+		missionSpawnRecord(&v2.Mission{Slug: "alpha", Source: missioncontext.SourceExplicit}),
+		spawnJSONDetails{},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(withMission, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(fields["mission"]); got != `{"slug":"alpha","source":"explicit"}` {
+		t.Fatalf("mission JSON = %s, want exact slug+source wire shape", got)
+	}
+
+	withoutMission, err := json.Marshal(newSpawnJSONRecord(missionSpawnRecord(nil), spawnJSONDetails{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields = nil
+	if err := json.Unmarshal(withoutMission, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["mission"]; ok {
+		t.Fatalf("mission field present without --mission: %s", withoutMission)
+	}
+}
+
+func TestSpawnMissionRefusalStopsBeforePaneCreation(t *testing.T) {
+	stubDir := t.TempDir()
+	called := filepath.Join(stubDir, "called")
+	stub := "#!/bin/sh\ntouch " + shellquote.Quote(called) + "\nexit 0\n"
+	for _, name := range []string{"herdr", "jq"} {
+		if err := os.WriteFile(filepath.Join(stubDir, name), []byte(stub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HERDR_ENV", "1")
+	t.Setenv("PATH", stubDir)
+	missionsRepo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(missionsRepo, "missions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MISSIONS_REPO", missionsRepo)
+
+	tests := []struct {
+		name       string
+		slug       string
+		unsetRepo  bool
+		wantCause  string
+		wantRemedy string
+	}{
+		{name: "invalid slug", slug: "bad--slug", wantCause: "invalid_mission_slug", wantRemedy: "use lowercase letters, digits, and single hyphens, with no trailing hyphen"},
+		{name: "empty slug", slug: "", wantCause: "invalid_mission_slug", wantRemedy: "use lowercase letters, digits, and single hyphens, with no trailing hyphen"},
+		{name: "missing mission", slug: "missing", wantCause: "mission_not_found", wantRemedy: "check the slug or create the mission"},
+		{name: "missions repo unset", slug: "alpha", unsetRepo: true, wantCause: "missions_repo_unset", wantRemedy: "set MISSIONS_REPO to the shared missions repository"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.unsetRepo {
+				t.Setenv("MISSIONS_REPO", "")
+			}
+			if err := os.Remove(called); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+			var stderr strings.Builder
+			code := Run([]string{"--role", "worker", "--agent", "bash", "--mission", tt.slug}, io.Discard, &stderr)
+			if code != 1 {
+				t.Fatalf("Run() code = %d, want 1", code)
+			}
+			for _, want := range []string{"refused [" + tt.wantCause + "]", tt.wantRemedy} {
+				if !strings.Contains(stderr.String(), want) {
+					t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+				}
+			}
+			if _, err := os.Stat(called); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("herdr or jq executed before mission refusal: %v", err)
+			}
+		})
+	}
+}
+
+func TestRegisterSpawnWritesInitialExplicitMission(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	record := missionSpawnRecord(&v2.Mission{Slug: "alpha", Source: missioncontext.SourceExplicit})
+	if err := (&runner{}).registerSpawn(path, record); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := registry.V2ByGUID(projection, record.GUID)
+	if row == nil || row.Event != "registered" || row.Mission == nil || row.Mission.Slug != "alpha" || row.Mission.Source != missioncontext.SourceExplicit {
+		t.Fatalf("spawn row = %+v, want initial registered row with explicit alpha membership", row)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(raw), `"guid":"guid-mission"`) != 1 || strings.Contains(string(raw), `"event":"mission_joined"`) {
+		t.Fatalf("registry = %s, want membership on exactly one initial row", raw)
+	}
+}
+
+func TestRegisterSpawnRejectsInferredMissionSource(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	record := missionSpawnRecord(&v2.Mission{Slug: "alpha", Source: missioncontext.SourceCWD})
+	err := (&runner{}).registerSpawn(path, record)
+	if err == nil || !strings.Contains(err.Error(), "invalid durable mission source") {
+		t.Fatalf("registerSpawn() error = %v, want durable-source refusal", err)
+	}
+	projection, loadErr := v2.LoadFile(path, v2.LoadOptions{})
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if row := registry.V2ByGUID(projection, record.GUID); row != nil {
+		t.Fatalf("refused inferred membership persisted: %+v", row)
+	}
+}
+
+func TestEnrichmentFailureRetainsRegisteredMission(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	var stderr strings.Builder
+	writes := 0
+	r := &runner{
+		stderr: &stderr,
+		updateRegistry: func(path string, update registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
+			writes++
+			if writes == 2 {
+				return nil, errors.New("enrichment refused")
+			}
+			return registry.UpdateLocked(path, update)
+		},
+	}
+	record := missionSpawnRecord(&v2.Mission{Slug: "alpha", Source: missioncontext.SourceExplicit})
+	if err := r.registerSpawn(path, record); err != nil {
+		t.Fatal(err)
+	}
+	if code := r.persistCapturedHcomName(path, record.GUID, "worker-rive"); code != 1 {
+		t.Fatalf("persistCapturedHcomName() = %d, want nonzero enrichment failure", code)
+	}
+	projection, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := registry.V2ByGUID(projection, record.GUID)
+	if row == nil || row.State != v2.StateSeated || row.Mission == nil || row.Mission.Slug != "alpha" || row.Mission.Source != missioncontext.SourceExplicit {
+		t.Fatalf("registered row after enrichment failure = %+v, want seated explicit alpha membership", row)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(raw), `"guid":"guid-mission"`) != 1 || strings.Contains(string(raw), `"event":"mission_left"`) {
+		t.Fatalf("registry after enrichment failure = %s, want unchanged registered membership", raw)
+	}
+	if !strings.Contains(stderr.String(), "enrichment refused") {
+		t.Fatalf("stderr = %q, want enrichment failure", stderr.String())
+	}
+}
+
+func TestSpawnMissionSurvivesRotation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	record := missionSpawnRecord(&v2.Mission{Slug: "alpha", Source: missioncontext.SourceExplicit})
+	if err := (&runner{}).registerSpawn(path, record); err != nil {
+		t.Fatal(err)
+	}
+	beforeNoise, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 4 {
+		outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+			current := registry.V2ByGUID(tx.Projection, record.GUID)
+			if current == nil {
+				t.Fatal("spawn row missing before rotation")
+			}
+			next := *current
+			next.Event = "recognised"
+			next.RecordedAt = ""
+			next.Mission = nil
+			return []v2.SessionRecord{next}, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		outcome, err := registry.SingleOutcome(outcomes)
+		if err != nil || outcome.Err() != nil {
+			t.Fatalf("successor outcome = %+v, err = %v", outcome, err)
+		}
+	}
+	t.Setenv("HERDER_REGISTRY_ROTATE_BYTES", strconv.Itoa(len(beforeNoise)+512))
+	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		current := registry.V2ByGUID(tx.Projection, record.GUID)
+		if current == nil {
+			t.Fatal("spawn row missing during rotation")
+		}
+		next := *current
+		next.Event = "registered"
+		return []v2.SessionRecord{next}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil || outcome.Err() != nil {
+		t.Fatalf("rotation successor outcome = %+v, err = %v", outcome, err)
+	}
+	if outcome.Status != registry.WriteNoop {
+		t.Fatalf("rotation successor outcome = %+v, want checked no-op", outcome)
+	}
+	after, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := registry.V2ByGUID(after, record.GUID)
+	if row == nil || row.Mission == nil || row.Mission.Slug != "alpha" || row.Mission.Source != missioncontext.SourceExplicit {
+		t.Fatalf("spawn membership after rotation = %+v", row)
+	}
+	archives, err := filepath.Glob(filepath.Join(dir, "registry.jsonl.archive", "*-rotation.jsonl"))
+	if err != nil || len(archives) != 1 {
+		t.Fatalf("rotation archives = %v, err = %v, want one", archives, err)
+	}
+}
+
+func missionSpawnRecord(mission *v2.Mission) spawnRecord {
+	return spawnRecord{
+		GUID:       "guid-mission",
+		ShortGUID:  "guid-mis",
+		Label:      "worker-mission",
+		Role:       "worker",
+		Agent:      "bash",
+		PaneID:     "p_mission",
+		TerminalID: "term_mission",
+		CWD:        "/repo",
+		Status:     "active",
+		StartedAt:  "2026-07-15T00:00:00Z",
+		Mission:    mission,
 	}
 }
 

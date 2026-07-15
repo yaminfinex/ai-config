@@ -41,7 +41,7 @@ func RunJoin(args []string, stdout, stderr io.Writer) int {
 	}
 	mission, err := missioncontext.ResolveExplicit(opts.slug, missioncontext.Options{})
 	if err != nil {
-		return dieRefusal(stderr, "join", contextRefusal(err))
+		return missioncontext.WriteRefusal(stderr, "join", err)
 	}
 	result, err := mutate(opts.target, &mission)
 	if err != nil {
@@ -226,14 +226,6 @@ explicit value so list --json returns to cwd and .mission inference.
 func usage(stderr io.Writer, verb, message string) int {
 	fmt.Fprintf(stderr, "herder %s: %s — run `herder %s --help` for usage\n", verb, message, verb)
 	return 2
-}
-
-func contextRefusal(err error) *refusal {
-	var source *missioncontext.Refusal
-	if errors.As(err, &source) {
-		return &refusal{cause: source.Kind, reason: source.Reason, remedy: source.Remedy}
-	}
-	return &refusal{cause: "mission_lookup_failed", reason: err.Error(), remedy: "fix the mission repository and retry"}
 }
 
 func asRefusal(err error) *refusal {
