@@ -30,16 +30,25 @@ append gate rejects the whole-partition statement on this path and requires
 the targeted statement; the differential checksum tests remain the state
 equivalence oracle for the covered append histories.
 
-One pre-existing equivalence hole remains outside this optimization. If every
-row from a group member is removed by dedupe, its placement no longer exists
-in the disposable message table. A later append to that same file can split
-incrementally, while Reindex replays the removed overlap rows and rejoins it.
-The optimized path does not admit this case as settled: a both-arrival-order
-differential fixture proves its incremental checksum remains byte-identical to
-the pre-optimization reference behavior and separately proves the known
-Reindex divergence remains observable. Recovering vanished-member placement
-requires its own bounded recovery design; this change does not claim to solve
-it.
+The vanished-member equivalence hole is closed without extending the frozen
+schema. Before parsing an incremental append, the indexer performs a full-key
+seek for prior rows from that exact file generation. A positive complete
+offset with no remaining rows is the narrow rejoin predicate: dedupe removed
+the file's entire disposable placement, while the durable mirror still holds
+the overlap history. Only then does parsing restart at byte zero for that one
+file. The replayed keys reconnect it to the touched logical component before
+dedupe removes the historical duplicates again; the new tail inherits the
+same label and ordinal that Reindex derives.
+
+Ordinary settled appends retain the targeted-key fast path and its
+approximately appended-row cost. A rejoin candidate pays for its own mirrored
+history plus connected-component maintenance, never corpus replay. The
+large-corpus plan gate proves that candidate detection is a pinned full-key
+seek and that maintenance writes stay bounded by the replayed file and touched
+component. Property fixtures cover both arrival orders, multiple vanished
+members, overlap keys split across append passes, an ordinal-compacted group,
+and a process restart after the dedupe deletion. Incremental checksum equality
+with Reindex and a second-Reindex fixed point remain the state oracles.
 
 ## Oversized complete lines
 

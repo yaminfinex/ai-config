@@ -299,7 +299,28 @@ func (idx *Indexer) processAppend(ctx context.Context, ev wire.AppendEvent, rebu
 
 func (idx *Indexer) applyAppend(ctx context.Context, ev wire.AppendEvent, rebuild bool) error {
 	phase := idx.timing.phaseClock()
-	rows, complete, err := idx.parseComplete(ctx, ev)
+	start, err := idx.completeOffset(ctx, ev)
+	if err != nil {
+		return err
+	}
+	if !rebuild && start > 0 {
+		var present int
+		err := idx.queryRowContext(ctx, `SELECT 1
+			FROM sesh_index_messages INDEXED BY sesh_index_messages_file
+			WHERE tool = ? AND wire_session_id = ? AND file_uuid = ? AND generation = ?
+			LIMIT 1`, ev.Tool, ev.WireSessionID, ev.FileUUID, ev.Generation).Scan(&present)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// Dedupe can remove every indexed row from a file. Its prior
+			// placement then exists only in the mirrored overlap history, so
+			// replay that one file before admitting its new tail. The work is
+			// bounded by the rejoining file and the component its keys touch.
+			start = 0
+		case err != nil:
+			return err
+		}
+	}
+	rows, complete, err := idx.parseComplete(ctx, ev, start)
 	phase(&idx.timing.parse)
 	if err != nil {
 		return err
@@ -428,11 +449,7 @@ func (idx *Indexer) generations(ctx context.Context) ([]generation, error) {
 	return out, rows.Err()
 }
 
-func (idx *Indexer) parseComplete(ctx context.Context, ev wire.AppendEvent) ([]indexedMessage, int64, error) {
-	start, err := idx.completeOffset(ctx, ev)
-	if err != nil {
-		return nil, 0, err
-	}
+func (idx *Indexer) parseComplete(ctx context.Context, ev wire.AppendEvent, start int64) ([]indexedMessage, int64, error) {
 	if ev.ByteEnd <= start {
 		return nil, start, nil
 	}

@@ -460,3 +460,79 @@ func TestAppendMaintenanceBoundedOnCorpus(t *testing.T) {
 		t.Errorf("maint_rows detector missed the naive whole-group rewrite on a steady-state append (reported %d)", got)
 	}
 }
+
+func TestVanishedRejoinReplayIsComponentBoundedOnCorpus(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(t.Context(), store.Config{Dir: dir, AppendBuffer: 32})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := New(t.Context(), st.DB(), st.MirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildAppendCostCorpus(t, st.DB(), 500, 10)
+
+	originSession, vanishedSession := syntheticUUID(77_000), syntheticUUID(77_001)
+	originFile, vanishedFile := syntheticUUID(77_100), syntheticUUID(77_101)
+	start := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
+	origin := syntheticSessionBody(originSession, "bounded-rejoin", 2, start)
+	vanished := syntheticResumeBody(vanishedSession, "unused", []string{"bounded-rejoin-00", "bounded-rejoin-01"}, 0, start.Add(time.Hour))
+	appendAndIndex(t, st, idx, originSession, originFile, 0, origin)
+	appendAndIndex(t, st, idx, vanishedSession, vanishedFile, 0, vanished)
+	assertFileVanished(t, st, vanishedSession, vanishedFile)
+
+	tail := syntheticSessionBody(vanishedSession, "bounded-tail", 1, start.Add(2*time.Hour))
+	putBytes(t, st, vanishedSession, vanishedFile, int64(len(vanished)), tail)
+	tailEvent := <-st.AppendEvents()
+	mirrorPath := st.MirrorPath
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	dbPath := filepath.Join(dir, "store.sqlite")
+	db, log := openWriteRecordingDB(t, dbPath)
+	plain, err := sql.Open("sqlite", sqlitedsn.ReadWrite(dbPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = plain.Close() })
+	recIdx, err := New(t.Context(), db, mirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture := &phaseCapture{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(capture))
+	defer slog.SetDefault(previous)
+
+	var componentBefore, corpusBefore int64
+	if err := plain.QueryRow(`SELECT COUNT(*) FROM sesh_index_messages WHERE tool = ? AND logical_session_id = ?`, wire.ToolClaude, originSession).Scan(&componentBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := plain.QueryRow(`SELECT COUNT(*) FROM sesh_index_messages`).Scan(&corpusBefore); err != nil {
+		t.Fatal(err)
+	}
+	log.reset()
+	if err := recIdx.ProcessAppend(t.Context(), tailEvent); err != nil {
+		t.Fatal(err)
+	}
+	replayed := capture.intSum("rows")
+	if replayed != 3 {
+		t.Fatalf("rejoin parsed %d rows, want the vanished file's two historical rows plus one tail", replayed)
+	}
+	touched := componentBefore + replayed
+	maintenance := capture.intSum("maint_rows")
+	if maintenance == 0 {
+		t.Fatal("rejoin fixture did not exercise logical maintenance")
+	}
+	if maintenance > 3*touched {
+		t.Fatalf("rejoin wrote %d maintenance rows for %d touched rows", maintenance, touched)
+	}
+	if 3*touched >= corpusBefore {
+		t.Fatalf("fixture does not discriminate component work %d from corpus %d", touched, corpusBefore)
+	}
+	for _, violation := range writePlanViolations(t, plain, log.snapshot()) {
+		t.Errorf("non-full-key storage access on vanished rejoin: %s", violation)
+	}
+}
