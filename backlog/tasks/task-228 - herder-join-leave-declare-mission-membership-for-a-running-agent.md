@@ -1,9 +1,10 @@
 ---
 id: TASK-228
 title: 'herder join/leave: declare mission membership for a running agent'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 05:02'
+updated_date: '2026-07-15 05:03'
 labels:
   - herder
 dependencies: []

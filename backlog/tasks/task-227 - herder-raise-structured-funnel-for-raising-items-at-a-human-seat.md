@@ -1,9 +1,10 @@
 ---
 id: TASK-227
 title: 'herder raise: structured funnel for raising items at a human seat'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 05:02'
+updated_date: '2026-07-15 05:03'
 labels:
   - herder
 dependencies: []
