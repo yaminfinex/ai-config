@@ -3,10 +3,10 @@ id: TASK-226
 title: >-
   compact --then: recorded-SID fallback does not arm for the manual-repair row
   shape
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-15 04:48'
-updated_date: '2026-07-15 04:49'
+updated_date: '2026-07-15 06:23'
 labels: []
 dependencies: []
 priority: medium
@@ -26,3 +26,9 @@ FIX SCOPE: (1) make the recorded-SID fallback arm for legitimately repaired rows
 
 CONSTRAINTS: live row 7ef0b17d is READ-ONLY evidence (probes use isolated state; the reporter offers re-runs on request through the orchestrator). Workaround exists (HCOM_SESSION_ID in env), so no fleet emergency.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged 6bd7eab (--no-ff, 3 commits: ee1711d fix + 74b33f3 review round + 0db9979 fast-path pin). Root cause: recorded-SID arming required literal hcom_verified=true; field rows repaired by the old binary carry the flag ABSENT. Fix: absent flag arms only via complete writer proof bundle (seated + enroll provenance + confirmed continuity + harvest SID == provenance.tool_session_id); explicit false + incomplete bundles stay fail-closed; Resolve untouched; refusal cause-split (5 causes, all goldened); legacy-v1 rows get an honest limitation cause. Field-shape regression fixture via real writer+loader, red-first (verified independently by reviewer). Review: opus incumbent fix-list (6 findings, all landed incl. coverage-regression restore + fixture-via-real-writer + comment honesty) -> delta APPROVE -> micro-delta APPROVE on the spawn fast-path pin (covers spawn-minted verified rows, real red proven twice); grok calibration seat delta APPROVE (2 conjunct pins, both landed load-bearing). Gates: independent 60/60 at DONE head, re-gate 60/60 at fix head, post-merge 60/60 on main, tails read. Live specimen row untouched throughout; operator remedy for it: re-run the pinned re-enroll OR rely on the now-arming absent-flag path.
+<!-- SECTION:NOTES:END -->
