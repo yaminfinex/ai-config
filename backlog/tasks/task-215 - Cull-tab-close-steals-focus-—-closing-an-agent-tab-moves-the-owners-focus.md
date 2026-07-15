@@ -1,10 +1,10 @@
 ---
 id: TASK-215
 title: Cull tab-close steals focus — closing an agent tab moves the owner's focus
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-15 00:00'
-updated_date: '2026-07-15 00:00'
+updated_date: '2026-07-15 00:58'
 labels: []
 dependencies: []
 ordinal: 213000
@@ -22,3 +22,9 @@ OWNER UX DEFECT (2026-07-15, companion to the fresh-tab focus fix): when herder 
 - [ ] #2 Least-machinery fix landed (focus save/restore or herdr option) across all herder pane-close call sites, or an upstream ask written with the finding
 - [ ] #3 Full house battery green (59)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged b0bdbab (final head b8de6bd), gate 59/59 on final head + post-merge 59/59, pushed. ClosePreservingFocus wraps all four managed close paths (cull, seed-pane, failAfterLaunch + registry-refusal via CloseConfirmed); best-effort restore, never alters close results. Review: opus adversarial, live repro + cure proof, 3 fix rounds (call-site wiring, mock-shape drift incl. the load-bearing agent_not_found-but-focuses quirk, 12-guard sweep), 10/10 mutations RED at final head, live re-repro on final head. Grok calibration seat ran in parallel (ledger row 12).
+<!-- SECTION:NOTES:END -->
