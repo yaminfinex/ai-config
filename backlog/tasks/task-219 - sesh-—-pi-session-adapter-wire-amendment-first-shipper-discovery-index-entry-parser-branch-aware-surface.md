@@ -3,7 +3,7 @@ id: TASK-219
 title: >-
   sesh — pi session adapter: wire amendment first, shipper discovery +
   exclusion boundary, store admission, pi entry parser, branch-aware surface
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 07:40'
 labels:
