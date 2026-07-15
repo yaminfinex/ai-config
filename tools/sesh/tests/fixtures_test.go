@@ -21,6 +21,7 @@ const (
 	fixInterleaved  = "claude-interleaved-writers-standin.jsonl"
 	fixCodexRollout = "codex-rollout-meta.jsonl"
 	fixGrokChat     = "grok-chat-history.jsonl"
+	fixPiBranched   = "pi-branched-session.jsonl"
 )
 
 func fixturePath(name string) string {
@@ -71,7 +72,7 @@ func parseEntries(t *testing.T, name string) []entry {
 func TestFixtureInventoryPresent(t *testing.T) {
 	for _, name := range []string{
 		fixNormal, fixResumeOrig, fixResumeNew,
-		fixPartial, fixInterleaved, fixCodexRollout, fixGrokChat,
+		fixPartial, fixInterleaved, fixCodexRollout, fixGrokChat, fixPiBranched,
 	} {
 		if _, err := os.Stat(fixturePath(name)); err != nil {
 			t.Errorf("named churn case missing: %v", err)
@@ -80,7 +81,7 @@ func TestFixtureInventoryPresent(t *testing.T) {
 }
 
 func TestCompleteFixturesAreLineJSONL(t *testing.T) {
-	for _, name := range []string{fixNormal, fixResumeOrig, fixResumeNew, fixInterleaved, fixCodexRollout, fixGrokChat} {
+	for _, name := range []string{fixNormal, fixResumeOrig, fixResumeNew, fixInterleaved, fixCodexRollout, fixGrokChat, fixPiBranched} {
 		raw, err := os.ReadFile(fixturePath(name))
 		if err != nil {
 			t.Fatal(err)
@@ -159,6 +160,39 @@ func TestGrokFixtureCarriesNoUUIDsOrTimestamps(t *testing.T) {
 		if types[typ] == 0 {
 			t.Errorf("fixture %s lost the %q entry type from the live spread", fixGrokChat, typ)
 		}
+	}
+}
+
+func TestPiFixtureCarriesBranchedTreeAndActiveLeaf(t *testing.T) {
+	type piEntry struct {
+		Type, ID string
+		ParentID *string `json:"parentId"`
+	}
+	children := map[string]int{}
+	lastID := ""
+	for i, line := range readLines(t, fixPiBranched) {
+		var e piEntry
+		if err := json.Unmarshal(line, &e); err != nil {
+			t.Fatalf("fixture %s line %d: %v", fixPiBranched, i+1, err)
+		}
+		if e.Type == "session" {
+			continue
+		}
+		if e.ID == "" {
+			t.Fatalf("fixture %s line %d has empty tree id", fixPiBranched, i+1)
+		}
+		parent := ""
+		if e.ParentID != nil {
+			parent = *e.ParentID
+		}
+		children[parent]++
+		lastID = e.ID
+	}
+	if children["shared02"] != 2 {
+		t.Fatalf("Pi fixture lost branch point: children=%v", children)
+	}
+	if lastID != "newlabel" {
+		t.Fatalf("Pi fixture active leaf=%q, want newlabel", lastID)
 	}
 }
 

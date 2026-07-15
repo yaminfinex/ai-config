@@ -32,6 +32,9 @@ type fakeStore struct {
 	// answers 400 unknown_tool — the mixed-fleet reality while nodes update
 	// ahead of a lagging store.
 	preAmendment3 bool
+	// preAmendment4 simulates a store predating wire Amendment 4: pi is not
+	// in its tool enum for either PUT or recovery GET.
+	preAmendment4 bool
 	// unavailableFor makes selected identities answer 503 so a pass can
 	// exercise successful and held files together.
 	unavailableFor map[string]bool
@@ -235,7 +238,8 @@ func (fs *fakeStore) dispatch(w http.ResponseWriter, r *http.Request, parts []st
 	}
 	tool, sid, fuuid := parts[0], parts[1], parts[2]
 	allowed := tool == string(wire.ToolClaude) || tool == string(wire.ToolCodex) ||
-		(tool == string(wire.ToolGrok) && !fs.preAmendment3)
+		(tool == string(wire.ToolGrok) && !fs.preAmendment3) ||
+		(tool == string(wire.ToolPi) && !fs.preAmendment4)
 	if !allowed {
 		writeErr(400, wire.ErrUnknownTool, 0, 0)
 		return

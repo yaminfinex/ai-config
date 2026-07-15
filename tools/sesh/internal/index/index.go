@@ -665,6 +665,26 @@ func parseToolLine(tool wire.Tool, line []byte) (parsedLine, error) {
 		case "tool_result":
 			out.Role = "tool"
 		}
+	case wire.ToolPi:
+		// Pi's header id is the stable session identity. Tree entries use a
+		// short id/parentId pair and nest role under message; parentId remains
+		// in the mirrored line for the branch-aware surface because the frozen
+		// index schema has no lineage column. Empty entry ids deliberately stay
+		// empty so they never dedupe or overlap-unify.
+		id := stringField(raw, "id")
+		if out.EntryType == "session" {
+			out.LogicalSessionID = id
+		} else {
+			out.MessageUUID = id
+		}
+		if msg, ok := raw["message"]; ok {
+			var m map[string]json.RawMessage
+			if json.Unmarshal(msg, &m) == nil {
+				if role := stringField(m, "role"); role != "" {
+					out.Role = role
+				}
+			}
+		}
 	case wire.ToolCodex:
 		if payload, ok := raw["payload"]; ok {
 			var p map[string]json.RawMessage

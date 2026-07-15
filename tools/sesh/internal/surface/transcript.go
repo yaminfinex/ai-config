@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"sesh/internal/wire"
@@ -52,6 +54,10 @@ type transcriptPage struct {
 	Entries []displayEntry
 	// OmittedRows counts index rows the display budget kept off the page.
 	OmittedRows int
+	// BranchNotice labels Pi's explicit degraded floor when a malformed tree
+	// cannot be resolved safely. A valid Pi tree instead labels its branch
+	// points on the active-path entries.
+	BranchNotice string
 
 	// Window pager: index rows From–To of Total (1-based, oldest-first
 	// numbering) are on this page. Page 1 is the NEWEST window; OlderURL and
@@ -67,8 +73,16 @@ type transcriptPage struct {
 // builds its display entries. Page numbers past the last real window clamp
 // to the oldest window — the page stays honest about what it shows and the
 // never-500 contract holds for any ?page= value.
-func (s *Server) transcriptData(ctx context.Context, sum SessionSummary, rows []wire.IndexMessage, pageN int) transcriptPage {
-	sortTranscript(rows)
+func (s *Server) transcriptData(ctx context.Context, sum SessionSummary, rows []wire.IndexMessage, markers map[transcriptRowKey]piBranchMarker, branchNotice string, pageN int) transcriptPage {
+	if markers == nil {
+		markers = map[transcriptRowKey]piBranchMarker{}
+	}
+	// Pi projections are sorted once, off the request path, before atomic
+	// publication. Re-sorting here would walk the entire active branch for
+	// every bounded page. Legacy adapters still arrive unsorted.
+	if sum.Tool != wire.ToolPi {
+		sortTranscript(rows)
+	}
 	total := len(rows)
 	lastPage := (total + transcriptWindowMessages - 1) / transcriptWindowMessages
 	if lastPage < 1 {
@@ -89,12 +103,13 @@ func (s *Server) transcriptData(ctx context.Context, sum SessionSummary, rows []
 		start = 0
 	}
 	page := transcriptPage{
-		Session: sum,
-		RawURL:  s.rawURL(sum),
-		Total:   total,
-		From:    start + 1,
-		To:      end,
-		Page:    pageN,
+		Session:      sum,
+		RawURL:       s.rawURL(sum),
+		Total:        total,
+		From:         start + 1,
+		To:           end,
+		Page:         pageN,
+		BranchNotice: branchNotice,
 	}
 	if pageN > 1 {
 		page.NewerURL = transcriptPageURL(s.transcriptURL(sum), pageN-1)
@@ -102,7 +117,7 @@ func (s *Server) transcriptData(ctx context.Context, sum SessionSummary, rows []
 	if start > 0 {
 		page.OlderURL = transcriptPageURL(s.transcriptURL(sum), pageN+1)
 	}
-	page.Entries, page.OmittedRows = s.buildEntries(ctx, sum.Tool, rows[start:end])
+	page.Entries, page.OmittedRows = s.buildEntries(ctx, sum.Tool, rows[start:end], markers)
 	return page
 }
 
@@ -126,6 +141,8 @@ type displayEntry struct {
 	Truncated        bool
 	ByteSize         int64
 	Blocks           []displayBlock
+	BranchPoint      string
+	BranchLabel      string
 }
 
 // displayBlock is one piece of an entry's body. Kind steers styling: text,
@@ -171,7 +188,7 @@ func sortTranscript(rows []wire.IndexMessage) {
 // that cannot be read or parsed renders as a raw excerpt, never an error
 // page. It stops once rendered text exceeds the display budget and reports
 // how many rows were left off the page.
-func (s *Server) buildEntries(ctx context.Context, tool wire.Tool, rows []wire.IndexMessage) (entries []displayEntry, omitted int) {
+func (s *Server) buildEntries(ctx context.Context, tool wire.Tool, rows []wire.IndexMessage, markers map[transcriptRowKey]piBranchMarker) (entries []displayEntry, omitted int) {
 	// Mirror-range failures repeat per row when a whole generation is
 	// unreadable, so they aggregate to one journal line per error class per
 	// request (up to a window of them) instead of a line per row.
@@ -188,6 +205,10 @@ func (s *Server) buildEntries(ctx context.Context, tool wire.Tool, rows []wire.I
 			return entries, len(rows) - i
 		}
 		entry := s.buildEntry(ctx, tool, row, mirrorFails)
+		if marker, ok := markers[transcriptKey(row)]; ok {
+			entry.BranchPoint = marker.Point
+			entry.BranchLabel = marker.Label
+		}
 		for _, b := range entry.Blocks {
 			spent += int64(len(b.Text))
 		}
@@ -261,6 +282,8 @@ func renderLine(tool wire.Tool, line []byte, totalBytes int64) []displayBlock {
 		blocks = codexBlocks(line)
 	case wire.ToolGrok:
 		blocks = grokBlocks(line)
+	case wire.ToolPi:
+		blocks = piBlocks(line)
 	}
 	if len(blocks) == 0 {
 		b := rawExcerptBlock(line, totalBytes, "unrecognized entry")
@@ -268,6 +291,342 @@ func renderLine(tool wire.Tool, line []byte, totalBytes int64) []displayBlock {
 		blocks = []displayBlock{b}
 	}
 	return blocks
+}
+
+type transcriptRowKey struct {
+	FileUUID   string
+	Generation int
+	Line       int64
+}
+
+func transcriptKey(row wire.IndexMessage) transcriptRowKey {
+	return transcriptRowKey{FileUUID: row.FileUUID, Generation: row.Generation, Line: row.LineOrdinal}
+}
+
+type piBranchMarker struct {
+	Point string
+	Label string
+}
+
+type piTreeLine struct {
+	Type     string  `json:"type"`
+	ID       string  `json:"id"`
+	ParentID *string `json:"parentId"`
+	TargetID string  `json:"targetId"`
+	Label    *string `json:"label"`
+}
+
+type piTreeNode struct {
+	parent string
+}
+
+// piProjectionStamp identifies every input that can change a session's
+// branch projection: mirrored member generations/order, mirror append time,
+// and the indexed/renderable row counts. The latter matters because mirror
+// acceptance and asynchronous indexing can advance in separate steps.
+type piProjectionStamp struct {
+	mirroredAt      int64
+	messageRows     int
+	quarantinedRows int
+	indexVersion    int64
+	members         string
+}
+
+type piBranchProjection struct {
+	stamp   piProjectionStamp
+	rows    []wire.IndexMessage
+	markers map[transcriptRowKey]piBranchMarker
+	notice  string
+}
+
+type piProjectionBuild struct {
+	done       chan struct{}
+	projection *piBranchProjection
+	err        error
+}
+
+type piProjectionEntry struct {
+	current *piBranchProjection
+	build   *piProjectionBuild
+}
+
+func piStamp(sum SessionSummary) piProjectionStamp {
+	var members strings.Builder
+	for _, f := range sum.Files {
+		fmt.Fprintf(&members, "%d:%s:%s:%d;", f.FirstIngestAt.UnixNano(), f.WireSessionID, f.FileUUID, f.Generation)
+	}
+	return piProjectionStamp{
+		mirroredAt:      sum.MirroredAt.UnixNano(),
+		messageRows:     sum.MessageRows,
+		quarantinedRows: sum.QuarantinedRows,
+		indexVersion:    sum.IndexVersion,
+		members:         members.String(),
+	}
+}
+
+// piProjectionSnapshot follows the surface's existing projection discipline:
+// the cold request joins one single-flighted build; warm requests serve the
+// last complete projection immediately while a changed mirror/index stamp
+// rebuilds outside the publication mutex. A page therefore performs mirror
+// range reads only for its bounded display window, never once per graph row.
+func (s *Server) piProjectionSnapshot(ctx context.Context, sum SessionSummary) ([]wire.IndexMessage, map[transcriptRowKey]piBranchMarker, string, error) {
+	key := string(sum.Tool) + "\x00" + sum.LogicalSessionID
+	stamp := piStamp(sum)
+	s.piProjectionMu.Lock()
+	if s.piProjectionClosed {
+		s.piProjectionMu.Unlock()
+		return nil, nil, "", context.Canceled
+	}
+	entry := s.piProjections[key]
+	if entry == nil {
+		entry = &piProjectionEntry{}
+		s.piProjections[key] = entry
+	}
+	if entry.current != nil && entry.current.stamp == stamp {
+		current := entry.current
+		s.piProjectionMu.Unlock()
+		return current.rows, current.markers, current.notice, nil
+	}
+	if entry.build == nil {
+		build := &piProjectionBuild{done: make(chan struct{})}
+		entry.build = build
+		s.piProjectionWG.Add(1)
+		go s.rebuildPiProjection(key, sum, stamp, build)
+	}
+	build := entry.build
+	if entry.current != nil {
+		current := entry.current
+		s.piProjectionMu.Unlock()
+		return current.rows, current.markers, current.notice, nil
+	}
+	s.piProjectionMu.Unlock()
+	select {
+	case <-build.done:
+	case <-ctx.Done():
+		return nil, nil, "", ctx.Err()
+	}
+	if build.err != nil {
+		return nil, nil, "", build.err
+	}
+	return build.projection.rows, build.projection.markers, build.projection.notice, nil
+}
+
+func (s *Server) rebuildPiProjection(key string, sum SessionSummary, stamp piProjectionStamp, build *piProjectionBuild) {
+	defer s.piProjectionWG.Done()
+	projection, err := s.buildPiProjection(s.piProjectionCtx, sum, stamp)
+	s.piProjectionMu.Lock()
+	entry := s.piProjections[key]
+	if entry != nil && entry.build == build {
+		if err == nil {
+			entry.current = projection
+		}
+		entry.build = nil
+	}
+	build.projection, build.err = projection, err
+	close(build.done)
+	s.piProjectionMu.Unlock()
+}
+
+func (s *Server) buildPiProjection(ctx context.Context, sum SessionSummary, stamp piProjectionStamp) (*piBranchProjection, error) {
+	rows, err := s.store.Rows(ctx, wire.ToolPi, sum.LogicalSessionID)
+	if err != nil {
+		return nil, err
+	}
+	sortPiAppend(rows)
+	reader := piMirrorCursor{store: s.store, ctx: ctx}
+	defer reader.close()
+	selected, markers, notice := resolvePiActiveBranch(rows, reader.read)
+	// Published projections are immutable and display-sorted once here. Warm
+	// page requests only slice the requested window; they never clone or sort
+	// the complete active branch.
+	sortTranscript(selected)
+	return &piBranchProjection{stamp: stamp, rows: selected, markers: markers, notice: notice}, nil
+}
+
+// sortPiAppend is Pi's canonical persisted append order. Store.Rows may
+// return any slice order, so leaf selection must use the index coordinates:
+// file_ordinal (member ingest order), then line_ordinal (mirror byte order),
+// with the frozen file/generation tie-breakers for deterministic corruption
+// handling. Timestamp order is display policy and is deliberately not leaf
+// policy.
+func sortPiAppend(rows []wire.IndexMessage) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if a.FileOrdinal != b.FileOrdinal {
+			return a.FileOrdinal < b.FileOrdinal
+		}
+		if a.LineOrdinal != b.LineOrdinal {
+			return a.LineOrdinal < b.LineOrdinal
+		}
+		if a.FileUUID != b.FileUUID {
+			return a.FileUUID < b.FileUUID
+		}
+		if a.Generation != b.Generation {
+			return a.Generation < b.Generation
+		}
+		return a.ByteStart < b.ByteStart
+	})
+}
+
+type piMirrorCursor struct {
+	store Store
+	ctx   context.Context
+	key   string
+	file  io.ReadCloser
+	pos   int64
+}
+
+func (c *piMirrorCursor) close() {
+	if c.file != nil {
+		_ = c.file.Close()
+		c.file = nil
+	}
+}
+
+// read streams each mirrored generation once in canonical byte order. The
+// amortized projection build never pays SQLStore's open/stat/read/close
+// MirrorRange path per graph row; page rendering retains that path for at
+// most transcriptWindowMessages selected rows.
+func (c *piMirrorCursor) read(row wire.IndexMessage) ([]byte, error) {
+	key := fmt.Sprintf("%s\x00%s\x00%s\x00%d", row.WireSessionID, row.FileUUID, row.Tool, row.Generation)
+	if key != c.key {
+		c.close()
+		file, err := c.store.MirrorFile(c.ctx, wire.ToolPi, row.WireSessionID, row.FileUUID, row.Generation)
+		if err != nil {
+			return nil, err
+		}
+		c.key, c.file, c.pos = key, file, 0
+	}
+	if row.ByteStart < c.pos {
+		return nil, fmt.Errorf("Pi projection mirror order moved backwards")
+	}
+	if skip := row.ByteStart - c.pos; skip > 0 {
+		if _, err := io.CopyN(io.Discard, c.file, skip); err != nil {
+			return nil, err
+		}
+		c.pos += skip
+	}
+	span := row.ByteEnd - row.ByteStart
+	if span < 0 {
+		return nil, fmt.Errorf("Pi projection row has negative byte span")
+	}
+	line := make([]byte, span)
+	if _, err := io.ReadFull(c.file, line); err != nil {
+		return nil, err
+	}
+	c.pos += span
+	return line, nil
+}
+
+// resolvePiActiveBranch resolves Pi's append-only id/parentId tree using
+// mirrored line bytes. The last valid tree entry is Pi's active leaf (the
+// vendor SessionManager uses the same rule). Only its root-to-leaf path
+// renders; nodes with multiple children are explicitly labeled. The frozen
+// index has no parent column, so this remains a read-side adapter and changes
+// no DDL.
+func resolvePiActiveBranch(rows []wire.IndexMessage, readLine func(wire.IndexMessage) ([]byte, error)) ([]wire.IndexMessage, map[transcriptRowKey]piBranchMarker, string) {
+	nodes := map[string]piTreeNode{}
+	children := map[string][]string{}
+	labels := map[string]string{}
+	headers := map[transcriptRowKey]bool{}
+	leaf := ""
+	malformed := false
+	for _, row := range rows {
+		if row.Quarantine || row.ByteEnd-row.ByteStart > maxParseLineBytes {
+			malformed = true
+			continue
+		}
+		line, err := readLine(row)
+		if err != nil {
+			malformed = true
+			continue
+		}
+		var entry piTreeLine
+		if json.Unmarshal(bytes.TrimRight(line, "\r\n"), &entry) != nil || entry.Type == "" {
+			malformed = true
+			continue
+		}
+		if entry.Type == "session" {
+			headers[transcriptKey(row)] = true
+			continue
+		}
+		if entry.ID == "" {
+			malformed = true
+			continue
+		}
+		if _, duplicate := nodes[entry.ID]; duplicate {
+			malformed = true
+			continue
+		}
+		parent := ""
+		if entry.ParentID != nil {
+			parent = *entry.ParentID
+		}
+		nodes[entry.ID] = piTreeNode{parent: parent}
+		children[parent] = append(children[parent], entry.ID)
+		leaf = entry.ID
+		if entry.Type == "label" && entry.TargetID != "" {
+			if entry.Label == nil || *entry.Label == "" {
+				delete(labels, entry.TargetID)
+			} else {
+				labels[entry.TargetID] = *entry.Label
+			}
+		}
+	}
+	if len(rows) == 0 {
+		return rows, map[transcriptRowKey]piBranchMarker{}, "Pi transcript is empty; no active branch is available."
+	}
+	if leaf == "" {
+		return rows, map[transcriptRowKey]piBranchMarker{}, "Pi branch graph is unavailable; showing the bounded degraded file-order view."
+	}
+	active := map[string]bool{}
+	activeChild := map[string]string{}
+	for id, steps := leaf, 0; id != ""; steps++ {
+		if steps > len(nodes) || active[id] {
+			malformed = true
+			break
+		}
+		node, ok := nodes[id]
+		if !ok {
+			malformed = true
+			break
+		}
+		active[id] = true
+		if node.parent != "" {
+			activeChild[node.parent] = id
+		}
+		id = node.parent
+	}
+	if malformed {
+		return rows, map[transcriptRowKey]piBranchMarker{}, "Pi branch graph is malformed or incomplete; showing the bounded degraded file-order view."
+	}
+	selected := make([]wire.IndexMessage, 0, len(active)+len(headers))
+	markers := map[transcriptRowKey]piBranchMarker{}
+	for _, row := range rows {
+		key := transcriptKey(row)
+		if headers[key] {
+			selected = append(selected, row)
+			continue
+		}
+		id := row.MessageUUID
+		if !active[id] {
+			continue
+		}
+		selected = append(selected, row)
+		marker := piBranchMarker{Label: labels[id]}
+		if n := len(children[id]); n > 1 {
+			child := activeChild[id]
+			choice := child
+			if label := labels[child]; label != "" {
+				choice = label
+			}
+			marker.Point = fmt.Sprintf("branch point: active path %q; %d alternate branch(es) hidden", choice, n-1)
+		}
+		if marker.Point != "" || marker.Label != "" {
+			markers[key] = marker
+		}
+	}
+	return selected, markers, ""
 }
 
 // --- Claude Code line shapes ---
@@ -523,6 +882,105 @@ func grokText(raw json.RawMessage) string {
 		buf.WriteString(p.Text)
 	}
 	return buf.String()
+}
+
+// --- Pi session-tree line shapes ---
+
+type piEntry struct {
+	Type          string          `json:"type"`
+	Version       int             `json:"version"`
+	CWD           string          `json:"cwd"`
+	ParentSession string          `json:"parentSession"`
+	Provider      string          `json:"provider"`
+	ModelID       string          `json:"modelId"`
+	ThinkingLevel string          `json:"thinkingLevel"`
+	TargetID      string          `json:"targetId"`
+	Label         string          `json:"label"`
+	Summary       string          `json:"summary"`
+	CustomType    string          `json:"customType"`
+	Content       json.RawMessage `json:"content"`
+	Message       *struct {
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		ToolName   string          `json:"toolName"`
+		ToolCallID string          `json:"toolCallId"`
+		IsError    bool            `json:"isError"`
+	} `json:"message"`
+}
+
+type piContentBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	Thinking  string          `json:"thinking"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+func piBlocks(line []byte) []displayBlock {
+	var e piEntry
+	if json.Unmarshal(line, &e) != nil || e.Type == "" {
+		return nil
+	}
+	switch e.Type {
+	case "session":
+		title := fmt.Sprintf("session format v%d · cwd %s", e.Version, e.CWD)
+		if e.ParentSession != "" {
+			title += " · forked from " + e.ParentSession
+		}
+		return []displayBlock{{Kind: "meta", Title: title}}
+	case "message":
+		if e.Message == nil {
+			return nil
+		}
+		var text string
+		if json.Unmarshal(e.Message.Content, &text) == nil {
+			return []displayBlock{textBlock("text", "", text)}
+		}
+		var parts []piContentBlock
+		if json.Unmarshal(e.Message.Content, &parts) != nil {
+			return nil
+		}
+		var out []displayBlock
+		for _, part := range parts {
+			switch part.Type {
+			case "text":
+				out = append(out, textBlock("text", "", part.Text))
+			case "thinking":
+				b := textBlock("thinking", "thinking", part.Thinking)
+				b.Collapsed = true
+				out = append(out, b)
+			case "toolCall":
+				b := textBlock("tool_use", "tool: "+part.Name, prettyJSON(part.Arguments))
+				b.Collapsed = true
+				out = append(out, b)
+			default:
+				b := textBlock("raw", "content block: "+part.Type, prettyJSON(mustCompact(part)))
+				b.Collapsed = true
+				out = append(out, b)
+			}
+		}
+		if e.Message.Role == "toolResult" {
+			text := grokText(e.Message.Content)
+			b := textBlock("tool_result", "tool result: "+e.Message.ToolName, text)
+			b.Collapsed = true
+			return []displayBlock{b}
+		}
+		return out
+	case "model_change":
+		return []displayBlock{{Kind: "meta", Title: "model: " + e.Provider + "/" + e.ModelID}}
+	case "thinking_level_change":
+		return []displayBlock{{Kind: "meta", Title: "thinking level: " + e.ThinkingLevel}}
+	case "label":
+		return []displayBlock{{Kind: "meta", Title: "label " + e.TargetID + ": " + e.Label}}
+	case "branch_summary", "compaction":
+		b := textBlock("meta", e.Type, e.Summary)
+		b.Collapsed = true
+		return []displayBlock{b}
+	case "custom_message":
+		return []displayBlock{textBlock("text", e.CustomType, grokText(e.Content))}
+	default:
+		return []displayBlock{{Kind: "meta", Title: e.Type}}
+	}
 }
 
 // --- shared block helpers ---

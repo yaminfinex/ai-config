@@ -103,3 +103,20 @@ hold the fixture back (playbook rule).
   high-entropy hits are paths and call ids (known-benign classes). No
   credentials found. User prompts are characterization test prompts; tool
   calls are `echo`/`sleep`/`grep` only.
+
+### pi-branched-session.jsonl — Pi v3 branched session tree
+
+- Shape source: Pi 0.80.6 session JSONL captured under the characterized
+  default tree (`$HOME/.pi/agent/sessions/<cwd-key>/`) on 2026-07-13/14.
+  The committed file is a minimal sanitized stand-in preserving the observed
+  v3 header, short entry ids, `parentId` tree, nested message roles/content,
+  and label-entry shape; it contains no real prompts, paths, credentials, or
+  model output.
+- 11 valid JSONL lines ending in `\n`: one header, a shared prefix, one
+  abandoned branch, one later active branch, and label entries for both.
+  The last entry is on the active branch, matching Pi SessionManager's
+  append-order leaf rule. `ABANDONED-BRANCH-CONTENT` and
+  `ACTIVE-BRANCH-CONTENT` are deliberate T27 tripwires.
+- Identity: header and filename UUID
+  `019f64a0-1111-7222-8333-444444444444`; entry ids are synthetic short ids.
+  Scrubbed by construction and checked by the repository fixture sweep.

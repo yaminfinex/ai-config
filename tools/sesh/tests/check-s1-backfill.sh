@@ -18,13 +18,15 @@ RESUME_NEW_UUID=e1be75ad-151b-47fa-9d69-46de1c117843
 INTERLEAVED_UUID=e4578030-c4a9-493f-82e6-de6156d0179a
 CODEX_UUID=019f01cf-3d22-7ea0-923e-e463b90ea31e
 GROK_UUID=71ebdd45-2641-49e8-87f5-b8d9f3706714
+PI_UUID=019f64a0-1111-7222-8333-444444444444
 PARTIAL_UUID=$(fresh_uuid) # name plumbing; bytes are the real trailing-partial capture
 
-step "pre-existing session tree (all seven corpus fixtures) BEFORE the shipper exists"
+step "pre-existing session tree (all eight corpus fixtures) BEFORE the shipper exists"
 DIR_A=$(claude_tree proj-a)
 DIR_B=$(claude_tree proj-b)
 DIR_CODEX=$(codex_tree)
 DIR_GROK=$(grok_tree "$GROK_UUID")
+DIR_PI=$(pi_tree)
 cp "$FIXTURES/claude-normal.jsonl"                     "$DIR_A/$NORMAL_UUID.jsonl"
 cp "$FIXTURES/claude-resume-original.jsonl"            "$DIR_B/$RESUME_ORIG_UUID.jsonl"
 cp "$FIXTURES/claude-resume-new-file.jsonl"            "$DIR_B/$RESUME_NEW_UUID.jsonl"
@@ -32,10 +34,14 @@ cp "$FIXTURES/claude-interleaved-writers-standin.jsonl" "$DIR_A/$INTERLEAVED_UUI
 cp "$FIXTURES/claude-trailing-partial.jsonl"           "$DIR_A/$PARTIAL_UUID.jsonl"
 cp "$FIXTURES/codex-rollout-meta.jsonl"                "$DIR_CODEX/rollout-2026-06-26T02-43-06-$CODEX_UUID.jsonl"
 cp "$FIXTURES/grok-chat-history.jsonl"                 "$DIR_GROK/chat_history.jsonl"
+cp "$FIXTURES/pi-branched-session.jsonl"               "$DIR_PI/2026-07-15T12-34-56-789Z_$PI_UUID.jsonl"
 # ~/.grok exclusion decoys: top-level config/creds and in-session runtime
 # state must never be discovered by the live binary (security boundary).
 printf 'api_key = "grok-fake-key-must-never-ship"\n' >"$HOME_DIR/.grok/config.toml"
 printf '{"type":"turn_started"}\n' >"$DIR_GROK/events.jsonl"
+# Pi exclusion decoys beside and below its exact transcript shape.
+printf '{"fixture_secret":"must-not-ship"}\n' >"$HOME_DIR/.pi/agent/auth.json"
+printf '{"runtime":true}\n' >"$DIR_PI/runtime.jsonl"
 
 step "real shipper backfills to quiescence"
 start_shipper
@@ -46,7 +52,8 @@ wait_quiesced claude "$INTERLEAVED_UUID" "$INTERLEAVED_UUID" "$DIR_A/$INTERLEAVE
 wait_quiesced claude "$PARTIAL_UUID"     "$PARTIAL_UUID"     "$DIR_A/$PARTIAL_UUID.jsonl"
 wait_quiesced codex  "$CODEX_UUID"       "$CODEX_UUID"       "$DIR_CODEX/rollout-2026-06-26T02-43-06-$CODEX_UUID.jsonl"
 wait_quiesced grok   "$GROK_UUID"        "$GROK_UUID"        "$DIR_GROK/chat_history.jsonl"
-ok "all seven pre-existing files reached quiescence"
+wait_quiesced pi     "$PI_UUID"          "$PI_UUID"          "$DIR_PI/2026-07-15T12-34-56-789Z_$PI_UUID.jsonl"
+ok "all eight pre-existing files reached quiescence"
 
 step "byte-compare mirror vs source for every file"
 assert_mirror_equals claude "$NORMAL_UUID"      "$NORMAL_UUID"      0 "$DIR_A/$NORMAL_UUID.jsonl"
@@ -56,12 +63,15 @@ assert_mirror_equals claude "$INTERLEAVED_UUID" "$INTERLEAVED_UUID" 0 "$DIR_A/$I
 assert_mirror_equals claude "$PARTIAL_UUID"     "$PARTIAL_UUID"     0 "$DIR_A/$PARTIAL_UUID.jsonl"
 assert_mirror_equals codex  "$CODEX_UUID"       "$CODEX_UUID"       0 "$DIR_CODEX/rollout-2026-06-26T02-43-06-$CODEX_UUID.jsonl"
 assert_mirror_equals grok   "$GROK_UUID"        "$GROK_UUID"        0 "$DIR_GROK/chat_history.jsonl"
-ok "byte parity on all seven mirrors (incl. the trailing-partial bytes — byte mirror does not care)"
+assert_mirror_equals pi     "$PI_UUID"          "$PI_UUID"          0 "$DIR_PI/2026-07-15T12-34-56-789Z_$PI_UUID.jsonl"
+ok "byte parity on all eight mirrors (incl. the trailing-partial bytes — byte mirror does not care)"
 
-step "store-DB: seven identities, all generation 0, high_water == size"
-assert_db "identity count" "SELECT COUNT(*) FROM files" "7"
+step "store-DB: eight identities, all generation 0, high_water == size"
+assert_db "identity count" "SELECT COUNT(*) FROM files" "8"
 assert_db "grok shipped exactly its transcript (decoys excluded)" \
   "SELECT COUNT(*) FROM files WHERE tool='grok'" "1"
+assert_db "pi shipped exactly its transcript (decoys excluded)" \
+  "SELECT COUNT(*) FROM files WHERE tool='pi'" "1"
 assert_db "all at generation 0" "SELECT COUNT(*) FROM files WHERE generation != 0" "0"
 assert_db "normal file high_water" \
   "SELECT high_water FROM files WHERE file_uuid='$NORMAL_UUID'" \

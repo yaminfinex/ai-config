@@ -579,6 +579,7 @@ func TestReadPathsServeWhileWriteConnectionHeld(t *testing.T) {
 
 	surfaceHandler, surfaceStore := newSurfaceHandler(st)
 	defer surfaceStore.Close()
+	defer surfaceHandler.Close()
 	storeHandler := st.Handler()
 	checks := []struct {
 		name    string

@@ -79,6 +79,7 @@ func newServe() *cobra.Command {
 			// refresh goroutine is cancelled and drained before the pool it
 			// reads shuts down.
 			defer surfaceStore.Close()
+			defer surfaceHandler.Close()
 			if tsnetMode {
 				err = serveTSNet(serveCtx, st.Handler(), surfaceHandler, dataDir, addr, surfaceAddr, tsnetHostname, tsnetDir, tsnetAuthKey)
 				if consumerErr := consumer.StopAndWait(); consumerErr != nil {
@@ -133,7 +134,7 @@ func newServe() *cobra.Command {
 // before closing the store whose pool it reads. Surface degradation events
 // log through the process-default slog logger (surface.New's default), the
 // same stderr → journald path as the timing and rebuild lines.
-func newSurfaceHandler(st *store.Store) (http.Handler, *surface.SQLStore) {
+func newSurfaceHandler(st *store.Store) (*surface.Server, *surface.SQLStore) {
 	surfaceStore := surface.NewSQLStore(st.ReadDB(), st.MirrorPath)
 	return surface.New(surfaceStore), surfaceStore
 }

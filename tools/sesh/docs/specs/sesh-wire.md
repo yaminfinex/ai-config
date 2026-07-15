@@ -22,7 +22,8 @@ deduplication, facts interpretation, conflict generations, quarantine, and auth.
 
 - Wire version: `1`.
 - API root: `/v1`.
-- Allowed tools: `claude`, `codex`, `grok` (Amendment 3). Unknown tools are rejected.
+- Allowed tools: `claude`, `codex`, `grok`, `pi` (Amendments 3–4). Unknown tools are
+  rejected.
 - Rescan interval (shipper-local default, NOT wire contract): 60 seconds — tunable per
   node; fsnotify-coverage calibration may adjust it without a wire amendment.
 - Maximum PUT body: 4 MiB.
@@ -39,13 +40,24 @@ deduplication, facts interpretation, conflict generations, quarantine, and auth.
 
 Every shipped file is identified by:
 
-- `tool`: closed enum, `claude`, `codex`, or `grok` (Amendment 3).
+- `tool`: closed enum, `claude`, `codex`, `grok`, or `pi` (Amendments 3–4).
 - `session_id`: the session id claim carried by the filename/path convention.
 - `file_uuid`: the UUID portion of the transcript filename. For `grok` the transcript
   filename is fixed (`chat_history.jsonl`) and carries no UUID; the session directory's
   UUID is the filename-convention claim and serves as both `session_id` and `file_uuid`
   (Amendment 3) — the same one-file-per-session shape as `claude`.
+  For `pi`, the transcript filename has the exact shape
+  `<timestamp>_<session-uuid>.jsonl` beneath exactly one cwd-key directory under the
+  default session root (`$HOME/.pi/agent/sessions`); that filename UUID serves as both
+  `session_id` and `file_uuid` (Amendment 4), again a one-file-per-session shape.
 - `fingerprint`: optional lowercase hex SHA-256 over the first 1024 file bytes.
+
+Pi admission is exact-shape, never a blocklist: the default session root itself MUST be
+a real directory, not a symlink, and only regular, non-symlink transcript files at
+`$HOME/.pi/agent/sessions/<cwd-key>/<timestamp>_<session-uuid>.jsonl` ship.
+Everything else is outside the wire surface, including the Pi agent root's config,
+credentials, extensions, models, settings, runtime state, non-matching session-root
+files, deeper paths, and symlinks. This exclusion boundary is a security property.
 
 The path and inode are never identity. The `session_id` in the URL is a wire claim; the
 index derives `logical_session_id` from parsed content and falls back to the wire claim
@@ -311,7 +323,7 @@ Table: `sesh_index_messages`
 | Column | Meaning |
 |---|---|
 | `id` | Store-local integer primary key |
-| `tool` | `claude`, `codex`, or `grok` (Amendment 3) |
+| `tool` | `claude`, `codex`, `grok`, or `pi` (Amendments 3–4) |
 | `logical_session_id` | Store-derived logical session id after content-id/link-field or overlap unification; falls back to `wire_session_id` only when unavailable |
 | `wire_session_id` | Session id claim from the PUT URL |
 | `entry_type` | Parsed transcript entry type; opaque string allowed |
@@ -357,6 +369,18 @@ same `sesh_index_messages` content aside from store-local primary keys.
 
 ## Changelog
 
+- 2026-07-15 — Amendment 4: add `pi` to the closed tool enum (Constants, File
+  Identity, and the index `tool` column); record Pi's exact default-session-tree
+  admission boundary and the filename UUID mapping to both `session_id` and
+  `file_uuid`. Nothing else changes: PUT/ACK semantics, headers, error catalog, and
+  shipper reactions are byte-untouched. Mixed-fleet compatibility: rollout order is
+  store before clients (the deploy pipeline guarantees it — the store deploys before
+  release publication). A pi-shipping client against a pre-amendment store receives
+  `400 unknown_tool` per the existing catalog row and applies its frozen reaction —
+  hold every pi file quietly (no retry loop, no crash, cursor untouched, nothing
+  dropped) while every other tool keeps shipping; resolution is the store upgrade.
+  This reaction applies to the recovery GET exactly as to PUT: a non-retryable refusal
+  during recovery parks that file and never blocks the rest of the pass.
 - 2026-07-14 — Amendment 3: add `grok` to the closed tool enum (Constants, File
   Identity, and the index `tool` column); record that grok's fixed transcript filename
   makes the session directory's UUID both `session_id` and `file_uuid`. Nothing else

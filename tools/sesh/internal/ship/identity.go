@@ -32,12 +32,15 @@ func (id Identity) Key() string {
 	return string(id.Tool) + "/" + id.SessionID + "/" + id.FileUUID
 }
 
-// Roots are the watched session roots. Any may itself be a symlink
-// (resolved before walking); symlinks below a root are not followed.
+// Roots are the watched session roots. The legacy Claude, Codex, and Grok
+// roots may themselves be symlinks (resolved before walking); symlinks below
+// a root are not followed. Pi is deliberately stricter: its default session
+// root is a security boundary and must itself be a real directory.
 type Roots struct {
 	Claude string // ~/.claude/projects
 	Codex  string // ~/.codex/sessions
 	Grok   string // ~/.grok/sessions
+	Pi     string // ~/.pi/agent/sessions
 }
 
 // DefaultRoots derives the watched roots from the home directory.
@@ -46,12 +49,13 @@ func DefaultRoots(home string) Roots {
 		Claude: filepath.Join(home, ".claude", "projects"),
 		Codex:  filepath.Join(home, ".codex", "sessions"),
 		Grok:   filepath.Join(home, ".grok", "sessions"),
+		Pi:     filepath.Join(home, ".pi", "agent", "sessions"),
 	}
 }
 
 // All returns the roots in walk order.
 func (r Roots) All() []string {
-	return []string{r.Claude, r.Codex, r.Grok}
+	return []string{r.Claude, r.Codex, r.Grok, r.Pi}
 }
 
 const uuidPattern = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
@@ -59,6 +63,7 @@ const uuidPattern = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
 var (
 	claudeName = regexp.MustCompile(`^(` + uuidPattern + `)\.jsonl$`)
 	codexName  = regexp.MustCompile(`^rollout-.+-(` + uuidPattern + `)\.jsonl$`)
+	piName     = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{3}Z_(` + uuidPattern + `)\.jsonl$`)
 	uuidName   = regexp.MustCompile(`^` + uuidPattern + `$`)
 )
 
@@ -79,8 +84,9 @@ type Discovered struct {
 // Discover walks the roots and returns every session file matching the
 // discovery globs: <uuid>.jsonl under the Claude root, rollout-*-<uuid>.jsonl
 // under the Codex root, <cwd-group>/<uuid>/chat_history.jsonl under the Grok
-// root. Everything else is ignored. A missing root is not an error (the tool
-// may not be installed on this box).
+// root, and <cwd-key>/<timestamp>_<uuid>.jsonl under the Pi root. Everything
+// else is ignored. A missing root is not an error (the tool may not be
+// installed on this box).
 func Discover(roots Roots) ([]Discovered, error) {
 	var out []Discovered
 	for _, w := range []struct {
@@ -91,14 +97,40 @@ func Discover(roots Roots) ([]Discovered, error) {
 		{roots.Claude, wire.ToolClaude, nameMatch(claudeName)},
 		{roots.Codex, wire.ToolCodex, nameMatch(codexName)},
 		{roots.Grok, wire.ToolGrok, grokMatch},
+		{roots.Pi, wire.ToolPi, piMatch},
 	} {
-		found, err := walkRoot(w.root, w.tool, w.match)
+		var found []Discovered
+		var err error
+		if w.tool == wire.ToolPi {
+			found, err = walkPiRoot(w.root, w.match)
+		} else {
+			found, err = walkRoot(w.root, w.tool, w.match)
+		}
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, found...)
 	}
 	return out, nil
+}
+
+// walkPiRoot enforces the Pi-only root policy before the legacy walker gets
+// any opportunity to resolve it. A symlink at ~/.pi/agent/sessions could
+// otherwise repoint the exact-shape allowlist at arbitrary same-shape files
+// outside the agent root. Missing roots and rejected non-directory/symlink
+// roots mean "Pi is not discoverable here", not a shipper-wide failure.
+func walkPiRoot(root string, match func(rel string, d fs.DirEntry) (string, bool)) ([]Discovered, error) {
+	info, err := os.Lstat(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if info.Mode()&fs.ModeSymlink != 0 || !info.IsDir() {
+		return nil, nil
+	}
+	return walkRoot(root, wire.ToolPi, match)
 }
 
 // walkRoot walks one root with one admission matcher. It is the seam the
@@ -173,6 +205,22 @@ func grokMatch(rel string, _ fs.DirEntry) (string, bool) {
 		return "", false
 	}
 	return parts[1], true
+}
+
+// piMatch admits exactly <cwd-key>/<timestamp>_<session-uuid>.jsonl relative
+// to Pi's default session root. The agent root's siblings are config,
+// credentials, extensions, and runtime state; exact depth and filename
+// admission keep that security boundary closed without a blocklist.
+func piMatch(rel string, d fs.DirEntry) (string, bool) {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) != 2 || d.Type()&fs.ModeType != 0 {
+		return "", false
+	}
+	m := piName.FindStringSubmatch(parts[1])
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
 }
 
 // Fingerprint computes the wire fingerprint of the file at path: lowercase

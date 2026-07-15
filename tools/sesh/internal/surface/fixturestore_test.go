@@ -37,6 +37,7 @@ const (
 	uuidInterleave = "e4578030-c4a9-493f-82e6-de6156d0179a"
 	uuidCodexMeta  = "019f01cf-3d22-7ea0-923e-e463b90ea31e"
 	uuidGrokChat   = "71ebdd45-2641-49e8-87f5-b8d9f3706714"
+	uuidPiBranched = "019f64a0-1111-7222-8333-444444444444"
 	// The trailing-partial fixture is a byte prefix of claude-normal; as a
 	// distinct session in the fake it needs its own file identity.
 	uuidPartial = "0f0f0f0f-1111-2222-3333-444444444444"
@@ -233,6 +234,7 @@ func (f *fakeStore) addSession(t *testing.T, spec sessionSpec) {
 		MirroredAt:       spec.mirroredAt,
 		MessageRows:      msgN,
 		QuarantinedRows:  quarN,
+		IndexVersion:     int64(len(rows)),
 		Files:            files,
 	})
 }
@@ -259,6 +261,7 @@ func parseIndexRow(spec sessionSpec, fileUUID string, fileOrd, lineOrd, byteStar
 	meta := struct {
 		Type      string `json:"type"`
 		UUID      string `json:"uuid"`
+		ID        string `json:"id"`
 		Timestamp string `json:"timestamp"`
 		Message   *struct {
 			Role string `json:"role"`
@@ -277,6 +280,9 @@ func parseIndexRow(spec sessionSpec, fileUUID string, fileOrd, lineOrd, byteStar
 	}
 	if spec.tool == wire.ToolClaude {
 		row.MessageUUID = meta.UUID
+	}
+	if spec.tool == wire.ToolPi && meta.Type != "session" {
+		row.MessageUUID = meta.ID
 	}
 	switch {
 	case meta.Message != nil && meta.Message.Role != "":
@@ -376,6 +382,16 @@ func corpusStore(t *testing.T) *fakeStore {
 		{Hostname: "laptop", OSUser: "alice", LastPutAt: day("2026-07-05T08:10:00Z"), Age: "51h50m0s", Stale: true, ShipperVersion: "sesh-v0.2.9"},
 	}
 	return f
+}
+
+func piStore(t *testing.T) *fakeStore {
+	t.Helper()
+	ingest, _ := time.Parse(time.RFC3339, "2026-07-15T12:35:30Z")
+	return buildStore(t, []sessionSpec{{
+		tool: wire.ToolPi, logicalID: uuidPiBranched,
+		hostname: "workstation", osUser: "grace", mirroredAt: ingest.Add(30 * time.Second),
+		files: []fixtureFile{{name: "pi-branched-session.jsonl", fileUUID: uuidPiBranched, firstIngest: ingest}},
+	}})
 }
 
 // inflatedLine re-marshals a real claude-normal user entry with its text

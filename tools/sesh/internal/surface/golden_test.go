@@ -64,6 +64,13 @@ func TestGoldenSnapshots(t *testing.T) {
 	}
 }
 
+func TestGoldenPiBranched(t *testing.T) {
+	srv := newServer(t, piStore(t))
+	body := mustGet200(t, srv, "/s/pi/"+uuidPiBranched)
+	assertWellFormedHTML(t, body)
+	checkGolden(t, "transcript-pi-branched.html", body)
+}
+
 // --- minimal strict well-formedness checker for our own output ---
 //
 // html/template guarantees escaping; this guards structure: every '<' opens

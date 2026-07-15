@@ -21,12 +21,15 @@
 {{- end}}
 </dl>
 {{- template "transcriptPager" .}}
+{{- if .BranchNotice}}<p class="notice">{{.BranchNotice}}</p>{{end}}
 <ol class="transcript">
 {{- range .Entries}}
 <li class="entry role-{{.Role}}{{if .Quarantined}} quarantined{{end}}"{{with .MessageUUID}} data-uuid="{{.}}"{{end}}>
 <div class="entryhead"><span class="role">{{.Role}}</span><span class="etype">{{.EntryType}}</span><span>{{fmtTime .Timestamp}}</span>
 {{- if .Quarantined}}<span class="badge warn">quarantined{{with .QuarantineReason}}: {{.}}{{end}}</span>{{end}}
 {{- if .Truncated}}<span class="badge warn">truncated — {{fmtSize .ByteSize}} line, full bytes in raw view</span>{{end}}</div>
+{{- if .BranchPoint}}<div class="source">{{.BranchPoint}}</div>{{end}}
+{{- if .BranchLabel}}<div class="source">branch label: {{.BranchLabel}}</div>{{end}}
 {{- range .Blocks}}
 {{- if .Collapsed}}
 <details class="block {{.Kind}}"><summary>{{if .Title}}{{.Title}}{{else}}{{.Kind}}{{end}}{{if .Truncated}} (truncated){{end}}</summary>{{if .Text}}<pre>{{.Text}}</pre>{{end}}</details>

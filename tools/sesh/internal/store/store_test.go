@@ -425,6 +425,16 @@ func TestOffsetGapUnknownToolBodyTooLargeAndWriteFailureUseWireCodes(t *testing.
 	}
 }
 
+func TestPiAdmittedWhileUnknownToolRemainsRejected(t *testing.T) {
+	st := newTestStore(t, new(bytes.Buffer))
+	body := []byte("{\"type\":\"session\"}\n")
+	ack := decodeAck(t, putReq(t, st, wire.ToolPi, testSession, testFile, 0, body, nil))
+	if ack.Tool != wire.ToolPi || ack.HighWater != int64(len(body)) {
+		t.Fatalf("Pi ACK = %+v", ack)
+	}
+	decodeError(t, putReq(t, st, wire.Tool("future-tool"), testSession, testFile, 0, body, nil), wire.ErrUnknownTool)
+}
+
 func TestMalformedRequestsByName(t *testing.T) {
 	st := newTestStore(t, new(bytes.Buffer))
 	badOffset := putReq(t, st, wire.ToolClaude, testSession, testFile, -1, []byte("x"), nil)

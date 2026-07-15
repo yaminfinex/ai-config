@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sesh — session 019f64a0</title>
+<script src="/assets/htmx.min.js"></script>
+<style>
+:root { color-scheme: light dark; }
+body { font: 14px/1.45 system-ui, sans-serif; margin: 0 auto; max-width: 72rem; padding: 0 1rem 3rem; }
+header.site { display: flex; gap: .6rem; align-items: baseline; padding: .8rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); margin-bottom: 1rem; }
+header.site a { font-weight: 700; text-decoration: none; color: inherit; }
+header.site .tagline { opacity: .6; font-size: .85em; }
+h2 { font-size: 1.1rem; margin: 1.2rem 0 .3rem; }
+h3 { font-size: .95rem; margin: .8rem 0 .3rem; opacity: .85; }
+.source, .secondary { opacity: .6; font-size: .85em; font-weight: 400; }
+table.sessions { border-collapse: collapse; width: 100%; }
+table.sessions td, table.sessions th { text-align: left; padding: .25rem .6rem .25rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); vertical-align: baseline; }
+table.sessions th { font-size: .78em; text-transform: uppercase; letter-spacing: .04em; opacity: .55; }
+.badge { font-size: .75em; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: .6em; padding: 0 .45em; margin-left: .4em; opacity: .8; white-space: nowrap; }
+.badge.warn { border-color: #b8860b; color: #b8860b; }
+code, pre { font: .86em/1.4 ui-monospace, monospace; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .2rem 0; }
+ol.transcript, ol.rawlines { list-style: none; padding: 0; }
+li.entry { border-left: 3px solid color-mix(in srgb, currentColor 15%, transparent); padding: .3rem 0 .3rem .7rem; margin: .35rem 0; }
+li.entry.role-user { border-left-color: #4a7dbd; }
+li.entry.role-assistant { border-left-color: #4aa564; }
+li.entry.quarantined { border-left-color: #b8860b; }
+.entryhead { font-size: .8em; opacity: .75; display: flex; gap: .7em; flex-wrap: wrap; }
+.entryhead .role { font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+.block.meta { opacity: .55; font-size: .82em; }
+.block .btitle { font-size: .82em; font-weight: 600; opacity: .8; margin-top: .25rem; }
+details.block { margin: .2rem 0; }
+details.block > summary { cursor: pointer; font-size: .84em; opacity: .75; }
+li.rawline { padding: .1rem 0; border-bottom: 1px dotted color-mix(in srgb, currentColor 10%, transparent); }
+p.crumbs { font-size: .85em; }
+p.notice { border: 1px solid color-mix(in srgb, currentColor 30%, transparent); border-radius: .3rem; padding: .4rem .7rem; background: color-mix(in srgb, currentColor 6%, transparent); }
+.empty { opacity: .6; }
+dl.meta { font-size: .85em; display: grid; grid-template-columns: max-content 1fr; gap: .1rem 1rem; }
+dl.meta dt { opacity: .6; }
+dl.meta dd { margin: 0; }
+</style>
+</head>
+<body>
+<header class="site"><a href="/">sesh</a><a href="/sessions">sessions</a><span class="tagline">team session mirror — read-only</span></header>
+<main>
+<p class="crumbs"><a href="/">← nodes</a> · <a href="/sessions">all sessions</a> · <a href="/s/pi/019f64a0-1111-7222-8333-444444444444/raw">raw JSONL from mirror</a></p>
+<h2>pi session <code>019f64a0-1111-7222-8333-444444444444</code></h2>
+<dl class="meta">
+<dt>owner</dt><dd>grace <span class="source">OS user (no owner claim)</span></dd>
+<dt>node</dt><dd>grace@workstation</dd>
+<dt>last activity</dt><dd>2026-07-15 12:35:02 UTC</dd>
+<dt>mirrored at</dt><dd>2026-07-15 12:36:00 UTC</dd>
+<dt>files</dt><dd><code>019f64a0</code> gen 0</dd>
+</dl>
+<ol class="transcript">
+<li class="entry role-unknown">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">session</span><span>2026-07-15 12:34:56 UTC</span></div>
+<div class="block meta">session format v3 · cwd /workspace/pi-fixture</div>
+</li>
+<li class="entry role-unknown" data-uuid="root0001">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">model_change</span><span>2026-07-15 12:34:56 UTC</span></div>
+<div class="block meta">model: fixture/fixture-model</div>
+</li>
+<li class="entry role-unknown" data-uuid="think001">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">thinking_level_change</span><span>2026-07-15 12:34:56 UTC</span></div>
+<div class="block meta">thinking level: low</div>
+</li>
+<li class="entry role-user" data-uuid="shared01">
+<div class="entryhead"><span class="role">user</span><span class="etype">message</span><span>2026-07-15 12:34:57 UTC</span></div>
+<div class="block text"><pre>Choose a route.</pre></div>
+</li>
+<li class="entry role-assistant" data-uuid="shared02">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">message</span><span>2026-07-15 12:34:58 UTC</span></div><div class="source">branch point: active path &#34;chosen option&#34;; 1 alternate branch(es) hidden</div>
+<div class="block text"><pre>I can take either route.</pre></div>
+</li>
+<li class="entry role-user" data-uuid="active01">
+<div class="entryhead"><span class="role">user</span><span class="etype">message</span><span>2026-07-15 12:35:01 UTC</span></div><div class="source">branch label: chosen option</div>
+<div class="block text"><pre>Take the active route.</pre></div>
+</li>
+<li class="entry role-assistant" data-uuid="active02">
+<div class="entryhead"><span class="role">assistant</span><span class="etype">message</span><span>2026-07-15 12:35:02 UTC</span></div>
+<div class="block text"><pre>ACTIVE-BRANCH-CONTENT</pre></div>
+</li>
+<li class="entry role-unknown" data-uuid="newlabel">
+<div class="entryhead"><span class="role">unknown</span><span class="etype">label</span><span>2026-07-15 12:35:02 UTC</span></div>
+<div class="block meta">label active01: chosen option</div>
+</li>
+</ol>
+</main>
+</body>
+</html>
+
+
+
+
