@@ -47,11 +47,11 @@ printf '%s\n' "$@" >"$PROBE/argv"
           "${HERDER_GUID-}" != child-guid || "${HERDER_ROLE-}" != worker ||
           "${HERDER_LABEL-}" != worker-child || "${HERDR_ENV-}" != 1 ||
           "${HERDR_PANE_ID-}" != child-pane ]]; then
-      printf 'CHILD_BIND_INPUTS=incomplete\n'
+      printf 'PREEXPORTED_SEAT_CONTEXT=incomplete\n'
       exit 42
     fi
     printf 'IDENTITY_SCRUB=clean\n'
-    printf 'CHILD_BIND_INPUTS=present\n'
+    printf 'PREEXPORTED_SEAT_CONTEXT=passed-through\n'
   fi
   if [[ "${PI_OFFLINE-}" == 1 ]]; then
     printf 'ANTHROPIC_API_KEY=%s\n' "${ANTHROPIC_API_KEY:+present}"
@@ -182,20 +182,21 @@ scenario unknown_tool     with-hcom '<case-home>' '<case-team>' ''              
 scenario pi_spawn         with-hcom '<case-home>' '<case-home>/.hcom' 'OPENAI_API_KEY=test-only ANTHROPIC_API_KEY=foreign XAI_API_KEY=foreign' pi --tag worker --provider openai --model model-one
 scenario pi_resume        with-hcom '<case-home>' '<case-home>/.hcom' 'OPENAI_API_KEY=test-only ANTHROPIC_API_KEY=foreign XAI_API_KEY=foreign' --resume pi session-one --tag worker --provider openai --model model-one
 scenario pi_fork          with-hcom '<case-home>' '<case-home>/.hcom' 'OPENAI_API_KEY=test-only ANTHROPIC_API_KEY=foreign XAI_API_KEY=foreign' --fork pi session-one --tag worker --provider openai --model model-one
-# The managed launch boundary must do both halves: discard caller bus identity
-# (including unknown future keys) and retain the child-owned inputs hcom needs
-# to mint and bind a fresh seat. A broken launch cannot pass these scenarios.
-IDENTITY_ENV='CHECK_IDENTITY_ENV=1 HERDER_GUID=child-guid HERDER_ROLE=worker HERDER_LABEL=worker-child HERDR_ENV=1 HERDR_PANE_ID=child-pane HCOM_PROCESS_ID=ambient-process HCOM_INSTANCE_NAME=ambient-name HCOM_SESSION_ID=ambient-session HCOM_TOOL=ambient-tool HCOM_LAUNCHED=1 HCOM_FUTUREKEY=ambient-future'
-scenario identity_claude    with-hcom '<case-home>' '<case-home>/.hcom' "$IDENTITY_ENV" claude
-scenario identity_codex     with-hcom '<case-home>' '<case-home>/.hcom' "$IDENTITY_ENV" codex
-scenario identity_pi        with-hcom '<case-home>' '<case-home>/.hcom' "$IDENTITY_ENV OPENAI_API_KEY=test-only" pi --provider openai
+# The managed launch boundary discards caller HCOM bus identity, including
+# unknown future keys. HERDER_*/HERDR_* values are deliberately passthrough
+# fixtures: spawn exported and owns them before this boundary; this test does
+# not claim the launcher verified their ownership.
+HOSTILE_LAUNCH_ENV='CHECK_IDENTITY_ENV=1 HERDER_GUID=child-guid HERDER_ROLE=worker HERDER_LABEL=worker-child HERDR_ENV=1 HERDR_PANE_ID=child-pane HCOM_PROCESS_ID=ambient-process HCOM_INSTANCE_NAME=ambient-name HCOM_SESSION_ID=ambient-session HCOM_TOOL=ambient-tool HCOM_LAUNCHED=1 HCOM_FUTUREKEY=ambient-future'
+scenario identity_claude    with-hcom '<case-home>' '<case-home>/.hcom' "$HOSTILE_LAUNCH_ENV" claude
+scenario identity_codex     with-hcom '<case-home>' '<case-home>/.hcom' "$HOSTILE_LAUNCH_ENV" codex
+scenario identity_pi        with-hcom '<case-home>' '<case-home>/.hcom' "$HOSTILE_LAUNCH_ENV OPENAI_API_KEY=test-only" pi --provider openai
 # TASK-010 print bypass: claude -p/--print one-shots skip hcom and exec the
 # PATH-resolved tool with the shim recursion guard set.
 scenario print_p          with-hcom '<case-home>' ''          ''                                     claude -p hello
 scenario print_long       with-hcom '<case-home>' ''          ''                                     claude --model opus --print hello
 scenario print_tag_drop   with-hcom '<case-home>' ''          ''                                     claude --tag worker -p hello
 scenario print_no_hcom    no-hcom   '<case-home>' ''          ''                                     claude -p hello
-scenario print_identity   with-hcom '<case-home>' '<case-home>/.hcom' "$IDENTITY_ENV"                 claude -p hello
+scenario print_identity   with-hcom '<case-home>' '<case-home>/.hcom' "$HOSTILE_LAUNCH_ENV"          claude -p hello
 scenario print_codex      with-hcom '<case-home>' ''          ''                                     codex -p myprofile
 scenario print_resume     with-hcom '<case-home>' ''          ''                                     --resume claude sess-1 -p hello
 

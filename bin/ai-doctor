@@ -20,7 +20,8 @@ credential/home/PATH-resolution drift. It also warns when the current shell carr
 managed-agent identity that makes direct vendor CLI probes unsafe. Findings are
 reported only; Grok state is never repaired automatically.
 
---quick skips network freshness checks.
+--quick skips network freshness checks. --strict fails on repository-health
+warnings; the situational identity-bearing-shell nudge remains warning-tier rc 0.
 USAGE
       exit 0
       ;;
@@ -33,9 +34,16 @@ done
 
 errors=0
 warnings=0
+strict_exempt_warnings=0
 
 warn() {
   warnings=$((warnings + 1))
+  log_warn "$*"
+}
+
+warn_strict_exempt() {
+  warnings=$((warnings + 1))
+  strict_exempt_warnings=$((strict_exempt_warnings + 1))
   log_warn "$*"
 }
 
@@ -400,7 +408,10 @@ check_identity_bearing_shell() {
   done
   [ "${#present[@]}" -gt 0 ] || return 0
 
-  warn "current shell carries managed-agent identity (${present[*]}); never invoke a vendor agent CLI directly here — use herder, or run probes under env -i with an isolated HOME/state and no HCOM_*/HERDER_*/HERDR_* values"
+  # This is a situational launch-safety nudge, not repository health. Managed
+  # agent shells carry these values by design, so --strict must not make every
+  # doctor run inside a seat permanently red.
+  warn_strict_exempt "current shell carries managed-agent identity (${present[*]}); never invoke a vendor agent CLI directly here — use herder, or run probes under env -i with an isolated HOME/state and no HCOM_*/HERDER_*/HERDR_* values"
 }
 
 check_git
@@ -423,7 +434,7 @@ fi
 
 if [ "$warnings" -gt 0 ]; then
   log_warn "ai-doctor found $warnings warning(s)"
-  [ "$strict" -eq 1 ] && exit 1
+  [ "$strict" -eq 1 ] && [ "$warnings" -gt "$strict_exempt_warnings" ] && exit 1
   exit 0
 fi
 

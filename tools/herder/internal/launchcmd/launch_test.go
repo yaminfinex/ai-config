@@ -9,7 +9,7 @@ import (
 	"ai-config/tools/herder/internal/hookcmd"
 )
 
-func TestBuildHcomLaunchEnvDropsAmbientIdentityAndKeepsChildInputs(t *testing.T) {
+func TestBuildHcomLaunchEnvDropsAmbientHcomAndPassesPreExportedSeatContext(t *testing.T) {
 	ambient := []string{
 		"HOME=/scratch/home",
 		"PATH=/scratch/bin",
@@ -40,6 +40,8 @@ func TestBuildHcomLaunchEnvDropsAmbientIdentityAndKeepsChildInputs(t *testing.T)
 			t.Errorf("ambient identity %s crossed launch boundary as %q", key, value)
 		}
 	}
+	// HERDER_*/HERDR_* ownership is established by spawn before this boundary.
+	// The launcher only passes that already-exported seat context through.
 	for key, want := range map[string]string{
 		"HOME":                 "/scratch/home",
 		"PATH":                 "/scratch/bin",
