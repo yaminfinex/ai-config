@@ -690,17 +690,11 @@ func parseTime(raw string) *time.Time {
 }
 
 func (idx *Indexer) insertRows(ctx context.Context, rows []indexedMessage) error {
-	dedupInsert, err := idx.prepareContext(ctx, `INSERT INTO sesh_index_messages
-		(tool, logical_session_id, parsed_logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ''
-		WHERE NOT EXISTS (
-			SELECT 1 FROM sesh_index_messages
-			WHERE quarantine = 0 AND tool = ? AND logical_session_id = ? AND entry_type = ? AND message_uuid = ?
-		)`)
-	if err != nil {
-		return err
-	}
-	defer dedupInsert.Close()
+	// Keep duplicate candidates until the touched logical component has been
+	// unified and assigned final file ordinals. dedupeLogical then chooses by
+	// the same deterministic preference key as full Reindex instead of the
+	// insert statement's replay order. Empty UUIDs follow this insert path but
+	// remain excluded from every dedupe and unification query.
 	plainInsert, err := idx.prepareContext(ctx, `INSERT INTO sesh_index_messages
 		(tool, logical_session_id, parsed_logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')`)
@@ -732,13 +726,6 @@ func (idx *Indexer) insertRows(ctx context.Context, rows []indexedMessage) error
 		}
 		args := []any{row.Tool, row.LogicalSessionID, row.ParsedLogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID,
 			row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd}
-		if row.MessageUUID != "" {
-			_, err = dedupInsert.ExecContext(ctx, append(args, row.Tool, row.LogicalSessionID, row.EntryType, row.MessageUUID)...)
-			if err != nil {
-				return err
-			}
-			continue
-		}
 		_, err := plainInsert.ExecContext(ctx, args...)
 		if err != nil {
 			return err

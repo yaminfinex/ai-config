@@ -494,6 +494,99 @@ func TestIncrementalAppendMatchesReindexChecksum(t *testing.T) {
 	}
 }
 
+func TestDuplicateSurvivorMatchesReindexInBothArrivalOrders(t *testing.T) {
+	const (
+		sessionID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+		earlyFile = "11111111-1111-1111-1111-111111111111"
+		lateFile  = "99999999-9999-9999-9999-999999999999"
+	)
+	files := []string{earlyFile, lateFile}
+	for _, first := range files {
+		first := first
+		second := earlyFile
+		if first == earlyFile {
+			second = lateFile
+		}
+		t.Run(first+" arrives first", func(t *testing.T) {
+			st, idx := newHarness(t)
+			body := func(fileUUID string) []byte {
+				return []byte(fmt.Sprintf(
+					`{"type":"message","uuid":"shared","sessionId":"%s","timestamp":"2026-07-09T12:00:00Z","message":{"role":"%s"}}`+"\n"+
+						`{"type":"message","sessionId":"%s","message":{"role":"empty-%s"}}`+"\n",
+					sessionID, fileUUID, sessionID, fileUUID))
+			}
+
+			for i, fileUUID := range []string{first, second} {
+				putBytes(t, st, sessionID, fileUUID, 0, body(fileUUID))
+				if err := idx.ProcessAppend(t.Context(), <-st.AppendEvents()); err != nil {
+					t.Fatal(err)
+				}
+				createdAt := fmt.Sprintf("2026-07-09T12:00:0%dZ", i)
+				if _, err := st.DB().Exec(`UPDATE files SET created_at = ? WHERE file_uuid = ?`, createdAt, fileUUID); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			var registeredFiles int
+			if err := st.DB().QueryRow(`SELECT COUNT(*) FROM files
+				WHERE tool = ? AND session_id = ? AND file_uuid IN (?, ?)`,
+				wire.ToolClaude, sessionID, earlyFile, lateFile).Scan(&registeredFiles); err != nil {
+				t.Fatal(err)
+			}
+			if registeredFiles != 2 || !bytes.Contains(body(earlyFile), []byte(`"uuid":"shared"`)) || !bytes.Contains(body(lateFile), []byte(`"uuid":"shared"`)) {
+				t.Fatalf("fixture premise failed: shared uuid is not present across two registered files")
+			}
+
+			assertSurvivor := func(stage string) {
+				t.Helper()
+				var survivor string
+				if err := st.DB().QueryRow(`SELECT file_uuid FROM sesh_index_messages
+					WHERE quarantine = 0 AND message_uuid = 'shared'`).Scan(&survivor); err != nil {
+					t.Fatal(err)
+				}
+				if survivor != first {
+					t.Fatalf("%s survivor = %q, want first-arrived %q", stage, survivor, first)
+				}
+				var emptyRows int
+				if err := st.DB().QueryRow(`SELECT COUNT(*) FROM sesh_index_messages
+					WHERE quarantine = 0 AND message_uuid = ''`).Scan(&emptyRows); err != nil {
+					t.Fatal(err)
+				}
+				if emptyRows != 2 {
+					t.Fatalf("%s empty-uuid rows = %d, want 2", stage, emptyRows)
+				}
+			}
+
+			assertSurvivor("incremental")
+			incrementalSum, incrementalRows, err := idx.Checksum(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := idx.Reindex(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			assertSurvivor("reindex")
+			reindexedSum, reindexedRows, err := idx.Checksum(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if incrementalSum != reindexedSum || incrementalRows != reindexedRows {
+				t.Fatalf("incremental checksum %s/%d does not match reindex %s/%d", incrementalSum, incrementalRows, reindexedSum, reindexedRows)
+			}
+			if err := idx.Reindex(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			fixedSum, fixedRows, err := idx.Checksum(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fixedSum != reindexedSum || fixedRows != reindexedRows {
+				t.Fatalf("second reindex checksum %s/%d does not match first %s/%d", fixedSum, fixedRows, reindexedSum, reindexedRows)
+			}
+		})
+	}
+}
+
 func TestPostUnifyAppendStaysInCurrentLogicalSession(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
