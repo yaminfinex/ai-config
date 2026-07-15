@@ -237,10 +237,8 @@ func verifyExistingGUIDOwner(current *v2.SessionRecord, pane herdrcli.Pane, live
 	if !live.Verified {
 		return fmt.Errorf("refused to re-enroll %s: stored bus name %q cannot be corroborated because live bus identity proof is unavailable (%s); restore or join that existing bus identity, then retry the same pinned re-enroll", current.GUID, stored.HcomName, live.Reason)
 	}
-	if stored.HcomName == "" || stored.HcomName == "null" {
-		return fmt.Errorf("refused to re-enroll %s: the existing seat has no stored bus name, so live ownership continuity cannot be proven; repair or adopt the existing identity explicitly, then retry (bare enroll will not mint a replacement)", current.GUID)
-	}
-	if live.Name != stored.HcomName {
+	storedBusCaptured := stored.HcomName != "" && stored.HcomName != "null"
+	if storedBusCaptured && live.Name != stored.HcomName {
 		return fmt.Errorf("refused to re-enroll %s: calling live bus @%s does not match stored bus name @%s; restore or join @%s from the existing session, then retry the same pinned re-enroll", current.GUID, live.Name, stored.HcomName, stored.HcomName)
 	}
 
@@ -271,6 +269,9 @@ func verifyExistingGUIDOwner(current *v2.SessionRecord, pane herdrcli.Pane, live
 			seatCause += "; "
 		}
 		seatCause += fmt.Sprintf("requested label %q does not match recorded label %q", label, current.Label)
+	}
+	if !storedBusCaptured {
+		return fmt.Errorf("refused to re-enroll %s: the existing seat has no stored bus name and bootstrap ownership proof failed: %s; %s; restore either the recorded session id or both the recorded terminal and label, then retry from a verified live bus row (bare enroll will not mint a replacement)", current.GUID, sidCause, seatCause)
 	}
 	return fmt.Errorf("refused to re-enroll %s: %s, and full seat corroboration failed (%s); restore the recorded terminal and label while joined as @%s, then retry the same pinned re-enroll (bare enroll will not mint a replacement)", current.GUID, sidCause, seatCause, stored.HcomName)
 }
@@ -336,8 +337,11 @@ recorded as unknown. Rerun herder enroll from the existing session to recapture
 and repair its bus binding. Reusing an existing guid always requires the caller's
 verified live bus name to equal the stored bus name. With that proof, ownership
 requires either an exact recorded/live session id match, or both unchanged
-terminal and unchanged label. An inherited guid that belongs to another session
-is refused; bare enroll never mints a replacement as a refusal remedy.
+terminal and unchanged label. If an older or adopted seated row has no stored bus
+name, a verified live caller may bootstrap it with the same session-or-seat proof;
+the successful repair captures its live name and session id, so later re-enrolls
+use the strict stored-name rule. An inherited guid that belongs to another
+session is refused; bare enroll never mints a replacement as a refusal remedy.
 `)
 }
 

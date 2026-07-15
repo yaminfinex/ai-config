@@ -117,6 +117,62 @@ func TestVerifyExistingGUIDOwnerTreatsUnverifiedMatchingSessionAsNoBusProof(t *t
 	}
 }
 
+func TestVerifyExistingGUIDOwnerBootstrapsAbsentStoredBusName(t *testing.T) {
+	tests := []struct {
+		name        string
+		recordedSID string
+		liveSID     string
+		terminalID  string
+		label       string
+		wantAccept  bool
+	}{
+		{
+			name:        "matching session alone",
+			recordedSID: "sid-recorded",
+			liveSID:     "sid-recorded",
+			terminalID:  "term-other",
+			label:       "different-label",
+			wantAccept:  true,
+		},
+		{
+			name:       "matching terminal and label without recorded session",
+			liveSID:    "sid-live",
+			terminalID: "term-live",
+			label:      "stable-label",
+			wantAccept: true,
+		},
+		{
+			name:        "neither session nor full seat proof",
+			recordedSID: "sid-recorded",
+			liveSID:     "sid-other",
+			terminalID:  "term-other",
+			label:       "different-label",
+			wantAccept:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			current := &v2.SessionRecord{
+				GUID:  "guid-existing",
+				State: v2.StateSeated,
+				Label: "stable-label",
+				Seat:  &v2.Seat{TerminalID: "term-live"},
+			}
+			if tt.recordedSID != "" {
+				current.SIDs = []v2.SID{{SID: tt.recordedSID}}
+			}
+			live := hcomidentity.Result{Name: "bus-live", SessionID: tt.liveSID, Verified: true}
+			err := verifyExistingGUIDOwner(current, herdrcli.Pane{TerminalID: tt.terminalID}, live, tt.label)
+			if tt.wantAccept && err != nil {
+				t.Fatalf("bootstrap proof refused: %v", err)
+			}
+			if !tt.wantAccept && err == nil {
+				t.Fatal("incomplete bootstrap proof accepted")
+			}
+		})
+	}
+}
+
 // TestShouldRetirePriorRow pins TASK-035 P1-b: retire-on-reenroll must not
 // close a row that could be a different, still-live session sharing a
 // moved/reshuffled pane_id. terminal_id is the move-stable coordinate; a joined

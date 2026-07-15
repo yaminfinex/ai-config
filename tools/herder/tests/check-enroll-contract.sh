@@ -202,7 +202,8 @@ if [[ "$WRITE" -eq 0 ]]; then
 	HELP_OUT="$("${HEN[@]}" --help 2>/dev/null | tr '\n' ' ')"
 	if grep -q 'stored bus name' <<<"$HELP_OUT" \
 	  && grep -q 'exact recorded/live session id match' <<<"$HELP_OUT" \
-	  && grep -q 'unchanged terminal and unchanged label' <<<"$HELP_OUT"; then
+	  && grep -q 'unchanged terminal and unchanged label' <<<"$HELP_OUT" \
+	  && grep -q 'may bootstrap it' <<<"$HELP_OUT"; then
 		printf 'PASS  help: guid reuse states the exact ownership proof\n'
 	else
 		printf 'FAIL  help: guid reuse does not state stored-bus AND (session OR terminal+label) proof\n'; fail=1
@@ -238,6 +239,48 @@ JSONL
 		printf 'PASS  repair: stale sid accepts full seated proof and records the live sid\n'
 	else
 		printf 'FAIL  repair: stale sid full-seat proof — rc=%s err=%s out=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")" "$RUN_OUT"; fail=1
+	fi
+
+	CASE="$ROOT/bootstrap-empty-stored-bus"
+	mkdir -p "$CASE/home" "$CASE/state"
+	cat >"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"node","event":"node_registered","node_id":"11111111-1111-1111-1111-111111111111","recorded_at":"2026-07-12T00:00:00Z"}
+{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_verified":false},"provenance":{"mechanism":"clear"}}
+JSONL
+	printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
+	RUN_ERR_F="$CASE/bootstrap.stderr"
+	RUN_OUT="$(env -i \
+	  PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+	  HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-existing-0000 HERDER_ROLE=worker \
+	  HCOM_SESSION_ID=sid-live \
+	  MOCK_HCOM_ROWS='[{"name":"bootstrap-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+	  "${HEN[@]}" --label stable --json 2>"$RUN_ERR_F")"
+	RUN_RC=$?
+	if [[ "$RUN_RC" -eq 0 ]] && tail -n1 "$CASE/state/registry.jsonl" | jq -e '
+	  .guid == "guid-existing-0000" and .seat.hcom_name == "bootstrap-bus" and
+	  .seat.hcom_verified == true and .provenance.tool_session_id == "sid-live" and
+	  (.sids | length == 1 and .[0].sid == "sid-live")
+	' >/dev/null; then
+		printf 'PASS  bootstrap: empty stored bus captures verified live name and sid\n'
+	else
+		printf 'FAIL  bootstrap: empty stored bus capture — rc=%s err=%s out=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")" "$RUN_OUT"; fail=1
+	fi
+	cp "$CASE/state/registry.jsonl" "$CASE/after-bootstrap.jsonl"
+	RUN_ERR_F="$CASE/rekey.stderr"
+	RUN_OUT="$(env -i \
+	  PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+	  HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-existing-0000 HERDER_ROLE=worker \
+	  HCOM_SESSION_ID=sid-live \
+	  MOCK_HCOM_ROWS='[{"name":"different-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+	  "${HEN[@]}" --label stable 2>"$RUN_ERR_F")"
+	RUN_RC=$?
+	if [[ "$RUN_RC" -eq 1 ]] \
+	  && cmp -s "$CASE/after-bootstrap.jsonl" "$CASE/state/registry.jsonl" \
+	  && grep -q 'different-bus' "$RUN_ERR_F" \
+	  && grep -q 'stored bus name @bootstrap-bus' "$RUN_ERR_F"; then
+		printf 'PASS  bootstrap: captured binding makes a different live name refuse\n'
+	else
+		printf 'FAIL  bootstrap: captured binding replay guard — rc=%s err=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")"; fail=1
 	fi
 
 	check_guid_reuse_refusal() {
