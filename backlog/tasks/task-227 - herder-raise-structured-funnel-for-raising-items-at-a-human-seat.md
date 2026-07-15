@@ -1,10 +1,10 @@
 ---
 id: TASK-227
 title: 'herder raise: structured funnel for raising items at a human seat'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-15 05:02'
-updated_date: '2026-07-15 05:03'
+updated_date: '2026-07-15 08:38'
 labels:
   - herder
 dependencies: []
@@ -33,9 +33,25 @@ Independent of the join/spawn-mission lane — parallelizable.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A raise lands as a managed thread in mission control's inbox with correct expects
-- [ ] #2 A bare raise attempt (missing --context and/or --expects) refuses with actionable text naming the missing field
-- [ ] #3 Unit tests cover the refusal matrix (each missing/invalid field combination)
-- [ ] #4 Intent derivation: reply/decide -> request; act/read -> inform; covered by tests
-- [ ] #5 No new bus message shape; the send is an ordinary hcom send to the configured seat
+- [x] #1 A raise lands as a managed thread in mission control's inbox with correct expects
+- [x] #2 A bare raise attempt (missing --context and/or --expects) refuses with actionable text naming the missing field
+- [x] #3 Unit tests cover the refusal matrix (each missing/invalid field combination)
+- [x] #4 Intent derivation: reply/decide -> request; act/read -> inform; covered by tests
+- [x] #5 No new bus message shape; the send is an ordinary hcom send to the configured seat
 <!-- AC:END -->
+
+
+
+
+
+
+
+
+
+
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged 16f4a9e (--no-ff; one conflict in check-help-contract.sh resolved as union of 227/228 verb lists, validated against cli.go registrations by the incumbent post-merge). Shipped: herder raise --context --expects decide|act|reply|read [--thread] [--mission] -- body. Wire contract (mc-parsed literals): context line 1; 'Expects: <v>' line 2; 'Mission: <slug>' line 3 when resolved; blank; body. Intent: decide/reply->request, act/read->inform. Seat config raise.seat in node-local config.json, fail-closed, no compiled default, read-only config access. Mission: explicit --mission wins via mish resolve; ambient cwd fallback; no_context -> valid missionless; refusals stop before send (zero partial sends proven). Review: opus incumbent fix-list -> F1 (line-boundary guard under-inclusive: 8 Unicode separators beyond \r\n enabled a proven read->decide Expects-spoof for Python/JS peers) fixed red-first with all ten chars individually mutation-pinned + calibration N1 folded (resolved-slug line-break refusal); delta APPROVE with independent re-verification. Grok calibration APPROVE (ledger row 19). Gates: independent 60/60 at 47c3770, re-gate 60/60 at caea1d2, post-merge 60/60 on main (first restarted after a disclosed mid-gate board-commit violation — run voided, restarted, green). Follow-ups filed: dual-resolver divergence watch; help-contract coverage gap; ExitError-path test nit recorded here (behavior correct, unpinned).
+<!-- SECTION:NOTES:END -->
