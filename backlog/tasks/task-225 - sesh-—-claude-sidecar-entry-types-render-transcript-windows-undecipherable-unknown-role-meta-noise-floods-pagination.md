@@ -3,7 +3,7 @@ id: TASK-225
 title: >-
   sesh — claude sidecar entry types render transcript windows undecipherable:
   unknown-role meta noise floods pagination
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 14:55'
 labels:
