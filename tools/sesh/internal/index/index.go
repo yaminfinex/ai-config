@@ -690,17 +690,11 @@ func parseTime(raw string) *time.Time {
 }
 
 func (idx *Indexer) insertRows(ctx context.Context, rows []indexedMessage) error {
-	dedupInsert, err := idx.prepareContext(ctx, `INSERT INTO sesh_index_messages
-		(tool, logical_session_id, parsed_logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ''
-		WHERE NOT EXISTS (
-			SELECT 1 FROM sesh_index_messages
-			WHERE quarantine = 0 AND tool = ? AND logical_session_id = ? AND entry_type = ? AND message_uuid = ?
-		)`)
-	if err != nil {
-		return err
-	}
-	defer dedupInsert.Close()
+	// Keep duplicate candidates until the touched logical component has been
+	// unified and assigned final file ordinals. dedupeLogical then chooses by
+	// the same deterministic preference key as full Reindex instead of the
+	// insert statement's replay order. Empty UUIDs follow this insert path but
+	// remain excluded from every dedupe and unification query.
 	plainInsert, err := idx.prepareContext(ctx, `INSERT INTO sesh_index_messages
 		(tool, logical_session_id, parsed_logical_session_id, wire_session_id, entry_type, message_uuid, file_uuid, generation, role, timestamp_utc, file_ordinal, line_ordinal, byte_start, byte_end, quarantine, quarantine_reason)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')`)
@@ -732,13 +726,6 @@ func (idx *Indexer) insertRows(ctx context.Context, rows []indexedMessage) error
 		}
 		args := []any{row.Tool, row.LogicalSessionID, row.ParsedLogicalSessionID, row.WireSessionID, row.EntryType, row.MessageUUID,
 			row.FileUUID, row.Generation, row.Role, nullableTime(row.TimestampUTC), row.FileOrdinal, row.LineOrdinal, row.ByteStart, row.ByteEnd}
-		if row.MessageUUID != "" {
-			_, err = dedupInsert.ExecContext(ctx, append(args, row.Tool, row.LogicalSessionID, row.EntryType, row.MessageUUID)...)
-			if err != nil {
-				return err
-			}
-			continue
-		}
 		_, err := plainInsert.ExecContext(ctx, args...)
 		if err != nil {
 			return err
@@ -936,10 +923,27 @@ func (idx *Indexer) unifyConnectedLogicalSessions(ctx context.Context, ev wire.A
 	}
 	dedupeStart := time.Now()
 	err = idx.dedupeLogical(ctx, group[0].tool, canonical)
+	if err == nil {
+		err = idx.compactLogicalFileOrdinals(ctx, group[0].tool, canonical)
+	}
 	if idx.timing != nil {
 		idx.timing.dedupe = time.Since(dedupeStart)
 	}
 	return err
+}
+
+func (idx *Indexer) compactLogicalFileOrdinals(ctx context.Context, tool wire.Tool, logical string) error {
+	group, err := idx.sameLogicalFiles(ctx, fileSummary{tool: tool, logicalID: logical})
+	if err != nil {
+		return err
+	}
+	sort.Slice(group, func(i, j int) bool {
+		if group[i].firstIngest != group[j].firstIngest {
+			return group[i].firstIngest < group[j].firstIngest
+		}
+		return group[i].key < group[j].key
+	})
+	return idx.updateFileOrdinalsForFiles(ctx, group)
 }
 
 func (idx *Indexer) connectedFiles(ctx context.Context, start fileSummary) ([]fileSummary, error) {
@@ -1096,7 +1100,12 @@ func (idx *Indexer) unifyLogicalSessions(ctx context.Context) error {
 	if err := idx.updateFileOrdinals(ctx); err != nil {
 		return err
 	}
-	return idx.dedupeAll(ctx)
+	if err := idx.dedupeAll(ctx); err != nil {
+		return err
+	}
+	// Dedupe can remove every row contributed by a file. Compact afterward
+	// so replay and incremental maintenance both number only surviving files.
+	return idx.updateFileOrdinals(ctx)
 }
 
 func (idx *Indexer) updateFileOrdinals(ctx context.Context) error {
