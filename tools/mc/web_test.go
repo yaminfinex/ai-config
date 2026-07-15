@@ -210,8 +210,139 @@ printf '%%s\n' "$*" >> %q
 		t.Fatal(err)
 	}
 	sends := string(raw)
-	if !strings.Contains(sends, "@builder-live") || strings.Contains(sends, "@builder-dead") || strings.Contains(sends, "orphaned") {
+	if !strings.Contains(sends, "@builder-live") || strings.Contains(sends, "@builder-dead") || !strings.Contains(sends, "--thread orphaned") {
 		t.Fatalf("filtered close sends = %q", sends)
+	}
+}
+
+func TestReplyFiltersDeadParticipantsPostsAndJournals(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "sends.txt")
+	hcom := writeExecutable(t, dir, "hcom", fmt.Sprintf(`#!/bin/sh
+if [ "$1" = list ]; then
+  printf '%%s\n' '[{"name":"builder-live","status":"active"},{"name":"builder-dead","status":"inactive"}]'
+  exit 0
+fi
+printf '%%s\n' "$*" >> %q
+`, capture))
+	ing, s := testIngestor(t)
+	if err := s.Open("mixed", "mixed", "ctx", "reply", "moment", "", "human-yamen", []string{"builder-live", "builder-dead"}, "builder-live,builder-dead", "managed"); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWeb(s, &Bus{Hcom: hcom}, ing, "human-yamen", "owner", "", nil)
+	form := url.Values{"text": {"still here"}, "intent": {"inform"}}
+	req := httptest.NewRequest(http.MethodPost, "/thread/mixed/reply", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rw := httptest.NewRecorder()
+	w.Routes().ServeHTTP(rw, req)
+	if rw.Code != http.StatusSeeOther || rw.Header().Get("Location") != "/thread/mixed" {
+		t.Fatalf("reply = %d Location %q", rw.Code, rw.Header().Get("Location"))
+	}
+	raw, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sent := string(raw); !strings.Contains(sent, "@builder-live") || strings.Contains(sent, "@builder-dead") || !strings.Contains(sent, "--thread mixed") {
+		t.Fatalf("filtered reply send = %q", sent)
+	}
+
+	// The bus remains the message source of truth; folding its resulting event
+	// journals the successful post without re-adding either agent alias.
+	fold(t, ing, busEvent(101, "human-yamen", "mixed", "still here", "inform"))
+	if got := s.Get("mixed"); len(got.Msgs) != 1 || got.Msgs[0].Text != "still here" {
+		t.Fatalf("journaled thread = %#v", got)
+	}
+	rw = httptest.NewRecorder()
+	w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/thread/mixed", nil))
+	if !strings.Contains(rw.Body.String(), "1 of 2 agent participants live") {
+		t.Fatalf("thread missing dead-member state: %s", rw.Body.String())
+	}
+}
+
+func TestReplyAllDeadStillPostsThreadOnly(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "sends.txt")
+	hcom := writeExecutable(t, dir, "hcom", fmt.Sprintf(`#!/bin/sh
+if [ "$1" = list ]; then
+  printf '%%s\n' '[{"name":"builder-dead","status":"inactive"}]'
+  exit 0
+fi
+printf '%%s\n' "$*" >> %q
+`, capture))
+	ing, s := testIngestor(t)
+	if err := s.Open("orphan", "orphan", "ctx", "reply", "moment", "", "human-yamen", []string{"builder-dead"}, "builder-dead", "managed"); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWeb(s, &Bus{Hcom: hcom}, ing, "human-yamen", "owner", "", nil)
+	form := url.Values{"text": {"record this"}}
+	req := httptest.NewRequest(http.MethodPost, "/thread/orphan/reply", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rw := httptest.NewRecorder()
+	w.Routes().ServeHTTP(rw, req)
+	if rw.Code != http.StatusSeeOther || rw.Header().Get("Location") != "/thread/orphan" {
+		t.Fatalf("all-dead reply = %d Location %q", rw.Code, rw.Header().Get("Location"))
+	}
+	raw, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sent := string(raw); strings.Contains(sent, "@builder-dead") || !strings.Contains(sent, "--thread orphan") || !strings.Contains(sent, "record this") {
+		t.Fatalf("thread-only reply = %q", sent)
+	}
+}
+
+func TestSendRaceFallsBackToThreadOnly(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "sends.txt")
+	hcom := writeExecutable(t, dir, "hcom", fmt.Sprintf(`#!/bin/sh
+if [ "$1" = list ]; then
+  printf '%%s\n' '[{"name":"builder-live","status":"active"}]'
+  exit 0
+fi
+printf '%%s\n' "$*" >> %q
+case "$*" in
+  *"@builder-live"*) printf '%%s\n' 'agent stopped during send' >&2; exit 1 ;;
+esac
+`, capture))
+	w := NewWeb(nil, &Bus{Hcom: hcom}, nil, "human-yamen", "owner", "", nil)
+	warn, err := w.sendToThread("human-yamen", []string{"builder-live"}, "race", "inform", "land anyway")
+	if err != nil || !strings.Contains(warn, "changed before send") {
+		t.Fatalf("race fallback warning %q err %v", warn, err)
+	}
+	raw, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sends := strings.TrimSpace(string(raw)); strings.Count(sends, "\n") != 1 || !strings.Contains(sends, "@builder-live") || !strings.Contains(sends, "--thread race") {
+		t.Fatalf("race sends = %q, want addressed attempt plus thread-only fallback", sends)
+	}
+}
+
+func TestRosterUsesCanonicalBusAddressWithoutDuplicateParticipant(t *testing.T) {
+	dir := t.TempDir()
+	hcom := writeExecutable(t, dir, "hcom", `#!/bin/sh
+printf '%s\n' '[{"name":"builder-beta","base_name":"beta","status":"inactive"}]'
+`)
+	herder := writeExecutable(t, dir, "herder", "#!/bin/sh\nexit 0\n")
+	_, s := testIngestor(t)
+	w := NewWeb(s, &Bus{Hcom: hcom}, nil, "human-yamen", "owner", herder, nil)
+	targets, _, err := w.resolveTalkTarget("agent", "builder-beta")
+	if err != nil || len(targets) != 1 || targets[0] != "beta" {
+		t.Fatalf("canonical target = %v err %v, want [beta]", targets, err)
+	}
+	if err := s.Open("aliases", "aliases", "ctx", "reply", "moment", "", "human-yamen", targets, "beta", "managed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Link("aliases", Msg{BusID: 1, From: "beta", Text: "reply"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Get("aliases").With; len(got) != 1 || got[0] != "beta" {
+		t.Fatalf("participants = %v, want one canonical bus name", got)
+	}
+
+	canonical := canonicalParticipantTargets([]string{"builder-beta", "beta"}, []BusAgent{{Name: "builder-beta", BaseName: "beta", Status: "active"}})
+	if len(canonical.wanted) != 1 || len(canonical.live) != 1 || canonical.live[0] != "beta" {
+		t.Fatalf("canonicalized legacy aliases = %#v", canonical)
 	}
 }
 

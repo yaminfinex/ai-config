@@ -294,16 +294,15 @@ func (w *Web) talkPost(rw http.ResponseWriter, r *http.Request) {
 		w.render(rw, 500, d)
 		return
 	}
-	if err := w.bus.Send(user, targets, id, "", "request", d.F["message"]); err != nil {
-		// Store opened but delivery refused (e.g. unknown agent): close the
-		// record honestly rather than leave a phantom open thread.
+	warn, err := w.sendToThread(user, targets, id, "request", d.F["message"])
+	if err != nil {
 		_ = w.store.Close(id, "delivery failed: "+err.Error())
 		d.Error = "bus refused delivery: " + err.Error()
 		w.render(rw, 502, d)
 		return
 	}
 	w.ing.Kick()
-	http.Redirect(rw, r, "/thread/"+id, http.StatusSeeOther)
+	redirectThread(rw, r, id, warn)
 }
 
 func (w *Web) openRedirect(rw http.ResponseWriter, r *http.Request) {
@@ -360,18 +359,14 @@ func (w *Web) reply(rw http.ResponseWriter, r *http.Request) {
 		http.Redirect(rw, r, "/thread/"+id+"?err=refused:+empty+reply", http.StatusSeeOther)
 		return
 	}
-	targets := agentTargets(t, w.userFor(r))
-	if len(targets) == 0 {
-		http.Redirect(rw, r, "/thread/"+id+"?err=refused:+no+addressable+agent+on+this+thread", http.StatusSeeOther)
-		return
-	}
-	if err := w.bus.Send(w.userFor(r), targets, id, "", r.FormValue("intent"), text); err != nil {
+	warn, err := w.sendToThread(w.userFor(r), agentTargets(t, w.userFor(r)), id, r.FormValue("intent"), text)
+	if err != nil {
 		http.Redirect(rw, r, "/thread/"+id+"?err="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
 		return
 	}
 	w.ing.Kick()
 	time.Sleep(300 * time.Millisecond) // let the kick land so the redirect shows the message
-	http.Redirect(rw, r, "/thread/"+id, http.StatusSeeOther)
+	redirectThread(rw, r, id, warn)
 }
 
 func (w *Web) close(rw http.ResponseWriter, r *http.Request) {
@@ -398,13 +393,11 @@ func (w *Web) close(rw http.ResponseWriter, r *http.Request) {
 		http.Redirect(rw, r, "/thread/"+id+"?err="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
 		return
 	}
-	if targets, err := w.liveAgentTargets(t, user); err != nil {
-		// The close is durable even when liveness cannot be inspected. Do not
-		// risk a mixed live/dead send, and do not present lookup failure as a
-		// delivery failure.
-		log.Printf("close notice liveness for %s: %v", id, err)
-	} else if len(targets) > 0 {
-		if err := w.bus.Send(user, targets, id, "", "inform", "[thread closed] "+res); err != nil {
+	warn := ""
+	if wanted := agentTargets(t, user); len(wanted) > 0 {
+		var err error
+		warn, err = w.sendToThread(user, wanted, id, "inform", "[thread closed] "+res)
+		if err != nil {
 			log.Printf("close notice for %s: %v", id, err)
 			w.ing.Kick()
 			http.Redirect(rw, r, "/?err="+template.URLQueryEscaper("closed, but the bus notice failed: "+err.Error()), http.StatusSeeOther)
@@ -412,7 +405,11 @@ func (w *Web) close(rw http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.ing.Kick()
-	http.Redirect(rw, r, "/", http.StatusSeeOther)
+	dest := "/"
+	if warn != "" {
+		dest += "?err=" + template.URLQueryEscaper(warn)
+	}
+	http.Redirect(rw, r, dest, http.StatusSeeOther)
 }
 
 func (w *Web) reopen(rw http.ResponseWriter, r *http.Request) {
@@ -476,14 +473,17 @@ type rosterBranchGroup struct {
 }
 
 type rosterAgent struct {
-	Name   string
-	Tool   string
-	Status string
-	Detail string
-	Unread int
-	Role   string
-	Branch string
-	GUID   string
+	Name string
+	// Address is hcom's canonical bus name. Name remains the descriptive
+	// herder label rendered in the roster (for example builder-nezi).
+	Address string
+	Tool    string
+	Status  string
+	Detail  string
+	Unread  int
+	Role    string
+	Branch  string
+	GUID    string
 	// Unmanaged means hcom knows this row but the herder registry does not.
 	Unmanaged bool
 }
@@ -549,7 +549,7 @@ func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {
 		if !showAll && a.Status == "inactive" {
 			continue
 		}
-		ra := rosterAgent{Name: a.Name, Tool: a.Tool, Status: a.Status, Detail: a.StatusCtx, Unread: int(a.Unread)}
+		ra := rosterAgent{Name: a.Name, Address: canonicalBusName(a), Tool: a.Tool, Status: a.Status, Detail: a.StatusCtx, Unread: int(a.Unread)}
 		// Group by spawn-grain cwd (declared intent) when herder knows the
 		// session; the bus directory tracks the live shell as it wanders.
 		dir := a.Directory
@@ -577,7 +577,7 @@ func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {
 		if !showAll && h.Status != "seated" {
 			continue
 		}
-		add(h.Cwd, rosterAgent{Name: h.Label, Tool: h.Agent, Status: h.Status, Role: h.Role, Branch: h.Branch, GUID: h.GUID})
+		add(h.Cwd, rosterAgent{Name: h.Label, Address: h.Label, Tool: h.Agent, Status: h.Status, Role: h.Role, Branch: h.Branch, GUID: h.GUID})
 	}
 	var out []rosterGroup
 	for _, g := range missionGroups {
@@ -649,8 +649,28 @@ func (w *Web) resolveTalkTarget(kind, target string) ([]string, string, error) {
 	case "agent":
 		for _, g := range groups {
 			for _, a := range g.Agents {
-				if a.Name == target {
-					return []string{target}, g.Mission, nil
+				if a.Name == target || a.Address == target {
+					return []string{a.Address}, g.Mission, nil
+				}
+			}
+			for _, repo := range g.Repos {
+				for _, branch := range repo.Branches {
+					for _, a := range branch.Agents {
+						if a.Name == target || a.Address == target {
+							return []string{a.Address}, g.Mission, nil
+						}
+					}
+				}
+			}
+		}
+		// Active-only roster grouping deliberately omits inactive rows, but a
+		// direct target may still name one. Canonicalize known historical rows
+		// before recording the participant even though delivery will be
+		// thread-only until that agent returns.
+		if agents, err := w.bus.List(); err == nil {
+			for _, a := range agents {
+				if a.Name == target || a.BaseName == target {
+					return []string{canonicalBusName(a)}, "", nil
 				}
 			}
 		}
@@ -664,8 +684,8 @@ func (w *Web) resolveTalkTarget(kind, target string) ([]string, string, error) {
 			}
 			var targets []string
 			for _, a := range g.Agents {
-				if a.Name != "" && a.Name != w.seat && !contains(targets, a.Name) {
-					targets = append(targets, a.Name)
+				if a.Address != "" && a.Address != w.seat && !contains(targets, a.Address) {
+					targets = append(targets, a.Address)
 				}
 			}
 			if len(targets) == 0 {
@@ -715,30 +735,54 @@ func liveBusStatus(status string) bool {
 	}
 }
 
-func (w *Web) liveAgentTargets(t *Thread, user string) ([]string, error) {
-	wanted := agentTargets(t, user)
+func canonicalBusName(a BusAgent) string {
+	if a.BaseName != "" {
+		return a.BaseName
+	}
+	return a.Name
+}
+
+type participantTargets struct {
+	wanted []string
+	live   []string
+}
+
+func canonicalParticipantTargets(wanted []string, agents []BusAgent) participantTargets {
+	aliases := make(map[string]string, len(agents)*2)
+	live := make(map[string]bool, len(agents))
+	for _, a := range agents {
+		canonical := canonicalBusName(a)
+		aliases[a.Name] = canonical
+		aliases[a.BaseName] = canonical
+		if liveBusStatus(a.Status) {
+			live[canonical] = true
+		}
+	}
+	var out participantTargets
+	for _, name := range wanted {
+		canonical := aliases[name]
+		if canonical == "" {
+			canonical = name
+		}
+		if !contains(out.wanted, canonical) {
+			out.wanted = append(out.wanted, canonical)
+		}
+		if live[canonical] && !contains(out.live, canonical) {
+			out.live = append(out.live, canonical)
+		}
+	}
+	return out
+}
+
+func (w *Web) participantTargets(wanted []string) (participantTargets, error) {
 	if len(wanted) == 0 {
-		return nil, nil
+		return participantTargets{}, nil
 	}
 	agents, err := w.bus.List()
 	if err != nil {
-		return nil, err
+		return participantTargets{}, err
 	}
-	live := make(map[string]bool, len(agents)*2)
-	for _, a := range agents {
-		if !liveBusStatus(a.Status) {
-			continue
-		}
-		live[a.Name] = true
-		live[a.BaseName] = true
-	}
-	var out []string
-	for _, name := range wanted {
-		if live[name] {
-			out = append(out, name)
-		}
-	}
-	return out, nil
+	return canonicalParticipantTargets(wanted, agents), nil
 }
 
 func (w *Web) participantState(t *Thread, user string) string {
@@ -746,17 +790,47 @@ func (w *Web) participantState(t *Thread, user string) string {
 	if len(wanted) == 0 {
 		return ""
 	}
-	live, err := w.liveAgentTargets(t, user)
+	targets, err := w.participantTargets(wanted)
 	if err != nil {
 		return "participant liveness unavailable"
 	}
-	if len(live) == 0 {
+	if len(targets.live) == 0 {
 		return "all agent participants gone"
 	}
-	if len(live) < len(wanted) {
-		return fmt.Sprintf("%d of %d agent participants live", len(live), len(wanted))
+	if len(targets.live) < len(targets.wanted) {
+		return fmt.Sprintf("%d of %d agent participants live", len(targets.live), len(targets.wanted))
 	}
-	return fmt.Sprintf("%d agent participants live", len(live))
+	return fmt.Sprintf("%d agent participants live", len(targets.live))
+}
+
+// sendToThread is the only outbound bus-send path. It resolves canonical bus
+// names, removes dead mentions, and always attempts a thread-only post when
+// liveness is unavailable or a participant dies between the check and send.
+func (w *Web) sendToThread(user string, wanted []string, thread, intent, text string) (string, error) {
+	targets, lookupErr := w.participantTargets(wanted)
+	if lookupErr != nil {
+		if err := w.bus.Send(user, nil, thread, "", intent, text); err != nil {
+			return "", err
+		}
+		return "message posted to thread; participant liveness unavailable", nil
+	}
+	if err := w.bus.Send(user, targets.live, thread, "", intent, text); err == nil {
+		return "", nil
+	} else if len(targets.live) == 0 {
+		return "", err
+	}
+	if err := w.bus.Send(user, nil, thread, "", intent, text); err != nil {
+		return "", err
+	}
+	return "message posted to thread; participant delivery changed before send", nil
+}
+
+func redirectThread(rw http.ResponseWriter, r *http.Request, id, warning string) {
+	dest := "/thread/" + id
+	if warning != "" {
+		dest += "?err=" + template.URLQueryEscaper(warning)
+	}
+	http.Redirect(rw, r, dest, http.StatusSeeOther)
 }
 
 func splitNames(s string) []string {
