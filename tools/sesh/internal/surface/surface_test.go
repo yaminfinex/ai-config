@@ -2,6 +2,7 @@ package surface_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -104,9 +105,10 @@ func TestResumePairRendersOneTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) <= surface.TranscriptWindowMessages {
-		t.Fatalf("fixture holds %d rows; this test needs the resume pair to span more than one %d-message window",
-			len(rows), surface.TranscriptWindowMessages)
+	renderable := renderableRowCount(wire.ToolClaude, rows)
+	if len(rows) <= surface.TranscriptWindowMessages || renderable >= len(rows) {
+		t.Fatalf("fixture premise rows=%d renderable=%d; need a sidecar-heavy index larger than one window",
+			len(rows), renderable)
 	}
 
 	// The transcript is windowed (bounded pages, latest window first): walk
@@ -114,7 +116,7 @@ func TestResumePairRendersOneTranscript(t *testing.T) {
 	seen := map[string]int{}
 	entries := 0
 	var whole strings.Builder
-	lastPage := (len(rows) + surface.TranscriptWindowMessages - 1) / surface.TranscriptWindowMessages
+	lastPage := (renderable + surface.TranscriptWindowMessages - 1) / surface.TranscriptWindowMessages
 	for page := 1; page <= lastPage; page++ {
 		path := "/s/claude/" + uuidResumeOrig
 		if page > 1 {
@@ -128,7 +130,7 @@ func TestResumePairRendersOneTranscript(t *testing.T) {
 		}
 		want := surface.TranscriptWindowMessages
 		if page == lastPage {
-			want = len(rows) - (lastPage-1)*surface.TranscriptWindowMessages
+			want = renderable - (lastPage-1)*surface.TranscriptWindowMessages
 		}
 		if n := strings.Count(body, `<li class="entry`); n != want {
 			t.Errorf("window %d rendered %d entries, want %d", page, n, want)
@@ -145,8 +147,8 @@ func TestResumePairRendersOneTranscript(t *testing.T) {
 			t.Errorf("message uuid %s rendered %d times; resume pair must render one transcript (S2)", uuid, n)
 		}
 	}
-	if entries != len(rows) {
-		t.Errorf("windows rendered %d entries in total, index holds %d deduped rows", entries, len(rows))
+	if entries != renderable {
+		t.Errorf("windows rendered %d entries in total, want %d renderable rows from %d index rows", entries, renderable, len(rows))
 	}
 
 	// Both mirrored files feed the one transcript.
@@ -202,6 +204,64 @@ func TestTranscriptWindowBoundsLargeSession(t *testing.T) {
 		if body := mustGet200(t, srv, path); !strings.Contains(body, want) {
 			t.Errorf("GET %s must render %q", path, want)
 		}
+	}
+}
+
+func TestTranscriptWindowsCountConversationNotClaudeMetadata(t *testing.T) {
+	const messages = surface.TranscriptWindowMessages + 5
+	var data []byte
+	for i := 0; i < messages; i++ {
+		timestamp := fmt.Sprintf("2026-07-15T12:%02d:%02dZ", (i/60)%60, i%60)
+		message := fmt.Sprintf(`{"type":"assistant","uuid":"%08d-aaaa-4000-8000-000000000000","sessionId":"%s","timestamp":"%s","message":{"role":"assistant","content":[{"type":"text","text":"message-%03d"}]}}`,
+			i, uuidNormal, timestamp, i)
+		meta := fmt.Sprintf(`{"type":"mode","mode":"default","sessionId":"%s","timestamp":"%s"}`, uuidNormal, timestamp)
+		data = append(data, message...)
+		data = append(data, '\n')
+		data = append(data, meta...)
+		data = append(data, '\n')
+	}
+	srv := newServer(t, oneFileStore(t, data, false))
+
+	latest := mustGet200(t, srv, "/s/claude/"+uuidNormal)
+	if n := strings.Count(latest, `<li class="entry`); n != surface.TranscriptWindowMessages {
+		t.Fatalf("latest window rendered %d entries, want %d conversation messages", n, surface.TranscriptWindowMessages)
+	}
+	if !strings.Contains(latest, "messages 6–205 of 205") {
+		t.Error("latest window count includes Claude metadata")
+	}
+	if !strings.Contains(latest, "200 known metadata lines excluded from this window") {
+		t.Error("latest window does not report its excluded metadata")
+	}
+	if strings.Contains(latest, `<span class="etype">mode</span>`) {
+		t.Error("known Claude metadata rendered as a conversation entry")
+	}
+
+	older := mustGet200(t, srv, "/s/claude/"+uuidNormal+"?page=2")
+	if n := strings.Count(older, `<li class="entry`); n != 5 {
+		t.Fatalf("older window rendered %d entries, want 5 conversation messages", n)
+	}
+	if !strings.Contains(older, "messages 1–5 of 205") {
+		t.Error("older window count includes Claude metadata")
+	}
+	if !strings.Contains(older, "5 known metadata lines excluded from this window") {
+		t.Error("older window does not report its five excluded metadata lines")
+	}
+}
+
+func TestClaudeMetadataOnlySessionRendersRawFallback(t *testing.T) {
+	line := []byte(`{"type":"mode","mode":"default","sessionId":"` + uuidNormal + `"}` + "\n")
+	srv := newServer(t, oneFileStore(t, line, false))
+
+	body := mustGet200(t, srv, "/s/claude/"+uuidNormal)
+	if !strings.Contains(body, "no renderable index rows") {
+		t.Error("metadata-only Claude session must take the raw fallback")
+	}
+	if !strings.Contains(body, "mode") || !strings.Contains(body, "default") {
+		t.Error("raw fallback must retain the sidecar's mirrored content")
+	}
+	raw := mustGet200(t, srv, "/s/claude/"+uuidNormal+"/raw")
+	if !strings.Contains(raw, "mode") || !strings.Contains(raw, "default") {
+		t.Error("raw view must retain metadata-only mirror bytes")
 	}
 }
 

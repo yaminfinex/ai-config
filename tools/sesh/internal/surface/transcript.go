@@ -34,9 +34,9 @@ const (
 	// omitted-rows notice and points at the raw view.
 	transcriptDisplayBudgetBytes = 8 << 20
 	// transcriptWindowMessages bounds one transcript page to a window of the
-	// session's index rows, newest window first — the same pager idiom as
-	// the sessions list. A session renders whole only when it fits one
-	// window; older history stays reachable through ?page=N links, and the
+	// session's renderable conversation rows, newest window first — the same
+	// pager idiom as the sessions list. A session renders whole only when those
+	// rows fit one window; older history stays reachable through ?page=N links, and the
 	// raw route stays whole-file. The display budget above remains the
 	// byte-level backstop within a window.
 	transcriptWindowMessages = 200
@@ -58,10 +58,14 @@ type transcriptPage struct {
 	// cannot be resolved safely. A valid Pi tree instead labels its branch
 	// points on the active-path entries.
 	BranchNotice string
+	// KnownMetaRows counts deliberately classified Claude state records in
+	// this page's contiguous raw-row interval. They stay in the index and raw
+	// view but do not consume conversation-window slots.
+	KnownMetaRows int
 
-	// Window pager: index rows From–To of Total (1-based, oldest-first
-	// numbering) are on this page. Page 1 is the NEWEST window; OlderURL and
-	// NewerURL walk the history and are empty at the edges.
+	// Window pager: renderable conversation rows From–To of Total (1-based,
+	// oldest-first numbering) are on this page. Page 1 is the NEWEST window;
+	// OlderURL and NewerURL walk the history and are empty at the edges.
 	Total    int
 	From, To int
 	Page     int
@@ -83,7 +87,12 @@ func (s *Server) transcriptData(ctx context.Context, sum SessionSummary, rows []
 	if sum.Tool != wire.ToolPi {
 		sortTranscript(rows)
 	}
-	total := len(rows)
+	total := 0
+	for _, row := range rows {
+		if !knownTranscriptMeta(sum.Tool, row) {
+			total++
+		}
+	}
 	lastPage := (total + transcriptWindowMessages - 1) / transcriptWindowMessages
 	if lastPage < 1 {
 		lastPage = 1
@@ -102,14 +111,37 @@ func (s *Server) transcriptData(ctx context.Context, sum SessionSummary, rows []
 	if start < 0 {
 		start = 0
 	}
+	windowRows := make([]wire.IndexMessage, 0, end-start)
+	knownMetaRows := 0
+	visibleOrdinal := 0
+	inWindowInterval := start == 0
+	for _, row := range rows {
+		if knownTranscriptMeta(sum.Tool, row) {
+			if inWindowInterval {
+				knownMetaRows++
+			}
+			continue
+		}
+		if visibleOrdinal == end {
+			break
+		}
+		if visibleOrdinal == start {
+			inWindowInterval = true
+		}
+		if visibleOrdinal >= start {
+			windowRows = append(windowRows, row)
+		}
+		visibleOrdinal++
+	}
 	page := transcriptPage{
-		Session:      sum,
-		RawURL:       s.rawURL(sum),
-		Total:        total,
-		From:         start + 1,
-		To:           end,
-		Page:         pageN,
-		BranchNotice: branchNotice,
+		Session:       sum,
+		RawURL:        s.rawURL(sum),
+		Total:         total,
+		From:          start + 1,
+		To:            end,
+		Page:          pageN,
+		BranchNotice:  branchNotice,
+		KnownMetaRows: knownMetaRows,
 	}
 	if pageN > 1 {
 		page.NewerURL = transcriptPageURL(s.transcriptURL(sum), pageN-1)
@@ -117,8 +149,34 @@ func (s *Server) transcriptData(ctx context.Context, sum SessionSummary, rows []
 	if start > 0 {
 		page.OlderURL = transcriptPageURL(s.transcriptURL(sum), pageN+1)
 	}
-	page.Entries, page.OmittedRows = s.buildEntries(ctx, sum.Tool, rows[start:end], markers)
+	page.Entries, page.OmittedRows = s.buildEntries(ctx, sum.Tool, windowRows, markers)
 	return page
+}
+
+func knownTranscriptMeta(tool wire.Tool, row wire.IndexMessage) bool {
+	return tool == wire.ToolClaude && row.Role == "meta" && isClaudeSidecarEntryType(row.EntryType)
+}
+
+// isClaudeSidecarEntryType mirrors the indexer's deliberately exact
+// admitted-population allowlist. Checking both role and entry type keeps rows
+// written by an older parser degraded-visible if they happened to inherit
+// message.role=meta.
+func isClaudeSidecarEntryType(entryType string) bool {
+	switch entryType {
+	case "agent-name",
+		"ai-title",
+		"bridge-session",
+		"file-history-snapshot",
+		"last-prompt",
+		"mode",
+		"permission-mode",
+		"pr-link",
+		"queue-operation",
+		"worktree-state":
+		return true
+	default:
+		return false
+	}
 }
 
 func transcriptPageURL(base string, page int) string {

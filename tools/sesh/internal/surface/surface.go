@@ -80,7 +80,7 @@ type SessionSummary struct {
 	// session — the R14 secondary display field.
 	MirroredAt time.Time
 
-	MessageRows     int // non-quarantined index rows
+	MessageRows     int // non-quarantined renderable conversation rows
 	QuarantinedRows int
 	// IndexVersion is the maximum append-only index row id in this logical
 	// session's projection snapshot. Pi uses it only as a branch-cache stamp;
@@ -488,7 +488,7 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("surface: index rows read failed", "tool", string(sum.Tool), "error_class", errClass(err))
 		s.serveRawFallback(w, r, sum, "index unavailable — raw mirror lines")
 		return
-	case !renderableFromIndex(rows):
+	case !renderableFromIndex(sum.Tool, rows):
 		s.serveRawFallback(w, r, sum, "no renderable index rows (quarantined or unindexed) — raw mirror lines")
 		return
 	}
@@ -510,9 +510,9 @@ func (s *Server) handleRaw(w http.ResponseWriter, r *http.Request) {
 // renderableFromIndex reports whether the index gives the transcript page
 // anything to stand on. All-quarantined or empty row sets go to the mirror
 // fallback (S10): quarantine markers alone are not a transcript.
-func renderableFromIndex(rows []wire.IndexMessage) bool {
+func renderableFromIndex(tool wire.Tool, rows []wire.IndexMessage) bool {
 	for _, row := range rows {
-		if !row.Quarantine {
+		if !row.Quarantine && !knownTranscriptMeta(tool, row) {
 			return true
 		}
 	}

@@ -702,6 +702,22 @@ func parseToolLine(tool wire.Tool, line []byte) (parsedLine, error) {
 	}
 	switch tool {
 	case wire.ToolClaude:
+		// Claude Code appends state records beside conversation records in the
+		// same JSONL. Preserve their exact entry type and byte range in the
+		// index, but classify the known set as metadata so transcript windows
+		// can exclude them without guessing. Unknown future types deliberately
+		// retain the degraded-visible role below.
+		if isClaudeSidecarType(out.EntryType) {
+			out.Role = "meta"
+			break
+		}
+		// Only established conversation entry types may inherit a nested
+		// message role. A future sidecar could itself contain a message-shaped
+		// object (including role=meta); it must stay on the degraded-visible
+		// unknown floor until explicitly classified above.
+		if !isClaudeConversationType(out.EntryType) {
+			break
+		}
 		if msg, ok := raw["message"]; ok {
 			var m map[string]json.RawMessage
 			if json.Unmarshal(msg, &m) == nil {
@@ -774,6 +790,39 @@ func parseToolLine(tool wire.Tool, line []byte) (parsedLine, error) {
 		}
 	}
 	return out, nil
+}
+
+func isClaudeConversationType(entryType string) bool {
+	switch entryType {
+	case "assistant", "attachment", "message", "system", "user":
+		return true
+	default:
+		return false
+	}
+}
+
+// isClaudeSidecarType is the deliberately enumerated non-conversation set
+// observed and audited in the Claude session files sesh currently admits. Do
+// not replace this allowlist with a broad "not a known message type" rule:
+// recursively observed or future records must remain visible on the
+// transcript's degraded floor until admitted-population evidence justifies
+// excluding them.
+func isClaudeSidecarType(entryType string) bool {
+	switch entryType {
+	case "agent-name",
+		"ai-title",
+		"bridge-session",
+		"file-history-snapshot",
+		"last-prompt",
+		"mode",
+		"permission-mode",
+		"pr-link",
+		"queue-operation",
+		"worktree-state":
+		return true
+	default:
+		return false
+	}
 }
 
 func stringField(raw map[string]json.RawMessage, key string) string {

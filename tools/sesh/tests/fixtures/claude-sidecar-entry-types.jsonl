@@ -1,0 +1,16 @@
+{"type":"user","uuid":"10000000-0000-0000-0000-000000000001","sessionId":"10000000-0000-0000-0000-000000000000","timestamp":"2026-07-15T12:00:00Z","message":{"role":"user","content":[{"type":"text","text":"scrubbed fixture prompt"}]}}
+{"type":"mode","mode":"default","sessionId":"10000000-0000-0000-0000-000000000000"}
+{"type":"assistant","uuid":"10000000-0000-0000-0000-000000000002","sessionId":"10000000-0000-0000-0000-000000000000","timestamp":"2026-07-15T12:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"scrubbed fixture reply"}]}}
+{"type":"permission-mode","permissionMode":"default","sessionId":"10000000-0000-0000-0000-000000000000"}
+{"type":"ai-title","aiTitle":"Scrubbed fixture title","sessionId":"10000000-0000-0000-0000-000000000000"}
+{"type":"last-prompt","lastPrompt":"scrubbed fixture prompt","leafUuid":"10000000-0000-0000-0000-000000000002","sessionId":"10000000-0000-0000-0000-000000000000"}
+{"type":"agent-name","agentName":"scrubbed-agent","sessionId":"10000000-0000-0000-0000-000000000000"}
+{"type":"queue-operation","operation":"enqueue","content":"scrubbed queued prompt","sessionId":"10000000-0000-0000-0000-000000000000","timestamp":"2026-07-15T12:00:02Z"}
+{"type":"pr-link","prNumber":1,"prRepository":"example/repository","prUrl":"https://example.invalid/pull/1","sessionId":"10000000-0000-0000-0000-000000000000","timestamp":"2026-07-15T12:00:03Z"}
+{"type":"file-history-snapshot","isSnapshotUpdate":false,"messageId":"10000000-0000-0000-0000-000000000002","snapshot":{}}
+{"type":"worktree-state","sessionId":"10000000-0000-0000-0000-000000000000","worktreeSession":false}
+{"type":"fork-context-ref","agentId":"scrubbed-agent","contextLength":1,"parentLastUuid":"10000000-0000-0000-0000-000000000002","parentSessionId":"10000000-0000-0000-0000-000000000000"}
+{"type":"bridge-session","bridgeSessionId":"20000000-0000-0000-0000-000000000000","lastSequenceNum":1,"sessionId":"10000000-0000-0000-0000-000000000000"}
+{"type":"started","agentId":"scrubbed-agent","key":"scrubbed-key"}
+{"type":"result","agentId":"scrubbed-agent","key":"scrubbed-key","result":{"summary":"sole generated workflow analysis","findings":[{"title":"scrubbed substantive finding","evidence":["scrubbed evidence"]}],"recommendation":"keep this output visible"}}
+{"type":"future-sidecar-probe","sessionId":"10000000-0000-0000-0000-000000000000","value":"must remain visible","message":{"role":"meta","content":"must not inherit the exclusion sentinel"}}

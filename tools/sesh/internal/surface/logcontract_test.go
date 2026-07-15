@@ -116,9 +116,9 @@ func journalNeedles() []string {
 	return []string{
 		uuidNormal, uuidResumeOrig, uuidResumeNew, uuidInterleave, uuidCodexMeta, uuidPartial,
 		"workstation", "laptop", "grace", "alice", // node identities
-		"SECRET",  // marker embedded in every injected error and panic value
-		"node=",   // query params must not reach the journal
-		"?page",   // ditto
+		"SECRET", // marker embedded in every injected error and panic value
+		"node=",  // query params must not reach the journal
+		"?page",  // ditto
 	}
 }
 
@@ -314,7 +314,7 @@ func TestSurfaceJournalAggregatesRepeatedFailures(t *testing.T) {
 	srv, h := capturingServer(t, store)
 	mustGet200(t, srv, "/s/claude/"+uuidNormal)
 
-	wantRows := int64(len(store.fakeStore.rows[sessionKey(wire.ToolClaude, uuidNormal)]))
+	wantRows := int64(renderableRowCount(wire.ToolClaude, store.fakeStore.rows[sessionKey(wire.ToolClaude, uuidNormal)]))
 	if wantRows < 2 {
 		t.Fatalf("fixture session has %d rows; the aggregation scenario needs several", wantRows)
 	}
@@ -587,7 +587,7 @@ func TestProjectionRebuildJournalContract(t *testing.T) {
 func TestSurfaceJournalConcurrentDegradedRenders(t *testing.T) {
 	fs := &failingStore{fakeStore: corpusStore(t), failMirrorRange: true}
 	srv, h := capturingServer(t, fs)
-	wantRows := int64(len(fs.fakeStore.rows[sessionKey(wire.ToolClaude, uuidNormal)]))
+	wantRows := int64(renderableRowCount(wire.ToolClaude, fs.fakeStore.rows[sessionKey(wire.ToolClaude, uuidNormal)]))
 	if wantRows < 2 {
 		t.Fatalf("fixture session has %d rows; the scenario needs several", wantRows)
 	}

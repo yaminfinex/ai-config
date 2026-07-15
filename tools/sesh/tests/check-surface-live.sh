@@ -104,22 +104,21 @@ grep -qF "<td>$SHIP_VER" <<<"$nodes_page" ||
   fail "nodes page does not show the shipper's self-reported version ($SHIP_VER)"
 ok "version census records and renders the shipper version ($SHIP_VER)"
 
-step "drill-down renders ONE windowed transcript (no duplicated history)"
-# 334 deduped rows span two 200-message windows; the union must tile the
-# session exactly, with no uuid rendered twice across windows.
+step "drill-down renders ONE conversation transcript (no duplicated history)"
+# The 334 deduped index rows contain 143 known Claude sidecars. They remain
+# in the raw mirror but do not consume conversation-window slots, so all 191
+# renderable messages fit in one bounded page.
 transcript=$(curl -sf "$SURFACE_URL/s/claude/$LOGICAL") || fail "GET transcript failed"
 entries=$(grep -c '<li class="entry' <<<"$transcript" || true)
-[ "$entries" = "200" ] || fail "newest window renders $entries entries, want the 200-message window"
-grep -q 'showing the latest window — messages 135–334 of 334' <<<"$transcript" ||
-  fail "transcript page must label its window of the session"
-older=$(curl -sf "$SURFACE_URL/s/claude/$LOGICAL?page=2") || fail "GET transcript page 2 failed"
-entries2=$(grep -c '<li class="entry' <<<"$older" || true)
-[ "$entries2" = "134" ] || fail "older window renders $entries2 entries, want 134"
-dup=$(printf '%s\n%s' "$transcript" "$older" | grep -o 'data-uuid="[^"]*"' | sort | uniq -d | head -3)
-[ -z "$dup" ] || fail "duplicated message uuids across transcript windows: $dup"
+[ "$entries" = "191" ] || fail "transcript renders $entries entries, want 191 conversation messages"
+grep -q '143 known metadata lines excluded from this window' <<<"$transcript" ||
+  fail "transcript must report the 143 excluded Claude sidecars"
+grep -q 'older →' <<<"$transcript" && fail "sidecars created a spurious older conversation window"
+dup=$(grep -o 'data-uuid="[^"]*"' <<<"$transcript" | sort | uniq -d | head -3)
+[ -z "$dup" ] || fail "duplicated message uuids in transcript: $dup"
 grep -q "${ORIG_UUID:0:8}" <<<"$transcript" || fail "transcript does not list the original file"
 grep -q "${NEW_UUID:0:8}" <<<"$transcript" || fail "transcript does not list the resumed file"
-ok "one transcript across two bounded windows, both files, no duplicates"
+ok "one bounded conversation transcript, both files, no duplicates; sidecars badged"
 
 step "raw fallback reachable; zero write surface"
 curl -sf "$SURFACE_URL/s/claude/$LOGICAL/raw" >/dev/null || fail "raw fallback GET failed"
