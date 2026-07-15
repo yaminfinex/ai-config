@@ -320,6 +320,92 @@ JSONL
 		printf 'FAIL  bootstrap: captured binding replay guard — rc=%s err=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")"; fail=1
 	fi
 
+	CASE="$ROOT/bootstrap-unverified-stored-bus"
+	mkdir -p "$CASE/home" "$CASE/state"
+	cat >"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"node","event":"node_registered","node_id":"11111111-1111-1111-1111-111111111111","recorded_at":"2026-07-12T00:00:00Z"}
+{"kind":"session","guid":"guid-existing-0000","event":"reconciled","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stored-bus","hcom_verified":false},"sids":[{"sid":"sid-live","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sid-live"}}
+JSONL
+	printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
+	RUN_ERR_F="$CASE/stderr"
+	RUN_OUT="$(env -i \
+	  PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+	  HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-existing-0000 HERDER_ROLE=worker \
+	  HCOM_SESSION_ID=sid-live \
+	  MOCK_HCOM_ROWS='[{"name":"live-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+	  "${HEN[@]}" --label stable --json 2>"$RUN_ERR_F")"
+	RUN_RC=$?
+	if [[ "$RUN_RC" -eq 0 ]] \
+	  && jq -s -e '[.[] | select(.kind=="session") | .guid] | unique == ["guid-existing-0000"]' "$CASE/state/registry.jsonl" >/dev/null \
+	  && tail -n1 "$CASE/state/registry.jsonl" | jq -e '
+		.guid == "guid-existing-0000" and .event == "seated" and
+		.seat.hcom_name == "live-bus" and .seat.hcom_verified == true and
+		.provenance.tool_session_id == "sid-live"
+	  ' >/dev/null; then
+		printf 'PASS  bootstrap: explicit unverified stored name captures verified live identity\n'
+	else
+		printf 'FAIL  bootstrap: explicit unverified stored name repair — rc=%s err=%s out=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")" "$RUN_OUT"; fail=1
+	fi
+
+	CASE="$ROOT/bare-enroll-matching-seat"
+	mkdir -p "$CASE/home" "$CASE/state"
+	cat >"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"node","event":"node_registered","node_id":"11111111-1111-1111-1111-111111111111","recorded_at":"2026-07-12T00:00:00Z"}
+{"kind":"session","guid":"guid-existing-0000","event":"reconciled","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":false},"sids":[{"sid":"sid-live","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sid-live"}}
+JSONL
+	printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
+	RUN_ERR_F="$CASE/stderr"
+	RUN_OUT="$(env -i \
+	  PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+	  HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_ROLE=worker HCOM_SESSION_ID=sid-live \
+	  MOCK_HCOM_ROWS='[{"name":"stable-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+	  "${HEN[@]}" --json 2>"$RUN_ERR_F")"
+	RUN_RC=$?
+	if [[ "$RUN_RC" -eq 0 ]] \
+	  && jq -s -e '[.[] | select(.kind=="session") | .guid] | unique == ["guid-existing-0000"]' "$CASE/state/registry.jsonl" >/dev/null \
+	  && tail -n1 "$CASE/state/registry.jsonl" | jq -e '
+		.guid == "guid-existing-0000" and .state == "seated" and .label == "stable" and
+		.seat.hcom_name == "stable-bus" and .seat.hcom_verified == true
+	  ' >/dev/null; then
+		printf 'PASS  fence: bare enroll repairs the matching occupied seat without minting\n'
+	else
+		printf 'FAIL  fence: bare enroll matching-seat repair — rc=%s err=%s out=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")" "$RUN_OUT"; fail=1
+	fi
+
+	CASE="$ROOT/duplicate-seat-cleanup"
+	mkdir -p "$CASE/home" "$CASE/state"
+	cat >"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"node","event":"node_registered","node_id":"11111111-1111-1111-1111-111111111111","recorded_at":"2026-07-12T00:00:00Z"}
+{"kind":"session","guid":"guid-original-0000","event":"reconciled","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus"},"sids":[{"sid":"sid-live","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sid-live"}}
+{"kind":"session","guid":"guid-duplicate-000","event":"seated","recorded_at":"2026-07-12T00:00:02Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"manual-copy","role":"manual","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true},"sids":[{"sid":"sid-live","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"enroll","tool_session_id":"sid-live"}}
+JSONL
+	printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
+	RUN_ERR_F="$CASE/stderr"
+	RUN_OUT="$(env -i \
+	  PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+	  HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-original-0000 HERDER_ROLE=worker \
+	  HCOM_SESSION_ID=sid-live \
+	  MOCK_HCOM_ROWS='[{"name":"stable-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+	  "${HEN[@]}" --label stable --json 2>"$RUN_ERR_F")"
+	RUN_RC=$?
+	if [[ "$RUN_RC" -eq 0 ]] \
+	  && tail -n2 "$CASE/state/registry.jsonl" | jq -s -e '
+		.[0].guid == "guid-original-0000" and .[0].event == "seated" and
+		.[0].seat.hcom_verified == true and
+		.[1].guid == "guid-duplicate-000" and .[1].event == "unseated" and
+		.[1].state == "unseated" and (.[1] | has("seat") | not) and
+		.[1].close_result == "duplicate_detached" and
+		(.[1].close_reason | startswith("source=enroll-repair; shared live seat retained by repaired guid "))
+	  ' >/dev/null \
+	  && jq -s -e '
+		reduce (.[] | select(.kind=="session")) as $row ({}; .[$row.guid]=$row)
+		| [.[] | select(.state=="seated" and .seat.terminal_id=="term_SELF" and .seat.pane_id=="p_self" and .seat.hcom_name=="stable-bus")] | length == 1
+	  ' "$CASE/state/registry.jsonl" >/dev/null; then
+		printf 'PASS  cleanup: original repairs before duplicate detaches without closing the pane\n'
+	else
+		printf 'FAIL  cleanup: repair-first duplicate detach — rc=%s err=%s out=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")" "$RUN_OUT"; fail=1
+	fi
+
 	check_guid_reuse_refusal() {
 		local name="$1" terminal="$2" label="$3" rows="$4"
 		CASE="$ROOT/$name"

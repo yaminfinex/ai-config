@@ -632,7 +632,8 @@ JSONL
   snapshot '[]' '[]'
   env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local HERDR_ENV=1 HERDR_PANE_ID=p_self "${HERDER[@]}" enroll --label nudged >/tmp/nudge-default.out 2>"$CASE/nudge-default.err"
   [[ ! -f "$STATE/observer.lock" ]] && pass "nudge default off" || fail_case "nudge default off" "observer.lock exists"
-  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-nudge2 HERDER_OBSERVER_AUTOSTART=1 "${HERDER[@]}" enroll --label nudged2 >/tmp/nudge-on.out 2>"$CASE/nudge-on.err"
+  printf '[{"name":"nudged-bus","session_id":"sid-nudge","joined":true,"launch_context":{"pane_id":"p_self"}}]\n' >"$HCOM/hcom.jsonl"
+  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-nudge2 HCOM_SESSION_ID=sid-nudge HERDER_OBSERVER_AUTOSTART=1 "${HERDER[@]}" enroll --label nudged2 >/tmp/nudge-on.out 2>"$CASE/nudge-on.err"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     [[ -f "$STATE/observer.lock" ]] && break
     sleep 0.2
