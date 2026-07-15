@@ -41,6 +41,7 @@ type procCorrelator struct {
 	cachedOwners   map[string]string
 	lastIdentities map[string]struct{}
 	scanCount      uint64
+	readDir        func(string) ([]os.DirEntry, error)
 }
 
 type procEntry struct {
@@ -85,12 +86,13 @@ func (c *procCorrelator) CorrelateAll(discovered []Discovered) map[string]string
 	entries := c.scan()
 	owners := map[string]string{}
 	if len(entries) > 0 {
+		codexOwners := c.codexOwners(entries, discovered)
 		for _, d := range discovered {
 			var owner string
 			var ok bool
 			switch d.Identity.Tool {
 			case wire.ToolCodex:
-				owner, ok = c.codexOwner(entries, d.Path)
+				owner, ok = codexOwners[d.Identity.Key()]
 			case wire.ToolClaude:
 				owner, ok = c.claudeOwner(entries, d.Path)
 			case wire.ToolGrok:
@@ -126,7 +128,7 @@ func (c *procCorrelator) ownersFor(discovered []Discovered) map[string]string {
 // are never opened further.
 func (c *procCorrelator) scan() []procEntry {
 	c.scanCount++
-	dirents, err := os.ReadDir(c.Root)
+	dirents, err := c.readDirectory(c.Root)
 	if err != nil {
 		return nil
 	}
@@ -170,33 +172,62 @@ func (c *procCorrelator) statusIdentity(pid int) (uid, ppid int, ok bool) {
 	return uid, ppid, uid >= 0
 }
 
-// codexOwner is the exact join (spec §4.2): pid → open fd → rollout file.
+// codexOwners is the exact join (spec §4.2): pid → open fd → rollout file.
 // When an inherited fd makes several processes hold the file, the leaf of
 // the holder tree (the codex process itself, not its parent shell) names
 // the owner; several distinct leaves must agree or nothing is stamped.
-func (c *procCorrelator) codexOwner(entries []procEntry, path string) (string, bool) {
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		resolved = path
+// Holders are grouped by identity, not discovery path: when one UUID appears
+// at multiple paths, their holders merge and owner disagreement yields absence
+// under the unanimous-or-absent rule, never an order-dependent arbitrary stamp.
+// Each process FD table is read once per sweep, independent of corpus size.
+func (c *procCorrelator) codexOwners(entries []procEntry, discovered []Discovered) map[string]string {
+	identitiesByPath := map[string][]string{}
+	for _, d := range discovered {
+		if d.Identity.Tool != wire.ToolCodex {
+			continue
+		}
+		key := d.Identity.Key()
+		identitiesByPath[d.Path] = append(identitiesByPath[d.Path], key)
+		if resolved, err := filepath.EvalSymlinks(d.Path); err == nil && resolved != d.Path {
+			identitiesByPath[resolved] = append(identitiesByPath[resolved], key)
+		}
 	}
-	var holders []procEntry
+	if len(identitiesByPath) == 0 {
+		return nil
+	}
+
+	holdersByIdentity := map[string][]procEntry{}
 	for _, e := range entries {
 		fdDir := filepath.Join(c.Root, strconv.Itoa(e.pid), "fd")
-		fds, err := os.ReadDir(fdDir)
+		fds, err := c.readDirectory(fdDir)
 		if err != nil {
 			continue
 		}
+		seen := map[string]bool{}
 		for _, fd := range fds {
 			target, err := os.Readlink(filepath.Join(fdDir, fd.Name()))
 			if err != nil {
 				continue
 			}
-			if target == resolved || target == path {
-				holders = append(holders, e)
-				break
+			for _, key := range identitiesByPath[target] {
+				if !seen[key] {
+					holdersByIdentity[key] = append(holdersByIdentity[key], e)
+					seen[key] = true
+				}
 			}
 		}
 	}
+
+	owners := map[string]string{}
+	for key, holders := range holdersByIdentity {
+		if owner, ok := c.codexOwner(holders); ok {
+			owners[key] = owner
+		}
+	}
+	return owners
+}
+
+func (c *procCorrelator) codexOwner(holders []procEntry) (string, bool) {
 	if len(holders) == 0 {
 		return "", false
 	}
@@ -231,6 +262,13 @@ func (c *procCorrelator) codexOwner(entries []procEntry, path string) (string, b
 		owner = o
 	}
 	return owner, owner != ""
+}
+
+func (c *procCorrelator) readDirectory(path string) ([]os.DirEntry, error) {
+	if c.readDir != nil {
+		return c.readDir(path)
+	}
+	return os.ReadDir(path)
 }
 
 // claudeOwner is the cohort join (spec §4.2): candidate claude processes

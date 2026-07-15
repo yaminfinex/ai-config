@@ -136,6 +136,33 @@ func TestCodexOwnerLeafHolderWins(t *testing.T) {
 	}
 }
 
+func TestCodexCorrelationReadsEachFDTableOncePerSweep(t *testing.T) {
+	fp := newFakeProc(t)
+	d1 := discoveredCodexUUID(t, t.TempDir(), "10000000-0000-4000-8000-000000000000")
+	d2 := discoveredCodexUUID(t, t.TempDir(), "20000000-0000-4000-8000-000000000000")
+	fp.add(100, 1, os.Getuid(), "codex", "/work", map[string]string{"SESSION_OWNER": "alice"}, d1.Path, d2.Path)
+
+	c := fp.correlator()
+	fdDir := filepath.Join(fp.root, "100", "fd")
+	fdReads := 0
+	c.readDir = func(path string) ([]os.DirEntry, error) {
+		if path == fdDir {
+			fdReads++
+		}
+		return os.ReadDir(path)
+	}
+	owners := c.CorrelateAll([]Discovered{d1, d2})
+
+	for _, d := range []Discovered{d1, d2} {
+		if got := owners[d.Identity.Key()]; got != "alice" {
+			t.Fatalf("owner for %s = %q, want alice", d.Identity.Key(), got)
+		}
+	}
+	if fdReads != 1 {
+		t.Fatalf("process FD table reads in one correlation sweep = %d, want 1", fdReads)
+	}
+}
+
 func TestCodexOwnerAbsentWhenNoHolderOrNoVariable(t *testing.T) {
 	fp := newFakeProc(t)
 	d := discoveredCodex(t, t.TempDir())
