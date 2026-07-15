@@ -12,6 +12,7 @@ import (
 
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/lifecyclecmd"
+	"ai-config/tools/herder/internal/panecleanup"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -306,7 +307,7 @@ func processTarget(registryPath string, rec registry.Record, live map[string]her
 		}
 	}
 
-	result, _, _ := (&herdrcli.Client{}).Combined("pane", "close", pane)
+	result, _, _ := panecleanup.ClosePreservingFocus(&herdrcli.Client{}, pane)
 	closedOK := closeResultType(result)
 	if closedOK == "error" {
 		reason := closeErrorReason(result)

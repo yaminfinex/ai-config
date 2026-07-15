@@ -959,7 +959,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 				}
 			}
 			if liveRootTerm == rootTerm {
-				if rc, _ := r.herdr.Run("pane", "close", rootPaneID); rc == 0 {
+				if _, rc, _ := panecleanup.ClosePreservingFocus(r.herdr, rootPaneID); rc == 0 {
 					rootClosed = true
 				}
 			} else {

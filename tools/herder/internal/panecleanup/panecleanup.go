@@ -20,6 +20,53 @@ type Result struct {
 	Detail    string
 }
 
+// ClosePreservingFocus closes paneID and restores the previously focused pane
+// only when herdr moved focus and that pane is still addressable. Focus
+// discovery and restoration are best-effort: they never replace the close
+// command's result.
+func ClosePreservingFocus(client Client, paneID string) ([]byte, int, error) {
+	prior := focusedPane(client)
+	closeOut, closeRC, closeErr := client.Combined("pane", "close", paneID)
+	if closeErr != nil || closeRC != 0 || prior == "" {
+		return closeOut, closeRC, closeErr
+	}
+	if prior == paneID {
+		return closeOut, closeRC, closeErr
+	}
+
+	current := focusedPane(client)
+	if current == "" || current == prior {
+		return closeOut, closeRC, closeErr
+	}
+	priorOut, priorRC, priorErr := client.Combined("pane", "get", prior)
+	if priorErr != nil || priorRC != 0 || paneLookupAbsent(priorOut) {
+		return closeOut, closeRC, closeErr
+	}
+	priorPane, err := herdrcli.ParsePaneGet(priorOut)
+	if err != nil || priorPane.PaneID != prior {
+		return closeOut, closeRC, closeErr
+	}
+	_, _, _ = client.Combined("agent", "focus", prior)
+	return closeOut, closeRC, closeErr
+}
+
+func focusedPane(client Client) string {
+	out, rc, err := client.Combined("pane", "list")
+	if err != nil || rc != 0 {
+		return ""
+	}
+	panes, err := herdrcli.ParsePaneList(out)
+	if err != nil {
+		return ""
+	}
+	for _, pane := range panes {
+		if pane.Focused {
+			return pane.PaneID
+		}
+	}
+	return ""
+}
+
 // CloseConfirmed closes only the pane that still carries expectedTerminal,
 // then proves the pane id is no longer addressable.
 func CloseConfirmed(client Client, paneID, expectedTerminal string) Result {
@@ -44,7 +91,7 @@ func CloseConfirmed(client Client, paneID, expectedTerminal string) Result {
 		return Result{Detail: fmt.Sprintf("refused to close %s: terminal changed from %s to %s", paneID, expectedTerminal, pane.TerminalID)}
 	}
 
-	closeOut, closeRC, closeErr := client.Combined("pane", "close", paneID)
+	closeOut, closeRC, closeErr := ClosePreservingFocus(client, paneID)
 	if closeErr != nil {
 		return Result{Detail: "pane close could not run: " + closeErr.Error()}
 	}

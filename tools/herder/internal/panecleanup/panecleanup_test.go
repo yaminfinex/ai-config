@@ -2,14 +2,16 @@ package panecleanup
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
 
 type response struct {
-	out []byte
-	rc  int
-	err error
+	want string
+	out  []byte
+	rc   int
+	err  error
 }
 
 type scriptedClient struct {
@@ -18,13 +20,86 @@ type scriptedClient struct {
 }
 
 func (c *scriptedClient) Combined(args ...string) ([]byte, int, error) {
-	c.calls = append(c.calls, strings.Join(args, " "))
+	call := strings.Join(args, " ")
+	c.calls = append(c.calls, call)
 	if len(c.responses) == 0 {
 		return nil, 64, errors.New("unexpected call")
 	}
 	r := c.responses[0]
 	c.responses = c.responses[1:]
+	if r.want != "" && call != r.want {
+		return nil, 64, fmt.Errorf("call = %q, want %q", call, r.want)
+	}
 	return r.out, r.rc, r.err
+}
+
+func assertScriptConsumed(t *testing.T, client *scriptedClient) {
+	t.Helper()
+	if len(client.responses) != 0 {
+		t.Fatalf("%d scripted response(s) were not consumed; calls = %v", len(client.responses), client.calls)
+	}
+}
+
+func TestClosePreservingFocusRestoresSurvivingPriorPaneAfterMovement(t *testing.T) {
+	client := &scriptedClient{
+		responses: []response{
+			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
+			{want: "pane close p_target", out: []byte(`{"result":{"type":"closed"}}`)},
+			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_other","focused":true}]}}`)},
+			{want: "pane get p_owner", out: []byte(`{"result":{"pane":{"pane_id":"p_owner"}}}`)},
+			{want: "agent focus p_owner", out: []byte(`{"result":{"type":"focused"}}`)},
+		},
+	}
+	_, rc, err := ClosePreservingFocus(client, "p_target")
+	if err != nil || rc != 0 {
+		t.Fatalf("ClosePreservingFocus() rc=%d err=%v, want success", rc, err)
+	}
+	assertScriptConsumed(t, client)
+}
+
+func TestClosePreservingFocusDoesNotRefocusWhenFocusStayedPut(t *testing.T) {
+	client := &scriptedClient{
+		responses: []response{
+			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
+			{want: "pane close p_target", out: []byte(`{"result":{"type":"closed"}}`)},
+			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
+		},
+	}
+	_, rc, err := ClosePreservingFocus(client, "p_target")
+	if err != nil || rc != 0 {
+		t.Fatalf("ClosePreservingFocus() rc=%d err=%v, want success", rc, err)
+	}
+	assertScriptConsumed(t, client)
+}
+
+func TestClosePreservingFocusDoesNotRefocusClosedPriorPane(t *testing.T) {
+	client := &scriptedClient{
+		responses: []response{
+			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_target","focused":true}]}}`)},
+			{want: "pane close p_target", out: []byte(`{"result":{"type":"closed"}}`)},
+		},
+	}
+	_, rc, err := ClosePreservingFocus(client, "p_target")
+	if err != nil || rc != 0 {
+		t.Fatalf("ClosePreservingFocus() rc=%d err=%v, want success", rc, err)
+	}
+	assertScriptConsumed(t, client)
+}
+
+func TestClosePreservingFocusDoesNotRefocusMissingPriorPane(t *testing.T) {
+	client := &scriptedClient{
+		responses: []response{
+			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
+			{want: "pane close p_target", out: []byte(`{"result":{"type":"closed"}}`)},
+			{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_other","focused":true}]}}`)},
+			{want: "pane get p_owner", out: []byte(`{"error":{"code":"pane_not_found"}}`), rc: 4},
+		},
+	}
+	_, rc, err := ClosePreservingFocus(client, "p_target")
+	if err != nil || rc != 0 {
+		t.Fatalf("ClosePreservingFocus() rc=%d err=%v, want success", rc, err)
+	}
+	assertScriptConsumed(t, client)
 }
 
 func TestAlreadyAbsentLookupShapesAreConfirmed(t *testing.T) {
@@ -68,6 +143,7 @@ func TestCloseConfirmationAcceptsAbsentLookupShapes(t *testing.T) {
 	for _, after := range tests {
 		client := &scriptedClient{responses: []response{
 			{out: []byte(`{"result":{"pane":{"pane_id":"p_new","terminal_id":"term_new"}}}`)},
+			{out: []byte(`{"result":{"panes":[]}}`)},
 			{out: []byte(`{"result":{"type":"closed"}}`)},
 			after,
 		}}
