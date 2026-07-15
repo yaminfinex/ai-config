@@ -303,8 +303,8 @@ are read-only.
 |---|---|
 | `mish new <slug> [--title T] [--authority A] [--owner O] [--no-marker] [--text]` | Scaffold `missions/<slug>/` (§6.1): manifest, pinned board, empty artifacts; write the context marker into cwd. Refuses on existing slug, invalid slug, unset `$MISSIONS_REPO`, or a conflicting existing marker. |
 | `mish backlog [--mission S] [--text] <backlog-args…>` | Resolve context (§5.3), guard the board's existence (invariant 6), check the allowlist, then exec the Backlog.md CLI with cwd pinned to the mission dir, forwarding arguments, stdio, and exit code verbatim (§6.2). |
-| `mish status [--mission S \| --all] [--text]` | Read-only report: single-mission detail when context resolves, repo-wide overview with `--all` or when invoked with no resolvable context from inside the missions repo (§6.3). |
-| `mish resolve [--mission S]` | Read-only, agent-first: print the resolved mission context (§5.3 order) as one line of JSON on stdout — success `{ok:true, slug, mission_dir, source, marker_path, missions_repo}` exit 0, refusal `{ok:false, refusal:<kind>, reason, remedy, paths}` exit 1 with prose mirrored to stderr (§6.4). |
+| `mish status [--mission S \| --all] [--text]` | Read-only report: single-mission detail when context resolves; repo-wide overview with `--all`. In `--text` mode only, bare status with no resolvable context from inside the missions repo keeps the friendly overview fallback (§6.3). |
+| `mish resolve [--mission S]` | Read-only, agent-first: print the resolved mission context (§5.3 order) as one line of JSON on stdout — success `{ok:true, slug, mission_dir, source, marker_path, missions_repo}` exit 0, refusal `{ok:false, verb:"resolve", refusal:<kind>, reason, remedy, paths}` exit 1 with prose mirrored to stderr (§6.4). |
 
 **Agent-first output contract.** `new` and `status` default to exactly one JSON value on
 stdout; `status --all` is a JSON array of the same per-mission objects. `--text` restores the
@@ -315,7 +315,7 @@ wrapper-owned only before the subcommand; the same token after the subcommand is
 Help and usage errors remain human help/usage, not operation results.
 
 All operation refusals exit 1, write one object
-`{"ok":false,"refusal":<kind>,"reason":<prose>,"remedy":<guidance>}` to stdout by
+`{"ok":false,"verb":<verb>,"refusal":<kind>,"reason":<prose>,"remedy":<guidance>}` to stdout by
 default, and mirror the established `mish <verb>: …` prose to stderr. With `--text`, stdout
 is empty and the prior stderr prose is byte-compatible. Optional `slug` and `paths` fields
 carry condition-specific context. These refusal kinds are the frozen machine vocabulary:
@@ -416,8 +416,16 @@ The default single-mission JSON object is the mission-control read model:
 
 Counts preserve board-config order; tasks are ordered by ordinal then id. Every task object
 always carries `id`, `title`, `status`, `ordinal`, and `labels` (an empty array when absent).
-`status --all` returns an array of these same objects sorted by slug. `--text` restores the
-prior formats below exactly.
+`status --all` returns an array of these same objects sorted by slug. A mission that cannot
+be read degrades to its own object with `ok:false` and warnings; one bad mission never aborts
+the array. Bare JSON `status` without mission context refuses with `no_context` and guidance
+for both `--mission <slug>` and `--all`; therefore an object is always single-mission status
+and an array is always explicit `--all`. `--text` restores the prior formats below exactly,
+including the friendly overview fallback from inside the missions repo.
+
+Warnings have two deliberate grains: a single-mission object includes read-only git
+staleness, while `--all` objects omit git checks and report filesystem/mission health only.
+Within each JSON object warnings are sorted for deterministic machine consumption.
 
 Single-mission mode (context resolved):
 
@@ -691,10 +699,11 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
   each produce their one-line warning on the next run; nothing is modified (a before/after
   subtree hash is identical); with the missions repo git-backed and the subtree carrying
   uncommitted or unpushed work, the one-line staleness warning appears.
-- **AC-13 status overview** — from the missions repo root with no marker, `mish status`
-  returns every mission dir including closed ones as an array of §6.3 objects (`--text` keeps
-  the prior one-per-line table); from an unrelated directory with
-  no context it refuses rather than showing the overview.
+- **AC-13 status overview** — `mish status --all` returns every mission dir including closed
+  ones as an array of §6.3 objects, degrading an unreadable mission to a warning-bearing row
+  without aborting the array. Bare JSON status with no mission context refuses `no_context`;
+  from the missions repo root, `--text` keeps the prior one-per-line fallback table. From an
+  unrelated directory with no context it refuses rather than showing the overview.
 - **AC-14 no git mutation, no bus, no herder** — a full `new` + passthrough + `status` session
   on a machine with no herder, no hcom, and `$MISSIONS_REPO` pointing at a plain non-git
   directory: everything works; auditing the CLI's process tree shows no git invocation at all

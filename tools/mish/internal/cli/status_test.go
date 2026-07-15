@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"mish/internal/resolve"
 )
 
 func TestStatusDefaultsToMissionPageJSON(t *testing.T) {
@@ -62,6 +64,28 @@ func TestStatusAllDefaultsToArrayOfMissionObjects(t *testing.T) {
 	}
 }
 
+func TestStatusAllJSONDegradesUnreadableMissionWithoutAbortingBatch(t *testing.T) {
+	repo, _ := makeStatusMission(t, "alpha")
+	if err := os.MkdirAll(filepath.Join(repo, "missions", "half-scaffold"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s stdout=%s", err, stderr, stdout)
+	}
+	var got []statusOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not JSON array: %v\n%s", err, stdout)
+	}
+	if len(got) != 2 || got[0].Slug != "alpha" || got[1].Slug != "half-scaffold" {
+		t.Fatalf("status --all = %+v", got)
+	}
+	if !got[0].OK || got[1].OK || len(got[1].Warnings) == 0 {
+		t.Fatalf("degraded row = %+v", got[1])
+	}
+}
+
 func TestStatusRefusalDefaultsToAgentJSON(t *testing.T) {
 	repo, _ := makeStatusMission(t, "alpha")
 	d := statusTestDeps(repo, t.TempDir())
@@ -75,11 +99,39 @@ func TestStatusRefusalDefaultsToAgentJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
 	}
-	if got.Refusal != "no_context" || got.OK {
+	if got.Verb != "status" || got.Refusal != "no_context" || got.OK {
 		t.Fatalf("refusal = %+v", got)
+	}
+	if !strings.Contains(got.Remedy, "--mission <slug>") || !strings.Contains(got.Remedy, "--all") {
+		t.Fatalf("remedy = %q", got.Remedy)
 	}
 	if !strings.Contains(stderr.String(), "mish status: no mission context found") {
 		t.Fatalf("stderr=%s", stderr.String())
+	}
+}
+
+func TestStatusBareJSONInsideMissionsRepoRefusesInsteadOfReturningArray(t *testing.T) {
+	repo, _ := makeStatusMission(t, "alpha")
+	d := statusTestDeps(repo, repo)
+	var stdout, stderr bytes.Buffer
+	d.stdout, d.stderr = &stdout, &stderr
+
+	if code := runWithDeps([]string{"status"}, d); code != exitRefuse {
+		t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var got refusalOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not refusal JSON: %v\n%s", err, stdout.String())
+	}
+	if got.Refusal != "no_context" || !strings.Contains(got.Remedy, "--all") {
+		t.Fatalf("refusal = %+v", got)
+	}
+}
+
+func TestStatusJSONWarningsAreSorted(t *testing.T) {
+	result := makeStatusOutput(resolve.Result{}, statusReport{Warnings: []string{"z warning", "a warning"}})
+	if strings.Join(result.Warnings, ",") != "a warning,z warning" {
+		t.Fatalf("warnings = %#v", result.Warnings)
 	}
 }
 

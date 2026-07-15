@@ -79,7 +79,15 @@ assert_contains "$LAST_OUT" "board:"
 step "AC-13 status overview"
 new_mission surface-closed --authority hera
 replace_in_file "$(mission_dir surface-closed)/mission.md" "status: active" "status: closed"
-run_mish "$MISSIONS_REPO_DIR" "overview-root" status
+run_mish "$MISSIONS_REPO_DIR" "overview-root" status --all
+assert_status 0
+assert_contains "$LAST_OUT" "surface-a"
+assert_contains "$LAST_OUT" "surface-closed"
+run_mish "$MISSIONS_REPO_DIR" "overview-root-bare-json" status
+assert_status 1
+assert_contains "$LAST_OUT" '"refusal":"no_context"'
+assert_contains "$LAST_OUT" "--all"
+run_mish "$MISSIONS_REPO_DIR" "overview-root-text" status --text
 assert_status 0
 assert_contains "$LAST_OUT" "surface-a"
 assert_contains "$LAST_OUT" "surface-closed"

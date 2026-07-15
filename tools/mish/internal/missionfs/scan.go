@@ -1,6 +1,8 @@
 package missionfs
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
@@ -142,9 +144,33 @@ func readTaskFrontmatter(path string) (Task, error) {
 	if err != nil {
 		return Task{}, fmt.Errorf("%s: %w", path, err)
 	}
+	// Decode each field independently. Backlog counts historically depended only
+	// on the lenient id/status line scan, so a malformed optional field must not
+	// make the whole task disappear from counts or the agent-facing task list.
 	var task Task
-	if err := yaml.Unmarshal(frontmatter, &task); err != nil {
-		return Task{}, fmt.Errorf("%s: parse frontmatter: %w", path, err)
+	scanner := bufio.NewScanner(bytes.NewReader(frontmatter))
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(scanner.Text(), ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		switch key {
+		case "id":
+			_ = yaml.Unmarshal([]byte(value), &task.ID)
+		case "title":
+			_ = yaml.Unmarshal([]byte(value), &task.Title)
+		case "status":
+			_ = yaml.Unmarshal([]byte(value), &task.Status)
+		case "ordinal":
+			_ = yaml.Unmarshal([]byte(value), &task.Ordinal)
+		case "labels":
+			_ = yaml.Unmarshal([]byte(value), &task.Labels)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return Task{}, fmt.Errorf("%s: scan frontmatter: %w", path, err)
 	}
 	return task, nil
 }

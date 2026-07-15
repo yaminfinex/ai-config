@@ -66,6 +66,43 @@ func TestScanTasksReportsMissingIDWithoutDroppingStatusCount(t *testing.T) {
 	assertFinding(t, scan.Findings, FindingMissingTaskID, "id")
 }
 
+func TestScanTasksRetainsTaskWhenOptionalFieldsAreMalformed(t *testing.T) {
+	boardDir := testBoardDir(t)
+	writeFile(t, filepath.Join(boardDir, "tasks", "bad-title.md"), `---
+id: TASK-1
+title: Ship: now
+status: To Do
+ordinal: 1000
+labels: [release]
+---
+`)
+	writeFile(t, filepath.Join(boardDir, "tasks", "scalar-labels.md"), `---
+id: TASK-2
+title: Fix infrastructure
+status: In Progress
+ordinal: 2000
+labels: infra
+---
+`)
+
+	scan, err := ScanTasks(boardDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scan.Counts["To Do"] != 1 || scan.Counts["In Progress"] != 1 {
+		t.Fatalf("counts = %#v, want both malformed-field tasks retained", scan.Counts)
+	}
+	if len(scan.Tasks) != 2 {
+		t.Fatalf("tasks = %#v, want 2", scan.Tasks)
+	}
+	if scan.Tasks[0].ID != "TASK-1" || scan.Tasks[0].Status != "To Do" || scan.Tasks[0].Title != "" {
+		t.Fatalf("bad-title task = %#v", scan.Tasks[0])
+	}
+	if scan.Tasks[1].ID != "TASK-2" || scan.Tasks[1].Status != "In Progress" || scan.Tasks[1].Labels == nil || len(scan.Tasks[1].Labels) != 0 {
+		t.Fatalf("scalar-labels task = %#v", scan.Tasks[1])
+	}
+}
+
 func TestOrderedCountsFollowConfigStatusOrder(t *testing.T) {
 	scan := TaskScan{Counts: map[string]int{"Validated": 2, "Queued": 1}}
 	got, findings := scan.OrderedCounts([]string{"Queued", "Doing", "Validated"})

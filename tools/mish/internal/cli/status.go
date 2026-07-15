@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -64,8 +65,11 @@ func runStatus(cmd *cobra.Command, d deps, missionFlag string, missionFlagSet bo
 	if err != nil {
 		var refusal *resolve.Refusal
 		if errors.As(err, &refusal) {
-			if refusal.Kind == resolve.RefusalNoContext && isInsideMissionsRepo(cwd, d.missionsRepo) {
+			if refusal.Kind == resolve.RefusalNoContext && text && isInsideMissionsRepo(cwd, d.missionsRepo) {
 				return runStatusOverview(cmd, d, text)
+			}
+			if refusal.Kind == resolve.RefusalNoContext && !text {
+				refusal.Remedy = "pass --mission <slug> for one mission or --all for every mission"
 			}
 			return refusalError{verb: "status", kind: string(refusal.Kind), message: refusal.Reason, remedy: refusal.Remedy, slug: refusal.Slug, paths: refusal.Paths, text: text}
 		}
@@ -214,6 +218,9 @@ func makeStatusOutput(result resolve.Result, report statusReport) statusOutput {
 	warnings := report.Warnings
 	if warnings == nil {
 		warnings = []string{}
+	} else {
+		warnings = append([]string(nil), warnings...)
+		sort.Strings(warnings)
 	}
 	return statusOutput{
 		OK: true, Slug: result.Slug, MissionDir: result.MissionDir, Manifest: report.Manifest,
@@ -237,13 +244,71 @@ func buildStatusOverviewJSON(d deps, repo string) ([]statusOutput, error) {
 			continue
 		}
 		result := resolve.Result{Slug: entry.Name(), MissionDir: filepath.Join(repo, "missions", entry.Name()), Source: resolve.SourceFlag}
-		report, err := collectStatusWithoutGit(d, result)
-		if err != nil {
-			return nil, err
-		}
-		outputs = append(outputs, makeStatusOutput(result, report))
+		report, ok := collectStatusOverviewJSON(d, result)
+		output := makeStatusOutput(result, report)
+		output.OK = ok
+		outputs = append(outputs, output)
 	}
 	return outputs, nil
+}
+
+// collectStatusOverviewJSON degrades failures within one mission to warnings,
+// keeping the repo-wide array useful when a directory is stray, partial, or
+// temporarily unreadable. Only failure to enumerate the missions directory is
+// fatal to the batch.
+func collectStatusOverviewJSON(d deps, result resolve.Result) (statusReport, bool) {
+	var report statusReport
+	var findings []missionfs.Finding
+	ok := true
+
+	manifest, manifestFindings, err := missionfs.ReadManifest(result.MissionDir)
+	if err != nil {
+		ok = false
+		findings = append(findings, missionfs.Finding{
+			Kind: missionfs.FindingMalformedManifest,
+			Path: filepath.Join(result.MissionDir, "mission.md"),
+		})
+	} else {
+		report.Manifest = manifest
+		findings = append(findings, manifestFindings...)
+	}
+
+	boardDir := filepath.Join(result.MissionDir, "backlog")
+	cfg, boardFindings, err := missionfs.ReadBoardConfig(boardDir)
+	if err != nil {
+		ok = false
+		findings = append(findings, missionfs.Finding{
+			Kind: missionfs.FindingMalformedBoardConfig,
+			Path: filepath.Join(boardDir, "config.yml"),
+		})
+	} else {
+		findings = append(findings, boardFindings...)
+		if !cfg.Missing && len(cfg.Statuses) > 0 {
+			taskScan, scanErr := missionfs.ScanTasks(boardDir)
+			if scanErr != nil {
+				ok = false
+				findings = append(findings, missionfs.Finding{Kind: missionfs.FindingMalformedTask, Path: boardDir})
+			} else {
+				report.BoardOK = true
+				report.Counts, boardFindings = taskScan.OrderedCounts(cfg.Statuses)
+				report.Tasks = taskScan.Tasks
+				findings = append(findings, taskScan.Findings...)
+				findings = append(findings, boardFindings...)
+			}
+		}
+	}
+
+	artifactsDir := filepath.Join(result.MissionDir, "artifacts")
+	artifacts, err := missionfs.ScanArtifacts(artifactsDir)
+	if err != nil {
+		ok = false
+		report.Warnings = append(report.Warnings, fmt.Sprintf("could not scan artifacts: %s", relativeFindingPath(result.MissionDir, artifactsDir)))
+	} else {
+		report.Artifacts = artifacts
+		findings = append(findings, artifacts.Findings...)
+	}
+	report.Warnings = append(report.Warnings, formatFindings(result.MissionDir, findings)...)
+	return report, ok
 }
 
 func buildStatusOverview(d deps, repo string) (string, error) {

@@ -17,6 +17,7 @@ import (
 // so humans and shell pipelines both see them.
 type resolveOutput struct {
 	OK           bool     `json:"ok"`
+	Verb         string   `json:"verb,omitempty"`
 	Slug         string   `json:"slug,omitempty"`
 	MissionDir   string   `json:"mission_dir,omitempty"`
 	Source       string   `json:"source,omitempty"`
@@ -69,6 +70,7 @@ func runResolve(cmd *cobra.Command, d deps, missionFlag string, missionFlagSet b
 		if errors.As(err, &refusal) {
 			emitResolveJSON(cmd, resolveOutput{
 				OK:      false,
+				Verb:    "resolve",
 				Refusal: string(refusal.Kind),
 				Slug:    refusal.Slug,
 				Reason:  refusal.Reason,
