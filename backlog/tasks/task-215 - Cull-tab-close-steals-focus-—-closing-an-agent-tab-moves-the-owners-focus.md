@@ -1,9 +1,10 @@
 ---
 id: TASK-215
 title: Cull tab-close steals focus — closing an agent tab moves the owner's focus
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-15 00:00'
+updated_date: '2026-07-15 00:00'
 labels: []
 dependencies: []
 ordinal: 213000
