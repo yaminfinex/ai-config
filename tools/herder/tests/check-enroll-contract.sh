@@ -316,13 +316,50 @@ if [[ "$WRITE" -eq 0 ]]; then
 	HELP_OUT="$("${HEN[@]}" --help 2>/dev/null | tr '\n' ' ')"
 	if grep -q 'stored bus name' <<<"$HELP_OUT" \
 	  && grep -q 'exact recorded/live session id match' <<<"$HELP_OUT" \
-	  && grep -q 'unchanged terminal and unchanged label' <<<"$HELP_OUT" \
+	  && grep -q 'unchanged terminal and caller-claimed label' <<<"$HELP_OUT" \
 	  && grep -q 'may bootstrap it' <<<"$HELP_OUT" \
 	  && grep -q 'captures its live name and session id' <<<"$HELP_OUT"; then
 		printf 'PASS  help: guid reuse states the exact ownership proof\n'
 	else
 		printf 'FAIL  help: guid reuse does not state stored-bus AND (session OR terminal+label) proof\n'; fail=1
 	fi
+
+	check_pinned_takeover_refusal() {
+		local name="$1" stored_bus_fields="$2"
+		CASE="$ROOT/$name"
+		mkdir -p "$CASE/home" "$CASE/state"
+		cat >"$CASE/state/registry.jsonl" <<JSONL
+{"kind":"node","event":"node_registered","node_id":"11111111-1111-1111-1111-111111111111","recorded_at":"2026-07-12T00:00:00Z"}
+{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"victim-label","role":"reviewer","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_old"$stored_bus_fields},"sids":[{"sid":"sid-victim","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sid-victim"}}
+JSONL
+		printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
+		cp "$CASE/state/registry.jsonl" "$CASE/before.jsonl"
+		RUN_ERR_F="$CASE/stderr"
+		HERDR_CALLS="$CASE/herdr.calls"
+		HCOM_CALLS="$CASE/hcom.calls"
+		RUN_OUT="$(env -i \
+		  PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+		  HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-existing-0000 \
+		  HCOM_SESSION_ID=sid-attacker \
+		  MOCK_HERDR_CALLS="$HERDR_CALLS" MOCK_HCOM_CALLS="$HCOM_CALLS" \
+		  MOCK_HCOM_ROWS='[{"name":"attacker-bus","session_id":"sid-attacker","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+		  "${HEN[@]}" --json 2>"$RUN_ERR_F")"
+		RUN_RC=$?
+		if [[ "$RUN_RC" -eq 1 ]] \
+		  && cmp -s "$CASE/before.jsonl" "$CASE/state/registry.jsonl" \
+		  && grep -q 'bootstrap ownership proof failed' "$RUN_ERR_F" \
+		  && grep -q 'requested label "manual-guid" does not match recorded label "victim-label"' "$RUN_ERR_F" \
+		  && [[ "$(cat "$HERDR_CALLS")" == "pane get" ]] \
+		  && [[ "$(cat "$HCOM_CALLS")" == "list --json" ]]; then
+			printf 'PASS  guard: %s refuses a foreign pinned caller without mutation\n' "$name"
+		else
+			printf 'FAIL  guard: %s foreign pinned caller — rc=%s err=%s out=%s herdr_calls=%q hcom_calls=%q\n' \
+			  "$name" "$RUN_RC" "$(cat "$RUN_ERR_F")" "$RUN_OUT" "$(cat "$HERDR_CALLS" 2>/dev/null)" "$(cat "$HCOM_CALLS" 2>/dev/null)"; fail=1
+		fi
+	}
+
+	check_pinned_takeover_refusal pinned-no-stored-bus ''
+	check_pinned_takeover_refusal pinned-unverified-stored-bus ',"hcom_name":"stored-bus","hcom_verified":false'
 
 	CASE="$ROOT/repair-preserves-identity"
 	mkdir -p "$CASE/home" "$CASE/state"

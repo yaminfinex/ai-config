@@ -451,8 +451,8 @@ func pinnedReEnroll(rec v2.SessionRecord, sessionID string) string {
 	} else {
 		sessionWord = shellquote.Quote(sessionID)
 	}
-	return fmt.Sprintf("HCOM_SESSION_ID=%s HERDER_GUID=%s HERDER_LABEL=%s HERDER_ROLE=%s herder enroll",
-		sessionWord, shellquote.Quote(rec.GUID), shellquote.Quote(rec.Label), shellquote.Quote(rec.Role))
+	return fmt.Sprintf("HCOM_SESSION_ID=%s HERDER_GUID=%s herder enroll",
+		sessionWord, shellquote.Quote(rec.GUID))
 }
 
 func failureAfter(stderr io.Writer, leg, cause string, applied, remaining []string) {
