@@ -5,6 +5,7 @@ const pageTpl = `
 <html><head><meta charset="utf-8"><title>mc — {{.Page}}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {{if .Auto}}<meta http-equiv="refresh" content="{{.Auto}}">{{end}}
+<link rel="stylesheet" href="/tokens.css">
 <style>
 :root{--fg:#1a1a1a;--dim:#777;--line:#e2e2e2;--accent:#0b57d0;--bg:#fafaf8;--card:#fff;--warn:#b3261e}
 *{box-sizing:border-box}

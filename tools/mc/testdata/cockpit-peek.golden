@@ -2,6 +2,7 @@
 <html><head><meta charset="utf-8"><title>mc — inbox</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
+<link rel="stylesheet" href="/tokens.css">
 <style>
 :root{--fg:#1a1a1a;--dim:#777;--line:#e2e2e2;--accent:#0b57d0;--bg:#fafaf8;--card:#fff;--warn:#b3261e}
 *{box-sizing:border-box}

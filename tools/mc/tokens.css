@@ -1,0 +1,128 @@
+/* mc token sheet — the visual language (TASK-45).
+ * Designs wireframes.md §3 "Token-sheet requirements"; usage doc at
+ * mission artifacts/token-sheet.md (token → meaning → wireframe use).
+ *
+ * Rules carried from the ratified record:
+ * - Semantic names only: --c-needs-you, never --red.
+ * - Mono is the DERIVED-tier voice; attested/prose stays proportional
+ *   (D3 truth-form rendering law — the tiers are typographically
+ *   distinct, not just labeled).
+ * - Standing review blocker: raw hex or ad-hoc spacing outside these
+ *   tokens fails review (W1+ consume; this file only defines).
+ * - New semantic = new justification, not new hex: badge families
+ *   alias existing slots rather than minting hues.
+ */
+
+:root {
+  /* ---- type ------------------------------------------------------ */
+  --font-prose: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* six steps; complete font shorthands: font: var(--t-body) */
+  --t-display: 700 1.3rem/1.25 var(--font-prose);  /* zone headers */
+  --t-title:   600 1.08rem/1.35 var(--font-prose); /* card/strip titles */
+  --t-body:    400 .94rem/1.5 var(--font-prose);   /* conversation prose */
+  --t-small:   400 .84rem/1.45 var(--font-prose);  /* annotations, traces */
+  --t-micro:   400 .72rem/1.4 var(--font-prose);   /* provenance lines */
+  --t-mono:    400 .8rem/1.45 var(--font-mono);    /* derived-tier voice */
+
+  --measure-prose: 62ch; /* conversation canvas reading measure */
+
+  /* ---- space + shape --------------------------------------------- */
+  /* one scale; no component defines its own gap */
+  --s-1: .25rem; /*  4px — badge padding, hairline gaps            */
+  --s-2: .5rem;  /*  8px — intra-card gaps, row padding            */
+  --s-3: .75rem; /* 12px — card internal padding                   */
+  --s-4: 1rem;   /* 16px — group gutters                           */
+  --s-5: 1.5rem; /* 24px — zone separation                         */
+  --s-6: 2.5rem; /* 40px — canvas margins                          */
+
+  --r-1: 6px;    /* inputs, folds, small chrome */
+  --r-2: 8px;    /* cards, banners              */
+  --r-pill: 99px;/* badges                      */
+
+  /* ---- neutrals --------------------------------------------------- */
+  --c-fg: #1c1c1a;
+  --c-fg-dim: #6e6e69;
+  --c-line: #e3e2dd;
+  --c-bg: #fafaf8;
+  --c-surface: #ffffff;
+
+  /* ---- semantic slots (ink + wash where the wireframes use a
+   *      surface; ink alone where the signal is text/dots) --------- */
+  --c-needs-you: #0b57d0;      /* expects decide/reply; filled your-turn */
+  --c-needs-you-wash: #e9f0fc;
+  --c-blocked: #b3261e;        /* attested blocking claim; strongest accent */
+  --c-blocked-wash: #fbedec;
+  --c-live: #1e7f37;           /* agent activity, working dots, live tail */
+  --c-live-wash: #e8f4ec;
+  --c-done: #517264;           /* settled / integrated / acknowledged */
+  --c-done-wash: #eef3f0;
+  --c-warn: #8a5f00;           /* warning family: spinning, hygiene, stale board */
+  --c-warn-wash: #fdf4dd;
+  --c-stale: #8c7a52;          /* stale provenance/artifacts — a fact style */
+  --c-stale-wash: #f6f2e8;
+  --c-health: #0f766e;         /* unanchored/untagged piles — indicts process */
+  --c-health-wash: #e7f4f2;
+  --c-attested: #7c46c8;       /* attestation tint — voice, quotation-styled */
+  --c-attested-wash: #f6f0fd;
+  --c-observed: #8a8a85;       /* dimmed observed-grade traffic (ink only) */
+  --c-unseated: #5b6474;       /* unseated banner — quiet, not alarming */
+  --c-unseated-wash: #edeff3;
+
+  /* ---- badge-family aliases (reuse, never new hues) ---------------
+   * NATURE badges (spec/brief/plan/working/report) carry NO color:
+   * neutral glyph/letter chip on --c-line, ink --c-fg-dim. Only
+   * STATUS carries color. */
+  --c-status-live: var(--c-live);
+  --c-status-ratified: var(--c-done);
+  --c-status-transient: var(--c-observed);
+  --c-status-stale: var(--c-stale);
+  --c-status-retired: var(--c-fg-dim);
+
+  --c-lc-building: var(--c-live);      /* normal motion            */
+  --c-lc-in-review: var(--c-fg-dim);   /* calm wait, no signal     */
+  --c-lc-remediating: var(--c-warn);   /* it bounced               */
+  --c-lc-integrated: var(--c-done);
+
+  --c-outcome-settled: var(--c-done);
+  --c-outcome-no-action: var(--c-fg-dim);
+  --c-outcome-superseded: var(--c-stale);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-fg: #e8e6e1;
+    --c-fg-dim: #9b9b94;
+    --c-line: #2e2e2b;
+    --c-bg: #131312;
+    --c-surface: #1c1c1a;
+
+    --c-needs-you: #7fb0f4;
+    --c-needs-you-wash: #14243d;
+    --c-blocked: #f2887f;
+    --c-blocked-wash: #3a1512;
+    --c-live: #66c17e;
+    --c-live-wash: #12291a;
+    --c-done: #8fae9d;
+    --c-done-wash: #1b2620;
+    --c-warn: #d9a53f;
+    --c-warn-wash: #2f2410;
+    --c-stale: #b3a071;
+    --c-stale-wash: #262115;
+    --c-health: #5fc0b5;
+    --c-health-wash: #102926;
+    --c-attested: #b795ee;
+    --c-attested-wash: #251639;
+    --c-observed: #85857e;
+    --c-unseated: #98a2b5;
+    --c-unseated-wash: #1d2129;
+  }
+}
+
+/* Base-element pass, deliberately minimal: the template's inline
+ * <style> loads after this sheet and owns all layout/skin until W1
+ * consumes tokens. Only genuinely additive rules belong here. */
+code, kbd, samp {
+  font-family: var(--font-mono);
+}
