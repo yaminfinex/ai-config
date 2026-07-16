@@ -17,6 +17,7 @@ type verbHelpRow struct {
 var rootHelpVerbs = []verbHelpRow{
 	{name: "new", summary: "scaffold a mission and stamp authority/owner"},
 	{name: "backlog", summary: "run allowlisted Backlog.md commands in one mission"},
+	{name: "asks", summary: "manage mission asks and rulings"},
 	{name: "status", summary: "report mission health and overview read-only"},
 	{name: "resolve", summary: "print the resolved mission context as JSON"},
 }
@@ -37,10 +38,11 @@ Concepts:
 Verbs:
   new       scaffold a mission and stamp authority/owner
   backlog   run allowlisted Backlog.md commands in one mission
+  asks      manage mission asks and rulings
   status    report mission health and overview read-only
   resolve   print the resolved mission context as JSON
 
-Agent-facing operation results default to JSON; new, status, and backlog accept --text for
+Agent-facing operation results default to JSON; new, status, asks, and backlog accept --text for
 their prior human output. Successful backlog commands remain verbatim Backlog.md passthrough.
 
 Git rhythm: pull before creating missions, task creation, board restructuring, or manifest
@@ -51,6 +53,27 @@ Open custody verbs include new, adopt, harvest, delete, rename, and close. Optio
 Mission-Source, Mission-Dest, Mission-Agent.
 
 Run 'mish <verb> --help' for the working doctrine on each verb.
+`
+
+const asksHelpText = `Usage: mish asks [--mission <slug>] <subcommand> [<id>] [--input <path|->] [--text]
+
+Manage the mission-owned asks/rulings board. JSON is the default. Mutations read exactly one
+JSON object from --input, require actor, and require if_updated_at for an existing entity.
+The --mission flag is accepted only before the subcommand.
+
+Subcommands:
+  create                    create an open ask or direct ruling
+  view                      read one entity
+  list                      list entities with optional JSON filters
+  reply                     append a member reply
+  settle                    record a ruling and close as settled
+  close                     close as no-action or superseded
+  withdraw-with-citation    authority withdrawal of an unanswered ask
+  link                      add a typed relation and optionally set the anchor
+  widen-membership          owner-only membership widening
+
+All writes use a mission-wide advisory lock, stale-write precondition, and atomic rename.
+Unknown subcommands and flags fail closed. --text changes presentation only.
 `
 
 const newHelpText = `Usage: mish new <slug> [--title T] [--authority A] [--owner O] [--no-marker] [--text]

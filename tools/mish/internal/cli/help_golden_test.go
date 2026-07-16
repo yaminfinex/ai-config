@@ -51,7 +51,7 @@ func TestRootHelpGolden(t *testing.T) {
 }
 
 func TestVerbHelpGolden(t *testing.T) {
-	for _, verb := range []string{"new", "backlog", "status"} {
+	for _, verb := range []string{"new", "backlog", "asks", "status"} {
 		t.Run(verb, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			code := Run([]string{verb, "--help"}, &stdout, &stderr)

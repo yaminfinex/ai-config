@@ -130,6 +130,7 @@ func newRoot(d deps) *cobra.Command {
 	root.AddCommand(
 		newNewCommand(d),
 		newBacklogCommand(d),
+		newAsksCommand(d),
 		newStatusCommand(d),
 		newResolveCommand(d),
 	)

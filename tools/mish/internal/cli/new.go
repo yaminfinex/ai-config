@@ -178,6 +178,9 @@ func runNew(d deps, opts newOptions, slug string) error {
 	if err := missionfs.WriteBoard(filepath.Join(missionDir, "backlog"), slug); err != nil {
 		return scaffoldRefusal("write backlog board", err)
 	}
+	if err := missionfs.WriteAsksScaffold(missionDir); err != nil {
+		return scaffoldRefusal("write asks board", err)
+	}
 	artifactsDir := filepath.Join(missionDir, "artifacts")
 	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
 		return scaffoldRefusal("create artifacts directory", err)

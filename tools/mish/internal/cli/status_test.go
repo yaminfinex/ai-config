@@ -9,11 +9,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"mish/internal/missionfs"
 	"mish/internal/resolve"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestStatusDefaultsToMissionPageJSON(t *testing.T) {
@@ -64,6 +68,11 @@ func TestStatusAllDefaultsToArrayOfMissionObjects(t *testing.T) {
 	}
 	if !got[0].Addressable || !got[1].Addressable {
 		t.Fatalf("valid mission rows must be addressable: %+v", got)
+	}
+	for _, row := range got {
+		if row.Asks.Available || row.Asks.Total != 0 || len(row.Asks.Entities) != 0 {
+			t.Fatalf("historical --all asks shape = %+v", row.Asks)
+		}
 	}
 }
 
@@ -163,6 +172,95 @@ func TestStatusJSONWarningsAreSorted(t *testing.T) {
 	result := makeStatusOutput(resolve.Result{}, statusReport{Warnings: []string{"z warning", "a warning"}})
 	if strings.Join(result.Warnings, ",") != "a warning,z warning" {
 		t.Fatalf("warnings = %#v", result.Warnings)
+	}
+}
+
+func TestStatusAsksAbsentIsUnavailableWithoutWarning(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "alpha")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s", err, stderr)
+	}
+	var got statusOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Asks.Available || got.Asks.Total != 0 || len(got.Asks.Counts) != 0 || len(got.Warnings) != 0 {
+		t.Fatalf("asks = %+v warnings=%v", got.Asks, got.Warnings)
+	}
+}
+
+func TestStatusConfigOnlyAsksIsAvailableEmptyWithoutWarning(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "alpha")
+	asks := filepath.Join(missionDir, "asks")
+	if err := os.MkdirAll(asks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(asks, "config.yml"), "schema: mish.asks/v1\nstates: [open, closed]\noutcomes: [settled, no-action, superseded]\n")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s", err, stderr)
+	}
+	var got statusOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Asks.Available || got.Asks.Total != 0 || len(got.Asks.Counts) != 2 || len(got.Warnings) != 0 {
+		t.Fatalf("asks=%+v warnings=%v", got.Asks, got.Warnings)
+	}
+}
+
+func TestStatusAsksProjectsCountsEntitiesAndDegradesMalformedPeer(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "alpha")
+	if err := missionfs.WriteAsksScaffold(missionDir); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(missionDir, "asks", "entities", "broken.md"), "not frontmatter\n")
+	entity := missionfs.AskEntity{Schema: missionfs.AskSchema, ID: "ask-019b2d6e-7c18-7f65-9d8d-4db7efc3b4ec", Kind: "ask", State: "open", Asker: "hera", AddressedTo: "riley", CreatedAt: "2026-07-16T01:00:00Z", UpdatedAt: "2026-07-16T01:00:00Z", Expects: "read", Anchor: missionfs.TypedRef{Type: "task", Ref: "TASK-1"}, Links: []missionfs.TypedRef{}, Members: []string{"hera", "riley"}, Framing: missionfs.Framing{SubDecisions: []string{}, Options: []missionfs.DecisionOption{}}, Replies: []missionfs.Reply{}, RulingTrail: []missionfs.RulingEntry{}, Traces: []missionfs.Trace{}}
+	data, err := yaml.Marshal(entity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(missionDir, "asks", "entities", entity.ID+".md"), "---\n"+string(data)+"---\n")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s", err, stderr)
+	}
+	var got statusOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Asks.Available || got.Asks.Total != 1 || len(got.Asks.Entities) != 1 || len(got.Warnings) != 1 {
+		t.Fatalf("asks=%+v warnings=%v", got.Asks, got.Warnings)
+	}
+}
+
+func TestStatusAllKeepsAsksShapeAndDegradesMalformedPeer(t *testing.T) {
+	repo, alpha := makeStatusMission(t, "alpha")
+	addStatusMission(t, repo, "beta")
+	if err := missionfs.WriteAsksScaffold(alpha); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(alpha, "asks", "entities", "broken.md"), "not frontmatter\n")
+	entity := missionfs.AskEntity{Schema: missionfs.AskSchema, ID: "ask-019b2d6e-7c18-7f65-9d8d-4db7efc3b4ec", Kind: "ask", State: "open", Asker: "hera", AddressedTo: "riley", CreatedAt: "2026-07-16T01:00:00Z", UpdatedAt: "2026-07-16T01:00:00Z", Expects: "read", Anchor: missionfs.TypedRef{Type: "task", Ref: "TASK-1"}, Links: []missionfs.TypedRef{}, Members: []string{"hera", "riley"}, Framing: missionfs.Framing{SubDecisions: []string{}, Options: []missionfs.DecisionOption{}}, Replies: []missionfs.Reply{}, RulingTrail: []missionfs.RulingEntry{}, Traces: []missionfs.Trace{}}
+	data, err := yaml.Marshal(entity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(alpha, "asks", "entities", entity.ID+".md"), "---\n"+string(data)+"---\n")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s", err, stderr)
+	}
+	var got []statusOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || !got[0].Asks.Available || got[0].Asks.Total != 1 || len(got[0].Warnings) != 1 || got[1].Asks.Available || got[1].Asks.Total != 0 {
+		t.Fatalf("rows=%+v", got)
+	}
+	if !sort.StringsAreSorted(got[0].Warnings) {
+		t.Fatalf("warnings not sorted: %v", got[0].Warnings)
 	}
 }
 
