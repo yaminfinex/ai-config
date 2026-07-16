@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-16 03:34'
-updated_date: '2026-07-16 03:44'
+updated_date: '2026-07-16 04:21'
 labels:
   - herder
 dependencies: []
@@ -37,4 +37,6 @@ Acceptance is by clean battery from BOTH environment classes that failed: an ide
 
 <!-- SECTION:NOTES:BEGIN -->
 TRUST-STATE CAVEAT (2026-07-16): mid-trial, a worker added a mise trust record for their own worktree path to get their battery green — which MASKS the class-2 repro inside that geometry. The class still reproduces from other cwds/fake-HOME (verified: the repo mise.toml trips the same refusal). Acceptance runs must therefore start from a CLEAN trust state (no per-worktree trust records), and unit cleanup should remove any trust records added during work — dangling records for removed worktrees are residue.
+
+CLASS 3, LIVE OUTAGE (2026-07-16 03:38-04:30): the same mise-trust fragility took down the LAUNCH PATH fleet-wide — every spawned pane (codex AND claude AND bash, any cwd) died at shell init on 'mise ERROR: config not trusted' (repo mise.toml, then per-worktree mise.toml for foreign-repo cwds), and the hcom --run-here launcher STRANDS FOREVER when the pane shell init fails (no timeout, no error surfaced; herder sidecar child exits defunct; registry row minted half-born with no bus bind). Detection cost was high because the pane error is invisible from spawn output. REMEDY APPLIED (host state, announced): explicit mise trust records for the ai-config repo, operator global config, and the affected foreign worktree; verified by probe spawns both geometries. OPEN QUESTIONS for this task: why trusted_config_paths coverage from the global config stopped applying in pane contexts at ~03:38 (first failure follows a mise trust write at 03:33 by five minutes — plausible trust-DB invalidation side effect, unproven); and the launcher no-timeout defect is upstream hcom (ledger candidate filed). Spawn-path smoke (one bash + one codex probe spawn) belongs in any fix verification.
 <!-- SECTION:NOTES:END -->

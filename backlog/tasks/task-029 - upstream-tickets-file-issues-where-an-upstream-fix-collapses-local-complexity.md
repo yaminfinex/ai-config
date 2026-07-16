@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-15 11:46'
+updated_date: '2026-07-16 04:21'
 labels:
   - run-herder-dx
 dependencies: []
@@ -56,6 +56,8 @@ hera (TASK-199 closeout): upstream hcom candidate — the pi extension acks the 
 hera (grok steady-state + hook-suppression closeout): two candidates. (1) hcom — expose a keepalive affordance (or socket-liveness check) before cleanup_stale_instances reaps an ad-hoc row: bridge-bound identities look like expired one-shots because status_time only advances on identified calls; herder now ships a 15m identified-refresh + rebind machine that an upstream affordance would collapse. (2) grok CLI 0.2.93 — ignores the [compat.claude] hooks=false config toggle that current vendor docs assign to GROK_HOME; the documented GROK_CLAUDE_HOOKS_ENABLED env override works. Config-surface bug worth a vendor report.
 
 Upstream hcom hypothesis from a resumed-session adoption incident: the observed inactive placeholder is consistent with `hcom start --as <prior-name>` minting a fresh identity even when the resumed transcript session id already owns a joined row, followed by later hooks rebinding the transcript-owned row. No standalone upstream repro was captured, so verify that sequence before filing. Herder avoids the suspected path during adoption by resolving an explicitly authorized source transcript session id before attempting a name reclaim, but raw/manual recovery may still expose it. If reproduced, ask that `start --as` reuse or explicitly rename the transcript-owned row, or refuse with the existing owner named. This would be hcom-owned because the herder hcom shim transparently forwards the command and cannot arbitrate hcom's roster mutation.
+
+NEW CANDIDATE (2026-07-16): hcom <agent> --run-here launcher strands FOREVER when the launched pane's shell init fails before the pty child starts (observed: mise trust refusal at shell init). No timeout, no diagnostic, launcher process sleeps indefinitely, half-born registry state downstream. Upstream fix: bounded launch-phase timeout + surface pane stderr/init failure to the spawn caller. Reproduced 6+ times across two orchestrators' fleets; recovery required manual launcher kills.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
