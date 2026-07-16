@@ -132,3 +132,31 @@ printf '%s\n' '[{"name":"builder-marker","status":"active","session_id":"019f64d
 		t.Fatalf("herder calls = %q, want only list --json", got)
 	}
 }
+
+func TestRosterGroupsTreatEmptyDeclaredMissionAsMissionless(t *testing.T) {
+	dir := t.TempDir()
+	herder := writeExecutable(t, dir, "herder", fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' '{"kind":"session","guid":"empty-mission","label":"builder-empty","role":"builder","tool":"codex","state":"seated","provenance":{"tool_session_id":"sid-empty","cwd":%q,"branch":"empty-branch"},"mission":{"slug":"","source":"explicit"}}'
+`, dir))
+	hcom := writeExecutable(t, dir, "hcom", `#!/bin/sh
+printf '%s\n' '[{"name":"builder-empty","status":"active","session_id":"sid-empty"}]'
+`)
+	mish := writeExecutable(t, dir, "mish", "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"slug\":\"fallback-mission\"}'\n")
+	_, store := testIngestor(t)
+	w := NewWeb(store, &Bus{Hcom: hcom}, nil, "human-yamen", "owner", herder, newMissionResolver(mish, ""))
+
+	groups, warning := w.rosterGroups(false)
+	if warning != "" {
+		t.Fatalf("roster warning = %q", warning)
+	}
+	if len(groups) != 1 || groups[0].Dir != "no mission" || groups[0].Mission != "" {
+		t.Fatalf("groups = %#v, want one missionless group", groups)
+	}
+	if len(groups[0].Repos) != 1 || len(groups[0].Repos[0].Branches) != 1 {
+		t.Fatalf("repo grouping = %#v, want one repo and branch", groups[0].Repos)
+	}
+	branch := groups[0].Repos[0].Branches[0]
+	if branch.Branch != "empty-branch" || len(branch.Agents) != 1 || branch.Agents[0].Name != "builder-empty" {
+		t.Fatalf("branch grouping = %#v, want builder-empty on empty-branch", branch)
+	}
+}

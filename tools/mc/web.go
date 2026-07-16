@@ -89,7 +89,7 @@ func (w *Web) conditionalPages(next http.Handler) http.Handler {
 			return
 		}
 		cursor, generation := w.store.Version()
-		state := sha256.Sum256([]byte(r.URL.RequestURI()))
+		state := sha256.Sum256([]byte(w.userFor(r) + "\x00" + r.URL.RequestURI()))
 		etag := fmt.Sprintf(`"%d-%d-%x"`, cursor, generation, state[:6])
 		rw.Header().Set("ETag", etag)
 		rw.Header().Set("Cache-Control", "no-cache")
@@ -436,7 +436,7 @@ func stateURL(path, mission string) string {
 }
 
 func safeReturnTarget(raw string) string {
-	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") && !strings.ContainsAny(raw, "\r\n") {
+	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") && !strings.ContainsAny(raw, "\\\r\n") {
 		return raw
 	}
 	return ""
@@ -965,7 +965,7 @@ func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {
 	missionGroups := map[string]*rosterGroup{}
 	missionless := map[string]map[string][]rosterAgent{}
 	add := func(dir string, declared *HerderMission, a rosterAgent) {
-		if declared != nil {
+		if declared != nil && declared.Slug != "" {
 			g := missionGroups[declared.Slug]
 			if g == nil {
 				g = &rosterGroup{Dir: "mission: " + declared.Slug, Mission: declared.Slug}
@@ -975,7 +975,7 @@ func (w *Web) rosterGroups(showAll bool) ([]rosterGroup, string) {
 			g.Agents = append(g.Agents, a)
 			return
 		}
-		if w.missions != nil {
+		if declared == nil && w.missions != nil {
 			if mission := w.missions.Slug(dir); mission != "" {
 				g := missionGroups[mission]
 				if g == nil {
