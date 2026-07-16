@@ -225,7 +225,7 @@ func thenDeliver(p busProbe, cfg thenConfig, log io.Writer, now func() time.Time
 			recordThenLifecycle(cfg, "delivered", "", log, now())
 			return 0
 		case "queued":
-			fmt.Fprintf(log, "herder compact-then: queued on attempt %d — no delivery receipt observed within the verification window; the bus accepted the continuation for later injection. NOT resending.\n", attempt)
+			fmt.Fprintf(log, "herder compact-then: queued on attempt %d — no delivery receipt observed within the verification window; the bus accepted the continuation. NOT resending.\n", attempt)
 			recordThenLifecycle(cfg, "queued", "", log, now())
 			return 0
 		}
