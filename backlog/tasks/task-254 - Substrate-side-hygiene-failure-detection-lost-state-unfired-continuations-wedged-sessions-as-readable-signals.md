@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-16 00:51'
+updated_date: '2026-07-16 04:55'
 labels:
   - herder
 dependencies: []
@@ -24,3 +25,9 @@ From the ratified synthesis audit (owner via design-seat, mc lane): mission-cont
 - [ ] #1 Inventory of hygiene-failure classes with existing-coverage map (dedupe vs continuation-lifecycle + observer scopes)
 - [ ] #2 Reviewed design: signal shape per class, readable by renderers, declared/checkable not inferred
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+PROVEN EXAMPLE for this umbrella (2026-07-16, peer-verified via hcom life events): config-layer breakage (mise trust refusal) silently starved a live service's seat keepalive; hcom's stale_cleanup janitor then reaped the seat of a LIVE holder, converting a config problem into identity loss after one staleness window. The detection this task wants would have surfaced 'seat keepalive failing while process alive' long before the janitor fired — heartbeat-starvation-with-live-holder is exactly the readable signal class to specify.
+<!-- SECTION:NOTES:END -->

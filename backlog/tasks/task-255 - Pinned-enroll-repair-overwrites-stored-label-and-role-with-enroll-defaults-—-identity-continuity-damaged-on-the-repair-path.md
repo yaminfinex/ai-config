@@ -3,9 +3,10 @@ id: TASK-255
 title: >-
   Pinned enroll repair overwrites stored label and role with enroll defaults —
   identity continuity damaged on the repair path
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-16 00:58'
+updated_date: '2026-07-16 03:04'
 labels:
   - herder
 dependencies: []
@@ -24,3 +25,9 @@ Found on the first live run of the repair path (worked otherwise: guid, pane, bu
 - [ ] #1 Same-guid repair preserves stored label and role absent explicit flags (red-first)
 - [ ] #2 Core-key rebind and adoption paths audited for the same overwrite class
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Dispatched 2026-07-16 as grok-vs-codex A/B calibration trial (row 2 of the implementation ledger): same brief, two independent seats/worktrees/threads, design checkpoints first, standard review chain holds merge authority, one arm merges.
+<!-- SECTION:NOTES:END -->
