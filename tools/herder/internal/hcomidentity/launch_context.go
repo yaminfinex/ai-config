@@ -183,7 +183,7 @@ func launchContextRemedy(code, name string) string {
 	case "launch_context_row_ambiguous":
 		return fmt.Sprintf("Resolve the duplicate %s instance rows in hcom before retrying; do not choose a row arbitrarily or edit the database manually", bus)
 	case "launch_context_pane_conflict":
-		return fmt.Sprintf("From the verified live pane for %s, run 'herder reconcile --apply' to re-establish exact identity before retrying; do not overwrite either coordinate manually", bus)
+		return fmt.Sprintf("No herder verb rewrites an existing pane coordinate by design; from the verified live pane, re-create %s through hcom itself so hcom records fresh launch coordinates", bus)
 	case "launch_context_invalid_json", "launch_context_invalid_coordinate":
 		return fmt.Sprintf("Repair or recreate %s through supported hcom commands, then rerun 'herder reconcile --apply'; do not edit launch_context manually", bus)
 	case "launch_context_read_failed":
