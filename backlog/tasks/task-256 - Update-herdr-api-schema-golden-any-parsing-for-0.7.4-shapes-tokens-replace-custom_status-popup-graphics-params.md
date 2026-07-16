@@ -3,9 +3,10 @@ id: TASK-256
 title: >-
   Update herdr api-schema golden + any parsing for 0.7.4 shapes (tokens replace
   custom_status, popup/graphics params)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-16 01:20'
+updated_date: '2026-07-16 02:17'
 labels:
   - herder
 dependencies: []
@@ -24,3 +25,9 @@ The 0.7.4 handoff changed the api schema without a protocol bump (still 16): Pan
 - [ ] #1 Golden regenerated from the live 0.7.4 server and inspected (not blind --write)
 - [ ] #2 check-live-contract 11/11 green; any parsing that consumed changed shapes updated in the same diff
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Dispatched 2026-07-16 as a priority lane (worktree task-256-schema-golden): the drift golden now blocks every full battery on this box — it voided the compact-fix lane's gate at suite 16. Deliberate-review regen (field-delta enumeration + removed-field consumer evidence), not a blind re-capture.
+<!-- SECTION:NOTES:END -->
