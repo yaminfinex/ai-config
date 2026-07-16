@@ -52,6 +52,7 @@ type options struct {
 	SplitExplicit bool
 	Workspace     string
 	FromPane      string
+	FromPaneSet   bool
 	Tab           string
 	NewTab        bool
 	Worktree      string
@@ -494,6 +495,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 				return opts, 1
 			}
 			opts.FromPane = v
+			opts.FromPaneSet = true
 			i += 2
 		case "--tab":
 			v, ok := value()
@@ -780,8 +782,13 @@ func (r *runner) run() int {
 			opts.Workspace = pane.WorkspaceID
 		}
 		if opts.Workspace == "" {
-			fmt.Fprintf(r.stderr, "herder spawn: --from-pane %s: pane not found (herdr pane get returned: %s)\n", opts.FromPane, strings.TrimRight(string(out), "\n"))
-			return 1
+			cause := fmt.Sprintf("pane candidate %s is not resolvable in live herdr state (herdr pane get returned: %s)", opts.FromPane, strings.TrimRight(string(out), "\n"))
+			if opts.FromPaneSet {
+				fmt.Fprintf(r.stderr, "herder spawn: refused [unresolvable_from_pane]: %s. Pass a pane id from 'herdr pane list' and retry. Nothing was launched.\n", cause)
+			} else {
+				fmt.Fprintf(r.stderr, "herder spawn: refused [unresolvable_from_pane]: %s. Recovery: prefix the command with HERDR_PANE_ID=<live-pane> HERDER_GUID=<guid>, spawn without --prompt, wait for the child to bind, then run 'herder send <child-guid-or-label> -- <prompt>'. Nothing was launched.\n", cause)
+			}
+			return 2
 		}
 	}
 
@@ -2151,7 +2158,36 @@ func (r *runner) verifyPromptSender(registryPath, busDir string) (string, error)
 		}
 	}
 	evidence := hcomidentity.CurrentEvidence(envPane, pane.PaneID)
-	return send.VerifyStoredSender(self.row.HcomName, busDir, evidence)
+	name, verifyErr := send.VerifyStoredSender(self.row.HcomName, busDir, evidence)
+	if verifyErr == nil {
+		return name, nil
+	}
+	if name, ok := emptyLaunchContextSenderFallback(*self.row, pane, busDir); ok {
+		return name, nil
+	}
+	return "", verifyErr
+}
+
+// emptyLaunchContextSenderFallback is deliberately narrower than normal hcom
+// identity resolution. It applies only when hcom recorded no launch facts and
+// the live herdr terminal+pane exactly equal one verified seated registry row
+// whose stored bus name identifies one joined row.
+func emptyLaunchContextSenderFallback(row registry.Record, pane herdrcli.Pane, busDir string) (string, bool) {
+	if !registry.IsSeated(row) || row.HcomVerified == nil || !*row.HcomVerified || row.HcomName == "" || row.HcomName == "null" {
+		return "", false
+	}
+	if pane.TerminalID == "" || pane.PaneID == "" || row.TerminalID != pane.TerminalID || row.PaneID != pane.PaneID {
+		return "", false
+	}
+	rows, err := hcomidentity.List(busDir)
+	if err != nil {
+		return "", false
+	}
+	live, count := hcomidentity.JoinedNamedCount(rows, row.HcomName)
+	if count != 1 || !live.LaunchContext.Empty() {
+		return "", false
+	}
+	return live.Name, true
 }
 
 func firstNonEmpty(values ...string) string {

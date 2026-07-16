@@ -159,6 +159,19 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stderr, "adopt: registry-bind applied: @%s recorded on guid %s\n", busIdentity.Name, replacement.GUID)
+	launchPane := os.Getenv("HERDR_PANE_ID")
+	if replacement.Seat != nil && replacement.Seat.PaneID != "" {
+		launchPane = replacement.Seat.PaneID
+	}
+	repair := hcomidentity.RepairLaunchContext(oldBusDir, busIdentity.Name, launchPane)
+	switch repair.Status {
+	case "written":
+		fmt.Fprintf(stderr, "adopt: launch-context written: @%s now records live pane %s\n", busIdentity.Name, repair.PaneID)
+	case "already-present":
+		fmt.Fprintf(stderr, "adopt: launch-context already-present: @%s records live pane %s\n", busIdentity.Name, repair.PaneID)
+	default:
+		fmt.Fprintf(stderr, "adopt: launch-context refused [%s]: %s. %s. Registry bind remains applied; the verified empty-context spawn fallback remains available.\n", repair.Code, repair.Cause, repair.Remedy)
+	}
 	fmt.Fprintf(stderr, "adopted %s: new guid %s seated; old guid %s retired; label reclaimed; bus identity %s\n", old.Label, replacement.GUID, old.GUID, busDisposition)
 	return 0
 }

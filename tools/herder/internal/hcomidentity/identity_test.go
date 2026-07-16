@@ -99,3 +99,40 @@ func TestDecodeAcceptsJSONLines(t *testing.T) {
 		t.Fatalf("Decode = (%+v, %v), want two JSONL rows", rows, err)
 	}
 }
+
+func TestLaunchContextEmptyRequiresAnActuallyEmptyObject(t *testing.T) {
+	tests := []struct {
+		raw   string
+		empty bool
+	}{
+		{raw: `[{"name":"empty","launch_context":{}}]`, empty: true},
+		{raw: `[{"name":"pane","launch_context":{"pane_id":"p_1"}}]`, empty: false},
+		{raw: `[{"name":"unknown","launch_context":{"future_key":true}}]`, empty: false},
+		{raw: `[{"name":"null","launch_context":null}]`, empty: false},
+	}
+	for _, tt := range tests {
+		rows, err := Decode([]byte(tt.raw))
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("Decode(%s) = (%+v, %v)", tt.raw, rows, err)
+		}
+		if got := rows[0].LaunchContext.Empty(); got != tt.empty {
+			t.Fatalf("LaunchContext.Empty(%s) = %v, want %v", tt.raw, got, tt.empty)
+		}
+	}
+}
+
+func TestResolveExactSessionPaneRequiresOneRowMatchingBoth(t *testing.T) {
+	joined := boolPtr(true)
+	rows := []Row{
+		{Name: "right", SessionID: "sid", Joined: joined, LaunchContext: LaunchContext{PaneID: "pane"}},
+		{Name: "session-only", SessionID: "sid", Joined: joined, LaunchContext: LaunchContext{PaneID: "elsewhere"}},
+		{Name: "pane-only", SessionID: "other", Joined: joined, LaunchContext: LaunchContext{PaneID: "pane"}},
+	}
+	if got := ResolveExactSessionPane(rows, "sid", "pane"); !got.Verified || got.Name != "right" {
+		t.Fatalf("ResolveExactSessionPane = %+v, want unique row matching both", got)
+	}
+	rows = append(rows, Row{Name: "duplicate", SessionID: "sid", Joined: joined, LaunchContext: LaunchContext{PaneID: "pane"}})
+	if got := ResolveExactSessionPane(rows, "sid", "pane"); got.Verified {
+		t.Fatalf("ResolveExactSessionPane duplicate = %+v, want refusal", got)
+	}
+}

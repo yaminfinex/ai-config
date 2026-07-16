@@ -164,6 +164,19 @@ assert "reopen non-retired refuses" test "$reopen_open_rc" -ne 0
 assert "reopen then rename claims freed label" bash -c 'test "$1" -eq 0 && grep -q "renamed  -> trap (guid-old-0000)" "$2" && grep -q "\"event\":\"labelled\"" "$3" && grep -q "\"label\":\"trap\"" "$3"' bash "$rename_after_reopen_rc" "$CASE/rename-after-reopen.err" "$CASE/state/registry.jsonl"
 
 new_case adopt_happy
+mkdir -p "$CASE/home/.hcom"
+python3 - "$CASE/home/.hcom/hcom.db" <<'PY'
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.executescript('''
+CREATE TABLE instances(name TEXT PRIMARY KEY, launch_context TEXT DEFAULT '');
+CREATE TABLE process_bindings(process_id TEXT PRIMARY KEY, instance_name TEXT, updated_at REAL NOT NULL);
+PRAGMA user_version=17;
+INSERT INTO instances(name, launch_context) VALUES ('trap', '{}');
+INSERT INTO process_bindings(process_id, instance_name, updated_at) VALUES ('process-replacement', 'trap', 1);
+''')
+db.commit()
+PY
 adopt_out="$(run_hr adopt trap 2>"$CASE/adopt.err")"; adopt_rc=$?
 assert "adopt replacement exits 0" test "$adopt_rc" -eq 0
 assert "adopt reports every applied leg" bash -c 'grep -q "adopt: enroll applied" "$1" && grep -q "adopt: label-transfer applied" "$1" && grep -q "adopt: retire applied" "$1" && grep -q "adopt: bus-name verified" "$1"' bash "$CASE/adopt.err"
@@ -174,6 +187,13 @@ assert "adopt mints new guid, retires old, and moves label" jq -se '
     and ([to_entries[] | select(.key != "guid-old-0000" and .value.label == "trap" and .value.state == "seated")] | length) == 1
 ' "$CASE/state/registry.jsonl"
 assert "adopt reclaims bus name" jq -e 'length == 1 and .[0].name == "trap" and .[0].session_id == "sess-replacement"' "$CASE/hcom.json"
+assert "adopt final bind records launch coordinates" python3 -c '
+import json, sqlite3, sys
+raw = sqlite3.connect(sys.argv[1]).execute("select launch_context from instances where name = ?", ("trap",)).fetchone()[0]
+ctx = json.loads(raw)
+raise SystemExit(0 if ctx.get("pane_id") == "p_enroll" and ctx.get("process_id") == "process-replacement" else 1)
+' "$CASE/home/.hcom/hcom.db"
+assert "adopt reports confirmed launch-context write" grep -q 'adopt: launch-context written: @trap now records live pane p_enroll' "$CASE/adopt.err"
 assert "adopt binds the replacement row after reclaim" jq -se '
   reduce (.[] | select(.kind=="session")) as $row ({}; .[$row.guid]=$row)
   | [to_entries[] | select(.key != "guid-old-0000" and .value.label == "trap")] as $replacement
@@ -220,6 +240,9 @@ assert "adopt binds a newly reclaimed name without ambient bus correlates" bash 
       and .[0].value.seat.hcom_verified == true
   '\'' "$2"
 ' bash "$adopt_no_identity_rc" "$CASE/state/registry.jsonl"
+assert "adopt launch-context refusal is loud but nonfatal after committed bind" bash -c '
+  test "$1" -eq 0 && grep -q "adopt: launch-context refused \[launch_context_db_unavailable\]" "$2" && grep -q "Registry bind remains applied" "$2"
+' bash "$adopt_no_identity_rc" "$CASE/adopt.err"
 
 new_case adopt_resumed_session_unasserted
 cat >>"$CASE/state/registry.jsonl" <<'JSONL'

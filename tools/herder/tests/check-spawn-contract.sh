@@ -118,7 +118,7 @@ run_spawn() {
     AI_CONFIG_ROOT="$REPO_ROOT" \
     XDG_CACHE_HOME="$ROOT/xdg-cache" \
     GOCACHE="$GOCACHE_SHARED" \
-    HERDR_ENV=1 HERDR_PANE_ID=p_orch \
+    HERDR_ENV=1 HERDR_PANE_ID="${SPAWN_PANE_ID:-p_orch}" \
     HERDER_GUID="${SPAWN_HERDER_GUID:-}" \
     HERDER_SPAWNED_BY="${SPAWN_HERDER_SPAWNED_BY:-}" \
     HERDER_TEAM="${SPAWN_HERDER_TEAM:-}" \
@@ -505,6 +505,113 @@ if [[ "$WRITE" -eq 0 ]]; then
     ok "notify-to unresolvable: hard error before pane creation"
   else
     bad "notify-to unresolvable: hard error before pane creation" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  # An adopted sender can have a fully seated herder row while its reclaimed
+  # hcom row carries no launch coordinates. The prompt sender gate must recover
+  # only from the exact live terminal+pane+stored-name proof class.
+  SPAWN_HERDER_GUID="guid-adopted-0000"
+  SPAWN_SENDER_BUS="adopted-bus"
+  SPAWN_SEED_IS_SELF=1
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
+  CASE="$ROOT/prompt_sender_empty_context"
+  run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
+  if [[ "$RUN_RC" -eq 0 ]] && [[ -f "$CASE/probe/agent_start_argv" ]] \
+    && grep -q -- '--from adopted-bus' "$CASE/probe/send_argv"; then
+    ok "prompt sender: empty launch context accepts exact live seat fallback"
+  else
+    bad "prompt sender: empty launch context accepts exact live seat fallback" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  CASE="$ROOT/prompt_sender_foreign_terminal"
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_FOREIGN","pane_id":"p_foreign","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
+  run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+    ok "prompt sender fallback: foreign terminal/pane refuses before launch"
+  else
+    bad "prompt sender fallback: foreign terminal/pane refuses before launch" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  CASE="$ROOT/prompt_sender_context_mismatch"
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
+  run_spawn ready claude wrongctx --role worker --agent claude --prompt "do the thing"
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+    ok "prompt sender fallback: nonempty mismatched context refuses"
+  else
+    bad "prompt sender fallback: nonempty mismatched context refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  CASE="$ROOT/prompt_sender_duplicate_bus"
+  run_spawn ready claude emptyctx_duplicate --role worker --agent claude --prompt "do the thing"
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+    ok "prompt sender fallback: duplicate joined stored name refuses"
+  else
+    bad "prompt sender fallback: duplicate joined stored name refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  CASE="$ROOT/prompt_sender_name_mismatch"
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"different-bus","namespace":"/hcom","hcom_verified":true}}'
+  run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+    ok "prompt sender fallback: stored/live bus-name mismatch refuses"
+  else
+    bad "prompt sender fallback: stored/live bus-name mismatch refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  CASE="$ROOT/prompt_sender_unseated"
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"reconciled","recorded_at":"2026-07-03T00:00:00Z","state":"unseated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
+  run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+    ok "prompt sender fallback: unseated row refuses"
+  else
+    bad "prompt sender fallback: unseated row refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  CASE="$ROOT/prompt_sender_unverified_registry_bus"
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":false}}'
+  run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+    ok "prompt sender fallback: registry bus proof marked unverified refuses"
+  else
+    bad "prompt sender fallback: registry bus proof marked unverified refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  CASE="$ROOT/prompt_sender_joined_row_absent"
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
+  run_spawn ready claude norows --role worker --agent claude --prompt "do the thing"
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+    ok "prompt sender fallback: joined stored-name row absent refuses"
+  else
+    bad "prompt sender fallback: joined stored-name row absent refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  unset SPAWN_HERDER_GUID SPAWN_SENDER_BUS SPAWN_SEED_IS_SELF SPAWN_SEED_REGISTRY
+
+  CASE="$ROOT/prompt_sender_ambiguous_registry_self"
+  SPAWN_SEED_IS_SELF=1
+  SPAWN_NO_DEFAULT_SENDER=1
+  SPAWN_SEED_REGISTRY=$'{"kind":"session","guid":"guid-first-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"first","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"first-bus","namespace":"/hcom","hcom_verified":true}}\n{"kind":"session","guid":"guid-second-0000","event":"seated","recorded_at":"2026-07-03T00:00:01Z","state":"seated","label":"second","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"second-bus","namespace":"/hcom","hcom_verified":true}}'
+  run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
+  unset SPAWN_SEED_IS_SELF SPAWN_NO_DEFAULT_SENDER SPAWN_SEED_REGISTRY
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+    ok "prompt sender fallback: ambiguous registry self refuses"
+  else
+    bad "prompt sender fallback: ambiguous registry self refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  CASE="$ROOT/derived_pane_unresolvable"
+  SPAWN_PANE_ID=p_stale
+  run_spawn ready claude launchctx --role worker --agent bash
+  unset SPAWN_PANE_ID
+  if [[ "$RUN_RC" -eq 2 ]] \
+    && grep -q 'refused \[unresolvable_from_pane\]' "$RUN_ERR_F" \
+    && grep -q 'HERDR_PANE_ID=<live-pane> HERDER_GUID=<guid>' "$RUN_ERR_F" \
+    && grep -q 'spawn without --prompt' "$RUN_ERR_F" \
+    && grep -q 'herder send' "$RUN_ERR_F" \
+    && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+    ok "derived pane: stale ambient coordinate has typed promptless-then-send recovery"
+  else
+    bad "derived pane: stale ambient coordinate has typed promptless-then-send recovery" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
 fi
 
