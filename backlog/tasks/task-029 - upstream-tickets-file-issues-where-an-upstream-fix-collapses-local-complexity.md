@@ -171,3 +171,11 @@ dropped. Suggested fix there: staleness should weigh liveness evidence (process/
 non-heartbeat activity) rather than heartbeat silence alone, and a reap of a row with recent
 non-heartbeat events deserves a grace probe. Local evidence: env-robustness task mechanism 3
 plus the asymmetry corollary (run event ids recorded there).
+
+hera (launch-context ownership, 2026-07-16): hcom candidate. hcom owns instances.launch_context
+(the coordinates its delivery/sender verification match against) but exposes NO way to set or
+repair it after row creation — rows created by `hcom start` / reclaimed by `start --as` keep
+launch_context={} forever, which downstream makes such sessions spawn-dead in herder (sender
+verification has nothing to match) with no healing verb. We are shipping an interim schema-gated
+direct-db backfill adapter (merge-missing-only, transactional); the right fix is an hcom-owned
+setter or launch-context capture on start/reclaim, at which point the adapter retires.
