@@ -26,6 +26,9 @@ trap 'rm -rf "$ROOT"' EXIT
 cat >"$MOCKBIN/herdr" <<'MOCK_HERDR'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -n "${MOCK_HERDR_CALLS:-}" ]]; then
+  printf '%s %s\n' "${1:-}" "${2:-}" >>"$MOCK_HERDR_CALLS"
+fi
 case "${1:-} ${2:-}" in
   "pane get")
     jq -n '{result:{pane:{pane_id:"p_self", terminal_id:"term_SELF", workspace_id:"ws_self", cwd:"/mock/cwd"}}}';;
@@ -41,6 +44,9 @@ chmod +x "$MOCKBIN/herdr"
 cat >"$MOCKBIN/hcom" <<'MOCK_HCOM'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -n "${MOCK_HCOM_CALLS:-}" ]]; then
+  printf '%s %s\n' "${1:-}" "${2:-}" >>"$MOCK_HCOM_CALLS"
+fi
 rows="${MOCK_HCOM_ROWS:-[]}"
 if [[ "${1:-} ${2:-}" == "list --json" ]]; then
   printf '%s\n' "$rows"
@@ -489,10 +495,13 @@ JSONL
 JSONL
 	printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
 	RUN_ERR_F="$CASE/stderr"
+	HERDR_CALLS="$CASE/herdr.calls"
+	HCOM_CALLS="$CASE/hcom.calls"
 	RUN_OUT="$(env -i \
 	  PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
 	  HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-original-0000 HERDER_ROLE=worker \
 	  HCOM_SESSION_ID=sid-live \
+	  MOCK_HERDR_CALLS="$HERDR_CALLS" MOCK_HCOM_CALLS="$HCOM_CALLS" \
 	  MOCK_HCOM_ROWS='[{"name":"stable-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
 	  "${HEN[@]}" --label stable --json 2>"$RUN_ERR_F")"
 	RUN_RC=$?
@@ -509,10 +518,12 @@ JSONL
 		reduce (.[] | select(.kind=="session")) as $row ({}; .[$row.guid]=$row)
 		| [.[] | select(.state=="seated" and .seat.terminal_id=="term_SELF" and .seat.pane_id=="p_self" and .seat.hcom_name=="stable-bus")] | length == 1
 	  ' "$CASE/state/registry.jsonl" >/dev/null \
-	  && ! grep -q 'mock herdr (enroll suite): unhandled: pane close' "$RUN_ERR_F"; then
+	  && [[ "$(cat "$HERDR_CALLS")" == "pane get" ]] \
+	  && [[ "$(cat "$HCOM_CALLS")" == "list --json" ]]; then
 		printf 'PASS  cleanup: original repairs before duplicate detaches without closing the pane\n'
 	else
-		printf 'FAIL  cleanup: repair-first duplicate detach — rc=%s err=%s out=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")" "$RUN_OUT"; fail=1
+		printf 'FAIL  cleanup: repair-first duplicate detach — rc=%s err=%s out=%s herdr_calls=%q hcom_calls=%q\n' \
+		  "$RUN_RC" "$(cat "$RUN_ERR_F")" "$RUN_OUT" "$(cat "$HERDR_CALLS" 2>/dev/null)" "$(cat "$HCOM_CALLS" 2>/dev/null)"; fail=1
 	fi
 
 	check_guid_reuse_refusal() {
