@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-15 20:29'
+updated_date: '2026-07-16 00:58'
 labels:
   - herder
 dependencies: []
@@ -21,6 +22,8 @@ From the same live incident as the TASK-243 duplicate-mint evidence (2026-07-15,
 TWO PARTS:
 1. HONESTY (small, ship first if split): the refusal text must describe only checks actually performed, with cause+remedy naming the env correlate that unblocks.
 2. DESIGN QUESTION (checkpoint before code): should the verify path accept registry corroboration it can already see (caller pane/terminal matches a seated row with a verified hcom_name) as the identity correlate when the env correlate is absent? Guard rail: must NOT weaken fail-closed — a caller whose pane matches nothing, or matches a row with a different identity, still refuses; ambient identity env passthrough hazards (see the HERDER_* passthrough task) mean pane corroboration must be proven not spoofable from a child shell before it is accepted.
+
+LIVE ROUND-TRIP EVIDENCE (first coordinated repair run): the V-conjunct refusal fired for a bash subprocess with no hcom session correlate; the remedy text (join hcom / reconcile / adopt) cost a full round trip because none of those was the actual fix — HCOM_SESSION_ID=<sid> in the caller env was. The bash-subprocess-has-no-correlate case needs its own remedy line naming the env correlate.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

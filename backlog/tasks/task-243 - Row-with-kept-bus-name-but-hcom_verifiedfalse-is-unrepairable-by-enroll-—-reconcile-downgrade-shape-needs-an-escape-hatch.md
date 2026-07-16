@@ -3,10 +3,10 @@ id: TASK-243
 title: >-
   Row with kept bus name but hcom_verified=false is unrepairable by enroll —
   reconcile-downgrade shape needs an escape hatch
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-15 11:25'
-updated_date: '2026-07-16 00:50'
+updated_date: '2026-07-16 00:58'
 labels: []
 dependencies: []
 ordinal: 242500
@@ -26,8 +26,10 @@ Fix directions to evaluate (design checkpoint first): (a) treat stored-but-unver
 <!-- AC:BEGIN -->
 - [x] #1 Red-first fixture: downgraded shape (stored name kept, hcom_verified=false) — repair path proven; strict-branch refusal for verified stored names unchanged (mutation-armed)
 - [x] #2 Red-first fixture: enroll on a matching terminal+pane+hcom_name repairs or refuses with real escape hatch — never mints a duplicate seated row
-- [ ] #3 A cleanup path exists for a duplicate seated row on a live pane (unseat-without-close or equivalent); the live specimen pair is cleaned with it — ORDERING: the duplicate is load-bearing for the victim's bare identity-correlated verbs (pane match), so repair + re-verify the ORIGINAL row first, then clean the duplicate; cleaning first re-strands the victim
+- [x] #3 A cleanup path exists for a duplicate seated row on a live pane (unseat-without-close or equivalent); the live specimen pair is cleaned with it — ORDERING: the duplicate is load-bearing for the victim's bare identity-correlated verbs (pane match), so repair + re-verify the ORIGINAL row first, then clean the duplicate; cleaning first re-strands the victim
 <!-- AC:END -->
+
+
 
 ## Implementation Notes
 
