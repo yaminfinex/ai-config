@@ -524,7 +524,7 @@ func (w *Web) mission(rw http.ResponseWriter, r *http.Request) {
 	if d.Mission.Slug == "" {
 		d.Mission.Slug = slug
 	}
-	for _, t := range w.store.List("", "") {
+	for _, t := range w.store.List("open", "") {
 		if t.Home == slug {
 			d.MissionThreads = append(d.MissionThreads, t)
 		}

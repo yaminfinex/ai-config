@@ -1198,6 +1198,12 @@ func TestMissionPageRendersStatusWarningsThreadsAndRoster(t *testing.T) {
 	if err := s.Open("other", "other title", "ctx", "reply", "moment", "mission-two", "vile", nil, "vile", "managed"); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.Open("finished", "finished title", "ctx", "reply", "moment", "mission-one", "vile", nil, "vile", "managed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close("finished", "wrapped up"); err != nil {
+		t.Fatal(err)
+	}
 	agentDir := filepath.Join(dir, "agent")
 	if err := os.Mkdir(agentDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -1232,6 +1238,9 @@ fi
 	}
 	if strings.Contains(body, "other title") {
 		t.Fatal("mission page included a thread homed on another mission")
+	}
+	if strings.Contains(body, "finished title") {
+		t.Fatal("mission page included a closed thread; closed threads belong to the /threads browse")
 	}
 }
 
