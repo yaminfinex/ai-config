@@ -9,13 +9,15 @@ created_date: '2026-07-16 09:20'
 labels:
   - herder
 dependencies: []
-priority: medium
+priority: high
 ordinal: 261500
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
+OWNER DIRECTIVE (2026-07-16): HIGHEST PRIORITY BY FAR — a peer orchestrator is spawn-dead in the field on this defect; operational seat repair executed same night, this task fixes the class.
+
 Live outage, peer orchestrator, blocking their dispatch. A session recovered via `herder adopt <old-guid> --confirm-dead` (after a restart left it with an unresolvable HERDR_PANE_ID — see the self-location task's stale-env variant) ended with a healthy bus row (hooks_bound, process_bound, correct sid and directory) whose launch_context is EMPTY {} — the row was created at boot under a different bus name and renamed by the adopt, so it never received launch coordinates.
 
 Consequences, all verified live:
