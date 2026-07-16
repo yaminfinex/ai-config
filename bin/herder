@@ -222,6 +222,15 @@ if [ -z "${GOCACHE:-}" ] || ! mkdir -p "$GOCACHE" 2>/dev/null || [ ! -w "$GOCACH
   mkdir -p "$GOCACHE"
 fi
 
+# A fake HOME must not make dependency downloads part of a disposable test or
+# launch directory. Go's module cache is intentionally read-only, so putting it
+# below a per-run HOME also makes ordinary cleanup noisy or impossible. Keep it
+# beside the cross-HOME binary cache unless the caller supplied a writable one.
+if [ -z "${GOMODCACHE:-}" ] || ! mkdir -p "$GOMODCACHE" 2>/dev/null || [ ! -w "$GOMODCACHE" ]; then
+  export GOMODCACHE="$shared_cache_root/go-mod"
+  mkdir -p "$GOMODCACHE"
+fi
+
 # The picked toolchain already satisfies go.mod, so pin GOTOOLCHAIN=local
 # (unless the caller chose otherwise): a build must never stall on a
 # toolchain download.

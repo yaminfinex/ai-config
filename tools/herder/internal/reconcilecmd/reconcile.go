@@ -21,17 +21,21 @@ type options struct {
 }
 
 type result struct {
-	GUID           string      `json:"guid"`
-	ShortGUID      string      `json:"short_guid,omitempty"`
-	Label          string      `json:"label"`
-	Outcome        string      `json:"outcome"`
-	Detail         string      `json:"detail"`
-	TerminalID     string      `json:"terminal_id,omitempty"`
-	PaneID         string      `json:"pane_id,omitempty"`
-	Write          string      `json:"write"`
-	Candidates     []candidate `json:"candidates,omitempty"`
-	bus            hcomidentity.Result
-	busUnavailable bool
+	GUID               string      `json:"guid"`
+	ShortGUID          string      `json:"short_guid,omitempty"`
+	Label              string      `json:"label"`
+	Outcome            string      `json:"outcome"`
+	Detail             string      `json:"detail"`
+	TerminalID         string      `json:"terminal_id,omitempty"`
+	PaneID             string      `json:"pane_id,omitempty"`
+	Write              string      `json:"write"`
+	LaunchContextWrite string      `json:"launch_context_write,omitempty"`
+	Candidates         []candidate `json:"candidates,omitempty"`
+	bus                hcomidentity.Result
+	busUnavailable     bool
+	livePaneID         string
+	trackerName        string
+	exactTerminal      bool
 }
 
 type candidate struct {
@@ -106,24 +110,39 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if opts.apply && !hasAmbiguous {
 		for i, rec := range active {
 			res := results[i]
-			if !shouldWrite(res) {
+			if !shouldWrite(res) && res.LaunchContextWrite != "pending" {
 				continue
 			}
-			row, err := updateRow(rec.Raw, res)
-			if err != nil {
-				res.Write = "error"
-				res.Detail = res.Detail + "; write failed: " + err.Error()
-				exit = 1
-			} else if outcome, err := registry.AppendLegacySessionEvent(registryPath, row, "reconciled", "seated"); err != nil {
-				res.Write = "error"
-				res.Detail = res.Detail + "; write failed: " + err.Error()
-				exit = 1
-			} else if err := outcome.Err(); err != nil {
-				res.Write = "error"
-				res.Detail = res.Detail + "; write failed: " + err.Error()
-				exit = 1
-			} else {
-				res.Write = string(outcome.Status)
+			if shouldWrite(res) {
+				row, err := updateRow(rec.Raw, res)
+				if err != nil {
+					res.Write = "error"
+					res.Detail = res.Detail + "; write failed: " + err.Error()
+					exit = 1
+				} else if outcome, err := registry.AppendLegacySessionEvent(registryPath, row, "reconciled", "seated"); err != nil {
+					res.Write = "error"
+					res.Detail = res.Detail + "; write failed: " + err.Error()
+					exit = 1
+				} else if err := outcome.Err(); err != nil {
+					res.Write = "error"
+					res.Detail = res.Detail + "; write failed: " + err.Error()
+					exit = 1
+				} else {
+					res.Write = string(outcome.Status)
+				}
+			}
+			if res.LaunchContextWrite == "pending" {
+				repair := hcomidentity.RepairLaunchContext(rec.HcomDir, res.bus.Name, res.PaneID)
+				res.LaunchContextWrite = repair.Status
+				switch repair.Status {
+				case "written":
+					res.Detail += "; launch context backfill written and confirmed"
+				case "already-present":
+					res.Detail += "; launch context already present at apply time"
+				default:
+					res.Detail += fmt.Sprintf("; launch context backfill refused [%s]: %s; %s", repair.Code, repair.Cause, repair.Remedy)
+					exit = 1
+				}
 			}
 			results[i] = res
 		}
@@ -181,6 +200,9 @@ Dry-run is the default. --apply is append-only: it writes full replacement rows
 through the registry, preserving unknown fields and never mutating old rows. Any
 carried bus name is re-verified from live session/pane evidence; a name that
 cannot be proven is explicitly marked unverified rather than trusted as clean.
+When an exactly re-confirmed seat names one unique joined hcom row whose launch
+context is empty, --apply also merges the missing live pane coordinate. That
+write is schema-gated and reported as written, already-present, or refused.
 
 Outcomes follow herder-spec §8.3 decisions D11/D12:
   re-confirm                    stored terminal still identifies the same label
@@ -263,8 +285,11 @@ func reconcileOne(rec registry.Record, held map[string]string, live liveState) r
 
 	if rec.TerminalID != "" {
 		if agent := live.byTerm[rec.TerminalID]; agent != nil {
+			res.exactTerminal = true
+			res.livePaneID = agent.PaneID
 			if agent.Name != "" && agent.Name != ptrString(rec.Label) {
 				res.Outcome = "conflict"
+				res.trackerName = agent.Name
 				res.Detail = fmt.Sprintf("stored terminal is live as name=%q; D11 refuses to unseat, use manual adoption/enroll", agent.Name)
 				return res
 			}
@@ -399,7 +424,8 @@ func updateRow(raw []byte, res result) ([]byte, error) {
 }
 
 func reconcileBusIdentity(rec registry.Record, res result, rosters map[string]busRoster) result {
-	if res.Outcome != "re-confirm" && res.Outcome != "re-bind (assumed-continuity)" {
+	trackerConflict := res.Outcome == "conflict" && res.trackerName != ""
+	if res.Outcome != "re-confirm" && res.Outcome != "re-bind (assumed-continuity)" && !trackerConflict {
 		return res
 	}
 	roster, ok := rosters[rec.HcomDir]
@@ -415,7 +441,28 @@ func reconcileBusIdentity(rec registry.Record, res result, rosters map[string]bu
 		if rec.Provenance != nil {
 			sessionID = rec.Provenance.ToolSessionID
 		}
-		res.bus = hcomidentity.Resolve(roster.rows, hcomidentity.Evidence{SessionID: sessionID, PaneIDs: []string{res.PaneID}})
+		if trackerConflict {
+			if res.exactTerminal && rec.PaneID != "" && res.livePaneID == rec.PaneID {
+				res.bus = hcomidentity.ResolveExactSessionPane(roster.rows, sessionID, rec.PaneID)
+			}
+			if !res.bus.Verified {
+				return res
+			}
+			res.Outcome = "re-confirm"
+			res.PaneID = res.livePaneID
+			res.Write = "pending"
+			res.Detail = fmt.Sprintf("terminal live; tracker name %q mismatch dominated by exact terminal+pane and unique joined bus @%s resolving recorded SID/pane", res.trackerName, res.bus.Name)
+		} else {
+			res.bus = hcomidentity.Resolve(roster.rows, hcomidentity.Evidence{SessionID: sessionID, PaneIDs: []string{res.PaneID}})
+		}
+	}
+	if trackerConflict && !res.bus.Verified {
+		return res
+	}
+	if !res.bus.Verified && res.Outcome == "re-confirm" && res.exactTerminal && res.livePaneID == res.PaneID && rec.HcomVerified != nil && *rec.HcomVerified {
+		if joined, count := hcomidentity.JoinedNamedCount(roster.rows, rec.HcomName); count == 1 && joined.LaunchContext.Empty() {
+			res.bus = hcomidentity.Result{Name: joined.Name, BaseName: joined.BaseName, SessionID: joined.SessionID, Verified: true}
+		}
 	}
 	needsWrite := res.bus.Verified && (rec.HcomName != res.bus.Name || rec.HcomVerified == nil || !*rec.HcomVerified)
 	needsDowngrade := !res.busUnavailable && !res.bus.Verified && rec.HcomName != "" && (rec.HcomVerified == nil || *rec.HcomVerified)
@@ -425,6 +472,12 @@ func reconcileBusIdentity(rec registry.Record, res result, rosters map[string]bu
 			res.Detail += fmt.Sprintf("; bus identity verified as @%s", res.bus.Name)
 		} else {
 			res.Detail += "; stored bus identity could not be re-verified and will be marked unverified"
+		}
+	}
+	if res.bus.Verified && res.Outcome == "re-confirm" && res.exactTerminal && res.livePaneID == res.PaneID && rec.HcomVerified != nil && *rec.HcomVerified {
+		if joined, count := hcomidentity.JoinedNamedCount(roster.rows, res.bus.Name); count == 1 && joined.LaunchContext.Empty() {
+			res.LaunchContextWrite = "pending"
+			res.Detail += "; launch context backfill pending from exact live terminal+pane and unique joined bus"
 		}
 	}
 	return res

@@ -55,6 +55,23 @@ case "${1:-} ${2:-}" in
           {name:"worker-rive", tag:"worker", directory:"/elsewhere",
            created_at:"2026-01-01T00:00:01Z", launch_context:{pane_id:"p_50"}}
         ]';;
+      emptyctx)
+        jq -n --arg sender "${MOCK_SPAWNER_BUS:-dispatcher-rive}" '[
+          {name:$sender, joined:true, session_id:"", created_at:"2026-01-01T00:00:00Z", launch_context:{}},
+          {name:"worker-rive", tag:"worker", directory:"/elsewhere",
+           created_at:"2026-01-01T00:00:01Z", launch_context:{pane_id:"p_50"}}
+        ]';;
+      emptyctx_duplicate)
+        jq -n --arg sender "${MOCK_SPAWNER_BUS:-dispatcher-rive}" '[
+          {name:$sender, joined:true, session_id:"", created_at:"2026-01-01T00:00:00Z", launch_context:{}},
+          {name:$sender, joined:true, session_id:"", created_at:"2026-01-01T00:00:01Z", launch_context:{}}
+        ]';;
+      wrongctx)
+        jq -n --arg sender "${MOCK_SPAWNER_BUS:-dispatcher-rive}" '[
+          {name:$sender, joined:true, session_id:"", created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_other"}}
+        ]';;
+      norows)
+        jq -n '[]';;
       fallback)
         jq -n --arg sender "${MOCK_SPAWNER_BUS:-dispatcher-rive}" '[
           {name:$sender, joined:true, session_id:"current-session",

@@ -14,8 +14,38 @@ import (
 )
 
 type LaunchContext struct {
-	PaneID    string `json:"pane_id"`
-	ProcessID string `json:"process_id"`
+	PaneID     string `json:"pane_id"`
+	ProcessID  string `json:"process_id"`
+	fieldCount int
+	decoded    bool
+	object     bool
+}
+
+func (l *LaunchContext) UnmarshalJSON(raw []byte) error {
+	type wire LaunchContext
+	var decoded wire
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	*l = LaunchContext(decoded)
+	l.fieldCount = len(fields)
+	l.decoded = true
+	l.object = !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+	return nil
+}
+
+// Empty reports whether hcom recorded no launch facts at all. A context that
+// contains an unrecognised field is deliberately non-empty: callers may not
+// use the empty-context recovery path to weaken an identity hcom did record.
+func (l LaunchContext) Empty() bool {
+	if l.decoded && !l.object {
+		return false
+	}
+	return l.PaneID == "" && l.ProcessID == "" && l.fieldCount == 0
 }
 
 type Row struct {
@@ -160,13 +190,42 @@ func Resolve(rows []Row, evidence Evidence) Result {
 		return Result{Reason: "live identity correlates resolve to different bus rows"}
 	}
 	for name, row := range matched {
-		baseName := row.BaseName
-		if baseName == "" {
-			baseName = row.Name
-		}
-		return Result{Name: name, BaseName: baseName, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
+		return resultForRow(name, row)
 	}
 	return Result{Reason: "live bus identity is unknown"}
+}
+
+func resultForRow(name string, row Row) Result {
+	baseName := row.BaseName
+	if baseName == "" {
+		baseName = row.Name
+	}
+	return Result{Name: name, BaseName: baseName, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
+}
+
+// ResolveExactSessionPane requires both durable coordinates to identify one
+// joined row. Unlike Resolve's ambient-evidence union, this proof is used to
+// dominate a disagreeing tracker display name and therefore admits no partial
+// signal or duplicate row.
+func ResolveExactSessionPane(rows []Row, sessionID, paneID string) Result {
+	if sessionID == "" || paneID == "" {
+		return Result{Reason: "recorded session id and live pane are both required"}
+	}
+	var found Row
+	count := 0
+	for _, row := range rows {
+		if joined(row) && row.Name != "" && row.SessionID == sessionID && row.LaunchContext.PaneID == paneID {
+			found = row
+			count++
+		}
+	}
+	if count == 0 {
+		return Result{Reason: "no joined bus row matches both the recorded session id and live pane"}
+	}
+	if count > 1 {
+		return Result{Reason: "multiple joined bus rows match the recorded session id and live pane"}
+	}
+	return resultForRow(found.Name, found)
 }
 
 func ResolveLive(dir string, evidence Evidence) Result {
