@@ -3,7 +3,7 @@ id: TASK-262
 title: >-
   Adopt-created rows have empty launch_context: spawn sender verification
   refuses, and no repair verb can backfill launch coordinates
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-16 09:20'
 labels:
@@ -38,3 +38,13 @@ Fix directions: (a) adopt's final bind should record launch coordinates for the 
 - [ ] #2 A repair path exists that backfills empty launch_context from a live-verified pane, with a red-first fixture reproducing the empty-context spawn refusal
 - [ ] #3 Spawn-side pane derivation validates candidate pane ids as resolvable and names the refusal cause + the recovery in its output
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+OPERATIONAL SEAT REPAIR EXECUTED (2026-07-16, owner-directed): fork-based seat replacement — fork rides the real launch path so the child got proper launch coordinates AND inherited full context; child proved bare spawn BEFORE cutover; label transferred atomically (rename --take-from --confirm-live); old seat culled; bus identity reclaimed by the child via start --as. Two fork attempts failed first because the impoverished row also fed fork a WRONG cwd (claude resume dies instantly outside the session's project dir) — cwd had to be passed explicitly, sourced from the hcom row's directory field.
+
+LIVE FIELD CASE the fix must heal (named acceptance case; row live in the fleet): repaired seat with label + launch-context-healthy registry row but stored bus name STALE vs live reclaimed bus identity. Verbatim refusals: reconcile --apply → "conflict — stored terminal is live as name=\"<old-label>\"; D11 refuses to unseat, use manual adoption/enroll" (stale herdr tracker name for the same terminal); repair enroll → "live bus identity could not be verified (no joined bus row matches the calling session, process, or pane)" then "refused to enroll an unverified bus identity: terminal <t> and pane <p> are already seated on guid <same-guid>; join hcom and retry, ... or herder adopt for a true replacement". Note the second refusal fires even though the caller IS the seated guid — self-repair of one's own row's bus binding is impossible while the row is seated. Bare spawn WORKS from that seat (launch coordinates healthy), so the desync is repair-verb-only; it will bite at the next compact/restart cycle.
+
+DISPATCHED (2026-07-16): codex builder in fresh worktree task-262-launch-context, design checkpoint mandated (identity write-spine). Spawn-time incident, adjacent class: the fresh worktree's mise.toml was untrusted, the pane stranded at mise's INTERACTIVE trust prompt, launcher gave up capture, and bind completed only after the orchestrator answered the prompt via pane send-keys — logged on the env-robustness task.
+<!-- SECTION:NOTES:END -->
