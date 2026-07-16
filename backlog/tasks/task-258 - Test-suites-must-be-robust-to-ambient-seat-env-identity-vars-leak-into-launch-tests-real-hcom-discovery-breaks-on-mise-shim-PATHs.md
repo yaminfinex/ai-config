@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-16 03:34'
+updated_date: '2026-07-16 03:44'
 labels:
   - herder
 dependencies: []
@@ -31,3 +32,9 @@ Acceptance is by clean battery from BOTH environment classes that failed: an ide
 - [ ] #2 Real-hcom discovery is immune to mise-shim-first PATHs (filter or pinned resolution), with the env override documented where the battery is documented
 - [ ] #3 Full battery green from an identity-bearing seat env AND from a shim-first shell without per-run workarounds
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+TRUST-STATE CAVEAT (2026-07-16): mid-trial, a worker added a mise trust record for their own worktree path to get their battery green — which MASKS the class-2 repro inside that geometry. The class still reproduces from other cwds/fake-HOME (verified: the repo mise.toml trips the same refusal). Acceptance runs must therefore start from a CLEAN trust state (no per-worktree trust records), and unit cleanup should remove any trust records added during work — dangling records for removed worktrees are residue.
+<!-- SECTION:NOTES:END -->
