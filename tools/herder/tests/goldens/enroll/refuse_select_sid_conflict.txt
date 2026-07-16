@@ -1,0 +1,9 @@
+=== STDERR ===
+herder enroll: refused to choose an occupied seat: guid guid-existing-0000 has the same terminal, pane, and bus name but a conflicting session id; inspect 'herder list --all --json', pin the intended guid for re-enroll, run 'herder reconcile --apply', or use 'herder adopt <guid>' for a true replacement
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== REGISTRY ===
+{"kind":"node","event":"node_registered","node_id":"<GUID>","recorded_at":"<TS>"}
+{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true},"sids":[{"sid":"sid-other","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sid-other"}}

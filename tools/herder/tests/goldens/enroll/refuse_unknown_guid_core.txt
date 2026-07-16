@@ -1,0 +1,9 @@
+=== STDERR ===
+herder enroll: refused to enroll unknown guid guid-unknown-0000: the live terminal, pane, and bus name are already seated on guid guid-existing-0000; retry pinned to guid guid-existing-0000, run 'herder reconcile --apply' to re-verify it, or use 'herder adopt guid-existing-0000' for a true replacement
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== REGISTRY ===
+{"kind":"node","event":"node_registered","node_id":"<GUID>","recorded_at":"<TS>"}
+{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true}}

@@ -11,6 +11,7 @@ REPO_ROOT="$(cd "$TESTS_DIR/../../.." && pwd -P)"
 unset HERDER_BIN
 export AI_CONFIG_ROOT="$REPO_ROOT"
 GOLDENS="$TESTS_DIR/goldens/enroll"
+HERDER=("$REPO_ROOT/bin/herder")
 HEN=("$REPO_ROOT/bin/herder" enroll)
 [[ -n "${HERDER_ENROLL_BIN:-}" ]] && HEN=("$HERDER_ENROLL_BIN")
 
@@ -150,10 +151,12 @@ scenario_reenroll_reused_pane() {
   CASE="$ROOT/reenroll_reused_pane"
   mkdir -p "$CASE/home" "$CASE/state"
   cat >"$CASE/state/registry.jsonl" <<'JSONL'
-{"guid":"guid-stale1-000","short_guid":"stale1","label":"stale-a","role":"manual","agent":"claude","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stale-a-bus","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"manual","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"2026-07-01T00:00:00Z"}}
-{"guid":"guid-stale2-000","short_guid":"stale2","label":"stale-b","role":"manual","agent":"claude","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stale-b-bus","status":"active","provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"","tag":"manual","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_self","branch":"","ts":"2026-07-02T00:00:00Z"}}
-{"guid":"guid-other-pane0","short_guid":"otherp","label":"other-pane","role":"manual","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","hcom_name":"other-bus","status":"active"}
+{"kind":"node","event":"node_registered","node_id":"11111111-1111-1111-1111-111111111111","recorded_at":"2026-07-01T00:00:00Z"}
+{"kind":"session","guid":"guid-stale1-000","event":"seated","recorded_at":"2026-07-01T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"stale-a","role":"manual","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stale-a-bus","hcom_verified":true},"provenance":{"mechanism":"enroll","tag":"manual","cwd":"/mock/cwd","workspace_id":"ws_self"}}
+{"kind":"session","guid":"guid-stale2-000","event":"seated","recorded_at":"2026-07-01T00:00:02Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"stale-b","role":"manual","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stale-b-bus","hcom_verified":true},"provenance":{"mechanism":"enroll","tag":"manual","cwd":"/mock/cwd","workspace_id":"ws_self"}}
+{"kind":"session","guid":"guid-other-pane0","event":"seated","recorded_at":"2026-07-01T00:00:03Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"other-pane","role":"manual","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_OTHER","pane_id":"p_other","hcom_name":"other-bus","hcom_verified":true}}
 JSONL
+  printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
   RUN_ERR_F="$CASE/stderr"
   RUN_OUT="$(env -i \
     PATH="$PATH_HERMETIC" \
@@ -161,6 +164,7 @@ JSONL
     HERDR_ENV=1 HERDR_PANE_ID=p_self \
     HERDER_STATE_DIR="$CASE/state" \
     HERDER_GUID=guid-fresh-0000 \
+    MOCK_HCOM_ROWS='[{"name":"fresh-bus","session_id":"sid-fresh","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
     "${HEN[@]}" --label fresh-session --json 2>"$RUN_ERR_F")"
   RUN_RC=$?
   check_one reenroll_reused_pane
@@ -192,11 +196,115 @@ JSONL
   check_one reenroll_compacted_pane
 }
 
+seed_v2_case() {
+  CASE="$ROOT/$1"
+  mkdir -p "$CASE/home" "$CASE/state"
+  printf '%s\n' '{"kind":"node","event":"node_registered","node_id":"11111111-1111-1111-1111-111111111111","recorded_at":"2026-07-12T00:00:00Z"}' >"$CASE/state/registry.jsonl"
+  printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
+}
+
+scenario_help() {
+  run_case help "${HEN[@]}" --help
+  check_one help
+}
+
+scenario_refuse_force_fresh_core() {
+  seed_v2_case refuse_force_fresh_core
+  cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"session","guid":"guid-source-0000","event":"seated","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true},"sids":[{"sid":"sid-live","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sid-live"}}
+JSONL
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self HCOM_SESSION_ID=sid-live \
+    MOCK_HCOM_ROWS='[{"name":"stable-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+    "${HERDER[@]}" adopt stable --confirm-dead 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+  check_one refuse_force_fresh_core
+}
+
+scenario_refuse_unknown_guid_core() {
+  seed_v2_case refuse_unknown_guid_core
+  cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true}}
+JSONL
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-unknown-0000 \
+    MOCK_HCOM_ROWS='[{"name":"stable-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+    "${HEN[@]}" --label stable 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+  check_one refuse_unknown_guid_core
+}
+
+scenario_refuse_unverified_occupied_seat() {
+  seed_v2_case refuse_unverified_occupied_seat
+  cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":false}}
+JSONL
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self MOCK_HCOM_ROWS='[]' \
+    "${HEN[@]}" --label replacement 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+  check_one refuse_unverified_occupied_seat
+}
+
+scenario_refuse_duplicate_sid_batch() {
+  seed_v2_case refuse_duplicate_sid_batch
+  cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"session","guid":"guid-original-0000","event":"seated","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true},"sids":[{"sid":"sid-live","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sid-live"}}
+{"kind":"session","guid":"guid-conflict-000","event":"seated","recorded_at":"2026-07-12T00:00:02Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"copy","role":"manual","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true},"sids":[{"sid":"sid-other","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"enroll","tool_session_id":"sid-other"}}
+JSONL
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-original-0000 HCOM_SESSION_ID=sid-live \
+    MOCK_HCOM_ROWS='[{"name":"stable-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+    "${HEN[@]}" --label stable 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+  check_one refuse_duplicate_sid_batch
+}
+
+scenario_refuse_select_sid_conflict() {
+  seed_v2_case refuse_select_sid_conflict
+  cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true},"sids":[{"sid":"sid-other","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sid-other"}}
+JSONL
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self HCOM_SESSION_ID=sid-live \
+    MOCK_HCOM_ROWS='[{"name":"stable-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+    "${HEN[@]}" 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+  check_one refuse_select_sid_conflict
+}
+
+scenario_refuse_select_ambiguous() {
+  seed_v2_case refuse_select_ambiguous
+  cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"session","guid":"guid-first-0000","event":"seated","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"first","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true}}
+{"kind":"session","guid":"guid-second-000","event":"seated","recorded_at":"2026-07-12T00:00:02Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"second","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true}}
+JSONL
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self HCOM_SESSION_ID=sid-live \
+    MOCK_HCOM_ROWS='[{"name":"stable-bus","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+    "${HEN[@]}" 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+  check_one refuse_select_ambiguous
+}
+
 scenario_default "${HEN[@]}" --json
 scenario_ambient "${HEN[@]}" --label cli-label --role cli-role --json
 scenario_reenroll_spawned
 scenario_reenroll_reused_pane
 scenario_reenroll_compacted_pane
+scenario_help
+scenario_refuse_force_fresh_core
+scenario_refuse_unknown_guid_core
+scenario_refuse_unverified_occupied_seat
+scenario_refuse_duplicate_sid_batch
+scenario_refuse_select_sid_conflict
+scenario_refuse_select_ambiguous
 
 if [[ "$WRITE" -eq 0 ]]; then
 	HELP_OUT="$("${HEN[@]}" --help 2>/dev/null | tr '\n' ' ')"
@@ -400,7 +508,8 @@ JSONL
 	  && jq -s -e '
 		reduce (.[] | select(.kind=="session")) as $row ({}; .[$row.guid]=$row)
 		| [.[] | select(.state=="seated" and .seat.terminal_id=="term_SELF" and .seat.pane_id=="p_self" and .seat.hcom_name=="stable-bus")] | length == 1
-	  ' "$CASE/state/registry.jsonl" >/dev/null; then
+	  ' "$CASE/state/registry.jsonl" >/dev/null \
+	  && ! grep -q 'mock herdr (enroll suite): unhandled: pane close' "$RUN_ERR_F"; then
 		printf 'PASS  cleanup: original repairs before duplicate detaches without closing the pane\n'
 	else
 		printf 'FAIL  cleanup: repair-first duplicate detach — rc=%s err=%s out=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")" "$RUN_OUT"; fail=1

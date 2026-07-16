@@ -184,6 +184,21 @@ assert "adopt binds the replacement row after reclaim" jq -se '
     and .[0].value.sids[-1].sid == "sess-replacement"
 ' "$CASE/state/registry.jsonl"
 
+new_case adopt_unverified_same_physical_source
+cat >>"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"session","guid":"guid-source-0000","event":"seated","recorded_at":"2026-07-08T00:00:05Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"source","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","pane_id":"p_enroll","terminal_id":"term_enroll"},"provenance":{"mechanism":"spawn"}}
+JSONL
+printf '[]\n' >"$CASE/hcom.json"
+run_hr adopt source --confirm-dead >/dev/null 2>"$CASE/adopt.err"
+adopt_unverified_source_rc=$?
+assert "adopt exempts its preserved source from the unverified occupied-seat fence" bash -c '
+  test "$1" -eq 0 && jq -se '\''
+    reduce (.[] | select(.kind=="session")) as $row ({}; .[$row.guid]=$row)
+    | .["guid-source-0000"].state == "retired"
+      and ([to_entries[] | select(.key != "guid-source-0000" and .value.label == "source" and .value.state == "seated")] | length) == 1
+  '\'' "$2" >/dev/null
+' bash "$adopt_unverified_source_rc" "$CASE/state/registry.jsonl"
+
 new_case adopt_without_ambient_identity
 printf '[{"name":"replacement-temp","session_id":"","joined":true,"launch_context":{}}]\n' >"$CASE/hcom.json"
 env -i \

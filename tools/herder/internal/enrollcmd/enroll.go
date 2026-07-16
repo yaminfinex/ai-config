@@ -122,8 +122,14 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 			}
 		}
 		if latest == nil && !liveBus.Verified {
-			if occupied := matchingPhysicalSeatRows(sessions, pane); len(occupied) > 0 {
-				return nil, fmt.Errorf("refused to enroll an unverified bus identity: terminal %s and pane %s are already seated on guid %s; join hcom and retry, run 'herder reconcile --apply' to re-verify the row, or use 'herder adopt %s' for a true replacement", pane.TerminalID, pane.PaneID, occupied[0].GUID, occupied[0].GUID)
+			for _, occupied := range matchingPhysicalSeatRows(sessions, pane) {
+				// Adoption has already authenticated and deliberately preserved its
+				// source for the later atomic unseat-and-label-transfer batch. It is
+				// not a competing mint target; every other occupied row still fences.
+				if occupied.GUID == preserveGUID {
+					continue
+				}
+				return nil, fmt.Errorf("refused to enroll an unverified bus identity: terminal %s and pane %s are already seated on guid %s; join hcom and retry, run 'herder reconcile --apply' to re-verify the row, or use 'herder adopt %s' for a true replacement", pane.TerminalID, pane.PaneID, occupied.GUID, occupied.GUID)
 			}
 		}
 		if guid == "" {
