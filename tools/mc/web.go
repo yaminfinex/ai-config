@@ -47,6 +47,7 @@ func NewWeb(store *Store, bus *Bus, ing *Ingestor, user, seat, herderBin string,
 		"stateURL":       stateURL,
 		"stampTime":      func(at time.Time) timestamp { return formatTimestamp(at, w.now()) },
 		"hasHumanPrefix": func(s string) bool { return strings.HasPrefix(s, "human-") },
+		"ownerOutbound":  func(a askEntity, s missionStatus) bool { return a.Asker == s.Manifest.Owner },
 	}).Parse(pageTpl))
 	return w
 }
@@ -61,6 +62,15 @@ func (w *Web) Routes() http.Handler {
 	mux.HandleFunc("GET /threads", w.threads)
 	mux.HandleFunc("GET /thread/{id}", w.thread)
 	mux.HandleFunc("GET /mission/{slug}", w.mission)
+	mux.HandleFunc("GET /mission/{slug}/asks", w.missionAsks)
+	mux.HandleFunc("GET /mission/{slug}/review", w.missionReview)
+	mux.HandleFunc("GET /asks", w.asks)
+	mux.HandleFunc("GET /ask/{id}", w.ask)
+	mux.HandleFunc("POST /ask/{id}/reply", w.askReply)
+	mux.HandleFunc("POST /ask/{id}/settle", w.askSettle)
+	mux.HandleFunc("POST /ask/{id}/close", w.askClose)
+	mux.HandleFunc("POST /ask/{id}/link", w.askLink)
+	mux.HandleFunc("POST /ask/{id}/widen", w.askWiden)
 	mux.HandleFunc("GET /mission/{slug}/file/{rel...}", w.missionFile)
 	mux.HandleFunc("POST /thread/{id}/reply", w.reply)
 	mux.HandleFunc("POST /thread/{id}/close", w.close)
@@ -84,7 +94,8 @@ func serveProgressiveJS(rw http.ResponseWriter, _ *http.Request) {
 
 func (w *Web) conditionalPages(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path == "/mc.js" || w.store == nil {
+		asksBacked := r.URL.Path == "/" || r.URL.Path == "/asks" || strings.HasPrefix(r.URL.Path, "/ask/") || strings.HasPrefix(r.URL.Path, "/mission/")
+		if r.Method != http.MethodGet || r.URL.Path == "/mc.js" || w.store == nil || asksBacked {
 			next.ServeHTTP(rw, r)
 			return
 		}
@@ -150,6 +161,13 @@ type pageData struct {
 	Missions       []missionStatus
 	MissionListErr string
 	Mission        missionStatus
+	Ask            askEntity
+	AskMission     missionStatus
+	AskError       string
+	AskDraft       map[string]string
+	ConfirmSettle  bool
+	CanWiden       bool
+	AskGroups      []askGroup
 	MissionThreads []*Thread
 	MissionAgents  []rosterAgent
 	Artifacts      []missionArtifact
@@ -535,6 +553,169 @@ func (w *Web) mission(rw http.ResponseWriter, r *http.Request) {
 	// HTTP 200: this is a useful, refreshable warning page rather than a blank
 	// 404 or a server error, and matches degraded status payload handling.
 	w.render(rw, http.StatusOK, d)
+}
+
+func (w *Web) asks(rw http.ResponseWriter, r *http.Request) {
+	d := w.data(r, "asks")
+	d.Missions, d.MissionListErr = w.missions.AllStatuses()
+	w.render(rw, http.StatusOK, d)
+}
+
+func (w *Web) missionAsks(rw http.ResponseWriter, r *http.Request) {
+	d := w.data(r, "mission-asks")
+	slug := r.PathValue("slug")
+	d.Mission = w.missions.Status(slug)
+	if d.Mission.Slug == "" {
+		d.Mission.Slug = slug
+	}
+	d.AskGroups = groupAsks(d.Mission.Asks.Entities, nil)
+	w.render(rw, http.StatusOK, d)
+}
+
+func (w *Web) missionReview(rw http.ResponseWriter, r *http.Request) {
+	d := w.data(r, "review")
+	slug := r.PathValue("slug")
+	d.Mission = w.missions.Status(slug)
+	if d.Mission.Slug == "" {
+		d.Mission.Slug = slug
+	}
+	d.AskGroups = groupAsks(d.Mission.Asks.Entities, func(entity askEntity) bool {
+		return entity.State == "open" && (entity.Expects == "decide" || entity.Expects == "read")
+	})
+	w.render(rw, http.StatusOK, d)
+}
+
+type askGroup struct {
+	Anchor   askReference
+	Entities []askEntity
+}
+
+func groupAsks(entities []askEntity, keep func(askEntity) bool) []askGroup {
+	indices := map[string]int{}
+	var groups []askGroup
+	for _, entity := range entities {
+		if keep != nil && !keep(entity) {
+			continue
+		}
+		key := entity.Anchor.Type + "\x00" + entity.Anchor.Ref
+		index, ok := indices[key]
+		if !ok {
+			index = len(groups)
+			indices[key] = index
+			groups = append(groups, askGroup{Anchor: entity.Anchor})
+		}
+		groups[index].Entities = append(groups[index].Entities, entity)
+	}
+	return groups
+}
+
+func (w *Web) ask(rw http.ResponseWriter, r *http.Request) {
+	d := w.data(r, "ask")
+	id := r.PathValue("id")
+	_, status, found := w.missions.FindAsk(id)
+	if !found {
+		http.NotFound(rw, r)
+		return
+	}
+	entity, envelope := w.missions.Ask(status.Slug, id)
+	if !envelope.OK {
+		d.AskError = askEnvelopeError(envelope)
+	} else {
+		d.Ask = entity
+	}
+	d.AskMission = status
+	d.ConfirmSettle = r.URL.Query().Get("confirm") == "settle"
+	d.CanWiden = w.userFor(r) == status.Manifest.Owner
+	d.AskDraft = map[string]string{}
+	for _, key := range []string{"prose", "choice", "reason", "outcome", "link_type", "link_ref", "member"} {
+		d.AskDraft[key] = r.URL.Query().Get(key)
+	}
+	if queryErr := r.URL.Query().Get("err"); queryErr != "" {
+		d.Error = queryErr
+	}
+	w.render(rw, http.StatusOK, d)
+}
+
+func askEnvelopeError(envelope askEnvelope) string {
+	message := envelope.Refusal
+	if message == "" {
+		message = envelope.Reason
+	} else if envelope.Reason != "" {
+		message += ": " + envelope.Reason
+	}
+	if envelope.Remedy != "" {
+		message += " — " + envelope.Remedy
+	}
+	return message
+}
+
+func (w *Web) askReply(rw http.ResponseWriter, r *http.Request) {
+	w.mutateAsk(rw, r, "reply", map[string]any{"prose": strings.TrimSpace(r.FormValue("prose"))})
+}
+
+func (w *Web) askSettle(rw http.ResponseWriter, r *http.Request) {
+	if r.FormValue("confirmed") != "true" {
+		http.Redirect(rw, r, "/ask/"+url.PathEscape(r.PathValue("id"))+"?err=settlement+requires+confirmation", http.StatusSeeOther)
+		return
+	}
+	input := map[string]any{"prose": strings.TrimSpace(r.FormValue("prose"))}
+	if choice := strings.TrimSpace(r.FormValue("choice")); choice != "" {
+		input["choice"] = choice
+	}
+	w.mutateAsk(rw, r, "settle", input)
+}
+
+func (w *Web) askClose(rw http.ResponseWriter, r *http.Request) {
+	reason := strings.TrimSpace(r.FormValue("reason"))
+	if reason == "" {
+		reason = "No additional reason supplied."
+	}
+	w.mutateAsk(rw, r, "close", map[string]any{
+		"outcome": strings.TrimSpace(r.FormValue("outcome")),
+		"reason":  reason,
+	})
+}
+
+func (w *Web) askLink(rw http.ResponseWriter, r *http.Request) {
+	w.mutateAsk(rw, r, "link", map[string]any{
+		"link": map[string]string{
+			"type": strings.TrimSpace(r.FormValue("link_type")),
+			"ref":  strings.TrimSpace(r.FormValue("link_ref")),
+		},
+		"set_anchor": r.FormValue("set_anchor") == "true",
+	})
+}
+
+func (w *Web) askWiden(rw http.ResponseWriter, r *http.Request) {
+	w.mutateAsk(rw, r, "widen-membership", map[string]any{"member": strings.TrimSpace(r.FormValue("member"))})
+}
+
+func (w *Web) mutateAsk(rw http.ResponseWriter, r *http.Request, verb string, input map[string]any) {
+	id := r.PathValue("id")
+	_, status, found := w.missions.FindAsk(id)
+	if !found {
+		http.NotFound(rw, r)
+		return
+	}
+	input["actor"] = w.userFor(r)
+	input["if_updated_at"] = r.FormValue("if_updated_at")
+	envelope := w.missions.MutateAsk(status.Slug, verb, id, input)
+	dest := "/ask/" + url.PathEscape(id)
+	if !envelope.OK {
+		values := url.Values{"err": {askEnvelopeError(envelope)}}
+		// The redirected GET refreshes the entity through mish while retaining
+		// the user's draft in URL-carried state, including stale-write refusals.
+		for _, key := range []string{"prose", "choice", "reason", "outcome", "link_type", "link_ref", "member"} {
+			if value := strings.TrimSpace(r.FormValue(key)); value != "" {
+				values.Set(key, value)
+			}
+		}
+		if verb == "settle" {
+			values.Set("confirm", "settle")
+		}
+		dest += "?" + values.Encode()
+	}
+	http.Redirect(rw, r, dest, http.StatusSeeOther)
 }
 
 func filterRailToMission(d *pageData, mission string) {

@@ -39,10 +39,12 @@ type missionStatus struct {
 	MissionDir string          `json:"mission_dir"`
 	Manifest   missionManifest `json:"manifest"`
 	Board      missionBoard    `json:"board"`
+	Asks       missionAsks     `json:"asks"`
 	Warnings   []string        `json:"warnings"`
 	Refusal    string          `json:"refusal"`
 	Reason     string          `json:"reason"`
 	Remedy     string          `json:"remedy"`
+	FetchedAt  time.Time       `json:"-"`
 }
 
 type missionManifest struct {
@@ -111,6 +113,7 @@ func (m *missionResolver) Status(slug string) missionStatus {
 			status.Reason = "mish status failed: " + runErr.Error()
 		}
 	}
+	status.FetchedAt = time.Now()
 	m.mu.Lock()
 	m.statusHits[slug] = missionStatusHit{status: status, at: time.Now()}
 	m.mu.Unlock()
@@ -142,6 +145,10 @@ func (m *missionResolver) AllStatuses() ([]missionStatus, string) {
 				warning = "mish status --all failed: " + runErr.Error()
 			}
 		}
+	}
+	fetchedAt := time.Now()
+	for i := range statuses {
+		statuses[i].FetchedAt = fetchedAt
 	}
 	m.mu.Lock()
 	m.allHit = missionListHit{statuses: statuses, warning: warning, at: time.Now()}
