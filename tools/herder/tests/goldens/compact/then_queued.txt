@@ -1,7 +1,7 @@
 === STDERR ===
 herder compact-then: armed for @me-bus (bus default) — waiting for a PROVEN turn end before delivering 40 chars (poll 1ms, timeout 2000ms, arm event #10)
 herder compact-then: turn end PROVEN (observed working→listening transition) — delivering continuation to @me-bus
-herder compact-then: queued on attempt 1 — @me-bus was busy; the bus will inject the continuation at its next turn. NOT resending.
+herder compact-then: queued on attempt 1 — no delivery receipt observed within the verification window; the bus accepted the continuation. NOT resending.
 === STDOUT ===
 
 === EXIT ===

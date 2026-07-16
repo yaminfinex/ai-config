@@ -140,7 +140,7 @@ want "solo: single joined delivers" 0 --grep "@solo-teki" "verify=delivered" \
 
 # One candidate, joined but no receipt in window → QUEUED, not refused.
 run_send "solo-teki" 0 --timeout 1000 p_solo "ring: DONE"
-want "solo: single busy queues (not refused)" 0 --grep "verify=queued" \
+want "solo: single unacknowledged send queues (not refused)" 0 --grep "verify=queued" \
   --nogrep "refused" "refusing to guess"
 
 # One candidate, NOT joined → deliver path's not_joined (exit 2), NOT the

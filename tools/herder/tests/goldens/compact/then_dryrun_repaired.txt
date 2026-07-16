@@ -1,6 +1,6 @@
 === STDERR ===
 herder compact --dry-run: would queue "/compact focus on the open unit, keep gate commands and thread names" into own pane w1-2 (terminal term_ME, guid guid-me-0000, resolution: durable-key)
-herder compact --dry-run: --then would arm a detached bus sender to @me-bus (bus default) once the paste verified, delivering the continuation (54 chars) after this turn ends (timeout 15m0s)
+herder compact --dry-run: --then would arm detached sender herder-compact-then-me-bus to deliver to @me-bus (bus default) once the paste verified, delivering the continuation (54 chars) after this turn ends (timeout 15m0s)
 === STDOUT ===
 
 === EXIT ===

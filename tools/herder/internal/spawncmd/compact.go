@@ -115,7 +115,7 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 	// The continuation targets the caller's OWN verified bus name, captured HERE
 	// from the proven self row — never re-resolved from a pane id later (task-034
 	// experiment #2). Claude-only: codex compaction semantics differ.
-	thenBusName, thenBusDir := "", ""
+	thenSenderName, thenBusName, thenBusDir := "", "", ""
 	if opts.ThenSet {
 		if row.Agent != "claude" {
 			dieCompact(stderr, fmt.Sprintf("refused — --then is claude-only (codex compaction semantics differ); your registry row records agent %q. Re-run without --then. Nothing was typed.", row.Agent))
@@ -166,6 +166,11 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 			}
 			return 2
 		}
+		thenSenderName, err = compactThenSenderName(thenBusName)
+		if err != nil {
+			dieCompact(stderr, fmt.Sprintf("refused — --then cannot construct a distinct continuation sender identity from verified recipient @%s: %v. Repair this session's bus binding with `herder enroll`, then retry. Nothing was typed.", thenBusName, err))
+			return 2
+		}
 	}
 
 	// Paste target: the CURRENT live pane holding our durable terminal_id —
@@ -212,8 +217,8 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "herder compact --dry-run: would queue %q into own pane %s (terminal %s, guid %s, resolution: %s)\n",
 			line, targetPane, row.TerminalID, ptrOrEmpty(row.GUID), map[bool]string{true: "positional+cwd", false: "durable-key"}[self.positional])
 		if opts.ThenSet {
-			fmt.Fprintf(stderr, "herder compact --dry-run: --then would arm a detached bus sender to @%s (bus %s) once the paste verified, delivering the continuation (%d chars) after this turn ends (timeout %s)\n",
-				thenBusName, busDirLabel(thenBusDir), runeLen(opts.Then), opts.ThenTimeout)
+			fmt.Fprintf(stderr, "herder compact --dry-run: --then would arm detached sender %s to deliver to @%s (bus %s) once the paste verified, delivering the continuation (%d chars) after this turn ends (timeout %s)\n",
+				thenSenderName, thenBusName, busDirLabel(thenBusDir), runeLen(opts.Then), opts.ThenTimeout)
 		}
 		return 0
 	}
@@ -239,7 +244,7 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		// it safe to arm the continuation — an unverified /compact must never
 		// have a continuation fired behind it into an uncompacted session.
 		if opts.ThenSet {
-			armCompactThen(stderr, ptrOrEmpty(row.ShortGUID), thenBusName, thenBusName, thenBusDir, opts.Then, int(opts.ThenTimeout/time.Millisecond))
+			armCompactThen(stderr, ptrOrEmpty(row.ShortGUID), thenSenderName, thenBusName, thenBusDir, opts.Then, int(opts.ThenTimeout/time.Millisecond))
 		}
 		return 0
 	case verify == "not_landed":

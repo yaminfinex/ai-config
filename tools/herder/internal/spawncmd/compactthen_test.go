@@ -129,7 +129,7 @@ func (c *fakeClock) Sleep(d time.Duration) {
 
 func baseCfg() thenConfig {
 	return thenConfig{
-		SenderName:     "me-bus",
+		SenderName:     "herder-compact-then-me-bus",
 		BusName:        "me-bus",
 		BusDir:         "",
 		Message:        "continue: run the gate, then report DONE",
@@ -656,11 +656,32 @@ func TestParseThenArgsRequiresSenderNameAndMessage(t *testing.T) {
 		t.Fatalf("missing-sender error does not name --sender: %s", errb.String())
 	}
 	errb.Reset()
-	cfg, code := parseThenArgs([]string{"--sender", "me-bus", "--name", "me-bus", "--message", "go", "--timeout-ms", "1234", "--poll-ms", "7"}, &errb)
+	if _, code := parseThenArgs([]string{"--sender", "me-bus", "--name", "me-bus", "--message", "go"}, &errb); code != 64 {
+		t.Fatalf("self-addressed sender must be refused with usage exit 64, got %d", code)
+	}
+	if !strings.Contains(errb.String(), "must differ") {
+		t.Fatalf("self-addressed refusal does not state the invariant: %s", errb.String())
+	}
+	errb.Reset()
+	cfg, code := parseThenArgs([]string{"--sender", "herder-compact-then-me-bus", "--name", "me-bus", "--message", "go", "--timeout-ms", "1234", "--poll-ms", "7"}, &errb)
 	if code != 0 {
 		t.Fatalf("want exit 0, got %d (%s)", code, errb.String())
 	}
-	if cfg.SenderName != "me-bus" || cfg.BusName != "me-bus" || cfg.Message != "go" || cfg.TimeoutMS != 1234 || cfg.PollMS != 7 {
+	if cfg.SenderName != "herder-compact-then-me-bus" || cfg.BusName != "me-bus" || cfg.Message != "go" || cfg.TimeoutMS != 1234 || cfg.PollMS != 7 {
 		t.Fatalf("parsed cfg wrong: %+v", cfg)
+	}
+}
+
+func TestArmCompactThenRefusesSelfAddressedSender(t *testing.T) {
+	t.Setenv("HERDER_COMPACT_THEN_DRYRUN", "1")
+	var stderr bytes.Buffer
+
+	armCompactThen(&stderr, "", "same-bus", "same-bus", t.TempDir(), "continue", 1000)
+
+	if !strings.Contains(stderr.String(), "--then NOT armed") || !strings.Contains(stderr.String(), "must differ") {
+		t.Fatalf("self-addressed arm was not refused with the invariant and remedy:\n%s", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "--then armed (dry-run)") {
+		t.Fatalf("self-addressed continuation reported armed:\n%s", stderr.String())
 	}
 }

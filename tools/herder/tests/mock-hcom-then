@@ -13,7 +13,7 @@
 #   MOCK_THEN_SCENARIO
 #     sent        — status is "active" on the first poll, "listening" after;
 #                   the delivery acks (classic delivered).
-#     queued_busy — same turn-end, but the delivery never acks in-window
+#     queued_no_receipt — same turn-end, but no delivery receipt appears in-window
 #                   (send.DeliverBus reports "queued").
 #     unknown_event — live status is unavailable, but a post-arm listening
 #                   event proves the turn ended and delivery acks.
@@ -103,11 +103,11 @@ case "${1:-}" in
     fi
     # Delivery receipt — stateful ack mirroring mock-hcom: the pre-send snapshot
     # sees nothing; the post-send poll sees THIS send's receipt (id newer).
-    if [[ "$SCEN" == "queued_busy" ]]; then
+    if [[ "$SCEN" == "queued_no_receipt" ]]; then
       exit 0  # never acks → DeliverBus reports "queued"
     fi
     if [[ -f "$STATE/events_polled" ]]; then
-      jq -cn '{id:42, data:{context:"deliver:me"}, instance:"receiver", type:"status"}'
+      jq -cn '{id:42, data:{context:"deliver:herder-compact-then-me-bus"}, instance:"receiver", type:"status"}'
     else
       : >"$STATE/events_polled"
     fi

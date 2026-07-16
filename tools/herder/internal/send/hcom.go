@@ -169,7 +169,7 @@ func (h *busSender) send(sender, target, busName, busDir, message string, timeou
 	}
 	fmt.Fprintf(stderr, ", verify=%s", verifyResult)
 	if verifyResult == "queued" {
-		fmt.Fprint(stderr, " (target was busy; message queued to run next — do NOT resend)")
+		fmt.Fprint(stderr, " (no delivery receipt observed within the verification window; message remains queued — do NOT resend)")
 	}
 	fmt.Fprintln(stderr)
 
