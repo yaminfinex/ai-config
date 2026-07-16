@@ -439,6 +439,10 @@ assert "adopt same-pane replacement needs no flag" bash -c 'test "$1" -eq 0 && g
 assert "adopt same-pane atomically unseats source with evidence" jq -se '
   [.[] | select(.guid=="guid-same-pane-0000" and .event=="adoption_source_released" and .state=="unseated" and .close_reason=="seat superseded by replacement process in the same pane" and (.seat|not) and (.label|not))] | length == 1
 ' "$CASE/state/registry.jsonl"
+assert "adopt final binding preserves the transferred label and source role" jq -se '
+  reduce (.[] | select(.kind=="session")) as $row ({}; .[$row.guid]=$row)
+  | [.[] | select(.guid!="guid-same-pane-0000" and .label=="same-label" and .role=="worker" and .state=="seated" and .seat.hcom_name=="same-label")] | length == 1
+' "$CASE/state/registry.jsonl"
 
 new_case adopt_bus_conflict
 printf '%s\n' '[{"name":"replacement-temp","session_id":"sess-replacement","joined":true,"launch_context":{"pane_id":"p_enroll"}},{"name":"trap","session_id":"sess-other","joined":true,"launch_context":{"pane_id":"p_other"}}]' >"$CASE/hcom.json"

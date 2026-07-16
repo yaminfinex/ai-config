@@ -76,10 +76,8 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 	if forceFreshGUID {
 		guid = ""
 	}
-	requestedLabel := firstNonEmpty(opts.label, os.Getenv("HERDER_LABEL"))
 	short := ""
 	label := ""
-	role := firstNonEmpty(opts.role, os.Getenv("HERDER_ROLE"), "manual")
 
 	registryPath := registry.DefaultPath()
 	var appendedRow []byte
@@ -140,12 +138,22 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 			guid = newGUID
 		}
 		short = registry.ShortGUID(guid)
-		label = requestedLabel
-		if label == "" && latest != nil && requestedGUID == "" {
+		label = opts.label
+		if label == "" && latest != nil {
 			label = latest.Label
 		}
 		if label == "" {
+			label = os.Getenv("HERDER_LABEL")
+		}
+		if label == "" {
 			label = "manual-" + short
+		}
+		role := opts.role
+		if role == "" && latest != nil {
+			role = latest.Role
+		}
+		if role == "" {
+			role = firstNonEmpty(os.Getenv("HERDER_ROLE"), "manual")
 		}
 		if err := verifyExistingGUIDOwner(latest, pane, liveBus, label); err != nil {
 			return nil, err
@@ -507,6 +515,8 @@ current bus row cannot be proven from session/process/pane identity, hcom_name i
 recorded as unknown. Rerun herder enroll from the existing session to recapture
 and repair its bus binding. Reusing an existing guid requires either an exact
 recorded/live session id match, or both unchanged terminal and unchanged label.
+A repair preserves the stored label and role; only explicit --label/--role flags
+replace them. Ambient HERDER_LABEL/HERDER_ROLE remain defaults for fresh enrolls.
 A verified stored bus name must also equal the caller's verified live name. If an
 older seat has no stored bus name, or explicitly records hcom_verified=false, a
 verified caller may bootstrap it with the same session-or-seat proof. The repair
