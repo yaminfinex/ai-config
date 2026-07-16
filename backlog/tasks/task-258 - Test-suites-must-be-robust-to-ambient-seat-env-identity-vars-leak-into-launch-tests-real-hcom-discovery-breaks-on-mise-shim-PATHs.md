@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-16 03:34'
-updated_date: '2026-07-16 04:55'
+updated_date: '2026-07-16 06:11'
 labels:
   - herder
 dependencies: []
@@ -43,4 +43,6 @@ CLASS 3, LIVE OUTAGE (2026-07-16 03:38-04:30): the same mise-trust fragility too
 INDEPENDENT CORROBORATION (peer orchestrator, 2026-07-16 ~04:47): a mission-control service shelling hcom from an untrusted-worktree cwd failed SILENTLY through the same window (ingest/keepalive/close-notices dropped, no errors surfaced) until that worktree was mise-trusted — the silent-degradation variant of class 3, worse than the loud launch failure. Collateral: a deploy inside the window booted the service with hcom broken; its fatal-exit path dropped its own seat row (documented exit-deletes-row class), causing a further failed-reclaim boot loop on their side. Class-3 fix verification should include a service-context hcom smoke (non-interactive, cwd in a worktree), not just spawn probes.
 
 MECHANISM 3, PROVEN (peer, hcom life events 101986/102055): the @owner seat row was reaped by hcom's SYSTEM JANITOR ({action:stopped, by:system, reason:stale_cleanup} at 04:43:14) while its holder was ALIVE — the untrusted-mise config had silently starved the service's seat keepalive since boot, the row aged past the staleness threshold, and the janitor cannot distinguish a live-but-mute holder from a dead one. Config-layer breakage therefore converts to IDENTITY LOSS after one staleness window. Row recreated clean at 04:51:47 by service restart.
+
+SANCTIONED PER-RUN REMEDY (2026-07-16, orchestrator-approved in the field): export MISE_TRUSTED_CONFIG_PATHS=$PWD for the battery/suite process — scoped to the run, zero persistent host mutation, precedented by the repo's own toolchain gate. This is the preferred workaround over persistent mise trust records (which mask the repro and leave residue); the eventual fix should fold this into the battery/gate harness itself so worktree batteries are trust-independent by construction.
 <!-- SECTION:NOTES:END -->
