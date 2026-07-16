@@ -4,6 +4,7 @@ title: Owner seated/unseated as a declared system status — registry fact + pus
 status: To Do
 assignee: []
 created_date: '2026-07-15 20:25'
+updated_date: '2026-07-16 02:03'
 labels:
   - herder
 dependencies: []
@@ -33,3 +34,9 @@ PUSH DOCTRINE (context the gate implements against): only a blocking decide/repl
 - [ ] #4 Unseated grants nothing: no gate relaxation, no timeout-proceed, no autonomy widening
 - [ ] #5 Refusal/degraded paths carry cause+remedy; no run identifiers in durable fixtures/goldens
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+SUBSTRATE LANDED 2026-07-16 (peer inform): mish gained a first-class asks board (mish asks — create/reply/settle/close/withdraw-with-citation/link/widen-membership, JSON-first, mish.ask/v1 frozen, per-mission asks/ dir). Adversarially reviewed and merged on the mission-control branch; shared binary reinstalled with existing surface verified bit-identical. Design doc: missions/2026-07-15-mission-control/artifacts/asks-board-design.md. This lane's design must consume that entity/wire rather than inventing a parallel one; re-validate scope against it at dispatch (worth-it re-check).
+<!-- SECTION:NOTES:END -->
