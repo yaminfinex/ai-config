@@ -59,6 +59,23 @@ type thenConfig struct {
 	LogPath        string
 }
 
+const compactThenSenderPrefix = "herder-compact-then-"
+
+// compactThenSenderName derives the detached external sender from the verified
+// recipient coordinate captured by RunCompact. Prefixing preserves the exact
+// recipient correlate while making the two identities distinct without any
+// downstream lookup.
+func compactThenSenderName(busName string) (string, error) {
+	if busName == "" || busName == "null" || strings.TrimSpace(busName) == "" {
+		return "", fmt.Errorf("verified recipient bus name is empty")
+	}
+	senderName := compactThenSenderPrefix + busName
+	if senderName == busName {
+		return "", fmt.Errorf("derived sender identity must differ from recipient")
+	}
+	return senderName, nil
+}
+
 // busProbe is the seam runThenLoop is tested against:
 //   - listStatus reports the caller's CURRENT session status
 //     ("active"|"listening"|"blocked"|"" unknown).
@@ -187,8 +204,9 @@ func establishWatermark(p busProbe, cfg thenConfig, now func() time.Time, sleep 
 }
 
 // thenDeliver hands the continuation to the bus once the turn end is proven.
-// "delivered" and "queued" are BOTH success — queued means the target was busy
-// and the bus will inject at its next turn; resending would double-deliver.
+// "delivered" and "queued" are BOTH success — queued means no receipt was
+// observed inside the verification window after the bus accepted the message;
+// resending would risk double-delivery.
 // A transient not_joined / send_failed (e.g. the instant compaction is still
 // running) is retried with a settling backoff, spending the REMAINING
 // --then-timeout budget rather than a fixed handful of no-delay attempts that
@@ -207,7 +225,7 @@ func thenDeliver(p busProbe, cfg thenConfig, log io.Writer, now func() time.Time
 			recordThenLifecycle(cfg, "delivered", "", log, now())
 			return 0
 		case "queued":
-			fmt.Fprintf(log, "herder compact-then: queued on attempt %d — @%s was busy; the bus will inject the continuation at its next turn. NOT resending.\n", attempt, cfg.BusName)
+			fmt.Fprintf(log, "herder compact-then: queued on attempt %d — no delivery receipt observed within the verification window; the bus accepted the continuation for later injection. NOT resending.\n", attempt)
 			recordThenLifecycle(cfg, "queued", "", log, now())
 			return 0
 		}
@@ -502,10 +520,14 @@ func recordThenLifecycle(cfg thenConfig, status, reason string, log io.Writer, a
 // warn-never-block precedent). In HERDER_COMPACT_THEN_DRYRUN mode it describes
 // the armed sender deterministically and forks nothing (hermetic goldens).
 func armCompactThen(stderr io.Writer, shortGUID, senderName, busName, busDir, message string, timeoutMS int) {
+	if senderName == "" || senderName == busName {
+		fmt.Fprintf(stderr, "herder compact: WARNING — --then NOT armed: continuation sender identity %q must differ from recipient @%s. Repair this session's bus binding with `herder enroll`, then retry; the continuation was not posted. Deliver it manually: herder send %s -- %s\n", senderName, busName, busName, shellPreview(message))
+		return
+	}
 	logDir := compactThenLogDir()
 	if os.Getenv("HERDER_COMPACT_THEN_DRYRUN") == "1" {
-		fmt.Fprintf(stderr, "herder compact: --then armed (dry-run) — after this turn ends, the continuation (%d chars) delivers to @%s on bus %s (timeout %dms); diagnostics under %s/\n",
-			runeLen(message), busName, busDirLabel(busDir), timeoutMS, logDir)
+		fmt.Fprintf(stderr, "herder compact: --then armed (dry-run) — after this turn ends, sender %s delivers the continuation (%d chars) to @%s on bus %s (timeout %dms); diagnostics under %s/\n",
+			senderName, runeLen(message), busName, busDirLabel(busDir), timeoutMS, logDir)
 		return
 	}
 
@@ -601,6 +623,10 @@ func parseThenArgs(args []string, stderr io.Writer) (thenConfig, int) {
 	}
 	if cfg.SenderName == "" || cfg.BusName == "" || cfg.Message == "" {
 		fmt.Fprintf(stderr, "herder compact-then: --sender, --name, and --message are required (internal subcommand; use `herder compact --then`)\n")
+		return cfg, 64
+	}
+	if cfg.SenderName == cfg.BusName {
+		fmt.Fprintf(stderr, "herder compact-then: refused — --sender must differ from --name; a self-addressed continuation is not deliverable. Re-arm it through `herder compact --then`.\n")
 		return cfg, 64
 	}
 	if cfg.PollMS <= 0 {

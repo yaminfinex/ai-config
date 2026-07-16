@@ -1,5 +1,5 @@
 === STDERR ===
-sent 21 chars to alpha (hcom @alpha-rive), submitted, verify=queued (target was busy; message queued to run next — do NOT resend)
+sent 21 chars to alpha (hcom @alpha-rive), submitted, verify=queued (no delivery receipt observed within the verification window; message remains queued — do NOT resend)
 === STDOUT ===
 {"pane_id":"","agent":"agent","target":"alpha","hcom_name":"alpha-rive","hcom_dir":"<BUS>","resolved_via":"registry","submitted":true,"verify":"queued","message_preview":"ring: alpha unit DONE"}
 === EXIT ===

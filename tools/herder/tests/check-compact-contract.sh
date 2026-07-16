@@ -150,7 +150,7 @@ run_then_child() {
     HERDER_COMPACT_THEN_TIMEOUT_MS="${THEN_TIMEOUT_MS:-2000}" \
     MOCK_THEN_SCENARIO="$scen" MOCK_THEN_STATE="$CASE/hcomstate" \
 	"$REPO_ROOT/bin/herder" compact-then \
-	  --sender me-bus --name me-bus --message 'continue: run the gate, then report DONE' "$@" 2>"$RUN_ERR_F")"
+	  --sender herder-compact-then-me-bus --name me-bus --message 'continue: run the gate, then report DONE' "$@" 2>"$RUN_ERR_F")"
   RUN_RC=$?
 }
 
@@ -320,7 +320,7 @@ scenario then_usage_empty    midturn       guid   "$STEER" --then ""
 scenario then_usage_badtimeout midturn     guid   "$STEER" --then "$CONT" --then-timeout nope
 
 # Detached-sender "sent shapes": drive `herder compact-then` directly against a
-# mock hcom that ends the turn and acks (sent), leaves the target busy (queued),
+# mock hcom that ends the turn and acks (sent), withholds a receipt (queued),
 # or never ends the turn (timeout — must give up loudly, never deliver).
 then_child_scenario() {  # then_child_scenario <name> <mock scen> <extra args...>
   local name="$1" scen="$2"; shift 2
@@ -329,7 +329,7 @@ then_child_scenario() {  # then_child_scenario <name> <mock scen> <extra args...
   check_one "$name"
 }
 then_child_scenario then_sent       sent
-then_child_scenario then_queued     queued_busy
+then_child_scenario then_queued     queued_no_receipt
 # Armed-late: "active" never sampled → turn end PROVEN via the hcom event history
 # (proof (b)), then delivered. A naked sampled "listening" must NOT be enough.
 then_child_scenario then_armed_late armed_late

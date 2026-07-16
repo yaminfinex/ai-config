@@ -1,6 +1,6 @@
 === STDERR ===
 herder compact: submitted — "/compact focus on the open unit, keep gate commands and thread names" is in your composer and fires when the current turn ends (verify: delivered)
-herder compact: --then armed (dry-run) — after this turn ends, the continuation (54 chars) delivers to @me-bus on bus default (timeout 900000ms); diagnostics under <CASE>/state/compact-then/
+herder compact: --then armed (dry-run) — after this turn ends, sender herder-compact-then-me-bus delivers the continuation (54 chars) to @me-bus on bus default (timeout 900000ms); diagnostics under <CASE>/state/compact-then/
 === STDOUT ===
 
 === EXIT ===
