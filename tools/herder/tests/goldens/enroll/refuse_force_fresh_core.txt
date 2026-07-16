@@ -1,0 +1,9 @@
+=== STDERR ===
+herder adopt: enroll leg refused: herder enroll: refused to enroll a fresh identity: the live terminal, pane, and bus name are already seated on guid guid-source-0000; repair that identity with a pinned 'herder enroll', run 'herder reconcile --apply' to re-verify it, or use 'herder adopt guid-source-0000' only for a true replacement
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== REGISTRY ===
+{"kind":"node","event":"node_registered","node_id":"<GUID>","recorded_at":"<TS>"}
+{"kind":"session","guid":"guid-source-0000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"stable","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true},"sids":[{"sid":"sid-live","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sid-live"}}

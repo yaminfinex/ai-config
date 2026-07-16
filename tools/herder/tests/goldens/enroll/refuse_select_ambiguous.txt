@@ -1,0 +1,10 @@
+=== STDERR ===
+herder enroll: refused to choose among 2 seated rows with the same terminal, pane, and bus name; inspect 'herder list --all --json', pin the intended original guid for re-enroll, run 'herder reconcile --apply', or use 'herder adopt <guid>' for a true replacement
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== REGISTRY ===
+{"kind":"node","event":"node_registered","node_id":"<GUID>","recorded_at":"<TS>"}
+{"kind":"session","guid":"guid-first-0000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"first","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true}}
+{"kind":"session","guid":"guid-second-000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"second","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"stable-bus","hcom_verified":true}}

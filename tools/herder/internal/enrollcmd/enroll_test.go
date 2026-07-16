@@ -173,6 +173,90 @@ func TestVerifyExistingGUIDOwnerBootstrapsAbsentStoredBusName(t *testing.T) {
 	}
 }
 
+func TestVerifyExistingGUIDOwnerStoredNameVerificationMutationMatrix(t *testing.T) {
+	verified := true
+	unverified := false
+	tests := []struct {
+		name         string
+		verification *bool
+		wantAccept   bool
+	}{
+		{name: "explicit unverified bootstraps", verification: &unverified, wantAccept: true},
+		{name: "verified remains strict", verification: &verified, wantAccept: false},
+		{name: "absent verification remains strict", verification: nil, wantAccept: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			current := &v2.SessionRecord{
+				GUID:  "guid-existing",
+				State: v2.StateSeated,
+				Label: "stable-label",
+				Seat: &v2.Seat{
+					TerminalID:   "term-live",
+					HcomName:     "bus-stored",
+					HcomVerified: tt.verification,
+				},
+				SIDs: []v2.SID{{SID: "sid-recorded"}},
+			}
+			live := hcomidentity.Result{Name: "bus-different", SessionID: "sid-recorded", Verified: true}
+			err := verifyExistingGUIDOwner(current, herdrcli.Pane{TerminalID: "term-live"}, live, "stable-label")
+			if tt.wantAccept && err != nil {
+				t.Fatalf("bootstrap proof refused: %v", err)
+			}
+			if !tt.wantAccept && err == nil {
+				t.Fatal("strict stored-name mismatch accepted")
+			}
+		})
+	}
+}
+
+func TestVerifyExistingGUIDOwnerUnverifiedStoredNameStillNeedsOwnership(t *testing.T) {
+	unverified := false
+	current := &v2.SessionRecord{
+		GUID:  "guid-existing",
+		State: v2.StateSeated,
+		Label: "stable-label",
+		Seat: &v2.Seat{
+			TerminalID:   "term-recorded",
+			HcomName:     "bus-stored",
+			HcomVerified: &unverified,
+		},
+		SIDs: []v2.SID{{SID: "sid-recorded"}},
+	}
+	live := hcomidentity.Result{Name: "bus-different", SessionID: "sid-different", Verified: true}
+	if err := verifyExistingGUIDOwner(current, herdrcli.Pane{TerminalID: "term-different"}, live, "different-label"); err == nil {
+		t.Fatal("unverified stored name bypassed session-or-seat ownership proof")
+	}
+}
+
+func TestSelectMatchingLiveSeatUsesSIDOnlyToRefine(t *testing.T) {
+	live := hcomidentity.Result{SessionID: "sid-live", Verified: true}
+	missingSID := v2.SessionRecord{GUID: "guid-missing"}
+	exactSID := v2.SessionRecord{GUID: "guid-exact", SIDs: []v2.SID{{SID: "sid-live"}}}
+
+	selected, err := selectMatchingLiveSeat([]v2.SessionRecord{missingSID, exactSID}, live)
+	if err != nil {
+		t.Fatalf("unique exact SID refused: %v", err)
+	}
+	if selected.GUID != exactSID.GUID {
+		t.Fatalf("selected guid = %q, want %q", selected.GUID, exactSID.GUID)
+	}
+
+	if _, err := selectMatchingLiveSeat([]v2.SessionRecord{exactSID, {
+		GUID: "guid-exact-too",
+		SIDs: []v2.SID{{SID: "sid-live"}},
+	}}, live); err == nil {
+		t.Fatal("multiple exact SID matches were not refused as ambiguous")
+	}
+
+	if _, err := selectMatchingLiveSeat([]v2.SessionRecord{{
+		GUID: "guid-conflict",
+		SIDs: []v2.SID{{SID: "sid-other"}},
+	}}, live); err == nil {
+		t.Fatal("conflicting SID was allowed to permit occupied-seat selection")
+	}
+}
+
 // TestShouldRetirePriorRow pins TASK-035 P1-b: retire-on-reenroll must not
 // close a row that could be a different, still-live session sharing a
 // moved/reshuffled pane_id. terminal_id is the move-stable coordinate; a joined
