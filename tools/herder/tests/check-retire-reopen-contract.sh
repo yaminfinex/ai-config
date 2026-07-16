@@ -18,7 +18,11 @@ cat >"$MOCKBIN/herdr" <<'MOCK_HERDR'
 set -euo pipefail
 case "${1:-} ${2:-}" in
   "pane get")
-    jq -n --arg pane "${3:-p_enroll}" '{result:{pane:{pane_id:$pane,terminal_id:"term_enroll",cwd:"/repo",workspace_id:"ws_1"}}}';;
+    if [[ -n "${MOCK_HERDR_NULL_PANE:-}" && "${3:-}" == "$MOCK_HERDR_NULL_PANE" ]]; then
+      jq -n '{result:{pane:null}}'
+    else
+      jq -n --arg pane "${3:-p_enroll}" '{result:{pane:{pane_id:$pane,terminal_id:"term_enroll",cwd:"/repo",workspace_id:"ws_1"}}}'
+    fi;;
   "agent rename")
     jq -n '{result:{type:"ok"}}';;
   "agent list")
@@ -96,9 +100,10 @@ run_hr() {
     HOME="$CASE/home" \
     HERDER_STATE_DIR="$CASE/state" \
     HERDR_ENV=1 \
-    HERDR_PANE_ID=p_enroll \
+    HERDR_PANE_ID="${RUN_HERDR_PANE_ID:-p_enroll}" \
     HCOM_SESSION_ID=sess-replacement \
     MOCK_HCOM_STATE="$CASE/hcom.json" \
+    MOCK_HERDR_NULL_PANE="${MOCK_HERDR_NULL_PANE:-}" \
     HCOM_INSTANCE_NAME=enrolled-bus \
     "$REPO_ROOT/bin/herder" "$@"
 }
@@ -203,6 +208,32 @@ assert "adopt binds the replacement row after reclaim" jq -se '
     and .[0].value.provenance.tool_session_id == "sess-replacement"
     and .[0].value.sids[-1].sid == "sess-replacement"
 ' "$CASE/state/registry.jsonl"
+
+new_case adopt_unresolvable_launch_pane
+mkdir -p "$CASE/home/.hcom"
+python3 - "$CASE/home/.hcom/hcom.db" <<'PY'
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.executescript('''
+CREATE TABLE instances(name TEXT PRIMARY KEY, launch_context TEXT DEFAULT '');
+CREATE TABLE process_bindings(process_id TEXT PRIMARY KEY, instance_name TEXT, updated_at REAL NOT NULL);
+PRAGMA user_version=17;
+INSERT INTO instances(name, launch_context) VALUES ('trap', '{}');
+INSERT INTO process_bindings(process_id, instance_name, updated_at) VALUES ('process-replacement', 'trap', 1);
+''')
+db.commit()
+PY
+launch_context_before="$(python3 -c 'import sqlite3, sys; print(sqlite3.connect(sys.argv[1]).execute("select launch_context from instances where name = ?", ("trap",)).fetchone()[0], end="")' "$CASE/home/.hcom/hcom.db")"
+RUN_HERDR_PANE_ID=p_stale MOCK_HERDR_NULL_PANE=p_stale run_hr adopt trap --confirm-dead >/dev/null 2>"$CASE/adopt.err"
+adopt_unresolvable_pane_rc=$?
+launch_context_after="$(python3 -c 'import sqlite3, sys; print(sqlite3.connect(sys.argv[1]).execute("select launch_context from instances where name = ?", ("trap",)).fetchone()[0], end="")' "$CASE/home/.hcom/hcom.db")"
+assert "adopt keeps the final bind when launch pane is unresolvable" bash -c '
+  test "$1" -eq 0 && grep -q "adopt: registry-bind applied" "$2"
+' bash "$adopt_unresolvable_pane_rc" "$CASE/adopt.err"
+assert "adopt refuses an unresolvable launch pane nonfatally" bash -c '
+  test "$1" -eq 0 && grep -q "adopt: launch-context refused \[launch_context_live_pane_unresolvable\]" "$2" && grep -q "Registry bind remains applied" "$2"
+' bash "$adopt_unresolvable_pane_rc" "$CASE/adopt.err"
+assert "adopt leaves empty launch context byte-identical when launch pane is unresolvable" test "$launch_context_after" = "$launch_context_before"
 
 new_case adopt_unverified_same_physical_source
 cat >>"$CASE/state/registry.jsonl" <<'JSONL'

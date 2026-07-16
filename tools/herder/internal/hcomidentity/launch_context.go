@@ -34,7 +34,7 @@ func RepairLaunchContext(dir, name, paneID string) LaunchContextRepair {
 			Status: "refused",
 			Code:   code,
 			Cause:  cause,
-			Remedy: "Do not edit the hcom database manually; use promptless spawn followed by herder send, and retry after restoring a compatible hcom data directory",
+			Remedy: launchContextRemedy(code, name),
 		}
 	}
 	if name == "" || paneID == "" {
@@ -162,6 +162,39 @@ func RepairLaunchContext(dir, name, paneID string) LaunchContextRepair {
 
 type sqlQueryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func launchContextRemedy(code, name string) string {
+	bus := "the intended bus"
+	if name != "" {
+		bus = "@" + name
+	}
+	switch code {
+	case "launch_context_evidence_incomplete":
+		return "Resolve the replacement to a live herdr pane and a verified joined hcom bus before retrying; do not edit the hcom database manually"
+	case "launch_context_db_unavailable":
+		return "Restore access to the configured hcom data directory and hcom.db, then retry; do not create or edit the database manually"
+	case "launch_context_db_busy":
+		return "Wait for the active hcom database writer to finish, then retry 'herder reconcile --apply' from the live pane"
+	case "launch_context_schema_mismatch":
+		return "Restore a compatible hcom data directory, then rerun 'herder reconcile --apply' from a live pane; do not edit the hcom database manually"
+	case "launch_context_row_missing":
+		return fmt.Sprintf("Join %s to hcom first, then rerun 'herder reconcile --apply' from its live pane", bus)
+	case "launch_context_row_ambiguous":
+		return fmt.Sprintf("Resolve the duplicate %s instance rows in hcom before retrying; do not choose a row arbitrarily or edit the database manually", bus)
+	case "launch_context_pane_conflict":
+		return fmt.Sprintf("From the verified live pane for %s, run 'herder reconcile --apply' to re-establish exact identity before retrying; do not overwrite either coordinate manually", bus)
+	case "launch_context_invalid_json", "launch_context_invalid_coordinate":
+		return fmt.Sprintf("Repair or recreate %s through supported hcom commands, then rerun 'herder reconcile --apply'; do not edit launch_context manually", bus)
+	case "launch_context_read_failed":
+		return "Check hcom database health and permissions, then retry 'herder reconcile --apply'; no row was changed"
+	case "launch_context_encode_failed":
+		return "Report the launch-context encoding failure to the herder maintainer; no row was changed"
+	case "launch_context_write_failed", "launch_context_write_raced", "launch_context_commit_failed", "launch_context_confirm_failed":
+		return "Retry 'herder reconcile --apply' from the verified live pane; if the refusal repeats, check hcom database health and concurrent writers"
+	default:
+		return "Keep the registry bind unchanged and rerun 'herder reconcile --apply' from a verified live pane; do not edit the hcom database manually"
+	}
 }
 
 func validateLaunchContextSchema(ctx context.Context, conn *sql.Conn) error {

@@ -128,6 +128,30 @@ func TestRepairLaunchContextRefusesMissingDatabaseWithoutCreatingIt(t *testing.T
 	}
 }
 
+func TestLaunchContextRefusalRemediesAreCodeSpecific(t *testing.T) {
+	tests := []struct {
+		code      string
+		want      string
+		doNotWant string
+	}{
+		{code: "launch_context_schema_mismatch", want: "compatible hcom data directory"},
+		{code: "launch_context_pane_conflict", want: "herder reconcile --apply", doNotWant: "compatible hcom data directory"},
+		{code: "launch_context_row_missing", want: "Join @live-self to hcom first", doNotWant: "compatible hcom data directory"},
+		{code: "launch_context_row_ambiguous", want: "duplicate @live-self instance rows", doNotWant: "compatible hcom data directory"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.code, func(t *testing.T) {
+			got := launchContextRemedy(tt.code, "live-self")
+			if !strings.Contains(got, tt.want) {
+				t.Fatalf("remedy = %q, want substring %q", got, tt.want)
+			}
+			if tt.doNotWant != "" && strings.Contains(got, tt.doNotWant) {
+				t.Fatalf("remedy = %q, do not want substring %q", got, tt.doNotWant)
+			}
+		})
+	}
+}
+
 func newLaunchContextDB(t *testing.T, version int, primaryKey bool) (string, *sql.DB) {
 	t.Helper()
 	dir := t.TempDir()

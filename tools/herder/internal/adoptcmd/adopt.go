@@ -16,6 +16,7 @@ import (
 
 	"ai-config/tools/herder/internal/enrollcmd"
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/renamecmd"
@@ -163,7 +164,18 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if replacement.Seat != nil && replacement.Seat.PaneID != "" {
 		launchPane = replacement.Seat.PaneID
 	}
-	repair := hcomidentity.RepairLaunchContext(oldBusDir, busIdentity.Name, launchPane)
+	repair := hcomidentity.LaunchContextRepair{}
+	liveLaunchPane, livePaneErr := resolveAdoptLaunchPane(launchPane)
+	if livePaneErr != nil {
+		repair = hcomidentity.LaunchContextRepair{
+			Status: "refused",
+			Code:   "launch_context_live_pane_unresolvable",
+			Cause:  livePaneErr.Error(),
+			Remedy: fmt.Sprintf("Recovery: from a live herdr pane joined to @%s, run 'herder reconcile --apply'; do not edit the hcom database manually", busIdentity.Name),
+		}
+	} else {
+		repair = hcomidentity.RepairLaunchContext(oldBusDir, busIdentity.Name, liveLaunchPane)
+	}
 	switch repair.Status {
 	case "written":
 		fmt.Fprintf(stderr, "adopt: launch-context written: @%s now records live pane %s\n", busIdentity.Name, repair.PaneID)
@@ -174,6 +186,24 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stderr, "adopted %s: new guid %s seated; old guid %s retired; label reclaimed; bus identity %s\n", old.Label, replacement.GUID, old.GUID, busDisposition)
 	return 0
+}
+
+func resolveAdoptLaunchPane(candidate string) (string, error) {
+	if candidate == "" {
+		return "", fmt.Errorf("replacement registry bind has no pane candidate")
+	}
+	out, err := (&herdrcli.Client{}).Output("pane", "get", candidate)
+	if err != nil {
+		return "", fmt.Errorf("herdr pane get failed for candidate %s", candidate)
+	}
+	pane, err := herdrcli.ParsePaneGet(out)
+	if err != nil {
+		return "", fmt.Errorf("herdr pane get returned invalid data for candidate %s", candidate)
+	}
+	if pane.PaneID == "" {
+		return "", fmt.Errorf("herdr pane get returned no live pane for candidate %s", candidate)
+	}
+	return pane.PaneID, nil
 }
 
 func adoptionUnseatReason(oldPane string, caller hcomidentity.Result, confirmDead bool) (string, error) {
