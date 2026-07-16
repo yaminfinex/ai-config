@@ -134,6 +134,7 @@ type statusReport struct {
 	Warnings  []string
 	BoardOK   bool
 	Tasks     []missionfs.Task
+	Asks      missionfs.AsksScan
 }
 
 type statusOutput struct {
@@ -143,8 +144,16 @@ type statusOutput struct {
 	MissionDir  string             `json:"mission_dir"`
 	Manifest    missionfs.Manifest `json:"manifest"`
 	Board       statusBoardOutput  `json:"board"`
+	Asks        statusAsksOutput   `json:"asks"`
 	Artifacts   statusArtifacts    `json:"artifacts"`
 	Warnings    []string           `json:"warnings"`
+}
+
+type statusAsksOutput struct {
+	Available bool                      `json:"available"`
+	Counts    []missionfs.AskStateCount `json:"counts"`
+	Total     int                       `json:"total"`
+	Entities  []missionfs.AskEntity     `json:"entities"`
 }
 
 type statusBoardOutput struct {
@@ -227,9 +236,26 @@ func makeStatusOutput(result resolve.Result, report statusReport) statusOutput {
 		OK: true, Addressable: missionfs.ValidateSlug(result.Slug) == nil,
 		Slug: result.Slug, MissionDir: result.MissionDir, Manifest: report.Manifest,
 		Board:     statusBoardOutput{Available: report.BoardOK, Counts: counts, Total: totalTasks(counts), Tasks: tasks},
+		Asks:      makeStatusAsks(report.Asks),
 		Artifacts: statusArtifacts{Missing: report.Artifacts.Missing, Count: report.Artifacts.Count, NewestPath: report.Artifacts.NewestPath, NewestTime: newest},
 		Warnings:  warnings,
 	}
+}
+
+func makeStatusAsks(scan missionfs.AsksScan) statusAsksOutput {
+	counts := scan.Counts
+	if counts == nil {
+		counts = []missionfs.AskStateCount{}
+	}
+	entities := scan.Entities
+	if entities == nil {
+		entities = []missionfs.AskEntity{}
+	}
+	total := 0
+	for _, c := range counts {
+		total += c.Count
+	}
+	return statusAsksOutput{Available: scan.Available, Counts: counts, Total: total, Entities: entities}
 }
 
 func buildStatusOverviewJSON(d deps, repo string) ([]statusOutput, error) {
@@ -310,6 +336,8 @@ func collectStatusOverviewJSON(d deps, result resolve.Result) (statusReport, boo
 		findings = append(findings, artifacts.Findings...)
 	}
 	report.Warnings = append(report.Warnings, formatFindings(result.MissionDir, findings)...)
+	report.Asks = missionfs.ScanAsks(result.MissionDir, report.Manifest.Owner)
+	report.Warnings = append(report.Warnings, report.Asks.Warnings...)
 	return report, ok
 }
 
@@ -519,6 +547,8 @@ func collectStatusWithGit(d deps, result resolve.Result, includeGit bool) (statu
 	findings = append(findings, artifacts.Findings...)
 
 	report.Warnings = append(report.Warnings, formatFindings(result.MissionDir, findings)...)
+	report.Asks = missionfs.ScanAsks(result.MissionDir, report.Manifest.Owner)
+	report.Warnings = append(report.Warnings, report.Asks.Warnings...)
 	if includeGit {
 		if dirty, err := missionHasStaleGit(d, result); err == nil && dirty {
 			report.Warnings = append(report.Warnings, "mission subtree has uncommitted or unpushed changes")

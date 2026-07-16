@@ -1,0 +1,19 @@
+Usage: mish asks [--mission <slug>] <subcommand> [<id>] [--input <path|->] [--text]
+
+Manage the mission-owned asks/rulings board. JSON is the default. Mutations read exactly one
+JSON object from --input, require actor, and require if_updated_at for an existing entity.
+The --mission flag is accepted only before the subcommand.
+
+Subcommands:
+  create                    create an open ask or direct ruling
+  view                      read one entity
+  list                      list entities with optional JSON filters
+  reply                     append a member reply
+  settle                    record a ruling and close as settled
+  close                     close as no-action or superseded
+  withdraw-with-citation    authority withdrawal of an unanswered ask
+  link                      add a typed relation and optionally set the anchor
+  widen-membership          owner-only membership widening
+
+All writes use a mission-wide advisory lock, stale-write precondition, and atomic rename.
+Unknown subcommands and flags fail closed. --text changes presentation only.

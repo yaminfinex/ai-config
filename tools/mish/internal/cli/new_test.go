@@ -75,6 +75,9 @@ func TestNewScaffoldsMissionTreeManifestBoardArtifactsMarkerAndEcho(t *testing.T
 
 	missionDir := filepath.Join(repo, "missions", "perf-regression")
 	assertExactMissionTree(t, missionDir)
+	if got := readFile(t, filepath.Join(missionDir, "asks", "config.yml")); got != "schema: mish.asks/v1\nstates: [open, closed]\noutcomes: [settled, no-action, superseded]\n" {
+		t.Fatalf("asks config = %q", got)
+	}
 	manifest, findings, err := missionfs.ReadManifest(missionDir)
 	if err != nil {
 		t.Fatal(err)
@@ -333,6 +336,9 @@ func assertExactMissionTree(t *testing.T, missionDir string) {
 	want := []string{
 		"artifacts/",
 		"artifacts/.gitkeep",
+		"asks/",
+		"asks/config.yml",
+		"asks/entities/",
 		"backlog/",
 		"backlog/config.yml",
 		"backlog/tasks/",

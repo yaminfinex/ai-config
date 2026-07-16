@@ -31,7 +31,7 @@ step() { echo "--- $*"; }
 all_green() { echo "ALL GREEN"; }
 
 preflight() {
-  local pinned_export='export PATH="$(mise where go@1.26.4)/bin:$PATH" && export GOTOOLCHAIN=local'
+  local pinned_export='export PATH="$(mise where go@1.26.5)/bin:$PATH" && export GOTOOLCHAIN=local'
   local need have dep version
   need=$(awk '/^go /{print $2; exit}' "$MISH_MODULE_DIR/go.mod")
   command -v go >/dev/null 2>&1 ||
