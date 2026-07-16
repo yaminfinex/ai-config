@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:34'
-updated_date: '2026-07-13 01:05'
+updated_date: '2026-07-16 01:56'
 labels: []
 dependencies: []
 priority: medium
@@ -63,4 +63,6 @@ lale field data (#11888), second refusal mode (benign): herder compact also refu
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-07-13 staleness audit (read-only, evidence-verified): AMEND not close. compact --then shipped but self-location remains: paste target resolved only from herdr agent list with refusal when absent (spawncmd/compact.go:146-164, hera spot-verified), wd must equal paneCWD exactly (287-295), early self-row refusal lacks concrete recovery (91-94). Pane re-key/durable-key correlation DID improve (69-83, 250-280; f210777). Remaining scope: pane-list fallback + recovery wording + subdir corroboration.
+
+FRESH LIVE EVIDENCE 2026-07-16: a peer orchestrator's manual session hit the exact class post-0.7.4-handoff — seat re-enrolled fine (guid/pane/terminal recorded) but the terminal is absent from herdr agent list (detection-lost), so herder compact refuses 'cannot locate your own pane'. Recovery today = owner types /compact directly. Any fix should consider the detection-lost case (registry row healthy, agent-list absent), not only pane renumbering.
 <!-- SECTION:NOTES:END -->

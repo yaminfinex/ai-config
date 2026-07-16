@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-14 23:04'
+updated_date: '2026-07-16 01:56'
 labels: []
 dependencies: []
 ordinal: 212000
@@ -22,3 +23,9 @@ Surfaced during the nudge-deletion review by the codex incumbent: broad package 
 - [ ] #1 Race root-caused (test-only vs protocol) with evidence
 - [ ] #2 Flake eliminated (100-run probe green) or protocol finding filed
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+CROSS-LINK 2026-07-16: same flake family as the grokbridge idle-delivery full-suite failure (wake=HCOM_RECOVER pending=1 where a delivery wake was expected; two voided batteries in one day). Root-cause research here should cover both symptom sites — dispatch as ONE research-then-fix unit with the idle-delivery task.
+<!-- SECTION:NOTES:END -->

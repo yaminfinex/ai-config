@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-16 00:22'
+updated_date: '2026-07-16 01:56'
 labels:
   - herder
 dependencies: []
@@ -26,3 +27,9 @@ Fix directions: make the wake-source assertion robust to scheduler-delayed recov
 - [ ] #1 Root cause identified: why full-suite load produces the recovery wake interleaving
 - [ ] #2 Test deterministic under load (repeated full-module runs green) without weakening the lost-delivery detection
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+CROSS-LINK 2026-07-16: likely the same root cause as the pre-existing T2 handshake ordering flake (HCOM_RECOVER preceding the expected per-id wake, ~1/100 under package load). Dispatch jointly with that task as one research-then-fix unit; whichever root-causes first closes both or narrows the other.
+<!-- SECTION:NOTES:END -->

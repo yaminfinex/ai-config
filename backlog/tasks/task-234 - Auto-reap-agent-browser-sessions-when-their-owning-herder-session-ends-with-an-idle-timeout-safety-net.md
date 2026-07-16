@@ -3,10 +3,10 @@ id: TASK-234
 title: >-
   Graceful cull: pre-cull release notice + ack window; resource cleanup is the
   agent's job
-status: In Progress
+status: To Do
 assignee: []
 created_date: '2026-07-15 07:14'
-updated_date: '2026-07-15 12:25'
+updated_date: '2026-07-16 01:56'
 labels:
   - herder
 dependencies: []
@@ -39,6 +39,12 @@ Design checkpoint required before implementation: notice delivery mechanism + ac
 - [ ] #7 Doctor/host sweep for agent-browser orphans with the proven guards (owner-absent + grace + no live client, never age alone)
 - [x] #8 Herder core contains zero resource-type-specific close logic
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+PARKED (owner, 2026-07-16): remaining scope (ACs 1-4, 7 — browser/orphan sweep + integration tests) is parked, not staffed. Shipped portion stays live: doctrine text (AC5), graceful-cull notice+window (AC6), zero resource-type logic in core (AC8). Re-validate the sweep design against world state before any future dispatch.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 

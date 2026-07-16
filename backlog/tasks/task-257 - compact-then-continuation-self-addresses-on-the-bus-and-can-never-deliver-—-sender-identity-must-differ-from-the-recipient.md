@@ -3,9 +3,10 @@ id: TASK-257
 title: >-
   compact --then continuation self-addresses on the bus and can never deliver —
   sender identity must differ from the recipient
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-16 01:48'
+updated_date: '2026-07-16 01:58'
 labels: []
 dependencies: []
 priority: high
@@ -29,3 +30,9 @@ Interim operational practice (already doctrine): before ending the compact turn,
 - [ ] #3 Delivery verdict text no longer asserts an inferred cause ('was busy') for an expired receipt window — it states the observation and the consequence
 - [ ] #4 Turn-end fail-closed proof and NOT-resending discipline unchanged (regression-pinned)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Dispatched 2026-07-16: codex builder in worktree task-257-compact-then, design checkpoint mandated before code (delivery-contract surface).
+<!-- SECTION:NOTES:END -->
