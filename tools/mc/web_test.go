@@ -84,10 +84,14 @@ func TestProgressiveEnhancementAssetCSPAndConditionalPages(t *testing.T) {
 	}
 	viewerRequest := httptest.NewRequest(http.MethodGet, "/thread/task-live", nil)
 	viewerRequest.Header.Set("Tailscale-User-Login", "alice@example.com")
+	viewerRequest.Header.Set("If-None-Match", etag)
 	viewer := httptest.NewRecorder()
 	handler.ServeHTTP(viewer, viewerRequest)
 	if viewerETag := viewer.Header().Get("ETag"); viewerETag == "" || viewerETag == etag {
 		t.Fatalf("distinct viewers shared ETag: default=%q alice=%q", etag, viewerETag)
+	}
+	if viewer.Code != http.StatusOK {
+		t.Fatalf("cross-identity conditional GET = %d, want 200", viewer.Code)
 	}
 
 	conditionalRequest := httptest.NewRequest(http.MethodGet, "/thread/task-live", nil)
@@ -127,6 +131,11 @@ func TestSafeReturnTargetRejectsUnsafePaths(t *testing.T) {
 		{name: "backslash", raw: `/\evil.com`, want: ""},
 		{name: "carriage return line feed", raw: "/thread/x\r\nLocation: //evil.com", want: ""},
 		{name: "relative path", raw: "/thread/x", want: "/thread/x"},
+		{name: "relative path with state", raw: "/?peek=task-live#rail", want: "/?peek=task-live#rail"},
+		{name: "scheme relative", raw: "//evil.com", want: ""},
+		{name: "absolute URL", raw: "https://evil.com", want: ""},
+		{name: "missing leading slash", raw: "thread/x", want: ""},
+		{name: "empty", raw: "", want: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -138,13 +147,26 @@ func TestSafeReturnTargetRejectsUnsafePaths(t *testing.T) {
 }
 
 func TestBrowserSmokeRequiredGate(t *testing.T) {
-	t.Setenv("MC_CHROME_REQUIRED", "")
-	if browserSmokeRequired() {
-		t.Fatal("browser smoke unexpectedly required by default")
+	tests := []struct {
+		name     string
+		required bool
+		chrome   string
+		node     string
+		fatal    bool
+		message  string
+	}{
+		{name: "default missing chrome skips", node: "node", message: "headless Chrome"},
+		{name: "required missing chrome fails", required: true, node: "node", fatal: true, message: "MC_CHROME_REQUIRED"},
+		{name: "required missing node fails", required: true, chrome: "chromium", fatal: true, message: "node"},
+		{name: "dependencies present proceed", required: true, chrome: "chromium", node: "node"},
 	}
-	t.Setenv("MC_CHROME_REQUIRED", "1")
-	if !browserSmokeRequired() {
-		t.Fatal("browser smoke not required when MC_CHROME_REQUIRED is set")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fatal, msg := browserSmokeDepError(tt.required, tt.chrome, tt.node)
+			if fatal != tt.fatal || (tt.message == "" && msg != "") || (tt.message != "" && !strings.Contains(msg, tt.message)) {
+				t.Fatalf("browserSmokeDepError(%v, %q, %q) = (%v, %q), want fatal=%v message containing %q", tt.required, tt.chrome, tt.node, fatal, msg, tt.fatal, tt.message)
+			}
+		})
 	}
 }
 
@@ -184,19 +206,24 @@ func TestProgressiveEnhancementKeepsJavaScriptOffControlsNative(t *testing.T) {
 	}
 }
 
-func browserSmokeRequired() bool {
-	return os.Getenv("MC_CHROME_REQUIRED") != ""
-}
-
-func browserSmokeUnavailable(t *testing.T, reason string) {
-	t.Helper()
-	if browserSmokeRequired() {
-		t.Fatal(reason)
+func browserSmokeDepError(required bool, chrome, node string) (fatal bool, msg string) {
+	if chrome == "" {
+		if required {
+			return true, "MC_CHROME_REQUIRED set but headless Chrome not found; set MC_CHROME or install chromium"
+		}
+		return false, "headless Chrome not installed; set MC_CHROME in CI"
 	}
-	t.Skip(reason)
+	if node == "" {
+		if required {
+			return true, "MC_CHROME_REQUIRED set but node not installed; browser smoke requires Node's built-in WebSocket client"
+		}
+		return false, "node not installed; browser smoke requires Node's built-in WebSocket client"
+	}
+	return false, ""
 }
 
 func TestProgressiveEnhancementBrowserSmoke(t *testing.T) {
+	chromeRequired := os.Getenv("MC_CHROME_REQUIRED") != ""
 	chrome := os.Getenv("MC_CHROME")
 	if chrome == "" {
 		for _, name := range []string{"chromium", "chromium-browser", "google-chrome", "chrome"} {
@@ -212,12 +239,16 @@ func TestProgressiveEnhancementBrowserSmoke(t *testing.T) {
 			chrome = matches[len(matches)-1]
 		}
 	}
-	if chrome == "" {
-		browserSmokeUnavailable(t, "headless Chrome not installed; set MC_CHROME in CI")
-	}
 	node, err := exec.LookPath("node")
-	if err != nil {
-		browserSmokeUnavailable(t, "node not installed; browser smoke requires Node's built-in WebSocket client")
+	nodePath := ""
+	if err == nil {
+		nodePath = node
+	}
+	if fatal, msg := browserSmokeDepError(chromeRequired, chrome, nodePath); msg != "" {
+		if fatal {
+			t.Fatal(msg)
+		}
+		t.Skip(msg)
 	}
 
 	dir := t.TempDir()
@@ -270,7 +301,7 @@ func TestProgressiveEnhancementBrowserSmoke(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
 	script := filepath.Join("testdata", "progressive-smoke.mjs")
-	output, err := exec.CommandContext(ctx, node, script, chrome, server.URL).CombinedOutput()
+	output, err := exec.CommandContext(ctx, nodePath, script, chrome, server.URL).CombinedOutput()
 	if err != nil {
 		t.Fatalf("browser smoke failed: %v\n%s", err, output)
 	}
