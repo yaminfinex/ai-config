@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-15 20:11'
-updated_date: '2026-07-15 20:12'
+updated_date: '2026-07-16 00:51'
 labels:
   - herder
 dependencies: []
@@ -37,4 +37,6 @@ Priority: not urgent-tagged by the owner; prevents the misrouting class above. O
 - [ ] #4 Refusal/degraded paths carry cause+remedy; no run identifiers (agent names, task numbers) in durable fixtures/goldens
 - [ ] #5 raise --blocking <one line> renders an optional "Blocking:" metadata line after "Mission:" (same stops-at-blank-line parsing); absent flag = absent line; refusal matrix unchanged
 - [ ] #6 No urgency enum or inferred urgency anywhere; blocking raises still never timeout-proceed (silence holds)
+- [ ] #7 Owner-only DYADIC WIDEN gesture: the owner may invite a third party into a live raise conversation; nobody else widens
+- [ ] #8 Blocking is attested by ruling: the wire carries the claim verbatim; nothing verifies or grades it
 <!-- AC:END -->

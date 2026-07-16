@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-15 11:25'
-updated_date: '2026-07-15 23:34'
+updated_date: '2026-07-16 00:50'
 labels: []
 dependencies: []
 ordinal: 242500
@@ -24,13 +24,13 @@ Fix directions to evaluate (design checkpoint first): (a) treat stored-but-unver
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Red-first fixture: downgraded shape (stored name kept, hcom_verified=false) — repair path proven; strict-branch refusal for verified stored names unchanged (mutation-armed)
-- [ ] #2 Red-first fixture: enroll on a matching terminal+pane+hcom_name repairs or refuses with real escape hatch — never mints a duplicate seated row
+- [x] #1 Red-first fixture: downgraded shape (stored name kept, hcom_verified=false) — repair path proven; strict-branch refusal for verified stored names unchanged (mutation-armed)
+- [x] #2 Red-first fixture: enroll on a matching terminal+pane+hcom_name repairs or refuses with real escape hatch — never mints a duplicate seated row
 - [ ] #3 A cleanup path exists for a duplicate seated row on a live pane (unseat-without-close or equivalent); the live specimen pair is cleaned with it — ORDERING: the duplicate is load-bearing for the victim's bare identity-correlated verbs (pane match), so repair + re-verify the ORIGINAL row first, then clean the duplicate; cleaning first re-strands the victim
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-CLEANUP ORDERING UPDATE (2026-07-15, wire-proven): the duplicate specimen row is now LOAD-BEARING for the victim — their bare identity-correlated verbs (compact) succeed via the duplicate row pane match while the original downgraded row still refuses. Cleanup must therefore repair and re-verify the ORIGINAL row first (bare-verb path proven), and only then clean the duplicate — cleaning first re-strands the victim. AC #3 is to be read with this ordering.
+Implemented across af51cd9 + 6eccf22 + 51f625c, merged 27486a8, post-merge battery 61/61 green. Enroll: explicit-false stored names bootstrap-eligible with S||(T&&L); true/nil strict (mutation-armed incl nil-with-S refusal); occupied-seat no-mint fence under the registry lock (SID refines, never permits); pinned repair writes original first then duplicate-detach in one atomic batch, no pane close/bus drop (call-witnessed: mock call lists must equal exactly pane get / list --json — red-proven against synthetic pane close). Adoption source exempt from the physical fence only (core-key adoption refusal intact). Six refusal goldens with registry pins incl first real zero-rows batch proof; reused-pane scenario rebuilt as honest v2. Review: 2 rounds opus incumbent (P1 adopt regression proven+fixed, P2 coverage closed, P3 vacuous-guard caught at delta and rebuilt), delta APPROVE. AC3 code path shipped+tested; live specimen cleanup pending coordinated execution with the affected seat.
 <!-- SECTION:NOTES:END -->
