@@ -85,7 +85,7 @@ fi
 		path  string
 		wants []string
 	}{
-		{"/", []string{"Zone 1 — answers from them", "Which contract?", "builder-koze", "Use mish.", "board · mish status"}},
+		{"/", []string{"1 · Your open loops", "(1 answered, 0 waiting)", "Which contract?", "builder-koze", "Use mish.", "board · mish status", "2 · Rulings backlog", "3 · Missions"}},
 		{"/asks", []string{"Asks boards", "/mission/mission-one/asks", "open 1", "mish status --all"}},
 		{"/mission/mission-one/asks", []string{"mission-one asks", "Which contract?", "TASK-43", "attested"}},
 		{"/ask/" + askTestID, []string{"Which contract?", "human-yamen ⇄ builder-koze", "cost: wait", "Use mish.", "Co-custodian traces", "citation", "Widen membership", "Review settlement", "mish asks view"}},

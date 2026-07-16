@@ -147,7 +147,7 @@ try {
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", {source: "window.__mcInjectError = true;"});
   await cdp.send("Page.navigate", {url: `${baseURL}/`});
   await waitFor(() => cdp.evaluate("document.readyState === 'complete' && window.__mcInjectError === true"), "exception-fallback page did not load");
-  if (!await cdp.evaluate("!!document.querySelector('.rail-list a[href*=\"peek=smoke\"]') && !!document.querySelector('form[method=\"get\"]')")) {
+  if (!await cdp.evaluate("!!document.querySelector('.rail-list a[href*=\"peek=smoke\"]') && !!document.querySelector('header a[href=\"/threads\"]')")) {
     throw new Error("injected exception removed native controls");
   }
   await cdp.evaluate("document.querySelector('.rail-list a[href*=\"peek=smoke\"]').click()")

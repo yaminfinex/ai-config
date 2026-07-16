@@ -31,6 +31,7 @@ type Web struct {
 	seat       string
 	herderBin  string
 	missions   *missionResolver
+	motion     *boardMotion
 	tpl        *template.Template
 	graphCache graphCache
 	now        func() time.Time
@@ -40,14 +41,14 @@ func NewWeb(store *Store, bus *Bus, ing *Ingestor, user, seat, herderBin string,
 	w := &Web{
 		store: store, bus: bus, ing: ing, user: user, seat: seat,
 		herderBin: herderBin, missions: missions, now: time.Now,
+		motion:     newBoardMotion(),
 		graphCache: graphCache{entries: map[string]graphCacheEntry{}},
 	}
 	w.tpl = template.Must(template.New("").Funcs(template.FuncMap{
 		"lower":          strings.ToLower,
-		"stateURL":       stateURL,
+		"join":           strings.Join,
 		"stampTime":      func(at time.Time) timestamp { return formatTimestamp(at, w.now()) },
 		"hasHumanPrefix": func(s string) bool { return strings.HasPrefix(s, "human-") },
-		"ownerOutbound":  func(a askEntity, s missionStatus) bool { return a.Asker == s.Manifest.Owner },
 	}).Parse(pageTpl))
 	return w
 }
@@ -56,7 +57,7 @@ func (w *Web) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /mc.js", serveProgressiveJS)
 	mux.HandleFunc("GET /tokens.css", serveTokensCSS)
-	mux.HandleFunc("GET /{$}", w.inbox)
+	mux.HandleFunc("GET /{$}", w.desk)
 	mux.HandleFunc("GET /talk", w.talkForm)
 	mux.HandleFunc("POST /talk", w.talkPost)
 	mux.HandleFunc("GET /open", w.openRedirect)
@@ -154,18 +155,17 @@ func sanitizeName(s string) string {
 
 type pageData struct {
 	Page   string
+	Scope  string
 	User   string
 	Seat   string
 	BusDir string
 	Cursor int64
 	Error  string
-	// inbox
-	YourTurn   []*Thread
-	Waiting    []*Thread
-	Closed     []*Thread
+	// the desk (three zones + SYSTEM panel)
+	Desk       *deskModel
 	ShowClosed bool
 	IngestWarn string
-	// all threads (observed grade — tracked bus traffic, never Your turn)
+	// all threads browse (managed + observed)
 	Observed []*Thread
 	// across-mission home and in-mission page
 	Missions       []missionStatus
@@ -204,9 +204,10 @@ type pageData struct {
 	MissionFilter string
 	CurrentPath   string
 	StateFields   []stateField
-	RailYourTurn  []*Thread
-	RailWaiting   []*Thread
-	RailThreads   []*Thread
+	RailItems     []deskItem
+	RailBlocked   int
+	RailLoops     int
+	RailMissions  []missionStrip
 	RailAgents    []rosterAgent
 	Peek          bool
 	Inhabit       bool
@@ -249,7 +250,7 @@ type objectPanel struct {
 
 func (w *Web) data(r *http.Request, page string) *pageData {
 	d := &pageData{
-		Page: page, User: w.userFor(r), Seat: w.seat, BusDir: w.bus.Dir,
+		Page: page, Scope: page, User: w.userFor(r), Seat: w.seat, BusDir: w.bus.Dir,
 		Cursor: w.store.Cursor(), F: map[string]string{}, MissionFilter: r.URL.Query().Get("mission"),
 		CurrentPath: r.URL.Path, View: r.URL.Query().Get("view"),
 	}
@@ -258,24 +259,16 @@ func (w *Web) data(r *http.Request, page string) *pageData {
 			d.StateFields = append(d.StateFields, stateField{Name: name, Value: value})
 		}
 	}
-	for _, t := range w.store.List("open", "managed") {
-		if d.MissionFilter != "" && t.Home != d.MissionFilter {
-			continue
-		}
-		if t.Turn == "owner" {
-			d.RailYourTurn = append(d.RailYourTurn, t)
-		} else {
-			d.RailWaiting = append(d.RailWaiting, t)
-		}
+	// The desk model also feeds the persistent rail (YOUR TURN / OPEN LOOPS
+	// / MISSIONS); the desk itself is global by construction — the mission
+	// query never filters it (scope model: URL path is the whole answer).
+	d.Desk = w.buildDesk()
+	for _, g := range d.Desk.Groups {
+		d.RailItems = append(d.RailItems, g.Items...)
 	}
-	for _, t := range w.store.List("", "") {
-		if d.MissionFilter == "" || t.Home == d.MissionFilter {
-			d.RailThreads = append(d.RailThreads, t)
-		}
-		if len(d.RailThreads) == 12 {
-			break
-		}
-	}
+	d.RailBlocked = d.Desk.Zone2Blocked
+	d.RailLoops = len(d.Desk.Loops)
+	d.RailMissions = d.Desk.Strips
 	groups, _ := w.rosterGroups(false)
 	for _, group := range groups {
 		if d.MissionFilter != "" && group.Mission != d.MissionFilter {
@@ -294,7 +287,7 @@ func (w *Web) data(r *http.Request, page string) *pageData {
 func (w *Web) prepareThread(d *pageData, t *Thread) {
 	d.T = t
 	if d.Peek {
-		d.ReturnURL = addQuery(stateURL("/", d.MissionFilter), "peek", t.ID) + "#rail-" + url.PathEscape(t.ID)
+		d.ReturnURL = addQuery("/", "peek", t.ID) + "#rail-" + url.PathEscape(t.ID)
 	}
 	d.ThreadStamp = formatTimestamp(t.Updated, w.now())
 	d.ContextHTML = renderRichText(t.Context, t.Home)
@@ -490,25 +483,12 @@ func (w *Web) render(rw http.ResponseWriter, code int, d *pageData) {
 	}
 }
 
-func (w *Web) inbox(rw http.ResponseWriter, r *http.Request) {
-	d := w.data(r, "inbox")
+func (w *Web) desk(rw http.ResponseWriter, r *http.Request) {
+	d := w.data(r, "desk")
+	d.Scope = "desk"
 	d.Error = r.URL.Query().Get("err")
 	if w.ing != nil {
 		d.IngestWarn = w.ing.StallWarning()
-	}
-	if w.missions != nil {
-		d.Missions, d.MissionListErr = w.missions.AllStatuses()
-	}
-	for _, t := range w.store.List("open", "managed") {
-		if t.Turn == "owner" {
-			d.YourTurn = append(d.YourTurn, t)
-		} else {
-			d.Waiting = append(d.Waiting, t)
-		}
-	}
-	if r.URL.Query().Get("closed") == "1" {
-		d.ShowClosed = true
-		d.Closed = w.store.List("closed", "managed")
 	}
 	if id := strings.TrimSpace(r.URL.Query().Get("peek")); id != "" {
 		t := w.store.Get(id)
@@ -535,6 +515,7 @@ func (w *Web) inbox(rw http.ResponseWriter, r *http.Request) {
 func (w *Web) mission(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "mission")
 	slug := r.PathValue("slug")
+	d.Scope = slug
 	if d.MissionFilter == "" {
 		d.MissionFilter = slug
 		filterRailToMission(d, slug)
@@ -574,6 +555,7 @@ func (w *Web) asks(rw http.ResponseWriter, r *http.Request) {
 func (w *Web) missionAsks(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "mission-asks")
 	slug := r.PathValue("slug")
+	d.Scope = slug + " › asks"
 	d.Mission = w.missions.Status(slug)
 	if d.Mission.Slug == "" {
 		d.Mission.Slug = slug
@@ -585,12 +567,18 @@ func (w *Web) missionAsks(rw http.ResponseWriter, r *http.Request) {
 func (w *Web) missionReview(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "review")
 	slug := r.PathValue("slug")
+	d.Scope = slug + " › review"
 	d.Mission = w.missions.Status(slug)
 	if d.Mission.Slug == "" {
 		d.Mission.Slug = slug
 	}
+	// Review debt: pending made-for-you decisions — agent-authored rulings
+	// awaiting the owner's read (D2.5) — plus open decide/read moments.
 	d.AskGroups = groupAsks(d.Mission.Asks.Entities, func(entity askEntity) bool {
-		return entity.State == "open" && (entity.Expects == "decide" || entity.Expects == "read")
+		if entity.State != "open" {
+			return false
+		}
+		return entity.Kind == "ruling" || entity.Expects == "decide" || entity.Expects == "read"
 	})
 	w.render(rw, http.StatusOK, d)
 }
@@ -634,6 +622,7 @@ func (w *Web) ask(rw http.ResponseWriter, r *http.Request) {
 		d.Ask = entity
 	}
 	d.AskMission = status
+	d.Scope = status.Slug + " › ask"
 	d.ConfirmSettle = r.URL.Query().Get("confirm") == "settle"
 	d.CanWiden = w.userFor(r) == status.Manifest.Owner
 	d.AskDraft = map[string]string{}
@@ -711,6 +700,13 @@ func (w *Web) mutateAsk(rw http.ResponseWriter, r *http.Request, verb string, in
 	input["if_updated_at"] = r.FormValue("if_updated_at")
 	envelope := w.missions.MutateAsk(status.Slug, verb, id, input)
 	dest := "/ask/" + url.PathEscape(id)
+	if envelope.OK {
+		// Desk composers answer in place: a successful verb returns the owner
+		// to where they acted instead of forcing an entity-page detour.
+		if target := safeReturnTarget(r.URL.Query().Get("return")); target != "" {
+			dest = target
+		}
+	}
 	if !envelope.OK {
 		values := url.Values{"err": {askEnvelopeError(envelope)}}
 		// The redirected GET refreshes the entity through mish while retaining
@@ -728,19 +724,36 @@ func (w *Web) mutateAsk(rw http.ResponseWriter, r *http.Request, verb string, in
 	http.Redirect(rw, r, dest, http.StatusSeeOther)
 }
 
+// filterRailToMission goes mission-local (the F8 move, one level up): the
+// rail shows only this mission's turn items, loops, and strip.
 func filterRailToMission(d *pageData, mission string) {
-	filter := func(threads []*Thread) []*Thread {
-		out := threads[:0]
-		for _, thread := range threads {
-			if thread.Home == mission {
-				out = append(out, thread)
+	items := d.RailItems[:0]
+	d.RailBlocked = 0
+	for _, item := range d.RailItems {
+		if item.Mission != mission {
+			continue
+		}
+		items = append(items, item)
+		if item.Blocked() != nil {
+			d.RailBlocked++
+		}
+	}
+	d.RailItems = items
+	if d.Desk != nil {
+		d.RailLoops = 0
+		for _, loop := range d.Desk.Loops {
+			if loop.Mission == mission {
+				d.RailLoops++
 			}
 		}
-		return out
 	}
-	d.RailYourTurn = filter(d.RailYourTurn)
-	d.RailWaiting = filter(d.RailWaiting)
-	d.RailThreads = filter(d.RailThreads)
+	var strips []missionStrip
+	for _, strip := range d.RailMissions {
+		if strip.Slug == mission {
+			strips = append(strips, strip)
+		}
+	}
+	d.RailMissions = strips
 }
 
 func (w *Web) missionFile(rw http.ResponseWriter, r *http.Request) {
@@ -788,12 +801,17 @@ func (w *Web) missionFile(rw http.ResponseWriter, r *http.Request) {
 	w.render(rw, http.StatusOK, d)
 }
 
-// threads is the All-threads view: observed bus traffic mc tracks but does
-// not manage. These never enter Your turn; an explicit raise at the seat
-// promotes them onto the desk.
+// threads is the browse-all view (observed included): every bus thread mc
+// tracks, managed or observed, browsable when the owner goes looking —
+// never pushed. ?mission= is a plain list filter here (scope model §1.1).
 func (w *Web) threads(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "threads")
-	d.Observed = w.store.List("", "observed")
+	for _, t := range w.store.List("", "") {
+		if d.MissionFilter != "" && t.Home != d.MissionFilter {
+			continue
+		}
+		d.Observed = append(d.Observed, t)
+	}
 	w.render(rw, 200, d)
 }
 
@@ -1075,7 +1093,17 @@ func (w *Web) roster(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "roster")
 	showAll := r.URL.Query().Get("all") == "1"
 	d.ShowClosed = showAll // reuse: roster "show all" toggle
-	d.Groups, d.Error = w.rosterGroups(showAll)
+	groups, errText := w.rosterGroups(showAll)
+	if d.MissionFilter != "" {
+		filtered := groups[:0]
+		for _, g := range groups {
+			if g.Mission == d.MissionFilter {
+				filtered = append(filtered, g)
+			}
+		}
+		groups = filtered
+	}
+	d.Groups, d.Error = groups, errText
 	w.render(rw, 200, d)
 }
 

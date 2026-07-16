@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,12 +19,13 @@ import (
 // just means "no mission" — grouping falls back gracefully.
 
 type missionResolver struct {
-	bin        string
-	repo       string // MISSIONS_REPO for the subprocess; empty = inherit
-	mu         sync.Mutex
-	slugHits   map[string]missionHit
-	statusHits map[string]missionStatusHit
-	allHit     missionListHit
+	bin           string
+	repo          string // MISSIONS_REPO for the subprocess; empty = inherit
+	mu            sync.Mutex
+	slugHits      map[string]missionHit
+	statusHits    map[string]missionStatusHit
+	allHit        missionListHit
+	milestoneHits map[string]milestoneHit
 }
 
 type missionHit struct {
@@ -87,11 +90,78 @@ type missionListHit struct {
 
 func newMissionResolver(bin, repo string) *missionResolver {
 	return &missionResolver{
-		bin:        bin,
-		repo:       repo,
-		slugHits:   map[string]missionHit{},
-		statusHits: map[string]missionStatusHit{},
+		bin:           bin,
+		repo:          repo,
+		slugHits:      map[string]missionHit{},
+		statusHits:    map[string]missionStatusHit{},
+		milestoneHits: map[string]milestoneHit{},
 	}
+}
+
+// missionMilestone is one row of the crew-authored narrative layer, read
+// through `mish backlog milestone list` — the one board read boundary.
+type missionMilestone struct {
+	ID        string
+	Title     string
+	Done      int
+	Total     int
+	Completed bool
+}
+
+type milestoneHit struct {
+	milestones []missionMilestone
+	at         time.Time
+}
+
+func (m *missionResolver) Milestones(slug string) []missionMilestone {
+	if m == nil || m.bin == "" || slug == "" {
+		return nil
+	}
+	m.mu.Lock()
+	if h, ok := m.milestoneHits[slug]; ok && time.Since(h.at) < time.Minute {
+		m.mu.Unlock()
+		return h.milestones
+	}
+	m.mu.Unlock()
+
+	out, _ := m.run("backlog", "--mission", slug, "milestone", "list", "--plain", "--show-completed")
+	milestones := parseMilestones(string(out))
+	m.mu.Lock()
+	m.milestoneHits[slug] = milestoneHit{milestones: milestones, at: time.Now()}
+	m.mu.Unlock()
+	return milestones
+}
+
+var milestoneLine = regexp.MustCompile(`^\s+([A-Za-z0-9_.-]+): (.+) \((\d+)/(\d+) done\)$`)
+
+// parseMilestones reads Backlog.md's plain milestone listing:
+//
+//	Active milestones (1):
+//	  m-1: phase two: build (0/1 done)
+//	Completed milestones (1):
+//	  m-0: phase one: capture (1/1 done)
+func parseMilestones(text string) []missionMilestone {
+	completed := false
+	var out []missionMilestone
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Active milestones") {
+			completed = false
+			continue
+		}
+		if strings.HasPrefix(trimmed, "Completed milestones") {
+			completed = true
+			continue
+		}
+		match := milestoneLine.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+		done, _ := strconv.Atoi(match[3])
+		total, _ := strconv.Atoi(match[4])
+		out = append(out, missionMilestone{ID: match[1], Title: match[2], Done: done, Total: total, Completed: completed})
+	}
+	return out
 }
 
 func (m *missionResolver) Status(slug string) missionStatus {

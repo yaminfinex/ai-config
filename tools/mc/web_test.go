@@ -190,9 +190,9 @@ func TestProgressiveEnhancementKeepsJavaScriptOffControlsNative(t *testing.T) {
 	for _, want := range []string{
 		`<script src="/mc.js" defer></script>`,
 		`data-live="thread-tail-task-native"`, `Server-rendered tail`,
-		`href="/?mission=mission-one&amp;peek=task-native#rail-task-native"`,
+		`href="/?peek=task-native#rail-task-native"`,
 		`method="post" action="/thread/task-native/reply?return=`,
-		`formaction="/thread/task-native/close?cockpit=1&amp;mission=mission-one"`,
+		`formaction="/thread/task-native/close?cockpit=1"`,
 		`<textarea name="text"`, `<time data-relative datetime=`,
 	} {
 		if !strings.Contains(body, want) {
@@ -333,8 +333,8 @@ func TestCockpitPeekRendersURLStateResponsiveShellAndRichMessages(t *testing.T) 
 		`class="cockpit"`, `class="rail`, `class="canvas conversation"`, `class="object-panel"`,
 		`body>header{position:fixed`,
 		`grid-template-columns:minmax(10rem,15vw) minmax(0,1fr) minmax(11rem,15vw)`,
-		`@media(max-width:899px)`, `name="mission" value="mission-control"`,
-		`/?mission=mission-control&amp;peek=task-cockpit#rail-task-cockpit`,
+		`@media(max-width:899px)`,
+		`/?peek=task-cockpit#rail-task-cockpit`,
 		`<details class="message-fold">`, `<pre><code>fmt.Println(&#34;safe&#34;)`,
 		`href="/mission/mission-control#task-22"`, `href="/mission/mission-control/file/artifacts/ui-design-pass.md"`,
 		`2026-07-15 11:29:00 UTC`, `1m ago`, `Send &amp; close`,
@@ -1283,17 +1283,17 @@ fi
 	for _, path := range []string{"/", "/roster"} {
 		rw := httptest.NewRecorder()
 		w.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, path, nil))
-		if !strings.Contains(rw.Body.String(), `href="/mission/mission-one?mission=mission-one"`) {
+		if !strings.Contains(rw.Body.String(), `href="/mission/mission-one"`) {
 			t.Errorf("%s missing mission-page entry point: %s", path, rw.Body.String())
 		}
 		if path == "/" {
-			for _, want := range []string{`href="/mission/mission-broken?mission=mission-broken"`, "degraded", "artifacts missing: artifacts/", `href="/mission/mission-one?mission=mission-one"`} {
+			for _, want := range []string{`href="/mission/mission-broken"`, "board unavailable", "artifacts missing: artifacts/", `href="/mission/mission-one"`} {
 				if !strings.Contains(rw.Body.String(), want) {
-					t.Errorf("root missing isolated degraded card %q", want)
+					t.Errorf("root missing isolated degraded strip %q", want)
 				}
 			}
 			if strings.Contains(rw.Body.String(), "board missing: backlog/config.yml") {
-				t.Error("degraded card rendered more than its first warning")
+				t.Error("degraded strip rendered more than its first warning")
 			}
 		}
 	}
