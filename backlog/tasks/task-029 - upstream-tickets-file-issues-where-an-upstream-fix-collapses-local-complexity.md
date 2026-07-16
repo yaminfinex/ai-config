@@ -161,3 +161,13 @@ flipped the row's tool, and its exit archived the row), the victim session is pe
 (kill/config say not-found on the stopped row; --orphan has no record; archive is whole-db only). An
 owner-side override (e.g. --force with process-continuity proof, or a tool-mismatch repair verb) would
 close the strand. (2) The same refusal exits rc=0 — scripted callers read success on a hard failure.
+
+hera (janitor asymmetry, 2026-07-16, peer-corroborated): hcom's stale_cleanup janitor keys on
+heartbeat traffic rather than process liveness, and fired on the wrong side of BOTH failure
+modes in one day: it reaped a LIVE seat whose keepalive was silently starved by a config-layer
+breakage (identity loss for a running holder after one staleness window), while a genuinely
+DEAD seat — process gone, row fossilized at "listening" — survived 4+ hours until manually
+dropped. Suggested fix there: staleness should weigh liveness evidence (process/pid, recent
+non-heartbeat activity) rather than heartbeat silence alone, and a reap of a row with recent
+non-heartbeat events deserves a grace probe. Local evidence: env-robustness task mechanism 3
+plus the asymmetry corollary (run event ids recorded there).
