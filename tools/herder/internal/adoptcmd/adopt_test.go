@@ -117,6 +117,13 @@ func TestResumedSessionAssertionIsAcceptedByParser(t *testing.T) {
 	}
 }
 
+func TestPinnedReEnrollHintCarriesLabelOwnershipClaim(t *testing.T) {
+	got := pinnedReEnroll(v2.SessionRecord{GUID: "guid-current", Label: "renamed-label", Role: "designer"}, "sid-current")
+	if want := "HCOM_SESSION_ID=sid-current HERDER_GUID=guid-current HERDER_LABEL=renamed-label herder enroll"; got != want {
+		t.Fatalf("pinnedReEnroll() = %q, want %q", got, want)
+	}
+}
+
 func seedAdoptRegistry(t *testing.T, recs ...v2.SessionRecord) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "registry.jsonl")

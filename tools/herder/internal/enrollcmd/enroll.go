@@ -76,10 +76,8 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 	if forceFreshGUID {
 		guid = ""
 	}
-	requestedLabel := firstNonEmpty(opts.label, os.Getenv("HERDER_LABEL"))
 	short := ""
 	label := ""
-	role := firstNonEmpty(opts.role, os.Getenv("HERDER_ROLE"), "manual")
 
 	registryPath := registry.DefaultPath()
 	var appendedRow []byte
@@ -140,14 +138,28 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 			guid = newGUID
 		}
 		short = registry.ShortGUID(guid)
-		label = requestedLabel
-		if label == "" && latest != nil && requestedGUID == "" {
+		label = opts.label
+		if label == "" && latest != nil {
 			label = latest.Label
+		}
+		if label == "" {
+			label = os.Getenv("HERDER_LABEL")
 		}
 		if label == "" {
 			label = "manual-" + short
 		}
-		if err := verifyExistingGUIDOwner(latest, pane, liveBus, label); err != nil {
+		proofLabel := label
+		if latest != nil && requestedGUID != "" {
+			proofLabel = firstNonEmpty(opts.label, os.Getenv("HERDER_LABEL"), "manual-"+short)
+		}
+		role := opts.role
+		if role == "" && latest != nil {
+			role = latest.Role
+		}
+		if role == "" {
+			role = firstNonEmpty(os.Getenv("HERDER_ROLE"), "manual")
+		}
+		if err := verifyExistingGUIDOwner(latest, pane, liveBus, proofLabel); err != nil {
 			return nil, err
 		}
 		if owner := registry.V2LabelOwner(tx.Projection, label, guid); owner != nil {
@@ -491,8 +503,10 @@ Usage:
   herder enroll [--label LABEL] [--role ROLE] [--json]
 
 Options:
-  --label LABEL   label to record (default: $HERDER_LABEL, else manual-<short>)
-  --role ROLE     role to record (default: $HERDER_ROLE, else "manual")
+  --label LABEL   label to record (repair: stored; empty/fresh: $HERDER_LABEL,
+                  else manual-<short>)
+  --role ROLE     role to record (repair: stored; empty/fresh: $HERDER_ROLE,
+                  else "manual")
   --json          print the appended registry record as JSON on stdout
 
 Records pane_id, terminal_id, workspace_id, cwd, and live-verified hcom
@@ -506,7 +520,12 @@ refuses otherwise. The launch-time HCOM_INSTANCE_NAME is never trusted. If the
 current bus row cannot be proven from session/process/pane identity, hcom_name is
 recorded as unknown. Rerun herder enroll from the existing session to recapture
 and repair its bus binding. Reusing an existing guid requires either an exact
-recorded/live session id match, or both unchanged terminal and unchanged label.
+recorded/live session id match, or both unchanged terminal and caller-claimed
+label. On a pinned repair, that proof label comes from --label, HERDER_LABEL, or
+manual-<short>; the stored label is never substituted as ownership proof on
+that path. The repair write preserves non-empty stored label and role; only
+explicit --label/--role flags replace them. HERDER_LABEL/HERDER_ROLE backstop an
+empty stored field on repair and remain the defaults for fresh enrolls.
 A verified stored bus name must also equal the caller's verified live name. If an
 older seat has no stored bus name, or explicitly records hcom_verified=false, a
 verified caller may bootstrap it with the same session-or-seat proof. The repair
