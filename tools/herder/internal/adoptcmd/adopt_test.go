@@ -117,9 +117,9 @@ func TestResumedSessionAssertionIsAcceptedByParser(t *testing.T) {
 	}
 }
 
-func TestPinnedReEnrollHintOmitsWriteIdentityEnvironment(t *testing.T) {
+func TestPinnedReEnrollHintCarriesLabelOwnershipClaim(t *testing.T) {
 	got := pinnedReEnroll(v2.SessionRecord{GUID: "guid-current", Label: "renamed-label", Role: "designer"}, "sid-current")
-	if want := "HCOM_SESSION_ID=sid-current HERDER_GUID=guid-current herder enroll"; got != want {
+	if want := "HCOM_SESSION_ID=sid-current HERDER_GUID=guid-current HERDER_LABEL=renamed-label herder enroll"; got != want {
 		t.Fatalf("pinnedReEnroll() = %q, want %q", got, want)
 	}
 }

@@ -361,6 +361,37 @@ JSONL
 	check_pinned_takeover_refusal pinned-no-stored-bus ''
 	check_pinned_takeover_refusal pinned-unverified-stored-bus ',"hcom_name":"stored-bus","hcom_verified":false'
 
+	CASE="$ROOT/pinned-ambient-label-proof"
+	mkdir -p "$CASE/home" "$CASE/state"
+	cat >"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"node","event":"node_registered","node_id":"11111111-1111-1111-1111-111111111111","recorded_at":"2026-07-12T00:00:00Z"}
+{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"2026-07-12T00:00:01Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"worker-name","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","terminal_id":"term_SELF","pane_id":"p_old","hcom_name":"worker-name","hcom_verified":true},"sids":[{"sid":"sid-before","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sid-before"}}
+JSONL
+	printf '11111111-1111-1111-1111-111111111111\n' >"$CASE/state/node_id"
+	RUN_ERR_F="$CASE/stderr"
+	HERDR_CALLS="$CASE/herdr.calls"
+	HCOM_CALLS="$CASE/hcom.calls"
+	RUN_OUT="$(env -i \
+	  PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+	  HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-existing-0000 \
+	  HERDER_LABEL=worker-name HERDER_ROLE=worker HCOM_SESSION_ID=sid-after \
+	  MOCK_HERDR_CALLS="$HERDR_CALLS" MOCK_HCOM_CALLS="$HCOM_CALLS" \
+	  MOCK_HCOM_ROWS='[{"name":"worker-name","session_id":"sid-after","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+	  "${HEN[@]}" --json 2>"$RUN_ERR_F")"
+	RUN_RC=$?
+	if [[ "$RUN_RC" -eq 0 ]] \
+	  && tail -n1 "$CASE/state/registry.jsonl" | jq -e '
+		.guid == "guid-existing-0000" and .label == "worker-name" and .role == "worker" and
+		.provenance.tool_session_id == "sid-after" and .sids[-1].sid == "sid-after"
+	  ' >/dev/null \
+	  && [[ "$(cat "$HERDR_CALLS")" == "pane get" ]] \
+	  && [[ "$(cat "$HCOM_CALLS")" == "list --json" ]]; then
+		printf 'PASS  repair: ambient label proves pinned ownership while stored identity survives\n'
+	else
+		printf 'FAIL  repair: ambient label ownership proof — rc=%s err=%s out=%s herdr_calls=%q hcom_calls=%q\n' \
+		  "$RUN_RC" "$(cat "$RUN_ERR_F")" "$RUN_OUT" "$(cat "$HERDR_CALLS" 2>/dev/null)" "$(cat "$HCOM_CALLS" 2>/dev/null)"; fail=1
+	fi
+
 	CASE="$ROOT/repair-preserves-identity"
 	mkdir -p "$CASE/home" "$CASE/state"
 	cat >"$CASE/state/registry.jsonl" <<'JSONL'
