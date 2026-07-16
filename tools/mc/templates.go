@@ -31,6 +31,7 @@ h2{font-size:1em;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);
 .badge.managed{border-color:var(--accent);color:var(--accent)}
 .badge.observed{border-style:dashed;color:var(--dim)}
 .badge.yourturn{background:var(--accent);border-color:var(--accent);color:#fff}
+.attested{border-left:3px solid #8b5cf6;background:#faf7ff;padding:.65em .8em;margin:.7em 0}.loud-gap{border:2px solid var(--warn);color:var(--warn);padding:.65em;margin:.6em 0;font-weight:700}.ask-option{border-left:3px solid var(--line);padding:.4em .7em;margin:.5em 0}.ask-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:1em}.ask-actions>details,.ask-actions>form{border:1px solid var(--line);border-radius:8px;padding:.7em}.ask-trace{font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace}
 .err{background:#fdeceb;border:1px solid var(--warn);color:var(--warn);padding:.6em 1em;border-radius:8px;margin:.8em 0}
 .warning{background:#fff7e0;border:1px solid #d7a600;color:#654b00;padding:.6em 1em;border-radius:8px;margin:.8em 0}
 .ctx{position:sticky;top:4.4rem;z-index:2;background:#fffbe8;border:1px solid #e6d9a0;border-radius:8px;padding:.8em 1em;margin:.8em 0;max-height:12em;overflow:auto}
@@ -65,6 +66,7 @@ th{color:var(--dim);font-weight:500}
   <a class="brand brand-link" href="{{stateURL "/" .MissionFilter}}">mc</a>
   <a href="{{stateURL "/" .MissionFilter}}" {{if eq .Page "inbox"}}class="on"{{end}}>inbox</a>
   <a href="{{stateURL "/threads" .MissionFilter}}" {{if eq .Page "threads"}}class="on"{{end}}>all threads</a>
+  <a href="/asks" {{if or (eq .Page "asks") (eq .Page "mission-asks") (eq .Page "ask")}}class="on"{{end}}>asks</a>
   <a href="{{stateURL "/roster" .MissionFilter}}" {{if eq .Page "roster"}}class="on"{{end}}>roster</a>
   <a href="{{stateURL "/graph" .MissionFilter}}" {{if eq .Page "graph"}}class="on"{{end}}>graph</a>
   <a href="{{stateURL "/talk" .MissionFilter}}" {{if eq .Page "talk"}}class="on"{{end}}>talk to…</a>
@@ -81,6 +83,19 @@ th{color:var(--dim);font-weight:500}
 
 {{if and (eq .Page "inbox") (not .T) (not .Graph)}}<section data-live="inbox">
   {{if .IngestWarn}}<div class="warning">{{.IngestWarn}}</div>{{end}}
+  <h2>Zone 1 — answers from them</h2>
+  {{range .Missions}}{{$m := .}}{{range .Asks.Entities}}{{if and (ownerOutbound . $m) (eq .State "open")}}
+    <div class="card"><a class="title" href="/ask/{{.ID}}">{{.Framing.Question}}</a>
+      <div class="meta">{{$m.Slug}} · {{$m.Manifest.Owner}} → {{.AddressedTo}} · {{.Expects}} · {{len .Replies}} replies</div>
+      {{range .Replies}}<div class="msg"><strong>{{.Actor}}</strong> · {{.Prose}}</div>{{end}}
+    </div>
+  {{end}}{{end}}{{end}}
+  <p class="meta">owner-outbound asks · board · mish status (per-card mission projection)</p>
+  <h2>Zone 2 — your asks</h2>
+  {{range .Missions}}{{$m := .}}{{range .Asks.Entities}}{{if and (not (ownerOutbound . $m)) (eq .State "open")}}
+    <div class="card"><a class="title" href="/ask/{{.ID}}">{{.Framing.Question}}</a><div class="meta">{{$m.Slug}} · {{.Asker}} → {{.AddressedTo}} · {{.Expects}}</div></div>
+  {{end}}{{end}}{{end}}
+  <p class="meta">mission-owned asks · board · mish status (per-card mission projection)</p>
   <h2>Missions</h2>
   {{if .MissionListErr}}<div class="warning">{{.MissionListErr}}</div>{{end}}
   {{range .Missions}}
@@ -106,7 +121,7 @@ th{color:var(--dim);font-weight:500}
   {{$m := .Mission}}
   <p class="meta"><a href="/">&larr; all missions</a></p>
   <h1 style="margin:.2em 0">{{$m.Slug}}</h1>
-  <p><a href="/talk?mission={{$m.Slug}}">Talk to this mission</a> · <a href="/graph?mission={{$m.Slug}}">View agent graph</a></p>
+  <p><a href="/mission/{{$m.Slug}}/asks">Asks board</a> · <a href="/mission/{{$m.Slug}}/review">Review debt</a> · <a href="/talk?mission={{$m.Slug}}">Talk to this mission</a> · <a href="/graph?mission={{$m.Slug}}">View agent graph</a></p>
 
   <h2>Goal / manifest</h2>
   {{if not $m.OK}}
@@ -129,6 +144,13 @@ th{color:var(--dim);font-weight:500}
     {{else}}<div class="warning">Board data is unavailable.</div>{{end}}
   {{else}}<div class="empty">board unavailable until mission status recovers</div>{{end}}
 
+  <h2>Asks</h2>
+  {{if $m.Asks.Available}}
+    <p>{{range $m.Asks.Counts}}<span class="badge">{{.State}} {{.Count}}</span>{{end}} <a href="/mission/{{$m.Slug}}/asks">open board</a></p>
+    {{range $m.Asks.Entities}}{{if eq .State "open"}}{{template "askCard" .}}{{end}}{{else}}<div class="empty">no asks</div>{{end}}
+    {{$fetched := stampTime $m.FetchedAt}}<p class="meta">board · mish status · <time data-relative datetime="{{$fetched.DateTime}}" title="{{$fetched.Absolute}}">{{$fetched.Relative}}</time></p>
+  {{else}}<div class="empty">asks board not initialized</div>{{end}}
+
   <h2>Artifacts</h2>
   {{if .ArtifactWarn}}<div class="warning">{{.ArtifactWarn}}</div>{{end}}
   {{range .Artifacts}}<div class="card"><a class="title" href="{{.URL}}">{{.Path}}</a></div>
@@ -143,6 +165,71 @@ th{color:var(--dim);font-weight:500}
   {{if .MissionAgents}}<table><tr><th>name</th><th>tool</th><th>status</th><th>role</th><th></th></tr>
     {{range .MissionAgents}}<tr><td><strong>{{.Name}}</strong>{{if .Unmanaged}} <span class="badge">unmanaged</span>{{end}}{{with .MissionSource}} <span class="badge" title="mission membership source">mission: {{.}}</span>{{end}}</td><td>{{.Tool}}</td><td>{{.Status}}</td><td>{{.Role}}</td><td><a href="/talk?agent={{.Name}}">talk to</a></td></tr>{{end}}
   </table>{{else}}<div class="empty">no seated agents</div>{{end}}
+{{end}}
+
+{{if eq .Page "asks"}}
+  <h1>Asks boards</h1>
+  {{if .MissionListErr}}<div class="warning">{{.MissionListErr}}</div>{{end}}
+  {{range .Missions}}<div class="card"><a class="title" href="/mission/{{.Slug}}/asks">{{.Slug}}</a>
+    {{if .Asks.Available}}<div class="meta">{{.Asks.Total}} entities{{range .Asks.Counts}} · {{.State}} {{.Count}}{{end}}</div>{{else}}<div class="meta">board unavailable</div>{{end}}
+  </div>{{else}}<div class="empty">no mission asks boards visible</div>{{end}}
+  <p class="meta">board · mish status --all · current cached projection</p>
+{{end}}
+
+{{if eq .Page "review"}}{{$m := .Mission}}
+  <p class="meta"><a href="/mission/{{$m.Slug}}">&larr; mission</a> · <a href="/mission/{{$m.Slug}}/asks">asks board</a></p>
+  <h1>{{$m.Slug}} review debt</h1>
+  <p class="meta">made-for-you decisions and review moments, grouped by their stored anchor</p>
+  {{range .AskGroups}}<section id="{{.Anchor.Ref}}"><h2>{{.Anchor.Type}}:{{.Anchor.Ref}}</h2>{{range .Entities}}{{template "askCard" .}}{{end}}</section>{{else}}<div class="empty">no review debt</div>{{end}}
+  {{$fetched := stampTime $m.FetchedAt}}<p class="meta">board · mish status · <time data-relative datetime="{{$fetched.DateTime}}" title="{{$fetched.Absolute}}">{{$fetched.Relative}}</time> · review is contextual</p>
+{{end}}
+
+{{if eq .Page "mission-asks"}}{{$m := .Mission}}
+  <p class="meta"><a href="/asks">&larr; all asks boards</a> · <a href="/mission/{{$m.Slug}}">mission</a></p>
+  <h1>{{$m.Slug}} asks</h1>
+  {{range $m.Warnings}}<div class="warning">{{.}}</div>{{end}}
+  {{if $m.Asks.Available}}
+    <p>{{range $m.Asks.Counts}}<span class="badge">{{.State}} {{.Count}}</span>{{end}} <span class="meta">{{$m.Asks.Total}} total</span></p>
+    {{range .AskGroups}}<section id="{{.Anchor.Ref}}"><h2>{{.Anchor.Type}}:{{.Anchor.Ref}}</h2>{{range .Entities}}{{template "askCard" .}}{{end}}</section>{{else}}<div class="empty">no asks</div>{{end}}
+    {{$fetched := stampTime $m.FetchedAt}}<p class="meta">board · mish status · <time data-relative datetime="{{$fetched.DateTime}}" title="{{$fetched.Absolute}}">{{$fetched.Relative}}</time></p>
+  {{else}}<div class="empty">asks board not initialized</div>{{end}}
+{{end}}
+
+{{if eq .Page "ask"}}{{$a := .Ask}}
+  <p class="meta"><a href="/mission/{{.AskMission.Slug}}/asks">&larr; {{.AskMission.Slug}} asks</a></p>
+  {{if .AskError}}<div class="warning">{{$a.ID}} unavailable: {{.AskError}}</div>{{else}}
+  <h1>{{$a.Framing.Question}}</h1>
+  <p class="meta"><span class="badge {{$a.Expects}}">{{$a.Expects}}</span><span class="badge">{{$a.Kind}} / {{$a.State}}{{with $a.Outcome}} / {{.}}{{end}}</span> {{$a.Asker}} ⇄ {{$a.AddressedTo}} · updated {{$a.UpdatedAt}} · id {{$a.ID}}</p>
+  {{if not $a.Framing.Question}}<div class="loud-gap">MALFORMED ASK — question missing</div>{{end}}
+  {{if not $a.Framing.Context}}<div class="loud-gap">MALFORMED ASK — context missing</div>{{else}}<div class="ctx">{{$a.Framing.Context}}</div>{{end}}
+  {{with $a.Blocking}}<div class="attested"><span class="badge">attested</span> {{.Actor}} · {{.At}} · “{{.Fact}}”</div>{{end}}
+  {{if eq $a.Expects "decide"}}
+    <h2>Decision</h2>
+    {{range $a.Framing.SubDecisions}}<span class="badge">{{.}}</span>{{else}}<div class="loud-gap">MALFORMED ASK — sub-decisions missing</div>{{end}}
+    {{range $a.Framing.Options}}<div class="ask-option"><strong>{{.ID}} — {{.Label}}</strong><div class="meta">cost: {{.Cost}} · risk: {{.Risk}} · blast radius: {{.BlastRadius}}</div>{{if or (not .ID) (not .Label) (not .Cost) (not .Risk) (not .BlastRadius)}}<div class="loud-gap">MALFORMED OPTION — required decision detail missing</div>{{end}}</div>{{else}}<div class="loud-gap">MALFORMED ASK — options missing</div>{{end}}
+    {{with $a.Framing.Recommendation}}<p><strong>Recommendation: {{.Choice}}</strong> — {{.Reason}}</p>{{else}}<div class="loud-gap">MALFORMED ASK — recommendation missing</div>{{end}}
+    {{if $a.Framing.DoNothing}}<p><strong>Do nothing:</strong> {{$a.Framing.DoNothing}}</p>{{else}}<div class="loud-gap">MALFORMED ASK — do-nothing consequence missing</div>{{end}}
+  {{end}}
+  <h2>Discussion</h2>
+  <p class="meta">dyad: {{$a.Asker}} + {{$a.AddressedTo}} · linked threads are relations, not containers</p>
+  {{range $a.Replies}}<article class="msg"><header class="from">{{.Actor}} <span class="meta">{{.At}} · {{.ID}}</span></header><div class="msg-body">{{.Prose}}</div></article>{{else}}<div class="empty">no replies</div>{{end}}
+  <h2>Ruling trail</h2>
+  {{range $a.Rulings}}<div class="card"><strong>{{with .Choice}}choice {{.}}{{else}}prose ruling{{end}}</strong> · {{.Actor}} · {{.At}}<p>{{.Prose}}</p><div class="meta">question as presented: {{.Question}}</div>{{range .OptionsAsPresented}}<div class="meta">{{.ID}} — {{.Label}}</div>{{end}}</div>{{else}}<div class="empty">not settled</div>{{end}}
+  <h2>SINCE</h2>
+  {{if $a.Rulings}}<p class="meta">movement on linked anchors after settlement</p>{{range $a.Links}}<div class="card">{{.Type}}:{{.Ref}}<div class="meta">relation · mish asks view</div></div>{{else}}<div class="empty">no linked anchors to inspect</div>{{end}}{{else}}<div class="empty">available after settlement</div>{{end}}
+  <h2>Co-custodian traces</h2>
+  {{range $a.Traces}}<div class="ask-trace">{{.At}} · {{.Actor}} · {{.Action}}{{with .Outcome}} · {{.}}{{end}}{{with .Reason}} · {{.}}{{end}}{{with .Member}} · member {{.}}{{end}}{{with .Citation}} · citation {{.Type}}:{{.Ref}}{{end}}</div>{{else}}<div class="empty">no traces</div>{{end}}
+  <h2>Relations</h2><p class="meta">anchor {{$a.Anchor.Type}}:{{$a.Anchor.Ref}}</p>{{range $a.Links}}<span class="badge">{{.Type}}:{{.Ref}}</span>{{else}}<span class="empty">no related items</span>{{end}}
+  {{range $a.Warnings}}<div class="warning">{{.}}</div>{{end}}
+  {{if eq $a.State "open"}}<h2>Actions</h2><div class="ask-actions">
+    <form class="stack" method="post" action="/ask/{{$a.ID}}/reply"><input type="hidden" name="if_updated_at" value="{{$a.UpdatedAt}}"><label>Reply</label><textarea name="prose">{{index $.AskDraft "prose"}}</textarea><button>Reply</button></form>
+    {{if $.ConfirmSettle}}<form class="stack" method="post" action="/ask/{{$a.ID}}/settle"><input type="hidden" name="if_updated_at" value="{{$a.UpdatedAt}}"><input type="hidden" name="confirmed" value="true"><input type="hidden" name="choice" value="{{index $.AskDraft "choice"}}"><input type="hidden" name="prose" value="{{index $.AskDraft "prose"}}"><strong>Confirm settlement</strong><p>Choice: {{index $.AskDraft "choice"}}<br>Prose: {{index $.AskDraft "prose"}}</p><button>Settle this ask</button> <a href="/ask/{{$a.ID}}">cancel</a></form>{{else}}<form class="stack" method="get" action="/ask/{{$a.ID}}"><input type="hidden" name="confirm" value="settle"><label>Choice (optional)</label><select name="choice"><option value="">prose only</option>{{range $a.Framing.Options}}<option value="{{.ID}}">{{.ID}} — {{.Label}}</option>{{end}}</select><label>Ruling prose</label><textarea name="prose"></textarea><button>Review settlement</button></form>{{end}}
+    <details><summary>Close without settlement</summary><form class="stack" method="post" action="/ask/{{$a.ID}}/close"><input type="hidden" name="if_updated_at" value="{{$a.UpdatedAt}}"><label>Outcome</label><select name="outcome"><option>no-action</option><option>superseded</option></select><label>Reason (optional)</label><textarea name="reason">{{index $.AskDraft "reason"}}</textarea><button>Close</button></form></details>
+    <details><summary>Link related item</summary><form class="stack" method="post" action="/ask/{{$a.ID}}/link"><input type="hidden" name="if_updated_at" value="{{$a.UpdatedAt}}"><label>Type</label><select name="link_type"><option>task</option><option>phase</option><option>milestone</option><option>artifact</option><option>thread</option><option>mission</option><option>entity</option></select><label>Reference</label><input type="text" name="link_ref" value="{{index $.AskDraft "link_ref"}}"><label><input type="checkbox" name="set_anchor" value="true"> also adopt as anchor</label><button>Link</button></form></details>
+    {{if $.CanWiden}}<details><summary>Widen membership</summary><form class="stack" method="post" action="/ask/{{$a.ID}}/widen"><input type="hidden" name="if_updated_at" value="{{$a.UpdatedAt}}"><label>Member actor string</label><input type="text" name="member" value="{{index $.AskDraft "member"}}"><button>Widen</button></form></details>{{end}}
+  </div>{{end}}
+  <p class="meta">board · mish asks view · framing immutable · close never stops traffic</p>
+  {{end}}
 {{end}}
 
 {{if eq .Page "file"}}
@@ -323,4 +410,11 @@ th{color:var(--dim);font-weight:500}
   </div>
 </div>
 {{end}}
+
+{{define "askCard"}}<div class="card">
+  <a class="title" href="/ask/{{.ID}}">{{if .Framing.Question}}{{.Framing.Question}}{{else}}MALFORMED ASK — question missing{{end}}</a>
+  <div class="meta"><span class="badge {{.Expects}}">{{.Expects}}</span><span class="badge">{{.Kind}} / {{.State}}{{with .Outcome}} / {{.}}{{end}}</span> {{.Asker}} ⇄ {{.AddressedTo}} · anchor {{.Anchor.Type}}:{{.Anchor.Ref}} · {{len .Replies}} replies</div>
+  {{with .Blocking}}<div class="attested"><span class="badge">attested</span> {{.Actor}} · {{.At}} · “{{.Fact}}”</div>{{end}}
+  {{range .Traces}}<div class="ask-trace">{{.At}} · {{.Actor}} · {{.Action}}{{with .Citation}} · citation {{.Type}}:{{.Ref}}{{end}}</div>{{end}}
+</div>{{end}}
 `

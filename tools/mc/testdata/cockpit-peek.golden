@@ -28,6 +28,7 @@ h2{font-size:1em;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);
 .badge.managed{border-color:var(--accent);color:var(--accent)}
 .badge.observed{border-style:dashed;color:var(--dim)}
 .badge.yourturn{background:var(--accent);border-color:var(--accent);color:#fff}
+.attested{border-left:3px solid #8b5cf6;background:#faf7ff;padding:.65em .8em;margin:.7em 0}.loud-gap{border:2px solid var(--warn);color:var(--warn);padding:.65em;margin:.6em 0;font-weight:700}.ask-option{border-left:3px solid var(--line);padding:.4em .7em;margin:.5em 0}.ask-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:1em}.ask-actions>details,.ask-actions>form{border:1px solid var(--line);border-radius:8px;padding:.7em}.ask-trace{font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace}
 .err{background:#fdeceb;border:1px solid var(--warn);color:var(--warn);padding:.6em 1em;border-radius:8px;margin:.8em 0}
 .warning{background:#fff7e0;border:1px solid #d7a600;color:#654b00;padding:.6em 1em;border-radius:8px;margin:.8em 0}
 .ctx{position:sticky;top:4.4rem;z-index:2;background:#fffbe8;border:1px solid #e6d9a0;border-radius:8px;padding:.8em 1em;margin:.8em 0;max-height:12em;overflow:auto}
@@ -62,6 +63,7 @@ th{color:var(--dim);font-weight:500}
   <a class="brand brand-link" href="/?mission=mission-control">mc</a>
   <a href="/?mission=mission-control" class="on">inbox</a>
   <a href="/threads?mission=mission-control" >all threads</a>
+  <a href="/asks" >asks</a>
   <a href="/roster?mission=mission-control" >roster</a>
   <a href="/graph?mission=mission-control" >graph</a>
   <a href="/talk?mission=mission-control" >talk to…</a>
@@ -82,6 +84,14 @@ th{color:var(--dim);font-weight:500}
 
 </aside>
 <main class="canvas conversation">
+
+
+
+
+
+
+
+
 
 
 
