@@ -83,3 +83,67 @@ coordinates/detection).
   HandoffManifest, so post-handoff re-adoption gets a real key. Effective for spawns
   started AFTER it shipped; codex sids pending the upstream hcom hook fix (TASK-045/F3).
 - `wait` now emits detection-lost guidance instead of a bare timeout.
+
+## What the 0.7.3 → 0.7.4 handoff actually did (2026-07-16)
+
+Much gentler than 0.6.10 → 0.7.3 — the upstream handoff fixes (socket-path
+preservation, slow-shutdown wait, response flush) held:
+
+1. **Pane ids were STABLE** — no coordinate reissue. **Terminal ids were reissued**
+   (same scheme, new values), which is what broke agent detection, not pane keys.
+2. **Occupants survived cleanly.** A pre-handoff bash worker ticking every 30s showed
+   zero gap across the swap.
+3. **Every live session went detection-lost** (hook reports predate the new server),
+   and `reconcile --apply` records those rows **unseated** — the dormant default.
+   Recovery per session, from its OWN pane:
+   `(cd <repo> && HCOM_SESSION_ID=<sid> HERDER_GUID=<guid> herder enroll)` —
+   the same-guid repair re-seats and re-verifies the bus name. Until the repair-path
+   label/role preservation fix ships, follow with `herder rename <guid> <label>`.
+   Sessions whose function is bus-only can defer re-seating to a natural boundary.
+4. Codex workers with name+kind+cwd matches were **auto-re-bound** by reconcile
+   (D12 assumed-continuity) — no manual action.
+5. **Fork's 0.7.3 crash shape did not reproduce**: forking a session without a
+   recorded tool_session_id now refuses typed ("nothing to fork from"). The full
+   fork path (live sid parent) was not exercised this round.
+6. The api schema changed without a protocol bump (still 16): metadata `tokens`
+   replaced `custom_status`, popup-pane and graphics params added. Only the
+   schema-drift golden failed in the live-contract tier; grep confirmed no herder
+   code touched removed fields. Update the golden + parsing in one change.
+7. **Observer generation recovery works**: the running daemon detected
+   "server is shutting down", retried on its steady 30s loop without crashing, and
+   re-established sweeps against the new server on its own.
+
+## Controlled restart drill (repeatable procedure)
+
+Run this at every herdr upgrade (it was proven live on the 0.7.4 handoff); it
+doubles as the recovery drill for unplanned restarts.
+
+Setup (before the restart):
+1. Main green and pushed; board committed; note `herdr --version`.
+2. Warn the fleet on the bus: hold identity-bearing herder verbs; transient
+   `herder list` output is not ground truth until ALL CLEAR.
+3. Spawn a disposable ticking worker as the survival specimen:
+   `herder spawn --role drill --agent bash --prompt 'while true; do sleep 30; echo TICK $(date +%H:%M:%S); done'`
+4. Snapshot `herder list --all` and the drill pane's coordinates.
+
+Restart: `herdr update --handoff` (occupants survive; cold restart kills them).
+
+Reconciliation and gate (in order):
+1. `herdr --version` — confirm the jump.
+2. `hcom list` — bus should be unaffected (different substrate).
+3. `bash tools/herder/tests/check-live-contract.sh` + diff `herdr api schema --json`
+   against the golden. Schema-drift-only failures are expected upgrade artifacts.
+4. `herder reconcile` dry-run — READ the classifications (gone / undetected /
+   re-bind), then `--apply`. Expect: undetected rows become unseated (dormant
+   default), D12 matches re-bind automatically.
+5. Verify the drill worker's pane ticked across the swap (read its pane; look for
+   a gap at the handoff timestamp).
+6. Spawn probe end-to-end: spawn a bash agent with an echo prompt, read the output
+   from its pane, cull it.
+7. Re-seat your own row (pinned enroll recipe above), restore label, then verify
+   self-resolution via `herder list`.
+8. ALL CLEAR to the fleet with the per-session re-seat recipe.
+
+Success criteria: version jumped; bus never degraded; drill ticks unbroken; spawn
+probe round-trips; reconcile classifications all explained (no ambiguity refusals
+left unresolved); own row seated + bus-verified; no session lost except by choice.
