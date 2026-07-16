@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-16 01:48'
-updated_date: '2026-07-16 01:58'
+updated_date: '2026-07-16 02:04'
 labels: []
 dependencies: []
 priority: high
@@ -35,4 +35,6 @@ Interim operational practice (already doctrine): before ending the compact turn,
 
 <!-- SECTION:NOTES:BEGIN -->
 Dispatched 2026-07-16: codex builder in worktree task-257-compact-then, design checkpoint mandated before code (delivery-contract surface).
+
+Design checkpoint APPROVED 2026-07-16 with riders: derived sender = fixed prefix + verified recipient bus name (fixture-proven against real hcom: self-send filtered with no receipt; never-joined external sender injects with sender-keyed receipt); equality refusals on both arm path and internal parser, no self-send fallback; verdict tokens frozen (prose-only honesty fix, goldens swept); stale-receipt guard coverage for the reused derived sender to be stated in DONE; wire-test placement/battery-count bookkeeping required.
 <!-- SECTION:NOTES:END -->
