@@ -55,6 +55,7 @@ func NewWeb(store *Store, bus *Bus, ing *Ingestor, user, seat, herderBin string,
 func (w *Web) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /mc.js", serveProgressiveJS)
+	mux.HandleFunc("GET /tokens.css", serveTokensCSS)
 	mux.HandleFunc("GET /{$}", w.inbox)
 	mux.HandleFunc("GET /talk", w.talkForm)
 	mux.HandleFunc("POST /talk", w.talkPost)
@@ -84,6 +85,9 @@ func (w *Web) Routes() http.Handler {
 //go:embed mc.js
 var progressiveJS []byte
 
+//go:embed tokens.css
+var tokensCSS []byte
+
 const contentSecurityPolicy = "script-src 'self'; object-src 'none'; base-uri 'none'"
 
 func serveProgressiveJS(rw http.ResponseWriter, _ *http.Request) {
@@ -92,10 +96,16 @@ func serveProgressiveJS(rw http.ResponseWriter, _ *http.Request) {
 	_, _ = rw.Write(progressiveJS)
 }
 
+func serveTokensCSS(rw http.ResponseWriter, _ *http.Request) {
+	rw.Header().Set("Content-Type", "text/css; charset=utf-8")
+	rw.Header().Set("Cache-Control", "no-cache")
+	_, _ = rw.Write(tokensCSS)
+}
+
 func (w *Web) conditionalPages(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		asksBacked := r.URL.Path == "/" || r.URL.Path == "/asks" || strings.HasPrefix(r.URL.Path, "/ask/") || strings.HasPrefix(r.URL.Path, "/mission/")
-		if r.Method != http.MethodGet || r.URL.Path == "/mc.js" || w.store == nil || asksBacked {
+		if r.Method != http.MethodGet || r.URL.Path == "/mc.js" || r.URL.Path == "/tokens.css" || w.store == nil || asksBacked {
 			next.ServeHTTP(rw, r)
 			return
 		}
