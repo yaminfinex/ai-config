@@ -36,6 +36,42 @@ func TestRecordedBusSessionEvidenceAcceptsCurrentWriterVerifiedShape(t *testing.
 	}
 }
 
+func TestRecordedBusSessionEvidenceBornAssumedRefusesUntilEnrollConfirms(t *testing.T) {
+	guid, label := "guid-me-0000", "me"
+	born := registry.V2FromRecord(registry.Record{
+		GUID:       &guid,
+		Label:      &label,
+		Role:       "worker",
+		Agent:      "claude",
+		TerminalID: "term_ME",
+		PaneID:     "w1-2",
+		HcomName:   "me-bus",
+		Provenance: &registry.Provenance{Mechanism: "spawn"},
+	}, "registered", "seated", "2026-07-17T00:00:00Z")
+	if born.Continuity != "assumed" || len(born.SIDs) != 0 {
+		t.Fatalf("born row evidence = continuity %q, sids %+v; want assumed with no SID", born.Continuity, born.SIDs)
+	}
+	raw, err := json.Marshal(born)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := loadRegistryRecord(t, raw)
+	if row.HcomVerified != nil {
+		t.Fatalf("born row HcomVerified = %v, want absent", row.HcomVerified)
+	}
+	if sid, reason := recordedBusSessionEvidence(&row); sid != "" || !strings.Contains(reason, "no provenance.tool_session_id") {
+		t.Fatalf("born row evidence = (%q, %q), want fail-closed missing-SID refusal", sid, reason)
+	}
+
+	confirmed := writerLoadedRepairRecord(t, nil, "seated", "enroll")
+	if sid, reason := recordedBusSessionEvidence(&confirmed); sid != "sess-me" || reason != "" {
+		t.Fatalf("confirmed enroll evidence = (%q, %q), want healed SID proof", sid, reason)
+	}
+	if !strings.Contains(string(confirmed.Raw), `"continuity":"confirmed"`) {
+		t.Fatalf("confirmed enroll row did not persist confirmed continuity: %s", confirmed.Raw)
+	}
+}
+
 func TestRecordedBusSessionEvidenceFailsClosedForWriterLoadedRows(t *testing.T) {
 	falseValue := false
 	tests := []struct {

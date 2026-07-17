@@ -247,6 +247,36 @@ func TestResumeAllowsLegacyClosedSession(t *testing.T) {
 	}
 }
 
+func TestResumeTargetSIDWinsAfterPriorProvenanceCarry(t *testing.T) {
+	dir := t.TempDir()
+	registryPath := filepath.Join(dir, "registry.jsonl")
+	rows := strings.ReplaceAll(`{"guid":"guid-resume-carry","short_guid":"resume","label":"resume-carry","role":"worker","agent":"claude","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sid-target","cwd":"<CWD>","ts":"2026-07-08T00:00:00Z"}}
+{"guid":"guid-resume-carry","short_guid":"resume","label":"resume-carry","role":"worker","agent":"claude","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","cwd":"<CWD>","ts":"2026-07-08T00:01:00Z"}}
+`, "<CWD>", dir)
+	if err := os.WriteFile(registryPath, []byte(rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configureLifecycleTest(t, dir)
+	t.Setenv("HCOM_SESSION_ID", "sid-caller")
+
+	var stdout, stderr strings.Builder
+	rc := (&runner{stdout: &stdout, stderr: &stderr, herdr: fakeHerdrClient{}}).resume(resumeOptions{target: "resume-carry"})
+	if rc != 0 {
+		t.Fatalf("resume rc = %d, want 0\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
+	}
+	projection, err := v2.LoadFile(registryPath, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := registry.V2ByGUID(projection, "guid-resume-carry")
+	if got == nil || got.Provenance.ToolSessionID != "sid-target" {
+		t.Fatalf("resumed provenance = %+v, want target SID after prior-provenance carry", got)
+	}
+	if len(got.SIDs) != 1 || got.SIDs[0].SID != "sid-target" || got.Continuity != "confirmed" {
+		t.Fatalf("resumed identity evidence = sids %+v, continuity %q; want explicit target SID confirmed", got.SIDs, got.Continuity)
+	}
+}
+
 type fakeHerdrClient struct{}
 
 func (fakeHerdrClient) Combined(args ...string) ([]byte, int, error) {

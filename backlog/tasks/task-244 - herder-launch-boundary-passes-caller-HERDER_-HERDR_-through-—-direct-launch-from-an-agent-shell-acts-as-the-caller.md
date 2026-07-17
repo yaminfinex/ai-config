@@ -23,7 +23,7 @@ WIRE-PROVEN SECOND VECTOR (2026-07-15, live incident): running herder SPAWN with
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Direct launch from an identity-bearing shell cannot act as the caller (scrub, fresh mint, or cause+remedy refusal)
-- [ ] #2 spawn/fork never attribute the caller's ambient session correlate (HCOM_SESSION_ID) to the spawned row — red-first fixture reproducing the harvest contamination
+- [x] #2 spawn/fork never attribute the caller's ambient session correlate (HCOM_SESSION_ID) to the spawned row — red-first fixture reproducing the harvest contamination
 - [ ] #3 Managed spawn pre-export, sidecar, print bypass, grok identity minting unchanged
 <!-- AC:END -->
 
@@ -35,4 +35,8 @@ TASK-266 investigation code-verified the second vector OPEN at HEAD (d50acfa): r
 Contained fix dispatched 2026-07-17 as its own implement unit (second vector only: creator-flow ambient-SID harvest). Brief: napkins/run-herder-dx/builder-244-brief.md — design checkpoint required before code (call-site creator/self classification). First vector (HERDER_*/HERDR_* passthrough on direct launch) remains open, not in this unit's scope.
 
 Two live field instances found 2026-07-17 (fleet escalation, rows verified read-only at HEAD): two spawn-minted rows degraded to unseated with no terminal/pane/bus name, each left with exactly ONE recorded sid, source harvest = the SPAWNER'S session id. Consequence sharper than contamination: enroll's guid-reuse ownership proof accepts recorded-sid==live-sid as a sufficient leg, so when the harvest sid is the only surviving evidence, the SPAWNER is the only session that can prove ownership of the child's row — the rightful seat holder is locked out (circular-repair class) while the contaminating caller is handed takeover capability. Recovery prescribed: adopt-from-own-seat (true replacement); outcome to be recorded. Fixture guidance for this unit: the red fixture should assert the ownership-proof consequence, not just the row bytes — a creator-minted row must never be ownership-provable by the creator's sid.
+
+Contained second-vector implementation behavior: `BuildProvenance` now requires an explicit tool session id. Spawn and fork pass no sid for ordinary children, while preassigned Grok/Pi identities, resume's resolved target identity, and verified self-observations remain explicit. Ordinary creator rows therefore start with assumed continuity and no harvest sid until observation or enrollment adds real evidence.
+
+Named compact behavior delta: an ordinary creator row born with assumed continuity and absent `hcom_verified` now fails closed in the durable bus-session evidence path instead of passing on a harvested caller sid. Its reachable first refusal is the missing `provenance.tool_session_id` gate; the later assumed-continuity guard still protects inconsistent or drifted persisted rows. A verified enroll/observer path records the real sid, upgrades continuity to confirmed, and heals the refusal. The existing executable repair guidance is unchanged. Resume continues assigning the resolved target sid after prior-provenance carry so carried metadata cannot replace it.
 <!-- SECTION:NOTES:END -->

@@ -257,8 +257,6 @@ func (r *runner) fork(opts forkOptions) int {
 	// spawned_by is the session that RAN this fork ($HERDER_GUID, matching the
 	// HERDER_SPAWNED_BY that startAndAppend exports into the child's pane); the
 	// forker's own spawner stays reachable transitively via the forker's row.
-	prov := registry.BuildProvenance("fork", firstNonEmpty(os.Getenv("HERDER_GUID"), "user"), role, cwd, workspace)
-	prov.ForkedFrom = parentGUID
 	grokSessionID := ""
 	if agent == "grok" {
 		grokSessionID, err = launchcmd.NewGrokSessionID()
@@ -272,8 +270,9 @@ func (r *runner) fork(opts forkOptions) int {
 			return 1
 		}
 		grokSessionID = lifecycle.SessionID
-		prov.ToolSessionID = grokSessionID
 	}
+	prov := registry.BuildProvenance("fork", firstNonEmpty(os.Getenv("HERDER_GUID"), "user"), grokSessionID, role, cwd, workspace)
+	prov.ForkedFrom = parentGUID
 
 	row, code := r.startAndAppend(startSpec{
 		Mode:          "fork",
@@ -692,7 +691,7 @@ func (r *runner) resume(opts resumeOptions) int {
 	// No-prior-provenance fallback: spawned_by is the session performing this
 	// resume ($HERDER_GUID), not the ambient grandparent. Normally overwritten
 	// by the preserved prior provenance just below.
-	prov := registry.BuildProvenance("resume", firstNonEmpty(os.Getenv("HERDER_GUID"), "user"), rec.HcomTag, currentCWD(), "")
+	prov := registry.BuildProvenance("resume", firstNonEmpty(os.Getenv("HERDER_GUID"), "user"), sessionID, rec.HcomTag, currentCWD(), "")
 	if rec.Provenance != nil {
 		prov = *rec.Provenance
 	}
