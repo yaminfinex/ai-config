@@ -4,7 +4,7 @@ title: 'Implement: attested break-glass repair verb (identity migration U2)'
 status: In Progress
 assignee: []
 created_date: '2026-07-17 04:27'
-updated_date: '2026-07-17 07:34'
+updated_date: '2026-07-17 08:34'
 labels:
   - herder
   - identity-migration
@@ -41,5 +41,10 @@ DESIGN CHECKPOINT REQUIRED BEFORE CODE (verb surface, attestation UX, event/tomb
 created: 2026-07-17 07:34
 ---
 Design checkpoint APPROVED after one amendment round. Note covered: exact-guid two-operation verb surface (rebind + reissue-credential) as sole production caller of the completion attested arm (source-inventory pin updates from none to exactly the repair package); /dev/tty challenge-sentence attestation, no flag/stdin/env path; cross-pane seat-control ceremony amended to a READ-ONLY observer of the claimed pane — visible-source-only, two consecutive stable reads, operator places nonce manually, nonce REMOVAL required before final attestation, both operator hazards (Enter-submits-into-live-composer; draft destruction) named in CLI warning + docs; attested_binding event as one self-contained snapshot in one UpdateLocked (proof pre-lock, preflight re-verify + rate limit + tombstone selection in-lock; crash leaves prior snapshot authoritative); tombstones keyed by durable binding id with legacy factless values materialized-then-tombstoned in the same snapshot; launch-context = authorization record only, never rewritten, upstream-gated branch honest; reissue lands the authenticated operation + completion commit point with the U3 token boundary stated honestly; fixed 10-min per-guid committed-operation window checked under lock, refusal names limit + remaining time, failed attempts loud but non-consuming (anti-DoS-by-typo rationale). Branch B honesty maintained throughout (tripwire not wall, no tamper-evidence claim). Code unlocked.
+---
+
+created: 2026-07-17 08:34
+---
+Adversarial review round 1 (incumbent opus + grok calibration, serialized slots, both released byte-clean): FIX ROUND REQUIRED. Credit where earned (both reviewers): no ceremony bypass exists (tty-only attestation, read-only pane observer verified hostile), atomicity real (in-lock failure injection left registry byte-identical), tombstone/adjudication semantics genuinely pinned, all six architecture damage-shape rows covered by fixtures. Seven consolidated findings: 2 P1 — source-inventory fence narrowed to one composite literal (variable-form arming invisible, gofmt defeats it, assignment-form rewrite loses the legit caller; all executed) and the in-lock rate-limit wholly unpinned (deleting all three in-lock checks stays green; sole test only trips preflight; true race commits once via the ANCHOR with the loser refusal naming the wrong mechanism vs the contract's named limit+window); 3 P2 — Branch B forgery test contains no forgery (stubbed proof, no pty/pane loopback: the accepted bypass is invisible), global SID-projection redefinition smuggled to satisfy one fixture (~6 reader packages unpinned, incumbent-only find), attestation prompt unbounded (timeout leg unimplemented/untested); 2 P3 — empty-challenge guard absent (fails closed today by coincidence), lifecycle-carry of the new histories untested. Lens h (builder flake claim) adjudicated ENVIRONMENTAL by the incumbent on four self-verified legs after rejecting the builder's file-level reasoning as insufficient (path-level isolation, post-body failure mode, zero registry surface in test, pre-existing boarded class with matching signature); false-friend test name flagged for the existing cleanup task. Fix round dispatched.
 ---
 <!-- COMMENTS:END -->
