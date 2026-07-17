@@ -750,8 +750,10 @@ func validateSeatedBindingTransition(current *v2.SessionRecord, row v2.SessionRe
 	}
 	priorName, priorVerified := busBindingProjection(priorSeat)
 	name, verified := busBindingProjection(row.Seat)
-	if (name != priorName || (verified && !priorVerified)) && name != "" && verified && !hasMatchingBusBinding(appended, name) {
-		return fmt.Errorf("seated session %s changes current bus binding without a matching binding fact", row.GUID)
+	if name != priorName || verified != priorVerified {
+		if name == "" || !verified || !hasMatchingBusBinding(appended, name) {
+			return fmt.Errorf("seated session %s changes current bus binding without a matching binding fact", row.GUID)
+		}
 	}
 	return nil
 }
@@ -1003,7 +1005,7 @@ func carrySeatFields(row, current v2.SessionRecord) v2.SessionRecord {
 	row.Tool = firstNonEmpty(row.Tool, current.Tool)
 	row = carryPiFacts(row, current)
 	row.State = current.State
-	row.Seat = current.Seat
+	row.Seat = cloneSeat(current.Seat)
 	if row.Seat == nil && current.LegacyV1 {
 		legacy, _ := DecodeLegacyV1Raw(current)
 		if legacy.PaneID != "" || legacy.TerminalID != "" || legacy.HcomName != "" || legacy.HcomDir != "" {

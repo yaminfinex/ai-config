@@ -842,6 +842,7 @@ func reconfirmCandidate(rec v2.SessionRecord, pane herdrcli.Pane, bus busState, 
 	next.State = v2.StateSeated
 	next.RecordedAt = now.Format(time.RFC3339)
 	next.ObservedVia = "snapshot sweep"
+	identity := hcomidentity.Result{}
 	if next.Seat != nil {
 		seat := *next.Seat
 		seat.ConfirmedAt = next.RecordedAt
@@ -850,7 +851,7 @@ func reconfirmCandidate(rec v2.SessionRecord, pane herdrcli.Pane, bus busState, 
 		}
 		current := rec
 		current.Seat = &seat
-		identity := resolveSeatBus(current, latestSID(rec), bus)
+		identity = resolveSeatBus(current, latestSID(rec), bus)
 		if identity.Verified || seat.HcomName != "" {
 			applyBusIdentity(&seat, identity)
 		}
@@ -860,7 +861,7 @@ func reconfirmCandidate(rec v2.SessionRecord, pane herdrcli.Pane, bus busState, 
 	if !sameBindingCoordinates(rec.Seat, next.Seat) {
 		kind = "reconfirm"
 	}
-	return candidate{kind: kind, guid: rec.GUID, row: next, seat: cloneSeat(next.Seat)}
+	return candidate{kind: kind, guid: rec.GUID, row: next, bus: identity, seat: cloneSeat(next.Seat)}
 }
 
 func sameBindingCoordinates(a, b *v2.Seat) bool {

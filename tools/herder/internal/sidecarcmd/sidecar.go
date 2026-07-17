@@ -81,9 +81,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		registry:        registry.DefaultPath(),
 		lifecycleMode:   os.Getenv("HERDER_LIFECYCLE_MODE"),
 		parentSessionID: os.Getenv("HERDER_PARENT_SESSION_ID"),
-		completeSeat: func(ctx context.Context, _ *hcomRow, request seatcompletion.Request) (seatcompletion.Result, error) {
-			return seatcompletion.Complete(ctx, request)
-		},
+		completeSeat:    completeObservedSeat,
 	}
 	return sidecar.run()
 }
@@ -494,30 +492,18 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 			complete = completeObservedSeat
 		}
 		result, completeErr := complete(context.Background(), row, request)
-		return completeErr == nil && result.Refusal == nil
+		return completeErr == nil && result.Refusal == nil && result.Status == registry.WriteApplied
 	}
 	return false
 }
 
-func completeObservedSeat(ctx context.Context, observed *hcomRow, request seatcompletion.Request) (seatcompletion.Result, error) {
-	launchPane := observed.LaunchContext.PaneID
-	if launchPane == "" {
-		// The sidecar has already correlated this observed row to the live seat,
-		// including the process-id-only launch-context case.
-		launchPane = request.Seat.PaneID
-	}
+func completeObservedSeat(ctx context.Context, _ *hcomRow, request seatcompletion.Request) (seatcompletion.Result, error) {
 	if request.Seat.Kind == seatcompletion.SeatHerdr {
 		terminalID := request.Seat.TerminalID
 		if terminalID == "" {
 			terminalID = "untracked-terminal"
 		}
 		request.ObservedPane = &seatcompletion.LivePane{PaneID: request.Seat.PaneID, TerminalID: terminalID}
-	}
-	request.ObservedBus = &hcomidentity.Result{
-		Name:      observed.Name,
-		SessionID: observed.SessionID,
-		PaneID:    launchPane,
-		Verified:  true,
 	}
 	return seatcompletion.Complete(ctx, request)
 }

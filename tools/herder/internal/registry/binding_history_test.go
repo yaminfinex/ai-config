@@ -99,6 +99,89 @@ func TestBindingHistoryRefusesRewritingPersistedEntry(t *testing.T) {
 	}
 }
 
+func TestBindingHistoryRefusesMalformedAppendShapes(t *testing.T) {
+	current := []v2.BindingFact{seatBinding("binding-seat", "pane-old"), busBinding("binding-bus", "bus-live")}
+	tests := []struct {
+		name  string
+		patch []v2.BindingFact
+		want  string
+	}{
+		{name: "shorter", patch: current[:1], want: "append-only"},
+		{name: "reordered", patch: []v2.BindingFact{current[1], current[0]}, want: "append-only"},
+		{name: "empty id", patch: append(cloneBindings(current), busBinding("", "bus-next")), want: "missing durable id"},
+		{name: "duplicate id", patch: append(cloneBindings(current), busBinding("binding-bus", "bus-next")), want: "not unique"},
+		{name: "empty evidence class", patch: func() []v2.BindingFact {
+			fact := busBinding("binding-next", "bus-next")
+			fact.EvidenceClass = ""
+			return append(cloneBindings(current), fact)
+		}(), want: "invalid evidence class"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := normalizeSessionAppend(bindingProjection(t), v2.SessionRecord{
+				GUID:     "guid-binding",
+				Event:    "labelled",
+				Label:    "renamed",
+				Bindings: tt.patch,
+			})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("normalizeSessionAppend() err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestBindingHistoryRefusesClearedOrDemotedSeatedBusProjection(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		busName  string
+		verified *bool
+	}{
+		{name: "cleared", busName: "", verified: nil},
+		{name: "demoted", busName: "bus-live", verified: boolPointer(false)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := normalizeSessionAppend(bindingProjection(t), v2.SessionRecord{
+				GUID:  "guid-binding",
+				Event: "reconciled",
+				State: v2.StateSeated,
+				Seat: &v2.Seat{
+					Kind:         "herdr",
+					Node:         testNodeA,
+					TerminalID:   "terminal-live",
+					PaneID:       "pane-old",
+					HcomName:     tt.busName,
+					HcomVerified: tt.verified,
+					Namespace:    "/bus",
+				},
+				Bindings: []v2.BindingFact{seatBinding("binding-seat", "pane-old"), busBinding("binding-bus", "bus-live")},
+			})
+			if err == nil || !strings.Contains(err.Error(), "bus binding") {
+				t.Fatalf("bus projection mutation err = %v, want bus-binding refusal", err)
+			}
+		})
+	}
+}
+
+func TestCarrySeatFieldsDoesNotAliasProjectionSeat(t *testing.T) {
+	projection := bindingProjection(t)
+	row, ok, err := normalizeSessionAppend(projection, v2.SessionRecord{
+		GUID:  "guid-binding",
+		Event: "labelled",
+		Label: "renamed",
+	})
+	if err != nil || !ok {
+		t.Fatalf("labelled normalize = ok %v err %v", ok, err)
+	}
+	if _, err := stampSessionNode(row, testNodeB); err != nil {
+		t.Fatal(err)
+	}
+	current := V2ByGUID(projection, "guid-binding")
+	if current == nil || current.Seat == nil || current.Seat.Node != testNodeA {
+		t.Fatalf("projection seat after stamping carried row = %+v, want original node %q", current, testNodeA)
+	}
+}
+
 func bindingProjection(t *testing.T) *v2.Projection {
 	t.Helper()
 	row := v2.SessionRecord{

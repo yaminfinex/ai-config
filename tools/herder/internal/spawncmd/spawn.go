@@ -316,6 +316,28 @@ func (r *runner) failAfterLaunch(reason, paneID, terminalID string) int {
 	return 1
 }
 
+func (r *runner) handleSeatCompletionFailure(reason, paneID, terminalID, readyReason string) int {
+	if r.spawnOccupantState(paneID) != occupantAbsent {
+		die(r.stderr, fmt.Sprintf("%s; bind status: %s; no registry row was appended and the child pane remains running because occupant death was not proven. Once the child has joined hcom, its sidecar will complete the seat automatically; manual recovery is `herder enroll` from pane %s", reason, readyReason, paneID))
+		return 1
+	}
+	return r.failAfterLaunch(reason, paneID, terminalID)
+}
+
+func (r *runner) handleIncompleteSeatCompletion(completion seatcompletion.Result, completeErr error, paneID, terminalID, readyReason string) (bool, int) {
+	if completeErr != nil {
+		return true, r.handleSeatCompletionFailure("seat completion failed: "+completeErr.Error(), paneID, terminalID, readyReason)
+	}
+	if completion.Refusal != nil {
+		reason := fmt.Sprintf("seat completion refused [%s]: %s", completion.Refusal.Code, completion.Refusal.Cause)
+		return true, r.handleSeatCompletionFailure(reason, paneID, terminalID, readyReason)
+	}
+	if completion.Status != registry.WriteApplied {
+		return true, r.handleSeatCompletionFailure("seat completion wrote no registry row", paneID, terminalID, readyReason)
+	}
+	return false, 0
+}
+
 func (r *runner) closeSeedPane(rootPaneID, rootTerm, agentTerm string) bool {
 	if rootTerm == agentTerm {
 		fmt.Fprintf(r.stderr, "herder spawn: refusing to close root pane — terminal_id matches the agent (%s)\n", agentTerm)
@@ -339,54 +361,6 @@ func (r *runner) closeSeedPane(rootPaneID, rootTerm, agentTerm string) bool {
 	}
 	_, rc, _ := panecleanup.ClosePreservingFocus(r.herdr, rootPaneID)
 	return rc == 0
-}
-
-func (r *runner) registerSpawn(registryPath string, record spawnRecord) error {
-	hooksBound := record.HooksBound
-	regRec := registry.Record{
-		GUID:           &record.GUID,
-		ShortGUID:      &record.ShortGUID,
-		Label:          &record.Label,
-		Role:           record.Role,
-		Agent:          record.Agent,
-		Provider:       record.Provider,
-		Model:          record.Model,
-		VendorVersion:  record.VendorVersion,
-		PaneID:         record.PaneID,
-		TerminalID:     record.TerminalID,
-		HcomDir:        record.HcomDir,
-		HcomName:       record.HcomName,
-		HcomTag:        record.HcomTag,
-		HooksBound:     &hooksBound,
-		TranscriptPath: record.TranscriptPath,
-		Status:         record.Status,
-		Mission:        record.Mission,
-		Provenance:     &record.Provenance,
-	}
-	outcomes, err := r.updateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
-		if owner := registry.V2LabelOwner(tx.Projection, record.Label, record.GUID); owner != nil {
-			return nil, fmt.Errorf("label %q already belongs to non-retired session %s", record.Label, owner.GUID)
-		}
-		row := registry.V2FromRecord(regRec, "registered", v2.StateSeated, record.StartedAt)
-		row.Provenance.CWD = record.CWD
-		row.Provenance.WorkspaceID = record.WorkspaceID
-		return []v2.SessionRecord{row}, nil
-	})
-	if err != nil {
-		return err
-	}
-	outcome, err := registry.SingleOutcome(outcomes)
-	if err != nil {
-		return err
-	}
-	return outcome.Err()
-}
-
-func (r *runner) registerSpawnOrRollback(registryPath string, record spawnRecord) int {
-	if err := r.registerSpawn(registryPath, record); err != nil {
-		return r.failAfterLaunch("registry write refused: "+err.Error(), record.PaneID, record.TerminalID)
-	}
-	return 0
 }
 
 func spawnCompletionCandidate(record spawnRecord) v2.SessionRecord {
@@ -445,37 +419,6 @@ func (r *runner) completeSpawn(registryPath string, record spawnRecord, launchPa
 			PaneIDs:   []string{record.PaneID, launchPaneID},
 		},
 	})
-}
-
-func (r *runner) persistCapturedHcomName(registryPath, guid, name string) int {
-	outcomes, err := r.updateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
-		current := registry.V2ByGUID(tx.Projection, guid)
-		if current == nil || current.State == v2.StateRetired || current.State == v2.StateLost {
-			return nil, nil
-		}
-		next := *current
-		next.Event = "recognised"
-		next.State = v2.StateSeated
-		next.RecordedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
-		if next.Seat == nil {
-			next.Seat = &v2.Seat{Kind: "herdr"}
-		}
-		next.Seat.HcomName = name
-		next.Seat.ConfirmedAt = next.RecordedAt
-		return []v2.SessionRecord{next}, nil
-	})
-	if err == nil && len(outcomes) > 0 {
-		var outcome registry.WriteOutcome
-		outcome, err = registry.SingleOutcome(outcomes)
-		if err == nil {
-			err = outcome.Err()
-		}
-	}
-	if err != nil {
-		die(r.stderr, err.Error())
-		return 1
-	}
-	return 0
 }
 
 func newTabMoveArgs(paneID, label, focusFlag string) []string {
@@ -1331,20 +1274,13 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		record.Model = opts.Model
 	}
 	completion, completeErr := r.completeSpawn(registryPath, record, launchPaneID, toolSessionID)
-	if completeErr != nil {
-		return r.failAfterLaunch("seat completion failed: "+completeErr.Error(), paneID, termID)
-	}
-	if completion.Refusal != nil {
-		if r.spawnOccupantState(paneID) != occupantAbsent {
-			die(r.stderr, fmt.Sprintf("seat completion refused [%s]: %s; bind status: %s; no registry row was appended and the child pane remains running because occupant death was not proven. Once the child has joined hcom, its sidecar will complete the seat automatically; manual recovery is `herder enroll` from pane %s", completion.Refusal.Code, completion.Refusal.Cause, readyReason, paneID))
-			return 1
-		}
-		return r.failAfterLaunch(fmt.Sprintf("seat completion refused [%s]: %s", completion.Refusal.Code, completion.Refusal.Cause), paneID, termID)
+	if handled, code := r.handleIncompleteSeatCompletion(completion, completeErr, paneID, termID, readyReason); handled {
+		return code
 	}
 	if isHcomAgent {
 		var completed v2.SessionRecord
 		if err := json.Unmarshal(completion.Row, &completed); err != nil || completed.Seat == nil || completed.Seat.HcomName == "" {
-			return r.failAfterLaunch("seat completion returned no verified bus binding", paneID, termID)
+			return r.handleSeatCompletionFailure("seat completion returned no verified bus binding", paneID, termID, readyReason)
 		}
 		record.HcomName = completed.Seat.HcomName
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
@@ -269,6 +270,75 @@ func TestAttestedBusBindingRequiresExactlyOneJoinedNamedRow(t *testing.T) {
 	))
 	if duplicate.Refusal == nil || duplicate.Refusal.Code != RefusalBusAmbiguous {
 		t.Fatalf("duplicate attestation = %+v, want ambiguity refusal", duplicate)
+	}
+}
+
+func TestAttestedBindingIsValidatedEvenWhenLiveResolutionSucceeds(t *testing.T) {
+	joined := true
+	for _, attested := range []AttestedBinding{
+		{Field: v2.BindingFieldSeat, Value: "bus-live"},
+		{Field: v2.BindingFieldHcomName, Value: ""},
+	} {
+		engine := testEngine(t)
+		engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+			return []hcomidentity.Row{{Name: "bus-live", Joined: &joined, SessionID: "session-live", LaunchContext: hcomidentity.LaunchContext{PaneID: "pane-live"}}}, nil
+		}
+		result, err := engine.Complete(context.Background(), Request{
+			Origin:       OriginReclaim,
+			RegistryPath: filepath.Join(t.TempDir(), "registry.jsonl"),
+			Candidate:    v2.SessionRecord{GUID: "guid-invalid-attestation", Tool: "codex"},
+			Seat:         SeatClaim{Kind: SeatHerdr, PaneID: "pane-live"},
+			Evidence:     hcomidentity.Evidence{SessionID: "session-live"},
+			Attested:     &attested,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Refusal == nil || result.Refusal.Code != RefusalAttestation {
+			t.Fatalf("invalid attestation %+v result = %+v, want attestation refusal", attested, result)
+		}
+	}
+}
+
+func TestUnusedValidAttestationDoesNotDowngradeLiveEvidence(t *testing.T) {
+	joined := true
+	engine := testEngine(t)
+	engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{{Name: "bus-live", Joined: &joined, SessionID: "session-live", LaunchContext: hcomidentity.LaunchContext{PaneID: "pane-live"}}}, nil
+	}
+	result, err := engine.Complete(context.Background(), Request{
+		Origin:       OriginReclaim,
+		RegistryPath: filepath.Join(t.TempDir(), "registry.jsonl"),
+		Candidate:    v2.SessionRecord{GUID: "guid-live-attestation", Tool: "codex"},
+		Seat:         SeatClaim{Kind: SeatHerdr, PaneID: "pane-live"},
+		Evidence:     hcomidentity.Evidence{SessionID: "session-live"},
+		Attested:     &AttestedBinding{Field: v2.BindingFieldHcomName, Value: "bus-live"},
+	})
+	if err != nil || result.Refusal != nil {
+		t.Fatalf("Complete() = %+v err=%v", result, err)
+	}
+	row := decodeCompletedRow(t, result.Row)
+	if len(row.Bindings) != 2 || row.Bindings[1].EvidenceClass != v2.EvidenceLiveVerified {
+		t.Fatalf("bindings = %+v, want live-verified bus evidence", row.Bindings)
+	}
+}
+
+func TestCompletionSurfacesNoopWriteStatus(t *testing.T) {
+	engine := testEngine(t)
+	engine.UpdateRegistry = func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
+		return []registry.WriteOutcome{{Status: registry.WriteNoop}}, nil
+	}
+	result, err := engine.Complete(context.Background(), Request{
+		Origin:       OriginSpawn,
+		RegistryPath: filepath.Join(t.TempDir(), "registry.jsonl"),
+		Candidate:    v2.SessionRecord{GUID: "guid-noop", Tool: "bash"},
+		Seat:         SeatClaim{Kind: SeatHerdr, PaneID: "pane-live"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != registry.WriteNoop || result.Row != nil || result.Refusal != nil {
+		t.Fatalf("noop completion = %+v, want explicit noop without row/refusal", result)
 	}
 }
 

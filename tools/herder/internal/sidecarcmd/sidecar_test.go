@@ -13,6 +13,7 @@ import (
 
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcompletion"
 )
 
@@ -348,7 +349,7 @@ func TestAppendEnrichmentCarriesPriorRowAndSessionID(t *testing.T) {
 	t.Setenv("HERDER_SPAWNED_BY", "parent-guid")
 	t.Setenv("HCOM_DIR", "/hcom")
 
-	s := &sidecar{tool: "codex", paneID: "p_new", cwd: "/repo", registry: registryPath}
+	s := &sidecar{tool: "codex", paneID: "p_new", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
 	s.appendEnrichment(&hcomRow{Name: "worker-rive", Tag: "worker", SessionID: "sess-123", Directory: "/repo"})
 
 	recs, err := registry.Load(registryPath)
@@ -398,7 +399,7 @@ func TestAppendEnrichmentSelfHealsStaleHcomName(t *testing.T) {
 
 	// The sidecar runs in the child's own pane and discovers the child's OWN row
 	// (worker-rive) — the correct bus name.
-	s := &sidecar{tool: "claude", paneID: "p_new", cwd: "/repo", registry: registryPath}
+	s := &sidecar{tool: "claude", paneID: "p_new", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
 	s.appendEnrichment(&hcomRow{Name: "worker-rive", Tag: "worker", SessionID: "sess-123", Directory: "/repo"})
 
 	recs, err := registry.Load(registryPath)
@@ -437,7 +438,7 @@ func TestSidecarDoesNotEnrichFromStaleUniqueFallback(t *testing.T) {
 	t.Setenv("HERDER_SPAWNED_BY", "parent-guid")
 	t.Setenv("HCOM_DIR", "/hcom")
 
-	s := &sidecar{tool: "claude", paneID: "p_child", tag: "worker", cwd: "/repo", registry: registryPath}
+	s := &sidecar{tool: "claude", paneID: "p_child", tag: "worker", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
 
 	// A stale agent is the ONLY tool+tag+cwd match; its launch pane (p_gone) is not
 	// ours, so there is no pane correlate.
@@ -489,7 +490,7 @@ func TestReportAgentSessionOnFirstPaneCorrelatedEnrichment(t *testing.T) {
 	t.Setenv("HERDER_LABEL", "worker-guid")
 	t.Setenv("HCOM_DIR", "/hcom")
 
-	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath}
+	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
 	row := &hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", SessionID: "sess-mine"}
 
 	if !s.enrichDiscovered(row, true) {
@@ -515,10 +516,11 @@ func TestProcessIDCorrelationEnrichesAndReportsAgentSession(t *testing.T) {
 	t.Setenv("HCOM_DIR", "/hcom")
 
 	s := &sidecar{
-		tool:     "codex",
-		paneID:   "p_child",
-		cwd:      "/repo",
-		registry: registryPath,
+		tool:         "codex",
+		paneID:       "p_child",
+		cwd:          "/repo",
+		registry:     registryPath,
+		completeSeat: testSeatCompletion(t),
 		processEnvirons: func(tool string) []processEnvironmentRead {
 			return []processEnvironmentRead{{
 				env: map[string]string{
@@ -567,11 +569,12 @@ func TestFallbackFirstThenEmptySessionProcessCorrelationEnrichesInLoop(t *testin
 	t.Setenv("HCOM_DIR", "/hcom")
 
 	s := &sidecar{
-		tool:     "codex",
-		paneID:   "p_child",
-		tag:      "worker",
-		cwd:      "/repo",
-		registry: registryPath,
+		tool:         "codex",
+		paneID:       "p_child",
+		tag:          "worker",
+		cwd:          "/repo",
+		registry:     registryPath,
+		completeSeat: testSeatCompletion(t),
 		processEnvirons: func(tool string) []processEnvironmentRead {
 			return []processEnvironmentRead{{
 				env: map[string]string{
@@ -630,8 +633,8 @@ func TestNoopFirstCorrelatedAppendKeepsEmptySessionRetryOpen(t *testing.T) {
 	t.Setenv("HERDER_LABEL", "taken")
 	t.Setenv("HCOM_DIR", "/hcom")
 
-	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath}
-	row := &hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening"}
+	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
+	row := &hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening", LaunchContext: launchContext("p_child", "")}
 
 	if !s.shouldAppendCorrelatedEnrichment(row, true) {
 		t.Fatal("first empty-sid correlated row did not request enrichment")
@@ -696,7 +699,7 @@ func TestReportAgentSessionSkipsEmptyPaneEmptySessionAndFallback(t *testing.T) {
 	(&sidecar{tool: "codex", paneID: "p_child"}).reportAgentSession(&hcomRow{Tool: "codex", SessionID: ""}, true)
 	(&sidecar{tool: "codex", paneID: "p_child"}).reportAgentSession(&hcomRow{Tool: "codex", SessionID: "sess-1"}, false)
 
-	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath}
+	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
 	if s.enrichDiscovered(&hcomRow{Name: "stale", Tool: "codex", Tag: "worker", Directory: "/repo", SessionID: "sess-stale"}, false) {
 		t.Fatal("enrichDiscovered wrote from fallback-only match; want false")
 	}
@@ -714,7 +717,7 @@ func TestReportAgentSessionFailureIsSwallowed(t *testing.T) {
 	t.Setenv("HERDER_LABEL", "worker-guid")
 	t.Setenv("HCOM_DIR", "/hcom")
 
-	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath}
+	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
 	if !s.enrichDiscovered(&hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", SessionID: "sess-mine"}, true) {
 		t.Fatal("enrichDiscovered returned false after report failure; want sidecar to continue")
 	}
@@ -740,7 +743,7 @@ func TestReportAgentSessionRetriesStableSIDAfterFailure(t *testing.T) {
 	t.Setenv("HERDER_LABEL", "worker-guid")
 	t.Setenv("HCOM_DIR", "/hcom")
 
-	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath}
+	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
 	row := &hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", SessionID: "sess-mine"}
 
 	if !s.enrichDiscovered(row, true) {
@@ -786,7 +789,7 @@ func TestAppendEnrichmentGeneratesManualShimIdentity(t *testing.T) {
 	t.Setenv("HERDER_SHIM", "1")
 	t.Setenv("HCOM_DIR", "/hcom")
 
-	s := &sidecar{tool: "claude", paneID: "p_manual", cwd: "/repo", registry: registryPath}
+	s := &sidecar{tool: "claude", paneID: "p_manual", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
 	s.appendEnrichment(&hcomRow{Name: "manual-rive", Tag: "manual", SessionID: "sess-manual", Directory: "/repo"})
 
 	recs, err := registry.Load(registryPath)
@@ -841,6 +844,76 @@ exit 1
 	return logPath
 }
 
+func installFakeHcomRosterForSidecar(t *testing.T, roster string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake hcom is a shell script")
+	}
+	dir := t.TempDir()
+	rosterPath := filepath.Join(dir, "roster.json")
+	if err := os.WriteFile(rosterPath, []byte(roster), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\ncat \"$FAKE_HCOM_ROSTER\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "hcom"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_HCOM_ROSTER", rosterPath)
+}
+
+func TestCompleteObservedSeatRequiresCorroboratedJoinedNamedUniqueBusRow(t *testing.T) {
+	tests := []struct {
+		name   string
+		roster string
+	}{
+		{name: "unjoined", roster: `[{"name":"observed","joined":false,"session_id":"session-live","launch_context":{"pane_id":"pane-live"}}]`},
+		{name: "empty name", roster: `[{"name":"","joined":true,"session_id":"session-live","launch_context":{"pane_id":"pane-live"}}]`},
+		{name: "duplicate pane", roster: `[{"name":"observed-a","joined":true,"launch_context":{"pane_id":"pane-live"}},{"name":"observed-b","joined":true,"launch_context":{"pane_id":"pane-live"}}]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			installFakeHcomRosterForSidecar(t, tt.roster)
+			observed := &hcomRow{Name: "observed", SessionID: "session-live"}
+			observed.LaunchContext.PaneID = "pane-live"
+			result, err := completeObservedSeat(context.Background(), observed, seatcompletion.Request{
+				Origin:       seatcompletion.OriginRecognition,
+				RegistryPath: filepath.Join(t.TempDir(), "registry.jsonl"),
+				Candidate:    v2.SessionRecord{GUID: "guid-sidecar", Tool: "codex"},
+				Seat:         seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: "pane-live", TerminalID: "terminal-live"},
+				Evidence:     hcomidentity.Evidence{SessionID: "session-live", PaneIDs: []string{"pane-live"}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Refusal == nil {
+				t.Fatalf("completeObservedSeat() = %+v, want live-roster refusal", result)
+			}
+		})
+	}
+}
+
+func TestNoopCompletionDoesNotLatchSidecarEnrichment(t *testing.T) {
+	s := &sidecar{
+		tool:     "codex",
+		paneID:   "pane-live",
+		registry: filepath.Join(t.TempDir(), "registry.jsonl"),
+		completeSeat: func(context.Context, *hcomRow, seatcompletion.Request) (seatcompletion.Result, error) {
+			return seatcompletion.Result{Status: registry.WriteNoop}, nil
+		},
+	}
+	row := &hcomRow{Name: "bus-live", SessionID: "session-live"}
+	if s.appendCorrelatedEnrichment(row) {
+		t.Fatal("noop completion reported an applied enrichment")
+	}
+	if s.enrichedCorrelated || s.enrichedSessionID != "" {
+		t.Fatalf("noop completion latched enrichment: correlated=%v session=%q", s.enrichedCorrelated, s.enrichedSessionID)
+	}
+	if !s.shouldAppendCorrelatedEnrichment(row, true) {
+		t.Fatal("noop completion suppressed the next retry")
+	}
+}
+
 func readReportLog(t *testing.T, path string) []string {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -874,7 +947,7 @@ func TestAppendEnrichmentDoesNotResumeClosedBySessionID(t *testing.T) {
 	t.Setenv("HERDER_SHIM", "")
 	t.Setenv("HCOM_DIR", "/hcom")
 
-	s := &sidecar{tool: "claude", paneID: "p_new", cwd: "/repo", registry: registryPath}
+	s := &sidecar{tool: "claude", paneID: "p_new", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
 	s.appendEnrichment(&hcomRow{Name: "resume-vire", Tag: "worker", SessionID: "sess-resume", Directory: "/repo"})
 
 	recs, err := registry.Load(registryPath)
@@ -902,7 +975,7 @@ func TestAppendEnrichmentDoesNotResurrectClosedGUID(t *testing.T) {
 	t.Setenv("HERDER_LABEL", "closed-worker")
 	t.Setenv("HCOM_DIR", "/hcom")
 
-	s := &sidecar{tool: "codex", paneID: "p_new", cwd: "/repo", registry: registryPath}
+	s := &sidecar{tool: "codex", paneID: "p_new", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
 	s.appendEnrichment(&hcomRow{Name: "worker-rive", Tag: "worker", SessionID: "sess-123", Directory: "/repo"})
 
 	recs, err := registry.Load(registryPath)
@@ -937,7 +1010,7 @@ func TestAppendEnrichmentDoesNotResurrectArchivedClosedGUID(t *testing.T) {
 	t.Setenv("HERDER_LABEL", "closed-worker")
 	t.Setenv("HCOM_DIR", "/hcom")
 
-	s := &sidecar{tool: "codex", paneID: "p_new", cwd: "/repo", registry: registryPath}
+	s := &sidecar{tool: "codex", paneID: "p_new", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
 	s.appendEnrichment(&hcomRow{Name: "worker-rive", Tag: "worker", SessionID: "sess-123", Directory: "/repo"})
 
 	recs, err := registry.Load(registryPath)
@@ -970,7 +1043,7 @@ func TestAppendEnrichmentRefusesActiveLabelCollision(t *testing.T) {
 	t.Setenv("HERDER_SPAWNED_BY", "")
 	t.Setenv("HCOM_DIR", "/hcom")
 
-	s := &sidecar{tool: "claude", paneID: "p_manual", cwd: "/repo", registry: registryPath}
+	s := &sidecar{tool: "claude", paneID: "p_manual", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
 	s.appendEnrichment(&hcomRow{Name: "manual-rive", Tag: "manual", SessionID: "sess-manual", Directory: "/repo"})
 
 	recs, err := registry.Load(registryPath)

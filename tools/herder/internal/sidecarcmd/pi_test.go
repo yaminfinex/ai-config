@@ -68,7 +68,7 @@ func TestPiSidecarPersistsFullBindAndRefreshedVersionFacts(t *testing.T) {
 	t.Setenv("HERDER_ROLE", "worker")
 	t.Setenv("HCOM_DIR", filepath.Join(root, ".hcom"))
 
-	s := &sidecar{tool: "pi", paneID: "p_pi", registry: registryPath, cwd: root}
+	s := &sidecar{tool: "pi", paneID: "p_pi", registry: registryPath, cwd: root, completeSeat: testSeatCompletion(t)}
 	row := &hcomRow{
 		Name: "worker-pi", Tool: "pi", HooksBound: true, SessionID: "session-pi",
 		TranscriptPath: filepath.Join(root, "session.jsonl"), Tag: "worker", Directory: root,

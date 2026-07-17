@@ -281,7 +281,6 @@ func realHcomForPiCleanupTest(t *testing.T) string {
 func TestPiSpawnRegistryPersistsLaunchAndBindFacts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	history := launchcmd.RefreshPiVendorVersion(nil, v2.VendorVersionObservation{Version: "0.80.6", ObservedAt: "2026-07-15T01:00:00Z"})
-	r := &runner{}
 	record := spawnRecord{
 		GUID: "guid-pi", ShortGUID: "guid-pi", Label: "worker-pi", Role: "worker", Agent: "pi",
 		Provider: "openai", Model: "gpt-test", VendorVersion: history,
@@ -289,8 +288,8 @@ func TestPiSpawnRegistryPersistsLaunchAndBindFacts(t *testing.T) {
 		HooksBound: true, TranscriptPath: "/scratch/session.jsonl", Status: "active", StartedAt: "2026-07-15T01:00:00Z",
 		Provenance: registry.Provenance{ToolSessionID: "session-pi", TS: "2026-07-15T01:00:00Z"},
 	}
-	if err := r.registerSpawn(path, record); err != nil {
-		t.Fatal(err)
+	if result, err := completeSpawnRecord(t, path, record); err != nil || result.Refusal != nil {
+		t.Fatalf("completeSpawn() = %+v err=%v", result, err)
 	}
 	projection, err := v2.LoadFile(path, v2.LoadOptions{})
 	if err != nil {
