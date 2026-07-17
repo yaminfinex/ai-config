@@ -352,8 +352,8 @@ withdrawn as an uncalled-out scope broadening that also made the proof circular)
 OS account*, nothing more. The herdr pane API (pane read/send over the
 uid-scoped socket) lets any same-uid process both observe and inject the nonce,
 and a non-human process can allocate a pty, so (a)+(b) as specified do **not**
-distinguish an operator from deliberate same-uid automation. Two designs follow,
-and the choice is flagged for ratification:
+distinguish an operator from deliberate same-uid automation. Two designs follow;
+the owner-ratified choice is recorded below:
 
 > **OWNER-DECISION — break-glass trust anchor: RESOLVED, Branch B ADOPTED
 > (owner-ratified 2026-07-17).** Ruling rationale, recorded: takeover in this
