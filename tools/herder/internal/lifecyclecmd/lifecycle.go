@@ -257,8 +257,6 @@ func (r *runner) fork(opts forkOptions) int {
 	// spawned_by is the session that RAN this fork ($HERDER_GUID, matching the
 	// HERDER_SPAWNED_BY that startAndAppend exports into the child's pane); the
 	// forker's own spawner stays reachable transitively via the forker's row.
-	prov := registry.BuildProvenance("fork", firstNonEmpty(os.Getenv("HERDER_GUID"), "user"), role, cwd, workspace)
-	prov.ForkedFrom = parentGUID
 	grokSessionID := ""
 	if agent == "grok" {
 		grokSessionID, err = launchcmd.NewGrokSessionID()
@@ -272,8 +270,9 @@ func (r *runner) fork(opts forkOptions) int {
 			return 1
 		}
 		grokSessionID = lifecycle.SessionID
-		prov.ToolSessionID = grokSessionID
 	}
+	prov := registry.BuildProvenance("fork", firstNonEmpty(os.Getenv("HERDER_GUID"), "user"), grokSessionID, role, cwd, workspace)
+	prov.ForkedFrom = parentGUID
 
 	row, code := r.startAndAppend(startSpec{
 		Mode:          "fork",
@@ -646,7 +645,7 @@ func (r *runner) resume(opts resumeOptions) int {
 	}
 	sessionID := registry.ToolSessionIDForGUID(recs, guid)
 	if sessionID == "" {
-		die(r.stderr, fmt.Sprintf("cannot resume %s: no tool_session_id recorded for this guid (never captured, or predates session capture) — spawn a fresh agent instead", opts.target))
+		die(r.stderr, fmt.Sprintf("cannot resume %s: no tool_session_id recorded for this guid — creator rows are born without one until sidecar or in-seat enrollment captures the session. Wait for sidecar capture and retry, or run 'herder enroll' from the session's own seat and retry. Only spawn a fresh agent if the session is genuinely dead and cannot be enrolled", opts.target))
 		return 1
 	}
 	if rec.Agent == "grok" {
@@ -690,13 +689,14 @@ func (r *runner) resume(opts resumeOptions) int {
 		return 1
 	}
 	// No-prior-provenance fallback: spawned_by is the session performing this
-	// resume ($HERDER_GUID), not the ambient grandparent. Normally overwritten
-	// by the preserved prior provenance just below.
-	prov := registry.BuildProvenance("resume", firstNonEmpty(os.Getenv("HERDER_GUID"), "user"), rec.HcomTag, currentCWD(), "")
+	// resume ($HERDER_GUID), not the ambient grandparent. Prior provenance
+	// metadata is carried below while the resolved target SID stays explicit.
+	prov := registry.BuildProvenance("resume", firstNonEmpty(os.Getenv("HERDER_GUID"), "user"), sessionID, rec.HcomTag, currentCWD(), "")
 	if rec.Provenance != nil {
-		prov = *rec.Provenance
+		carried := *rec.Provenance
+		carried.ToolSessionID = prov.ToolSessionID
+		prov = carried
 	}
-	prov.ToolSessionID = sessionID
 	prov.CWD = cwd
 	prov.WorkspaceID = workspace
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
@@ -1551,8 +1551,10 @@ their sessionstart hook and skip all of this.
 
 If it fails:
   - "already running": the agent is live — use herder send/wait, not resume.
-  - "cannot resume ...: no tool_session_id recorded for this guid": its session was
-    never captured (or it predates session capture) — spawn a fresh agent instead.
+  - "cannot resume ...: no tool_session_id recorded for this guid": creator rows
+    start without one until the sidecar or in-seat enrollment captures it. Wait
+    for sidecar capture and retry, or run 'herder enroll' from that session's own
+    seat. Spawn a fresh agent only if the session is genuinely dead.
   - "unknown target": run 'herder list --all' to find the right guid/label.
 `)
 }

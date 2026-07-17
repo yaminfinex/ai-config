@@ -2428,22 +2428,22 @@ func TestBuildProvenanceSpawnedBy(t *testing.T) {
 
 	// Creator flows pass the session performing the action explicitly — the row
 	// must record the parent, not the ambient grandparent (TASK-016).
-	if p := BuildProvenance("spawn", "guid-parent", "", t.TempDir(), ""); p.SpawnedBy != "guid-parent" {
+	if p := BuildProvenance("spawn", "guid-parent", "", "", t.TempDir(), ""); p.SpawnedBy != "guid-parent" {
 		t.Fatalf("explicit spawnedBy = %q, want guid-parent", p.SpawnedBy)
 	}
 	// Empty spawnedBy harvests the ambient chain — enroll/sidecar rows describe
 	// the CURRENT session, whose spawner genuinely is HERDER_SPAWNED_BY.
-	if p := BuildProvenance("enroll", "", "", t.TempDir(), ""); p.SpawnedBy != "guid-grandparent" {
+	if p := BuildProvenance("enroll", "", "", "", t.TempDir(), ""); p.SpawnedBy != "guid-grandparent" {
 		t.Fatalf("ambient spawnedBy = %q, want guid-grandparent", p.SpawnedBy)
 	}
 
 	// Ambient chain degrades HERDER_SPAWNED_BY -> HERDER_GUID -> "user".
 	t.Setenv("HERDER_SPAWNED_BY", "")
-	if p := BuildProvenance("enroll", "", "", t.TempDir(), ""); p.SpawnedBy != "guid-parent" {
+	if p := BuildProvenance("enroll", "", "", "", t.TempDir(), ""); p.SpawnedBy != "guid-parent" {
 		t.Fatalf("ambient guid fallback = %q, want guid-parent", p.SpawnedBy)
 	}
 	t.Setenv("HERDER_GUID", "")
-	if p := BuildProvenance("enroll", "", "", t.TempDir(), ""); p.SpawnedBy != "user" {
+	if p := BuildProvenance("enroll", "", "", "", t.TempDir(), ""); p.SpawnedBy != "user" {
 		t.Fatalf("ambient user fallback = %q, want user", p.SpawnedBy)
 	}
 }

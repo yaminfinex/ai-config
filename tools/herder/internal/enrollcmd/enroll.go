@@ -174,10 +174,11 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 		if latest != nil {
 			agent = firstNonEmpty(latest.Tool, agent)
 		}
-		prov := registry.BuildProvenance(mechanism, "", os.Getenv("HCOM_TAG"), pane.CWD, pane.WorkspaceID)
+		verifiedSessionID := ""
 		if liveBus.Verified && liveBus.SessionID != "" {
-			prov.ToolSessionID = liveBus.SessionID
+			verifiedSessionID = liveBus.SessionID
 		}
+		prov := registry.BuildProvenance(mechanism, "", verifiedSessionID, os.Getenv("HCOM_TAG"), pane.CWD, pane.WorkspaceID)
 		if prov.ToolSessionID == "" && latest != nil {
 			priorGUID := latest.GUID
 			priorSID := latest.Provenance.ToolSessionID

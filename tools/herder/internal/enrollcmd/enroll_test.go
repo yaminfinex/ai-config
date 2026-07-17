@@ -117,6 +117,51 @@ func TestVerifyExistingGUIDOwnerTreatsUnverifiedMatchingSessionAsNoBusProof(t *t
 	}
 }
 
+func TestCreatorProvenanceDoesNotGrantChildOwnershipToCallerSID(t *testing.T) {
+	t.Setenv("HCOM_SESSION_ID", "sid-creator")
+	guid, label := "guid-child", "child-label"
+	prov := registry.BuildProvenance("spawn", "guid-creator", "", "worker", t.TempDir(), "")
+	child := registry.V2FromRecord(registry.Record{
+		GUID:       &guid,
+		Label:      &label,
+		Role:       "worker",
+		Agent:      "claude",
+		Provenance: &prov,
+	}, "registered", v2.StateUnseated, "2026-07-17T00:00:00Z")
+
+	t.Run("caller SID is not projected onto child", func(t *testing.T) {
+		if len(child.SIDs) != 0 || child.Continuity != "assumed" {
+			t.Fatalf("child identity evidence = sids %+v, continuity %q; want no SIDs and assumed continuity", child.SIDs, child.Continuity)
+		}
+	})
+
+	t.Run("caller SID cannot prove child ownership", func(t *testing.T) {
+		live := hcomidentity.Result{Name: "creator-bus", SessionID: "sid-creator", Verified: true}
+		if err := verifyExistingGUIDOwner(&child, herdrcli.Pane{TerminalID: "term-creator"}, live, "creator-label"); err == nil {
+			t.Fatal("creator SID alone proved ownership of the child row")
+		}
+	})
+
+	t.Run("self flow keeps explicit current SID", func(t *testing.T) {
+		selfGUID, selfLabel := "guid-self", "self-label"
+		selfProv := registry.BuildProvenance("enroll", "", "sid-creator", "worker", t.TempDir(), "")
+		self := registry.V2FromRecord(registry.Record{
+			GUID:       &selfGUID,
+			Label:      &selfLabel,
+			Role:       "worker",
+			Agent:      "claude",
+			Provenance: &selfProv,
+		}, "registered", v2.StateUnseated, "2026-07-17T00:00:00Z")
+		if len(self.SIDs) != 1 || self.SIDs[0].SID != "sid-creator" || self.SIDs[0].Source != "harvest" || self.Continuity != "confirmed" {
+			t.Fatalf("self identity evidence = sids %+v, continuity %q; want explicit current SID and confirmed continuity", self.SIDs, self.Continuity)
+		}
+		live := hcomidentity.Result{Name: "self-bus", SessionID: "sid-creator", Verified: true}
+		if err := verifyExistingGUIDOwner(&self, herdrcli.Pane{TerminalID: "term-other"}, live, "other-label"); err != nil {
+			t.Fatalf("explicit self SID did not prove self ownership: %v", err)
+		}
+	})
+}
+
 func TestVerifyExistingGUIDOwnerBootstrapsAbsentStoredBusName(t *testing.T) {
 	tests := []struct {
 		name        string

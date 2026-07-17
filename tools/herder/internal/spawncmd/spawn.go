@@ -1234,13 +1234,11 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		hcomDirRec = hcomDirEff
 		hcomTagRec = opts.Role
 	}
-	provenance := registry.BuildProvenance("spawn", spawnedBy, opts.Role, resolvedCWD, wsID)
-	if grokSessionID != "" {
-		provenance.ToolSessionID = grokSessionID
-	}
+	toolSessionID := grokSessionID
 	if opts.Agent == "pi" {
-		provenance.ToolSessionID = r.piBind.SessionID
+		toolSessionID = r.piBind.SessionID
 	}
+	provenance := registry.BuildProvenance("spawn", spawnedBy, toolSessionID, opts.Role, resolvedCWD, wsID)
 	record := spawnRecord{
 		GUID:                 guid,
 		ShortGUID:            short,

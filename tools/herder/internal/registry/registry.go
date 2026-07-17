@@ -754,7 +754,13 @@ func ShortGUID(guid string) string {
 // ($HERDER_SPAWNED_BY, then $HERDER_GUID, then "user"), which is right only
 // for rows that describe the CURRENT session (enroll, sidecar): there the
 // ambient spawner genuinely is the row's spawner.
-func BuildProvenance(mechanism, spawnedBy, tag, cwd, workspaceID string) Provenance {
+//
+// toolSessionID is always explicit. Creator flows may pass only a session id
+// known to belong to the target row; otherwise they pass "" and let later
+// observation enrich the row. Self flows may pass their observed current
+// session id. Harvesting the ambient caller's HCOM_SESSION_ID here would
+// misattribute that caller to any child row it creates.
+func BuildProvenance(mechanism, spawnedBy, toolSessionID, tag, cwd, workspaceID string) Provenance {
 	if spawnedBy == "" {
 		spawnedBy = os.Getenv("HERDER_SPAWNED_BY")
 	}
@@ -773,7 +779,7 @@ func BuildProvenance(mechanism, spawnedBy, tag, cwd, workspaceID string) Provena
 	return Provenance{
 		Mechanism:     mechanism,
 		SpawnedBy:     spawnedBy,
-		ToolSessionID: os.Getenv("HCOM_SESSION_ID"),
+		ToolSessionID: toolSessionID,
 		Tag:           tag,
 		BatchID:       os.Getenv("HCOM_LAUNCH_BATCH_ID"),
 		CWD:           cwd,
