@@ -40,9 +40,10 @@ addition is withdrawn).
 Out of scope: upstream janitor policy, the vendor extension's env-honoring
 takeover, multi-node identity, any relitigation of the ratified herder spec's
 ontology. Upstream-blocked residuals are named per stage and collected at the
-end. One decision is marked OWNER-DECISION (the break-glass trust anchor, in
-U2); no other survived revision — the T6 lattice was tightened so it no longer
-amends spec semantics (see the architecture document).
+end. The one OWNER-DECISION this design raised (the break-glass trust anchor,
+in U2) is resolved: Branch B adopted, owner-ratified 2026-07-17. No other
+arose — the T6 lattice was tightened so it no longer amends spec semantics
+(see the architecture document).
 
 ## Registry write-spine reality (shared scope note)
 
@@ -231,9 +232,12 @@ the stored terminal is intact. Named honestly: (b) proves same-uid control of
 the pane, not human presence — the herdr pane API lets any same-uid process
 observe and inject the nonce, and automation can allocate a pty.
 
-> **OWNER-DECISION — break-glass trust anchor** (both branches fully designed in
-> the architecture document §3.3; the choice must be ratified, not defaulted
-> silently):
+> **OWNER-DECISION — break-glass trust anchor: RESOLVED, Branch B ADOPTED
+> (owner-ratified 2026-07-17; ruling rationale recorded at the architecture
+> §3.3 decision point — accidental-never-adversarial takeover, low stakes, no
+> season evidence of a deliberate same-uid adversary). Branch B binds this
+> stage.** Both branches remain fully designed in the architecture document
+> §3.3:
 > **Branch A** — an operator-held factor with a **verifier anchored outside
 > the calling uid's write authority** (a same-uid-stored hash proves nothing —
 > same-uid automation could replace it): root-owned hash + verifier helper
@@ -253,8 +257,9 @@ observe and inject the nonce, and automation can allocate a pty.
 > record is not claimed tamper-evident against a deliberate adversary):
 > tripwire, not wall.
 > This plan's stages are written to work under either branch; Branch B is the
-> working default pending ratification, and Branch A is additive later (the
-> anchored factor becomes one more conjunct).
+> ratified anchor, and Branch A remains an additive posture upgrade (the
+> anchored factor becomes one more conjunct), revisited only on evidence of a
+> deliberate same-uid adversary.
 
 The verb surface also carries the one non-rebind operation:
 **`reissue-credential`** (specified with U3, authenticated here) — attestation +
@@ -725,19 +730,21 @@ Recorded so residual risk is legible; every stage above ships without them.
 - herdr tracker never adopts foreign-launched agents; no first-class
   server-generation id (U5 ships on the backstop + fallback rule regardless).
 
-## Owner decision pending ratification
+## Owner decision — resolved
 
-**Break-glass trust anchor (U2 / architecture §3.3):** Branch A (operator-held
-factor with a verifier anchored outside the calling uid's write authority —
-root-owned verifier with password-gated escalation, hardware user-presence
-factor, or remote approval; literal operator attestation at real operational
-cost and stated preconditions) versus Branch B (posture reduction to a
-deliberate same-uid action with a normal-path audit record; consistent with
-the prior single-purpose-machine ruling; tripwire, not wall). Branch B is the
-working default pending this ratification.
+**Break-glass trust anchor (U2 / architecture §3.3): CLOSED — Branch B
+ADOPTED, owner-ratified 2026-07-17; Branch B binds the break-glass stage.**
+Ruling rationale, recorded: takeover in this environment is always accidental,
+never adversarial — repair should be easy and trusted; the stakes are low;
+complexity to protect against failure scenarios with no season evidence is not
+warranted (zero deliberate same-uid adversaries on record; every impersonation
+was ambient/inherited). Branch A (operator-held factor with a verifier
+anchored outside the calling uid's write authority) is **not adopted**; it
+remains an additive posture upgrade, revisited only on evidence of a
+deliberate same-uid adversary.
 
-No other owner decision remains in this revision: the T6 lattice was tightened
-so live-conflict refusal stays supreme, history adjudicates only the
+No other owner decision arose in this design: the T6 lattice was tightened so
+live-conflict refusal stays supreme, history adjudicates only the
 live-evidence-absent quadrant, and attested corrections act by explicit
 tombstone rather than by outranking — no spec amendment is proposed, and any
 future widening would require one.

@@ -355,9 +355,16 @@ and a non-human process can allocate a pty, so (a)+(b) as specified do **not**
 distinguish an operator from deliberate same-uid automation. Two designs follow,
 and the choice is flagged for ratification:
 
-> **OWNER-DECISION — break-glass trust anchor.** Both branches are fully
-> designed and written to the trust boundary; neither is silently assumed
-> elsewhere in this document.
+> **OWNER-DECISION — break-glass trust anchor: RESOLVED, Branch B ADOPTED
+> (owner-ratified 2026-07-17).** Ruling rationale, recorded: takeover in this
+> environment is always accidental, never adversarial — repair should be easy
+> and trusted; the stakes are low; complexity to protect against failure
+> scenarios with no season evidence is not warranted (the evidence record
+> shows zero deliberate same-uid adversaries; every impersonation incident was
+> ambient/inherited). **Branch A is NOT adopted** — it remains described below
+> as an additive posture upgrade, to be revisited only on evidence of a
+> deliberate same-uid adversary. Both branches remain fully written to the
+> trust boundary; Branch B binds this document and the migration plan.
 >
 > **Branch A — operator-held factor, verifier anchored outside uid write
 > authority.** A passphrase hash alone is not enough: a same-uid process could
@@ -395,9 +402,9 @@ and the choice is flagged for ratification:
 >
 > Branch B matches the ruled posture and costs nothing operationally; Branch A
 > is the only option that makes "operator" literally true, at the price of its
-> anchor's preconditions. Default in the migration plan is Branch B pending
-> ratification; switching to Branch A later is additive (the anchored factor
-> becomes one more conjunct).
+> anchor's preconditions. Switching to Branch A later is additive (the
+> anchored factor becomes one more conjunct) and is contingent on evidence of
+> a deliberate same-uid adversary, per the ruling above.
 
 **Damage shapes and their terminating sequences** (the honest enumeration T3
 promises):
@@ -650,8 +657,10 @@ upstream generation id is a recorded refinement.
   mechanism above works if upstream never moves; several get simpler (and some
   of our machinery retires) if upstream does.
 - It does not distinguish the operator from deliberate same-uid automation
-  anywhere except break-glass Branch A, if the owner selects it. The trust
-  boundary in the preamble governs; claims are written to it.
+  anywhere: the ratified break-glass anchor is Branch B (posture reduction),
+  and Branch A — the one mechanism that would draw that distinction — was not
+  adopted. The trust boundary in the preamble governs; claims are written to
+  it.
 - It does not protect direct vendor-CLI invocation from an identity-bearing
   shell. That is the vendor extension's env boundary; doctrine (scrub the env)
   remains load-bearing there.
