@@ -23,8 +23,16 @@ const (
 	StateRetired  = "retired"
 	StateLost     = "lost"
 
-	BindingFieldSeat     = "seat"
-	BindingFieldHcomName = "hcom_name"
+	BindingFieldSeat          = "seat"
+	BindingFieldHcomName      = "hcom_name"
+	BindingFieldSID           = "sid"
+	BindingFieldLaunchContext = "launch_context"
+
+	EventAttestedBinding = "attested_binding"
+
+	AttestationRebind            = "rebind"
+	AttestationAuthorizeRecreate = "authorize-recreate"
+	AttestationReissueCredential = "reissue-credential"
 
 	EvidenceLiveVerified = "live-verified"
 	EvidenceAttested     = "attested"
@@ -48,32 +56,34 @@ type Projection struct {
 }
 
 type SessionRecord struct {
-	Kind          string                `json:"kind,omitempty"`
-	GUID          string                `json:"guid"`
-	Event         string                `json:"event"`
-	RecordedAt    string                `json:"recorded_at"`
-	Node          string                `json:"node"`
-	State         string                `json:"state"`
-	Label         string                `json:"label,omitempty"`
-	Role          string                `json:"role,omitempty"`
-	Tool          string                `json:"tool,omitempty"`
-	Provider      string                `json:"provider,omitempty"`
-	Model         string                `json:"model,omitempty"`
-	VendorVersion *VendorVersionHistory `json:"vendor_version,omitempty"`
-	Seat          *Seat                 `json:"seat,omitempty"`
-	Capabilities  *Capabilities         `json:"capabilities,omitempty"`
-	Mission       *Mission              `json:"mission,omitempty"`
-	Bindings      []BindingFact         `json:"bindings,omitempty"`
-	SIDs          []SID                 `json:"sids,omitempty"`
-	Continuity    string                `json:"continuity,omitempty"`
-	Lineage       Lineage               `json:"lineage,omitempty"`
-	Provenance    Provenance            `json:"provenance,omitempty"`
-	CloseResult   string                `json:"close_result,omitempty"`
-	CloseReason   string                `json:"close_reason,omitempty"`
-	ObservedVia   string                `json:"observed_via,omitempty"`
-	Raw           json.RawMessage       `json:"-"`
-	Ordinal       int                   `json:"-"`
-	LegacyV1      bool                  `json:"-"`
+	Kind              string                `json:"kind,omitempty"`
+	GUID              string                `json:"guid"`
+	Event             string                `json:"event"`
+	RecordedAt        string                `json:"recorded_at"`
+	Node              string                `json:"node"`
+	State             string                `json:"state"`
+	Label             string                `json:"label,omitempty"`
+	Role              string                `json:"role,omitempty"`
+	Tool              string                `json:"tool,omitempty"`
+	Provider          string                `json:"provider,omitempty"`
+	Model             string                `json:"model,omitempty"`
+	VendorVersion     *VendorVersionHistory `json:"vendor_version,omitempty"`
+	Seat              *Seat                 `json:"seat,omitempty"`
+	Capabilities      *Capabilities         `json:"capabilities,omitempty"`
+	Mission           *Mission              `json:"mission,omitempty"`
+	Bindings          []BindingFact         `json:"bindings,omitempty"`
+	Attestations      []Attestation         `json:"attestations,omitempty"`
+	BindingTombstones []BindingTombstone    `json:"binding_tombstones,omitempty"`
+	SIDs              []SID                 `json:"sids,omitempty"`
+	Continuity        string                `json:"continuity,omitempty"`
+	Lineage           Lineage               `json:"lineage,omitempty"`
+	Provenance        Provenance            `json:"provenance,omitempty"`
+	CloseResult       string                `json:"close_result,omitempty"`
+	CloseReason       string                `json:"close_reason,omitempty"`
+	ObservedVia       string                `json:"observed_via,omitempty"`
+	Raw               json.RawMessage       `json:"-"`
+	Ordinal           int                   `json:"-"`
+	LegacyV1          bool                  `json:"-"`
 }
 
 // BindingFact records one independently established identity binding. The
@@ -86,6 +96,33 @@ type BindingFact struct {
 	Seat          *BindingSeat `json:"seat,omitempty"`
 	EvidenceClass string       `json:"evidence_class"`
 	ObservedAt    string       `json:"observed_at"`
+	AttestationID string       `json:"attestation_id,omitempty"`
+}
+
+// Attestation is the durable normal-path audit record for one deliberate
+// break-glass operation. It is not claimed tamper-evident against the uid that
+// owns the registry.
+type Attestation struct {
+	ID         string `json:"id"`
+	Operation  string `json:"operation"`
+	GUID       string `json:"guid"`
+	Field      string `json:"field,omitempty"`
+	Value      string `json:"value,omitempty"`
+	Statement  string `json:"statement"`
+	PaneID     string `json:"pane_id"`
+	TerminalID string `json:"terminal_id,omitempty"`
+	ObservedAt string `json:"observed_at"`
+}
+
+// BindingTombstone removes one specific persisted binding from adjudication
+// without deleting history. CorrectionBindingID names the attested-or-better
+// replacement that authorized the correction.
+type BindingTombstone struct {
+	BindingID           string `json:"binding_id"`
+	Field               string `json:"field"`
+	CorrectionBindingID string `json:"correction_binding_id"`
+	AttestationID       string `json:"attestation_id"`
+	TombstonedAt        string `json:"tombstoned_at"`
 }
 
 // BindingSeat is the value of a seat binding fact. It deliberately excludes

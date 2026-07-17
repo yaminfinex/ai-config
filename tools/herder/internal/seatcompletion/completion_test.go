@@ -342,6 +342,69 @@ func TestCompletionSurfacesNoopWriteStatus(t *testing.T) {
 	}
 }
 
+func TestCompletionUsesSurvivingAttestedBindingOnlyWhenLiveEvidenceAbsent(t *testing.T) {
+	joined := true
+	engine := testEngine(t)
+	engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{{Name: "bus-repaired", Joined: &joined}}, nil
+	}
+	engine.RepairLaunchContext = func(string, string, string) hcomidentity.LaunchContextRepair {
+		return hcomidentity.LaunchContextRepair{Status: "written", PaneID: "pane-live"}
+	}
+	verified := true
+	candidate := v2.SessionRecord{
+		GUID: "guid-corrected", Event: v2.EventAttestedBinding, Tool: "codex",
+		Seat: &v2.Seat{Kind: SeatHerdr, PaneID: "pane-live", TerminalID: "terminal-live", HcomName: "bus-repaired", HcomVerified: &verified},
+		Bindings: []v2.BindingFact{
+			{ID: "seat-live", Field: v2.BindingFieldSeat, EvidenceClass: v2.EvidenceLiveVerified, ObservedAt: "2026-07-17T00:00:00Z", Seat: &v2.BindingSeat{Kind: SeatHerdr, PaneID: "pane-live", TerminalID: "terminal-live"}},
+			{ID: "bus-stale", Field: v2.BindingFieldHcomName, Value: "bus-stale", EvidenceClass: v2.EvidenceLiveVerified, ObservedAt: "2026-07-17T00:00:00Z"},
+			{ID: "bus-repaired-id", Field: v2.BindingFieldHcomName, Value: "bus-repaired", EvidenceClass: v2.EvidenceAttested, ObservedAt: "2026-07-17T00:01:00Z", AttestationID: "attestation-id"},
+		},
+		Attestations:      []v2.Attestation{{ID: "attestation-id", Operation: v2.AttestationRebind, GUID: "guid-corrected", Field: v2.BindingFieldHcomName, Value: "bus-repaired", Statement: "explicit statement", PaneID: "pane-live", TerminalID: "terminal-live", ObservedAt: "2026-07-17T00:01:00Z"}},
+		BindingTombstones: []v2.BindingTombstone{{BindingID: "bus-stale", Field: v2.BindingFieldHcomName, CorrectionBindingID: "bus-repaired-id", AttestationID: "attestation-id", TombstonedAt: "2026-07-17T00:01:00Z"}},
+	}
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) { return []v2.SessionRecord{candidate}, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, outcome := range outcomes {
+		if err := outcome.Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	projection, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate = projection.Sessions()[0]
+	result, err := engine.Complete(context.Background(), Request{
+		Origin: OriginReconcile, RegistryPath: path, Candidate: candidate,
+		Seat: SeatClaim{Kind: SeatHerdr, PaneID: "pane-live"}, ObservedPane: &LivePane{PaneID: "pane-live", TerminalID: "terminal-live"},
+		RequireBus: true,
+	})
+	if err != nil || result.Refusal != nil {
+		t.Fatalf("Complete result=%+v err=%v", result, err)
+	}
+	row := decodeCompletedRow(t, result.Row)
+	if row.Seat == nil || row.Seat.HcomName != "bus-repaired" {
+		t.Fatalf("completed row = %+v", row)
+	}
+}
+
+func TestCompletionDoesNotArmHistoryWhenBusRosterUnavailable(t *testing.T) {
+	engine := testEngine(t)
+	engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) { return nil, errors.New("outage") }
+	result, err := engine.Complete(context.Background(), Request{
+		Origin: OriginReconcile, RegistryPath: filepath.Join(t.TempDir(), "registry.jsonl"),
+		Candidate: v2.SessionRecord{GUID: "guid-outage", Tool: "codex", Bindings: []v2.BindingFact{{ID: "bus-attested", Field: v2.BindingFieldHcomName, Value: "bus-repaired", EvidenceClass: v2.EvidenceAttested, ObservedAt: "2026-07-17T00:01:00Z"}}},
+		Seat:      SeatClaim{Kind: SeatHerdr, PaneID: "pane-live"}, ObservedPane: &LivePane{PaneID: "pane-live", TerminalID: "terminal-live"}, RequireBus: true,
+	})
+	if err != nil || result.Refusal == nil || result.Refusal.Code != RefusalBusUnavailable {
+		t.Fatalf("Complete result=%+v err=%v, want unavailable refusal", result, err)
+	}
+}
+
 func TestNarrowEmptyContextFallbackRequiresUnchangedVerifiedSeat(t *testing.T) {
 	joined := true
 	verified := true

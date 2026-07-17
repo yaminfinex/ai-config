@@ -24,20 +24,21 @@ func TestSeatCompletionOwnsSoleProductionLaunchContextRepairCall(t *testing.T) {
 	}
 }
 
-func TestAttestedCompletionArmHasNoProductionCaller(t *testing.T) {
+func TestAttestedCompletionArmHasExactlyRepairCommandCaller(t *testing.T) {
 	files := productionInternalGoFiles(t)
 	var callers []string
 	for path, source := range files {
 		if path == "seatcompletion/completion.go" {
 			continue
 		}
-		if strings.Contains(source, "Attested:") || strings.Contains(source, "AttestedBinding{") {
+		if strings.Contains(source, "Attested: &seatcompletion.AttestedBinding{") {
 			callers = append(callers, path)
 		}
 	}
 	sort.Strings(callers)
-	if len(callers) != 0 {
-		t.Fatalf("attested completion production callers = %v, want none", callers)
+	want := []string{"repaircmd/repair.go"}
+	if strings.Join(callers, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("attested completion production callers = %v, want %v", callers, want)
 	}
 }
 

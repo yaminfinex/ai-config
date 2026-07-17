@@ -29,6 +29,7 @@ const (
 	OriginResume       Origin = "herder resume"
 	OriginReconcile    Origin = "herder reconcile --apply"
 	OriginRecognition  Origin = "seat recognition"
+	OriginRepair       Origin = "herder repair"
 )
 
 const (
@@ -57,8 +58,9 @@ type LivePane struct {
 }
 
 type AttestedBinding struct {
-	Field string
-	Value string
+	Operation string
+	Field     string
+	Value     string
 }
 
 // NarrowFallback carries the already-established facts used by the two
@@ -68,18 +70,20 @@ type NarrowFallback struct {
 }
 
 type Request struct {
-	Origin       Origin
-	RegistryPath string
-	Candidate    v2.SessionRecord
-	Seat         SeatClaim
-	ObservedPane *LivePane
-	ObservedBus  *hcomidentity.Result
-	Namespace    string
-	Evidence     hcomidentity.Evidence
-	RequireBus   bool
-	Attested     *AttestedBinding
-	Fallback     *NarrowFallback
-	BuildLocked  func(registry.LockedUpdate, v2.Seat) (v2.SessionRecord, []v2.SessionRecord, []v2.SessionRecord, error)
+	Origin         Origin
+	RegistryPath   string
+	Candidate      v2.SessionRecord
+	Seat           SeatClaim
+	ObservedPane   *LivePane
+	ObservedBus    *hcomidentity.Result
+	Namespace      string
+	Evidence       hcomidentity.Evidence
+	RequireBus     bool
+	Attested       *AttestedBinding
+	Fallback       *NarrowFallback
+	BuildLocked    func(registry.LockedUpdate, v2.Seat) (v2.SessionRecord, []v2.SessionRecord, []v2.SessionRecord, error)
+	Event          string
+	FinalizeLocked func(registry.LockedUpdate, *v2.SessionRecord, *v2.SessionRecord, string) error
 }
 
 type MissingFact struct {
@@ -159,8 +163,8 @@ func (e Engine) Complete(ctx context.Context, request Request) (Result, error) {
 	if e.Now == nil || e.NewBindingID == nil {
 		return Result{}, errors.New("seat completion engine is missing clock or binding-id source")
 	}
-	if request.Attested != nil && (request.Attested.Field != v2.BindingFieldHcomName || request.Attested.Value == "") {
-		return Result{Refusal: &Refusal{Code: RefusalAttestation, Cause: "attested completion may substitute exactly one nonempty hcom_name binding"}}, nil
+	if request.Attested != nil && !validAttestedBinding(*request.Attested) {
+		return Result{Refusal: &Refusal{Code: RefusalAttestation, Cause: "attested completion requires one supported repair operation"}}, nil
 	}
 
 	stamp := e.Now().UTC().Format(time.RFC3339)
@@ -191,9 +195,14 @@ func (e Engine) Complete(ctx context.Context, request Request) (Result, error) {
 		current := registry.V2ByGUID(tx.Projection, next.GUID)
 		if current != nil {
 			next.Bindings = cloneBindings(current.Bindings)
+			next.Attestations = cloneAttestations(current.Attestations)
+			next.BindingTombstones = cloneTombstones(current.BindingTombstones)
 		}
 		next.Kind = v2.KindSession
-		next.Event = "seated"
+		next.Event = request.Event
+		if next.Event == "" {
+			next.Event = "seated"
+		}
 		next.RecordedAt = stamp
 		next.State = v2.StateSeated
 		seat.Node = tx.NodeID
@@ -233,6 +242,11 @@ func (e Engine) Complete(ctx context.Context, request Request) (Result, error) {
 				ObservedAt:    stamp,
 			})
 		}
+		if request.FinalizeLocked != nil {
+			if err := request.FinalizeLocked(tx, current, &next, stamp); err != nil {
+				return nil, err
+			}
+		}
 		rows := make([]v2.SessionRecord, 0, len(before)+1+len(after))
 		rows = append(rows, before...)
 		rows = append(rows, next)
@@ -252,6 +266,17 @@ func (e Engine) Complete(ctx context.Context, request Request) (Result, error) {
 		result.Refusal = &Refusal{Code: RefusalRegistryWrite, Cause: writeErr.Error()}
 	}
 	return result, nil
+}
+
+func validAttestedBinding(binding AttestedBinding) bool {
+	switch binding.Operation {
+	case "", v2.AttestationRebind:
+		return (binding.Field == v2.BindingFieldHcomName || binding.Field == v2.BindingFieldSID || binding.Field == v2.BindingFieldLaunchContext) && binding.Value != ""
+	case v2.AttestationReissueCredential:
+		return binding.Field == "" && binding.Value == ""
+	default:
+		return false
+	}
 }
 
 func (e Engine) resolveSeat(ctx context.Context, request Request, stamp string) (v2.Seat, bool, *Refusal) {
@@ -307,12 +332,48 @@ func (e Engine) resolveSeat(ctx context.Context, request Request, stamp string) 
 		}
 		resolved = hcomidentity.Resolve(rows, request.Evidence)
 	}
-	if !resolved.Verified && request.Attested != nil {
+	if !resolved.Verified && !containsAmbiguity(resolved.Reason) {
+		historyResults := make([]hcomidentity.Result, 0, 2)
+		if fact, status := registry.LatestSufficientBinding(request.Candidate, v2.BindingFieldHcomName, registry.LiveEvidenceAbsent); status == registry.BindingSelected {
+			if row, count := hcomidentity.JoinedNamedCount(rows, fact.Value); count == 1 {
+				historyResults = append(historyResults, hcomidentity.Result{Name: row.Name, BaseName: row.BaseName, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true})
+				busAttested = fact.EvidenceClass == v2.EvidenceAttested
+			}
+		}
+		if fact, status := registry.LatestSufficientBinding(request.Candidate, v2.BindingFieldSID, registry.LiveEvidenceAbsent); status == registry.BindingSelected {
+			bySID := hcomidentity.Resolve(rows, hcomidentity.Evidence{SessionID: fact.Value})
+			if bySID.Verified {
+				historyResults = append(historyResults, bySID)
+			}
+		}
+		if len(historyResults) > 0 {
+			resolved = historyResults[0]
+			for _, candidate := range historyResults[1:] {
+				if candidate.Name != resolved.Name {
+					return v2.Seat{}, false, &Refusal{Code: RefusalBusAmbiguous, Cause: "surviving binding histories resolve to different joined bus rows"}
+				}
+			}
+		}
+	}
+	if !resolved.Verified && request.Attested != nil && request.Attested.Field == v2.BindingFieldHcomName {
 		row, count := hcomidentity.JoinedNamedCount(rows, request.Attested.Value)
 		if count != 1 {
 			return v2.Seat{}, false, &Refusal{Code: RefusalBusAmbiguous, Cause: fmt.Sprintf("attested bus name resolves to %d joined rows", count)}
 		}
 		resolved = hcomidentity.Result{Name: row.Name, BaseName: row.BaseName, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
+		busAttested = true
+	}
+	if !resolved.Verified && request.Attested != nil && request.Attested.Field == v2.BindingFieldLaunchContext && request.Candidate.Seat != nil && request.Candidate.Seat.HcomName != "" {
+		row, count := hcomidentity.JoinedNamedCount(rows, request.Candidate.Seat.HcomName)
+		if count != 1 {
+			return v2.Seat{}, false, &Refusal{Code: RefusalBusAmbiguous, Cause: fmt.Sprintf("stored bus name resolves to %d joined rows", count)}
+		}
+		resolved = hcomidentity.Result{Name: row.Name, BaseName: row.BaseName, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
+	}
+	if resolved.Verified && request.Attested != nil && request.Attested.Operation == v2.AttestationRebind && request.Attested.Field == v2.BindingFieldHcomName {
+		if resolved.Name != request.Attested.Value {
+			return v2.Seat{}, false, &Refusal{Code: RefusalBusAmbiguous, Cause: fmt.Sprintf("conflicting live bus evidence proves @%s, not attested @%s", resolved.Name, request.Attested.Value)}
+		}
 		busAttested = true
 	}
 	if !resolved.Verified && request.Fallback != nil {
@@ -393,6 +454,24 @@ func cloneBindings(in []v2.BindingFact) []v2.BindingFact {
 			out[i].Seat = &seat
 		}
 	}
+	return out
+}
+
+func cloneAttestations(in []v2.Attestation) []v2.Attestation {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]v2.Attestation, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneTombstones(in []v2.BindingTombstone) []v2.BindingTombstone {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]v2.BindingTombstone, len(in))
+	copy(out, in)
 	return out
 }
 

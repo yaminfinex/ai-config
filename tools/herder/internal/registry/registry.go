@@ -213,6 +213,11 @@ func recordFromV2SessionObject(obj map[string]json.RawMessage) Record {
 	_ = json.Unmarshal(obj["seat"], &seat)
 	var prov Provenance
 	_ = json.Unmarshal(obj["provenance"], &prov)
+	var sids []v2.SID
+	_ = json.Unmarshal(obj["sids"], &sids)
+	if len(sids) > 0 {
+		prov.ToolSessionID = sids[len(sids)-1].SID
+	}
 	rec := Record{
 		Role:           rawString(obj["role"]),
 		Agent:          rawString(obj["tool"]),
