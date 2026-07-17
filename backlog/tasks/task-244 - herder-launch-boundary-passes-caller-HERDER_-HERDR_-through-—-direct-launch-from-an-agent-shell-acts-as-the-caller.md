@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-15 11:28'
-updated_date: '2026-07-17 02:23'
+updated_date: '2026-07-17 02:41'
 labels: []
 dependencies: []
 ordinal: 243500
@@ -35,4 +35,6 @@ TASK-266 investigation code-verified the second vector OPEN at HEAD (d50acfa): r
 Contained fix dispatched 2026-07-17 as its own implement unit (second vector only: creator-flow ambient-SID harvest). Brief: napkins/run-herder-dx/builder-244-brief.md — design checkpoint required before code (call-site creator/self classification). First vector (HERDER_*/HERDR_* passthrough on direct launch) remains open, not in this unit's scope.
 
 Two live field instances found 2026-07-17 (fleet escalation, rows verified read-only at HEAD): two spawn-minted rows degraded to unseated with no terminal/pane/bus name, each left with exactly ONE recorded sid, source harvest = the SPAWNER'S session id. Consequence sharper than contamination: enroll's guid-reuse ownership proof accepts recorded-sid==live-sid as a sufficient leg, so when the harvest sid is the only surviving evidence, the SPAWNER is the only session that can prove ownership of the child's row — the rightful seat holder is locked out (circular-repair class) while the contaminating caller is handed takeover capability. Recovery prescribed: adopt-from-own-seat (true replacement); outcome to be recorded. Fixture guidance for this unit: the red fixture should assert the ownership-proof consequence, not just the row bytes — a creator-minted row must never be ownership-provable by the creator's sid.
+
+Design checkpoint APPROVED 2026-07-17 (bus thread sid-harvest-fix): five production call sites classified (spawn+fork+resume = creator/target flows passing explicit-or-empty target SID; enroll+sidecar = self flows passing their verified/observed own SID); BuildProvenance loses the ambient env read entirely. Orchestrator verified the enumeration independently (grep match). Rider 1: named behavior delta at the compact identity path that requires confirmed continuity when hcom_verified is absent — born-assumed creator rows now fail it closed (the prior pass rode on harvested wrong-session evidence); pinned by test with the confirmation-path heal. Rider 2: resume target-SID-wins ordering pinned by assertion.
 <!-- SECTION:NOTES:END -->
