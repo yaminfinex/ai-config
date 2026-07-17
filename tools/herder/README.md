@@ -158,9 +158,11 @@ resend), `send_failed`/`not_joined` (nothing delivered — a retry via `herder s
 for the owned-child sidecar). After the sidecar completes the canonical seat it submits that prompt
 through the same receipt-checked bus engine. If an operator manually sends the exact pending prompt
 first, the shared delivery marker suppresses the sidecar replay instead of double-submitting it.
-Pending plaintext is mode-0600, expires after a bounded lifetime, and is removed on successful
-delivery or session teardown; only a short-lived content digest remains long enough to deduplicate
-the competing delivery path.
+The marker is committed before transport, so a process crash may drop the automatic hand-off but
+cannot make a blind retry double-submit it. After confirming the prompt is absent, an operator can
+send a distinct recovery message with `herder send`; an exact retry remains suppressed. Pending
+plaintext is mode-0600, expires after a bounded lifetime, and is removed on successful delivery or
+session teardown; only a content digest remains until expiry to deduplicate the delivery paths.
 The prompt gate trusts CHILD-SPECIFIC bind signals only (this guid's sidecar enrichment, or the
 frozen-launch-pane roster match) — a pre-existing same-tag+cwd bus agent never satisfies it, so a
 stale roster match waits out to `bind_timeout` instead of misdelivering the prompt to the old

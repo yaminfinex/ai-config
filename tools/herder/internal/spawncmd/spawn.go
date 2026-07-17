@@ -164,6 +164,7 @@ type worktreeInfo struct {
 
 type spawnJSONDetails struct {
 	PromptSent     bool
+	PendingPrompt  bool
 	DeliveryResult string
 	Prompt         string
 	PasteNotes     []string
@@ -205,7 +206,7 @@ func newSpawnJSONRecord(record spawnRecord, details spawnJSONDetails) spawnJSONR
 		Provenance:           record.Provenance,
 		PromptSent:           details.PromptSent,
 		DeliveryResult:       details.DeliveryResult,
-		ResendCommand:        resendCommandFor(details.DeliveryResult, record.Label, details.Prompt),
+		ResendCommand:        resendCommandFor(details.DeliveryResult, details.PendingPrompt, record.Label, details.Prompt),
 		PasteNotes:           details.PasteNotes,
 		PermInjected:         details.PermInjected,
 		NewTab:               details.NewTab,
@@ -1376,6 +1377,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	if opts.JSONOutput {
 		outRecord := newSpawnJSONRecord(record, spawnJSONDetails{
 			PromptSent:     promptSent,
+			PendingPrompt:  r.pendingPrompt,
 			DeliveryResult: deliveryResult,
 			Prompt:         opts.Prompt,
 			PasteNotes:     pasteNotes,
@@ -1718,6 +1720,9 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 		case deliveryResult == "blocked_trust_modal":
 			fmt.Fprintln(r.stderr, "  prompt: NOT sent — a directory-trust modal is open and --safe forbids auto-accepting it.")
 			fmt.Fprintf(r.stderr, "          Accept it in the pane (focus + Enter), then: herder send %s \"<prompt>\"\n", record.Label)
+		case deliveryResult == "bind_timeout" && r.pendingPrompt:
+			fmt.Fprintf(r.stderr, "  prompt: pending after bind timeout (%s) — the owned-child sidecar will deliver it automatically.\n", readyReason)
+			fmt.Fprintln(r.stderr, "          Do NOT resend the initial prompt; the durable hand-off suppresses duplicate submission.")
 		case deliveryResult == "bind_timeout" || deliveryResult == "ready_match_timeout":
 			fmt.Fprintf(r.stderr, "  prompt: NOT sent (%s) — nothing went on the wire; a resend is SAFE.\n", readyReason)
 			fmt.Fprintf(r.stderr, "          once `herder list` shows its bus name, resend verbatim (also in --json as resend_command):\n")
@@ -2159,7 +2164,7 @@ func grokBoundBusOnce(stateDir, guid, sessionID string) string {
 }
 
 // resendCommand renders the exact, copy-pasteable recovery command for a prompt
-// that bind-timed out (nothing went on the wire — a resend is safe; TASK-036).
+// that timed out before any durable sidecar hand-off existed.
 // BOTH the label and the prompt are shell-quoted with the same printf %q-
 // compatible quoting herder uses elsewhere: the label is built from
 // --label-prefix verbatim and metachar prefixes are accepted (bash_metachar
@@ -2172,12 +2177,12 @@ func resendCommand(label, prompt string) string {
 
 // resendCommandFor returns the recovery command for the --json surface, but ONLY
 // for the delivery results where a resend is the documented remedy and provably
-// safe — bind_timeout and ready_match_timeout (nothing went on the wire). Every
+// safe — an unpersisted bind_timeout or ready_match_timeout. Every
 // other result (delivered, queued, blocked_trust_modal, send_failed, the paste
 // variants) has its own remedy and must NOT carry a resend_command, so the field
 // is omitempty and left "" here. Mirrors the writeSummary human line exactly.
-func resendCommandFor(deliveryResult, label, prompt string) string {
-	if deliveryResult == "bind_timeout" || deliveryResult == "ready_match_timeout" {
+func resendCommandFor(deliveryResult string, pendingPrompt bool, label, prompt string) string {
+	if (deliveryResult == "bind_timeout" && !pendingPrompt) || deliveryResult == "ready_match_timeout" {
 		return resendCommand(label, prompt)
 	}
 	return ""
