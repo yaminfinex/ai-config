@@ -200,8 +200,9 @@ strengthens one of these.
   | Seat credential | Not a binding: reissue operation (§3.3), no adjudication | — | — |
 
   Worked instance of the correction cell: bus name A was once recorded
-  `live-verified`; after a rename/reclaim the live correlates are unavailable
-  and A is stale; the operator attests B. The attested correction tombstones
+  `live-verified`; after a rename/reclaim the live source is successfully
+  consulted and no correlate matches (rule 2's arming case — an *unavailable*
+  source would not arm) while A is stale; the operator attests B. The attested correction tombstones
   the A-binding and appends B; adjudication sees only B among survivors, so
   completion binds B. Without rule 3, class-dominates-recency would have
   restored A and re-created the refusal loop — that contradiction is the rule's
