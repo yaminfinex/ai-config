@@ -269,6 +269,37 @@ func TestFindRowCorrelatedRejectsReclaimedFrozenOwnedChildName(t *testing.T) {
 	}
 }
 
+func TestFindRowCorrelatedReportsPIDSchemaDriftOnce(t *testing.T) {
+	t.Setenv("HERDER_GUID", "guid-child-0000")
+	var diagnostic strings.Builder
+	s := &sidecar{
+		tool: "codex", paneID: "p_child", diagnostic: &diagnostic,
+		instancePID: func(string, string) (int, error) {
+			return 0, fmt.Errorf("%w: instances.pid INTEGER column is missing", hcomidentity.ErrInstancePIDSchemaDrift)
+		},
+		processEnvirons: func(string) []processEnvironmentRead {
+			return []processEnvironmentRead{{pid: 4242, env: map[string]string{
+				"HERDER_GUID": "guid-child-0000", "HCOM_INSTANCE_NAME": "zida", "HCOM_TAG": "builder",
+			}}}
+		},
+	}
+	rows := []hcomRow{{Name: "builder-zida", BaseName: "zida", Tag: "builder", Tool: "codex", Status: "listening"}}
+
+	for range 2 {
+		if row, correlated := s.findRowCorrelated(rows); row != nil || correlated {
+			t.Fatalf("schema-drift lookup = %+v correlated=%v, want fail-closed miss", row, correlated)
+		}
+	}
+	got := diagnostic.String()
+	if !strings.Contains(got, "refusing hcom PID corroboration: schema drift") ||
+		!strings.Contains(got, "refusing exact-name recovery") {
+		t.Fatalf("schema-drift diagnostic = %q, want explicit refusal", got)
+	}
+	if strings.Count(got, "herder sidecar:") != 1 {
+		t.Fatalf("schema-drift diagnostic count = %d, want one", strings.Count(got, "herder sidecar:"))
+	}
+}
+
 func TestOwnedChildNameDisagreementFailsClosed(t *testing.T) {
 	t.Setenv("HERDER_GUID", "guid-child-0000")
 	s := &sidecar{

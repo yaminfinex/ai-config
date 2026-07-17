@@ -152,24 +152,55 @@ func TestLaunchContextRefusalRemediesAreCodeSpecific(t *testing.T) {
 	}
 }
 
-func TestInstancePIDReadsOneExactBaseNameWithoutCreatingState(t *testing.T) {
+func TestInstancePIDReadsTaggedInstanceByExactBaseNameWithoutCreatingState(t *testing.T) {
 	dir, db := newLaunchContextDB(t, supportedSchemaVersion, true)
-	execSQL(t, db, `INSERT INTO instances(name, launch_context, pid) VALUES ('mine', '{}', 4242)`)
+	execSQL(t, db, `INSERT INTO instances(name, tag, launch_context, pid) VALUES ('zida', 'builder', '{}', 3001551)`)
 	db.Close()
 
-	pid, err := InstancePID(dir, "mine")
-	if err != nil || pid != 4242 {
-		t.Fatalf("InstancePID = (%d, %v), want 4242", pid, err)
+	pid, err := InstancePID(dir, "zida")
+	if err != nil || pid != 3001551 {
+		t.Fatalf("InstancePID(base name) = (%d, %v), want 3001551", pid, err)
 	}
-	if _, err := InstancePID(dir, "missing"); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("InstancePID missing error = %v, want sql.ErrNoRows", err)
+	if _, err := InstancePID(dir, "builder-zida"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("InstancePID(full roster name) error = %v, want sql.ErrNoRows", err)
 	}
 	missingDir := t.TempDir()
-	if _, err := InstancePID(missingDir, "mine"); err == nil {
+	if _, err := InstancePID(missingDir, "zida"); err == nil {
 		t.Fatal("InstancePID created or accepted a missing hcom database")
 	}
 	if _, err := os.Stat(filepath.Join(missingDir, "hcom.db")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("InstancePID missing-db read created state: %v", err)
+	}
+}
+
+func TestInstancePIDRefusesSchemaDriftLoudly(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(*testing.T, *sql.DB)
+		version int
+	}{
+		{name: "schema version", version: supportedSchemaVersion - 1},
+		{
+			name:    "pid column",
+			version: supportedSchemaVersion,
+			setup: func(t *testing.T, db *sql.DB) {
+				execSQL(t, db, `ALTER TABLE instances DROP COLUMN pid`)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, db := newLaunchContextDB(t, tt.version, true)
+			if tt.setup != nil {
+				tt.setup(t, db)
+			}
+			db.Close()
+
+			_, err := InstancePID(dir, "zida")
+			if !errors.Is(err, ErrInstancePIDSchemaDrift) || !strings.Contains(err.Error(), "refusing hcom PID corroboration: schema drift:") {
+				t.Fatalf("InstancePID schema error = %v, want loud schema-drift refusal", err)
+			}
+		})
 	}
 }
 
@@ -184,7 +215,7 @@ func newLaunchContextDB(t *testing.T, version int, primaryKey bool) (string, *sq
 	if !primaryKey {
 		nameDecl = "TEXT"
 	}
-	execSQL(t, db, fmt.Sprintf(`CREATE TABLE instances(name %s, launch_context TEXT DEFAULT '', pid INTEGER)`, nameDecl))
+	execSQL(t, db, fmt.Sprintf(`CREATE TABLE instances(name %s, tag TEXT, launch_context TEXT DEFAULT '', pid INTEGER DEFAULT NULL)`, nameDecl))
 	execSQL(t, db, `CREATE TABLE process_bindings(process_id TEXT PRIMARY KEY, instance_name TEXT, updated_at REAL NOT NULL)`)
 	execSQL(t, db, fmt.Sprintf(`PRAGMA user_version=%d`, version))
 	return dir, db

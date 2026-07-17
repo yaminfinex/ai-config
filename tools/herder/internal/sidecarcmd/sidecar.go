@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -60,7 +61,6 @@ func (t *flexibleJSONText) UnmarshalJSON(b []byte) error {
 
 // Run bridges hcom status to herdr's pane.report_agent socket protocol.
 func Run(args []string, stdout, stderr io.Writer) int {
-	_ = stderr
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		printHelp(stdout)
 		return 0
@@ -83,6 +83,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		lifecycleMode:   os.Getenv("HERDER_LIFECYCLE_MODE"),
 		parentSessionID: os.Getenv("HERDER_PARENT_SESSION_ID"),
 		completeSeat:    completeObservedSeat,
+		diagnostic:      stderr,
 	}
 	return sidecar.run()
 }
@@ -134,6 +135,8 @@ type sidecar struct {
 	correlatedPIDs      []int
 	processEnvirons     processEnvironmentScanner
 	instancePID         func(string, string) (int, error)
+	diagnostic          io.Writer
+	pidSchemaWarned     bool
 	statuslineSnapshots *statuslineSnapshotWriter
 	completeSeat        func(context.Context, *hcomRow, seatcompletion.Request) (seatcompletion.Result, error)
 }
@@ -806,8 +809,26 @@ func (s *sidecar) pidCorroborator(identity ownedChildIdentity) func(hcomRow) boo
 			lookup = hcomidentity.InstancePID
 		}
 		pid, err := lookup(os.Getenv("HCOM_DIR"), baseName)
-		return err == nil && pid > 0 && containsPID(identity.PIDs, pid)
+		if err != nil {
+			if errors.Is(err, hcomidentity.ErrInstancePIDSchemaDrift) {
+				s.reportPIDSchemaDrift(err)
+			}
+			return false
+		}
+		return pid > 0 && containsPID(identity.PIDs, pid)
 	}
+}
+
+func (s *sidecar) reportPIDSchemaDrift(err error) {
+	if s.pidSchemaWarned {
+		return
+	}
+	s.pidSchemaWarned = true
+	diagnostic := s.diagnostic
+	if diagnostic == nil {
+		diagnostic = os.Stderr
+	}
+	fmt.Fprintf(diagnostic, "herder sidecar: %v; refusing exact-name recovery\n", err)
 }
 
 func containsPID(pids []int, want int) bool {
