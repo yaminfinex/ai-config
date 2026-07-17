@@ -7,7 +7,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-17 07:33'
-updated_date: '2026-07-17 07:35'
+updated_date: '2026-07-17 07:47'
 labels:
   - herder
   - identity-migration
@@ -29,3 +29,12 @@ Field class, same night the canonical seat-completion unit merged: 4/4 codex spa
 - [ ] #3 Refusal text matches reality: the automatic-recovery promise is either made true or reworded to the actual remedy
 - [ ] #4 All ratified completion fences preserved (refuse-not-mint, multi-match fail-closed, no partial rows); existing suites + spawn goldens green
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-17 07:47
+---
+Root cause ACCEPTED (builder's isolated probes + lived spawn refusal): (1) awaitBind has only two child proofs — own-guid registry enrichment (cannot exist under refuse-not-mint) or roster pane_id match (codex rows omit pane) — so a row joining at ~30s stays invisible for the whole 60s window; (2) completion Evidence carries empty SessionID (codex sid lag), no ProcessID, and pane ids that match nothing -> zero correlates -> joined_bus_row_missing; (3) the sidecar starts env-scrubbed, extracts only HCOM_PROCESS_ID from owned children (ignores HCOM_INSTANCE_NAME the child demonstrably carries), and its tag+cwd fallback is deliberately non-authoritative -> the automatic-recovery promise is FALSE for the empty-coordinate codex row class. Regression boundary: the seat-completion unit's hardening correctly removed the sidecar ObservedBus shortcut but added no replacement child-specific correlate. Design APPROVED WITH REDIRECT: exact-Name correlate added to hcomidentity.Evidence and consumed by Resolve (joined/nonempty/exactly-one/fail-closed preserved; completions class live-verified) — a tightly-scoped authorized edit on the seam shared with the concurrent break-glass unit (which was notified; its attested-arm sole-caller pin is untouched — the builder's original proposal to reuse the AttestedBinding arm was REFUSED for exactly that collision). Spawn passes the name herder itself minted at launch; the owned-child env probe (guid-keyed, all-must-agree) is the sidecar's recovery path. Red-first pins required incl. making the refusal-text promise true end-to-end.
+---
+<!-- COMMENTS:END -->
