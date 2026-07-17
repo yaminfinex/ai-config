@@ -73,7 +73,11 @@ cat >"$MOCKBIN/hcom" <<'MOCK_HCOM'
 #!/usr/bin/env bash
 # fork --self correlates the current pane to a registered guid via `hcom list`.
 if [[ "${1:-} ${2:-}" == "list --json" ]]; then
-  printf '%s\n' "${MOCK_HCOM_IDENTITY:-[]}"
+  identity="${MOCK_HCOM_IDENTITY:-}"
+  if [[ -z "$identity" ]]; then
+    identity='[{"name":"fork-child","joined":true,"launch_context":{"pane_id":"p_child"}}]'
+  fi
+  printf '%s\n' "$identity"
   exit 0
 fi
 # TASK-017: the addendum send rides the real bus engine — record what it sends
@@ -293,7 +297,7 @@ check_one missing_session
 # user developer_instructions on resume/fork), so the native fork path
 # re-delivers it over the bus once the sidecar binds the child's bus name.
 SEED_CODEX=1 SEED_SENDER=1 MOCK_BIND_NAME=codexfork-vibe \
-  MOCK_HCOM_IDENTITY='[{"name":"dispatcher-rive","launch_context":{"pane_id":"p_self"}}]' \
+  MOCK_HCOM_IDENTITY='[{"name":"dispatcher-rive","joined":true,"launch_context":{"pane_id":"p_self"}},{"name":"codexfork-vibe","joined":true,"session_id":"sess-codexp-child","launch_context":{"pane_id":"p_child"}}]' \
   run_case codex_addendum 0 codexp --json
 check_one codex_addendum
 # provenance: a fork run BY a spawned session records THAT session as the child's
@@ -308,7 +312,7 @@ check_one provenance_spawned_by
 # --- fork --self -----------------------------------------------------------
 # claude, pane correlates to a registered guid (hcom_name) -> NATIVE fork path.
 CLAUDECODE=1 \
-  MOCK_HCOM_IDENTITY='[{"name":"parent-rive","session_id":"sess-parent","launch_context":{"pane_id":"p_self"}}]' \
+  MOCK_HCOM_IDENTITY='[{"name":"parent-rive","joined":true,"session_id":"sess-parent","launch_context":{"pane_id":"p_self"}},{"name":"self-child","joined":true,"launch_context":{"pane_id":"p_child"}}]' \
   run_self_case self_native 1 --self --prompt "hello self" --json
 check_one self_native
 # claude, no registered guid, orphan session id -> FALLBACK to spawn --resume.

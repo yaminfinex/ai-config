@@ -224,7 +224,7 @@ PY
     fail=1
   fi
   backfill_apply="$(MOCK_RECONCILE_SCENARIO=backfill MOCK_RECONCILE_HCOM_DIR="$backfill_dir" run_one "$FIX/reconcile-backfill" 1 --apply)"
-  if grep -q 'launch context backfill written and confirmed' <<<"$backfill_apply" \
+  if grep -q 'launch context backfill completed before registry append' <<<"$backfill_apply" \
     && grep -q '=== EXIT ==='$'\n''0' <<<"$backfill_apply" \
     && python3 -c '
 import json,sqlite3,sys
@@ -245,7 +245,7 @@ db.execute("pragma user_version=18")
 db.commit()
 PY
   backfill_refuse="$(MOCK_RECONCILE_SCENARIO=backfill MOCK_RECONCILE_HCOM_DIR="$backfill_dir" run_one "$FIX/reconcile-backfill" 1 --apply)"
-  if grep -q 'launch context backfill refused \[launch_context_schema_mismatch\]' <<<"$backfill_refuse" \
+  if grep -q 'completion refused \[launch_context_schema_mismatch\]' <<<"$backfill_refuse" \
     && grep -q '=== EXIT ==='$'\n''1' <<<"$backfill_refuse" \
     && python3 -c 'import sqlite3,sys; raise SystemExit(0 if sqlite3.connect(sys.argv[1]).execute("select launch_context from instances where name=\"repair-bus\"").fetchone()[0] == "{}" else 1)' "$backfill_dir/hcom.db"; then
     printf 'PASS  reconcile schema mismatch is typed and writes nothing\n'

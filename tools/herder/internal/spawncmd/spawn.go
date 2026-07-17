@@ -2,6 +2,7 @@ package spawncmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ import (
 	"ai-config/tools/herder/internal/placement"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcompletion"
 	"ai-config/tools/herder/internal/send"
 	"ai-config/tools/herder/internal/shellquote"
 )
@@ -288,6 +290,7 @@ type runner struct {
 	piVendorVersion *v2.VendorVersionHistory
 	piBinDir        string
 	piBind          hcomEntry
+	completion      *seatcompletion.Engine
 }
 
 type herdrClient interface {
@@ -384,6 +387,64 @@ func (r *runner) registerSpawnOrRollback(registryPath string, record spawnRecord
 		return r.failAfterLaunch("registry write refused: "+err.Error(), record.PaneID, record.TerminalID)
 	}
 	return 0
+}
+
+func spawnCompletionCandidate(record spawnRecord) v2.SessionRecord {
+	hooksBound := record.HooksBound
+	rec := registry.Record{
+		GUID:           &record.GUID,
+		ShortGUID:      &record.ShortGUID,
+		Label:          &record.Label,
+		Role:           record.Role,
+		Agent:          record.Agent,
+		Provider:       record.Provider,
+		Model:          record.Model,
+		VendorVersion:  record.VendorVersion,
+		PaneID:         record.PaneID,
+		TerminalID:     record.TerminalID,
+		HcomDir:        record.HcomDir,
+		HcomName:       record.HcomName,
+		HcomTag:        record.HcomTag,
+		HooksBound:     &hooksBound,
+		TranscriptPath: record.TranscriptPath,
+		Status:         record.Status,
+		Mission:        record.Mission,
+		Provenance:     &record.Provenance,
+	}
+	row := registry.V2FromRecord(rec, "seated", v2.StateSeated, record.StartedAt)
+	row.Provenance.CWD = record.CWD
+	row.Provenance.WorkspaceID = record.WorkspaceID
+	return row
+}
+
+func (r *runner) completeSpawn(registryPath string, record spawnRecord, launchPaneID, sessionID string) (seatcompletion.Result, error) {
+	engine := seatcompletion.DefaultEngine()
+	if r.completion != nil {
+		engine = *r.completion
+	}
+	engine.HerdrPane = func(_ context.Context, paneID string) (seatcompletion.LivePane, error) {
+		out, err := r.herdr.Output("pane", "get", paneID)
+		if err != nil {
+			return seatcompletion.LivePane{}, err
+		}
+		pane, err := herdrcli.ParsePaneGet(out)
+		if err != nil {
+			return seatcompletion.LivePane{}, err
+		}
+		return seatcompletion.LivePane{PaneID: pane.PaneID, TerminalID: pane.TerminalID}, nil
+	}
+	engine.UpdateRegistry = r.updateLocked
+	return engine.Complete(context.Background(), seatcompletion.Request{
+		Origin:       seatcompletion.OriginSpawn,
+		RegistryPath: registryPath,
+		Candidate:    spawnCompletionCandidate(record),
+		Seat:         seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: record.PaneID},
+		Namespace:    record.HcomDir,
+		Evidence: hcomidentity.Evidence{
+			SessionID: sessionID,
+			PaneIDs:   []string{record.PaneID, launchPaneID},
+		},
+	})
 }
 
 func (r *runner) persistCapturedHcomName(registryPath, guid, name string) int {
@@ -1170,7 +1231,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	modalCleared := false
 	capturedName := ""
 	switch {
-	case busPrompt || opts.Agent == "grok" || opts.Agent == "pi":
+	case isHcomAgent:
 		// Bind is the delivery gate, so --no-ready-wait cannot skip this wait
 		// (ruling: it stays meaningful only for the paste path). The trust
 		// modal blocks BOOT itself — pre-bind — so awaitBind clears it too.
@@ -1269,8 +1330,23 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	if opts.Agent == "pi" {
 		record.Model = opts.Model
 	}
-	if code := r.registerSpawnOrRollback(registryPath, record); code != 0 {
-		return code
+	completion, completeErr := r.completeSpawn(registryPath, record, launchPaneID, toolSessionID)
+	if completeErr != nil {
+		return r.failAfterLaunch("seat completion failed: "+completeErr.Error(), paneID, termID)
+	}
+	if completion.Refusal != nil {
+		if r.spawnOccupantState(paneID) != occupantAbsent {
+			die(r.stderr, fmt.Sprintf("seat completion refused [%s]: %s; bind status: %s; no registry row was appended and the child pane remains running because occupant death was not proven. Once the child has joined hcom, its sidecar will complete the seat automatically; manual recovery is `herder enroll` from pane %s", completion.Refusal.Code, completion.Refusal.Cause, readyReason, paneID))
+			return 1
+		}
+		return r.failAfterLaunch(fmt.Sprintf("seat completion refused [%s]: %s", completion.Refusal.Code, completion.Refusal.Cause), paneID, termID)
+	}
+	if isHcomAgent {
+		var completed v2.SessionRecord
+		if err := json.Unmarshal(completion.Row, &completed); err != nil || completed.Seat == nil || completed.Seat.HcomName == "" {
+			return r.failAfterLaunch("seat completion returned no verified bus binding", paneID, termID)
+		}
+		record.HcomName = completed.Seat.HcomName
 	}
 
 	hcomCapture := "not_hcom_agent"
@@ -1278,50 +1354,6 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		// Bus-first delivery already bound the name (awaitBind) and the row
 		// above records it — no post-write capture loop to run.
 		hcomCapture = "captured"
-	} else if isHcomAgent {
-		// Post-write row enrichment trusts CHILD-SPECIFIC signals ONLY, the same
-		// discipline the bus-first bind gate enforces: this guid's sidecar registry
-		// enrichment, Grok's live bridge status operation, or (for other families)
-		// the hcom roster entry whose launch_context matches the frozen launch pane.
-		// The tag+cwd-unique
-		// fallback is GONE (TASK-033): even a UNIQUE same-tag+cwd match can be a
-		// STALE pre-existing agent still on the bus, and enriching the row with
-		// its name would make a later `herder send <guid>` message the WRONG
-		// session — no prompt misdelivery (that gate is already fixed), but a
-		// mislabeled row. When no child-specific signal appears the name is LEFT
-		// EMPTY for sidecar enrichment to fill from the child's own pane row
-		// (findRowForPane) later — never guessed.
-		hcomCapture = "not_found"
-		if name := registryCapturedName(registryPath, guid); opts.Agent != "grok" && name != "" {
-			// The sidecar already persisted this enrichment to the registry; the
-			// in-memory record just needs the name for the summary/JSON. No second
-			// append.
-			record.HcomName = name
-			hcomCapture = "captured"
-		} else {
-			for i := 0; i < 6; i++ {
-				name := ""
-				if opts.Agent == "grok" {
-					name = grokBoundBusOnce(filepath.Dir(registryPath), guid, grokSessionID)
-				} else {
-					for _, entry := range hcomList(hcomDirEff) {
-						if entry.LaunchContext.PaneID == launchPaneID {
-							name = entry.Name
-							break
-						}
-					}
-				}
-				if name != "" {
-					record.HcomName = name
-					hcomCapture = "captured"
-					if code := r.persistCapturedHcomName(registryPath, record.GUID, name); code != 0 {
-						return code
-					}
-					break
-				}
-				sleepMS(700)
-			}
-		}
 	}
 
 	r.writeSummary(record, wtInfo, isHcomAgent, rootClosed, newTabResult, permInjected, hcomCapture, busPrompt, promptSent, deliveryResult, readyReason, trustBlocked, pasteNotes)
@@ -1344,6 +1376,29 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	spawnCompleted = true
 	observercmd.NudgeIfConfigured(r.stderr)
 	return 0
+}
+
+type occupantState int
+
+const (
+	occupantUnknown occupantState = iota
+	occupantPresent
+	occupantAbsent
+)
+
+func (r *runner) spawnOccupantState(paneID string) occupantState {
+	out, err := r.herdr.Output("pane", "process_info", paneID)
+	if err != nil {
+		return occupantUnknown
+	}
+	info, err := herdrcli.ParseProcessInfo(out)
+	if err != nil {
+		return occupantUnknown
+	}
+	if len(info.Processes) == 0 {
+		return occupantAbsent
+	}
+	return occupantPresent
 }
 
 func agentLoginPathExpression(shimsDir, agent, piBinDir string) string {

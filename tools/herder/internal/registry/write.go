@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +22,7 @@ var errNoAppend = errors.New("registry append skipped")
 type LockedUpdate struct {
 	Projection *v2.Projection
 	WasMinted  bool
+	NodeID     string
 }
 
 type LockedUpdateFunc func(LockedUpdate) ([]v2.SessionRecord, error)
@@ -147,7 +149,7 @@ func UpdateLocked(path string, fn LockedUpdateFunc) ([]WriteOutcome, error) {
 			mintedRow = nil
 		}
 	}
-	rows, err := fn(LockedUpdate{Projection: proj, WasMinted: wasMinted})
+	rows, err := fn(LockedUpdate{Projection: proj, WasMinted: wasMinted, NodeID: nodeID})
 	if err != nil {
 		return nil, err
 	}
@@ -507,8 +509,19 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 		if err := validateDurableMission(row); err != nil {
 			return row, false, err
 		}
+		if err := validateBindingHistory(nil, row.Bindings); err != nil {
+			return row, false, err
+		}
+		if err := validateSeatedBindingTransition(nil, row); err != nil {
+			return row, false, err
+		}
 		return row, true, nil
 	}
+	bindings, err := normalizeBindingHistory(current.Bindings, row.Bindings)
+	if err != nil {
+		return row, false, err
+	}
+	row.Bindings = bindings
 	if !missionChangeEvent(row) && row.Mission != nil && !sameMission(row.Mission, current.Mission) {
 		return row, false, fmt.Errorf("session %s event %q cannot change explicit mission membership", row.GUID, row.Event)
 	}
@@ -619,7 +632,203 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 			return row, false, nil
 		}
 	}
+	if err := validateSeatedBindingTransition(current, row); err != nil {
+		return row, false, err
+	}
 	return row, true, nil
+}
+
+func normalizeBindingHistory(current, patch []v2.BindingFact) ([]v2.BindingFact, error) {
+	if err := validateBindingHistory(nil, current); err != nil {
+		return nil, fmt.Errorf("persisted binding history is invalid: %w", err)
+	}
+	if len(patch) == 0 {
+		return cloneBindings(current), nil
+	}
+	if len(patch) < len(current) {
+		return nil, fmt.Errorf("binding history is append-only: patch has %d facts, current row has %d", len(patch), len(current))
+	}
+	for i := range current {
+		if !reflect.DeepEqual(current[i], patch[i]) {
+			return nil, fmt.Errorf("binding history is append-only: persisted fact %q was changed or reordered", current[i].ID)
+		}
+	}
+	if err := validateBindingHistory(current, patch[len(current):]); err != nil {
+		return nil, err
+	}
+	return cloneBindings(patch), nil
+}
+
+func validateBindingHistory(current, appended []v2.BindingFact) error {
+	ids := make(map[string]bool, len(current)+len(appended))
+	for _, fact := range current {
+		if fact.ID != "" {
+			ids[fact.ID] = true
+		}
+	}
+	for _, fact := range appended {
+		if fact.ID == "" {
+			return fmt.Errorf("binding fact missing durable id")
+		}
+		if ids[fact.ID] {
+			return fmt.Errorf("binding fact id %q is not unique", fact.ID)
+		}
+		ids[fact.ID] = true
+		if fact.ObservedAt == "" {
+			return fmt.Errorf("binding fact %q missing observed_at", fact.ID)
+		}
+		switch fact.EvidenceClass {
+		case v2.EvidenceLiveVerified, v2.EvidenceAttested, v2.EvidenceHarvest, v2.EvidenceCarried, v2.EvidenceAssumed:
+		default:
+			return fmt.Errorf("binding fact %q has invalid evidence class %q", fact.ID, fact.EvidenceClass)
+		}
+		switch fact.Field {
+		case v2.BindingFieldSeat:
+			if fact.Seat == nil || fact.Value != "" {
+				return fmt.Errorf("seat binding fact %q must carry only a typed seat value", fact.ID)
+			}
+			if err := validateBindingSeat(*fact.Seat); err != nil {
+				return fmt.Errorf("seat binding fact %q: %w", fact.ID, err)
+			}
+		case v2.BindingFieldHcomName:
+			if fact.Value == "" || fact.Seat != nil {
+				return fmt.Errorf("hcom_name binding fact %q must carry only a nonempty value", fact.ID)
+			}
+		default:
+			return fmt.Errorf("binding fact %q has invalid field %q", fact.ID, fact.Field)
+		}
+	}
+	return nil
+}
+
+func validateBindingSeat(seat v2.BindingSeat) error {
+	switch seat.Kind {
+	case "herdr":
+		if seat.TerminalID == "" || seat.PaneID == "" || seat.PID != 0 {
+			return fmt.Errorf("herdr seat requires terminal_id + pane_id and no pid")
+		}
+	case "process":
+		if seat.PID <= 0 || seat.TerminalID != "" || seat.PaneID != "" {
+			return fmt.Errorf("process seat requires pid and no terminal/pane")
+		}
+	default:
+		return fmt.Errorf("invalid kind %q", seat.Kind)
+	}
+	return nil
+}
+
+func validateSeatedBindingTransition(current *v2.SessionRecord, row v2.SessionRecord) error {
+	if row.State != v2.StateSeated {
+		return nil
+	}
+	// Rows written before binding history existed remain readable and mutable so
+	// the first completion can upgrade them. Once a row carries binding facts,
+	// every seated successor is held to the canonical binding contract.
+	if len(row.Bindings) == 0 && (current == nil || len(current.Bindings) == 0) {
+		return nil
+	}
+	if row.Seat == nil {
+		return fmt.Errorf("seated session %s is missing a canonical seat", row.GUID)
+	}
+	if err := validateCurrentSeat(*row.Seat); err != nil {
+		return fmt.Errorf("seated session %s: %w", row.GUID, err)
+	}
+	priorCount := 0
+	var priorSeat *v2.Seat
+	if current != nil {
+		priorCount = len(current.Bindings)
+		if current.State == v2.StateSeated {
+			priorSeat = current.Seat
+		}
+	}
+	if priorCount > len(row.Bindings) {
+		return fmt.Errorf("seated session %s lost binding history", row.GUID)
+	}
+	appended := row.Bindings[priorCount:]
+	if !sameSeatBindingProjection(priorSeat, row.Seat) && !hasMatchingSeatBinding(appended, row.Seat) {
+		return fmt.Errorf("seated session %s changes current seat coordinates without a matching binding fact", row.GUID)
+	}
+	priorName, priorVerified := busBindingProjection(priorSeat)
+	name, verified := busBindingProjection(row.Seat)
+	if (name != priorName || (verified && !priorVerified)) && name != "" && verified && !hasMatchingBusBinding(appended, name) {
+		return fmt.Errorf("seated session %s changes current bus binding without a matching binding fact", row.GUID)
+	}
+	return nil
+}
+
+func validateCurrentSeat(seat v2.Seat) error {
+	switch seat.Kind {
+	case "herdr":
+		if seat.TerminalID == "" || seat.PaneID == "" || seat.PID != 0 {
+			return fmt.Errorf("herdr seat requires terminal_id + pane_id and no pid")
+		}
+	case "process":
+		if seat.PID <= 0 || seat.TerminalID != "" || seat.PaneID != "" {
+			return fmt.Errorf("process seat requires pid and no terminal/pane")
+		}
+	default:
+		return fmt.Errorf("invalid seat kind %q", seat.Kind)
+	}
+	return nil
+}
+
+func sameSeatBindingProjection(a, b *v2.Seat) bool {
+	return reflect.DeepEqual(bindingSeatValue(a), bindingSeatValue(b))
+}
+
+func bindingSeatValue(seat *v2.Seat) *v2.BindingSeat {
+	if seat == nil {
+		return nil
+	}
+	return &v2.BindingSeat{
+		Kind:       seat.Kind,
+		Node:       seat.Node,
+		TerminalID: seat.TerminalID,
+		PaneID:     seat.PaneID,
+		PID:        seat.PID,
+		Namespace:  seat.Namespace,
+	}
+}
+
+func busBindingProjection(seat *v2.Seat) (string, bool) {
+	if seat == nil || seat.HcomVerified == nil {
+		return "", false
+	}
+	return seat.HcomName, *seat.HcomVerified
+}
+
+func hasMatchingSeatBinding(facts []v2.BindingFact, seat *v2.Seat) bool {
+	want := bindingSeatValue(seat)
+	for _, fact := range facts {
+		if fact.Field == v2.BindingFieldSeat && reflect.DeepEqual(fact.Seat, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasMatchingBusBinding(facts []v2.BindingFact, name string) bool {
+	for _, fact := range facts {
+		if fact.Field == v2.BindingFieldHcomName && fact.Value == name {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneBindings(in []v2.BindingFact) []v2.BindingFact {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]v2.BindingFact, len(in))
+	copy(out, in)
+	for i := range out {
+		if in[i].Seat != nil {
+			seat := *in[i].Seat
+			out[i].Seat = &seat
+		}
+	}
+	return out
 }
 
 func validateDurableMission(row v2.SessionRecord) error {
@@ -837,6 +1046,7 @@ func sameProjectedSession(a, b v2.SessionRecord) bool {
 		a.Model == b.Model &&
 		sameVendorVersion(a.VendorVersion, b.VendorVersion) &&
 		sameSeatFields(a.Seat, b.Seat) &&
+		reflect.DeepEqual(a.Bindings, b.Bindings) &&
 		sameSIDs(a.SIDs, b.SIDs) &&
 		a.Continuity == b.Continuity &&
 		a.Lineage == b.Lineage &&

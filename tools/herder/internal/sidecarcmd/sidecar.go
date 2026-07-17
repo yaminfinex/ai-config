@@ -14,9 +14,12 @@ import (
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcompletion"
 )
 
 type options struct {
@@ -78,6 +81,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		registry:        registry.DefaultPath(),
 		lifecycleMode:   os.Getenv("HERDER_LIFECYCLE_MODE"),
 		parentSessionID: os.Getenv("HERDER_PARENT_SESSION_ID"),
+		completeSeat: func(ctx context.Context, _ *hcomRow, request seatcompletion.Request) (seatcompletion.Result, error) {
+			return seatcompletion.Complete(ctx, request)
+		},
 	}
 	return sidecar.run()
 }
@@ -127,6 +133,7 @@ type sidecar struct {
 	correlatedProcessID string
 	processEnvirons     processEnvironmentScanner
 	statuslineSnapshots *statuslineSnapshotWriter
+	completeSeat        func(context.Context, *hcomRow, seatcompletion.Request) (seatcompletion.Result, error)
 }
 
 type processEnvironmentScanner func(tool string) []processEnvironmentRead
@@ -466,10 +473,53 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 		})
 	}
 	if err == nil {
-		outcome, writeErr := registry.AppendLegacySessionEvent(s.registry, out, "recognised", "seated")
-		return writeErr == nil && outcome.Err() == nil
+		candidate, decodeErr := registry.SessionEventFromJSON(out, "seated", v2.StateSeated)
+		if decodeErr != nil {
+			return false
+		}
+		request := seatcompletion.Request{
+			Origin:       seatcompletion.OriginRecognition,
+			RegistryPath: s.registry,
+			Candidate:    candidate,
+			Seat:         seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: coords.PaneID, TerminalID: coords.TerminalID},
+			Namespace:    os.Getenv("HCOM_DIR"),
+			Evidence: hcomidentity.Evidence{
+				SessionID: row.SessionID,
+				ProcessID: row.LaunchContext.ProcessID,
+				PaneIDs:   []string{coords.PaneID, row.LaunchContext.PaneID},
+			},
+		}
+		complete := s.completeSeat
+		if complete == nil {
+			complete = completeObservedSeat
+		}
+		result, completeErr := complete(context.Background(), row, request)
+		return completeErr == nil && result.Refusal == nil
 	}
 	return false
+}
+
+func completeObservedSeat(ctx context.Context, observed *hcomRow, request seatcompletion.Request) (seatcompletion.Result, error) {
+	launchPane := observed.LaunchContext.PaneID
+	if launchPane == "" {
+		// The sidecar has already correlated this observed row to the live seat,
+		// including the process-id-only launch-context case.
+		launchPane = request.Seat.PaneID
+	}
+	if request.Seat.Kind == seatcompletion.SeatHerdr {
+		terminalID := request.Seat.TerminalID
+		if terminalID == "" {
+			terminalID = "untracked-terminal"
+		}
+		request.ObservedPane = &seatcompletion.LivePane{PaneID: request.Seat.PaneID, TerminalID: terminalID}
+	}
+	request.ObservedBus = &hcomidentity.Result{
+		Name:      observed.Name,
+		SessionID: observed.SessionID,
+		PaneID:    launchPane,
+		Verified:  true,
+	}
+	return seatcompletion.Complete(ctx, request)
 }
 
 func piRowBound(row *hcomRow) bool {

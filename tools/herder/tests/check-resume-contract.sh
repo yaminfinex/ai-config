@@ -76,7 +76,11 @@ chmod +x "$MOCKBIN/herdr"
 cat >"$MOCKBIN/hcom" <<'MOCK_HCOM'
 #!/usr/bin/env bash
 if [[ "${1:-} ${2:-}" == "list --json" ]]; then
-  printf '%s\n' "${MOCK_HCOM_IDENTITY:-[]}"
+  identity="${MOCK_HCOM_IDENTITY:-}"
+  if [[ -z "$identity" ]]; then
+    identity='[{"name":"resume-child","joined":true,"session_id":"sess-resume","launch_context":{"pane_id":"p_resumed"}}]'
+  fi
+  printf '%s\n' "$identity"
   exit 0
 fi
 case "${1:-}" in
@@ -212,12 +216,12 @@ check_one missing_session
 # user developer_instructions on resume/fork), so resume re-delivers it over
 # the bus once the sidecar binds the new instance's bus name in the registry.
 SEED_CODEX=1 SEED_SENDER=1 MOCK_BIND_NAME=codex-vibe \
-  MOCK_HCOM_IDENTITY='[{"name":"dispatcher-rive","launch_context":{"pane_id":"p_self"}}]' \
+  MOCK_HCOM_IDENTITY='[{"name":"dispatcher-rive","joined":true,"launch_context":{"pane_id":"p_self"}},{"name":"codex-vibe","joined":true,"session_id":"sess-codex","launch_context":{"pane_id":"p_resumed"}}]' \
   run_case codex_addendum 0 codex --json
 check_one codex_addendum
-# No bind inside the window -> WARN with the manual remedy, but the resume
-# itself still succeeds (exit 0) — delivery never blocks the lifecycle verdict.
-SEED_CODEX=1 HERDER_ADDENDUM_SETTLE_MS=1 \
+# No bind inside the window -> canonical completion refuses the registry row
+# while preserving the live child for sidecar or in-seat enrollment recovery.
+SEED_CODEX=1 HERDER_ADDENDUM_SETTLE_MS=1 MOCK_HCOM_IDENTITY='[]' \
   run_case codex_addendum_timeout 0 codex
 check_one codex_addendum_timeout
 

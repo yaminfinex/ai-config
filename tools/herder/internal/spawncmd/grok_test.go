@@ -2,6 +2,7 @@ package spawncmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -11,9 +12,11 @@ import (
 	"testing"
 
 	"ai-config/tools/herder/internal/grokbridge"
+	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcompletion"
 )
 
 func serveGrokStatus(t *testing.T, stateDir, seat, sessionID, bus string) <-chan error {
@@ -84,6 +87,13 @@ func serveGrokStatusCalls(t *testing.T, stateDir, seat, sessionID, bus string, s
 type grokSpawnFlowHerdr struct {
 	cleanupHerdr
 	onStart func([]string)
+}
+
+func (f *grokSpawnFlowHerdr) Output(args ...string) ([]byte, error) {
+	if len(args) >= 3 && args[0] == "pane" && args[1] == "get" {
+		return []byte(`{"result":{"pane":{"pane_id":"p_new","terminal_id":"term_new"}}}`), nil
+	}
+	return f.cleanupHerdr.Output(args...)
 }
 
 func (f *grokSpawnFlowHerdr) Combined(args ...string) ([]byte, int, error) {
@@ -284,16 +294,27 @@ func TestGrokSpawnFlowNeverEnrichesNameFromRegistryCapture(t *testing.T) {
 	state := shortGrokFlowState(t)
 	client := &grokSpawnFlowHerdr{}
 	var guid string
+	var liveSessionID string
 	var bridgeDone <-chan error
 	client.onStart = func(args []string) {
 		guid = flowArg(args, "HERDER_GUID=")
 		sessionID := flowArg(args, "HERDER_GROK_SESSION_ID=")
+		liveSessionID = sessionID
 		if guid == "" || sessionID == "" {
 			t.Fatalf("spawn argv missing Grok identity: %v", args)
 		}
-		bridgeDone = serveGrokStatusCalls(t, state, guid, sessionID, "bridge-bus", 2)
+		bridgeDone = serveGrokStatusCalls(t, state, guid, sessionID, "bridge-bus", 1)
 	}
 	r, _, stderr := grokFlowRunner(t, client, state)
+	joined := true
+	engine := seatcompletion.DefaultEngine()
+	engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{{Name: "bridge-bus", Joined: &joined, SessionID: liveSessionID}}, nil
+	}
+	engine.RepairLaunchContext = func(string, string, string) hcomidentity.LaunchContextRepair {
+		return hcomidentity.LaunchContextRepair{Status: "already-present", PaneID: "p_new"}
+	}
+	r.completion = &engine
 	r.opts.ReadyMatch = "never-visible"
 	injected := false
 	r.updateRegistry = func(path string, fn registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
@@ -321,11 +342,8 @@ func TestGrokSpawnFlowNeverEnrichesNameFromRegistryCapture(t *testing.T) {
 		if err != nil {
 			return outcomes, err
 		}
-		if len(injectedOutcomes) != 1 || injectedOutcomes[0].Status != registry.WriteApplied {
-			return outcomes, fmt.Errorf("registry poison write outcomes=%+v, want one applied row", injectedOutcomes)
-		}
-		if err := injectedOutcomes[0].Err(); err != nil {
-			return outcomes, err
+		if len(injectedOutcomes) != 1 || injectedOutcomes[0].Status != registry.WriteRefused || !strings.Contains(injectedOutcomes[0].Reason, "binding fact") {
+			return outcomes, fmt.Errorf("registry poison write outcomes=%+v, want binding-fact refusal", injectedOutcomes)
 		}
 		return outcomes, nil
 	}

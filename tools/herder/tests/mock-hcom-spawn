@@ -45,21 +45,23 @@ printf '%s' "${HCOM_DIR:-<unset>}" >"$PROBE/hcom_dir"
 
 case "${1:-} ${2:-}" in
   "list --json")
+    pane="p_50"
+    [[ -f "${MOCK_SPAWN_STATE:-/nonexistent}/root_closed" ]] && pane="p_41"
     case "$SCEN" in
       launchctx*)
-        jq -n --arg sender "${MOCK_SPAWNER_BUS:-dispatcher-rive}" '[
+        jq -n --arg sender "${MOCK_SPAWNER_BUS:-dispatcher-rive}" --arg pane "$pane" '[
           {name:$sender, joined:true, session_id:"current-session",
            created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_orch"}},
           {name:"decoy-yolo",  tag:"other",  directory:"/elsewhere",
            created_at:"2026-01-01T00:00:00Z", launch_context:{pane_id:"p_99"}},
-          {name:"worker-rive", tag:"worker", directory:"/elsewhere",
-           created_at:"2026-01-01T00:00:01Z", launch_context:{pane_id:"p_50"}}
+          {name:"worker-rive", joined:true, tag:"worker", directory:"/elsewhere",
+           created_at:"2026-01-01T00:00:01Z", launch_context:{pane_id:$pane}}
         ]';;
       emptyctx)
-        jq -n --arg sender "${MOCK_SPAWNER_BUS:-dispatcher-rive}" '[
+        jq -n --arg sender "${MOCK_SPAWNER_BUS:-dispatcher-rive}" --arg pane "$pane" '[
           {name:$sender, joined:true, session_id:"", created_at:"2026-01-01T00:00:00Z", launch_context:{}},
-          {name:"worker-rive", tag:"worker", directory:"/elsewhere",
-           created_at:"2026-01-01T00:00:01Z", launch_context:{pane_id:"p_50"}}
+          {name:"worker-rive", joined:true, tag:"worker", directory:"/elsewhere",
+           created_at:"2026-01-01T00:00:01Z", launch_context:{pane_id:$pane}}
         ]';;
       emptyctx_duplicate)
         jq -n --arg sender "${MOCK_SPAWNER_BUS:-dispatcher-rive}" '[

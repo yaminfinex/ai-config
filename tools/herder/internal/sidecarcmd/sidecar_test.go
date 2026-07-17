@@ -1,6 +1,7 @@
 package sidecarcmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,8 +11,41 @@ import (
 	"strings"
 	"testing"
 
+	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/registry"
+	"ai-config/tools/herder/internal/seatcompletion"
 )
+
+func testSeatCompletion(t *testing.T) func(context.Context, *hcomRow, seatcompletion.Request) (seatcompletion.Result, error) {
+	t.Helper()
+	return func(ctx context.Context, observed *hcomRow, request seatcompletion.Request) (seatcompletion.Result, error) {
+		joined := true
+		engine := seatcompletion.DefaultEngine()
+		engine.HerdrPane = func(context.Context, string) (seatcompletion.LivePane, error) {
+			terminalID := request.Seat.TerminalID
+			if terminalID == "" {
+				terminalID = "terminal-test"
+			}
+			return seatcompletion.LivePane{PaneID: request.Seat.PaneID, TerminalID: terminalID}, nil
+		}
+		engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+			return []hcomidentity.Row{{
+				Name:      observed.Name,
+				Tool:      observed.Tool,
+				Joined:    &joined,
+				SessionID: observed.SessionID,
+				LaunchContext: hcomidentity.LaunchContext{
+					PaneID:    observed.LaunchContext.PaneID,
+					ProcessID: observed.LaunchContext.ProcessID,
+				},
+			}}, nil
+		}
+		engine.RepairLaunchContext = func(_, _, pane string) hcomidentity.LaunchContextRepair {
+			return hcomidentity.LaunchContextRepair{Status: "already-present", PaneID: pane}
+		}
+		return engine.Complete(ctx, request)
+	}
+}
 
 func launchContext(paneID, processID string) struct {
 	PaneID    string `json:"pane_id"`
