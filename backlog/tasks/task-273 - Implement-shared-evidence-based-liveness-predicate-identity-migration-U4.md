@@ -1,10 +1,10 @@
 ---
 id: TASK-273
 title: 'Implement: shared evidence-based liveness predicate (identity migration U4)'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-17 04:28'
-updated_date: '2026-07-17 22:04'
+updated_date: '2026-07-17 23:37'
 labels:
   - herder
   - identity-migration
@@ -25,8 +25,14 @@ DESIGN CHECKPOINT REQUIRED BEFORE CODE (predicate API, evidence taxonomy, applie
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Design checkpoint note approved by orchestrator BEFORE any code
-- [ ] #2 Every plan §U4 test scenario implemented and green: starved-keepalive advisory (no unseat, cause class named); dead-pid-behind-listening-row positive unseat with evidence recorded; observer-down first-observer unseat by sidecar/CLI under the shared predicate; foreign-launched pane observed alive via pane/process evidence; observer-down blocks no verb and fabricates no verdict, restart catch-up converges without backdated timestamps; absence-of-evidence surfaces observation gap, never automated unseat
-- [ ] #3 Replay fixtures for both season wrong-side failures — reap-the-living (starved keepalive) and spare-the-dead (fossilized listening row) — advisory fires on the first, positive-evidence unseat on the second, from more than one applier
-- [ ] #4 All ad-hoc liveness inference sites converted to the shared predicate (enumerate them in the checkpoint); existing observer disposability/catch-up suites green; keep-list re-audit of the final diff
+- [x] #1 Design checkpoint note approved by orchestrator BEFORE any code
+- [x] #2 Every plan §U4 test scenario implemented and green: starved-keepalive advisory (no unseat, cause class named); dead-pid-behind-listening-row positive unseat with evidence recorded; observer-down first-observer unseat by sidecar/CLI under the shared predicate; foreign-launched pane observed alive via pane/process evidence; observer-down blocks no verb and fabricates no verdict, restart catch-up converges without backdated timestamps; absence-of-evidence surfaces observation gap, never automated unseat
+- [x] #3 Replay fixtures for both season wrong-side failures — reap-the-living (starved keepalive) and spare-the-dead (fossilized listening row) — advisory fires on the first, positive-evidence unseat on the second, from more than one applier
+- [x] #4 All ad-hoc liveness inference sites converted to the shared predicate (enumerate them in the checkpoint); existing observer disposability/catch-up suites green; keep-list re-audit of the final diff
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged d53f80a (unit commits: predicate+appliers, contract alignment, husk demotion). Design checkpoint approved pre-code with 6 riders. Adversarial chain: opus incumbent APPROVE→delta CONFIRM; grok calibration seat found the P1 (fourth positive-death path via one-sweep husk inference) fixed by removal — deathFacts now pinned to exactly the settled three causes; incumbent found the unpinned starved conjunct, pinned red-under-mutation. Gates: independent 61/61, re-gate 61/61 after each fix round, post-merge 61/61 on main. Both season wrong-side classes replay-pinned (reap-the-living stays seated + advisory; spare-the-dead unseats from multiple appliers). Ad-hoc inference deleted with reintroduction pins.
+<!-- SECTION:NOTES:END -->
