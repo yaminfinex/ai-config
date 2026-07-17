@@ -125,9 +125,11 @@ consumed by `tools/herder/internal/spawncmd/`, `tools/herder/internal/enrollcmd/
 merge-missing-only write stays in
 `tools/herder/internal/hcomidentity/launch_context.go` and is called only from
 the completion step. **Write-spine scope:** the seat/bus binding evidence-class
-field on session records plus its normalizer and carry-rule ownership in
-`tools/herder/internal/registry/` (per the shared scope note). Tests beside each
-consumer, the shared package, and the write spine.
+field and the persisted per-binding id (minted at append, stored in the row
+JSON, never derived from load-time ordinals) on session records, plus their
+normalizer and carry-rule ownership in `tools/herder/internal/registry/` (per
+the shared scope note). Tests beside each consumer, the shared package, and the
+write spine.
 
 **Approach.** Consolidation, not invention: adopt already resolves a live pane
 pre-write and backfills; spawn already records full coordinates; reconcile
@@ -216,10 +218,11 @@ Closes the remainder of H4.
 attestation-consuming mode; without it the repair would mint yet another shape).
 
 **Files.** New command package (e.g. `tools/herder/internal/repaircmd/`);
-**write-spine scope:** the attested-binding event kind, its normalizer ownership
-and carry rules, and the atomic locked batch (attested rebind + completion as
-one `UpdateLocked` transaction) in `tools/herder/internal/registry/`; CLI wiring
-in `tools/herder/internal/cli/`; operator documentation under `docs/`.
+**write-spine scope:** the attested-binding event kind with tombstone markers
+keyed by durable binding id, its normalizer ownership and carry rules, and the
+atomic locked batch (attested rebind + completion as one `UpdateLocked`
+transaction) in `tools/herder/internal/registry/`; CLI wiring in
+`tools/herder/internal/cli/`; operator documentation under `docs/`.
 
 **Approach.** Proof = (a) explicit attestation naming row + field + new value,
 unforgeable from flags alone or piped input; (b) seat-control corroboration:
@@ -256,12 +259,20 @@ observe and inject the nonce, and automation can allocate a pty.
 The verb surface also carries the one non-rebind operation:
 **`reissue-credential`** (specified with U3, authenticated here) — attestation +
 seat-control corroboration under the ratified branch, no identity field
-rebound, ending in atomic re-completion which mints the new token. It exists
+rebound, ending in re-completion which mints the new token under the
+rotation commit protocol (architecture §3.1; registry-side batch atomic, file
+staged before the commit point). It exists
 so no credential-gated verb is ever its own credential recovery. An attested
-*rebind* additionally **tombstones the specific binding it supersedes** (same
-locked batch; history retained) per the T6 correction semantics — this is what
-lets an attested repair beat an older stale live-verified binding without
-weakening class-dominates-recency among surviving candidates.
+*rebind* additionally **tombstones the specific binding it supersedes, named by
+field + durable binding id** (same locked batch; history retained) per the T6
+correction semantics — this is what lets an attested repair beat an older stale
+live-verified binding without weakening class-dominates-recency among surviving
+candidates. Binding ids are minted at append time and persisted in the row
+JSON; they are never derived from load-time ordinals or line numbers (which the
+registry reassigns on load and resets at rotation/reseed). Binding histories
+and their tombstone markers ride inside the session row as append-only lists
+(the existing sid-history pattern), so the reseeded latest-row-per-guid at
+rotation carries the full adjudication-relevant set by construction.
 
 The verb is rate-limited, loud on stderr, appends an attested evidence-classed
 binding recording the attestation, preserves label/role/lineage, repairs one
@@ -294,7 +305,14 @@ keep-list.
   historically `live-verified`; after the attested rebind + tombstone, the
   absent-live adjudication selects the attested value — the stale
   live-verified binding is a non-candidate, not outranked.** Tombstone names
-  exactly one binding; history remains readable.
+  exactly one binding id; history remains readable.
+- **Rotation-survival test (pins the durable binding id): correction applied
+  BEFORE a registry rotation/reseed → rotation runs (latest row per guid
+  reseeded, ordinals reassigned) → adjudication AFTER rotation still selects
+  the attested value; the exact tombstoned binding and its tombstone marker
+  are byte-identifiable in the reseeded row by binding id; the pre-rotation
+  event history is intact in the archive; no binding id was re-keyed by load
+  or reseed.**
 - Wrong-nonempty launch context → no rewrite ever; recreate protocol prescribed;
   after a successful rejoin, completion backfills and the row is complete;
   after a refused rejoin, output names the upstream-gated shape and the
@@ -376,7 +394,14 @@ ceiling.
 
 **Approach.** Token is random (no derivable structure), stored at a seat-keyed
 path, permission-restricted (defense against other uids; explicitly *not* the
-boundary against same-uid), rotated at every completion. **Identity selection
+boundary against same-uid), rotated at every completion **under the rotation
+commit protocol** (architecture §3.1): write + fsync an immutable
+generation-keyed token file first; the locked registry append flipping the
+row's credential generation is the commit point; verification always checks a
+presented token against the registry-current generation (registry = generation
+truth, file = possession only); old-generation files are dead, never-committed
+staged files are orphans GC'd lazily by later completions, never inside the
+transaction. By construction no crash point strands either generation. **Identity selection
 order is normative:** credential selects the acting identity (credential → guid
 → registry row); ambient correlates are used only to *verify* the selected
 row's bus binding, and a verification mismatch refuses — ambient evidence never
@@ -392,7 +417,8 @@ live seat). **Token-loss recovery is one explicit path and it is not
 credential-gated: the `reissue-credential` operation** — authenticated by
 attestation + seat-control corroboration under the ratified U2 branch (a proof
 pool disjoint from the missing token), rebinding no identity field, ending in
-atomic re-completion that rotates the generation and mints the new token.
+re-completion that rotates the generation and mints the new token under the
+rotation commit protocol (no crash point strands either generation).
 Prescribing an ordinary credential-gated verb as its own credential recovery
 is exactly the repair-circularity class this design exists to kill, and is
 forbidden here by construction. State-dir/HOME/worktree variance and harness
@@ -421,10 +447,19 @@ explicit design item for the implementing unit, not assumed away.
   with intact bus/sid/launch context loses only its token file → every
   cut-over verb refuses at credential selection, naming `reissue-credential`
   as the remedy → the reissue operation authenticates from the break-glass
-  proof pool (never the missing token), completion runs atomically, a new
-  token exists under a new generation → the previously refusing verbs
-  succeed.** Crash mid-reissue → prior row and old-generation state intact
-  (one locked batch); a replayed pre-reissue token → refuse.
+  proof pool (never the missing token), completion runs the rotation commit
+  protocol, a new token exists under a new generation → the previously
+  refusing verbs succeed.**
+- **Crash-point drills against the rotation protocol, all three points:**
+  (a) crash before/during token staging → registry still at the old
+  generation, old token still authenticates, partial staged file is a
+  GC-able orphan; (b) crash after staging, before the registry flip → same
+  observable state, staged file orphaned; (c) crash after the registry flip →
+  rotation committed, the new generation's file already durably exists and
+  authenticates. In no drill is a seat left with zero working recovery state.
+  Replay of a pre-rotation (old-generation) token after any drill → refuse
+  (verification reads registry-current generation). Orphan GC runs on a later
+  completion and removes only never-committed generations.
 - Suite/battery simulation: a spawned child running herder verbs acts as
   itself, never as the spawner (covers the inherited-seat-env battery-void
   class).

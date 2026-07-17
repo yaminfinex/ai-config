@@ -150,14 +150,29 @@ strengthens one of these.
      epoch validity for coordinate-valued fields.
   3. **Correction semantics.** An attested correction (a break-glass rebind,
      §3.3) appends the new binding **and tombstones the specific binding it
-     supersedes** — named by field and ordinal, in the same locked batch.
-     Tombstoned bindings stay in history (nothing is deleted) but are not
-     candidates for adjudication. Only an `attested`-or-better event may
-     tombstone, a tombstone names exactly one binding, and blanket
-     invalidation does not exist. This is what lets a newer attested repair
-     beat an older *stale* `live-verified` binding without weakening rule 4:
-     the old binding loses by being tombstoned by an explicit logged
-     correction, never by being outranked.
+     supersedes** — named by field and **binding id**, in the same locked
+     batch. A binding id is a **durable, persisted identifier minted at append
+     time and stored in the row JSON** — never a load-time line number or any
+     other load/rotation-derived value, which the registry reassigns on load
+     and resets at rotation/reseed. Binding histories ride *inside* the
+     session row as append-only lists (the pattern the sid history already
+     uses): each entry carries its binding id, evidence class, timestamp, and
+     — when tombstoned — the id of the correction that invalidated it. Because
+     every appended row is a full self-contained snapshot and rotation reseeds
+     the latest row per guid, the complete adjudication-relevant binding set,
+     tombstones included, **survives rotation inside the reseeded row by
+     construction**; rotation archives retain the full pre-rotation event
+     history for forensics, but adjudication correctness never depends on
+     reading an archive. Tombstoned bindings stay in history (nothing is
+     deleted) but are not candidates for adjudication. Only an
+     `attested`-or-better event may tombstone, a tombstone names exactly one
+     binding id, and blanket invalidation does not exist. This is what lets a
+     newer attested repair beat an older *stale* `live-verified` binding
+     without weakening rule 4: the old binding loses by being tombstoned by an
+     explicit logged correction, never by being outranked. (List growth is
+     bounded by binding-*changing* events — rebinds, corrections, epoch
+     re-stamps — not by traffic, the same growth class as the existing sid
+     history.)
   4. Among surviving (non-tombstoned, epoch-valid) candidates in the absent-live
      quadrant, class dominates recency; a later `live-verified` binding
      supersedes any earlier `attested` one; coordinate bindings expire at their
@@ -214,6 +229,31 @@ that today authenticate callers by ambient `HCOM_*`/`HERDER_*` values
 authenticate by presenting the token, and the env vars demote to diagnostics and
 birth provenance (extending the spec's §3.1-8 rule for `HERDER_GUID` to every
 identity-bearing var on herder's own verb surface).
+
+**Rotation commit protocol (two stores, one commit point).** The token file and
+the registry generation live in different stores, and a locked registry append
+cannot atomically publish a file — so every mint/rotation (completion and
+reissue alike) follows one logical transaction:
+
+1. Mint the new generation id and token; **write + fsync an immutable,
+   generation-keyed token file** (`…/<guid>/<generation>.token`, never
+   overwritten in place; directory fsynced).
+2. **The locked registry append that flips the row's credential generation is
+   the commit point.** The registry is the sole source of generation truth;
+   the file is possession evidence only — verification always checks a
+   presented token against the *registry-current* generation.
+3. The old generation's file is retained but dead (its generation is no longer
+   registry-current); files for generations that were staged but never
+   committed are orphans, garbage-collected lazily by later completions —
+   never inside the transaction.
+
+Crash analysis, exhaustive by construction: a crash before or during staging
+leaves the registry at the old generation with its token file intact (the
+partial staged file is an orphan); a crash after staging but before the
+registry flip is the same state; a crash after the flip is a committed
+rotation whose token file already durably exists — staging precedes the commit
+point, so there is **no crash point at which either generation is stranded**.
+A replayed pre-rotation token fails closed at step 2's verification rule.
 
 **Identity selection order is part of the design, not an implementation detail:**
 on a credential-authenticated verb, the credential selects the acting identity
@@ -355,7 +395,7 @@ promises):
 | Launch context empty | No attestation needed in the ordinary case (merge-missing-only backfill at completion); attestation supplies the pane fact when live bus proof is unavailable. Terminates. |
 | Launch context wrong-nonempty (`pane_conflict`) | Never rewritten (keep-list fence). Terminating protocol: recreate the vendor row through hcom itself from the verified live pane (leave/stop the wrong row, rejoin under the same name), which yields an empty launch context that completion then backfills. The attested record covers the operator's authorization of the recreate. **Upstream-gated residual:** if hcom's reclaim guard refuses the rejoin (its refusal exits rc=0 — recorded upstream defect), the shape is *not* terminable inside herder; the documented owner-approved database recovery recipe in the hazard doc is the honest fallback, and this row of the table says so rather than claiming termination. |
 | Registry seat coordinates wrong/stale | Out of break-glass vocabulary. Cure: the existing re-seat corridor (enroll/adopt from the live seat, or reconcile re-confirmation), which ends in completion; break-glass repairs the bus/sid/launch-context fields those verbs' proofs need, then the corridor runs. Terminates via composition. |
-| Seat credential lost (T1) | **Dedicated reissue operation** (below): attested + seat-control corroborated under the ratified branch, no identity field rebound, ends in atomic re-completion which mints the new token. Never prescribed as "re-run a credential-gated verb" — that would be the circularity class re-entering through the new machinery. Terminates. |
+| Seat credential lost (T1) | **Dedicated reissue operation** (below): attested + seat-control corroborated under the ratified branch, no identity field rebound, ends in re-completion which mints the new token under the §3.1 rotation commit protocol (registry generation flip = commit point; no crash point strands either generation). Never prescribed as "re-run a credential-gated verb" — that would be the circularity class re-entering through the new machinery. Terminates. |
 
 **Credential reissue (the one non-rebind operation on this verb surface).**
 Credential loss is a damage shape *created by* the claim plane (§3.1), so its
@@ -363,20 +403,25 @@ recovery lives here by design, not as scope creep on the memo's rebind
 vocabulary: a `reissue-credential` operation authenticated exactly like a
 rebind (attestation + seat-control corroboration under the ratified branch),
 which rebinds **no identity field** — row identity facts are untouched — and
-ends in the T2 completion step, which atomically rotates the generation and
-mints the new token. It exists precisely so that no credential-gated verb is
-ever its own credential recovery: the authentication for reissue is drawn from
-the break-glass proof pool, which is disjoint from the missing token.
+ends in the T2 completion step, which rotates the generation and mints the new
+token under the §3.1 rotation commit protocol (staged generation-keyed token
+first; the locked registry generation flip is the commit point; no crash point
+strands either generation). It exists precisely so that no credential-gated
+verb is ever its own credential recovery: the authentication for reissue is
+drawn from the break-glass proof pool, which is disjoint from the missing
+token.
 
 Constraints (settled): logged into the row's history as an attested
 evidence-classed binding recording the attestation; preserves stored label,
 role, and lineage; rate-limited and loud; single field (or the reissue
 operation) per invocation; ends in the T2 completion step. Automated paths
 never call it — no attestation means exactly today's fail-closed refusals. It
-fixes no root cause — it caps the *cost* of every residual. The registry write
-for an attested rebind or reissue plus its completion is **one locked batch**
-(see §3.5 write-spine note): a sparse or half-applied attested row must be
-impossible by construction.
+fixes no root cause — it caps the *cost* of every residual. The **registry
+side** of an attested rebind or reissue plus its completion is one locked
+batch (see §3.5 write-spine note): a sparse or half-applied attested row must
+be impossible by construction. The credential file is outside that batch by
+nature and is governed by the §3.1 rotation commit protocol instead — the
+locked batch *is* that protocol's commit point.
 
 ### 3.4 Liveness plane — one predicate, evidence-based
 
