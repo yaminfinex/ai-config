@@ -70,8 +70,8 @@ const (
 	CauseLiveEvidence           CauseClass = "live_evidence"
 	CauseHolderExited           CauseClass = "holder_exited"
 	CausePaneGoneSameEpoch      CauseClass = "pane_gone_same_epoch"
-	CauseOccupantExited         CauseClass = "occupant_exited"
 	CauseDeadPIDStaleBusRow     CauseClass = "dead_pid_stale_bus_row"
+	CausePossiblePaneHusk       CauseClass = "possible_pane_husk"
 	CauseKeepaliveStarvation    CauseClass = "keepalive_starvation"
 	CauseEvidenceConflict       CauseClass = "evidence_conflict"
 	CauseInsufficientEvidence   CauseClass = "insufficient_evidence"
@@ -113,6 +113,20 @@ func Evaluate(in Input) Verdict {
 			ObservedVia: deathVia,
 		}
 	}
+	if in.SeatKind != "process" && in.Pane.State == StateAlive && in.Process.State == StateDead {
+		via := appendUnique(nil, in.Pane.ObservedVia, in.Process.ObservedVia)
+		return Verdict{
+			Class:       VerdictObservationGap,
+			Cause:       CausePossiblePaneHusk,
+			Evidence:    []string{"pane_present", "foreground_process_snapshot_empty"},
+			ObservedVia: via,
+			Advisory: &Advisory{
+				Cause:       CausePossiblePaneHusk,
+				Detail:      "pane is alive but one foreground-process snapshot was empty; possible husk, no automated unseat",
+				ObservedVia: via,
+			},
+		}
+	}
 	if len(liveEvidence) > 0 {
 		verdict := Verdict{
 			Class:       VerdictAlive,
@@ -122,9 +136,13 @@ func Evaluate(in Input) Verdict {
 		}
 		if in.Keepalive == KeepaliveStarved {
 			via := appendUnique(liveVia, in.BusObservedVia)
+			detail := "holder alive; bus keepalive is starved"
+			if in.BusRow == BusAbsent {
+				detail = "holder alive; expected bus roster row is absent"
+			}
 			verdict.Advisory = &Advisory{
 				Cause:       CauseKeepaliveStarvation,
-				Detail:      "holder alive, keepalive failing",
+				Detail:      detail,
 				ObservedVia: via,
 			}
 		}
@@ -163,9 +181,6 @@ func deathFacts(in Input) (CauseClass, []string, []string) {
 	}
 	if in.Pane.State == StateDead && in.PaneEpoch == EpochSame {
 		return CausePaneGoneSameEpoch, []string{"pane_absent", "epoch_unchanged"}, appendUnique(nil, in.Pane.ObservedVia)
-	}
-	if in.SeatKind != "process" && in.Pane.State == StateAlive && in.Process.State == StateDead {
-		return CauseOccupantExited, []string{"pane_present", "foreground_process_exited"}, appendUnique(nil, in.Pane.ObservedVia, in.Process.ObservedVia)
 	}
 	if in.SeatKind == "process" && in.Process.State == StateDead && in.BusRow == BusPresent && in.Keepalive == KeepaliveStarved {
 		return CauseDeadPIDStaleBusRow, []string{"pid_dead", "bus_row_present", "keepalive_starved"}, appendUnique(nil, in.Process.ObservedVia, in.BusObservedVia)

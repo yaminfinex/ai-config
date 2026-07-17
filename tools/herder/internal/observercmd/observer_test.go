@@ -94,8 +94,14 @@ func TestReplayLiveHolderWithStarvedKeepaliveAdvisesWithoutUnseat(t *testing.T) 
 		t.Fatalf("starved live holder produced mutation candidates: %+v", cands)
 	}
 	flags := livenessFlags(proj, herdrState{}, bus, time.Now())
-	if len(flags) != 1 || flags[0].CauseClass != string(liveness.CauseKeepaliveStarvation) || flags[0].Detail != "holder alive, keepalive failing" {
+	if len(flags) != 1 || flags[0].CauseClass != string(liveness.CauseKeepaliveStarvation) || flags[0].Detail != "holder alive; bus keepalive is starved" {
 		t.Fatalf("flags = %+v", flags)
+	}
+
+	missingBus := busState{available: true, rows: map[string]hcomidentity.Row{}}
+	flags = livenessFlags(proj, herdrState{}, missingBus, time.Now())
+	if len(flags) != 1 || flags[0].Detail != "holder alive; expected bus roster row is absent" {
+		t.Fatalf("missing-row flags = %+v", flags)
 	}
 }
 
@@ -157,6 +163,29 @@ func TestForeignPaneIsAliveWithoutTrackerOwnership(t *testing.T) {
 	verdict := liveness.Evaluate(livenessInput(rec, hd, busState{}))
 	if verdict.Class != liveness.VerdictAlive || !strings.Contains(strings.Join(verdict.ObservedVia, ","), "process_info") {
 		t.Fatalf("foreign pane verdict = %+v", verdict)
+	}
+}
+
+func TestEmptyForegroundSnapshotIsHuskAdvisoryNotDeathCandidate(t *testing.T) {
+	rec := v2.SessionRecord{GUID: "fixture-pane-husk", Label: "worker", State: v2.StateSeated, Seat: &v2.Seat{Kind: "herdr", TerminalID: "terminal-present", PaneID: "pane-present"}}
+	hd := herdrState{
+		available: true,
+		byTerm:    map[string]herdrcli.Pane{"terminal-present": {TerminalID: "terminal-present", PaneID: "pane-present"}},
+		procs:     map[string]herdrcli.ProcessInfo{"terminal-present": {}},
+	}
+	verdict := liveness.Evaluate(livenessInput(rec, hd, busState{}))
+	if verdict.Class != liveness.VerdictObservationGap || verdict.Cause != liveness.CauseClass("possible_pane_husk") || verdict.Advisory == nil {
+		t.Fatalf("single empty foreground snapshot verdict = %+v", verdict)
+	}
+	proj := projectionFromRows(t, rec)
+	for _, cand := range buildCandidates(proj, hd, busState{}, time.Now()) {
+		if cand.kind == "liveness-death" {
+			t.Fatalf("single empty foreground snapshot produced death candidate: %+v", cand)
+		}
+	}
+	flags := livenessFlags(proj, hd, busState{}, time.Now())
+	if len(flags) != 1 || flags[0].Type != "possible-pane-husk" || flags[0].Severity != "warning" || flags[0].CauseClass != "possible_pane_husk" || !strings.Contains(flags[0].Suggested, "herder cull --guid fixture-pane-husk") {
+		t.Fatalf("husk advice = %+v", flags)
 	}
 }
 

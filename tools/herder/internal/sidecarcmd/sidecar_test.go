@@ -81,7 +81,7 @@ func TestSidecarMissingBusKeepsPollingUntilHolderExitThenStops(t *testing.T) {
 	if got := registry.V2ByGUID(mustSidecarProjection(t, path), "guid-sidecar"); got == nil || got.State != v2.StateSeated {
 		t.Fatalf("starved keepalive changed seated row: %+v", got)
 	}
-	if count := strings.Count(diagnostic.String(), "holder alive, keepalive failing"); count != 1 {
+	if count := strings.Count(diagnostic.String(), "holder alive; expected bus roster row is absent"); count != 1 {
 		t.Fatalf("starvation advisory count = %d, output=%q", count, diagnostic.String())
 	}
 	if s.observeLiveness(true, nil) {

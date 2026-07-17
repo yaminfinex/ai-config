@@ -114,6 +114,14 @@ func TestMissingTrackerAndPaneEvidenceRendersObservationGap(t *testing.T) {
 	}
 }
 
+func TestPossiblePaneHuskAdviceIsOperatorActionable(t *testing.T) {
+	got := observerAdviceSuffix([]observerstatus.Flag{{Type: "possible-pane-husk"}})
+	want := " [observer advice: possible pane husk; inspect, then cull deliberately]"
+	if got != want {
+		t.Fatalf("advice suffix = %q, want %q", got, want)
+	}
+}
+
 func renderedMission(t *testing.T, raw []byte) *v2.Mission {
 	t.Helper()
 	var row struct {

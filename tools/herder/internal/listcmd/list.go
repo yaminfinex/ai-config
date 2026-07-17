@@ -522,7 +522,9 @@ func observerAdviceSuffix(flags []observerstatus.Flag) string {
 		case "epoch-doubt":
 			parts = append(parts, "observer advice: epoch doubt")
 		case "holder-alive-keepalive-failing":
-			parts = append(parts, "observer advice: holder alive, keepalive failing")
+			parts = append(parts, "observer advice: holder alive; keepalive starved or bus row absent")
+		case "possible-pane-husk":
+			parts = append(parts, "observer advice: possible pane husk; inspect, then cull deliberately")
 		default:
 			parts = append(parts, "observer advice: "+flag.Type)
 		}

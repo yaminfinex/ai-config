@@ -253,7 +253,7 @@ assert_jq() {
   if jq -e "$expr" "$file" >/dev/null; then pass "$name"; else fail_case "$name" "jq assertion failed: $expr"; fi
 }
 
-t1_enrolled_crash_and_noop() {
+t1_one_sweep_husk_gap() {
   case_dir t1
   write_registry <<JSONL
 $node_row
@@ -262,12 +262,11 @@ JSONL
   snapshot '[{"pane_id":"p_dead","terminal_id":"t_dead","label":"alpha"}]' '[{"pane_id":"p_dead","terminal_id":"t_dead","agent":"claude","agent_status":"idle","name":"alpha"}]'
   proc_empty p_dead
   run_sweep_json >"$CASE/out1.json" || fail_case "T-1 sweep" "command failed"
-  assert_jq "T-1 unseats enrolled dead occupant" 'select(.status.last_sweep_summary.applied==1)' "$CASE/out1.json"
-  [[ "$(latest_count guid-dead unseated)" == "1" ]] && pass "T-1 exactly one unseated row" || fail_case "T-1 exactly one unseated row" "$(cat "$STATE/registry.jsonl")"
-  assert_jq "T-1 close_result/evidence" 'select(.guid=="guid-dead" and .event=="unseated" and .close_result=="observed_dead" and (.close_reason|length>0))' "$STATE/registry.jsonl"
+  assert_jq "T-1 empty foreground reports possible-husk warning" 'select(any(.status.flags[]?; .guid=="guid-dead" and .type=="possible-pane-husk" and .severity=="warning" and .cause_class=="possible_pane_husk" and (.suggested | contains("herder cull --guid guid-dead"))))' "$CASE/out1.json"
+  [[ "$(latest_count guid-dead unseated)" == "0" ]] && pass "T-1 one-sweep husk inference does not unseat" || fail_case "T-1 one-sweep husk inference" "$(cat "$STATE/registry.jsonl")"
   run_sweep_json >"$CASE/out2.json" || fail_case "T-1 rerun" "command failed"
   assert_jq "T-1 rerun has no stale death candidate" 'select(.status.last_sweep_summary.applied==0 and .status.last_sweep_summary.noop==0 and .status.last_sweep_summary.refused==0)' "$CASE/out2.json"
-  [[ "$(latest_count guid-dead unseated)" == "1" ]] && pass "T-1 rerun appends no duplicate" || fail_case "T-1 rerun duplicate" "$(cat "$STATE/registry.jsonl")"
+  [[ "$(latest_count guid-dead unseated)" == "0" ]] && pass "T-1 rerun remains seated" || fail_case "T-1 rerun unseated" "$(cat "$STATE/registry.jsonl")"
 }
 
 t2_turnover() {
@@ -504,11 +503,12 @@ JSONL
   env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local "${HERDER[@]}" observer run >"$CASE/run.out" 2>"$CASE/run.err" &
   pid=$!
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    [[ -f "$STATE/observer.status.json" ]] && break
+    [[ -f "$STATE/observer.status.json" ]] && jq -e 'any(.flags[]?; .guid=="guid-run" and .type=="possible-pane-husk")' "$STATE/observer.status.json" >/dev/null && break
     sleep 0.2
   done
   [[ -f "$STATE/observer.status.json" ]] && pass "T-8 run writes status" || fail_case "T-8 run writes status" "$(cat "$CASE/run.err" 2>/dev/null)"
-  [[ "$(latest_count guid-run unseated)" == "1" ]] && pass "T-8 registry converges before restart" || fail_case "T-8 pre-restart convergence" "$(cat "$STATE/registry.jsonl")"
+  [[ "$(latest_count guid-run unseated)" == "0" ]] && pass "T-8 possible husk stays seated before restart" || fail_case "T-8 pre-restart liveness" "$(cat "$STATE/registry.jsonl")"
+  assert_jq "T-8 status records possible-husk warning" 'select(any(.flags[]?; .guid=="guid-run" and .type=="possible-pane-husk" and .severity=="warning" and .cause_class=="possible_pane_husk"))' "$STATE/observer.status.json"
   run_herder "${HERDER[@]}" observer status >"$CASE/status.txt" || fail_case "T-8 status" "command failed"
   grep -q 'observer status:' "$CASE/status.txt" && pass "T-8 status reports" || fail_case "T-8 status reports" "$(cat "$CASE/status.txt")"
   env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local "${HERDER[@]}" observer run >"$CASE/run2.out" 2>"$CASE/run2.err"
@@ -519,11 +519,11 @@ JSONL
   env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local "${HERDER[@]}" observer run >"$CASE/run3.out" 2>"$CASE/run3.err" &
   pid=$!
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    [[ -f "$STATE/observer.status.json" ]] && break
+    [[ -f "$STATE/observer.status.json" ]] && jq -e 'any(.flags[]?; .guid=="guid-run" and .type=="possible-pane-husk")' "$STATE/observer.status.json" >/dev/null && break
     sleep 0.2
   done
   [[ -f "$STATE/observer.status.json" ]] && pass "T-8 kill9 restart rewrites status" || fail_case "T-8 restart" "$(cat "$CASE/run3.err" 2>/dev/null)"
-  [[ "$(latest_count guid-run unseated)" == "1" ]] && pass "T-8 kill9 restart preserves registry convergence" || fail_case "T-8 restart convergence" "$(cat "$STATE/registry.jsonl")"
+  [[ "$(latest_count guid-run unseated)" == "0" ]] && pass "T-8 kill9 restart preserves seated husk gap" || fail_case "T-8 restart liveness" "$(cat "$STATE/registry.jsonl")"
   run_herder "${HERDER[@]}" observer stop >"$CASE/stop.txt" || fail_case "T-8 stop" "command failed"
   grep -q 'signalled pid' "$CASE/stop.txt" && pass "T-8 stop signals pid" || fail_case "T-8 stop output" "$(cat "$CASE/stop.txt")"
   wait "$pid" 2>/dev/null || true
@@ -646,7 +646,7 @@ JSONL
 }
 
 run_step1() {
-  t1_enrolled_crash_and_noop
+  t1_one_sweep_husk_gap
   t2_turnover
   t4_socket_down_process_continues
   t5_t6_t7_advice_and_coexistence

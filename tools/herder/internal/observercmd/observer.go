@@ -1095,12 +1095,17 @@ func livenessFlags(proj *v2.Projection, hd herdrState, bus busState, now time.Ti
 		}
 		verdict := liveness.Evaluate(livenessInput(rec, hd, bus))
 		if verdict.Advisory != nil {
-			flags = append(flags, observerstatus.Flag{
+			flag := observerstatus.Flag{
 				GUID: rec.GUID, Label: rec.Label, Type: "holder-alive-keepalive-failing", Severity: "warning",
 				CauseClass: string(verdict.Advisory.Cause), Detail: verdict.Advisory.Detail,
 				ObservedAt: now.UTC().Format(time.RFC3339), ObservedVia: append([]string(nil), verdict.Advisory.ObservedVia...),
 				Suggested: "inspect keepalive feeding and hcom configuration before the upstream staleness window expires",
-			})
+			}
+			if verdict.Advisory.Cause == liveness.CausePossiblePaneHusk {
+				flag.Type = "possible-pane-husk"
+				flag.Suggested = fmt.Sprintf("inspect pane %s; if it is a husk, run herder cull --guid %s", rec.Seat.PaneID, rec.GUID)
+			}
+			flags = append(flags, flag)
 			continue
 		}
 		if verdict.Class == liveness.VerdictObservationGap {
