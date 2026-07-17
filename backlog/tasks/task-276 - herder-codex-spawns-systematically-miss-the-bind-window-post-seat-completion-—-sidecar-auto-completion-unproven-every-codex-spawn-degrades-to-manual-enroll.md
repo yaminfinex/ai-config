@@ -7,7 +7,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-17 07:33'
-updated_date: '2026-07-17 08:48'
+updated_date: '2026-07-17 09:22'
 labels:
   - herder
   - identity-migration
@@ -41,5 +41,10 @@ Root cause ACCEPTED (builder's isolated probes + lived spawn refusal): (1) await
 created: 2026-07-17 08:48
 ---
 Adversarial review round 1 (incumbent opus + grok calibration): FIX ROUND REQUIRED. Incumbent P1 (keep-list fence): the launch-frozen env name is admitted alone — after rename/reclaim a stranger holding the derived name gets OUR pane written into THEIR hcom row and their name stamped verified on OUR guid (executed in an isolated copy; merge-missing-only does not protect the empty-coordinate victim class); plus the derived tag+instance form violates the codebase's own no-derivation rule; open severity question for the builder: does hcom collision-suffix names at join (routine divergence) or is rename/reclaim required (narrow). Incumbent P2: sidecar accepts UNVERIFIED WriteNoop and latches permanently for empty-SessionID codex rows (retry predicate can never re-fire) — and the unit INVERTED the previously-pinned no-latch test to make it pass; spawn-side noop verification exists and the asymmetry is the bug. P3 stale docs/reasons + cosmetics. Held under mutation: duplicate-name rowMatches pin (load-bearing — map collapse would otherwise admit), name-vs-pane conflict refusal, tag+cwd non-authoritative (6 tests fail on revert), empty-name double fence, agreement rule incl. scrubbed-grandchild abstention, seam scope exactly as authorized, red-first proven behaviorally against main. CALIBRATION SPLIT: grok seat APPROVED, missing both incumbent findings (frozen-env divergence unconsidered; noop asymmetry read as intended design); also suffered total shell-tool death mid-slot (never mutated the real tree; reported honestly; tree verified quiet by orchestrator). Fix round dispatched (3 findings + the hcom suffix question).
+---
+
+created: 2026-07-17 09:22
+---
+Adversarial review DELTA (incumbent opus @danu, isolated-copy + real-hcom-db read-only verification): APPROVE. Both round-1 findings fixed at the mechanism, pins verified by reversion: FR-1 (P1 stranger-row) — childBusName synthesis fully removed (StoredNameMatches Name-or-BaseName matcher), findRowForOwnedChild never admits the name clue alone (requires HCOM_PROCESS_ID agreement OR base-row PID from hcom.db read-only proven to be one of our HERDER_GUID-owned live PIDs); the exact round-1 stranger scenario now REFUSES (executed against real db). Incumbent hunted the new db read for holes and found none — verified against the live schema (read-only backup, live db untouched) that instances.name PK is the base name (keying by BaseName correct), instances.pid is populated for herder agents, and the full chain resolves TRUE for tonight's actual codex agents (recovery works end-to-end, refusal promise now true). FR-2 (P2 noop-latch) fixed symmetric with spawn (reload + completedRecognitionMatches before accepting WriteNoop; original fence test restored). FR-3 four-signal copy done (10 goldens pure refusal-text, codes/semantics unchanged). No new defect. CALIBRATION: @modi code-trace APPROVE (shell harness dead entire round — persistent grok-seat event; solid proof-path audit, revision-after-incumbent-signal in round 1). ONE non-blocking P2 taken as a PRE-MERGE micro item (maps to keep-list schema-pinned-vendor-db fence): InstancePID is an unpinned db reader — silent fail-closed on schema drift would regress codex binds to 6/6 with no test failing; fix = pin user_version + pid column + tagged real-db fixture. Dispatched; incumbent re-verifies only that.
 ---
 <!-- COMMENTS:END -->
