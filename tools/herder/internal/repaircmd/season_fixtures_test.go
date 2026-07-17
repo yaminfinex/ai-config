@@ -47,13 +47,21 @@ func TestSeasonRetiredRowOwningLiveSIDIsSupersededByAttestedCurrentBinding(t *te
 	if _, err := service.Execute(context.Background(), Request{Operation: OperationRebind, GUID: "guid-repair", Field: v2.BindingFieldSID, Value: "sid-live"}); err != nil {
 		t.Fatal(err)
 	}
-	records, err := registry.Load(path)
+	projection, err := v2.LoadFile(path, v2.LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := registry.ResolveByToolSessionID(records, "sid-live")
-	if owner == nil || owner.GUID == nil || *owner.GUID != "guid-repair" {
-		t.Fatalf("sid owner = %+v, want repaired seated row", owner)
+	repaired := sessionForTest(projection, "guid-repair")
+	retired := sessionForTest(projection, "guid-retired")
+	if repaired == nil || repaired.State != v2.StateSeated || len(repaired.SIDs) == 0 || repaired.SIDs[len(repaired.SIDs)-1].SID != "sid-live" {
+		t.Fatalf("repaired current sid = %+v", repaired)
+	}
+	if retired == nil || retired.State != v2.StateRetired || len(retired.SIDs) != 1 || retired.SIDs[0].SID != "sid-live" {
+		t.Fatalf("retired history = %+v", retired)
+	}
+	fact, status := registry.LatestSufficientBinding(*repaired, v2.BindingFieldSID, registry.LiveEvidenceAbsent)
+	if status != registry.BindingSelected || fact.Value != "sid-live" || fact.EvidenceClass != v2.EvidenceAttested {
+		t.Fatalf("repair-scoped sid adjudication = %+v status=%q", fact, status)
 	}
 }
 

@@ -168,11 +168,14 @@ func (s Service) Execute(ctx context.Context, request Request) (Result, error) {
 
 func (s Service) finalizer(preflight v2.SessionRecord, request Request, attestation v2.Attestation) func(registry.LockedUpdate, *v2.SessionRecord, *v2.SessionRecord, string) error {
 	return func(_ registry.LockedUpdate, current *v2.SessionRecord, next *v2.SessionRecord, stamp string) error {
-		if current == nil || !sameRepairAnchor(preflight, *current) {
+		if current == nil {
 			return errors.New("repair target changed during attestation; no mutation committed, inspect the current row and retry")
 		}
 		if remaining, limited := registry.AttestationRateLimit(*current, s.Now(), RateWindow); limited {
 			return rateLimitRefusal(current.GUID, remaining)
+		}
+		if !sameRepairAnchor(preflight, *current) {
+			return errors.New("repair target changed during attestation; no mutation committed, inspect the current row and retry")
 		}
 		next.Attestations = append(next.Attestations, attestation)
 		if request.Operation == OperationReissueCredential {
@@ -255,11 +258,14 @@ func (s Service) executeLaunchContext(ctx context.Context, current v2.SessionRec
 		Event:    v2.EventAttestedBinding,
 		Attested: &seatcompletion.AttestedBinding{Operation: v2.AttestationRebind, Field: v2.BindingFieldLaunchContext, Value: request.Value},
 		FinalizeLocked: func(_ registry.LockedUpdate, locked *v2.SessionRecord, next *v2.SessionRecord, _ string) error {
-			if locked == nil || !sameRepairAnchor(current, *locked) {
+			if locked == nil {
 				return errors.New("repair target changed during attestation; no mutation committed")
 			}
 			if remaining, limited := registry.AttestationRateLimit(*locked, s.Now(), RateWindow); limited {
 				return rateLimitRefusal(locked.GUID, remaining)
+			}
+			if !sameRepairAnchor(current, *locked) {
+				return errors.New("repair target changed during attestation; no mutation committed")
 			}
 			next.Attestations = append(next.Attestations, attestation)
 			return nil
@@ -282,11 +288,14 @@ func (s Service) appendAuthorization(preflight v2.SessionRecord, attestation v2.
 	}
 	outcomes, err := update(s.RegistryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		current := registry.V2ByGUID(tx.Projection, preflight.GUID)
-		if current == nil || !sameRepairAnchor(preflight, *current) {
+		if current == nil {
 			return nil, errors.New("repair target changed during attestation; no mutation committed")
 		}
 		if remaining, limited := registry.AttestationRateLimit(*current, s.Now(), RateWindow); limited {
 			return nil, rateLimitRefusal(current.GUID, remaining)
+		}
+		if !sameRepairAnchor(preflight, *current) {
+			return nil, errors.New("repair target changed during attestation; no mutation committed")
 		}
 		next := cloneRecord(*current)
 		next.Event = v2.EventAttestedBinding

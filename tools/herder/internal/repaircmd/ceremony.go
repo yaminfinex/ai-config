@@ -17,17 +17,21 @@ import (
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
-const ceremonyTimeout = 90 * time.Second
+const (
+	ceremonyTimeout       = 90 * time.Second
+	minimumChallengeBytes = 16
+)
 
 type ProofCollector struct {
-	Stderr       io.Writer
-	OpenTTY      func() (*os.File, error)
-	IsTTY        func(*os.File) bool
-	PaneGet      func(context.Context, string) (herdrcli.Pane, error)
-	ReadVisible  func(context.Context, string) (string, error)
-	NewChallenge func() (string, error)
-	Now          func() time.Time
-	Wait         func(time.Duration)
+	Stderr              io.Writer
+	OpenTTY             func() (*os.File, error)
+	IsTTY               func(*os.File) bool
+	PaneGet             func(context.Context, string) (herdrcli.Pane, error)
+	ReadVisible         func(context.Context, string) (string, error)
+	NewChallenge        func() (string, error)
+	Now                 func() time.Time
+	Wait                func(time.Duration)
+	ConfirmationTimeout time.Duration
 }
 
 func DefaultProofCollector(stderr io.Writer) ProofCollector {
@@ -47,9 +51,10 @@ func DefaultProofCollector(stderr io.Writer) ProofCollector {
 			out, err := cmd.Output()
 			return string(out), err
 		},
-		NewChallenge: registry.NewGUID,
-		Now:          time.Now,
-		Wait:         time.Sleep,
+		NewChallenge:        registry.NewGUID,
+		Now:                 time.Now,
+		Wait:                time.Sleep,
+		ConfirmationTimeout: ceremonyTimeout,
 	}
 }
 
@@ -76,6 +81,9 @@ func (c ProofCollector) Collect(ctx context.Context, rec v2.SessionRecord, reque
 	challenge, err := c.NewChallenge()
 	if err != nil {
 		return Proof{}, err
+	}
+	if len(challenge) < minimumChallengeBytes {
+		return Proof{}, fmt.Errorf("%w: generated challenge is too short", ErrCorroborationFailed)
 	}
 	expected := attestationStatement(challenge, request)
 	stderr := c.Stderr
@@ -107,9 +115,9 @@ func (c ProofCollector) Collect(ctx context.Context, rec v2.SessionRecord, reque
 	}
 	fmt.Fprintln(stderr, "Challenge observed twice. Remove it from the target composer WITHOUT pressing Enter, return here, then type the exact attestation below.")
 	fmt.Fprintln(stderr, expected)
-	line, err := bufio.NewReader(tty).ReadString('\n')
+	line, err := readConfirmation(ctx, tty, c.ConfirmationTimeout)
 	if err != nil {
-		return Proof{}, fmt.Errorf("%w: confirmation was not read", ErrAttestationRequired)
+		return Proof{}, err
 	}
 	if strings.TrimSpace(line) != expected {
 		return Proof{}, fmt.Errorf("%w: confirmation did not match", ErrAttestationRequired)
@@ -123,6 +131,37 @@ func (c ProofCollector) Collect(ctx context.Context, rec v2.SessionRecord, reque
 		return Proof{}, fmt.Errorf("%w: pane identity changed before commit", ErrCorroborationFailed)
 	}
 	return Proof{Statement: expected, PaneID: live.PaneID, TerminalID: live.TerminalID}, nil
+}
+
+type confirmationRead struct {
+	line string
+	err  error
+}
+
+func readConfirmation(ctx context.Context, tty *os.File, timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		timeout = ceremonyTimeout
+	}
+	result := make(chan confirmationRead, 1)
+	go func() {
+		line, err := bufio.NewReader(tty).ReadString('\n')
+		result <- confirmationRead{line: line, err: err}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		_ = tty.Close()
+		return "", fmt.Errorf("%w: confirmation canceled: %v", ErrAttestationRequired, ctx.Err())
+	case <-timer.C:
+		_ = tty.Close()
+		return "", fmt.Errorf("%w: confirmation timed out after %s", ErrAttestationRequired, timeout)
+	case read := <-result:
+		if read.err != nil {
+			return "", fmt.Errorf("%w: confirmation was not read", ErrAttestationRequired)
+		}
+		return read.line, nil
+	}
 }
 
 func attestationStatement(challenge string, request Request) string {

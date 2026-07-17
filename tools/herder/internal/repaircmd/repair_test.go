@@ -3,12 +3,18 @@ package repaircmd
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcompletion"
@@ -63,7 +69,7 @@ func TestSuccessfulBusRebindPreservesIdentityAndTombstonesOldBinding(t *testing.
 	}
 }
 
-func TestAcceptedSameUIDForgeryPathIsAuditedAndRateLimited(t *testing.T) {
+func TestCommittedRepairIsAuditedAndRateLimited(t *testing.T) {
 	service, path := testService(t)
 	if _, err := service.Execute(context.Background(), Request{Operation: OperationRebind, GUID: "guid-repair", Field: v2.BindingFieldHcomName, Value: "bus-new"}); err != nil {
 		t.Fatal(err)
@@ -75,6 +81,152 @@ func TestAcceptedSameUIDForgeryPathIsAuditedAndRateLimited(t *testing.T) {
 	}
 	if got := len(loadCurrent(t, path).Attestations); got != 1 {
 		t.Fatalf("attestations = %d, want 1", got)
+	}
+}
+
+func TestAcceptedSameUIDPTYForgeryPathCompletesCeremonyAndCommitsAudit(t *testing.T) {
+	service, path := testService(t)
+	master, slave := openTestPTY(t)
+	request := Request{Operation: OperationRebind, GUID: "guid-repair", Field: v2.BindingFieldHcomName, Value: "bus-new"}
+	challenge := "same-uid-loopback-challenge"
+	expected := attestationStatement(challenge, request)
+	var visibleMu sync.Mutex
+	visible := ""
+	injected := make(chan struct{})
+	observedTwice := make(chan struct{})
+	readCount := 0
+	automationDone := make(chan error, 1)
+	go func() {
+		visibleMu.Lock()
+		visible = challenge
+		visibleMu.Unlock()
+		close(injected)
+		<-observedTwice
+		visibleMu.Lock()
+		visible = ""
+		visibleMu.Unlock()
+		_, err := master.WriteString(expected + "\n")
+		automationDone <- err
+	}()
+
+	collector := DefaultProofCollector(io.Discard)
+	collector.OpenTTY = func() (*os.File, error) { return slave, nil }
+	collector.PaneGet = func(context.Context, string) (herdrcli.Pane, error) {
+		return herdrcli.Pane{PaneID: "pane-live", TerminalID: "terminal-live"}, nil
+	}
+	collector.ReadVisible = func(context.Context, string) (string, error) {
+		if readCount == 0 {
+			<-injected
+		}
+		visibleMu.Lock()
+		defer visibleMu.Unlock()
+		readCount++
+		if readCount == 2 {
+			close(observedTwice)
+		}
+		return visible, nil
+	}
+	collector.NewChallenge = func() (string, error) { return challenge, nil }
+	collector.Wait = func(time.Duration) {}
+	service.CollectProof = collector.Collect
+
+	result, err := service.Execute(context.Background(), request)
+	if err != nil || result.Status != registry.WriteApplied {
+		t.Fatalf("same-uid loopback result=%+v err=%v", result, err)
+	}
+	if err := <-automationDone; err != nil {
+		t.Fatal(err)
+	}
+	rec := loadCurrent(t, path)
+	if len(rec.Attestations) != 1 || rec.Attestations[0].Statement != expected || len(rec.BindingTombstones) != 1 {
+		t.Fatalf("same-uid loopback audit = %+v tombstones=%+v", rec.Attestations, rec.BindingTombstones)
+	}
+	service.Now = func() time.Time { return time.Date(2026, 7, 17, 0, 2, 0, 0, time.UTC) }
+	_, err = service.Execute(context.Background(), Request{Operation: OperationReissueCredential, GUID: "guid-repair"})
+	if err == nil || !strings.Contains(err.Error(), "rate limit") || !strings.Contains(err.Error(), "retry in 8m") {
+		t.Fatalf("post-forgery rate-limit err = %v", err)
+	}
+}
+
+func TestConcurrentRepairsCommitOnceAndLoserGetsRateWindow(t *testing.T) {
+	tests := []struct {
+		name      string
+		request   Request
+		configure func(*Service)
+	}{
+		{
+			name:    "identity rebind completion finalizer",
+			request: Request{Operation: OperationRebind, GUID: "guid-repair", Field: v2.BindingFieldHcomName, Value: "bus-new"},
+		},
+		{
+			name:    "empty launch context completion finalizer",
+			request: Request{Operation: OperationRebind, GUID: "guid-repair", Field: v2.BindingFieldLaunchContext, Value: "pane-live"},
+			configure: func(service *Service) {
+				joined := true
+				service.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+					return []hcomidentity.Row{{Name: "bus-old", Joined: &joined}}, nil
+				}
+			},
+		},
+		{
+			name:    "wrong launch context authorization append",
+			request: Request{Operation: OperationRebind, GUID: "guid-repair", Field: v2.BindingFieldLaunchContext, Value: "pane-live"},
+			configure: func(service *Service) {
+				joined := true
+				service.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+					return []hcomidentity.Row{{Name: "bus-old", Joined: &joined, LaunchContext: hcomidentity.LaunchContext{PaneID: "pane-wrong"}}}, nil
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service, path := testService(t)
+			if tt.configure != nil {
+				tt.configure(&service)
+			}
+			arrived := make(chan struct{}, 2)
+			release := make(chan struct{})
+			service.CollectProof = func(context.Context, v2.SessionRecord, Request) (Proof, error) {
+				arrived <- struct{}{}
+				<-release
+				return Proof{Statement: "explicit statement", PaneID: "pane-live", TerminalID: "terminal-live"}, nil
+			}
+			type execution struct {
+				result Result
+				err    error
+			}
+			results := make(chan execution, 2)
+			for range 2 {
+				go func() {
+					result, err := service.Execute(context.Background(), tt.request)
+					results <- execution{result: result, err: err}
+				}()
+			}
+			<-arrived
+			<-arrived
+			close(release)
+
+			var successes int
+			var loser error
+			for range 2 {
+				execution := <-results
+				if execution.err == nil {
+					successes++
+				} else {
+					loser = execution.err
+				}
+			}
+			if successes != 1 {
+				t.Fatalf("successful executions = %d, want exactly one", successes)
+			}
+			if loser == nil || !strings.Contains(loser.Error(), "rate limit") || !strings.Contains(loser.Error(), "retry in 10m") {
+				t.Fatalf("loser error = %v, want rate limit with remaining window", loser)
+			}
+			if got := len(loadCurrent(t, path).Attestations); got != 1 {
+				t.Fatalf("committed attestations = %d, want 1", got)
+			}
+		})
 	}
 }
 
@@ -175,11 +327,13 @@ func testService(t *testing.T) (Service, string) {
 			},
 		}}, nil
 	})
-	ids := []string{"attestation-id", "correction-id", "extra-id"}
+	var idMu sync.Mutex
+	idCounter := 0
 	nextID := func() (string, error) {
-		id := ids[0]
-		ids = ids[1:]
-		return id, nil
+		idMu.Lock()
+		defer idMu.Unlock()
+		idCounter++
+		return fmt.Sprintf("repair-test-id-%d", idCounter), nil
 	}
 	now := func() time.Time { return time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC) }
 	complete := func(ctx context.Context, request seatcompletion.Request) (seatcompletion.Result, error) {
@@ -244,4 +398,31 @@ func readFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+func openTestPTY(t *testing.T) (*os.File, *os.File) {
+	t.Helper()
+	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.IoctlSetPointerInt(int(master.Fd()), unix.TIOCSPTLCK, 0); err != nil {
+		_ = master.Close()
+		t.Fatal(err)
+	}
+	number, err := unix.IoctlGetInt(int(master.Fd()), unix.TIOCGPTN)
+	if err != nil {
+		_ = master.Close()
+		t.Fatal(err)
+	}
+	slave, err := os.OpenFile(fmt.Sprintf("/dev/pts/%d", number), os.O_RDWR|unix.O_NOCTTY, 0)
+	if err != nil {
+		_ = master.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = slave.Close()
+		_ = master.Close()
+	})
+	return master, slave
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -232,6 +233,44 @@ func TestBindingHistoryCarriesAcrossNonBindingAndLifecycleEvents(t *testing.T) {
 		t.Fatalf("unseated seat = %+v, want nil", unseated.Seat)
 	}
 	assertBindingIDs(t, unseated.Bindings, "binding-seat", "binding-bus")
+}
+
+func TestAttestationAndTombstoneHistoriesCarryAcrossLifecycleEvents(t *testing.T) {
+	corrected, ok, err := normalizeSessionAppend(bindingProjection(t), attestedCorrectionPatch("binding-bus", v2.BindingFieldHcomName))
+	if err != nil || !ok {
+		t.Fatalf("corrected normalize = ok %v err %v", ok, err)
+	}
+	encoded, err := json.Marshal(corrected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := v2.Load(strings.NewReader(string(encoded)+"\n"), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		row  v2.SessionRecord
+	}{
+		{name: "label", row: v2.SessionRecord{GUID: corrected.GUID, Event: "labelled", Label: "renamed"}},
+		{name: "mission", row: v2.SessionRecord{GUID: corrected.GUID, Event: "mission_joined", Mission: &v2.Mission{Slug: "repair-audit", Source: "explicit"}}},
+		{name: "unseat", row: v2.SessionRecord{GUID: corrected.GUID, Event: "unseated", State: v2.StateUnseated}},
+		{name: "retire", row: v2.SessionRecord{GUID: corrected.GUID, Event: "retired", State: v2.StateRetired}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			next, ok, err := normalizeSessionAppend(projection, tt.row)
+			if err != nil || !ok {
+				t.Fatalf("normalize = ok %v err %v", ok, err)
+			}
+			if !reflect.DeepEqual(next.Attestations, corrected.Attestations) {
+				t.Fatalf("attestations changed across %s: got %+v want %+v", tt.row.Event, next.Attestations, corrected.Attestations)
+			}
+			if !reflect.DeepEqual(next.BindingTombstones, corrected.BindingTombstones) {
+				t.Fatalf("tombstones changed across %s: got %+v want %+v", tt.row.Event, next.BindingTombstones, corrected.BindingTombstones)
+			}
+		})
+	}
 }
 
 func TestBindingHistoryRefusesSeatedCoordinateChangeWithoutFact(t *testing.T) {
