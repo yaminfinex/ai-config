@@ -928,34 +928,33 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	outputRow := append([]byte(nil), row...)
 	result, err := r.completeLifecycle(spec, candidate, start.Agent.PaneID, start.Agent.TerminalID)
 	if err != nil {
-		r.failAfterLaunch("seat completion failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
+		r.handleLifecycleCompletionFailure("seat completion failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, false)
 		return nil, 1
 	}
 	if result.Refusal != nil {
-		state := r.lifecycleOccupantState(start.Agent.PaneID, start.Agent.TerminalID)
 		reason := fmt.Sprintf("seat completion refused [%s]: %s", result.Refusal.Code, result.Refusal.Cause)
-		if state == "absent" {
-			r.failAfterLaunch(reason, start.Agent.PaneID, start.Agent.TerminalID)
-		} else {
-			die(r.stderr, reason+"; launched child is "+state+" and was preserved without a registry row. Once it joins hcom, the sidecar will retry this same completion step; otherwise run herder enroll from the live seat")
-		}
+		r.handleLifecycleCompletionFailure(reason, start.Agent.PaneID, start.Agent.TerminalID, false)
+		return nil, 1
+	}
+	if result.Status != registry.WriteApplied {
+		r.handleLifecycleCompletionFailure("seat completion wrote no registry row", start.Agent.PaneID, start.Agent.TerminalID, false)
 		return nil, 1
 	}
 	var completed v2.SessionRecord
 	if err := json.Unmarshal(result.Row, &completed); err != nil {
-		r.failAfterLaunch("seat completion returned an invalid registry row: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
+		r.handleLifecycleCompletionFailure("seat completion returned an invalid registry row: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, true)
 		return nil, 1
 	}
 	if completed.Seat != nil && completed.Seat.HcomName != "" {
 		outputRow, err = registry.UpdateRawObject(outputRow, map[string]any{"hcom_name": completed.Seat.HcomName})
 		if err != nil {
-			r.failAfterLaunch("lifecycle output encoding failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
+			r.handleLifecycleCompletionFailure("lifecycle output encoding failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, true)
 			return nil, 1
 		}
 	}
 	if spec.Agent == "grok" {
 		if err = refreshGrokCapabilitiesAfterRegistration(spec.RegistryPath, spec.GUID, spec.GrokSessionID); err != nil {
-			r.failAfterLaunch("Grok capability registration failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
+			r.handleLifecycleCompletionFailure("Grok capability registration failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, true)
 			return nil, 1
 		}
 	}
@@ -1020,6 +1019,19 @@ func (r *runner) lifecycleOccupantState(paneID, terminalID string) string {
 		return "live"
 	}
 	return "unknown"
+}
+
+func (r *runner) handleLifecycleCompletionFailure(reason, paneID, terminalID string, registryApplied bool) {
+	state := r.lifecycleOccupantState(paneID, terminalID)
+	if state == "absent" {
+		r.failAfterLaunch(reason, paneID, terminalID)
+		return
+	}
+	if registryApplied {
+		die(r.stderr, reason+"; launched child is "+state+" and was preserved because canonical registry completion was already applied. Inspect the completed registry row before retrying lifecycle output recovery")
+		return
+	}
+	die(r.stderr, reason+"; launched child is "+state+" and was preserved without a registry row. Once it joins hcom, the sidecar will retry this same completion step; otherwise run herder enroll from the live seat")
 }
 
 func refreshGrokCapabilitiesAfterRegistration(registryPath, guid, sessionID string) error {

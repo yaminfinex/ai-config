@@ -313,6 +313,121 @@ func (fakeHerdrClient) Output(args ...string) ([]byte, error) {
 	return []byte(`{"result":{"agents":[]}}`), nil
 }
 
+type liveLifecycleFailureHerdr struct {
+	closeCalls int
+}
+
+func (f *liveLifecycleFailureHerdr) Combined(args ...string) ([]byte, int, error) {
+	if len(args) >= 2 && args[0] == "agent" && args[1] == "start" {
+		return []byte(`{"result":{"type":"agent_started","agent":{"pane_id":"p_live","terminal_id":"term_live","workspace_id":"ws_live","cwd":"/repo"}}}`), 0, nil
+	}
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "get" {
+		return []byte(`{"result":{"pane":{"pane_id":"p_live","terminal_id":"term_live"}}}`), 0, nil
+	}
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "close" {
+		f.closeCalls++
+		return []byte(`{"result":{"type":"pane_closed"}}`), 0, nil
+	}
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "list" {
+		return []byte(`{"result":{"panes":[]}}`), 0, nil
+	}
+	return []byte(`{"result":{"type":"ok"}}`), 0, nil
+}
+
+func (f *liveLifecycleFailureHerdr) Output(args ...string) ([]byte, error) {
+	return []byte(`{"result":{"agents":[]}}`), nil
+}
+
+func TestLifecycleIncompleteCompletionPreservesLiveChild(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		update func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error)
+		want   string
+	}{
+		{
+			name: "registry lock failure",
+			update: func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
+				return nil, errors.New("lock refused")
+			},
+			want: "seat completion failed: lock refused",
+		},
+		{
+			name: "registry noop",
+			update: func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
+				return []registry.WriteOutcome{{Status: registry.WriteNoop}}, nil
+			},
+			want: "seat completion wrote no registry row",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			state := t.TempDir()
+			configureLifecycleTest(t, state)
+			client := &liveLifecycleFailureHerdr{}
+			engine := seatcompletion.DefaultEngine()
+			engine.UpdateRegistry = tt.update
+			var stderr strings.Builder
+			_, code := (&runner{stderr: &stderr, herdr: client, completion: &engine}).startAndAppend(startSpec{
+				Mode:         "resume",
+				GUID:         "guid-live-failure",
+				Short:        "live",
+				Label:        "live-worker",
+				Role:         "worker",
+				Agent:        "bash",
+				RegistryPath: filepath.Join(state, "registry.jsonl"),
+				BaseRaw:      []byte(`{}`),
+				CWD:          state,
+			})
+			if code != 1 {
+				t.Fatalf("startAndAppend() code = %d, want 1", code)
+			}
+			if client.closeCalls != 0 {
+				t.Fatalf("live child close calls = %d, want 0; stderr=%s", client.closeCalls, stderr.String())
+			}
+			for _, want := range []string{tt.want, "launched child is live", "preserved without a registry row"} {
+				if !strings.Contains(stderr.String(), want) {
+					t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+				}
+			}
+			if strings.Contains(stderr.String(), "invalid registry row") {
+				t.Fatalf("noop reached registry-row unmarshal: %s", stderr.String())
+			}
+		})
+	}
+}
+
+func TestLifecycleInvalidAppliedRowPreservesLiveChild(t *testing.T) {
+	state := t.TempDir()
+	configureLifecycleTest(t, state)
+	client := &liveLifecycleFailureHerdr{}
+	engine := seatcompletion.DefaultEngine()
+	engine.UpdateRegistry = func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
+		return []registry.WriteOutcome{{Status: registry.WriteApplied, Row: []byte(`{`)}}, nil
+	}
+	var stderr strings.Builder
+	_, code := (&runner{stderr: &stderr, herdr: client, completion: &engine}).startAndAppend(startSpec{
+		Mode:         "fork",
+		GUID:         "guid-invalid-applied-row",
+		Short:        "invalid",
+		Label:        "invalid-worker",
+		Role:         "worker",
+		Agent:        "bash",
+		RegistryPath: filepath.Join(state, "registry.jsonl"),
+		BaseRaw:      []byte(`{}`),
+		CWD:          state,
+	})
+	if code != 1 {
+		t.Fatalf("startAndAppend() code = %d, want 1", code)
+	}
+	if client.closeCalls != 0 {
+		t.Fatalf("live child close calls = %d, want 0; stderr=%s", client.closeCalls, stderr.String())
+	}
+	for _, want := range []string{"invalid registry row", "launched child is live", "registry completion was already applied"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+		}
+	}
+}
+
 type lifecycleBridge struct {
 	b      *grokbridge.Binder
 	cancel context.CancelFunc
