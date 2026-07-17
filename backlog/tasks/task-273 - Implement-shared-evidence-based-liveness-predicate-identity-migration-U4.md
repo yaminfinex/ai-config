@@ -1,9 +1,10 @@
 ---
 id: TASK-273
 title: 'Implement: shared evidence-based liveness predicate (identity migration U4)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-17 04:28'
+updated_date: '2026-07-17 22:04'
 labels:
   - herder
   - identity-migration
