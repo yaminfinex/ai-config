@@ -3,10 +3,10 @@ id: TASK-267
 title: >-
   Design: target-state identity architecture and staged migration plan for the
   registration/assignment layer
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-17 02:19'
-updated_date: '2026-07-17 04:16'
+updated_date: '2026-07-17 04:24'
 labels:
   - herder
   - design
@@ -26,7 +26,7 @@ Owner-ordered follow-on to the accepted registration-brittleness investigation (
 - [ ] #1 Target-state architecture doc in docs/design/ with provenance header; each memo root cause (H1-H7) neutralized or explicitly accepted as residual; keep-list invariants preserved verbatim
 - [ ] #2 Staged migration plan (ce-plan discipline) with independently-shippable ordered stages, per-stage invariant + verification story + blast-radius honesty, no upstream dependency; upstream-blocked residuals marked
 - [ ] #3 Investigation memo promoted to docs/design/ with provenance header, content otherwise unchanged
-- [ ] #4 Adversarial design review and memo-author intent-holder check passed; owner ratification received before any task breakdown
+- [x] #4 Adversarial design review and memo-author intent-holder check passed; owner ratification received before any task breakdown
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -46,3 +46,12 @@ CHAIN COMPLETE at 4dd9d9d: adversarial design review final APPROVE (6 rounds); i
 
 OWNER RATIFIED 2026-07-17: Branch B (same-uid posture reduction, tripwire-not-wall) ruled for the break-glass trust anchor. Owner rationale verbatim: takeover is always by accident and repairing should be easy and trusted; low stakes; no complexity for failure scenarios that are not real. Execution (ratification commit, merge, Done flip, task breakdown U1-U5) proceeds post-compact per resume steer.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-17 04:24
+---
+MERGED a002486 (--no-ff, docs-only: 3 files under docs/design/, 1853 insertions). Ratification recorded in-doc by designer (7777a82 + a4207e7: Branch B ADOPTED at the decision point with owner rationale; Branch A not-adopted additive posture upgrade, revisit only on deliberate same-uid adversary evidence; all pending-ratification wording dropped incl. one residual caught by reviewer sight-check and fixed same round). Reviewer sight-verified both commits: edit-site allowlist held, open-decision sweep clean, rationale fidelity confirmed, hygiene clean, memo untouched. Pre-merge orchestrator gates: docs-only proof (0 non-docs paths) + identifier sweep (2 matches = memo's own provenance header, ruled acceptable). No battery per docs-only rule (docs/design, not docs/specs). AC#4 complete: 6-round adversarial review APPROVE + intent-holder CONCUR-WITH-NOTES (condition discharged) + owner ratification received before task breakdown. Task breakdown U1-U5 follows as separate filed tasks.
+---
+<!-- COMMENTS:END -->
