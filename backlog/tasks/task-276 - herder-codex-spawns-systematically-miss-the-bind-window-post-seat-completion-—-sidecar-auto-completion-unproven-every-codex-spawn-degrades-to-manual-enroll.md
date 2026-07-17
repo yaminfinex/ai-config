@@ -4,9 +4,10 @@ title: >-
   herder: codex spawns systematically miss the bind window post seat-completion
   — sidecar auto-completion unproven, every codex spawn degrades to manual
   enroll
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-17 07:33'
+updated_date: '2026-07-17 07:35'
 labels:
   - herder
   - identity-migration
