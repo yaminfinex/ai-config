@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-15 11:28'
-updated_date: '2026-07-17 03:15'
+updated_date: '2026-07-17 03:24'
 labels: []
 dependencies: []
 ordinal: 243500
@@ -41,4 +41,6 @@ Design checkpoint APPROVED 2026-07-17 (bus thread sid-harvest-fix): five product
 Builder DONE 2026-07-17 (f649ff5): signature + 5 call sites per approved checkpoint, riders 1-2 covered (compact progression pin with actual-first-gate correction; resume carry-order pin), red-to-green consequence fixtures, builder battery 61/61 + 4 modules. Review chain dispatched: hera independent gate running from the worktree (announced); incumbent opus reviewer + grok calibration seat briefed (verdict authority incumbent; brief lens (a) = empty-value admission sweep on now-possibly-empty ToolSessionID consumers, (b) = legacy-poison re-propagation via resume). Pi calibration seat skipped this row (0/6 boots, task-263 open — pi ledger row records it).
 
 Fix round 1 committed 3016056: (1) P1 mint-path pins as wire goldens on actual spawn/fork CLI paths, mutation-verified with the incumbent's exact attack (both suites failed under it, restored); (2) resume refusal cause+remedy corrected golden-first (true cause: creator rows born SID-less until sidecar/in-seat enroll capture; non-destructive remedy); (3) operative-value route: explicit BuildProvenance argument now determines carried provenance, post-carry reassignment removed, sidecar stale-vs-observed test added; (4) record accuracy: sidecar = sole automatic healer, resume delta named. Final-head full battery 61/61 + 4 modules announced with tail. Delta reviews dispatched (incumbent verdict authority + calibration seat).
+
+Delta verdicts: incumbent APPROVE + calibration APPROVE (round 2). Incumbent re-executed their round-1 attack verbatim against the new pins — both contracts FAIL under it with the injected values in the golden diffs (the fork diff reproduces the two live field rows exactly); operative-value change mutation-armed on both sites; refusal/help/record consistency verified. Slot-contamination incident during delta (calibration seat mutated while incumbent held slot 1): incumbent proved their results uncontaminable (false-pass-only risk direction, injected values present in observed FAILs) and re-executed clean with custody instrumentation anyway — no re-baseline needed; process fault recorded for the calibration ledger. NEXT-TOUCH RIDER (non-blocking P3, incumbent): the resume refusal's cause clause is incomplete for legacy rows that genuinely predate SID capture — add 'or predates session capture' back as a second cause clause whenever that text is next touched; remedy already correct for both cases. Incumbent battery note: 1 script env-fail in reviewer shell (old go on PATH, GOTOOLCHAIN=local) — environmental, package green in normal shell, delta touches zero grok files.
 <!-- SECTION:NOTES:END -->
