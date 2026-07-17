@@ -6,6 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-17 02:19'
+updated_date: '2026-07-17 02:52'
 labels:
   - herder
   - design
@@ -27,3 +28,9 @@ Owner-ordered follow-on to the accepted registration-brittleness investigation (
 - [ ] #3 Investigation memo promoted to docs/design/ with provenance header, content otherwise unchanged
 - [ ] #4 Adversarial design review and memo-author intent-holder check passed; owner ratification received before any task breakdown
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Designer DONE 2026-07-17 (commit 68abf3f, branch task-267-identity-design): target architecture (T1-T6 invariants, plane-by-plane, H1-H7 disposition), migration plan (U1-U5: rebirth, break-glass, credentials, observer liveness, epochs — each independently shippable, no upstream dependency), memo promoted with provenance (byte-identical verified). Designer verified read-only that herdr exposes no server-generation id at protocol 16; epoch stage ships on spec-sanctioned probe inference + process-incarnation fingerprint. Orchestrator read both docs in full; verified commit + memo diff. Adversarial design review dispatched cross-family (codex 5.6 high) with designer-nominated attack surfaces (break-glass proof forgeability, credential real-cut availability split, epoch false-stability) + write-spine pre-trace + independent re-verification of the negative claim. Chain: review -> fix rounds -> memo-author intent-holder check -> fresh-eyes offer -> owner ratification -> task breakdown.
+<!-- SECTION:NOTES:END -->
