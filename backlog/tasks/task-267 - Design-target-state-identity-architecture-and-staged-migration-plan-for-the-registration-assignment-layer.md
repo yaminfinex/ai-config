@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-17 02:19'
-updated_date: '2026-07-17 03:46'
+updated_date: '2026-07-17 04:16'
 labels:
   - herder
   - design
@@ -43,4 +43,6 @@ Fix rounds 3+4: rotation commit protocol (registry generation flip = sole commit
 Intent-holder verdict (memo author): CONCUR-WITH-NOTES at 3c0018e. Faithfulness confirmed — no place where the design claims the memo supports something it does not; both letter-departures labeled and endorsed (reissue = the anti-circularity finding applied prospectively; T4 recast to one-predicate-many-appliers endorsed: evidence-basedness was the load-bearing part, centralization was not). Sole substantive ask (round 5, dispatched): T6 lattice absent-vs-unavailable condition — absence = consulted-successfully-no-match, never source-unavailable (else history adjudication arms during recorded outage windows). Recorded observations for owner scoping: U1+U2 alone retire the season's two dominant costs (spawn-dead class + repair-loop operator tail); the record contains zero deliberate same-uid adversaries (every recorded impersonation was ambient/inherited) so Branch B suffices on the evidence, Branch A is an additive posture upgrade; §3.5 transport invariants = simple direct-dial check in implementing units, not detection machinery.
 
 CHAIN COMPLETE at 4dd9d9d: adversarial design review final APPROVE (6 rounds); intent-holder CONCUR-WITH-NOTES, sole condition discharged and confirmed (absent-vs-unavailable lattice rule landed + verified by both). Merge-readiness verified: docs-only diff proven (3 files, 0 non-docs paths), identifier sweep clean (single match = the promoted memo's own provenance citation, reviewer-verified non-load-bearing). AC#1-3 satisfied; AC#4 awaits owner ratification. Presented to owner with the ONE decision (break-glass trust anchor) + scoping observations + fresh-eyes offer. Seats held pending ratification: designer (amendments), incumbent reviewer (delta on amendments), memo author.
+
+OWNER RATIFIED 2026-07-17: Branch B (same-uid posture reduction, tripwire-not-wall) ruled for the break-glass trust anchor. Owner rationale verbatim: takeover is always by accident and repairing should be easy and trusted; low stakes; no complexity for failure scenarios that are not real. Execution (ratification commit, merge, Done flip, task breakdown U1-U5) proceeds post-compact per resume steer.
 <!-- SECTION:NOTES:END -->
