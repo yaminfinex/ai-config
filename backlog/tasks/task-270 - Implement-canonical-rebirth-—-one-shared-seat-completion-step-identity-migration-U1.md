@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-17 04:26'
-updated_date: '2026-07-17 04:28'
+updated_date: '2026-07-17 04:38'
 labels:
   - herder
   - identity-migration
@@ -31,9 +31,18 @@ DESIGN CHECKPOINT REQUIRED BEFORE CODE: short design note (shared-package shape 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Design checkpoint note approved by orchestrator BEFORE any code (package shape, per-seat-kind completion sequence, refusal matrix, write-spine field + binding-id design)
+- [x] #1 Design checkpoint note approved by orchestrator BEFORE any code (package shape, per-seat-kind completion sequence, refusal matrix, write-spine field + binding-id design)
 - [ ] #2 All six creation/recovery verbs terminate in the shared completion step; cross-verb row-shape parity suite proves byte-equivalent seat shapes for the same live facts across paths, for all three seat kinds (herdr/process/busless)
 - [ ] #3 Every plan §U1 test scenario implemented and green: reclaimed-row backfill then spawn-capable; bus-row-absent refusal with no partial row; busless bash completes without bus facts; headless process seat completes on pid+bus; pane_conflict carried not rewritten; two-bus-row multi-match fail-closed; write-spine projection preservation + typed outcome + rotation survival; mutation-armed pins on every admitting path of the completion predicate
 - [ ] #4 Keep-list re-audit of the final diff: no widened admitting predicate, no unexplained pass, no stored-value ownership proof on a pinned path, no weakened refusal
 - [ ] #5 Full existing enroll/adopt/reconcile/spawn suites green + manual pass: a reclaimed seat is spawn-capable after completion with no fallback branch firing
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-17 04:38
+---
+Design checkpoint APPROVED (after one amendment round). Builder's note covered package/API shape, per-seat-kind sequences, refusal matrix, and the binding-fact write spine — conformant to the plan's settled decisions on all axes. Orchestrator raised 3 corrections, all resolved in the amendment: (1) spawn bind expiry reclassified as an observation window — teardown only on positive death/no-occupant evidence; live-but-slow or unknown-liveness children keep their pane with a retryable refusal, and the sidecar's late correlated recognition converts to the shared completion step so slow binders still mint atomically (all three cells test-pinned); (2) adopt wrong-nonempty launch-context refusal ships with a terminating ordinary remedy (stop wrong vendor row -> hcom start --as -> herder enroll) and names the reclaim-guard shape as upstream-gated pointing at the durable hazards-doc recovery recipe; (3) normalizer binding-fact requirement scoped to seated-state establish/change; lifecycle seat-clearing exempt from fact creation but not history carry; seated partial clears refused. Hygiene re-confirmed (no stage letters/identifiers in code). Code unlocked.
+---
+<!-- COMMENTS:END -->
