@@ -1,5 +1,5 @@
 === STDERR ===
-herder-lifecycle: cannot resume nosess: no tool_session_id recorded for this guid (never captured, or predates session capture) — spawn a fresh agent instead
+herder-lifecycle: cannot resume nosess: no tool_session_id recorded for this guid — creator rows are born without one until sidecar or in-seat enrollment captures the session. Wait for sidecar capture and retry, or run 'herder enroll' from the session's own seat and retry. Only spawn a fresh agent if the session is genuinely dead and cannot be enrolled
 === STDOUT ===
 
 === EXIT ===

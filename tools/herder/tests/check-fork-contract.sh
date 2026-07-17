@@ -186,6 +186,7 @@ run_case() {
     MOCK_HCOM_IDENTITY="${MOCK_HCOM_IDENTITY:-}" \
     HERDER_GUID="${HERDER_GUID:-}" \
     HERDER_SPAWNED_BY="${HERDER_SPAWNED_BY:-}" \
+    HCOM_SESSION_ID="${FORK_HCOM_SESSION_ID:-}" \
     "${HFK[@]}" "$@" 2>"$RUN_ERR_F")"
   RUN_RC=$?
 }
@@ -298,7 +299,9 @@ check_one codex_addendum
 # provenance: a fork run BY a spawned session records THAT session as the child's
 # spawned_by — not the inherited HERDER_SPAWNED_BY, which names the forker's own
 # spawner (the child's grandparent). TASK-004.
-HERDER_GUID=guid-forker-1111 HERDER_SPAWNED_BY=guid-orch-2222 \
+# The ambient SID belongs to the forker; the child golden must stay assumed
+# with no sids entry until the child reports its own identity.
+HERDER_GUID=guid-forker-1111 HERDER_SPAWNED_BY=guid-orch-2222 FORK_HCOM_SESSION_ID=sid-forker \
   run_case provenance_spawned_by 1 parent --label prov-fork --json
 check_one provenance_spawned_by
 

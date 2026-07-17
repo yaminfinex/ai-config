@@ -410,13 +410,13 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 	prov := registry.BuildProvenance(mechanism, "", row.SessionID, row.Tag, coords.CWD, coords.WorkspaceID)
 	if latest != nil && latest.Provenance != nil {
 		carried := *latest.Provenance
+		carried.ToolSessionID = prov.ToolSessionID
 		carried.CWD = prov.CWD
 		carried.WorkspaceID = prov.WorkspaceID
 		carried.Branch = prov.Branch
 		carried.TS = prov.TS
 		prov = carried
 	}
-	prov.ToolSessionID = row.SessionID
 	if prov.ToolSessionID == "" {
 		prov = registry.PreserveToolSessionID(prov, recs, guid)
 	}

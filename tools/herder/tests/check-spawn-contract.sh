@@ -121,6 +121,7 @@ run_spawn() {
     HERDR_ENV=1 HERDR_PANE_ID="${SPAWN_PANE_ID:-p_orch}" \
     HERDER_GUID="${SPAWN_HERDER_GUID:-}" \
     HERDER_SPAWNED_BY="${SPAWN_HERDER_SPAWNED_BY:-}" \
+    HCOM_SESSION_ID="${SPAWN_HCOM_SESSION_ID:-}" \
     HERDER_TEAM="${SPAWN_HERDER_TEAM:-}" \
     HERDER_STATE_DIR="$CASE/state" \
     HERDER_SPAWN_SHELL=/bin/zsh \
@@ -294,8 +295,11 @@ scenario worktree_createfail wtcreatefail claude launchctx --role worker --agent
 # the same value exported to the child as HERDER_SPAWNED_BY (row/env agreement).
 SPAWN_HERDER_GUID="guid-parent-000"
 SPAWN_HERDER_SPAWNED_BY="guid-grandpa-00"
+# The ambient SID belongs to the spawner; the child golden must stay assumed
+# with no sids entry until the child reports its own identity.
+SPAWN_HCOM_SESSION_ID="sid-parent"
 scenario spawn_grandparent ready claude launchctx --role worker --agent claude --json
-unset SPAWN_HERDER_GUID SPAWN_HERDER_SPAWNED_BY
+unset SPAWN_HERDER_GUID SPAWN_HERDER_SPAWNED_BY SPAWN_HCOM_SESSION_ID
 # TASK-023: --notify-to as a bus name. A seated registry session's hcom_name
 # matches even when the value is not a guid/label/pane coordinate...
 SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-lead-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"orchestrator","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_OTHER","pane_id":"p_other","hcom_name":"lead-bus","namespace":"/hcom"},"provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-lead","tag":"orchestrator","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"2026-07-03T00:00:00Z"}}'
