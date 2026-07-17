@@ -3,10 +3,10 @@ id: TASK-280
 title: >-
   spawn bind window: codex joins now exceed the 60s default; undelivered prompt
   should ride the sidecar late-completion
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-17 22:06'
-updated_date: '2026-07-17 22:16'
+updated_date: '2026-07-17 22:17'
 labels:
   - herder
   - dx
