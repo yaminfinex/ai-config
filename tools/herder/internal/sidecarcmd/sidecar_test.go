@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/pendingprompt"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcompletion"
@@ -295,8 +296,8 @@ func TestFindRowCorrelatedReportsPIDSchemaDriftOnce(t *testing.T) {
 		!strings.Contains(got, "refusing exact-name recovery") {
 		t.Fatalf("schema-drift diagnostic = %q, want explicit refusal", got)
 	}
-	if strings.Count(got, "herder sidecar:") != 1 {
-		t.Fatalf("schema-drift diagnostic count = %d, want one", strings.Count(got, "herder sidecar:"))
+	if strings.Count(got, "refusing exact-name recovery") != 1 {
+		t.Fatalf("schema-drift diagnostic count = %d, want one", strings.Count(got, "refusing exact-name recovery"))
 	}
 }
 
@@ -841,6 +842,101 @@ func TestProcessIDCorrelationEnrichesAndReportsAgentSession(t *testing.T) {
 	want := "pane report-agent-session p_child --source herder:sidecar --agent codex --agent-session-id sess-mine"
 	if got[0] != want {
 		t.Fatalf("report call = %q, want %q", got[0], want)
+	}
+}
+
+func TestLateProcessCorrelatedCompletionDeliversPendingPrompt(t *testing.T) {
+	installFakeHerdrForSidecar(t, 0)
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "worker-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+	prompt := pendingprompt.Record{
+		GUID: "guid-new-0000", Sender: "dispatcher-live", BusDir: "/hcom", Message: "late initial prompt", VerifyMS: 20,
+	}
+	if err := pendingprompt.Store(registryPath, prompt, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	var diagnostic strings.Builder
+	deliveries := 0
+	s := &sidecar{
+		tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath,
+		diagnostic:   &diagnostic,
+		completeSeat: testSeatCompletion(t),
+		processEnvirons: func(string) []processEnvironmentRead {
+			return []processEnvironmentRead{{env: map[string]string{
+				"HERDER_GUID": "guid-new-0000", "HCOM_INSTANCE_NAME": "mine", "HCOM_PROCESS_ID": "proc-child",
+			}}}
+		},
+		deliverPrompt: func(sender, target, busDir, message string, verifyMS int) string {
+			deliveries++
+			if sender != "dispatcher-live" || target != "worker-mine" || busDir != "/hcom" || message != "late initial prompt" || verifyMS != 20 {
+				t.Fatalf("delivery args = %q %q %q %q %d", sender, target, busDir, message, verifyMS)
+			}
+			return "delivered"
+		},
+	}
+	rows := []hcomRow{{
+		Name: "worker-mine", BaseName: "mine", Tool: "codex", Tag: "worker", Directory: "/repo",
+		Status: "listening", SessionID: "session-live", LaunchContext: launchContext("", "proc-child"),
+	}}
+	row, correlated := s.findRowCorrelated(rows)
+	if row == nil || !correlated {
+		t.Fatalf("late correlate = %+v correlated=%v", row, correlated)
+	}
+	if !s.enrichDiscovered(row, correlated) {
+		t.Fatal("late correlated seat did not complete")
+	}
+	if deliveries != 1 || !s.pendingPromptHandled {
+		t.Fatalf("deliveries=%d handled=%v", deliveries, s.pendingPromptHandled)
+	}
+	if latest := s.latest("guid-new-0000"); latest == nil || latest.HcomName != "worker-mine" {
+		t.Fatalf("completed row = %+v", latest)
+	}
+	for _, want := range []string{"process scan:", "correlate=owned-process", "completion result:", "pending prompt result: delivered"} {
+		if !strings.Contains(diagnostic.String(), want) {
+			t.Fatalf("diagnostic = %q, want %q", diagnostic.String(), want)
+		}
+	}
+}
+
+func TestPendingPromptPersistedAfterSeatCompletionStillDelivers(t *testing.T) {
+	installFakeHerdrForSidecar(t, 0)
+	registryPath := filepath.Join(t.TempDir(), "registry.jsonl")
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "worker-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+	deliveries := 0
+	s := &sidecar{
+		tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath,
+		completeSeat: testSeatCompletion(t),
+		deliverPrompt: func(string, string, string, string, int) string {
+			deliveries++
+			return "delivered"
+		},
+	}
+	row := &hcomRow{
+		Name: "worker-mine", BaseName: "mine", Tool: "codex", Tag: "worker", Directory: "/repo",
+		Status: "listening", SessionID: "session-live", HooksBound: true, LaunchContext: launchContext("p_child", "proc-child"),
+	}
+	if !s.enrichDiscovered(row, true) {
+		t.Fatal("seat did not complete")
+	}
+	if deliveries != 0 {
+		t.Fatalf("delivery ran before pending record existed: %d", deliveries)
+	}
+	if err := pendingprompt.Store(registryPath, pendingprompt.Record{
+		GUID: "guid-new-0000", Sender: "dispatcher-live", BusDir: "/hcom", Message: "late persisted prompt",
+	}, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	s.deliverPendingPromptForCompletedSeat(row)
+	if deliveries != 1 || !s.pendingPromptHandled {
+		t.Fatalf("late persistence deliveries=%d handled=%v", deliveries, s.pendingPromptHandled)
 	}
 }
 

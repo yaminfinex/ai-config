@@ -20,6 +20,7 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/hookcmd"
 	"ai-config/tools/herder/internal/observerstatus"
+	"ai-config/tools/herder/internal/pendingprompt"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcompletion"
@@ -187,6 +188,9 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 	registryPath := registry.DefaultPath()
 	stateDir := filepath.Dir(registryPath)
 	now := time.Now().UTC()
+	if err := pendingprompt.PruneAll(registryPath, now); err != nil {
+		fmt.Fprintf(stderr, "herder observer: pending prompt GC failed: %v\n", err)
+	}
 	st := observerstatus.Status{
 		Schema:             "herder.observer.status.v1",
 		Advice:             true,

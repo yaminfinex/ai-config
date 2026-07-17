@@ -171,6 +171,32 @@ func TestParseArgsAcceptsMission(t *testing.T) {
 	}
 }
 
+func TestBindTimeoutDefaultsAreFamilyAwareAndEnvironmentWins(t *testing.T) {
+	t.Setenv("HERDER_SPAWN_BIND_MS", "")
+	for _, tt := range []struct {
+		agent string
+		want  int
+	}{
+		{agent: "claude", want: 60000},
+		{agent: "codex", want: 300000},
+		{agent: "gemini", want: 300000},
+		{agent: "bash", want: 60000},
+	} {
+		opts, code := parseArgs([]string{"--role", "worker", "--agent", tt.agent}, io.Discard, io.Discard)
+		if code != 0 || opts.BindTimeoutMS != tt.want {
+			t.Fatalf("agent %s bind timeout = %d code=%d, want %d", tt.agent, opts.BindTimeoutMS, code, tt.want)
+		}
+	}
+
+	t.Setenv("HERDER_SPAWN_BIND_MS", "12345")
+	for _, agent := range []string{"claude", "codex"} {
+		opts, code := parseArgs([]string{"--role", "worker", "--agent", agent}, io.Discard, io.Discard)
+		if code != 0 || opts.BindTimeoutMS != 12345 {
+			t.Fatalf("agent %s override = %d code=%d, want 12345", agent, opts.BindTimeoutMS, code)
+		}
+	}
+}
+
 func TestSpawnJSONMissionWireShape(t *testing.T) {
 	withMission, err := json.Marshal(newSpawnJSONRecord(
 		missionSpawnRecord(&v2.Mission{Slug: "alpha", Source: missioncontext.SourceExplicit}),

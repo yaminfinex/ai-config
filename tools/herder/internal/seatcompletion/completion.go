@@ -400,7 +400,15 @@ func (e Engine) resolveSeat(ctx context.Context, request Request, stamp string) 
 		if e.RepairLaunchContext == nil {
 			return v2.Seat{}, false, &Refusal{Code: "launch_context_repair_unavailable", Cause: "launch-context repair unavailable"}
 		}
-		repair := e.RepairLaunchContext(request.Namespace, resolved.Name, seat.PaneID)
+		// The roster's tagged display name is the delivery coordinate, while
+		// hcom's instances table is keyed by the emitted base name. Repair only
+		// the store coordinate hcom supplied; never manufacture one from tag
+		// parts. Untagged/legacy rows legitimately use Name as the fallback.
+		repairName := resolved.BaseName
+		if repairName == "" {
+			repairName = resolved.Name
+		}
+		repair := e.RepairLaunchContext(request.Namespace, repairName, seat.PaneID)
 		if repair.Refused() || (repair.Status != "written" && repair.Status != "already-present") {
 			return v2.Seat{}, false, &Refusal{Code: repair.Code, Cause: repair.Cause, LaunchContext: &repair}
 		}

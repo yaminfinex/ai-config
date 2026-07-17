@@ -145,6 +145,9 @@ block_for() {  # assemble + normalize the golden block for the current CASE
   block+="$(printf '\n=== REGISTRY ===\n%s' "$(cat "$CASE/state/registry.jsonl" 2>/dev/null)")"
   block+="$(printf '\n=== HCOM SEND ARGV ===\n%s' "$(cat "$CASE/probe/send_argv" 2>/dev/null)")"
   block+="$(printf '\n=== HCOM EVENTS ARGV ===\n%s' "$(cat "$CASE/probe/events_argv" 2>/dev/null)")"
+	local pending_prompts
+	pending_prompts="$(find "$CASE/state/pending-prompts" -maxdepth 1 -name '*.json' ! -name '*.delivered.json' -type f -exec cat {} \; 2>/dev/null || true)"
+	[[ -n "$pending_prompts" ]] && block+="$(printf '\n=== PENDING PROMPTS ===\n%s' "$pending_prompts")"
 
   block="${block//$CASE/<CASE>}"
   block="${block//$REPO_ROOT/<REPO>}"
@@ -157,6 +160,7 @@ block_for() {  # assemble + normalize the golden block for the current CASE
   block="$(sed -E 's/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/<GUID>/g; s/"hostname":"[^"]*"/"hostname":"<HOST>"/g' <<<"$block")"
   # started_at / closed_at ISO timestamps
   block="$(sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g' <<<"$block")"
+	block="$(sed -E 's/"expires_at":"[^"]*"/"expires_at":"<TS>"/g' <<<"$block")"
   printf '%s' "$block"
 }
 

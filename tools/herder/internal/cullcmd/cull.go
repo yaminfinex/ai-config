@@ -14,6 +14,7 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/lifecyclecmd"
 	"ai-config/tools/herder/internal/panecleanup"
+	"ai-config/tools/herder/internal/pendingprompt"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -539,6 +540,9 @@ func appendClosed(path string, rec registry.Record, nowISO, result, reason strin
 		return rec, false, err
 	}
 	if already != nil {
+		if err := pendingprompt.Cleanup(path, guid); err != nil {
+			return rec, false, fmt.Errorf("clean pending initial prompt after unseat: %w", err)
+		}
 		rec.State = already.State
 		rec.RecordedAt = already.RecordedAt
 		rec.CloseResult = already.CloseResult
@@ -554,6 +558,9 @@ func appendClosed(path string, rec registry.Record, nowISO, result, reason strin
 	}
 	if outcome.Status != registry.WriteApplied {
 		return rec, false, fmt.Errorf("registry unseat failed for %s: no unseated session record appended", guid)
+	}
+	if err := pendingprompt.Cleanup(path, guid); err != nil {
+		return rec, false, fmt.Errorf("clean pending initial prompt after unseat: %w", err)
 	}
 	rec.State = v2.StateUnseated
 	rec.CloseResult = result

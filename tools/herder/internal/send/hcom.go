@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"ai-config/tools/herder/internal/pendingprompt"
 )
 
 type busSender struct {
@@ -152,6 +154,39 @@ func DeliverBus(sender, busName, busDir, message string, timeoutMS int) string {
 // not joined on its bus.
 func (h *busSender) send(sender, target, busName, busDir, message string, timeoutMS int, jsonOut bool, stdout, stderr io.Writer) int {
 	verdict := h.deliver(sender, busName, busDir, message, timeoutMS)
+	return h.reportDelivery(verdict, target, busName, busDir, message, jsonOut, stdout, stderr)
+}
+
+func (h *busSender) sendPending(registryPath, guid, sender, target, busName, busDir, message string, timeoutMS int, jsonOut bool, stdout, stderr io.Writer) int {
+	result, err := pendingprompt.Attempt(registryPath, guid, message, pendingprompt.ActorManual, h.now().UTC(), func(pendingprompt.Record) string {
+		return h.deliver(sender, busName, busDir, message, timeoutMS)
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "hcom_send: pending initial prompt state failed: %v\n", err)
+		return 1
+	}
+	if !result.Managed {
+		return h.send(sender, target, busName, busDir, message, timeoutMS, jsonOut, stdout, stderr)
+	}
+	if result.Suppressed {
+		fmt.Fprintf(stderr, "sent 0 chars to %s (hcom @%s), verify=already_delivered (matching pending initial prompt was already submitted; duplicate suppressed)\n", target, busName)
+		if jsonOut {
+			writeCompactJSON(stdout, hcomRecord{
+				Target:         target,
+				HcomName:       busName,
+				HcomDir:        busDir,
+				ResolvedVia:    "registry",
+				Submitted:      false,
+				Verify:         "already_delivered",
+				MessagePreview: messagePreview(message),
+			})
+		}
+		return 0
+	}
+	return h.reportDelivery(result.Verdict, target, busName, busDir, message, jsonOut, stdout, stderr)
+}
+
+func (h *busSender) reportDelivery(verdict, target, busName, busDir, message string, jsonOut bool, stdout, stderr io.Writer) int {
 	if verdict == "not_joined" {
 		fmt.Fprintf(stderr, "hcom_send: target %s (@%s) not found on bus (not joined or does not exist)\n", target, busName)
 		return 2
