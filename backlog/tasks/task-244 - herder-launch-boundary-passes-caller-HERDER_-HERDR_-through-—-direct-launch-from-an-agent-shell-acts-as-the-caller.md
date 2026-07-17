@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-15 11:28'
-updated_date: '2026-07-17 02:55'
+updated_date: '2026-07-17 03:15'
 labels: []
 dependencies: []
 ordinal: 243500
@@ -39,4 +39,6 @@ Two live field instances found 2026-07-17 (fleet escalation, rows verified read-
 Design checkpoint APPROVED 2026-07-17 (bus thread sid-harvest-fix): five production call sites classified (spawn+fork+resume = creator/target flows passing explicit-or-empty target SID; enroll+sidecar = self flows passing their verified/observed own SID); BuildProvenance loses the ambient env read entirely. Orchestrator verified the enumeration independently (grep match). Rider 1: named behavior delta at the compact identity path that requires confirmed continuity when hcom_verified is absent — born-assumed creator rows now fail it closed (the prior pass rode on harvested wrong-session evidence); pinned by test with the confirmation-path heal. Rider 2: resume target-SID-wins ordering pinned by assertion.
 
 Builder DONE 2026-07-17 (f649ff5): signature + 5 call sites per approved checkpoint, riders 1-2 covered (compact progression pin with actual-first-gate correction; resume carry-order pin), red-to-green consequence fixtures, builder battery 61/61 + 4 modules. Review chain dispatched: hera independent gate running from the worktree (announced); incumbent opus reviewer + grok calibration seat briefed (verdict authority incumbent; brief lens (a) = empty-value admission sweep on now-possibly-empty ToolSessionID consumers, (b) = legacy-poison re-propagation via resume). Pi calibration seat skipped this row (0/6 boots, task-263 open — pi ledger row records it).
+
+Fix round 1 committed 3016056: (1) P1 mint-path pins as wire goldens on actual spawn/fork CLI paths, mutation-verified with the incumbent's exact attack (both suites failed under it, restored); (2) resume refusal cause+remedy corrected golden-first (true cause: creator rows born SID-less until sidecar/in-seat enroll capture; non-destructive remedy); (3) operative-value route: explicit BuildProvenance argument now determines carried provenance, post-carry reassignment removed, sidecar stale-vs-observed test added; (4) record accuracy: sidecar = sole automatic healer, resume delta named. Final-head full battery 61/61 + 4 modules announced with tail. Delta reviews dispatched (incumbent verdict authority + calibration seat).
 <!-- SECTION:NOTES:END -->
