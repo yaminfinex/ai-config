@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -33,6 +34,7 @@ type hcomRow struct {
 	Directory      string           `json:"directory"`
 	Tool           string           `json:"tool"`
 	Status         string           `json:"status"`
+	Joined         *bool            `json:"joined,omitempty"`
 	StatusAgeS     int64            `json:"status_age_seconds"`
 	SessionID      string           `json:"session_id"`
 	HooksBound     bool             `json:"hooks_bound"`
@@ -59,7 +61,6 @@ func (t *flexibleJSONText) UnmarshalJSON(b []byte) error {
 
 // Run bridges hcom status to herdr's pane.report_agent socket protocol.
 func Run(args []string, stdout, stderr io.Writer) int {
-	_ = stderr
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		printHelp(stdout)
 		return 0
@@ -82,6 +83,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		lifecycleMode:   os.Getenv("HERDER_LIFECYCLE_MODE"),
 		parentSessionID: os.Getenv("HERDER_PARENT_SESSION_ID"),
 		completeSeat:    completeObservedSeat,
+		diagnostic:      stderr,
 	}
 	return sidecar.run()
 }
@@ -129,7 +131,12 @@ type sidecar struct {
 	lifecycleMode       string
 	parentSessionID     string
 	correlatedProcessID string
+	correlatedName      string
+	correlatedPIDs      []int
 	processEnvirons     processEnvironmentScanner
+	instancePID         func(string, string) (int, error)
+	diagnostic          io.Writer
+	pidSchemaWarned     bool
 	statuslineSnapshots *statuslineSnapshotWriter
 	completeSeat        func(context.Context, *hcomRow, seatcompletion.Request) (seatcompletion.Result, error)
 }
@@ -137,6 +144,7 @@ type sidecar struct {
 type processEnvironmentScanner func(tool string) []processEnvironmentRead
 
 type processEnvironmentRead struct {
+	pid int
 	env map[string]string
 	err error
 }
@@ -282,28 +290,98 @@ func findRowForPane(rows []hcomRow, paneID, lifecycleMode, parentSessionID strin
 	return nil
 }
 
-func findRowForProcessID(rows []hcomRow, processID, lifecycleMode, parentSessionID string) *hcomRow {
+func exactProcessIDMatch(rows []hcomRow, processID, lifecycleMode, parentSessionID string) (*hcomRow, int) {
 	if processID == "" {
-		return nil
+		return nil, 0
 	}
-	// If multiple GUID-sharing child processes exist, correctness depends on
-	// them inheriting the same HCOM_PROCESS_ID; scan-order drift then degrades
-	// to a miss, not cross-enrichment.
+	var hit *hcomRow
+	count := 0
 	for i := range rows {
 		if lifecycleMode == "fork" && parentSessionID != "" && rows[i].SessionID == parentSessionID {
 			continue
 		}
-		if rows[i].LaunchContext.ProcessID == processID {
-			return &rows[i]
+		if sidecarRowJoined(rows[i]) && rows[i].LaunchContext.ProcessID == processID {
+			count++
+			hit = &rows[i]
 		}
+	}
+	return hit, count
+}
+
+func exactStoredNameMatch(rows []hcomRow, storedName, lifecycleMode, parentSessionID string) (*hcomRow, int) {
+	if storedName == "" {
+		return nil, 0
+	}
+	var hit *hcomRow
+	count := 0
+	for i := range rows {
+		if lifecycleMode == "fork" && parentSessionID != "" && rows[i].SessionID == parentSessionID {
+			continue
+		}
+		if !sidecarRowJoined(rows[i]) || !hcomidentity.StoredNameMatches(rows[i].Name, rows[i].BaseName, storedName) {
+			continue
+		}
+		count++
+		if hit == nil {
+			hit = &rows[i]
+		}
+	}
+	return hit, count
+}
+
+func sidecarRowJoined(row hcomRow) bool {
+	if row.Name == "" {
+		return false
+	}
+	if row.Joined != nil && !*row.Joined {
+		return false
+	}
+	switch strings.ToLower(row.Status) {
+	case "inactive", "stopped", "closed", "dead":
+		return false
+	default:
+		return true
+	}
+}
+
+type ownedChildIdentity struct {
+	StoredName string
+	ProcessID  string
+	PIDs       []int
+}
+
+func (i ownedChildIdentity) empty() bool {
+	return i.StoredName == "" && i.ProcessID == "" && len(i.PIDs) == 0
+}
+
+func findRowForOwnedChild(
+	rows []hcomRow,
+	identity ownedChildIdentity,
+	lifecycleMode, parentSessionID string,
+	pidCorroborates func(hcomRow) bool,
+) *hcomRow {
+	byName, nameCount := exactStoredNameMatch(rows, identity.StoredName, lifecycleMode, parentSessionID)
+	byProcess, processCount := exactProcessIDMatch(rows, identity.ProcessID, lifecycleMode, parentSessionID)
+	if nameCount > 1 || processCount > 1 {
+		return nil
+	}
+	if byName != nil && byProcess != nil && byName.Name != byProcess.Name {
+		return nil
+	}
+	if byProcess != nil {
+		return byProcess
+	}
+	if byName != nil && pidCorroborates != nil && pidCorroborates(*byName) {
+		return byName
 	}
 	return nil
 }
 
 // findRowCorrelated locates this session's hcom row and reports whether the
-// match is CHILD-SPECIFIC. A pane correlate (launch_context.pane_id == this
-// pane) positively identifies THIS session's row; the tool+tag+cwd launch
-// fallback does NOT — during a window where our own row has no pane correlate,
+// match is CHILD-SPECIFIC. A pane correlate or the exact hcom name/process id
+// read from a live tool process carrying this HERDER_GUID identifies THIS
+// session's row. The tool+tag+cwd launch fallback does NOT — during a window
+// where our own row has no pane/name/process correlate,
 // a STALE same-tag+cwd agent can be the sole match. The fallback row is still
 // returned (status bridging keeps using it), flagged paneCorrelated=false so
 // callers never write its bus name onto this guid (TASK-033: row enrichment
@@ -315,17 +393,21 @@ func (s *sidecar) findRowCorrelated(rows []hcomRow) (row *hcomRow, paneCorrelate
 	if r := findRowForPane(rows, s.paneID, s.lifecycleMode, s.parentSessionID); r != nil {
 		return r, true
 	}
-	if r := findRowForProcessID(rows, s.correlatedProcessID, s.lifecycleMode, s.parentSessionID); r != nil {
+	cached := ownedChildIdentity{StoredName: s.correlatedName, ProcessID: s.correlatedProcessID, PIDs: s.correlatedPIDs}
+	if r := findRowForOwnedChild(rows, cached, s.lifecycleMode, s.parentSessionID, s.pidCorroborator(cached)); r != nil {
 		return r, true
 	}
-	// Codex hcom rows may lack launch_context.pane_id but carry
-	// launch_context.process_id. Reading a LIVE child process environ is
-	// authoritative for this spawned child and not the TASK-043 inherited shell
-	// env hazard: HERDER_GUID proves ownership, and HCOM_PROCESS_ID is then only
-	// used to select the matching roster row.
-	if processID := s.findProcessIDForOwnChild(); processID != "" {
-		if r := findRowForProcessID(rows, processID, s.lifecycleMode, s.parentSessionID); r != nil {
-			s.correlatedProcessID = processID
+	// Reading a LIVE child process environ is authoritative for this spawned
+	// child and not the TASK-043 inherited shell env hazard: HERDER_GUID proves
+	// ownership. Every matching process must agree on the base-form
+	// HCOM_INSTANCE_NAME and HCOM_PROCESS_ID. A stored-name match is only a clue:
+	// it must be corroborated by the row's process id or by the hcom row's live
+	// OS process carrying this HERDER_GUID.
+	if identity := s.findIdentityForOwnChild(); !identity.empty() {
+		if r := findRowForOwnedChild(rows, identity, s.lifecycleMode, s.parentSessionID, s.pidCorroborator(identity)); r != nil {
+			s.correlatedName = r.Name
+			s.correlatedProcessID = identity.ProcessID
+			s.correlatedPIDs = append([]int(nil), identity.PIDs...)
 			return r, true
 		}
 	}
@@ -381,6 +463,11 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 	}
 	if latest != nil && registry.IsTerminal(*latest) {
 		return false
+	}
+	if completedRecognitionMatches(latest, row, coords) {
+		// Spawn (or an earlier sidecar pass) already completed this exact
+		// canonical seat. This is a successful idempotent replay: no second row.
+		return true
 	}
 	label := os.Getenv("HERDER_LABEL")
 	role := os.Getenv("HERDER_ROLE")
@@ -482,8 +569,9 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 			Seat:         seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: coords.PaneID, TerminalID: coords.TerminalID},
 			Namespace:    os.Getenv("HCOM_DIR"),
 			Evidence: hcomidentity.Evidence{
+				Name:      s.correlatedName,
 				SessionID: row.SessionID,
-				ProcessID: row.LaunchContext.ProcessID,
+				ProcessID: firstNonEmpty(s.correlatedProcessID, row.LaunchContext.ProcessID),
 				PaneIDs:   []string{coords.PaneID, row.LaunchContext.PaneID},
 			},
 		}
@@ -492,9 +580,35 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 			complete = completeObservedSeat
 		}
 		result, completeErr := complete(context.Background(), row, request)
-		return completeErr == nil && result.Refusal == nil && result.Status == registry.WriteApplied
+		if completeErr != nil || result.Refusal != nil {
+			return false
+		}
+		if result.Status == registry.WriteApplied {
+			return true
+		}
+		if result.Status == registry.WriteNoop {
+			confirmed, loadErr := registry.Load(s.registry)
+			return loadErr == nil && completedRecognitionMatches(s.latestFromRecords(confirmed, guid), row, coords)
+		}
 	}
 	return false
+}
+
+func completedRecognitionMatches(latest *registry.Record, row *hcomRow, coords paneCoordinates) bool {
+	if latest == nil || row == nil || !registry.IsSeated(*latest) || latest.HcomVerified == nil || !*latest.HcomVerified {
+		return false
+	}
+	if row.SessionID != "" && (latest.Provenance == nil || latest.Provenance.ToolSessionID != row.SessionID) {
+		return false
+	}
+	if row.Tag != "" && latest.HcomTag != row.Tag {
+		return false
+	}
+	hooksBound := latest.HooksBound != nil && *latest.HooksBound
+	return latest.PaneID == coords.PaneID && latest.TerminalID == coords.TerminalID &&
+		latest.HcomName == row.Name && latest.HcomDir == os.Getenv("HCOM_DIR") &&
+		hooksBound == row.HooksBound &&
+		latest.TranscriptPath == row.TranscriptPath
 }
 
 func completeObservedSeat(ctx context.Context, _ *hcomRow, request seatcompletion.Request) (seatcompletion.Result, error) {
@@ -633,18 +747,19 @@ func ptrString(s *string) string {
 	return *s
 }
 
-func (s *sidecar) findProcessIDForOwnChild() string {
+func (s *sidecar) findIdentityForOwnChild() ownedChildIdentity {
 	guid := os.Getenv("HERDER_GUID")
 	if guid == "" {
-		return ""
+		return ownedChildIdentity{}
 	}
 	scan := s.processEnvirons
 	if scan == nil {
 		scan = scanProcessEnvirons
 	}
-	// If multiple processes share this HERDER_GUID, they are expected to share
-	// this child's HCOM_PROCESS_ID too; lexical /proc scan order can then only
-	// cause a later roster miss, not enrichment of a different hcom row.
+	// Multiple live processes carrying this HERDER_GUID must agree on the hcom
+	// name and process id. Disagreement fails closed instead of letting /proc
+	// scan order choose an identity.
+	identity := ownedChildIdentity{}
 	for _, read := range scan(s.tool) {
 		if read.err != nil {
 			continue
@@ -652,11 +767,77 @@ func (s *sidecar) findProcessIDForOwnChild() string {
 		if read.env["HERDER_GUID"] != guid {
 			continue
 		}
-		if processID := read.env["HCOM_PROCESS_ID"]; processID != "" {
-			return processID
+		candidate := ownedChildIdentity{
+			StoredName: read.env["HCOM_INSTANCE_NAME"],
+			ProcessID:  read.env["HCOM_PROCESS_ID"],
+		}
+		if read.pid > 0 {
+			candidate.PIDs = []int{read.pid}
+		}
+		if candidate.empty() {
+			continue
+		}
+		if identity.StoredName != "" && candidate.StoredName != "" && identity.StoredName != candidate.StoredName {
+			return ownedChildIdentity{}
+		}
+		if identity.ProcessID != "" && candidate.ProcessID != "" && identity.ProcessID != candidate.ProcessID {
+			return ownedChildIdentity{}
+		}
+		identity.StoredName = firstNonEmpty(identity.StoredName, candidate.StoredName)
+		identity.ProcessID = firstNonEmpty(identity.ProcessID, candidate.ProcessID)
+		if read.pid > 0 && !containsPID(identity.PIDs, read.pid) {
+			identity.PIDs = append(identity.PIDs, read.pid)
 		}
 	}
-	return ""
+	return identity
+}
+
+func (s *sidecar) pidCorroborator(identity ownedChildIdentity) func(hcomRow) bool {
+	return func(row hcomRow) bool {
+		if len(identity.PIDs) == 0 {
+			return false
+		}
+		baseName := row.BaseName
+		if baseName == "" && row.Tag == "" {
+			baseName = row.Name
+		}
+		if baseName == "" {
+			return false
+		}
+		lookup := s.instancePID
+		if lookup == nil {
+			lookup = hcomidentity.InstancePID
+		}
+		pid, err := lookup(os.Getenv("HCOM_DIR"), baseName)
+		if err != nil {
+			if errors.Is(err, hcomidentity.ErrInstancePIDSchemaDrift) {
+				s.reportPIDSchemaDrift(err)
+			}
+			return false
+		}
+		return pid > 0 && containsPID(identity.PIDs, pid)
+	}
+}
+
+func (s *sidecar) reportPIDSchemaDrift(err error) {
+	if s.pidSchemaWarned {
+		return
+	}
+	s.pidSchemaWarned = true
+	diagnostic := s.diagnostic
+	if diagnostic == nil {
+		diagnostic = os.Stderr
+	}
+	fmt.Fprintf(diagnostic, "herder sidecar: %v; refusing exact-name recovery\n", err)
+}
+
+func containsPID(pids []int, want int) bool {
+	for _, pid := range pids {
+		if pid == want {
+			return true
+		}
+	}
+	return false
 }
 
 func scanProcessEnvirons(tool string) []processEnvironmentRead {
@@ -682,7 +863,7 @@ func scanProcessEnvirons(tool string) []processEnvironmentRead {
 			continue
 		}
 		env, err := readProcessEnviron(procDir + "/environ")
-		reads = append(reads, processEnvironmentRead{env: env, err: err})
+		reads = append(reads, processEnvironmentRead{pid: pid, env: env, err: err})
 	}
 	return reads
 }

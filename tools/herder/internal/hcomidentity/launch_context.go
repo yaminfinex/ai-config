@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,11 @@ import (
 )
 
 const supportedSchemaVersion = 17
+
+// ErrInstancePIDSchemaDrift marks a refusal to use hcom process identity after
+// the read-only database contract has drifted. Callers must surface this error:
+// treating it as an ordinary non-match silently disables process proof.
+var ErrInstancePIDSchemaDrift = errors.New("refusing hcom PID corroboration: schema drift")
 
 type LaunchContextRepair struct {
 	Status    string
@@ -198,12 +205,8 @@ func launchContextRemedy(code, name string) string {
 }
 
 func validateLaunchContextSchema(ctx context.Context, conn *sql.Conn) error {
-	var version int
-	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return fmt.Errorf("cannot read hcom schema version: %w", err)
-	}
-	if version != supportedSchemaVersion {
-		return fmt.Errorf("unsupported hcom schema version %d (expected %d)", version, supportedSchemaVersion)
+	if err := validateSchemaVersion(ctx, conn); err != nil {
+		return err
 	}
 	instances, err := tableColumns(ctx, conn, "instances")
 	if err != nil {
@@ -228,6 +231,35 @@ func validateLaunchContextSchema(ctx context.Context, conn *sql.Conn) error {
 	}
 	if _, ok := bindings["updated_at"]; !ok {
 		return fmt.Errorf("process_bindings.updated_at column is missing")
+	}
+	return nil
+}
+
+func validateInstancePIDSchema(ctx context.Context, conn *sql.Conn) error {
+	if err := validateSchemaVersion(ctx, conn); err != nil {
+		return err
+	}
+	instances, err := tableColumns(ctx, conn, "instances")
+	if err != nil {
+		return err
+	}
+	name, ok := instances["name"]
+	if !ok || name.pk != 1 || primaryKeyCount(instances) != 1 || !strings.EqualFold(name.kind, "TEXT") {
+		return fmt.Errorf("instances.name is not the single TEXT primary key")
+	}
+	if pid, ok := instances["pid"]; !ok || !strings.EqualFold(pid.kind, "INTEGER") {
+		return fmt.Errorf("instances.pid INTEGER column is missing")
+	}
+	return nil
+}
+
+func validateSchemaVersion(ctx context.Context, conn *sql.Conn) error {
+	var version int
+	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return fmt.Errorf("cannot read hcom schema version: %w", err)
+	}
+	if version != supportedSchemaVersion {
+		return fmt.Errorf("unsupported hcom schema version %d (expected %d)", version, supportedSchemaVersion)
 	}
 	return nil
 }
@@ -320,6 +352,48 @@ func uniqueProcessBinding(ctx context.Context, conn *sql.Conn, name string) stri
 		return values[0]
 	}
 	return ""
+}
+
+// InstancePID returns the OS process recorded for one exact hcom base name.
+// It is a read-only corroboration surface for callers that have already
+// selected a live roster row but need to prove which live process owns it.
+func InstancePID(dir, baseName string) (int, error) {
+	if baseName == "" {
+		return 0, fmt.Errorf("hcom base name is required")
+	}
+	dbPath, err := hcomDBPath(dir)
+	if err != nil {
+		return 0, err
+	}
+	if info, statErr := os.Stat(dbPath); statErr != nil {
+		return 0, statErr
+	} else if !info.Mode().IsRegular() {
+		return 0, fmt.Errorf("%s is not a regular database file", dbPath)
+	}
+	dsn := (&url.URL{Scheme: "file", Path: dbPath, RawQuery: "mode=ro"}).String()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+	if err := validateInstancePIDSchema(ctx, conn); err != nil {
+		return 0, fmt.Errorf("%w: %v", ErrInstancePIDSchemaDrift, err)
+	}
+	var pid sql.NullInt64
+	if err := conn.QueryRowContext(ctx, "SELECT pid FROM instances WHERE name = ?", baseName).Scan(&pid); err != nil {
+		return 0, err
+	}
+	if !pid.Valid || pid.Int64 <= 0 || pid.Int64 > int64(^uint(0)>>1) {
+		return 0, fmt.Errorf("hcom instance %q has no live process id", baseName)
+	}
+	return int(pid.Int64), nil
 }
 
 func hcomDBPath(dir string) (string, error) {

@@ -129,7 +129,7 @@ recorded bus name and delivers over the hcom bus, scoped to the row's recorded `
 buses cross correctly), then polls for a `deliver:` receipt — ack ⇒ `delivered`, none in the
 window ⇒ `queued` (do NOT resend). A target with no bus-bound registry row is refused with exit 2;
 keystrokes are never typed. The sender is proven independently from the caller's registry row and
-the joined live hcom roster (session, process, or pane evidence), then stamped with that real bus
+the joined live hcom roster (name, session, process, or pane evidence), then stamped with that real bus
 name. Missing or conflicting proof refuses with a repair remedy; no label or synthetic sender is
 substituted. Exit codes and target forms: `herder send --help`. Contract pinned by
 `tests/check-send-contract.sh` (bus-only goldens) + `check-hcom-contract.sh` (scoping/addressing).

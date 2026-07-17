@@ -1,5 +1,5 @@
 === STDERR ===
-herder-lifecycle: seat completion refused [joined_bus_row_missing]: no joined bus row matches the calling session, process, or pane; launched child is live and was preserved without a registry row. Once it joins hcom, the sidecar will retry this same completion step; otherwise run herder enroll from the live seat
+herder-lifecycle: seat completion refused [joined_bus_row_missing]: no joined bus row matches the provided name, session, process, or pane; launched child is live and was preserved without a registry row. Once it joins hcom, the sidecar will retry this same completion step; otherwise run herder enroll from the live seat
 === STDOUT ===
 
 === EXIT ===

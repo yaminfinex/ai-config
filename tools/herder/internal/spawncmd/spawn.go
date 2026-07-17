@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -332,7 +333,7 @@ func (r *runner) handleIncompleteSeatCompletion(completion seatcompletion.Result
 		reason := fmt.Sprintf("seat completion refused [%s]: %s", completion.Refusal.Code, completion.Refusal.Cause)
 		return true, r.handleSeatCompletionFailure(reason, paneID, terminalID, readyReason)
 	}
-	if completion.Status != registry.WriteApplied {
+	if completion.Status != registry.WriteApplied && completion.Status != registry.WriteNoop {
 		return true, r.handleSeatCompletionFailure("seat completion wrote no registry row", paneID, terminalID, readyReason)
 	}
 	return false, 0
@@ -407,18 +408,69 @@ func (r *runner) completeSpawn(registryPath string, record spawnRecord, launchPa
 		}
 		return seatcompletion.LivePane{PaneID: pane.PaneID, TerminalID: pane.TerminalID}, nil
 	}
-	engine.UpdateRegistry = r.updateLocked
-	return engine.Complete(context.Background(), seatcompletion.Request{
+	engine.UpdateRegistry = func(path string, fn registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
+		return r.updateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+			current := registry.V2ByGUID(tx.Projection, record.GUID)
+			if completedSpawnSeatMatches(current, record) {
+				// The sidecar won the race and already wrote this exact canonical
+				// seat. Feed registry normalization an idempotent registered replay
+				// so the locked outcome is noop rather than a second seated row.
+				replay := *current
+				replay.Event = "registered"
+				replay.RecordedAt = ""
+				replay.Raw = nil
+				return []v2.SessionRecord{replay}, nil
+			}
+			return fn(tx)
+		})
+	}
+	result, err := engine.Complete(context.Background(), seatcompletion.Request{
 		Origin:       seatcompletion.OriginSpawn,
 		RegistryPath: registryPath,
 		Candidate:    spawnCompletionCandidate(record),
 		Seat:         seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: record.PaneID},
 		Namespace:    record.HcomDir,
 		Evidence: hcomidentity.Evidence{
+			Name:      record.HcomName,
 			SessionID: sessionID,
 			PaneIDs:   []string{record.PaneID, launchPaneID},
 		},
 	})
+	if err != nil || result.Refusal != nil || result.Status != registry.WriteNoop || len(result.Row) != 0 {
+		return result, err
+	}
+	projection, loadErr := v2.LoadFile(registryPath, v2.LoadOptions{})
+	if loadErr != nil {
+		return result, fmt.Errorf("load canonical sidecar completion after noop: %w", loadErr)
+	}
+	current := registry.V2ByGUID(projection, record.GUID)
+	if !completedSpawnSeatMatches(current, record) {
+		return result, errors.New("seat completion noop has no matching canonical row")
+	}
+	result.Row = append([]byte(nil), current.Raw...)
+	return result, nil
+}
+
+func completedSpawnSeatMatches(current *v2.SessionRecord, record spawnRecord) bool {
+	if current == nil || current.State != v2.StateSeated || current.Seat == nil || current.Seat.Kind != seatcompletion.SeatHerdr {
+		return false
+	}
+	seat := current.Seat
+	return current.Label == record.Label && current.Role == record.Role && current.Tool == record.Agent &&
+		current.Provider == record.Provider && current.Model == record.Model && sameCompletionMission(current.Mission, record.Mission) &&
+		current.Provenance.Mechanism == record.Provenance.Mechanism && current.Provenance.SpawnedBy == record.Provenance.SpawnedBy &&
+		current.Provenance.ToolSessionID == record.Provenance.ToolSessionID && current.Provenance.Tag == record.Provenance.Tag &&
+		current.Provenance.CWD == record.Provenance.CWD && current.Provenance.WorkspaceID == record.Provenance.WorkspaceID &&
+		seat.PaneID == record.PaneID && seat.TerminalID == record.TerminalID &&
+		seat.HcomName != "" && seat.HcomName == record.HcomName &&
+		seat.HcomVerified != nil && *seat.HcomVerified && seat.Namespace == record.HcomDir
+}
+
+func sameCompletionMission(current, candidate *v2.Mission) bool {
+	if current == nil || candidate == nil {
+		return current == candidate
+	}
+	return *current == *candidate
 }
 
 func newTabMoveArgs(paneID, label, focusFlag string) []string {
@@ -1418,7 +1470,7 @@ func (r *runner) awaitReady(paneID *string) (reason string, trustBlocked bool, m
 // awaitBind waits for the child to BIND its bus name — the delivery gate for
 // bus-first initial prompts (TASK-032). Bind is positively observable via
 // CHILD-SPECIFIC signals only (childBoundBusOnce: this guid's registry
-// enrichment, or the frozen-launch-pane roster match) and lands early in
+// enrichment or the frozen-launch-pane roster match) and lands early in
 // boot, well before the TUI is interactive — hcom holds a message sent at
 // that instant until the session is deliverable, so no TUI-readiness gate is
 // layered on top. The
@@ -1426,12 +1478,10 @@ func (r *runner) awaitReady(paneID *string) (reason string, trustBlocked bool, m
 // here exactly as in awaitReady (--safe refuses instead). --ready-match,
 // when given, additionally gates the send on the pane text (ruling: the flag
 // keeps its "don't deliver before the screen shows X" meaning on both paths).
-// Budget: HERDER_SPAWN_BIND_MS (default 60000). Claude/bash publish
-// launch_context.pane_id, so the roster match here resolves them in a second or
-// two; codex omits pane_id and is only correlated via the sidecar's async
-// tag+cwd registry enrichment, which under load can lag past any window
-// (TASK-036) — a codex bind_timeout is expected, and its recovery is the exact
-// verbatim resend command reported below.
+// Budget: HERDER_SPAWN_BIND_MS (default 60000). Pane-bearing rows resolve
+// directly; Codex rows whose pane/session/process enrichment lags are completed
+// by the owned-child sidecar and resolve from this guid's row on the next 500ms
+// poll. A timeout therefore means no child-specific completed row appeared.
 func (r *runner) awaitBind(paneID *string, registryPath, guid, hcomDir, launchPaneID, grokSessionID string) (name, reason string, trustBlocked, modalCleared bool) {
 	waited := 0
 	boundName := ""
@@ -1676,7 +1726,8 @@ func printHelp(stdout io.Writer) {
 		"  herder spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]",
 		"               [--split right|down] [--workspace ID | --from-pane PANE_ID]",
 		"               [--tab ID | --new-tab | --worktree BRANCH [--base REF]] [--cwd PATH] [--safe]",
-		"               [--notify | --notify-to TARGET] [--mission SLUG] [--provider FAMILY] [--model ID] [--extra-arg ARG]... [--focus] [--json]",
+		"               [--notify | --notify-to TARGET] [--mission SLUG] [--provider FAMILY] [--model ID]",
+		"               [--extra-arg ARG]... [--focus] [--json]",
 		"",
 		"Options:",
 		"  --role R          agent role; becomes the hcom --tag and label prefix (required)",
@@ -1737,8 +1788,8 @@ func printHelp(stdout io.Writer) {
 		"  queued (sent, no receipt yet; it injects the moment the agent is deliverable — do NOT",
 		"  resend). On bind_timeout nothing goes on the wire (a resend is SAFE): the summary and",
 		"  --json (resend_command) carry the exact verbatim `herder send` command to run once the",
-		"  bus name shows in `herder list` — codex correlates via a slower path, so it hits this",
-		"  more often. hcom wakes an idle agent with an EMPTY composer instantly, even a fresh",
+		"  bus name shows in `herder list`. Codex rows with lagging launch coordinates still bind",
+		"  after the owned-child sidecar completes this guid's row. hcom wakes an idle agent with an EMPTY composer instantly, even a fresh",
 		"  never-prompted one; a message sent mid-boot is held until the session can take it.",
 		"  The one thing that starves bus delivery — on both families — is UNSUBMITTED TEXT in",
 		"  the composer: nothing injects until it is submitted or cleared. Preferred remedy for",

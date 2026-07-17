@@ -1,5 +1,5 @@
 === STDERR ===
-herder enroll: live bus identity could not be verified (no joined bus row matches the calling session, process, or pane); recording hcom_name as unknown. Join this session to hcom, then rerun `herder enroll` to repair the row.
+herder enroll: live bus identity could not be verified (no joined bus row matches the provided name, session, process, or pane); recording hcom_name as unknown. Join this session to hcom, then rerun `herder enroll` to repair the row.
 enrolled fresh-session (guid-fresh-0000) pane=p_self terminal=term_SELF
 === STDOUT ===
 {"kind":"session","guid":"guid-fresh-0000","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"fresh-session","role":"manual","tool":"manual","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self","confirmed_at":"<TS>"},"bindings":[{"id":"<GUID>","field":"seat","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_SELF","pane_id":"p_self"},"evidence_class":"live-verified","observed_at":"<TS>"}],"continuity":"assumed","lineage":{},"provenance":{"mechanism":"enroll","spawned_by":"guid-fresh-0000","cwd":"/mock/cwd","workspace_id":"ws_self","ts":"<TS>"}}
