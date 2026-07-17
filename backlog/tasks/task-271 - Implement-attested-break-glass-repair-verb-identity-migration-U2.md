@@ -1,9 +1,10 @@
 ---
 id: TASK-271
 title: 'Implement: attested break-glass repair verb (identity migration U2)'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-17 04:27'
+updated_date: '2026-07-17 07:22'
 labels:
   - herder
   - identity-migration
