@@ -306,6 +306,10 @@ keep-list.
   absent-live adjudication selects the attested value — the stale
   live-verified binding is a non-candidate, not outranked.** Tombstone names
   exactly one binding id; history remains readable.
+- **Absent ≠ unavailable (pins the T6 quadrant definition): live source
+  errors (roster error / bus unreachable) → history adjudication does not
+  arm; the operation refuses/defers exactly as today; no stale binding is
+  admitted during an outage window.**
 - **Rotation-survival test (pins the durable binding id): correction applied
   BEFORE a registry rotation/reseed → rotation runs (latest row per guid
   reseeded, ordinals reassigned) → adjudication AFTER rotation still selects

@@ -147,7 +147,17 @@ strengthens one of these.
      where today two stores' stale copies disagree and no live correlate can
      arbitrate, the latest sufficient binding is consulted *instead of refusing
      on the pairwise copy mismatch*. "Sufficient" = class ≥ `attested`, within
-     epoch validity for coordinate-valued fields.
+     epoch validity for coordinate-valued fields. **"Absent" is normative and
+     narrow: the live source was consulted successfully and no correlate
+     matched. A live source that is *unavailable* — roster error, bus
+     unreachable, outage — is NOT absence: history adjudication does not arm,
+     and the operation refuses or defers exactly as today.** Rationale:
+     absence-as-unavailability would arm stale-binding admission during
+     exactly the recorded fleet outage windows, when every seat's live source
+     errors at once; the codebase already embodies the
+     unavailable-vs-unresolvable split (reconcile performs no writes and no
+     mass downgrade on roster error), and implementing units inherit it here
+     as a lattice condition, not an implementation choice.
   3. **Correction semantics.** An attested correction (a break-glass rebind,
      §3.3) appends the new binding **and tombstones the specific binding it
      supersedes** — named by field and **binding id**, in the same locked
@@ -181,7 +191,7 @@ strengthens one of these.
 
   **Field-by-field admitting matrix** (the correction cell shown, not promised):
 
-  | Field | Live evidence now: conflicts with stored | Live evidence now: absent | Correction path |
+  | Field | Live evidence now: conflicts with stored | Live evidence now: absent (source consulted successfully, no match — unavailable is NOT absent, rule 2) | Correction path |
   |---|---|---|---|
   | Stored bus name | Refuse (rule 1) | Latest surviving candidate by class-then-recency (rules 3–4) | Attested rebind appends new binding + tombstones the named stale one — including a stale `live-verified` — so the attested value wins by survivorship |
   | Recorded sid | Refuse (rule 1) | Same as bus name | Same as bus name (adopt's resumed-sid authorization unchanged for automated paths) |
