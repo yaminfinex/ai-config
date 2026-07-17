@@ -6,13 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"ai-config/tools/herder/internal/grokbridge"
+	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
+	"ai-config/tools/herder/internal/liveness"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -22,6 +26,50 @@ type cullResponse struct {
 	out  []byte
 	rc   int
 	err  error
+}
+
+func TestObserverDownCLIUsesSharedPredicateToUnseatDeadProcess(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "exit 0")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := cmd.Process.Pid
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	_, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{
+			GUID: "fixture-cli-death", Event: "seated", RecordedAt: "2026-07-17T08:00:00Z", State: v2.StateSeated,
+			Seat: &v2.Seat{Kind: "process", Node: tx.NodeID, PID: pid, HcomName: "fixture-bus"},
+		}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs, err := registry.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := registry.Resolve(recs, "fixture-cli-death")
+	if rec == nil {
+		t.Fatal("missing process fixture")
+	}
+	verdict := liveness.Evaluate(cullLivenessInputFromRows(*rec, map[string]herdrcli.Agent{}, []hcomidentity.Row{{
+		Name: "fixture-bus", Status: "listening", StatusAge: 301,
+	}}, nil))
+	if verdict.Class != liveness.VerdictPositiveDeath || verdict.Cause != liveness.CauseDeadPIDStaleBusRow {
+		t.Fatalf("verdict = %+v", verdict)
+	}
+	stamp := "2026-07-17T14:00:00Z"
+	closed, appended, err := applyObservedDeath(path, *rec, verdict, stamp, "cull")
+	if err != nil || !appended {
+		t.Fatalf("apply = appended=%t closed=%+v err=%v", appended, closed, err)
+	}
+	got := latestSession(t, path, "fixture-cli-death")
+	if got.State != v2.StateUnseated || got.RecordedAt != stamp || !strings.Contains(got.CloseReason, "dead_pid_stale_bus_row") || !strings.Contains(got.ObservedVia, "cull") {
+		t.Fatalf("unseat evidence = %+v", got)
+	}
 }
 
 type scriptedCullClient struct {
@@ -385,8 +433,8 @@ func TestRunClosesSeatedPaneLessRowWithoutForce(t *testing.T) {
 	if _, err := os.Stat(closeProbe); !os.IsNotExist(err) {
 		t.Fatalf("pane close probe exists = %v, want no pane close call for pane-less row", err)
 	}
-	if got := latestSession(t, registryPath, "guid-ghost"); got.Event != "unseated" || got.State != v2.StateUnseated || got.CloseResult != "already_gone" || got.CloseReason == "" || got.Seat != nil {
-		t.Fatalf("latest row = %+v, want unseated already_gone without seat", got)
+	if got := latestSession(t, registryPath, "guid-ghost"); got.Event != "unseated" || got.State != v2.StateUnseated || got.CloseResult != "requested" || !strings.Contains(got.CloseReason, "operator-cull") || got.Seat != nil {
+		t.Fatalf("latest row = %+v, want explicit requested cull without a fabricated death verdict", got)
 	}
 	recs, err := registry.Load(registryPath)
 	if err != nil {
@@ -395,7 +443,7 @@ func TestRunClosesSeatedPaneLessRowWithoutForce(t *testing.T) {
 	if got := registry.Resolve(recs, "guid-ghost"); got == nil || got.State != v2.StateUnseated {
 		t.Fatalf("latest = %+v, want unseated dormant row", got)
 	}
-	if !strings.Contains(stdout.String(), "recorded unseated ghost (guid-ghost) pane= → already_gone") {
+	if !strings.Contains(stdout.String(), "recorded unseated ghost (guid-ghost) pane= → requested") {
 		t.Fatalf("stdout = %q, want recorded-unseated line", stdout.String())
 	}
 }
@@ -416,10 +464,10 @@ func TestRunPaneLessUnannotatedCullAppendsOneVerifiedAnnotation(t *testing.T) {
 	if after := closeRecordCount(t, registryPath, "guid-ghost"); after != before+1 {
 		t.Fatalf("unseated rows = %d, want %d", after, before+1)
 	}
-	if got := latestSession(t, registryPath, "guid-ghost"); got.State != v2.StateUnseated || got.CloseResult != "already_gone" || !strings.Contains(got.CloseReason, "source=cull-verification") || got.RecordedAt == "2026-07-08T00:00:00Z" {
-		t.Fatalf("latest row = %+v, want fresh verified already_gone annotation", got)
+	if got := latestSession(t, registryPath, "guid-ghost"); got.State != v2.StateUnseated || got.CloseResult != "requested" || !strings.Contains(got.CloseReason, "source=operator-cull") || got.RecordedAt == "2026-07-08T00:00:00Z" {
+		t.Fatalf("latest row = %+v, want fresh operator-request annotation", got)
 	}
-	if !strings.Contains(stdout.String(), "recorded unseated ghost (guid-ghost) pane= → already_gone") {
+	if !strings.Contains(stdout.String(), "recorded unseated ghost (guid-ghost) pane= → requested") {
 		t.Fatalf("stdout = %q, want recorded-unseated line", stdout.String())
 	}
 
@@ -432,7 +480,7 @@ func TestRunPaneLessUnannotatedCullAppendsOneVerifiedAnnotation(t *testing.T) {
 	if afterBytes := mustReadFile(t, registryPath); string(afterBytes) != string(beforeBytes) {
 		t.Fatalf("registry changed after repeat cull\nbefore:\n%s\nafter:\n%s", beforeBytes, afterBytes)
 	}
-	if !strings.Contains(stdout.String(), "already unseated ghost (guid-ghost) at ") || !strings.Contains(stdout.String(), "close_result=already_gone") {
+	if !strings.Contains(stdout.String(), "already unseated ghost (guid-ghost) at ") || !strings.Contains(stdout.String(), "close_result=requested") {
 		t.Fatalf("second stdout = %q, want recorded fact line", stdout.String())
 	}
 }

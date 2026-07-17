@@ -9,9 +9,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/liveness"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcompletion"
@@ -237,7 +239,7 @@ Outcomes follow herder-spec §8.3 decisions D11/D12:
   conflict                      stored terminal is live but names a different agent; refuses to act
   ambiguous                     multiple fallback candidates; refuses to guess
   undetected                    pane is alive but absent from agent detection
-  gone                          no live agent or pane matches
+  observation_gap               no positive live or death evidence is available
 `)
 }
 
@@ -352,12 +354,14 @@ func reconcileOne(rec registry.Record, held map[string]string, live liveState) r
 	}
 
 	if paneAlive(rec, live) {
+		verdict := liveness.Evaluate(liveness.Input{Pane: liveness.Signal{State: liveness.StateAlive, ObservedVia: "reconcile_pane_snapshot"}})
 		res.Outcome = "undetected"
-		res.Detail = "pane is alive, but agent list has no matching detection; restart or relaunch to restore status before rebinding"
+		res.Detail = fmt.Sprintf("pane is alive via %s, but agent list has no matching detection; restart or relaunch to restore status before rebinding", strings.Join(verdict.ObservedVia, ","))
 		return res
 	}
-	res.Outcome = "gone"
-	res.Detail = "no live agent or pane matches"
+	verdict := liveness.Evaluate(liveness.Input{Pane: liveness.Signal{State: liveness.StateDead, ObservedVia: "reconcile_pane_snapshot"}, PaneEpoch: liveness.EpochUnknown})
+	res.Outcome = string(verdict.Class)
+	res.Detail = fmt.Sprintf("cause_class=%s; no live pane matched, but one-shot absence is not positive death evidence", verdict.Cause)
 	return res
 }
 

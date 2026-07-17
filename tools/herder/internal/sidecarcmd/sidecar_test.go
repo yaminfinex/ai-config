@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/liveness"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcompletion"
@@ -47,6 +48,51 @@ func testSeatCompletion(t *testing.T) func(context.Context, *hcomRow, seatcomple
 		}
 		return engine.Complete(ctx, request)
 	}
+}
+
+func TestSidecarMissingBusKeepsPollingUntilHolderExitThenStops(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	_, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{
+			GUID: "guid-sidecar", Event: "seated", RecordedAt: "2026-07-17T10:00:00Z", State: v2.StateSeated,
+			Seat: &v2.Seat{Kind: "herdr", Node: tx.NodeID, TerminalID: "terminal-live", PaneID: "pane-live", HcomName: "bus-live"},
+		}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_GUID", "guid-sidecar")
+	var diagnostic strings.Builder
+	s := &sidecar{
+		registry: path, diagnostic: &diagnostic,
+	}
+	for poll := 0; poll < 8; poll++ {
+		if !s.observeLiveness(false, nil) {
+			t.Fatalf("missing bus stopped sidecar on poll %d while holder remained alive", poll)
+		}
+	}
+	if got := registry.V2ByGUID(mustSidecarProjection(t, path), "guid-sidecar"); got == nil || got.State != v2.StateSeated {
+		t.Fatalf("starved keepalive changed seated row: %+v", got)
+	}
+	if count := strings.Count(diagnostic.String(), "holder alive, keepalive failing"); count != 1 {
+		t.Fatalf("starvation advisory count = %d, output=%q", count, diagnostic.String())
+	}
+	if s.observeLiveness(true, nil) {
+		t.Fatal("holder exit did not terminate sidecar lifetime")
+	}
+	got := registry.V2ByGUID(mustSidecarProjection(t, path), "guid-sidecar")
+	if got == nil || got.State != v2.StateUnseated || got.CloseResult != "observed_dead" || !strings.Contains(got.ObservedVia, "sidecar") {
+		t.Fatalf("holder exit did not persist shared death evidence: %+v", got)
+	}
+}
+
+func mustSidecarProjection(t *testing.T, path string) *v2.Projection {
+	t.Helper()
+	proj, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proj
 }
 
 func launchContext(paneID, processID string) struct {
@@ -455,6 +501,9 @@ func TestSidecarRunCompletesLateEmptyCoordinateRowWithinSteadyPoll(t *testing.T)
 	complete := testSeatCompletion(t)
 	s = &sidecar{
 		tool: "codex", paneID: "p_child", tag: "worker", cwd: "/repo", registry: registryPath, ppid0: os.Getppid(),
+		applyDeath: func(string, string, liveness.SeatAnchor, liveness.Verdict, time.Time, string) (liveness.ApplyResult, error) {
+			return liveness.ApplyResult{Status: registry.WriteNoop}, nil
+		},
 		instancePID: func(string, string) (int, error) {
 			return 4242, nil
 		},

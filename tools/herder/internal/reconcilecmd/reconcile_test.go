@@ -3,9 +3,11 @@ package reconcilecmd
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
 )
 
@@ -24,6 +26,18 @@ func TestUpdateRowMarksCarriedBusNameUnverified(t *testing.T) {
 	}
 	if got.HcomName != "old-name" || got.HcomVerified == nil || *got.HcomVerified {
 		t.Fatalf("updated row = %+v, want carried name explicitly unverified", got)
+	}
+}
+
+func TestOneShotAbsenceIsObservationGapNotGone(t *testing.T) {
+	guid, label := "fixture-guid", "fixture-label"
+	rec := registry.Record{GUID: &guid, Label: &label, TerminalID: "terminal-absent", PaneID: "pane-absent"}
+	live := liveState{
+		byTerm: map[string]*herdrcli.Agent{}, paneTerms: map[string]bool{}, panePanes: map[string]bool{},
+	}
+	got := reconcileOne(rec, map[string]string{}, live)
+	if got.Outcome != "observation_gap" || !strings.Contains(got.Detail, "not positive death evidence") {
+		t.Fatalf("reconcile result = %+v", got)
 	}
 }
 

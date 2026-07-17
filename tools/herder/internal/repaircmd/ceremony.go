@@ -13,6 +13,7 @@ import (
 	"github.com/mattn/go-isatty"
 
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/liveness"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -76,7 +77,7 @@ func (c ProofCollector) Collect(ctx context.Context, rec v2.SessionRecord, reque
 	}
 	live, err := c.PaneGet(ctx, rec.Seat.PaneID)
 	if err != nil || live.PaneID != rec.Seat.PaneID || (rec.Seat.TerminalID != "" && live.TerminalID != rec.Seat.TerminalID) {
-		return Proof{}, fmt.Errorf("%w: claimed pane or intact terminal id does not match live herdr state", ErrCorroborationFailed)
+		return Proof{}, fmt.Errorf("%w: claimed pane or intact terminal id does not match live herdr state (%s)", ErrCorroborationFailed, repairLivenessGap())
 	}
 	challenge, err := c.NewChallenge()
 	if err != nil {
@@ -98,7 +99,7 @@ func (c ProofCollector) Collect(ctx context.Context, rec v2.SessionRecord, reque
 		pane, paneErr := c.PaneGet(ctx, rec.Seat.PaneID)
 		visible, readErr := c.ReadVisible(ctx, rec.Seat.PaneID)
 		if paneErr != nil || readErr != nil || pane.PaneID != rec.Seat.PaneID || (rec.Seat.TerminalID != "" && pane.TerminalID != rec.Seat.TerminalID) {
-			return Proof{}, fmt.Errorf("%w: pane changed or became unreadable during challenge", ErrCorroborationFailed)
+			return Proof{}, fmt.Errorf("%w: pane changed or became unreadable during challenge (%s)", ErrCorroborationFailed, repairLivenessGap())
 		}
 		if strings.Contains(visible, challenge) {
 			stableReads++
@@ -128,9 +129,14 @@ func (c ProofCollector) Collect(ctx context.Context, rec v2.SessionRecord, reque
 	}
 	live, err = c.PaneGet(ctx, rec.Seat.PaneID)
 	if err != nil || live.PaneID != rec.Seat.PaneID || (rec.Seat.TerminalID != "" && live.TerminalID != rec.Seat.TerminalID) {
-		return Proof{}, fmt.Errorf("%w: pane identity changed before commit", ErrCorroborationFailed)
+		return Proof{}, fmt.Errorf("%w: pane identity changed before commit (%s)", ErrCorroborationFailed, repairLivenessGap())
 	}
 	return Proof{Statement: expected, PaneID: live.PaneID, TerminalID: live.TerminalID}, nil
+}
+
+func repairLivenessGap() string {
+	verdict := liveness.Evaluate(liveness.Input{Pane: liveness.Signal{State: liveness.StateDead, ObservedVia: "repair_pane_probe"}, PaneEpoch: liveness.EpochUnknown})
+	return fmt.Sprintf("liveness=%s cause_class=%s; no death verdict", verdict.Class, verdict.Cause)
 }
 
 type confirmationRead struct {

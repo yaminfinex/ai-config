@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/continuationstate"
+	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
@@ -96,6 +97,21 @@ func TestReconciledJSONMissionPrecedenceAndInference(t *testing.T) {
 			t.Fatalf("mission = %+v, want nil", mission)
 		}
 	})
+}
+
+func TestMissingTrackerAndPaneEvidenceRendersObservationGap(t *testing.T) {
+	rec := registry.Record{TerminalID: "terminal-absent", PaneID: "pane-absent"}
+	idx := liveIndex{
+		byTerm: map[string]*herdrcli.Agent{}, byPane: map[string]*herdrcli.Agent{}, byName: map[string]*herdrcli.Agent{},
+		paneTerms: map[string]bool{}, panePanes: map[string]bool{},
+	}
+	if got := idx.unmatchedStatus(rec); got != "observation_gap" {
+		t.Fatalf("unmatched status = %q, want observation_gap", got)
+	}
+	idx.paneTerms[rec.TerminalID] = true
+	if got := idx.unmatchedStatus(rec); got != "undetected" {
+		t.Fatalf("pane-present tracker gap status = %q, want undetected", got)
+	}
 }
 
 func renderedMission(t *testing.T, raw []byte) *v2.Mission {

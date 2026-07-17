@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/liveness"
 	"ai-config/tools/herder/internal/registry"
 )
 
@@ -157,7 +158,7 @@ func printHelp(stdout io.Writer) {
 		"",
 		"Exit codes:",
 		"  0   target reached the requested status (for claude/codex, `done`≈`idle`).",
-		"  1   timed out, or the target is not live — gone or culled (check `herder list --all`).",
+		"  1   timed out, or direct evidence cannot resolve the target (check `herder list --all`).",
 	}
 	fmt.Fprint(stdout, strings.Join(lines, "\n")+"\n")
 }
@@ -185,9 +186,11 @@ func resolvePane(target string, paneOut []byte, stderr io.Writer) (string, bool)
 		}
 	}
 	if paneErr != nil || len(panes) == 0 {
-		fmt.Fprintf(stderr, "herder wait: could not read live pane list; cannot resolve %s\n", target)
+		verdict := liveness.Evaluate(liveness.Input{BusRow: liveness.BusUnavailable})
+		fmt.Fprintf(stderr, "herder wait: could not read live pane list; liveness=%s cause_class=%s for %s\n", verdict.Class, verdict.Cause, target)
 	} else {
-		fmt.Fprintf(stderr, "herder wait: %s (terminal %s) is not live anywhere — agent gone or culled\n", displayName(rec, target), term)
+		verdict := liveness.Evaluate(liveness.Input{Pane: liveness.Signal{State: liveness.StateDead, ObservedVia: "wait_pane_snapshot"}, PaneEpoch: liveness.EpochUnknown})
+		fmt.Fprintf(stderr, "herder wait: %s (terminal %s) has liveness=%s cause_class=%s; one-shot pane absence does not prove death\n", displayName(rec, target), term, verdict.Class, verdict.Cause)
 	}
 	return "", false
 }

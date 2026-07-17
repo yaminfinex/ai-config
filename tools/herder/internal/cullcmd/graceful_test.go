@@ -276,8 +276,8 @@ func TestGracefulCullRevalidatesTerminalAfterNotice(t *testing.T) {
 		t.Fatalf("reassigned pane close log stat=%v, want no pane close", err)
 	}
 	got := latestSession(t, filepath.Join(h.stateDir, "registry.jsonl"), "guid-peer")
-	if got.State != v2.StateUnseated || got.CloseResult != "already_gone" || !strings.Contains(got.CloseReason, "post-grace-verification") {
-		t.Fatalf("latest=%+v, want post-grace already-gone fact", got)
+	if got.State != v2.StateUnseated || got.CloseResult != "requested" || !strings.Contains(got.CloseReason, "operator-cull-post-grace") {
+		t.Fatalf("latest=%+v, want post-grace operator-request fact without a death verdict", got)
 	}
 	if !strings.Contains(stderr, "no longer belongs to terminal") {
 		t.Fatalf("stderr=%q, want post-grace identity explanation", stderr)

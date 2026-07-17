@@ -19,6 +19,7 @@ import (
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/hookcmd"
+	"ai-config/tools/herder/internal/liveness"
 	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
@@ -66,12 +67,15 @@ type herdrContext struct {
 }
 
 type candidate struct {
-	kind string
-	guid string
-	row  v2.SessionRecord
-	sid  string
-	bus  hcomidentity.Result
-	seat *v2.Seat
+	kind       string
+	guid       string
+	row        v2.SessionRecord
+	sid        string
+	bus        hcomidentity.Result
+	seat       *v2.Seat
+	verdict    liveness.Verdict
+	anchor     liveness.SeatAnchor
+	observedAt time.Time
 }
 
 type sweepResult struct {
@@ -224,8 +228,9 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 	cands := buildCandidates(proj, hd, bus, now)
 	doctrine := doctrineCandidates(proj, hd, bus, st.DoctrineDeliveries, joinedHcomRow)
 	flags := advisoryFlags(proj, hd)
+	flags = append(flags, livenessFlags(proj, hd, bus, now)...)
 	flags = append(flags, grokFlags...)
-	flags = append(flags, epochFlags(proj, hd, bus)...)
+	flags = append(flags, epochFlags(proj, hd)...)
 	flags = append(flags, continuationFailureFlags(proj, stateDir, stderr)...)
 	summary := applyCandidates(registryPath, cands, stderr)
 	deliverDoctrine(doctrine, st.DoctrineDeliveries, sendDoctrine, now)
@@ -575,54 +580,77 @@ func sendDoctrine(name string) bool {
 }
 
 func buildCandidates(proj *v2.Projection, hd herdrState, bus busState, now time.Time) []candidate {
-	overlap, recordedHerdr := herdrOverlap(proj, hd)
 	var out []candidate
 	for _, rec := range proj.Sessions() {
-		if rec.State == v2.StateUnseated && rec.CloseResult == "observed_dead" && rec.ObservedVia != "" {
-			out = append(out, candidate{guid: rec.GUID, row: rec})
-			continue
-		}
 		if rec.State != v2.StateSeated || rec.Seat == nil {
 			continue
 		}
-		switch rec.Seat.Kind {
-		case "process":
-			if processDead(rec, bus) {
-				out = append(out, unseatCandidate(rec, now, "process pid gone and bus row stale", "process sweep"))
-			}
-		default:
-			if !hd.available {
-				continue
-			}
-			if cand, ok := sidObservationCandidate(rec, hd, bus, now); ok {
-				out = append(out, cand)
-				continue
-			}
-			pane, present := hd.byTerm[rec.Seat.TerminalID]
-			if present {
-				if pi, ok := hd.procs[rec.Seat.TerminalID]; ok && occupantGone(pi) {
-					out = append(out, unseatCandidate(rec, now, "pane present but foreground tool process is gone", "snapshot sweep + process_info"))
-					continue
-				}
-				if shouldReconfirm(rec, now) {
-					out = append(out, reconfirmCandidate(rec, pane, bus, now))
-				}
-				continue
-			}
-			if hd.sameEpochAbsent[rec.Seat.TerminalID] {
-				out = append(out, unseatCandidate(rec, now, "terminal_id absent after prior sighting on uninterrupted herdr socket connection", "socket subscription sweep"))
-				continue
-			}
-			if recordedHerdr >= 2 && overlap == 0 {
-				continue
-			}
-			if recordedHerdr == 1 && !busCorroboratesDead(rec, bus) {
-				continue
-			}
-			out = append(out, unseatCandidate(rec, now, "terminal_id absent from snapshot with positive epoch/bus evidence", "snapshot sweep"))
+		verdict := liveness.Evaluate(livenessInput(rec, hd, bus))
+		if verdict.Class == liveness.VerdictPositiveDeath {
+			out = append(out, candidate{
+				kind: "liveness-death", guid: rec.GUID, row: rec, verdict: verdict,
+				anchor: liveness.Anchor(rec.Seat), observedAt: now,
+			})
+			continue
+		}
+		if rec.Seat.Kind == "process" || !hd.available {
+			continue
+		}
+		if cand, ok := sidObservationCandidate(rec, hd, bus, now); ok {
+			out = append(out, cand)
+			continue
+		}
+		if pane, present := hd.byTerm[rec.Seat.TerminalID]; present && shouldReconfirm(rec, now) {
+			out = append(out, reconfirmCandidate(rec, pane, bus, now))
 		}
 	}
 	return out
+}
+
+func livenessInput(rec v2.SessionRecord, hd herdrState, bus busState) liveness.Input {
+	in := liveness.Input{SeatKind: "herdr", BusRow: liveness.BusUnavailable}
+	if rec.Seat == nil {
+		return in
+	}
+	in.SeatKind = rec.Seat.Kind
+	if rec.Seat.Kind == "process" {
+		in.Process = liveness.ProbePID(rec.Seat.PID)
+	} else if hd.available {
+		if _, present := hd.byTerm[rec.Seat.TerminalID]; present {
+			in.Pane = liveness.Signal{State: liveness.StateAlive, ObservedVia: "herdr_snapshot"}
+			if pi, ok := hd.procs[rec.Seat.TerminalID]; ok {
+				state := liveness.StateAlive
+				if len(pi.Processes) == 0 {
+					state = liveness.StateDead
+				}
+				in.Process = liveness.Signal{State: state, ObservedVia: "process_info"}
+			}
+		} else {
+			in.Pane = liveness.Signal{State: liveness.StateDead, ObservedVia: "herdr_snapshot"}
+			if hd.sameEpochAbsent[rec.Seat.TerminalID] {
+				in.PaneEpoch = liveness.EpochSame
+			} else {
+				in.PaneEpoch = liveness.EpochUnknown
+			}
+		}
+	}
+	if !bus.available {
+		return in
+	}
+	in.BusRow = liveness.BusAbsent
+	if rec.Seat.HcomName == "" {
+		return in
+	}
+	row, ok := bus.rows[rec.Seat.HcomName]
+	if !ok {
+		in.BusObservedVia = "hcom_roster"
+		in.Keepalive = liveness.KeepaliveStarved
+		return in
+	}
+	in.BusRow = liveness.BusPresent
+	in.BusObservedVia = "hcom_roster"
+	in.Keepalive = liveness.KeepaliveFromAge(int64(row.StatusAge))
+	return in
 }
 
 func sidObservationCandidate(rec v2.SessionRecord, hd herdrState, bus busState, now time.Time) (candidate, bool) {
@@ -824,18 +852,6 @@ func cloneSeat(seat *v2.Seat) *v2.Seat {
 	return &cp
 }
 
-func unseatCandidate(rec v2.SessionRecord, now time.Time, reason, via string) candidate {
-	next := rec
-	next.Event = "unseated"
-	next.State = v2.StateUnseated
-	next.RecordedAt = now.Format(time.RFC3339)
-	next.Seat = nil
-	next.CloseResult = "observed_dead"
-	next.CloseReason = reason
-	next.ObservedVia = via
-	return candidate{kind: "unseat", guid: rec.GUID, row: next}
-}
-
 func reconfirmCandidate(rec v2.SessionRecord, pane herdrcli.Pane, bus busState, now time.Time) candidate {
 	next := rec
 	next.Event = "reconciled"
@@ -879,6 +895,23 @@ func applyCandidates(path string, cands []candidate, stderr io.Writer) observers
 	var summary observerstatus.Summary
 	plain := make([]candidate, 0, len(cands))
 	for _, cand := range cands {
+		if cand.kind == "liveness-death" {
+			result, err := liveness.ApplyPositiveDeath(path, cand.guid, cand.anchor, cand.verdict, cand.observedAt, "observer")
+			if err != nil {
+				fmt.Fprintf(stderr, "herder observer sweep: liveness candidate %s refused: %v\n", cand.guid, err)
+				summary.Refused++
+				continue
+			}
+			switch result.Status {
+			case registry.WriteApplied:
+				summary.Applied++
+			case registry.WriteNoop:
+				summary.Noop++
+			default:
+				summary.Refused++
+			}
+			continue
+		}
 		if cand.kind != "recognised" && cand.kind != "turnover" && cand.kind != "reconfirm" {
 			plain = append(plain, cand)
 			continue
@@ -1054,6 +1087,33 @@ func advisoryFlags(proj *v2.Projection, hd herdrState) []observerstatus.Flag {
 	return flags
 }
 
+func livenessFlags(proj *v2.Projection, hd herdrState, bus busState, now time.Time) []observerstatus.Flag {
+	var flags []observerstatus.Flag
+	for _, rec := range proj.Sessions() {
+		if rec.State != v2.StateSeated || rec.Seat == nil {
+			continue
+		}
+		verdict := liveness.Evaluate(livenessInput(rec, hd, bus))
+		if verdict.Advisory != nil {
+			flags = append(flags, observerstatus.Flag{
+				GUID: rec.GUID, Label: rec.Label, Type: "holder-alive-keepalive-failing", Severity: "warning",
+				CauseClass: string(verdict.Advisory.Cause), Detail: verdict.Advisory.Detail,
+				ObservedAt: now.UTC().Format(time.RFC3339), ObservedVia: append([]string(nil), verdict.Advisory.ObservedVia...),
+				Suggested: "inspect keepalive feeding and hcom configuration before the upstream staleness window expires",
+			})
+			continue
+		}
+		if verdict.Class == liveness.VerdictObservationGap {
+			flags = append(flags, observerstatus.Flag{
+				GUID: rec.GUID, Label: rec.Label, Type: "liveness-observation-gap", Severity: "info",
+				CauseClass: string(verdict.Cause), Detail: "liveness remains unknown; no automated unseat",
+				ObservedAt: now.UTC().Format(time.RFC3339), ObservedVia: append([]string(nil), verdict.ObservedVia...),
+			})
+		}
+	}
+	return flags
+}
+
 func continuationFailureFlags(proj *v2.Projection, stateDir string, stderr io.Writer) []observerstatus.Flag {
 	records, warnings, err := continuationstate.Unresolved(filepath.Join(stateDir, "continuations"))
 	for _, warning := range warnings {
@@ -1098,7 +1158,7 @@ func continuationTarget(proj *v2.Projection, target string) (string, string, boo
 	return guid, label, guid != ""
 }
 
-func epochFlags(proj *v2.Projection, hd herdrState, bus busState) []observerstatus.Flag {
+func epochFlags(proj *v2.Projection, hd herdrState) []observerstatus.Flag {
 	if !hd.available {
 		return nil
 	}
@@ -1117,9 +1177,6 @@ func epochFlags(proj *v2.Projection, hd herdrState, bus busState) []observerstat
 	if recorded == 1 && overlap == 0 {
 		for _, rec := range proj.Sessions() {
 			if rec.State != v2.StateSeated || rec.Seat == nil || rec.Seat.Kind == "process" {
-				continue
-			}
-			if busCorroboratesDead(rec, bus) {
 				continue
 			}
 			return []observerstatus.Flag{{
@@ -1155,10 +1212,6 @@ func herdrOverlap(proj *v2.Projection, hd herdrState) (int, int) {
 	return overlap, recorded
 }
 
-func occupantGone(pi herdrcli.ProcessInfo) bool {
-	return len(pi.Processes) == 0
-}
-
 func shouldReconfirm(rec v2.SessionRecord, now time.Time) bool {
 	if rec.Seat == nil || rec.Seat.ConfirmedAt == "" {
 		return true
@@ -1171,30 +1224,6 @@ func shouldReconfirm(rec v2.SessionRecord, now time.Time) bool {
 		return true
 	}
 	return now.Sub(t) >= reconfirmInterval()
-}
-
-func processDead(rec v2.SessionRecord, bus busState) bool {
-	if rec.Seat == nil || rec.Seat.PID == 0 {
-		return false
-	}
-	if err := syscall.Kill(rec.Seat.PID, 0); err == nil {
-		return false
-	}
-	return busCorroboratesDead(rec, bus)
-}
-
-func busCorroboratesDead(rec v2.SessionRecord, bus busState) bool {
-	if !bus.available || rec.Seat == nil || rec.Seat.HcomName == "" {
-		return false
-	}
-	row, ok := bus.rows[rec.Seat.HcomName]
-	if !ok {
-		return false
-	}
-	if row.ProcessBound != nil && !*row.ProcessBound {
-		return true
-	}
-	return row.StatusAge > 300 && row.Status != "working" && row.Status != "idle"
 }
 
 func runDaemon(stdout, stderr io.Writer) int {
@@ -1381,7 +1410,9 @@ func runStatus(opts options, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "observer status: pid=%d build=%s heartbeat=%s last_sweep=%s applied=%d noop=%d refused=%d protocol_compatible=%t\n",
 		st.PID, firstNonEmpty(st.BuildHash, "unknown"), st.HeartbeatAt, st.LastSweepAt, s.Applied, s.Noop, s.Refused, st.ProtocolCompatible)
 	for _, flag := range st.Flags {
-		fmt.Fprintf(stdout, "observer advice: %s %s %s\n", firstNonEmpty(flag.GUID, flag.Label, "-"), flag.Type, flag.Detail)
+		fmt.Fprintf(stdout, "observer advice: %s %s cause_class=%s observed_at=%s observed_via=%s %s\n",
+			firstNonEmpty(flag.GUID, flag.Label, "-"), flag.Type, firstNonEmpty(flag.CauseClass, "-"),
+			firstNonEmpty(flag.ObservedAt, "-"), firstNonEmpty(strings.Join(flag.ObservedVia, ","), "-"), flag.Detail)
 	}
 	return 0
 }
