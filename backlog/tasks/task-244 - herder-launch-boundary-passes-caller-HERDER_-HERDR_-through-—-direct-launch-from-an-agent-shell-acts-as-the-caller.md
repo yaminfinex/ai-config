@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-15 11:28'
-updated_date: '2026-07-17 03:24'
+updated_date: '2026-07-17 03:34'
 labels: []
 dependencies: []
 ordinal: 243500
@@ -49,4 +49,6 @@ Contained second-vector implementation behavior: `BuildProvenance` now requires 
 Named compact behavior delta: an ordinary creator row born with assumed continuity and absent `hcom_verified` now fails closed in the durable bus-session evidence path instead of passing on a harvested caller sid. Its reachable first refusal is the missing `provenance.tool_session_id` gate; the later assumed-continuity guard still protects inconsistent or drifted persisted rows. The sidecar is the sole automatic healer: it records the observed sid and upgrades continuity to confirmed. In-seat `herder enroll` is the manual alternative. The existing executable repair guidance is unchanged.
 
 Named resume behavior delta: resume may encounter a creator row before the sidecar has captured its sid, or a row whose pane correlation never landed. The refusal now names that pending-capture cause and directs the operator to wait and retry after sidecar capture or enroll from the session's own seat. Spawning fresh is reserved for a genuinely dead session that cannot be enrolled.
+
+SECOND VECTOR MERGED to main 7d26af6 (--no-ff), post-merge gate green 61/61 + 4 modules (tail read, counted). AC#2 checked (ratified at merge from the branch-side edit — process note issued to builder re board territory). Task REMAINS OPEN for AC#1 (direct-launch HERDER_*/HERDR_* passthrough — first vector, separate unit) and AC#3 (rides the first-vector unit). Unit seats culled; worktree+branch removed.
 <!-- SECTION:NOTES:END -->
