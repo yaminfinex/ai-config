@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-17 04:26'
-updated_date: '2026-07-17 04:38'
+updated_date: '2026-07-17 06:04'
 labels:
   - herder
   - identity-migration
@@ -44,5 +44,10 @@ DESIGN CHECKPOINT REQUIRED BEFORE CODE: short design note (shared-package shape 
 created: 2026-07-17 04:38
 ---
 Design checkpoint APPROVED (after one amendment round). Builder's note covered package/API shape, per-seat-kind sequences, refusal matrix, and the binding-fact write spine — conformant to the plan's settled decisions on all axes. Orchestrator raised 3 corrections, all resolved in the amendment: (1) spawn bind expiry reclassified as an observation window — teardown only on positive death/no-occupant evidence; live-but-slow or unknown-liveness children keep their pane with a retryable refusal, and the sidecar's late correlated recognition converts to the shared completion step so slow binders still mint atomically (all three cells test-pinned); (2) adopt wrong-nonempty launch-context refusal ships with a terminating ordinary remedy (stop wrong vendor row -> hcom start --as -> herder enroll) and names the reclaim-guard shape as upstream-gated pointing at the durable hazards-doc recovery recipe; (3) normalizer binding-fact requirement scoped to seated-state establish/change; lifecycle seat-clearing exempt from fact creation but not history carry; seated partial clears refused. Hygiene re-confirmed (no stage letters/identifiers in code). Code unlocked.
+---
+
+created: 2026-07-17 06:04
+---
+Adversarial review round 1 (incumbent opus + grok calibration seat, shared worktree under serialized mutation slots — both held/released clean, byte-clean restores verified): FIX ROUND REQUIRED. Ten findings consolidated, all mapping to checkpoint/contract text: 4 P1 (sidecar hand-builds Verified:true around the resolver — multi-match chooses + empty-name admits; registry infra errors route around the occupant-liveness gate and tear down live children; normalizer bus guard short-circuits on cleared/demoted projections; observer reconfirm wired to a zero ObservedBus so real changes refuse), 2 P2 (WriteNoop latches as sidecar success killing the designated retry recovery + feeds the teardown P1; empty-id/uniqueness guards + several hostile matrix cases unpinned — reviewer-executed deletions left the suite green), 4 P3 (contracted source-inventory tests absent; attested arm unvalidated when bus verifies; seat-pointer alias in carry; dead raw-mint helpers). Incumbent explicitly verified clean: creator-provenance/sid-harvest goldens preserved at equal strength, three-cell teardown gate itself correct (positive-evidence only), adopt corridor honest, hygiene clean, core append-only pins real (deliberately broken, all caught). Both grok P1s orchestrator-verified in code before inclusion (calibration protocol). Fix round dispatched; builds held for a host quiesce window.
 ---
 <!-- COMMENTS:END -->
