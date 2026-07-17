@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-17 02:19'
-updated_date: '2026-07-17 03:43'
+updated_date: '2026-07-17 03:46'
 labels:
   - herder
   - design
@@ -41,4 +41,6 @@ Delta review round 2: FIX ROUND 2 REQUIRED — four residuals (Branch A verifier
 Fix rounds 3+4: rotation commit protocol (registry generation flip = sole commit point; immutable generation-keyed staged token, fsync discipline, lazy orphan GC; exhaustive crash analysis — exactly one working generation at every crash point) and durable binding IDs (persisted in row JSON, load/rotation-derived values named as excluded class; in-row append-only histories survive reseed by construction — reviewer verified against migration.go reseed code; correction-through-rotation pins). Round-4 micro: replay assertions rescoped strictly post-commit-point (reviewer-supplied rewrite adopted exactly). FINAL DESIGN VERDICT: APPROVE at 3c0018e (4 rounds total). Dirty-tree note withdrawn by reviewer. Intent-holder check dispatched to the memo author (last gate before owner ratification + fresh-eyes offer). ONE owner decision pending: break-glass trust anchor (Branch A verifier-integrity anchor menu vs Branch B same-uid posture reduction, tripwire-not-wall).
 
 Intent-holder verdict (memo author): CONCUR-WITH-NOTES at 3c0018e. Faithfulness confirmed — no place where the design claims the memo supports something it does not; both letter-departures labeled and endorsed (reissue = the anti-circularity finding applied prospectively; T4 recast to one-predicate-many-appliers endorsed: evidence-basedness was the load-bearing part, centralization was not). Sole substantive ask (round 5, dispatched): T6 lattice absent-vs-unavailable condition — absence = consulted-successfully-no-match, never source-unavailable (else history adjudication arms during recorded outage windows). Recorded observations for owner scoping: U1+U2 alone retire the season's two dominant costs (spawn-dead class + repair-loop operator tail); the record contains zero deliberate same-uid adversaries (every recorded impersonation was ambient/inherited) so Branch B suffices on the evidence, Branch A is an additive posture upgrade; §3.5 transport invariants = simple direct-dial check in implementing units, not detection machinery.
+
+CHAIN COMPLETE at 4dd9d9d: adversarial design review final APPROVE (6 rounds); intent-holder CONCUR-WITH-NOTES, sole condition discharged and confirmed (absent-vs-unavailable lattice rule landed + verified by both). Merge-readiness verified: docs-only diff proven (3 files, 0 non-docs paths), identifier sweep clean (single match = the promoted memo's own provenance citation, reviewer-verified non-load-bearing). AC#1-3 satisfied; AC#4 awaits owner ratification. Presented to owner with the ONE decision (break-glass trust anchor) + scoping observations + fresh-eyes offer. Seats held pending ratification: designer (amendments), incumbent reviewer (delta on amendments), memo author.
 <!-- SECTION:NOTES:END -->
