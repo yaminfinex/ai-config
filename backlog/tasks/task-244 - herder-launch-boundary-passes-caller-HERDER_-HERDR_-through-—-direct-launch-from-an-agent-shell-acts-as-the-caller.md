@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-15 11:28'
-updated_date: '2026-07-17 02:41'
+updated_date: '2026-07-17 02:55'
 labels: []
 dependencies: []
 ordinal: 243500
@@ -37,4 +37,6 @@ Contained fix dispatched 2026-07-17 as its own implement unit (second vector onl
 Two live field instances found 2026-07-17 (fleet escalation, rows verified read-only at HEAD): two spawn-minted rows degraded to unseated with no terminal/pane/bus name, each left with exactly ONE recorded sid, source harvest = the SPAWNER'S session id. Consequence sharper than contamination: enroll's guid-reuse ownership proof accepts recorded-sid==live-sid as a sufficient leg, so when the harvest sid is the only surviving evidence, the SPAWNER is the only session that can prove ownership of the child's row — the rightful seat holder is locked out (circular-repair class) while the contaminating caller is handed takeover capability. Recovery prescribed: adopt-from-own-seat (true replacement); outcome to be recorded. Fixture guidance for this unit: the red fixture should assert the ownership-proof consequence, not just the row bytes — a creator-minted row must never be ownership-provable by the creator's sid.
 
 Design checkpoint APPROVED 2026-07-17 (bus thread sid-harvest-fix): five production call sites classified (spawn+fork+resume = creator/target flows passing explicit-or-empty target SID; enroll+sidecar = self flows passing their verified/observed own SID); BuildProvenance loses the ambient env read entirely. Orchestrator verified the enumeration independently (grep match). Rider 1: named behavior delta at the compact identity path that requires confirmed continuity when hcom_verified is absent — born-assumed creator rows now fail it closed (the prior pass rode on harvested wrong-session evidence); pinned by test with the confirmation-path heal. Rider 2: resume target-SID-wins ordering pinned by assertion.
+
+Builder DONE 2026-07-17 (f649ff5): signature + 5 call sites per approved checkpoint, riders 1-2 covered (compact progression pin with actual-first-gate correction; resume carry-order pin), red-to-green consequence fixtures, builder battery 61/61 + 4 modules. Review chain dispatched: hera independent gate running from the worktree (announced); incumbent opus reviewer + grok calibration seat briefed (verdict authority incumbent; brief lens (a) = empty-value admission sweep on now-possibly-empty ToolSessionID consumers, (b) = legacy-poison re-propagation via resume). Pi calibration seat skipped this row (0/6 boots, task-263 open — pi ledger row records it).
 <!-- SECTION:NOTES:END -->
