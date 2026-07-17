@@ -452,14 +452,16 @@ explicit design item for the implementing unit, not assumed away.
   refusing verbs succeed.**
 - **Crash-point drills against the rotation protocol, all three points:**
   (a) crash before/during token staging → registry still at the old
-  generation, old token still authenticates, partial staged file is a
-  GC-able orphan; (b) crash after staging, before the registry flip → same
-  observable state, staged file orphaned; (c) crash after the registry flip →
-  rotation committed, the new generation's file already durably exists and
-  authenticates. In no drill is a seat left with zero working recovery state.
-  Replay of a pre-rotation (old-generation) token after any drill → refuse
-  (verification reads registry-current generation). Orphan GC runs on a later
-  completion and removes only never-committed generations.
+  generation, **the old token authenticates** (it is the registry-current,
+  exactly-one-working credential) and the partial staged token does **not**;
+  (b) crash after staging, before the registry flip → same assertions: old
+  token authenticates, staged token refuses, staged file orphaned; (c) crash
+  after the registry flip → rotation committed, the new token authenticates
+  and **the old token now refuses** (verification reads registry-current
+  generation). In no drill is a seat left with zero working generations. If a
+  drill-(a)/(b) state is followed by a successful retry through the flip,
+  then — and only then — the formerly-current token refuses. Orphan GC runs
+  on a later completion and removes only never-committed generations.
 - Suite/battery simulation: a spawned child running herder verbs acts as
   itself, never as the spawner (covers the inherited-seat-env battery-void
   class).

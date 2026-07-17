@@ -253,7 +253,10 @@ partial staged file is an orphan); a crash after staging but before the
 registry flip is the same state; a crash after the flip is a committed
 rotation whose token file already durably exists — staging precedes the commit
 point, so there is **no crash point at which either generation is stranded**.
-A replayed pre-rotation token fails closed at step 2's verification rule.
+After the registry flip — and only after it — replay of the pre-rotation token
+fails closed at step 2's verification rule; before the flip the old generation
+*is* registry-current and keeps authenticating, which is exactly what makes the
+pre-commit crash states safe.
 
 **Identity selection order is part of the design, not an implementation detail:**
 on a credential-authenticated verb, the credential selects the acting identity
