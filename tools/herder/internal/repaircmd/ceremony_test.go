@@ -80,6 +80,24 @@ func TestCrossPaneCeremonyRefusesNonceConsumedBetweenVisibleReads(t *testing.T) 
 	}
 }
 
+func TestCrossPaneCeremonyRefusesChallengeStillVisibleAfterConfirmation(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	challenge := "challenge-still-visible"
+	if _, err := writer.WriteString(attestationStatement(challenge, ceremonyRequest()) + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	collector := confirmationCollector(reader, challenge)
+	collector.ReadVisible = func(context.Context, string) (string, error) { return challenge, nil }
+	_, err = collector.Collect(context.Background(), ceremonyRecord(), ceremonyRequest())
+	if !errors.Is(err, ErrCorroborationFailed) || !strings.Contains(err.Error(), "challenge remains visible") {
+		t.Fatalf("visible challenge err = %v", err)
+	}
+}
+
 func TestCrossPaneCeremonyBoundsTTYConfirmation(t *testing.T) {
 	reader, writer, err := os.Pipe()
 	if err != nil {
