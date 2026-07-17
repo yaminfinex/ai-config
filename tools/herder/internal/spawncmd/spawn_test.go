@@ -2,6 +2,7 @@ package spawncmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,10 +12,13 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/missioncontext"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcompletion"
 	"ai-config/tools/herder/internal/shellquote"
 )
 
@@ -98,8 +102,9 @@ func (f *cleanupHerdr) Combined(args ...string) ([]byte, int, error) {
 func (f *cleanupHerdr) Output(args ...string) ([]byte, error) { return nil, errors.New("unused") }
 func (f *cleanupHerdr) Run(args ...string) (int, error)       { return 64, errors.New("unused") }
 
-func TestRegistryRefusalClosesAndConfirmsLaunchedPane(t *testing.T) {
+func TestAbsentChildAllowsCleanupAfterCompletionFailure(t *testing.T) {
 	client := &scriptedSpawnClient{responses: []spawnResponse{
+		{want: "pane process_info p_new", out: []byte(`{"result":{"process_info":{"foreground_processes":[]}}}`)},
 		{want: "pane get p_new", out: []byte(`{"result":{"pane":{"pane_id":"p_new","terminal_id":"term_new"}}}`)},
 		{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
 		{want: "pane close p_new", out: []byte(`{"result":{"type":"ok"}}`)},
@@ -110,32 +115,58 @@ func TestRegistryRefusalClosesAndConfirmsLaunchedPane(t *testing.T) {
 	r := &runner{
 		herdr:  client,
 		stderr: &stderr,
+	}
+	if code := r.handleSeatCompletionFailure("seat completion failed: lock refused", "p_new", "term_new", "ready"); code != 1 {
+		t.Fatalf("handleSeatCompletionFailure() = %d, want 1", code)
+	}
+	assertSpawnScriptConsumed(t, client)
+	if !strings.Contains(stderr.String(), "seat completion failed: lock refused") || !strings.Contains(stderr.String(), "cleanup confirmed") {
+		t.Fatalf("stderr = %q, want refusal plus confirmed cleanup", stderr.String())
+	}
+}
+
+func TestCompletionInfrastructureFailurePreservesLiveChild(t *testing.T) {
+	client := &scriptedSpawnClient{responses: []spawnResponse{
+		{want: "pane get p_new", out: []byte(`{"result":{"pane":{"pane_id":"p_new","terminal_id":"term_new"}}}`)},
+		{want: "pane process_info p_new", out: []byte(`{"result":{"process_info":{"foreground_processes":[{"pid":4242,"argv":["codex"]}]}}}`)},
+	}}
+	var stderr strings.Builder
+	r := &runner{
+		herdr:      client,
+		stderr:     &stderr,
+		completion: testSpawnCompletionEngine(t),
 		updateRegistry: func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
 			return nil, errors.New("lock refused")
 		},
 	}
-	record := spawnRecord{
-		GUID:       "guid-new",
-		ShortGUID:  "guid-new",
-		Label:      "worker-new",
-		Role:       "worker",
-		Agent:      "bash",
-		PaneID:     "p_new",
-		TerminalID: "term_new",
-		Status:     "active",
-		StartedAt:  "2026-07-10T00:00:00Z",
-		Mission:    &v2.Mission{Slug: "alpha", Source: missioncontext.SourceExplicit},
+	record := spawnRecord{GUID: "guid-new", ShortGUID: "guid-new", Label: "worker-new", Agent: "bash", PaneID: "p_new", TerminalID: "term_new"}
+	_, err := r.completeSpawn(filepath.Join(t.TempDir(), "registry.jsonl"), record, "p_new", "")
+	if err == nil || !strings.Contains(err.Error(), "lock refused") {
+		t.Fatalf("completeSpawn() err = %v, want lock refusal", err)
 	}
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	if code := r.registerSpawnOrRollback(path, record); code != 1 {
-		t.Fatalf("registerSpawnOrRollback() = %d, want 1", code)
+	if code := r.handleSeatCompletionFailure("seat completion failed: "+err.Error(), "p_new", "term_new", "ready"); code != 1 {
+		t.Fatalf("handleSeatCompletionFailure() = %d, want 1", code)
 	}
 	assertSpawnScriptConsumed(t, client)
-	if !strings.Contains(stderr.String(), "registry write refused: lock refused") || !strings.Contains(stderr.String(), "cleanup confirmed") {
-		t.Fatalf("stderr = %q, want refusal plus confirmed cleanup", stderr.String())
+	if !strings.Contains(stderr.String(), "child pane remains running") || strings.Contains(strings.Join(client.calls, " "), "pane close") {
+		t.Fatalf("live-child failure stderr=%q calls=%v", stderr.String(), client.calls)
 	}
-	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("registry path exists after refused write: %v", statErr)
+}
+
+func TestNoopCompletionPreservesLiveChild(t *testing.T) {
+	client := &scriptedSpawnClient{responses: []spawnResponse{{
+		want: "pane process_info p_new",
+		out:  []byte(`{"result":{"process_info":{"foreground_processes":[{"pid":4242,"argv":["codex"]}]}}}`),
+	}}}
+	var stderr strings.Builder
+	r := &runner{herdr: client, stderr: &stderr}
+	handled, code := r.handleIncompleteSeatCompletion(seatcompletion.Result{Status: registry.WriteNoop}, nil, "p_new", "term_new", "ready")
+	if !handled || code != 1 {
+		t.Fatalf("handleIncompleteSeatCompletion() = (%v, %d), want (true, 1)", handled, code)
+	}
+	assertSpawnScriptConsumed(t, client)
+	if !strings.Contains(stderr.String(), "wrote no registry row") || strings.Contains(strings.Join(client.calls, " "), "pane close") {
+		t.Fatalf("noop live-child stderr=%q calls=%v", stderr.String(), client.calls)
 	}
 }
 
@@ -312,19 +343,20 @@ func TestPromptSenderRefusalStopsBeforeChildCreation(t *testing.T) {
 	}
 }
 
-func TestRegisterSpawnWritesInitialExplicitMission(t *testing.T) {
+func TestCompleteSpawnWritesInitialExplicitMission(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	record := missionSpawnRecord(&v2.Mission{Slug: "alpha", Source: missioncontext.SourceExplicit})
-	if err := (&runner{}).registerSpawn(path, record); err != nil {
-		t.Fatal(err)
+	result, err := completeSpawnRecord(t, path, record)
+	if err != nil || result.Refusal != nil || result.Status != registry.WriteApplied {
+		t.Fatalf("completeSpawn() = %+v err=%v", result, err)
 	}
 	projection, err := v2.LoadFile(path, v2.LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	row := registry.V2ByGUID(projection, record.GUID)
-	if row == nil || row.Event != "registered" || row.Mission == nil || row.Mission.Slug != "alpha" || row.Mission.Source != missioncontext.SourceExplicit {
-		t.Fatalf("spawn row = %+v, want initial registered row with explicit alpha membership", row)
+	if row == nil || row.Event != "seated" || row.Mission == nil || row.Mission.Slug != "alpha" || row.Mission.Source != missioncontext.SourceExplicit {
+		t.Fatalf("spawn row = %+v, want initial completed row with explicit alpha membership", row)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -335,12 +367,12 @@ func TestRegisterSpawnWritesInitialExplicitMission(t *testing.T) {
 	}
 }
 
-func TestRegisterSpawnRejectsInferredMissionSource(t *testing.T) {
+func TestCompleteSpawnRejectsInferredMissionSource(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	record := missionSpawnRecord(&v2.Mission{Slug: "alpha", Source: missioncontext.SourceCWD})
-	err := (&runner{}).registerSpawn(path, record)
-	if err == nil || !strings.Contains(err.Error(), "invalid durable mission source") {
-		t.Fatalf("registerSpawn() error = %v, want durable-source refusal", err)
+	result, err := completeSpawnRecord(t, path, record)
+	if err != nil || result.Refusal == nil || !strings.Contains(result.Refusal.Cause, "invalid durable mission source") {
+		t.Fatalf("completeSpawn() = %+v err=%v, want durable-source refusal", result, err)
 	}
 	projection, loadErr := v2.LoadFile(path, v2.LoadOptions{})
 	if loadErr != nil {
@@ -351,53 +383,12 @@ func TestRegisterSpawnRejectsInferredMissionSource(t *testing.T) {
 	}
 }
 
-func TestEnrichmentFailureRetainsRegisteredMission(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	var stderr strings.Builder
-	writes := 0
-	r := &runner{
-		stderr: &stderr,
-		updateRegistry: func(path string, update registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
-			writes++
-			if writes == 2 {
-				return nil, errors.New("enrichment refused")
-			}
-			return registry.UpdateLocked(path, update)
-		},
-	}
-	record := missionSpawnRecord(&v2.Mission{Slug: "alpha", Source: missioncontext.SourceExplicit})
-	if err := r.registerSpawn(path, record); err != nil {
-		t.Fatal(err)
-	}
-	if code := r.persistCapturedHcomName(path, record.GUID, "worker-rive"); code != 1 {
-		t.Fatalf("persistCapturedHcomName() = %d, want nonzero enrichment failure", code)
-	}
-	projection, err := v2.LoadFile(path, v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	row := registry.V2ByGUID(projection, record.GUID)
-	if row == nil || row.State != v2.StateSeated || row.Mission == nil || row.Mission.Slug != "alpha" || row.Mission.Source != missioncontext.SourceExplicit {
-		t.Fatalf("registered row after enrichment failure = %+v, want seated explicit alpha membership", row)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Count(string(raw), `"guid":"guid-mission"`) != 1 || strings.Contains(string(raw), `"event":"mission_left"`) {
-		t.Fatalf("registry after enrichment failure = %s, want unchanged registered membership", raw)
-	}
-	if !strings.Contains(stderr.String(), "enrichment refused") {
-		t.Fatalf("stderr = %q, want enrichment failure", stderr.String())
-	}
-}
-
 func TestSpawnMissionSurvivesRotation(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "registry.jsonl")
 	record := missionSpawnRecord(&v2.Mission{Slug: "alpha", Source: missioncontext.SourceExplicit})
-	if err := (&runner{}).registerSpawn(path, record); err != nil {
-		t.Fatal(err)
+	if result, err := completeSpawnRecord(t, path, record); err != nil || result.Refusal != nil {
+		t.Fatalf("completeSpawn() = %+v err=%v", result, err)
 	}
 	beforeNoise, err := os.ReadFile(path)
 	if err != nil {
@@ -471,6 +462,45 @@ func missionSpawnRecord(mission *v2.Mission) spawnRecord {
 		StartedAt:  "2026-07-15T00:00:00Z",
 		Mission:    mission,
 	}
+}
+
+func testSpawnCompletionEngine(t *testing.T) *seatcompletion.Engine {
+	t.Helper()
+	ids := 0
+	return &seatcompletion.Engine{
+		ListBus: func(context.Context, string) ([]hcomidentity.Row, error) {
+			t.Fatal("unexpected bus list")
+			return nil, nil
+		},
+		ProcessAlive: func(int) bool { return true },
+		Now:          func() time.Time { return time.Date(2026, 7, 17, 1, 2, 3, 0, time.UTC) },
+		NewBindingID: func() (string, error) {
+			ids++
+			return fmt.Sprintf("binding-%d", ids), nil
+		},
+	}
+}
+
+func completeSpawnRecord(t *testing.T, path string, record spawnRecord) (seatcompletion.Result, error) {
+	t.Helper()
+	client := &scriptedSpawnClient{responses: []spawnResponse{{
+		want: "pane get " + record.PaneID,
+		out:  []byte(`{"result":{"pane":{"pane_id":"` + record.PaneID + `","terminal_id":"` + record.TerminalID + `"}}}`),
+	}}}
+	engine := testSpawnCompletionEngine(t)
+	if record.Agent != "bash" {
+		joined := true
+		engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+			return []hcomidentity.Row{{
+				Name: "bus-live", Joined: &joined, SessionID: record.Provenance.ToolSessionID,
+				LaunchContext: hcomidentity.LaunchContext{PaneID: record.PaneID},
+			}}, nil
+		}
+	}
+	r := &runner{herdr: client, completion: engine}
+	result, err := r.completeSpawn(path, record, record.PaneID, record.Provenance.ToolSessionID)
+	assertSpawnScriptConsumed(t, client)
+	return result, err
 }
 
 func TestSeedPaneClosePreservesFocus(t *testing.T) {

@@ -1,6 +1,7 @@
 package enrollcmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"ai-config/tools/herder/internal/observercmd"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcompletion"
 )
 
 type options struct {
@@ -92,7 +94,7 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 
 	nowISO := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	var cleanupMessages []string
-	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	buildRows := func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		sessions := tx.Projection.Sessions()
 		var latest *v2.SessionRecord
 		for _, rec := range sessions {
@@ -259,20 +261,48 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 			cleanupMessages = append(cleanupMessages, fmt.Sprintf("unseated stale pane session %s (%s) superseded by re-enroll", priorV2.Label, priorV2.GUID))
 		}
 		return rows, nil
+	}
+	engine := seatcompletion.DefaultEngine()
+	result, err := engine.Complete(context.Background(), seatcompletion.Request{
+		Origin:       seatcompletion.OriginEnroll,
+		RegistryPath: registryPath,
+		Candidate:    v2.SessionRecord{Tool: firstNonEmpty(envTool(), "manual")},
+		Seat: seatcompletion.SeatClaim{
+			Kind:       seatcompletion.SeatHerdr,
+			PaneID:     pane.PaneID,
+			TerminalID: pane.TerminalID,
+		},
+		ObservedPane: &seatcompletion.LivePane{PaneID: pane.PaneID, TerminalID: pane.TerminalID},
+		ObservedBus:  &liveBus,
+		Namespace:    hcomDir,
+		Evidence:     hcomidentity.CurrentEvidence(paneID, pane.PaneID),
+		RequireBus:   liveBus.Verified,
+		BuildLocked: func(tx registry.LockedUpdate, _ v2.Seat) (v2.SessionRecord, []v2.SessionRecord, []v2.SessionRecord, error) {
+			rows, buildErr := buildRows(tx)
+			if buildErr != nil {
+				return v2.SessionRecord{}, nil, nil, buildErr
+			}
+			if len(rows) == 0 {
+				return v2.SessionRecord{}, nil, nil, fmt.Errorf("enroll produced no completed candidate")
+			}
+			return rows[0], nil, rows[1:], nil
+		},
 	})
 	if err != nil {
 		die(stderr, err.Error())
 		return 1
 	}
-	for _, outcome := range outcomes {
+	if result.Refusal != nil {
+		die(stderr, fmt.Sprintf("seat completion refused [%s]: %s", result.Refusal.Code, result.Refusal.Cause))
+		return 1
+	}
+	for _, outcome := range result.Outcomes {
 		if err := outcome.Err(); err != nil {
 			die(stderr, err.Error())
 			return 1
 		}
 	}
-	if len(outcomes) > 0 {
-		appendedRow = outcomes[0].Row
-	}
+	appendedRow = result.Row
 	for _, message := range cleanupMessages {
 		fmt.Fprintln(stderr, message)
 	}

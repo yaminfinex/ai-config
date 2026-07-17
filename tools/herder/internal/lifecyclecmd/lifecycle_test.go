@@ -13,11 +13,28 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/grokbridge"
+	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcompletion"
 )
+
+func lifecycleCompletionFor(name, sessionID, paneID string) *seatcompletion.Engine {
+	joined := true
+	engine := seatcompletion.DefaultEngine()
+	engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{{
+			Name: name, SessionID: sessionID, Joined: &joined,
+			LaunchContext: hcomidentity.LaunchContext{PaneID: paneID},
+		}}, nil
+	}
+	engine.RepairLaunchContext = func(string, string, string) hcomidentity.LaunchContextRepair {
+		return hcomidentity.LaunchContextRepair{Status: "written"}
+	}
+	return &engine
+}
 
 func configureLifecycleTest(t *testing.T, stateDir string) {
 	t.Helper()
@@ -118,7 +135,7 @@ func TestSettleFailureIncludesLaunchAndExitDiagnostics(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("startAndAppend() code = 0, want failure\nstderr:\n%s", stderr.String())
 	}
-	for _, want := range []string{"mode=resume", "agent=codex", "label=diagnostic-worker", "cwd=" + dir, "workspace=ws_work", "pane=p_vanished", "pane lookup exit=4", "pane was closed", "process exit code/signal unavailable"} {
+	for _, want := range []string{"seat completion refused [live_seat_missing]", "pane lookup exited 4", "pane was closed", "launched pane cleanup confirmed"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("stderr missing %q: %s", want, stderr.String())
 		}
@@ -238,7 +255,7 @@ func TestResumeAllowsLegacyClosedSession(t *testing.T) {
 	t.Setenv("HERDER_ADDENDUM_SETTLE_MS", "0")
 
 	var stdout, stderr strings.Builder
-	rc := (&runner{stdout: &stdout, stderr: &stderr, herdr: fakeHerdrClient{}}).resume(resumeOptions{target: "legacy"})
+	rc := (&runner{stdout: &stdout, stderr: &stderr, herdr: fakeHerdrClient{}, completion: lifecycleCompletionFor("legacy-bus", "sess-legacy", "p_resumed")}).resume(resumeOptions{target: "legacy"})
 	if rc != 0 {
 		t.Fatalf("resume legacy closed rc = %d, want 0\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 	}
@@ -260,7 +277,7 @@ func TestResumeTargetSIDWinsAfterPriorProvenanceCarry(t *testing.T) {
 	t.Setenv("HCOM_SESSION_ID", "sid-caller")
 
 	var stdout, stderr strings.Builder
-	rc := (&runner{stdout: &stdout, stderr: &stderr, herdr: fakeHerdrClient{}}).resume(resumeOptions{target: "resume-carry"})
+	rc := (&runner{stdout: &stdout, stderr: &stderr, herdr: fakeHerdrClient{}, completion: lifecycleCompletionFor("target-bus", "sid-target", "p_resumed")}).resume(resumeOptions{target: "resume-carry"})
 	if rc != 0 {
 		t.Fatalf("resume rc = %d, want 0\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 	}
@@ -275,6 +292,9 @@ func TestResumeTargetSIDWinsAfterPriorProvenanceCarry(t *testing.T) {
 	if len(got.SIDs) != 1 || got.SIDs[0].SID != "sid-target" || got.Continuity != "confirmed" {
 		t.Fatalf("resumed identity evidence = sids %+v, continuity %q; want explicit target SID confirmed", got.SIDs, got.Continuity)
 	}
+	if len(got.Bindings) != 2 || got.Bindings[0].Field != v2.BindingFieldSeat || got.Bindings[1].Field != v2.BindingFieldHcomName {
+		t.Fatalf("resumed binding history = %+v, want seat and bus facts from shared completion", got.Bindings)
+	}
 }
 
 type fakeHerdrClient struct{}
@@ -283,11 +303,129 @@ func (fakeHerdrClient) Combined(args ...string) ([]byte, int, error) {
 	if len(args) >= 2 && args[0] == "agent" && args[1] == "start" {
 		return []byte(`{"result":{"type":"agent_started","agent":{"pane_id":"p_resumed","terminal_id":"term_resumed","workspace_id":"ws_resumed","cwd":"/repo"}}}`), 0, nil
 	}
+	if len(args) >= 3 && args[0] == "pane" && args[1] == "get" {
+		return []byte(`{"result":{"pane":{"pane_id":"p_resumed","terminal_id":"term_resumed"}}}`), 0, nil
+	}
 	return []byte(`{"result":{"type":"ok"}}`), 0, nil
 }
 
 func (fakeHerdrClient) Output(args ...string) ([]byte, error) {
 	return []byte(`{"result":{"agents":[]}}`), nil
+}
+
+type liveLifecycleFailureHerdr struct {
+	closeCalls int
+}
+
+func (f *liveLifecycleFailureHerdr) Combined(args ...string) ([]byte, int, error) {
+	if len(args) >= 2 && args[0] == "agent" && args[1] == "start" {
+		return []byte(`{"result":{"type":"agent_started","agent":{"pane_id":"p_live","terminal_id":"term_live","workspace_id":"ws_live","cwd":"/repo"}}}`), 0, nil
+	}
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "get" {
+		return []byte(`{"result":{"pane":{"pane_id":"p_live","terminal_id":"term_live"}}}`), 0, nil
+	}
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "close" {
+		f.closeCalls++
+		return []byte(`{"result":{"type":"pane_closed"}}`), 0, nil
+	}
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "list" {
+		return []byte(`{"result":{"panes":[]}}`), 0, nil
+	}
+	return []byte(`{"result":{"type":"ok"}}`), 0, nil
+}
+
+func (f *liveLifecycleFailureHerdr) Output(args ...string) ([]byte, error) {
+	return []byte(`{"result":{"agents":[]}}`), nil
+}
+
+func TestLifecycleIncompleteCompletionPreservesLiveChild(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		update func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error)
+		want   string
+	}{
+		{
+			name: "registry lock failure",
+			update: func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
+				return nil, errors.New("lock refused")
+			},
+			want: "seat completion failed: lock refused",
+		},
+		{
+			name: "registry noop",
+			update: func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
+				return []registry.WriteOutcome{{Status: registry.WriteNoop}}, nil
+			},
+			want: "seat completion wrote no registry row",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			state := t.TempDir()
+			configureLifecycleTest(t, state)
+			client := &liveLifecycleFailureHerdr{}
+			engine := seatcompletion.DefaultEngine()
+			engine.UpdateRegistry = tt.update
+			var stderr strings.Builder
+			_, code := (&runner{stderr: &stderr, herdr: client, completion: &engine}).startAndAppend(startSpec{
+				Mode:         "resume",
+				GUID:         "guid-live-failure",
+				Short:        "live",
+				Label:        "live-worker",
+				Role:         "worker",
+				Agent:        "bash",
+				RegistryPath: filepath.Join(state, "registry.jsonl"),
+				BaseRaw:      []byte(`{}`),
+				CWD:          state,
+			})
+			if code != 1 {
+				t.Fatalf("startAndAppend() code = %d, want 1", code)
+			}
+			if client.closeCalls != 0 {
+				t.Fatalf("live child close calls = %d, want 0; stderr=%s", client.closeCalls, stderr.String())
+			}
+			for _, want := range []string{tt.want, "launched child is live", "preserved without a registry row"} {
+				if !strings.Contains(stderr.String(), want) {
+					t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+				}
+			}
+			if strings.Contains(stderr.String(), "invalid registry row") {
+				t.Fatalf("noop reached registry-row unmarshal: %s", stderr.String())
+			}
+		})
+	}
+}
+
+func TestLifecycleInvalidAppliedRowPreservesLiveChild(t *testing.T) {
+	state := t.TempDir()
+	configureLifecycleTest(t, state)
+	client := &liveLifecycleFailureHerdr{}
+	engine := seatcompletion.DefaultEngine()
+	engine.UpdateRegistry = func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
+		return []registry.WriteOutcome{{Status: registry.WriteApplied, Row: []byte(`{`)}}, nil
+	}
+	var stderr strings.Builder
+	_, code := (&runner{stderr: &stderr, herdr: client, completion: &engine}).startAndAppend(startSpec{
+		Mode:         "fork",
+		GUID:         "guid-invalid-applied-row",
+		Short:        "invalid",
+		Label:        "invalid-worker",
+		Role:         "worker",
+		Agent:        "bash",
+		RegistryPath: filepath.Join(state, "registry.jsonl"),
+		BaseRaw:      []byte(`{}`),
+		CWD:          state,
+	})
+	if code != 1 {
+		t.Fatalf("startAndAppend() code = %d, want 1", code)
+	}
+	if client.closeCalls != 0 {
+		t.Fatalf("live child close calls = %d, want 0; stderr=%s", client.closeCalls, stderr.String())
+	}
+	for _, want := range []string{"invalid registry row", "launched child is live", "registry completion was already applied"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+		}
+	}
 }
 
 type lifecycleBridge struct {
@@ -475,7 +613,7 @@ func TestT14GrokResumeKeepsSeatSessionSpoolAndBusIdentity(t *testing.T) {
 	t.Setenv("HERDER_LIFECYCLE_SETTLE_MS", "1500")
 	fake := &grokLifecycleHerdr{mode: "resume", childSID: sid, paneID: "pane-resume", terminalID: "term-resume"}
 	var stdout, stderr strings.Builder
-	rc := (&runner{stdout: &stdout, stderr: &stderr, herdr: fake}).resume(resumeOptions{target: guid, cwd: os.TempDir()})
+	rc := (&runner{stdout: &stdout, stderr: &stderr, herdr: fake, completion: lifecycleCompletionFor("resume-bus", sid, "pane-resume")}).resume(resumeOptions{target: guid, cwd: os.TempDir()})
 	if rc != 0 {
 		t.Fatalf("resume rc=%d stdout=%s stderr=%s", rc, stdout.String(), stderr.String())
 	}
@@ -484,7 +622,7 @@ func TestT14GrokResumeKeepsSeatSessionSpoolAndBusIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := registry.V2ByGUID(proj, guid)
-	if got == nil || got.State != v2.StateSeated || got.Seat == nil || got.Seat.PID != 4242 || got.Seat.HcomName != "resume-bus" || got.Capabilities == nil || got.Capabilities.Pending != 1 || got.Capabilities.Wake != "degraded" || got.Provenance.ToolSessionID != sid {
+	if got == nil || got.State != v2.StateSeated || got.Seat == nil || got.Seat.PID != 0 || got.Seat.HcomName != "resume-bus" || got.Capabilities == nil || got.Capabilities.BinderPID <= 0 || got.Capabilities.Pending != 1 || got.Capabilities.Wake != "degraded" || got.Provenance.ToolSessionID != sid {
 		t.Fatalf("resumed row=%+v", got)
 	}
 	if len(got.SIDs) != 1 || got.SIDs[0].SID != sid {
@@ -546,7 +684,12 @@ func TestT15GrokForkGetsFreshSeatSpoolNameAndLineage(t *testing.T) {
 		}
 	}()
 	var stdout, stderr strings.Builder
-	rc := (&runner{stdout: &stdout, stderr: &stderr, herdr: fake}).fork(forkOptions{target: parentGUID, label: "child-grok", cwd: os.TempDir()})
+	completion := lifecycleCompletionFor("child-bus", "", "pane-child")
+	completion.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+		joined := true
+		return []hcomidentity.Row{{Name: "child-bus", SessionID: fake.childSID, Joined: &joined, LaunchContext: hcomidentity.LaunchContext{PaneID: "pane-child"}}}, nil
+	}
+	rc := (&runner{stdout: &stdout, stderr: &stderr, herdr: fake, completion: completion}).fork(forkOptions{target: parentGUID, label: "child-grok", cwd: os.TempDir()})
 	if rc != 0 {
 		t.Fatalf("fork rc=%d stdout=%s stderr=%s startErr=%v", rc, stdout.String(), stderr.String(), fake.startErr)
 	}

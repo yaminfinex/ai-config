@@ -2,6 +2,7 @@ package lifecyclecmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/grokbridge"
+	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herderpaths"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/hookcmd"
@@ -23,6 +25,7 @@ import (
 	"ai-config/tools/herder/internal/placement"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcompletion"
 	"ai-config/tools/herder/internal/send"
 	"ai-config/tools/herder/internal/shellquote"
 )
@@ -74,9 +77,10 @@ func RunResume(args []string, stdout, stderr io.Writer) int {
 }
 
 type runner struct {
-	stdout io.Writer
-	stderr io.Writer
-	herdr  herdrClient
+	stdout     io.Writer
+	stderr     io.Writer
+	herdr      herdrClient
+	completion *seatcompletion.Engine
 }
 
 type herdrClient interface {
@@ -916,27 +920,118 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 			return nil, 1
 		}
 	}
-	outcome, err := registry.AppendLegacySessionEvent(spec.RegistryPath, row, "registered", "seated")
-	if err == nil {
-		err = outcome.Err()
-	}
+	candidate, err := registry.SessionEventFromJSON(row, "seated", v2.StateSeated)
 	if err != nil {
-		r.failAfterLaunch("registry write refused: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
+		r.failAfterLaunch("registry row conversion failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
 		return nil, 1
+	}
+	outputRow := append([]byte(nil), row...)
+	result, err := r.completeLifecycle(spec, candidate, start.Agent.PaneID, start.Agent.TerminalID)
+	if err != nil {
+		r.handleLifecycleCompletionFailure("seat completion failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, false)
+		return nil, 1
+	}
+	if result.Refusal != nil {
+		reason := fmt.Sprintf("seat completion refused [%s]: %s", result.Refusal.Code, result.Refusal.Cause)
+		r.handleLifecycleCompletionFailure(reason, start.Agent.PaneID, start.Agent.TerminalID, false)
+		return nil, 1
+	}
+	if result.Status != registry.WriteApplied {
+		r.handleLifecycleCompletionFailure("seat completion wrote no registry row", start.Agent.PaneID, start.Agent.TerminalID, false)
+		return nil, 1
+	}
+	var completed v2.SessionRecord
+	if err := json.Unmarshal(result.Row, &completed); err != nil {
+		r.handleLifecycleCompletionFailure("seat completion returned an invalid registry row: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, true)
+		return nil, 1
+	}
+	if completed.Seat != nil && completed.Seat.HcomName != "" {
+		outputRow, err = registry.UpdateRawObject(outputRow, map[string]any{"hcom_name": completed.Seat.HcomName})
+		if err != nil {
+			r.handleLifecycleCompletionFailure("lifecycle output encoding failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, true)
+			return nil, 1
+		}
 	}
 	if spec.Agent == "grok" {
 		if err = refreshGrokCapabilitiesAfterRegistration(spec.RegistryPath, spec.GUID, spec.GrokSessionID); err != nil {
-			r.failAfterLaunch("Grok capability registration failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
+			r.handleLifecycleCompletionFailure("Grok capability registration failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, true)
 			return nil, 1
-		}
-	} else {
-		if code := r.verifyLaunchStayedAlive(spec.RegistryPath, row, start.Agent.PaneID, spec, cwd); code != 0 {
-			return nil, code
 		}
 	}
 	var decoded map[string]any
-	_ = json.Unmarshal(row, &decoded)
+	_ = json.Unmarshal(outputRow, &decoded)
 	return decoded, 0
+}
+
+func (r *runner) completeLifecycle(spec startSpec, candidate v2.SessionRecord, paneID, terminalID string) (seatcompletion.Result, error) {
+	engine := seatcompletion.DefaultEngine()
+	if r.completion != nil {
+		engine = *r.completion
+	}
+	engine.HerdrPane = func(_ context.Context, requested string) (seatcompletion.LivePane, error) {
+		out, rc, err := r.client().Combined("pane", "get", requested)
+		if err != nil {
+			return seatcompletion.LivePane{}, err
+		}
+		if rc != 0 {
+			return seatcompletion.LivePane{}, fmt.Errorf("pane lookup exited %d: %s", rc, compactLifecycleMessage(string(out)))
+		}
+		pane, err := herdrcli.ParsePaneGet(out)
+		if err != nil {
+			return seatcompletion.LivePane{}, err
+		}
+		if pane.PaneID != paneID || pane.TerminalID != terminalID {
+			return seatcompletion.LivePane{}, errors.New("pane coordinates changed during lifecycle completion")
+		}
+		return seatcompletion.LivePane{PaneID: pane.PaneID, TerminalID: pane.TerminalID}, nil
+	}
+	evidence := hcomidentity.Evidence{SessionID: candidate.Provenance.ToolSessionID, PaneIDs: []string{paneID}}
+	if candidate.Seat != nil && candidate.Seat.PID > 0 {
+		evidence.ProcessID = fmt.Sprint(candidate.Seat.PID)
+	}
+	origin := seatcompletion.OriginResume
+	if spec.Mode == "fork" {
+		origin = seatcompletion.OriginSpawn
+	}
+	return engine.Complete(context.Background(), seatcompletion.Request{
+		Origin:       origin,
+		RegistryPath: spec.RegistryPath,
+		Candidate:    candidate,
+		Seat:         seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: paneID},
+		Namespace:    spec.HcomDir,
+		Evidence:     evidence,
+	})
+}
+
+func (r *runner) lifecycleOccupantState(paneID, terminalID string) string {
+	out, rc, err := r.client().Combined("pane", "get", paneID)
+	if err != nil {
+		return "unknown"
+	}
+	if rc != 0 {
+		return "absent"
+	}
+	pane, parseErr := herdrcli.ParsePaneGet(out)
+	if parseErr != nil {
+		return "unknown"
+	}
+	if pane.PaneID == paneID && pane.TerminalID == terminalID {
+		return "live"
+	}
+	return "unknown"
+}
+
+func (r *runner) handleLifecycleCompletionFailure(reason, paneID, terminalID string, registryApplied bool) {
+	state := r.lifecycleOccupantState(paneID, terminalID)
+	if state == "absent" {
+		r.failAfterLaunch(reason, paneID, terminalID)
+		return
+	}
+	if registryApplied {
+		die(r.stderr, reason+"; launched child is "+state+" and was preserved because canonical registry completion was already applied. Inspect the completed registry row before retrying lifecycle output recovery")
+		return
+	}
+	die(r.stderr, reason+"; launched child is "+state+" and was preserved without a registry row. Once it joins hcom, the sidecar will retry this same completion step; otherwise run herder enroll from the live seat")
 }
 
 func refreshGrokCapabilitiesAfterRegistration(registryPath, guid, sessionID string) error {
@@ -1165,54 +1260,6 @@ func RetireGrokForCull(registryPath, guid string) (int, error) {
 		return 0, fmt.Errorf("record Grok cull retirement for %s: capability row was not appended", guid)
 	}
 	return retired.Retired, nil
-}
-
-func (r *runner) verifyLaunchStayedAlive(registryPath string, row []byte, paneID string, spec startSpec, cwd string) int {
-	settle := lifecycleSettleMS()
-	if settle <= 0 {
-		return 0
-	}
-	time.Sleep(time.Duration(settle) * time.Millisecond)
-	paneOut, paneRC, paneErr := r.client().Combined("pane", "get", paneID)
-	if paneErr == nil && paneRC == 0 {
-		return 0
-	}
-	closed := registry.DropRawFields(row, "closed_at", "closed_by_pane", "close_result", "close_reason")
-	closed, err := registry.UpdateRawObject(closed, map[string]any{
-		"status":         "closed",
-		"closed_at":      time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		"closed_by_pane": firstNonEmpty(os.Getenv("HERDR_PANE_ID"), "unknown"),
-		"close_result":   "launch_failed",
-		"close_reason":   "pane exited before lifecycle bind",
-	})
-	registryCleanup := ""
-	if err == nil {
-		outcome, writeErr := registry.AppendLegacySessionEvent(registryPath, closed, "retired", v2.StateRetired)
-		if writeErr == nil {
-			writeErr = outcome.Err()
-		}
-		if writeErr != nil {
-			registryCleanup = "; registry cleanup failed: " + writeErr.Error()
-		} else {
-			registryCleanup = "; registry cleanup=" + string(outcome.Status)
-		}
-	} else {
-		registryCleanup = "; registry cleanup encoding failed: " + err.Error()
-	}
-	lookup := compactLifecycleMessage(string(paneOut))
-	if paneErr != nil {
-		lookup = paneErr.Error()
-	}
-	if lookup == "" {
-		lookup = "no pane diagnostics returned"
-	}
-	exitContext := "process exit code/signal unavailable (the pane may have exited or been closed externally)"
-	lookupLower := strings.ToLower(lookup)
-	if strings.Contains(lookupLower, "exit_code") || strings.Contains(lookupLower, "exit code") || strings.Contains(lookupLower, "signal") {
-		exitContext = "process exit context included in the pane diagnostics above"
-	}
-	die(r.stderr, fmt.Sprintf("launch failed before lifecycle bind: mode=%s agent=%s label=%s cwd=%s workspace=%s pane=%s settle_ms=%d; pane lookup exit=%d: %s; %s%s", spec.Mode, spec.Agent, spec.Label, cwd, spec.Workspace, paneID, settle, paneRC, lookup, exitContext, registryCleanup))
-	return 1
 }
 
 func compactLifecycleMessage(s string) string {

@@ -32,6 +32,6 @@ pane move p_50 --new-tab --no-focus --label worker-<SHORT>
 === HCOM DIR ===
 === REGISTRY ===
 {"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
-{"kind":"session","guid":"<GUID>","event":"registered","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"worker-<SHORT>","role":"worker","tool":"bash","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50","confirmed_at":"<TS>"},"continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tag":"worker","cwd":"/mock/cwd","workspace_id":"ws_1","ts":"<TS>"}}
+{"kind":"session","guid":"<GUID>","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"worker-<SHORT>","role":"worker","tool":"bash","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50","confirmed_at":"<TS>"},"bindings":[{"id":"<GUID>","field":"seat","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50"},"evidence_class":"live-verified","observed_at":"<TS>"}],"continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tag":"worker","cwd":"/mock/cwd","workspace_id":"ws_1","ts":"<TS>"}}
 === HCOM SEND ARGV ===
 === HCOM EVENTS ARGV ===

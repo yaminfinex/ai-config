@@ -22,6 +22,15 @@ const (
 	StateUnseated = "unseated"
 	StateRetired  = "retired"
 	StateLost     = "lost"
+
+	BindingFieldSeat     = "seat"
+	BindingFieldHcomName = "hcom_name"
+
+	EvidenceLiveVerified = "live-verified"
+	EvidenceAttested     = "attested"
+	EvidenceHarvest      = "harvest"
+	EvidenceCarried      = "carried"
+	EvidenceAssumed      = "assumed"
 )
 
 type LoadOptions struct {
@@ -54,6 +63,7 @@ type SessionRecord struct {
 	Seat          *Seat                 `json:"seat,omitempty"`
 	Capabilities  *Capabilities         `json:"capabilities,omitempty"`
 	Mission       *Mission              `json:"mission,omitempty"`
+	Bindings      []BindingFact         `json:"bindings,omitempty"`
 	SIDs          []SID                 `json:"sids,omitempty"`
 	Continuity    string                `json:"continuity,omitempty"`
 	Lineage       Lineage               `json:"lineage,omitempty"`
@@ -64,6 +74,29 @@ type SessionRecord struct {
 	Raw           json.RawMessage       `json:"-"`
 	Ordinal       int                   `json:"-"`
 	LegacyV1      bool                  `json:"-"`
+}
+
+// BindingFact records one independently established identity binding. The
+// append-only history lives in every full session snapshot so registry
+// rotation never changes the identity used to address a correction.
+type BindingFact struct {
+	ID            string       `json:"id"`
+	Field         string       `json:"field"`
+	Value         string       `json:"value,omitempty"`
+	Seat          *BindingSeat `json:"seat,omitempty"`
+	EvidenceClass string       `json:"evidence_class"`
+	ObservedAt    string       `json:"observed_at"`
+}
+
+// BindingSeat is the value of a seat binding fact. It deliberately excludes
+// the bus name, which is a separately attestable field.
+type BindingSeat struct {
+	Kind       string `json:"kind"`
+	Node       string `json:"node"`
+	TerminalID string `json:"terminal_id,omitempty"`
+	PaneID     string `json:"pane_id,omitempty"`
+	PID        int    `json:"pid,omitempty"`
+	Namespace  string `json:"namespace,omitempty"`
 }
 
 type Mission struct {

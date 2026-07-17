@@ -610,6 +610,17 @@ func AppendLegacySessionEvent(path string, row []byte, event, state string) (Wri
 	return SingleOutcome(outcomes)
 }
 
+// SessionEventFromJSON decodes a legacy- or v2-shaped session snapshot into a
+// typed append candidate. Callers that establish a seat pass the candidate to
+// seat completion rather than appending it directly.
+func SessionEventFromJSON(row []byte, event, state string) (v2.SessionRecord, error) {
+	rec, err := recordFromJSON(row)
+	if err != nil {
+		return v2.SessionRecord{}, err
+	}
+	return V2FromRecord(rec, event, state, ""), nil
+}
+
 func recordFromJSON(row []byte) (Record, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(bytes.TrimSpace(row), &obj); err != nil {

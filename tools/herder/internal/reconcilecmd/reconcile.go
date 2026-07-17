@@ -2,6 +2,7 @@ package reconcilecmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcompletion"
 )
 
 type options struct {
@@ -113,35 +116,59 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			if !shouldWrite(res) && res.LaunchContextWrite != "pending" {
 				continue
 			}
+			raw := rec.Raw
 			if shouldWrite(res) {
-				row, err := updateRow(rec.Raw, res)
-				if err != nil {
+				var updateErr error
+				raw, updateErr = updateRow(rec.Raw, res)
+				if updateErr != nil {
 					res.Write = "error"
-					res.Detail = res.Detail + "; write failed: " + err.Error()
+					res.Detail += "; write failed: " + updateErr.Error()
 					exit = 1
-				} else if outcome, err := registry.AppendLegacySessionEvent(registryPath, row, "reconciled", "seated"); err != nil {
-					res.Write = "error"
-					res.Detail = res.Detail + "; write failed: " + err.Error()
-					exit = 1
-				} else if err := outcome.Err(); err != nil {
-					res.Write = "error"
-					res.Detail = res.Detail + "; write failed: " + err.Error()
-					exit = 1
-				} else {
-					res.Write = string(outcome.Status)
+					results[i] = res
+					continue
 				}
 			}
-			if res.LaunchContextWrite == "pending" {
-				repair := hcomidentity.RepairLaunchContext(rec.HcomDir, res.bus.Name, res.PaneID)
-				res.LaunchContextWrite = repair.Status
-				switch repair.Status {
-				case "written":
-					res.Detail += "; launch context backfill written and confirmed"
-				case "already-present":
-					res.Detail += "; launch context already present at apply time"
-				default:
-					res.Detail += fmt.Sprintf("; launch context backfill refused [%s]: %s; %s", repair.Code, repair.Cause, repair.Remedy)
-					exit = 1
+			candidate, decodeErr := registry.SessionEventFromJSON(raw, "seated", v2.StateSeated)
+			if decodeErr != nil {
+				res.Write = "error"
+				res.Detail += "; write failed: " + decodeErr.Error()
+				exit = 1
+				results[i] = res
+				continue
+			}
+			current, _ := registry.SessionEventFromJSON(rec.Raw, "seated", v2.StateSeated)
+			paneID := firstNonEmpty(res.PaneID, rec.PaneID)
+			engine := seatcompletion.DefaultEngine()
+			observedPane := seatcompletion.LivePane{PaneID: paneID, TerminalID: firstNonEmpty(res.TerminalID, rec.TerminalID)}
+			completion, completeErr := engine.Complete(context.Background(), seatcompletion.Request{
+				Origin:       seatcompletion.OriginReconcile,
+				RegistryPath: registryPath,
+				Candidate:    candidate,
+				Seat:         seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: paneID, TerminalID: firstNonEmpty(res.TerminalID, rec.TerminalID)},
+				ObservedPane: &observedPane,
+				ObservedBus:  &res.bus,
+				Namespace:    rec.HcomDir,
+				Evidence:     hcomidentity.Evidence{SessionID: res.bus.SessionID, PaneIDs: []string{paneID}},
+				Fallback:     &seatcompletion.NarrowFallback{Current: current},
+			})
+			switch {
+			case completeErr != nil:
+				res.Write = "error"
+				res.Detail += "; completion failed: " + completeErr.Error()
+				exit = 1
+			case completion.Refusal != nil:
+				res.Write = "refused"
+				res.Detail += fmt.Sprintf("; completion refused [%s]: %s", completion.Refusal.Code, completion.Refusal.Cause)
+				if completion.Refusal.LaunchContext != nil {
+					res.Detail += "; " + completion.Refusal.LaunchContext.Remedy
+					res.LaunchContextWrite = "refused"
+				}
+				exit = 1
+			default:
+				res.Write = string(completion.Outcome.Status)
+				if res.LaunchContextWrite == "pending" {
+					res.LaunchContextWrite = "completed"
+					res.Detail += "; launch context backfill completed before registry append"
 				}
 			}
 			results[i] = res
@@ -504,6 +531,15 @@ func ptrString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func displayGUID(res result) string {

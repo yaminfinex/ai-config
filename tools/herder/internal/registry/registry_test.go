@@ -1401,7 +1401,7 @@ func TestLegacyV1MigrationRefusesMismatchedExistingArchive(t *testing.T) {
 }
 
 func TestRotationAtThresholdArchivesAndReseeds(t *testing.T) {
-	t.Setenv(rotationThresholdEnv, "650")
+	t.Setenv(rotationThresholdEnv, "1200")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "registry.jsonl")
 	if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
@@ -1417,7 +1417,7 @@ func TestRotationAtThresholdArchivesAndReseeds(t *testing.T) {
 		`{"kind":"node","event":"node_registered","node_id":"` + testNodeA + `","recorded_at":"2026-07-08T00:00:00Z"}`,
 		`{"kind":"session","guid":"guid-keep","event":"registered","recorded_at":"2026-07-08T00:00:01Z","node":"` + testNodeA + `","state":"seated","label":"keep-old","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"` + testNodeA + `","terminal_id":"term_old","pane_id":"p_old","hcom_name":"keep-bus","namespace":"/hcom","confirmed_at":"2026-07-08T00:00:01Z"}}`,
 		`{"kind":"session","guid":"guid-drop","event":"retired","recorded_at":"2026-07-08T00:00:02Z","node":"` + testNodeA + `","state":"retired","label":"drop","role":"worker","tool":"claude"}`,
-		`{"kind":"session","guid":"guid-keep","event":"labelled","recorded_at":"2026-07-08T00:00:03Z","node":"` + testNodeA + `","state":"seated","label":"keep","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"` + testNodeA + `","terminal_id":"term_new","pane_id":"p_new","hcom_name":"keep-bus","namespace":"/hcom","confirmed_at":"2026-07-08T00:00:03Z"}}`,
+		`{"kind":"session","guid":"guid-keep","event":"labelled","recorded_at":"2026-07-08T00:00:03Z","node":"` + testNodeA + `","state":"seated","label":"keep","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"` + testNodeA + `","terminal_id":"term_new","pane_id":"p_new","hcom_name":"keep-bus","hcom_verified":true,"namespace":"/hcom","confirmed_at":"2026-07-08T00:00:03Z"},"bindings":[{"id":"binding-seat","field":"seat","seat":{"kind":"herdr","node":"` + testNodeA + `","terminal_id":"term_new","pane_id":"p_new","namespace":"/hcom"},"evidence_class":"live-verified","observed_at":"2026-07-08T00:00:03Z"},{"id":"binding-bus","field":"hcom_name","value":"keep-bus","evidence_class":"live-verified","observed_at":"2026-07-08T00:00:03Z"}]}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
@@ -1438,7 +1438,7 @@ func TestRotationAtThresholdArchivesAndReseeds(t *testing.T) {
 		t.Fatalf("archive mode = %o, want 0444", mode)
 	}
 	proj := loadProjection(t, path)
-	if got := V2ByGUID(proj, "guid-keep"); got == nil || got.Label != "keep" || got.Seat == nil || got.Seat.PaneID != "p_new" {
+	if got := V2ByGUID(proj, "guid-keep"); got == nil || got.Label != "keep" || got.Seat == nil || got.Seat.PaneID != "p_new" || len(got.Bindings) != 2 || got.Bindings[0].ID != "binding-seat" || got.Bindings[1].ID != "binding-bus" {
 		t.Fatalf("kept row = %+v, want latest self-contained snapshot", got)
 	}
 	if got := V2ByGUID(proj, "guid-drop"); got != nil {

@@ -22,6 +22,7 @@ import (
 	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcompletion"
 )
 
 const (
@@ -70,6 +71,7 @@ type candidate struct {
 	row  v2.SessionRecord
 	sid  string
 	bus  hcomidentity.Result
+	seat *v2.Seat
 }
 
 type sweepResult struct {
@@ -657,7 +659,7 @@ func recognisedCandidate(rec v2.SessionRecord, newSID string, identity hcomident
 		applyBusIdentity(&seat, identity)
 		next.Seat = &seat
 	}
-	return candidate{kind: "recognised", guid: rec.GUID, row: next, sid: newSID, bus: identity}
+	return candidate{kind: "recognised", guid: rec.GUID, row: next, sid: newSID, bus: identity, seat: cloneSeat(next.Seat)}
 }
 
 func turnoverCandidate(rec v2.SessionRecord, newSID string, identity hcomidentity.Result, now time.Time) candidate {
@@ -670,7 +672,11 @@ func turnoverCandidate(rec v2.SessionRecord, newSID string, identity hcomidentit
 	old.CloseResult = "displaced"
 	old.CloseReason = "observer detected sid turnover in sidecar-less seat"
 	old.ObservedVia = "observer turnover"
-	return candidate{kind: "turnover", guid: rec.GUID, row: old, sid: newSID, bus: identity}
+	seat := cloneSeat(rec.Seat)
+	if seat != nil {
+		applyBusIdentity(seat, identity)
+	}
+	return candidate{kind: "turnover", guid: rec.GUID, row: old, sid: newSID, bus: identity, seat: seat}
 }
 
 func turnoverRowsLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string, identity hcomidentity.Result, now time.Time) ([]v2.SessionRecord, bool) {
@@ -836,6 +842,7 @@ func reconfirmCandidate(rec v2.SessionRecord, pane herdrcli.Pane, bus busState, 
 	next.State = v2.StateSeated
 	next.RecordedAt = now.Format(time.RFC3339)
 	next.ObservedVia = "snapshot sweep"
+	identity := hcomidentity.Result{}
 	if next.Seat != nil {
 		seat := *next.Seat
 		seat.ConfirmedAt = next.RecordedAt
@@ -844,82 +851,43 @@ func reconfirmCandidate(rec v2.SessionRecord, pane herdrcli.Pane, bus busState, 
 		}
 		current := rec
 		current.Seat = &seat
-		identity := resolveSeatBus(current, latestSID(rec), bus)
+		identity = resolveSeatBus(current, latestSID(rec), bus)
 		if identity.Verified || seat.HcomName != "" {
 			applyBusIdentity(&seat, identity)
 		}
 		next.Seat = &seat
 	}
-	return candidate{kind: "reconfirm", guid: rec.GUID, row: next}
+	kind := "confirm"
+	if !sameBindingCoordinates(rec.Seat, next.Seat) {
+		kind = "reconfirm"
+	}
+	return candidate{kind: kind, guid: rec.GUID, row: next, bus: identity, seat: cloneSeat(next.Seat)}
+}
+
+func sameBindingCoordinates(a, b *v2.Seat) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Kind == b.Kind && a.Node == b.Node && a.TerminalID == b.TerminalID && a.PaneID == b.PaneID && a.PID == b.PID && a.Namespace == b.Namespace && a.HcomName == b.HcomName && boolValue(a.HcomVerified) == boolValue(b.HcomVerified)
+}
+
+func boolValue(value *bool) bool {
+	return value != nil && *value
 }
 
 func applyCandidates(path string, cands []candidate, stderr io.Writer) observerstatus.Summary {
 	var summary observerstatus.Summary
-	if len(cands) == 0 {
-		return summary
-	}
-	type outcomeRange struct {
-		start int
-		count int
-	}
-	ranges := make([]outcomeRange, len(cands))
-	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
-		rows := make([]v2.SessionRecord, 0, len(cands)+1)
-		now := time.Now().UTC()
-		for i, cand := range cands {
-			start := len(rows)
-			switch cand.kind {
-			case "turnover":
-				if pair, ok := turnoverRowsLocked(tx.Projection, cand.row, cand.sid, cand.bus, now); ok {
-					rows = append(rows, pair...)
-				}
-			case "recognised":
-				if row, ok := recognisedRowLocked(tx.Projection, cand.row, cand.sid, cand.bus, now); ok {
-					rows = append(rows, row)
-				}
-			default:
-				if current := registry.V2ByGUID(tx.Projection, cand.guid); current != nil {
-					if cand.row.Event == "unseated" && (current.State == v2.StateRetired || current.State == v2.StateLost) {
-						continue
-					}
-					if cand.row.Event == "reconciled" && current.State != v2.StateSeated {
-						continue
-					}
-				}
-				rows = append(rows, cand.row)
-			}
-			ranges[i] = outcomeRange{start: start, count: len(rows) - start}
-		}
-		return rows, nil
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "herder observer sweep: refused %d candidate(s): %v\n", len(cands), err)
-		summary.Refused = len(cands)
-		return summary
-	}
-	expected := 0
-	for _, r := range ranges {
-		expected += r.count
-	}
-	if len(outcomes) != expected {
-		fmt.Fprintf(stderr, "herder observer sweep: refused %d candidate(s): registry returned %d outcomes for %d rows\n", len(cands), len(outcomes), expected)
-		summary.Refused = len(cands)
-		return summary
-	}
-	for _, r := range ranges {
-		if r.count == 0 {
-			summary.Noop++
+	plain := make([]candidate, 0, len(cands))
+	for _, cand := range cands {
+		if cand.kind != "recognised" && cand.kind != "turnover" && cand.kind != "reconfirm" {
+			plain = append(plain, cand)
 			continue
 		}
-		status := registry.WriteNoop
-		for _, outcome := range outcomes[r.start : r.start+r.count] {
-			if outcome.Status == registry.WriteRefused {
-				status = registry.WriteRefused
-				break
-			}
-			if outcome.Status == registry.WriteApplied {
-				status = registry.WriteApplied
-			}
+		status, err := completeRecognition(path, cand)
+		if err != nil {
+			fmt.Fprintf(stderr, "herder observer sweep: candidate %s refused: %v\n", cand.guid, err)
+			summary.Refused++
+			continue
 		}
 		switch status {
 		case registry.WriteApplied:
@@ -930,7 +898,116 @@ func applyCandidates(path string, cands []candidate, stderr io.Writer) observers
 			summary.Refused++
 		}
 	}
+	plainSummary := applyPlainCandidates(path, plain, stderr)
+	summary.Applied += plainSummary.Applied
+	summary.Noop += plainSummary.Noop
+	summary.Refused += plainSummary.Refused
 	return summary
+}
+
+func applyPlainCandidates(path string, cands []candidate, stderr io.Writer) observerstatus.Summary {
+	var summary observerstatus.Summary
+	if len(cands) == 0 {
+		return summary
+	}
+	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		rows := make([]v2.SessionRecord, 0, len(cands))
+		for _, cand := range cands {
+			if current := registry.V2ByGUID(tx.Projection, cand.guid); current != nil && cand.row.Event == "unseated" && (current.State == v2.StateRetired || current.State == v2.StateLost) {
+				continue
+			}
+			rows = append(rows, cand.row)
+		}
+		return rows, nil
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "herder observer sweep: refused %d candidate(s): %v\n", len(cands), err)
+		summary.Refused = len(cands)
+		return summary
+	}
+	if len(outcomes) == 0 {
+		summary.Noop = len(cands)
+		return summary
+	}
+	batchRefused := false
+	for _, outcome := range outcomes {
+		if outcome.Status == registry.WriteRefused {
+			batchRefused = true
+			break
+		}
+	}
+	if batchRefused {
+		summary.Refused = len(cands)
+		return summary
+	}
+	for _, outcome := range outcomes {
+		if outcome.Status == registry.WriteApplied {
+			summary.Applied++
+		} else {
+			summary.Noop++
+		}
+	}
+	summary.Noop += len(cands) - len(outcomes)
+	return summary
+}
+
+func completeRecognition(path string, cand candidate) (registry.WriteStatus, error) {
+	if cand.seat == nil {
+		return registry.WriteRefused, errors.New("recognition completion requires a live seat")
+	}
+	seat := *cand.seat
+	engine := seatcompletion.DefaultEngine()
+	observedPane := seatcompletion.LivePane{PaneID: seat.PaneID, TerminalID: seat.TerminalID}
+	request := seatcompletion.Request{
+		Origin:       seatcompletion.OriginRecognition,
+		RegistryPath: path,
+		Candidate:    cand.row,
+		Seat:         seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: seat.PaneID},
+		ObservedPane: &observedPane,
+		ObservedBus:  &cand.bus,
+		Namespace:    seat.Namespace,
+		Evidence:     hcomidentity.Evidence{SessionID: cand.bus.SessionID, PaneIDs: []string{seat.PaneID}},
+	}
+	request.BuildLocked = func(tx registry.LockedUpdate, _ v2.Seat) (v2.SessionRecord, []v2.SessionRecord, []v2.SessionRecord, error) {
+		now := time.Now().UTC()
+		switch cand.kind {
+		case "turnover":
+			rows, ok := turnoverRowsLocked(tx.Projection, cand.row, cand.sid, cand.bus, now)
+			if !ok || len(rows) != 2 {
+				return v2.SessionRecord{}, nil, nil, errors.New("turnover no longer matches the live registry state")
+			}
+			return rows[0], nil, rows[1:], nil
+		case "recognised":
+			row, ok := recognisedRowLocked(tx.Projection, cand.row, cand.sid, cand.bus, now)
+			if !ok {
+				return v2.SessionRecord{}, nil, nil, errors.New("recognition no longer matches the live registry state")
+			}
+			return row, nil, nil, nil
+		default:
+			current := registry.V2ByGUID(tx.Projection, cand.guid)
+			if current == nil || current.State != v2.StateSeated {
+				return v2.SessionRecord{}, nil, nil, errors.New("reconfirmation no longer matches a seated registry row")
+			}
+			return cand.row, nil, nil, nil
+		}
+	}
+	result, err := engine.Complete(context.Background(), request)
+	if err != nil {
+		return registry.WriteRefused, err
+	}
+	if result.Refusal != nil {
+		return registry.WriteRefused, result.Refusal
+	}
+	status := registry.WriteNoop
+	for _, outcome := range result.Outcomes {
+		if err := outcome.Err(); err != nil {
+			return registry.WriteRefused, err
+		}
+		if outcome.Status == registry.WriteApplied {
+			status = registry.WriteApplied
+		}
+	}
+	return status, nil
 }
 
 func advisoryFlags(proj *v2.Projection, hd herdrState) []observerstatus.Flag {

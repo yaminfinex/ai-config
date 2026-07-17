@@ -5,6 +5,7 @@ package adoptcmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/renamecmd"
 	"ai-config/tools/herder/internal/retirecmd"
+	"ai-config/tools/herder/internal/seatcompletion"
 	"ai-config/tools/herder/internal/shellquote"
 )
 
@@ -148,42 +150,63 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		busDisposition = "ADOPTED as @" + busIdentity.Name
 		fmt.Fprintf(stderr, "adopt: bus-name note: requested @%s was not reclaimed; ADOPTED already-live @%s from the confirmed resumed transcript session\n", oldBus, busIdentity.Name)
 	}
-	if err := bindReplacementBus(registry.DefaultPath(), replacement.GUID, oldBusDir, busIdentity); err != nil {
-		failureAfter(stderr, "registry-bind", err.Error(),
-			[]string{
-				"enroll applied for new guid " + replacement.GUID,
-				"label-transfer applied for label " + old.Label,
-				"retire applied for old guid " + old.GUID,
-				"bus-name verified as @" + busIdentity.Name,
-			},
-			[]string{pinnedReEnroll(replacement, busIdentity.SessionID)})
-		return 1
-	}
-	fmt.Fprintf(stderr, "adopt: registry-bind applied: @%s recorded on guid %s\n", busIdentity.Name, replacement.GUID)
 	launchPane := os.Getenv("HERDR_PANE_ID")
 	if replacement.Seat != nil && replacement.Seat.PaneID != "" {
 		launchPane = replacement.Seat.PaneID
 	}
-	repair := hcomidentity.LaunchContextRepair{}
 	liveLaunchPane, livePaneErr := resolveAdoptLaunchPane(launchPane)
 	if livePaneErr != nil {
-		repair = hcomidentity.LaunchContextRepair{
-			Status: "refused",
-			Code:   "launch_context_live_pane_unresolvable",
-			Cause:  livePaneErr.Error(),
-			Remedy: fmt.Sprintf("Recovery: from a live herdr pane joined to @%s, run 'herder reconcile --apply'; do not edit the hcom database manually", busIdentity.Name),
+		failureAfter(stderr, "seat-completion", livePaneErr.Error(),
+			[]string{"replacement remains completely seated as guid " + replacement.GUID, "label-transfer applied for label " + old.Label, "retire applied for old guid " + old.GUID},
+			[]string{fmt.Sprintf("from the live replacement pane joined to @%s, run 'herder enroll'", busIdentity.Name)})
+		return 1
+	}
+	completion, completeErr := seatcompletion.Complete(context.Background(), seatcompletion.Request{
+		Origin:       seatcompletion.OriginAdopt,
+		RegistryPath: registry.DefaultPath(),
+		Candidate:    v2.SessionRecord{GUID: replacement.GUID, Tool: replacement.Tool},
+		Seat:         seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: liveLaunchPane},
+		ObservedBus:  &busIdentity,
+		Namespace:    oldBusDir,
+		Evidence:     hcomidentity.Evidence{SessionID: busIdentity.SessionID, PaneIDs: []string{liveLaunchPane}},
+		RequireBus:   true,
+		BuildLocked: func(tx registry.LockedUpdate, _ v2.Seat) (v2.SessionRecord, []v2.SessionRecord, []v2.SessionRecord, error) {
+			current := registry.V2ByGUID(tx.Projection, replacement.GUID)
+			if current == nil || current.State != v2.StateSeated {
+				return v2.SessionRecord{}, nil, nil, fmt.Errorf("replacement guid %s is no longer seated", replacement.GUID)
+			}
+			next := *current
+			if busIdentity.SessionID != "" {
+				next.Provenance.ToolSessionID = busIdentity.SessionID
+				found := false
+				for _, sid := range next.SIDs {
+					found = found || sid.SID == busIdentity.SessionID
+				}
+				if !found {
+					next.SIDs = append(next.SIDs, v2.SID{SID: busIdentity.SessionID, ObservedAt: time.Now().UTC().Format(time.RFC3339), Source: "harvest"})
+				}
+				next.Continuity = "confirmed"
+			}
+			return next, nil, nil, nil
+		},
+	})
+	if completeErr != nil || completion.Refusal != nil {
+		cause := "seat completion failed"
+		if completeErr != nil {
+			cause = completeErr.Error()
 		}
-	} else {
-		repair = hcomidentity.RepairLaunchContext(oldBusDir, busIdentity.Name, liveLaunchPane)
+		if completion.Refusal != nil {
+			cause = fmt.Sprintf("[%s] %s", completion.Refusal.Code, completion.Refusal.Cause)
+		}
+		failureAfter(stderr, "seat-completion", cause,
+			[]string{"replacement remains completely seated as guid " + replacement.GUID, "label-transfer applied for label " + old.Label, "retire applied for old guid " + old.GUID, "bus-name verified as @" + busIdentity.Name},
+			[]string{
+				fmt.Sprintf("from the verified live pane, leave/stop the wrong @%s row through hcom, run 'hcom start --as %s', then run 'herder enroll'", busIdentity.Name, busIdentity.Name),
+				"if hcom's reclaim guard refuses the rejoin, this shape is upstream-gated: follow docs/hazards/agent-cli-identity-hijack.md, Recovery recipe, then retry 'hcom start --as' and 'herder enroll'",
+			})
+		return 1
 	}
-	switch repair.Status {
-	case "written":
-		fmt.Fprintf(stderr, "adopt: launch-context written: @%s now records live pane %s\n", busIdentity.Name, repair.PaneID)
-	case "already-present":
-		fmt.Fprintf(stderr, "adopt: launch-context already-present: @%s records live pane %s\n", busIdentity.Name, repair.PaneID)
-	default:
-		fmt.Fprintf(stderr, "adopt: launch-context refused [%s]: %s. %s. Registry bind remains applied; the verified empty-context spawn fallback remains available.\n", repair.Code, repair.Cause, repair.Remedy)
-	}
+	fmt.Fprintf(stderr, "adopt: seat-completion applied: @%s recorded on guid %s with live pane %s\n", busIdentity.Name, replacement.GUID, liveLaunchPane)
 	fmt.Fprintf(stderr, "adopted %s: new guid %s seated; old guid %s retired; label reclaimed; bus identity %s\n", old.Label, replacement.GUID, old.GUID, busDisposition)
 	return 0
 }
@@ -427,64 +450,6 @@ func latestSessionID(rec v2.SessionRecord) string {
 		return rec.SIDs[len(rec.SIDs)-1].SID
 	}
 	return rec.Provenance.ToolSessionID
-}
-
-// bindReplacementBus closes adoption's final persistence gap: reclaiming a
-// live bus name is not enough when every later delivery verb resolves through
-// the registry row. The replacement guid is already known exactly, so this
-// append never guesses an identity from a display coordinate.
-func bindReplacementBus(path, guid, dir string, identity hcomidentity.Result) error {
-	if !identity.Verified || identity.Name == "" {
-		return errors.New("replacement bus identity is not verified")
-	}
-	stamp := time.Now().UTC().Format(time.RFC3339)
-	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
-		current := registry.V2ByGUID(tx.Projection, guid)
-		if current == nil {
-			return nil, fmt.Errorf("replacement guid %s no longer exists", guid)
-		}
-		if current.State != v2.StateSeated || current.Seat == nil {
-			return nil, fmt.Errorf("replacement guid %s is no longer seated", guid)
-		}
-		next := *current
-		next.SIDs = append([]v2.SID(nil), current.SIDs...)
-		next.Event = "recognised"
-		next.RecordedAt = stamp
-		next.ObservedVia = "adopt bus reclaim"
-		seat := *current.Seat
-		seat.HcomName = identity.Name
-		verified := true
-		seat.HcomVerified = &verified
-		if dir != "" && dir != "null" {
-			seat.Namespace = dir
-		}
-		seat.ConfirmedAt = stamp
-		next.Seat = &seat
-		if identity.SessionID != "" {
-			next.Provenance.ToolSessionID = identity.SessionID
-			if !hasSID(next.SIDs, identity.SessionID) {
-				next.SIDs = append(next.SIDs, v2.SID{SID: identity.SessionID, ObservedAt: stamp, Source: "adopt bus reclaim"})
-			}
-			next.Continuity = "confirmed"
-		}
-		return []v2.SessionRecord{next}, nil
-	})
-	if err != nil {
-		return err
-	}
-	if len(outcomes) != 1 {
-		return fmt.Errorf("registry returned %d outcomes for the replacement binding", len(outcomes))
-	}
-	return outcomes[0].Err()
-}
-
-func hasSID(sids []v2.SID, want string) bool {
-	for _, sid := range sids {
-		if sid.SID == want {
-			return true
-		}
-	}
-	return false
 }
 
 func pinnedReEnroll(rec v2.SessionRecord, sessionID string) string {

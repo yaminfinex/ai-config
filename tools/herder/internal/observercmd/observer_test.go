@@ -231,6 +231,9 @@ func TestReconfirmRefreshesBusIdentityFromLiveCorrelate(t *testing.T) {
 	if cand.row.Seat == nil || cand.row.Seat.HcomName != "live-self" || cand.row.Seat.HcomVerified == nil || !*cand.row.Seat.HcomVerified {
 		t.Fatalf("reconfirmed seat = %+v, want verified live-self", cand.row.Seat)
 	}
+	if !cand.bus.Verified || cand.bus.Name != "live-self" || cand.bus.SessionID != "sess-live" || cand.bus.PaneID != "p_new" {
+		t.Fatalf("reconfirmed candidate bus = %+v, want the live identity passed to completion", cand.bus)
+	}
 }
 
 func TestSuccessorCarryMarksBusIdentityUnverifiedWithoutProof(t *testing.T) {
