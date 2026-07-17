@@ -3,6 +3,6 @@
 === STDOUT ===
 GUID       LABEL                AGENT   PANE               LIVE      BUS              CTX         ROLE
 arch       arch-final           claude  p_arch             ARCHIVED  -                unknown     worker
-live       live-current         codex   p_live             gone      -                unknown     worker
+live       live-current         codex   p_live             observation_gap -                unknown     worker
 === EXIT ===
 0

@@ -8,7 +8,7 @@
 # characterized here — live smokes (P5/P6) cover actual waiting. What IS locked:
 #
 #   resolution — guid/label → the agent's CURRENT pane via durable terminal_id
-#                (drift-proof); raw pane ids verbatim; gone/unresolvable targets
+#                (drift-proof); raw pane ids verbatim; observation-gap targets
 #                error out before any wait call.
 #   argv       — the exact `herdr wait agent-status <pane> --status S --timeout MS`
 #                and `herdr pane read <pane> --source S --lines N` invocations
@@ -49,7 +49,7 @@ trap 'rm -rf "$ROOT"' EXIT
 
 # Mock herdr. Topology (vs fixture registry): term_AAA live at stored pane p_10;
 # term_BBB live but re-keyed to p_99 (stored p_20 — resolution must follow the
-# terminal); term_CCC absent (gone). Scenarios:
+# terminal); term_CCC absent without epoch proof (observation gap). Scenarios:
 #   MOCK_WAIT_SCENARIO  normal | emptylist (pane list has zero panes) | closed_after_wait
 #   MOCK_WAIT_RC        exit code for `herdr wait agent-status` (0 ok, 1 timeout)
 # Every wait/read invocation appends its argv to $MOCK_PROBE_DIR.

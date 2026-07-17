@@ -2,7 +2,10 @@ package observercmd
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +14,7 @@ import (
 	"ai-config/tools/herder/internal/continuationstate"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/liveness"
 	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
@@ -40,8 +44,11 @@ func TestApplyCandidatesRefusalLeavesBatchUnapplied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	healthyNext := *healthy
+	healthyNext.Event = "reconciled"
+	healthyNext.RecordedAt = time.Now().UTC().Format(time.RFC3339)
 	cands := []candidate{
-		unseatCandidate(*healthy, time.Now().UTC(), "process gone", "process sweep"),
+		{kind: "plain", guid: healthy.GUID, row: healthyNext},
 		{
 			kind: "unseat",
 			guid: "guid-poison",
@@ -68,6 +75,183 @@ func TestApplyCandidatesRefusalLeavesBatchUnapplied(t *testing.T) {
 	if !bytes.Equal(after, before) {
 		t.Fatalf("registry changed after refused observer batch:\nbefore=%s\nafter=%s", before, after)
 	}
+}
+
+func TestReplayLiveHolderWithStarvedKeepaliveAdvisesWithoutUnseat(t *testing.T) {
+	rec := v2.SessionRecord{
+		GUID: "fixture-live-holder", State: v2.StateSeated,
+		Seat: &v2.Seat{Kind: "process", PID: os.Getpid(), HcomName: "fixture-bus"},
+	}
+	bus := busState{available: true, rows: map[string]hcomidentity.Row{
+		"fixture-bus": {Name: "fixture-bus", Status: "listening", StatusAge: 301},
+	}}
+	verdict := liveness.Evaluate(livenessInput(rec, herdrState{}, bus))
+	if verdict.Class != liveness.VerdictAlive || verdict.Advisory == nil || verdict.Advisory.Cause != liveness.CauseKeepaliveStarvation {
+		t.Fatalf("verdict = %+v, want alive keepalive-starvation advisory", verdict)
+	}
+	proj := projectionFromRows(t, rec)
+	if cands := buildCandidates(proj, herdrState{}, bus, time.Now()); len(cands) != 0 {
+		t.Fatalf("starved live holder produced mutation candidates: %+v", cands)
+	}
+	flags := livenessFlags(proj, herdrState{}, bus, time.Now())
+	if len(flags) != 1 || flags[0].CauseClass != string(liveness.CauseKeepaliveStarvation) || flags[0].Detail != "holder alive; bus keepalive is starved" {
+		t.Fatalf("flags = %+v", flags)
+	}
+
+	missingBus := busState{available: true, rows: map[string]hcomidentity.Row{}}
+	flags = livenessFlags(proj, herdrState{}, missingBus, time.Now())
+	if len(flags) != 1 || flags[0].Detail != "holder alive; expected bus roster row is absent" {
+		t.Fatalf("missing-row flags = %+v", flags)
+	}
+}
+
+func TestReplayDeadPIDBehindListeningRowAppliesEvidenceAtObservationTime(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "exit 0")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := cmd.Process.Pid
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{
+			GUID: "fixture-dead-holder", Event: "seated", RecordedAt: "2026-07-17T08:00:00Z", State: v2.StateSeated,
+			Seat: &v2.Seat{Kind: "process", Node: tx.NodeID, PID: pid, HcomName: "fixture-bus"},
+		}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := outcome.Err(); err != nil {
+		t.Fatal(err)
+	}
+	proj, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bus := busState{available: true, rows: map[string]hcomidentity.Row{
+		"fixture-bus": {Name: "fixture-bus", Status: "listening", StatusAge: 301},
+	}}
+	observedAt := time.Date(2026, 7, 17, 12, 30, 0, 0, time.UTC)
+	cands := buildCandidates(proj, herdrState{}, bus, observedAt)
+	if len(cands) != 1 || cands[0].verdict.Cause != liveness.CauseDeadPIDStaleBusRow {
+		t.Fatalf("candidates = %+v", cands)
+	}
+	summary := applyCandidates(path, cands, io.Discard)
+	if summary.Applied != 1 || summary.Refused != 0 {
+		t.Fatalf("summary = %+v", summary)
+	}
+	got := registry.V2ByGUID(mustProjection(t, path), "fixture-dead-holder")
+	if got == nil || got.State != v2.StateUnseated || got.RecordedAt != observedAt.Format(time.RFC3339) || !strings.Contains(got.CloseReason, "dead_pid_stale_bus_row") || !strings.Contains(got.ObservedVia, "observer") {
+		t.Fatalf("unseat evidence = %+v", got)
+	}
+}
+
+func TestForeignPaneIsAliveWithoutTrackerOwnership(t *testing.T) {
+	rec := v2.SessionRecord{GUID: "fixture-foreign-pane", State: v2.StateSeated, Seat: &v2.Seat{Kind: "herdr", TerminalID: "terminal-present", PaneID: "pane-present"}}
+	hd := herdrState{
+		available: true,
+		byTerm:    map[string]herdrcli.Pane{"terminal-present": {TerminalID: "terminal-present", PaneID: "pane-present"}},
+		procs:     map[string]herdrcli.ProcessInfo{"terminal-present": {Processes: []herdrcli.Process{{PID: os.Getpid()}}}},
+	}
+	verdict := liveness.Evaluate(livenessInput(rec, hd, busState{}))
+	if verdict.Class != liveness.VerdictAlive || !strings.Contains(strings.Join(verdict.ObservedVia, ","), "process_info") {
+		t.Fatalf("foreign pane verdict = %+v", verdict)
+	}
+}
+
+func TestEmptyForegroundSnapshotIsHuskAdvisoryNotDeathCandidate(t *testing.T) {
+	rec := v2.SessionRecord{GUID: "fixture-pane-husk", Label: "worker", State: v2.StateSeated, Seat: &v2.Seat{Kind: "herdr", TerminalID: "terminal-present", PaneID: "pane-present"}}
+	hd := herdrState{
+		available: true,
+		byTerm:    map[string]herdrcli.Pane{"terminal-present": {TerminalID: "terminal-present", PaneID: "pane-present"}},
+		procs:     map[string]herdrcli.ProcessInfo{"terminal-present": {}},
+	}
+	verdict := liveness.Evaluate(livenessInput(rec, hd, busState{}))
+	if verdict.Class != liveness.VerdictObservationGap || verdict.Cause != liveness.CauseClass("possible_pane_husk") || verdict.Advisory == nil {
+		t.Fatalf("single empty foreground snapshot verdict = %+v", verdict)
+	}
+	proj := projectionFromRows(t, rec)
+	for _, cand := range buildCandidates(proj, hd, busState{}, time.Now()) {
+		if cand.kind == "liveness-death" {
+			t.Fatalf("single empty foreground snapshot produced death candidate: %+v", cand)
+		}
+	}
+	flags := livenessFlags(proj, hd, busState{}, time.Now())
+	if len(flags) != 1 || flags[0].Type != "possible-pane-husk" || flags[0].Severity != "warning" || flags[0].CauseClass != "possible_pane_husk" || !strings.Contains(flags[0].Suggested, "herder cull --guid fixture-pane-husk") {
+		t.Fatalf("husk advice = %+v", flags)
+	}
+}
+
+func TestObserverRestartCatchupDoesNotBackdatePaneDeath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{
+			GUID: "fixture-catchup", Event: "seated", RecordedAt: "2026-07-17T06:00:00Z", State: v2.StateSeated,
+			Seat: &v2.Seat{Kind: "herdr", Node: tx.NodeID, TerminalID: "terminal-absent", PaneID: "pane-absent"},
+		}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := outcome.Err(); err != nil {
+		t.Fatal(err)
+	}
+	proj := mustProjection(t, path)
+	gap := herdrState{available: true, connectionGap: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}, sameEpochAbsent: map[string]bool{}}
+	if cands := buildCandidates(proj, gap, busState{}, time.Now()); len(cands) != 0 {
+		t.Fatalf("restart connection gap fabricated candidates: %+v", cands)
+	}
+	observedAt := time.Date(2026, 7, 17, 13, 0, 0, 0, time.UTC)
+	continuous := herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}, sameEpochAbsent: map[string]bool{"terminal-absent": true}}
+	cands := buildCandidates(proj, continuous, busState{}, observedAt)
+	if len(cands) != 1 {
+		t.Fatalf("catch-up candidates = %+v", cands)
+	}
+	if summary := applyCandidates(path, cands, io.Discard); summary.Applied != 1 {
+		t.Fatalf("summary = %+v", summary)
+	}
+	got := registry.V2ByGUID(mustProjection(t, path), "fixture-catchup")
+	if got == nil || got.RecordedAt != observedAt.Format(time.RFC3339) {
+		t.Fatalf("catch-up timestamp = %+v, want observation time", got)
+	}
+}
+
+func projectionFromRows(t *testing.T, rows ...v2.SessionRecord) *v2.Projection {
+	t.Helper()
+	var input strings.Builder
+	for _, row := range rows {
+		b, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input.Write(b)
+		input.WriteByte('\n')
+	}
+	proj, err := v2.Load(strings.NewReader(input.String()), v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proj
+}
+
+func mustProjection(t *testing.T, path string) *v2.Projection {
+	t.Helper()
+	proj, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proj
 }
 
 func TestContinuationFailureFindingRequiresExplicitAcknowledgement(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 
 	"ai-config/tools/herder/internal/continuationstate"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/liveness"
 	"ai-config/tools/herder/internal/missioncontext"
 	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/registry"
@@ -347,11 +348,16 @@ func (idx liveIndex) match(rec registry.Record) (*herdrcli.Agent, string) {
 // is alive but invisible to `agent list` (detection lost; only a process
 // restart/re-report recovers real status).
 func (idx liveIndex) unmatchedStatus(rec registry.Record) string {
+	in := liveness.Input{Pane: liveness.Signal{State: liveness.StateDead, ObservedVia: "list_pane_snapshot"}, PaneEpoch: liveness.EpochUnknown}
 	if (rec.TerminalID != "" && idx.paneTerms[rec.TerminalID]) ||
 		(rec.PaneID != "" && idx.panePanes[rec.PaneID]) {
+		in.Pane = liveness.Signal{State: liveness.StateAlive, ObservedVia: "list_pane_snapshot"}
+	}
+	verdict := liveness.Evaluate(in)
+	if verdict.Class == liveness.VerdictAlive {
 		return "undetected"
 	}
-	return "gone"
+	return string(verdict.Class)
 }
 
 func lastOwnGUIDRecord(path, target string) (registry.Record, bool) {
@@ -464,7 +470,7 @@ func reconciledLiveStatus(rec registry.Record, idx liveIndex, live *herdrcli.Age
 	if status, ok := rawStringField(live.Raw, "agent_status"); ok {
 		return status
 	}
-	return "gone"
+	return string(liveness.VerdictAlive)
 }
 
 func renderJSONContinuationFailures(stdout, stderr io.Writer, failures []continuationstate.Record) {
@@ -515,6 +521,10 @@ func observerAdviceSuffix(flags []observerstatus.Flag) string {
 			parts = append(parts, "observer advice: live occupant observed")
 		case "epoch-doubt":
 			parts = append(parts, "observer advice: epoch doubt")
+		case "holder-alive-keepalive-failing":
+			parts = append(parts, "observer advice: holder alive; keepalive starved or bus row absent")
+		case "possible-pane-husk":
+			parts = append(parts, "observer advice: possible pane husk; inspect, then cull deliberately")
 		default:
 			parts = append(parts, "observer advice: "+flag.Type)
 		}

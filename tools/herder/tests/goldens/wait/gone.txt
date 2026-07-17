@@ -1,5 +1,5 @@
 === STDERR ===
-herder wait: gone (terminal term_CCC) is not live anywhere — agent gone or culled
+herder wait: gone (terminal term_CCC) has liveness=observation_gap cause_class=epoch_uncertain; one-shot pane absence does not prove death
 === STDOUT ===
 
 === EXIT ===

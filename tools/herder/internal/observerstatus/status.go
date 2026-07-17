@@ -32,14 +32,17 @@ type Summary struct {
 }
 
 type Flag struct {
-	GUID       string `json:"guid,omitempty"`
-	Label      string `json:"label,omitempty"`
-	Type       string `json:"type"`
-	Severity   string `json:"severity,omitempty"`
-	Detail     string `json:"detail"`
-	Suggested  string `json:"suggested,omitempty"`
-	TerminalID string `json:"terminal_id,omitempty"`
-	PaneID     string `json:"pane_id,omitempty"`
+	GUID        string   `json:"guid,omitempty"`
+	Label       string   `json:"label,omitempty"`
+	Type        string   `json:"type"`
+	Severity    string   `json:"severity,omitempty"`
+	CauseClass  string   `json:"cause_class,omitempty"`
+	Detail      string   `json:"detail"`
+	Suggested   string   `json:"suggested,omitempty"`
+	ObservedAt  string   `json:"observed_at,omitempty"`
+	ObservedVia []string `json:"observed_via,omitempty"`
+	TerminalID  string   `json:"terminal_id,omitempty"`
+	PaneID      string   `json:"pane_id,omitempty"`
 }
 
 // Observation is secondary, source-labelled evidence gathered by the

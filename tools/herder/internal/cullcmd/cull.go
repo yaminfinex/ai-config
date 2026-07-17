@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/lifecyclecmd"
+	"ai-config/tools/herder/internal/liveness"
 	"ai-config/tools/herder/internal/panecleanup"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
@@ -218,9 +220,7 @@ func selectTargets(recs []registry.Record, proj *v2.Projection, live map[string]
 			if current == nil || current.State != v2.StateSeated {
 				continue
 			}
-			if _, ok := live[rec.TerminalID]; !ok {
-				out = append(out, rec)
-			}
+			out = append(out, rec)
 			continue
 		}
 		switch opts.selector {
@@ -261,12 +261,21 @@ func processTargetWithClient(registryPath string, rec registry.Record, live map[
 	}
 
 	if opts.goneOnly {
-		closed, appended, err := appendClosed(registryPath, rec, nowISO, "already_gone", "terminal_id not in live agent list")
+		verdict := liveness.Evaluate(cullLivenessInput(rec, live))
+		if verdict.Class == liveness.VerdictAlive {
+			fmt.Fprintf(stdout, "not gone %s (%s): live evidence via %s\n", label, guid, strings.Join(verdict.ObservedVia, ","))
+			return true
+		}
+		if verdict.Class != liveness.VerdictPositiveDeath {
+			fmt.Fprintf(stdout, "observation gap %s (%s): cause_class=%s; no automated unseat\n", label, guid, verdict.Cause)
+			return true
+		}
+		closed, appended, err := applyObservedDeath(registryPath, rec, verdict, nowISO, "cull")
 		if err != nil {
 			die(stderr, err.Error())
 			return false
 		}
-		reportClosedFact(stdout, closed, appended, "already_gone", label, guid, pane)
+		reportClosedFact(stdout, closed, appended, "observed_dead", label, guid, pane)
 		if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
 			return false
 		}
@@ -280,12 +289,12 @@ func processTargetWithClient(registryPath string, rec registry.Record, live map[
 	}
 
 	if pane == "" && term == "" {
-		closed, appended, err := appendClosed(registryPath, rec, nowISO, "already_gone", "source=cull-verification; no seat coordinates")
+		closed, appended, err := appendClosed(registryPath, rec, nowISO, "requested", "source=operator-cull; no seat coordinates")
 		if err != nil {
 			die(stderr, err.Error())
 			return false
 		}
-		reportClosedFact(stdout, closed, appended, "already_gone", label, guid, pane)
+		reportClosedFact(stdout, closed, appended, "requested", label, guid, pane)
 		if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
 			return false
 		}
@@ -311,26 +320,17 @@ func processTargetWithClient(registryPath string, rec registry.Record, live map[
 					reportUnverifiable(stdout, rec, label, guid)
 					return true
 				}
-				if vrc == 1 {
-					fmt.Fprintf(stderr, "pane %s gone and terminal %s not live anywhere; recording session unseated without API call\n", pane, term)
-				} else {
-					fmt.Fprintf(stderr, "pane %s reassigned to another terminal and %s not live anywhere; recording session unseated\n", pane, term)
+				verdict := liveness.Evaluate(cullLivenessInput(rec, live))
+				if verdict.Class != liveness.VerdictPositiveDeath {
+					fmt.Fprintf(stderr, "herder cull: observation gap for %s (%s): cause_class=%s; missing tracker/pane coordinates do not prove death; no automated unseat\n", label, guid, verdict.Cause)
+					return false
 				}
-				closed, appended, err := appendClosed(registryPath, rec, nowISO, "already_gone", "source=cull-verification; terminal_id not in live agent list")
+				closed, appended, err := applyObservedDeath(registryPath, rec, verdict, nowISO, "cull")
 				if err != nil {
 					die(stderr, err.Error())
 					return false
 				}
-				reportClosedFact(stdout, closed, appended, "already_gone", label, guid, pane)
-				if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
-					return false
-				}
-				if appended {
-					if err := teardownBusEntryIfGone(closed, opts.force, stdout); err != nil {
-						die(stderr, err.Error())
-						return false
-					}
-				}
+				reportClosedFact(stdout, closed, appended, "observed_dead", label, guid, pane)
 				return true
 			}
 		}
@@ -346,22 +346,23 @@ func processTargetWithClient(registryPath string, rec registry.Record, live map[
 					label, guid, pane, term, livePane)
 				pane = livePane
 			} else {
-				fmt.Fprintf(stderr, "pane %s no longer belongs to terminal %s after release grace; recording session unseated without API call\n", pane, term)
-				closed, appended, err := appendClosed(registryPath, rec, nowISO, "already_gone", "source=cull-post-grace-verification; terminal_id not in live agent list")
+				verdict := liveness.Evaluate(cullLivenessInput(rec, liveAgents()))
+				if verdict.Class != liveness.VerdictPositiveDeath {
+					fmt.Fprintf(stderr, "pane %s no longer belongs to terminal %s after release grace; recording the explicit cull request without a death verdict\n", pane, term)
+					closed, appended, err := appendClosed(registryPath, rec, nowISO, "requested", "source=operator-cull-post-grace; coordinate changed after release request")
+					if err != nil {
+						die(stderr, err.Error())
+						return false
+					}
+					reportClosedFact(stdout, closed, appended, "requested", label, guid, pane)
+					return true
+				}
+				closed, appended, err := applyObservedDeath(registryPath, rec, verdict, nowISO, "cull_post_grace")
 				if err != nil {
 					die(stderr, err.Error())
 					return false
 				}
-				reportClosedFact(stdout, closed, appended, "already_gone", label, guid, pane)
-				if !retireGrokAfterCull(registryPath, closed, stdout, stderr) {
-					return false
-				}
-				if appended {
-					if err := teardownBusEntryIfGone(closed, opts.force, stdout); err != nil {
-						die(stderr, err.Error())
-						return false
-					}
-				}
+				reportClosedFact(stdout, closed, appended, "observed_dead", label, guid, pane)
 				return true
 			}
 		}
@@ -510,6 +511,62 @@ func closeErrorReason(out []byte) string {
 		return envelope.Error.Message
 	}
 	return "unknown_error"
+}
+
+func cullLivenessInput(rec registry.Record, live map[string]herdrcli.Agent) liveness.Input {
+	rows, err := hcomidentity.List(rec.HcomDir)
+	return cullLivenessInputFromRows(rec, live, rows, err)
+}
+
+func cullLivenessInputFromRows(rec registry.Record, live map[string]herdrcli.Agent, rows []hcomidentity.Row, rosterErr error) liveness.Input {
+	in := liveness.Input{SeatKind: "herdr", BusRow: liveness.BusUnavailable}
+	if rec.PID > 0 {
+		in.SeatKind = "process"
+		in.Process = liveness.ProbePID(rec.PID)
+	} else if rec.TerminalID != "" {
+		if _, ok := live[rec.TerminalID]; ok || verifyPaneIdentity(rec.PaneID, rec.TerminalID) == 0 {
+			in.Pane = liveness.Signal{State: liveness.StateAlive, ObservedVia: "cull_pane_probe"}
+		} else {
+			in.Pane = liveness.Signal{State: liveness.StateDead, ObservedVia: "cull_pane_probe"}
+			in.PaneEpoch = liveness.EpochUnknown
+		}
+	}
+	if rosterErr != nil {
+		return in
+	}
+	in.BusRow = liveness.BusAbsent
+	for _, row := range rows {
+		if rec.HcomName == "" || row.Name != rec.HcomName {
+			continue
+		}
+		in.BusRow = liveness.BusPresent
+		in.BusObservedVia = "hcom_roster"
+		in.Keepalive = liveness.KeepaliveFromAge(int64(row.StatusAge))
+		break
+	}
+	return in
+}
+
+func applyObservedDeath(path string, rec registry.Record, verdict liveness.Verdict, nowISO, applier string) (registry.Record, bool, error) {
+	guid := ptrString(rec.GUID)
+	proj, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		return rec, false, err
+	}
+	current := registry.V2ByGUID(proj, guid)
+	if current == nil || current.Seat == nil {
+		return rec, false, fmt.Errorf("liveness append target %s has no current seat", guid)
+	}
+	observedAt, err := time.Parse(time.RFC3339, nowISO)
+	if err != nil {
+		observedAt = time.Now().UTC()
+	}
+	result, err := liveness.ApplyPositiveDeath(path, guid, liveness.Anchor(current.Seat), verdict, observedAt, applier)
+	if err != nil {
+		return rec, false, err
+	}
+	closed := latestForGUID(path, rec)
+	return closed, result.Status == registry.WriteApplied, nil
 }
 
 func appendClosed(path string, rec registry.Record, nowISO, result, reason string) (registry.Record, bool, error) {

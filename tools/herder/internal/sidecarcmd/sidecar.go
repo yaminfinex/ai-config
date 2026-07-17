@@ -18,6 +18,7 @@ import (
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
+	"ai-config/tools/herder/internal/liveness"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcompletion"
@@ -137,8 +138,11 @@ type sidecar struct {
 	instancePID         func(string, string) (int, error)
 	diagnostic          io.Writer
 	pidSchemaWarned     bool
+	starvationWarned    bool
 	statuslineSnapshots *statuslineSnapshotWriter
 	completeSeat        func(context.Context, *hcomRow, seatcompletion.Request) (seatcompletion.Result, error)
+	currentPPID         func() int
+	applyDeath          func(string, string, liveness.SeatAnchor, liveness.Verdict, time.Time, string) (liveness.ApplyResult, error)
 }
 
 type processEnvironmentScanner func(tool string) []processEnvironmentRead
@@ -164,14 +168,16 @@ func (s *sidecar) run() int {
 	defer ticker.Stop()
 
 	for {
-		if os.Getppid() != s.ppid0 {
+		currentPPID := os.Getppid
+		if s.currentPPID != nil {
+			currentPPID = s.currentPPID
+		}
+		if !s.observeLiveness(currentPPID() != s.ppid0, row) {
 			s.release(true)
 			return 0
 		}
 		if row == nil {
-			s.missing++
 		} else {
-			s.missing = 0
 			// Re-enrichment is gated on a CHILD-SPECIFIC (pane) correlate for the
 			// same reason as the initial write: a fallback-only row is not proven
 			// ours, so its bus name must never be attached to this guid (TASK-033).
@@ -184,14 +190,77 @@ func (s *sidecar) run() int {
 				s.lastState = state
 			}
 		}
-		if s.missing >= 5 {
-			s.release(false)
-			return 0
-		}
 		<-ticker.C
 		rows = hcomList()
 		row, paneCorrelated = s.findRowCorrelated(rows)
 		s.writeStatuslineSnapshots(rows, row, paneCorrelated)
+	}
+}
+
+func (s *sidecar) observeLiveness(holderExited bool, row *hcomRow) bool {
+	if holderExited {
+		s.applyHolderExit()
+		return false
+	}
+	if row == nil {
+		s.missing++
+	} else {
+		s.missing = 0
+	}
+	starved := s.missing >= 5 || (row != nil && liveness.KeepaliveFromAge(row.StatusAgeS) == liveness.KeepaliveStarved)
+	if !starved {
+		s.starvationWarned = false
+		return true
+	}
+	verdict := liveness.Evaluate(liveness.Input{
+		Holder:         liveness.Signal{State: liveness.StateAlive, ObservedVia: "sidecar_parent"},
+		BusRow:         liveness.BusAbsent,
+		BusObservedVia: "hcom_roster",
+		Keepalive:      liveness.KeepaliveStarved,
+	})
+	if row != nil {
+		verdict = liveness.Evaluate(liveness.Input{
+			Holder:         liveness.Signal{State: liveness.StateAlive, ObservedVia: "sidecar_parent"},
+			BusRow:         liveness.BusPresent,
+			BusObservedVia: "hcom_roster",
+			Keepalive:      liveness.KeepaliveStarved,
+		})
+	}
+	if verdict.Advisory != nil && !s.starvationWarned {
+		diagnostic := s.diagnostic
+		if diagnostic == nil {
+			diagnostic = os.Stderr
+		}
+		fmt.Fprintf(diagnostic, "herder sidecar advisory [%s]: %s\n", verdict.Advisory.Cause, verdict.Advisory.Detail)
+		s.starvationWarned = true
+	}
+	return true
+}
+
+func (s *sidecar) applyHolderExit() {
+	guid := os.Getenv("HERDER_GUID")
+	if guid == "" || s.registry == "" {
+		return
+	}
+	proj, err := v2.LoadFile(s.registry, v2.LoadOptions{})
+	if err != nil {
+		return
+	}
+	current := registry.V2ByGUID(proj, guid)
+	if current == nil || current.State != v2.StateSeated || current.Seat == nil {
+		return
+	}
+	verdict := liveness.Evaluate(liveness.Input{Holder: liveness.Signal{State: liveness.StateDead, ObservedVia: "sidecar_parent_wait"}})
+	apply := s.applyDeath
+	if apply == nil {
+		apply = liveness.ApplyPositiveDeath
+	}
+	if _, err := apply(s.registry, guid, liveness.Anchor(current.Seat), verdict, time.Now().UTC(), "sidecar"); err != nil {
+		diagnostic := s.diagnostic
+		if diagnostic == nil {
+			diagnostic = os.Stderr
+		}
+		fmt.Fprintf(diagnostic, "herder sidecar: holder-exit liveness append refused: %v\n", err)
 	}
 }
 
