@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -320,6 +321,39 @@ func uniqueProcessBinding(ctx context.Context, conn *sql.Conn, name string) stri
 		return values[0]
 	}
 	return ""
+}
+
+// InstancePID returns the OS process recorded for one exact hcom base name.
+// It is a read-only corroboration surface for callers that have already
+// selected a live roster row but need to prove which live process owns it.
+func InstancePID(dir, baseName string) (int, error) {
+	if baseName == "" {
+		return 0, fmt.Errorf("hcom base name is required")
+	}
+	dbPath, err := hcomDBPath(dir)
+	if err != nil {
+		return 0, err
+	}
+	if info, statErr := os.Stat(dbPath); statErr != nil {
+		return 0, statErr
+	} else if !info.Mode().IsRegular() {
+		return 0, fmt.Errorf("%s is not a regular database file", dbPath)
+	}
+	dsn := (&url.URL{Scheme: "file", Path: dbPath, RawQuery: "mode=ro"}).String()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	var pid sql.NullInt64
+	if err := db.QueryRow("SELECT pid FROM instances WHERE name = ?", baseName).Scan(&pid); err != nil {
+		return 0, err
+	}
+	if !pid.Valid || pid.Int64 <= 0 || pid.Int64 > int64(^uint(0)>>1) {
+		return 0, fmt.Errorf("hcom instance %q has no live process id", baseName)
+	}
+	return int(pid.Int64), nil
 }
 
 func hcomDBPath(dir string) (string, error) {

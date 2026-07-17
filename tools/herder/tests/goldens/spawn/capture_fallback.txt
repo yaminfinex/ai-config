@@ -1,5 +1,5 @@
 === STDERR ===
-herder spawn: seat completion refused [joined_bus_row_missing]: no joined bus row matches the calling session, process, or pane; bind status: bind-timeout(60000ms); no registry row was appended and the child pane remains running because occupant death was not proven. Once the child has joined hcom, its sidecar will complete the seat automatically; manual recovery is `herder enroll` from pane p_50
+herder spawn: seat completion refused [joined_bus_row_missing]: no joined bus row matches the provided name, session, process, or pane; bind status: bind-timeout(60000ms); no registry row was appended and the child pane remains running because occupant death was not proven. Once the child has joined hcom, its sidecar will complete the seat automatically; manual recovery is `herder enroll` from pane p_50
 === STDOUT ===
 
 === EXIT ===

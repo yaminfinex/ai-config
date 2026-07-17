@@ -27,6 +27,9 @@ func TestJoinedStoredCountResolvesTaggedFullOrBaseName(t *testing.T) {
 			t.Fatalf("JoinedStoredCount(%q) = (%+v, %d), want tagged row", stored, row, count)
 		}
 	}
+	if StoredNameMatches("worker-peer-seat", "peer-seat", "other-peer-seat") {
+		t.Fatal("StoredNameMatches manufactured a display name instead of matching an emitted form")
+	}
 }
 
 func TestVerifyStoredRejectsJoinedNeighbor(t *testing.T) {

@@ -152,6 +152,27 @@ func TestLaunchContextRefusalRemediesAreCodeSpecific(t *testing.T) {
 	}
 }
 
+func TestInstancePIDReadsOneExactBaseNameWithoutCreatingState(t *testing.T) {
+	dir, db := newLaunchContextDB(t, supportedSchemaVersion, true)
+	execSQL(t, db, `INSERT INTO instances(name, launch_context, pid) VALUES ('mine', '{}', 4242)`)
+	db.Close()
+
+	pid, err := InstancePID(dir, "mine")
+	if err != nil || pid != 4242 {
+		t.Fatalf("InstancePID = (%d, %v), want 4242", pid, err)
+	}
+	if _, err := InstancePID(dir, "missing"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("InstancePID missing error = %v, want sql.ErrNoRows", err)
+	}
+	missingDir := t.TempDir()
+	if _, err := InstancePID(missingDir, "mine"); err == nil {
+		t.Fatal("InstancePID created or accepted a missing hcom database")
+	}
+	if _, err := os.Stat(filepath.Join(missingDir, "hcom.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("InstancePID missing-db read created state: %v", err)
+	}
+}
+
 func newLaunchContextDB(t *testing.T, version int, primaryKey bool) (string, *sql.DB) {
 	t.Helper()
 	dir := t.TempDir()
@@ -163,7 +184,7 @@ func newLaunchContextDB(t *testing.T, version int, primaryKey bool) (string, *sq
 	if !primaryKey {
 		nameDecl = "TEXT"
 	}
-	execSQL(t, db, fmt.Sprintf(`CREATE TABLE instances(name %s, launch_context TEXT DEFAULT '')`, nameDecl))
+	execSQL(t, db, fmt.Sprintf(`CREATE TABLE instances(name %s, launch_context TEXT DEFAULT '', pid INTEGER)`, nameDecl))
 	execSQL(t, db, `CREATE TABLE process_bindings(process_id TEXT PRIMARY KEY, instance_name TEXT, updated_at REAL NOT NULL)`)
 	execSQL(t, db, fmt.Sprintf(`PRAGMA user_version=%d`, version))
 	return dir, db

@@ -1,5 +1,5 @@
 === STDERR ===
-herder enroll: live bus identity could not be verified (no joined bus row matches the calling session, process, or pane); recording hcom_name as unknown. Join this session to hcom, then rerun `herder enroll` to repair the row.
+herder enroll: live bus identity could not be verified (no joined bus row matches the provided name, session, process, or pane); recording hcom_name as unknown. Join this session to hcom, then rerun `herder enroll` to repair the row.
 herder enroll: refused to enroll an unverified bus identity: terminal term_SELF and pane p_self are already seated on guid guid-existing-0000; join hcom and retry, run 'herder reconcile --apply' to re-verify the row, or use 'herder adopt guid-existing-0000' for a true replacement
 === STDOUT ===
 

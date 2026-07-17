@@ -145,8 +145,9 @@ func Decode(raw []byte) ([]Row, error) {
 	return rows, nil
 }
 
-// Resolve proves one live bus row from independent session, process, or pane
-// correlates. Conflicting correlates fail closed instead of choosing a winner.
+// Resolve proves one live bus row from provided name, session, process, or
+// pane correlates. Conflicting correlates fail closed instead of choosing a
+// winner.
 func Resolve(rows []Row, evidence Evidence) Result {
 	type signal struct {
 		label string
@@ -188,10 +189,10 @@ func Resolve(rows []Row, evidence Evidence) Result {
 		}
 	}
 	if used == 0 {
-		return Result{Reason: "no session, process, or pane correlate is available"}
+		return Result{Reason: "no name, session, process, or pane correlate is available"}
 	}
 	if len(matched) == 0 {
-		return Result{Reason: "no joined bus row matches the calling session, process, or pane"}
+		return Result{Reason: "no joined bus row matches the provided name, session, process, or pane"}
 	}
 	if len(matched) > 1 {
 		return Result{Reason: "live identity correlates resolve to different bus rows"}
@@ -286,7 +287,7 @@ func JoinedStoredCount(rows []Row, stored string) (Row, int) {
 	var found Row
 	count := 0
 	for _, row := range rows {
-		if joined(row) && stored != "" && (row.Name == stored || row.BaseName == stored) {
+		if joined(row) && StoredNameMatches(row.Name, row.BaseName, stored) {
 			if count == 0 {
 				found = row
 			}
@@ -294,6 +295,13 @@ func JoinedStoredCount(rows []Row, stored string) (Row, int) {
 		}
 	}
 	return found, count
+}
+
+// StoredNameMatches compares an exact persisted bus coordinate with the two
+// authoritative forms emitted by the hcom roster. It never manufactures a
+// tagged display name from separate fields.
+func StoredNameMatches(name, baseName, stored string) bool {
+	return stored != "" && (name == stored || baseName == stored)
 }
 
 func joined(row Row) bool {
