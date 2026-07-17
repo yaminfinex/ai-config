@@ -4,7 +4,7 @@ title: 'Implement: attested break-glass repair verb (identity migration U2)'
 status: In Progress
 assignee: []
 created_date: '2026-07-17 04:27'
-updated_date: '2026-07-17 07:22'
+updated_date: '2026-07-17 07:34'
 labels:
   - herder
   - identity-migration
@@ -28,9 +28,18 @@ DESIGN CHECKPOINT REQUIRED BEFORE CODE (verb surface, attestation UX, event/tomb
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Design checkpoint note approved by orchestrator BEFORE any code
+- [x] #1 Design checkpoint note approved by orchestrator BEFORE any code
 - [ ] #2 Every plan §U2 test scenario implemented and green, including: no-attestation refusal; failed nonce/terminal corroboration refusal; the Branch B forgery-path test documenting the accepted bypass with audit row + rate limit asserted; successful bus-name rebind with label/role/lineage byte-identical; correction-cell test (tombstoned stale live-verified binding is a non-candidate, not outranked); absent-vs-unavailable test (live source errors never arm history adjudication); rotation-survival test (tombstone + binding id byte-identifiable after reseed, no id re-keyed); wrong-nonempty launch-context no-rewrite both legs; out-of-vocabulary rebind refused; rate-limit window refusal; crash mid-batch leaves prior row intact
 - [ ] #3 Season terminal-state fixtures: each recorded shape (bus-name unrecoverable, duplicate seated row aftermath, retired-row-owns-live-sid, wrong-nonempty pane) reproduced and cured by the documented attested sequence, or honestly reported as the one upstream-gated shape — architecture §3.3 table verified row by row
 - [ ] #4 reissue-credential operation authenticated on this surface, ending in re-completion under the rotation commit protocol; never credential-gated
 - [ ] #5 Keep-list re-audit of the final diff; operator docs for the verb landed under docs/
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-07-17 07:34
+---
+Design checkpoint APPROVED after one amendment round. Note covered: exact-guid two-operation verb surface (rebind + reissue-credential) as sole production caller of the completion attested arm (source-inventory pin updates from none to exactly the repair package); /dev/tty challenge-sentence attestation, no flag/stdin/env path; cross-pane seat-control ceremony amended to a READ-ONLY observer of the claimed pane — visible-source-only, two consecutive stable reads, operator places nonce manually, nonce REMOVAL required before final attestation, both operator hazards (Enter-submits-into-live-composer; draft destruction) named in CLI warning + docs; attested_binding event as one self-contained snapshot in one UpdateLocked (proof pre-lock, preflight re-verify + rate limit + tombstone selection in-lock; crash leaves prior snapshot authoritative); tombstones keyed by durable binding id with legacy factless values materialized-then-tombstoned in the same snapshot; launch-context = authorization record only, never rewritten, upstream-gated branch honest; reissue lands the authenticated operation + completion commit point with the U3 token boundary stated honestly; fixed 10-min per-guid committed-operation window checked under lock, refusal names limit + remaining time, failed attempts loud but non-consuming (anti-DoS-by-typo rationale). Branch B honesty maintained throughout (tripwire not wall, no tamper-evidence claim). Code unlocked.
+---
+<!-- COMMENTS:END -->
