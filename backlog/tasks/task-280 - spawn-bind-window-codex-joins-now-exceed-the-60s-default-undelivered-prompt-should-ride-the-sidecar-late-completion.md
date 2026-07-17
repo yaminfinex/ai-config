@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-17 22:06'
+updated_date: '2026-07-17 22:16'
 labels:
   - herder
   - dx
@@ -31,4 +32,6 @@ Operational mitigation until this lands (broadcast to fleets): HERDER_SPAWN_BIND
 - [ ] #1 Measured repro fixture: child joins after the window; spawn refuses; sidecar completes seat AND delivers the stranded prompt verified; refusal text names both behaviors
 - [ ] #2 Manual-redelivery-then-sidecar-delivery does not double-submit (dedupe pinned by test)
 - [ ] #3 Non-claude bind window default raised per measurement or made family-aware; env override still wins; claude path unchanged
+- [ ] #4 Sidecar late-completion failure mode diagnosed and fixed: live repro observed where the child env carried guid+instance-name+process-id, the bus row was joined (7+ min), the sidecar ran, and NO completion occurred — window extension alone is insufficient for this shape
+- [ ] #5 Sidecar gains minimal decision-point observability (stderr log lines: scan results, correlate outcomes, completion attempts/refusals) — every sidecar log observed in the field was 0 bytes
 <!-- AC:END -->
