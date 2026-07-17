@@ -6,7 +6,8 @@
 # Covers, against a hermetic mock `herdr` (no live session):
 #   reconciliation — records are matched to live agents by durable terminal_id
 #                    (NOT the stale spawn-time pane_id): live status + current
-#                    pane (drift) are reported; missing terminal ⇒ "gone".
+#                    pane (drift) are reported; one-shot absence without an
+#                    epoch proof ⇒ "observation_gap".
 #   collapse       — append-only registry collapses to latest-record-per-guid;
 #                    retired and lost sessions are hidden unless --all.
 #   modes          — table (default), --all, --json, --raw, --guid (found +
@@ -51,7 +52,7 @@ trap 'rm -rf "$ROOT"' EXIT
 # Mock herdr: herder list calls `herdr agent list` and `herdr pane list`. Topology (vs fixture
 # registry): term_AAA live at its stored pane p_10 (idle, no drift); term_BBB
 # live but re-keyed to p_99 (working, drifted from stored p_20); term_CCC and
-# term_DDD absent (gone); label reborn matches a new-epoch live agent by name;
+# term_DDD absent (observation gap); label reborn matches a new-epoch live agent by name;
 # term_UND is alive in pane list but absent from agent list (undetected).
 # MOCK_LIST_SCENARIO=fail makes the agent call fail, which herder list must
 # treat as an empty live list (pane-list can still prove undetected), not an error.

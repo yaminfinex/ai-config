@@ -22,6 +22,6 @@ Outcomes follow herder-spec §8.3 decisions D11/D12:
   conflict                      stored terminal is live but names a different agent; refuses to act
   ambiguous                     multiple fallback candidates; refuses to guess
   undetected                    pane is alive but absent from agent detection
-  gone                          no live agent or pane matches
+  observation_gap               no positive live or death evidence is available
 === EXIT ===
 0

@@ -222,12 +222,15 @@ run_cull notfound all --label fail
 grep -q 'bus: @bus-fail already gone (nothing to drop)' <<<"$RUN_OUT" && ok "already-gone bus: softened note" || bad "already-gone bus: softened note" "out=$RUN_OUT"
 grep -q 'drop failed' <<<"$RUN_OUT" && bad "already-gone bus: no drop-failed line" "out=$RUN_OUT" || ok "already-gone bus: no drop-failed line"
 
-# 4. --gone sweep applies bus-drop per record without calling pane close.
+# 4. --gone sweep does not turn a one-shot tracker/pane absence into death.
+# Without positive evidence, it leaves both registry and bus state untouched.
 make_case gone gone
+gone_registry_before="$(cat "$REG_DIR/registry.jsonl")"
 run_cull 0 none --gone
 [[ "$RUN_RC" -eq 0 ]] && ok "gone sweep: exit 0" || bad "gone sweep: exit 0" "rc=$RUN_RC out=$RUN_OUT"
-[[ "$(line_count "$PROBE/hcom_kill_argv")" = "1" ]] && ok "gone sweep: hcom row dropped once" || bad "gone sweep: hcom row dropped once" "count=$(line_count "$PROBE/hcom_kill_argv")"
-[[ "$(cat "$PROBE/hcom_kill_argv" 2>/dev/null)" = "bus-gone" ]] && ok "gone sweep: kill uses swept hcom_name" || bad "gone sweep: kill uses swept hcom_name" "argv=$(cat "$PROBE/hcom_kill_argv" 2>/dev/null)"
+[[ "$(line_count "$PROBE/hcom_kill_argv")" = "0" ]] && ok "gone sweep: observation gap preserves bus row" || bad "gone sweep: observation gap preserves bus row" "count=$(line_count "$PROBE/hcom_kill_argv")"
+[[ "$(cat "$REG_DIR/registry.jsonl")" = "$gone_registry_before" ]] && ok "gone sweep: observation gap leaves registry byte-identical" || bad "gone sweep: observation gap leaves registry byte-identical" "out=$RUN_OUT"
+[[ "$(grep -c 'cause_class=epoch_uncertain; no automated unseat' <<<"$RUN_OUT")" = "2" ]] && ok "gone sweep: reports both observation gaps" || bad "gone sweep: reports both observation gaps" "out=$RUN_OUT"
 [[ "$(line_count "$PROBE/closed_panes")" = "0" ]] && ok "gone sweep: no pane close call" || bad "gone sweep: no pane close call" "closed=$(cat "$PROBE/closed_panes" 2>/dev/null)"
 
 echo

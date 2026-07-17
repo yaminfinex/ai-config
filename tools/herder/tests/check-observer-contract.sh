@@ -266,7 +266,7 @@ JSONL
   [[ "$(latest_count guid-dead unseated)" == "1" ]] && pass "T-1 exactly one unseated row" || fail_case "T-1 exactly one unseated row" "$(cat "$STATE/registry.jsonl")"
   assert_jq "T-1 close_result/evidence" 'select(.guid=="guid-dead" and .event=="unseated" and .close_result=="observed_dead" and (.close_reason|length>0))' "$STATE/registry.jsonl"
   run_sweep_json >"$CASE/out2.json" || fail_case "T-1 rerun" "command failed"
-  assert_jq "T-1 rerun typed noop" 'select(.status.last_sweep_summary.noop==1)' "$CASE/out2.json"
+  assert_jq "T-1 rerun has no stale death candidate" 'select(.status.last_sweep_summary.applied==0 and .status.last_sweep_summary.noop==0 and .status.last_sweep_summary.refused==0)' "$CASE/out2.json"
   [[ "$(latest_count guid-dead unseated)" == "1" ]] && pass "T-1 rerun appends no duplicate" || fail_case "T-1 rerun duplicate" "$(cat "$STATE/registry.jsonl")"
 }
 
@@ -324,7 +324,7 @@ $(session_row guid-herdr seated alpha t_missing p_missing bus-alpha enroll old-s
 $(process_row)
 JSONL
   rm -f "$HDR/herdr.sock" "$HDR/snapshot.json"
-  jq -cn '{name:"proc-bus",status:"stopped",process_bound:false,status_age:1}' >"$HCOM/hcom.jsonl"
+  jq -cn '{name:"proc-bus",status:"stopped",process_bound:false,status_age:301}' >"$HCOM/hcom.jsonl"
   run_sweep_json >"$CASE/out.json" || fail_case "T-4 sweep" "command failed"
   assert_jq "T-4 protocol incompatible surfaced" 'select(.status.protocol_compatible==false)' "$CASE/out.json"
   [[ "$(latest_count guid-herdr unseated)" == "0" ]] && pass "T-4 herdr verdict paused" || fail_case "T-4 herdr verdict paused" "$(cat "$STATE/registry.jsonl")"
@@ -339,7 +339,8 @@ JSONL
   jq -cn '{name:"bus-alpha",status:"stopped",process_bound:false,status_age:1}' >"$HCOM/hcom.jsonl"
   HERDER_OBSERVER_ALLOW_CLI_FALLBACK=1 MOCK_HERDR_PROTOCOL=17 run_sweep_json >"$CASE/proto.json" || fail_case "T-4 protocol fallback sweep" "command failed"
   assert_jq "T-4 protocol pin does not trust server compatible flag" 'select(.status.protocol_detail | contains("cli-fallback"))' "$CASE/proto.json"
-  [[ "$(latest_count guid-proto unseated)" == "1" ]] && pass "T-4 CLI fallback only on protocol mismatch" || fail_case "T-4 protocol fallback" "$(cat "$STATE/registry.jsonl")"
+  [[ "$(latest_count guid-proto unseated)" == "0" ]] && pass "T-4 CLI fallback absence does not prove death" || fail_case "T-4 protocol fallback" "$(cat "$STATE/registry.jsonl")"
+  assert_jq "T-4 CLI fallback reports observation gap" 'select(any(.status.flags[]?; .guid=="guid-proto" and .type=="liveness-observation-gap" and .cause_class=="epoch_uncertain"))' "$CASE/proto.json"
 }
 
 t5_t6_t7_advice_and_coexistence() {
@@ -446,7 +447,8 @@ $(session_row guid-c seated c t3 p3 bus-c enroll old-c)
 JSONL
   snapshot '[{"pane_id":"p1","terminal_id":"t1","label":"a"},{"pane_id":"p2","terminal_id":"t2","label":"b"}]' '[]'
   run_sweep_json >"$CASE/out.json" || fail_case "T-11b sweep" "command failed"
-  [[ "$(latest_count guid-c unseated)" == "1" && "$(latest_count guid-a unseated)" == "0" ]] && pass "T-11b partial overlap only absent unseats" || fail_case "T-11b partial" "$(cat "$STATE/registry.jsonl")"
+  [[ "$(latest_count guid-c unseated)" == "0" && "$(latest_count guid-a unseated)" == "0" ]] && pass "T-11b one-shot partial overlap unseats none" || fail_case "T-11b partial" "$(cat "$STATE/registry.jsonl")"
+  assert_jq "T-11b absent seat reports observation gap" 'select(any(.status.flags[]?; .guid=="guid-c" and .type=="liveness-observation-gap" and .cause_class=="epoch_uncertain"))' "$CASE/out.json"
 
   case_dir t11c
   write_registry <<JSONL
@@ -461,9 +463,10 @@ JSONL
   : >"$HCOM/hcom.jsonl"
   run_sweep_json >"$CASE/out2.json" || fail_case "T-11c absent bus sweep" "command failed"
   [[ "$(latest_count guid-lone unseated)" == "0" ]] && pass "T-11c absent bus row alone does not unseat" || fail_case "T-11c absent bus row" "$(cat "$STATE/registry.jsonl")"
-  jq -cn '{name:"bus-lone",status:"stopped",session_id:"old-lone",process_bound:false,status_age:1}' >"$HCOM/hcom.jsonl"
+  jq -cn '{name:"bus-lone",status:"stopped",session_id:"old-lone",process_bound:false,status_age:301}' >"$HCOM/hcom.jsonl"
   run_sweep_json >"$CASE/out3.json" || fail_case "T-11c dead bus sweep" "command failed"
-  [[ "$(latest_count guid-lone unseated)" == "1" ]] && pass "T-11c present dead bus row unseats" || fail_case "T-11c dead bus" "$(cat "$STATE/registry.jsonl")"
+  [[ "$(latest_count guid-lone unseated)" == "0" ]] && pass "T-11c stale stopped bus alone does not unseat" || fail_case "T-11c dead bus" "$(cat "$STATE/registry.jsonl")"
+  assert_jq "T-11c stale stopped bus reports observation gap" 'select(any(.status.flags[]?; .guid=="guid-lone" and .type=="liveness-observation-gap" and .cause_class=="epoch_uncertain"))' "$CASE/out3.json"
 
   case_dir t11d
   write_registry <<JSONL

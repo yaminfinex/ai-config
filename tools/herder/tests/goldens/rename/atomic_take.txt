@@ -15,5 +15,5 @@ herdr: rename skipped (registry row has no terminal_id)
 {"kind":"session","guid":"guid-beta-0000","event":"label_transferred","recorded_at":"<TS>","node":"<GUID>","state":"unseated","label":"alpha","role":"reviewer","tool":"claude","continuity":"assumed","lineage":{},"provenance":{}}
 === LIST ===
 GUID       LABEL                AGENT   PANE               LIVE      BUS              CTX         ROLE
-guid                            codex                      gone      -                unknown     worker
-guid       alpha                claude                     gone      -                unknown     reviewer
+guid                            codex                      observation_gap -                unknown     worker
+guid       alpha                claude                     observation_gap -                unknown     reviewer

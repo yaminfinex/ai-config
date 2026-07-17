@@ -67,7 +67,7 @@ func TestApplyPositiveDeathRecordsEvidenceAndFirstObserverWins(t *testing.T) {
 func TestApplyRefusesStaleSeatAnchor(t *testing.T) {
 	path, rec := seededSeated(t)
 	anchor := Anchor(rec.Seat)
-	_, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		current := registry.V2ByGUID(tx.Projection, rec.GUID)
 		next := *current
 		seat := *current.Seat
@@ -78,6 +78,13 @@ func TestApplyRefusesStaleSeatAnchor(t *testing.T) {
 		return []v2.SessionRecord{next}, nil
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := outcome.Err(); err != nil {
 		t.Fatal(err)
 	}
 	verdict := Evaluate(Input{Holder: Signal{State: StateDead, ObservedVia: "holder_wait"}})

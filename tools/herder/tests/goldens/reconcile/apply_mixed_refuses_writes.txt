@@ -7,8 +7,8 @@ amb        amb                  ambiguous                      multiple fallback
 beta       beta                 re-confirm                     terminal live; pane refresh p_20 -> p_99; bus identity verified as @beta-live
 conflict   gamma                conflict                       stored terminal is live as name="intruder"; D11 refuses to unseat, use manual adoption/enroll
 delta      delta                re-bind (assumed-continuity)   one live name+agent-kind+cwd fallback match; identity assumed per D12; bus identity verified as @delta-live
-gone       gone                 gone                           no live agent or pane matches
-undet      undet                undetected                     pane is alive, but agent list has no matching detection; restart or relaunch to restore status before rebinding
+gone       gone                 observation_gap                cause_class=epoch_uncertain; no live pane matched, but one-shot absence is not positive death evidence
+undet      undet                undetected                     pane is alive via reconcile_pane_snapshot, but agent list has no matching detection; restart or relaunch to restore status before rebinding
 === EXIT ===
 1
 === REGISTRY ===

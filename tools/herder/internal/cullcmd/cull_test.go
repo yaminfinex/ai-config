@@ -38,13 +38,20 @@ func TestObserverDownCLIUsesSharedPredicateToUnseatDeadProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	_, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		return []v2.SessionRecord{{
 			GUID: "fixture-cli-death", Event: "seated", RecordedAt: "2026-07-17T08:00:00Z", State: v2.StateSeated,
 			Seat: &v2.Seat{Kind: "process", Node: tx.NodeID, PID: pid, HcomName: "fixture-bus"},
 		}}, nil
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := registry.SingleOutcome(outcomes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := outcome.Err(); err != nil {
 		t.Fatal(err)
 	}
 	recs, err := registry.Load(path)

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# check-cull-closed-record.sh — prove cull appends the first unseated session record
-# and treats repeated unseated culls as confirmed no-ops.
+# check-cull-closed-record.sh — prove an explicit cull appends the first
+# operator-request annotation and treats repeated unseated culls as confirmed
+# no-ops without fabricating a death verdict.
 
 set -uo pipefail
 
@@ -112,7 +113,7 @@ make_case() {
 
 close_count() {
   local guid="$1"
-  jq -r --arg guid "$guid" 'select(.guid==$guid and .event=="unseated" and .state=="unseated" and .close_result=="already_gone") | .guid' "$REGISTRY" | wc -l | tr -d '[:space:]'
+  jq -r --arg guid "$guid" 'select(.guid==$guid and .event=="unseated" and .state=="unseated" and .close_result=="requested") | .guid' "$REGISTRY" | wc -l | tr -d '[:space:]'
 }
 
 # 1. Migrated v1 unseated pane-less holder -> cull exercises the real corpse shape.
@@ -124,9 +125,9 @@ after="$(close_count guid-dead-trap)"
 [[ "$RUN_RC" -eq 0 ]] && ok "unseated record: cull exits 0" || bad "unseated record: cull exits 0" "rc=$RUN_RC out=$RUN_OUT"
 [[ "$after" -eq $((before + 1)) ]] \
   && ok "unseated record: first cull appends one annotation" || bad "unseated record: first cull appends one annotation" "before=$before after=$after out=$RUN_OUT"
-tail -n1 "$REGISTRY" | jq -e '.event=="unseated" and .state=="unseated" and .label=="trap" and .close_result=="already_gone" and (.close_reason | contains("source=cull-verification")) and (.seat|not)' >/dev/null \
-  && ok "unseated record: verified annotation row appended" || bad "unseated record: verified annotation row appended" "latest=$(tail -n1 "$REGISTRY")"
-grep -q 'recorded unseated trap (guid-dead-trap) pane= → already_gone' <<<"$RUN_OUT" \
+tail -n1 "$REGISTRY" | jq -e '.event=="unseated" and .state=="unseated" and .label=="trap" and .close_result=="requested" and (.close_reason | contains("source=operator-cull")) and (.seat|not)' >/dev/null \
+  && ok "unseated record: operator-request annotation row appended" || bad "unseated record: operator-request annotation row appended" "latest=$(tail -n1 "$REGISTRY")"
+grep -q 'recorded unseated trap (guid-dead-trap) pane= → requested' <<<"$RUN_OUT" \
   && ok "unseated record: first cull reports unseated session" || bad "unseated record: first cull reports unseated session" "out=$RUN_OUT"
 
 # 2. Unseated rows still hold labels; enroll names the lifecycle state and the
@@ -157,7 +158,7 @@ after_bytes="$(cat "$REGISTRY")"
   && ok "unseated record: repeat cull leaves registry byte-identical" || bad "unseated record: repeat cull leaves registry byte-identical" "before=$before_bytes after=$after_bytes out=$RUN_OUT"
 grep -q 'already unseated trap (guid-dead-trap) at .*close_result=never-close-annotated' <<<"$RUN_OUT" \
   && bad "unseated record: repeat cull must not report missing annotation" "out=$RUN_OUT" || ok "unseated record: repeat cull does not report missing annotation"
-grep -q 'already unseated trap (guid-dead-trap) at .*close_result=already_gone' <<<"$RUN_OUT" \
+grep -q 'already unseated trap (guid-dead-trap) at .*close_result=requested' <<<"$RUN_OUT" \
   && ok "unseated record: repeat cull reports recorded fact" || bad "unseated record: repeat cull reports recorded fact" "out=$RUN_OUT"
 
 # 4. Pane-less non-force cull must not kill a still-joined bus row.
