@@ -7,7 +7,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-17 07:33'
-updated_date: '2026-07-17 07:47'
+updated_date: '2026-07-17 08:48'
 labels:
   - herder
   - identity-migration
@@ -36,5 +36,10 @@ Field class, same night the canonical seat-completion unit merged: 4/4 codex spa
 created: 2026-07-17 07:47
 ---
 Root cause ACCEPTED (builder's isolated probes + lived spawn refusal): (1) awaitBind has only two child proofs — own-guid registry enrichment (cannot exist under refuse-not-mint) or roster pane_id match (codex rows omit pane) — so a row joining at ~30s stays invisible for the whole 60s window; (2) completion Evidence carries empty SessionID (codex sid lag), no ProcessID, and pane ids that match nothing -> zero correlates -> joined_bus_row_missing; (3) the sidecar starts env-scrubbed, extracts only HCOM_PROCESS_ID from owned children (ignores HCOM_INSTANCE_NAME the child demonstrably carries), and its tag+cwd fallback is deliberately non-authoritative -> the automatic-recovery promise is FALSE for the empty-coordinate codex row class. Regression boundary: the seat-completion unit's hardening correctly removed the sidecar ObservedBus shortcut but added no replacement child-specific correlate. Design APPROVED WITH REDIRECT: exact-Name correlate added to hcomidentity.Evidence and consumed by Resolve (joined/nonempty/exactly-one/fail-closed preserved; completions class live-verified) — a tightly-scoped authorized edit on the seam shared with the concurrent break-glass unit (which was notified; its attested-arm sole-caller pin is untouched — the builder's original proposal to reuse the AttestedBinding arm was REFUSED for exactly that collision). Spawn passes the name herder itself minted at launch; the owned-child env probe (guid-keyed, all-must-agree) is the sidecar's recovery path. Red-first pins required incl. making the refusal-text promise true end-to-end.
+---
+
+created: 2026-07-17 08:48
+---
+Adversarial review round 1 (incumbent opus + grok calibration): FIX ROUND REQUIRED. Incumbent P1 (keep-list fence): the launch-frozen env name is admitted alone — after rename/reclaim a stranger holding the derived name gets OUR pane written into THEIR hcom row and their name stamped verified on OUR guid (executed in an isolated copy; merge-missing-only does not protect the empty-coordinate victim class); plus the derived tag+instance form violates the codebase's own no-derivation rule; open severity question for the builder: does hcom collision-suffix names at join (routine divergence) or is rename/reclaim required (narrow). Incumbent P2: sidecar accepts UNVERIFIED WriteNoop and latches permanently for empty-SessionID codex rows (retry predicate can never re-fire) — and the unit INVERTED the previously-pinned no-latch test to make it pass; spawn-side noop verification exists and the asymmetry is the bug. P3 stale docs/reasons + cosmetics. Held under mutation: duplicate-name rowMatches pin (load-bearing — map collapse would otherwise admit), name-vs-pane conflict refusal, tag+cwd non-authoritative (6 tests fail on revert), empty-name double fence, agreement rule incl. scrubbed-grandchild abstention, seam scope exactly as authorized, red-first proven behaviorally against main. CALIBRATION SPLIT: grok seat APPROVED, missing both incumbent findings (frozen-env divergence unconsidered; noop asymmetry read as intended design); also suffered total shell-tool death mid-slot (never mutated the real tree; reported honestly; tree verified quiet by orchestrator). Fix round dispatched (3 findings + the hcom suffix question).
 ---
 <!-- COMMENTS:END -->
