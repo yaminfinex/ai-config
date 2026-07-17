@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-17 16:42'
+updated_date: '2026-07-17 22:25'
 labels:
   - herder
   - identity
@@ -40,3 +41,9 @@ Impact: long-lived orchestrator sessions progressively lose herder send/cull-not
 - [ ] #3 A live-bus caller refused at verification has a working self-service recovery path (enroll must not fail the same way for a session with a live joined row)
 - [ ] #4 Reconcile D11 fork-name conflict on the same row explained: why terminal detection reports a fork-derived name for an unforked-looking seat, and whether that is this defect or a separate capture
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Scope-check evidence from the bind-recovery unit: caller/sender verification resolves ONLY session/process/pane evidence (name is compare-after, never a lookup key) — hypothesis (b) composite-vs-base name mismatch is ELIMINATED for the caller arm. Remaining hypotheses: (a) all ambient correlates stale via long-uptime env drift, (c) fork-lineage coordinate rotation (matches the D11 fork-name terminal detection). Recovery-path AC unchanged and now sharper: enroll must succeed for a live-bus caller even when every env correlate is stale.
+<!-- SECTION:NOTES:END -->
