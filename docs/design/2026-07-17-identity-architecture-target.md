@@ -148,10 +148,39 @@ strengthens one of these.
      arbitrate, the latest sufficient binding is consulted *instead of refusing
      on the pairwise copy mismatch*. "Sufficient" = class ≥ `attested`, within
      epoch validity for coordinate-valued fields.
-  3. Within the absent-live quadrant, class dominates recency between classes; a
-     later `live-verified` binding supersedes any earlier `attested` one;
-     coordinate bindings expire at their epoch boundary (T5).
-  4. Every admitting path is pinned by a fence matrix — no unexplained passes.
+  3. **Correction semantics.** An attested correction (a break-glass rebind,
+     §3.3) appends the new binding **and tombstones the specific binding it
+     supersedes** — named by field and ordinal, in the same locked batch.
+     Tombstoned bindings stay in history (nothing is deleted) but are not
+     candidates for adjudication. Only an `attested`-or-better event may
+     tombstone, a tombstone names exactly one binding, and blanket
+     invalidation does not exist. This is what lets a newer attested repair
+     beat an older *stale* `live-verified` binding without weakening rule 4:
+     the old binding loses by being tombstoned by an explicit logged
+     correction, never by being outranked.
+  4. Among surviving (non-tombstoned, epoch-valid) candidates in the absent-live
+     quadrant, class dominates recency; a later `live-verified` binding
+     supersedes any earlier `attested` one; coordinate bindings expire at their
+     epoch boundary (T5).
+  5. Every admitting path is pinned by the matrix below — no unexplained passes.
+
+  **Field-by-field admitting matrix** (the correction cell shown, not promised):
+
+  | Field | Live evidence now: conflicts with stored | Live evidence now: absent | Correction path |
+  |---|---|---|---|
+  | Stored bus name | Refuse (rule 1) | Latest surviving candidate by class-then-recency (rules 3–4) | Attested rebind appends new binding + tombstones the named stale one — including a stale `live-verified` — so the attested value wins by survivorship |
+  | Recorded sid | Refuse (rule 1) | Same as bus name | Same as bus name (adopt's resumed-sid authorization unchanged for automated paths) |
+  | Launch context | Governed by the vendor-db fence, not the lattice: merge-missing-only backfill when empty; wrong-nonempty → recreate protocol (§3.3), never adjudicated or rewritten | — | The attested record authorizes the recreate; no tombstone (the vendor store, not history, holds the value) |
+  | Registry seat coordinates | Not lattice-adjudicated: re-seat corridor (§3.3 table) re-stamps from live evidence at completion | — | None (out of break-glass vocabulary) |
+  | Seat credential | Not a binding: reissue operation (§3.3), no adjudication | — | — |
+
+  Worked instance of the correction cell: bus name A was once recorded
+  `live-verified`; after a rename/reclaim the live correlates are unavailable
+  and A is stale; the operator attests B. The attested correction tombstones
+  the A-binding and appends B; adjudication sees only B among survivors, so
+  completion binds B. Without rule 3, class-dominates-recency would have
+  restored A and re-created the refusal loop — that contradiction is the rule's
+  reason for existing.
 
   Authority semantics are unchanged: the registry remains snapshot-per-event and
   the sole seat→session authority per the ratified spec; evidence class is an
@@ -206,11 +235,11 @@ kind; that is the class this plane deletes.
 The cutover is a real cut per verb — a transition period with env fallback would
 re-open the inheritance hole — which is why legacy issuance must precede any
 verb's cut (an issuance sweep mints tokens for existing live seats before the
-first verb switches) and why the break-glass verb (T3) and re-completion (T2)
-must land first as the recovery paths for token loss: completion mints/rotates,
-so the cure for a lost token is running the completion-bearing verb from the
-live seat, with break-glass available to repair the identity fields that verb's
-proof needs.
+first verb switches) and why the break-glass surface (T3) must land first: the
+recovery path for a lost token is the dedicated **credential reissue** operation
+(§3.3), authenticated from the break-glass proof pool — never a credential-gated
+verb, which after cutover could not authenticate without the very token it is
+supposed to restore.
 
 Boundary honesty, upstream: the hcom vendor extension honors its own inherited
 env with no continuity check (the row-takeover hazard,
@@ -273,33 +302,48 @@ distinguish an operator from deliberate same-uid automation. Two designs follow,
 and the choice is flagged for ratification:
 
 > **OWNER-DECISION — break-glass trust anchor.** Both branches are fully
-> designed; neither is silently assumed elsewhere in this document.
+> designed and written to the trust boundary; neither is silently assumed
+> elsewhere in this document.
 >
-> **Branch A — operator-held factor.** At setup, the operator records a
-> passphrase out-of-band; only its slow hash is stored on the machine. The verb
-> requires the passphrase, entered on a channel same-uid processes cannot
-> observe — which on this platform means **not** a herdr-managed pane (any pane
-> keystroke is readable via the pane API); a direct tty outside herdr is the
-> supported channel. Same-uid automation cannot produce the preimage, so the
-> verb genuinely requires the operator. Costs: setup ceremony, an
-> outside-herdr entry channel for every repair, passphrase-loss recovery
-> (re-setup), and residual exposure if the operator ever types the passphrase
-> into a managed pane.
+> **Branch A — operator-held factor, verifier anchored outside uid write
+> authority.** A passphrase hash alone is not enough: a same-uid process could
+> replace the stored hash with one for an attacker-known passphrase, so
+> preimage secrecy without **verifier integrity** proves nothing. Branch A
+> therefore requires *both*: (i) an operator-held factor entered on a channel
+> same-uid processes cannot observe — not a herdr-managed pane (pane
+> keystrokes are API-readable); a direct tty outside herdr is the supported
+> channel — and (ii) a verifier the calling uid cannot rewrite. Concrete
+> anchor options, in rough order of fit for a single-user box: a root-owned
+> hash file plus root-owned verifier helper (installed once with sudo; honest
+> **precondition: root escalation must itself be password-gated** — on a box
+> with passwordless sudo this variant collapses into Branch B and must not be
+> claimed); a hardware user-presence factor (FIDO2 touch — same-uid automation
+> cannot produce a physical touch); or remote approval from a second device.
+> Costs: setup ceremony, an outside-herdr entry channel, factor-loss recovery
+> (re-setup at the anchor's level), and the stated precondition. If no anchor
+> option is acceptable on the target machine, Branch A is *unavailable
+> honestly* — there is no same-uid-resistant middle ground.
 >
 > **Branch B — posture reduction.** The claim is reduced to what (a)+(b)
 > actually prove: *a deliberate, named, logged action by the OS account that
 > controls the pane*. Same-uid takeover through this verb is explicitly
 > accepted at the machine boundary — consistent with the owner's prior
 > single-purpose-machine ruling — and the verb's security value is honestly
-> restated as: narrowness (single field, single row), rate limit, loudness, and
-> a tamper-evident attested audit trail (a tripwire, not a wall). The
-> forgery-path test (pty + pane-API nonce loopback) then *documents the
-> accepted bypass* instead of asserting its absence.
+> restated as: narrowness (single field, single row), rate limit, loudness at
+> time of use (stderr + bus/observer event streams give contemporaneous
+> visibility), and a **normal-path audit record**: it reliably records
+> ordinary deliberate use, but the registry is same-uid-editable and no
+> integrity mechanism (hash chain, MAC, remote sink) is designed, so it is
+> *not* tamper-evident against the deliberate adversary and is not claimed to
+> be. A tripwire for the normal path, not a wall and not a forensic seal. The
+> forgery-path test (pty + pane-API nonce loopback) *documents the accepted
+> bypass* instead of asserting its absence.
 >
 > Branch B matches the ruled posture and costs nothing operationally; Branch A
-> is the only option that makes "operator" literally true. Default in the
-> migration plan is Branch B pending ratification; switching to Branch A later
-> is additive (the factor becomes one more conjunct).
+> is the only option that makes "operator" literally true, at the price of its
+> anchor's preconditions. Default in the migration plan is Branch B pending
+> ratification; switching to Branch A later is additive (the anchored factor
+> becomes one more conjunct).
 
 **Damage shapes and their terminating sequences** (the honest enumeration T3
 promises):
@@ -311,16 +355,28 @@ promises):
 | Launch context empty | No attestation needed in the ordinary case (merge-missing-only backfill at completion); attestation supplies the pane fact when live bus proof is unavailable. Terminates. |
 | Launch context wrong-nonempty (`pane_conflict`) | Never rewritten (keep-list fence). Terminating protocol: recreate the vendor row through hcom itself from the verified live pane (leave/stop the wrong row, rejoin under the same name), which yields an empty launch context that completion then backfills. The attested record covers the operator's authorization of the recreate. **Upstream-gated residual:** if hcom's reclaim guard refuses the rejoin (its refusal exits rc=0 — recorded upstream defect), the shape is *not* terminable inside herder; the documented owner-approved database recovery recipe in the hazard doc is the honest fallback, and this row of the table says so rather than claiming termination. |
 | Registry seat coordinates wrong/stale | Out of break-glass vocabulary. Cure: the existing re-seat corridor (enroll/adopt from the live seat, or reconcile re-confirmation), which ends in completion; break-glass repairs the bus/sid/launch-context fields those verbs' proofs need, then the corridor runs. Terminates via composition. |
-| Seat credential lost (T1) | Not a break-glass field: re-run a completion-bearing verb from the live seat (completion rotates the credential); break-glass repairs any identity field that verb's proof requires. Terminates. |
+| Seat credential lost (T1) | **Dedicated reissue operation** (below): attested + seat-control corroborated under the ratified branch, no identity field rebound, ends in atomic re-completion which mints the new token. Never prescribed as "re-run a credential-gated verb" — that would be the circularity class re-entering through the new machinery. Terminates. |
+
+**Credential reissue (the one non-rebind operation on this verb surface).**
+Credential loss is a damage shape *created by* the claim plane (§3.1), so its
+recovery lives here by design, not as scope creep on the memo's rebind
+vocabulary: a `reissue-credential` operation authenticated exactly like a
+rebind (attestation + seat-control corroboration under the ratified branch),
+which rebinds **no identity field** — row identity facts are untouched — and
+ends in the T2 completion step, which atomically rotates the generation and
+mints the new token. It exists precisely so that no credential-gated verb is
+ever its own credential recovery: the authentication for reissue is drawn from
+the break-glass proof pool, which is disjoint from the missing token.
 
 Constraints (settled): logged into the row's history as an attested
 evidence-classed binding recording the attestation; preserves stored label,
-role, and lineage; rate-limited and loud; single field per invocation; ends in
-the T2 completion step. Automated paths never call it — no attestation means
-exactly today's fail-closed refusals. It fixes no root cause — it caps the
-*cost* of every residual. The registry write for an attested rebind plus its
-completion is **one locked batch** (see §3.5 write-spine note): a sparse or
-half-applied attested row must be impossible by construction.
+role, and lineage; rate-limited and loud; single field (or the reissue
+operation) per invocation; ends in the T2 completion step. Automated paths
+never call it — no attestation means exactly today's fail-closed refusals. It
+fixes no root cause — it caps the *cost* of every residual. The registry write
+for an attested rebind or reissue plus its completion is **one locked batch**
+(see §3.5 write-spine note): a sparse or half-applied attested row must be
+impossible by construction.
 
 ### 3.4 Liveness plane — one predicate, evidence-based
 
@@ -375,11 +431,24 @@ keys, not in the api schema. The stage proceeds without it, on two legs with an
 explicit fallback rule:
 
 - **Probe-inferred boundaries** (ratified spec §6.3): a recorded terminal id
-  unknown to the live daemon implies a boundary. This is the **correctness
-  backstop**: it detects an epoch boundary regardless of what any fingerprint
-  claims, so a falsely-stable fingerprint cannot silently keep dead coordinates
-  in same-epoch comparison — the unknown-terminal probe still forces
-  reconciliation.
+  unknown to the live daemon implies a boundary. This detects **disappearance**
+  regardless of what any fingerprint claims — but not **reuse**: the spec
+  itself warns terminal ids may be reissued wholesale, and a restarted daemon
+  reusing the old id set for different occupants leaves every recorded id
+  "known". Hence the next rule.
+- **Discontinuity rule (normative, the reuse backstop): unexplained multi-seat
+  discontinuity ⇒ epoch unknown ⇒ reconcile.** When one observation pass finds
+  two or more seats simultaneously showing turnover-shaped disagreement
+  (SID/occupant/coordinate mismatch) with no recorded lifecycle events
+  explaining them, the pass treats the substrate epoch as unknown and routes
+  *all* affected seats to reconciliation instead of emitting per-seat
+  turnover/conflict/`gone` verdicts. Rationale: genuinely simultaneous
+  independent multi-seat turnover without observed causes is far less likely
+  than an epoch boundary, and the costs are asymmetric — a wrong epoch-unknown
+  is one cheap reconcile pass, a wrong per-seat verdict is identity loss.
+  Single-seat discontinuity keeps today's semantics (real turnovers are
+  overwhelmingly single-seat, and the session layer's sid-changed-in-my-seat
+  rule already owns that case).
 - **Process-incarnation fingerprint** (accelerator, not authority): the herdr
   API socket is a unix socket, so a peer's process incarnation (pid + start
   time + kernel boot id) is readable at connect time. A fingerprint is
@@ -390,10 +459,22 @@ explicit fallback rule:
   proxies, fd handoff, and cross-namespace pid readings all violate the
   invariants.
 - **Fallback rule (normative): any unverifiable incarnation ⇒ epoch unknown ⇒
-  reconcile.** Epoch-unknown is never compared as same-epoch. False rotation
-  (over-reconciling) stays the only reachable failure mode, and it costs one
-  cheap reconciliation pass; false stability is excluded by the backstop plus
-  the fallback rule, not by optimism about the fingerprint.
+  reconcile.** Epoch-unknown is never compared as same-epoch.
+
+**Failure-mode honesty.** False rotation (over-reconciling) is the intended
+failure mode and costs one cheap pass. False stability is **bounded, not
+absolutely excluded**: disappearance is caught by probe-inference, wholesale
+reuse/permutation by the discontinuity rule, unverifiable transport by the
+fallback rule. The residual is the single-seat coincidence — a falsely-stable
+fingerprint (transport invariants passing while wrong) *and* a reused terminal
+id landing a different occupant on exactly one seat *and* no other discrepancy
+in the pass. Its blast radius is one seat, and its observable shape (a
+sid-changed-in-seat event) is exactly what today's turnover semantics already
+handle — so the residual is no worse than current behavior, on a strictly
+rarer path. A candidate refinement (an authenticated incarnation marker herder
+plants and reads back through the substrate) could close it but rides on
+unverified substrate surface and is recorded as a refinement to verify, never
+load-bearing.
 
 The upstream ask (a first-class generation id in status/snapshot) is recorded as
 a refinement that would retire the fingerprint derivation and shrink the
@@ -490,11 +571,14 @@ the new lattice's admitting paths.
 
 **H7 — coordinates carry no validity domain.** *Neutralized by T5.*
 Epoch-stamped coordinates make a substrate restart/handoff a reconciliation
-trigger instead of fleet-wide identity loss. Firm without upstream: the
-probe-inference backstop plus the unverifiable-incarnation ⇒ epoch-unknown ⇒
-reconcile rule exclude false stability by construction, and the fingerprint
-only ever accelerates. The first-class upstream generation id is a recorded
-refinement.
+trigger instead of fleet-wide identity loss. Firm without upstream: every
+identified false-stability path routes to epoch-unknown ⇒ reconcile
+(disappearance via probe-inference, wholesale reuse/permutation via the
+discontinuity rule, unverifiable transport via the fallback rule), and the
+fingerprint only ever accelerates. The honestly-stated residual is the
+single-seat reuse coincidence (§3.5), whose blast radius is one seat and whose
+observable shape today's turnover semantics already own. The first-class
+upstream generation id is a recorded refinement.
 
 ---
 
