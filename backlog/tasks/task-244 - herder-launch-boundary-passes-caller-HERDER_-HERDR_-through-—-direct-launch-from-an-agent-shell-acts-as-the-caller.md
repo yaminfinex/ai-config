@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-15 11:28'
-updated_date: '2026-07-17 02:19'
+updated_date: '2026-07-17 02:23'
 labels: []
 dependencies: []
 ordinal: 243500
@@ -33,4 +33,6 @@ WIRE-PROVEN SECOND VECTOR (2026-07-15, live incident): running herder SPAWN with
 TASK-266 investigation code-verified the second vector OPEN at HEAD (d50acfa): registry BuildProvenance unconditionally stamps ToolSessionID from ambient HCOM_SESSION_ID on creator-flow child rows, and the v2 projection records it as SIDs[{source: harvest}] and upgrades Continuity to confirmed. The adjacent spawnedBy field already takes explicit values with a comment documenting exactly this hazard class — the reasoning was never extended to the sid one field below. Recommended contained fix (from the memo, endorsed by hera after verification): pass explicit values like spawnedBy does; do not wait for the full per-seat credential design (memo direction R3). Note the hazard doc's 'managed launches discard every ambient HCOM_*' covers the child ENV only — the child ROW still receives the caller sid via this harvest.
 
 Contained fix dispatched 2026-07-17 as its own implement unit (second vector only: creator-flow ambient-SID harvest). Brief: napkins/run-herder-dx/builder-244-brief.md — design checkpoint required before code (call-site creator/self classification). First vector (HERDER_*/HERDR_* passthrough on direct launch) remains open, not in this unit's scope.
+
+Two live field instances found 2026-07-17 (fleet escalation, rows verified read-only at HEAD): two spawn-minted rows degraded to unseated with no terminal/pane/bus name, each left with exactly ONE recorded sid, source harvest = the SPAWNER'S session id. Consequence sharper than contamination: enroll's guid-reuse ownership proof accepts recorded-sid==live-sid as a sufficient leg, so when the harvest sid is the only surviving evidence, the SPAWNER is the only session that can prove ownership of the child's row — the rightful seat holder is locked out (circular-repair class) while the contaminating caller is handed takeover capability. Recovery prescribed: adopt-from-own-seat (true replacement); outcome to be recorded. Fixture guidance for this unit: the red fixture should assert the ownership-proof consequence, not just the row bytes — a creator-minted row must never be ownership-provable by the creator's sid.
 <!-- SECTION:NOTES:END -->
