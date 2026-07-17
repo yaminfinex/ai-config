@@ -1,10 +1,10 @@
 ---
 id: TASK-271
 title: 'Implement: attested break-glass repair verb (identity migration U2)'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-17 04:27'
-updated_date: '2026-07-17 08:34'
+updated_date: '2026-07-17 10:01'
 labels:
   - herder
   - identity-migration
@@ -29,10 +29,10 @@ DESIGN CHECKPOINT REQUIRED BEFORE CODE (verb surface, attestation UX, event/tomb
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Design checkpoint note approved by orchestrator BEFORE any code
-- [ ] #2 Every plan §U2 test scenario implemented and green, including: no-attestation refusal; failed nonce/terminal corroboration refusal; the Branch B forgery-path test documenting the accepted bypass with audit row + rate limit asserted; successful bus-name rebind with label/role/lineage byte-identical; correction-cell test (tombstoned stale live-verified binding is a non-candidate, not outranked); absent-vs-unavailable test (live source errors never arm history adjudication); rotation-survival test (tombstone + binding id byte-identifiable after reseed, no id re-keyed); wrong-nonempty launch-context no-rewrite both legs; out-of-vocabulary rebind refused; rate-limit window refusal; crash mid-batch leaves prior row intact
-- [ ] #3 Season terminal-state fixtures: each recorded shape (bus-name unrecoverable, duplicate seated row aftermath, retired-row-owns-live-sid, wrong-nonempty pane) reproduced and cured by the documented attested sequence, or honestly reported as the one upstream-gated shape — architecture §3.3 table verified row by row
-- [ ] #4 reissue-credential operation authenticated on this surface, ending in re-completion under the rotation commit protocol; never credential-gated
-- [ ] #5 Keep-list re-audit of the final diff; operator docs for the verb landed under docs/
+- [x] #2 Every plan §U2 test scenario implemented and green, including: no-attestation refusal; failed nonce/terminal corroboration refusal; the Branch B forgery-path test documenting the accepted bypass with audit row + rate limit asserted; successful bus-name rebind with label/role/lineage byte-identical; correction-cell test (tombstoned stale live-verified binding is a non-candidate, not outranked); absent-vs-unavailable test (live source errors never arm history adjudication); rotation-survival test (tombstone + binding id byte-identifiable after reseed, no id re-keyed); wrong-nonempty launch-context no-rewrite both legs; out-of-vocabulary rebind refused; rate-limit window refusal; crash mid-batch leaves prior row intact
+- [x] #3 Season terminal-state fixtures: each recorded shape (bus-name unrecoverable, duplicate seated row aftermath, retired-row-owns-live-sid, wrong-nonempty pane) reproduced and cured by the documented attested sequence, or honestly reported as the one upstream-gated shape — architecture §3.3 table verified row by row
+- [x] #4 reissue-credential operation authenticated on this surface, ending in re-completion under the rotation commit protocol; never credential-gated
+- [x] #5 Keep-list re-audit of the final diff; operator docs for the verb landed under docs/
 <!-- AC:END -->
 
 ## Comments
@@ -46,5 +46,10 @@ Design checkpoint APPROVED after one amendment round. Note covered: exact-guid t
 created: 2026-07-17 08:34
 ---
 Adversarial review round 1 (incumbent opus + grok calibration, serialized slots, both released byte-clean): FIX ROUND REQUIRED. Credit where earned (both reviewers): no ceremony bypass exists (tty-only attestation, read-only pane observer verified hostile), atomicity real (in-lock failure injection left registry byte-identical), tombstone/adjudication semantics genuinely pinned, all six architecture damage-shape rows covered by fixtures. Seven consolidated findings: 2 P1 — source-inventory fence narrowed to one composite literal (variable-form arming invisible, gofmt defeats it, assignment-form rewrite loses the legit caller; all executed) and the in-lock rate-limit wholly unpinned (deleting all three in-lock checks stays green; sole test only trips preflight; true race commits once via the ANCHOR with the loser refusal naming the wrong mechanism vs the contract's named limit+window); 3 P2 — Branch B forgery test contains no forgery (stubbed proof, no pty/pane loopback: the accepted bypass is invisible), global SID-projection redefinition smuggled to satisfy one fixture (~6 reader packages unpinned, incumbent-only find), attestation prompt unbounded (timeout leg unimplemented/untested); 2 P3 — empty-challenge guard absent (fails closed today by coincidence), lifecycle-carry of the new histories untested. Lens h (builder flake claim) adjudicated ENVIRONMENTAL by the incumbent on four self-verified legs after rejecting the builder's file-level reasoning as insufficient (path-level isolation, post-body failure mode, zero registry surface in test, pre-existing boarded class with matching signature); false-friend test name flagged for the existing cleanup task. Fix round dispatched.
+---
+
+created: 2026-07-17 10:01
+---
+MERGED f5c28e3 (--no-ff, pushed); post-merge battery on main green 61/61 + 4 modules (tail read, counted). Final head 81c364c = design + 7-finding hardening + P2-D pin. Chain: design checkpoint (approved after cross-pane ceremony amendment) -> red-first build -> review round 1 (opus incumbent kivu + grok calibration lote, 7 findings incl. 2 P1: defeatable source-inventory fence, wholly-unpinned in-lock rate-limit) -> fix round -> delta (APPROVE-pending-P2-D: 7/7 closed mutation-verified, one new pin-strength gap) -> P2-D micro pin -> final APPROVE (8/8, every finding reverted-and-verified). Incumbent verified merge faithfulness (approved head byte-identical to shipped). Orchestrator gates: independent + final-head + post-merge all 61/61, identifier sweep clean. Branch B honesty maintained (tripwire, no tamper-evidence claim); real /dev/ptmx forgery test documents the accepted same-uid bypass; global SID-projection override reverted to scoped v2-binding adjudication. Residuals boarded: TASK-278 (cullcmd flake, not-delta-attributable), TASK-223 (grokbridge race, not folded). appendAuthorization conscious-ack corrected (RepairLaunchContext refuses not rewrites; bypass exists because completion would refuse pre-write and strand the mandated attestation).
 ---
 <!-- COMMENTS:END -->
