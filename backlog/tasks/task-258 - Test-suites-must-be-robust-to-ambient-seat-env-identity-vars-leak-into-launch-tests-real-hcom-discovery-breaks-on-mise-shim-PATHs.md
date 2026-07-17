@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-16 03:34'
-updated_date: '2026-07-16 06:36'
+updated_date: '2026-07-17 02:38'
 labels:
   - herder
 dependencies: []
@@ -53,4 +53,6 @@ SANCTIONED PER-RUN REMEDY (2026-07-16, orchestrator-approved in the field): expo
 REVIEWER NIT worth folding in (from an unrelated review's environmental sweep): the real-hcom wire-test PATH walk skips only the repo shim — the mise shims dir also contains an hcom trampoline and would be picked if it ever sorted earlier, driving tests through mise (this task's class 2) for environmental reasons. Battery/gate docs should pin HERDER_TEST_HCOM_BIN to the real binary as standard practice; the durable gate template now exports it.
 
 CLASS 2 COROLLARY (2026-07-16, battery void at suite 33): the shim-avoidance remedy has its own failure mode — a minimal no-shim PATH silently drops mise-managed HARNESS dependencies. The toolchain-gate suite's tab-pinned mish check needs the `backlog` binary, which exists only under the mise install tree (npm-backlog-md/<ver>/bin); with shims excluded and that dir absent, the suite body never starts ("harness dependency missing: backlog") and the battery fails on environment, not product. Remedy in the field: append the REAL install bin dirs for every harness dep (go, hcom, backlog) to the no-shim PATH — INCLUDING TRANSITIVE INTERPRETER DEPS (a second void followed at the same suite: backlog is a #!/usr/bin/env node script, so the node install bin is required too; the dep set is not discoverable from the tool list alone). The eventual fix should have the harness enumerate its own binary deps and resolve them through the version-manager query once at startup (same pinned-resolution direction as the hcom discovery fix), so no-shim battery PATHs are constructible mechanically instead of by trial.
+
+New silent flavor of the fresh-worktree mise-trust stranding, field-hit twice 2026-07-17 (both fixed-and-respawned same hour): spawn --worktree into a fresh (untrusted) worktree half-born BOTH seats — pane up, registry row minted, NO bus row, hcom launcher stranded forever blocked reading a unix socket, agent child dead at birth (zombie), and NOTHING rendered in the pane (unlike the earlier interactive trust-prompt flavor, there is no prompt to answer). Root cause verified: mise refuses the worktree mise.toml in the seat's cwd, so mise-shimmed binary resolution kills the agent exec while hcom waits for it. Discriminating test: identical spawn at repo root bound instantly. Operational practice adopted (standing orders): trust the worktree config BEFORE spawning into a fresh worktree; with spawn --worktree that means create-then-trust-then-spawn --cwd, since the one-step flag cannot be pre-trusted.
 <!-- SECTION:NOTES:END -->
