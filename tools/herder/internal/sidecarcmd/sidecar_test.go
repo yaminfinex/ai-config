@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/registry"
@@ -207,6 +208,195 @@ func TestFindRowCorrelatedUsesProcessIDWhenPaneIDMissing(t *testing.T) {
 	}
 	if scans != 1 {
 		t.Fatalf("process scan count = %d, want 1 after cached success", scans)
+	}
+}
+
+func TestFindRowCorrelatedUsesOwnedChildNameWhenLaunchCoordinatesAreEmpty(t *testing.T) {
+	t.Setenv("HERDER_GUID", "guid-child-0000")
+	s := &sidecar{
+		tool:   "codex",
+		paneID: "p_child",
+		processEnvirons: func(tool string) []processEnvironmentRead {
+			return []processEnvironmentRead{{env: map[string]string{
+				"HERDER_GUID":        "guid-child-0000",
+				"HCOM_INSTANCE_NAME": "mine",
+				"HCOM_TAG":           "worker",
+				"HCOM_PROCESS_ID":    "proc-child",
+			}}}
+		},
+	}
+	rows := []hcomRow{{Name: "worker-mine", BaseName: "mine", Tool: "codex", Status: "listening"}}
+
+	row, correlated := s.findRowCorrelated(rows)
+	if row == nil || row.Name != "worker-mine" || !correlated {
+		t.Fatalf("owned-name match = %+v (correlated=%v), want worker-mine/true", row, correlated)
+	}
+	if s.correlatedName != "worker-mine" {
+		t.Fatalf("cached correlated name = %q, want worker-mine", s.correlatedName)
+	}
+}
+
+func TestOwnedChildNameDisagreementFailsClosed(t *testing.T) {
+	t.Setenv("HERDER_GUID", "guid-child-0000")
+	s := &sidecar{
+		tool:   "codex",
+		paneID: "p_child",
+		processEnvirons: func(tool string) []processEnvironmentRead {
+			return []processEnvironmentRead{
+				{env: map[string]string{"HERDER_GUID": "guid-child-0000", "HCOM_INSTANCE_NAME": "mine", "HCOM_TAG": "worker", "HCOM_PROCESS_ID": "proc-child"}},
+				{env: map[string]string{"HERDER_GUID": "guid-child-0000", "HCOM_INSTANCE_NAME": "other", "HCOM_TAG": "worker", "HCOM_PROCESS_ID": "proc-child"}},
+			}
+		},
+	}
+	rows := []hcomRow{
+		{Name: "worker-mine", BaseName: "mine", Tool: "codex", Status: "listening"},
+		{Name: "worker-other", BaseName: "other", Tool: "codex", Status: "listening"},
+	}
+
+	row, correlated := s.findRowCorrelated(rows)
+	if row != nil || correlated || s.correlatedName != "" {
+		t.Fatalf("disagreeing owned names = %+v (correlated=%v cached=%q), want fail-closed miss", row, correlated, s.correlatedName)
+	}
+}
+
+func TestOwnedChildExactNameAmbiguityFailsClosed(t *testing.T) {
+	t.Setenv("HERDER_GUID", "guid-child-0000")
+	s := &sidecar{
+		tool: "codex", paneID: "p_child",
+		processEnvirons: func(tool string) []processEnvironmentRead {
+			return []processEnvironmentRead{{env: map[string]string{
+				"HERDER_GUID": "guid-child-0000", "HCOM_INSTANCE_NAME": "mine", "HCOM_TAG": "worker",
+			}}}
+		},
+	}
+	rows := []hcomRow{
+		{Name: "worker-mine", Tool: "codex", Status: "listening"},
+		{Name: "worker-mine", Tool: "codex", Status: "active"},
+	}
+	if row, correlated := s.findRowCorrelated(rows); row != nil || correlated {
+		t.Fatalf("duplicate exact name = %+v correlated=%v, want fail-closed miss", row, correlated)
+	}
+}
+
+func TestOwnedChildExactNameIgnoresExplicitlyUnjoinedRow(t *testing.T) {
+	joined := true
+	unjoined := false
+	rows := []hcomRow{
+		{Name: "worker-mine", Tool: "codex", Status: "listening", Joined: &unjoined},
+		{Name: "worker-mine", Tool: "codex", Status: "listening", Joined: &joined},
+	}
+	row := findRowForOwnedChild(rows, ownedChildIdentity{Name: "worker-mine"}, "", "")
+	if row == nil || row.Joined == nil || !*row.Joined {
+		t.Fatalf("owned exact-name match = %+v, want the sole joined row", row)
+	}
+}
+
+func TestSidecarCompletesEmptyCoordinateRowFromOwnedChildName(t *testing.T) {
+	installFakeHerdrForSidecar(t, 0)
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	t.Setenv("HERDER_GUID", "guid-new-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "worker-guid")
+	t.Setenv("HCOM_DIR", "/hcom")
+	s := &sidecar{
+		tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath,
+		completeSeat: testSeatCompletion(t),
+		processEnvirons: func(tool string) []processEnvironmentRead {
+			return []processEnvironmentRead{{env: map[string]string{
+				"HERDER_GUID": "guid-new-0000", "HCOM_INSTANCE_NAME": "mine", "HCOM_TAG": "worker", "HCOM_PROCESS_ID": "proc-child",
+			}}}
+		},
+	}
+	rows := []hcomRow{{Name: "worker-mine", BaseName: "mine", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening"}}
+	row, correlated := s.findRowCorrelated(rows)
+	if row == nil || !correlated {
+		t.Fatalf("owned-name discovery = %+v correlated=%v", row, correlated)
+	}
+	if !s.enrichDiscovered(row, correlated) {
+		t.Fatal("sidecar did not complete empty-coordinate row from owned child name")
+	}
+	if !s.appendEnrichment(row) {
+		t.Fatal("identical sidecar replay was not treated as success")
+	}
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := registry.Resolve(recs, "guid-new-0000")
+	if latest == nil || latest.HcomName != "worker-mine" {
+		t.Fatalf("completed row = %+v, want worker-mine", latest)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("registry session rows = %d, want one after idempotent replay", len(recs))
+	}
+}
+
+func TestSidecarTreatsNormalizedNoopAsSuccessfulCompletion(t *testing.T) {
+	registryPath := filepath.Join(t.TempDir(), "registry.jsonl")
+	t.Setenv("HERDER_GUID", "guid-noop-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "worker-noop")
+	t.Setenv("HCOM_DIR", "/hcom")
+	s := &sidecar{
+		tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath,
+		completeSeat: func(context.Context, *hcomRow, seatcompletion.Request) (seatcompletion.Result, error) {
+			return seatcompletion.Result{Status: registry.WriteNoop}, nil
+		},
+	}
+	row := &hcomRow{Name: "worker-mine", Tool: "codex", Tag: "worker", Directory: "/repo", Status: "listening"}
+	if !s.appendEnrichment(row) {
+		t.Fatal("normalized noop was not treated as successful sidecar completion")
+	}
+}
+
+func TestSidecarRunCompletesLateEmptyCoordinateRowWithinSteadyPoll(t *testing.T) {
+	installFakeHerdrForSidecar(t, 0)
+	installFakeHcomRosterForSidecar(t, `[{"name":"worker-mine","base_name":"mine","tool":"codex","tag":"worker","directory":"/repo","status":"listening","session_id":"","launch_context":{}}]`)
+	registryPath := filepath.Join(t.TempDir(), "registry.jsonl")
+	t.Setenv("HERDER_GUID", "guid-late-0000")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "worker-late")
+	t.Setenv("HCOM_DIR", "/hcom")
+	scans := 0
+	var s *sidecar
+	var completedAt time.Time
+	complete := testSeatCompletion(t)
+	s = &sidecar{
+		tool: "codex", paneID: "p_child", tag: "worker", cwd: "/repo", registry: registryPath, ppid0: os.Getppid(),
+		processEnvirons: func(tool string) []processEnvironmentRead {
+			scans++
+			if scans == 1 {
+				return nil
+			}
+			return []processEnvironmentRead{{env: map[string]string{
+				"HERDER_GUID": "guid-late-0000", "HCOM_INSTANCE_NAME": "mine", "HCOM_TAG": "worker", "HCOM_PROCESS_ID": "proc-child",
+			}}}
+		},
+	}
+	s.completeSeat = func(ctx context.Context, observed *hcomRow, request seatcompletion.Request) (seatcompletion.Result, error) {
+		result, err := complete(ctx, observed, request)
+		if err == nil && result.Refusal == nil && result.Status == registry.WriteApplied {
+			completedAt = time.Now()
+			s.ppid0 = -1
+		}
+		return result, err
+	}
+	started := time.Now()
+	if code := s.run(); code != 0 {
+		t.Fatalf("sidecar run code = %d", code)
+	}
+	elapsed := completedAt.Sub(started)
+	if elapsed < 1500*time.Millisecond || elapsed > 3500*time.Millisecond {
+		t.Fatalf("late completion elapsed = %s, want one 2s steady poll", elapsed)
+	}
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := registry.Resolve(recs, "guid-late-0000")
+	if latest == nil || latest.HcomName != "worker-mine" {
+		t.Fatalf("late completed row = %+v, want worker-mine", latest)
 	}
 }
 
@@ -893,7 +1083,7 @@ func TestCompleteObservedSeatRequiresCorroboratedJoinedNamedUniqueBusRow(t *test
 	}
 }
 
-func TestNoopCompletionDoesNotLatchSidecarEnrichment(t *testing.T) {
+func TestNoopCompletionLatchesSuccessfulSidecarEnrichment(t *testing.T) {
 	s := &sidecar{
 		tool:     "codex",
 		paneID:   "pane-live",
@@ -903,14 +1093,11 @@ func TestNoopCompletionDoesNotLatchSidecarEnrichment(t *testing.T) {
 		},
 	}
 	row := &hcomRow{Name: "bus-live", SessionID: "session-live"}
-	if s.appendCorrelatedEnrichment(row) {
-		t.Fatal("noop completion reported an applied enrichment")
+	if !s.appendCorrelatedEnrichment(row) {
+		t.Fatal("noop completion was not treated as a successful replay")
 	}
-	if s.enrichedCorrelated || s.enrichedSessionID != "" {
-		t.Fatalf("noop completion latched enrichment: correlated=%v session=%q", s.enrichedCorrelated, s.enrichedSessionID)
-	}
-	if !s.shouldAppendCorrelatedEnrichment(row, true) {
-		t.Fatal("noop completion suppressed the next retry")
+	if !s.enrichedCorrelated || s.enrichedSessionID != "session-live" {
+		t.Fatalf("noop completion did not latch success: correlated=%v session=%q", s.enrichedCorrelated, s.enrichedSessionID)
 	}
 }
 

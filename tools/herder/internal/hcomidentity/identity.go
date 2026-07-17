@@ -61,6 +61,7 @@ type Row struct {
 }
 
 type Evidence struct {
+	Name      string
 	SessionID string
 	ProcessID string
 	PaneIDs   []string
@@ -153,6 +154,7 @@ func Resolve(rows []Row, evidence Evidence) Result {
 		match func(Row) bool
 	}
 	signals := []signal{
+		{"name", evidence.Name, func(row Row) bool { return row.Name == evidence.Name }},
 		{"session_id", evidence.SessionID, func(row Row) bool { return row.SessionID == evidence.SessionID }},
 		{"process_id", evidence.ProcessID, func(row Row) bool { return row.LaunchContext.ProcessID == evidence.ProcessID }},
 	}
@@ -168,10 +170,15 @@ func Resolve(rows []Row, evidence Evidence) Result {
 		}
 		used++
 		perSignal := map[string]Row{}
+		rowMatches := 0
 		for _, row := range rows {
 			if row.Name != "" && joined(row) && sig.match(row) {
+				rowMatches++
 				perSignal[row.Name] = row
 			}
+		}
+		if sig.label == "name" && rowMatches > 1 {
+			return Result{Reason: sig.label + " matches multiple joined bus rows"}
 		}
 		if len(perSignal) > 1 {
 			return Result{Reason: sig.label + " matches multiple joined bus rows"}

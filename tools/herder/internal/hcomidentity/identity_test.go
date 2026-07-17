@@ -93,6 +93,35 @@ func TestResolveUsesCallerProcessWhenPaneFormsMiss(t *testing.T) {
 	}
 }
 
+func TestResolveUsesExactJoinedNameWhenLaunchCoordinatesAreEmpty(t *testing.T) {
+	joined := true
+	rows := []Row{{Name: "worker-mine", Joined: &joined}}
+
+	got := Resolve(rows, Evidence{Name: "worker-mine"})
+	if !got.Verified || got.Name != "worker-mine" {
+		t.Fatalf("Resolve exact name = %+v, want verified worker-mine", got)
+	}
+}
+
+func TestResolveExactNameFailsClosedOnDuplicateAndConflict(t *testing.T) {
+	joined := true
+	duplicate := []Row{
+		{Name: "worker-mine", Joined: &joined},
+		{Name: "worker-mine", Joined: &joined},
+	}
+	if got := Resolve(duplicate, Evidence{Name: "worker-mine"}); got.Verified || got.Reason != "name matches multiple joined bus rows" {
+		t.Fatalf("Resolve duplicate exact name = %+v, want fail-closed name ambiguity", got)
+	}
+
+	conflict := []Row{
+		{Name: "worker-mine", Joined: &joined},
+		{Name: "worker-other", Joined: &joined, LaunchContext: LaunchContext{PaneID: "pane-live"}},
+	}
+	if got := Resolve(conflict, Evidence{Name: "worker-mine", PaneIDs: []string{"pane-live"}}); got.Verified || got.Reason != "live identity correlates resolve to different bus rows" {
+		t.Fatalf("Resolve disagreeing name/pane = %+v, want cross-correlate refusal", got)
+	}
+}
+
 func TestDecodeAcceptsJSONLines(t *testing.T) {
 	rows, err := Decode([]byte("{\"name\":\"one\"}\n{\"name\":\"two\"}\n"))
 	if err != nil || len(rows) != 2 || rows[1].Name != "two" {

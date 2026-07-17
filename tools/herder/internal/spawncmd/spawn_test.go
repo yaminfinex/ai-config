@@ -153,20 +153,11 @@ func TestCompletionInfrastructureFailurePreservesLiveChild(t *testing.T) {
 	}
 }
 
-func TestNoopCompletionPreservesLiveChild(t *testing.T) {
-	client := &scriptedSpawnClient{responses: []spawnResponse{{
-		want: "pane process_info p_new",
-		out:  []byte(`{"result":{"process_info":{"foreground_processes":[{"pid":4242,"argv":["codex"]}]}}}`),
-	}}}
-	var stderr strings.Builder
-	r := &runner{herdr: client, stderr: &stderr}
+func TestNoopCompletionIsSuccessfulReplay(t *testing.T) {
+	r := &runner{}
 	handled, code := r.handleIncompleteSeatCompletion(seatcompletion.Result{Status: registry.WriteNoop}, nil, "p_new", "term_new", "ready")
-	if !handled || code != 1 {
-		t.Fatalf("handleIncompleteSeatCompletion() = (%v, %d), want (true, 1)", handled, code)
-	}
-	assertSpawnScriptConsumed(t, client)
-	if !strings.Contains(stderr.String(), "wrote no registry row") || strings.Contains(strings.Join(client.calls, " "), "pane close") {
-		t.Fatalf("noop live-child stderr=%q calls=%v", stderr.String(), client.calls)
+	if handled || code != 0 {
+		t.Fatalf("handleIncompleteSeatCompletion() = (%v, %d), want (false, 0)", handled, code)
 	}
 }
 
@@ -725,6 +716,207 @@ func TestRegistryCapturedNameUsesLatestEnrichmentRow(t *testing.T) {
 	}
 	if got := registryCapturedName(path, "guid-1"); got != "worker-rive" {
 		t.Fatalf("registryCapturedName = %q, want worker-rive", got)
+	}
+}
+
+func TestCompleteSpawnUsesCapturedNameAsLiveEvidence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	record := spawnRecord{
+		GUID: "guid-name", ShortGUID: "guid-nam", Label: "worker-name", Role: "worker", Agent: "codex",
+		PaneID: "pane-live", TerminalID: "terminal-live", HcomName: "worker-mine", HcomDir: "/bus", Status: "active",
+	}
+	client := &scriptedSpawnClient{responses: []spawnResponse{{
+		want: "pane get pane-live",
+		out:  []byte(`{"result":{"pane":{"pane_id":"pane-live","terminal_id":"terminal-live"}}}`),
+	}}}
+	joined := true
+	engine := testSpawnCompletionEngine(t)
+	engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{{Name: "worker-mine", Joined: &joined}}, nil
+	}
+	engine.RepairLaunchContext = func(_, name, pane string) hcomidentity.LaunchContextRepair {
+		if name != "worker-mine" || pane != "pane-live" {
+			t.Fatalf("repair inputs = (%q, %q)", name, pane)
+		}
+		return hcomidentity.LaunchContextRepair{Status: "written", PaneID: pane}
+	}
+	r := &runner{herdr: client, completion: engine}
+	result, err := r.completeSpawn(path, record, "pane-live", "")
+	assertSpawnScriptConsumed(t, client)
+	if err != nil || result.Refusal != nil || result.Status != registry.WriteApplied {
+		t.Fatalf("completeSpawn exact name = %+v err=%v, want applied", result, err)
+	}
+}
+
+type bindObserverHerdr struct{}
+
+func (bindObserverHerdr) Combined(...string) ([]byte, int, error) {
+	return nil, 64, errors.New("unused")
+}
+func (bindObserverHerdr) Run(...string) (int, error) { return 64, errors.New("unused") }
+func (bindObserverHerdr) Output(args ...string) ([]byte, error) {
+	call := strings.Join(args, " ")
+	switch {
+	case call == "pane get pane-live":
+		return []byte(`{"result":{"pane":{"pane_id":"pane-live","terminal_id":"terminal-live"}}}`), nil
+	case strings.HasPrefix(call, "agent read "):
+		return []byte(`{"result":{"read":{"text":""}}}`), nil
+	case call == "agent list":
+		return []byte(`{"result":{"agents":[]}}`), nil
+	default:
+		return nil, fmt.Errorf("unexpected herdr call %q", call)
+	}
+}
+
+func TestSidecarCompletionConvergesWithSpawnBindAndNoopReplay(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "hcom"), []byte("#!/bin/sh\nprintf '[]\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	registryPath := filepath.Join(t.TempDir(), "registry.jsonl")
+	record := spawnRecord{
+		GUID: "guid-converge", ShortGUID: "guid-con", Label: "worker-converge", Role: "worker", Agent: "codex",
+		PaneID: "pane-live", TerminalID: "terminal-live", WorkspaceID: "workspace-live", CWD: "/repo", HcomDir: "/bus", HcomName: "worker-mine",
+		HcomTag: "worker", Status: "active", StartedAt: "2026-07-17T00:00:00Z",
+		Provenance: registry.BuildProvenance("spawn", "parent-guid", "", "worker", "/repo", "workspace-live"),
+	}
+	joined := true
+	rows := []hcomidentity.Row{{Name: "worker-mine", Tool: "codex", Joined: &joined}}
+	newEngine := func() seatcompletion.Engine {
+		engine := seatcompletion.DefaultEngine()
+		engine.HerdrPane = func(context.Context, string) (seatcompletion.LivePane, error) {
+			return seatcompletion.LivePane{PaneID: "pane-live", TerminalID: "terminal-live"}, nil
+		}
+		engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) { return rows, nil }
+		engine.RepairLaunchContext = func(_, _, pane string) hcomidentity.LaunchContextRepair {
+			return hcomidentity.LaunchContextRepair{Status: "already-present", PaneID: pane}
+		}
+		return engine
+	}
+
+	completion := make(chan struct {
+		at     time.Time
+		result seatcompletion.Result
+		err    error
+	}, 1)
+	started := time.Now()
+	go func() {
+		time.Sleep(2100 * time.Millisecond)
+		engine := newEngine()
+		result, err := engine.Complete(context.Background(), seatcompletion.Request{
+			Origin:       seatcompletion.OriginRecognition,
+			RegistryPath: registryPath,
+			Candidate:    spawnCompletionCandidate(record),
+			Seat:         seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: record.PaneID},
+			Namespace:    record.HcomDir,
+			Evidence:     hcomidentity.Evidence{Name: record.HcomName},
+		})
+		completion <- struct {
+			at     time.Time
+			result seatcompletion.Result
+			err    error
+		}{time.Now(), result, err}
+	}()
+
+	r := &runner{opts: options{Agent: "codex", BindTimeoutMS: 60000}, herdr: bindObserverHerdr{}}
+	paneID := record.PaneID
+	name, reason, blocked, _ := r.awaitBind(&paneID, registryPath, record.GUID, record.HcomDir, record.PaneID, "")
+	boundAt := time.Now()
+	written := <-completion
+	if written.err != nil || written.result.Refusal != nil || written.result.Status != registry.WriteApplied {
+		t.Fatalf("sidecar completion = %+v err=%v", written.result, written.err)
+	}
+	if name != record.HcomName || reason != "bound" || blocked {
+		t.Fatalf("awaitBind() = name %q reason %q blocked %v", name, reason, blocked)
+	}
+	if sidecarElapsed := written.at.Sub(started); sidecarElapsed < 2*time.Second || sidecarElapsed > 3*time.Second {
+		t.Fatalf("sidecar completion elapsed = %s, want one 2s steady poll", sidecarElapsed)
+	}
+	if observeLag := boundAt.Sub(written.at); observeLag < 0 || observeLag > 750*time.Millisecond {
+		t.Fatalf("spawn observation lag = %s, want next 500ms poll", observeLag)
+	}
+	if total := boundAt.Sub(started); total >= 4*time.Second || total >= 60*time.Second {
+		t.Fatalf("end-to-end bind = %s, want well inside 60s", total)
+	}
+
+	replayEngine := newEngine()
+	r.completion = &replayEngine
+	replay, err := r.completeSpawn(registryPath, record, record.PaneID, "")
+	if err != nil || replay.Refusal != nil || replay.Status != registry.WriteNoop || len(replay.Row) == 0 {
+		t.Fatalf("spawn replay = %+v err=%v, want hydrated noop", replay, err)
+	}
+	if handled, code := r.handleIncompleteSeatCompletion(replay, nil, record.PaneID, record.TerminalID, reason); handled || code != 0 {
+		t.Fatalf("spawn noop handling = (%v, %d), want success", handled, code)
+	}
+	projection, err := v2.LoadFile(registryPath, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, session := range projection.Sessions() {
+		if session.GUID == record.GUID {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("canonical rows for %s = %d, want one after noop replay", record.GUID, count)
+	}
+}
+
+func TestGrokCompletionUsesBridgeCapturedExactNameForAdhocEmptyCoordinateRow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	record := spawnRecord{
+		GUID: "guid-grok-name", ShortGUID: "guid-gro", Label: "reviewer-grok", Role: "reviewer", Agent: "grok",
+		PaneID: "pane-live", TerminalID: "terminal-live", HcomName: "reviewer-lote", HcomDir: "/bus", Status: "active",
+	}
+	client := &scriptedSpawnClient{responses: []spawnResponse{{
+		want: "pane get pane-live",
+		out:  []byte(`{"result":{"pane":{"pane_id":"pane-live","terminal_id":"terminal-live"}}}`),
+	}}}
+	joined := true
+	engine := testSpawnCompletionEngine(t)
+	engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{{Name: "reviewer-lote", Tool: "adhoc", Joined: &joined}}, nil
+	}
+	engine.RepairLaunchContext = func(_, name, pane string) hcomidentity.LaunchContextRepair {
+		if name != "reviewer-lote" || pane != "pane-live" {
+			t.Fatalf("repair inputs = (%q, %q)", name, pane)
+		}
+		return hcomidentity.LaunchContextRepair{Status: "already-present", PaneID: pane}
+	}
+	r := &runner{herdr: client, completion: engine}
+	result, err := r.completeSpawn(path, record, record.PaneID, "")
+	assertSpawnScriptConsumed(t, client)
+	if err != nil || result.Refusal != nil || result.Status != registry.WriteApplied {
+		t.Fatalf("Grok exact-name completion = %+v err=%v, want applied", result, err)
+	}
+}
+
+func TestSpawnTimeoutCompletionWithEmptyNameStillRefusesEmptyCoordinateRow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	record := spawnRecord{
+		GUID: "guid-empty", ShortGUID: "guid-emp", Label: "worker-empty", Role: "worker", Agent: "codex",
+		PaneID: "pane-live", TerminalID: "terminal-live", HcomDir: "/bus", Status: "active",
+	}
+	client := &scriptedSpawnClient{responses: []spawnResponse{{
+		want: "pane get pane-live",
+		out:  []byte(`{"result":{"pane":{"pane_id":"pane-live","terminal_id":"terminal-live"}}}`),
+	}}}
+	joined := true
+	engine := testSpawnCompletionEngine(t)
+	engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{{Name: "worker-mine", Tool: "codex", Joined: &joined}}, nil
+	}
+	r := &runner{herdr: client, completion: engine}
+	result, err := r.completeSpawn(path, record, record.PaneID, "")
+	assertSpawnScriptConsumed(t, client)
+	if err != nil || result.Refusal == nil || result.Refusal.Code != seatcompletion.RefusalBusRowMissing {
+		t.Fatalf("empty-name timeout completion = %+v err=%v, want joined_bus_row_missing", result, err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("empty-name refusal created registry file: %v", statErr)
 	}
 }
 
