@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-16 13:05'
+updated_date: '2026-07-17 01:04'
 labels:
   - herder
 dependencies: []
@@ -33,3 +34,9 @@ Scope: extend the dominance exception (or the tracker-name comparison ordering) 
 - [ ] #2 The post-merge spawn admitting path for the field row is identified and pinned by a fixture (no unexplained passes on the sender fence)
 - [ ] #3 Live field row heals end-to-end (stored bus name corrected, launch context backfilled, herder send by guid resolves the live bus)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Correction from the TASK-266 independent investigation (verified against HEAD by hera): the description's ordering hypothesis is wrong in detail — the D11 evidence-dominance exception IS consulted on tracker-name conflicts (reconcilecmd/reconcile.go, reconcileBusIdentity trackerConflict branch). The field row fails the exception's PREDICATE: ResolveExactSessionPane requires recorded-SID equality AND bus-row launch-frozen pane equality, both unsatisfiable for reclaimed (start --as) / empty-launch-context shapes; and the launch-context backfill only arms on a re-confirm outcome, which the standing conflict blocks. The description's 'suspected second divergence' (SID leg) is correct. Fix scope = the predicate's admissible evidence classes, not consultation order. AC#1 wording should be read accordingly.
+<!-- SECTION:NOTES:END -->
