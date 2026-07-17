@@ -258,6 +258,23 @@ func TestResolveByToolSessionIDScansClosedAndOlderRows(t *testing.T) {
 	}
 }
 
+func TestLegacyProjectionDoesNotReplaceProvenanceSIDWithV2History(t *testing.T) {
+	path := writeRegistry(t,
+		`{"kind":"session","guid":"guid-divergent","event":"seated","state":"seated","label":"current","seat":{"kind":"herdr","terminal_id":"term-current","pane_id":"pane-current"},"sids":[{"sid":"sid-history-new","source":"attested"}],"provenance":{"mechanism":"resume","tool_session_id":"sid-provenance-current"}}`,
+	)
+	recs, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := LatestByGUID(recs)
+	if len(latest) != 1 || latest[0].Provenance == nil {
+		t.Fatalf("latest records = %+v", latest)
+	}
+	if got := latest[0].Provenance.ToolSessionID; got != "sid-provenance-current" {
+		t.Fatalf("legacy projection sid = %q, want provenance sid", got)
+	}
+}
+
 func TestResolveByToolSessionIDPrefersCurrentNonTerminalOwnership(t *testing.T) {
 	t.Run("seated current sid beats later retired observation", func(t *testing.T) {
 		path := writeRegistry(t,
