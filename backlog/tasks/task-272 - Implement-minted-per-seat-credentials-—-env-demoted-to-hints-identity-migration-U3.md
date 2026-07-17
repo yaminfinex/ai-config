@@ -3,9 +3,10 @@ id: TASK-272
 title: >-
   Implement: minted per-seat credentials — env demoted to hints (identity
   migration U3)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-17 04:28'
+updated_date: '2026-07-17 22:05'
 labels:
   - herder
   - identity-migration
