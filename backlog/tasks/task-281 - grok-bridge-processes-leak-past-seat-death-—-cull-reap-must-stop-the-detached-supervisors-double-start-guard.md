@@ -3,10 +3,10 @@ id: TASK-281
 title: >-
   grok bridge processes leak past seat death — cull/reap must stop the detached
   supervisors (+ double-start guard)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-17 22:12'
-updated_date: '2026-07-18 15:01'
+updated_date: '2026-07-18 16:40'
 labels:
   - herder
   - grok
@@ -32,8 +32,26 @@ Scope:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Culling/unseating a grok seat stops its bridge supervisor+child within a bounded window (test-pinned)
-- [ ] #2 Sweep identifies and reaps bridges for non-seated guids with grace + re-verification; never reaps a bridge whose seat is live (negative test)
-- [ ] #3 Second supervisor for an already-bridged seat refuses or supersedes cleanly; no duplicate pairs (pin)
-- [ ] #4 Grok spawn reaches a completed seated registry row via bridge-driven canonical completion (or the refusal contract is made family-honest and a supported completion path is documented + pinned)
+- [x] #1 Culling/unseating a grok seat stops its bridge supervisor+child within a bounded window (test-pinned)
+- [x] #2 Sweep identifies and reaps bridges for non-seated guids with grace + re-verification; never reaps a bridge whose seat is live (negative test)
+- [x] #3 Second supervisor for an already-bridged seat refuses or supersedes cleanly; no duplicate pairs (pin)
+- [x] #4 Grok spawn reaches a completed seated registry row via bridge-driven canonical completion (or the refusal contract is made family-honest and a supported completion path is documented + pinned)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to main at 41ce8cd (lifecycle commit + edge-hardening fix round). Post-merge gate 63/63 + 4 module passes.
+
+AC#1: cull/manual teardown quiesces then TERM-wait-KILLs the verified supervisor incarnation (start-time+argv+pgid fence defeats pid reuse), explicitly terminates non-PG-leader children by exact pid, and verifies the bridge socket no longer accepts clients as a post-condition — teardown consumes committed liveness verdicts or explicit cull only.
+
+AC#2: observer-adjacent sweep auto-reaps only row-confirmed non-seated grok rows after grace + same-incarnation reverify + zero-client recheck; live-seat and live-client shapes refuse (negative-pinned); ROWLESS bridge pairs are report-only with the exact manual recipe and get a persisted 15s birth grace so healthy launching seats are never reported; age is never evidence.
+
+AC#3: per-seat lifetime flock; concurrent losers reuse or exit with a typed already-running refusal; one-supervisor-one-child pinned under concurrent start.
+
+AC#4: bridge supervisor drives canonical seatcompletion (authoritative BaseName, admitting evidence byte-unchanged, in-lock race convergence pinned via injected projection) for spawn AND fork births (fork carries pane/session/provenance coordinates), then the existing pendingprompt locked-marker handoff exactly once; resume honestly names manual enroll (no armed owner); all former sidecar-promise strings grok-branched and pinned.
+
+Review: dual adversarial (opus + grok calibration — the grok seat reviewing its own seat machinery), one six-item batched round (findings fully complementary: grok seat took contract-honesty + fork-owner P1s; incumbent took teardown post-condition + birth-window hazards), dual delta APPROVE with independently re-executed red-first pins. Builder self-caught a test-discipline violation mid-battery and restarted the full run unprompted.
+
+Field note: the next grok spawn on a rebuilt herder validates bridge-driven completion live — until then the four historical refusal instances stand explained.
+<!-- SECTION:NOTES:END -->
