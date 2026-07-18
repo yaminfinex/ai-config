@@ -4,6 +4,7 @@ import { useMissions } from "@/entities/missions";
 import { useVersionInvalidation } from "@/entities/version";
 import { useSkin } from "@/skins/index";
 import { useWorkingSet } from "@/stores/working-set";
+import { loadFailure } from "@/view-models/load-failure";
 import { missionListVM } from "@/view-models/mission-list";
 
 export function MissionsPage() {
@@ -11,7 +12,7 @@ export function MissionsPage() {
   useVersionInvalidation({ kind: "missions" });
   const navigate = useNavigate();
   const wsNavigate = useWorkingSet((state) => state.navigate);
-  const { data, isPending } = useMissions();
+  const { data, isPending, error } = useMissions();
   useEffect(() => {
     wsNavigate({ kind: "missions" });
   }, [wsNavigate]);
@@ -20,6 +21,7 @@ export function MissionsPage() {
     <skin.MissionListView
       vm={vm}
       loading={isPending}
+      failure={loadFailure(error, data !== undefined)}
       onOpenMission={(slug) => void navigate({ to: "/mission/$slug", params: { slug } })}
     />
   );

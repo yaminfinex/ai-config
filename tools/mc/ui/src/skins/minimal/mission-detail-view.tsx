@@ -6,9 +6,17 @@ import type { ThreadRowVM } from "@/view-models/mission-detail";
 export function MinimalMissionDetailView({
   vm,
   loading,
+  failure,
   activeThreadId,
   onToggleThread,
 }: MissionDetailViewProps) {
+  if (failure !== null) {
+    return (
+      <p data-testid="load-failure" className="p-6 font-fact text-sm text-warn">
+        ▲ {failure}
+      </p>
+    );
+  }
   if (loading || vm === null) {
     return <p className="p-6 text-muted-foreground">loading…</p>;
   }
@@ -16,6 +24,13 @@ export function MinimalMissionDetailView({
     <div className="mx-auto max-w-2xl space-y-6 p-6">
       <header className="space-y-1">
         <h1 className="text-lg font-semibold">{vm.title}</h1>
+        {(vm.facts !== null || vm.taskSummary !== null) && (
+          <p className="font-fact text-sm text-muted-foreground">
+            {vm.facts !== null && <span data-testid="mission-facts">{vm.facts}</span>}
+            {vm.facts !== null && vm.taskSummary !== null && " · "}
+            {vm.taskSummary !== null && <span data-testid="task-summary">{vm.taskSummary}</span>}
+          </p>
+        )}
         {vm.warnings.map((warning) => (
           <p key={warning} data-testid="mission-warning" className="font-fact text-sm text-warn">
             ▲ {warning}
@@ -28,6 +43,11 @@ export function MinimalMissionDetailView({
         {vm.rosterWarning !== null && (
           <p data-testid="roster-warning" className="font-fact text-sm text-warn">
             ▲ {vm.rosterWarning}
+          </p>
+        )}
+        {vm.agents.length === 0 && (
+          <p data-testid="crew-empty" className="font-fact text-sm text-quiet">
+            no agents
           </p>
         )}
         <ul className="space-y-1">
@@ -43,6 +63,11 @@ export function MinimalMissionDetailView({
 
       <section aria-label="threads" className="space-y-2">
         <h2 className="text-sm font-medium text-muted-foreground">threads</h2>
+        {vm.threads.length === 0 && (
+          <p data-testid="threads-empty" className="font-fact text-sm text-quiet">
+            no threads
+          </p>
+        )}
         <ul className="space-y-2">
           {vm.threads.map((thread) => (
             <li key={thread.id} data-thread-id={thread.id} className="rounded-lg border">

@@ -31,12 +31,26 @@ export function missionListVM(payload: MissionsPayload | undefined): MissionList
 export function missionRowVM(mission: Mission): MissionRowVM {
   return {
     slug: mission.slug,
-    title: mission.name !== "" ? mission.name : mission.slug,
+    title: missionTitle(mission),
     owner: mission.owner === "" ? null : mission.owner,
     healthy: mission.ok && mission.warnings.length === 0,
-    taskSummary: mission.boardAvailable ? taskSummary(mission) : null,
+    taskSummary: missionTaskSummary(mission),
     warnings: mission.warnings,
   };
+}
+
+/** The title-fallback law: a manifest without a name falls back to the slug. */
+export function missionTitle(mission: Mission): string {
+  return mission.name !== "" ? mission.name : mission.slug;
+}
+
+/**
+ * Gap honesty: an unavailable board yields null — render nothing, never a
+ * fabricated zero. An available board summarizes non-zero counts, falling
+ * back to the total when every count is zero.
+ */
+export function missionTaskSummary(mission: Mission): string | null {
+  return mission.boardAvailable ? taskSummary(mission) : null;
 }
 
 function taskSummary(mission: Mission): string {

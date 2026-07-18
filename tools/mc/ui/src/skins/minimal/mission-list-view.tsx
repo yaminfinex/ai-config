@@ -2,7 +2,19 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { MissionListViewProps } from "@/skins/contract";
 
-export function MinimalMissionListView({ vm, loading, onOpenMission }: MissionListViewProps) {
+export function MinimalMissionListView({
+  vm,
+  loading,
+  failure,
+  onOpenMission,
+}: MissionListViewProps) {
+  if (failure !== null) {
+    return (
+      <p data-testid="load-failure" className="p-6 font-fact text-sm text-warn">
+        ▲ {failure}
+      </p>
+    );
+  }
   if (loading) {
     return <p className="p-6 text-muted-foreground">loading…</p>;
   }
@@ -12,6 +24,11 @@ export function MinimalMissionListView({ vm, loading, onOpenMission }: MissionLi
       {vm.warning !== null && (
         <p data-testid="list-warning" className="font-fact text-sm text-warn">
           ▲ {vm.warning}
+        </p>
+      )}
+      {vm.rows.length === 0 && (
+        <p data-testid="missions-empty" className="font-fact text-sm text-quiet">
+          no missions
         </p>
       )}
       <ul className="space-y-3">

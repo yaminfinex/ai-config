@@ -1,4 +1,5 @@
 import type { MissionDetailPayload, RosterAgent, Thread } from "@/entities/types";
+import { missionTaskSummary, missionTitle } from "@/view-models/mission-list";
 
 // The thread sort law and preview derivation live here — a component
 // containing a sort order or a derivation fails review (ARCHITECTURE.md).
@@ -30,6 +31,11 @@ export interface AgentRowVM {
 export interface MissionDetailVM {
   slug: string;
   title: string;
+  /** Derived facts of the mission section (owner · status · created), fact
+   * grain; null when the manifest carries none — render nothing, not a blank. */
+  facts: string | null;
+  /** null = board unavailable: gap honesty, render nothing rather than fake. */
+  taskSummary: string | null;
   warnings: string[];
   threads: ThreadRowVM[];
   agents: AgentRowVM[];
@@ -93,9 +99,16 @@ export function missionDetailVM(payload: MissionDetailPayload | undefined): Miss
     return null;
   }
   const status = payload.mission.status;
+  const factParts = [
+    status.owner === "" ? "" : `owner ${status.owner}`,
+    status.status,
+    status.created,
+  ].filter((part) => part !== "");
   return {
     slug: status.slug,
-    title: status.name !== "" ? status.name : status.slug,
+    title: missionTitle(status),
+    facts: factParts.length > 0 ? factParts.join(" · ") : null,
+    taskSummary: missionTaskSummary(status),
     warnings: [...status.warnings],
     threads: sortThreads(payload.threads.rows).map(threadRowVM),
     agents: [...payload.roster.agents].sort((a, b) => a.name.localeCompare(b.name)).map(agentRowVM),

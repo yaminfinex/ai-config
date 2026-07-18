@@ -13,12 +13,17 @@ export type SkinName = (typeof skinNames)[number];
 export interface MissionListViewProps {
   vm: MissionListVM;
   loading: boolean;
+  /** The load-failure law (view-models/load-failure.ts): non-null means the
+   * fetch failed with nothing cached — render the failure, not a healthy blank. */
+  failure: string | null;
   onOpenMission: (slug: string) => void;
 }
 
 export interface MissionDetailViewProps {
   vm: MissionDetailVM | null;
   loading: boolean;
+  /** Same load-failure law as the list view. */
+  failure: string | null;
   activeThreadId: string | null;
   onToggleThread: (id: string) => void;
 }

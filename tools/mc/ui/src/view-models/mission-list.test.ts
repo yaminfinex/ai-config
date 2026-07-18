@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Mission, MissionsPayload } from "@/entities/types";
-import { missionListVM, missionRowVM } from "@/view-models/mission-list";
+import {
+  missionListVM,
+  missionRowVM,
+  missionTaskSummary,
+  missionTitle,
+} from "@/view-models/mission-list";
 
 function mission(overrides: Partial<Mission> = {}): Mission {
   return {
@@ -78,5 +83,19 @@ describe("missionRowVM", () => {
       taskTotal: 5,
     });
     expect(missionRowVM(zeroed).taskSummary).toBe("5 tasks");
+  });
+});
+
+describe("missionTitle — the title-fallback law, shared with the detail page", () => {
+  it("prefers the manifest name, falls back to the slug", () => {
+    expect(missionTitle(mission())).toBe("Mission One");
+    expect(missionTitle(mission({ name: "" }))).toBe("mission-one");
+  });
+});
+
+describe("missionTaskSummary — shared with the detail page", () => {
+  it("summarizes an available board, renders nothing for an unavailable one", () => {
+    expect(missionTaskSummary(mission())).toBe("2 in progress · 1 done");
+    expect(missionTaskSummary(mission({ boardAvailable: false }))).toBeNull();
   });
 });

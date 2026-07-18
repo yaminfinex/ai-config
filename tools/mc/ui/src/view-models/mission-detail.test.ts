@@ -158,6 +158,26 @@ describe("missionDetailVM", () => {
     expect(vm?.rosterWarning).toBeNull();
   });
 
+  it("derives the mission fact line: owner · status · created, empties dropped", () => {
+    const full = missionDetailVM(payload([], []));
+    expect(full?.facts).toBe("owner riley · active · 2026-07-15");
+    const bare = payload([], []);
+    bare.mission.status.owner = "";
+    bare.mission.status.status = "";
+    expect(missionDetailVM(bare)?.facts).toBe("2026-07-15");
+    bare.mission.status.created = "";
+    expect(missionDetailVM(bare)?.facts).toBeNull();
+  });
+
+  it("gap honesty: an unavailable board renders NO task summary on the detail page", () => {
+    const withBoard = payload([], []);
+    withBoard.mission.status.taskTotal = 4;
+    expect(missionDetailVM(withBoard)?.taskSummary).toBe("4 tasks");
+    const noBoard = payload([], []);
+    noBoard.mission.status.boardAvailable = false;
+    expect(missionDetailVM(noBoard)?.taskSummary).toBeNull();
+  });
+
   it("sorts agents by name", () => {
     const vm = missionDetailVM(
       payload([], [agent({ name: "worker-suna" }), agent({ name: "builder-lobo" })]),

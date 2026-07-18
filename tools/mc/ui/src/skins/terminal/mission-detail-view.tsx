@@ -4,9 +4,17 @@ import type { ThreadRowVM } from "@/view-models/mission-detail";
 export function TerminalMissionDetailView({
   vm,
   loading,
+  failure,
   activeThreadId,
   onToggleThread,
 }: MissionDetailViewProps) {
+  if (failure !== null) {
+    return (
+      <p data-testid="load-failure" className="p-4 font-fact text-sm text-warn">
+        ▲ {failure}
+      </p>
+    );
+  }
   if (loading || vm === null) {
     return <p className="p-4 text-quiet">… loading</p>;
   }
@@ -15,6 +23,13 @@ export function TerminalMissionDetailView({
     <div className="mx-auto max-w-3xl space-y-4 p-4 font-fact text-sm">
       <header>
         <h1 className="uppercase tracking-widest">== {vm.title} ==</h1>
+        {(vm.facts !== null || vm.taskSummary !== null) && (
+          <p className="text-quiet">
+            {vm.facts !== null && <span data-testid="mission-facts">{vm.facts}</span>}
+            {vm.facts !== null && vm.taskSummary !== null && " "}
+            {vm.taskSummary !== null && <span data-testid="task-summary">[{vm.taskSummary}]</span>}
+          </p>
+        )}
         {vm.warnings.map((warning) => (
           <p key={warning} data-testid="mission-warning" className="text-warn">
             ▲ {warning}
@@ -51,16 +66,23 @@ export function TerminalMissionDetailView({
 
       <section aria-label="threads" className="space-y-1">
         <h2 className="uppercase tracking-widest text-quiet">threads</h2>
-        <ul className="divide-y divide-border border border-border">
-          {vm.threads.map((thread) => (
-            <ThreadRow
-              key={thread.id}
-              thread={thread}
-              active={thread.id === activeThreadId}
-              onToggle={() => onToggleThread(thread.id)}
-            />
-          ))}
-        </ul>
+        {vm.threads.length === 0 && (
+          <p data-testid="threads-empty" className="text-quiet">
+            (no threads)
+          </p>
+        )}
+        {vm.threads.length > 0 && (
+          <ul className="divide-y divide-border border border-border">
+            {vm.threads.map((thread) => (
+              <ThreadRow
+                key={thread.id}
+                thread={thread}
+                active={thread.id === activeThreadId}
+                onToggle={() => onToggleThread(thread.id)}
+              />
+            ))}
+          </ul>
+        )}
       </section>
 
       <section aria-label="crew" className="space-y-1">
@@ -68,6 +90,11 @@ export function TerminalMissionDetailView({
         {vm.rosterWarning !== null && (
           <p data-testid="roster-warning" className="text-warn">
             ▲ {vm.rosterWarning}
+          </p>
+        )}
+        {vm.agents.length === 0 && (
+          <p data-testid="crew-empty" className="text-quiet">
+            (no agents)
           </p>
         )}
         <ul>

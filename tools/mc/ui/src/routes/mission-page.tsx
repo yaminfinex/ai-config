@@ -4,6 +4,7 @@ import { useMissionDetail } from "@/entities/missions";
 import { useVersionInvalidation } from "@/entities/version";
 import { useSkin } from "@/skins/index";
 import { useWorkingSet } from "@/stores/working-set";
+import { loadFailure } from "@/view-models/load-failure";
 import { missionDetailVM } from "@/view-models/mission-detail";
 
 export function MissionPage() {
@@ -15,7 +16,7 @@ export function MissionPage() {
   const wsNavigate = useWorkingSet((state) => state.navigate);
   const activeThreadId = useWorkingSet((state) => state.thread?.id ?? null);
   const toggleThread = useWorkingSet((state) => state.toggleThread);
-  const { data, isPending } = useMissionDetail(slug);
+  const { data, isPending, error } = useMissionDetail(slug);
   useEffect(() => {
     wsNavigate({ kind: "mission", slug });
   }, [wsNavigate, slug]);
@@ -24,6 +25,7 @@ export function MissionPage() {
     <skin.MissionDetailView
       vm={vm}
       loading={isPending}
+      failure={loadFailure(error, data !== undefined)}
       activeThreadId={activeThreadId}
       onToggleThread={toggleThread}
     />
