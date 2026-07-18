@@ -116,6 +116,7 @@ func TestSeatRewriteWriterInventoryRequiresCarryPins(t *testing.T) {
 		"cullcmd/cull.go":             {updateLocked: 1},
 		"enrollcmd/enroll.go":         {completionRequest: 1},
 		"grokbridge/binder.go":        {updateLocked: 1, carryPin: true},
+		"grokbridge/completion.go":    {updateLocked: 1, completionRequest: 1, carryPin: true},
 		"lifecyclecmd/lifecycle.go":   {updateLocked: 2, completionRequest: 1, carryPin: true},
 		"liveness/apply.go":           {updateLocked: 1},
 		"missioncmd/mission.go":       {updateLocked: 1, carryPin: true},

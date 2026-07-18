@@ -8,10 +8,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/grokbridge"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/lifecyclecmd"
@@ -353,7 +355,7 @@ func processTargetWithClient(registryPath string, rec registry.Record, live map[
 			} else {
 				if rec.CloseResult == "" && isAlreadyUnseated(registryPath, guid) {
 					reportUnverifiable(stdout, rec, label, guid)
-					return true
+					return retireGrokAfterCull(registryPath, latestForGUID(registryPath, rec), stdout, stderr)
 				}
 				verdict := liveness.Evaluate(cullLivenessInput(rec, live))
 				if verdict.Class != liveness.VerdictPositiveDeath {
@@ -366,7 +368,7 @@ func processTargetWithClient(registryPath string, rec registry.Record, live map[
 					return false
 				}
 				reportClosedFact(stdout, closed, appended, "observed_dead", label, guid, pane)
-				return true
+				return retireGrokAfterCull(registryPath, closed, stdout, stderr)
 			}
 		}
 	}
@@ -390,7 +392,7 @@ func processTargetWithClient(registryPath string, rec registry.Record, live map[
 						return false
 					}
 					reportClosedFact(stdout, closed, appended, "requested", label, guid, pane)
-					return true
+					return retireGrokAfterCull(registryPath, closed, stdout, stderr)
 				}
 				closed, appended, err := applyObservedDeath(registryPath, rec, verdict, nowISO, "cull_post_grace")
 				if err != nil {
@@ -398,7 +400,7 @@ func processTargetWithClient(registryPath string, rec registry.Record, live map[
 					return false
 				}
 				reportClosedFact(stdout, closed, appended, "observed_dead", label, guid, pane)
-				return true
+				return retireGrokAfterCull(registryPath, closed, stdout, stderr)
 			}
 		}
 	}
@@ -456,13 +458,28 @@ func retireGrokAfterCull(registryPath string, rec registry.Record, stdout, stder
 	if rec.Agent != "grok" {
 		return true
 	}
-	retired, err := lifecyclecmd.RetireGrokForCull(registryPath, ptrString(rec.GUID))
-	if err != nil {
-		die(stderr, err.Error())
-		return false
+	guid := ptrString(rec.GUID)
+	retired, retireErr := lifecyclecmd.RetireGrokForCull(registryPath, guid)
+	if retireErr == nil {
+		fmt.Fprintf(stdout, "grok bridge: retired %d pending message(s) as undeliverable\n", retired)
 	}
-	fmt.Fprintf(stdout, "grok bridge: retired %d pending message(s) as undeliverable\n", retired)
-	return true
+	stopped, stopErr := grokbridge.StopSeatSupervisors(filepath.Dir(registryPath), guid, grokbridge.DefaultSupervisorStopTimeout)
+	if stopErr == nil {
+		fmt.Fprintf(stdout, "grok bridge: stopped %d supervisor(s) term=%d kill=%d child=%d child-term=%d child-kill=%d\n", stopped.Matched, stopped.Termed, stopped.Killed, stopped.ChildrenMatched, stopped.ChildrenTermed, stopped.ChildrenKilled)
+	}
+	if retireErr != nil && stopErr == nil {
+		retired, retireErr = lifecyclecmd.RetireGrokForCull(registryPath, guid)
+		if retireErr == nil {
+			fmt.Fprintf(stdout, "grok bridge: retired %d pending message(s) as undeliverable after stop\n", retired)
+		}
+	}
+	if retireErr != nil {
+		die(stderr, retireErr.Error())
+	}
+	if stopErr != nil {
+		die(stderr, stopErr.Error())
+	}
+	return retireErr == nil && stopErr == nil
 }
 
 func reportClosedFact(stdout io.Writer, rec registry.Record, appended bool, result, fallbackLabel, fallbackGUID, pane string) {

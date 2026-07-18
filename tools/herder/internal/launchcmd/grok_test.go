@@ -97,6 +97,12 @@ func countGlobalSettingsHookExecutions(t *testing.T, data []byte) int {
 	return count
 }
 
+func clearAmbientGrokSeat(t *testing.T) {
+	t.Helper()
+	t.Setenv(grokPreassignedEnv, "")
+	t.Setenv("HERDER_GROK_SEAT", "")
+}
+
 func TestCountGlobalSettingsHookExecutionsMatchesRealEnvelope(t *testing.T) {
 	if got := countGlobalSettingsHookExecutions(t, []byte(realShapedGrokHookUpdate+"\n")); got != 1 {
 		t.Fatalf("real-shaped hook update count = %d, want 1", got)
@@ -105,6 +111,7 @@ func TestCountGlobalSettingsHookExecutionsMatchesRealEnvelope(t *testing.T) {
 
 func prepareTestGrok(t *testing.T, version string) (grokLaunchPlan, string) {
 	t.Helper()
+	clearAmbientGrokSeat(t)
 	root := t.TempDir()
 	workdir := filepath.Join(root, "worktree")
 	if err := os.MkdirAll(workdir, 0o700); err != nil {
@@ -196,6 +203,7 @@ func TestResolveRealHcomPrefersRealThenFallsBackToArgv0DispatchShim(t *testing.T
 }
 
 func TestGrokFamilyDefaultsOnAndChecksAuthBeforeState(t *testing.T) {
+	clearAmbientGrokSeat(t)
 	root := t.TempDir()
 	state := filepath.Join(root, "state")
 	t.Setenv("XAI_API_KEY", "")
@@ -215,6 +223,7 @@ func TestGrokFamilyDefaultsOnAndChecksAuthBeforeState(t *testing.T) {
 }
 
 func TestManualGrokLaunchReplacesUnregisteredAmbientIdentity(t *testing.T) {
+	clearAmbientGrokSeat(t)
 	t.Setenv("HERDER_GUID", "")
 	t.Setenv("HERDER_GROK_SESSION_ID", "")
 	manual, err := ensureManualGrokIdentity()
@@ -257,6 +266,7 @@ func TestManagedGrokPreassignmentIsPreservedBeforeRegistryBind(t *testing.T) {
 }
 
 func TestManualGrokLaunchRefusesForeignFamilyGUIDWithoutSeatState(t *testing.T) {
+	clearAmbientGrokSeat(t)
 	state := t.TempDir()
 	foreign, err := registry.NewGUID()
 	if err != nil {
@@ -285,6 +295,7 @@ func TestManualGrokLaunchRefusesForeignFamilyGUIDWithoutSeatState(t *testing.T) 
 }
 
 func TestManualMintedIdentityUsesPreassignedPlanAndCollisionFence(t *testing.T) {
+	clearAmbientGrokSeat(t)
 	root := t.TempDir()
 	state := filepath.Join(root, "state")
 	hcom := filepath.Join(root, "hcom-real")

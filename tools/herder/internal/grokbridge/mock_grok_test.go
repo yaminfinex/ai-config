@@ -29,12 +29,16 @@ const servingHcomScript = "#!/bin/sh\nif [ \"$1\" = start ]; then printf '%s\\n'
 const repairingHcomScript = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HCOM_DIR/calls\"\ncase \"$1\" in\n  list) [ -f \"$HCOM_DIR/joined\" ] || exit 1; printf '%s\\n' '{\"name\":\"seat-bus\"}' ;;\n  start) : > \"$HCOM_DIR/joined\"; printf '%s\\n' '[hcom:seat-bus]' ;;\n  send) printf '%s\\n' sent ;;\nesac\n"
 
 func startMockBridge(t *testing.T, state string, session string) *mockBridge {
+	return startMockBridgeForSeat(t, state, "seat", session)
+}
+
+func startMockBridgeForSeat(t *testing.T, state, seat string, session string) *mockBridge {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "hcom")
 	if err := os.WriteFile(bin, []byte(servingHcomScript), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	b, err := OpenBinder(BinderConfig{Seat: "seat", StateDir: state, HcomBin: bin, BusName: "seat-bus", SessionID: session})
+	b, err := OpenBinder(BinderConfig{Seat: seat, StateDir: state, HcomBin: bin, BusName: "seat-bus", SessionID: session})
 	if err != nil {
 		t.Fatal(err)
 	}

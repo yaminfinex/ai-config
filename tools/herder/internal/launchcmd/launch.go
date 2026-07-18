@@ -10,20 +10,16 @@ import (
 	"syscall"
 	"time"
 
+	"ai-config/tools/herder/internal/agentfamily"
 	"ai-config/tools/herder/internal/hookcmd"
 	"ai-config/tools/herder/internal/registry"
 )
 
-// IsHcomCapable is the single source of truth for agents that herder spawn
-// routes through hcom. Adding a tool here must also add its config pin in
+// IsHcomCapable preserves launchcmd's public predicate while agentfamily owns
+// the shared family table. Adding a tool there must also add its config pin in
 // PinConfigDir when hcom local mode would otherwise redirect it.
 func IsHcomCapable(agent string) bool {
-	switch agent {
-	case "claude", "codex", "gemini", "grok", "pi":
-		return true
-	default:
-		return false
-	}
+	return agentfamily.HcomCapable(agent)
 }
 
 // PinConfigDir preserves each supported tool's real config dir when HCOM_DIR

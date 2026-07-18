@@ -162,6 +162,9 @@ func TestSeatRewriteWriterPinsDependOnStructuralCarry(t *testing.T) {
 		{name: "grok capability publication", source: "grokbridge/binder.go", build: func(current v2.SessionRecord) v2.SessionRecord {
 			return v2.SessionRecord{GUID: current.GUID, Event: "registered", State: v2.StateSeated, Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat(), Capabilities: &v2.Capabilities{Bus: "bound", Wake: "armed"}}
 		}},
+		{name: "grok completion replay", source: "grokbridge/completion.go", build: func(current v2.SessionRecord) v2.SessionRecord {
+			return v2.SessionRecord{GUID: current.GUID, Event: "registered", State: v2.StateSeated, Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat()}
+		}},
 		{name: "rename", source: "renamecmd/rename.go", build: func(current v2.SessionRecord) v2.SessionRecord {
 			return v2.SessionRecord{GUID: current.GUID, Event: "labelled", Label: "renamed"}
 		}},

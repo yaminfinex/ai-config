@@ -154,6 +154,27 @@ func TestCompletionInfrastructureFailurePreservesLiveChild(t *testing.T) {
 	}
 }
 
+func TestGrokCompletionRefusalNamesBridgeSupervisorAndPromptHandoff(t *testing.T) {
+	client := &scriptedSpawnClient{responses: []spawnResponse{{
+		want: "pane process_info p_grok", out: []byte(`{"result":{"process_info":{"foreground_processes":[{"pid":4242,"argv":["grok"]}]}}}`),
+	}}}
+	var stderr strings.Builder
+	r := &runner{herdr: client, stderr: &stderr, opts: options{Agent: "grok"}, pendingPrompt: true}
+	if code := r.handleSeatCompletionFailure("seat completion refused [joined_bus_row_missing]", "p_grok", "term_grok", "bound"); code != 1 {
+		t.Fatalf("handleSeatCompletionFailure()=%d", code)
+	}
+	assertSpawnScriptConsumed(t, client)
+	got := stderr.String()
+	for _, want := range []string{"its bridge supervisor", "complete the seat AND deliver the pending initial prompt automatically"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Grok refusal=%q, want %q", got, want)
+		}
+	}
+	if strings.Contains(got, "its sidecar") {
+		t.Fatalf("Grok refusal retained false sidecar promise: %q", got)
+	}
+}
+
 func TestNoopCompletionIsSuccessfulReplay(t *testing.T) {
 	r := &runner{}
 	handled, code := r.handleIncompleteSeatCompletion(seatcompletion.Result{Status: registry.WriteNoop}, nil, "p_new", "term_new", "ready")
@@ -996,6 +1017,34 @@ func TestSummaryDescribesPersistedBindTimeoutAsAutomaticHandoff(t *testing.T) {
 	got := stderr.String()
 	if !strings.Contains(got, "sidecar will deliver it automatically") || strings.Contains(got, "resend is SAFE") || strings.Contains(got, "resend_command") {
 		t.Fatalf("persisted bind-timeout summary contradicts hand-off contract:\n%s", got)
+	}
+}
+
+func TestGrokSummaryNamesBridgeSupervisorForPersistedPrompt(t *testing.T) {
+	var stderr strings.Builder
+	r := &runner{
+		opts:          options{Agent: "grok", Prompt: "initial prompt"},
+		stderr:        &stderr,
+		pendingPrompt: true,
+	}
+	r.writeSummary(spawnRecord{
+		GUID: "child-guid", Label: "worker-label", Agent: "grok", PaneID: "pane-live",
+		WorkspaceID: "workspace-live", CWD: "/work", HcomName: "worker", HcomDir: "/bus",
+	}, nil, true, false, "", "", "captured", true, false, "bind_timeout", "bind timed out", false, nil)
+	got := stderr.String()
+	if !strings.Contains(got, "bridge supervisor will deliver it automatically") || strings.Contains(got, "sidecar will deliver") {
+		t.Fatalf("Grok bind-timeout summary names the wrong completion owner:\n%s", got)
+	}
+}
+
+func TestSpawnHelpNamesBothPendingPromptCompletionOwners(t *testing.T) {
+	var stdout strings.Builder
+	printHelp(&stdout)
+	got := stdout.String()
+	for _, want := range []string{"sidecar for sidecar families", "bridge supervisor for Grok"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("spawn help omits %q:\n%s", want, got)
+		}
 	}
 }
 

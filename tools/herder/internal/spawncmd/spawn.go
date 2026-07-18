@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/agentfamily"
 	"ai-config/tools/herder/internal/credentialnotice"
 	"ai-config/tools/herder/internal/grokbridge"
 	"ai-config/tools/herder/internal/hcomidentity"
@@ -333,11 +334,15 @@ func (r *runner) failAfterLaunch(reason, paneID, terminalID string) int {
 
 func (r *runner) handleSeatCompletionFailure(reason, paneID, terminalID, readyReason string) int {
 	if r.spawnOccupantState(paneID) != occupantAbsent {
+		completionOwner := "its sidecar"
+		if r.opts.Agent == "grok" {
+			completionOwner = "its bridge supervisor"
+		}
 		recovery := "complete the seat automatically"
 		if r.pendingPrompt {
 			recovery = "complete the seat AND deliver the pending initial prompt automatically"
 		}
-		die(r.stderr, fmt.Sprintf("%s; bind status: %s; no registry row was appended and the child pane remains running because occupant death was not proven. Once the child has joined hcom, its sidecar will %s; manual recovery is `herder enroll` from pane %s", reason, readyReason, recovery, paneID))
+		die(r.stderr, fmt.Sprintf("%s; bind status: %s; no registry row was appended and the child pane remains running because occupant death was not proven. Once the child has joined hcom, %s will %s; manual recovery is `herder enroll` from pane %s", reason, readyReason, completionOwner, recovery, paneID))
 		return 1
 	}
 	return r.failAfterLaunch(reason, paneID, terminalID)
@@ -1154,17 +1159,24 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		}
 	}
 	rootExport := " AI_CONFIG_ROOT=" + shellquote.Quote(childEnvRoot) + " HERDER_STATE_DIR=" + shellquote.Quote(stateDir)
+	missionEnv := ""
+	if opts.Agent == "grok" && mission != nil {
+		missionEnv = " HERDER_MISSION_SLUG=" + shellquote.Quote(mission.Slug) + " HERDER_MISSION_SOURCE=" + shellquote.Quote(mission.Source)
+	}
 	argv := []string{}
 	if opts.LoginShell {
 		innerCmd := shellCommand(launchTokens)
-		inner := fmt.Sprintf("%sexport HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s%s%s%s; exec %s",
-			misePathFix, shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(childEnvBin), rootExport, hcomEnv, grokEnv, innerCmd)
+		inner := fmt.Sprintf("%sexport HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s%s%s%s%s; exec %s",
+			misePathFix, shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(childEnvBin), rootExport, hcomEnv, grokEnv, missionEnv, innerCmd)
 		argv = []string{opts.LoginShellBin, "-lic", inner}
 	} else {
 		// The env form has no shell, so it gets the spawner herder pin but not
 		// the mise shims PATH fix (that one needs runtime expansion).
 		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SPAWNED_BY=" + spawnedBy, "HERDER_BIN=" + childEnvBin}
 		argv = append(argv, "AI_CONFIG_ROOT="+childEnvRoot, "HERDER_STATE_DIR="+stateDir)
+		if opts.Agent == "grok" && mission != nil {
+			argv = append(argv, "HERDER_MISSION_SLUG="+mission.Slug, "HERDER_MISSION_SOURCE="+mission.Source)
+		}
 		if isHcomAgent {
 			argv = append(argv, "HCOM_DIR="+hcomDirEff, "PATH="+agentPathValue(r.paths.ShimsDir, os.Getenv("PATH"), opts.Agent, r.piBinDir))
 		}
@@ -1771,7 +1783,7 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 			fmt.Fprintln(r.stderr, "  prompt: NOT sent — a directory-trust modal is open and --safe forbids auto-accepting it.")
 			fmt.Fprintf(r.stderr, "          Accept it in the pane (focus + Enter), then: herder send %s \"<prompt>\"\n", record.Label)
 		case deliveryResult == "bind_timeout" && r.pendingPrompt:
-			fmt.Fprintf(r.stderr, "  prompt: pending after bind timeout (%s) — the owned-child sidecar will deliver it automatically.\n", readyReason)
+			fmt.Fprintf(r.stderr, "  prompt: pending after bind timeout (%s) — the owned-child %s will deliver it automatically.\n", readyReason, agentfamily.CompletionOwner(record.Agent))
 			fmt.Fprintln(r.stderr, "          Do NOT resend the initial prompt; the durable hand-off suppresses duplicate submission.")
 		case deliveryResult == "bind_timeout" || deliveryResult == "ready_match_timeout":
 			fmt.Fprintf(r.stderr, "  prompt: NOT sent (%s) — nothing went on the wire; a resend is SAFE.\n", readyReason)
@@ -1874,9 +1886,10 @@ func printHelp(stdout io.Writer) {
 		"  prompt as a bus message, and reports the receipt — verify: delivered (receipt seen) or",
 		"  queued (sent, no receipt yet; it injects the moment the agent is deliverable — do NOT",
 		"  resend). On bind_timeout nothing has gone on the wire yet: spawn persists the initial",
-		"  prompt for the owned-child sidecar, which completes the seat and then submits the prompt",
+		"  prompt for the owned-child completion process (sidecar for sidecar families;",
+		"  bridge supervisor for Grok), which completes the seat and then submits the prompt",
 		"  through the same receipt-checked bus path. A matching manual `herder send` that wins the",
-		"  race marks the hand-off complete so the sidecar suppresses its replay. hcom wakes an idle",
+		"  race marks the hand-off complete so that owner suppresses its replay. hcom wakes an idle",
 		"  agent with an EMPTY composer instantly, even a fresh",
 		"  never-prompted one; a message sent mid-boot is held until the session can take it.",
 		"  The one thing that starves bus delivery — on both families — is UNSUBMITTED TEXT in",

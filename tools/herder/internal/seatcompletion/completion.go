@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"ai-config/tools/herder/internal/agentfamily"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
-	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcred"
@@ -355,7 +355,7 @@ func (e Engine) resolveSeat(ctx context.Context, request Request, stamp string) 
 		return v2.Seat{}, false, &Refusal{Code: RefusalSeatMissing, Cause: fmt.Sprintf("unsupported seat kind %q", request.Seat.Kind)}
 	}
 
-	if !request.RequireBus && !launchcmd.IsHcomCapable(request.Candidate.Tool) {
+	if !request.RequireBus && !agentfamily.HcomCapable(request.Candidate.Tool) {
 		return seat, false, nil
 	}
 	if request.ObservedBus == nil && e.ListBus == nil {

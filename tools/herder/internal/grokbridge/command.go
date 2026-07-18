@@ -27,16 +27,36 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runMCP(args[1:], stdout, stderr)
 	case "bridge":
 		return runBridge(args[1:], stderr)
+	case "stop-bridge":
+		return runStopBridge(args[1:], stdout, stderr)
 	case "retire-offline":
 		return runRetireOffline(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "herder grok: unknown subcommand %q — use check, tap, mcp, bridge, or retire-offline\n", args[0])
+		fmt.Fprintf(stderr, "herder grok: unknown subcommand %q — use check, tap, mcp, bridge, stop-bridge, or retire-offline\n", args[0])
 		return 2
 	}
 }
 
 func printHelp(w io.Writer) {
-	fmt.Fprint(w, "herder grok — health and transport for first-class Grok seats.\n\nUsage:\n  herder grok check\n  herder grok tap --seat <guid>\n  herder grok mcp --seat <guid>\n  herder grok bridge --seat <guid> --hcom-bin <path> [--hcom-dir <path>] [--supervise]\n  herder grok retire-offline --seat <guid> [--state-dir <herder-state>]\n")
+	fmt.Fprint(w, "herder grok — health and transport for first-class Grok seats.\n\nUsage:\n  herder grok check\n  herder grok tap --seat <guid>\n  herder grok mcp --seat <guid>\n  herder grok bridge --seat <guid> --hcom-bin <path> [--hcom-dir <path>] [--supervise]\n  herder grok stop-bridge --seat <guid> [--state-dir <herder-state>]\n  herder grok retire-offline --seat <guid> [--state-dir <herder-state>]\n")
+}
+
+func runStopBridge(args []string, stdout, stderr io.Writer) int {
+	fs, seat, state := commonFS("herder grok stop-bridge", stderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *seat == "" || fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "herder grok stop-bridge: --seat is required and no positional arguments are accepted")
+		return 2
+	}
+	result, err := StopSeatSupervisors(*state, *seat, DefaultSupervisorStopTimeout)
+	if err != nil {
+		fmt.Fprintf(stderr, "herder grok stop-bridge: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "stopped seat=%s supervisors=%d term=%d kill=%d children=%d child-term=%d child-kill=%d\n", *seat, result.Matched, result.Termed, result.Killed, result.ChildrenMatched, result.ChildrenTermed, result.ChildrenKilled)
+	return 0
 }
 func stateDefault() string {
 	if v := os.Getenv("HERDER_STATE_DIR"); v != "" {
@@ -126,6 +146,9 @@ func runBridge(args []string, stderr io.Writer) int {
 	hdir := fs.String("hcom-dir", os.Getenv("HCOM_DIR"), "hcom state directory")
 	name := fs.String("name", "", "existing bus name")
 	sessionID := fs.String("session-id", processCapability("HERDER_GROK_SESSION_ID"), "owning Grok session id used for request fencing")
+	lifecycleMode := fs.String("lifecycle-mode", "", "internal managed lifecycle mode")
+	forkedFromGUID := fs.String("forked-from-guid", "", "internal fork parent registry coordinate")
+	completeSeat := fs.Bool("complete-seat", false, "internal bridge-owned canonical seat completion")
 	supervise := fs.Bool("supervise", false, "restart the bridge with capped backoff")
 	retireOnStop := fs.Bool("retire-on-stop", false, "retire the journal when a supervised manual bridge is stopped")
 	child := fs.Bool("child", false, "internal supervised child")
@@ -137,6 +160,9 @@ func runBridge(args []string, stderr io.Writer) int {
 		return 2
 	}
 	if *supervise && !*child {
+		_ = lifecycleMode
+		_ = forkedFromGUID
+		_ = completeSeat
 		return superviseBridge(args, *state, *seat, *retireOnStop)
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -178,6 +204,19 @@ func superviseBridge(args []string, state, seat string, retireOnStop bool) int {
 }
 
 func superviseBridgeContext(ctx context.Context, args []string, state, seat string, retireOnStop bool, exe string, log io.Writer) int {
+	lease, err := acquireSupervisorLease(state, seat)
+	if err != nil {
+		fmt.Fprintf(log, "%s supervisor refused: %v\n", time.Now().UTC().Format(time.RFC3339), err)
+		return 23
+	}
+	defer lease.Close()
+	completionCtx, cancelCompletion := context.WithCancel(ctx)
+	defer cancelCompletion()
+	if cfg, ok := managedCompletionFromArgs(args, state, seat); ok {
+		go superviseManagedCompletion(completionCtx, cfg, func(format string, values ...any) {
+			fmt.Fprintf(log, "%s "+format+"\n", append([]any{time.Now().UTC().Format(time.RFC3339)}, values...)...)
+		})
+	}
 	childArgs := []string{"grok", "bridge"}
 	for _, a := range args {
 		if !strings.HasPrefix(a, "--supervise") && !strings.HasPrefix(a, "--child") {
@@ -208,6 +247,38 @@ func superviseBridgeContext(ctx context.Context, args []string, state, seat stri
 			backoff = 5 * time.Second
 		}
 	}
+}
+
+func managedCompletionFromArgs(args []string, state, seat string) (managedCompletionConfig, bool) {
+	cfg := managedCompletionConfig{Seat: seat, StateDir: state, PaneID: os.Getenv("HERDR_PANE_ID")}
+	enabled := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--complete-seat":
+			enabled = true
+		case "--hcom-dir":
+			if i+1 < len(args) {
+				cfg.HcomDir = args[i+1]
+				i++
+			}
+		case "--session-id":
+			if i+1 < len(args) {
+				cfg.SessionID = args[i+1]
+				i++
+			}
+		case "--lifecycle-mode":
+			if i+1 < len(args) {
+				cfg.LifecycleMode = args[i+1]
+				i++
+			}
+		case "--forked-from-guid":
+			if i+1 < len(args) {
+				cfg.ForkedFromGUID = args[i+1]
+				i++
+			}
+		}
+	}
+	return cfg, enabled
 }
 
 func retireStoppedBridge(state, seat string, retireOnStop bool, log io.Writer) int {

@@ -35,6 +35,7 @@ type BridgeStatus struct {
 	Bus     string `json:"bus"`
 	Wake    string `json:"wake"`
 	Pending int    `json:"pending"`
+	Clients int    `json:"clients"`
 }
 
 type ReceiptView struct {
