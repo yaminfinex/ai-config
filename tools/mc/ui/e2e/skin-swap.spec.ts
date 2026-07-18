@@ -19,8 +19,11 @@ test.afterAll(async () => {
   await server.stop();
 });
 
+// The app's toggle advances one step through the registry cycle; the
+// expectation derives from the same enumeration (skinNames via allSkins),
+// so neither side can hardcode a skin pair.
 function otherSkin(skin: SkinUnderTest): SkinUnderTest {
-  return skin === "minimal" ? "terminal" : "minimal";
+  return allSkins[(allSkins.indexOf(skin) + 1) % allSkins.length] ?? skin;
 }
 
 // The declared difference: where the active thread renders. In-row means

@@ -54,7 +54,10 @@ export interface MissionsPayload {
 export interface Thread {
   id: string;
   title: string;
-  status: "open" | "closed";
+  /** The wire pins keys, not values (TestAPIWireShapeRawKeys): a literal
+   * union here would assert a value contract nothing enforces. Rendering
+   * laws branch on `=== "open"` and treat everything else as not-open. */
+  status: string;
   grade: string;
   expects: string;
   openedBy: string;

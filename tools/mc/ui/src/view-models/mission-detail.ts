@@ -17,7 +17,8 @@ export interface ThreadRowVM {
   id: string;
   title: string;
   expects: string;
-  status: "open" | "closed";
+  /** Same non-contract as the wire type: only `"open"` carries meaning. */
+  status: string;
   /** Derived facts, rendered in the fact grain (mono). */
   facts: string;
   preview: ThreadPreviewVM | null;

@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, type Page } from "@playwright/test";
+import { skinNames } from "../src/skins/contract";
 
 // The harness of ARCHITECTURE.md §8: the REAL mc binary (built by
 // global-setup, SPA embedded) with fake mish/hcom/herder shell scripts and a
@@ -302,7 +303,9 @@ export async function startDeadShell(): Promise<{ baseUrl: string; stop: () => P
   };
 }
 
-export const allSkins = ["minimal", "terminal"] as const;
+// The registry is the enumeration source (§3): every flow runs under every
+// registered skin, so a new skin is under test the moment it registers.
+export const allSkins = skinNames;
 export type SkinUnderTest = (typeof allSkins)[number];
 
 // ---------------------------------------------------------------------------
