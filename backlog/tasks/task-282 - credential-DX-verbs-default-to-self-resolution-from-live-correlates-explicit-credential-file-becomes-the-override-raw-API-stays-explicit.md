@@ -3,9 +3,10 @@ id: TASK-282
 title: >-
   credential DX: verbs default to self-resolution from live correlates; explicit
   --credential-file becomes the override; raw API stays explicit
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-18 12:05'
+updated_date: '2026-07-18 12:06'
 labels:
   - herder
   - dx
