@@ -1,0 +1,57 @@
+@import "tailwindcss";
+@import "../skins/minimal/tokens.css";
+@import "../skins/terminal/tokens.css";
+
+/*
+ * The visual half of a skin is a file of variable values (D4): each skin
+ * scopes the same semantic token names under its data-theme attribute.
+ * This block maps those tokens onto Tailwind utilities and the shadcn
+ * slots. Components consume utilities/slots only — raw hex or oklch in a
+ * component fails review (ARCHITECTURE.md).
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* mc semantic layer — meaning stays ours; skins only re-value it. */
+  --color-needs-you: var(--c-needs-you);
+  --color-warn: var(--c-warn);
+  --color-ok: var(--c-ok);
+  --color-quiet: var(--c-quiet);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* Two-grain type (settled style principle): mono for derived facts,
+   * proportional for human speech. Utilities: font-fact / font-speech. */
+  --font-fact: var(--grain-fact);
+  --font-speech: var(--grain-speech);
+}
+
+html {
+  font-size: var(--type-base);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--grain-speech);
+}

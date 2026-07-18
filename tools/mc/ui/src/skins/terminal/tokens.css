@@ -1,0 +1,36 @@
+/*
+ * terminal skin — visual half of the deliberately divergent verification
+ * skin (D4 proof). Differs from minimal in palette, radius, and type scale;
+ * the token NAMES are identical — a skin is a file of values.
+ */
+[data-theme="terminal"] {
+  /* mc semantic layer */
+  --c-needs-you: oklch(0.75 0.22 25);
+  --c-warn: oklch(0.85 0.17 95);
+  --c-ok: oklch(0.87 0.24 145);
+  --c-quiet: oklch(0.6 0.05 145);
+  --grain-fact: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --grain-speech: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --type-base: 14px;
+  --radius: 0rem;
+
+  /* shadcn slots: green phosphor over near-black */
+  --background: oklch(0.13 0.01 145);
+  --foreground: oklch(0.87 0.21 145);
+  --card: oklch(0.18 0.02 145);
+  --card-foreground: oklch(0.87 0.21 145);
+  --popover: oklch(0.18 0.02 145);
+  --popover-foreground: oklch(0.87 0.21 145);
+  --primary: oklch(0.87 0.24 145);
+  --primary-foreground: oklch(0.13 0.01 145);
+  --secondary: oklch(0.25 0.04 145);
+  --secondary-foreground: oklch(0.87 0.21 145);
+  --muted: oklch(0.22 0.03 145);
+  --muted-foreground: oklch(0.65 0.09 145);
+  --accent: oklch(0.25 0.04 145);
+  --accent-foreground: oklch(0.9 0.24 145);
+  --destructive: var(--c-needs-you);
+  --border: oklch(0.87 0.21 145 / 25%);
+  --input: oklch(0.87 0.21 145 / 30%);
+  --ring: oklch(0.87 0.24 145);
+}
