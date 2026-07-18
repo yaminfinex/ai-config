@@ -8,12 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/pendingprompt"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
-func TestManagedBridgeCompletesCanonicalSeatByBaseNameAndHandsOffPromptOnce(t *testing.T) {
+func TestManagedForkBridgeCompletesCanonicalSeatByBaseNameAndHandsOffPromptOnce(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, "state")
 	busDir := filepath.Join(root, "bus")
@@ -63,7 +64,10 @@ exit 1
 	}, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	cfg := managedCompletionConfig{Seat: "seat-guid", StateDir: state, HcomDir: busDir, SessionID: "grok-session", PaneID: "pane-live"}
+	cfg := managedCompletionConfig{
+		Seat: "seat-guid", StateDir: state, HcomDir: busDir, SessionID: "grok-session", PaneID: "pane-live",
+		LifecycleMode: "fork", ForkedFromGUID: "parent-seat-guid",
+	}
 	done, err := completeManagedSeat(context.Background(), cfg)
 	if err != nil || !done {
 		t.Fatalf("completeManagedSeat done=%t err=%v", done, err)
@@ -82,6 +86,9 @@ exit 1
 	if current.Mission == nil || current.Mission.Slug != "mission-one" || current.Mission.Source != "explicit" {
 		t.Fatalf("canonical completion lost mission: %+v", current.Mission)
 	}
+	if current.Provenance.Mechanism != "fork" || current.Provenance.ForkedFrom != "parent-seat-guid" {
+		t.Fatalf("canonical completion lost fork provenance: %+v", current.Provenance)
+	}
 	data, err := os.ReadFile(sendLog)
 	if err != nil || !strings.Contains(string(data), "send --from sender-seat @worker-base-seat -- initial prompt") {
 		t.Fatalf("pending prompt send log=%q err=%v", data, err)
@@ -95,5 +102,45 @@ exit 1
 	data, err = os.ReadFile(sendLog)
 	if err != nil || strings.Count(string(data), "send --from") != 1 {
 		t.Fatalf("pending prompt replay duplicated send: %q err=%v", data, err)
+	}
+}
+
+func TestManagedCompletionConvergesWhenConcurrentWriterSeatsInsideLock(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	cfg := managedCompletionConfig{Seat: "race-seat", StateDir: state, HcomDir: "/bus", SessionID: "race-session", PaneID: "pane-race", LifecycleMode: "fork"}
+	pane := herdrcli.Pane{PaneID: "pane-race", TerminalID: "term-race", WorkspaceID: "workspace-race", CWD: "/repo"}
+	row := managedCompletionCandidate(cfg, pane, "worker-race")
+	verified := true
+	row.Seat = &v2.Seat{
+		Kind: "herdr", PaneID: pane.PaneID, TerminalID: pane.TerminalID, Namespace: cfg.HcomDir,
+		HcomName: "worker-race", HcomVerified: &verified,
+	}
+	seedOutcomes, err := registry.UpdateLocked(registryPath, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{row}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seedOutcomes) != 1 || seedOutcomes[0].Status != registry.WriteApplied {
+		t.Fatalf("race seed outcomes=%+v", seedOutcomes)
+	}
+	innerCalled := false
+	outcomes, err := managedCompletionRegistryWriter(cfg, pane, "worker-race")(registryPath, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		innerCalled = true
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if innerCalled {
+		t.Fatal("concurrent canonical row fell through to stale completion update")
+	}
+	if len(outcomes) != 1 || (outcomes[0].Status != registry.WriteApplied && outcomes[0].Status != registry.WriteNoop) {
+		t.Fatalf("race convergence outcomes=%+v", outcomes)
+	}
+	projection, err := v2.LoadFile(registryPath, v2.LoadOptions{})
+	if err != nil || !canonicalManagedSeatMatches(registry.V2ByGUID(projection, cfg.Seat), cfg, pane, "worker-race") {
+		t.Fatalf("race convergence lost canonical row: err=%v", err)
 	}
 }

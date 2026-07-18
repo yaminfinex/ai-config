@@ -69,19 +69,20 @@ func NewGrokSessionID() (string, error) {
 }
 
 type grokLaunchPlan struct {
-	Binary        string
-	Mode          string
-	StateDir      string
-	GrokHome      string
-	LaunchCWD     string
-	MCPConfigPath string
-	Seat          string
-	SessionID     string
-	ParentSID     string
-	HcomBin       string
-	HcomDir       string
-	Argv          []string
-	Env           []string
+	Binary         string
+	Mode           string
+	StateDir       string
+	GrokHome       string
+	LaunchCWD      string
+	MCPConfigPath  string
+	Seat           string
+	SessionID      string
+	ParentSID      string
+	ForkedFromGUID string
+	HcomBin        string
+	HcomDir        string
+	Argv           []string
+	Env            []string
 }
 
 type GrokLifecyclePlan struct {
@@ -405,7 +406,11 @@ func prepareGrokLifecycleLaunch(rest []string, lifecycle GrokLifecyclePlan) (gro
 		"HERDER_REAL_HCOM":          hcomBin,
 	})
 	env = removeLaunchEnv(env, "GROK_HOME")
-	return grokLaunchPlan{Binary: binary, Mode: lifecycle.Mode, StateDir: stateDir, GrokHome: grokHome, LaunchCWD: launchCWD, MCPConfigPath: mcpConfigPath, Seat: seat, SessionID: sessionID, ParentSID: lifecycle.ParentSID, HcomBin: hcomBin, HcomDir: hcomDir, Argv: append([]string{"grok"}, args...), Env: env}, nil
+	forkedFromGUID := ""
+	if lifecycle.Mode == "fork" {
+		forkedFromGUID = os.Getenv("HERDER_GROK_FORKED_FROM_GUID")
+	}
+	return grokLaunchPlan{Binary: binary, Mode: lifecycle.Mode, StateDir: stateDir, GrokHome: grokHome, LaunchCWD: launchCWD, MCPConfigPath: mcpConfigPath, Seat: seat, SessionID: sessionID, ParentSID: lifecycle.ParentSID, ForkedFromGUID: forkedFromGUID, HcomBin: hcomBin, HcomDir: hcomDir, Argv: append([]string{"grok"}, args...), Env: env}, nil
 }
 
 func validateGrokLaunchCWD(plan grokLaunchPlan) error {
@@ -494,8 +499,11 @@ func startGrokBridge(plan grokLaunchPlan, manual bool) (string, error) {
 	args := []string{"grok", "bridge", "--seat", plan.Seat, "--state-dir", plan.StateDir, "--hcom-bin", plan.HcomBin, "--session-id", plan.SessionID, "--supervise"}
 	if manual {
 		args = append(args, "--retire-on-stop")
-	} else if plan.Mode == "launch" {
+	} else if plan.Mode == "launch" || plan.Mode == "fork" {
 		args = append(args, "--complete-seat", "--lifecycle-mode", plan.Mode)
+		if plan.Mode == "fork" && plan.ForkedFromGUID != "" {
+			args = append(args, "--forked-from-guid", plan.ForkedFromGUID)
+		}
 	}
 	if plan.HcomDir != "" {
 		args = append(args, "--hcom-dir", plan.HcomDir)

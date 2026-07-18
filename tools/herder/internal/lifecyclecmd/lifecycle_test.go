@@ -410,6 +410,27 @@ func TestLifecycleIncompleteCompletionPreservesLiveChild(t *testing.T) {
 	}
 }
 
+func TestGrokLifecycleCompletionFailureNamesOnlyRealRecoveryOwner(t *testing.T) {
+	for _, tt := range []struct {
+		mode    string
+		want    string
+		notWant string
+	}{
+		{mode: "fork", want: "bridge supervisor will retry", notWant: "sidecar will retry"},
+		{mode: "resume", want: "No automatic resume completion owner is armed", notWant: "will retry this same completion step"},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			var stderr strings.Builder
+			r := &runner{stderr: &stderr, herdr: &liveLifecycleFailureHerdr{}}
+			r.handleLifecycleCompletionFailure("seat completion refused", "p_live", "term_live", "grok", tt.mode, false)
+			got := stderr.String()
+			if !strings.Contains(got, tt.want) || strings.Contains(got, tt.notWant) {
+				t.Fatalf("Grok %s recovery text=%q, want %q and not %q", tt.mode, got, tt.want, tt.notWant)
+			}
+		})
+	}
+}
+
 func TestLifecycleInvalidAppliedRowPreservesLiveChild(t *testing.T) {
 	state := t.TempDir()
 	configureLifecycleTest(t, state)

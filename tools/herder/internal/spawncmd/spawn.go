@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/agentfamily"
 	"ai-config/tools/herder/internal/credentialnotice"
 	"ai-config/tools/herder/internal/grokbridge"
 	"ai-config/tools/herder/internal/hcomidentity"
@@ -1782,7 +1783,7 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 			fmt.Fprintln(r.stderr, "  prompt: NOT sent — a directory-trust modal is open and --safe forbids auto-accepting it.")
 			fmt.Fprintf(r.stderr, "          Accept it in the pane (focus + Enter), then: herder send %s \"<prompt>\"\n", record.Label)
 		case deliveryResult == "bind_timeout" && r.pendingPrompt:
-			fmt.Fprintf(r.stderr, "  prompt: pending after bind timeout (%s) — the owned-child sidecar will deliver it automatically.\n", readyReason)
+			fmt.Fprintf(r.stderr, "  prompt: pending after bind timeout (%s) — the owned-child %s will deliver it automatically.\n", readyReason, agentfamily.CompletionOwner(record.Agent))
 			fmt.Fprintln(r.stderr, "          Do NOT resend the initial prompt; the durable hand-off suppresses duplicate submission.")
 		case deliveryResult == "bind_timeout" || deliveryResult == "ready_match_timeout":
 			fmt.Fprintf(r.stderr, "  prompt: NOT sent (%s) — nothing went on the wire; a resend is SAFE.\n", readyReason)
@@ -1885,9 +1886,10 @@ func printHelp(stdout io.Writer) {
 		"  prompt as a bus message, and reports the receipt — verify: delivered (receipt seen) or",
 		"  queued (sent, no receipt yet; it injects the moment the agent is deliverable — do NOT",
 		"  resend). On bind_timeout nothing has gone on the wire yet: spawn persists the initial",
-		"  prompt for the owned-child sidecar, which completes the seat and then submits the prompt",
+		"  prompt for the owned-child completion process (sidecar for sidecar families;",
+		"  bridge supervisor for Grok), which completes the seat and then submits the prompt",
 		"  through the same receipt-checked bus path. A matching manual `herder send` that wins the",
-		"  race marks the hand-off complete so the sidecar suppresses its replay. hcom wakes an idle",
+		"  race marks the hand-off complete so that owner suppresses its replay. hcom wakes an idle",
 		"  agent with an EMPTY composer instantly, even a fresh",
 		"  never-prompted one; a message sent mid-boot is held until the session can take it.",
 		"  The one thing that starves bus delivery — on both families — is UNSUBMITTED TEXT in",

@@ -139,3 +139,43 @@ func TestManagedBridgeCompletionFlags(t *testing.T) {
 		t.Fatalf("stop helper bridge: %v", err)
 	}
 }
+
+func TestManagedForkBridgeOwnsCompletion(t *testing.T) {
+	root := t.TempDir()
+	argsPath := filepath.Join(root, "bridge-args")
+	pidPath := filepath.Join(root, "bridge-pid")
+	plan := grokLaunchPlan{
+		Mode: "fork", StateDir: root, Seat: "fork-seat", HcomBin: "/bin/true",
+		SessionID: "019f36ef-acb5-72a2-820c-cbcbbdd1c413", ForkedFromGUID: "parent-guid",
+		Env: replaceLaunchEnv(os.Environ(), map[string]string{
+			"HERDER_TEST_GROK_BRIDGE_HELPER": "1",
+			"HERDER_TEST_GROK_BRIDGE_ARGS":   argsPath,
+			"HERDER_TEST_GROK_BRIDGE_PID":    pidPath,
+		}),
+	}
+	name, err := startGrokBridge(plan, false)
+	if err != nil || name != "manual-test-bus" {
+		t.Fatalf("fork bridge name=%q err=%v", name, err)
+	}
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Fields(string(data))
+	for _, want := range []string{"--complete-seat", "--lifecycle-mode", "fork", "--forked-from-guid", "parent-guid"} {
+		if !containsString(args, want) {
+			t.Fatalf("fork bridge argv omitted %s:\n%s", want, data)
+		}
+	}
+	pidData, err := os.ReadFile(pidPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = syscall.Kill(-pid, syscall.SIGTERM); err != nil {
+		t.Fatalf("stop helper bridge: %v", err)
+	}
+}

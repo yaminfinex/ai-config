@@ -19,15 +19,17 @@ import (
 )
 
 type managedCompletionConfig struct {
-	Seat      string
-	StateDir  string
-	HcomDir   string
-	SessionID string
-	PaneID    string
+	Seat           string
+	StateDir       string
+	HcomDir        string
+	SessionID      string
+	PaneID         string
+	LifecycleMode  string
+	ForkedFromGUID string
 }
 
 func superviseManagedCompletion(ctx context.Context, cfg managedCompletionConfig, logf func(string, ...any)) {
-	if cfg.Seat == "" || cfg.StateDir == "" || cfg.SessionID == "" || cfg.PaneID == "" {
+	if cfg.Seat == "" || cfg.StateDir == "" || cfg.SessionID == "" || cfg.PaneID == "" || (cfg.LifecycleMode != "launch" && cfg.LifecycleMode != "fork") {
 		logf("managed seat completion disabled: required seat/session/pane coordinate is absent")
 		return
 	}
@@ -102,22 +104,7 @@ func completeManagedSeat(ctx context.Context, cfg managedCompletionConfig) (bool
 
 	candidate := managedCompletionCandidate(cfg, pane, joined.Name)
 	engine := seatcompletion.DefaultEngine()
-	engine.UpdateRegistry = func(path string, update registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
-		return registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
-			latest := registry.V2ByGUID(tx.Projection, cfg.Seat)
-			if canonicalManagedSeatMatches(latest, cfg, pane, joined.Name) {
-				replay := *latest
-				replay.Event = "registered"
-				replay.RecordedAt = ""
-				replay.Raw = nil
-				return []v2.SessionRecord{replay}, nil
-			}
-			if latest != nil && latest.State != v2.StateSeated {
-				return nil, errors.New("managed completion lost race to a non-seated owner state")
-			}
-			return update(tx)
-		})
-	}
+	engine.UpdateRegistry = managedCompletionRegistryWriter(cfg, pane, joined.Name)
 	result, err := engine.Complete(ctx, seatcompletion.Request{
 		Origin: seatcompletion.OriginRecognition, RegistryPath: registryPath, Candidate: candidate,
 		Seat: seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: pane.PaneID}, Namespace: cfg.HcomDir, RequireBus: true,
@@ -142,6 +129,25 @@ func completeManagedSeat(ctx context.Context, cfg managedCompletionConfig) (bool
 	return deliverManagedPendingPrompt(registryPath, cfg.Seat, joined.Name)
 }
 
+func managedCompletionRegistryWriter(cfg managedCompletionConfig, pane herdrcli.Pane, hcomName string) func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
+	return func(path string, update registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
+		return registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+			latest := registry.V2ByGUID(tx.Projection, cfg.Seat)
+			if canonicalManagedSeatMatches(latest, cfg, pane, hcomName) {
+				replay := *latest
+				replay.Event = "registered"
+				replay.RecordedAt = ""
+				replay.Raw = nil
+				return []v2.SessionRecord{replay}, nil
+			}
+			if latest != nil && latest.State != v2.StateSeated {
+				return nil, errors.New("managed completion lost race to a non-seated owner state")
+			}
+			return update(tx)
+		})
+	}
+}
+
 func managedCompletionCandidate(cfg managedCompletionConfig, pane herdrcli.Pane, hcomName string) v2.SessionRecord {
 	guid := cfg.Seat
 	label := os.Getenv("HERDER_LABEL")
@@ -157,7 +163,14 @@ func managedCompletionCandidate(cfg managedCompletionConfig, pane herdrcli.Pane,
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	provenance := registry.BuildProvenance("spawn", os.Getenv("HERDER_SPAWNED_BY"), cfg.SessionID, role, cwd, workspace)
+	mechanism := cfg.LifecycleMode
+	if mechanism == "" {
+		mechanism = "spawn"
+	}
+	provenance := registry.BuildProvenance(mechanism, os.Getenv("HERDER_SPAWNED_BY"), cfg.SessionID, role, cwd, workspace)
+	if mechanism == "fork" {
+		provenance.ForkedFrom = cfg.ForkedFromGUID
+	}
 	hooksBound := false
 	record := registry.Record{
 		GUID: &guid, ShortGUID: stringPtr(registry.ShortGUID(guid)), Label: &label, Role: role, Agent: "grok",

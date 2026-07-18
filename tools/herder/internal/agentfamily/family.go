@@ -10,3 +10,12 @@ func HcomCapable(agent string) bool {
 		return false
 	}
 }
+
+// CompletionOwner names the family-specific process that converges a live
+// child after its foreground launcher times out before canonical seating.
+func CompletionOwner(agent string) string {
+	if agent == "grok" {
+		return "bridge supervisor"
+	}
+	return "sidecar"
+}

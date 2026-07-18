@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,12 +24,16 @@ type SupervisorProcess struct {
 	StartTime string `json:"start_time"`
 	Seat      string `json:"seat"`
 	StateDir  string `json:"state_dir"`
+	Child     bool   `json:"child,omitempty"`
 }
 
 type StopResult struct {
-	Matched int
-	Termed  int
-	Killed  int
+	Matched         int
+	Termed          int
+	Killed          int
+	ChildrenMatched int
+	ChildrenTermed  int
+	ChildrenKilled  int
 }
 
 type supervisorLease struct {
@@ -110,6 +115,18 @@ func readSupervisorIdentity(path string) (SupervisorProcess, error) {
 }
 
 func DiscoverSupervisors(stateDir string) ([]SupervisorProcess, error) {
+	return discoverBridgeProcesses(stateDir, false, func(args []string) (string, string, bool) {
+		return supervisorArgs(args)
+	})
+}
+
+func discoverBridgeChildren(stateDir string) ([]SupervisorProcess, error) {
+	return discoverBridgeProcesses(stateDir, true, func(args []string) (string, string, bool) {
+		return bridgeChildArgs(args)
+	})
+}
+
+func discoverBridgeProcesses(stateDir string, child bool, match func([]string) (string, string, bool)) ([]SupervisorProcess, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil, err
@@ -128,11 +145,11 @@ func DiscoverSupervisors(stateDir string) ([]SupervisorProcess, error) {
 		if err != nil {
 			continue
 		}
-		seat, processState, ok := supervisorArgs(args)
+		seat, processState, ok := match(args)
 		if !ok || filepath.Clean(processState) != cleanState {
 			continue
 		}
-		identity, err := inspectSupervisorPID(pid, cleanState, seat, true)
+		identity, err := inspectBridgePID(pid, cleanState, seat, child, true)
 		if err == nil {
 			found = append(found, identity)
 		}
@@ -155,17 +172,19 @@ func StopSeatSupervisors(stateDir, seat string, timeout time.Duration) (StopResu
 	if err != nil {
 		return result, err
 	}
+	allChildren, err := discoverBridgeChildren(stateDir)
+	if err != nil {
+		return result, err
+	}
 	var targets []SupervisorProcess
 	for _, process := range all {
 		if process.Seat == seat {
 			targets = append(targets, process)
 		}
 	}
+	children := filterProcessesBySeat(allChildren, seat)
 	result.Matched = len(targets)
-	if len(targets) == 0 {
-		_ = os.Remove(supervisorIdentityPath(stateDir, seat))
-		return result, nil
-	}
+	result.ChildrenMatched = len(children)
 	for _, target := range targets {
 		if !supervisorAlive(target) {
 			continue
@@ -175,14 +194,23 @@ func StopSeatSupervisors(stateDir, seat string, timeout time.Duration) (StopResu
 		}
 		result.Termed++
 	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if supervisorsGone(targets) {
-			_ = os.Remove(supervisorIdentityPath(stateDir, seat))
-			return result, nil
-		}
-		time.Sleep(20 * time.Millisecond)
+	waitProcessesGone(targets, timeout)
+	currentChildren, discoverErr := discoverBridgeChildren(stateDir)
+	if discoverErr != nil {
+		return result, discoverErr
 	}
+	children = mergeProcesses(children, filterProcessesBySeat(currentChildren, seat))
+	result.ChildrenMatched = len(children)
+	for _, child := range children {
+		if !supervisorAlive(child) {
+			continue
+		}
+		if err := syscall.Kill(child.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return result, err
+		}
+		result.ChildrenTermed++
+	}
+	waitProcessesGone(children, timeout)
 	for _, target := range targets {
 		if !supervisorAlive(target) {
 			continue
@@ -192,15 +220,88 @@ func StopSeatSupervisors(stateDir, seat string, timeout time.Duration) (StopResu
 		}
 		result.Killed++
 	}
-	deadline = time.Now().Add(timeout)
+	for _, child := range children {
+		if !supervisorAlive(child) {
+			continue
+		}
+		if err := syscall.Kill(child.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return result, err
+		}
+		result.ChildrenKilled++
+	}
+	waitProcessesGone(append(append([]SupervisorProcess(nil), targets...), children...), timeout)
+	remainingSupervisors, err := DiscoverSupervisors(stateDir)
+	if err != nil {
+		return result, err
+	}
+	remainingChildren, err := discoverBridgeChildren(stateDir)
+	if err != nil {
+		return result, err
+	}
+	if len(filterProcessesBySeat(remainingSupervisors, seat)) != 0 || len(filterProcessesBySeat(remainingChildren, seat)) != 0 {
+		return result, fmt.Errorf("bridge processes for seat %s remained alive after TERM and KILL", seat)
+	}
+	if err := verifyBridgeSocketStopped(stateDir, seat); err != nil {
+		return result, err
+	}
+	_ = os.Remove(supervisorIdentityPath(stateDir, seat))
+	return result, nil
+}
+
+func waitProcessesGone(processes []SupervisorProcess, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if supervisorsGone(targets) {
-			_ = os.Remove(supervisorIdentityPath(stateDir, seat))
-			return result, nil
+		if supervisorsGone(processes) {
+			return true
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	return result, fmt.Errorf("bridge supervisor for seat %s remained alive after TERM and KILL", seat)
+	return supervisorsGone(processes)
+}
+
+func filterProcessesBySeat(processes []SupervisorProcess, seat string) []SupervisorProcess {
+	var filtered []SupervisorProcess
+	for _, process := range processes {
+		if process.Seat == seat {
+			filtered = append(filtered, process)
+		}
+	}
+	return filtered
+}
+
+func mergeProcesses(groups ...[]SupervisorProcess) []SupervisorProcess {
+	seen := map[string]bool{}
+	var merged []SupervisorProcess
+	for _, group := range groups {
+		for _, process := range group {
+			key := fmt.Sprintf("%d:%s", process.PID, process.StartTime)
+			if !seen[key] {
+				seen[key] = true
+				merged = append(merged, process)
+			}
+		}
+	}
+	return merged
+}
+
+func verifyBridgeSocketStopped(stateDir, seat string) error {
+	path := SocketPath(stateDir, seat)
+	conn, err := net.DialTimeout("unix", path, 50*time.Millisecond)
+	if err == nil {
+		_ = conn.Close()
+		return fmt.Errorf("bridge socket for seat %s still accepts clients after process teardown", seat)
+	}
+	info, statErr := os.Lstat(path)
+	if errors.Is(statErr, os.ErrNotExist) {
+		return nil
+	}
+	if statErr != nil {
+		return statErr
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("refuse stale bridge socket cleanup for seat %s: %s is not a Unix socket", seat, path)
+	}
+	return os.Remove(path)
 }
 
 func signalSupervisor(process SupervisorProcess, signal syscall.Signal) error {
@@ -223,15 +324,19 @@ func supervisorsGone(processes []SupervisorProcess) bool {
 }
 
 func supervisorAlive(process SupervisorProcess) bool {
-	current, err := inspectSupervisorPID(process.PID, process.StateDir, process.Seat, true)
+	current, err := inspectBridgePID(process.PID, process.StateDir, process.Seat, process.Child, true)
 	return err == nil && sameSupervisor(current, process)
 }
 
 func sameSupervisor(a, b SupervisorProcess) bool {
-	return a.PID == b.PID && a.PGID == b.PGID && a.StartTime == b.StartTime && a.Seat == b.Seat && filepath.Clean(a.StateDir) == filepath.Clean(b.StateDir)
+	return a.PID == b.PID && a.PGID == b.PGID && a.StartTime == b.StartTime && a.Seat == b.Seat && a.Child == b.Child && filepath.Clean(a.StateDir) == filepath.Clean(b.StateDir)
 }
 
 func inspectSupervisorPID(pid int, stateDir, seat string, requireArgs bool) (SupervisorProcess, error) {
+	return inspectBridgePID(pid, stateDir, seat, false, requireArgs)
+}
+
+func inspectBridgePID(pid int, stateDir, seat string, child, requireArgs bool) (SupervisorProcess, error) {
 	start, err := processStartTime(pid)
 	if err != nil {
 		return SupervisorProcess{}, err
@@ -242,6 +347,9 @@ func inspectSupervisorPID(pid int, stateDir, seat string, requireArgs bool) (Sup
 			return SupervisorProcess{}, err
 		}
 		gotSeat, gotState, ok := supervisorArgs(args)
+		if child {
+			gotSeat, gotState, ok = bridgeChildArgs(args)
+		}
 		if !ok || gotSeat != seat || filepath.Clean(gotState) != filepath.Clean(stateDir) {
 			return SupervisorProcess{}, errors.New("process argv no longer identifies the expected bridge supervisor")
 		}
@@ -250,7 +358,7 @@ func inspectSupervisorPID(pid int, stateDir, seat string, requireArgs bool) (Sup
 	if err != nil {
 		return SupervisorProcess{}, err
 	}
-	return SupervisorProcess{PID: pid, PGID: pgid, StartTime: start, Seat: seat, StateDir: filepath.Clean(stateDir)}, nil
+	return SupervisorProcess{PID: pid, PGID: pgid, StartTime: start, Seat: seat, StateDir: filepath.Clean(stateDir), Child: child}, nil
 }
 
 func processStartTime(pid int) (string, error) {
@@ -285,7 +393,16 @@ func readProcessArgs(pid int) ([]string, error) {
 }
 
 func supervisorArgs(args []string) (seat, stateDir string, ok bool) {
-	supervise, child, command := false, false, false
+	seat, stateDir, supervise, child, command := bridgeProcessArgs(args)
+	return seat, stateDir, command && supervise && !child && seat != "" && stateDir != ""
+}
+
+func bridgeChildArgs(args []string) (seat, stateDir string, ok bool) {
+	seat, stateDir, supervise, child, command := bridgeProcessArgs(args)
+	return seat, stateDir, command && child && !supervise && seat != "" && stateDir != ""
+}
+
+func bridgeProcessArgs(args []string) (seat, stateDir string, supervise, child, command bool) {
 	for i := 0; i < len(args); i++ {
 		if i+1 < len(args) && args[i] == "grok" && args[i+1] == "bridge" {
 			command = true
@@ -307,5 +424,5 @@ func supervisorArgs(args []string) (seat, stateDir string, ok bool) {
 			child = true
 		}
 	}
-	return seat, stateDir, command && supervise && !child && seat != "" && stateDir != ""
+	return seat, stateDir, supervise, child, command
 }

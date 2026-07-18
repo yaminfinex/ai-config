@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -111,6 +112,13 @@ func TestSupervisorArgsRequireExactSupervisorShape(t *testing.T) {
 			t.Fatalf("accepted non-supervisor argv: %v", args)
 		}
 	}
+	seat, state, ok = bridgeChildArgs([]string{"/bin/herder", "grok", "bridge", "--seat", "seat-a", "--state-dir", "/state", "--child"})
+	if !ok || seat != "seat-a" || state != "/state" {
+		t.Fatalf("bridge child args=(%q,%q,%t)", seat, state, ok)
+	}
+	if _, _, ok = bridgeChildArgs([]string{"/bin/herder", "grok", "bridge", "--seat", "seat-a", "--state-dir", "/state", "--supervise", "--child"}); ok {
+		t.Fatal("supervisor/child hybrid argv was accepted as an exact bridge child")
+	}
 }
 
 func TestStopSeatSupervisorsStopsSupervisorAndChildWithinBoundedWindow(t *testing.T) {
@@ -138,14 +146,53 @@ func TestStopSeatSupervisorsStopsSupervisorAndChildWithinBoundedWindow(t *testin
 	}
 }
 
-func TestRowlessSupervisorIsReportedButNeverAutoKilled(t *testing.T) {
-	state := t.TempDir()
-	cmd := startSupervisorFixture(t, state, "rowless-seat")
-	findings, err := SweepOrphanSupervisors(filepath.Join(state, "registry.jsonl"), time.Now(), time.Millisecond)
+func TestStopSeatSupervisorsStopsChildWhenSupervisorIsNotProcessGroupLeader(t *testing.T) {
+	state, err := os.MkdirTemp("/tmp", "gb-nl-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(findings) != 1 || findings[0].Type != "rowless-grok-bridge-orphan" || !strings.Contains(findings[0].Suggested, "stop-bridge") {
+	t.Cleanup(func() { _ = os.RemoveAll(state) })
+	seat := "nonleader-seat"
+	cmd := startSupervisorFixtureWithSession(t, state, seat, false)
+	childPID := waitFixtureChildPID(t, state, seat)
+	t.Cleanup(func() { _ = syscall.Kill(childPID, syscall.SIGKILL) })
+	waitFixtureSocket(t, state, seat)
+	result, err := StopSeatSupervisors(state, seat, 500*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Matched != 1 {
+		t.Fatalf("non-leader stop result=%+v", result)
+	}
+	if err = cmd.Wait(); err != nil {
+		t.Fatalf("supervisor exit: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for syscall.Kill(childPID, 0) == nil && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if err = syscall.Kill(childPID, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("exact bridge child pid %d survived non-leader supervisor stop: %v", childPID, err)
+	}
+	if conn, dialErr := net.DialTimeout("unix", SocketPath(state, seat), 20*time.Millisecond); dialErr == nil {
+		conn.Close()
+		t.Fatal("bridge socket still accepts clients after successful stop")
+	}
+}
+
+func TestRowlessSupervisorIsReportedButNeverAutoKilled(t *testing.T) {
+	state := t.TempDir()
+	cmd := startSupervisorFixture(t, state, "rowless-seat")
+	now := time.Now().UTC()
+	findings, err := SweepOrphanSupervisors(filepath.Join(state, "registry.jsonl"), now, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("healthy rowless birth window was reported as an orphan: %+v", findings)
+	}
+	findings, err = SweepOrphanSupervisors(filepath.Join(state, "registry.jsonl"), now.Add(DefaultRowlessBirthGrace+time.Millisecond), time.Millisecond)
+	if err != nil || len(findings) != 1 || findings[0].Type != "rowless-grok-bridge-orphan" || !strings.Contains(findings[0].Suggested, "stop-bridge") {
 		t.Fatalf("rowless findings=%+v", findings)
 	}
 	if err = cmd.Process.Signal(syscall.Signal(0)); err != nil {
@@ -210,16 +257,28 @@ func TestNonSeatedSupervisorWithLiveClientIsNeverReaped(t *testing.T) {
 }
 
 func startSupervisorFixture(t *testing.T, state, seat string) *exec.Cmd {
+	return startSupervisorFixtureWithSession(t, state, seat, true)
+}
+
+func startSupervisorFixtureWithSession(t *testing.T, state, seat string, newSession bool) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=TestSupervisorFixtureProcess", "--", "grok", "bridge", "--seat", seat, "--state-dir", state, "--supervise")
 	cmd.Env = append(os.Environ(), "HERDER_TEST_SUPERVISOR_FIXTURE=1")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if newSession {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	} else {
+		cmd.Env = append(cmd.Env, "HERDER_TEST_FIXTURE_SOCKET=1")
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		if cmd.ProcessState == nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			if newSession {
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			} else {
+				_ = cmd.Process.Kill()
+			}
 			_, _ = cmd.Process.Wait()
 		}
 	})
@@ -250,11 +309,30 @@ func TestSupervisorFixtureProcess(t *testing.T) {
 	if separator < 0 {
 		os.Exit(90)
 	}
-	seat, state, ok := supervisorArgs(os.Args[separator+1:])
+	seat, state, childMode, ok := fixtureBridgeArgs(os.Args[separator+1:])
 	if !ok {
 		os.Exit(91)
 	}
-	child := exec.Command("sleep", "60")
+	if childMode {
+		if os.Getenv("HERDER_TEST_FIXTURE_SOCKET") == "1" {
+			dir := SeatDir(state, seat)
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				os.Exit(95)
+			}
+			_ = os.Remove(SocketPath(state, seat))
+			listener, err := net.Listen("unix", SocketPath(state, seat))
+			if err != nil {
+				os.Exit(96)
+			}
+			defer listener.Close()
+		}
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
+		<-signals
+		return
+	}
+	child := exec.Command(os.Args[0], "-test.run=TestSupervisorFixtureProcess", "--", "grok", "bridge", "--seat", seat, "--state-dir", state, "--child")
+	child.Env = append(os.Environ(), "HERDER_TEST_SUPERVISOR_FIXTURE=1")
 	if err := child.Start(); err != nil {
 		os.Exit(92)
 	}
@@ -269,6 +347,46 @@ func TestSupervisorFixtureProcess(t *testing.T) {
 	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
 	<-signals
 	os.Exit(0)
+}
+
+func fixtureBridgeArgs(args []string) (seat, state string, child, ok bool) {
+	command := false
+	for i := 0; i < len(args); i++ {
+		if i+1 < len(args) && args[i] == "grok" && args[i+1] == "bridge" {
+			command = true
+		}
+		switch args[i] {
+		case "--seat":
+			if i+1 < len(args) {
+				seat = args[i+1]
+				i++
+			}
+		case "--state-dir":
+			if i+1 < len(args) {
+				state = args[i+1]
+				i++
+			}
+		case "--child":
+			child = true
+		}
+	}
+	return seat, state, child, command && seat != "" && state != ""
+}
+
+func waitFixtureSocket(t *testing.T, state, seat string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		conn, err := net.DialTimeout("unix", SocketPath(state, seat), 20*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fixture bridge socket unavailable: %v", err)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func waitFixtureChildPID(t *testing.T, state, seat string) int {

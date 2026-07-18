@@ -465,7 +465,7 @@ func retireGrokAfterCull(registryPath string, rec registry.Record, stdout, stder
 	}
 	stopped, stopErr := grokbridge.StopSeatSupervisors(filepath.Dir(registryPath), guid, grokbridge.DefaultSupervisorStopTimeout)
 	if stopErr == nil {
-		fmt.Fprintf(stdout, "grok bridge: stopped %d supervisor(s) term=%d kill=%d\n", stopped.Matched, stopped.Termed, stopped.Killed)
+		fmt.Fprintf(stdout, "grok bridge: stopped %d supervisor(s) term=%d kill=%d child=%d child-term=%d child-kill=%d\n", stopped.Matched, stopped.Termed, stopped.Killed, stopped.ChildrenMatched, stopped.ChildrenTermed, stopped.ChildrenKilled)
 	}
 	if retireErr != nil && stopErr == nil {
 		retired, retireErr = lifecyclecmd.RetireGrokForCull(registryPath, guid)

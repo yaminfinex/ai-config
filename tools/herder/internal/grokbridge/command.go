@@ -32,7 +32,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "retire-offline":
 		return runRetireOffline(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "herder grok: unknown subcommand %q — use check, tap, mcp, bridge, or retire-offline\n", args[0])
+		fmt.Fprintf(stderr, "herder grok: unknown subcommand %q — use check, tap, mcp, bridge, stop-bridge, or retire-offline\n", args[0])
 		return 2
 	}
 }
@@ -55,7 +55,7 @@ func runStopBridge(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "herder grok stop-bridge: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "stopped seat=%s supervisors=%d term=%d kill=%d\n", *seat, result.Matched, result.Termed, result.Killed)
+	fmt.Fprintf(stdout, "stopped seat=%s supervisors=%d term=%d kill=%d children=%d child-term=%d child-kill=%d\n", *seat, result.Matched, result.Termed, result.Killed, result.ChildrenMatched, result.ChildrenTermed, result.ChildrenKilled)
 	return 0
 }
 func stateDefault() string {
@@ -147,6 +147,7 @@ func runBridge(args []string, stderr io.Writer) int {
 	name := fs.String("name", "", "existing bus name")
 	sessionID := fs.String("session-id", processCapability("HERDER_GROK_SESSION_ID"), "owning Grok session id used for request fencing")
 	lifecycleMode := fs.String("lifecycle-mode", "", "internal managed lifecycle mode")
+	forkedFromGUID := fs.String("forked-from-guid", "", "internal fork parent registry coordinate")
 	completeSeat := fs.Bool("complete-seat", false, "internal bridge-owned canonical seat completion")
 	supervise := fs.Bool("supervise", false, "restart the bridge with capped backoff")
 	retireOnStop := fs.Bool("retire-on-stop", false, "retire the journal when a supervised manual bridge is stopped")
@@ -160,6 +161,7 @@ func runBridge(args []string, stderr io.Writer) int {
 	}
 	if *supervise && !*child {
 		_ = lifecycleMode
+		_ = forkedFromGUID
 		_ = completeSeat
 		return superviseBridge(args, *state, *seat, *retireOnStop)
 	}
@@ -262,6 +264,16 @@ func managedCompletionFromArgs(args []string, state, seat string) (managedComple
 		case "--session-id":
 			if i+1 < len(args) {
 				cfg.SessionID = args[i+1]
+				i++
+			}
+		case "--lifecycle-mode":
+			if i+1 < len(args) {
+				cfg.LifecycleMode = args[i+1]
+				i++
+			}
+		case "--forked-from-guid":
+			if i+1 < len(args) {
+				cfg.ForkedFromGUID = args[i+1]
 				i++
 			}
 		}

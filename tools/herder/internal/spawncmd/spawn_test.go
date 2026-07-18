@@ -1020,6 +1020,34 @@ func TestSummaryDescribesPersistedBindTimeoutAsAutomaticHandoff(t *testing.T) {
 	}
 }
 
+func TestGrokSummaryNamesBridgeSupervisorForPersistedPrompt(t *testing.T) {
+	var stderr strings.Builder
+	r := &runner{
+		opts:          options{Agent: "grok", Prompt: "initial prompt"},
+		stderr:        &stderr,
+		pendingPrompt: true,
+	}
+	r.writeSummary(spawnRecord{
+		GUID: "child-guid", Label: "worker-label", Agent: "grok", PaneID: "pane-live",
+		WorkspaceID: "workspace-live", CWD: "/work", HcomName: "worker", HcomDir: "/bus",
+	}, nil, true, false, "", "", "captured", true, false, "bind_timeout", "bind timed out", false, nil)
+	got := stderr.String()
+	if !strings.Contains(got, "bridge supervisor will deliver it automatically") || strings.Contains(got, "sidecar will deliver") {
+		t.Fatalf("Grok bind-timeout summary names the wrong completion owner:\n%s", got)
+	}
+}
+
+func TestSpawnHelpNamesBothPendingPromptCompletionOwners(t *testing.T) {
+	var stdout strings.Builder
+	printHelp(&stdout)
+	got := stdout.String()
+	for _, want := range []string{"sidecar for sidecar families", "bridge supervisor for Grok"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("spawn help omits %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestResendCommandQuotesPromptVerbatim confirms the prompt round-trips through
 // shell quoting so a copy-paste resend re-sends the exact bytes — including a
 // multi-line brief with the notify appendix already folded in.

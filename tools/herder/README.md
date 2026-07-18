@@ -348,13 +348,15 @@ retires the journal), or use `herder grok stop-bridge --seat <guid> --state-dir 
 for the incarnation-verified TERM/wait/KILL path, then run
 `herder grok retire-offline --seat <guid> --state-dir <herder-state>` if offline retirement is needed.
 
-Managed Grok launches give the detached supervisor one lifetime lock per seat. After its binder
+Managed Grok launches and forks give the detached supervisor one lifetime lock per seat. After its binder
 child stabilizes a joined hcom row, the supervisor completes the canonical registry seat using the
 same completion engine as spawn and sidecars, selecting hcom's store coordinate by authoritative
-`base_name`. Cull and observer-confirmed unseat paths quiesce the journal and stop the entire bridge
-process group. The observer backstop automatically reaps only a row-confirmed non-seated bridge
-after an eligibility grace and zero-client recheck; a rowless legacy bridge is report-only and names
-the manual `stop-bridge` recipe because process age alone cannot prove owner death.
+`base_name`. Cull and observer-confirmed unseat paths quiesce the journal, stop every exact supervisor
+and binder-child incarnation, and verify the seat socket no longer accepts clients. The observer
+backstop automatically reaps only a row-confirmed non-seated bridge after an eligibility grace and
+zero-client recheck. A newly observed rowless bridge gets a short birth grace for canonical completion;
+after that it remains report-only and names the manual `stop-bridge` recipe because process age alone
+cannot prove owner death.
 Testing the raw vendor executable does not verify the harness. Both `herder launch grok` and the
 `grok` PATH shim enter the first-class contract by default; an absent `XAI_API_KEY` refuses with a
 login-profile remedy, and there is never an automatic raw-vendor fallback. Use

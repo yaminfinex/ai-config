@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/agentfamily"
 	"ai-config/tools/herder/internal/grokbridge"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herderpaths"
@@ -830,6 +831,9 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		grokEnv = " HERDER_STATE_DIR=" + shellquote.Quote(filepath.Dir(spec.RegistryPath)) +
 			" HERDER_GROK_SESSION_ID=" + shellquote.Quote(spec.GrokSessionID) +
 			" HERDER_GROK_PREASSIGNED=1"
+		if spec.Mode == "fork" && spec.Provenance.ForkedFrom != "" {
+			grokEnv += " HERDER_GROK_FORKED_FROM_GUID=" + shellquote.Quote(spec.Provenance.ForkedFrom)
+		}
 		for _, key := range []string{"HERDER_REAL_HCOM"} {
 			if value := os.Getenv(key); value != "" {
 				grokEnv += " " + key + "=" + shellquote.Quote(value)
@@ -928,33 +932,33 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	outputRow := append([]byte(nil), row...)
 	result, err := r.completeLifecycle(spec, candidate, start.Agent.PaneID, start.Agent.TerminalID)
 	if err != nil {
-		r.handleLifecycleCompletionFailure("seat completion failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, false)
+		r.handleLifecycleCompletionFailure("seat completion failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, spec.Agent, spec.Mode, false)
 		return nil, 1
 	}
 	if result.Refusal != nil {
 		reason := fmt.Sprintf("seat completion refused [%s]: %s", result.Refusal.Code, result.Refusal.Cause)
-		r.handleLifecycleCompletionFailure(reason, start.Agent.PaneID, start.Agent.TerminalID, false)
+		r.handleLifecycleCompletionFailure(reason, start.Agent.PaneID, start.Agent.TerminalID, spec.Agent, spec.Mode, false)
 		return nil, 1
 	}
 	if result.Status != registry.WriteApplied {
-		r.handleLifecycleCompletionFailure("seat completion wrote no registry row", start.Agent.PaneID, start.Agent.TerminalID, false)
+		r.handleLifecycleCompletionFailure("seat completion wrote no registry row", start.Agent.PaneID, start.Agent.TerminalID, spec.Agent, spec.Mode, false)
 		return nil, 1
 	}
 	var completed v2.SessionRecord
 	if err := json.Unmarshal(result.Row, &completed); err != nil {
-		r.handleLifecycleCompletionFailure("seat completion returned an invalid registry row: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, true)
+		r.handleLifecycleCompletionFailure("seat completion returned an invalid registry row: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, spec.Agent, spec.Mode, true)
 		return nil, 1
 	}
 	if completed.Seat != nil && completed.Seat.HcomName != "" {
 		outputRow, err = registry.UpdateRawObject(outputRow, map[string]any{"hcom_name": completed.Seat.HcomName})
 		if err != nil {
-			r.handleLifecycleCompletionFailure("lifecycle output encoding failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, true)
+			r.handleLifecycleCompletionFailure("lifecycle output encoding failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, spec.Agent, spec.Mode, true)
 			return nil, 1
 		}
 	}
 	if spec.Agent == "grok" {
 		if err = refreshGrokCapabilitiesAfterRegistration(spec.RegistryPath, spec.GUID, spec.GrokSessionID); err != nil {
-			r.handleLifecycleCompletionFailure("Grok capability registration failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, true)
+			r.handleLifecycleCompletionFailure("Grok capability registration failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, spec.Agent, spec.Mode, true)
 			return nil, 1
 		}
 	}
@@ -1021,7 +1025,7 @@ func (r *runner) lifecycleOccupantState(paneID, terminalID string) string {
 	return "unknown"
 }
 
-func (r *runner) handleLifecycleCompletionFailure(reason, paneID, terminalID string, registryApplied bool) {
+func (r *runner) handleLifecycleCompletionFailure(reason, paneID, terminalID, agent, mode string, registryApplied bool) {
 	state := r.lifecycleOccupantState(paneID, terminalID)
 	if state == "absent" {
 		r.failAfterLaunch(reason, paneID, terminalID)
@@ -1031,7 +1035,11 @@ func (r *runner) handleLifecycleCompletionFailure(reason, paneID, terminalID str
 		die(r.stderr, reason+"; launched child is "+state+" and was preserved because canonical registry completion was already applied. Inspect the completed registry row before retrying lifecycle output recovery")
 		return
 	}
-	die(r.stderr, reason+"; launched child is "+state+" and was preserved without a registry row. Once it joins hcom, the sidecar will retry this same completion step; otherwise run herder enroll from the live seat")
+	if agent == "grok" && mode != "fork" {
+		die(r.stderr, reason+"; launched child is "+state+" and was preserved without a registry row. No automatic resume completion owner is armed; run herder enroll from the live seat")
+		return
+	}
+	die(r.stderr, reason+"; launched child is "+state+" and was preserved without a registry row. Once it joins hcom, the "+agentfamily.CompletionOwner(agent)+" will retry this same completion step; otherwise run herder enroll from the live seat")
 }
 
 func refreshGrokCapabilitiesAfterRegistration(registryPath, guid, sessionID string) error {

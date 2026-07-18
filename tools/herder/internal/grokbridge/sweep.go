@@ -15,7 +15,10 @@ import (
 	"ai-config/tools/herder/internal/shellquote"
 )
 
-const DefaultOrphanGrace = 2 * time.Minute
+const (
+	DefaultOrphanGrace       = 2 * time.Minute
+	DefaultRowlessBirthGrace = 15 * time.Second
+)
 
 type SweepFinding struct {
 	Seat        string
@@ -36,6 +39,10 @@ type orphanCandidate struct {
 
 func orphanCandidatePath(stateDir, seat string) string {
 	return filepath.Join(SeatDir(stateDir, seat), "orphan-candidate.json")
+}
+
+func rowlessCandidatePath(stateDir, seat string) string {
+	return filepath.Join(SeatDir(stateDir, seat), "rowless-candidate.json")
 }
 
 // SweepOrphanSupervisors consumes committed registry state; it never infers
@@ -68,6 +75,18 @@ func SweepOrphanSupervisors(registryPath string, now time.Time, grace time.Durat
 		}
 		if current == nil {
 			_ = os.Remove(orphanCandidatePath(stateDir, seat))
+			fingerprint := supervisorFingerprint(group)
+			candidate, readErr := readOrphanCandidate(rowlessCandidatePath(stateDir, seat))
+			if readErr != nil || candidate.Seat != seat || candidate.Fingerprint != fingerprint {
+				candidate = orphanCandidate{Seat: seat, Fingerprint: fingerprint, ObservedAt: now.UTC()}
+				if writeErr := writeOrphanCandidate(rowlessCandidatePath(stateDir, seat), candidate); writeErr != nil {
+					return findings, fmt.Errorf("record rowless Grok birth grace for %s: %w", seat, writeErr)
+				}
+				continue
+			}
+			if now.Sub(candidate.ObservedAt) < DefaultRowlessBirthGrace {
+				continue
+			}
 			findings = append(findings, SweepFinding{
 				Seat: seat, Type: "rowless-grok-bridge-orphan", Severity: "warning", CauseClass: "rowless_bridge_owner_unknown",
 				Detail:    fmt.Sprintf("rowless Grok bridge orphan candidate has %d supervisor process(es); no committed owner state exists, so automatic teardown is refused", len(group)),
@@ -75,6 +94,7 @@ func SweepOrphanSupervisors(registryPath string, now time.Time, grace time.Durat
 			})
 			continue
 		}
+		_ = os.Remove(rowlessCandidatePath(stateDir, seat))
 		if current.Tool != "grok" {
 			_ = os.Remove(orphanCandidatePath(stateDir, seat))
 			findings = append(findings, sweepRefusal(seat, now, fmt.Sprintf("seat guid belongs to tool %q, not grok", current.Tool), stateDir))
