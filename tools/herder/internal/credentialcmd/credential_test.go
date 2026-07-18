@@ -57,12 +57,41 @@ func TestEnableRefusesBelowCompleteCoverage(t *testing.T) {
 	if !strings.Contains(stderr.String(), "herder credential sweep") {
 		t.Fatalf("enable refusal lacks sweep remedy: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
+	if !strings.Contains(stdout.String(), "blocker: guid-process: legacy seat has no credential generation") {
+		t.Fatalf("enable refusal lacks coverage blocker: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
 	cutover, err := seatcred.CutoverEnabled(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cutover {
 		t.Fatal("enable below 100% coverage created the cutover marker")
+	}
+}
+
+func TestEnableRefusesWhenCurrentCredentialIsMissing(t *testing.T) {
+	state := t.TempDir()
+	path := filepath.Join(state, "registry.jsonl")
+	seedSweepSeat(t, path, "lost-generation")
+	t.Setenv("HERDER_STATE_DIR", state)
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"enable"}, &stdout, &stderr); code != 1 {
+		t.Fatalf("enable code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{"blocker: guid-process: current credential unavailable", "herder repair reissue-credential --guid guid-process"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("enable refusal missing %q: stdout=%q stderr=%q", want, stdout.String(), stderr.String())
+		}
+	}
+	if !strings.Contains(stderr.String(), "herder credential sweep") {
+		t.Fatalf("enable refusal lacks sweep remedy: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	cutover, err := seatcred.CutoverEnabled(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cutover {
+		t.Fatal("enable with an unavailable current credential created the cutover marker")
 	}
 }
 

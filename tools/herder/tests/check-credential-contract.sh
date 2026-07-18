@@ -49,10 +49,21 @@ below="$ROOT/below"
 mkdir -p "$below/state"
 seed_legacy "$below"
 run_credential "$below" enable
-if [[ "$RUN_RC" -eq 1 && "$RUN_ERR" == *'herder credential sweep'* && ! -e "$below/state/credentials/cutover-v1" ]]; then
+if [[ "$RUN_RC" -eq 1 && "$RUN_OUT" == *'blocker: guid-legacy: legacy seat has no credential generation'* && "$RUN_ERR" == *'herder credential sweep'* && ! -e "$below/state/credentials/cutover-v1" ]]; then
   ok "enable refuses below 100% without creating marker"
 else
   bad "enable refuses below 100% without creating marker" "rc=$RUN_RC stdout=$RUN_OUT stderr=$RUN_ERR"
+fi
+
+token_loss="$ROOT/token_loss"
+mkdir -p "$token_loss/state"
+seed_covered "$token_loss"
+rm "$token_loss/state/credentials/guid-covered/generation-covered.token"
+run_credential "$token_loss" enable
+if [[ "$RUN_RC" -eq 1 && "$RUN_OUT" == *'blocker: guid-covered: current credential unavailable'* && "$RUN_OUT" == *'herder repair reissue-credential --guid guid-covered'* && "$RUN_ERR" == *'herder credential sweep'* && ! -e "$token_loss/state/credentials/cutover-v1" ]]; then
+  ok "enable re-verifies current credential usability before marker creation"
+else
+  bad "enable re-verifies current credential usability before marker creation" "rc=$RUN_RC stdout=$RUN_OUT stderr=$RUN_ERR"
 fi
 
 covered="$ROOT/covered"
