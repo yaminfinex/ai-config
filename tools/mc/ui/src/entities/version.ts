@@ -5,9 +5,15 @@ import type { VersionInfo } from "@/entities/types";
 
 export const VERSION_POLL_MS = 5000;
 
-// Live updates keep the proven mc pattern (D1): poll a cheap version number;
-// when it changes, invalidate every entity query. SSE can slot in behind this
-// same seam later without touching any view.
+// Live updates keep the proven mc pattern (D1): poll a cheap version signal;
+// when it changes, invalidate the affected entity queries. SSE can slot in
+// behind this same seam later without touching any view.
+//
+// STALE (chunk C rewrites this module): this polls the pre-remediation
+// {cursor, generation} shape. The live /api/v1/version is scope-aware and
+// serves per-source-family provenance stamps — a missions-list client polls
+// bare and watches `missions`; a mission-detail client polls with its slug
+// and watches `mission` + `journal` + `roster` (see apiVersionDTO, api.go).
 export function useVersionInvalidation() {
   const queryClient = useQueryClient();
   const { data } = useQuery({

@@ -70,7 +70,8 @@ export const useWorkingSet = create<WorkingSetState & WorkingSetActions>()(
       navigate: (view) => set({ view }),
       toggleThread: (id) => set((state) => ({ thread: applyToggleThread(state.thread, id) })),
       closeThread: () => set({ thread: null }),
-      openMaterial: (ref) => set((state) => ({ materials: applyOpenMaterial(state.materials, ref) })),
+      openMaterial: (ref) =>
+        set((state) => ({ materials: applyOpenMaterial(state.materials, ref) })),
       pinMaterial: (ref) =>
         set((state) => ({
           materials: state.materials.map((slot) =>

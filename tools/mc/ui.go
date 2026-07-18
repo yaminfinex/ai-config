@@ -31,6 +31,14 @@ func uiHandler(fsys fs.FS) http.HandlerFunc {
 		name := path.Clean(rel)
 		data, err := fs.ReadFile(fsys, name)
 		if err != nil {
+			// Only route-like paths fall back to the SPA shell. A miss that
+			// names a file — anything under assets/ or with an extension —
+			// gets an honest 404: a stale asset URL served as 200 HTML would
+			// masquerade as a working script until the browser chokes on it.
+			if name != "index.html" && (strings.HasPrefix(name, "assets/") || path.Ext(name) != "") {
+				http.NotFound(rw, r)
+				return
+			}
 			// Client-side routes (/ui/mission/x) resolve to the SPA shell.
 			name = "index.html"
 			data, err = fs.ReadFile(fsys, name)

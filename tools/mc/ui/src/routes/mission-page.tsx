@@ -1,13 +1,15 @@
+import { useParams } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 import { useMissionDetail } from "@/entities/missions";
-import { missionRoute } from "@/router";
 import { useSkin } from "@/skins/index";
 import { useWorkingSet } from "@/stores/working-set";
 import { missionDetailVM } from "@/view-models/mission-detail";
 
 export function MissionPage() {
   const skin = useSkin();
-  const { slug } = missionRoute.useParams();
+  // from-string form, not missionRoute.useParams(): importing the router
+  // from a route component would close an ESM cycle (router → page → router).
+  const { slug } = useParams({ from: "/mission/$slug" });
   const wsNavigate = useWorkingSet((state) => state.navigate);
   const activeThreadId = useWorkingSet((state) => state.thread?.id ?? null);
   const toggleThread = useWorkingSet((state) => state.toggleThread);

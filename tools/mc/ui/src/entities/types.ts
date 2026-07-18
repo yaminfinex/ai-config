@@ -1,6 +1,12 @@
 // Wire types for /api/v1 — the frontend expression of the Go DTOs in
 // tools/mc/api.go. One property per DTO field, same names; a change here
 // without a matching server change is a contract break.
+//
+// STALE (chunk C rewrites this module): these types predate the chunk-A
+// remediation. The live contract is sectioned and provenance-stamped — see
+// apiVersionDTO/apiMissionDetailDTO in api.go and TestAPIWireShapeRawKeys
+// in api_test.go for the real shapes. Nothing may build on these types
+// until they match the wire.
 
 export interface VersionInfo {
   cursor: number;

@@ -98,9 +98,7 @@ export function missionDetailVM(payload: MissionDetailPayload | undefined): Miss
     title: payload.mission.name !== "" ? payload.mission.name : payload.mission.slug,
     warnings,
     threads: sortThreads(payload.threads).map(threadRowVM),
-    agents: [...payload.agents]
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map(agentRowVM),
+    agents: [...payload.agents].sort((a, b) => a.name.localeCompare(b.name)).map(agentRowVM),
     rosterWarning: payload.rosterWarning === "" ? null : payload.rosterWarning,
   };
 }

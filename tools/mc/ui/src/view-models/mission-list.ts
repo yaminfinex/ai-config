@@ -24,9 +24,7 @@ export function missionListVM(payload: MissionsPayload | undefined): MissionList
   if (!payload) {
     return { rows: [], warning: null };
   }
-  const rows = [...payload.missions]
-    .sort((a, b) => a.slug.localeCompare(b.slug))
-    .map(missionRowVM);
+  const rows = [...payload.missions].sort((a, b) => a.slug.localeCompare(b.slug)).map(missionRowVM);
   return { rows, warning: payload.warning === "" ? null : payload.warning };
 }
 
