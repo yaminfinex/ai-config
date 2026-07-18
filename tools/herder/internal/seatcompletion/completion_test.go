@@ -542,6 +542,39 @@ func TestCompletionOriginsProduceIdenticalSeatJSONForEverySeatKind(t *testing.T)
 	}
 }
 
+func TestCompletionRotatesPersistedCredentialGeneration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	current := v2.SessionRecord{
+		GUID: "guid-rotate", Event: "seated", State: v2.StateSeated, Label: "worker", Tool: "bash",
+		Seat: &v2.Seat{Kind: SeatProcess, PID: 4242, CredentialGeneration: "generation-old"},
+	}
+	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{current}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := registry.SingleOutcome(outcomes); err != nil || outcome.Err() != nil {
+		t.Fatalf("seed outcome=%+v err=%v", outcome, err)
+	}
+
+	engine := testEngine(t)
+	result, err := engine.Complete(context.Background(), Request{
+		Origin: OriginRecognition, RegistryPath: path, Candidate: current,
+		Seat: SeatClaim{Kind: SeatProcess, PID: 4242},
+	})
+	if err != nil || result.Refusal != nil || result.Status != registry.WriteApplied {
+		t.Fatalf("rotation result=%+v err=%v", result, err)
+	}
+	if result.CredentialGeneration == "" || result.CredentialGeneration == "generation-old" {
+		t.Fatalf("credential generation = %q, want a newly committed generation", result.CredentialGeneration)
+	}
+	row := decodeCompletedRow(t, result.Row)
+	if row.Seat == nil || row.Seat.CredentialGeneration != result.CredentialGeneration {
+		t.Fatalf("completed seat=%+v result=%+v", row.Seat, result)
+	}
+}
+
 func joinedRows(rows ...hcomidentity.Row) []hcomidentity.Row {
 	joined := true
 	for i := range rows {

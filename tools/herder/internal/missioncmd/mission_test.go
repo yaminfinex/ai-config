@@ -24,6 +24,7 @@ func TestJoinAndLeaveRoundTrip(t *testing.T) {
 	if joined.Event != "mission_joined" || joined.Mission == nil || joined.Mission.Slug != "alpha" || joined.Mission.Source != "explicit" {
 		t.Fatalf("joined row = %+v, mission=%+v", joined, joined.Mission)
 	}
+	assertMembershipCredential(t, joined)
 
 	stdout.Reset()
 	stderr.Reset()
@@ -34,6 +35,7 @@ func TestJoinAndLeaveRoundTrip(t *testing.T) {
 	if left.Event != "mission_left" || left.Mission != nil {
 		t.Fatalf("left row = %+v, mission=%+v", left, left.Mission)
 	}
+	assertMembershipCredential(t, left)
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(left.Raw, &raw); err != nil {
 		t.Fatal(err)
@@ -160,7 +162,7 @@ func setupMembershipTest(t *testing.T, state, missionSlug string) string {
 		GUID: guid, Event: "registered", State: state, Label: "worker", Role: "worker", Tool: "codex",
 	}
 	if state == v2.StateSeated {
-		rec.Seat = &v2.Seat{Kind: "herdr", TerminalID: "term_worker", PaneID: "pane_worker"}
+		rec.Seat = &v2.Seat{Kind: "herdr", TerminalID: "term_worker", PaneID: "pane_worker", CredentialGeneration: "generation-membership"}
 	}
 	if missionSlug != "" {
 		rec.Mission = &v2.Mission{Slug: missionSlug, Source: "explicit"}
@@ -175,6 +177,13 @@ func setupMembershipTest(t *testing.T, state, missionSlug string) string {
 		t.Fatalf("seed outcome=%+v err=%v", outcome, err)
 	}
 	return guid
+}
+
+func assertMembershipCredential(t *testing.T, row v2.SessionRecord) {
+	t.Helper()
+	if row.Seat == nil || row.Seat.CredentialGeneration != "generation-membership" {
+		t.Fatalf("membership rewrite stripped credential generation: %+v", row.Seat)
+	}
 }
 
 func latestMembership(t *testing.T, guid string) v2.SessionRecord {

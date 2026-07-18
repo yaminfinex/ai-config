@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strings"
@@ -99,6 +100,90 @@ func TestCompletionArmInventoryDetectsAlternateForms(t *testing.T) {
 				t.Fatalf("completionArmUsage() = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSeatRewriteWriterInventoryRequiresCarryPins(t *testing.T) {
+	files := productionInternalGoFiles(t)
+	directWant := map[string]int{
+		"cullcmd/cull.go":           1,
+		"grokbridge/binder.go":      1,
+		"lifecyclecmd/lifecycle.go": 2,
+		"liveness/apply.go":         1,
+		"missioncmd/mission.go":     1,
+		"observercmd/observer.go":   1,
+		"renamecmd/rename.go":       2,
+		"retirecmd/retire.go":       2,
+		"spawncmd/spawn.go":         1,
+	}
+	completionWant := map[string]int{
+		"adoptcmd/adopt.go":           1,
+		"credentialcmd/credential.go": 1,
+		"enrollcmd/enroll.go":         1,
+		"lifecyclecmd/lifecycle.go":   1,
+		"observercmd/observer.go":     1,
+		"reconcilecmd/reconcile.go":   1,
+		"repaircmd/repair.go":         2,
+		"sidecarcmd/sidecar.go":       1,
+		"spawncmd/spawn.go":           1,
+	}
+	assertCallInventory(t, files, "registry.UpdateLocked(", directWant)
+	assertCallInventory(t, files, "seatcompletion.Request{", completionWant)
+	assertCallInventory(t, files, "registry.Append(", map[string]int{})
+	assertCallInventory(t, files, "registry.AppendLegacySessionEvent(", map[string]int{})
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot resolve seat writer pin paths")
+	}
+	internal := filepath.Dir(filepath.Dir(thisFile))
+	pins := []struct {
+		path   string
+		marker string
+	}{
+		{path: "grokbridge/mock_grok_test.go", marker: "capability publication stripped credential generation"},
+		{path: "lifecyclecmd/lifecycle_test.go", marker: "TestLifecycleReseatCandidateCarriesCredentialGeneration"},
+		{path: "missioncmd/mission_test.go", marker: "assertMembershipCredential"},
+		{path: "observercmd/observer_test.go", marker: "observer reconfirm stripped credential generation"},
+		{path: "reconcilecmd/reconcile_test.go", marker: "TestReconcileApplyCandidateCarriesCredentialGeneration"},
+		{path: "renamecmd/rename_test.go", marker: "label transfer stripped credential generation"},
+		{path: "repaircmd/repair_test.go", marker: "instead of rotating it"},
+		{path: "sidecarcmd/sidecar_test.go", marker: "TestSidecarEnrichmentKeepsCredentialCoverage"},
+		{path: "spawncmd/spawn_test.go", marker: "spawn idempotent replay stripped"},
+		{path: "seatcompletion/completion_test.go", marker: "TestCompletionRotatesPersistedCredentialGeneration"},
+		{path: "registry/seat_carry_test.go", marker: "TestSeatedRewriteEventInventoryCarriesUnownedSeatFacts"},
+		{path: "registry/seat_carry_test.go", marker: "TestCompatibilityAppendWritersCarryCredentialGeneration"},
+		{path: "../tests/check-enroll-contract.sh", marker: `credential_generation":"[0-9a-f]`},
+		{path: "../tests/goldens/reconcile/apply_fixture.txt", marker: `credential_generation":"<GEN>`},
+	}
+	for _, pin := range pins {
+		raw, err := os.ReadFile(filepath.Join(internal, filepath.FromSlash(pin.path)))
+		if err != nil {
+			t.Fatalf("read carry pin %s: %v", pin.path, err)
+		}
+		if !strings.Contains(string(raw), pin.marker) {
+			t.Fatalf("seat rewrite carry pin %s lost marker %q", pin.path, pin.marker)
+		}
+	}
+
+	registrySource := files["registry/registry.go"]
+	for _, entryPoint := range []string{"func Append(", "func AppendLegacySessionEvent("} {
+		if strings.Count(registrySource, entryPoint) != 1 {
+			t.Fatalf("compatibility append entry point %q changed; inventory and pin its seated carry behavior", entryPoint)
+		}
+	}
+}
+
+func assertCallInventory(t *testing.T, files map[string]string, needle string, want map[string]int) {
+	t.Helper()
+	got := map[string]int{}
+	for path, source := range files {
+		if count := strings.Count(source, needle); count > 0 {
+			got[path] = count
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("production call inventory for %q = %v, want %v; add a writer carry pin before updating this inventory", needle, got, want)
 	}
 }
 

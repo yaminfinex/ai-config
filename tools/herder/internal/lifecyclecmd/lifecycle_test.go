@@ -36,6 +36,21 @@ func lifecycleCompletionFor(name, sessionID, paneID string) *seatcompletion.Engi
 	return &engine
 }
 
+func TestLifecycleReseatCandidateCarriesCredentialGeneration(t *testing.T) {
+	base := []byte(`{"kind":"session","guid":"guid-lifecycle","event":"unseated","state":"unseated","credential_generation":"generation-lifecycle","seat":{"kind":"herdr","terminal_id":"term-old","pane_id":"pane-old","credential_generation":"generation-lifecycle"}}`)
+	row, err := registry.UpdateRawObject(base, map[string]any{"terminal_id": "term-new", "pane_id": "pane-new", "status": "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := registry.SessionEventFromJSON(row, "seated", v2.StateSeated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Seat == nil || candidate.Seat.CredentialGeneration != "generation-lifecycle" {
+		t.Fatalf("lifecycle candidate stripped credential generation: %+v", candidate.Seat)
+	}
+}
+
 func configureLifecycleTest(t *testing.T, stateDir string) {
 	t.Helper()
 	mockBin := t.TempDir()

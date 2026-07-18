@@ -905,16 +905,17 @@ func V2FromRecord(rec Record, event, state, recordedAt string) v2.SessionRecord 
 	}
 	if state == v2.StateSeated {
 		out.Seat = &v2.Seat{
-			Kind:           "herdr",
-			TerminalID:     rec.TerminalID,
-			PaneID:         rec.PaneID,
-			PID:            rec.PID,
-			HcomName:       rec.HcomName,
-			HcomVerified:   rec.HcomVerified,
-			HooksBound:     rec.HooksBound != nil && *rec.HooksBound,
-			TranscriptPath: rec.TranscriptPath,
-			Namespace:      rec.HcomDir,
-			ConfirmedAt:    recordedAt,
+			Kind:                 "herdr",
+			TerminalID:           rec.TerminalID,
+			PaneID:               rec.PaneID,
+			PID:                  rec.PID,
+			HcomName:             rec.HcomName,
+			HcomVerified:         rec.HcomVerified,
+			HooksBound:           rec.HooksBound != nil && *rec.HooksBound,
+			TranscriptPath:       rec.TranscriptPath,
+			Namespace:            rec.HcomDir,
+			CredentialGeneration: rec.CredentialGeneration,
+			ConfirmedAt:          recordedAt,
 		}
 	}
 	return out

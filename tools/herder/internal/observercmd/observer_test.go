@@ -403,7 +403,7 @@ func TestReconfirmRefreshesBusIdentityFromLiveCorrelate(t *testing.T) {
 	rec := v2.SessionRecord{
 		GUID:  "guid-self",
 		State: v2.StateSeated,
-		Seat:  &v2.Seat{Kind: "herdr", PaneID: "p_old", HcomName: "poisoned-name"},
+		Seat:  &v2.Seat{Kind: "herdr", PaneID: "p_old", HcomName: "poisoned-name", CredentialGeneration: "generation-observer"},
 		SIDs:  []v2.SID{{SID: "sess-live"}},
 	}
 	joined := true
@@ -414,6 +414,9 @@ func TestReconfirmRefreshesBusIdentityFromLiveCorrelate(t *testing.T) {
 	cand := reconfirmCandidate(rec, herdrcli.Pane{PaneID: "p_new"}, bus, time.Now().UTC())
 	if cand.row.Seat == nil || cand.row.Seat.HcomName != "live-self" || cand.row.Seat.HcomVerified == nil || !*cand.row.Seat.HcomVerified {
 		t.Fatalf("reconfirmed seat = %+v, want verified live-self", cand.row.Seat)
+	}
+	if cand.row.Seat.CredentialGeneration != "generation-observer" {
+		t.Fatalf("observer reconfirm stripped credential generation: %+v", cand.row.Seat)
 	}
 	if !cand.bus.Verified || cand.bus.Name != "live-self" || cand.bus.SessionID != "sess-live" || cand.bus.PaneID != "p_new" {
 		t.Fatalf("reconfirmed candidate bus = %+v, want the live identity passed to completion", cand.bus)

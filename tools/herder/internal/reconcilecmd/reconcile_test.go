@@ -9,6 +9,7 @@ import (
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
+	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
 func TestUpdateRowMarksCarriedBusNameUnverified(t *testing.T) {
@@ -26,6 +27,21 @@ func TestUpdateRowMarksCarriedBusNameUnverified(t *testing.T) {
 	}
 	if got.HcomName != "old-name" || got.HcomVerified == nil || *got.HcomVerified {
 		t.Fatalf("updated row = %+v, want carried name explicitly unverified", got)
+	}
+}
+
+func TestReconcileApplyCandidateCarriesCredentialGeneration(t *testing.T) {
+	raw := []byte(`{"kind":"session","guid":"guid-reconcile","event":"seated","state":"seated","seat":{"kind":"herdr","terminal_id":"term-old","pane_id":"pane-old","credential_generation":"generation-reconcile"}}`)
+	updated, err := updateRow(raw, result{TerminalID: "term-new", PaneID: "pane-new", busUnavailable: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := registry.SessionEventFromJSON(updated, "seated", v2.StateSeated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Seat == nil || candidate.Seat.CredentialGeneration != "generation-reconcile" {
+		t.Fatalf("reconcile candidate stripped credential generation: %+v", candidate.Seat)
 	}
 }
 
