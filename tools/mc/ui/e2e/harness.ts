@@ -119,12 +119,26 @@ function groupPids(pgid: number): string[] {
   }
 }
 
-async function waitForServer(url: string, timeoutMs: number): Promise<void> {
+/**
+ * Readiness is a 2xx from the address AND the spawned server still alive —
+ * a 2xx alone could be someone else's server if the ephemeral port was
+ * stolen between release and bind. A lost bind exits the child, so
+ * `assertAlive` (checked each attempt and again at the 2xx) turns that
+ * steal into the honest startup failure it is instead of coupling the
+ * suite onto the thief.
+ */
+async function waitForServer(
+  url: string,
+  timeoutMs: number,
+  assertAlive: () => void,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
+    assertAlive();
     try {
       const res = await fetch(url);
       if (res.ok) {
+        assertAlive(); // the 2xx only counts as OURS with the child alive
         return;
       }
     } catch {
@@ -213,8 +227,16 @@ export async function startMc(mish: MishMode = "healthy"): Promise<McServer> {
   // of showing its honest loading state. /ui/ proves the process is serving
   // without warming caches.
   const probePath = mish === "slow" || mish === "hang" ? "/ui/" : "/api/v1/version";
+  const assertAlive = () => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `mc exited during startup (${child.signalCode ?? `code ${child.exitCode}`}) — ` +
+          `a lost port bind or a crash; any response from ${baseUrl} is not ours`,
+      );
+    }
+  };
   try {
-    await waitForServer(`${baseUrl}${probePath}`, 20_000);
+    await waitForServer(`${baseUrl}${probePath}`, 20_000, assertAlive);
   } catch (err) {
     await stop();
     throw err;

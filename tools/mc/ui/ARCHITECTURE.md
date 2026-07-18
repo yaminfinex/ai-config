@@ -85,8 +85,10 @@ component; chrome is never skinned with conditionals in a route.
 
 ## 3. The skin seam (D4 — both halves)
 
-A skin is two files' worth of difference and nothing else: a token value
-sheet (visual half) and a component set (behavioural-rendering half).
+A skin is two halves of difference and nothing else: its token values
+(the visual half) and its component set over the shared prop contracts
+(the behavioural-rendering half). What landing one mechanically touches
+is the adding-a-skin rule that closes this section.
 
 **Visual half — tokens.** Every skin defines THE SAME token names under
 its `[data-theme="<name>"]` scope in `src/skins/<name>/tokens.css`:
