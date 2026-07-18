@@ -14,9 +14,9 @@ test.beforeAll(async () => {
   degradedServer = await startMc(9321, "degraded");
 });
 
-test.afterAll(() => {
-  emptyServer.stop();
-  degradedServer.stop();
+test.afterAll(async () => {
+  await emptyServer.stop();
+  await degradedServer.stop();
 });
 
 for (const skin of allSkins) {

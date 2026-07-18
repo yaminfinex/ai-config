@@ -20,8 +20,8 @@ test.beforeAll(async () => {
   server = await startMc(9310);
 });
 
-test.afterAll(() => {
-  server.stop();
+test.afterAll(async () => {
+  await server.stop();
 });
 
 for (const skin of allSkins) {

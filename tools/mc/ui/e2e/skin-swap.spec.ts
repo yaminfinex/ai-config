@@ -15,8 +15,8 @@ test.beforeAll(async () => {
   server = await startMc(9350);
 });
 
-test.afterAll(() => {
-  server.stop();
+test.afterAll(async () => {
+  await server.stop();
 });
 
 function otherSkin(skin: SkinUnderTest): SkinUnderTest {

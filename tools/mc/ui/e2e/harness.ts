@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execSync, spawn } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
@@ -45,7 +45,8 @@ export interface McServer {
   /** Create/remove a flip file the fake upstreams check (e.g. "herder-down"). */
   flip: (name: string) => void;
   unflip: (name: string) => void;
-  stop: () => void;
+  /** Kills the WHOLE process tree and throws if any of it survives. */
+  stop: () => Promise<void>;
 }
 
 function mishDispatch(): string {
@@ -88,6 +89,18 @@ const herderSession = JSON.stringify({
   mission: { slug: "mission-one", source: "marker" },
 });
 
+/** Live PIDs in a process group; empty when the group is fully gone. */
+function groupPids(pgid: number): string[] {
+  try {
+    return execSync(`ps -o pid= -g ${pgid}`, { encoding: "utf8" })
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "");
+  } catch {
+    return []; // ps exits non-zero when the group has no processes
+  }
+}
+
 async function waitForServer(url: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -128,6 +141,10 @@ export async function startMc(port: number, mish: MishMode = "healthy"): Promise
   );
   copyFileSync(join(fixtures, "journal.jsonl"), join(tmp, "journal.jsonl"));
 
+  // detached: the server becomes its own process-group leader, so stop()
+  // can signal the WHOLE tree — mc plus whatever fake upstreams it has in
+  // flight (the hang fixture's sh+sleep would otherwise outlive the parent,
+  // reparented to PID 1, and pollute the box run after run).
   const child: ChildProcess = spawn(
     binary,
     [
@@ -143,8 +160,33 @@ export async function startMc(port: number, mish: MishMode = "healthy"): Promise
       "--herder",
       herderBin,
     ],
-    { stdio: "ignore" },
+    { stdio: "ignore", detached: true },
   );
+  const stop = async (): Promise<void> => {
+    const pid = child.pid;
+    if (pid !== undefined) {
+      try {
+        process.kill(-pid, "SIGKILL"); // the whole group, not just the parent
+      } catch {
+        // group already gone
+      }
+      // The teardown ASSERTS the tree is gone: a future leak fails the suite
+      // instead of stranding orphans on the box.
+      const deadline = Date.now() + 5_000;
+      for (;;) {
+        const alive = groupPids(pid);
+        if (alive.length === 0) {
+          break;
+        }
+        if (Date.now() > deadline) {
+          throw new Error(`mc process group ${pid} survived stop(): pids ${alive.join(", ")}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    rmSync(tmp, { recursive: true, force: true });
+  };
+
   const baseUrl = `http://127.0.0.1:${port}`;
   // The readiness probe must not touch /api in slow/hang modes: an /api probe
   // triggers a mish observation whose result the resolver caches (or, hung,
@@ -155,17 +197,14 @@ export async function startMc(port: number, mish: MishMode = "healthy"): Promise
   try {
     await waitForServer(`${baseUrl}${probePath}`, 20_000);
   } catch (err) {
-    child.kill();
+    await stop();
     throw err;
   }
   return {
     baseUrl,
     flip: (name) => writeFileSync(join(tmp, name), ""),
     unflip: (name) => rmSync(join(tmp, name), { force: true }),
-    stop: () => {
-      child.kill();
-      rmSync(tmp, { recursive: true, force: true });
-    },
+    stop,
   };
 }
 

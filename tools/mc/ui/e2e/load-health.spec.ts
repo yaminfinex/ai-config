@@ -54,7 +54,7 @@ for (const skin of allSkins) {
         await page.goto(`${hung.baseUrl}/ui/`);
         await expectListPageState(page, { loading: true });
       } finally {
-        hung.stop();
+        await hung.stop();
       }
       // Phase 2 — a slow source proves the transition: loading, then data,
       // each alone.
@@ -65,7 +65,7 @@ for (const skin of allSkins) {
         await expect(page.getByTestId("mission-row")).toHaveCount(2, { timeout: 20_000 });
         await expectListPageState(page, { rows: 2 });
       } finally {
-        server.stop();
+        await server.stop();
       }
     });
 
@@ -75,7 +75,7 @@ for (const skin of allSkins) {
       await expect(page.getByTestId("mission-row")).toHaveCount(2);
       await expectListPageState(page, { rows: 2 });
       // The backend dies out from under a loaded page.
-      server.stop();
+      await server.stop();
       // Cached truth keeps rendering — with the staleness line carrying the
       // payload's own observedAt; the failure line is NOT for this state.
       await expect(page.getByTestId("stale-warning")).toBeVisible({ timeout: 30_000 });
