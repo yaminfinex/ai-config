@@ -3,10 +3,10 @@ id: TASK-282
 title: >-
   credential DX: verbs default to self-resolution from live correlates; explicit
   --credential-file becomes the override; raw API stays explicit
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-18 12:05'
-updated_date: '2026-07-18 12:06'
+updated_date: '2026-07-18 20:46'
 labels:
   - herder
   - dx
@@ -34,7 +34,13 @@ Constraints: no evidence-class widening; no env-derived path auto-open (resoluti
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Design note covers: default-resolution semantics per verb, refusal matrix with escape hatches, the three preserved properties argued explicitly, operator story, harness deltas
-- [ ] #2 Adversarial design review (cross-family) passes before any implementation task is filed
-- [ ] #3 Owner sign-off on the boundary amendment recorded
+- [x] #1 Design note covers: default-resolution semantics per verb, refusal matrix with escape hatches, the three preserved properties argued explicitly, operator story, harness deltas
+- [x] #2 Adversarial design review (cross-family) passes before any implementation task is filed
+- [x] #3 Owner sign-off on the boundary amendment recorded
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Design-of-record merged to main at 4a91e7d (docs-only: docs/design/2026-07-18-credential-self-resolution.md, 944 lines, rev 9 + one merge-hygiene commit dropping an agent name from the header). 8 adversarial design review rounds (cross-family, codex reviewer), APPROVED at rev 9; owner sign-off recorded in chat 2026-07-18 ('ok signed off'). Deltas D1-D6 named per constraint (D3 carries a herdr process_info surface dependency: ns-inode + start-time, hard-refuse when absent; D5 applier-composition adopt recovery, no waiver; D6 bash attribution verification); fossil-row residual documented honestly (no safe removal verb; label recovery via fresh-pane enroll + rename --take-from --confirm-live). Poisoned-env harness deltas and refusal-matrix pass are in the design's disposition tables. Implementation filed as TASK-286 (settled-decisions, stop-and-report). Identifier sweep run and read before merge; docs-only gate-skip per stakes rule (not docs/specs/). Designer + reviewer seats culled at close.
+<!-- SECTION:NOTES:END -->
