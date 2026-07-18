@@ -1,7 +1,7 @@
 # Credential DX: verb-level self-resolution from live correlates
 
 - **Task:** TASK-282 (design; adversarial design review before any implementation task is cut)
-- **Date:** 2026-07-18 (rev 8, after adversarial review rounds 1–7 — reviewer-rofe; disposition maps in §12)
+- **Date:** 2026-07-18 (rev 9, after adversarial review rounds 1–8 — reviewer-rofe; disposition maps in §12)
 - **Status:** Revised draft for re-review
 - **Amends:** the double-reviewed "ambient evidence may verify but never select" boundary, per the owner-ratified direction of 2026-07-18: *"low ceremony for sane defaults, explicit at the API layer, and escape hatches."*
 
@@ -487,10 +487,13 @@ marker-off keeps today's legacy messages byte-for-byte):
   as what to run once the applier clears the seat). For the
   **`epoch_uncertain` shape specifically** — where settling may never
   come (see the residual below) — the refusal additionally names the
-  shipped label-recovery workaround: *fresh-enroll a replacement in your
-  pane, then `herder rename NEW --take-from ORPHAN --confirm-live`* (round
-  7), so the operator is never left with only "wait" when waiting cannot
-  end.
+  shipped label-recovery workaround: *open a **fresh unseated** herdr
+  pane, enroll the replacement there, then
+  `herder rename NEW --take-from ORPHAN --confirm-live`* (rounds 7–8 —
+  the fresh pane matters: plain enroll from an already-seated pane
+  resolves or refuses the *existing* seat rather than minting, so the
+  seated operator pane is a non-recovery path). The operator is never
+  left with only "wait" when waiting cannot end.
 - **`--confirm-dead` gains no new semantics.** It keeps exactly the
   meaning the existing seated/dead paths give it today; it is not a risk
   authority and cannot substitute for the applier's verdict. (The
@@ -501,14 +504,23 @@ marker-off keeps today's legacy messages byte-for-byte):
 
 **Operational recovery for the epoch-orphan (round 7 — a shipped path
 rounds 5–6 missed):** the *label* — the thing the operator actually needs
-back — is recoverable today without any death verdict and without
-touching any pane: **fresh-enroll a replacement in your own pane, then
+back — is recoverable today without any death verdict and without ever
+touching the orphan's pane: **open a fresh unseated herdr pane, enroll
+the replacement there** (a fresh pane is required — plain enroll from an
+already-seated pane resolves or refuses that pane's *existing* seat, and
+under D1 a flag-less enroll would simply re-enroll it, so the seated
+operator pane routes into a non-recovery path), **then
 `herder rename NEW --take-from ORPHAN --confirm-live`**. The rename
 transfer explicitly permits a seated source under `--confirm-live`
 (`renamecmd/rename.go:174-178`) and performs an atomic two-row label move
-— source row keeps its seat and loses only the label, target claims it —
-touching no pane (`rename.go:219-235`; pinned by
-`TestTransferAllowsConfirmedSeatedSource`). The `epoch_uncertain` refusal
+— source row keeps its seat and loses only the label, target claims it
+(`rename.go:219-235`; pinned by
+`TestTransferAllowsConfirmedSeatedSource`). The exact pane-safety
+property, stated precisely (round 8): the rename **never touches the
+orphan/source pane or its stale recorded coordinates**; its only pane
+interaction is a best-effort `syncHerdrName` of the **replacement's**
+live terminal title (`rename.go:47-55`, `286-308`) — which is the
+caller's own pane, not an epoch-stale coordinate. The `epoch_uncertain` refusal
 DX names this workaround (above), so the composition's "wait for
 settling" guidance never strands an operator whose evidence can never
 settle.
@@ -923,4 +935,10 @@ design, so rolling either direction requires no state migration.
 
 | Finding | Disposition |
 |---|---|
-| Shipped label-recovery path missed in rounds 5–6: fresh-enroll a replacement, then `herder rename NEW --take-from ORPHAN --confirm-live` (seated source explicitly permitted, `rename.go:174-178`; atomic two-row label move touching no pane, `rename.go:219-235`; pinned by `TestTransferAllowsConfirmedSeatedSource`) | Fixed (§6.1, §9, and the three repeated claims narrowed): the workaround is documented as the operational recovery for the epoch-orphan, and the `epoch_uncertain` refusal DX now names it — the operator is never left with only "wait" when settling may never come. The residual narrows to **no supported safe fossil-row unseat/removal** (the seated, now-unlabelled fossil row): `retire` refuses seated rows, cull refuses on gap without `--force`, and `--force` blindly closes at the recorded pane id. Owner-choice framing unchanged — post-restart death evidence vs a safe row-removal-only fossil verb — with the materially smaller impact stated: registry hygiene, not label recovery |
+| Shipped label-recovery path missed in rounds 5–6: enroll a replacement in a fresh unseated pane, then `herder rename NEW --take-from ORPHAN --confirm-live` (seated source explicitly permitted, `rename.go:174-178`; atomic two-row label move that never touches the orphan/source pane or its stale coordinates — its only pane interaction is best-effort `syncHerdrName` against the replacement's terminal, `rename.go:47-55`, `286-308`; pinned by `TestTransferAllowsConfirmedSeatedSource`) | Fixed (§6.1, §9, and the three repeated claims narrowed): the workaround is documented as the operational recovery for the epoch-orphan, and the `epoch_uncertain` refusal DX now names it — the operator is never left with only "wait" when settling may never come. The residual narrows to **no supported safe fossil-row unseat/removal** (the seated, now-unlabelled fossil row): `retire` refuses seated rows, cull refuses on gap without `--force`, and `--force` blindly closes at the recorded pane id. Owner-choice framing unchanged — post-restart death evidence vs a safe row-removal-only fossil verb — with the materially smaller impact stated: registry hygiene, not label recovery |
+
+### Round 8
+
+| Finding | Disposition |
+|---|---|
+| Two wording inaccuracies in the round-7 workaround: (1) "fresh-enroll in your pane" routes into a non-recovery path — plain enroll from the seated operator pane resolves/refuses the existing seat, and D1 self-resolution would re-enroll it; (2) "touching no pane" overstates — rename does best-effort `syncHerdrName` against the replacement terminal | Fixed (§6.1 both phrases + round-7 disposition row): the instruction now says open a **fresh unseated** herdr pane and enroll the replacement there, with the why stated; the pane-safety property is stated exactly — the rename never touches the **orphan/source** pane or its stale recorded coordinates, and its only pane interaction is best-effort `syncHerdrName` of the replacement's own live terminal (`rename.go:47-55`, `286-308`) |
