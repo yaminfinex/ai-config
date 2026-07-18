@@ -270,6 +270,9 @@ func TestReissueCredentialAuthenticatesWithoutRebindingIdentity(t *testing.T) {
 	if result.CredentialPath == "" || result.CredentialGeneration != after.Seat.CredentialGeneration {
 		t.Fatalf("reissue credential result=%+v seat=%+v", result, after.Seat)
 	}
+	if result.CredentialGeneration == before.Seat.CredentialGeneration {
+		t.Fatalf("reissue preserved generation %q instead of rotating it", result.CredentialGeneration)
+	}
 	if _, err := seatcred.Authenticate(path, result.CredentialPath); err != nil {
 		t.Fatalf("replacement credential does not authenticate: %v", err)
 	}
@@ -327,7 +330,10 @@ func testService(t *testing.T) (Service, string) {
 			GUID: "guid-repair", Event: "seated", State: v2.StateSeated, Label: "stable-label", Role: "worker", Tool: "codex",
 			Lineage: v2.Lineage{ForkedFrom: "parent-guid"},
 			SIDs:    []v2.SID{{SID: "sid-old", Source: v2.EvidenceHarvest, ObservedAt: "2026-07-17T00:00:00Z"}},
-			Seat:    &v2.Seat{Kind: "herdr", Node: tx.NodeID, TerminalID: "terminal-live", PaneID: "pane-live", HcomName: "bus-old", HcomVerified: &verified, Namespace: "/bus"},
+			Seat: &v2.Seat{
+				Kind: "herdr", Node: tx.NodeID, TerminalID: "terminal-live", PaneID: "pane-live",
+				HcomName: "bus-old", HcomVerified: &verified, Namespace: "/bus", CredentialGeneration: "generation-old",
+			},
 			Bindings: []v2.BindingFact{
 				{ID: "binding-seat", Field: v2.BindingFieldSeat, EvidenceClass: v2.EvidenceLiveVerified, ObservedAt: "2026-07-17T00:00:00Z", Seat: &v2.BindingSeat{Kind: "herdr", Node: tx.NodeID, TerminalID: "terminal-live", PaneID: "pane-live", Namespace: "/bus"}},
 				{ID: "binding-old-bus", Field: v2.BindingFieldHcomName, Value: "bus-old", EvidenceClass: v2.EvidenceLiveVerified, ObservedAt: "2026-07-17T00:00:00Z"},

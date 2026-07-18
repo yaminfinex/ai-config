@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strings"
@@ -99,6 +100,106 @@ func TestCompletionArmInventoryDetectsAlternateForms(t *testing.T) {
 				t.Fatalf("completionArmUsage() = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSeatRewriteWriterInventoryRequiresCarryPins(t *testing.T) {
+	files := productionInternalGoFiles(t)
+	type writerInventory struct {
+		updateLocked      int
+		completionRequest int
+		carryPin          bool
+	}
+	writers := map[string]writerInventory{
+		"adoptcmd/adopt.go":           {completionRequest: 1},
+		"credentialcmd/credential.go": {completionRequest: 1},
+		"cullcmd/cull.go":             {updateLocked: 1},
+		"enrollcmd/enroll.go":         {completionRequest: 1},
+		"grokbridge/binder.go":        {updateLocked: 1, carryPin: true},
+		"lifecyclecmd/lifecycle.go":   {updateLocked: 2, completionRequest: 1, carryPin: true},
+		"liveness/apply.go":           {updateLocked: 1},
+		"missioncmd/mission.go":       {updateLocked: 1, carryPin: true},
+		"observercmd/observer.go":     {updateLocked: 1, completionRequest: 1, carryPin: true},
+		"reconcilecmd/reconcile.go":   {completionRequest: 1, carryPin: true},
+		"renamecmd/rename.go":         {updateLocked: 2, carryPin: true},
+		"repaircmd/repair.go":         {completionRequest: 2, carryPin: true},
+		"retirecmd/retire.go":         {updateLocked: 2},
+		"sidecarcmd/sidecar.go":       {completionRequest: 1, carryPin: true},
+		"spawncmd/spawn.go":           {updateLocked: 1, completionRequest: 1, carryPin: true},
+	}
+	directWant := map[string]int{}
+	completionWant := map[string]int{}
+	for source, inventory := range writers {
+		if inventory.updateLocked > 0 {
+			directWant[source] = inventory.updateLocked
+		}
+		if inventory.completionRequest > 0 {
+			completionWant[source] = inventory.completionRequest
+		}
+	}
+	assertCallInventory(t, files, "registry.UpdateLocked(", directWant)
+	assertCallInventory(t, files, "seatcompletion.Request{", completionWant)
+	assertCallInventory(t, files, "registry.Append(", map[string]int{})
+	assertCallInventory(t, files, "registry.AppendLegacySessionEvent(", map[string]int{})
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot resolve seat writer pin paths")
+	}
+	internal := filepath.Dir(filepath.Dir(thisFile))
+	registryPins, err := os.ReadFile(filepath.Join(internal, "registry", "seat_carry_test.go"))
+	if err != nil {
+		t.Fatalf("read structural carry pins: %v", err)
+	}
+	for source, inventory := range writers {
+		if !inventory.carryPin {
+			continue
+		}
+		marker := `source: "` + source + `"`
+		if !strings.Contains(string(registryPins), marker) {
+			t.Fatalf("seat writer %s is inventory-pinned for carry but lacks a structural UpdateLocked pin", source)
+		}
+	}
+	pins := []struct {
+		path   string
+		marker string
+	}{
+		{path: "seatcompletion/completion_test.go", marker: "TestCompletionRotatesPersistedCredentialGeneration"},
+		{path: "registry/seat_carry_test.go", marker: "TestSeatedRewriteEventInventoryCarriesUnownedSeatFacts"},
+		{path: "registry/seat_carry_test.go", marker: "TestSeatedNilSeatAppendCannotErasePersistedSeat"},
+		{path: "registry/seat_carry_test.go", marker: "TestSeatRewriteWriterPinsDependOnStructuralCarry"},
+		{path: "registry/seat_carry_test.go", marker: "TestCompatibilityAppendWritersCarryCredentialGeneration"},
+		{path: "../tests/check-enroll-contract.sh", marker: `credential_generation":"[0-9a-f]`},
+		{path: "../tests/goldens/reconcile/apply_fixture.txt", marker: `credential_generation":"<GEN>`},
+	}
+	for _, pin := range pins {
+		raw, err := os.ReadFile(filepath.Join(internal, filepath.FromSlash(pin.path)))
+		if err != nil {
+			t.Fatalf("read carry pin %s: %v", pin.path, err)
+		}
+		if !strings.Contains(string(raw), pin.marker) {
+			t.Fatalf("seat rewrite carry pin %s lost marker %q", pin.path, pin.marker)
+		}
+	}
+
+	registrySource := files["registry/registry.go"]
+	for _, entryPoint := range []string{"func Append(", "func AppendLegacySessionEvent("} {
+		if strings.Count(registrySource, entryPoint) != 1 {
+			t.Fatalf("compatibility append entry point %q changed; inventory and pin its seated carry behavior", entryPoint)
+		}
+	}
+}
+
+func assertCallInventory(t *testing.T, files map[string]string, needle string, want map[string]int) {
+	t.Helper()
+	got := map[string]int{}
+	for path, source := range files {
+		if count := strings.Count(source, needle); count > 0 {
+			got[path] = count
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("production call inventory for %q = %v, want %v; add a writer carry pin before updating this inventory", needle, got, want)
 	}
 }
 

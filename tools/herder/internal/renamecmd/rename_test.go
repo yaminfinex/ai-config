@@ -13,7 +13,7 @@ import (
 
 func TestTransferMovesLabelAndPreservesLifecycleStates(t *testing.T) {
 	path := seedTransferRegistry(t,
-		v2.SessionRecord{GUID: "guid-current", State: v2.StateSeated, Label: "temporary", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_current", PaneID: "pane_current"}},
+		v2.SessionRecord{GUID: "guid-current", State: v2.StateSeated, Label: "temporary", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_current", PaneID: "pane_current", CredentialGeneration: "generation-current"}},
 		v2.SessionRecord{GUID: "guid-previous", State: v2.StateUnseated, Label: "stable"},
 	)
 	result, err := Transfer(path, "guid-current", "stable", false)
@@ -27,6 +27,9 @@ func TestTransferMovesLabelAndPreservesLifecycleStates(t *testing.T) {
 	previous := latestTransferSession(t, path, "guid-previous")
 	if current.State != v2.StateSeated || current.Label != "stable" || current.Seat == nil || current.Seat.TerminalID != "term_current" {
 		t.Fatalf("target = %+v, want seated stable target with original seat", current)
+	}
+	if current.Seat.CredentialGeneration != "generation-current" {
+		t.Fatalf("label transfer stripped credential generation: %+v", current.Seat)
 	}
 	if previous.State != v2.StateUnseated || previous.Label != "" || previous.Seat != nil {
 		t.Fatalf("source = %+v, want unseated unlabelled source", previous)
@@ -90,7 +93,7 @@ func TestTransferAllowsConfirmedSeatedSource(t *testing.T) {
 
 func TestAdoptionTransferAtomicallyUnseatsSourceAndMovesLabel(t *testing.T) {
 	path := seedTransferRegistry(t,
-		v2.SessionRecord{GUID: "guid-replacement", State: v2.StateSeated, Label: "temporary", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_replacement", PaneID: "pane_replacement"}},
+		v2.SessionRecord{GUID: "guid-replacement", State: v2.StateSeated, Label: "temporary", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_replacement", PaneID: "pane_replacement", CredentialGeneration: "generation-replacement"}},
 		v2.SessionRecord{GUID: "guid-previous", State: v2.StateSeated, Label: "stable", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_previous", PaneID: "pane_replacement"}},
 	)
 	result, err := TransferForAdoption(path, "guid-replacement", "guid-previous", "pane_replacement", AdoptionReasonSeatSuperseded)
@@ -110,6 +113,9 @@ func TestAdoptionTransferAtomicallyUnseatsSourceAndMovesLabel(t *testing.T) {
 	replacement := latestTransferSession(t, path, "guid-replacement")
 	if replacement.State != v2.StateSeated || replacement.Label != "stable" || replacement.Seat == nil {
 		t.Fatalf("target = %+v, want seated stable replacement", replacement)
+	}
+	if replacement.Seat.CredentialGeneration != "generation-replacement" {
+		t.Fatalf("adoption transfer stripped credential generation: %+v", replacement.Seat)
 	}
 	data := mustReadTransferFile(t, path)
 	if !strings.Contains(data, `"event":"adoption_source_released"`) || !strings.Contains(data, `"event":"label_transferred"`) {

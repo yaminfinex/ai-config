@@ -659,9 +659,10 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 			return row, false, nil
 		}
 		row = carryRegisteredFields(row, *current)
-		if sameProjectedSession(row, *current) {
-			return row, false, nil
-		}
+	}
+	row = carrySeatedSuccessorFacts(row, *current)
+	if row.Event == "registered" && sameProjectedSession(row, *current) {
+		return row, false, nil
 	}
 	if err := validateSeatedBindingTransition(current, row); err != nil {
 		return row, false, err
@@ -1055,7 +1056,6 @@ func isLegacyV1SessionAppend(row v2.SessionRecord) bool {
 }
 
 func carryRegisteredFields(row, current v2.SessionRecord) v2.SessionRecord {
-	carriedHcomName := current.Seat != nil && current.Seat.HcomName != "" && (row.Seat == nil || row.Seat.HcomName == "")
 	if row.Seat == nil {
 		row.State = current.State
 	}
@@ -1076,17 +1076,24 @@ func carryRegisteredFields(row, current v2.SessionRecord) v2.SessionRecord {
 		row.Provenance = current.Provenance
 	}
 	row.Capabilities = carryCapabilities(row.Capabilities, current.Capabilities)
-	row.Seat = mergeSeatFields(row.Seat, current.Seat)
-	if carriedHcomName && row.Seat != nil {
-		verified := false
-		row.Seat.HcomVerified = &verified
-	}
 	return row
 }
 
-func mergeSeatFields(patch, current *v2.Seat) *v2.Seat {
+type seatFieldOwnership int
+
+const (
+	seatFieldsPartialSnapshot seatFieldOwnership = iota
+	seatFieldsCanonicalReseat
+)
+
+func mergeSeatFieldsWithOwnership(patch, current *v2.Seat, ownership seatFieldOwnership) *v2.Seat {
 	if patch == nil {
-		return cloneSeat(current)
+		seat := cloneSeat(current)
+		if ownership == seatFieldsPartialSnapshot && seat != nil && seat.HcomName != "" {
+			verified := false
+			seat.HcomVerified = &verified
+		}
+		return seat
 	}
 	if current == nil {
 		seat := cloneSeat(patch)
@@ -1094,33 +1101,69 @@ func mergeSeatFields(patch, current *v2.Seat) *v2.Seat {
 		return seat
 	}
 	seat := *current
-	if patch.Kind != "" {
+	// Seat field ownership for seated-to-seated rewrites:
+	//
+	//   canonical re-seat owned (including explicit zero values): kind, node,
+	//     terminal_id, pane_id, pid, hcom_name, hcom_verified, namespace
+	//   partial-snapshot owned when present: the same fields
+	//   candidate-owned when present: hcom_epoch, herdr_epoch, confirmed_at
+	//   observation-owned when affirmative/present: hooks_bound, transcript_path
+	//   completion-owned when nonempty: credential_generation
+	//
+	// Every other value is carried from the persisted seat. In particular,
+	// absence is never a request to clear a durable fact except on the explicit
+	// canonical re-seat surface, where coordinates and bus identity are a complete
+	// replacement and omissions must reach validation rather than resurrect stale
+	// values. Clearing credentials is a lifecycle operation that unseats the
+	// session. hooks_bound may advance to true, but a missing/false observation
+	// cannot erase prior positive proof; transcript_path likewise advances only
+	// with a concrete observed path.
+	// Starting from current makes carry-forward the default for future seat facts:
+	// a new field cannot be silently stripped before its ownership is designed.
+	if ownership == seatFieldsCanonicalReseat {
 		seat.Kind = patch.Kind
-	}
-	if patch.Node != "" {
 		seat.Node = patch.Node
-	}
-	if patch.TerminalID != "" {
 		seat.TerminalID = patch.TerminalID
-	}
-	if patch.PaneID != "" {
 		seat.PaneID = patch.PaneID
-	}
-	if patch.PID != 0 {
 		seat.PID = patch.PID
-	}
-	if patch.HcomName != "" {
 		seat.HcomName = patch.HcomName
-		if patch.HcomVerified == nil {
-			verified := false
-			seat.HcomVerified = &verified
+		seat.HcomVerified = patch.HcomVerified
+		seat.Namespace = patch.Namespace
+	} else {
+		if patch.Kind != "" {
+			seat.Kind = patch.Kind
+		}
+		if patch.Node != "" {
+			seat.Node = patch.Node
+		}
+		if patch.TerminalID != "" {
+			seat.TerminalID = patch.TerminalID
+		}
+		if patch.PaneID != "" {
+			seat.PaneID = patch.PaneID
+		}
+		if patch.PID != 0 {
+			seat.PID = patch.PID
+		}
+		if patch.HcomName != "" {
+			seat.HcomName = patch.HcomName
+			if patch.HcomVerified == nil {
+				verified := false
+				seat.HcomVerified = &verified
+			}
+		}
+		if patch.HcomVerified != nil {
+			seat.HcomVerified = patch.HcomVerified
+		}
+		if patch.Namespace != "" {
+			seat.Namespace = patch.Namespace
 		}
 	}
-	if patch.HcomVerified != nil {
-		seat.HcomVerified = patch.HcomVerified
+	if patch.HooksBound {
+		seat.HooksBound = true
 	}
-	if patch.Namespace != "" {
-		seat.Namespace = patch.Namespace
+	if patch.TranscriptPath != "" {
+		seat.TranscriptPath = patch.TranscriptPath
 	}
 	if patch.HcomEpoch != "" {
 		seat.HcomEpoch = patch.HcomEpoch
@@ -1128,10 +1171,33 @@ func mergeSeatFields(patch, current *v2.Seat) *v2.Seat {
 	if patch.HerdrEpoch != "" {
 		seat.HerdrEpoch = patch.HerdrEpoch
 	}
+	if patch.CredentialGeneration != "" {
+		seat.CredentialGeneration = patch.CredentialGeneration
+	}
 	if patch.ConfirmedAt != "" {
 		seat.ConfirmedAt = patch.ConfirmedAt
 	}
+	if ownership == seatFieldsPartialSnapshot && current.HcomName != "" && patch.HcomName == "" {
+		verified := false
+		seat.HcomVerified = &verified
+	}
 	return &seat
+}
+
+// carrySeatedSuccessorFacts is the structural fence for every rewrite of a
+// live seat, independent of the event or caller that produced the candidate.
+// Intentional unseat/retire transitions bypass it because their final state is
+// not seated and their seat must remain nil.
+func carrySeatedSuccessorFacts(row, current v2.SessionRecord) v2.SessionRecord {
+	if current.State != v2.StateSeated || row.State != v2.StateSeated {
+		return row
+	}
+	ownership := seatFieldsCanonicalReseat
+	if row.Event == "registered" {
+		ownership = seatFieldsPartialSnapshot
+	}
+	row.Seat = mergeSeatFieldsWithOwnership(row.Seat, current.Seat, ownership)
+	return row
 }
 
 func defaultSeatVerification(seat *v2.Seat) {
@@ -1192,8 +1258,7 @@ func carrySeatFields(row, current v2.SessionRecord) v2.SessionRecord {
 	row.Tool = firstNonEmpty(row.Tool, current.Tool)
 	row = carryPiFacts(row, current)
 	row.State = current.State
-	row.Seat = cloneSeat(current.Seat)
-	if row.Seat == nil && current.LegacyV1 {
+	if row.Seat == nil && current.Seat == nil && current.LegacyV1 {
 		legacy, _ := DecodeLegacyV1Raw(current)
 		if legacy.PaneID != "" || legacy.TerminalID != "" || legacy.HcomName != "" || legacy.HcomDir != "" {
 			row.State = v2.StateSeated
@@ -1285,6 +1350,7 @@ func sameSeatFields(a, b *v2.Seat) bool {
 		a.Namespace == b.Namespace &&
 		a.HcomEpoch == b.HcomEpoch &&
 		a.HerdrEpoch == b.HerdrEpoch &&
+		a.CredentialGeneration == b.CredentialGeneration &&
 		a.ConfirmedAt == b.ConfirmedAt
 }
 

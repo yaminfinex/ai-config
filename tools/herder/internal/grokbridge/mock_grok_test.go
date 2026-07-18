@@ -977,6 +977,7 @@ func seedGrokRegistryRow(t *testing.T, state, seat, sessionID string) {
 			{
 				Kind: v2.KindSession, GUID: seat, Event: "registered", RecordedAt: "2026-07-13T00:00:00Z", State: v2.StateSeated,
 				Label: "grok-seat", Role: "worker", Tool: "grok", SIDs: []v2.SID{{SID: sessionID}}, Provenance: v2.Provenance{ToolSessionID: sessionID},
+				Seat: &v2.Seat{Kind: "herdr", TerminalID: "terminal-grok", PaneID: "pane-grok", CredentialGeneration: "generation-grok"},
 			},
 			{
 				Kind: v2.KindSession, GUID: "foreign-seat", Event: "registered", RecordedAt: "2026-07-13T00:00:01Z", State: v2.StateSeated,
@@ -1025,6 +1026,9 @@ func waitForWakeCapability(t *testing.T, state, seat, wake string, pending, unde
 		if err == nil {
 			latest := registry.V2ByGUID(projection, seat)
 			if latest != nil && latest.Capabilities != nil && latest.Capabilities.Wake == wake && latest.Capabilities.Pending == pending && latest.Capabilities.Undeliverable == undeliverable {
+				if latest.State == v2.StateSeated && (latest.Seat == nil || latest.Seat.CredentialGeneration != "generation-grok") {
+					t.Fatalf("capability publication stripped credential generation: %+v", latest.Seat)
+				}
 				if wake == "down" && (latest.Capabilities.Bus != "" || latest.Capabilities.BinderPID != 0) {
 					t.Fatalf("down capability retained live claims: %+v", latest.Capabilities)
 				}

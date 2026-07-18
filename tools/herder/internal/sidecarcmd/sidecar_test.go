@@ -495,6 +495,40 @@ func TestSidecarAcceptsNoopAfterCanonicalCompletionIsVerified(t *testing.T) {
 	}
 }
 
+func TestSidecarEnrichmentKeepsCredentialCoverage(t *testing.T) {
+	installFakeHerdrForSidecar(t, 0)
+	registryPath := filepath.Join(t.TempDir(), "registry.jsonl")
+	verified := true
+	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{
+			GUID: "guid-carry-sidecar", Event: "seated", State: v2.StateSeated, Label: "worker", Role: "worker", Tool: "codex",
+			Seat: &v2.Seat{
+				Kind: "herdr", Node: tx.NodeID, TerminalID: "term_TEST", PaneID: "p_child",
+				HcomName: "worker-mine", HcomVerified: &verified, Namespace: "/hcom", CredentialGeneration: "generation-before-sidecar",
+			},
+		}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := registry.SingleOutcome(outcomes); err != nil || outcome.Err() != nil {
+		t.Fatalf("seed outcome=%+v err=%v", outcome, err)
+	}
+	t.Setenv("HERDER_GUID", "guid-carry-sidecar")
+	t.Setenv("HERDER_ROLE", "worker")
+	t.Setenv("HERDER_LABEL", "worker")
+	t.Setenv("HCOM_DIR", "/hcom")
+	s := &sidecar{tool: "codex", paneID: "p_child", cwd: "/repo", registry: registryPath, completeSeat: testSeatCompletion(t)}
+	row := &hcomRow{Name: "worker-mine", Tool: "codex", Directory: "/repo", Status: "listening", LaunchContext: launchContext("p_child", "")}
+	if !s.appendEnrichment(row) {
+		t.Fatal("sidecar enrichment did not complete")
+	}
+	latest := registry.V2ByGUID(mustSidecarProjection(t, registryPath), "guid-carry-sidecar")
+	if latest == nil || latest.Seat == nil || latest.Seat.CredentialGeneration == "" {
+		t.Fatalf("sidecar enrichment stripped credential coverage: %+v", latest)
+	}
+}
+
 func TestSidecarRunCompletesLateEmptyCoordinateRowWithinSteadyPoll(t *testing.T) {
 	installFakeHerdrForSidecar(t, 0)
 	installFakeHcomRosterForSidecar(t, `[{"name":"worker-mine","base_name":"mine","tool":"codex","tag":"worker","directory":"/repo","status":"listening","session_id":"","launch_context":{}}]`)

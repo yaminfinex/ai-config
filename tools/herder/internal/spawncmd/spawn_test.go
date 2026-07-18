@@ -883,13 +883,20 @@ func TestSidecarCompletionConvergesWithSpawnBindAndNoopReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	count := 0
+	credentialGeneration := ""
 	for _, session := range projection.Sessions() {
 		if session.GUID == record.GUID {
 			count++
+			if session.Seat != nil {
+				credentialGeneration = session.Seat.CredentialGeneration
+			}
 		}
 	}
 	if count != 1 {
 		t.Fatalf("canonical rows for %s = %d, want one after noop replay", record.GUID, count)
+	}
+	if credentialGeneration == "" {
+		t.Fatal("spawn idempotent replay stripped the canonical credential generation")
 	}
 }
 
