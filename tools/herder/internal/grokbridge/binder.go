@@ -42,21 +42,22 @@ type BinderConfig struct {
 }
 
 type Binder struct {
-	cfg         BinderConfig
-	journal     *Journal
-	generation  uint64
-	lock        *os.File
-	listener    net.Listener
-	socket      string
-	mu          sync.Mutex
-	taps        map[net.Conn]struct{}
-	drainMu     sync.Mutex
-	capMu       sync.Mutex
-	identityMu  sync.Mutex
-	retiring    atomic.Bool
-	retireOnce  sync.Once
-	retired     chan struct{}
-	afterAppend func(int, Receipt) error
+	cfg           BinderConfig
+	journal       *Journal
+	generation    uint64
+	lock          *os.File
+	listener      net.Listener
+	socket        string
+	mu            sync.Mutex
+	taps          map[net.Conn]struct{}
+	drainMu       sync.Mutex
+	capMu         sync.Mutex
+	identityMu    sync.Mutex
+	activeClients atomic.Int64
+	retiring      atomic.Bool
+	retireOnce    sync.Once
+	retired       chan struct{}
+	afterAppend   func(int, Receipt) error
 }
 
 func SeatDir(stateDir, seat string) string { return filepath.Join(stateDir, "grok", seat) }
@@ -337,6 +338,8 @@ func (b *Binder) acceptLoop(ctx context.Context) error {
 
 func (b *Binder) handle(c net.Conn) {
 	defer c.Close()
+	b.activeClients.Add(1)
+	defer b.activeClients.Add(-1)
 	var req Request
 	if err := json.NewDecoder(bufio.NewReader(c)).Decode(&req); err != nil {
 		return
@@ -385,8 +388,12 @@ func (b *Binder) execute(req Request) Response {
 			wake = "armed"
 		}
 		b.mu.Unlock()
-		r.Status = &BridgeStatus{PID: os.Getpid(), Bus: b.cfg.BusName, Wake: wake, Pending: len(pending)}
-	case "retire":
+		clients := int(b.activeClients.Load())
+		if clients > 0 {
+			clients-- // exclude this status request itself
+		}
+		r.Status = &BridgeStatus{PID: os.Getpid(), Bus: b.cfg.BusName, Wake: wake, Pending: len(pending), Clients: clients}
+	case "quiesce", "retire":
 		b.retiring.Store(true)
 		_, err := b.journal.RetireUnacked(req.Generation)
 		if err != nil {

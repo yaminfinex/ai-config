@@ -494,6 +494,8 @@ func startGrokBridge(plan grokLaunchPlan, manual bool) (string, error) {
 	args := []string{"grok", "bridge", "--seat", plan.Seat, "--state-dir", plan.StateDir, "--hcom-bin", plan.HcomBin, "--session-id", plan.SessionID, "--supervise"}
 	if manual {
 		args = append(args, "--retire-on-stop")
+	} else if plan.Mode == "launch" {
+		args = append(args, "--complete-seat", "--lifecycle-mode", plan.Mode)
 	}
 	if plan.HcomDir != "" {
 		args = append(args, "--hcom-dir", plan.HcomDir)

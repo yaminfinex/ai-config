@@ -154,6 +154,27 @@ func TestCompletionInfrastructureFailurePreservesLiveChild(t *testing.T) {
 	}
 }
 
+func TestGrokCompletionRefusalNamesBridgeSupervisorAndPromptHandoff(t *testing.T) {
+	client := &scriptedSpawnClient{responses: []spawnResponse{{
+		want: "pane process_info p_grok", out: []byte(`{"result":{"process_info":{"foreground_processes":[{"pid":4242,"argv":["grok"]}]}}}`),
+	}}}
+	var stderr strings.Builder
+	r := &runner{herdr: client, stderr: &stderr, opts: options{Agent: "grok"}, pendingPrompt: true}
+	if code := r.handleSeatCompletionFailure("seat completion refused [joined_bus_row_missing]", "p_grok", "term_grok", "bound"); code != 1 {
+		t.Fatalf("handleSeatCompletionFailure()=%d", code)
+	}
+	assertSpawnScriptConsumed(t, client)
+	got := stderr.String()
+	for _, want := range []string{"its bridge supervisor", "complete the seat AND deliver the pending initial prompt automatically"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Grok refusal=%q, want %q", got, want)
+		}
+	}
+	if strings.Contains(got, "its sidecar") {
+		t.Fatalf("Grok refusal retained false sidecar promise: %q", got)
+	}
+}
+
 func TestNoopCompletionIsSuccessfulReplay(t *testing.T) {
 	r := &runner{}
 	handled, code := r.handleIncompleteSeatCompletion(seatcompletion.Result{Status: registry.WriteNoop}, nil, "p_new", "term_new", "ready")

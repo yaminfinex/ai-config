@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/continuationstate"
+	"ai-config/tools/herder/internal/grokbridge"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/hookcmd"
@@ -238,6 +239,12 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 	flags = append(flags, epochFlags(proj, hd)...)
 	flags = append(flags, continuationFailureFlags(proj, stateDir, stderr)...)
 	summary := applyCandidates(registryPath, cands, stderr)
+	bridgeFindings, sweepErr := grokbridge.SweepOrphanSupervisors(registryPath, now, durationEnv("HERDER_GROK_ORPHAN_GRACE", grokbridge.DefaultOrphanGrace))
+	if sweepErr != nil {
+		fmt.Fprintf(stderr, "herder observer: Grok bridge orphan sweep failed: %v\n", sweepErr)
+	} else {
+		flags = append(flags, grokBridgeFlags(bridgeFindings)...)
+	}
 	deliverDoctrine(doctrine, st.DoctrineDeliveries, sendDoctrine, now)
 	for _, rec := range sessions {
 		if rec.State == v2.StateSeated && rec.Seat != nil {
@@ -250,6 +257,18 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 		return sweepResult{}, err
 	}
 	return sweepResult{Status: st, Candidates: len(cands)}, nil
+}
+
+func grokBridgeFlags(findings []grokbridge.SweepFinding) []observerstatus.Flag {
+	flags := make([]observerstatus.Flag, 0, len(findings))
+	for _, finding := range findings {
+		flags = append(flags, observerstatus.Flag{
+			GUID: finding.Seat, Type: finding.Type, Severity: finding.Severity, CauseClass: finding.CauseClass,
+			Detail: finding.Detail, Suggested: finding.Suggested, ObservedAt: finding.ObservedAt,
+			ObservedVia: append([]string(nil), finding.ObservedVia...),
+		})
+	}
+	return flags
 }
 
 // Receipt loss or status rotation deliberately fails toward re-delivery: informational doctrine spam is safer than silence.

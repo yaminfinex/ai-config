@@ -1215,13 +1215,29 @@ func RetireGrokForCull(registryPath, guid string) (int, error) {
 	if sessionID == "" {
 		return 0, fmt.Errorf("Grok cull retirement refused for %s: owning session id is absent; repair the registry identity before retrying", guid)
 	}
-	retired, err := grokBridgeCall(filepath.Dir(registryPath), guid, sessionID, "retire")
+	retired, err := grokBridgeCall(filepath.Dir(registryPath), guid, sessionID, "quiesce")
 	if err != nil {
 		offlineRetired, offlineErr := grokbridge.RetireOffline(filepath.Dir(registryPath), guid)
 		if offlineErr != nil {
 			return 0, fmt.Errorf("retire Grok seat bridge for %s: socket unavailable (%v); offline convergence refused: %w", guid, err, offlineErr)
 		}
 		retired.Retired = offlineRetired
+	} else {
+		processes, discoverErr := grokbridge.DiscoverSupervisors(filepath.Dir(registryPath))
+		hasSupervisor := discoverErr != nil
+		for _, process := range processes {
+			if process.Seat == guid {
+				hasSupervisor = true
+				break
+			}
+		}
+		if !hasSupervisor {
+			closed, closeErr := grokBridgeCall(filepath.Dir(registryPath), guid, sessionID, "retire")
+			if closeErr != nil {
+				return 0, fmt.Errorf("stop unsupervised Grok binder for %s after quiesce: %w", guid, closeErr)
+			}
+			retired = closed
+		}
 	}
 	alreadyRecorded := false
 	outcomes, err := registry.UpdateLocked(registryPath, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {

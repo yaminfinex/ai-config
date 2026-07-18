@@ -333,11 +333,15 @@ func (r *runner) failAfterLaunch(reason, paneID, terminalID string) int {
 
 func (r *runner) handleSeatCompletionFailure(reason, paneID, terminalID, readyReason string) int {
 	if r.spawnOccupantState(paneID) != occupantAbsent {
+		completionOwner := "its sidecar"
+		if r.opts.Agent == "grok" {
+			completionOwner = "its bridge supervisor"
+		}
 		recovery := "complete the seat automatically"
 		if r.pendingPrompt {
 			recovery = "complete the seat AND deliver the pending initial prompt automatically"
 		}
-		die(r.stderr, fmt.Sprintf("%s; bind status: %s; no registry row was appended and the child pane remains running because occupant death was not proven. Once the child has joined hcom, its sidecar will %s; manual recovery is `herder enroll` from pane %s", reason, readyReason, recovery, paneID))
+		die(r.stderr, fmt.Sprintf("%s; bind status: %s; no registry row was appended and the child pane remains running because occupant death was not proven. Once the child has joined hcom, %s will %s; manual recovery is `herder enroll` from pane %s", reason, readyReason, completionOwner, recovery, paneID))
 		return 1
 	}
 	return r.failAfterLaunch(reason, paneID, terminalID)
@@ -1154,17 +1158,24 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		}
 	}
 	rootExport := " AI_CONFIG_ROOT=" + shellquote.Quote(childEnvRoot) + " HERDER_STATE_DIR=" + shellquote.Quote(stateDir)
+	missionEnv := ""
+	if opts.Agent == "grok" && mission != nil {
+		missionEnv = " HERDER_MISSION_SLUG=" + shellquote.Quote(mission.Slug) + " HERDER_MISSION_SOURCE=" + shellquote.Quote(mission.Source)
+	}
 	argv := []string{}
 	if opts.LoginShell {
 		innerCmd := shellCommand(launchTokens)
-		inner := fmt.Sprintf("%sexport HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s%s%s%s; exec %s",
-			misePathFix, shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(childEnvBin), rootExport, hcomEnv, grokEnv, innerCmd)
+		inner := fmt.Sprintf("%sexport HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s%s%s%s%s; exec %s",
+			misePathFix, shellquote.Quote(guid), shellquote.Quote(opts.Role), shellquote.Quote(label), shellquote.Quote(spawnedBy), shellquote.Quote(childEnvBin), rootExport, hcomEnv, grokEnv, missionEnv, innerCmd)
 		argv = []string{opts.LoginShellBin, "-lic", inner}
 	} else {
 		// The env form has no shell, so it gets the spawner herder pin but not
 		// the mise shims PATH fix (that one needs runtime expansion).
 		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SPAWNED_BY=" + spawnedBy, "HERDER_BIN=" + childEnvBin}
 		argv = append(argv, "AI_CONFIG_ROOT="+childEnvRoot, "HERDER_STATE_DIR="+stateDir)
+		if opts.Agent == "grok" && mission != nil {
+			argv = append(argv, "HERDER_MISSION_SLUG="+mission.Slug, "HERDER_MISSION_SOURCE="+mission.Source)
+		}
 		if isHcomAgent {
 			argv = append(argv, "HCOM_DIR="+hcomDirEff, "PATH="+agentPathValue(r.paths.ShimsDir, os.Getenv("PATH"), opts.Agent, r.piBinDir))
 		}
