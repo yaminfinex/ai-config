@@ -37,8 +37,13 @@ function payload(missions: Mission[], warning = ""): MissionsPayload {
 }
 
 describe("missionListVM", () => {
-  it("renders nothing before the payload arrives — no fabricated rows", () => {
-    expect(missionListVM(undefined)).toEqual({ rows: [], warning: null });
+  it("renders nothing before the payload arrives — no fabricated rows, no empty claim", () => {
+    expect(missionListVM(undefined)).toEqual({
+      rows: [],
+      warning: null,
+      empty: false,
+      observedAt: null,
+    });
   });
 
   it("sorts rows by slug", () => {
@@ -51,6 +56,21 @@ describe("missionListVM", () => {
   it("surfaces list-level degradation as a warning, empty string as null", () => {
     expect(missionListVM(payload([], "mish unreachable")).warning).toBe("mish unreachable");
     expect(missionListVM(payload([])).warning).toBeNull();
+  });
+
+  it("degraded is NOT empty: zero rows behind a warning claims nothing", () => {
+    const degraded = missionListVM(payload([], "mish unreachable"));
+    expect(degraded.empty).toBe(false);
+    expect(degraded.warning).toBe("mish unreachable");
+  });
+
+  it("empty only when healthily observed with zero missions", () => {
+    expect(missionListVM(payload([])).empty).toBe(true);
+    expect(missionListVM(payload([mission()])).empty).toBe(false);
+  });
+
+  it("carries the payload's own observation time for the staleness law", () => {
+    expect(missionListVM(payload([])).observedAt).toBe("2026-07-18T12:00:00Z");
   });
 });
 

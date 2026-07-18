@@ -233,6 +233,30 @@ renders as absence, and no blank error page stands in for a partially
 degraded payload. Inventing provenance, or presenting a stale observation
 as current, is a rejection — `observedAt` is what the server says it is.
 
+**Degraded is not empty.** An empty claim ("no missions", "no agents")
+asserts an observed zero, and only a healthy observation can assert one:
+the claim is derived in the view-model, true only when the section was
+observed without a warning and returned zero rows. Zero rows behind a
+warning is an unobservable source, not a known zero. Skins render the
+VM's empty flags; a skin computing emptiness from row counts is a
+rejection.
+
+**Load health is two situations, never one.** Fatal-no-data (the fetch
+failed and nothing is cached) renders a failure line, not a healthy
+blank or an eternal loading state (`view-models/load-failure.ts`).
+Cached-but-unverified (a payload is cached while the entity refetch OR
+the version poll is failing) keeps presenting the cached data — truth
+outranks blankness — but must mark it with a staleness warning carrying
+the cached payload's own provenance `observedAt`
+(`view-models/staleness.ts`). The version poll's own errors are part of
+this contract: the invalidation hook surfaces its poll health, because a
+dead invalidation channel means cached data can no longer be verified as
+current. Swallowing either channel's errors presents stale data as
+current and is a rejection. The render precedence — failure > loading >
+empty claim > data (with staleness beside the data) — is VM-boundary law
+with specs (`render-contract.test.ts`); the per-skin on-screen proof
+lands with the flow suite.
+
 ## 7. Routing
 
 The route table in `router.tsx` is code-based, typed, and the registry

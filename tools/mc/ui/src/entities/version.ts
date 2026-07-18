@@ -93,10 +93,20 @@ export function applyVersionStamps(
   return true;
 }
 
-export function useVersionInvalidation(scope: VersionScope): void {
+export interface VersionInvalidation {
+  /**
+   * The poll's own health, surfaced: when the invalidation contract itself is
+   * unreachable, cached entity data can no longer be verified as current, and
+   * the page must say so (the staleness law, view-models/staleness.ts).
+   * Swallowing this error would present stale data as current — a rejection.
+   */
+  pollError: Error | null;
+}
+
+export function useVersionInvalidation(scope: VersionScope): VersionInvalidation {
   const queryClient = useQueryClient();
   const slug = scope.kind === "mission" ? scope.slug : null;
-  const { data, dataUpdatedAt } = useQuery({
+  const { data, dataUpdatedAt, error } = useQuery({
     queryKey: slug === null ? (["version"] as const) : (["version", slug] as const),
     queryFn: () => getJSON<VersionStamps>(versionUrl(scope)),
     refetchInterval: VERSION_POLL_MS,
@@ -114,4 +124,5 @@ export function useVersionInvalidation(scope: VersionScope): void {
       data,
     );
   }, [data, dataUpdatedAt, queryClient, slug]);
+  return { pollError: error };
 }

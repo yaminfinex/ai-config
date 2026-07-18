@@ -5,6 +5,7 @@ export function TerminalMissionDetailView({
   vm,
   loading,
   failure,
+  stale,
   activeThreadId,
   onToggleThread,
 }: MissionDetailViewProps) {
@@ -28,6 +29,11 @@ export function TerminalMissionDetailView({
             {vm.facts !== null && <span data-testid="mission-facts">{vm.facts}</span>}
             {vm.facts !== null && vm.taskSummary !== null && " "}
             {vm.taskSummary !== null && <span data-testid="task-summary">[{vm.taskSummary}]</span>}
+          </p>
+        )}
+        {stale !== null && (
+          <p data-testid="stale-warning" className="text-warn">
+            ▲ {stale}
           </p>
         )}
         {vm.warnings.map((warning) => (
@@ -66,7 +72,7 @@ export function TerminalMissionDetailView({
 
       <section aria-label="threads" className="space-y-1">
         <h2 className="uppercase tracking-widest text-quiet">threads</h2>
-        {vm.threads.length === 0 && (
+        {vm.threadsEmpty && (
           <p data-testid="threads-empty" className="text-quiet">
             (no threads)
           </p>
@@ -92,7 +98,7 @@ export function TerminalMissionDetailView({
             ▲ {vm.rosterWarning}
           </p>
         )}
-        {vm.agents.length === 0 && (
+        {vm.crewEmpty && (
           <p data-testid="crew-empty" className="text-quiet">
             (no agents)
           </p>

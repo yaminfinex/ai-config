@@ -6,6 +6,7 @@ export function MinimalMissionListView({
   vm,
   loading,
   failure,
+  stale,
   onOpenMission,
 }: MissionListViewProps) {
   if (failure !== null) {
@@ -21,12 +22,17 @@ export function MinimalMissionListView({
   return (
     <div className="mx-auto max-w-2xl space-y-4 p-6">
       <h1 className="text-lg font-semibold">missions</h1>
+      {stale !== null && (
+        <p data-testid="stale-warning" className="font-fact text-sm text-warn">
+          ▲ {stale}
+        </p>
+      )}
       {vm.warning !== null && (
         <p data-testid="list-warning" className="font-fact text-sm text-warn">
           ▲ {vm.warning}
         </p>
       )}
-      {vm.rows.length === 0 && (
+      {vm.empty && (
         <p data-testid="missions-empty" className="font-fact text-sm text-quiet">
           no missions
         </p>

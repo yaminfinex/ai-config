@@ -18,14 +18,29 @@ export interface MissionListVM {
   rows: MissionRowVM[];
   /** List-level degradation (mish unreachable etc.); null = healthy. */
   warning: string | null;
+  /**
+   * The empty claim — degraded is NOT empty: true only when the source was
+   * healthily observed and returned zero missions. Zero rows behind a warning
+   * is an unobservable source, not a known zero. Skins render this flag and
+   * never compute emptiness themselves.
+   */
+  empty: boolean;
+  /** The cached payload's own observation time; null before any payload. */
+  observedAt: string | null;
 }
 
 export function missionListVM(payload: MissionsPayload | undefined): MissionListVM {
   if (!payload) {
-    return { rows: [], warning: null };
+    return { rows: [], warning: null, empty: false, observedAt: null };
   }
   const rows = [...payload.missions].sort((a, b) => a.slug.localeCompare(b.slug)).map(missionRowVM);
-  return { rows, warning: payload.warning === "" ? null : payload.warning };
+  const warning = payload.warning === "" ? null : payload.warning;
+  return {
+    rows,
+    warning,
+    empty: warning === null && rows.length === 0,
+    observedAt: payload.provenance.observedAt,
+  };
 }
 
 export function missionRowVM(mission: Mission): MissionRowVM {

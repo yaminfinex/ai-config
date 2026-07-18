@@ -6,13 +6,14 @@ import { useSkin } from "@/skins/index";
 import { useWorkingSet } from "@/stores/working-set";
 import { loadFailure } from "@/view-models/load-failure";
 import { missionDetailVM } from "@/view-models/mission-detail";
+import { stalenessWarning } from "@/view-models/staleness";
 
 export function MissionPage() {
   const skin = useSkin();
   // from-string form, not missionRoute.useParams(): importing the router
   // from a route component would close an ESM cycle (router → page → router).
   const { slug } = useParams({ from: "/mission/$slug" });
-  useVersionInvalidation({ kind: "mission", slug });
+  const { pollError } = useVersionInvalidation({ kind: "mission", slug });
   const wsNavigate = useWorkingSet((state) => state.navigate);
   const activeThreadId = useWorkingSet((state) => state.thread?.id ?? null);
   const toggleThread = useWorkingSet((state) => state.toggleThread);
@@ -26,6 +27,7 @@ export function MissionPage() {
       vm={vm}
       loading={isPending}
       failure={loadFailure(error, data !== undefined)}
+      stale={stalenessWarning(vm?.observedAt ?? null, error, pollError)}
       activeThreadId={activeThreadId}
       onToggleThread={toggleThread}
     />

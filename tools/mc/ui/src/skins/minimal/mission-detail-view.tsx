@@ -7,6 +7,7 @@ export function MinimalMissionDetailView({
   vm,
   loading,
   failure,
+  stale,
   activeThreadId,
   onToggleThread,
 }: MissionDetailViewProps) {
@@ -31,6 +32,11 @@ export function MinimalMissionDetailView({
             {vm.taskSummary !== null && <span data-testid="task-summary">{vm.taskSummary}</span>}
           </p>
         )}
+        {stale !== null && (
+          <p data-testid="stale-warning" className="font-fact text-sm text-warn">
+            ▲ {stale}
+          </p>
+        )}
         {vm.warnings.map((warning) => (
           <p key={warning} data-testid="mission-warning" className="font-fact text-sm text-warn">
             ▲ {warning}
@@ -45,7 +51,7 @@ export function MinimalMissionDetailView({
             ▲ {vm.rosterWarning}
           </p>
         )}
-        {vm.agents.length === 0 && (
+        {vm.crewEmpty && (
           <p data-testid="crew-empty" className="font-fact text-sm text-quiet">
             no agents
           </p>
@@ -63,7 +69,7 @@ export function MinimalMissionDetailView({
 
       <section aria-label="threads" className="space-y-2">
         <h2 className="text-sm font-medium text-muted-foreground">threads</h2>
-        {vm.threads.length === 0 && (
+        {vm.threadsEmpty && (
           <p data-testid="threads-empty" className="font-fact text-sm text-quiet">
             no threads
           </p>

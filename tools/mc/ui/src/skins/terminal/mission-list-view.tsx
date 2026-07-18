@@ -4,6 +4,7 @@ export function TerminalMissionListView({
   vm,
   loading,
   failure,
+  stale,
   onOpenMission,
 }: MissionListViewProps) {
   if (failure !== null) {
@@ -19,12 +20,17 @@ export function TerminalMissionListView({
   return (
     <div className="mx-auto max-w-3xl space-y-2 p-4">
       <h1 className="font-fact text-sm uppercase tracking-widest text-quiet">== missions ==</h1>
+      {stale !== null && (
+        <p data-testid="stale-warning" className="font-fact text-sm text-warn">
+          ▲ {stale}
+        </p>
+      )}
       {vm.warning !== null && (
         <p data-testid="list-warning" className="font-fact text-sm text-warn">
           ▲ {vm.warning}
         </p>
       )}
-      {vm.rows.length === 0 && (
+      {vm.empty && (
         <p data-testid="missions-empty" className="font-fact text-sm text-quiet">
           (no missions)
         </p>

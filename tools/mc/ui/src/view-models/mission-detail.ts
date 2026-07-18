@@ -40,6 +40,20 @@ export interface MissionDetailVM {
   threads: ThreadRowVM[];
   agents: AgentRowVM[];
   rosterWarning: string | null;
+  /**
+   * The empty claims — degraded is NOT empty (same law as the list page).
+   * threadsEmpty: the threads section carries no degradation channel — a
+   * journal zero is an observed zero. crewEmpty: only when the roster was
+   * healthily observed (no warning) with zero agents. Skins render these
+   * flags and never compute emptiness themselves.
+   */
+  threadsEmpty: boolean;
+  crewEmpty: boolean;
+  /**
+   * When this page's data was last honestly observed: the OLDEST of the three
+   * section stamps — the newest cannot vouch for the others.
+   */
+  observedAt: string;
 }
 
 /**
@@ -104,6 +118,12 @@ export function missionDetailVM(payload: MissionDetailPayload | undefined): Miss
     status.status,
     status.created,
   ].filter((part) => part !== "");
+  const rosterWarning = payload.roster.warning === "" ? null : payload.roster.warning;
+  const observedAt = [
+    payload.mission.provenance.observedAt,
+    payload.threads.provenance.observedAt,
+    payload.roster.provenance.observedAt,
+  ].sort()[0] as string; // RFC3339 sorts lexically; oldest first
   return {
     slug: status.slug,
     title: missionTitle(status),
@@ -112,6 +132,9 @@ export function missionDetailVM(payload: MissionDetailPayload | undefined): Miss
     warnings: [...status.warnings],
     threads: sortThreads(payload.threads.rows).map(threadRowVM),
     agents: [...payload.roster.agents].sort((a, b) => a.name.localeCompare(b.name)).map(agentRowVM),
-    rosterWarning: payload.roster.warning === "" ? null : payload.roster.warning,
+    rosterWarning,
+    threadsEmpty: payload.threads.rows.length === 0,
+    crewEmpty: rosterWarning === null && payload.roster.agents.length === 0,
+    observedAt,
   };
 }

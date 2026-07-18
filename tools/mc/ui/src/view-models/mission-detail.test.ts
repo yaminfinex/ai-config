@@ -190,4 +190,28 @@ describe("missionDetailVM", () => {
       "hcom unreachable",
     );
   });
+
+  it("degraded is NOT empty: zero agents behind a roster warning claims nothing", () => {
+    const vm = missionDetailVM(payload([], [], "hcom unreachable"));
+    expect(vm?.crewEmpty).toBe(false);
+    expect(vm?.rosterWarning).toBe("hcom unreachable");
+  });
+
+  it("crewEmpty only when the roster was healthily observed with zero agents", () => {
+    expect(missionDetailVM(payload([], []))?.crewEmpty).toBe(true);
+    expect(missionDetailVM(payload([], [agent()]))?.crewEmpty).toBe(false);
+  });
+
+  it("threadsEmpty tracks its authoritative section — a journal zero is an observed zero", () => {
+    expect(missionDetailVM(payload([], []))?.threadsEmpty).toBe(true);
+    expect(missionDetailVM(payload([thread()], []))?.threadsEmpty).toBe(false);
+  });
+
+  it("observedAt is the OLDEST section stamp — the newest cannot vouch for the others", () => {
+    const p = payload([], []);
+    p.mission.provenance = { ...prov, observedAt: "2026-07-18T12:30:00Z" };
+    p.threads.provenance = { ...prov, observedAt: "2026-07-18T12:10:00Z" };
+    p.roster.provenance = { ...prov, observedAt: "2026-07-18T12:20:00Z" };
+    expect(missionDetailVM(p)?.observedAt).toBe("2026-07-18T12:10:00Z");
+  });
 });
