@@ -14,7 +14,7 @@ import { allSkins, expectDetailPageState, type McServer, startMc, useSkin } from
 let server: McServer;
 
 test.beforeAll(async () => {
-  server = await startMc(9340);
+  server = await startMc();
 });
 
 test.afterAll(async () => {

@@ -12,7 +12,7 @@ import { allSkins, type McServer, type SkinUnderTest, startMc, useSkin } from ".
 let server: McServer;
 
 test.beforeAll(async () => {
-  server = await startMc(9350);
+  server = await startMc();
 });
 
 test.afterAll(async () => {

@@ -17,7 +17,7 @@ import {
 let server: McServer;
 
 test.beforeAll(async () => {
-  server = await startMc(9310);
+  server = await startMc();
 });
 
 test.afterAll(async () => {

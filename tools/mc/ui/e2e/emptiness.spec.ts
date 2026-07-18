@@ -10,8 +10,8 @@ let emptyServer: McServer;
 let degradedServer: McServer;
 
 test.beforeAll(async () => {
-  emptyServer = await startMc(9320, "empty");
-  degradedServer = await startMc(9321, "degraded");
+  emptyServer = await startMc("empty");
+  degradedServer = await startMc("degraded");
 });
 
 test.afterAll(async () => {

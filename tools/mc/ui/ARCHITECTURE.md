@@ -1,6 +1,7 @@
 # tools/mc/ui — the constitution (v1)
 
-This document is law for everything under `tools/mc/ui/src`. It is judged
+This document is law for everything under `tools/mc/ui/src` and the flow
+suite beside it (`tools/mc/ui/e2e`). It is judged
 as hard as code: a reviewer must be able to REJECT a diff from this
 document alone, and "the constitution didn't say" is an argument for
 amending the constitution, not for merging the diff. It binds until the
@@ -22,7 +23,7 @@ How to run, build, and gate the tree is in [README.md](./README.md).
 | `src/entities/` | 1 — entity | wire types mirroring the Go DTOs; TanStack Query hooks, one module per source family; the fetch helper; version-poll invalidation | JSX, rendering knowledge, derived/sorted/formatted data |
 | `src/view-models/` | 2 — view-model | pure functions from entity payloads to render-ready data; the program's rendering laws as code | JSX, hooks, fetches, store access, `Date.now()`/randomness |
 | `src/skins/<name>/` | 3 — skin | one component set per skin over the shared prop contracts; that skin's `tokens.css` | store access, entity hooks, router access, business/sort/derivation logic, raw colors |
-| `src/skins/contract.ts` | seam | the `Skin` interface and the per-view prop contracts | anything else |
+| `src/skins/contract.ts` | seam | the `Skin` interface, the legal `skinNames`, and the per-view prop contracts | anything else |
 | `src/routes/` | composition | route components wiring hooks + view-models + working-set actions into skin components; the root layout | rendering laws, per-skin markup |
 | `src/router.tsx` | composition | the typed route table, one route per shareable entity URL | components (imports them; never the reverse) |
 | `src/stores/` | client state | the working-set Zustand store (closed action set) | server-derived entity data, comment drafts |
@@ -33,9 +34,11 @@ How to run, build, and gate the tree is in [README.md](./README.md).
 
 File names are kebab-case (`mission-list-view.tsx`); exported React
 components are PascalCase and skin components carry their skin as prefix
-(`MinimalMissionListView`). Imports use the `@/` alias, never `../`
-chains. Biome (`bun run check`) is the arbiter of format and lint; its
-config is part of the reviewed tree.
+(`MinimalMissionListView`). Imports within `src` use the `@/` alias,
+never `../` chains (`e2e/` sits outside the alias root and reaches
+`src` relatively — that is the exception, not license). Biome
+(`bun run check`) is the arbiter of format and lint; its config is part
+of the reviewed tree.
 
 ## 2. The three-layer rule
 
@@ -124,10 +127,15 @@ toggle sets `data-theme` (visual half) and the `Skin` component set
 preference, persisted in localStorage beside — never inside — the
 working-set store.
 
-**Adding a skin** is: one `tokens.css` (same names, new values), one
-directory of components satisfying `contract.ts`, one entry in
-`skins/index.ts`. If adding a skin requires touching anything else, the
-seam has been broken — fix the seam, not the skin.
+**Adding a skin** is: one directory of components satisfying
+`contract.ts` plus its `tokens.css` (same names, new values), and three
+shared one-line registrations — the sheet's `@import` in
+`styles/globals.css`, the name in `skinNames` (`contract.ts`), the entry
+in `skins/index.ts`. The compiler holds the last two in sync (`skins` is
+a `Record<SkinName, Skin>`); the `@import` is review's to check. If
+adding a skin requires touching anything beyond its own directory and
+those three lines, the seam has been broken — fix the seam, not the
+skin.
 
 ## 4. The working-set store
 
@@ -247,15 +255,18 @@ blank or an eternal loading state (`view-models/load-failure.ts`).
 Cached-but-unverified (a payload is cached while the entity refetch OR
 the version poll is failing) keeps presenting the cached data — truth
 outranks blankness — but must mark it with a staleness warning carrying
-the cached payload's own provenance `observedAt`
-(`view-models/staleness.ts`). The version poll's own errors are part of
+the cached payload's own provenance `observedAt` — for a multi-section
+payload, the OLDEST section stamp: the newest cannot vouch for the
+others (`view-models/staleness.ts`, `view-models/mission-detail.ts`). The version poll's own errors are part of
 this contract: the invalidation hook surfaces its poll health, because a
 dead invalidation channel means cached data can no longer be verified as
 current. Swallowing either channel's errors presents stale data as
 current and is a rejection. The render precedence — failure > loading >
 empty claim > data (with staleness beside the data) — is VM-boundary law
-with specs (`render-contract.test.ts`); the per-skin on-screen proof
-lands with the flow suite.
+with specs (`render-contract.test.ts`), and it holds on screen under
+both skins in the flow suite (`e2e/`), which asserts every state's FULL
+claim set: each claim present where the law puts it, absent everywhere
+else.
 
 ## 7. Routing
 
@@ -293,11 +304,20 @@ place is a review finding even when green.
   view-model function and pure transition function has a spec beside it
   (`foo.test.ts` next to `foo.ts`); no browser, no DOM, milliseconds.
   Laws get named tests (sort law, cap, preview truncation, gap honesty).
-- **Flows — Playwright, against the real stack.** The e2e harness runs
-  the REAL Go server with fake `mish`/`hcom`/`herder` shell scripts and
-  a seeded journal fixture — the same pattern `api_test.go` and
-  `tools/mc/testdata/` already use. No frontend mocks, no request
-  interception: real wire or it doesn't count.
+- **Flows — Playwright, against the real stack.** The e2e harness
+  (`e2e/harness.ts`) runs the REAL Go server with fake
+  `mish`/`hcom`/`herder` shell scripts and a seeded journal fixture —
+  the same pattern `api_test.go` and `tools/mc/testdata/` already use.
+  No frontend mocks, no request interception: real wire or it doesn't
+  count. Every flow runs under both skins, and every page-state flow
+  asserts the state's FULL claim set (`expectListPageState` /
+  `expectDetailPageState`) — strengthen those assertions, never bypass
+  them. Fixtures the suite owns live in `e2e/fixtures/`;
+  `tools/mc/testdata/` belongs to the Go tests and is never edited for
+  a UI test's convenience. The harness owns its whole process tree:
+  servers spawn as their own process group and teardown THROWS if any
+  process survives — the teardown is the leak assertion; keep that
+  property.
 - **The skin-swap proof.** Behaviour assertions run identically under
   BOTH skins; the declared behavioural rendering difference is asserted
   via the `Skin` declaration (`data-testid="active-thread"` inside a row
@@ -320,25 +340,16 @@ architecture has a gap — stop and report it before building around it.
 
 ## 10. Current state (ledger, not law)
 
-Honest state of this tree, with the exit condition that clears each
+Honest debts of this tree, with the exit condition that clears each
 entry — checkable from the repo alone:
 
-- **The flow suite exists and is a gate** (`e2e/`, `bun run test:e2e`):
-  the §8 harness (real binary, fake upstream scripts, seeded journal)
-  drives first mount, deep links, mission-to-mission scope changes,
-  live warning-token transitions (roster family, both directions),
-  degraded-vs-healthy emptiness, the two-situation load-health law, and
-  render precedence on screen — every flow under both skins. The
-  skin-swap proof asserts the declared behavioural rendering difference
-  from the `Skin` declaration itself, computed-style change across the
-  toggle, and identical behaviour laws under both skins.
 - **The missions-family warning transition is not driven live** in the
-  flow suite: the mission resolver caches observations for a minute by
-  design (a poll must not fan out git checks), so the suite covers that
-  family's degraded and healthy states as separate cold starts and
-  drives the live §6 loop through the per-request roster family
-  instead. Clears if the resolver TTL ever becomes injectable from the
-  CLI.
+  flow suite (`e2e/`): the mission resolver caches observations for a
+  minute by design (a poll must not fan out git checks), so the suite
+  covers that family's degraded and healthy states as separate cold
+  starts (`emptiness.spec.ts`) and drives the live §6 loop through the
+  per-request roster family instead (`live-update.spec.ts`). Clears if
+  the resolver TTL ever becomes injectable from the CLI.
 - **No comment-shaped code exists.** §5 binds from the first diff that
   adds any.
 - **Material slots are stored but undriven** (§4) — cleared by the

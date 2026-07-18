@@ -8,8 +8,8 @@ import { stalenessWarning } from "@/view-models/staleness";
 // view-model layer raises EXACTLY the claims that state deserves — failure >
 // loading > empty claim > data, with staleness riding beside cached data.
 // Skins render claims and never decide them; the per-skin proof that the
-// branches are honored on screen is the chunk-E flow suite, but the contract
-// itself is law now. Each case below is one full page state, composed exactly
+// branches are honored on screen is the flow suite (e2e/), but the contract
+// itself is law here. Each case below is one full page state, composed exactly
 // as the routes compose it (loadFailure(error, hasPayload) +
 // missionListVM(payload) + stalenessWarning(vm.observedAt, error, pollError)).
 

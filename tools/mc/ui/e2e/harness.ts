@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { type AddressInfo, createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -89,6 +90,23 @@ const herderSession = JSON.stringify({
   mission: { slug: "mission-one", source: "marker" },
 });
 
+/**
+ * Ask the OS for a free ephemeral port. Fixed ports collide when suites (or
+ * concurrent gate runs) overlap; ephemeral ones cannot. The port is released
+ * before the server binds it, so a rare steal is possible — that surfaces as
+ * an honest startup failure in waitForServer, never a silent collision.
+ */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createTcpServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close((err) => (err ? reject(err) : resolve(port)));
+    });
+  });
+}
+
 /** Live PIDs in a process group; empty when the group is fully gone. */
 function groupPids(pgid: number): string[] {
   try {
@@ -119,8 +137,9 @@ async function waitForServer(url: string, timeoutMs: number): Promise<void> {
   }
 }
 
-/** Start the real mc binary on `port` with fake upstreams in `mish` mode. */
-export async function startMc(port: number, mish: MishMode = "healthy"): Promise<McServer> {
+/** Start the real mc binary on an ephemeral port with fake upstreams in `mish` mode. */
+export async function startMc(mish: MishMode = "healthy"): Promise<McServer> {
+  const port = await freePort();
   const tmp = mkdtempSync(join(tmpdir(), "mc-e2e-"));
   const bin = join(tmp, "bin");
   mkdirSync(bin);
@@ -221,10 +240,10 @@ const contentTypes: Record<string, string> = {
  * but the page is reachable (or cached). Real HTTP end to end; the 503 is a
  * genuine wire response, not interception.
  */
-export function startDeadShell(port: number): { baseUrl: string; stop: () => void } {
+export async function startDeadShell(): Promise<{ baseUrl: string; stop: () => Promise<void> }> {
   const dist = join(uiDir, "dist");
   const server: Server = createServer((req, res) => {
-    const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
     if (url.pathname.startsWith("/api/")) {
       res.writeHead(503).end("api down");
       return;
@@ -241,10 +260,23 @@ export function startDeadShell(port: number): { baseUrl: string; stop: () => voi
     });
     createReadStream(asset).pipe(res);
   });
-  server.listen(port, "127.0.0.1");
+  // Ephemeral bind, awaited: the OS picks the port and the promise resolves
+  // only once the shell is actually accepting connections.
+  const port = await new Promise<number>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      resolve((server.address() as AddressInfo).port);
+    });
+  });
   return {
     baseUrl: `http://127.0.0.1:${port}`,
-    stop: () => server.close(),
+    // Awaited close, with sockets destroyed first — a browser's keep-alive
+    // connections would otherwise hold `close` open past the test.
+    stop: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+        server.closeAllConnections();
+      }),
   };
 }
 
