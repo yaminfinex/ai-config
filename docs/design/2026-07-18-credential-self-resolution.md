@@ -1,7 +1,7 @@
 # Credential DX: verb-level self-resolution from live correlates
 
 - **Task:** TASK-282 (design; adversarial design review before any implementation task is cut)
-- **Date:** 2026-07-18 (rev 7, after adversarial review rounds 1–6 — reviewer-rofe; disposition maps in §12)
+- **Date:** 2026-07-18 (rev 8, after adversarial review rounds 1–7 — reviewer-rofe; disposition maps in §12)
 - **Status:** Revised draft for re-review
 - **Amends:** the double-reviewed "ambient evidence may verify but never select" boundary, per the owner-ratified direction of 2026-07-18: *"low ceremony for sane defaults, explicit at the API layer, and escape hatches."*
 
@@ -482,11 +482,15 @@ marker-off keeps today's legacy messages byte-for-byte):
 - **Seated-source adopt from another pane refuses with the evidence
   state.** The refusal distinguishes `alive` (names the live evidence:
   the source is running — adopt from its pane or cull it deliberately)
-  from `observation_gap` (names the unsettled cause — e.g.
-  `epoch_uncertain` after a herdr restart — points at
-  `herder observer status` / evidence settling, and says recovery
-  becomes available once the seat clears). Both name the unseated-adopt
-  path as *what to run next* once the applier unseats.
+  from `observation_gap` (names the unsettled cause, points at
+  `herder observer status` / evidence settling, and names unseated adopt
+  as what to run once the applier clears the seat). For the
+  **`epoch_uncertain` shape specifically** — where settling may never
+  come (see the residual below) — the refusal additionally names the
+  shipped label-recovery workaround: *fresh-enroll a replacement in your
+  pane, then `herder rename NEW --take-from ORPHAN --confirm-live`* (round
+  7), so the operator is never left with only "wait" when waiting cannot
+  end.
 - **`--confirm-dead` gains no new semantics.** It keeps exactly the
   meaning the existing seated/dead paths give it today; it is not a risk
   authority and cannot substitute for the applier's verdict. (The
@@ -495,32 +499,38 @@ marker-off keeps today's legacy messages byte-for-byte):
 - **The same-pane seated-adopt flow is untouched**, including its source
   credential requirement and credential forwarding.
 
-**Named residual for the owner (not solved here — and larger than rev 6
-stated):** positive death settles only via `holder_exited`,
-`pane_gone_same_epoch`, or (process seats) `dead_pid_stale_bus_row`
-(`liveness.go:179-190`). A pane-kind seat orphaned by a **permanent epoch
-change** — herdr restarted, no sidecar holder observation surviving — can
-sit in `observation_gap` (`epoch_uncertain`) indefinitely, leaving
-cross-pane recovery through this composition permanently unavailable for
-that row. Rev 6 claimed the way out was "the existing manual
-repair/reconcile/retire surface"; **verified against shipped code, that
-claim was wrong and is withdrawn** (round 6): `retire` refuses seated
-rows outright ("cull first", `retirecmd/retire.go:42-43`), which funnels
-every exit through cull — and cull has **no row-removal-only mode for a
-coordinate-bearing seated row**. Without `--force`, the epoch-orphan's
-`observation_gap` verdict refuses ("no automated unseat",
-`cullcmd/cull.go:345-364`); with `--force`, cull skips terminal identity
-verification and then **unconditionally attempts a pane close at the
-recorded pane id** (`ClosePreservingFocus`, `cull.go:406`) — and after an
-epoch change, pane ids have reshuffled, so that recorded id may belong to
-an innocent occupant. `--force` therefore cannot be used safely under the
-condition that matters (never close a pane at recorded coordinates across
-an epoch change), and no procedural scoping fixes it: the close attempt
-itself is the unsafe act. **There is no supported safe exit for the
-epoch-orphan today.** The residual returned to the owner sign-off list is
-accordingly larger: either post-restart death evidence (observer-domain
-work), or a safe fossil-row removal verb (row-recorded-unseated only,
-touching no pane, for identity-unverifiable seats under explicit operator
+**Operational recovery for the epoch-orphan (round 7 — a shipped path
+rounds 5–6 missed):** the *label* — the thing the operator actually needs
+back — is recoverable today without any death verdict and without
+touching any pane: **fresh-enroll a replacement in your own pane, then
+`herder rename NEW --take-from ORPHAN --confirm-live`**. The rename
+transfer explicitly permits a seated source under `--confirm-live`
+(`renamecmd/rename.go:174-178`) and performs an atomic two-row label move
+— source row keeps its seat and loses only the label, target claims it —
+touching no pane (`rename.go:219-235`; pinned by
+`TestTransferAllowsConfirmedSeatedSource`). The `epoch_uncertain` refusal
+DX names this workaround (above), so the composition's "wait for
+settling" guidance never strands an operator whose evidence can never
+settle.
+
+**Named residual for the owner (narrowed accordingly):** positive death
+settles only via `holder_exited`, `pane_gone_same_epoch`, or (process
+seats) `dead_pid_stale_bus_row` (`liveness.go:179-190`); a pane-kind seat
+orphaned by a **permanent epoch change** can sit in `observation_gap`
+(`epoch_uncertain`) indefinitely. With label recovery available via the
+take-from workaround, what remains unrecoverable is only the **seated,
+now-unlabelled fossil row itself**: there is **no supported safe
+fossil-row unseat/removal** today. `retire` refuses seated rows ("cull
+first", `retirecmd/retire.go:42-43`); cull without `--force` refuses on
+`observation_gap` ("no automated unseat", `cullcmd/cull.go:345-364`); and
+cull `--force` skips terminal identity verification then
+**unconditionally attempts a pane close at the recorded pane id**
+(`ClosePreservingFocus`, `cull.go:406`) — unsafe across an epoch change,
+where reshuffled ids can name an innocent occupant; no procedural scoping
+fixes a blind close. The owner choice stands with **materially smaller
+impact** (registry hygiene, not label recovery): either post-restart
+death evidence (observer-domain work) or a safe fossil-row removal verb
+(row-recorded-unseated only, touching no pane, explicit operator
 attestation). Both are named, neither is designed here — adding either
 without review would be exactly the ad-hoc machinery rounds 4–5 deleted.
 
@@ -653,13 +663,16 @@ in this note changes ratified behavior.
   the evidence state (`alive` vs `observation_gap` + cause), pointing at
   `herder observer status` / evidence settling, and naming unseated
   adopt as the next step once the seat clears. `--confirm-dead` gains no
-  new semantics. One named residual rides to the owner, enlarged by the
-  round 6 code verification: a pane seat orphaned by a permanent epoch
-  change may never settle (`liveness.go:179-190`), and **no supported
-  safe exit exists today** — `retire` refuses seated rows and
-  `cull --force` blindly closes at the recorded pane id, unsafe across an
-  epoch change. The owner choice is post-restart death evidence
-  (observer work) or a safe row-removal-only fossil verb (§6.1).
+  new semantics. One named residual rides to the owner, narrowed by the
+  round 7 discovery of the shipped label-recovery workaround
+  (fresh-enroll + `rename --take-from --confirm-live`, §6.1): a pane seat
+  orphaned by a permanent epoch change may never settle
+  (`liveness.go:179-190`); its *label* is recoverable today, but the
+  seated unlabelled fossil row has **no supported safe unseat/removal** —
+  `retire` refuses seated rows and `cull --force` blindly closes at the
+  recorded pane id, unsafe across an epoch change. The owner choice —
+  post-restart death evidence (observer work) or a safe row-removal-only
+  fossil verb — is registry hygiene, not label recovery (§6.1).
 - **D6 (non-hcom spawn attribution verification).** Explicit-credential
   spawns of non-hcom children (`--agent bash`, …) currently perform **no**
   ambient verification of the selected caller (`spawn.go:937-950`) — the
@@ -897,11 +910,17 @@ design, so rolling either direction requires no state migration.
 
 | Finding | Disposition |
 |---|---|
-| P1 no production observation path lets a one-shot adopt CLI construct an epoch-proven `positive_death` input (that continuity lives only in the running observers) | Fixed per ruling by **deleting the seated-source waiver entirely** (§6.1, D5 rewritten): no `VerifySelectedBus` scoping, no adopt-side deadness logic, no new epoch surface. Cross-pane dead-source recovery = the composition of shipped pieces: autostarted observer / sidecar appliers settle `positive_death` and unseat the row (`ApplyPositiveDeath`, `liveness/apply.go:44`); plain **unseated** adopt — already the supported fresh-enroll recovery leg, no source credential — then completes from the operator's pane. D5 shrinks to documenting that composition plus marker-on refusal DX (seated-source cross-pane adopt refuses naming `alive` vs `observation_gap` + cause, pointing at `herder observer status`, naming unseated adopt as the next step); `--confirm-dead` gains no new semantics. E3 rewritten to real paths with no fabricated `Evaluate` inputs: live→refuse, gap→refuse-with-settle-guidance, applier-unseat→unseated-adopt succeeds end-to-end, marker-off legacy refusal. **Named residual for the owner:** a pane seat orphaned by a permanent epoch change can never settle (`liveness.go:179-190` — only `holder_exited` / `pane_gone_same_epoch` / process-seat `dead_pid_stale_bus_row` produce positive death). *The "recoverable via the manual repair/reconcile/retire surface" claim originally made here was corrected in Round 6: no supported safe exit exists.* Cascading spec updates: R5/R6/§4/§5.3(b)/§6 table/§9/§11 now state D6 as the sole fence delta and D1/D4/D6 as the marker-gated authority set |
+| P1 no production observation path lets a one-shot adopt CLI construct an epoch-proven `positive_death` input (that continuity lives only in the running observers) | Fixed per ruling by **deleting the seated-source waiver entirely** (§6.1, D5 rewritten): no `VerifySelectedBus` scoping, no adopt-side deadness logic, no new epoch surface. Cross-pane dead-source recovery = the composition of shipped pieces: autostarted observer / sidecar appliers settle `positive_death` and unseat the row (`ApplyPositiveDeath`, `liveness/apply.go:44`); plain **unseated** adopt — already the supported fresh-enroll recovery leg, no source credential — then completes from the operator's pane. D5 shrinks to documenting that composition plus marker-on refusal DX (seated-source cross-pane adopt refuses naming `alive` vs `observation_gap` + cause, pointing at `herder observer status`, naming unseated adopt as the next step); `--confirm-dead` gains no new semantics. E3 rewritten to real paths with no fabricated `Evaluate` inputs: live→refuse, gap→refuse-with-settle-guidance, applier-unseat→unseated-adopt succeeds end-to-end, marker-off legacy refusal. **Named residual for the owner:** a pane seat orphaned by a permanent epoch change can never settle (`liveness.go:179-190` — only `holder_exited` / `pane_gone_same_epoch` / process-seat `dead_pid_stale_bus_row` produce positive death). *The "recoverable via the manual repair/reconcile/retire surface" claim originally made here was corrected in Round 6, then narrowed in Round 7: label recovery exists via fresh-enroll + `rename --take-from --confirm-live`; only safe fossil-row unseat/removal is missing.* Cascading spec updates: R5/R6/§4/§5.3(b)/§6 table/§9/§11 now state D6 as the sole fence delta and D1/D4/D6 as the marker-gated authority set |
 
 ### Round 6
 
 | Finding | Disposition |
 |---|---|
-| P1 the residual's "manual repair/reconcile/retire surface" exit was asserted, not verified | Fixed by code verification, and the claim **withdrawn** (§6.1, §9): `retire` refuses seated rows outright (`retirecmd/retire.go:42-43`), funnelling every exit through cull; cull has no row-removal-only mode for a coordinate-bearing seated row — flag-less/`--gone` refuses on `observation_gap` (`cull.go:345-364`) and `--force` skips identity verification then **unconditionally attempts a pane close at the recorded pane id** (`ClosePreservingFocus`, `cull.go:406`), which is unsafe across an epoch change because reshuffled ids can name an innocent occupant; no procedural scoping fixes a blind close. Truthful statement recorded: **no supported safe exit for the epoch-orphan exists today**. The owner residual is enlarged accordingly: post-restart death evidence (observer work) OR a safe fossil-row removal verb (row-recorded-unseated only, no pane touch, explicit operator attestation) — named, not designed |
+| P1 the residual's "manual repair/reconcile/retire surface" exit was asserted, not verified | Fixed by code verification, and the claim **withdrawn** (§6.1, §9): `retire` refuses seated rows outright (`retirecmd/retire.go:42-43`), funnelling every exit through cull; cull has no row-removal-only mode for a coordinate-bearing seated row — flag-less/`--gone` refuses on `observation_gap` (`cull.go:345-364`) and `--force` skips identity verification then **unconditionally attempts a pane close at the recorded pane id** (`ClosePreservingFocus`, `cull.go:406`), which is unsafe across an epoch change because reshuffled ids can name an innocent occupant; no procedural scoping fixes a blind close. Truthful statement recorded at the time: no supported safe exit for the epoch-orphan exists. *Narrowed in Round 7:* label recovery exists via a shipped path rounds 5–6 missed (fresh-enroll + `rename --take-from --confirm-live`); the residual is now only safe fossil-row unseat/removal — post-restart death evidence (observer work) OR a safe fossil-row removal verb — named, not designed |
 | P2 stray "waives" verb in R6; superseded disposition rows read as current | Fixed: R6 verb list is now "selects, verifies, or resolves"; rounds 2–4 waiver-referencing rows marked *superseded by Round 5* (round-2 P1, round-3 P1-1/P1-2, round-4 P1-1, and the D5 half of round-3 P1-4); the round-5 residual row carries its Round 6 correction inline |
+
+### Round 7
+
+| Finding | Disposition |
+|---|---|
+| Shipped label-recovery path missed in rounds 5–6: fresh-enroll a replacement, then `herder rename NEW --take-from ORPHAN --confirm-live` (seated source explicitly permitted, `rename.go:174-178`; atomic two-row label move touching no pane, `rename.go:219-235`; pinned by `TestTransferAllowsConfirmedSeatedSource`) | Fixed (§6.1, §9, and the three repeated claims narrowed): the workaround is documented as the operational recovery for the epoch-orphan, and the `epoch_uncertain` refusal DX now names it — the operator is never left with only "wait" when settling may never come. The residual narrows to **no supported safe fossil-row unseat/removal** (the seated, now-unlabelled fossil row): `retire` refuses seated rows, cull refuses on gap without `--force`, and `--force` blindly closes at the recorded pane id. Owner-choice framing unchanged — post-restart death evidence vs a safe row-removal-only fossil verb — with the materially smaller impact stated: registry hygiene, not label recovery |
