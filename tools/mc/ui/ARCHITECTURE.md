@@ -216,6 +216,17 @@ Entity hooks own this: version polling and query invalidation live in
 the entity layer, keyed to the page's scope. Components know nothing
 about versions, polling, or staleness mechanics.
 
+**The staleness baseline is the cache itself, never the previous poll.**
+Every entity payload carries its own section provenance, and the hook
+satisfies this section only by comparing the polled stamps against the
+CACHED payload's own tokens. A poll-to-poll comparison chain is a
+rejection: its first observation becomes an unfounded baseline, and an
+entity response already in flight when the source changed lands stale
+behind it and sticks — silently, forever, re-arming after every
+transient poll failure (the first-poll race). Judged against the cached
+payload's own stamps, the first poll has an honest baseline and the
+race cannot be built.
+
 Degraded upstreams arrive as HTTP 200 with warnings in the payload.
 The UI renders that honesty: warnings render as warnings, absent data
 renders as absence, and no blank error page stands in for a partially
@@ -288,11 +299,14 @@ architecture has a gap — stop and report it before building around it.
 Honest state of this tree, with the exit condition that clears each
 entry — checkable from the repo alone:
 
-- **Hook wiring is exercised only by the running app.** The pure
-  invalidation law, view-models, and store transitions carry Vitest
-  specs, but the React wiring around them (query mounting, the
-  invalidation hook's effect) has no automated coverage until the
-  Playwright harness drives real flows.
+- **Hook wiring is exercised only by the running app.** The staleness
+  laws, the poll-tick application (including its concurrent orderings,
+  against a real query cache), view-models, store transitions, and
+  rehydration normalization carry Vitest specs — but the React wiring
+  around them (query mounting, the invalidation hook's effect cadence)
+  has no automated coverage until the Playwright harness drives real
+  flows, including first mount, mission-to-mission scope changes, and
+  warning/refusal token changes.
 - **No Playwright config or harness exists.** `bun run test:e2e` is
   unconfigured. Clears with the skin-swap proof: the real-server
   harness of §8, both-skin behaviour runs, and the declared rendering
