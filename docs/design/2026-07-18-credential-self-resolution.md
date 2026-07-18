@@ -1,7 +1,7 @@
 # Credential DX: verb-level self-resolution from live correlates
 
 - **Task:** TASK-282 (design; adversarial design review before any implementation task is cut)
-- **Date:** 2026-07-18 (rev 2, after adversarial review round 1 — reviewer-rofe, seven findings, all addressed below; finding-to-section map in §12)
+- **Date:** 2026-07-18 (rev 3, after adversarial review rounds 1–2 — reviewer-rofe; disposition maps in §12)
 - **Status:** Revised draft for re-review
 - **Amends:** the double-reviewed "ambient evidence may verify but never select" boundary, per the owner-ratified direction of 2026-07-18: *"low ceremony for sane defaults, explicit at the API layer, and escape hatches."*
 
@@ -77,11 +77,17 @@ Normative rules:
   what closes the coherent-poison steering hole (review P1-1, §5.2).
 - **R3 — fail-closed, no ambient fallback.** Any conflict, ambiguity, or
   absence of live proof refuses with the escape hatch named. Resolution
-  failure never falls back to pre-cutover ambient attribution. One verb has
-  a ratified, explicitly-pinned exception: flag-less `enroll` falls through
-  to the credential-free *fresh mint* on resolution miss (§4, enroll row) —
-  falling through to minting a brand-new identity is not ambient
-  attribution of an existing one.
+  failure never falls back to pre-cutover ambient attribution. Exactly two
+  verbs have ratified, explicitly-pinned **miss-only** fall-throughs (§4):
+  flag-less `enroll` falls through to the credential-free *fresh mint*, and
+  flag-less promptless/notify-less `spawn` falls through to the
+  credential-free `spawned_by: "user"` leg. A *miss* is the anchor finding
+  no occupied pane or no seated candidate; a *conflict or ambiguity* (a
+  candidate found but cardinality or a hint veto fails) is never a miss and
+  always refuses on every verb — poison can therefore strip nothing and
+  select nothing. Neither fall-through attributes an existing identity:
+  fresh mint creates a new one, and `user` is the no-identity attribution
+  spawn already uses for humans.
 - **R4 — the resolved path is the canonical registry-derived path.**
   `SelfResolve` ends in `seatcred.CurrentPath(registryPath, guid)`
   (`credential.go:137`), reading only non-secret registry metadata. The
@@ -94,9 +100,10 @@ Normative rules:
 - **R5 — explicit flag always bypasses resolution.** When
   `--credential-file` is present, `SelfResolve` is not consulted at all and
   authentication behaves byte-for-byte as today. Whether the *act completes*
-  is governed by each verb's unchanged post-selection fences — the honest
-  per-verb truth table is §6; this note no longer claims the override is
-  universally sufficient from arbitrary environments.
+  is governed by each verb's post-selection fences — unchanged except the
+  two named deltas D5 and D6 (§9); the honest per-verb truth table is §6.
+  This note no longer claims the override is universally sufficient from
+  arbitrary environments.
 - **R6 — pre-cutover behavior unchanged.** Before the cutover marker exists,
   verbs keep the current legacy ambient-verified path. Self-resolution
   replaces exactly one thing: the post-cutover no-flag
@@ -117,15 +124,34 @@ Given the registry projection and a live herdr client:
 1. **Ancestry.** Walk the calling process's ppid chain via `/proc`
    (bounded depth, stop at pid 1). Linux-only, like the rest of the fence
    tooling (`syscall.Kill`-based probes in `liveness/observe.go:11`).
-2. **Occupancy anchor.** Enumerate live panes (`herdr agent list` /
-   session snapshot) and fetch `pane process_info` for each. A pane is
-   *occupied by the caller* iff its `shell_pid` or a foreground process pid
-   appears in the ancestry chain. Exactly one occupied pane is required;
-   zero (herdr down, `process_info` unavailable, caller reparented to init
-   by setsid/daemonization, caller outside any pane) or more than one
-   (nested seats, §5.2 residuals) refuses. A dead or unresolvable pane can
-   never be replaced by bus-only proof: no anchor, no default (review
-   harness shape 1).
+2. **Occupancy anchor with namespace agreement.** Enumerate live panes
+   (`herdr agent list` / session snapshot) and fetch `pane process_info`
+   for each. A pane is *occupied by the caller* iff (a) a pid in the
+   pane's inventory (`shell_pid` or a foreground process pid) appears in
+   the ancestry chain, **and** (b) *PID-namespace agreement is
+   established*: at least one matched pid comes from an argv-bearing
+   foreground entry whose reported argv equals the caller's own `/proc`
+   view of that pid's cmdline. Numeric pid intersection alone is not
+   caller-bound when the CLI's `/proc` and herdr's inventory could sit in
+   different PID namespaces (review round 2 P2: a namespace-local ancestor
+   pid can numerically equal a foreign pane's host `shell_pid`); argv
+   corroboration proves both views name the same process. A bare
+   `shell_pid`-only match (the field carries no argv,
+   `herdrcli.go:122-128`) never establishes agreement by itself —
+   **hard-refuse**. In the normal cases an argv-bearing corroborator
+   exists: the agent process itself is a foreground entry and an ancestor
+   of every tool-invoked `herder`; an operator running `herder`
+   interactively observes *itself* in the inventory. A backgrounded or
+   otherwise non-foreground invocation that leaves no argv-corroborated
+   ancestor refuses and falls to the explicit flag. Exactly one occupied
+   pane is required; zero (herdr down, `process_info` unavailable, caller
+   reparented to init by setsid/daemonization, caller outside any pane,
+   agreement not established) or more than one (nested seats, §5.2
+   residuals) refuses. A dead or unresolvable pane can never be replaced
+   by bus-only proof: no anchor, no default (review harness shape 1).
+   Start-time corroboration would harden the pid-reuse window further but
+   requires herdr to report process start times — a new surface deliberately
+   deferred; it is a named residual, not a v1 requirement.
 3. **Seat mapping.** Exactly one *seated* registry row whose recorded
    `seat.pane_id`/`seat.terminal_id` matches the occupied pane's live
    coordinates. Zero or >1 (reused coordinates) refuses with the candidate
@@ -177,12 +203,22 @@ supply: the kernel's ppid chain for the calling process, intersected with
 herdr's live statement of which processes are in which pane. The claim,
 narrowed to what the evidence proves:
 
-> **A poisoned environment cannot steer the default to any seat whose pane's
-> live process tree does not contain the calling process.** Environment
-> values can only cause refusals (veto), never selection. In the coherent
-> all-live victim-tuple attack, the caller's ancestors are in pane A;
-> pane B's inventory does not contain them; B is never a candidate no matter
-> what the env claims (harness N2).
+> **Given established PID-namespace agreement (§2.1 step 2), a poisoned
+> environment cannot steer the default to any seat whose pane's live
+> process tree does not contain the calling process.** Environment values
+> can only cause refusals (veto), never selection. In the coherent all-live
+> victim-tuple attack, the caller's ancestors are in pane A; pane B's
+> inventory does not contain them; B is never a candidate no matter what
+> the env claims (harness N2). When namespace agreement cannot be
+> established, there is no anchor and the default hard-refuses — it never
+> degrades to numeric-pid trust.
+
+Deployment precondition, stated plainly: the caller-bound proof assumes the
+herder CLI and the herdr daemon observe the **same PID namespace**. The
+argv-corroboration gate *enforces* rather than assumes this — a
+namespace-split deployment (e.g. herder inside a PID-namespaced container
+reaching a host herdr socket) fails the gate and refuses, so the flag is
+the supported path there.
 
 Explicit residuals — what this does **not** claim:
 
@@ -190,10 +226,13 @@ Explicit residuals — what this does **not** claim:
   process can read any 0600 token and present it via the flag. The default,
   like the flag, provides selection discipline, not intra-uid access
   control.
-- **PID-reuse race.** An ancestor pid could in principle be reused as a
-  pane's `shell_pid` between herdr's observation and the check. The window
-  is one CLI invocation; steps 3–6 (seat + roster + hint consistency) must
-  *also* line up for a wrong selection. Accepted, named.
+- **PID-reuse + argv-collision race.** An ancestor pid could in principle
+  be reused between herdr's observation and the check. The argv
+  corroboration shrinks this to a reused pid whose new process *also*
+  reproduces the observed argv within one CLI invocation, and steps 3–6
+  (seat + roster + hint consistency) must *also* line up. Start-time
+  corroboration would shrink it further and is deferred (§2.1 step 2).
+  Accepted, named.
 - **Same-tree nesting.** A process manually launched *inside* another
   seat's pane (e.g. a hand-run `claude` under a seated bash shell, both
   enrolled) makes two occupied-pane/seat candidates share one ancestry;
@@ -224,7 +263,7 @@ pane inventory rather than a recorded pid.
 | Verb | What the credential selects today | Default (no flag, post-cutover) |
 |---|---|---|
 | `send` | caller/sender attribution (`send.go:64-72`) | SelfResolve the caller seat; sender name from the selected row exactly as `credentialCallerSender` does today |
-| `spawn` | `spawned_by` attribution, initial-prompt sender, `--notify` recipient (`spawn.go:937-994`) | SelfResolve the spawner. Promptless, notify-less spawn from a non-seat stays credential-free with `spawned_by: "user"` (fresh-self preserved, unchanged) |
+| `spawn` | `spawned_by` attribution, initial-prompt sender, `--notify` recipient (`spawn.go:937-994`) | SelfResolve the spawner; the outcome branches are normative (review round 2 P2): **resolve** → the seat is the caller for attribution, prompt sender, and notify, verified by the unchanged fences; **miss** (no occupied pane / no seated candidate) → prompt-bearing or `--notify`-without-`--notify-to` spawn refuses (a sender/recipient cannot be `user`), while promptless, notify-less spawn proceeds credential-free with `spawned_by: "user"` — the second miss-only fall-through (R3), preserving fresh-self; **conflict or ambiguity** → refuse outright, never downgrade to `user` (a poisoned or ambiguous environment must not be able to strip attribution; pinned by harness N16) |
 | `compact` | proof of the caller's own pane (`compact.go:122-142`) | SelfResolve; compact's extra credential-branch fences (terminal equality, bus verify) run unchanged |
 | `cull` | caller identity for authority + release-notice sender (`cull.go:71-89`) | SelfResolve the caller seat |
 | `adopt` (seated source) | **the source seat's** credential as custody proof (`adopt.go:80-100`) | Resolve the *source* seat by live occupancy: the caller's occupied pane (step 2) must be the seated source's recorded pane — the same occupancy `adoptionUnseatReason` demands, now proven by ancestry instead of env. Adopt is the one verb where "self" means "the seat whose pane I demonstrably occupy." A caller not occupying the source's pane — including `--confirm-dead` recovery from elsewhere — gets no default and must present the source credential explicitly (§6 for what that requires) |
@@ -302,10 +341,17 @@ The three ratified escape-hatch classes, restated against that table:
   correlates so the unchanged `VerifySelectedBus` does not veto — §6 states
   exactly when. This is today's behavior, now documented instead of
   implied.
-- **(b) Deliberate act-as.** Same: explicit credential plus, on
-  send/cull/adopt, a scrubbed-correlate environment; impossible by design
-  on compact/enroll/prompt-spawn, whose own fences are self-only. Nothing
-  here changes at cutover semantics; the table makes the limits explicit.
+- **(b) Deliberate act-as.** Explicit credential plus, on send/cull and
+  non-hcom spawn attribution, a scrubbed-correlate environment; impossible
+  by design on compact/enroll/prompt-spawn, whose own fences are self-only.
+  Cross-pane recovery of a **dead** seated source via adopt is a real,
+  ratified escape-hatch flow that review round 2 proved *cannot execute at
+  all* against the unchanged composed fences (neither with the caller's
+  real pane nor scrubbed — the mandatory replacement-enroll leg needs a
+  live pane, `enrollcmd/enroll.go:54-56`). Rather than mark a ratified
+  flow unsupported, this design names the minimal composition delta **D5**
+  (§6.1, §9) that makes it execute end-to-end, gated on explicit
+  credential + `--confirm-dead` + *proven* source deadness.
 - **(c) Harness / isolated-registry use.** Harnesses pass explicit paths
   and never engage resolution; flag-less runs inside an isolated
   `HERDER_STATE_DIR` can resolve only seats of the isolated registry
@@ -330,13 +376,50 @@ boundary working as intended, not a defect).
 |---|---|---|---|
 | `send` | `HERDR_ENV=1` only | **Works when scrubbed** (evidence empty → verify pass); refused when live correlates resolve a different row | `send.go:46`, `send.go:222-228` |
 | `cull` | `HERDR_ENV=1` only | **Works when scrubbed**; refused under conflicting live correlates | `cull.go:44`, `cull.go:84` |
-| `adopt` (seated source) | none beyond registry | **Works when scrubbed**, composed with `--confirm-dead` when not occupying the source pane; refused when live correlates resolve the operator's own row | `adopt.go:95`, `adopt.go:277-293` |
-| `spawn` with `--prompt`/`--notify` | live herdr pane required by the sender fence | **Self-only**: the caller's live pane must verify the credential row; a foreign pane's evidence fails `Resolve` and vetoes | `spawn.go:2284-2321` |
+| `adopt` (seated source) | none beyond registry | **Broken today from outside the source pane — in every environment** (round 2 P1): with the caller's real pane, `VerifySelectedBus` vetoes the source selection (`adopt.go:89-98`) or `preflightRecordedSessionClaim` rejects the caller pane (`adopt.go:462-485`); scrubbed, the mandatory replacement-enroll leg refuses on missing `HERDR_PANE_ID` (`adopt.go:122-131`, `enroll.go:54-56`). **D5 (§6.1) makes the dead-source case execute**; a *live* source remains adoptable only from its own pane |
+| `spawn`, hcom-capable child | `HERDR_ENV=1` (`spawn.go:263-265`) + live pane demanded by the sender fence | **Self-only**: `verifyPromptSender` runs for *every* hcom-capable child whenever a credential is presented — even promptless, notify-less (`spawn.go:955-958`); a foreign pane's evidence fails `Resolve` and vetoes | `spawn.go:2284-2321` |
+| `spawn`, non-hcom child (`--agent bash`, …) | `HERDR_ENV=1` | **Attribution-level act-as, today unverified**: an explicit credential sets `spawned_by` (and feeds `--notify` spawner resolution) with *no* `VerifySelectedBus` call at all (`spawn.go:937-950`; `launchcmd` hcom-capability gate). That is an inconsistency with the verify-or-refuse doctrine every other explicit selection obeys — **D6** (§9) aligns it: the same verification runs, so scrubbed works, conflicting live correlates refuse | `spawn.go:937-950` |
 | `compact` | live herdr pane; credential row's terminal must equal the caller's live terminal | **Self-only by design** (self-pane-only doctrine) | `compact.go:128-131` |
 | `enroll` (existing seat) | live herdr pane; credential seat's terminal must equal the caller's live terminal | **Self-only by design** | `enroll.go:100` |
 
-No post-selection fence changes anywhere in this design; the table is
-documentation of unchanged cutover behavior, not a delta.
+Post-selection fences change in exactly two named places — D5 (adopt
+dead-source composition) and D6 (non-hcom spawn verification), both in §9
+riding the owner sign-off. Everything else in the table is documentation of
+unchanged cutover behavior.
+
+### 6.1 D5 — adopt dead-source cross-pane recovery (composition delta)
+
+Intent: an operator in their own live pane O, holding dead source seat S's
+credential, runs `herder adopt S --credential-file <S> --confirm-dead` and
+it completes: label transfer from S plus replacement enroll of the caller's
+pane, end-to-end, with **no env scrubbing**. Scope, precisely:
+
+- **Trigger:** explicit `--credential-file` selecting the source seat AND
+  `--confirm-dead`. Never triggered by self-resolved selection (a flag-less
+  adopt gets the §4 occupancy default only) and never without
+  `--confirm-dead`.
+- **Deadness gate:** the caller-pane ambient veto on the source selection
+  is waived only when the source is *proven dead* by the live probes adopt
+  already runs, composed as one gate: the source's recorded pane is absent
+  from live herdr, its recorded bus name has no joined roster row, and its
+  recorded session id resolves to no joined row. Any sign of life — or any
+  probe being unavailable (herdr down, roster unreadable) — keeps the veto
+  and refuses: a live seat can never be displaced cross-pane, and
+  inconclusive is not dead.
+- **What is waived and what is not:** only the `VerifySelectedBus`
+  caller-evidence veto against the *source* selection (`adopt.go:95`) is
+  scoped out under the gate — the caller is by definition not the dead
+  source, so "ambient must verify the selected row" is category-mismatched
+  here, and `--confirm-dead` is the operator's explicit assumption of that
+  exact risk. Everything else runs unchanged and un-scrubbed: credential
+  authentication, `preflightRecordedSessionClaim` (which passes under the
+  gate because a dead source's SID resolves to no joined row), and the
+  replacement-enroll leg against the caller's real live pane — which is
+  the *point*: the replacement seat is the operator's own pane, enrolled
+  through the normal completion path with its own fresh credential.
+- **Refusal text:** when the gate fails because the source shows life, the
+  refusal says so and names the source's live coordinates; when it fails
+  on probe unavailability, it names the probe.
 
 ## 7. Operator-shell story (corrected)
 
@@ -362,9 +445,12 @@ refuses bash outright (`compact.go:143-147`). The honest story:
 - **Unenrolled shell inside a herdr pane:** first identity-bearing verb
   refuses (§8 row 2) naming `herder enroll` — one-time, credential-free.
   After that (bus-joined), zero ceremony.
-- **Outside herdr entirely:** unchanged. `send`/`compact`/`cull` gate on
-  `HERDR_ENV=1`; promptless spawn works attributed `user`; prompt-bearing
-  spawn refuses (its sender fence requires a live pane, `spawn.go:2284`).
+- **Outside herdr entirely:** unchanged — and stricter than the previous
+  draft claimed: `send`/`compact`/`cull` gate on `HERDR_ENV=1`, and
+  `spawn` **also refuses unconditionally** when `HERDR_ENV != 1`
+  (`spawn.go:263-265`); there is no outside-herdr spawn of any kind. The
+  credential-free promptless `user` spawn is an *inside-herdr,
+  non-seat-pane* affordance (§4 spawn row), not an outside-herdr one.
 - **Doc surface delta:** `tools/herder/docs/credentials.md`, verb help
   texts, and the hcom session boilerplate (maintained outside this repo)
   stop teaching the `--guid $HERDER_GUID` incantation and teach bare verbs,
@@ -418,8 +504,10 @@ in this note changes ratified behavior.
 
 - **D1 (the amendment).** Post-cutover, flag-less invocation of a
   credential-authenticated verb changes from `ErrCredentialRequired` to
-  live self-resolution per §2.1, with the per-verb semantics of §4
-  (including enroll's resolution-miss fall-through to fresh mint).
+  live self-resolution per §2.1, with the per-verb semantics of §4 —
+  including both miss-only fall-throughs (enroll → fresh mint; promptless,
+  notify-less spawn → `spawned_by: "user"`), with conflict/ambiguity
+  refusing everywhere (R3).
 - **D2 (refusal texts).** The `ErrCredentialRequired` family is replaced on
   the default path by the §8 refusals; legacy-seat wording reordered
   sweep-first; help texts updated.
@@ -427,10 +515,32 @@ in this note changes ratified behavior.
   process ancestry intersected with live herdr pane process inventory — a
   new caller-bound proof form composed from the existing pane and process
   evidence classes (no new class, no new herdr surface; linux-only like
-  existing pid probes). This inverts the role of `HERDR_PANE_ID` for the
-  default path from entry point to veto-only hint.
+  existing pid probes). PID-namespace agreement is enforced by argv
+  corroboration and hard-refuses when unestablishable (§2.1 step 2, §3);
+  start-time corroboration is deferred as a named residual. This inverts
+  the role of `HERDR_PANE_ID` for the default path from entry point to
+  veto-only hint.
 - **D4 (`credential path --self`).** New read-only helper riding
   `SelfResolve`.
+- **D5 (adopt dead-source cross-pane recovery).** The one composition
+  change to an existing fence: under explicit source credential +
+  `--confirm-dead` + proven source deadness, the caller-evidence
+  `VerifySelectedBus` veto on the source selection is scoped out so the
+  ratified cross-pane recovery flow can execute end-to-end (§6.1). Review
+  round 2 established the flow is impossible today in *every* environment;
+  the alternative — declaring it unsupported — would silently shrink the
+  ratified escape-hatch intent, so the delta is taken and named instead.
+  Gated never-on-self-resolved, never-without-confirm-dead,
+  never-on-any-sign-of-life, never-on-inconclusive-probes.
+- **D6 (non-hcom spawn attribution verification).** Explicit-credential
+  spawns of non-hcom children (`--agent bash`, …) currently perform **no**
+  ambient verification of the selected caller (`spawn.go:937-950`) — the
+  only explicit selection in the verb set that skips the verify-or-refuse
+  doctrine. D6 runs the same `VerifySelectedBus` call there: scrubbed
+  environments still work (empty-evidence pass), conflicting live
+  correlates now refuse. This tightens an existing hole; nothing that
+  works legitimately today stops working except act-as *with* contradicting
+  live evidence, which every other verb already refuses.
 - **Explicitly NOT changed (previous draft's D3 withdrawn):** the credential
   audit. `Authenticate` derives `presentation` solely by comparing the
   presented path to the canonical path (`credential.go:300-302`), so a
@@ -441,7 +551,8 @@ in this note changes ratified behavior.
   separate, explicitly-reviewed change. Consequence: v1 ships without an
   audit-level adoption metric.
 - **Explicitly NOT changed:** the seatcred API surface; post-selection
-  fences (§6 is documentation, not change), including the empty-evidence
+  fences other than the two named deltas D5 and D6 (the rest of §6 is
+  documentation, not change), including the empty-evidence
   `VerifySelectedBus` pass now recorded as load-bearing for recovery; token
   file discipline; rotation and its commit point; the cutover marker and
   its fail-closed handling; the sweep's literal-100% gate; fresh-self
@@ -468,7 +579,12 @@ from round 1 are mapped inline.
   and B both live and joined; caller's ancestry sits in A's pane; env is
   B's complete tuple (`HERDR_PANE_ID`+`HCOM_SESSION_ID`+`HCOM_PROCESS_ID`),
   run twice: with `HERDER_GUID=B` and with guid unset. Both refuse (hints
-  veto against the A anchor); no audit entry for B; nothing acted.
+  veto against the A anchor); no audit entry for B; nothing acted. Third
+  leg, pinning the chosen namespace boundary (round 2 P2): pane B's
+  inventory carries a `shell_pid` numerically equal to a caller ancestor
+  but **no argv-corroborated entry** — namespace agreement is not
+  established, hard-refuse; B never enters the candidate set on numeric
+  intersection alone.
 - **N3 — duplicate same-name joined rows refuse** *(shape 3)*. Two joined
   roster row instances named `@x`; one seated row maps to `@x`; anchor
   proves the pane. SelfResolve's instance count refuses (the shape
@@ -521,6 +637,46 @@ from round 1 are mapped inline.
   the correct guid; (b) under N1/N2 poison, the verb-specific side effect
   is asserted absent — nothing sent, nothing launched, nothing typed,
   nothing unseated, no label transferred, no row enrolled.
+- **N15 — real `/proc` ancestry adapter** *(round 2 P2)*. The injected
+  provider pins resolver logic; this pins the production adapter that
+  makes the proof caller-bound, against real `/proc`: includes self and
+  parent; terminates bounded (depth cap, stop at pid 1, cycle-safe);
+  fail-closed on unreadable/garbled `stat` (refusal, not partial chain);
+  argv-corroboration policy — a numerically matched pid whose
+  `/proc/<pid>/cmdline` mismatches the reported argv does not establish
+  agreement. Integration leg: real ancestry intersected with a mocked
+  `process_info` naming a real live ancestor (pid + true argv) resolves;
+  the same with argv perturbed refuses.
+- **N16 — spawn miss → `user`, conflict → refuse, never env-attributed.**
+  Flag-less spawn from a non-seat pane with fully poisoned parent env:
+  promptless/notify-less spawns with `spawned_by: "user"` and the poison
+  guid absent from the row (extends the existing check-spawn-contract
+  poison case to the SelfResolve path); prompt-bearing refuses; the same
+  spawn under a resolution *conflict* (N2-style) refuses entirely rather
+  than downgrading to `user`.
+
+End-to-end explicit-override cases (round 2 P2: resolver-only assertions
+cannot expose composition defects — the adopt P1 and both spawn findings
+would have been caught here):
+
+- **E1 `send` / E2 `cull`:** explicit flag, scrubbed correlates → acts;
+  explicit flag with conflicting live correlates → refuses. 
+- **E3 `adopt` (D5):** operator in live pane O, dead source S, explicit
+  source credential + `--confirm-dead`, real un-scrubbed env → completes
+  end-to-end: label transferred, replacement enrolled on pane O with a
+  fresh credential. Counter-legs: source shows any sign of life → refuse;
+  probes unavailable (herdr down / roster unreadable) → refuse; no
+  `--confirm-dead` → refuse; flag-less self-resolved adopt → no waiver,
+  occupancy default only.
+- **E4 `spawn` hcom-capable:** explicit credential from a foreign live
+  pane → refuse (self-only, even promptless — `spawn.go:955-958`); from
+  the credential seat's own pane → acts.
+- **E5 `spawn` non-hcom (D6):** explicit credential, scrubbed → spawns
+  with credential attribution; explicit credential with conflicting live
+  correlates → refuses (this leg *is* the D6 behavior change and pins it).
+- **E6 `compact` / `enroll`:** explicit credential from a foreign
+  terminal → refuse (self-only fences, `compact.go:128-131`,
+  `enroll.go:100`).
 
 ## 11. Rollback
 
@@ -531,7 +687,9 @@ marker remains the larger lever and behaves exactly as documented today. No
 token file, registry row, or generation is written differently under this
 design, so rolling either direction requires no state migration.
 
-## 12. Review round 1 — finding disposition
+## 12. Review finding disposition
+
+### Round 1
 
 | Finding | Disposition |
 |---|---|
@@ -542,3 +700,13 @@ design, so rolling either direction requires no state migration.
 | P2-5 D3/H7 audit contradiction | Fixed: audit delta withdrawn; self-resolved presentations audit `canonical`; observability gap named as a consequence (§9) |
 | P2-6 namespace enumeration undefined | Fixed: registry-recorded namespaces only, cross-namespace cardinality (§2.1 steps 4–5); ambient `HCOM_DIR` never consulted; harness N7/N8 |
 | P2-7 nine missing harness shapes | All folded: shapes 1→N6, 2→N2, 3→N3, 4→N4, 5→N9, 6→N10, 7→N11, 8→N12, 9→N14; none argued away |
+
+### Round 2
+
+| Finding | Disposition |
+|---|---|
+| P1 adopt escape hatch cannot execute end-to-end | Fixed by named composition delta **D5** (§6.1, §9): explicit source credential + `--confirm-dead` + proven deadness scopes out the caller-evidence veto on the source selection; enroll leg runs on the caller's real pane, no scrubbing; live/inconclusive source keeps the veto. Chosen over "unsupported" because that would silently shrink the ratified escape-hatch intent. End-to-end harness E3 |
+| P2 spawn second fall-through contradicts R3 | Fixed: R3 now names exactly two miss-only fall-throughs; §4 spawn row specifies resolve/miss/conflict branches normatively (miss+prompt refuses, miss+promptless → `user`, conflict never downgrades); pinned by N16 |
+| P2 spawn truth-table row incomplete / bash act-as unclassified | Fixed: table split into hcom-capable (self-only, even promptless — `spawn.go:955-958`) and non-hcom rows; the unverified bash attribution act-as is classified honestly and aligned by named delta **D6** (verification runs; scrubbed works, conflict refuses); §7 outside-herdr claim corrected (`spawn.go:263-265` refuses unconditionally) |
+| P2 PID-namespace precondition | Fixed: argv-corroboration gate in §2.1 step 2 — numeric intersection alone never establishes agreement, bare `shell_pid` match hard-refuses; deployment precondition + narrowed claim + revised pid-reuse residual in §3; start-time corroboration named deferred hardening; N2 third leg pins the boundary |
+| P2 harness gaps (truth table, real adapter) | Fixed: E1–E6 end-to-end explicit-override cases per verb (scrubbed / conflicting / self-only, incl. D5 and D6 legs); N15 real-`/proc` adapter test (self/parent inclusion, bounded termination, fail-closed parse, argv policy, integration leg) |
