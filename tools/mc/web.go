@@ -557,7 +557,7 @@ func (w *Web) mission(rw http.ResponseWriter, r *http.Request) {
 
 func (w *Web) asks(rw http.ResponseWriter, r *http.Request) {
 	d := w.data(r, "asks")
-	d.Missions, d.MissionListErr = w.missions.AllStatuses()
+	d.Missions, d.MissionListErr, _ = w.missions.AllStatuses()
 	w.render(rw, http.StatusOK, d)
 }
 

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -10,12 +12,36 @@ import (
 // /api/v1 is the JSON face of the same structs the HTML pages render.
 // DTOs are explicit wire contracts with tools/mc/ui: internal store types
 // never cross wholesale, so store refactors cannot silently change the API.
-// Degraded upstream reads (mish/hcom/herder unavailable) stay HTTP 200 with
-// their warnings in the payload — the UI renders honesty, not a blank error.
+//
+// Truth-forms law (vocabulary doctrine): every derived fact crosses the wire
+// naming its system of record and observation time. That stamp — provenance —
+// is ALSO the invalidation contract: each stamp carries an opaque version
+// token derived from the observed content, and /api/v1/version serves just
+// the stamps. A client polls /api/v1/version and refetches a source family
+// when its token moves; any data response can be correlated with the poll
+// because it carries the same stamp shape. Degraded upstream reads
+// (mish/hcom/herder unavailable) stay HTTP 200 with their warnings in the
+// payload — the UI renders honesty, not a blank error.
+//
+// The three source families v1 serves:
+//   - journal: mc's own thread journal (in-memory projection; version is the
+//     store's cursor-generation pair, observed at request time).
+//   - missions: `mish status --all` through the resolver's one-minute cache
+//     (observedAt is cache-fill time — an old observation never renders as
+//     current); the same family covers per-slug status reads.
+//   - roster: `hcom list` + `herder list`, read live per request — the same
+//     cost every legacy HTML page load already pays.
+
+type apiProvenanceDTO struct {
+	Source     string `json:"source"`
+	ObservedAt string `json:"observedAt"`
+	Version    string `json:"version"`
+}
 
 type apiVersionDTO struct {
-	Cursor     int64  `json:"cursor"`
-	Generation uint64 `json:"generation"`
+	Journal  apiProvenanceDTO `json:"journal"`
+	Missions apiProvenanceDTO `json:"missions"`
+	Roster   apiProvenanceDTO `json:"roster"`
 }
 
 type apiTaskCountDTO struct {
@@ -38,8 +64,9 @@ type apiMissionDTO struct {
 }
 
 type apiMissionsDTO struct {
-	Missions []apiMissionDTO `json:"missions"`
-	Warning  string          `json:"warning"`
+	Missions   []apiMissionDTO  `json:"missions"`
+	Warning    string           `json:"warning"`
+	Provenance apiProvenanceDTO `json:"provenance"`
 }
 
 type apiThreadDTO struct {
@@ -58,22 +85,85 @@ type apiThreadDTO struct {
 }
 
 type apiRosterAgentDTO struct {
-	Name      string `json:"name"`
-	Address   string `json:"address"`
-	Tool      string `json:"tool"`
-	Status    string `json:"status"`
-	Detail    string `json:"detail"`
-	Unread    int    `json:"unread"`
-	Role      string `json:"role"`
-	Branch    string `json:"branch"`
-	Unmanaged bool   `json:"unmanaged"`
+	Name          string `json:"name"`
+	Address       string `json:"address"`
+	Tool          string `json:"tool"`
+	Status        string `json:"status"`
+	Detail        string `json:"detail"`
+	Unread        int    `json:"unread"`
+	Role          string `json:"role"`
+	Branch        string `json:"branch"`
+	MissionSource string `json:"missionSource"`
+	Unmanaged     bool   `json:"unmanaged"`
+}
+
+// Mission detail is three source-backed sections; provenance sits on the
+// section it stamps, never response-global, because the sections come from
+// different systems of record observed at different times.
+
+type apiMissionSectionDTO struct {
+	Status     apiMissionDTO    `json:"status"`
+	Provenance apiProvenanceDTO `json:"provenance"`
+}
+
+type apiThreadsSectionDTO struct {
+	Rows       []apiThreadDTO   `json:"rows"`
+	Provenance apiProvenanceDTO `json:"provenance"`
+}
+
+type apiRosterSectionDTO struct {
+	Agents     []apiRosterAgentDTO `json:"agents"`
+	Warning    string              `json:"warning"`
+	Provenance apiProvenanceDTO    `json:"provenance"`
 }
 
 type apiMissionDetailDTO struct {
-	Mission       apiMissionDTO       `json:"mission"`
-	Threads       []apiThreadDTO      `json:"threads"`
-	Agents        []apiRosterAgentDTO `json:"agents"`
-	RosterWarning string              `json:"rosterWarning"`
+	Mission apiMissionSectionDTO `json:"mission"`
+	Threads apiThreadsSectionDTO `json:"threads"`
+	Roster  apiRosterSectionDTO  `json:"roster"`
+}
+
+const (
+	sourceJournal  = "mc journal"
+	sourceMissions = "mish status"
+	sourceRoster   = "hcom list + herder list"
+)
+
+// contentToken derives an opaque change token from observed content.
+// Observation stamps must not feed it (missionStatus.FetchedAt is json:"-",
+// so a cache refresh that observes identical content keeps the same token).
+func contentToken(parts ...any) string {
+	h := sha256.New()
+	enc := json.NewEncoder(h)
+	for _, part := range parts {
+		if err := enc.Encode(part); err != nil {
+			// Wire DTO inputs are all marshalable; refusing loudly beats a
+			// token that silently stopped moving.
+			panic(fmt.Sprintf("contentToken: %v", err))
+		}
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))[:12]
+}
+
+func provenance(source string, observedAt time.Time, version string) apiProvenanceDTO {
+	return apiProvenanceDTO{
+		Source:     source,
+		ObservedAt: observedAt.UTC().Format(time.RFC3339),
+		Version:    version,
+	}
+}
+
+func (w *Web) journalProvenance() apiProvenanceDTO {
+	cursor, generation := w.store.Version()
+	return provenance(sourceJournal, w.now(), fmt.Sprintf("%d-%d", cursor, generation))
+}
+
+func missionsProvenance(statuses []missionStatus, warning string, observedAt time.Time) apiProvenanceDTO {
+	return provenance(sourceMissions, observedAt, contentToken(statuses, warning))
+}
+
+func (w *Web) rosterProvenance(groups []rosterGroup, warning string) apiProvenanceDTO {
+	return provenance(sourceRoster, w.now(), contentToken(groups, warning))
 }
 
 func writeJSON(rw http.ResponseWriter, code int, v any) {
@@ -86,8 +176,13 @@ func writeJSON(rw http.ResponseWriter, code int, v any) {
 }
 
 func (w *Web) apiVersion(rw http.ResponseWriter, _ *http.Request) {
-	cursor, generation := w.store.Version()
-	writeJSON(rw, http.StatusOK, apiVersionDTO{Cursor: cursor, Generation: generation})
+	statuses, missionsWarning, observedAt := w.missions.AllStatuses()
+	groups, rosterWarning := w.rosterGroups(false)
+	writeJSON(rw, http.StatusOK, apiVersionDTO{
+		Journal:  w.journalProvenance(),
+		Missions: missionsProvenance(statuses, missionsWarning, observedAt),
+		Roster:   w.rosterProvenance(groups, rosterWarning),
+	})
 }
 
 func missionDTO(s missionStatus) apiMissionDTO {
@@ -138,21 +233,26 @@ func threadDTO(t *Thread) apiThreadDTO {
 
 func rosterAgentDTO(a rosterAgent) apiRosterAgentDTO {
 	return apiRosterAgentDTO{
-		Name:      a.Name,
-		Address:   a.Address,
-		Tool:      a.Tool,
-		Status:    a.Status,
-		Detail:    a.Detail,
-		Unread:    a.Unread,
-		Role:      a.Role,
-		Branch:    a.Branch,
-		Unmanaged: a.Unmanaged,
+		Name:          a.Name,
+		Address:       a.Address,
+		Tool:          a.Tool,
+		Status:        a.Status,
+		Detail:        a.Detail,
+		Unread:        a.Unread,
+		Role:          a.Role,
+		Branch:        a.Branch,
+		MissionSource: a.MissionSource,
+		Unmanaged:     a.Unmanaged,
 	}
 }
 
 func (w *Web) apiMissions(rw http.ResponseWriter, _ *http.Request) {
-	statuses, warning := w.missions.AllStatuses()
-	out := apiMissionsDTO{Missions: []apiMissionDTO{}, Warning: warning}
+	statuses, warning, observedAt := w.missions.AllStatuses()
+	out := apiMissionsDTO{
+		Missions:   []apiMissionDTO{},
+		Warning:    warning,
+		Provenance: missionsProvenance(statuses, warning, observedAt),
+	}
 	for _, s := range statuses {
 		out.Missions = append(out.Missions, missionDTO(s))
 	}
@@ -165,22 +265,35 @@ func (w *Web) apiMission(rw http.ResponseWriter, r *http.Request) {
 	if status.Slug == "" {
 		status.Slug = slug
 	}
+	missionObservedAt := status.FetchedAt
+	if missionObservedAt.IsZero() {
+		missionObservedAt = w.now() // disabled resolver: the refusal was observed now
+	}
 	out := apiMissionDetailDTO{
-		Mission: missionDTO(status),
-		Threads: []apiThreadDTO{},
-		Agents:  []apiRosterAgentDTO{},
+		Mission: apiMissionSectionDTO{
+			Status:     missionDTO(status),
+			Provenance: provenance(sourceMissions, missionObservedAt, contentToken(status)),
+		},
+		Threads: apiThreadsSectionDTO{
+			Rows:       []apiThreadDTO{},
+			Provenance: w.journalProvenance(),
+		},
+		Roster: apiRosterSectionDTO{
+			Agents: []apiRosterAgentDTO{},
+		},
 	}
 	for _, t := range w.store.List("", "") {
 		if t.Home == slug {
-			out.Threads = append(out.Threads, threadDTO(t))
+			out.Threads.Rows = append(out.Threads.Rows, threadDTO(t))
 		}
 	}
 	groups, rosterErr := w.rosterGroups(false)
-	out.RosterWarning = rosterErr
+	out.Roster.Warning = rosterErr
+	out.Roster.Provenance = w.rosterProvenance(groups, rosterErr)
 	for _, g := range groups {
 		if g.Mission == slug {
 			for _, a := range g.Agents {
-				out.Agents = append(out.Agents, rosterAgentDTO(a))
+				out.Roster.Agents = append(out.Roster.Agents, rosterAgentDTO(a))
 			}
 			break
 		}

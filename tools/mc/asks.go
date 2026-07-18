@@ -124,7 +124,7 @@ func (m *missionResolver) Ask(slug, id string) (askEntity, askEnvelope) {
 }
 
 func (m *missionResolver) FindAsk(id string) (askEntity, missionStatus, bool) {
-	statuses, _ := m.AllStatuses()
+	statuses, _, _ := m.AllStatuses()
 	for _, status := range statuses {
 		for _, entity := range status.Asks.Entities {
 			if entity.ID == id {

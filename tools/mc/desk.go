@@ -293,7 +293,7 @@ func (w *Web) buildDesk() *deskModel {
 
 	var statuses []missionStatus
 	if w.missions != nil {
-		statuses, model.BoardWarn = w.missions.AllStatuses()
+		statuses, model.BoardWarn, _ = w.missions.AllStatuses()
 	}
 	if len(statuses) > 0 {
 		model.BoardStamp = formatTimestamp(statuses[0].FetchedAt, now)

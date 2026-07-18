@@ -190,15 +190,18 @@ func (m *missionResolver) Status(slug string) missionStatus {
 	return status
 }
 
-func (m *missionResolver) AllStatuses() ([]missionStatus, string) {
+// AllStatuses returns the mission list, a degradation warning, and the
+// observation time of the underlying `mish status --all` read (cache-fill
+// time, not request time — old observations must never render as current).
+func (m *missionResolver) AllStatuses() ([]missionStatus, string, time.Time) {
 	if m == nil || m.bin == "" {
-		return nil, "mission list is unavailable: mish is disabled"
+		return nil, "mission list is unavailable: mish is disabled", time.Now()
 	}
 	m.mu.Lock()
 	if time.Since(m.allHit.at) < time.Minute {
 		h := m.allHit
 		m.mu.Unlock()
-		return h.statuses, h.warning
+		return h.statuses, h.warning, h.at
 	}
 	m.mu.Unlock()
 
@@ -221,9 +224,9 @@ func (m *missionResolver) AllStatuses() ([]missionStatus, string) {
 		statuses[i].FetchedAt = fetchedAt
 	}
 	m.mu.Lock()
-	m.allHit = missionListHit{statuses: statuses, warning: warning, at: time.Now()}
+	m.allHit = missionListHit{statuses: statuses, warning: warning, at: fetchedAt}
 	m.mu.Unlock()
-	return statuses, warning
+	return statuses, warning, fetchedAt
 }
 
 func formatMissionRefusal(refusal missionStatus) string {
