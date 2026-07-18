@@ -165,13 +165,18 @@ persistence is client-local, conditional on a seam that lets a
 server-side store swap in by changing one provider binding and zero
 components. The law, binding from the first comment-shaped diff:
 
-- **One interface, all async.** Every comment operation goes through the
-  `CommentStore` interface in `src/comments/` — capture, update,
-  discard, abandon-all, pending, mark-outdated, submit-batch, watch —
-  and every method is `Promise`-returning even while the implementation
-  is synchronous localStorage. A sync method signature anywhere on the
-  seam is a rejection: call sites that learn synchronicity make the
-  server swap a rewrite.
+- **One interface; operations async, subscription sync.** Every comment
+  operation goes through the `CommentStore` interface in
+  `src/comments/`. The operation set — `capture`, `update`, `discard`,
+  `abandonAll`, `pending`, `markOutdated`, `submitBatch` — is
+  `Promise`-returning even while the implementation is synchronous
+  localStorage; a sync signature on any of these is a rejection, because
+  call sites that learn synchronicity make the server swap a rewrite.
+  The one deliberate exception is the subscription:
+  `watch(cb): Unsubscribe` is synchronous, and correctly so — a React
+  effect must return its cleanup synchronously, and a
+  `Promise<Unsubscribe>` creates an unsubscribe race/leak path. Making
+  `watch` async is as much a rejection as making `capture` sync.
 - **IDs are minted client-side** (ulid) at capture. An implementation
   that waits on any server to hand back an identity is a rejection.
 - **Components never touch the interface.** They consume comment state
