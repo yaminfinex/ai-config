@@ -19,9 +19,11 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/liveness"
+	"ai-config/tools/herder/internal/pendingprompt"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcompletion"
+	"ai-config/tools/herder/internal/send"
 )
 
 type options struct {
@@ -117,32 +119,35 @@ func parseArgs(args []string) (options, bool) {
 }
 
 type sidecar struct {
-	tool                string
-	paneID              string
-	socketPath          string
-	tag                 string
-	cwd                 string
-	ppid0               int
-	registry            string
-	lastState           string
-	missing             int
-	enrichedCorrelated  bool
-	enrichedSessionID   string
-	lastReportedSID     string
-	lifecycleMode       string
-	parentSessionID     string
-	correlatedProcessID string
-	correlatedName      string
-	correlatedPIDs      []int
-	processEnvirons     processEnvironmentScanner
-	instancePID         func(string, string) (int, error)
-	diagnostic          io.Writer
-	pidSchemaWarned     bool
-	starvationWarned    bool
-	statuslineSnapshots *statuslineSnapshotWriter
-	completeSeat        func(context.Context, *hcomRow, seatcompletion.Request) (seatcompletion.Result, error)
-	currentPPID         func() int
-	applyDeath          func(string, string, liveness.SeatAnchor, liveness.Verdict, time.Time, string) (liveness.ApplyResult, error)
+	tool                 string
+	paneID               string
+	socketPath           string
+	tag                  string
+	cwd                  string
+	ppid0                int
+	registry             string
+	lastState            string
+	missing              int
+	enrichedCorrelated   bool
+	enrichedSessionID    string
+	lastReportedSID      string
+	lifecycleMode        string
+	parentSessionID      string
+	correlatedProcessID  string
+	correlatedName       string
+	correlatedPIDs       []int
+	processEnvirons      processEnvironmentScanner
+	instancePID          func(string, string) (int, error)
+	diagnostic           io.Writer
+	diagnosticStates     map[string]string
+	pidSchemaWarned      bool
+	starvationWarned     bool
+	statuslineSnapshots  *statuslineSnapshotWriter
+	completeSeat         func(context.Context, *hcomRow, seatcompletion.Request) (seatcompletion.Result, error)
+	deliverPrompt        func(string, string, string, string, int) string
+	pendingPromptHandled bool
+	currentPPID          func() int
+	applyDeath           func(string, string, liveness.SeatAnchor, liveness.Verdict, time.Time, string) (liveness.ApplyResult, error)
 }
 
 type processEnvironmentScanner func(tool string) []processEnvironmentRead
@@ -183,6 +188,9 @@ func (s *sidecar) run() int {
 			// ours, so its bus name must never be attached to this guid (TASK-033).
 			if s.shouldAppendCorrelatedEnrichment(row, paneCorrelated) {
 				_ = s.appendCorrelatedEnrichment(row)
+			}
+			if paneCorrelated {
+				s.deliverPendingPromptForCompletedSeat(row)
 			}
 			s.reportAgentSession(row, paneCorrelated)
 			if state, ok := mapStatus(row.Status); ok && state != s.lastState {
@@ -460,10 +468,12 @@ func findRowForOwnedChild(
 // is enriched then (natural retry).
 func (s *sidecar) findRowCorrelated(rows []hcomRow) (row *hcomRow, paneCorrelated bool) {
 	if r := findRowForPane(rows, s.paneID, s.lifecycleMode, s.parentSessionID); r != nil {
+		s.noteCorrelation("pane", len(rows), r)
 		return r, true
 	}
 	cached := ownedChildIdentity{StoredName: s.correlatedName, ProcessID: s.correlatedProcessID, PIDs: s.correlatedPIDs}
 	if r := findRowForOwnedChild(rows, cached, s.lifecycleMode, s.parentSessionID, s.pidCorroborator(cached)); r != nil {
+		s.noteCorrelation("cached-child", len(rows), r)
 		return r, true
 	}
 	// Reading a LIVE child process environ is authoritative for this spawned
@@ -477,10 +487,17 @@ func (s *sidecar) findRowCorrelated(rows []hcomRow) (row *hcomRow, paneCorrelate
 			s.correlatedName = r.Name
 			s.correlatedProcessID = identity.ProcessID
 			s.correlatedPIDs = append([]int(nil), identity.PIDs...)
+			s.noteCorrelation("owned-process", len(rows), r)
 			return r, true
 		}
 	}
-	return findRowForLaunchFallback(rows, s.tool, s.tag, s.cwd, s.lifecycleMode, s.parentSessionID), false
+	fallback := findRowForLaunchFallback(rows, s.tool, s.tag, s.cwd, s.lifecycleMode, s.parentSessionID)
+	source := "none"
+	if fallback != nil {
+		source = "untrusted-fallback"
+	}
+	s.noteCorrelation(source, len(rows), fallback)
+	return fallback, false
 }
 
 func (s *sidecar) findRow(rows []hcomRow) *hcomRow {
@@ -490,8 +507,10 @@ func (s *sidecar) findRow(rows []hcomRow) *hcomRow {
 
 func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 	if s.tool == "pi" && !piRowBound(row) {
+		s.diagTransition("completion-result", "completion refused: Pi bind predicate incomplete")
 		return false
 	}
+	s.diagTransition("completion-attempt", "completion attempt: correlated joined row observed")
 	guid, hadGUID := os.LookupEnv("HERDER_GUID")
 	recs, _ := registry.Load(s.registry)
 	resumed := false
@@ -531,11 +550,14 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 		return false
 	}
 	if latest != nil && registry.IsTerminal(*latest) {
+		s.diagTransition("completion-result", "completion refused: registry session is terminal")
 		return false
 	}
 	if completedRecognitionMatches(latest, row, coords) {
 		// Spawn (or an earlier sidecar pass) already completed this exact
 		// canonical seat. This is a successful idempotent replay: no second row.
+		s.diagTransition("completion-result", "completion result: canonical seat already present")
+		s.deliverPendingPrompt(row)
 		return true
 	}
 	label := os.Getenv("HERDER_LABEL")
@@ -555,6 +577,7 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 		role = "manual"
 	}
 	if owner := registry.NonRetiredLabelOwner(recs, label, guid); owner != nil {
+		s.diagTransition("completion-result", "completion refused: label is owned by another session")
 		return false
 	}
 
@@ -649,18 +672,77 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 			complete = completeObservedSeat
 		}
 		result, completeErr := complete(context.Background(), row, request)
-		if completeErr != nil || result.Refusal != nil {
+		if completeErr != nil {
+			s.diagTransition("completion-result", "completion error: "+completeErr.Error())
+			return false
+		}
+		if result.Refusal != nil {
+			s.diagTransition("completion-result", fmt.Sprintf("completion refused [%s]: %s", result.Refusal.Code, result.Refusal.Cause))
 			return false
 		}
 		if result.Status == registry.WriteApplied {
+			s.diagTransition("completion-result", "completion result: canonical seat applied")
+			s.deliverPendingPrompt(row)
 			return true
 		}
 		if result.Status == registry.WriteNoop {
 			confirmed, loadErr := registry.Load(s.registry)
-			return loadErr == nil && completedRecognitionMatches(s.latestFromRecords(confirmed, guid), row, coords)
+			matched := loadErr == nil && completedRecognitionMatches(s.latestFromRecords(confirmed, guid), row, coords)
+			if matched {
+				s.diagTransition("completion-result", "completion result: verified canonical noop")
+				s.deliverPendingPrompt(row)
+				return true
+			}
+			s.diagTransition("completion-result", "completion refused: unverified registry noop")
+			return false
 		}
 	}
+	s.diagTransition("completion-result", "completion produced no successful canonical outcome")
 	return false
+}
+
+func (s *sidecar) deliverPendingPrompt(row *hcomRow) {
+	if s.pendingPromptHandled || row == nil || row.Name == "" {
+		return
+	}
+	guid := os.Getenv("HERDER_GUID")
+	result, err := pendingprompt.Attempt(s.registry, guid, "", pendingprompt.ActorSidecar, time.Now().UTC(), func(pending pendingprompt.Record) string {
+		deliver := s.deliverPrompt
+		if deliver == nil {
+			deliver = send.DeliverBus
+		}
+		return deliver(pending.Sender, row.Name, pending.BusDir, pending.Message, pending.VerifyMS)
+	})
+	if err != nil {
+		s.diagTransition("prompt", "pending prompt error: "+err.Error())
+		return
+	}
+	if !result.Managed {
+		return
+	}
+	if result.Suppressed {
+		s.pendingPromptHandled = true
+		s.diagTransition("prompt", "pending prompt result: matching manual delivery already completed; duplicate suppressed")
+		return
+	}
+	s.diagTransition("prompt", "pending prompt result: "+result.Verdict)
+	if result.Verdict == "delivered" || result.Verdict == "queued" {
+		s.pendingPromptHandled = true
+	}
+}
+
+func (s *sidecar) deliverPendingPromptForCompletedSeat(row *hcomRow) {
+	if s.pendingPromptHandled || row == nil {
+		return
+	}
+	guid := os.Getenv("HERDER_GUID")
+	coords := s.paneCoordinates()
+	if coords.PaneID == "" {
+		coords.PaneID = s.paneID
+	}
+	if latest := s.latest(guid); completedRecognitionMatches(latest, row, coords) {
+		s.deliverPendingPrompt(row)
+	}
 }
 
 func completedRecognitionMatches(latest *registry.Record, row *hcomRow, coords paneCoordinates) bool {
@@ -829,13 +911,16 @@ func (s *sidecar) findIdentityForOwnChild() ownedChildIdentity {
 	// name and process id. Disagreement fails closed instead of letting /proc
 	// scan order choose an identity.
 	identity := ownedChildIdentity{}
-	for _, read := range scan(s.tool) {
+	reads := scan(s.tool)
+	owned := 0
+	for _, read := range reads {
 		if read.err != nil {
 			continue
 		}
 		if read.env["HERDER_GUID"] != guid {
 			continue
 		}
+		owned++
 		candidate := ownedChildIdentity{
 			StoredName: read.env["HCOM_INSTANCE_NAME"],
 			ProcessID:  read.env["HCOM_PROCESS_ID"],
@@ -847,9 +932,11 @@ func (s *sidecar) findIdentityForOwnChild() ownedChildIdentity {
 			continue
 		}
 		if identity.StoredName != "" && candidate.StoredName != "" && identity.StoredName != candidate.StoredName {
+			s.diagTransition("process-scan", "process scan: owned identity conflict=name")
 			return ownedChildIdentity{}
 		}
 		if identity.ProcessID != "" && candidate.ProcessID != "" && identity.ProcessID != candidate.ProcessID {
+			s.diagTransition("process-scan", "process scan: owned identity conflict=process")
 			return ownedChildIdentity{}
 		}
 		identity.StoredName = firstNonEmpty(identity.StoredName, candidate.StoredName)
@@ -858,7 +945,27 @@ func (s *sidecar) findIdentityForOwnChild() ownedChildIdentity {
 			identity.PIDs = append(identity.PIDs, read.pid)
 		}
 	}
+	s.diagTransition("process-scan", fmt.Sprintf("process scan: owned=%t identity=%t", owned > 0, !identity.empty()))
 	return identity
+}
+
+func (s *sidecar) noteCorrelation(source string, rows int, row *hcomRow) {
+	joined := row != nil && sidecarRowJoined(*row)
+	s.diagTransition("correlation", fmt.Sprintf("roster scan: available=%t correlate=%s joined=%t", rows > 0, source, joined))
+}
+
+func (s *sidecar) diagTransition(key, message string) {
+	if s.diagnostic == nil || message == "" {
+		return
+	}
+	if s.diagnosticStates == nil {
+		s.diagnosticStates = make(map[string]string)
+	}
+	if s.diagnosticStates[key] == message {
+		return
+	}
+	s.diagnosticStates[key] = message
+	fmt.Fprintln(s.diagnostic, "herder sidecar: "+message)
 }
 
 func (s *sidecar) pidCorroborator(identity ownedChildIdentity) func(hcomRow) bool {

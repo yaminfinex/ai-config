@@ -1,5 +1,5 @@
 === STDERR ===
-herder spawn: seat completion refused [joined_bus_row_missing]: no joined bus row matches the provided name, session, process, or pane; bind status: bind-timeout(3000ms); no registry row was appended and the child pane remains running because occupant death was not proven. Once the child has joined hcom, its sidecar will complete the seat automatically; manual recovery is `herder enroll` from pane p_50
+herder spawn: seat completion refused [joined_bus_row_missing]: no joined bus row matches the provided name, session, process, or pane; bind status: bind-timeout(3000ms); no registry row was appended and the child pane remains running because occupant death was not proven. Once the child has joined hcom, its sidecar will complete the seat AND deliver the pending initial prompt automatically; manual recovery is `herder enroll` from pane p_50
 === STDOUT ===
 
 === EXIT ===
@@ -28,3 +28,5 @@ pane move p_50 --new-tab --no-focus --label quote;$`&<>("* )-<SHORT>
 {"kind":"session","guid":"guid-dispatcher","event":"seated","state":"seated","label":"dispatcher","role":"lead","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"dispatcher-rive","namespace":"<CASE>/home/.hcom"}}
 === HCOM SEND ARGV ===
 === HCOM EVENTS ARGV ===
+=== PENDING PROMPTS ===
+{"version":1,"guid":"<GUID>","sender":"dispatcher-rive","bus_dir":"<CASE>/home/.hcom","message":"do the thing","verify_ms":1000,"expires_at":"<TS>"}

@@ -180,7 +180,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		writeSenderRefusal(stderr, err)
 		return 2
 	}
-	return sender.send(senderName, target, rec.HcomName, rec.HcomDir, message, opts.TimeoutMS, opts.JSONOutput, stdout, stderr)
+	return sender.sendPending(registry.DefaultPath(), ptrString(rec.GUID), senderName, target, rec.HcomName, rec.HcomDir, message, opts.TimeoutMS, opts.JSONOutput, stdout, stderr)
 }
 
 func verifiedCallerSender(recs []registry.Record, busDir string) (string, error) {

@@ -171,6 +171,32 @@ func TestParseArgsAcceptsMission(t *testing.T) {
 	}
 }
 
+func TestBindTimeoutDefaultsAreFamilyAwareAndEnvironmentWins(t *testing.T) {
+	t.Setenv("HERDER_SPAWN_BIND_MS", "")
+	for _, tt := range []struct {
+		agent string
+		want  int
+	}{
+		{agent: "claude", want: 60000},
+		{agent: "codex", want: 300000},
+		{agent: "gemini", want: 300000},
+		{agent: "bash", want: 60000},
+	} {
+		opts, code := parseArgs([]string{"--role", "worker", "--agent", tt.agent}, io.Discard, io.Discard)
+		if code != 0 || opts.BindTimeoutMS != tt.want {
+			t.Fatalf("agent %s bind timeout = %d code=%d, want %d", tt.agent, opts.BindTimeoutMS, code, tt.want)
+		}
+	}
+
+	t.Setenv("HERDER_SPAWN_BIND_MS", "12345")
+	for _, agent := range []string{"claude", "codex"} {
+		opts, code := parseArgs([]string{"--role", "worker", "--agent", agent}, io.Discard, io.Discard)
+		if code != 0 || opts.BindTimeoutMS != 12345 {
+			t.Fatalf("agent %s override = %d code=%d, want 12345", agent, opts.BindTimeoutMS, code)
+		}
+	}
+}
+
 func TestSpawnJSONMissionWireShape(t *testing.T) {
 	withMission, err := json.Marshal(newSpawnJSONRecord(
 		missionSpawnRecord(&v2.Mission{Slug: "alpha", Source: missioncontext.SourceExplicit}),
@@ -932,7 +958,7 @@ func TestResendCommandForOnlySafeResults(t *testing.T) {
 		"bind_timeout", "ready_match_timeout",
 		"delivered", "queued", "blocked_trust_modal", "send_failed", "not_attempted",
 	} {
-		got := resendCommandFor(result, label, "do the thing")
+		got := resendCommandFor(result, false, label, "do the thing")
 		if safe[result] {
 			want := resendCommand(label, "do the thing")
 			if got != want {
@@ -941,6 +967,26 @@ func TestResendCommandForOnlySafeResults(t *testing.T) {
 		} else if got != "" {
 			t.Fatalf("resendCommandFor(%q) = %q, want empty (resend is not the remedy)", result, got)
 		}
+	}
+	if got := resendCommandFor("bind_timeout", true, label, "do the thing"); got != "" {
+		t.Fatalf("persisted bind-timeout hand-off resend command = %q, want empty", got)
+	}
+}
+
+func TestSummaryDescribesPersistedBindTimeoutAsAutomaticHandoff(t *testing.T) {
+	var stderr strings.Builder
+	r := &runner{
+		opts:          options{Prompt: "initial prompt"},
+		stderr:        &stderr,
+		pendingPrompt: true,
+	}
+	r.writeSummary(spawnRecord{
+		GUID: "child-guid", Label: "worker-label", Agent: "codex", PaneID: "pane-live",
+		WorkspaceID: "workspace-live", CWD: "/work", HcomName: "worker", HcomDir: "/bus",
+	}, nil, true, false, "", "", "captured", true, false, "bind_timeout", "bind timed out", false, nil)
+	got := stderr.String()
+	if !strings.Contains(got, "sidecar will deliver it automatically") || strings.Contains(got, "resend is SAFE") || strings.Contains(got, "resend_command") {
+		t.Fatalf("persisted bind-timeout summary contradicts hand-off contract:\n%s", got)
 	}
 }
 

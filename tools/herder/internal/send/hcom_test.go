@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"ai-config/tools/herder/internal/pendingprompt"
 )
 
 func TestPromptSenderStampIsAddressableLiveIdentity(t *testing.T) {
@@ -139,6 +142,58 @@ exit 0
 		t.Fatalf("empty sender invoked hcom send:\n%s", data)
 	} else if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
+	}
+}
+
+func TestManualSendClaimsPendingPromptBeforeSidecar(t *testing.T) {
+	stubDir := t.TempDir()
+	stateDir := t.TempDir()
+	stub := `#!/bin/sh
+case "$1" in
+  list) exit 0 ;;
+  send) printf 'sent\n' >>"$STUB_STATE/sends"; exit 0 ;;
+  events) exit 0 ;;
+esac
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(stubDir, "hcom"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STUB_STATE", stateDir)
+	registryPath := filepath.Join(stateDir, "registry.jsonl")
+	now := time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)
+	message := "initial prompt"
+	if err := pendingprompt.Store(registryPath, pendingprompt.Record{
+		GUID: "child-guid", Sender: "dispatcher", BusDir: stateDir, Message: message, VerifyMS: 1,
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	clock := now
+	sender := &busSender{
+		Bin:   filepath.Join(stubDir, "hcom"),
+		Sleep: func(time.Duration) {},
+		Now: func() time.Time {
+			clock = clock.Add(2 * time.Second)
+			return clock
+		},
+	}
+	var stdout, stderr strings.Builder
+	if code := sender.sendPending(registryPath, "child-guid", "dispatcher", "child", "worker", stateDir, message, 1, false, &stdout, &stderr); code != 0 {
+		t.Fatalf("manual pending send code=%d stderr=%q", code, stderr.String())
+	}
+	data, err := os.ReadFile(filepath.Join(stateDir, "sends"))
+	if err != nil || strings.Count(string(data), "sent") != 1 {
+		t.Fatalf("manual hcom sends = %q err=%v", data, err)
+	}
+
+	sidecarCalls := 0
+	result, err := pendingprompt.Attempt(registryPath, "child-guid", "", pendingprompt.ActorSidecar, clock, func(pendingprompt.Record) string {
+		sidecarCalls++
+		return "delivered"
+	})
+	if err != nil || !result.Suppressed || sidecarCalls != 0 {
+		t.Fatalf("sidecar replay = %+v calls=%d err=%v", result, sidecarCalls, err)
 	}
 }
 

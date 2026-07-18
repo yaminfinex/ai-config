@@ -101,6 +101,45 @@ func TestHerdrCompletionBackfillsBeforeAppendingCanonicalBinding(t *testing.T) {
 	}
 }
 
+func TestTaggedJoinedRowWithoutPaneRepairsByAuthoritativeBaseName(t *testing.T) {
+	engine := testEngine(t)
+	joined := true
+	engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{{
+			Name:      "worker-live",
+			BaseName:  "live",
+			Joined:    &joined,
+			SessionID: "session-live",
+			LaunchContext: hcomidentity.LaunchContext{
+				ProcessID: "process-live",
+			},
+		}}, nil
+	}
+	repaired := false
+	engine.RepairLaunchContext = func(dir, name, pane string) hcomidentity.LaunchContextRepair {
+		repaired = true
+		if dir != "/bus" || name != "live" || pane != "pane-live" {
+			t.Fatalf("repair args = %q %q %q, want base-name store coordinate", dir, name, pane)
+		}
+		return hcomidentity.LaunchContextRepair{Status: "written", PaneID: pane, ProcessID: "process-live"}
+	}
+	result, err := engine.Complete(context.Background(), Request{
+		Origin:       OriginRecognition,
+		RegistryPath: filepath.Join(t.TempDir(), "registry.jsonl"),
+		Candidate:    v2.SessionRecord{GUID: "guid-agent", Label: "worker", Tool: "codex"},
+		Seat:         SeatClaim{Kind: SeatHerdr, PaneID: "pane-live"},
+		Namespace:    "/bus",
+		Evidence:     hcomidentity.Evidence{ProcessID: "process-live"},
+	})
+	if err != nil || result.Refusal != nil || !repaired {
+		t.Fatalf("Complete() = result %+v repaired %v err %v", result, repaired, err)
+	}
+	row := decodeCompletedRow(t, result.Row)
+	if row.Seat == nil || row.Seat.HcomName != "worker-live" || row.Seat.PaneID != "pane-live" {
+		t.Fatalf("completed seat = %+v", row.Seat)
+	}
+}
+
 func TestRepeatedCompletionDoesNotDuplicateUnchangedBindingFacts(t *testing.T) {
 	engine := testEngine(t)
 	joined := true

@@ -23,6 +23,7 @@ import (
 	"ai-config/tools/herder/internal/missioncontext"
 	"ai-config/tools/herder/internal/observercmd"
 	"ai-config/tools/herder/internal/panecleanup"
+	"ai-config/tools/herder/internal/pendingprompt"
 	"ai-config/tools/herder/internal/placement"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
@@ -163,6 +164,7 @@ type worktreeInfo struct {
 
 type spawnJSONDetails struct {
 	PromptSent     bool
+	PendingPrompt  bool
 	DeliveryResult string
 	Prompt         string
 	PasteNotes     []string
@@ -204,7 +206,7 @@ func newSpawnJSONRecord(record spawnRecord, details spawnJSONDetails) spawnJSONR
 		Provenance:           record.Provenance,
 		PromptSent:           details.PromptSent,
 		DeliveryResult:       details.DeliveryResult,
-		ResendCommand:        resendCommandFor(details.DeliveryResult, record.Label, details.Prompt),
+		ResendCommand:        resendCommandFor(details.DeliveryResult, details.PendingPrompt, record.Label, details.Prompt),
 		PasteNotes:           details.PasteNotes,
 		PermInjected:         details.PermInjected,
 		NewTab:               details.NewTab,
@@ -292,6 +294,7 @@ type runner struct {
 	piBinDir        string
 	piBind          hcomEntry
 	completion      *seatcompletion.Engine
+	pendingPrompt   bool
 }
 
 type herdrClient interface {
@@ -319,7 +322,11 @@ func (r *runner) failAfterLaunch(reason, paneID, terminalID string) int {
 
 func (r *runner) handleSeatCompletionFailure(reason, paneID, terminalID, readyReason string) int {
 	if r.spawnOccupantState(paneID) != occupantAbsent {
-		die(r.stderr, fmt.Sprintf("%s; bind status: %s; no registry row was appended and the child pane remains running because occupant death was not proven. Once the child has joined hcom, its sidecar will complete the seat automatically; manual recovery is `herder enroll` from pane %s", reason, readyReason, paneID))
+		recovery := "complete the seat automatically"
+		if r.pendingPrompt {
+			recovery = "complete the seat AND deliver the pending initial prompt automatically"
+		}
+		die(r.stderr, fmt.Sprintf("%s; bind status: %s; no registry row was appended and the child pane remains running because occupant death was not proven. Once the child has joined hcom, its sidecar will %s; manual recovery is `herder enroll` from pane %s", reason, readyReason, recovery, paneID))
 		return 1
 	}
 	return r.failAfterLaunch(reason, paneID, terminalID)
@@ -778,7 +785,16 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 	}
 	opts.Split = decision.Split
 	opts.NewTab = decision.NewTab
+	opts.BindTimeoutMS = bindTimeoutMS(opts.Agent)
 	return opts, 0
+}
+
+func bindTimeoutMS(agent string) int {
+	fallback := 60000
+	if launchcmd.IsHcomCapable(agent) && agent != "claude" {
+		fallback = 300000
+	}
+	return envInt("HERDER_SPAWN_BIND_MS", fallback)
 }
 
 func (r *runner) run() int {
@@ -1325,6 +1341,19 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	if opts.Agent == "pi" {
 		record.Model = opts.Model
 	}
+	if deliveryResult == "bind_timeout" && opts.Prompt != "" {
+		pending := pendingprompt.Record{
+			GUID:     guid,
+			Sender:   promptSender,
+			BusDir:   hcomDirEff,
+			Message:  opts.Prompt,
+			VerifyMS: opts.VerifyMS,
+		}
+		if err := pendingprompt.Store(registryPath, pending, time.Now().UTC()); err != nil {
+			return r.handleSeatCompletionFailure("pending initial prompt could not be persisted: "+err.Error(), paneID, termID, readyReason)
+		}
+		r.pendingPrompt = true
+	}
 	completion, completeErr := r.completeSpawn(registryPath, record, launchPaneID, toolSessionID)
 	if handled, code := r.handleIncompleteSeatCompletion(completion, completeErr, paneID, termID, readyReason); handled {
 		return code
@@ -1348,6 +1377,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	if opts.JSONOutput {
 		outRecord := newSpawnJSONRecord(record, spawnJSONDetails{
 			PromptSent:     promptSent,
+			PendingPrompt:  r.pendingPrompt,
 			DeliveryResult: deliveryResult,
 			Prompt:         opts.Prompt,
 			PasteNotes:     pasteNotes,
@@ -1690,6 +1720,9 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 		case deliveryResult == "blocked_trust_modal":
 			fmt.Fprintln(r.stderr, "  prompt: NOT sent — a directory-trust modal is open and --safe forbids auto-accepting it.")
 			fmt.Fprintf(r.stderr, "          Accept it in the pane (focus + Enter), then: herder send %s \"<prompt>\"\n", record.Label)
+		case deliveryResult == "bind_timeout" && r.pendingPrompt:
+			fmt.Fprintf(r.stderr, "  prompt: pending after bind timeout (%s) — the owned-child sidecar will deliver it automatically.\n", readyReason)
+			fmt.Fprintln(r.stderr, "          Do NOT resend the initial prompt; the durable hand-off suppresses duplicate submission.")
 		case deliveryResult == "bind_timeout" || deliveryResult == "ready_match_timeout":
 			fmt.Fprintf(r.stderr, "  prompt: NOT sent (%s) — nothing went on the wire; a resend is SAFE.\n", readyReason)
 			fmt.Fprintf(r.stderr, "          once `herder list` shows its bus name, resend verbatim (also in --json as resend_command):\n")
@@ -1759,7 +1792,9 @@ func printHelp(stdout io.Writer) {
 		"  --no-login-shell      run the agent without a login+interactive shell wrapper",
 		"  --wait-timeout-ms MS  paste path (bash) / promptless spawns: max boot ready-wait",
 		"                        (bus delivery waits for hcom BIND instead: HERDER_SPAWN_BIND_MS,",
-		"                        default 60000; receipt window: HERDER_SPAWN_VERIFY_MS, default 20000)",
+		"                        defaults: Claude 60000, other bus agents 300000; an explicit env",
+		"                        value overrides the family default; receipt window:",
+		"                        HERDER_SPAWN_VERIFY_MS, default 20000)",
 		"  --ready-match STR     don't deliver before the pane's screen matches STR (both paths)",
 		"  --no-ready-wait       paste path/promptless only: skip the boot ready-wait. Bus delivery",
 		"                        cannot skip its bind wait — without a bound bus name there is",
@@ -1786,10 +1821,11 @@ func printHelp(stdout io.Writer) {
 		"  BIND its bus name (early in boot, well before the TUI is interactive), sends the full",
 		"  prompt as a bus message, and reports the receipt — verify: delivered (receipt seen) or",
 		"  queued (sent, no receipt yet; it injects the moment the agent is deliverable — do NOT",
-		"  resend). On bind_timeout nothing goes on the wire (a resend is SAFE): the summary and",
-		"  --json (resend_command) carry the exact verbatim `herder send` command to run once the",
-		"  bus name shows in `herder list`. Codex rows with lagging launch coordinates still bind",
-		"  after the owned-child sidecar completes this guid's row. hcom wakes an idle agent with an EMPTY composer instantly, even a fresh",
+		"  resend). On bind_timeout nothing has gone on the wire yet: spawn persists the initial",
+		"  prompt for the owned-child sidecar, which completes the seat and then submits the prompt",
+		"  through the same receipt-checked bus path. A matching manual `herder send` that wins the",
+		"  race marks the hand-off complete so the sidecar suppresses its replay. hcom wakes an idle",
+		"  agent with an EMPTY composer instantly, even a fresh",
 		"  never-prompted one; a message sent mid-boot is held until the session can take it.",
 		"  The one thing that starves bus delivery — on both families — is UNSUBMITTED TEXT in",
 		"  the composer: nothing injects until it is submitted or cleared. Preferred remedy for",
@@ -2128,7 +2164,7 @@ func grokBoundBusOnce(stateDir, guid, sessionID string) string {
 }
 
 // resendCommand renders the exact, copy-pasteable recovery command for a prompt
-// that bind-timed out (nothing went on the wire — a resend is safe; TASK-036).
+// that timed out before any durable sidecar hand-off existed.
 // BOTH the label and the prompt are shell-quoted with the same printf %q-
 // compatible quoting herder uses elsewhere: the label is built from
 // --label-prefix verbatim and metachar prefixes are accepted (bash_metachar
@@ -2141,12 +2177,12 @@ func resendCommand(label, prompt string) string {
 
 // resendCommandFor returns the recovery command for the --json surface, but ONLY
 // for the delivery results where a resend is the documented remedy and provably
-// safe — bind_timeout and ready_match_timeout (nothing went on the wire). Every
+// safe — an unpersisted bind_timeout or ready_match_timeout. Every
 // other result (delivered, queued, blocked_trust_modal, send_failed, the paste
 // variants) has its own remedy and must NOT carry a resend_command, so the field
 // is omitempty and left "" here. Mirrors the writeSummary human line exactly.
-func resendCommandFor(deliveryResult, label, prompt string) string {
-	if deliveryResult == "bind_timeout" || deliveryResult == "ready_match_timeout" {
+func resendCommandFor(deliveryResult string, pendingPrompt bool, label, prompt string) string {
+	if (deliveryResult == "bind_timeout" && !pendingPrompt) || deliveryResult == "ready_match_timeout" {
 		return resendCommand(label, prompt)
 	}
 	return ""
