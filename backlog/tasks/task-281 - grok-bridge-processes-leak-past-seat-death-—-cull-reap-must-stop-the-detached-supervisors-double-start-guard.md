@@ -3,7 +3,7 @@ id: TASK-281
 title: >-
   grok bridge processes leak past seat death — cull/reap must stop the detached
   supervisors (+ double-start guard)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-17 22:12'
 updated_date: '2026-07-18 15:01'
