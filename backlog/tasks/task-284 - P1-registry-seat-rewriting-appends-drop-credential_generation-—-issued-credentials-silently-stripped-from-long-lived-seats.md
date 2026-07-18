@@ -3,9 +3,10 @@ id: TASK-284
 title: >-
   P1: registry seat-rewriting appends drop credential_generation — issued
   credentials silently stripped from long-lived seats
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-18 12:45'
+updated_date: '2026-07-18 12:45'
 labels:
   - herder
   - bug
