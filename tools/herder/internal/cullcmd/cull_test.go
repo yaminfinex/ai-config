@@ -19,6 +19,7 @@ import (
 	"ai-config/tools/herder/internal/liveness"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcred"
 )
 
 type cullResponse struct {
@@ -26,6 +27,26 @@ type cullResponse struct {
 	out  []byte
 	rc   int
 	err  error
+}
+
+func TestCutoverCullNeverSelectsCallerFromAmbientEnvironment(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	if err := seatcred.EnableCutover(registryPath); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_STATE_DIR", state)
+	t.Setenv("HERDR_ENV", "1")
+	t.Setenv("HERDER_GUID", "guid-poison-parent")
+	t.Setenv("HCOM_SESSION_ID", "sid-poison-parent")
+	t.Setenv("HERDR_PANE_ID", "pane-poison-parent")
+	var stdout, stderr strings.Builder
+	if rc := Run([]string{"--gone"}, &stdout, &stderr); rc != 2 {
+		t.Fatalf("Run rc=%d, want credential refusal; stderr=%q", rc, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--credential-file is required") || !strings.Contains(stderr.String(), "hints, not authority") {
+		t.Fatalf("stderr=%q, want ambient-authority refusal", stderr.String())
+	}
 }
 
 func TestObserverDownCLIUsesSharedPredicateToUnseatDeadProcess(t *testing.T) {
@@ -427,6 +448,7 @@ func waitForCullBridge(t *testing.T, socket string) {
 
 func TestRunClosesSeatedPaneLessRowWithoutForce(t *testing.T) {
 	registryPath := seedSeatedCullRow(t, "ghost", "", "")
+	credential := installCullCredential(t, registryPath)
 	mockDir, closeProbe := installCullTestMocks(t)
 	t.Setenv("PATH", mockDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HERDR_ENV", "1")
@@ -434,7 +456,7 @@ func TestRunClosesSeatedPaneLessRowWithoutForce(t *testing.T) {
 	t.Setenv("HERDER_STATE_DIR", filepath.Dir(registryPath))
 
 	var stdout, stderr strings.Builder
-	if rc := Run([]string{"--label", "ghost"}, &stdout, &stderr); rc != 0 {
+	if rc := Run([]string{"--credential-file", credential, "--label", "ghost"}, &stdout, &stderr); rc != 0 {
 		t.Fatalf("Run rc = %d, want 0\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 	}
 	if _, err := os.Stat(closeProbe); !os.IsNotExist(err) {
@@ -457,6 +479,7 @@ func TestRunClosesSeatedPaneLessRowWithoutForce(t *testing.T) {
 
 func TestRunPaneLessUnannotatedCullAppendsOneVerifiedAnnotation(t *testing.T) {
 	registryPath := seedUnseatedCullRow(t, "ghost")
+	credential := installCullCredential(t, registryPath)
 	mockDir, _ := installCullTestMocks(t)
 	t.Setenv("PATH", mockDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HERDR_ENV", "1")
@@ -465,7 +488,7 @@ func TestRunPaneLessUnannotatedCullAppendsOneVerifiedAnnotation(t *testing.T) {
 
 	before := closeRecordCount(t, registryPath, "guid-ghost")
 	var stdout, stderr strings.Builder
-	if rc := Run([]string{"--label", "ghost"}, &stdout, &stderr); rc != 0 {
+	if rc := Run([]string{"--credential-file", credential, "--label", "ghost"}, &stdout, &stderr); rc != 0 {
 		t.Fatalf("Run rc = %d, want 0\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 	}
 	if after := closeRecordCount(t, registryPath, "guid-ghost"); after != before+1 {
@@ -481,7 +504,7 @@ func TestRunPaneLessUnannotatedCullAppendsOneVerifiedAnnotation(t *testing.T) {
 	beforeBytes := mustReadFile(t, registryPath)
 	stdout.Reset()
 	stderr.Reset()
-	if rc := Run([]string{"--label", "ghost"}, &stdout, &stderr); rc != 0 {
+	if rc := Run([]string{"--credential-file", credential, "--label", "ghost"}, &stdout, &stderr); rc != 0 {
 		t.Fatalf("second Run rc = %d, want 0\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 	}
 	if afterBytes := mustReadFile(t, registryPath); string(afterBytes) != string(beforeBytes) {
@@ -527,6 +550,7 @@ func TestRunUnannotatedStaleCoordinateCorpseDoesNotStampBlindly(t *testing.T) {
 			TerminalID: "term_stale",
 		},
 	})
+	credential := installCullCredential(t, registryPath)
 	mockDir, _ := installCullTestMocks(t)
 	t.Setenv("PATH", mockDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HERDR_ENV", "1")
@@ -535,7 +559,7 @@ func TestRunUnannotatedStaleCoordinateCorpseDoesNotStampBlindly(t *testing.T) {
 
 	before := mustReadFile(t, registryPath)
 	var stdout, stderr strings.Builder
-	if rc := Run([]string{"--label", "ghost"}, &stdout, &stderr); rc != 0 {
+	if rc := Run([]string{"--credential-file", credential, "--label", "ghost"}, &stdout, &stderr); rc != 0 {
 		t.Fatalf("Run rc = %d, want 0\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
 	}
 	if after := mustReadFile(t, registryPath); string(after) != string(before) {
@@ -554,6 +578,7 @@ func TestRunGoneSweepSkipsUnseatedCorpsesByteIdentically(t *testing.T) {
 		v2.SessionRecord{GUID: "guid-ghost-a", Label: "ghost-a", CloseResult: "already_gone", CloseReason: "terminal_id not in live agent list"},
 		v2.SessionRecord{GUID: "guid-ghost-b", Label: "ghost-b"},
 	)
+	credential := installCullCredential(t, registryPath)
 	mockDir, _ := installCullTestMocks(t)
 	t.Setenv("PATH", mockDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HERDR_ENV", "1")
@@ -563,11 +588,11 @@ func TestRunGoneSweepSkipsUnseatedCorpsesByteIdentically(t *testing.T) {
 	before := mustReadFile(t, registryPath)
 	for i := 0; i < 2; i++ {
 		var stdout, stderr strings.Builder
-		if rc := Run([]string{"--gone"}, &stdout, &stderr); rc != 0 {
+		if rc := Run([]string{"--credential-file", credential, "--gone"}, &stdout, &stderr); rc != 0 {
 			t.Fatalf("run %d rc = %d, want 0\nstdout:\n%s\nstderr:\n%s", i+1, rc, stdout.String(), stderr.String())
 		}
-		if !strings.Contains(stdout.String(), "no gone records to cull") {
-			t.Fatalf("run %d stdout = %q, want no-op sweep line", i+1, stdout.String())
+		if !strings.Contains(stdout.String(), "not gone caller (guid-caller): live evidence") {
+			t.Fatalf("run %d stdout = %q, want authenticated caller preserved as live", i+1, stdout.String())
 		}
 		if after := mustReadFile(t, registryPath); string(after) != string(before) {
 			t.Fatalf("registry changed after gone sweep %d\nbefore:\n%s\nafter:\n%s", i+1, before, after)
@@ -577,6 +602,7 @@ func TestRunGoneSweepSkipsUnseatedCorpsesByteIdentically(t *testing.T) {
 
 func TestRunPaneLessCloseWriteFailureExitsNonzero(t *testing.T) {
 	registryPath := seedPaneLessCullRow(t, "ghost")
+	credential := installCullCredential(t, registryPath)
 	mockDir, _ := installCullTestMocks(t)
 	t.Setenv("PATH", mockDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HERDR_ENV", "1")
@@ -585,7 +611,7 @@ func TestRunPaneLessCloseWriteFailureExitsNonzero(t *testing.T) {
 	t.Setenv("HERDER_TEST_FLOCK_REFUSE", "1")
 
 	var stdout, stderr strings.Builder
-	if rc := Run([]string{"--label", "ghost"}, &stdout, &stderr); rc == 0 {
+	if rc := Run([]string{"--credential-file", credential, "--label", "ghost"}, &stdout, &stderr); rc == 0 {
 		t.Fatalf("Run rc = 0, want nonzero\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
 	}
 	if strings.Contains(stdout.String(), "recorded unseated") || strings.Contains(stdout.String(), "recorded closed") || strings.Contains(stdout.String(), "marked closed") {
@@ -706,7 +732,7 @@ func installCullTestMocks(t *testing.T) (string, string) {
 set -euo pipefail
 case "${1:-} ${2:-}" in
   "agent list")
-    printf '{"result":{"agents":[]}}\n'
+    printf '{"result":{"agents":[{"terminal_id":"term-culler","pane_id":"p_culler","agent":"codex","agent_status":"idle"}]}}\n'
     ;;
   "pane close")
     printf '%s\n' "${3:-}" >>"` + closeProbe + `"
@@ -724,7 +750,41 @@ esac
 	if err := os.WriteFile(filepath.Join(dir, "jq"), []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	hcom := `#!/usr/bin/env bash
+if [[ "${1:-} ${2:-}" == "list --json" ]]; then
+  printf '[{"name":"worker-caller","base_name":"caller","status":"active","session_id":"caller-session","launch_context":{"pane_id":"p_culler"}}]\n'
+  exit 0
+fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(dir, "hcom"), []byte(hcom), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	return dir, closeProbe
+}
+
+func installCullCredential(t *testing.T, path string) string {
+	t.Helper()
+	staged, err := seatcred.Stage(path, "guid-caller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified := true
+	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{
+			Kind: v2.KindSession, GUID: "guid-caller", Event: "registered", RecordedAt: "2026-07-08T00:00:01Z", State: v2.StateSeated,
+			Label: "caller", Role: "builder", Tool: "codex", Seat: &v2.Seat{Kind: "herdr", PaneID: "p_culler", TerminalID: "term-culler", HcomName: "worker-caller", HcomVerified: &verified, CredentialGeneration: staged.File.Generation},
+		}}, nil
+	})
+	if err != nil {
+		staged.Abort()
+		t.Fatal(err)
+	}
+	assertWriteOutcomes(t, outcomes)
+	if err := staged.Close(path, staged.File.Generation); err != nil {
+		t.Fatal(err)
+	}
+	return staged.Path
 }
 
 func latestSession(t *testing.T, path, guid string) v2.SessionRecord {

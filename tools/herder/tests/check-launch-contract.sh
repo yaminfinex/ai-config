@@ -98,7 +98,7 @@ printf '%s\n' "$@" >"$PROBE/tool_argv"
 exit 0
 MOCK_CLAUDE
 chmod +x "$BASEBIN/claude"
-REAL_GO="$(command -v go)"
+REAL_GO="$(mise which go 2>/dev/null)" || { printf 'FAIL  launch contract cannot resolve repository Go pin through mise\n'; exit 1; }
 printf '%s\n' '#!/usr/bin/env bash' "exec \"$REAL_GO\" \"\$@\"" >"$BASEBIN/go"
 chmod +x "$BASEBIN/go"
 

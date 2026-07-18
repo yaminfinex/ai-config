@@ -249,6 +249,7 @@ block_for() {
     block="${block//$short/<SHORT>}"
   fi
   block="$(sed -E 's/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/<GUID>/g; s/"hostname":"[^"]*"/"hostname":"<HOST>"/g' <<<"$block")"
+	block="$(sed -E 's/[0-9a-f]{32}/<GEN>/g' <<<"$block")"
   block="${block//$REPO/<REPO>}"
   if [[ -n "$LIVE_BRANCH" ]]; then
     block="${block//\"branch\":\"$LIVE_BRANCH\"/\"branch\":\"<BRANCH>\"}"

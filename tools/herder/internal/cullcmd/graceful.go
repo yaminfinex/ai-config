@@ -13,6 +13,7 @@ import (
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
+	"ai-config/tools/herder/internal/seatcred"
 	"ai-config/tools/herder/internal/send"
 )
 
@@ -39,10 +40,25 @@ func gracefulRelease(rec registry.Record, pane, term string, opts options, stdou
 		fmt.Fprintf(stdout, "release notice: skipped (caller bus identity unverified: %s); proceeding\n", rosterErr)
 		return
 	}
-	sender := hcomidentity.Resolve(rows, hcomidentity.CurrentEvidence(os.Getenv("HERDR_PANE_ID")))
-	if !sender.Verified {
-		fmt.Fprintf(stdout, "release notice: skipped (caller bus identity unverified: %s); proceeding\n", sender.Reason)
-		return
+	var sender hcomidentity.Row
+	if opts.caller == nil {
+		legacy := hcomidentity.Resolve(rows, hcomidentity.CurrentEvidence(os.Getenv("HERDR_PANE_ID")))
+		if !legacy.Verified {
+			fmt.Fprintf(stdout, "release notice: skipped (caller bus identity unverified: %s); proceeding\n", legacy.Reason)
+			return
+		}
+		sender = hcomidentity.Row{Name: legacy.Name, BaseName: legacy.BaseName}
+	} else {
+		if err := seatcred.VerifySelectedBus(rows, *opts.caller, hcomidentity.Evidence{}); err != nil {
+			fmt.Fprintf(stdout, "release notice: skipped (caller bus identity unverified: %s); proceeding\n", err)
+			return
+		}
+		var senderCount int
+		sender, senderCount = hcomidentity.JoinedNamedCount(rows, opts.caller.Row.Seat.HcomName)
+		if senderCount != 1 || sender.Name == "" || sender.BaseName == "" {
+			fmt.Fprintln(stdout, "release notice: skipped (credential-selected caller bus row unavailable or ambiguous); proceeding")
+			return
+		}
 	}
 	target, targetCount := hcomidentity.JoinedStoredCount(rows, rec.HcomName)
 	if targetCount != 1 || target.Name == "" || target.BaseName == "" {

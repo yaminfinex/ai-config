@@ -16,6 +16,7 @@ import (
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcred"
 )
 
 type Origin string
@@ -72,6 +73,7 @@ type NarrowFallback struct {
 type Request struct {
 	Origin         Origin
 	RegistryPath   string
+	CredentialGUID string
 	Candidate      v2.SessionRecord
 	Seat           SeatClaim
 	ObservedPane   *LivePane
@@ -107,11 +109,13 @@ func (r *Refusal) Error() string {
 }
 
 type Result struct {
-	Outcome  registry.WriteOutcome
-	Outcomes []registry.WriteOutcome
-	Status   registry.WriteStatus
-	Row      []byte
-	Refusal  *Refusal
+	Outcome              registry.WriteOutcome
+	Outcomes             []registry.WriteOutcome
+	Status               registry.WriteStatus
+	Row                  []byte
+	Refusal              *Refusal
+	CredentialPath       string
+	CredentialGeneration string
 }
 
 type Engine struct {
@@ -122,6 +126,7 @@ type Engine struct {
 	Now                 func() time.Time
 	NewBindingID        func() (string, error)
 	UpdateRegistry      func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error)
+	StageCredential     func(string, string) (*seatcred.Staged, error)
 }
 
 func DefaultEngine() Engine {
@@ -146,9 +151,10 @@ func DefaultEngine() Engine {
 			process, err := os.FindProcess(pid)
 			return err == nil && process.Signal(syscall.Signal(0)) == nil
 		},
-		Now:            time.Now,
-		NewBindingID:   registry.NewGUID,
-		UpdateRegistry: registry.UpdateLocked,
+		Now:             time.Now,
+		NewBindingID:    registry.NewGUID,
+		UpdateRegistry:  registry.UpdateLocked,
+		StageCredential: seatcred.Stage,
 	}
 }
 
@@ -172,6 +178,21 @@ func (e Engine) Complete(ctx context.Context, request Request) (Result, error) {
 	if refusal != nil {
 		return Result{Refusal: refusal}, nil
 	}
+	credentialGUID := request.CredentialGUID
+	if credentialGUID == "" {
+		credentialGUID = request.Candidate.GUID
+	}
+	if credentialGUID == "" {
+		return Result{}, errors.New("seat completion requires a guid before credential staging")
+	}
+	stage := e.StageCredential
+	if stage == nil {
+		stage = seatcred.Stage
+	}
+	staged, err := stage(request.RegistryPath, credentialGUID)
+	if err != nil {
+		return Result{}, fmt.Errorf("stage seat credential: %w", err)
+	}
 
 	update := e.UpdateRegistry
 	if update == nil {
@@ -192,6 +213,9 @@ func (e Engine) Complete(ctx context.Context, request Request) (Result, error) {
 		if next.GUID == "" {
 			return nil, errors.New("seat completion locked builder returned an empty guid")
 		}
+		if next.GUID != staged.File.GUID {
+			return nil, fmt.Errorf("seat completion credential guid %s does not match locked candidate guid %s", staged.File.GUID, next.GUID)
+		}
 		current := registry.V2ByGUID(tx.Projection, next.GUID)
 		if current != nil {
 			next.Bindings = cloneBindings(current.Bindings)
@@ -211,6 +235,7 @@ func (e Engine) Complete(ctx context.Context, request Request) (Result, error) {
 			seat.TranscriptPath = next.Seat.TranscriptPath
 		}
 		next.Seat = cloneSeat(&seat)
+		next.Seat.CredentialGeneration = staged.File.Generation
 
 		if bindingSeatChanged(current, seat) {
 			seatID, err := e.NewBindingID()
@@ -254,13 +279,29 @@ func (e Engine) Complete(ctx context.Context, request Request) (Result, error) {
 		return rows, nil
 	})
 	if err != nil {
+		staged.Abort()
 		return Result{}, err
+	}
+	currentGeneration := ""
+	currentPath := ""
+	if projection, loadErr := v2.LoadFile(request.RegistryPath, v2.LoadOptions{}); loadErr == nil {
+		if current := registry.V2ByGUID(projection, credentialGUID); current != nil && current.Seat != nil {
+			currentGeneration = current.Seat.CredentialGeneration
+			if currentGeneration != "" {
+				currentPath = seatcred.CredentialPath(request.RegistryPath, credentialGUID, currentGeneration)
+			}
+		}
+	}
+	if currentGeneration == "" {
+		staged.Abort()
+	} else if closeErr := staged.Close(request.RegistryPath, currentGeneration); closeErr != nil {
+		return Result{}, fmt.Errorf("credential garbage collection: %w", closeErr)
 	}
 	if completedAt >= len(outcomes) {
 		return Result{}, fmt.Errorf("seat completion returned %d outcomes", len(outcomes))
 	}
 	outcome := outcomes[completedAt]
-	result := Result{Outcome: outcome, Status: outcome.Status, Row: outcome.Row}
+	result := Result{Outcome: outcome, Status: outcome.Status, Row: outcome.Row, CredentialPath: currentPath, CredentialGeneration: currentGeneration}
 	result.Outcomes = outcomes
 	if writeErr := outcome.Err(); writeErr != nil {
 		result.Refusal = &Refusal{Code: RefusalRegistryWrite, Cause: writeErr.Error()}

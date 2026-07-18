@@ -3,6 +3,8 @@ package enrollcmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,7 +12,86 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcompletion"
+	"ai-config/tools/herder/internal/seatcred"
 )
+
+func TestCutoverLockedBuildRefusesConcurrentAmbientReselection(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	if err := seatcred.EnableCutover(registryPath); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	herdr := `#!/bin/sh
+if [ "$1 $2" = "pane get" ]; then
+  printf '%s\n' '{"result":{"pane":{"pane_id":"p_self","terminal_id":"term_SELF","workspace_id":"ws_self","cwd":"/mock/cwd"}}}'
+  exit 0
+fi
+exit 64
+`
+	hcom := `#!/bin/sh
+if [ "$1 $2" = "list --json" ]; then
+  printf '%s\n' '[{"name":"bus-live","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]'
+  exit 0
+fi
+exit 64
+`
+	for name, body := range map[string]string{"herdr": herdr, "hcom": hcom} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HERDER_STATE_DIR", state)
+	t.Setenv("HERDR_ENV", "1")
+	t.Setenv("HERDR_PANE_ID", "p_self")
+	t.Setenv("HCOM_SESSION_ID", "sid-live")
+	t.Setenv("HCOM_DIR", t.TempDir())
+
+	engine := seatcompletion.DefaultEngine()
+	baseUpdate := engine.UpdateRegistry
+	injected := false
+	engine.UpdateRegistry = func(path string, update registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
+		if !injected {
+			injected = true
+			verified := true
+			outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+				return []v2.SessionRecord{{
+					Kind: v2.KindSession, GUID: "guid-concurrent", Event: "seated", State: v2.StateSeated, Label: "concurrent", Tool: "codex",
+					Seat: &v2.Seat{Kind: "herdr", PaneID: "p_self", TerminalID: "term_SELF", HcomName: "bus-live", HcomVerified: &verified},
+				}}, nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			for _, outcome := range outcomes {
+				if err := outcome.Err(); err != nil {
+					return nil, err
+				}
+			}
+		}
+		return baseUpdate(path, update)
+	}
+
+	var stdout, stderr strings.Builder
+	if rc := runWithEngine([]string{"--label", "fresh"}, &stdout, &stderr, false, "", engine); rc != 1 {
+		t.Fatalf("runWithEngine rc=%d, want locked refusal; stderr=%q", rc, stderr.String())
+	}
+	for _, want := range []string{"existing live seat guid-concurrent is legacy", "herder credential sweep", "herder credential path --guid guid-concurrent"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr=%q, want %q", stderr.String(), want)
+		}
+	}
+	projection, err := v2.LoadFile(registryPath, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := projection.Sessions()
+	if len(sessions) != 1 || sessions[0].GUID != "guid-concurrent" {
+		t.Fatalf("sessions=%+v, want only concurrent seat and no ambient re-selection append", sessions)
+	}
+}
 
 func rec(terminalID, hcomName string) registry.Record {
 	return registry.Record{TerminalID: terminalID, HcomName: hcomName}

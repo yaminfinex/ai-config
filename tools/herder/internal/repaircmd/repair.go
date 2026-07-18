@@ -48,8 +48,10 @@ type Proof struct {
 }
 
 type Result struct {
-	Status        registry.WriteStatus
-	UpstreamGated bool
+	Status               registry.WriteStatus
+	UpstreamGated        bool
+	CredentialPath       string
+	CredentialGeneration string
 }
 
 type Service struct {
@@ -163,7 +165,7 @@ func (s Service) Execute(ctx context.Context, request Request) (Result, error) {
 	if completed.Refusal != nil {
 		return Result{}, errors.New(completed.Refusal.Cause)
 	}
-	return Result{Status: completed.Status}, nil
+	return Result{Status: completed.Status, CredentialPath: completed.CredentialPath, CredentialGeneration: completed.CredentialGeneration}, nil
 }
 
 func (s Service) finalizer(preflight v2.SessionRecord, request Request, attestation v2.Attestation) func(registry.LockedUpdate, *v2.SessionRecord, *v2.SessionRecord, string) error {
@@ -278,7 +280,7 @@ func (s Service) executeLaunchContext(ctx context.Context, current v2.SessionRec
 	if completed.Refusal != nil {
 		return Result{}, errors.New(completed.Refusal.Cause)
 	}
-	return Result{Status: completed.Status}, nil
+	return Result{Status: completed.Status, CredentialPath: completed.CredentialPath, CredentialGeneration: completed.CredentialGeneration}, nil
 }
 
 func (s Service) appendAuthorization(preflight v2.SessionRecord, attestation v2.Attestation) (registry.WriteStatus, error) {
@@ -471,6 +473,9 @@ func runWithService(args []string, stdout, stderr io.Writer, service Service) in
 		return 1
 	}
 	fmt.Fprintf(stderr, "herder repair: committed attested operation for guid %s\n", request.GUID)
+	if request.Operation == OperationReissueCredential {
+		fmt.Fprintf(stderr, "herder repair: replacement credential generation=%s path=%s\n", result.CredentialGeneration, result.CredentialPath)
+	}
 	return 0
 }
 

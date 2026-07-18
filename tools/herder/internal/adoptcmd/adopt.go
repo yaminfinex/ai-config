@@ -23,6 +23,7 @@ import (
 	"ai-config/tools/herder/internal/renamecmd"
 	"ai-config/tools/herder/internal/retirecmd"
 	"ai-config/tools/herder/internal/seatcompletion"
+	"ai-config/tools/herder/internal/seatcred"
 	"ai-config/tools/herder/internal/shellquote"
 )
 
@@ -34,6 +35,11 @@ type options struct {
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
+	credentialPath, args, credentialFlagErr := seatcred.ExtractFlag(args)
+	if credentialFlagErr != nil {
+		die(stderr, credentialFlagErr.Error())
+		return 2
+	}
 	opts, code := parseArgs(args, stdout, stderr)
 	if code != 0 || opts.help {
 		return code
@@ -57,6 +63,41 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	oldBus, oldBusDir := busCoordinates(old)
+	cutover, cutoverErr := seatcred.CutoverEnabled(registry.DefaultPath())
+	if cutoverErr != nil {
+		die(stderr, cutoverErr.Error())
+		return 2
+	}
+	var selected *seatcred.Selection
+	if credentialPath != "" || (cutover && old.State == v2.StateSeated) {
+		selection, authErr := seatcred.Authenticate(registry.DefaultPath(), credentialPath)
+		if authErr != nil {
+			die(stderr, "caller credential refused: "+authErr.Error())
+			return 2
+		}
+		selected = &selection
+	}
+	if old.State == v2.StateSeated {
+		if cutover && selected == nil {
+			die(stderr, fmt.Sprintf("old target %s is seated; --credential-file PATH for that exact seat is required because ambient identity cannot authorize adoption", old.GUID))
+			return 2
+		}
+		if selected != nil && selected.GUID != old.GUID {
+			die(stderr, fmt.Sprintf("credential selects guid %s, not adoption target %s; refusing without re-selection", selected.GUID, old.GUID))
+			return 2
+		}
+		if selected != nil {
+			rows, listErr := hcomidentity.List(oldBusDir)
+			if listErr != nil {
+				die(stderr, "credential-selected bus roster unavailable: "+listErr.Error())
+				return 2
+			}
+			if verifyErr := seatcred.VerifySelectedBus(rows, *selected, hcomidentity.CurrentEvidence(os.Getenv("HERDR_PANE_ID"))); verifyErr != nil {
+				die(stderr, verifyErr.Error())
+				return 2
+			}
+		}
+	}
 	priorSessionID := latestSessionID(old)
 	unseatReason := ""
 	expectedSourcePane := ""
@@ -79,6 +120,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	enrollArgs := []string{"--json"}
+	if selected != nil {
+		enrollArgs = append(enrollArgs, "--credential-file", selected.Path)
+	}
 	if old.Role != "" {
 		enrollArgs = append(enrollArgs, "--role", old.Role)
 	}
@@ -207,6 +251,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stderr, "adopt: seat-completion applied: @%s recorded on guid %s with live pane %s\n", busIdentity.Name, replacement.GUID, liveLaunchPane)
+	fmt.Fprintf(stderr, "adopt: credential generation=%s path=%s\n", completion.CredentialGeneration, completion.CredentialPath)
 	fmt.Fprintf(stderr, "adopted %s: new guid %s seated; old guid %s retired; label reclaimed; bus identity %s\n", old.Label, replacement.GUID, old.GUID, busDisposition)
 	return 0
 }
@@ -521,7 +566,7 @@ func printHelp(stdout io.Writer) {
 	fmt.Fprint(stdout, `herder adopt — replace a restarted session without reusing its guid.
 
 Usage:
-  herder adopt <old-target> [--confirm-dead] [--confirm-resumed-session]
+  herder adopt <old-target> [--credential-file PATH] [--confirm-dead] [--confirm-resumed-session]
 
 Run inside the replacement's live herdr pane. Adopt composes five explicit
 legs: enroll the replacement under a NEW guid, atomically take the old row's

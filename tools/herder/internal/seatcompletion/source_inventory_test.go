@@ -44,12 +44,13 @@ func TestAttestedCompletionArmHasExactlyRepairCommandCaller(t *testing.T) {
 	}
 	sort.Strings(attestedCallers)
 	sort.Strings(finalizerCallers)
-	want := []string{"repaircmd/repair.go"}
-	if strings.Join(attestedCallers, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("attested completion production callers = %v, want %v", attestedCallers, want)
+	wantAttested := []string{"repaircmd/repair.go"}
+	if strings.Join(attestedCallers, "\n") != strings.Join(wantAttested, "\n") {
+		t.Fatalf("attested completion production callers = %v, want %v", attestedCallers, wantAttested)
 	}
-	if strings.Join(finalizerCallers, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("locked completion finalizer production callers = %v, want %v", finalizerCallers, want)
+	wantFinalizers := []string{"credentialcmd/credential.go", "repaircmd/repair.go"}
+	if strings.Join(finalizerCallers, "\n") != strings.Join(wantFinalizers, "\n") {
+		t.Fatalf("locked completion finalizer production callers = %v, want %v", finalizerCallers, wantFinalizers)
 	}
 }
 

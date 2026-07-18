@@ -9,7 +9,97 @@ import (
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcred"
 )
+
+func TestCutoverAdoptNeverSelectsCallerFromAmbientEnvironment(t *testing.T) {
+	path := seedAdoptRegistry(t, v2.SessionRecord{
+		GUID: "guid-previous", State: v2.StateSeated, Label: "stable", Tool: "codex",
+		Seat: &v2.Seat{Kind: "herdr", PaneID: "pane-previous", TerminalID: "term-previous"},
+	})
+	if err := seatcred.EnableCutover(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_STATE_DIR", filepath.Dir(path))
+	t.Setenv("HERDR_PANE_ID", "pane-poison-parent")
+	t.Setenv("HERDER_GUID", "guid-poison-parent")
+	t.Setenv("HERDER_AGENT", "")
+	t.Setenv("HCOM_SESSION_ID", "sid-poison-parent")
+	t.Setenv("HCOM_TOOL", "")
+	var stdout, stderr strings.Builder
+	if rc := Run([]string{"guid-previous"}, &stdout, &stderr); rc != 2 {
+		t.Fatalf("Run rc=%d, want credential refusal; stderr=%q", rc, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--credential-file is required") || !strings.Contains(stderr.String(), "hints, not authority") {
+		t.Fatalf("stderr=%q, want ambient-authority refusal", stderr.String())
+	}
+}
+
+func TestCutoverUnseatedAdoptMintsFreshReplacementCredentialWithoutCallerCredential(t *testing.T) {
+	path := seedAdoptRegistry(t, v2.SessionRecord{
+		GUID: "guid-previous", State: v2.StateUnseated, Label: "stable", Role: "worker", Tool: "codex",
+	})
+	if err := seatcred.EnableCutover(path); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	herdr := `#!/bin/sh
+if [ "$1 $2" = "pane get" ]; then
+  printf '%s\n' '{"result":{"pane":{"pane_id":"pane-replacement","terminal_id":"term-replacement","workspace_id":"ws-replacement","cwd":"/mock/cwd"}}}'
+fi
+exit 0
+`
+	hcom := `#!/bin/sh
+if [ "$1 $2" = "list --json" ]; then
+  printf '%s\n' '[]'
+  exit 0
+fi
+if [ "$1" = "start" ]; then
+  printf 'intentional reclaim stop\n' >&2
+  exit 1
+fi
+exit 0
+`
+	for name, body := range map[string]string{"herdr": herdr, "hcom": hcom} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HERDER_STATE_DIR", filepath.Dir(path))
+	t.Setenv("HERDR_ENV", "1")
+	t.Setenv("HERDR_PANE_ID", "pane-replacement")
+	t.Setenv("HERDER_GUID", "guid-poison-parent")
+	t.Setenv("HERDER_AGENT", "")
+	t.Setenv("HCOM_SESSION_ID", "sid-poison-parent")
+	t.Setenv("HCOM_TOOL", "")
+	t.Setenv("HCOM_DIR", t.TempDir())
+
+	var stdout, stderr strings.Builder
+	if rc := Run([]string{"guid-previous"}, &stdout, &stderr); rc != 1 {
+		t.Fatalf("Run rc=%d, want deliberate late reclaim failure; stderr=%q", rc, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "--credential-file is required") || !strings.Contains(stderr.String(), "adopt: enroll applied: new guid") {
+		t.Fatalf("stderr=%q, want uncredentialed fresh-enroll leg before late failure", stderr.String())
+	}
+	projection, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var replacement *v2.SessionRecord
+	for _, session := range projection.Sessions() {
+		if session.GUID != "guid-previous" && session.State == v2.StateSeated {
+			copy := session
+			replacement = &copy
+		}
+	}
+	if replacement == nil || replacement.Seat == nil || replacement.Seat.CredentialGeneration == "" {
+		t.Fatalf("replacement=%+v, want fresh seat with first credential committed", replacement)
+	}
+	if replacement.Provenance.SpawnedBy != "user" && replacement.Provenance.SpawnedBy != "" {
+		t.Fatalf("replacement provenance spawned_by=%q, inherited parent must not select attribution", replacement.Provenance.SpawnedBy)
+	}
+}
 
 func TestDifferentPaneSeatedTargetRefusesBeforeEnrollment(t *testing.T) {
 	path := seedAdoptRegistry(t,

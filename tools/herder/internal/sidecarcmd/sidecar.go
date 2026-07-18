@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/credentialnotice"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/launchcmd"
@@ -23,6 +24,7 @@ import (
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcompletion"
+	"ai-config/tools/herder/internal/seatcred"
 	"ai-config/tools/herder/internal/send"
 )
 
@@ -683,6 +685,7 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 		if result.Status == registry.WriteApplied {
 			s.diagTransition("completion-result", "completion result: canonical seat applied")
 			s.deliverPendingPrompt(row)
+			s.deliverCredentialNotice(row)
 			return true
 		}
 		if result.Status == registry.WriteNoop {
@@ -691,6 +694,7 @@ func (s *sidecar) appendEnrichment(row *hcomRow) bool {
 			if matched {
 				s.diagTransition("completion-result", "completion result: verified canonical noop")
 				s.deliverPendingPrompt(row)
+				s.deliverCredentialNotice(row)
 				return true
 			}
 			s.diagTransition("completion-result", "completion refused: unverified registry noop")
@@ -742,7 +746,34 @@ func (s *sidecar) deliverPendingPromptForCompletedSeat(row *hcomRow) {
 	}
 	if latest := s.latest(guid); completedRecognitionMatches(latest, row, coords) {
 		s.deliverPendingPrompt(row)
+		s.deliverCredentialNotice(row)
 	}
+}
+
+func (s *sidecar) deliverCredentialNotice(row *hcomRow) {
+	if row == nil || row.Name == "" {
+		return
+	}
+	guid := os.Getenv("HERDER_GUID")
+	latest := s.latest(guid)
+	if latest == nil || latest.Provenance == nil || latest.CredentialGeneration == "" || latest.HcomName != row.Name || latest.Provenance.CredentialNoticeSender == "" {
+		return
+	}
+	result, err := credentialnotice.Attempt(s.registry, credentialnotice.Record{
+		GUID: guid, Generation: latest.CredentialGeneration,
+		Path:   seatcred.CredentialPath(s.registry, guid, latest.CredentialGeneration),
+		Sender: latest.Provenance.CredentialNoticeSender, Recipient: row.Name,
+		BusDir: latest.Provenance.CredentialNoticeBusDir,
+	}, send.DeliverCredentialNotice)
+	if err != nil {
+		s.diagTransition("credential-notice", "credential path notice error: "+err.Error())
+		return
+	}
+	if result.Suppressed {
+		s.diagTransition("credential-notice", "credential path notice already attempted; blind resend suppressed")
+		return
+	}
+	s.diagTransition("credential-notice", "credential path notice result: "+result.Verdict)
 }
 
 func completedRecognitionMatches(latest *registry.Record, row *hcomRow, coords paneCoordinates) bool {

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-config/tools/herder/internal/credentialnotice"
 	"ai-config/tools/herder/internal/grokbridge"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herderpaths"
@@ -28,6 +29,7 @@ import (
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcompletion"
+	"ai-config/tools/herder/internal/seatcred"
 	"ai-config/tools/herder/internal/send"
 	"ai-config/tools/herder/internal/shellquote"
 )
@@ -253,6 +255,11 @@ func (t *hcomCreatedAt) UnmarshalJSON(b []byte) error {
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
+	credentialPath, args, credentialFlagErr := seatcred.ExtractFlag(args)
+	if credentialFlagErr != nil {
+		die(stderr, credentialFlagErr.Error())
+		return 2
+	}
 	if os.Getenv("HERDR_ENV") != "1" {
 		die(stderr, "not running inside a herdr pane (HERDR_ENV != 1)")
 		return 1
@@ -275,10 +282,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	runner := &runner{
-		opts:   opts,
-		stdout: stdout,
-		stderr: stderr,
-		herdr:  &herdrcli.Client{},
+		opts:           opts,
+		stdout:         stdout,
+		stderr:         stderr,
+		herdr:          &herdrcli.Client{},
+		credentialPath: credentialPath,
 	}
 	return runner.run()
 }
@@ -295,6 +303,9 @@ type runner struct {
 	piBind          hcomEntry
 	completion      *seatcompletion.Engine
 	pendingPrompt   bool
+	credentialPath  string
+	caller          *seatcred.Selection
+	cutover         bool
 }
 
 type herdrClient interface {
@@ -912,23 +923,30 @@ func (r *runner) run() int {
 		}
 	}
 
-	stateDir := os.Getenv("HERDER_STATE_DIR")
-	if stateDir == "" {
-		stateBase := os.Getenv("XDG_STATE_HOME")
-		if stateBase == "" {
-			stateBase = filepath.Join(os.Getenv("HOME"), ".local", "state")
-		}
-		stateDir = filepath.Join(stateBase, "herder")
-	}
+	registryPath := registry.DefaultPath()
+	stateDir := filepath.Dir(registryPath)
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		die(r.stderr, err.Error())
 		return 1
 	}
-	registryPath := filepath.Join(stateDir, "registry.jsonl")
-
-	spawnedBy := os.Getenv("HERDER_GUID")
-	if spawnedBy == "" {
-		spawnedBy = "user"
+	r.cutover, err = seatcred.CutoverEnabled(registryPath)
+	if err != nil {
+		fmt.Fprintf(r.stderr, "herder spawn: refused — %v. Nothing was launched.\n", err)
+		return 2
+	}
+	if r.credentialPath != "" {
+		selected, err := seatcred.Authenticate(registryPath, r.credentialPath)
+		if err != nil {
+			fmt.Fprintf(r.stderr, "herder spawn: caller credential refused: %v. Nothing was launched.\n", err)
+			return 2
+		}
+		r.caller = &selected
+	}
+	spawnedBy := "user"
+	if r.caller != nil {
+		spawnedBy = r.caller.GUID
+	} else if !r.cutover && os.Getenv("HERDER_GUID") != "" {
+		spawnedBy = os.Getenv("HERDER_GUID")
 	}
 
 	// Every spawned hcom-capable child joins the node's global bus. Resolve it
@@ -942,10 +960,23 @@ func (r *runner) run() int {
 		}
 	}
 	promptSender := ""
-	if isHcomAgent && opts.Prompt != "" {
-		promptSender, err = r.verifyPromptSender(registryPath, hcomDirEff)
+	if isHcomAgent && r.caller != nil {
+		promptSender, err = r.verifyPromptSender(*r.caller, hcomDirEff)
+		if err != nil {
+			fmt.Fprintf(r.stderr, "herder spawn: refused — credential-selected caller is not verified against the live bus: %s. Nothing was launched.\n", err)
+			return 2
+		}
+	}
+	if isHcomAgent && r.caller == nil && !r.cutover && opts.Prompt != "" {
+		promptSender, err = r.verifyLegacyPromptSender(registryPath, hcomDirEff)
 		if err != nil {
 			fmt.Fprintf(r.stderr, "herder spawn: refused — initial prompt sender identity is not verified: %s. Nothing was launched.\n", err)
+			return 2
+		}
+	}
+	if isHcomAgent && opts.Prompt != "" {
+		if promptSender == "" {
+			fmt.Fprintln(r.stderr, "herder spawn: refused — --credential-file PATH is required for an initial prompt; ambient identity cannot select its sender. Nothing was launched.")
 			return 2
 		}
 	}
@@ -957,6 +988,10 @@ func (r *runner) run() int {
 	// terminal id went with the herdr delivery transport; a bus-less spawner is
 	// a hard error BEFORE any pane is created, not a silent downgrade.
 	if opts.Notify {
+		if r.cutover && r.caller == nil && opts.NotifyTo == "" {
+			die(r.stderr, "--notify: --credential-file PATH is required to select the reporting recipient; ambient identity is not authority")
+			return 2
+		}
 		name, ambiguous := resolveSpawnerBus(registryPath, opts.NotifyTo, spawnedBy, spawnerPaneID, spawnerTermID, hcomDirEff, r.stderr)
 		switch {
 		case name != "":
@@ -1107,8 +1142,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	}
 	grokEnv := ""
 	if opts.Agent == "grok" {
-		grokEnv = " HERDER_STATE_DIR=" + shellquote.Quote(stateDir) +
-			" HERDER_GROK_SESSION_ID=" + shellquote.Quote(grokSessionID) +
+		grokEnv = " HERDER_GROK_SESSION_ID=" + shellquote.Quote(grokSessionID) +
 			" HERDER_GROK_PREASSIGNED=1"
 		for _, key := range []string{"HERDER_REAL_HCOM"} {
 			if value := os.Getenv(key); value != "" {
@@ -1119,7 +1153,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 			grokEnv += " HERDER_GROK_SAFE=1"
 		}
 	}
-	rootExport := " AI_CONFIG_ROOT=" + shellquote.Quote(childEnvRoot)
+	rootExport := " AI_CONFIG_ROOT=" + shellquote.Quote(childEnvRoot) + " HERDER_STATE_DIR=" + shellquote.Quote(stateDir)
 	argv := []string{}
 	if opts.LoginShell {
 		innerCmd := shellCommand(launchTokens)
@@ -1130,12 +1164,12 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		// The env form has no shell, so it gets the spawner herder pin but not
 		// the mise shims PATH fix (that one needs runtime expansion).
 		argv = []string{"env", "HERDER_GUID=" + guid, "HERDER_ROLE=" + opts.Role, "HERDER_LABEL=" + label, "HERDER_SPAWNED_BY=" + spawnedBy, "HERDER_BIN=" + childEnvBin}
-		argv = append(argv, "AI_CONFIG_ROOT="+childEnvRoot)
+		argv = append(argv, "AI_CONFIG_ROOT="+childEnvRoot, "HERDER_STATE_DIR="+stateDir)
 		if isHcomAgent {
 			argv = append(argv, "HCOM_DIR="+hcomDirEff, "PATH="+agentPathValue(r.paths.ShimsDir, os.Getenv("PATH"), opts.Agent, r.piBinDir))
 		}
 		if opts.Agent == "grok" {
-			argv = append(argv, "HERDER_STATE_DIR="+stateDir, "HERDER_GROK_SESSION_ID="+grokSessionID, "HERDER_GROK_PREASSIGNED=1")
+			argv = append(argv, "HERDER_GROK_SESSION_ID="+grokSessionID, "HERDER_GROK_PREASSIGNED=1")
 			for _, key := range []string{"HERDER_REAL_HCOM"} {
 				if value := os.Getenv(key); value != "" {
 					argv = append(argv, key+"="+value)
@@ -1311,6 +1345,10 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		toolSessionID = r.piBind.SessionID
 	}
 	provenance := registry.BuildProvenance("spawn", spawnedBy, toolSessionID, opts.Role, resolvedCWD, wsID)
+	provenance.CredentialNoticeSender = promptSender
+	if promptSender != "" {
+		provenance.CredentialNoticeBusDir = hcomDirEff
+	}
 	record := spawnRecord{
 		GUID:                 guid,
 		ShortGUID:            short,
@@ -1365,6 +1403,17 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		}
 		record.HcomName = completed.Seat.HcomName
 	}
+	if provenance.CredentialNoticeSender != "" && record.HcomName != "" {
+		notice, noticeErr := credentialnotice.Attempt(registryPath, credentialnotice.Record{
+			GUID: record.GUID, Generation: completion.CredentialGeneration, Path: completion.CredentialPath,
+			Sender: provenance.CredentialNoticeSender, Recipient: record.HcomName, BusDir: provenance.CredentialNoticeBusDir,
+		}, send.DeliverCredentialNotice)
+		if noticeErr != nil {
+			fmt.Fprintf(r.stderr, "herder spawn: credential path notice not confirmed: %v; the child can recover it with `herder credential path --guid %s`\n", noticeErr, record.GUID)
+		} else {
+			fmt.Fprintf(r.stderr, "herder spawn: credential path notice=%s (automatic retries suppressed)\n", notice.Verdict)
+		}
+	}
 
 	hcomCapture := "not_hcom_agent"
 	if isHcomAgent && record.HcomName != "" {
@@ -1374,6 +1423,7 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 	}
 
 	r.writeSummary(record, wtInfo, isHcomAgent, rootClosed, newTabResult, permInjected, hcomCapture, busPrompt, promptSent, deliveryResult, readyReason, trustBlocked, pasteNotes)
+	fmt.Fprintf(r.stderr, "  credential: generation %s at %s\n", completion.CredentialGeneration, completion.CredentialPath)
 	if opts.JSONOutput {
 		outRecord := newSpawnJSONRecord(record, spawnJSONDetails{
 			PromptSent:     promptSent,
@@ -1756,13 +1806,15 @@ func printHelp(stdout io.Writer) {
 		"herder spawn — spawn a named, GUID-tagged agent in a herdr pane and register it.",
 		"",
 		"Usage:",
-		"  herder spawn --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]",
+		"  herder spawn [--credential-file PATH] --role <role> --agent <claude|codex|bash|...> [--prompt TEXT | --prompt-file FILE]",
 		"               [--split right|down] [--workspace ID | --from-pane PANE_ID]",
 		"               [--tab ID | --new-tab | --worktree BRANCH [--base REF]] [--cwd PATH] [--safe]",
 		"               [--notify | --notify-to TARGET] [--mission SLUG] [--provider FAMILY] [--model ID]",
 		"               [--extra-arg ARG]... [--focus] [--json]",
 		"",
 		"Options:",
+		"  --credential-file PATH",
+		"                    select the spawning seat; required for prompted/attributed agent spawn",
 		"  --role R          agent role; becomes the hcom --tag and label prefix (required)",
 		"  --agent A         tool to run: claude, codex, gemini, bash, ... (required)",
 		"  --prompt TEXT     initial prompt (or --prompt-file F): bus-capable agents get it as a",
@@ -2197,7 +2249,38 @@ func envInt(name string, fallback int) int {
 	return fallback
 }
 
-func (r *runner) verifyPromptSender(registryPath, busDir string) (string, error) {
+func (r *runner) verifyLegacyPromptSender(registryPath, busDir string) (string, error) {
+	envPane := os.Getenv("HERDR_PANE_ID")
+	if os.Getenv("HERDR_ENV") != "1" || envPane == "" {
+		return "", &send.SenderIdentityRefusal{Cause: "the spawning process is not inside a herdr pane with a provable session identity", Remedy: "Run `herder enroll` there first, then retry"}
+	}
+	out, err := r.herdr.Output("pane", "get", envPane)
+	if err != nil {
+		return "", &send.SenderIdentityRefusal{Cause: "the spawning pane cannot be resolved from live herdr state", Remedy: "Restore the herdr pane, then retry"}
+	}
+	pane, err := herdrcli.ParsePaneGet(out)
+	if err != nil || pane.TerminalID == "" {
+		return "", &send.SenderIdentityRefusal{Cause: "the spawning pane has no live terminal identity", Remedy: "Restore the herdr pane, then retry"}
+	}
+	recs, err := registry.Load(registryPath)
+	if err != nil {
+		return "", &send.SenderIdentityRefusal{Cause: "the spawning session registry is not readable: " + err.Error(), Remedy: "Restore the registry, then retry"}
+	}
+	self, refuse := resolveSelfRow(recs, pane)
+	if self.row == nil {
+		return "", &send.SenderIdentityRefusal{Cause: "the spawning registry row is not provable: " + strings.TrimSuffix(strings.TrimSpace(refuse), "."), Remedy: "Run `herder enroll` from this session, then retry"}
+	}
+	name, verifyErr := send.VerifyStoredSender(self.row.HcomName, busDir, hcomidentity.CurrentEvidence(envPane, pane.PaneID))
+	if verifyErr == nil {
+		return name, nil
+	}
+	if name, ok := emptyLaunchContextSenderFallback(*self.row, pane, busDir); ok {
+		return name, nil
+	}
+	return "", verifyErr
+}
+
+func (r *runner) verifyPromptSender(selected seatcred.Selection, busDir string) (string, error) {
 	envPane := os.Getenv("HERDR_PANE_ID")
 	if os.Getenv("HERDR_ENV") != "1" || envPane == "" {
 		return "", &send.SenderIdentityRefusal{
@@ -2219,29 +2302,23 @@ func (r *runner) verifyPromptSender(registryPath, busDir string) (string, error)
 			Remedy: "Restore the herdr pane or re-enter the dispatcher session, then retry",
 		}
 	}
-	recs, err := registry.Load(registryPath)
+	if selected.Row.Seat == nil || selected.Row.Seat.HcomName == "" {
+		return "", &send.SenderIdentityRefusal{
+			Cause:  "the credential-selected spawning row has no bus binding",
+			Remedy: "Join hcom and run `herder enroll --credential-file PATH`, then retry",
+		}
+	}
+	rows, err := hcomidentity.List(busDir)
 	if err != nil {
-		return "", &send.SenderIdentityRefusal{
-			Cause:  "the spawning session registry is not readable: " + err.Error(),
-			Remedy: "Restore the herder registry or run `herder enroll` from this session, then retry",
-		}
+		return "", &send.SenderIdentityRefusal{Cause: "the live hcom roster is unavailable: " + err.Error(), Remedy: "Restore roster access, then retry"}
 	}
-	self, refuse := resolveSelfRow(recs, pane)
-	if self.row == nil {
-		return "", &send.SenderIdentityRefusal{
-			Cause:  "the spawning registry row is not provable: " + strings.TrimSuffix(strings.TrimSpace(refuse), "."),
-			Remedy: "Run `herder enroll` from this session to restore its registry and bus binding, then retry",
-		}
+	if err := seatcred.VerifySelectedBus(rows, selected, hcomidentity.CurrentEvidence(envPane, pane.PaneID)); err != nil {
+		return "", &send.SenderIdentityRefusal{Cause: err.Error(), Remedy: "Use the credential belonging to this live spawning session, or scrub poisoned ambient correlates"}
 	}
-	evidence := hcomidentity.CurrentEvidence(envPane, pane.PaneID)
-	name, verifyErr := send.VerifyStoredSender(self.row.HcomName, busDir, evidence)
-	if verifyErr == nil {
-		return name, nil
+	if _, count := hcomidentity.JoinedNamedCount(rows, selected.Row.Seat.HcomName); count != 1 {
+		return "", &send.SenderIdentityRefusal{Cause: fmt.Sprintf("credential-selected @%s resolves to %d joined rows", selected.Row.Seat.HcomName, count), Remedy: "Restore exactly one joined row for the selected seat"}
 	}
-	if name, ok := emptyLaunchContextSenderFallback(*self.row, pane, busDir); ok {
-		return name, nil
-	}
-	return "", verifyErr
+	return selected.Row.Seat.HcomName, nil
 }
 
 // emptyLaunchContextSenderFallback is deliberately narrower than normal hcom

@@ -150,19 +150,20 @@ type Capabilities struct {
 }
 
 type Seat struct {
-	Kind           string `json:"kind"`
-	Node           string `json:"node"`
-	TerminalID     string `json:"terminal_id,omitempty"`
-	PaneID         string `json:"pane_id,omitempty"`
-	PID            int    `json:"pid,omitempty"`
-	HcomName       string `json:"hcom_name,omitempty"`
-	HcomVerified   *bool  `json:"hcom_verified,omitempty"`
-	HooksBound     bool   `json:"hooks_bound,omitempty"`
-	TranscriptPath string `json:"transcript_path,omitempty"`
-	Namespace      string `json:"namespace,omitempty"`
-	HcomEpoch      string `json:"hcom_epoch,omitempty"`
-	HerdrEpoch     string `json:"herdr_epoch,omitempty"`
-	ConfirmedAt    string `json:"confirmed_at,omitempty"`
+	Kind                 string `json:"kind"`
+	Node                 string `json:"node"`
+	TerminalID           string `json:"terminal_id,omitempty"`
+	PaneID               string `json:"pane_id,omitempty"`
+	PID                  int    `json:"pid,omitempty"`
+	HcomName             string `json:"hcom_name,omitempty"`
+	HcomVerified         *bool  `json:"hcom_verified,omitempty"`
+	HooksBound           bool   `json:"hooks_bound,omitempty"`
+	TranscriptPath       string `json:"transcript_path,omitempty"`
+	Namespace            string `json:"namespace,omitempty"`
+	HcomEpoch            string `json:"hcom_epoch,omitempty"`
+	HerdrEpoch           string `json:"herdr_epoch,omitempty"`
+	CredentialGeneration string `json:"credential_generation,omitempty"`
+	ConfirmedAt          string `json:"confirmed_at,omitempty"`
 }
 
 type VendorVersionHistory struct {
@@ -190,17 +191,19 @@ type Lineage struct {
 }
 
 type Provenance struct {
-	Mechanism     string `json:"mechanism,omitempty"`
-	SpawnedBy     string `json:"spawned_by,omitempty"`
-	ToolSessionID string `json:"tool_session_id,omitempty"`
-	Tag           string `json:"tag,omitempty"`
-	BatchID       string `json:"batch_id,omitempty"`
-	CWD           string `json:"cwd,omitempty"`
-	WorkspaceID   string `json:"workspace_id,omitempty"`
-	Branch        string `json:"branch,omitempty"`
-	TS            string `json:"ts,omitempty"`
-	ForkedFrom    string `json:"forked_from,omitempty"`
-	ResumedAt     string `json:"resumed_at,omitempty"`
+	Mechanism              string `json:"mechanism,omitempty"`
+	SpawnedBy              string `json:"spawned_by,omitempty"`
+	ToolSessionID          string `json:"tool_session_id,omitempty"`
+	Tag                    string `json:"tag,omitempty"`
+	BatchID                string `json:"batch_id,omitempty"`
+	CWD                    string `json:"cwd,omitempty"`
+	WorkspaceID            string `json:"workspace_id,omitempty"`
+	Branch                 string `json:"branch,omitempty"`
+	TS                     string `json:"ts,omitempty"`
+	ForkedFrom             string `json:"forked_from,omitempty"`
+	ResumedAt              string `json:"resumed_at,omitempty"`
+	CredentialNoticeSender string `json:"credential_notice_sender,omitempty"`
+	CredentialNoticeBusDir string `json:"credential_notice_bus_dir,omitempty"`
 }
 
 type NodeRecord struct {

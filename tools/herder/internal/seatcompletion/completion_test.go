@@ -525,6 +525,9 @@ func TestCompletionOriginsProduceIdenticalSeatJSONForEverySeatKind(t *testing.T)
 					t.Fatalf("origin %q result=%+v err=%v", origin, result, err)
 				}
 				row := decodeCompletedRow(t, result.Row)
+				// Credential generations intentionally rotate at every completion;
+				// parity covers the canonical seat shape apart from that owned field.
+				row.Seat.CredentialGeneration = ""
 				encoded, err := json.Marshal(row.Seat)
 				if err != nil {
 					t.Fatal(err)

@@ -36,6 +36,7 @@ REPO_ROOT="$(cd "$TESTS_DIR/../../.." && pwd -P)"
 
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
+GO_BIN=$(mise which go 2>/dev/null) || { printf 'FAIL  cannot resolve repository Go pin through mise\n'; exit 1; }
 
 fail=0
 pass() { printf 'PASS  %s\n' "$1"; }
@@ -765,7 +766,7 @@ func sameBinding(a, b *ast.Ident) bool {
 GO
 
 SCANNER_BIN="$ROOT/updatelocked-error-gate"
-go build -o "$SCANNER_BIN" "$SCANNER"
+"$GO_BIN" build -o "$SCANNER_BIN" "$SCANNER"
 
 updatelocked_gate() {
   local scan_dir="$1"

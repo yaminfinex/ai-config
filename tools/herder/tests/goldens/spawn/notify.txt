@@ -1,5 +1,5 @@
 === STDERR ===
-herder spawn: refused — initial prompt sender identity is not verified: the spawning session registry is not readable: open <CASE>/state/registry.jsonl: no such file or directory. Restore the herder registry or run `herder enroll` from this session, then retry. Nothing was launched.
+herder spawn: refused — initial prompt sender identity is not verified: the spawning session registry is not readable: open <CASE>/state/registry.jsonl: no such file or directory. Restore the registry, then retry. Nothing was launched.
 === STDOUT ===
 
 === EXIT ===

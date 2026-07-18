@@ -99,6 +99,12 @@ fail=0
 run_spawn() {
   local herdr_scen="$1" agent_kind="$2" hcom_scen="$3"; shift 3
   mkdir -p "$CASE/home" "$CASE/state" "$CASE/mock" "$CASE/probe"
+	if [[ -n "${SPAWN_CUTOVER:-}" ]]; then
+		mkdir -p "$CASE/state/credentials"
+		chmod 700 "$CASE/state/credentials"
+		printf 'credential-cutover-v1\n' >"$CASE/state/credentials/cutover-v1"
+		chmod 600 "$CASE/state/credentials/cutover-v1"
+	fi
 	local needs_sender=0 arg default_sender sender_bus
 	if [[ "$agent_kind" != "bash" ]]; then
 		for arg in "$@"; do [[ "$arg" == "--prompt" ]] && needs_sender=1; done
@@ -158,6 +164,7 @@ block_for() {  # assemble + normalize the golden block for the current CASE
     block="${block//$short/<SHORT>}"
   fi
   block="$(sed -E 's/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/<GUID>/g; s/"hostname":"[^"]*"/"hostname":"<HOST>"/g' <<<"$block")"
+	block="$(sed -E 's/[0-9a-f]{32}/<GEN>/g' <<<"$block")"
   # started_at / closed_at ISO timestamps
   block="$(sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g' <<<"$block")"
 	block="$(sed -E 's/"expires_at":"[^"]*"/"expires_at":"<TS>"/g' <<<"$block")"
@@ -620,6 +627,22 @@ if [[ "$WRITE" -eq 0 ]]; then
     ok "derived pane: stale ambient coordinate has typed promptless-then-send recovery"
   else
     bad "derived pane: stale ambient coordinate has typed promptless-then-send recovery" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+  fi
+
+  SPAWN_CUTOVER=1
+  SPAWN_HERDER_GUID=guid-poison-parent
+  SPAWN_HCOM_SESSION_ID=sid-poison-parent
+  CASE="$ROOT/cutover_promptless_fresh"
+  run_spawn ready bash launchctx --role worker --agent bash --json
+  unset SPAWN_CUTOVER SPAWN_HERDER_GUID SPAWN_HCOM_SESSION_ID
+  if [[ "$RUN_RC" -eq 0 ]] \
+    && [[ -f "$CASE/probe/agent_start_argv" ]] \
+    && ! grep -q 'guid-poison-parent' "$CASE/state/registry.jsonl" \
+    && grep -q '"spawned_by":"user"' "$CASE/state/registry.jsonl" \
+    && grep -q '"credential_generation":"[0-9a-f]\{32\}"' "$CASE/state/registry.jsonl"; then
+    ok "cutover promptless spawn: poisoned inherited identity selects nothing"
+  else
+    bad "cutover promptless spawn: poisoned inherited identity selects nothing" "rc=$RUN_RC err=$(cat "$RUN_ERR_F") registry=$(cat "$CASE/state/registry.jsonl" 2>/dev/null)"
   fi
 fi
 

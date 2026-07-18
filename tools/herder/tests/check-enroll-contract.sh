@@ -81,6 +81,7 @@ block_for() {
   local block guid short
   block="$(printf '=== STDERR ===\n%s\n=== STDOUT ===\n%s\n=== EXIT ===\n%s\n=== REGISTRY ===\n%s' \
     "$(cat "$RUN_ERR_F")" "$RUN_OUT" "$RUN_RC" "$(cat "$CASE/state/registry.jsonl" 2>/dev/null)")"
+	block="${block//$CASE/<CASE>}"
   guid="$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' <<<"$block" | head -n1 || true)"
   if [[ -n "$guid" ]]; then
     short="${guid:0:8}"
@@ -88,6 +89,7 @@ block_for() {
     block="${block//$short/<SHORT>}"
   fi
   block="$(sed -E 's/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/<GUID>/g; s/"hostname":"[^"]*"/"hostname":"<HOST>"/g' <<<"$block")"
+	block="$(sed -E 's/[0-9a-f]{32}/<GEN>/g' <<<"$block")"
   block="$(sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g' <<<"$block")"
   printf '%s' "$block"
 }
@@ -804,6 +806,55 @@ JSONL
     printf 'PASS  guard: inherited guid cannot re-key another session\n'
   else
     printf 'FAIL  guard: inherited guid cannot re-key another session — rc=%s err=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")"; fail=1
+  fi
+
+  # After cutover, a token-less process may enroll only as a genuinely fresh
+  # seat. Poisoned inherited identity must neither select nor re-key the parent.
+  CASE="$ROOT/cutover-fresh"
+  mkdir -p "$CASE/home" "$CASE/state/credentials"
+  chmod 700 "$CASE/state/credentials"
+  printf 'credential-cutover-v1\n' >"$CASE/state/credentials/cutover-v1"
+  chmod 600 "$CASE/state/credentials/cutover-v1"
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i \
+    PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-poison-parent \
+    HCOM_SESSION_ID=sid-poison-parent HCOM_INSTANCE_NAME=poison-parent \
+    MOCK_HCOM_ROWS='[]' \
+    "${HEN[@]}" --label cutover-fresh --json 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+  if [[ "$RUN_RC" -eq 0 ]] \
+    && ! grep -q 'guid-poison-parent' "$CASE/state/registry.jsonl" \
+    && grep -q '"credential_generation":"[0-9a-f]\{32\}"' "$CASE/state/registry.jsonl" \
+    && grep -q '"spawned_by":"user"' "$CASE/state/registry.jsonl"; then
+    printf 'PASS  guard: post-cutover fresh enroll ignores poisoned inherited identity\n'
+  else
+    printf 'FAIL  guard: post-cutover fresh enroll ignored poisoned identity — rc=%s err=%s registry=%s\n' \
+      "$RUN_RC" "$(cat "$RUN_ERR_F")" "$(cat "$CASE/state/registry.jsonl" 2>/dev/null)"; fail=1
+  fi
+
+  CASE="$ROOT/cutover-existing-legacy"
+  mkdir -p "$CASE/home" "$CASE/state/credentials"
+  chmod 700 "$CASE/state/credentials"
+  printf 'credential-cutover-v1\n' >"$CASE/state/credentials/cutover-v1"
+  chmod 600 "$CASE/state/credentials/cutover-v1"
+  cat >"$CASE/state/registry.jsonl" <<'JSONL'
+{"kind":"session","guid":"guid-existing-0000","event":"seated","recorded_at":"2026-07-18T00:00:00Z","state":"seated","label":"existing","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"bus-live","hcom_verified":true}}
+JSONL
+  RUN_ERR_F="$CASE/stderr"
+  RUN_OUT="$(env -i \
+    PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
+    HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-existing-0000 \
+    HCOM_SESSION_ID=sid-live \
+    MOCK_HCOM_ROWS='[{"name":"bus-live","session_id":"sid-live","joined":true,"launch_context":{"pane_id":"p_self"}}]' \
+    "${HEN[@]}" --label existing --json 2>"$RUN_ERR_F")"
+  RUN_RC=$?
+  if [[ "$RUN_RC" -eq 2 ]] \
+    && grep -q 'existing live seat guid-existing-0000 is legacy' "$RUN_ERR_F" \
+    && grep -q 'herder credential sweep' "$RUN_ERR_F"; then
+    printf 'PASS  guard: post-cutover legacy seat refuses ambient selection with issuance remedy\n'
+  else
+    printf 'FAIL  guard: post-cutover legacy seat refusal — rc=%s err=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")"; fail=1
   fi
 fi
 
