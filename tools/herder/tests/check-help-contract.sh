@@ -72,7 +72,7 @@ assert_help() {
   printf 'PASS  %s\n' "$cmd"
 }
 
-for cmd in spawn send raise list join leave wait cull enroll adopt rename retire reopen fork resume compact node grok launch sidecar repair; do
+for cmd in spawn send raise list join leave wait cull enroll adopt rename retire reopen fork resume compact node grok launch sidecar repair credential; do
   assert_help "$cmd"
 done
 

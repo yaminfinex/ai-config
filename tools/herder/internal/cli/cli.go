@@ -53,7 +53,7 @@ var commands = []command{
 	{"leave", "Remove explicit mission membership from a running agent", missioncmd.RunLeave},
 	{"reconcile", "Audit or repair registry coordinates after herdr handoff", reconcilecmd.Run},
 	{"repair", "Run an operator-attested break-glass identity repair", repaircmd.Run},
-	{"credential", "Discover or issue per-seat credentials", credentialcmd.Run},
+	{"credential", "Discover, issue, or enable per-seat credentials", credentialcmd.Run},
 	{"wait", "Block until an agent reaches a status, optionally read its screen", waitcmd.Run},
 	{"cull", "Close spawned-agent panes and unseat their registry sessions", cullcmd.Run},
 	{"enroll", "Register the current herdr pane in the registry", enrollcmd.Run},
