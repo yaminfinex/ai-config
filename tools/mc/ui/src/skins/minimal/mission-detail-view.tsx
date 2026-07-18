@@ -19,7 +19,11 @@ export function MinimalMissionDetailView({
     );
   }
   if (loading || vm === null) {
-    return <p className="p-6 text-muted-foreground">loading…</p>;
+    return (
+      <p data-testid="loading" className="p-6 text-muted-foreground">
+        loading…
+      </p>
+    );
   }
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-6">

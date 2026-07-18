@@ -15,7 +15,11 @@ export function TerminalMissionListView({
     );
   }
   if (loading) {
-    return <p className="p-4 text-quiet">… loading</p>;
+    return (
+      <p data-testid="loading" className="p-4 text-quiet">
+        … loading
+      </p>
+    );
   }
   return (
     <div className="mx-auto max-w-3xl space-y-2 p-4">

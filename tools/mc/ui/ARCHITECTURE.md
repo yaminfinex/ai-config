@@ -323,19 +323,26 @@ architecture has a gap — stop and report it before building around it.
 Honest state of this tree, with the exit condition that clears each
 entry — checkable from the repo alone:
 
-- **Hook wiring is exercised only by the running app.** The staleness
-  laws, the poll-tick application (including its concurrent orderings,
-  against a real query cache), view-models, store transitions, and
-  rehydration normalization carry Vitest specs — but the React wiring
-  around them (query mounting, the invalidation hook's effect cadence)
-  has no automated coverage until the Playwright harness drives real
-  flows, including first mount, mission-to-mission scope changes, and
-  warning/refusal token changes.
-- **No Playwright config or harness exists.** `bun run test:e2e` is
-  unconfigured. Clears with the skin-swap proof: the real-server
-  harness of §8, both-skin behaviour runs, and the declared rendering
-  difference asserted.
+- **The flow suite exists and is a gate** (`e2e/`, `bun run test:e2e`):
+  the §8 harness (real binary, fake upstream scripts, seeded journal)
+  drives first mount, deep links, mission-to-mission scope changes,
+  live warning-token transitions (roster family, both directions),
+  degraded-vs-healthy emptiness, the two-situation load-health law, and
+  render precedence on screen — every flow under both skins. The
+  skin-swap proof asserts the declared behavioural rendering difference
+  from the `Skin` declaration itself, computed-style change across the
+  toggle, and identical behaviour laws under both skins.
+- **The missions-family warning transition is not driven live** in the
+  flow suite: the mission resolver caches observations for a minute by
+  design (a poll must not fan out git checks), so the suite covers that
+  family's degraded and healthy states as separate cold starts and
+  drives the live §6 loop through the per-request roster family
+  instead. Clears if the resolver TTL ever becomes injectable from the
+  CLI.
 - **No comment-shaped code exists.** §5 binds from the first diff that
   adds any.
 - **Material slots are stored but undriven** (§4) — cleared by the
-  first material-opening surface driving the existing actions.
+  first material-opening surface driving the existing actions. The
+  working-set cap is therefore attackable only in Vitest today; the
+  flow-level "clicking around cannot exceed the cap" attack lands with
+  that surface.

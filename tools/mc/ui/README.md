@@ -37,7 +37,24 @@ An unbuilt tree (only `.gitkeep` in `dist/`) serves an honest 501 at `/ui/`.
 | `bun run check` | Biome lint + format check | gate — must be green |
 | `bun run format` | Biome, writing fixes | tool |
 | `bun run test` | Vitest over `src/**/*.test.ts` (invalidation law, view-models, store transitions) | gate — must be green |
-| `bun run test:e2e` | Playwright | no config/harness yet — lands with the skin-swap proof |
+| `bun run test:e2e` | Playwright flow suite (`e2e/`): builds the SPA + the Go binary, then drives the served app under BOTH skins — read path, load-health/emptiness laws on screen, live warning transitions, the skin-swap proof | gate — must be green |
+
+The e2e harness (`e2e/harness.ts`) runs the REAL Go binary with fake
+`mish`/`hcom`/`herder` shell scripts and a seeded journal fixture — the
+same pattern `api_test.go` uses; no frontend mocks, no request
+interception (ARCHITECTURE.md §8). `e2e/global-setup.ts` builds both
+artifacts, so the suite always tests the production wiring (go:embed,
+SPA fallback, `/api`), never the dev server.
+
+## Driving the app with Playwright MCP
+
+`.mcp.json` in this directory wires the Playwright MCP server
+(`@playwright/mcp` via bunx) for agent sessions started here — agents
+drive the running app through the accessibility tree, explore, reproduce
+bugs, and encode findings into `e2e/` as deterministic tests. Run the
+dev recipe above (Go server + Vite), then point the browser at
+`http://localhost:5173/ui/`. Sessions started elsewhere can pass this
+file explicitly (`claude --mcp-config tools/mc/ui/.mcp.json`).
 
 Biome does not cover CSS (its parser predates Tailwind v4's at-rules, so
 `**/*.css` is excluded in `biome.json`): the token sheets and

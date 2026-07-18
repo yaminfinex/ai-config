@@ -17,7 +17,11 @@ export function MinimalMissionListView({
     );
   }
   if (loading) {
-    return <p className="p-6 text-muted-foreground">loading…</p>;
+    return (
+      <p data-testid="loading" className="p-6 text-muted-foreground">
+        loading…
+      </p>
+    );
   }
   return (
     <div className="mx-auto max-w-2xl space-y-4 p-6">

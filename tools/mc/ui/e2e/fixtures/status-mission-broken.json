@@ -1,0 +1,13 @@
+{
+  "ok": false,
+  "slug": "mission-broken",
+  "mission_dir": "/missions-repo/missions/mission-broken",
+  "manifest": { "mission": "", "authority": "", "owner": "", "status": "", "created": "" },
+  "board": { "available": false, "counts": [], "total": 0, "tasks": [] },
+  "artifacts": { "missing": true, "count": 0 },
+  "warnings": [
+    "artifacts missing: artifacts/",
+    "board missing: backlog/config.yml",
+    "malformed mission.md frontmatter: mission.md"
+  ]
+}

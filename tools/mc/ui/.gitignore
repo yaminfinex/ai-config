@@ -5,3 +5,4 @@ test-results/
 playwright-report/
 e2e/.tmp/
 tsconfig.tsbuildinfo
+e2e/.build/

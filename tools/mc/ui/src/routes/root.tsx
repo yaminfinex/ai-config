@@ -15,7 +15,7 @@ export function RootLayout() {
     <SkinContext.Provider value={skins[skinName]}>
       <div className="min-h-screen">
         <header className="flex items-center justify-between border-b px-4 py-2">
-          <Link to="/" className="font-fact text-sm">
+          <Link to="/" data-testid="mc-home" className="font-fact text-sm">
             mc · ui
           </Link>
           <Button

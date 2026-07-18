@@ -1,0 +1,5 @@
+{"ts":"2026-07-15T04:59:00Z","op":"cursor","bus_id":1000}
+{"ts":"2026-07-15T05:00:00Z","op":"open","thread":"task-x","title":"grok A/B","context":"context","expects":"decide","weight":"moment","home":"mission-one","by":"builder-lobo","with":["human-yamen"],"turn":"owner","grade":"managed"}
+{"ts":"2026-07-15T05:40:00Z","op":"link","thread":"task-x","bus_id":41,"from":"builder-lobo","text":"which shape wins?","msg_ts":"2026-07-15T05:40:00Z"}
+{"ts":"2026-07-15T05:10:00Z","op":"open","thread":"task-y","title":"quiet reply thread","context":"context","expects":"reply","weight":"moment","home":"mission-one","by":"worker-suna","turn":"owner","grade":"managed"}
+{"ts":"2026-07-15T05:20:00Z","op":"open","thread":"task-z","title":"other mission thread","context":"context","expects":"reply","weight":"moment","home":"mission-broken","by":"worker-suna","turn":"owner","grade":"managed"}

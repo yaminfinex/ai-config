@@ -17,7 +17,11 @@ export function TerminalMissionDetailView({
     );
   }
   if (loading || vm === null) {
-    return <p className="p-4 text-quiet">… loading</p>;
+    return (
+      <p data-testid="loading" className="p-4 text-quiet">
+        … loading
+      </p>
+    );
   }
   const active = vm.threads.find((thread) => thread.id === activeThreadId) ?? null;
   return (
