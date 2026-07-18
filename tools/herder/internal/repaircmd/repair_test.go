@@ -18,6 +18,7 @@ import (
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcompletion"
+	"ai-config/tools/herder/internal/seatcred"
 )
 
 func TestParseRefusesOutOfVocabularyAndMultipleFields(t *testing.T) {
@@ -265,6 +266,12 @@ func TestReissueCredentialAuthenticatesWithoutRebindingIdentity(t *testing.T) {
 	}
 	if len(after.Attestations) != 1 || after.Attestations[0].Operation != v2.AttestationReissueCredential {
 		t.Fatalf("reissue audit = %+v", after.Attestations)
+	}
+	if result.CredentialPath == "" || result.CredentialGeneration != after.Seat.CredentialGeneration {
+		t.Fatalf("reissue credential result=%+v seat=%+v", result, after.Seat)
+	}
+	if _, err := seatcred.Authenticate(path, result.CredentialPath); err != nil {
+		t.Fatalf("replacement credential does not authenticate: %v", err)
 	}
 }
 

@@ -5,8 +5,9 @@ spawned worker-<SHORT> (bash) in pane p_50 (workspace ws_1)
   tab:    tab_9 (new; agent pane moved, no seed shell)
   bus:    n/a (bash is not an hcom agent — no bus name, so herder send cannot reach it)
   prompt: sent (12 chars), ready: status=idle,stable, verify: delivered
+  credential: generation <GEN> at <CASE>/state/credentials/<GUID>/<GEN>.token
 === STDOUT ===
-{"guid":"<GUID>","short_guid":"<SHORT>","label":"worker-<SHORT>","role":"worker","agent":"bash","extra_args":[""],"argv":["/bin/zsh","-lic","if [ -d \"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims\" ]; then export PATH=\"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH\"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO>; exec bash"],"pane_id":"p_50","workspace_id":"ws_1","tab_id":"tab_9","terminal_id":"term_AGENT","cwd":"/mock/cwd","started_at":"<TS>","started_by_pane":"p_orch","initial_prompt_present":true,"hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_1","branch":"","ts":"<TS>"},"prompt_sent":true,"delivery_result":"delivered","perm_injected":"","new_tab":true,"root_pane_closed":false,"new_tab_result":"moved","hcom_capture":"not_hcom_agent"}
+{"guid":"<GUID>","short_guid":"<SHORT>","label":"worker-<SHORT>","role":"worker","agent":"bash","extra_args":[""],"argv":["/bin/zsh","-lic","if [ -d \"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims\" ]; then export PATH=\"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH\"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HERDER_STATE_DIR=<CASE>/state; exec bash"],"pane_id":"p_50","workspace_id":"ws_1","tab_id":"tab_9","terminal_id":"term_AGENT","cwd":"/mock/cwd","started_at":"<TS>","started_by_pane":"p_orch","initial_prompt_present":true,"hcom_dir":"","hcom_name":"","hcom_tag":"","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_1","branch":"","ts":"<TS>"},"prompt_sent":true,"delivery_result":"delivered","perm_injected":"","new_tab":true,"root_pane_closed":false,"new_tab_result":"moved","hcom_capture":"not_hcom_agent"}
 === EXIT ===
 0
 === AGENT START ARGV ===
@@ -23,7 +24,7 @@ ws_1
 --
 /bin/zsh
 -lic
-if [ -d "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" ]; then export PATH="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO>; exec bash
+if [ -d "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" ]; then export PATH="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HERDER_STATE_DIR=<CASE>/state; exec bash
 === HERDR MUTATING CALLS ===
 agent start worker-<SHORT>
 pane move p_50 --new-tab --no-focus --label worker-<SHORT>
@@ -32,6 +33,6 @@ pane send-keys p_50 Enter
 === HCOM DIR ===
 === REGISTRY ===
 {"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
-{"kind":"session","guid":"<GUID>","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"worker-<SHORT>","role":"worker","tool":"bash","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50","confirmed_at":"<TS>"},"bindings":[{"id":"<GUID>","field":"seat","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50"},"evidence_class":"live-verified","observed_at":"<TS>"}],"continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tag":"worker","cwd":"/mock/cwd","workspace_id":"ws_1","ts":"<TS>"}}
+{"kind":"session","guid":"<GUID>","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"worker-<SHORT>","role":"worker","tool":"bash","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50","credential_generation":"<GEN>","confirmed_at":"<TS>"},"bindings":[{"id":"<GUID>","field":"seat","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50"},"evidence_class":"live-verified","observed_at":"<TS>"}],"continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tag":"worker","cwd":"/mock/cwd","workspace_id":"ws_1","ts":"<TS>"}}
 === HCOM SEND ARGV ===
 === HCOM EVENTS ARGV ===

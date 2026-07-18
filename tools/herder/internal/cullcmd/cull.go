@@ -1,6 +1,7 @@
 package cullcmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"ai-config/tools/herder/internal/pendingprompt"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcred"
 )
 
 type options struct {
@@ -30,9 +32,15 @@ type options struct {
 	force          bool
 	now            bool
 	graceTimeoutMS int
+	caller         *seatcred.Selection
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
+	credentialPath, args, credentialFlagErr := seatcred.ExtractFlag(args)
+	if credentialFlagErr != nil {
+		die(stderr, credentialFlagErr.Error())
+		return 2
+	}
 	if os.Getenv("HERDR_ENV") != "1" {
 		die(stderr, "not running inside a herdr pane (HERDR_ENV != 1)")
 		return 1
@@ -55,6 +63,25 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	registryPath := registry.DefaultPath()
+	if seatcred.CutoverEnabled(registryPath) || credentialPath != "" {
+		selected, err := seatcred.Authenticate(registryPath, credentialPath)
+		if err != nil {
+			die(stderr, "caller credential refused: "+err.Error())
+			return 2
+		}
+		callerCtx, callerCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		rows, listErr := hcomidentity.ListContext(callerCtx, selected.Row.Seat.Namespace)
+		callerCancel()
+		if listErr != nil {
+			die(stderr, "credential-selected bus roster unavailable: "+listErr.Error())
+			return 2
+		}
+		if verifyErr := seatcred.VerifySelectedBus(rows, selected, hcomidentity.CurrentEvidence(os.Getenv("HERDR_PANE_ID"))); verifyErr != nil {
+			die(stderr, verifyErr.Error())
+			return 2
+		}
+		opts.caller = &selected
+	}
 	recs, err := registry.Load(registryPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -166,6 +193,8 @@ func printHelp(stdout io.Writer) {
 		"  herder cull --gone           unseat seated sessions whose pane is no longer live",
 		"",
 		"Options:",
+		"  --credential-file PATH",
+		"               select the caller from its registry-current per-seat credential",
 		"  --dry-run    print what would be culled without acting",
 		"  --force      skip terminal_id verification — use ONLY when you've confirmed the",
 		"               agent is dead and just need to unseat the registry session",

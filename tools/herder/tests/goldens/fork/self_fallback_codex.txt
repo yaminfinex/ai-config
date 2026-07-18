@@ -1,6 +1,6 @@
 === STDERR ===
 spawn-handoff: spawn --role fork-codex --agent codex --cwd /mock/foreground --no-focus --json --from-pane p_self --split down --extra-arg fork --extra-arg --last
-sent 2624 chars to <GUID> (hcom @codexfb-vibe), submitted, verify=delivered
+sent 3023 chars to <GUID> (hcom @codexfb-vibe), submitted, verify=delivered
 === STDOUT ===
 {"guid":"<GUID>","short_guid":"<SHORT>","label":"codex-fallback-child","agent":"codex","status":"active"}
 === EXIT ===
@@ -25,11 +25,13 @@ Session doctrine, not a task: do NOT reply to this message. This session was res
 
 Provision and manage agent sessions through herder. Do NOT spawn with `hcom <n> claude`, stop with `hcom kill`, or drive raw `herdr agent start/send` — those bypass the registry or write text without submitting it. herder-spawned claude/codex bind to the bus from birth, so once running you message them with `hcom send`.
 
-- Spawn:  herder spawn --role R --agent <claude|codex|bash|...> --prompt 'short task (or a one-line pointer to a brief file)' [--workspace ID] [--split right|down] [--cwd PATH]
+Credential-authenticated verbs receive the current non-secret credential path in a generation-keyed bus notice after seat completion. If that notice is unavailable, recover only the path with `herder credential path --guid "$HERDER_GUID"`; the environment guid is provenance for this lookup, never authentication authority. Pass the resulting file explicitly as `--credential-file PATH`.
+
+- Spawn:  herder spawn --credential-file PATH --role R --agent <claude|codex|bash|...> --prompt 'short task (or a one-line pointer to a brief file)' [--workspace ID] [--split right|down] [--cwd PATH]
 - List:   herder list [--all]                 # default: seated + unseated; --all adds retired + lost
 - Wait:   herder wait <guid> [--read]          # boot-settle / post-send check — NOT for watching long work
-- Send:   herder send <guid> 'msg'             # verified delivery to a spawned agent (guid/label, drift-proof)
-- Cull:   herder cull --guid GUID              # close the pane + unseat the session (label stays leased)
+- Send:   herder send --credential-file PATH <guid> 'msg' # verified delivery (guid/label, drift-proof)
+- Cull:   herder cull --credential-file PATH --guid GUID  # close pane + unseat (label stays leased)
 - Fork:   herder fork <guid> [--prompt P] [--workspace ID] [--split right|down] # fresh tab by default
 - Resume: herder resume <guid> [--cwd PATH] [--workspace ID] [--split right|down] # fresh tab by default
 

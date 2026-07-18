@@ -19,6 +19,7 @@ import (
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
+	"ai-config/tools/herder/internal/seatcred"
 )
 
 type hcomDryRunRecord struct {
@@ -37,6 +38,11 @@ type hcomDryRunRefuseRecord struct {
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
+	credentialPath, args, credentialFlagErr := seatcred.ExtractFlag(args)
+	if credentialFlagErr != nil {
+		die(stderr, credentialFlagErr.Error())
+		return 64
+	}
 	if os.Getenv("HERDR_ENV") != "1" {
 		die(stderr, "not running inside a herdr pane (HERDR_ENV != 1)")
 		return 64
@@ -49,6 +55,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if opts.Help {
 		return 0
 	}
+	registryPath := registry.DefaultPath()
+	var selected *seatcred.Selection
+	if seatcred.CutoverEnabled(registryPath) || credentialPath != "" {
+		selection, err := seatcred.Authenticate(registryPath, credentialPath)
+		if err != nil {
+			die(stderr, "caller credential refused: "+err.Error())
+			return 2
+		}
+		selected = &selection
+	}
 
 	forced := false
 	switch os.Getenv("HERDER_BUS") {
@@ -59,7 +75,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		forced = true
 	}
 
-	recs, err := registry.Load(registry.DefaultPath())
+	recs, err := registry.Load(registryPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		die(stderr, "registry not readable: "+err.Error())
 		return 1
@@ -127,7 +143,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				}
 				return 0
 			}
-			senderName, err := verifiedCallerSender(recs, "")
+			senderName, err := callerSender(recs, selected, "")
 			if err != nil {
 				writeSenderRefusal(stderr, err)
 				return 2
@@ -175,12 +191,37 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	senderName, err := verifiedCallerSender(recs, rec.HcomDir)
+	senderName, err := callerSender(recs, selected, rec.HcomDir)
 	if err != nil {
 		writeSenderRefusal(stderr, err)
 		return 2
 	}
-	return sender.sendPending(registry.DefaultPath(), ptrString(rec.GUID), senderName, target, rec.HcomName, rec.HcomDir, message, opts.TimeoutMS, opts.JSONOutput, stdout, stderr)
+	return sender.sendPending(registryPath, ptrString(rec.GUID), senderName, target, rec.HcomName, rec.HcomDir, message, opts.TimeoutMS, opts.JSONOutput, stdout, stderr)
+}
+
+func callerSender(recs []registry.Record, selected *seatcred.Selection, busDir string) (string, error) {
+	if selected != nil {
+		return credentialCallerSender(*selected, busDir)
+	}
+	return verifiedCallerSender(recs, busDir)
+}
+
+func credentialCallerSender(selected seatcred.Selection, busDir string) (string, error) {
+	if selected.Row.Seat == nil || selected.Row.Seat.HcomName == "" {
+		return "", &SenderIdentityRefusal{Cause: "credential-selected caller has no recorded bus name", Remedy: "Run `herder enroll --credential-file PATH` after joining hcom, then retry"}
+	}
+	rows, err := hcomidentity.List(busDir)
+	if err != nil {
+		return "", &SenderIdentityRefusal{Cause: "live bus roster unavailable: " + err.Error(), Remedy: "Restore access to the selected seat's hcom roster, then retry"}
+	}
+	paneIDs, _ := currentCallerCoordinates()
+	if err := seatcred.VerifySelectedBus(rows, selected, hcomidentity.CurrentEvidence(paneIDs...)); err != nil {
+		return "", &SenderIdentityRefusal{Cause: err.Error(), Remedy: "Use the credential belonging to this live caller, or scrub stale HCOM_*/HERDER_*/HERDR_* correlates"}
+	}
+	if _, count := hcomidentity.JoinedNamedCount(rows, selected.Row.Seat.HcomName); count != 1 {
+		return "", &SenderIdentityRefusal{Cause: fmt.Sprintf("credential-selected bus name @%s resolves to %d joined rows", selected.Row.Seat.HcomName, count), Remedy: "Restore exactly one joined row for the credential-selected seat, then retry"}
+	}
+	return selected.Row.Seat.HcomName, nil
 }
 
 func verifiedCallerSender(recs []registry.Record, busDir string) (string, error) {
@@ -426,7 +467,7 @@ func printHelp(stdout io.Writer) {
 		"herder send — deliver a message to a spawned agent over the hcom bus, delivery verified.",
 		"",
 		"Usage:",
-		"  herder send <target> <message> [options]",
+		"  herder send --credential-file PATH <target> <message> [options]",
 		"",
 		"<target> is a short-guid, full guid, label, terminal_id (term_*), or raw pane_id.",
 		"Every form resolves through the spawn registry to the agent's recorded bus name:",
@@ -438,13 +479,14 @@ func printHelp(stdout io.Writer) {
 		"the candidate list when the coordinate is ambiguous (0 or >1 rows bus-live) rather than",
 		"guessing. hcom is THE transport — a target with no bus-bound registry row is refused",
 		"(exit 2); nothing is ever typed into a pane.",
-		"The caller must also prove its own joined bus identity from live session/process/pane",
-		"evidence matching its registry row. Missing or conflicting sender proof refuses with",
+		"The credential selects the caller first; live session/process/pane evidence may only",
+		"verify or refuse that selected row and can never select another. Missing or conflicting proof refuses with",
 		"an enroll/repair remedy; no user-facing label or synthetic sender is substituted.",
 		"(The herdr keystroke transport was removed. The one surviving keystroke path is",
 		"spawn's boot-time initial-prompt paste, owned by `herder spawn`.)",
 		"",
 		"Options:",
+		"  --credential-file PATH  registry-current immutable per-seat credential (required)",
 		"  --dry-run       resolve the target and print where it would send, then exit without sending",
 		"  --timeout MS    max wait for a delivery receipt on the bus (default 3000)",
 		"  --json          emit a JSON record of the send on stdout",

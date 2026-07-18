@@ -442,7 +442,7 @@ func TestSuccessorCarryMarksBusIdentityUnverifiedWithoutProof(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, ok := turnoverRowsLocked(proj, current, "sess-new", hcomidentity.Result{Reason: "no live proof"}, time.Now().UTC())
+	rows, ok := turnoverRowsLocked(proj, current, "sess-new", "guid-child", hcomidentity.Result{Reason: "no live proof"}, time.Now().UTC())
 	if !ok || len(rows) != 2 || rows[0].Seat == nil || rows[0].Seat.HcomVerified == nil || *rows[0].Seat.HcomVerified {
 		t.Fatalf("turnover rows = %+v, want successor with explicit unverified bus identity", rows)
 	}

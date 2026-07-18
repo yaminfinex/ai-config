@@ -19,6 +19,7 @@ import (
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcompletion"
+	"ai-config/tools/herder/internal/seatcred"
 	"ai-config/tools/herder/internal/shellquote"
 )
 
@@ -308,7 +309,8 @@ printf '%s\n' '[{"name":"live-self","session_id":"current-session","joined":true
 		out:  []byte(`{"result":{"pane":{"pane_id":"pane-self","terminal_id":"term-self","foreground_cwd":"/repo"}}}`),
 	}}}
 	r := &runner{herdr: client}
-	got, err := r.verifyPromptSender(registryPath, "/bus")
+	selected := seatcred.Selection{GUID: "guid-self", Row: v2.SessionRecord{GUID: "guid-self", Seat: &v2.Seat{HcomName: "live-self"}}}
+	got, err := r.verifyPromptSender(selected, "/bus")
 	if err != nil || got != "live-self" {
 		t.Fatalf("verifyPromptSender = (%q, %v), want pane-proven live-self", got, err)
 	}

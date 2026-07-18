@@ -4,13 +4,15 @@
 herder enroll — register the CURRENT herdr pane in the herder registry.
 
 Run from inside a herdr pane to make the running agent (or shell) addressable by
-herder send/wait/list/cull. Identity comes from HERDER_GUID/HERDER_LABEL/HERDER_ROLE
-if set, else a fresh guid and a "manual-<short>" label are generated.
+herder send/wait/list/cull. An existing identity is selected only by its
+registry-current credential; ambient HERDER_*/HCOM_*/HERDR_* values are hints.
 
 Usage:
-  herder enroll [--label LABEL] [--role ROLE] [--json]
+  herder enroll [--credential-file PATH] [--label LABEL] [--role ROLE] [--json]
 
 Options:
+  --credential-file PATH
+                  select an existing seated identity; omit only for a fresh seat
   --label LABEL   label to record (repair: stored; empty/fresh: $HERDER_LABEL,
                   else manual-<short>)
   --role ROLE     role to record (repair: stored; empty/fresh: $HERDER_ROLE,

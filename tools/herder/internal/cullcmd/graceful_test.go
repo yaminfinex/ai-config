@@ -11,14 +11,16 @@ import (
 
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcred"
 )
 
 type gracefulHarness struct {
-	stateDir  string
-	busDir    string
-	sendLog   string
-	eventsLog string
-	closeLog  string
+	stateDir       string
+	busDir         string
+	sendLog        string
+	eventsLog      string
+	closeLog       string
+	credentialPath string
 }
 
 func TestGracefulCullAcknowledgedRequest(t *testing.T) {
@@ -71,15 +73,14 @@ func TestGracefulCullCallerRosterChildHoldingStdoutIsBounded(t *testing.T) {
 	h := installGracefulHarness(t, "caller_fd_leak", true)
 	start := time.Now()
 	stdout, stderr, rc := h.run(t, "--label", "peer", "--grace-timeout-ms", "100")
-	if rc != 0 {
-		t.Fatalf("cull rc=%d\nstdout:\n%s\nstderr:\n%s", rc, stdout, stderr)
+	if rc != 2 {
+		t.Fatalf("cull rc=%d, want credential-verification refusal\nstdout:\n%s\nstderr:\n%s", rc, stdout, stderr)
 	}
-	h.assertClosed(t)
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("caller roster child-held stdout escaped bound: %s", elapsed)
 	}
-	if !strings.Contains(stdout, "caller bus identity unverified") {
-		t.Fatalf("stdout=%q, want caller roster failure outcome", stdout)
+	if !strings.Contains(stderr, "credential-selected bus roster unavailable") {
+		t.Fatalf("stderr=%q, want caller roster refusal", stderr)
 	}
 }
 
@@ -219,15 +220,17 @@ func TestGracefulCullUnverifiedCallerSkipsNotice(t *testing.T) {
 	t.Setenv("HCOM_SESSION_ID", "not-the-live-caller")
 	t.Setenv("HERDR_PANE_ID", "pane-not-in-roster")
 	stdout, stderr, rc := h.run(t, "--label", "peer", "--grace-timeout-ms", "100")
-	if rc != 0 {
-		t.Fatalf("cull rc=%d\nstdout:\n%s\nstderr:\n%s", rc, stdout, stderr)
+	if rc != 2 {
+		t.Fatalf("cull rc=%d, want poisoned-correlate refusal\nstdout:\n%s\nstderr:\n%s", rc, stdout, stderr)
 	}
-	h.assertClosed(t)
+	if _, err := os.Stat(h.closeLog); !os.IsNotExist(err) {
+		t.Fatalf("unverified caller close log stat=%v, want no mutation", err)
+	}
 	if _, err := os.Stat(h.sendLog); !os.IsNotExist(err) {
 		t.Fatalf("unverified caller send log stat=%v, want no release notice", err)
 	}
-	if !strings.Contains(stdout, "caller bus identity unverified") {
-		t.Fatalf("stdout=%q, want verified-caller failure reason", stdout)
+	if !strings.Contains(stderr, "ambient correlate verification refused") {
+		t.Fatalf("stderr=%q, want poisoned-correlate refusal reason", stderr)
 	}
 }
 
@@ -287,6 +290,7 @@ func TestGracefulCullRevalidatesTerminalAfterNotice(t *testing.T) {
 func (h gracefulHarness) run(t *testing.T, args ...string) (string, string, int) {
 	t.Helper()
 	var stdout, stderr strings.Builder
+	args = append([]string{"--credential-file", h.credentialPath}, args...)
 	rc := Run(args, &stdout, &stderr)
 	return stdout.String(), stderr.String(), rc
 }
@@ -322,6 +326,7 @@ func installGracefulHarness(t *testing.T, mode string, busBound bool) gracefulHa
 		closeLog:  filepath.Join(root, "close.log"),
 	}
 	seedGracefulTarget(t, filepath.Join(state, "registry.jsonl"), bus, busBound)
+	h.credentialPath = seedGracefulCaller(t, filepath.Join(state, "registry.jsonl"), bus)
 
 	herdr := `#!/usr/bin/env bash
 set -euo pipefail
@@ -504,6 +509,34 @@ func seedGracefulTarget(t *testing.T, path, busDir string, busBound bool) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func seedGracefulCaller(t *testing.T, path, busDir string) string {
+	t.Helper()
+	staged, err := seatcred.Stage(path, "guid-caller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified := true
+	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{
+			Kind: v2.KindSession, GUID: "guid-caller", Event: "registered", RecordedAt: "2026-01-01T00:00:01Z", State: v2.StateSeated,
+			Label: "caller-label", Role: "builder", Tool: "codex", Seat: &v2.Seat{Kind: "herdr", PaneID: "pane-caller", TerminalID: "term-caller", HcomName: "worker-caller-seat", HcomVerified: &verified, Namespace: busDir, CredentialGeneration: staged.File.Generation},
+		}}, nil
+	})
+	if err != nil {
+		staged.Abort()
+		t.Fatal(err)
+	}
+	for _, outcome := range outcomes {
+		if err := outcome.Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := staged.Close(path, staged.File.Generation); err != nil {
+		t.Fatal(err)
+	}
+	return staged.Path
 }
 
 func writeGraceExecutable(t *testing.T, path, body string) {

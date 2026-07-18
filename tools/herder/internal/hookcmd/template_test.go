@@ -49,7 +49,7 @@ func TestCodexBootstrapBlock_Content(t *testing.T) {
 		"SUPERSEDED",
 		// Shared herder lifecycle doctrine (verbatim from herderAgentsSection).
 		"## AGENTS (herder lifecycle)",
-		"herder spawn --role",
+		"herder spawn --credential-file",
 		"herder cull",
 		"Do NOT spawn with `hcom <n> claude`, stop with `hcom kill`",
 		"Delivery is verified",

@@ -7,6 +7,7 @@ REPO_ROOT=$(cd "$TESTS_DIR/../../.." && pwd -P)
 HERDER_ROOT="$REPO_ROOT/tools/herder"
 export GOTOOLCHAIN=local
 unset GOROOT
+GO_BIN=$(mise which go 2>/dev/null) || { printf 'GROK TRANSPORT GATE BLOCKED — mise cannot resolve the repository Go pin.\n' >&2; exit 1; }
 
 real_hcom=${HERDER_TEST_HCOM_BIN:-}
 if [[ -z $real_hcom ]]; then
@@ -104,7 +105,7 @@ executed_and_passed() {
   grep -Fq -- "=== RUN   $name" <<<"$output" && grep -Fq -- "--- PASS: $name " <<<"$output"
 }
 
-if ! listed=$(go test ./internal/grokbridge -list '^Test'); then
+if ! listed=$("$GO_BIN" test ./internal/grokbridge -list '^Test'); then
   printf '\nGROK TRANSPORT TEST DISCOVERY FAILED — fix compilation before claiming the gate.\n' >&2
   exit 1
 fi
@@ -116,7 +117,7 @@ fi
 require_declared_tests "$listed" "${test_names[@]}" || exit 1
 
 pattern="^($(IFS='|'; printf '%s' "${test_names[*]}"))$"
-if ! output=$(go test -v ./internal/grokbridge -run "$pattern"); then
+if ! output=$("$GO_BIN" test -v ./internal/grokbridge -run "$pattern"); then
   printf '%s\n' "$output"
   printf '\nGROK TRANSPORT CONTRACT DRIFT — fix the failing declared test.\n' >&2
   exit 1
@@ -139,7 +140,7 @@ for name in "${test_names[@]}"; do
   fi
 done
 
-if ! go test ./internal/cli; then
+if ! "$GO_BIN" test ./internal/cli; then
   printf 'GROK TRANSPORT CLI REGISTRATION DRIFT — repair the root command surface.\n' >&2
   exit 1
 fi

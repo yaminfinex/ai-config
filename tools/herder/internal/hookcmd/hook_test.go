@@ -72,7 +72,7 @@ func TestRewriteSessionStart_HappyPath(t *testing.T) {
 
 	// Carries herder doctrine, drops hcom spawn/kill advertising.
 	for _, want := range []string{
-		"herder spawn --role",
+		"herder spawn --credential-file",
 		"herder list",
 		"herder cull",
 		"AGENTS (herder lifecycle)",

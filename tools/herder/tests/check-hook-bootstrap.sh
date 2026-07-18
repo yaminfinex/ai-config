@@ -162,7 +162,7 @@ assert_contains "sessionstart: threads active snapshot" "$AC_OUT" "Active (snaps
 assert_contains "sessionstart: renders tag group line" "$AC_OUT" "You are tagged 'boothook'"
 # herder doctrine present.
 assert_contains "sessionstart: AGENTS section" "$AC_OUT" "AGENTS (herder lifecycle)"
-assert_contains "sessionstart: herder spawn verb" "$AC_OUT" "herder spawn --role"
+assert_contains "sessionstart: herder spawn verb" "$AC_OUT" "herder spawn --credential-file"
 assert_contains "sessionstart: herder cull verb" "$AC_OUT" "herder cull"
 assert_contains "sessionstart: anti-pattern warning" "$AC_OUT" 'Do NOT spawn with `hcom <n> claude`, stop with `hcom kill`'
 # claude SUBAGENTS doctrine reinstated (TASK-002): hcom's CLAUDE_ONLY recipe
@@ -314,7 +314,7 @@ assert_contains "codex launch: supersedes hcom lifecycle guidance" "$LAUNCH_ARGV
 assert_contains "codex launch: AGENTS section" "$LAUNCH_ARGV" "AGENTS (herder lifecycle)"
 assert_contains "codex launch: anti-pattern warning" "$LAUNCH_ARGV" 'Do NOT spawn with `hcom <n> claude`, stop with `hcom kill`'
 assert_contains "codex launch: codex-appropriate doctrine" "$LAUNCH_ARGV" "Codex has no Task/subagent tool"
-assert_contains "codex launch: herder spawn recipe" "$LAUNCH_ARGV" "herder spawn --role"
+assert_contains "codex launch: herder spawn recipe" "$LAUNCH_ARGV" "herder spawn --credential-file"
 assert_contains "codex launch: herder cull verb" "$LAUNCH_ARGV" "herder cull"
 assert_not_contains "codex launch: claude Task recipe not leaked" "$LAUNCH_ARGV" "Run Task with background=true"
 

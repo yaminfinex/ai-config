@@ -9,7 +9,28 @@ import (
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
+	"ai-config/tools/herder/internal/seatcred"
 )
+
+func TestCutoverAdoptNeverSelectsCallerFromAmbientEnvironment(t *testing.T) {
+	path := seedAdoptRegistry(t, v2.SessionRecord{
+		GUID: "guid-previous", State: v2.StateUnseated, Label: "stable", Tool: "codex",
+	})
+	if err := seatcred.EnableCutover(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_STATE_DIR", filepath.Dir(path))
+	t.Setenv("HERDR_PANE_ID", "pane-poison-parent")
+	t.Setenv("HERDER_GUID", "guid-poison-parent")
+	t.Setenv("HCOM_SESSION_ID", "sid-poison-parent")
+	var stdout, stderr strings.Builder
+	if rc := Run([]string{"guid-previous"}, &stdout, &stderr); rc != 2 {
+		t.Fatalf("Run rc=%d, want credential refusal; stderr=%q", rc, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--credential-file is required") || !strings.Contains(stderr.String(), "hints, not authority") {
+		t.Fatalf("stderr=%q, want ambient-authority refusal", stderr.String())
+	}
+}
 
 func TestDifferentPaneSeatedTargetRefusesBeforeEnrollment(t *testing.T) {
 	path := seedAdoptRegistry(t,

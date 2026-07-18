@@ -8,7 +8,28 @@ import (
 	"testing"
 
 	"ai-config/tools/herder/internal/registry"
+	"ai-config/tools/herder/internal/seatcred"
 )
+
+func TestCutoverCompactNeverSelectsCallerFromAmbientEnvironment(t *testing.T) {
+	state := t.TempDir()
+	registryPath := filepath.Join(state, "registry.jsonl")
+	if err := seatcred.EnableCutover(registryPath); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_STATE_DIR", state)
+	t.Setenv("HERDR_ENV", "1")
+	t.Setenv("HERDR_PANE_ID", "pane-poison-parent")
+	t.Setenv("HERDER_GUID", "guid-poison-parent")
+	t.Setenv("HCOM_SESSION_ID", "sid-poison-parent")
+	var stdout, stderr strings.Builder
+	if rc := RunCompact([]string{"--dry-run", "compact me"}, &stdout, &stderr); rc != 2 {
+		t.Fatalf("RunCompact rc=%d, want credential refusal; stderr=%q", rc, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "--credential-file is required") || !strings.Contains(stderr.String(), "hints, not authority") {
+		t.Fatalf("stderr=%q, want ambient-authority refusal", stderr.String())
+	}
+}
 
 func TestRecordedBusSessionEvidenceAcceptsFieldRepairShapeThroughWriterAndLoader(t *testing.T) {
 	row := writerLoadedRepairRecord(t, nil, "seated", "enroll")

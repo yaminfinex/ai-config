@@ -46,30 +46,31 @@ type Record struct {
 	ShortGUID *string `json:"short_guid"`
 	Label     *string `json:"label"`
 
-	Role           string                   `json:"role"`
-	Agent          string                   `json:"agent"`
-	Provider       string                   `json:"provider,omitempty"`
-	Model          string                   `json:"model,omitempty"`
-	VendorVersion  *v2.VendorVersionHistory `json:"vendor_version,omitempty"`
-	PaneID         string                   `json:"pane_id"`
-	TerminalID     string                   `json:"terminal_id"`
-	PID            int                      `json:"pid,omitempty"`
-	Team           string                   `json:"team"`
-	HcomDir        string                   `json:"hcom_dir"`
-	HcomName       string                   `json:"hcom_name"`
-	HcomVerified   *bool                    `json:"hcom_verified,omitempty"`
-	HooksBound     *bool                    `json:"hooks_bound,omitempty"`
-	TranscriptPath string                   `json:"transcript_path,omitempty"`
-	HcomTag        string                   `json:"hcom_tag"`
-	Status         string                   `json:"status"`
-	State          string                   `json:"state,omitempty"`
-	RecordedAt     string                   `json:"recorded_at,omitempty"`
-	CloseResult    string                   `json:"close_result,omitempty"`
-	CloseReason    string                   `json:"close_reason,omitempty"`
-	ObservedVia    string                   `json:"observed_via,omitempty"`
-	Capabilities   *v2.Capabilities         `json:"capabilities,omitempty"`
-	Mission        *v2.Mission              `json:"mission,omitempty"`
-	Provenance     *Provenance              `json:"provenance,omitempty"`
+	Role                 string                   `json:"role"`
+	Agent                string                   `json:"agent"`
+	Provider             string                   `json:"provider,omitempty"`
+	Model                string                   `json:"model,omitempty"`
+	VendorVersion        *v2.VendorVersionHistory `json:"vendor_version,omitempty"`
+	PaneID               string                   `json:"pane_id"`
+	TerminalID           string                   `json:"terminal_id"`
+	PID                  int                      `json:"pid,omitempty"`
+	Team                 string                   `json:"team"`
+	HcomDir              string                   `json:"hcom_dir"`
+	HcomName             string                   `json:"hcom_name"`
+	HcomVerified         *bool                    `json:"hcom_verified,omitempty"`
+	HooksBound           *bool                    `json:"hooks_bound,omitempty"`
+	TranscriptPath       string                   `json:"transcript_path,omitempty"`
+	CredentialGeneration string                   `json:"credential_generation,omitempty"`
+	HcomTag              string                   `json:"hcom_tag"`
+	Status               string                   `json:"status"`
+	State                string                   `json:"state,omitempty"`
+	RecordedAt           string                   `json:"recorded_at,omitempty"`
+	CloseResult          string                   `json:"close_result,omitempty"`
+	CloseReason          string                   `json:"close_reason,omitempty"`
+	ObservedVia          string                   `json:"observed_via,omitempty"`
+	Capabilities         *v2.Capabilities         `json:"capabilities,omitempty"`
+	Mission              *v2.Mission              `json:"mission,omitempty"`
+	Provenance           *Provenance              `json:"provenance,omitempty"`
 
 	Archived bool            `json:"-"`
 	Raw      json.RawMessage `json:"-"`
@@ -79,17 +80,19 @@ type Record struct {
 // so old rows remain valid and raw-list output can continue to pass them
 // through without synthetic fields.
 type Provenance struct {
-	Mechanism     string `json:"mechanism"`
-	SpawnedBy     string `json:"spawned_by"`
-	ToolSessionID string `json:"tool_session_id"`
-	Tag           string `json:"tag"`
-	BatchID       string `json:"batch_id"`
-	CWD           string `json:"cwd"`
-	WorkspaceID   string `json:"workspace_id"`
-	Branch        string `json:"branch"`
-	TS            string `json:"ts"`
-	ForkedFrom    string `json:"forked_from,omitempty"`
-	ResumedAt     string `json:"resumed_at,omitempty"`
+	Mechanism              string `json:"mechanism"`
+	SpawnedBy              string `json:"spawned_by"`
+	ToolSessionID          string `json:"tool_session_id"`
+	Tag                    string `json:"tag"`
+	BatchID                string `json:"batch_id"`
+	CWD                    string `json:"cwd"`
+	WorkspaceID            string `json:"workspace_id"`
+	Branch                 string `json:"branch"`
+	TS                     string `json:"ts"`
+	ForkedFrom             string `json:"forked_from,omitempty"`
+	ResumedAt              string `json:"resumed_at,omitempty"`
+	CredentialNoticeSender string `json:"credential_notice_sender,omitempty"`
+	CredentialNoticeBusDir string `json:"credential_notice_bus_dir,omitempty"`
 }
 
 // DefaultPath resolves the registry location exactly like the bash scripts:
@@ -214,24 +217,25 @@ func recordFromV2SessionObject(obj map[string]json.RawMessage) Record {
 	var prov Provenance
 	_ = json.Unmarshal(obj["provenance"], &prov)
 	rec := Record{
-		Role:           rawString(obj["role"]),
-		Agent:          rawString(obj["tool"]),
-		Provider:       rawString(obj["provider"]),
-		Model:          rawString(obj["model"]),
-		PaneID:         seat.PaneID,
-		TerminalID:     seat.TerminalID,
-		PID:            seat.PID,
-		Team:           rawString(obj["team"]),
-		HcomDir:        seat.Namespace,
-		HcomName:       seat.HcomName,
-		HcomVerified:   seat.HcomVerified,
-		HooksBound:     boolPointer(seat.HooksBound),
-		TranscriptPath: seat.TranscriptPath,
-		State:          rawString(obj["state"]),
-		CloseResult:    rawString(obj["close_result"]),
-		CloseReason:    rawString(obj["close_reason"]),
-		ObservedVia:    rawString(obj["observed_via"]),
-		Provenance:     &prov,
+		Role:                 rawString(obj["role"]),
+		Agent:                rawString(obj["tool"]),
+		Provider:             rawString(obj["provider"]),
+		Model:                rawString(obj["model"]),
+		PaneID:               seat.PaneID,
+		TerminalID:           seat.TerminalID,
+		PID:                  seat.PID,
+		Team:                 rawString(obj["team"]),
+		HcomDir:              seat.Namespace,
+		HcomName:             seat.HcomName,
+		HcomVerified:         seat.HcomVerified,
+		HooksBound:           boolPointer(seat.HooksBound),
+		TranscriptPath:       seat.TranscriptPath,
+		CredentialGeneration: seat.CredentialGeneration,
+		State:                rawString(obj["state"]),
+		CloseResult:          rawString(obj["close_result"]),
+		CloseReason:          rawString(obj["close_reason"]),
+		ObservedVia:          rawString(obj["observed_via"]),
+		Provenance:           &prov,
 	}
 	var vendorVersion v2.VendorVersionHistory
 	if json.Unmarshal(obj["vendor_version"], &vendorVersion) == nil && vendorVersion.Current != (v2.VendorVersionObservation{}) {
@@ -856,17 +860,19 @@ func V2FromRecord(rec Record, event, state, recordedAt string) v2.SessionRecord 
 	prov := v2.Provenance{}
 	if rec.Provenance != nil {
 		prov = v2.Provenance{
-			Mechanism:     rec.Provenance.Mechanism,
-			SpawnedBy:     rec.Provenance.SpawnedBy,
-			ToolSessionID: rec.Provenance.ToolSessionID,
-			Tag:           rec.Provenance.Tag,
-			BatchID:       rec.Provenance.BatchID,
-			CWD:           rec.Provenance.CWD,
-			WorkspaceID:   rec.Provenance.WorkspaceID,
-			Branch:        rec.Provenance.Branch,
-			TS:            rec.Provenance.TS,
-			ForkedFrom:    rec.Provenance.ForkedFrom,
-			ResumedAt:     rec.Provenance.ResumedAt,
+			Mechanism:              rec.Provenance.Mechanism,
+			SpawnedBy:              rec.Provenance.SpawnedBy,
+			ToolSessionID:          rec.Provenance.ToolSessionID,
+			Tag:                    rec.Provenance.Tag,
+			BatchID:                rec.Provenance.BatchID,
+			CWD:                    rec.Provenance.CWD,
+			WorkspaceID:            rec.Provenance.WorkspaceID,
+			Branch:                 rec.Provenance.Branch,
+			TS:                     rec.Provenance.TS,
+			ForkedFrom:             rec.Provenance.ForkedFrom,
+			ResumedAt:              rec.Provenance.ResumedAt,
+			CredentialNoticeSender: rec.Provenance.CredentialNoticeSender,
+			CredentialNoticeBusDir: rec.Provenance.CredentialNoticeBusDir,
 		}
 	}
 	out := v2.SessionRecord{

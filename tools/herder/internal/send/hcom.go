@@ -67,6 +67,10 @@ func (h *busSender) now() time.Time {
 // "send_failed" | "sender_unverified" — the caller maps these onto its own
 // reporting/exit contract.
 func (h *busSender) deliver(sender, busName, busDir, message string, timeoutMS int) string {
+	return h.deliverWithThread(sender, busName, busDir, "", message, timeoutMS)
+}
+
+func (h *busSender) deliverWithThread(sender, busName, busDir, thread, message string, timeoutMS int) string {
 	if timeoutMS == 0 {
 		timeoutMS = 3000
 	}
@@ -112,7 +116,12 @@ func (h *busSender) deliver(sender, busName, busDir, message string, timeoutMS i
 	if out, rc := h.output(env, receiptArgs...); rc == 0 {
 		preMax = maxEventID(out)
 	}
-	if rc := h.runDiscard(env, "send", "--from", sender, "@"+busName, "--", message); rc != 0 {
+	sendArgs := []string{"send", "--from", sender, "@" + busName}
+	if thread != "" {
+		sendArgs = append(sendArgs, "--intent", "inform", "--thread", thread)
+	}
+	sendArgs = append(sendArgs, "--", message)
+	if rc := h.runDiscard(env, sendArgs...); rc != 0 {
 		return "send_failed"
 	}
 	if h.waitForAck(env, receiptArgs, preMax, timeoutMS) {
@@ -146,6 +155,12 @@ func (h *busSender) joined(busName, busDir string) bool {
 // layer's registry resolution would only re-derive the same values.
 func DeliverBus(sender, busName, busDir, message string, timeoutMS int) string {
 	return (&busSender{}).deliver(sender, busName, busDir, message, timeoutMS)
+}
+
+// DeliverCredentialNotice sends a non-secret path notice on its generation-
+// keyed thread. The receipt semantics are identical to DeliverBus.
+func DeliverCredentialNotice(sender, busName, busDir, thread, message string, timeoutMS int) string {
+	return (&busSender{}).deliverWithThread(sender, busName, busDir, thread, message, timeoutMS)
 }
 
 // send delivers message to busName (scoping every hcom call to busDir when the

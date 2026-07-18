@@ -1,4 +1,5 @@
 === STDERR ===
+herder spawn: credential path notice=queued (automatic retries suppressed)
 spawned worker-<SHORT> (claude) in pane p_50 (workspace ws_1)
   guid:   <GUID>
   cwd:    /mock/cwd
@@ -8,8 +9,9 @@ spawned worker-<SHORT> (claude) in pane p_50 (workspace ws_1)
   bus:    global @worker-rive
           HCOM_DIR=<CASE>/home/.hcom
   prompt: sent (409 chars) over the hcom bus, bind: bound, verify: delivered (receipt seen)
+  credential: generation <GEN> at <CASE>/state/credentials/<GUID>/<GEN>.token
 === STDOUT ===
-{"guid":"<GUID>","short_guid":"<SHORT>","label":"worker-<SHORT>","role":"worker","agent":"claude","extra_args":["--dangerously-skip-permissions"],"argv":["/bin/zsh","-lic","if [ -d \"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims\" ]; then export PATH=\"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH\"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=<CASE>/home/.hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch claude --tag worker --dangerously-skip-permissions"],"pane_id":"p_50","workspace_id":"ws_1","tab_id":"tab_9","terminal_id":"term_AGENT","cwd":"/mock/cwd","started_at":"<TS>","started_by_pane":"p_orch","initial_prompt_present":true,"hcom_dir":"<CASE>/home/.hcom","hcom_name":"worker-rive","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_1","branch":"","ts":"<TS>"},"prompt_sent":true,"delivery_result":"delivered","perm_injected":"--dangerously-skip-permissions","new_tab":true,"root_pane_closed":false,"new_tab_result":"moved","hcom_capture":"captured"}
+{"guid":"<GUID>","short_guid":"<SHORT>","label":"worker-<SHORT>","role":"worker","agent":"claude","extra_args":["--dangerously-skip-permissions"],"argv":["/bin/zsh","-lic","if [ -d \"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims\" ]; then export PATH=\"${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH\"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HERDER_STATE_DIR=<CASE>/state HCOM_DIR=<CASE>/home/.hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch claude --tag worker --dangerously-skip-permissions"],"pane_id":"p_50","workspace_id":"ws_1","tab_id":"tab_9","terminal_id":"term_AGENT","cwd":"/mock/cwd","started_at":"<TS>","started_by_pane":"p_orch","initial_prompt_present":true,"hcom_dir":"<CASE>/home/.hcom","hcom_name":"worker-rive","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"/mock/cwd","workspace_id":"ws_1","branch":"","ts":"<TS>","credential_notice_sender":"lead-bus","credential_notice_bus_dir":"<CASE>/home/.hcom"},"prompt_sent":true,"delivery_result":"delivered","perm_injected":"--dangerously-skip-permissions","new_tab":true,"root_pane_closed":false,"new_tab_result":"moved","hcom_capture":"captured"}
 === EXIT ===
 0
 === AGENT START ARGV ===
@@ -26,7 +28,7 @@ ws_1
 --
 /bin/zsh
 -lic
-if [ -d "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" ]; then export PATH="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=<CASE>/home/.hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch claude --tag worker --dangerously-skip-permissions
+if [ -d "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" ]; then export PATH="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HERDER_STATE_DIR=<CASE>/state HCOM_DIR=<CASE>/home/.hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch claude --tag worker --dangerously-skip-permissions
 === HERDR MUTATING CALLS ===
 agent start worker-<SHORT>
 pane move p_50 --new-tab --no-focus --label worker-<SHORT>
@@ -35,12 +37,8 @@ pane move p_50 --new-tab --no-focus --label worker-<SHORT>
 === REGISTRY ===
 {"kind":"session","guid":"guid-lead-0000","event":"seated","recorded_at":"<TS>","state":"seated","label":"orchestrator","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"lead-bus","namespace":"/hcom"},"provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-lead","tag":"orchestrator","cwd":"/repo","workspace_id":"ws_1","branch":"main","ts":"<TS>"}}
 {"kind":"node","event":"node_registered","node_id":"<GUID>","hostname":"<HOST>","recorded_at":"<TS>"}
-{"kind":"session","guid":"<GUID>","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"worker-<SHORT>","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50","hcom_name":"worker-rive","hcom_verified":true,"namespace":"<CASE>/home/.hcom","confirmed_at":"<TS>"},"bindings":[{"id":"<GUID>","field":"seat","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50","namespace":"<CASE>/home/.hcom"},"evidence_class":"live-verified","observed_at":"<TS>"},{"id":"<GUID>","field":"hcom_name","value":"worker-rive","evidence_class":"live-verified","observed_at":"<TS>"}],"continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tag":"worker","cwd":"/mock/cwd","workspace_id":"ws_1","ts":"<TS>"}}
+{"kind":"session","guid":"<GUID>","event":"seated","recorded_at":"<TS>","node":"<GUID>","state":"seated","label":"worker-<SHORT>","role":"worker","tool":"claude","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50","hcom_name":"worker-rive","hcom_verified":true,"namespace":"<CASE>/home/.hcom","credential_generation":"<GEN>","confirmed_at":"<TS>"},"bindings":[{"id":"<GUID>","field":"seat","seat":{"kind":"herdr","node":"<GUID>","terminal_id":"term_AGENT","pane_id":"p_50","namespace":"<CASE>/home/.hcom"},"evidence_class":"live-verified","observed_at":"<TS>"},{"id":"<GUID>","field":"hcom_name","value":"worker-rive","evidence_class":"live-verified","observed_at":"<TS>"}],"continuity":"assumed","lineage":{},"provenance":{"mechanism":"spawn","spawned_by":"user","tag":"worker","cwd":"/mock/cwd","workspace_id":"ws_1","ts":"<TS>","credential_notice_sender":"lead-bus","credential_notice_bus_dir":"<CASE>/home/.hcom"}}
 === HCOM SEND ARGV ===
-send --from lead-bus @worker-rive -- do the thing
-
-When your unit is finished (or blocked), report to the spawner over the hcom bus so it does not have to poll — a real status message with content, not a fixed slogan:
-  hcom send @lead-bus --intent inform -- "<what you finished, what's left, any blockers>"
-Send it ONCE when you are genuinely done or blocked, then end your turn. (If your hcom setup expects a --name, use your own agent name.)
+send --from lead-bus @worker-rive --intent inform --thread credential:<GUID>:<GEN> -- Seat credential ready. generation=<GEN> path=<CASE>/state/credentials/<GUID>/<GEN>.token. Pass this file as `--credential-file PATH`; the token is never carried in environment variables or messages.
 === HCOM EVENTS ARGV ===
 events --last 50 --agent worker-rive --context deliver:lead-bus --after <TS>

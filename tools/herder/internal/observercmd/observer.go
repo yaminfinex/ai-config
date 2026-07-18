@@ -68,15 +68,16 @@ type herdrContext struct {
 }
 
 type candidate struct {
-	kind       string
-	guid       string
-	row        v2.SessionRecord
-	sid        string
-	bus        hcomidentity.Result
-	seat       *v2.Seat
-	verdict    liveness.Verdict
-	anchor     liveness.SeatAnchor
-	observedAt time.Time
+	kind           string
+	guid           string
+	credentialGUID string
+	row            v2.SessionRecord
+	sid            string
+	bus            hcomidentity.Result
+	seat           *v2.Seat
+	verdict        liveness.Verdict
+	anchor         liveness.SeatAnchor
+	observedAt     time.Time
 }
 
 type sweepResult struct {
@@ -708,10 +709,11 @@ func turnoverCandidate(rec v2.SessionRecord, newSID string, identity hcomidentit
 	if seat != nil {
 		applyBusIdentity(seat, identity)
 	}
-	return candidate{kind: "turnover", guid: rec.GUID, row: old, sid: newSID, bus: identity, seat: seat}
+	childGUID, _ := registry.NewGUID()
+	return candidate{kind: "turnover", guid: rec.GUID, credentialGUID: childGUID, row: old, sid: newSID, bus: identity, seat: seat}
 }
 
-func turnoverRowsLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string, identity hcomidentity.Result, now time.Time) ([]v2.SessionRecord, bool) {
+func turnoverRowsLocked(proj *v2.Projection, rec v2.SessionRecord, newSID, childGUID string, identity hcomidentity.Result, now time.Time) ([]v2.SessionRecord, bool) {
 	current := registry.V2ByGUID(proj, rec.GUID)
 	if current == nil || current.State != v2.StateSeated || current.Seat == nil || !observerOwnedSeat(*current) {
 		return nil, false
@@ -720,8 +722,7 @@ func turnoverRowsLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string
 	if newSID == "" || priorSID == newSID || priorSID == "" || turnoverAlreadyRecorded(proj, current.GUID, newSID) {
 		return nil, false
 	}
-	guid, err := registry.NewGUID()
-	if err != nil {
+	if childGUID == "" {
 		return nil, false
 	}
 	stamp := now.Format(time.RFC3339)
@@ -732,7 +733,7 @@ func turnoverRowsLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string
 	}
 	child := v2.SessionRecord{
 		Kind:       v2.KindSession,
-		GUID:       guid,
+		GUID:       childGUID,
 		Event:      "registered",
 		RecordedAt: stamp,
 		State:      v2.StateSeated,
@@ -768,7 +769,7 @@ func turnoverRowsLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string
 	old.RecordedAt = stamp
 	old.State = v2.StateUnseated
 	old.Seat = nil
-	old.Lineage.DisplacedBy = guid
+	old.Lineage.DisplacedBy = childGUID
 	old.CloseResult = "displaced"
 	old.CloseReason = "observer detected sid turnover in sidecar-less seat"
 	old.ObservedVia = "observer turnover"
@@ -996,20 +997,21 @@ func completeRecognition(path string, cand candidate) (registry.WriteStatus, err
 	engine := seatcompletion.DefaultEngine()
 	observedPane := seatcompletion.LivePane{PaneID: seat.PaneID, TerminalID: seat.TerminalID}
 	request := seatcompletion.Request{
-		Origin:       seatcompletion.OriginRecognition,
-		RegistryPath: path,
-		Candidate:    cand.row,
-		Seat:         seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: seat.PaneID},
-		ObservedPane: &observedPane,
-		ObservedBus:  &cand.bus,
-		Namespace:    seat.Namespace,
-		Evidence:     hcomidentity.Evidence{SessionID: cand.bus.SessionID, PaneIDs: []string{seat.PaneID}},
+		Origin:         seatcompletion.OriginRecognition,
+		RegistryPath:   path,
+		Candidate:      cand.row,
+		CredentialGUID: firstNonEmpty(cand.credentialGUID, cand.row.GUID),
+		Seat:           seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: seat.PaneID},
+		ObservedPane:   &observedPane,
+		ObservedBus:    &cand.bus,
+		Namespace:      seat.Namespace,
+		Evidence:       hcomidentity.Evidence{SessionID: cand.bus.SessionID, PaneIDs: []string{seat.PaneID}},
 	}
 	request.BuildLocked = func(tx registry.LockedUpdate, _ v2.Seat) (v2.SessionRecord, []v2.SessionRecord, []v2.SessionRecord, error) {
 		now := time.Now().UTC()
 		switch cand.kind {
 		case "turnover":
-			rows, ok := turnoverRowsLocked(tx.Projection, cand.row, cand.sid, cand.bus, now)
+			rows, ok := turnoverRowsLocked(tx.Projection, cand.row, cand.sid, cand.credentialGUID, cand.bus, now)
 			if !ok || len(rows) != 2 {
 				return v2.SessionRecord{}, nil, nil, errors.New("turnover no longer matches the live registry state")
 			}

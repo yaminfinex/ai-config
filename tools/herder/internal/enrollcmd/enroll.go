@@ -14,6 +14,7 @@ import (
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcompletion"
+	"ai-config/tools/herder/internal/seatcred"
 )
 
 type options struct {
@@ -34,6 +35,11 @@ func RunFreshForAdoption(args []string, stdout, stderr io.Writer, oldGUID string
 }
 
 func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveGUID string) int {
+	credentialPath, args, credentialFlagErr := seatcred.ExtractFlag(args)
+	if credentialFlagErr != nil {
+		die(stderr, credentialFlagErr.Error())
+		return 2
+	}
 	opts, code := parseArgs(args, stdout, stderr)
 	if code != 0 {
 		return code
@@ -73,7 +79,34 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 		fmt.Fprintf(stderr, "herder enroll: live bus identity could not be verified (%s); recording hcom_name as unknown. Join this session to hcom, then rerun `herder enroll` to repair the row.\n", liveBus.Reason)
 	}
 
-	requestedGUID := os.Getenv("HERDER_GUID")
+	registryPath := registry.DefaultPath()
+	cutover := seatcred.CutoverEnabled(registryPath)
+	var selected *seatcred.Selection
+	if credentialPath != "" {
+		selection, authErr := seatcred.Authenticate(registryPath, credentialPath)
+		if authErr != nil {
+			die(stderr, "caller credential refused: "+authErr.Error())
+			return 2
+		}
+		selected = &selection
+		if selection.Row.Seat == nil || selection.Row.Seat.TerminalID != pane.TerminalID {
+			die(stderr, "ambient pane does not verify the credential-selected seat; refusing without re-selection")
+			return 2
+		}
+		if rows, listErr := hcomidentity.List(hcomDir); listErr != nil {
+			die(stderr, "credential-selected bus roster unavailable: "+listErr.Error())
+			return 2
+		} else if verifyErr := seatcred.VerifySelectedBus(rows, selection, hcomidentity.CurrentEvidence(paneID, pane.PaneID)); verifyErr != nil {
+			die(stderr, verifyErr.Error())
+			return 2
+		}
+	}
+	requestedGUID := ""
+	if selected != nil {
+		requestedGUID = selected.GUID
+	} else if !cutover {
+		requestedGUID = os.Getenv("HERDER_GUID")
+	}
 	guid := requestedGUID
 	if forceFreshGUID {
 		guid = ""
@@ -81,7 +114,6 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 	short := ""
 	label := ""
 
-	registryPath := registry.DefaultPath()
 	var appendedRow []byte
 	// PreserveToolSessionID needs the append-only history when another writer's
 	// latest row dropped its SID. The locked latest projection is appended to
@@ -94,6 +126,32 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 
 	nowISO := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	var cleanupMessages []string
+	credentialGUID := guid
+	if credentialGUID == "" && !forceFreshGUID {
+		if projection, projectionErr := v2.LoadFile(registryPath, v2.LoadOptions{}); projectionErr == nil {
+			if selected, selectErr := selectMatchingLiveSeat(matchingLiveSeatRows(projection.Sessions(), pane, liveBus), liveBus); selectErr == nil && selected != nil {
+				if cutover {
+					if selected.Seat != nil && selected.Seat.CredentialGeneration == "" {
+						die(stderr, fmt.Sprintf("existing live seat %s is legacy and cannot be selected from ambient identity; run `herder credential sweep`, then retry with `--credential-file $(herder credential path --guid %s)`", selected.GUID, selected.GUID))
+					} else {
+						die(stderr, fmt.Sprintf("existing live seat %s requires its explicit credential; retry with `--credential-file $(herder credential path --guid %s)`", selected.GUID, selected.GUID))
+					}
+					return 2
+				} else {
+					credentialGUID = selected.GUID
+					guid = selected.GUID
+				}
+			}
+		}
+	}
+	if credentialGUID == "" {
+		credentialGUID, err = registry.NewGUID()
+		if err != nil {
+			die(stderr, err.Error())
+			return 1
+		}
+		guid = credentialGUID
+	}
 	buildRows := func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		sessions := tx.Projection.Sessions()
 		var latest *v2.SessionRecord
@@ -180,7 +238,14 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 		if liveBus.Verified && liveBus.SessionID != "" {
 			verifiedSessionID = liveBus.SessionID
 		}
-		prov := registry.BuildProvenance(mechanism, "", verifiedSessionID, os.Getenv("HCOM_TAG"), pane.CWD, pane.WorkspaceID)
+		provenanceSpawner := ""
+		if cutover {
+			provenanceSpawner = "user"
+			if selected != nil {
+				provenanceSpawner = selected.GUID
+			}
+		}
+		prov := registry.BuildProvenance(mechanism, provenanceSpawner, verifiedSessionID, os.Getenv("HCOM_TAG"), pane.CWD, pane.WorkspaceID)
 		if prov.ToolSessionID == "" && latest != nil {
 			priorGUID := latest.GUID
 			priorSID := latest.Provenance.ToolSessionID
@@ -264,9 +329,10 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 	}
 	engine := seatcompletion.DefaultEngine()
 	result, err := engine.Complete(context.Background(), seatcompletion.Request{
-		Origin:       seatcompletion.OriginEnroll,
-		RegistryPath: registryPath,
-		Candidate:    v2.SessionRecord{Tool: firstNonEmpty(envTool(), "manual")},
+		Origin:         seatcompletion.OriginEnroll,
+		RegistryPath:   registryPath,
+		CredentialGUID: credentialGUID,
+		Candidate:      v2.SessionRecord{Tool: firstNonEmpty(envTool(), "manual")},
 		Seat: seatcompletion.SeatClaim{
 			Kind:       seatcompletion.SeatHerdr,
 			PaneID:     pane.PaneID,
@@ -307,6 +373,7 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 		fmt.Fprintln(stderr, message)
 	}
 	fmt.Fprintf(stderr, "enrolled %s (%s) pane=%s terminal=%s\n", label, guid, pane.PaneID, pane.TerminalID)
+	fmt.Fprintf(stderr, "credential generation=%s path=%s\n", result.CredentialGeneration, result.CredentialPath)
 	if opts.json {
 		fmt.Fprintln(stdout, string(appendedRow))
 	}
@@ -527,13 +594,15 @@ func printHelp(stdout io.Writer) {
 	fmt.Fprint(stdout, `herder enroll — register the CURRENT herdr pane in the herder registry.
 
 Run from inside a herdr pane to make the running agent (or shell) addressable by
-herder send/wait/list/cull. Identity comes from HERDER_GUID/HERDER_LABEL/HERDER_ROLE
-if set, else a fresh guid and a "manual-<short>" label are generated.
+herder send/wait/list/cull. An existing identity is selected only by its
+registry-current credential; ambient HERDER_*/HCOM_*/HERDR_* values are hints.
 
 Usage:
-  herder enroll [--label LABEL] [--role ROLE] [--json]
+  herder enroll [--credential-file PATH] [--label LABEL] [--role ROLE] [--json]
 
 Options:
+  --credential-file PATH
+                  select an existing seated identity; omit only for a fresh seat
   --label LABEL   label to record (repair: stored; empty/fresh: $HERDER_LABEL,
                   else manual-<short>)
   --role ROLE     role to record (repair: stored; empty/fresh: $HERDER_ROLE,

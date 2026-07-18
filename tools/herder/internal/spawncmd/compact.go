@@ -25,6 +25,7 @@ import (
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
+	"ai-config/tools/herder/internal/seatcred"
 	"ai-config/tools/herder/internal/shellquote"
 )
 
@@ -45,12 +46,27 @@ const defaultThenTimeout = 15 * time.Minute
 
 // RunCompact executes herder compact and returns the process exit code.
 func RunCompact(args []string, stdout, stderr io.Writer) int {
+	credentialPath, args, credentialFlagErr := seatcred.ExtractFlag(args)
+	if credentialFlagErr != nil {
+		dieCompact(stderr, credentialFlagErr.Error())
+		return 64
+	}
 	opts, code := parseCompactArgs(args, stdout, stderr)
 	if code != 0 {
 		return code
 	}
 	if opts.Help {
 		return 0
+	}
+	registryPath := registry.DefaultPath()
+	var selected *seatcred.Selection
+	if seatcred.CutoverEnabled(registryPath) || credentialPath != "" {
+		selection, err := seatcred.Authenticate(registryPath, credentialPath)
+		if err != nil {
+			dieCompact(stderr, "caller credential refused: "+err.Error()+" Nothing was typed.")
+			return 2
+		}
+		selected = &selection
 	}
 
 	if os.Getenv("HERDR_ENV") != "1" || os.Getenv("HERDR_PANE_ID") == "" {
@@ -84,16 +100,40 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	recs, err := registry.Load(registry.DefaultPath())
+	recs, err := registry.Load(registryPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		dieCompact(stderr, "registry not readable: "+err.Error())
 		return 1
 	}
 
-	self, refuseMsg := resolveSelfRow(recs, pane)
-	if self.row == nil {
-		dieCompact(stderr, "refused — "+refuseMsg+" herder compact only ever types into the caller's own pane; without proof of self-identity it refuses. Nothing was typed.")
-		return 2
+	self := selfIdentity{}
+	if selected == nil {
+		var refuseMsg string
+		self, refuseMsg = resolveSelfRow(recs, pane)
+		if self.row == nil {
+			dieCompact(stderr, "refused — "+refuseMsg+" herder compact only ever types into the caller's own pane; without proof of self-identity it refuses. Nothing was typed.")
+			return 2
+		}
+	} else {
+		row := registry.Resolve(recs, selected.GUID)
+		if row == nil || !registry.IsSeated(*row) {
+			dieCompact(stderr, "refused — the credential-selected guid has no seated compatibility row. Nothing was typed.")
+			return 2
+		}
+		if row.TerminalID == "" || row.TerminalID != pane.TerminalID {
+			dieCompact(stderr, fmt.Sprintf("refused — ambient pane terminal %s does not verify credential-selected terminal %s; refusing without re-selection. Nothing was typed.", pane.TerminalID, row.TerminalID))
+			return 2
+		}
+		busRows, listErr := hcomidentity.List(selected.Row.Seat.Namespace)
+		if listErr != nil {
+			dieCompact(stderr, "refused — credential-selected bus roster unavailable: "+listErr.Error()+". Nothing was typed.")
+			return 2
+		}
+		if verifyErr := seatcred.VerifySelectedBus(busRows, *selected, hcomidentity.CurrentEvidence(envPane, pane.PaneID)); verifyErr != nil {
+			dieCompact(stderr, "refused — "+verifyErr.Error()+" Nothing was typed.")
+			return 2
+		}
+		self = selfIdentity{row: row, corroborated: true}
 	}
 	row := self.row
 	if row.Agent != "claude" && row.Agent != "codex" {
@@ -500,7 +540,7 @@ func printCompactHelp(stdout io.Writer) {
 		"herder compact — queue a steered /compact into the CALLER'S OWN pane (self only).",
 		"",
 		"Usage:",
-		"  herder compact [--dry-run] [--then <continuation> [--then-timeout <dur>] | --stop] \\",
+		"  herder compact --credential-file PATH [--dry-run] [--then <continuation> [--then-timeout <dur>] | --stop] \\",
 		"                 [<steer text> | -- <steer text>]",
 		"",
 		"Types a real `/compact <steer>` input line into your own composer via the",

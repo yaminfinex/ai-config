@@ -161,7 +161,7 @@ for row in "${SCENARIOS[@]}"; do
   # shellcheck disable=SC2206
   args=($argstr)
 
-  block="$(run_one "$state" "$mutable" ${args[@]+"${args[@]}"} | sed -E 's/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/<GUID>/g; s/"hostname":"[^"]*"/"hostname":"<HOST>"/g; s/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g')"
+  block="$(run_one "$state" "$mutable" ${args[@]+"${args[@]}"} | sed -E 's/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/<GUID>/g; s/[0-9a-f]{32}/<GEN>/g; s/"hostname":"[^"]*"/"hostname":"<HOST>"/g; s/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g')"
   gold="$GOLDENS/$name.txt"
 
   if [[ "$WRITE" -eq 1 ]]; then

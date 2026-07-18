@@ -68,6 +68,7 @@ git -C "$REPO_ROOT" ls-files -z >"$WORK/tracked" 2>/dev/null ||
 export MISE_TRUSTED_CONFIG_PATHS="$COPY"
 export MISE_STATE_DIR="$WORK/mise-state"
 export MISE_CACHE_DIR="$WORK/mise-cache"
+export GOCACHE="$WORK/go-cache"
 
 # Gates under test: every suite that derives its toolchain from a go.mod.
 # key|script (repo-relative)|module dir
