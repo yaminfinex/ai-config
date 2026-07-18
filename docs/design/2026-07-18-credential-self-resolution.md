@@ -1,7 +1,7 @@
 # Credential DX: verb-level self-resolution from live correlates
 
 - **Task:** TASK-282 (design; adversarial design review before any implementation task is cut)
-- **Date:** 2026-07-18 (rev 9, after adversarial review rounds 1–8 — reviewer-rofe; disposition maps in §12)
+- **Date:** 2026-07-18 (rev 9, after 8 adversarial design review rounds; disposition maps in §12)
 - **Status:** Revised draft for re-review
 - **Amends:** the double-reviewed "ambient evidence may verify but never select" boundary, per the owner-ratified direction of 2026-07-18: *"low ceremony for sane defaults, explicit at the API layer, and escape hatches."*
 
