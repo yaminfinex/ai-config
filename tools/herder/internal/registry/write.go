@@ -659,11 +659,11 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 			return row, false, nil
 		}
 		row = carryRegisteredFields(row, *current)
-		if sameProjectedSession(row, *current) {
-			return row, false, nil
-		}
 	}
 	row = carrySeatedSuccessorFacts(row, *current)
+	if row.Event == "registered" && sameProjectedSession(row, *current) {
+		return row, false, nil
+	}
 	if err := validateSeatedBindingTransition(current, row); err != nil {
 		return row, false, err
 	}
@@ -1056,7 +1056,6 @@ func isLegacyV1SessionAppend(row v2.SessionRecord) bool {
 }
 
 func carryRegisteredFields(row, current v2.SessionRecord) v2.SessionRecord {
-	carriedHcomName := current.Seat != nil && current.Seat.HcomName != "" && (row.Seat == nil || row.Seat.HcomName == "")
 	if row.Seat == nil {
 		row.State = current.State
 	}
@@ -1077,11 +1076,6 @@ func carryRegisteredFields(row, current v2.SessionRecord) v2.SessionRecord {
 		row.Provenance = current.Provenance
 	}
 	row.Capabilities = carryCapabilities(row.Capabilities, current.Capabilities)
-	row.Seat = mergeSeatFields(row.Seat, current.Seat)
-	if carriedHcomName && row.Seat != nil {
-		verified := false
-		row.Seat.HcomVerified = &verified
-	}
 	return row
 }
 
@@ -1092,16 +1086,14 @@ const (
 	seatFieldsCanonicalReseat
 )
 
-func mergeSeatFields(patch, current *v2.Seat) *v2.Seat {
-	return mergeSeatFieldsWithOwnership(patch, current, seatFieldsPartialSnapshot)
-}
-
 func mergeSeatFieldsWithOwnership(patch, current *v2.Seat, ownership seatFieldOwnership) *v2.Seat {
 	if patch == nil {
-		if ownership == seatFieldsCanonicalReseat {
-			return nil
+		seat := cloneSeat(current)
+		if ownership == seatFieldsPartialSnapshot && seat != nil && seat.HcomName != "" {
+			verified := false
+			seat.HcomVerified = &verified
 		}
-		return cloneSeat(current)
+		return seat
 	}
 	if current == nil {
 		seat := cloneSeat(patch)
@@ -1185,6 +1177,10 @@ func mergeSeatFieldsWithOwnership(patch, current *v2.Seat, ownership seatFieldOw
 	if patch.ConfirmedAt != "" {
 		seat.ConfirmedAt = patch.ConfirmedAt
 	}
+	if ownership == seatFieldsPartialSnapshot && current.HcomName != "" && patch.HcomName == "" {
+		verified := false
+		seat.HcomVerified = &verified
+	}
 	return &seat
 }
 
@@ -1262,8 +1258,7 @@ func carrySeatFields(row, current v2.SessionRecord) v2.SessionRecord {
 	row.Tool = firstNonEmpty(row.Tool, current.Tool)
 	row = carryPiFacts(row, current)
 	row.State = current.State
-	row.Seat = cloneSeat(current.Seat)
-	if row.Seat == nil && current.LegacyV1 {
+	if row.Seat == nil && current.Seat == nil && current.LegacyV1 {
 		legacy, _ := DecodeLegacyV1Raw(current)
 		if legacy.PaneID != "" || legacy.TerminalID != "" || legacy.HcomName != "" || legacy.HcomDir != "" {
 			row.State = v2.StateSeated

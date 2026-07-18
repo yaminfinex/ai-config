@@ -105,27 +105,37 @@ func TestCompletionArmInventoryDetectsAlternateForms(t *testing.T) {
 
 func TestSeatRewriteWriterInventoryRequiresCarryPins(t *testing.T) {
 	files := productionInternalGoFiles(t)
-	directWant := map[string]int{
-		"cullcmd/cull.go":           1,
-		"grokbridge/binder.go":      1,
-		"lifecyclecmd/lifecycle.go": 2,
-		"liveness/apply.go":         1,
-		"missioncmd/mission.go":     1,
-		"observercmd/observer.go":   1,
-		"renamecmd/rename.go":       2,
-		"retirecmd/retire.go":       2,
-		"spawncmd/spawn.go":         1,
+	type writerInventory struct {
+		updateLocked      int
+		completionRequest int
+		carryPin          bool
 	}
-	completionWant := map[string]int{
-		"adoptcmd/adopt.go":           1,
-		"credentialcmd/credential.go": 1,
-		"enrollcmd/enroll.go":         1,
-		"lifecyclecmd/lifecycle.go":   1,
-		"observercmd/observer.go":     1,
-		"reconcilecmd/reconcile.go":   1,
-		"repaircmd/repair.go":         2,
-		"sidecarcmd/sidecar.go":       1,
-		"spawncmd/spawn.go":           1,
+	writers := map[string]writerInventory{
+		"adoptcmd/adopt.go":           {completionRequest: 1},
+		"credentialcmd/credential.go": {completionRequest: 1},
+		"cullcmd/cull.go":             {updateLocked: 1},
+		"enrollcmd/enroll.go":         {completionRequest: 1},
+		"grokbridge/binder.go":        {updateLocked: 1, carryPin: true},
+		"lifecyclecmd/lifecycle.go":   {updateLocked: 2, completionRequest: 1, carryPin: true},
+		"liveness/apply.go":           {updateLocked: 1},
+		"missioncmd/mission.go":       {updateLocked: 1, carryPin: true},
+		"observercmd/observer.go":     {updateLocked: 1, completionRequest: 1, carryPin: true},
+		"reconcilecmd/reconcile.go":   {completionRequest: 1, carryPin: true},
+		"renamecmd/rename.go":         {updateLocked: 2, carryPin: true},
+		"repaircmd/repair.go":         {completionRequest: 2, carryPin: true},
+		"retirecmd/retire.go":         {updateLocked: 2},
+		"sidecarcmd/sidecar.go":       {completionRequest: 1, carryPin: true},
+		"spawncmd/spawn.go":           {updateLocked: 1, completionRequest: 1, carryPin: true},
+	}
+	directWant := map[string]int{}
+	completionWant := map[string]int{}
+	for source, inventory := range writers {
+		if inventory.updateLocked > 0 {
+			directWant[source] = inventory.updateLocked
+		}
+		if inventory.completionRequest > 0 {
+			completionWant[source] = inventory.completionRequest
+		}
 	}
 	assertCallInventory(t, files, "registry.UpdateLocked(", directWant)
 	assertCallInventory(t, files, "seatcompletion.Request{", completionWant)
@@ -137,21 +147,27 @@ func TestSeatRewriteWriterInventoryRequiresCarryPins(t *testing.T) {
 		t.Fatal("cannot resolve seat writer pin paths")
 	}
 	internal := filepath.Dir(filepath.Dir(thisFile))
+	registryPins, err := os.ReadFile(filepath.Join(internal, "registry", "seat_carry_test.go"))
+	if err != nil {
+		t.Fatalf("read structural carry pins: %v", err)
+	}
+	for source, inventory := range writers {
+		if !inventory.carryPin {
+			continue
+		}
+		marker := `source: "` + source + `"`
+		if !strings.Contains(string(registryPins), marker) {
+			t.Fatalf("seat writer %s is inventory-pinned for carry but lacks a structural UpdateLocked pin", source)
+		}
+	}
 	pins := []struct {
 		path   string
 		marker string
 	}{
-		{path: "grokbridge/mock_grok_test.go", marker: "capability publication stripped credential generation"},
-		{path: "lifecyclecmd/lifecycle_test.go", marker: "TestLifecycleReseatCandidateCarriesCredentialGeneration"},
-		{path: "missioncmd/mission_test.go", marker: "assertMembershipCredential"},
-		{path: "observercmd/observer_test.go", marker: "observer reconfirm stripped credential generation"},
-		{path: "reconcilecmd/reconcile_test.go", marker: "TestReconcileApplyCandidateCarriesCredentialGeneration"},
-		{path: "renamecmd/rename_test.go", marker: "label transfer stripped credential generation"},
-		{path: "repaircmd/repair_test.go", marker: "instead of rotating it"},
-		{path: "sidecarcmd/sidecar_test.go", marker: "TestSidecarEnrichmentKeepsCredentialCoverage"},
-		{path: "spawncmd/spawn_test.go", marker: "spawn idempotent replay stripped"},
 		{path: "seatcompletion/completion_test.go", marker: "TestCompletionRotatesPersistedCredentialGeneration"},
 		{path: "registry/seat_carry_test.go", marker: "TestSeatedRewriteEventInventoryCarriesUnownedSeatFacts"},
+		{path: "registry/seat_carry_test.go", marker: "TestSeatedNilSeatAppendCannotErasePersistedSeat"},
+		{path: "registry/seat_carry_test.go", marker: "TestSeatRewriteWriterPinsDependOnStructuralCarry"},
 		{path: "registry/seat_carry_test.go", marker: "TestCompatibilityAppendWritersCarryCredentialGeneration"},
 		{path: "../tests/check-enroll-contract.sh", marker: `credential_generation":"[0-9a-f]`},
 		{path: "../tests/goldens/reconcile/apply_fixture.txt", marker: `credential_generation":"<GEN>`},

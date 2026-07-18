@@ -92,12 +92,140 @@ func TestCanonicalReseatDoesNotResurrectOwnedCoordinates(t *testing.T) {
 	}
 }
 
+func TestSeatedNilSeatAppendCannotErasePersistedSeat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	current := v2.SessionRecord{
+		GUID: "guid-nil-seat", Event: "seated", State: v2.StateSeated, Label: "worker", Tool: "codex",
+		Seat: &v2.Seat{
+			Kind: "herdr", TerminalID: "terminal-live", PaneID: "pane-live",
+			CredentialGeneration: carryTestGeneration,
+		},
+	}
+	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{current}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := SingleOutcome(outcomes); err != nil || outcome.Err() != nil {
+		t.Fatalf("seed outcome=%+v err=%v", outcome, err)
+	}
+
+	outcomes, err = UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+		return []v2.SessionRecord{{
+			GUID: current.GUID, Event: "seated", State: v2.StateSeated,
+			Label: current.Label, Tool: current.Tool, Seat: nil,
+		}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := SingleOutcome(outcomes); err != nil || outcome.Err() != nil {
+		t.Fatalf("nil-seat append outcome=%+v err=%v", outcome, err)
+	}
+
+	latest := V2ByGUID(loadProjection(t, path), current.GUID)
+	if latest == nil || latest.Seat == nil || latest.Seat.TerminalID != "terminal-live" ||
+		latest.Seat.PaneID != "pane-live" || latest.Seat.CredentialGeneration != carryTestGeneration {
+		t.Fatalf("nil-seat seated append erased persisted seat facts: %+v", latest)
+	}
+}
+
 func TestSeatedCarryAllowsOwnedCredentialRotation(t *testing.T) {
 	current := v2.SessionRecord{GUID: "guid-rotate", State: v2.StateSeated, Seat: &v2.Seat{Kind: "process", PID: 41, CredentialGeneration: "generation-old"}}
 	candidate := v2.SessionRecord{GUID: current.GUID, Event: v2.EventAttestedBinding, State: v2.StateSeated, Seat: &v2.Seat{Kind: "process", PID: 41, CredentialGeneration: "generation-new"}}
 	got := carrySeatedSuccessorFacts(candidate, current)
 	if got.Seat == nil || got.Seat.CredentialGeneration != "generation-new" {
 		t.Fatalf("credential generation = %+v, want nonempty candidate rotation", got.Seat)
+	}
+}
+
+func TestSeatRewriteWriterPinsDependOnStructuralCarry(t *testing.T) {
+	verified := true
+	canonicalSeat := func() *v2.Seat {
+		return &v2.Seat{
+			Kind: "herdr", TerminalID: "terminal-live", PaneID: "pane-live",
+			HcomName: "bus-live", HcomVerified: &verified, Namespace: "/bus",
+		}
+	}
+	writers := []struct {
+		name   string
+		source string
+		build  func(v2.SessionRecord) v2.SessionRecord
+	}{
+		{name: "sidecar enrichment", source: "sidecarcmd/sidecar.go", build: func(current v2.SessionRecord) v2.SessionRecord {
+			return v2.SessionRecord{GUID: current.GUID, Event: "seated", State: v2.StateSeated, Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat()}
+		}},
+		{name: "observer reconfirm", source: "observercmd/observer.go", build: func(current v2.SessionRecord) v2.SessionRecord {
+			return v2.SessionRecord{GUID: current.GUID, Event: "reconciled", State: v2.StateSeated, Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat(), ObservedVia: "observer reconfirm"}
+		}},
+		{name: "grok capability publication", source: "grokbridge/binder.go", build: func(current v2.SessionRecord) v2.SessionRecord {
+			return v2.SessionRecord{GUID: current.GUID, Event: "registered", State: v2.StateSeated, Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat(), Capabilities: &v2.Capabilities{Bus: "bound", Wake: "armed"}}
+		}},
+		{name: "rename", source: "renamecmd/rename.go", build: func(current v2.SessionRecord) v2.SessionRecord {
+			return v2.SessionRecord{GUID: current.GUID, Event: "labelled", Label: "renamed"}
+		}},
+		{name: "mission membership", source: "missioncmd/mission.go", build: func(current v2.SessionRecord) v2.SessionRecord {
+			return v2.SessionRecord{GUID: current.GUID, Event: "mission_joined", Mission: &v2.Mission{Slug: "alpha", Source: "explicit"}}
+		}},
+		{name: "spawn replay", source: "spawncmd/spawn.go", build: func(current v2.SessionRecord) v2.SessionRecord {
+			return v2.SessionRecord{GUID: current.GUID, Event: "registered", State: v2.StateSeated, Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat()}
+		}},
+		{name: "repair attestation", source: "repaircmd/repair.go", build: func(current v2.SessionRecord) v2.SessionRecord {
+			return v2.SessionRecord{
+				GUID: current.GUID, Event: v2.EventAttestedBinding, State: v2.StateSeated,
+				Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat(),
+				Attestations: []v2.Attestation{{
+					ID: "attestation-reissue", GUID: current.GUID, Operation: v2.AttestationReissueCredential,
+					Statement: "authorize credential rotation", PaneID: "pane-live", ObservedAt: "2026-07-18T00:01:00Z",
+				}},
+			}
+		}},
+		{name: "lifecycle reseat", source: "lifecyclecmd/lifecycle.go", build: func(current v2.SessionRecord) v2.SessionRecord {
+			return v2.SessionRecord{GUID: current.GUID, Event: "seated", State: v2.StateSeated, Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat(), ObservedVia: "lifecycle reseat"}
+		}},
+		{name: "reconcile apply", source: "reconcilecmd/reconcile.go", build: func(current v2.SessionRecord) v2.SessionRecord {
+			return v2.SessionRecord{GUID: current.GUID, Event: "seated", State: v2.StateSeated, Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat(), ObservedVia: "reconcile apply"}
+		}},
+	}
+
+	for _, writer := range writers {
+		t.Run(writer.name+" ["+writer.source+"]", func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "registry.jsonl")
+			current := v2.SessionRecord{
+				GUID: "guid-writer", Event: "seated", State: v2.StateSeated,
+				Label: "worker", Role: "worker", Tool: "codex", Seat: canonicalSeat(),
+			}
+			current.Seat.CredentialGeneration = carryTestGeneration
+			outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+				return []v2.SessionRecord{current}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if outcome, err := SingleOutcome(outcomes); err != nil || outcome.Err() != nil {
+				t.Fatalf("seed outcome=%+v err=%v", outcome, err)
+			}
+
+			candidate := writer.build(current)
+			if candidate.Seat != nil && candidate.Seat.CredentialGeneration != "" {
+				t.Fatalf("%s pin candidate unexpectedly owns credential generation", writer.source)
+			}
+			outcomes, err = UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
+				return []v2.SessionRecord{candidate}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if outcome, err := SingleOutcome(outcomes); err != nil || outcome.Err() != nil {
+				t.Fatalf("writer outcome=%+v err=%v", outcome, err)
+			}
+
+			latest := V2ByGUID(loadProjection(t, path), current.GUID)
+			if latest == nil || latest.Seat == nil || latest.Seat.CredentialGeneration != carryTestGeneration {
+				t.Fatalf("%s stripped non-owned credential generation: %+v", writer.source, latest)
+			}
+		})
 	}
 }
 
