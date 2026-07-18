@@ -3,10 +3,10 @@ id: TASK-272
 title: >-
   Implement: minted per-seat credentials — env demoted to hints (identity
   migration U3)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-17 04:28'
-updated_date: '2026-07-18 02:19'
+updated_date: '2026-07-18 04:36'
 labels:
   - herder
   - identity-migration
@@ -31,15 +31,29 @@ DESIGN CHECKPOINT REQUIRED BEFORE CODE (token path scheme incl. HOME/worktree va
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Design checkpoint note approved by orchestrator BEFORE any code
-- [ ] #2 Every plan §U3 test scenario implemented and green, including: env-only child selects nothing; deliberate same-uid read documented-accepted with audit surface; previous-generation token refused; token-present-env-scrubbed succeeds; poisoned-correlates-plus-valid-token pins selection order; legacy-seat pre/post-cutover refusal naming remedy; token-loss end-to-end through reissue-credential; all three crash-point drills with exactly-one-working-generation asserted at every point; spawned-child battery simulation acts as itself; permission + no-token-in-env/registry checks
-- [ ] #3 Cutover inventory re-run at unit HEAD and reconciled against the design-time floor; issuance sweep verified on a fixture registry with pre-cutover seated rows before the first verb cut
-- [ ] #4 Poisoned-env harness run over the full cut-over verb inventory: zero caller-attribution successes from inherited env; scrubbed-env run fully green; launcher-family HCOM_* scrub tests still pin
-- [ ] #5 Keep-list re-audit of the final diff; per-verb rollback story (revert verification to ambient) documented
+- [x] #1 Design checkpoint note approved by orchestrator BEFORE any code
+- [x] #2 Every plan §U3 test scenario implemented and green, including: env-only child selects nothing; deliberate same-uid read documented-accepted with audit surface; previous-generation token refused; token-present-env-scrubbed succeeds; poisoned-correlates-plus-valid-token pins selection order; legacy-seat pre/post-cutover refusal naming remedy; token-loss end-to-end through reissue-credential; all three crash-point drills with exactly-one-working-generation asserted at every point; spawned-child battery simulation acts as itself; permission + no-token-in-env/registry checks
+- [x] #3 Cutover inventory re-run at unit HEAD and reconciled against the design-time floor; issuance sweep verified on a fixture registry with pre-cutover seated rows before the first verb cut
+- [x] #4 Poisoned-env harness run over the full cut-over verb inventory: zero caller-attribution successes from inherited env; scrubbed-env run fully green; launcher-family HCOM_* scrub tests still pin
+- [x] #5 Keep-list re-audit of the final diff; per-verb rollback story (revert verification to ambient) documented
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-2026-07-18: hold lifted — U3 released for implementation after TASK-280 merged (836d4d5). Builder re-runs the ambient-selector inventory at merged HEAD and posts the delta before code.
+Merged to main at 85e8214 (branch task-272-credentials: mint commit + cutover-fence hardening round). Post-merge gate 61/61 scripts + 4 module passes.
+
+AC#1: design checkpoint + addendum approved as design-of-record before code; release-time inventory delta posted and ratified before implementation; builder self-caught a GC-timing deviation pre-commit (architecture over checkpoint — retained-dead prior generation, later-Stage locked GC) and it was triaged and pinned.
+
+AC#2: full scenario suite green — env-only selects nothing; same-uid read accepted with guid+generation audit surface; stale generation refuses (with non-secret recovery command after the fix round); scrubbed-env + token succeeds; poisoned correlates + valid token refuse-not-reselect; legacy refusals name remedies; token loss blocks with reissue remedy (never silent remint); three crash drills leave exactly one working generation; permission/symlink/euid enforcement; token absent from env/registry/child listings.
+
+AC#3: inventory re-run at merged HEAD (9 production CurrentEvidence calls) and again at final HEAD (15; all 6 additions independently verified as credential-selected verification gates by both reviewers); issuance sweep fixture proves literal-100% coverage before the first cutover verb.
+
+AC#4: poisoned-env harness zero caller-attribution successes across send/spawn/adopt/cull/compact/enroll; scrubbed run green; launcher scrub pins hold.
+
+AC#5: keep-list re-audit clean (refuse-not-mint, fail-closed multi-match, no ambient selection, unforgeable-by-inheritance); per-verb rollback documented plus deliberate time-bounded cutover-marker rollback guidance.
+
+Review: dual adversarial (opus incumbent + grok calibration seat), one fix round of five contract-mapped items (locked-enroll ambient-reselect under cutover — grok-found, orchestrator-verified; O_EXCL immutability pin; stale-refusal remedy; cutover marker absence-vs-tamper fail-closed; adopt unseated-target fresh-self alignment), dual delta APPROVE with red-verified mutations on every fix.
+
+ROLLOUT NOTE: merging does NOT flip the cutover — the marker is created only by `herder credential sweep` reaching literal-100% coverage then explicit enable; owner-paced per the rollout docs in the diff.
 <!-- SECTION:NOTES:END -->
