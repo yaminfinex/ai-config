@@ -17,11 +17,17 @@ variables, registry rows, logs, or bus messages. Managed launches propagate
 `herder credential path --guid "$HERDER_GUID"` to print the non-secret current
 path, then pass that path explicitly as `--credential-file PATH`.
 
-Before enabling credential-authenticated verbs on an existing registry, run
-`herder credential sweep`. It re-confirms legacy seats through the normal live
-seat-completion path and exits successfully only when coverage is exactly
-100%. Only then does it fsync the owner-only `credentials/cutover-v1` marker;
-until that commit, the previous binary-compatible caller path remains active so
+Cutover is deliberately two-step. First run `herder credential sweep`. It
+re-confirms legacy seats through the normal live seat-completion path, reports
+coverage, and exits successfully only when coverage is exactly 100%. A
+successful sweep is behavior-neutral: it never creates the cutover marker and
+names `herder credential enable` as the next step.
+
+Only after reviewing that report should the owner run `herder credential enable`.
+Enable independently verifies that every currently seated row has a
+usable registry-current credential, refuses below 100% with the sweep remedy,
+and at 100% fsyncs the owner-only `credentials/cutover-v1` marker. Until that
+explicit commit, the previous binary-compatible caller path remains active so
 issuance itself does not create a flag day. Once present, the marker makes
 identity-bearing verbs require `--credential-file` and ambient-only selection
 is disabled. Clean marker absence is the only pre-cutover state: a marker that
@@ -58,11 +64,12 @@ removes only files that were already non-current; it never follows unknown or
 symlink entries and can safely be retried.
 
 During rollout, keep the previous binary available until the issuance sweep
-reports 100%. Rolling the executable back does not require rewriting the
+reports 100%, its report has been reviewed, and the explicit enable step has
+been authorized. Rolling the executable back does not require rewriting the
 registry: older readers ignore `credential_generation`, while the credential
 files remain inert state. Do not delete credential files during rollback. When
 rolling forward again, rerun the sweep to verify every current generation and
-surface any token loss before re-enabling credential-authenticated verbs.
+surface any token loss, then explicitly rerun `herder credential enable`.
 
 The code-level rollback remains separable in cutover order. Revert credential
 selection to the prior ambient verifier first for `spawn` and `send`, then for

@@ -1,5 +1,5 @@
-// Package credentialcmd exposes non-secret credential discovery and the
-// one-time live issuance sweep used before credential-authenticated cutover.
+// Package credentialcmd exposes non-secret credential discovery, the live
+// issuance sweep, and the explicit owner-gated credential cutover.
 package credentialcmd
 
 import (
@@ -25,7 +25,7 @@ type sweepReport struct {
 	Blockers []string `json:"blockers,omitempty"`
 }
 
-// Run dispatches `herder credential path|sweep`.
+// Run dispatches `herder credential path|sweep|enable`.
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(stdout, usage)
@@ -36,6 +36,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runPath(args[1:], stdout, stderr)
 	case "sweep":
 		return runSweep(args[1:], stdout, stderr)
+	case "enable":
+		return runEnable(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "herder credential: unknown operation %q\n", args[0])
 		return 2
@@ -82,9 +84,8 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	for _, row := range seatedRows(projection) {
 		report.Total++
 		if row.Seat.CredentialGeneration != "" {
-			credentialPath := seatcred.CredentialPath(path, row.GUID, row.Seat.CredentialGeneration)
-			if _, err := seatcred.Authenticate(path, credentialPath); err != nil {
-				report.Blockers = append(report.Blockers, fmt.Sprintf("%s: current credential unavailable (%v); run `herder repair reissue-credential --guid %s`", row.GUID, err, row.GUID))
+			if blocker := currentCredentialBlocker(path, row); blocker != "" {
+				report.Blockers = append(report.Blockers, blocker)
 			} else {
 				report.Covered++
 			}
@@ -110,25 +111,85 @@ func runSweep(args []string, stdout, stderr io.Writer) int {
 	if *jsonOutput {
 		_ = json.NewEncoder(stdout).Encode(report)
 	} else {
-		fmt.Fprintf(stdout, "credential coverage: %d/%d", report.Covered, report.Total)
-		if report.Total == 0 || report.Covered == report.Total {
-			fmt.Fprintln(stdout, " (100%)")
-		} else {
-			fmt.Fprintln(stdout)
-		}
-		for _, blocker := range report.Blockers {
-			fmt.Fprintf(stdout, "blocker: %s\n", blocker)
-		}
+		printReport(stdout, report)
 	}
 	if report.Covered != report.Total {
-		fmt.Fprintln(stderr, "herder credential sweep: cutover refused until every currently seated row is covered")
+		fmt.Fprintln(stderr, "herder credential sweep: coverage is incomplete; resolve blockers and rerun the sweep")
+		return 1
+	}
+	if *jsonOutput {
+		fmt.Fprintln(stderr, "next step: run `herder credential enable` to create the owner-gated cutover marker")
+	} else {
+		fmt.Fprintln(stdout, "next step: run `herder credential enable` to create the owner-gated cutover marker")
+	}
+	return 0
+}
+
+func runEnable(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("credential enable", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		return 2
+	}
+	path := registry.DefaultPath()
+	projection, err := v2.LoadFile(path, v2.LoadOptions{})
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintln(stderr, "herder credential enable: registry does not exist; run `herder credential sweep` first")
+		} else {
+			fmt.Fprintf(stderr, "herder credential enable: load registry: %v\n", err)
+		}
+		return 1
+	}
+	report := inspectCoverage(path, projection)
+	printReport(stdout, report)
+	if report.Covered != report.Total {
+		fmt.Fprintln(stderr, "herder credential enable: cutover refused below 100% coverage; run `herder credential sweep`, resolve every blocker, then retry")
 		return 1
 	}
 	if err := seatcred.EnableCutover(path); err != nil {
-		fmt.Fprintf(stderr, "herder credential sweep: coverage is complete but cutover marker could not be committed: %v\n", err)
+		fmt.Fprintf(stderr, "herder credential enable: coverage is complete but cutover marker could not be committed: %v\n", err)
 		return 1
 	}
+	fmt.Fprintln(stdout, "credential cutover enabled")
 	return 0
+}
+
+func inspectCoverage(path string, projection *v2.Projection) sweepReport {
+	report := sweepReport{}
+	for _, row := range seatedRows(projection) {
+		report.Total++
+		if row.Seat.CredentialGeneration == "" {
+			report.Blockers = append(report.Blockers, fmt.Sprintf("%s: legacy seat has no credential generation", row.GUID))
+			continue
+		}
+		if blocker := currentCredentialBlocker(path, row); blocker != "" {
+			report.Blockers = append(report.Blockers, blocker)
+			continue
+		}
+		report.Covered++
+	}
+	return report
+}
+
+func currentCredentialBlocker(path string, row v2.SessionRecord) string {
+	credentialPath := seatcred.CredentialPath(path, row.GUID, row.Seat.CredentialGeneration)
+	if _, err := seatcred.Authenticate(path, credentialPath); err != nil {
+		return fmt.Sprintf("%s: current credential unavailable (%v); run `herder repair reissue-credential --guid %s`", row.GUID, err, row.GUID)
+	}
+	return ""
+}
+
+func printReport(stdout io.Writer, report sweepReport) {
+	fmt.Fprintf(stdout, "credential coverage: %d/%d", report.Covered, report.Total)
+	if report.Total == 0 || report.Covered == report.Total {
+		fmt.Fprintln(stdout, " (100%)")
+	} else {
+		fmt.Fprintln(stdout)
+	}
+	for _, blocker := range report.Blockers {
+		fmt.Fprintf(stdout, "blocker: %s\n", blocker)
+	}
 }
 
 func seatedRows(projection *v2.Projection) []v2.SessionRecord {
@@ -167,7 +228,12 @@ func completionRequest(path string, row v2.SessionRecord) seatcompletion.Request
 const usage = `usage:
   herder credential path --guid GUID
   herder credential sweep [--json]
+  herder credential enable
 
-path prints only the registry-derived path for the current generation. sweep
-issues credentials for live legacy seats and succeeds only at 100% coverage.
+path prints only the registry-derived path for the current generation.
+
+Cutover is an explicit two-step operation: sweep issues credentials for live
+legacy seats and reports coverage, but does not enable credential-authenticated
+verbs. After sweep reports 100% coverage, enable verifies coverage again and
+creates the owner-gated cutover marker.
 `
