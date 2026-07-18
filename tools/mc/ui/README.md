@@ -36,7 +36,7 @@ An unbuilt tree (only `.gitkeep` in `dist/`) serves an honest 501 at `/ui/`.
 | `bun run build` | strict typecheck + production build | gate — must be green |
 | `bun run check` | Biome lint + format check | gate — must be green |
 | `bun run format` | Biome, writing fixes | tool |
-| `bun run test` | Vitest over `src/**/*.test.ts` | no specs yet — exits 1 until the view-model/store specs land; deliberately not `--passWithNoTests` |
+| `bun run test` | Vitest over `src/**/*.test.ts` (invalidation law, view-models, store transitions) | gate — must be green |
 | `bun run test:e2e` | Playwright | no config/harness yet — lands with the skin-swap proof |
 
 Biome does not cover CSS (its parser predates Tailwind v4's at-rules, so

@@ -288,16 +288,11 @@ architecture has a gap — stop and report it before building around it.
 Honest state of this tree, with the exit condition that clears each
 entry — checkable from the repo alone:
 
-- **Version-poll invalidation is not wired.** Pages refetch on
-  mount/focus via query defaults only. Clears when the entity layer
-  grows scope-aware invalidation hooks per §6 (poll keyed to the page's
-  scope, per-family invalidation), mounted from the composition layer,
-  with Vitest specs.
-- **View-models and store transition functions have no specs.**
-  `bun run test` intentionally fails (no `--passWithNoTests`); it joins
-  the gate set the moment the first spec lands, and every exported
-  view-model/transition function must be covered per §8 before the
-  entity/VM layer is treated as reviewed.
+- **Hook wiring is exercised only by the running app.** The pure
+  invalidation law, view-models, and store transitions carry Vitest
+  specs, but the React wiring around them (query mounting, the
+  invalidation hook's effect) has no automated coverage until the
+  Playwright harness drives real flows.
 - **No Playwright config or harness exists.** `bun run test:e2e` is
   unconfigured. Clears with the skin-swap proof: the real-server
   harness of §8, both-skin behaviour runs, and the declared rendering

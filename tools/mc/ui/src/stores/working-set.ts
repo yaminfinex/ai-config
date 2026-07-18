@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create, type StateCreator } from "zustand";
 import { persist } from "zustand/middleware";
 
 // The ratified working-set object (D2): one current view, at most one active
@@ -61,26 +61,30 @@ export function applyToggleThread(thread: ThreadRef | null, id: string): ThreadR
   return thread?.id === id ? null : { id };
 }
 
-export const useWorkingSet = create<WorkingSetState & WorkingSetActions>()(
-  persist(
-    (set) => ({
-      view: { kind: "missions" },
-      thread: null,
-      materials: [],
-      navigate: (view) => set({ view }),
-      toggleThread: (id) => set((state) => ({ thread: applyToggleThread(state.thread, id) })),
-      closeThread: () => set({ thread: null }),
-      openMaterial: (ref) =>
-        set((state) => ({ materials: applyOpenMaterial(state.materials, ref) })),
-      pinMaterial: (ref) =>
-        set((state) => ({
-          materials: state.materials.map((slot) =>
-            slot.ref === ref ? { ...slot, pinned: true } : slot,
-          ),
-        })),
-      closeMaterial: (ref) =>
-        set((state) => ({ materials: state.materials.filter((slot) => slot.ref !== ref) })),
-    }),
-    { name: "mc-working-set" },
-  ),
+export type WorkingSet = WorkingSetState & WorkingSetActions;
+
+// The closed action set, exported bare so invariant tests drive the REAL
+// transitions through zustand/vanilla without the persist middleware (and
+// its localStorage dependency). Production wraps it below; the behaviour
+// under test and the behaviour shipped are the same function.
+export const workingSetCreator: StateCreator<WorkingSet> = (set) => ({
+  view: { kind: "missions" },
+  thread: null,
+  materials: [],
+  navigate: (view) => set({ view }),
+  toggleThread: (id) => set((state) => ({ thread: applyToggleThread(state.thread, id) })),
+  closeThread: () => set({ thread: null }),
+  openMaterial: (ref) => set((state) => ({ materials: applyOpenMaterial(state.materials, ref) })),
+  pinMaterial: (ref) =>
+    set((state) => ({
+      materials: state.materials.map((slot) =>
+        slot.ref === ref ? { ...slot, pinned: true } : slot,
+      ),
+    })),
+  closeMaterial: (ref) =>
+    set((state) => ({ materials: state.materials.filter((slot) => slot.ref !== ref) })),
+});
+
+export const useWorkingSet = create<WorkingSet>()(
+  persist(workingSetCreator, { name: "mc-working-set" }),
 );

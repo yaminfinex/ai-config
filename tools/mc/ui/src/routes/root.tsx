@@ -5,10 +5,9 @@ import { useSkinChoice } from "@/skins/use-skin-choice";
 
 // Composition root: selects the skin (both halves) and owns the shared
 // chrome. Route components below wire entity hooks + view-models +
-// working-set actions into skin components. Version-poll-driven cache
-// invalidation is not wired yet: it mounts here once the entity layer
-// grows its scope-aware invalidation hooks (ARCHITECTURE.md §"The wire
-// contract"); until then pages refetch on mount/focus only.
+// working-set actions into skin components — including version-poll
+// invalidation, which each page mounts with its own scope (the scope a
+// page polls with mirrors what it renders, so it cannot live here).
 
 export function RootLayout() {
   const [skinName, toggleSkin] = useSkinChoice();
