@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-07-17 04:28'
-updated_date: '2026-07-17 22:05'
+updated_date: '2026-07-18 02:19'
 labels:
   - herder
   - identity-migration
@@ -37,3 +37,9 @@ DESIGN CHECKPOINT REQUIRED BEFORE CODE (token path scheme incl. HOME/worktree va
 - [ ] #4 Poisoned-env harness run over the full cut-over verb inventory: zero caller-attribution successes from inherited env; scrubbed-env run fully green; launcher-family HCOM_* scrub tests still pin
 - [ ] #5 Keep-list re-audit of the final diff; per-verb rollback story (revert verification to ambient) documented
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-07-18: hold lifted — U3 released for implementation after TASK-280 merged (836d4d5). Builder re-runs the ambient-selector inventory at merged HEAD and posts the delta before code.
+<!-- SECTION:NOTES:END -->
