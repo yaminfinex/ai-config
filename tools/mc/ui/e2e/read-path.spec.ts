@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { allSkins, type McServer, startMc, useSkin } from "./harness";
+import {
+  allSkins,
+  expectDetailPageState,
+  expectListPageState,
+  type McServer,
+  startMc,
+  useSkin,
+} from "./harness";
 
 // The slice read path against the real stack: first mount, mission detail,
 // mission-to-mission scope change, unknown slug — identically under both
@@ -35,10 +42,8 @@ for (const skin of allSkins) {
       await expect(rows.nth(1)).toContainText("riley");
       await expect(page.getByText("board missing: backlog/config.yml")).toBeVisible();
       await expect(page.getByTestId("task-summary")).toHaveCount(1);
-      // Healthy list: no list-level warning, no failure, no empty claim.
-      await expect(page.getByTestId("list-warning")).toHaveCount(0);
-      await expect(page.getByTestId("load-failure")).toHaveCount(0);
-      await expect(page.getByTestId("missions-empty")).toHaveCount(0);
+      // Data state: every other claim excluded.
+      await expectListPageState(page, { rows: 2 });
     });
 
     test("mission page renders all three sections from the wire", async ({ page }) => {
@@ -56,7 +61,13 @@ for (const skin of allSkins) {
       await expect(threads.nth(1)).toContainText("quiet reply thread");
       // Crew section from the live roster.
       await expect(page.getByTestId("agent-row")).toContainText("builder-lobo");
-      await expect(page.getByTestId("crew-empty")).toHaveCount(0);
+      // Healthy data state: every other claim excluded.
+      await expectDetailPageState(page, {
+        facts: true,
+        taskSummary: true,
+        threadRows: 2,
+        agentRows: 1,
+      });
     });
 
     test("a mission page is a shareable URL — deep link renders without the list", async ({
@@ -64,7 +75,12 @@ for (const skin of allSkins) {
     }) => {
       await page.goto(`${server.baseUrl}/ui/mission/mission-one`);
       await expect(page.getByTestId("mission-facts")).toContainText("owner riley");
-      await expect(page.getByTestId("thread-row")).toHaveCount(2);
+      await expectDetailPageState(page, {
+        facts: true,
+        taskSummary: true,
+        threadRows: 2,
+        agentRows: 1,
+      });
     });
 
     test("mission-to-mission scope change: the next page renders ITS truth and polls ITS scope", async ({
@@ -78,12 +94,13 @@ for (const skin of allSkins) {
       await page.goto(`${server.baseUrl}/ui/mission/mission-broken`);
       // The degraded mission's own sections: warnings, no facts to fabricate,
       // its single thread, no crew — and because the roster was healthily
-      // observed, the empty claim is honest here.
-      await expect(page.getByTestId("mission-warning").first()).toBeVisible();
-      await expect(page.getByTestId("mission-facts")).toHaveCount(0);
-      await expect(page.getByTestId("thread-row")).toHaveCount(1);
+      // observed, the empty claim is honest here. Every other claim excluded.
+      await expectDetailPageState(page, {
+        missionWarning: true,
+        threadRows: 1,
+        crewEmpty: true,
+      });
       await expect(page.getByTestId("thread-row")).toContainText("other mission thread");
-      await expect(page.getByTestId("crew-empty")).toBeVisible();
       // The invalidation scope follows the page (observed, not intercepted).
       await scopedPoll;
     });
@@ -91,11 +108,12 @@ for (const skin of allSkins) {
     test("unknown slug renders the refusal honestly — no fabrication", async ({ page }) => {
       await page.goto(`${server.baseUrl}/ui/mission/ghost`);
       await expect(page.getByTestId("mission-warning")).toContainText("mission ghost not found");
-      await expect(page.getByTestId("mission-facts")).toHaveCount(0);
-      await expect(page.getByTestId("task-summary")).toHaveCount(0);
-      await expect(page.getByTestId("threads-empty")).toBeVisible();
-      await expect(page.getByTestId("crew-empty")).toBeVisible();
-      await expect(page.getByTestId("load-failure")).toHaveCount(0);
+      // Refusal state: the warning and the honest empties, nothing else.
+      await expectDetailPageState(page, {
+        missionWarning: true,
+        threadsEmpty: true,
+        crewEmpty: true,
+      });
     });
   });
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { allSkins, type McServer, startMc, useSkin } from "./harness";
+import { allSkins, expectDetailPageState, type McServer, startMc, useSkin } from "./harness";
 
 // Warning-token transitions, live: the roster is observed per request, so a
 // dying upstream moves the roster token, the scoped version poll notices, the
@@ -36,20 +36,35 @@ for (const skin of allSkins) {
     }) => {
       await page.goto(`${server.baseUrl}/ui/mission/mission-one`);
       await expect(page.getByTestId("agent-row")).toContainText("builder-lobo");
-      await expect(page.getByTestId("roster-warning")).toHaveCount(0);
+      await expectDetailPageState(page, {
+        facts: true,
+        taskSummary: true,
+        threadRows: 2,
+        agentRows: 1,
+      });
 
       server.flip("herder-down");
       // One poll cycle later the page tells the truth: warning up, agents
       // gone, and NO "no agents" claim — the roster became unobservable,
-      // not empty.
+      // not empty. Every other claim holds steady.
       await expect(page.getByTestId("roster-warning")).toBeVisible({ timeout: 20_000 });
-      await expect(page.getByTestId("agent-row")).toHaveCount(0);
-      await expect(page.getByTestId("crew-empty")).toHaveCount(0);
+      await expectDetailPageState(page, {
+        facts: true,
+        taskSummary: true,
+        threadRows: 2,
+        rosterWarning: true,
+      });
 
       server.unflip("herder-down");
       // Recovery is also live: warning clears, crew returns.
       await expect(page.getByTestId("roster-warning")).toHaveCount(0, { timeout: 20_000 });
       await expect(page.getByTestId("agent-row")).toContainText("builder-lobo");
+      await expectDetailPageState(page, {
+        facts: true,
+        taskSummary: true,
+        threadRows: 2,
+        agentRows: 1,
+      });
     });
   });
 }

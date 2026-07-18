@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { allSkins, startDeadShell, startMc, useSkin } from "./harness";
+import {
+  allSkins,
+  expectDetailPageState,
+  expectListPageState,
+  startDeadShell,
+  startMc,
+  useSkin,
+} from "./harness";
 
 // The two-situation load-health law (ARCHITECTURE.md §6) on screen, plus the
 // render precedence: failure > loading > empty claim > data.
@@ -19,9 +26,7 @@ for (const skin of allSkins) {
         await expect(page.getByTestId("load-failure")).toBeVisible({ timeout: 30_000 });
         await expect(page.getByTestId("load-failure")).toContainText("503");
         // Precedence on screen: the failure claim stands alone.
-        await expect(page.getByTestId("loading")).toHaveCount(0);
-        await expect(page.getByTestId("missions-empty")).toHaveCount(0);
-        await expect(page.getByTestId("mission-row")).toHaveCount(0);
+        await expectListPageState(page, { failure: true });
       } finally {
         shell.stop();
       }
@@ -34,23 +39,31 @@ for (const skin of allSkins) {
       try {
         await page.goto(`${shell.baseUrl}/ui/mission/mission-one`);
         await expect(page.getByTestId("load-failure")).toBeVisible({ timeout: 30_000 });
-        await expect(page.getByTestId("loading")).toHaveCount(0);
-        await expect(page.getByTestId("mission-facts")).toHaveCount(0);
+        await expectDetailPageState(page, { failure: true });
       } finally {
         shell.stop();
       }
     });
 
     test("loading precedes data and never stands in for it", async ({ page }) => {
+      // Phase 1 — a source that never answers holds the page in a STABLE
+      // loading state, so the state's full claim set is assertable without
+      // racing data arrival.
+      const hung = await startMc(9374, "hang");
+      try {
+        await page.goto(`${hung.baseUrl}/ui/`);
+        await expectListPageState(page, { loading: true });
+      } finally {
+        hung.stop();
+      }
+      // Phase 2 — a slow source proves the transition: loading, then data,
+      // each alone.
       const server = await startMc(9372, "slow");
       try {
         await page.goto(`${server.baseUrl}/ui/`);
-        // The slow source holds the page in its honest loading state...
         await expect(page.getByTestId("loading")).toBeVisible();
-        await expect(page.getByTestId("mission-row")).toHaveCount(0);
-        // ...and real data replaces it.
         await expect(page.getByTestId("mission-row")).toHaveCount(2, { timeout: 20_000 });
-        await expect(page.getByTestId("loading")).toHaveCount(0);
+        await expectListPageState(page, { rows: 2 });
       } finally {
         server.stop();
       }
@@ -60,15 +73,14 @@ for (const skin of allSkins) {
       const server = await startMc(9373);
       await page.goto(`${server.baseUrl}/ui/`);
       await expect(page.getByTestId("mission-row")).toHaveCount(2);
-      await expect(page.getByTestId("stale-warning")).toHaveCount(0);
+      await expectListPageState(page, { rows: 2 });
       // The backend dies out from under a loaded page.
       server.stop();
       // Cached truth keeps rendering — with the staleness line carrying the
       // payload's own observedAt; the failure line is NOT for this state.
       await expect(page.getByTestId("stale-warning")).toBeVisible({ timeout: 30_000 });
       await expect(page.getByTestId("stale-warning")).toContainText("last observed");
-      await expect(page.getByTestId("mission-row")).toHaveCount(2);
-      await expect(page.getByTestId("load-failure")).toHaveCount(0);
+      await expectListPageState(page, { rows: 2, stale: true });
     });
   });
 }
