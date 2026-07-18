@@ -80,6 +80,13 @@ func (w *Web) Routes() http.Handler {
 	mux.HandleFunc("POST /thread/{id}/retitle", w.retitle)
 	mux.HandleFunc("GET /roster", w.roster)
 	mux.HandleFunc("GET /graph", w.graph)
+	mux.HandleFunc("GET /api/v1/version", w.apiVersion)
+	mux.HandleFunc("GET /api/v1/missions", w.apiMissions)
+	mux.HandleFunc("GET /api/v1/mission/{slug}", w.apiMission)
+	mux.HandleFunc("GET /ui", func(rw http.ResponseWriter, r *http.Request) {
+		http.Redirect(rw, r, "/ui/", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("GET /ui/", uiHandler(uiDistFS()))
 	return securityHeaders(w.conditionalPages(mux))
 }
 
@@ -106,7 +113,9 @@ func serveTokensCSS(rw http.ResponseWriter, _ *http.Request) {
 func (w *Web) conditionalPages(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		asksBacked := r.URL.Path == "/" || r.URL.Path == "/asks" || strings.HasPrefix(r.URL.Path, "/ask/") || strings.HasPrefix(r.URL.Path, "/mission/")
-		if r.Method != http.MethodGet || r.URL.Path == "/mc.js" || r.URL.Path == "/tokens.css" || w.store == nil || asksBacked {
+		// /api sets its own cache headers; /ui assets are content-hashed.
+		spaBacked := strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/ui" || strings.HasPrefix(r.URL.Path, "/ui/")
+		if r.Method != http.MethodGet || r.URL.Path == "/mc.js" || r.URL.Path == "/tokens.css" || w.store == nil || asksBacked || spaBacked {
 			next.ServeHTTP(rw, r)
 			return
 		}
