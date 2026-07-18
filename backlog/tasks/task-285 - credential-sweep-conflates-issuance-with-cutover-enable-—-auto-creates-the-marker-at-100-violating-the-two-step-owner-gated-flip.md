@@ -3,9 +3,10 @@ id: TASK-285
 title: >-
   credential sweep conflates issuance with cutover enable — auto-creates the
   marker at 100%, violating the two-step owner-gated flip
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-18 13:51'
+updated_date: '2026-07-18 14:07'
 labels:
   - herder
   - bug
