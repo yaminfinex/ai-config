@@ -26,9 +26,10 @@ import (
 // The three source families v1 serves:
 //   - journal: mc's own thread journal (in-memory projection; version is the
 //     store's cursor-generation pair, observed at request time).
-//   - missions: `mish status --all` through the resolver's one-minute cache
-//     (observedAt is cache-fill time — an old observation never renders as
-//     current); the same family covers per-slug status reads.
+//   - missions: `mish status` through the resolver's cache (observedAt is
+//     cache-fill time — an old observation never renders as current). The
+//     family has two scopes with different powers: --all for the list, and
+//     --mission <slug> for a detail page (see apiVersionDTO).
 //   - roster: `hcom list` + `herder list`, read live per request — the same
 //     cost every legacy HTML page load already pays.
 
@@ -38,10 +39,27 @@ type apiProvenanceDTO struct {
 	Version    string `json:"version"`
 }
 
+// apiVersionDTO is THE pollable invalidation contract. Its stamps are
+// derived by the same functions that stamp data-response sections, so a
+// polled token and the matching section token can never drift.
+//
+// Scope matters inside the missions family: the per-slug projection
+// (`mish status --mission`) observes things the --all projection never does
+// (git staleness, for one), so the list token cannot vouch for a detail
+// payload. A client on the missions list polls bare /api/v1/version and
+// watches Missions; a client on a mission-detail page polls
+// /api/v1/version?mission=<slug> and watches Mission (plus Journal and
+// Roster, which stamp the detail's other two sections). The per-slug stamp
+// rides the resolver's per-slug cache — polling never fans out git checks
+// across all missions.
 type apiVersionDTO struct {
 	Journal  apiProvenanceDTO `json:"journal"`
 	Missions apiProvenanceDTO `json:"missions"`
 	Roster   apiProvenanceDTO `json:"roster"`
+	// Mission is the per-slug missions-family stamp, present only when the
+	// poll asks ?mission=<slug>; equal by construction to the mission-detail
+	// response's mission-section token for the same slug.
+	Mission *apiProvenanceDTO `json:"mission,omitempty"`
 }
 
 type apiTaskCountDTO struct {
@@ -166,6 +184,21 @@ func (w *Web) rosterProvenance(groups []rosterGroup, warning string) apiProvenan
 	return provenance(sourceRoster, w.now(), contentToken(groups, warning))
 }
 
+// missionStatusStamped resolves one slug's status plus the stamp both the
+// version poll and the detail response derive from it — one derivation,
+// two consumers, zero drift.
+func (w *Web) missionStatusStamped(slug string) (missionStatus, apiProvenanceDTO) {
+	status := w.missions.Status(slug)
+	if status.Slug == "" {
+		status.Slug = slug
+	}
+	observedAt := status.FetchedAt
+	if observedAt.IsZero() {
+		observedAt = w.now() // disabled resolver: the refusal was observed now
+	}
+	return status, provenance(sourceMissions, observedAt, contentToken(status))
+}
+
 func writeJSON(rw http.ResponseWriter, code int, v any) {
 	rw.Header().Set("Content-Type", "application/json; charset=utf-8")
 	rw.Header().Set("Cache-Control", "no-store")
@@ -175,14 +208,19 @@ func writeJSON(rw http.ResponseWriter, code int, v any) {
 	}
 }
 
-func (w *Web) apiVersion(rw http.ResponseWriter, _ *http.Request) {
+func (w *Web) apiVersion(rw http.ResponseWriter, r *http.Request) {
 	statuses, missionsWarning, observedAt := w.missions.AllStatuses()
 	groups, rosterWarning := w.rosterGroups(false)
-	writeJSON(rw, http.StatusOK, apiVersionDTO{
+	out := apiVersionDTO{
 		Journal:  w.journalProvenance(),
 		Missions: missionsProvenance(statuses, missionsWarning, observedAt),
 		Roster:   w.rosterProvenance(groups, rosterWarning),
-	})
+	}
+	if slug := r.URL.Query().Get("mission"); slug != "" {
+		_, stamp := w.missionStatusStamped(slug)
+		out.Mission = &stamp
+	}
+	writeJSON(rw, http.StatusOK, out)
 }
 
 func missionDTO(s missionStatus) apiMissionDTO {
@@ -261,18 +299,11 @@ func (w *Web) apiMissions(rw http.ResponseWriter, _ *http.Request) {
 
 func (w *Web) apiMission(rw http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
-	status := w.missions.Status(slug)
-	if status.Slug == "" {
-		status.Slug = slug
-	}
-	missionObservedAt := status.FetchedAt
-	if missionObservedAt.IsZero() {
-		missionObservedAt = w.now() // disabled resolver: the refusal was observed now
-	}
+	status, missionStamp := w.missionStatusStamped(slug)
 	out := apiMissionDetailDTO{
 		Mission: apiMissionSectionDTO{
 			Status:     missionDTO(status),
-			Provenance: provenance(sourceMissions, missionObservedAt, contentToken(status)),
+			Provenance: missionStamp,
 		},
 		Threads: apiThreadsSectionDTO{
 			Rows:       []apiThreadDTO{},

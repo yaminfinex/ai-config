@@ -20,7 +20,8 @@ import (
 
 type missionResolver struct {
 	bin           string
-	repo          string // MISSIONS_REPO for the subprocess; empty = inherit
+	repo          string        // MISSIONS_REPO for the subprocess; empty = inherit
+	ttl           time.Duration // status/milestone cache lifetime (tests shrink it)
 	mu            sync.Mutex
 	slugHits      map[string]missionHit
 	statusHits    map[string]missionStatusHit
@@ -92,6 +93,7 @@ func newMissionResolver(bin, repo string) *missionResolver {
 	return &missionResolver{
 		bin:           bin,
 		repo:          repo,
+		ttl:           time.Minute,
 		slugHits:      map[string]missionHit{},
 		statusHits:    map[string]missionStatusHit{},
 		milestoneHits: map[string]milestoneHit{},
@@ -118,7 +120,7 @@ func (m *missionResolver) Milestones(slug string) []missionMilestone {
 		return nil
 	}
 	m.mu.Lock()
-	if h, ok := m.milestoneHits[slug]; ok && time.Since(h.at) < time.Minute {
+	if h, ok := m.milestoneHits[slug]; ok && time.Since(h.at) < m.ttl {
 		m.mu.Unlock()
 		return h.milestones
 	}
@@ -169,7 +171,7 @@ func (m *missionResolver) Status(slug string) missionStatus {
 		return missionStatus{Reason: "mission status is unavailable: mish is disabled"}
 	}
 	m.mu.Lock()
-	if h, ok := m.statusHits[slug]; ok && time.Since(h.at) < time.Minute {
+	if h, ok := m.statusHits[slug]; ok && time.Since(h.at) < m.ttl {
 		m.mu.Unlock()
 		return h.status
 	}
@@ -198,7 +200,7 @@ func (m *missionResolver) AllStatuses() ([]missionStatus, string, time.Time) {
 		return nil, "mission list is unavailable: mish is disabled", time.Now()
 	}
 	m.mu.Lock()
-	if time.Since(m.allHit.at) < time.Minute {
+	if time.Since(m.allHit.at) < m.ttl {
 		h := m.allHit
 		m.mu.Unlock()
 		return h.statuses, h.warning, h.at

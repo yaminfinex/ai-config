@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -123,6 +124,83 @@ func TestContentTokenTracksContentNotObservation(t *testing.T) {
 	}
 	if contentToken([]missionStatus{a}, "") == contentToken([]missionStatus{a}, "degraded") {
 		t.Fatal("token did not move on warning change")
+	}
+}
+
+// A change only the per-slug projection can observe (mish's git-staleness
+// check runs for --mission, never for --all JSON) must move the key a
+// detail-page client polls, while every other family — including the list
+// token — holds. This is the reason /version has a mission scope at all.
+func TestAPIVersionMissionScopeSeesPerSlugOnlyChanges(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStore(dir + "/journal.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hcom := writeExecutable(t, dir, "hcom", "#!/bin/sh\ncase \"$1\" in list) printf '[]';; *) : ;; esac\n")
+	herder := writeExecutable(t, dir, "herder", "#!/bin/sh\nexit 0\n")
+	// --all output never changes; --mission output grows the git-staleness
+	// warning once the flip file appears (mirrors status.go:552-556).
+	mish := writeExecutable(t, dir, "mish", fmt.Sprintf(`#!/bin/sh
+case "$*" in
+  *--all*)
+    printf '%%s\n' '[{"ok":true,"slug":"mission-one","manifest":{"mission":"mission-one","owner":"riley"},"board":{"available":true,"total":1,"counts":[]},"warnings":[]}]'
+    ;;
+  *"--mission mission-one"*)
+    if [ -f %q ]; then
+      printf '%%s\n' '{"ok":true,"slug":"mission-one","manifest":{"mission":"mission-one","owner":"riley"},"board":{"available":true,"total":1,"counts":[]},"warnings":["mission subtree has uncommitted or unpushed changes"]}'
+    else
+      printf '%%s\n' '{"ok":true,"slug":"mission-one","manifest":{"mission":"mission-one","owner":"riley"},"board":{"available":true,"total":1,"counts":[]},"warnings":[]}'
+    fi
+    ;;
+esac
+`, dir+"/flip"))
+	resolver := newMissionResolver(mish, "")
+	resolver.ttl = 0 // observe every poll; the token must still only move on content
+	w := NewWeb(s, &Bus{Hcom: hcom}, nil, "human-yamen", "owner", herder, resolver)
+
+	var before apiVersionDTO
+	getJSON(t, w, "/api/v1/version?mission=mission-one", &before)
+	if before.Mission == nil {
+		t.Fatal("mission-scoped poll carries no mission stamp")
+	}
+	checkProvenance(t, *before.Mission, sourceMissions)
+	var detailBefore apiMissionDetailDTO
+	getJSON(t, w, "/api/v1/mission/mission-one", &detailBefore)
+	if detailBefore.Mission.Provenance.Version != before.Mission.Version {
+		t.Fatal("polled mission stamp and detail section token disagree")
+	}
+
+	// The same content re-observed: the polled key must hold.
+	var steady apiVersionDTO
+	getJSON(t, w, "/api/v1/version?mission=mission-one", &steady)
+	if steady.Mission == nil || steady.Mission.Version != before.Mission.Version {
+		t.Fatal("mission token moved without a content change")
+	}
+
+	if err := os.WriteFile(dir+"/flip", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var after apiVersionDTO
+	getJSON(t, w, "/api/v1/version?mission=mission-one", &after)
+	if after.Mission == nil || after.Mission.Version == before.Mission.Version {
+		t.Fatal("per-slug-only change did not move the polled mission token")
+	}
+	if after.Missions.Version != before.Missions.Version {
+		t.Fatal("list token moved on a per-slug-only change")
+	}
+	if after.Journal.Version != before.Journal.Version || after.Roster.Version != before.Roster.Version {
+		t.Fatal("unrelated families moved on a per-slug-only change")
+	}
+	var detailAfter apiMissionDetailDTO
+	getJSON(t, w, "/api/v1/mission/mission-one", &detailAfter)
+	if detailAfter.Mission.Provenance.Version != after.Mission.Version {
+		t.Fatal("detail section token drifted from the polled mission stamp")
+	}
+	var bare apiVersionDTO
+	getJSON(t, w, "/api/v1/version", &bare)
+	if bare.Mission != nil {
+		t.Fatal("unscoped poll must not carry a mission stamp")
 	}
 }
 
