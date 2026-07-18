@@ -3,10 +3,10 @@ id: TASK-280
 title: >-
   spawn bind window: codex joins now exceed the 60s default; undelivered prompt
   should ride the sidecar late-completion
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-17 22:06'
-updated_date: '2026-07-17 22:17'
+updated_date: '2026-07-18 02:16'
 labels:
   - herder
   - dx
@@ -29,9 +29,25 @@ Operational mitigation until this lands (broadcast to fleets): HERDER_SPAWN_BIND
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Measured repro fixture: child joins after the window; spawn refuses; sidecar completes seat AND delivers the stranded prompt verified; refusal text names both behaviors
-- [ ] #2 Manual-redelivery-then-sidecar-delivery does not double-submit (dedupe pinned by test)
-- [ ] #3 Non-claude bind window default raised per measurement or made family-aware; env override still wins; claude path unchanged
-- [ ] #4 Sidecar late-completion failure mode diagnosed and fixed: live repro observed where the child env carried guid+instance-name+process-id, the bus row was joined (7+ min), the sidecar ran, and NO completion occurred — window extension alone is insufficient for this shape
-- [ ] #5 Sidecar gains minimal decision-point observability (stderr log lines: scan results, correlate outcomes, completion attempts/refusals) — every sidecar log observed in the field was 0 bytes
+- [x] #1 Measured repro fixture: child joins after the window; spawn refuses; sidecar completes seat AND delivers the stranded prompt verified; refusal text names both behaviors
+- [x] #2 Manual-redelivery-then-sidecar-delivery does not double-submit (dedupe pinned by test)
+- [x] #3 Non-claude bind window default raised per measurement or made family-aware; env override still wins; claude path unchanged
+- [x] #4 Sidecar late-completion failure mode diagnosed and fixed: live repro observed where the child env carried guid+instance-name+process-id, the bus row was joined (7+ min), the sidecar ran, and NO completion occurred — window extension alone is insufficient for this shape
+- [x] #5 Sidecar gains minimal decision-point observability (stderr log lines: scan results, correlate outcomes, completion attempts/refusals) — every sidecar log observed in the field was 0 bytes
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Merged to main at 836d4d5 (branch task-280-bind: root-cause commit + hardening fix round). Post-merge gate 61/61 scripts + 4 module passes.
+
+Root cause (AC#4): missing-pane canonical completion passed the tagged roster DISPLAY name into a DB repair keyed by hcom BASE name — the query hit a nonexistent row and the sidecar silently refused the exact joined-row/no-pane shape. Fixed as coordinate selection only (authoritative BaseName, Name fallback); duplicate/conflict resolution stays fail-closed; regression pin on the exact shape.
+
+AC#1/#2: bind-timeout prompt persists 0600 keyed by child guid; sidecar delivers post-completion via receipt-checked bus engine; shared locked claim marker makes manual-send vs sidecar single-submit. Fix round hardened: O_NOFOLLOW/regular-file/euid reads, marker fsynced durable BEFORE transport (drop-over-duplicate crash doctrine), single bounded dir lock + legacy per-guid lock sweep + lock-free no-state fast path, repeated Store preserves crash claims, summary promises sidecar auto-delivery (resend_command dropped on persisted case).
+
+AC#3: family-aware defaults — claude 60s, other bus families 300s, env override wins, documented. AC#5: transition-only sidecar stderr diagnostics.
+
+Review: dual adversarial (opus cross-family + grok calibration seat), one fix round, dual delta APPROVE with revert-verified pins on all five fix claims. Merge resolved the sidecar.run seam as a verified union with the liveness-predicate unit's semantics (both parents' hunks survived; old missing-roster death path stays removed).
+
+Known non-blocking latent edge (reviewer-flagged, in-contract): sidecar treats an observed claim marker as terminal give-up; if a manual claim rolls back on transport failure inside the microsecond-scale join window, the prompt waits out expiry (operator gets the failure signal; drop-over-duplicate doctrine). Candidate tidy: treat Suppressed as retry-eligible until a delivered verdict is observed.
+<!-- SECTION:NOTES:END -->
