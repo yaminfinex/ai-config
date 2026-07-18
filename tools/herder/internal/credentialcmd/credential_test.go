@@ -24,7 +24,11 @@ func TestSweepIssuesLiveLegacyProcessSeatAndIsIdempotent(t *testing.T) {
 	if !strings.Contains(stdout.String(), "1/1 (100%)") || !strings.Contains(stderr.String(), "credential issued") {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
-	if !seatcred.CutoverEnabled(path) {
+	cutover, err := seatcred.CutoverEnabled(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cutover {
 		t.Fatal("100% sweep did not durably enable credential cutover")
 	}
 	current, err := seatcred.CurrentPath(path, "guid-process")

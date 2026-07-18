@@ -30,16 +30,41 @@ const (
 )
 
 // CutoverEnabled reports whether the owner has completed the literal-100%
-// issuance gate. Before this marker exists the old binary-compatible identity
-// path remains active so rollout can issue credentials without a flag day.
-func CutoverEnabled(registryPath string) bool {
-	file, err := openOwnedRegular(filepath.Join(filepath.Dir(registryPath), credentialDir, cutoverFile), unix.O_RDONLY, 0, false)
+// issuance gate. Clean absence is the only legacy-path state. Once a marker is
+// present, any unreadable or tampered shape fails closed instead of silently
+// restoring ambient identity authority.
+func CutoverEnabled(registryPath string) (bool, error) {
+	path := filepath.Join(filepath.Dir(registryPath), credentialDir, cutoverFile)
+	if _, err := os.Lstat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, cutoverMarkerError(path, err)
+	}
+	file, err := openOwnedRegular(path, unix.O_RDONLY, 0, false)
 	if err != nil {
-		return false
+		return false, cutoverMarkerError(path, err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
-	return err == nil && info.Mode().Perm()&0o077 == 0
+	if err != nil {
+		return false, cutoverMarkerError(path, err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		return false, cutoverMarkerError(path, fmt.Errorf("mode is %04o, want 0600", info.Mode().Perm()))
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 64))
+	if err != nil {
+		return false, cutoverMarkerError(path, err)
+	}
+	if string(data) != "credential-cutover-v1\n" {
+		return false, cutoverMarkerError(path, errors.New("content is not credential-cutover-v1"))
+	}
+	return true, nil
+}
+
+func cutoverMarkerError(path string, cause error) error {
+	return fmt.Errorf("credential cutover marker %s is present but invalid: %v; repair its owner-only 0600 file and credential-cutover-v1 content, or intentionally remove it only as a time-bounded rollback that reopens ambient authority", path, cause)
 }
 
 // EnableCutover durably commits the credential-authenticated verb cutover.
@@ -127,6 +152,10 @@ func CurrentPath(registryPath, guid string) (string, error) {
 // Stage durably creates a new immutable generation while holding the per-seat
 // rotation lock. The caller must Close after the registry commit attempt.
 func Stage(registryPath, guid string) (*Staged, error) {
+	return stageWithRandom(registryPath, guid, rand.Reader)
+}
+
+func stageWithRandom(registryPath, guid string, random io.Reader) (*Staged, error) {
 	if guid == "" || guid == "." || guid == ".." || strings.ContainsAny(guid, `/\\`) || strings.ContainsRune(guid, '\x00') {
 		return nil, fmt.Errorf("credential staging requires one safe guid, got %q", guid)
 	}
@@ -170,11 +199,11 @@ func Stage(registryPath, guid string) (*Staged, error) {
 	}
 	generationBytes := make([]byte, 16)
 	tokenBytes := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, generationBytes); err != nil {
+	if _, err := io.ReadFull(random, generationBytes); err != nil {
 		releaseLock(lock)
 		return nil, err
 	}
-	if _, err := io.ReadFull(rand.Reader, tokenBytes); err != nil {
+	if _, err := io.ReadFull(random, tokenBytes); err != nil {
 		releaseLock(lock)
 		return nil, err
 	}
@@ -258,7 +287,7 @@ func Authenticate(registryPath, presentedPath string) (Selection, error) {
 		return Selection{}, fmt.Errorf("legacy seat %s has no credential generation; run the issuance sweep or a completion-bearing recovery verb", row.GUID)
 	}
 	if presented.Generation != current {
-		return Selection{}, fmt.Errorf("%w for guid %s: presented %s, current %s", ErrStaleCredential, row.GUID, presented.Generation, current)
+		return Selection{}, fmt.Errorf("%w for guid %s: presented %s, current %s; recover the current non-secret path with `herder credential path --guid %s` and retry", ErrStaleCredential, row.GUID, presented.Generation, current, row.GUID)
 	}
 	canonicalPath := CredentialPath(registryPath, row.GUID, current)
 	canonical, _, err := readCredential(canonicalPath)

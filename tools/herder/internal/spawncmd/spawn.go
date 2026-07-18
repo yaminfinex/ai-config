@@ -929,7 +929,11 @@ func (r *runner) run() int {
 		die(r.stderr, err.Error())
 		return 1
 	}
-	r.cutover = seatcred.CutoverEnabled(registryPath)
+	r.cutover, err = seatcred.CutoverEnabled(registryPath)
+	if err != nil {
+		fmt.Fprintf(r.stderr, "herder spawn: refused — %v. Nothing was launched.\n", err)
+		return 2
+	}
 	if r.credentialPath != "" {
 		selected, err := seatcred.Authenticate(registryPath, r.credentialPath)
 		if err != nil {

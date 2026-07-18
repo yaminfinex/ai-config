@@ -24,8 +24,13 @@ seat-completion path and exits successfully only when coverage is exactly
 until that commit, the previous binary-compatible caller path remains active so
 issuance itself does not create a flag day. Once present, the marker makes
 identity-bearing verbs require `--credential-file` and ambient-only selection
-is disabled. A row that names a generation whose file is missing is token loss, not a
-legacy row; recover it only with the interactive, audited command:
+is disabled. Clean marker absence is the only pre-cutover state: a marker that
+exists but is unreadable, has non-0600 permissions, or has invalid content makes
+verbs fail closed with a repair/intentional-rollback remedy; it never silently
+restores ambient authority. A stale credential reports the current non-secret
+lookup command, `herder credential path --guid GUID`. A row that names a
+generation whose file is missing is token loss, not a legacy row; recover it
+only with the interactive, audited command:
 
 ```text
 herder repair reissue-credential --guid GUID
@@ -33,6 +38,13 @@ herder repair reissue-credential --guid GUID
 
 Reissue rotates only the credential. It does not change the guid, label, bus
 name, seat, transcript continuity, or provenance.
+
+Fresh-self operations remain intentionally possible without an existing token:
+a promptless spawn and a fresh enroll mint a new guid and its first credential.
+Adopting an already-unseated label uses that same fresh-enroll leg; adopting a
+still-seated source requires the exact source-seat credential. Inherited
+identity values can make these flows refuse, but cannot select their guid or
+provenance.
 
 ## Transaction and rollback
 

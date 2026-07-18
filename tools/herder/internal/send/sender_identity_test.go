@@ -202,6 +202,27 @@ func TestCutoverNeverSelectsCallerFromAmbientEnvironment(t *testing.T) {
 	assertTextContains(t, stderr.String(), "--credential-file is required", "hints, not authority")
 }
 
+func TestInvalidPresentCutoverMarkerFailsClosed(t *testing.T) {
+	stateDir := t.TempDir()
+	registryPath := filepath.Join(stateDir, "registry.jsonl")
+	if err := seatcred.EnableCutover(registryPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(stateDir, "credentials", "cutover-v1"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDER_STATE_DIR", stateDir)
+	t.Setenv("HERDR_ENV", "1")
+	t.Setenv("HERDER_GUID", "guid-poison")
+	t.Setenv("HCOM_SESSION_ID", "session-poison")
+	t.Setenv("HERDR_PANE_ID", "pane-poison")
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"target", "payload"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("Run exit=%d, want fail-closed marker refusal; stderr=%q", code, stderr.String())
+	}
+	assertTextContains(t, stderr.String(), "present but invalid", "time-bounded rollback")
+}
+
 func TestCutoverCredentialWorksWithIdentityEnvironmentScrubbed(t *testing.T) {
 	stateDir := t.TempDir()
 	busDir := t.TempDir()

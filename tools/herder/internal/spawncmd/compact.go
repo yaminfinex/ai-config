@@ -59,8 +59,13 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	registryPath := registry.DefaultPath()
+	cutover, cutoverErr := seatcred.CutoverEnabled(registryPath)
+	if cutoverErr != nil {
+		dieCompact(stderr, cutoverErr.Error()+" Nothing was typed.")
+		return 2
+	}
 	var selected *seatcred.Selection
-	if seatcred.CutoverEnabled(registryPath) || credentialPath != "" {
+	if cutover || credentialPath != "" {
 		selection, err := seatcred.Authenticate(registryPath, credentialPath)
 		if err != nil {
 			dieCompact(stderr, "caller credential refused: "+err.Error()+" Nothing was typed.")

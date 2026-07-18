@@ -1,6 +1,7 @@
 package seatcred
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -95,7 +96,7 @@ func TestRotationProtocolAndAcceptedSameUIDRead(t *testing.T) {
 	if _, err := os.Stat(oldPath); err != nil {
 		t.Fatalf("just-retired generation was not retained as dead state: %v", err)
 	}
-	if _, err := Authenticate(registryPath, oldPath); !errors.Is(err, ErrStaleCredential) {
+	if _, err := Authenticate(registryPath, oldPath); !errors.Is(err, ErrStaleCredential) || !strings.Contains(err.Error(), "herder credential path --guid "+guid) {
 		t.Fatalf("retained-dead generation authentication error = %v, want stale refusal", err)
 	}
 	unknownPath := filepath.Join(filepath.Dir(oldPath), "operator-note")
@@ -246,6 +247,81 @@ func TestCredentialPayloadIsVersionedAndBound(t *testing.T) {
 	}
 	if payload.Version != Version || payload.GUID != "guid-bound" || payload.Generation != staged.File.Generation || payload.Token == "" {
 		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+func TestStageRefusesToOverwriteAnExistingGeneration(t *testing.T) {
+	registryPath := filepath.Join(t.TempDir(), "registry.jsonl")
+	guid := "guid-immutable"
+	generationBytes := bytes.Repeat([]byte{0x11}, 16)
+	firstRandom := append(append([]byte{}, generationBytes...), bytes.Repeat([]byte{0x22}, 32)...)
+	first, err := stageWithRandom(registryPath, guid, bytes.NewReader(firstRandom))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setGeneration(t, registryPath, guid, first.File.Generation)
+	if err := first.Close(registryPath, first.File.Generation); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(first.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRandom := append(append([]byte{}, generationBytes...), bytes.Repeat([]byte{0x33}, 32)...)
+	if staged, err := stageWithRandom(registryPath, guid, bytes.NewReader(secondRandom)); !errors.Is(err, os.ErrExist) {
+		if staged != nil {
+			staged.Abort()
+		}
+		t.Fatalf("duplicate generation Stage error=%v, want EEXIST refusal", err)
+	}
+	after, err := os.ReadFile(first.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("duplicate generation attempt changed immutable credential bytes")
+	}
+}
+
+func TestCutoverMarkerDistinguishesAbsenceFromInvalidPresence(t *testing.T) {
+	t.Run("clean absence", func(t *testing.T) {
+		enabled, err := CutoverEnabled(filepath.Join(t.TempDir(), "registry.jsonl"))
+		if err != nil || enabled {
+			t.Fatalf("CutoverEnabled absent=(%v,%v), want false,nil", enabled, err)
+		}
+	})
+	for _, test := range []struct {
+		name   string
+		mutate func(string) error
+	}{
+		{name: "group-readable mode", mutate: func(path string) error { return os.Chmod(path, 0o640) }},
+		{name: "tampered content", mutate: func(path string) error { return os.WriteFile(path, []byte("not-a-cutover\n"), 0o600) }},
+		{name: "symlink open refusal", mutate: func(path string) error {
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+			return os.Symlink(filepath.Join(filepath.Dir(path), "missing-marker-target"), path)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			registryPath := filepath.Join(t.TempDir(), "registry.jsonl")
+			if err := EnableCutover(registryPath); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(filepath.Dir(registryPath), credentialDir, cutoverFile)
+			if err := test.mutate(marker); err != nil {
+				t.Fatal(err)
+			}
+			enabled, err := CutoverEnabled(registryPath)
+			if err == nil || enabled {
+				t.Fatalf("CutoverEnabled invalid=(%v,%v), want fail-closed error", enabled, err)
+			}
+			for _, want := range []string{"present but invalid", "repair", "time-bounded rollback"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error=%q, want %q", err, want)
+				}
+			}
+		})
 	}
 }
 

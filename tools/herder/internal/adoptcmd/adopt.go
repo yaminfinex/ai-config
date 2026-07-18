@@ -63,9 +63,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	oldBus, oldBusDir := busCoordinates(old)
-	cutover := seatcred.CutoverEnabled(registry.DefaultPath())
+	cutover, cutoverErr := seatcred.CutoverEnabled(registry.DefaultPath())
+	if cutoverErr != nil {
+		die(stderr, cutoverErr.Error())
+		return 2
+	}
 	var selected *seatcred.Selection
-	if cutover || credentialPath != "" {
+	if credentialPath != "" || (cutover && old.State == v2.StateSeated) {
 		selection, authErr := seatcred.Authenticate(registry.DefaultPath(), credentialPath)
 		if authErr != nil {
 			die(stderr, "caller credential refused: "+authErr.Error())

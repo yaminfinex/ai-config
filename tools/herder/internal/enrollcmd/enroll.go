@@ -35,6 +35,10 @@ func RunFreshForAdoption(args []string, stdout, stderr io.Writer, oldGUID string
 }
 
 func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveGUID string) int {
+	return runWithEngine(args, stdout, stderr, forceFreshGUID, preserveGUID, seatcompletion.DefaultEngine())
+}
+
+func runWithEngine(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveGUID string, engine seatcompletion.Engine) int {
 	credentialPath, args, credentialFlagErr := seatcred.ExtractFlag(args)
 	if credentialFlagErr != nil {
 		die(stderr, credentialFlagErr.Error())
@@ -80,7 +84,11 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 	}
 
 	registryPath := registry.DefaultPath()
-	cutover := seatcred.CutoverEnabled(registryPath)
+	cutover, cutoverErr := seatcred.CutoverEnabled(registryPath)
+	if cutoverErr != nil {
+		die(stderr, cutoverErr.Error())
+		return 2
+	}
 	var selected *seatcred.Selection
 	if credentialPath != "" {
 		selection, authErr := seatcred.Authenticate(registryPath, credentialPath)
@@ -131,11 +139,7 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 		if projection, projectionErr := v2.LoadFile(registryPath, v2.LoadOptions{}); projectionErr == nil {
 			if selected, selectErr := selectMatchingLiveSeat(matchingLiveSeatRows(projection.Sessions(), pane, liveBus), liveBus); selectErr == nil && selected != nil {
 				if cutover {
-					if selected.Seat != nil && selected.Seat.CredentialGeneration == "" {
-						die(stderr, fmt.Sprintf("existing live seat %s is legacy and cannot be selected from ambient identity; run `herder credential sweep`, then retry with `--credential-file $(herder credential path --guid %s)`", selected.GUID, selected.GUID))
-					} else {
-						die(stderr, fmt.Sprintf("existing live seat %s requires its explicit credential; retry with `--credential-file $(herder credential path --guid %s)`", selected.GUID, selected.GUID))
-					}
+					die(stderr, existingSeatCredentialError(*selected).Error())
 					return 2
 				} else {
 					credentialGUID = selected.GUID
@@ -170,6 +174,12 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 				return nil, fmt.Errorf("refused to enroll a fresh identity: the live terminal, pane, and bus name are already seated on guid %s; repair that identity with a pinned 'herder enroll', run 'herder reconcile --apply' to re-verify it, or use 'herder adopt %s' only for a true replacement", coreMatches[0].GUID, coreMatches[0].GUID)
 			case requestedGUID != "":
 				return nil, fmt.Errorf("refused to enroll unknown guid %s: the live terminal, pane, and bus name are already seated on guid %s; retry pinned to guid %s, run 'herder reconcile --apply' to re-verify it, or use 'herder adopt %s' for a true replacement", requestedGUID, coreMatches[0].GUID, coreMatches[0].GUID, coreMatches[0].GUID)
+			case cutover:
+				selected, selectErr := selectMatchingLiveSeat(coreMatches, liveBus)
+				if selectErr != nil {
+					return nil, selectErr
+				}
+				return nil, existingSeatCredentialError(*selected)
 			default:
 				selected, selectErr := selectMatchingLiveSeat(coreMatches, liveBus)
 				if selectErr != nil {
@@ -327,7 +337,6 @@ func run(args []string, stdout, stderr io.Writer, forceFreshGUID bool, preserveG
 		}
 		return rows, nil
 	}
-	engine := seatcompletion.DefaultEngine()
 	result, err := engine.Complete(context.Background(), seatcompletion.Request{
 		Origin:         seatcompletion.OriginEnroll,
 		RegistryPath:   registryPath,
@@ -472,6 +481,13 @@ func selectMatchingLiveSeat(matches []v2.SessionRecord, live hcomidentity.Result
 		}
 	}
 	return nil, fmt.Errorf("refused to choose among %d seated rows with the same terminal, pane, and bus name; inspect 'herder list --all --json', pin the intended original guid for re-enroll, run 'herder reconcile --apply', or use 'herder adopt <guid>' for a true replacement", len(matches))
+}
+
+func existingSeatCredentialError(selected v2.SessionRecord) error {
+	if selected.Seat != nil && selected.Seat.CredentialGeneration == "" {
+		return fmt.Errorf("existing live seat %s is legacy and cannot be selected from ambient identity; run `herder credential sweep`, then retry with `--credential-file $(herder credential path --guid %s)`", selected.GUID, selected.GUID)
+	}
+	return fmt.Errorf("existing live seat %s requires its explicit credential; retry with `--credential-file $(herder credential path --guid %s)`", selected.GUID, selected.GUID)
 }
 
 func labelOwnerError(label string, owner v2.SessionRecord) error {

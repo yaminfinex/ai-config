@@ -63,7 +63,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	registryPath := registry.DefaultPath()
-	if seatcred.CutoverEnabled(registryPath) || credentialPath != "" {
+	cutover, cutoverErr := seatcred.CutoverEnabled(registryPath)
+	if cutoverErr != nil {
+		die(stderr, cutoverErr.Error())
+		return 2
+	}
+	if cutover || credentialPath != "" {
 		selected, err := seatcred.Authenticate(registryPath, credentialPath)
 		if err != nil {
 			die(stderr, "caller credential refused: "+err.Error())
