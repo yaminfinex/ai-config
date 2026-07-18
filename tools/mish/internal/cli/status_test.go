@@ -3,15 +3,266 @@ package cli
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"mish/internal/missionfs"
+	"mish/internal/resolve"
+
+	"gopkg.in/yaml.v3"
 )
+
+func TestStatusDefaultsToMissionPageJSON(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "perf-regression")
+	writeFile(t, filepath.Join(missionDir, "backlog", "tasks", "task-7.md"), `---
+id: TASK-7
+title: Find hot path
+status: In Progress
+ordinal: 7000
+labels: [performance, urgent]
+---
+
+# Find hot path
+`)
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s", err, stderr)
+	}
+	var got statusOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
+	}
+	if !got.OK || got.Slug != "perf-regression" || got.MissionDir != missionDir || got.Manifest.Authority != "hera" {
+		t.Fatalf("status identity = %+v", got)
+	}
+	if got.Board.Total != 1 || len(got.Board.Tasks) != 1 {
+		t.Fatalf("status board = %+v", got.Board)
+	}
+	task := got.Board.Tasks[0]
+	if task.ID != "TASK-7" || task.Title != "Find hot path" || task.Status != "In Progress" || task.Ordinal != 7000 || strings.Join(task.Labels, ",") != "performance,urgent" {
+		t.Fatalf("status task = %+v", task)
+	}
+}
+
+func TestStatusAllDefaultsToArrayOfMissionObjects(t *testing.T) {
+	repo, _ := makeStatusMission(t, "alpha")
+	addStatusMission(t, repo, "beta")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s", err, stderr)
+	}
+	var got []statusOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not JSON array: %v\n%s", err, stdout)
+	}
+	if len(got) != 2 || got[0].Slug != "alpha" || got[1].Slug != "beta" {
+		t.Fatalf("status --all = %+v", got)
+	}
+	if !got[0].Addressable || !got[1].Addressable {
+		t.Fatalf("valid mission rows must be addressable: %+v", got)
+	}
+	for _, row := range got {
+		if row.Asks.Available || row.Asks.Total != 0 || len(row.Asks.Entities) != 0 {
+			t.Fatalf("historical --all asks shape = %+v", row.Asks)
+		}
+	}
+}
+
+func TestStatusAllMarksArchiveDirectoryUnaddressable(t *testing.T) {
+	repo, _ := makeStatusMission(t, "alpha")
+	if err := os.MkdirAll(filepath.Join(repo, "missions", ".archive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s stdout=%s", err, stderr, stdout)
+	}
+	var got []struct {
+		Slug        string `json:"slug"`
+		Addressable *bool  `json:"addressable"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not JSON array: %v\n%s", err, stdout)
+	}
+	if len(got) != 2 || got[0].Slug != ".archive" || got[1].Slug != "alpha" {
+		t.Fatalf("status --all did not retain archive directory: %+v", got)
+	}
+	if got[0].Addressable == nil || *got[0].Addressable {
+		t.Fatalf("archive row addressable = %v, want explicit false", got[0].Addressable)
+	}
+	if got[1].Addressable == nil || !*got[1].Addressable {
+		t.Fatalf("mission row addressable = %v, want explicit true", got[1].Addressable)
+	}
+}
+
+func TestStatusAllJSONDegradesUnreadableMissionWithoutAbortingBatch(t *testing.T) {
+	repo, _ := makeStatusMission(t, "alpha")
+	if err := os.MkdirAll(filepath.Join(repo, "missions", "half-scaffold"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s stdout=%s", err, stderr, stdout)
+	}
+	var got []statusOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not JSON array: %v\n%s", err, stdout)
+	}
+	if len(got) != 2 || got[0].Slug != "alpha" || got[1].Slug != "half-scaffold" {
+		t.Fatalf("status --all = %+v", got)
+	}
+	if !got[0].OK || got[1].OK || len(got[1].Warnings) == 0 {
+		t.Fatalf("degraded row = %+v", got[1])
+	}
+}
+
+func TestStatusRefusalDefaultsToAgentJSON(t *testing.T) {
+	repo, _ := makeStatusMission(t, "alpha")
+	d := statusTestDeps(repo, t.TempDir())
+	var stdout, stderr bytes.Buffer
+	d.stdout, d.stderr = &stdout, &stderr
+	code := runWithDeps([]string{"status"}, d)
+	if code != exitRefuse {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	var got refusalOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+	}
+	if got.Verb != "status" || got.Refusal != "no_context" || got.OK {
+		t.Fatalf("refusal = %+v", got)
+	}
+	if !strings.Contains(got.Remedy, "--mission <slug>") || !strings.Contains(got.Remedy, "--all") {
+		t.Fatalf("remedy = %q", got.Remedy)
+	}
+	if !strings.Contains(stderr.String(), "mish status: no mission context found") {
+		t.Fatalf("stderr=%s", stderr.String())
+	}
+}
+
+func TestStatusBareJSONInsideMissionsRepoRefusesInsteadOfReturningArray(t *testing.T) {
+	repo, _ := makeStatusMission(t, "alpha")
+	d := statusTestDeps(repo, repo)
+	var stdout, stderr bytes.Buffer
+	d.stdout, d.stderr = &stdout, &stderr
+
+	if code := runWithDeps([]string{"status"}, d); code != exitRefuse {
+		t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var got refusalOutput
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not refusal JSON: %v\n%s", err, stdout.String())
+	}
+	if got.Refusal != "no_context" || !strings.Contains(got.Remedy, "--all") {
+		t.Fatalf("refusal = %+v", got)
+	}
+}
+
+func TestStatusJSONWarningsAreSorted(t *testing.T) {
+	result := makeStatusOutput(resolve.Result{}, statusReport{Warnings: []string{"z warning", "a warning"}})
+	if strings.Join(result.Warnings, ",") != "a warning,z warning" {
+		t.Fatalf("warnings = %#v", result.Warnings)
+	}
+}
+
+func TestStatusAsksAbsentIsUnavailableWithoutWarning(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "alpha")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s", err, stderr)
+	}
+	var got statusOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Asks.Available || got.Asks.Total != 0 || len(got.Asks.Counts) != 0 || len(got.Warnings) != 0 {
+		t.Fatalf("asks = %+v warnings=%v", got.Asks, got.Warnings)
+	}
+}
+
+func TestStatusConfigOnlyAsksIsAvailableEmptyWithoutWarning(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "alpha")
+	asks := filepath.Join(missionDir, "asks")
+	if err := os.MkdirAll(asks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(asks, "config.yml"), "schema: mish.asks/v1\nstates: [open, closed]\noutcomes: [settled, no-action, superseded]\n")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s", err, stderr)
+	}
+	var got statusOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Asks.Available || got.Asks.Total != 0 || len(got.Asks.Counts) != 2 || len(got.Warnings) != 0 {
+		t.Fatalf("asks=%+v warnings=%v", got.Asks, got.Warnings)
+	}
+}
+
+func TestStatusAsksProjectsCountsEntitiesAndDegradesMalformedPeer(t *testing.T) {
+	repo, missionDir := makeStatusMission(t, "alpha")
+	if err := missionfs.WriteAsksScaffold(missionDir); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(missionDir, "asks", "entities", "broken.md"), "not frontmatter\n")
+	entity := missionfs.AskEntity{Schema: missionfs.AskSchema, ID: "ask-019b2d6e-7c18-7f65-9d8d-4db7efc3b4ec", Kind: "ask", State: "open", Asker: "hera", AddressedTo: "riley", CreatedAt: "2026-07-16T01:00:00Z", UpdatedAt: "2026-07-16T01:00:00Z", Expects: "read", Anchor: missionfs.TypedRef{Type: "task", Ref: "TASK-1"}, Links: []missionfs.TypedRef{}, Members: []string{"hera", "riley"}, Framing: missionfs.Framing{SubDecisions: []string{}, Options: []missionfs.DecisionOption{}}, Replies: []missionfs.Reply{}, RulingTrail: []missionfs.RulingEntry{}, Traces: []missionfs.Trace{}}
+	data, err := yaml.Marshal(entity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(missionDir, "asks", "entities", entity.ID+".md"), "---\n"+string(data)+"---\n")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s", err, stderr)
+	}
+	var got statusOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Asks.Available || got.Asks.Total != 1 || len(got.Asks.Entities) != 1 || len(got.Warnings) != 1 {
+		t.Fatalf("asks=%+v warnings=%v", got.Asks, got.Warnings)
+	}
+}
+
+func TestStatusAllKeepsAsksShapeAndDegradesMalformedPeer(t *testing.T) {
+	repo, alpha := makeStatusMission(t, "alpha")
+	addStatusMission(t, repo, "beta")
+	if err := missionfs.WriteAsksScaffold(alpha); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(alpha, "asks", "entities", "broken.md"), "not frontmatter\n")
+	entity := missionfs.AskEntity{Schema: missionfs.AskSchema, ID: "ask-019b2d6e-7c18-7f65-9d8d-4db7efc3b4ec", Kind: "ask", State: "open", Asker: "hera", AddressedTo: "riley", CreatedAt: "2026-07-16T01:00:00Z", UpdatedAt: "2026-07-16T01:00:00Z", Expects: "read", Anchor: missionfs.TypedRef{Type: "task", Ref: "TASK-1"}, Links: []missionfs.TypedRef{}, Members: []string{"hera", "riley"}, Framing: missionfs.Framing{SubDecisions: []string{}, Options: []missionfs.DecisionOption{}}, Replies: []missionfs.Reply{}, RulingTrail: []missionfs.RulingEntry{}, Traces: []missionfs.Trace{}}
+	data, err := yaml.Marshal(entity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(alpha, "asks", "entities", entity.ID+".md"), "---\n"+string(data)+"---\n")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+	if err != nil || stderr != "" {
+		t.Fatalf("err=%v stderr=%s", err, stderr)
+	}
+	var got []statusOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || !got[0].Asks.Available || got[0].Asks.Total != 1 || len(got[0].Warnings) != 1 || got[1].Asks.Available || got[1].Asks.Total != 0 {
+		t.Fatalf("rows=%+v", got)
+	}
+	if !sort.StringsAreSorted(got[0].Warnings) {
+		t.Fatalf("warnings not sorted: %v", got[0].Warnings)
+	}
+}
 
 func TestStatusSingleMissionHappyBlock(t *testing.T) {
 	repo, missionDir := makeStatusMission(t, "perf-regression")
@@ -24,7 +275,7 @@ func TestStatusSingleMissionHappyBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status", "--text")
 	if err != nil {
 		t.Fatalf("status error: %v\nstderr=%s", err, stderr)
 	}
@@ -50,7 +301,7 @@ func TestStatusSingleMissionUsesSingularTaskNoun(t *testing.T) {
 	repo, missionDir := makeStatusMission(t, "perf-regression")
 	writeTaskFile(t, missionDir, "tasks/task-1.md", "TASK-1", "To Do")
 
-	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status", "--text")
 	if err != nil {
 		t.Fatalf("status error: %v\nstderr=%s", err, stderr)
 	}
@@ -71,7 +322,7 @@ func TestStatusOverviewFromRepoRootListsActiveAndClosedMissions(t *testing.T) {
 	writeTaskFile(t, closedDir, "completed/task-21.md", "TASK-21", "Done")
 	setTreeTimes(t, closedDir, testNow().Add(-6*24*time.Hour))
 
-	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--text")
 	if err != nil {
 		t.Fatalf("status overview error: %v\nstderr=%s", err, stderr)
 	}
@@ -109,7 +360,7 @@ func TestStatusOverviewTaskHeaderUsesSharedOrderOnlyWhenAllBoardsMatch(t *testin
 		closedDir := addStatusMission(t, repo, "q3-launch")
 		writeTaskFile(t, closedDir, "completed/task-2.md", "TASK-2", "Done")
 
-		stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+		stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--text", "--all")
 		if err != nil {
 			t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
 		}
@@ -134,7 +385,7 @@ func TestStatusOverviewTaskHeaderUsesSharedOrderOnlyWhenAllBoardsMatch(t *testin
 		writeTaskFile(t, customDir, "tasks/task-3.md", "TASK-3", "Active")
 		writeTaskFile(t, customDir, "completed/task-4.md", "TASK-4", "Shipped")
 
-		stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+		stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--text", "--all")
 		if err != nil {
 			t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
 		}
@@ -163,7 +414,7 @@ func TestStatusOverviewDoesNotUseGitOrSurfaceStalenessWarnings(t *testing.T) {
 		return []byte("dirty"), nil
 	}
 
-	stdout, stderr, err := executeStatus(t, d, "status", "--all")
+	stdout, stderr, err := executeStatus(t, d, "status", "--text", "--all")
 	if err != nil {
 		t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
 	}
@@ -179,7 +430,7 @@ func TestStatusContextlessOutsideRepoRefuses(t *testing.T) {
 	repo, _ := makeStatusMission(t, "perf-regression")
 	outside := t.TempDir()
 
-	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, outside), "status")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, outside), "status", "--text")
 	if err == nil {
 		t.Fatalf("contextless status unexpectedly succeeded")
 	}
@@ -196,7 +447,7 @@ func TestStatusContextlessOutsideRepoRefuses(t *testing.T) {
 func TestStatusMissionAndAllAreMutuallyExclusive(t *testing.T) {
 	repo, _ := makeStatusMission(t, "perf-regression")
 
-	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--mission", "perf-regression", "--all")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--text", "--mission", "perf-regression", "--all")
 	if err == nil {
 		t.Fatalf("status --mission --all unexpectedly succeeded")
 	}
@@ -222,7 +473,7 @@ func TestStatusOverviewAllWorksFromAnywhereWithMissionsRepo(t *testing.T) {
 	repo, missionDir := makeStatusMission(t, "perf-regression")
 	writeTaskFile(t, missionDir, "tasks/task-1.md", "TASK-1", "Done")
 
-	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, t.TempDir()), "status", "--all")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, t.TempDir()), "status", "--text", "--all")
 	if err != nil {
 		t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
 	}
@@ -256,7 +507,7 @@ func TestStatusOverviewZeroMissionsRendersHeaderOnly(t *testing.T) {
 			repo := t.TempDir()
 			tt.setup(t, repo)
 
-			stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+			stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--text", "--all")
 			if err != nil {
 				t.Fatalf("status --all error: %v\nstderr=%s", err, stderr)
 			}
@@ -275,7 +526,7 @@ func TestStatusOverviewBrokenManifestGetsWarningRow(t *testing.T) {
 	repo, missionDir := makeStatusMission(t, "perf-regression")
 	replaceInFile(t, filepath.Join(missionDir, "mission.md"), "mission: perf-regression", "mission: [")
 
-	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--all")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, repo), "status", "--text", "--all")
 	if err != nil {
 		t.Fatalf("status --all with broken manifest returned err %v; stderr=%s stdout=%s", err, stderr, stdout)
 	}
@@ -364,6 +615,13 @@ func TestStatusWarnings(t *testing.T) {
 			want: "warning: malformed task frontmatter: backlog/tasks/stray.md",
 		},
 		{
+			name: "malformed task field",
+			mutate: func(t *testing.T, missionDir string) {
+				writeFile(t, filepath.Join(missionDir, "backlog", "tasks", "bad-title.md"), "---\nid: TASK-1\ntitle: Ship: now\nstatus: To Do\nordinal: 1000\nlabels: []\n---\n")
+			},
+			want: "warning: malformed task field: title (backlog/tasks/bad-title.md)",
+		},
+		{
 			name: "unknown task status",
 			mutate: func(t *testing.T, missionDir string) {
 				writeTaskFile(t, missionDir, "tasks/task-1.md", "TASK-1", "Blocked")
@@ -384,7 +642,7 @@ func TestStatusWarnings(t *testing.T) {
 			repo, missionDir := makeStatusMission(t, "perf-regression")
 			tt.mutate(t, missionDir)
 
-			stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+			stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status", "--text")
 			if err != nil {
 				t.Fatalf("status error: %v\nstderr=%s", err, stderr)
 			}
@@ -429,7 +687,7 @@ func TestStatusMalformedManifestAndConfigDegradeToExitOKWarnings(t *testing.T) {
 			repo, missionDir := makeStatusMission(t, "perf-regression")
 			tt.mutate(t, missionDir)
 
-			stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+			stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status", "--text")
 			if err != nil {
 				t.Fatalf("status returned err %v, want exit-0 success; stderr=%s stdout=%s", err, stderr, stdout)
 			}
@@ -468,7 +726,7 @@ func TestStatusStalenessWarningUsesReadOnlyGitSeam(t *testing.T) {
 		}
 	}
 
-	stdout, stderr, err := executeStatus(t, d, "status")
+	stdout, stderr, err := executeStatus(t, d, "status", "--text")
 	if err != nil {
 		t.Fatalf("status error: %v\nstderr=%s", err, stderr)
 	}
@@ -491,7 +749,7 @@ func TestStatusStalenessSkippedWhenRepoIsNotGit(t *testing.T) {
 		return nil, nil
 	}
 
-	stdout, stderr, err := executeStatus(t, d, "status")
+	stdout, stderr, err := executeStatus(t, d, "status", "--text")
 	if err != nil {
 		t.Fatalf("status error: %v\nstderr=%s", err, stderr)
 	}
@@ -508,7 +766,7 @@ func TestStatusDoesNotMutateMissionSubtree(t *testing.T) {
 	writeTaskFile(t, missionDir, "tasks/task-1.md", "TASK-1", "To Do")
 	before := hashTree(t, missionDir)
 
-	_, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	_, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status", "--text")
 	if err != nil {
 		t.Fatalf("status error: %v\nstderr=%s", err, stderr)
 	}
@@ -527,7 +785,7 @@ func TestStatusCountsFollowBoardConfiguredOrder(t *testing.T) {
 	writeTaskFile(t, missionDir, "tasks/task-1.md", "TASK-1", "Validated")
 	writeTaskFile(t, missionDir, "tasks/task-2.md", "TASK-2", "Queued")
 
-	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status", "--text")
 	if err != nil {
 		t.Fatalf("status error: %v\nstderr=%s", err, stderr)
 	}
@@ -544,7 +802,7 @@ func TestStatusMissionFlagMissingRefusesBeforeOutput(t *testing.T) {
 	}
 	d := statusTestDeps(repo, repo)
 
-	stdout, stderr, err := executeStatus(t, d, "status", "--mission", "missing")
+	stdout, stderr, err := executeStatus(t, d, "status", "--text", "--mission", "missing")
 	if err == nil {
 		t.Fatalf("status unexpectedly succeeded")
 	}
@@ -564,7 +822,7 @@ func TestStatusMissingBoardOmitsTaskCountTail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status")
+	stdout, stderr, err := executeStatus(t, statusTestDeps(repo, missionDir), "status", "--text")
 	if err != nil {
 		t.Fatalf("status error: %v\nstderr=%s", err, stderr)
 	}

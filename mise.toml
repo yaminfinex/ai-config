@@ -1,3 +1,6 @@
 [tools]
 go = "1.26.5"
 "npm:backlog.md" = "1.47.1"
+
+[env]
+MISSIONS_REPO = "{{env.HOME}}/Coding/missions"

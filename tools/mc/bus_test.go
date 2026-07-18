@@ -1,0 +1,202 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func fakePagedHcom(t *testing.T, head int) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "queries.log")
+	path := filepath.Join(dir, "hcom")
+	script := fmt.Sprintf(`#!/bin/sh
+set -eu
+printf '%%s\n' "$*" >> %q
+sql=
+mention=
+tail=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --sql) sql=$2; shift 2 ;;
+    --mention) mention=$2; shift 2 ;;
+    --last) tail=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$sql" in
+  *"id IN"*) ;;
+  *)
+    start=$((%d - tail + 1))
+    i=$start
+    while [ "$i" -le %d ]; do
+      printf '{"id":%%d,"type":"message","data":{"mentions":[]}}\n' "$i"
+      i=$((i + 1))
+    done
+    exit 0
+    ;;
+esac
+cursor=$(printf '%%s\n' "$sql" | sed -n 's/.*id > \([0-9][0-9]*\).*/\1/p')
+limit=$(printf '%%s\n' "$sql" | sed -n 's/.*LIMIT \([0-9][0-9]*\).*/\1/p')
+[ -n "$cursor" ] && [ -n "$limit" ] || exit 2
+last=$((cursor + limit))
+[ "$last" -le %d ] || last=%d
+i=$last
+while [ "$i" -gt "$cursor" ]; do
+  if [ -n "$mention" ]; then
+    printf '{"id":%%d,"type":"message","data":{"mentions":["%%s"]}}\n' "$i" "$mention"
+  else
+    printf '{"id":%%d,"type":"message","data":{"mentions":[]}}\n' "$i"
+  fi
+  i=$((i - 1))
+done
+`, logPath, head, head, head, head)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path, logPath
+}
+
+func TestEventsSincePagesForwardWithoutSkipping(t *testing.T) {
+	hcom, logPath := fakePagedHcom(t, 1205)
+	b := &Bus{Hcom: hcom}
+
+	evs, err := b.EventsSince(0, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1205 || evs[0].ID != 1 || evs[len(evs)-1].ID != 1205 {
+		t.Fatalf("events = %d ids %d..%d, want 1205 ids 1..1205", len(evs), evs[0].ID, evs[len(evs)-1].ID)
+	}
+	queries, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := string(queries)
+	if strings.Count(q, "id IN (SELECT id") != 3 {
+		t.Fatalf("each limited query must bound oldest-page membership:\n%s", q)
+	}
+	for _, cursor := range []string{"id > 0", "id > 500", "id > 1000"} {
+		if !strings.Contains(q, cursor) {
+			t.Errorf("queries missing forward page %q:\n%s", cursor, q)
+		}
+	}
+}
+
+func TestMentionsSincePagesForwardWithoutSkipping(t *testing.T) {
+	hcom, logPath := fakePagedHcom(t, 1205)
+	b := &Bus{Hcom: hcom}
+
+	evs, err := b.MentionsSince(0, 500, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1205 || evs[0].ID != 1 || evs[len(evs)-1].ID != 1205 {
+		t.Fatalf("mentions = %d ids %d..%d, want 1205 ids 1..1205", len(evs), evs[0].ID, evs[len(evs)-1].ID)
+	}
+	queries, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := string(queries)
+	if strings.Count(q, "id IN (SELECT id") != 3 {
+		t.Fatalf("each limited mention query must bound oldest-page membership:\n%s", q)
+	}
+	if !strings.Contains(q, "json_each(msg_mentions)") {
+		t.Fatalf("mention predicate is outside forward-page subquery:\n%s", q)
+	}
+}
+
+func TestLatestEventIDReadsHeadWithoutDraining(t *testing.T) {
+	hcom, logPath := fakePagedHcom(t, 1205)
+	b := &Bus{Hcom: hcom}
+
+	head, err := b.LatestEventID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head != 1205 {
+		t.Fatalf("head = %d, want 1205", head)
+	}
+	queries, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(strings.TrimSpace(string(queries)), "\n") + 1; got != 1 {
+		t.Fatalf("latest head lookup made %d queries:\n%s", got, queries)
+	}
+}
+
+func TestLatestEventIDAllowsGenuinelyEmptyBus(t *testing.T) {
+	hcom := writeExecutable(t, t.TempDir(), "hcom", "#!/bin/sh\nexit 0\n")
+	head, err := (&Bus{Hcom: hcom}).LatestEventID()
+	if err != nil || head != 0 {
+		t.Fatalf("empty bus head = %d, err = %v; want 0, nil", head, err)
+	}
+}
+
+func TestTickDrainsBacklogAndLandsCursorOnHead(t *testing.T) {
+	hcom, logPath := fakePagedHcom(t, 1205)
+	s, err := OpenStore(filepath.Join(t.TempDir(), "journal.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := NewIngestor(s, &Bus{Hcom: hcom}, "human-yamen", "owner")
+
+	if err := in.Tick(); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Cursor(); got != 1205 {
+		t.Fatalf("cursor = %d, want true head 1205", got)
+	}
+	queries, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(queries), "id <= 1205") {
+		t.Fatalf("mention enrichment was not bounded to captured head:\n%s", queries)
+	}
+}
+
+func TestRealHcomSupportsForwardMembershipSchema(t *testing.T) {
+	hcom := installedRealHcom(t)
+	b := &Bus{Hcom: hcom, Dir: t.TempDir()}
+
+	if _, err := b.EventsSince(0, 2); err != nil {
+		t.Fatalf("events_v forward membership query: %v", err)
+	}
+	if _, err := b.MentionsSince(0, 2, "owner"); err != nil {
+		t.Fatalf("events_v msg_mentions membership query: %v", err)
+	}
+}
+
+func installedRealHcom(t *testing.T) string {
+	t.Helper()
+	for _, key := range []string{"MC_TEST_HCOM_BIN", "HERDER_TEST_HCOM_BIN"} {
+		if path := os.Getenv(key); path != "" {
+			return path
+		}
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		path := filepath.Join(dir, "hcom")
+		info, err := os.Stat(path)
+		if err != nil || info.Mode()&0o111 == 0 {
+			continue
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		head := make([]byte, 512)
+		n, _ := f.Read(head)
+		_ = f.Close()
+		if !strings.Contains(string(head[:n]), "herder-path-shim") {
+			return path
+		}
+	}
+	t.Skip("real hcom binary unavailable; set MC_TEST_HCOM_BIN")
+	return ""
+}

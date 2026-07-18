@@ -16,6 +16,7 @@ type newOptions struct {
 	owner     string
 	title     string
 	noMarker  bool
+	text      bool
 }
 
 func newNewCommand(d deps) *cobra.Command {
@@ -34,7 +35,7 @@ func newNewCommand(d deps) *cobra.Command {
 				return err
 			}
 			opts = parsed
-			return runNew(d, opts, slug)
+			return withRefusalText(runNew(d, opts, slug), opts.text)
 		},
 	}
 	attachHelp(cmd, newHelpText)
@@ -68,6 +69,8 @@ func parseNewArgs(args []string) (newOptions, string, error) {
 			opts.title = strings.TrimPrefix(arg, "--title=")
 		case arg == "--no-marker":
 			opts.noMarker = true
+		case arg == "--text":
+			opts.text = true
 		case strings.HasPrefix(arg, "--"):
 			return newOptions{}, "", usageError{err: fmt.Errorf("mish new: unknown flag %s", arg)}
 		default:
@@ -104,6 +107,7 @@ func runNew(d deps, opts newOptions, slug string) error {
 	if d.missionsRepo == "" {
 		return refusalError{
 			verb:    "new",
+			kind:    "missions_repo_unset",
 			message: "$MISSIONS_REPO is not set",
 			remedy:  "set MISSIONS_REPO to the shared missions repo before scaffolding a mission",
 		}
@@ -111,6 +115,7 @@ func runNew(d deps, opts newOptions, slug string) error {
 	if err := missionfs.ValidateSlug(slug); err != nil {
 		return refusalError{
 			verb:    "new",
+			kind:    "invalid_slug",
 			message: fmt.Sprintf("invalid slug %q: %v", slug, err),
 			remedy:  "use lowercase letters, digits, and single hyphens",
 		}
@@ -119,6 +124,7 @@ func runNew(d deps, opts newOptions, slug string) error {
 	if err != nil {
 		return refusalError{
 			verb:    "new",
+			kind:    "cwd_unavailable",
 			message: fmt.Sprintf("could not determine current directory: %v", err),
 			remedy:  "run from a readable working directory",
 		}
@@ -133,12 +139,16 @@ func runNew(d deps, opts newOptions, slug string) error {
 	if info, err := os.Stat(missionDir); err == nil && info.IsDir() {
 		return refusalError{
 			verb:    "new",
+			kind:    "mission_already_exists",
+			slug:    slug,
 			message: fmt.Sprintf("mission %s already exists", slug),
 			remedy:  "choose a new slug or use the existing mission",
 		}
 	} else if err != nil && !os.IsNotExist(err) {
 		return refusalError{
 			verb:    "new",
+			kind:    "mission_inspection_failed",
+			slug:    slug,
 			message: fmt.Sprintf("could not inspect mission %s: %v", slug, err),
 			remedy:  "check permissions on $MISSIONS_REPO",
 		}
@@ -153,7 +163,7 @@ func runNew(d deps, opts newOptions, slug string) error {
 	created := d.clock().Format("2006-01-02")
 
 	if err := os.MkdirAll(missionDir, 0o755); err != nil {
-		return err
+		return scaffoldRefusal("create mission directory", err)
 	}
 	manifest := missionfs.Manifest{
 		Mission:   slug,
@@ -163,28 +173,60 @@ func runNew(d deps, opts newOptions, slug string) error {
 		Created:   created,
 	}
 	if err := missionfs.WriteManifest(filepath.Join(missionDir, "mission.md"), manifest, title); err != nil {
-		return err
+		return scaffoldRefusal("write mission.md", err)
 	}
 	if err := missionfs.WriteBoard(filepath.Join(missionDir, "backlog"), slug); err != nil {
-		return err
+		return scaffoldRefusal("write backlog board", err)
+	}
+	if err := missionfs.WriteAsksScaffold(missionDir); err != nil {
+		return scaffoldRefusal("write asks board", err)
 	}
 	artifactsDir := filepath.Join(missionDir, "artifacts")
 	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
-		return err
+		return scaffoldRefusal("create artifacts directory", err)
 	}
 	if err := os.WriteFile(filepath.Join(artifactsDir, ".gitkeep"), nil, 0o644); err != nil {
-		return err
+		return scaffoldRefusal("write artifacts keep-file", err)
 	}
 	if markerAction.write {
 		if err := os.WriteFile(filepath.Join(cwd, ".mission"), []byte(slug+"\n"), 0o644); err != nil {
-			return err
+			return scaffoldRefusal("write .mission marker", err)
 		}
 	}
 
-	fmt.Fprintf(d.stdout, "created mission %s\n", slug)
-	fmt.Fprintf(d.stdout, "authority: %s (source: %s)\n", authority, authoritySource)
-	fmt.Fprintf(d.stdout, "owner: %s (source: %s)\n", owner, ownerSource)
+	if opts.text {
+		fmt.Fprintf(d.stdout, "created mission %s\n", slug)
+		fmt.Fprintf(d.stdout, "authority: %s (source: %s)\n", authority, authoritySource)
+		fmt.Fprintf(d.stdout, "owner: %s (source: %s)\n", owner, ownerSource)
+	} else {
+		markerPath := ""
+		if markerAction.write {
+			markerPath = filepath.Join(cwd, ".mission")
+		}
+		emitJSON(d.stdout, newOutput{
+			OK: true, Slug: slug, MissionDir: missionDir, Manifest: manifest,
+			AuthoritySource: authoritySource, OwnerSource: ownerSource, MarkerPath: markerPath,
+		})
+	}
 	return nil
+}
+
+func scaffoldRefusal(action string, err error) error {
+	return refusalError{
+		verb: "new", kind: "mission_scaffold_failed",
+		message: fmt.Sprintf("could not %s: %v", action, err),
+		remedy:  "fix filesystem permissions, remove any partial scaffold, and retry",
+	}
+}
+
+type newOutput struct {
+	OK              bool               `json:"ok"`
+	Slug            string             `json:"slug"`
+	MissionDir      string             `json:"mission_dir"`
+	Manifest        missionfs.Manifest `json:"manifest"`
+	AuthoritySource string             `json:"authority_source"`
+	OwnerSource     string             `json:"owner_source"`
+	MarkerPath      string             `json:"marker_path,omitempty"`
 }
 
 func chooseAuthority(d deps, opts newOptions) (string, string) {
@@ -222,6 +264,8 @@ func planMarkerWrite(cwd, missionsRepo, slug string, noMarker bool) (markerPlan,
 		if err != nil {
 			return markerPlan{}, refusalError{
 				verb:    "new",
+				kind:    "marker_unreadable",
+				paths:   []string{path},
 				message: fmt.Sprintf("could not read .mission marker %s", path),
 				remedy:  "fix marker permissions or remove the marker",
 			}
@@ -231,6 +275,8 @@ func planMarkerWrite(cwd, missionsRepo, slug string, noMarker bool) (markerPlan,
 		if markerSlug != slug {
 			return markerPlan{}, refusalError{
 				verb:    "new",
+				kind:    "marker_conflict",
+				paths:   []string{path},
 				message: fmt.Sprintf(".mission marker %s names %s, not %s", path, markerSlug, slug),
 				remedy:  "remove the marker or pass --no-marker",
 			}

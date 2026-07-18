@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"os/user"
 	"time"
+
+	"mish/internal/missionfs"
 )
 
 type execResult struct {
@@ -20,6 +22,7 @@ type deps struct {
 	exec         func(name string, args []string, dir string, stdin io.Reader, stdout, stderr io.Writer) execResult
 	git          func(args []string, dir string) ([]byte, error)
 	clock        func() time.Time
+	askID        func(time.Time) (string, error)
 	stdin        io.Reader
 	stdout       io.Writer
 	stderr       io.Writer
@@ -36,6 +39,7 @@ func newDeps(stdout, stderr io.Writer) deps {
 		exec:         runExec,
 		git:          runGit,
 		clock:        time.Now,
+		askID:        missionfs.GenerateAskID,
 		stdin:        os.Stdin,
 		stdout:       stdout,
 		stderr:       stderr,

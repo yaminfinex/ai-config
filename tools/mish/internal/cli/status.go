@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 func newStatusCommand(d deps) *cobra.Command {
 	var missionFlag string
 	var all bool
+	var text bool
 
 	cmd := &cobra.Command{
 		Use:          "status",
@@ -31,21 +33,22 @@ func newStatusCommand(d deps) *cobra.Command {
 				return usageError{err: fmt.Errorf("mish status: --mission and --all are mutually exclusive — choose one status mode")}
 			}
 			if all {
-				return runStatusOverview(cmd, d)
+				return runStatusOverview(cmd, d, text)
 			}
-			return runStatus(cmd, d, missionFlag, cmd.Flags().Changed("mission"))
+			return runStatus(cmd, d, missionFlag, cmd.Flags().Changed("mission"), text)
 		},
 	}
 	attachHelp(cmd, statusHelpText)
 	cmd.Flags().StringVar(&missionFlag, "mission", "", "mission slug to report")
 	cmd.Flags().BoolVar(&all, "all", false, "report all missions")
+	cmd.Flags().BoolVar(&text, "text", false, "print the human-readable report")
 	return cmd
 }
 
-func runStatus(cmd *cobra.Command, d deps, missionFlag string, missionFlagSet bool) error {
+func runStatus(cmd *cobra.Command, d deps, missionFlag string, missionFlagSet bool, text bool) error {
 	cwd, err := d.cwd()
 	if err != nil {
-		return refusalError{verb: "status", message: "could not determine current directory", remedy: err.Error()}
+		return refusalError{verb: "status", kind: "cwd_unavailable", message: "could not determine current directory", remedy: err.Error(), text: text}
 	}
 	result, err := resolve.Resolve(resolve.Options{
 		MissionFlagSet: missionFlagSet,
@@ -62,41 +65,62 @@ func runStatus(cmd *cobra.Command, d deps, missionFlag string, missionFlagSet bo
 	if err != nil {
 		var refusal *resolve.Refusal
 		if errors.As(err, &refusal) {
-			if refusal.Kind == resolve.RefusalNoContext && isInsideMissionsRepo(cwd, d.missionsRepo) {
-				return runStatusOverview(cmd, d)
+			if refusal.Kind == resolve.RefusalNoContext && text && isInsideMissionsRepo(cwd, d.missionsRepo) {
+				return runStatusOverview(cmd, d, text)
 			}
-			return refusalError{verb: "status", message: refusal.Reason, remedy: refusal.Remedy}
+			if refusal.Kind == resolve.RefusalNoContext && !text {
+				refusal.Remedy = "pass --mission <slug> for one mission or --all for every mission"
+			}
+			return refusalError{verb: "status", kind: string(refusal.Kind), message: refusal.Reason, remedy: refusal.Remedy, slug: refusal.Slug, paths: refusal.Paths, text: text}
 		}
 		return err
 	}
 
-	report, err := buildStatusReport(d, result)
+	report, err := collectStatus(d, result)
 	if err != nil {
 		return refusalError{
 			verb:    "status",
+			kind:    "status_read_failed",
 			message: "could not read mission status",
 			remedy:  err.Error(),
+			text:    text,
 		}
 	}
-	fmt.Fprint(cmd.OutOrStdout(), report)
+	if text {
+		fmt.Fprint(cmd.OutOrStdout(), formatStatusReport(d, result, report))
+	} else {
+		emitJSON(cmd.OutOrStdout(), makeStatusOutput(result, report))
+	}
 	return nil
 }
 
-func runStatusOverview(cmd *cobra.Command, d deps) error {
+func runStatusOverview(cmd *cobra.Command, d deps, text bool) error {
 	repo := d.missionsRepo
 	if repo == "" {
 		return refusalError{
 			verb:    "status",
+			kind:    "missions_repo_unset",
 			message: "$MISSIONS_REPO is not set",
 			remedy:  "set MISSIONS_REPO to the shared missions repo",
+			text:    text,
 		}
+	}
+	if !text {
+		outputs, err := buildStatusOverviewJSON(d, repo)
+		if err != nil {
+			return refusalError{verb: "status", kind: "mission_overview_read_failed", message: "could not read mission overview", remedy: err.Error()}
+		}
+		emitJSON(cmd.OutOrStdout(), outputs)
+		return nil
 	}
 	report, err := buildStatusOverview(d, repo)
 	if err != nil {
 		return refusalError{
 			verb:    "status",
+			kind:    "mission_overview_read_failed",
 			message: "could not read mission overview",
 			remedy:  err.Error(),
+			text:    text,
 		}
 	}
 	fmt.Fprint(cmd.OutOrStdout(), report)
@@ -109,6 +133,41 @@ type statusReport struct {
 	Artifacts missionfs.ArtifactScan
 	Warnings  []string
 	BoardOK   bool
+	Tasks     []missionfs.Task
+	Asks      missionfs.AsksScan
+}
+
+type statusOutput struct {
+	OK          bool               `json:"ok"`
+	Addressable bool               `json:"addressable"`
+	Slug        string             `json:"slug"`
+	MissionDir  string             `json:"mission_dir"`
+	Manifest    missionfs.Manifest `json:"manifest"`
+	Board       statusBoardOutput  `json:"board"`
+	Asks        statusAsksOutput   `json:"asks"`
+	Artifacts   statusArtifacts    `json:"artifacts"`
+	Warnings    []string           `json:"warnings"`
+}
+
+type statusAsksOutput struct {
+	Available bool                      `json:"available"`
+	Counts    []missionfs.AskStateCount `json:"counts"`
+	Total     int                       `json:"total"`
+	Entities  []missionfs.AskEntity     `json:"entities"`
+}
+
+type statusBoardOutput struct {
+	Available bool                    `json:"available"`
+	Counts    []missionfs.StatusCount `json:"counts"`
+	Total     int                     `json:"total"`
+	Tasks     []missionfs.Task        `json:"tasks"`
+}
+
+type statusArtifacts struct {
+	Missing    bool   `json:"missing"`
+	Count      int    `json:"count"`
+	NewestPath string `json:"newest_path,omitempty"`
+	NewestTime string `json:"newest_time,omitempty"`
 }
 
 type statusOverviewRow struct {
@@ -128,6 +187,10 @@ func buildStatusReport(d deps, result resolve.Result) (string, error) {
 		return "", err
 	}
 
+	return formatStatusReport(d, result, report), nil
+}
+
+func formatStatusReport(d deps, result resolve.Result, report statusReport) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "mission: %s         %s     authority: %s   owner: %s   created %s\n",
 		result.Slug,
@@ -146,7 +209,136 @@ func buildStatusReport(d deps, result resolve.Result) (string, error) {
 	for _, warning := range report.Warnings {
 		fmt.Fprintf(&b, "warning: %s\n", warning)
 	}
-	return b.String(), nil
+	return b.String()
+}
+
+func makeStatusOutput(result resolve.Result, report statusReport) statusOutput {
+	newest := ""
+	if !report.Artifacts.NewestTime.IsZero() {
+		newest = report.Artifacts.NewestTime.UTC().Format(time.RFC3339)
+	}
+	counts := report.Counts
+	if counts == nil {
+		counts = []missionfs.StatusCount{}
+	}
+	tasks := report.Tasks
+	if tasks == nil {
+		tasks = []missionfs.Task{}
+	}
+	warnings := report.Warnings
+	if warnings == nil {
+		warnings = []string{}
+	} else {
+		warnings = append([]string(nil), warnings...)
+		sort.Strings(warnings)
+	}
+	return statusOutput{
+		OK: true, Addressable: missionfs.ValidateSlug(result.Slug) == nil,
+		Slug: result.Slug, MissionDir: result.MissionDir, Manifest: report.Manifest,
+		Board:     statusBoardOutput{Available: report.BoardOK, Counts: counts, Total: totalTasks(counts), Tasks: tasks},
+		Asks:      makeStatusAsks(report.Asks),
+		Artifacts: statusArtifacts{Missing: report.Artifacts.Missing, Count: report.Artifacts.Count, NewestPath: report.Artifacts.NewestPath, NewestTime: newest},
+		Warnings:  warnings,
+	}
+}
+
+func makeStatusAsks(scan missionfs.AsksScan) statusAsksOutput {
+	counts := scan.Counts
+	if counts == nil {
+		counts = []missionfs.AskStateCount{}
+	}
+	entities := scan.Entities
+	if entities == nil {
+		entities = []missionfs.AskEntity{}
+	}
+	total := 0
+	for _, c := range counts {
+		total += c.Count
+	}
+	return statusAsksOutput{Available: scan.Available, Counts: counts, Total: total, Entities: entities}
+}
+
+func buildStatusOverviewJSON(d deps, repo string) ([]statusOutput, error) {
+	entries, err := os.ReadDir(filepath.Join(repo, "missions"))
+	if os.IsNotExist(err) {
+		return []statusOutput{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	outputs := make([]statusOutput, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		result := resolve.Result{Slug: entry.Name(), MissionDir: filepath.Join(repo, "missions", entry.Name()), Source: resolve.SourceFlag}
+		report, ok := collectStatusOverviewJSON(d, result)
+		output := makeStatusOutput(result, report)
+		output.OK = ok
+		outputs = append(outputs, output)
+	}
+	return outputs, nil
+}
+
+// collectStatusOverviewJSON degrades failures within one mission to warnings,
+// keeping the repo-wide array useful when a directory is stray, partial, or
+// temporarily unreadable. Only failure to enumerate the missions directory is
+// fatal to the batch.
+func collectStatusOverviewJSON(d deps, result resolve.Result) (statusReport, bool) {
+	var report statusReport
+	var findings []missionfs.Finding
+	ok := true
+
+	manifest, manifestFindings, err := missionfs.ReadManifest(result.MissionDir)
+	if err != nil {
+		ok = false
+		findings = append(findings, missionfs.Finding{
+			Kind: missionfs.FindingMalformedManifest,
+			Path: filepath.Join(result.MissionDir, "mission.md"),
+		})
+	} else {
+		report.Manifest = manifest
+		findings = append(findings, manifestFindings...)
+	}
+
+	boardDir := filepath.Join(result.MissionDir, "backlog")
+	cfg, boardFindings, err := missionfs.ReadBoardConfig(boardDir)
+	if err != nil {
+		ok = false
+		findings = append(findings, missionfs.Finding{
+			Kind: missionfs.FindingMalformedBoardConfig,
+			Path: filepath.Join(boardDir, "config.yml"),
+		})
+	} else {
+		findings = append(findings, boardFindings...)
+		if !cfg.Missing && len(cfg.Statuses) > 0 {
+			taskScan, scanErr := missionfs.ScanTasks(boardDir)
+			if scanErr != nil {
+				ok = false
+				findings = append(findings, missionfs.Finding{Kind: missionfs.FindingMalformedTask, Path: boardDir})
+			} else {
+				report.BoardOK = true
+				report.Counts, boardFindings = taskScan.OrderedCounts(cfg.Statuses)
+				report.Tasks = taskScan.Tasks
+				findings = append(findings, taskScan.Findings...)
+				findings = append(findings, boardFindings...)
+			}
+		}
+	}
+
+	artifactsDir := filepath.Join(result.MissionDir, "artifacts")
+	artifacts, err := missionfs.ScanArtifacts(artifactsDir)
+	if err != nil {
+		ok = false
+		report.Warnings = append(report.Warnings, fmt.Sprintf("could not scan artifacts: %s", relativeFindingPath(result.MissionDir, artifactsDir)))
+	} else {
+		report.Artifacts = artifacts
+		findings = append(findings, artifacts.Findings...)
+	}
+	report.Warnings = append(report.Warnings, formatFindings(result.MissionDir, findings)...)
+	report.Asks = missionfs.ScanAsks(result.MissionDir, report.Manifest.Owner)
+	report.Warnings = append(report.Warnings, report.Asks.Warnings...)
+	return report, ok
 }
 
 func buildStatusOverview(d deps, repo string) (string, error) {
@@ -310,6 +502,14 @@ func overviewWidths(headers []string, rows []statusOverviewRow) []int {
 }
 
 func collectStatus(d deps, result resolve.Result) (statusReport, error) {
+	return collectStatusWithGit(d, result, true)
+}
+
+func collectStatusWithoutGit(d deps, result resolve.Result) (statusReport, error) {
+	return collectStatusWithGit(d, result, false)
+}
+
+func collectStatusWithGit(d deps, result resolve.Result, includeGit bool) (statusReport, error) {
 	var report statusReport
 	var findings []missionfs.Finding
 
@@ -334,6 +534,7 @@ func collectStatus(d deps, result resolve.Result) (statusReport, error) {
 		}
 		orderedCounts, orderedFindings := taskScan.OrderedCounts(cfg.Statuses)
 		report.Counts = orderedCounts
+		report.Tasks = taskScan.Tasks
 		findings = append(findings, taskScan.Findings...)
 		findings = append(findings, orderedFindings...)
 	}
@@ -346,8 +547,12 @@ func collectStatus(d deps, result resolve.Result) (statusReport, error) {
 	findings = append(findings, artifacts.Findings...)
 
 	report.Warnings = append(report.Warnings, formatFindings(result.MissionDir, findings)...)
-	if dirty, err := missionHasStaleGit(d, result); err == nil && dirty {
-		report.Warnings = append(report.Warnings, "mission subtree has uncommitted or unpushed changes")
+	report.Asks = missionfs.ScanAsks(result.MissionDir, report.Manifest.Owner)
+	report.Warnings = append(report.Warnings, report.Asks.Warnings...)
+	if includeGit {
+		if dirty, err := missionHasStaleGit(d, result); err == nil && dirty {
+			report.Warnings = append(report.Warnings, "mission subtree has uncommitted or unpushed changes")
+		}
 	}
 	return report, nil
 }
@@ -449,7 +654,11 @@ func formatFindings(missionDir string, findings []missionfs.Finding) []string {
 		case missionfs.FindingMissingArtifacts:
 			warnings = append(warnings, "artifacts missing: artifacts/")
 		case missionfs.FindingMalformedTask:
-			warnings = append(warnings, fmt.Sprintf("malformed task frontmatter: %s", relativeFindingPath(missionDir, finding.Path)))
+			if finding.Key != "" {
+				warnings = append(warnings, fmt.Sprintf("malformed task field: %s (%s)", finding.Key, relativeFindingPath(missionDir, finding.Path)))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("malformed task frontmatter: %s", relativeFindingPath(missionDir, finding.Path)))
+			}
 		case missionfs.FindingMissingTaskID:
 			warnings = append(warnings, fmt.Sprintf("task missing id: %s", relativeFindingPath(missionDir, finding.Path)))
 		case missionfs.FindingUnknownTaskStatus:

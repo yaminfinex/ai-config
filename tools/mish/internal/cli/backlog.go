@@ -43,8 +43,10 @@ func runBacklog(d deps, args []string) error {
 	if err != nil {
 		return refusalError{
 			verb:    "backlog",
+			kind:    "cwd_unavailable",
 			message: "could not determine current directory",
 			remedy:  "run from a readable directory or pass --mission <slug>",
+			text:    parsed.text,
 		}
 	}
 	result, err := resolve.Resolve(resolve.Options{
@@ -62,24 +64,28 @@ func runBacklog(d deps, args []string) error {
 		},
 	})
 	if err != nil {
-		return backlogRefusalFromResolve(err)
+		return backlogRefusalFromResolve(err, parsed.text)
 	}
 	if err := requireMissionBoard(result.MissionDir); err != nil {
-		return err
+		return withRefusalText(err, parsed.text)
 	}
 	subcommand := parsed.tail[0]
 	if !isBacklogAllowed(subcommand) {
 		return refusalError{
 			verb:    "backlog",
+			kind:    "subcommand_not_allowed",
 			message: fmt.Sprintf("subcommand %q is not allowed", subcommand),
 			remedy:  "use one of: " + backlogAllowlistSummary(),
+			text:    parsed.text,
 		}
 	}
 	if _, err := d.lookPath(backlogBinary); err != nil {
 		return refusalError{
 			verb:    "backlog",
+			kind:    "backlog_cli_not_found",
 			message: "Backlog.md CLI not found",
 			remedy:  "install npm:backlog.md 1.47.x with mise or put 'backlog' on PATH",
+			text:    parsed.text,
 		}
 	}
 
@@ -95,6 +101,7 @@ type parsedBacklogArgs struct {
 	missionFlag    string
 	tail           []string
 	help           bool
+	text           bool
 }
 
 func parseBacklogArgs(args []string) (parsedBacklogArgs, error) {
@@ -118,6 +125,14 @@ func parseBacklogArgs(args []string) (parsedBacklogArgs, error) {
 			i++
 			continue
 		}
+		if arg == "--text" {
+			parsed.text = true
+			continue
+		}
+		if isWrapperBacklogHelp(arg) {
+			parsed.help = true
+			continue
+		}
 		parsed.tail = args[i:]
 		return parsed, nil
 	}
@@ -137,29 +152,37 @@ func requireMissionBoard(missionDir string) error {
 	if err == nil || errors.Is(err, fs.ErrNotExist) {
 		return refusalError{
 			verb:    "backlog",
+			kind:    "board_missing",
 			message: "board missing",
 			remedy:  "scaffold damaged or wrong mission",
 		}
 	}
 	return refusalError{
 		verb:    "backlog",
+		kind:    "board_inspection_failed",
 		message: fmt.Sprintf("could not inspect board %s", path),
 		remedy:  "fix filesystem permissions and retry",
 	}
 }
 
-func backlogRefusalFromResolve(err error) error {
+func backlogRefusalFromResolve(err error, text bool) error {
 	var refusal *resolve.Refusal
 	if errors.As(err, &refusal) {
 		return refusalError{
 			verb:    "backlog",
+			kind:    string(refusal.Kind),
 			message: refusal.Reason,
 			remedy:  refusal.Remedy,
+			slug:    refusal.Slug,
+			paths:   refusal.Paths,
+			text:    text,
 		}
 	}
 	return refusalError{
 		verb:    "backlog",
+		kind:    "resolution_failed",
 		message: err.Error(),
 		remedy:  "pass --mission <slug>, run from inside missions/<slug>/, or add a .mission marker",
+		text:    text,
 	}
 }

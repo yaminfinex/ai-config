@@ -51,6 +51,6 @@ assert_status 0
 assert_contains "$LAST_OUT" "Branch task"
 run_mish "$INVOKE_DIR" "moved-status" status
 assert_status 0
-assert_contains "$LAST_OUT" "mission: branch-moved"
+assert_contains "$LAST_OUT" '"slug":"branch-moved"'
 
 all_green

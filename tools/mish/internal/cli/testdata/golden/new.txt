@@ -1,4 +1,4 @@
-Usage: mish new <slug> [--title T] [--authority A] [--owner O] [--no-marker]
+Usage: mish new <slug> [--title T] [--authority A] [--owner O] [--no-marker] [--text]
 
 Use 'mish new -h' or 'mish new --help' for this help; 'mish help new' is also available.
 
@@ -10,8 +10,10 @@ Authority and owner:
   authority  --authority, else the invoking OS user
   owner      --owner, else SESSION_OWNER, else the invoking OS user
 
-On success, mish prints both stamped values and their source so a wrong stamp is visible at
-birth. Correcting one later is an ordinary manifest edit owned by the authority.
+Output defaults to one JSON object on stdout containing ok, slug, mission_dir, manifest,
+authority_source, owner_source, and marker_path when written. --text restores the prior human
+lines, including both stamped values and their source. Refusals are JSON on stdout plus prose
+on stderr unless --text is set.
 
 Markers:
   new writes .mission in the invoking cwd unless --no-marker is set or cwd is inside the

@@ -56,7 +56,7 @@ git_commit_all "$MISSIONS_REPO_DIR" "local unpushed mission change"
 : >"$WORK/git.log"
 run_mish_with_path "$(mission_dir plain-run)" "git-status" "$shim" status
 assert_status 0
-assert_contains "$LAST_OUT" "warning: mission subtree has uncommitted or unpushed changes"
+assert_contains "$LAST_OUT" '"warnings":["mission subtree has uncommitted or unpushed changes"]'
 if [ ! -s "$WORK/git.log" ]; then
   fail "git-backed status did not perform the expected read-only staleness query"
 fi

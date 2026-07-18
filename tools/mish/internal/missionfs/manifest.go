@@ -16,11 +16,11 @@ var manifestKeys = []string{"mission", "authority", "owner", "status", "created"
 
 // Manifest is the normative mission.md frontmatter.
 type Manifest struct {
-	Mission   string `yaml:"mission"`
-	Authority string `yaml:"authority"`
-	Owner     string `yaml:"owner"`
-	Status    string `yaml:"status"`
-	Created   string `yaml:"created"`
+	Mission   string `json:"mission" yaml:"mission"`
+	Authority string `json:"authority" yaml:"authority"`
+	Owner     string `json:"owner" yaml:"owner"`
+	Status    string `json:"status" yaml:"status"`
+	Created   string `json:"created" yaml:"created"`
 }
 
 // FindingKind names a machine-readable status finding.

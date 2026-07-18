@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -12,13 +13,49 @@ import (
 	"time"
 )
 
+func TestBacklogWrapperRefusalDefaultsToAgentJSON(t *testing.T) {
+	h := newBacklogHarness(t)
+	h.writeMission("alpha", true)
+	code := h.run("backlog", "--mission", "alpha", "init")
+	if code != exitRefuse {
+		t.Fatalf("exit=%d stderr=%s", code, h.stderr.String())
+	}
+	var got refusalOutput
+	if err := json.Unmarshal(h.stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout.String())
+	}
+	if got.OK || got.Refusal != "subcommand_not_allowed" {
+		t.Fatalf("refusal = %+v", got)
+	}
+	if !strings.Contains(h.stderr.String(), "mish backlog: subcommand \"init\" is not allowed") {
+		t.Fatalf("stderr=%s", h.stderr.String())
+	}
+}
+
+func TestBacklogSuccessStaysVerbatimAndPostSubcommandTextPassesThrough(t *testing.T) {
+	h := newBacklogHarness(t)
+	h.writeMission("alpha", true)
+	code := h.run("backlog", "--mission", "alpha", "task", "show", "TASK-1", "--text")
+	if code != exitOK {
+		t.Fatalf("exit=%d stderr=%s", code, h.stderr.String())
+	}
+	call := h.singleExec(t)
+	want := []string{"task", "show", "TASK-1", "--text"}
+	if !slices.Equal(call.args, want) {
+		t.Fatalf("args=%v want=%v", call.args, want)
+	}
+	if h.stdout.Len() != 0 {
+		t.Fatalf("wrapper added success output: %s", h.stdout.String())
+	}
+}
+
 func TestBacklogDeniedSubcommandsNameAllowlist(t *testing.T) {
 	for _, subcommand := range []string{"init", "config", "agents", "browser", "future"} {
 		t.Run(subcommand, func(t *testing.T) {
 			h := newBacklogHarness(t)
 			h.writeMission("alpha", true)
 
-			code := h.run("backlog", "--mission", "alpha", subcommand)
+			code := h.run("backlog", "--text", "--mission", "alpha", subcommand)
 			if code != exitRefuse {
 				t.Fatalf("exit = %d, want %d; stderr=%s", code, exitRefuse, h.stderr.String())
 			}
@@ -41,7 +78,7 @@ func TestBacklogAllowedSubcommandsExecWithPinnedCWDAndVerbatimArgs(t *testing.T)
 			h := newBacklogHarness(t)
 			missionDir := h.writeMission("alpha", true)
 
-			code := h.run("backlog", "--mission", "alpha", subcommand, "show", "--help")
+			code := h.run("backlog", "--text", "--mission", "alpha", subcommand, "show", "--help")
 			if code != exitOK {
 				t.Fatalf("exit = %d, want %d; stderr=%s", code, exitOK, h.stderr.String())
 			}
@@ -64,7 +101,7 @@ func TestBacklogMissingBoardRefusesBeforeLookupOrExec(t *testing.T) {
 	h := newBacklogHarness(t)
 	h.writeMission("alpha", false)
 
-	code := h.run("backlog", "--mission", "alpha", "task", "list")
+	code := h.run("backlog", "--text", "--mission", "alpha", "task", "list")
 	if code != exitRefuse {
 		t.Fatalf("exit = %d, want %d", code, exitRefuse)
 	}
@@ -86,7 +123,7 @@ func TestBacklogPassthroughExitCodesAreReturnedVerbatim(t *testing.T) {
 			h.writeMission("alpha", true)
 			h.execExitCode = exitCode
 
-			code := h.run("backlog", "--mission", "alpha", "task", "list")
+			code := h.run("backlog", "--text", "--mission", "alpha", "task", "list")
 			if code != exitCode {
 				t.Fatalf("exit = %d, want passthrough %d; stderr=%s", code, exitCode, h.stderr.String())
 			}
@@ -99,7 +136,7 @@ func TestBacklogFlagShapedTailArgsForwardUnmodified(t *testing.T) {
 	h := newBacklogHarness(t)
 	h.writeMission("alpha", true)
 
-	code := h.run("backlog", "--mission", "alpha", "task", "edit", "TASK-1", "--ref", "repo@abc123", "-s", "In Progress")
+	code := h.run("backlog", "--text", "--mission", "alpha", "task", "edit", "TASK-1", "--ref", "repo@abc123", "-s", "In Progress")
 	if code != exitOK {
 		t.Fatalf("exit = %d, want %d; stderr=%s", code, exitOK, h.stderr.String())
 	}
@@ -115,7 +152,7 @@ func TestBacklogMissionFlagOnlyBeforeSubcommand(t *testing.T) {
 	h.writeMission("alpha", true)
 	markerDir := h.writeWorkMarker("alpha")
 
-	code := h.runFrom(markerDir, "backlog", "--mission", "alpha", "task", "list")
+	code := h.runFrom(markerDir, "backlog", "--text", "--mission", "alpha", "task", "list")
 	if code != exitOK {
 		t.Fatalf("pre-subcommand --mission exit = %d; stderr=%s", code, h.stderr.String())
 	}
@@ -125,7 +162,7 @@ func TestBacklogMissionFlagOnlyBeforeSubcommand(t *testing.T) {
 	}
 
 	h.resetOutputAndExecs()
-	code = h.runFrom(markerDir, "backlog", "task", "--mission", "beta")
+	code = h.runFrom(markerDir, "backlog", "--text", "task", "--mission", "beta")
 	if code != exitOK {
 		t.Fatalf("post-subcommand --mission exit = %d; stderr=%s", code, h.stderr.String())
 	}
@@ -166,7 +203,7 @@ func TestBacklogMissingBinaryRefusesWithInstallHint(t *testing.T) {
 	h.writeMission("alpha", true)
 	h.lookPathErr = errors.New("not found")
 
-	code := h.run("backlog", "--mission", "alpha", "task", "list")
+	code := h.run("backlog", "--text", "--mission", "alpha", "task", "list")
 	if code != exitRefuse {
 		t.Fatalf("exit = %d, want %d", code, exitRefuse)
 	}

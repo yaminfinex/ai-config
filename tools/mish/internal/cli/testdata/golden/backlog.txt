@@ -1,8 +1,11 @@
-Usage: mish backlog [--mission <slug>] <subcommand> [args...]
+Usage: mish backlog [--mission <slug>] [--text] <subcommand> [args...]
 
 Resolve one mission, verify backlog/config.yml exists, check the first forwarded subcommand
 against this closed allowlist, then exec Backlog.md with cwd pinned to the mission directory.
 Arguments, stdin/stdout/stderr, and exit code pass through verbatim after the guard.
+Wrapper refusals default to JSON on stdout plus prose on stderr; --text before the subcommand
+restores prose-only refusals. Successful Backlog.md output is always passed through unchanged.
+A --text after the subcommand belongs to Backlog.md and is forwarded untouched.
 
 Allowed subcommands:
   task        Task CRUD, notes, status, and references (--ref)
