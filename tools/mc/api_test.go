@@ -575,6 +575,10 @@ func TestUIHandlerServesSPAWithFallback(t *testing.T) {
 	}{
 		{"/ui/", "<html>shell</html>", "no-cache"},
 		{"/ui/mission/mission-one", "<html>shell</html>", "no-cache"},
+		// Route-like paths fall back to the shell even when they LOOK like
+		// files: artifact identities are file paths, so an extension must
+		// never be grounds for a 404 before the router sees the URL.
+		{"/ui/mission/mission-one/README.md", "<html>shell</html>", "no-cache"},
 		{"/ui/assets/app-abc.js", "console.log(1)", "public, max-age=31536000, immutable"},
 	} {
 		rw := httptest.NewRecorder()
@@ -587,13 +591,18 @@ func TestUIHandlerServesSPAWithFallback(t *testing.T) {
 		}
 	}
 
-	// Asset-shaped misses must 404, never masquerade as the SPA shell: a
-	// stale hashed URL served as 200 HTML would look like a working script.
+	// Misses in the reserved built-asset namespaces must 404, never
+	// masquerade as the SPA shell: a stale hashed URL served as 200 HTML
+	// would look like a working script. The namespace is assets/ (including
+	// the bare directory path) plus the finite root-file set — never a
+	// generic extension test (see the README.md route case above).
 	for _, url := range []string{
 		"/ui/assets/app-stale.js",
 		"/ui/assets/missing",
+		"/ui/assets",
+		"/ui/assets/",
 		"/ui/favicon.ico",
-		"/ui/mission/logo.png",
+		"/ui/robots.txt",
 	} {
 		rw := httptest.NewRecorder()
 		h(rw, httptest.NewRequest(http.MethodGet, url, nil))

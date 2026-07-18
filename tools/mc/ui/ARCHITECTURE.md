@@ -4,7 +4,8 @@ This document is law for everything under `tools/mc/ui/src`. It is judged
 as hard as code: a reviewer must be able to REJECT a diff from this
 document alone, and "the constitution didn't say" is an argument for
 amending the constitution, not for merging the diff. It binds until the
-pre-ratification exit review (TASK-56 chunk F) amends or ratifies it.
+pre-ratification exit review (readability, testability, extensibility,
+simplicity) amends or ratifies it.
 
 The settled decisions beneath it — D1–D6 plus the behaviour–skin seam —
 live in the mission repo, `artifacts/frontend-tech-proposal.md`
@@ -18,14 +19,15 @@ How to run, build, and gate the tree is in [README.md](./README.md).
 
 | path | layer | contains | never contains |
 | --- | --- | --- | --- |
-| `src/entities/` | 1 — entity | wire types mirroring the Go DTOs; TanStack Query hooks, one module per source family; the fetch helper | JSX, rendering knowledge, derived/sorted/formatted data |
+| `src/entities/` | 1 — entity | wire types mirroring the Go DTOs; TanStack Query hooks, one module per source family; the fetch helper; version-poll invalidation | JSX, rendering knowledge, derived/sorted/formatted data |
 | `src/view-models/` | 2 — view-model | pure functions from entity payloads to render-ready data; the program's rendering laws as code | JSX, hooks, fetches, store access, `Date.now()`/randomness |
 | `src/skins/<name>/` | 3 — skin | one component set per skin over the shared prop contracts; that skin's `tokens.css` | store access, entity hooks, router access, business/sort/derivation logic, raw colors |
 | `src/skins/contract.ts` | seam | the `Skin` interface and the per-view prop contracts | anything else |
 | `src/routes/` | composition | route components wiring hooks + view-models + working-set actions into skin components; the root layout | rendering laws, per-skin markup |
 | `src/router.tsx` | composition | the typed route table, one route per shareable entity URL | components (imports them; never the reverse) |
-| `src/stores/` | client state | the working-set Zustand store (closed action set) | server-derived entity data |
-| `src/components/ui/` | vendored | shadcn primitives, owned source, added per-component | hand-rolled mc logic (edits for tokens/variants are fine) |
+| `src/stores/` | client state | the working-set Zustand store (closed action set) | server-derived entity data, comment drafts |
+| `src/comments/` | client state | the comment store, when it lands: the async `CommentStore` interface, its persistence implementation(s), and the TanStack Query wrapper hooks | anything that reads its storage directly from outside; sync variants of the interface |
+| `src/components/ui/` | vendored | shadcn primitives, owned source, added per-component | hand-rolled mc logic (edits for tokens/variants are fine — vendored code obeys every rule in this document) |
 | `src/styles/globals.css` | tokens | the `@theme inline` mapping from semantic tokens to utilities | per-skin values |
 | `src/lib/` | util | `cn()` and similarly tiny, layer-free helpers | anything with an opinion about mc |
 
@@ -90,16 +92,21 @@ the mc semantic layer (`--c-needs-you`, `--c-warn`, `--c-ok`,
 `--radius`) plus the shadcn slots, valued from it. `globals.css` maps
 tokens to utilities once, globally. The discipline:
 
-- Components use utilities and shadcn slots only. A raw color (hex,
-  oklch, named CSS color) in a component or its class string is an
-  automatic rejection — meaning lives in the token name.
+- Components use utilities and shadcn slots only. A raw color in a
+  component or its class string — hex, oklch, or a named color utility
+  (`text-white`, `bg-black`, any palette-scale utility) — is an
+  automatic rejection; meaning lives in the token name. Vendored
+  primitives are owned source and obey this the day they land: adding a
+  missing token is the fix, keeping the named color is not.
 - Semantic names only: a token says what it is FOR, never what it looks
   like. `--c-needs-you`, not `--red`. New tokens are added to every
   skin's sheet in the same diff, or the diff is rejected.
 - Two-grain type is law (settled style principle): derived facts render
   `font-fact` (mono), human speech renders `font-speech` (proportional).
-  A skin may value both grains with the same face (terminal does); a
-  component may not pick the wrong grain for its content.
+  The grain is semantic, the face is the skin's: a skin may value both
+  grains with the same face (terminal does), but a component must still
+  mark speech as speech — content classified by what it IS, never by
+  what the current skin happens to render.
 
 **Behavioural half — the component set IS the skin.** All skins implement
 the same `Skin` interface over the same prop contracts. Behaviour —
@@ -150,11 +157,47 @@ opens materials (documents/source beside a thread) must drive THESE
 actions — building its own slot state is a rejection. Layout state is
 client-local (`persist` → localStorage) and never rides a URL.
 
-## 5. The wire contract and invalidation
+## 5. The comment store (D3 — the swap seam)
 
-Provenance IS the invalidation contract (chunk A law). Every
-source-backed section carries `provenance: {source, observedAt, version}`;
-`/api/v1/version` serves exactly those stamps, and it is scope-aware:
+Comments are a first-class capture entity (pending → submitted →
+resolved/outdated, anchored to entity + revision + span). Their MVP
+persistence is client-local, conditional on a seam that lets a
+server-side store swap in by changing one provider binding and zero
+components. The law, binding from the first comment-shaped diff:
+
+- **One interface, all async.** Every comment operation goes through the
+  `CommentStore` interface in `src/comments/` — capture, update,
+  discard, abandon-all, pending, mark-outdated, submit-batch, watch —
+  and every method is `Promise`-returning even while the implementation
+  is synchronous localStorage. A sync method signature anywhere on the
+  seam is a rejection: call sites that learn synchronicity make the
+  server swap a rewrite.
+- **IDs are minted client-side** (ulid) at capture. An implementation
+  that waits on any server to hand back an identity is a rejection.
+- **Components never touch the interface.** They consume comment state
+  through TanStack Query wrapper hooks (`usePendingComments()`,
+  `useSubmitBatch()`, …) exactly as they consume entities through
+  entity hooks. A component importing the store implementation — or any
+  code outside `src/comments/` reading its storage keys directly — is a
+  rejection.
+- **Drafts live nowhere else.** Not in the working-set store (the
+  working set holds no comment data; the tray count subscribes through
+  the hooks), not in `useState`, not welded to layout persistence. A
+  draft in Zustand is a rejection.
+- **Outdated-marking lives behind the interface** (anchor-revision
+  comparison on read). UI code that computes outdatedness is a
+  rejection — the UI renders the flag.
+- **What must never leak through the seam:** storage keys,
+  synchronicity, and the single-device assumption. Submission is
+  already server-side (a batch publishes as one thread reply through
+  the API); only the draft lifecycle is local, which is exactly why the
+  swap is a transport change and must stay one.
+
+## 6. The wire contract and invalidation
+
+Provenance IS the invalidation contract. Every source-backed section
+carries `provenance: {source, observedAt, version}`; `/api/v1/version`
+serves exactly those stamps, and it is scope-aware:
 
 - a missions-list page polls bare `/api/v1/version` and refetches when
   `missions.version` moves;
@@ -174,22 +217,30 @@ renders as absence, and no blank error page stands in for a partially
 degraded payload. Inventing provenance, or presenting a stale observation
 as current, is a rejection — `observedAt` is what the server says it is.
 
-## 6. Routing
+## 7. Routing
 
 The route table in `router.tsx` is code-based, typed, and the registry
 of the implementation law: **every core entity has a shareable URL.** A
 new entity surface means a new route here — a view reachable only by
 client state is a rejection. URLs anchor entities only; layout and pane
-arrangements never ride a URL. The SPA mounts at basepath `/ui` (D1
-transition); the Go server owns `/api` and falls back to the SPA shell
-only for route-like paths (asset-shaped misses 404 — `ui.go`).
+arrangements never ride a URL. The SPA mounts at basepath `/ui` (the
+transition arrangement: the Go server keeps serving the legacy HTML
+while surfaces move over).
+
+The Go server owns `/api` and falls back to the SPA shell for every
+missed path EXCEPT the reserved built-asset namespaces (`assets/` and
+the finite root-file set — `ui.go`, `assetShaped`), which 404. Route
+URLs may legitimately look like file paths — artifact identities ARE
+paths — so reserving namespaces, not extensions, is the law; growing
+the built-asset surface means growing `assetShaped` and its test in the
+same diff.
 
 Route components read params with `useParams({ from: ... })`. Importing
 `router.tsx` from any component module is a rejection — it closes an ESM
 cycle (router → page → router) and couples pages to the tree that mounts
 them.
 
-## 7. Testing patterns
+## 8. Testing patterns
 
 The test for each layer matches the layer's nature; a test in the wrong
 place is a review finding even when green.
@@ -202,10 +253,10 @@ place is a review finding even when green.
   view-model function and pure transition function has a spec beside it
   (`foo.test.ts` next to `foo.ts`); no browser, no DOM, milliseconds.
   Laws get named tests (sort law, cap, preview truncation, gap honesty).
-- **Flows — Playwright, against the real stack.** The e2e harness (chunk
-  E) runs the REAL Go server with fake `mish`/`hcom`/`herder` shell
-  scripts and a seeded journal fixture — the same pattern `api_test.go`
-  and `tools/mc/testdata/` already use. No frontend mocks, no request
+- **Flows — Playwright, against the real stack.** The e2e harness runs
+  the REAL Go server with fake `mish`/`hcom`/`herder` shell scripts and
+  a seeded journal fixture — the same pattern `api_test.go` and
+  `tools/mc/testdata/` already use. No frontend mocks, no request
   interception: real wire or it doesn't count.
 - **The skin-swap proof.** Behaviour assertions run identically under
   BOTH skins; the declared behavioural rendering difference is asserted
@@ -218,7 +269,7 @@ place is a review finding even when green.
   `active-thread`). Tests select by testid or accessible role — never by
   class names, which belong to skins.
 
-## 8. Adding a view — the recipe
+## 9. Adding a view — the recipe
 
 Route in `router.tsx` → entity hook(s) it needs (new endpoint = new Go
 DTO + raw-key contract test first) → view-model function + its Vitest
@@ -227,20 +278,26 @@ spec → one component per skin satisfying a new prop contract in
 predictable places; a view that needs a sixth kind of change means the
 architecture has a gap — stop and report it before building around it.
 
-## 9. Current state (ledger, not law)
+## 10. Current state (ledger, not law)
 
-Honest state of this tree as of chunk B, for reviewers and the next
-builder:
+Honest state of this tree, with the exit condition that clears each
+entry — checkable from the repo alone:
 
-- `entities/types.ts` and `entities/version.ts` are STALE against the
-  remediated wire contract (flat pre-provenance shapes, unscoped poll)
-  and are marked so in-file. Chunk C rewrites them per §5 and adds the
-  Vitest layer; nothing may build on them until they match the wire.
-- View-models and the working-set store exist and follow §2/§4 but have
-  no specs yet (chunk C).
-- Both skins exist over the current contracts with one declared
-  behavioural rendering difference; the full swap proof + Playwright
-  harness + MCP wiring is chunk E.
-- `bun run test` intentionally fails (no specs, no `--passWithNoTests`);
-  `bun run build` and `bun run check` are the UI gates today, alongside
-  the Go gates (README).
+- **Version-poll invalidation is not wired.** Pages refetch on
+  mount/focus via query defaults only. Clears when the entity layer
+  grows scope-aware invalidation hooks per §6 (poll keyed to the page's
+  scope, per-family invalidation), mounted from the composition layer,
+  with Vitest specs.
+- **View-models and store transition functions have no specs.**
+  `bun run test` intentionally fails (no `--passWithNoTests`); it joins
+  the gate set the moment the first spec lands, and every exported
+  view-model/transition function must be covered per §8 before the
+  entity/VM layer is treated as reviewed.
+- **No Playwright config or harness exists.** `bun run test:e2e` is
+  unconfigured. Clears with the skin-swap proof: the real-server
+  harness of §8, both-skin behaviour runs, and the declared rendering
+  difference asserted.
+- **No comment-shaped code exists.** §5 binds from the first diff that
+  adds any.
+- **Material slots are stored but undriven** (§4) — cleared by the
+  first material-opening surface driving the existing actions.

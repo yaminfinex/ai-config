@@ -31,8 +31,11 @@ export function TerminalMissionDetailView({
               ┌ {active.title} · {active.facts}
             </p>
             {active.preview ? (
-              <p data-testid="active-thread-text">
-                <span className="text-quiet">{active.preview.from}&gt; </span>
+              // The message body is human speech: font-speech even though
+              // this skin values both grains with the same face — the grain
+              // is semantic, the face is the skin's choice (two-grain law).
+              <p data-testid="active-thread-text" className="font-speech">
+                <span className="font-fact text-quiet">{active.preview.from}&gt; </span>
                 {active.preview.text}
               </p>
             ) : (

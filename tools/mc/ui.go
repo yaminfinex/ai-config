@@ -31,11 +31,7 @@ func uiHandler(fsys fs.FS) http.HandlerFunc {
 		name := path.Clean(rel)
 		data, err := fs.ReadFile(fsys, name)
 		if err != nil {
-			// Only route-like paths fall back to the SPA shell. A miss that
-			// names a file — anything under assets/ or with an extension —
-			// gets an honest 404: a stale asset URL served as 200 HTML would
-			// masquerade as a working script until the browser chokes on it.
-			if name != "index.html" && (strings.HasPrefix(name, "assets/") || path.Ext(name) != "") {
+			if assetShaped(name) {
 				http.NotFound(rw, r)
 				return
 			}
@@ -58,6 +54,24 @@ func uiHandler(fsys fs.FS) http.HandlerFunc {
 		}
 		_, _ = rw.Write(data)
 	}
+}
+
+// assetShaped reports whether a missed path names a built asset rather than
+// a client-side route. A stale asset URL served as 200 HTML would masquerade
+// as a working script, so asset misses get an honest 404 — but route params
+// may legitimately look like file paths (artifact identities ARE paths), so
+// "has an extension" is not the test. Only the reserved namespaces 404: the
+// assets/ tree (Vite's hashed output) and the finite set of root files a
+// build may emit. Extend the list when the build grows a public/ file.
+func assetShaped(name string) bool {
+	if name == "assets" || strings.HasPrefix(name, "assets/") {
+		return true
+	}
+	switch name {
+	case "favicon.ico", "robots.txt":
+		return true
+	}
+	return false
 }
 
 func uiDistFS() fs.FS {

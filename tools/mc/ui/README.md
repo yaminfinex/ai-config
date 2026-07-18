@@ -36,8 +36,14 @@ An unbuilt tree (only `.gitkeep` in `dist/`) serves an honest 501 at `/ui/`.
 | `bun run build` | strict typecheck + production build | gate — must be green |
 | `bun run check` | Biome lint + format check | gate — must be green |
 | `bun run format` | Biome, writing fixes | tool |
-| `bun run test` | Vitest over `src/**/*.test.ts` | no specs yet — exits 1 until the entity/VM/store specs land (chunk C); deliberately not `--passWithNoTests` |
-| `bun run test:e2e` | Playwright | no config/harness yet — lands with skin-swap proof (chunk E) |
+| `bun run test` | Vitest over `src/**/*.test.ts` | no specs yet — exits 1 until the view-model/store specs land; deliberately not `--passWithNoTests` |
+| `bun run test:e2e` | Playwright | no config/harness yet — lands with the skin-swap proof |
+
+Biome does not cover CSS (its parser predates Tailwind v4's at-rules, so
+`**/*.css` is excluded in `biome.json`): the token sheets and
+`globals.css` are governed by `bun run build` (Tailwind/Vite reject
+malformed CSS) and by review against ARCHITECTURE.md's token rules, not
+by `check`.
 
 Go-side gates (the API contract tests live there, from `tools/mc`):
 
@@ -55,5 +61,7 @@ GOTOOLCHAIN=local mise exec go@1.26.5 -- go test ./... -count=1
   the Go binary is the production server.
 
 shadcn primitives are added per-component (`bunx shadcn@latest add <name>`)
-and become owned source under `src/components/ui/` — never the `ai` npm
-package (see `artifacts/spike-ai-elements.md` in the mission repo).
+and become owned source under `src/components/ui/` — subject to every
+ARCHITECTURE.md rule from the day they land (generated named colors get
+retokenized, not kept). Never the `ai` npm package (see
+`artifacts/spike-ai-elements.md` in the mission repo).

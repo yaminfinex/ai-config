@@ -1,16 +1,28 @@
 // Wire types for /api/v1 — the frontend expression of the Go DTOs in
-// tools/mc/api.go. One property per DTO field, same names; a change here
-// without a matching server change is a contract break.
-//
-// STALE (chunk C rewrites this module): these types predate the chunk-A
-// remediation. The live contract is sectioned and provenance-stamped — see
-// apiVersionDTO/apiMissionDetailDTO in api.go and TestAPIWireShapeRawKeys
-// in api_test.go for the real shapes. Nothing may build on these types
-// until they match the wire.
+// tools/mc/api.go, one property per DTO field, same names. The raw JSON
+// keys are pinned server-side (TestAPIWireShapeRawKeys, api_test.go); a
+// change on either side without the other is a contract break.
 
-export interface VersionInfo {
-  cursor: number;
-  generation: number;
+// Every source-backed payload/section carries its provenance stamp: the
+// system of record, the observation time, and an opaque content-derived
+// version token. Provenance IS the invalidation contract (ARCHITECTURE.md
+// §"The wire contract").
+export interface Provenance {
+  source: string;
+  observedAt: string;
+  version: string;
+}
+
+// GET /api/v1/version — the pollable invalidation contract, scope-aware.
+// A missions-list client polls bare and watches `missions`; a
+// mission-detail client polls ?mission=<slug> and watches `mission` +
+// `journal` + `roster` (the stamps of its three sections). `mission` is
+// present only on a scoped poll.
+export interface VersionStamps {
+  journal: Provenance;
+  missions: Provenance;
+  roster: Provenance;
+  mission?: Provenance;
 }
 
 export interface TaskCount {
@@ -32,9 +44,11 @@ export interface Mission {
   warnings: string[];
 }
 
+// GET /api/v1/missions
 export interface MissionsPayload {
   missions: Mission[];
   warning: string;
+  provenance: Provenance;
 }
 
 export interface Thread {
@@ -61,12 +75,31 @@ export interface RosterAgent {
   unread: number;
   role: string;
   branch: string;
+  missionSource: string;
   unmanaged: boolean;
 }
 
-export interface MissionDetailPayload {
-  mission: Mission;
-  threads: Thread[];
+// GET /api/v1/mission/{slug} — three per-source sections, each stamped by
+// its own system of record; provenance is never response-global because
+// the sections are observed at different times.
+export interface MissionSection {
+  status: Mission;
+  provenance: Provenance;
+}
+
+export interface ThreadsSection {
+  rows: Thread[];
+  provenance: Provenance;
+}
+
+export interface RosterSection {
   agents: RosterAgent[];
-  rosterWarning: string;
+  warning: string;
+  provenance: Provenance;
+}
+
+export interface MissionDetailPayload {
+  mission: MissionSection;
+  threads: ThreadsSection;
+  roster: RosterSection;
 }

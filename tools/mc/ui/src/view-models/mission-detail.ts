@@ -92,13 +92,13 @@ export function missionDetailVM(payload: MissionDetailPayload | undefined): Miss
   if (!payload) {
     return null;
   }
-  const warnings = [...payload.mission.warnings];
+  const status = payload.mission.status;
   return {
-    slug: payload.mission.slug,
-    title: payload.mission.name !== "" ? payload.mission.name : payload.mission.slug,
-    warnings,
-    threads: sortThreads(payload.threads).map(threadRowVM),
-    agents: [...payload.agents].sort((a, b) => a.name.localeCompare(b.name)).map(agentRowVM),
-    rosterWarning: payload.rosterWarning === "" ? null : payload.rosterWarning,
+    slug: status.slug,
+    title: status.name !== "" ? status.name : status.slug,
+    warnings: [...status.warnings],
+    threads: sortThreads(payload.threads.rows).map(threadRowVM),
+    agents: [...payload.roster.agents].sort((a, b) => a.name.localeCompare(b.name)).map(agentRowVM),
+    rosterWarning: payload.roster.warning === "" ? null : payload.roster.warning,
   };
 }
