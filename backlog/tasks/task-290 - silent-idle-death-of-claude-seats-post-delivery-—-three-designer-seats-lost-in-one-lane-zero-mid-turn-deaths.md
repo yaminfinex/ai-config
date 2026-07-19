@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-19 11:45'
+updated_date: '2026-07-19 11:49'
 labels: []
 dependencies: []
 ordinal: 289500
@@ -24,3 +25,9 @@ Controls that survived to clean cull+ack: riko 66d0b741 (codex, w4D:p20, SAME id
 
 Unit shape: INVESTIGATE (research type). (1) Pull whatever host/registry/observer telemetry exists for the three guids (registry rows, observer sweep logs, tmux/pane server logs, process exit traces) and bound the actual times of death. (2) Determine the death mechanism: agent process exit? pane teardown? harness-side idle timeout? OOM? distinguish herder-caused vs vendor-CLI-caused vs terminal-server-caused. (3) Establish whether the class is claude-specific, workspace-w4D-specific, or lane-coincidence — check other workspaces' idle claude seats for survivors as further controls. (4) Recommend detection (a seat death should be OBSERVED and announced near death time, not discovered at the next verb — relates to the observer's sweep cadence) and, if mechanism is herder-side, a fix capture as a follow-on task. Probes read-only against live state; NO probe may kill, restart, or write to live seats or the registry.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+OWNER ATTESTATION (2026-07-19, post-filing): the owner manually closed at least ONE of the three panes themselves ('Err I closed one of the panes myself, not sure I did 3'). This likely explains one — possibly all three — of the deaths as ordinary operator pane closure, not a spontaneous failure class. REVISED FIRST STEP: attribution before mechanism-hunting — determine which of the three closures were operator actions (tmux/terminal server logs, close timing vs owner activity) and whether ANY death remains unexplained after attribution. If all three attribute to operator closure, the residual finding is only that herder discovers seat death late and attributes it to nobody (detection/attribution gap, not a death class) — downgrade scope accordingly. Severity: no longer suspected-urgent.
+<!-- SECTION:NOTES:END -->
