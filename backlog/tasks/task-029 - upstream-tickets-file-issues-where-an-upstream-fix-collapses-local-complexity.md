@@ -4,7 +4,7 @@ title: 'upstream tickets: file issues where an upstream fix collapses local comp
 status: To Do
 assignee: []
 created_date: '2026-07-07 12:31'
-updated_date: '2026-07-16 04:21'
+updated_date: '2026-07-20 05:19'
 labels:
   - run-herder-dx
 dependencies: []
@@ -58,6 +58,8 @@ hera (grok steady-state + hook-suppression closeout): two candidates. (1) hcom �
 Upstream hcom hypothesis from a resumed-session adoption incident: the observed inactive placeholder is consistent with `hcom start --as <prior-name>` minting a fresh identity even when the resumed transcript session id already owns a joined row, followed by later hooks rebinding the transcript-owned row. No standalone upstream repro was captured, so verify that sequence before filing. Herder avoids the suspected path during adoption by resolving an explicitly authorized source transcript session id before attempting a name reclaim, but raw/manual recovery may still expose it. If reproduced, ask that `start --as` reuse or explicitly rename the transcript-owned row, or refuse with the existing owner named. This would be hcom-owned because the herder hcom shim transparently forwards the command and cannot arbitrate hcom's roster mutation.
 
 NEW CANDIDATE (2026-07-16): hcom <agent> --run-here launcher strands FOREVER when the launched pane's shell init fails before the pty child starts (observed: mise trust refusal at shell init). No timeout, no diagnostic, launcher process sleeps indefinitely, half-born registry state downstream. Upstream fix: bounded launch-phase timeout + surface pane stderr/init failure to the spawn caller. Reproduced 6+ times across two orchestrators' fleets; recovery required manual launcher kills.
+
+Upstream (bus) candidates from second-deployment field report (2026-07-20): (1) rebind-without-rename — recovering a stranded session identity currently forces stop+start which renames the agent every time; (2) terminal preset silently resets to default on db wipe/recreation — should survive or fail loudly; (3) term screen scrapes return blank for herdr panes mid-boot (observability gap).
 <!-- SECTION:NOTES:END -->
 
 ## Comments
