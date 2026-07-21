@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"ai-config/tools/herder/internal/herdrcli"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -20,6 +22,31 @@ const supportedSchemaVersion = 17
 // the read-only database contract has drifted. Callers must surface this error:
 // treating it as an ordinary non-match silently disables process proof.
 var ErrInstancePIDSchemaDrift = errors.New("refusing hcom PID corroboration: schema drift")
+
+// liveHerdrPanes reports the set of pane ids herdr currently lists, and whether
+// that snapshot could be read at all. It lets launch-context repair tell a
+// genuine collision (the recorded pane is still live) from a stale coordinate
+// left by a prior epoch (a restart re-keyed the pane, so the recorded id is
+// gone). When herdr state is unreadable the second result is false and callers
+// stay strict — an unprovable death never licenses an overwrite. Overridable in
+// tests so the decision does not depend on an ambient herdr.
+var liveHerdrPanes = func() (map[string]struct{}, bool) {
+	out, err := (&herdrcli.Client{}).Output("pane", "list")
+	if err != nil {
+		return nil, false
+	}
+	panes, err := herdrcli.ParsePaneList(out)
+	if err != nil {
+		return nil, false
+	}
+	set := make(map[string]struct{}, len(panes))
+	for _, p := range panes {
+		if p.PaneID != "" {
+			set[p.PaneID] = struct{}{}
+		}
+	}
+	return set, true
+}
 
 type LaunchContextRepair struct {
 	Status    string
@@ -107,8 +134,21 @@ func RepairLaunchContext(dir, name, paneID string) LaunchContextRepair {
 	if !paneValid {
 		return refuse("launch_context_invalid_coordinate", fmt.Sprintf("@%s launch_context.pane_id is not a string", name))
 	}
+	stalePane := false
 	if existingPane != "" && existingPane != paneID {
-		return refuse("launch_context_pane_conflict", fmt.Sprintf("@%s already records pane_id %q, not verified live pane %q", name, existingPane, paneID))
+		// A recorded pane still present in live herdr state is a genuine
+		// collision — refuse. A recorded pane absent from a readable herdr
+		// snapshot is a stale coordinate from a prior epoch (a restart
+		// re-keyed the pane), which the verified-live-pane caller may repair.
+		// If herdr state cannot be read at all, death is unproven: stay strict.
+		live, known := liveHerdrPanes()
+		if !known {
+			return refuse("launch_context_pane_conflict", fmt.Sprintf("@%s already records pane_id %q, not verified live pane %q", name, existingPane, paneID))
+		}
+		if _, stillLive := live[existingPane]; stillLive {
+			return refuse("launch_context_pane_conflict", fmt.Sprintf("@%s already records pane_id %q, not verified live pane %q", name, existingPane, paneID))
+		}
+		stalePane = true
 	}
 	existingProcess, processValid := jsonStringField(fields, "process_id")
 	if !processValid {
@@ -116,14 +156,18 @@ func RepairLaunchContext(dir, name, paneID string) LaunchContextRepair {
 	}
 
 	changed := false
-	if existingPane == "" {
+	if existingPane == "" || stalePane {
 		fields["pane_id"] = jsonStringValue(paneID)
 		changed = true
 	}
 	processID := existingProcess
-	if processID == "" {
-		processID = uniqueProcessBinding(ctx, conn, name)
-		if processID != "" {
+	// Fill an empty binding; when repairing a stale pane, re-derive the process
+	// binding too so pane and process never straddle epochs — a prior epoch's
+	// pid is cleared if hcom no longer binds one.
+	if existingProcess == "" || stalePane {
+		derived := uniqueProcessBinding(ctx, conn, name)
+		if derived != processID {
+			processID = derived
 			fields["process_id"] = jsonStringValue(processID)
 			changed = true
 		}
@@ -190,7 +234,7 @@ func launchContextRemedy(code, name string) string {
 	case "launch_context_row_ambiguous":
 		return fmt.Sprintf("Resolve the duplicate %s instance rows in hcom before retrying; do not choose a row arbitrarily or edit the database manually", bus)
 	case "launch_context_pane_conflict":
-		return fmt.Sprintf("No herder verb rewrites an existing pane coordinate by design; from the verified live pane, re-create %s through hcom itself so hcom records fresh launch coordinates", bus)
+		return fmt.Sprintf("The pane recorded for %s is still live in herdr (a genuine collision), or herdr state was unreadable so a stale coordinate could not be proven dead; resolve the live seat owning that pane, or retry once herdr is readable. A pane left dead by a prior epoch is repaired automatically.", bus)
 	case "launch_context_invalid_json", "launch_context_invalid_coordinate":
 		return fmt.Sprintf("Repair or recreate %s through supported hcom commands, then rerun 'herder reconcile --apply'; do not edit launch_context manually", bus)
 	case "launch_context_read_failed":

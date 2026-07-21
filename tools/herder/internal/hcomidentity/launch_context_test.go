@@ -60,18 +60,75 @@ func TestRepairLaunchContextAlreadyPresentDoesNotRewrite(t *testing.T) {
 	}
 }
 
-func TestRepairLaunchContextRefusesConflictingPaneWithoutWrite(t *testing.T) {
+func TestRepairLaunchContextRefusesLiveConflictingPaneWithoutWrite(t *testing.T) {
 	dir, db := newLaunchContextDB(t, supportedSchemaVersion, true)
 	raw := `{"pane_id":"pane-foreign","keep":"yes"}`
 	execSQL(t, db, `INSERT INTO instances(name, launch_context) VALUES (?, ?)`, "live-self", raw)
 	db.Close()
 
+	// The recorded pane is still live in herdr — a genuine collision, refused.
+	defer withLiveHerdrPanes(t, true, "pane-foreign", "pane-self")()
 	got := RepairLaunchContext(dir, "live-self", "pane-self")
 	if got.Status != "refused" || got.Code != "launch_context_pane_conflict" || got.Remedy == "" {
 		t.Fatalf("repair = %+v, want typed refusal", got)
 	}
 	if after := readRawLaunchContext(t, filepath.Join(dir, "hcom.db"), "live-self"); after != raw {
 		t.Fatalf("refused row changed: %s", after)
+	}
+}
+
+func TestRepairLaunchContextRefusesConflictWhenHerdrUnreadable(t *testing.T) {
+	dir, db := newLaunchContextDB(t, supportedSchemaVersion, true)
+	raw := `{"pane_id":"pane-foreign","keep":"yes"}`
+	execSQL(t, db, `INSERT INTO instances(name, launch_context) VALUES (?, ?)`, "live-self", raw)
+	db.Close()
+
+	// herdr state cannot be read: death is unproven, so stay strict.
+	defer withLiveHerdrPanes(t, false)()
+	got := RepairLaunchContext(dir, "live-self", "pane-self")
+	if got.Status != "refused" || got.Code != "launch_context_pane_conflict" {
+		t.Fatalf("repair = %+v, want conflict refusal when herdr is unreadable", got)
+	}
+	if after := readRawLaunchContext(t, filepath.Join(dir, "hcom.db"), "live-self"); after != raw {
+		t.Fatalf("unreadable-herdr refusal changed row: %s", after)
+	}
+}
+
+func TestRepairLaunchContextRepairsStaleDeadPaneAndRebindsProcess(t *testing.T) {
+	dir, db := newLaunchContextDB(t, supportedSchemaVersion, true)
+	// A prior epoch's coordinates: the recorded pane is gone from live herdr,
+	// and its process binding no longer exists in process_bindings.
+	execSQL(t, db, `INSERT INTO instances(name, launch_context) VALUES (?, ?)`, "live-self", `{"pane_id":"pane-dead","process_id":"process-dead","keep":"yes"}`)
+	execSQL(t, db, `INSERT INTO process_bindings(process_id, instance_name, updated_at) VALUES ('process-fresh', 'live-self', 2)`)
+	db.Close()
+
+	// Only the caller's verified live pane is live; pane-dead is absent.
+	defer withLiveHerdrPanes(t, true, "pane-self")()
+	got := RepairLaunchContext(dir, "live-self", "pane-self")
+	if got.Status != "written" || got.PaneID != "pane-self" || got.ProcessID != "process-fresh" {
+		t.Fatalf("repair = %+v, want stale pane rewritten and process rebound", got)
+	}
+	fields := readLaunchContext(t, filepath.Join(dir, "hcom.db"), "live-self")
+	if fields["pane_id"] != "pane-self" || fields["process_id"] != "process-fresh" || fields["keep"] != "yes" {
+		t.Fatalf("launch_context = %#v, want repaired coordinates with preserved fields", fields)
+	}
+}
+
+func TestRepairLaunchContextClearsStaleProcessWhenNoLiveBinding(t *testing.T) {
+	dir, db := newLaunchContextDB(t, supportedSchemaVersion, true)
+	// Stale pane and stale process, but no current binding to re-derive: the
+	// stale pid must not straddle epochs onto the freshly repaired pane.
+	execSQL(t, db, `INSERT INTO instances(name, launch_context) VALUES (?, ?)`, "live-self", `{"pane_id":"pane-dead","process_id":"process-dead"}`)
+	db.Close()
+
+	defer withLiveHerdrPanes(t, true, "pane-self")()
+	got := RepairLaunchContext(dir, "live-self", "pane-self")
+	if got.Status != "written" || got.PaneID != "pane-self" || got.ProcessID != "" {
+		t.Fatalf("repair = %+v, want stale pane rewritten and stale process cleared", got)
+	}
+	fields := readLaunchContext(t, filepath.Join(dir, "hcom.db"), "live-self")
+	if fields["pane_id"] != "pane-self" || fields["process_id"] != "" {
+		t.Fatalf("launch_context = %#v, want cleared stale process", fields)
 	}
 }
 
@@ -135,7 +192,7 @@ func TestLaunchContextRefusalRemediesAreCodeSpecific(t *testing.T) {
 		doNotWant string
 	}{
 		{code: "launch_context_schema_mismatch", want: "compatible hcom data directory"},
-		{code: "launch_context_pane_conflict", want: "No herder verb rewrites an existing pane coordinate by design", doNotWant: "herder reconcile --apply"},
+		{code: "launch_context_pane_conflict", want: "still live in herdr", doNotWant: "herder reconcile --apply"},
 		{code: "launch_context_row_missing", want: "Join @live-self to hcom first", doNotWant: "compatible hcom data directory"},
 		{code: "launch_context_row_ambiguous", want: "duplicate @live-self instance rows", doNotWant: "compatible hcom data directory"},
 	}
@@ -202,6 +259,24 @@ func TestInstancePIDRefusesSchemaDriftLoudly(t *testing.T) {
 			}
 		})
 	}
+}
+
+// withLiveHerdrPanes swaps the herdr liveness probe for a deterministic set and
+// returns a restore func. known=false simulates unreadable herdr state.
+func withLiveHerdrPanes(t *testing.T, known bool, panes ...string) func() {
+	t.Helper()
+	prev := liveHerdrPanes
+	liveHerdrPanes = func() (map[string]struct{}, bool) {
+		if !known {
+			return nil, false
+		}
+		set := make(map[string]struct{}, len(panes))
+		for _, p := range panes {
+			set[p] = struct{}{}
+		}
+		return set, true
+	}
+	return func() { liveHerdrPanes = prev }
 }
 
 func newLaunchContextDB(t *testing.T, version int, primaryKey bool) (string, *sql.DB) {
