@@ -119,6 +119,46 @@ type Pane struct {
 	AgentSession  string `json:"agent_session"`
 }
 
+// UnmarshalJSON tolerates both agent_session shapes: herdr <= 0.7.3 emits a
+// bare session-id string, 0.7.4 an object whose "value" member carries the
+// same id. Consumers compare AgentSession against session ids, so both
+// decode to that string; null and absent stay "".
+func (p *Pane) UnmarshalJSON(data []byte) error {
+	type paneAlias Pane
+	aux := struct {
+		*paneAlias
+		AgentSession json.RawMessage `json:"agent_session"`
+	}{paneAlias: (*paneAlias)(p)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	session, err := decodeAgentSession(aux.AgentSession)
+	if err != nil {
+		return fmt.Errorf("pane %s: agent_session: %w", p.PaneID, err)
+	}
+	p.AgentSession = session
+	return nil
+}
+
+func decodeAgentSession(raw json.RawMessage) (string, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return "", nil
+	}
+	if trimmed[0] == '"' {
+		var s string
+		err := json.Unmarshal(trimmed, &s)
+		return s, err
+	}
+	var obj struct {
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(trimmed, &obj); err != nil {
+		return "", err
+	}
+	return obj.Value, nil
+}
+
 type ProcessInfo struct {
 	ShellPID  int       `json:"shell_pid"`
 	Processes []Process `json:"foreground_processes"`

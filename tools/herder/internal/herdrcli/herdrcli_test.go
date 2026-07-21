@@ -155,6 +155,63 @@ func TestParsePaneListAndGet(t *testing.T) {
 	}
 }
 
+func TestParsePaneAgentSessionShapes(t *testing.T) {
+	// herdr 0.7.4 made agent_session an object (id in "value") and added
+	// members like scroll/revision; <= 0.7.3 emitted a bare string. Both
+	// must decode to the session-id string consumers compare against.
+	// The 0.7.4 payload is trimmed from live `herdr pane get` output.
+	pane, err := ParsePaneGet([]byte(`{"id":"cli:pane:get","result":{"pane":{
+		"agent":"claude",
+		"agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"2b7564ae-7fc9-4717-854a-4055ffb950cb"},
+		"agent_status":"working",
+		"pane_id":"w653ed3f6442fe1b:pT",
+		"revision":20,
+		"scroll":{"max_offset_from_bottom":0,"offset_from_bottom":0,"viewport_rows":86},
+		"terminal_id":"term_6570716bf14da1a",
+		"terminal_title":"x",
+		"workspace_id":"w653ed3f6442fe1b"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pane.AgentSession != "2b7564ae-7fc9-4717-854a-4055ffb950cb" {
+		t.Errorf("0.7.4 object shape: AgentSession = %q, want the value member", pane.AgentSession)
+	}
+	if pane.PaneID != "w653ed3f6442fe1b:pT" || pane.TerminalID != "term_6570716bf14da1a" {
+		t.Errorf("sibling fields mis-decoded: %+v", pane)
+	}
+
+	pane, err = ParsePaneGet([]byte(`{"result":{"pane":{"pane_id":"p_1","agent_session":"legacy-sid"}}}`))
+	if err != nil || pane.AgentSession != "legacy-sid" {
+		t.Errorf("legacy string shape = (%q, %v), want legacy-sid", pane.AgentSession, err)
+	}
+
+	for _, payload := range []string{
+		`{"result":{"pane":{"pane_id":"p_1","agent_session":null}}}`,
+		`{"result":{"pane":{"pane_id":"p_1"}}}`,
+	} {
+		pane, err = ParsePaneGet([]byte(payload))
+		if err != nil || pane.AgentSession != "" {
+			t.Errorf("ParsePaneGet(%s) = (%q, %v), want empty session", payload, pane.AgentSession, err)
+		}
+	}
+
+	panes, err := ParsePaneList([]byte(`{"result":{"panes":[
+		{"pane_id":"p_1","agent_session":{"kind":"id","value":"sid-obj"}},
+		{"pane_id":"p_2","agent_session":"sid-str"},
+		{"pane_id":"p_3"}
+	]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(panes) != 3 || panes[0].AgentSession != "sid-obj" || panes[1].AgentSession != "sid-str" || panes[2].AgentSession != "" {
+		t.Errorf("mixed-shape pane list = %+v", panes)
+	}
+
+	if _, err := ParsePaneGet([]byte(`{"result":{"pane":{"pane_id":"p_1","agent_session":42}}}`)); err == nil {
+		t.Error("want error for agent_session of unusable type")
+	}
+}
+
 func TestParseSessionSnapshotWrappedAndFlat(t *testing.T) {
 	wrapped := []byte(`{"result":{"type":"session_snapshot","snapshot":{
 		"protocol":16,
