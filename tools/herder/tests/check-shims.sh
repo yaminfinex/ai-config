@@ -297,6 +297,49 @@ assert_file_eq "claude sibling inflight: real argv preserved" "$PROBE/real_claud
   "$(printf '%s\n' --real)"
 assert_file_missing "claude sibling inflight: herder launch not called" "$PROBE/herder_argv"
 
+# 10a. A mise-generated `claude` shim (in a mise/shims dir) ahead of the real
+#      binary is skipped, not dispatched — mise re-resolves claude via PATH and
+#      loops back to a herder shim, freezing the pane. Regression: a stale mise
+#      claude registration wedged panes twice; mise regenerates the shim on every
+#      reshim, so the herder shim must be immune to it.
+make_case mise_skip_claude
+MISE_SHIMS="$CASE_DIR/mise/shims"
+mkdir -p "$MISE_SHIMS"
+cat > "$MISE_SHIMS/claude" <<'MOCK_MISE_CLAUDE'
+#!/usr/bin/env bash
+: "${PROBE:?}"
+printf 'invoked\n' >>"$PROBE/mise_invoked"
+exec claude "$@"
+MOCK_MISE_CLAUDE
+chmod +x "$MISE_SHIMS/claude"
+run_with_timeout 5 env -i \
+  PATH="$SHIM_CASE:$MISE_SHIMS:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
+  HCOM_LAUNCH_INFLIGHT=1 "$SHIM_CASE/claude" --real
+rc=$?
+assert_eq "mise skip (path): exit 0 (no loop)" "$rc" "0"
+assert_file_eq "mise skip (path): real binary called once" "$PROBE/real_claude_count" "1"
+assert_file_missing "mise skip (path): mise shim never dispatched" "$PROBE/mise_invoked"
+
+# 10b. Detection also fires when a `codex` on PATH is a symlink resolving to the
+#      mise multiplexer, even outside a mise/shims path (readlink-target branch).
+make_case mise_skip_codex_symlink
+mkdir -p "$CASE_DIR/fakemise" "$CASE_DIR/misebin"
+cat > "$CASE_DIR/fakemise/mise" <<'MOCK_MISE_CODEX'
+#!/usr/bin/env bash
+: "${PROBE:?}"
+printf 'invoked\n' >>"$PROBE/mise_invoked"
+exec codex "$@"
+MOCK_MISE_CODEX
+chmod +x "$CASE_DIR/fakemise/mise"
+ln -s "$CASE_DIR/fakemise/mise" "$CASE_DIR/misebin/codex"
+run_with_timeout 5 env -i \
+  PATH="$SHIM_CASE:$CASE_DIR/misebin:$REALBIN:$PATH_BASE" HOME="$HOME" PROBE="$PROBE" \
+  HCOM_LAUNCH_INFLIGHT=1 "$SHIM_CASE/codex" go
+rc=$?
+assert_eq "mise skip (symlink): exit 0 (no loop)" "$rc" "0"
+assert_file_eq "mise skip (symlink): real codex called once" "$PROBE/real_codex_count" "1"
+assert_file_missing "mise skip (symlink): mise not dispatched" "$PROBE/mise_invoked"
+
 # 11. A bare Grok resolved to the shim enters only the launch contract. The shim
 #     never searches for or invokes a vendor binary itself.
 make_case grok_plain

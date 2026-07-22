@@ -43,6 +43,26 @@ is_herder_shim() {
   LC_ALL=C head -c 512 -- "$1" 2>/dev/null | grep -Fq 'herder-path-shim'
 }
 
+# A mise-generated shim dispatches TOOL back through mise, which re-resolves it
+# via PATH and can land on a herder shim again — an infinite launch loop that
+# freezes the pane at the "Starting…" banner. mise regenerates a TOOL shim on
+# every reshim even with no TOOL tool configured (a stale registry entry is
+# enough), so it cannot be reliably removed; never treat it as the real binary.
+# The real codex comes from the vendor installer under ~/.local/bin, never from
+# mise, so skipping mise here only ever removes the wrong candidate. (The hcom
+# shim deliberately does NOT skip mise: mise is hcom's real provider.)
+resolves_to_mise() {
+  local cand="$1" target
+  case "$cand" in
+    */mise/shims/*) return 0 ;;
+  esac
+  target="$(readlink -f -- "$cand" 2>/dev/null || true)"
+  case "${target##*/}" in
+    mise | mise-*) return 0 ;;
+  esac
+  return 1
+}
+
 find_real_tool() {
   local entry candidate
   IFS=:
@@ -54,6 +74,7 @@ find_real_tool() {
     [[ -n "$candidate" ]] || continue
     [[ "$candidate" == "$shim_path" ]] && continue
     is_herder_shim "$candidate" && continue
+    resolves_to_mise "$candidate" && continue
     printf '%s\n' "$candidate"
     return 0
   done
@@ -61,7 +82,17 @@ find_real_tool() {
 }
 
 if [[ "${HCOM_LAUNCH_INFLIGHT:-}" == "1" ]]; then
+  # Belt to the resolves_to_mise suspenders: bound re-dispatch so any residual
+  # PATH exec loop fails loud here instead of freezing the pane forever. Cleared
+  # before exec so the launched agent's own future launches start from zero.
+  depth="${HERDER_SHIM_DEPTH:-0}"
+  [[ "$depth" =~ ^[0-9]+$ ]] || depth=0
+  if ((depth >= 8)); then
+    die "aborted after $depth re-dispatches — a non-herder '$TOOL' shim (e.g. mise) sits ahead of the real binary on PATH and is looping; remove it or fix PATH order"
+  fi
+  export HERDER_SHIM_DEPTH=$((depth + 1))
   real_tool="$(find_real_tool)" || die "HCOM_LAUNCH_INFLIGHT=1 but no real '$TOOL' binary found on PATH"
+  unset HERDER_SHIM_DEPTH
   exec "$real_tool" "$@"
 fi
 
