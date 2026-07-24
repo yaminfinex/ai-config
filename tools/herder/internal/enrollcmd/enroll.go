@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"time"
+	"unicode"
 
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
@@ -18,10 +19,12 @@ import (
 )
 
 type options struct {
-	help  bool
-	json  bool
-	label string
-	role  string
+	help      bool
+	json      bool
+	label     string
+	role      string
+	sessionID string
+	hcomName  string
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -78,7 +81,29 @@ func runWithEngine(args []string, stdout, stderr io.Writer, forceFreshGUID bool,
 		pane.CWD, _ = os.Getwd()
 	}
 	hcomDir := os.Getenv("HCOM_DIR")
-	liveBus := hcomidentity.ResolveLive(hcomDir, hcomidentity.CurrentEvidence(paneID, pane.PaneID))
+	// Long-lived and resumed sessions keep HCOM_SESSION_ID/HCOM_PROCESS_ID frozen
+	// at the dead launch epoch, so env-only evidence cannot corroborate the live
+	// bus row. --session-id/--hcom-name let the operator supply the live truth;
+	// the frozen ambient hints are dropped and the explicit values are proven
+	// against the live roster by the same Resolve engine (they are evidence, not
+	// an override of it). A stale or wrong assertion still fails closed below.
+	evidence := hcomidentity.CurrentEvidence(paneID, pane.PaneID)
+	explicitEvidence := opts.sessionID != "" || opts.hcomName != ""
+	if explicitEvidence {
+		evidence.SessionID = ""
+		evidence.ProcessID = ""
+	}
+	if opts.sessionID != "" {
+		evidence.SessionID = opts.sessionID
+	}
+	if opts.hcomName != "" {
+		evidence.Name = opts.hcomName
+	}
+	liveBus := hcomidentity.ResolveLive(hcomDir, evidence)
+	if explicitEvidence && !liveBus.Verified {
+		die(stderr, fmt.Sprintf("explicit evidence did not corroborate one joined bus row (%s); run `hcom list --json` in this namespace and pass the exact joined --hcom-name and/or --session-id", liveBus.Reason))
+		return 1
+	}
 	if !liveBus.Verified {
 		fmt.Fprintf(stderr, "herder enroll: live bus identity could not be verified (%s); recording hcom_name as unknown. Join this session to hcom, then rerun `herder enroll` to repair the row.\n", liveBus.Reason)
 	}
@@ -104,7 +129,7 @@ func runWithEngine(args []string, stdout, stderr io.Writer, forceFreshGUID bool,
 		if rows, listErr := hcomidentity.List(hcomDir); listErr != nil {
 			die(stderr, "credential-selected bus roster unavailable: "+listErr.Error())
 			return 2
-		} else if verifyErr := seatcred.VerifySelectedBus(rows, selection, hcomidentity.CurrentEvidence(paneID, pane.PaneID)); verifyErr != nil {
+		} else if verifyErr := seatcred.VerifySelectedBus(rows, selection, evidence); verifyErr != nil {
 			die(stderr, verifyErr.Error())
 			return 2
 		}
@@ -591,6 +616,28 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 			}
 			opts.role = args[i+1]
 			i += 2
+		case "--session-id":
+			if i+1 >= len(args) {
+				die(stderr, "--session-id requires a value")
+				return opts, 1
+			}
+			if !validEvidenceToken(args[i+1]) {
+				die(stderr, "--session-id must be one nonempty token without whitespace or control characters")
+				return opts, 1
+			}
+			opts.sessionID = args[i+1]
+			i += 2
+		case "--hcom-name":
+			if i+1 >= len(args) {
+				die(stderr, "--hcom-name requires a value")
+				return opts, 1
+			}
+			if !validEvidenceToken(args[i+1]) {
+				die(stderr, "--hcom-name must be one nonempty token without whitespace or control characters")
+				return opts, 1
+			}
+			opts.hcomName = args[i+1]
+			i += 2
 		case "--json":
 			opts.json = true
 			i++
@@ -614,7 +661,8 @@ herder send/wait/list/cull. An existing identity is selected only by its
 registry-current credential; ambient HERDER_*/HCOM_*/HERDR_* values are hints.
 
 Usage:
-  herder enroll [--credential-file PATH] [--label LABEL] [--role ROLE] [--json]
+  herder enroll [--credential-file PATH] [--label LABEL] [--role ROLE]
+                [--session-id ID] [--hcom-name NAME] [--json]
 
 Options:
   --credential-file PATH
@@ -623,6 +671,10 @@ Options:
                   else manual-<short>)
   --role ROLE     role to record (repair: stored; empty/fresh: $HERDER_ROLE,
                   else "manual")
+  --session-id ID explicit live tool-session id (HCOM_SESSION_ID) to corroborate
+                  when the ambient launch env has gone stale (resumed/long-lived
+                  session). Proven against the live roster, not trusted blindly.
+  --hcom-name NAME explicit live bus name to corroborate for the same reason.
   --json          print the appended registry record as JSON on stdout
 
 Records pane_id, terminal_id, workspace_id, cwd, and live-verified hcom
@@ -635,7 +687,13 @@ LIVE=working. Must run inside a herdr pane (HERDR_ENV=1 and HERDR_PANE_ID set);
 refuses otherwise. The launch-time HCOM_INSTANCE_NAME is never trusted. If the
 current bus row cannot be proven from session/process/pane identity, hcom_name is
 recorded as unknown. Rerun herder enroll from the existing session to recapture
-and repair its bus binding. Reusing an existing guid requires either an exact
+and repair its bus binding. On a resumed or long-lived session the frozen
+HCOM_SESSION_ID/HCOM_PROCESS_ID env belong to a dead launch epoch and can no
+longer prove the live row; pass --session-id and/or --hcom-name from 'hcom list
+--json' to supply the live truth. Those values are corroborated against the live
+roster exactly like ambient evidence — a wrong or stale assertion fails closed
+rather than re-seating onto another live agent — so this repairs a wedged pane
+in place without the bus stop+start that renames the agent. Reusing an existing guid requires either an exact
 recorded/live session id match, or both unchanged terminal and caller-claimed
 label. On a pinned repair, that proof label comes from --label, HERDER_LABEL, or
 manual-<short>; the stored label is never substituted as ownership proof on
@@ -703,6 +761,18 @@ func envTool() string {
 		return v
 	}
 	return ""
+}
+
+func validEvidenceToken(value string) bool {
+	if value == "" || len(value) > 512 {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func firstNonEmpty(values ...string) string {
