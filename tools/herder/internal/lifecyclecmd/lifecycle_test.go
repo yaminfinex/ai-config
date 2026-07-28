@@ -72,7 +72,11 @@ type noLaunchHerdr struct {
 }
 
 func (f *noLaunchHerdr) Combined(args ...string) ([]byte, int, error) {
-	if len(args) >= 2 && args[0] == "agent" && args[1] == "start" {
+	// herdr 0.7.5 creates the pane via tab create / pane split, not agent start.
+	if len(args) >= 2 && args[0] == "tab" && args[1] == "create" {
+		f.startCalls++
+	}
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "split" {
 		f.startCalls++
 	}
 	return []byte(`{"result":{"workspaces":[]}}`), 0, nil
@@ -114,8 +118,8 @@ func TestResumeMissingWorkingDirectoryRefusesBeforeLaunch(t *testing.T) {
 type vanishedPaneHerdr struct{}
 
 func (vanishedPaneHerdr) Combined(args ...string) ([]byte, int, error) {
-	if len(args) >= 2 && args[0] == "agent" && args[1] == "start" {
-		return []byte(`{"result":{"agent":{"pane_id":"p_vanished","terminal_id":"term_vanished","workspace_id":"ws_work","cwd":"/work"}}}`), 0, nil
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "split" {
+		return []byte(`{"result":{"type":"pane_info","pane":{"pane_id":"p_vanished","terminal_id":"term_vanished","workspace_id":"ws_work","cwd":"/work"}}}`), 0, nil
 	}
 	if len(args) >= 2 && args[0] == "pane" && args[1] == "get" {
 		return []byte(`{"error":{"code":"pane_not_found","message":"pane was closed"}}`), 4, nil
@@ -154,25 +158,6 @@ func TestSettleFailureIncludesLaunchAndExitDiagnostics(t *testing.T) {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("stderr missing %q: %s", want, stderr.String())
 		}
-	}
-}
-
-func TestNewTabMoveArgsCarryResolvedFocus(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		focusFlag string
-		wantFocus string
-	}{
-		{name: "default", wantFocus: "--no-focus"},
-		{name: "explicit focus", focusFlag: "--focus", wantFocus: "--focus"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := strings.Join(newTabMoveArgs("pane-1", "worker", tc.focusFlag), " ")
-			want := "pane move pane-1 --new-tab " + tc.wantFocus + " --label worker"
-			if got != want {
-				t.Fatalf("move args = %q, want %q", got, want)
-			}
-		})
 	}
 }
 
@@ -315,11 +300,11 @@ func TestResumeTargetSIDWinsAfterPriorProvenanceCarry(t *testing.T) {
 type fakeHerdrClient struct{}
 
 func (fakeHerdrClient) Combined(args ...string) ([]byte, int, error) {
-	if len(args) >= 2 && args[0] == "agent" && args[1] == "start" {
-		return []byte(`{"result":{"type":"agent_started","agent":{"pane_id":"p_resumed","terminal_id":"term_resumed","workspace_id":"ws_resumed","cwd":"/repo"}}}`), 0, nil
+	if len(args) >= 2 && args[0] == "tab" && args[1] == "create" {
+		return []byte(`{"result":{"type":"tab_created","root_pane":{"pane_id":"p_resumed","terminal_id":"term_resumed","workspace_id":"ws_resumed","cwd":"/repo"},"tab":{"tab_id":"tab_r"}}}`), 0, nil
 	}
 	if len(args) >= 3 && args[0] == "pane" && args[1] == "get" {
-		return []byte(`{"result":{"pane":{"pane_id":"p_resumed","terminal_id":"term_resumed"}}}`), 0, nil
+		return []byte(`{"result":{"pane":{"pane_id":"p_resumed","terminal_id":"term_resumed","workspace_id":"ws_resumed","cwd":"/repo"}}}`), 0, nil
 	}
 	return []byte(`{"result":{"type":"ok"}}`), 0, nil
 }
@@ -333,8 +318,11 @@ type liveLifecycleFailureHerdr struct {
 }
 
 func (f *liveLifecycleFailureHerdr) Combined(args ...string) ([]byte, int, error) {
-	if len(args) >= 2 && args[0] == "agent" && args[1] == "start" {
-		return []byte(`{"result":{"type":"agent_started","agent":{"pane_id":"p_live","terminal_id":"term_live","workspace_id":"ws_live","cwd":"/repo"}}}`), 0, nil
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "split" {
+		return []byte(`{"result":{"type":"pane_info","pane":{"pane_id":"p_live","terminal_id":"term_live","workspace_id":"ws_live","cwd":"/repo"}}}`), 0, nil
+	}
+	if len(args) >= 2 && args[0] == "tab" && args[1] == "create" {
+		return []byte(`{"result":{"type":"tab_created","root_pane":{"pane_id":"p_live","terminal_id":"term_live","workspace_id":"ws_live","cwd":"/repo"},"tab":{"tab_id":"tab_l"}}}`), 0, nil
 	}
 	if len(args) >= 2 && args[0] == "pane" && args[1] == "get" {
 		return []byte(`{"result":{"pane":{"pane_id":"p_live","terminal_id":"term_live"}}}`), 0, nil
@@ -552,7 +540,15 @@ func (f *grokLifecycleHerdr) Combined(args ...string) ([]byte, int, error) {
 	if len(args) >= 2 && args[0] == "workspace" && args[1] == "list" {
 		return []byte(`{"result":{"workspaces":[]}}`), 0, nil
 	}
-	if len(args) >= 2 && args[0] == "agent" && args[1] == "start" {
+	if len(args) >= 2 && args[0] == "tab" && args[1] == "create" {
+		return []byte(fmt.Sprintf(`{"result":{"type":"tab_created","root_pane":{"pane_id":%q,"terminal_id":%q,"cwd":%q},"tab":{"tab_id":"tab_g"}}}`, f.paneID, f.terminalID, os.TempDir())), 0, nil
+	}
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "split" {
+		return []byte(fmt.Sprintf(`{"result":{"type":"pane_info","pane":{"pane_id":%q,"terminal_id":%q,"cwd":%q}}}`, f.paneID, f.terminalID, os.TempDir())), 0, nil
+	}
+	if len(args) >= 3 && args[0] == "pane" && args[1] == "run" {
+		// The GUID/SID the spawner exports now ride the pane run command, not
+		// agent start.
 		f.startCmd = strings.Join(args, " ")
 		if match := lifecycleGUIDRE.FindStringSubmatch(f.startCmd); len(match) == 2 {
 			f.childGUID = match[1]
@@ -566,7 +562,7 @@ func (f *grokLifecycleHerdr) Combined(args ...string) ([]byte, int, error) {
 				return []byte(`{"error":{"message":"fixture start failed"}}`), 1, f.startErr
 			}
 		}
-		return []byte(fmt.Sprintf(`{"result":{"agent":{"pane_id":%q,"terminal_id":%q,"cwd":%q}}}`, f.paneID, f.terminalID, os.TempDir())), 0, nil
+		return []byte(`{"result":{"type":"ok"}}`), 0, nil
 	}
 	if len(args) >= 3 && args[0] == "pane" && args[1] == "get" {
 		return []byte(fmt.Sprintf(`{"result":{"pane":{"pane_id":%q,"terminal_id":%q,"cwd":%q}}}`, args[2], f.terminalID, os.TempDir())), 0, nil

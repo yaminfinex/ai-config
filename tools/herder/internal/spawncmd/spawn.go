@@ -25,6 +25,7 @@ import (
 	"ai-config/tools/herder/internal/missioncontext"
 	"ai-config/tools/herder/internal/observercmd"
 	"ai-config/tools/herder/internal/panecleanup"
+	"ai-config/tools/herder/internal/panelaunch"
 	"ai-config/tools/herder/internal/pendingprompt"
 	"ai-config/tools/herder/internal/placement"
 	"ai-config/tools/herder/internal/registry"
@@ -494,10 +495,6 @@ func sameCompletionMission(current, candidate *v2.Mission) bool {
 		return current == candidate
 	}
 	return *current == *candidate
-}
-
-func newTabMoveArgs(paneID, label, focusFlag string) []string {
-	return []string{"pane", "move", paneID, "--new-tab", firstNonEmpty(focusFlag, "--no-focus"), "--label", label}
 }
 
 func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
@@ -1194,64 +1191,43 @@ Send it ONCE when you are genuinely done or blocked, then end your turn. (If you
 		argv = append(argv, launchTokens...)
 	}
 
-	startArgs := []string{"agent", "start", label, opts.FocusFlag, "--split", opts.Split}
-	if opts.Workspace != "" {
-		startArgs = append(startArgs, "--workspace", opts.Workspace)
-	}
-	if opts.Tab != "" {
-		startArgs = append(startArgs, "--tab", opts.Tab)
-	}
 	// Place the agent in the resolved cwd — the explicit --cwd, else the anchored
 	// workspace's checkout path, else the spawner's own cwd (os.Getwd). Passing it
-	// explicitly is what makes "default: current" true: without a --cwd on the
+	// explicitly is what makes "default: current" true: without a cwd on the
 	// wire, herdr starts the child in its own default (e.g. $HOME), which for a
 	// fresh/untrusted dir re-opens the trust modal. childCWD is only "" if getwd
 	// itself failed, in which case we let herdr pick as before.
-	if childCWD != "" {
-		startArgs = append(startArgs, "--cwd", childCWD)
+	//
+	// herdr 0.7.5 split pane creation from agent start; panelaunch creates the
+	// pane (fresh tab by default — subsuming the old pane-move-to-new-tab — else
+	// a split), runs the wrapper (argv) in it, and reports the agent working. A
+	// plain split anchors on --from-pane, else the caller's own pane; an
+	// explicit --tab or --worktree's seed tab anchors on a pane already in it.
+	pane, launchErr := panelaunch.Launch(r.herdr, panelaunch.Spec{
+		Label:     label,
+		CWD:       childCWD,
+		Workspace: opts.Workspace,
+		Tab:       opts.Tab,
+		BasePane:  firstNonEmpty(opts.FromPane, os.Getenv("HERDR_PANE_ID")),
+		Split:     opts.Split,
+		NewTab:    opts.NewTab,
+		FocusFlag: opts.FocusFlag,
+		Argv:      argv,
+		Source:    "herder:spawn",
+	})
+	if launchErr != nil {
+		return r.failAfterLaunch("pane launch failed: "+launchErr.Error(), pane.PaneID, pane.TerminalID)
 	}
-	startArgs = append(startArgs, "--")
-	startArgs = append(startArgs, argv...)
-
-	startOut, startRC, _ := r.herdr.Combined(startArgs...)
-	if startRC != 0 {
-		fmt.Fprintf(r.stderr, "herdr agent start failed:\n%s\n", strings.TrimRight(string(startOut), "\n"))
-		return startRC
-	}
-	start, err := parseAgentStart(startOut)
-	if err != nil || start.Agent.PaneID == "" {
-		fmt.Fprintf(r.stderr, "unexpected start payload: %s\n", strings.TrimRight(string(startOut), "\n"))
-		return 1
-	}
-	paneID := start.Agent.PaneID
-	wsID := start.Agent.WorkspaceID
-	tabID := start.Agent.TabID
-	termID := start.Agent.TerminalID
-	resolvedCWD := start.Agent.CWD
+	paneID := pane.PaneID
+	wsID := pane.WorkspaceID
+	tabID := pane.TabID
+	termID := pane.TerminalID
+	resolvedCWD := pane.CWD
 	launchPaneID := paneID
 	newTabResult := ""
-
 	if opts.NewTab {
-		moveArgs := newTabMoveArgs(paneID, label, opts.FocusFlag)
-		if out, rc, _ := r.herdr.Combined(moveArgs...); rc == 0 {
-			newTabResult = "moved"
-		} else {
-			reason := compactMessage(string(out))
-			if reason == "" {
-				reason = fmt.Sprintf("herdr pane move exited %d", rc)
-			}
-			newTabResult = "move_failed: " + reason
-			return r.failAfterLaunch("fresh-tab placement failed: "+reason, paneID, termID)
-		}
-		if out, err := r.herdr.Output("pane", "get", paneID); err == nil {
-			if pane, parseErr := herdrcli.ParsePaneGet(out); parseErr == nil {
-				paneID = firstNonEmpty(pane.PaneID, paneID)
-				wsID = firstNonEmpty(pane.WorkspaceID, wsID)
-				tabID = firstNonEmpty(pane.TabID, tabID)
-				termID = firstNonEmpty(pane.TerminalID, termID)
-			}
-		}
-		opts.Tab = tabID
+		newTabResult = "tab_created"
+		opts.Tab = firstNonEmpty(tabID, opts.Tab)
 	}
 
 	// Seed-pane close: --worktree's workspace create leaves a root shell pane
@@ -1741,11 +1717,7 @@ func (r *runner) writeSummary(record spawnRecord, wtInfo *worktreeInfo, isHcomAg
 		fmt.Fprintf(r.stderr, "            after cull the workspace auto-closes (herdr remove no longer applies); then: git worktree remove %s && git branch -D %s\n", wtInfo.CheckoutPath, wtInfo.Branch)
 	}
 	if r.opts.NewTab {
-		if strings.HasPrefix(newTabResult, "move_failed:") {
-			fmt.Fprintf(r.stderr, "  tab:    %s (new-tab move FAILED; agent remains alive in this tab: %s)\n", record.TabID, strings.TrimPrefix(newTabResult, "move_failed: "))
-		} else {
-			fmt.Fprintf(r.stderr, "  tab:    %s (new; agent pane moved, no seed shell)\n", record.TabID)
-		}
+		fmt.Fprintf(r.stderr, "  tab:    %s (new; agent launched in a fresh tab, no seed shell)\n", record.TabID)
 	}
 	if permInjected != "" {
 		fmt.Fprintf(r.stderr, "  perms:  %s (autonomous; pass --safe to opt out)\n", permInjected)
@@ -2052,10 +2024,6 @@ func spawnLabel(role, labelPrefix, short string) string {
 	return prefix + "-" + short
 }
 
-func compactMessage(s string) string {
-	return strings.Join(strings.Fields(s), " ")
-}
-
 // parseWorktreeSource extracts the parent checkout path from `herdr worktree
 // list --cwd … --json` (.result.source) — the directory `worktree create`
 // must be pointed at, since herdr refuses to create from a linked worktree.
@@ -2113,25 +2081,6 @@ func parseWorktreeCreate(out []byte) worktreeCreatePayload {
 		RootPaneID:     envelope.Result.RootPane.PaneID,
 		RootTerminalID: envelope.Result.RootPane.TerminalID,
 	}
-}
-
-type agentStartPayload struct {
-	Agent struct {
-		PaneID      string `json:"pane_id"`
-		WorkspaceID string `json:"workspace_id"`
-		TabID       string `json:"tab_id"`
-		TerminalID  string `json:"terminal_id"`
-		CWD         string `json:"cwd"`
-	} `json:"agent"`
-	Type string `json:"type"`
-}
-
-func parseAgentStart(out []byte) (agentStartPayload, error) {
-	var envelope struct {
-		Result agentStartPayload `json:"result"`
-	}
-	err := json.Unmarshal(out, &envelope)
-	return envelope.Result, err
 }
 
 func registryCapturedName(path, guid string) string {

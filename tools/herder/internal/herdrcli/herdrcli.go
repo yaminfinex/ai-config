@@ -187,19 +187,6 @@ type Tab struct {
 	TabID string `json:"tab_id"`
 }
 
-// AgentStart is `herdr agent start`'s result:
-// {"id":…,"result":{"agent":{…},"argv":[…],"type":"agent_started"}}.
-type AgentStart struct {
-	Agent struct {
-		PaneID      string `json:"pane_id"`
-		WorkspaceID string `json:"workspace_id"`
-		TabID       string `json:"tab_id"`
-		TerminalID  string `json:"terminal_id"`
-	} `json:"agent"`
-	Argv []string `json:"argv"`
-	Type string   `json:"type"`
-}
-
 // ParseAgentList decodes `herdr agent list` output. Like `.result.agents[]?`
 // a missing/null agents array yields no entries without erroring.
 func ParseAgentList(out []byte) ([]Agent, error) {
@@ -335,11 +322,17 @@ func ParseTabCreate(out []byte) (Tab, error) {
 	return envelope.Result.Tab, err
 }
 
-// ParseAgentStart decodes `herdr agent start` output.
-func ParseAgentStart(out []byte) (AgentStart, error) {
+// ParseTabCreateRootPane decodes the pane `herdr tab create` opens the tab
+// around (.result.root_pane). herdr 0.7.5 split pane creation from agent
+// start: `tab create` returns its first pane under root_pane (not the `pane`
+// key that `pane get`/`pane split` use), so the spawner reads coordinates
+// from here. A missing member decodes to the zero Pane.
+func ParseTabCreateRootPane(out []byte) (Pane, error) {
 	var envelope struct {
-		Result AgentStart `json:"result"`
+		Result struct {
+			RootPane Pane `json:"root_pane"`
+		} `json:"result"`
 	}
 	err := json.Unmarshal(out, &envelope)
-	return envelope.Result, err
+	return envelope.Result.RootPane, err
 }

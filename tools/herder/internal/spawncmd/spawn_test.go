@@ -585,7 +585,10 @@ func TestSpawnLabelPrefixReplacement(t *testing.T) {
 	}
 }
 
-func TestNewTabMoveArgsCarryResolvedFocus(t *testing.T) {
+func TestParseArgsResolvesFocusFlag(t *testing.T) {
+	// panelaunch carries opts.FocusFlag verbatim into `tab create`/`pane split`,
+	// so the resolved default (--no-focus) and the explicit override must survive
+	// arg parsing.
 	for _, tc := range []struct {
 		name      string
 		focusArgs []string
@@ -600,10 +603,8 @@ func TestNewTabMoveArgsCarryResolvedFocus(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("parseArgs() code = %d, want 0", code)
 			}
-			got := strings.Join(newTabMoveArgs("pane-1", "worker", opts.FocusFlag), " ")
-			want := "pane move pane-1 --new-tab " + tc.wantFocus + " --label worker"
-			if got != want {
-				t.Fatalf("move args = %q, want %q", got, want)
+			if opts.FocusFlag != tc.wantFocus {
+				t.Fatalf("FocusFlag = %q, want %q", opts.FocusFlag, tc.wantFocus)
 			}
 		})
 	}

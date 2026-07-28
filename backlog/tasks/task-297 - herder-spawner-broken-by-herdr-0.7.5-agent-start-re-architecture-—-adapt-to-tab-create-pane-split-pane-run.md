@@ -3,15 +3,20 @@ id: TASK-297
 title: >-
   herder spawner broken by herdr 0.7.5 agent-start re-architecture — adapt to
   tab-create/pane-split + pane-run
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-28 00:15'
+updated_date: '2026-07-28 01:30'
 labels:
   - herder-herdr-drift
 dependencies: []
 references:
-  - 'tools/herder/internal/lifecyclecmd/lifecycle.go:849'
+  - 'tools/herder/internal/panelaunch/panelaunch.go'
+  - 'tools/herder/internal/spawncmd/spawn.go:1197'
+  - 'tools/herder/internal/lifecyclecmd/lifecycle.go:853'
 modified_files:
+  - tools/herder/internal/panelaunch/panelaunch.go
+  - tools/herder/internal/spawncmd/spawn.go
   - tools/herder/internal/lifecyclecmd/lifecycle.go
   - tools/herder/internal/herdrcli/herdrcli.go
 ordinal: 296500
@@ -41,14 +46,14 @@ GOTCHAS: (1) JSON shape split — tab create=result.root_pane, pane split=result
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 spawn/fork/resume create panes via 'herdr tab create' (new-tab, default) or 'herdr pane split' (split direction), never 'agent start --split'
-- [ ] #2 new-tab path is a single 'tab create --workspace --cwd --label' call with NO separate 'pane move --new-tab'
-- [ ] #3 login-shell wrapper runs via 'herdr pane run <pane> bash -lic <innerCmd>' with env/PATH strategy unchanged
-- [ ] #4 spawner emits an initial 'pane report-agent --state working' after pane run so the seat shows live immediately
-- [ ] #5 herdrcli parses tab-create result.root_pane and pane-split result.pane into pane_info; parseAgentStart callsite updated
-- [ ] #6 workspace placement preserved (tab create --workspace; split path falls back to pane move --new-workspace)
-- [ ] #7 full herder test battery green and updated for the new call shapes
-- [ ] #8 one real live spawn validated end-to-end: herdr agent get shows the spawned agent as working
+- [x] #1 spawn/fork/resume create panes via 'herdr tab create' (new-tab, default) or 'herdr pane split' (split direction), never 'agent start --split'
+- [x] #2 new-tab path is a single 'tab create --workspace --cwd --label' call with NO separate 'pane move --new-tab'
+- [x] #3 login-shell wrapper runs via 'herdr pane run <pane> bash -lic <innerCmd>' with env/PATH strategy unchanged
+- [x] #4 spawner emits an initial 'pane report-agent --state working' after pane run so the seat shows live immediately
+- [x] #5 herdrcli parses tab-create result.root_pane and pane-split result.pane into pane_info; parseAgentStart callsite updated
+- [x] #6 workspace placement preserved (tab create --workspace; split path falls back to pane move --new-workspace)
+- [x] #7 full herder test battery green and updated for the new call shapes
+- [x] #8 one real live spawn validated end-to-end: herdr agent get shows the spawned agent as working
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,4 +66,10 @@ GOTCHAS: (1) JSON shape split — tab create=result.root_pane, pane split=result
 
 <!-- SECTION:NOTES:BEGIN -->
 Characterized live 2026-07-27/28 against herdr 0.7.5: agent start re-arch confirmed; tab create / pane split / pane run / report-agent all exercised on throwaway panes (cleaned up). Recipe proven: tab create -> pane run -> report-agent(-session) yields agent_status=working via 'herdr agent get'. Reporting infra already exists (sidecar.go:1146). Fix is contained to pane-creation half. Owner note: new-tab is the dominant path, not split.
+
+DONE 2026-07-28. SCOPE CORRECTION discovered during implementation: the plan's "single call site" was WRONG — there are TWO live `agent start` sites. `herder spawn` -> spawncmd/spawn.go (the primary, feature-rich spawner: --worktree/--tab/--from-pane/non-login env-form argv), and `herder fork <target>`/`herder resume` -> lifecyclecmd/lifecycle.go:startAndAppend. `herder fork --self` (claude/codex) shells out to `herder spawn`. Both were broken and both are fixed.
+
+Implementation: new shared package tools/herder/internal/panelaunch centralizes the 0.7.5 recipe (create pane -> `pane run <pane> <argv...>` -> `pane report-agent --state working`, then a merge-refresh via `pane get`). createPane: NewTab -> `tab create [--workspace] --cwd --label <focus>` (root_pane) subsuming the old pane-move-to-new-tab; else `pane split <base|--current> --direction <dir> --cwd <focus>` (result.pane), base = explicit --tab's pane (worktree seed tab wins) else --from-pane/HERDR_PANE_ID else --current; split honors --workspace via a follow-up `pane move <pane> --workspace`. herdrcli: added ParseTabCreateRootPane (result.root_pane); retired AgentStart/ParseAgentStart + both local parseAgentStart + both newTabMoveArgs + spawn's compactMessage/agentStartPayload. Both spawn.go and lifecycle.go now call panelaunch.Launch. Source tags: herder:spawn / herder:<mode>.
+
+Gates: full herder battery green + go vet clean; new panelaunch_test.go (8 cases: new-tab-no-move, split anchors, --current fallback, existing-tab wins over caller, workspace move, create/run failure propagation). Live-validated BOTH paths on herdr 0.7.5 via bin/herder: new-tab spawn (fresh tab, no seed shell) and --split down spawn both showed agent_status=working in `herdr agent get` and LIVE=working in `herder list`; both culled clean. Rolled out at this pull. Follow-up (unchanged, not in scope): herdr auto-update will re-break on the next forward-only stable bump — pin/track herdr.
 <!-- SECTION:NOTES:END -->

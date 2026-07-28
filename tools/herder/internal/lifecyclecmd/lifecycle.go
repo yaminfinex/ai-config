@@ -23,6 +23,7 @@ import (
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/observercmd"
 	"ai-config/tools/herder/internal/panecleanup"
+	"ai-config/tools/herder/internal/panelaunch"
 	"ai-config/tools/herder/internal/placement"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
@@ -779,10 +780,6 @@ type startSpec struct {
 	NewTab        bool
 }
 
-func newTabMoveArgs(paneID, label, focusFlag string) []string {
-	return []string{"pane", "move", paneID, "--new-tab", firstNonEmpty(focusFlag, "--no-focus"), "--label", label}
-}
-
 func lifecycleLaunchTokens(herderBin string, spec startSpec, extra []string) []string {
 	tokens := []string{herderBin, "launch", "--" + spec.Mode, spec.Agent, spec.VehicleTarget, "--tag", spec.Role}
 	if spec.Agent == "pi" {
@@ -846,43 +843,28 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	innerCmd := fmt.Sprintf("export HERDER_GUID=%s HERDER_ROLE=%s HERDER_LABEL=%s HERDER_SPAWNED_BY=%s HERDER_BIN=%s AI_CONFIG_ROOT=%s HCOM_DIR=%s PATH=%s%s; exec %s",
 		shellquote.Quote(spec.GUID), shellquote.Quote(spec.Role), shellquote.Quote(spec.Label), shellquote.Quote(spawnedBy), shellquote.Quote(paths.BinHerder), shellquote.Quote(paths.RepoRoot), shellquote.Quote(spec.HcomDir), lifecyclePathExpression(paths.ShimsDir, spec), grokEnv, inner)
 	argv := []string{shell, "-lic", innerCmd}
-	startArgs := []string{"agent", "start", spec.Label, focusFlag, "--split", split, "--cwd", cwd, "--", shell, "-lic", innerCmd}
-	if spec.Workspace != "" {
-		startArgs = []string{"agent", "start", spec.Label, focusFlag, "--split", split, "--workspace", spec.Workspace, "--cwd", cwd, "--", shell, "-lic", innerCmd}
-	}
-	out, rc, _ := r.client().Combined(startArgs...)
-	if rc != 0 {
-		fmt.Fprintf(r.stderr, "herdr agent start failed (mode=%s agent=%s label=%s cwd=%s workspace=%s):\n%s\n", spec.Mode, spec.Agent, spec.Label, cwd, spec.Workspace, strings.TrimRight(string(out), "\n"))
-		return nil, rc
-	}
-	start, err := parseAgentStart(out)
-	if err != nil || start.Agent.PaneID == "" {
-		fmt.Fprintf(r.stderr, "unexpected start payload: %s\n", strings.TrimRight(string(out), "\n"))
+	// herdr 0.7.5 split pane creation from agent start; panelaunch creates the
+	// pane (fresh tab by default, else a split off the caller's pane), runs the
+	// login-shell wrapper in it, and reports the agent working. HERDR_PANE_ID is
+	// the caller's own pane — the deterministic anchor for a split.
+	pane, err := panelaunch.Launch(r.client(), panelaunch.Spec{
+		Label:     spec.Label,
+		CWD:       cwd,
+		Workspace: spec.Workspace,
+		BasePane:  os.Getenv("HERDR_PANE_ID"),
+		Split:     split,
+		NewTab:    spec.NewTab,
+		FocusFlag: focusFlag,
+		Argv:      argv,
+		Source:    "herder:" + spec.Mode,
+	})
+	if err != nil {
+		fmt.Fprintf(r.stderr, "herdr pane launch failed (mode=%s agent=%s label=%s cwd=%s workspace=%s): %s\n", spec.Mode, spec.Agent, spec.Label, cwd, spec.Workspace, err.Error())
+		r.failAfterLaunch("pane launch failed: "+err.Error(), pane.PaneID, pane.TerminalID)
 		return nil, 1
 	}
-	if spec.NewTab {
-		moveOut, moveRC, moveErr := r.client().Combined(newTabMoveArgs(start.Agent.PaneID, spec.Label, focusFlag)...)
-		if moveErr != nil || moveRC != 0 {
-			reason := compactLifecycleMessage(string(moveOut))
-			if moveErr != nil {
-				reason = moveErr.Error()
-			} else if reason == "" {
-				reason = fmt.Sprintf("herdr pane move exited %d", moveRC)
-			}
-			r.failAfterLaunch("fresh-tab placement failed: "+reason, start.Agent.PaneID, start.Agent.TerminalID)
-			return nil, 1
-		}
-		if paneOut, paneRC, paneErr := r.client().Combined("pane", "get", start.Agent.PaneID); paneErr == nil && paneRC == 0 {
-			if pane, parseErr := herdrcli.ParsePaneGet(paneOut); parseErr == nil {
-				start.Agent.PaneID = firstNonEmpty(pane.PaneID, start.Agent.PaneID)
-				start.Agent.TerminalID = firstNonEmpty(pane.TerminalID, start.Agent.TerminalID)
-				start.Agent.WorkspaceID = firstNonEmpty(pane.WorkspaceID, start.Agent.WorkspaceID)
-				start.Agent.CWD = firstNonEmpty(pane.CWD, start.Agent.CWD)
-			}
-		}
-	}
-	spec.Provenance.CWD = firstNonEmpty(start.Agent.CWD, cwd)
-	spec.Provenance.WorkspaceID = start.Agent.WorkspaceID
+	spec.Provenance.CWD = firstNonEmpty(pane.CWD, cwd)
+	spec.Provenance.WorkspaceID = pane.WorkspaceID
 	updates := map[string]any{
 		"guid":            spec.GUID,
 		"short_guid":      spec.Short,
@@ -890,10 +872,10 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 		"role":            spec.Role,
 		"agent":           spec.Agent,
 		"argv":            argv,
-		"pane_id":         start.Agent.PaneID,
-		"terminal_id":     start.Agent.TerminalID,
-		"workspace_id":    start.Agent.WorkspaceID,
-		"cwd":             start.Agent.CWD,
+		"pane_id":         pane.PaneID,
+		"terminal_id":     pane.TerminalID,
+		"workspace_id":    pane.WorkspaceID,
+		"cwd":             pane.CWD,
 		"started_at":      time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		"started_by_pane": firstNonEmpty(os.Getenv("HERDR_PANE_ID"), "unknown"),
 		"hcom_dir":        spec.HcomDir,
@@ -911,54 +893,54 @@ func (r *runner) startAndAppend(spec startSpec) (map[string]any, int) {
 	}
 	row, err := registry.UpdateRawObject(spec.BaseRaw, updates)
 	if err != nil {
-		r.failAfterLaunch("registry row encoding failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
+		r.failAfterLaunch("registry row encoding failed: "+err.Error(), pane.PaneID, pane.TerminalID)
 		return nil, 1
 	}
 	if spec.Agent == "grok" {
-		row, err = r.verifyGrokLifecycleIdentity(row, start.Agent.PaneID, start.Agent.TerminalID, spec)
+		row, err = r.verifyGrokLifecycleIdentity(row, pane.PaneID, pane.TerminalID, spec)
 		if err != nil {
 			if spec.Mode == "fork" {
 				_, _ = grokBridgeCall(filepath.Dir(spec.RegistryPath), spec.GUID, spec.GrokSessionID, "retire")
 			}
-			r.failAfterLaunch(err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
+			r.failAfterLaunch(err.Error(), pane.PaneID, pane.TerminalID)
 			return nil, 1
 		}
 	}
 	candidate, err := registry.SessionEventFromJSON(row, "seated", v2.StateSeated)
 	if err != nil {
-		r.failAfterLaunch("registry row conversion failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID)
+		r.failAfterLaunch("registry row conversion failed: "+err.Error(), pane.PaneID, pane.TerminalID)
 		return nil, 1
 	}
 	outputRow := append([]byte(nil), row...)
-	result, err := r.completeLifecycle(spec, candidate, start.Agent.PaneID, start.Agent.TerminalID)
+	result, err := r.completeLifecycle(spec, candidate, pane.PaneID, pane.TerminalID)
 	if err != nil {
-		r.handleLifecycleCompletionFailure("seat completion failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, spec.Agent, spec.Mode, false)
+		r.handleLifecycleCompletionFailure("seat completion failed: "+err.Error(), pane.PaneID, pane.TerminalID, spec.Agent, spec.Mode, false)
 		return nil, 1
 	}
 	if result.Refusal != nil {
 		reason := fmt.Sprintf("seat completion refused [%s]: %s", result.Refusal.Code, result.Refusal.Cause)
-		r.handleLifecycleCompletionFailure(reason, start.Agent.PaneID, start.Agent.TerminalID, spec.Agent, spec.Mode, false)
+		r.handleLifecycleCompletionFailure(reason, pane.PaneID, pane.TerminalID, spec.Agent, spec.Mode, false)
 		return nil, 1
 	}
 	if result.Status != registry.WriteApplied {
-		r.handleLifecycleCompletionFailure("seat completion wrote no registry row", start.Agent.PaneID, start.Agent.TerminalID, spec.Agent, spec.Mode, false)
+		r.handleLifecycleCompletionFailure("seat completion wrote no registry row", pane.PaneID, pane.TerminalID, spec.Agent, spec.Mode, false)
 		return nil, 1
 	}
 	var completed v2.SessionRecord
 	if err := json.Unmarshal(result.Row, &completed); err != nil {
-		r.handleLifecycleCompletionFailure("seat completion returned an invalid registry row: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, spec.Agent, spec.Mode, true)
+		r.handleLifecycleCompletionFailure("seat completion returned an invalid registry row: "+err.Error(), pane.PaneID, pane.TerminalID, spec.Agent, spec.Mode, true)
 		return nil, 1
 	}
 	if completed.Seat != nil && completed.Seat.HcomName != "" {
 		outputRow, err = registry.UpdateRawObject(outputRow, map[string]any{"hcom_name": completed.Seat.HcomName})
 		if err != nil {
-			r.handleLifecycleCompletionFailure("lifecycle output encoding failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, spec.Agent, spec.Mode, true)
+			r.handleLifecycleCompletionFailure("lifecycle output encoding failed: "+err.Error(), pane.PaneID, pane.TerminalID, spec.Agent, spec.Mode, true)
 			return nil, 1
 		}
 	}
 	if spec.Agent == "grok" {
 		if err = refreshGrokCapabilitiesAfterRegistration(spec.RegistryPath, spec.GUID, spec.GrokSessionID); err != nil {
-			r.handleLifecycleCompletionFailure("Grok capability registration failed: "+err.Error(), start.Agent.PaneID, start.Agent.TerminalID, spec.Agent, spec.Mode, true)
+			r.handleLifecycleCompletionFailure("Grok capability registration failed: "+err.Error(), pane.PaneID, pane.TerminalID, spec.Agent, spec.Mode, true)
 			return nil, 1
 		}
 	}
@@ -1700,28 +1682,6 @@ func permissionArgs(agent string) []string {
 	default:
 		return nil
 	}
-}
-
-func parseAgentStart(out []byte) (struct {
-	Agent struct {
-		PaneID      string `json:"pane_id"`
-		TerminalID  string `json:"terminal_id"`
-		WorkspaceID string `json:"workspace_id"`
-		CWD         string `json:"cwd"`
-	} `json:"agent"`
-}, error) {
-	var envelope struct {
-		Result struct {
-			Agent struct {
-				PaneID      string `json:"pane_id"`
-				TerminalID  string `json:"terminal_id"`
-				WorkspaceID string `json:"workspace_id"`
-				CWD         string `json:"cwd"`
-			} `json:"agent"`
-		} `json:"result"`
-	}
-	err := json.Unmarshal(out, &envelope)
-	return envelope.Result, err
 }
 
 func currentCWD() string {

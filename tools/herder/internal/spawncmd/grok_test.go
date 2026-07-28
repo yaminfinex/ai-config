@@ -97,11 +97,20 @@ func (f *grokSpawnFlowHerdr) Output(args ...string) ([]byte, error) {
 }
 
 func (f *grokSpawnFlowHerdr) Combined(args ...string) ([]byte, int, error) {
-	if len(args) >= 2 && args[0] == "agent" && args[1] == "start" {
+	// herdr 0.7.5: pane creation (tab create / pane split) is separate from the
+	// wrapper run. The Grok identity env now rides the pane run command, so the
+	// onStart inspection fires there.
+	if len(args) >= 2 && args[0] == "tab" && args[1] == "create" {
+		return []byte(`{"result":{"type":"tab_created","root_pane":{"pane_id":"p_new","workspace_id":"w_new","tab_id":"t_new","terminal_id":"term_new","cwd":"/tmp"},"tab":{"tab_id":"t_new"}}}`), 0, nil
+	}
+	if len(args) >= 2 && args[0] == "pane" && args[1] == "split" {
+		return []byte(`{"result":{"type":"pane_info","pane":{"pane_id":"p_new","workspace_id":"w_new","tab_id":"t_new","terminal_id":"term_new","cwd":"/tmp"}}}`), 0, nil
+	}
+	if len(args) >= 3 && args[0] == "pane" && args[1] == "run" {
 		if f.onStart != nil {
 			f.onStart(args)
 		}
-		return []byte(`{"result":{"agent":{"pane_id":"p_new","workspace_id":"w_new","tab_id":"t_new","terminal_id":"term_new","cwd":"/tmp"}}}`), 0, nil
+		return []byte(`{"result":{"type":"ok"}}`), 0, nil
 	}
 	return f.cleanupHerdr.Combined(args...)
 }
