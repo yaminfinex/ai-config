@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"ai-config/tools/herder/internal/shellquote"
 )
 
 // recorder is a scriptable herdr stub that records every Combined call and
@@ -65,11 +67,47 @@ func TestLaunchNewTabUsesTabCreateNotPaneMove(t *testing.T) {
 	if rec.called("pane move") {
 		t.Fatalf("new-tab path must not issue a separate pane move: %v", rec.calls)
 	}
-	if !rec.called("pane run p1 bash -lic exec claude") {
-		t.Fatalf("wrapper not run in the created pane: %v", rec.calls)
+	// pane run gets ONE pre-quoted line (pane run does not execve its COMMAND
+	// vector), with exec so the agent replaces the pane shell.
+	if !rec.called("pane run p1 exec bash -lic " + shellquote.Quote("exec claude")) {
+		t.Fatalf("wrapper not run as a single quoted line: %v", rec.calls)
 	}
 	if !rec.called("pane report-agent p1 --source herder:spawn --agent worker --state working") {
 		t.Fatalf("initial working report not emitted: %v", rec.calls)
+	}
+}
+
+func TestLaunchQuotesMetacharacterScriptAsOneToken(t *testing.T) {
+	var runCall string
+	rec := &recorder{
+		tabCreate: func() ([]byte, int, error) {
+			return []byte(`{"result":{"root_pane":{"pane_id":"p1","terminal_id":"t1"},"tab":{"tab_id":"tab1"}}}`), 0, nil
+		},
+		paneGet: ok,
+	}
+	// The real inner wrapper is full of shell metacharacters; pane run space-
+	// joins its COMMAND vector unquoted, so the whole `-lic` body must arrive as
+	// one already-quoted token or the pane shell re-splits it and breaks.
+	inner := `if [ -d x ]; then export PATH="a:$PATH"; fi; export HERDER_GUID='g 1'; exec claude`
+	if _, err := Launch(rec, Spec{Label: "w", NewTab: true, Argv: []string{"/bin/bash", "-lic", inner}}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	for _, c := range rec.calls {
+		if strings.HasPrefix(c, "pane run p1 ") {
+			runCall = strings.TrimPrefix(c, "pane run p1 ")
+		}
+	}
+	// The wire form is `exec /bin/bash -lic <one-shell-quoted-inner>`: three
+	// fixed leading words then the ENTIRE inner as a single quoted token, so the
+	// pane shell hands the whole `-lic` body to bash as one argument.
+	want := "exec /bin/bash -lic " + shellquote.Quote(inner)
+	if runCall != want {
+		t.Fatalf("run line = %q, want %q", runCall, want)
+	}
+	// Guard the actual bug: no raw (unescaped) metacharacter run may survive in
+	// the quoted token, or the pane shell would re-split/short-circuit it.
+	if strings.Contains(runCall, "; then ") || strings.Contains(runCall, "'g 1'") {
+		t.Fatalf("metacharacters left unescaped in run line: %q", runCall)
 	}
 }
 

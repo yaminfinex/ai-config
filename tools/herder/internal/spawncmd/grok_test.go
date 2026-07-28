@@ -116,12 +116,19 @@ func (f *grokSpawnFlowHerdr) Combined(args ...string) ([]byte, int, error) {
 }
 
 func flowArg(args []string, prefix string) string {
-	for _, arg := range args {
-		if value, ok := strings.CutPrefix(arg, prefix); ok {
-			return value
-		}
+	// herdr 0.7.5's pane run carries the whole wrapper as one space-joined line
+	// token, so KEY=VALUE env assignments live INSIDE a token rather than being
+	// their own argv entries — scan the joined command for the assignment.
+	joined := strings.Join(args, " ")
+	idx := strings.Index(joined, prefix)
+	if idx < 0 {
+		return ""
 	}
-	return ""
+	rest := joined[idx+len(prefix):]
+	if sp := strings.IndexByte(rest, ' '); sp >= 0 {
+		return rest[:sp]
+	}
+	return rest
 }
 
 func grokFlowRunner(t *testing.T, client herdrClient, state string) (*runner, *bytes.Buffer, *bytes.Buffer) {

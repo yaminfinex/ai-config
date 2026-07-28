@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/shellquote"
 )
 
 // Client is the slice of the herdr CLI this package drives. Both spawners'
@@ -45,8 +46,7 @@ func Launch(c Client, spec Spec) (herdrcli.Pane, error) {
 	if pane.PaneID == "" {
 		return pane, fmt.Errorf("herdr pane creation returned no pane id")
 	}
-	runArgs := append([]string{"pane", "run", pane.PaneID}, spec.Argv...)
-	if out, rc, runErr := c.Combined(runArgs...); runErr != nil || rc != 0 {
+	if out, rc, runErr := c.Combined("pane", "run", pane.PaneID, runLine(spec.Argv)); runErr != nil || rc != 0 {
 		return pane, fmt.Errorf("herdr pane run exited %d: %s", rc, compact(out, runErr))
 	}
 	// Report the agent working immediately so the seat shows live without
@@ -161,6 +161,22 @@ func refresh(c Client, pane herdrcli.Pane) herdrcli.Pane {
 	pane.TabID = firstNonEmpty(got.TabID, pane.TabID)
 	pane.CWD = firstNonEmpty(got.CWD, pane.CWD)
 	return pane
+}
+
+// runLine renders argv into ONE shell line for `herdr pane run`. Under 0.7.5
+// pane run does not execve its COMMAND vector — it space-joins the tokens with
+// no re-quoting and feeds the result to the pane's interactive shell. Passing
+// `bash -lic <script>` as separate tokens therefore lets the shell re-split the
+// script on its own spaces/metacharacters (the `-lic` body loses its quoting,
+// breaking on the first `;`/`then`). So we quote every token ourselves and hand
+// pane run a single already-valid line; `exec` replaces the pane's shell with
+// the agent, matching the pre-0.7.5 `agent start -- …` process model.
+func runLine(argv []string) string {
+	quoted := make([]string, len(argv))
+	for i, a := range argv {
+		quoted[i] = shellquote.Quote(a)
+	}
+	return "exec " + strings.Join(quoted, " ")
 }
 
 func focus(flag string) string {
