@@ -33,6 +33,20 @@ func TestDerivedContinuationSenderDeliversWithExactReceipt(t *testing.T) {
 	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	const processID = "fixture-recipient"
+	// hcom 0.7.24 fail-closes sessionstart for unknown actors (fix(claude) #99:
+	// identity rows are created by `hcom start`/launch, no longer inferred from
+	// a bare hook call — a bare sessionstart now exits 0 with NO bootstrap).
+	// Prime the recipient row the way live launches do. On a fresh HOME the
+	// first start installs hooks and asks to be re-run, so run it twice and
+	// require the second to yield the identity.
+	prime := exec.Command(bin, "start")
+	prime.Env = compactThenHcomEnv(busDir, home, processID)
+	_ = prime.Run()
+	prime = exec.Command(bin, "start")
+	prime.Env = compactThenHcomEnv(busDir, home, processID)
+	if primeOut, err := prime.CombinedOutput(); err != nil {
+		t.Fatalf("hcom start (identity prime): %v: %s", err, primeOut)
+	}
 	startPayload := `{"session_id":"fixture-session","transcript_path":"/tmp/fixture.jsonl","cwd":"/tmp","hook_event_name":"SessionStart","source":"startup"}`
 	start := exec.Command(bin, "sessionstart")
 	start.Env = compactThenHcomEnv(busDir, home, processID)

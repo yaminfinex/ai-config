@@ -1,0 +1,24 @@
+=== STDERR ===
+herder spawn: pane launch failed: herdr pane move --workspace exited 5: {   "error": {     "code": "pane_move_failed",     "message": "mock pane move failure"   } }; launched pane cleanup confirmed: pane close confirmed
+=== STDOUT ===
+
+=== EXIT ===
+1
+=== PANE CREATE ARGV ===
+pane
+split
+p_orch
+--direction
+down
+--cwd
+/mock/other
+--no-focus
+=== PANE RUN LINE ===
+=== HERDR MUTATING CALLS ===
+pane split p_orch
+pane move p_50 --workspace ws_2 --no-focus
+pane close p_50
+=== HCOM DIR ===
+=== REGISTRY ===
+=== HCOM SEND ARGV ===
+=== HCOM EVENTS ARGV ===

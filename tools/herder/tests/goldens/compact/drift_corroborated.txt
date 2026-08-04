@@ -6,5 +6,5 @@ herder compact: submitted — "/compact focus on the open unit, keep gate comman
 === EXIT ===
 0
 === HERDR MUTATING CALLS ===
-agent send w1-5 /compact focus on the open unit, keep gate commands and thread names
+pane send-text w1-5 /compact focus on the open unit, keep gate commands and thread names
 pane send-keys w1-5 Enter

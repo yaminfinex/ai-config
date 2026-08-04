@@ -4,7 +4,8 @@ herder spawn: refused — initial prompt sender identity is not verified: the sp
 
 === EXIT ===
 2
-=== AGENT START ARGV ===
+=== PANE CREATE ARGV ===
+=== PANE RUN LINE ===
 === HERDR MUTATING CALLS ===
 === HCOM DIR ===
 === REGISTRY ===

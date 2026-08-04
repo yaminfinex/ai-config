@@ -6,5 +6,5 @@ herder compact: --then NOT armed — the /compact paste was not verified, so no 
 === EXIT ===
 1
 === HERDR MUTATING CALLS ===
-agent send w1-2 /compact focus on the open unit, keep gate commands and thread names
+pane send-text w1-2 /compact focus on the open unit, keep gate commands and thread names
 pane send-keys w1-2 Enter

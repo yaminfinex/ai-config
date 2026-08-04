@@ -56,7 +56,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		paneID = opts.target
 	}
 
-	waitRC, err := client.Run("wait", "agent-status", paneID, "--status", opts.status, "--timeout", opts.timeoutMS)
+	// herdr 0.8.0 retired the top-level `wait agent-status` verb; `agent wait
+	// --until` is the same single-state match with the same timeout semantics.
+	waitRC, err := client.Run("agent", "wait", paneID, "--until", opts.status, "--timeout", opts.timeoutMS)
 	if err != nil {
 		waitRC = 1
 	}

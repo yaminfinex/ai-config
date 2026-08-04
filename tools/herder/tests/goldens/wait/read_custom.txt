@@ -11,5 +11,5 @@
 === EXIT ===
 0
 === HERDR CALLS ===
-wait agent-status p_10 --status idle --timeout 60000
+agent wait p_10 --until idle --timeout 60000
 pane read p_10 --source visible --lines 5

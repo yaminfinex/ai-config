@@ -423,7 +423,9 @@ func loadHerdrStateSocket(hctx *herdrContext, source string) herdrState {
 
 func loadHerdrStateCLI(source string) herdrState {
 	client := &herdrcli.Client{}
-	out, err := client.Output("session", "snapshot")
+	// herdr 0.8.0 moved the CLI snapshot from `session snapshot` to `api
+	// snapshot`; the envelope ({"result":{"snapshot":{...}}}) is unchanged.
+	out, err := client.Output("api", "snapshot")
 	if err != nil {
 		return herdrState{source: source, err: fmt.Errorf("herdr CLI session.snapshot unavailable")}
 	}

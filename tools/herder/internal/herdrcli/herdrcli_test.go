@@ -61,7 +61,7 @@ func TestCombinedInterleavesAndReportsExitCode(t *testing.T) {
 
 func TestRunReturnsExitCodeOnly(t *testing.T) {
 	c := &Client{Bin: fakeHerdr(t, `exit 1`)}
-	code, err := c.Run("wait", "agent-status", "p_1")
+	code, err := c.Run("agent", "wait", "p_1")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,24 +4,22 @@ herder spawn: seat completion refused [joined_bus_row_missing]: no joined bus ro
 
 === EXIT ===
 1
-=== AGENT START ARGV ===
-agent
-start
-quote;$`&<>("* )-<SHORT>
---no-focus
---split
-right
+=== PANE CREATE ARGV ===
+tab
+create
 --workspace
 ws_1
 --cwd
 /mock/cwd
---
-/bin/zsh
--lic
-if [ -d "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" ]; then export PATH="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=quote\;\$\`\&\<\>\(\"\*\ \)-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HERDER_STATE_DIR=<CASE>/state HCOM_DIR=<CASE>/home/.hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch claude --tag worker --dangerously-skip-permissions
+--label
+quote;$`&<>("* )-<SHORT>
+--no-focus
+=== PANE RUN LINE ===
+exec /bin/zsh -lic if\ \[\ -d\ \"\$\{MISE_DATA_DIR:-\$HOME/.local/share/mise\}/shims\"\ \]\;\ then\ export\ PATH=\"\$\{MISE_DATA_DIR:-\$HOME/.local/share/mise\}/shims:\$PATH\"\;\ fi\;\ export\ HERDER_GUID=<GUID>\ HERDER_ROLE=worker\ HERDER_LABEL=quote\\\;\\\$\\\`\\\&\\\<\\\>\\\(\\\"\\\*\\\ \\\)-<SHORT>\ HERDER_SPAWNED_BY=user\ HERDER_BIN=<REPO>/bin/herder\ AI_CONFIG_ROOT=<REPO>\ HERDER_STATE_DIR=<CASE>/state\ HCOM_DIR=<CASE>/home/.hcom\ PATH=<REPO>/tools/herder/shims:\$PATH\;\ exec\ <REPO>/bin/herder\ launch\ claude\ --tag\ worker\ --dangerously-skip-permissions
 === HERDR MUTATING CALLS ===
-agent start quote;$`&<>("* )-<SHORT>
-pane move p_50 --new-tab --no-focus --label quote;$`&<>("* )-<SHORT>
+tab create
+pane run p_50
+pane report-agent p_50 --source herder:spawn --agent quote;$`&<>("* )-<SHORT> --state working
 === HCOM DIR ===
 <CASE>/home/.hcom
 === REGISTRY ===

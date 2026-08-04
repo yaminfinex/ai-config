@@ -6,7 +6,7 @@
 #   herdr pane list
 #   herdr agent list
 #   herdr agent read <pane> [flags...]
-#   herdr agent send <pane> <message>
+#   herdr pane send-text <pane> <message>   (0.8.0: agent send retired)
 #   herdr pane send-keys <pane> Enter
 #
 # Behaviour is driven by two env vars (set by the harness):
@@ -132,7 +132,8 @@ case "${1:-}" in
           emit_read "$(current_text)"
         fi;;
       send)
-        # herdr agent send <pane> <message>
+        # retired herdr agent send (0.8.0) — kept as a tripwire: nothing
+        # in current herder should reach this subcase
         printf '%s' "${4:-}" > "$STATE/msg"
         : > "$STATE/send"
         printf '{"result":{"ok":true}}\n';;

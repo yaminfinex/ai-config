@@ -25,8 +25,9 @@ set -euo pipefail
 STATE="${MOCK_HERDR_STATE:?}"
 case "${1:-} ${2:-}" in
   "status server")
-    printf 'status: running\nversion: mock\nprotocol: %s\ncompatible: %s\nsocket: %s/herdr.sock\n' "${MOCK_HERDR_PROTOCOL:-16}" "${MOCK_HERDR_COMPATIBLE:-yes}" "$STATE";;
-  "session snapshot")
+    printf 'status: running\nversion: mock\nprotocol: %s\ncompatible: %s\nsocket: %s/herdr.sock\n' "${MOCK_HERDR_PROTOCOL:-19}" "${MOCK_HERDR_COMPATIBLE:-yes}" "$STATE";;
+  "api snapshot")
+    # 0.8.0 moved the CLI snapshot from `session snapshot` to `api snapshot`.
     cat "$STATE/snapshot.json";;
   "pane process_info")
     id="${3:-}"
@@ -133,7 +134,7 @@ def response(req):
     method = req.get("method")
     params = req.get("params") or {}
     if method == "session.snapshot":
-        snap = load_json(os.path.join(state, "snapshot.json"), {"result": {"type": "session_snapshot", "snapshot": {"protocol": 16, "version": "mock", "panes": [], "agents": []}}})
+        snap = load_json(os.path.join(state, "snapshot.json"), {"result": {"type": "session_snapshot", "snapshot": {"protocol": 19, "version": "mock", "panes": [], "agents": []}}})
         return {"id": mid, "result": snap.get("result", snap)}
     if method == "pane.process_info":
         pane_id = params.get("pane_id") or ""
@@ -214,7 +215,7 @@ process_row() {
 }
 
 snapshot() {
-  jq -cn --argjson panes "$1" --argjson agents "$2" '{result:{type:"session_snapshot",snapshot:{protocol:16,version:"mock",panes:$panes,agents:$agents}}}' >"$HDR/snapshot.json"
+  jq -cn --argjson panes "$1" --argjson agents "$2" '{result:{type:"session_snapshot",snapshot:{protocol:19,version:"mock",panes:$panes,agents:$agents}}}' >"$HDR/snapshot.json"
 }
 
 proc_empty() {
@@ -222,7 +223,7 @@ proc_empty() {
 }
 
 run_herder() {
-  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" MOCK_HERDR_PROTOCOL="${MOCK_HERDR_PROTOCOL:-16}" MOCK_HERDR_COMPATIBLE="${MOCK_HERDR_COMPATIBLE:-yes}" HERDER_OBSERVER_ALLOW_CLI_FALLBACK="${HERDER_OBSERVER_ALLOW_CLI_FALLBACK:-}" GOTOOLCHAIN=local "$@"
+  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" MOCK_HERDR_PROTOCOL="${MOCK_HERDR_PROTOCOL:-19}" MOCK_HERDR_COMPATIBLE="${MOCK_HERDR_COMPATIBLE:-yes}" HERDER_OBSERVER_ALLOW_CLI_FALLBACK="${HERDER_OBSERVER_ALLOW_CLI_FALLBACK:-}" GOTOOLCHAIN=local "$@"
 }
 
 run_sweep_json() {
@@ -633,10 +634,12 @@ tnudge_autostart() {
 $node_row
 JSONL
   snapshot '[]' '[]'
-  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local HERDR_ENV=1 HERDR_PANE_ID=p_self "${HERDER[@]}" enroll --label nudged >/tmp/nudge-default.out 2>"$CASE/nudge-default.err"
+  # Outputs live under $CASE, not /tmp — shared-box /tmp can hold another
+  # user's leftover file of the same name (live-hit: Permission denied).
+  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local HERDR_ENV=1 HERDR_PANE_ID=p_self "${HERDER[@]}" enroll --label nudged >"$CASE/nudge-default.out" 2>"$CASE/nudge-default.err"
   [[ ! -f "$STATE/observer.lock" ]] && pass "nudge default off" || fail_case "nudge default off" "observer.lock exists"
   printf '[{"name":"nudged-bus","session_id":"sid-nudge","joined":true,"launch_context":{"pane_id":"p_self"}}]\n' >"$HCOM/hcom.jsonl"
-  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-nudge2 HCOM_SESSION_ID=sid-nudge HERDER_OBSERVER_AUTOSTART=1 "${HERDER[@]}" enroll --label nudged2 >/tmp/nudge-on.out 2>"$CASE/nudge-on.err"
+  env -i PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$STATE" MOCK_HERDR_STATE="$HDR" MOCK_HCOM_STATE="$HCOM" GOTOOLCHAIN=local HERDR_ENV=1 HERDR_PANE_ID=p_self HERDER_GUID=guid-nudge2 HCOM_SESSION_ID=sid-nudge HERDER_OBSERVER_AUTOSTART=1 "${HERDER[@]}" enroll --label nudged2 >"$CASE/nudge-on.out" 2>"$CASE/nudge-on.err"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     [[ -f "$STATE/observer.lock" ]] && break
     sleep 0.2

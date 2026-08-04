@@ -6,5 +6,5 @@ herder compact: --then armed (dry-run) — after this turn ends, sender herder-c
 === EXIT ===
 0
 === HERDR MUTATING CALLS ===
-agent send w1-2 /compact focus on the open unit, keep gate commands and thread names
+pane send-text w1-2 /compact focus on the open unit, keep gate commands and thread names
 pane send-keys w1-2 Enter

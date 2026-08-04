@@ -359,9 +359,10 @@ if [[ "$WRITE" -eq 0 ]]; then
   [[ -z "$hits" ]] && ok "grep-gate: bootpaste.go exports nothing" \
     || bad "grep-gate: bootpaste.go exports nothing" "$hits"
 
-  # 3. The keystroke verbs (herdr agent send / pane send-keys) appear in no Go
-  #    package other than spawncmd — nobody quietly rebuilt a transport.
-  hits="$(grep -rn '"send-keys"\|"agent", "send"' "$GO_SRC/internal" --include='*.go' | grep -v "internal/spawncmd/" || true)"
+  # 3. The keystroke verbs (herdr pane send-text / pane send-keys — plus the
+  #    retired agent send) appear in no Go package other than spawncmd —
+  #    nobody quietly rebuilt a transport.
+  hits="$(grep -rn '"send-keys"\|"send-text"\|"agent", "send"' "$GO_SRC/internal" --include='*.go' | grep -v "internal/spawncmd/" || true)"
   [[ -z "$hits" ]] && ok "grep-gate: keystroke verbs confined to internal/spawncmd" \
     || bad "grep-gate: keystroke verbs confined to internal/spawncmd" "$hits"
 

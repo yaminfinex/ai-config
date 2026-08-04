@@ -277,8 +277,8 @@ import sys
 with open(sys.argv[1]) as f:
     schema = json.load(f)
 
-if schema.get("protocol") != 16:
-    raise SystemExit("schema protocol is not 16")
+if schema.get("protocol") != 19:
+    raise SystemExit("schema protocol is not 19")
 
 request = schema.get("schemas", {}).get("request", {})
 defs = request.get("$defs", {})
@@ -370,8 +370,8 @@ except json.JSONDecodeError:
                 pass
         elif key.strip() == "compatible":
             compatible = value.strip().lower()
-if protocol != 16:
-    print(f"herdr status server reported protocol {protocol!r}, expected 16", file=sys.stderr)
+if protocol != 19:
+    print(f"herdr status server reported protocol {protocol!r}, expected 19", file=sys.stderr)
     sys.exit(2)
 if compatible not in (True, "yes"):
     print(f"herdr status server reported incompatible status {compatible!r}", file=sys.stderr)
@@ -580,7 +580,7 @@ check_herdr_socket_snapshot() {
 }
 
 check_snapshot_negative_demo() {
-  local flat='{"id":"negative-demo","result":{"type":"session_snapshot","protocol":16,"panes":[],"agents":[]}}'
+  local flat='{"id":"negative-demo","result":{"type":"session_snapshot","protocol":19,"panes":[],"agents":[]}}'
   if assert_snapshot_response <<<"$flat" >/dev/null 2>&1; then
     fail "negative demo: flat session.snapshot is rejected" "flat-serving response passed nested-shape assertion"
   else

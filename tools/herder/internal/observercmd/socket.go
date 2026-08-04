@@ -17,7 +17,12 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 )
 
-const supportedHerdrProtocol = 16
+// herdr 0.8.0 reports protocol 19. The 16→19 drift was audited at the bump
+// (2026-08-04): every surface the observer drives is unchanged — the
+// subscription request/ack shapes, the pane.* subscription variants, and the
+// session.snapshot envelope; the only removed API method is agent.send
+// (herder now uses pane send-text). See the live-contract schema golden.
+const supportedHerdrProtocol = 19
 
 type socketStatus struct {
 	socket     string

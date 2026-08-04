@@ -10,7 +10,7 @@
 #   resolution — guid/label → the agent's CURRENT pane via durable terminal_id
 #                (drift-proof); raw pane ids verbatim; observation-gap targets
 #                error out before any wait call.
-#   argv       — the exact `herdr wait agent-status <pane> --status S --timeout MS`
+#   argv       — the exact `herdr agent wait <pane> --until S --timeout MS`
 #                and `herdr pane read <pane> --source S --lines N` invocations
 #                (recorded by the mock and diffed as golden sections).
 #   output     — stderr messages, --read passthrough, and exit codes (1 on
@@ -51,7 +51,7 @@ trap 'rm -rf "$ROOT"' EXIT
 # term_BBB live but re-keyed to p_99 (stored p_20 — resolution must follow the
 # terminal); term_CCC absent without epoch proof (observation gap). Scenarios:
 #   MOCK_WAIT_SCENARIO  normal | emptylist (pane list has zero panes) | closed_after_wait
-#   MOCK_WAIT_RC        exit code for `herdr wait agent-status` (0 ok, 1 timeout)
+#   MOCK_WAIT_RC        exit code for `herdr agent wait` (0 ok, 1 timeout)
 # Every wait/read invocation appends its argv to $MOCK_PROBE_DIR.
 cat > "$MOCKBIN/herdr" <<'MOCK_HERDR'
 #!/usr/bin/env bash
@@ -90,9 +90,11 @@ case "${1:-} ${2:-}" in
       jq -n '{result:{agent:{}}}'
     fi
     ;;
-  "wait agent-status")
+  "agent wait")
+    # 0.8.0 wire: top-level `wait agent-status --status` became
+    # `agent wait --until` (same single-state match + timeout).
     shift 2
-    printf 'wait agent-status %s\n' "$*" >>"$MOCK_PROBE_DIR/wait_argv"
+    printf 'agent wait %s\n' "$*" >>"$MOCK_PROBE_DIR/wait_argv"
     exit "${MOCK_WAIT_RC:-0}"
     ;;
   "pane read")

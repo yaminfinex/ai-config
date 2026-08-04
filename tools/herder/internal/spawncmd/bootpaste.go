@@ -141,7 +141,10 @@ func (b *bootPaster) paste(paneID, message string) pasteResult {
 			}
 		}
 		sendAttempts++
-		if rc, err := b.client().Run("agent", "send", paneID, message); err != nil || rc != 0 {
+		// herdr 0.8.0 retired `agent send`; `pane send-text` is the same
+		// paste-without-submit (probed live 2026-08-04: text sits on the
+		// composer line until the separate Enter leg below submits it).
+		if rc, err := b.client().Run("pane", "send-text", paneID, message); err != nil || rc != 0 {
 			b.sleep(400 * time.Millisecond)
 			continue
 		}

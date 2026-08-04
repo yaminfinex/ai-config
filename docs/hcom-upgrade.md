@@ -6,9 +6,10 @@ Written after the 0.7.22 → 0.7.23 upgrade (2026-07-08); shaped by what actuall
 ## Ownership model — read this first
 
 - **mise owns hcom on this machine.** The pin lives in the repo at `lib/mise-path.sh`
-  (single version string) and is materialized into `~/.config/mise/conf.d/ai-config.toml`
-  by `bin/ai-setup --shims install`. A test golden pins the same version:
-  `tools/herder/tests/check-mise-path-install.sh`.
+  (`mise_hcom_version` — the single source of truth) and is materialized into
+  `~/.config/mise/conf.d/ai-config.toml` by `bin/ai-setup --shims install`. The test
+  battery (`check-mise-path-install`, `check-grok-doctor`, `check-grok-transport`)
+  **sources that file and derives the version** — no test hardcodes it, so a bump is one edit.
 - **Never upgrade via `hcom update`, the curl installer, brew, or uv here.** They install a
   second binary (typically `~/.local/bin/hcom`) that either shadows or is shadowed by the
   mise install depending on PATH order — you get a machine where `hcom --version` disagrees
@@ -30,9 +31,9 @@ Written after the 0.7.22 → 0.7.23 upgrade (2026-07-08); shaped by what actuall
    Verdict: upgrade-now / upgrade-with-changes / hold.
 2. **Land any required herder changes first** (0.7.23 needed the quote-agnostic reTag,
    TASK-040). Merge them to main before touching the machine.
-3. **Bump the pin in the repo** — `lib/mise-path.sh` and the golden in
-   `check-mise-path-install.sh`. Run the full gate (go vet/test herder+bottle + the
-   `check-*.sh` battery). Commit.
+3. **Bump the pin in the repo** — edit `mise_hcom_version` in `lib/mise-path.sh` and
+   nothing else (the battery derives the version from it). Run the full gate (go vet/test
+   herder+bottle + the `check-*.sh` battery). Commit.
 4. **Apply to the machine:** `bin/ai-setup --shims install`
    (regenerates conf.d + `mise install`s the new version).
 5. **Remove every stale/stray install** — this is the step that bites:
@@ -55,6 +56,15 @@ Written after the 0.7.22 → 0.7.23 upgrade (2026-07-08); shaped by what actuall
 8. **Record it:** task notes on the board + the run journal if a run is live.
 
 ## Known gotchas
+
+- **0.7.24 fail-closes bare `sessionstart` for unknown actors** (upstream #99: actor-first
+  routing; identity rows come from `hcom start`/launch, never inferred from a hook call).
+  A bare `hcom sessionstart` with a made-up `HCOM_PROCESS_ID` now exits 0 with NO
+  bootstrap output — silently. Live herder flows are safe (launch goes through
+  `hcom <tool> --run-here`, which creates the row), but any fixture or probe that
+  fabricated identity via bare sessionstart must prime with `hcom start` first
+  (`compactthen_wire_test.go` was the live hit; the step-1 audit must include the
+  spawncmd/send wire tests, not just the delivery-driver and grok suites).
 
 - **Running sessions keep their old PATH — and this breaks INBOUND delivery, not just CLI
   calls.** A session started before the upgrade may have the OLD versioned mise install dir

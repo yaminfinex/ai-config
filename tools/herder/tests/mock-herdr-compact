@@ -8,7 +8,7 @@
 #   herdr pane get <pane>
 #   herdr agent list
 #   herdr agent read <pane> [--source ...] [--lines N]
-#   herdr agent send <pane> <message>
+#   herdr pane send-text <pane> <message>   (0.8.0: agent send retired)
 #   herdr pane send-keys <pane> Enter
 #
 # Behaviour is driven by env vars (set by the harness):
@@ -181,7 +181,9 @@ case "${1:-} ${2:-}" in
   "agent read")
     src="$(read_source "$@")"
     jq -n --arg t "$(read_text "$src")" '{result:{read:{text:$t}}}';;
-  "agent send")
+  "pane send-text")
+    # 0.8.0 wire: `agent send` retired; send-text is the paste-without-submit
+    # leg (Enter rides pane send-keys separately).
     log_call "$@"
     printf '%s' "${4:-}" >"$STATE/msg"
     : > "$STATE/send"

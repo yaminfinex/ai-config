@@ -34,13 +34,25 @@ case "${1:-} ${2:-}" in
     else
       jq -n '{result:{agents:[]}}'
     fi;;
-  "agent start")
+  "tab create")
+    # 0.7.5+ wire: pane creation is its own call (agent start no longer creates
+    # panes — internal/panelaunch). herdr_start_argv keeps its name: it records
+    # the pane-launch wire, whichever verb carries it.
     printf '%s\n' "$*" >>"$PROBE/herdr_start_argv"
 		ws="ws_child"; prev=""
 		for arg in "$@"; do [[ "$prev" == "--workspace" ]] && ws="$arg"; prev="$arg"; done
 		printf '%s' "$ws" >"$PROBE/agent_workspace"
+		jq -n --arg ws "$ws" '{result:{tab:{tab_id:"tab_new", workspace_id:$ws}, root_pane:{pane_id:"p_child", terminal_id:"term_CHILD", workspace_id:$ws, tab_id:"tab_new", cwd:"/mock/cwd"}}}';;
+  "pane split")
+    # A split inherits the base pane's workspace (p_self @ ws_self); panelaunch
+    # follows up with pane move --workspace when the spec wants another one.
+    printf '%s\n' "$*" >>"$PROBE/herdr_start_argv"
+		printf '%s' "ws_self" >"$PROBE/agent_workspace"
+		jq -n '{result:{pane:{pane_id:"p_child", terminal_id:"term_CHILD", workspace_id:"ws_self", tab_id:"tab_self", cwd:"/mock/cwd"}}}';;
+  "pane run")
+    printf '%s\n' "${4:-}" >>"$PROBE/herdr_run_line"
     # TASK-017: stand in for the sidecar's registry bind — a beat after the
-    # pane starts, append an enrichment row carrying the new bus name so the
+    # wrapper starts, append an enrichment row carrying the new bus name so the
     # fork addendum poll finds it (real sidecars bind seconds after boot).
     if [[ -n "${MOCK_BIND_NAME:-}" ]]; then
       guid="$(sed -n 's/.*HERDER_GUID=\([^ ]*\).*/\1/p' <<<"$*")"
@@ -49,9 +61,13 @@ case "${1:-} ${2:-}" in
           "$guid" "${guid:0:8}" "$MOCK_BIND_NAME" >>"${HERDER_STATE_DIR:?}/registry.jsonl"
       ) >/dev/null 2>&1 &
     fi
-		jq -n --arg ws "$ws" '{result:{agent:{pane_id:"p_child", terminal_id:"term_CHILD", workspace_id:$ws, cwd:"/mock/cwd"}}}';;
+    printf '{"result":{"ok":true}}\n';;
+  "pane report-agent")
+    printf '{"result":{"ok":true}}\n';;
 	"pane move")
 		printf '%s\n' "$*" >>"$PROBE/herdr_move_argv"
+		prev=""
+		for arg in "$@"; do [[ "$prev" == "--workspace" ]] && printf '%s' "$arg" >"$PROBE/agent_workspace"; prev="$arg"; done
 		jq -n '{result:{type:"pane_moved"}}';;
   "pane get")
     # fork --self resolves the current pane's cwd from here (foreground_cwd first).
@@ -236,6 +252,12 @@ block_for() {
     "$(cat "$CASE/probe/herdr_start_argv" 2>/dev/null)" \
     "$(cat "$CASE/probe/herdr_move_argv" 2>/dev/null)" \
     "$(cat "$CASE/state/registry.jsonl" 2>/dev/null)")"
+  # The pane run wrapper line (0.7.5 wire) pins login-shell wrapping + env
+  # exports; section absent on cases that never reach the wire so their goldens
+  # stay byte-identical (same pattern as the codex addendum below).
+  if [[ -f "$CASE/probe/herdr_run_line" ]]; then
+    block+="$(printf '\n=== HERDR RUN LINE ===\n%s' "$(cat "$CASE/probe/herdr_run_line")")"
+  fi
   # TASK-017: codex cases capture the addendum send verbatim (pins doctrine
   # content at the delivery surface); section absent on non-codex cases so
   # their goldens stay byte-identical.

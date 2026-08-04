@@ -10,6 +10,10 @@ set -uo pipefail
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$TESTS_DIR/../../.." && pwd -P)"
 AI_DOCTOR="$REPO/bin/ai-doctor"
+# Derive the managed hcom pin from its single source of truth (lib/mise-path.sh).
+source "$REPO/lib/mise-path.sh"
+HCOM_TOOL="$(mise_hcom_tool)"
+HCOM_VERSION="$(mise_hcom_version)"
 toolchain_fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
@@ -65,7 +69,7 @@ cat > "$XDG_CONFIG/mise/conf.d/ai-config.toml" <<EOF
 [env]
 _.path = ["$REPO/bin", "$REPO/tools/herder/shims"]
 [tools]
-"github:aannoo/hcom" = "0.7.23"
+"$HCOM_TOOL" = "$HCOM_VERSION"
 EOF
 
 PATH_VALUE="$GO_BIN:$REPO/bin:$REPO/tools/herder/shims:$VENDORBIN:$MOCKBIN:/usr/bin:/bin"

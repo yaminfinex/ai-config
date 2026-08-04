@@ -5,17 +5,20 @@
 #
 # Drives the FULL spawn path against hermetic mocks (mock-herdr-spawn +
 # mock-hcom-spawn; no live session, no live bus), covering:
-#   argv        — the exact `herdr agent start` argv: login-shell wrapping
-#                 ($SHELL -lic 'export HERDER_*…; exec …'), --no-login-shell env
-#                 form, herder launch routing with the role as --tag, global
-#                 HCOM_DIR pinning, HERDER_BIN export.
+#   argv        — the exact pane-creation argv (`herdr tab create` / `pane
+#                 split`, the 0.7.5+ wire) plus the single pre-quoted `pane run`
+#                 wrapper line: login-shell wrapping (exec $SHELL -lic 'export
+#                 HERDER_*…; exec …'), --no-login-shell env form, herder launch
+#                 routing with the role as --tag, global HCOM_DIR pinning,
+#                 HERDER_BIN export.
 #   permissions — per-agent autonomous-mode flag injection (claude/codex),
 #                 suppression under --safe or an explicit caller perm flag.
 #   readiness   — trust-modal clearing (Enter) vs --safe refusal; the
 #                 status+stable ready reason.
-#   new-tab     — normal split launch followed by `pane move --new-tab`,
-#                 fail-soft move errors, and unconditional pane coordinate
-#                 re-fetch before registry write.
+#   placement   — fresh-tab default via one `tab create` (no follow-up move),
+#                 --split via `pane split` off the caller's pane, the split-path
+#                 `pane move --workspace` fallback (and its failure), and
+#                 unconditional pane coordinate re-fetch before registry write.
 #   delivery    — bus-first initial prompts (TASK-032): bind-wait (bus-name
 #                 capture is the delivery gate) → in-process hcom send with the
 #                 full prompt (multiline included; no codex brief staging) →
@@ -145,7 +148,8 @@ block_for() {  # assemble + normalize the golden block for the current CASE
   local block guid short
   block="$(printf '=== STDERR ===\n%s\n=== STDOUT ===\n%s\n=== EXIT ===\n%s\n' \
     "$(cat "$RUN_ERR_F")" "$RUN_OUT" "$RUN_RC")"
-  block+="$(printf '\n=== AGENT START ARGV ===\n%s' "$(cat "$CASE/probe/agent_start_argv" 2>/dev/null)")"
+  block+="$(printf '\n=== PANE CREATE ARGV ===\n%s' "$(cat "$CASE/probe/pane_create_argv" 2>/dev/null)")"
+  block+="$(printf '\n=== PANE RUN LINE ===\n%s' "$(cat "$CASE/probe/pane_run_line" 2>/dev/null)")"
   block+="$(printf '\n=== HERDR MUTATING CALLS ===\n%s' "$(cat "$CASE/probe/calls" 2>/dev/null)")"
   block+="$(printf '\n=== HCOM DIR ===\n%s' "$(cat "$CASE/probe/hcom_dir" 2>/dev/null)")"
   block+="$(printf '\n=== REGISTRY ===\n%s' "$(cat "$CASE/state/registry.jsonl" 2>/dev/null)")"
@@ -162,6 +166,12 @@ block_for() {  # assemble + normalize the golden block for the current CASE
     short="${guid:0:8}"
     block="${block//$guid/<GUID>}"
     block="${block//$short/<SHORT>}"
+  else
+    # Fail-at-pane-creation cases never run the wrapper, so no GUID reaches the
+    # block; the only guid-derived value is the label's short suffix on the
+    # pane-create argv (0.7.5 wire: the wrapper rides pane run, not creation).
+    short="$(grep -x -A1 -- '--label' "$CASE/probe/pane_create_argv" 2>/dev/null | sed -nE '2s/.*-([0-9a-f]{8})$/\1/p')"
+    [[ -n "$short" ]] && block="${block//$short/<SHORT>}"
   fi
   block="$(sed -E 's/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/<GUID>/g; s/"hostname":"[^"]*"/"hostname":"<HOST>"/g' <<<"$block")"
 	block="$(sed -E 's/[0-9a-f]{32}/<GEN>/g' <<<"$block")"
@@ -214,7 +224,13 @@ scenario claude_modal      modal claude launchctx --role worker --agent claude -
 scenario claude_modal_safe modal claude launchctx --role worker --agent claude --safe --prompt "do the thing" --json
 scenario claude_newtab     ready claude launchctx --role worker --agent claude --new-tab --json
 scenario claude_newtab_focus ready claude launchctx --role worker --agent claude --new-tab --focus --json
-scenario newtab_movefail   newtab_movefail claude launchctx --role worker --agent claude --new-tab --json
+# Split placement honoring an explicit --workspace rides the one surviving
+# pane-move leg (pane split has no --workspace; panelaunch falls back to
+# `pane move --workspace`): pin the success and the move-failure cleanup.
+# (newtab_movefail retired with the move itself — 0.7.5 tab create places
+# the fresh tab directly.)
+scenario split_workspace   ready claude launchctx --role worker --agent claude --split down --workspace ws_2 --json
+scenario split_movefail    movefail claude launchctx --role worker --agent claude --split down --workspace ws_2 --json
 # Multiline codex brief rides the bus WHOLE (TASK-032) — no brief-file staging,
 # no one-line pointer; the full text appears in the hcom send argv.
 scenario codex_multiline   ready codex launchctx --role worker --agent codex --prompt "$MULTILINE_BRIEF" --json
@@ -471,20 +487,20 @@ if [[ "$WRITE" -eq 0 ]]; then
   # documented "--cwd default: current".
   CASE="$ROOT/default_cwd"
   run_spawn ready claude launchctx --role worker --agent claude
-  if grep -qxF -- '--cwd' "$CASE/probe/agent_start_argv" 2>/dev/null \
-    && grep -qxF '/mock/cwd' "$CASE/probe/agent_start_argv" 2>/dev/null; then
+  if grep -qxF -- '--cwd' "$CASE/probe/pane_create_argv" 2>/dev/null \
+    && grep -qxF '/mock/cwd' "$CASE/probe/pane_create_argv" 2>/dev/null; then
     ok "default cwd: omitted --cwd places child via explicit --cwd"
   else
-    bad "default cwd: omitted --cwd places child via explicit --cwd" "argv=$(cat "$CASE/probe/agent_start_argv" 2>/dev/null)"
+    bad "default cwd: omitted --cwd places child via explicit --cwd" "argv=$(cat "$CASE/probe/pane_create_argv" 2>/dev/null)"
   fi
 
   # An explicit --cwd is honored verbatim on the wire.
   CASE="$ROOT/explicit_cwd"
   run_spawn ready claude launchctx --role worker --agent claude --cwd /tmp/trusted
-  if grep -qxF '/tmp/trusted' "$CASE/probe/agent_start_argv" 2>/dev/null; then
+  if grep -qxF '/tmp/trusted' "$CASE/probe/pane_create_argv" 2>/dev/null; then
     ok "explicit --cwd honored on the agent-start wire"
   else
-    bad "explicit --cwd honored on the agent-start wire" "argv=$(cat "$CASE/probe/agent_start_argv" 2>/dev/null)"
+    bad "explicit --cwd honored on the agent-start wire" "argv=$(cat "$CASE/probe/pane_create_argv" 2>/dev/null)"
   fi
 
   # ---- Unit H direct assertions (TASK-006 flag validation, TASK-023 refusal) ----
@@ -514,7 +530,7 @@ if [[ "$WRITE" -eq 0 ]]; then
   run_spawn ready claude launchctx --role worker --agent claude --notify-to nosuch --prompt "do the thing"
   if [[ "$RUN_RC" -eq 1 ]] \
     && grep -q 'as registry row and as bus name' "$RUN_ERR_F" \
-    && [[ ! -f "$CASE/probe/agent_start_argv" ]] \
+    && [[ ! -f "$CASE/probe/pane_create_argv" ]] \
     && [[ "$(wc -l <"$CASE/state/registry.jsonl")" -eq 1 ]] \
     && grep -q '"guid":"guid-dispatcher"' "$CASE/state/registry.jsonl"; then
     ok "notify-to unresolvable: hard error before pane creation"
@@ -531,7 +547,7 @@ if [[ "$WRITE" -eq 0 ]]; then
   SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
   CASE="$ROOT/prompt_sender_empty_context"
   run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
-  if [[ "$RUN_RC" -eq 0 ]] && [[ -f "$CASE/probe/agent_start_argv" ]] \
+  if [[ "$RUN_RC" -eq 0 ]] && [[ -f "$CASE/probe/pane_create_argv" ]] \
     && grep -q -- '--from adopted-bus' "$CASE/probe/send_argv"; then
     ok "prompt sender: empty launch context accepts exact live seat fallback"
   else
@@ -541,7 +557,7 @@ if [[ "$WRITE" -eq 0 ]]; then
   CASE="$ROOT/prompt_sender_foreign_terminal"
   SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_FOREIGN","pane_id":"p_foreign","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
   run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
-  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
     ok "prompt sender fallback: foreign terminal/pane refuses before launch"
   else
     bad "prompt sender fallback: foreign terminal/pane refuses before launch" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
@@ -550,7 +566,7 @@ if [[ "$WRITE" -eq 0 ]]; then
   CASE="$ROOT/prompt_sender_context_mismatch"
   SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
   run_spawn ready claude wrongctx --role worker --agent claude --prompt "do the thing"
-  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
     ok "prompt sender fallback: nonempty mismatched context refuses"
   else
     bad "prompt sender fallback: nonempty mismatched context refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
@@ -558,7 +574,7 @@ if [[ "$WRITE" -eq 0 ]]; then
 
   CASE="$ROOT/prompt_sender_duplicate_bus"
   run_spawn ready claude emptyctx_duplicate --role worker --agent claude --prompt "do the thing"
-  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
     ok "prompt sender fallback: duplicate joined stored name refuses"
   else
     bad "prompt sender fallback: duplicate joined stored name refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
@@ -567,7 +583,7 @@ if [[ "$WRITE" -eq 0 ]]; then
   CASE="$ROOT/prompt_sender_name_mismatch"
   SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"different-bus","namespace":"/hcom","hcom_verified":true}}'
   run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
-  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
     ok "prompt sender fallback: stored/live bus-name mismatch refuses"
   else
     bad "prompt sender fallback: stored/live bus-name mismatch refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
@@ -576,7 +592,7 @@ if [[ "$WRITE" -eq 0 ]]; then
   CASE="$ROOT/prompt_sender_unseated"
   SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"reconciled","recorded_at":"2026-07-03T00:00:00Z","state":"unseated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
   run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
-  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
     ok "prompt sender fallback: unseated row refuses"
   else
     bad "prompt sender fallback: unseated row refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
@@ -585,7 +601,7 @@ if [[ "$WRITE" -eq 0 ]]; then
   CASE="$ROOT/prompt_sender_unverified_registry_bus"
   SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":false}}'
   run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
-  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
     ok "prompt sender fallback: registry bus proof marked unverified refuses"
   else
     bad "prompt sender fallback: registry bus proof marked unverified refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
@@ -594,7 +610,7 @@ if [[ "$WRITE" -eq 0 ]]; then
   CASE="$ROOT/prompt_sender_joined_row_absent"
   SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
   run_spawn ready claude norows --role worker --agent claude --prompt "do the thing"
-  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
     ok "prompt sender fallback: joined stored-name row absent refuses"
   else
     bad "prompt sender fallback: joined stored-name row absent refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
@@ -608,7 +624,7 @@ if [[ "$WRITE" -eq 0 ]]; then
   SPAWN_SEED_REGISTRY=$'{"kind":"session","guid":"guid-first-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"first","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"first-bus","namespace":"/hcom","hcom_verified":true}}\n{"kind":"session","guid":"guid-second-0000","event":"seated","recorded_at":"2026-07-03T00:00:01Z","state":"seated","label":"second","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"second-bus","namespace":"/hcom","hcom_verified":true}}'
   run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
   unset SPAWN_SEED_IS_SELF SPAWN_NO_DEFAULT_SENDER SPAWN_SEED_REGISTRY
-  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
     ok "prompt sender fallback: ambiguous registry self refuses"
   else
     bad "prompt sender fallback: ambiguous registry self refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
@@ -623,7 +639,7 @@ if [[ "$WRITE" -eq 0 ]]; then
     && grep -q 'HERDR_PANE_ID=<live-pane> HERDER_GUID=<guid>' "$RUN_ERR_F" \
     && grep -q 'spawn without --prompt' "$RUN_ERR_F" \
     && grep -q 'herder send' "$RUN_ERR_F" \
-    && [[ ! -f "$CASE/probe/agent_start_argv" ]]; then
+    && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
     ok "derived pane: stale ambient coordinate has typed promptless-then-send recovery"
   else
     bad "derived pane: stale ambient coordinate has typed promptless-then-send recovery" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
@@ -636,7 +652,7 @@ if [[ "$WRITE" -eq 0 ]]; then
   run_spawn ready bash launchctx --role worker --agent bash --json
   unset SPAWN_CUTOVER SPAWN_HERDER_GUID SPAWN_HCOM_SESSION_ID
   if [[ "$RUN_RC" -eq 0 ]] \
-    && [[ -f "$CASE/probe/agent_start_argv" ]] \
+    && [[ -f "$CASE/probe/pane_create_argv" ]] \
     && ! grep -q 'guid-poison-parent' "$CASE/state/registry.jsonl" \
     && grep -q '"spawned_by":"user"' "$CASE/state/registry.jsonl" \
     && grep -q '"credential_generation":"[0-9a-f]\{32\}"' "$CASE/state/registry.jsonl"; then

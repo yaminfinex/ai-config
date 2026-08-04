@@ -5,6 +5,10 @@ set -uo pipefail
 TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "$TESTS_DIR/../../.." && pwd -P)
 HERDER_ROOT="$REPO_ROOT/tools/herder"
+# These contracts are characterized against the managed hcom pin. Derive it from
+# the single source of truth (lib/mise-path.sh) so a version bump is one edit.
+source "$REPO_ROOT/lib/mise-path.sh"
+HCOM_PIN="$(mise_hcom_version)"
 export GOTOOLCHAIN=local
 unset GOROOT
 GO_BIN=$(mise which go 2>/dev/null) || { printf 'GROK TRANSPORT GATE BLOCKED — mise cannot resolve the repository Go pin.\n' >&2; exit 1; }
@@ -18,15 +22,15 @@ if [[ -z $real_hcom ]]; then
   done < <(type -a -p hcom 2>/dev/null || true)
 fi
 if [[ -z $real_hcom || ! -x $real_hcom ]]; then
-  printf 'GROK TRANSPORT GATE BLOCKED — real hcom 0.7.23 is unavailable; install it or set HERDER_TEST_HCOM_BIN to its executable path. Real-bus tests cannot be skipped.\n' >&2
+  printf 'GROK TRANSPORT GATE BLOCKED — real hcom %s is unavailable; install it or set HERDER_TEST_HCOM_BIN to its executable path. Real-bus tests cannot be skipped.\n' "$HCOM_PIN" >&2
   exit 1
 fi
 if version=$($real_hcom --version 2>&1); then :; else
   printf 'GROK TRANSPORT GATE BLOCKED — cannot execute %s --version; repair the installation or set HERDER_TEST_HCOM_BIN correctly.\n' "$real_hcom" >&2
   exit 1
 fi
-if [[ $version != *'0.7.23'* ]]; then
-  printf 'GROK TRANSPORT GATE BLOCKED — %s reports %q, but these contracts pin hcom 0.7.23; select the pinned binary.\n' "$real_hcom" "$version" >&2
+if [[ $version != *"$HCOM_PIN"* ]]; then
+  printf 'GROK TRANSPORT GATE BLOCKED — %s reports %q, but these contracts pin hcom %s; select the pinned binary.\n' "$real_hcom" "$version" "$HCOM_PIN" >&2
   exit 1
 fi
 export HERDER_TEST_HCOM_BIN=$real_hcom

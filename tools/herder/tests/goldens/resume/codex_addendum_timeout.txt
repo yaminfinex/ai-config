@@ -5,9 +5,9 @@ herder-lifecycle: seat completion refused [joined_bus_row_missing]: no joined bu
 === EXIT ===
 1
 === HERDR START ARGV ===
-agent start codex-me --no-focus --split right --workspace ws_1 --cwd <REPO> -- /bin/zsh -lic export HERDER_GUID=guid-codex-0000 HERDER_ROLE=worker HERDER_LABEL=codex-me HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HCOM_DIR=/hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch --resume codex sess-codex --tag worker --dangerously-bypass-approvals-and-sandbox --go
+tab create --workspace ws_1 --cwd <REPO> --label codex-me --no-focus
 === HERDR MOVE ARGV ===
-pane move p_resumed --new-tab --no-focus --label codex-me
+
 === REGISTRY ===
 {"guid":"guid-resume-0000","short_guid":"resume","label":"resume-me","role":"worker","agent":"claude","terminal_id":"term_OLD","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"resume-rive","hcom_tag":"worker","status":"active","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-resume","tag":"worker","batch_id":"","cwd":"<REPO>","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
 {"guid":"guid-resume-0000","short_guid":"resume","label":"resume-me","role":"worker","agent":"claude","terminal_id":"term_OLD","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"resume-rive","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"","tag":"worker","batch_id":"","cwd":"<REPO>","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
@@ -16,3 +16,5 @@ pane move p_resumed --new-tab --no-focus --label codex-me
 {"guid":"guid-collide-0000","short_guid":"collide","label":"taken","role":"worker","agent":"claude","terminal_id":"term_COLLIDE","pane_id":"p_collide","hcom_dir":"/hcom","hcom_name":"collide-rive","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-collide","tag":"worker","batch_id":"","cwd":"<REPO>","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
 {"guid":"guid-other-0000","short_guid":"other","label":"taken","role":"worker","agent":"claude","terminal_id":"term_OTHER","pane_id":"p_other","status":"active"}
 {"guid":"guid-codex-0000","short_guid":"codex","label":"codex-me","role":"worker","agent":"codex","terminal_id":"term_CODEX","pane_id":"p_codex","hcom_dir":"/hcom","hcom_name":"codex-vibe","hcom_tag":"worker","status":"closed","provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-codex","tag":"worker","batch_id":"","cwd":"<REPO>","workspace_id":"ws_1","branch":"feat/herder-go-port","ts":"<TS>"}}
+=== HERDR RUN LINE ===
+exec /bin/zsh -lic export\ HERDER_GUID=guid-codex-0000\ HERDER_ROLE=worker\ HERDER_LABEL=codex-me\ HERDER_SPAWNED_BY=user\ HERDER_BIN=<REPO>/bin/herder\ AI_CONFIG_ROOT=<REPO>\ HCOM_DIR=/hcom\ PATH=<REPO>/tools/herder/shims:\$PATH\;\ exec\ <REPO>/bin/herder\ launch\ --resume\ codex\ sess-codex\ --tag\ worker\ --dangerously-bypass-approvals-and-sandbox\ --go

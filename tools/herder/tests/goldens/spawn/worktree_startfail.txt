@@ -1,11 +1,5 @@
 === STDERR ===
-herdr agent start failed:
-{
-  "error": {
-    "code": "agent_placement_not_found",
-    "message": "mock start failure"
-  }
-}
+herder spawn: pane launch failed: herdr pane split exited 3: {   "error": {     "code": "pane_split_failed",     "message": "mock pane creation failure"   } }; launched pane cleanup confirmed: pane already absent before cleanup
 herder spawn: --worktree task/foo: worktree/workspace was CREATED but the spawn did not complete — left in place (not auto-removed):
   workspace: w_WT
   checkout:  /mock/wt
@@ -14,27 +8,20 @@ herder spawn: --worktree task/foo: worktree/workspace was CREATED but the spawn 
 === STDOUT ===
 
 === EXIT ===
-3
-=== AGENT START ARGV ===
-agent
-start
-worker-<SHORT>
---no-focus
---split
+1
+=== PANE CREATE ARGV ===
+pane
+split
+p_60
+--direction
 right
---workspace
-w_WT
---tab
-tab_WT
 --cwd
 /mock/wt
---
-/bin/zsh
--lic
-if [ -d "${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims" ]; then export PATH="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims:$PATH"; fi; export HERDER_GUID=<GUID> HERDER_ROLE=worker HERDER_LABEL=worker-<SHORT> HERDER_SPAWNED_BY=user HERDER_BIN=<REPO>/bin/herder AI_CONFIG_ROOT=<REPO> HERDER_STATE_DIR=<CASE>/state HCOM_DIR=<CASE>/home/.hcom PATH=<REPO>/tools/herder/shims:$PATH; exec <REPO>/bin/herder launch claude --tag worker --dangerously-skip-permissions
+--no-focus
+=== PANE RUN LINE ===
 === HERDR MUTATING CALLS ===
 worktree create --cwd /mock/src --branch task/foo --no-focus --json
-agent start worker-<SHORT>
+pane split p_60
 === HCOM DIR ===
 === REGISTRY ===
 === HCOM SEND ARGV ===

@@ -30,7 +30,7 @@ func installedHcom(t *testing.T) string {
 			return p
 		}
 	}
-	t.Fatal("real hcom binary unavailable; install hcom 0.7.23 or set HERDER_TEST_HCOM_BIN")
+	t.Fatal("real hcom binary unavailable; install the pinned hcom (see lib/mise-path.sh) or set HERDER_TEST_HCOM_BIN")
 	return ""
 }
 func hrunProcess(t *testing.T, bin, dir, processID string, args ...string) string {

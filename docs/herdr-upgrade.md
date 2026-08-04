@@ -39,6 +39,32 @@ coordinates/detection).
    legal composite is: `herder enroll` (new guid) + `rename <new> <label> --take-from
    <old>` + `retire <old>` — never reuse a guid across transcripts (spec D1, TASK-042).
 
+## What the 0.7.5 → 0.8.0 stable auto-update broke (2026-08-04)
+
+Protocol 16 → 19 and a CLI verb re-organization. The subscription surface the observer
+drives (events.subscribe request/ack, pane.* subscription variants, session.snapshot
+envelope) survived byte-identical — the migration was pins plus three verb renames:
+
+1. **`herdr agent send` retired** (socket method `agent.send` removed) — split into
+   `agent prompt` (paste + submit + optional wait) and the surviving `pane send-text`
+   (paste WITHOUT submit). herder's paste engine (`spawncmd/bootpaste.go`) moved to
+   `pane send-text`; probed live: text sits on the composer line until the separate
+   Enter leg submits, matching the old `agent send` exactly.
+2. **Top-level `herdr wait` retired** — `wait agent-status <p> --status S` became
+   `agent wait <p> --until S` (same single-state match + `--timeout`); `waitcmd` updated.
+3. **`herdr session snapshot` CLI verb retired** — the CLI read moved to
+   `herdr api snapshot`; same `{"result":{"snapshot":{…}}}` envelope. (The SOCKET method
+   `session.snapshot` is unchanged; only the observer's CLI fallback needed the rename.)
+4. Everything else herder drives (pane get/list/close/move/split/run/send-keys,
+   report-agent(-session), agent list/get/read/rename/focus, workspace/worktree list,
+   tab create) survived unchanged. Protocol pin lives at `observercmd/socket.go`
+   (`supportedHerdrProtocol`); schema golden at
+   `tests/goldens/live-contract/herdr-api-schema.json`.
+
+The resident observer daemon self-degraded honestly (`protocol_compatible=false`, no
+crash) from the 0.8.0 arrival until the pin bump rolled out — restart it on the new
+build as part of the gate (step 4e).
+
 ## Procedure for the next herdr upgrade
 
 1. **Audit before updating.** Read the upstream release notes for every version being

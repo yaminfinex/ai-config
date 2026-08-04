@@ -5,4 +5,4 @@
 === EXIT ===
 0
 === HERDR CALLS ===
-wait agent-status p_5 --status idle --timeout 60000
+agent wait p_5 --until idle --timeout 60000
