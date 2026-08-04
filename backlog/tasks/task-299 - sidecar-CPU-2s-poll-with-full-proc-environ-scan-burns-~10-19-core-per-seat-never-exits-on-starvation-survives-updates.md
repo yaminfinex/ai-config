@@ -22,7 +22,7 @@ Measured 2026-08-03: ~17 sidecars (12 ubuntu + 5 grace) each burning 10-19% of a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 steady-state sidecar CPU for an uncorrelated seat is <1% of a core
-- [ ] #2 a sidecar whose seat stays starved beyond a bounded window exits and records why
-- [ ] #3 herder update leaves no sidecars running from superseded binaries
+- [x] #1 steady-state sidecar CPU for an uncorrelated seat is <1% of a core
+- [x] #2 a sidecar whose seat stays starved beyond a bounded window exits and records why
+- [x] #3 herder update leaves no sidecars running from superseded binaries
 <!-- AC:END -->

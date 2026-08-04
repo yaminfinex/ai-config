@@ -130,6 +130,22 @@ type sidecar struct {
 	registry             string
 	lastState            string
 	missing              int
+	hcomBin              string
+	busStamp             busStamp
+	rowsFetchedAt        time.Time
+	nextRefresh          time.Time
+	missStreak           int
+	starvedSince         time.Time
+	starvedProbeAt       time.Time
+	starvedOwnedLive     bool
+	starvationExitAfter  time.Duration
+	coords               *paneCoordinates
+	regCacheStamp        time.Time
+	regCacheSize         int64
+	regCache             []registry.Record
+	regCacheOK           bool
+	credNoticeDone       map[string]bool
+	reexecCheckAt        time.Time
 	enrichedCorrelated   bool
 	enrichedSessionID    string
 	lastReportedSID      string
@@ -165,7 +181,7 @@ func (s *sidecar) run() int {
 	s.lastState = "working"
 
 	row, paneCorrelated := s.discoverRow()
-	rows := hcomList()
+	rows := s.busRows()
 	if row == nil {
 		row, paneCorrelated = s.findRowCorrelated(rows)
 	}
@@ -201,11 +217,68 @@ func (s *sidecar) run() int {
 			}
 		}
 		<-ticker.C
-		rows = hcomList()
+		s.maybeReexec()
+		if !s.refreshDue(time.Now(), paneCorrelated) {
+			continue
+		}
+		rows = s.busRows()
 		row, paneCorrelated = s.findRowCorrelated(rows)
 		s.writeStatuslineSnapshots(rows, row, paneCorrelated)
+		s.scheduleNextRefresh(time.Now(), row, paneCorrelated)
 	}
 }
+
+const (
+	refreshHealthy   = 5 * time.Second
+	refreshFloor     = 2 * time.Second
+	refreshCeiling   = 60 * time.Second
+	refreshMissGrace = 5
+)
+
+// refreshDue decides whether this tick pays for a roster fetch. Holder-exit
+// detection stays on the raw 2s ticker; only the fetch/correlate/snapshot
+// pipeline is throttled. A correlated seat whose bus database has not moved
+// skips entirely — with unchanged rows every downstream result is unchanged
+// too. An uncorrelated seat still refreshes on its (backed-off) schedule even
+// without database movement, because /proc identity evidence can appear
+// independently of the bus.
+func (s *sidecar) refreshDue(now time.Time, paneCorrelated bool) bool {
+	if now.Before(s.nextRefresh) {
+		return false
+	}
+	if paneCorrelated && !s.busChanged() {
+		return false
+	}
+	return true
+}
+
+// scheduleNextRefresh backs the cadence off while the row is missing or only
+// fallback-matched (the /proc-scan-per-refresh miss path), and resets to the
+// healthy cadence the moment a pane correlate returns. The first
+// refreshMissGrace misses stay at the 2s floor so a freshly spawned agent's
+// late bus join is still caught within one steady poll.
+func (s *sidecar) scheduleNextRefresh(now time.Time, row *hcomRow, paneCorrelated bool) {
+	interval := refreshHealthy
+	if row == nil || !paneCorrelated {
+		s.missStreak++
+		interval = refreshFloor
+		if s.missStreak > refreshMissGrace {
+			interval = refreshFloor << (s.missStreak - refreshMissGrace)
+			if interval > refreshCeiling || interval <= 0 {
+				interval = refreshCeiling
+			}
+		}
+	} else {
+		s.missStreak = 0
+	}
+	s.nextRefresh = now.Add(interval)
+}
+
+// defaultStarvationExit bounds how long a starved seat keeps its sidecar. The
+// window sits well above both the 5-minute keepalive starvation threshold and
+// any plausible quiet agent turn; before exiting, a live owned process is
+// checked one more time so a slow-but-alive agent never loses its death watch.
+const defaultStarvationExit = 15 * time.Minute
 
 func (s *sidecar) observeLiveness(holderExited bool, row *hcomRow) bool {
 	if holderExited {
@@ -217,10 +290,14 @@ func (s *sidecar) observeLiveness(holderExited bool, row *hcomRow) bool {
 	} else {
 		s.missing = 0
 	}
-	starved := s.missing >= 5 || (row != nil && liveness.KeepaliveFromAge(row.StatusAgeS) == liveness.KeepaliveStarved)
+	starved := s.missing >= 5 || (row != nil && liveness.KeepaliveFromAge(s.effectiveStatusAge(row)) == liveness.KeepaliveStarved)
 	if !starved {
 		s.starvationWarned = false
+		s.starvedSince = time.Time{}
 		return true
+	}
+	if s.starvedSince.IsZero() {
+		s.starvedSince = time.Now()
 	}
 	verdict := liveness.Evaluate(liveness.Input{
 		Holder:         liveness.Signal{State: liveness.StateAlive, ObservedVia: "sidecar_parent"},
@@ -244,7 +321,60 @@ func (s *sidecar) observeLiveness(holderExited bool, row *hcomRow) bool {
 		fmt.Fprintf(diagnostic, "herder sidecar advisory [%s]: %s\n", verdict.Advisory.Cause, verdict.Advisory.Detail)
 		s.starvationWarned = true
 	}
-	return true
+	window := s.starvationExitAfter
+	if window == 0 {
+		window = defaultStarvationExit
+	}
+	starvedFor := time.Since(s.starvedSince)
+	if starvedFor < window {
+		return true
+	}
+	if s.ownedProcessAlive(time.Now()) {
+		return true
+	}
+	diagnostic := s.diagnostic
+	if diagnostic == nil {
+		diagnostic = os.Stderr
+	}
+	cause, detail := "keepalive_starvation", "seat starved with no live owned process"
+	if verdict.Advisory != nil {
+		cause, detail = string(verdict.Advisory.Cause), verdict.Advisory.Detail
+	}
+	fmt.Fprintf(diagnostic, "herder sidecar: exiting after %s of continuous starvation [%s]: %s\n",
+		starvedFor.Round(time.Second), cause, detail)
+	return false
+}
+
+// effectiveStatusAge ages the cached row's keepalive by the time since the
+// last roster fetch — fetch skipping must not freeze starvation detection.
+func (s *sidecar) effectiveStatusAge(row *hcomRow) int64 {
+	age := row.StatusAgeS
+	if !s.rowsFetchedAt.IsZero() {
+		age += int64(time.Since(s.rowsFetchedAt) / time.Second)
+	}
+	return age
+}
+
+// ownedProcessAlive reports whether any live process still carries this
+// seat's HERDER_GUID. It is only consulted at the starvation-exit boundary
+// and rechecks at most once a minute: a busy agent deep in a long turn keeps
+// its death watch, while a truly dead seat's sidecar is allowed to exit.
+func (s *sidecar) ownedProcessAlive(now time.Time) bool {
+	if now.Before(s.starvedProbeAt) {
+		return s.starvedOwnedLive
+	}
+	s.starvedProbeAt = now.Add(time.Minute)
+	s.starvedOwnedLive = false
+	for _, pid := range s.correlatedPIDs {
+		if liveness.ProbePID(pid).State == liveness.StateAlive {
+			s.starvedOwnedLive = true
+			return true
+		}
+	}
+	if identity := s.findIdentityForOwnChild(); len(identity.PIDs) > 0 {
+		s.starvedOwnedLive = true
+	}
+	return s.starvedOwnedLive
 }
 
 func (s *sidecar) applyHolderExit() {
@@ -336,8 +466,13 @@ func (s *sidecar) discoverRow() (*hcomRow, bool) {
 			s.release(true)
 			return nil, false
 		}
-		if row, paneCorrelated := s.findRowCorrelated(hcomList()); row != nil {
-			return row, paneCorrelated
+		// A correlate can only appear alongside new bus data (identity evidence
+		// must match a row), so an unmoved database skips the fetch AND the
+		// /proc scan a miss would trigger.
+		if i == 0 || s.busChanged() {
+			if row, paneCorrelated := s.findRowCorrelated(s.busRows()); row != nil {
+				return row, paneCorrelated
+			}
 		}
 		time.Sleep(700 * time.Millisecond)
 	}
@@ -759,6 +894,13 @@ func (s *sidecar) deliverCredentialNotice(row *hcomRow) {
 	if latest == nil || latest.Provenance == nil || latest.CredentialGeneration == "" || latest.HcomName != row.Name || latest.Provenance.CredentialNoticeSender == "" {
 		return
 	}
+	// The notice is durably suppressed per generation on disk; latch the
+	// resolved outcome in-process too so the steady tick stops re-reading the
+	// receipt. A rotated generation changes the key and re-attempts.
+	noticeKey := guid + ":" + latest.CredentialGeneration
+	if s.credNoticeDone[noticeKey] {
+		return
+	}
 	result, err := credentialnotice.Attempt(s.registry, credentialnotice.Record{
 		GUID: guid, Generation: latest.CredentialGeneration,
 		Path:   seatcred.CredentialPath(s.registry, guid, latest.CredentialGeneration),
@@ -769,6 +911,10 @@ func (s *sidecar) deliverCredentialNotice(row *hcomRow) {
 		s.diagTransition("credential-notice", "credential path notice error: "+err.Error())
 		return
 	}
+	if s.credNoticeDone == nil {
+		s.credNoticeDone = make(map[string]bool)
+	}
+	s.credNoticeDone[noticeKey] = true
 	if result.Suppressed {
 		s.diagTransition("credential-notice", "credential path notice already attempted; blind resend suppressed")
 		return
@@ -815,7 +961,14 @@ type paneCoordinates struct {
 	CWD         string
 }
 
+// paneCoordinates caches its first successful herdr answer: a pane's
+// terminal/workspace identity is fixed for the pane's lifetime, and this call
+// sits on the steady-tick path (recognition matching), where a fork per tick
+// was a measurable share of the sidecar's CPU. Failures stay uncached.
 func (s *sidecar) paneCoordinates() paneCoordinates {
+	if s.coords != nil {
+		return *s.coords
+	}
 	out, err := (&herdrcli.Client{}).Output("pane", "get", s.paneID)
 	if err != nil {
 		return paneCoordinates{PaneID: s.paneID}
@@ -824,20 +977,46 @@ func (s *sidecar) paneCoordinates() paneCoordinates {
 	if err != nil {
 		return paneCoordinates{PaneID: s.paneID}
 	}
-	return paneCoordinates{
+	coords := paneCoordinates{
 		PaneID:      firstNonEmpty(pane.PaneID, s.paneID),
 		TerminalID:  pane.TerminalID,
 		WorkspaceID: pane.WorkspaceID,
 		CWD:         pane.CWD,
 	}
+	s.coords = &coords
+	return coords
 }
 
 func (s *sidecar) latest(guid string) *registry.Record {
-	recs, err := registry.Load(s.registry)
+	recs, err := s.loadRegistryCached()
 	if err != nil {
 		return nil
 	}
 	return s.latestFromRecords(recs, guid)
+}
+
+// loadRegistryCached serves the parsed registry while its file is unchanged
+// (mtime+size stamp). Steady-tick readers (recognition matching, credential
+// notice) hit this; write paths keep loading fresh under their own locks.
+func (s *sidecar) loadRegistryCached() ([]registry.Record, error) {
+	info, err := os.Stat(s.registry)
+	if err != nil {
+		s.regCacheOK = false
+		return registry.Load(s.registry)
+	}
+	if s.regCacheOK && info.ModTime().Equal(s.regCacheStamp) && info.Size() == s.regCacheSize {
+		return s.regCache, nil
+	}
+	recs, err := registry.Load(s.registry)
+	if err != nil {
+		s.regCacheOK = false
+		return recs, err
+	}
+	s.regCacheStamp = info.ModTime()
+	s.regCacheSize = info.Size()
+	s.regCache = recs
+	s.regCacheOK = true
+	return recs, nil
 }
 
 func (s *sidecar) latestFromRecords(recs []registry.Record, guid string) *registry.Record {
@@ -865,7 +1044,7 @@ func (s *sidecar) latestSessionMissing(sessionID string) bool {
 	if sessionID == "" {
 		return false
 	}
-	recs, err := registry.Load(s.registry)
+	recs, err := s.loadRegistryCached()
 	if err != nil {
 		return false
 	}
@@ -1106,20 +1285,6 @@ func readProcessEnviron(path string) (map[string]string, error) {
 		env[string(key)] = string(value)
 	}
 	return env, nil
-}
-
-func hcomList() []hcomRow {
-	cmd := exec.Command("hcom", "list", "--json")
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
-		return nil
-	}
-	var rows []hcomRow
-	if json.Unmarshal(stdout.Bytes(), &rows) != nil {
-		return nil
-	}
-	return rows
 }
 
 func (s *sidecar) report(state string) {
