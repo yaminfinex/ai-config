@@ -243,7 +243,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		_ = os.Setenv("HERDER_LIFECYCLE_MODE", mode)
 		_ = os.Setenv("HERDER_PARENT_SESSION_ID", parentSessionID)
 	}
-	launchEnv := hcomLaunchEnv(tool)
+	launchEnv := pinVendorForLaunch(tool, hcomLaunchEnv(tool), stderr)
 	startSidecar(tool, launchEnv)
 
 	argv := append([]string{"hcom"}, hcomArgs...)
@@ -278,10 +278,16 @@ func isPrintInvocation(tool string, args []string) bool {
 // pinning is skipped too: only hcom's local mode redirects config dirs, and
 // hcom is out of the picture here.
 func execPrintBypass(tool string, args []string, stderr io.Writer) int {
-	toolPath, err := exec.LookPath(tool)
+	// Prefer deterministic vendor resolution (see vendor.go); fall back to a
+	// plain PATH lookup + shim recursion guard for tools without a resolver
+	// or machines still routing through the shim generation.
+	toolPath, err := resolveVendorTool(tool)
 	if err != nil {
-		die(stderr, "print bypass: no '"+tool+"' on PATH: "+err.Error())
-		return 1
+		toolPath, err = exec.LookPath(tool)
+		if err != nil {
+			die(stderr, "print bypass: no '"+tool+"' on PATH: "+err.Error())
+			return 1
+		}
 	}
 	_ = os.Setenv("HCOM_LAUNCH_INFLIGHT", "1")
 	argv := append([]string{tool}, args...)

@@ -25,8 +25,12 @@ Operational rules:
 - `bin/ai-adopt <name>` searches global skill roots and project-local `.claude/skills`, `.agents/skills`, and `.codex/skills` roots from the current directory upward.
 - If a live skill exists outside the repo, surface it as unharvested instead of overwriting it.
 - Use `bin/ai-setup --dry-run` before installing or repairing links when the effect is not obvious.
-- `bin/ai-setup` requires mise and writes the managed mise PATH config for `bin/` and
-  `tools/herder/shims/`; do not add shell rc PATH blocks.
+- `bin/ai-setup` requires mise. It writes the managed mise PATH config for `bin/` only and
+  installs the managed rc block defining the claude/codex/grok launcher functions
+  (`lib/launchers.sh`, `bin/ai-setup --rc`). Do not add hand-rolled shell rc PATH blocks or
+  alias/function overrides for agent tools; interception is functions-only by design
+  (`docs/launcher-design.md`). The shims dir never rides global PATH — it is launch-scoped
+  (spawner-injected) only.
 
 After changes:
 

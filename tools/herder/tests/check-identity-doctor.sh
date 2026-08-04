@@ -63,7 +63,8 @@ mkdir -p "$FIXTURE/bin" "$FIXTURE/lib" "$FIXTURE/tools/herder/shims" \
   "$HOME_DIR/.claude" "$XDG_CONFIG/mise/conf.d" "$XDG_STATE" "$XDG_CACHE" \
   "$VENDORBIN" "$MOCKBIN"
 
-cp "$REPO/lib/common.sh" "$REPO/lib/mise-path.sh" "$REPO/lib/grok-health.sh" "$FIXTURE/lib/"
+cp "$REPO/lib/common.sh" "$REPO/lib/mise-path.sh" "$REPO/lib/grok-health.sh" \
+  "$REPO/lib/launchers.sh" "$FIXTURE/lib/"
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$FIXTURE/bin/herder"
 for tool in claude codex grok; do
   printf '%s\n' '#!/bin/sh' '# herder-path-shim' 'exit 0' > "$FIXTURE/tools/herder/shims/$tool"
@@ -75,11 +76,19 @@ chmod +x "$FIXTURE/bin/herder" "$FIXTURE/tools/herder/shims/claude" \
   "$VENDORBIN/grok" "$MOCKBIN/mise"
 
 printf '%s\n' '{"statusLine":{"command":"$HOME/.claude/statusline.sh"}}' > "$HOME_DIR/.claude/settings.json"
+# Healthy machine shape for the launcher generation: conf.d fronts bin/ ONLY
+# (a shims dir entry now draws a doctor warning), and the login shell defines
+# the claude/codex/grok launcher functions via the managed rc block.
 {
   printf '%s\n' '# Managed by ai-config. Remove with: bin/ai-setup --shims remove'
   printf '%s\n' '[env]'
-  printf '_.path = ["%s", "%s"]\n' "$FIXTURE/bin" "$FIXTURE/tools/herder/shims"
+  printf '_.path = ["%s"]\n' "$FIXTURE/bin"
 } > "$XDG_CONFIG/mise/conf.d/ai-config.toml"
+printf '%s\n' '. "$HOME/.bashrc"' > "$HOME_DIR/.profile"
+{
+  printf 'export AI_CONFIG_ROOT="%s"\n' "$FIXTURE"
+  printf '%s\n' '[ -r "$AI_CONFIG_ROOT/lib/launchers.sh" ] && . "$AI_CONFIG_ROOT/lib/launchers.sh"'
+} > "$HOME_DIR/.bashrc"
 
 git init --bare "$ORIGIN" >/dev/null 2>&1
 git -C "$FIXTURE" init -b main >/dev/null 2>&1

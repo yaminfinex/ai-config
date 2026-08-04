@@ -32,12 +32,18 @@ mise_path_marker() {
 # hcom is a hard dependency of the herder bus substrate (plan 002 R4/R7): the
 # github backend pulls the prebuilt release binary (attestation-verified) with
 # no brew/compile. Pinned for reproducibility — bump deliberately.
+#
+# THIS IS THE SINGLE SOURCE OF TRUTH for the managed hcom version. Bump it here
+# and nowhere else: ai-setup renders it into conf.d, and the test battery
+# (check-mise-path-install, check-grok-doctor, check-grok-transport) sources this
+# file and derives the version from mise_hcom_version rather than hardcoding it.
+# See docs/hcom-upgrade.md for the full bump procedure.
 mise_hcom_tool() {
   printf '%s\n' "github:aannoo/hcom"
 }
 
 mise_hcom_version() {
-  printf '%s\n' "0.7.23"
+  printf '%s\n' "0.7.24"
 }
 
 mise_available() {
@@ -55,12 +61,18 @@ mise_require() {
 
 mise_render_config() {
   local bin_dir="$1"
-  local shims_dir="$2"
+  # bin/ only. The herder shims dir is deliberately NOT on the global PATH any
+  # more: hand-typed claude/codex/grok are shell functions (lib/launchers.sh,
+  # installed by the ai-setup rc block), which win name resolution regardless
+  # of PATH order — global shim interception lost the PATH-ordering race to
+  # mise hook-env on every config-boundary cd. The shims dir still exists for
+  # launch-scoped injection (the spawner prepends it per-spawn for the hcom
+  # shim); it just never rides machine-wide PATH.
   mise_path_marker
   printf '%s\n' "[env]"
-  printf '_.path = ["%s", "%s"]\n' "$bin_dir" "$shims_dir"
-  # Hand-typed launches skip permission prompts by default (the shims prepend
-  # these before user args). Delete the lines locally for ask-mode machines.
+  printf '_.path = ["%s"]\n' "$bin_dir"
+  # Optional per-machine override of the launcher functions' baked default
+  # args (lib/launchers.sh). Set empty values for an ask-mode machine.
   printf 'HERDER_SHIM_ARGS_CLAUDE = "--dangerously-skip-permissions"\n'
   printf 'HERDER_SHIM_ARGS_CODEX = "--dangerously-bypass-approvals-and-sandbox"\n'
   printf '%s\n' "[tools]"
@@ -165,13 +177,13 @@ mise_path_install() {
 
   if [ "${dry_run:-0}" -eq 1 ]; then
     log_info "would write $file:"
-    mise_render_config "$bin_dir" "$shims_dir"
+    mise_render_config "$bin_dir"
     return 0
   fi
 
   mkdir -p "$(dirname "$file")"
   tmp="$(mktemp)"
-  mise_render_config "$bin_dir" "$shims_dir" > "$tmp"
+  mise_render_config "$bin_dir" > "$tmp"
   mv "$tmp" "$file"
   log_info "installed ai-config mise PATH config: $file"
 
@@ -207,18 +219,29 @@ mise_path_remove() {
   log_info "removed ai-config mise PATH config: $file"
 }
 
+mise_launcher_status_message() {
+  # claude/codex/grok are launcher shell functions in interactive shells
+  # (lib/launchers.sh via the ai-setup rc block); PATH position is irrelevant
+  # to them. Outside an rc-loaded shell the function is legitimately absent,
+  # so this is informational, not a verdict — the doctor's login-shell check
+  # is the real gate.
+  local tool="$1"
+  if [ "$(type -t "$tool" 2>/dev/null || true)" = "function" ]; then
+    printf '%s: launcher function active\n' "$tool"
+  else
+    printf '%s: launcher function not loaded in this shell (interactive shells get it from the ai-setup rc block)\n' "$tool"
+  fi
+}
+
 mise_path_status() {
   local file
   local bin_dir
-  local shims_dir
   local configured
   local owner="absent"
   local match_bin="n/a"
-  local match_shims="n/a"
 
   file="$(mise_path_config_file)"
   bin_dir="$(mise_bin_dir)"
-  shims_dir="$(mise_shims_dir)"
 
   if [ -e "$file" ]; then
     if mise_file_is_ours "$file"; then
@@ -229,16 +252,10 @@ mise_path_status() {
       else
         match_bin="no"
       fi
-      if printf '%s\n' "$configured" | grep -Fqx "$shims_dir"; then
-        match_shims="yes"
-      else
-        match_shims="no"
-      fi
     else
       owner="foreign"
       configured="$(mise_configured_paths "$file" || true)"
       match_bin="unknown"
-      match_shims="unknown"
     fi
   fi
 
@@ -246,7 +263,6 @@ mise_path_status() {
   printf 'mise present: %s\n' "$(mise_available && printf yes || printf no)"
   printf 'config: %s\n' "$file"
   printf 'expected bin dir: %s\n' "$bin_dir"
-  printf 'expected shim dir: %s\n' "$shims_dir"
   printf 'configured paths:\n'
   if [ -n "${configured:-}" ]; then
     printf '%s\n' "$configured" | sed 's/^/  /'
@@ -254,13 +270,11 @@ mise_path_status() {
     printf '  n/a\n'
   fi
   printf 'bin path configured: %s\n' "$match_bin"
-  printf 'shim path configured: %s\n' "$match_shims"
   printf 'PATH entries for bin dir: %s\n' "$(mise_path_count "$bin_dir")"
-  printf 'PATH entries for shim dir: %s\n' "$(mise_path_count "$shims_dir")"
   mise_tool_resolution_message herder "$bin_dir/herder"
-  mise_tool_resolution_message claude "$shims_dir/claude"
-  mise_tool_resolution_message codex "$shims_dir/codex"
-  mise_tool_resolution_message grok "$shims_dir/grok"
+  mise_launcher_status_message claude
+  mise_launcher_status_message codex
+  mise_launcher_status_message grok
 }
 
 mise_path_main() {

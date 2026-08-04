@@ -6,9 +6,15 @@ Canonical bring-up for a new machine using this repo.
 
 - `git`
 - `mise` (install from <https://mise.jdx.dev/>)
+- `herdr` — the terminal/session server the `herder` orchestration layer drives (`spawn`,
+  `fork`, `enroll`, the observer). **Baseline: 0.8.0.** Unlike `hcom`, herdr is *not* managed
+  by `ai-setup`/mise; install it out-of-band via its own installer and keep it current with
+  `herdr update --handoff`. See `docs/herdr-upgrade.md`. (`hcom`, the message-bus dependency,
+  *is* installed and pinned by `ai-setup` — see Setup below.)
 
-`ai-setup` requires mise. It writes PATH entries through mise `conf.d`; there is no shell rc
-fallback.
+`ai-setup` requires mise. It writes the `bin/` PATH entry through mise `conf.d`, and installs
+one managed rc block in `~/.bashrc` (and `~/.zshrc` when present) that defines the interactive
+agent launcher functions — see Setup below.
 
 ## Clone
 
@@ -20,22 +26,42 @@ cd "$HOME/Coding/ai-config"
 
 ## Setup
 
-Preview, then install portable config links, skill links, and the managed mise PATH file:
+Install the vendor agent CLIs first — **never via npm/mise** (a copy inside a mise-managed
+node install shadows the vendor binary and launches raw, off-bus agents; `ai-doctor` flags
+such copies):
+
+- `claude` — the vendor installer, landing in `~/.local/bin/claude`
+- `codex` — the vendor binary in `~/.local/bin/codex`
+- `grok` — the Grok Build installer (`~/.grok/bin`)
+
+Then preview and run setup:
 
 ```sh
 bin/ai-setup --dry-run
 bin/ai-setup
 ```
 
-This writes `${XDG_CONFIG_HOME:-$HOME/.config}/mise/conf.d/ai-config.toml` with absolute paths for:
+This installs portable config links, skill links, and two pieces of launch machinery:
 
-- `<checkout>/bin`
-- `<checkout>/tools/herder/shims`
+1. `${XDG_CONFIG_HOME:-$HOME/.config}/mise/conf.d/ai-config.toml` — puts `<checkout>/bin`
+   (only) on the mise-managed PATH. The herder shims dir is deliberately NOT on global PATH:
+   it exists solely for launch-scoped injection by the spawner (the `hcom` shim).
+2. A managed rc block in `~/.bashrc` (and `~/.zshrc` if present) sourcing `lib/launchers.sh`,
+   which defines `claude`, `codex`, and `grok` as shell FUNCTIONS routing through
+   `bin/herder launch`. Functions win name resolution over every PATH entry, so no PATH
+   writer — mise hook-env rewriting order on `cd`, an installer prepend, stale inherited
+   env — can reroute a hand-typed launch. Manage it with `bin/ai-setup --rc status|install|remove`.
+   See `docs/launcher-design.md` for why interception moved off PATH entirely.
 
-The same file sets `HERDER_SHIM_ARGS_CLAUDE` / `HERDER_SHIM_ARGS_CODEX` so hand-typed `claude`
-and `codex` skip permission prompts by default (the shims prepend these before user args).
-Delete those two lines locally for an ask-mode machine — but note `ai-setup` restores them on
-the next run.
+`herder launch` itself resolves the vendor binary with a skip-list (never a herder shim,
+never anything mise-owned) and pins it into the child PATH (`~/.cache/herder/vendorbin/`),
+so the bus launcher's own name lookup is deterministic too.
+
+The conf.d file sets `HERDER_SHIM_ARGS_CLAUDE` / `HERDER_SHIM_ARGS_CODEX`, overriding the
+launcher functions' baked default flags. Export them empty for an ask-mode machine (the
+functions bake autonomous defaults, so deleting the lines alone is not enough).
+
+Bypass deliberately with `command claude ...` — that is a raw vendor launch, off the bus.
 
 It also declares `hcom` as a managed mise tool (`[tools] "github:aannoo/hcom"`) and installs it —
 hcom is a hard dependency of the herder bus substrate (`launch`/`spawn` refuse to run without it).
@@ -44,8 +70,8 @@ Pinned for reproducibility — bump the version in `lib/mise-path.sh`. (Homebrew
 `brew install aannoo/hcom/hcom`, the `hcom-installer.sh` script, and `uv tool install hcom` also
 work, but sit outside mise's management.)
 
-Restart the shell after setup so `ai-setup`, `ai-doctor`, `herder`, `claude`, `codex`, `grok`, and `hcom`
-resolve from the managed PATH entries.
+Restart the shell after setup so the launcher functions load and `ai-setup`, `ai-doctor`,
+`herder`, and `hcom` resolve from the managed PATH entry.
 
 ## Optional hcom Hooks
 
@@ -68,35 +94,20 @@ herder spawn --role smoke --agent codex --cwd "$PWD" \
   --prompt 'Reply exactly PONG MACHINE-SETUP, then wait idle.'
 ```
 
-`type -a` should show this repo's `bin/herder` before any other `herder`, and this repo's
-`tools/herder/shims/{claude,codex,grok}` before real tool binaries. `ai-doctor` warns if the mise file
-is missing, unmanaged, incomplete, duplicated on PATH, or shadowed by aliases/functions/earlier
-executables.
+`type -t claude` (and `codex`, `grok`) must print `function` in a fresh interactive shell;
+`type -a herder` should show this repo's `bin/herder` first. `ai-doctor` runs the same probes
+in a fresh login shell (so an already-corrected seat can't mask a broken terminal), flags
+mise-owned duplicate vendor CLIs, and warns if the mise conf.d file is missing, unmanaged, or
+still fronting the shims dir globally (the pre-function generation — rerun `bin/ai-setup`).
 
-Aliases and shell functions beat PATH shims. Find old overrides with:
+Stale `alias claude=...` or hand-rolled functions in rc files load AFTER the managed block if
+they appear later in the file and would win — `ai-doctor`'s login-shell check catches the
+symptom; remove the stale definition.
 
-```sh
-grep -RInE '^[[:space:]]*(alias[[:space:]]+(claude|codex|grok|herder)=|(function[[:space:]]+)?(claude|codex|grok|herder)[[:space:]]*\(\))' \
-  "$HOME/.zshrc" "$HOME/.zshenv" "$HOME/.zprofile" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.config" 2>/dev/null
-```
-
-Remove or rename any `herder`, `claude`, `codex`, or `grok` alias or function that should no longer shadow
-the managed paths.
-
-**PATH-order shadowing (interactive shells).** If mise activation runs in `~/.zshenv`, any PATH
-prepends later in `~/.zshrc` (`~/.local/bin`, nvm, pnpm, …) land *ahead* of the managed entries —
-`ai-doctor` then reports `claude: shadowed before expected` even with no alias in sight. mise does
-not re-assert ordering on its own; fix it by force-reapplying the managed env as the **last** line
-of `~/.zshrc`:
-
-```sh
-# Re-assert mise-managed PATH entries (conf.d _.path) after the prepends above.
-eval "$(mise hook-env -s zsh --force 2>/dev/null)"
-```
-
-No repo paths are hardcoded — the mise conf.d file stays the single source of truth; this line
-just replays it after everything else has had its say. Verify with `type -a claude` in a fresh
-shell.
+PATH-order shadowing (the old failure class: mise hook-env re-fronting its shims dir on every
+config-boundary `cd`, beating any rc-file ordering fix) is retired by design: functions do not
+participate in PATH resolution. No `hook-env --force` replay lines are needed; delete them if
+a machine still carries one.
 
 ## Updates
 

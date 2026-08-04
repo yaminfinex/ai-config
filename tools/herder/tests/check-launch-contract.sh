@@ -98,6 +98,12 @@ printf '%s\n' "$@" >"$PROBE/tool_argv"
 exit 0
 MOCK_CLAUDE
 chmod +x "$BASEBIN/claude"
+# Mock vendor codex: launch pins the vendor binary for claude AND codex
+# (vendor.go); without a resolvable codex the pin falls back with a stderr
+# warning that would pollute every codex golden. The pin only fronts the
+# child PATH — mock hcom still intercepts, so no probe output changes.
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$BASEBIN/codex"
+chmod +x "$BASEBIN/codex"
 REAL_GO="$(mise which go 2>/dev/null)" || { printf 'FAIL  launch contract cannot resolve repository Go pin through mise\n'; exit 1; }
 printf '%s\n' '#!/usr/bin/env bash' "exec \"$REAL_GO\" \"\$@\"" >"$BASEBIN/go"
 chmod +x "$BASEBIN/go"

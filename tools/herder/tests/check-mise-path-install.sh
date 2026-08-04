@@ -12,6 +12,11 @@ REPO="$(cd "$TESTS_DIR/../../.." && pwd -P)"
 # tree's wrapper/sources. Ignore the binary override; pin the root to THIS tree.
 unset HERDER_BIN
 export AI_CONFIG_ROOT="$REPO"
+# Derive the managed hcom pin from its single source of truth rather than
+# hardcoding it here (see lib/mise-path.sh mise_hcom_version).
+source "$REPO/lib/mise-path.sh"
+HCOM_TOOL="$(mise_hcom_tool)"
+HCOM_VERSION="$(mise_hcom_version)"
 AI_SETUP="$REPO/bin/ai-setup"
 BIN_DIR="$REPO/bin"
 SHIM_DIR="$REPO/tools/herder/shims"
@@ -69,19 +74,23 @@ expected_config() {
   cat <<EOF
 # Managed by ai-config. Remove with: bin/ai-setup --shims remove
 [env]
-_.path = ["$BIN_DIR", "$SHIM_DIR"]
+_.path = ["$BIN_DIR"]
 HERDER_SHIM_ARGS_CLAUDE = "--dangerously-skip-permissions"
 HERDER_SHIM_ARGS_CODEX = "--dangerously-bypass-approvals-and-sandbox"
 [tools]
-"github:aannoo/hcom" = "0.7.23"
+"$HCOM_TOOL" = "$HCOM_VERSION"
 EOF
 }
 
-# 1. Default setup writes the managed mise conf.d file under XDG_CONFIG_HOME.
+# 1. Default setup writes the managed mise conf.d file under XDG_CONFIG_HOME
+#    (bin/ only — the shims dir deliberately left off the global PATH; see
+#    lib/mise-path.sh) and installs the launcher rc block in $HOME/.bashrc.
 make_case default
 run_setup
 assert_eq "default setup: exit 0" "$RUN_RC" "0"
 assert_eq "default setup: exact config" "$(cat "$CONF_FILE")" "$(expected_config)"
+assert_contains "default setup: rc block installed" "$(cat "$HOME_DIR/.bashrc" 2>/dev/null)" ">>> ai-config launchers >>>"
+assert_contains "default setup: rc block sources launchers" "$(cat "$HOME_DIR/.bashrc" 2>/dev/null)" 'lib/launchers.sh'
 
 # 2. --shims install is a compatibility alias for the same file.
 make_case install
@@ -89,26 +98,26 @@ run_setup --shims install
 assert_eq "install alias: exit 0" "$RUN_RC" "0"
 assert_eq "install alias: exact config" "$(cat "$CONF_FILE")" "$(expected_config)"
 
-# 3. status reports installed, both path matches, PATH counts, and type-a ordering.
-PATH_VALUE="$BIN_DIR:$SHIM_DIR:$PATH_BASE"
+# 3. status reports installed, bin path match, PATH count, herder ordering,
+#    and the launcher-function report for agent tools (not loaded in the
+#    setup process itself — that is the expected non-interactive answer).
+PATH_VALUE="$BIN_DIR:$PATH_BASE"
 run_setup --shims status
 assert_eq "status installed: exit 0" "$RUN_RC" "0"
 assert_contains "status installed: overall" "$RUN_OUT" "ai-config mise PATH: installed"
 assert_contains "status installed: bin configured" "$RUN_OUT" "bin path configured: yes"
-assert_contains "status installed: shim configured" "$RUN_OUT" "shim path configured: yes"
 assert_contains "status installed: bin path count" "$RUN_OUT" "PATH entries for bin dir: 1"
-assert_contains "status installed: shim path count" "$RUN_OUT" "PATH entries for shim dir: 1"
 assert_contains "status installed: herder first" "$RUN_OUT" "herder: expected first"
-assert_contains "status installed: claude first" "$RUN_OUT" "claude: expected first"
-assert_contains "status installed: codex first" "$RUN_OUT" "codex: expected first"
-assert_contains "status installed: grok first" "$RUN_OUT" "grok: expected first"
+assert_contains "status installed: claude launcher note" "$RUN_OUT" "claude: launcher function not loaded in this shell"
+assert_contains "status installed: codex launcher note" "$RUN_OUT" "codex: launcher function not loaded in this shell"
+assert_contains "status installed: grok launcher note" "$RUN_OUT" "grok: launcher function not loaded in this shell"
 
 # 4. status warns when another executable shadows a managed path entry.
 OTHERBIN="$CASE_DIR/otherbin"
 mkdir -p "$OTHERBIN"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$OTHERBIN/herder"
 chmod +x "$OTHERBIN/herder"
-PATH_VALUE="$OTHERBIN:$BIN_DIR:$SHIM_DIR:$PATH_BASE"
+PATH_VALUE="$OTHERBIN:$BIN_DIR:$PATH_BASE"
 run_setup --shims status
 assert_eq "status shadow: exit 0" "$RUN_RC" "0"
 assert_contains "status shadow: herder shadowed" "$RUN_OUT" "herder: shadowed before expected ($OTHERBIN/herder)"
@@ -139,7 +148,7 @@ make_case dryrun
 run_setup --dry-run --shims install
 assert_eq "dry-run install: exit 0" "$RUN_RC" "0"
 assert_contains "dry-run install: reports file" "$RUN_OUT" "would write $CONF_FILE"
-assert_contains "dry-run install: prints config" "$RUN_OUT" "_.path = [\"$BIN_DIR\", \"$SHIM_DIR\"]"
+assert_contains "dry-run install: prints config" "$RUN_OUT" "_.path = [\"$BIN_DIR\"]"
 assert_absent "dry-run install: no file" "$CONF_FILE"
 
 # 8. absent status is explicit.
