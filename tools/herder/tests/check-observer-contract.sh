@@ -29,8 +29,12 @@ case "${1:-} ${2:-}" in
   "api snapshot")
     # 0.8.0 moved the CLI snapshot from `session snapshot` to `api snapshot`.
     cat "$STATE/snapshot.json";;
-  "pane process_info")
-    id="${3:-}"
+  "pane process-info")
+    # herdr 0.8 CLI verb: `pane process-info --pane <id>`. The positional
+    # `process_info <id>` spelling returns help text with rc=0 (TASK-307),
+    # so the mock rejects anything but the flag form.
+    [[ "${3:-}" == "--pane" ]] || { printf 'mock herdr(observer): process-info wants --pane, got: %s\n' "$*" >&2; exit 64; }
+    id="${4:-}"
     if [[ -f "$STATE/proc-$id.json" ]]; then
       cat "$STATE/proc-$id.json"
     else

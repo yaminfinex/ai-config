@@ -105,7 +105,7 @@ func (f *cleanupHerdr) Run(args ...string) (int, error)       { return 64, error
 
 func TestAbsentChildAllowsCleanupAfterCompletionFailure(t *testing.T) {
 	client := &scriptedSpawnClient{responses: []spawnResponse{
-		{want: "pane process_info p_new", out: []byte(`{"result":{"process_info":{"foreground_processes":[]}}}`)},
+		{want: "pane process-info --pane p_new", out: []byte(`{"result":{"process_info":{"foreground_processes":[]}}}`)},
 		{want: "pane get p_new", out: []byte(`{"result":{"pane":{"pane_id":"p_new","terminal_id":"term_new"}}}`)},
 		{want: "pane list", out: []byte(`{"result":{"panes":[{"pane_id":"p_owner","focused":true}]}}`)},
 		{want: "pane close p_new", out: []byte(`{"result":{"type":"ok"}}`)},
@@ -129,7 +129,7 @@ func TestAbsentChildAllowsCleanupAfterCompletionFailure(t *testing.T) {
 func TestCompletionInfrastructureFailurePreservesLiveChild(t *testing.T) {
 	client := &scriptedSpawnClient{responses: []spawnResponse{
 		{want: "pane get p_new", out: []byte(`{"result":{"pane":{"pane_id":"p_new","terminal_id":"term_new"}}}`)},
-		{want: "pane process_info p_new", out: []byte(`{"result":{"process_info":{"foreground_processes":[{"pid":4242,"argv":["codex"]}]}}}`)},
+		{want: "pane process-info --pane p_new", out: []byte(`{"result":{"process_info":{"foreground_processes":[{"pid":4242,"argv":["codex"]}]}}}`)},
 	}}
 	var stderr strings.Builder
 	r := &runner{
@@ -156,7 +156,7 @@ func TestCompletionInfrastructureFailurePreservesLiveChild(t *testing.T) {
 
 func TestGrokCompletionRefusalNamesBridgeSupervisorAndPromptHandoff(t *testing.T) {
 	client := &scriptedSpawnClient{responses: []spawnResponse{{
-		want: "pane process_info p_grok", out: []byte(`{"result":{"process_info":{"foreground_processes":[{"pid":4242,"argv":["grok"]}]}}}`),
+		want: "pane process-info --pane p_grok", out: []byte(`{"result":{"process_info":{"foreground_processes":[{"pid":4242,"argv":["grok"]}]}}}`),
 	}}}
 	var stderr strings.Builder
 	r := &runner{herdr: client, stderr: &stderr, opts: options{Agent: "grok"}, pendingPrompt: true}
