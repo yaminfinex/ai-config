@@ -1,7 +1,14 @@
 # Herder Spec
 
 Status: **RATIFIED 2026-07-08** (owner walkthrough, decisions D1–D12 confirmed; D5 teams-kill
-confirmed explicitly; migration dormant-default resolved under D12). This document is the
+confirmed explicitly; migration dormant-default resolved under D12).
+**AMENDED 2026-08-21** (owner ruling, fleet-refit mission TASK-3 resolution): ground-truth
+resolution amendments applied — re-seat-in-place removed (§2, §3.3, AC-13), stored seat
+coordinates demoted to observation provenance (§3.3, invariant 15), §8.3 reconciliation
+replaced by occupant resolution, AC-40 rewritten (auto-heal only on positive transcript-match
+probe evidence, verb-time in v1; observer-sweep self-heal is an explicitly deferred
+fast-follow), D6/D11 amended and D13 added (§11). Drafts + rationale:
+fleet-refit `artifacts/wayfinder/herder-spec-amendment-drafts.md`. This document is the
 ground truth for herder's shape: ubiquitous language, domain model, expected behaviour,
 high-level design, and acceptance scenarios. Implementation plans derive from it; it does not
 narrate how we got here — the derivation working-memory was pruned with its branch, and this
@@ -45,7 +52,7 @@ run orchestration protocols (the `orchestrate` skill's domain).
 | **sid** (tool session id) | A tool's native session id (claude UUIDv4, codex UUIDv7). A mutable, late-arriving, tool-scoped *attribute* of a session — never its identity. |
 | **seat** | A binding of a session to the place it runs. Defines liveness. Kinds: `herdr` (terminal binding), `process` (bare process binding; headless). |
 | **occupant** | The live tool process currently realising a session in a seat. Seat liveness means *occupant* liveness. |
-| **vacant seat** | A surviving terminal whose occupant exited. Re-seatable in place. |
+| **vacant seat** | A surviving terminal whose occupant exited. Closed on observation; never re-seated. Resume always creates a fresh seat. |
 | **label** | Optional addressing lease on exactly one session. Non-expiring: released only by retire or explicit transfer — never by liveness, TTL, or co-location. |
 | **lease / transfer** | The label's tenure semantics. Transfer = explicit anointing naming the current holder. Never automatic. |
 | **turnover** | `/clear`: the seat survives, the session is evicted, a new session (new guid, unlabelled, unbriefed) is registered in the same seat. |
@@ -54,7 +61,7 @@ run orchestration protocols (the `orchestrate` skill's domain).
 | **brief / briefed** | The role instructions delivered to a session. A turnover newcomer is unbriefed until re-briefed. |
 | **continuity** | Epistemic status of a session's transcript identity: `confirmed` (sid-verified) or `assumed` (sid-less; recorded, surfaced, never faked). |
 | **recognition** | Matching a newly observed occupant to an existing session by (tool, sid, tool-native scope). |
-| **reconciliation** | Re-verifying seat bindings after an epoch/node mismatch: probe, then re-stamp or unseat. Triggered, never assumed. |
+| **resolution (ground truth)** | Proving who occupies a seat by probing the live occupant — pane → process → transcript → sid — against recorded sid/lineage (§8.3). Runs at verb time; stored coordinates are never its evidence. Replaces the former triggered "reconciliation". |
 | **retire** | Explicitly closing a session for good. Releases its label. Distinct from unseating. |
 | **lost** | A session whose transcript is verified gone from the tool layer. Not resumable; never deleted. |
 | **state dir** | `$HERDER_STATE_DIR`: herder's node-local home — the live registry file plus the `node_id` marker. One writable registry per state dir; it travels with the home directory. |
@@ -107,8 +114,11 @@ seat: holds ≤1 session at a time; kind ∈ {herdr, process}
 10. **Every record is node-attributed.** All registry rows carry the writing node's id (§6.1) —
     a zero-cost stamp that keeps attribution unambiguous if the state dir ever moves or scope
     ever widens; no behaviour hangs off it today.
-11. **Epoch/node mismatch triggers reconciliation, never a verdict.** Stale bindings are
-    re-verified, then re-stamped or unseated; sends against unreconciled bindings refuse.
+11. **Stored bindings are never adjudicated against each other.** Disagreement between
+    stores (registry, bus, substrate, env) is resolved by probing the occupant (§8.3),
+    never by comparing copies and never by refusal alone. Node-attribution rules
+    (§3.1-12) unchanged. *(Amended 2026-08-21; was: epoch/node mismatch triggers
+    reconciliation.)*
 12. **Unknown-node rows are anomalies, not peers.** The local herder writes only as the owning
     node. A row attributed to any other node id (a synced-in or hand-copied fragment) is
     flagged loudly by the loader, surfaced in `list`, and never written to or adjudicated.
@@ -123,6 +133,12 @@ seat: holds ≤1 session at a time; kind ∈ {herdr, process}
 14. **The observer is disposable.** Its death or rebuild is a non-event; no handoff protocol
     may exist between observer generations; every boot re-derives its view from the registry
     and live substrates (catch-up sweep, §8.4).
+15. **Ground truth over copies.** The occupant is its own proof: resolution = live pane
+    occupant → pid → transcript → sid, matched against recorded sid/lineage (§8.3). On
+    match, stale stored coordinates are rebound from observation (silent self-heal,
+    evidence appended). Refusal is reserved for positive mismatch, no occupant, or genuine
+    ambiguity (multi-match fails closed). Subsumes the spirit of invariant 8 (env is birth
+    provenance only), which stands. *(Added 2026-08-21, TASK-3 ratification.)*
 
 ### 3.2 Session state machine
 
@@ -145,12 +161,19 @@ Label sub-machine (`unlabelled ⇄ labelled` via label/transfer/release-on-retir
   key; terminal_id survives moves but not restarts, which is the epoch machinery's job, §6.3).
   `process` seat: key pid + hcom process binding.
 - **Seat liveness = occupant liveness.** Terminal presence is necessary, not sufficient: if the
-  occupant exits while the terminal survives, the session is unseated (recorded) and the seat is
-  vacant — re-seatable in place.
+  occupant exits while the terminal survives, the session is unseated (recorded) and the
+  surviving terminal is closed (pane hygiene, recorded); resume seats the session in a fresh
+  terminal.
 - Unseating is a recorded event appended by whichever component first observes seat death —
   a sidecar, the node observer, or a CLI verb — never a per-caller inference.
 - Every seat binding carries: kind, key, `node`, `namespace`, `hcom_epoch`, `herdr_epoch`
-  (herder epoch ids, §6), `hcom_name`, and a last-confirmed timestamp.
+  (herder epoch ids, §6), `hcom_name`, and a last-confirmed timestamp — all observation
+  provenance (below), not gating state.
+- **Stored seat coordinates are observation provenance** (terminal_id, pane_id, hcom_name,
+  last-confirmed stamps): a record of where the session was last positively seen. No
+  resolution, proof, or liveness verdict may read them as evidence; every such decision
+  probes the live occupant (§8.3). The terminal_id remains the seat's descriptive key — the
+  name of the place — never its proof of occupancy. *(Added 2026-08-21, TASK-3.)*
 
 ## 4. Components — from model to machinery
 
@@ -352,7 +375,8 @@ by rewrite, under the §5.2 lock:
    non-retired guid.
 2. **Mapping.** `status: closed` ⇒ `state: retired`. `status: active` ⇒ `unseated`
    (**dormant default — migration performs no live probing**; a genuinely live occupant is
-   re-seated by its sidecar's next observation, an explicit enroll, or §8.3 reconciliation).
+   re-seated by its sidecar's next observation, an explicit enroll, or a verb whose §8.3
+   resolution matches it).
    Migration must never seat a session verbatim: on the reference machine at spec time,
    ~28 of 34 latest-active guids were dead sessions never culled, and a storage-wave
    migration should not grow a substrate dependency just to classify them.
@@ -376,9 +400,10 @@ by rewrite, under the §5.2 lock:
 Three ids with three different jobs and different maturity — motivated separately, not as one
 mechanism. **Node** answers "whose record is this / who may write" (a dormant attribution
 stamp). **Namespace** answers "which bus universe is this name from" (a dormant identity
-anchor). **Epoch** answers "can I still trust this cached binding" (live bookkeeping, used by
-reconciliation every day). The join between substrate lifetimes and herder is always an
-explicit registry event, never an ambient inference.
+anchor). **Epoch** answers "which substrate lifetime was this observation made in"
+(provenance bookkeeping — since the 2026-08-21 amendment, resolution never consults cached
+bindings, so epochs no longer gate anything). The join between substrate lifetimes and
+herder is always an explicit registry event, never an ambient inference.
 
 ### 6.1 Node
 
@@ -415,9 +440,10 @@ bookkeeping — the identity rule is fixed now so nothing re-keys if scope ever 
 
 ### 6.3 Epochs (implementation tier)
 
-Epochs are oracle bookkeeping, not domain identity: they answer "can I still trust this cached
-binding (hcom name, terminal id), or did the substrate restart under me?" — nothing more. They
-appear in seat bindings and §8.3 reconciliation, never in addressing or human language.
+Epochs are oracle bookkeeping, not domain identity: they record which substrate lifetime an
+observation belongs to — nothing more. *(Amended 2026-08-21, D6/D13: resolution never reads
+cached bindings, so epoch mismatch is invisible to it; epoch ids persist in seat bindings as
+observation provenance.)* They never appear in addressing or human language.
 
 - **hcom epoch.** One db lifetime within a namespace. Fingerprint: db birth time + inode.
   hcom names are never recycled within an epoch and are forgotten across epochs — in-flight
@@ -425,7 +451,7 @@ appear in seat bindings and §8.3 reconciliation, never in addressing or human l
 - **herdr epoch.** One server lifetime (no namespace — herdr is bus-agnostic). No boot id is
   exposed; epochs are probe-inferred (a registry terminal_id unknown to the daemon implies a
   boundary). `herdr update` performs a live handoff (occupants survive); a cold restart kills
-  occupants. §8.3 reconciliation makes both safe without distinguishing them a priori.
+  occupants. §8.3 resolution makes both safe without distinguishing them a priori.
 - First observation appends `epoch_observed` with a minted per-node `epoch_id`.
 
 ## 7. Command surface — expected behaviour
@@ -436,7 +462,7 @@ appear in seat bindings and §8.3 reconciliation, never in addressing or human l
 | `spawn` | Register session + create seat + seat + brief (+ label). Readiness observed via the status bridge. Emits guid + label + seat. |
 | `launch` | The substrate primitive spawn rides on: the §4 choke point + sidecar in the current context. Exception: claude `-p`/`--print` one-shots bypass the bus and sidecar entirely (exec the tool directly, no hcom required) — they return their answer and never become sessions. |
 | `enroll` | Adopt the session found in an existing seat (same code path as sidecar enrolment). Label collisions refuse (§3.1-6). |
-| `send <target>` | Resolve label\|guid → session → seat; deliver via bus; **receipt always includes the resolved guid**. Refusals: unseated (report unseating/eviction), unreconciled binding, name↔sid disagreement. Warnings: unbriefed, `continuity: assumed`. Dereference-at-issue is the race semantics. |
+| `send <target>` | Resolve label\|guid → session → seat; deliver via bus; **receipt always includes the resolved guid**. Refusals: unseated (report unseating/eviction), §8.3 positive mismatch / no occupant / ambiguity, name↔sid disagreement. Warnings: unbriefed, `continuity: assumed`. Dereference-at-issue is the race semantics. |
 | `wait <target>` | Observe the seat (herdr status via bridge; process seats: bus status). |
 | `compact <steer>` | Queue a steered `/compact` into the **caller's own** pane. Self-only by construction: no target argument exists; self-identity is proven via the registry before anything is typed. The one ruled exception to bus-only delivery. No registry event — `/compact` is a non-event (§3.1-2, AC-9). |
 | `list` | Sessions × (label, seat, liveness, continuity). Default: seated + recently unseated; `--all` includes retired/lost (and rotation archives). |
@@ -457,7 +483,7 @@ proxies a substrate command only where the registry join adds real value (candid
 usage. Substrate-global commands (`hcom reset`, `herdr update`/`server stop`) are never
 wrapped; herder observes their effects as epoch boundaries (§6.3, §8.3).
 
-## 8. Recognition & reconciliation
+## 8. Recognition & resolution
 
 ### 8.1 Turnover detection (one rule, every path)
 
@@ -478,34 +504,42 @@ row re-keys the same guid. This one rule serves spawned, shimmed, and enrolled s
 - A sid that surfaces and *disagrees* with an assumed-continuity window ⇒ retroactive turnover:
   a `reconciled` correction row with the backdated displacement.
 
-### 8.3 Epoch reconciliation
+### 8.3 Resolution (ground truth) *(replaced 2026-08-21, TASK-3 — was "Epoch reconciliation")*
 
-On any epoch/node mismatch between a seat binding and the live substrate:
+Every verb that needs identity runs the occupant probe at operation time: pane →
+`pane.process_info` → pid → transcript → sid, matched against the session's recorded
+sid/lineage. Outcomes:
 
-1. Suspend trust in the binding; sends refuse until reconciled.
-2. Probe: does the terminal exist, and does the pane's reported sid match the session's sid?
-   For process seats: pid + bus status.
-3. Outcomes: match ⇒ re-confirm + re-stamp epoch (`reconciled`); sid found live in a different
-   seat ⇒ re-bind (seat migrated — the handoff case); neither ⇒ unseat (cold restart — the
-   occupant genuinely died).
+- **MATCH** ⇒ proceed, silently re-stamping stale stored coordinates from observation
+  (self-heal, evidence appended). In v1 self-heal happens at **verb time only**; an
+  observer-sweep self-heal loop is an explicitly deferred fast-follow (owner ruling
+  2026-08-21), and until it lands the observer's role for stale-but-matching rows stays
+  advisory (AC-40).
+- **POSITIVE MISMATCH** (the occupant is a different session's transcript) ⇒ refuse,
+  naming the actual owner; for observer-owned turnover detection this is the §8.1 path.
+- **NO OCCUPANT** ⇒ the seat is dead: unseat on positive-death evidence (§8.4), close the
+  vacant pane (§3.3). A gone *pane* is not a gone *transcript* — the session goes
+  unseated/dormant, never lost, on this evidence alone.
+- **AMBIGUOUS** (more than one candidate at any layer) ⇒ fail closed. Never pick.
+- **UNPROBEABLE** (the occupant's tool has no probe recipe yet, e.g. grok/pi; or a
+  pane-less process seat) ⇒ existing evidence rules apply unchanged at
+  `continuity: assumed` — never a guessed match. A later probeable observation upgrades
+  per §8.2.
 
-**Sid-probe precondition (normative).** herdr's per-pane sid exposure is report-only — the
-substrate never scans for a sid; `agent_session` populates only when a reporter pushes it
-(`pane.report_agent_session`). The probe therefore requires an active sid reporter: the herder
-sidecar self-reporting the sid it already learns from the bus (preferred — no third-party
-config writes, covers every tool herder launches, reuses the sidecar's ambiguity guard), or the
-tool's herdr agent integration (`herdr integration install claude|codex`). Spawn and any future
-doctor surface warn when neither reporter is active.
+Epoch/node mismatch stops being a special state: stale coordinates are simply never
+consulted, so a re-keyed pane id or reissued terminal id is invisible to resolution. The
+former guarded (tool, label, cwd) re-bind is deleted — soft-correlate rebinding is the
+class of silent guess the record proved dangerous.
 
-**Sid-less fallback (normative).** A probe returning no `agent_session` means *sid-less, not
-dead*. Reconcile on the durable substrate key: `terminal_id` first, then a guarded
-(tool, label, cwd) match that refuses on ambiguity. The outcome is re-confirmation at
-`continuity: assumed` — never a fake match, never an unseat on absence-of-evidence alone; a
-later sid report upgrades assumed → confirmed per §8.2.
+**Sid-probe precondition (normative, amended).** herdr's per-pane `agent_session` is
+report-only and is treated as a *hint*, never ground truth on its own: MATCH requires the
+transcript artifact (the probed process's transcript file), not merely an agreeing report.
+Where the pid→transcript leg is impossible for a tool, that tool is UNPROBEABLE (above).
 
-This procedure is what makes herdr live-handoff updates, cold restarts, and hcom db resets all
-safe without herder distinguishing them in advance. Reconciliation only ever adjudicates seats
-recorded by the owning node; unknown-node rows (§3.1-12) are flagged, never probed or unseated.
+This procedure is what makes herdr live-handoff updates, cold restarts, and hcom db resets
+all safe without herder distinguishing them in advance. Resolution only ever adjudicates
+seats recorded by the owning node; unknown-node rows (§3.1-12) are flagged, never probed or
+unseated.
 
 ### 8.4 Catch-up sweep (observer)
 
@@ -513,11 +547,12 @@ On every observer boot — downtime recovery is not a distinct mode — the obse
 level-triggered sweep: current substrate snapshot × current bus state × current registry
 projection. Verdict discipline: **positive evidence of death unseats** (occupant exited, pane
 gone within an unchanged epoch, dead pid with stale bus row); **absence of evidence is an
-observation gap, never a verdict** (§8.3 sid-less doctrine applies); missed transitions during
+observation gap, never a verdict** (§8.3 UNPROBEABLE doctrine applies); missed transitions during
 downtime collapse into their observed end state. Correction rows are appended at observation
 time — `recorded_at` is never backdated; staleness evidence rides in the row body. Dormant
 rows with live counter-evidence and epoch-wide doubt are **flagged for the explicit verbs**
-(enroll / reconcile / resume), never auto-repaired — and the flags are surfaced in the
+(enroll / resume, whose own §8.3 resolution then self-heals on match), never sweep-repaired
+in v1 — and the flags are surfaced in the
 operator's default view (`list`), marked as observer advice (display-tier, sourced from the
 observer's status file — never mistakable for registry facts, which remain the sole authority
 per §3.1-8). Across a herdr epoch boundary (probe-inferred; terminal ids may be reissued
@@ -560,8 +595,9 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
   lineage travel. *(S2)*
 - **AC-12 crash** — seat death without cull converges to the same dormant state; unseating is
   recorded by the first observer. *(S9)*
-- **AC-13 vacant seat** — occupant exits, terminal survives: session unseated, seat vacant,
-  re-seatable in place. *(S9b, A5)*
+- **AC-13 vacant seat** — occupant exits, terminal survives: session unseated, the
+  surviving pane closed (recorded); a subsequent resume gets a fresh pane; nothing ever
+  re-seats into the old terminal. *(S9b, A5; amended 2026-08-21, TASK-3)*
 - **AC-14 resume verification** — resume of a pruned/foreign transcript never re-seats the
   guid: tool-reported sid mismatch ⇒ new guid + `resume_failed_from`; verified-gone transcript
   ⇒ `lost`. *(S23, A10)*
@@ -587,24 +623,26 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
   (under the registry lock; concurrent first writes converge on one node). Thereafter, writes
   proceed only when marker and registry agree on the local node_id; disagreement or a
   half-present pair refuses with repair guidance (`herder node init`).
-- **AC-22 hcom epoch reset** — after `hcom reset`, sends against pre-reset seats refuse and
-  trigger reconciliation; delivery never happens on name-exists alone. *(S13, A4)*
-- **AC-23 herdr cold restart** — reconciliation unseats all locally-seated herdr sessions
-  (occupants died); sessions are dormant and resumable, not lost.
-- **AC-24 herdr live handoff** — after `herdr update`, reconciliation re-confirms surviving
-  occupants (sid probe where a reporter is active; terminal_id + guarded label/cwd match
-  otherwise, re-confirming at `assumed` continuity) and re-stamps epochs; no healthy session
+- **AC-22 hcom epoch reset** — after `hcom reset`, sends against pre-reset seats re-resolve
+  via §8.3 and refuse on no-occupant/mismatch; delivery never happens on name-exists alone.
+  *(S13, A4; amended 2026-08-21)*
+- **AC-23 herdr cold restart** — §8.3 resolution finds no occupants (panes gone) and unseats
+  on that positive evidence; sessions are dormant and resumable, not lost. *(amended
+  2026-08-21)*
+- **AC-24 herdr live handoff** — after `herdr update`, surviving occupants re-confirm by
+  occupant probe (transcript-match; UNPROBEABLE tools keep existing evidence rules at
+  `assumed` continuity); no healthy session
   is unseated. Note terminal ids may be reissued wholesale at handoff, so the fallback match
   must not assume terminal_id stability across the boundary.
 - **AC-25 unknown-node rows** — a registry containing rows attributed to an unknown node id
   (a hand-copied fragment, a synced-in file) still loads: those rows are flagged anomalous in
-  `list`, never written to, and never adjudicated by reconciliation; every command keeps
+  `list`, never written to, and never adjudicated by resolution; every command keeps
   working.
 - **AC-26 namespace identity** — two default `~/.hcom` dirs on two machines are TWO namespaces
   despite identical paths; the anchored `namespace_id` survives `hcom reset`; name resolution
   never crosses namespaces.
 - **AC-27 home migration** — a home directory moved to new hardware (registry + marker
-  intact) keeps its node_id: same node, sessions resolve as local, seats reconcile to unseated
+  intact) keeps its node_id: same node, sessions resolve as local, seats resolve to unseated
   (the occupants died in transit); nothing orphaned, nothing re-keyed.
 - **AC-28 clone repair** — a cloned state dir (two copies, one node_id) is repaired by
   `node init --new` on the copy: fresh node_id for future writes; prior rows stay intact,
@@ -629,7 +667,7 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
 - **AC-36 v1 migration** — a v1 registry (status-snapshot rows) migrates one-shot: the v1
   file is archived untouched; closed ⇒ retired; active ⇒ unseated (dormant default, no live
   probing — no corpse is seated, and live occupants re-seat via observation/enroll/
-  reconciliation); legacy keys ignored; migrated rows node-attributed and event-marked as
+  verb-time resolution); legacy keys ignored; migrated rows node-attributed and event-marked as
   migration; re-running is a no-op.
 
 **Observer**
@@ -643,10 +681,14 @@ Normative. Each is a high-level test case; implementation plans map suites onto 
 - **AC-39 disposability** — `kill -9` of the observer mid-loop loses nothing: restart
   reacquires the singleton lock, the catch-up sweep re-derives the view, and no file
   written by the previous generation is read by the new one.
-- **AC-40 advice, not repair** — an unseated row with a live matching occupant (the
-  migration dormant-default case) is flagged with evidence and a suggested verb; the
-  observer appends nothing for it; `enroll`/`reconcile`/`resume` remain the only re-seat
-  paths.
+- **AC-40 ground-truth self-heal, advice otherwise** *(rewritten 2026-08-21, TASK-3)* — an
+  unseated or stale row whose recorded sid/lineage matches a live occupant by **positive
+  transcript-match probe evidence** (§8.3) is re-seated by verb-time resolution as a
+  recorded observation fact (silent self-heal). The observer flags such rows but appends no
+  re-seat for them in v1 (observer-sweep self-heal is a deferred fast-follow). Rows with
+  *correlate-only* evidence (no transcript-match probe possible) remain advice-only:
+  flagged, never auto-repaired. The fence is "never auto-repair without ground truth", not
+  "never auto-repair".
 - **AC-41 enrolled turnover** — `/clear` in an enrolled seat produces the child-first
   turnover pair from the observer (§8.1), idempotent under re-observation.
 
@@ -695,13 +737,14 @@ Ratifying this spec ratifies these. Flag any line to reopen it.
 | D3 | Review amendments A1–A12 adopted wholesale | §§3–8 throughout |
 | D4 | Node = lazily-minted node_id living with the state (registry + marker, travels with the home dir); marker↔registry gate enforces backup-not-sync; hardware identity excluded; clone = accepted residual risk repaired by `--new` | §6.1, AC-21, AC-27..29 |
 | D5 | Namespace identity = minted namespace_id anchored inside the HCOM_DIR; path is per-node description; one namespace per node; teams dropped | §6.2, AC-26, §10 |
-| D6 | Epochs are implementation-tier oracle bookkeeping: herder-minted per-node ids; derive + probe; reconcile-never-invalidate | §6.3, §8.3 |
+| D6 | Epochs are implementation-tier oracle bookkeeping: herder-minted per-node ids; derive + probe; *(amended 2026-08-21)* epoch mismatch is invisible to resolution — stored coordinates are never consulted (§8.3); epoch ids persist as provenance only | §6.3, §8.3 |
 | D7 | Single-machine only: cross-node behaviour out of scope, deferred to a future central-orchestrator design; node attribution kept as a zero-cost stamp; unknown-node rows are read-only anomalies | §3.1-12, §10, AC-25 |
 | D8 | Headless: full schema now (pid/node/epochs), degraded command support | §3.3, AC-35 |
 | D9 | Registry: one live JSONL per state dir; kind-partitioned projection; flock write discipline; backup-not-sync; sqlite/hybrid rejected with recorded rationale; rotate-never-delete growth stance | §5, §10 |
 | D10 | One resolver: targets are sessions; seats via explicit escapes; `resolve` + a minimal usage-driven proxy set as the substrate escape hatch | §4, §7 |
-| D11 | Sid probing requires an active reporter (sidecar self-report preferred over tool integrations); sid-less panes reconcile via terminal_id-then-guarded-match at `assumed` continuity, never unseat on absence of evidence | §4, §8.3, AC-24 |
+| D11 | *(amended 2026-08-21)* `agent_session` reports are hints, never ground truth: MATCH requires the transcript artifact; tools without a pid→transcript leg are UNPROBEABLE and keep existing evidence rules at `assumed` continuity; the terminal_id-then-guarded-match re-bind is deleted; never unseat on absence of evidence | §4, §8.3, AC-24 |
 | D12 | v1 registry migrates by one-shot rewrite-with-archive at first v2 write: closed→retired, active→unseated (dormant default, no live probing — never verbatim, never a corpse seated), absent-node legal only pre-mint, legacy keys ignored, tool vocabulary widened beyond claude\|codex | §5.4, AC-36 |
+| D13 | *(added 2026-08-21, fleet-refit TASK-3)* Ground-truth resolution with verb-time silent self-heal: the occupant is its own proof; refuse only on positive mismatch, no occupant, or ambiguity; re-seat-in-place removed; stored coordinates are observation provenance; observer-sweep self-heal deferred as a fast-follow. Successor of the registration-brittleness memo's R2+R4 fused with recognition, minus the operator | §2, §3.1-15, §3.3, §8.3, AC-13, AC-40 |
 
 Process notes outside the spec: where the distilled glossary lands (CONTEXT.md home) and which
 gaps ride which branch belong to the implementation plan, not this document. Open naming
