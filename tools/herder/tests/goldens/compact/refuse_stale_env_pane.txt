@@ -1,0 +1,7 @@
+=== STDERR ===
+herder compact: refused — cannot resolve own pane: no terminal_id for p_gone. If HERDR_PANE_ID is stale (a restarted or resumed-in-place session inherits the old value), find your live pane id with `herdr pane list` and re-run as HERDR_PANE_ID=<live-pane-id> herder compact ... Nothing was typed.
+=== STDOUT ===
+
+=== EXIT ===
+2
+=== HERDR MUTATING CALLS ===

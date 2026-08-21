@@ -26,6 +26,13 @@ type bootPaster struct {
 	Client herdrClient
 	Sleep  func(time.Duration)
 
+	// KindHint names the target agent kind when the caller has already proven
+	// it (compact's registry row). The pane-list detection below misses a
+	// detection-lost pane — alive and readable but absent from the herdr
+	// agent list — which would leave the paste sigil-less and unable to
+	// verify submission (TASK-041).
+	KindHint string
+
 	// PreflightVisibleOnly restricts the paste preflight to the VISIBLE screen
 	// (what is blocking NOW). The boot path keeps the additional scrollback
 	// check (default false): a fresh pane's scrollback ≈ its screen, so the
@@ -68,7 +75,10 @@ type pasteResult struct {
 // delivery_result=not_attempted, matching the old shell-out where a refusal
 // produced no --json record.
 func (b *bootPaster) paste(paneID, message string) pasteResult {
-	kind := b.detectKind(paneID)
+	kind := b.KindHint
+	if kind == "" {
+		kind = b.detectKind(paneID)
+	}
 	sigil := ""
 	switch kind {
 	case "codex":

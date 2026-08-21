@@ -33,12 +33,14 @@
 #       polluted_still  — the VISIBLE composer starts with stray text; ctrl+u
 #                         is accepted but leaves it polluted, so paste refuses.
 #       guid_drift      — the env pane resolves to a DIFFERENT terminal than
-#                         the caller's registry row. WITHOUT a corroborating
-#                         session id this must REFUSE (a stale/inherited
-#                         HERDER_GUID looks identical — codex review P1); WITH
-#                         one (drift_corroborated harness case) compact pastes
-#                         into the registry terminal's live pane, with a note.
-#       term_dead       — the registry terminal is not in agent list.
+#                         the caller's registry row records (stale stored
+#                         coordinates). Compact NOTES the disagreement and
+#                         pastes into the caller's own LIVE env pane — never
+#                         into the pane the fossil row points at (TASK-041).
+#       term_dead       — the registry terminal is not in agent list
+#                         (detection-lost / reissued): must not block; the
+#                         paste targets the live env pane and verifies via
+#                         the proven-kind sigil (KindHint).
 #       clear_landed    — codex review P2: the payload lands in the composer
 #                         (first read after send) but is CLEARED before the
 #                         Enter (escape/modal/redraw). The pre-Enter sample
@@ -52,7 +54,8 @@
 #   p_env  — the caller's HERDR_PANE_ID (legacy alias, never in agent list)
 #   w1-2 @ term_ME     the caller's canonical pane (default self)
 #   w1-3 @ term_OTHER  a neighbour pane
-#   w1-5 @ term_REG    the caller's REAL pane in guid_drift (registry terminal)
+#   w1-5 @ term_REG    the pane the fossil registry row points at in guid_drift
+#                      (the live target w1-2 must win over it)
 
 set -euo pipefail
 
