@@ -1,5 +1,5 @@
 === STDERR ===
-herder compact: not running inside a herdr pane (HERDR_ENV/HERDR_PANE_ID required) — herder compact queues input to the caller's OWN pane only
+herder compact: cannot locate own pane: occupant probe unavailable (herdr pane list failed: exit status 64) and not running inside a herdr pane environment (HERDR_ENV/HERDR_PANE_ID absent) — herder compact queues input to the caller's OWN pane only
 === STDOUT ===
 
 === EXIT ===

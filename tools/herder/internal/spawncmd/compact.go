@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,10 +76,6 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		selected = &selection
 	}
 
-	if os.Getenv("HERDR_ENV") != "1" || os.Getenv("HERDR_PANE_ID") == "" {
-		dieCompact(stderr, "not running inside a herdr pane (HERDR_ENV/HERDR_PANE_ID required) — herder compact queues input to the caller's OWN pane only")
-		return 64
-	}
 	if strings.ContainsAny(opts.Steer, "\n\r") {
 		dieCompact(stderr, "steer must be a single line — an embedded newline would submit early and corrupt the /compact command")
 		return 64
@@ -89,22 +87,40 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Current truth: what does the pane named by our environment hold NOW.
-	// HERDR_PANE_ID was captured at pane start and pane ids can re-key on
-	// moves or reshuffle after restart, so the env VALUE is only an entry
-	// point — the live `pane get` yields the canonical pane id that becomes
-	// the paste target, and a value that no longer resolves refuses here.
+	// Self-location by live evidence only (TASK-041). PRIMARY: the occupant
+	// probe pointed at oneself — enumerate the live panes and find the ONE
+	// whose process tree contains this process. The caller is provably
+	// inside its own pane, with no env, no herdr agent detection, and no
+	// stored coordinates needed — manual seats herdr never launched
+	// included. An authoritative no-match or multi-match fails closed.
+	// FALLBACK (probe transport unavailable only — older herdr without
+	// pane.process_info, partial probe outage): HERDR_PANE_ID re-resolved
+	// through a live `pane get`; the env value is a launch-epoch entry
+	// point, never trusted un-resolved.
 	envPane := os.Getenv("HERDR_PANE_ID")
-	staleEnvRecovery := " If HERDR_PANE_ID is stale (a restarted or resumed-in-place session inherits the old value), find your live pane id with `herdr pane list` and re-run as HERDR_PANE_ID=<live-pane-id> herder compact ..."
-	out, err := herdr.Output("pane", "get", envPane)
-	if err != nil {
-		dieCompact(stderr, "refused — cannot resolve own pane: herdr pane get failed for "+envPane+"."+staleEnvRecovery+" Nothing was typed.")
+	pane, probeErr := locateOwnPaneByPID(herdr)
+	switch {
+	case probeErr == nil:
+		// Located by occupancy proof.
+	case errors.Is(probeErr, errSelfProbeNoMatch), errors.Is(probeErr, errSelfProbeAmbiguous):
+		dieCompact(stderr, "refused — cannot prove which pane is yours: "+probeErr.Error()+". herder compact only ever types into the caller's own pane; without proof it refuses. If you ARE at a pane you can see, the manual recovery is: herdr pane send-keys <your-pane> ctrl+u; herdr pane send-text <your-pane> '/compact <steer>'; herdr pane send-keys <your-pane> Enter. Nothing was typed.")
 		return 2
-	}
-	pane, err := herdrcli.ParsePaneGet(out)
-	if err != nil || pane.TerminalID == "" {
-		dieCompact(stderr, "refused — cannot resolve own pane: no terminal_id for "+envPane+"."+staleEnvRecovery+" Nothing was typed.")
-		return 2
+	default:
+		if os.Getenv("HERDR_ENV") != "1" || envPane == "" {
+			dieCompact(stderr, "cannot locate own pane: occupant probe unavailable ("+probeErr.Error()+") and not running inside a herdr pane environment (HERDR_ENV/HERDR_PANE_ID absent) — herder compact queues input to the caller's OWN pane only")
+			return 64
+		}
+		staleEnvRecovery := " If HERDR_PANE_ID is stale (a restarted or resumed-in-place session inherits the old value), find your live pane id with `herdr pane list` and re-run as HERDR_PANE_ID=<live-pane-id> herder compact ..."
+		out, err := herdr.Output("pane", "get", envPane)
+		if err != nil {
+			dieCompact(stderr, "refused — cannot resolve own pane: occupant probe unavailable ("+probeErr.Error()+") and herdr pane get failed for "+envPane+"."+staleEnvRecovery+" Nothing was typed.")
+			return 2
+		}
+		pane, err = herdrcli.ParsePaneGet(out)
+		if err != nil || pane.TerminalID == "" {
+			dieCompact(stderr, "refused — cannot resolve own pane: occupant probe unavailable ("+probeErr.Error()+") and no terminal_id for "+envPane+"."+staleEnvRecovery+" Nothing was typed.")
+			return 2
+		}
 	}
 
 	recs, err := registry.Load(registryPath)
@@ -437,6 +453,123 @@ func resolveSelfRow(recs []registry.Record, pane herdrcli.Pane) (selfIdentity, s
 // session (TASK-041 AC#3, lale field report).
 func cwdWithin(wd, paneCWD string) bool {
 	return wd == paneCWD || strings.HasPrefix(wd, strings.TrimRight(paneCWD, "/")+"/")
+}
+
+var (
+	errSelfProbeNoMatch   = errors.New("no live pane's process tree contains this process")
+	errSelfProbeAmbiguous = errors.New("multiple live panes' process trees contain this process")
+)
+
+// locateOwnPaneByPID is the occupant probe pointed at oneself (TASK-041,
+// compact-scoped forerunner of slimdown charter decision 1): find the live
+// pane whose process tree contains this process. herder runs as a tool-call
+// descendant of the agent process, itself a descendant of the pane shell, so
+// a pane owns the caller when its shell pid or any foreground pid is this
+// process or one of its ancestors. pid 1 is everyone's ancestor and proves
+// nothing, so it never matches.
+//
+// Errors are three-way: errSelfProbeNoMatch means every pane answered and
+// none contains us (authoritative — the caller is not in any live pane);
+// errSelfProbeAmbiguous means more than one does (fail closed, never pick);
+// any other error means the probe transport could not answer (pane list
+// unsupported/failed, or no pane's process_info was queryable) and the
+// caller may fall back to other entry points.
+func locateOwnPaneByPID(herdr *herdrcli.Client) (herdrcli.Pane, error) {
+	out, err := herdr.Output("pane", "list")
+	if err != nil {
+		return herdrcli.Pane{}, fmt.Errorf("herdr pane list failed: %w", err)
+	}
+	panes, err := herdrcli.ParsePaneList(out)
+	if err != nil {
+		return herdrcli.Pane{}, fmt.Errorf("herdr pane list unparseable: %w", err)
+	}
+	if len(panes) == 0 {
+		return herdrcli.Pane{}, errors.New("herdr pane list reports no panes")
+	}
+	ancestors := selfAndAncestorPIDs()
+	matches := []herdrcli.Pane(nil)
+	probed := 0
+	for _, pane := range panes {
+		infoOut, infoErr := herdr.Output("pane", "process_info", pane.PaneID)
+		if infoErr != nil {
+			continue
+		}
+		info, parseErr := herdrcli.ParseProcessInfo(infoOut)
+		if parseErr != nil {
+			continue
+		}
+		probed++
+		if paneOwnsPIDs(info, ancestors) {
+			matches = append(matches, pane)
+		}
+	}
+	switch {
+	case len(matches) == 1:
+		return matches[0], nil
+	case len(matches) > 1:
+		ids := make([]string, len(matches))
+		for i, m := range matches {
+			ids[i] = m.PaneID
+		}
+		return herdrcli.Pane{}, fmt.Errorf("%w (pid %d, panes %s)", errSelfProbeAmbiguous, os.Getpid(), strings.Join(ids, ", "))
+	case probed == 0:
+		return herdrcli.Pane{}, errors.New("pane.process_info answered for no pane")
+	case probed < len(panes):
+		// Zero matches but some panes were unprobeable: not authoritative —
+		// the caller could be in one of the unprobed panes.
+		return herdrcli.Pane{}, fmt.Errorf("pane.process_info answered for only %d of %d panes and none of those contains this process", probed, len(panes))
+	default:
+		return herdrcli.Pane{}, fmt.Errorf("%w (pid %d, %d panes probed)", errSelfProbeNoMatch, os.Getpid(), probed)
+	}
+}
+
+func paneOwnsPIDs(info herdrcli.ProcessInfo, pids map[int]bool) bool {
+	if info.ShellPID > 1 && pids[info.ShellPID] {
+		return true
+	}
+	for _, proc := range info.Processes {
+		if proc.PID > 1 && pids[proc.PID] {
+			return true
+		}
+	}
+	return false
+}
+
+// selfAndAncestorPIDs is this process plus its ancestry walked toward init
+// (excluded: pid 1 proves nothing). Cycles and unreadable parents terminate
+// the walk.
+func selfAndAncestorPIDs() map[int]bool {
+	pids := map[int]bool{}
+	for pid := os.Getpid(); pid > 1 && !pids[pid]; pid = parentPID(pid) {
+		pids[pid] = true
+	}
+	return pids
+}
+
+// parentPID reads the parent from /proc (field 4 of stat, after the last ')'
+// since comm may contain spaces or parens), falling back to `ps` where /proc
+// does not exist (darwin).
+func parentPID(pid int) int {
+	if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err == nil {
+		s := string(data)
+		if idx := strings.LastIndexByte(s, ')'); idx >= 0 {
+			if fields := strings.Fields(s[idx+1:]); len(fields) >= 2 {
+				if ppid, err := strconv.Atoi(fields[1]); err == nil {
+					return ppid
+				}
+			}
+		}
+		return 0
+	}
+	out, err := exec.Command("ps", "-o", "ppid=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return 0
+	}
+	ppid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0
+	}
+	return ppid
 }
 
 func sameGUID(a, b *registry.Record) bool {

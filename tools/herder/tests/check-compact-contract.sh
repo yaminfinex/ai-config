@@ -132,6 +132,10 @@ run_compact() {
     MOCK_HCOM_ROWS="$hcom_rows" \
     MOCK_COMPACT_SCENARIO="$scen" MOCK_COMPACT_STATE="$CASE/mock" \
     MOCK_PROBE_DIR="$CASE/probe" MOCK_COMPACT_CWD="$cwdval" \
+    MOCK_SELF_SHELL_PID="$$" \
+    MOCK_NO_SELF_PANE="${MOCK_NO_SELF_PANE:-}" \
+    MOCK_MULTI_SELF_PANE="${MOCK_MULTI_SELF_PANE:-}" \
+    MOCK_PROBE_UNAVAILABLE="${MOCK_PROBE_UNAVAILABLE:-}" \
     "${HC[@]}" "$@" 2>"$RUN_ERR_F")"
   RUN_RC=$?
 }
@@ -168,6 +172,8 @@ block_for() {
   block+="$(printf '\n=== HERDR MUTATING CALLS ===\n%s' "$(cat "$CASE/probe/calls" 2>/dev/null)")"
   block="${block//$CASE/<CASE>}"
   block="${block//$REPO_ROOT/<REPO>}"
+  # The self-probe refusals name the caller's live pid — normalize it.
+  block="$(sed -E 's/\(pid [0-9]+/(pid <PID>/g' <<<"$block")"
   printf '%s' "$block"
 }
 
@@ -230,19 +236,27 @@ COMPACT_SEED_REGISTRY=""
 scenario refuse_noidentity   midturn         positional "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF"
 scenario refuse_ghost_guid   midturn         noguidrow  "$STEER"
-scenario refuse_stale_env_pane midturn       stalepane  --stop "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF_BASH"
 scenario refuse_bash         midturn         guid       "$STEER"
 
 # TASK-041 red fixtures, now green: stale stored coordinates never block
-# self-compaction. The paste target is the caller's own LIVE pane, so the
-# registry row (which only names WHO the caller is) cannot redirect the paste.
+# self-compaction. Self-location is the occupant probe pointed at oneself
+# (pane list -> process_info -> the pane whose process tree contains the
+# caller), so neither env, herdr agent detection, nor the registry row can
+# misdirect or block the paste.
 # stale_term_ok — the row's terminal is absent from the agent list
 # (detection-lost / reissued at server handoff); the old ladder refused
-# "cannot locate your own pane". Now: types into the live env pane, and the
-# KindHint keeps submission verification working with no agent-list entry.
+# "cannot locate your own pane". Now: types into the probed own pane, and
+# the KindHint keeps submission verification working with no agent-list entry.
 COMPACT_SEED_REGISTRY="$ROW_SELF"
 scenario stale_term_ok       term_dead       guid       --stop "$STEER"
+# manual_undetected_ok — reza round-2 field case (riko): manually-seated row,
+# NO HERDR_PANE_ID at all, agent-list undetected. The pid probe alone
+# locates the pane; positional row match + cwd corroboration prove the row.
+scenario manual_undetected_ok term_dead      nopaneid   --stop "$STEER"
+# stale_env_pane_ok — HERDR_PANE_ID points at a pane herdr cannot resolve;
+# the probe does not care.
+scenario stale_env_pane_ok   midturn         stalepane  --stop "$STEER"
 # enrolled_no_terminal — a durable-key row recording no terminal_id at all.
 COMPACT_SEED_REGISTRY="$ROW_SELF_NOTERM"
 scenario enrolled_no_terminal midturn        guid       --stop "$STEER"
@@ -250,6 +264,13 @@ scenario enrolled_no_terminal midturn        guid       --stop "$STEER"
 # stored pane id matches the caller's live canonical pane, cwd corroborates.
 COMPACT_SEED_REGISTRY="$ROW_SELF_STALETERM"
 scenario positional_stale_term midturn       positional --stop "$STEER"
+
+# Probe verdicts: transport-down falls back to the HERDR_PANE_ID entry point
+# (silently — old-herdr substrates keep working); an authoritative no-match
+# or a multi-match fails closed with the manual-injection recovery named.
+COMPACT_SEED_REGISTRY="$ROW_SELF"
+MOCK_PROBE_UNAVAILABLE=1 scenario probe_down_env_fallback midturn guid --stop "$STEER"
+MOCK_MULTI_SELF_PANE=1   scenario probe_ambiguous         midturn guid --stop "$STEER"
 
 # Pane-id churn / stale identity: stored coordinates disagreeing with the live
 # env pane get a NOTE and the paste proceeds into the caller's own live pane —
@@ -275,9 +296,12 @@ COMPACT_SEED_REGISTRY="$ROW_SELF"
 # not_delivered (exit 1), never a false delivered.
 scenario clear_before_enter  clear_landed    guid          --stop "$STEER"
 
-# Environment/usage refusals.
-scenario refuse_outside      midturn         outside    "$STEER"
-scenario refuse_nopaneid     midturn         nopaneid   "$STEER"
+# Environment/usage refusals. Outside a pane the probe answers
+# authoritatively (no pane's tree contains the caller) — fail closed even
+# though env vars happen to be present; with the probe down AND no
+# HERDR_PANE_ID there is no entry point left.
+MOCK_NO_SELF_PANE=1      scenario refuse_outside  midturn outside  "$STEER"
+MOCK_PROBE_UNAVAILABLE=1 scenario refuse_nopaneid midturn nopaneid "$STEER"
 scenario usage_unknown_flag  midturn         guid       --pane w1-3 "$STEER"
 scenario usage_multiline     midturn         guid       $'line one\nline two'
 
