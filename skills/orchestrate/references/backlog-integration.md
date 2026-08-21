@@ -6,8 +6,8 @@ let the run lean on it. When it doesn't, nothing changes — this whole file is 
 **Division of labour.** Two ledgers, no duplication:
 
 - **Backlog.md (`backlog/`, git-tracked, durable)** = the *unit ledger*. The list of units, their
-  grouping, dependencies, and current status. Survives the branch, the prune, and the run.
-- **Journal (run-log — napkins, gitignored, ephemeral)** = the *decision ledger*: dispatches,
+  grouping, dependencies, and current status. Survives the branch and the run.
+- **Journal (run-log — mission artifacts, git-shared)** = the *decision ledger*: dispatches,
   sliding doors, deviations, verification verdicts (invariants 4 + 9). Reports and evidence ride
   the bus on unit threads; neither belongs in backlog tasks.
 
@@ -118,5 +118,6 @@ must never block a run — it's an enhancement to durability, not a dependency.
 
 The branch merges; `backlog/` merges with it, so the durable unit record ships in the repo. Harvest
 the journal into the backlog where it belongs (follow-ups discovered mid-run → new `backlog task
-create`, no run label) before pruning napkins. Closed run-label tasks can stay closed in `backlog/`
-as the record, or `backlog cleanup` ages them out.
+create`, no run label) before the run closes; the journal itself stays in the mission as the
+decision record. Closed run-label tasks can stay closed in `backlog/` as the record, or `backlog
+cleanup` ages them out.

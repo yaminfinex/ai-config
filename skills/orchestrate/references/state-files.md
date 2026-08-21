@@ -1,7 +1,8 @@
 # State files — playbook + journal
 
-The two files that carry a multi-session mission, living in the branch's gitignored scratch dir
-(e.g. `napkins/<run>/playbook.md` + `run-log.md`). The branch carries the code; the bus carries
+The two files that carry a multi-session mission, living in the active mission's artifacts
+(e.g. `<mission>/artifacts/playbook.md` + `run-log.md` — see `using-missions` for resolution;
+an orchestrator may pick a deeper path). The branch carries the code; the bus carries
 reports and evidence; spawn prompts stay one line because these files hold everything else.
 
 Tests: a fresh agent given only the one-line prompt can run its unit from the playbook alone; a

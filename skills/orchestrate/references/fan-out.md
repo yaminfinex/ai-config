@@ -17,7 +17,7 @@ serialize them instead of discovering the interaction as a merge conflict.
    <run-branch> ...` with the one-line prompt — one step; it creates the worktree + workspace).
    Read-only workers may share the main worktree — then they write nothing, scratch included.
 2. **Cap the fleet at what you can supervise**; batch beyond that.
-3. **Deliverables land as files** (e.g. `napkins/<run>/results/<unit>.md`); the DONE report —
+3. **Deliverables land as files** (e.g. `<mission>/artifacts/results/<unit>.md`); the DONE report —
    gate results inline or bundled — lands on the unit thread. The orchestrator idles and
    integrates **in completion order as reports arrive** — not by waiting on workers one at a
    time, which stalls on whichever you picked and is blind to whoever finished first. Backstop

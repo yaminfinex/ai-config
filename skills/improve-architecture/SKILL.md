@@ -3,8 +3,8 @@ name: improve-architecture
 description:
   Use when reviewing a package/directory for architectural friction, deepening a shallow module cluster, or improving
   testability. Triggers "let's review packages/X", "how should we refactor Y", "improve architecture of Z", or
-  complaints that a module is hard to understand or has brittle/over-mocked tests. Produces a napkin issue file; does
-  NOT write implementation code.
+  complaints that a module is hard to understand or has brittle/over-mocked tests. Produces an issue file in the active
+  mission's artifacts; does NOT write implementation code.
 ---
 
 # Improve Architecture
@@ -34,7 +34,7 @@ tests they supersede.
 4. Design 3+ interfaces        → parallel sub-agents, each with a different constraint
 5. Compare and recommend       → opinionated read, not a menu
 6. User picks an interface
-7. Write the napkin issue file → handoff-ready, pickup-able by a planning/impl agent
+7. Write the issue file into the mission → handoff-ready, pickup-able by a planning/impl agent
 ```
 
 Work phases in order; wait for user input between handoffs. For multiple cluster picks in Phase 2, see "Handling
@@ -91,7 +91,7 @@ Support picking more than one cluster and handling each differently:
 | ------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | **Inline**   | The cluster the user most wants to steer, or one so small it's faster to do than hand off | Loop Phases 3–7 for this cluster now                                            |
 | **Handoff**  | Worth exploring but not worth live attention; parallel work                               | Invoke the `handoff` skill with a Phase-3-ready package (contents below)        |
-| **Deferred** | Noted but not prioritized                                                                 | List in the napkin index as "candidates not yet explored" — no document written |
+| **Deferred** | Noted but not prioritized                                                                 | List in the cluster docs' dir (`candidates.md`) as "not yet explored" — no document written |
 
 Handoff package must include:
 
@@ -99,9 +99,9 @@ Handoff package must include:
 - Exploration notes that justified the candidate (friction evidence, not a full rewrite)
 - User-set constraints (e.g. "don't touch the public API")
 - Instruction to re-enter `improve-architecture` at Phase 3
-- The shared napkin output path, so all cluster docs land together
+- The shared mission output path, so all cluster docs land together
 
-When the user picks multiple inline clusters, finish one fully (through the napkin file) before starting the next —
+When the user picks multiple inline clusters, finish one fully (through the issue file) before starting the next —
 don't context-switch mid-cluster.
 
 ## Phase 3: Frame the Problem Space (after user picks a candidate)
@@ -156,15 +156,16 @@ Wait for the user to pick, accept your recommendation, or ask for a hybrid.
 The issue file is the **final artifact** and the **input to the next agent** (planning, implementation, or human). Write
 it so a fresh agent with zero session context can plan/execute without follow-up.
 
-Resolve the napkin path via the `using-napkins` skill convention, then write to
-`<napkin-dir>/improve-architecture/<cluster-name>.md` and update `<napkin-dir>/index.md`.
+Resolve the active mission via the `using-missions` skill convention (its refuse-without-mission rule applies — no
+mission, no issue file), then write to `<mission>/artifacts/improve-architecture/<cluster-name>.md`, or wherever the
+mission's orchestrator dictates. Commit per the missions git rhythm.
 
 Use the template at [references/issue-template.md](references/issue-template.md) — it defines every required section
 (Problem, Current State Inventory, Proposed Interface, Dependency Strategy, Testing Strategy, Migration Phases,
 Implementation Recommendations, Acceptance Criteria, Out of Scope, Open Questions).
 
 Present the final file to the user and confirm it captures the session's decisions. For multiple clusters, each gets its
-own file; update `index.md` so they're discoverable as a set.
+own file in the same `improve-architecture/` dir, so they're discoverable as a set.
 
 ## Anti-Patterns
 

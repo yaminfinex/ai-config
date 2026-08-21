@@ -1,7 +1,7 @@
 # Issue File Template
 
 Template for the final artifact written in Phase 7 of the `improve-architecture` skill. Copy the structure below into
-`<napkin-dir>/improve-architecture/<cluster-name>.md`.
+`<mission>/artifacts/improve-architecture/<cluster-name>.md`.
 
 "Implementation Recommendations" is deliberately **not tied to file paths** — pickup agents use "Current State
 Inventory" for orientation and "Implementation Recommendations" for design intent.

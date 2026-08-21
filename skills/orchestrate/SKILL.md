@@ -142,7 +142,8 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
    for a future orchestrator picking up the run cold and for end-of-run reporting. It is not a
    communication channel and carries no evidence (that rides the bus — invariants 4, 9); a worker
    writes at most a one-line pointer. The branch carries the code: agents commit; the user ships.
-   Both files live in the branch's gitignored scratch dir (e.g. `napkins/`); bus history is
+   Both files live in the active mission's artifacts (`<mission>/artifacts/` — durable,
+   git-shared, outside every worktree; see `using-missions`); bus history is
    machine-local today, so journal + branch remain the cold-pickup artifacts until bus durability
    lands. Backlog-backed runs add a durable unit ledger alongside — `references/backlog-integration.md`.
 2. **Spawn prompts are one line** — "read <playbook> in full, then execute <unit>". Context
@@ -153,7 +154,7 @@ All run coordination rides the hcom bus; the herder registry resolves guid/label
    orchestrator at a future date (possibly post-compaction), the dispatched worker, and the
    eventual reviewers. Every reference must be reachable by the eventual worker — quote it
    inline or keep it in docs the capture ships with (main is ideal, not required; the backlog
-   itself may live in ephemeral napkins). Acceptance criteria are written at capture time,
+   itself may live in the mission). Acceptance criteria are written at capture time,
    while intent is fresh — never invented at dispatch. The capture names the unit's type
    (see Unit types) and, for implement units, its settled-decisions list. Plain language
    throughout: no run-internal dialect, no opaque references — dispatchable by a reader with

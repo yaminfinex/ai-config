@@ -53,10 +53,10 @@ git -C "$MISSIONS_REPO" commit -m 'mission(perf-regression): new scaffold for th
 
 # adopt — you move the files in yourself (there is no adopt machinery),
 # then commit; the summary names the source
-mv ~/code/api/napkins/repro "$MISSIONS_REPO/missions/perf-regression/artifacts/hera/repro"
+mv ~/code/api/scratch/repro "$MISSIONS_REPO/missions/perf-regression/artifacts/hera/repro"
 git -C "$MISSIONS_REPO" add missions/perf-regression
 git -C "$MISSIONS_REPO" commit \
-  -m 'mission(perf-regression): adopt repro script from api worktree napkins' \
+  -m 'mission(perf-regression): adopt repro script from api worktree scratch' \
   --trailer 'Mission-Source: api@9f31c2d' --trailer 'Mission-Agent: hera'
 
 # harvest — copy out, never move: the mission stays self-contained. Record

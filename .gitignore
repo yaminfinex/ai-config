@@ -17,7 +17,8 @@ logs/
 *.db
 *.db-*
 
-# Per-branch working memory (see skills/using-napkins/SKILL.md)
+# Legacy per-branch scratch (skill retired in favor of skills/using-missions); still ignored
+# so existing local napkins/ content stays out of git until migrated to a mission
 napkins/
 
 # Local backups and generated files
