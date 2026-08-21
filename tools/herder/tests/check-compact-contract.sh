@@ -418,8 +418,12 @@ if [[ "$WRITE" -eq 0 ]]; then
   [[ -z "$hits" ]] && ok "grep-gate: keystroke verbs confined to internal/spawncmd" \
     || bad "grep-gate: keystroke verbs confined to internal/spawncmd" "$hits"
 
-  # 4. The compact surface has no target/pane addressing flag.
-  hits="$(grep -En -- '--pane|--target|--to\b' "$GO_SRC/internal/spawncmd/compact.go" || true)"
+  # 4. The compact surface has no target/pane addressing flag: no such case
+  #    in the arg parser (the runtime rejection is pinned by the
+  #    usage_unknown_flag golden). A bare literal grep would false-positive
+  #    on the self-probe's `pane process-info --pane <id>` herdr invocation,
+  #    which addresses herdr's CLI, not compact's.
+  hits="$(grep -En -- 'case "--pane"|case "--target"|case "--to"' "$GO_SRC/internal/spawncmd/compact.go" || true)"
   [[ -z "$hits" ]] && ok "grep-gate: compact has no target/pane flag" \
     || bad "grep-gate: compact has no target/pane flag" "$hits"
 fi

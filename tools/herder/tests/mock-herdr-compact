@@ -6,7 +6,7 @@
 #
 # Answers exactly the herdr sub-invocations herder compact makes:
 #   herdr pane list                          (self-location occupant probe)
-#   herdr pane process_info <pane>           (which pane's tree contains the caller)
+#   herdr pane process-info --pane <pane>    (which pane's tree contains the caller)
 #   herdr pane get <pane>                    (env-pane fallback when probe is down)
 #   herdr agent list
 #   herdr agent read <pane> [--source ...] [--lines N]
@@ -183,19 +183,22 @@ case "${1:-} ${2:-}" in
         {pane_id:"w1-3", terminal_id:"term_OTHER", workspace_id:"w1", cwd:"/mock/other", foreground_cwd:"/mock/other"}
       ]}}'
     fi;;
-  "pane process_info")
+  "pane process-info")
+    # Live-verified 0.8 shape: `pane process-info --pane ID` ($3=--pane $4=ID).
     [[ "${MOCK_PROBE_UNAVAILABLE:-}" == 1 ]] && exit 64
+    [[ "${3:-}" == "--pane" ]] || { exit 64; }
     self_pid="${MOCK_SELF_SHELL_PID:-0}"
     owns=0
     if [[ "${MOCK_NO_SELF_PANE:-}" != 1 ]]; then
-      [[ "${3:-}" == "w1-2" ]] && owns=1
-      [[ "${MOCK_MULTI_SELF_PANE:-}" == 1 && "${3:-}" == "w1-3" ]] && owns=1
+      [[ "${4:-}" == "w1-2" ]] && owns=1
+      [[ "${MOCK_MULTI_SELF_PANE:-}" == 1 && "${4:-}" == "w1-3" ]] && owns=1
     fi
+    # Live 0.8 shape: no shell_pid member; foreground_processes only.
     if [[ "$owns" == 1 && "$self_pid" -gt 1 ]]; then
       jq -n --argjson pid "$self_pid" \
-        '{result:{process_info:{shell_pid:$pid, foreground_processes:[{pid:$pid, argv:["bash"], cwd:"/"}]}}}'
+        '{result:{process_info:{foreground_process_group_id:$pid, foreground_processes:[{pid:$pid, argv:["bash"], cwd:"/"}]}}}'
     else
-      jq -n '{result:{process_info:{shell_pid:999999999, foreground_processes:[]}}}'
+      jq -n '{result:{process_info:{foreground_process_group_id:999999999, foreground_processes:[{pid:999999999, argv:["bash"], cwd:"/"}]}}}'
     fi;;
   "pane get")
     case "${3:-}" in

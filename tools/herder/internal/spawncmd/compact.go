@@ -490,7 +490,10 @@ func locateOwnPaneByPID(herdr *herdrcli.Client) (herdrcli.Pane, error) {
 	matches := []herdrcli.Pane(nil)
 	probed := 0
 	for _, pane := range panes {
-		infoOut, infoErr := herdr.Output("pane", "process_info", pane.PaneID)
+		// Live-verified verb shape (herdr 0.8): `pane process-info --pane ID`.
+		// (The `pane process_info <ID>` spelling other herder call-sites use
+		// returns the pane help text on 0.8 — do not copy it.)
+		infoOut, infoErr := herdr.Output("pane", "process-info", "--pane", pane.PaneID)
 		if infoErr != nil {
 			continue
 		}
