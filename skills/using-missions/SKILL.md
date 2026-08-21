@@ -1,12 +1,8 @@
 ---
 name: using-missions
 description: >
-  Working memory backed by the active mission under `$MISSIONS_REPO/missions/<slug>/` (resolved via the `.mission`
-  marker). Owns capture and session-start rehydration. Use on intents like "capture this", "park this", "save for
-  later", "remember this" — recording todos / decisions / questions / lessons from recent conversation without
-  promoting them yet. Requires an active mission; refuses (with the `mish` recipe) when there is none. Other skills
-  (handoff, improve-architecture, orchestrate, debug repros) write hand-named files into the same mission's
-  `artifacts/` tree.
+  Capture working memory into the active mission. Use on "capture this" intents, at session start to rehydrate prior
+  captures, or when another skill needs the mission's `artifacts/` conventions; refuses when no mission is active.
 ---
 
 # Using Missions

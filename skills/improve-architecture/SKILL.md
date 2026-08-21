@@ -117,39 +117,26 @@ Include:
 
 Show this, then proceed to Phase 4 immediately.
 
-## Phase 4: Design Multiple Interfaces in Parallel
+## Phases 4–6: Design, Compare, User Picks
 
-Spawn **3+ sub-agents in parallel** (single message, multiple Agent calls). Each produces a **radically different**
-interface. A single design is a guess; three surface trade-offs.
+The mechanics — 3+ radically different interfaces from parallel constrained sub-agents, presented sequentially,
+compared in prose, an opinionated recommendation or hybrid — are the `design-an-interface` skill: invoke it for
+Phases 4–5 and follow it. Specific to this workflow:
 
-Each sub-agent gets a technical brief (separate from Phase 3's user-facing text):
+- **Phase 4 (design):** each sub-agent gets a technical brief (separate from Phase 3's user-facing text): file paths
+  and coupling details, dependency category, what's hidden behind the new interface, and that agent's design
+  constraint. The constraint set is dependency-category-driven:
 
-- File paths and coupling details
-- Dependency category
-- What's hidden behind the new interface
-- That agent's design constraint
+  | Agent       | Constraint                                                    |
+  | ----------- | ------------------------------------------------------------- |
+  | **Agent 1** | Minimize the interface — 1–3 entry points max                 |
+  | **Agent 2** | Maximize flexibility — many use cases and extension points    |
+  | **Agent 3** | Optimize for the most common caller — default case is trivial |
+  | **Agent 4** | _(if remote-owned or external)_ Ports & adapters pattern      |
 
-| Agent       | Constraint                                                    |
-| ----------- | ------------------------------------------------------------- |
-| **Agent 1** | Minimize the interface — 1–3 entry points max                 |
-| **Agent 2** | Maximize flexibility — many use cases and extension points    |
-| **Agent 3** | Optimize for the most common caller — default case is trivial |
-| **Agent 4** | _(if remote-owned or external)_ Ports & adapters pattern      |
+  Each design must include a dependency strategy matching the category.
 
-Each must output: interface signature, usage example, what complexity it hides, dependency strategy (matching the
-category), honest trade-offs.
-
-## Phase 5: Compare and Recommend
-
-Present each design **sequentially** so the user can read each on its own terms. Compare in prose — what each optimizes
-for, what each gives up.
-
-Then **recommend**. Be opinionated: which is strongest and why. If designs combine well, propose a **hybrid** and sketch
-it. Don't hedge — the user wants a read, not a menu.
-
-## Phase 6: User Picks an Interface
-
-Wait for the user to pick, accept your recommendation, or ask for a hybrid.
+- **Phase 6:** wait for the user to pick an interface, accept your recommendation, or ask for a hybrid.
 
 ## Phase 7: Write the Issue File
 

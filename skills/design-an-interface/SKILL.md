@@ -1,6 +1,6 @@
 ---
 name: design-an-interface
-description: Produce 3+ radically different designs for a module, API, or interface, compare them in prose, and synthesize a recommendation. Use when asked to "design an interface", "shape this API", "design it twice", "explore module boundaries", or when planning a new deep module and the first idea is unlikely to be the best. Based on "Design It Twice" from A Philosophy of Software Design — the value is the contrast, not the first draft.
+description: Produce 3+ radically different designs for a module or API, compare them, and recommend one. Use on "design an interface" or "design it twice" asks, or when planning a new deep module whose shape isn't obvious.
 ---
 
 <objective>

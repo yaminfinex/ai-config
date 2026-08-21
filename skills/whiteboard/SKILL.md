@@ -1,6 +1,6 @@
 ---
 name: whiteboard
-description: Live terminal whiteboard — maintain a hot-reloading presenterm deck in a herdr side pane while you work, with diagrams rendered as real images via kitty graphics. Use when the user says "open a whiteboard", "whiteboard this", "show me in a pane", "sketch in the terminal", "draw as you go", or wants live diagrams beside the session without the browser canvas.
+description: Live terminal whiteboard — a hot-reloading slide deck in a side pane beside the session. Use when the user says "whiteboard this" or wants live diagrams in the terminal rather than the browser canvas.
 ---
 
 # whiteboard

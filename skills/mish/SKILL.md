@@ -1,6 +1,6 @@
 ---
 name: mish
-description: Work with missions — durable, git-shared work homes under $MISSIONS_REPO/missions/<slug>/ driven by the `mish` CLI (new/backlog/status). Use when the user says "mint a mission", "create a mission", "mission board", "mission status", "adopt this into the mission", "harvest the results", "rename the mission", "close the mission", mentions a .mission marker or $MISSIONS_REPO, asks for a custody commit, or hits a merge conflict on mission files and needs the multi-writer resolution doctrine.
+description: Work with missions via the `mish` CLI — mint, adopt into, harvest, rename, or close one, check the board or status, make a custody commit. Use on .mission or $MISSIONS_REPO mentions, or when mission files merge-conflict.
 ---
 
 # mish
