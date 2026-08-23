@@ -160,12 +160,17 @@ func decodeAgentSession(raw json.RawMessage) (string, error) {
 }
 
 type ProcessInfo struct {
-	ShellPID  int       `json:"shell_pid"`
-	Processes []Process `json:"foreground_processes"`
+	// ShellPID is retained for compatibility with older herdr responses. The
+	// 0.8 wire omits it, so callers must also use ForegroundProcessGroupID and
+	// Processes as process-tree anchors.
+	ShellPID                 int       `json:"shell_pid"`
+	ForegroundProcessGroupID int       `json:"foreground_process_group_id"`
+	Processes                []Process `json:"foreground_processes"`
 }
 
 type Process struct {
 	PID  int      `json:"pid"`
+	Name string   `json:"name"`
 	Argv []string `json:"argv"`
 	CWD  string   `json:"cwd"`
 }

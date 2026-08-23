@@ -155,6 +155,16 @@ func TestParsePaneListAndGet(t *testing.T) {
 	}
 }
 
+func TestParseProcessInfoHerdr08Wire(t *testing.T) {
+	got, err := ParseProcessInfo([]byte(`{"result":{"process_info":{"pane_id":"p_1","foreground_process_group_id":42,"foreground_processes":[{"pid":43,"name":"bash","argv":["bash"],"cwd":"/work"}]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ShellPID != 0 || got.ForegroundProcessGroupID != 42 || len(got.Processes) != 1 || got.Processes[0].Name != "bash" {
+		t.Fatalf("ParseProcessInfo = %+v", got)
+	}
+}
+
 func TestParsePaneAgentSessionShapes(t *testing.T) {
 	// herdr 0.7.4 made agent_session an object (id in "value") and added
 	// members like scroll/revision; <= 0.7.3 emitted a bare string. Both
