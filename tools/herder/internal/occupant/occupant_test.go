@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry/v2"
@@ -21,7 +22,21 @@ type fakeHerdr struct {
 	pane  herdrcli.Pane
 	panes []herdrcli.Pane
 	info  herdrcli.ProcessInfo
+	infos map[string]herdrcli.ProcessInfo
 	err   error
+}
+
+type retryHerdr struct {
+	pane  herdrcli.Pane
+	info  herdrcli.ProcessInfo
+	calls int
+}
+
+func (f *retryHerdr) Pane(string) (herdrcli.Pane, error) { return f.pane, nil }
+func (f *retryHerdr) Panes() ([]herdrcli.Pane, error)    { return []herdrcli.Pane{f.pane}, nil }
+func (f *retryHerdr) ProcessInfo(string) (herdrcli.ProcessInfo, error) {
+	f.calls++
+	return f.info, nil
 }
 
 func (f fakeHerdr) Pane(id string) (herdrcli.Pane, error) {
@@ -38,8 +53,13 @@ func (f fakeHerdr) Pane(id string) (herdrcli.Pane, error) {
 	}
 	return herdrcli.Pane{}, os.ErrNotExist
 }
-func (f fakeHerdr) Panes() ([]herdrcli.Pane, error)                  { return f.panes, f.err }
-func (f fakeHerdr) ProcessInfo(string) (herdrcli.ProcessInfo, error) { return f.info, f.err }
+func (f fakeHerdr) Panes() ([]herdrcli.Pane, error) { return f.panes, f.err }
+func (f fakeHerdr) ProcessInfo(id string) (herdrcli.ProcessInfo, error) {
+	if info, ok := f.infos[id]; ok {
+		return info, f.err
+	}
+	return f.info, f.err
+}
 
 type fixture struct{ root, home string }
 
@@ -114,6 +134,39 @@ func TestProbeHappyClaude(t *testing.T) {
 	}
 }
 
+func TestProbeClaudeMatchingWitnessesCollapseToArtifact(t *testing.T) {
+	f := newFixture(t)
+	pane, info, cwd := baseTree(t, f, "claude")
+	pane.AgentSession = sidA
+	// A nested claude process sees the same cohort and artifact. Witness
+	// count is two, but the proven answer is still exactly one transcript.
+	f.proc(t, 31, 30, "claude", cwd, "guid-nested")
+	path := filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd), sidA+".jsonl")
+	f.transcript(t, path)
+	obs := Probe(Substrate{Herdr: fakeHerdr{pane: pane, info: info}, ProcRoot: f.root, Home: f.home}, pane.PaneID)
+	if obs.Status != Occupied || obs.SID != sidA || obs.PID != 30 {
+		t.Fatalf("Probe = %+v", obs)
+	}
+}
+
+func TestProbeClaudeMungeCollisionRemainsAmbiguous(t *testing.T) {
+	f := newFixture(t)
+	cwdA := filepath.Join(f.home, "a-b")
+	cwdB := filepath.Join(f.home, "a", "b")
+	if mungeCWD(cwdA) != mungeCWD(cwdB) {
+		t.Fatal("fixture paths do not collide")
+	}
+	f.proc(t, 10, 1, "bash", cwdA, "")
+	f.proc(t, 30, 10, "claude", cwdA, "guid-a")
+	f.proc(t, 31, 10, "claude", cwdB, "guid-b")
+	pane := herdrcli.Pane{PaneID: "pane-a", Agent: "claude", AgentSession: sidA}
+	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwdA), sidA+".jsonl"))
+	obs := Probe(Substrate{Herdr: fakeHerdr{pane: pane, info: herdrcli.ProcessInfo{ForegroundProcessGroupID: 10}}, ProcRoot: f.root, Home: f.home}, pane.PaneID)
+	if obs.Status != Ambiguous {
+		t.Fatalf("Probe = %+v", obs)
+	}
+}
+
 func TestProbeHappyCodexUsesLeafHolder(t *testing.T) {
 	f := newFixture(t)
 	pane, info, _ := baseTree(t, f, "codex")
@@ -167,11 +220,97 @@ func TestProbeNoOccupantVariants(t *testing.T) {
 	})
 }
 
+func TestProbeRequeriesOnceWhenToolPIDVanishes(t *testing.T) {
+	f := newFixture(t)
+	f.proc(t, 10, 1, "bash", f.home, "")
+	// A missing cwd link simulates the process disappearing after the status
+	// sweep but before permission-sensitive detail reads.
+	f.proc(t, 30, 10, "codex", "", "guid-a")
+	h := &retryHerdr{
+		pane: herdrcli.Pane{PaneID: "pane-a", Agent: "codex"},
+		info: herdrcli.ProcessInfo{ForegroundProcessGroupID: 10},
+	}
+	obs := Probe(Substrate{Herdr: h, ProcRoot: f.root, Home: f.home}, "pane-a")
+	if h.calls != 2 || obs.Status != Vacant {
+		t.Fatalf("calls/Probe = %d / %+v", h.calls, obs)
+	}
+}
+
 func TestProbeClaudeDetectionLostMultiTranscriptIsAmbiguous(t *testing.T) {
 	f := newFixture(t)
 	pane, info, cwd := baseTree(t, f, "claude")
 	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd), sidA+".jsonl"))
 	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd), sidB+".jsonl"))
+	obs := Probe(Substrate{Herdr: fakeHerdr{pane: pane, info: info}, ProcRoot: f.root, Home: f.home}, pane.PaneID)
+	if obs.Status != Ambiguous {
+		t.Fatalf("Probe = %+v", obs)
+	}
+}
+
+func TestProbeClaudeDetectionLostUsesActiveWindow(t *testing.T) {
+	t.Run("single-active", func(t *testing.T) {
+		f := newFixture(t)
+		pane, info, cwd := baseTree(t, f, "claude")
+		path := filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd), sidA+".jsonl")
+		f.transcript(t, path)
+		obs := Probe(Substrate{Herdr: fakeHerdr{pane: pane, info: info}, ProcRoot: f.root, Home: f.home}, pane.PaneID)
+		if obs.Status != Occupied || obs.SID != sidA || len(obs.Evidence) == 0 || obs.Evidence[0] != SignalCohort {
+			t.Fatalf("Probe = %+v", obs)
+		}
+	})
+	t.Run("stale-history-filtered", func(t *testing.T) {
+		f := newFixture(t)
+		pane, info, cwd := baseTree(t, f, "claude")
+		dir := filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd))
+		active := filepath.Join(dir, sidA+".jsonl")
+		stale := filepath.Join(dir, sidB+".jsonl")
+		f.transcript(t, active)
+		f.transcript(t, stale)
+		newest := time.Unix(1_700_000_000, 0)
+		if err := os.Chtimes(active, newest, newest); err != nil {
+			t.Fatal(err)
+		}
+		old := newest.Add(-claudeActivityWindow - time.Second)
+		if err := os.Chtimes(stale, old, old); err != nil {
+			t.Fatal(err)
+		}
+		obs := Probe(Substrate{Herdr: fakeHerdr{pane: pane, info: info}, ProcRoot: f.root, Home: f.home}, pane.PaneID)
+		if obs.Status != Occupied || obs.SID != sidA {
+			t.Fatalf("Probe = %+v", obs)
+		}
+	})
+}
+
+func TestProbeNestedUnprovenToolDoesNotVetoExactArtifact(t *testing.T) {
+	f := newFixture(t)
+	pane, info, cwd := baseTree(t, f, "codex")
+	pane.AgentSession = sidA
+	rollout := filepath.Join(f.home, ".codex", "sessions", "rollout-now-"+sidA+".jsonl")
+	f.transcript(t, rollout)
+	if err := os.Symlink(rollout, filepath.Join(f.root, "30", "fd", "42")); err != nil {
+		t.Fatal(err)
+	}
+	// The nested Claude has cohort history but no artifact matching the pane's
+	// Codex agent_session report, so it is not a proven competing occupant.
+	f.proc(t, 40, 30, "claude", cwd, "guid-nested")
+	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd), sidB+".jsonl"))
+	obs := Probe(Substrate{Herdr: fakeHerdr{pane: pane, info: info}, ProcRoot: f.root, Home: f.home}, pane.PaneID)
+	if obs.Status != Occupied || obs.Tool != "codex" || obs.SID != sidA {
+		t.Fatalf("Probe = %+v", obs)
+	}
+}
+
+func TestProbeDistinctProvenNestedArtifactsAreAmbiguous(t *testing.T) {
+	f := newFixture(t)
+	pane, info, cwd := baseTree(t, f, "claude")
+	pane.AgentSession = sidA
+	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd), sidA+".jsonl"))
+	f.proc(t, 40, 30, "codex", cwd, "guid-nested")
+	rollout := filepath.Join(f.home, ".codex", "sessions", "rollout-now-"+sidB+".jsonl")
+	f.transcript(t, rollout)
+	if err := os.Symlink(rollout, filepath.Join(f.root, "40", "fd", "42")); err != nil {
+		t.Fatal(err)
+	}
 	obs := Probe(Substrate{Herdr: fakeHerdr{pane: pane, info: info}, ProcRoot: f.root, Home: f.home}, pane.PaneID)
 	if obs.Status != Ambiguous {
 		t.Fatalf("Probe = %+v", obs)
@@ -210,7 +349,7 @@ func TestProcRootEnvironmentHook(t *testing.T) {
 	pane, info, _ := baseTree(t, f, "codex")
 	t.Setenv(ProcRootEnv, f.root)
 	obs := Probe(Substrate{Herdr: fakeHerdr{pane: pane, info: info}, Home: f.home}, pane.PaneID)
-	if obs.Status != Vacant || obs.Tool != "codex" {
+	if obs.Status != Vacant {
 		t.Fatalf("Probe = %+v", obs)
 	}
 }
@@ -240,6 +379,92 @@ func TestSelfProbeForeignTreeFailsClosed(t *testing.T) {
 	obs := SelfProbe(Substrate{Herdr: h, ProcRoot: f.root, Home: f.home})
 	if obs.Status != Vacant || obs.SID != "" {
 		t.Fatalf("foreign tree accepted: %+v", obs)
+	}
+}
+
+func TestSelfProbeDifferentPaneProducesPositiveMismatch(t *testing.T) {
+	f := newFixture(t)
+	cwdA := filepath.Join(f.home, "work", "a")
+	cwdB := filepath.Join(f.home, "work", "b")
+	f.proc(t, 10, 1, "bash", cwdA, "")
+	f.proc(t, 30, 10, "claude", cwdA, "guid-a")
+	f.proc(t, 50, 1, "bash", cwdB, "")
+	f.proc(t, 60, 50, "claude", cwdB, "guid-b")
+	f.proc(t, os.Getpid(), 60, "occupant.test", cwdB, "")
+	paneA := herdrcli.Pane{PaneID: "pane-a", Agent: "claude", AgentSession: sidA}
+	paneB := herdrcli.Pane{PaneID: "pane-b", Agent: "claude", AgentSession: sidB}
+	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwdA), sidA+".jsonl"))
+	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwdB), sidB+".jsonl"))
+	h := fakeHerdr{
+		panes: []herdrcli.Pane{paneA, paneB},
+		infos: map[string]herdrcli.ProcessInfo{
+			"pane-a": {ForegroundProcessGroupID: 10},
+			"pane-b": {ForegroundProcessGroupID: 50},
+		},
+	}
+	t.Setenv("HERDR_PANE_ID", "pane-a") // positive but foreign entry hint
+	obs := SelfProbe(Substrate{Herdr: h, ProcRoot: f.root, Home: f.home})
+	out := Verdict(obs, v2.SessionRecord{SIDs: []v2.SID{{SID: sidA}}})
+	if obs.Pane.PaneID != "pane-b" || obs.SID != sidB || out.Status != PositiveMismatch {
+		t.Fatalf("SelfProbe/Verdict = %+v / %+v", obs, out)
+	}
+}
+
+func TestIncident268LibraryEssenceReplacementDoesNotMatchOldRow(t *testing.T) {
+	f := newFixture(t)
+	cwd := filepath.Join(f.home, "replacement")
+	f.proc(t, 10, 1, "bash", f.home, "")
+	f.proc(t, 50, 1, "bash", cwd, "")
+	f.proc(t, 60, 50, "claude", cwd, "guid-new")
+	oldPane := herdrcli.Pane{PaneID: "pane-old"}
+	newPane := herdrcli.Pane{PaneID: "pane-new", Agent: "claude", AgentSession: sidB}
+	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd), sidB+".jsonl"))
+	h := fakeHerdr{
+		panes: []herdrcli.Pane{oldPane, newPane},
+		infos: map[string]herdrcli.ProcessInfo{
+			"pane-old": {ForegroundProcessGroupID: 10},
+			"pane-new": {ForegroundProcessGroupID: 50},
+		},
+	}
+	sub := Substrate{Herdr: h, ProcRoot: f.root, Home: f.home}
+	oldObs := Probe(sub, oldPane.PaneID)
+	newObs := Probe(sub, newPane.PaneID)
+	newVerdict := Verdict(newObs, v2.SessionRecord{SIDs: []v2.SID{{SID: sidA}}})
+	if oldObs.Status != Vacant || newObs.SID != sidB || newVerdict.Status != PositiveMismatch {
+		t.Fatalf("old/new/verdict = %+v / %+v / %+v", oldObs, newObs, newVerdict)
+	}
+}
+
+func TestIncident041LibraryEssenceDetectionLostSelfLocation(t *testing.T) {
+	f := newFixture(t)
+	pane, info, cwd := baseTree(t, f, "claude") // agent_session intentionally absent
+	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd), sidA+".jsonl"))
+	f.proc(t, os.Getpid(), 30, "occupant.test", cwd, "")
+	t.Setenv("HERDR_PANE_ID", pane.PaneID)
+	h := fakeHerdr{pane: pane, panes: []herdrcli.Pane{pane}, info: info}
+	obs := SelfProbe(Substrate{Herdr: h, ProcRoot: f.root, Home: f.home})
+	out := Verdict(obs, v2.SessionRecord{SIDs: []v2.SID{{SID: sidA}}})
+	if out.Status != Match || obs.SID != sidA || obs.Evidence[0] != SignalCohort {
+		t.Fatalf("SelfProbe/Verdict = %+v / %+v", obs, out)
+	}
+}
+
+func TestIncident262LibraryEssenceIgnoresBusCopies(t *testing.T) {
+	f := newFixture(t)
+	cwd := filepath.Join(f.home, "work", "repo")
+	f.proc(t, 30, 1, "codex", cwd, "guid-a")
+	f.proc(t, os.Getpid(), 30, "occupant.test", cwd, "")
+	path := filepath.Join(f.home, ".codex", "sessions", "rollout-now-"+sidA+".jsonl")
+	f.transcript(t, path)
+	if err := os.Symlink(path, filepath.Join(f.root, "30", "fd", "42")); err != nil {
+		t.Fatal(err)
+	}
+	obs := SelfProbe(Substrate{Herdr: fakeHerdr{}, ProcRoot: f.root, Home: f.home})
+	verified := false
+	row := v2.SessionRecord{SIDs: []v2.SID{{SID: sidA}}, Seat: &v2.Seat{HcomVerified: &verified}}
+	out := Verdict(obs, row)
+	if out.Status != Match || obs.SID != sidA {
+		t.Fatalf("SelfProbe/Verdict = %+v / %+v", obs, out)
 	}
 }
 

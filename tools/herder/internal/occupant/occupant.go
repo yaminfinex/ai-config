@@ -15,12 +15,22 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry/v2"
 )
 
 const ProcRootEnv = "HERDER_PROBE_PROC_ROOT"
+
+// Claude does not expose an exact pid-to-transcript join. In the
+// detection-lost leg, keep only the newest activity cohort: transcripts
+// outside this window behind the newest mtime are historical, while two
+// transcripts active inside the window remain honestly ambiguous. The
+// window is relative to the newest artifact rather than wall-clock now so
+// an idle-but-live pane does not become vacant merely because no turn was
+// written recently.
+const claudeActivityWindow = 5 * time.Minute
 
 type Status string
 
@@ -51,6 +61,10 @@ type Observation struct {
 	Evidence   []Signal
 	Status     Status
 	Err        error
+	// provenCandidates is internal decision metadata used when independent
+	// tool legs must be collapsed. It never substitutes for SID/artifact
+	// evidence exposed to callers.
+	provenCandidates int
 }
 
 type OutcomeStatus string
@@ -167,7 +181,15 @@ func Probe(sub Substrate, paneID string) Observation {
 	if err != nil {
 		return Observation{Pane: pane, Status: Unprobeable, Err: err}
 	}
-	return probeSnapshot(sub, pane, info)
+	obs := probeSnapshot(sub, pane, info)
+	if errors.Is(obs.Err, os.ErrNotExist) || errors.Is(obs.Err, syscall.ENOENT) {
+		// A /proc entry may vanish between the herdr snapshot and descent.
+		// Re-query exactly once before classifying the pane as vacant.
+		if retry, retryErr := sub.Herdr.ProcessInfo(pane.PaneID); retryErr == nil {
+			obs = probeSnapshot(sub, pane, retry)
+		}
+	}
+	return obs
 }
 
 // SelfProbe locates the caller from live process ancestry. HERDR_PANE_ID is
@@ -300,6 +322,7 @@ func probeSnapshot(sub Substrate, pane herdrcli.Pane, info herdrcli.ProcessInfo)
 		return Observation{Pane: pane, Status: Unprobeable, Err: permissionErr}
 	}
 	var tools []procEntry
+	vanished := false
 	for _, e := range entries {
 		if !descendsFrom(e.pid, anchors, entries) {
 			continue
@@ -309,6 +332,9 @@ func probeSnapshot(sub Substrate, pane herdrcli.Pane, info herdrcli.ProcessInfo)
 			if detailErr != nil {
 				if errors.Is(detailErr, os.ErrPermission) || errors.Is(detailErr, syscall.EACCES) {
 					return Observation{Pane: pane, Tool: toolName(e.comm), PID: e.pid, Status: Unprobeable, Err: detailErr}
+				}
+				if errors.Is(detailErr, os.ErrNotExist) || errors.Is(detailErr, syscall.ENOENT) {
+					vanished = true
 				}
 				continue
 			}
@@ -328,22 +354,61 @@ func probeSnapshot(sub Substrate, pane herdrcli.Pane, info herdrcli.ProcessInfo)
 		if toolName(pane.Agent) == "" && pane.Agent != "" {
 			return Observation{Pane: pane, Tool: pane.Agent, Status: Unprobeable}
 		}
-		return Observation{Pane: pane, Status: Vacant}
+		obs := Observation{Pane: pane, Status: Vacant}
+		if vanished {
+			obs.Err = syscall.ENOENT
+		}
+		return obs
 	}
 	kinds := map[string]bool{}
 	for _, e := range tools {
 		kinds[toolName(e.comm)] = true
 	}
-	if len(kinds) != 1 {
-		return Observation{Pane: pane, Status: Ambiguous}
-	}
+	var legs []Observation
 	if kinds["codex"] {
-		return probeCodex(sub, pane, entries, anchors)
+		legs = append(legs, probeCodex(sub, pane, entries, anchors))
 	}
 	if kinds["claude"] {
-		return probeClaude(sub, pane, tools)
+		legs = append(legs, probeClaude(sub, pane, tools))
 	}
-	return Observation{Pane: pane, Status: Unprobeable}
+	obs := collapseProvenLegs(pane, legs)
+	if obs.Status == Vacant && vanished {
+		obs.Err = syscall.ENOENT
+	}
+	return obs
+}
+
+// collapseProvenLegs computes unanimity over answers, not witnesses. Nested
+// tool subprocesses are common; an unproven nested leg cannot veto an exact
+// occupant artifact, while two distinct proven artifacts fail closed.
+func collapseProvenLegs(pane herdrcli.Pane, legs []Observation) Observation {
+	proven := map[string]Observation{}
+	status := Vacant
+	for _, obs := range legs {
+		switch obs.Status {
+		case Occupied:
+			key := obs.Tool + "\x00" + obs.SID + "\x00" + obs.Transcript
+			proven[key] = obs
+		case Ambiguous:
+			if obs.provenCandidates > 1 {
+				return Observation{Pane: pane, Status: Ambiguous, provenCandidates: obs.provenCandidates}
+			}
+			if status != Unprobeable {
+				status = Ambiguous
+			}
+		case Unprobeable:
+			status = Unprobeable
+		}
+	}
+	if len(proven) == 1 {
+		for _, obs := range proven {
+			return obs
+		}
+	}
+	if len(proven) > 1 {
+		return Observation{Pane: pane, Status: Ambiguous, provenCandidates: len(proven)}
+	}
+	return Observation{Pane: pane, Status: status}
 }
 
 func scanProc(root string) ([]procEntry, error) {
@@ -474,6 +539,7 @@ func probeCodex(sub Substrate, pane herdrcli.Pane, all []procEntry, anchors map[
 		path, sid string
 	}
 	var cs []candidate
+	vanished := false
 	// Inspect every process below the pane anchor, not only codex-named
 	// processes: launch shells may inherit the rollout fd. Leaf-holder
 	// disambiguation below removes those ancestors without guessing.
@@ -485,6 +551,9 @@ func probeCodex(sub Substrate, pane herdrcli.Pane, all []procEntry, anchors map[
 		if err != nil {
 			if errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) {
 				return Observation{Pane: pane, Tool: "codex", PID: e.pid, Status: Unprobeable, Err: err}
+			}
+			if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOENT) {
+				vanished = true
 			}
 			continue
 		}
@@ -506,7 +575,11 @@ func probeCodex(sub Substrate, pane herdrcli.Pane, all []procEntry, anchors map[
 	if len(cs) == 0 {
 		// A tool process without an open rollout is booting, exiting, or not a
 		// session-bearing codex occupant. It supplies no occupant evidence.
-		return Observation{Pane: pane, Tool: "codex", Status: Vacant}
+		obs := Observation{Pane: pane, Tool: "codex", Status: Vacant}
+		if vanished {
+			obs.Err = syscall.ENOENT
+		}
+		return obs
 	}
 	holders := map[int]bool{}
 	for _, c := range cs {
@@ -536,7 +609,7 @@ func probeCodex(sub Substrate, pane herdrcli.Pane, all []procEntry, anchors map[
 		sids[c.sid] = true
 	}
 	if len(sids) != 1 || len(leaves) == 0 {
-		return Observation{Pane: pane, Tool: "codex", Status: Ambiguous}
+		return Observation{Pane: pane, Tool: "codex", Status: Ambiguous, provenCandidates: len(sids)}
 	}
 	c := leaves[0]
 	if toolName(c.comm) != "codex" {
@@ -574,16 +647,21 @@ func probeClaude(sub Substrate, pane herdrcli.Pane, tools []procEntry) Observati
 		cohortCandidates := 0
 		for _, e := range claudes {
 			dir := filepath.Join(sub.Home, ".claude", "projects", mungeCWD(e.cwd))
-			files, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+			files, _ := claudeTranscripts(dir)
 			cohortCandidates += len(files)
 			p := filepath.Join(dir, pane.AgentSession+".jsonl")
 			if st, err := os.Stat(p); err == nil && !st.IsDir() {
 				matches = append(matches, e)
 				path = p
+			} else if errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) {
+				return Observation{Pane: pane, Tool: "claude", PID: e.pid, Status: Unprobeable, Err: err}
 			}
 		}
-		if len(matches) == 1 {
-			e := matches[0]
+		if len(matches) > 0 {
+			if !sameProcessCohort(matches) {
+				return Observation{Pane: pane, Tool: "claude", Status: Ambiguous, provenCandidates: 2}
+			}
+			e := outermostProcess(sub.ProcRoot, matches)
 			ev := []Signal{SignalCohort, SignalAgentSession}
 			if e.guid != "" {
 				ev = append(ev, SignalEnvironGUID)
@@ -598,37 +676,121 @@ func probeClaude(sub Substrate, pane herdrcli.Pane, tools []procEntry) Observati
 	type candidate struct {
 		procEntry
 		path, sid string
+		mtime     time.Time
 	}
 	var cs []candidate
 	for _, e := range claudes {
 		dir := filepath.Join(sub.Home, ".claude", "projects", mungeCWD(e.cwd))
-		files, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+		files, err := claudeTranscripts(dir)
 		if err != nil {
+			if errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EACCES) {
+				return Observation{Pane: pane, Tool: "claude", PID: e.pid, Status: Unprobeable, Err: err}
+			}
 			continue
 		}
 		for _, p := range files {
+			st, statErr := os.Stat(p)
+			if statErr != nil {
+				if errors.Is(statErr, os.ErrPermission) || errors.Is(statErr, syscall.EACCES) {
+					return Observation{Pane: pane, Tool: "claude", PID: e.pid, Status: Unprobeable, Err: statErr}
+				}
+				continue
+			}
 			sid := strings.TrimSuffix(filepath.Base(p), ".jsonl")
 			if sid != "" {
-				cs = append(cs, candidate{e, p, sid})
+				cs = append(cs, candidate{procEntry: e, path: p, sid: sid, mtime: st.ModTime()})
 			}
 		}
 	}
-	unique := map[string]candidate{}
+	var newest time.Time
 	for _, c := range cs {
-		unique[c.sid] = c
+		if c.mtime.After(newest) {
+			newest = c.mtime
+		}
 	}
-	if len(unique) != 1 {
-		return Observation{Pane: pane, Tool: "claude", Status: Ambiguous}
+	unique := map[string][]candidate{}
+	for _, c := range cs {
+		if !newest.IsZero() && c.mtime.Before(newest.Add(-claudeActivityWindow)) {
+			continue
+		}
+		key := c.sid + "\x00" + c.path
+		unique[key] = append(unique[key], c)
 	}
-	var c candidate
+	if len(unique) == 0 {
+		return Observation{Pane: pane, Tool: "claude", Status: Vacant}
+	}
+	if len(unique) > 1 {
+		return Observation{Pane: pane, Tool: "claude", Status: Ambiguous, provenCandidates: len(unique)}
+	}
+	var witnesses []candidate
 	for _, v := range unique {
-		c = v
+		witnesses = v
+	}
+	procs := make([]procEntry, 0, len(witnesses))
+	for _, witness := range witnesses {
+		procs = append(procs, witness.procEntry)
+	}
+	if !sameProcessCohort(procs) {
+		return Observation{Pane: pane, Tool: "claude", Status: Ambiguous, provenCandidates: 2}
+	}
+	chosen := outermostProcess(sub.ProcRoot, procs)
+	c := witnesses[0]
+	for _, witness := range witnesses {
+		if witness.pid == chosen.pid {
+			c = witness
+			break
+		}
 	}
 	ev := []Signal{SignalCohort}
 	if c.guid != "" {
 		ev = append(ev, SignalEnvironGUID)
 	}
 	return Observation{Pane: pane, Tool: "claude", PID: c.pid, Transcript: c.path, SID: c.sid, Evidence: ev, Status: Occupied}
+}
+
+func claudeTranscripts(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, entry.Name()))
+	}
+	return paths, nil
+}
+
+func outermostProcess(root string, matches []procEntry) procEntry {
+	for _, candidate := range matches {
+		outermost := true
+		for _, other := range matches {
+			if candidate.pid != other.pid && !isAncestor(root, candidate.pid, other.pid) {
+				outermost = false
+				break
+			}
+		}
+		if outermost {
+			return candidate
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].pid < matches[j].pid })
+	return matches[0]
+}
+
+func sameProcessCohort(matches []procEntry) bool {
+	if len(matches) == 0 {
+		return true
+	}
+	cwd := matches[0].cwd
+	for _, match := range matches[1:] {
+		if match.cwd != cwd {
+			return false
+		}
+	}
+	return true
 }
 
 // RecordedSIDSet exposes the exact lineage membership rule for callers that
