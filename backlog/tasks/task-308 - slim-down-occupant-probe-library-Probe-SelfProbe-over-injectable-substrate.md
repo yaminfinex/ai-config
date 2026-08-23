@@ -1,7 +1,7 @@
 ---
 id: TASK-308
 title: 'slim-down: occupant-probe library (Probe/SelfProbe over injectable substrate)'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-23 11:53'
 labels:
