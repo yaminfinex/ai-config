@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/registry"
 	"ai-config/tools/herder/internal/seatcred"
 )
@@ -29,6 +30,43 @@ func TestCutoverCompactNeverSelectsCallerFromAmbientEnvironment(t *testing.T) {
 	if !strings.Contains(stderr.String(), "--credential-file is required") || !strings.Contains(stderr.String(), "hints, not authority") {
 		t.Fatalf("stderr=%q, want ambient-authority refusal", stderr.String())
 	}
+}
+
+func TestSelfAncestryContainsSelfAndParentNeverInit(t *testing.T) {
+	pids := selfAndAncestorPIDs()
+	if !pids[os.Getpid()] {
+		t.Fatalf("ancestry %v does not contain own pid %d", pids, os.Getpid())
+	}
+	if ppid := os.Getppid(); ppid > 1 && !pids[ppid] {
+		t.Fatalf("ancestry %v does not contain parent pid %d", pids, ppid)
+	}
+	if pids[1] {
+		t.Fatalf("ancestry %v contains pid 1 — init is everyone's ancestor and proves nothing", pids)
+	}
+}
+
+func TestPaneOwnsPIDsMatchesShellOrForegroundNeverInit(t *testing.T) {
+	pids := map[int]bool{42: true, 1: true}
+	if !paneOwnsPIDs(registryProcessInfo(42, 0), pids) {
+		t.Fatal("shell_pid in ancestry must match")
+	}
+	if !paneOwnsPIDs(registryProcessInfo(999, 42), pids) {
+		t.Fatal("foreground pid in ancestry must match")
+	}
+	if paneOwnsPIDs(registryProcessInfo(999, 998), pids) {
+		t.Fatal("unrelated pids must not match")
+	}
+	if paneOwnsPIDs(registryProcessInfo(1, 1), pids) {
+		t.Fatal("pid 1 must never count as occupancy proof")
+	}
+}
+
+func registryProcessInfo(shellPID, foregroundPID int) herdrcli.ProcessInfo {
+	info := herdrcli.ProcessInfo{ShellPID: shellPID}
+	if foregroundPID != 0 {
+		info.Processes = []herdrcli.Process{{PID: foregroundPID}}
+	}
+	return info
 }
 
 func TestRecordedBusSessionEvidenceAcceptsFieldRepairShapeThroughWriterAndLoader(t *testing.T) {

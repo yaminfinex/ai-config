@@ -1443,7 +1443,10 @@ const (
 )
 
 func (r *runner) spawnOccupantState(paneID string) occupantState {
-	out, err := r.herdr.Output("pane", "process_info", paneID)
+	// herdr 0.8 verb shape: `pane process-info --pane <id>`. The positional
+	// `pane process_info <id>` spelling returns the pane help text with rc=0,
+	// which parses as empty and silently degrades this probe (TASK-307).
+	out, err := r.herdr.Output("pane", "process-info", "--pane", paneID)
 	if err != nil {
 		return occupantUnknown
 	}

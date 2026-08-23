@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,10 +76,6 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		selected = &selection
 	}
 
-	if os.Getenv("HERDR_ENV") != "1" || os.Getenv("HERDR_PANE_ID") == "" {
-		dieCompact(stderr, "not running inside a herdr pane (HERDR_ENV/HERDR_PANE_ID required) — herder compact queues input to the caller's OWN pane only")
-		return 64
-	}
 	if strings.ContainsAny(opts.Steer, "\n\r") {
 		dieCompact(stderr, "steer must be a single line — an embedded newline would submit early and corrupt the /compact command")
 		return 64
@@ -89,20 +87,40 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Current truth: which terminal does the pane named by our environment
-	// hold NOW. HERDR_PANE_ID was captured at pane start and pane ids can
-	// re-key on moves or reshuffle after restart, so it is an entry point,
-	// never the paste target.
+	// Self-location by live evidence only (TASK-041). PRIMARY: the occupant
+	// probe pointed at oneself — enumerate the live panes and find the ONE
+	// whose process tree contains this process. The caller is provably
+	// inside its own pane, with no env, no herdr agent detection, and no
+	// stored coordinates needed — manual seats herdr never launched
+	// included. An authoritative no-match or multi-match fails closed.
+	// FALLBACK (probe transport unavailable only — older herdr without
+	// pane.process_info, partial probe outage): HERDR_PANE_ID re-resolved
+	// through a live `pane get`; the env value is a launch-epoch entry
+	// point, never trusted un-resolved.
 	envPane := os.Getenv("HERDR_PANE_ID")
-	out, err := herdr.Output("pane", "get", envPane)
-	if err != nil {
-		dieCompact(stderr, "refused — cannot resolve own pane: herdr pane get failed for "+envPane+". Nothing was typed.")
+	pane, probeErr := locateOwnPaneByPID(herdr)
+	switch {
+	case probeErr == nil:
+		// Located by occupancy proof.
+	case errors.Is(probeErr, errSelfProbeNoMatch), errors.Is(probeErr, errSelfProbeAmbiguous):
+		dieCompact(stderr, "refused — cannot prove which pane is yours: "+probeErr.Error()+". herder compact only ever types into the caller's own pane; without proof it refuses. If you ARE at a pane you can see, the manual recovery is: herdr pane send-keys <your-pane> ctrl+u; herdr pane send-text <your-pane> '/compact <steer>'; herdr pane send-keys <your-pane> Enter. Nothing was typed.")
 		return 2
-	}
-	pane, err := herdrcli.ParsePaneGet(out)
-	if err != nil || pane.TerminalID == "" {
-		dieCompact(stderr, "refused — cannot resolve own pane: no terminal_id for "+envPane+". Nothing was typed.")
-		return 2
+	default:
+		if os.Getenv("HERDR_ENV") != "1" || envPane == "" {
+			dieCompact(stderr, "cannot locate own pane: occupant probe unavailable ("+probeErr.Error()+") and not running inside a herdr pane environment (HERDR_ENV/HERDR_PANE_ID absent) — herder compact queues input to the caller's OWN pane only")
+			return 64
+		}
+		staleEnvRecovery := " If HERDR_PANE_ID is stale (a restarted or resumed-in-place session inherits the old value), find your live pane id with `herdr pane list` and re-run as HERDR_PANE_ID=<live-pane-id> herder compact ..."
+		out, err := herdr.Output("pane", "get", envPane)
+		if err != nil {
+			dieCompact(stderr, "refused — cannot resolve own pane: occupant probe unavailable ("+probeErr.Error()+") and herdr pane get failed for "+envPane+"."+staleEnvRecovery+" Nothing was typed.")
+			return 2
+		}
+		pane, err = herdrcli.ParsePaneGet(out)
+		if err != nil || pane.TerminalID == "" {
+			dieCompact(stderr, "refused — cannot resolve own pane: occupant probe unavailable ("+probeErr.Error()+") and no terminal_id for "+envPane+"."+staleEnvRecovery+" Nothing was typed.")
+			return 2
+		}
 	}
 
 	recs, err := registry.Load(registryPath)
@@ -125,10 +143,11 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 			dieCompact(stderr, "refused — the credential-selected guid has no seated compatibility row. Nothing was typed.")
 			return 2
 		}
-		if row.TerminalID == "" || row.TerminalID != pane.TerminalID {
-			dieCompact(stderr, fmt.Sprintf("refused — ambient pane terminal %s does not verify credential-selected terminal %s; refusing without re-selection. Nothing was typed.", pane.TerminalID, row.TerminalID))
-			return 2
-		}
+		// The row's stored terminal_id is provenance, not a location gate: it
+		// goes stale at server handoff or detection loss while the caller's
+		// pane stays live (TASK-041). The paste target below never depends on
+		// it, and the bus verification next is the real credential-vs-caller
+		// fence — a fossil mismatch alone must not block self-compaction.
 		busRows, listErr := hcomidentity.List(selected.Row.Seat.Namespace)
 		if listErr != nil {
 			dieCompact(stderr, "refused — credential-selected bus roster unavailable: "+listErr.Error()+". Nothing was typed.")
@@ -138,7 +157,7 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 			dieCompact(stderr, "refused — "+verifyErr.Error()+" Nothing was typed.")
 			return 2
 		}
-		self = selfIdentity{row: row, corroborated: true}
+		self = selfIdentity{row: row}
 	}
 	row := self.row
 	if row.Agent != "claude" && row.Agent != "codex" {
@@ -218,39 +237,18 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Paste target: the CURRENT live pane holding our durable terminal_id —
-	// the same drift-proof re-resolution send and cull use. This also yields
-	// the canonical pane id the paste engine's status/kind detection matches
-	// on (the env value can be a legacy alias herdr's agent list never shows).
-	targetPane := ""
-	if listOut, listErr := herdr.Output("agent", "list"); listErr == nil {
-		if agents, parseErr := herdrcli.ParseAgentList(listOut); parseErr == nil {
-			for _, agent := range agents {
-				if agent.TerminalID != nil && *agent.TerminalID == row.TerminalID {
-					targetPane = agent.PaneID
-					break
-				}
-			}
-		}
-	}
-	if targetPane == "" {
-		dieCompact(stderr, "refused — terminal "+row.TerminalID+" is not live in herdr agent list; cannot locate your own pane. Nothing was typed.")
-		return 2
-	}
-	if row.TerminalID != pane.TerminalID {
-		// The env pane's LIVE terminal disagrees with the registry row. A
-		// durable key alone cannot arbitrate this: HERDER_GUID (and equally a
-		// session id) can be stale or inherited by a process that is NOT in
-		// that row's pane, and typing there would break the self-pane-only
-		// guarantee (codex review P1). Proceed only when a SECOND independent
-		// self signal corroborates the row — the caller's current
-		// HCOM_SESSION_ID matching the row's recorded session — which proves
-		// this process IS that session and the env pane id merely drifted.
-		if !self.corroborated {
-			dieCompact(stderr, fmt.Sprintf("refused — your pane's live terminal (%s) disagrees with your registry row's (%s) and no second self signal corroborates the row (HCOM_SESSION_ID matching its recorded session). A stale or inherited HERDER_GUID looks exactly like this. Nothing was typed.", pane.TerminalID, row.TerminalID))
-			return 2
-		}
-		fmt.Fprintf(stderr, "herder compact: note — HERDR_PANE_ID (%s) no longer names your terminal (env: %s, registry: %s); session id corroborates the row, using its live pane %s\n", envPane, pane.TerminalID, row.TerminalID, targetPane)
+	// Paste target: the caller's OWN live pane — envPane re-resolved through
+	// `pane get` at entry. pane.PaneID is the canonical id (the env value can
+	// be a legacy alias herdr's agent list never shows). Stored registry
+	// coordinates are provenance, never location: a row whose terminal_id
+	// went stale (server handoff, detection loss, resume-in-place) must not
+	// block self-compaction, and since the target never depends on the row, a
+	// stale or inherited HERDER_GUID can mislabel the row but can never
+	// redirect the paste — the self-pane-only guarantee rests on the live
+	// env-pane resolution alone (TASK-041; slimdown charter decisions 1-2).
+	targetPane := pane.PaneID
+	if row.TerminalID != "" && row.TerminalID != pane.TerminalID {
+		fmt.Fprintf(stderr, "herder compact: note — registry row (guid %s) records terminal %s but your live pane %s holds %s; stored coordinates are stale, proceeding on live evidence\n", ptrOrEmpty(row.GUID), row.TerminalID, targetPane, pane.TerminalID)
 	}
 
 	line := "/compact"
@@ -260,7 +258,7 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 
 	if opts.DryRun {
 		fmt.Fprintf(stderr, "herder compact --dry-run: would queue %q into own pane %s (terminal %s, guid %s, resolution: %s)\n",
-			line, targetPane, row.TerminalID, ptrOrEmpty(row.GUID), map[bool]string{true: "positional+cwd", false: "durable-key"}[self.positional])
+			line, targetPane, pane.TerminalID, ptrOrEmpty(row.GUID), map[bool]string{true: "positional+cwd", false: "durable-key"}[self.positional])
 		if opts.ThenSet {
 			fmt.Fprintf(stderr, "herder compact --dry-run: --then would arm detached sender %s to deliver to @%s (bus %s) once the paste verified, delivering the continuation (%d chars) after this turn ends (timeout %s)\n",
 				thenSenderName, thenBusName, busDirLabel(thenBusDir), runeLen(opts.Then), opts.ThenTimeout)
@@ -268,7 +266,10 @@ func RunCompact(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	paste := (&bootPaster{Client: herdr, PreflightVisibleOnly: true}).paste(targetPane, line)
+	// KindHint: the row already proved the agent kind, and a detection-lost
+	// pane (alive and readable, absent from the agent list) would otherwise
+	// leave the paste engine sigil-less and unable to verify submission.
+	paste := (&bootPaster{Client: herdr, KindHint: row.Agent, PreflightVisibleOnly: true}).paste(targetPane, line)
 	verify, rc := paste.Verify, paste.Code
 	switch {
 	case verify == "" && rc == 2 && paste.Refusal == "composer_polluted":
@@ -387,14 +388,13 @@ func thenAbortNote(stderr io.Writer, thenSet bool) {
 	}
 }
 
-// selfIdentity is resolveSelfRow's verdict: the caller's own registry row,
-// how it was proven, and whether a SECOND independent signal (guid row and
-// session row agreeing) corroborates it — required before the row's terminal
-// may override a disagreeing live env pane (codex review P1).
+// selfIdentity is resolveSelfRow's verdict: the caller's own registry row and
+// how it was proven. The row names WHO the caller is (agent kind, --then bus
+// binding); it never locates the paste target, which is always the caller's
+// own live pane.
 type selfIdentity struct {
-	row          *registry.Record
-	positional   bool
-	corroborated bool
+	row        *registry.Record
+	positional bool
 }
 
 // resolveSelfRow proves which registry identity is the caller's own. Durable
@@ -402,10 +402,13 @@ type selfIdentity struct {
 // the hcom session id recorded in provenance — when BOTH are present they
 // must agree on one identity (a mismatch means at least one is stale or
 // inherited: refuse, never pick). Only when neither exists does it fall back
-// to resolution by the CURRENT terminal — and then it demands corroborating
-// evidence (the pane's foreground cwd matching our own working directory)
-// because a terminal-only match cannot otherwise be told apart from a stale
-// registry identity after pane-id re-keying or restart reshuffle.
+// to resolution by the caller's LIVE coordinates (current terminal, then
+// current canonical pane id — the latter survives terminal reissue at server
+// handoff) — and then it demands corroborating evidence (the pane's
+// foreground cwd containing our own working directory) because a
+// coordinate-only match cannot otherwise be told apart from a stale registry
+// identity after restart reshuffle. Every refusal names a recovery step
+// (TASK-041 AC#2).
 func resolveSelfRow(recs []registry.Record, pane herdrcli.Pane) (selfIdentity, string) {
 	guid := os.Getenv("HERDER_GUID")
 	sessionID := os.Getenv("HCOM_SESSION_ID")
@@ -414,35 +417,162 @@ func resolveSelfRow(recs []registry.Record, pane herdrcli.Pane) (selfIdentity, s
 	if guid != "" {
 		guidRow = registry.Resolve(recs, guid)
 		if guidRow == nil {
-			return selfIdentity{}, "HERDER_GUID=" + guid + " has no registry row."
+			return selfIdentity{}, "HERDER_GUID=" + guid + " has no registry row. If it was inherited from another session's environment, re-run with it unset; to seat this session, run `herder enroll` from this pane."
 		}
 	}
 	if sessionID != "" {
 		sessRow = registry.ResolveByToolSessionID(recs, sessionID)
 	}
 	if guidRow != nil && sessRow != nil && !sameGUID(guidRow, sessRow) {
-		return selfIdentity{}, fmt.Sprintf("HERDER_GUID (%s) and HCOM_SESSION_ID (%s) resolve to DIFFERENT identities (%s vs %s) — at least one is stale or inherited.", guid, sessionID, ptrOrEmpty(guidRow.GUID), ptrOrEmpty(sessRow.GUID))
+		return selfIdentity{}, fmt.Sprintf("HERDER_GUID (%s) and HCOM_SESSION_ID (%s) resolve to DIFFERENT identities (%s vs %s) — at least one is stale or inherited. Unset the stale variable and retry, or run `herder enroll` from this pane to re-prove identity.", guid, sessionID, ptrOrEmpty(guidRow.GUID), ptrOrEmpty(sessRow.GUID))
 	}
 	if row := firstRow(guidRow, sessRow); row != nil {
-		if row.TerminalID == "" {
-			return selfIdentity{}, "your registry row (guid " + ptrOrEmpty(row.GUID) + ") records no terminal_id."
-		}
-		return selfIdentity{row: row, corroborated: guidRow != nil && sessRow != nil}, ""
+		return selfIdentity{row: row}, ""
 	}
 
 	row := registry.SeatedByPaneOrTerminal(recs, pane.TerminalID)
 	if row == nil {
-		return selfIdentity{positional: true}, "no registry row proves this pane is yours (no HERDER_GUID, no session match, no seated session for terminal " + pane.TerminalID + ")."
+		row = registry.SeatedByPaneOrTerminal(recs, pane.PaneID)
+	}
+	if row == nil {
+		return selfIdentity{positional: true}, "no registry row proves this pane is yours (no HERDER_GUID, no session match, no seated session for terminal " + pane.TerminalID + " or pane " + pane.PaneID + "). Run `herder enroll` from this pane to seat it, then retry."
 	}
 	wd, _ := os.Getwd()
 	paneCWD := pane.ForegroundCWD
 	if paneCWD == "" {
 		paneCWD = pane.CWD
 	}
-	if wd == "" || paneCWD == "" || wd != paneCWD {
-		return selfIdentity{positional: true}, fmt.Sprintf("positional identity only (terminal %s) and the pane's foreground cwd (%q) does not corroborate this process's cwd (%q).", pane.TerminalID, paneCWD, wd)
+	if wd == "" || paneCWD == "" || !cwdWithin(wd, paneCWD) {
+		return selfIdentity{positional: true}, fmt.Sprintf("positional identity only (terminal %s) and the pane's foreground cwd (%q) does not corroborate this process's cwd (%q). Re-run from that directory (or a subdirectory of it), or run `herder enroll` from this pane to bind a durable identity.", pane.TerminalID, paneCWD, wd)
 	}
 	return selfIdentity{row: row, positional: true}, ""
+}
+
+// cwdWithin accepts wd equal to paneCWD or nested anywhere beneath it: a
+// process running in a subdirectory of the pane's foreground cwd is the same
+// session (TASK-041 AC#3, lale field report).
+func cwdWithin(wd, paneCWD string) bool {
+	return wd == paneCWD || strings.HasPrefix(wd, strings.TrimRight(paneCWD, "/")+"/")
+}
+
+var (
+	errSelfProbeNoMatch   = errors.New("no live pane's process tree contains this process")
+	errSelfProbeAmbiguous = errors.New("multiple live panes' process trees contain this process")
+)
+
+// locateOwnPaneByPID is the occupant probe pointed at oneself (TASK-041,
+// compact-scoped forerunner of slimdown charter decision 1): find the live
+// pane whose process tree contains this process. herder runs as a tool-call
+// descendant of the agent process, itself a descendant of the pane shell, so
+// a pane owns the caller when its shell pid or any foreground pid is this
+// process or one of its ancestors. pid 1 is everyone's ancestor and proves
+// nothing, so it never matches.
+//
+// Errors are three-way: errSelfProbeNoMatch means every pane answered and
+// none contains us (authoritative — the caller is not in any live pane);
+// errSelfProbeAmbiguous means more than one does (fail closed, never pick);
+// any other error means the probe transport could not answer (pane list
+// unsupported/failed, or no pane's process_info was queryable) and the
+// caller may fall back to other entry points.
+func locateOwnPaneByPID(herdr *herdrcli.Client) (herdrcli.Pane, error) {
+	out, err := herdr.Output("pane", "list")
+	if err != nil {
+		return herdrcli.Pane{}, fmt.Errorf("herdr pane list failed: %w", err)
+	}
+	panes, err := herdrcli.ParsePaneList(out)
+	if err != nil {
+		return herdrcli.Pane{}, fmt.Errorf("herdr pane list unparseable: %w", err)
+	}
+	if len(panes) == 0 {
+		return herdrcli.Pane{}, errors.New("herdr pane list reports no panes")
+	}
+	ancestors := selfAndAncestorPIDs()
+	matches := []herdrcli.Pane(nil)
+	probed := 0
+	for _, pane := range panes {
+		// Live-verified verb shape (herdr 0.8): `pane process-info --pane ID`.
+		// (The `pane process_info <ID>` spelling other herder call-sites use
+		// returns the pane help text on 0.8 — do not copy it.)
+		infoOut, infoErr := herdr.Output("pane", "process-info", "--pane", pane.PaneID)
+		if infoErr != nil {
+			continue
+		}
+		info, parseErr := herdrcli.ParseProcessInfo(infoOut)
+		if parseErr != nil {
+			continue
+		}
+		probed++
+		if paneOwnsPIDs(info, ancestors) {
+			matches = append(matches, pane)
+		}
+	}
+	switch {
+	case len(matches) == 1:
+		return matches[0], nil
+	case len(matches) > 1:
+		ids := make([]string, len(matches))
+		for i, m := range matches {
+			ids[i] = m.PaneID
+		}
+		return herdrcli.Pane{}, fmt.Errorf("%w (pid %d, panes %s)", errSelfProbeAmbiguous, os.Getpid(), strings.Join(ids, ", "))
+	case probed == 0:
+		return herdrcli.Pane{}, errors.New("pane.process_info answered for no pane")
+	case probed < len(panes):
+		// Zero matches but some panes were unprobeable: not authoritative —
+		// the caller could be in one of the unprobed panes.
+		return herdrcli.Pane{}, fmt.Errorf("pane.process_info answered for only %d of %d panes and none of those contains this process", probed, len(panes))
+	default:
+		return herdrcli.Pane{}, fmt.Errorf("%w (pid %d, %d panes probed)", errSelfProbeNoMatch, os.Getpid(), probed)
+	}
+}
+
+func paneOwnsPIDs(info herdrcli.ProcessInfo, pids map[int]bool) bool {
+	if info.ShellPID > 1 && pids[info.ShellPID] {
+		return true
+	}
+	for _, proc := range info.Processes {
+		if proc.PID > 1 && pids[proc.PID] {
+			return true
+		}
+	}
+	return false
+}
+
+// selfAndAncestorPIDs is this process plus its ancestry walked toward init
+// (excluded: pid 1 proves nothing). Cycles and unreadable parents terminate
+// the walk.
+func selfAndAncestorPIDs() map[int]bool {
+	pids := map[int]bool{}
+	for pid := os.Getpid(); pid > 1 && !pids[pid]; pid = parentPID(pid) {
+		pids[pid] = true
+	}
+	return pids
+}
+
+// parentPID reads the parent from /proc (field 4 of stat, after the last ')'
+// since comm may contain spaces or parens), falling back to `ps` where /proc
+// does not exist (darwin).
+func parentPID(pid int) int {
+	if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err == nil {
+		s := string(data)
+		if idx := strings.LastIndexByte(s, ')'); idx >= 0 {
+			if fields := strings.Fields(s[idx+1:]); len(fields) >= 2 {
+				if ppid, err := strconv.Atoi(fields[1]); err == nil {
+					return ppid
+				}
+			}
+		}
+		return 0
+	}
+	out, err := exec.Command("ps", "-o", "ppid=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return 0
+	}
+	ppid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0
+	}
+	return ppid
 }
 
 func sameGUID(a, b *registry.Record) bool {
@@ -577,13 +707,14 @@ func printCompactHelp(stdout io.Writer) {
 		"",
 		"This is input automation on your own pane, NOT message delivery — agent-to-agent",
 		"messaging stays on the hcom bus (`herder send`). There is no target argument and",
-		"no pane flag: the only pane herder compact can address is the one it PROVES to be",
-		"yours — via HERDER_GUID, else your recorded session id, else a seated registry",
-		"row for your current terminal corroborated by matching cwd. If guid and session",
-		"id disagree, or your row's terminal disagrees with your live pane without a",
-		"session-id corroboration (a stale/inherited HERDER_GUID looks exactly like",
-		"that), it refuses. Unprovable identity, a non-composer agent (bash), or a dead",
-		"terminal is refused; it never guesses.",
+		"no pane flag: the paste target is always your OWN live pane (HERDR_PANE_ID",
+		"re-resolved live at entry), so a stale registry row can never redirect the",
+		"paste. The registry row names WHO you are — via HERDER_GUID / credential, else",
+		"your recorded session id, else a seated row for your live terminal or pane id",
+		"corroborated by cwd — and stale stored coordinates on that row are noted, never",
+		"blocking. It still refuses when identity is unprovable: guid and session id",
+		"disagreeing, no row at all, a non-composer agent (bash), or an unresolvable",
+		"HERDR_PANE_ID; every refusal names a recovery step.",
 		"",
 		"Options:",
 		"  --dry-run          resolve your own pane and print what would be queued (and",
@@ -604,7 +735,7 @@ func printCompactHelp(stdout io.Writer) {
 		"  1   paste attempted but not verified (read your OWN pane before retrying —",
 		"      a blind retry may double-queue), or herdr/registry unavailable.",
 		"  2   refused: self-identity unprovable, pane blocked by a modal/interrupt",
-		"      overlay, agent has no composer, or terminal not live. Nothing was typed.",
+		"      overlay, agent has no composer, or own pane unresolvable. Nothing was typed.",
 		"  64  usage error, or not inside a herdr pane.",
 		"",
 		"Context-ceiling recipe (skills/orchestrate): commit WIP + write your HANDOFF/",

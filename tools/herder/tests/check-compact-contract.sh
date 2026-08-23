@@ -87,16 +87,21 @@ ROW_SELF_BASH='{"kind":"session","guid":"guid-me-0000","event":"seated","state":
 ROW_SELF_SESS='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"me-bus"},"provenance":{"mechanism":"enroll","spawned_by":"user","tool_session_id":"sess-me","tag":"worker","cwd":"/x","workspace_id":"w1","branch":"main","ts":"2026-07-07T00:00:00Z"}}'
 ROW_SELF_REG_SESS='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_REG","pane_id":"w1-5","hcom_name":"me-bus"},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-me","tag":"worker","cwd":"/x","workspace_id":"w1","branch":"main","ts":"2026-07-07T00:00:00Z"}}'
 ROW_PARENT='{"kind":"session","guid":"guid-par-0000","event":"seated","state":"seated","label":"parent","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_OTHER","pane_id":"w1-3","hcom_name":"parent-bus"},"provenance":{"tag":"orchestrator"}}'
+# TASK-041 rows: a seat whose stored terminal went stale (server handoff /
+# detection loss) while its pane id survived, and a seat with no terminal at all.
+ROW_SELF_STALETERM='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_STALE","pane_id":"w1-2","hcom_name":"me-bus"},"provenance":{"tag":"worker"}}'
+ROW_SELF_NOTERM='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"claude","seat":{"kind":"herdr","pane_id":"w1-9","hcom_name":"me-bus"},"provenance":{"tag":"worker"}}'
 ROW_OTHER_SESS='{"kind":"session","guid":"guid-oth-0000","event":"seated","state":"seated","label":"other","role":"worker","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_OTHER","pane_id":"w1-3","hcom_name":"other-bus"},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-x","tag":"worker","cwd":"/x","workspace_id":"w1","branch":"main","ts":"2026-07-07T00:00:00Z"}}'
 
 # run_compact <scenario> <env-mode> <args...>
 #   env-mode: guid | session | guid_session | parentguid | guid_conflict |
-#             positional | positional_badcwd | noguidrow | outside | nopaneid
+#             positional | positional_badcwd | positional_subdir | noguidrow |
+#             outside | nopaneid | stalepane
 run_compact() {
   local scen="$1" envmode="$2"; shift 2
   mkdir -p "$CASE/state" "$CASE/mock" "$CASE/probe" "$CASE/cwd"
   [[ -n "${COMPACT_SEED_REGISTRY:-}" ]] && printf '%s\n' "$COMPACT_SEED_REGISTRY" >"$CASE/state/registry.jsonl"
-  local guid="" sess="" herdrenv=1 paneid=p_env cwdval="$CASE/cwd"
+  local guid="" sess="" herdrenv=1 paneid=p_env cwdval="$CASE/cwd" runcwd="$CASE/cwd"
   local hcom_rows='[{"name":"me-bus","joined":true,"launch_context":{"pane_id":"w1-2"}}]'
   [[ -n "${MOCK_HCOM_ROWS:-}" ]] && hcom_rows="$MOCK_HCOM_ROWS"
   case "$envmode" in
@@ -107,12 +112,14 @@ run_compact() {
     guid_conflict)     guid="guid-me-0000"; sess="sess-x";;
     positional)        ;;
     positional_badcwd) cwdval="/mock/elsewhere";;
+    positional_subdir) mkdir -p "$CASE/cwd/sub"; runcwd="$CASE/cwd/sub";;
     noguidrow)         guid="guid-ghost-0000";;
     outside)           herdrenv="";;
     nopaneid)          paneid="";;
+    stalepane)         paneid="p_gone";;
   esac
   RUN_ERR_F="$CASE/stderr"
-  RUN_OUT="$(cd "$CASE/cwd" && env -i \
+  RUN_OUT="$(cd "$runcwd" && env -i \
     PATH="$PATH_HERMETIC" \
     HOME="$ROOT/home" \
     XDG_CACHE_HOME="$ROOT/xdg-cache" \
@@ -125,6 +132,10 @@ run_compact() {
     MOCK_HCOM_ROWS="$hcom_rows" \
     MOCK_COMPACT_SCENARIO="$scen" MOCK_COMPACT_STATE="$CASE/mock" \
     MOCK_PROBE_DIR="$CASE/probe" MOCK_COMPACT_CWD="$cwdval" \
+    MOCK_SELF_SHELL_PID="$$" \
+    MOCK_NO_SELF_PANE="${MOCK_NO_SELF_PANE:-}" \
+    MOCK_MULTI_SELF_PANE="${MOCK_MULTI_SELF_PANE:-}" \
+    MOCK_PROBE_UNAVAILABLE="${MOCK_PROBE_UNAVAILABLE:-}" \
     "${HC[@]}" "$@" 2>"$RUN_ERR_F")"
   RUN_RC=$?
 }
@@ -161,6 +172,8 @@ block_for() {
   block+="$(printf '\n=== HERDR MUTATING CALLS ===\n%s' "$(cat "$CASE/probe/calls" 2>/dev/null)")"
   block="${block//$CASE/<CASE>}"
   block="${block//$REPO_ROOT/<REPO>}"
+  # The self-probe refusals name the caller's live pid — normalize it.
+  block="$(sed -E 's/\(pid [0-9]+/(pid <PID>/g' <<<"$block")"
   printf '%s' "$block"
 }
 
@@ -207,6 +220,8 @@ scenario session_identity    midturn         session    --stop "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF"
 scenario positional_ok       midturn         positional --stop "$STEER"
 scenario positional_badcwd   midturn         positional_badcwd --stop "$STEER"
+# TASK-041 AC#3: a subdirectory of the pane's foreground cwd corroborates.
+scenario positional_subdir   midturn         positional_subdir --stop "$STEER"
 
 # Preflight: visible-only (old scrollback noise must NOT refuse; a live visible
 # modal MUST).
@@ -215,29 +230,63 @@ scenario polluted_clear      polluted_clear   guid      --stop "$STEER"
 scenario polluted_still      polluted_still   guid      --stop "$STEER"
 scenario blocked_modal       blocked          guid      --stop "$STEER"
 
-# Self-pane proof failures.
+# Self-pane proof failures. Every refusal must name a recovery step (TASK-041
+# AC#2) — no refusal ends at diagnosis only.
 COMPACT_SEED_REGISTRY=""
 scenario refuse_noidentity   midturn         positional "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF"
 scenario refuse_ghost_guid   midturn         noguidrow  "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF_BASH"
 scenario refuse_bash         midturn         guid       "$STEER"
-COMPACT_SEED_REGISTRY="$ROW_SELF"
-scenario refuse_term_dead    term_dead       guid       --stop "$STEER"
 
-# Pane-id churn vs stale identity (codex review P1): a durable key whose
-# terminal disagrees with the live env pane REFUSES unless a second self
-# signal (session id matching the row) corroborates it — a stale/inherited
-# HERDER_GUID is indistinguishable from drift by the guid alone.
+# TASK-041 red fixtures, now green: stale stored coordinates never block
+# self-compaction. Self-location is the occupant probe pointed at oneself
+# (pane list -> process_info -> the pane whose process tree contains the
+# caller), so neither env, herdr agent detection, nor the registry row can
+# misdirect or block the paste.
+# stale_term_ok — the row's terminal is absent from the agent list
+# (detection-lost / reissued at server handoff); the old ladder refused
+# "cannot locate your own pane". Now: types into the probed own pane, and
+# the KindHint keeps submission verification working with no agent-list entry.
+COMPACT_SEED_REGISTRY="$ROW_SELF"
+scenario stale_term_ok       term_dead       guid       --stop "$STEER"
+# manual_undetected_ok — reza round-2 field case (riko): manually-seated row,
+# NO HERDR_PANE_ID at all, agent-list undetected. The pid probe alone
+# locates the pane; positional row match + cwd corroboration prove the row.
+scenario manual_undetected_ok term_dead      nopaneid   --stop "$STEER"
+# stale_env_pane_ok — HERDR_PANE_ID points at a pane herdr cannot resolve;
+# the probe does not care.
+scenario stale_env_pane_ok   midturn         stalepane  --stop "$STEER"
+# enrolled_no_terminal — a durable-key row recording no terminal_id at all.
+COMPACT_SEED_REGISTRY="$ROW_SELF_NOTERM"
+scenario enrolled_no_terminal midturn        guid       --stop "$STEER"
+# positional_stale_term — no env keys; the stored terminal is stale but the
+# stored pane id matches the caller's live canonical pane, cwd corroborates.
+COMPACT_SEED_REGISTRY="$ROW_SELF_STALETERM"
+scenario positional_stale_term midturn       positional --stop "$STEER"
+
+# Probe verdicts: transport-down falls back to the HERDR_PANE_ID entry point
+# (silently — old-herdr substrates keep working); an authoritative no-match
+# or a multi-match fails closed with the manual-injection recovery named.
+COMPACT_SEED_REGISTRY="$ROW_SELF"
+MOCK_PROBE_UNAVAILABLE=1 scenario probe_down_env_fallback midturn guid --stop "$STEER"
+MOCK_MULTI_SELF_PANE=1   scenario probe_ambiguous         midturn guid --stop "$STEER"
+
+# Pane-id churn / stale identity: stored coordinates disagreeing with the live
+# env pane get a NOTE and the paste proceeds into the caller's own live pane —
+# never into the pane the fossil row points at (the old codex-review-P1 gate
+# arbitrated between fossils; the live target makes the arbitration moot).
 COMPACT_SEED_REGISTRY="$ROW_SELF_REG"
 scenario guid_drift          guid_drift      guid          --stop "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF_REG_SESS"
 scenario drift_corroborated  guid_drift      guid_session  --stop "$STEER"
-# Stale inherited guid: the row's terminal belongs to a LIVE neighbour pane —
-# compact must type NOWHERE (no mutating calls at all).
+# Stale inherited guid: the row mislabels the caller (parent's row), but the
+# paste still lands only in the caller's OWN live pane w1-2 — never in the
+# parent's w1-3. The note surfaces the fossil disagreement.
 COMPACT_SEED_REGISTRY="$ROW_PARENT"
 scenario stale_guid          midturn         parentguid    --stop "$STEER"
-# HERDER_GUID and HCOM_SESSION_ID resolving to different identities: refuse.
+# HERDER_GUID and HCOM_SESSION_ID resolving to different identities: refuse
+# (two durable keys in positive conflict is genuine ambiguity, not fossil drift).
 COMPACT_SEED_REGISTRY="$ROW_SELF"$'\n'"$ROW_OTHER_SESS"
 scenario key_conflict        midturn         guid_conflict "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF"
@@ -247,9 +296,12 @@ COMPACT_SEED_REGISTRY="$ROW_SELF"
 # not_delivered (exit 1), never a false delivered.
 scenario clear_before_enter  clear_landed    guid          --stop "$STEER"
 
-# Environment/usage refusals.
-scenario refuse_outside      midturn         outside    "$STEER"
-scenario refuse_nopaneid     midturn         nopaneid   "$STEER"
+# Environment/usage refusals. Outside a pane the probe answers
+# authoritatively (no pane's tree contains the caller) — fail closed even
+# though env vars happen to be present; with the probe down AND no
+# HERDR_PANE_ID there is no entry point left.
+MOCK_NO_SELF_PANE=1      scenario refuse_outside  midturn outside  "$STEER"
+MOCK_PROBE_UNAVAILABLE=1 scenario refuse_nopaneid midturn nopaneid "$STEER"
 scenario usage_unknown_flag  midturn         guid       --pane w1-3 "$STEER"
 scenario usage_multiline     midturn         guid       $'line one\nline two'
 
@@ -366,8 +418,12 @@ if [[ "$WRITE" -eq 0 ]]; then
   [[ -z "$hits" ]] && ok "grep-gate: keystroke verbs confined to internal/spawncmd" \
     || bad "grep-gate: keystroke verbs confined to internal/spawncmd" "$hits"
 
-  # 4. The compact surface has no target/pane addressing flag.
-  hits="$(grep -En -- '--pane|--target|--to\b' "$GO_SRC/internal/spawncmd/compact.go" || true)"
+  # 4. The compact surface has no target/pane addressing flag: no such case
+  #    in the arg parser (the runtime rejection is pinned by the
+  #    usage_unknown_flag golden). A bare literal grep would false-positive
+  #    on the self-probe's `pane process-info --pane <id>` herdr invocation,
+  #    which addresses herdr's CLI, not compact's.
+  hits="$(grep -En -- 'case "--pane"|case "--target"|case "--to"' "$GO_SRC/internal/spawncmd/compact.go" || true)"
   [[ -z "$hits" ]] && ok "grep-gate: compact has no target/pane flag" \
     || bad "grep-gate: compact has no target/pane flag" "$hits"
 fi

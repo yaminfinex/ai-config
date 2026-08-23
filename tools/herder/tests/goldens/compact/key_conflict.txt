@@ -1,5 +1,5 @@
 === STDERR ===
-herder compact: refused — HERDER_GUID (guid-me-0000) and HCOM_SESSION_ID (sess-x) resolve to DIFFERENT identities (guid-me-0000 vs guid-oth-0000) — at least one is stale or inherited. herder compact only ever types into the caller's own pane; without proof of self-identity it refuses. Nothing was typed.
+herder compact: refused — HERDER_GUID (guid-me-0000) and HCOM_SESSION_ID (sess-x) resolve to DIFFERENT identities (guid-me-0000 vs guid-oth-0000) — at least one is stale or inherited. Unset the stale variable and retry, or run `herder enroll` from this pane to re-prove identity. herder compact only ever types into the caller's own pane; without proof of self-identity it refuses. Nothing was typed.
 === STDOUT ===
 
 === EXIT ===

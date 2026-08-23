@@ -1096,7 +1096,9 @@ func (r *runner) verifyGrokLifecycleIdentity(row []byte, paneID, terminalID stri
 		if paneErr != nil || paneRC != 0 || parsePaneErr != nil || pane.PaneID != paneID || pane.TerminalID != terminalID {
 			last = fmt.Sprintf("pane evidence unavailable or mismatched (exit=%d)", paneRC)
 		} else {
-			processOut, processRC, processErr := r.client().Combined("pane", "process_info", paneID)
+			// herdr 0.8 verb shape: `pane process-info --pane <id>` (the
+			// positional `process_info` spelling returns help text, rc=0).
+			processOut, processRC, processErr := r.client().Combined("pane", "process-info", "--pane", paneID)
 			processes, parseProcessErr := herdrcli.ParseProcessInfo(processOut)
 			pid := matchingGrokProcess(processes.Processes, spec)
 			ownerHome, _ := os.UserHomeDir()

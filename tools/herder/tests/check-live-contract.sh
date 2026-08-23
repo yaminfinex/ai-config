@@ -244,6 +244,81 @@ check_herdr_agent_list() {
   fi
 }
 
+assert_process_info_envelope() {
+  local input="$ROOT/process-info-response.json"
+  cat >"$input"
+  python3 - "$input" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as f:
+    raw = f.read()
+try:
+    obj = json.loads(raw)
+except json.JSONDecodeError:
+    raise SystemExit("output is not JSON (help text from a verb-shape drift?)")
+result = obj.get("result")
+if not isinstance(result, dict):
+    raise SystemExit("missing result object")
+info = result.get("process_info")
+if not isinstance(info, dict):
+    raise SystemExit("missing result.process_info object")
+procs = info.get("foreground_processes")
+if not isinstance(procs, list):
+    raise SystemExit("foreground_processes is not an array")
+for proc in procs:
+    if not isinstance(proc, dict) or not isinstance(proc.get("pid"), int) or not isinstance(proc.get("argv"), list):
+        raise SystemExit("foreground process entry shape drifted")
+PY
+}
+
+# TASK-307: on herdr 0.8 the only working CLI spelling is
+# `pane process-info --pane <id>`; the positional `pane process_info <id>`
+# returns the pane help text with rc=0, which parses as empty and silently
+# degraded three herder call-sites. This check pins the spelling herder uses
+# against the installed herdr so the next verb reshuffle fails loudly here.
+check_herdr_pane_process_info_verb() {
+  local herdr_bin="$1" panes pane out rc
+  panes="$(run_live "$herdr_bin" pane list 2>"$ROOT/herdr-pane-list.err")"
+  rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    skip "herdr pane process-info verb shape" "herdr pane list unavailable: $(cat "$ROOT/herdr-pane-list.err")"
+    check_process_info_negative_demo
+    return
+  fi
+  pane="$(jq -r '.result.panes[0].pane_id // empty' <<<"$panes" 2>/dev/null)"
+  if [[ -z "$pane" ]]; then
+    skip "herdr pane process-info verb shape" "no live panes to probe"
+    check_process_info_negative_demo
+    return
+  fi
+  out="$(run_live "$herdr_bin" pane process-info --pane "$pane" 2>"$ROOT/herdr-process-info.err")"
+  rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    fail "herdr pane process-info verb shape" "pane process-info --pane $pane exited $rc: $(cat "$ROOT/herdr-process-info.err")"
+    check_process_info_negative_demo
+    return
+  fi
+  if assert_process_info_envelope <<<"$out"; then
+    pass "herdr pane process-info --pane returns a parseable process_info envelope"
+  else
+    fail "herdr pane process-info verb shape" "unexpected payload"
+  fi
+  check_process_info_negative_demo
+}
+
+check_process_info_negative_demo() {
+  # The exact TASK-307 failure signature: help text on stdout with rc=0.
+  local help_text='Manage panes
+
+Usage: herdr pane <COMMAND>'
+  if assert_process_info_envelope <<<"$help_text" >/dev/null 2>&1; then
+    fail "negative demo: process-info help-text output is rejected" "rc=0 help text passed the process_info assertion path"
+  else
+    pass "negative demo: process-info help-text (rc=0 verb drift) is rejected by the live assertion path"
+  fi
+}
+
 check_herdr_schema() {
   local herdr_bin="$1" current="$ROOT/herdr-api-schema.json"
   if [[ ! -f "$GOLDEN_SCHEMA" ]]; then
@@ -626,11 +701,14 @@ fi
 
 if herdr_bin="$(real_herdr)" && [[ -n "$herdr_bin" && -x "$herdr_bin" ]]; then
   check_herdr_agent_list "$herdr_bin"
+  check_herdr_pane_process_info_verb "$herdr_bin"
   check_herdr_schema "$herdr_bin"
   check_herdr_socket_snapshot "$herdr_bin"
   check_herdr_socket_subscription "$herdr_bin"
 else
   skip "herdr agent list envelope" "installed herdr not found"
+  skip "herdr pane process-info verb shape" "installed herdr not found"
+  check_process_info_negative_demo
   skip "herdr api schema --json drift check" "installed herdr not found"
   skip "herdr subscription schema contract" "installed herdr not found"
   skip "herdr socket session.snapshot nested shape" "installed herdr not found"

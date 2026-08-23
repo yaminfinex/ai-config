@@ -567,7 +567,7 @@ func (f *grokLifecycleHerdr) Combined(args ...string) ([]byte, int, error) {
 	if len(args) >= 3 && args[0] == "pane" && args[1] == "get" {
 		return []byte(fmt.Sprintf(`{"result":{"pane":{"pane_id":%q,"terminal_id":%q,"cwd":%q}}}`, args[2], f.terminalID, os.TempDir())), 0, nil
 	}
-	if len(args) >= 3 && args[0] == "pane" && args[1] == "process_info" {
+	if len(args) >= 4 && args[0] == "pane" && args[1] == "process-info" && args[2] == "--pane" {
 		argv := []string{"/pinned/grok-linux-x86_64", "--no-subagents"}
 		if f.mode == "resume" {
 			argv = append(argv, "--resume", f.childSID)

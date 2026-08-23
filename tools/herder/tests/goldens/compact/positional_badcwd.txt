@@ -1,5 +1,5 @@
 === STDERR ===
-herder compact: refused — positional identity only (terminal term_ME) and the pane's foreground cwd ("/mock/elsewhere") does not corroborate this process's cwd ("<CASE>/cwd"). herder compact only ever types into the caller's own pane; without proof of self-identity it refuses. Nothing was typed.
+herder compact: refused — positional identity only (terminal term_ME) and the pane's foreground cwd ("/mock/elsewhere") does not corroborate this process's cwd ("<CASE>/cwd"). Re-run from that directory (or a subdirectory of it), or run `herder enroll` from this pane to bind a durable identity. herder compact only ever types into the caller's own pane; without proof of self-identity it refuses. Nothing was typed.
 === STDOUT ===
 
 === EXIT ===

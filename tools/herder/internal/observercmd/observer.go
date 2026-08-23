@@ -464,7 +464,9 @@ func loadHerdrStateCLI(source string) herdrState {
 	}
 	for term, pane := range hd.byTerm {
 		id := firstNonEmpty(pane.PaneID, term)
-		out, err := client.Output("pane", "process_info", id)
+		// herdr 0.8 verb shape: `pane process-info --pane <id>` (the
+		// positional `process_info` spelling returns help text, rc=0).
+		out, err := client.Output("pane", "process-info", "--pane", id)
 		if err != nil {
 			continue
 		}
