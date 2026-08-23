@@ -171,6 +171,9 @@ func TestSeatRewriteWriterPinsDependOnStructuralCarry(t *testing.T) {
 		{name: "mission membership", source: "missioncmd/mission.go", build: func(current v2.SessionRecord) v2.SessionRecord {
 			return v2.SessionRecord{GUID: current.GUID, Event: "mission_joined", Mission: &v2.Mission{Slug: "alpha", Source: "explicit"}}
 		}},
+		{name: "compact verb-time observation", source: "spawncmd/compact.go", build: func(current v2.SessionRecord) v2.SessionRecord {
+			return v2.SessionRecord{GUID: current.GUID, Event: "seated", State: v2.StateSeated, Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat(), ObservedVia: "compact verb-time occupant probe"}
+		}},
 		{name: "spawn replay", source: "spawncmd/spawn.go", build: func(current v2.SessionRecord) v2.SessionRecord {
 			return v2.SessionRecord{GUID: current.GUID, Event: "registered", State: v2.StateSeated, Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat()}
 		}},

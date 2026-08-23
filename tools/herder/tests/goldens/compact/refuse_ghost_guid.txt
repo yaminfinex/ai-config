@@ -1,5 +1,5 @@
 === STDERR ===
-herder compact: refused — HERDER_GUID=guid-ghost-0000 has no registry row. If it was inherited from another session's environment, re-run with it unset; to seat this session, run `herder enroll` from this pane. herder compact only ever types into the caller's own pane; without proof of self-identity it refuses. Nothing was typed.
+herder compact: refused — positive occupant mismatch on cohort-class evidence; the operation is blocked, but that evidence is not authoritative enough to name or displace an owner. Nothing was typed.
 === STDOUT ===
 
 === EXIT ===

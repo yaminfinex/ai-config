@@ -1,5 +1,5 @@
 === STDERR ===
-herder compact: refused — your registry row records agent "bash", which has no interactive composer to type /compact into. Nothing was typed.
+herder compact: refused — positive occupant mismatch on cohort-class evidence; the operation is blocked, but that evidence is not authoritative enough to name or displace an owner. Nothing was typed.
 === STDOUT ===
 
 === EXIT ===

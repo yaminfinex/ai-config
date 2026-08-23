@@ -1,10 +1,7 @@
 === STDERR ===
-herder compact: submitted — "/compact focus on the open unit, keep gate commands and thread names" is in your composer and fires when the current turn ends (verify: delivered)
-herder compact: --then armed (dry-run) — after this turn ends, sender herder-compact-then-me-bus delivers the continuation (54 chars) to @me-bus on bus default (timeout 900000ms); diagnostics under <CASE>/state/compact-then/
+herder compact: refused — --then bus identity mismatch: no joined bus row matches the provided name, session, process, or pane. Run `herder enroll` from this live session to bind its bus identity, then retry. Nothing was typed.
 === STDOUT ===
 
 === EXIT ===
-0
+2
 === HERDR MUTATING CALLS ===
-pane send-text w1-2 /compact focus on the open unit, keep gate commands and thread names
-pane send-keys w1-2 Enter

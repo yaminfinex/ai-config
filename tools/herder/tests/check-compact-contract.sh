@@ -45,7 +45,47 @@ MOCKBIN="$ROOT/bin"
 mkdir -p "$MOCKBIN" "$GOLDENS"
 trap 'rm -rf "$ROOT"' EXIT
 
-ln -s "$TESTS_DIR/mock-herdr-compact" "$MOCKBIN/herdr"
+cat >"$MOCKBIN/herdr" <<'MOCK_HERDR'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-} ${2:-}" == "pane get" ]]; then
+  case "${3:-}" in
+    w1-2)
+      terminal=term_ME
+      [[ "${MOCK_COMPACT_SCENARIO:-}" == guid_drift ]] && terminal=term_OTHER
+      jq -n --arg t "$terminal" --arg cwd "${MOCK_COMPACT_CWD:-/mock/self-cwd}" \
+        '{result:{pane:{pane_id:"w1-2",terminal_id:$t,workspace_id:"w1",cwd:$cwd,foreground_cwd:$cwd}}}'
+      exit 0;;
+    w1-3)
+      cwd=/mock/other
+      [[ -n "${MOCK_MULTI_SELF_PANE:-}" ]] && cwd="${MOCK_COMPACT_CWD:-/mock/self-cwd}"
+      jq -n --arg cwd "$cwd" '{result:{pane:{pane_id:"w1-3",terminal_id:"term_OTHER",workspace_id:"w1",cwd:$cwd,foreground_cwd:$cwd}}}'
+      exit 0;;
+    w1-5)
+      jq -n '{result:{pane:{pane_id:"w1-5",terminal_id:"term_REG",workspace_id:"w1",cwd:"/mock/other",foreground_cwd:"/mock/other"}}}'
+      exit 0;;
+  esac
+fi
+if [[ "${1:-} ${2:-}" == "pane process-info" ]]; then
+  [[ "${MOCK_PROBE_UNAVAILABLE:-}" == 1 ]] && exit 64
+  pane="${4:-}"
+  if [[ "$pane" != "w1-2" && -z "${MOCK_MULTI_SELF_PANE:-}" ]]; then
+    jq -n --arg pane "$pane" '{result:{process_info:{pane_id:$pane,foreground_processes:[{pid:5000,name:"bash",argv:["bash"]}]}}}'
+    exit 0
+  fi
+  if [[ -n "${MOCK_PROCESS_INFO_NO_SHELL_PID:-}" ]]; then
+    jq -n --arg cwd "${MOCK_COMPACT_CWD:-/mock/self-cwd}" --arg tool "${MOCK_PROBE_TOOL:-claude}" \
+      '{result:{process_info:{pane_id:"w1-2",foreground_processes:[{pid:4242,name:$tool,argv:[$tool],cwd:$cwd}]}}}'
+  else
+    jq -n --arg cwd "${MOCK_COMPACT_CWD:-/mock/self-cwd}" --arg tool "${MOCK_PROBE_TOOL:-claude}" \
+      '{result:{process_info:{pane_id:"w1-2",shell_pid:4000,foreground_processes:[{pid:4242,name:$tool,argv:[$tool],cwd:$cwd}]}}}'
+  fi
+  exit 0
+fi
+exec "@TESTS_DIR@/mock-herdr-compact" "$@"
+MOCK_HERDR
+sed -i "s|@TESTS_DIR@|$TESTS_DIR|" "$MOCKBIN/herdr"
+chmod +x "$MOCKBIN/herdr"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$MOCKBIN/sleep"
 chmod +x "$MOCKBIN/sleep"
 cat >"$MOCKBIN/hcom" <<'MOCK_HCOM'
@@ -102,7 +142,8 @@ run_compact() {
   mkdir -p "$CASE/state" "$CASE/mock" "$CASE/probe" "$CASE/cwd"
   [[ -n "${COMPACT_SEED_REGISTRY:-}" ]] && printf '%s\n' "$COMPACT_SEED_REGISTRY" >"$CASE/state/registry.jsonl"
   local guid="" sess="" herdrenv=1 paneid=p_env cwdval="$CASE/cwd" runcwd="$CASE/cwd"
-  local hcom_rows='[{"name":"me-bus","joined":true,"launch_context":{"pane_id":"w1-2"}}]'
+  local probe_tool=claude probe_sid=sess-me no_shell_pid=""
+  local hcom_rows='[{"name":"me-bus","joined":true,"session_id":"sess-me","launch_context":{"pane_id":"w1-2"}}]'
   [[ -n "${MOCK_HCOM_ROWS:-}" ]] && hcom_rows="$MOCK_HCOM_ROWS"
   case "$envmode" in
     guid)              guid="guid-me-0000";;
@@ -118,6 +159,41 @@ run_compact() {
     nopaneid)          paneid="";;
     stalepane)         paneid="p_gone";;
   esac
+  if [[ "${COMPACT_SEED_REGISTRY:-}" == *'"tool":"codex"'* ]]; then
+    probe_tool=codex
+    probe_sid=11111111-1111-4111-8111-111111111111
+  fi
+  if [[ -s "$CASE/state/registry.jsonl" ]]; then
+    jq -c --arg claude_sid sess-me --arg codex_sid "$probe_sid" '
+      if .kind == "session" and (.tool == "claude" or .tool == "codex") and ((.sids // []) | length == 0) then
+        .sids = [{sid:(if .tool == "codex" then $codex_sid elif .guid == "guid-par-0000" then "sess-parent" else $claude_sid end), source:"harvest"}]
+        | .continuity = "confirmed"
+        | .provenance.tool_session_id = .sids[0].sid
+      else . end' "$CASE/state/registry.jsonl" >"$CASE/state/registry.jsonl.tmp"
+    mv "$CASE/state/registry.jsonl.tmp" "$CASE/state/registry.jsonl"
+  fi
+  rm -rf "$CASE/proc"
+  mkdir -p "$CASE/proc/4242/fd" "$CASE/proc/4243"
+  printf '%s\n' "$probe_tool" >"$CASE/proc/4242/comm"
+  printf '%s\0' "$probe_tool" >"$CASE/proc/4242/cmdline"
+  printf 'HERDR_PANE_ID=%s\0' "$paneid" >"$CASE/proc/4242/environ"
+  printf 'Name:\t%s\nPid:\t4242\nPPid:\t1\n' "$probe_tool" >"$CASE/proc/4242/status"
+  ln -sfn "$cwdval" "$CASE/proc/4242/cwd"
+  if [[ "$probe_tool" == codex ]]; then
+    local rollout="$ROOT/home/.codex/sessions/2026/08/23/rollout-now-$probe_sid.jsonl"
+    mkdir -p "$(dirname "$rollout")"
+    printf '{}\n' >"$rollout"
+    ln -sfn "$rollout" "$CASE/proc/4242/fd/42"
+  else
+    local cohort
+    cohort="$(printf '%s' "$cwdval" | sed -E 's/[^A-Za-z0-9]/-/g')"
+    mkdir -p "$ROOT/home/.claude/projects/$cohort"
+    printf '{}\n' >"$ROOT/home/.claude/projects/$cohort/$probe_sid.jsonl"
+  fi
+  local self_parent=4242
+  [[ -n "${MOCK_NO_SELF_PANE:-}" ]] && self_parent=1
+  printf 'Name:\therder\nPid:\t4243\nPPid:\t%s\n' "$self_parent" >"$CASE/proc/4243/status"
+  [[ "$scen" == queued_slow ]] && no_shell_pid=1
   RUN_ERR_F="$CASE/stderr"
   RUN_OUT="$(cd "$runcwd" && env -i \
     PATH="$PATH_HERMETIC" \
@@ -132,7 +208,8 @@ run_compact() {
     MOCK_HCOM_ROWS="$hcom_rows" \
     MOCK_COMPACT_SCENARIO="$scen" MOCK_COMPACT_STATE="$CASE/mock" \
     MOCK_PROBE_DIR="$CASE/probe" MOCK_COMPACT_CWD="$cwdval" \
-    MOCK_SELF_SHELL_PID="$$" \
+    MOCK_PROBE_TOOL="$probe_tool" MOCK_PROCESS_INFO_NO_SHELL_PID="$no_shell_pid" \
+    HERDER_PROBE_PROC_ROOT="$CASE/proc" HERDER_PROBE_SELF_PID=4243 \
     MOCK_NO_SELF_PANE="${MOCK_NO_SELF_PANE:-}" \
     MOCK_MULTI_SELF_PANE="${MOCK_MULTI_SELF_PANE:-}" \
     MOCK_PROBE_UNAVAILABLE="${MOCK_PROBE_UNAVAILABLE:-}" \
@@ -252,7 +329,7 @@ COMPACT_SEED_REGISTRY="$ROW_SELF"
 scenario stale_term_ok       term_dead       guid       --stop "$STEER"
 # manual_undetected_ok — reza round-2 field case (riko): manually-seated row,
 # NO HERDR_PANE_ID at all, agent-list undetected. The pid probe alone
-# locates the pane; positional row match + cwd corroboration prove the row.
+# locates the pane; the transcript sid proves the registry row.
 scenario manual_undetected_ok term_dead      nopaneid   --stop "$STEER"
 # stale_env_pane_ok — HERDR_PANE_ID points at a pane herdr cannot resolve;
 # the probe does not care.
@@ -260,33 +337,30 @@ scenario stale_env_pane_ok   midturn         stalepane  --stop "$STEER"
 # enrolled_no_terminal — a durable-key row recording no terminal_id at all.
 COMPACT_SEED_REGISTRY="$ROW_SELF_NOTERM"
 scenario enrolled_no_terminal midturn        guid       --stop "$STEER"
-# positional_stale_term — no env keys; the stored terminal is stale but the
-# stored pane id matches the caller's live canonical pane, cwd corroborates.
+# positional_stale_term — no identity env keys and stale stored coordinates;
+# the live transcript sid still proves the row.
 COMPACT_SEED_REGISTRY="$ROW_SELF_STALETERM"
 scenario positional_stale_term midturn       positional --stop "$STEER"
 
-# Probe verdicts: transport-down falls back to the HERDR_PANE_ID entry point
-# (silently — old-herdr substrates keep working); an authoritative no-match
-# or a multi-match fails closed with the manual-injection recovery named.
+# Probe verdicts: transport-down is unprobeable; a multi-match is ambiguous
+# and fails closed with the restart-to-re-report recovery named.
 COMPACT_SEED_REGISTRY="$ROW_SELF"
 MOCK_PROBE_UNAVAILABLE=1 scenario probe_down_env_fallback midturn guid --stop "$STEER"
-MOCK_MULTI_SELF_PANE=1   scenario probe_ambiguous         midturn guid --stop "$STEER"
+COMPACT_SEED_REGISTRY='{"kind":"session","guid":"guid-me-0000","event":"seated","state":"seated","label":"me","role":"worker","tool":"codex","seat":{"kind":"herdr","terminal_id":"term_ME","pane_id":"w1-2","hcom_name":"me-bus"},"provenance":{"tag":"worker"}}'
+MOCK_MULTI_SELF_PANE=1   scenario probe_ambiguous         midturn nopaneid --stop "$STEER"
 
-# Pane-id churn / stale identity: stored coordinates disagreeing with the live
-# env pane get a NOTE and the paste proceeds into the caller's own live pane —
-# never into the pane the fossil row points at (the old codex-review-P1 gate
-# arbitrated between fossils; the live target makes the arbitration moot).
+# Pane-id churn: stored coordinates disagreeing with the live observation are
+# silently rebound, and the paste proceeds into the caller's own live pane.
 COMPACT_SEED_REGISTRY="$ROW_SELF_REG"
 scenario guid_drift          guid_drift      guid          --stop "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF_REG_SESS"
 scenario drift_corroborated  guid_drift      guid_session  --stop "$STEER"
-# Stale inherited guid: the row mislabels the caller (parent's row), but the
-# paste still lands only in the caller's OWN live pane w1-2 — never in the
-# parent's w1-3. The note surfaces the fossil disagreement.
+# Stale inherited guid disagrees with the transcript-proven row and refuses;
+# no stored coordinate is used to pick a paste target.
 COMPACT_SEED_REGISTRY="$ROW_PARENT"
 scenario stale_guid          midturn         parentguid    --stop "$STEER"
-# HERDER_GUID and HCOM_SESSION_ID resolving to different identities: refuse
-# (two durable keys in positive conflict is genuine ambiguity, not fossil drift).
+# HERDER_GUID and the transcript observation resolving to different identities:
+# refuse as a positive mismatch.
 COMPACT_SEED_REGISTRY="$ROW_SELF"$'\n'"$ROW_OTHER_SESS"
 scenario key_conflict        midturn         guid_conflict "$STEER"
 COMPACT_SEED_REGISTRY="$ROW_SELF"

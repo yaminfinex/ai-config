@@ -34,6 +34,10 @@ case "${1:-} ${2:-}" in
     jq -n '{result:{pane:{pane_id:"p_self", terminal_id:"term_SELF", workspace_id:"ws_self", cwd:"/mock/cwd"}}}';;
   "agent list")
     jq -n '{result:{agents:[{pane_id:"p_self", terminal_id:"term_SELF", agent:"claude", agent_status:"idle"}]}}';;
+  "pane list")
+    jq -n '{result:{panes:[{pane_id:"p_self", terminal_id:"term_SELF", agent:"claude", cwd:"/mock/cwd"}]}}';;
+  "pane process-info")
+    jq -n '{result:{process_info:{pane_id:"p_self",foreground_processes:[{pid:4242,name:"claude",argv:["claude"],cwd:"/mock/cwd"}]}}}';;
   *)
     printf 'mock herdr (enroll suite): unhandled: %s\n' "$*" >&2
     exit 64;;
@@ -525,14 +529,23 @@ JSONL
 	else
 		printf 'FAIL  repair: empty live sid preservation — rc=%s err=%s out=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")" "$RUN_OUT"; fail=1
 	fi
+	mkdir -p "$CASE/proc/4242/fd" "$CASE/proc/4243" "$CASE/home/.claude/projects/-mock-cwd"
+	printf 'claude\n' >"$CASE/proc/4242/comm"
+	printf 'claude\0' >"$CASE/proc/4242/cmdline"
+	printf 'HERDR_PANE_ID=p_self\0' >"$CASE/proc/4242/environ"
+	printf 'Name:\tclaude\nPid:\t4242\nPPid:\t1\n' >"$CASE/proc/4242/status"
+	ln -sfn /mock/cwd "$CASE/proc/4242/cwd"
+	printf 'Name:\therder\nPid:\t4243\nPPid:\t4242\n' >"$CASE/proc/4243/status"
+	printf '{}\n' >"$CASE/home/.claude/projects/-mock-cwd/sid-durable.jsonl"
 	RUN_ERR_F="$CASE/resolve.stderr"
 	RUN_OUT="$(cd "$CASE" && env -i \
 	  PATH="$PATH_HERMETIC" HOME="$CASE/home" HERDER_STATE_DIR="$CASE/state" \
 	  HERDR_ENV=1 HERDR_PANE_ID=p_self HCOM_SESSION_ID=sid-durable \
+	  HERDER_PROBE_PROC_ROOT="$CASE/proc" HERDER_PROBE_SELF_PID=4243 \
 	  MOCK_HCOM_ROWS='[]' \
 	  "$REPO_ROOT/bin/herder" compact --dry-run --stop 2>"$RUN_ERR_F")"
 	RUN_RC=$?
-	if [[ "$RUN_RC" -eq 0 ]] && grep -q 'guid guid-existing-0000, resolution: durable-key' "$RUN_ERR_F"; then
+	if [[ "$RUN_RC" -eq 0 ]] && grep -q 'guid guid-existing-0000, resolution: occupant-cohort' "$RUN_ERR_F"; then
 		printf 'PASS  repair: preserved sid still resolves the re-enrolled row\n'
 	else
 		printf 'FAIL  repair: preserved sid resolution — rc=%s err=%s out=%s\n' "$RUN_RC" "$(cat "$RUN_ERR_F")" "$RUN_OUT"; fail=1

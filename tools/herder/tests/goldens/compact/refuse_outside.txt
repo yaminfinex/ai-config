@@ -1,5 +1,5 @@
 === STDERR ===
-herder compact: refused — cannot prove which pane is yours: no live pane's process tree contains this process (pid <PID>, 2 panes probed). herder compact only ever types into the caller's own pane; without proof it refuses. If you ARE at a pane you can see, the manual recovery is: herdr pane send-keys <your-pane> ctrl+u; herdr pane send-text <your-pane> '/compact <steer>'; herdr pane send-keys <your-pane> Enter. Nothing was typed.
+herder compact: refused — no live tool occupant was found in the caller's pane. Nothing was typed.
 === STDOUT ===
 
 === EXIT ===

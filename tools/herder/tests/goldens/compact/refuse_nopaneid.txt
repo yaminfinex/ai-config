@@ -1,7 +1,7 @@
 === STDERR ===
-herder compact: cannot locate own pane: occupant probe unavailable (herdr pane list failed: exit status 64) and not running inside a herdr pane environment (HERDR_ENV/HERDR_PANE_ID absent) — herder compact queues input to the caller's OWN pane only
+herder compact: refused — the caller's live occupant is unprobeable; compact never guesses a self identity. Nothing was typed.
 === STDOUT ===
 
 === EXIT ===
-64
+2
 === HERDR MUTATING CALLS ===
