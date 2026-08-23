@@ -24,7 +24,7 @@ case "${1:-} ${2:-}" in
       jq -n --arg pane "${3:-p_enroll}" '{result:{pane:{pane_id:$pane,terminal_id:"term_enroll",cwd:"/repo",workspace_id:"ws_1"}}}'
     fi;;
   "pane process-info")
-    jq -n '{result:{process_info:{foreground_process_group_id:999999,foreground_processes:[{pid:999999,name:"bash"}]}}}';;
+    jq -n '{result:{process_info:{foreground_process_group_id:9999999,foreground_processes:[{pid:9999999,name:"bash"}]}}}';;
   "agent rename")
     jq -n '{result:{type:"ok"}}';;
   "agent list")

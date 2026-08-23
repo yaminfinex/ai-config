@@ -160,6 +160,10 @@ func TestAdoptionUnseatAuthorization(t *testing.T) {
 		if err != nil || reason != "seat superseded by replacement process in the same pane" {
 			t.Fatalf("reason/error = %q / %v", reason, err)
 		}
+		_, err = adoptionUnseatReason(samePane, hcomidentity.Result{Verified: true, PaneID: "pane_shared"}, true, occupant.Substrate{})
+		if err == nil || !strings.Contains(err.Error(), "--confirm-dead is unnecessary") || !strings.Contains(err.Error(), "rerun without it: 'herder adopt guid-previous'") {
+			t.Fatalf("surplus flag error = %v", err)
+		}
 	})
 
 	t.Run("pane gone requires and honors confirm-dead", func(t *testing.T) {
@@ -190,7 +194,7 @@ func TestAdoptionUnseatAuthorization(t *testing.T) {
 		sub := adoptProbeSubstrate(t, adoptProbeMatch, false)
 		for _, confirmDead := range []bool{false, true} {
 			_, err := adoptionUnseatReason(old, caller, confirmDead, sub)
-			if err == nil || !strings.Contains(err.Error(), "seat is alive") || !strings.Contains(err.Error(), "herder cull guid-previous") {
+			if err == nil || !strings.Contains(err.Error(), "seat is alive") || !strings.Contains(err.Error(), "session "+adoptSIDOld) || !strings.Contains(err.Error(), "herder cull --guid guid-previous") {
 				t.Fatalf("confirmDead=%v error=%v", confirmDead, err)
 			}
 		}

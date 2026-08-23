@@ -304,7 +304,7 @@ func adoptionUnseatReason(old v2.SessionRecord, caller hcomidentity.Result, conf
 			return renamecmd.AdoptionReasonConfirmedDead, nil
 		}
 	case occupant.Match:
-		return "", fmt.Errorf("the old seat is alive: transcript %s occupies pane %s; work in that live seat, or run 'herder cull %s' first, then rerun 'herder adopt %s'", verdict.SID, oldPane, old.GUID, old.GUID)
+		return "", fmt.Errorf("the old seat is alive: session %s occupies pane %s; work in that live seat, or run 'herder cull --guid %s' first, then rerun 'herder adopt %s'", verdict.SID, oldPane, old.GUID, old.GUID)
 	case occupant.PositiveMismatch, occupant.OutcomeAmbiguous:
 		return "", fmt.Errorf("pane %s has a foreign or ambiguous occupant, so --confirm-dead is not applicable; a live old session can re-report itself with 'herder compact' (or resume from inside it), otherwise rerun 'herder adopt %s' once the old pane is gone or provably vacant", oldPane, old.GUID)
 	case occupant.OutcomeUnprobeable:
