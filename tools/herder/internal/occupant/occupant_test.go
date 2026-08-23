@@ -554,6 +554,56 @@ func TestRecordedSIDSetExcludesCrossRowLineage(t *testing.T) {
 	}
 }
 
+func TestLiveClaudeResidualClassification(t *testing.T) {
+	cwd := "/work/repo"
+	current := herdrcli.Pane{PaneID: "pane-a", Agent: "claude", CWD: cwd}
+	tests := []struct {
+		name  string
+		panes []herdrcli.Pane
+		want  bool
+	}{
+		{name: "same-cwd detection-lost peer", panes: []herdrcli.Pane{current, {PaneID: "pane-b", Agent: "claude", ForegroundCWD: cwd}}, want: true},
+		{name: "peer has report", panes: []herdrcli.Pane{current, {PaneID: "pane-b", Agent: "claude", CWD: cwd, AgentSession: sidB}}},
+		{name: "peer has different cwd", panes: []herdrcli.Pane{current, {PaneID: "pane-b", Agent: "claude", CWD: "/work/other"}}},
+		{name: "current has report", panes: []herdrcli.Pane{{PaneID: "pane-a", Agent: "claude", CWD: cwd, AgentSession: sidA}, {PaneID: "pane-b", Agent: "claude", CWD: cwd}}},
+		{name: "current is codex", panes: []herdrcli.Pane{{PaneID: "pane-a", Agent: "codex", CWD: cwd}, {PaneID: "pane-b", Agent: "claude", CWD: cwd}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := liveClaudeResidual(tt.panes[0], tt.panes); got != tt.want {
+				t.Fatalf("liveClaudeResidual = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func liveClaudeResidual(current herdrcli.Pane, panes []herdrcli.Pane) bool {
+	if toolName(current.Agent) != "claude" || current.AgentSession != "" {
+		return false
+	}
+	cwd := current.ForegroundCWD
+	if cwd == "" {
+		cwd = current.CWD
+	}
+	if cwd == "" {
+		return false
+	}
+	cwd = filepath.Clean(cwd)
+	for _, pane := range panes {
+		if pane.PaneID == current.PaneID || toolName(pane.Agent) != "claude" || pane.AgentSession != "" {
+			continue
+		}
+		peerCWD := pane.ForegroundCWD
+		if peerCWD == "" {
+			peerCWD = pane.CWD
+		}
+		if peerCWD != "" && filepath.Clean(peerCWD) == cwd {
+			return true
+		}
+	}
+	return false
+}
+
 func TestLiveHerdrProcessInfoAndSelfProbe(t *testing.T) {
 	if os.Getenv("HERDR_PANE_ID") == "" {
 		t.Skip("live smoke: no HERDR_PANE_ID")
@@ -562,17 +612,50 @@ func TestLiveHerdrProcessInfoAndSelfProbe(t *testing.T) {
 		t.Skip("live smoke: herdr unavailable")
 	}
 	q := CLIQuerier{}
-	info, err := q.ProcessInfo(os.Getenv("HERDR_PANE_ID"))
+	paneID := os.Getenv("HERDR_PANE_ID")
+	info, err := q.ProcessInfo(paneID)
 	if err != nil {
 		t.Fatalf("live process-info flag form: %v", err)
 	}
 	if info.ForegroundProcessGroupID == 0 && len(info.Processes) == 0 {
 		t.Fatal("live process-info returned no anchors (possible CLI verb drift)")
 	}
-	paneObs := Probe(Substrate{Herdr: q}, os.Getenv("HERDR_PANE_ID"))
-	t.Logf("live pane Probe = %s err=%v", paneObs, paneObs.Err)
-	obs := SelfProbe(Substrate{Herdr: q})
-	if obs.Status != Occupied {
-		t.Fatalf("live SelfProbe = %s", obs)
+	current, err := q.Pane(paneID)
+	if err != nil {
+		t.Fatalf("live pane get: %v", err)
+	}
+	panes, err := q.Panes()
+	if err != nil {
+		t.Fatalf("live pane inventory: %v", err)
+	}
+	residual := liveClaudeResidual(current, panes)
+	if residual {
+		t.Log("live smoke branch: same-cwd Claude detection-lost residual; asserting honest AMBIGUOUS")
+	} else {
+		t.Log("live smoke branch: attributable seat; asserting OCCUPIED")
+	}
+	// A full parallel `go test ./...` temporarily places other packages'
+	// mock tool processes below the same foreground process-group anchor.
+	// Resample that transient snapshot without weakening either expected
+	// terminal outcome; focused live runs normally settle on the first pass.
+	deadline := time.Now().Add(20 * time.Second)
+	for attempt := 1; ; attempt++ {
+		paneObs := Probe(Substrate{Herdr: q}, paneID)
+		obs := SelfProbe(Substrate{Herdr: q})
+		t.Logf("live smoke sample %d: pane=%s err=%v self=%s err=%v", attempt, paneObs, paneObs.Err, obs, obs.Err)
+		if residual {
+			if paneObs.Status == Occupied || obs.Status == Occupied {
+				t.Fatalf("live residual manufactured an occupant: pane=%s self=%s", paneObs, obs)
+			}
+			if paneObs.Status == Ambiguous && paneObs.SID == "" && obs.Status == Ambiguous && obs.SID == "" {
+				return
+			}
+		} else if paneObs.Status == Occupied && obs.Status == Occupied && paneObs.SID == obs.SID {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("live smoke did not reach expected terminal outcome: pane=%s self=%s", paneObs, obs)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
