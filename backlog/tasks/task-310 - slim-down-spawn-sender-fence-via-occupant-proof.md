@@ -1,7 +1,7 @@
 ---
 id: TASK-310
 title: 'slim-down: spawn sender fence via occupant proof'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-23 11:53'
 labels:

@@ -3,7 +3,7 @@ id: TASK-309
 title: >-
   slim-down: verb-time resolution — swap hcomidentity evidence to the probe;
   delete compact fossil ladder
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-23 11:53'
 labels:
