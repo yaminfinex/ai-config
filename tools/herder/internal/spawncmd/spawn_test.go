@@ -376,7 +376,7 @@ func TestPromptSenderRefusalStopsBeforeChildCreation(t *testing.T) {
 		t.Fatalf("run() code = %d, want sender refusal exit 2; stderr=%s", code, stderr.String())
 	}
 	assertSpawnScriptConsumed(t, client)
-	for _, want := range []string{"sender identity is not verified", "Run `herder enroll`", "Nothing was launched"} {
+	for _, want := range []string{"sender identity is not verified", "live occupant is unprobeable", "Restore access to the live pane and process tree", "Nothing was launched"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("stderr = %q, want %q", stderr.String(), want)
 		}

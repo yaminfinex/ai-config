@@ -47,8 +47,13 @@ mkdir -p "$COPY"
 # that is gigabytes of release artifacts against ~13M of tracked source, a cost
 # that grows with local history and buys nothing: the gates read go.mod and the
 # scripts, and nothing here needs .git, which this way is never copied at all.
-git -C "$REPO_ROOT" ls-files -z >"$WORK/tracked" 2>/dev/null ||
+# Respect tracked deletions in the working tree as well as edits: a deleted
+# source is intentionally absent from the copy, not a cp failure.
+git -C "$REPO_ROOT" ls-files -z >"$WORK/all-tracked" 2>/dev/null ||
   { printf 'FAIL  cannot list tracked files from %s\n' "$REPO_ROOT"; exit 1; }
+while IFS= read -r -d '' path; do
+  [[ -e "$REPO_ROOT/$path" || -L "$REPO_ROOT/$path" ]] && printf '%s\0' "$path"
+done <"$WORK/all-tracked" >"$WORK/tracked"
 [ -s "$WORK/tracked" ] ||
   { printf 'FAIL  no tracked files found under %s\n' "$REPO_ROOT"; exit 1; }
 # The trailing -- matters: NUL delimiters carry spaces and newlines through

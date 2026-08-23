@@ -587,6 +587,7 @@ RUN_OUT="$(cd "$CASE/cwd" && env -i \
   MOCK_SPAWNER_CWD="$CASE/cwd" MOCK_SPAWNER_BUS=adopted-bus \
   MOCK_HCOM_SPAWN_SCENARIO=emptyctx \
   HERDER_PROBE_PROC_ROOT="$CASE/proc" \
+  HERDER_PROBE_SELF_PID=4243 \
   "${HERDER[@]}" spawn --role worker --agent claude --prompt "do the thing" --json 2>"$RUN_ERR_F")"
 RUN_RC=$?
 
@@ -628,6 +629,7 @@ RUN_OUT="$(cd "$CASE/cwd" && env -i \
   MOCK_SPAWNER_CWD="$CASE/cwd" MOCK_SPAWNER_BUS=first-bus \
   MOCK_HCOM_SPAWN_SCENARIO=emptyctx \
   HERDER_PROBE_PROC_ROOT="$CASE/proc" \
+  HERDER_PROBE_SELF_PID=4243 \
   "${HERDER[@]}" spawn --role worker --agent claude --prompt "do the thing" --json 2>"$RUN_ERR_F")"
 RUN_RC=$?
 
