@@ -1,7 +1,7 @@
 ---
 id: TASK-318
 title: 'slim-down: narrow adopt --confirm-dead to the pane-gone case only'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-23 13:05'
 labels:
