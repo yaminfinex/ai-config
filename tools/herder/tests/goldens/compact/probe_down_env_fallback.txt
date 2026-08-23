@@ -1,9 +1,7 @@
 === STDERR ===
-herder compact: submitted — "/compact focus on the open unit, keep gate commands and thread names" is in your composer and fires when the current turn ends (verify: delivered)
+herder compact: refused — the caller's live occupant is unprobeable; compact never guesses a self identity. Nothing was typed.
 === STDOUT ===
 
 === EXIT ===
-0
+2
 === HERDR MUTATING CALLS ===
-pane send-text w1-2 /compact focus on the open unit, keep gate commands and thread names
-pane send-keys w1-2 Enter

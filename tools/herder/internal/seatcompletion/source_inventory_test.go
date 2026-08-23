@@ -126,6 +126,7 @@ func TestSeatRewriteWriterInventoryRequiresCarryPins(t *testing.T) {
 		"repaircmd/repair.go":         {completionRequest: 2, carryPin: true},
 		"retirecmd/retire.go":         {updateLocked: 2},
 		"sidecarcmd/sidecar.go":       {completionRequest: 1, carryPin: true},
+		"spawncmd/compact.go":         {updateLocked: 1, carryPin: true},
 		"spawncmd/spawn.go":           {updateLocked: 1, completionRequest: 1, carryPin: true},
 	}
 	directWant := map[string]int{}

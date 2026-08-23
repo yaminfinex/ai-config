@@ -21,7 +21,10 @@ import (
 	"ai-config/tools/herder/internal/registry/v2"
 )
 
-const ProcRootEnv = "HERDER_PROBE_PROC_ROOT"
+const (
+	ProcRootEnv = "HERDER_PROBE_PROC_ROOT"
+	SelfPIDEnv  = "HERDER_PROBE_SELF_PID"
+)
 
 // Claude does not expose an exact pid-to-transcript join. In the
 // detection-lost leg, keep only the newest activity cohort: transcripts
@@ -110,6 +113,11 @@ type Substrate struct {
 	Herdr    HerdrQuerier
 	ProcRoot string
 	Home     string
+	// SelfPID makes SelfProbe hermetic with an injected ProcRoot. Production
+	// leaves it zero and uses os.Getpid. The environment equivalent is honored
+	// only alongside an injected proc root so accidental inheritance cannot
+	// redirect a production probe into a foreign process tree.
+	SelfPID int
 }
 
 // CLIQuerier invokes the field-verified herdr 0.8 CLI spelling. In
@@ -195,8 +203,8 @@ func Probe(sub Substrate, paneID string) Observation {
 // SelfProbe locates the caller from live process ancestry. HERDR_PANE_ID is
 // only a fast entry hint; if it is stale or absent every live pane is tried.
 func SelfProbe(sub Substrate) Observation {
+	self := selfProbePID(sub)
 	sub = normalized(sub)
-	self := os.Getpid()
 	if hint := os.Getenv("HERDR_PANE_ID"); hint != "" {
 		obs := Probe(sub, hint)
 		if obs.Status == Occupied && isAncestor(sub.ProcRoot, obs.PID, self) {
@@ -229,6 +237,19 @@ func SelfProbe(sub Substrate) Observation {
 		return obs
 	}
 	return Observation{Status: Vacant}
+}
+
+func selfProbePID(sub Substrate) int {
+	if sub.SelfPID != 0 {
+		return sub.SelfPID
+	}
+	procRootInjected := os.Getenv(ProcRootEnv) != "" || (sub.ProcRoot != "" && sub.ProcRoot != "/proc")
+	if procRootInjected {
+		if pid, err := strconv.Atoi(os.Getenv(SelfPIDEnv)); err == nil && pid != 0 {
+			return pid
+		}
+	}
+	return os.Getpid()
 }
 
 func probeSelfAncestry(sub Substrate, self int) Observation {

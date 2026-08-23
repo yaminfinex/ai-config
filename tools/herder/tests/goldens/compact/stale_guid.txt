@@ -1,10 +1,7 @@
 === STDERR ===
-herder compact: note — registry row (guid guid-par-0000) records terminal term_OTHER but your live pane w1-2 holds term_ME; stored coordinates are stale, proceeding on live evidence
-herder compact: submitted — "/compact focus on the open unit, keep gate commands and thread names" is in your composer and fires when the current turn ends (verify: delivered)
+herder compact: refused — positive occupant mismatch on cohort-class evidence; the operation is blocked, but that evidence is not authoritative enough to name or displace an owner. If HERDER_GUID was inherited from another session, unset it and retry; if this seat was never enrolled, run `herder enroll` from this pane. Nothing was typed.
 === STDOUT ===
 
 === EXIT ===
-0
+2
 === HERDR MUTATING CALLS ===
-pane send-text w1-2 /compact focus on the open unit, keep gate commands and thread names
-pane send-keys w1-2 Enter

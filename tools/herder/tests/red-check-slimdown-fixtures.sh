@@ -144,8 +144,13 @@ if [[ -n "${MOCK_RED_PANE_GONE:-}" && "${1:-} ${2:-}" == "pane get" ]]; then
   exit 0
 fi
 if [[ "${1:-} ${2:-}" == "pane process-info" || "${1:-} ${2:-}" == "pane process_info" ]]; then
-  jq -n --arg cwd "${MOCK_COMPACT_CWD:-/mock/self-cwd}" \
-    '{result:{process_info:{pane_id:"w1-2", shell_pid:4000, foreground_processes:[{pid:4242, name:"claude", argv:["claude"], cwd:$cwd}]}}}'
+  if [[ -n "${MOCK_PROCESS_INFO_NO_SHELL_PID:-}" ]]; then
+    jq -n --arg cwd "${MOCK_COMPACT_CWD:-/mock/self-cwd}" \
+      '{result:{process_info:{pane_id:"w1-2", foreground_processes:[{pid:4242, name:"claude", argv:["claude"], cwd:$cwd}]}}}'
+  else
+    jq -n --arg cwd "${MOCK_COMPACT_CWD:-/mock/self-cwd}" \
+      '{result:{process_info:{pane_id:"w1-2", shell_pid:4000, foreground_processes:[{pid:4242, name:"claude", argv:["claude"], cwd:$cwd}]}}}'
+  fi
   exit 0
 fi
 exec "@TESTS_DIR@/mock-herdr-compact" "$@"
@@ -210,6 +215,12 @@ seed_probe_substrate() {  # <case-dir> <sid> <cwd> <pid> <pane-id>
   ln -sfn "$cwd" "$p/cwd"
   printf 'HERDR_PANE_ID=%s\0' "$paneid" >"$p/environ"
   printf 'Name:\tclaude\nPid:\t%s\nPPid:\t1\n' "$pid" >"$p/status"
+  # SelfProbe's ancestry fence needs the synthetic caller beneath the tool
+  # process. The production path uses os.Getpid; fixtures inject this pid.
+  local selfpid=4243 selfp="$casedir/proc/4243"
+  mkdir -p "$selfp"
+  printf 'Name:\therder\nPid:\t%s\nPPid:\t%s\n' "$selfpid" "$pid" >"$selfp/status"
+  printf 'herder\n' >"$selfp/comm"
 }
 
 # ---------------------------------------------------------------------------
@@ -436,6 +447,7 @@ RUN_OUT="$(cd "$CASE/cwd" && env -i \
   MOCK_PROBE_DIR="$CASE/probe" MOCK_COMPACT_CWD="$CASE/cwd" \
   MOCK_HCOM_ROWS='[{"name":"me-bus","joined":true,"session_id":"sess-me","launch_context":{}}]' \
   HERDER_PROBE_PROC_ROOT="$CASE/proc" \
+  HERDER_PROBE_SELF_PID=4243 \
   "${HERDER[@]}" compact --stop "$STEER" 2>"$RUN_ERR_F")"
 RUN_RC=$?
 
@@ -478,8 +490,10 @@ RUN_OUT="$(cd "$CASE/cwd" && env -i \
   HERDER_STATE_DIR="$CASE/state" \
   MOCK_COMPACT_SCENARIO=midturn MOCK_COMPACT_STATE="$CASE/mock" \
   MOCK_PROBE_DIR="$CASE/probe" MOCK_COMPACT_CWD="$CASE/cwd" \
+  MOCK_PROCESS_INFO_NO_SHELL_PID=1 \
   MOCK_HCOM_ROWS='[{"name":"parent-bus","joined":true,"session_id":"sess-parent","launch_context":{"pane_id":"w1-3"}}]' \
   HERDER_PROBE_PROC_ROOT="$CASE/proc" \
+  HERDER_PROBE_SELF_PID=4243 \
   "${HERDER[@]}" compact --stop "$STEER" 2>"$RUN_ERR_F")"
 RUN_RC=$?
 
@@ -514,6 +528,7 @@ RUN_OUT="$(cd "$CASE/cwd" && env -i \
   MOCK_PROBE_DIR="$CASE/probe" MOCK_COMPACT_CWD="$CASE/cwd" \
   MOCK_HCOM_ROWS='[{"name":"me-bus","joined":true,"session_id":"sess-me","launch_context":{}}]' \
   HERDER_PROBE_PROC_ROOT="$CASE/proc" \
+  HERDER_PROBE_SELF_PID=4243 \
   "${HERDER[@]}" compact --stop "$STEER" 2>"$RUN_ERR_F")"
 RUN_RC=$?
 

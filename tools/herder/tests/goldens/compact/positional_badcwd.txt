@@ -1,7 +1,9 @@
 === STDERR ===
-herder compact: refused — positional identity only (terminal term_ME) and the pane's foreground cwd ("/mock/elsewhere") does not corroborate this process's cwd ("<CASE>/cwd"). Re-run from that directory (or a subdirectory of it), or run `herder enroll` from this pane to bind a durable identity. herder compact only ever types into the caller's own pane; without proof of self-identity it refuses. Nothing was typed.
+herder compact: submitted — "/compact focus on the open unit, keep gate commands and thread names" is in your composer and fires when the current turn ends (verify: delivered)
 === STDOUT ===
 
 === EXIT ===
-2
+0
 === HERDR MUTATING CALLS ===
+pane send-text w1-2 /compact focus on the open unit, keep gate commands and thread names
+pane send-keys w1-2 Enter

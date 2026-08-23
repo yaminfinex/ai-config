@@ -486,6 +486,21 @@ func TestProcRootEnvironmentHook(t *testing.T) {
 	}
 }
 
+func TestSelfProbePIDEnvironmentRequiresInjectedProcRoot(t *testing.T) {
+	t.Setenv(SelfPIDEnv, "4242")
+	t.Setenv(ProcRootEnv, "")
+	if got := selfProbePID(Substrate{}); got != os.Getpid() {
+		t.Fatalf("default proc root honored inherited %s: got %d, want caller %d", SelfPIDEnv, got, os.Getpid())
+	}
+	if got := selfProbePID(Substrate{ProcRoot: "/synthetic/proc"}); got != 4242 {
+		t.Fatalf("explicit injected proc root ignored %s: got %d, want 4242", SelfPIDEnv, got)
+	}
+	t.Setenv(ProcRootEnv, "/synthetic/proc-from-env")
+	if got := selfProbePID(Substrate{}); got != 4242 {
+		t.Fatalf("environment-injected proc root ignored %s: got %d, want 4242", SelfPIDEnv, got)
+	}
+}
+
 func TestSelfProbeAncestry(t *testing.T) {
 	f := newFixture(t)
 	pane, info, cwd := baseTree(t, f, "claude")
