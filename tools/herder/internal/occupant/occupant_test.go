@@ -286,6 +286,8 @@ func TestProbeClaudeDetectionLostDoesNotStealSharedCohortSID(t *testing.T) {
 	cwd := filepath.Join(f.home, "shared", "repo")
 	f.proc(t, 10, 1, "bash", cwd, "")
 	f.proc(t, 30, 10, "claude", cwd, "guid-a")
+	f.proc(t, 50, 1, "bash", cwd, "")
+	f.proc(t, 60, 50, "claude", cwd, "guid-b")
 	paneA := herdrcli.Pane{PaneID: "pane-a", Agent: "claude", CWD: cwd} // detection-lost
 	paneB := herdrcli.Pane{PaneID: "pane-b", Agent: "claude", CWD: cwd, AgentSession: sidB}
 	dir := filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd))
@@ -304,7 +306,10 @@ func TestProbeClaudeDetectionLostDoesNotStealSharedCohortSID(t *testing.T) {
 	h := fakeHerdr{
 		pane:  paneA,
 		panes: []herdrcli.Pane{paneA, paneB},
-		info:  herdrcli.ProcessInfo{ForegroundProcessGroupID: 10},
+		infos: map[string]herdrcli.ProcessInfo{
+			"pane-a": {ForegroundProcessGroupID: 10},
+			"pane-b": {ForegroundProcessGroupID: 50},
+		},
 	}
 	obs := Probe(Substrate{Herdr: h, ProcRoot: f.root, Home: f.home}, paneA.PaneID)
 	if obs.Status != Occupied || obs.SID != sidA {
@@ -317,6 +322,8 @@ func TestProbeClaudeBothSharedCohortPanesDetectionLostFailsClosed(t *testing.T) 
 	cwd := filepath.Join(f.home, "shared", "repo")
 	f.proc(t, 10, 1, "bash", cwd, "")
 	f.proc(t, 30, 10, "claude", cwd, "guid-a")
+	f.proc(t, 50, 1, "bash", cwd, "")
+	f.proc(t, 60, 50, "claude", cwd, "guid-b")
 	paneA := herdrcli.Pane{PaneID: "pane-a", Agent: "claude", CWD: cwd}
 	paneB := herdrcli.Pane{PaneID: "pane-b", Agent: "claude", CWD: cwd}
 	dir := filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd))
@@ -335,7 +342,10 @@ func TestProbeClaudeBothSharedCohortPanesDetectionLostFailsClosed(t *testing.T) 
 	h := fakeHerdr{
 		pane:  paneA,
 		panes: []herdrcli.Pane{paneA, paneB},
-		info:  herdrcli.ProcessInfo{ForegroundProcessGroupID: 10},
+		infos: map[string]herdrcli.ProcessInfo{
+			"pane-a": {ForegroundProcessGroupID: 10},
+			"pane-b": {ForegroundProcessGroupID: 50},
+		},
 	}
 	obs := Probe(Substrate{Herdr: h, ProcRoot: f.root, Home: f.home}, paneA.PaneID)
 	if obs.Status != Ambiguous || obs.SID != "" {

@@ -303,17 +303,7 @@ type procEntry struct {
 
 func probeSnapshot(sub Substrate, pane herdrcli.Pane, info herdrcli.ProcessInfo) Observation {
 	anchors := map[int]bool{}
-	if info.ShellPID > 0 {
-		anchors[info.ShellPID] = true
-	}
-	if info.ForegroundProcessGroupID > 0 {
-		anchors[info.ForegroundProcessGroupID] = true
-	}
-	for _, p := range info.Processes {
-		if p.PID > 0 {
-			anchors[p.PID] = true
-		}
-	}
+	addProcessInfoAnchors(anchors, info)
 	entries, permissionErr := scanProc(sub.ProcRoot)
 	if permissionErr != nil {
 		if errors.Is(permissionErr, os.ErrNotExist) || errors.Is(permissionErr, syscall.ENOENT) {
@@ -376,6 +366,20 @@ func probeSnapshot(sub Substrate, pane herdrcli.Pane, info herdrcli.ProcessInfo)
 		obs.Err = syscall.ENOENT
 	}
 	return obs
+}
+
+func addProcessInfoAnchors(anchors map[int]bool, info herdrcli.ProcessInfo) {
+	if info.ShellPID > 0 {
+		anchors[info.ShellPID] = true
+	}
+	if info.ForegroundProcessGroupID > 0 {
+		anchors[info.ForegroundProcessGroupID] = true
+	}
+	for _, p := range info.Processes {
+		if p.PID > 0 {
+			anchors[p.PID] = true
+		}
+	}
 }
 
 // collapseProvenLegs computes unanimity over answers, not witnesses. Nested
@@ -707,12 +711,26 @@ func probeClaude(sub Substrate, pane herdrcli.Pane, tools, all []procEntry, anch
 	if panesErr != nil {
 		return Observation{Pane: pane, Tool: "claude", Status: Unprobeable, Err: panesErr}
 	}
+	allPaneAnchors := map[int]bool{}
+	for pid := range anchors {
+		allPaneAnchors[pid] = true
+	}
+	for _, other := range otherPanes {
+		if other.PaneID == pane.PaneID {
+			continue
+		}
+		otherInfo, infoErr := sub.Herdr.ProcessInfo(other.PaneID)
+		if infoErr != nil {
+			return Observation{Pane: pane, Tool: "claude", Status: Unprobeable, Err: infoErr}
+		}
+		addProcessInfoAnchors(allPaneAnchors, otherInfo)
+	}
 	cohorts := map[string]bool{}
 	for _, e := range claudes {
 		cohorts[mungeCWD(e.cwd)] = true
 	}
 	for _, e := range all {
-		if toolName(e.comm) != "claude" || descendsFrom(e.pid, anchors, all) {
+		if toolName(e.comm) != "claude" || descendsFrom(e.pid, allPaneAnchors, all) {
 			continue
 		}
 		cwd, cwdErr := os.Readlink(filepath.Join(sub.ProcRoot, strconv.Itoa(e.pid), "cwd"))
