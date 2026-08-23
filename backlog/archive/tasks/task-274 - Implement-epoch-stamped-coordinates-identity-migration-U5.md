@@ -4,6 +4,7 @@ title: 'Implement: epoch-stamped coordinates (identity migration U5)'
 status: To Do
 assignee: []
 created_date: '2026-07-17 04:28'
+updated_date: '2026-08-21 05:00'
 labels:
   - herder
   - identity-migration
@@ -33,3 +34,9 @@ DESIGN CHECKPOINT REQUIRED BEFORE CODE (fingerprint derivation + invariant check
 - [ ] #4 Substrate-restart drill harness: seeded pre-boundary seats, rotated fingerprint, one reconcile pass — zero gone verdicts on surviving panes, zero trusted stale coordinates on dead ones; invariant-violation and falsely-stable drills in the same harness as standing regressions
 - [ ] #5 Existing reconcile suites green; keep-list re-audit of the final diff
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+CLOSED-SUPERSEDED 2026-08-21 by the herder slim-down charter (napkins/herder-slimdown-charter.md, decisions 1-2, owner-ratified 2026-08-20/21): ground-truth resolution never reads stored pane/terminal coordinates, so epoch-stamping their validity domain has no remaining consumer — the deletion map (napkins/herder-slimdown-deletion-map.md) confirms every stored-coordinate resolution read is DELETE/REPLACE. The one legitimate epoch remnant is liveness vocabulary (EpochSame as today's only positive pane-death evidence for herdr seats) — that question is carried forward as deletion-map UNCLEAR item U2 (what constitutes positive death evidence under occupant probing), not as this task. Archived unimplemented, not Done-as-built.
+<!-- SECTION:NOTES:END -->

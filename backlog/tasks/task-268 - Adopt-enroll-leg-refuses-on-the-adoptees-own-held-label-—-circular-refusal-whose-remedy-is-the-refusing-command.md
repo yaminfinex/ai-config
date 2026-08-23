@@ -6,9 +6,11 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-17 02:31'
+updated_date: '2026-08-21 05:00'
 labels:
   - herder
-dependencies: []
+dependencies:
+  - TASK-303
 priority: medium
 ordinal: 267500
 ---
@@ -29,3 +31,9 @@ This is a live instance of the repair-circularity class the identity design lane
 - [ ] #2 Adopt refusal remedies are executable from the refusing state: no remedy prescribes the refusing command; retire-then-rename no longer suggested where it forecloses adopt
 - [ ] #3 HERDER_LABEL temp-override workaround pinned by a fixture as a supported path (take-label leg restores the stored label)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Re-scoped 2026-08-21 by the slim-down charter (napkins/herder-slimdown-charter.md decision 4): resolves BY DELETION, not by the fix-shape in this description. The enroll-leg repair fences that create the circularity (enroll.go:199-201, 225, 518-526 at HEAD ada6bf7 — see deletion map napkins/herder-slimdown-deletion-map.md §2/§4) are deleted outright; adopt's composition survives with occupant-probe evidence. This task's field refusal transcript becomes a pass-3 red fixture (TASK-303) that must pass as silent self-heal; close this task when that fixture is green under the deletion. Do NOT implement the transferable-label fix described here.
+<!-- SECTION:NOTES:END -->

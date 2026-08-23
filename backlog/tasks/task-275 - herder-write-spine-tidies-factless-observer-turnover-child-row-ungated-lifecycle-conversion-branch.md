@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-17 07:19'
+updated_date: '2026-08-21 05:00'
 labels:
   - herder
   - identity-migration
@@ -25,3 +26,9 @@ Two non-blocking advisories from the canonical-seat-completion unit's final revi
 - [ ] #1 Turnover child row either carries binding facts at mint or the legacy exemption is narrowed, with a pin proving a factless seated live-verified row can no longer be minted on the turnover path
 - [ ] #2 Lifecycle conversion-failure branch routed through the occupant-gated completion-failure handler; existing lifecycle preservation pins stay green
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Slim-down charter check 2026-08-21 (TASK-305): SURVIVES the slim-down — binding facts remain KEEP-PROVENANCE (deletion map §6 completion.go:240-268) so advisory (1) factless turnover child is still real; advisory (2) lifecyclecmd error-branch uniformity is untouched by the deletions. Re-verify line numbers after the seatcompletion rung deletions land (narrowFallback, attested class, name-history rung all die around the cited code).
+<!-- SECTION:NOTES:END -->
