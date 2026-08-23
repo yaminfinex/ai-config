@@ -18,20 +18,19 @@ import (
 	"ai-config/tools/herder/internal/enrollcmd"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/occupant"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/renamecmd"
 	"ai-config/tools/herder/internal/retirecmd"
 	"ai-config/tools/herder/internal/seatcompletion"
 	"ai-config/tools/herder/internal/seatcred"
-	"ai-config/tools/herder/internal/shellquote"
 )
 
 type options struct {
-	help                  bool
-	target                string
-	confirmDead           bool
-	confirmResumedSession bool
+	help        bool
+	target      string
+	confirmDead bool
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -63,6 +62,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	oldBus, oldBusDir := busCoordinates(old)
+	callerObservation := occupant.SelfProbe(occupant.Substrate{Herdr: occupant.CLIQuerier{}})
+	resumeSID := resumeSIDForAdoption(callerObservation, old)
 	cutover, cutoverErr := seatcred.CutoverEnabled(registry.DefaultPath())
 	if cutoverErr != nil {
 		die(stderr, cutoverErr.Error())
@@ -98,7 +99,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	priorSessionID := latestSessionID(old)
 	unseatReason := ""
 	expectedSourcePane := ""
 	if old.State == v2.StateSeated {
@@ -115,10 +115,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	if err := preflightRecordedSessionClaim(oldBusDir, priorSessionID, os.Getenv("HERDR_PANE_ID"), opts.confirmResumedSession); err != nil {
-		die(stderr, fmt.Sprintf("recorded resumed-session preflight refused: %s; refusing before enrollment", err))
-		return 1
-	}
 	enrollArgs := []string{"--json"}
 	if selected != nil {
 		enrollArgs = append(enrollArgs, "--credential-file", selected.Path)
@@ -127,7 +123,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		enrollArgs = append(enrollArgs, "--role", old.Role)
 	}
 	var enrollOut, enrollErr bytes.Buffer
-	if rc := enrollcmd.RunFreshForAdoption(enrollArgs, &enrollOut, &enrollErr, old.GUID); rc != 0 {
+	if rc := enrollcmd.RunFreshForAdoption(enrollArgs, &enrollOut, &enrollErr); rc != 0 {
 		die(stderr, "enroll leg refused: "+oneLine(enrollErr.String()))
 		return 1
 	}
@@ -177,7 +173,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	_, _ = io.Copy(stdout, &retireOut)
 	fmt.Fprintf(stderr, "adopt: retire applied: old guid %s retired\n", old.GUID)
 
-	busIdentity, err := reclaimOrVerifyBus(oldBus, oldBusDir, priorSessionID, os.Getenv("HERDR_PANE_ID"), opts.confirmResumedSession)
+	busIdentity, err := reclaimOrVerifyBus(oldBus, oldBusDir, os.Getenv("HERDR_PANE_ID"), resumeSID)
 	if err != nil {
 		failureAfter(stderr, "bus-name", err.Error(),
 			[]string{
@@ -307,12 +303,6 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 				return opts, 1
 			}
 			opts.confirmDead = true
-		case "--confirm-resumed-session":
-			if opts.confirmResumedSession {
-				die(stderr, "--confirm-resumed-session may be specified only once")
-				return opts, 1
-			}
-			opts.confirmResumedSession = true
 		default:
 			if opts.target != "" {
 				die(stderr, "unexpected arg: "+arg)
@@ -322,7 +312,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 		}
 	}
 	if opts.target == "" {
-		die(stderr, "usage: herder adopt <old-target> [--confirm-dead] [--confirm-resumed-session]")
+		die(stderr, "usage: herder adopt <old-target> [--confirm-dead]")
 		return opts, 1
 	}
 	return opts, 0
@@ -382,27 +372,26 @@ func busCoordinates(rec v2.SessionRecord) (string, string) {
 	return name, dir
 }
 
-func reclaimOrVerifyBus(want, dir, priorSessionID, callerPane string, confirmResumedSession bool) (hcomidentity.Result, error) {
+func resumeSIDForAdoption(observation occupant.Observation, old v2.SessionRecord) string {
+	verdict := occupant.Verdict(observation, old)
+	if verdict.Status == occupant.Match {
+		return verdict.SID
+	}
+	return ""
+}
+
+func reclaimOrVerifyBus(want, dir, callerPane, occupantSID string) (hcomidentity.Result, error) {
 	evidence := hcomidentity.CurrentEvidence(callerPane)
+	if occupantSID != "" {
+		// The live occupant transcript supersedes frozen launch-epoch correlates.
+		evidence.SessionID = occupantSID
+		evidence.ProcessID = ""
+	}
 	rows, err := hcomidentity.List(dir)
 	if err != nil {
 		return hcomidentity.Result{}, fmt.Errorf("cannot inspect the live bus roster (%v); run %s, then 'herder enroll' to verify the binding", err, busRecovery(want, dir))
 	}
 	resolved := hcomidentity.Resolve(rows, evidence)
-	// A hand-recovered resume often lacks every launch-time hcom variable while
-	// its hooks have already rejoined the bus row under the transcript session id
-	// preserved by the source registry row. The SID identifies the candidate;
-	// caller-pane agreement or an explicit pane-less assertion authorizes the
-	// caller to adopt it without minting a placeholder bus row.
-	if !resolved.Verified && priorSessionID != "" {
-		resumed := hcomidentity.Resolve(rows, hcomidentity.Evidence{SessionID: priorSessionID})
-		if resumed.Verified {
-			if err := authorizeRecordedSessionClaim(resumed, callerPane, confirmResumedSession); err != nil {
-				return hcomidentity.Result{}, err
-			}
-			return resumed, nil
-		}
-	}
 	if want == "" {
 		if resolved.Verified {
 			return resolved, nil
@@ -454,58 +443,6 @@ func reclaimOrVerifyBus(want, dir, priorSessionID, callerPane string, confirmRes
 		return hcomidentity.Result{}, fmt.Errorf("hcom reclaim ran but @%s matches multiple joined bus rows; refusing ambiguous operation-scoped ownership proof", want)
 	}
 	return hcomidentity.Result{}, fmt.Errorf("hcom reclaim ran but @%s is not joined; run 'herder enroll' after the live bus row appears", want)
-}
-
-// preflightRecordedSessionClaim keeps an unproven source SID from reaching
-// adoption's mutating legs. The same authorization is repeated after reclaim
-// because the live roster can change between preflight and persistence.
-func preflightRecordedSessionClaim(dir, priorSessionID, callerPane string, confirmResumedSession bool) error {
-	if priorSessionID == "" {
-		return nil
-	}
-	rows, err := hcomidentity.List(dir)
-	if err != nil {
-		return fmt.Errorf("cannot inspect the live bus roster: %w", err)
-	}
-	if hcomidentity.Resolve(rows, hcomidentity.CurrentEvidence(callerPane)).Verified {
-		return nil
-	}
-	resumed := hcomidentity.Resolve(rows, hcomidentity.Evidence{SessionID: priorSessionID})
-	if !resumed.Verified {
-		return nil
-	}
-	return authorizeRecordedSessionClaim(resumed, callerPane, confirmResumedSession)
-}
-
-func authorizeRecordedSessionClaim(resumed hcomidentity.Result, callerPane string, confirmResumedSession bool) error {
-	if resumed.PaneID != "" {
-		if callerPane != resumed.PaneID {
-			return fmt.Errorf("source transcript session id resolves to live @%s on pane %s, but the caller pane is %s", resumed.Name, resumed.PaneID, displayPane(callerPane))
-		}
-		return nil
-	}
-	if !confirmResumedSession {
-		return fmt.Errorf("source transcript session id resolves to live @%s without a launch pane; --confirm-resumed-session is required to assert that the caller owns that hand-resumed transcript", resumed.Name)
-	}
-	return nil
-}
-
-func latestSessionID(rec v2.SessionRecord) string {
-	if len(rec.SIDs) > 0 {
-		return rec.SIDs[len(rec.SIDs)-1].SID
-	}
-	return rec.Provenance.ToolSessionID
-}
-
-func pinnedReEnroll(rec v2.SessionRecord, sessionID string) string {
-	sessionWord := ""
-	if sessionID == "" {
-		sessionWord = "'<resumed-session-id>'"
-	} else {
-		sessionWord = shellquote.Quote(sessionID)
-	}
-	return fmt.Sprintf("HCOM_SESSION_ID=%s HERDER_GUID=%s HERDER_LABEL=%s herder enroll",
-		sessionWord, shellquote.Quote(rec.GUID), shellquote.Quote(rec.Label))
 }
 
 func failureAfter(stderr io.Writer, leg, cause string, applied, remaining []string) {
@@ -566,20 +503,13 @@ func printHelp(stdout io.Writer) {
 	fmt.Fprint(stdout, `herder adopt — replace a restarted session without reusing its guid.
 
 Usage:
-  herder adopt <old-target> [--credential-file PATH] [--confirm-dead] [--confirm-resumed-session]
+  herder adopt <old-target> [--credential-file PATH] [--confirm-dead]
 
 Run inside the replacement's live herdr pane. Adopt composes five explicit
 legs: enroll the replacement under a NEW guid, atomically take the old row's
 label, retire the old row, reclaim or verify its hcom bus identity, then record
 that verified identity on the replacement row. A restart is a new transcript,
 so the old guid is never moved or re-keyed.
-
-For a hand-resumed transcript that lacks ambient hcom identity variables,
-adopt can verify an already-live bus row from the source row's recorded tool
-session id only when its live launch pane matches the caller. If that roster
-row has no launch pane, --confirm-resumed-session explicitly asserts that the
-caller owns the source transcript. It never guesses bus ownership from a name,
-tag, or directory.
 
 A seated old target in the caller's own pane is provably superseded: adopt
 atomically unseats it while moving its label, recording "seat superseded by
