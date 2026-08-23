@@ -1,5 +1,5 @@
 === STDERR ===
-herder compact: refused — positive occupant mismatch on cohort-class evidence; the operation is blocked, but that evidence is not authoritative enough to name or displace an owner. Nothing was typed.
+herder compact: refused — positive occupant mismatch on cohort-class evidence; the operation is blocked, but that evidence is not authoritative enough to name or displace an owner. If HERDER_GUID was inherited from another session, unset it and retry; if this seat was never enrolled, run `herder enroll` from this pane. Nothing was typed.
 === STDOUT ===
 
 === EXIT ===

@@ -280,14 +280,15 @@ func v2Sessions(recs []registry.Record) []v2.SessionRecord {
 }
 
 func compactResolutionRefusal(res occupant.Resolution) string {
+	const recovery = " If HERDER_GUID was inherited from another session, unset it and retry; if this seat was never enrolled, run `herder enroll` from this pane."
 	switch res.Outcome.Status {
 	case occupant.PositiveMismatch:
 		if occupant.ExactEvidence(res.Observation) {
 			return fmt.Sprintf("refused — positive occupant mismatch: the live transcript sid %q does not belong to the claimed registry identity.", res.Observation.SID)
 		}
-		return "refused — positive occupant mismatch on cohort-class evidence; the operation is blocked, but that evidence is not authoritative enough to name or displace an owner."
+		return "refused — positive occupant mismatch on cohort-class evidence; the operation is blocked, but that evidence is not authoritative enough to name or displace an owner." + recovery
 	case occupant.NoOccupant:
-		return "refused — no live tool occupant was found in the caller's pane."
+		return "refused — no live tool occupant was found in the caller's pane." + recovery
 	case occupant.OutcomeUnprobeable:
 		return "refused — the caller's live occupant is unprobeable; compact never guesses a self identity."
 	default:
