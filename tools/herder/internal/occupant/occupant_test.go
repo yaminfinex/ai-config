@@ -343,6 +343,66 @@ func TestProbeClaudeBothSharedCohortPanesDetectionLostFailsClosed(t *testing.T) 
 	}
 }
 
+func TestReviewReproLiveOutOfPaneSharedCohortFailsClosed(t *testing.T) {
+	f := newFixture(t)
+	pane, info, cwd := baseTree(t, f, "claude") // pane A, agent_session absent
+	dir := filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd))
+	mine := filepath.Join(dir, sidA+".jsonl")     // pane A's own transcript, idle
+	neighbor := filepath.Join(dir, sidB+".jsonl") // terminal session transcript, active now
+	f.transcript(t, mine)
+	f.transcript(t, neighbor)
+	now := time.Unix(1_700_000_000, 0)
+	idle := now.Add(-claudeActivityWindow - time.Minute) // idle 6 min
+	if err := os.Chtimes(mine, idle, idle); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(neighbor, now, now); err != nil {
+		t.Fatal(err)
+	}
+	// Same-uid Claude outside pane A's anchor models a still-running plain
+	// terminal or ssh session in the shared cwd.
+	f.proc(t, 90, 1, "claude", cwd, "")
+	obs := Probe(Substrate{Herdr: fakeHerdr{pane: pane, info: info}, ProcRoot: f.root, Home: f.home}, pane.PaneID)
+	if obs.Status != Ambiguous || obs.SID != "" {
+		t.Fatalf("out-of-pane writer produced a pick: %+v", obs)
+	}
+}
+
+// Review repro residual: the out-of-pane writer has exited, leaving only
+// its newer file. Neither /proc nor herdr can observe its former ownership;
+// contract §5.1 accepts the cohort-class result and requires downstream
+// verbs to treat a cohort-only mismatch as non-authoritative.
+func TestReviewReproExitedWriterCohortResidual(t *testing.T) {
+	f := newFixture(t)
+	pane, info, cwd := baseTree(t, f, "claude") // pane A, agent_session absent
+	dir := filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd))
+	mine := filepath.Join(dir, sidA+".jsonl")     // pane A's own transcript, idle
+	neighbor := filepath.Join(dir, sidB+".jsonl") // exited writer's transcript, newest
+	f.transcript(t, mine)
+	f.transcript(t, neighbor)
+	now := time.Unix(1_700_000_000, 0)
+	idle := now.Add(-claudeActivityWindow - time.Minute) // idle 6 min
+	if err := os.Chtimes(mine, idle, idle); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(neighbor, now, now); err != nil {
+		t.Fatal(err)
+	}
+	obs := Probe(Substrate{Herdr: fakeHerdr{pane: pane, info: info}, ProcRoot: f.root, Home: f.home}, pane.PaneID)
+	if obs.Status != Occupied || obs.SID != sidB || !hasSignal(obs.Evidence, SignalCohort) || hasSignal(obs.Evidence, SignalAgentSession) {
+		t.Fatalf("exited-writer residual changed class: %+v", obs)
+	}
+}
+
+func hasSignal(signals []Signal, want Signal) bool {
+	for _, signal := range signals {
+		if signal == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestProbeNestedUnprovenToolDoesNotVetoExactArtifact(t *testing.T) {
 	f := newFixture(t)
 	pane, info, cwd := baseTree(t, f, "codex")

@@ -369,7 +369,7 @@ func probeSnapshot(sub Substrate, pane herdrcli.Pane, info herdrcli.ProcessInfo)
 		legs = append(legs, probeCodex(sub, pane, entries, anchors))
 	}
 	if kinds["claude"] {
-		legs = append(legs, probeClaude(sub, pane, tools))
+		legs = append(legs, probeClaude(sub, pane, tools, entries, anchors))
 	}
 	obs := collapseProvenLegs(pane, legs)
 	if obs.Status == Vacant && vanished {
@@ -634,7 +634,7 @@ var mungeRe = regexp.MustCompile(`[^A-Za-z0-9]`)
 
 func mungeCWD(cwd string) string { return mungeRe.ReplaceAllString(cwd, "-") }
 
-func probeClaude(sub Substrate, pane herdrcli.Pane, tools []procEntry) Observation {
+func probeClaude(sub Substrate, pane herdrcli.Pane, tools, all []procEntry, anchors map[int]bool) Observation {
 	var claudes []procEntry
 	for _, e := range tools {
 		if toolName(e.comm) == "claude" {
@@ -710,6 +710,26 @@ func probeClaude(sub Substrate, pane herdrcli.Pane, tools []procEntry) Observati
 	cohorts := map[string]bool{}
 	for _, e := range claudes {
 		cohorts[mungeCWD(e.cwd)] = true
+	}
+	for _, e := range all {
+		if toolName(e.comm) != "claude" || descendsFrom(e.pid, anchors, all) {
+			continue
+		}
+		cwd, cwdErr := os.Readlink(filepath.Join(sub.ProcRoot, strconv.Itoa(e.pid), "cwd"))
+		if cwdErr != nil {
+			// Other-uid cwd links are unreadable and their transcripts live
+			// under a different HOME, so they cannot collide with this cohort.
+			// Vanished processes are the ordinary snapshot race.
+			continue
+		}
+		if cohorts[mungeCWD(cwd)] {
+			// A readable on-box Claude outside this pane's descent can write
+			// any transcript in the shared cohort, so recency cannot attribute
+			// a SID to this pane. Exited writers and off-box writers sharing a
+			// network HOME remain genuinely invisible (§5.1); their surviving
+			// files retain the explicitly weaker cohort evidence class.
+			return Observation{Pane: pane, Tool: "claude", Status: Ambiguous}
+		}
 	}
 	reportedElsewhere := map[string]bool{}
 	unresolvedPeer := false
