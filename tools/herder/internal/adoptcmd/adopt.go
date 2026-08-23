@@ -109,9 +109,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		expectedSourcePane = oldPane
 		liveCaller := hcomidentity.ResolveLive(oldBusDir, hcomidentity.CurrentEvidence(os.Getenv("HERDR_PANE_ID")))
 		var authErr error
-		unseatReason, authErr = adoptionUnseatReason(oldPane, liveCaller, opts.confirmDead)
+		unseatReason, authErr = adoptionUnseatReason(old, liveCaller, opts.confirmDead, occupant.Substrate{Herdr: occupant.CLIQuerier{}})
 		if authErr != nil {
-			die(stderr, fmt.Sprintf("old target %s is seated on pane %s, but the caller's own pane is not proven to be the same (%s); refusing before enrollment so no replacement row is created. If the old transcript is dead, rerun 'herder adopt %s --confirm-dead'", old.GUID, displayPane(oldPane), authErr, old.GUID))
+			die(stderr, fmt.Sprintf("old target %s is seated on pane %s; refusing before enrollment so no replacement row is created: %s", old.GUID, displayPane(oldPane), authErr))
 			return 1
 		}
 	}
@@ -270,23 +270,47 @@ func resolveAdoptLaunchPane(candidate string) (string, error) {
 	return pane.PaneID, nil
 }
 
-func adoptionUnseatReason(oldPane string, caller hcomidentity.Result, confirmDead bool) (string, error) {
-	if confirmDead {
-		return renamecmd.AdoptionReasonConfirmedDead, nil
+func adoptionUnseatReason(old v2.SessionRecord, caller hcomidentity.Result, confirmDead bool, sub occupant.Substrate) (string, error) {
+	oldPane := ""
+	if old.Seat != nil {
+		oldPane = old.Seat.PaneID
 	}
-	if !caller.Verified {
-		return "", fmt.Errorf("live caller identity is unverified: %s", caller.Reason)
-	}
-	if caller.PaneID == "" {
-		return "", fmt.Errorf("live caller identity has no pane coordinate")
+	if caller.Verified && caller.PaneID != "" && caller.PaneID == oldPane {
+		if confirmDead {
+			return "", fmt.Errorf("--confirm-dead is unnecessary for the replacement process already proven in the old seat's pane; rerun without it: 'herder adopt %s'", old.GUID)
+		}
+		return renamecmd.AdoptionReasonSeatSuperseded, nil
 	}
 	if oldPane == "" {
-		return "", fmt.Errorf("old seated row has no pane coordinate; caller pane is %s", caller.PaneID)
+		return "", fmt.Errorf("the old seated row has no recorded pane to probe, so --confirm-dead is not applicable; a live old session can re-report itself with 'herder compact' (or resume from inside it), otherwise rerun 'herder adopt %s' once its pane is gone or provably vacant", old.GUID)
 	}
-	if caller.PaneID != oldPane {
-		return "", fmt.Errorf("caller occupies pane %s", caller.PaneID)
+
+	observation := occupant.Probe(sub, oldPane)
+	verdict := occupant.Verdict(observation, old)
+	switch verdict.Status {
+	case occupant.NoOccupant:
+		switch verdict.Reason {
+		case occupant.ReasonPaneGone:
+			if confirmDead {
+				return renamecmd.AdoptionReasonConfirmedDead, nil
+			}
+			return "", fmt.Errorf("the recorded pane is gone and only that unprovable death case accepts the flag; rerun 'herder adopt %s --confirm-dead'", old.GUID)
+		case occupant.ReasonVacant:
+			if confirmDead {
+				return "", fmt.Errorf("--confirm-dead is unnecessary because pane %s exists and is provably vacant; rerun without it: 'herder adopt %s'", oldPane, old.GUID)
+			}
+			// The persisted vocabulary has no separate reason for probe-proven
+			// vacancy, so retain the existing confirmed-dead reason.
+			return renamecmd.AdoptionReasonConfirmedDead, nil
+		}
+	case occupant.Match:
+		return "", fmt.Errorf("the old seat is alive: transcript %s occupies pane %s; work in that live seat, or run 'herder cull %s' first, then rerun 'herder adopt %s'", verdict.SID, oldPane, old.GUID, old.GUID)
+	case occupant.PositiveMismatch, occupant.OutcomeAmbiguous:
+		return "", fmt.Errorf("pane %s has a foreign or ambiguous occupant, so --confirm-dead is not applicable; a live old session can re-report itself with 'herder compact' (or resume from inside it), otherwise rerun 'herder adopt %s' once the old pane is gone or provably vacant", oldPane, old.GUID)
+	case occupant.OutcomeUnprobeable:
+		return "", fmt.Errorf("the occupant of pane %s is unprobeable, so --confirm-dead is not applicable; restore probe access, or let a live old session re-report itself with 'herder compact' (or resume from inside it); otherwise rerun 'herder adopt %s' once the old pane is gone or provably vacant", oldPane, old.GUID)
 	}
-	return renamecmd.AdoptionReasonSeatSuperseded, nil
+	return "", fmt.Errorf("pane %s produced no authoritative occupant result, so --confirm-dead is not applicable; retry once the old pane is gone or provably vacant", oldPane)
 }
 
 func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
@@ -513,11 +537,12 @@ so the old guid is never moved or re-keyed.
 
 A seated old target in the caller's own pane is provably superseded: adopt
 atomically unseats it while moving its label, recording "seat superseded by
-replacement process in the same pane" as the reason. A seated target on a
-different pane refuses before enrollment unless --confirm-dead asserts that
-the old transcript is dead; that path records "operator confirmed old
-transcript dead". Plain rename --confirm-live has different semantics and is
-never used by adopt. Lost and retired old targets still refuse.
+replacement process in the same pane" as the reason. Otherwise adopt probes
+the recorded pane's live occupant. --confirm-dead is required and honored only
+when that pane is gone. A provably vacant pane needs no flag; a live matching,
+foreign, ambiguous, or unprobeable occupant refuses without turnover. Plain
+rename --confirm-live has different semantics and is never used by adopt.
+Lost and retired old targets still refuse.
 
 If a later leg fails, adopt reports every applied leg and the exact remaining
 manual commands. It does not roll back an applied enrollment. A bus name held

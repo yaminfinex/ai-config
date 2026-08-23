@@ -1,12 +1,16 @@
 package adoptcmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/occupant"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
@@ -125,7 +129,7 @@ func TestDifferentPaneSeatedTargetRefusesBeforeEnrollment(t *testing.T) {
 	}
 	for _, want := range []string{
 		"seated on pane pane_previous",
-		"caller's own pane is not proven",
+		"recorded pane is gone",
 		"refusing before enrollment",
 		"herder adopt guid-previous --confirm-dead",
 	} {
@@ -142,53 +146,164 @@ func TestDifferentPaneSeatedTargetRefusesBeforeEnrollment(t *testing.T) {
 }
 
 func TestAdoptionUnseatAuthorization(t *testing.T) {
-	cases := []struct {
-		name        string
-		oldPane     string
-		caller      hcomidentity.Result
-		confirmDead bool
-		wantReason  string
-		wantError   string
-	}{
-		{
-			name:       "same pane is proven superseded",
-			oldPane:    "pane_shared",
-			caller:     hcomidentity.Result{Verified: true, PaneID: "pane_shared"},
-			wantReason: "seat superseded by replacement process in the same pane",
-		},
-		{
-			name:      "different pane refuses",
-			oldPane:   "pane_previous",
-			caller:    hcomidentity.Result{Verified: true, PaneID: "pane_replacement"},
-			wantError: "caller occupies pane pane_replacement",
-		},
-		{
-			name:      "unresolved caller refuses",
-			oldPane:   "pane_previous",
-			caller:    hcomidentity.Result{Reason: "ambiguous evidence"},
-			wantError: "unverified: ambiguous evidence",
-		},
-		{
-			name:        "operator confirms dead",
-			oldPane:     "pane_previous",
-			caller:      hcomidentity.Result{Reason: "ambiguous evidence"},
-			confirmDead: true,
-			wantReason:  "operator confirmed old transcript dead",
-		},
+	old := v2.SessionRecord{
+		GUID: "guid-previous", Tool: "codex",
+		Seat: &v2.Seat{PaneID: "pane_previous"},
+		SIDs: []v2.SID{{SID: adoptSIDOld}},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			reason, err := adoptionUnseatReason(tc.oldPane, tc.caller, tc.confirmDead)
-			if reason != tc.wantReason {
-				t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
+	caller := hcomidentity.Result{Verified: true, PaneID: "pane_replacement"}
+
+	t.Run("same pane flag-free path remains seat-superseded", func(t *testing.T) {
+		samePane := old
+		samePane.Seat = &v2.Seat{PaneID: "pane_shared"}
+		reason, err := adoptionUnseatReason(samePane, hcomidentity.Result{Verified: true, PaneID: "pane_shared"}, false, occupant.Substrate{})
+		if err != nil || reason != "seat superseded by replacement process in the same pane" {
+			t.Fatalf("reason/error = %q / %v", reason, err)
+		}
+	})
+
+	t.Run("pane gone requires and honors confirm-dead", func(t *testing.T) {
+		sub := adoptProbeSubstrate(t, adoptProbeGone, false)
+		if _, err := adoptionUnseatReason(old, caller, false, sub); err == nil || !strings.Contains(err.Error(), "herder adopt guid-previous --confirm-dead") {
+			t.Fatalf("missing flag remedy: %v", err)
+		}
+		reason, err := adoptionUnseatReason(old, caller, true, sub)
+		if err != nil || reason != "operator confirmed old transcript dead" {
+			t.Fatalf("reason/error = %q / %v", reason, err)
+		}
+	})
+
+	t.Run("vacant pane proceeds flag-free and refuses unnecessary flag", func(t *testing.T) {
+		// The shell_pid-present wire still omits the tool pid from foreground_processes.
+		sub := adoptProbeSubstrate(t, adoptProbeVacant, true)
+		reason, err := adoptionUnseatReason(old, caller, false, sub)
+		if err != nil || reason != "operator confirmed old transcript dead" {
+			t.Fatalf("reason/error = %q / %v", reason, err)
+		}
+		if _, err := adoptionUnseatReason(old, caller, true, sub); err == nil || !strings.Contains(err.Error(), "--confirm-dead is unnecessary") || !strings.Contains(err.Error(), "herder adopt guid-previous") {
+			t.Fatalf("missing flag-free rerun: %v", err)
+		}
+	})
+
+	t.Run("matching old occupant proves seat alive", func(t *testing.T) {
+		// The shell_pid-absent wire forces discovery through the /proc descent leg.
+		sub := adoptProbeSubstrate(t, adoptProbeMatch, false)
+		for _, confirmDead := range []bool{false, true} {
+			_, err := adoptionUnseatReason(old, caller, confirmDead, sub)
+			if err == nil || !strings.Contains(err.Error(), "seat is alive") || !strings.Contains(err.Error(), "herder cull guid-previous") {
+				t.Fatalf("confirmDead=%v error=%v", confirmDead, err)
 			}
-			if tc.wantError == "" && err != nil {
-				t.Fatal(err)
-			}
-			if tc.wantError != "" && (err == nil || !strings.Contains(err.Error(), tc.wantError)) {
-				t.Fatalf("error = %v, want containing %q", err, tc.wantError)
-			}
-		})
+		}
+	})
+
+	t.Run("foreign and unprobeable occupants fail closed", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			sub  occupant.Substrate
+			want string
+		}{
+			{name: "foreign", sub: adoptProbeSubstrate(t, adoptProbeForeign, true), want: "foreign or ambiguous"},
+			{name: "unprobeable", sub: adoptProbeSubstrate(t, adoptProbeUnprobeable, false), want: "unprobeable"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				_, err := adoptionUnseatReason(old, caller, true, tc.sub)
+				if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "--confirm-dead is not applicable") || !strings.Contains(err.Error(), "herder compact") {
+					t.Fatalf("error=%v", err)
+				}
+			})
+		}
+	})
+}
+
+const (
+	adoptSIDOld     = "11111111-1111-4111-8111-111111111111"
+	adoptSIDForeign = "22222222-2222-4222-8222-222222222222"
+)
+
+type adoptProbeCase int
+
+const (
+	adoptProbeGone adoptProbeCase = iota
+	adoptProbeVacant
+	adoptProbeMatch
+	adoptProbeForeign
+	adoptProbeUnprobeable
+)
+
+type adoptFakeHerdr struct {
+	pane    herdrcli.Pane
+	info    herdrcli.ProcessInfo
+	paneErr error
+	infoErr error
+}
+
+func (f adoptFakeHerdr) Pane(string) (herdrcli.Pane, error) { return f.pane, f.paneErr }
+func (f adoptFakeHerdr) Panes() ([]herdrcli.Pane, error)    { return []herdrcli.Pane{f.pane}, f.paneErr }
+func (f adoptFakeHerdr) ProcessInfo(string) (herdrcli.ProcessInfo, error) {
+	return f.info, f.infoErr
+}
+
+func adoptProbeSubstrate(t *testing.T, probeCase adoptProbeCase, shellPID bool) occupant.Substrate {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "proc")
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if probeCase == adoptProbeGone {
+		return occupant.Substrate{Herdr: adoptFakeHerdr{paneErr: os.ErrNotExist}, ProcRoot: root, Home: home}
+	}
+	pane := herdrcli.Pane{PaneID: "pane_previous", Agent: "codex"}
+	info := herdrcli.ProcessInfo{ForegroundProcessGroupID: 10, Processes: []herdrcli.Process{{PID: 10, Name: "bash"}}}
+	if shellPID {
+		info.ShellPID = 10
+	}
+	writeAdoptProc(t, root, 10, 1, "bash", home)
+	if probeCase == adoptProbeUnprobeable {
+		return occupant.Substrate{Herdr: adoptFakeHerdr{pane: pane, infoErr: syscall.EACCES}, ProcRoot: root, Home: home}
+	}
+	if probeCase == adoptProbeMatch || probeCase == adoptProbeForeign {
+		writeAdoptProc(t, root, 30, 10, "codex", home)
+		sid := adoptSIDOld
+		if probeCase == adoptProbeForeign {
+			sid = adoptSIDForeign
+		}
+		transcript := filepath.Join(home, ".codex", "sessions", "2026", "08", "23", "rollout-now-"+sid+".jsonl")
+		if err := os.MkdirAll(filepath.Dir(transcript), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(transcript, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(transcript, filepath.Join(root, "30", "fd", "42")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return occupant.Substrate{Herdr: adoptFakeHerdr{pane: pane, info: info}, ProcRoot: root, Home: home}
+}
+
+func writeAdoptProc(t *testing.T, root string, pid, ppid int, comm, cwd string) {
+	t.Helper()
+	dir := filepath.Join(root, strconv.Itoa(pid))
+	if err := os.MkdirAll(filepath.Join(dir, "fd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"status":  fmt.Sprintf("Name:\t%s\nPPid:\t%d\nUid:\t1000\t1000\t1000\t1000\n", comm, ppid),
+		"comm":    comm + "\n",
+		"cmdline": comm + "\x00",
+		"environ": "\x00",
+	}
+	for name, value := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(cwd, filepath.Join(dir, "cwd")); err != nil {
+		t.Fatal(err)
 	}
 }
 
