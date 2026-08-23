@@ -6,9 +6,10 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-08 04:34'
-updated_date: '2026-07-16 03:35'
+updated_date: '2026-08-23 10:18'
 labels: []
-dependencies: []
+dependencies:
+  - TASK-303
 priority: medium
 ordinal: 41000
 ---
@@ -26,6 +27,20 @@ herder compact self-location refuses for manual/enrolled sessions whose registry
 
 Fail-closed remains correct in all cases — nothing may be typed into an unverified pane. Related: TASK-035 fixed this disease class for send; TASK-046 for wait/list.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 compact from a detection-lost-but-alive pane (agent list empty for the pane, pane list + registry coordinates agree) succeeds via the pane-list fallback
+- [ ] #2 every self-location refusal message names at least one concrete recovery step; no refusal ends at diagnosis only
+- [ ] #3 compact invoked from a subdirectory of the pane foreground cwd is accepted
+- [ ] #4 contract suite covers the fallback path, the refusal wording, and the subdirectory case
+<!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-08-21 tactical unblock (hotfix-vemo): branch task-041-compact-unblock (8ef50b7, unmerged, reza gates) pre-lands the compact slice — paste target = caller's own live pane, stored-terminal ladder + disagreement gate + credential stored-terminal check deleted, fossil mismatch = note + proceed. Deliberately narrow forerunner of slim-down charter decisions 1-2; no registry self-heal append (stays with decision-1 work). Wayfinder folded deltas into the deletion map (addendum block). Interplay with the red fixture fence: incident-041 red in tools/herder/tests/red-check-slimdown-fixtures.sh asserts exactly this slice and should flip green when the branch merges — re-run the suite at merge; 268/262 reds must stay red until the probe work. This task still closes via the fixture green + map deletions, unchanged.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 
@@ -49,24 +64,9 @@ created: 2026-07-08 11:31
 ---
 lale field data (#11888), second refusal mode (benign): herder compact also refuses when the invoking shell cwd is a SUBDIRECTORY of the pane foreground cwd (cwd corroboration too strict); running from the repo root cleared it. Distinct from the own-pane refusal already on this task; fold both into whatever loosens compact's corroboration.
 ---
+
+created: 2026-08-23 10:18
+---
+Interim fix MERGED to main 2026-08-23 in ea6e1c0 (branch task-041-compact-unblock @ 28f90b2; owner-approved; field-verified on riko manual seat — the recorded refusing terminal now resolves to its own live pane). Task stays OPEN as resolved-interim: permanent resolution is by deletion at slim-down IMPL-2 (compact fossil ladder replaced by SelfProbe; readiness package spine). CORRECTION to the 2026-08-21 note below: the incident-041 red fixture does NOT flip green at this merge — it models the IMPL-2 injectable probe substrate, while the merged hotfix locates by the caller real pid ancestry; it flips at IMPL-2 (missions feb8b28). Post-merge red suite on main: 3 reds / 5 keep-greens, as amended.
+---
 <!-- COMMENTS:END -->
-
-## Acceptance Criteria
-<!-- AC:BEGIN -->
-- [ ] #1 compact from a detection-lost-but-alive pane (agent list empty for the pane, pane list + registry coordinates agree) succeeds via the pane-list fallback
-- [ ] #2 every self-location refusal message names at least one concrete recovery step; no refusal ends at diagnosis only
-- [ ] #3 compact invoked from a subdirectory of the pane foreground cwd is accepted
-- [ ] #4 contract suite covers the fallback path, the refusal wording, and the subdirectory case
-<!-- AC:END -->
-
-## Implementation Notes
-
-<!-- SECTION:NOTES:BEGIN -->
-2026-07-13 staleness audit (read-only, evidence-verified): AMEND not close. compact --then shipped but self-location remains: paste target resolved only from herdr agent list with refusal when absent (spawncmd/compact.go:146-164, hera spot-verified), wd must equal paneCWD exactly (287-295), early self-row refusal lacks concrete recovery (91-94). Pane re-key/durable-key correlation DID improve (69-83, 250-280; f210777). Remaining scope: pane-list fallback + recovery wording + subdir corroboration.
-
-FRESH LIVE EVIDENCE 2026-07-16: a peer orchestrator's manual session hit the exact class post-0.7.4-handoff — seat re-enrolled fine (guid/pane/terminal recorded) but the terminal is absent from herdr agent list (detection-lost), so herder compact refuses 'cannot locate your own pane'. Recovery today = owner types /compact directly. Any fix should consider the detection-lost case (registry row healthy, agent-list absent), not only pane renumbering.
-
-RESUME-PATH REFINEMENT (peer datapoint, 2026-07-16): a full process restart via session RESUME does NOT heal detection-lost — the session re-enters its existing pane instead of launching through the shim, so launch-time detection never fires; the terminal stays absent from the agent list while sibling sessions are detected. herder enroll succeeds (registry healthy) but compact still refuses on self-location. Practical consequence: sessions resumed in place CANNOT self-compact; the human types /compact. Correction to prior operational advice: restart heals detection only when the relaunch goes through the shim/launch path (fresh pane) — resume-in-place does not. The fix must cover the resume path, not just fresh launches.
-
-STALE-ENV VARIANT (peer datapoint, 2026-07-16): an owner-restarted session booted with a HERDR_PANE_ID in env pointing at an UNRESOLVABLE pane (herdr pane get fails on it; the session's real pane differs) — so every herder verb needs an explicit HERDR_PANE_ID override or the enroll leg dies. Same family: restarted/resumed-in-place sessions inherit stale or foreign pane ids from the prior environment. Working end-to-end recovery on record: herder adopt <old-guid> --confirm-dead with the pane override (new guid seated, label transferred, old seat retired, bus identity reclaimed). Fix scope addition: launch-time pane-id env must be VALIDATED against a resolvable pane (and refreshed or dropped when stale), not trusted; the adopt recovery should be named in the refusal text.
-<!-- SECTION:NOTES:END -->
