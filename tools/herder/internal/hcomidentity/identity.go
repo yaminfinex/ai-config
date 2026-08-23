@@ -211,31 +211,6 @@ func resultForRow(name string, row Row) Result {
 	return Result{Name: name, BaseName: baseName, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
 }
 
-// ResolveExactSessionPane requires both durable coordinates to identify one
-// joined row. Unlike Resolve's ambient-evidence union, this proof is used to
-// dominate a disagreeing tracker display name and therefore admits no partial
-// signal or duplicate row.
-func ResolveExactSessionPane(rows []Row, sessionID, paneID string) Result {
-	if sessionID == "" || paneID == "" {
-		return Result{Reason: "recorded session id and live pane are both required"}
-	}
-	var found Row
-	count := 0
-	for _, row := range rows {
-		if joined(row) && row.Name != "" && row.SessionID == sessionID && row.LaunchContext.PaneID == paneID {
-			found = row
-			count++
-		}
-	}
-	if count == 0 {
-		return Result{Reason: "no joined bus row matches both the recorded session id and live pane"}
-	}
-	if count > 1 {
-		return Result{Reason: "multiple joined bus rows match the recorded session id and live pane"}
-	}
-	return resultForRow(found.Name, found)
-}
-
 func ResolveLive(dir string, evidence Evidence) Result {
 	rows, err := List(dir)
 	if err != nil {

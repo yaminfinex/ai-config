@@ -18,11 +18,10 @@ func TestLivenessInferenceSourceInventory(t *testing.T) {
 		"observercmd/observer.go": {
 			"busCorroboratesDead", "processDead(", "occupantGone(", "StatusAge >", "positive epoch/bus evidence",
 		},
-		"sidecarcmd/sidecar.go":     {"StatusAgeS >", "s.missing >= 5 {\n\t\t\ts.release"},
-		"cullcmd/cull.go":           {"terminal_id not in live agent list"},
-		"listcmd/list.go":           {"return \"gone\""},
-		"reconcilecmd/reconcile.go": {"Outcome = \"gone\""},
-		"waitcmd/wait.go":           {"gone or culled"},
+		"sidecarcmd/sidecar.go": {"StatusAgeS >", "s.missing >= 5 {\n\t\t\ts.release"},
+		"cullcmd/cull.go":       {"terminal_id not in live agent list"},
+		"listcmd/list.go":       {"return \"gone\""},
+		"waitcmd/wait.go":       {"gone or culled"},
 	}
 	for rel, forbidden := range targets {
 		b, err := os.ReadFile(filepath.Join(internal, filepath.FromSlash(rel)))
@@ -90,24 +89,5 @@ func TestPaneHuskInferenceCannotBecomeDeathPath(t *testing.T) {
 		if !strings.Contains(deathFacts, required) {
 			t.Fatalf("deathFacts lost settled path %q", required)
 		}
-	}
-}
-
-func TestRepairUsesLivenessOnlyInClassificationSurface(t *testing.T) {
-	_, thisFile, _, _ := runtime.Caller(0)
-	internal := filepath.Dir(filepath.Dir(thisFile))
-	repair, err := os.ReadFile(filepath.Join(internal, "repaircmd", "repair.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(repair), "internal/liveness") || strings.Contains(string(repair), "liveness.") {
-		t.Fatal("repair mutation arm imported liveness; classification must remain ceremony-only")
-	}
-	ceremony, err := os.ReadFile(filepath.Join(internal, "repaircmd", "ceremony.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(ceremony), "repairLivenessGap") {
-		t.Fatal("repair classification surface lost shared observation-gap advice")
 	}
 }

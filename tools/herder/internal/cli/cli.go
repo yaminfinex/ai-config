@@ -25,9 +25,7 @@ import (
 	"ai-config/tools/herder/internal/nodecmd"
 	"ai-config/tools/herder/internal/observercmd"
 	"ai-config/tools/herder/internal/raisecmd"
-	"ai-config/tools/herder/internal/reconcilecmd"
 	"ai-config/tools/herder/internal/renamecmd"
-	"ai-config/tools/herder/internal/repaircmd"
 	"ai-config/tools/herder/internal/retirecmd"
 	"ai-config/tools/herder/internal/send"
 	"ai-config/tools/herder/internal/sidecarcmd"
@@ -51,8 +49,6 @@ var commands = []command{
 	{"list", "Show spawned agents, reconciled with live herdr state", listcmd.Run},
 	{"join", "Declare mission membership for a running agent", missioncmd.RunJoin},
 	{"leave", "Remove explicit mission membership from a running agent", missioncmd.RunLeave},
-	{"reconcile", "Audit or repair registry coordinates after herdr handoff", reconcilecmd.Run},
-	{"repair", "Run an operator-attested break-glass identity repair", repaircmd.Run},
 	{"credential", "Discover, issue, or enable per-seat credentials", credentialcmd.Run},
 	{"wait", "Block until an agent reaches a status, optionally read its screen", waitcmd.Run},
 	{"cull", "Close spawned-agent panes and unseat their registry sessions", cullcmd.Run},

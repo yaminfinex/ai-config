@@ -2,7 +2,6 @@ package registry
 
 import (
 	"sort"
-	"time"
 
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -65,25 +64,4 @@ func evidenceRank(class string) int {
 	default:
 		return 0
 	}
-}
-
-// AttestationRateLimit returns the duration remaining in the per-guid rolling
-// window. Only committed attestations appear in the row, so failed proof
-// attempts intentionally do not consume the window.
-func AttestationRateLimit(rec v2.SessionRecord, now time.Time, window time.Duration) (time.Duration, bool) {
-	var latest time.Time
-	for _, attestation := range rec.Attestations {
-		observed, err := time.Parse(time.RFC3339, attestation.ObservedAt)
-		if err == nil && observed.After(latest) {
-			latest = observed
-		}
-	}
-	if latest.IsZero() {
-		return 0, false
-	}
-	remaining := latest.Add(window).Sub(now)
-	if remaining <= 0 {
-		return 0, false
-	}
-	return remaining, true
 }

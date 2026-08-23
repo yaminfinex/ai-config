@@ -358,7 +358,7 @@ JSONL
   snapshot '[{"pane_id":"p_live","terminal_id":"t_live","label":"newname"},{"pane_id":"p_alpha","terminal_id":"t_alpha","label":"alpha"},{"pane_id":"p_dup1","terminal_id":"t_dup1","label":"dup"},{"pane_id":"p_dup2","terminal_id":"t_dup2","label":"dup"}]' '[{"pane_id":"p_live","terminal_id":"t_live","agent":"claude","agent_status":"idle","name":"newname"},{"pane_id":"p_alpha","terminal_id":"t_alpha","agent":"claude","agent_status":"idle","name":"alpha"},{"pane_id":"p_dup1","terminal_id":"t_dup1","agent":"claude","agent_status":"idle","name":"dup"},{"pane_id":"p_dup2","terminal_id":"t_dup2","agent":"claude","agent_status":"idle","name":"dup"}]'
   run_sweep_json >"$CASE/out.json" || fail_case "T-5/6/7 sweep" "command failed"
   assert_jq "T-5 sidecar rename not reverted" 'select(.guid=="guid-side" and .label=="newname" and .state=="seated")' "$STATE/registry.jsonl"
-  assert_jq "T-6 dormant-live flagged" 'select(any(.status.flags[]?; .guid=="guid-dorm" and .type=="dormant-live"))' "$CASE/out.json"
+  assert_jq "T-6 dormant-live names herder enroll recovery" 'select(any(.status.flags[]?; .guid=="guid-dorm" and .type=="dormant-live" and .suggested=="run herder enroll from the intended live pane"))' "$CASE/out.json"
   run_herder "${HERDER[@]}" list >"$CASE/list.txt" 2>/dev/null
   grep -q 'observer advice: live occupant observed' "$CASE/list.txt" && pass "T-6 list annotates observer advice" || fail_case "T-6 list advice" "$(cat "$CASE/list.txt")"
   assert_jq "T-7 ambiguity flagged" 'select(any(.status.flags[]?; .guid=="guid-amb" and .type=="ambiguous-dormant-live"))' "$CASE/out.json"
@@ -438,7 +438,7 @@ JSONL
   snapshot '[{"pane_id":"pX","terminal_id":"tX","label":"x"},{"pane_id":"pY","terminal_id":"tY","label":"y"}]' '[]'
   run_sweep_json >"$CASE/out.json" || fail_case "T-11a sweep" "command failed"
   [[ "$(jq -s '[.[] | select(.event=="unseated")] | length' "$STATE/registry.jsonl")" == "0" ]] && pass "T-11a wholesale reissue unseats zero" || fail_case "T-11a wholesale" "$(cat "$STATE/registry.jsonl")"
-  assert_jq "T-11a epoch doubt flagged" 'select(any(.status.flags[]?; .type=="epoch-doubt"))' "$CASE/out.json"
+  assert_jq "T-11a epoch doubt names restart/re-report recovery" 'select(any(.status.flags[]?; .type=="epoch-doubt" and .suggested=="restart the affected live tools so they re-report, then run herder list"))' "$CASE/out.json"
   run_herder "${HERDER[@]}" list >"$CASE/list.txt" 2>/dev/null
   grep -q 'observer advice: epoch doubt' "$CASE/list.txt" && pass "T-11a list surfaces epoch-wide advice" || fail_case "T-11a list epoch advice" "$(cat "$CASE/list.txt")"
 

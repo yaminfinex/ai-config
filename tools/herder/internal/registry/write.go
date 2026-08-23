@@ -492,6 +492,9 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 	if row.Event == "" {
 		row.Event = "seated"
 	}
+	if row.Event == v2.EventAttestedBinding {
+		return row, false, fmt.Errorf("attested binding writes are no longer supported")
+	}
 	if row.State == "" {
 		if row.Seat != nil {
 			row.State = v2.StateSeated
@@ -517,12 +520,12 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 			return row, false, err
 		}
 		row.Attestations = attestations
-		tombstones, err := normalizeTombstoneHistory(nil, row.BindingTombstones, row.Bindings, row.Attestations)
+		tombstones, err := normalizeTombstoneHistory(nil, row.BindingTombstones)
 		if err != nil {
 			return row, false, err
 		}
 		row.BindingTombstones = tombstones
-		if err := validateAttestedEventOwnership(row, 0, 0); err != nil {
+		if err := validateNoAttestationWrites(row, 0, 0); err != nil {
 			return row, false, err
 		}
 		if err := validateSeatedBindingTransition(nil, row); err != nil {
@@ -540,12 +543,12 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 		return row, false, err
 	}
 	row.Attestations = attestations
-	tombstones, err := normalizeTombstoneHistory(current.BindingTombstones, row.BindingTombstones, row.Bindings, row.Attestations)
+	tombstones, err := normalizeTombstoneHistory(current.BindingTombstones, row.BindingTombstones)
 	if err != nil {
 		return row, false, err
 	}
 	row.BindingTombstones = tombstones
-	if err := validateAttestedEventOwnership(row, len(current.Attestations), len(current.BindingTombstones)); err != nil {
+	if err := validateNoAttestationWrites(row, len(current.Attestations), len(current.BindingTombstones)); err != nil {
 		return row, false, err
 	}
 	if !missionChangeEvent(row) && row.Mission != nil && !sameMission(row.Mission, current.Mission) {
@@ -623,22 +626,17 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 			return row, false, nil
 		}
 		row = carrySeatFields(row, *current)
-	case "recognised", "reconciled", "seated", v2.EventAttestedBinding:
+	case "recognised", "reconciled", "seated":
 		if current.State == v2.StateRetired || current.State == v2.StateLost {
 			return row, false, nil
 		}
 		if (row.Event == "recognised" || row.Event == "reconciled") && current.State == v2.StateUnseated && !current.LegacyV1 {
 			return row, false, nil
 		}
-		if row.Event == "recognised" || row.Event == "reconciled" || row.Event == v2.EventAttestedBinding || row.Label == "" {
+		if row.Event == "recognised" || row.Event == "reconciled" || row.Label == "" {
 			row.Label = current.Label
 		}
-		if row.Event == v2.EventAttestedBinding {
-			row.Role = current.Role
-			row.Lineage = current.Lineage
-		} else {
-			row.Role = firstNonEmpty(row.Role, current.Role)
-		}
+		row.Role = firstNonEmpty(row.Role, current.Role)
 		row.Tool = firstNonEmpty(row.Tool, current.Tool)
 		row = carryPiFacts(row, *current)
 		if len(row.SIDs) == 0 {
@@ -670,43 +668,11 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 	return row, true, nil
 }
 
-func validateAttestedEventOwnership(row v2.SessionRecord, priorAttestations, priorTombstones int) error {
+func validateNoAttestationWrites(row v2.SessionRecord, priorAttestations, priorTombstones int) error {
 	newAttestations := len(row.Attestations) - priorAttestations
 	newTombstones := len(row.BindingTombstones) - priorTombstones
-	if row.Event != v2.EventAttestedBinding {
-		if newAttestations != 0 || newTombstones != 0 {
-			return fmt.Errorf("event %q cannot append attestation or binding tombstone history", row.Event)
-		}
-		return nil
-	}
-	if newAttestations != 1 {
-		return fmt.Errorf("attested_binding event must append exactly one attestation")
-	}
-	attestation := row.Attestations[len(row.Attestations)-1]
-	if attestation.GUID != row.GUID {
-		return fmt.Errorf("attestation %q names guid %s, not row guid %s", attestation.ID, attestation.GUID, row.GUID)
-	}
-	for _, marker := range row.BindingTombstones[priorTombstones:] {
-		if marker.AttestationID != attestation.ID {
-			return fmt.Errorf("attested_binding event tombstone does not belong to its appended attestation")
-		}
-	}
-	for i := range row.Bindings {
-		fact := row.Bindings[i]
-		if fact.AttestationID == attestation.ID && fact.EvidenceClass != v2.EvidenceAttested {
-			return fmt.Errorf("binding %q names attestation but is not attested evidence", fact.ID)
-		}
-	}
-	if attestation.Operation == v2.AttestationRebind && (attestation.Field == v2.BindingFieldHcomName || attestation.Field == v2.BindingFieldSID) {
-		matches := 0
-		for _, fact := range row.Bindings {
-			if fact.AttestationID == attestation.ID && fact.Field == attestation.Field && fact.Value == attestation.Value && fact.EvidenceClass == v2.EvidenceAttested {
-				matches++
-			}
-		}
-		if matches != 1 {
-			return fmt.Errorf("attested rebind must append exactly one matching correction binding")
-		}
+	if newAttestations != 0 || newTombstones != 0 {
+		return fmt.Errorf("event %q cannot append frozen attestation or binding tombstone history", row.Event)
 	}
 	return nil
 }
@@ -723,39 +689,13 @@ func normalizeAttestationHistory(current, patch []v2.Attestation) ([]v2.Attestat
 			return nil, fmt.Errorf("attestation history is append-only: persisted attestation %q changed", current[i].ID)
 		}
 	}
-	ids := map[string]bool{}
-	for _, attestation := range current {
-		ids[attestation.ID] = true
-	}
-	for _, attestation := range patch[len(current):] {
-		if attestation.ID == "" || ids[attestation.ID] {
-			return nil, fmt.Errorf("attestation requires a unique durable id")
-		}
-		ids[attestation.ID] = true
-		if attestation.GUID == "" || attestation.Statement == "" || attestation.PaneID == "" || attestation.ObservedAt == "" {
-			return nil, fmt.Errorf("attestation %q is incomplete", attestation.ID)
-		}
-		switch attestation.Operation {
-		case v2.AttestationRebind:
-			if (attestation.Field != v2.BindingFieldHcomName && attestation.Field != v2.BindingFieldSID && attestation.Field != v2.BindingFieldLaunchContext) || attestation.Value == "" {
-				return nil, fmt.Errorf("rebind attestation %q has invalid field or value", attestation.ID)
-			}
-		case v2.AttestationAuthorizeRecreate:
-			if attestation.Field != v2.BindingFieldLaunchContext || attestation.Value == "" {
-				return nil, fmt.Errorf("recreate attestation %q must name launch_context and pane value", attestation.ID)
-			}
-		case v2.AttestationReissueCredential:
-			if attestation.Field != "" || attestation.Value != "" {
-				return nil, fmt.Errorf("credential reissue attestation %q cannot rebind a field", attestation.ID)
-			}
-		default:
-			return nil, fmt.Errorf("attestation %q has invalid operation %q", attestation.ID, attestation.Operation)
-		}
+	if len(patch) > len(current) {
+		return nil, fmt.Errorf("attestation history is frozen; new attestations cannot be appended")
 	}
 	return cloneAttestations(patch), nil
 }
 
-func normalizeTombstoneHistory(current, patch []v2.BindingTombstone, bindings []v2.BindingFact, attestations []v2.Attestation) ([]v2.BindingTombstone, error) {
+func normalizeTombstoneHistory(current, patch []v2.BindingTombstone) ([]v2.BindingTombstone, error) {
 	if len(patch) == 0 {
 		return cloneTombstones(current), nil
 	}
@@ -767,43 +707,8 @@ func normalizeTombstoneHistory(current, patch []v2.BindingTombstone, bindings []
 			return nil, fmt.Errorf("binding tombstone history is append-only: marker for %q changed", current[i].BindingID)
 		}
 	}
-	byID := make(map[string]v2.BindingFact, len(bindings))
-	for _, binding := range bindings {
-		byID[binding.ID] = binding
-	}
-	attestationIDs := make(map[string]bool, len(attestations))
-	for _, attestation := range attestations {
-		attestationIDs[attestation.ID] = true
-	}
-	tombstoned := map[string]bool{}
-	for _, marker := range current {
-		tombstoned[marker.BindingID] = true
-	}
-	for _, marker := range patch[len(current):] {
-		if marker.BindingID == "" {
-			return nil, fmt.Errorf("binding tombstone must name one specific durable binding id")
-		}
-		if tombstoned[marker.BindingID] {
-			return nil, fmt.Errorf("binding %q is already tombstoned", marker.BindingID)
-		}
-		target, ok := byID[marker.BindingID]
-		if !ok {
-			return nil, fmt.Errorf("binding tombstone target %q does not exist", marker.BindingID)
-		}
-		correction, ok := byID[marker.CorrectionBindingID]
-		if !ok || correction.EvidenceClass != v2.EvidenceAttested || correction.AttestationID == "" {
-			return nil, fmt.Errorf("binding tombstone correction %q is not an attested binding", marker.CorrectionBindingID)
-		}
-		if marker.Field == "" || target.Field != marker.Field || correction.Field != marker.Field {
-			return nil, fmt.Errorf("binding tombstone target and correction must have the same field")
-		}
-		if marker.AttestationID == "" || marker.AttestationID != correction.AttestationID || !attestationIDs[marker.AttestationID] {
-			return nil, fmt.Errorf("binding tombstone must name its correction attestation")
-		}
-		if marker.TombstonedAt == "" {
-			return nil, fmt.Errorf("binding tombstone for %q missing tombstoned_at", marker.BindingID)
-		}
-		tombstoned[marker.BindingID] = true
+	if len(patch) > len(current) {
+		return nil, fmt.Errorf("binding tombstone history is frozen; new tombstones cannot be appended")
 	}
 	return cloneTombstones(patch), nil
 }
@@ -821,6 +726,11 @@ func normalizeBindingHistory(current, patch []v2.BindingFact) ([]v2.BindingFact,
 	for i := range current {
 		if !reflect.DeepEqual(current[i], patch[i]) {
 			return nil, fmt.Errorf("binding history is append-only: persisted fact %q was changed or reordered", current[i].ID)
+		}
+	}
+	for _, fact := range patch[len(current):] {
+		if fact.EvidenceClass == v2.EvidenceAttested {
+			return nil, fmt.Errorf("attested binding history is frozen; new attested evidence cannot be appended")
 		}
 	}
 	if err := validateBindingHistory(current, patch[len(current):]); err != nil {

@@ -28,9 +28,7 @@ const (
 	OriginAdopt        Origin = "herder adopt"
 	OriginReclaim      Origin = "hcom start --as"
 	OriginResume       Origin = "herder resume"
-	OriginReconcile    Origin = "herder reconcile --apply"
 	OriginRecognition  Origin = "seat recognition"
-	OriginRepair       Origin = "herder repair"
 )
 
 const (
@@ -42,7 +40,6 @@ const (
 	RefusalBusUnavailable = "bus_roster_unavailable"
 	RefusalBusRowMissing  = "joined_bus_row_missing"
 	RefusalBusAmbiguous   = "bus_identity_ambiguous"
-	RefusalAttestation    = "attested_binding_invalid"
 	RefusalRegistryWrite  = "registry_write_refused"
 )
 
@@ -56,12 +53,6 @@ type SeatClaim struct {
 type LivePane struct {
 	PaneID     string
 	TerminalID string
-}
-
-type AttestedBinding struct {
-	Operation string
-	Field     string
-	Value     string
 }
 
 // NarrowFallback carries the already-established facts used by the two
@@ -81,7 +72,6 @@ type Request struct {
 	Namespace      string
 	Evidence       hcomidentity.Evidence
 	RequireBus     bool
-	Attested       *AttestedBinding
 	Fallback       *NarrowFallback
 	BuildLocked    func(registry.LockedUpdate, v2.Seat) (v2.SessionRecord, []v2.SessionRecord, []v2.SessionRecord, error)
 	Event          string
@@ -169,12 +159,8 @@ func (e Engine) Complete(ctx context.Context, request Request) (Result, error) {
 	if e.Now == nil || e.NewBindingID == nil {
 		return Result{}, errors.New("seat completion engine is missing clock or binding-id source")
 	}
-	if request.Attested != nil && !validAttestedBinding(*request.Attested) {
-		return Result{Refusal: &Refusal{Code: RefusalAttestation, Cause: "attested completion requires one supported repair operation"}}, nil
-	}
-
 	stamp := e.Now().UTC().Format(time.RFC3339)
-	seat, busAttested, refusal := e.resolveSeat(ctx, request, stamp)
+	seat, refusal := e.resolveSeat(ctx, request, stamp)
 	if refusal != nil {
 		return Result{Refusal: refusal}, nil
 	}
@@ -255,15 +241,11 @@ func (e Engine) Complete(ctx context.Context, request Request) (Result, error) {
 			if err != nil {
 				return nil, err
 			}
-			busClass := v2.EvidenceLiveVerified
-			if busAttested {
-				busClass = v2.EvidenceAttested
-			}
 			next.Bindings = append(next.Bindings, v2.BindingFact{
 				ID:            busID,
 				Field:         v2.BindingFieldHcomName,
 				Value:         seat.HcomName,
-				EvidenceClass: busClass,
+				EvidenceClass: v2.EvidenceLiveVerified,
 				ObservedAt:    stamp,
 			})
 		}
@@ -309,31 +291,19 @@ func (e Engine) Complete(ctx context.Context, request Request) (Result, error) {
 	return result, nil
 }
 
-func validAttestedBinding(binding AttestedBinding) bool {
-	switch binding.Operation {
-	case "", v2.AttestationRebind:
-		return (binding.Field == v2.BindingFieldHcomName || binding.Field == v2.BindingFieldSID || binding.Field == v2.BindingFieldLaunchContext) && binding.Value != ""
-	case v2.AttestationReissueCredential:
-		return binding.Field == "" && binding.Value == ""
-	default:
-		return false
-	}
-}
-
-func (e Engine) resolveSeat(ctx context.Context, request Request, stamp string) (v2.Seat, bool, *Refusal) {
+func (e Engine) resolveSeat(ctx context.Context, request Request, stamp string) (v2.Seat, *Refusal) {
 	seat := v2.Seat{Kind: request.Seat.Kind, Namespace: request.Namespace, ConfirmedAt: stamp}
-	busAttested := false
 	switch request.Seat.Kind {
 	case SeatHerdr:
 		if request.ObservedPane != nil {
 			pane := *request.ObservedPane
 			if pane.PaneID == "" || pane.TerminalID == "" || (request.Seat.PaneID != "" && pane.PaneID != request.Seat.PaneID) {
-				return v2.Seat{}, false, missingRefusal(RefusalSeatMissing, "observed herdr pane coordinates do not match the claim", "live herdr terminal + pane", string(request.Origin), "retry from the live seat")
+				return v2.Seat{}, missingRefusal(RefusalSeatMissing, "observed herdr pane coordinates do not match the claim", "live herdr terminal + pane", string(request.Origin), "retry from the live seat")
 			}
 			seat.PaneID = pane.PaneID
 			seat.TerminalID = pane.TerminalID
 		} else if e.HerdrPane == nil {
-			return v2.Seat{}, false, &Refusal{Code: RefusalSeatMissing, Cause: "live herdr seat resolver unavailable"}
+			return v2.Seat{}, &Refusal{Code: RefusalSeatMissing, Cause: "live herdr seat resolver unavailable"}
 		} else {
 			pane, err := e.HerdrPane(ctx, request.Seat.PaneID)
 			if err != nil || pane.PaneID == "" || pane.TerminalID == "" {
@@ -341,25 +311,25 @@ func (e Engine) resolveSeat(ctx context.Context, request Request, stamp string) 
 				if err != nil {
 					cause += ": " + err.Error()
 				}
-				return v2.Seat{}, false, missingRefusal(RefusalSeatMissing, cause, "live herdr terminal + pane", string(request.Origin), "retry from the live seat")
+				return v2.Seat{}, missingRefusal(RefusalSeatMissing, cause, "live herdr terminal + pane", string(request.Origin), "retry from the live seat")
 			}
 			seat.PaneID = pane.PaneID
 			seat.TerminalID = pane.TerminalID
 		}
 	case SeatProcess:
 		if e.ProcessAlive == nil || !e.ProcessAlive(request.Seat.PID) {
-			return v2.Seat{}, false, missingRefusal(RefusalProcessMissing, "live process pid is required", "live process pid", string(request.Origin), "retry after the headless process is running")
+			return v2.Seat{}, missingRefusal(RefusalProcessMissing, "live process pid is required", "live process pid", string(request.Origin), "retry after the headless process is running")
 		}
 		seat.PID = request.Seat.PID
 	default:
-		return v2.Seat{}, false, &Refusal{Code: RefusalSeatMissing, Cause: fmt.Sprintf("unsupported seat kind %q", request.Seat.Kind)}
+		return v2.Seat{}, &Refusal{Code: RefusalSeatMissing, Cause: fmt.Sprintf("unsupported seat kind %q", request.Seat.Kind)}
 	}
 
 	if !request.RequireBus && !agentfamily.HcomCapable(request.Candidate.Tool) {
-		return seat, false, nil
+		return seat, nil
 	}
 	if request.ObservedBus == nil && e.ListBus == nil {
-		return v2.Seat{}, false, &Refusal{Code: RefusalBusUnavailable, Cause: "live bus roster resolver unavailable"}
+		return v2.Seat{}, &Refusal{Code: RefusalBusUnavailable, Cause: "live bus roster resolver unavailable"}
 	}
 	var rows []hcomidentity.Row
 	resolved := hcomidentity.Result{}
@@ -369,7 +339,7 @@ func (e Engine) resolveSeat(ctx context.Context, request Request, stamp string) 
 		var err error
 		rows, err = e.ListBus(ctx, request.Namespace)
 		if err != nil {
-			return v2.Seat{}, false, missingRefusal(RefusalBusUnavailable, "live bus roster unavailable: "+err.Error(), "reachable live bus roster", string(request.Origin), "restore hcom access and retry")
+			return v2.Seat{}, missingRefusal(RefusalBusUnavailable, "live bus roster unavailable: "+err.Error(), "reachable live bus roster", string(request.Origin), "restore hcom access and retry")
 		}
 		resolved = hcomidentity.Resolve(rows, request.Evidence)
 	}
@@ -378,7 +348,6 @@ func (e Engine) resolveSeat(ctx context.Context, request Request, stamp string) 
 		if fact, status := registry.LatestSufficientBinding(request.Candidate, v2.BindingFieldHcomName, registry.LiveEvidenceAbsent); status == registry.BindingSelected {
 			if row, count := hcomidentity.JoinedNamedCount(rows, fact.Value); count == 1 {
 				historyResults = append(historyResults, hcomidentity.Result{Name: row.Name, BaseName: row.BaseName, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true})
-				busAttested = fact.EvidenceClass == v2.EvidenceAttested
 			}
 		}
 		if fact, status := registry.LatestSufficientBinding(request.Candidate, v2.BindingFieldSID, registry.LiveEvidenceAbsent); status == registry.BindingSelected {
@@ -391,31 +360,10 @@ func (e Engine) resolveSeat(ctx context.Context, request Request, stamp string) 
 			resolved = historyResults[0]
 			for _, candidate := range historyResults[1:] {
 				if candidate.Name != resolved.Name {
-					return v2.Seat{}, false, &Refusal{Code: RefusalBusAmbiguous, Cause: "surviving binding histories resolve to different joined bus rows"}
+					return v2.Seat{}, &Refusal{Code: RefusalBusAmbiguous, Cause: "surviving binding histories resolve to different joined bus rows"}
 				}
 			}
 		}
-	}
-	if !resolved.Verified && request.Attested != nil && request.Attested.Field == v2.BindingFieldHcomName {
-		row, count := hcomidentity.JoinedNamedCount(rows, request.Attested.Value)
-		if count != 1 {
-			return v2.Seat{}, false, &Refusal{Code: RefusalBusAmbiguous, Cause: fmt.Sprintf("attested bus name resolves to %d joined rows", count)}
-		}
-		resolved = hcomidentity.Result{Name: row.Name, BaseName: row.BaseName, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
-		busAttested = true
-	}
-	if !resolved.Verified && request.Attested != nil && request.Attested.Field == v2.BindingFieldLaunchContext && request.Candidate.Seat != nil && request.Candidate.Seat.HcomName != "" {
-		row, count := hcomidentity.JoinedNamedCount(rows, request.Candidate.Seat.HcomName)
-		if count != 1 {
-			return v2.Seat{}, false, &Refusal{Code: RefusalBusAmbiguous, Cause: fmt.Sprintf("stored bus name resolves to %d joined rows", count)}
-		}
-		resolved = hcomidentity.Result{Name: row.Name, BaseName: row.BaseName, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
-	}
-	if resolved.Verified && request.Attested != nil && request.Attested.Operation == v2.AttestationRebind && request.Attested.Field == v2.BindingFieldHcomName {
-		if resolved.Name != request.Attested.Value {
-			return v2.Seat{}, false, &Refusal{Code: RefusalBusAmbiguous, Cause: fmt.Sprintf("conflicting live bus evidence proves @%s, not attested @%s", resolved.Name, request.Attested.Value)}
-		}
-		busAttested = true
 	}
 	if !resolved.Verified && request.Fallback != nil {
 		resolved = narrowFallback(rows, request.Fallback.Current, seat)
@@ -425,21 +373,21 @@ func (e Engine) resolveSeat(ctx context.Context, request Request, stamp string) 
 		if containsAmbiguity(resolved.Reason) {
 			code = RefusalBusAmbiguous
 		}
-		return v2.Seat{}, false, missingRefusal(code, resolved.Reason, "one joined bus row", "hcom start", "join the live session to hcom, then retry "+string(request.Origin))
+		return v2.Seat{}, missingRefusal(code, resolved.Reason, "one joined bus row", "hcom start", "join the live session to hcom, then retry "+string(request.Origin))
 	}
 	verified := true
 	seat.HcomName = resolved.Name
 	seat.HcomVerified = &verified
 	if seat.Kind == SeatHerdr {
 		if request.ObservedBus != nil && resolved.PaneID == seat.PaneID {
-			return seat, busAttested, nil
+			return seat, nil
 		}
 		joined, count := hcomidentity.JoinedNamedCount(rows, resolved.Name)
 		if count == 1 && joined.LaunchContext.PaneID == seat.PaneID {
-			return seat, busAttested, nil
+			return seat, nil
 		}
 		if e.RepairLaunchContext == nil {
-			return v2.Seat{}, false, &Refusal{Code: "launch_context_repair_unavailable", Cause: "launch-context repair unavailable"}
+			return v2.Seat{}, &Refusal{Code: "launch_context_repair_unavailable", Cause: "launch-context repair unavailable"}
 		}
 		// The roster's tagged display name is the delivery coordinate, while
 		// hcom's instances table is keyed by the emitted base name. Repair only
@@ -451,10 +399,10 @@ func (e Engine) resolveSeat(ctx context.Context, request Request, stamp string) 
 		}
 		repair := e.RepairLaunchContext(request.Namespace, repairName, seat.PaneID)
 		if repair.Refused() || (repair.Status != "written" && repair.Status != "already-present") {
-			return v2.Seat{}, false, &Refusal{Code: repair.Code, Cause: repair.Cause, LaunchContext: &repair}
+			return v2.Seat{}, &Refusal{Code: repair.Code, Cause: repair.Cause, LaunchContext: &repair}
 		}
 	}
-	return seat, busAttested, nil
+	return seat, nil
 }
 
 func narrowFallback(rows []hcomidentity.Row, current v2.SessionRecord, live v2.Seat) hcomidentity.Result {

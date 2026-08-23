@@ -28,28 +28,20 @@ func TestSeatCompletionOwnsSoleProductionLaunchContextRepairCall(t *testing.T) {
 	}
 }
 
-func TestAttestedCompletionArmHasExactlyRepairCommandCaller(t *testing.T) {
+func TestLockedCompletionFinalizerHasExactlyCredentialCommandCaller(t *testing.T) {
 	files := productionInternalGoFiles(t)
-	var attestedCallers, finalizerCallers []string
+	var finalizerCallers []string
 	for path, source := range files {
 		usage, err := completionArmUsage(source)
 		if err != nil {
 			t.Fatalf("parse %s: %v", path, err)
 		}
-		if usage.attested {
-			attestedCallers = append(attestedCallers, path)
-		}
 		if usage.finalizeLocked {
 			finalizerCallers = append(finalizerCallers, path)
 		}
 	}
-	sort.Strings(attestedCallers)
 	sort.Strings(finalizerCallers)
-	wantAttested := []string{"repaircmd/repair.go"}
-	if strings.Join(attestedCallers, "\n") != strings.Join(wantAttested, "\n") {
-		t.Fatalf("attested completion production callers = %v, want %v", attestedCallers, wantAttested)
-	}
-	wantFinalizers := []string{"credentialcmd/credential.go", "repaircmd/repair.go"}
+	wantFinalizers := []string{"credentialcmd/credential.go"}
 	if strings.Join(finalizerCallers, "\n") != strings.Join(wantFinalizers, "\n") {
 		t.Fatalf("locked completion finalizer production callers = %v, want %v", finalizerCallers, wantFinalizers)
 	}
@@ -62,21 +54,6 @@ func TestCompletionArmInventoryDetectsAlternateForms(t *testing.T) {
 		want completionArmInventory
 	}{
 		{
-			name: "durable attested binding composite token",
-			src:  `package p; func f() { _ = &seatcompletion.AttestedBinding{} }`,
-			want: completionArmInventory{attested: true},
-		},
-		{
-			name: "attested assignment from variable",
-			src:  `package p; func f(req *seatcompletion.Request, binding *seatcompletion.AttestedBinding) { req.Attested = binding }`,
-			want: completionArmInventory{attested: true},
-		},
-		{
-			name: "attested request composite from variable",
-			src:  `package p; var binding *seatcompletion.AttestedBinding; var _ = seatcompletion.Request{Attested: binding}`,
-			want: completionArmInventory{attested: true},
-		},
-		{
 			name: "finalizer assignment",
 			src:  `package p; func f(req *seatcompletion.Request) { req.FinalizeLocked = finish }`,
 			want: completionArmInventory{finalizeLocked: true},
@@ -88,7 +65,7 @@ func TestCompletionArmInventoryDetectsAlternateForms(t *testing.T) {
 		},
 		{
 			name: "reads do not arm",
-			src:  `package p; func f(req seatcompletion.Request) { _, _ = req.Attested, req.FinalizeLocked }`,
+			src:  `package p; func f(req seatcompletion.Request) { _ = req.FinalizeLocked }`,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -121,9 +98,7 @@ func TestSeatRewriteWriterInventoryRequiresCarryPins(t *testing.T) {
 		"liveness/apply.go":           {updateLocked: 1},
 		"missioncmd/mission.go":       {updateLocked: 1, carryPin: true},
 		"observercmd/observer.go":     {updateLocked: 1, completionRequest: 1, carryPin: true},
-		"reconcilecmd/reconcile.go":   {completionRequest: 1, carryPin: true},
 		"renamecmd/rename.go":         {updateLocked: 2, carryPin: true},
-		"repaircmd/repair.go":         {completionRequest: 2, carryPin: true},
 		"retirecmd/retire.go":         {updateLocked: 2},
 		"sidecarcmd/sidecar.go":       {completionRequest: 1, carryPin: true},
 		"spawncmd/compact.go":         {updateLocked: 1, carryPin: true},
@@ -172,7 +147,6 @@ func TestSeatRewriteWriterInventoryRequiresCarryPins(t *testing.T) {
 		{path: "registry/seat_carry_test.go", marker: "TestSeatRewriteWriterPinsDependOnStructuralCarry"},
 		{path: "registry/seat_carry_test.go", marker: "TestCompatibilityAppendWritersCarryCredentialGeneration"},
 		{path: "../tests/check-enroll-contract.sh", marker: `credential_generation":"[0-9a-f]`},
-		{path: "../tests/goldens/reconcile/apply_fixture.txt", marker: `credential_generation":"<GEN>`},
 	}
 	for _, pin := range pins {
 		raw, err := os.ReadFile(filepath.Join(internal, filepath.FromSlash(pin.path)))
@@ -206,7 +180,6 @@ func assertCallInventory(t *testing.T, files map[string]string, needle string, w
 }
 
 type completionArmInventory struct {
-	attested       bool
 	finalizeLocked bool
 }
 
@@ -219,9 +192,6 @@ func completionArmUsage(source string) (completionArmInventory, error) {
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch node := node.(type) {
 		case *ast.CompositeLit:
-			if completionArmTypeName(node.Type) == "AttestedBinding" {
-				usage.attested = true
-			}
 			for _, element := range node.Elts {
 				keyValue, ok := element.(*ast.KeyValueExpr)
 				if !ok {
@@ -243,25 +213,8 @@ func completionArmUsage(source string) (completionArmInventory, error) {
 	return usage, nil
 }
 
-func completionArmTypeName(expr ast.Expr) string {
-	switch expr := expr.(type) {
-	case *ast.Ident:
-		return expr.Name
-	case *ast.SelectorExpr:
-		return expr.Sel.Name
-	case *ast.IndexExpr:
-		return completionArmTypeName(expr.X)
-	case *ast.IndexListExpr:
-		return completionArmTypeName(expr.X)
-	default:
-		return ""
-	}
-}
-
 func markCompletionArm(usage *completionArmInventory, name string) {
 	switch name {
-	case "Attested":
-		usage.attested = true
 	case "FinalizeLocked":
 		usage.finalizeLocked = true
 	}

@@ -152,19 +152,3 @@ func TestLaunchContextEmptyRequiresAnActuallyEmptyObject(t *testing.T) {
 		}
 	}
 }
-
-func TestResolveExactSessionPaneRequiresOneRowMatchingBoth(t *testing.T) {
-	joined := boolPtr(true)
-	rows := []Row{
-		{Name: "right", SessionID: "sid", Joined: joined, LaunchContext: LaunchContext{PaneID: "pane"}},
-		{Name: "session-only", SessionID: "sid", Joined: joined, LaunchContext: LaunchContext{PaneID: "elsewhere"}},
-		{Name: "pane-only", SessionID: "other", Joined: joined, LaunchContext: LaunchContext{PaneID: "pane"}},
-	}
-	if got := ResolveExactSessionPane(rows, "sid", "pane"); !got.Verified || got.Name != "right" {
-		t.Fatalf("ResolveExactSessionPane = %+v, want unique row matching both", got)
-	}
-	rows = append(rows, Row{Name: "duplicate", SessionID: "sid", Joined: joined, LaunchContext: LaunchContext{PaneID: "pane"}})
-	if got := ResolveExactSessionPane(rows, "sid", "pane"); got.Verified {
-		t.Fatalf("ResolveExactSessionPane duplicate = %+v, want refusal", got)
-	}
-}
