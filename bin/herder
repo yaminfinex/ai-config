@@ -231,6 +231,20 @@ if [ -z "${GOMODCACHE:-}" ] || ! mkdir -p "$GOMODCACHE" 2>/dev/null || [ ! -w "$
   mkdir -p "$GOMODCACHE"
 fi
 
+# The tmp module cache is subject to the macOS /var/folders sweeper, which
+# deletes FILES older than ~3 days but leaves directories: an extracted module
+# keeps its marker yet loses its sources, and go then reports "no required
+# module provides package" for modules go.mod plainly requires. Detect that
+# exact signature after a failed build and heal by wiping the cache and
+# retrying once — but only when GOMODCACHE lives under the herder tmp cache,
+# so a caller-owned module cache is never destroyed.
+modcache_is_healable() {
+  case "$GOMODCACHE" in
+  "$shared_cache_root"/*) grep -q 'no required module provides package' "$build_log" 2>/dev/null ;;
+  *) return 1 ;;
+  esac
+}
+
 # The picked toolchain already satisfies go.mod, so pin GOTOOLCHAIN=local
 # (unless the caller chose otherwise): a build must never stall on a
 # toolchain download.
@@ -248,7 +262,24 @@ cleanup_build() { rm -f "$tmp_bin" "$build_log" 2>/dev/null || true; }
 trap cleanup_build EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-if (cd "$src_dir" && env -u GOROOT GOTOOLCHAIN="${GOTOOLCHAIN:-local}" "${go_cmd[@]}" build -o "$tmp_bin" ./cmd/herder) 2>"$build_log"; then
+run_build() {
+  (cd "$src_dir" && env -u GOROOT GOTOOLCHAIN="${GOTOOLCHAIN:-local}" "${go_cmd[@]}" build -o "$tmp_bin" ./cmd/herder) 2>"$build_log"
+}
+
+build_ok=0
+if run_build; then
+  build_ok=1
+elif modcache_is_healable; then
+  printf 'herder: module cache swept by tmp cleaner, rebuilding it\n' >&2
+  (cd "$src_dir" && env -u GOROOT GOTOOLCHAIN="${GOTOOLCHAIN:-local}" "${go_cmd[@]}" clean -modcache) 2>/dev/null ||
+    { chmod -R u+w "$GOMODCACHE" 2>/dev/null && rm -rf "$GOMODCACHE"; } 2>/dev/null || true
+  mkdir -p "$GOMODCACHE" 2>/dev/null || true
+  if run_build; then
+    build_ok=1
+  fi
+fi
+
+if [ "$build_ok" = 1 ]; then
   mv "$tmp_bin" "$herder_bin"
   rm -f "$build_log" 2>/dev/null || true
   record_last_good "$cache_dir" "$herder_bin"
