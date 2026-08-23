@@ -77,6 +77,10 @@ case "${1:-} ${2:-}" in
 		else
 			jq -n --arg ws "$(cat "$PROBE/agent_workspace" 2>/dev/null || printf ws_resumed)" '{result:{pane:{pane_id:"p_resumed",terminal_id:"term_RESUMED",workspace_id:$ws,tab_id:"tab_new",cwd:"/mock/cwd"}}}'
 		fi;;
+  "pane process-info")
+    jq -n '{result:{process_info:{pane_id:"p_self",foreground_processes:[{pid:4242,name:"codex",argv:["codex"],cwd:"/repo"}]}}}';;
+  "pane list")
+    jq -n '{result:{panes:[{pane_id:"p_self",terminal_id:"term_SELF",agent:"codex",cwd:"/repo"}]}}';;
   *)
     printf 'mock herdr (resume suite): unhandled: %s\n' "$*" >&2
     exit 64;;
@@ -136,7 +140,7 @@ JSONL
   fi
 	if [[ -n "${SEED_SENDER:-}" ]]; then
 		cat >>"$CASE/state/registry.jsonl" <<'JSONL'
-{"kind":"session","guid":"guid-sender-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"sender","role":"dispatcher","tool":"codex","seat":{"kind":"herdr","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"dispatcher-rive","namespace":"/hcom"},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"sess-sender","tag":"dispatcher","cwd":"/repo","workspace_id":"ws_self","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
+{"kind":"session","guid":"guid-sender-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"sender","role":"dispatcher","tool":"codex","seat":{"kind":"herdr","terminal_id":"term_SELF","pane_id":"p_self","hcom_name":"dispatcher-rive","namespace":"/hcom"},"provenance":{"mechanism":"spawn","spawned_by":"user","tool_session_id":"11111111-2222-3333-4444-555555555555","tag":"dispatcher","cwd":"/repo","workspace_id":"ws_self","branch":"feat/herder-go-port","ts":"2026-07-03T00:00:00Z"}}
 JSONL
 	fi
 	# Recorded cwd values are real directories so the preflight tests the normal
@@ -144,11 +148,25 @@ JSONL
 	sed -i "s#\"cwd\":\"/repo\"#\"cwd\":\"$REPO\"#g" "$CASE/state/registry.jsonl"
 }
 
+seed_sender_probe() {
+  local rollout="$CASE/home/.codex/sessions/2026/07/03/rollout-2026-07-03T00-00-00-11111111-2222-3333-4444-555555555555.jsonl"
+  mkdir -p "$(dirname "$rollout")" "$CASE/proc/4242/fd" "$CASE/proc/4243"
+  printf '{}\n' >"$rollout"
+  printf 'codex\n' >"$CASE/proc/4242/comm"
+  printf 'Name:\tcodex\nPid:\t4242\nPPid:\t1\n' >"$CASE/proc/4242/status"
+  printf 'HERDR_PANE_ID=p_self\0' >"$CASE/proc/4242/environ"
+  ln -s "$REPO" "$CASE/proc/4242/cwd"
+  ln -s "$rollout" "$CASE/proc/4242/fd/42"
+  printf 'herder\n' >"$CASE/proc/4243/comm"
+  printf 'Name:\therder\nPid:\t4243\nPPid:\t4242\n' >"$CASE/proc/4243/status"
+}
+
 run_case() {
   local name="$1" live="$2"; shift 2
   CASE="$ROOT/$name"
   mkdir -p "$CASE/home" "$CASE/probe"
   seed_registry
+  seed_sender_probe
   RUN_ERR_F="$CASE/stderr"
   # Pin the runner cwd to $REPO so resume's os.Getwd()-derived child cwd is a
   # stable fixture value regardless of where this suite is invoked from.
@@ -158,6 +176,7 @@ run_case() {
     AI_CONFIG_ROOT="$REPO" \
     HERDR_ENV=1 HERDR_PANE_ID=p_self \
     HERDER_STATE_DIR="$CASE/state" \
+    HERDER_PROBE_PROC_ROOT="$CASE/proc" HERDER_PROBE_SELF_PID=4243 \
     HERDER_LIFECYCLE_SETTLE_MS=0 \
     HERDER_LIFECYCLE_FOCUS="${HERDER_LIFECYCLE_FOCUS:-}" \
     HERDER_ADDENDUM_SETTLE_MS="${HERDER_ADDENDUM_SETTLE_MS:-10000}" \

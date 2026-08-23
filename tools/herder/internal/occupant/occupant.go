@@ -123,9 +123,13 @@ type Substrate struct {
 // CLIQuerier invokes the field-verified herdr 0.8 CLI spelling. In
 // particular, process-info takes --pane; the positional form returns help
 // with a successful exit code and must never be used.
-type CLIQuerier struct{ Client *herdrcli.Client }
+type CLIClient interface {
+	Output(...string) ([]byte, error)
+}
 
-func (q CLIQuerier) client() *herdrcli.Client {
+type CLIQuerier struct{ Client CLIClient }
+
+func (q CLIQuerier) client() CLIClient {
 	if q.Client != nil {
 		return q.Client
 	}

@@ -8,8 +8,8 @@
 # force/modal*/timeout/dryrun_*) was removed; the one surviving keystroke path
 # is spawn's boot-time initial-prompt paste, exercised by
 # check-spawn-contract.sh, not here. Proof the transport is gone: this suite
-# puts NO herdr on the hermetic PATH. Optional caller-coordinate expansion may
-# fail soft; a send that still tried to use herdr for transport would fail loudly.
+# provides only herdr's query-only occupant snapshot verbs. A send that tried
+# to use herdr for transport would still fail loudly.
 #
 # Drives the REAL herder send CLI against a hermetic mock `hcom` and diffs the
 # stderr human line, the --json record, exit code, AND the recorded hcom argv
@@ -49,6 +49,30 @@ WRITE=0
 MOCKBIN="$(mktemp -d)"
 ln -s "$TESTS_DIR/mock-hcom" "$MOCKBIN/hcom"
 
+TEST_HOME="$(mktemp -d)"
+PROBE_ROOT="$(mktemp -d)"
+CALLER_CWD="$(mktemp -d)"
+CALLER_SLUG="$(printf '%s' "$CALLER_CWD" | sed -E 's/[^A-Za-z0-9]/-/g')"
+mkdir -p "$TEST_HOME/.claude/projects/$CALLER_SLUG" "$PROBE_ROOT/4242" "$PROBE_ROOT/4243"
+printf '{}\n' >"$TEST_HOME/.claude/projects/$CALLER_SLUG/sid-sender.jsonl"
+printf 'claude\n' >"$PROBE_ROOT/4242/comm"
+printf 'Name:\tclaude\nPid:\t4242\nPPid:\t1\n' >"$PROBE_ROOT/4242/status"
+printf 'HERDR_PANE_ID=p_sender\0' >"$PROBE_ROOT/4242/environ"
+ln -s "$CALLER_CWD" "$PROBE_ROOT/4242/cwd"
+printf 'herder\n' >"$PROBE_ROOT/4243/comm"
+printf 'Name:\therder\nPid:\t4243\nPPid:\t4242\n' >"$PROBE_ROOT/4243/status"
+cat >"$MOCKBIN/herdr" <<'MOCK_HERDR'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-} ${2:-}" in
+  "pane get") jq -cn --arg cwd "$MOCK_CALLER_CWD" '{result:{pane:{pane_id:"p_sender",terminal_id:"term_SENDER",agent:"claude",agent_session:"sid-sender",cwd:$cwd,foreground_cwd:$cwd}}}';;
+  "pane process-info") jq -cn --arg cwd "$MOCK_CALLER_CWD" '{result:{process_info:{pane_id:"p_sender",foreground_processes:[{pid:4242,name:"claude",argv:["claude"],cwd:$cwd}]}}}';;
+  "pane list") jq -cn --arg cwd "$MOCK_CALLER_CWD" '{result:{panes:[{pane_id:"p_sender",terminal_id:"term_SENDER",agent:"claude",agent_session:"sid-sender",cwd:$cwd,foreground_cwd:$cwd}]}}';;
+  *) exit 64;;
+esac
+MOCK_HERDR
+chmod +x "$MOCKBIN/herdr"
+
 # Registry: a bus-bound peer, a bus-less peer (bash pane), and a
 # RETIRED bus-bound session — its pane/terminal coordinates must NOT resolve
 # (coordinates are positional; retired sessions are refused on that path).
@@ -57,7 +81,8 @@ BUS_DIR="$(mktemp -d)"
 {
 	jq -nc --arg dir "$BUS_DIR" \
 	  '{kind:"session", guid:"guid-sender-0000", event:"seated", state:"seated", label:"sender", role:"lead", tool:"claude",
-	    seat:{kind:"herdr", terminal_id:"term_SENDER", pane_id:"p_sender", namespace:$dir, hcom_name:"sender-bus"}}'
+	    seat:{kind:"herdr", terminal_id:"term_SENDER", pane_id:"p_sender", namespace:$dir, hcom_name:"sender-bus"},
+	    sids:[{sid:"sid-sender",source:"harvest"}]}'
   jq -nc --arg dir "$BUS_DIR" \
     '{kind:"session", guid:"guid-alpha-0000", event:"seated", state:"seated", label:"alpha", role:"reviewer", tool:"claude", team:"alpha-team",
       seat:{kind:"herdr", terminal_id:"term_AAA", pane_id:"p_10", namespace:$dir, hcom_name:"alpha-rive"},
@@ -77,7 +102,7 @@ BUS_DIR="$(mktemp -d)"
       seat:{kind:"herdr", terminal_id:"term_EEE", pane_id:"p_50", namespace:$dir, hcom_name:"dormant-bus"}}'
 } > "$REG_DIR/registry.jsonl"
 
-trap 'rm -rf "$MOCKBIN" "$REG_DIR" "$BUS_DIR"' EXIT
+trap 'rm -rf "$MOCKBIN" "$REG_DIR" "$BUS_DIR" "$TEST_HOME" "$PROBE_ROOT" "$CALLER_CWD"' EXIT
 mkdir -p "$GOLDENS"
 
 MSG='ring: alpha unit DONE'
@@ -115,9 +140,10 @@ run_one() {  # $1=HERDER_BUS ('auto' → unset-equivalent), $2=mock scenario, re
   err="$(mktemp)"
   out="$(env -i \
     PATH="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin" \
-    HOME="$HOME" \
+    HOME="$TEST_HOME" \
 	HERDR_ENV=1 HERDR_PANE_ID=p_sender HERDER_GUID=guid-sender-0000 HERDER_BUS="$bus" \
     HERDER_STATE_DIR="$REG_DIR" \
+    HERDER_PROBE_PROC_ROOT="$PROBE_ROOT" HERDER_PROBE_SELF_PID=4243 MOCK_CALLER_CWD="$CALLER_CWD" \
     MOCK_HCOM_SCENARIO="$scen" MOCK_HCOM_PROBE="$probe" \
     "${HS[@]}" "$@" 2>"$err")"
   code=$?

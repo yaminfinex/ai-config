@@ -24,6 +24,7 @@ import (
 	"ai-config/tools/herder/internal/launchcmd"
 	"ai-config/tools/herder/internal/missioncontext"
 	"ai-config/tools/herder/internal/observercmd"
+	"ai-config/tools/herder/internal/occupant"
 	"ai-config/tools/herder/internal/panecleanup"
 	"ai-config/tools/herder/internal/panelaunch"
 	"ai-config/tools/herder/internal/pendingprompt"
@@ -970,7 +971,7 @@ func (r *runner) run() int {
 		}
 	}
 	if isHcomAgent && r.caller == nil && !r.cutover && opts.Prompt != "" {
-		promptSender, err = r.verifyLegacyPromptSender(registryPath, hcomDirEff)
+		promptSender, err = r.verifyOccupantPromptSender(registryPath, hcomDirEff)
 		if err != nil {
 			fmt.Fprintf(r.stderr, "herder spawn: refused — initial prompt sender identity is not verified: %s. Nothing was launched.\n", err)
 			return 2
@@ -2214,35 +2215,14 @@ func envInt(name string, fallback int) int {
 	return fallback
 }
 
-func (r *runner) verifyLegacyPromptSender(registryPath, busDir string) (string, error) {
-	envPane := os.Getenv("HERDR_PANE_ID")
-	if os.Getenv("HERDR_ENV") != "1" || envPane == "" {
-		return "", &send.SenderIdentityRefusal{Cause: "the spawning process is not inside a herdr pane with a provable session identity", Remedy: "Run `herder enroll` there first, then retry"}
-	}
-	out, err := r.herdr.Output("pane", "get", envPane)
-	if err != nil {
-		return "", &send.SenderIdentityRefusal{Cause: "the spawning pane cannot be resolved from live herdr state", Remedy: "Restore the herdr pane, then retry"}
-	}
-	pane, err := herdrcli.ParsePaneGet(out)
-	if err != nil || pane.TerminalID == "" {
-		return "", &send.SenderIdentityRefusal{Cause: "the spawning pane has no live terminal identity", Remedy: "Restore the herdr pane, then retry"}
-	}
+func (r *runner) verifyOccupantPromptSender(registryPath, busDir string) (string, error) {
 	recs, err := registry.Load(registryPath)
 	if err != nil {
 		return "", &send.SenderIdentityRefusal{Cause: "the spawning session registry is not readable: " + err.Error(), Remedy: "Restore the registry, then retry"}
 	}
-	self, refuse := resolveSelfRow(recs, pane)
-	if self.row == nil {
-		return "", &send.SenderIdentityRefusal{Cause: "the spawning registry row is not provable: " + strings.TrimSuffix(strings.TrimSpace(refuse), "."), Remedy: "Run `herder enroll` from this session, then retry"}
-	}
-	name, verifyErr := send.VerifyStoredSender(self.row.HcomName, busDir, hcomidentity.CurrentEvidence(envPane, pane.PaneID))
-	if verifyErr == nil {
-		return name, nil
-	}
-	if name, ok := emptyLaunchContextSenderFallback(*self.row, pane, busDir); ok {
-		return name, nil
-	}
-	return "", verifyErr
+	return send.VerifyOccupantSender(recs, busDir, os.Getenv("HERDER_GUID"), occupant.Substrate{
+		Herdr: occupant.CLIQuerier{Client: r.herdr},
+	})
 }
 
 func (r *runner) verifyPromptSender(selected seatcred.Selection, busDir string) (string, error) {
@@ -2284,28 +2264,6 @@ func (r *runner) verifyPromptSender(selected seatcred.Selection, busDir string) 
 		return "", &send.SenderIdentityRefusal{Cause: fmt.Sprintf("credential-selected @%s resolves to %d joined rows", selected.Row.Seat.HcomName, count), Remedy: "Restore exactly one joined row for the selected seat"}
 	}
 	return selected.Row.Seat.HcomName, nil
-}
-
-// emptyLaunchContextSenderFallback is deliberately narrower than normal hcom
-// identity resolution. It applies only when hcom recorded no launch facts and
-// the live herdr terminal+pane exactly equal one verified seated registry row
-// whose stored bus name identifies one joined row.
-func emptyLaunchContextSenderFallback(row registry.Record, pane herdrcli.Pane, busDir string) (string, bool) {
-	if !registry.IsSeated(row) || row.HcomVerified == nil || !*row.HcomVerified || row.HcomName == "" || row.HcomName == "null" {
-		return "", false
-	}
-	if pane.TerminalID == "" || pane.PaneID == "" || row.TerminalID != pane.TerminalID || row.PaneID != pane.PaneID {
-		return "", false
-	}
-	rows, err := hcomidentity.List(busDir)
-	if err != nil {
-		return "", false
-	}
-	live, count := hcomidentity.JoinedNamedCount(rows, row.HcomName)
-	if count != 1 || !live.LaunchContext.Empty() {
-		return "", false
-	}
-	return live.Name, true
 }
 
 func firstNonEmpty(values ...string) string {

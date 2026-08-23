@@ -10,41 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/occupant"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcred"
 )
-
-func TestVerifyStoredSenderAcceptsPaneProofWhenSessionIDIsStale(t *testing.T) {
-	binDir := t.TempDir()
-	stub := `#!/bin/sh
-printf '%s\n' '[{"name":"live-self","session_id":"current-session","joined":true,"launch_context":{"pane_id":"pane-self"}}]'
-`
-	if err := os.WriteFile(filepath.Join(binDir, "hcom"), []byte(stub), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	got, err := VerifyStoredSender("live-self", t.TempDir(), hcomidentity.Evidence{
-		SessionID: "stale-session",
-		PaneIDs:   []string{"pane-self", "pane-canonical"},
-	})
-	if err != nil || got != "live-self" {
-		t.Fatalf("VerifyStoredSender = (%q, %v), want pane-proven live-self", got, err)
-	}
-}
-
-func TestVerifyStoredSenderRefusalCarriesCauseAndRemedy(t *testing.T) {
-	_, err := VerifyStoredSender("", t.TempDir(), hcomidentity.Evidence{})
-	var refusal *SenderIdentityRefusal
-	if !errors.As(err, &refusal) {
-		t.Fatalf("error = %T %v, want SenderIdentityRefusal", err, err)
-	}
-	if refusal.Cause == "" || refusal.Remedy == "" {
-		t.Fatalf("refusal = %+v, want typed cause and remedy", refusal)
-	}
-}
 
 func TestCallerCoordinatesKeepTerminalOutOfBusPaneEvidence(t *testing.T) {
 	binDir := t.TempDir()
@@ -66,122 +36,17 @@ printf '%s\n' '{"result":{"pane":{"pane_id":"pane-canonical","terminal_id":"term
 	}
 }
 
-func TestVerifiedCallerSenderRecoversFromStaleUnseatedSessionViaPane(t *testing.T) {
-	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "herdr"), []byte(`#!/bin/sh
-printf '%s\n' '{"result":{"pane":{"pane_id":"pane-canonical","terminal_id":"terminal-coordinate"}}}'
-`), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(binDir, "hcom"), []byte(`#!/bin/sh
-printf '%s\n' '[{"name":"live-self","session_id":"current-session","joined":true,"launch_context":{"pane_id":"pane-canonical"}}]'
-`), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("HERDER_GUID", "")
-	t.Setenv("HERDR_PANE_ID", "pane-launch")
-	t.Setenv("HCOM_SESSION_ID", "stale-session")
-	t.Setenv("HCOM_PROCESS_ID", "")
-
-	oldGUID, currentGUID := "guid-predecessor", "guid-current"
-	recs := []registry.Record{
-		{GUID: &oldGUID, State: "unseated", HcomName: "stale-self", Provenance: &registry.Provenance{ToolSessionID: "stale-session"}},
-		{GUID: &currentGUID, State: "seated", PaneID: "pane-canonical", TerminalID: "terminal-coordinate", HcomName: "live-self"},
-	}
-	got, err := verifiedCallerSender(recs, t.TempDir())
-	if err != nil || got != "live-self" {
-		t.Fatalf("verifiedCallerSender = (%q, %v), want pane-proven live-self", got, err)
-	}
+func TestSenderResolutionRefusalKeepsCohortMismatchOwnerFree(t *testing.T) {
+	err := senderResolutionRefusal(occupant.Resolution{
+		Observation: occupant.Observation{Status: occupant.Occupied, SID: "sid-other", Evidence: []occupant.Signal{occupant.SignalCohort}},
+		Outcome:     occupant.Outcome{Status: occupant.PositiveMismatch},
+	})
+	assertSenderRefusalContains(t, err, "cohort-class", "not authoritative enough to name an owner", "unset it and retry")
 }
 
-func TestVerifiedCallerSenderRefusesMultipleMatchingSeatedRows(t *testing.T) {
-	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "herdr"), []byte(`#!/bin/sh
-printf '%s\n' '{"result":{"pane":{"pane_id":"pane-canonical","terminal_id":"terminal-coordinate"}}}'
-`), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(binDir, "hcom"), []byte(`#!/bin/sh
-printf '%s\n' '[{"name":"live-self","joined":true,"launch_context":{"pane_id":"pane-canonical"}}]'
-`), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("HERDER_GUID", "")
-	t.Setenv("HERDR_PANE_ID", "pane-launch")
-	t.Setenv("HCOM_SESSION_ID", "")
-	t.Setenv("HCOM_PROCESS_ID", "")
-
-	firstGUID, secondGUID := "guid-first", "guid-second"
-	recs := []registry.Record{
-		{GUID: &firstGUID, State: "seated", PaneID: "pane-canonical", TerminalID: "terminal-coordinate", HcomName: "live-self"},
-		{GUID: &secondGUID, State: "seated", PaneID: "pane-canonical", TerminalID: "terminal-coordinate", HcomName: "live-self"},
-	}
-	_, err := verifiedCallerSender(recs, t.TempDir())
-	assertSenderRefusalContains(t, err, "multiple seated registry rows")
-}
-
-func TestRequireStoredSenderRefusesUnseatedRow(t *testing.T) {
-	guid := "guid-unseated"
-	_, err := requireStoredSender(&registry.Record{GUID: &guid, State: "unseated", HcomName: "live-self"}, "live-self")
-	assertSenderRefusalContains(t, err, "not seated")
-}
-
-func TestRequireStoredSenderRefusesStoredLiveMismatch(t *testing.T) {
-	guid := "guid-mismatch"
-	_, err := requireStoredSender(&registry.Record{GUID: &guid, State: "seated", HcomName: "stale-self"}, "live-self")
-	assertSenderRefusalContains(t, err, "@stale-self", "@live-self")
-}
-
-func TestVerifyStoredSenderRefusesStoredLiveMismatch(t *testing.T) {
-	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "hcom"), []byte(`#!/bin/sh
-printf '%s\n' '[{"name":"live-self","joined":true,"launch_context":{"pane_id":"pane-self"}}]'
-`), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	_, err := VerifyStoredSender("stale-self", t.TempDir(), hcomidentity.Evidence{PaneIDs: []string{"pane-self"}})
-	assertSenderRefusalContains(t, err, "@stale-self", "@live-self")
-}
-
-func TestSendGateRefusesWhenLiveRosterUnavailable(t *testing.T) {
-	binDir := t.TempDir()
-	sendMarker := filepath.Join(t.TempDir(), "sent")
-	stub := `#!/bin/sh
-if [ "$1" = "send" ]; then
-  : >"$HCOM_SEND_MARKER"
-fi
-exit 1
-`
-	if err := os.WriteFile(filepath.Join(binDir, "hcom"), []byte(stub), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	stateDir := t.TempDir()
-	senderGUID, targetGUID := "guid-sender", "guid-target"
-	writeRegistryRecords(t, stateDir,
-		registry.Record{GUID: &senderGUID, Label: stringPointer("sender"), State: "seated", HcomName: "sender-rive"},
-		registry.Record{GUID: &targetGUID, Label: stringPointer("target"), State: "seated", HcomName: "target-rive"},
-	)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("HCOM_SEND_MARKER", sendMarker)
-	t.Setenv("HERDER_STATE_DIR", stateDir)
-	t.Setenv("HERDR_ENV", "1")
-	t.Setenv("HERDER_GUID", senderGUID)
-	t.Setenv("HERDR_PANE_ID", "")
-	t.Setenv("HCOM_SESSION_ID", "session-sender")
-	t.Setenv("HCOM_PROCESS_ID", "")
-
-	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"target", "payload"}, &stdout, &stderr); code != 2 {
-		t.Fatalf("Run exit = %d, want 2; stderr:\n%s", code, stderr.String())
-	}
-	assertTextContains(t, stderr.String(), "live hcom roster is unavailable", "Nothing was sent")
-	if _, err := os.Stat(sendMarker); !os.IsNotExist(err) {
-		t.Fatalf("roster-unavailable refusal invoked hcom send; marker stat error = %v", err)
-	}
+func TestSenderResolutionRefusalMakesAmbiguityActionable(t *testing.T) {
+	err := senderResolutionRefusal(occupant.Resolution{Outcome: occupant.Outcome{Status: occupant.OutcomeAmbiguous}})
+	assertSenderRefusalContains(t, err, "ambiguous", "herder resume", "re-reports")
 }
 
 func TestCutoverNeverSelectsCallerFromAmbientEnvironment(t *testing.T) {

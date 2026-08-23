@@ -18,6 +18,7 @@ import (
 
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/occupant"
 	"ai-config/tools/herder/internal/registry"
 	"ai-config/tools/herder/internal/seatcred"
 )
@@ -230,57 +231,9 @@ func credentialCallerSender(selected seatcred.Selection, busDir string) (string,
 }
 
 func verifiedCallerSender(recs []registry.Record, busDir string) (string, error) {
-	paneIDs, keys := currentCallerCoordinates()
-	evidence := hcomidentity.CurrentEvidence(paneIDs...)
-	liveName, err := ResolveLiveSender(busDir, evidence)
-	if err != nil {
-		return "", err
-	}
-
-	if guid := os.Getenv("HERDER_GUID"); guid != "" {
-		row := registry.Resolve(recs, guid)
-		if row == nil {
-			return "", &SenderIdentityRefusal{
-				Cause:  "HERDER_GUID does not resolve to a registry row for the calling session",
-				Remedy: "Run `herder enroll` from this session to restore its registry binding, then retry",
-			}
-		}
-		return requireStoredSender(row, liveName)
-	}
-	if sid := os.Getenv("HCOM_SESSION_ID"); sid != "" {
-		if row := registry.ResolveByToolSessionID(recs, sid); row != nil {
-			// A stale session correlate may still point at an unseated predecessor.
-			// Let current pane/terminal evidence recover the seated caller; a
-			// conflicting seated row remains a hard refusal below.
-			if registry.IsSeated(*row) {
-				return requireStoredSender(row, liveName)
-			}
-		}
-	}
-
-	var matched *registry.Record
-	for _, key := range keys {
-		for _, candidate := range registry.SeatedCandidatesByPaneOrTerminal(recs, key) {
-			if candidate.HcomName != liveName {
-				continue
-			}
-			if matched != nil && !sameRecordIdentity(matched, &candidate) {
-				return "", &SenderIdentityRefusal{
-					Cause:  "multiple seated registry rows match the caller's live bus identity and pane/terminal evidence",
-					Remedy: "Reconcile or re-enroll this session so one seated row owns the live bus identity, then retry",
-				}
-			}
-			copy := candidate
-			matched = &copy
-		}
-	}
-	if matched == nil {
-		return "", &SenderIdentityRefusal{
-			Cause:  fmt.Sprintf("live caller evidence proves @%s, but no seated registry row with that bus name matches the caller's pane or terminal", liveName),
-			Remedy: "Run `herder enroll` from this session to restore its registry binding, then retry",
-		}
-	}
-	return liveName, nil
+	return VerifyOccupantSender(recs, busDir, os.Getenv("HERDER_GUID"), occupant.Substrate{
+		Herdr: occupant.CLIQuerier{Client: &herdrcli.Client{}},
+	})
 }
 
 func currentCallerCoordinates() (paneIDs, registryKeys []string) {
@@ -310,35 +263,6 @@ func uniqueNonEmpty(values []string) []string {
 		}
 	}
 	return out
-}
-
-func requireStoredSender(row *registry.Record, liveName string) (string, error) {
-	if !registry.IsSeated(*row) {
-		return "", &SenderIdentityRefusal{
-			Cause:  "the calling session's registry row is not seated",
-			Remedy: "Run `herder enroll` from this session to restore its live registry seat, then retry",
-		}
-	}
-	if row.HcomName == liveName {
-		return liveName, nil
-	}
-	stored := row.HcomName
-	if stored == "" || stored == "null" {
-		stored = "(none)"
-	} else {
-		stored = "@" + stored
-	}
-	return "", &SenderIdentityRefusal{
-		Cause:  fmt.Sprintf("the calling session's registry row records %s but live evidence proves @%s", stored, liveName),
-		Remedy: "Run `herder enroll` from this session to repair its registry bus binding, then retry",
-	}
-}
-
-func sameRecordIdentity(a, b *registry.Record) bool {
-	if a == nil || b == nil || a.GUID == nil || b.GUID == nil {
-		return false
-	}
-	return *a.GUID == *b.GUID
 }
 
 func writeSenderRefusal(stderr io.Writer, err error) {

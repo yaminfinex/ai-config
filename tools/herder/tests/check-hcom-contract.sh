@@ -34,11 +34,34 @@ export AI_CONFIG_ROOT="$REPO_ROOT"
 HS=("$REPO_ROOT/bin/herder" send)
 [[ -n "${HERDER_CMD_SEND_BIN:-}" ]] && HS=("$HERDER_CMD_SEND_BIN")
 
-# Hermetic bin: mock `hcom` first on PATH, real jq/date/bash behind it.
-# Deliberately NO herdr — optional caller-coordinate expansion may fail soft,
-# while transport must remain bus-only; a lingering keystroke path fails loudly.
+# Hermetic bin: mock hcom plus herdr's query-only occupant snapshot verbs.
+# Transport remains bus-only; a lingering herdr keystroke path fails loudly.
 MOCKBIN="$(mktemp -d)"
 ln -s "$TESTS_DIR/mock-hcom" "$MOCKBIN/hcom"
+
+TEST_HOME="$(mktemp -d)"
+PROBE_ROOT="$(mktemp -d)"
+CALLER_CWD="$(mktemp -d)"
+CALLER_SLUG="$(printf '%s' "$CALLER_CWD" | sed -E 's/[^A-Za-z0-9]/-/g')"
+mkdir -p "$TEST_HOME/.claude/projects/$CALLER_SLUG" "$PROBE_ROOT/4242" "$PROBE_ROOT/4243"
+printf '{}\n' >"$TEST_HOME/.claude/projects/$CALLER_SLUG/sid-sender.jsonl"
+printf 'claude\n' >"$PROBE_ROOT/4242/comm"
+printf 'Name:\tclaude\nPid:\t4242\nPPid:\t1\n' >"$PROBE_ROOT/4242/status"
+printf 'HERDR_PANE_ID=p_sender\0' >"$PROBE_ROOT/4242/environ"
+ln -s "$CALLER_CWD" "$PROBE_ROOT/4242/cwd"
+printf 'herder\n' >"$PROBE_ROOT/4243/comm"
+printf 'Name:\therder\nPid:\t4243\nPPid:\t4242\n' >"$PROBE_ROOT/4243/status"
+cat >"$MOCKBIN/herdr" <<'MOCK_HERDR'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-} ${2:-}" in
+  "pane get") jq -cn --arg cwd "$MOCK_CALLER_CWD" '{result:{pane:{pane_id:"p_sender",terminal_id:"term_SENDER",agent:"claude",agent_session:"sid-sender",cwd:$cwd,foreground_cwd:$cwd}}}';;
+  "pane process-info") jq -cn --arg cwd "$MOCK_CALLER_CWD" '{result:{process_info:{pane_id:"p_sender",foreground_processes:[{pid:4242,name:"claude",argv:["claude"],cwd:$cwd}]}}}';;
+  "pane list") jq -cn --arg cwd "$MOCK_CALLER_CWD" '{result:{panes:[{pane_id:"p_sender",terminal_id:"term_SENDER",agent:"claude",agent_session:"sid-sender",cwd:$cwd,foreground_cwd:$cwd}]}}';;
+  *) exit 64;;
+esac
+MOCK_HERDR
+chmod +x "$MOCKBIN/herdr"
 
 # Registry with a bus-bound peer (alpha team) and a bus-less peer (bash pane).
 # The bus-less peer's terminal_id is term_AAA, so the resolution tests can
@@ -49,7 +72,8 @@ BUS_DIR="$(mktemp -d)"   # stands in for the team's HCOM_DIR
 {
 	jq -nc --arg dir "$BUS_DIR" \
 	  '{kind:"session", guid:"g-sender", event:"seated", state:"seated", label:"sender", role:"lead", tool:"claude",
-	    seat:{kind:"herdr", terminal_id:"term_SENDER", pane_id:"p_sender", namespace:$dir, hcom_name:"sender-bus"}}'
+	    seat:{kind:"herdr", terminal_id:"term_SENDER", pane_id:"p_sender", namespace:$dir, hcom_name:"sender-bus"},
+	    sids:[{sid:"sid-sender",source:"harvest"}]}'
   jq -nc --arg dir "$BUS_DIR" \
     '{guid:"g-bus", short_guid:"busagent", label:"busagent", role:"reviewer", agent:"claude",
       terminal_id:"term_BUS", pane_id:"p_10",
@@ -60,7 +84,7 @@ BUS_DIR="$(mktemp -d)"   # stands in for the team's HCOM_DIR
       team:"", hcom_dir:"", hcom_name:"", hcom_tag:"", status:"active"}'
 } > "$REG_DIR/registry.jsonl"
 
-cleanup() { rm -rf "$MOCKBIN" "$REG_DIR" "$BUS_DIR"; }
+cleanup() { rm -rf "$MOCKBIN" "$REG_DIR" "$BUS_DIR" "$TEST_HOME" "$PROBE_ROOT" "$CALLER_CWD"; }
 trap cleanup EXIT
 
 PATH_HERMETIC="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin"
@@ -77,14 +101,16 @@ run_send() {
   errf="$(mktemp)"
   if [[ -n "$ambient_dir" ]]; then
     RUN_OUT="$(env -i \
-      PATH="$PATH_HERMETIC" HOME="$HOME" HCOM_DIR="$ambient_dir" \
+      PATH="$PATH_HERMETIC" HOME="$TEST_HOME" HCOM_DIR="$ambient_dir" \
 	  HERDR_ENV=1 HERDR_PANE_ID=p_sender HERDER_GUID=g-sender HERDER_STATE_DIR="$REG_DIR" HERDER_BUS="$bus" \
+      HERDER_PROBE_PROC_ROOT="$PROBE_ROOT" HERDER_PROBE_SELF_PID=4243 MOCK_CALLER_CWD="$CALLER_CWD" \
       MOCK_HCOM_SCENARIO="$scen" MOCK_HCOM_PROBE="$probe" \
       "${HS[@]}" "$@" 2>"$errf")"
   else
     RUN_OUT="$(env -i \
-      PATH="$PATH_HERMETIC" HOME="$HOME" \
+      PATH="$PATH_HERMETIC" HOME="$TEST_HOME" \
 	  HERDR_ENV=1 HERDR_PANE_ID=p_sender HERDER_GUID=g-sender HERDER_STATE_DIR="$REG_DIR" HERDER_BUS="$bus" \
+      HERDER_PROBE_PROC_ROOT="$PROBE_ROOT" HERDER_PROBE_SELF_PID=4243 MOCK_CALLER_CWD="$CALLER_CWD" \
       MOCK_HCOM_SCENARIO="$scen" MOCK_HCOM_PROBE="$probe" \
       "${HS[@]}" "$@" 2>"$errf")"
   fi

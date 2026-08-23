@@ -70,7 +70,23 @@ MOCKBIN="$ROOT/bin"
 mkdir -p "$MOCKBIN" "$GOLDENS"
 trap 'rm -rf "$ROOT"' EXIT
 
-ln -s "$TESTS_DIR/mock-herdr-spawn" "$MOCKBIN/herdr"
+cat >"$MOCKBIN/herdr" <<'MOCK_HERDR'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-} ${2:-}" == "pane get" && "${3:-}" == "p_orch" ]]; then
+  jq -n --arg cwd "${MOCK_SPAWNER_CWD:-/mock/cwd}" --arg sid "${MOCK_SPAWNER_SID:-sid-dispatcher}" \
+    '{result:{pane:{pane_id:"p_orch",terminal_id:"term_ORCH",workspace_id:"ws_1",tab_id:"tab_1",agent:"claude",agent_session:$sid,foreground_cwd:$cwd,cwd:$cwd}}}'
+  exit 0
+fi
+if [[ "${1:-} ${2:-}" == "pane process-info" ]]; then
+  jq -n --arg cwd "${MOCK_SPAWNER_CWD:-/mock/cwd}" \
+    '{result:{process_info:{pane_id:"p_orch",foreground_processes:[{pid:4242,name:"claude",argv:["claude"],cwd:$cwd}]}}}'
+  exit 0
+fi
+exec "@TESTS_DIR@/mock-herdr-spawn" "$@"
+MOCK_HERDR
+sed -i "s|@TESTS_DIR@|$TESTS_DIR|" "$MOCKBIN/herdr"
+chmod +x "$MOCKBIN/herdr"
 ln -s "$TESTS_DIR/mock-hcom-spawn" "$MOCKBIN/hcom"
 # No-op sleep: every wait loop in herder spawn/herder send advances by iteration
 # counter, not wall clock, so this is pure speed-up with identical behavior.
@@ -113,13 +129,27 @@ run_spawn() {
 		for arg in "$@"; do [[ "$arg" == "--prompt" ]] && needs_sender=1; done
 	fi
 	sender_bus="${SPAWN_SENDER_BUS:-dispatcher-rive}"
-	default_sender="{\"kind\":\"session\",\"guid\":\"${SPAWN_HERDER_GUID:-guid-dispatcher}\",\"event\":\"seated\",\"state\":\"seated\",\"label\":\"dispatcher\",\"role\":\"lead\",\"tool\":\"claude\",\"seat\":{\"kind\":\"herdr\",\"terminal_id\":\"term_ORCH\",\"pane_id\":\"p_orch\",\"hcom_name\":\"$sender_bus\",\"namespace\":\"$CASE/home/.hcom\"}}"
+	default_sender="{\"kind\":\"session\",\"guid\":\"${SPAWN_HERDER_GUID:-guid-dispatcher}\",\"event\":\"seated\",\"state\":\"seated\",\"label\":\"dispatcher\",\"role\":\"lead\",\"tool\":\"claude\",\"seat\":{\"kind\":\"herdr\",\"terminal_id\":\"term_ORCH\",\"pane_id\":\"p_orch\",\"hcom_name\":\"$sender_bus\",\"namespace\":\"$CASE/home/.hcom\"},\"sids\":[{\"sid\":\"sid-dispatcher\",\"source\":\"harvest\"}]}"
   # Optional pre-seed so a scenario can give the spawner a registry identity
   # (e.g. a bus-bound orchestrator row that --notify resolves against).
 	if [[ "$needs_sender" -eq 1 && -z "${SPAWN_NO_DEFAULT_SENDER:-}" && -z "${SPAWN_SEED_IS_SELF:-}" ]]; then
 		printf '%s\n' "$default_sender" >"$CASE/state/registry.jsonl"
 	fi
 	[[ -n "${SPAWN_SEED_REGISTRY:-}" ]] && printf '%s\n' "$SPAWN_SEED_REGISTRY" >>"$CASE/state/registry.jsonl"
+	local probe_sid probe_slug probe_cohort
+	probe_sid="${SPAWN_PROBE_SID:-$(jq -sr --arg guid "${SPAWN_HERDER_GUID:-}" '
+	  [ .[] | select(($guid != "" and .guid == $guid) or ($guid == "" and ((.seat.pane_id // .pane_id) == "p_orch"))) |
+	    (.sids[-1].sid // .provenance.tool_session_id // empty) ] | first // "sid-dispatcher"' "$CASE/state/registry.jsonl" 2>/dev/null)}"
+	probe_slug="$(printf '%s' "$INVOKING_CWD" | sed -E 's/[^A-Za-z0-9]/-/g')"
+	probe_cohort="$CASE/home/.claude/projects/$probe_slug"
+	mkdir -p "$probe_cohort" "$CASE/proc/4242" "$CASE/proc/4243"
+	printf '{}\n' >"$probe_cohort/$probe_sid.jsonl"
+	printf 'claude\n' >"$CASE/proc/4242/comm"
+	printf 'Name:\tclaude\nPid:\t4242\nPPid:\t1\n' >"$CASE/proc/4242/status"
+	printf 'HERDR_PANE_ID=p_orch\0' >"$CASE/proc/4242/environ"
+	ln -s "$INVOKING_CWD" "$CASE/proc/4242/cwd"
+	printf 'herder\n' >"$CASE/proc/4243/comm"
+	printf 'Name:\therder\nPid:\t4243\nPPid:\t4242\n' >"$CASE/proc/4243/status"
   RUN_ERR_F="$CASE/stderr"
   RUN_OUT="$(env -i \
     PATH="$PATH_HERMETIC" \
@@ -133,11 +163,12 @@ run_spawn() {
     HCOM_SESSION_ID="${SPAWN_HCOM_SESSION_ID:-}" \
     HERDER_TEAM="${SPAWN_HERDER_TEAM:-}" \
     HERDER_STATE_DIR="$CASE/state" \
+    HERDER_PROBE_PROC_ROOT="$CASE/proc" HERDER_PROBE_SELF_PID=4243 \
     HERDER_SPAWN_SHELL=/bin/zsh \
     HERDER_SPAWN_BIND_MS="${SPAWN_BIND_MS:-60000}" \
     HERDER_SPAWN_VERIFY_MS="${SPAWN_VERIFY_MS:-1000}" \
     MOCK_SPAWN_SCENARIO="$herdr_scen" MOCK_SPAWN_AGENT="$agent_kind" \
-    MOCK_SPAWN_STATE="$CASE/mock" MOCK_PROBE_DIR="$CASE/probe" MOCK_SPAWNER_CWD="$INVOKING_CWD" \
+    MOCK_SPAWN_STATE="$CASE/mock" MOCK_PROBE_DIR="$CASE/probe" MOCK_SPAWNER_CWD="$INVOKING_CWD" MOCK_SPAWNER_SID="$probe_sid" \
     MOCK_SPAWNER_BUS="$sender_bus" \
     MOCK_HCOM_SPAWN_SCENARIO="$hcom_scen" \
     "${HSP[@]}" "$@" 2>"$RUN_ERR_F")"
@@ -175,6 +206,9 @@ block_for() {  # assemble + normalize the golden block for the current CASE
   fi
   block="$(sed -E 's/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/<GUID>/g; s/"hostname":"[^"]*"/"hostname":"<HOST>"/g' <<<"$block")"
 	block="$(sed -E 's/[0-9a-f]{32}/<GEN>/g' <<<"$block")"
+  # The synthetic sender lineage exists only to let occupant.SelfProbe resolve
+  # this hermetic caller. Keep that test-only evidence out of legacy goldens.
+  block="$(sed 's/,"sids":\[{"sid":"sid-dispatcher","source":"harvest"}\]//' <<<"$block")"
   # started_at / closed_at ISO timestamps
   block="$(sed -E 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z/<TS>/g' <<<"$block")"
 	block="$(sed -E 's/"expires_at":"[^"]*"/"expires_at":"<TS>"/g' <<<"$block")"
@@ -538,96 +572,98 @@ if [[ "$WRITE" -eq 0 ]]; then
     bad "notify-to unresolvable: hard error before pane creation" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
 
-  # An adopted sender can have a fully seated herder row while its reclaimed
-  # hcom row carries no launch coordinates. The prompt sender gate must recover
-  # only from the exact live terminal+pane+stored-name proof class.
+  # Prompt sender identity is proved by occupant.SelfProbe lineage. Stored pane,
+  # terminal, launch context, seat state, and hcom_verified are not identity
+  # evidence; the joined bus roster only proves the recorded name addressable.
   SPAWN_HERDER_GUID="guid-adopted-0000"
   SPAWN_SENDER_BUS="adopted-bus"
   SPAWN_SEED_IS_SELF=1
-  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
+  SPAWN_PROBE_SID="sid-adopted"
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":false},"sids":[{"sid":"sid-adopted","source":"harvest"}]}'
   CASE="$ROOT/prompt_sender_empty_context"
   run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
   if [[ "$RUN_RC" -eq 0 ]] && [[ -f "$CASE/probe/pane_create_argv" ]] \
     && grep -q -- '--from adopted-bus' "$CASE/probe/send_argv"; then
-    ok "prompt sender: empty launch context accepts exact live seat fallback"
+    ok "prompt sender: occupant proof accepts an unverified reclaimed bus row"
   else
-    bad "prompt sender: empty launch context accepts exact live seat fallback" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+    bad "prompt sender: occupant proof accepts an unverified reclaimed bus row" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
 
   CASE="$ROOT/prompt_sender_foreign_terminal"
-  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_FOREIGN","pane_id":"p_foreign","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_FOREIGN","pane_id":"p_foreign","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true},"sids":[{"sid":"sid-adopted","source":"harvest"}]}'
   run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
-  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
-    ok "prompt sender fallback: foreign terminal/pane refuses before launch"
+  if [[ "$RUN_RC" -eq 0 ]] && [[ -f "$CASE/probe/pane_create_argv" ]]; then
+    ok "prompt sender: stored terminal/pane do not override occupant proof"
   else
-    bad "prompt sender fallback: foreign terminal/pane refuses before launch" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+    bad "prompt sender: stored terminal/pane do not override occupant proof" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
 
   CASE="$ROOT/prompt_sender_context_mismatch"
-  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true},"sids":[{"sid":"sid-adopted","source":"harvest"}]}'
   run_spawn ready claude wrongctx --role worker --agent claude --prompt "do the thing"
-  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
-    ok "prompt sender fallback: nonempty mismatched context refuses"
+  if [[ "$RUN_RC" -eq 0 ]] && [[ -f "$CASE/probe/pane_create_argv" ]]; then
+    ok "prompt sender: launch context does not override occupant proof"
   else
-    bad "prompt sender fallback: nonempty mismatched context refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+    bad "prompt sender: launch context does not override occupant proof" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
 
   CASE="$ROOT/prompt_sender_duplicate_bus"
   run_spawn ready claude emptyctx_duplicate --role worker --agent claude --prompt "do the thing"
   if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
-    ok "prompt sender fallback: duplicate joined stored name refuses"
+    ok "prompt sender: duplicate joined recorded name refuses"
   else
-    bad "prompt sender fallback: duplicate joined stored name refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+    bad "prompt sender: duplicate joined recorded name refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
 
   CASE="$ROOT/prompt_sender_name_mismatch"
-  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"different-bus","namespace":"/hcom","hcom_verified":true}}'
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"different-bus","namespace":"/hcom","hcom_verified":true},"sids":[{"sid":"sid-adopted","source":"harvest"}]}'
   run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
   if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
-    ok "prompt sender fallback: stored/live bus-name mismatch refuses"
+    ok "prompt sender: recorded name absent from roster refuses"
   else
-    bad "prompt sender fallback: stored/live bus-name mismatch refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+    bad "prompt sender: recorded name absent from roster refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
 
   CASE="$ROOT/prompt_sender_unseated"
-  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"reconciled","recorded_at":"2026-07-03T00:00:00Z","state":"unseated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"reconciled","recorded_at":"2026-07-03T00:00:00Z","state":"unseated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true},"sids":[{"sid":"sid-adopted","source":"harvest"}]}'
   run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
-  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
-    ok "prompt sender fallback: unseated row refuses"
+  if [[ "$RUN_RC" -eq 0 ]] && [[ -f "$CASE/probe/pane_create_argv" ]]; then
+    ok "prompt sender: occupant proof is independent of seat state"
   else
-    bad "prompt sender fallback: unseated row refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+    bad "prompt sender: occupant proof is independent of seat state" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
 
   CASE="$ROOT/prompt_sender_unverified_registry_bus"
-  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":false}}'
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":false},"sids":[{"sid":"sid-adopted","source":"harvest"}]}'
   run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
-  if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
-    ok "prompt sender fallback: registry bus proof marked unverified refuses"
+  if [[ "$RUN_RC" -eq 0 ]] && [[ -f "$CASE/probe/pane_create_argv" ]]; then
+    ok "prompt sender: hcom_verified is not identity evidence"
   else
-    bad "prompt sender fallback: registry bus proof marked unverified refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+    bad "prompt sender: hcom_verified is not identity evidence" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
 
   CASE="$ROOT/prompt_sender_joined_row_absent"
-  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true}}'
+  SPAWN_SEED_REGISTRY='{"kind":"session","guid":"guid-adopted-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"dispatcher","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"adopted-bus","namespace":"/hcom","hcom_verified":true},"sids":[{"sid":"sid-adopted","source":"harvest"}]}'
   run_spawn ready claude norows --role worker --agent claude --prompt "do the thing"
   if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
-    ok "prompt sender fallback: joined stored-name row absent refuses"
+    ok "prompt sender: joined recorded-name row absent refuses"
   else
-    bad "prompt sender fallback: joined stored-name row absent refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+    bad "prompt sender: joined recorded-name row absent refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
 
-  unset SPAWN_HERDER_GUID SPAWN_SENDER_BUS SPAWN_SEED_IS_SELF SPAWN_SEED_REGISTRY
+  unset SPAWN_HERDER_GUID SPAWN_SENDER_BUS SPAWN_SEED_IS_SELF SPAWN_SEED_REGISTRY SPAWN_PROBE_SID
 
   CASE="$ROOT/prompt_sender_ambiguous_registry_self"
   SPAWN_SEED_IS_SELF=1
   SPAWN_NO_DEFAULT_SENDER=1
-  SPAWN_SEED_REGISTRY=$'{"kind":"session","guid":"guid-first-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"first","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"first-bus","namespace":"/hcom","hcom_verified":true}}\n{"kind":"session","guid":"guid-second-0000","event":"seated","recorded_at":"2026-07-03T00:00:01Z","state":"seated","label":"second","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"second-bus","namespace":"/hcom","hcom_verified":true}}'
+  SPAWN_PROBE_SID="sid-ambiguous"
+  SPAWN_SEED_REGISTRY=$'{"kind":"session","guid":"guid-first-0000","event":"seated","recorded_at":"2026-07-03T00:00:00Z","state":"seated","label":"first","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"first-bus","namespace":"/hcom","hcom_verified":true},"sids":[{"sid":"sid-ambiguous","source":"harvest"}]}\n{"kind":"session","guid":"guid-second-0000","event":"seated","recorded_at":"2026-07-03T00:00:01Z","state":"seated","label":"second","role":"orchestrator","tool":"claude","seat":{"kind":"herdr","terminal_id":"term_ORCH","pane_id":"p_orch","hcom_name":"second-bus","namespace":"/hcom","hcom_verified":true},"sids":[{"sid":"sid-ambiguous","source":"harvest"}]}'
   run_spawn ready claude emptyctx --role worker --agent claude --prompt "do the thing"
-  unset SPAWN_SEED_IS_SELF SPAWN_NO_DEFAULT_SENDER SPAWN_SEED_REGISTRY
+  unset SPAWN_SEED_IS_SELF SPAWN_NO_DEFAULT_SENDER SPAWN_SEED_REGISTRY SPAWN_PROBE_SID
   if [[ "$RUN_RC" -eq 2 ]] && [[ ! -f "$CASE/probe/pane_create_argv" ]]; then
-    ok "prompt sender fallback: ambiguous registry self refuses"
+    ok "prompt sender: ambiguous occupant proof refuses"
   else
-    bad "prompt sender fallback: ambiguous registry self refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
+    bad "prompt sender: ambiguous occupant proof refuses" "rc=$RUN_RC err=$(cat "$RUN_ERR_F")"
   fi
 
   CASE="$ROOT/derived_pane_unresolvable"
