@@ -1808,7 +1808,7 @@ func printHelp(stdout io.Writer) {
 		"  --prompt TEXT     initial prompt (or --prompt-file F): bus-capable agents get it as a",
 		"                    verified hcom message once their bus name binds; the spawner's live",
 		"                    bus identity is proven before child creation and stamped as sender;",
-		"                    an unverified spawner refuses with an enroll/repair remedy; bash gets it typed",
+		"                    an unverified spawner refuses with an owner-free recovery; bash gets it typed",
 		"  --split D         opt into the current tab with a right or down split",
 		"  --workspace ID    place in this workspace; --from-pane PANE_ID copies another pane's",
 		"  --tab ID          add to an existing tab; --new-tab explicitly selects the default fresh-tab placement",
