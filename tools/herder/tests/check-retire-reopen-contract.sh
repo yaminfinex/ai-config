@@ -23,6 +23,8 @@ case "${1:-} ${2:-}" in
     else
       jq -n --arg pane "${3:-p_enroll}" '{result:{pane:{pane_id:$pane,terminal_id:"term_enroll",cwd:"/repo",workspace_id:"ws_1"}}}'
     fi;;
+  "pane process-info")
+    jq -n '{result:{process_info:{foreground_process_group_id:9999999,foreground_processes:[{pid:9999999,name:"bash"}]}}}';;
   "agent rename")
     jq -n '{result:{type:"ok"}}';;
   "agent list")
@@ -232,9 +234,9 @@ cat >>"$CASE/state/registry.jsonl" <<'JSONL'
 {"kind":"session","guid":"guid-source-0000","event":"seated","recorded_at":"2026-07-08T00:00:05Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"source","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","pane_id":"p_enroll","terminal_id":"term_enroll"},"provenance":{"mechanism":"spawn"}}
 JSONL
 printf '[]\n' >"$CASE/hcom.json"
-run_hr adopt source --confirm-dead >/dev/null 2>"$CASE/adopt.err"
+run_hr adopt source >/dev/null 2>"$CASE/adopt.err"
 adopt_unverified_source_rc=$?
-assert "adopt fresh-enroll leg does not consult the source row's stored seat" bash -c '
+assert "adopt provably vacant source pane needs no confirm-dead flag" bash -c '
   test "$1" -eq 0 && jq -se '\''
     reduce (.[] | select(.kind=="session")) as $row ({}; .[$row.guid]=$row)
     | .["guid-source-0000"].state == "retired"
@@ -294,11 +296,11 @@ cat >>"$CASE/state/registry.jsonl" <<'JSONL'
 {"guid":"guid-live-old-0000","event":"registered","recorded_at":"2026-07-08T00:00:05Z","node":"11111111-1111-1111-1111-111111111111","state":"seated","label":"live-label","role":"worker","tool":"codex","seat":{"kind":"herdr","node":"11111111-1111-1111-1111-111111111111","pane_id":"p_elsewhere","terminal_id":"term_elsewhere"}}
 JSONL
 adopt_partial_before="$(cksum "$CASE/state/registry.jsonl")"
-run_hr adopt live-label >/dev/null 2>"$CASE/adopt-partial.err"; adopt_partial_rc=$?
+MOCK_HERDR_NULL_PANE=p_elsewhere run_hr adopt live-label >/dev/null 2>"$CASE/adopt-partial.err"; adopt_partial_rc=$?
 adopt_partial_after="$(cksum "$CASE/state/registry.jsonl")"
-assert "adopt different-pane target refuses before enrollment" bash -c 'test "$1" -ne 0 && grep -q "seated on pane p_elsewhere" "$2" && grep -q "caller occupies pane p_enroll" "$2" && grep -q "refusing before enrollment" "$2" && grep -q "herder adopt guid-live-old-0000 --confirm-dead" "$2" && ! grep -q "herder cull" "$2"' bash "$adopt_partial_rc" "$CASE/adopt-partial.err"
+assert "adopt pane-gone target refuses before enrollment without flag" bash -c 'test "$1" -ne 0 && grep -q "seated on pane p_elsewhere" "$2" && grep -q "recorded pane is gone" "$2" && grep -q "refusing before enrollment" "$2" && grep -q "herder adopt guid-live-old-0000 --confirm-dead" "$2" && ! grep -q "herder cull" "$2"' bash "$adopt_partial_rc" "$CASE/adopt-partial.err"
 assert "adopt seated pre-refusal writes no replacement row" test "$adopt_partial_before" = "$adopt_partial_after"
-run_hr adopt live-label --confirm-dead >/dev/null 2>"$CASE/adopt-confirmed.err"; adopt_confirmed_rc=$?
+MOCK_HERDR_NULL_PANE=p_elsewhere run_hr adopt live-label --confirm-dead >/dev/null 2>"$CASE/adopt-confirmed.err"; adopt_confirmed_rc=$?
 assert "adopt confirm-dead remedy runs to completion" bash -c 'test "$1" -eq 0 && grep -q "adopt: retire applied" "$2" && grep -q "adopt: bus-name verified" "$2"' bash "$adopt_confirmed_rc" "$CASE/adopt-confirmed.err"
 assert "adopt confirm-dead records atomic source unseat" jq -se '
   [.[] | select(.guid=="guid-live-old-0000" and .event=="adoption_source_released" and .state=="unseated" and .close_result=="adopted" and .close_reason=="operator confirmed old transcript dead" and (.seat|not) and (.label|not))] | length == 1
