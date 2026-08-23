@@ -281,6 +281,68 @@ func TestProbeClaudeDetectionLostUsesActiveWindow(t *testing.T) {
 	})
 }
 
+func TestProbeClaudeDetectionLostDoesNotStealSharedCohortSID(t *testing.T) {
+	f := newFixture(t)
+	cwd := filepath.Join(f.home, "shared", "repo")
+	f.proc(t, 10, 1, "bash", cwd, "")
+	f.proc(t, 30, 10, "claude", cwd, "guid-a")
+	paneA := herdrcli.Pane{PaneID: "pane-a", Agent: "claude", CWD: cwd} // detection-lost
+	paneB := herdrcli.Pane{PaneID: "pane-b", Agent: "claude", CWD: cwd, AgentSession: sidB}
+	dir := filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd))
+	pathA := filepath.Join(dir, sidA+".jsonl")
+	pathB := filepath.Join(dir, sidB+".jsonl")
+	f.transcript(t, pathA)
+	f.transcript(t, pathB)
+	newest := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(pathB, newest, newest); err != nil {
+		t.Fatal(err)
+	}
+	old := newest.Add(-claudeActivityWindow - time.Second)
+	if err := os.Chtimes(pathA, old, old); err != nil {
+		t.Fatal(err)
+	}
+	h := fakeHerdr{
+		pane:  paneA,
+		panes: []herdrcli.Pane{paneA, paneB},
+		info:  herdrcli.ProcessInfo{ForegroundProcessGroupID: 10},
+	}
+	obs := Probe(Substrate{Herdr: h, ProcRoot: f.root, Home: f.home}, paneA.PaneID)
+	if obs.Status != Occupied || obs.SID != sidA {
+		t.Fatalf("pane A stole pane B sid: %+v", obs)
+	}
+}
+
+func TestProbeClaudeBothSharedCohortPanesDetectionLostFailsClosed(t *testing.T) {
+	f := newFixture(t)
+	cwd := filepath.Join(f.home, "shared", "repo")
+	f.proc(t, 10, 1, "bash", cwd, "")
+	f.proc(t, 30, 10, "claude", cwd, "guid-a")
+	paneA := herdrcli.Pane{PaneID: "pane-a", Agent: "claude", CWD: cwd}
+	paneB := herdrcli.Pane{PaneID: "pane-b", Agent: "claude", CWD: cwd}
+	dir := filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd))
+	pathA := filepath.Join(dir, sidA+".jsonl")
+	pathB := filepath.Join(dir, sidB+".jsonl")
+	f.transcript(t, pathA)
+	f.transcript(t, pathB)
+	newest := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(pathB, newest, newest); err != nil {
+		t.Fatal(err)
+	}
+	old := newest.Add(-claudeActivityWindow - time.Second)
+	if err := os.Chtimes(pathA, old, old); err != nil {
+		t.Fatal(err)
+	}
+	h := fakeHerdr{
+		pane:  paneA,
+		panes: []herdrcli.Pane{paneA, paneB},
+		info:  herdrcli.ProcessInfo{ForegroundProcessGroupID: 10},
+	}
+	obs := Probe(Substrate{Herdr: h, ProcRoot: f.root, Home: f.home}, paneA.PaneID)
+	if obs.Status != Ambiguous || obs.SID != "" {
+		t.Fatalf("both detection-lost panes produced a pick: %+v", obs)
+	}
+}
+
 func TestProbeNestedUnprovenToolDoesNotVetoExactArtifact(t *testing.T) {
 	f := newFixture(t)
 	pane, info, cwd := baseTree(t, f, "codex")

@@ -703,6 +703,46 @@ func probeClaude(sub Substrate, pane herdrcli.Pane, tools []procEntry) Observati
 		}
 	}
 	var newest time.Time
+	otherPanes, panesErr := sub.Herdr.Panes()
+	if panesErr != nil {
+		return Observation{Pane: pane, Tool: "claude", Status: Unprobeable, Err: panesErr}
+	}
+	cohorts := map[string]bool{}
+	for _, e := range claudes {
+		cohorts[mungeCWD(e.cwd)] = true
+	}
+	reportedElsewhere := map[string]bool{}
+	unresolvedPeer := false
+	for _, other := range otherPanes {
+		if other.PaneID == pane.PaneID {
+			continue
+		}
+		if other.AgentSession != "" {
+			reportedElsewhere[other.AgentSession] = true
+			continue
+		}
+		otherCWD := other.ForegroundCWD
+		if otherCWD == "" {
+			otherCWD = other.CWD
+		}
+		if (otherCWD != "" && cohorts[mungeCWD(otherCWD)]) || (otherCWD == "" && other.Agent == "claude") {
+			// When both same-cohort panes lose agent_session, cohort evidence
+			// has no pid-to-sid join and cannot say which transcript belongs to
+			// which pane. This is the accepted residual from contract §5.1:
+			// fail closed rather than allowing recency to pick an owner.
+			unresolvedPeer = true
+		}
+	}
+	if unresolvedPeer {
+		return Observation{Pane: pane, Tool: "claude", Status: Ambiguous}
+	}
+	eligible := cs[:0]
+	for _, c := range cs {
+		if !reportedElsewhere[c.sid] {
+			eligible = append(eligible, c)
+		}
+	}
+	cs = eligible
 	for _, c := range cs {
 		if c.mtime.After(newest) {
 			newest = c.mtime
