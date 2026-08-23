@@ -1,7 +1,7 @@
 ---
 id: TASK-311
 title: 'slim-down: adopt/enroll — delete the repair leg and the circularity'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-23 11:53'
 labels:

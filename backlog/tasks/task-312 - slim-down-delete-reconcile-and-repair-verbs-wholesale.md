@@ -1,7 +1,7 @@
 ---
 id: TASK-312
 title: 'slim-down: delete reconcile and repair verbs wholesale'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-23 11:53'
 labels:
