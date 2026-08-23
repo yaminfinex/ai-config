@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/occupant"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 	"ai-config/tools/herder/internal/seatcred"
@@ -199,18 +200,38 @@ func TestDifferentPaneRemedyIsAcceptedByParser(t *testing.T) {
 	}
 }
 
-func TestResumedSessionAssertionIsAcceptedByParser(t *testing.T) {
-	var stdout, stderr strings.Builder
-	opts, code := parseArgs([]string{"guid-previous", "--confirm-resumed-session"}, &stdout, &stderr)
-	if code != 0 || opts.target != "guid-previous" || !opts.confirmResumedSession {
-		t.Fatalf("parseArgs = %+v, code %d, stderr %q", opts, code, stderr.String())
+func TestResumeSIDForAdoptionRequiresOccupantLineageMatch(t *testing.T) {
+	old := v2.SessionRecord{
+		GUID: "guid-previous",
+		Tool: "codex",
+		SIDs: []v2.SID{{SID: "sid-resumed"}},
+	}
+	matched := occupant.Observation{Status: occupant.Occupied, Tool: "codex", SID: "sid-resumed", Transcript: "/rollout/sid-resumed.jsonl", Evidence: []occupant.Signal{occupant.SignalFD}}
+	if got := resumeSIDForAdoption(matched, old); got != "sid-resumed" {
+		t.Fatalf("resumeSIDForAdoption(match) = %q", got)
+	}
+	mismatched := matched
+	mismatched.SID = "sid-foreign"
+	if got := resumeSIDForAdoption(mismatched, old); got != "" {
+		t.Fatalf("resumeSIDForAdoption(mismatch) = %q, want empty", got)
 	}
 }
 
-func TestPinnedReEnrollHintCarriesLabelOwnershipClaim(t *testing.T) {
-	got := pinnedReEnroll(v2.SessionRecord{GUID: "guid-current", Label: "renamed-label", Role: "designer"}, "sid-current")
-	if want := "HCOM_SESSION_ID=sid-current HERDER_GUID=guid-current HERDER_LABEL=renamed-label herder enroll"; got != want {
-		t.Fatalf("pinnedReEnroll() = %q, want %q", got, want)
+func TestRemovedResumedSessionFlagIsRejected(t *testing.T) {
+	var stdout, stderr strings.Builder
+	if _, code := parseArgs([]string{"guid-previous", "--confirm-resumed-session"}, &stdout, &stderr); code == 0 {
+		t.Fatalf("removed flag parsed successfully")
+	}
+}
+
+func TestAdoptHelpKeepsConfirmDeadAndDropsResumedAssertion(t *testing.T) {
+	var help strings.Builder
+	printHelp(&help)
+	if !strings.Contains(help.String(), "--confirm-dead") {
+		t.Fatalf("help dropped --confirm-dead: %q", help.String())
+	}
+	if strings.Contains(help.String(), "--confirm-resumed-session") {
+		t.Fatalf("help retained removed resumed-session assertion: %q", help.String())
 	}
 }
 
