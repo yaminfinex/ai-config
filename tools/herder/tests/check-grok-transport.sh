@@ -25,6 +25,15 @@ if [[ -z $real_hcom || ! -x $real_hcom ]]; then
   printf 'GROK TRANSPORT GATE BLOCKED — real hcom %s is unavailable; install it or set HERDER_TEST_HCOM_BIN to its executable path. Real-bus tests cannot be skipped.\n' "$HCOM_PIN" >&2
   exit 1
 fi
+# The mise shim re-reads mise config on every exec; the real-hcom contract
+# tests run it under a synthetic $HOME where no trust store exists, so every
+# invocation dies before hcom starts. Hand the tests the concrete installed
+# binary instead.
+if [[ $real_hcom == */mise/shims/hcom ]]; then
+  if mise_target=$(mise which hcom 2>/dev/null) && [[ -x $mise_target ]]; then
+    real_hcom=$mise_target
+  fi
+fi
 if version=$($real_hcom --version 2>&1); then :; else
   printf 'GROK TRANSPORT GATE BLOCKED — cannot execute %s --version; repair the installation or set HERDER_TEST_HCOM_BIN correctly.\n' "$real_hcom" >&2
   exit 1

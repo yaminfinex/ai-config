@@ -3,4 +3,7 @@ go = "1.26.5"
 "npm:backlog.md" = "1.47.1"
 
 [env]
-MISSIONS_REPO = "{{env.HOME}}/Coding/missions"
+# config_root, not env.HOME: scrubbed-env invocations (grokbridge seat-scrub
+# tests, launch-scoped shims) have no HOME and a template miss kills every
+# mise-shim exec in the repo.
+MISSIONS_REPO = "{{config_root}}/../missions"
