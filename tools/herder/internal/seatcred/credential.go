@@ -27,6 +27,8 @@ const (
 	credentialDir = "credentials"
 	cutoverFile   = "cutover-v1"
 	maxFileBytes  = 4096
+
+	MissingCredentialRecovery = "unset stale HERDER_*/HCOM_* identity values and run `herder enroll` to create a fresh seat"
 )
 
 // CutoverEnabled reports whether the owner has completed the literal-100%
@@ -292,7 +294,7 @@ func Authenticate(registryPath, presentedPath string) (Selection, error) {
 	canonicalPath := CredentialPath(registryPath, row.GUID, current)
 	canonical, _, err := readCredential(canonicalPath)
 	if err != nil {
-		return Selection{}, fmt.Errorf("current credential file is unavailable; run `herder repair reissue-credential --guid %s`: %w", row.GUID, err)
+		return Selection{}, fmt.Errorf("current credential file is unavailable; %s: %w", MissingCredentialRecovery, err)
 	}
 	if canonical.Version != Version || canonical.GUID != row.GUID || canonical.Generation != current || subtle.ConstantTimeCompare([]byte(presented.Token), []byte(canonical.Token)) != 1 {
 		return Selection{}, errors.New("presented credential does not match the registry-current canonical credential")

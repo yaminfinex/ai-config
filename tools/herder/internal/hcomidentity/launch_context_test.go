@@ -192,7 +192,7 @@ func TestLaunchContextRefusalRemediesAreCodeSpecific(t *testing.T) {
 		doNotWant string
 	}{
 		{code: "launch_context_schema_mismatch", want: "compatible hcom data directory"},
-		{code: "launch_context_pane_conflict", want: "still live in herdr", doNotWant: "herder reconcile --apply"},
+		{code: "launch_context_pane_conflict", want: "still live in herdr"},
 		{code: "launch_context_row_missing", want: "Join @live-self to hcom first", doNotWant: "compatible hcom data directory"},
 		{code: "launch_context_row_ambiguous", want: "duplicate @live-self instance rows", doNotWant: "compatible hcom data directory"},
 	}

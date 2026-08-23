@@ -175,7 +175,7 @@ func inspectCoverage(path string, projection *v2.Projection) sweepReport {
 func currentCredentialBlocker(path string, row v2.SessionRecord) string {
 	credentialPath := seatcred.CredentialPath(path, row.GUID, row.Seat.CredentialGeneration)
 	if _, err := seatcred.Authenticate(path, credentialPath); err != nil {
-		return fmt.Sprintf("%s: current credential unavailable (%v); run `herder repair reissue-credential --guid %s`", row.GUID, err, row.GUID)
+		return fmt.Sprintf("%s: current credential unavailable (%v); %s", row.GUID, err, seatcred.MissingCredentialRecovery)
 	}
 	return ""
 }

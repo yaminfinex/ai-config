@@ -56,14 +56,6 @@ func TestSeatedRewriteEventInventoryCarriesUnownedSeatFacts(t *testing.T) {
 		{name: "mission_left", candidate: func() v2.SessionRecord {
 			return v2.SessionRecord{GUID: current.GUID, Event: "mission_left"}
 		}},
-		{name: "attested_binding", candidate: func() v2.SessionRecord {
-			row := canonical(v2.EventAttestedBinding)
-			row.Attestations = []v2.Attestation{{
-				ID: "attestation-reissue", GUID: current.GUID, Operation: v2.AttestationReissueCredential,
-				Statement: "authorize credential rotation", PaneID: "pane-next", ObservedAt: "2026-07-18T00:01:00Z",
-			}}
-			return row
-		}},
 	}
 
 	for _, tt := range tests {
@@ -133,7 +125,7 @@ func TestSeatedNilSeatAppendCannotErasePersistedSeat(t *testing.T) {
 
 func TestSeatedCarryAllowsOwnedCredentialRotation(t *testing.T) {
 	current := v2.SessionRecord{GUID: "guid-rotate", State: v2.StateSeated, Seat: &v2.Seat{Kind: "process", PID: 41, CredentialGeneration: "generation-old"}}
-	candidate := v2.SessionRecord{GUID: current.GUID, Event: v2.EventAttestedBinding, State: v2.StateSeated, Seat: &v2.Seat{Kind: "process", PID: 41, CredentialGeneration: "generation-new"}}
+	candidate := v2.SessionRecord{GUID: current.GUID, Event: "seated", State: v2.StateSeated, Seat: &v2.Seat{Kind: "process", PID: 41, CredentialGeneration: "generation-new"}}
 	got := carrySeatedSuccessorFacts(candidate, current)
 	if got.Seat == nil || got.Seat.CredentialGeneration != "generation-new" {
 		t.Fatalf("credential generation = %+v, want nonempty candidate rotation", got.Seat)
@@ -177,21 +169,8 @@ func TestSeatRewriteWriterPinsDependOnStructuralCarry(t *testing.T) {
 		{name: "spawn replay", source: "spawncmd/spawn.go", build: func(current v2.SessionRecord) v2.SessionRecord {
 			return v2.SessionRecord{GUID: current.GUID, Event: "registered", State: v2.StateSeated, Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat()}
 		}},
-		{name: "repair attestation", source: "repaircmd/repair.go", build: func(current v2.SessionRecord) v2.SessionRecord {
-			return v2.SessionRecord{
-				GUID: current.GUID, Event: v2.EventAttestedBinding, State: v2.StateSeated,
-				Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat(),
-				Attestations: []v2.Attestation{{
-					ID: "attestation-reissue", GUID: current.GUID, Operation: v2.AttestationReissueCredential,
-					Statement: "authorize credential rotation", PaneID: "pane-live", ObservedAt: "2026-07-18T00:01:00Z",
-				}},
-			}
-		}},
 		{name: "lifecycle reseat", source: "lifecyclecmd/lifecycle.go", build: func(current v2.SessionRecord) v2.SessionRecord {
 			return v2.SessionRecord{GUID: current.GUID, Event: "seated", State: v2.StateSeated, Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat(), ObservedVia: "lifecycle reseat"}
-		}},
-		{name: "reconcile apply", source: "reconcilecmd/reconcile.go", build: func(current v2.SessionRecord) v2.SessionRecord {
-			return v2.SessionRecord{GUID: current.GUID, Event: "seated", State: v2.StateSeated, Label: current.Label, Role: current.Role, Tool: current.Tool, Seat: canonicalSeat(), ObservedVia: "reconcile apply"}
 		}},
 	}
 

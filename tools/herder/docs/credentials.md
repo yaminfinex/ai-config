@@ -35,15 +35,16 @@ exists but is unreadable, has non-0600 permissions, or has invalid content makes
 verbs fail closed with a repair/intentional-rollback remedy; it never silently
 restores ambient authority. A stale credential reports the current non-secret
 lookup command, `herder credential path --guid GUID`. A row that names a
-generation whose file is missing is token loss, not a legacy row; recover it
-only with the interactive, audited command:
+generation whose file is missing is token loss, not a legacy row. Recover by
+unsetting inherited `HERDER_*`/`HCOM_*` identity values and enrolling the live
+pane as a fresh seat:
 
 ```text
-herder repair reissue-credential --guid GUID
+herder enroll
 ```
 
-Reissue rotates only the credential. It does not change the guid, label, bus
-name, seat, transcript continuity, or provenance.
+This intentionally creates a fresh guid and credential. Once the prior seat is
+unseated, `herder adopt` can explicitly take its label.
 
 Fresh-self operations remain intentionally possible without an existing token:
 a promptless spawn and a fresh enroll mint a new guid and its first credential.

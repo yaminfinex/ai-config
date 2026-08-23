@@ -1107,7 +1107,7 @@ func advisoryFlags(proj *v2.Projection, hd herdrState) []observerstatus.Flag {
 				Type:       "dormant-live",
 				Severity:   "warning",
 				Detail:     "unseated registry row has live matching pane label",
-				Suggested:  "herder enroll or herder reconcile --apply",
+				Suggested:  "run herder enroll from the intended live pane",
 				TerminalID: pane.TerminalID,
 				PaneID:     pane.PaneID,
 			})
@@ -1205,7 +1205,7 @@ func epochFlags(proj *v2.Projection, hd herdrState) []observerstatus.Flag {
 			Type:      "epoch-doubt",
 			Severity:  "warning",
 			Detail:    "no recorded seated terminal ids appear in the current snapshot; absence verdicts paused",
-			Suggested: "herder reconcile",
+			Suggested: "restart the affected live tools so they re-report, then run herder list",
 		}}
 	}
 	if recorded == 1 && overlap == 0 {
@@ -1219,7 +1219,7 @@ func epochFlags(proj *v2.Projection, hd herdrState) []observerstatus.Flag {
 				Type:       "epoch-doubt",
 				Severity:   "warning",
 				Detail:     "single recorded terminal absent after a connection gap without dead-bus corroboration",
-				Suggested:  "herder reconcile",
+				Suggested:  "restart the affected live tool so it re-reports, then run herder list",
 				TerminalID: rec.Seat.TerminalID,
 				PaneID:     rec.Seat.PaneID,
 			}}

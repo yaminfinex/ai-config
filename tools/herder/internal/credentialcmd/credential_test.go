@@ -78,7 +78,7 @@ func TestEnableRefusesWhenCurrentCredentialIsMissing(t *testing.T) {
 	if code := Run([]string{"enable"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("enable code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
-	for _, want := range []string{"blocker: guid-process: current credential unavailable", "herder repair reissue-credential --guid guid-process"} {
+	for _, want := range []string{"blocker: guid-process: current credential unavailable", "unset stale HERDER_*/HCOM_* identity values", "herder enroll"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("enable refusal missing %q: stdout=%q stderr=%q", want, stdout.String(), stderr.String())
 		}
@@ -139,7 +139,7 @@ func TestSweepTreatsMissingCurrentFileAsTokenLoss(t *testing.T) {
 	if code := Run([]string{"sweep"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("sweep code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "repair reissue-credential") || !strings.Contains(stderr.String(), "coverage is incomplete") {
+	if !strings.Contains(stdout.String(), "herder enroll") || !strings.Contains(stderr.String(), "coverage is incomplete") {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 	projection, err := v2.LoadFile(path, v2.LoadOptions{})

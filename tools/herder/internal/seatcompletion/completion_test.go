@@ -227,7 +227,7 @@ func TestBusRosterFailureRefusesWithoutTreatingOutageAsAbsence(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	result, err := engine.Complete(context.Background(), Request{
-		Origin:       OriginReconcile,
+		Origin:       OriginRecognition,
 		RegistryPath: path,
 		Candidate:    v2.SessionRecord{GUID: "guid-outage", Tool: "codex"},
 		Seat:         SeatClaim{Kind: SeatHerdr, PaneID: "pane-live"},
@@ -267,101 +267,6 @@ func TestMultipleMatchingBusRowsFailClosed(t *testing.T) {
 	}
 }
 
-func TestAttestedBusBindingRequiresExactlyOneJoinedNamedRow(t *testing.T) {
-	complete := func(t *testing.T, attested AttestedBinding, rows []hcomidentity.Row) Result {
-		t.Helper()
-		engine := testEngine(t)
-		engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) { return rows, nil }
-		engine.RepairLaunchContext = func(string, string, string) hcomidentity.LaunchContextRepair {
-			return hcomidentity.LaunchContextRepair{Status: "written"}
-		}
-		result, err := engine.Complete(context.Background(), Request{
-			Origin:       OriginReclaim,
-			RegistryPath: filepath.Join(t.TempDir(), "registry.jsonl"),
-			Candidate:    v2.SessionRecord{GUID: "guid-attested", Tool: "codex"},
-			Seat:         SeatClaim{Kind: SeatHerdr, PaneID: "pane-live"},
-			Attested:     &attested,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return result
-	}
-
-	attested := AttestedBinding{Field: v2.BindingFieldHcomName, Value: "attested-bus"}
-	result := complete(t, attested, joinedRows(hcomidentity.Row{Name: "attested-bus"}))
-	if result.Refusal != nil {
-		t.Fatalf("attested completion refused: %+v", result.Refusal)
-	}
-	row := decodeCompletedRow(t, result.Row)
-	if len(row.Bindings) != 2 || row.Bindings[1].Field != v2.BindingFieldHcomName || row.Bindings[1].EvidenceClass != v2.EvidenceAttested {
-		t.Fatalf("attested bindings = %+v", row.Bindings)
-	}
-
-	wrongField := complete(t, AttestedBinding{Field: v2.BindingFieldSeat, Value: "attested-bus"}, joinedRows(hcomidentity.Row{Name: "attested-bus"}))
-	if wrongField.Refusal == nil || wrongField.Refusal.Code != RefusalAttestation {
-		t.Fatalf("wrong-field attestation = %+v, want attestation refusal", wrongField)
-	}
-
-	duplicate := complete(t, attested, joinedRows(
-		hcomidentity.Row{Name: "attested-bus"},
-		hcomidentity.Row{Name: "attested-bus"},
-	))
-	if duplicate.Refusal == nil || duplicate.Refusal.Code != RefusalBusAmbiguous {
-		t.Fatalf("duplicate attestation = %+v, want ambiguity refusal", duplicate)
-	}
-}
-
-func TestAttestedBindingIsValidatedEvenWhenLiveResolutionSucceeds(t *testing.T) {
-	joined := true
-	for _, attested := range []AttestedBinding{
-		{Field: v2.BindingFieldSeat, Value: "bus-live"},
-		{Field: v2.BindingFieldHcomName, Value: ""},
-	} {
-		engine := testEngine(t)
-		engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
-			return []hcomidentity.Row{{Name: "bus-live", Joined: &joined, SessionID: "session-live", LaunchContext: hcomidentity.LaunchContext{PaneID: "pane-live"}}}, nil
-		}
-		result, err := engine.Complete(context.Background(), Request{
-			Origin:       OriginReclaim,
-			RegistryPath: filepath.Join(t.TempDir(), "registry.jsonl"),
-			Candidate:    v2.SessionRecord{GUID: "guid-invalid-attestation", Tool: "codex"},
-			Seat:         SeatClaim{Kind: SeatHerdr, PaneID: "pane-live"},
-			Evidence:     hcomidentity.Evidence{SessionID: "session-live"},
-			Attested:     &attested,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if result.Refusal == nil || result.Refusal.Code != RefusalAttestation {
-			t.Fatalf("invalid attestation %+v result = %+v, want attestation refusal", attested, result)
-		}
-	}
-}
-
-func TestUnusedValidAttestationDoesNotDowngradeLiveEvidence(t *testing.T) {
-	joined := true
-	engine := testEngine(t)
-	engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) {
-		return []hcomidentity.Row{{Name: "bus-live", Joined: &joined, SessionID: "session-live", LaunchContext: hcomidentity.LaunchContext{PaneID: "pane-live"}}}, nil
-	}
-	result, err := engine.Complete(context.Background(), Request{
-		Origin:       OriginReclaim,
-		RegistryPath: filepath.Join(t.TempDir(), "registry.jsonl"),
-		Candidate:    v2.SessionRecord{GUID: "guid-live-attestation", Tool: "codex"},
-		Seat:         SeatClaim{Kind: SeatHerdr, PaneID: "pane-live"},
-		Evidence:     hcomidentity.Evidence{SessionID: "session-live"},
-		Attested:     &AttestedBinding{Field: v2.BindingFieldHcomName, Value: "bus-live"},
-	})
-	if err != nil || result.Refusal != nil {
-		t.Fatalf("Complete() = %+v err=%v", result, err)
-	}
-	row := decodeCompletedRow(t, result.Row)
-	if len(row.Bindings) != 2 || row.Bindings[1].EvidenceClass != v2.EvidenceLiveVerified {
-		t.Fatalf("bindings = %+v, want live-verified bus evidence", row.Bindings)
-	}
-}
-
 func TestCompletionSurfacesNoopWriteStatus(t *testing.T) {
 	engine := testEngine(t)
 	engine.UpdateRegistry = func(string, registry.LockedUpdateFunc) ([]registry.WriteOutcome, error) {
@@ -392,7 +297,7 @@ func TestCompletionUsesSurvivingAttestedBindingOnlyWhenLiveEvidenceAbsent(t *tes
 	}
 	verified := true
 	candidate := v2.SessionRecord{
-		GUID: "guid-corrected", Event: v2.EventAttestedBinding, Tool: "codex",
+		Kind: v2.KindSession, GUID: "guid-corrected", Event: v2.EventAttestedBinding, State: v2.StateSeated, Tool: "codex",
 		Seat: &v2.Seat{Kind: SeatHerdr, PaneID: "pane-live", TerminalID: "terminal-live", HcomName: "bus-repaired", HcomVerified: &verified},
 		Bindings: []v2.BindingFact{
 			{ID: "seat-live", Field: v2.BindingFieldSeat, EvidenceClass: v2.EvidenceLiveVerified, ObservedAt: "2026-07-17T00:00:00Z", Seat: &v2.BindingSeat{Kind: SeatHerdr, PaneID: "pane-live", TerminalID: "terminal-live"}},
@@ -403,22 +308,21 @@ func TestCompletionUsesSurvivingAttestedBindingOnlyWhenLiveEvidenceAbsent(t *tes
 		BindingTombstones: []v2.BindingTombstone{{BindingID: "bus-stale", Field: v2.BindingFieldHcomName, CorrectionBindingID: "bus-repaired-id", AttestationID: "attestation-id", TombstonedAt: "2026-07-17T00:01:00Z"}},
 	}
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) { return []v2.SessionRecord{candidate}, nil })
+	raw, err := json.Marshal(candidate)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, outcome := range outcomes {
-		if err := outcome.Err(); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	projection, err := v2.LoadFile(path, v2.LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	candidate = projection.Sessions()[0]
+	candidate.Event = ""
 	result, err := engine.Complete(context.Background(), Request{
-		Origin: OriginReconcile, RegistryPath: path, Candidate: candidate,
+		Origin: OriginRecognition, RegistryPath: path, Candidate: candidate,
 		Seat: SeatClaim{Kind: SeatHerdr, PaneID: "pane-live"}, ObservedPane: &LivePane{PaneID: "pane-live", TerminalID: "terminal-live"},
 		RequireBus: true,
 	})
@@ -435,7 +339,7 @@ func TestCompletionDoesNotArmHistoryWhenBusRosterUnavailable(t *testing.T) {
 	engine := testEngine(t)
 	engine.ListBus = func(context.Context, string) ([]hcomidentity.Row, error) { return nil, errors.New("outage") }
 	result, err := engine.Complete(context.Background(), Request{
-		Origin: OriginReconcile, RegistryPath: filepath.Join(t.TempDir(), "registry.jsonl"),
+		Origin: OriginRecognition, RegistryPath: filepath.Join(t.TempDir(), "registry.jsonl"),
 		Candidate: v2.SessionRecord{GUID: "guid-outage", Tool: "codex", Bindings: []v2.BindingFact{{ID: "bus-attested", Field: v2.BindingFieldHcomName, Value: "bus-repaired", EvidenceClass: v2.EvidenceAttested, ObservedAt: "2026-07-17T00:01:00Z"}}},
 		Seat:      SeatClaim{Kind: SeatHerdr, PaneID: "pane-live"}, ObservedPane: &LivePane{PaneID: "pane-live", TerminalID: "terminal-live"}, RequireBus: true,
 	})
@@ -464,7 +368,7 @@ func TestNarrowEmptyContextFallbackRequiresUnchangedVerifiedSeat(t *testing.T) {
 			return hcomidentity.LaunchContextRepair{Status: "written"}
 		}
 		result, err := engine.Complete(context.Background(), Request{
-			Origin:       OriginReconcile,
+			Origin:       OriginRecognition,
 			RegistryPath: filepath.Join(t.TempDir(), "registry.jsonl"),
 			Candidate:    v2.SessionRecord{GUID: "guid-fallback", Tool: "codex"},
 			Seat:         SeatClaim{Kind: SeatHerdr, PaneID: "pane-live"},
@@ -488,7 +392,7 @@ func TestNarrowEmptyContextFallbackRequiresUnchangedVerifiedSeat(t *testing.T) {
 }
 
 func TestCompletionOriginsProduceIdenticalSeatJSONForEverySeatKind(t *testing.T) {
-	origins := []Origin{OriginSpawn, OriginEnroll, OriginEnrollRepair, OriginAdopt, OriginReclaim, OriginResume, OriginReconcile, OriginRecognition}
+	origins := []Origin{OriginSpawn, OriginEnroll, OriginEnrollRepair, OriginAdopt, OriginReclaim, OriginResume, OriginRecognition}
 	shapes := []struct {
 		name      string
 		tool      string
