@@ -27,13 +27,26 @@ Restored 2026-08-23 with `herdr integration install claude` (idempotent).
 
 ## Acceptance criteria
 
-- [ ] check-live-contract.sh (or a sibling check) asserts the herdr
+- [x] check-live-contract.sh (or a sibling check) asserts the herdr
       SessionStart registration is present in ~/.claude/settings.json, so
       the wipe class fails a gate instead of silently degrading resolution
       evidence.
-- [ ] The assertion distinguishes "hook script missing" from "settings
+- [x] The assertion distinguishes "hook script missing" from "settings
       registration missing" in its failure message.
 - [ ] Note filed upstream (herdr): `integration status` should verify the
       live registration, not just the script file.
 - [ ] Optional follow-up recorded if the settings-rewrite writer is
       identified.
+
+## Gate shipped — 2026-08-24
+
+check-live-contract.sh now pins both registrations in the real
+~/.claude/settings.json: the herdr SessionStart hook (registration
+presence and hook-script-on-disk are distinct failures with distinct
+remedies) AND the hcom sessionstart hook, which post-teardown is the
+only self-registration path onto the bus — the same wipe class would
+sever both. A negative demo runs the same assertion against a
+wipe-signature fixture (valid JSON, user hooks intact, registrations
+gone) and must reject it. Live run: PASS=16 FAIL=0 SKIP=0; full
+battery + fleet suite 18/18 green. Remaining: the upstream note to the
+herdr maintainer (no tracker known from this box) — owner to route.

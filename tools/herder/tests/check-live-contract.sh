@@ -665,6 +665,61 @@ check_snapshot_negative_demo() {
   fi
 }
 
+# TASK-317: on 2026-08-21 a wholesale rewrite of ~/.claude/settings.json
+# silently dropped the herdr SessionStart hook registration — every claude
+# started afterwards looked session-less fleet-wide, and `herdr integration
+# status` did not catch it because it verifies the hook script FILE, not the
+# settings registration. Post-teardown the same wipe class would also strip
+# hcom's hooks, the only remaining self-registration path onto the bus. These
+# checks pin the live registrations so the wipe class fails a gate.
+
+claude_sessionstart_commands() {
+  jq -r '.hooks.SessionStart[]?.hooks[]?.command // empty' "$1" 2>/dev/null
+}
+
+check_claude_settings_registrations() {
+  local settings="$1"
+  local label_herdr="claude settings herdr SessionStart registration"
+  local label_hcom="claude settings hcom hook registration"
+  if [[ ! -f "$settings" ]]; then
+    fail "$label_herdr" "$settings missing entirely (settings-wipe class); reinstall: herdr integration install claude"
+    fail "$label_hcom" "$settings missing entirely (settings-wipe class); reinstall: bin/ai-setup --hcom-hooks install"
+    return
+  fi
+  local cmds herdr_cmd script
+  cmds="$(claude_sessionstart_commands "$settings")"
+  herdr_cmd="$(grep -m1 'herdr-agent-state' <<<"$cmds" || true)"
+  if [[ -z "$herdr_cmd" ]]; then
+    fail "$label_herdr" "settings REGISTRATION missing (the hook script may still exist on disk — the silent-wipe class herdr integration status does not catch); reinstall: herdr integration install claude"
+  else
+    script="$(sed -n "s/.*'\([^']*herdr-agent-state[^']*\)'.*/\1/p" <<<"$herdr_cmd")"
+    if [[ -n "$script" && ! -f "$script" ]]; then
+      fail "$label_herdr" "registration present but hook SCRIPT missing at $script (a different failure than a settings wipe); reinstall: herdr integration install claude"
+    else
+      pass "claude settings herdr SessionStart registration present, hook script on disk"
+    fi
+  fi
+  if grep -q 'sessionstart' <<<"$cmds"; then
+    pass "claude settings hcom sessionstart hook registration present"
+  else
+    fail "$label_hcom" "hcom sessionstart hook not registered — new claudes will not self-register on the bus; reinstall: bin/ai-setup --hcom-hooks install"
+  fi
+}
+
+check_settings_registration_negative_demo() {
+  # The exact 2026-08-21 wipe signature: valid settings JSON, user content
+  # intact, registration rows gone. Run in a subshell so the fixture's FAIL
+  # lines do not count against the live summary.
+  local wiped="$ROOT/wiped-settings.json" out
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/keep/user"}]}]}}\n' > "$wiped"
+  out="$(check_claude_settings_registrations "$wiped")"
+  if grep -q 'FAIL.*herdr SessionStart' <<<"$out" && grep -q 'FAIL.*hcom hook' <<<"$out"; then
+    pass "negative demo: wipe-class settings (registrations gone) is rejected by the live assertion path"
+  else
+    fail "negative demo: wipe-class settings is rejected" "wipe fixture passed the registration checks: $out"
+  fi
+}
+
 check_hcom_pi_launch_line() {
   local hcom_bin="$1" out
   if ! out="$(HOME="$ROOT/pi-home" HCOM_DIR="$ROOT/pi-home/.hcom" run_live "$hcom_bin" pi --help 2>"$ROOT/hcom-pi-help.err")"; then
@@ -688,6 +743,14 @@ else
   printf '\nSUMMARY live-contract: PASS=0 FAIL=0 SKIP=10\n'
   exit 0
 fi
+
+if [[ -d "$HOME/.claude" ]]; then
+  check_claude_settings_registrations "$HOME/.claude/settings.json"
+else
+  skip "claude settings herdr SessionStart registration" "no ~/.claude on this machine"
+  skip "claude settings hcom hook registration" "no ~/.claude on this machine"
+fi
+check_settings_registration_negative_demo
 
 if hcom_bin="$(real_hcom)" && [[ -n "$hcom_bin" && -x "$hcom_bin" ]]; then
   check_hcom_bootstrap "$hcom_bin"
