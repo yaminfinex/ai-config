@@ -61,7 +61,9 @@ When the seat occupied the only pane in a worktree workspace, managed close
 also removes that workspace. The git checkout remains deliberate state: after
 the cull is verified, remove that exact checkout with `git worktree remove
 <cwd-reported-by-spawn>` and delete the disposable branch separately when it
-is no longer needed.
+is no longer needed. Alternatively, while the workspace is still open (before
+cull, or after an unmanaged kill), `herdr worktree remove --workspace <id>`
+removes the workspace and checkout together.
 
 Resume keeps the hcom name and fork assigns a new one. Create an idle target
 pane first, then place either operation through the same preset contract:

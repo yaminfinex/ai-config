@@ -22,7 +22,7 @@ config=$config_dir/config.toml
 mkdir -p -- "$config_dir"
 touch -- "$config"
 
-helper_toml=${helper//\/\\}
+helper_toml=${helper//\\/\\\\}
 helper_toml=${helper_toml//\"/\\\"}
 fleet_block=$(printf '%s\n' \
   '[terminal.presets.fleet]' \

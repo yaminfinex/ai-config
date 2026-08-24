@@ -102,9 +102,11 @@ pane_id=
 
 if [[ -n $workspace ]]; then
   placement_kind=tab
-  placement_detail="workspace=$workspace"
   create_output=$(herdr tab create --workspace "$workspace" --no-focus) || die "herdr tab create failed for workspace $workspace"
-  pane_id=$(jq -er '.result.root_pane.pane_id | select(length > 0)' <<<"$create_output") || die "tab create returned no root pane id"
+  tab_id=$(jq -r '.result.tab.tab_id // empty' <<<"$create_output")
+  placement_detail="workspace=$workspace${tab_id:+ tab=$tab_id}"
+  pane_id=$(jq -er '.result.root_pane.pane_id | select(length > 0)' <<<"$create_output") \
+    || die "tab create returned no root pane id ($placement_detail left for explicit cleanup)"
   cwd=$(jq -r '.result.root_pane.foreground_cwd // .result.root_pane.cwd // empty' <<<"$create_output")
 elif [[ -n $worktree_branch ]]; then
   placement_kind=worktree
@@ -112,14 +114,19 @@ elif [[ -n $worktree_branch ]]; then
   source_output=$(herdr worktree list --cwd "$repo") || die "cannot resolve source repository from $repo"
   source_repo=$(jq -er '.result.source.source_checkout_path // .result.source.repo_root | select(length > 0)' <<<"$source_output") || die "worktree list returned no source checkout for $repo"
   create_output=$(herdr worktree create --cwd "$source_repo" --branch "$worktree_branch" --no-focus) || die "herdr worktree create failed for branch $worktree_branch"
-  pane_id=$(jq -er '.result.root_pane.pane_id | select(length > 0)' <<<"$create_output") || die "worktree create returned no root pane id"
-  cwd=$(jq -er '.result.workspace.worktree.checkout_path | select(length > 0)' <<<"$create_output") || die "worktree create returned no checkout path"
+  pane_id=$(jq -er '.result.root_pane.pane_id | select(length > 0)' <<<"$create_output") \
+    || die "worktree create returned no root pane id ($placement_detail left for explicit cleanup)"
+  cwd=$(jq -er '.result.workspace.worktree.checkout_path | select(length > 0)' <<<"$create_output") \
+    || die "worktree create returned no checkout path ($placement_detail, pane=$pane_id left for explicit cleanup)"
 else
   placement_kind=existing-pane
   placement_detail="pane=$pane"
   pane_output=$(herdr pane get "$pane") || die "pane does not exist: $pane"
   pane_id=$(jq -er '.result.pane.pane_id | select(length > 0)' <<<"$pane_output") || die "pane get returned no pane id"
   process_output=$(herdr pane process-info --pane "$pane_id") || die "cannot inspect pane process state: $pane_id"
+  shell_pid=$(jq -r '.result.process_info.shell_pid // empty' <<<"$process_output")
+  [[ -n $shell_pid ]] \
+    || die "cannot verify idle shell because process info omitted shell_pid: $pane_id"
   if jq -e '
       .result.process_info as $info
       | any(($info.foreground_processes // [])[];
@@ -133,10 +140,12 @@ else
 fi
 
 if [[ -z $cwd ]]; then
-  pane_output=$(herdr pane get "$pane_id") || die "cannot resolve cwd from pane $pane_id"
-  cwd=$(jq -er '.result.pane.foreground_cwd // .result.pane.cwd | select(length > 0)' <<<"$pane_output") || die "pane has no cwd: $pane_id"
+  pane_output=$(herdr pane get "$pane_id") \
+    || die "cannot resolve cwd from pane $pane_id ($placement_detail left for explicit cleanup)"
+  cwd=$(jq -er '.result.pane.foreground_cwd // .result.pane.cwd | select(length > 0)' <<<"$pane_output") \
+    || die "pane has no cwd: $pane_id ($placement_detail left for explicit cleanup)"
 fi
-[[ -d $cwd ]] || die "placement cwd is not a directory: $cwd"
+[[ -d $cwd ]] || die "placement cwd is not a directory: $cwd ($placement_detail, pane=$pane_id left for explicit cleanup)"
 
 launch=(hcom 1 "$tool" --tag "$tag" --dir "$cwd")
 [[ -z $model ]] || launch+=(--model "$model")
@@ -179,9 +188,23 @@ if [[ -z $ready_json ]] || ! jq -e '.status == "ready" and .ready == 1 and .bloc
   die "launch did not become ready for $hcom_name (batch=$batch_id, pane=$pane_id)"
 fi
 
-full_name=$(hcom list --json \
-  | jq -er --arg base "$hcom_name" '[.[] | select(.base_name == $base or .name == $base)] | select(length == 1) | .[0].name') \
-  || die "ready launch is missing or ambiguous in hcom list: $hcom_name"
+roster_entry=
+for ((hooks_attempts = 0; hooks_attempts < 10; hooks_attempts++)); do
+  roster_json=$(hcom list --json 2>/dev/null || true)
+  roster_entry=$(jq -cer --arg base "$hcom_name" \
+    '[.[] | select(.base_name == $base or .name == $base)] | select(length == 1) | .[0]' \
+    <<<"$roster_json" 2>/dev/null || true)
+  if [[ -n $roster_entry ]] && jq -e '.hooks_bound == true' <<<"$roster_entry" >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+[[ -n $roster_entry ]] || die "ready launch is missing or ambiguous in hcom list: $hcom_name (batch=$batch_id, $placement_detail, pane=$pane_id left for explicit cleanup)"
+full_name=$(jq -er '.name | select(length > 0)' <<<"$roster_entry") \
+  || die "ready launch roster row has no name: $hcom_name (batch=$batch_id, $placement_detail, pane=$pane_id)"
+if ! jq -e '.hooks_bound == true' <<<"$roster_entry" >/dev/null; then
+  die "ready launch is not hook-bound in hcom roster: $full_name (batch=$batch_id, $placement_detail, pane=$pane_id left for explicit cleanup)"
+fi
 
 printf 'name=%s\n' "$full_name"
 printf 'pane=%s\n' "$pane_id"
