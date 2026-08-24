@@ -1,7 +1,7 @@
 ---
 id: TASK-321
 title: 'teardown unit three: verb-layer demolition — red suite reshaped, probe library untouched'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-24 07:30'
 labels:

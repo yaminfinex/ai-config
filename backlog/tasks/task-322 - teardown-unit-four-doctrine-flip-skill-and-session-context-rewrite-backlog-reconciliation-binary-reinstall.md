@@ -1,7 +1,7 @@
 ---
 id: TASK-322
 title: 'teardown unit four: doctrine flip — skill and session-context rewrite, backlog reconciliation, binary reinstall'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-24 07:30'
 labels:
