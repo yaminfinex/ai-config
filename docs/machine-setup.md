@@ -6,11 +6,12 @@ Canonical bring-up for a new machine using this repo.
 
 - `git`
 - `mise` (install from <https://mise.jdx.dev/>)
-- `herdr` — the terminal/session server the `herder` orchestration layer drives (`spawn`,
-  `fork`, `enroll`, the observer). **Baseline: 0.8.0.** Unlike `hcom`, herdr is *not* managed
-  by `ai-setup`/mise; install it out-of-band via its own installer and keep it current with
-  `herdr update --handoff`. See `docs/herdr-upgrade.md`. (`hcom`, the message-bus dependency,
-  *is* installed and pinned by `ai-setup` — see Setup below.)
+- `herdr` — the terminal/session server the fleet lifecycle drives (pane placement, worktree
+  panes, managed close) and the `herder` display cache observes. **Baseline: 0.8.0.** Unlike
+  `hcom`, herdr is *not* managed by `ai-setup`/mise; install it out-of-band via its own
+  installer and keep it current with `herdr update --handoff`. See `docs/herdr-upgrade.md`.
+  (`hcom`, the message-bus dependency, *is* installed and pinned by `ai-setup` — see Setup
+  below.)
 
 `ai-setup` requires mise. It writes the `bin/` PATH entry through mise `conf.d`, and installs
 one managed rc block in `~/.bashrc` (and `~/.zshrc` when present) that defines the interactive
@@ -32,7 +33,8 @@ such copies):
 
 - `claude` — the vendor installer, landing in `~/.local/bin/claude`
 - `codex` — the vendor binary in `~/.local/bin/codex`
-- `grok` — the Grok Build installer (`~/.grok/bin`)
+- `grok` — optional; fleet support is retired, the launcher function is only a direct
+  vendor passthrough (the Grok Build installer, `~/.grok/bin`)
 
 Then preview and run setup:
 
@@ -73,15 +75,48 @@ work, but sit outside mise's management.)
 Restart the shell after setup so the launcher functions load and `ai-setup`, `ai-doctor`,
 `herder`, and `hcom` resolve from the managed PATH entry.
 
-## Optional hcom Hooks
+## hcom Hooks (required for fleet seats)
 
 hcom hooks are explicit machine config, layered on top of the hcom binary that `ai-setup` already
-installed above. Install them separately:
+installed above. Post-teardown they are the ONLY path by which a launched agent self-registers on
+the bus — a machine without them runs raw, off-bus agents. Install them separately:
 
 ```sh
 bin/ai-setup --hcom-hooks status
 bin/ai-setup --hcom-hooks install
 ```
+
+## Fleet wiring (bus machines)
+
+Three machine-side registrations complete a fleet-capable box. All are idempotent; re-run
+the first after moving the checkout (it stores absolute paths).
+
+1. **The managed terminal preset** — registers `[terminal.presets.fleet]` in
+   `~/.hcom/config.toml` (never as the box default; `tools/fleet/spawn.sh` selects it per
+   launch). Without it, placed spawns fail:
+
+   ```sh
+   tools/fleet/preset-install.sh
+   ```
+
+2. **The lifecycle doctrine note** — the one-time bootstrap note every hcom-launched agent
+   reads at boot. Point it at this checkout's drop-in context doc (run from the checkout
+   root):
+
+   ```sh
+   hcom config notes "Lifecycle doctrine: spawn/cull peers via $PWD/tools/fleet (spawn.sh / cull.sh / selfcompact.sh); messaging, compact-inject, resume (hcom r), fork (hcom f) via hcom; placement via herdr. herder is display-cache ONLY (list + observer) — never a lifecycle gateway. Full doctrine: $PWD/docs/session-context-fleet.md"
+   ```
+
+3. **herdr's claude session registration** — the SessionStart hook that reports claude
+   session ids to herdr, the display cache's session evidence:
+
+   ```sh
+   herdr integration install claude
+   ```
+
+   Note `herdr integration status` verifies the hook script file only, NOT the settings
+   registration; the battery's `tools/herder/tests/check-live-contract.sh` pins the live
+   registration itself (the 2026-08-21 silent settings-wipe class).
 
 ## Verify
 
@@ -89,7 +124,7 @@ Run:
 
 ```sh
 bin/ai-doctor
-type -a herder claude codex grok hcom
+type -a herder claude codex hcom
 tools/fleet/spawn.sh codex --tag smoke --workspace <workspace-id> \
   --prompt 'Reply exactly PONG MACHINE-SETUP, then wait idle.'
 ```

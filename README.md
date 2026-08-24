@@ -25,8 +25,8 @@ bin/ai-setup
 bin/ai-doctor --quick
 ```
 
-`ai-setup` requires mise and writes the managed mise PATH config for `bin/` and
-`tools/herder/shims/`. Restart the shell after setup.
+`ai-setup` requires mise and writes the managed mise PATH config for `bin/`.
+Restart the shell after setup.
 
 ## Skill Layout
 
@@ -49,7 +49,7 @@ Beyond skills and agent config, the repo also tracks:
 
 ## Optional: herdr
 
-The `herder` and `orchestrate` skills drive herdr surfaces and only activate inside a herdr pane (`HERDR_ENV=1`); without herdr they stay dormant and the rest of the repo works normally. `ai-setup` never installs herdr or its shortcuts, and the `bin/vsc-*` / `etc/launchd` editor helpers are opt-in — none of it is required to use the portable skills, `bottle`, or config linking.
+The `orchestrate` skill and the `tools/fleet` lifecycle scripts drive herdr surfaces (pane placement, worktree panes, managed close); `bin/herder` is a read-only display cache (`list` + `observer`) over the same substrate. Without herdr all of it stays dormant and the rest of the repo works normally. `ai-setup` never installs herdr or its shortcuts, and the `bin/vsc-*` / `etc/launchd` editor helpers are opt-in — none of it is required to use the portable skills or config linking.
 
 ## Current Caveats
 
