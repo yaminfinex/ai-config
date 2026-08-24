@@ -3,6 +3,7 @@ package observercmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -64,6 +65,13 @@ func TestCacheStampRetiresDeadRowsAfterGrace(t *testing.T) {
 	}
 
 	dead := got[0].row
+	dead.RecordedAt = now.Add(-30 * time.Second).Format(time.RFC3339)
+	dead.Cache.ObservedAt = dead.RecordedAt
+	got = buildCacheCandidates(projection(t, dead), nil, now, time.Minute)
+	if len(got) != 0 {
+		t.Fatalf("within-grace candidates = %+v, want dead row retained", got)
+	}
+
 	dead.RecordedAt = now.Add(-2 * time.Minute).Format(time.RFC3339)
 	dead.Cache.ObservedAt = dead.RecordedAt
 	archivedProjection := projection(t, dead)
@@ -197,6 +205,84 @@ func TestCacheStampLiveBusWithoutRelocationNeverDies(t *testing.T) {
 	}, time.Now().UTC(), time.Minute)
 	if len(got) != 0 {
 		t.Fatalf("live-but-unrelocated candidates = %+v, want retry without death", got)
+	}
+}
+
+func TestObservePanesEnforcesAllChannelsBeforeDeath(t *testing.T) {
+	rec := seatRow("guid-live", "worker", "pane-old", "worker-name", "sid-live", "2026-08-24T09:59:00Z")
+	proj := projection(t, rec)
+	row := hcomidentity.Row{Name: "worker-name", SessionID: "sid-live", Status: "listening"}
+	bus := busState{available: true, rows: map[string]hcomidentity.Row{"worker-name": row}, roster: []hcomidentity.Row{row}}
+	hd := herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}}
+
+	t.Run("live bus and failed relocation suppress death", func(t *testing.T) {
+		observed := observePanesWithAliasProbe(proj, hd, bus, func(string) occupant.Observation {
+			return occupant.Observation{Status: occupant.PaneGone}
+		})
+		got := buildCacheCandidates(proj, observed, time.Now().UTC(), time.Minute)
+		if len(got) != 0 {
+			t.Fatalf("candidates = %+v, want live row left untouched", got)
+		}
+	})
+
+	t.Run("alias relocation stamps current pane", func(t *testing.T) {
+		observed := observePanesWithAliasProbe(proj, hd, bus, func(string) occupant.Observation {
+			return occupant.Observation{Status: occupant.Occupied, Tool: "codex", SID: "sid-live", Pane: herdrcli.Pane{PaneID: "pane-new", TerminalID: "term-new"}}
+		})
+		got := buildCacheCandidates(proj, observed, time.Now().UTC(), time.Minute)
+		if len(got) != 1 || got[0].kind != "stamp" || got[0].row.Seat == nil || got[0].row.Seat.PaneID != "pane-new" {
+			t.Fatalf("relocated candidates = %+v", got)
+		}
+	})
+}
+
+func TestObservePanesBusFailureCannotAgreeToDeath(t *testing.T) {
+	rec := seatRow("guid-live", "worker", "pane-old", "worker-name", "sid-live", "2026-08-24T09:59:00Z")
+	proj := projection(t, rec)
+	hd := herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}}
+	observed := observePanesWithAliasProbe(proj, hd, busState{err: errors.New("hcom unavailable")}, func(string) occupant.Observation {
+		return occupant.Observation{Status: occupant.PaneGone}
+	})
+	got := buildCacheCandidatesWithHealth(proj, observed, time.Now().UTC(), time.Minute, false)
+	if len(got) != 0 {
+		t.Fatalf("candidates = %+v, want no destructive write while bus channel is unavailable", got)
+	}
+}
+
+func TestCacheStampLiveDedupeLoserUsesRecoverableDeadPath(t *testing.T) {
+	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	proj := projection(t,
+		seatRow("guid-winner", "winner", "pane-1", "winner-name", "sid-winner", "2026-08-24T09:59:00Z"),
+		seatRow("guid-live-loser", "loser", "pane-1", "loser-name", "sid-loser", "2026-08-24T09:58:00Z"),
+	)
+	winnerRow := hcomidentity.Row{Name: "winner-name", SessionID: "sid-winner", Status: "listening"}
+	loserRow := hcomidentity.Row{Name: "loser-name", SessionID: "sid-loser", Status: "listening"}
+	bus := busState{
+		available: true,
+		rows:      map[string]hcomidentity.Row{"winner-name": winnerRow, "loser-name": loserRow},
+		roster:    []hcomidentity.Row{winnerRow, loserRow},
+	}
+	hd := herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}}
+	observed := observePanesWithAliasProbe(proj, hd, bus, func(string) occupant.Observation {
+		return occupant.Observation{Status: occupant.Occupied, Tool: "codex", SID: "sid-winner", Pane: herdrcli.Pane{PaneID: "pane-new", TerminalID: "term-new"}}
+	})
+	got := buildCacheCandidates(proj, observed, now, time.Minute)
+	if len(got) != 2 || got[0].kind != "dead" || got[0].guid != "guid-live-loser" || got[0].row.State != v2.StateUnseated || got[0].row.Cache == nil || got[0].row.Cache.Liveness != "dead" || got[1].kind != "stamp" {
+		t.Fatalf("candidates = %+v, want recoverable dead loser then winner stamp", got)
+	}
+}
+
+func TestLiveBusRowUsesHcomJoinedClassification(t *testing.T) {
+	rec := seatRow("guid-worker", "worker", "pane-1", "worker-name", "sid-worker", "2026-08-24T09:59:00Z")
+	joinedFalse := false
+	for _, row := range []hcomidentity.Row{
+		{Name: "worker-name", SessionID: "sid-worker", Status: "closed"},
+		{Name: "worker-name", SessionID: "sid-worker", Status: "DEAD"},
+		{Name: "worker-name", SessionID: "sid-worker", Status: "listening", Joined: &joinedFalse},
+	} {
+		if got, ok := liveBusRow(rec, busState{available: true, roster: []hcomidentity.Row{row}}); ok {
+			t.Fatalf("row %+v classified live as %+v", row, got)
+		}
 	}
 }
 

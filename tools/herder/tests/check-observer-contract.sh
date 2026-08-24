@@ -30,7 +30,7 @@ if rg -n 'grokbridge|seatcompletion|DoctrineDeliver|doctrineCandidates|recognise
   fail "observer authority, credential, doctrine, or Grok machinery remains"
 fi
 
-pattern='^(TestCacheStampCollapsesRecognitionAndTurnover|TestCacheStampDedupeKeepsProbeCorroboratedRow|TestCacheStampRetiresDeadRowsAfterGrace|TestCacheStampMarksRecordedOccupantMismatchDead|TestCacheStampMakesBlockedStateVisible|TestCacheStampBootRaceIsLastWriteWinsWithoutIdentityEvent|TestCacheStampBootingPaneWaitsForCorroboration|TestCacheStampRelocatesLiveIdentityBeforeDeath|TestCacheStampLiveBusWithoutRelocationNeverDies|TestObservedStampBypassesFrozenBindingLegality)$'
+pattern='^(TestCacheStampCollapsesRecognitionAndTurnover|TestCacheStampDedupeKeepsProbeCorroboratedRow|TestCacheStampRetiresDeadRowsAfterGrace|TestCacheStampMarksRecordedOccupantMismatchDead|TestCacheStampMakesBlockedStateVisible|TestCacheStampBootRaceIsLastWriteWinsWithoutIdentityEvent|TestCacheStampBootingPaneWaitsForCorroboration|TestCacheStampRelocatesLiveIdentityBeforeDeath|TestCacheStampLiveBusWithoutRelocationNeverDies|TestObservePanesEnforcesAllChannelsBeforeDeath|TestObservePanesBusFailureCannotAgreeToDeath|TestCacheStampLiveDedupeLoserUsesRecoverableDeadPath|TestLiveBusRowUsesHcomJoinedClassification|TestObservedStampBypassesFrozenBindingLegality)$'
 output="$(cd "$HERDER_ROOT" && env -u GOROOT GOTOOLCHAIN=local "$GO_BIN" test -count=1 -v ./internal/observercmd -run "$pattern")" || {
   printf '%s\n' "$output"
   fail "observer-as-cache contract failed"
@@ -47,6 +47,10 @@ for name in \
   TestCacheStampBootingPaneWaitsForCorroboration \
   TestCacheStampRelocatesLiveIdentityBeforeDeath \
   TestCacheStampLiveBusWithoutRelocationNeverDies \
+  TestObservePanesEnforcesAllChannelsBeforeDeath \
+  TestObservePanesBusFailureCannotAgreeToDeath \
+  TestCacheStampLiveDedupeLoserUsesRecoverableDeadPath \
+  TestLiveBusRowUsesHcomJoinedClassification \
   TestObservedStampBypassesFrozenBindingLegality
 do
   grep -Fq -- "--- PASS: $name" <<<"$output" || fail "$name did not run and pass"

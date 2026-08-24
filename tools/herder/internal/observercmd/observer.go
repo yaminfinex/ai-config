@@ -38,18 +38,16 @@ type busState struct {
 	err       error
 }
 type herdrState struct {
-	available       bool
-	source          string
-	connectionGap   bool
-	snapshot        herdrcli.Snapshot
-	byTerm          map[string]herdrcli.Pane
-	procs           map[string]herdrcli.ProcessInfo
-	sameEpochAbsent map[string]bool
-	err             error
+	available     bool
+	source        string
+	connectionGap bool
+	snapshot      herdrcli.Snapshot
+	byTerm        map[string]herdrcli.Pane
+	procs         map[string]herdrcli.ProcessInfo
+	err           error
 }
 type herdrContext struct {
 	client        *herdrSocketClient
-	seenTerms     map[string]bool
 	connectionGap bool
 }
 type candidate struct {
@@ -60,6 +58,7 @@ type paneObservation struct {
 	Occupant  occupant.Observation
 	Bus       hcomidentity.Result
 	BusStatus string
+	LiveGUIDs map[string]bool
 }
 type sweepResult struct {
 	Status     observerstatus.Status `json:"status"`
@@ -178,8 +177,8 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 	grace := durationEnv("HERDER_OBSERVER_DEAD_GRACE", defaultDeadGrace)
 	var cands []candidate
 	if hd.available {
-		cands = buildCacheCandidates(proj, observePanes(proj, hd, bus), now, grace)
-	} else {
+		cands = buildCacheCandidatesWithHealth(proj, observePanes(proj, hd, bus), now, grace, bus.available)
+	} else if bus.available {
 		cands = archiveDeadCandidates(proj, now, grace)
 	}
 	summary := applyCandidates(registryPath, cands, stderr)
@@ -224,7 +223,7 @@ func loadHerdrState(hctx *herdrContext, stderr io.Writer) herdrState {
 		return herdrState{err: err}
 	}
 	defer client.Close()
-	return loadHerdrStateSocket(&herdrContext{client: client, seenTerms: map[string]bool{}, connectionGap: true}, "socket")
+	return loadHerdrStateSocket(&herdrContext{client: client, connectionGap: true}, "socket")
 }
 
 func cliFallbackAllowed(st socketStatus) bool {
@@ -239,26 +238,17 @@ func loadHerdrStateSocket(hctx *herdrContext, source string) herdrState {
 	if err != nil {
 		return herdrState{source: source, err: fmt.Errorf("herdr socket session.snapshot failed: %w", err)}
 	}
-	previousSeen := map[string]bool{}
-	for term, seen := range hctx.seenTerms {
-		previousSeen[term] = seen
-	}
-	if hctx.seenTerms == nil {
-		hctx.seenTerms = map[string]bool{}
-	}
 	hd := herdrState{
-		available:       true,
-		source:          source,
-		connectionGap:   hctx.connectionGap,
-		snapshot:        snap,
-		byTerm:          map[string]herdrcli.Pane{},
-		procs:           map[string]herdrcli.ProcessInfo{},
-		sameEpochAbsent: map[string]bool{},
+		available:     true,
+		source:        source,
+		connectionGap: hctx.connectionGap,
+		snapshot:      snap,
+		byTerm:        map[string]herdrcli.Pane{},
+		procs:         map[string]herdrcli.ProcessInfo{},
 	}
 	for _, pane := range snap.Panes {
 		if pane.TerminalID != "" {
 			hd.byTerm[pane.TerminalID] = pane
-			hctx.seenTerms[pane.TerminalID] = true
 		}
 	}
 	for _, agent := range snap.Agents {
@@ -273,14 +263,6 @@ func loadHerdrStateSocket(hctx *herdrContext, source string) herdrState {
 				AgentStatus: agent.Status,
 				Label:       agent.Name,
 				CWD:         agent.CWD,
-			}
-		}
-		hctx.seenTerms[*agent.TerminalID] = true
-	}
-	if !hctx.connectionGap {
-		for term := range previousSeen {
-			if _, ok := hd.byTerm[term]; !ok {
-				hd.sameEpochAbsent[term] = true
 			}
 		}
 	}
@@ -309,13 +291,12 @@ func loadHerdrStateCLI(source string) herdrState {
 		return herdrState{source: source, err: fmt.Errorf("herdr CLI session.snapshot parse failed: %w", err)}
 	}
 	hd := herdrState{
-		available:       true,
-		source:          source,
-		connectionGap:   true,
-		snapshot:        snap,
-		byTerm:          map[string]herdrcli.Pane{},
-		procs:           map[string]herdrcli.ProcessInfo{},
-		sameEpochAbsent: map[string]bool{},
+		available:     true,
+		source:        source,
+		connectionGap: true,
+		snapshot:      snap,
+		byTerm:        map[string]herdrcli.Pane{},
+		procs:         map[string]herdrcli.ProcessInfo{},
 	}
 	for _, pane := range snap.Panes {
 		if pane.TerminalID != "" {
@@ -397,6 +378,12 @@ func (q snapshotQuerier) ProcessInfo(id string) (herdrcli.ProcessInfo, error) {
 }
 
 func observePanes(proj *v2.Projection, hd herdrState, bus busState) map[string]paneObservation {
+	return observePanesWithAliasProbe(proj, hd, bus, func(id string) occupant.Observation {
+		return occupant.Probe(occupant.Substrate{Herdr: occupant.CLIQuerier{}}, id)
+	})
+}
+
+func observePanesWithAliasProbe(proj *v2.Projection, hd herdrState, bus busState, aliasProbe func(string) occupant.Observation) map[string]paneObservation {
 	observed := map[string]paneObservation{}
 	querier := snapshotQuerier{state: hd}
 	byPane := map[string][]v2.SessionRecord{}
@@ -418,9 +405,7 @@ func observePanes(proj *v2.Projection, hd herdrState, bus busState) map[string]p
 			obs.Status = occupant.Unprobeable
 		}
 		if !observationCorroboratesAny(obs, rows) {
-			if relocated, ok := relocateRows(rows, hd, bus, func(id string) occupant.Observation {
-				return occupant.Probe(occupant.Substrate{Herdr: occupant.CLIQuerier{}}, id)
-			}, func(id string) occupant.Observation {
+			if relocated, ok := relocateRows(rows, hd, bus, aliasProbe, func(id string) occupant.Observation {
 				return occupant.Probe(occupant.Substrate{Herdr: querier}, id)
 			}); ok {
 				obs = relocated
@@ -431,7 +416,12 @@ func observePanes(proj *v2.Projection, hd herdrState, bus busState) map[string]p
 				obs.Status = occupant.Unprobeable
 			}
 		}
-		po := paneObservation{Occupant: obs}
+		po := paneObservation{Occupant: obs, LiveGUIDs: map[string]bool{}}
+		for _, rec := range rows {
+			if _, live := liveBusRow(rec, bus); live {
+				po.LiveGUIDs[rec.GUID] = true
+			}
+		}
 		if obs.Status == occupant.Occupied && bus.available {
 			po.Bus = hcomidentity.Resolve(bus.roster, hcomidentity.Evidence{SessionID: obs.SID, PaneIDs: []string{paneID}})
 			if po.Bus.Verified {
@@ -464,7 +454,7 @@ func relocateRows(rows []v2.SessionRecord, hd herdrState, bus busState, aliasPro
 		}
 		if obs := aliasProbe(recordPaneID(rec)); occupantMatchesRow(obs, rec) {
 			return obs, true
-		} else if obs.Pane.PaneID != "" && obs.Pane.PaneID != recordPaneID(rec) {
+		} else if obs.Status != occupant.Occupied && obs.Pane.PaneID != "" && obs.Pane.PaneID != recordPaneID(rec) {
 			// herdr preserves old pane ids as relocation aliases. An exact live
 			// bus identity plus an alias resolving to a new coordinate is enough
 			// to heal the display cache even when the transcript probe is briefly
@@ -513,11 +503,12 @@ func liveBusRow(rec v2.SessionRecord, bus busState) (hcomidentity.Row, bool) {
 	}
 	sid := latestSID(rec)
 	name := recordHcomName(rec)
+	resolved := hcomidentity.Resolve(bus.roster, hcomidentity.Evidence{Name: name, SessionID: sid})
+	if !resolved.Verified {
+		return hcomidentity.Row{}, false
+	}
 	for _, row := range bus.roster {
-		if row.Status == "inactive" || row.Status == "stopped" || row.SessionID == "" {
-			continue
-		}
-		if (sid != "" && row.SessionID == sid) || (name != "" && row.Name == name) {
+		if row.Name == resolved.Name {
 			return row, true
 		}
 	}
@@ -543,6 +534,10 @@ func paneHasToolProcess(hd herdrState, paneID string) bool {
 }
 
 func buildCacheCandidates(proj *v2.Projection, observed map[string]paneObservation, now time.Time, grace time.Duration) []candidate {
+	return buildCacheCandidatesWithHealth(proj, observed, now, grace, true)
+}
+
+func buildCacheCandidatesWithHealth(proj *v2.Projection, observed map[string]paneObservation, now time.Time, grace time.Duration, deathChannelsHealthy bool) []candidate {
 	var out []candidate
 	touched := map[string]bool{}
 	byPane := map[string][]v2.SessionRecord{}
@@ -569,27 +564,40 @@ func buildCacheCandidates(proj *v2.Projection, observed map[string]paneObservati
 		case occupant.Occupied:
 			winner := corroboratedRow(rows, po.Occupant.SID)
 			if winner < 0 {
-				for _, rec := range rows {
-					out = append(out, deadCandidate(rec, now))
+				if deathChannelsHealthy {
+					for _, rec := range rows {
+						out = append(out, deadCandidate(rec, now))
+					}
 				}
 				continue
 			}
 			for i, rec := range rows {
 				if i != winner {
-					out = append(out, duplicateCandidate(rec, now))
+					if !deathChannelsHealthy {
+						continue
+					}
+					if po.LiveGUIDs[rec.GUID] {
+						out = append(out, deadCandidate(rec, now))
+					} else {
+						out = append(out, duplicateCandidate(rec, now))
+					}
 				}
 			}
 			out = append(out, stampCandidate(rows[winner], po, now))
 			touched[rows[winner].GUID] = true
 		case occupant.Vacant, occupant.PaneGone:
-			for _, rec := range rows {
-				out = append(out, deadCandidate(rec, now))
+			if deathChannelsHealthy {
+				for _, rec := range rows {
+					out = append(out, deadCandidate(rec, now))
+				}
 			}
 		}
 	}
-	for _, cand := range archiveDeadCandidates(proj, now, grace) {
-		if !touched[cand.guid] {
-			out = append(out, cand)
+	if deathChannelsHealthy {
+		for _, cand := range archiveDeadCandidates(proj, now, grace) {
+			if !touched[cand.guid] {
+				out = append(out, cand)
+			}
 		}
 	}
 	return out
@@ -813,7 +821,7 @@ func runDaemon(stdout, stderr io.Writer) int {
 			}
 			continue
 		}
-		hctx := &herdrContext{client: client, seenTerms: map[string]bool{}, connectionGap: true}
+		hctx := &herdrContext{client: client, connectionGap: true}
 		if err := client.subscribeObserverEvents(); err != nil {
 			fmt.Fprintf(stderr, "herder observer run: events.subscribe failed: %v; retrying after %s\n", err, interval)
 			client.Close()
