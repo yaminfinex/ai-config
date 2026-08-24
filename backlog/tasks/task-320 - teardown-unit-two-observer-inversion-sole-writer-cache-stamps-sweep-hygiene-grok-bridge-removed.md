@@ -1,7 +1,7 @@
 ---
 id: TASK-320
 title: 'teardown unit two: observer inversion — sole-writer cache stamps, sweep hygiene, grok bridge removed'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-24 07:30'
 labels:

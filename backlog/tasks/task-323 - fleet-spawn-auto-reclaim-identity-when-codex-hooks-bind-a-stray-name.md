@@ -24,3 +24,11 @@ the launch pane, spawn.sh injects the reclaim into the pane, re-verifies,
 and only refuses if reclaim fails. Also worth reporting upstream to hcom as
 a codex binding defect.
 <!-- SECTION:DESCRIPTION:END -->
+
+Addendum 2026-08-24: the reclaim path leaves more debris than the name —
+observed at unit-two closeout: the pane label keeps the stray pre-reclaim
+name (so cull.sh's exact-label fallback correctly refuses), the reclaimed
+row loses launch_context.pane_id (managed close impossible), and hcom kill
+loses its tracked PID (hcom stop required). Auto-reclaim should restore
+all three: re-stamp the label, carry the pane id into the reclaimed row,
+and rebind the tracked PID.
