@@ -286,6 +286,45 @@ func TestLiveBusRowUsesHcomJoinedClassification(t *testing.T) {
 	}
 }
 
+// Reviewer demonstration (not part of the unit): a live seat whose recorded
+// bus name was recycled to a different joined agent while its recorded sid is
+// still live under a new name. The amendment's death rule is disjunctive —
+// "no live hcom row for that session id or name" — so death must be vetoed.
+func TestReviewConflictingBusCorrelatesStillVetoDeath(t *testing.T) {
+	rec := seatRow("guid-w", "worker", "pane-1", "worker-a", "S1", "2026-08-24T09:59:00Z")
+	roster := []hcomidentity.Row{
+		{Name: "worker-a", SessionID: "S2", Status: "listening"},
+		{Name: "worker-b", SessionID: "S1", Status: "listening"},
+	}
+	bus := busState{available: true, roster: roster}
+	if _, live := liveBusRow(rec, bus); !live {
+		t.Errorf("liveBusRow: live sid row on the bus did not veto death")
+	}
+	hd := herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}}
+	observed := observePanesWithAliasProbe(projection(t, rec), hd, bus, func(string) occupant.Observation {
+		return occupant.Observation{Status: occupant.PaneGone}
+	})
+	got := buildCacheCandidates(projection(t, rec), observed, time.Now().UTC(), time.Minute)
+	if len(got) != 0 {
+		t.Errorf("candidates = %+v, want live seat left untouched despite ambiguous bus correlates", got)
+	}
+}
+
+func TestOccupiedForeignSIDAliasDoesNotRelocate(t *testing.T) {
+	rec := seatRow("guid-live", "worker", "pane-old", "worker-name", "sid-live", "2026-08-24T09:59:00Z")
+	row := hcomidentity.Row{Name: "worker-name", SessionID: "sid-live", Status: "listening"}
+	bus := busState{available: true, roster: []hcomidentity.Row{row}}
+	hd := herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}}
+	proj := projection(t, rec)
+	observed := observePanesWithAliasProbe(proj, hd, bus, func(string) occupant.Observation {
+		return occupant.Observation{Status: occupant.Occupied, Tool: "codex", SID: "sid-foreign", Pane: herdrcli.Pane{PaneID: "pane-new", TerminalID: "term-new"}}
+	})
+	got := buildCacheCandidates(proj, observed, time.Now().UTC(), time.Minute)
+	if len(got) != 0 {
+		t.Fatalf("candidates = %+v, want foreign occupant rejected and live row left untouched", got)
+	}
+}
+
 func TestObservedStampBypassesFrozenBindingLegality(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	initial := seatRow("guid-worker", "worker", "pane-1", "old-name", "sid-1", "2026-08-24T09:59:00Z")

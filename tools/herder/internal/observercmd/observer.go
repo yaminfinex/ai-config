@@ -503,12 +503,11 @@ func liveBusRow(rec v2.SessionRecord, bus busState) (hcomidentity.Row, bool) {
 	}
 	sid := latestSID(rec)
 	name := recordHcomName(rec)
-	resolved := hcomidentity.Resolve(bus.roster, hcomidentity.Evidence{Name: name, SessionID: sid})
-	if !resolved.Verified {
-		return hcomidentity.Row{}, false
-	}
 	for _, row := range bus.roster {
-		if row.Name == resolved.Name {
+		if !hcomidentity.IsJoined(row) {
+			continue
+		}
+		if (sid != "" && row.SessionID == sid) || hcomidentity.StoredNameMatches(row.Name, row.BaseName, name) {
 			return row, true
 		}
 	}
