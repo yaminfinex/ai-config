@@ -44,27 +44,27 @@ bin/ai-setup
 This installs portable config links, skill links, and two pieces of launch machinery:
 
 1. `${XDG_CONFIG_HOME:-$HOME/.config}/mise/conf.d/ai-config.toml` — puts `<checkout>/bin`
-   (only) on the mise-managed PATH. The herder shims dir is deliberately NOT on global PATH:
-   it exists solely for launch-scoped injection by the spawner (the `hcom` shim).
+   (only) on the mise-managed PATH. Retired herder shims are never installed on global PATH.
 2. A managed rc block in `~/.bashrc` (and `~/.zshrc` if present) sourcing `lib/launchers.sh`,
-   which defines `claude`, `codex`, and `grok` as shell FUNCTIONS routing through
-   `bin/herder launch`. Functions win name resolution over every PATH entry, so no PATH
+   which defines `claude`, `codex`, and `grok` as shell FUNCTIONS that resolve and execute
+   the vendor CLI directly. Functions win name resolution over every PATH entry, so no PATH
    writer — mise hook-env rewriting order on `cd`, an installer prepend, stale inherited
    env — can reroute a hand-typed launch. Manage it with `bin/ai-setup --rc status|install|remove`.
    See `docs/launcher-design.md` for why interception moved off PATH entirely.
 
-`herder launch` itself resolves the vendor binary with a skip-list (never a herder shim,
-never anything mise-owned) and pins it into the child PATH (`~/.cache/herder/vendorbin/`),
-so the bus launcher's own name lookup is deterministic too.
+The functions resolve the absolute vendor binary once with a skip-list (never a retired
+herder shim, never anything mise-owned, including symlink targets), then exec it without a
+second PATH lookup. Global hooks register Claude/Codex with hcom and herdr automatically;
+Grok fleet support is retired, so its function is only a direct vendor launcher.
 
 The conf.d file sets `HERDER_SHIM_ARGS_CLAUDE` / `HERDER_SHIM_ARGS_CODEX`, overriding the
 launcher functions' baked default flags. Export them empty for an ask-mode machine (the
 functions bake autonomous defaults, so deleting the lines alone is not enough).
 
-Bypass deliberately with `command claude ...` — that is a raw vendor launch, off the bus.
+Bypass the function's resolver and default flags deliberately with `command claude ...`.
 
 It also declares `hcom` as a managed mise tool (`[tools] "github:aannoo/hcom"`) and installs it —
-hcom is a hard dependency of the herder bus substrate (`launch`/`spawn` refuse to run without it).
+hcom is a hard dependency of the fleet wrapper and surviving bus substrate.
 The `github:` backend pulls the prebuilt, attestation-verified release binary; no brew or compile.
 Pinned for reproducibility — bump the version in `lib/mise-path.sh`. (Homebrew
 `brew install aannoo/hcom/hcom`, the `hcom-installer.sh` script, and `uv tool install hcom` also
@@ -90,7 +90,7 @@ Run:
 ```sh
 bin/ai-doctor
 type -a herder claude codex grok hcom
-herder spawn --role smoke --agent codex --cwd "$PWD" \
+tools/fleet/spawn.sh codex --tag smoke --workspace <workspace-id> \
   --prompt 'Reply exactly PONG MACHINE-SETUP, then wait idle.'
 ```
 

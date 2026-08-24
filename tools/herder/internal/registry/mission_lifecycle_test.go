@@ -27,7 +27,7 @@ func TestLockedWriteRefusesInvalidDurableMission(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			outcome, err := SingleOutcome(outcomes)
+			outcome, err := singleOutcomeForTest(outcomes)
 			if err != nil || outcome.Status != WriteRefused || outcome.Err() == nil {
 				t.Fatalf("outcome=%+v err=%v, want refused", outcome, err)
 			}

@@ -65,9 +65,8 @@ mise_render_config() {
   # more: hand-typed claude/codex/grok are shell functions (lib/launchers.sh,
   # installed by the ai-setup rc block), which win name resolution regardless
   # of PATH order — global shim interception lost the PATH-ordering race to
-  # mise hook-env on every config-boundary cd. The shims dir still exists for
-  # launch-scoped injection (the spawner prepends it per-spawn for the hcom
-  # shim); it just never rides machine-wide PATH.
+  # mise hook-env on every config-boundary cd. The retired shims never ride
+  # machine-wide PATH; the launcher functions resolve vendors themselves.
   mise_path_marker
   printf '%s\n' "[env]"
   printf '_.path = ["%s"]\n' "$bin_dir"

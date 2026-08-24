@@ -14,15 +14,15 @@ cd "$HERDER_ROOT" || exit 1
 
 test_names=(
   TestLoadPreservesFourStateViewFromV2Rows
-  TestReadPredicatesKeepSeatAndLeaseQuestionsSeparate
-  TestTwoProcessLabelClaimsOneWinner
+  TestLockedWriteReturnsPerCandidateOutcomes
+  TestLockedWriteRefusalIsAtomicAndReportedPerCandidate
   TestLockedWriteMintsNodeOnceAndStampsRows
   TestTwoProcessFirstWritersConvergeOnOneNode
   TestLockedWriteRefusesHalfPresentNodeState
-  TestNodeInitRepairsAndCloneRepairKeepsPriorRows
-  TestLockedValidatorPreservesRenameAgainstStaleEnrichment
-  TestLockedValidatorDoesNotResurrectUnseatedSession
-  TestLockedWriterRefusesUnlocked
+  TestUnknownNodeRowsAreReadOnlyButDoNotBlockLocalWrites
+  TestLockedWriteRefusesLegacyV1AppendToMintedRegistry
+  TestLockedWriteRefusesInjectedLegacyV1RowInBornV2Registry
+  TestLockedWriteRefusesLegacyV1RowInPlantedMigrationArchive
 )
 
 minimum_test_count=10

@@ -7,7 +7,7 @@
 #   selfcompact suite separately pins the self-helper.
 # - Incident 262 (uncorroborated-bus spawn): the gateway verb is gone. Its
 #   successor is the fleet wrapper obligation: a local launch with explicit
-#   `--go`, pinned by tools/fleet/tests/run.sh.
+#   `--go`, pinned by tools/fleet/tests/check-fleet.sh.
 # - Incident 268 (adopt circularity): the adopt verb is gone. Its successor is
 #   hcom construction: hook-bound names are bus-unique and continuity uses
 #   `hcom r <name-or-uuid>`.
@@ -37,9 +37,11 @@
 # - check-node-contract -> registry/observer cache checks.
 # - check-grok-doctor, check-grok-transport -> no successor; Grok support was
 #   explicitly dropped by the teardown ruling.
+# - check-launchers -> the direct-vendor resolver/exec contract in the new
+#   tools/herder/tests/check-launchers.sh.
 # - check-hook-bootstrap, check-launch-contract, check-launcher-doctor,
-#   check-launchers, check-shims, check-statusline-snapshot -> hcom hook
-#   construction (check-hcom-hooks) and the fleet wrapper suite.
+#   check-shims, check-statusline-snapshot -> hcom hook construction
+#   (check-hcom-hooks) and the fleet wrapper suite.
 
 set -euo pipefail
 

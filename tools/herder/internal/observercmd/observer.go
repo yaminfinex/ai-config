@@ -381,12 +381,17 @@ func (q snapshotQuerier) ProcessInfo(id string) (herdrcli.ProcessInfo, error) {
 func observePanes(proj *v2.Projection, hd herdrState, bus busState) map[string]paneObservation {
 	return observePanesWithAliasProbe(proj, hd, bus, func(id string) occupant.Observation {
 		return occupant.Probe(occupant.Substrate{Herdr: occupant.CLIQuerier{}}, id)
-	})
+	}, nil)
 }
 
-func observePanesWithAliasProbe(proj *v2.Projection, hd herdrState, bus busState, aliasProbe func(string) occupant.Observation) map[string]paneObservation {
+func observePanesWithAliasProbe(proj *v2.Projection, hd herdrState, bus busState, aliasProbe, paneProbe func(string) occupant.Observation) map[string]paneObservation {
 	observed := map[string]paneObservation{}
 	querier := snapshotQuerier{state: hd}
+	if paneProbe == nil {
+		paneProbe = func(id string) occupant.Observation {
+			return occupant.Probe(occupant.Substrate{Herdr: querier}, id)
+		}
+	}
 	byPane := map[string][]v2.SessionRecord{}
 	for _, rec := range proj.Sessions() {
 		paneID := recordPaneID(rec)
@@ -398,7 +403,7 @@ func observePanesWithAliasProbe(proj *v2.Projection, hd herdrState, bus busState
 		byPane[paneID] = append(byPane[paneID], rec)
 	}
 	for paneID, rows := range byPane {
-		obs := occupant.Probe(occupant.Substrate{Herdr: querier}, paneID)
+		obs := paneProbe(paneID)
 		// A tool process can exist before its transcript/session artifact is
 		// ready. That boot-order gap is not proof of vacancy and must not turn a
 		// wrapper birth stamp into a dead row.
@@ -406,9 +411,7 @@ func observePanesWithAliasProbe(proj *v2.Projection, hd herdrState, bus busState
 			obs.Status = occupant.Unprobeable
 		}
 		if !observationCorroboratesAny(obs, rows) {
-			if relocated, ok := relocateRows(rows, hd, bus, aliasProbe, func(id string) occupant.Observation {
-				return occupant.Probe(occupant.Substrate{Herdr: querier}, id)
-			}); ok {
+			if relocated, ok := relocateRows(rows, hd, bus, aliasProbe, paneProbe); ok {
 				obs = relocated
 			} else if anyLiveBusRow(rows, bus) {
 				// Live hook/PTY evidence outranks a stale coordinate. If identity
@@ -436,9 +439,7 @@ func observePanesWithAliasProbe(proj *v2.Projection, hd herdrState, bus busState
 			if i == winner || !po.LiveGUIDs[rec.GUID] {
 				continue
 			}
-			relocated, ok := relocateRows([]v2.SessionRecord{rec}, hd, bus, aliasProbe, func(id string) occupant.Observation {
-				return occupant.Probe(occupant.Substrate{Herdr: querier}, id)
-			})
+			relocated, ok := relocateRows([]v2.SessionRecord{rec}, hd, bus, aliasProbe, paneProbe)
 			if !ok || relocated.Pane.PaneID == "" || relocated.Pane.PaneID == paneID {
 				continue
 			}

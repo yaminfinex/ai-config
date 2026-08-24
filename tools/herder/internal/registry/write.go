@@ -60,13 +60,6 @@ func (o WriteOutcome) Err() error {
 	return errors.New(o.Reason)
 }
 
-func SingleOutcome(outcomes []WriteOutcome) (WriteOutcome, error) {
-	if len(outcomes) != 1 {
-		return WriteOutcome{}, fmt.Errorf("registry write returned %d outcomes for one candidate", len(outcomes))
-	}
-	return outcomes[0], nil
-}
-
 type LegacyV1AppendError struct {
 	GUID        string
 	ArchivePath string
@@ -347,10 +340,10 @@ func readNodeMarker(path string) (string, bool, error) {
 	}
 	id := strings.TrimSpace(string(b))
 	if id == "" {
-		return "", false, fmt.Errorf("registry node gate refused: empty node marker %s; run `herder node init` to repair the state dir", path)
+		return "", false, fmt.Errorf("registry node gate refused: empty node marker %s; restore the marker from the registry's node row before retrying", path)
 	}
 	if !isNodeIDShape(id) {
-		return "", false, fmt.Errorf("registry node gate refused: malformed node marker %s contains %q; run `herder node init` to repair the state dir", path, id)
+		return "", false, fmt.Errorf("registry node gate refused: malformed node marker %s contains %q; restore the marker from the registry's node row before retrying", path, id)
 	}
 	return id, true, nil
 }
@@ -445,7 +438,7 @@ func nodeGateError(marker string, markerPresent bool, nodes []v2.NodeRecord) err
 	default:
 		state = "marker and registry node state are inconsistent"
 	}
-	return fmt.Errorf("registry node gate refused: %s; run `herder node init` to repair the state dir", state)
+	return fmt.Errorf("registry node gate refused: %s; restore a matching marker and node row before retrying", state)
 }
 
 func nodeIDs(nodes []v2.NodeRecord) string {
@@ -1360,21 +1353,6 @@ func V2ByGUID(proj *v2.Projection, guid string) *v2.SessionRecord {
 		}
 	}
 	return nil
-}
-
-func V2Resolve(proj *v2.Projection, target string) *v2.SessionRecord {
-	var hit *v2.SessionRecord
-	for _, rec := range proj.Sessions() {
-		paneID := ""
-		if rec.Seat != nil {
-			paneID = rec.Seat.PaneID
-		}
-		if rec.GUID == target || ShortGUID(rec.GUID) == target || rec.Label == target || paneID == target {
-			cp := rec
-			hit = &cp
-		}
-	}
-	return hit
 }
 
 func V2LabelOwner(proj *v2.Projection, label, exceptGUID string) *v2.SessionRecord {

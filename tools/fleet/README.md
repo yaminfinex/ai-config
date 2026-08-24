@@ -43,6 +43,14 @@ hcom term inject review-vava '/compact retain the review contract' --enter
 hcom send @review-vava --intent request -- 'Continue the review'
 ```
 
+A busy Claude or Codex queues a landed message until its current turn ends.
+That queued state is success: send once, do not retry, and do not inject extra
+Enter keys (each Enter can stack a duplicate). For long or multiline Codex
+briefs, write the text to a file and send a short one-line path instead. Large
+pastes collapse into a composer blob that can require two Enters, while a
+multiline paste can trigger the planning overlay; both make delivery checks
+ambiguous and retries can duplicate the prompt.
+
 Self-compaction uses two composer injections because a self-addressed bus send
 reroutes to the owner. The helper detaches and prints its log filename:
 

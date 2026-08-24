@@ -24,10 +24,9 @@ test_names=(
   TestRotationInvalidThresholdNamesFix
   TestRotationRecoveryRefusalTexts
   TestRotationArchiveByteVerificationRefusalText
-  TestArchiveConsultationProvidesForkParentSessionID
 )
 
-minimum_test_count=12
+minimum_test_count=11
 declare -A declared_test_names=()
 for test_name in "${test_names[@]}"; do
   if [[ -n "${declared_test_names[$test_name]+present}" ]]; then

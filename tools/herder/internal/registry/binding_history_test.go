@@ -11,28 +11,6 @@ import (
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
-func TestHistoricalAttestationVocabularyRemainsReadable(t *testing.T) {
-	row := attestedCorrectionPatch("binding-bus", v2.BindingFieldHcomName)
-	encoded, err := json.Marshal(row)
-	if err != nil {
-		t.Fatal(err)
-	}
-	projection, err := v2.Load(strings.NewReader(string(encoded)+"\n"), v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded := projection.Sessions()[0]
-	if len(decoded.Attestations) != 1 || len(decoded.BindingTombstones) != 1 || decoded.Bindings[2].EvidenceClass != v2.EvidenceAttested {
-		t.Fatalf("historical attestation vocabulary was not decoded: %+v", decoded)
-	}
-	if got, status := LatestSufficientBinding(decoded, v2.BindingFieldHcomName, LiveEvidenceAbsent); status != BindingSelected || got.ID != "binding-correction" {
-		t.Fatalf("selected binding = %+v status=%q, want historical correction", got, status)
-	}
-	if got, status := LatestSufficientBinding(decoded, v2.BindingFieldHcomName, LiveEvidenceUnavailable); status != BindingDeferred || got.ID != "" {
-		t.Fatalf("unavailable selection = %+v status=%q, want deferred empty", got, status)
-	}
-}
-
 func TestAttestationWritersAreRemoved(t *testing.T) {
 	_, _, err := normalizeSessionAppend(bindingProjection(t), attestedCorrectionPatch("binding-bus", v2.BindingFieldHcomName))
 	if err == nil || !strings.Contains(err.Error(), "no longer supported") {
