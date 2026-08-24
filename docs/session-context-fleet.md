@@ -74,5 +74,10 @@ Messages arrive through <hcom> tags. A queued send is delivered at the target's 
 
 ## SUBAGENTS
 
-In-session subagents follow the active harness's native subagent contract. Separate peer sessions use the fleet lifecycle above and coordinate through hcom.
+- Run the harness Task tool with `background=true` and tell the subagent `USE HCOM`.
+- Each subagent receives its own context and a random hcom name.
+- Let that context teach the join mechanics; do not hand the subagent specific hcom syntax.
+- Keep the subagent alive with `hcom config -i self subagent_timeout SEC` when needed.
+
+Separate peer sessions use the fleet lifecycle above and coordinate through hcom.
 </hcom_system_context>
