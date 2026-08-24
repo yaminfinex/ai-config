@@ -3,7 +3,7 @@ id: TASK-261
 title: >-
   Docs lift after the enroll-repair trial: repair-proof rationale comment,
   compact re-enroll help case, compact-then derived-sender help naming
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-16 08:05'
 labels:
@@ -13,6 +13,12 @@ dependencies: []
 priority: low
 ordinal: 260500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Superseded. Enroll, repair, and compact help retired with their verbs. The live
+compact and continuity doctrine now lives in the orchestrate skill, fleet
+README, and session-context template.
 
 ## Description
 

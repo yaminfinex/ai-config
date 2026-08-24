@@ -1,118 +1,84 @@
 #!/usr/bin/env bash
-# check-launchers.sh - hermetic contract for lib/launchers.sh: the interactive
-# claude/codex/grok launcher functions.
-#
-# Pins the properties the design depends on:
-#   - functions route to "$AI_CONFIG_ROOT/bin/herder" launch with baked
-#     default args, env-overridable (including the empty-string ask-mode
-#     override), user args appended;
-#   - a PATH imposter prepended ahead of everything loses to the function
-#     (the mise hook-env re-front scenario that beat the shim generation);
-#   - a missing/unresolvable AI_CONFIG_ROOT fails loud (rc 127) and never
-#     falls back to a raw PATH launch.
+# Hermetic contract for the managed interactive launcher functions: resolve
+# once past retired herder shims and mise-owned candidates, then exec the
+# absolute vendor entry point with the configured default args.
 
-set -uo pipefail
+set -euo pipefail
 
-TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd "$TESTS_DIR/../../.." && pwd -P)"
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
+TEST_ROOT=$(mktemp -d)
+trap 'rm -rf -- "$TEST_ROOT"' EXIT
 
-ROOT="$(mktemp -d)"
-cleanup() { rm -rf "$ROOT"; }
-trap cleanup EXIT
+fail() { printf 'FAIL  %s\n' "$1" >&2; exit 1; }
+pass() { printf 'PASS  %s\n' "$1"; }
 
-fail=0
-ok()  { printf 'PASS  %s\n' "$1"; }
-bad() { printf 'FAIL  %s - %s\n' "$1" "$2"; fail=1; }
-
-assert_eq() {
-  local name="$1" got="$2" want="$3"
-  if [ "$got" = "$want" ]; then
-    ok "$name"
-  else
-    bad "$name" "got [$got] want [$want]"
-  fi
-}
-
-assert_contains() {
-  local name="$1" haystack="$2" needle="$3"
-  case "$haystack" in
-    *"$needle"*) ok "$name" ;;
-    *) bad "$name" "missing [$needle] in [$haystack]" ;;
-  esac
-}
-
-FIXROOT="$ROOT/root"
-mkdir -p "$FIXROOT/bin" "$FIXROOT/lib" "$ROOT/decoy"
-cp "$REPO/lib/launchers.sh" "$FIXROOT/lib/"
-# Recorder herder: prints exactly one argv line per token so word-splitting
-# bugs (a quoted user arg breaking apart) are visible.
-cat > "$FIXROOT/bin/herder" <<'EOF'
-#!/bin/sh
-for a in "$@"; do printf 'ARG[%s]\n' "$a"; done
+mkdir -p "$TEST_ROOT/herder-bin" "$TEST_ROOT/mise/shims" \
+  "$TEST_ROOT/mise/installs/node/fixture/bin" "$TEST_ROOT/symlink-bin" "$TEST_ROOT/vendor-bin"
+cat >"$TEST_ROOT/herder-bin/claude" <<'EOF'
+#!/usr/bin/env bash
+# herder-path-shim
+exit 91
 EOF
-printf '%s\n' '#!/bin/sh' 'echo RAW-DECOY-RAN' > "$ROOT/decoy/claude"
-chmod +x "$FIXROOT/bin/herder" "$ROOT/decoy/claude"
+cat >"$TEST_ROOT/mise/shims/claude" <<'EOF'
+#!/usr/bin/env bash
+exit 92
+EOF
+cat >"$TEST_ROOT/mise/installs/node/fixture/bin/claude" <<'EOF'
+#!/usr/bin/env bash
+exit 93
+EOF
+ln -s "$TEST_ROOT/mise/installs/node/fixture/bin/claude" "$TEST_ROOT/symlink-bin/claude"
+cat >"$TEST_ROOT/vendor-bin/claude" <<'EOF'
+#!/usr/bin/env bash
+printf 'exe=%s\n' "$0" >"$LAUNCHER_TEST_LOG"
+printf 'arg=%s\n' "$@" >>"$LAUNCHER_TEST_LOG"
+exit 23
+EOF
+cat >"$TEST_ROOT/vendor-bin/codex" <<'EOF'
+#!/usr/bin/env bash
+printf 'exe=%s\n' "$0" >"$LAUNCHER_TEST_LOG"
+printf 'arg=%s\n' "$@" >>"$LAUNCHER_TEST_LOG"
+EOF
+chmod +x "$TEST_ROOT/herder-bin/claude" "$TEST_ROOT/mise/shims/claude" \
+  "$TEST_ROOT/mise/installs/node/fixture/bin/claude" \
+  "$TEST_ROOT/vendor-bin/claude" "$TEST_ROOT/vendor-bin/codex"
 
-run_case() { # run_case <extra-env...> -- <shell-body>
-  local envs=()
-  while [ "$1" != "--" ]; do envs+=("$1"); shift; done
-  shift
-  env -i PATH="$ROOT/decoy:/usr/bin:/bin" HOME="$ROOT" AI_CONFIG_ROOT="$FIXROOT" "${envs[@]}" \
-    bash --noprofile --norc -c "source \"\$AI_CONFIG_ROOT/lib/launchers.sh\"; $1" 2>&1
-}
+export LAUNCHER_TEST_LOG="$TEST_ROOT/launch.log"
+PATH="$TEST_ROOT/herder-bin:$TEST_ROOT/mise/shims:$TEST_ROOT/symlink-bin:$TEST_ROOT/vendor-bin:/usr/bin:/bin"
+# shellcheck source=../../../lib/launchers.sh
+source "$ROOT/lib/launchers.sh"
 
-# 1. Defaults baked in, user args appended, quoting preserved.
-OUT="$(run_case -- 'claude --resume "two words"')"
-assert_eq "claude default+args" "$OUT" 'ARG[launch]
-ARG[claude]
-ARG[--dangerously-skip-permissions]
-ARG[--resume]
-ARG[two words]'
+set +e
+claude --model test-model
+rc=$?
+set -e
+[[ $rc -eq 23 ]] || fail "launcher did not return the vendor process status"
+grep -Fx "exe=$TEST_ROOT/vendor-bin/claude" "$LAUNCHER_TEST_LOG" >/dev/null \
+  || fail "launcher did not exec the absolute vendor entry point"
+grep -Fx 'arg=--dangerously-skip-permissions' "$LAUNCHER_TEST_LOG" >/dev/null \
+  || fail "launcher omitted the Claude default autonomy flag"
+grep -Fx 'arg=--model' "$LAUNCHER_TEST_LOG" >/dev/null \
+  || fail "launcher lost caller arguments"
+grep -Fx 'arg=test-model' "$LAUNCHER_TEST_LOG" >/dev/null \
+  || fail "launcher lost caller argument values"
+pass "launcher skips herder/mise imposters and execs the vendor once"
 
-OUT="$(run_case -- 'codex')"
-assert_eq "codex default" "$OUT" 'ARG[launch]
-ARG[codex]
-ARG[--dangerously-bypass-approvals-and-sandbox]'
-
-OUT="$(run_case -- 'grok')"
-assert_eq "grok no default args" "$OUT" 'ARG[launch]
-ARG[grok]'
-
-# 2. Env overrides: custom flags, and the empty-string ask-mode override.
-OUT="$(run_case HERDER_SHIM_ARGS_CLAUDE=--custom-flag -- 'claude')"
-assert_eq "claude env override" "$OUT" 'ARG[launch]
-ARG[claude]
-ARG[--custom-flag]'
-
-OUT="$(run_case HERDER_SHIM_ARGS_CLAUDE= -- 'claude -p hi')"
-assert_eq "claude empty override (ask mode)" "$OUT" 'ARG[launch]
-ARG[claude]
-ARG[-p]
-ARG[hi]'
-
-# 3. The function wins over a PATH imposter fronted ahead of everything.
-OUT="$(run_case -- 'type -t claude; claude')"
-assert_contains "function beats PATH decoy: type" "$OUT" "function"
-assert_contains "function beats PATH decoy: routes to herder" "$OUT" "ARG[launch]"
-case "$OUT" in
-  *RAW-DECOY-RAN*) bad "function beats PATH decoy: decoy never runs" "decoy ran" ;;
-  *) ok "function beats PATH decoy: decoy never runs" ;;
-esac
-
-# 4. Missing root fails loud with rc 127; the decoy must NOT run as fallback.
-OUT="$(env -i PATH="$ROOT/decoy:/usr/bin:/bin" HOME="$ROOT" AI_CONFIG_ROOT="$ROOT/nonexistent" \
-  bash --noprofile --norc -c "source \"$FIXROOT/lib/launchers.sh\"; claude; echo rc=\$?" 2>&1)"
-assert_contains "missing root: loud error" "$OUT" "missing or not executable"
-assert_contains "missing root: rc 127" "$OUT" "rc=127"
-case "$OUT" in
-  *RAW-DECOY-RAN*) bad "missing root: no raw fallback" "decoy ran" ;;
-  *) ok "missing root: no raw fallback" ;;
-esac
-
-echo
-if [ "$fail" -eq 0 ]; then
-  printf 'ALL GREEN - launcher function contract holds.\n'
-  exit 0
+HERDER_SHIM_ARGS_CODEX='' codex exec hello
+if grep -F -- '--dangerously-bypass-approvals-and-sandbox' "$LAUNCHER_TEST_LOG" >/dev/null; then
+  fail "empty override did not disable default Codex args"
 fi
-printf 'CONTRACT DRIFT - see failures above.\n'
-exit 1
+grep -Fx 'arg=exec' "$LAUNCHER_TEST_LOG" >/dev/null || fail "Codex override lost caller args"
+grep -Fx 'arg=hello' "$LAUNCHER_TEST_LOG" >/dev/null || fail "Codex override lost caller values"
+pass "empty launcher override preserves ask-mode behavior"
+
+PATH="$TEST_ROOT/herder-bin:$TEST_ROOT/mise/shims:/usr/bin:/bin"
+set +e
+claude >"$TEST_ROOT/missing.out" 2>"$TEST_ROOT/missing.err"
+rc=$?
+set -e
+[[ $rc -eq 127 ]] || fail "missing vendor did not fail with rc 127"
+grep -F "no vendor 'claude' on PATH" "$TEST_ROOT/missing.err" >/dev/null \
+  || fail "missing vendor failure was not actionable"
+pass "missing vendor fails loud without falling back"
+
+printf 'ALL GREEN - interactive launchers resolve and exec vendors directly.\n'

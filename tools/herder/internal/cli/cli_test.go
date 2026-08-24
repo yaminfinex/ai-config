@@ -50,3 +50,22 @@ func TestEverySubcommandHasHandler(t *testing.T) {
 		}
 	}
 }
+
+func TestRetiredLifecycleCommandsAreAbsent(t *testing.T) {
+	retired := []string{
+		"spawn", "send", "raise", "join", "leave", "credential", "wait",
+		"cull", "enroll", "adopt", "rename", "retire", "reopen", "fork",
+		"resume", "compact", "compact-then", "node", "grok", "launch",
+		"hook", "sidecar",
+	}
+	_, usage, _ := runCLI(t, "--help")
+	for _, name := range retired {
+		if strings.Contains(usage, "  "+name+" ") {
+			t.Errorf("root usage still advertises retired command %q", name)
+		}
+		code, stdout, stderr := runCLI(t, name, "--help")
+		if code != 2 || stdout != "" || !strings.Contains(stderr, "unknown command") {
+			t.Errorf("retired command %q = code %d stdout %q stderr %q", name, code, stdout, stderr)
+		}
+	}
+}

@@ -3,7 +3,7 @@ id: TASK-264
 title: >-
   Reconcile D11 healing misses the stale-tracker-name flavor: conflict fires
   before the evidence-dominance exception is consulted
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-16 13:05'
 updated_date: '2026-07-17 01:04'
@@ -13,6 +13,11 @@ dependencies: []
 priority: medium
 ordinal: 263500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. Reconcile and D11 lifecycle healing retired; the observer
+uses the occupant probe only to refresh display-cache stamps.
 
 ## Description
 

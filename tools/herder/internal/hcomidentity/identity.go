@@ -3,14 +3,12 @@ package hcomidentity
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 )
 
 type LaunchContext struct {
@@ -76,41 +74,9 @@ type Result struct {
 	Reason    string
 }
 
-// CurrentEvidence returns durable live-row correlates for the calling process.
-// HCOM_INSTANCE_NAME is deliberately excluded: a launch-time name is not proof.
-func CurrentEvidence(paneIDs ...string) Evidence {
-	evidence := Evidence{
-		SessionID: os.Getenv("HCOM_SESSION_ID"),
-		ProcessID: os.Getenv("HCOM_PROCESS_ID"),
-	}
-	for _, paneID := range paneIDs {
-		if paneID == "" || contains(evidence.PaneIDs, paneID) {
-			continue
-		}
-		evidence.PaneIDs = append(evidence.PaneIDs, paneID)
-	}
-	return evidence
-}
-
 // List reads the live hcom roster in the requested namespace.
 func List(dir string) ([]Row, error) {
 	cmd := exec.Command("hcom", "list", "--json")
-	cmd.Env = os.Environ()
-	if dir != "" && dir != "null" {
-		cmd.Env = setEnv(cmd.Env, "HCOM_DIR", dir)
-	}
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("hcom list --json failed: %w", err)
-	}
-	return Decode(out)
-}
-
-// ListContext is List with a caller-owned deadline. Lifecycle protocols use
-// it when a dead bus process must not make an otherwise bounded operation hang.
-func ListContext(ctx context.Context, dir string) ([]Row, error) {
-	cmd := exec.CommandContext(ctx, "hcom", "list", "--json")
-	cmd.WaitDelay = 100 * time.Millisecond
 	cmd.Env = os.Environ()
 	if dir != "" && dir != "null" {
 		cmd.Env = setEnv(cmd.Env, "HCOM_DIR", dir)
@@ -211,67 +177,6 @@ func resultForRow(name string, row Row) Result {
 	return Result{Name: name, BaseName: baseName, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
 }
 
-func ResolveLive(dir string, evidence Evidence) Result {
-	rows, err := List(dir)
-	if err != nil {
-		return Result{Reason: err.Error()}
-	}
-	return Resolve(rows, evidence)
-}
-
-func ResolveLiveContext(ctx context.Context, dir string, evidence Evidence) Result {
-	rows, err := ListContext(ctx, dir)
-	if err != nil {
-		return Result{Reason: err.Error()}
-	}
-	return Resolve(rows, evidence)
-}
-
-func VerifyStored(rows []Row, evidence Evidence, stored string) (bool, Result) {
-	resolved := Resolve(rows, evidence)
-	return resolved.Verified && stored != "" && stored == resolved.Name, resolved
-}
-
-// JoinedNamed returns the live row holding name. Callers use this before an
-// explicit reclaim so a different live session is never displaced.
-func JoinedNamed(rows []Row, name string) (Row, bool) {
-	row, count := JoinedNamedCount(rows, name)
-	return row, count > 0
-}
-
-// JoinedNamedCount returns one matching live row plus the total match count so
-// callers creating operation-scoped proof can fail closed on name ambiguity.
-func JoinedNamedCount(rows []Row, name string) (Row, int) {
-	var found Row
-	count := 0
-	for _, row := range rows {
-		if row.Name == name && joined(row) {
-			if count == 0 {
-				found = row
-			}
-			count++
-		}
-	}
-	return found, count
-}
-
-// JoinedStoredCount resolves a stored bus coordinate whether it recorded the
-// roster's tagged full name or its base name. The returned row is the source
-// of truth for both forms; callers must not derive one form from the other.
-func JoinedStoredCount(rows []Row, stored string) (Row, int) {
-	var found Row
-	count := 0
-	for _, row := range rows {
-		if joined(row) && StoredNameMatches(row.Name, row.BaseName, stored) {
-			if count == 0 {
-				found = row
-			}
-			count++
-		}
-	}
-	return found, count
-}
-
 // StoredNameMatches compares an exact persisted bus coordinate with the two
 // authoritative forms emitted by the hcom roster. It never manufactures a
 // tagged display name from separate fields.
@@ -305,13 +210,4 @@ func setEnv(env []string, key, value string) []string {
 		}
 	}
 	return append(out, prefix+value)
-}
-
-func contains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }

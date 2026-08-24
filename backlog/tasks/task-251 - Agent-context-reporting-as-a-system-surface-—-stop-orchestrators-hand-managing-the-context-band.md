@@ -13,6 +13,12 @@ priority: high
 ordinal: 250500
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open. Context-band reporting is still required, now as an hcom/herdr
+status or metadata surface; the deleted sidecar and cache ledger are not the
+authority.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

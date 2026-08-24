@@ -14,6 +14,11 @@ The herder segment uses these environment variables when present:
 
 ## Statusline Snapshot Contract
 
+> **Superseded 2026-08-24 for herder production.** The per-seat sidecar was
+> deleted, so it no longer creates or refreshes these snapshots. The contract
+> remains as history for existing files; live status comes from hcom and herdr,
+> while herder list/observer expose display cache only.
+
 Statusline renderers and the herder sidecar share a tiny optional state file
 per hcom instance. Renderers must omit unavailable segments when the file is
 absent or a key is malformed.

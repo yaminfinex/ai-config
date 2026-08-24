@@ -1,14 +1,14 @@
 ---
 name: orchestrate
-description: Run a long or complex plan across multiple agent sessions via the `herder` CLI. Use when the user says "orchestrate this plan" or hands over a plan or runbook that won't fit one context window.
+description: Run a long or complex plan across multiple agent sessions through the fleet wrapper, hcom, and herdr. Use when the user says "orchestrate this plan" or hands over a plan or runbook that will not fit one context window.
 ---
 
 # Orchestrate
 
-Policy for running one mission across many agent sessions. The `herder` CLI is the substrate
-(`herder --help`); the hcom bus carries all coordination. You are smart — this file carries only
-the law that real runs minted; everything else is your judgment, composed per run into the
-playbook.
+Policy for running one mission across many agent sessions. `tools/fleet` owns Claude/Codex
+spawn and cull, hcom owns identity and coordination, and herdr owns placement. Herder survives
+only as `list` plus `observer`: its ledger is display cache, never lifecycle authority. This
+file carries the law that real runs minted; compose everything else per run into the playbook.
 
 ## State
 
@@ -25,31 +25,52 @@ rewrite) and the **run-log** — your journal and the run's wake authority. Cold
 - **Models.** Pin every spawn's model explicitly — the box default is often wrong for the role.
   Confirm the per-role lineup with the operator and write it into the playbook; it changes run to
   run and is never baked into this skill.
-- **Liveness per role.** Cull-on-done (default — `hcom transcript` and `herder resume` make
-  culling cheap) vs keep-open for interrogation.
+- **Liveness per role.** Cull-on-done (default — `hcom transcript` and `hcom r` make culling
+  cheap) vs keep-open for interrogation.
+
+## Lifecycle
+
+- **Spawn.** Use `$AI_CONFIG_ROOT/tools/fleet/spawn.sh` with exactly one placement: an existing
+  herdr workspace, a herdr-managed worktree, or a verified idle pane. Dispatch one line:
+  "read <playbook> in full, then execute <unit>". The wrapper owns `--go`, cwd, autonomy,
+  readiness, hook binding, pane stamping, and failure coordinates.
+- **Message.** Use `hcom send` with an intent and one thread per unit. A `queued` result is
+  delivered work: send once. Resolve uncertain names with `hcom list`; inspect a screen with
+  `hcom term <name>`.
+- **Compact another worker.** Check `hcom list <name> status` and, when ordering matters,
+  `hcom term <name> --json`. Submit `hcom term inject <name> '/compact <steer>' --enter`, then
+  send the continuation once with `hcom send`; hcom carries the queued message through
+  compaction. A busy composer queues safely, but wait for listening when compact must run now.
+- **Self-compact.** Write a superseding **wake state** block first, then run
+  `$AI_CONFIG_ROOT/tools/fleet/selfcompact.sh <self-name> '<steer>' '<continuation>'` and end the
+  turn. The detached helper owns the busy/listening latch and the two composer injections.
+- **Cull.** Use `$AI_CONFIG_ROOT/tools/fleet/cull.sh <exact-hcom-name>`. It sends one courtesy
+  release notice, kills the hcom process, and verifies managed pane closure. Remove a disposable
+  checkout only after that exact cull is verified.
+- **Resume / fork.** Create a verified idle target pane, then place the operation with
+  `FLEET_PANE=<pane> HCOM_TERMINAL=fleet hcom r <name-or-uuid>` or the same form with `hcom f`.
+  Resume keeps the hcom name; fork mints a new one.
 
 ## Context law
 
 - Hard cap **250k tokens** for every seat, yours included. Workers report context % in every
-  DONE; a unit that can't fit the band is a breakdown failure — split it, don't push through.
-- You: compact in place — write a **wake state** block to the run-log first (versioned,
-  "supersedes all earlier wake notes": live state, credentials, rerun commands, next moves),
-  then `herder compact '<steer>' --then '<continuation>'` (bare compact refuses).
-- Workers: prefer **kill+pickup** — a tracked handoff brief and a fresh seat beat a degraded
+  DONE; a unit that cannot fit the band is a breakdown failure — split it, do not push through.
+- You compact in place only after the run-log wake state is complete: version it, say
+  "supersedes all earlier wake notes", and include live state, rerun commands, and next moves.
+- Workers prefer **cull+pickup** — a tracked handoff brief and a fresh seat beat a degraded
   compact.
 
 ## Law — minted by real incidents
 
 - **Verify before done.** A DONE report is a claim: re-run the pinned gates yourself, uncached,
   and **content-read** the deliverable — never accept counts, message strings, or a green you
-  didn't run. Never advance past red.
-- **Doorbell, not poll.** Dispatch, end your turn, wake on reports (a thread per unit on the
-  bus). A silent worker gets a **watchdog** nudge at ~20 min, then a pane read — silence emits
-  no events.
-- **One-line spawn prompts** — "read <playbook> in full, then execute <unit>". Context rides the
-  files and the branch, never the prompt. A capture serves three readers — future orchestrator,
-  worker, reviewer — with acceptance criteria written at capture time and a dispatch-safe
-  description.
+  did not run. Never advance past red.
+- **Doorbell, not poll.** Dispatch, subscribe with `hcom events sub`, then end your turn and wake
+  on the report. hcom's request watcher (`reqwatch`) covers unanswered requests; use a bounded
+  watchdog nudge and a pane read only when it fires. Silence is not progress evidence.
+- **One-line spawn prompts.** Context rides the files and branch, never the prompt. A capture
+  serves three readers — future orchestrator, worker, reviewer — with acceptance criteria written
+  at capture time and a dispatch-safe description.
 - **Implement briefs quote the stop-and-report rule** (a worker that dislikes a settled decision
   stops and reports; it never substitutes its own design) **and the settled-decisions list**;
   DONE reports carry a mandatory deviations section — "none" is an explicit entry.
@@ -75,6 +96,7 @@ rewrite) and the **run-log** — your journal and the run's wake authority. Cold
 
 ## Substrate safety
 
-Never: close your own pane or cull yourself; close workspaces or tabs; send `esc` to a running
-peer; stop or delete sessions without operator confirmation. `herder send` is the only delivery
-path to a peer.
+Lifecycle actions resolve at action time from hcom hooks, fleet preset metadata, and herdr pane
+state. `herder list` and observer stamps are display only. Never close your own pane, close a
+workspace or tab, inject Escape into a running peer, or remove a checkout before its exact seat
+is gone. Use `hcom send` for peer delivery and the fleet wrapper for cull.

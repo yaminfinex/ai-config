@@ -1,6 +1,0 @@
-=== STDERR ===
-
-=== STDOUT ===
-herder node init: minted fresh node id: <NODE>
-=== EXIT ===
-0

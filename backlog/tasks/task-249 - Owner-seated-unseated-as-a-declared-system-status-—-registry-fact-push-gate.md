@@ -12,6 +12,12 @@ priority: medium
 ordinal: 248500
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open as an owner-status product requirement, but not as a herder
+registry fact. Re-home the declared status and push gate to hcom/mission-control
+without granting lifecycle authority to the display cache.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

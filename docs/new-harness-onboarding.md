@@ -1,6 +1,12 @@
 # New-harness onboarding and characterization playbook
 
-Date: 2026-07-09 · Updated: 2026-07-14 · Status: current characterization checklist
+> **SUPERSEDED 2026-08-24.** This is the historical checklist for adding a
+> harness to the retired herder lifecycle gateway. New lifecycle support begins
+> in hcom; Claude/Codex placement and cull compose through `tools/fleet` and
+> herdr. The worked probes remain research evidence, but the herder commands and
+> implementation map below are not live instructions. Grok support was dropped.
+
+Date: 2026-07-09 · Updated: 2026-08-24 · Status: superseded historical checklist
 
 Purpose: the checklist any future CLI coding agent ("harness") must satisfy to become a first-class herder/hcom citizen — spawnable, bus-bound from birth, deliverable-to, observable, forkable/resumable. Written harness-agnostically; **grok CLI 0.2.93 is the worked example** (full evidence in `docs/grok-integration-characterization.md`).
 

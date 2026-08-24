@@ -14,6 +14,11 @@ priority: medium
 ordinal: 305500
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open. This owner-ratified mish cleanup is independent of the herder
+teardown and retains its existing scope.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

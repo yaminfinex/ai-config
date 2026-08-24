@@ -3,7 +3,7 @@ id: TASK-259
 title: >-
   herder spawn --mission refuses: 'event registered cannot change explicit
   mission membership'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-16 05:09'
 labels:
@@ -12,6 +12,11 @@ dependencies: []
 priority: medium
 ordinal: 258500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. Herder spawn and its mission-membership write retired;
+fleet tags and hcom threads carry run grouping without registry authority.
 
 ## Description
 

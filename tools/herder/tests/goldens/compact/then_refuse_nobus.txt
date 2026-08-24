@@ -1,7 +1,0 @@
-=== STDERR ===
-herder compact: refused — --then needs your own bus name to deliver the continuation, but your registry row records none (this session is not bus-bound). Run `herder enroll` from this live session to bind its bus identity, then retry. Nothing was typed.
-=== STDOUT ===
-
-=== EXIT ===
-2
-=== HERDR MUTATING CALLS ===

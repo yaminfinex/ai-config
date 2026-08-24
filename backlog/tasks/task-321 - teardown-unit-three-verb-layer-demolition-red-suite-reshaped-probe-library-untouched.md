@@ -12,6 +12,12 @@ dependencies:
 ordinal: 318700
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Implementation is approved at `3e02b3a` on `impl-verb-demolition`. Status stays
+open until the conductor performs the single atomic merge with unit four;
+merge is deploy on this box.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

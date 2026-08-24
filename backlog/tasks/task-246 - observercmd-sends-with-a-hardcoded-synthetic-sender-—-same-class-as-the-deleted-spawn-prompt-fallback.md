@@ -14,5 +14,9 @@ ordinal: 245500
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
+**Teardown reconciliation — 2026-08-24:** Remains open only for notifications
+emitted by the surviving observer/cache refresher. Deleted lifecycle sender
+engines are not a remedy; fix or explicitly suppress replies at the hcom seam.
+
 Pre-existing, flagged by both reviewers of the sender-identity unit (explicitly out of that unit's seam): observercmd sends 'hcom send @<name> --from herder-observer' — a hardcoded non-live sender identity. Replies to it hit the @nonexistent-agent error path (and pre-dated reply-resolution quirks route them to the owner desk — the incident class). Fix shape: route observer sends through the explicit-sender engine with a verified identity, or a deliberate documented exception if the observer must stay row-less (state why replies-to-observer are impossible/refused). Small unit; depends on the sender-identity engine landing on main.
 <!-- SECTION:DESCRIPTION:END -->

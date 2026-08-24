@@ -12,6 +12,12 @@ dependencies: []
 ordinal: 289500
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open as a read-only attribution/detection investigation. Lifecycle
+authority moved to hcom/herdr, but near-time death evidence and observer-cache
+attribution are still missing; retired herder wait/cull are historical signals.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

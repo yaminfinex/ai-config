@@ -3,7 +3,7 @@ id: TASK-279
 title: >-
   herder caller identity verification fails for long-lived forked sessions
   (sender unverified despite functional bus)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-17 16:42'
 updated_date: '2026-07-17 22:25'
@@ -14,6 +14,11 @@ dependencies: []
 priority: medium
 ordinal: 278500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. Caller verification for lifecycle verbs retired; live
+identity and delivery now use hcom's hook/process binding directly.
 
 ## Description
 

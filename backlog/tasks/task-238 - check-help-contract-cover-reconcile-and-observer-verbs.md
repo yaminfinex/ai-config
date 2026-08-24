@@ -1,7 +1,7 @@
 ---
 id: TASK-238
 title: 'check-help-contract: cover reconcile and observer verbs'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-15 08:32'
 labels:
@@ -10,6 +10,12 @@ dependencies: []
 priority: low
 ordinal: 237500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by the command-surface flip. Reconcile and hook retired; the surviving
+list/observer help surface is generated from the live command registry and
+covered by the slimmed help contract.
 
 ## Description
 

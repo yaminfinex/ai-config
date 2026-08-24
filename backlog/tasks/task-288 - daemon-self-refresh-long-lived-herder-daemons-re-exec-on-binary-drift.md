@@ -11,6 +11,11 @@ priority: medium
 ordinal: 287500
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open, narrowed to safe refresh of the singleton observer. Per-seat
+sidecar and bridge re-exec scope retired.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

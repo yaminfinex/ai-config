@@ -3,7 +3,7 @@ id: TASK-252
 title: >-
   grokbridge idle-delivery wire test is timing-flaky under full-suite load — two
   voided batteries in one day
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-16 00:22'
 updated_date: '2026-07-16 01:56'
@@ -13,6 +13,11 @@ dependencies: []
 priority: medium
 ordinal: 251500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Superseded by the owner-ratified Grok drop. The bridge and its flaky delivery
+test were deleted; there is no successor gate.
 
 ## Description
 

@@ -4,46 +4,6 @@ import "testing"
 
 func boolPtr(v bool) *bool { return &v }
 
-func TestResolvePrefersLiveSessionIdentityOverStoredName(t *testing.T) {
-	rows := []Row{
-		{Name: "worker-live-self", BaseName: "live-self", SessionID: "sess-self", Joined: boolPtr(true)},
-		{Name: "live-neighbor", SessionID: "sess-other", Joined: boolPtr(true)},
-	}
-
-	got := Resolve(rows, Evidence{SessionID: "sess-self"})
-	if !got.Verified || got.Name != "worker-live-self" || got.BaseName != "live-self" {
-		t.Fatalf("Resolve = %+v, want verified tagged identity with base name", got)
-	}
-	if ok, _ := VerifyStored(rows, Evidence{SessionID: "sess-self"}, "stale-launch-name"); ok {
-		t.Fatal("VerifyStored accepted a stopped stale name")
-	}
-}
-
-func TestJoinedStoredCountResolvesTaggedFullOrBaseName(t *testing.T) {
-	rows := []Row{{Name: "worker-peer-seat", BaseName: "peer-seat", Joined: boolPtr(true)}}
-	for _, stored := range []string{"worker-peer-seat", "peer-seat"} {
-		row, count := JoinedStoredCount(rows, stored)
-		if count != 1 || row.Name != "worker-peer-seat" || row.BaseName != "peer-seat" {
-			t.Fatalf("JoinedStoredCount(%q) = (%+v, %d), want tagged row", stored, row, count)
-		}
-	}
-	if StoredNameMatches("worker-peer-seat", "peer-seat", "other-peer-seat") {
-		t.Fatal("StoredNameMatches manufactured a display name instead of matching an emitted form")
-	}
-}
-
-func TestVerifyStoredRejectsJoinedNeighbor(t *testing.T) {
-	rows := []Row{
-		{Name: "live-self", SessionID: "sess-self", Joined: boolPtr(true)},
-		{Name: "live-neighbor", SessionID: "sess-other", Joined: boolPtr(true)},
-	}
-
-	ok, got := VerifyStored(rows, Evidence{SessionID: "sess-self"}, "live-neighbor")
-	if ok || !got.Verified || got.Name != "live-self" {
-		t.Fatalf("VerifyStored = (%v, %+v), want mismatch against verified live-self", ok, got)
-	}
-}
-
 func TestResolveRefusesConflictingCorrelates(t *testing.T) {
 	rows := []Row{
 		{Name: "by-session", SessionID: "sess-self", Joined: boolPtr(true)},
@@ -73,15 +33,6 @@ func TestResolveAcceptsEitherRecordedOrCanonicalPane(t *testing.T) {
 	got := Resolve(rows, Evidence{PaneIDs: []string{"pane-from-launch", "pane-canonical"}})
 	if !got.Verified || got.Name != "live-self" || got.PaneID != "pane-from-launch" {
 		t.Fatalf("Resolve = %+v, want launch-pane correlate to prove live-self", got)
-	}
-}
-
-func TestCurrentEvidenceIncludesCallerProcessAndAllPaneForms(t *testing.T) {
-	t.Setenv("HCOM_SESSION_ID", "")
-	t.Setenv("HCOM_PROCESS_ID", "process-self")
-	got := CurrentEvidence("pane-from-launch", "pane-canonical")
-	if got.ProcessID != "process-self" || len(got.PaneIDs) != 2 || got.PaneIDs[0] != "pane-from-launch" || got.PaneIDs[1] != "pane-canonical" {
-		t.Fatalf("CurrentEvidence = %+v, want caller process plus launch/canonical panes", got)
 	}
 }
 

@@ -3,7 +3,7 @@ id: TASK-289
 title: >-
   credential-path notice send_failed on every spawn from a long-lived forked
   seat
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-19 00:09'
 labels:
@@ -13,6 +13,11 @@ dependencies: []
 priority: medium
 ordinal: 288500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. Herder credential issuance and its path notice retired;
+hcom owns fleet launch identity and delivery.
 
 ## Description
 

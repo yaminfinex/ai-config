@@ -15,6 +15,12 @@ priority: medium
 ordinal: 299500
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open as an upstream herdr environment defect. Direct launcher functions
+protect hand-typed agent CLIs, but other pane commands and fleet launches still
+inherit the server snapshot.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

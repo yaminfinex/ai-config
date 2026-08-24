@@ -12,6 +12,12 @@ dependencies:
 ordinal: 318800
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Repo implementation lands on `impl-verb-demolition` and remains open through
+review and the single atomic merge with TASK-321. The conductor owns the
+machine-side session-context flip immediately after merge.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

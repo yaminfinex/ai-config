@@ -14,6 +14,12 @@ priority: medium
 ordinal: 233500
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open for the external agent-browser orphan sweep (ACs 1–4 and 7).
+Fleet cull preserves the delivered generic courtesy notice, but lifecycle code
+still must not learn resource-specific cleanup.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

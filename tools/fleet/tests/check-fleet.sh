@@ -57,6 +57,28 @@ set -euo pipefail
 printf 'herdr' >>"$FLEET_TEST_CALLS"
 printf ' %q' "$@" >>"$FLEET_TEST_CALLS"
 printf '\n' >>"$FLEET_TEST_CALLS"
+if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
+  case "${1:-} ${2:-}" in
+    'pane list')
+      case "$FLEET_TEST_CULL_MODE" in
+        managed) printf '%s\n' '{"result":{"panes":[{"pane_id":"p-managed","label":"◉ gate-vava [codex]"}]}}' ;;
+        fallback) printf '%s\n' '{"result":{"panes":[{"pane_id":"p-fallback","label":"▶ gate-vava [codex]"}]}}' ;;
+        ambiguous) printf '%s\n' '{"result":{"panes":[{"pane_id":"p-one","label":"◉ gate-vava [codex]"},{"pane_id":"p-two","label":"○ gate-vava [codex]"}]}}' ;;
+      esac
+      ;;
+    'pane get')
+      if [[ $FLEET_TEST_CULL_MODE == managed && -e $FLEET_TEST_CULL_STATE/killed ]] || \
+         [[ $FLEET_TEST_CULL_MODE == fallback && -e $FLEET_TEST_CULL_STATE/closed ]]; then
+        exit 1
+      fi
+      printf '%s\n' '{"result":{"pane":{"pane_id":"'"${3:-}"'"}}}'
+      ;;
+    'pane close')
+      : >"$FLEET_TEST_CULL_STATE/closed"
+      ;;
+  esac
+  exit 0
+fi
 case "$1 $2" in
   'tab create')
     printf '%s\n' '{"result":{"tab":{"tab_id":"tab-left-behind"}}}'
@@ -79,6 +101,24 @@ set -euo pipefail
 printf 'hcom FLEET_PANE=%q HCOM_TERMINAL=%q' "${FLEET_PANE:-}" "${HCOM_TERMINAL:-}" >>"$FLEET_TEST_CALLS"
 printf ' %q' "$@" >>"$FLEET_TEST_CALLS"
 printf '\n' >>"$FLEET_TEST_CALLS"
+if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
+  case "${1:-} ${2:-}" in
+    'list --json')
+      if [[ $FLEET_TEST_CULL_MODE == managed ]]; then
+        printf '%s\n' '[{"name":"gate-vava","base_name":"vava","tool":"codex","launch_context":{"pane_id":"p-managed"}}]'
+      else
+        printf '%s\n' '[{"name":"gate-vava","base_name":"vava","tool":"codex","launch_context":{}}]'
+      fi
+      ;;
+    'send @gate-vava') ;;
+    'kill gate-vava')
+      : >"$FLEET_TEST_CULL_STATE/killed"
+      [[ $FLEET_TEST_CULL_MODE == managed ]] || exit 1
+      ;;
+    *) exit 64 ;;
+  esac
+  exit 0
+fi
 if [[ ${1:-} == 1 ]]; then
   printf '%s\n' 'Started the launch process' 'Names: vava' 'Batch id: batch-test'
   exit 2
@@ -209,5 +249,44 @@ fi
 grep -F 'term inject vava continue --enter' "$FLEET_TEST_CALLS" >/dev/null \
   || fail "selfcompact did not best-effort inject continuation on timeout"
 pass "selfcompact injects continuation before timeout exit"
+
+cull_state=$TEST_ROOT/cull-state
+mkdir -p "$cull_state"
+: >"$FLEET_TEST_CALLS"
+FLEET_TEST_CULL_MODE=managed FLEET_TEST_CULL_STATE="$cull_state" \
+  PATH="$TEST_ROOT/bin:$PATH" "$FLEET/cull.sh" vava >"$TEST_ROOT/cull-managed.out"
+grep -Fx 'culled name=gate-vava pane=p-managed close=managed' "$TEST_ROOT/cull-managed.out" >/dev/null \
+  || fail "cull did not verify the managed pane close"
+send_line=$(grep -n 'hcom .* send @gate-vava' "$FLEET_TEST_CALLS" | cut -d: -f1)
+kill_line=$(grep -n 'hcom .* kill gate-vava' "$FLEET_TEST_CALLS" | cut -d: -f1)
+[[ -n $send_line && -n $kill_line && $send_line -lt $kill_line ]] \
+  || fail "cull did not send its courtesy notice before kill"
+if grep -F 'herdr pane close' "$FLEET_TEST_CALLS" >/dev/null; then
+  fail "cull closed a pane explicitly after managed close was verified"
+fi
+pass "cull sends courtesy before kill and verifies managed close"
+
+rm -f "$cull_state/killed" "$cull_state/closed"
+: >"$FLEET_TEST_CALLS"
+FLEET_TEST_CULL_MODE=fallback FLEET_TEST_CULL_STATE="$cull_state" \
+  PATH="$TEST_ROOT/bin:$PATH" "$FLEET/cull.sh" vava >"$TEST_ROOT/cull-fallback.out" 2>"$TEST_ROOT/cull-fallback.err"
+grep -Fx 'culled name=gate-vava pane=p-fallback close=label-fallback' "$TEST_ROOT/cull-fallback.out" >/dev/null \
+  || fail "cull did not report its unique-label fallback close"
+grep -F 'herdr pane close p-fallback' "$FLEET_TEST_CALLS" >/dev/null \
+  || fail "cull did not close the unique exact-label fallback pane"
+pass "cull closes only the unique exact-label fallback pane"
+
+rm -f "$cull_state/killed" "$cull_state/closed"
+: >"$FLEET_TEST_CALLS"
+if FLEET_TEST_CULL_MODE=ambiguous FLEET_TEST_CULL_STATE="$cull_state" \
+  PATH="$TEST_ROOT/bin:$PATH" "$FLEET/cull.sh" vava >"$TEST_ROOT/cull-ambiguous.out" 2>"$TEST_ROOT/cull-ambiguous.err"; then
+  fail "cull accepted ambiguous exact-label fallback panes"
+fi
+grep -F 'multiple panes match the exact gate-vava [codex] label; refusing to cull' "$TEST_ROOT/cull-ambiguous.err" >/dev/null \
+  || fail "cull did not explain its ambiguity refusal"
+if grep -E 'hcom .* (send|kill) ' "$FLEET_TEST_CALLS" >/dev/null; then
+  fail "cull acted on the seat before refusing ambiguous labels"
+fi
+pass "cull refuses ambiguous exact-label matches before acting"
 
 printf 'ALL GREEN - fleet wrapper contract holds.\n'

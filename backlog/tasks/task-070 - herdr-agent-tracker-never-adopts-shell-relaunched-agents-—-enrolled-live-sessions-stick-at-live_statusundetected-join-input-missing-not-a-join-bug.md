@@ -16,6 +16,10 @@ ordinal: 70000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
+**Teardown reconciliation — 2026-08-24:** Remains open, narrowed to the
+surviving read-only `herder list` presentation and upstream `herdr` tracker
+adoption. Lifecycle repair and registry-writing remedies below are historical.
+
 herdr agent tracker only adopts agents it started: a shell-relaunched agent in an existing pane reports agent_status=unknown with no agent field, so its enrolled registry row shows live_status=undetected forever even when seat.terminal_id exactly matches a live terminal (verified by diff: term_65612408bc9034, row bbbc84c2). Post-046 tri-state is honest, but operators cannot distinguish live-shell-relaunched from dead via herder list.
 
 RE-GROUND FIRST (the seat observer shipped after this was filed — TASK-080, merge 7012f9e): the observer confirms seats from bus evidence and snapshot evidence and its advice now annotates herder list. Verify against a live shell-relaunched session (the orchestrator pane is a standing specimen) whether observer confirmation already closes this gap in practice — note the observer itself cannot see herdr agent-tracker status for unadopted agents either, since herdr never detects them. NOTE: do this re-ground after TASK-081 lands (observer snapshot parsing is broken until then; herdr-side evidence is currently empty).

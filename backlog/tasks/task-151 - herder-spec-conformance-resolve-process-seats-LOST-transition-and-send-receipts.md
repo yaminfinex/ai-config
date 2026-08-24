@@ -3,7 +3,7 @@ id: TASK-151
 title: >-
   herder spec conformance: resolve, process seats, LOST transition, and send
   receipts
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-10 10:15'
 updated_date: '2026-07-13 01:05'
@@ -14,6 +14,12 @@ references:
 priority: medium
 ordinal: 150000
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Superseded. Resolve, send, wait, cull, process-seat lifecycle, and authoritative
+LOST transitions retired; the spec marks those promises historical. hcom owns
+live delivery/status and the ledger is display cache only.
 
 ## Description
 

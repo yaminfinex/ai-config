@@ -1,7 +1,7 @@
 ---
 id: TASK-240
 title: 'herder resume: preempt the vendor cwd prompt and carry original launch args'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-15 08:54'
 labels:
@@ -10,6 +10,11 @@ dependencies: []
 priority: high
 ordinal: 239500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Superseded. Resume/fork now use `hcom r` / `hcom f`, with cwd/tool arguments
+owned by hcom and placement pinned by `FLEET_PANE` + `HCOM_TERMINAL=fleet`.
 
 ## Description
 

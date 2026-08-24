@@ -1,7 +1,7 @@
 ---
 id: TASK-224
 title: Make --no-approve the built-in default for herder pi seats
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-15 04:12'
 labels: []
@@ -9,6 +9,11 @@ dependencies: []
 priority: medium
 ordinal: 223500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Superseded. Herder's Pi launch path retired and the fleet wrapper supports
+Claude/Codex only. Any Pi approval default belongs to hcom's native integration.
 
 ## Description
 

@@ -14,8 +14,8 @@
 # conservative by design because deferred/goroutine captures are easy to mistake
 # for durable handling of a registry write failure.
 #
-# The first result is checked independently for UpdateLocked, the injectable
-# updateLocked wrapper, and AppendLegacySessionEvent: it must be bound to a named
+# The first result is checked independently for UpdateLocked and the injectable
+# updateLocked wrapper: it must be bound to a named
 # local and consumed before overwrite. This keeps the typed per-candidate
 # confirmation contract distinct from merely checking the batch error.
 # Before a binding is overwritten, any recognized outcome discard dominates
@@ -334,7 +334,7 @@ func (s *scanner) isUpdateLockedCall(expr ast.Expr) bool {
 func (s *scanner) isUpdateLockedValue(expr ast.Expr) bool {
 	switch fn := unwrapParen(expr).(type) {
 	case *ast.Ident:
-		if (fn.Name == "UpdateLocked" || fn.Name == "AppendLegacySessionEvent") && (s.file.Name.Name == "registry" || s.dotAlias) {
+		if fn.Name == "UpdateLocked" && (s.file.Name.Name == "registry" || s.dotAlias) {
 			return true
 		}
 		if fn.Obj != nil {
@@ -345,7 +345,7 @@ func (s *scanner) isUpdateLockedValue(expr ast.Expr) bool {
 		if fn.Sel.Name == "updateLocked" {
 			return true
 		}
-		if fn.Sel.Name != "UpdateLocked" && fn.Sel.Name != "AppendLegacySessionEvent" {
+		if fn.Sel.Name != "UpdateLocked" {
 			return false
 		}
 		id, ok := fn.X.(*ast.Ident)
@@ -780,7 +780,7 @@ else
 fi
 
 neg_root="$ROOT/negative"
-mkdir -p "$neg_root"/{blank,bare,ignored,defer,go,decl_func,decl_package,labeled,switch_init,funclit,method_value,paren,shadow,field_use,selector_assign,guarded_unchecked,overwrite_unread,switch_unchecked,guarded_overwrite,switch_case_overwrite,sibling_branch_read,outcomes_blank,outcomes_unread,outcomes_blank_after_bind,outcomes_positional_blank,outcomes_positional_blank_after_use,outcomes_empty_range,outcomes_ignored_argument,append_outcomes_blank,wrapper_outcomes_blank,malformed_source}
+mkdir -p "$neg_root"/{blank,bare,ignored,defer,go,decl_func,decl_package,labeled,switch_init,funclit,method_value,paren,shadow,field_use,selector_assign,guarded_unchecked,overwrite_unread,switch_unchecked,guarded_overwrite,switch_case_overwrite,sibling_branch_read,outcomes_blank,outcomes_unread,outcomes_blank_after_bind,outcomes_positional_blank,outcomes_positional_blank_after_use,outcomes_empty_range,outcomes_ignored_argument,wrapper_outcomes_blank,malformed_source}
 
 cat >"$neg_root/blank/negative.go" <<'GO'
 package negative
@@ -1159,17 +1159,6 @@ package negative
 func malformed(
 GO
 
-cat >"$neg_root/append_outcomes_blank/negative.go" <<'GO'
-package negative
-
-import registry "ai-config/tools/herder/internal/registry"
-
-func blankAppendOutcomes() error {
-	_, err := registry.AppendLegacySessionEvent("registry.jsonl", nil, "registered", "seated")
-	return err
-}
-GO
-
 cat >"$neg_root/wrapper_outcomes_blank/negative.go" <<'GO'
 package negative
 
@@ -1241,7 +1230,6 @@ expect_violation_at outcomes_positional_blank 8 'registry write outcomes are dis
 expect_violation_at outcomes_positional_blank_after_use 8 'registry write outcomes are discarded here; remove the discard or consume every outcome'
 expect_violation_at outcomes_empty_range 7 'registry write outcomes are discarded here; remove the discard or consume every outcome'
 expect_violation_at outcomes_ignored_argument 9 'registry write outcomes are discarded here; remove the discard or consume every outcome'
-expect_violation append_outcomes_blank 'registry write outcomes are assigned to _'
 expect_violation wrapper_outcomes_blank 'registry write outcomes are assigned to _'
 
 set +e

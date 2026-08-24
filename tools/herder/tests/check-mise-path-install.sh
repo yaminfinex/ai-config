@@ -156,7 +156,21 @@ run_setup --shims status
 assert_eq "status absent: exit 0" "$RUN_RC" "0"
 assert_contains "status absent: overall" "$RUN_OUT" "ai-config mise PATH: absent"
 
-# 9. no mise on PATH and no mise config dir is a hard failure for install/default.
+# 9. A fresh git archive has no empty, untracked shims directory. Its install
+#    path must still succeed because the managed config contains bin/ only.
+ARCHIVE_REPO="$ROOT/archive-repo"
+mkdir -p "$ARCHIVE_REPO"
+git -C "$REPO" archive HEAD | tar -x -C "$ARCHIVE_REPO"
+assert_absent "fresh archive: retired shims dir absent" "$ARCHIVE_REPO/tools/herder/shims"
+make_case fresh_archive
+RUN_OUT="$(env -i \
+  PATH="$PATH_VALUE" HOME="$HOME_DIR" XDG_CONFIG_HOME="$XDG_DIR" SHELL=/bin/zsh \
+  bash "$ARCHIVE_REPO/bin/ai-setup" --dry-run --shims install 2>&1)"
+RUN_RC=$?
+assert_eq "fresh archive install: exit 0" "$RUN_RC" "0"
+assert_contains "fresh archive install: renders archived bin" "$RUN_OUT" "_.path = [\"$ARCHIVE_REPO/bin\"]"
+
+# 10. no mise on PATH and no mise config dir is a hard failure for install/default.
 make_case no_mise
 rmdir "$XDG_DIR/mise"
 PATH_VALUE="/usr/bin:/bin"

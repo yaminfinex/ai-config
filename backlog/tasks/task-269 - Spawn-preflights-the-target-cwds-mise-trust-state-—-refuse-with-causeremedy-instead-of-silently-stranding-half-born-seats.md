@@ -13,6 +13,12 @@ priority: medium
 ordinal: 268500
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open and moves to `tools/fleet/spawn.sh` plus hcom's workspace-trust
+surface. A newly created untrusted worktree can still strand a fleet launch
+before hook binding.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

@@ -8,6 +8,12 @@ labels: [herder, plumbing]
 dependencies: []
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open and becomes more important: herdr's SessionStart binding is a
+surviving placement/session signal, and the live-contract tripwire still does
+not verify the settings registration.
+
 ## Description
 
 On 2026-08-21 a wholesale rewrite of ~/.claude/settings.json (writer

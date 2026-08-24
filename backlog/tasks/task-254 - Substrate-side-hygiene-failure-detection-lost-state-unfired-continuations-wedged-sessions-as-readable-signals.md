@@ -14,6 +14,12 @@ priority: medium
 ordinal: 253500
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open after re-scoping: hcom events/request watching, fleet helper logs,
+and observer status are the surviving signal sources. The retired lifecycle
+journal and compact-continuation subsystem are no longer candidates.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

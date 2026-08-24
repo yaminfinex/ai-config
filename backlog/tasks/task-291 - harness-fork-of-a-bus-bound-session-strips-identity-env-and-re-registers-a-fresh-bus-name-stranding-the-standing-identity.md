@@ -14,6 +14,11 @@ ordinal: 290500
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
+**Teardown reconciliation — 2026-08-24:** Remains open as an hcom/harness
+identity defect. Registry-specific language below is historical; the surviving
+recovery paths are `hcom r`/`hcom f` and `hcom start --as`, with fleet reclaim
+work tracked by TASK-323. Deduplicate any implementation shared with that task.
+
 Observed live: a harness-level conversation fork (/fork) of a long-lived orchestrator session stripped HCOM_SESSION_ID/HERDER_GUID from the environment; the session-start hook then treated the continuation as a NEW session and minted a fresh bus identity, leaving the standing bus name as an idle ghost row. Every peer/crew report addressed to the standing name would have queued against the ghost indefinitely — silent starvation of the orchestration seat. The herder registry seat was UNAFFECTED (guid/label/pane intact); only the bus binding drifted.
 
 Recovery (proven, clean): back up the bus db, then `hcom start --as <standing-name>` from the continuation session — documented reclaim path ("after compaction/resume/clear"); the ghost row rebinds to the live session and the freshly minted name is retired. Explicit-prefix verb practice (passing pane id + guid literally on herder verbs) kept lifecycle verbs working throughout; only inbound bus delivery was at risk.

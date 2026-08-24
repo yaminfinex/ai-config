@@ -389,6 +389,12 @@ check_vendor_agent_duplicates() {
   done
 }
 
+check_retired_vendor_pin_cache() {
+  local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/herder/vendorbin"
+  [ -d "$cache_dir" ] || return 0
+  warn "orphaned retired herder vendor pin cache: $cache_dir; stale entries are ignored and degrade safely, but nothing maintains or prunes this directory after the launcher rewire"
+}
+
 resolve_in_login_shell() {
   # Run one command in a fresh login+interactive shell and echo its stdout.
   # -l sources the login profile, -i the interactive rc — together they mirror
@@ -486,10 +492,6 @@ check_grok_family() {
   local configured_home="${GROK_HOME:-}"
   local vendor_binary
 
-  if [ ! -x "$AI_CONFIG_ROOT/tools/herder/shims/grok" ]; then
-    err "Grok PATH shim missing or not executable: $AI_CONFIG_ROOT/tools/herder/shims/grok; restore the checkout and rerun bin/ai-setup"
-  fi
-
   if [ -z "${XAI_API_KEY:-}" ]; then
     warn "Grok credential precondition missing: XAI_API_KEY is absent or empty in this environment; export it from a login-shell profile such as \$HOME/.profile, then verify in a fresh herder pane"
   fi
@@ -500,9 +502,9 @@ check_grok_family() {
 
   vendor_binary="$(grok_vendor_on_path || true)"
   if [ -z "$vendor_binary" ]; then
-    warn "no Grok vendor binary found on PATH after herder shims; install Grok Build before launch"
+    warn "no Grok vendor binary found on PATH after retired herder shims; install Grok Build before launch"
   else
-    [ "$quick" -eq 1 ] || log_info "Grok vendor binary resolved after herder PATH shims (not executed): $vendor_binary"
+    [ "$quick" -eq 1 ] || log_info "Grok vendor binary resolved past retired herder PATH shims (not executed): $vendor_binary"
   fi
 }
 
@@ -520,7 +522,7 @@ check_identity_bearing_shell() {
   # This is a situational launch-safety nudge, not repository health. Managed
   # agent shells carry these values by design, so --strict must not make every
   # doctor run inside a seat permanently red.
-  warn_strict_exempt "current shell carries managed-agent identity (${present[*]}); never invoke a vendor agent CLI directly here — use herder, or run probes under env -i with an isolated HOME/state and no HCOM_*/HERDER_*/HERDR_* values"
+  warn_strict_exempt "current shell carries managed-agent identity (${present[*]}); launch agents from a clean shell through the managed launcher functions, or run probes under env -i with an isolated HOME/state and no HCOM_*/HERDER_*/HERDR_* values"
 }
 
 check_git
@@ -532,6 +534,7 @@ check_claude_shared_settings
 check_claude_config_divergence
 check_mise_path
 check_vendor_agent_duplicates
+check_retired_vendor_pin_cache
 check_login_shell_resolution
 check_grok_family
 check_identity_bearing_shell

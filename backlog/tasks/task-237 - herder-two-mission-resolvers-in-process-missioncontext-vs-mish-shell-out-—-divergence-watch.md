@@ -3,7 +3,7 @@ id: TASK-237
 title: >-
   herder: two mission resolvers (in-process missioncontext vs mish shell-out) —
   divergence watch
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-15 08:16'
 updated_date: '2026-07-15 09:58'
@@ -13,6 +13,12 @@ dependencies: []
 priority: low
 ordinal: 236500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. Raise/join/leave and the mish shell-out retired; the one
+remaining missioncontext use is read-only list-cache annotation, so the
+two-resolver divergence no longer exists.
 
 ## Description
 

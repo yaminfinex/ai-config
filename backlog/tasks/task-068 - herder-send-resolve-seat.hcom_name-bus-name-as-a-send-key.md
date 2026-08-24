@@ -1,7 +1,7 @@
 ---
 id: TASK-068
 title: 'herder send: resolve seat.hcom_name (bus name) as a send key'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 10:03'
 updated_date: '2026-07-13 01:05'
@@ -12,6 +12,11 @@ dependencies: []
 priority: low
 ordinal: 68000
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Superseded. Herder send retired; hcom names are the native address accepted by
+`hcom send`, with hcom owning ambiguity and delivery.
 
 ## Description
 

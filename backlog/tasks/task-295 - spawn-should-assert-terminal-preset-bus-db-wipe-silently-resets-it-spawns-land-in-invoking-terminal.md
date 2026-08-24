@@ -14,5 +14,9 @@ ordinal: 294500
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
+**Teardown reconciliation — 2026-08-24:** Remains open at the fleet/hcom
+boundary. `tools/fleet/spawn.sh` must assert the fleet terminal preset (or fail
+clearly); the herder-spawn remedy below is retired history.
+
 Field-report (second deployment): wiping the bus db silently resets the terminal preset to default; subsequent spawns launch into the INVOKING terminal instead of herdr panes ('no panes', Ctrl-C exit-130s, confusing half-born sessions). Fix: herder asserts/re-sets terminal=herdr at spawn, or fails with a clear message naming the preset drift. UPSTREAM (bus) candidate: preset should survive db recreation or its loss should be loud.
 <!-- SECTION:DESCRIPTION:END -->

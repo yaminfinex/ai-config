@@ -139,125 +139,6 @@ func TestLatestByGUIDCollapsesAndSorts(t *testing.T) {
 	}
 }
 
-func TestResolve(t *testing.T) {
-	path := writeRegistry(t,
-		`{"guid":"guid-alpha-0000","short_guid":"alpha","label":"alpha-l","status":"active"}`,
-		`{"guid":"guid-beta-0000","short_guid":"beta","label":"beta-l","status":"active"}`,
-		`{"guid":"guid-beta-0000","short_guid":"beta","label":"beta-l","status":"closed"}`,
-	)
-	recs, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, target := range []string{"guid-beta-0000", "beta", "beta-l"} {
-		hit := Resolve(recs, target)
-		if hit == nil {
-			t.Fatalf("Resolve(%q) = nil, want the beta record", target)
-		}
-		if hit.Status != "closed" {
-			t.Errorf("Resolve(%q).Status = %q, want closed (latest row)", target, hit.Status)
-		}
-	}
-	if hit := Resolve(recs, "term_XYZ"); hit != nil {
-		t.Errorf("Resolve(term_XYZ) = %+v, want nil (herdr-verbatim path)", hit)
-	}
-	// jq: null == "" is false — a record without a label never matches "".
-	if hit := Resolve([]Record{{}}, ""); hit != nil {
-		t.Errorf("Resolve(\"\") on fieldless record = %+v, want nil", hit)
-	}
-}
-
-func TestSeatedCandidatesByPaneOrTerminal(t *testing.T) {
-	// A reused pane p_1 carries three manual identities: two stale-but-seated
-	// (bus_a already superseded on the bus, bus_b likewise) and one live.
-	// gamma sits on a different pane; delta is retired on p_1. Candidates must
-	// be every seated row on the coordinate, in guid order, and nothing else.
-	path := writeRegistry(t,
-		`{"kind":"session","guid":"guid-alpha-0000","label":"a","state":"seated","seat":{"pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_a"}}`,
-		`{"kind":"session","guid":"guid-beta-0000","label":"b","state":"seated","seat":{"pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_b"}}`,
-		`{"kind":"session","guid":"guid-gamma-0000","label":"g","state":"seated","seat":{"pane_id":"p_2","terminal_id":"term_2","hcom_name":"bus_g"}}`,
-		`{"kind":"session","guid":"guid-delta-0000","label":"d","state":"retired","seat":{"pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_d"}}`,
-		`{"kind":"session","guid":"guid-epsilon-0000","label":"e","state":"unseated","seat":{"pane_id":"p_1","terminal_id":"term_1","hcom_name":"bus_e"}}`,
-	)
-	recs, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{"p_1", "term_1"} {
-		got := SeatedCandidatesByPaneOrTerminal(recs, key)
-		if len(got) != 2 {
-			t.Fatalf("SeatedCandidatesByPaneOrTerminal(%q) = %d rows, want 2 (alpha,beta)", key, len(got))
-		}
-		if ptrString(got[0].GUID) != "guid-alpha-0000" || ptrString(got[1].GUID) != "guid-beta-0000" {
-			t.Errorf("candidates(%q) order = %q,%q, want alpha,beta (guid order)", key, ptrString(got[0].GUID), ptrString(got[1].GUID))
-		}
-	}
-	if got := SeatedCandidatesByPaneOrTerminal(recs, "p_2"); len(got) != 1 || ptrString(got[0].GUID) != "guid-gamma-0000" {
-		t.Errorf("candidates(p_2) = %+v, want just gamma", got)
-	}
-	if got := SeatedCandidatesByPaneOrTerminal(recs, ""); got != nil {
-		t.Errorf("candidates(\"\") = %+v, want nil", got)
-	}
-	if got := SeatedCandidatesByPaneOrTerminal(recs, "p_nope"); got != nil {
-		t.Errorf("candidates(unknown) = %+v, want nil", got)
-	}
-}
-
-func TestNonRetiredLabelOwnerUsesLatestRows(t *testing.T) {
-	path := writeRegistry(t,
-		`{"guid":"guid-alpha-0000","short_guid":"alpha","label":"shared","status":"active"}`,
-		`{"guid":"guid-beta-0000","short_guid":"beta","label":"closed-label","status":"active"}`,
-		`{"guid":"guid-beta-0000","short_guid":"beta","label":"closed-label","status":"closed"}`,
-		`{"guid":"guid-gamma-0000","short_guid":"gamma","label":"shared","status":"active"}`,
-	)
-	recs, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner := NonRetiredLabelOwner(recs, "shared", "guid-alpha-0000")
-	if owner == nil || ptrString(owner.GUID) != "guid-gamma-0000" {
-		t.Fatalf("NonRetiredLabelOwner(shared, except alpha) = %+v, want gamma", owner)
-	}
-	if owner := NonRetiredLabelOwner(recs, "shared", "guid-gamma-0000"); owner == nil || ptrString(owner.GUID) != "guid-alpha-0000" {
-		t.Fatalf("NonRetiredLabelOwner(shared, except gamma) = %+v, want alpha", owner)
-	}
-	if owner := NonRetiredLabelOwner(recs, "closed-label", ""); owner != nil {
-		t.Fatalf("closed latest row owns label: %+v, want nil", owner)
-	}
-	if owner := NonRetiredLabelOwner(recs, "", ""); owner != nil {
-		t.Fatalf("empty label owner = %+v, want nil", owner)
-	}
-}
-
-func TestResolveByToolSessionIDScansClosedAndOlderRows(t *testing.T) {
-	path := writeRegistry(t,
-		`{"guid":"guid-alpha-0000","short_guid":"alpha","label":"alpha-old","status":"active","provenance":{"mechanism":"spawn","tool_session_id":"sess-alpha","tag":"worker"}}`,
-		`{"guid":"guid-alpha-0000","short_guid":"alpha","label":"alpha-latest","status":"closed","provenance":{"mechanism":"spawn","tool_session_id":"","tag":"worker"}}`,
-		`{"guid":"guid-beta-0000","short_guid":"beta","label":"beta","status":"active","provenance":{"mechanism":"spawn","tool_session_id":"sess-beta","tag":"worker"}}`,
-	)
-	recs, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hit := ResolveByToolSessionID(recs, "sess-alpha")
-	if hit == nil {
-		t.Fatal("ResolveByToolSessionID returned nil")
-	}
-	if ptrString(hit.Label) != "alpha-latest" || hit.Status != "closed" {
-		t.Fatalf("hit = label %q status %q, want latest closed alpha row", ptrString(hit.Label), hit.Status)
-	}
-	if got := ToolSessionIDForGUID(recs, "guid-alpha-0000"); got != "sess-alpha" {
-		t.Fatalf("ToolSessionIDForGUID = %q, want sess-alpha", got)
-	}
-	prov := PreserveToolSessionID(Provenance{Mechanism: "spawn"}, recs, "guid-alpha-0000")
-	if prov.ToolSessionID != "sess-alpha" {
-		t.Fatalf("PreserveToolSessionID = %q, want sess-alpha", prov.ToolSessionID)
-	}
-	if hit := ResolveByToolSessionID(recs, ""); hit != nil {
-		t.Fatalf("empty session resolved %+v, want nil", hit)
-	}
-}
-
 func TestLegacyProjectionDoesNotReplaceProvenanceSIDWithV2History(t *testing.T) {
 	path := writeRegistry(t,
 		`{"kind":"session","guid":"guid-divergent","event":"seated","state":"seated","label":"current","seat":{"kind":"herdr","terminal_id":"term-current","pane_id":"pane-current"},"sids":[{"sid":"sid-history-new","source":"attested"}],"provenance":{"mechanism":"resume","tool_session_id":"sid-provenance-current"}}`,
@@ -272,139 +153,6 @@ func TestLegacyProjectionDoesNotReplaceProvenanceSIDWithV2History(t *testing.T) 
 	}
 	if got := latest[0].Provenance.ToolSessionID; got != "sid-provenance-current" {
 		t.Fatalf("legacy projection sid = %q, want provenance sid", got)
-	}
-}
-
-func TestResolveByToolSessionIDPrefersCurrentNonTerminalOwnership(t *testing.T) {
-	t.Run("seated current sid beats later retired observation", func(t *testing.T) {
-		path := writeRegistry(t,
-			`{"kind":"session","guid":"guid-seated","event":"seated","state":"seated","label":"current","seat":{"terminal_id":"term-current"},"provenance":{"mechanism":"clear","tool_session_id":"sid-shared"}}`,
-			`{"kind":"session","guid":"guid-retired","event":"retired","state":"retired","provenance":{"mechanism":"enroll","tool_session_id":"sid-shared"}}`,
-		)
-		recs, err := Load(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		hit := ResolveByToolSessionID(recs, "sid-shared")
-		if hit == nil || ptrString(hit.GUID) != "guid-seated" {
-			t.Fatalf("hit = %+v, want current seated owner", hit)
-		}
-	})
-
-	t.Run("unseated beats retired historical observation", func(t *testing.T) {
-		path := writeRegistry(t,
-			`{"kind":"session","guid":"guid-dormant","event":"unseated","state":"unseated","label":"dormant","provenance":{"mechanism":"spawn","tool_session_id":"sid-shared"}}`,
-			`{"kind":"session","guid":"guid-retired","event":"retired","state":"retired","provenance":{"mechanism":"enroll","tool_session_id":"sid-shared"}}`,
-		)
-		recs, err := Load(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		hit := ResolveByToolSessionID(recs, "sid-shared")
-		if hit == nil || ptrString(hit.GUID) != "guid-dormant" {
-			t.Fatalf("hit = %+v, want unseated owner", hit)
-		}
-	})
-
-	t.Run("historical sid on seated row is not current corroboration", func(t *testing.T) {
-		path := writeRegistry(t,
-			`{"kind":"session","guid":"guid-retired","event":"retired","state":"retired","provenance":{"mechanism":"enroll","tool_session_id":"sid-shared"}}`,
-			`{"kind":"session","guid":"guid-seated","event":"seated","state":"seated","label":"current","seat":{"terminal_id":"term-current"},"provenance":{"mechanism":"spawn","tool_session_id":"sid-shared"}}`,
-			`{"kind":"session","guid":"guid-seated","event":"recognised","state":"seated","label":"current","seat":{"terminal_id":"term-current"},"provenance":{"mechanism":"spawn","tool_session_id":"sid-other"}}`,
-		)
-		recs, err := Load(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		hit := ResolveByToolSessionID(recs, "sid-shared")
-		if hit == nil || ptrString(hit.GUID) != "guid-retired" {
-			t.Fatalf("hit = %+v, want terminal historical owner", hit)
-		}
-	})
-
-	t.Run("retired-only lookup remains available", func(t *testing.T) {
-		path := writeRegistry(t,
-			`{"kind":"session","guid":"guid-retired","event":"retired","state":"retired","provenance":{"mechanism":"spawn","tool_session_id":"sid-only"}}`,
-		)
-		recs, err := Load(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		hit := ResolveByToolSessionID(recs, "sid-only")
-		if hit == nil || ptrString(hit.GUID) != "guid-retired" {
-			t.Fatalf("hit = %+v, want retired fallback", hit)
-		}
-	})
-
-	t.Run("seated latest row with absent sid keeps historical fallback", func(t *testing.T) {
-		path := writeRegistry(t,
-			`{"kind":"session","guid":"guid-seated","event":"seated","state":"seated","label":"current","seat":{"terminal_id":"term-current"},"provenance":{"mechanism":"spawn","tool_session_id":"sid-historical"}}`,
-			`{"kind":"session","guid":"guid-seated","event":"recognised","state":"seated","label":"current","seat":{"terminal_id":"term-current"},"provenance":{"mechanism":"spawn"}}`,
-		)
-		recs, err := Load(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		hit := ResolveByToolSessionID(recs, "sid-historical")
-		if hit == nil || ptrString(hit.GUID) != "guid-seated" || hit.Provenance == nil || hit.Provenance.ToolSessionID != "" {
-			t.Fatalf("hit = %+v, want latest seated row through historical fallback", hit)
-		}
-	})
-
-	t.Run("seated current owner beats unseated current owner", func(t *testing.T) {
-		path := writeRegistry(t,
-			`{"kind":"session","guid":"guid-seated","event":"seated","state":"seated","label":"current","seat":{"terminal_id":"term-current"},"provenance":{"mechanism":"spawn","tool_session_id":"sid-shared"}}`,
-			`{"kind":"session","guid":"guid-dormant","event":"unseated","state":"unseated","label":"dormant","provenance":{"mechanism":"spawn","tool_session_id":"sid-shared"}}`,
-		)
-		recs, err := Load(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		hit := ResolveByToolSessionID(recs, "sid-shared")
-		if hit == nil || ptrString(hit.GUID) != "guid-seated" {
-			t.Fatalf("hit = %+v, want seated owner over unseated owner", hit)
-		}
-	})
-}
-
-func TestAppend(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state", "registry.jsonl")
-	if err := Append(path, []byte(`{"guid":"g-1","status":"active"}`)); err != nil {
-		t.Fatal(err)
-	}
-	// Rows arriving with a trailing newline must not double it.
-	if err := Append(path, []byte(`{"guid":"g-2","status":"active"}`+"\n")); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("lines = %d, want node row plus 2 session rows: %s", len(lines), data)
-	}
-	for i, line := range lines {
-		var row map[string]any
-		if err := json.Unmarshal([]byte(line), &row); err != nil {
-			t.Fatal(err)
-		}
-		if i == 0 {
-			if row["kind"] != "node" || row["event"] != "node_registered" || row["node_id"] == "" {
-				t.Fatalf("line %d = %s, want node_registered row", i+1, line)
-			}
-			continue
-		}
-		if row["kind"] != "session" || row["state"] != "seated" || row["status"] != nil || row["node"] == "" {
-			t.Fatalf("line %d = %s, want clean node-attributed seated v2 session row", i+1, line)
-		}
-	}
-	recs, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(recs) != 2 || ptrString(recs[0].GUID) != "g-1" || recs[0].State != v2.StateSeated || recs[0].Status != "" || ptrString(recs[1].GUID) != "g-2" {
-		t.Fatalf("four-state view = %+v, want seated g-1/g-2 records", recs)
 	}
 }
 
@@ -733,7 +481,7 @@ func runNodeMintHelper() {
 		os.Stderr.WriteString(err.Error() + "\n")
 		os.Exit(2)
 	}
-	if outcome, oneErr := SingleOutcome(outcomes); oneErr != nil || outcome.Err() != nil {
+	if outcome, oneErr := singleOutcomeForTest(outcomes); oneErr != nil || outcome.Err() != nil {
 		if oneErr != nil {
 			os.Stderr.WriteString(oneErr.Error() + "\n")
 		} else {
@@ -756,8 +504,8 @@ func TestLockedWriteRefusesHalfPresentNodeState(t *testing.T) {
 		if len(outcomes) != 0 {
 			t.Fatalf("outcomes = %+v, want none for batch refusal", outcomes)
 		}
-		if err == nil || !strings.Contains(err.Error(), "herder node init") {
-			t.Fatalf("err = %v, want node init guidance", err)
+		if err == nil || !strings.Contains(err.Error(), "restore") {
+			t.Fatalf("err = %v, want node repair guidance", err)
 		}
 	})
 	t.Run("row only", func(t *testing.T) {
@@ -768,8 +516,8 @@ func TestLockedWriteRefusesHalfPresentNodeState(t *testing.T) {
 		if len(outcomes) != 0 {
 			t.Fatalf("outcomes = %+v, want none for batch refusal", outcomes)
 		}
-		if err == nil || !strings.Contains(err.Error(), "herder node init") {
-			t.Fatalf("err = %v, want node init guidance", err)
+		if err == nil || !strings.Contains(err.Error(), "restore") {
+			t.Fatalf("err = %v, want node repair guidance", err)
 		}
 	})
 	t.Run("empty marker", func(t *testing.T) {
@@ -784,231 +532,10 @@ func TestLockedWriteRefusesHalfPresentNodeState(t *testing.T) {
 		if len(outcomes) != 0 {
 			t.Fatalf("outcomes = %+v, want none for batch refusal", outcomes)
 		}
-		if err == nil || !strings.Contains(err.Error(), "herder node init") {
-			t.Fatalf("err = %v, want node init guidance", err)
+		if err == nil || !strings.Contains(err.Error(), "restore") {
+			t.Fatalf("err = %v, want node repair guidance", err)
 		}
 	})
-}
-
-func TestNodeInitRepairsAndCloneRepairKeepsPriorRows(t *testing.T) {
-	t.Run("idempotent healthy state", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "registry.jsonl")
-		first, err := InitNode(path, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		second, err := InitNode(path, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if first.NodeID == "" || second.NodeID != first.NodeID || second.Changed {
-			t.Fatalf("first=%+v second=%+v, want stable no-op second init", first, second)
-		}
-		if got := len(loadProjection(t, path).Nodes()); got != 1 {
-			t.Fatalf("node rows = %d, want 1 after idempotent init", got)
-		}
-	})
-	t.Run("marker only", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "registry.jsonl")
-		if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		res, err := InitNode(path, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !res.Changed || res.NodeID != testNodeA || !hasNode(loadProjection(t, path).Nodes(), testNodeA) {
-			t.Fatalf("res=%+v, want marker node row repair", res)
-		}
-	})
-	t.Run("row only", func(t *testing.T) {
-		path := writeRegistry(t, `{"kind":"node","event":"node_registered","node_id":"`+testNodeB+`","recorded_at":"2026-07-08T00:00:00Z"}`)
-		res, err := InitNode(path, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		marker, err := os.ReadFile(NodeMarkerPath(path))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !res.Changed || res.NodeID != testNodeB || strings.TrimSpace(string(marker)) != testNodeB {
-			t.Fatalf("res=%+v marker=%q, want marker repair", res, marker)
-		}
-	})
-	t.Run("malformed marker refuses", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "registry.jsonl")
-		if err := os.WriteFile(NodeMarkerPath(path), []byte("not-a-node-id\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(`{"kind":"node","event":"node_registered","node_id":"`+testNodeB+`","recorded_at":"2026-07-08T00:00:00Z"}`+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		for _, forceNew := range []bool{false, true} {
-			if _, err := InitNode(path, forceNew); err == nil || !strings.Contains(err.Error(), NodeMarkerPath(path)) || !strings.Contains(err.Error(), "restore it from registry") {
-				t.Fatalf("forceNew=%v err = %v, want malformed marker refusal with restore guidance", forceNew, err)
-			}
-		}
-	})
-	t.Run("conflicting marker multiple nodes refuses", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "registry.jsonl")
-		if err := os.WriteFile(NodeMarkerPath(path), []byte(testNodeA+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(
-			`{"kind":"node","event":"node_registered","node_id":"`+testNodeB+`","recorded_at":"2026-07-08T00:00:00Z"}`+"\n"+
-				`{"kind":"node","event":"node_registered","node_id":"`+testNodeC+`","recorded_at":"2026-07-08T00:00:01Z"}`+"\n",
-		), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := InitNode(path, false); err == nil || !strings.Contains(err.Error(), "registry node init refused") || !strings.Contains(err.Error(), testNodeB) || !strings.Contains(err.Error(), testNodeC) {
-			t.Fatalf("err = %v, want conflicting marker/multiple-node refusal", err)
-		}
-	})
-	t.Run("empty marker", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "registry.jsonl")
-		if err := os.WriteFile(NodeMarkerPath(path), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		res, err := InitNode(path, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !res.Changed || res.NodeID == "" || len(loadProjection(t, path).Nodes()) != 1 {
-			t.Fatalf("res=%+v, want fresh repair for empty marker", res)
-		}
-	})
-	t.Run("empty marker new", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "registry.jsonl")
-		if err := os.WriteFile(NodeMarkerPath(path), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		res, err := InitNode(path, true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !res.Changed || res.NodeID == "" || strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path)))) != res.NodeID {
-			t.Fatalf("res=%+v, want --new repair for empty marker", res)
-		}
-	})
-	t.Run("new clone node", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "registry.jsonl")
-		if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
-			return []v2.SessionRecord{{GUID: "guid-old", State: v2.StateSeated}}, nil
-		}); err != nil {
-			t.Fatal(err)
-		}
-		oldProj := loadProjection(t, path)
-		oldNode := oldProj.Nodes()[0].NodeID
-		if _, err := InitNode(path, true); err != nil {
-			t.Fatal(err)
-		}
-		if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
-			return []v2.SessionRecord{{GUID: "guid-new", State: v2.StateSeated}}, nil
-		}); err != nil {
-			t.Fatal(err)
-		}
-		proj := loadProjection(t, path)
-		nodes := proj.Nodes()
-		if len(nodes) != 2 {
-			t.Fatalf("nodes = %+v, want old and fresh node", nodes)
-		}
-		newNode := strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path))))
-		if newNode == "" || newNode == oldNode {
-			t.Fatalf("new marker = %q old = %q, want fresh", newNode, oldNode)
-		}
-		byGUID := map[string]v2.SessionRecord{}
-		for _, rec := range proj.Sessions() {
-			byGUID[rec.GUID] = rec
-		}
-		if byGUID["guid-old"].Node != oldNode {
-			t.Fatalf("old row node = %q, want %q", byGUID["guid-old"].Node, oldNode)
-		}
-		if byGUID["guid-new"].Node != newNode {
-			t.Fatalf("new row node = %q, want %q", byGUID["guid-new"].Node, newNode)
-		}
-	})
-}
-
-func TestCloneRepairLifecycleWritesStampFreshNode(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
-		return []v2.SessionRecord{
-			{GUID: "guid-cull", State: v2.StateSeated, Label: "cull-me", Role: "worker", Tool: "codex", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_cull"}},
-			{GUID: "guid-rename", State: v2.StateSeated, Label: "old-name", Role: "worker", Tool: "codex", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_rename"}},
-			{GUID: "guid-recognise", State: v2.StateSeated, Label: "recognise-me", Role: "worker", Tool: "codex", Seat: &v2.Seat{Kind: "herdr", TerminalID: "term_old"}},
-		}, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	oldNode := strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path))))
-	if _, err := InitNode(path, true); err != nil {
-		t.Fatal(err)
-	}
-	newNode := strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path))))
-	if newNode == oldNode {
-		t.Fatalf("clone repair marker = old node %q, want fresh", oldNode)
-	}
-
-	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
-		current := V2ByGUID(tx.Projection, "guid-cull")
-		next := *current
-		next.Event = "unseated"
-		next.RecordedAt = ""
-		next.State = v2.StateUnseated
-		next.Seat = nil
-		return []v2.SessionRecord{next}, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
-		current := V2ByGUID(tx.Projection, "guid-rename")
-		next := *current
-		next.Event = "labelled"
-		next.RecordedAt = ""
-		next.Label = "new-name"
-		return []v2.SessionRecord{next}, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
-		current := V2ByGUID(tx.Projection, "guid-recognise")
-		next := *current
-		next.Event = "recognised"
-		next.RecordedAt = ""
-		next.Seat = &v2.Seat{Kind: "herdr", TerminalID: "term_new", PaneID: "p_new"}
-		return []v2.SessionRecord{next}, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	proj := loadProjection(t, path)
-	for _, guid := range []string{"guid-cull", "guid-rename", "guid-recognise"} {
-		rec := V2ByGUID(proj, guid)
-		if rec == nil {
-			t.Fatalf("missing %s", guid)
-		}
-		if rec.Node != newNode {
-			t.Fatalf("%s node = %q, want fresh node %q", guid, rec.Node, newNode)
-		}
-		if rec.Seat != nil && rec.Seat.Node != newNode {
-			t.Fatalf("%s seat node = %q, want fresh node %q", guid, rec.Seat.Node, newNode)
-		}
-	}
-	lines := strings.Split(strings.TrimSpace(string(mustReadFile(t, path))), "\n")
-	oldRows := 0
-	for _, line := range lines {
-		if strings.Contains(line, `"node":"`+oldNode+`"`) {
-			oldRows++
-		}
-	}
-	if oldRows != 3 {
-		t.Fatalf("old-node session rows = %d, want original three rows untouched", oldRows)
-	}
 }
 
 func TestUnknownNodeRowsAreReadOnlyButDoNotBlockLocalWrites(t *testing.T) {
@@ -1036,7 +563,7 @@ func TestUnknownNodeRowsAreReadOnlyButDoNotBlockLocalWrites(t *testing.T) {
 		return []v2.SessionRecord{next}, nil
 	})
 	if err == nil {
-		outcome, oneErr := SingleOutcome(outcomes)
+		outcome, oneErr := singleOutcomeForTest(outcomes)
 		if oneErr != nil {
 			err = oneErr
 		} else {
@@ -1087,26 +614,6 @@ func TestLoadPreservesFourStateViewFromV2Rows(t *testing.T) {
 	}
 }
 
-func TestReadPredicatesKeepSeatAndLeaseQuestionsSeparate(t *testing.T) {
-	rows := []Record{
-		{State: v2.StateSeated},
-		{State: v2.StateUnseated},
-		{State: v2.StateRetired},
-		{State: v2.StateLost},
-		{},
-	}
-	wantSeated := []bool{true, false, false, false, false}
-	wantNonRetired := []bool{true, true, false, false, false}
-	for i, row := range rows {
-		if got := IsSeated(row); got != wantSeated[i] {
-			t.Errorf("row %d IsSeated = %v, want %v", i, got, wantSeated[i])
-		}
-		if got := IsNonRetired(row); got != wantNonRetired[i] {
-			t.Errorf("row %d IsNonRetired = %v, want %v", i, got, wantNonRetired[i])
-		}
-	}
-}
-
 func TestDecodeLegacyV1RawReadsCoordinatesWithoutMappingV2State(t *testing.T) {
 	rec := v2.SessionRecord{
 		LegacyV1: true,
@@ -1122,133 +629,6 @@ func TestDecodeLegacyV1RawReadsCoordinatesWithoutMappingV2State(t *testing.T) {
 	}
 	if _, ok := DecodeLegacyV1Raw(v2.SessionRecord{State: v2.StateSeated, Raw: rec.Raw}); ok {
 		t.Fatal("v2 row was accepted by legacy-v1 compatibility decoder")
-	}
-}
-
-func TestTwoProcessLabelClaimsOneWinner(t *testing.T) {
-	if os.Getenv("HERDER_REGISTRY_CLAIM_HELPER") == "1" {
-		runLabelClaimHelper()
-		return
-	}
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	start := filepath.Join(t.TempDir(), "start")
-	cmds := make([]*exec.Cmd, 0, 2)
-	stderrs := make([]*bytes.Buffer, 0, 2)
-	for _, guid := range []string{"guid-alpha", "guid-beta"} {
-		cmd := exec.Command(os.Args[0], "-test.run=^TestTwoProcessLabelClaimsOneWinner$", "-test.count=1")
-		cmd.Env = append(os.Environ(),
-			"HERDER_REGISTRY_CLAIM_HELPER=1",
-			"HERDER_REGISTRY_CLAIM_PATH="+path,
-			"HERDER_REGISTRY_CLAIM_GUID="+guid,
-			"HERDER_REGISTRY_CLAIM_START="+start,
-		)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		cmds = append(cmds, cmd)
-		stderrs = append(stderrs, &stderr)
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("start helper %s: %v", guid, err)
-		}
-		t.Cleanup(func() {
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
-		})
-	}
-	winners := 0
-	losers := 0
-	if err := os.WriteFile(start, []byte("go\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for i, cmd := range cmds {
-		err := cmd.Wait()
-		if err == nil {
-			winners++
-			continue
-		}
-		exitErr, ok := err.(*exec.ExitError)
-		if !ok {
-			t.Fatalf("unexpected helper error: %v", err)
-		}
-		stderr := stderrs[i].String()
-		if exitErr.ExitCode() == 42 && strings.Contains(stderr, `label "shared" already belongs`) {
-			losers++
-			continue
-		}
-		t.Fatalf("unexpected helper exit %d stderr=%s", exitErr.ExitCode(), stderr)
-	}
-	if winners != 1 || losers != 1 {
-		t.Fatalf("winners=%d losers=%d, want one winner and one loser", winners, losers)
-	}
-	recs, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if owner := NonRetiredLabelOwner(recs, "shared", ""); owner == nil {
-		t.Fatal("non-retired resolver sees no shared owner")
-	}
-}
-
-func runLabelClaimHelper() {
-	start := os.Getenv("HERDER_REGISTRY_CLAIM_START")
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := os.Stat(start); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			os.Stderr.WriteString("timed out waiting for start barrier\n")
-			os.Exit(2)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	path := os.Getenv("HERDER_REGISTRY_CLAIM_PATH")
-	guid := os.Getenv("HERDER_REGISTRY_CLAIM_GUID")
-	label := "shared"
-	prov := Provenance{Mechanism: "spawn"}
-	rec := Record{GUID: &guid, Label: &label, Status: "active", Provenance: &prov}
-	outcomes, err := UpdateLocked(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
-		return []v2.SessionRecord{V2FromRecord(rec, "registered", v2.StateSeated, "")}, nil
-	})
-	if err == nil {
-		outcome, oneErr := SingleOutcome(outcomes)
-		if oneErr != nil {
-			err = oneErr
-		} else {
-			err = outcome.Err()
-		}
-	}
-	if err == nil {
-		os.Exit(0)
-	}
-	os.Stderr.WriteString(err.Error() + "\n")
-	if strings.Contains(err.Error(), `label "shared" already belongs`) {
-		os.Exit(42)
-	}
-	os.Exit(2)
-}
-
-func TestLockedValidatorMigratesLegacyActiveDormantOnRename(t *testing.T) {
-	path := writeRegistry(t, `{"guid":"guid-legacy","short_guid":"legacy","label":"old","role":"worker","agent":"codex","terminal_id":"term_OLD","pane_id":"p_old","hcom_dir":"/hcom","hcom_name":"bus-old","status":"active"}`)
-	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
-		current := V2ByGUID(tx.Projection, "guid-legacy")
-		if current == nil {
-			t.Fatal("missing legacy projection row")
-		}
-		next := *current
-		next.Event = "labelled"
-		next.Label = "new"
-		return []v2.SessionRecord{next}, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	recs, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	latest := Resolve(recs, "guid-legacy")
-	if latest == nil || ptrString(latest.Label) != "new" || latest.PaneID != "" || latest.TerminalID != "" || latest.HcomName != "" || latest.HcomDir != "" {
-		t.Fatalf("latest = %+v, want renamed dormant row without legacy seat", latest)
 	}
 }
 
@@ -1552,6 +932,65 @@ func TestMigrationRecoveryDoesNotRefireOnPureV2LiveWithStaleMigrationArchive(t *
 	}
 }
 
+func TestLoadWithArchivesMergesDeterministicallyLiveWins(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	archDir := filepath.Join(dir, "registry.jsonl.archive")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archDir, "0002-rotation.jsonl"), []byte(`{"guid":"guid-arch","short_guid":"arch","label":"arch-new","status":"closed"}`+"\n"+`{"guid":"guid-collide","short_guid":"collide","label":"arch-collide","status":"closed"}`+"\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archDir, "0001-rotation.jsonl"), []byte(`{"guid":"guid-arch","short_guid":"arch","label":"arch-old","status":"active"}`+"\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"guid":"guid-collide","short_guid":"collide","label":"live-collide","status":"active"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := LoadWithArchives(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arch := latestRecordForTest(recs, "guid-arch")
+	if arch == nil || ptrString(arch.Label) != "arch-new" || !arch.Archived {
+		t.Fatalf("archive-only = %+v, want latest archive row marked archived", arch)
+	}
+	live := latestRecordForTest(recs, "guid-collide")
+	if live == nil || ptrString(live.Label) != "live-collide" || live.Archived {
+		t.Fatalf("live collision = %+v, want live row to win", live)
+	}
+}
+
+func TestLoadWithArchivesUsesLatestAcrossThreeRotationArchives(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.jsonl")
+	archDir := filepath.Join(dir, "registry.jsonl.archive")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, label := range map[string]string{
+		"0002-rotation.jsonl": "two",
+		"0003-rotation.jsonl": "three",
+		"0004-rotation.jsonl": "four",
+	} {
+		row := `{"guid":"guid-tie","short_guid":"tie","label":"` + label + `","status":"closed"}` + "\n"
+		if err := os.WriteFile(filepath.Join(archDir, name), []byte(row), 0o444); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := LoadWithArchives(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := latestRecordForTest(recs, "guid-tie"); got == nil || ptrString(got.Label) != "four" {
+		t.Fatalf("latest archive tie = %+v, want 0004/four", got)
+	}
+}
+
 func TestRotationRecoveryUsesNewestRotationArchiveOverMigrationArchive(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "registry.jsonl")
@@ -1593,65 +1032,6 @@ func TestRotationRecoveryUsesNewestRotationArchiveOverMigrationArchive(t *testin
 	}
 	if retired := V2ByGUID(proj, "guid-retired"); retired != nil {
 		t.Fatalf("retired row reseeded live: %+v", retired)
-	}
-}
-
-func TestLoadWithArchivesMergesDeterministicallyLiveWins(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.jsonl")
-	archDir := filepath.Join(dir, "registry.jsonl.archive")
-	if err := os.MkdirAll(archDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(archDir, "0002-rotation.jsonl"), []byte(`{"guid":"guid-arch","short_guid":"arch","label":"arch-new","status":"closed"}`+"\n"+`{"guid":"guid-collide","short_guid":"collide","label":"arch-collide","status":"closed"}`+"\n"), 0o444); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(archDir, "0001-rotation.jsonl"), []byte(`{"guid":"guid-arch","short_guid":"arch","label":"arch-old","status":"active"}`+"\n"), 0o444); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(`{"guid":"guid-collide","short_guid":"collide","label":"live-collide","status":"active"}`+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	recs, err := LoadWithArchives(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	arch := Resolve(recs, "guid-arch")
-	if arch == nil || ptrString(arch.Label) != "arch-new" || !arch.Archived {
-		t.Fatalf("archive-only = %+v, want latest archive row marked archived", arch)
-	}
-	live := Resolve(recs, "guid-collide")
-	if live == nil || ptrString(live.Label) != "live-collide" || live.Archived {
-		t.Fatalf("live collision = %+v, want live row to win", live)
-	}
-}
-
-func TestLoadWithArchivesUsesLatestAcrossThreeRotationArchives(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.jsonl")
-	archDir := filepath.Join(dir, "registry.jsonl.archive")
-	if err := os.MkdirAll(archDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for name, label := range map[string]string{
-		"0002-rotation.jsonl": "two",
-		"0003-rotation.jsonl": "three",
-		"0004-rotation.jsonl": "four",
-	} {
-		row := `{"guid":"guid-tie","short_guid":"tie","label":"` + label + `","status":"closed"}` + "\n"
-		if err := os.WriteFile(filepath.Join(archDir, name), []byte(row), 0o444); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	recs, err := LoadWithArchives(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := Resolve(recs, "guid-tie"); got == nil || ptrString(got.Label) != "four" {
-		t.Fatalf("latest archive tie = %+v, want 0004/four", got)
 	}
 }
 
@@ -1793,80 +1173,6 @@ func TestRotationArchiveByteVerificationRefusalText(t *testing.T) {
 	}
 }
 
-func TestArchiveConsultationProvidesForkParentSessionID(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "registry.jsonl")
-	archDir := filepath.Join(dir, "registry.jsonl.archive")
-	if err := os.MkdirAll(archDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(archDir, "0001-rotation.jsonl"), []byte(`{"kind":"session","guid":"guid-parent","event":"retired","recorded_at":"2026-07-08T00:00:00Z","state":"retired","label":"parent","role":"worker","tool":"codex","sids":[{"sid":"sess-parent","observed_at":"2026-07-08T00:00:00Z","source":"harvest"}],"continuity":"confirmed","provenance":{"mechanism":"spawn","tool_session_id":"sess-parent"}}`+"\n"), 0o444); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(`{"kind":"session","guid":"guid-child","event":"registered","recorded_at":"2026-07-08T00:00:01Z","state":"unseated","label":"child","role":"worker","tool":"codex","lineage":{"forked_from":"guid-parent"},"provenance":{"mechanism":"fork","forked_from":"guid-parent"}}`+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	recs, err := LoadWithArchives(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parent := Resolve(recs, "guid-parent")
-	if parent == nil || !parent.Archived {
-		t.Fatalf("parent = %+v, want archive-resolved parent", parent)
-	}
-	if sid := ToolSessionIDForGUID(recs, "guid-parent"); sid != "sess-parent" {
-		t.Fatalf("parent sid = %q, want sess-parent", sid)
-	}
-}
-
-func TestRegisteredCarriesRecognisedHcomName(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	guid, label := "guid-carry", "worker"
-	recognised := Record{
-		GUID:       &guid,
-		Label:      &label,
-		Role:       "worker",
-		Agent:      "codex",
-		PaneID:     "p_sidecar",
-		TerminalID: "term_sidecar",
-		HcomName:   "worker-rive",
-		HcomDir:    "/hcom",
-		Status:     "active",
-	}
-	mustAppendLegacySessionEvent(t, path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated)
-	registered := Record{
-		GUID:       &guid,
-		Label:      &label,
-		Role:       "worker",
-		Agent:      "codex",
-		PaneID:     "p_spawn",
-		TerminalID: "term_spawn",
-		HcomDir:    "/hcom",
-		Status:     "active",
-		Provenance: &Provenance{Mechanism: "spawn", ToolSessionID: "sess-spawn", Tag: "worker"},
-	}
-	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
-		return []v2.SessionRecord{V2FromRecord(registered, "registered", v2.StateSeated, "2026-07-08T00:00:01Z")}, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	recs, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	latest := Resolve(recs, guid)
-	if latest == nil || latest.HcomName != "worker-rive" || latest.PaneID != "p_spawn" || latest.TerminalID != "term_spawn" {
-		t.Fatalf("latest seated view = %+v, want registered seat with carried hcom_name and fresh spawn coordinates", latest)
-	}
-	if latest.HcomVerified == nil || *latest.HcomVerified {
-		t.Fatalf("latest HcomVerified = %v, want explicit false after carry-forward", latest.HcomVerified)
-	}
-	collapsed := LatestByGUID(recs)
-	if len(collapsed) != 1 || collapsed[0].HcomName != "worker-rive" {
-		t.Fatalf("LatestByGUID = %+v, want bus-reachable hcom_name", collapsed)
-	}
-}
-
 func TestRegisteredReplacementNameWithoutProofDefaultsUnverified(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	verified := true
@@ -1890,117 +1196,6 @@ func TestRegisteredReplacementNameWithoutProofDefaultsUnverified(t *testing.T) {
 	latest := V2ByGUID(loadProjection(t, path), current.GUID)
 	if latest == nil || latest.Seat == nil || latest.Seat.HcomName != "new-name" || latest.Seat.HcomVerified == nil || *latest.Seat.HcomVerified {
 		t.Fatalf("latest seat = %+v, want replacement name explicitly unverified", latest)
-	}
-}
-
-func TestRegisteredCarryForwardStampsFreshNodeAfterCloneRepair(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	guid, label := "guid-clone-registered", "worker"
-	recognised := Record{
-		GUID:       &guid,
-		Label:      &label,
-		Role:       "worker",
-		Agent:      "codex",
-		PaneID:     "p_sidecar",
-		TerminalID: "term_sidecar",
-		HcomName:   "worker-rive",
-		HcomDir:    "/hcom",
-		Status:     "active",
-	}
-	mustAppendLegacySessionEvent(t, path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated)
-	oldNode := strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path))))
-	if _, err := InitNode(path, true); err != nil {
-		t.Fatal(err)
-	}
-	newNode := strings.TrimSpace(string(mustReadFile(t, NodeMarkerPath(path))))
-	if newNode == oldNode {
-		t.Fatalf("clone repair marker = old node %q, want fresh", oldNode)
-	}
-	registered := Record{
-		GUID:       &guid,
-		Label:      &label,
-		Role:       "worker",
-		Agent:      "codex",
-		PaneID:     "p_spawn",
-		TerminalID: "term_spawn",
-		HcomDir:    "/hcom",
-		Status:     "active",
-	}
-	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
-		return []v2.SessionRecord{V2FromRecord(registered, "registered", v2.StateSeated, "2026-07-08T00:00:01Z")}, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	latest := V2ByGUID(loadProjection(t, path), guid)
-	if latest == nil {
-		t.Fatal("missing latest registered row")
-	}
-	if latest.Node != newNode || latest.Seat == nil || latest.Seat.Node != newNode {
-		t.Fatalf("latest = %+v, want fresh node %q on row and seat", latest, newNode)
-	}
-	if latest.Seat.HcomName != "worker-rive" || latest.Seat.TerminalID != "term_spawn" || latest.Seat.PaneID != "p_spawn" {
-		t.Fatalf("latest seat = %+v, want carried hcom_name plus fresh spawn coordinates", latest.Seat)
-	}
-}
-
-func TestRegisteredCarrySurvivesRotationReseed(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	guid, label := "guid-reseed", "worker"
-	recognised := Record{
-		GUID:       &guid,
-		Label:      &label,
-		Role:       "worker",
-		Agent:      "codex",
-		PaneID:     "p_sidecar",
-		TerminalID: "term_sidecar",
-		HcomName:   "worker-rive",
-		HcomDir:    "/hcom",
-		Status:     "active",
-	}
-	mustAppendLegacySessionEvent(t, path, mustMarshalRecord(t, recognised), "recognised", v2.StateSeated)
-	registered := Record{
-		GUID:       &guid,
-		Label:      &label,
-		Role:       "worker",
-		Agent:      "codex",
-		PaneID:     "p_spawn",
-		TerminalID: "term_spawn",
-		HcomDir:    "/hcom",
-		Status:     "active",
-	}
-	if err := updateLockedForTest(path, func(LockedUpdate) ([]v2.SessionRecord, error) {
-		return []v2.SessionRecord{V2FromRecord(registered, "registered", v2.StateSeated, "2026-07-08T00:00:01Z")}, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	proj, err := v2.Load(bytes.NewReader(data), v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	reseedPath := filepath.Join(t.TempDir(), "registry.jsonl")
-	for _, rec := range proj.Sessions() {
-		if rec.State == v2.StateRetired || rec.State == v2.StateLost {
-			continue
-		}
-		b, err := json.Marshal(rec)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := Append(reseedPath, b); err != nil {
-			t.Fatal(err)
-		}
-	}
-	reseeded, err := Load(reseedPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	latest := Resolve(reseeded, guid)
-	if latest == nil || latest.HcomName != "worker-rive" || latest.PaneID != "p_spawn" || latest.TerminalID != "term_spawn" {
-		t.Fatalf("reseeded latest = %+v, want self-contained registered row with hcom_name", latest)
 	}
 }
 
@@ -2058,34 +1253,6 @@ func TestRegisteredCarryMarksUnverifiedThenNoOps(t *testing.T) {
 	}
 }
 
-func TestAppendLegacyRetiredPreservesCloseReason(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	row := []byte(`{"guid":"guid-launch","short_guid":"launch","label":"launch","role":"worker","agent":"codex","terminal_id":"term_L","pane_id":"p_l","hcom_dir":"/hcom","hcom_name":"launch-bus","status":"closed","close_result":"launch_failed","close_reason":"pane exited before lifecycle bind"}`)
-	mustAppendLegacySessionEvent(t, path, row, "retired", v2.StateRetired)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("lines = %d, want node row plus retired row: %s", len(lines), data)
-	}
-	var got map[string]any
-	if err := json.Unmarshal([]byte(lines[1]), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got["state"] != v2.StateRetired || got["event"] != "retired" || got["close_result"] != "launch_failed" || got["close_reason"] != "pane exited before lifecycle bind" {
-		t.Fatalf("row = %s, want retired launch_failed with close_reason", data)
-	}
-	recs, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(recs) != 1 || recs[0].State != v2.StateRetired || recs[0].Status != "" || recs[0].CloseResult != "launch_failed" || recs[0].CloseReason == "" {
-		t.Fatalf("four-state view = %+v, want retired launch_failed", recs)
-	}
-}
-
 func TestBridgeCapabilitiesRoundTripCarryForwardAndValidate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	guid, err := NewGUID()
@@ -2103,7 +1270,7 @@ func TestBridgeCapabilitiesRoundTripCarryForwardAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outcome, err := SingleOutcome(outcomes); err != nil || outcome.Err() != nil {
+	if outcome, err := singleOutcomeForTest(outcomes); err != nil || outcome.Err() != nil {
 		t.Fatalf("initial outcome=%+v err=%v", outcome, err)
 	}
 	outcomes, err = UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
@@ -2117,7 +1284,7 @@ func TestBridgeCapabilitiesRoundTripCarryForwardAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outcome, err := SingleOutcome(outcomes); err != nil || outcome.Err() != nil {
+	if outcome, err := singleOutcomeForTest(outcomes); err != nil || outcome.Err() != nil {
 		t.Fatalf("carry outcome=%+v err=%v", outcome, err)
 	}
 	proj, err := v2.LoadFile(path, v2.LoadOptions{})
@@ -2140,7 +1307,7 @@ func TestBridgeCapabilitiesRoundTripCarryForwardAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outcome, err := SingleOutcome(outcomes); err != nil || outcome.Status != WriteApplied || outcome.Err() != nil {
+	if outcome, err := singleOutcomeForTest(outcomes); err != nil || outcome.Status != WriteApplied || outcome.Err() != nil {
 		t.Fatalf("down outcome=%+v err=%v", outcome, err)
 	}
 	outcomes, err = UpdateLocked(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
@@ -2153,73 +1320,9 @@ func TestBridgeCapabilitiesRoundTripCarryForwardAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outcome, err := SingleOutcome(outcomes)
+	outcome, err := singleOutcomeForTest(outcomes)
 	if err != nil || outcome.Status != WriteRefused || outcome.Err() == nil {
 		t.Fatalf("invalid outcome=%+v err=%v", outcome, err)
-	}
-}
-
-func TestLockedValidatorPreservesRenameAgainstStaleEnrichment(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	guid, oldLabel := "guid-stale", "old"
-	if err := Append(path, []byte(`{"guid":"`+guid+`","label":"`+oldLabel+`","role":"worker","agent":"codex","pane_id":"p_old","terminal_id":"term_old","status":"active"}`)); err != nil {
-		t.Fatal(err)
-	}
-	stale := Record{GUID: &guid, Label: &oldLabel, Role: "worker", Agent: "codex", PaneID: "p_new", TerminalID: "term_new", HcomName: "bus-new", Status: "active"}
-	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
-		current := V2ByGUID(tx.Projection, guid)
-		next := *current
-		next.Event = "labelled"
-		next.Label = "new"
-		return []v2.SessionRecord{next}, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	mustAppendLegacySessionEvent(t, path, mustMarshalRecord(t, stale), "recognised", v2.StateSeated)
-	recs, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	latest := Resolve(recs, guid)
-	if latest == nil || ptrString(latest.Label) != "new" || latest.HcomName != "bus-new" {
-		t.Fatalf("latest = %+v, want label new with enriched bus", latest)
-	}
-}
-
-func TestLockedValidatorDoesNotResurrectUnseatedSession(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	guid, label := "guid-culled", "worker"
-	if err := Append(path, []byte(`{"guid":"`+guid+`","label":"`+label+`","role":"worker","agent":"codex","pane_id":"p_old","terminal_id":"term_old","status":"active"}`)); err != nil {
-		t.Fatal(err)
-	}
-	if err := updateLockedForTest(path, func(tx LockedUpdate) ([]v2.SessionRecord, error) {
-		current := V2ByGUID(tx.Projection, guid)
-		next := *current
-		next.Event = "unseated"
-		next.State = v2.StateUnseated
-		next.Seat = nil
-		return []v2.SessionRecord{next}, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	stale := Record{GUID: &guid, Label: &label, Role: "worker", Agent: "codex", PaneID: "p_new", TerminalID: "term_new", HcomName: "bus-new", Status: "active"}
-	mustAppendLegacySessionEvent(t, path, mustMarshalRecord(t, stale), "recognised", v2.StateSeated)
-	recs, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	latest := Resolve(recs, guid)
-	if latest == nil || latest.PaneID != "" || latest.HcomName != "" {
-		t.Fatalf("latest = %+v, want still unseated/no seat after stale heartbeat", latest)
-	}
-}
-
-func TestLockedWriterRefusesUnlocked(t *testing.T) {
-	t.Setenv("HERDER_TEST_FLOCK_REFUSE", "1")
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	err := Append(path, []byte(`{"guid":"g-1","status":"active"}`))
-	if err == nil || !strings.Contains(err.Error(), "refusing to write unlocked") {
-		t.Fatalf("err = %v, want refusing to write unlocked", err)
 	}
 }
 
@@ -2289,18 +1392,6 @@ func mustMarshalRecord(t *testing.T, rec Record) []byte {
 		t.Fatal(err)
 	}
 	return b
-}
-
-func mustAppendLegacySessionEvent(t *testing.T, path string, row []byte, event, state string) WriteOutcome {
-	t.Helper()
-	outcome, err := AppendLegacySessionEvent(path, row, event, state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := outcome.Err(); err != nil {
-		t.Fatal(err)
-	}
-	return outcome
 }
 
 func updateLockedForTest(path string, fn LockedUpdateFunc) error {
@@ -2392,37 +1483,6 @@ func TestJQParityCollapse(t *testing.T) {
 
 // TestJQParityResolve pins Resolve against the shared bash lookup
 // (_registry_record_for / resolve_pane) for every interesting target.
-func TestJQParityResolve(t *testing.T) {
-	jq, err := exec.LookPath("jq")
-	if err != nil {
-		t.Skip("jq not on PATH")
-	}
-	path := writeRegistry(t, jqParityRows...)
-	recs, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	prog := `group_by(.guid) | map(.[-1])
-	  | map(select(.guid==$v or .short_guid==$v or .label==$v))
-	  | last // empty`
-	targets := []string{"g-alpha", "alpha", "a", "zulu", "", "g-Ω", "term_nope", "missing-guid"}
-	for _, target := range targets {
-		out, err := exec.Command(jq, "-c", "-s", "--arg", "v", target, prog, path).Output()
-		if err != nil {
-			t.Fatal(err)
-		}
-		jqHit := strings.TrimRight(string(out), "\n")
-
-		var goHit string
-		if rec := Resolve(recs, target); rec != nil {
-			goHit = string(rec.Raw)
-		}
-		if goHit != jqHit {
-			t.Errorf("Resolve(%q) diverges from jq:\n  go: %s\n  jq: %s", target, goHit, jqHit)
-		}
-	}
-}
 
 // The raw rows Load preserves must be exactly what jq -c would emit for the
 // same rows (writers use jq -nc, so the file is already jq-compact); parity
@@ -2434,34 +1494,6 @@ func TestRawRowsAreJQCompact(t *testing.T) {
 		if err := json.Unmarshal([]byte(row), &v); err != nil {
 			t.Fatalf("fixture row %q: %v", row, err)
 		}
-	}
-}
-
-func TestBuildProvenanceSpawnedBy(t *testing.T) {
-	// Ambient env of a session that was ITSELF spawned: HERDER_SPAWNED_BY names
-	// that session's own spawner (the grandparent of anything it creates).
-	t.Setenv("HERDER_SPAWNED_BY", "guid-grandparent")
-	t.Setenv("HERDER_GUID", "guid-parent")
-
-	// Creator flows pass the session performing the action explicitly — the row
-	// must record the parent, not the ambient grandparent (TASK-016).
-	if p := BuildProvenance("spawn", "guid-parent", "", "", t.TempDir(), ""); p.SpawnedBy != "guid-parent" {
-		t.Fatalf("explicit spawnedBy = %q, want guid-parent", p.SpawnedBy)
-	}
-	// Empty spawnedBy harvests the ambient chain — enroll/sidecar rows describe
-	// the CURRENT session, whose spawner genuinely is HERDER_SPAWNED_BY.
-	if p := BuildProvenance("enroll", "", "", "", t.TempDir(), ""); p.SpawnedBy != "guid-grandparent" {
-		t.Fatalf("ambient spawnedBy = %q, want guid-grandparent", p.SpawnedBy)
-	}
-
-	// Ambient chain degrades HERDER_SPAWNED_BY -> HERDER_GUID -> "user".
-	t.Setenv("HERDER_SPAWNED_BY", "")
-	if p := BuildProvenance("enroll", "", "", "", t.TempDir(), ""); p.SpawnedBy != "guid-parent" {
-		t.Fatalf("ambient guid fallback = %q, want guid-parent", p.SpawnedBy)
-	}
-	t.Setenv("HERDER_GUID", "")
-	if p := BuildProvenance("enroll", "", "", "", t.TempDir(), ""); p.SpawnedBy != "user" {
-		t.Fatalf("ambient user fallback = %q, want user", p.SpawnedBy)
 	}
 }
 
@@ -2486,15 +1518,19 @@ func TestV2LabelOwnerIgnoresRetiredLabelHolder(t *testing.T) {
 	}
 }
 
-func TestV2ResolveMatchesPaneID(t *testing.T) {
-	proj, err := v2.Load(strings.NewReader(strings.Join([]string{
-		`{"kind":"node","event":"node_registered","node_id":"node-1","recorded_at":"2026-07-08T00:00:00Z"}`,
-		`{"guid":"guid-pane","event":"registered","node":"node-1","state":"seated","label":"pane-agent","seat":{"kind":"herdr","pane_id":"p_123"}}`,
-	}, "\n")+"\n"), v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
+func singleOutcomeForTest(outcomes []WriteOutcome) (WriteOutcome, error) {
+	if len(outcomes) != 1 {
+		return WriteOutcome{}, errors.New("expected exactly one registry write outcome")
 	}
-	if got := V2Resolve(proj, "p_123"); got == nil || got.GUID != "guid-pane" {
-		t.Fatalf("V2Resolve pane = %+v, want guid-pane", got)
+	return outcomes[0], nil
+}
+
+func latestRecordForTest(recs []Record, guid string) *Record {
+	for _, rec := range LatestByGUID(recs) {
+		if rec.GUID != nil && *rec.GUID == guid {
+			copy := rec
+			return &copy
+		}
 	}
+	return nil
 }

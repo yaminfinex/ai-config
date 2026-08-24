@@ -213,7 +213,9 @@ check_hcom_roster_launch_context() {
         and (.launch_context.pane_id | type == "string" and length > 0)
         and (.launch_context.process_id | type == "string" and length > 0)
         and (.launch_context.terminal_preset_effective | type == "string" and length > 0)
-        and (.launch_context.env | type == "object"))
+        and ((.launch_context.terminal_preset_effective == "fleet"
+              and (.launch_context.terminal_id | type == "string" and length > 0))
+             or (.launch_context.env | type == "object")))
     ' <<<"$out" >/dev/null; then
     pass "hcom roster exposes launch_context for observed agent families"
   else

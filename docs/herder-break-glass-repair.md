@@ -1,5 +1,11 @@
 # Herder break-glass identity repair
 
+> **SUPERSEDED 2026-08-24.** The repair, enroll, adopt, reconcile, credential,
+> and lifecycle authority described here were deleted. This file is retained as
+> incident history, not an executable runbook. Current lifecycle composition is
+> `tools/fleet` + hcom + herdr; herder's ledger is display cache only. See
+> [`tools/fleet/README.md`](../tools/fleet/README.md).
+
 `herder repair` is the manual recovery path for a seated row whose bus name,
 recorded tool session id, or hcom launch context cannot pass the ordinary repair
 proof. It does not weaken automated enrollment or reconciliation. Use it only

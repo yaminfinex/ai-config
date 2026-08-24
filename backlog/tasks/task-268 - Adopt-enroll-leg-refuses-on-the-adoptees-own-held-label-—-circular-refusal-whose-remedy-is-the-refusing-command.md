@@ -3,7 +3,7 @@ id: TASK-268
 title: >-
   Adopt enroll-leg refuses on the adoptee's own held label — circular refusal
   whose remedy is the refusing command
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-17 02:31'
 updated_date: '2026-08-21 05:00'
@@ -14,6 +14,12 @@ dependencies:
 priority: medium
 ordinal: 267500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion as previously ruled. Adopt/enroll retired and continuity is
+`hcom r <name-or-uuid>`; the composition suite records the incident 268
+successor.
 
 ## Description
 

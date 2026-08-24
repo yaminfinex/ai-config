@@ -3,7 +3,7 @@ id: TASK-314
 title: >-
   slim-down: liveness plane occupant-first (death rules, targeting, observer
   sweep deletion)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-23 11:53'
 labels:
@@ -12,6 +12,11 @@ labels:
 dependencies: []
 ordinal: 313500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Superseded and delivered by teardown unit two: the observer owns cache-only
+dedupe/death hygiene, while lifecycle targeting moved to hcom/fleet/herdr.
 
 ## Description
 

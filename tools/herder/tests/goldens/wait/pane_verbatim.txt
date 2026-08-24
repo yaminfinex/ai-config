@@ -1,8 +1,0 @@
-=== STDERR ===
-
-=== STDOUT ===
-
-=== EXIT ===
-0
-=== HERDR CALLS ===
-agent wait p_77 --until idle --timeout 60000

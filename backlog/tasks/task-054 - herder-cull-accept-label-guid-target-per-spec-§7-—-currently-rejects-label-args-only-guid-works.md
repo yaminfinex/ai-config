@@ -3,7 +3,7 @@ id: TASK-054
 title: >-
   herder cull: accept label/guid <target> per spec §7 — currently rejects label
   args (only --guid works)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 05:29'
 updated_date: '2026-07-13 01:05'
@@ -12,6 +12,11 @@ dependencies: []
 priority: low
 ordinal: 54000
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. Herder cull retired; `tools/fleet/cull.sh` accepts one exact
+hcom name and refuses ambiguous cache/label fallbacks.
 
 ## Description
 

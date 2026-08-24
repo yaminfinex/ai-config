@@ -3,7 +3,7 @@ id: TASK-263
 title: >-
   pi review seats never boot: hcom launch wrapper stalls in pre-child update
   check until herder bind timeout
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-16 11:35'
 labels:
@@ -13,6 +13,12 @@ dependencies: []
 priority: medium
 ordinal: 262500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Superseded as a herder task. Herder's Pi launch path retired and the fleet
+wrapper deliberately supports Claude/Codex only. Any future Pi boot fix belongs
+to hcom's native Pi integration.
 
 ## Description
 

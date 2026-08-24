@@ -125,6 +125,15 @@ assert_not_contains "clean shell: identity warning silent" "$OUT" "current shell
 assert_not_contains "clean shell: no unrelated warning masks contract" "$OUT" "WARN "
 assert_contains "clean shell: doctor healthy" "$OUT" "INFO ai-doctor ok"
 
+mkdir -p "$XDG_CACHE/herder/vendorbin"
+OUT="$(doctor)"
+RC=$?
+assert_rc "orphaned vendor pin cache: warning tier rc 0" "$RC" 0
+assert_contains "orphaned vendor pin cache: warning fires" "$OUT" "WARN orphaned retired herder vendor pin cache: $XDG_CACHE/herder/vendorbin"
+assert_contains "orphaned vendor pin cache: safe degradation stated" "$OUT" "stale entries are ignored and degrade safely"
+assert_contains "orphaned vendor pin cache: counted as one warning" "$OUT" "WARN ai-doctor found 1 warning(s)"
+rm -rf "$XDG_CACHE/herder"
+
 OUT="$(doctor HCOM_SESSION_ID= HERDER_GUID= HERDR_PANE_ID=)"
 RC=$?
 assert_rc "empty identity keys: rc 0" "$RC" 0

@@ -1,7 +1,7 @@
 ---
 id: TASK-253
 title: Raise wire carries thread-to-task linkage so desk anchors can inherit
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-16 00:51'
 updated_date: '2026-07-16 02:03'
@@ -11,6 +11,11 @@ dependencies: []
 priority: medium
 ordinal: 252500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Superseded with herder raise. hcom carries the thread directly; task and
+decision linkage belongs in the request text and durable mission artifacts.
 
 ## Description
 
