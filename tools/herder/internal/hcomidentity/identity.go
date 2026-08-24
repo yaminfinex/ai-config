@@ -279,6 +279,11 @@ func StoredNameMatches(name, baseName, stored string) bool {
 	return stored != "" && (name == stored || baseName == stored)
 }
 
+// IsJoined reports whether a roster row participates in live identity checks.
+func IsJoined(row Row) bool {
+	return joined(row)
+}
+
 func joined(row Row) bool {
 	if row.Joined != nil && !*row.Joined {
 		return false

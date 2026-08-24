@@ -503,6 +503,9 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 		}
 	}
 	current := V2ByGUID(proj, row.GUID)
+	if isObserverCacheEvent(row.Event) {
+		return normalizeObserverCacheAppend(current, row)
+	}
 	if current == nil {
 		if row.Lineage.ClearedFrom != "" && row.Mission == nil {
 			if displaced := V2ByGUID(proj, row.Lineage.ClearedFrom); displaced != nil {
@@ -664,6 +667,50 @@ func normalizeSessionAppend(proj *v2.Projection, row v2.SessionRecord) (v2.Sessi
 	}
 	if err := validateSeatedBindingTransition(current, row); err != nil {
 		return row, false, err
+	}
+	return row, true, nil
+}
+
+func isObserverCacheEvent(event string) bool {
+	switch event {
+	case "observed", "observed_dead", "observation_archived":
+		return true
+	default:
+		return false
+	}
+}
+
+// normalizeObserverCacheAppend is intentionally not a binding-legality path.
+// The observer records a display cache from fresh substrate evidence; binding
+// history remains carried only so unit-three verb readers can consume the
+// interim row shape until those readers are deleted.
+func normalizeObserverCacheAppend(current *v2.SessionRecord, row v2.SessionRecord) (v2.SessionRecord, bool, error) {
+	if row.Cache == nil || row.Cache.ObservedAt == "" || row.Cache.Liveness == "" {
+		return row, false, fmt.Errorf("observer cache event %q requires liveness and observed_at", row.Event)
+	}
+	if current == nil {
+		return row, false, fmt.Errorf("observer cache target %s not found", row.GUID)
+	}
+	row.Kind = v2.KindSession
+	row.Node = current.Node
+	row = carryIdentityFields(row, *current)
+	row.Bindings = cloneBindings(current.Bindings)
+	row.Attestations = cloneAttestations(current.Attestations)
+	row.BindingTombstones = cloneTombstones(current.BindingTombstones)
+	row.Mission = cloneMission(current.Mission)
+	row.VendorVersion = cloneVendorVersion(current.VendorVersion)
+	switch row.Event {
+	case "observed":
+		if row.State != v2.StateSeated || row.Seat == nil {
+			return row, false, fmt.Errorf("observed cache stamp requires a seated row")
+		}
+	case "observed_dead":
+		row.State = v2.StateUnseated
+		row.Seat = nil
+	case "observation_archived":
+		row.State = v2.StateRetired
+		row.Label = ""
+		row.Seat = nil
 	}
 	return row, true, nil
 }

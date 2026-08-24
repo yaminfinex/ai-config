@@ -81,9 +81,24 @@ type SessionRecord struct {
 	CloseResult       string                `json:"close_result,omitempty"`
 	CloseReason       string                `json:"close_reason,omitempty"`
 	ObservedVia       string                `json:"observed_via,omitempty"`
+	Cache             *CacheObservation     `json:"cache,omitempty"`
 	Raw               json.RawMessage       `json:"-"`
 	Ordinal           int                   `json:"-"`
 	LegacyV1          bool                  `json:"-"`
+}
+
+// CacheObservation is the observer's human-facing projection of live
+// substrate state. It is deliberately descriptive rather than authoritative:
+// commands bind through live hcom/herdr handles, never through these fields.
+type CacheObservation struct {
+	PaneID       string `json:"pane_id,omitempty"`
+	TerminalID   string `json:"terminal_id,omitempty"`
+	OccupantKind string `json:"occupant_kind,omitempty"`
+	SessionID    string `json:"session_id,omitempty"`
+	HcomName     string `json:"hcom_name,omitempty"`
+	Label        string `json:"label,omitempty"`
+	Liveness     string `json:"liveness"`
+	ObservedAt   string `json:"observed_at"`
 }
 
 // BindingFact records one independently established identity binding. The

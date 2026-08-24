@@ -3,716 +3,386 @@ package observercmd
 import (
 	"bytes"
 	"encoding/json"
-	"io"
-	"os"
-	"os/exec"
+	"errors"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
-	"ai-config/tools/herder/internal/continuationstate"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
-	"ai-config/tools/herder/internal/liveness"
-	"ai-config/tools/herder/internal/observerstatus"
+	"ai-config/tools/herder/internal/occupant"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
-func TestApplyCandidatesRefusalLeavesBatchUnapplied(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
-		return []v2.SessionRecord{
-			{GUID: "guid-healthy", Label: "healthy", State: v2.StateSeated},
-			{GUID: "guid-poison", Label: "poison", State: v2.StateSeated},
-		}, nil
-	})
-	if err != nil {
-		t.Fatal(err)
+func TestCacheStampCollapsesRecognitionAndTurnover(t *testing.T) {
+	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	proj := projection(t,
+		seatRow("guid-worker", "worker", "pane-1", "old-name", "", "2026-08-24T09:59:00Z"),
+	)
+	got := buildCacheCandidates(proj, livePane("pane-1", "sid-1", "new-name", "active"), now, time.Minute)
+	if len(got) != 1 {
+		t.Fatalf("candidates = %+v, want one cache stamp", got)
 	}
-	assertObserverWriteOutcomes(t, outcomes)
-	proj, err := v2.LoadFile(path, v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
+	row := got[0].row
+	if got[0].kind != "stamp" || row.Event != "observed" || row.GUID != "guid-worker" {
+		t.Fatalf("candidate = %+v, want same-guid observed stamp", got[0])
 	}
-	healthy := registry.V2ByGUID(proj, "guid-healthy")
-	if healthy == nil {
-		t.Fatal("missing healthy session")
+	if row.Cache == nil || row.Cache.PaneID != "pane-1" || row.Cache.OccupantKind != "codex" || row.Cache.SessionID != "sid-1" || row.Cache.HcomName != "new-name" || row.Cache.Label != "worker" || row.Cache.Liveness != "active" || row.Cache.ObservedAt != now.Format(time.RFC3339) {
+		t.Fatalf("cache stamp = %+v", row.Cache)
 	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	if row.Seat == nil || row.Seat.PaneID != "pane-1" || row.Seat.HcomName != "new-name" || latestSID(row) != "sid-1" {
+		t.Fatalf("interim verb-compatible row = %+v", row)
 	}
-	healthyNext := *healthy
-	healthyNext.Event = "reconciled"
-	healthyNext.RecordedAt = time.Now().UTC().Format(time.RFC3339)
-	cands := []candidate{
-		{kind: "plain", guid: healthy.GUID, row: healthyNext},
-		{
-			kind: "unseat",
-			guid: "guid-poison",
-			row: v2.SessionRecord{
-				GUID:     "guid-poison",
-				Event:    "legacy_v1_mapped",
-				State:    v2.StateUnseated,
-				Label:    "poison",
-				Tool:     "claude",
-				LegacyV1: true,
-			},
-		},
-	}
-
-	var stderr bytes.Buffer
-	summary := applyCandidates(path, cands, &stderr)
-	if summary.Refused != len(cands) || summary.Applied != 0 {
-		t.Fatalf("summary = %+v, want all candidates refused", summary)
-	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(after, before) {
-		t.Fatalf("registry changed after refused observer batch:\nbefore=%s\nafter=%s", before, after)
+	if row.Event == "recognised" || row.Event == "turnover" || row.Lineage.ClearedFrom != "" || row.Lineage.DisplacedBy != "" {
+		t.Fatalf("authority transition leaked into cache stamp: %+v", row)
 	}
 }
 
-func TestReplayLiveHolderWithStarvedKeepaliveAdvisesWithoutUnseat(t *testing.T) {
-	rec := v2.SessionRecord{
-		GUID: "fixture-live-holder", State: v2.StateSeated,
-		Seat: &v2.Seat{Kind: "process", PID: os.Getpid(), HcomName: "fixture-bus"},
+func TestCacheStampDedupeKeepsProbeCorroboratedRow(t *testing.T) {
+	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	proj := projection(t,
+		seatRow("guid-live", "live", "pane-1", "live-name", "sid-live", "2026-08-24T09:00:00Z"),
+		seatRow("guid-stale", "stale", "pane-1", "stale-name", "sid-stale", "2026-08-24T09:59:00Z"),
+	)
+	got := buildCacheCandidates(proj, livePane("pane-1", "sid-live", "live-name", "listening"), now, time.Minute)
+	if len(got) != 2 || got[0].kind != "retire-duplicate" || got[0].guid != "guid-stale" || got[1].kind != "stamp" || got[1].guid != "guid-live" {
+		t.Fatalf("candidates = %+v, want stale retirement then corroborated stamp", got)
 	}
-	bus := busState{available: true, rows: map[string]hcomidentity.Row{
-		"fixture-bus": {Name: "fixture-bus", Status: "listening", StatusAge: 301},
-	}}
-	verdict := liveness.Evaluate(livenessInput(rec, herdrState{}, bus))
-	if verdict.Class != liveness.VerdictAlive || verdict.Advisory == nil || verdict.Advisory.Cause != liveness.CauseKeepaliveStarvation {
-		t.Fatalf("verdict = %+v, want alive keepalive-starvation advisory", verdict)
-	}
-	proj := projectionFromRows(t, rec)
-	if cands := buildCandidates(proj, herdrState{}, bus, time.Now()); len(cands) != 0 {
-		t.Fatalf("starved live holder produced mutation candidates: %+v", cands)
-	}
-	flags := livenessFlags(proj, herdrState{}, bus, time.Now())
-	if len(flags) != 1 || flags[0].CauseClass != string(liveness.CauseKeepaliveStarvation) || flags[0].Detail != "holder alive; bus keepalive is starved" {
-		t.Fatalf("flags = %+v", flags)
-	}
-
-	missingBus := busState{available: true, rows: map[string]hcomidentity.Row{}}
-	flags = livenessFlags(proj, herdrState{}, missingBus, time.Now())
-	if len(flags) != 1 || flags[0].Detail != "holder alive; expected bus roster row is absent" {
-		t.Fatalf("missing-row flags = %+v", flags)
+	if got[0].row.State != v2.StateRetired || got[0].row.Cache == nil || got[0].row.Cache.Liveness != "duplicate" {
+		t.Fatalf("duplicate retirement = %+v", got[0].row)
 	}
 }
 
-func TestReplayDeadPIDBehindListeningRowAppliesEvidenceAtObservationTime(t *testing.T) {
-	cmd := exec.Command("sh", "-c", "exit 0")
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
+func TestCacheStampRetiresDeadRowsAfterGrace(t *testing.T) {
+	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	proj := projection(t, seatRow("guid-dead", "dead", "pane-gone", "dead-name", "sid-dead", "2026-08-24T09:59:00Z"))
+	got := buildCacheCandidates(proj, map[string]paneObservation{
+		"pane-gone": {Occupant: occupant.Observation{Status: occupant.PaneGone}},
+	}, now, time.Minute)
+	if len(got) != 1 || got[0].kind != "dead" || got[0].row.Event != "observed_dead" || got[0].row.State != v2.StateUnseated || got[0].row.Cache == nil || got[0].row.Cache.Liveness != "dead" {
+		t.Fatalf("dead candidates = %+v", got)
 	}
-	pid := cmd.Process.Pid
-	if err := cmd.Wait(); err != nil {
-		t.Fatal(err)
+
+	dead := got[0].row
+	dead.RecordedAt = now.Add(-30 * time.Second).Format(time.RFC3339)
+	dead.Cache.ObservedAt = dead.RecordedAt
+	got = buildCacheCandidates(projection(t, dead), nil, now, time.Minute)
+	if len(got) != 0 {
+		t.Fatalf("within-grace candidates = %+v, want dead row retained", got)
 	}
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
-		return []v2.SessionRecord{{
-			GUID: "fixture-dead-holder", Event: "seated", RecordedAt: "2026-07-17T08:00:00Z", State: v2.StateSeated,
-			Seat: &v2.Seat{Kind: "process", Node: tx.NodeID, PID: pid, HcomName: "fixture-bus"},
-		}}, nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	outcome, err := registry.SingleOutcome(outcomes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := outcome.Err(); err != nil {
-		t.Fatal(err)
-	}
-	proj, err := v2.LoadFile(path, v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	bus := busState{available: true, rows: map[string]hcomidentity.Row{
-		"fixture-bus": {Name: "fixture-bus", Status: "listening", StatusAge: 301},
-	}}
-	observedAt := time.Date(2026, 7, 17, 12, 30, 0, 0, time.UTC)
-	cands := buildCandidates(proj, herdrState{}, bus, observedAt)
-	if len(cands) != 1 || cands[0].verdict.Cause != liveness.CauseDeadPIDStaleBusRow {
-		t.Fatalf("candidates = %+v", cands)
-	}
-	summary := applyCandidates(path, cands, io.Discard)
-	if summary.Applied != 1 || summary.Refused != 0 {
-		t.Fatalf("summary = %+v", summary)
-	}
-	got := registry.V2ByGUID(mustProjection(t, path), "fixture-dead-holder")
-	if got == nil || got.State != v2.StateUnseated || got.RecordedAt != observedAt.Format(time.RFC3339) || !strings.Contains(got.CloseReason, "dead_pid_stale_bus_row") || !strings.Contains(got.ObservedVia, "observer") {
-		t.Fatalf("unseat evidence = %+v", got)
+
+	dead.RecordedAt = now.Add(-2 * time.Minute).Format(time.RFC3339)
+	dead.Cache.ObservedAt = dead.RecordedAt
+	archivedProjection := projection(t, dead)
+	got = buildCacheCandidates(archivedProjection, nil, now, time.Minute)
+	if len(got) != 1 || got[0].kind != "archive-dead" || got[0].row.Event != "observation_archived" || got[0].row.State != v2.StateRetired {
+		t.Fatalf("archive candidates = %+v", got)
 	}
 }
 
-func TestForeignPaneIsAliveWithoutTrackerOwnership(t *testing.T) {
-	rec := v2.SessionRecord{GUID: "fixture-foreign-pane", State: v2.StateSeated, Seat: &v2.Seat{Kind: "herdr", TerminalID: "terminal-present", PaneID: "pane-present"}}
-	hd := herdrState{
-		available: true,
-		byTerm:    map[string]herdrcli.Pane{"terminal-present": {TerminalID: "terminal-present", PaneID: "pane-present"}},
-		procs:     map[string]herdrcli.ProcessInfo{"terminal-present": {Processes: []herdrcli.Process{{PID: os.Getpid()}}}},
-	}
-	verdict := liveness.Evaluate(livenessInput(rec, hd, busState{}))
-	if verdict.Class != liveness.VerdictAlive || !strings.Contains(strings.Join(verdict.ObservedVia, ","), "process_info") {
-		t.Fatalf("foreign pane verdict = %+v", verdict)
+func TestCacheStampMarksRecordedOccupantMismatchDead(t *testing.T) {
+	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	proj := projection(t, seatRow("guid-old", "old", "pane-1", "old-name", "sid-old", "2026-08-24T09:59:00Z"))
+	got := buildCacheCandidates(proj, livePane("pane-1", "sid-new", "new-name", "active"), now, time.Minute)
+	if len(got) != 1 || got[0].kind != "dead" || got[0].row.Cache == nil || got[0].row.Cache.Liveness != "dead" {
+		t.Fatalf("mismatch candidates = %+v, want recorded occupant dead", got)
 	}
 }
 
-func TestEmptyForegroundSnapshotIsHuskAdvisoryNotDeathCandidate(t *testing.T) {
-	rec := v2.SessionRecord{GUID: "fixture-pane-husk", Label: "worker", State: v2.StateSeated, Seat: &v2.Seat{Kind: "herdr", TerminalID: "terminal-present", PaneID: "pane-present"}}
-	hd := herdrState{
-		available: true,
-		byTerm:    map[string]herdrcli.Pane{"terminal-present": {TerminalID: "terminal-present", PaneID: "pane-present"}},
-		procs:     map[string]herdrcli.ProcessInfo{"terminal-present": {}},
-	}
-	verdict := liveness.Evaluate(livenessInput(rec, hd, busState{}))
-	if verdict.Class != liveness.VerdictObservationGap || verdict.Cause != liveness.CauseClass("possible_pane_husk") || verdict.Advisory == nil {
-		t.Fatalf("single empty foreground snapshot verdict = %+v", verdict)
-	}
-	proj := projectionFromRows(t, rec)
-	for _, cand := range buildCandidates(proj, hd, busState{}, time.Now()) {
-		if cand.kind == "liveness-death" {
-			t.Fatalf("single empty foreground snapshot produced death candidate: %+v", cand)
-		}
-	}
-	flags := livenessFlags(proj, hd, busState{}, time.Now())
-	if len(flags) != 1 || flags[0].Type != "possible-pane-husk" || flags[0].Severity != "warning" || flags[0].CauseClass != "possible_pane_husk" || !strings.Contains(flags[0].Suggested, "herder cull --guid fixture-pane-husk") {
-		t.Fatalf("husk advice = %+v", flags)
+func TestCacheStampMakesBlockedStateVisible(t *testing.T) {
+	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	proj := projection(t, seatRow("guid-worker", "worker", "pane-1", "worker", "sid-1", "2026-08-24T09:59:00Z"))
+	got := buildCacheCandidates(proj, livePane("pane-1", "sid-1", "worker", "blocked"), now, time.Minute)
+	if len(got) != 1 || got[0].row.Cache == nil || got[0].row.Cache.Liveness != "blocked" {
+		t.Fatalf("blocked candidates = %+v", got)
 	}
 }
 
-func TestObserverRestartCatchupDoesNotBackdatePaneDeath(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
-		return []v2.SessionRecord{{
-			GUID: "fixture-catchup", Event: "seated", RecordedAt: "2026-07-17T06:00:00Z", State: v2.StateSeated,
-			Seat: &v2.Seat{Kind: "herdr", Node: tx.NodeID, TerminalID: "terminal-absent", PaneID: "pane-absent"},
-		}}, nil
-	})
-	if err != nil {
-		t.Fatal(err)
+func TestCacheStampBootRaceIsLastWriteWinsWithoutIdentityEvent(t *testing.T) {
+	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	proj := projection(t, seatRow("guid-birth", "worker", "pane-1", "birth-name", "", "2026-08-24T10:00:01Z"))
+	first := buildCacheCandidates(proj, livePane("pane-1", "sid-1", "fresh-name", "active"), now, time.Minute)
+	if len(first) != 1 || first[0].row.GUID != "guid-birth" || first[0].row.Event != "observed" || first[0].row.Seat.HcomName != "fresh-name" {
+		t.Fatalf("first sweep = %+v", first)
 	}
-	outcome, err := registry.SingleOutcome(outcomes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := outcome.Err(); err != nil {
-		t.Fatal(err)
-	}
-	proj := mustProjection(t, path)
-	gap := herdrState{available: true, connectionGap: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}, sameEpochAbsent: map[string]bool{}}
-	if cands := buildCandidates(proj, gap, busState{}, time.Now()); len(cands) != 0 {
-		t.Fatalf("restart connection gap fabricated candidates: %+v", cands)
-	}
-	observedAt := time.Date(2026, 7, 17, 13, 0, 0, 0, time.UTC)
-	continuous := herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}, sameEpochAbsent: map[string]bool{"terminal-absent": true}}
-	cands := buildCandidates(proj, continuous, busState{}, observedAt)
-	if len(cands) != 1 {
-		t.Fatalf("catch-up candidates = %+v", cands)
-	}
-	if summary := applyCandidates(path, cands, io.Discard); summary.Applied != 1 {
-		t.Fatalf("summary = %+v", summary)
-	}
-	got := registry.V2ByGUID(mustProjection(t, path), "fixture-catchup")
-	if got == nil || got.RecordedAt != observedAt.Format(time.RFC3339) {
-		t.Fatalf("catch-up timestamp = %+v, want observation time", got)
+	secondProj := projection(t, first[0].row)
+	second := buildCacheCandidates(secondProj, livePane("pane-1", "sid-1", "forked-name", "listening"), now.Add(time.Second), time.Minute)
+	if len(second) != 1 || second[0].row.GUID != "guid-birth" || second[0].row.Event != "observed" || second[0].row.Seat.HcomName != "forked-name" || latestSID(second[0].row) != "sid-1" {
+		t.Fatalf("name-churn sweep = %+v", second)
 	}
 }
 
-func projectionFromRows(t *testing.T, rows ...v2.SessionRecord) *v2.Projection {
-	t.Helper()
-	var input strings.Builder
-	for _, row := range rows {
-		b, err := json.Marshal(row)
-		if err != nil {
-			t.Fatal(err)
-		}
-		input.Write(b)
-		input.WriteByte('\n')
-	}
-	proj, err := v2.Load(strings.NewReader(input.String()), v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return proj
-}
-
-func mustProjection(t *testing.T, path string) *v2.Projection {
-	t.Helper()
-	proj, err := v2.LoadFile(path, v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return proj
-}
-
-func TestContinuationFailureFindingRequiresExplicitAcknowledgement(t *testing.T) {
-	stateDir := t.TempDir()
-	projJSON := `{"kind":"session","guid":"guid-target","event":"seated","recorded_at":"2026-07-12T11:00:00Z","state":"seated","label":"target","seat":{"kind":"herdr","hcom_name":"worker-hone"}}
-{"kind":"session","guid":"guid-alpha","event":"seated","recorded_at":"2026-07-12T11:00:00Z","state":"seated","label":"alpha","seat":{"kind":"herdr","hcom_name":"alpha"}}
-{"kind":"session","guid":"guid-beta","event":"seated","recorded_at":"2026-07-12T11:00:00Z","state":"seated","label":"beta","seat":{"kind":"herdr","hcom_name":"beta"}}
-`
-	proj, err := v2.Load(bytes.NewBufferString(projJSON), v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := continuationstate.Record{
-		ID: "compact-then-self-42", Status: "failed", Target: "worker-hone",
-		UpdatedAt: "2026-07-12T12:00:00Z", Reason: "delivery budget exhausted",
-		LogPath: "/tmp/sender.log", RecoveryCommand: "herder send worker-hone -- 'continue'",
-	}
-	if err := continuationstate.Write(filepath.Join(stateDir, "continuations"), rec); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "continuations", "foreign.json"), []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var stderr bytes.Buffer
-	flags := continuationFailureFlags(proj, stateDir, &stderr)
-	if len(flags) != 1 || flags[0].Type != "failed-continuation" ||
-		!strings.Contains(flags[0].Suggested, "--ack-continuation "+rec.ID) {
-		t.Fatalf("flags = %+v; want actionable failed-continuation finding", flags)
-	}
-	byGUID := observerstatus.FlagsByGUID(observerstatus.Status{Flags: flags})
-	if len(byGUID["guid-target"]) != 1 || len(byGUID["guid-alpha"]) != 0 || len(byGUID["guid-beta"]) != 0 ||
-		len(observerstatus.GlobalFlags(observerstatus.Status{Flags: flags})) != 0 {
-		t.Fatalf("flags leaked beyond target row: %+v", byGUID)
-	}
-	if !strings.Contains(stderr.String(), "ignoring continuation record") {
-		t.Fatalf("observer did not warn about skipped foreign record: %s", stderr.String())
-	}
-
-	// Merely reading again (the equivalent of an observer restart/sweep) retains
-	// the finding; only the explicit acknowledgement mutates the record.
-	if again := continuationFailureFlags(proj, stateDir, &stderr); len(again) != 1 {
-		t.Fatalf("finding cleared without acknowledgement: %+v", again)
-	}
-	if _, err := continuationstate.Acknowledge(filepath.Join(stateDir, "continuations"), rec.ID, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if cleared := continuationFailureFlags(proj, stateDir, &stderr); len(cleared) != 0 {
-		t.Fatalf("finding after acknowledgement = %+v, want cleared", cleared)
+func TestCacheStampBootingPaneWaitsForCorroboration(t *testing.T) {
+	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	proj := projection(t, seatRow("guid-birth", "worker", "pane-1", "birth-name", "", "2026-08-24T10:00:01Z"))
+	got := buildCacheCandidates(proj, map[string]paneObservation{
+		"pane-1": {Occupant: occupant.Observation{Status: occupant.Unprobeable}},
+	}, now, time.Minute)
+	if len(got) != 0 {
+		t.Fatalf("booting pane candidates = %+v, want birth stamp left for next sweep", got)
 	}
 }
 
-func TestContinuationFailureWithoutTargetRowDoesNotBecomeGlobal(t *testing.T) {
-	stateDir := t.TempDir()
-	if err := continuationstate.Write(filepath.Join(stateDir, "continuations"), continuationstate.Record{
-		ID: "failed", Status: "failed", Target: "missing", UpdatedAt: "2026-07-12T12:00:00Z",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	proj, err := v2.Load(bytes.NewReader(nil), v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var stderr bytes.Buffer
-	if flags := continuationFailureFlags(proj, stateDir, &stderr); len(flags) != 0 {
-		t.Fatalf("unresolved target became global observer advice: %+v", flags)
-	}
-}
-
-func TestContinuationFailureAmbiguousActiveTargetEmitsNoFlag(t *testing.T) {
-	stateDir := t.TempDir()
-	if err := continuationstate.Write(filepath.Join(stateDir, "continuations"), continuationstate.Record{
-		ID: "failed", Status: "failed", Target: "shared-name", UpdatedAt: "2026-07-12T12:00:00Z",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	projJSON := `{"kind":"session","guid":"guid-one","event":"seated","recorded_at":"2026-07-12T11:00:00Z","state":"seated","label":"one","seat":{"kind":"herdr","hcom_name":"shared-name"}}
-{"kind":"session","guid":"guid-two","event":"seated","recorded_at":"2026-07-12T11:00:00Z","state":"seated","label":"two","seat":{"kind":"herdr","hcom_name":"shared-name"}}
-`
-	proj, err := v2.Load(bytes.NewBufferString(projJSON), v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var stderr bytes.Buffer
-	if flags := continuationFailureFlags(proj, stateDir, &stderr); len(flags) != 0 {
-		t.Fatalf("ambiguous seated target emitted observer advice: %+v", flags)
-	}
-}
-
-func TestContinuationFailureFollowsWritePathNameReuse(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	rows := []v2.SessionRecord{
-		{GUID: "guid-previous", Event: "seated", State: v2.StateSeated, Label: "previous", Seat: &v2.Seat{Kind: "herdr", HcomName: "shared-name"}},
-		{GUID: "guid-previous", Event: "unseated", State: v2.StateUnseated, CloseResult: "closed", CloseReason: "occupant exited"},
-		{GUID: "guid-previous", Event: "retired", State: v2.StateRetired},
-		{GUID: "guid-current", Event: "seated", State: v2.StateSeated, Label: "current", Seat: &v2.Seat{Kind: "herdr", HcomName: "shared-name"}},
-	}
-	for _, row := range rows {
-		outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
-			return []v2.SessionRecord{row}, nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(outcomes) != 1 || outcomes[0].Status != registry.WriteApplied {
-			t.Fatalf("write outcome for %s = %+v, want one applied row", row.Event, outcomes)
-		}
-	}
-
-	proj, err := v2.LoadFile(path, v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous := registry.V2ByGUID(proj, "guid-previous")
-	if previous == nil || previous.State != v2.StateRetired || previous.Seat != nil {
-		t.Fatalf("retired row = %+v, want writer-normalized terminal row without a seat", previous)
-	}
-	stateDir := filepath.Dir(path)
-	if err := continuationstate.Write(filepath.Join(stateDir, "continuations"), continuationstate.Record{
-		ID: "failed", Status: "failed", Target: "shared-name", UpdatedAt: "2026-07-12T12:00:00Z",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	var stderr bytes.Buffer
-	flags := continuationFailureFlags(proj, stateDir, &stderr)
-	if len(flags) != 1 || flags[0].GUID != "guid-current" {
-		t.Fatalf("name-reuse flags = %+v, want one flag on the respawned seated row", flags)
-	}
-}
-
-func TestContinuationTargetSyntheticTerminalSeatsAreIgnored(t *testing.T) {
-	// These terminal rows cannot be produced by registry.UpdateLocked today because
-	// the normalizer strips their seats. They pin the defensive guard for external
-	// registry authors and future writers that might preserve stale seat metadata.
-	projJSON := `{"kind":"session","guid":"guid-current","event":"seated","recorded_at":"2026-07-12T11:00:00Z","state":"seated","label":"current","seat":{"kind":"herdr","hcom_name":"shared-name"}}
-{"kind":"session","guid":"guid-retired","event":"retired","recorded_at":"2026-07-12T11:00:00Z","state":"retired","label":"retired","seat":{"kind":"herdr","hcom_name":"shared-name"}}
-{"kind":"session","guid":"guid-lost","event":"lost","recorded_at":"2026-07-12T11:00:00Z","state":"lost","label":"lost","seat":{"kind":"herdr","hcom_name":"shared-name"}}
-`
-	proj, err := v2.Load(bytes.NewBufferString(projJSON), v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	guid, _, ok := continuationTarget(proj, "shared-name")
-	if !ok || guid != "guid-current" {
-		t.Fatalf("continuationTarget = (%q, %t), want seated guid-current", guid, ok)
-	}
-}
-
-func TestReconfirmRefreshesBusIdentityFromLiveCorrelate(t *testing.T) {
-	rec := v2.SessionRecord{
-		GUID:  "guid-self",
-		State: v2.StateSeated,
-		Seat:  &v2.Seat{Kind: "herdr", PaneID: "p_old", HcomName: "poisoned-name", CredentialGeneration: "generation-observer"},
-		SIDs:  []v2.SID{{SID: "sess-live"}},
-	}
-	joined := true
-	bus := busState{available: true, rows: map[string]hcomidentity.Row{
-		"live-self": {Name: "live-self", SessionID: "sess-live", Joined: &joined, LaunchContext: hcomidentity.LaunchContext{PaneID: "p_new"}},
-	}}
-
-	cand := reconfirmCandidate(rec, herdrcli.Pane{PaneID: "p_new"}, bus, time.Now().UTC())
-	if cand.row.Seat == nil || cand.row.Seat.HcomName != "live-self" || cand.row.Seat.HcomVerified == nil || !*cand.row.Seat.HcomVerified {
-		t.Fatalf("reconfirmed seat = %+v, want verified live-self", cand.row.Seat)
-	}
-	if cand.row.Seat.CredentialGeneration != "generation-observer" {
-		t.Fatalf("observer reconfirm stripped credential generation: %+v", cand.row.Seat)
-	}
-	if !cand.bus.Verified || cand.bus.Name != "live-self" || cand.bus.SessionID != "sess-live" || cand.bus.PaneID != "p_new" {
-		t.Fatalf("reconfirmed candidate bus = %+v, want the live identity passed to completion", cand.bus)
-	}
-}
-
-func TestSuccessorCarryMarksBusIdentityUnverifiedWithoutProof(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "registry.jsonl")
-	current := v2.SessionRecord{
-		GUID:       "guid-old",
-		Event:      "seated",
-		State:      v2.StateSeated,
-		Seat:       &v2.Seat{Kind: "herdr", PaneID: "p_self", HcomName: "poisoned-name"},
-		SIDs:       []v2.SID{{SID: "sess-old"}},
-		Provenance: v2.Provenance{Mechanism: "enroll"},
-	}
-	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
-		return []v2.SessionRecord{current}, nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertObserverWriteOutcomes(t, outcomes)
-	proj, err := v2.LoadFile(path, v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rows, ok := turnoverRowsLocked(proj, current, "sess-new", "guid-child", hcomidentity.Result{Reason: "no live proof"}, time.Now().UTC())
-	if !ok || len(rows) != 2 || rows[0].Seat == nil || rows[0].Seat.HcomVerified == nil || *rows[0].Seat.HcomVerified {
-		t.Fatalf("turnover rows = %+v, want successor with explicit unverified bus identity", rows)
-	}
-}
-
-func assertObserverWriteOutcomes(t *testing.T, outcomes []registry.WriteOutcome) {
-	t.Helper()
-	for _, outcome := range outcomes {
-		if err := outcome.Err(); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func TestObservedSIDUsesPaneCorrelatedBusForSidecarlessSeat(t *testing.T) {
-	rec := v2.SessionRecord{
-		GUID:       "guid-self",
-		State:      v2.StateSeated,
-		Seat:       &v2.Seat{Kind: "herdr", TerminalID: "term-missing", PaneID: "pane-self", HcomName: "stale-name"},
-		Provenance: v2.Provenance{Mechanism: "enroll"},
-	}
-	joined := true
-	bus := busState{available: true, rows: map[string]hcomidentity.Row{
-		"live-self": {
-			Name: "live-self", SessionID: "session-new", Joined: &joined,
-			LaunchContext: hcomidentity.LaunchContext{PaneID: "pane-self"},
-		},
-	}}
-
-	if got := observedSID(rec, herdrState{available: true, byTerm: map[string]herdrcli.Pane{}}, bus); got != "session-new" {
-		t.Fatalf("observedSID = %q, want pane-correlated session-new", got)
-	}
-}
-
-func TestDoctrineDeliveryRequiresFullUnmanagedCodexCorrelation(t *testing.T) {
-	proj, err := v2.Load(bytes.NewReader(nil), v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseHD := herdrState{
-		available: true,
-		byTerm: map[string]herdrcli.Pane{
-			"term-1": {PaneID: "pane-1", TerminalID: "term-1", AgentSession: "sid-1"},
-		},
-		procs: map[string]herdrcli.ProcessInfo{
-			"term-1": {Processes: []herdrcli.Process{{PID: 4242, Argv: []string{"/usr/local/bin/codex", "resume"}}}},
-		},
-	}
-	baseBus := busState{available: true, rows: map[string]hcomRow{
-		"raw-codex": {
-			Name: "raw-codex", Tool: "codex", SessionID: "sid-1", ProcessBound: boolPtr(true),
-			LaunchContext: hcomLaunchContext{PaneID: "pane-1", ProcessID: "process-1"},
-		},
-	}}
-	joined := func(row hcomRow) bool { return row.Name == "raw-codex" && row.SessionID == "sid-1" }
-
-	tests := []struct {
-		name string
-		hd   herdrState
-		bus  busState
-		join func(hcomRow) bool
-		want int
-	}{
-		{name: "full correlation", hd: baseHD, bus: baseBus, join: joined, want: 1},
-		{name: "missing live pane and process", hd: herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}}, bus: baseBus, join: joined},
-		{name: "missing tool session id", hd: withPaneSession(baseHD, ""), bus: baseBus, join: joined},
-		{name: "missing joined hcom row", hd: baseHD, bus: baseBus, join: func(hcomRow) bool { return false }},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := doctrineCandidates(proj, tc.hd, tc.bus, nil, tc.join)
-			if len(got) != tc.want {
-				t.Fatalf("doctrineCandidates() = %+v, want %d candidate(s)", got, tc.want)
+func TestCacheStampRelocatesLiveIdentityBeforeDeath(t *testing.T) {
+	rec := seatRow("guid-live", "worker", "pane-old", "worker-name", "sid-live", "2026-08-24T09:59:00Z")
+	bus := busState{available: true, roster: []hcomidentity.Row{{Name: "worker-name", SessionID: "sid-live", Status: "listening"}}}
+	aliasCalls := 0
+	obs, ok := relocateRows([]v2.SessionRecord{rec}, herdrState{}, bus,
+		func(id string) occupant.Observation {
+			aliasCalls++
+			if id != "pane-old" {
+				t.Fatalf("alias probe id = %q", id)
 			}
-			sent := 0
-			deliverDoctrine(got, map[string]string{}, func(string) bool {
-				sent++
-				return true
-			}, time.Now())
-			if sent != tc.want {
-				t.Fatalf("delivery count = %d, want %d", sent, tc.want)
+			return occupant.Observation{Status: occupant.Occupied, Tool: "codex", SID: "sid-live", Pane: herdrcli.Pane{PaneID: "pane-new", TerminalID: "term-new"}}
+		},
+		func(string) occupant.Observation { return occupant.Observation{Status: occupant.PaneGone} },
+	)
+	if !ok || aliasCalls != 1 || obs.Pane.PaneID != "pane-new" || obs.SID != "sid-live" {
+		t.Fatalf("relocation = (%+v, %t), calls=%d", obs, ok, aliasCalls)
+	}
+	got := buildCacheCandidates(projection(t, rec), map[string]paneObservation{
+		"pane-old": {Occupant: obs, Bus: hcomidentity.Result{Name: "worker-name", SessionID: "sid-live", PaneID: "pane-new", Verified: true}, BusStatus: "listening"},
+	}, time.Now().UTC(), time.Minute)
+	if len(got) != 1 || got[0].kind != "stamp" || got[0].row.State != v2.StateSeated || got[0].row.Seat.PaneID != "pane-new" {
+		t.Fatalf("relocated stamp = %+v", got)
+	}
+}
+
+func TestCacheStampRevivesArchivedRowWhenLiveIdentityRelocates(t *testing.T) {
+	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	rec := seatRow("guid-live", "", "pane-old", "worker-name", "sid-live", "2026-08-24T09:55:00Z")
+	rec.State = v2.StateRetired
+	rec.Seat = nil
+	rec.Cache = &v2.CacheObservation{PaneID: "pane-old", TerminalID: "term-old", SessionID: "sid-live", HcomName: "worker-name", Label: "worker", Liveness: "dead", ObservedAt: rec.RecordedAt}
+	bus := busState{available: true, roster: []hcomidentity.Row{{Name: "worker-name", SessionID: "sid-live", Status: "listening"}}}
+	if !anyLiveBusRow([]v2.SessionRecord{rec}, bus) {
+		t.Fatal("archived cache identity did not match its live bus row")
+	}
+	wantObs := occupant.Observation{Status: occupant.Occupied, Tool: "claude", SID: "sid-live", Pane: herdrcli.Pane{PaneID: "pane-new", TerminalID: "term-new"}}
+	obs, ok := relocateRows([]v2.SessionRecord{rec}, herdrState{}, bus,
+		func(id string) occupant.Observation {
+			if id != "pane-old" {
+				t.Fatalf("alias probe id = %q", id)
 			}
+			return wantObs
+		},
+		func(string) occupant.Observation { return occupant.Observation{Status: occupant.PaneGone} },
+	)
+	if !ok || obs.Pane.PaneID != "pane-new" {
+		t.Fatalf("archived relocation = (%+v, %t)", obs, ok)
+	}
+	got := buildCacheCandidates(projection(t, rec), map[string]paneObservation{
+		"pane-old": {Occupant: obs, Bus: hcomidentity.Result{Name: "worker-name", SessionID: "sid-live", PaneID: "pane-new", Verified: true}, BusStatus: "listening"},
+	}, now, time.Minute)
+	if len(got) != 1 || got[0].kind != "stamp" || got[0].row.State != v2.StateSeated || got[0].row.Seat == nil || got[0].row.Seat.PaneID != "pane-new" || got[0].row.Label != "worker" || got[0].row.Cache.Liveness != "listening" {
+		t.Fatalf("revival stamp = %+v", got)
+	}
+}
+
+func TestCacheStampRelocatesByAliasWhenTranscriptProbeIsAmbiguous(t *testing.T) {
+	rec := seatRow("guid-live", "worker", "pane-old", "worker-name", "sid-live", "2026-08-24T09:59:00Z")
+	bus := busState{available: true, roster: []hcomidentity.Row{{Name: "worker-name", SessionID: "sid-live", Status: "listening"}}}
+	obs, ok := relocateRows([]v2.SessionRecord{rec}, herdrState{}, bus,
+		func(string) occupant.Observation {
+			return occupant.Observation{Status: occupant.Unprobeable, Pane: herdrcli.Pane{PaneID: "pane-new", TerminalID: "term-new"}}
+		},
+		func(string) occupant.Observation { return occupant.Observation{Status: occupant.PaneGone} },
+	)
+	if !ok || obs.Status != occupant.Occupied || obs.Pane.PaneID != "pane-new" || obs.SID != "sid-live" || obs.Tool != "codex" {
+		t.Fatalf("alias relocation = (%+v, %t)", obs, ok)
+	}
+}
+
+func TestCacheStampLiveBusWithoutRelocationNeverDies(t *testing.T) {
+	rec := seatRow("guid-live", "worker", "pane-old", "worker-name", "sid-live", "2026-08-24T09:59:00Z")
+	bus := busState{available: true, roster: []hcomidentity.Row{{Name: "worker-name", SessionID: "sid-live", Status: "blocked"}}}
+	if !anyLiveBusRow([]v2.SessionRecord{rec}, bus) {
+		t.Fatal("live blocked hcom row was not recognized as stronger liveness evidence")
+	}
+	got := buildCacheCandidates(projection(t, rec), map[string]paneObservation{
+		"pane-old": {Occupant: occupant.Observation{Status: occupant.Unprobeable}},
+	}, time.Now().UTC(), time.Minute)
+	if len(got) != 0 {
+		t.Fatalf("live-but-unrelocated candidates = %+v, want retry without death", got)
+	}
+}
+
+func TestObservePanesEnforcesAllChannelsBeforeDeath(t *testing.T) {
+	rec := seatRow("guid-live", "worker", "pane-old", "worker-name", "sid-live", "2026-08-24T09:59:00Z")
+	proj := projection(t, rec)
+	row := hcomidentity.Row{Name: "worker-name", SessionID: "sid-live", Status: "listening"}
+	bus := busState{available: true, rows: map[string]hcomidentity.Row{"worker-name": row}, roster: []hcomidentity.Row{row}}
+	hd := herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}}
+
+	t.Run("live bus and failed relocation suppress death", func(t *testing.T) {
+		observed := observePanesWithAliasProbe(proj, hd, bus, func(string) occupant.Observation {
+			return occupant.Observation{Status: occupant.PaneGone}
 		})
+		got := buildCacheCandidates(proj, observed, time.Now().UTC(), time.Minute)
+		if len(got) != 0 {
+			t.Fatalf("candidates = %+v, want live row left untouched", got)
+		}
+	})
+
+	t.Run("alias relocation stamps current pane", func(t *testing.T) {
+		observed := observePanesWithAliasProbe(proj, hd, bus, func(string) occupant.Observation {
+			return occupant.Observation{Status: occupant.Occupied, Tool: "codex", SID: "sid-live", Pane: herdrcli.Pane{PaneID: "pane-new", TerminalID: "term-new"}}
+		})
+		got := buildCacheCandidates(proj, observed, time.Now().UTC(), time.Minute)
+		if len(got) != 1 || got[0].kind != "stamp" || got[0].row.Seat == nil || got[0].row.Seat.PaneID != "pane-new" {
+			t.Fatalf("relocated candidates = %+v", got)
+		}
+	})
+}
+
+func TestObservePanesBusFailureCannotAgreeToDeath(t *testing.T) {
+	rec := seatRow("guid-live", "worker", "pane-old", "worker-name", "sid-live", "2026-08-24T09:59:00Z")
+	proj := projection(t, rec)
+	hd := herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}}
+	observed := observePanesWithAliasProbe(proj, hd, busState{err: errors.New("hcom unavailable")}, func(string) occupant.Observation {
+		return occupant.Observation{Status: occupant.PaneGone}
+	})
+	got := buildCacheCandidatesWithHealth(proj, observed, time.Now().UTC(), time.Minute, false)
+	if len(got) != 0 {
+		t.Fatalf("candidates = %+v, want no destructive write while bus channel is unavailable", got)
 	}
 }
 
-func TestDoctrineDeliverySuppressesManagedAmbiguousAndRepeatedSessions(t *testing.T) {
-	hd := herdrState{
+func TestCacheStampLiveDedupeLoserUsesRecoverableDeadPath(t *testing.T) {
+	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	proj := projection(t,
+		seatRow("guid-winner", "winner", "pane-1", "winner-name", "sid-winner", "2026-08-24T09:59:00Z"),
+		seatRow("guid-live-loser", "loser", "pane-1", "loser-name", "sid-loser", "2026-08-24T09:58:00Z"),
+	)
+	winnerRow := hcomidentity.Row{Name: "winner-name", SessionID: "sid-winner", Status: "listening"}
+	loserRow := hcomidentity.Row{Name: "loser-name", SessionID: "sid-loser", Status: "listening"}
+	bus := busState{
 		available: true,
-		byTerm: map[string]herdrcli.Pane{
-			"term-1": {PaneID: "pane-1", TerminalID: "term-1", AgentSession: "sid-1"},
-		},
-		procs: map[string]herdrcli.ProcessInfo{
-			"term-1": {Processes: []herdrcli.Process{{PID: 4242, Argv: []string{"codex", "resume"}}}},
-		},
+		rows:      map[string]hcomidentity.Row{"winner-name": winnerRow, "loser-name": loserRow},
+		roster:    []hcomidentity.Row{winnerRow, loserRow},
 	}
-	row := hcomRow{
-		Name: "raw-codex", Tool: "codex", SessionID: "sid-1", ProcessBound: boolPtr(true),
-		LaunchContext: hcomLaunchContext{PaneID: "pane-1", ProcessID: "process-1"},
-	}
-	joined := func(hcomRow) bool { return true }
-	empty, err := v2.Load(bytes.NewReader(nil), v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	first := doctrineCandidates(empty, hd, busState{available: true, rows: map[string]hcomRow{row.Name: row}}, nil, joined)
-	if len(first) != 1 {
-		t.Fatalf("full correlation produced %d candidates, want 1", len(first))
-	}
-	receipts := map[string]string{first[0].Token: "already sent"}
-	if got := doctrineCandidates(empty, hd, busState{available: true, rows: map[string]hcomRow{row.Name: row}}, receipts, joined); len(got) != 0 {
-		t.Fatalf("repeat delivery candidates = %+v, want none", got)
-	}
-
-	other := row
-	other.Name = "other-codex"
-	other.LaunchContext.ProcessID = "process-2"
-	if got := doctrineCandidates(empty, hd, busState{available: true, rows: map[string]hcomRow{row.Name: row, other.Name: other}}, nil, joined); len(got) != 0 {
-		t.Fatalf("ambiguous correlation candidates = %+v, want none", got)
-	}
-
-	managedJSON := `{"kind":"session","guid":"managed-guid","event":"seated","recorded_at":"2026-07-12T00:00:00Z","state":"seated","tool":"codex","seat":{"kind":"herdr","terminal_id":"term-1","pane_id":"pane-1","hcom_name":"managed"},"sids":[{"sid":"sid-1"}]}`
-	managed, err := v2.Load(bytes.NewBufferString(managedJSON+"\n"), v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := doctrineCandidates(managed, hd, busState{available: true, rows: map[string]hcomRow{row.Name: row}}, nil, joined); len(got) != 0 {
-		t.Fatalf("managed correlation candidates = %+v, want none", got)
+	hd := herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}}
+	observed := observePanesWithAliasProbe(proj, hd, bus, func(string) occupant.Observation {
+		return occupant.Observation{Status: occupant.Occupied, Tool: "codex", SID: "sid-winner", Pane: herdrcli.Pane{PaneID: "pane-new", TerminalID: "term-new"}}
+	})
+	got := buildCacheCandidates(proj, observed, now, time.Minute)
+	if len(got) != 2 || got[0].kind != "dead" || got[0].guid != "guid-live-loser" || got[0].row.State != v2.StateUnseated || got[0].row.Cache == nil || got[0].row.Cache.Liveness != "dead" || got[1].kind != "stamp" {
+		t.Fatalf("candidates = %+v, want recoverable dead loser then winner stamp", got)
 	}
 }
 
-func TestDoctrineReceiptTokenIgnoresCodexProcessOrdering(t *testing.T) {
-	proj, err := v2.Load(bytes.NewReader(nil), v2.LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	hd := herdrState{
-		available: true,
-		byTerm: map[string]herdrcli.Pane{
-			"term-1": {PaneID: "pane-1", TerminalID: "term-1", AgentSession: "sid-1"},
-		},
-		procs: map[string]herdrcli.ProcessInfo{
-			"term-1": {Processes: []herdrcli.Process{
-				{PID: 1111, Argv: []string{"codex", "resume"}},
-				{PID: 2222, Argv: []string{"codex", "resume"}},
-			}},
-		},
-	}
-	bus := busState{available: true, rows: map[string]hcomRow{
-		"raw-codex": {
-			Name: "raw-codex", Tool: "codex", SessionID: "sid-1", ProcessBound: boolPtr(true),
-			LaunchContext: hcomLaunchContext{PaneID: "pane-1", ProcessID: "process-1"},
-		},
-	}}
-	first := doctrineCandidates(proj, hd, bus, nil, func(hcomRow) bool { return true })
-	hd.procs["term-1"] = herdrcli.ProcessInfo{Processes: []herdrcli.Process{
-		{PID: 2222, Argv: []string{"codex", "resume"}},
-		{PID: 1111, Argv: []string{"codex", "resume"}},
-	}}
-	second := doctrineCandidates(proj, hd, bus, nil, func(hcomRow) bool { return true })
-	if len(first) != 1 || len(second) != 1 || first[0].Token != "process-1:sid-1" || second[0].Token != first[0].Token {
-		t.Fatalf("tokens before/after process reorder = %+v / %+v, want stable process-1:sid-1", first, second)
-	}
-}
-
-func TestPriorDoctrineDeliveriesRequiresPositiveEvidenceOrRetentionExpiry(t *testing.T) {
-	stateDir := t.TempDir()
-	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
-	status := observerstatus.Status{DoctrineDeliveries: map[string]string{
-		"live-process:sid-live":          "2026-07-10T00:00:00Z",
-		"replaced-process:sid-old":       "2026-07-12T11:59:00Z",
-		"old-process:sid-moved":          "2026-07-12T11:59:00Z",
-		"recent-process:sid-unconfirmed": "2026-07-12T11:59:00Z",
-		"unconfirmed-process:sid-gone":   "2026-07-10T00:00:00Z",
-	}}
-	if err := observerstatus.WriteAtomic(observerstatus.PathForStateDir(stateDir), status); err != nil {
-		t.Fatal(err)
-	}
-	hd := herdrState{
-		available: true,
-		byTerm: map[string]herdrcli.Pane{
-			"term-live": {PaneID: "pane-live", TerminalID: "term-live", AgentSession: "sid-live"},
-		},
-		procs: map[string]herdrcli.ProcessInfo{}, // Per-pane process_info failed this sweep.
-	}
-	bus := busState{available: true, rows: map[string]hcomRow{
-		"replacement": {
-			Name: "replacement", Tool: "codex", SessionID: "sid-new", ProcessBound: boolPtr(true),
-			LaunchContext: hcomLaunchContext{PaneID: "pane-replaced", ProcessID: "replaced-process"},
-		},
-		"moved": {
-			Name: "moved", Tool: "codex", SessionID: "sid-moved", ProcessBound: boolPtr(true),
-			LaunchContext: hcomLaunchContext{PaneID: "pane-moved", ProcessID: "new-process"},
-		},
-	}}
-	pruned := priorDoctrineDeliveries(stateDir, hd, bus, now)
-	if len(pruned) != 2 || pruned["live-process:sid-live"] == "" || pruned["recent-process:sid-unconfirmed"] == "" {
-		t.Fatalf("pruned receipts = %v, want live and recently unconfirmed receipts preserved", pruned)
-	}
-	preserved := priorDoctrineDeliveries(stateDir, herdrState{}, busState{}, now)
-	if len(preserved) != 5 {
-		t.Fatalf("receipts during whole-transport gap = %v, want all preserved", preserved)
-	}
-}
-
-func TestJoinedHcomRowAcceptsObjectAndSingletonArray(t *testing.T) {
-	binDir := t.TempDir()
-	stub := "#!/usr/bin/env bash\nprintf '%s' \"$HCOM_LIST_JSON\"\n"
-	if err := os.WriteFile(filepath.Join(binDir, "hcom"), []byte(stub), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	want := hcomRow{Name: "raw-codex", Tool: "codex", SessionID: "sid-1"}
-	for _, tc := range []struct {
-		name string
-		json string
-		want bool
-	}{
-		{name: "object", json: `{"name":"raw-codex","tool":"codex","session_id":"sid-1"}`, want: true},
-		{name: "singleton array", json: `[{"name":"raw-codex","tool":"codex","session_id":"sid-1"}]`, want: true},
-		{name: "ambiguous array", json: `[{"tool":"codex","session_id":"sid-1"},{"tool":"codex","session_id":"sid-1"}]`},
+func TestLiveBusRowUsesHcomJoinedClassification(t *testing.T) {
+	rec := seatRow("guid-worker", "worker", "pane-1", "worker-name", "sid-worker", "2026-08-24T09:59:00Z")
+	joinedFalse := false
+	for _, row := range []hcomidentity.Row{
+		{Name: "worker-name", SessionID: "sid-worker", Status: "closed"},
+		{Name: "worker-name", SessionID: "sid-worker", Status: "DEAD"},
+		{Name: "worker-name", SessionID: "sid-worker", Status: "listening", Joined: &joinedFalse},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("HCOM_LIST_JSON", tc.json)
-			if got := joinedHcomRow(want); got != tc.want {
-				t.Fatalf("joinedHcomRow() = %t, want %t", got, tc.want)
-			}
-		})
+		if got, ok := liveBusRow(rec, busState{available: true, roster: []hcomidentity.Row{row}}); ok {
+			t.Fatalf("row %+v classified live as %+v", row, got)
+		}
 	}
 }
 
-func TestDoctrineDeliveryRecordsReceiptWithoutRegistryWrite(t *testing.T) {
-	registryPath := filepath.Join(t.TempDir(), "registry.jsonl")
-	before := []byte("registry sentinel\n")
-	if err := os.WriteFile(registryPath, before, 0o644); err != nil {
-		t.Fatal(err)
+// Reviewer demonstration (not part of the unit): a live seat whose recorded
+// bus name was recycled to a different joined agent while its recorded sid is
+// still live under a new name. The amendment's death rule is disjunctive —
+// "no live hcom row for that session id or name" — so death must be vetoed.
+func TestReviewConflictingBusCorrelatesStillVetoDeath(t *testing.T) {
+	rec := seatRow("guid-w", "worker", "pane-1", "worker-a", "S1", "2026-08-24T09:59:00Z")
+	roster := []hcomidentity.Row{
+		{Name: "worker-a", SessionID: "S2", Status: "listening"},
+		{Name: "worker-b", SessionID: "S1", Status: "listening"},
 	}
-	receipts := map[string]string{}
-	sent := 0
-	deliverDoctrine([]doctrineCandidate{{Name: "raw-codex", Token: "incarnation"}}, receipts, func(name string) bool {
-		sent++
-		return name == "raw-codex"
-	}, time.Date(2026, 7, 12, 1, 2, 3, 0, time.UTC))
-	deliverDoctrine([]doctrineCandidate{{Name: "raw-codex", Token: "incarnation"}}, receipts, func(string) bool {
-		sent++
-		return true
-	}, time.Date(2026, 7, 12, 1, 2, 4, 0, time.UTC))
-	if sent != 1 || receipts["incarnation"] != "2026-07-12T01:02:03Z" {
-		t.Fatalf("sent=%d receipts=%v, want one recorded delivery", sent, receipts)
+	bus := busState{available: true, roster: roster}
+	if _, live := liveBusRow(rec, bus); !live {
+		t.Errorf("liveBusRow: live sid row on the bus did not veto death")
 	}
-	after, err := os.ReadFile(registryPath)
+	hd := herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}}
+	observed := observePanesWithAliasProbe(projection(t, rec), hd, bus, func(string) occupant.Observation {
+		return occupant.Observation{Status: occupant.PaneGone}
+	})
+	got := buildCacheCandidates(projection(t, rec), observed, time.Now().UTC(), time.Minute)
+	if len(got) != 0 {
+		t.Errorf("candidates = %+v, want live seat left untouched despite ambiguous bus correlates", got)
+	}
+}
+
+func TestOccupiedForeignSIDAliasDoesNotRelocate(t *testing.T) {
+	rec := seatRow("guid-live", "worker", "pane-old", "worker-name", "sid-live", "2026-08-24T09:59:00Z")
+	row := hcomidentity.Row{Name: "worker-name", SessionID: "sid-live", Status: "listening"}
+	bus := busState{available: true, roster: []hcomidentity.Row{row}}
+	hd := herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}}
+	proj := projection(t, rec)
+	observed := observePanesWithAliasProbe(proj, hd, bus, func(string) occupant.Observation {
+		return occupant.Observation{Status: occupant.Occupied, Tool: "codex", SID: "sid-foreign", Pane: herdrcli.Pane{PaneID: "pane-new", TerminalID: "term-new"}}
+	})
+	got := buildCacheCandidates(proj, observed, time.Now().UTC(), time.Minute)
+	if len(got) != 0 {
+		t.Fatalf("candidates = %+v, want foreign occupant rejected and live row left untouched", got)
+	}
+}
+
+func TestObservedStampBypassesFrozenBindingLegality(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry.jsonl")
+	initial := seatRow("guid-worker", "worker", "pane-1", "old-name", "sid-1", "2026-08-24T09:59:00Z")
+	initial.Bindings = []v2.BindingFact{
+		{ID: "seat-binding", Field: v2.BindingFieldSeat, Seat: &v2.BindingSeat{Kind: "herdr", TerminalID: "term-1", PaneID: "pane-1"}, EvidenceClass: v2.EvidenceLiveVerified, ObservedAt: initial.RecordedAt},
+		{ID: "bus-binding", Field: v2.BindingFieldHcomName, Value: "old-name", EvidenceClass: v2.EvidenceLiveVerified, ObservedAt: initial.RecordedAt},
+	}
+	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) { return []v2.SessionRecord{initial}, nil })
+	if err != nil || len(outcomes) != 1 || outcomes[0].Status != registry.WriteApplied {
+		t.Fatalf("seed write = %+v, %v", outcomes, err)
+	}
+	proj, err := v2.LoadFile(path, v2.LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(after, before) {
-		t.Fatalf("doctrine delivery changed registry:\nbefore=%q\nafter=%q", before, after)
+	cands := buildCacheCandidates(proj, livePane("pane-1", "sid-1", "new-name", "active"), time.Now().UTC(), time.Minute)
+	summary := applyCandidates(path, cands, &bytes.Buffer{})
+	if summary.Applied != 1 || summary.Refused != 0 {
+		t.Fatalf("summary = %+v, want legality-free observed write", summary)
 	}
 }
 
-func withPaneSession(hd herdrState, sid string) herdrState {
-	copyHD := hd
-	copyHD.byTerm = map[string]herdrcli.Pane{}
-	for term, pane := range hd.byTerm {
-		pane.AgentSession = sid
-		copyHD.byTerm[term] = pane
+func projection(t *testing.T, rows ...v2.SessionRecord) *v2.Projection {
+	t.Helper()
+	var raw bytes.Buffer
+	for _, row := range rows {
+		encoded, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw.Write(encoded)
+		raw.WriteByte('\n')
 	}
-	return copyHD
+	proj, err := v2.Load(&raw, v2.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proj
 }
 
-func boolPtr(v bool) *bool { return &v }
+func seatRow(guid, label, pane, hcomName, sid, observedAt string) v2.SessionRecord {
+	rec := v2.SessionRecord{
+		Kind: v2.KindSession, GUID: guid, Event: "seated", RecordedAt: observedAt,
+		State: v2.StateSeated, Label: label, Role: "worker", Tool: "codex",
+		Seat: &v2.Seat{Kind: "herdr", TerminalID: "term-1", PaneID: pane, HcomName: hcomName},
+	}
+	if sid != "" {
+		rec.SIDs = []v2.SID{{SID: sid, ObservedAt: observedAt, Source: "observer"}}
+	}
+	return rec
+}
+
+func livePane(pane, sid, name, status string) map[string]paneObservation {
+	return map[string]paneObservation{
+		pane: {
+			Occupant:  occupant.Observation{Pane: herdrcli.Pane{PaneID: pane, TerminalID: "term-1"}, Tool: "codex", SID: sid, Status: occupant.Occupied},
+			Bus:       hcomidentity.Result{Name: name, SessionID: sid, PaneID: pane, Verified: true},
+			BusStatus: status,
+		},
+	}
+}
