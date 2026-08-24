@@ -151,20 +151,14 @@ mise_tool_resolution_message() {
 mise_path_install() {
   local file
   local bin_dir
-  local shims_dir
   local tmp
 
   mise_require || return 1
 
   file="$(mise_path_config_file)"
   bin_dir="$(mise_bin_dir)"
-  shims_dir="$(mise_shims_dir)"
   [ -d "$bin_dir" ] || {
     log_error "bin dir missing: $bin_dir"
-    return 1
-  }
-  [ -d "$shims_dir" ] || {
-    log_error "herder shim dir missing: $shims_dir"
     return 1
   }
 
