@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"ai-config/tools/herder/internal/continuationstate"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/liveness"
 	"ai-config/tools/herder/internal/missioncontext"
@@ -30,7 +29,6 @@ type options struct {
 	mode       string
 	includeAll bool
 	targetGUID string
-	ackID      string
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -39,15 +37,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	if opts.help {
-		return 0
-	}
-	if opts.ackID != "" {
-		rec, err := continuationstate.Acknowledge("", opts.ackID, time.Now())
-		if err != nil {
-			fmt.Fprintf(stderr, "herder list: cannot acknowledge continuation %s: %v. Run `herder list` to inventory unresolved failures.\n", opts.ackID, err)
-			return 1
-		}
-		fmt.Fprintf(stdout, "acknowledged failed continuation %s for @%s; if recovery is still needed, run:\n  %s\n", rec.ID, rec.Target, rec.RecoveryCommand)
 		return 0
 	}
 	if _, err := exec.LookPath("herdr"); err != nil {
@@ -59,28 +48,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	var failures []continuationstate.Record
-	if opts.mode == "table" || opts.mode == "json" {
-		var warnings []error
-		var err error
-		failures, warnings, err = continuationstate.Unresolved("")
-		for _, warning := range warnings {
-			fmt.Fprintf(stderr, "herder list: ignoring continuation record: %v\n", warning)
-		}
-		if err != nil {
-			fmt.Fprintf(stderr, "herder list: continuation state unavailable: %v. Inspect %s for durable records.\n", err, continuationstate.DefaultDir())
-		}
-	}
-	if opts.mode == "table" {
-		renderContinuationFailures(stdout, failures)
-	}
-
 	registryPath := registry.DefaultPath()
 	if _, err := os.Stat(registryPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			if opts.mode == "json" {
-				renderJSONContinuationFailures(stdout, stderr, failures)
-			}
 			fmt.Fprintf(stderr, "no registry at %s\n", registryPath)
 			return 0
 		}
@@ -135,7 +105,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			out := reconciledJSON(rec, idx, observerAdviceFor(advice, ptrString(rec.GUID)), observations[ptrString(rec.GUID)])
 			fmt.Fprintln(stdout, string(out))
 		}
-		renderJSONContinuationFailures(stdout, stderr, failures)
 		return 0
 	}
 
@@ -191,13 +160,6 @@ func parseArgs(args []string, stdout, stderr io.Writer) (options, int) {
 				opts.targetGUID = args[i+1]
 			}
 			i += 2
-		case "--ack-continuation":
-			if i+1 >= len(args) {
-				die(stderr, "--ack-continuation requires an id")
-				return opts, 1
-			}
-			opts.ackID = args[i+1]
-			i += 2
 		case "-h", "--help":
 			printHelp(stdout)
 			opts.help = true
@@ -216,37 +178,16 @@ func printHelp(stdout io.Writer) {
 Usage:
   herder list              table of non-retired sessions (seated and unseated), reconciled with live agents
   herder list --all        additionally include retired and lost sessions
-  herder list --json       reconciled sessions and unresolved failures as JSONL
+  herder list --json       reconciled sessions as JSONL
   herder list --raw        raw registry JSONL, no reconciliation
   herder list --guid GUID  one record as full JSON (exit 1 if not found)
-  herder list --ack-continuation ID
-                           acknowledge a failed detached continuation after recovery
-
-The table lists unresolved detached continuation failures before agent rows.
-Run the recorded recovery command, then use --ack-continuation to clear the
-failure from list and observer advice. Use --all to check whether a missing
-session is retired or lost.
+Use --all to check whether a missing session is retired or lost.
 
 In --json output, select kind=="session" for session rows; for compatibility,
-a row without kind is also a session row. Unresolved failures have
-kind=="unresolved_continuation" and are independent of session-row filters.
+a row without kind is also a session row.
 Session rows carry mission:{slug,source} or mission:null. Source is explicit,
 cwd, or marker; explicit membership wins over cwd and .mission inference.
 `)
-}
-
-func renderContinuationFailures(stdout io.Writer, failures []continuationstate.Record) {
-	if len(failures) == 0 {
-		return
-	}
-	fmt.Fprintln(stdout, "UNRESOLVED DETACHED CONTINUATIONS")
-	for _, rec := range failures {
-		fmt.Fprintf(stdout, "  %s  @%s  failed %s: %s\n", rec.ID, rec.Target, rec.UpdatedAt, rec.Reason)
-		fmt.Fprintf(stdout, "    recovery: %s\n", rec.RecoveryCommand)
-		fmt.Fprintf(stdout, "    log: %s\n", rec.LogPath)
-		fmt.Fprintf(stdout, "    after recovery: herder list --ack-continuation %s\n", rec.ID)
-	}
-	fmt.Fprintln(stdout)
 }
 
 // liveIndex resolves registry rows to live herdr agents. Terminal ids are the
@@ -449,46 +390,17 @@ func reconciledJSON(rec registry.Record, idx liveIndex, advice []observerstatus.
 	return appendJSONFields(rec.Raw, fields...)
 }
 
-// reconciledLiveStatus keeps Grok honest while herdr has no Grok integration
-// target. Its raw live object remains visible as evidence, but an agent_status
-// from the generic process row cannot become an authoritative live_status.
-// Source-labelled Grok events are attached separately as observer enrichment.
 func reconciledLiveStatus(rec registry.Record, idx liveIndex, live *herdrcli.Agent) string {
 	if rec.Archived {
 		return "ARCHIVED"
 	}
 	if live == nil {
-		if rec.Agent == "grok" && ((rec.TerminalID != "" && idx.paneTerms[rec.TerminalID]) ||
-			(rec.PaneID != "" && idx.panePanes[rec.PaneID])) {
-			return "unknown"
-		}
 		return idx.unmatchedStatus(rec)
-	}
-	if rec.Agent == "grok" {
-		return "unknown"
 	}
 	if status, ok := rawStringField(live.Raw, "agent_status"); ok {
 		return status
 	}
 	return string(liveness.VerdictAlive)
-}
-
-func renderJSONContinuationFailures(stdout, stderr io.Writer, failures []continuationstate.Record) {
-	renderJSONContinuationFailuresWith(stdout, stderr, failures, json.Marshal)
-}
-
-func renderJSONContinuationFailuresWith(stdout, stderr io.Writer, failures []continuationstate.Record, marshal func(any) ([]byte, error)) {
-	for _, failure := range failures {
-		out, err := marshal(struct {
-			Kind string `json:"kind"`
-			continuationstate.Record
-		}{Kind: "unresolved_continuation", Record: failure})
-		if err != nil {
-			fmt.Fprintf(stderr, "herder list: cannot render unresolved continuation %s as JSON: %v. Inspect %s and retry after correcting the serialization failure.\n", failure.ID, err, continuationstate.DefaultDir())
-			continue
-		}
-		fmt.Fprintln(stdout, string(out))
-	}
 }
 
 func loadObserverState() (map[string][]observerstatus.Flag, map[string]observerstatus.Observation) {

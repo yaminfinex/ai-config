@@ -1,7 +1,0 @@
-=== STDERR ===
-herder compact: refused — the caller's live occupant is unprobeable; compact never guesses a self identity. Nothing was typed.
-=== STDOUT ===
-
-=== EXIT ===
-2
-=== HERDR MUTATING CALLS ===

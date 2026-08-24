@@ -1,7 +1,0 @@
-=== STDERR ===
-herder wait: could not read live pane list; liveness=observation_gap cause_class=observation_unavailable for beta
-=== STDOUT ===
-
-=== EXIT ===
-1
-=== HERDR CALLS ===

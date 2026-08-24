@@ -249,7 +249,7 @@ func TestObservePanesBusFailureCannotAgreeToDeath(t *testing.T) {
 	}
 }
 
-func TestCacheStampLiveDedupeLoserUsesRecoverableDeadPath(t *testing.T) {
+func TestCacheStampRelocatesLiveDedupeLoserBeforeDeadStamp(t *testing.T) {
 	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
 	proj := projection(t,
 		seatRow("guid-winner", "winner", "pane-1", "winner-name", "sid-winner", "2026-08-24T09:59:00Z"),
@@ -257,18 +257,24 @@ func TestCacheStampLiveDedupeLoserUsesRecoverableDeadPath(t *testing.T) {
 	)
 	winnerRow := hcomidentity.Row{Name: "winner-name", SessionID: "sid-winner", Status: "listening"}
 	loserRow := hcomidentity.Row{Name: "loser-name", SessionID: "sid-loser", Status: "listening"}
-	bus := busState{
-		available: true,
-		rows:      map[string]hcomidentity.Row{"winner-name": winnerRow, "loser-name": loserRow},
-		roster:    []hcomidentity.Row{winnerRow, loserRow},
+	observed := map[string]paneObservation{
+		"pane-1": {
+			Occupant:  occupant.Observation{Status: occupant.Occupied, Tool: "codex", SID: "sid-winner", Pane: herdrcli.Pane{PaneID: "pane-1", TerminalID: "term-1"}},
+			Bus:       hcomidentity.Result{Name: winnerRow.Name, SessionID: winnerRow.SessionID, PaneID: "pane-1", Verified: true},
+			BusStatus: winnerRow.Status,
+			LiveGUIDs: map[string]bool{"guid-winner": true, "guid-live-loser": true},
+			Relocated: map[string]paneObservation{
+				"guid-live-loser": {
+					Occupant:  occupant.Observation{Status: occupant.Occupied, Tool: "codex", SID: "sid-loser", Pane: herdrcli.Pane{PaneID: "pane-2", TerminalID: "term-2"}},
+					Bus:       hcomidentity.Result{Name: loserRow.Name, SessionID: loserRow.SessionID, PaneID: "pane-2", Verified: true},
+					BusStatus: loserRow.Status,
+				},
+			},
+		},
 	}
-	hd := herdrState{available: true, byTerm: map[string]herdrcli.Pane{}, procs: map[string]herdrcli.ProcessInfo{}}
-	observed := observePanesWithAliasProbe(proj, hd, bus, func(string) occupant.Observation {
-		return occupant.Observation{Status: occupant.Occupied, Tool: "codex", SID: "sid-winner", Pane: herdrcli.Pane{PaneID: "pane-new", TerminalID: "term-new"}}
-	})
 	got := buildCacheCandidates(proj, observed, now, time.Minute)
-	if len(got) != 2 || got[0].kind != "dead" || got[0].guid != "guid-live-loser" || got[0].row.State != v2.StateUnseated || got[0].row.Cache == nil || got[0].row.Cache.Liveness != "dead" || got[1].kind != "stamp" {
-		t.Fatalf("candidates = %+v, want recoverable dead loser then winner stamp", got)
+	if len(got) != 2 || got[0].kind != "stamp" || got[0].guid != "guid-live-loser" || got[0].row.State != v2.StateSeated || got[0].row.Seat == nil || got[0].row.Seat.PaneID != "pane-2" || got[0].row.Cache == nil || got[0].row.Cache.Liveness != "listening" || got[1].kind != "stamp" || got[1].guid != "guid-winner" {
+		t.Fatalf("candidates = %+v, want relocated loser stamp then winner stamp", got)
 	}
 }
 

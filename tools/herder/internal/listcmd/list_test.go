@@ -3,7 +3,6 @@ package listcmd
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"ai-config/tools/herder/internal/continuationstate"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/registry"
@@ -133,95 +131,11 @@ func renderedMission(t *testing.T, raw []byte) *v2.Mission {
 	return row.Mission
 }
 
-func TestFailedContinuationIsVisibleAndExplicitlyAcknowledged(t *testing.T) {
-	stateDir := t.TempDir()
-	t.Setenv("HERDER_STATE_DIR", stateDir)
-	rec := continuationstate.Record{
-		ID: "compact-then-self-42", Status: "failed", Target: "worker-hone",
-		UpdatedAt: "2026-07-12T12:00:00Z", Reason: "turn end never proven",
-		LogPath: "/tmp/sender.log", RecoveryCommand: "herder send worker-hone -- 'continue'",
-	}
-	if err := continuationstate.Write("", rec); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(continuationstate.DefaultDir(), "foreign.json"), []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var visible bytes.Buffer
-	renderContinuationFailures(&visible, []continuationstate.Record{rec})
-	for _, want := range []string{rec.ID, "@worker-hone", rec.Reason, rec.RecoveryCommand, rec.LogPath, "--ack-continuation"} {
-		if !strings.Contains(visible.String(), want) {
-			t.Fatalf("failure surface missing %q:\n%s", want, visible.String())
-		}
-	}
-
-	binDir := t.TempDir()
-	for _, name := range []string{"herdr", "jq"} {
-		if err := os.WriteFile(filepath.Join(binDir, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", binDir)
-	var stdout, stderr bytes.Buffer
-	if code := Run(nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("list exit=%d stderr=%s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "UNRESOLVED DETACHED CONTINUATIONS") || !strings.Contains(stdout.String(), rec.ID) {
-		t.Fatalf("routine list surface omitted failure:\n%s", stdout.String())
-	}
-	if !strings.Contains(stderr.String(), "ignoring continuation record") {
-		t.Fatalf("list did not warn about skipped foreign record: %s", stderr.String())
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	if code := Run([]string{"--ack-continuation", rec.ID}, &stdout, &stderr); code != 0 {
-		t.Fatalf("ack exit=%d stderr=%s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "if recovery is still needed") {
-		t.Fatalf("ack output dropped recovery remedy: %s", stdout.String())
-	}
-	failed, warnings, err := continuationstate.Unresolved("")
-	if err != nil || len(warnings) != 1 || len(failed) != 0 {
-		t.Fatalf("unresolved after ack = %+v, warnings=%v, err=%v; want only foreign-record warning", failed, warnings, err)
-	}
-}
-
 func TestRemovedTeamsFlagIsUnknown(t *testing.T) {
 	var stderr bytes.Buffer
 	_, code := parseArgs([]string{"--teams"}, io.Discard, &stderr)
 	if code != 1 || !strings.Contains(stderr.String(), "unknown arg: --teams") {
 		t.Fatalf("parseArgs() code=%d stderr=%q, want unknown-arg refusal", code, stderr.String())
-	}
-}
-
-func TestUnresolvedContinuationJSONIsDocumentLevel(t *testing.T) {
-	failure := continuationstate.Record{ID: "failed", Status: "failed", Target: "target-fixture"}
-	var out, stderr bytes.Buffer
-	renderJSONContinuationFailures(&out, &stderr, []continuationstate.Record{failure})
-	for _, want := range []string{`"kind":"unresolved_continuation"`, `"id":"failed"`, `"target":"target-fixture"`} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("JSON output missing %s: %s", want, out.String())
-		}
-	}
-	if strings.Contains(out.String(), `"unresolved_continuations"`) {
-		t.Fatalf("JSON output retained per-session attachment: %s", out.String())
-	}
-}
-
-func TestUnresolvedContinuationJSONMarshalFailureIsLoud(t *testing.T) {
-	failure := continuationstate.Record{ID: "failed", Status: "failed", Target: "target-fixture"}
-	var out, stderr bytes.Buffer
-	renderJSONContinuationFailuresWith(&out, &stderr, []continuationstate.Record{failure}, func(any) ([]byte, error) {
-		return nil, errors.New("encoder unavailable")
-	})
-	if out.Len() != 0 {
-		t.Fatalf("marshal failure wrote JSON: %s", out.String())
-	}
-	for _, want := range []string{"failed", "encoder unavailable", "Inspect", "retry"} {
-		if !strings.Contains(stderr.String(), want) {
-			t.Fatalf("marshal warning missing %q: %s", want, stderr.String())
-		}
 	}
 }
 

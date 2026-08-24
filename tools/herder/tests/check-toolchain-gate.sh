@@ -78,9 +78,7 @@ export GOCACHE="$WORK/go-cache"
 # Gates under test: every suite that derives its toolchain from a go.mod.
 # key|script (repo-relative)|module dir
 GATES="
-node|tools/herder/tests/check-node-contract.sh|tools/herder
 observer|tools/herder/tests/check-observer-contract.sh|tools/herder
-grok-doctor|tools/herder/tests/check-grok-doctor.sh|tools/herder
 mish|tools/mish/tests/check-nesting.sh|tools/mish
 "
 gate_script() { printf '%s\n' "$GATES" | awk -F'|' -v k="$1" '$1 == k {print $2; exit}'; }
@@ -187,7 +185,7 @@ gate_refuses() {
 
 # --- phase 1: every gate refuses every go.mod it cannot honour --------------
 printf -- '--- gate refusals\n'
-for key in node observer grok-doctor mish; do
+for key in observer mish; do
   for mode in unresolvable no-directive conflict; do
     if gate_refuses "$key" "$mode"; then
       ok "$key: refuses at the gate [$mode]"
@@ -229,6 +227,7 @@ degrade() { # degrade <class> <gate-script-path>
       # Without the readback to mask it, an empty pin resolves off the ambient
       # toolchain config instead of go.mod — the mute wrong-pin route.
       sed -i '/^\[ -n "\$GO_VERSION" \]/d' "$f"
+      sed -i 's|^GO_ROOT=.*|GO_ROOT="$(mise where "go@$GO_VERSION" 2>/dev/null)"|' "$f"
       sed -i '/^\[ "\$GO_HAVE" = "\$GO_VERSION" \]/,+1d' "$f" ;;
     toolchain-conflict)
       sed -i '/^\[ -z "\$TOOLCHAIN" \]/,+1d' "$f" ;;
@@ -264,10 +263,9 @@ self_check() {
   fi
 }
 
-self_check parser               "whitespace-robust parser"  node pins
-self_check empty-parse          "empty-parse guard"         node refuses no-directive
-self_check toolchain-conflict   "toolchain-conflict check"  node refuses conflict
-self_check exact-pin-resolution "exact-pin resolution"      node refuses unresolvable
+self_check parser               "whitespace-robust parser"  observer pins
+self_check toolchain-conflict   "toolchain-conflict check"  observer refuses conflict
+self_check exact-pin-resolution "exact-pin resolution"      observer refuses unresolvable
 
 if [ "$fail" -eq 0 ]; then
   printf 'ALL GREEN - toolchain gates fail closed, and this suite can see them disappear.\n'

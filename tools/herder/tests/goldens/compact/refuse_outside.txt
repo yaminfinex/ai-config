@@ -1,7 +1,0 @@
-=== STDERR ===
-herder compact: refused — no live tool occupant was found in the caller's pane. If HERDER_GUID was inherited from another session, unset it and retry; if this seat was never enrolled, run `herder enroll` from this pane. Nothing was typed.
-=== STDOUT ===
-
-=== EXIT ===
-2
-=== HERDR MUTATING CALLS ===

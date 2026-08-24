@@ -1,7 +1,0 @@
-=== STDERR ===
-herder compact: refused — caller identity is ambiguous. If this Claude seat started while agent-session reporting was unavailable, restart it with `herder resume` so SessionStart re-reports the same session id, then retry. Nothing was typed.
-=== STDOUT ===
-
-=== EXIT ===
-2
-=== HERDR MUTATING CALLS ===

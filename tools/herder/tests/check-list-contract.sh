@@ -11,8 +11,7 @@
 #   collapse       — append-only registry collapses to latest-record-per-guid;
 #                    retired and lost sessions are hidden unless --all.
 #   modes          — table (default), --all, --json, --raw, --guid (found +
-#                    missing), missing registry, herdr-list failure,
-#                    unresolved continuation surfacing + acknowledgement.
+#                    missing), missing registry, herdr-list failure.
 #   provenance     — raw/json modes pass provenance-bearing rows through.
 #
 # Usage:
@@ -118,58 +117,6 @@ CTX_SIZE=258400
 CTX_TS=1
 CTX_STALE
 
-# Failed-continuation scenarios: scratch-only durable state, including one
-# foreign record that must warn without hiding the valid failure.
-CONT_STATE="$ROOT/list-continuations-state"
-mkdir -p "$CONT_STATE/continuations"
-cp "$FIX/registry.jsonl" "$CONT_STATE/registry.jsonl"
-cat > "$CONT_STATE/continuations/compact-then-beta-42.json" <<'CONT_FAILURE'
-{
-  "schema": "herder.continuation.v1",
-  "id": "compact-then-beta-42",
-  "status": "failed",
-  "target": "beta-rive",
-  "updated_at": "2026-07-12T12:00:00Z",
-  "reason": "delivery budget exhausted after 3 attempts",
-  "log_path": "/hfake/state/compact-then/compact-then-beta-42.log",
-  "recovery_command": "herder send beta-rive -- continue",
-  "lifecycle": [
-    {"status":"armed","timestamp":"2026-07-12T11:59:00Z"},
-    {"status":"failed","timestamp":"2026-07-12T12:00:00Z","reason":"delivery budget exhausted after 3 attempts"}
-  ]
-}
-CONT_FAILURE
-printf '{}\n' > "$CONT_STATE/continuations/foreign.json"
-cat > "$CONT_STATE/observer.status.json" <<'OBSERVER_STATUS'
-{
-  "schema": "herder.observer.v1",
-  "advice": true,
-  "last_sweep_summary": {"applied": 0, "noop": 0, "refused": 0},
-  "protocol_compatible": true,
-  "flags": [
-    {
-      "guid": "guid-beta-0000",
-      "label": "beta",
-      "type": "failed-continuation",
-      "severity": "warning",
-      "detail": "detached continuation delivery failed",
-      "suggested": "run the recorded recovery command"
-    }
-  ]
-}
-OBSERVER_STATUS
-
-# An unresolved failure remains a JSONL document record even when no session
-# row survives reconciliation or filtering.
-CONT_EMPTY_STATE="$ROOT/list-continuations-empty-state"
-mkdir -p "$CONT_EMPTY_STATE/continuations"
-: > "$CONT_EMPTY_STATE/registry.jsonl"
-cp "$CONT_STATE/continuations/compact-then-beta-42.json" "$CONT_EMPTY_STATE/continuations/"
-
-CONT_NO_REGISTRY_STATE="$ROOT/list-continuations-no-registry-state"
-mkdir -p "$CONT_NO_REGISTRY_STATE/continuations"
-cp "$CONT_STATE/continuations/compact-then-beta-42.json" "$CONT_NO_REGISTRY_STATE/continuations/"
-
 # scenario name | mock scenario | state dir | args
 SCENARIOS=(
   "table|normal|$FIX|"
@@ -188,11 +135,6 @@ SCENARIOS=(
   "guid_fork_shadow|normal|$TESTS_DIR/fixtures/list-guid-fork-shadow|--guid guid-parent-0000"
   "archive_all|normal|$TESTS_DIR/fixtures/list-archives|--all"
   "archive_json|normal|$TESTS_DIR/fixtures/list-archives|--json --all"
-  "continuations_table|normal|$CONT_STATE|"
-  "continuations_json|normal|$CONT_STATE|--json"
-  "continuations_json_empty|normal|$CONT_EMPTY_STATE|--json"
-  "continuations_json_no_registry|normal|$CONT_NO_REGISTRY_STATE|--json"
-  "continuations_ack|normal|$CONT_STATE|--ack-continuation compact-then-beta-42"
 )
 
 normalize() {  # make tempdir paths deterministic before diffing

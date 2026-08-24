@@ -1,9 +1,0 @@
-=== STDERR ===
-herder wait: timeout waiting for p_99 to reach status=idle
-herder wait: pane p_99 is alive, but herdr agent detection is lost (agent get reports unknown or absent). This usually means the process predates a server handoff; restart the agent in the pane or relaunch it to restore status.
-=== STDOUT ===
-
-=== EXIT ===
-1
-=== HERDR CALLS ===
-agent wait p_99 --until idle --timeout 60000

@@ -59,6 +59,7 @@ type paneObservation struct {
 	Bus       hcomidentity.Result
 	BusStatus string
 	LiveGUIDs map[string]bool
+	Relocated map[string]paneObservation
 }
 type sweepResult struct {
 	Status     observerstatus.Status `json:"status"`
@@ -416,7 +417,7 @@ func observePanesWithAliasProbe(proj *v2.Projection, hd herdrState, bus busState
 				obs.Status = occupant.Unprobeable
 			}
 		}
-		po := paneObservation{Occupant: obs, LiveGUIDs: map[string]bool{}}
+		po := paneObservation{Occupant: obs, LiveGUIDs: map[string]bool{}, Relocated: map[string]paneObservation{}}
 		for _, rec := range rows {
 			if _, live := liveBusRow(rec, bus); live {
 				po.LiveGUIDs[rec.GUID] = true
@@ -429,6 +430,26 @@ func observePanesWithAliasProbe(proj *v2.Projection, hd herdrState, bus busState
 					po.BusStatus = row.Status
 				}
 			}
+		}
+		winner := corroboratedRow(rows, obs.SID)
+		for i, rec := range rows {
+			if i == winner || !po.LiveGUIDs[rec.GUID] {
+				continue
+			}
+			relocated, ok := relocateRows([]v2.SessionRecord{rec}, hd, bus, aliasProbe, func(id string) occupant.Observation {
+				return occupant.Probe(occupant.Substrate{Herdr: querier}, id)
+			})
+			if !ok || relocated.Pane.PaneID == "" || relocated.Pane.PaneID == paneID {
+				continue
+			}
+			rpo := paneObservation{Occupant: relocated, LiveGUIDs: map[string]bool{rec.GUID: true}}
+			rpo.Bus = hcomidentity.Resolve(bus.roster, hcomidentity.Evidence{SessionID: relocated.SID, PaneIDs: []string{relocated.Pane.PaneID}})
+			if rpo.Bus.Verified {
+				if row, exists := bus.rows[rpo.Bus.Name]; exists {
+					rpo.BusStatus = row.Status
+				}
+			}
+			po.Relocated[rec.GUID] = rpo
 		}
 		observed[paneID] = po
 	}
@@ -576,7 +597,12 @@ func buildCacheCandidatesWithHealth(proj *v2.Projection, observed map[string]pan
 						continue
 					}
 					if po.LiveGUIDs[rec.GUID] {
-						out = append(out, deadCandidate(rec, now))
+						if relocated, ok := po.Relocated[rec.GUID]; ok {
+							out = append(out, stampCandidate(rec, relocated, now))
+							touched[rec.GUID] = true
+						} else {
+							out = append(out, deadCandidate(rec, now))
+						}
 					} else {
 						out = append(out, duplicateCandidate(rec, now))
 					}

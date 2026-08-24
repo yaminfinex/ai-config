@@ -1,7 +1,0 @@
-=== STDERR ===
-herder compact: refused — explicit continuation intent is required: pass --then <continuation> to resume after compaction or --stop to compact and go idle. Without either flag, compaction silently leaves the session dormant. Nothing was typed.
-=== STDOUT ===
-
-=== EXIT ===
-2
-=== HERDR MUTATING CALLS ===
