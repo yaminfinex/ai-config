@@ -1,7 +1,7 @@
 ---
 id: TASK-319
 title: 'teardown unit one: fleet wrapper — managed preset, spawn/cull scripts, self-compact helper'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-24 07:30'
 labels:
