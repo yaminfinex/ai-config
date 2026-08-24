@@ -1,7 +1,6 @@
 package observercmd
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,38 +9,27 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"ai-config/tools/herder/internal/continuationstate"
-	"ai-config/tools/herder/internal/grokbridge"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
-	"ai-config/tools/herder/internal/hookcmd"
-	"ai-config/tools/herder/internal/liveness"
 	"ai-config/tools/herder/internal/observerstatus"
-	"ai-config/tools/herder/internal/pendingprompt"
+	"ai-config/tools/herder/internal/occupant"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
-	"ai-config/tools/herder/internal/seatcompletion"
 )
 
 const (
-	defaultSweepInterval     = 30 * time.Second
-	defaultReconfirmInterval = time.Hour
-	doctrineReceiptRetention = 24 * time.Hour
-	lockFileName             = "observer.lock"
+	defaultSweepInterval = 30 * time.Second
+	defaultDeadGrace     = 2 * time.Minute
+	lockFileName         = "observer.lock"
 )
 
-type options struct {
-	help bool
-	json bool
-}
-
-type hcomRow = hcomidentity.Row
-type hcomLaunchContext = hcomidentity.LaunchContext
+type options struct{ help, json bool }
 
 type busState struct {
 	available bool
@@ -49,7 +37,6 @@ type busState struct {
 	roster    []hcomidentity.Row
 	err       error
 }
-
 type herdrState struct {
 	available       bool
 	source          string
@@ -60,35 +47,23 @@ type herdrState struct {
 	sameEpochAbsent map[string]bool
 	err             error
 }
-
 type herdrContext struct {
 	client        *herdrSocketClient
 	seenTerms     map[string]bool
-	grokCursors   map[string]*grokArtifactCursor
 	connectionGap bool
 }
-
 type candidate struct {
-	kind           string
-	guid           string
-	credentialGUID string
-	row            v2.SessionRecord
-	sid            string
-	bus            hcomidentity.Result
-	seat           *v2.Seat
-	verdict        liveness.Verdict
-	anchor         liveness.SeatAnchor
-	observedAt     time.Time
+	kind, guid string
+	row        v2.SessionRecord
 }
-
+type paneObservation struct {
+	Occupant  occupant.Observation
+	Bus       hcomidentity.Result
+	BusStatus string
+}
 type sweepResult struct {
 	Status     observerstatus.Status `json:"status"`
 	Candidates int                   `json:"candidates"`
-}
-
-type doctrineCandidate struct {
-	Name  string
-	Token string
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -148,7 +123,7 @@ func parseOptions(args []string, stdout, stderr io.Writer) (options, int) {
 }
 
 func printHelp(stdout io.Writer) {
-	fmt.Fprint(stdout, `herder observer — observe seated sessions and append witnessed facts.
+	fmt.Fprint(stdout, `herder observer — refresh the human-facing fleet ledger from live substrate probes.
 
 Usage:
   herder observer sweep [--json]   run one level-triggered observation pass
@@ -156,13 +131,9 @@ Usage:
   herder observer status [--json]  report lock/status-file advice
   herder observer stop             SIGTERM the lockfile pid
 
-The observer is advice until it appends a registry row: observer.status.json can
-flag dormant-live, epoch-doubt, or failed-continuation findings for operators,
-but the registry remains truth. Recover a failed continuation with its suggested
-command, then clear the finding explicitly with
-herder list --ack-continuation ID. Observation facts use the same locked registry
-writer as every CLI verb; there is no observer write service or IPC append
-surface.
+The ledger is a display cache, never authority for lifecycle commands. Each
+sweep stamps probe-corroborated pane/session state, deduplicates pane claims,
+and retires dead observations after a short grace window.
 `)
 }
 
@@ -180,34 +151,16 @@ func runSweep(opts options, stdout, stderr io.Writer) int {
 	}
 	s := res.Status.LastSweepSummary
 	fmt.Fprintf(stdout, "observer sweep: candidates=%d applied=%d noop=%d refused=%d flags=%d\n", res.Candidates, s.Applied, s.Noop, s.Refused, len(res.Status.Flags))
-	for _, flag := range res.Status.Flags {
-		fmt.Fprintf(stdout, "observer advice: %s %s %s\n", firstNonEmpty(flag.GUID, flag.Label, "-"), flag.Type, flag.Detail)
-	}
 	return 0
 }
 
-func sweepOnce(stderr io.Writer) (sweepResult, error) {
-	return sweepOnceWithHerdr(stderr, nil)
-}
+func sweepOnce(stderr io.Writer) (sweepResult, error) { return sweepOnceWithHerdr(stderr, nil) }
 
 func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, error) {
 	registryPath := registry.DefaultPath()
 	stateDir := filepath.Dir(registryPath)
 	now := time.Now().UTC()
-	if err := pendingprompt.PruneAll(registryPath, now); err != nil {
-		fmt.Fprintf(stderr, "herder observer: pending prompt GC failed: %v\n", err)
-	}
-	st := observerstatus.Status{
-		Schema:             "herder.observer.status.v1",
-		Advice:             true,
-		PID:                os.Getpid(),
-		BuildHash:          buildHash(),
-		HeartbeatAt:        now.Format(time.RFC3339),
-		LastSweepAt:        now.Format(time.RFC3339),
-		ProtocolCompatible: true,
-		Confirmed:          map[string]string{},
-		DoctrineDeliveries: map[string]string{},
-	}
+	st := observerstatus.Status{Schema: "herder.observer.status.v1", Advice: true, PID: os.Getpid(), BuildHash: buildHash(), HeartbeatAt: now.Format(time.RFC3339), LastSweepAt: now.Format(time.RFC3339), ProtocolCompatible: true, Confirmed: map[string]string{}}
 	proj, err := loadProjection(registryPath, stderr)
 	if err != nil {
 		return sweepResult{}, err
@@ -215,110 +168,32 @@ func sweepOnceWithHerdr(stderr io.Writer, hctx *herdrContext) (sweepResult, erro
 	hd := loadHerdrState(hctx, stderr)
 	if !hd.available {
 		st.ProtocolCompatible = false
-		st.ProtocolDetail = hd.err.Error()
+		if hd.err != nil {
+			st.ProtocolDetail = hd.err.Error()
+		}
 	} else {
 		st.ProtocolDetail = fmt.Sprintf("source=%s connection_gap=%t", firstNonEmpty(hd.source, "unknown"), hd.connectionGap)
 	}
 	bus := loadBusState()
-	sessions := proj.Sessions()
-	st.DoctrineDeliveries = priorDoctrineDeliveries(stateDir, hd, bus, now)
-	var grokCursors map[string]*grokArtifactCursor
-	if hctx != nil {
-		if hctx.grokCursors == nil {
-			hctx.grokCursors = map[string]*grokArtifactCursor{}
-		}
-		grokCursors = hctx.grokCursors
-	}
-	grokObservationState, grokFlags := grokObservations(sessions, stateDir, stderr, grokCursors)
-	st.Observations = grokObservationState
-	cands := buildCandidates(proj, hd, bus, now)
-	doctrine := doctrineCandidates(proj, hd, bus, st.DoctrineDeliveries, joinedHcomRow)
-	flags := advisoryFlags(proj, hd)
-	flags = append(flags, livenessFlags(proj, hd, bus, now)...)
-	flags = append(flags, grokFlags...)
-	flags = append(flags, epochFlags(proj, hd)...)
-	flags = append(flags, continuationFailureFlags(proj, stateDir, stderr)...)
-	summary := applyCandidates(registryPath, cands, stderr)
-	bridgeFindings, sweepErr := grokbridge.SweepOrphanSupervisors(registryPath, now, durationEnv("HERDER_GROK_ORPHAN_GRACE", grokbridge.DefaultOrphanGrace))
-	if sweepErr != nil {
-		fmt.Fprintf(stderr, "herder observer: Grok bridge orphan sweep failed: %v\n", sweepErr)
+	grace := durationEnv("HERDER_OBSERVER_DEAD_GRACE", defaultDeadGrace)
+	var cands []candidate
+	if hd.available {
+		cands = buildCacheCandidates(proj, observePanes(proj, hd, bus), now, grace)
 	} else {
-		flags = append(flags, grokBridgeFlags(bridgeFindings)...)
+		cands = archiveDeadCandidates(proj, now, grace)
 	}
-	deliverDoctrine(doctrine, st.DoctrineDeliveries, sendDoctrine, now)
-	for _, rec := range sessions {
-		if rec.State == v2.StateSeated && rec.Seat != nil {
-			st.Confirmed[rec.GUID] = rec.Seat.ConfirmedAt
+	summary := applyCandidates(registryPath, cands, stderr)
+	for _, cand := range cands {
+		if cand.kind == "stamp" && cand.row.Cache != nil {
+			st.Confirmed[cand.guid] = cand.row.Cache.ObservedAt
 		}
 	}
 	st.LastSweepSummary = summary
-	st.Flags = flags
 	if err := observerstatus.WriteAtomic(observerstatus.PathForStateDir(stateDir), st); err != nil {
 		return sweepResult{}, err
 	}
 	return sweepResult{Status: st, Candidates: len(cands)}, nil
 }
-
-func grokBridgeFlags(findings []grokbridge.SweepFinding) []observerstatus.Flag {
-	flags := make([]observerstatus.Flag, 0, len(findings))
-	for _, finding := range findings {
-		flags = append(flags, observerstatus.Flag{
-			GUID: finding.Seat, Type: finding.Type, Severity: finding.Severity, CauseClass: finding.CauseClass,
-			Detail: finding.Detail, Suggested: finding.Suggested, ObservedAt: finding.ObservedAt,
-			ObservedVia: append([]string(nil), finding.ObservedVia...),
-		})
-	}
-	return flags
-}
-
-// Receipt loss or status rotation deliberately fails toward re-delivery: informational doctrine spam is safer than silence.
-func priorDoctrineDeliveries(stateDir string, hd herdrState, bus busState, now time.Time) map[string]string {
-	receipts := map[string]string{}
-	prior, err := observerstatus.Read(observerstatus.PathForStateDir(stateDir))
-	if err != nil {
-		return receipts
-	}
-	for token, stamp := range prior.DoctrineDeliveries {
-		if keepDoctrineReceipt(token, stamp, hd, bus, now) {
-			receipts[token] = stamp
-		}
-	}
-	return receipts
-}
-
-func keepDoctrineReceipt(token, stamp string, hd herdrState, bus busState, now time.Time) bool {
-	if !hd.available || !bus.available {
-		return true
-	}
-	processID, sessionID, ok := strings.Cut(token, ":")
-	if !ok || processID == "" || sessionID == "" {
-		return false
-	}
-	sameProcess := false
-	sameSession := false
-	for _, row := range bus.rows {
-		if row.LaunchContext.ProcessID == processID && row.SessionID == sessionID {
-			return true
-		}
-		sameProcess = sameProcess || row.LaunchContext.ProcessID == processID
-		sameSession = sameSession || row.SessionID == sessionID
-	}
-	if sameProcess || sameSession {
-		return false
-	}
-	for _, pane := range hd.byTerm {
-		if pane.AgentSession == sessionID {
-			return true
-		}
-	}
-	deliveredAt, err := time.Parse(time.RFC3339, stamp)
-	if err != nil {
-		return false
-	}
-	age := now.Sub(deliveredAt)
-	return age < doctrineReceiptRetention || age < 0
-}
-
 func loadProjection(path string, stderr io.Writer) (*v2.Projection, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -491,775 +366,433 @@ func loadBusState() busState {
 	return busState{available: true, rows: rows, roster: listed}
 }
 
-// doctrineCandidates finds only unmanaged Codex sessions for which the live
-// herdr pane/process, tool session id, and joined hcom process row all agree.
-// Every match is exact and child-specific; ambiguity or a missing leg yields
-// no candidate.
-func doctrineCandidates(proj *v2.Projection, hd herdrState, bus busState, receipts map[string]string, joined func(hcomRow) bool) []doctrineCandidate {
-	if proj == nil || !hd.available || !bus.available || joined == nil {
-		return nil
-	}
-	var out []doctrineCandidate
-	for _, correlation := range doctrineCorrelations(hd, bus) {
-		if !joined(correlation.row) || managedCorrelation(proj, correlation.pane, correlation.row) {
-			continue
-		}
-		if _, delivered := receipts[correlation.token]; delivered {
-			continue
-		}
-		out = append(out, doctrineCandidate{Name: correlation.row.Name, Token: correlation.token})
-	}
-	return out
-}
+type snapshotQuerier struct{ state herdrState }
 
-type doctrineCorrelation struct {
-	pane  herdrcli.Pane
-	row   hcomRow
-	token string
-}
-
-func doctrineCorrelations(hd herdrState, bus busState) []doctrineCorrelation {
-	if !hd.available || !bus.available {
-		return nil
+func (q snapshotQuerier) Pane(id string) (herdrcli.Pane, error) {
+	for _, p := range q.state.byTerm {
+		if p.PaneID == id || p.TerminalID == id {
+			return p, nil
+		}
 	}
-	var out []doctrineCorrelation
-	for term, pane := range hd.byTerm {
-		if pane.PaneID == "" || pane.AgentSession == "" {
-			continue
-		}
-		if liveCodexPID(hd.procs[term]) == 0 {
-			continue
-		}
-		matches := make([]hcomRow, 0, 1)
-		for _, row := range bus.rows {
-			if row.Tool != "codex" || row.SessionID != pane.AgentSession || row.LaunchContext.PaneID != pane.PaneID || row.LaunchContext.ProcessID == "" || row.ProcessBound == nil || !*row.ProcessBound {
-				continue
+	return herdrcli.Pane{}, os.ErrNotExist
+}
+func (q snapshotQuerier) Panes() ([]herdrcli.Pane, error) {
+	out := make([]herdrcli.Pane, 0, len(q.state.byTerm))
+	for _, p := range q.state.byTerm {
+		out = append(out, p)
+	}
+	return out, nil
+}
+func (q snapshotQuerier) ProcessInfo(id string) (herdrcli.ProcessInfo, error) {
+	for term, p := range q.state.byTerm {
+		if p.PaneID == id || p.TerminalID == id {
+			info, ok := q.state.procs[term]
+			if !ok {
+				return herdrcli.ProcessInfo{}, errors.New("process ancestry unavailable")
 			}
-			matches = append(matches, row)
-		}
-		if len(matches) != 1 {
-			continue
-		}
-		out = append(out, doctrineCorrelation{
-			pane:  pane,
-			row:   matches[0],
-			token: matches[0].LaunchContext.ProcessID + ":" + pane.AgentSession,
-		})
-	}
-	return out
-}
-
-func liveCodexPID(pi herdrcli.ProcessInfo) int {
-	for _, proc := range pi.Processes {
-		if proc.PID > 0 && len(proc.Argv) > 0 && filepath.Base(proc.Argv[0]) == "codex" {
-			return proc.PID
+			return info, nil
 		}
 	}
-	return 0
+	return herdrcli.ProcessInfo{}, os.ErrNotExist
 }
 
-func managedCorrelation(proj *v2.Projection, pane herdrcli.Pane, row hcomRow) bool {
+func observePanes(proj *v2.Projection, hd herdrState, bus busState) map[string]paneObservation {
+	observed := map[string]paneObservation{}
+	querier := snapshotQuerier{state: hd}
+	byPane := map[string][]v2.SessionRecord{}
 	for _, rec := range proj.Sessions() {
-		if rec.State != v2.StateSeated || rec.Seat == nil {
+		paneID := recordPaneID(rec)
+		seated := rec.State == v2.StateSeated && rec.Seat != nil && rec.Seat.Kind != "process"
+		recoverable := rec.Cache != nil && rec.Cache.Liveness == "dead" && anyLiveBusRow([]v2.SessionRecord{rec}, bus)
+		if paneID == "" || (!seated && !recoverable) {
 			continue
 		}
-		if rec.Seat.TerminalID == pane.TerminalID || rec.Seat.PaneID == pane.PaneID || rec.Seat.HcomName == row.Name || latestSID(rec) == pane.AgentSession {
+		byPane[paneID] = append(byPane[paneID], rec)
+	}
+	for paneID, rows := range byPane {
+		obs := occupant.Probe(occupant.Substrate{Herdr: querier}, paneID)
+		// A tool process can exist before its transcript/session artifact is
+		// ready. That boot-order gap is not proof of vacancy and must not turn a
+		// wrapper birth stamp into a dead row.
+		if obs.Status == occupant.Vacant && paneHasToolProcess(hd, paneID) {
+			obs.Status = occupant.Unprobeable
+		}
+		if !observationCorroboratesAny(obs, rows) {
+			if relocated, ok := relocateRows(rows, hd, bus, func(id string) occupant.Observation {
+				return occupant.Probe(occupant.Substrate{Herdr: occupant.CLIQuerier{}}, id)
+			}, func(id string) occupant.Observation {
+				return occupant.Probe(occupant.Substrate{Herdr: querier}, id)
+			}); ok {
+				obs = relocated
+			} else if anyLiveBusRow(rows, bus) {
+				// Live hook/PTY evidence outranks a stale coordinate. If identity
+				// relocation cannot yet resolve the new pane, leave the cache row
+				// untouched and retry next sweep.
+				obs.Status = occupant.Unprobeable
+			}
+		}
+		po := paneObservation{Occupant: obs}
+		if obs.Status == occupant.Occupied && bus.available {
+			po.Bus = hcomidentity.Resolve(bus.roster, hcomidentity.Evidence{SessionID: obs.SID, PaneIDs: []string{paneID}})
+			if po.Bus.Verified {
+				if row, ok := bus.rows[po.Bus.Name]; ok {
+					po.BusStatus = row.Status
+				}
+			}
+		}
+		observed[paneID] = po
+	}
+	return observed
+}
+
+func observationCorroboratesAny(obs occupant.Observation, rows []v2.SessionRecord) bool {
+	if obs.Status != occupant.Occupied || obs.SID == "" {
+		return false
+	}
+	for _, rec := range rows {
+		if latestSID(rec) == obs.SID || latestSID(rec) == "" {
 			return true
 		}
 	}
 	return false
 }
 
-func joinedHcomRow(row hcomRow) bool {
-	out, err := exec.Command("hcom", "list", row.Name, "--json").Output()
-	if err != nil {
-		return false
-	}
-	var current hcomRow
-	if json.Unmarshal(out, &current) != nil {
-		var rows []hcomRow
-		if json.Unmarshal(out, &rows) != nil || len(rows) != 1 {
-			return false
-		}
-		current = rows[0]
-	}
-	return current.SessionID != "" && current.SessionID == row.SessionID && current.Tool == "codex"
-}
-
-func deliverDoctrine(candidates []doctrineCandidate, receipts map[string]string, send func(string) bool, now time.Time) {
-	if receipts == nil || send == nil {
-		return
-	}
-	for _, cand := range candidates {
-		if _, exists := receipts[cand.Token]; exists {
+func relocateRows(rows []v2.SessionRecord, hd herdrState, bus busState, aliasProbe, paneProbe func(string) occupant.Observation) (occupant.Observation, bool) {
+	for _, rec := range rows {
+		if _, live := liveBusRow(rec, bus); !live {
 			continue
 		}
-		if send(cand.Name) {
-			receipts[cand.Token] = now.UTC().Format(time.RFC3339)
+		if obs := aliasProbe(recordPaneID(rec)); occupantMatchesRow(obs, rec) {
+			return obs, true
+		} else if obs.Pane.PaneID != "" && obs.Pane.PaneID != recordPaneID(rec) {
+			// herdr preserves old pane ids as relocation aliases. An exact live
+			// bus identity plus an alias resolving to a new coordinate is enough
+			// to heal the display cache even when the transcript probe is briefly
+			// ambiguous (notably for long-lived Claude sessions).
+			obs.Status = occupant.Occupied
+			obs.SID = latestSID(rec)
+			obs.Tool = firstNonEmpty(obs.Tool, rec.Tool)
+			return obs, true
+		}
+		for _, pane := range hd.byTerm {
+			if pane.PaneID == "" || (pane.Label != rec.Label && pane.Label != recordHcomName(rec)) {
+				continue
+			}
+			if obs := paneProbe(pane.PaneID); occupantMatchesRow(obs, rec) {
+				return obs, true
+			}
+		}
+		for _, pane := range hd.byTerm {
+			if pane.PaneID == "" {
+				continue
+			}
+			if obs := paneProbe(pane.PaneID); occupantMatchesRow(obs, rec) {
+				return obs, true
+			}
 		}
 	}
+	return occupant.Observation{}, false
 }
 
-func sendDoctrine(name string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "hcom", "send", "@"+name, "--from", "herder-observer", "--intent", "inform", "--", hookcmd.CodexResumeAddendum)
-	return cmd.Run() == nil
+func occupantMatchesRow(obs occupant.Observation, rec v2.SessionRecord) bool {
+	return obs.Status == occupant.Occupied && obs.SID != "" && (latestSID(rec) == "" || obs.SID == latestSID(rec))
 }
 
-func buildCandidates(proj *v2.Projection, hd herdrState, bus busState, now time.Time) []candidate {
+func anyLiveBusRow(rows []v2.SessionRecord, bus busState) bool {
+	for _, rec := range rows {
+		if _, ok := liveBusRow(rec, bus); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func liveBusRow(rec v2.SessionRecord, bus busState) (hcomidentity.Row, bool) {
+	if !bus.available {
+		return hcomidentity.Row{}, false
+	}
+	sid := latestSID(rec)
+	name := recordHcomName(rec)
+	for _, row := range bus.roster {
+		if row.Status == "inactive" || row.Status == "stopped" || row.SessionID == "" {
+			continue
+		}
+		if (sid != "" && row.SessionID == sid) || (name != "" && row.Name == name) {
+			return row, true
+		}
+	}
+	return hcomidentity.Row{}, false
+}
+
+func paneHasToolProcess(hd herdrState, paneID string) bool {
+	for term, pane := range hd.byTerm {
+		if pane.PaneID != paneID {
+			continue
+		}
+		for _, process := range hd.procs[term].Processes {
+			name := strings.ToLower(filepath.Base(process.Name))
+			if name == "" && len(process.Argv) > 0 {
+				name = strings.ToLower(filepath.Base(process.Argv[0]))
+			}
+			if name == "codex" || strings.HasPrefix(name, "codex-") || name == "claude" || strings.HasPrefix(name, "claude-") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func buildCacheCandidates(proj *v2.Projection, observed map[string]paneObservation, now time.Time, grace time.Duration) []candidate {
 	var out []candidate
+	touched := map[string]bool{}
+	byPane := map[string][]v2.SessionRecord{}
 	for _, rec := range proj.Sessions() {
-		if rec.State != v2.StateSeated || rec.Seat == nil {
+		paneID := recordPaneID(rec)
+		seated := rec.State == v2.StateSeated && rec.Seat != nil && rec.Seat.Kind != "process"
+		recoverable := rec.Cache != nil && rec.Cache.Liveness == "dead"
+		if paneID != "" && (seated || recoverable) {
+			byPane[paneID] = append(byPane[paneID], rec)
+		}
+	}
+	panes := make([]string, 0, len(byPane))
+	for pane := range byPane {
+		panes = append(panes, pane)
+	}
+	sort.Strings(panes)
+	for _, pane := range panes {
+		rows := byPane[pane]
+		po, ok := observed[pane]
+		if !ok {
 			continue
 		}
-		verdict := liveness.Evaluate(livenessInput(rec, hd, bus))
-		if verdict.Class == liveness.VerdictPositiveDeath {
-			out = append(out, candidate{
-				kind: "liveness-death", guid: rec.GUID, row: rec, verdict: verdict,
-				anchor: liveness.Anchor(rec.Seat), observedAt: now,
-			})
-			continue
+		switch po.Occupant.Status {
+		case occupant.Occupied:
+			winner := corroboratedRow(rows, po.Occupant.SID)
+			if winner < 0 {
+				for _, rec := range rows {
+					out = append(out, deadCandidate(rec, now))
+				}
+				continue
+			}
+			for i, rec := range rows {
+				if i != winner {
+					out = append(out, duplicateCandidate(rec, now))
+				}
+			}
+			out = append(out, stampCandidate(rows[winner], po, now))
+			touched[rows[winner].GUID] = true
+		case occupant.Vacant, occupant.PaneGone:
+			for _, rec := range rows {
+				out = append(out, deadCandidate(rec, now))
+			}
 		}
-		if rec.Seat.Kind == "process" || !hd.available {
-			continue
-		}
-		if cand, ok := sidObservationCandidate(rec, hd, bus, now); ok {
+	}
+	for _, cand := range archiveDeadCandidates(proj, now, grace) {
+		if !touched[cand.guid] {
 			out = append(out, cand)
-			continue
-		}
-		if pane, present := hd.byTerm[rec.Seat.TerminalID]; present && shouldReconfirm(rec, now) {
-			out = append(out, reconfirmCandidate(rec, pane, bus, now))
 		}
 	}
 	return out
 }
 
-func livenessInput(rec v2.SessionRecord, hd herdrState, bus busState) liveness.Input {
-	in := liveness.Input{SeatKind: "herdr", BusRow: liveness.BusUnavailable}
-	if rec.Seat == nil {
-		return in
-	}
-	in.SeatKind = rec.Seat.Kind
-	if rec.Seat.Kind == "process" {
-		in.Process = liveness.ProbePID(rec.Seat.PID)
-	} else if hd.available {
-		if _, present := hd.byTerm[rec.Seat.TerminalID]; present {
-			in.Pane = liveness.Signal{State: liveness.StateAlive, ObservedVia: "herdr_snapshot"}
-			if pi, ok := hd.procs[rec.Seat.TerminalID]; ok {
-				state := liveness.StateAlive
-				if len(pi.Processes) == 0 {
-					state = liveness.StateDead
-				}
-				in.Process = liveness.Signal{State: state, ObservedVia: "process_info"}
-			}
-		} else {
-			in.Pane = liveness.Signal{State: liveness.StateDead, ObservedVia: "herdr_snapshot"}
-			if hd.sameEpochAbsent[rec.Seat.TerminalID] {
-				in.PaneEpoch = liveness.EpochSame
-			} else {
-				in.PaneEpoch = liveness.EpochUnknown
-			}
+func corroboratedRow(rows []v2.SessionRecord, sid string) int {
+	winner, bestRank := -1, 0
+	for i, rec := range rows {
+		rank := 0
+		current := latestSID(rec)
+		if sid != "" && current == sid {
+			rank = 2
+		} else if current == "" {
+			rank = 1
+		}
+		if rank != 0 && (winner < 0 || rank > bestRank || (rank == bestRank && newerRow(rec, rows[winner]))) {
+			winner, bestRank = i, rank
 		}
 	}
-	if !bus.available {
-		return in
+	return winner
+}
+func newerRow(a, b v2.SessionRecord) bool {
+	ta, ea := time.Parse(time.RFC3339, a.RecordedAt)
+	tb, eb := time.Parse(time.RFC3339, b.RecordedAt)
+	if ea == nil && eb == nil && !ta.Equal(tb) {
+		return ta.After(tb)
 	}
-	in.BusRow = liveness.BusAbsent
-	if rec.Seat.HcomName == "" {
-		return in
+	if a.Ordinal != b.Ordinal {
+		return a.Ordinal > b.Ordinal
 	}
-	row, ok := bus.rows[rec.Seat.HcomName]
-	if !ok {
-		in.BusObservedVia = "hcom_roster"
-		in.Keepalive = liveness.KeepaliveStarved
-		return in
-	}
-	in.BusRow = liveness.BusPresent
-	in.BusObservedVia = "hcom_roster"
-	in.Keepalive = liveness.KeepaliveFromAge(int64(row.StatusAge))
-	return in
+	return a.GUID < b.GUID
 }
 
-func sidObservationCandidate(rec v2.SessionRecord, hd herdrState, bus busState, now time.Time) (candidate, bool) {
-	if !observerOwnedSeat(rec) {
-		return candidate{}, false
-	}
-	newSID := observedSID(rec, hd, bus)
-	if newSID == "" {
-		return candidate{}, false
-	}
-	priorSID := latestSID(rec)
-	if priorSID == newSID {
-		return candidate{}, false
-	}
-	identity := resolveSeatBus(rec, newSID, bus)
-	if priorSID == "" {
-		return recognisedCandidate(rec, newSID, identity, now), true
-	}
-	return turnoverCandidate(rec, newSID, identity, now), true
-}
-
-func recognisedCandidate(rec v2.SessionRecord, newSID string, identity hcomidentity.Result, now time.Time) candidate {
-	stamp := now.Format(time.RFC3339)
+func stampCandidate(rec v2.SessionRecord, po paneObservation, now time.Time) candidate {
+	stamp := now.UTC().Format(time.RFC3339)
 	next := rec
-	next.Event = "recognised"
-	next.State = v2.StateSeated
+	next.Event = "observed"
 	next.RecordedAt = stamp
-	next.SIDs = append(append([]v2.SID(nil), rec.SIDs...), v2.SID{SID: newSID, ObservedAt: stamp, Source: "harvest"})
-	next.Continuity = "confirmed"
-	next.ObservedVia = "observer sid enrichment"
-	if next.Seat != nil {
-		seat := *next.Seat
-		seat.ConfirmedAt = stamp
-		applyBusIdentity(&seat, identity)
-		next.Seat = &seat
-	}
-	return candidate{kind: "recognised", guid: rec.GUID, row: next, sid: newSID, bus: identity, seat: cloneSeat(next.Seat)}
-}
-
-func turnoverCandidate(rec v2.SessionRecord, newSID string, identity hcomidentity.Result, now time.Time) candidate {
-	stamp := now.Format(time.RFC3339)
-	old := rec
-	old.Event = "unseated"
-	old.RecordedAt = stamp
-	old.State = v2.StateUnseated
-	old.Seat = nil
-	old.CloseResult = "displaced"
-	old.CloseReason = "observer detected sid turnover in sidecar-less seat"
-	old.ObservedVia = "observer turnover"
+	next.State = v2.StateSeated
+	next.Label = firstNonEmpty(next.Label, cacheLabel(rec))
+	next.ObservedVia = "observer+occupant_probe"
 	seat := cloneSeat(rec.Seat)
-	if seat != nil {
-		applyBusIdentity(seat, identity)
-	}
-	childGUID, _ := registry.NewGUID()
-	return candidate{kind: "turnover", guid: rec.GUID, credentialGUID: childGUID, row: old, sid: newSID, bus: identity, seat: seat}
-}
-
-func turnoverRowsLocked(proj *v2.Projection, rec v2.SessionRecord, newSID, childGUID string, identity hcomidentity.Result, now time.Time) ([]v2.SessionRecord, bool) {
-	current := registry.V2ByGUID(proj, rec.GUID)
-	if current == nil || current.State != v2.StateSeated || current.Seat == nil || !observerOwnedSeat(*current) {
-		return nil, false
-	}
-	priorSID := latestSID(*current)
-	if newSID == "" || priorSID == newSID || priorSID == "" || turnoverAlreadyRecorded(proj, current.GUID, newSID) {
-		return nil, false
-	}
-	if childGUID == "" {
-		return nil, false
-	}
-	stamp := now.Format(time.RFC3339)
-	childSeat := cloneSeat(current.Seat)
-	if childSeat != nil {
-		childSeat.ConfirmedAt = stamp
-		applyBusIdentity(childSeat, identity)
-	}
-	child := v2.SessionRecord{
-		Kind:       v2.KindSession,
-		GUID:       childGUID,
-		Event:      "registered",
-		RecordedAt: stamp,
-		State:      v2.StateSeated,
-		Role:       current.Role,
-		Tool:       current.Tool,
-		Provider:   current.Provider,
-		Model:      current.Model,
-		VendorVersion: func() *v2.VendorVersionHistory {
-			if current.VendorVersion == nil {
-				return nil
-			}
-			cloned := *current.VendorVersion
-			if cloned.Previous != nil {
-				previous := *cloned.Previous
-				cloned.Previous = &previous
-			}
-			return &cloned
-		}(),
-		Seat:       childSeat,
-		SIDs:       []v2.SID{{SID: newSID, ObservedAt: stamp, Source: "harvest"}},
-		Continuity: "confirmed",
-		Lineage:    v2.Lineage{ClearedFrom: current.GUID},
-		Provenance: v2.Provenance{
-			Mechanism: "clear",
-			SpawnedBy: firstNonEmpty(current.GUID, "observer"),
-			CWD:       current.Provenance.CWD,
-			TS:        stamp,
-		},
-		ObservedVia: "observer turnover",
-	}
-	old := *current
-	old.Event = "unseated"
-	old.RecordedAt = stamp
-	old.State = v2.StateUnseated
-	old.Seat = nil
-	old.Lineage.DisplacedBy = childGUID
-	old.CloseResult = "displaced"
-	old.CloseReason = "observer detected sid turnover in sidecar-less seat"
-	old.ObservedVia = "observer turnover"
-	return []v2.SessionRecord{child, old}, true
-}
-
-func recognisedRowLocked(proj *v2.Projection, rec v2.SessionRecord, newSID string, identity hcomidentity.Result, now time.Time) (v2.SessionRecord, bool) {
-	current := registry.V2ByGUID(proj, rec.GUID)
-	if current == nil || current.State != v2.StateSeated || current.Seat == nil || !observerOwnedSeat(*current) {
-		return v2.SessionRecord{}, false
-	}
-	priorSID := latestSID(*current)
-	if newSID == "" || priorSID == newSID || priorSID != "" {
-		return v2.SessionRecord{}, false
-	}
-	return recognisedCandidate(*current, newSID, identity, now).row, true
-}
-
-func observerOwnedSeat(rec v2.SessionRecord) bool {
-	return rec.Seat != nil && rec.Seat.Kind != "process" && rec.Provenance.Mechanism == "enroll"
-}
-
-func observedSID(rec v2.SessionRecord, hd herdrState, bus busState) string {
-	if rec.Seat == nil {
-		return ""
-	}
-	if pane, ok := hd.byTerm[rec.Seat.TerminalID]; ok && pane.AgentSession != "" {
-		return pane.AgentSession
-	}
-	if identity := resolveSeatBus(rec, "", bus); identity.Verified {
-		return identity.SessionID
-	}
-	return ""
-}
-
-func resolveSeatBus(rec v2.SessionRecord, sessionID string, bus busState) hcomidentity.Result {
-	if !bus.available || rec.Seat == nil {
-		return hcomidentity.Result{Reason: "live bus roster unavailable"}
-	}
-	rows := bus.roster
-	if rows == nil {
-		rows = make([]hcomidentity.Row, 0, len(bus.rows))
-		for _, row := range bus.rows {
-			rows = append(rows, row)
-		}
-	}
-	return hcomidentity.Resolve(rows, hcomidentity.Evidence{SessionID: sessionID, PaneIDs: []string{rec.Seat.PaneID}})
-}
-
-func applyBusIdentity(seat *v2.Seat, identity hcomidentity.Result) {
 	if seat == nil {
-		return
+		seat = &v2.Seat{Kind: "herdr"}
 	}
-	verified := identity.Verified
-	seat.HcomVerified = &verified
-	if identity.Verified {
-		seat.HcomName = identity.Name
+	seat.Kind = "herdr"
+	seat.PaneID = firstNonEmpty(po.Occupant.Pane.PaneID, seat.PaneID)
+	seat.TerminalID = firstNonEmpty(po.Occupant.Pane.TerminalID, seat.TerminalID)
+	seat.ConfirmedAt = stamp
+	name := seat.HcomName
+	if po.Bus.Verified {
+		name = po.Bus.Name
+		verified := true
+		seat.HcomVerified = &verified
 	}
+	seat.HcomName = name
+	if po.Occupant.SID != "" && latestSID(next) != po.Occupant.SID {
+		next.SIDs = append(append([]v2.SID(nil), next.SIDs...), v2.SID{SID: po.Occupant.SID, ObservedAt: stamp, Source: "observer"})
+	}
+	next.Continuity = "confirmed"
+	next.Tool = firstNonEmpty(po.Occupant.Tool, next.Tool)
+	next.Seat = seat
+	liveness := firstNonEmpty(po.BusStatus, "alive")
+	next.Cache = &v2.CacheObservation{PaneID: seat.PaneID, TerminalID: seat.TerminalID, OccupantKind: next.Tool, SessionID: po.Occupant.SID, HcomName: name, Label: firstNonEmpty(rec.Label, cacheLabel(rec), name), Liveness: liveness, ObservedAt: stamp}
+	return candidate{kind: "stamp", guid: rec.GUID, row: next}
 }
 
+func deadCandidate(rec v2.SessionRecord, now time.Time) candidate {
+	stamp := now.UTC().Format(time.RFC3339)
+	next := rec
+	next.Event = "observed_dead"
+	next.RecordedAt = stamp
+	next.State = v2.StateUnseated
+	next.Seat = nil
+	next.CloseResult = "observed_dead"
+	next.CloseReason = "pane gone or recorded occupant no longer corroborated by ancestry probe"
+	next.ObservedVia = "observer+occupant_probe"
+	cache := cacheFromRow(rec)
+	cache.Liveness = "dead"
+	cache.ObservedAt = stamp
+	next.Cache = &cache
+	return candidate{kind: "dead", guid: rec.GUID, row: next}
+}
+func duplicateCandidate(rec v2.SessionRecord, now time.Time) candidate {
+	stamp := now.UTC().Format(time.RFC3339)
+	next := rec
+	next.Event = "observation_archived"
+	next.RecordedAt = stamp
+	next.State = v2.StateRetired
+	next.Seat = nil
+	next.CloseResult = "deduplicated"
+	next.CloseReason = "another row on the same pane was corroborated by the occupant probe"
+	next.ObservedVia = "observer+occupant_probe"
+	cache := cacheFromRow(rec)
+	cache.Liveness = "duplicate"
+	cache.ObservedAt = stamp
+	next.Cache = &cache
+	return candidate{kind: "retire-duplicate", guid: rec.GUID, row: next}
+}
+func archiveDeadCandidates(proj *v2.Projection, now time.Time, grace time.Duration) []candidate {
+	var out []candidate
+	for _, rec := range proj.Sessions() {
+		if rec.State != v2.StateUnseated || rec.Cache == nil || rec.Cache.Liveness != "dead" {
+			continue
+		}
+		observedAt, err := time.Parse(time.RFC3339, firstNonEmpty(rec.Cache.ObservedAt, rec.RecordedAt))
+		if err != nil || now.Before(observedAt.Add(grace)) {
+			continue
+		}
+		stamp := now.UTC().Format(time.RFC3339)
+		next := rec
+		next.Event = "observation_archived"
+		next.RecordedAt = stamp
+		next.State = v2.StateRetired
+		next.Seat = nil
+		cache := *rec.Cache
+		cache.ObservedAt = stamp
+		next.Cache = &cache
+		out = append(out, candidate{kind: "archive-dead", guid: rec.GUID, row: next})
+	}
+	return out
+}
+func cacheFromRow(rec v2.SessionRecord) v2.CacheObservation {
+	if rec.Cache != nil {
+		cache := *rec.Cache
+		return cache
+	}
+	cache := v2.CacheObservation{Label: rec.Label, OccupantKind: rec.Tool, SessionID: latestSID(rec)}
+	if rec.Seat != nil {
+		cache.PaneID = rec.Seat.PaneID
+		cache.TerminalID = rec.Seat.TerminalID
+		cache.HcomName = rec.Seat.HcomName
+	}
+	return cache
+}
 func latestSID(rec v2.SessionRecord) string {
 	if len(rec.SIDs) == 0 {
 		return ""
 	}
 	return rec.SIDs[len(rec.SIDs)-1].SID
 }
-
-func turnoverAlreadyRecorded(proj *v2.Projection, clearedFrom, sid string) bool {
-	for _, rec := range proj.Sessions() {
-		if rec.Lineage.ClearedFrom != clearedFrom {
-			continue
-		}
-		if latestSID(rec) == sid {
-			return true
-		}
+func recordPaneID(rec v2.SessionRecord) string {
+	if rec.Seat != nil && rec.Seat.PaneID != "" {
+		return rec.Seat.PaneID
 	}
-	return false
+	if rec.Cache != nil {
+		return rec.Cache.PaneID
+	}
+	return ""
 }
-
+func recordHcomName(rec v2.SessionRecord) string {
+	if rec.Seat != nil && rec.Seat.HcomName != "" {
+		return rec.Seat.HcomName
+	}
+	if rec.Cache != nil {
+		return rec.Cache.HcomName
+	}
+	return ""
+}
+func cacheLabel(rec v2.SessionRecord) string {
+	if rec.Cache != nil {
+		return rec.Cache.Label
+	}
+	return ""
+}
 func cloneSeat(seat *v2.Seat) *v2.Seat {
 	if seat == nil {
 		return nil
 	}
-	cp := *seat
-	return &cp
-}
-
-func reconfirmCandidate(rec v2.SessionRecord, pane herdrcli.Pane, bus busState, now time.Time) candidate {
-	next := rec
-	next.Event = "reconciled"
-	next.State = v2.StateSeated
-	next.RecordedAt = now.Format(time.RFC3339)
-	next.ObservedVia = "snapshot sweep"
-	identity := hcomidentity.Result{}
-	if next.Seat != nil {
-		seat := *next.Seat
-		seat.ConfirmedAt = next.RecordedAt
-		if pane.PaneID != "" {
-			seat.PaneID = pane.PaneID
-		}
-		current := rec
-		current.Seat = &seat
-		identity = resolveSeatBus(current, latestSID(rec), bus)
-		if identity.Verified || seat.HcomName != "" {
-			applyBusIdentity(&seat, identity)
-		}
-		next.Seat = &seat
-	}
-	kind := "confirm"
-	if !sameBindingCoordinates(rec.Seat, next.Seat) {
-		kind = "reconfirm"
-	}
-	return candidate{kind: kind, guid: rec.GUID, row: next, bus: identity, seat: cloneSeat(next.Seat)}
-}
-
-func sameBindingCoordinates(a, b *v2.Seat) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return a.Kind == b.Kind && a.Node == b.Node && a.TerminalID == b.TerminalID && a.PaneID == b.PaneID && a.PID == b.PID && a.Namespace == b.Namespace && a.HcomName == b.HcomName && boolValue(a.HcomVerified) == boolValue(b.HcomVerified)
-}
-
-func boolValue(value *bool) bool {
-	return value != nil && *value
+	copy := *seat
+	return &copy
 }
 
 func applyCandidates(path string, cands []candidate, stderr io.Writer) observerstatus.Summary {
 	var summary observerstatus.Summary
-	plain := make([]candidate, 0, len(cands))
-	for _, cand := range cands {
-		if cand.kind == "liveness-death" {
-			result, err := liveness.ApplyPositiveDeath(path, cand.guid, cand.anchor, cand.verdict, cand.observedAt, "observer")
-			if err != nil {
-				fmt.Fprintf(stderr, "herder observer sweep: liveness candidate %s refused: %v\n", cand.guid, err)
-				summary.Refused++
-				continue
-			}
-			switch result.Status {
-			case registry.WriteApplied:
-				summary.Applied++
-			case registry.WriteNoop:
-				summary.Noop++
-			default:
-				summary.Refused++
-			}
-			continue
-		}
-		if cand.kind != "recognised" && cand.kind != "turnover" && cand.kind != "reconfirm" {
-			plain = append(plain, cand)
-			continue
-		}
-		status, err := completeRecognition(path, cand)
-		if err != nil {
-			fmt.Fprintf(stderr, "herder observer sweep: candidate %s refused: %v\n", cand.guid, err)
-			summary.Refused++
-			continue
-		}
-		switch status {
-		case registry.WriteApplied:
-			summary.Applied++
-		case registry.WriteNoop:
-			summary.Noop++
-		case registry.WriteRefused:
-			summary.Refused++
-		}
-	}
-	plainSummary := applyPlainCandidates(path, plain, stderr)
-	summary.Applied += plainSummary.Applied
-	summary.Noop += plainSummary.Noop
-	summary.Refused += plainSummary.Refused
-	return summary
-}
-
-func applyPlainCandidates(path string, cands []candidate, stderr io.Writer) observerstatus.Summary {
-	var summary observerstatus.Summary
 	if len(cands) == 0 {
 		return summary
 	}
-	outcomes, err := registry.UpdateLocked(path, func(tx registry.LockedUpdate) ([]v2.SessionRecord, error) {
+	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) {
 		rows := make([]v2.SessionRecord, 0, len(cands))
 		for _, cand := range cands {
-			if current := registry.V2ByGUID(tx.Projection, cand.guid); current != nil && cand.row.Event == "unseated" && (current.State == v2.StateRetired || current.State == v2.StateLost) {
-				continue
-			}
 			rows = append(rows, cand.row)
 		}
 		return rows, nil
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "herder observer sweep: refused %d candidate(s): %v\n", len(cands), err)
-		summary.Refused = len(cands)
-		return summary
-	}
-	if len(outcomes) == 0 {
-		summary.Noop = len(cands)
-		return summary
-	}
-	batchRefused := false
-	for _, outcome := range outcomes {
-		if outcome.Status == registry.WriteRefused {
-			batchRefused = true
-			break
-		}
-	}
-	if batchRefused {
+		fmt.Fprintf(stderr, "herder observer sweep: refused %d cache stamp(s): %v\n", len(cands), err)
 		summary.Refused = len(cands)
 		return summary
 	}
 	for _, outcome := range outcomes {
-		if outcome.Status == registry.WriteApplied {
+		switch outcome.Status {
+		case registry.WriteApplied:
 			summary.Applied++
-		} else {
+		case registry.WriteNoop:
 			summary.Noop++
+		default:
+			summary.Refused++
 		}
 	}
 	summary.Noop += len(cands) - len(outcomes)
 	return summary
 }
-
-func completeRecognition(path string, cand candidate) (registry.WriteStatus, error) {
-	if cand.seat == nil {
-		return registry.WriteRefused, errors.New("recognition completion requires a live seat")
-	}
-	seat := *cand.seat
-	engine := seatcompletion.DefaultEngine()
-	observedPane := seatcompletion.LivePane{PaneID: seat.PaneID, TerminalID: seat.TerminalID}
-	request := seatcompletion.Request{
-		Origin:         seatcompletion.OriginRecognition,
-		RegistryPath:   path,
-		Candidate:      cand.row,
-		CredentialGUID: firstNonEmpty(cand.credentialGUID, cand.row.GUID),
-		Seat:           seatcompletion.SeatClaim{Kind: seatcompletion.SeatHerdr, PaneID: seat.PaneID},
-		ObservedPane:   &observedPane,
-		ObservedBus:    &cand.bus,
-		Namespace:      seat.Namespace,
-		Evidence:       hcomidentity.Evidence{SessionID: cand.bus.SessionID, PaneIDs: []string{seat.PaneID}},
-	}
-	request.BuildLocked = func(tx registry.LockedUpdate, _ v2.Seat) (v2.SessionRecord, []v2.SessionRecord, []v2.SessionRecord, error) {
-		now := time.Now().UTC()
-		switch cand.kind {
-		case "turnover":
-			rows, ok := turnoverRowsLocked(tx.Projection, cand.row, cand.sid, cand.credentialGUID, cand.bus, now)
-			if !ok || len(rows) != 2 {
-				return v2.SessionRecord{}, nil, nil, errors.New("turnover no longer matches the live registry state")
-			}
-			return rows[0], nil, rows[1:], nil
-		case "recognised":
-			row, ok := recognisedRowLocked(tx.Projection, cand.row, cand.sid, cand.bus, now)
-			if !ok {
-				return v2.SessionRecord{}, nil, nil, errors.New("recognition no longer matches the live registry state")
-			}
-			return row, nil, nil, nil
-		default:
-			current := registry.V2ByGUID(tx.Projection, cand.guid)
-			if current == nil || current.State != v2.StateSeated {
-				return v2.SessionRecord{}, nil, nil, errors.New("reconfirmation no longer matches a seated registry row")
-			}
-			return cand.row, nil, nil, nil
-		}
-	}
-	result, err := engine.Complete(context.Background(), request)
-	if err != nil {
-		return registry.WriteRefused, err
-	}
-	if result.Refusal != nil {
-		return registry.WriteRefused, result.Refusal
-	}
-	status := registry.WriteNoop
-	for _, outcome := range result.Outcomes {
-		if err := outcome.Err(); err != nil {
-			return registry.WriteRefused, err
-		}
-		if outcome.Status == registry.WriteApplied {
-			status = registry.WriteApplied
-		}
-	}
-	return status, nil
-}
-
-func advisoryFlags(proj *v2.Projection, hd herdrState) []observerstatus.Flag {
-	if !hd.available {
-		return nil
-	}
-	var flags []observerstatus.Flag
-	for _, rec := range proj.Sessions() {
-		if rec.State != v2.StateUnseated {
-			continue
-		}
-		var matches []herdrcli.Pane
-		for _, pane := range hd.byTerm {
-			if rec.Label == "" || pane.Label == "" || rec.Label != pane.Label {
-				continue
-			}
-			matches = append(matches, pane)
-		}
-		if len(matches) > 1 {
-			flags = append(flags, observerstatus.Flag{
-				GUID:      rec.GUID,
-				Label:     rec.Label,
-				Type:      "ambiguous-dormant-live",
-				Severity:  "warning",
-				Detail:    "multiple live panes match this unseated row label; observer refuses to guess",
-				Suggested: "herder enroll explicitly from the intended pane",
-			})
-			continue
-		}
-		if len(matches) == 1 {
-			pane := matches[0]
-			flags = append(flags, observerstatus.Flag{
-				GUID:       rec.GUID,
-				Label:      rec.Label,
-				Type:       "dormant-live",
-				Severity:   "warning",
-				Detail:     "unseated registry row has live matching pane label",
-				Suggested:  "run herder enroll from the intended live pane",
-				TerminalID: pane.TerminalID,
-				PaneID:     pane.PaneID,
-			})
-		}
-	}
-	return flags
-}
-
-func livenessFlags(proj *v2.Projection, hd herdrState, bus busState, now time.Time) []observerstatus.Flag {
-	var flags []observerstatus.Flag
-	for _, rec := range proj.Sessions() {
-		if rec.State != v2.StateSeated || rec.Seat == nil {
-			continue
-		}
-		verdict := liveness.Evaluate(livenessInput(rec, hd, bus))
-		if verdict.Advisory != nil {
-			flag := observerstatus.Flag{
-				GUID: rec.GUID, Label: rec.Label, Type: "holder-alive-keepalive-failing", Severity: "warning",
-				CauseClass: string(verdict.Advisory.Cause), Detail: verdict.Advisory.Detail,
-				ObservedAt: now.UTC().Format(time.RFC3339), ObservedVia: append([]string(nil), verdict.Advisory.ObservedVia...),
-				Suggested: "inspect keepalive feeding and hcom configuration before the upstream staleness window expires",
-			}
-			if verdict.Advisory.Cause == liveness.CausePossiblePaneHusk {
-				flag.Type = "possible-pane-husk"
-				flag.Suggested = fmt.Sprintf("inspect pane %s; if it is a husk, run herder cull --guid %s", rec.Seat.PaneID, rec.GUID)
-			}
-			flags = append(flags, flag)
-			continue
-		}
-		if verdict.Class == liveness.VerdictObservationGap {
-			flags = append(flags, observerstatus.Flag{
-				GUID: rec.GUID, Label: rec.Label, Type: "liveness-observation-gap", Severity: "info",
-				CauseClass: string(verdict.Cause), Detail: "liveness remains unknown; no automated unseat",
-				ObservedAt: now.UTC().Format(time.RFC3339), ObservedVia: append([]string(nil), verdict.ObservedVia...),
-			})
-		}
-	}
-	return flags
-}
-
-func continuationFailureFlags(proj *v2.Projection, stateDir string, stderr io.Writer) []observerstatus.Flag {
-	records, warnings, err := continuationstate.Unresolved(filepath.Join(stateDir, "continuations"))
-	for _, warning := range warnings {
-		fmt.Fprintf(stderr, "herder observer sweep: ignoring continuation record: %v\n", warning)
-	}
-	if err != nil {
-		fmt.Fprintf(stderr, "herder observer sweep: continuation state unavailable: %v\n", err)
-		return nil
-	}
-	flags := make([]observerstatus.Flag, 0, len(records))
-	for _, rec := range records {
-		guid, label, ok := continuationTarget(proj, rec.Target)
-		if !ok {
-			continue
-		}
-		flags = append(flags, observerstatus.Flag{
-			GUID:      guid,
-			Label:     label,
-			Type:      "failed-continuation",
-			Severity:  "warning",
-			Detail:    fmt.Sprintf("detached continuation %s failed at %s: %s (log: %s)", rec.ID, rec.UpdatedAt, rec.Reason, rec.LogPath),
-			Suggested: rec.RecoveryCommand + "; then herder list --ack-continuation " + rec.ID,
-		})
-	}
-	return flags
-}
-
-func continuationTarget(proj *v2.Projection, target string) (string, string, bool) {
-	var guid, label string
-	for _, rec := range proj.Sessions() {
-		// Normal writes strip seats from retired/lost rows; this guard is belt-and-braces
-		// for externally authored rows and future writers that might retain stale seats.
-		if rec.State == v2.StateRetired || rec.State == v2.StateLost || rec.Seat == nil || rec.Seat.HcomName != target {
-			continue
-		}
-		if guid != "" {
-			return "", "", false
-		}
-		guid = rec.GUID
-		label = rec.Label
-	}
-	return guid, label, guid != ""
-}
-
-func epochFlags(proj *v2.Projection, hd herdrState) []observerstatus.Flag {
-	if !hd.available {
-		return nil
-	}
-	if !hd.connectionGap {
-		return nil
-	}
-	overlap, recorded := herdrOverlap(proj, hd)
-	if recorded >= 2 && overlap == 0 {
-		return []observerstatus.Flag{{
-			Type:      "epoch-doubt",
-			Severity:  "warning",
-			Detail:    "no recorded seated terminal ids appear in the current snapshot; absence verdicts paused",
-			Suggested: "restart the affected live tools so they re-report, then run herder list",
-		}}
-	}
-	if recorded == 1 && overlap == 0 {
-		for _, rec := range proj.Sessions() {
-			if rec.State != v2.StateSeated || rec.Seat == nil || rec.Seat.Kind == "process" {
-				continue
-			}
-			return []observerstatus.Flag{{
-				GUID:       rec.GUID,
-				Label:      rec.Label,
-				Type:       "epoch-doubt",
-				Severity:   "warning",
-				Detail:     "single recorded terminal absent after a connection gap without dead-bus corroboration",
-				Suggested:  "restart the affected live tool so it re-reports, then run herder list",
-				TerminalID: rec.Seat.TerminalID,
-				PaneID:     rec.Seat.PaneID,
-			}}
-		}
-	}
-	return nil
-}
-
-func herdrOverlap(proj *v2.Projection, hd herdrState) (int, int) {
-	if !hd.available {
-		return 0, 0
-	}
-	overlap := 0
-	recorded := 0
-	for _, rec := range proj.Sessions() {
-		if rec.State != v2.StateSeated || rec.Seat == nil || rec.Seat.Kind == "process" || rec.Seat.TerminalID == "" {
-			continue
-		}
-		recorded++
-		if _, ok := hd.byTerm[rec.Seat.TerminalID]; ok {
-			overlap++
-		}
-	}
-	return overlap, recorded
-}
-
-func shouldReconfirm(rec v2.SessionRecord, now time.Time) bool {
-	if rec.Seat == nil || rec.Seat.ConfirmedAt == "" {
-		return true
-	}
-	t, err := time.Parse(time.RFC3339, rec.Seat.ConfirmedAt)
-	if err != nil {
-		t, err = time.Parse("2006-01-02T15:04:05Z", rec.Seat.ConfirmedAt)
-	}
-	if err != nil {
-		return true
-	}
-	return now.Sub(t) >= reconfirmInterval()
-}
-
 func runDaemon(stdout, stderr io.Writer) int {
 	lock, ok := acquireObserverLock(stderr)
 	if !ok {
@@ -1577,10 +1110,6 @@ func buildHash() string {
 
 func sweepInterval() time.Duration {
 	return durationEnv("HERDER_OBSERVER_SWEEP_INTERVAL", defaultSweepInterval)
-}
-
-func reconfirmInterval() time.Duration {
-	return durationEnv("HERDER_OBSERVER_RECONFIRM_INTERVAL", defaultReconfirmInterval)
 }
 
 func durationEnv(name string, fallback time.Duration) time.Duration {
