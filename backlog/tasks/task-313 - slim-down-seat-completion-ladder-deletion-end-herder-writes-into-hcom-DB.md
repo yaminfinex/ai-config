@@ -1,7 +1,7 @@
 ---
 id: TASK-313
 title: 'slim-down: seat-completion ladder deletion + end herder writes into hcom DB'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-23 11:53'
 labels:
@@ -10,6 +10,11 @@ labels:
 dependencies: []
 ordinal: 312500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Done by teardown unit three. Seatcompletion and the herder-to-hcom DB write
+path were deleted wholesale.
 
 ## Description
 

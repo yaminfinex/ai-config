@@ -1,5 +1,15 @@
 # Herder Spec
 
+> **SUPERSEDED 2026-08-24 — lifecycle and authority doctrine.** Herder now
+> survives as `list`, `observer`, the display-cache ledger, and the occupant
+> probe library. Spawn/cull compose through `tools/fleet`; identity, messaging,
+> resume, fork, and watchdogs belong to hcom; placement belongs to herdr. The
+> ledger is never consulted before lifecycle action. See
+> `$MISSIONS_REPO/missions/fleet-refit/artifacts/conductor/herder-teardown-composition.md`
+> and [`tools/fleet/README.md`](../../tools/fleet/README.md). The dated model and
+> decisions below remain as history; section-local notices identify contracts
+> whose verbs or authority semantics died.
+
 Status: **RATIFIED 2026-07-08** (owner walkthrough, decisions D1–D12 confirmed; D5 teams-kill
 confirmed explicitly; migration dormant-default resolved under D12).
 **AMENDED 2026-08-21** (owner ruling, fleet-refit mission TASK-3 resolution): ground-truth
@@ -177,6 +187,10 @@ Label sub-machine (`unlabelled ⇄ labelled` via label/transfer/release-on-retir
 
 ## 4. Components — from model to machinery
 
+> **Superseded 2026-08-24.** This component map describes the retired lifecycle
+> gateway. Only the observer, display-cache registry, list projection, and
+> occupant probe survive; hcom/herdr and `tools/fleet` own the composed lifecycle.
+
 A seat binding is a join row across three layers — the herdr terminal, the hcom name, the
 tool's transcript — and each layer's handle expires on its own schedule. Worse, the joins
 change *while no herder command is running*: an occupant `/clear`s at 2am, crashes, or a human
@@ -235,6 +249,10 @@ everything else is a cache.**
   the same substrate (activation staged separately).
 
 ## 5. The registry
+
+> **Authority semantics superseded 2026-08-24.** The JSONL projection survives
+> as an observer-written display cache. Its historical write, credential,
+> label, and lifecycle invariants below do not authorize or refuse actions.
 
 ### 5.1 Shape
 
@@ -456,6 +474,10 @@ observation provenance.)* They never appear in addressing or human language.
 
 ## 7. Command surface — expected behaviour
 
+> **Superseded 2026-08-24.** Every lifecycle/identity verb in this section is
+> retired. The live herder command surface is `list` plus `observer`; lifecycle
+> commands are the fleet/hcom/herdr composition linked in the banner above.
+
 | Command | Behaviour |
 |---|---|
 | `node init [--new]` | Explicit form of the lazy node mint (§6.1); idempotent, locked. Normally never needed — the first registry write mints transparently. `--new` mints a fresh node_id (clone repair). |
@@ -487,6 +509,10 @@ wrapped; herder observes their effects as epoch boundaries (§6.3, §8.3).
 
 ### 8.1 Turnover detection (one rule, every path)
 
+> **Superseded 2026-08-24.** Turnover rows no longer drive lifecycle authority.
+> hcom owns live session identity; the observer may reflect turnover only as
+> display-cache state.
+
 The seat's observer — the sidecar for spawned/shimmed seats, the node observer for
 sidecar-less seats — watches its seat's sid. **Sid changed in my seat ⇒ turnover**: unseat the old
 session (displaced), register the newcomer (new guid, `cleared_from`, unlabelled, unbriefed) —
@@ -495,6 +521,9 @@ both inside one lock, child-first. Exception: sid changed *with* transcript-cont
 row re-keys the same guid. This one rule serves spawned, shimmed, and enrolled sessions alike.
 
 ### 8.2 Recognition keys
+
+> **Superseded 2026-08-24 for lifecycle decisions.** These keys remain historical
+> cache/probe vocabulary only.
 
 - Key = **(tool, sid, tool-native scope)** — claude: (sid, project dir); codex: sid alone.
   A scope mismatch is a different conversation: fresh guid + collision note.
@@ -505,6 +534,10 @@ row re-keys the same guid. This one rule serves spawned, shimmed, and enrolled s
   a `reconciled` correction row with the backdated displacement.
 
 ### 8.3 Resolution (ground truth) *(replaced 2026-08-21, TASK-3 — was "Epoch reconciliation")*
+
+> **Verb protocol superseded 2026-08-24.** The occupant probe library survives
+> unchanged for observer cache refresh and fleet's final fallback, but no herder
+> lifecycle verb consumes this resolution procedure.
 
 Every verb that needs identity runs the occupant probe at operation time: pane →
 `pane.process_info` → pid → transcript → sid, matched against the session's recorded
@@ -543,6 +576,10 @@ unseated.
 
 ### 8.4 Catch-up sweep (observer)
 
+> **Authority semantics superseded 2026-08-24.** The observer still performs a
+> level-triggered sweep, now as the sole cache writer. Its stamps are human/web
+> display data and never lifecycle authority.
+
 On every observer boot — downtime recovery is not a distinct mode — the observer runs one
 level-triggered sweep: current substrate snapshot × current bus state × current registry
 projection. Verdict discipline: **positive evidence of death unseats** (occupant exited, pane
@@ -559,6 +596,10 @@ per §3.1-8). Across a herdr epoch boundary (probe-inferred; terminal ids may be
 wholesale), absence of recorded terminal ids alone never unseats.
 
 ## 9. Acceptance scenarios
+
+> **Historical as of 2026-08-24.** Scenarios for retired commands are not live
+> acceptance contracts. Surviving behavior is pinned by the fleet, composition,
+> observer, occupant-probe, list, and live-substrate suites.
 
 Normative. Each is a high-level test case; implementation plans map suites onto them.
 (Traceability: S/A refs point into the derivation docs.)

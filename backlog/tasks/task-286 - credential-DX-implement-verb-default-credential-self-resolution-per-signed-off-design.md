@@ -3,7 +3,7 @@ id: TASK-286
 title: >-
   credential DX: implement verb-default credential self-resolution per
   signed-off design
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-18 20:45'
 labels:
@@ -13,6 +13,11 @@ dependencies: []
 priority: high
 ordinal: 285500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Superseded. Every credential-authenticated lifecycle verb retired; the local
+fleet/hcom/herdr composition has no herder credential successor.
 
 ## Description
 

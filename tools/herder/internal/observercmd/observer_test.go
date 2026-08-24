@@ -329,11 +329,8 @@ func TestLiveBusRowUsesHcomJoinedClassification(t *testing.T) {
 	}
 }
 
-// Reviewer demonstration (not part of the unit): a live seat whose recorded
-// bus name was recycled to a different joined agent while its recorded sid is
-// still live under a new name. The amendment's death rule is disjunctive —
-// "no live hcom row for that session id or name" — so death must be vetoed.
-func TestReviewConflictingBusCorrelatesStillVetoDeath(t *testing.T) {
+// Either a live recorded name or a live recorded session vetoes death.
+func TestConflictingBusCorrelatesVetoDeath(t *testing.T) {
 	rec := seatRow("guid-w", "worker", "pane-1", "worker-a", "S1", "2026-08-24T09:59:00Z")
 	roster := []hcomidentity.Row{
 		{Name: "worker-a", SessionID: "S2", Status: "listening"},

@@ -3,7 +3,7 @@ id: TASK-277
 title: >-
   herder enroll: degraded no-bus compat path mints unverified rows for
   bus-capable tools misclassified as manual
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-17 08:24'
 labels:
@@ -13,6 +13,11 @@ dependencies: []
 priority: medium
 ordinal: 276500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. Enroll and Grok support retired; hcom hook binding owns bus
+membership for supported seats.
 
 ## Description
 

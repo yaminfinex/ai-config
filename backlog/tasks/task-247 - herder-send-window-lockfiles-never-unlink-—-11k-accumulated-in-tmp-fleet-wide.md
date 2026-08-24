@@ -3,13 +3,19 @@ id: TASK-247
 title: >-
   herder send-window lockfiles never unlink — 11k+ accumulated in /tmp
   fleet-wide
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-15 12:11'
 labels: []
 dependencies: []
 ordinal: 246500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. Herder's send engine and both send-window lock
+implementations retired; direct hcom delivery and fleet cull create no such
+lockfiles.
 
 ## Description
 

@@ -1,7 +1,7 @@
 ---
 id: TASK-231
 title: 'herder mission seat: declare the primary agent a human reaches for a mission'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-15 06:00'
 labels:
@@ -11,6 +11,12 @@ dependencies:
 priority: medium
 ordinal: 230500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Superseded. Herder's mission membership/seat write surface retired. Human and
+crew routing now uses hcom names, tags, and threads; durable mission decisions
+remain mission artifacts.
 
 ## Description
 

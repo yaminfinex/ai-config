@@ -11,6 +11,12 @@ priority: high
 ordinal: 238500
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open because the deletion hazard survives. Re-scope enforcement to
+`tools/fleet`/herdr worktree cleanup using live hcom cwd + herdr pane evidence;
+the display-cache ledger cannot authorize removal.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

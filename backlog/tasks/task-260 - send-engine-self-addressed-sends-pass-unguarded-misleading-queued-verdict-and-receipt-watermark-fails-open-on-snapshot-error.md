@@ -3,7 +3,7 @@ id: TASK-260
 title: >-
   send engine: self-addressed sends pass unguarded (misleading queued verdict)
   and receipt watermark fails open on snapshot error
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-16 06:35'
 labels:
@@ -12,6 +12,12 @@ dependencies: []
 priority: medium
 ordinal: 259500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. Herder's send engine retired. Peer delivery is hcom-native;
+self-compaction deliberately uses two composer injections because a
+self-addressed bus send reroutes to the owner.
 
 ## Description
 

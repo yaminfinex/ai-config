@@ -3,7 +3,7 @@ id: TASK-275
 title: >-
   herder write-spine tidies: factless observer turnover child row; ungated
   lifecycle conversion branch
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-17 07:19'
 updated_date: '2026-08-21 05:00'
@@ -14,6 +14,11 @@ dependencies: []
 priority: low
 ordinal: 274500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. Seat completion and lifecycle conversion retired, and the
+cache-only observer no longer mints an authoritative turnover child row.
 
 ## Description
 

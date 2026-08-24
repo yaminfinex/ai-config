@@ -389,6 +389,12 @@ check_vendor_agent_duplicates() {
   done
 }
 
+check_retired_vendor_pin_cache() {
+  local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/herder/vendorbin"
+  [ -d "$cache_dir" ] || return 0
+  warn "orphaned retired herder vendor pin cache: $cache_dir; stale entries are ignored and degrade safely, but nothing maintains or prunes this directory after the launcher rewire"
+}
+
 resolve_in_login_shell() {
   # Run one command in a fresh login+interactive shell and echo its stdout.
   # -l sources the login profile, -i the interactive rc — together they mirror
@@ -528,6 +534,7 @@ check_claude_shared_settings
 check_claude_config_divergence
 check_mise_path
 check_vendor_agent_duplicates
+check_retired_vendor_pin_cache
 check_login_shell_resolution
 check_grok_family
 check_identity_bearing_shell

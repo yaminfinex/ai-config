@@ -12,6 +12,12 @@ priority: medium
 ordinal: 29000
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open as the upstream-candidate ledger. Re-evaluate every herder-specific
+candidate against the teardown before filing; hcom/herdr issues that still
+affect fleet composition survive, and no agent files externally.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

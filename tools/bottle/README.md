@@ -281,9 +281,10 @@ found"), materialize (temp file, linted, atomically renamed), record the
 decant in the registry, then chdir and exec. **The chdir is mandatory**, not
 incidental: `claude --resume` is cwd-scoped, and resuming the right id from
 the wrong directory fails.
-`--pane right|below` launches into a herdr split via `herder spawn` instead
-of exec-ing in place; permission semantics are kept identical across both
-paths (safe by default, `--yolo` for `--dangerously-skip-permissions`).
+`--pane right|below` is unavailable after the 2026-08-24 retirement of
+herder's lifecycle gateway. Its historical implementation launched through
+`herder spawn`; restoration must target the `tools/fleet` placement contract
+without changing in-place decant semantics.
 
 The project-dir encoding (every non-alphanumeric byte → `-`) mirrors Claude's
 own scheme. It is lossy and must never be inverted — always derive the

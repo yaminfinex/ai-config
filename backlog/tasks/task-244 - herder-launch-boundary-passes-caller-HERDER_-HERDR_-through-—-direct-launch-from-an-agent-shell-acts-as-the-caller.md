@@ -3,7 +3,7 @@ id: TASK-244
 title: >-
   herder launch boundary passes caller HERDER_*/HERDR_* through — direct launch
   from an agent shell acts as the caller
-status: In Progress
+status: To Do
 assignee: []
 created_date: '2026-07-15 11:28'
 updated_date: '2026-07-17 03:34'
@@ -11,6 +11,13 @@ labels: []
 dependencies: []
 ordinal: 243500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Remains open after re-scoping. Herder launch retired, but the direct
+`lib/launchers.sh` vendor boundary still inherits ambient `HCOM_*`, `HERDER_*`,
+and `HERDR_*` from an agent shell. Re-verify and pin safe child identity against
+the direct launcher plus global hcom/herdr hooks; AC2 remains delivered history.
 
 ## Description
 

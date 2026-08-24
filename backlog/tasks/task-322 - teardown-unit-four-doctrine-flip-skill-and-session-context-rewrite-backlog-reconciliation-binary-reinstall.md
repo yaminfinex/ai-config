@@ -12,6 +12,12 @@ dependencies:
 ordinal: 318800
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Repo implementation lands on `impl-verb-demolition` and remains open through
+review and the single atomic merge with TASK-321. The conductor owns the
+machine-side session-context flip immediately after merge.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
@@ -23,3 +29,15 @@ backlog tasks (301-307) against the teardown charter; rebuild and install
 the slimmed binary — the compatibility boundary for live seats flips here,
 coordinated with the conductor so no running seat is mid-flow on a dead verb.
 <!-- SECTION:DESCRIPTION:END -->
+
+Addendum 2026-08-24 (from unit-three review, non-blocking): the old
+`herder launch` maintained the ~/.cache/herder/vendorbin pin directory;
+nothing maintains or cleans it after the launcher rewire — stale entries
+degrade safely, but ai-doctor should flag the orphaned cache. Also
+inherited by this unit: mark docs/specs/herder-spec.md superseded where
+verbs died; rename/trim the adopted TestReview* reviewer-narration test
+comment (unit-two note). NOTE from entry-39 ruling: this unit's repo work
+lands on the impl-verb-demolition branch BEFORE the single atomic merge;
+"binary reinstall" is obsolete — bin/herder self-builds, so the merge
+itself deploys, and the conductor flips machine-side session context
+immediately after.

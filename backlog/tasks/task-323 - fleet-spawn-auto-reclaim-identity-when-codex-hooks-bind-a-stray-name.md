@@ -11,6 +11,12 @@ dependencies: []
 ordinal: 318900
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open on the surviving fleet wrapper. The doctrine flip documents the
+current fail-closed boundary; automatic reclaim, label restamp, managed pane id,
+and PID restoration still require implementation and upstream reporting.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

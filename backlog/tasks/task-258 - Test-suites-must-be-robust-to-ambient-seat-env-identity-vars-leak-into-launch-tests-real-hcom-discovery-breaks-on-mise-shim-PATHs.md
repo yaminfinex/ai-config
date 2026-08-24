@@ -14,6 +14,12 @@ priority: medium
 ordinal: 257500
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open for surviving fleet, composition, observer, and live-substrate
+gates. Deleted lifecycle suites reduce the surface but do not remove ambient
+identity/PATH contamination from the remaining tests.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

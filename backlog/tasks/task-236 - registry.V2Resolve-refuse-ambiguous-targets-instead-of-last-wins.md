@@ -1,7 +1,7 @@
 ---
 id: TASK-236
 title: 'registry.V2Resolve: refuse ambiguous targets instead of last-wins'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-15 07:44'
 labels:
@@ -10,6 +10,12 @@ dependencies: []
 priority: medium
 ordinal: 235500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. `V2Resolve` and every named mutating consumer retired. The
+surviving list/observer cache path does not resolve a target to authorize a
+write.
 
 ## Description
 

@@ -3,7 +3,7 @@ id: TASK-041
 title: >-
   herder compact: self-location fails for a manual session after herdr pane
   renumbering (stale registry row, no recovery path)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 04:34'
 updated_date: '2026-08-23 10:18'
@@ -13,6 +13,13 @@ dependencies:
 priority: medium
 ordinal: 41000
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. Herder compact retired; third-party compaction is
+status-check + `hcom term inject` + one queued `hcom send`, and self-compaction
+uses `tools/fleet/selfcompact.sh`. The composition suite carries the incident
+041 successor contract.
 
 ## Description
 

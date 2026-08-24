@@ -3,7 +3,7 @@ id: TASK-283
 title: >-
   herder raise: refuses with mish-resolve JSON contract failure outside a
   mission context
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-18 12:05'
 labels:
@@ -13,6 +13,11 @@ dependencies: []
 priority: medium
 ordinal: 282500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. Herder raise retired; use an hcom request/thread and attach
+the relevant mission artifact path explicitly.
 
 ## Description
 

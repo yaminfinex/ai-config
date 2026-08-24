@@ -3,7 +3,7 @@ id: TASK-109
 title: >-
   Fold seat-coordinate erratum into herder-spec: live observation beats
   launch-frozen env
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-09 07:05'
 labels: []
@@ -11,6 +11,12 @@ dependencies: []
 priority: medium
 ordinal: 109000
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Done and superseded. The occupant-probe amendments established live observation
+over frozen coordinates; the final spec banner now limits that rule to
+observer-cache refresh and fleet's action-time fallback.
 
 ## Description
 

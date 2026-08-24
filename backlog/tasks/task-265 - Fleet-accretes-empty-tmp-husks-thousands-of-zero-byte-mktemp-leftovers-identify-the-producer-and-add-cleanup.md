@@ -16,6 +16,10 @@ ordinal: 264500
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
+**Teardown reconciliation — 2026-08-24:** Remains open as fleet-wide hygiene.
+Retired herder wrappers are historical suspects only; investigate surviving
+`tools/fleet`, hcom, herdr, observer, and test paths before changing anything.
+
 Reviewer observation during an unrelated unit (shared-user box): /tmp holds ~8342 `tmp.*` entries, all empty, with ~41 accreted in a few hours of fleet activity — so something in the toolchain (a wrapper, a gate script, a launcher, or a vendor CLI invoked by seats) is calling mktemp without cleaning up on at least one path. Individually harmless; collectively it is inode litter that will eventually degrade /tmp operations and makes real debris hard to spot.
 
 Scope: (a) identify the producer — sample creation times against fleet activity, instrument or grep the house scripts (bin/, tools/*/tests, gate templates, hcom/herder wrappers) for mktemp calls missing trap-based cleanup; (b) fix the producer(s) to self-clean (mktemp + trap is the house pattern that works — the reviewer's own probes left zero residue with it); (c) one-time sweep of the existing husks (age + empty + pattern-matched only; do not touch non-empty or foreign files).

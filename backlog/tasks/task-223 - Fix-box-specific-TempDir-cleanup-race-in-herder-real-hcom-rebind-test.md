@@ -1,7 +1,7 @@
 ---
 id: TASK-223
 title: Fix box-specific TempDir cleanup race in herder real-hcom rebind test
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-15 03:28'
 labels: []
@@ -9,6 +9,11 @@ dependencies: []
 priority: low
 ordinal: 222500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. The Grok bridge and its real-hcom rebind test retired under
+the owner-ratified Grok drop.
 
 ## Description
 

@@ -3,7 +3,7 @@ id: TASK-250
 title: >-
   Spawn caller-identity verify: refusal claims a pane check it does not perform
   — evaluate registry pane/terminal corroboration as a correlate
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-15 20:29'
 updated_date: '2026-07-16 00:58'
@@ -13,6 +13,12 @@ dependencies: []
 priority: medium
 ordinal: 249500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. The herder spawn caller-identity gate retired. Fleet spawn
+is a local explicit `--go` action and requires a unique hook-bound hcom row
+before reporting ready.
 
 ## Description
 

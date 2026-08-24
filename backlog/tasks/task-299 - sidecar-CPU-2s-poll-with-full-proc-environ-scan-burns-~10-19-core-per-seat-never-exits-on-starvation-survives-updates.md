@@ -3,7 +3,7 @@ id: TASK-299
 title: >-
   sidecar CPU: 2s poll with full /proc environ scan burns ~10-19% core per seat,
   never exits on starvation, survives updates
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-04 02:08'
 labels:
@@ -13,6 +13,11 @@ dependencies: []
 priority: high
 ordinal: 298500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Done. Its acceptance criteria were already met, and teardown removes the
+per-seat sidecar entirely; the observer is the sole remaining cache writer.
 
 ## Description
 

@@ -3,7 +3,7 @@ id: TASK-278
 title: >-
   herder: intermittent TestGracefulCullQueuedNoticeCanAckLater failure under
   full-module parallel load
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-17 09:07'
 labels:
@@ -13,6 +13,11 @@ dependencies: []
 priority: low
 ordinal: 277500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Closed by deletion. The cullcmd test retired; `tools/fleet/cull.sh` and its
+hermetic suite own courtesy notice, kill, and managed-pane-close behavior.
 
 ## Description
 

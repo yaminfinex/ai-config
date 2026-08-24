@@ -1,7 +1,7 @@
 ---
 id: TASK-315
 title: 'slim-down: escape hatches and unprobeable carve-outs'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-23 11:53'
 labels:
@@ -10,6 +10,12 @@ labels:
 dependencies: []
 ordinal: 314500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Done under the teardown ruling. Legacy verb escape hatches retired, Grok was
+dropped, and the surviving occupant probe retains fail-closed UNPROBEABLE and
+AMBIGUOUS outcomes for observer/fleet use.
 
 ## Description
 

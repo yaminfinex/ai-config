@@ -13,6 +13,12 @@ priority: high
 ordinal: 286500
 ---
 
+## Teardown reconciliation — 2026-08-24
+
+Remains open, narrowed to the singleton observer: sidecars, Grok bridges, and
+credential-enable preflight retired, but a stale observer remains a resident
+cache writer whose build identity should be reported by doctor.
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->

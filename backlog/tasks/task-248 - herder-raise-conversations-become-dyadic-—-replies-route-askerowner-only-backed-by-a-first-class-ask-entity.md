@@ -3,7 +3,7 @@ id: TASK-248
 title: >-
   herder raise conversations become dyadic — replies route asker+owner only,
   backed by a first-class ask entity
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-15 20:11'
 updated_date: '2026-07-16 02:03'
@@ -13,6 +13,12 @@ dependencies: []
 priority: medium
 ordinal: 247500
 ---
+
+## Teardown reconciliation — 2026-08-24
+
+Superseded. Herder raise retired. Dyadic asks use an hcom request addressed to
+the owner on its own thread; durable rulings live in mission artifacts rather
+than a herder entity.
 
 ## Description
 
