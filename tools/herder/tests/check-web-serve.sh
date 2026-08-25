@@ -55,6 +55,15 @@ cat >"$ROOT/bin/hcom" <<'HCOM'
 if [ "${1:-}" = list ] && [ "${2:-}" = --json ]; then
   exec /bin/cat "$WEB_SERVE_ROSTER"
 fi
+if [ "${1:-}" = f ] && [ "${2:-}" = mavu ]; then
+  for arg in "$@"; do printf '<%s>\n' "$arg"; done >"$WEB_FORK_LOG"
+  jq '. + [{"name":"fork-vava","base_name":"fork-vava","tool":"codex","status":"listening","joined":true,"session_id":"session-fork","launch_context":{"pane_id":"w1:p8"}}]' "$WEB_SERVE_ROSTER" >"$WEB_SERVE_ROSTER.tmp"
+  mv "$WEB_SERVE_ROSTER.tmp" "$WEB_SERVE_ROSTER"
+  jq '.panes += [{"pane_id":"w1:p8","workspace_id":"w1","tab_id":"t1","agent":"codex","agent_status":"active","agent_session":"session-fork"}]' "$WEB_SERVE_SNAPSHOT" >"$WEB_SERVE_SNAPSHOT.tmp"
+  mv "$WEB_SERVE_SNAPSHOT.tmp" "$WEB_SERVE_SNAPSHOT"
+  printf '%s\n' 'Started the fork process for 1 Codex agent' 'Names: fork-vava' 'Batch id: batch-fork'
+  exit 0
+fi
 if [ "${1:-}" = transcript ]; then
   printf '%s\n' "$*" >>"$WEB_TRANSCRIPT_LOG"
   if [[ "${3:-}" =~ ^([0-9]+)-([0-9]+)$ ]] && [ "${4:-}" = --json ]; then
@@ -110,6 +119,19 @@ exit 2
 HCOM
 chmod +x "$ROOT/bin/hcom"
 
+mkdir -p "$ROOT/action-root/tools/fleet"
+cat >"$ROOT/action-root/tools/fleet/spawn.sh" <<'SPAWN'
+#!/usr/bin/env bash
+for arg in "$@"; do printf '<%s>\n' "$arg"; done >"$WEB_SPAWN_LOG"
+jq '. + [{"name":"spawn-vava","base_name":"spawn-vava","tool":"codex","status":"listening","joined":true,"session_id":"session-spawn","launch_context":{"pane_id":"w1:p9"}}]' "$WEB_SERVE_ROSTER" >"$WEB_SERVE_ROSTER.tmp"
+mv "$WEB_SERVE_ROSTER.tmp" "$WEB_SERVE_ROSTER"
+jq '.panes += [{"pane_id":"w1:p9","workspace_id":"w1","tab_id":"t1","agent":"codex","agent_status":"active","agent_session":"session-spawn"}]' "$WEB_SERVE_SNAPSHOT" >"$WEB_SERVE_SNAPSHOT.tmp"
+mv "$WEB_SERVE_SNAPSHOT.tmp" "$WEB_SERVE_SNAPSHOT"
+printf '%s\n' 'Started the launch process' 'Names: spawn-vava' 'Batch id: batch-spawn' >&2
+printf '%s\n' 'name=spawn-vava' 'pane=w1:p9' 'cwd=/repo' 'placement=split-pane'
+SPAWN
+chmod +x "$ROOT/action-root/tools/fleet/spawn.sh"
+
 cat >"$ROOT/bin/tailscale" <<'TAILSCALE'
 #!/usr/bin/env bash
 if [ " $* " != " whois --json 127.0.0.1 " ]; then
@@ -131,22 +153,23 @@ chmod +x "$ROOT/bin/tailscale"
 
 jq '. + [{"name":"web-vile","base_name":"web-vile","tool":"codex","status":"listening","joined":true,"session_id":"session-web-vile","launch_context":{}}]' \
   "$FIXTURE/roster.json" >"$ROOT/roster.json"
+cp "$FIXTURE/snapshot.json" "$ROOT/snapshot.json"
 
 socket="$ROOT/herdr.sock"
-python3 - "$socket" "$FIXTURE/snapshot.json" <<'PY' &
+python3 - "$socket" "$ROOT/snapshot.json" <<'PY' &
 import json
 import socket
 import sys
 
 socket_path, fixture_path = sys.argv[1:]
-with open(fixture_path) as source:
-    snapshot = json.load(source)
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 server.bind(socket_path)
 server.listen()
 while True:
     connection, _ = server.accept()
     with connection:
+        with open(fixture_path) as source:
+            snapshot = json.load(source)
         request = json.loads(connection.makefile("rb").readline())
         response = {"id": request.get("id"), "result": {"type": "session_snapshot", "snapshot": snapshot}}
         connection.sendall((json.dumps(response, separators=(",", ":")) + "\n").encode())
@@ -173,7 +196,11 @@ WEB_SERVE_ROSTER="$ROOT/roster.json" \
 WEB_TRANSCRIPT_LOG="$ROOT/transcript.log" \
 WEB_STREAM_STATE="$ROOT/stream.state" \
 WEB_SEND_LOG="$ROOT/send.log" \
+WEB_SPAWN_LOG="$ROOT/spawn.log" \
+WEB_FORK_LOG="$ROOT/fork.log" \
+WEB_SERVE_SNAPSHOT="$ROOT/snapshot.json" \
 WEB_WHOIS_MODE="$ROOT/whois.mode" \
+AI_CONFIG_ROOT="$ROOT/action-root" \
 HERDER_HERDR_SOCKET="$socket" \
 HERDER_SERVE_TEST_LOOPBACK_ONLY=1 \
   "$ROOT/herder" serve --port "$port" >"$ROOT/serve.out" 2>"$ROOT/serve.err" &
@@ -293,6 +320,27 @@ else
   bad "message write" "body=$(cat "$ROOT/message.json" 2>/dev/null || true) args=$(cat "$ROOT/send.log" 2>/dev/null || true)"
 fi
 
+if curl -fsS -X POST -H 'Content-Type: application/json' \
+  --data '{"from_pane":"w1:p1","shape":"pane","tool":"codex","tag":"web","prompt":"quote '\'' and\n--dash"}' \
+  "http://127.0.0.1:$port/api/spawn" >"$ROOT/spawn.json" &&
+  jq -e '. == {name:"spawn-vava",pane:"w1:p9"}' "$ROOT/spawn.json" >/dev/null &&
+  grep -qxF '<--split-from>' "$ROOT/spawn.log" && grep -qxF '<w1:p1>' "$ROOT/spawn.log" &&
+  curl -fsS "http://127.0.0.1:$port/api/fleet" | jq -e '.workspaces[].tabs[].panes[] | select(.pane_id == "w1:p9" and .agent == "spawn-vava")' >/dev/null; then
+  pass "contextual spawn maps same-tab to split-from, preserves argv, and appears in fleet"
+else
+  bad "contextual spawn" "body=$(cat "$ROOT/spawn.json" 2>/dev/null || true) args=$(cat "$ROOT/spawn.log" 2>/dev/null || true)"
+fi
+
+if curl -fsS -X POST -H 'Content-Type: application/json' --data '{"prompt":"continue safely"}' \
+  "http://127.0.0.1:$port/api/agents/mavu/fork" >"$ROOT/fork.json" &&
+  jq -e '. == {name:"fork-vava",pane:"w1:p8"}' "$ROOT/fork.json" >/dev/null &&
+  grep -qxF '<f>' "$ROOT/fork.log" && grep -qxF '<mavu>' "$ROOT/fork.log" && grep -qxF '<--hcom-prompt>' "$ROOT/fork.log" &&
+  curl -fsS "http://127.0.0.1:$port/api/fleet" | jq -e '.workspaces[].tabs[].panes[] | select(.pane_id == "w1:p8" and .agent == "fork-vava")' >/dev/null; then
+  pass "fork wraps hcom with prompt and returns live placement visible in fleet"
+else
+  bad "fork" "body=$(cat "$ROOT/fork.json" 2>/dev/null || true) args=$(cat "$ROOT/fork.log" 2>/dev/null || true)"
+fi
+
 printf '%s\n' unresolved >"$ROOT/whois.mode"
 curl -sS -o "$ROOT/unresolved.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"text":"blocked"}' \
   "http://127.0.0.1:$port/api/agents/mavu/message" >"$ROOT/unresolved.status"
@@ -353,7 +401,7 @@ else
   bad "server shutdown" "rc=$serve_rc"
 fi
 
-printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((14 - fail))" "$fail"
+printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((16 - fail))" "$fail"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi

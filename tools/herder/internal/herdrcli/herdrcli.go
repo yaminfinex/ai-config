@@ -44,14 +44,20 @@ type Tab struct {
 }
 
 type Workspace struct {
-	WorkspaceID string `json:"workspace_id"`
-	Number      int    `json:"number"`
-	Label       string `json:"label"`
-	Focused     bool   `json:"focused"`
-	PaneCount   int    `json:"pane_count"`
-	TabCount    int    `json:"tab_count"`
-	ActiveTabID string `json:"active_tab_id"`
-	AgentStatus string `json:"agent_status"`
+	WorkspaceID string             `json:"workspace_id"`
+	Number      int                `json:"number"`
+	Label       string             `json:"label"`
+	Focused     bool               `json:"focused"`
+	PaneCount   int                `json:"pane_count"`
+	TabCount    int                `json:"tab_count"`
+	ActiveTabID string             `json:"active_tab_id"`
+	AgentStatus string             `json:"agent_status"`
+	Worktree    *WorkspaceWorktree `json:"worktree,omitempty"`
+}
+
+type WorkspaceWorktree struct {
+	RepoRoot     string `json:"repo_root"`
+	CheckoutPath string `json:"checkout_path"`
 }
 
 // UnmarshalJSON accepts both herdr agent_session shapes: a bare session ID or
