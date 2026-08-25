@@ -70,16 +70,31 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"example.com/h/internal"
 )
 
-func main() { fmt.Println("TAG=" + internal.Tag) }
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "print-build" {
+		fmt.Println(os.Getenv("HERDER_BUILD_HASH"))
+		return
+	}
+	fmt.Println("TAG=" + internal.Tag)
+}
 MAIN
   write_tag "$dir" "$tag"
 }
 write_tag()  { printf 'package internal\n\nconst Tag = "%s"\n' "$2" > "$1/tools/herder/internal/ver.go"; }
 break_tag()  { printf 'package internal\n\nconst Tag = \n' > "$1/tools/herder/internal/ver.go"; }
+source_hash() {
+  (cd "$1/tools/herder" &&
+    find go.mod cmd internal -type f \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' \) -print0 |
+    LC_ALL=C sort -z |
+    xargs -0 sha256sum |
+    sha256sum |
+    cut -c1-16)
+}
 
 # run_wrapper_env ROOT HOME_DIR TMP_DIR ARGS... — drive ROOT's wrapper under an
 # explicit HOME/XDG and TMPDIR (PATH preserved so go/mise resolve as in real
@@ -111,6 +126,9 @@ run_wrapper "$LR" args-ignored
 assert_eq       "build V1: exit 0"         "$RC"  "0"
 assert_eq       "build V1: prints tag"     "$OUT" "TAG=V1"
 assert_eq       "build V1: quiet stderr"   "$ERR" ""
+V1_HASH="$(source_hash "$LR")"
+run_wrapper "$LR" print-build
+assert_eq       "exact reuse: exports source build hash" "$OUT" "$V1_HASH"
 
 # 2. Break the source (hash changes, package no longer compiles): the wrapper
 #    serves last-good V1 with ONE quiet line and NO compiler spew.
@@ -122,6 +140,9 @@ assert_contains "broken: quiet last-good line"    "$ERR" "herder: rebuild failed
 assert_eq       "broken: stderr is ONLY that line" "$(printf '%s\n' "$ERR" | grep -c .)" "1"
 assert_not_contains "broken: no compiler spew (path)"   "$ERR" "internal/ver.go"
 assert_not_contains "broken: no compiler spew (syntax)" "$ERR" "syntax error"
+run_wrapper "$LR" print-build
+assert_eq       "broken: fallback exports its own build hash" "$OUT" "$V1_HASH"
+assert_contains "broken: build export still uses fallback" "$ERR" "serving last-good $V1_HASH"
 
 # 3. Fix the source to a NEW state: the wrapper rebuilds cleanly (no serve line).
 write_tag "$LR" V2
@@ -129,6 +150,9 @@ run_wrapper "$LR" args-ignored
 assert_eq       "fixed: exit 0"            "$RC"  "0"
 assert_eq       "fixed: rebuilds to V2"    "$OUT" "TAG=V2"
 assert_eq       "fixed: quiet stderr"      "$ERR" ""
+V2_HASH="$(source_hash "$LR")"
+run_wrapper "$LR" print-build
+assert_eq       "fresh build: exports current source hash" "$OUT" "$V2_HASH"
 
 # --- never-built checkout: broken from the start must fail LOUD --------------
 NR="$ROOT/neverbuilt"

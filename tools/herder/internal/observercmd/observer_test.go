@@ -4,16 +4,216 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/occupant"
 	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
+
+func TestDaemonExitsSupersededAndWritesFinalStatus(t *testing.T) {
+	if os.Getenv("HERDER_TEST_STALE_CHILD") == "1" {
+		os.Exit(runDaemon(ioDiscard{}, ioDiscard{}))
+	}
+	root := fakeSourceTree(t)
+	stateDir := t.TempDir()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestDaemonExitsSupersededAndWritesFinalStatus$")
+	cmd.Env = append(os.Environ(),
+		"HERDER_TEST_STALE_CHILD=1",
+		"HERDER_BUILD_HASH=0000000000000000",
+		"AI_CONFIG_ROOT="+root,
+		"HERDER_STATE_DIR="+stateDir,
+	)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Run() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("superseded daemon exit: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		_ = cmd.Process.Kill()
+		<-done
+		t.Fatal("superseded daemon did not self-exit before attempting its sweep loop")
+	}
+	st, err := observerstatus.Read(observerstatus.PathForStateDir(stateDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := sourceHash(filepath.Join(root, "tools", "herder"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.BuildHash != "0000000000000000" || !strings.Contains(st.ProtocolDetail, "superseded") || !strings.Contains(st.ProtocolDetail, current) || len(st.Flags) != 1 || st.Flags[0].Type != "superseded" {
+		t.Fatalf("final status = %+v, want superseded with running and current hashes", st)
+	}
+}
+
+func TestStalenessCheckIsOffWhenEvidenceAbsent(t *testing.T) {
+	t.Setenv("HERDER_BUILD_HASH", "")
+	t.Setenv("AI_CONFIG_ROOT", "")
+	if exitIfSuperseded(ioDiscard{}) {
+		t.Fatal("missing build and source evidence caused self-exit")
+	}
+	t.Setenv("HERDER_BUILD_HASH", "0000000000000000")
+	if exitIfSuperseded(ioDiscard{}) {
+		t.Fatal("missing AI_CONFIG_ROOT caused self-exit")
+	}
+	t.Setenv("HERDER_BUILD_HASH", "")
+	t.Setenv("AI_CONFIG_ROOT", t.TempDir())
+	if exitIfSuperseded(ioDiscard{}) {
+		t.Fatal("missing HERDER_BUILD_HASH caused self-exit")
+	}
+}
+
+func TestSourceHashMatchesWrapperAlgorithm(t *testing.T) {
+	root := fakeSourceTree(t)
+	got, err := sourceHash(filepath.Join(root, "tools", "herder"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// sha256 of the LC_ALL=C ordered sha256sum lines for the three files
+	// written by fakeSourceTree. This pins filenames, separators, and newline.
+	if got != "66ef142bdad6b75e" {
+		t.Fatalf("source hash = %s, want wrapper-compatible 66ef142bdad6b75e", got)
+	}
+}
+
+func TestObserverLockTakeoverByBuild(t *testing.T) {
+	t.Run("different build terminates holder and acquires", func(t *testing.T) {
+		stateDir := t.TempDir()
+		holder := startLockHolder(t, stateDir, "old-build", true)
+		t.Setenv("HERDER_STATE_DIR", stateDir)
+		t.Setenv("HERDER_BUILD_HASH", "new-build")
+		holderExit := make(chan error, 1)
+		go func() { holderExit <- holder.Wait() }()
+		lock, already, err := acquireObserverLock(ioDiscard{})
+		if err != nil || already {
+			t.Fatalf("takeover = already %t, err %v", already, err)
+		}
+		defer lock.Close()
+		if err := <-holderExit; err == nil {
+			t.Fatal("different-build holder exited cleanly, want SIGTERM termination")
+		}
+	})
+
+	t.Run("same build is left alone", func(t *testing.T) {
+		stateDir := t.TempDir()
+		holder := startLockHolder(t, stateDir, "same-build", true)
+		defer stopHolder(holder)
+		t.Setenv("HERDER_STATE_DIR", stateDir)
+		t.Setenv("HERDER_BUILD_HASH", "same-build")
+		_, already, err := acquireObserverLock(ioDiscard{})
+		if err != nil || !already {
+			t.Fatalf("same-build acquire = already %t, err %v", already, err)
+		}
+		if err := holder.Process.Signal(syscall.Signal(0)); err != nil {
+			t.Fatalf("same-build holder was disturbed: %v", err)
+		}
+	})
+
+	t.Run("pid reuse guard refuses non-observer", func(t *testing.T) {
+		stateDir := t.TempDir()
+		holder := startLockHolder(t, stateDir, "old-build", false)
+		defer stopHolder(holder)
+		t.Setenv("HERDER_STATE_DIR", stateDir)
+		t.Setenv("HERDER_BUILD_HASH", "new-build")
+		_, already, err := acquireObserverLock(ioDiscard{})
+		if err == nil || already || !strings.Contains(err.Error(), "refusing takeover") {
+			t.Fatalf("pid-reuse acquire = already %t, err %v", already, err)
+		}
+		if err := holder.Process.Signal(syscall.Signal(0)); err != nil {
+			t.Fatalf("non-observer holder was signalled: %v", err)
+		}
+	})
+}
+
+type ioDiscard struct{}
+
+func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
+
+func TestObserverLockHolder(t *testing.T) {
+	if os.Getenv("HERDER_TEST_LOCK_HOLDER") != "1" {
+		return
+	}
+	path := filepath.Join(os.Getenv("HERDER_STATE_DIR"), lockFileName)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		os.Exit(2)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil || syscall.Flock(int(f.Fd()), syscall.LOCK_EX) != nil {
+		os.Exit(2)
+	}
+	_ = f.Truncate(0)
+	_, _ = f.Seek(0, 0)
+	_, _ = fmt.Fprintf(f, "pid=%d\nbuild=%s\n", os.Getpid(), os.Getenv("HERDER_TEST_HOLDER_BUILD"))
+	_ = f.Sync()
+	select {}
+}
+
+func startLockHolder(t *testing.T, stateDir, build string, observerArgs bool) *exec.Cmd {
+	t.Helper()
+	args := []string{"-test.run=^TestObserverLockHolder$"}
+	if observerArgs {
+		args = append(args, "--", "observer", "run")
+	}
+	cmd := exec.Command(os.Args[0], args...)
+	cmd.Env = append(os.Environ(), "HERDER_TEST_LOCK_HOLDER=1", "HERDER_TEST_HOLDER_BUILD="+build, "HERDER_STATE_DIR="+stateDir)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopHolder(cmd) })
+	path := filepath.Join(stateDir, lockFileName)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if b, err := os.ReadFile(path); err == nil && strings.Contains(string(b), fmt.Sprintf("pid=%d", cmd.Process.Pid)) {
+			return cmd
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	stopHolder(cmd)
+	t.Fatalf("lock holder %d did not become ready", cmd.Process.Pid)
+	return nil
+}
+
+func stopHolder(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil || cmd.ProcessState != nil {
+		return
+	}
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+}
+
+func fakeSourceTree(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	module := filepath.Join(root, "tools", "herder")
+	for _, path := range []string{"cmd/herder", "internal/example"} {
+		if err := os.MkdirAll(filepath.Join(module, path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, contents := range map[string]string{
+		"go.mod":                      "module example.com/herder\n\ngo 1.21\n",
+		"cmd/herder/main.go":          "package main\nfunc main() {}\n",
+		"internal/example/example.go": "package example\n",
+	} {
+		if err := os.WriteFile(filepath.Join(module, path), []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
 
 func TestCacheStampCollapsesRecognitionAndTurnover(t *testing.T) {
 	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
