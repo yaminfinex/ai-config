@@ -3,14 +3,12 @@ package occupant
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
 	"ai-config/tools/herder/internal/herdrcli"
-	"ai-config/tools/herder/internal/registry/v2"
 )
 
 const (
@@ -185,37 +183,20 @@ func TestProbeHappyCodexUsesLeafHolder(t *testing.T) {
 	}
 }
 
-func TestVerdictResumedLineageIsStaleMatch(t *testing.T) {
-	row := v2.SessionRecord{SIDs: []v2.SID{{SID: sidA}, {SID: sidB}}}
-	got := Verdict(Observation{Status: Occupied, SID: sidA}, row)
-	if got.Status != Match || got.MatchAge != Stale {
-		t.Fatalf("Verdict = %+v", got)
-	}
-}
-
-func TestVerdictPositiveMismatchForeign(t *testing.T) {
-	got := Verdict(Observation{Status: Occupied, SID: sidB}, v2.SessionRecord{SIDs: []v2.SID{{SID: sidA}}})
-	if got.Status != PositiveMismatch || got.SID != sidB {
-		t.Fatalf("Verdict = %+v", got)
-	}
-}
-
 func TestProbeNoOccupantVariants(t *testing.T) {
 	t.Run("vacant", func(t *testing.T) {
 		f := newFixture(t)
 		f.proc(t, 10, 1, "bash", f.home, "")
 		pane := herdrcli.Pane{PaneID: "pane-a"}
 		obs := Probe(Substrate{Herdr: fakeHerdr{pane: pane, info: herdrcli.ProcessInfo{Processes: []herdrcli.Process{{PID: 10}}}}, ProcRoot: f.root, Home: f.home}, pane.PaneID)
-		out := Verdict(obs, v2.SessionRecord{})
-		if out.Status != NoOccupant || out.Reason != ReasonVacant {
-			t.Fatalf("obs/out = %+v / %+v", obs, out)
+		if obs.Status != Vacant {
+			t.Fatalf("obs = %+v", obs)
 		}
 	})
 	t.Run("pane-gone", func(t *testing.T) {
 		obs := Probe(Substrate{Herdr: fakeHerdr{}, ProcRoot: t.TempDir(), Home: t.TempDir()}, "gone")
-		out := Verdict(obs, v2.SessionRecord{})
-		if out.Status != NoOccupant || out.Reason != ReasonPaneGone {
-			t.Fatalf("obs/out = %+v / %+v", obs, out)
+		if obs.Status != PaneGone {
+			t.Fatalf("obs = %+v", obs)
 		}
 	})
 }
@@ -456,7 +437,7 @@ func TestProbeUnprobeableToolsPassThrough(t *testing.T) {
 			f.proc(t, 10, 1, "bash", f.home, "")
 			pane := herdrcli.Pane{PaneID: "pane-a", Agent: tool}
 			obs := Probe(Substrate{Herdr: fakeHerdr{pane: pane, info: herdrcli.ProcessInfo{Processes: []herdrcli.Process{{PID: 10}}}}, ProcRoot: f.root, Home: f.home}, pane.PaneID)
-			if Verdict(obs, v2.SessionRecord{}).Status != OutcomeUnprobeable {
+			if obs.Status != Unprobeable {
 				t.Fatalf("Probe = %+v", obs)
 			}
 		})
@@ -483,159 +464,6 @@ func TestProcRootEnvironmentHook(t *testing.T) {
 	obs := Probe(Substrate{Herdr: fakeHerdr{pane: pane, info: info}, Home: f.home}, pane.PaneID)
 	if obs.Status != Vacant {
 		t.Fatalf("Probe = %+v", obs)
-	}
-}
-
-func TestSelfProbePIDEnvironmentRequiresInjectedProcRoot(t *testing.T) {
-	t.Setenv(SelfPIDEnv, "4242")
-	t.Setenv(ProcRootEnv, "")
-	if got := selfProbePID(Substrate{}); got != os.Getpid() {
-		t.Fatalf("default proc root honored inherited %s: got %d, want caller %d", SelfPIDEnv, got, os.Getpid())
-	}
-	if got := selfProbePID(Substrate{ProcRoot: "/synthetic/proc"}); got != 4242 {
-		t.Fatalf("explicit injected proc root ignored %s: got %d, want 4242", SelfPIDEnv, got)
-	}
-	t.Setenv(ProcRootEnv, "/synthetic/proc-from-env")
-	if got := selfProbePID(Substrate{}); got != 4242 {
-		t.Fatalf("environment-injected proc root ignored %s: got %d, want 4242", SelfPIDEnv, got)
-	}
-}
-
-func TestSelfProbeAncestry(t *testing.T) {
-	f := newFixture(t)
-	pane, info, cwd := baseTree(t, f, "claude")
-	pane.AgentSession = sidA
-	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd), sidA+".jsonl"))
-	// Represent this go test process below the occupant in the injected tree.
-	f.proc(t, os.Getpid(), 30, "occupant.test", cwd, "")
-	t.Setenv("HERDR_PANE_ID", "stale-pane")
-	h := fakeHerdr{pane: pane, panes: []herdrcli.Pane{pane}, info: info}
-	obs := SelfProbe(Substrate{Herdr: h, ProcRoot: f.root, Home: f.home})
-	if obs.Status != Occupied || obs.SID != sidA || obs.Evidence[len(obs.Evidence)-1] != SignalAncestry {
-		t.Fatalf("SelfProbe = %+v", obs)
-	}
-}
-
-func TestSelfProbeForeignTreeFailsClosed(t *testing.T) {
-	f := newFixture(t)
-	pane, info, cwd := baseTree(t, f, "claude")
-	pane.AgentSession = sidA
-	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd), sidA+".jsonl"))
-	f.proc(t, os.Getpid(), 99, "occupant.test", cwd, "")
-	h := fakeHerdr{pane: pane, panes: []herdrcli.Pane{pane}, info: info}
-	obs := SelfProbe(Substrate{Herdr: h, ProcRoot: f.root, Home: f.home})
-	if obs.Status != Vacant || obs.SID != "" {
-		t.Fatalf("foreign tree accepted: %+v", obs)
-	}
-}
-
-func TestSelfProbeDifferentPaneProducesPositiveMismatch(t *testing.T) {
-	f := newFixture(t)
-	cwdA := filepath.Join(f.home, "work", "a")
-	cwdB := filepath.Join(f.home, "work", "b")
-	f.proc(t, 10, 1, "bash", cwdA, "")
-	f.proc(t, 30, 10, "claude", cwdA, "guid-a")
-	f.proc(t, 50, 1, "bash", cwdB, "")
-	f.proc(t, 60, 50, "claude", cwdB, "guid-b")
-	f.proc(t, os.Getpid(), 60, "occupant.test", cwdB, "")
-	paneA := herdrcli.Pane{PaneID: "pane-a", Agent: "claude", AgentSession: sidA}
-	paneB := herdrcli.Pane{PaneID: "pane-b", Agent: "claude", AgentSession: sidB}
-	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwdA), sidA+".jsonl"))
-	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwdB), sidB+".jsonl"))
-	h := fakeHerdr{
-		panes: []herdrcli.Pane{paneA, paneB},
-		infos: map[string]herdrcli.ProcessInfo{
-			"pane-a": {ForegroundProcessGroupID: 10},
-			"pane-b": {ForegroundProcessGroupID: 50},
-		},
-	}
-	t.Setenv("HERDR_PANE_ID", "pane-a") // positive but foreign entry hint
-	obs := SelfProbe(Substrate{Herdr: h, ProcRoot: f.root, Home: f.home})
-	out := Verdict(obs, v2.SessionRecord{SIDs: []v2.SID{{SID: sidA}}})
-	if obs.Pane.PaneID != "pane-b" || obs.SID != sidB || out.Status != PositiveMismatch {
-		t.Fatalf("SelfProbe/Verdict = %+v / %+v", obs, out)
-	}
-}
-
-func TestIncident268LibraryEssenceReplacementDoesNotMatchOldRow(t *testing.T) {
-	f := newFixture(t)
-	cwd := filepath.Join(f.home, "replacement")
-	f.proc(t, 10, 1, "bash", f.home, "")
-	f.proc(t, 50, 1, "bash", cwd, "")
-	f.proc(t, 60, 50, "claude", cwd, "guid-new")
-	oldPane := herdrcli.Pane{PaneID: "pane-old"}
-	newPane := herdrcli.Pane{PaneID: "pane-new", Agent: "claude", AgentSession: sidB}
-	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd), sidB+".jsonl"))
-	h := fakeHerdr{
-		panes: []herdrcli.Pane{oldPane, newPane},
-		infos: map[string]herdrcli.ProcessInfo{
-			"pane-old": {ForegroundProcessGroupID: 10},
-			"pane-new": {ForegroundProcessGroupID: 50},
-		},
-	}
-	sub := Substrate{Herdr: h, ProcRoot: f.root, Home: f.home}
-	oldObs := Probe(sub, oldPane.PaneID)
-	newObs := Probe(sub, newPane.PaneID)
-	newVerdict := Verdict(newObs, v2.SessionRecord{SIDs: []v2.SID{{SID: sidA}}})
-	if oldObs.Status != Vacant || newObs.SID != sidB || newVerdict.Status != PositiveMismatch {
-		t.Fatalf("old/new/verdict = %+v / %+v / %+v", oldObs, newObs, newVerdict)
-	}
-}
-
-func TestIncident041LibraryEssenceDetectionLostSelfLocation(t *testing.T) {
-	f := newFixture(t)
-	pane, info, cwd := baseTree(t, f, "claude") // agent_session intentionally absent
-	f.transcript(t, filepath.Join(f.home, ".claude", "projects", mungeCWD(cwd), sidA+".jsonl"))
-	f.proc(t, os.Getpid(), 30, "occupant.test", cwd, "")
-	t.Setenv("HERDR_PANE_ID", pane.PaneID)
-	h := fakeHerdr{pane: pane, panes: []herdrcli.Pane{pane}, info: info}
-	obs := SelfProbe(Substrate{Herdr: h, ProcRoot: f.root, Home: f.home})
-	out := Verdict(obs, v2.SessionRecord{SIDs: []v2.SID{{SID: sidA}}})
-	if out.Status != Match || obs.SID != sidA || obs.Evidence[0] != SignalCohort {
-		t.Fatalf("SelfProbe/Verdict = %+v / %+v", obs, out)
-	}
-}
-
-func TestIncident262LibraryEssenceIgnoresBusCopies(t *testing.T) {
-	f := newFixture(t)
-	cwd := filepath.Join(f.home, "work", "repo")
-	f.proc(t, 30, 1, "codex", cwd, "guid-a")
-	f.proc(t, os.Getpid(), 30, "occupant.test", cwd, "")
-	path := filepath.Join(f.home, ".codex", "sessions", "rollout-now-"+sidA+".jsonl")
-	f.transcript(t, path)
-	if err := os.Symlink(path, filepath.Join(f.root, "30", "fd", "42")); err != nil {
-		t.Fatal(err)
-	}
-	obs := SelfProbe(Substrate{Herdr: fakeHerdr{}, ProcRoot: f.root, Home: f.home})
-	verified := false
-	row := v2.SessionRecord{SIDs: []v2.SID{{SID: sidA}}, Seat: &v2.Seat{HcomVerified: &verified}}
-	out := Verdict(obs, row)
-	if out.Status != Match || obs.SID != sidA {
-		t.Fatalf("SelfProbe/Verdict = %+v / %+v", obs, out)
-	}
-}
-
-func TestSelfProbeWorksWithoutPaneInventory(t *testing.T) {
-	f := newFixture(t)
-	cwd := filepath.Join(f.home, "work", "repo")
-	f.proc(t, 30, 1, "codex", cwd, "guid-a")
-	f.proc(t, os.Getpid(), 30, "occupant.test", cwd, "")
-	path := filepath.Join(f.home, ".codex", "sessions", "rollout-now-"+sidA+".jsonl")
-	f.transcript(t, path)
-	if err := os.Symlink(path, filepath.Join(f.root, "30", "fd", "42")); err != nil {
-		t.Fatal(err)
-	}
-	obs := SelfProbe(Substrate{Herdr: fakeHerdr{panes: []herdrcli.Pane{}}, ProcRoot: f.root, Home: f.home})
-	if obs.Status != Occupied || obs.SID != sidA || obs.Pane.PaneID != "" {
-		t.Fatalf("SelfProbe = %+v", obs)
-	}
-}
-
-func TestRecordedSIDSetExcludesCrossRowLineage(t *testing.T) {
-	row := v2.SessionRecord{SIDs: []v2.SID{{SID: sidA}}, Provenance: v2.Provenance{ToolSessionID: sidB}, Lineage: v2.Lineage{ForkedFrom: "guid-parent"}}
-	got := RecordedSIDSet(row)
-	if len(got) != 2 || got[0] != sidA || got[1] != sidB {
-		t.Fatalf("RecordedSIDSet = %v", got)
 	}
 }
 
@@ -687,60 +515,4 @@ func liveClaudeResidual(current herdrcli.Pane, panes []herdrcli.Pane) bool {
 		}
 	}
 	return false
-}
-
-func TestLiveHerdrProcessInfoAndSelfProbe(t *testing.T) {
-	if os.Getenv("HERDR_PANE_ID") == "" {
-		t.Skip("live smoke: no HERDR_PANE_ID")
-	}
-	if _, err := exec.LookPath("herdr"); err != nil {
-		t.Skip("live smoke: herdr unavailable")
-	}
-	q := CLIQuerier{}
-	paneID := os.Getenv("HERDR_PANE_ID")
-	info, err := q.ProcessInfo(paneID)
-	if err != nil {
-		t.Fatalf("live process-info flag form: %v", err)
-	}
-	if info.ForegroundProcessGroupID == 0 && len(info.Processes) == 0 {
-		t.Fatal("live process-info returned no anchors (possible CLI verb drift)")
-	}
-	current, err := q.Pane(paneID)
-	if err != nil {
-		t.Fatalf("live pane get: %v", err)
-	}
-	panes, err := q.Panes()
-	if err != nil {
-		t.Fatalf("live pane inventory: %v", err)
-	}
-	residual := liveClaudeResidual(current, panes)
-	if residual {
-		t.Log("live smoke branch: same-cwd Claude detection-lost residual; asserting honest AMBIGUOUS")
-	} else {
-		t.Log("live smoke branch: attributable seat; asserting OCCUPIED")
-	}
-	// A full parallel `go test ./...` temporarily places other packages'
-	// mock tool processes below the same foreground process-group anchor.
-	// Resample that transient snapshot without weakening either expected
-	// terminal outcome; focused live runs normally settle on the first pass.
-	deadline := time.Now().Add(20 * time.Second)
-	for attempt := 1; ; attempt++ {
-		paneObs := Probe(Substrate{Herdr: q}, paneID)
-		obs := SelfProbe(Substrate{Herdr: q})
-		t.Logf("live smoke sample %d: pane=%s err=%v self=%s err=%v", attempt, paneObs, paneObs.Err, obs, obs.Err)
-		if residual {
-			if paneObs.Status == Occupied || obs.Status == Occupied {
-				t.Fatalf("live residual manufactured an occupant: pane=%s self=%s", paneObs, obs)
-			}
-			if paneObs.Status == Ambiguous && paneObs.SID == "" && obs.Status == Ambiguous && obs.SID == "" {
-				return
-			}
-		} else if paneObs.Status == Occupied && obs.Status == Occupied && paneObs.SID == obs.SID {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("live smoke did not reach expected terminal outcome: pane=%s self=%s", paneObs, obs)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
 }

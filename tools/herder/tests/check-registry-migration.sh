@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-registry-migration.sh — gate the one-shot v1→v2 registry migration.
+# check-registry-migration.sh — pin the post-migration disposable-cache cut.
 
 set -uo pipefail
 
@@ -13,16 +13,14 @@ export AI_CONFIG_ROOT="$REPO_ROOT"
 cd "$HERDER_ROOT" || exit 1
 
 test_names=(
-  TestLegacyV1MigrationArchivesAndReseeds
-  TestLegacyV1MigrationTwiceIsByteStable
-  TestLockedWriteRefusesInjectedLegacyV1RowInBornV2Registry
-  TestLockedWriteRefusesLegacyV1RowInPlantedMigrationArchive
-  TestLegacyV1MigrationRecoversEmptyLiveFromArchive
-  TestLegacyV1MigrationRecoversPartialLiveWithNodeFromArchive
-  TestLegacyV1MigrationRefusesMismatchedExistingArchive
+  TestLegacyRowsRemainUnmigratedDuringCacheMaintenance
+  TestLockedWriteRejectsNonObserverEvents
+  TestLockedWriteRefusesHalfPresentNodeState
+  TestUnknownNodeRowsAreReadOnlyButDoNotBlockLocalWrites
+  TestRotationDropsRetiredSnapshots
 )
 
-minimum_test_count=7
+minimum_test_count=5
 declare -A declared_test_names=()
 for test_name in "${test_names[@]}"; do
   if [[ -n "${declared_test_names[$test_name]+present}" ]]; then
@@ -61,13 +59,13 @@ test_executed_and_passed() {
 }
 
 if ! listed_tests="$(go test ./internal/registry -list '^Test')"; then
-  printf '\nREGISTRY V1 MIGRATION TEST DISCOVERY FAILED — fix the compile or listing failure above; the gate cannot verify its declared tests.\n'
+  printf '\nREGISTRY CACHE-CUT TEST DISCOVERY FAILED — fix the compile or listing failure above; the gate cannot verify its declared tests.\n'
   exit 1
 fi
 
 missing_test_probe=TestRegistryMigrationGateMissingNameProbe
 if require_declared_tests "$listed_tests" "$missing_test_probe" >/dev/null 2>&1; then
-  printf '\nREGISTRY V1 MIGRATION GATE SELF-CHECK FAILED — the deliberately nonexistent test "%s" was accepted; fix missing-name validation in check-registry-migration.sh.\n' "$missing_test_probe"
+  printf '\nREGISTRY CACHE-CUT GATE SELF-CHECK FAILED — the deliberately nonexistent test "%s" was accepted; fix missing-name validation in check-registry-migration.sh.\n' "$missing_test_probe"
   exit 1
 fi
 
@@ -78,7 +76,7 @@ fi
 test_pattern="^($(IFS='|'; printf '%s' "${test_names[*]}"))$"
 if ! test_output="$(go test -v ./internal/registry -run "$test_pattern")"; then
   printf '%s\n' "$test_output"
-  printf '\nREGISTRY V1 MIGRATION CONTRACT DRIFT — fix the failing test or its declared name in check-registry-migration.sh.\n'
+  printf '\nREGISTRY CACHE-CUT CONTRACT DRIFT — fix the failing test or its declared name in check-registry-migration.sh.\n'
   exit 1
 fi
 
@@ -107,4 +105,4 @@ for test_name in "${test_names[@]}"; do
   exit 1
 done
 
-printf '\nALL GREEN — registry v1 migration invariants pass.\n'
+printf '\nALL GREEN — legacy migration is absent and the disposable-cache boundary is pinned.\n'

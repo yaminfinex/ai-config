@@ -2,9 +2,7 @@
 package missioncontext
 
 import (
-	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -30,19 +28,6 @@ type Refusal struct {
 }
 
 func (r *Refusal) Error() string { return r.Reason }
-
-func WriteRefusal(stderr io.Writer, verb string, err error) int {
-	var refusal *Refusal
-	if !errors.As(err, &refusal) {
-		refusal = &Refusal{
-			Kind:   "mission_lookup_failed",
-			Reason: err.Error(),
-			Remedy: "fix the mission repository and retry",
-		}
-	}
-	fmt.Fprintf(stderr, "herder %s: refused [%s]: %s — remedy: %s\n", verb, refusal.Kind, refusal.Reason, refusal.Remedy)
-	return 1
-}
 
 type FS interface {
 	Stat(name string) (fs.FileInfo, error)
@@ -81,30 +66,6 @@ func ValidateSlug(slug string) error {
 		Reason: fmt.Sprintf("invalid mission slug %q: %s", slug, reason),
 		Remedy: "use lowercase letters, digits, and single hyphens, with no trailing hyphen",
 	}
-}
-
-func ResolveExplicit(slug string, opts Options) (v2.Mission, error) {
-	if err := ValidateSlug(slug); err != nil {
-		return v2.Mission{}, err
-	}
-	env, fsys := dependencies(opts)
-	repo := env("MISSIONS_REPO")
-	if repo == "" {
-		return v2.Mission{}, &Refusal{
-			Kind:   "missions_repo_unset",
-			Reason: "$MISSIONS_REPO is not set",
-			Remedy: "set MISSIONS_REPO to the shared missions repository",
-		}
-	}
-	missionDir := filepath.Join(repo, "missions", slug)
-	if !dirExists(fsys, missionDir) {
-		return v2.Mission{}, &Refusal{
-			Kind:   "mission_not_found",
-			Reason: fmt.Sprintf("mission %s not found", slug),
-			Remedy: "check the slug or create the mission",
-		}
-	}
-	return v2.Mission{Slug: slug, Source: SourceExplicit}, nil
 }
 
 func ResolveCWD(opts Options) (v2.Mission, error) {

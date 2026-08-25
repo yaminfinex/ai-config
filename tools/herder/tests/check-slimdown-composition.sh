@@ -42,6 +42,44 @@
 # - check-hook-bootstrap, check-launch-contract, check-launcher-doctor,
 #   check-shims, check-statusline-snapshot -> hcom hook construction
 #   (check-hcom-hooks) and the fleet wrapper suite.
+#
+# Cache-writer refusal successor notes (foundation slim, unit two):
+# - Legacy-v1 append detection, first-write migration refusal, migration-archive
+#   byte verification, and archive recovery have no writer successor. The observer is
+#   the only writer, old binaries no longer enter through a supported write
+#   surface, and the cache may be deleted and rebuilt from live substrate state.
+#   Existing archives remain read-only display history for `list --all`.
+# - Label-owner uniqueness is no longer guarded. Labels are display data from
+#   the observer's fresh hcom/herdr view; a transient duplicate is an honest
+#   cache observation, not an authority collision.
+# - Bridge capability enum/count validation is no longer guarded. The observer
+#   copies descriptive capability fields from the latest row and no lifecycle
+#   command consumes the cache as authority.
+# - Durable-mission slug/source validation, mission-change event legality,
+#   mission clearing, and cross-lineage mission carry have no writer successor.
+#   The observer preserves the full observed row as display data; the sole
+#   surviving inference reader treats mission context as a view concern.
+# - Binding-history durable IDs, field/value shapes, evidence classes,
+#   append-only prefix checks, and attested-evidence refusal are no longer
+#   guarded. No binding writer survives, and observer rows are not adjudicated
+#   as identity authority.
+# - Attestation-history and binding-tombstone append-only/frozen checks, plus
+#   the blanket no-new-attestation guard, have no successor. These authority
+#   histories may remain as copied display fields but cannot authorize action.
+# - Canonical seated-coordinate validation and matching seat/bus binding-fact
+#   transition checks are replaced by the observer-only event shape checks:
+#   observed rows must be seated with a seat; dead/archive rows must be
+#   unseated/retired without one. Fresh occupant/hcom probes supply the values.
+# - Lifecycle-event state guards (retire/reopen/label/adoption/mission/
+#   recognised/reconciled/registered), seated-successor field ownership, and
+#   registered-row no-op equivalence have no successor because UpdateLocked
+#   now categorically refuses every non-observer event.
+# - Torn/malformed cache rows, atomic batch refusal, flock/fsync discipline,
+#   and local node identity remain guarded in registry/write.go and are pinned
+#   by check-registry-write-discipline.sh.
+# - Rotation archive creation and recovery have no successor. Size rotation
+#   rewrites a compact current snapshot under the writer lock; existing archives
+#   remain readable by `list --all`, but the disposable cache creates no new ones.
 
 set -euo pipefail
 

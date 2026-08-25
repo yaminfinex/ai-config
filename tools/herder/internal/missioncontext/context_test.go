@@ -1,7 +1,6 @@
 package missioncontext
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,27 +28,5 @@ func TestResolveCWDMatchesMissionAndMarkerPrecedence(t *testing.T) {
 	}
 	if mission.Slug != "cwd-mission" || mission.Source != SourceCWD {
 		t.Fatalf("mission = %+v", mission)
-	}
-}
-
-func TestResolveExplicitTypedRefusals(t *testing.T) {
-	tests := []struct {
-		name string
-		slug string
-		env  func(string) string
-		kind string
-	}{
-		{name: "invalid", slug: "Bad--slug", env: os.Getenv, kind: "invalid_mission_slug"},
-		{name: "repo unset", slug: "valid", env: func(string) string { return "" }, kind: "missions_repo_unset"},
-		{name: "missing", slug: "valid", env: func(string) string { return t.TempDir() }, kind: "mission_not_found"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := ResolveExplicit(tt.slug, Options{Env: tt.env})
-			var refusal *Refusal
-			if !errors.As(err, &refusal) || refusal.Kind != tt.kind || refusal.Remedy == "" {
-				t.Fatalf("err = %#v, want %s refusal with remedy", err, tt.kind)
-			}
-		})
 	}
 }

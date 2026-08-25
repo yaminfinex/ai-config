@@ -74,6 +74,6 @@ lale field data (#11888), second refusal mode (benign): herder compact also refu
 
 created: 2026-08-23 10:18
 ---
-Interim fix MERGED to main 2026-08-23 in ea6e1c0 (branch task-041-compact-unblock @ 28f90b2; owner-approved; field-verified on riko manual seat — the recorded refusing terminal now resolves to its own live pane). Task stays OPEN as resolved-interim: permanent resolution is by deletion at slim-down IMPL-2 (compact fossil ladder replaced by SelfProbe; readiness package spine). CORRECTION to the 2026-08-21 note below: the incident-041 red fixture does NOT flip green at this merge — it models the IMPL-2 injectable probe substrate, while the merged hotfix locates by the caller real pid ancestry; it flips at IMPL-2 (missions feb8b28). Post-merge red suite on main: 3 reds / 5 keep-greens, as amended.
+Interim fix MERGED to main 2026-08-23 in ea6e1c0 (branch task-041-compact-unblock @ 28f90b2; owner-approved; field-verified on riko manual seat — the recorded refusing terminal now resolves to its own live pane). The proposed permanent replacement was a caller-self-location probe, but the verb teardown instead deleted compact and the display-cache amendment later removed that zero-caller probe leg. CORRECTION to the 2026-08-21 note below: the incident-041 red fixture did NOT flip green at this merge — it modeled the then-planned injectable probe substrate, while the merged hotfix located by the caller real pid ancestry. Post-merge red suite on main: 3 reds / 5 keep-greens, as amended.
 ---
 <!-- COMMENTS:END -->

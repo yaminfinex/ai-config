@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-registry-rotation.sh — gate registry size rotation and archive consultation.
+# check-registry-rotation.sh — gate simple in-place cache compaction.
 
 set -uo pipefail
 
@@ -13,20 +13,13 @@ export AI_CONFIG_ROOT="$REPO_ROOT"
 cd "$HERDER_ROOT" || exit 1
 
 test_names=(
-  TestRotationAtThresholdArchivesAndReseeds
-  TestRotationRecoversPartialLiveFromArchive
-  TestMigrationRecoveryDoesNotRefireOnPureV2LiveWithStaleMigrationArchive
-  TestRotationRecoveryUsesNewestRotationArchiveOverMigrationArchive
-  TestLoadWithArchivesMergesDeterministicallyLiveWins
-  TestLoadWithArchivesUsesLatestAcrossThreeRotationArchives
-  TestRotationReusesMatchingArchiveAfterPreTruncateCrash
-  TestRotationSkipsWhenReseedWouldStillExceedThreshold
+  TestRotationCompactsLiveCacheWithoutArchives
+  TestRotationDropsRetiredSnapshots
+  TestRotationSkipsWhenCompactSnapshotStillExceedsThreshold
   TestRotationInvalidThresholdNamesFix
-  TestRotationRecoveryRefusalTexts
-  TestRotationArchiveByteVerificationRefusalText
 )
 
-minimum_test_count=11
+minimum_test_count=4
 declare -A declared_test_names=()
 for test_name in "${test_names[@]}"; do
   if [[ -n "${declared_test_names[$test_name]+present}" ]]; then
@@ -111,4 +104,4 @@ for test_name in "${test_names[@]}"; do
   exit 1
 done
 
-printf '\nALL GREEN — registry rotation/archive-consultation invariants pass.\n'
+printf '\nALL GREEN — registry rotation compacts the live disposable cache without archives.\n'

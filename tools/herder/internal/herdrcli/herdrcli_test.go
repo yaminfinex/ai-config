@@ -279,38 +279,3 @@ func TestParseSessionSnapshotRejectsNeitherShape(t *testing.T) {
 		}
 	}
 }
-
-func TestParseWorkspaceTabCreate(t *testing.T) {
-	wss, err := ParseWorkspaceList([]byte(`{"result":{"workspaces":[{"workspace_id":"ws_1"},{"workspace_id":"ws_2"}]}}`))
-	if err != nil || len(wss) != 2 || wss[1].WorkspaceID != "ws_2" {
-		t.Errorf("workspaces = (%+v, %v)", wss, err)
-	}
-
-	tab, err := ParseTabCreate([]byte(`{"result":{"tab":{"tab_id":"tab_3"}}}`))
-	if err != nil || tab.TabID != "tab_3" {
-		t.Errorf("tab = (%+v, %v)", tab, err)
-	}
-
-	// herdr 0.7.5 `tab create` returns the opened pane under root_pane, and
-	// `pane split` returns the same shape under pane (which ParsePaneGet reads).
-	root, err := ParseTabCreateRootPane([]byte(`{"id":4,"result":{
-		"root_pane":{"pane_id":"pane_5","workspace_id":"ws_1","tab_id":"tab_3","terminal_id":"term_D","cwd":"/repo"},
-		"tab":{"tab_id":"tab_3"},"type":"tab_created"}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if root.PaneID != "pane_5" || root.TerminalID != "term_D" ||
-		root.WorkspaceID != "ws_1" || root.TabID != "tab_3" || root.CWD != "/repo" {
-		t.Errorf("root_pane = %+v", root)
-	}
-
-	split, err := ParsePaneGet([]byte(`{"id":5,"result":{
-		"pane":{"pane_id":"pane_6","workspace_id":"ws_1","tab_id":"tab_3","terminal_id":"term_E"},
-		"type":"pane_info"}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if split.PaneID != "pane_6" || split.TerminalID != "term_E" {
-		t.Errorf("split pane = %+v", split)
-	}
-}

@@ -18,12 +18,10 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/herdrcli"
-	"ai-config/tools/herder/internal/registry/v2"
 )
 
 const (
 	ProcRootEnv = "HERDER_PROBE_PROC_ROOT"
-	SelfPIDEnv  = "HERDER_PROBE_SELF_PID"
 )
 
 // Claude does not expose an exact pid-to-transcript join. In the
@@ -52,7 +50,6 @@ const (
 	SignalCohort       Signal = "cohort"
 	SignalAgentSession Signal = "agent_session"
 	SignalEnvironGUID  Signal = "environ-guid"
-	SignalAncestry     Signal = "ancestry"
 )
 
 type Observation struct {
@@ -70,39 +67,8 @@ type Observation struct {
 	provenCandidates int
 }
 
-type OutcomeStatus string
-
-const (
-	Match              OutcomeStatus = "MATCH"
-	PositiveMismatch   OutcomeStatus = "POSITIVE-MISMATCH"
-	NoOccupant         OutcomeStatus = "NO-OCCUPANT"
-	OutcomeAmbiguous   OutcomeStatus = "AMBIGUOUS"
-	OutcomeUnprobeable OutcomeStatus = "UNPROBEABLE"
-)
-
-type MatchAge string
-
-const (
-	Current MatchAge = "current"
-	Stale   MatchAge = "stale"
-)
-
-type NoOccupantReason string
-
-const (
-	ReasonVacant   NoOccupantReason = "vacant"
-	ReasonPaneGone NoOccupantReason = "pane_gone"
-)
-
-type Outcome struct {
-	Status   OutcomeStatus
-	MatchAge MatchAge
-	Reason   NoOccupantReason
-	SID      string
-}
-
-// HerdrQuerier is the complete live substrate seam used by Probe and
-// SelfProbe. Tests inject snapshots; CLIQuerier supplies the production CLI.
+// HerdrQuerier is the live substrate seam consumed by the observer's pane
+// sweep. Tests inject snapshots; CLIQuerier supplies the production CLI.
 type HerdrQuerier interface {
 	Pane(string) (herdrcli.Pane, error)
 	Panes() ([]herdrcli.Pane, error)
@@ -113,11 +79,6 @@ type Substrate struct {
 	Herdr    HerdrQuerier
 	ProcRoot string
 	Home     string
-	// SelfPID makes SelfProbe hermetic with an injected ProcRoot. Production
-	// leaves it zero and uses os.Getpid. The environment equivalent is honored
-	// only alongside an injected proc root so accidental inheritance cannot
-	// redirect a production probe into a foreign process tree.
-	SelfPID int
 }
 
 // CLIQuerier invokes the field-verified herdr 0.8 CLI spelling. In
@@ -202,123 +163,6 @@ func Probe(sub Substrate, paneID string) Observation {
 		}
 	}
 	return obs
-}
-
-// SelfProbe locates the caller from live process ancestry. HERDR_PANE_ID is
-// only a fast entry hint; if it is stale or absent every live pane is tried.
-func SelfProbe(sub Substrate) Observation {
-	self := selfProbePID(sub)
-	sub = normalized(sub)
-	if hint := os.Getenv("HERDR_PANE_ID"); hint != "" {
-		obs := Probe(sub, hint)
-		if obs.Status == Occupied && isAncestor(sub.ProcRoot, obs.PID, self) {
-			obs.Evidence = append(obs.Evidence, SignalAncestry)
-			return obs
-		}
-	}
-	panes, err := sub.Herdr.Panes()
-	if err != nil {
-		return Observation{Status: Unprobeable, Err: err}
-	}
-	var matches []Observation
-	for _, pane := range panes {
-		obs := Probe(sub, pane.PaneID)
-		if obs.Status == Occupied && isAncestor(sub.ProcRoot, obs.PID, self) {
-			obs.Evidence = append(obs.Evidence, SignalAncestry)
-			matches = append(matches, obs)
-		}
-	}
-	if len(matches) == 1 {
-		return matches[0]
-	}
-	if len(matches) > 1 {
-		return Observation{Status: Ambiguous}
-	}
-	// A caller outside herdr's pane inventory (for example an ssh or cron
-	// command invoked beneath a tool) can still prove identity pid-first.
-	// There are deliberately no seat coordinates to heal in this case.
-	if obs := probeSelfAncestry(sub, self); obs.Status == Occupied || obs.Status == Ambiguous || obs.Status == Unprobeable {
-		return obs
-	}
-	return Observation{Status: Vacant}
-}
-
-func selfProbePID(sub Substrate) int {
-	if sub.SelfPID != 0 {
-		return sub.SelfPID
-	}
-	procRootInjected := os.Getenv(ProcRootEnv) != "" || (sub.ProcRoot != "" && sub.ProcRoot != "/proc")
-	if procRootInjected {
-		if pid, err := strconv.Atoi(os.Getenv(SelfPIDEnv)); err == nil && pid != 0 {
-			return pid
-		}
-	}
-	return os.Getpid()
-}
-
-func probeSelfAncestry(sub Substrate, self int) Observation {
-	entries, err := scanProc(sub.ProcRoot)
-	if err != nil {
-		return Observation{Status: Unprobeable, Err: err}
-	}
-	byPID := map[int]procEntry{}
-	for _, e := range entries {
-		byPID[e.pid] = e
-	}
-	for pid, hops := self, 0; pid > 0 && hops < 64; hops++ {
-		e, ok := byPID[pid]
-		if !ok {
-			return Observation{Status: Vacant}
-		}
-		if toolName(e.comm) != "" {
-			obs := probeSnapshot(sub, herdrcli.Pane{}, herdrcli.ProcessInfo{ForegroundProcessGroupID: e.pid})
-			if obs.Status == Occupied {
-				obs.Evidence = append(obs.Evidence, SignalAncestry)
-			}
-			return obs
-		}
-		if e.ppid == pid {
-			break
-		}
-		pid = e.ppid
-	}
-	return Observation{Status: Vacant}
-}
-
-func Verdict(obs Observation, row v2.SessionRecord) Outcome {
-	switch obs.Status {
-	case Vacant:
-		return Outcome{Status: NoOccupant, Reason: ReasonVacant}
-	case PaneGone:
-		return Outcome{Status: NoOccupant, Reason: ReasonPaneGone}
-	case Ambiguous:
-		return Outcome{Status: OutcomeAmbiguous}
-	case Unprobeable:
-		return Outcome{Status: OutcomeUnprobeable}
-	}
-	if obs.Status != Occupied || obs.SID == "" {
-		return Outcome{Status: OutcomeAmbiguous}
-	}
-	recorded := map[string]bool{}
-	for _, sid := range row.SIDs {
-		if sid.SID != "" {
-			recorded[sid.SID] = true
-		}
-	}
-	if row.Provenance.ToolSessionID != "" {
-		recorded[row.Provenance.ToolSessionID] = true
-	}
-	if !recorded[obs.SID] {
-		return Outcome{Status: PositiveMismatch, SID: obs.SID}
-	}
-	age := Stale
-	if len(row.SIDs) > 0 && row.SIDs[len(row.SIDs)-1].SID == obs.SID {
-		age = Current
-	}
-	if len(row.SIDs) == 0 && row.Provenance.ToolSessionID == obs.SID {
-		age = Current
-	}
-	return Outcome{Status: Match, MatchAge: age, SID: obs.SID}
 }
 
 type procEntry struct {
@@ -894,26 +738,6 @@ func sameProcessCohort(matches []procEntry) bool {
 		}
 	}
 	return true
-}
-
-// RecordedSIDSet exposes the exact lineage membership rule for callers that
-// need to check ambiguity across several registry rows before Verdict.
-func RecordedSIDSet(row v2.SessionRecord) []string {
-	set := map[string]bool{}
-	for _, sid := range row.SIDs {
-		if sid.SID != "" {
-			set[sid.SID] = true
-		}
-	}
-	if row.Provenance.ToolSessionID != "" {
-		set[row.Provenance.ToolSessionID] = true
-	}
-	out := make([]string, 0, len(set))
-	for sid := range set {
-		out = append(out, sid)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func (o Observation) String() string {

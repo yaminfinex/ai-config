@@ -182,16 +182,6 @@ type Snapshot struct {
 	Panes    []Pane  `json:"panes"`
 }
 
-// Workspace is one entry of `herdr workspace list` (.result.workspaces[]).
-type Workspace struct {
-	WorkspaceID string `json:"workspace_id"`
-}
-
-// Tab is `herdr tab create`'s .result.tab.
-type Tab struct {
-	TabID string `json:"tab_id"`
-}
-
 // ParseAgentList decodes `herdr agent list` output. Like `.result.agents[]?`
 // a missing/null agents array yields no entries without erroring.
 func ParseAgentList(out []byte) ([]Agent, error) {
@@ -300,44 +290,4 @@ func ParseProcessInfo(out []byte) (ProcessInfo, error) {
 		}
 	}
 	return envelope.Result.ProcessInfo, nil
-}
-
-// ParseWorkspaceList decodes `herdr workspace list` output
-// (.result.workspaces[]?).
-func ParseWorkspaceList(out []byte) ([]Workspace, error) {
-	var envelope struct {
-		Result struct {
-			Workspaces []Workspace `json:"workspaces"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(out, &envelope); err != nil {
-		return nil, err
-	}
-	return envelope.Result.Workspaces, nil
-}
-
-// ParseTabCreate decodes `herdr tab create` output (.result.tab.tab_id).
-func ParseTabCreate(out []byte) (Tab, error) {
-	var envelope struct {
-		Result struct {
-			Tab Tab `json:"tab"`
-		} `json:"result"`
-	}
-	err := json.Unmarshal(out, &envelope)
-	return envelope.Result.Tab, err
-}
-
-// ParseTabCreateRootPane decodes the pane `herdr tab create` opens the tab
-// around (.result.root_pane). herdr 0.7.5 split pane creation from agent
-// start: `tab create` returns its first pane under root_pane (not the `pane`
-// key that `pane get`/`pane split` use), so the spawner reads coordinates
-// from here. A missing member decodes to the zero Pane.
-func ParseTabCreateRootPane(out []byte) (Pane, error) {
-	var envelope struct {
-		Result struct {
-			RootPane Pane `json:"root_pane"`
-		} `json:"result"`
-	}
-	err := json.Unmarshal(out, &envelope)
-	return envelope.Result.RootPane, err
 }

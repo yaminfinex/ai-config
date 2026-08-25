@@ -23,6 +23,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
@@ -123,7 +125,7 @@ func Load(path string) ([]Record, error) {
 }
 
 func LoadWithArchives(path string) ([]Record, error) {
-	recs, err := LoadArchives(path)
+	recs, err := loadArchives(path)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +136,7 @@ func LoadWithArchives(path string) ([]Record, error) {
 	return append(recs, live...), nil
 }
 
-func LoadArchives(path string) ([]Record, error) {
+func loadArchives(path string) ([]Record, error) {
 	archives, err := registryArchivePaths(path)
 	if err != nil {
 		return nil, err
@@ -145,10 +147,10 @@ func LoadArchives(path string) ([]Record, error) {
 		if err != nil {
 			return nil, err
 		}
-		recs, decErr := decode(f, archive, true)
+		recs, decodeErr := decode(f, archive, true)
 		closeErr := f.Close()
-		if decErr != nil {
-			return nil, decErr
+		if decodeErr != nil {
+			return nil, decodeErr
 		}
 		if closeErr != nil {
 			return nil, closeErr
@@ -156,6 +158,39 @@ func LoadArchives(path string) ([]Record, error) {
 		out = append(out, recs...)
 	}
 	return out, nil
+}
+
+func registryArchivePaths(path string) ([]string, error) {
+	dir := filepath.Join(filepath.Dir(path), filepath.Base(path)+".archive")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var paths []string
+	for _, entry := range entries {
+		if entry.IsDir() || archiveSequence(entry.Name()) == 0 || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, entry.Name()))
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		return archiveSequence(filepath.Base(paths[i])) < archiveSequence(filepath.Base(paths[j]))
+	})
+	return paths, nil
+}
+
+func archiveSequence(name string) int {
+	if len(name) < 5 || name[4] != '-' {
+		return 0
+	}
+	sequence, err := strconv.Atoi(name[:4])
+	if err != nil || sequence <= 0 {
+		return 0
+	}
+	return sequence
 }
 
 func decode(r io.Reader, path string, archived bool) ([]Record, error) {
@@ -206,7 +241,7 @@ func isV2SessionObject(obj map[string]json.RawMessage) bool {
 
 func recordFromV2SessionObject(obj map[string]json.RawMessage) Record {
 	guid := rawString(obj["guid"])
-	short := ShortGUID(guid)
+	short := shortGUID(guid)
 	label := rawString(obj["label"])
 	var seat v2.Seat
 	_ = json.Unmarshal(obj["seat"], &seat)
@@ -269,44 +304,6 @@ func legacyV1State(status string) string {
 	}
 }
 
-// LegacyV1RawCompat contains only fields decoded from a legacy-v1 row's Raw
-// payload. It exists for migration compatibility where old seat coordinates
-// remain operationally relevant; it never derives a two-state status from a
-// v2 session state.
-type LegacyV1RawCompat struct {
-	PaneID       string
-	TerminalID   string
-	HcomDir      string
-	HcomName     string
-	HcomVerified *bool
-	V1Status     string
-}
-
-func DecodeLegacyV1Raw(rec v2.SessionRecord) (LegacyV1RawCompat, bool) {
-	if !rec.LegacyV1 || len(bytes.TrimSpace(rec.Raw)) == 0 {
-		return LegacyV1RawCompat{}, false
-	}
-	var raw struct {
-		PaneID       string `json:"pane_id"`
-		TerminalID   string `json:"terminal_id"`
-		HcomDir      string `json:"hcom_dir"`
-		HcomName     string `json:"hcom_name"`
-		HcomVerified *bool  `json:"hcom_verified,omitempty"`
-		Status       string `json:"status"`
-	}
-	if err := json.Unmarshal(rec.Raw, &raw); err != nil {
-		return LegacyV1RawCompat{}, false
-	}
-	return LegacyV1RawCompat{
-		PaneID:       raw.PaneID,
-		TerminalID:   raw.TerminalID,
-		HcomDir:      raw.HcomDir,
-		HcomName:     raw.HcomName,
-		HcomVerified: raw.HcomVerified,
-		V1Status:     raw.Status,
-	}, true
-}
-
 func warnQuarantined(path string, lineNo int, err error) {
 	fmt.Fprintf(os.Stderr, "herder registry %s: quarantined line %d: %v\n", path, lineNo, err)
 }
@@ -335,7 +332,7 @@ func IsNonRetired(rec Record) bool {
 	return rec.State == v2.StateSeated || rec.State == v2.StateUnseated
 }
 
-func NewGUID() (string, error) {
+func newGUID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
@@ -346,7 +343,7 @@ func NewGUID() (string, error) {
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
-func ShortGUID(guid string) string {
+func shortGUID(guid string) string {
 	for i, r := range guid {
 		if r == '-' {
 			return guid[:i]

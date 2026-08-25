@@ -17,7 +17,6 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/observerstatus"
 	"ai-config/tools/herder/internal/occupant"
-	"ai-config/tools/herder/internal/registry"
 	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
@@ -572,9 +571,12 @@ func TestObservedStampBypassesFrozenBindingLegality(t *testing.T) {
 		{ID: "seat-binding", Field: v2.BindingFieldSeat, Seat: &v2.BindingSeat{Kind: "herdr", TerminalID: "term-1", PaneID: "pane-1"}, EvidenceClass: v2.EvidenceLiveVerified, ObservedAt: initial.RecordedAt},
 		{ID: "bus-binding", Field: v2.BindingFieldHcomName, Value: "old-name", EvidenceClass: v2.EvidenceLiveVerified, ObservedAt: initial.RecordedAt},
 	}
-	outcomes, err := registry.UpdateLocked(path, func(registry.LockedUpdate) ([]v2.SessionRecord, error) { return []v2.SessionRecord{initial}, nil })
-	if err != nil || len(outcomes) != 1 || outcomes[0].Status != registry.WriteApplied {
-		t.Fatalf("seed write = %+v, %v", outcomes, err)
+	encoded, err := json.Marshal(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(encoded, '\n'), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	proj, err := v2.LoadFile(path, v2.LoadOptions{})
 	if err != nil {

@@ -76,13 +76,6 @@ func TestResolveExactNameFailsClosedOnDuplicateAndConflict(t *testing.T) {
 	}
 }
 
-func TestDecodeAcceptsJSONLines(t *testing.T) {
-	rows, err := Decode([]byte("{\"name\":\"one\"}\n{\"name\":\"two\"}\n"))
-	if err != nil || len(rows) != 2 || rows[1].Name != "two" {
-		t.Fatalf("Decode = (%+v, %v), want two JSONL rows", rows, err)
-	}
-}
-
 func TestLaunchContextEmptyRequiresAnActuallyEmptyObject(t *testing.T) {
 	tests := []struct {
 		raw   string
@@ -94,9 +87,9 @@ func TestLaunchContextEmptyRequiresAnActuallyEmptyObject(t *testing.T) {
 		{raw: `[{"name":"null","launch_context":null}]`, empty: false},
 	}
 	for _, tt := range tests {
-		rows, err := Decode([]byte(tt.raw))
+		rows, err := decode([]byte(tt.raw))
 		if err != nil || len(rows) != 1 {
-			t.Fatalf("Decode(%s) = (%+v, %v)", tt.raw, rows, err)
+			t.Fatalf("decode(%s) = (%+v, %v)", tt.raw, rows, err)
 		}
 		if got := rows[0].LaunchContext.Empty(); got != tt.empty {
 			t.Fatalf("LaunchContext.Empty(%s) = %v, want %v", tt.raw, got, tt.empty)

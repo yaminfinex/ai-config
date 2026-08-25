@@ -85,11 +85,11 @@ func List(dir string) ([]Row, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hcom list --json failed: %w", err)
 	}
-	return Decode(out)
+	return decode(out)
 }
 
-// Decode accepts both the array and JSONL roster formats emitted by hcom.
-func Decode(raw []byte) ([]Row, error) {
+// decode accepts both the array and JSONL roster formats emitted by hcom.
+func decode(raw []byte) ([]Row, error) {
 	var rows []Row
 	if err := json.Unmarshal(raw, &rows); err == nil {
 		return rows, nil

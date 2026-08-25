@@ -13,19 +13,16 @@ export AI_CONFIG_ROOT="$REPO_ROOT"
 cd "$HERDER_ROOT" || exit 1
 
 test_names=(
-  TestLoadPreservesFourStateViewFromV2Rows
   TestLockedWriteReturnsPerCandidateOutcomes
   TestLockedWriteRefusalIsAtomicAndReportedPerCandidate
   TestLockedWriteMintsNodeOnceAndStampsRows
   TestTwoProcessFirstWritersConvergeOnOneNode
   TestLockedWriteRefusesHalfPresentNodeState
   TestUnknownNodeRowsAreReadOnlyButDoNotBlockLocalWrites
-  TestLockedWriteRefusesLegacyV1AppendToMintedRegistry
-  TestLockedWriteRefusesInjectedLegacyV1RowInBornV2Registry
-  TestLockedWriteRefusesLegacyV1RowInPlantedMigrationArchive
+  TestLockedWriteRejectsNonObserverEvents
 )
 
-minimum_test_count=10
+minimum_test_count=7
 declare -A declared_test_names=()
 for test_name in "${test_names[@]}"; do
   if [[ -n "${declared_test_names[$test_name]+present}" ]]; then
