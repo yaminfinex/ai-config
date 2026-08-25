@@ -119,13 +119,24 @@ POST `/api/spawn`
     "branch": "<only for worktree shape>"}`.
   Placement derives from `from_pane`'s tab/workspace; worktree shape
   inherits the workspace's repo. Wraps the one spawn path
-  (tools/fleet). Response: the new agent's bus name + pane. Refusals
+  (tools/fleet — which grew a same-tab split placement for the pane
+  shape at implementation, 2026-08-25, keeping terminal and web on
+  one path). Response: the new agent's bus name + pane. Refusals
   (unknown pane, workspace without a repo for worktree shape) are
   409s quoting the substrate.
 
 POST `/api/agents/{bus-name}/fork`
   Body: `{"prompt": "..."}` (optional). Wraps hcom fork; response =
   new agent name + placement.
+
+Both lifecycle responses (pinned at implementation review
+2026-08-25): HTTP 200 `{"name": "<bus-name>", "pane": "<pane-id>"}`.
+Substrate success IS success: when the fork/spawn succeeded but
+placement is not yet visible to the board poll, `pane` is empty and
+the agent appears on `/api/fleet` within a poll tick — never a 5xx
+for a session that exists (a false 502 invites double-forks).
+Attribution, statuses, and infrastructure-vs-refusal classification
+follow the message write's rules exactly.
 
 ## Web-peer attribution (ruled — tailscale identities, flat authority)
 
