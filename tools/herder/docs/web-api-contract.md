@@ -101,8 +101,15 @@ POST `/api/agents/{bus-name}/message`
   Body: `{"text": "..."}`. Sends on the bus as an ATTRIBUTED web
   peer (below). RULED: the server marks EVERY web message as a
   reply-expected request (intent=request) — always, no knob in v1 —
-  so agent response rules guarantee an answer. Agent replies on its
-  own turn; the reply arrives on the stream. No injection, ever.
+  so agent response rules guarantee an answer. Web origin is
+  disclosed to the agent (owner ruling 2026-08-25): the server
+  prepends a bracketed context note to the delivered text — the
+  sender is a web operator, hcom replies cannot reach them, answer
+  in the normal chat turn. Web senders are NOT addressable bus
+  peers (their identity is transient; observed live 2026-08-25 when
+  agent replies to a web sender bounced): the agent's answer
+  arrives on the web viewer's transcript tail, not as a bus
+  message. No pane injection, ever.
   Success response (pinned at implementation review 2026-08-25):
   `{"sent": true, "to": "<agent>", "from": "<web-sender>",
   "intent": "request"}`. Refusal statuses on this path: 404 unknown
