@@ -30,7 +30,7 @@ if rg -n 'grokbridge|seatcompletion|DoctrineDeliver|doctrineCandidates|recognise
   fail "observer authority, credential, doctrine, or Grok machinery remains"
 fi
 
-pattern='^(TestCacheStampCollapsesRecognitionAndTurnover|TestCacheStampDedupeKeepsProbeCorroboratedRow|TestCacheStampRetiresDeadRowsAfterGrace|TestCacheStampMarksRecordedOccupantMismatchDead|TestCacheStampMakesBlockedStateVisible|TestCacheStampBootRaceIsLastWriteWinsWithoutIdentityEvent|TestCacheStampBootingPaneWaitsForCorroboration|TestCacheStampRelocatesLiveIdentityBeforeDeath|TestCacheStampLiveBusWithoutRelocationNeverDies|TestObservePanesEnforcesAllChannelsBeforeDeath|TestObservePanesBusFailureCannotAgreeToDeath|TestCacheStampRelocatesLiveDedupeLoserBeforeDeadStamp|TestObservePanesPopulatesRelocatedLiveDedupeLoser|TestLiveBusRowUsesHcomJoinedClassification|TestConflictingBusCorrelatesVetoDeath|TestOccupiedForeignSIDAliasDoesNotRelocate|TestObservedStampBypassesFrozenBindingLegality)$'
+pattern='^(TestDaemonExitsSupersededAndWritesFinalStatus|TestStalenessCheckIsOffWhenEvidenceAbsent|TestSourceHashMatchesWrapperAlgorithm|TestObserverLockTakeoverByBuild|TestCacheStampCollapsesRecognitionAndTurnover|TestCacheStampDedupeKeepsProbeCorroboratedRow|TestCacheStampRetiresDeadRowsAfterGrace|TestCacheStampMarksRecordedOccupantMismatchDead|TestCacheStampMakesBlockedStateVisible|TestCacheStampBootRaceIsLastWriteWinsWithoutIdentityEvent|TestCacheStampBootingPaneWaitsForCorroboration|TestCacheStampRelocatesLiveIdentityBeforeDeath|TestCacheStampLiveBusWithoutRelocationNeverDies|TestObservePanesEnforcesAllChannelsBeforeDeath|TestObservePanesBusFailureCannotAgreeToDeath|TestCacheStampRelocatesLiveDedupeLoserBeforeDeadStamp|TestObservePanesPopulatesRelocatedLiveDedupeLoser|TestLiveBusRowUsesHcomJoinedClassification|TestConflictingBusCorrelatesVetoDeath|TestOccupiedForeignSIDAliasDoesNotRelocate|TestObservedStampBypassesFrozenBindingLegality)$'
 output="$(cd "$HERDER_ROOT" && env -u GOROOT GOTOOLCHAIN=local "$GO_BIN" test -count=1 -v ./internal/observercmd -run "$pattern")" || {
   printf '%s\n' "$output"
   fail "observer-as-cache contract failed"
@@ -38,6 +38,10 @@ output="$(cd "$HERDER_ROOT" && env -u GOROOT GOTOOLCHAIN=local "$GO_BIN" test -c
 printf '%s\n' "$output"
 
 for name in \
+  TestDaemonExitsSupersededAndWritesFinalStatus \
+  TestStalenessCheckIsOffWhenEvidenceAbsent \
+  TestSourceHashMatchesWrapperAlgorithm \
+  TestObserverLockTakeoverByBuild \
   TestCacheStampCollapsesRecognitionAndTurnover \
   TestCacheStampDedupeKeepsProbeCorroboratedRow \
   TestCacheStampRetiresDeadRowsAfterGrace \

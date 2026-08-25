@@ -1,6 +1,7 @@
 package observercmd
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 const (
 	defaultSweepInterval = 30 * time.Second
 	defaultDeadGrace     = 2 * time.Minute
+	takeoverWait         = 5 * time.Second
 	lockFileName         = "observer.lock"
 )
 
@@ -828,8 +830,11 @@ func applyCandidates(path string, cands []candidate, stderr io.Writer) observers
 	return summary
 }
 func runDaemon(stdout, stderr io.Writer) int {
-	lock, ok := acquireObserverLock(stderr)
-	if !ok {
+	lock, alreadyRunning, err := acquireObserverLock(stderr)
+	if err != nil {
+		return 1
+	}
+	if alreadyRunning {
 		return 0
 	}
 	defer lock.Close()
@@ -838,6 +843,9 @@ func runDaemon(stdout, stderr io.Writer) int {
 	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
 	defer signal.Stop(signals)
 	for {
+		if exitIfSuperseded(stderr) {
+			return 0
+		}
 		client, _, err := connectHerdrSocket(stderr)
 		if err != nil {
 			fmt.Fprintf(stderr, "herder observer run: herdr socket connect failed: %v; retrying after %s\n", err, interval)
@@ -876,6 +884,11 @@ func runDaemon(stdout, stderr io.Writer) int {
 			}
 			select {
 			case <-ticker.C:
+				if exitIfSuperseded(stderr) {
+					ticker.Stop()
+					client.Close()
+					return 0
+				}
 				if client.isClosed() {
 					reconnect = true
 					reconnectCause = client.closeCause().Error()
@@ -899,6 +912,11 @@ func runDaemon(stdout, stderr io.Writer) int {
 					// Events are latency hints. A full sweep is still the correctness
 					// path, and it subsumes a targeted probe while preserving the
 					// same uninterrupted socket generation.
+					if exitIfSuperseded(stderr) {
+						ticker.Stop()
+						client.Close()
+						return 0
+					}
 					if err := sweepDaemonOnce(stderr, hctx, lock.path); err != nil {
 						reconnect = true
 						reconnectCause = fmt.Sprintf("event-triggered sweep failed: %v", err)
@@ -969,25 +987,148 @@ func (l observerLock) Close() {
 	_ = l.file.Close()
 }
 
-func acquireObserverLock(stderr io.Writer) (observerLock, bool) {
+func acquireObserverLock(stderr io.Writer) (observerLock, bool, error) {
 	path := filepath.Join(filepath.Dir(registry.DefaultPath()), lockFileName)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		fmt.Fprintf(stderr, "herder observer run: %v\n", err)
-		return observerLock{}, false
+		return observerLock{}, false, err
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		fmt.Fprintf(stderr, "herder observer run: %v\n", err)
-		return observerLock{}, false
+		return observerLock{}, false, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close()
-		return observerLock{}, false
+		holder, readErr := io.ReadAll(f)
+		if readErr != nil {
+			_ = f.Close()
+			fmt.Fprintf(stderr, "herder observer run: read lock holder: %v\n", readErr)
+			return observerLock{}, false, readErr
+		}
+		pid, holderBuild := parsePID(string(holder)), parseLockValue(string(holder), "build")
+		if holderBuild == buildHash() {
+			_ = f.Close()
+			return observerLock{}, true, nil
+		}
+		if pid == 0 || !observerRunPID(pid) {
+			_ = f.Close()
+			err := fmt.Errorf("lock held by pid %d build %q, but pid cmdline is not an observer run; refusing takeover", pid, holderBuild)
+			fmt.Fprintf(stderr, "herder observer run: %v\n", err)
+			return observerLock{}, false, err
+		}
+		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			_ = f.Close()
+			fmt.Fprintf(stderr, "herder observer run: terminate superseded pid %d: %v\n", pid, err)
+			return observerLock{}, false, err
+		}
+		deadline := time.Now().Add(takeoverWait)
+		for processAlive(pid) && time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		// Exactly one post-wait retry: a replacement never joins a flock race
+		// or signals a second process based on changing lockfile contents.
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			_ = f.Close()
+			err := fmt.Errorf("superseded observer pid %d did not release lock within %s", pid, takeoverWait)
+			fmt.Fprintf(stderr, "herder observer run: %v\n", err)
+			return observerLock{}, false, err
+		}
 	}
 	_ = f.Truncate(0)
+	_, _ = f.Seek(0, io.SeekStart)
 	_, _ = fmt.Fprintf(f, "pid=%d\nbuild=%s\nstarted_at=%s\n", os.Getpid(), buildHash(), time.Now().UTC().Format(time.RFC3339))
 	_ = f.Sync()
-	return observerLock{file: f, path: path}, true
+	return observerLock{file: f, path: path}, false, nil
+}
+
+func parseLockValue(s, key string) string {
+	prefix := key + "="
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
+}
+
+func observerRunPID(pid int) bool {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return false
+	}
+	args := strings.Split(strings.TrimRight(string(b), "\x00"), "\x00")
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "observer" && args[i+1] == "run" {
+			return true
+		}
+	}
+	return false
+}
+
+func processAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+func exitIfSuperseded(stderr io.Writer) bool {
+	running, root := os.Getenv("HERDER_BUILD_HASH"), os.Getenv("AI_CONFIG_ROOT")
+	if running == "" || root == "" {
+		return false
+	}
+	current, err := sourceHash(filepath.Join(root, "tools", "herder"))
+	if err != nil || current == running {
+		return false
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	detail := fmt.Sprintf("superseded: running build=%s current source=%s", running, current)
+	st := observerstatus.Status{
+		Schema: "herder.observer.status.v1", Advice: true, PID: os.Getpid(),
+		BuildHash: running, HeartbeatAt: now, LastSweepAt: now,
+		ProtocolCompatible: true, ProtocolDetail: detail,
+		Flags: []observerstatus.Flag{{Type: "superseded", Severity: "info", Detail: detail, ObservedAt: now, ObservedVia: []string{"source_hash"}}},
+	}
+	if err := observerstatus.WriteAtomic(observerstatus.DefaultPath(), st); err != nil {
+		fmt.Fprintf(stderr, "herder observer run: write superseded status: %v\n", err)
+	}
+	return true
+}
+
+func sourceHash(root string) (string, error) {
+	paths := []string{"go.mod"}
+	for _, dir := range []string{"cmd", "internal"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() || !entry.Type().IsRegular() {
+				return nil
+			}
+			name := entry.Name()
+			if filepath.Ext(name) != ".go" && name != "go.mod" && name != "go.sum" {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			paths = append(paths, filepath.ToSlash(rel))
+			return nil
+		})
+		if err != nil {
+			return "", err
+		}
+	}
+	sort.Strings(paths)
+	outer := sha256.New()
+	for _, rel := range paths {
+		contents, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			return "", err
+		}
+		sum := sha256.Sum256(contents)
+		_, _ = fmt.Fprintf(outer, "%x  %s\n", sum, rel)
+	}
+	return fmt.Sprintf("%x", outer.Sum(nil))[:16], nil
 }
 
 func runStatus(opts options, stdout, stderr io.Writer) int {
@@ -1034,7 +1175,7 @@ func runStop(stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "observer stop: no pid in lockfile")
 		return 0
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		fmt.Fprintf(stderr, "herder observer stop: %v\n", err)
 		return 1
 	}
