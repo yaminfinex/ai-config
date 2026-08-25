@@ -22,6 +22,7 @@ import (
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/webui"
 )
 
 const (
@@ -199,12 +200,29 @@ func newHandler(deps dependencies) http.Handler {
 		}
 		serveEvents(w, r, deps)
 	})
+	ui := http.FileServer(http.FS(webui.Files()))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/fleet" && r.URL.Path != "/api/events" {
+		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api" {
+			if r.URL.Path == "/api/fleet" || r.URL.Path == "/api/events" {
+				mux.ServeHTTP(w, r)
+				return
+			}
 			refuse(w, http.StatusNotFound, "not found", "unknown endpoint")
 			return
 		}
-		mux.ServeHTTP(w, r)
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		if webui.Has(r.URL.Path) {
+			ui.ServeHTTP(w, r)
+			return
+		}
+		// Non-API routes are SPA routes. Serve index.html without redirecting
+		// so a future client-side route can be opened directly.
+		request := r.Clone(r.Context())
+		request.URL.Path = "/"
+		ui.ServeHTTP(w, request)
 	})
 }
 

@@ -6,6 +6,7 @@ set -uo pipefail
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$TESTS_DIR/../../.." && pwd -P)"
 HERDER_ROOT="$REPO_ROOT/tools/herder"
+WEB_ROOT="$HERDER_ROOT/web"
 FIXTURE="$TESTS_DIR/fixtures/list-live"
 ROOT="$(mktemp -d)"
 server_pid=""
@@ -26,6 +27,19 @@ trap cleanup EXIT
 fail=0
 pass() { printf 'PASS  %s\n' "$1"; }
 bad() { printf 'FAIL  %s - %s\n' "$1" "$2"; fail=$((fail + 1)); }
+
+if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+  if npm --prefix "$WEB_ROOT" ci &&
+    npm --prefix "$WEB_ROOT" run lint &&
+    npm --prefix "$WEB_ROOT" run typecheck &&
+    npm --prefix "$WEB_ROOT" run build; then
+    pass "web dependencies install cleanly and lint, typecheck, and production build pass"
+  else
+    bad "web build gates" "npm UI checks failed"
+  fi
+else
+  pass "web build gates skipped because node/npm are absent (committed dist remains buildable by Go)"
+fi
 
 mkdir -p "$ROOT/bin" "$ROOT/home" "$ROOT/cache"
 if ! (cd "$HERDER_ROOT" && go build -o "$ROOT/herder" ./cmd/herder); then
@@ -113,6 +127,15 @@ else
   bad "serve startup" "stdout=$(cat "$ROOT/serve.out") stderr=$(cat "$ROOT/serve.err")"
 fi
 
+if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
+  grep -qF '<title>Herder fleet</title>' "$ROOT/index.html" &&
+  asset="$(sed -n 's|.*src="\(/assets/[^\"]*\.js\)".*|\1|p' "$ROOT/index.html")" &&
+  [ -n "$asset" ] && curl -fsS "http://127.0.0.1:$port$asset" | grep -qF '/api/events'; then
+  pass "serve delivers the embedded production UI and its hashed JavaScript asset"
+else
+  bad "embedded UI" "index=$(cat "$ROOT/index.html" 2>/dev/null || true)"
+fi
+
 if python3 - "$ROOT/fleet.json" <<'PY'
 import json, sys
 board = json.load(open(sys.argv[1]))
@@ -166,7 +189,7 @@ else
   bad "server shutdown" "rc=$serve_rc"
 fi
 
-printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((5 - fail))" "$fail"
+printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((7 - fail))" "$fail"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
