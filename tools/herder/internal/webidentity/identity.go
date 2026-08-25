@@ -48,7 +48,11 @@ func Sender(ctx context.Context, remoteAddr string) (string, error) {
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && len(bytes.TrimSpace(exitErr.Stderr)) > 0 {
-			return "", fmt.Errorf("%w: tailscale whois failed: %s", ErrUnavailable, bytes.TrimSpace(exitErr.Stderr))
+			detail := string(bytes.TrimSpace(exitErr.Stderr))
+			if strings.Contains(strings.ToLower(detail), "peer not found") {
+				return "", fmt.Errorf("tailscale whois failed: %s", detail)
+			}
+			return "", fmt.Errorf("%w: tailscale whois failed: %s", ErrUnavailable, detail)
 		}
 		return "", fmt.Errorf("%w: tailscale whois failed: %v", ErrUnavailable, err)
 	}

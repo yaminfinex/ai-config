@@ -122,7 +122,7 @@ case "$mode" in
   ok) login='Alice@Example.com' ;;
   existing) login='vile' ;;
   reserved) login='bigboss@example.com' ;;
-  unresolved) printf '%s\n' '{"UserProfile":{}}'; exit 0 ;;
+  unresolved) printf 'peer not found\n' >&2; exit 1 ;;
   *) printf 'unknown whois fixture mode: %s\n' "$mode" >&2; exit 2 ;;
 esac
 printf '{"UserProfile":{"LoginName":"%s"}}\n' "$login"
