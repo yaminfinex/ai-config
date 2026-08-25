@@ -98,6 +98,7 @@ if [ "${1:-}" = transcript ]; then
   esac
 fi
 if [ "${1:-}" = send ]; then
+  printf '<send>\n' >>"$WEB_SEND_CALLS"
   for arg in "$@"; do printf '<%s>\n' "$arg"; done >"$WEB_SEND_LOG"
   exit 0
 fi
@@ -196,6 +197,7 @@ WEB_SERVE_ROSTER="$ROOT/roster.json" \
 WEB_TRANSCRIPT_LOG="$ROOT/transcript.log" \
 WEB_STREAM_STATE="$ROOT/stream.state" \
 WEB_SEND_LOG="$ROOT/send.log" \
+WEB_SEND_CALLS="$ROOT/send.calls" \
 WEB_SPAWN_LOG="$ROOT/spawn.log" \
 WEB_FORK_LOG="$ROOT/fork.log" \
 WEB_SERVE_SNAPSHOT="$ROOT/snapshot.json" \
@@ -313,14 +315,33 @@ else
   bad "transcript stream resume" "first=$stream_one second=$stream_two stderr=$(cat "$ROOT/transcript-stream.err")"
 fi
 
-if curl -fsS -X POST -H 'Content-Type: application/json' --data '{"text":"please inspect"}' \
+message_text="please inspect --flag 'quotes'
+second line"
+message_body="$(jq -cn --arg text "$message_text" '{text:$text}')"
+if curl -fsS -X POST -H 'Content-Type: application/json' --data "$message_body" \
   "http://127.0.0.1:$port/api/agents/mavu/message" >"$ROOT/message.json" &&
   jq -e '. == {sent:true,to:"mavu",from:"web-alice-example-com",intent:"request"}' "$ROOT/message.json" >/dev/null &&
-  grep -qxF '<request>' "$ROOT/send.log" && grep -qxF '<--intent>' "$ROOT/send.log" &&
-  grep -qxF '<web-alice-example-com>' "$ROOT/send.log"; then
-  pass "message write is attributed, always intent=request, and confirms the send"
+  [ "$(wc -l <"$ROOT/send.calls")" -eq 1 ] &&
+  python3 - "$ROOT/send.log" "$message_text" <<'PY'
+import sys
+
+log_path, original = sys.argv[1:]
+note = "[This message came from a web operator named web-alice-example-com via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]"
+expected = ["send", "@mavu", "--intent", "request", "--from", "web-alice-example-com", "--", note + "\n\n" + original]
+raw = open(log_path).read()
+actual = []
+position = 0
+while position < len(raw):
+    assert raw[position] == "<", raw
+    end = raw.index(">\n", position)
+    actual.append(raw[position + 1:end])
+    position = end + 2
+assert actual == expected, (actual, expected)
+PY
+then
+  pass "message write sends exactly once with web context, byte-intact text, attribution, request intent, and unchanged confirmation"
 else
-  bad "message write" "body=$(cat "$ROOT/message.json" 2>/dev/null || true) args=$(cat "$ROOT/send.log" 2>/dev/null || true)"
+  bad "message write" "body=$(cat "$ROOT/message.json" 2>/dev/null || true) calls=$(cat "$ROOT/send.calls" 2>/dev/null || true) args=$(cat "$ROOT/send.log" 2>/dev/null || true)"
 fi
 
 if curl -fsS -X POST -H 'Content-Type: application/json' \
