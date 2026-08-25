@@ -18,13 +18,17 @@ import (
 
 const whoisTimeout = 5 * time.Second
 
+// ErrUnavailable marks failures to execute or reach the tailscale whois
+// substrate. Successfully resolved but unusable identities are not wrapped.
+var ErrUnavailable = errors.New("tailscale unavailable")
+
 var reservedUsers = map[string]bool{
 	"bigboss": true, "conductor": true, "hcom": true, "herder": true,
 	"owner": true, "system": true,
 }
 
 // Sender resolves the peer's tailnet login and renders a visibly web-origin
-// hcom sender. Loopback is deliberately read-only under the pinned contract.
+// hcom sender. A peer who resolves without a usable login remains read-only.
 func Sender(ctx context.Context, remoteAddr string) (string, error) {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
@@ -40,13 +44,13 @@ func Sender(ctx context.Context, remoteAddr string) (string, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		if whoisCtx.Err() != nil {
-			return "", fmt.Errorf("tailscale whois timed out: %w", whoisCtx.Err())
+			return "", fmt.Errorf("%w: tailscale whois timed out: %v", ErrUnavailable, whoisCtx.Err())
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && len(bytes.TrimSpace(exitErr.Stderr)) > 0 {
-			return "", fmt.Errorf("tailscale whois failed: %s", bytes.TrimSpace(exitErr.Stderr))
+			return "", fmt.Errorf("%w: tailscale whois failed: %s", ErrUnavailable, bytes.TrimSpace(exitErr.Stderr))
 		}
-		return "", fmt.Errorf("tailscale whois failed: %w", err)
+		return "", fmt.Errorf("%w: tailscale whois failed: %v", ErrUnavailable, err)
 	}
 	var result struct {
 		UserProfile struct {
@@ -54,7 +58,7 @@ func Sender(ctx context.Context, remoteAddr string) (string, error) {
 		} `json:"UserProfile"`
 	}
 	if err := json.Unmarshal(out, &result); err != nil {
-		return "", fmt.Errorf("invalid tailscale whois JSON: %w", err)
+		return "", fmt.Errorf("%w: invalid tailscale whois JSON: %v", ErrUnavailable, err)
 	}
 	login := strings.TrimSpace(result.UserProfile.LoginName)
 	if login == "" {

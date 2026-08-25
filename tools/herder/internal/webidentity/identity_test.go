@@ -2,6 +2,7 @@ package webidentity
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,20 +35,26 @@ printf '%s\n' '{"UserProfile":{"LoginName":"Alice+Ops@Example.COM"}}'
 	}
 }
 
-func TestSenderRefusesLoopbackAndReservedTailnetUser(t *testing.T) {
+func TestSenderClassifiesWhoisFailureAndSemanticIdentityRefusals(t *testing.T) {
 	dir := t.TempDir()
 	stub := filepath.Join(dir, "tailscale")
 	if err := os.WriteFile(stub, []byte("#!/usr/bin/env bash\nprintf 'no tailnet identity for loopback\\n' >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
-	if _, err := Sender(context.Background(), "127.0.0.1:4400"); err == nil || !strings.Contains(err.Error(), "no tailnet identity") {
+	if _, err := Sender(context.Background(), "127.0.0.1:4400"); !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "no tailnet identity") {
 		t.Fatalf("loopback error = %v", err)
+	}
+	if err := os.WriteFile(stub, []byte("#!/usr/bin/env bash\nprintf '%s\\n' '{\"UserProfile\":{}}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Sender(context.Background(), "100.64.0.9:1234"); err == nil || errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "no user login") {
+		t.Fatalf("missing login error = %v", err)
 	}
 	if err := os.WriteFile(stub, []byte("#!/usr/bin/env bash\nprintf '%s\\n' '{\"UserProfile\":{\"LoginName\":\"bigboss@example.com\"}}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Sender(context.Background(), "100.64.0.9:1234"); err == nil || !strings.Contains(err.Error(), "reserved") {
+	if _, err := Sender(context.Background(), "100.64.0.9:1234"); err == nil || errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "reserved") {
 		t.Fatalf("reserved error = %v", err)
 	}
 }

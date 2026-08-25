@@ -16,6 +16,10 @@ import (
 
 const sendTimeout = 10 * time.Second
 
+// ErrUnavailable marks failures to start or reach the hcom substrate. A
+// running hcom process that refuses a send returns an ordinary semantic error.
+var ErrUnavailable = errors.New("hcom unavailable")
+
 // SendRequest always supplies intent=request; callers cannot choose a weaker
 // intent through this API.
 func SendRequest(ctx context.Context, target, sender, message string) error {
@@ -24,13 +28,16 @@ func SendRequest(ctx context.Context, target, sender, message string) error {
 	cmd := hcomcli.CommandContext(sendCtx, "send", "@"+target, "--intent", "request", "--from", sender, "--", message)
 	if _, err := cmd.Output(); err != nil {
 		if sendCtx.Err() != nil {
-			return fmt.Errorf("hcom send timed out: %w", sendCtx.Err())
+			return fmt.Errorf("%w: hcom send timed out: %v", ErrUnavailable, sendCtx.Err())
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && len(bytes.TrimSpace(exitErr.Stderr)) > 0 {
 			return errors.New(string(bytes.TrimSpace(exitErr.Stderr)))
 		}
-		return errors.New(strings.TrimSpace(err.Error()))
+		if errors.As(err, &exitErr) {
+			return errors.New(strings.TrimSpace(err.Error()))
+		}
+		return fmt.Errorf("%w: hcom send failed to start: %v", ErrUnavailable, err)
 	}
 	return nil
 }

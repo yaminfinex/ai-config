@@ -2,6 +2,7 @@ package hcommessage
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,5 +39,23 @@ for arg in "$@"; do printf '<%s>\n' "$arg"; done >"$SEND_ARGS"
 	want := "<send>\n<@dore>\n<--intent>\n<request>\n<--from>\n<web-alice-example-com>\n<-->\n<please inspect tools>\n"
 	if string(raw) != want || strings.Contains(string(raw), "inform") {
 		t.Fatalf("hcom send args:\n%s\nwant:\n%s", raw, want)
+	}
+}
+
+func TestSendRequestClassifiesStartFailureAndRunningRefusal(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	err := SendRequest(context.Background(), "dore", "web-alice", "hello")
+	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "failed to start") {
+		t.Fatalf("missing hcom error = %v", err)
+	}
+
+	stub := filepath.Join(dir, "hcom")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nprintf 'target refused message\\n' >&2\nexit 9\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err = SendRequest(context.Background(), "dore", "web-alice", "hello")
+	if err == nil || errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "target refused message") {
+		t.Fatalf("running refusal error = %v", err)
 	}
 }

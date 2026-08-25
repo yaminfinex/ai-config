@@ -18,8 +18,10 @@ import (
 
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/hcommessage"
 	"ai-config/tools/herder/internal/hcomtranscript"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/webidentity"
 )
 
 func fixtureDeps() dependencies {
@@ -258,6 +260,50 @@ func TestMessageWritePinsAttributionRefusalsAndConfirmationShape(t *testing.T) {
 	newHandler(deps).ServeHTTP(confirmed, request)
 	if confirmed.Code != http.StatusOK || target != "dore" || sender != "web-alice-example-com" || text != "please inspect" || !strings.Contains(confirmed.Body.String(), `"sent":true`) || !strings.Contains(confirmed.Body.String(), `"intent":"request"`) {
 		t.Fatalf("confirmed=%d %s send=(%q,%q,%q)", confirmed.Code, confirmed.Body.String(), target, sender, text)
+	}
+}
+
+func TestMessageWriteMapsWhoisInfrastructureTo502AndSemanticAttributionTo409(t *testing.T) {
+	for name, test := range map[string]struct {
+		err       error
+		status    int
+		errorText string
+	}{
+		"infrastructure": {fmt.Errorf("%w: daemon unavailable", webidentity.ErrUnavailable), http.StatusBadGateway, "substrate unreachable"},
+		"semantic":       {errors.New("tailscale whois returned no user login"), http.StatusConflict, "attribution required"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			deps := fixtureDeps()
+			deps.sender = func(context.Context, string) (string, error) { return "", test.err }
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/agents/dore/message", bytes.NewBufferString(`{"text":"hello"}`))
+			newHandler(deps).ServeHTTP(response, request)
+			if response.Code != test.status || !strings.Contains(response.Body.String(), `"error":"`+test.errorText+`"`) {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestMessageWriteMapsSendInfrastructureTo502AndSemanticRefusalTo409(t *testing.T) {
+	for name, test := range map[string]struct {
+		err       error
+		status    int
+		errorText string
+	}{
+		"infrastructure": {fmt.Errorf("%w: hcom missing", hcommessage.ErrUnavailable), http.StatusBadGateway, "substrate unreachable"},
+		"semantic":       {errors.New("target refused message"), http.StatusConflict, "refused by substrate"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			deps := fixtureDeps()
+			deps.send = func(context.Context, string, string, string) error { return test.err }
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/agents/dore/message", bytes.NewBufferString(`{"text":"hello"}`))
+			newHandler(deps).ServeHTTP(response, request)
+			if response.Code != test.status || !strings.Contains(response.Body.String(), `"error":"`+test.errorText+`"`) {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 

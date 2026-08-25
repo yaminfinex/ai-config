@@ -585,6 +585,10 @@ func serveMessage(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 	}
 	sender, err := deps.sender(r.Context(), r.RemoteAddr)
 	if err != nil {
+		if errors.Is(err, webidentity.ErrUnavailable) {
+			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+			return
+		}
 		refuse(w, http.StatusConflict, "attribution required", err.Error())
 		return
 	}
@@ -595,6 +599,10 @@ func serveMessage(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 		}
 	}
 	if err := deps.send(r.Context(), name, sender, request.Text); err != nil {
+		if errors.Is(err, hcommessage.ErrUnavailable) {
+			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+			return
+		}
 		refuse(w, http.StatusConflict, "refused by substrate", err.Error())
 		return
 	}
