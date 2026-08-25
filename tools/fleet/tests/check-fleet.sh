@@ -84,7 +84,13 @@ case "$1 $2" in
     printf '%s\n' '{"result":{"tab":{"tab_id":"tab-left-behind"}}}'
     ;;
   'pane get')
-    printf '%s\n' '{"result":{"pane":{"pane_id":"p-test","cwd":"/tmp"}}}'
+    if [[ ${FLEET_TEST_UNKNOWN_SPLIT:-} == 1 && ${3:-} == p-source ]]; then
+      exit 1
+    fi
+    printf '%s\n' '{"result":{"pane":{"pane_id":"'"${3:-p-test}"'","cwd":"/tmp"}}}'
+    ;;
+  'pane split')
+    printf '%s\n' '{"result":{"pane":{"pane_id":"p-split","cwd":"/tmp"}}}'
     ;;
   'pane process-info')
     if [[ ${FLEET_TEST_PROCESS_SHAPE:-} == no-shell-pid ]]; then
@@ -173,6 +179,22 @@ grep -F 'FLEET_PANE=p-test HCOM_TERMINAL=fleet' "$FLEET_TEST_CALLS" >/dev/null |
 grep -E 'hcom .* 1 codex .*--dir /tmp.*--hcom-prompt hello.*--sandbox danger-full-access.*--go' "$FLEET_TEST_CALLS" >/dev/null \
   || fail "codex launch omitted a required flag"
 pass "spawn pins placement, cwd, readiness, and Codex autonomy"
+
+: >"$FLEET_TEST_CALLS"
+PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --split-from p-source --prompt hello >"$TEST_ROOT/split.out"
+grep -F 'herdr pane get p-source' "$FLEET_TEST_CALLS" >/dev/null || fail "split spawn did not validate its source pane"
+grep -F 'herdr pane split --pane p-source --no-focus' "$FLEET_TEST_CALLS" >/dev/null || fail "split spawn did not invoke herdr pane split"
+grep -F 'FLEET_PANE=p-split HCOM_TERMINAL=fleet' "$FLEET_TEST_CALLS" >/dev/null || fail "split spawn did not launch into the fresh pane"
+grep -Fx 'pane=p-split' "$TEST_ROOT/split.out" >/dev/null || fail "split spawn did not report the fresh pane"
+pass "spawn splits beside a validated source and launches into the fresh pane"
+
+if FLEET_TEST_UNKNOWN_SPLIT=1 PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --split-from p-source >"$TEST_ROOT/split-missing.out" 2>"$TEST_ROOT/split-missing.err"; then
+  fail "split spawn accepted an unknown source pane"
+fi
+grep -F 'fleet spawn: pane does not exist: p-source' "$TEST_ROOT/split-missing.err" >/dev/null \
+  || fail "split spawn did not quote the unknown source refusal"
+pass "spawn refuses an unknown split source before creating placement"
 
 printf '0\n' >"$TEST_ROOT/hooks-count"
 FLEET_TEST_HOOKS_BOUND=delayed FLEET_TEST_HOOKS_COUNT="$TEST_ROOT/hooks-count" \

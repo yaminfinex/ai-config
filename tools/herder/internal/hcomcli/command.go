@@ -12,7 +12,14 @@ import (
 // agent/pane identity inherited by a server launched from an agent session.
 func CommandContext(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "hcom", args...)
-	cmd.Env = make([]string, 0, len(os.Environ()))
+	cmd.Env = AnonymousEnv()
+	return cmd
+}
+
+// AnonymousEnv preserves ordinary process configuration and the selected bus
+// while removing managed agent/pane identity.
+func AnonymousEnv() []string {
+	env := make([]string, 0, len(os.Environ()))
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
 		if strings.HasPrefix(name, "HCOM_") && name != "HCOM_DIR" {
@@ -22,7 +29,7 @@ func CommandContext(ctx context.Context, args ...string) *exec.Cmd {
 		case "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID":
 			continue
 		}
-		cmd.Env = append(cmd.Env, entry)
+		env = append(env, entry)
 	}
-	return cmd
+	return env
 }

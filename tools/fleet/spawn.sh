@@ -14,7 +14,8 @@ usage() {
   local rc=${1:-2}
   cat >&2 <<'EOF'
 usage: spawn.sh <claude|codex> [--model MODEL] --tag TAG
-                (--workspace ID | --worktree-branch NAME --repo PATH | --pane ID)
+                (--workspace ID | --worktree-branch NAME --repo PATH |
+                 --pane ID | --split-from PANE_ID)
                 [--prompt TEXT]
 EOF
   exit "$rc"
@@ -31,6 +32,7 @@ workspace=
 worktree_branch=
 repo=
 pane=
+split_from=
 prompt=
 
 while (($# > 0)); do
@@ -65,6 +67,11 @@ while (($# > 0)); do
       pane=$2
       shift 2
       ;;
+    --split-from)
+      [[ $# -ge 2 ]] || usage
+      split_from=$2
+      shift 2
+      ;;
     --prompt)
       [[ $# -ge 2 ]] || usage
       prompt=$2
@@ -86,7 +93,8 @@ placements=0
 [[ -n $workspace ]] && ((placements += 1))
 [[ -n $worktree_branch || -n $repo ]] && ((placements += 1))
 [[ -n $pane ]] && ((placements += 1))
-((placements == 1)) || die "choose exactly one placement: --workspace, --worktree-branch with --repo, or --pane"
+[[ -n $split_from ]] && ((placements += 1))
+((placements == 1)) || die "choose exactly one placement: --workspace, --worktree-branch with --repo, --pane, or --split-from"
 if [[ -n $worktree_branch || -n $repo ]]; then
   [[ -n $worktree_branch && -n $repo ]] || die "--worktree-branch and --repo must be used together"
 fi
@@ -119,7 +127,16 @@ elif [[ -n $worktree_branch ]]; then
   cwd=$(jq -er '.result.workspace.worktree.checkout_path | select(length > 0)' <<<"$create_output") \
     || die "worktree create returned no checkout path ($placement_detail, pane=$pane_id left for explicit cleanup)"
 else
-  placement_kind=existing-pane
+  if [[ -n $split_from ]]; then
+    source_output=$(herdr pane get "$split_from") || die "pane does not exist: $split_from"
+    source_pane=$(jq -er '.result.pane.pane_id | select(length > 0)' <<<"$source_output") || die "pane get returned no pane id"
+    split_output=$(herdr pane split --pane "$source_pane" --no-focus) || die "herdr pane split failed for pane $source_pane"
+    pane=$(jq -er '.result.pane.pane_id // .result.pane_id | select(length > 0)' <<<"$split_output") \
+      || die "pane split returned no pane id (source pane=$source_pane left unchanged; split placement may need explicit cleanup)"
+    placement_kind=split-pane
+  else
+    placement_kind=existing-pane
+  fi
   placement_detail="pane=$pane"
   pane_output=$(herdr pane get "$pane") || die "pane does not exist: $pane"
   pane_id=$(jq -er '.result.pane.pane_id | select(length > 0)' <<<"$pane_output") || die "pane get returned no pane id"

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -25,6 +26,7 @@ import (
 	"ai-config/tools/herder/internal/hcommessage"
 	"ai-config/tools/herder/internal/hcomtranscript"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/webaction"
 	"ai-config/tools/herder/internal/webidentity"
 	"ai-config/tools/herder/internal/webui"
 )
@@ -43,6 +45,8 @@ type dependencies struct {
 	rangeRead  func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error)
 	sender     func(context.Context, string) (string, error)
 	send       func(context.Context, string, string, string) error
+	spawn      func(context.Context, []string) (webaction.Result, error)
+	fork       func(context.Context, string, string, bool) (string, error)
 	poll       time.Duration
 	listeners  func(int) ([]net.Listener, []string, error)
 }
@@ -56,6 +60,8 @@ var liveDependencies = dependencies{
 	rangeRead:  hcomtranscript.Range,
 	sender:     webidentity.Sender,
 	send:       hcommessage.SendRequest,
+	spawn:      webaction.Spawn,
+	fork:       webaction.Fork,
 	poll:       PollCadence,
 	listeners:  liveListeners,
 }
@@ -120,6 +126,24 @@ type messageResponse struct {
 	From   string `json:"from"`
 	Intent string `json:"intent"`
 }
+
+type spawnRequest struct {
+	FromPane *string `json:"from_pane"`
+	Shape    *string `json:"shape"`
+	Tool     *string `json:"tool"`
+	Tag      *string `json:"tag"`
+	Prompt   *string `json:"prompt"`
+	Branch   *string `json:"branch"`
+}
+
+type forkRequest struct {
+	Prompt *string `json:"prompt"`
+}
+
+var (
+	tagPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+	branchPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+)
 
 // Run parses and serves `herder serve` until the process is stopped.
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -289,6 +313,20 @@ func newHandler(deps dependencies) http.Handler {
 			return
 		}
 		serveMessage(w, r, deps, r.PathValue("busName"))
+	})
+	mux.HandleFunc("/api/spawn", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			refuse(w, http.StatusBadRequest, "bad request", "POST required")
+			return
+		}
+		serveSpawn(w, r, deps)
+	})
+	mux.HandleFunc("/api/agents/{busName}/fork", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			refuse(w, http.StatusBadRequest, "bad request", "POST required")
+			return
+		}
+		serveFork(w, r, deps, r.PathValue("busName"))
 	})
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		refuse(w, http.StatusNotFound, "not found", "unknown endpoint")
@@ -611,6 +649,225 @@ func serveMessage(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 		return
 	}
 	writeJSON(w, http.StatusOK, messageResponse{Sent: true, To: name, From: sender, Intent: "request"})
+}
+
+func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
+	var request spawnRequest
+	if err := decodeWriteBody(w, r, &request, false); err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	if request.FromPane == nil || strings.TrimSpace(*request.FromPane) == "" || request.Shape == nil || request.Tool == nil || request.Tag == nil || request.Prompt == nil {
+		refuse(w, http.StatusBadRequest, "bad request", "from_pane, shape, tool, tag, and prompt are required")
+		return
+	}
+	if *request.Shape != "pane" && *request.Shape != "tab" && *request.Shape != "worktree" {
+		refuse(w, http.StatusBadRequest, "bad request", `shape must be "pane", "tab", or "worktree"`)
+		return
+	}
+	if *request.Tool != "claude" && *request.Tool != "codex" {
+		refuse(w, http.StatusBadRequest, "bad request", "tool must be claude or codex")
+		return
+	}
+	if !tagPattern.MatchString(*request.Tag) {
+		refuse(w, http.StatusBadRequest, "bad request", "fleet spawn: --tag must contain only letters, digits, underscore, and hyphen")
+		return
+	}
+	if *request.Shape == "worktree" {
+		if request.Branch == nil || !branchPattern.MatchString(*request.Branch) {
+			refuse(w, http.StatusBadRequest, "bad request", "fleet spawn: branch must start with a letter or digit and contain only letters, digits, dot, underscore, slash, and hyphen")
+			return
+		}
+	} else if request.Branch != nil {
+		refuse(w, http.StatusBadRequest, "bad request", "branch is allowed only for worktree shape")
+		return
+	}
+	roster, err := deps.roster()
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	if _, err := attributedSender(r, deps, roster); err != nil {
+		serveAttributionError(w, err)
+		return
+	}
+	snapshot, err := deps.snapshot()
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	var pane *herdrcli.Pane
+	for i := range snapshot.Panes {
+		if snapshot.Panes[i].PaneID == *request.FromPane {
+			pane = &snapshot.Panes[i]
+			break
+		}
+	}
+	if pane == nil {
+		refuse(w, http.StatusConflict, "refused by substrate", fmt.Sprintf("fleet spawn: pane does not exist: %s", *request.FromPane))
+		return
+	}
+	args := []string{*request.Tool, "--tag", *request.Tag}
+	switch *request.Shape {
+	case "pane":
+		args = append(args, "--split-from", pane.PaneID)
+	case "tab":
+		args = append(args, "--workspace", pane.WorkspaceID)
+	case "worktree":
+		var repo string
+		for _, workspace := range snapshot.Workspaces {
+			if workspace.WorkspaceID == pane.WorkspaceID && workspace.Worktree != nil {
+				repo = workspace.Worktree.CheckoutPath
+				if repo == "" {
+					repo = workspace.Worktree.RepoRoot
+				}
+				break
+			}
+		}
+		if repo == "" {
+			refuse(w, http.StatusConflict, "refused by substrate", fmt.Sprintf("fleet spawn: workspace %s has no repository", pane.WorkspaceID))
+			return
+		}
+		args = append(args, "--worktree-branch", *request.Branch, "--repo", repo)
+	}
+	args = append(args, "--prompt", *request.Prompt)
+	result, err := deps.spawn(r.Context(), args)
+	if err != nil {
+		if errors.Is(err, webaction.ErrUnavailable) {
+			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		} else {
+			refuse(w, http.StatusConflict, "refused by substrate", err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func serveFork(w http.ResponseWriter, r *http.Request, deps dependencies, name string) {
+	roster, err := deps.roster()
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	found := false
+	for _, row := range roster {
+		if row.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		refuse(w, http.StatusNotFound, "unknown agent", fmt.Sprintf("agent %q is not on the hcom bus", name))
+		return
+	}
+	var request forkRequest
+	if err := decodeWriteBody(w, r, &request, true); err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	if _, err := attributedSender(r, deps, roster); err != nil {
+		serveAttributionError(w, err)
+		return
+	}
+	prompt := ""
+	if request.Prompt != nil {
+		prompt = *request.Prompt
+	}
+	newName, err := deps.fork(r.Context(), name, prompt, request.Prompt != nil)
+	if err != nil {
+		if errors.Is(err, webaction.ErrUnavailable) {
+			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		} else {
+			refuse(w, http.StatusConflict, "refused by substrate", err.Error())
+		}
+		return
+	}
+	placement, err := waitForPlacement(r.Context(), deps, newName)
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, webaction.Result{Name: newName, Pane: placement})
+}
+
+func attributedSender(r *http.Request, deps dependencies, roster []hcomidentity.Row) (string, error) {
+	sender, err := deps.sender(r.Context(), r.RemoteAddr)
+	if err != nil {
+		return "", err
+	}
+	for _, row := range roster {
+		if strings.EqualFold(row.Name, sender) {
+			return "", fmt.Errorf("derived sender %q is already a bus agent", sender)
+		}
+	}
+	return sender, nil
+}
+
+func serveAttributionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, webidentity.ErrUnavailable) {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	if strings.Contains(err.Error(), "already a bus agent") {
+		refuse(w, http.StatusConflict, "sender refused", err.Error())
+		return
+	}
+	refuse(w, http.StatusConflict, "attribution required", err.Error())
+}
+
+func decodeWriteBody(w http.ResponseWriter, r *http.Request, target any, emptyOK bool) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	decoder := json.NewDecoder(r.Body)
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		if emptyOK && errors.Is(err, io.EOF) {
+			return nil
+		}
+		return errors.New("body must be one JSON object with only documented fields")
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) < 2 || trimmed[0] != '{' {
+		return errors.New("body must be one JSON object with only documented fields")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return errors.New("body must contain one JSON object")
+	}
+	objectDecoder := json.NewDecoder(bytes.NewReader(trimmed))
+	objectDecoder.DisallowUnknownFields()
+	if err := objectDecoder.Decode(target); err != nil {
+		return errors.New("body must be one JSON object with only documented fields")
+	}
+	return nil
+}
+
+func waitForPlacement(ctx context.Context, deps dependencies, name string) (string, error) {
+	timeout := 2*deps.poll + time.Second
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for {
+		snapshot, roster, err := readFleetInputs(deps)
+		if err != nil {
+			return "", err
+		}
+		for _, row := range roster {
+			if row.Name != name || row.LaunchContext.PaneID == "" {
+				continue
+			}
+			for _, pane := range snapshot.Panes {
+				if pane.PaneID == row.LaunchContext.PaneID {
+					return pane.PaneID, nil
+				}
+			}
+		}
+		timer := time.NewTimer(deps.poll)
+		select {
+		case <-waitCtx.Done():
+			timer.Stop()
+			return "", fmt.Errorf("forked agent %q did not appear with a pane within %s", name, timeout)
+		case <-timer.C:
+		}
+	}
 }
 
 func refuse(w http.ResponseWriter, status int, short, detail string) {

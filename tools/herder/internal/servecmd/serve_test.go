@@ -21,6 +21,7 @@ import (
 	"ai-config/tools/herder/internal/hcommessage"
 	"ai-config/tools/herder/internal/hcomtranscript"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/webaction"
 	"ai-config/tools/herder/internal/webidentity"
 )
 
@@ -56,7 +57,11 @@ func fixtureDeps() dependencies {
 		},
 		sender: func(context.Context, string) (string, error) { return "web-alice-example-com", nil },
 		send:   func(context.Context, string, string, string) error { return nil },
-		poll:   10 * time.Millisecond,
+		spawn: func(context.Context, []string) (webaction.Result, error) {
+			return webaction.Result{Name: "new-vava", Pane: "p-new"}, nil
+		},
+		fork: func(context.Context, string, string, bool) (string, error) { return "fork-vava", nil },
+		poll: 10 * time.Millisecond,
 	}
 }
 
@@ -360,6 +365,178 @@ func TestMessageWriteMapsSendInfrastructureTo502AndSemanticRefusalTo409(t *testi
 			newHandler(deps).ServeHTTP(response, request)
 			if response.Code != test.status || !strings.Contains(response.Body.String(), `"error":"`+test.errorText+`"`) {
 				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestSpawnMapsEveryShapeToThePinnedFleetFlags(t *testing.T) {
+	for name, test := range map[string]struct {
+		body string
+		want []string
+	}{
+		"same tab":       {`{"from_pane":"p1","shape":"pane","tool":"codex","tag":"api","prompt":"hello"}`, []string{"codex", "--tag", "api", "--split-from", "p1", "--prompt", "hello"}},
+		"same workspace": {`{"from_pane":"p1","shape":"tab","tool":"claude","tag":"api","prompt":"hello"}`, []string{"claude", "--tag", "api", "--workspace", "w1", "--prompt", "hello"}},
+		"worktree":       {`{"from_pane":"p1","shape":"worktree","tool":"codex","tag":"api","prompt":"hello","branch":"feature/web"}`, []string{"codex", "--tag", "api", "--worktree-branch", "feature/web", "--repo", "/repo/checkout", "--prompt", "hello"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			deps := fixtureDeps()
+			baseSnapshot := deps.snapshot
+			deps.snapshot = func() (herdrcli.Snapshot, error) {
+				snapshot, _ := baseSnapshot()
+				snapshot.Workspaces[0].Worktree = &herdrcli.WorkspaceWorktree{RepoRoot: "/repo", CheckoutPath: "/repo/checkout"}
+				return snapshot, nil
+			}
+			var got []string
+			deps.spawn = func(_ context.Context, args []string) (webaction.Result, error) {
+				got = append([]string(nil), args...)
+				return webaction.Result{Name: "api-vava", Pane: "p9"}, nil
+			}
+			response := httptest.NewRecorder()
+			newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewBufferString(test.body)))
+			if response.Code != http.StatusOK || fmt.Sprint(got) != fmt.Sprint(test.want) || !strings.Contains(response.Body.String(), `"name":"api-vava"`) || !strings.Contains(response.Body.String(), `"pane":"p9"`) {
+				t.Fatalf("response=%d %s args=%q want=%q", response.Code, response.Body.String(), got, test.want)
+			}
+		})
+	}
+}
+
+func TestSpawnPreservesPromptAsOneArgumentAndPinsStrictBody(t *testing.T) {
+	deps := fixtureDeps()
+	prompt := "--review 'quotes'\nsecond line"
+	var got []string
+	deps.spawn = func(_ context.Context, args []string) (webaction.Result, error) {
+		got = args
+		return webaction.Result{Name: "api-vava", Pane: "p9"}, nil
+	}
+	body, _ := json.Marshal(map[string]string{"from_pane": "p1", "shape": "pane", "tool": "codex", "tag": "api", "prompt": prompt})
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewReader(body)))
+	if response.Code != http.StatusOK || got[len(got)-1] != prompt {
+		t.Fatalf("response=%d %s args=%q", response.Code, response.Body.String(), got)
+	}
+
+	for name, body := range map[string]string{
+		"unknown field":  `{"from_pane":"p1","shape":"pane","tool":"codex","tag":"api","prompt":"x","extra":true}`,
+		"missing prompt": `{"from_pane":"p1","shape":"pane","tool":"codex","tag":"api"}`,
+		"branch on pane": `{"from_pane":"p1","shape":"pane","tool":"codex","tag":"api","prompt":"x","branch":"no"}`,
+		"bad tag":        `{"from_pane":"p1","shape":"pane","tool":"codex","tag":"bad tag","prompt":"x"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			newHandler(fixtureDeps()).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewBufferString(body)))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("response=%d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestSpawnPinsAttributionAndSubstrateRefusals(t *testing.T) {
+	valid := `{"from_pane":"p1","shape":"pane","tool":"codex","tag":"api","prompt":"x"}`
+	for name, test := range map[string]struct {
+		mutate func(*dependencies)
+		status int
+		detail string
+	}{
+		"unattributed": {func(d *dependencies) {
+			d.sender = func(context.Context, string) (string, error) { return "", errors.New("peer not found") }
+		}, 409, "peer not found"},
+		"whois unavailable": {func(d *dependencies) {
+			d.sender = func(context.Context, string) (string, error) {
+				return "", fmt.Errorf("%w: tailscaled down", webidentity.ErrUnavailable)
+			}
+		}, 502, "tailscaled down"},
+		"unknown pane": {func(d *dependencies) {}, 409, "fleet spawn: pane does not exist: missing"},
+		"script refusal": {func(d *dependencies) {
+			d.spawn = func(context.Context, []string) (webaction.Result, error) {
+				return webaction.Result{}, errors.New("fleet spawn: pane is busy")
+			}
+		}, 409, "fleet spawn: pane is busy"},
+		"script unavailable": {func(d *dependencies) {
+			d.spawn = func(context.Context, []string) (webaction.Result, error) {
+				return webaction.Result{}, fmt.Errorf("%w: missing", webaction.ErrUnavailable)
+			}
+		}, 502, "missing"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			deps := fixtureDeps()
+			test.mutate(&deps)
+			body := valid
+			if name == "unknown pane" {
+				body = strings.Replace(valid, `"p1"`, `"missing"`, 1)
+			}
+			response := httptest.NewRecorder()
+			newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewBufferString(body)))
+			if response.Code != test.status || !strings.Contains(response.Body.String(), test.detail) {
+				t.Fatalf("response=%d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestForkPinsTargetPromptAttributionAndPlacement(t *testing.T) {
+	deps := fixtureDeps()
+	baseSnapshot := deps.snapshot
+	deps.snapshot = func() (herdrcli.Snapshot, error) {
+		snapshot, _ := baseSnapshot()
+		snapshot.Panes = append(snapshot.Panes, herdrcli.Pane{PaneID: "p2", WorkspaceID: "w1", TabID: "t1"})
+		return snapshot, nil
+	}
+	baseRoster := deps.roster
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		rows, _ := baseRoster()
+		return append(rows, hcomidentity.Row{Name: "fork-vava", LaunchContext: hcomidentity.LaunchContext{PaneID: "p2"}}), nil
+	}
+	var target, prompt string
+	var hasPrompt bool
+	deps.fork = func(_ context.Context, gotTarget, gotPrompt string, gotHas bool) (string, error) {
+		target, prompt, hasPrompt = gotTarget, gotPrompt, gotHas
+		return "fork-vava", nil
+	}
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/agents/dore/fork", bytes.NewBufferString(`{"prompt":"continue"}`)))
+	if response.Code != http.StatusOK || target != "dore" || prompt != "continue" || !hasPrompt || !strings.Contains(response.Body.String(), `"pane":"p2"`) {
+		t.Fatalf("response=%d %s call=(%q,%q,%t)", response.Code, response.Body.String(), target, prompt, hasPrompt)
+	}
+
+	missing := httptest.NewRecorder()
+	newHandler(fixtureDeps()).ServeHTTP(missing, httptest.NewRequest(http.MethodPost, "/api/agents/missing/fork", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing=%d %s", missing.Code, missing.Body.String())
+	}
+	blockedDeps := fixtureDeps()
+	blockedDeps.sender = func(context.Context, string) (string, error) { return "", errors.New("peer not found") }
+	blocked := httptest.NewRecorder()
+	newHandler(blockedDeps).ServeHTTP(blocked, httptest.NewRequest(http.MethodPost, "/api/agents/dore/fork", nil))
+	if blocked.Code != http.StatusConflict || !strings.Contains(blocked.Body.String(), `"error":"attribution required"`) {
+		t.Fatalf("blocked=%d %s", blocked.Code, blocked.Body.String())
+	}
+	for _, body := range []string{"null", "[]", `{"extra":true}`} {
+		invalid := httptest.NewRecorder()
+		newHandler(fixtureDeps()).ServeHTTP(invalid, httptest.NewRequest(http.MethodPost, "/api/agents/dore/fork", bytes.NewBufferString(body)))
+		if invalid.Code != http.StatusBadRequest {
+			t.Fatalf("invalid body %q = %d %s", body, invalid.Code, invalid.Body.String())
+		}
+	}
+}
+
+func TestForkMapsSemanticAndInfrastructureFailures(t *testing.T) {
+	for name, test := range map[string]struct {
+		err    error
+		status int
+		detail string
+	}{
+		"refusal":     {errors.New("hcom: source session cannot fork"), http.StatusConflict, "source session cannot fork"},
+		"unavailable": {fmt.Errorf("%w: hcom missing", webaction.ErrUnavailable), http.StatusBadGateway, "hcom missing"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			deps := fixtureDeps()
+			deps.fork = func(context.Context, string, string, bool) (string, error) { return "", test.err }
+			response := httptest.NewRecorder()
+			newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/agents/dore/fork", nil))
+			if response.Code != test.status || !strings.Contains(response.Body.String(), test.detail) {
+				t.Fatalf("response=%d %s", response.Code, response.Body.String())
 			}
 		})
 	}
