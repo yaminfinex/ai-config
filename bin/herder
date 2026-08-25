@@ -49,12 +49,12 @@ if [ -z "$cache_dir" ]; then
   exit 1
 fi
 
-# Key the cached binary on a hash of the module sources so a source change
-# triggers a rebuild and an unchanged tree reuses the cache. LC_ALL=C pins the
-# sort order so the same tree hashes identically in any locale.
+# Key the cached binary on a hash of the module sources and embedded UI assets
+# so either kind of change triggers a rebuild and an unchanged tree reuses the
+# cache. LC_ALL=C pins the sort order across locales.
 src_hash="$(
   cd "$src_dir" &&
-    find go.mod cmd internal -type f \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' \) -print0 |
+    find go.mod cmd internal -type f \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' -o -path 'internal/webui/dist/*' \) -print0 |
     LC_ALL=C sort -z |
     xargs -0 "${hash_cmd[@]}" |
     "${hash_cmd[@]}" |

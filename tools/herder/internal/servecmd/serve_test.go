@@ -102,6 +102,28 @@ func TestRefusalsUseOneShapeAndHonestStatuses(t *testing.T) {
 	}
 }
 
+func TestServesEmbeddedUIAndSPAWithoutWeakeningAPINamespace(t *testing.T) {
+	for name, test := range map[string]struct {
+		path        string
+		status      int
+		contentType string
+		contains    string
+	}{
+		"root":             {"/", http.StatusOK, "text/html", "<title>Herder fleet</title>"},
+		"spa fallback":     {"/future/agent/dore", http.StatusOK, "text/html", "<title>Herder fleet</title>"},
+		"unknown api":      {"/api/future", http.StatusNotFound, "application/json", `"error":"not found"`},
+		"api root refusal": {"/api", http.StatusNotFound, "application/json", `"detail":"unknown endpoint"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			newHandler(fixtureDeps()).ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+			if response.Code != test.status || !strings.Contains(response.Header().Get("Content-Type"), test.contentType) || !strings.Contains(response.Body.String(), test.contains) {
+				t.Fatalf("response = %d content-type=%q body=%s", response.Code, response.Header().Get("Content-Type"), response.Body.String())
+			}
+		})
+	}
+}
+
 func TestFleetRefusesFailingHcomRoster(t *testing.T) {
 	deps := fixtureDeps()
 	deps.roster = func() ([]hcomidentity.Row, error) { return nil, errors.New("hcom list failed") }
