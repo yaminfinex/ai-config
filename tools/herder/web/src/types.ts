@@ -50,6 +50,11 @@ export interface Refusal {
   detail: string
 }
 
+export interface LifecycleResult {
+  name: string
+  pane: string
+}
+
 export interface AgentDetail {
   name: string
   tool: string

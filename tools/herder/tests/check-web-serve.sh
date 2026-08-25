@@ -227,6 +227,9 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF '/api/events' "$ROOT/app.js" &&
   grep -qF '/transcript/stream' "$ROOT/app.js" &&
   grep -qF '/message' "$ROOT/app.js" &&
+  grep -qF '/api/spawn' "$ROOT/app.js" &&
+  grep -qF '/fork' "$ROOT/app.js" &&
+  grep -qF 'placement pending' "$ROOT/app.js" &&
   grep -qF '/agents/' "$ROOT/app.js" &&
   curl -fsS "http://127.0.0.1:$port/agents/mavu" | grep -qF '<title>Herder fleet</title>'; then
   pass "serve delivers built board/agent routes and direct SPA navigation"

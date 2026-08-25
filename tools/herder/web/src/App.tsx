@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   AgentDetail,
   Board,
+  LifecycleResult,
   Pane,
   Refusal,
   Row,
@@ -18,6 +19,12 @@ const columns: Array<[keyof Row, string]> = [
   ['bus_status', 'Bus status'],
   ['gap', 'Gap'],
 ]
+
+type LifecycleProblem = {
+  inline?: string
+  readOnly?: string
+  banner?: string
+}
 
 function without(problem: Record<string, string>, key: string) {
   const next = { ...problem }
@@ -50,11 +57,95 @@ function AppLink({ to, className, children }: { to: string, className?: string, 
   }}>{children}</a>
 }
 
-function Rows({ rows }: { rows: Array<Row | Pane> }) {
+async function lifecycleProblem(response: Response): Promise<LifecycleProblem> {
+  const problem = await refusal(response)
+  if (response.status === 409 && problem.error === 'attribution required') {
+    return { readOnly: `Connect via Tailscale to continue. ${problem.detail}` }
+  }
+  if (response.status === 502) return { banner: problem.detail }
+  if (response.status === 409) return { inline: problem.detail }
+  return { inline: `${problem.error}: ${problem.detail}` }
+}
+
+function placementNotice(action: string, result: LifecycleResult) {
+  return `${action} ${result.name} · ${result.pane || 'placement pending'}`
+}
+
+function SpawnControl({ pane, onBanner }: { pane: Pane, onBanner: (key: string, detail: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [shape, setShape] = useState<'pane' | 'tab' | 'worktree'>('pane')
+  const [tool, setTool] = useState<'claude' | 'codex'>('codex')
+  const [tag, setTag] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [branch, setBranch] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [inlineProblem, setInlineProblem] = useState('')
+  const [readOnly, setReadOnly] = useState('')
+  const [notice, setNotice] = useState('')
+  const problemKey = `spawn ${pane.pane_id}`
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (submitting || readOnly) return
+    setSubmitting(true)
+    setInlineProblem('')
+    setNotice('')
+    onBanner(problemKey, '')
+    try {
+      const body: Record<string, string> = {
+        from_pane: pane.pane_id,
+        shape,
+        tool,
+        tag,
+        prompt,
+      }
+      if (shape === 'worktree') body.branch = branch
+      const response = await fetch('/api/spawn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!response.ok) {
+        const problem = await lifecycleProblem(response)
+        if (problem.readOnly) setReadOnly(problem.readOnly)
+        if (problem.inline) setInlineProblem(problem.inline)
+        if (problem.banner) onBanner(problemKey, problem.banner)
+        return
+      }
+      const result = await response.json() as LifecycleResult
+      setNotice(placementNotice('Started', result))
+    } catch (error: unknown) {
+      onBanner(problemKey, error instanceof Error ? error.message : String(error))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (!open) return <button type="button" className="compact" onClick={() => setOpen(true)}>Spawn</button>
+  return (
+    <form className="lifecycle-form spawn-form" onSubmit={(event) => void submit(event)}>
+      <div className="lifecycle-heading"><strong>Spawn from {pane.pane_id}</strong><button type="button" className="compact" disabled={submitting} onClick={() => setOpen(false)}>Close</button></div>
+      {readOnly && <div className="read-only" role="alert"><strong>Read-only</strong><span>{readOnly}</span></div>}
+      <div className="lifecycle-fields">
+        <label>Shape<select value={shape} disabled={submitting || Boolean(readOnly)} onChange={(event) => setShape(event.target.value as typeof shape)}><option value="pane">Same tab</option><option value="tab">Same workspace</option><option value="worktree">New worktree</option></select></label>
+        <label>Tool<select value={tool} disabled={submitting || Boolean(readOnly)} onChange={(event) => setTool(event.target.value as typeof tool)}><option value="claude">Claude</option><option value="codex">Codex</option></select></label>
+        <label>Tag<input value={tag} required disabled={submitting || Boolean(readOnly)} onChange={(event) => setTag(event.target.value)} /></label>
+        {shape === 'worktree' && <label>Branch<input value={branch} required disabled={submitting || Boolean(readOnly)} onChange={(event) => setBranch(event.target.value)} /></label>}
+      </div>
+      <label>Prompt<textarea rows={3} value={prompt} required disabled={submitting || Boolean(readOnly)} onChange={(event) => setPrompt(event.target.value)} /></label>
+      <div className="send-footer">
+        <div>{inlineProblem && <p className="inline-error" role="alert">{inlineProblem}</p>}{notice && <p className="send-notice">{notice}</p>}</div>
+        <button type="submit" disabled={submitting || Boolean(readOnly)}>{submitting ? 'Spawning… this can take up to 150s' : 'Spawn agent'}</button>
+      </div>
+    </form>
+  )
+}
+
+function Rows({ rows, spawning = false, onBanner = () => {} }: { rows: Array<Row | Pane>, spawning?: boolean, onBanner?: (key: string, detail: string) => void }) {
   return (
     <div className="table-wrap">
       <table>
-        <thead><tr>{columns.map(([key, label]) => <th key={key}>{label}</th>)}</tr></thead>
+        <thead><tr>{columns.map(([key, label]) => <th key={key}>{label}</th>)}{spawning && <th>Actions</th>}</tr></thead>
         <tbody>
           {rows.map((row) => (
             <tr key={`${row.pane_id}:${row.agent}`} className={row.gap !== '-' ? 'has-gap' : undefined}>
@@ -63,6 +154,7 @@ function Rows({ rows }: { rows: Array<Row | Pane> }) {
                   ? <AppLink to={`/agents/${encodeURIComponent(row.agent)}`}>{row.agent}</AppLink>
                   : row[key]}
               </td>)}
+              {spawning && <td>{row.agent !== '-' && <SpawnControl pane={row as Pane} onBanner={onBanner} />}</td>}
             </tr>
           ))}
         </tbody>
@@ -75,6 +167,9 @@ function BoardPage() {
   const [board, setBoard] = useState<Board | null>(null)
   const [problems, setProblems] = useState<Record<string, string>>({ stream: 'Connecting to live fleet…' })
   const [messages, setMessages] = useState(0)
+  const setLifecycleBanner = (key: string, detail: string) => setProblems((current) => detail
+    ? { ...current, [key]: detail }
+    : without(current, key))
 
   useEffect(() => {
     let active = true
@@ -82,7 +177,7 @@ function BoardPage() {
     const connect = () => {
       if (!active) return
       events = new EventSource('/api/events')
-      events.onopen = () => setProblems({})
+      events.onopen = () => setProblems((current) => without(current, 'stream'))
       events.onerror = () => setProblems((current) => ({ ...current, stream: 'Live stream disconnected; reconnecting…' }))
       events.addEventListener('fleet', (event) => {
         setBoard(JSON.parse(event.data) as Board)
@@ -137,7 +232,7 @@ function BoardPage() {
                 {workspace.tabs.map((tab) => (
                   <section className="tab" key={tab.tab_id}>
                     <h3>Tab {tab.number}: {tab.label || tab.tab_id} {tab.focused && <span className="focused">focused</span>}</h3>
-                    <Rows rows={tab.panes} />
+                    <Rows rows={tab.panes} spawning onBanner={setLifecycleBanner} />
                   </section>
                 ))}
               </article>
@@ -179,6 +274,58 @@ function Exchange({ exchange }: { exchange: TranscriptExchange }) {
   )
 }
 
+function ForkControl({ name, onBanner }: { name: string, onBanner: (key: string, detail: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [prompt, setPrompt] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [inlineProblem, setInlineProblem] = useState('')
+  const [readOnly, setReadOnly] = useState('')
+  const [notice, setNotice] = useState('')
+  const problemKey = 'fork'
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (submitting || readOnly) return
+    setSubmitting(true)
+    setInlineProblem('')
+    setNotice('')
+    onBanner(problemKey, '')
+    try {
+      const response = await fetch(`/api/agents/${encodeURIComponent(name)}/fork`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(prompt ? { prompt } : {}),
+      })
+      if (!response.ok) {
+        const problem = await lifecycleProblem(response)
+        if (problem.readOnly) setReadOnly(problem.readOnly)
+        if (problem.inline) setInlineProblem(problem.inline)
+        if (problem.banner) onBanner(problemKey, problem.banner)
+        return
+      }
+      const result = await response.json() as LifecycleResult
+      setNotice(placementNotice('Forked', result))
+    } catch (error: unknown) {
+      onBanner(problemKey, error instanceof Error ? error.message : String(error))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (!open) return <button type="button" onClick={() => setOpen(true)}>Fork agent</button>
+  return (
+    <form className="lifecycle-form fork-form" onSubmit={(event) => void submit(event)}>
+      <div className="lifecycle-heading"><strong>Fork {name}</strong><button type="button" className="compact" disabled={submitting} onClick={() => setOpen(false)}>Close</button></div>
+      {readOnly && <div className="read-only" role="alert"><strong>Read-only</strong><span>{readOnly}</span></div>}
+      <label>Opening prompt <span className="optional">optional</span><textarea rows={3} value={prompt} disabled={submitting || Boolean(readOnly)} onChange={(event) => setPrompt(event.target.value)} /></label>
+      <div className="send-footer">
+        <div>{inlineProblem && <p className="inline-error" role="alert">{inlineProblem}</p>}{notice && <p className="send-notice">{notice}</p>}</div>
+        <button type="submit" disabled={submitting || Boolean(readOnly)}>{submitting ? 'Forking… this can take up to 150s' : 'Fork agent'}</button>
+      </div>
+    </form>
+  )
+}
+
 function AgentPage({ name }: { name: string }) {
   const [agent, setAgent] = useState<AgentDetail | null>(null)
   const [exchanges, setExchanges] = useState<TranscriptExchange[]>([])
@@ -195,6 +342,9 @@ function AgentPage({ name }: { name: string }) {
   const [readOnly, setReadOnly] = useState('')
   const currentView = useRef({ name, detail })
   currentView.current = { name, detail }
+  const setLifecycleBanner = (key: string, problemDetail: string) => setProblems((current) => problemDetail
+    ? { ...current, [key]: problemDetail }
+    : without(current, key))
 
   useEffect(() => {
     let active = true
@@ -345,6 +495,7 @@ function AgentPage({ name }: { name: string }) {
           <div><dt>Gap</dt><dd className={agent.gap !== '-' ? 'warning' : ''}>{agent.gap}</dd></div>
         </dl>
       </section>}
+      {agent && <ForkControl name={name} onBanner={setLifecycleBanner} />}
       <section className="transcript" aria-label="Transcript">
         <div className="older">
           {hasOlder
