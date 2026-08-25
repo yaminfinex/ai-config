@@ -76,7 +76,11 @@ GET `/api/agents/{bus-name}/transcript/stream` (SSE, per-agent)
   events (same shape as the windowed read) as new transcript content
   lands, incrementally from the connection's start cursor; supports
   `Last-Event-ID` reconnect resume so a dropped tab picks up where
-  it left off instead of rehydrating.
+  it left off instead of rehydrating. Takes the same `detail` query
+  knob as the windowed read (`exchanges` default | `full`; added at
+  implementation review 2026-08-25 — without it, full-detail pages
+  received plain-exchange tails). Resume cursors bind detail exactly
+  like page cursors: cross-detail replay refuses 400.
 
 GET `/api/events` (SSE)
   One stream, three event types:
