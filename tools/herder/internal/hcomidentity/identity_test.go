@@ -1,6 +1,13 @@
 package hcomidentity
 
-import "testing"
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestDecodeArrayAndJSONL(t *testing.T) {
 	for name, input := range map[string]string{
@@ -22,5 +29,19 @@ func TestDecodeArrayAndJSONL(t *testing.T) {
 func TestDecodeRejectsMalformedRoster(t *testing.T) {
 	if _, err := Decode([]byte(`{"name":`)); err == nil {
 		t.Fatal("Decode accepted malformed JSON")
+	}
+}
+
+func TestListContextBoundsHungHcom(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "hcom")
+	if err := os.WriteFile(stub, []byte("#!/usr/bin/env bash\nwhile :; do :; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := ListContext(ctx); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("ListContext error = %v", err)
 	}
 }
