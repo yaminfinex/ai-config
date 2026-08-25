@@ -55,6 +55,43 @@ cat >"$ROOT/bin/hcom" <<'HCOM'
 if [ "${1:-}" = list ] && [ "${2:-}" = --json ]; then
   exec /bin/cat "$WEB_SERVE_ROSTER"
 fi
+if [ "${1:-}" = transcript ]; then
+  printf '%s\n' "$*" >>"$WEB_TRANSCRIPT_LOG"
+  if [[ "${3:-}" =~ ^([0-9]+)-([0-9]+)$ ]] && [ "${4:-}" = --json ]; then
+    start="${BASH_REMATCH[1]}"
+    end="${BASH_REMATCH[2]}"
+    printf '['
+    separator=''
+    for ((position=start; position<=end; position++)); do
+      printf '%s{"position":%d,"user":"stream %d","action":"reply %d"}' "$separator" "$position" "$position" "$position"
+      separator=','
+    done
+    printf ']\n'
+    exit 0
+  fi
+  case " $* " in
+    *" transcript mavu --last 2 --json "*)
+      printf '%s\n' '[{"position":3,"user":"three","action":"reply three"},{"position":4,"user":"four","action":"reply four"}]'
+      exit 0 ;;
+    *" transcript mavu --last 2 --detailed --json "*)
+      printf '%s\n' '[{"position":3,"user":"three","action":"reply three","tools":["read"]},{"position":4,"user":"four","action":"reply four","tools":["write"]}]'
+      exit 0 ;;
+    *" transcript mavu 1-2 --json "*)
+      printf '%s\n' '[{"position":1,"user":"one","action":"reply one"},{"position":2,"user":"two","action":"reply two"}]'
+      exit 0 ;;
+    *" transcript mavu --last 1 --json "*)
+      count=0
+      [ ! -f "$WEB_STREAM_STATE" ] || count="$(/bin/cat "$WEB_STREAM_STATE")"
+      position=$((4 + count))
+      printf '%s\n' "$((count + 1))" >"$WEB_STREAM_STATE"
+      printf '[{"position":%d,"user":"stream %d","action":"reply %d"}]\n' "$position" "$position" "$position"
+      exit 0 ;;
+  esac
+fi
+if [ "${1:-}" = send ]; then
+  for arg in "$@"; do printf '<%s>\n' "$arg"; done >"$WEB_SEND_LOG"
+  exit 0
+fi
 if [ "${1:-}" = events ]; then
   case " $* " in
     *" events --last 1 --full --type message "*) exit 0 ;;
@@ -72,6 +109,28 @@ printf 'unexpected hcom args: %s\n' "$*" >&2
 exit 2
 HCOM
 chmod +x "$ROOT/bin/hcom"
+
+cat >"$ROOT/bin/tailscale" <<'TAILSCALE'
+#!/usr/bin/env bash
+if [ " $* " != " whois --json 127.0.0.1 " ]; then
+  printf 'unexpected tailscale args: %s\n' "$*" >&2
+  exit 2
+fi
+mode=ok
+[ ! -f "$WEB_WHOIS_MODE" ] || mode="$(/bin/cat "$WEB_WHOIS_MODE")"
+case "$mode" in
+  ok) login='Alice@Example.com' ;;
+  existing) login='vile' ;;
+  reserved) login='bigboss@example.com' ;;
+  unresolved) printf 'no tailnet identity\n' >&2; exit 1 ;;
+  *) printf 'unknown whois fixture mode: %s\n' "$mode" >&2; exit 2 ;;
+esac
+printf '{"UserProfile":{"LoginName":"%s"}}\n' "$login"
+TAILSCALE
+chmod +x "$ROOT/bin/tailscale"
+
+jq '. + [{"name":"web-vile","base_name":"web-vile","tool":"codex","status":"listening","joined":true,"session_id":"session-web-vile","launch_context":{}}]' \
+  "$FIXTURE/roster.json" >"$ROOT/roster.json"
 
 socket="$ROOT/herdr.sock"
 python3 - "$socket" "$FIXTURE/snapshot.json" <<'PY' &
@@ -110,7 +169,11 @@ PY
 PATH="$ROOT/bin:/usr/bin:/bin" \
 HOME="$ROOT/home" \
 XDG_CACHE_HOME="$ROOT/cache" \
-WEB_SERVE_ROSTER="$FIXTURE/roster.json" \
+WEB_SERVE_ROSTER="$ROOT/roster.json" \
+WEB_TRANSCRIPT_LOG="$ROOT/transcript.log" \
+WEB_STREAM_STATE="$ROOT/stream.state" \
+WEB_SEND_LOG="$ROOT/send.log" \
+WEB_WHOIS_MODE="$ROOT/whois.mode" \
 HERDER_HERDR_SOCKET="$socket" \
 HERDER_SERVE_TEST_LOOPBACK_ONLY=1 \
   "$ROOT/herder" serve --port "$port" >"$ROOT/serve.out" 2>"$ROOT/serve.err" &
@@ -155,6 +218,99 @@ else
   bad "fleet JSON contract" "body=$(cat "$ROOT/fleet.json")"
 fi
 
+if curl -fsS "http://127.0.0.1:$port/api/agents/mavu" >"$ROOT/agent.json" && python3 - "$ROOT/agent.json" <<'PY'
+import json, sys
+agent = json.load(open(sys.argv[1]))
+assert agent["name"] == "mavu"
+assert agent["tool"] == "codex"
+assert agent["herdr_status"] != "-"
+assert agent["bus_status"] == "listening"
+assert agent["gap"] == "-"
+assert agent["pane"] == {"workspace_id":"w1", "tab_id":"t1", "pane_id":"w1:p1"}
+assert agent["launch_context"]["pane_id"] == "w1:p1"
+PY
+then
+  pass "agent detail returns pane coordinate, tool, statuses, launch context, and gap"
+else
+  bad "agent detail" "body=$(cat "$ROOT/agent.json" 2>/dev/null || true)"
+fi
+
+curl -sS -o "$ROOT/unknown-agent.json" -w '%{http_code}' "http://127.0.0.1:$port/api/agents/missing" >"$ROOT/unknown-agent.status"
+if [ "$(cat "$ROOT/unknown-agent.status")" = 404 ] &&
+  jq -e '.error == "unknown agent" and (.detail | contains("not on the hcom bus"))' "$ROOT/unknown-agent.json" >/dev/null; then
+  pass "unknown bus name refuses agent detail with structured 404"
+else
+  bad "unknown agent refusal" "status=$(cat "$ROOT/unknown-agent.status") body=$(cat "$ROOT/unknown-agent.json")"
+fi
+
+if curl -fsS "http://127.0.0.1:$port/api/agents/mavu/transcript?limit=2" >"$ROOT/transcript-new.json" &&
+  cursor="$(jq -r '.cursor' "$ROOT/transcript-new.json")" &&
+  curl -fsS "http://127.0.0.1:$port/api/agents/mavu/transcript?limit=2&before=$cursor" >"$ROOT/transcript-old.json" &&
+  curl -fsS "http://127.0.0.1:$port/api/agents/mavu/transcript?limit=2&detail=full" >"$ROOT/transcript-full.json" &&
+  python3 - "$ROOT/transcript-new.json" "$ROOT/transcript-old.json" "$ROOT/transcript-full.json" <<'PY'
+import json, sys
+new, old, full = [json.load(open(path)) for path in sys.argv[1:]]
+assert [item["position"] for item in new["exchanges"]] == [3, 4]
+assert [item["position"] for item in old["exchanges"]] == [1, 2]
+assert new["cursor"] and old["cursor"]
+assert full["exchanges"][0]["tools"] == ["read"]
+PY
+then
+  pass "transcript pages backward by exchange with opaque cursors and both detail levels"
+else
+  bad "transcript windows" "new=$(cat "$ROOT/transcript-new.json" 2>/dev/null || true) old=$(cat "$ROOT/transcript-old.json" 2>/dev/null || true) full=$(cat "$ROOT/transcript-full.json" 2>/dev/null || true)"
+fi
+
+stream_one="$(curl --max-time 5 -Ns "http://127.0.0.1:$port/api/agents/mavu/transcript/stream" 2>"$ROOT/transcript-stream.err" | awk '
+  /^id:/ { id=$2 }
+  /^event: exchange/ { exchange=1 }
+  /^data:/ { if (exchange) { print id; print; exit } }
+')"
+stream_id="$(sed -n '1p' <<<"$stream_one")"
+stream_data="$(sed -n '2p' <<<"$stream_one")"
+stream_two="$(curl --max-time 3 -Ns -H "Last-Event-ID: $stream_id" "http://127.0.0.1:$port/api/agents/mavu/transcript/stream" 2>>"$ROOT/transcript-stream.err" | awk '
+  /^event: exchange/ { exchange=1 }
+  /^data:/ { if (exchange) { print; exit } }
+')"
+if grep -qF '"position":5' <<<"$stream_data" && grep -qF '"position":6' <<<"$stream_two" && [ -n "$stream_id" ]; then
+  pass "per-agent transcript SSE emits incrementally and Last-Event-ID resumes"
+else
+  bad "transcript stream resume" "first=$stream_one second=$stream_two stderr=$(cat "$ROOT/transcript-stream.err")"
+fi
+
+if curl -fsS -X POST -H 'Content-Type: application/json' --data '{"text":"please inspect"}' \
+  "http://127.0.0.1:$port/api/agents/mavu/message" >"$ROOT/message.json" &&
+  jq -e '. == {sent:true,to:"mavu",from:"web-alice-example-com",intent:"request"}' "$ROOT/message.json" >/dev/null &&
+  grep -qxF '<request>' "$ROOT/send.log" && grep -qxF '<--intent>' "$ROOT/send.log" &&
+  grep -qxF '<web-alice-example-com>' "$ROOT/send.log"; then
+  pass "message write is attributed, always intent=request, and confirms the send"
+else
+  bad "message write" "body=$(cat "$ROOT/message.json" 2>/dev/null || true) args=$(cat "$ROOT/send.log" 2>/dev/null || true)"
+fi
+
+printf '%s\n' unresolved >"$ROOT/whois.mode"
+curl -sS -o "$ROOT/unresolved.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"text":"blocked"}' \
+  "http://127.0.0.1:$port/api/agents/mavu/message" >"$ROOT/unresolved.status"
+printf '%s\n' existing >"$ROOT/whois.mode"
+curl -sS -o "$ROOT/existing.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"text":"blocked"}' \
+  "http://127.0.0.1:$port/api/agents/mavu/message" >"$ROOT/existing.status"
+printf '%s\n' reserved >"$ROOT/whois.mode"
+curl -sS -o "$ROOT/reserved.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"text":"blocked"}' \
+  "http://127.0.0.1:$port/api/agents/mavu/message" >"$ROOT/reserved.status"
+if [ "$(cat "$ROOT/unresolved.status")" = 409 ] && jq -e '.error == "attribution required"' "$ROOT/unresolved.json" >/dev/null &&
+  [ "$(cat "$ROOT/existing.status")" = 409 ] && jq -e '.error == "sender refused"' "$ROOT/existing.json" >/dev/null &&
+  [ "$(cat "$ROOT/reserved.status")" = 409 ] && jq -e '.error == "attribution required" and (.detail | contains("reserved"))' "$ROOT/reserved.json" >/dev/null; then
+  pass "unresolved, existing-agent, and reserved web senders are loudly refused"
+else
+  bad "sender refusals" "unresolved=$(cat "$ROOT/unresolved.status")/$(cat "$ROOT/unresolved.json") existing=$(cat "$ROOT/existing.status")/$(cat "$ROOT/existing.json") reserved=$(cat "$ROOT/reserved.status")/$(cat "$ROOT/reserved.json")"
+fi
+
+if ! grep -Eq '^transcript mavu (--last (1|2)|[1-6]-[1-6])' "$ROOT/transcript.log" || grep -Eq 'transcript mavu (--last [0-9]{4,}|--json$)' "$ROOT/transcript.log"; then
+  bad "bounded transcript reads" "calls=$(cat "$ROOT/transcript.log")"
+else
+  pass "transcript substrate reads stay bounded; no whole-session invocation occurs"
+fi
+
 events="$(curl --max-time 3 -Ns "http://127.0.0.1:$port/api/events" 2>"$ROOT/events.err" | awk '
   /^event:/ { print }
   /^data:/ { print; seen++; if (seen == 2) exit }
@@ -192,7 +348,7 @@ else
   bad "server shutdown" "rc=$serve_rc"
 fi
 
-printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((7 - fail))" "$fail"
+printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((14 - fail))" "$fail"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
