@@ -1,0 +1,41 @@
+{
+  "protocol": 19,
+  "version": "fixture",
+  "panes": [
+    {
+      "pane_id": "w1:p1",
+      "workspace_id": "w1",
+      "tab_id": "t1",
+      "agent": "codex",
+      "agent_status": "active",
+      "agent_session": "session-mavu"
+    },
+    {
+      "pane_id": "w1:p2",
+      "workspace_id": "w1",
+      "tab_id": "t1",
+      "agent": "claude",
+      "agent_status": "idle",
+      "agent_session": "session-zira"
+    },
+    {
+      "pane_id": "w1:p3",
+      "workspace_id": "w1",
+      "tab_id": "t1"
+    }
+  ],
+  "agents": [
+    {
+      "pane_id": "w1:p1",
+      "name": "mavu",
+      "agent": "codex",
+      "agent_status": "active"
+    },
+    {
+      "pane_id": "w1:p2",
+      "name": "zira",
+      "agent": "claude",
+      "agent_status": "idle"
+    }
+  ]
+}

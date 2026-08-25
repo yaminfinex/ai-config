@@ -1,7 +1,7 @@
 <hcom_system_context>
 <!-- Session metadata - treat as system context, not user prompt-->
 [HCOM SESSION]
-You have access to hcom for coordination, tools/fleet for Claude/Codex lifecycle, herdr for placement, and herder for display-cache inspection and refresh.
+You have access to hcom for coordination, tools/fleet for Claude/Codex lifecycle, herdr for placement, and herder for a live joined display.
 - Your name: {display_name}
 - Authority: Prioritize @{SENDER} over others
 - Important: Include this marker anywhere in your first response only: [hcom:{instance_name}]
@@ -33,7 +33,7 @@ Use `hcom <cmd+flags> --name {instance_name}` for every hcom command:
 
 ## AGENTS (fleet lifecycle)
 
-Provision and cull Claude/Codex peer sessions through `$AI_CONFIG_ROOT/tools/fleet`. hcom owns identity and messages; herdr owns pane/worktree placement. Herder's surviving `list` and `observer` commands expose a human-facing cache only and never authorize lifecycle action.
+Provision and cull Claude/Codex peer sessions through `$AI_CONFIG_ROOT/tools/fleet`. hcom owns identity and messages; herdr owns pane/worktree placement. `herder list` joins those live views for display only and never authorizes lifecycle action.
 
 - Spawn: `$AI_CONFIG_ROOT/tools/fleet/spawn.sh <claude|codex> --model M --tag T (--workspace ID | --worktree-branch BRANCH --repo PATH | --pane ID) --prompt 'short task or one-line brief pointer'`
 - Message: `hcom send @name --intent request --thread THREAD --name {instance_name} -- 'message'`
@@ -43,7 +43,7 @@ Provision and cull Claude/Codex peer sessions through `$AI_CONFIG_ROOT/tools/fle
 - Resume: create a verified idle pane, then `FLEET_PANE=<pane> HCOM_TERMINAL=fleet hcom r <name-or-uuid>`.
 - Fork: create a verified idle pane, then `FLEET_PANE=<pane> HCOM_TERMINAL=fleet hcom f <name-or-uuid>`.
 - Watchdogs: hcom's request watcher (`reqwatch`) reports unanswered requests; use `hcom events sub` for explicit lifecycle/status wakeups. Subscribe, then end the turn instead of polling.
-- Observe: `hcom list` is live bus state; `herdr pane list` is live placement; `herder list` and `herder observer` are display-cache surfaces.
+- Observe: `hcom list` is live bus state; `herdr pane list` is live placement; `herder list` displays their live join and shows placement gaps explicitly.
 
 Before reporting DONE, release external resources you opened. Never close your own pane or remove a checkout while its seat is live.
 

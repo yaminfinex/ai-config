@@ -1,178 +1,63 @@
-// Package herdrcli execs the herdr CLI and decodes the response payloads the
-// bash substrate consumes. It is deliberately thin: the scripts' behavior on
-// herdr failure varies per call site (`|| true`, `|| printf '{"result":…}'`,
-// exit-code propagation for `herdr wait`), so the client exposes the raw
-// output and exit code and lets each ported command reproduce its own
-// fallback exactly. Payload decoding mirrors the scripts' jq paths
-// (`.result.agents[]?`, `.result.pane.terminal_id // empty`, …): missing or
-// null result members decode to zero values, invalid JSON is an error.
-//
-// The hermetic suites exercise this seam with a mock `herdr` on PATH, which
-// is why lookup goes through the environment like the bash scripts' bare
-// `herdr` invocation.
+// Package herdrcli reads and decodes the live herdr session snapshot.
 package herdrcli
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"net"
+	"os"
 	"os/exec"
+	"strconv"
+	"strings"
+	"time"
 )
 
-// Client runs herdr commands. The zero value resolves `herdr` on PATH, the
-// same way the bash scripts invoke it (and how the suites' mocks intercept).
-type Client struct {
-	// Bin overrides the executable; empty means "herdr" via PATH lookup.
-	Bin string
-}
+const supportedProtocol = 19
 
-func (c *Client) bin() string {
-	if c != nil && c.Bin != "" {
-		return c.Bin
-	}
-	return "herdr"
-}
-
-// Available reports whether the herdr executable can be resolved — the
-// scripts' `command -v herdr` guard.
-func (c *Client) Available() bool {
-	_, err := exec.LookPath(c.bin())
-	return err == nil
-}
-
-// Output runs herdr and returns its stdout, discarding stderr (the scripts'
-// `herdr … 2>/dev/null` shape). A non-zero exit is returned as an error with
-// whatever stdout was produced.
-func (c *Client) Output(args ...string) ([]byte, error) {
-	cmd := exec.Command(c.bin(), args...)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	err := cmd.Run()
-	return stdout.Bytes(), err
-}
-
-// Combined runs herdr with stdout and stderr interleaved into one buffer
-// (the scripts' `herdr … 2>&1` shape) and returns the exit code alongside.
-// err is non-nil only when the command could not run at all.
-func (c *Client) Combined(args ...string) (out []byte, exitCode int, err error) {
-	cmd := exec.Command(c.bin(), args...)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	err = cmd.Run()
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return buf.Bytes(), exitErr.ExitCode(), nil
-	}
-	if err != nil {
-		return buf.Bytes(), -1, err
-	}
-	return buf.Bytes(), 0, nil
-}
-
-// Run executes herdr for its exit code only, discarding all output (the
-// `herdr wait … >/dev/null 2>&1` shape). err is non-nil only when the
-// command could not run at all.
-func (c *Client) Run(args ...string) (exitCode int, err error) {
-	cmd := exec.Command(c.bin(), args...)
-	err = cmd.Run()
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode(), nil
-	}
-	if err != nil {
-		return -1, err
-	}
-	return 0, nil
-}
-
-// Agent is one entry of `herdr agent list` (.result.agents[]). TerminalID
-// stays a pointer because herder list's reconcile keys its live map on
-// `select(.terminal_id != null)` — null and "" must stay distinguishable.
-// Raw preserves the full object: reconcile embeds it verbatim as the
-// record's `live` field, including members this struct doesn't name.
 type Agent struct {
-	TerminalID *string `json:"terminal_id"`
-	PaneID     string  `json:"pane_id"`
-	Agent      string  `json:"agent"`
-	Status     string  `json:"agent_status"`
-	Name       string  `json:"name"`
-	CWD        string  `json:"cwd"`
-
-	Raw json.RawMessage `json:"-"`
+	PaneID string `json:"pane_id"`
+	Agent  string `json:"agent"`
+	Status string `json:"agent_status"`
+	Name   string `json:"name"`
 }
 
-// Pane is one pane object, from `herdr pane list` (.result.panes[]) or
-// `herdr pane get` (.result.pane).
 type Pane struct {
-	PaneID        string `json:"pane_id"`
-	TerminalID    string `json:"terminal_id"`
-	WorkspaceID   string `json:"workspace_id"`
-	TabID         string `json:"tab_id"`
-	Focused       bool   `json:"focused"`
-	CWD           string `json:"cwd"`
-	ForegroundCWD string `json:"foreground_cwd"`
-	Label         string `json:"label"`
-	Agent         string `json:"agent"`
-	AgentStatus   string `json:"agent_status"`
-	AgentSession  string `json:"agent_session"`
+	PaneID       string `json:"pane_id"`
+	Label        string `json:"label"`
+	Agent        string `json:"agent"`
+	AgentStatus  string `json:"agent_status"`
+	AgentSession string `json:"agent_session"`
 }
 
-// UnmarshalJSON tolerates both agent_session shapes: herdr <= 0.7.3 emits a
-// bare session-id string, 0.7.4 an object whose "value" member carries the
-// same id. Consumers compare AgentSession against session ids, so both
-// decode to that string; null and absent stay "".
+// UnmarshalJSON accepts both herdr agent_session shapes: a bare session ID or
+// an object whose value member carries that ID.
 func (p *Pane) UnmarshalJSON(data []byte) error {
-	type paneAlias Pane
+	type alias Pane
 	aux := struct {
-		*paneAlias
+		*alias
 		AgentSession json.RawMessage `json:"agent_session"`
-	}{paneAlias: (*paneAlias)(p)}
+	}{alias: (*alias)(p)}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
-	session, err := decodeAgentSession(aux.AgentSession)
-	if err != nil {
-		return fmt.Errorf("pane %s: agent_session: %w", p.PaneID, err)
-	}
-	p.AgentSession = session
-	return nil
-}
-
-func decodeAgentSession(raw json.RawMessage) (string, error) {
-	trimmed := bytes.TrimSpace(raw)
+	p.AgentSession = ""
+	trimmed := bytes.TrimSpace(aux.AgentSession)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return "", nil
+		return nil
 	}
 	if trimmed[0] == '"' {
-		var s string
-		err := json.Unmarshal(trimmed, &s)
-		return s, err
+		return json.Unmarshal(trimmed, &p.AgentSession)
 	}
-	var obj struct {
+	var object struct {
 		Value string `json:"value"`
 	}
-	if err := json.Unmarshal(trimmed, &obj); err != nil {
-		return "", err
+	if err := json.Unmarshal(trimmed, &object); err != nil {
+		return fmt.Errorf("pane %s: agent_session: %w", p.PaneID, err)
 	}
-	return obj.Value, nil
-}
-
-type ProcessInfo struct {
-	// ShellPID is retained for compatibility with older herdr responses. The
-	// 0.8 wire omits it, so callers must also use ForegroundProcessGroupID and
-	// Processes as process-tree anchors.
-	ShellPID                 int       `json:"shell_pid"`
-	ForegroundProcessGroupID int       `json:"foreground_process_group_id"`
-	Processes                []Process `json:"foreground_processes"`
-}
-
-type Process struct {
-	PID  int      `json:"pid"`
-	Name string   `json:"name"`
-	Argv []string `json:"argv"`
-	CWD  string   `json:"cwd"`
+	p.AgentSession = object.Value
+	return nil
 }
 
 type Snapshot struct {
@@ -182,162 +67,195 @@ type Snapshot struct {
 	Panes    []Pane  `json:"panes"`
 }
 
-// Workspace is one entry of `herdr workspace list` (.result.workspaces[]).
-type Workspace struct {
-	WorkspaceID string `json:"workspace_id"`
-}
-
-// Tab is `herdr tab create`'s .result.tab.
-type Tab struct {
-	TabID string `json:"tab_id"`
-}
-
-// ParseAgentList decodes `herdr agent list` output. Like `.result.agents[]?`
-// a missing/null agents array yields no entries without erroring.
-func ParseAgentList(out []byte) ([]Agent, error) {
-	var envelope struct {
-		Result struct {
-			Agents []json.RawMessage `json:"agents"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(out, &envelope); err != nil {
-		return nil, err
-	}
-	var agents []Agent
-	for _, raw := range envelope.Result.Agents {
-		var a Agent
-		if err := json.Unmarshal(raw, &a); err != nil {
-			return nil, err
+// LiveSnapshot reads one session.snapshot directly from the herdr Unix
+// socket. The CLI is used only to discover that socket and its protocol; no
+// CLI-list fallback is allowed because it could hide a placement outage.
+func LiveSnapshot() (Snapshot, error) {
+	socket := os.Getenv("HERDER_HERDR_SOCKET")
+	if socket == "" {
+		out, err := exec.Command("herdr", "status", "server").Output()
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("herdr status server failed: %w", err)
 		}
-		a.Raw = raw
-		agents = append(agents, a)
-	}
-	return agents, nil
-}
-
-// ParsePaneList decodes `herdr pane list` output (.result.panes[]?).
-func ParsePaneList(out []byte) ([]Pane, error) {
-	var envelope struct {
-		Result struct {
-			Panes []Pane `json:"panes"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(out, &envelope); err != nil {
-		return nil, err
-	}
-	return envelope.Result.Panes, nil
-}
-
-// ParsePaneGet decodes `herdr pane get` output (.result.pane). A missing
-// pane member decodes to the zero Pane, matching `// empty` fallbacks.
-func ParsePaneGet(out []byte) (Pane, error) {
-	var envelope struct {
-		Result struct {
-			Pane Pane `json:"pane"`
-		} `json:"result"`
-	}
-	err := json.Unmarshal(out, &envelope)
-	return envelope.Result.Pane, err
-}
-
-func ParseSessionSnapshot(out []byte) (Snapshot, error) {
-	var envelope struct {
-		Result json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(out, &envelope); err != nil {
-		return Snapshot{}, err
-	}
-	if len(envelope.Result) == 0 || bytes.Equal(envelope.Result, []byte("null")) {
-		return Snapshot{}, nil
-	}
-	return ParseSessionSnapshotResult(envelope.Result)
-}
-
-func ParseSessionSnapshotResult(result []byte) (Snapshot, error) {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(result, &obj); err != nil {
-		return Snapshot{}, err
-	}
-	if raw, ok := obj["snapshot"]; ok {
-		var snap Snapshot
-		if err := json.Unmarshal(raw, &snap); err != nil {
+		status, err := parseServerStatus(out)
+		if err != nil {
 			return Snapshot{}, err
 		}
-		if emptySessionSnapshot(snap) {
-			return Snapshot{}, fmt.Errorf("herdr session snapshot payload is empty")
+		if status.protocol != supportedProtocol || !status.compatible {
+			return Snapshot{}, fmt.Errorf("herdr protocol incompatible: list supports %d, server reported %d (compatible=%t)", supportedProtocol, status.protocol, status.compatible)
 		}
-		return snap, nil
+		socket = status.socket
 	}
-	var direct Snapshot
-	if err := json.Unmarshal(result, &direct); err != nil {
+	if socket == "" {
+		return Snapshot{}, fmt.Errorf("herdr server did not report a socket")
+	}
+	return snapshotFromSocket(socket)
+}
+
+type serverStatus struct {
+	socket     string
+	protocol   int
+	compatible bool
+}
+
+func parseServerStatus(out []byte) (serverStatus, error) {
+	var envelope struct {
+		Result struct {
+			Socket     string      `json:"socket"`
+			Protocol   json.Number `json:"protocol"`
+			Compatible any         `json:"compatible"`
+		} `json:"result"`
+		Socket     string      `json:"socket"`
+		Protocol   json.Number `json:"protocol"`
+		Compatible any         `json:"compatible"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(out))
+	decoder.UseNumber()
+	if err := decoder.Decode(&envelope); err == nil {
+		status := serverStatus{
+			socket:     firstNonEmpty(envelope.Result.Socket, envelope.Socket),
+			protocol:   firstNonZero(numberInt(envelope.Result.Protocol), numberInt(envelope.Protocol)),
+			compatible: compatibility(firstNonNil(envelope.Result.Compatible, envelope.Compatible)),
+		}
+		if status.socket == "" {
+			return serverStatus{}, fmt.Errorf("herdr status server did not report a socket")
+		}
+		return status, nil
+	}
+
+	var status serverStatus
+	for _, line := range strings.Split(string(out), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "socket":
+			status.socket = strings.TrimSpace(value)
+		case "protocol":
+			status.protocol, _ = strconv.Atoi(strings.TrimSpace(value))
+		case "compatible":
+			status.compatible = compatibility(strings.TrimSpace(value))
+		}
+	}
+	if status.socket == "" {
+		return serverStatus{}, fmt.Errorf("could not decode herdr server status")
+	}
+	return status, nil
+}
+
+func snapshotFromSocket(socket string) (Snapshot, error) {
+	conn, err := net.DialTimeout("unix", socket, 2*time.Second)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("connect herdr socket %s: %w", socket, err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	request := []byte(`{"id":"herder-list-snapshot","method":"session.snapshot","params":{}}` + "\n")
+	if _, err := conn.Write(request); err != nil {
+		return Snapshot{}, fmt.Errorf("request herdr session.snapshot: %w", err)
+	}
+
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		var response struct {
+			ID     any             `json:"id"`
+			Result json.RawMessage `json:"result"`
+			Error  *struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &response); err != nil || fmt.Sprint(response.ID) != "herder-list-snapshot" {
+			continue
+		}
+		if response.Error != nil {
+			return Snapshot{}, fmt.Errorf("herdr session.snapshot: %s: %s", response.Error.Code, response.Error.Message)
+		}
+		snapshot, err := ParseSessionSnapshotResult(response.Result)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("decode herdr session.snapshot: %w", err)
+		}
+		return snapshot, nil
+	}
+	if err := scanner.Err(); err != nil {
+		return Snapshot{}, fmt.Errorf("read herdr session.snapshot: %w", err)
+	}
+	return Snapshot{}, fmt.Errorf("herdr socket closed before session.snapshot response")
+}
+
+// ParseSessionSnapshotResult accepts the live nested snapshot result and the
+// direct snapshot form retained for compatibility with earlier herdr builds.
+func ParseSessionSnapshotResult(result []byte) (Snapshot, error) {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(result, &object); err != nil {
 		return Snapshot{}, err
 	}
-	if emptySessionSnapshot(direct) {
+	if raw, ok := object["snapshot"]; ok {
+		var snapshot Snapshot
+		if err := json.Unmarshal(raw, &snapshot); err != nil {
+			return Snapshot{}, err
+		}
+		if emptySnapshot(snapshot) {
+			return Snapshot{}, fmt.Errorf("herdr session snapshot payload is empty")
+		}
+		return snapshot, nil
+	}
+	var snapshot Snapshot
+	if err := json.Unmarshal(result, &snapshot); err != nil {
+		return Snapshot{}, err
+	}
+	if emptySnapshot(snapshot) {
 		return Snapshot{}, fmt.Errorf("herdr session snapshot payload has no snapshot")
 	}
-	return direct, nil
+	return snapshot, nil
 }
 
-func emptySessionSnapshot(s Snapshot) bool {
-	return s.Protocol == 0 && len(s.Panes) == 0 && len(s.Agents) == 0
+func emptySnapshot(snapshot Snapshot) bool {
+	return snapshot.Protocol == 0 && len(snapshot.Panes) == 0 && len(snapshot.Agents) == 0
 }
 
-func ParseProcessInfo(out []byte) (ProcessInfo, error) {
-	var envelope struct {
-		Result struct {
-			ProcessInfo ProcessInfo `json:"process_info"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(out, &envelope); err != nil {
-		return ProcessInfo{}, err
-	}
-	if envelope.Result.ProcessInfo.ShellPID == 0 && len(envelope.Result.ProcessInfo.Processes) == 0 {
-		var alt struct {
-			Result ProcessInfo `json:"result"`
-		}
-		if err := json.Unmarshal(out, &alt); err == nil {
-			return alt.Result, nil
+func numberInt(value json.Number) int {
+	n, _ := value.Int64()
+	return int(n)
+}
+
+func compatibility(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		switch strings.ToLower(typed) {
+		case "yes", "true", "1":
+			return true
 		}
 	}
-	return envelope.Result.ProcessInfo, nil
+	return false
 }
 
-// ParseWorkspaceList decodes `herdr workspace list` output
-// (.result.workspaces[]?).
-func ParseWorkspaceList(out []byte) ([]Workspace, error) {
-	var envelope struct {
-		Result struct {
-			Workspaces []Workspace `json:"workspaces"`
-		} `json:"result"`
+func firstNonNil(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
 	}
-	if err := json.Unmarshal(out, &envelope); err != nil {
-		return nil, err
-	}
-	return envelope.Result.Workspaces, nil
+	return nil
 }
 
-// ParseTabCreate decodes `herdr tab create` output (.result.tab.tab_id).
-func ParseTabCreate(out []byte) (Tab, error) {
-	var envelope struct {
-		Result struct {
-			Tab Tab `json:"tab"`
-		} `json:"result"`
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
 	}
-	err := json.Unmarshal(out, &envelope)
-	return envelope.Result.Tab, err
+	return ""
 }
 
-// ParseTabCreateRootPane decodes the pane `herdr tab create` opens the tab
-// around (.result.root_pane). herdr 0.7.5 split pane creation from agent
-// start: `tab create` returns its first pane under root_pane (not the `pane`
-// key that `pane get`/`pane split` use), so the spawner reads coordinates
-// from here. A missing member decodes to the zero Pane.
-func ParseTabCreateRootPane(out []byte) (Pane, error) {
-	var envelope struct {
-		Result struct {
-			RootPane Pane `json:"root_pane"`
-		} `json:"result"`
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
 	}
-	err := json.Unmarshal(out, &envelope)
-	return envelope.Result.RootPane, err
+	return 0
 }

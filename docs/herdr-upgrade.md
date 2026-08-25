@@ -76,15 +76,15 @@ build as part of the gate (step 4e).
    identifiers, pane process-info, pane run/close, tab/worktree placement, integration
    hooks, and session snapshot/event subscription shapes. File a task per delta first.
 2. **Snapshot state.** Note current version (`herdr --version`), commit any pending board
-   state, snapshot `hcom list --json`, `herdr pane list`, and `herder list --all`, then
+   state, snapshot `hcom list --json`, `herdr pane list`, and `herder list`, then
    make sure main is green.
 3. **Notify the fleet.** Hold placement and pane-close actions during the handoff; hcom
    messaging may continue.
 4. **Run `herdr update --handoff`** so occupants survive.
 5. **Post-upgrade gate, immediately:** confirm `herdr --version`; run
    `tools/herder/tests/check-live-contract.sh`; compare `hcom list --json` and
-   `herdr pane list` to the snapshots; run one stamp-only
-   `bin/herder observer sweep --json`; inspect `herder list --all` as cache, not authority.
+   `herdr pane list` to the snapshots; run `herder list` and inspect every
+   displayed join gap without treating the display as authority.
 6. **Lifecycle smoke.** Use `tools/fleet/spawn.sh` to place one disposable Claude or
    Codex seat, verify an `hcom send` round trip, then `tools/fleet/cull.sh` it. Exercise
    `hcom r`/`hcom f` only when the release changed resume/fork or placement behavior.
@@ -146,7 +146,7 @@ Setup (before the restart):
    remains display cache throughout.
 3. Create a disposable herdr pane running a bounded shell ticker as the survival
    specimen; record its exact pane id and cleanup command.
-4. Snapshot `hcom list --json`, `herdr pane list`, and `herder list --all`.
+4. Snapshot `hcom list --json`, `herdr pane list`, and the then-current herder display.
 
 Restart: `herdr update --handoff` (occupants survive; cold restart kills them).
 
@@ -155,8 +155,8 @@ Reconciliation and gate (in order):
 2. `hcom list` — bus should be unaffected (different substrate).
 3. `bash tools/herder/tests/check-live-contract.sh` + diff `herdr api schema --json`
    against the golden. Schema-drift-only failures are expected upgrade artifacts.
-4. Run one `bin/herder observer sweep --json`; inspect its stamp summary and
-   `herder list --all` without treating cache rows as authority.
+4. Run the then-current herder refresh command; inspect its stamp summary and
+   display without treating cache rows as authority.
 5. Verify the drill pane ticked across the swap (read its pane; look for
    a gap at the handoff timestamp).
 6. Spawn one disposable Claude/Codex probe through `tools/fleet/spawn.sh`, verify
@@ -165,5 +165,5 @@ Reconciliation and gate (in order):
 8. Send ALL CLEAR with any detection-lost sessions named for natural-boundary restart.
 
 Success criteria: version jumped; bus never degraded; drill ticks remained unbroken;
-fleet spawn/message/cull round-tripped; observer cache stamps were explained; no
+fleet spawn/message/cull round-tripped; display cache stamps were explained; no
 session or pane was lost except by choice.

@@ -4,10 +4,7 @@
 # This tier intentionally talks to the live installed binaries, not the hermetic
 # mocks used by the rest of the contract battery. Mutating operations are out of
 # scope: hcom hook bootstrapping runs under a scratch HCOM_DIR, and herdr checks
-# use read/introspection commands or read-only socket requests. Herdr event
-# The check assumes Herdr subscriptions are connection-scoped. The subscription
-# probe guarantees that its client connection closes immediately after the
-# acknowledgement; it does not inspect server-side subscription state.
+# use read/introspection commands or read-only socket requests.
 
 set -uo pipefail
 
@@ -223,104 +220,6 @@ check_hcom_roster_launch_context() {
   fi
 }
 
-check_herdr_agent_list() {
-  local herdr_bin="$1" out rc
-  out="$(run_live "$herdr_bin" agent list 2>"$ROOT/herdr-agent-list.err")"
-  rc=$?
-  if [[ "$rc" -ne 0 ]]; then
-    fail "herdr agent list envelope" "herdr agent list exited $rc: $(cat "$ROOT/herdr-agent-list.err")"
-    return
-  fi
-  if jq -e '
-      (.id | type == "string" and length > 0)
-      and (.result.type == "agent_list")
-      and (.result.agents | type == "array")
-      and all(.result.agents[];
-        (.pane_id | type == "string" and length > 0)
-        and (.terminal_id | type == "string" and length > 0)
-        and (.agent_status | type == "string" and length > 0))
-    ' <<<"$out" >/dev/null; then
-    pass "herdr agent list returns the pinned envelope"
-  else
-    fail "herdr agent list envelope" "unexpected payload"
-  fi
-}
-
-assert_process_info_envelope() {
-  local input="$ROOT/process-info-response.json"
-  cat >"$input"
-  python3 - "$input" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1]) as f:
-    raw = f.read()
-try:
-    obj = json.loads(raw)
-except json.JSONDecodeError:
-    raise SystemExit("output is not JSON (help text from a verb-shape drift?)")
-result = obj.get("result")
-if not isinstance(result, dict):
-    raise SystemExit("missing result object")
-info = result.get("process_info")
-if not isinstance(info, dict):
-    raise SystemExit("missing result.process_info object")
-procs = info.get("foreground_processes")
-if not isinstance(procs, list):
-    raise SystemExit("foreground_processes is not an array")
-for proc in procs:
-    if not isinstance(proc, dict) or not isinstance(proc.get("pid"), int) or not isinstance(proc.get("argv"), list):
-        raise SystemExit("foreground process entry shape drifted")
-PY
-}
-
-# TASK-307: on herdr 0.8 the only working CLI spelling is
-# `pane process-info --pane <id>`; the positional `pane process_info <id>`
-# returns the pane help text with rc=0, which parses as empty and silently
-# degraded three herder call-sites. This check pins the spelling herder uses
-# against the installed herdr so the next verb reshuffle fails loudly here.
-check_herdr_pane_process_info_verb() {
-  local herdr_bin="$1" panes pane out rc
-  panes="$(run_live "$herdr_bin" pane list 2>"$ROOT/herdr-pane-list.err")"
-  rc=$?
-  if [[ "$rc" -ne 0 ]]; then
-    skip "herdr pane process-info verb shape" "herdr pane list unavailable: $(cat "$ROOT/herdr-pane-list.err")"
-    check_process_info_negative_demo
-    return
-  fi
-  pane="$(jq -r '.result.panes[0].pane_id // empty' <<<"$panes" 2>/dev/null)"
-  if [[ -z "$pane" ]]; then
-    skip "herdr pane process-info verb shape" "no live panes to probe"
-    check_process_info_negative_demo
-    return
-  fi
-  out="$(run_live "$herdr_bin" pane process-info --pane "$pane" 2>"$ROOT/herdr-process-info.err")"
-  rc=$?
-  if [[ "$rc" -ne 0 ]]; then
-    fail "herdr pane process-info verb shape" "pane process-info --pane $pane exited $rc: $(cat "$ROOT/herdr-process-info.err")"
-    check_process_info_negative_demo
-    return
-  fi
-  if assert_process_info_envelope <<<"$out"; then
-    pass "herdr pane process-info --pane returns a parseable process_info envelope"
-  else
-    fail "herdr pane process-info verb shape" "unexpected payload"
-  fi
-  check_process_info_negative_demo
-}
-
-check_process_info_negative_demo() {
-  # The exact TASK-307 failure signature: help text on stdout with rc=0.
-  local help_text='Manage panes
-
-Usage: herdr pane <COMMAND>'
-  if assert_process_info_envelope <<<"$help_text" >/dev/null 2>&1; then
-    fail "negative demo: process-info help-text output is rejected" "rc=0 help text passed the process_info assertion path"
-  else
-    pass "negative demo: process-info help-text (rc=0 verb drift) is rejected by the live assertion path"
-  fi
-}
-
 check_herdr_schema() {
   local herdr_bin="$1" current="$ROOT/herdr-api-schema.json"
   if [[ ! -f "$GOLDEN_SCHEMA" ]]; then
@@ -338,72 +237,6 @@ check_herdr_schema() {
     sed -n '1,200p' "$ROOT/herdr-schema.diff"
     fail "herdr api schema --json drift check" "schema differs from committed golden"
   fi
-
-  if assert_subscription_schema "$current"; then
-    pass "herdr schema pins protocol and observer subscription parameter shapes"
-  else
-    fail "herdr subscription schema contract" "protocol, request, acknowledgement, or observer subscription variants drifted"
-  fi
-}
-
-assert_subscription_schema() {
-  python3 - "$1" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1]) as f:
-    schema = json.load(f)
-
-if schema.get("protocol") != 19:
-    raise SystemExit("schema protocol is not 19")
-
-request = schema.get("schemas", {}).get("request", {})
-defs = request.get("$defs", {})
-params = defs.get("EventsSubscribeParams")
-if not isinstance(params, dict):
-    raise SystemExit("missing EventsSubscribeParams")
-if params.get("type") != "object" or params.get("required") != ["subscriptions"]:
-    raise SystemExit("events.subscribe params shape drifted")
-subscriptions = params.get("properties", {}).get("subscriptions", {})
-if subscriptions.get("type") != "array" or subscriptions.get("items", {}).get("$ref") != "#/schemas/request/$defs/Subscription":
-    raise SystemExit("events.subscribe subscriptions array shape drifted")
-
-request_variants = request.get("oneOf", [])
-subscribe_requests = [
-    item for item in request_variants
-    if item.get("properties", {}).get("method", {}).get("const") == "events.subscribe"
-]
-if len(subscribe_requests) != 1:
-    raise SystemExit("events.subscribe request variant missing or duplicated")
-subscribe_request = subscribe_requests[0]
-if subscribe_request.get("required") != ["method", "params"]:
-    raise SystemExit("events.subscribe request required fields drifted")
-if subscribe_request.get("properties", {}).get("params", {}).get("$ref") != "#/schemas/request/$defs/EventsSubscribeParams":
-    raise SystemExit("events.subscribe params reference drifted")
-
-subscription = defs.get("Subscription", {})
-variants = {}
-for item in subscription.get("oneOf", []):
-    event_type = item.get("properties", {}).get("type", {}).get("const")
-    if event_type:
-        variants[event_type] = item
-for event_type in ("pane.created", "pane.closed", "pane.exited", "pane.agent_detected"):
-    item = variants.get(event_type)
-    if not isinstance(item, dict):
-        raise SystemExit(f"missing subscription variant {event_type}")
-    if item.get("type") != "object" or item.get("required") != ["type"]:
-        raise SystemExit(f"subscription parameter shape drifted for {event_type}")
-    if set(item.get("properties", {})) != {"type"}:
-        raise SystemExit(f"unexpected parameters for {event_type}")
-
-success = schema.get("schemas", {}).get("success_response", {}).get("$defs", {}).get("ResponseResult", {})
-acks = [
-    item for item in success.get("oneOf", [])
-    if item.get("properties", {}).get("type", {}).get("const") == "subscription_started"
-]
-if len(acks) != 1 or acks[0].get("required") != ["type"]:
-    raise SystemExit("subscription_started acknowledgement shape drifted")
-PY
 }
 
 socket_path_from_status() {
@@ -516,109 +349,6 @@ try:
 finally:
     s.close()
 PY
-}
-
-assert_subscription_response() {
-  local input="$ROOT/subscription-response.json"
-  cat >"$input"
-  python3 - "$input" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1]) as f:
-    obj = json.load(f)
-if obj.get("id") != "live-contract-events-subscribe":
-    raise SystemExit("subscription acknowledgement id does not match request")
-result = obj.get("result")
-if not isinstance(result, dict):
-    raise SystemExit("missing subscription result object")
-if result.get("type") != "subscription_started":
-    raise SystemExit("result.type is not subscription_started")
-PY
-}
-
-fetch_socket_subscription_ack() {
-  local sock="$1"
-  run_live python3 - "$sock" <<'PY'
-import json
-import socket
-import sys
-
-sock_path = sys.argv[1]
-req = {
-    "id": "live-contract-events-subscribe",
-    "method": "events.subscribe",
-    "params": {"subscriptions": [
-        {"type": "pane.created"},
-        {"type": "pane.closed"},
-        {"type": "pane.exited"},
-        {"type": "pane.agent_detected"},
-    ]},
-}
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-try:
-    s.settimeout(2.0)
-    s.connect(sock_path)
-    s.sendall((json.dumps(req, separators=(",", ":")) + "\n").encode())
-    chunks = []
-    while True:
-        data = s.recv(65536)
-        if not data:
-            print("connection closed before subscription acknowledgement", file=sys.stderr)
-            sys.exit(3)
-        chunks.append(data)
-        joined = b"".join(chunks)
-        if b"\n" in joined:
-            print(joined.splitlines()[0].decode())
-            break
-finally:
-    # Assuming Herdr scopes subscriptions to their connection, this close ends
-    # the read-only probe on success, mismatch, timeout, and socket errors.
-    s.close()
-PY
-}
-
-check_herdr_socket_subscription() {
-  local herdr_bin="$1" sock out rc
-  sock="$(socket_path_from_status "$herdr_bin" 2>"$ROOT/herdr-subscription-status.err")"
-  rc=$?
-  if [[ "$rc" -eq 2 ]]; then
-    fail "herdr socket subscription protocol compatibility" "$(cat "$ROOT/herdr-subscription-status.err")"
-    check_subscription_negative_demo
-    return
-  fi
-  if [[ "$rc" -ne 0 ]]; then
-    skip "herdr socket subscription acknowledgement" "live server unavailable: $(cat "$ROOT/herdr-subscription-status.err")"
-    check_subscription_negative_demo
-    return
-  fi
-  out="$(fetch_socket_subscription_ack "$sock" 2>"$ROOT/herdr-subscription.err")"
-  rc=$?
-  if [[ "$rc" -eq 3 ]]; then
-    fail "herdr socket subscription acknowledgement" "$(cat "$ROOT/herdr-subscription.err")"
-    check_subscription_negative_demo
-    return
-  fi
-  if [[ "$rc" -ne 0 ]]; then
-    skip "herdr socket subscription acknowledgement" "live socket unavailable: $(cat "$ROOT/herdr-subscription.err")"
-    check_subscription_negative_demo
-    return
-  fi
-  if assert_subscription_response <<<"$out"; then
-    pass "herdr socket subscription returns subscription_started; client closes immediately"
-  else
-    fail "herdr socket subscription acknowledgement" "unexpected payload"
-  fi
-  check_subscription_negative_demo
-}
-
-check_subscription_negative_demo() {
-  local malformed='{"id":"live-contract-events-subscribe","result":{"ok":true}}'
-  if assert_subscription_response <<<"$malformed" >/dev/null 2>&1; then
-    fail "negative demo: malformed subscription acknowledgement is rejected" "mock-only acknowledgement passed the live assertion path"
-  else
-    pass "negative demo: malformed subscription acknowledgement is rejected by the live assertion path"
-  fi
 }
 
 check_herdr_socket_snapshot() {
@@ -765,21 +495,12 @@ else
 fi
 
 if herdr_bin="$(real_herdr)" && [[ -n "$herdr_bin" && -x "$herdr_bin" ]]; then
-  check_herdr_agent_list "$herdr_bin"
-  check_herdr_pane_process_info_verb "$herdr_bin"
   check_herdr_schema "$herdr_bin"
   check_herdr_socket_snapshot "$herdr_bin"
-  check_herdr_socket_subscription "$herdr_bin"
 else
-  skip "herdr agent list envelope" "installed herdr not found"
-  skip "herdr pane process-info verb shape" "installed herdr not found"
-  check_process_info_negative_demo
   skip "herdr api schema --json drift check" "installed herdr not found"
-  skip "herdr subscription schema contract" "installed herdr not found"
   skip "herdr socket session.snapshot nested shape" "installed herdr not found"
   skip "negative demo: flat session.snapshot is rejected" "installed herdr not found"
-  skip "herdr socket subscription acknowledgement" "installed herdr not found"
-  check_subscription_negative_demo
 fi
 
 printf '\nSUMMARY live-contract: PASS=%d FAIL=%d SKIP=%d\n' "$pass_count" "$fail_count" "$skip_count"

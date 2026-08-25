@@ -91,11 +91,9 @@ Resolve at action time and stop on ambiguity, in this order:
 2. **Exact label match:** inspect `herdr pane list` for one label ending in
    ` <full-hcom-name> [<tool>]`. Status changes may alter the leading glyph;
    the name and tool suffix must match exactly, and multiple matches refuse.
-3. **PID occupant probe:** when managed metadata and the live label are both
-   absent, use the retained `tools/herder/internal/occupant` process-ancestry
-   probe to join the hcom-bound tool process to one live pane. A positive
-   unique ancestry match is usable; no occupant, unprobeable, or ambiguous
-   evidence is a report-only result and never permission to close a pane.
+3. **Unresolved:** when managed metadata and the live label are both absent,
+   report the missing placement. Do not infer a pane from process ancestry and
+   never treat missing placement evidence as permission to close a pane.
 
-The observer may cache this mapping for display, but lifecycle actions do not
-consult that cache.
+`herder list` displays the same exact-coordinate join and its gaps; lifecycle
+actions do not consult that display.

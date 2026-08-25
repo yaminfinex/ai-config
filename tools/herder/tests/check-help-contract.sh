@@ -23,7 +23,7 @@ MOCKBIN="$ROOT/bin"
 mkdir -p "$MOCKBIN"
 trap 'rm -rf "$ROOT"' EXIT
 
-for tool in herdr jq hcom; do
+for tool in herdr hcom; do
   cat >"$MOCKBIN/$tool" <<'MOCK'
 #!/usr/bin/env bash
 exit 0
@@ -40,8 +40,7 @@ PATH_HERMETIC="$MOCKBIN:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.lo
 
 run_help() {
   local cmd="$1"
-  mkdir -p "$ROOT/home/.local/state/herder" "$ROOT/cache" "$ROOT/gocache"
-  : >"$ROOT/home/.local/state/herder/registry.jsonl"
+  mkdir -p "$ROOT/cache" "$ROOT/gocache"
   env -i \
     PATH="$PATH_HERMETIC" \
     HOME="$ROOT/home" \
@@ -72,7 +71,7 @@ assert_help() {
   printf 'PASS  %s\n' "$cmd"
 }
 
-for cmd in list observer; do
+for cmd in list; do
   assert_help "$cmd"
 done
 

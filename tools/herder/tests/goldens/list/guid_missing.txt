@@ -1,6 +1,0 @@
-=== STDERR ===
-no record for guid nope
-=== STDOUT ===
-
-=== EXIT ===
-1
