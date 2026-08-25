@@ -14,13 +14,21 @@ import (
 const listTimeout = 5 * time.Second
 
 type LaunchContext struct {
-	PaneID string `json:"pane_id"`
+	PaneID                  string            `json:"pane_id"`
+	ProcessID               string            `json:"process_id,omitempty"`
+	TerminalID              string            `json:"terminal_id,omitempty"`
+	TerminalPresetEffective string            `json:"terminal_preset_effective,omitempty"`
+	TTY                     string            `json:"tty,omitempty"`
+	GitBranch               string            `json:"git_branch,omitempty"`
+	Env                     map[string]string `json:"env,omitempty"`
 }
 
 type Row struct {
 	Name          string        `json:"name"`
 	Tool          string        `json:"tool"`
 	Status        string        `json:"status"`
+	Directory     string        `json:"directory,omitempty"`
+	SessionID     string        `json:"session_id,omitempty"`
 	LaunchContext LaunchContext `json:"launch_context"`
 }
 

@@ -4,6 +4,7 @@ package servecmd
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -21,7 +22,10 @@ import (
 	"ai-config/tools/herder/internal/fleetview"
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/hcommessage"
+	"ai-config/tools/herder/internal/hcomtranscript"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/webidentity"
 	"ai-config/tools/herder/internal/webui"
 )
 
@@ -31,19 +35,29 @@ const (
 )
 
 type dependencies struct {
-	snapshot  func() (herdrcli.Snapshot, error)
-	roster    func() ([]hcomidentity.Row, error)
-	messages  func(context.Context, *hcomevents.Cursor, func(hcomevents.Message) error, func() error) error
-	poll      time.Duration
-	listeners func(int) ([]net.Listener, []string, error)
+	snapshot   func() (herdrcli.Snapshot, error)
+	roster     func() ([]hcomidentity.Row, error)
+	messages   func(context.Context, *hcomevents.Cursor, func(hcomevents.Message) error, func() error) error
+	transcript func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error)
+	latest     func(context.Context, string, hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error)
+	rangeRead  func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error)
+	sender     func(context.Context, string) (string, error)
+	send       func(context.Context, string, string, string) error
+	poll       time.Duration
+	listeners  func(int) ([]net.Listener, []string, error)
 }
 
 var liveDependencies = dependencies{
-	snapshot:  herdrcli.LiveSnapshot,
-	roster:    hcomidentity.List,
-	messages:  hcomevents.Subscribe,
-	poll:      PollCadence,
-	listeners: liveListeners,
+	snapshot:   herdrcli.LiveSnapshot,
+	roster:     hcomidentity.List,
+	messages:   hcomevents.Subscribe,
+	transcript: hcomtranscript.Window,
+	latest:     hcomtranscript.Latest,
+	rangeRead:  hcomtranscript.Range,
+	sender:     webidentity.Sender,
+	send:       hcommessage.SendRequest,
+	poll:       PollCadence,
+	listeners:  liveListeners,
 }
 
 type refusal struct {
@@ -63,6 +77,49 @@ type sourceError struct {
 }
 
 func (e sourceError) Error() string { return e.err.Error() }
+
+type agentPane struct {
+	WorkspaceID string `json:"workspace_id"`
+	TabID       string `json:"tab_id"`
+	PaneID      string `json:"pane_id"`
+}
+
+type agentDetail struct {
+	Name          string                     `json:"name"`
+	Tool          string                     `json:"tool"`
+	HerdrStatus   string                     `json:"herdr_status"`
+	BusStatus     string                     `json:"bus_status"`
+	Gap           string                     `json:"gap"`
+	Pane          *agentPane                 `json:"pane"`
+	Directory     string                     `json:"directory,omitempty"`
+	SessionID     string                     `json:"session_id,omitempty"`
+	LaunchContext hcomidentity.LaunchContext `json:"launch_context"`
+}
+
+type transcriptPage struct {
+	Exchanges []hcomtranscript.Exchange `json:"exchanges"`
+	Cursor    string                    `json:"cursor"`
+}
+
+type transcriptCursor struct {
+	Version  int                   `json:"v"`
+	Kind     string                `json:"kind"`
+	Agent    string                `json:"agent"`
+	Session  string                `json:"session,omitempty"`
+	Detail   hcomtranscript.Detail `json:"detail"`
+	Position int                   `json:"position"`
+}
+
+type messageRequest struct {
+	Text string `json:"text"`
+}
+
+type messageResponse struct {
+	Sent   bool   `json:"sent"`
+	To     string `json:"to"`
+	From   string `json:"from"`
+	Intent string `json:"intent"`
+}
 
 // Run parses and serves `herder serve` until the process is stopped.
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -200,14 +257,49 @@ func newHandler(deps dependencies) http.Handler {
 		}
 		serveEvents(w, r, deps)
 	})
+	mux.HandleFunc("/api/agents/{busName}", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		detail, err := readAgent(deps, r.PathValue("busName"))
+		if err != nil {
+			serveAgentReadError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, detail)
+	})
+	mux.HandleFunc("/api/agents/{busName}/transcript", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveTranscriptWindow(w, r, deps, r.PathValue("busName"))
+	})
+	mux.HandleFunc("/api/agents/{busName}/transcript/stream", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveTranscriptStream(w, r, deps, r.PathValue("busName"))
+	})
+	mux.HandleFunc("/api/agents/{busName}/message", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			refuse(w, http.StatusBadRequest, "bad request", "POST required")
+			return
+		}
+		serveMessage(w, r, deps, r.PathValue("busName"))
+	})
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
+		refuse(w, http.StatusNotFound, "not found", "unknown endpoint")
+	})
+	mux.HandleFunc("/api", func(w http.ResponseWriter, _ *http.Request) {
+		refuse(w, http.StatusNotFound, "not found", "unknown endpoint")
+	})
 	ui := http.FileServer(http.FS(webui.Files()))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api" {
-			if r.URL.Path == "/api/fleet" || r.URL.Path == "/api/events" {
-				mux.ServeHTTP(w, r)
-				return
-			}
-			refuse(w, http.StatusNotFound, "not found", "unknown endpoint")
+			mux.ServeHTTP(w, r)
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -227,21 +319,294 @@ func newHandler(deps dependencies) http.Handler {
 }
 
 func readBoard(deps dependencies) (fleetview.Board, error) {
+	snapshot, roster, err := readFleetInputs(deps)
+	if err != nil {
+		return fleetview.Board{}, err
+	}
+	return fleetview.Build(snapshot, roster), nil
+}
+
+func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, error) {
 	snapshot, err := deps.snapshot()
 	if err != nil {
-		return fleetview.Board{}, sourceError{"herdr", err}
+		return herdrcli.Snapshot{}, nil, sourceError{"herdr", err}
 	}
 	if err := fleetview.ValidateSnapshot(snapshot); err != nil {
-		return fleetview.Board{}, sourceError{"herdr", fmt.Errorf("invalid session hierarchy: %w", err)}
+		return herdrcli.Snapshot{}, nil, sourceError{"herdr", fmt.Errorf("invalid session hierarchy: %w", err)}
 	}
 	roster, err := deps.roster()
 	if err != nil {
-		return fleetview.Board{}, sourceError{"hcom", err}
+		return herdrcli.Snapshot{}, nil, sourceError{"hcom", err}
 	}
 	if err := fleetview.ValidateRoster(roster); err != nil {
-		return fleetview.Board{}, sourceError{"hcom", fmt.Errorf("invalid roster: %w", err)}
+		return herdrcli.Snapshot{}, nil, sourceError{"hcom", fmt.Errorf("invalid roster: %w", err)}
 	}
-	return fleetview.Build(snapshot, roster), nil
+	return snapshot, roster, nil
+}
+
+var errUnknownAgent = errors.New("unknown agent")
+
+func readAgent(deps dependencies, name string) (agentDetail, error) {
+	snapshot, roster, err := readFleetInputs(deps)
+	if err != nil {
+		return agentDetail{}, err
+	}
+	var bus *hcomidentity.Row
+	for i := range roster {
+		if roster[i].Name == name {
+			bus = &roster[i]
+			break
+		}
+	}
+	if bus == nil {
+		return agentDetail{}, fmt.Errorf("%w: agent %q is not on the hcom bus", errUnknownAgent, name)
+	}
+	result := agentDetail{
+		Name: name, Tool: bus.Tool, HerdrStatus: "-", BusStatus: bus.Status,
+		Gap: "no visible pane", Directory: bus.Directory, SessionID: bus.SessionID,
+		LaunchContext: bus.LaunchContext,
+	}
+	for _, row := range fleetview.JoinRows(snapshot, roster) {
+		if row.Agent == name && (row.Pane == bus.LaunchContext.PaneID || row.Pane == "-") {
+			result.Tool = row.Tool
+			result.HerdrStatus = row.HerdrStatus
+			result.BusStatus = row.BusStatus
+			result.Gap = row.Gap
+			break
+		}
+	}
+	if bus.LaunchContext.PaneID != "" {
+		for _, pane := range snapshot.Panes {
+			if pane.PaneID == bus.LaunchContext.PaneID {
+				result.Pane = &agentPane{WorkspaceID: pane.WorkspaceID, TabID: pane.TabID, PaneID: pane.PaneID}
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+func serveAgentReadError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errUnknownAgent) {
+		refuse(w, http.StatusNotFound, "unknown agent", err.Error())
+		return
+	}
+	refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+}
+
+func transcriptDetail(value string) (hcomtranscript.Detail, error) {
+	if value == "" || value == string(hcomtranscript.Exchanges) {
+		return hcomtranscript.Exchanges, nil
+	}
+	if value == string(hcomtranscript.Full) {
+		return hcomtranscript.Full, nil
+	}
+	return "", fmt.Errorf("detail must be %q or %q", hcomtranscript.Exchanges, hcomtranscript.Full)
+}
+
+func serveTranscriptWindow(w http.ResponseWriter, r *http.Request, deps dependencies, name string) {
+	agent, err := readAgent(deps, name)
+	if err != nil {
+		serveAgentReadError(w, err)
+		return
+	}
+	detail, err := transcriptDetail(r.URL.Query().Get("detail"))
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 100 {
+			refuse(w, http.StatusBadRequest, "bad request", "limit must be an integer from 1 through 100")
+			return
+		}
+	}
+	before := 0
+	if raw := r.URL.Query().Get("before"); raw != "" {
+		cursor, cursorErr := decodeTranscriptCursor(raw, "page", name, agent.SessionID, detail)
+		if cursorErr != nil {
+			refuse(w, http.StatusBadRequest, "bad request", cursorErr.Error())
+			return
+		}
+		before = cursor.Position
+	}
+	exchanges, err := deps.transcript(r.Context(), name, before, limit, detail)
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	next := before
+	if len(exchanges) > 0 {
+		next = exchanges[0].Position
+	} else if next == 0 {
+		next = 1
+	}
+	writeJSON(w, http.StatusOK, transcriptPage{Exchanges: exchanges, Cursor: encodeTranscriptCursor(transcriptCursor{
+		Version: 1, Kind: "page", Agent: name, Session: agent.SessionID, Detail: detail, Position: next,
+	})})
+}
+
+func encodeTranscriptCursor(cursor transcriptCursor) string {
+	raw, _ := json.Marshal(cursor)
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func decodeTranscriptCursor(raw, kind, agent, session string, detail hcomtranscript.Detail) (transcriptCursor, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return transcriptCursor{}, errors.New("invalid transcript cursor")
+	}
+	var cursor transcriptCursor
+	if err := json.Unmarshal(decoded, &cursor); err != nil || cursor.Version != 1 || cursor.Kind != kind || cursor.Agent != agent || cursor.Session != session || cursor.Detail != detail || cursor.Position < 0 {
+		return transcriptCursor{}, errors.New("invalid transcript cursor")
+	}
+	return cursor, nil
+}
+
+func serveTranscriptStream(w http.ResponseWriter, r *http.Request, deps dependencies, name string) {
+	agent, err := readAgent(deps, name)
+	if err != nil {
+		serveAgentReadError(w, err)
+		return
+	}
+	detail := hcomtranscript.Exchanges
+	position := 0
+	resuming := false
+	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
+		cursor, err := decodeTranscriptCursor(raw, "stream", name, agent.SessionID, detail)
+		if err != nil {
+			refuse(w, http.StatusBadRequest, "bad request", err.Error())
+			return
+		}
+		position = cursor.Position
+		resuming = true
+	}
+	latest, ok, err := deps.latest(r.Context(), name, detail)
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	if !resuming && ok {
+		position = latest.Position
+	}
+	flusher, okFlusher := w.(http.Flusher)
+	if !okFlusher {
+		refuse(w, http.StatusInternalServerError, "stream unavailable", "response writer does not support flushing")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+	emitThrough := func(end int) bool {
+		for position < end {
+			chunkEnd := position + 100
+			if chunkEnd > end {
+				chunkEnd = end
+			}
+			exchanges, rangeErr := deps.rangeRead(r.Context(), name, position+1, chunkEnd, detail)
+			if rangeErr != nil || len(exchanges) == 0 {
+				return false
+			}
+			for _, exchange := range exchanges {
+				cursor := encodeTranscriptCursor(transcriptCursor{
+					Version: 1, Kind: "stream", Agent: name, Session: agent.SessionID, Detail: detail, Position: exchange.Position,
+				})
+				data, marshalErr := json.Marshal(exchange)
+				if marshalErr != nil {
+					return false
+				}
+				if _, writeErr := fmt.Fprintf(w, "id: %s\nevent: exchange\ndata: %s\n\n", cursor, data); writeErr != nil {
+					return false
+				}
+				position = exchange.Position
+				flusher.Flush()
+			}
+		}
+		return true
+	}
+	if resuming && ok && latest.Position > position && !emitThrough(latest.Position) {
+		return
+	}
+	ticker := time.NewTicker(deps.poll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			latest, exists, latestErr := deps.latest(r.Context(), name, detail)
+			if latestErr != nil {
+				return
+			}
+			if exists && latest.Position > position && !emitThrough(latest.Position) {
+				return
+			}
+		}
+	}
+}
+
+func serveMessage(w http.ResponseWriter, r *http.Request, deps dependencies, name string) {
+	roster, err := deps.roster()
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	found := false
+	for _, row := range roster {
+		if row.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		refuse(w, http.StatusNotFound, "unknown agent", fmt.Sprintf("agent %q is not on the hcom bus", name))
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var request messageRequest
+	if err := decoder.Decode(&request); err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", "body must be JSON object {\"text\":\"...\"}")
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		refuse(w, http.StatusBadRequest, "bad request", "body must contain one JSON object")
+		return
+	}
+	if strings.TrimSpace(request.Text) == "" {
+		refuse(w, http.StatusBadRequest, "bad request", "text must not be empty")
+		return
+	}
+	sender, err := deps.sender(r.Context(), r.RemoteAddr)
+	if err != nil {
+		if errors.Is(err, webidentity.ErrUnavailable) {
+			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+			return
+		}
+		refuse(w, http.StatusConflict, "attribution required", err.Error())
+		return
+	}
+	for _, row := range roster {
+		if strings.EqualFold(row.Name, sender) {
+			refuse(w, http.StatusConflict, "sender refused", fmt.Sprintf("derived sender %q is already a bus agent", sender))
+			return
+		}
+	}
+	if err := deps.send(r.Context(), name, sender, request.Text); err != nil {
+		if errors.Is(err, hcommessage.ErrUnavailable) {
+			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+			return
+		}
+		refuse(w, http.StatusConflict, "refused by substrate", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, messageResponse{Sent: true, To: name, From: sender, Intent: "request"})
 }
 
 func refuse(w http.ResponseWriter, status int, short, detail string) {

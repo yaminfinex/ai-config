@@ -2,9 +2,11 @@ package servecmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -16,7 +18,10 @@ import (
 
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/hcommessage"
+	"ai-config/tools/herder/internal/hcomtranscript"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/webidentity"
 )
 
 func fixtureDeps() dependencies {
@@ -30,14 +35,45 @@ func fixtureDeps() dependencies {
 			}, nil
 		},
 		roster: func() ([]hcomidentity.Row, error) {
-			return []hcomidentity.Row{{Name: "dore", Tool: "codex", Status: "active", LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}}}, nil
+			return []hcomidentity.Row{{Name: "dore", Tool: "codex", Status: "active", SessionID: "session-dore", LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}}}, nil
 		},
 		messages: func(ctx context.Context, cursor *hcomevents.Cursor, emit func(hcomevents.Message) error, healthy func() error) error {
 			<-ctx.Done()
 			return nil
 		},
-		poll: 10 * time.Millisecond,
+		transcript: func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
+			return fixtureExchanges(1), nil
+		},
+		latest: func(context.Context, string, hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error) {
+			return fixtureExchanges(1)[0], true, nil
+		},
+		rangeRead: func(_ context.Context, _ string, start, end int, _ hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
+			positions := make([]int, 0, end-start+1)
+			for position := start; position <= end; position++ {
+				positions = append(positions, position)
+			}
+			return fixtureExchanges(positions...), nil
+		},
+		sender: func(context.Context, string) (string, error) { return "web-alice-example-com", nil },
+		send:   func(context.Context, string, string, string) error { return nil },
+		poll:   10 * time.Millisecond,
 	}
+}
+
+func fixtureExchanges(positions ...int) []hcomtranscript.Exchange {
+	raw := bytes.NewBufferString("[")
+	for index, position := range positions {
+		if index > 0 {
+			raw.WriteByte(',')
+		}
+		fmt.Fprintf(raw, `{"position":%d,"user":"prompt %d","action":"reply %d"}`, position, position, position)
+	}
+	raw.WriteByte(']')
+	var exchanges []hcomtranscript.Exchange
+	if err := json.Unmarshal(raw.Bytes(), &exchanges); err != nil {
+		panic(err)
+	}
+	return exchanges
 }
 
 func TestFleetEndpointPinsPathAndBoardJSONShape(t *testing.T) {
@@ -69,6 +105,208 @@ func TestFleetEndpointPinsPathAndBoardJSONShape(t *testing.T) {
 	}
 }
 
+func TestAgentEndpointReturnsJoinedDetailAnd404sUnknownBusName(t *testing.T) {
+	deps := fixtureDeps()
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/dore", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("detail response = %d %s", response.Code, response.Body.String())
+	}
+	var detail agentDetail
+	if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Name != "dore" || detail.Tool != "codex" || detail.HerdrStatus != "working" || detail.BusStatus != "active" || detail.Gap != "-" || detail.Pane == nil || detail.Pane.PaneID != "p1" || detail.LaunchContext.PaneID != "p1" {
+		t.Fatalf("agent detail = %#v", detail)
+	}
+
+	response = httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/missing", nil))
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"error":"unknown agent"`) {
+		t.Fatalf("unknown response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestTranscriptWindowsPageBackwardByExchangeAndPinDetail(t *testing.T) {
+	deps := fixtureDeps()
+	type call struct {
+		before, limit int
+		detail        hcomtranscript.Detail
+	}
+	var calls []call
+	deps.transcript = func(_ context.Context, agent string, before, limit int, detail hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
+		if agent != "dore" {
+			t.Fatalf("agent = %q", agent)
+		}
+		calls = append(calls, call{before, limit, detail})
+		if before == 0 {
+			return fixtureExchanges(4, 5), nil
+		}
+		return fixtureExchanges(2, 3), nil
+	}
+
+	first := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/api/agents/dore/transcript?limit=2", nil))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first = %d %s", first.Code, first.Body.String())
+	}
+	var page transcriptPage
+	if err := json.Unmarshal(first.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Exchanges) != 2 || page.Exchanges[0].Position != 4 || page.Exchanges[1].Position != 5 || page.Cursor == "" {
+		t.Fatalf("first page = %#v", page)
+	}
+
+	olderPath := "/api/agents/dore/transcript?limit=2&before=" + page.Cursor
+	older := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(older, httptest.NewRequest(http.MethodGet, olderPath, nil))
+	var olderPage transcriptPage
+	if err := json.Unmarshal(older.Body.Bytes(), &olderPage); err != nil {
+		t.Fatal(err)
+	}
+	if older.Code != http.StatusOK || len(olderPage.Exchanges) != 2 || olderPage.Exchanges[0].Position != 2 || olderPage.Exchanges[1].Position != 3 {
+		t.Fatalf("older page = %d %#v", older.Code, olderPage)
+	}
+	repeat := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(repeat, httptest.NewRequest(http.MethodGet, olderPath, nil))
+	var repeatPage transcriptPage
+	if err := json.Unmarshal(repeat.Body.Bytes(), &repeatPage); err != nil {
+		t.Fatal(err)
+	}
+	if repeatPage.Cursor != olderPage.Cursor {
+		t.Fatalf("cursor changed for stable window: %q != %q", repeatPage.Cursor, olderPage.Cursor)
+	}
+
+	full := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(full, httptest.NewRequest(http.MethodGet, "/api/agents/dore/transcript?limit=2&detail=full", nil))
+	if full.Code != http.StatusOK || len(calls) != 4 || calls[0] != (call{0, 2, hcomtranscript.Exchanges}) || calls[1].before != 4 || calls[3].detail != hcomtranscript.Full {
+		t.Fatalf("calls = %#v full=%d %s", calls, full.Code, full.Body.String())
+	}
+	staleCursor := encodeTranscriptCursor(transcriptCursor{
+		Version: 1, Kind: "page", Agent: "dore", Session: "older-session", Detail: hcomtranscript.Exchanges, Position: 4,
+	})
+	stale := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(stale, httptest.NewRequest(http.MethodGet, "/api/agents/dore/transcript?before="+staleCursor, nil))
+	if stale.Code != http.StatusBadRequest || len(calls) != 4 {
+		t.Fatalf("stale cursor response=%d %s calls=%#v", stale.Code, stale.Body.String(), calls)
+	}
+}
+
+func TestTranscriptStreamResumesAfterLastEventID(t *testing.T) {
+	deps := fixtureDeps()
+	deps.latest = func(context.Context, string, hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error) {
+		return fixtureExchanges(5)[0], true, nil
+	}
+	var rangeStart, rangeEnd int
+	deps.rangeRead = func(_ context.Context, _ string, start, end int, _ hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
+		rangeStart, rangeEnd = start, end
+		return fixtureExchanges(3, 4, 5), nil
+	}
+	lastID := encodeTranscriptCursor(transcriptCursor{Version: 1, Kind: "stream", Agent: "dore", Session: "session-dore", Detail: hcomtranscript.Exchanges, Position: 2})
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+	request, err := http.NewRequest(http.MethodGet, server.URL+"/api/agents/dore/transcript/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Last-Event-ID", lastID)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	event, data := readEvent(t, bufio.NewReader(response.Body))
+	if response.StatusCode != http.StatusOK || event != "exchange" || !strings.Contains(data, `"position":3`) || rangeStart != 3 || rangeEnd != 5 {
+		t.Fatalf("resume = status=%d event=%q data=%s range=%d-%d", response.StatusCode, event, data, rangeStart, rangeEnd)
+	}
+}
+
+func TestMessageWritePinsAttributionRefusalsAndConfirmationShape(t *testing.T) {
+	requestBody := func() *bytes.Buffer { return bytes.NewBufferString(`{"text":"please inspect"}`) }
+
+	deps := fixtureDeps()
+	deps.sender = func(context.Context, string) (string, error) {
+		return "", errors.New("loopback peer has no tailnet identity")
+	}
+	unresolved := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/agents/dore/message", requestBody())
+	newHandler(deps).ServeHTTP(unresolved, request)
+	if unresolved.Code != http.StatusConflict || !strings.Contains(unresolved.Body.String(), `"error":"attribution required"`) {
+		t.Fatalf("unresolved = %d %s", unresolved.Code, unresolved.Body.String())
+	}
+
+	deps = fixtureDeps()
+	roster := deps.roster
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		rows, _ := roster()
+		return append(rows, hcomidentity.Row{Name: "web-alice-example-com", Status: "active"}), nil
+	}
+	collision := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/api/agents/dore/message", requestBody())
+	newHandler(deps).ServeHTTP(collision, request)
+	if collision.Code != http.StatusConflict || !strings.Contains(collision.Body.String(), `"error":"sender refused"`) {
+		t.Fatalf("collision = %d %s", collision.Code, collision.Body.String())
+	}
+
+	deps = fixtureDeps()
+	var target, sender, text string
+	deps.send = func(_ context.Context, gotTarget, gotSender, gotText string) error {
+		target, sender, text = gotTarget, gotSender, gotText
+		return nil
+	}
+	confirmed := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/api/agents/dore/message", requestBody())
+	newHandler(deps).ServeHTTP(confirmed, request)
+	if confirmed.Code != http.StatusOK || target != "dore" || sender != "web-alice-example-com" || text != "please inspect" || !strings.Contains(confirmed.Body.String(), `"sent":true`) || !strings.Contains(confirmed.Body.String(), `"intent":"request"`) {
+		t.Fatalf("confirmed=%d %s send=(%q,%q,%q)", confirmed.Code, confirmed.Body.String(), target, sender, text)
+	}
+}
+
+func TestMessageWriteMapsWhoisInfrastructureTo502AndSemanticAttributionTo409(t *testing.T) {
+	for name, test := range map[string]struct {
+		err       error
+		status    int
+		errorText string
+	}{
+		"infrastructure": {fmt.Errorf("%w: daemon unavailable", webidentity.ErrUnavailable), http.StatusBadGateway, "substrate unreachable"},
+		"semantic":       {errors.New("tailscale whois returned no user login"), http.StatusConflict, "attribution required"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			deps := fixtureDeps()
+			deps.sender = func(context.Context, string) (string, error) { return "", test.err }
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/agents/dore/message", bytes.NewBufferString(`{"text":"hello"}`))
+			newHandler(deps).ServeHTTP(response, request)
+			if response.Code != test.status || !strings.Contains(response.Body.String(), `"error":"`+test.errorText+`"`) {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestMessageWriteMapsSendInfrastructureTo502AndSemanticRefusalTo409(t *testing.T) {
+	for name, test := range map[string]struct {
+		err       error
+		status    int
+		errorText string
+	}{
+		"infrastructure": {fmt.Errorf("%w: hcom missing", hcommessage.ErrUnavailable), http.StatusBadGateway, "substrate unreachable"},
+		"semantic":       {errors.New("target refused message"), http.StatusConflict, "refused by substrate"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			deps := fixtureDeps()
+			deps.send = func(context.Context, string, string, string) error { return test.err }
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/agents/dore/message", bytes.NewBufferString(`{"text":"hello"}`))
+			newHandler(deps).ServeHTTP(response, request)
+			if response.Code != test.status || !strings.Contains(response.Body.String(), `"error":"`+test.errorText+`"`) {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestRefusalsUseOneShapeAndHonestStatuses(t *testing.T) {
 	deps := fixtureDeps()
 	deps.snapshot = func() (herdrcli.Snapshot, error) {
@@ -81,7 +319,7 @@ func TestRefusalsUseOneShapeAndHonestStatuses(t *testing.T) {
 	}{
 		"dead socket":      {http.MethodGet, "/api/fleet", http.StatusBadGateway, "connect missing.sock: refused"},
 		"bad method":       {http.MethodPost, "/api/fleet", http.StatusBadRequest, "GET required"},
-		"unknown endpoint": {http.MethodGet, "/api/agents/dore", http.StatusNotFound, "unknown endpoint"},
+		"unknown endpoint": {http.MethodGet, "/api/not-an-endpoint", http.StatusNotFound, "unknown endpoint"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := httptest.NewRecorder()
