@@ -542,6 +542,53 @@ func TestForkMapsSemanticAndInfrastructureFailures(t *testing.T) {
 	}
 }
 
+func TestForkSuccessWithPlacementPendingReturnsNameAndEmptyPane(t *testing.T) {
+	deps := fixtureDeps()
+	deps.poll = time.Millisecond
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/agents/dore/fork", nil))
+	if response.Code != http.StatusOK || response.Body.String() != "{\"name\":\"fork-vava\",\"pane\":\"\"}\n" {
+		t.Fatalf("response=%d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestForkSuccessSurvivesPlacementPollSubstrateFailure(t *testing.T) {
+	deps := fixtureDeps()
+	deps.poll = time.Millisecond
+	baseSnapshot := deps.snapshot
+	var calls atomic.Int32
+	deps.snapshot = func() (herdrcli.Snapshot, error) {
+		if calls.Add(1) > 1 {
+			return herdrcli.Snapshot{}, errors.New("socket failed during placement poll")
+		}
+		return baseSnapshot()
+	}
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/agents/dore/fork", nil))
+	if response.Code != http.StatusOK || response.Body.String() != "{\"name\":\"fork-vava\",\"pane\":\"\"}\n" {
+		t.Fatalf("response=%d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestSpawnRejectsWorktreeWithoutRepoAndInvalidBranch(t *testing.T) {
+	for name, test := range map[string]struct {
+		body   string
+		status int
+		detail string
+	}{
+		"missing repo":   {`{"from_pane":"p1","shape":"worktree","tool":"codex","tag":"api","prompt":"x","branch":"feature/web"}`, http.StatusConflict, "workspace w1 has no repository"},
+		"invalid branch": {`{"from_pane":"p1","shape":"worktree","tool":"codex","tag":"api","prompt":"x","branch":"bad branch"}`, http.StatusBadRequest, "branch must start"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			newHandler(fixtureDeps()).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewBufferString(test.body)))
+			if response.Code != test.status || !strings.Contains(response.Body.String(), test.detail) {
+				t.Fatalf("response=%d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestRefusalsUseOneShapeAndHonestStatuses(t *testing.T) {
 	deps := fixtureDeps()
 	deps.snapshot = func() (herdrcli.Snapshot, error) {

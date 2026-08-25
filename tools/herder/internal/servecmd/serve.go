@@ -141,8 +141,9 @@ type forkRequest struct {
 }
 
 var (
-	tagPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
-	branchPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+	tagPattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+	branchPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+	errSenderCollision = errors.New("derived web sender collides with a bus agent")
 )
 
 // Run parses and serves `herder serve` until the process is stopped.
@@ -608,37 +609,19 @@ func serveMessage(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 		refuse(w, http.StatusNotFound, "unknown agent", fmt.Sprintf("agent %q is not on the hcom bus", name))
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
 	var request messageRequest
-	if err := decoder.Decode(&request); err != nil {
-		refuse(w, http.StatusBadRequest, "bad request", "body must be JSON object {\"text\":\"...\"}")
-		return
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		refuse(w, http.StatusBadRequest, "bad request", "body must contain one JSON object")
+	if err := decodeWriteBody(w, r, &request, false); err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return
 	}
 	if strings.TrimSpace(request.Text) == "" {
 		refuse(w, http.StatusBadRequest, "bad request", "text must not be empty")
 		return
 	}
-	sender, err := deps.sender(r.Context(), r.RemoteAddr)
+	sender, err := attributedSender(r, deps, roster)
 	if err != nil {
-		if errors.Is(err, webidentity.ErrUnavailable) {
-			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
-			return
-		}
-		refuse(w, http.StatusConflict, "attribution required", err.Error())
+		serveAttributionError(w, err)
 		return
-	}
-	for _, row := range roster {
-		if strings.EqualFold(row.Name, sender) {
-			refuse(w, http.StatusConflict, "sender refused", fmt.Sprintf("derived sender %q is already a bus agent", sender))
-			return
-		}
 	}
 	if err := deps.send(r.Context(), name, sender, request.Text); err != nil {
 		if errors.Is(err, hcommessage.ErrUnavailable) {
@@ -782,11 +765,7 @@ func serveFork(w http.ResponseWriter, r *http.Request, deps dependencies, name s
 		}
 		return
 	}
-	placement, err := waitForPlacement(r.Context(), deps, newName)
-	if err != nil {
-		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
-		return
-	}
+	placement := waitForPlacement(r.Context(), deps, newName)
 	writeJSON(w, http.StatusOK, webaction.Result{Name: newName, Pane: placement})
 }
 
@@ -797,7 +776,7 @@ func attributedSender(r *http.Request, deps dependencies, roster []hcomidentity.
 	}
 	for _, row := range roster {
 		if strings.EqualFold(row.Name, sender) {
-			return "", fmt.Errorf("derived sender %q is already a bus agent", sender)
+			return "", fmt.Errorf("%w: derived sender %q is already a bus agent", errSenderCollision, sender)
 		}
 	}
 	return sender, nil
@@ -808,7 +787,7 @@ func serveAttributionError(w http.ResponseWriter, err error) {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
 	}
-	if strings.Contains(err.Error(), "already a bus agent") {
+	if errors.Is(err, errSenderCollision) {
 		refuse(w, http.StatusConflict, "sender refused", err.Error())
 		return
 	}
@@ -841,14 +820,14 @@ func decodeWriteBody(w http.ResponseWriter, r *http.Request, target any, emptyOK
 	return nil
 }
 
-func waitForPlacement(ctx context.Context, deps dependencies, name string) (string, error) {
+func waitForPlacement(ctx context.Context, deps dependencies, name string) string {
 	timeout := 2*deps.poll + time.Second
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	for {
 		snapshot, roster, err := readFleetInputs(deps)
 		if err != nil {
-			return "", err
+			return ""
 		}
 		for _, row := range roster {
 			if row.Name != name || row.LaunchContext.PaneID == "" {
@@ -856,7 +835,7 @@ func waitForPlacement(ctx context.Context, deps dependencies, name string) (stri
 			}
 			for _, pane := range snapshot.Panes {
 				if pane.PaneID == row.LaunchContext.PaneID {
-					return pane.PaneID, nil
+					return pane.PaneID
 				}
 			}
 		}
@@ -864,7 +843,7 @@ func waitForPlacement(ctx context.Context, deps dependencies, name string) (stri
 		select {
 		case <-waitCtx.Done():
 			timer.Stop()
-			return "", fmt.Errorf("forked agent %q did not appear with a pane within %s", name, timeout)
+			return ""
 		case <-timer.C:
 		}
 	}

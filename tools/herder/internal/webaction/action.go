@@ -36,7 +36,10 @@ func Spawn(ctx context.Context, args []string) (Result, error) {
 	defer cancel()
 	cmd := exec.CommandContext(commandCtx, script, args...)
 	cmd.Env = hcomcli.AnonymousEnv()
-	out, err := cmd.CombinedOutput()
+	cmd.WaitDelay = time.Second
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if commandCtx.Err() != nil {
 		return Result{}, fmt.Errorf("%w: fleet spawn timed out after %s", ErrUnavailable, commandTimeout)
 	}
@@ -44,7 +47,7 @@ func Spawn(ctx context.Context, args []string) (Result, error) {
 		if unavailable(err) {
 			return Result{}, fmt.Errorf("%w: run %s: %v", ErrUnavailable, script, err)
 		}
-		return Result{}, errors.New(detail(out, err))
+		return Result{}, errors.New(detail(out, stderr.Bytes(), err))
 	}
 	result, err := parseSpawn(out)
 	if err != nil {
@@ -61,7 +64,11 @@ func Fork(ctx context.Context, target, prompt string, hasPrompt bool) (string, e
 		args = append(args, "--hcom-prompt", prompt)
 	}
 	args = append(args, "--go")
-	out, err := hcomcli.CommandContext(commandCtx, args...).CombinedOutput()
+	cmd := hcomcli.CommandContext(commandCtx, args...)
+	cmd.WaitDelay = time.Second
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if commandCtx.Err() != nil {
 		return "", fmt.Errorf("%w: hcom fork timed out after %s", ErrUnavailable, commandTimeout)
 	}
@@ -69,7 +76,7 @@ func Fork(ctx context.Context, target, prompt string, hasPrompt bool) (string, e
 		if unavailable(err) {
 			return "", fmt.Errorf("%w: run hcom fork: %v", ErrUnavailable, err)
 		}
-		return "", errors.New(detail(out, err))
+		return "", errors.New(detail(out, stderr.Bytes(), err))
 	}
 	name, err := parseNames(out)
 	if err != nil {
@@ -80,6 +87,7 @@ func Fork(ctx context.Context, target, prompt string, hasPrompt bool) (string, e
 
 func parseSpawn(out []byte) (Result, error) {
 	var result Result
+	var names, panes int
 	for _, line := range strings.Split(string(out), "\n") {
 		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
 		if !ok {
@@ -87,13 +95,15 @@ func parseSpawn(out []byte) (Result, error) {
 		}
 		switch key {
 		case "name":
+			names++
 			result.Name = value
 		case "pane":
+			panes++
 			result.Pane = value
 		}
 	}
-	if result.Name == "" || result.Pane == "" {
-		return Result{}, errors.New("fleet spawn output omitted name or pane")
+	if names != 1 || result.Name == "" || panes > 1 || (panes == 1 && result.Pane == "") {
+		return Result{}, errors.New("fleet spawn output must contain exactly one name and at most one nonempty pane")
 	}
 	return result, nil
 }
@@ -116,8 +126,11 @@ func unavailable(err error) bool {
 	return errors.As(err, &pathErr) || errors.Is(err, exec.ErrNotFound)
 }
 
-func detail(out []byte, err error) string {
-	if trimmed := bytes.TrimSpace(out); len(trimmed) > 0 {
+func detail(stdout, stderr []byte, err error) string {
+	if trimmed := bytes.TrimSpace(stderr); len(trimmed) > 0 {
+		return string(trimmed)
+	}
+	if trimmed := bytes.TrimSpace(stdout); len(trimmed) > 0 {
 		return string(trimmed)
 	}
 	return err.Error()
