@@ -1016,7 +1016,7 @@ func acquireObserverLock(stderr io.Writer) (observerLock, bool, error) {
 			fmt.Fprintf(stderr, "herder observer run: %v\n", err)
 			return observerLock{}, false, err
 		}
-		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 			_ = f.Close()
 			fmt.Fprintf(stderr, "herder observer run: terminate superseded pid %d: %v\n", pid, err)
 			return observerLock{}, false, err
@@ -1175,7 +1175,7 @@ func runStop(stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "observer stop: no pid in lockfile")
 		return 0
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		fmt.Fprintf(stderr, "herder observer stop: %v\n", err)
 		return 1
 	}
