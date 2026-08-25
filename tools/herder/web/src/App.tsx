@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   AgentDetail,
   Board,
@@ -193,6 +193,8 @@ function AgentPage({ name }: { name: string }) {
   const [sendNotice, setSendNotice] = useState('')
   const [sending, setSending] = useState(false)
   const [readOnly, setReadOnly] = useState('')
+  const currentView = useRef({ name, detail })
+  currentView.current = { name, detail }
 
   useEffect(() => {
     let active = true
@@ -201,6 +203,7 @@ function AgentPage({ name }: { name: string }) {
     setExchanges([])
     setCursor('')
     setHasOlder(true)
+    setLoadingOlder(false)
     setNotFound(null)
     setProblems({ stream: 'Connecting to live transcript…' })
 
@@ -220,7 +223,7 @@ function AgentPage({ name }: { name: string }) {
         // Establish the tail before reading the newest window. Anything that
         // lands during initial paint is then present in either the window or
         // the stream, and position de-duplication handles the overlap.
-        events = new EventSource(`/api/agents/${encodeURIComponent(name)}/transcript/stream`)
+        events = new EventSource(`/api/agents/${encodeURIComponent(name)}/transcript/stream?detail=${detail}`)
         events.onopen = () => setProblems((current) => without(current, 'stream'))
         events.onerror = () => setProblems((current) => ({ ...current, stream: 'Live transcript disconnected; reconnecting…' }))
         events.addEventListener('exchange', (event) => {
@@ -255,11 +258,15 @@ function AgentPage({ name }: { name: string }) {
 
   const loadOlder = async () => {
     if (!cursor || loadingOlder) return
+    const requestView = { name, detail }
+    const requestIsCurrent = () => currentView.current.name === requestView.name && currentView.current.detail === requestView.detail
     setLoadingOlder(true)
     try {
       const response = await fetch(`/api/agents/${encodeURIComponent(name)}/transcript?limit=20&detail=${detail}&before=${encodeURIComponent(cursor)}`)
+      if (!requestIsCurrent()) return
       if (!response.ok) throw new Error((await refusal(response)).detail)
       const page = await response.json() as TranscriptPage
+      if (!requestIsCurrent()) return
       setCursor(page.cursor)
       setHasOlder(page.exchanges.length > 0)
       setExchanges((current) => {
@@ -267,9 +274,13 @@ function AgentPage({ name }: { name: string }) {
         return [...page.exchanges.filter((item) => !positions.has(item.position)), ...current]
       })
     } catch (error: unknown) {
-      setProblems((current) => ({ ...current, transcript: error instanceof Error ? error.message : String(error) }))
+      if (requestIsCurrent()) {
+        setProblems((current) => ({ ...current, transcript: error instanceof Error ? error.message : String(error) }))
+      }
     } finally {
-      setLoadingOlder(false)
+      if (requestIsCurrent()) {
+        setLoadingOlder(false)
+      }
     }
   }
 

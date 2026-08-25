@@ -471,7 +471,11 @@ func serveTranscriptStream(w http.ResponseWriter, r *http.Request, deps dependen
 		serveAgentReadError(w, err)
 		return
 	}
-	detail := hcomtranscript.Exchanges
+	detail, err := transcriptDetail(r.URL.Query().Get("detail"))
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
 	position := 0
 	resuming := false
 	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
