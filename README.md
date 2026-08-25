@@ -11,7 +11,6 @@ This repo is the canonical corpus. Live agent config paths are symlinked into it
 - `bin/ai-sync`: pull remote changes and heal safe symlink drift.
 - `bin/ai-adopt <skill-path|skill-name>`: copy a local-only skill into `skills/<name>` and relink live roots.
 - `bin/ai-push "message"`: stage allowlisted repo files, validate them, commit, and push.
-- `bin/bottle`: pin, name, and re-enter agent contexts; run `bin/bottle` (no args) for the agent-first help.
 
 ## First Machine Setup
 
@@ -41,9 +40,8 @@ Restart the shell after setup.
 
 Beyond skills and agent config, the repo also tracks:
 
-- `bin/`, `lib/`: the `ai-*` and `bottle` commands and their shared shell library.
+- `bin/`, `lib/`: the `ai-*` commands and their shared shell library.
 - `claude/`, `codex/`: shared agent config fragments and examples managed by `ai-setup`.
-- `tools/bottle/`: the Go implementation behind `bin/bottle` (see `tools/bottle/README.md`).
 - `vendor/`: vendored upstream projects some skills build on (e.g. `native-shortcuts-herd`).
 - `docs/`: operating guides, characterizations, standing specifications, and their preserved source records.
 

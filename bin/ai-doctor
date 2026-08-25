@@ -18,7 +18,7 @@ Checks ai-config repository health, link drift, local-only skills, secrets,
 machine-specific absolute home paths, Claude config divergence, and Grok
 credential/home/PATH-resolution drift. It also verifies that a fresh login
 shell defines the claude/codex/grok launcher functions (lib/launchers.sh via
-the ai-setup rc block) and resolves the herder/mish/bottle bin wrappers to
+the ai-setup rc block) and resolves the herder/mish bin wrappers to
 this checkout, flags mise-owned duplicate vendor CLIs (npm copies inside node
 installs), and warns when the current shell carries managed-agent identity
 that makes direct vendor CLI probes unsafe. Findings are reported only; Grok
@@ -431,7 +431,7 @@ check_login_shell_resolution() {
   #      ai-setup rc block). Functions win over every PATH entry, so this is
   #      immune to mise hook-env re-fronting its shims dir on cd — the reason
   #      the PATH-shim generation of this design was retired.
-  #   2. herder/mish/bottle bin/ wrappers resolve to THIS checkout, not a
+  #   2. herder/mish bin/ wrappers resolve to THIS checkout, not a
   #      stale copy (e.g. a `go install` leftover or a mise shim).
   source "$AI_CONFIG_ROOT/lib/mise-path.sh"
 
@@ -455,7 +455,7 @@ check_login_shell_resolution() {
   # `typeset -f` detects functions in both bash and zsh; `command -v` reports
   # the PATH answer for what would actually run when it is not a function.
   # Sentinel lines isolate answers from any rc banner on stdout.
-  probe_cmd='for _t in claude codex grok; do if typeset -f "$_t" >/dev/null 2>&1; then printf "AIDOCTOR_KIND %s=function\n" "$_t"; else printf "AIDOCTOR_KIND %s=%s\n" "$_t" "$(command -v "$_t" 2>/dev/null || true)"; fi; done; for _t in herder mish bottle; do printf "AIDOCTOR_BIN %s=%s\n" "$_t" "$(command -v "$_t" 2>/dev/null || true)"; done'
+  probe_cmd='for _t in claude codex grok; do if typeset -f "$_t" >/dev/null 2>&1; then printf "AIDOCTOR_KIND %s=function\n" "$_t"; else printf "AIDOCTOR_KIND %s=%s\n" "$_t" "$(command -v "$_t" 2>/dev/null || true)"; fi; done; for _t in herder mish; do printf "AIDOCTOR_BIN %s=%s\n" "$_t" "$(command -v "$_t" 2>/dev/null || true)"; done'
   out="$(resolve_in_login_shell "$login_shell" "$probe_cmd")"
 
   if [ -z "$out" ]; then
@@ -474,7 +474,7 @@ check_login_shell_resolution() {
     fi
   done
 
-  for tool in herder mish bottle; do
+  for tool in herder mish; do
     expected="$bin_dir/$tool"
     resolved="$(printf '%s\n' "$out" | sed -n "s/^AIDOCTOR_BIN $tool=//p" | tail -n1)"
     [ -n "$resolved" ] || continue   # not on PATH here — nothing to shadow
