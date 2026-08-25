@@ -93,7 +93,9 @@ func TestRefusalsUseOneShapeAndHonestStatuses(t *testing.T) {
 			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 				t.Fatal(err)
 			}
-			if len(body) != 2 || body["error"] == "" || !strings.Contains(body["detail"].(string), test.detail) {
+			errorText, errorOK := body["error"].(string)
+			detail, detailOK := body["detail"].(string)
+			if len(body) != 2 || !errorOK || errorText == "" || !detailOK || !strings.Contains(detail, test.detail) {
 				t.Fatalf("refusal = %#v", body)
 			}
 		})
@@ -173,6 +175,16 @@ func TestTailscaleBindFailureKeepsLoopbackListener(t *testing.T) {
 	}()
 	if len(listeners) != 1 || len(warnings) != 1 || !strings.Contains(warnings[0], "tailscale address") {
 		t.Fatalf("listeners=%d warnings=%v", len(listeners), warnings)
+	}
+}
+
+func TestOpenListenersRejectsWildcard(t *testing.T) {
+	listeners, _, err := openListeners([]string{"0.0.0.0"}, 0)
+	for _, listener := range listeners {
+		_ = listener.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "unspecified") {
+		t.Fatalf("openListeners wildcard error = %v", err)
 	}
 }
 

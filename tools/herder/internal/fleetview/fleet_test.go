@@ -41,6 +41,28 @@ func TestBuildPreservesHierarchyAndBothGapDirections(t *testing.T) {
 	}
 }
 
+func TestBuildDoesNotInferPlacementFromMatchingName(t *testing.T) {
+	snapshot := herdrcli.Snapshot{
+		Workspaces: []herdrcli.Workspace{{WorkspaceID: "w1", TabCount: 1, PaneCount: 1}},
+		Tabs:       []herdrcli.Tab{{TabID: "t1", WorkspaceID: "w1", PaneCount: 1}},
+		Panes:      []herdrcli.Pane{{PaneID: "p1", WorkspaceID: "w1", TabID: "t1", Agent: "codex", AgentStatus: "working", AgentSession: "s1"}},
+		Agents:     []herdrcli.Agent{{PaneID: "p1", Name: "dore", Agent: "codex", Status: "working"}},
+	}
+	roster := []hcomidentity.Row{{
+		Name: "dore", Tool: "codex", Status: "active",
+		LaunchContext: hcomidentity.LaunchContext{PaneID: "different-pane"},
+	}}
+
+	board := Build(snapshot, roster)
+	pane := board.Workspaces[0].Tabs[0].Panes[0]
+	if pane.Agent != "dore" || pane.BusStatus != "-" || pane.Gap != "no bus row" {
+		t.Fatalf("same-name herdr pane was incorrectly joined: %#v", pane)
+	}
+	if len(board.Unplaced) != 1 || board.Unplaced[0].Agent != "dore" || board.Unplaced[0].Pane != "-" || board.Unplaced[0].Gap != "no visible pane" {
+		t.Fatalf("different-pane bus row was incorrectly placed: %#v", board.Unplaced)
+	}
+}
+
 func TestValidateSnapshotRejectsHierarchyGaps(t *testing.T) {
 	for name, snapshot := range map[string]herdrcli.Snapshot{
 		"missing tab":       {Panes: []herdrcli.Pane{{PaneID: "p1", WorkspaceID: "w1", TabID: "missing"}}},

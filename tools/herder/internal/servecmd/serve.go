@@ -134,8 +134,8 @@ func liveListeners(port int) ([]net.Listener, []string, error) {
 				return nil, nil, fmt.Errorf("read tailscale0 addresses: %w", addrErr)
 			}
 			for _, addr := range addrs {
-				host, _, splitErr := net.SplitHostPort(net.JoinHostPort(strings.Split(addr.String(), "/")[0], strconv.Itoa(port)))
-				if splitErr == nil && host != "" {
+				host := strings.SplitN(addr.String(), "/", 2)[0]
+				if host != "" {
 					addresses = append(addresses, host)
 				}
 			}
@@ -155,6 +155,13 @@ func openListeners(addresses []string, port int) ([]net.Listener, []string, erro
 	listeners := make([]net.Listener, 0, len(addresses))
 	warnings := []string{}
 	for _, address := range addresses {
+		ip := net.ParseIP(address)
+		if ip == nil || ip.IsUnspecified() {
+			for _, open := range listeners {
+				_ = open.Close()
+			}
+			return nil, nil, fmt.Errorf("refusing unspecified or invalid bind address %q", address)
+		}
 		listener, err := net.Listen("tcp", net.JoinHostPort(address, strconv.Itoa(port)))
 		if err != nil {
 			if address == "127.0.0.1" {
