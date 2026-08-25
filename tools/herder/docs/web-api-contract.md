@@ -99,6 +99,14 @@ POST `/api/agents/{bus-name}/message`
   reply-expected request (intent=request) — always, no knob in v1 —
   so agent response rules guarantee an answer. Agent replies on its
   own turn; the reply arrives on the stream. No injection, ever.
+  Success response (pinned at implementation review 2026-08-25):
+  `{"sent": true, "to": "<agent>", "from": "<web-sender>",
+  "intent": "request"}`. Refusal statuses on this path: 404 unknown
+  agent; 400 bad body; 409 attribution required / sender collision /
+  refused by substrate (semantic refusals, incl. tailscale's
+  peer-not-found for an unresolvable peer); 502 substrate
+  unreachable (infrastructure: timeouts, missing/unreachable hcom or
+  tailscaled — never conflated with a refusal).
 
 POST `/api/spawn`
   Contextual only. Body:
@@ -121,8 +129,14 @@ POST `/api/agents/{bus-name}/fork`
   identity of the connection (whois-style lookup against the local
   tailscale daemon). No cookies, no chosen names, no login UI.
 - The derived identity is presented on the bus as a visibly
-  web-origin sender (shape proposed: `web-<tailnet-user>`; exact
-  rendering settled at implementation review).
+  web-origin sender. Rendering (settled at implementation review
+  2026-08-25): `web-<slugged tailnet login>` — lowercase ASCII
+  letters/digits with separator runs collapsed to single hyphens,
+  bounded at 50 chars with a stable 8-hex SHA-256 suffix when
+  truncated (e.g. `Alice@Example.com` → `web-alice-example-com`).
+  Accepted on record: two distinct logins can slug to the same
+  sender; harmless under flat authority because identity is
+  attribution, never authorization.
 - Reserved and existing agent names are refused as senders — a web
   peer can never send as an agent or the conductor.
 - A connection whose tailnet identity cannot be resolved (e.g. bare
