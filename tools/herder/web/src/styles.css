@@ -3,7 +3,7 @@
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 a { color: #7dd3fc; text-underline-offset: 3px; }
 a:hover { color: #bae6fd; }
-button, textarea { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button { padding: 8px 12px; border: 1px solid #475569; border-radius: 7px; background: #1e293b; color: #e8edf5; cursor: pointer; }
 button:hover:not(:disabled) { border-color: #7dd3fc; }
 button:disabled { cursor: not-allowed; opacity: .55; }
@@ -27,7 +27,18 @@ table { width: 100%; border-collapse: collapse; font-size: .82rem; }
 th, td { padding: 10px 12px; border-bottom: 1px solid #242b38; text-align: left; white-space: nowrap; }
 th { background: #171d29; color: #94a3b8; font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; }
 tr:last-child td { border-bottom: 0; }
-.has-gap td:last-child { color: #fbbf24; font-weight: 600; }
+.has-gap td:nth-child(6) { color: #fbbf24; font-weight: 600; }
+.compact { padding: 5px 9px; font-size: .75rem; }
+.lifecycle-form { min-width: 360px; padding: 14px; border: 1px solid #334155; border-radius: 9px; background: #111620; white-space: normal; }
+.spawn-form { margin: -4px 0; }
+.fork-form { width: min(680px, 100%); margin: 0 0 24px; }
+.lifecycle-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.lifecycle-form label { display: grid; gap: 5px; color: #cbd5e1; font-size: .76rem; font-weight: 700; }
+.lifecycle-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
+.lifecycle-form input, .lifecycle-form select, .lifecycle-form textarea { width: 100%; padding: 8px 9px; border: 1px solid #334155; border-radius: 7px; outline: none; background: #090d14; color: #e8edf5; }
+.lifecycle-form textarea { resize: vertical; }
+.lifecycle-form input:focus, .lifecycle-form select:focus, .lifecycle-form textarea:focus { border-color: #38bdf8; }
+.optional { color: #64748b; font-weight: 400; }
 .loading, .empty { margin: 24px 0 0; color: #94a3b8; }
 .back-link { display: inline-block; margin-bottom: 22px; }
 .agent-header { margin-bottom: 16px; }
@@ -63,3 +74,4 @@ pre { max-width: 100%; overflow-x: auto; padding: 12px; border-radius: 6px; back
 .not-found h1 { font-size: clamp(2rem, 5vw, 3.5rem); }
 @media (max-width: 640px) { main { padding-top: 22px; } header, .section-heading { align-items: start; flex-direction: column; gap: 8px; } .workspace { padding: 14px; } }
 @media (max-width: 640px) { .identity dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } .send-footer { align-items: stretch; flex-direction: column; } .turn { grid-template-columns: 1fr; gap: 4px; } }
+@media (max-width: 640px) { .lifecycle-form { min-width: 280px; } .lifecycle-fields { grid-template-columns: 1fr; } }
