@@ -44,7 +44,9 @@ export default function App() {
     const connect = () => {
       if (!active) return
       events = new EventSource('/api/events')
-      events.onopen = () => setProblems((current) => without(current, 'stream'))
+      // A new stream is a fresh substrate assessment. Clear prior-connection
+      // failures; any source still down is reasserted by its initial event.
+      events.onopen = () => setProblems({})
       events.onerror = () => setProblems((current) => ({ ...current, stream: 'Live stream disconnected; reconnecting…' }))
       events.addEventListener('fleet', (event) => {
         setBoard(JSON.parse(event.data) as Board)

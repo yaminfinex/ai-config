@@ -29,13 +29,16 @@ pass() { printf 'PASS  %s\n' "$1"; }
 bad() { printf 'FAIL  %s - %s\n' "$1" "$2"; fail=$((fail + 1)); }
 
 if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+  # Build outside the worktree: comparing complete directories catches stale
+  # source and direct dist tampering without silently repairing either one.
   if npm --prefix "$WEB_ROOT" ci &&
     npm --prefix "$WEB_ROOT" run lint &&
     npm --prefix "$WEB_ROOT" run typecheck &&
-    npm --prefix "$WEB_ROOT" run build; then
-    pass "web dependencies install cleanly and lint, typecheck, and production build pass"
+    npm --prefix "$WEB_ROOT" run build:check -- --outDir "$ROOT/web-dist" --emptyOutDir &&
+    diff -qr "$ROOT/web-dist" "$HERDER_ROOT/internal/webui/dist"; then
+    pass "web lint, typecheck, production build, and committed artifact drift check pass"
   else
-    bad "web build gates" "npm UI checks failed"
+    bad "web build gates" "npm UI checks failed or committed dist differs from a clean production build"
   fi
 else
   pass "web build gates skipped because node/npm are absent (committed dist remains buildable by Go)"
