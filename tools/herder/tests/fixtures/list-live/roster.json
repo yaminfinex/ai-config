@@ -1,0 +1,20 @@
+[
+  {
+    "name": "mavu",
+    "base_name": "mavu",
+    "tool": "codex",
+    "status": "listening",
+    "joined": true,
+    "session_id": "session-mavu",
+    "launch_context": {"pane_id": "w1:p1", "process_id": "101"}
+  },
+  {
+    "name": "vile",
+    "base_name": "vile",
+    "tool": "claude",
+    "status": "active",
+    "joined": true,
+    "session_id": "session-vile",
+    "launch_context": {"pane_id": "w9:p9", "process_id": "202"}
+  }
+]

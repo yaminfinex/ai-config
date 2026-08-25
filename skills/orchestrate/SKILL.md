@@ -7,7 +7,7 @@ description: Run a long or complex plan across multiple agent sessions through t
 
 Policy for running one mission across many agent sessions. `tools/fleet` owns Claude/Codex
 spawn and cull, hcom owns identity and coordination, and herdr owns placement. Herder survives
-only as `list` plus `observer`: its ledger is display cache, never lifecycle authority. This
+only as `list`: a live display join, never lifecycle authority. This
 file carries the law that real runs minted; compose everything else per run into the playbook.
 
 ## State
@@ -97,6 +97,6 @@ rewrite) and the **run-log** — your journal and the run's wake authority. Cold
 ## Substrate safety
 
 Lifecycle actions resolve at action time from hcom hooks, fleet preset metadata, and herdr pane
-state. `herder list` and observer stamps are display only. Never close your own pane, close a
+state. `herder list` is display only. Never close your own pane, close a
 workspace or tab, inject Escape into a running peer, or remove a checkout before its exact seat
 is gone. Use `hcom send` for peer delivery and the fleet wrapper for cull.

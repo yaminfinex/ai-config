@@ -1,15 +1,12 @@
-# Herder observer and ledger viewer
+# Herder live fleet view
 
-Herder retains two surfaces after the lifecycle teardown:
+Herder has one command: `herder list`. It reads a `session.snapshot` directly
+from the herdr Unix socket, reads the live hcom roster, and joins rows only by
+an exact pane ID. A visible agent pane without a bus row and a bus agent without
+a visible pane remain explicit gaps.
 
-- `herder observer` is the sole writer of the human-facing fleet ledger cache.
-- `herder list` reads that cache and annotates it with current read-only
-  substrate observations.
-
-The ledger is display state, never authority for lifecycle actions. Spawn,
-message, compact, cull, resume, and fork compose through `tools/fleet`, hcom,
-and herdr. The installed herder binary is refreshed separately from this
-source change so existing live seats are not disrupted mid-run.
+Herder owns no ledger, cache, daemon, or lifecycle authority. Spawn, message,
+compact, cull, resume, and fork compose through `tools/fleet`, hcom, and herdr.
 
 The self-building launcher at `bin/herder` hashes this module's Go sources and
 reuses a checkout-specific last-good binary if a rebuild temporarily fails.
@@ -18,11 +15,10 @@ When running Go directly from this module, use `env -u GOROOT go ...`.
 ## Layout
 
 - `cmd/herder/` — binary entry point.
-- `internal/occupant/` — retained process-ancestry occupant probe.
-- `internal/observercmd/` — level-triggered cache refresh and daemon surface.
-- `internal/listcmd/` — read-only ledger display.
-- `internal/registry/` — append-only cache representation and projection.
-- `tests/` — hermetic contracts for the surviving surfaces.
+- `internal/herdrcli/` — herdr socket snapshot and response decoding.
+- `internal/hcomidentity/` — hcom roster decoding and identity helpers.
+- `internal/listcmd/` — exact-coordinate live join and table rendering.
+- `tests/` — hermetic contracts for the surviving surface.
 
 ## Gates
 

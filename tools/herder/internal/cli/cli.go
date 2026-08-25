@@ -1,5 +1,4 @@
-// Package cli wires the surviving read-only list surface and the observer that
-// refreshes the human-facing ledger cache.
+// Package cli wires herder's single read-only live-list surface.
 package cli
 
 import (
@@ -8,7 +7,6 @@ import (
 	"strings"
 
 	"ai-config/tools/herder/internal/listcmd"
-	"ai-config/tools/herder/internal/observercmd"
 )
 
 // command is one herder subcommand. summary is the one-line description in
@@ -21,18 +19,17 @@ type command struct {
 
 // commands is the single registry the root usage table is generated from.
 var commands = []command{
-	{"list", "Show the human-facing fleet ledger cache with live annotations", listcmd.Run},
-	{"observer", "Observe seated sessions and surface observer advice", observercmd.Run},
+	{"list", "Join live herdr placement with the hcom roster", listcmd.Run},
 }
 
 // rootUsage renders the no-arg / help output: what the binary is and the
 // subcommand table.
 func rootUsage() string {
 	var b strings.Builder
-	b.WriteString("herder — observe and display the human-facing fleet ledger cache.\n")
+	b.WriteString("herder — display the live fleet view.\n")
 	b.WriteString("\n")
-	b.WriteString("Lifecycle actions compose through tools/fleet, hcom, and herdr. Herder's\n")
-	b.WriteString("ledger is display cache only and is never authority for lifecycle actions.\n")
+	b.WriteString("Lifecycle actions compose through tools/fleet, hcom, and herdr. Herder is\n")
+	b.WriteString("a read-only display join and is never lifecycle authority.\n")
 	b.WriteString("\n")
 	b.WriteString("Commands:\n")
 	for _, cmd := range commands {

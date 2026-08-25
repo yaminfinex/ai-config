@@ -2,183 +2,148 @@ package listcmd
 
 import (
 	"bytes"
-	"encoding/json"
-	"io"
-	"os"
-	"path/filepath"
+	"errors"
 	"strings"
 	"testing"
-	"time"
 
+	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
-	"ai-config/tools/herder/internal/observerstatus"
-	"ai-config/tools/herder/internal/registry"
-	v2 "ai-config/tools/herder/internal/registry/v2"
 )
 
-func TestReconciledJSONMissionPrecedenceAndInference(t *testing.T) {
-	t.Run("explicit wins over marker", func(t *testing.T) {
-		root := t.TempDir()
-		cwd := filepath.Join(root, "work", "nested")
-		if err := os.MkdirAll(cwd, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, "work", ".mission"), []byte("beta\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		missionsRepo := filepath.Join(root, "mission-repo")
-		if err := os.MkdirAll(filepath.Join(missionsRepo, "missions", "beta"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("MISSIONS_REPO", missionsRepo)
-		rec := registry.Record{
-			Mission:    &v2.Mission{Slug: "alpha", Source: "explicit"},
-			Provenance: &registry.Provenance{CWD: cwd},
-			Raw:        []byte(`{"kind":"session","guid":"guid-explicit","state":"seated","mission":{"slug":"alpha","source":"explicit"}}`),
-		}
-		mission := renderedMission(t, reconciledJSON(rec, liveIndex{}, nil, observerstatus.Observation{}))
-		if mission == nil || mission.Slug != "alpha" || mission.Source != "explicit" {
-			t.Fatalf("mission = %+v", mission)
-		}
-	})
-
-	t.Run("cwd mission directory fallback", func(t *testing.T) {
-		root := t.TempDir()
-		missionDir := filepath.Join(root, "missions", "alpha")
-		cwd := filepath.Join(missionDir, "work")
-		if err := os.MkdirAll(cwd, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(missionDir, "mission.md"), []byte("mission: alpha\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		rec := registry.Record{
-			Provenance: &registry.Provenance{CWD: cwd},
-			Raw:        []byte(`{"kind":"session","guid":"guid-cwd","state":"seated"}`),
-		}
-		mission := renderedMission(t, reconciledJSON(rec, liveIndex{}, nil, observerstatus.Observation{}))
-		if mission == nil || mission.Slug != "alpha" || mission.Source != "cwd" {
-			t.Fatalf("mission = %+v", mission)
-		}
-	})
-
-	t.Run("marker fallback", func(t *testing.T) {
-		root := t.TempDir()
-		cwd := filepath.Join(root, "work", "nested")
-		if err := os.MkdirAll(cwd, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, "work", ".mission"), []byte("beta\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		missionsRepo := filepath.Join(root, "mission-repo")
-		if err := os.MkdirAll(filepath.Join(missionsRepo, "missions", "beta"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("MISSIONS_REPO", missionsRepo)
-		rec := registry.Record{
-			Provenance: &registry.Provenance{CWD: cwd},
-			Raw:        []byte(`{"kind":"session","guid":"guid-marker","state":"seated"}`),
-		}
-		mission := renderedMission(t, reconciledJSON(rec, liveIndex{}, nil, observerstatus.Observation{}))
-		if mission == nil || mission.Slug != "beta" || mission.Source != "marker" {
-			t.Fatalf("mission = %+v", mission)
-		}
-	})
-
-	t.Run("no context renders null", func(t *testing.T) {
-		rec := registry.Record{
-			Provenance: &registry.Provenance{CWD: t.TempDir()},
-			Raw:        []byte(`{"kind":"session","guid":"guid-none","state":"seated"}`),
-		}
-		if mission := renderedMission(t, reconciledJSON(rec, liveIndex{}, nil, observerstatus.Observation{})); mission != nil {
-			t.Fatalf("mission = %+v, want nil", mission)
-		}
-	})
-}
-
-func TestMissingTrackerAndPaneEvidenceRendersObservationGap(t *testing.T) {
-	rec := registry.Record{TerminalID: "terminal-absent", PaneID: "pane-absent"}
-	idx := liveIndex{
-		byTerm: map[string]*herdrcli.Agent{}, byPane: map[string]*herdrcli.Agent{}, byName: map[string]*herdrcli.Agent{},
-		paneTerms: map[string]bool{}, panePanes: map[string]bool{},
+func TestJoinShowsExactMatchAndBothGapDirections(t *testing.T) {
+	snapshot := herdrcli.Snapshot{
+		Panes: []herdrcli.Pane{
+			{PaneID: "pane-a", Agent: "codex", AgentStatus: "active", AgentSession: "session-a"},
+			{PaneID: "pane-b", Agent: "claude", AgentStatus: "idle", AgentSession: "session-b"},
+			{PaneID: "shell-only"},
+		},
+		Agents: []herdrcli.Agent{
+			{PaneID: "pane-a", Name: "mavu", Agent: "codex", Status: "active"},
+			{PaneID: "pane-b", Name: "zira", Agent: "claude", Status: "idle"},
+		},
 	}
-	if got := idx.unmatchedStatus(rec); got != "observation_gap" {
-		t.Fatalf("unmatched status = %q, want observation_gap", got)
+	roster := []hcomidentity.Row{
+		{Name: "mavu", Tool: "codex", Status: "listening", LaunchContext: hcomidentity.LaunchContext{PaneID: "pane-a"}},
+		{Name: "vile", Tool: "claude", Status: "active", LaunchContext: hcomidentity.LaunchContext{PaneID: "missing-pane"}},
 	}
-	idx.paneTerms[rec.TerminalID] = true
-	if got := idx.unmatchedStatus(rec); got != "undetected" {
-		t.Fatalf("pane-present tracker gap status = %q, want undetected", got)
+
+	want := []Row{
+		{Pane: "-", Agent: "vile", Tool: "claude", HerdrStatus: "-", BusStatus: "active", Gap: "no visible pane"},
+		{Pane: "pane-a", Agent: "mavu", Tool: "codex", HerdrStatus: "active", BusStatus: "listening", Gap: "-"},
+		{Pane: "pane-b", Agent: "zira", Tool: "claude", HerdrStatus: "idle", BusStatus: "-", Gap: "no bus row"},
+	}
+	got := Join(snapshot, roster)
+	if len(got) != len(want) {
+		t.Fatalf("Join rows = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("Join row %d = %#v, want %#v", i, got[i], want[i])
+		}
 	}
 }
 
-func TestPossiblePaneHuskAdviceIsOperatorActionable(t *testing.T) {
-	got := observerAdviceSuffix([]observerstatus.Flag{{Type: "possible-pane-husk"}})
-	want := " [observer advice: possible pane husk; inspect, then cull deliberately]"
-	if got != want {
-		t.Fatalf("advice suffix = %q, want %q", got, want)
-	}
-}
-
-func renderedMission(t *testing.T, raw []byte) *v2.Mission {
-	t.Helper()
-	var row struct {
-		Mission *v2.Mission `json:"mission"`
-	}
-	if err := json.Unmarshal(raw, &row); err != nil {
-		t.Fatalf("decode %s: %v", raw, err)
-	}
-	return row.Mission
-}
-
-func TestRemovedTeamsFlagIsUnknown(t *testing.T) {
-	var stderr bytes.Buffer
-	_, code := parseArgs([]string{"--teams"}, io.Discard, &stderr)
-	if code != 1 || !strings.Contains(stderr.String(), "unknown arg: --teams") {
-		t.Fatalf("parseArgs() code=%d stderr=%q, want unknown-arg refusal", code, stderr.String())
-	}
-}
-
-func TestContextSnapshotDisplayNormalizesPercent(t *testing.T) {
-	rec := writeContextSnapshot(t, "fresh-rive", "CTX_PCT=+42\nCTX_TS=100\n")
-
-	got := contextSnapshotDisplay(rec, time.Unix(100, 0))
-	if got != "42%" {
-		t.Fatalf("contextSnapshotDisplay = %q, want normalized 42%%", got)
-	}
-}
-
-func TestContextSnapshotDisplayRejectsHostilePercent(t *testing.T) {
-	for _, pct := range []string{"Inf", "1e300", "0x1p10", strings.Repeat("9", 26)} {
-		t.Run(pct, func(t *testing.T) {
-			rec := writeContextSnapshot(t, "worker-rive", "CTX_PCT="+pct+"\nCTX_TS=100\n")
-
-			got := contextSnapshotDisplay(rec, time.Unix(100, 0))
-			if got != "unknown" {
-				t.Fatalf("contextSnapshotDisplay(%q) = %q, want unknown", pct, got)
+func TestJoinDoesNotInferPlacementFromMatchingName(t *testing.T) {
+	snapshot := herdrcli.Snapshot{Agents: []herdrcli.Agent{{PaneID: "pane-live", Name: "same", Agent: "codex", Status: "active"}}}
+	for name, paneID := range map[string]string{
+		"missing pane coordinate": "",
+		"stale pane coordinate":   "pane-stale",
+	} {
+		t.Run(name, func(t *testing.T) {
+			roster := []hcomidentity.Row{{
+				Name: "same", Tool: "codex", Status: "active",
+				LaunchContext: hcomidentity.LaunchContext{PaneID: paneID},
+			}}
+			rows := Join(snapshot, roster)
+			if len(rows) != 2 || rows[0].Gap != "no visible pane" || rows[1].Gap != "no bus row" {
+				t.Fatalf("matching names erased placement gap: %#v", rows)
 			}
 		})
 	}
 }
 
-func TestContextSnapshotDisplayRejectsFarFutureTimestamp(t *testing.T) {
-	rec := writeContextSnapshot(t, "future-rive", "CTX_PCT=24\nCTX_TS=9223372036854775807\n")
-
-	got := contextSnapshotDisplay(rec, time.Unix(100, 0))
-	if got != "unknown" {
-		t.Fatalf("future contextSnapshotDisplay = %q, want unknown", got)
+func TestJoinDoesNotClaimPaneVisibilityFromAgentRow(t *testing.T) {
+	rows := Join(herdrcli.Snapshot{
+		Agents: []herdrcli.Agent{{PaneID: "pane-agent-only", Name: "mavu", Agent: "codex"}},
+	}, nil)
+	if len(rows) != 1 || rows[0].HerdrStatus != "-" {
+		t.Fatalf("agent-only row claims pane visibility: %#v", rows)
 	}
 }
 
-func writeContextSnapshot(t *testing.T, name, content string) registry.Record {
-	t.Helper()
-	root := t.TempDir()
-	statusDir := filepath.Join(root, "statusline")
-	if err := os.MkdirAll(statusDir, 0o755); err != nil {
-		t.Fatal(err)
+func TestRunReadsSocketSnapshotBeforeRosterAndPrintsTable(t *testing.T) {
+	var calls []string
+	deps := dependencies{
+		snapshot: func() (herdrcli.Snapshot, error) {
+			calls = append(calls, "snapshot")
+			return herdrcli.Snapshot{Agents: []herdrcli.Agent{{PaneID: "p1", Name: "mavu", Agent: "codex", Status: "active"}}}, nil
+		},
+		roster: func() ([]hcomidentity.Row, error) {
+			calls = append(calls, "roster")
+			return []hcomidentity.Row{{Name: "mavu", Tool: "codex", Status: "listening", LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}}}, nil
+		},
 	}
-	if err := os.WriteFile(filepath.Join(statusDir, name+".env"), []byte(content), 0o644); err != nil {
-		t.Fatal(err)
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, &stdout, &stderr, deps); code != 0 {
+		t.Fatalf("run code = %d, stderr = %q", code, stderr.String())
 	}
-	return registry.Record{HcomDir: root, HcomName: name}
+	if strings.Join(calls, ",") != "snapshot,roster" {
+		t.Fatalf("calls = %v", calls)
+	}
+	for _, text := range []string{"PANE", "AGENT", "HERDR", "BUS", "p1", "mavu", "listening"} {
+		if !strings.Contains(stdout.String(), text) {
+			t.Errorf("output missing %q:\n%s", text, stdout.String())
+		}
+	}
+}
+
+func TestRunReportsHerdrFailureWithoutReadingRoster(t *testing.T) {
+	rosterCalled := false
+	deps := dependencies{
+		snapshot: func() (herdrcli.Snapshot, error) { return herdrcli.Snapshot{}, errors.New("socket refused") },
+		roster: func() ([]hcomidentity.Row, error) {
+			rosterCalled = true
+			return nil, nil
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, &stdout, &stderr, deps); code != 1 {
+		t.Fatalf("run code = %d, want 1", code)
+	}
+	if rosterCalled {
+		t.Fatal("roster read after herdr failure")
+	}
+	if !strings.Contains(stderr.String(), "cannot read live herdr snapshot: socket refused") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunReportsHcomFailure(t *testing.T) {
+	deps := dependencies{
+		snapshot: func() (herdrcli.Snapshot, error) { return herdrcli.Snapshot{}, nil },
+		roster:   func() ([]hcomidentity.Row, error) { return nil, errors.New("bus unavailable") },
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, &stdout, &stderr, deps); code != 1 {
+		t.Fatalf("run code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "cannot read live hcom roster: bus unavailable") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunHelpAndUnknownArgument(t *testing.T) {
+	deps := dependencies{
+		snapshot: func() (herdrcli.Snapshot, error) { t.Fatal("snapshot called"); return herdrcli.Snapshot{}, nil },
+		roster:   func() ([]hcomidentity.Row, error) { t.Fatal("roster called"); return nil, nil },
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--help"}, &stdout, &stderr, deps); code != 0 || !strings.Contains(stdout.String(), "join live herdr placement") {
+		t.Fatalf("help: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"--json"}, &stdout, &stderr, deps); code != 2 || !strings.Contains(stderr.String(), "unknown argument") {
+		t.Fatalf("unknown: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
 }

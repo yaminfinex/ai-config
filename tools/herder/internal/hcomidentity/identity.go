@@ -1,4 +1,4 @@
-// Package hcomidentity resolves bus names only from live hcom roster evidence.
+// Package hcomidentity reads and decodes the live hcom roster.
 package hcomidentity
 
 import (
@@ -6,81 +6,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
-	"strings"
 )
 
 type LaunchContext struct {
-	PaneID     string `json:"pane_id"`
-	ProcessID  string `json:"process_id"`
-	fieldCount int
-	decoded    bool
-	object     bool
-}
-
-func (l *LaunchContext) UnmarshalJSON(raw []byte) error {
-	type wire LaunchContext
-	var decoded wire
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return err
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return err
-	}
-	*l = LaunchContext(decoded)
-	l.fieldCount = len(fields)
-	l.decoded = true
-	l.object = !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
-	return nil
-}
-
-// Empty reports whether hcom recorded no launch facts at all. A context that
-// contains an unrecognised field is deliberately non-empty: callers may not
-// use the empty-context recovery path to weaken an identity hcom did record.
-func (l LaunchContext) Empty() bool {
-	if l.decoded && !l.object {
-		return false
-	}
-	return l.PaneID == "" && l.ProcessID == "" && l.fieldCount == 0
+	PaneID string `json:"pane_id"`
 }
 
 type Row struct {
 	Name          string        `json:"name"`
-	BaseName      string        `json:"base_name"`
 	Tool          string        `json:"tool"`
 	Status        string        `json:"status"`
-	Joined        *bool         `json:"joined,omitempty"`
-	SessionID     string        `json:"session_id"`
-	ProcessBound  *bool         `json:"process_bound,omitempty"`
-	StatusAge     int           `json:"status_age"`
 	LaunchContext LaunchContext `json:"launch_context"`
 }
 
-type Evidence struct {
-	Name      string
-	SessionID string
-	ProcessID string
-	PaneIDs   []string
-}
-
-type Result struct {
-	Name      string
-	BaseName  string
-	SessionID string
-	PaneID    string
-	Verified  bool
-	Reason    string
-}
-
-// List reads the live hcom roster in the requested namespace.
-func List(dir string) ([]Row, error) {
+// List reads the live hcom roster.
+func List() ([]Row, error) {
 	cmd := exec.Command("hcom", "list", "--json")
-	cmd.Env = os.Environ()
-	if dir != "" && dir != "null" {
-		cmd.Env = setEnv(cmd.Env, "HCOM_DIR", dir)
-	}
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("hcom list --json failed: %w", err)
@@ -94,10 +36,10 @@ func Decode(raw []byte) ([]Row, error) {
 	if err := json.Unmarshal(raw, &rows); err == nil {
 		return rows, nil
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
+	decoder := json.NewDecoder(bytes.NewReader(raw))
 	for {
 		var row Row
-		if err := dec.Decode(&row); err != nil {
+		if err := decoder.Decode(&row); err != nil {
 			if err == io.EOF {
 				break
 			}
@@ -109,105 +51,4 @@ func Decode(raw []byte) ([]Row, error) {
 		return nil, fmt.Errorf("could not decode hcom roster")
 	}
 	return rows, nil
-}
-
-// Resolve proves one live bus row from provided name, session, process, or
-// pane correlates. Conflicting correlates fail closed instead of choosing a
-// winner.
-func Resolve(rows []Row, evidence Evidence) Result {
-	type signal struct {
-		label string
-		value string
-		match func(Row) bool
-	}
-	signals := []signal{
-		{"name", evidence.Name, func(row Row) bool { return row.Name == evidence.Name }},
-		{"session_id", evidence.SessionID, func(row Row) bool { return row.SessionID == evidence.SessionID }},
-		{"process_id", evidence.ProcessID, func(row Row) bool { return row.LaunchContext.ProcessID == evidence.ProcessID }},
-	}
-	for _, paneID := range evidence.PaneIDs {
-		paneID := paneID
-		signals = append(signals, signal{"pane_id", paneID, func(row Row) bool { return row.LaunchContext.PaneID == paneID }})
-	}
-	matched := map[string]Row{}
-	used := 0
-	for _, sig := range signals {
-		if sig.value == "" {
-			continue
-		}
-		used++
-		perSignal := map[string]Row{}
-		rowMatches := 0
-		for _, row := range rows {
-			if row.Name != "" && joined(row) && sig.match(row) {
-				rowMatches++
-				perSignal[row.Name] = row
-			}
-		}
-		if sig.label == "name" && rowMatches > 1 {
-			return Result{Reason: sig.label + " matches multiple joined bus rows"}
-		}
-		if len(perSignal) > 1 {
-			return Result{Reason: sig.label + " matches multiple joined bus rows"}
-		}
-		for name, row := range perSignal {
-			matched[name] = row
-		}
-	}
-	if used == 0 {
-		return Result{Reason: "no name, session, process, or pane correlate is available"}
-	}
-	if len(matched) == 0 {
-		return Result{Reason: "no joined bus row matches the provided name, session, process, or pane"}
-	}
-	if len(matched) > 1 {
-		return Result{Reason: "live identity correlates resolve to different bus rows"}
-	}
-	for name, row := range matched {
-		return resultForRow(name, row)
-	}
-	return Result{Reason: "live bus identity is unknown"}
-}
-
-func resultForRow(name string, row Row) Result {
-	baseName := row.BaseName
-	if baseName == "" {
-		baseName = row.Name
-	}
-	return Result{Name: name, BaseName: baseName, SessionID: row.SessionID, PaneID: row.LaunchContext.PaneID, Verified: true}
-}
-
-// StoredNameMatches compares an exact persisted bus coordinate with the two
-// authoritative forms emitted by the hcom roster. It never manufactures a
-// tagged display name from separate fields.
-func StoredNameMatches(name, baseName, stored string) bool {
-	return stored != "" && (name == stored || baseName == stored)
-}
-
-// IsJoined reports whether a roster row participates in live identity checks.
-func IsJoined(row Row) bool {
-	return joined(row)
-}
-
-func joined(row Row) bool {
-	if row.Joined != nil && !*row.Joined {
-		return false
-	}
-	switch strings.ToLower(row.Status) {
-	case "inactive", "stopped", "closed", "dead":
-		return false
-	default:
-		return true
-	}
-}
-
-func setEnv(env []string, key, value string) []string {
-	prefix := key + "="
-	out := make([]string, 0, len(env)+1)
-	for _, item := range env {
-		if !strings.HasPrefix(item, prefix) {
-			out = append(out, item)
-		}
-	}
-	return append(out, prefix+value)
 }
