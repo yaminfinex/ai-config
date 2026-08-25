@@ -286,7 +286,14 @@ func TestTranscriptStreamPinsFullDetailAndRejectsCrossDetailResume(t *testing.T)
 }
 
 func TestMessageWritePinsAttributionRefusalsAndConfirmationShape(t *testing.T) {
-	requestBody := func() *bytes.Buffer { return bytes.NewBufferString(`{"text":"please inspect"}`) }
+	original := "please inspect --flag 'quotes'\nsecond line"
+	requestBody := func() *bytes.Buffer {
+		body, err := json.Marshal(messageRequest{Text: original})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bytes.NewBuffer(body)
+	}
 
 	deps := fixtureDeps()
 	deps.sender = func(context.Context, string) (string, error) {
@@ -314,14 +321,18 @@ func TestMessageWritePinsAttributionRefusalsAndConfirmationShape(t *testing.T) {
 
 	deps = fixtureDeps()
 	var target, sender, text string
+	sendCalls := 0
 	deps.send = func(_ context.Context, gotTarget, gotSender, gotText string) error {
+		sendCalls++
 		target, sender, text = gotTarget, gotSender, gotText
 		return nil
 	}
 	confirmed := httptest.NewRecorder()
 	request = httptest.NewRequest(http.MethodPost, "/api/agents/dore/message", requestBody())
 	newHandler(deps).ServeHTTP(confirmed, request)
-	if confirmed.Code != http.StatusOK || target != "dore" || sender != "web-alice-example-com" || text != "please inspect" || !strings.Contains(confirmed.Body.String(), `"sent":true`) || !strings.Contains(confirmed.Body.String(), `"intent":"request"`) {
+	wantText := "[This message came from a web operator named web-alice-example-com via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]\n\n" + original
+	wantResponse := "{\"sent\":true,\"to\":\"dore\",\"from\":\"web-alice-example-com\",\"intent\":\"request\"}\n"
+	if confirmed.Code != http.StatusOK || sendCalls != 1 || target != "dore" || sender != "web-alice-example-com" || text != wantText || confirmed.Body.String() != wantResponse {
 		t.Fatalf("confirmed=%d %s send=(%q,%q,%q)", confirmed.Code, confirmed.Body.String(), target, sender, text)
 	}
 }

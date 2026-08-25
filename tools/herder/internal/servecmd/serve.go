@@ -146,6 +146,11 @@ var (
 	errSenderCollision = errors.New("derived web sender collides with a bus agent")
 )
 
+func webMessage(sender, text string) string {
+	note := fmt.Sprintf("[This message came from a web operator named %s via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]", sender)
+	return note + "\n\n" + text
+}
+
 // Run parses and serves `herder serve` until the process is stopped.
 func Run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("herder serve", flag.ContinueOnError)
@@ -623,7 +628,7 @@ func serveMessage(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 		serveAttributionError(w, err)
 		return
 	}
-	if err := deps.send(r.Context(), name, sender, request.Text); err != nil {
+	if err := deps.send(r.Context(), name, sender, webMessage(sender, request.Text)); err != nil {
 		if errors.Is(err, hcommessage.ErrUnavailable) {
 			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 			return
