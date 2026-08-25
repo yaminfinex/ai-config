@@ -155,8 +155,8 @@ Reconciliation and gate (in order):
 2. `hcom list` — bus should be unaffected (different substrate).
 3. `bash tools/herder/tests/check-live-contract.sh` + diff `herdr api schema --json`
    against the golden. Schema-drift-only failures are expected upgrade artifacts.
-4. Run the then-current herder refresh command; inspect its stamp summary and
-   display without treating cache rows as authority.
+4. Run `herder list`; inspect every displayed join gap without treating the
+   display as authority.
 5. Verify the drill pane ticked across the swap (read its pane; look for
    a gap at the handoff timestamp).
 6. Spawn one disposable Claude/Codex probe through `tools/fleet/spawn.sh`, verify
@@ -165,5 +165,5 @@ Reconciliation and gate (in order):
 8. Send ALL CLEAR with any detection-lost sessions named for natural-boundary restart.
 
 Success criteria: version jumped; bus never degraded; drill ticks remained unbroken;
-fleet spawn/message/cull round-tripped; display cache stamps were explained; no
+fleet spawn/message/cull round-tripped; all `herder list` gaps were explained; no
 session or pane was lost except by choice.

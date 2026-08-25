@@ -14,7 +14,7 @@ import (
 
 type dependencies struct {
 	snapshot func() (herdrcli.Snapshot, error)
-	roster   func(string) ([]hcomidentity.Row, error)
+	roster   func() ([]hcomidentity.Row, error)
 }
 
 var liveDependencies = dependencies{
@@ -54,7 +54,7 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 		fmt.Fprintf(stderr, "herder list: cannot read live herdr snapshot: %v\n", err)
 		return 1
 	}
-	roster, err := deps.roster("")
+	roster, err := deps.roster()
 	if err != nil {
 		fmt.Fprintf(stderr, "herder list: cannot read live hcom roster: %v\n", err)
 		return 1
@@ -113,7 +113,7 @@ func Join(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) []Row {
 		}
 		placements[paneID] = placement{
 			pane: paneID, name: agent.Name, tool: agent.Agent,
-			status: first(agent.Status, "visible"),
+			status: agent.Status,
 		}
 	}
 

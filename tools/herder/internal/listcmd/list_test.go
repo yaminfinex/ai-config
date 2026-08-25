@@ -45,10 +45,29 @@ func TestJoinShowsExactMatchAndBothGapDirections(t *testing.T) {
 
 func TestJoinDoesNotInferPlacementFromMatchingName(t *testing.T) {
 	snapshot := herdrcli.Snapshot{Agents: []herdrcli.Agent{{PaneID: "pane-live", Name: "same", Agent: "codex", Status: "active"}}}
-	roster := []hcomidentity.Row{{Name: "same", Tool: "codex", Status: "active"}}
-	rows := Join(snapshot, roster)
-	if len(rows) != 2 || rows[0].Gap != "no visible pane" || rows[1].Gap != "no bus row" {
-		t.Fatalf("matching names erased placement gap: %#v", rows)
+	for name, paneID := range map[string]string{
+		"missing pane coordinate": "",
+		"stale pane coordinate":   "pane-stale",
+	} {
+		t.Run(name, func(t *testing.T) {
+			roster := []hcomidentity.Row{{
+				Name: "same", Tool: "codex", Status: "active",
+				LaunchContext: hcomidentity.LaunchContext{PaneID: paneID},
+			}}
+			rows := Join(snapshot, roster)
+			if len(rows) != 2 || rows[0].Gap != "no visible pane" || rows[1].Gap != "no bus row" {
+				t.Fatalf("matching names erased placement gap: %#v", rows)
+			}
+		})
+	}
+}
+
+func TestJoinDoesNotClaimPaneVisibilityFromAgentRow(t *testing.T) {
+	rows := Join(herdrcli.Snapshot{
+		Agents: []herdrcli.Agent{{PaneID: "pane-agent-only", Name: "mavu", Agent: "codex"}},
+	}, nil)
+	if len(rows) != 1 || rows[0].HerdrStatus != "-" {
+		t.Fatalf("agent-only row claims pane visibility: %#v", rows)
 	}
 }
 
@@ -59,7 +78,7 @@ func TestRunReadsSocketSnapshotBeforeRosterAndPrintsTable(t *testing.T) {
 			calls = append(calls, "snapshot")
 			return herdrcli.Snapshot{Agents: []herdrcli.Agent{{PaneID: "p1", Name: "mavu", Agent: "codex", Status: "active"}}}, nil
 		},
-		roster: func(string) ([]hcomidentity.Row, error) {
+		roster: func() ([]hcomidentity.Row, error) {
 			calls = append(calls, "roster")
 			return []hcomidentity.Row{{Name: "mavu", Tool: "codex", Status: "listening", LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}}}, nil
 		},
@@ -82,7 +101,7 @@ func TestRunReportsHerdrFailureWithoutReadingRoster(t *testing.T) {
 	rosterCalled := false
 	deps := dependencies{
 		snapshot: func() (herdrcli.Snapshot, error) { return herdrcli.Snapshot{}, errors.New("socket refused") },
-		roster: func(string) ([]hcomidentity.Row, error) {
+		roster: func() ([]hcomidentity.Row, error) {
 			rosterCalled = true
 			return nil, nil
 		},
@@ -102,7 +121,7 @@ func TestRunReportsHerdrFailureWithoutReadingRoster(t *testing.T) {
 func TestRunReportsHcomFailure(t *testing.T) {
 	deps := dependencies{
 		snapshot: func() (herdrcli.Snapshot, error) { return herdrcli.Snapshot{}, nil },
-		roster:   func(string) ([]hcomidentity.Row, error) { return nil, errors.New("bus unavailable") },
+		roster:   func() ([]hcomidentity.Row, error) { return nil, errors.New("bus unavailable") },
 	}
 	var stdout, stderr bytes.Buffer
 	if code := run(nil, &stdout, &stderr, deps); code != 1 {
@@ -116,7 +135,7 @@ func TestRunReportsHcomFailure(t *testing.T) {
 func TestRunHelpAndUnknownArgument(t *testing.T) {
 	deps := dependencies{
 		snapshot: func() (herdrcli.Snapshot, error) { t.Fatal("snapshot called"); return herdrcli.Snapshot{}, nil },
-		roster:   func(string) ([]hcomidentity.Row, error) { t.Fatal("roster called"); return nil, nil },
+		roster:   func() ([]hcomidentity.Row, error) { t.Fatal("roster called"); return nil, nil },
 	}
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"--help"}, &stdout, &stderr, deps); code != 0 || !strings.Contains(stdout.String(), "join live herdr placement") {
