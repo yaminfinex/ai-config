@@ -44,3 +44,30 @@ export interface SubstrateEvent {
   status: 'unreachable' | 'recovered'
   detail?: string
 }
+
+export interface Refusal {
+  error: string
+  detail: string
+}
+
+export interface AgentDetail {
+  name: string
+  tool: string
+  herdr_status: string
+  bus_status: string
+  gap: string
+  pane: { workspace_id: string, tab_id: string, pane_id: string } | null
+  directory?: string
+  session_id?: string
+  launch_context: Record<string, unknown>
+}
+
+export interface TranscriptExchange {
+  position: number
+  [key: string]: unknown
+}
+
+export interface TranscriptPage {
+  exchanges: TranscriptExchange[]
+  cursor: string
+}

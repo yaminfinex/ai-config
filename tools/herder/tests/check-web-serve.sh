@@ -196,8 +196,13 @@ fi
 if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF '<title>Herder fleet</title>' "$ROOT/index.html" &&
   asset="$(sed -n 's|.*src="\(/assets/[^\"]*\.js\)".*|\1|p' "$ROOT/index.html")" &&
-  [ -n "$asset" ] && curl -fsS "http://127.0.0.1:$port$asset" | grep -qF '/api/events'; then
-  pass "serve delivers the embedded production UI and its hashed JavaScript asset"
+  [ -n "$asset" ] && curl -fsS "http://127.0.0.1:$port$asset" >"$ROOT/app.js" &&
+  grep -qF '/api/events' "$ROOT/app.js" &&
+  grep -qF '/transcript/stream' "$ROOT/app.js" &&
+  grep -qF '/message' "$ROOT/app.js" &&
+  grep -qF '/agents/' "$ROOT/app.js" &&
+  curl -fsS "http://127.0.0.1:$port/agents/mavu" | grep -qF '<title>Herder fleet</title>'; then
+  pass "serve delivers built board/agent routes and direct SPA navigation"
 else
   bad "embedded UI" "index=$(cat "$ROOT/index.html" 2>/dev/null || true)"
 fi

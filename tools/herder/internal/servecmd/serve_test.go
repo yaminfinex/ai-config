@@ -195,12 +195,15 @@ func TestTranscriptWindowsPageBackwardByExchangeAndPinDetail(t *testing.T) {
 
 func TestTranscriptStreamResumesAfterLastEventID(t *testing.T) {
 	deps := fixtureDeps()
-	deps.latest = func(context.Context, string, hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error) {
+	var latestDetail, rangeDetail hcomtranscript.Detail
+	deps.latest = func(_ context.Context, _ string, detail hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error) {
+		latestDetail = detail
 		return fixtureExchanges(5)[0], true, nil
 	}
 	var rangeStart, rangeEnd int
-	deps.rangeRead = func(_ context.Context, _ string, start, end int, _ hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
+	deps.rangeRead = func(_ context.Context, _ string, start, end int, detail hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
 		rangeStart, rangeEnd = start, end
+		rangeDetail = detail
 		return fixtureExchanges(3, 4, 5), nil
 	}
 	lastID := encodeTranscriptCursor(transcriptCursor{Version: 1, Kind: "stream", Agent: "dore", Session: "session-dore", Detail: hcomtranscript.Exchanges, Position: 2})
@@ -217,8 +220,63 @@ func TestTranscriptStreamResumesAfterLastEventID(t *testing.T) {
 	}
 	defer response.Body.Close()
 	event, data := readEvent(t, bufio.NewReader(response.Body))
-	if response.StatusCode != http.StatusOK || event != "exchange" || !strings.Contains(data, `"position":3`) || rangeStart != 3 || rangeEnd != 5 {
-		t.Fatalf("resume = status=%d event=%q data=%s range=%d-%d", response.StatusCode, event, data, rangeStart, rangeEnd)
+	if response.StatusCode != http.StatusOK || event != "exchange" || !strings.Contains(data, `"position":3`) || rangeStart != 3 || rangeEnd != 5 || latestDetail != hcomtranscript.Exchanges || rangeDetail != hcomtranscript.Exchanges {
+		t.Fatalf("resume = status=%d event=%q data=%s range=%d-%d latest=%q range-detail=%q", response.StatusCode, event, data, rangeStart, rangeEnd, latestDetail, rangeDetail)
+	}
+}
+
+func TestTranscriptStreamPinsFullDetailAndRejectsCrossDetailResume(t *testing.T) {
+	deps := fixtureDeps()
+	var latestDetail, rangeDetail hcomtranscript.Detail
+	deps.latest = func(_ context.Context, _ string, detail hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error) {
+		latestDetail = detail
+		return fixtureExchanges(3)[0], true, nil
+	}
+	deps.rangeRead = func(_ context.Context, _ string, _, _ int, detail hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
+		rangeDetail = detail
+		var exchanges []hcomtranscript.Exchange
+		if err := json.Unmarshal([]byte(`[{"position":3,"user":"prompt 3","action":"reply 3","tools":["read"]}]`), &exchanges); err != nil {
+			t.Fatal(err)
+		}
+		return exchanges, nil
+	}
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+
+	fullID := encodeTranscriptCursor(transcriptCursor{Version: 1, Kind: "stream", Agent: "dore", Session: "session-dore", Detail: hcomtranscript.Full, Position: 2})
+	fullRequest, err := http.NewRequest(http.MethodGet, server.URL+"/api/agents/dore/transcript/stream?detail=full", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullRequest.Header.Set("Last-Event-ID", fullID)
+	fullResponse, err := http.DefaultClient.Do(fullRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fullResponse.StatusCode != http.StatusOK {
+		fullResponse.Body.Close()
+		t.Fatalf("full stream status = %d", fullResponse.StatusCode)
+	}
+	event, data := readEvent(t, bufio.NewReader(fullResponse.Body))
+	fullResponse.Body.Close()
+	if event != "exchange" || !strings.Contains(data, `"tools":["read"]`) || latestDetail != hcomtranscript.Full || rangeDetail != hcomtranscript.Full {
+		t.Fatalf("full stream event=%q data=%s latest=%q range=%q", event, data, latestDetail, rangeDetail)
+	}
+
+	exchangesID := encodeTranscriptCursor(transcriptCursor{Version: 1, Kind: "stream", Agent: "dore", Session: "session-dore", Detail: hcomtranscript.Exchanges, Position: 2})
+	crossRequest, err := http.NewRequest(http.MethodGet, server.URL+"/api/agents/dore/transcript/stream?detail=full", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crossRequest.Header.Set("Last-Event-ID", exchangesID)
+	crossResponse, err := http.DefaultClient.Do(crossRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crossStatus := crossResponse.StatusCode
+	crossResponse.Body.Close()
+	if crossStatus != http.StatusBadRequest {
+		t.Fatalf("cross-detail resume status = %d, want 400", crossStatus)
 	}
 }
 
