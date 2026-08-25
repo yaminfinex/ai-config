@@ -3,11 +3,15 @@ package hcomidentity
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
+	"time"
 )
+
+const listTimeout = 5 * time.Second
 
 type LaunchContext struct {
 	PaneID string `json:"pane_id"`
@@ -22,9 +26,19 @@ type Row struct {
 
 // List reads the live hcom roster.
 func List() ([]Row, error) {
-	cmd := exec.Command("hcom", "list", "--json")
+	ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
+	defer cancel()
+	return ListContext(ctx)
+}
+
+// ListContext reads the roster with a caller-controlled deadline.
+func ListContext(ctx context.Context) ([]Row, error) {
+	cmd := exec.CommandContext(ctx, "hcom", "list", "--json")
 	out, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("hcom list --json timed out: %w", ctx.Err())
+		}
 		return nil, fmt.Errorf("hcom list --json failed: %w", err)
 	}
 	return Decode(out)

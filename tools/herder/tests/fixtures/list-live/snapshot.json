@@ -1,6 +1,29 @@
 {
   "protocol": 19,
   "version": "fixture",
+  "workspaces": [
+    {
+      "workspace_id": "w1",
+      "number": 1,
+      "label": "ai-config",
+      "focused": true,
+      "pane_count": 3,
+      "tab_count": 1,
+      "active_tab_id": "t1",
+      "agent_status": "working"
+    }
+  ],
+  "tabs": [
+    {
+      "tab_id": "t1",
+      "workspace_id": "w1",
+      "number": 1,
+      "label": "agents",
+      "focused": true,
+      "pane_count": 3,
+      "agent_status": "working"
+    }
+  ],
   "panes": [
     {
       "pane_id": "w1:p1",
