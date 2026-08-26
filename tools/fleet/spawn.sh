@@ -130,7 +130,8 @@ else
   if [[ -n $split_from ]]; then
     source_output=$(herdr pane get "$split_from") || die "pane does not exist: $split_from"
     source_pane=$(jq -er '.result.pane.pane_id | select(length > 0)' <<<"$source_output") || die "pane get returned no pane id"
-    split_output=$(herdr pane split --pane "$source_pane" --no-focus) || die "herdr pane split failed for pane $source_pane"
+    # herdr 0.8 requires --direction; without it pane split exits 2 with usage.
+    split_output=$(herdr pane split --pane "$source_pane" --direction down --no-focus) || die "herdr pane split failed for pane $source_pane"
     pane=$(jq -er '.result.pane.pane_id // .result.pane_id | select(length > 0)' <<<"$split_output") \
       || die "pane split returned no pane id (source pane=$source_pane left unchanged; split placement may need explicit cleanup)"
     placement_kind=split-pane
