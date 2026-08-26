@@ -1,0 +1,16 @@
+{"type":"user","uuid":"invented-human","timestamp":"2026-01-02T03:04:05.000Z","origin":{"kind":"human"},"promptSource":"typed","message":{"role":"user","content":"Sketch a shape that has never existed."}}
+{"type":"user","uuid":"invented-stub","timestamp":"2026-01-02T03:04:06.000Z","origin":{"kind":"human"},"promptSource":"typed","message":{"role":"user","content":"<hcom>"}}
+{"type":"attachment","subtype":"hook_system_message","uuid":"invented-hook","timestamp":"2026-01-02T03:04:06.100Z","message":{"content":"<hcom>[request #731] rava → agent-nori: Inspect the invented violet fixture.</hcom>"}}
+{"type":"user","uuid":"invented-task","timestamp":"2026-01-02T03:04:07.000Z","origin":{"kind":"task-notification"},"promptSource":"system","message":{"role":"user","content":"<task-notification>fabricated job complete</task-notification>"}}
+{"type":"user","uuid":"invented-meta","timestamp":"2026-01-02T03:04:08.000Z","isMeta":true,"promptSource":"system","message":{"role":"user","content":"Invented watchdog pulse."}}
+{"type":"user","uuid":"invented-command","timestamp":"2026-01-02T03:04:09.000Z","message":{"role":"user","content":"<command-name>/invent</command-name><local-command-stdout>violet-ok</local-command-stdout>"}}
+{"type":"user","uuid":"invented-summary","timestamp":"2026-01-02T03:04:10.000Z","isCompactSummary":true,"message":{"role":"user","content":"This session is being continued from an invented summary."}}
+{"type":"assistant","uuid":"invented-text","timestamp":"2026-01-02T03:04:11.000Z","message":{"role":"assistant","content":[{"type":"text","text":"A fictional answer."}]}}
+{"type":"assistant","uuid":"invented-thinking","timestamp":"2026-01-02T03:04:12.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Considering a fictional option."}]}}
+{"type":"assistant","uuid":"invented-tool","timestamp":"2026-01-02T03:04:13.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_invented_731","name":"ImaginaryRead","input":{"file_path":"/invented/violet.txt"}}]}}
+{"type":"user","uuid":"invented-result-string","timestamp":"2026-01-02T03:04:14.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_invented_731","is_error":true,"content":"Invented failure output."}]},"toolUseResult":{"structuredPatch":[{"oldStart":7,"oldLines":1,"newStart":7,"newLines":1,"lines":["-violet","+indigo"]}]}}
+{"type":"user","uuid":"invented-result-blocks","timestamp":"2026-01-02T03:04:15.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_invented_732","is_error":false,"content":[{"type":"text","text":"Invented block output."},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"invented-not-real-image-data"}}]}]}}
+{"type":"system","subtype":"turn_duration","uuid":"invented-duration","timestamp":"2026-01-02T03:04:16.000Z","durationMs":731}
+{"type":"system","subtype":"compact_boundary","uuid":"invented-boundary","timestamp":"2026-01-02T03:04:17.000Z","compactMetadata":{"trigger":"manual","preTokens":7310,"postTokens":731}}
+{"type":"system","subtype":"scheduled_task_fire","uuid":"invented-chip","timestamp":"2026-01-02T03:04:18.000Z","taskId":"invented-task-731"}
+{"type":"future-sidecar-probe","uuid":"invented-future","timestamp":"2026-01-02T03:04:19.000Z","payload":{"shape":"invented"}}
