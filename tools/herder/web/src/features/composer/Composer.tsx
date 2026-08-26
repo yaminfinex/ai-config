@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { apiProblem, sendMessage } from '../../api/client'
+import { apiProblem, sendMessage, viewerReadOnlyMessage } from '../../api/client'
 import { isComposerSendShortcut, persistComposerDraft, readComposerDraft } from '../../composerState'
 
 export function Composer({ name, identityReadOnly, onViewer, onProblem }: {
@@ -41,7 +41,7 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem }: {
       onProblem('')
     } catch (error: unknown) {
       const { response, problem } = apiProblem(error)
-      if (response?.status === 409 && problem.error === 'attribution required') setReadOnly(`Connect via Tailscale to send. ${problem.detail}`)
+      if (response?.status === 409 && (problem.error === 'attribution required' || problem.error === 'sender refused')) setReadOnly(viewerReadOnlyMessage(problem, response.status))
       else if (response?.status === 502) onProblem(problem.detail)
       else setSendProblem(`${problem.error}: ${problem.detail}`)
     }

@@ -100,3 +100,11 @@ export function lifecycleProblem(error: unknown): LifecycleProblem {
   if (response?.status === 409) return { inline: problem.detail }
   return { inline: `${problem.error}: ${problem.detail}` }
 }
+
+export function viewerReadOnlyMessage(problem: Refusal, status: number | undefined) {
+  if (status === 409 && problem.error === 'attribution required') return `Connect via Tailscale to send. ${problem.detail}`
+  if (status === 409 && problem.error === 'sender refused') {
+    return `Sender collision: this viewer identity maps to a web sender name already reserved or in use. ${problem.detail}`
+  }
+  return `Viewer identity is unavailable. ${problem.detail}`
+}

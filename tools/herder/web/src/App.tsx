@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiProblem, getFleet, queryKeys } from './api/client'
+import { apiProblem, getFleet, queryKeys, viewerReadOnlyMessage } from './api/client'
 import { viewerQueryOptions } from './api/queries'
 import { BoardPanel } from './features/board/BoardPanel'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
@@ -82,8 +82,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const viewerProblem = viewerState === 'unavailable' ? viewerFailure?.problem.detail ?? '' : ''
   const viewerReadOnly = viewerQuery.isPending ? 'Resolving viewer identity…'
     : viewerQuery.data ? ''
-      : viewerFailure?.response?.status === 409 ? `Connect via Tailscale to send. ${viewerFailure.problem.detail}`
-        : `Viewer identity is unavailable. ${viewerFailure?.problem.detail ?? 'unknown failure'}`
+      : viewerReadOnlyMessage(viewerFailure?.problem ?? { error: 'request failed', detail: 'unknown failure' }, viewerFailure?.response?.status)
 
   const activate = useCallback((tab: ShellTab, push = true) => {
     setTabs((current) => current.some((item) => item.id === tab.id) ? current : [...current, tab])
