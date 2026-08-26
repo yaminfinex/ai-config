@@ -15,7 +15,7 @@ unset HERDER_WATCH_SOURCE_DIR HERDER_WATCH_LAUNCHER
 if [ "${1:-}" = serve ]; then
   for arg in "$@"; do
     case "$arg" in
-      --watch|--watch=*)
+      --watch|--watch=*|-watch|-watch=*)
         export HERDER_WATCH_SOURCE_DIR="$src_dir"
         export HERDER_WATCH_LAUNCHER="$AI_CONFIG_ROOT/bin/herder"
         break
