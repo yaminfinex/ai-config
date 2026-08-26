@@ -152,9 +152,14 @@ printf '{"UserProfile":{"LoginName":"%s"}}\n' "$login"
 TAILSCALE
 chmod +x "$ROOT/bin/tailscale"
 
-jq '. + [{"name":"web-vile","base_name":"web-vile","tool":"codex","status":"listening","joined":true,"session_id":"session-web-vile","launch_context":{}}]' \
+jq 'map(if .name == "vile" then .session_id = "73100000-0000-4000-8000-000000000731" | .directory = "/invented/violet" else . end) + [{"name":"web-vile","base_name":"web-vile","tool":"codex","status":"listening","joined":true,"session_id":"session-web-vile","launch_context":{}}]' \
   "$FIXTURE/roster.json" >"$ROOT/roster.json"
 cp "$FIXTURE/snapshot.json" "$ROOT/snapshot.json"
+mkdir -p "$ROOT/home/.claude/projects/-invented-violet"
+cat >"$ROOT/home/.claude/projects/-invented-violet/73100000-0000-4000-8000-000000000731.jsonl" <<'SESSION'
+{"type":"user","uuid":"invented-web-human","timestamp":"2026-01-02T03:04:05.000Z","origin":{"kind":"human"},"promptSource":"typed","message":{"role":"user","content":"Invented web endpoint prompt."}}
+{"type":"assistant","uuid":"invented-web-answer","timestamp":"2026-01-02T03:04:06.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Invented web endpoint answer."}]}}
+SESSION
 
 socket="$ROOT/herdr.sock"
 python3 - "$socket" "$ROOT/snapshot.json" <<'PY' &
@@ -275,6 +280,23 @@ then
   pass "agent detail returns pane coordinate, tool, statuses, launch context, and gap"
 else
   bad "agent detail" "body=$(cat "$ROOT/agent.json" 2>/dev/null || true)"
+fi
+
+if curl -fsS "http://127.0.0.1:$port/api/agents/vile/entries?limit=1" >"$ROOT/entries.json" && python3 - "$ROOT/entries.json" <<'PY'
+import json, sys
+page = json.load(open(sys.argv[1]))
+assert page["sessionId"] == "73100000-0000-4000-8000-000000000731"
+assert page["window"]["mode"] == "tail"
+assert page["window"]["limit"] == 1
+assert page["window"]["from"] == page["entries"][0]["byteOffset"]
+assert page["entries"][0]["uuid"] == "invented-web-answer"
+assert page["entries"][0]["kind"] == "assistant_text"
+assert page["nextOffset"] > page["window"]["from"]
+PY
+then
+  pass "entries route serves a classified tail window with a session-bound byte cursor"
+else
+  bad "entries route" "body=$(cat "$ROOT/entries.json" 2>/dev/null || true)"
 fi
 
 curl -sS -o "$ROOT/unknown-agent.json" -w '%{http_code}' "http://127.0.0.1:$port/api/agents/missing" >"$ROOT/unknown-agent.status"
@@ -430,7 +452,7 @@ else
   bad "server shutdown" "rc=$serve_rc"
 fi
 
-printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((16 - fail))" "$fail"
+printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((17 - fail))" "$fail"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi

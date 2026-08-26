@@ -299,6 +299,13 @@ func newHandler(deps dependencies) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, detail)
 	})
+	mux.HandleFunc("/api/agents/{busName}/entries", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveEntries(w, r, deps, r.PathValue("busName"))
+	})
 	mux.HandleFunc("/api/agents/{busName}/transcript", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			refuse(w, http.StatusBadRequest, "bad request", "GET required")

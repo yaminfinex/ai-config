@@ -47,9 +47,32 @@ type envelope struct {
 	} `json:"attachment"`
 }
 
+type offsetBeyondError struct {
+	offset int64
+	size   int64
+}
+
+func (e *offsetBeyondError) Error() string {
+	return fmt.Sprintf("session offset %d beyond size %d", e.offset, e.size)
+}
+
 // ReadFrom emits every renderable complete line at or after offset. A
 // trailing line without '\n' is held back and NextOffset remains before it.
 func ReadFrom(path string, offset int64) (ReadResult, error) {
+	return read(path, offset, 0, false)
+}
+
+// ReadWindow emits at most limit renderable entries at or after offset. Its
+// next offset is the first unreturned renderable entry, or the end of the
+// complete input when the window reaches EOF.
+func ReadWindow(path string, offset int64, limit int) (ReadResult, error) {
+	if limit < 1 {
+		return ReadResult{}, fmt.Errorf("session entry limit must be positive: %d", limit)
+	}
+	return read(path, offset, limit, false)
+}
+
+func read(path string, offset int64, limit int, keepTail bool) (ReadResult, error) {
 	if offset < 0 {
 		return ReadResult{}, fmt.Errorf("negative session offset: %d", offset)
 	}
@@ -63,7 +86,7 @@ func ReadFrom(path string, offset int64) (ReadResult, error) {
 		return ReadResult{}, err
 	}
 	if offset > st.Size() {
-		return ReadResult{}, fmt.Errorf("session offset %d beyond size %d", offset, st.Size())
+		return ReadResult{}, &offsetBeyondError{offset: offset, size: st.Size()}
 	}
 	line, err := lineAt(f, offset)
 	if err != nil {
@@ -74,6 +97,7 @@ func ReadFrom(path string, offset int64) (ReadResult, error) {
 	}
 
 	result := ReadResult{NextOffset: offset}
+	ringNext := 0
 	reader := bufio.NewReader(f)
 	for {
 		start := result.NextOffset
@@ -90,11 +114,43 @@ func ReadFrom(path string, offset int64) (ReadResult, error) {
 		if sidechain {
 			result.Stats.SidechainSkipped++
 		} else if render {
-			result.Entries = append(result.Entries, entry)
+			if keepTail && len(result.Entries) == limit {
+				result.Entries[ringNext] = entry
+				ringNext = (ringNext + 1) % limit
+			} else if limit > 0 && len(result.Entries) == limit {
+				result.NextOffset = start
+				return result, nil
+			} else {
+				result.Entries = append(result.Entries, entry)
+			}
 		}
 		line++
 	}
+	if keepTail && ringNext > 0 {
+		ordered := make([]Entry, 0, len(result.Entries))
+		ordered = append(ordered, result.Entries[ringNext:]...)
+		ordered = append(ordered, result.Entries[:ringNext]...)
+		result.Entries = ordered
+	}
 	return result, nil
+}
+
+// ReadTail returns the last limit renderable complete entries without keeping
+// the full classified session in memory. The chosen offset is the first
+// returned entry, or the complete-input end when no entries are renderable.
+func ReadTail(path string, limit int) (ReadResult, int64, error) {
+	if limit < 1 {
+		return ReadResult{}, 0, fmt.Errorf("session entry limit must be positive: %d", limit)
+	}
+	result, err := read(path, 0, limit, true)
+	if err != nil {
+		return ReadResult{}, 0, err
+	}
+	from := result.NextOffset
+	if len(result.Entries) > 0 {
+		from = result.Entries[0].ByteOffset
+	}
+	return result, from, nil
 }
 
 func lineAt(f *os.File, offset int64) (int64, error) {
