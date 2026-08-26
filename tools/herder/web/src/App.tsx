@@ -700,7 +700,7 @@ function AgentPanel({ name, onViewer, identityReadOnly, liveWake, streamGenerati
   const [newEntryCount, setNewEntryCount] = useState(0)
   const [reloadGeneration, setReloadGeneration] = useState(0)
   const [appendGeneration, setAppendGeneration] = useState(0)
-  const [message, setMessage] = useState(() => readComposerDraft(localStorage, name))
+  const [message, setMessage] = useState(() => readComposerDraft(name))
   const [sendProblem, setSendProblem] = useState('')
   const [sendNotice, setSendNotice] = useState('')
   const [sending, setSending] = useState(false)
@@ -822,7 +822,7 @@ function AgentPanel({ name, onViewer, identityReadOnly, liveWake, streamGenerati
   }, [])
 
   useEffect(() => {
-    persistComposerDraft(localStorage, name, message)
+    persistComposerDraft(name, message)
   }, [message, name])
 
   useLayoutEffect(() => {
@@ -871,7 +871,7 @@ function AgentPanel({ name, onViewer, identityReadOnly, liveWake, streamGenerati
       }
       const result = await response.json() as { sent: boolean, to: string, from: string }
       onViewer(result.from)
-      persistComposerDraft(localStorage, name, '')
+      persistComposerDraft(name, '')
       setMessage('')
       setSendNotice(`Sent to ${result.to} as ${result.from}. Waiting for the live reply…`)
       setProblems((current) => without(current, 'send'))

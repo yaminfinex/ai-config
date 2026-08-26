@@ -5,6 +5,7 @@ import {
   isComposerSendShortcut,
   persistComposerDraft,
   readComposerDraft,
+  resolveComposerStorage,
 } from '../src/composerState.ts'
 
 function memoryStorage() {
@@ -18,14 +19,27 @@ function memoryStorage() {
 
 test('draft keys are versioned and isolated per agent', () => {
   const storage = memoryStorage()
-  persistComposerDraft(storage, 'agent/one', 'first draft')
-  persistComposerDraft(storage, 'agent two', 'second draft')
-  assert.equal(readComposerDraft(storage, 'agent/one'), 'first draft')
-  assert.equal(readComposerDraft(storage, 'agent two'), 'second draft')
+  persistComposerDraft('agent/one', 'first draft', storage)
+  persistComposerDraft('agent two', 'second draft', storage)
+  assert.equal(readComposerDraft('agent/one', storage), 'first draft')
+  assert.equal(readComposerDraft('agent two', storage), 'second draft')
   assert.notEqual(composerDraftKey('agent/one'), composerDraftKey('agent two'))
-  persistComposerDraft(storage, 'agent/one', '')
-  assert.equal(readComposerDraft(storage, 'agent/one'), '')
-  assert.equal(readComposerDraft(storage, 'agent two'), 'second draft')
+  persistComposerDraft('agent/one', '', storage)
+  assert.equal(readComposerDraft('agent/one', storage), '')
+  assert.equal(readComposerDraft('agent two', storage), 'second draft')
+})
+
+test('blocked browser storage degrades to a working non-persistent composer', () => {
+  const blocked = resolveComposerStorage(() => {
+    const error = new Error('Access is denied for this document.')
+    error.name = 'SecurityError'
+    throw error
+  })
+
+  assert.equal(blocked, null)
+  assert.equal(readComposerDraft('agent/blocked', blocked), '')
+  assert.doesNotThrow(() => persistComposerDraft('agent/blocked', 'usable draft', blocked))
+  assert.equal(isComposerSendShortcut({ key: 'Enter', ctrlKey: true, metaKey: false }), true)
 })
 
 test('only Ctrl+Enter and Cmd+Enter are send shortcuts', () => {
