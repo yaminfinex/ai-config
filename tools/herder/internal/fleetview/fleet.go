@@ -11,7 +11,8 @@ import (
 )
 
 // Row is one honest placement/bus join result. Gap is empty only when a live
-// pane coordinate and an hcom roster row agree by exact pane ID.
+// pane coordinate and an hcom roster row agree by exact pane ID or by the
+// unambiguous live tool/session fallback described in JoinRows.
 type Row struct {
 	Pane        string `json:"pane_id"`
 	Agent       string `json:"agent"`
@@ -61,7 +62,11 @@ type Pane struct {
 }
 
 type placement struct {
-	pane, name, tool, status string
+	pane, name, tool, session, status string
+}
+
+type sessionIdentity struct {
+	tool, session string
 }
 
 // ValidateSnapshot rejects hierarchy gaps that would otherwise turn a live
@@ -114,8 +119,9 @@ func ValidateRoster(roster []hcomidentity.Row) error {
 	return nil
 }
 
-// JoinRows correlates only exact pane IDs. Names and session IDs are display
-// evidence, never placement evidence.
+// JoinRows correlates exact pane IDs first. A roster row without a live pane
+// claim may then use an unambiguous live tool/session identity. Names remain
+// display evidence and never place a row.
 func JoinRows(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) []Row {
 	agents := make(map[string]herdrcli.Agent, len(snapshot.Agents))
 	for _, agent := range snapshot.Agents {
@@ -129,18 +135,44 @@ func JoinRows(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) []Row {
 		if !hasAgent && pane.Agent == "" && pane.AgentSession == "" && pane.AgentStatus == "" {
 			continue
 		}
-		placements[pane.PaneID] = placement{pane.PaneID, first(agent.Name, pane.Label), first(agent.Agent, pane.Agent), first(agent.Status, pane.AgentStatus, "visible")}
+		placements[pane.PaneID] = placement{pane.PaneID, first(agent.Name, pane.Label), first(agent.Agent, pane.Agent), pane.AgentSession, first(agent.Status, pane.AgentStatus, "visible")}
 	}
 	for paneID, agent := range agents {
 		if _, ok := placements[paneID]; !ok {
-			placements[paneID] = placement{paneID, agent.Name, agent.Agent, agent.Status}
+			placements[paneID] = placement{pane: paneID, name: agent.Name, tool: agent.Agent, status: agent.Status}
 		}
 	}
 
 	byPane := make(map[string][]int)
+	livePanes := make(map[string]bool, len(snapshot.Panes))
+	for _, pane := range snapshot.Panes {
+		livePanes[pane.PaneID] = true
+	}
 	for i, bus := range roster {
 		if bus.LaunchContext.PaneID != "" {
 			byPane[bus.LaunchContext.PaneID] = append(byPane[bus.LaunchContext.PaneID], i)
+		}
+	}
+	panesBySession := make(map[sessionIdentity][]string)
+	for paneID, place := range placements {
+		if place.tool != "" && place.session != "" {
+			key := sessionIdentity{tool: place.tool, session: place.session}
+			panesBySession[key] = append(panesBySession[key], paneID)
+		}
+	}
+	rowsBySession := make(map[sessionIdentity][]int)
+	for i, bus := range roster {
+		if bus.Tool == "" || bus.SessionID == "" || livePanes[bus.LaunchContext.PaneID] {
+			continue
+		}
+		key := sessionIdentity{tool: bus.Tool, session: bus.SessionID}
+		rowsBySession[key] = append(rowsBySession[key], i)
+	}
+	bySessionPane := make(map[string]int)
+	for key, paneMatches := range panesBySession {
+		rowMatches := rowsBySession[key]
+		if len(paneMatches) == 1 && len(rowMatches) == 1 && len(byPane[paneMatches[0]]) == 0 {
+			bySessionPane[paneMatches[0]] = rowMatches[0]
 		}
 	}
 	matched := make(map[int]bool)
@@ -153,6 +185,11 @@ func JoinRows(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) []Row {
 	for _, paneID := range paneIDs {
 		place := placements[paneID]
 		matches := byPane[paneID]
+		if len(matches) == 0 {
+			if match, ok := bySessionPane[paneID]; ok {
+				matches = []int{match}
+			}
+		}
 		if len(matches) == 0 {
 			rows = append(rows, Row{paneID, display(place.name), display(place.tool), display(place.status), "-", "no bus row"})
 			continue

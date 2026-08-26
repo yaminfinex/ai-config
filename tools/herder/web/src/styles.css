@@ -202,7 +202,6 @@ pre { max-width: 100%; overflow-x: auto; padding: 9px; border-radius: 5px; backg
 .compact { padding: 3px 7px; font-size: 10px; }
 .lifecycle-form { min-width: 340px; padding: 10px; border: 1px solid var(--border2); border-radius: 6px; background: var(--bg2); white-space: normal; }
 .spawn-form { margin: -2px 0; }
-.fork-form { position: absolute; z-index: 3; top: 34px; right: 10px; width: min(560px, calc(100vw - 280px)); }
 .lifecycle-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
 .lifecycle-form label { display: grid; gap: 3px; color: var(--dim); font-size: 10px; font-weight: 600; }
 .lifecycle-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-bottom: 7px; }

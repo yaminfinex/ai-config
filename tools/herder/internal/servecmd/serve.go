@@ -53,7 +53,6 @@ type dependencies struct {
 	sender     func(context.Context, string) (string, error)
 	send       func(context.Context, string, string, string) error
 	spawn      func(context.Context, []string) (webaction.Result, error)
-	fork       func(context.Context, string, string, bool) (string, error)
 	poll       time.Duration
 	heartbeat  time.Duration
 	listeners  func(int) ([]net.Listener, []string, error)
@@ -72,7 +71,6 @@ var liveDependencies = dependencies{
 	sender:     webidentity.Sender,
 	send:       hcommessage.SendRequest,
 	spawn:      webaction.Spawn,
-	fork:       webaction.Fork,
 	poll:       PollCadence,
 	heartbeat:  HeartbeatCadence,
 	listeners:  liveListeners,
@@ -160,10 +158,6 @@ type spawnRequest struct {
 	Tag      *string `json:"tag"`
 	Prompt   *string `json:"prompt"`
 	Branch   *string `json:"branch"`
-}
-
-type forkRequest struct {
-	Prompt *string `json:"prompt"`
 }
 
 var (
@@ -367,13 +361,6 @@ func newHandler(deps dependencies) http.Handler {
 		}
 		serveSpawn(w, r, deps)
 	})
-	mux.HandleFunc("/api/agents/{busName}/fork", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			refuse(w, http.StatusBadRequest, "bad request", "POST required")
-			return
-		}
-		serveFork(w, r, deps, r.PathValue("busName"))
-	})
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		refuse(w, http.StatusNotFound, "not found", "unknown endpoint")
 	})
@@ -454,18 +441,20 @@ func readAgent(deps dependencies, name string) (agentDetail, error) {
 		Gap: "no visible pane", Directory: bus.Directory, SessionID: bus.SessionID,
 		LaunchContext: bus.LaunchContext,
 	}
+	resolvedPane := ""
 	for _, row := range fleetview.JoinRows(snapshot, roster) {
-		if row.Agent == name && (row.Pane == bus.LaunchContext.PaneID || row.Pane == "-") {
+		if row.Agent == name && row.BusStatus != "-" {
 			result.Tool = row.Tool
 			result.HerdrStatus = row.HerdrStatus
 			result.BusStatus = row.BusStatus
 			result.Gap = row.Gap
+			resolvedPane = row.Pane
 			break
 		}
 	}
-	if bus.LaunchContext.PaneID != "" {
+	if resolvedPane != "" && resolvedPane != "-" {
 		for _, pane := range snapshot.Panes {
-			if pane.PaneID == bus.LaunchContext.PaneID {
+			if pane.PaneID == resolvedPane {
 				result.Pane = &agentPane{WorkspaceID: pane.WorkspaceID, TabID: pane.TabID, PaneID: pane.PaneID}
 				break
 			}
@@ -809,49 +798,6 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func serveFork(w http.ResponseWriter, r *http.Request, deps dependencies, name string) {
-	roster, err := deps.roster()
-	if err != nil {
-		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
-		return
-	}
-	found := false
-	for _, row := range roster {
-		if row.Name == name {
-			found = true
-			break
-		}
-	}
-	if !found {
-		refuse(w, http.StatusNotFound, "unknown agent", fmt.Sprintf("agent %q is not on the hcom bus", name))
-		return
-	}
-	var request forkRequest
-	if err := decodeWriteBody(w, r, &request, true); err != nil {
-		refuse(w, http.StatusBadRequest, "bad request", err.Error())
-		return
-	}
-	if _, err := attributedSender(r, deps, roster); err != nil {
-		serveAttributionError(w, err)
-		return
-	}
-	prompt := ""
-	if request.Prompt != nil {
-		prompt = *request.Prompt
-	}
-	newName, err := deps.fork(r.Context(), name, prompt, request.Prompt != nil)
-	if err != nil {
-		if errors.Is(err, webaction.ErrUnavailable) {
-			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
-		} else {
-			refuse(w, http.StatusConflict, "refused by substrate", err.Error())
-		}
-		return
-	}
-	placement := waitForPlacement(r.Context(), deps, newName)
-	writeJSON(w, http.StatusOK, webaction.Result{Name: newName, Pane: placement})
-}
-
 func attributedSender(r *http.Request, deps dependencies, roster []hcomidentity.Row) (string, error) {
 	sender, err := deps.sender(r.Context(), r.RemoteAddr)
 	if err != nil {
@@ -901,35 +847,6 @@ func decodeWriteBody(w http.ResponseWriter, r *http.Request, target any, emptyOK
 		return errors.New("body must be one JSON object with only documented fields")
 	}
 	return nil
-}
-
-func waitForPlacement(ctx context.Context, deps dependencies, name string) string {
-	timeout := 2*deps.poll + time.Second
-	waitCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	for {
-		snapshot, roster, err := readFleetInputs(deps)
-		if err != nil {
-			return ""
-		}
-		for _, row := range roster {
-			if row.Name != name || row.LaunchContext.PaneID == "" {
-				continue
-			}
-			for _, pane := range snapshot.Panes {
-				if pane.PaneID == row.LaunchContext.PaneID {
-					return pane.PaneID
-				}
-			}
-		}
-		timer := time.NewTimer(deps.poll)
-		select {
-		case <-waitCtx.Done():
-			timer.Stop()
-			return ""
-		case <-timer.C:
-		}
-	}
 }
 
 func refuse(w http.ResponseWriter, status int, short, detail string) {
