@@ -176,8 +176,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("herder serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	port := fs.Int("port", DefaultPort, "TCP port for loopback and tailscale listeners")
+	watch := fs.Bool("watch", false, "re-exec when the deployed herder build changes")
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), "herder serve — expose the read-only live fleet API.\n\nUsage:\n  herder serve [--port PORT]\n")
+		fmt.Fprint(fs.Output(), "herder serve — expose the read-only live fleet API.\n\nUsage:\n  herder serve [--port PORT] [--watch]\n")
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -189,6 +190,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if *port < 1 || *port > 65535 {
 		fmt.Fprintf(stderr, "herder serve: invalid port %d\n", *port)
 		return 2
+	}
+	ctx, cancelWatch := context.WithCancel(context.Background())
+	defer cancelWatch()
+	if *watch {
+		config, err := newWatchConfig(os.Args)
+		if err != nil {
+			fmt.Fprintf(stderr, "herder serve: watch unavailable: %v\n", err)
+			return 1
+		}
+		startWatch(ctx, config, stderr)
 	}
 	listeners, warnings, err := liveDependencies.listeners(*port)
 	if err != nil {
