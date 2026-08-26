@@ -233,8 +233,11 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF '/fork' "$ROOT/app.js" &&
   grep -qF 'placement pending' "$ROOT/app.js" &&
   grep -qF '/agents/' "$ROOT/app.js" &&
+  grep -qF 'herder.web.layout.v1' "$ROOT/app.js" &&
+  grep -qF 'Fleet sidebar' "$ROOT/app.js" &&
+  grep -qF 'aria-expanded' "$ROOT/app.js" &&
   curl -fsS "http://127.0.0.1:$port/agents/mavu" | grep -qF '<title>Herder fleet</title>'; then
-  pass "serve delivers built board/agent routes and direct SPA navigation"
+  pass "serve delivers built shell/sidebar, viewer layout persistence, board/agent routes, and direct SPA navigation"
 else
   bad "embedded UI" "index=$(cat "$ROOT/index.html" 2>/dev/null || true)"
 fi
