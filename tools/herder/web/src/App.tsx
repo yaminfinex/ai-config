@@ -3,6 +3,7 @@ import { hotkeysCoreFeature, selectionFeature, syncDataLoaderFeature } from '@he
 import { useTree } from '@headless-tree/react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { isComposerSendShortcut, persistComposerDraft, readComposerDraft } from './composerState'
 import { duplicateHcomDeliveryIndices, stripWebOperatorNote } from './messagePolish'
 import type {
   AgentDetail,
@@ -679,9 +680,10 @@ function ForkControl({ name, onBanner }: { name: string, onBanner: (key: string,
   )
 }
 
-function AgentPanel({ name, onViewer, liveWake, streamGeneration, resetGeneration }: {
+function AgentPanel({ name, onViewer, identityReadOnly, liveWake, streamGeneration, resetGeneration }: {
   name: string
   onViewer: (viewer: string) => void
+  identityReadOnly: string
   liveWake: number
   streamGeneration: number
   resetGeneration: number
@@ -698,14 +700,16 @@ function AgentPanel({ name, onViewer, liveWake, streamGeneration, resetGeneratio
   const [newEntryCount, setNewEntryCount] = useState(0)
   const [reloadGeneration, setReloadGeneration] = useState(0)
   const [appendGeneration, setAppendGeneration] = useState(0)
-  const [message, setMessage] = useState('')
+  const [message, setMessage] = useState(() => readComposerDraft(name))
   const [sendProblem, setSendProblem] = useState('')
   const [sendNotice, setSendNotice] = useState('')
   const [sending, setSending] = useState(false)
   const [readOnly, setReadOnly] = useState('')
   const transcriptRef = useRef<HTMLElement>(null)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
   const followingRef = useRef(true)
   const reanchorAfterAppendRef = useRef(true)
+  const effectiveReadOnly = identityReadOnly || readOnly
   const setLifecycleBanner = (key: string, problemDetail: string) => setProblems((current) => problemDetail
     ? { ...current, [key]: problemDetail }
     : without(current, key))
@@ -817,6 +821,19 @@ function AgentPanel({ name, onViewer, liveWake, streamGeneration, resetGeneratio
     return () => window.clearInterval(timer)
   }, [])
 
+  useEffect(() => {
+    persistComposerDraft(name, message)
+  }, [message, name])
+
+  useLayoutEffect(() => {
+    const composer = composerRef.current
+    if (!composer) return
+    composer.style.height = '0px'
+    const height = Math.min(composer.scrollHeight, 160)
+    composer.style.height = `${height}px`
+    composer.style.overflowY = composer.scrollHeight > 160 ? 'auto' : 'hidden'
+  }, [message])
+
   useLayoutEffect(() => {
     if (!reanchorAfterAppendRef.current) return
     const transcript = transcriptRef.current
@@ -831,7 +848,7 @@ function AgentPanel({ name, onViewer, liveWake, streamGeneration, resetGeneratio
 
   const send = async (event: React.FormEvent) => {
     event.preventDefault()
-    if (!message.trim() || sending || readOnly) return
+    if (!message.trim() || sending || effectiveReadOnly) return
     setSending(true)
     setSendProblem('')
     setSendNotice('')
@@ -854,6 +871,7 @@ function AgentPanel({ name, onViewer, liveWake, streamGeneration, resetGeneratio
       }
       const result = await response.json() as { sent: boolean, to: string, from: string }
       onViewer(result.from)
+      persistComposerDraft(name, '')
       setMessage('')
       setSendNotice(`Sent to ${result.to} as ${result.from}. Waiting for the live reply…`)
       setProblems((current) => without(current, 'send'))
@@ -897,11 +915,24 @@ function AgentPanel({ name, onViewer, liveWake, streamGeneration, resetGeneratio
         }}>↓ {newEntryCount} new</button>}
       </section>
       {agent && <form className="send-box" onSubmit={(event) => void send(event)}>
-        {readOnly && <div className="read-only" role="alert"><strong>Read-only</strong><span>{readOnly}</span></div>}
-        <label htmlFor="message">Message {name}</label><textarea id="message" rows={2} value={message} disabled={Boolean(readOnly) || sending} onChange={(event) => setMessage(event.target.value)} placeholder="Send an attributed request…" />
+        {effectiveReadOnly && <div className="read-only" role="alert"><strong>Read-only</strong><span>{effectiveReadOnly}</span></div>}
+        <label htmlFor="message">Message {name} <span>· Enter for newline · Ctrl/Cmd+Enter to send</span></label><textarea
+          id="message"
+          ref={composerRef}
+          rows={1}
+          value={message}
+          disabled={Boolean(effectiveReadOnly) || sending}
+          onChange={(event) => setMessage(event.target.value)}
+          onKeyDown={(event) => {
+            if (!isComposerSendShortcut(event) || event.nativeEvent.isComposing) return
+            event.preventDefault()
+            event.currentTarget.form?.requestSubmit()
+          }}
+          placeholder="Send an attributed request…"
+        />
         <div className="send-footer">
           <div>{sendProblem && <p className="inline-error" role="alert">{sendProblem}</p>}{sendNotice && <p className="send-notice">{sendNotice}</p>}</div>
-          <button type="submit" disabled={!message.trim() || sending || Boolean(readOnly)}>{sending ? 'Sending…' : 'Send request'}</button>
+          <button type="submit" disabled={!message.trim() || sending || Boolean(effectiveReadOnly)}>{sending ? 'Sending…' : 'Send request'}</button>
         </div>
         <p className="attribution-copy">sends as an attributed web viewer · web senders are not addressable bus peers</p>
       </form>}
@@ -1120,7 +1151,10 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const [sidebarWidth, setSidebarWidth] = useState(initial.sidebarWidth)
   const [expandedItems, setExpandedItems] = useState<string[] | null>(initial.expandedItems)
   const [knownWorkspaceItems, setKnownWorkspaceItems] = useState<string[] | null>(initial.knownWorkspaceItems)
-  const [viewer, setViewer] = useState('unresolved')
+  const [viewer, setViewer] = useState('resolving…')
+  const [viewerState, setViewerState] = useState<'resolving' | 'attributed' | 'unresolved' | 'unavailable'>('resolving')
+  const [viewerProblem, setViewerProblem] = useState('')
+  const [viewerReadOnly, setViewerReadOnly] = useState('Resolving viewer identity…')
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
   const agentNames = tabs.flatMap((tab) => tab.kind === 'agent' ? [tab.name] : [])
   const {
@@ -1128,6 +1162,45 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     streamGeneration, transcriptEvents, transcriptResets,
   } = useFleet(agentNames)
   const active = tabs.find((tab) => tab.id === activeTab) ?? boardTab
+
+  useEffect(() => {
+    let activeRequest = true
+    const resolveViewer = async () => {
+      try {
+        const response = await fetch('/api/viewer')
+        if (!response.ok) {
+          const problem = await refusal(response)
+          if (!activeRequest) return
+          setViewer('unresolved')
+          if (response.status === 409) {
+            setViewerState('unresolved')
+            setViewerProblem('')
+            setViewerReadOnly(`Connect via Tailscale to send. ${problem.detail}`)
+          } else {
+            setViewerState('unavailable')
+            setViewerProblem(problem.detail)
+            setViewerReadOnly(`Viewer identity is unavailable. ${problem.detail}`)
+          }
+          return
+        }
+        const result = await response.json() as { viewer: string }
+        if (!activeRequest) return
+        setViewer(result.viewer)
+        setViewerState('attributed')
+        setViewerProblem('')
+        setViewerReadOnly('')
+      } catch (error: unknown) {
+        if (!activeRequest) return
+        setViewer('unresolved')
+        setViewerState('unavailable')
+        const detail = error instanceof Error ? error.message : String(error)
+        setViewerProblem(detail)
+        setViewerReadOnly(`Viewer identity is unavailable. ${detail}`)
+      }
+    }
+    void resolveViewer()
+    return () => { activeRequest = false }
+  }, [])
 
   const activate = (tab: ShellTab, push = true) => {
     setTabs((current) => current.some((item) => item.id === tab.id) ? current : [...current, tab])
@@ -1258,14 +1331,20 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
         <span className={`stream-chip${problems.stream ? ' fault' : ''}`}>{problems.stream ? 'SSE: reconnecting' : 'SSE: connected'}</span>
         <span className="layout-chip" title="Shortcuts: Ctrl/Cmd+W close tab · Ctrl/Cmd+PageUp/PageDown previous/next tab · Alt+1 focus sidebar · Alt+2 focus composer">layout: this browser</span>
       </div>
-      <div className="shell-banners">{Object.entries(problems).map(([source, detail]) => <Banner source={source} detail={detail} key={source} />)}</div>
+      <div className="shell-banners">{viewerProblem && <Banner source="viewer" detail={viewerProblem} />}{Object.entries(problems).map(([source, detail]) => <Banner source={source} detail={detail} key={source} />)}</div>
       <div className="panel-host">
         {tabs.map((tab, index) => <div id={`shell-panel-${index}`} role="tabpanel" aria-labelledby={`shell-tab-${index}`} hidden={tab.id !== activeTab} className="hosted-panel" key={tab.id}>
           {tab.kind === 'board'
             ? <BoardPanel board={board} onBanner={setLifecycleBanner} />
             : <AgentPanel
               name={tab.name}
-              onViewer={setViewer}
+              onViewer={(resolvedViewer) => {
+                setViewer(resolvedViewer)
+                setViewerState('attributed')
+                setViewerProblem('')
+                setViewerReadOnly('')
+              }}
+              identityReadOnly={viewerReadOnly}
               liveWake={transcriptEvents[tab.name] ?? 0}
               streamGeneration={streamGeneration}
               resetGeneration={transcriptResets[tab.name] ?? 0}
@@ -1275,7 +1354,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       <footer className="status-bar">
         <span>substrate: herdr {board ? '✓' : '…'} · hcom {problems.hcom ? '×' : '✓'}</span>
         <span className={problems.stream ? 'fault' : ''}>SSE: {problems.stream ? 'reconnecting' : 'connected'}</span>
-        <span>viewer: {viewer}</span><span>{viewer === 'unresolved' ? 'attribution resolves on send' : 'attributed'}</span>
+        <span>viewer: {viewer}</span><span>{viewerState === 'resolving' ? 'resolving identity' : viewerState === 'attributed' ? 'attributed' : viewerState === 'unavailable' ? 'identity unavailable' : 'read-only · unattributed'}</span>
         <span className="status-spacer" /><span>{messages} messages</span><span>last event: {lastEvent ? lastEvent.toLocaleTimeString() : '—'}</span>
       </footer>
     </section>

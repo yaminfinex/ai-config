@@ -381,6 +381,53 @@ func TestMessageWritePinsAttributionRefusalsAndConfirmationShape(t *testing.T) {
 	}
 }
 
+func TestViewerEndpointResolvesWithoutWritingAndSharesAttributionRefusals(t *testing.T) {
+	deps := fixtureDeps()
+	sendCalls := 0
+	deps.send = func(context.Context, string, string, string) error {
+		sendCalls++
+		return nil
+	}
+	resolved := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/viewer", nil)
+	request.RemoteAddr = "100.64.0.8:44321"
+	newHandler(deps).ServeHTTP(resolved, request)
+	if resolved.Code != http.StatusOK || resolved.Body.String() != "{\"viewer\":\"web-alice-example-com\"}\n" || sendCalls != 0 {
+		t.Fatalf("resolved = %d %s send calls=%d", resolved.Code, resolved.Body.String(), sendCalls)
+	}
+
+	for name, test := range map[string]struct {
+		err       error
+		status    int
+		errorText string
+	}{
+		"unresolved":     {errors.New("tailscale whois returned no user login"), http.StatusConflict, "attribution required"},
+		"infrastructure": {fmt.Errorf("%w: daemon unavailable", webidentity.ErrUnavailable), http.StatusBadGateway, "substrate unreachable"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			refusing := fixtureDeps()
+			refusing.sender = func(context.Context, string) (string, error) { return "", test.err }
+			response := httptest.NewRecorder()
+			newHandler(refusing).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/viewer", nil))
+			if response.Code != test.status || !strings.Contains(response.Body.String(), `"error":"`+test.errorText+`"`) {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+
+	collision := fixtureDeps()
+	baseRoster := collision.roster
+	collision.roster = func() ([]hcomidentity.Row, error) {
+		rows, err := baseRoster()
+		return append(rows, hcomidentity.Row{Name: "web-alice-example-com"}), err
+	}
+	response := httptest.NewRecorder()
+	newHandler(collision).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/viewer", nil))
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"error":"sender refused"`) {
+		t.Fatalf("collision = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestMessageWriteMapsWhoisInfrastructureTo502AndSemanticAttributionTo409(t *testing.T) {
 	for name, test := range map[string]struct {
 		err       error

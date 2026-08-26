@@ -149,6 +149,10 @@ type messageResponse struct {
 	Intent string `json:"intent"`
 }
 
+type viewerResponse struct {
+	Viewer string `json:"viewer"`
+}
+
 type spawnRequest struct {
 	FromPane *string `json:"from_pane"`
 	Shape    *string `json:"shape"`
@@ -308,6 +312,13 @@ func newHandler(deps dependencies) http.Handler {
 			return
 		}
 		serveEvents(w, r, deps)
+	})
+	mux.HandleFunc("/api/viewer", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveViewer(w, r, deps)
 	})
 	mux.HandleFunc("/api/agents/{busName}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -690,6 +701,20 @@ func serveMessage(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 		return
 	}
 	writeJSON(w, http.StatusOK, messageResponse{Sent: true, To: name, From: sender, Intent: "request"})
+}
+
+func serveViewer(w http.ResponseWriter, r *http.Request, deps dependencies) {
+	roster, err := deps.roster()
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	sender, err := attributedSender(r, deps, roster)
+	if err != nil {
+		serveAttributionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, viewerResponse{Viewer: sender})
 }
 
 func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {

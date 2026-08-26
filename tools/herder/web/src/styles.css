@@ -189,7 +189,8 @@ summary { cursor: pointer; font-size: 10px; }
 pre { max-width: 100%; overflow-x: auto; padding: 9px; border-radius: 5px; background: #15161a; color: #c9d1d9; font: 11px var(--mono); white-space: pre-wrap; }
 .send-box { flex: 0 0 auto; padding: 7px 14px 5px; border-top: 1px solid var(--border); background: var(--bg2); }
 .send-box label { display: block; margin-bottom: 4px; color: var(--dim); font-size: 10px; }
-.send-box textarea { width: 100%; resize: vertical; padding: 6px 9px; border: 1px solid var(--border2); border-radius: 5px; outline: none; background: var(--bg); color: var(--text); }
+.send-box label span { color: var(--dimmer); font-weight: 400; }
+.send-box textarea { display: block; width: 100%; min-height: 36px; max-height: 160px; resize: none; padding: 7px 9px; border: 1px solid var(--border2); border-radius: 5px; outline: none; background: var(--bg); color: var(--text); line-height: 1.45; }
 .send-box textarea:focus, .lifecycle-form input:focus, .lifecycle-form select:focus, .lifecycle-form textarea:focus { border-color: var(--accent); }
 .send-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }
 .send-footer p { margin: 0; font-size: 10px; }
