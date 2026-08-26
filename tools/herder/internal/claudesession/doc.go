@@ -4,4 +4,7 @@
 // doctrine that herder never opens transcript files itself: the Claude
 // backend is resolved and parsed here. hcomtranscript remains unchanged for
 // non-Claude fallbacks.
+//
+// The bookkeeping exclusion allowlist is sesh's audited ten types plus the
+// evidenced file-history-delta sibling observed in the admitted corpus.
 package claudesession

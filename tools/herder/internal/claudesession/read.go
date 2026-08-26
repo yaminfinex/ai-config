@@ -17,12 +17,13 @@ const maxToolOutputBytes = 16 * 1024
 
 var bookkeepingTypes = map[string]struct{}{
 	"agent-name": {}, "ai-title": {}, "bridge-session": {},
-	"file-history-snapshot": {}, "last-prompt": {}, "mode": {},
+	"file-history-delta": {}, "file-history-snapshot": {},
+	"last-prompt": {}, "mode": {},
 	"permission-mode": {}, "pr-link": {}, "queue-operation": {},
 	"worktree-state": {},
 }
 
-var hcomMessagePattern = regexp.MustCompile(`(?s)^\[(\w+)\s+#(\d+)\]\s+([^\s]+)\s+→\s+([^:]+):\s*(.*)$`)
+var hcomMessagePattern = regexp.MustCompile(`(?m)\[([^\]#]+?)\s+#(\d+)\]\s+(\S+)\s+→\s+(.+?):[ \t]+`)
 
 type envelope struct {
 	Type             string `json:"type"`
@@ -40,7 +41,10 @@ type envelope struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
-	Content json.RawMessage `json:"content"`
+	Attachment struct {
+		Type    string          `json:"type"`
+		Content json.RawMessage `json:"content"`
+	} `json:"attachment"`
 }
 
 // ReadFrom emits every renderable complete line at or after offset. A
@@ -210,21 +214,48 @@ func classifyUser(env envelope, raw json.RawMessage) (Kind, json.RawMessage) {
 }
 
 func classifyAttachment(env envelope, raw json.RawMessage) (Kind, json.RawMessage) {
-	if env.Subtype != "hook_system_message" && env.Subtype != "hook_additional_context" {
+	if env.Attachment.Type != "hook_system_message" && env.Attachment.Type != "hook_additional_context" {
 		return KindSystemChip, raw
 	}
-	text := contentText(env.Message.Content)
-	if text == "" {
-		text = contentText(env.Content)
+	body := unwrapHcom(attachmentText(env.Attachment.Content))
+	matches := hcomMessagePattern.FindAllStringSubmatchIndex(body, -1)
+	deliveries := make([]map[string]any, 0, max(len(matches), 1))
+	for i, match := range matches {
+		intent, thread, _ := strings.Cut(strings.TrimSpace(body[match[2]:match[3]]), ":")
+		textEnd := len(body)
+		if i+1 < len(matches) {
+			textEnd = matches[i+1][0]
+		}
+		delivery := map[string]any{
+			"intent":     strings.TrimSpace(intent),
+			"message_id": body[match[4]:match[5]],
+			"sender":     body[match[6]:match[7]],
+			"recipient":  strings.TrimSpace(body[match[8]:match[9]]),
+			"text":       strings.TrimSpace(body[match[1]:textEnd]),
+		}
+		if thread != "" {
+			delivery["thread"] = strings.TrimSpace(thread)
+		}
+		deliveries = append(deliveries, delivery)
 	}
-	match := hcomMessagePattern.FindStringSubmatch(strings.TrimSpace(unwrapHcom(text)))
-	if match == nil {
-		return KindSystemChip, raw
+	if len(deliveries) == 0 {
+		deliveries = append(deliveries, map[string]any{"text": strings.TrimSpace(body)})
 	}
 	return KindHcomDelivery, mustJSON(map[string]any{
-		"subtype": env.Subtype, "intent": match[1], "message_id": match[2],
-		"sender": match[3], "recipient": strings.TrimSpace(match[4]), "text": match[5],
+		"subtype": env.Attachment.Type, "deliveries": deliveries,
 	})
+}
+
+func attachmentText(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	var parts []string
+	if json.Unmarshal(raw, &parts) == nil {
+		return strings.Join(parts, "\n")
+	}
+	return ""
 }
 
 func unwrapHcom(text string) string {
@@ -301,11 +332,15 @@ func capText(value string, limit int) (string, bool) {
 	if len(b) <= limit {
 		return value, false
 	}
-	b = b[:max(limit, 0)]
-	for !utf8.Valid(b) {
-		b = b[:len(b)-1]
+	end := min(max(limit, 0), len(b))
+	// Only repair a split UTF-8 sequence at the cap boundary. Invalid bytes
+	// earlier in binary-ish output must not make the result collapse toward
+	// that byte; at most one UTF-8 sequence (three bytes) is held back.
+	floor := max(end-3, 0)
+	for end > floor && end < len(b) && !utf8.RuneStart(b[end]) {
+		end--
 	}
-	return string(b), true
+	return string(b[:end]), true
 }
 
 func contentBlocks(raw json.RawMessage) []map[string]json.RawMessage {

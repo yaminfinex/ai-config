@@ -89,11 +89,33 @@ func TestTaxonomyFixture(t *testing.T) {
 			t.Errorf("entry %d line = %d", i, result.Entries[i].Line)
 		}
 	}
-	if result.Entries[15].UUID != "invented-future" || !json.Valid(result.Entries[15].Payload) {
+	if result.Entries[15].Kind != KindUnknown || !json.Valid(result.Entries[15].Payload) || !strings.Contains(string(result.Entries[15].Payload), "invented-message-future") {
 		t.Fatal("future-sidecar-probe must remain visible with raw payload")
 	}
-	assertJSONField(t, result.Entries[2].Payload, "sender", "rava")
-	assertJSONField(t, result.Entries[2].Payload, "message_id", "731")
+	var hcomPayload struct {
+		Subtype    string `json:"subtype"`
+		Deliveries []struct {
+			Intent    string `json:"intent"`
+			Thread    string `json:"thread"`
+			MessageID string `json:"message_id"`
+			Sender    string `json:"sender"`
+			Recipient string `json:"recipient"`
+			Text      string `json:"text"`
+		} `json:"deliveries"`
+	}
+	if err := json.Unmarshal(result.Entries[2].Payload, &hcomPayload); err != nil {
+		t.Fatal(err)
+	}
+	if hcomPayload.Subtype != "hook_system_message" || len(hcomPayload.Deliveries) != 2 {
+		t.Fatalf("hcom payload = %+v", hcomPayload)
+	}
+	first, second := hcomPayload.Deliveries[0], hcomPayload.Deliveries[1]
+	if first.Intent != "inform" || first.Thread != "violet-grid" || first.MessageID != "731" || first.Sender != "rava" || first.Recipient != "agent-nori" || first.Text != "Inspect the invented violet fixture." {
+		t.Fatalf("threaded delivery = %+v", first)
+	}
+	if second.Intent != "new message" || second.Thread != "" || second.MessageID != "732" || second.Text != "A second invented body." {
+		t.Fatalf("new-message delivery = %+v", second)
+	}
 	assertJSONField(t, result.Entries[10].Payload, "is_error", true)
 
 	var stringResult map[string]json.RawMessage
@@ -122,7 +144,8 @@ func TestBookkeepingAllowlistIsExact(t *testing.T) {
 	t.Parallel()
 	want := map[string]struct{}{
 		"agent-name": {}, "ai-title": {}, "bridge-session": {},
-		"file-history-snapshot": {}, "last-prompt": {}, "mode": {},
+		"file-history-delta": {}, "file-history-snapshot": {},
+		"last-prompt": {}, "mode": {},
 		"permission-mode": {}, "pr-link": {}, "queue-operation": {},
 		"worktree-state": {},
 	}
@@ -190,7 +213,10 @@ func TestPartialTrailingLineHeldThenEmittedOnce(t *testing.T) {
 
 func TestToolOutputCapIsHonest(t *testing.T) {
 	t.Parallel()
-	output := strings.Repeat("v", maxToolOutputBytes+731)
+	if maxToolOutputBytes != 16384 {
+		t.Fatalf("maxToolOutputBytes = %d, want literal 16384", maxToolOutputBytes)
+	}
+	output := strings.Repeat("v", 16384+731)
 	line := `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_invented_cap","is_error":false,"content":` + mustString(output) + `}]}}` + "\n"
 	result, err := ReadFrom(writeTemp(t, line), 0)
 	if err != nil {
@@ -204,8 +230,45 @@ func TestToolOutputCapIsHonest(t *testing.T) {
 	if err := json.Unmarshal(result.Entries[0].Payload, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if len(payload.Content) != maxToolOutputBytes || payload.TotalBytes != len(output) || !payload.Truncated {
+	if len(payload.Content) != 16384 || payload.TotalBytes != len(output) || !payload.Truncated {
 		t.Fatalf("cap payload = length %d total %d truncated %v", len(payload.Content), payload.TotalBytes, payload.Truncated)
+	}
+}
+
+func TestCapTextOnlyBacksOffAtUTF8Boundary(t *testing.T) {
+	t.Parallel()
+	binaryish := []byte(strings.Repeat("v", 16384+8))
+	binaryish[731] = 0xff
+	capped, truncated := capText(string(binaryish), 16384)
+	if !truncated || len(capped) != 16384 {
+		t.Fatalf("invalid mid-slice output shrank to %d bytes", len(capped))
+	}
+
+	splitRune := strings.Repeat("v", 16383) + "€" + "tail"
+	capped, truncated = capText(splitRune, 16384)
+	if !truncated || len(capped) != 16383 {
+		t.Fatalf("split UTF-8 boundary length = %d, want 16383", len(capped))
+	}
+}
+
+func TestHookAttachmentFallbackDelivery(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{"type":"attachment","attachment":{"type":"hook_additional_context","content":["Invented unheaded hook body."]}}`)
+	entry, render, sidechain := classify(raw, 0, 0)
+	if !render || sidechain || entry.Kind != KindHcomDelivery {
+		t.Fatalf("fallback classification = %#v, render=%v sidechain=%v", entry, render, sidechain)
+	}
+	var payload struct {
+		Subtype    string `json:"subtype"`
+		Deliveries []struct {
+			Text string `json:"text"`
+		} `json:"deliveries"`
+	}
+	if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Subtype != "hook_additional_context" || len(payload.Deliveries) != 1 || payload.Deliveries[0].Text != "Invented unheaded hook body." {
+		t.Fatalf("fallback payload = %+v", payload)
 	}
 }
 
