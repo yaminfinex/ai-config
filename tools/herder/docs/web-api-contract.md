@@ -167,6 +167,24 @@ one multiplexed EventSource per page. The legacy per-agent
 `/transcript/stream` endpoint remains exchange-shaped for direct API
 consumers and is not used by the web shell.
 
+### AMENDMENT (conductor, 2026-08-26) — entries are tool-dispatched
+
+The entries endpoint and multiplexed `entry:{bus-name}` tail are no longer
+Claude-only. They dispatch from the hcom roster row's `tool` while preserving
+one wire projection and all existing window, byte-offset, complete-line,
+reset, rewindow, and endpoint-as-truth laws. The client renders `kind` and
+never receives or branches on a source-tool discriminator in an entry.
+
+For `tool: claude`, resolution and parsing remain byte-for-byte the existing
+`claudesession` behavior. For `tool: codex`, the `codexsession` resolver
+validates the roster session ID and requires exactly one match under
+`~/.codex/sessions/YYYY/MM/DD/rollout-*-<sessionId>.jsonl`; zero or ambiguous
+matches are honest 409 `no session` refusals on the endpoint and transcript
+substrate failures on the stream. Unknown complete rollout lines are served
+as quarantined `unknown` entries, and partial trailing lines are held back.
+Tools with neither a Claude nor Codex session file keep their prior refusal
+and stream-failure behavior. Legacy exchange endpoints remain untouched.
+
 ## Writes (plain HTTP POST — ruled: no WebSocket in v1)
 
 POST `/api/agents/{bus-name}/message`

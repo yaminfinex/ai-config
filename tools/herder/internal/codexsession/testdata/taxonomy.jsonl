@@ -1,0 +1,18 @@
+{"timestamp":"2026-01-02T03:04:05.000Z","type":"session_meta","payload":{"id":"73100000-0000-4000-8000-000000000731","timestamp":"2026-01-02T03:04:05.000Z","cwd":"/invented/violet","originator":"codex_cli_rs","cli_version":"0.0-invented","source":"cli","model_provider":"invented"}}
+{"timestamp":"2026-01-02T03:04:06.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Invented prompt."}]}}
+{"timestamp":"2026-01-02T03:04:06.000Z","type":"event_msg","payload":{"type":"user_message","message":"Invented prompt.","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-01-02T03:04:07.000Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"Invented answer."}]}}
+{"timestamp":"2026-01-02T03:04:07.000Z","type":"event_msg","payload":{"type":"agent_message","message":"Invented answer.","phase":"commentary","memory_citation":null}}
+{"timestamp":"2026-01-02T03:04:08.000Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"Considering invented evidence."}],"content":null,"encrypted_content":"invented"}}
+{"timestamp":"2026-01-02T03:04:09.000Z","type":"response_item","payload":{"type":"reasoning","summary":[],"content":null,"encrypted_content":"invented-opaque"}}
+{"timestamp":"2026-01-02T03:04:10.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"invented --check\"}","call_id":"call_invented_function"}}
+{"timestamp":"2026-01-02T03:04:11.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_invented_function","output":"Process exited with code 7\nOutput:\ninvented failure"}}
+{"timestamp":"2026-01-02T03:04:12.000Z","type":"response_item","payload":{"type":"custom_tool_call","id":"ctc_invented","status":"completed","call_id":"call_invented_custom","name":"exec","input":"const result = invented();"}}
+{"timestamp":"2026-01-02T03:04:13.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_invented_custom","output":[{"type":"input_text","text":"Script completed\nOutput:\nindigo"},{"type":"image_url","image_url":"data:image/png;base64,invented","detail":"high"}]}}
+{"timestamp":"2026-01-02T03:04:14.000Z","type":"event_msg","payload":{"type":"user_message","message":"<hcom>","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-01-02T03:04:14.100Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<hcom>"}]}}
+{"timestamp":"2026-01-02T03:04:14.200Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<hcom>[request:violet-grid #731] rava → agent-nori: Inspect the invented violet fixture.</hcom>"}]}}
+{"timestamp":"2026-01-02T03:04:15.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn_invented","duration_ms":7310,"time_to_first_token_ms":731,"completed_at":"2026-01-02T03:04:15.000Z","last_agent_message":"Invented answer."}}
+{"timestamp":"2026-01-02T03:04:16.000Z","type":"compacted","payload":{"message":{"role":"user","content":[{"type":"input_text","text":"Invented compact summary."}]},"replacement_history":[],"previous_window_id":"window_old","window_id":"window_new","window_number":2}}
+{"timestamp":"2026-01-02T03:04:16.000Z","type":"event_msg","payload":{"type":"context_compacted"}}
+{"timestamp":"2026-01-02T03:04:17.000Z","type":"future_rollout_probe","payload":{"invented":true}}

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"ai-config/tools/herder/internal/claudesession"
+	"ai-config/tools/herder/internal/codexsession"
 	"ai-config/tools/herder/internal/hcomidentity"
 )
 
@@ -86,6 +87,24 @@ func TestEntriesEndpointFromWithoutSessionIDReturnsCurrentSessionID(t *testing.T
 	page := decodeEntriesResponse(t, response)
 	if response.Code != http.StatusOK || page.SessionID != fixtureSessionID {
 		t.Fatalf("from-without-sessionId = %d sessionId %q body=%s", response.Code, page.SessionID, response.Body.String())
+	}
+}
+
+func TestEntriesEndpointDispatchesCodexRollout(t *testing.T) {
+	home, _ := writeCodexEntrySession(t, sessionLines(
+		`{"timestamp":"2026-01-02T03:04:05Z","type":"event_msg","payload":{"type":"user_message","message":"Invented Codex prompt.","images":[],"local_images":[],"text_elements":[]}}`,
+		`{"timestamp":"2026-01-02T03:04:06Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Invented Codex answer."}]}}`,
+	))
+	t.Setenv("HOME", home)
+	deps := entryDepsWithRow(hcomidentity.Row{Name: "dore", Tool: "codex", Status: "active", SessionID: fixtureSessionID})
+
+	response := requestEntries(t, deps, "/api/agents/dore/entries?from=0&limit=2")
+	page := decodeEntriesResponse(t, response)
+	if response.Code != http.StatusOK || page.SessionID != fixtureSessionID || page.Entries == nil || len(*page.Entries) != 2 {
+		t.Fatalf("codex response = %d %#v %s", response.Code, page, response.Body.String())
+	}
+	if (*page.Entries)[0].Kind != claudesession.KindHumanPrompt || (*page.Entries)[1].Kind != claudesession.KindAssistantText {
+		t.Fatalf("codex entries = %#v", *page.Entries)
 	}
 }
 
@@ -170,7 +189,7 @@ func TestEntriesEndpointMapsResolveRefusals(t *testing.T) {
 			d.roster = func() ([]hcomidentity.Row, error) { return nil, errors.New("invented roster outage") }
 			return d
 		}(), "/api/agents/dore/entries", http.StatusBadGateway, "substrate unreachable"},
-		{"wrong tool", entryDepsWithRow(hcomidentity.Row{Name: "dore", Tool: "codex", SessionID: fixtureSessionID, Directory: "/invented/violet"}), "/api/agents/dore/entries", http.StatusConflict, "no session"},
+		{"wrong tool", entryDepsWithRow(hcomidentity.Row{Name: "dore", Tool: "gemini", SessionID: fixtureSessionID, Directory: "/invented/violet"}), "/api/agents/dore/entries", http.StatusConflict, "no session"},
 		{"missing session", entryDepsWithRow(hcomidentity.Row{Name: "dore", Tool: "claude", Directory: "/invented/violet"}), "/api/agents/dore/entries", http.StatusConflict, "no session"},
 		{"invalid session", entryDepsWithRow(hcomidentity.Row{Name: "dore", Tool: "claude", SessionID: "../invented", Directory: "/invented/violet"}), "/api/agents/dore/entries", http.StatusConflict, "no session"},
 		{"file absent", entryFixtureDeps(), "/api/agents/dore/entries", http.StatusConflict, "no session"},
@@ -231,6 +250,23 @@ func writeEntrySession(t *testing.T, content string) (string, string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	return home, path
+}
+
+func writeCodexEntrySession(t *testing.T, content string) (string, string) {
+	t.Helper()
+	home := t.TempDir()
+	path := filepath.Join(home, ".codex", "sessions", "2026", "01", "02", "rollout-2026-01-02T03-04-05-"+fixtureSessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := codexsession.Resolve(home, hcomidentity.Row{Tool: "codex", SessionID: fixtureSessionID})
+	if err != nil || resolved != path {
+		t.Fatalf("fixture Codex resolve = %q, %v", resolved, err)
 	}
 	return home, path
 }

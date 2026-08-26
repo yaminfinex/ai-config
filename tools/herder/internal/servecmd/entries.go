@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"ai-config/tools/herder/internal/claudesession"
+	"ai-config/tools/herder/internal/codexsession"
 	"ai-config/tools/herder/internal/hcomidentity"
 )
 
@@ -70,10 +71,11 @@ func serveEntries(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
 	}
-	path, err := claudesession.Resolve(home, row)
+	path, err := resolveEntryPath(home, row)
 	if err != nil {
 		var resolveErr *claudesession.ResolveError
-		if errors.As(err, &resolveErr) {
+		var codexResolveErr *codexsession.ResolveError
+		if errors.As(err, &resolveErr) || errors.As(err, &codexResolveErr) {
 			refuse(w, http.StatusConflict, "no session", err.Error())
 			return
 		}
@@ -84,7 +86,7 @@ func serveEntries(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 	window := entriesWindow{Mode: "from", From: from, Limit: limit}
 	var read claudesession.ReadResult
 	if hasFrom {
-		tail, tailErr := claudesession.TailWindow(path, row.SessionID, claudesession.Cursor{SessionID: previousSessionID, Offset: from}, limit)
+		tail, tailErr := readEntryWindow(path, row, claudesession.Cursor{SessionID: previousSessionID, Offset: from}, limit)
 		if tailErr != nil {
 			refuse(w, http.StatusBadGateway, "substrate unreachable", tailErr.Error())
 			return
@@ -96,7 +98,7 @@ func serveEntries(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 		read = tail.Read
 	} else {
 		window.Mode = "tail"
-		read, window.From, err = claudesession.ReadTail(path, limit)
+		read, window.From, err = readEntryTail(path, row, limit)
 		if err != nil {
 			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 			return
@@ -171,11 +173,16 @@ func entryTailEnd(row hcomidentity.Row) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	path, err := claudesession.Resolve(home, row)
+	path, err := resolveEntryPath(home, row)
 	if err != nil {
 		return 0, err
 	}
-	read, _, err := claudesession.ReadTail(path, 1)
+	var read claudesession.ReadResult
+	if row.Tool == "codex" {
+		read, _, err = codexsession.ReadTail(path, 1)
+	} else {
+		read, _, err = claudesession.ReadTail(path, 1)
+	}
 	return read.NextOffset, err
 }
 
@@ -184,9 +191,38 @@ func entryTail(row hcomidentity.Row, cursor claudesession.Cursor, limit int) (cl
 	if err != nil {
 		return claudesession.TailResult{}, err
 	}
-	path, err := claudesession.Resolve(home, row)
+	path, err := resolveEntryPath(home, row)
 	if err != nil {
 		return claudesession.TailResult{}, err
 	}
+	if row.Tool == "codex" {
+		return codexsession.TailWindow(path, row.SessionID, cursor, limit)
+	}
 	return claudesession.TailWindow(path, row.SessionID, cursor, limit)
+}
+
+func resolveEntryPath(home string, row hcomidentity.Row) (string, error) {
+	switch row.Tool {
+	case "claude":
+		return claudesession.Resolve(home, row)
+	case "codex":
+		return codexsession.Resolve(home, row)
+	default:
+		// Preserve the existing non-file-tool refusal category.
+		return claudesession.Resolve(home, row)
+	}
+}
+
+func readEntryWindow(path string, row hcomidentity.Row, cursor claudesession.Cursor, limit int) (claudesession.TailResult, error) {
+	if row.Tool == "codex" {
+		return codexsession.TailWindow(path, row.SessionID, cursor, limit)
+	}
+	return claudesession.TailWindow(path, row.SessionID, cursor, limit)
+}
+
+func readEntryTail(path string, row hcomidentity.Row, limit int) (claudesession.ReadResult, int64, error) {
+	if row.Tool == "codex" {
+		return codexsession.ReadTail(path, limit)
+	}
+	return claudesession.ReadTail(path, limit)
 }
