@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  composerFieldId,
   composerDraftKey,
   isComposerSendShortcut,
   persistComposerDraft,
@@ -47,4 +48,9 @@ test('only Ctrl+Enter and Cmd+Enter are send shortcuts', () => {
   assert.equal(isComposerSendShortcut({ key: 'Enter', ctrlKey: false, metaKey: true }), true)
   assert.equal(isComposerSendShortcut({ key: 'Enter', ctrlKey: false, metaKey: false }), false)
   assert.equal(isComposerSendShortcut({ key: 'a', ctrlKey: true, metaKey: false }), false)
+})
+
+test('each open agent composer gets a unique DOM id', () => {
+  assert.equal(composerFieldId('agent one'), 'message-agent%20one')
+  assert.notEqual(composerFieldId('agent one'), composerFieldId('agent two'))
 })

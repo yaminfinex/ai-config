@@ -127,7 +127,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
         const index = tabs.findIndex((tab) => tab.id === active.id)
         activate(tabs[(index + (event.key === 'PageDown' ? 1 : -1) + tabs.length) % tabs.length])
       } else if (event.altKey && event.key === '1') document.querySelector<HTMLElement>('.fleet-tree [role="treeitem"]')?.focus()
-      else if (event.altKey && event.key === '2') document.querySelector<HTMLTextAreaElement>('.hosted-panel:not([hidden]) #message')?.focus()
+      else if (event.altKey && event.key === '2') document.querySelector<HTMLTextAreaElement>('.hosted-panel:not([hidden]) textarea[data-composer]')?.focus()
       else return
       event.preventDefault()
     }

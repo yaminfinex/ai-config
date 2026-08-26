@@ -14,6 +14,10 @@ export function composerDraftKey(agentName: string) {
   return `${composerDraftPrefix}${encodeURIComponent(agentName)}`
 }
 
+export function composerFieldId(agentName: string) {
+  return `message-${encodeURIComponent(agentName)}`
+}
+
 export function readComposerDraft(agentName: string, storage: Pick<ComposerStorage, 'getItem'> | null = resolveComposerStorage()) {
   try {
     return storage?.getItem(composerDraftKey(agentName)) ?? ''

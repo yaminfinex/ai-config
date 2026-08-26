@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { apiProblem, sendMessage, viewerReadOnlyMessage } from '../../api/client'
-import { isComposerSendShortcut, persistComposerDraft, readComposerDraft } from '../../composerState'
+import { composerFieldId, isComposerSendShortcut, persistComposerDraft, readComposerDraft } from '../../composerState'
 
 export function Composer({ name, identityReadOnly, onViewer, onProblem }: {
   name: string
@@ -16,6 +16,7 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem }: {
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const mutation = useMutation({ mutationFn: (text: string) => sendMessage(name, text) })
   const effectiveReadOnly = identityReadOnly || readOnly
+  const fieldId = composerFieldId(name)
 
   useLayoutEffect(() => {
     persistComposerDraft(name, message)
@@ -49,8 +50,9 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem }: {
 
   return <form className="send-box" onSubmit={(event) => void send(event)}>
     {effectiveReadOnly && <div className="read-only" role="alert"><strong>Read-only</strong><span>{effectiveReadOnly}</span></div>}
-    <label htmlFor="message">Message {name} <span>· Enter for newline · Ctrl/Cmd+Enter to send</span></label><textarea
-      id="message"
+    <label htmlFor={fieldId}>Message {name} <span>· Enter for newline · Ctrl/Cmd+Enter to send</span></label><textarea
+      id={fieldId}
+      data-composer
       ref={composerRef}
       rows={1}
       value={message}
