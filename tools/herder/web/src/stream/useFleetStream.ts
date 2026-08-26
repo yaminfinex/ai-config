@@ -81,7 +81,6 @@ export function subscribeToFleet(
       touch()
       backoff = 500
       update((current) => ({ ...current, problems: without(current.problems, 'stream') }))
-      void queryClient.invalidateQueries({ queryKey: queryKeys.fleet, exact: true })
       names.forEach((name) => void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true }))
     }
     events.onerror = () => scheduleReconnect('Live stream disconnected; reconnecting…')
