@@ -58,6 +58,38 @@ GET `/api/agents/{bus-name}`
   One agent: pane coordinate, tool, statuses, launch context, gap
   state. 404 for names not on the bus.
 
+GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
+  The classified, immutable Claude session entry stream. The server
+  resolves the active file from the bus roster's directory and session ID;
+  it never searches for session files and never parses JSONL outside the
+  `claudesession` resolver. Pairing (`tool_use` with `tool_result`, hcom
+  stub with attachment) is consumer-side and does not change this stream.
+
+  `limit` defaults to and is capped at 500 entries. With `from`, entries
+  begin at that non-negative byte offset and `window.mode` is `from`.
+  Without `from`, the server chooses the last N complete classified entries
+  and reports their first byte offset with `window.mode` `tail`. A partial
+  trailing JSONL line is held back. Resolver-owned tool-output truncation
+  fields, including the 16 KiB cap's `truncated` and `total_bytes`, pass
+  through unchanged.
+
+  Successful read shape (fields absent in the source entry stay absent):
+  `{"sessionId":"<current>","window":{"mode":"from|tail","from":0,"limit":500},"entries":[{"uuid":"...","line":0,"byteOffset":0,"timestamp":"...","kind":"human_prompt","payload":{...}}],"nextOffset":123,"stats":{"sidechainSkipped":0}}`.
+  A quarantined entry additionally carries its resolver-provided
+  `quarantine` object.
+
+  Offsets are meaningful only within one session. Every response returns
+  the current `sessionId`; clients pin it on subsequent `from` reads using
+  the optional `sessionId` query parameter. A first `from` read without
+  `sessionId` uses the current session and returns its ID. A mismatched ID
+  returns the resolver's typed `session_changed` reset without a blind
+  window; an offset beyond the current complete file returns its typed
+  `truncated` reset. Reset responses contain `sessionId`, `window`, and
+  `reset`, but no entries or fabricated next offset. `sessionId` without
+  `from` is a 400. Refusals: 404 unknown bus agent; 409 no resolvable Claude
+  session (wrong tool, missing/invalid ID, or absent derived file); 502 bus,
+  filesystem, or other substrate failure.
+
 GET `/api/agents/{bus-name}/transcript?before={cursor}&limit=N`
   The agent page shows the FULL SESSION TRANSCRIPT (what hcom
   transcript actually serves), not bus correspondence. Windowed BY

@@ -308,6 +308,18 @@ func TestTailResetsAndReads(t *testing.T) {
 	}
 }
 
+func TestTailMapsConcurrentTruncationReadErrorToReset(t *testing.T) {
+	t.Parallel()
+	cursor := Cursor{SessionID: "invented-session", Offset: 731}
+	result, ok := truncatedReadReset(&offsetBeyondError{offset: 731, size: 73}, "invented-session", cursor)
+	if !ok || result.Reset == nil || result.Reset.Reason != ResetTruncated || result.Reset.PreviousOffset != 731 {
+		t.Fatalf("truncated read reset = %+v, %v", result, ok)
+	}
+	if _, ok := truncatedReadReset(errors.New("invented read failure"), "invented-session", cursor); ok {
+		t.Fatal("unrelated read failure was treated as truncation")
+	}
+}
+
 func assertJSONField(t *testing.T, raw json.RawMessage, key string, want any) {
 	t.Helper()
 	var object map[string]any
