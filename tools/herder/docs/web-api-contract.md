@@ -62,6 +62,24 @@ GET `/api/agents/{bus-name}`
   One agent: pane coordinate, tool, statuses, launch context, gap
   state. 404 for names not on the bus.
 
+GET `/api/viewer`
+  Resolves the current connection through the same tailscale identity and
+  sender-collision checks used by every write, without performing a write or
+  retaining state. Success is `{"viewer":"<web-sender>"}`. This lets the web
+  shell show its attribution on initial load rather than waiting for a message
+  submission. An identity that genuinely cannot be attributed receives the
+  normal 409 `attribution required` refusal; a derived sender collision is a
+  409 `sender refused`; tailscale or hcom infrastructure failure is a 502
+  `substrate unreachable`. All refusals use the pinned refusal body.
+
+### AMENDMENT (conductor, 2026-08-26) — viewer identity is readable on load
+
+The read-only `/api/viewer` endpoint above exposes the exact attribution result
+that write paths already require. It has no server-side state and grants no new
+authority: attributed and unattributed viewers retain the same v1 privileges.
+The web shell calls it on load and keeps an honest unresolved state after a
+semantic attribution refusal.
+
 GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
   The classified, immutable Claude session entry stream. The server
   resolves the active file from the bus roster's directory and session ID;

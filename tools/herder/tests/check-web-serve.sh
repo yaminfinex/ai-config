@@ -317,6 +317,14 @@ else
   bad "agent detail" "body=$(cat "$ROOT/agent.json" 2>/dev/null || true)"
 fi
 
+if curl -fsS "http://127.0.0.1:$port/api/viewer" >"$ROOT/viewer.json" &&
+  jq -e '. == {viewer:"web-alice-example-com"}' "$ROOT/viewer.json" >/dev/null &&
+  [ ! -e "$ROOT/send.calls" ]; then
+  pass "viewer identity resolves on read without sending or retaining state"
+else
+  bad "viewer identity read" "body=$(cat "$ROOT/viewer.json" 2>/dev/null || true) send_calls=$(cat "$ROOT/send.calls" 2>/dev/null || true)"
+fi
+
 if curl -fsS "http://127.0.0.1:$port/api/agents/vile/entries?limit=1" >"$ROOT/entries.json" && python3 - "$ROOT/entries.json" <<'PY'
 import json, sys
 page = json.load(open(sys.argv[1]))
