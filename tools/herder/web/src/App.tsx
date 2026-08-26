@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentDetail,
   Board,
@@ -42,15 +42,6 @@ function readLayout(): { tabs: ShellTab[], activeTab: string, sidebarWidth: numb
     return { tabs: [boardTab], activeTab: boardTab.id, sidebarWidth: defaultSidebarWidth }
   }
 }
-
-const columns: Array<[keyof Row, string]> = [
-  ['pane_id', 'Pane'],
-  ['agent', 'Agent'],
-  ['tool', 'Tool'],
-  ['herdr_status', 'Herdr status'],
-  ['bus_status', 'Bus status'],
-  ['gap', 'Gap'],
-]
 
 type LifecycleProblem = {
   inline?: string
@@ -173,32 +164,38 @@ function SpawnControl({ pane, onBanner }: { pane: Pane, onBanner: (key: string, 
   )
 }
 
-function Rows({ rows, spawning = false, onBanner = () => {} }: { rows: Array<Row | Pane>, spawning?: boolean, onBanner?: (key: string, detail: string) => void }) {
+function gapLabel(gap: string) {
+  if (gap === '-') return ''
+  return gap.toLowerCase().includes('pane') ? 'no pane' : 'gap'
+}
+
+function RowCells({ row, spawning = false, onBanner = () => {} }: { row: Row | Pane, spawning?: boolean, onBanner?: (key: string, detail: string) => void }) {
+  const hasAgent = row.agent !== '-'
   return (
-    <div className="table-wrap">
-      <table>
-        <thead><tr>{columns.map(([key, label]) => <th key={key}>{label}</th>)}{spawning && <th>Actions</th>}</tr></thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={`${row.pane_id}:${row.agent}`} className={row.gap !== '-' ? 'has-gap' : undefined}>
-              {columns.map(([key]) => <td key={key} data-label={key}>
-                {key === 'agent' && row.agent !== '-'
-                  ? <AppLink to={`/agents/${encodeURIComponent(row.agent)}`}>{row.agent}</AppLink>
-                  : row[key]}
-              </td>)}
-              {spawning && <td>{row.agent !== '-' && <SpawnControl pane={row as Pane} onBanner={onBanner} />}</td>}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <>
+      <td className="pane-id">{row.pane_id}</td>
+      <td className="agent-cell">{hasAgent
+        ? <><AppLink to={`/agents/${encodeURIComponent(row.agent)}`}>{row.agent}</AppLink><span>{row.tool}</span></>
+        : <><span>{'label' in row && row.label ? row.label : 'shell'}</span><span>shell</span></>}</td>
+      <td className="status-cell"><span className={`status-dot ${statusClass(row.herdr_status)}`} />{row.herdr_status} · {row.bus_status !== '-' ? row.bus_status : 'no bus'}{hasAgent && gapLabel(row.gap) && <span className="gap-badge">{gapLabel(row.gap)}</span>}</td>
+      <td className="actions-cell">{spawning && hasAgent && <SpawnControl pane={row as Pane} onBanner={onBanner} />}</td>
+    </>
   )
+}
+
+function Rows({ rows, spawning = false, onBanner = () => {} }: { rows: Array<Row | Pane>, spawning?: boolean, onBanner?: (key: string, detail: string) => void }) {
+  return <div className="table-wrap"><table><thead><tr><th>Pane</th><th>Agent</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows.map((row) => (
+    <tr key={`${row.pane_id}:${row.agent}`} className={row.agent !== '-' ? 'agent-table-row' : undefined} onClick={(event) => {
+      if (row.agent !== '-' && !(event.target as HTMLElement).closest('button, a, form')) navigate(`/agents/${encodeURIComponent(row.agent)}`)
+    }}><RowCells row={row} spawning={spawning} onBanner={onBanner} /></tr>
+  ))}</tbody></table></div>
 }
 
 function useFleet() {
   const [board, setBoard] = useState<Board | null>(null)
   const [problems, setProblems] = useState<Record<string, string>>({ stream: 'Connecting to live fleet…' })
   const [messages, setMessages] = useState(0)
+  const [lastEvent, setLastEvent] = useState<Date | null>(null)
   const setLifecycleBanner = (key: string, detail: string) => setProblems((current) => detail
     ? { ...current, [key]: detail }
     : without(current, key))
@@ -209,20 +206,28 @@ function useFleet() {
     const connect = () => {
       if (!active) return
       events = new EventSource('/api/events')
-      events.onopen = () => setProblems((current) => without(current, 'stream'))
+      events.onopen = () => {
+        setLastEvent(new Date())
+        setProblems((current) => without(current, 'stream'))
+      }
       events.onerror = () => setProblems((current) => ({ ...current, stream: 'Live stream disconnected; reconnecting…' }))
       events.addEventListener('fleet', (event) => {
+        setLastEvent(new Date())
         setBoard(JSON.parse(event.data) as Board)
         setProblems((current) => without(current, 'fleet'))
       })
       events.addEventListener('substrate', (event) => {
+        setLastEvent(new Date())
         const state = JSON.parse(event.data) as SubstrateEvent
         setProblems((current) => {
           if (state.status === 'recovered') return without(current, state.source)
           return { ...current, [state.source]: state.detail ?? `${state.source} is unreachable` }
         })
       })
-      events.addEventListener('message', () => setMessages((count) => count + 1))
+      events.addEventListener('message', () => {
+        setLastEvent(new Date())
+        setMessages((count) => count + 1)
+      })
     }
     const firstPaint = async () => {
       try {
@@ -243,36 +248,39 @@ function useFleet() {
     }
   }, [])
 
-  return { board, problems, messages, setLifecycleBanner }
+  return { board, problems, messages, lastEvent, setLifecycleBanner }
 }
 
-function BoardPanel({ board, messages, onBanner }: { board: Board | null, messages: number, onBanner: (key: string, detail: string) => void }) {
+function workspaceName(label: string, id: string) {
+  return (label || id).replace(/-[0-9a-f]{8}$/i, '')
+}
+
+function BoardPanel({ board, onBanner }: { board: Board | null, onBanner: (key: string, detail: string) => void }) {
   return (
     <main className="panel-scroll board-panel">
-      <header>
-        <div><p className="eyebrow">Live substrate</p><h1>Herder fleet</h1></div>
-        <div className="ticker" aria-label="Messages seen">{messages} messages seen</div>
-      </header>
+      <header className="board-header"><strong>Fleet board</strong><span>{board ? `${board.workspaces.length} workspaces · ${board.workspaces.reduce((count, workspace) => count + workspace.pane_count, 0)} panes` : 'connecting'}</span></header>
       {!board ? <p className="loading">Waiting for the first fleet snapshot…</p> : (
         <>
           <section className="fleet" aria-label="Workspaces">
             {board.workspaces.map((workspace) => (
               <article className="workspace" key={workspace.workspace_id}>
                 <div className="section-heading">
-                  <div><p className="eyebrow">Workspace {workspace.number}</p><h2>{workspace.label || workspace.workspace_id} {workspace.focused && <span className="focused">focused</span>}</h2></div>
+                  <h2 title={workspace.label || workspace.workspace_id}>{workspaceName(workspace.label, workspace.workspace_id)} {workspace.focused && <span className="focused">focused</span>}</h2>
                   <span>{workspace.tab_count} tabs · {workspace.pane_count} panes · {workspace.agent_status || '—'}</span>
                 </div>
-                {workspace.tabs.map((tab) => (
-                  <section className="tab" key={tab.tab_id}>
-                    <h3>Tab {tab.number}: {tab.label || tab.tab_id} {tab.focused && <span className="focused">focused</span>}</h3>
-                    <Rows rows={tab.panes} spawning onBanner={onBanner} />
-                  </section>
-                ))}
+                <div className="table-wrap"><table><thead><tr><th>Pane</th><th>Agent</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+                  {workspace.tabs.map((tab) => <Fragment key={tab.tab_id}>
+                    <tr className="tab-separator"><th colSpan={4}>tab {tab.number}: {tab.label || tab.tab_id} {tab.focused && <span>focused</span>}</th></tr>
+                    {tab.panes.map((row) => <tr key={`${row.pane_id}:${row.agent}`} className={row.agent !== '-' ? 'agent-table-row' : undefined} onClick={(event) => {
+                      if (row.agent !== '-' && !(event.target as HTMLElement).closest('button, a, form')) navigate(`/agents/${encodeURIComponent(row.agent)}`)
+                    }}><RowCells row={row} spawning onBanner={onBanner} /></tr>)}
+                  </Fragment>)}
+                </tbody></table></div>
               </article>
             ))}
           </section>
           <section className="workspace unplaced">
-            <div className="section-heading"><div><p className="eyebrow">Bus-only agents</p><h2>Unplaced</h2></div><span>{board.unplaced.length} agents</span></div>
+            <div className="section-heading"><h2>Unplaced</h2><span>{board.unplaced.length} agents</span></div>
             {board.unplaced.length ? <Rows rows={board.unplaced} /> : <p className="empty">No placement gaps.</p>}
           </section>
         </>
@@ -359,7 +367,7 @@ function ForkControl({ name, onBanner }: { name: string, onBanner: (key: string,
   )
 }
 
-function AgentPanel({ name }: { name: string }) {
+function AgentPanel({ name, onViewer }: { name: string, onViewer: (viewer: string) => void }) {
   const [agent, setAgent] = useState<AgentDetail | null>(null)
   const [exchanges, setExchanges] = useState<TranscriptExchange[]>([])
   const [cursor, setCursor] = useState('')
@@ -491,6 +499,7 @@ function AgentPanel({ name }: { name: string }) {
         return
       }
       const result = await response.json() as { sent: boolean, to: string, from: string }
+      onViewer(result.from)
       setMessage('')
       setSendNotice(`Sent to ${result.to} as ${result.from}. Waiting for the live reply…`)
       setProblems((current) => without(current, 'send'))
@@ -502,31 +511,22 @@ function AgentPanel({ name }: { name: string }) {
   }
 
   if (notFound) return (
-    <main className="panel-scroll agent-page">
-      <section className="not-found" role="alert"><p className="eyebrow">404 · {notFound.error}</p><h1>Agent not found</h1><p>{notFound.detail}</p></section>
+    <main className="agent-page">
+      <section className="not-found" role="alert"><strong>404 · Agent not found</strong><p>{notFound.detail}</p></section>
     </main>
   )
 
   return (
-    <main className="panel-scroll agent-page">
+    <main className="agent-page">
       <header className="agent-header">
-        <div><p className="eyebrow">Agent transcript</p><h1>{name}</h1></div>
-        <div className="detail-toggle" aria-label="Transcript detail">
+        <strong className="agent-name">{name}</strong>
+        {agent && <><span className="pane-chip">{agent.pane?.pane_id ?? 'unplaced'}</span><span className="agent-status">{agent.herdr_status} · {agent.bus_status}</span>{agent.gap !== '-' && <span className="gap-badge">{gapLabel(agent.gap)}</span>}<span className="tool-chip">{agent.tool}</span></>}
+        <div className="agent-actions"><div className="detail-toggle" aria-label="Transcript detail">
           <button className={detail === 'exchanges' ? 'active' : ''} onClick={() => setDetail('exchanges')}>Exchanges</button>
           <button className={detail === 'full' ? 'active' : ''} onClick={() => setDetail('full')}>Full</button>
-        </div>
+        </div>{agent && <ForkControl name={name} onBanner={setLifecycleBanner} />}</div>
       </header>
       {Object.entries(problems).map(([source, problemDetail]) => <Banner source={source} detail={problemDetail} key={source} />)}
-      {agent && <section className="identity" aria-label="Agent identity">
-        <dl>
-          <div><dt>Tool</dt><dd>{agent.tool}</dd></div>
-          <div><dt>Pane</dt><dd>{agent.pane?.pane_id ?? 'unplaced'}</dd></div>
-          <div><dt>Herdr</dt><dd>{agent.herdr_status}</dd></div>
-          <div><dt>Bus</dt><dd>{agent.bus_status}</dd></div>
-          <div><dt>Gap</dt><dd className={agent.gap !== '-' ? 'warning' : ''}>{agent.gap}</dd></div>
-        </dl>
-      </section>}
-      {agent && <ForkControl name={name} onBanner={setLifecycleBanner} />}
       <section className="transcript" aria-label="Transcript">
         <div className="older">
           {hasOlder
@@ -537,13 +537,13 @@ function AgentPanel({ name }: { name: string }) {
         {exchanges.map((exchange) => <Exchange exchange={exchange} key={exchange.position} />)}
       </section>
       {agent && <form className="send-box" onSubmit={(event) => void send(event)}>
-        <label htmlFor="message">Message {name}</label>
         {readOnly && <div className="read-only" role="alert"><strong>Read-only</strong><span>{readOnly}</span></div>}
-        <textarea id="message" rows={4} value={message} disabled={Boolean(readOnly) || sending} onChange={(event) => setMessage(event.target.value)} placeholder="Send an attributed request…" />
+        <label htmlFor="message">Message {name}</label><textarea id="message" rows={2} value={message} disabled={Boolean(readOnly) || sending} onChange={(event) => setMessage(event.target.value)} placeholder="Send an attributed request…" />
         <div className="send-footer">
           <div>{sendProblem && <p className="inline-error" role="alert">{sendProblem}</p>}{sendNotice && <p className="send-notice">{sendNotice}</p>}</div>
           <button type="submit" disabled={!message.trim() || sending || Boolean(readOnly)}>{sending ? 'Sending…' : 'Send request'}</button>
         </div>
+        <p className="attribution-copy">sends as an attributed web viewer · web senders are not addressable bus peers</p>
       </form>}
     </main>
   )
@@ -583,6 +583,7 @@ function PaneTreeRow({ pane, focused, selected, setRef, onFocus, onOpen, onKeyDo
 }) {
   const hasAgent = pane.agent !== '-'
   const name = hasAgent ? pane.agent : ('label' in pane && pane.label) || pane.pane_id
+  const signal = hasAgent && pane.bus_status !== '-' ? pane.bus_status : ''
   return <div
     ref={setRef}
     role="treeitem"
@@ -590,21 +591,20 @@ function PaneTreeRow({ pane, focused, selected, setRef, onFocus, onOpen, onKeyDo
     aria-selected={hasAgent && selected}
     tabIndex={focused ? 0 : -1}
     className={`tree-row pane-row${hasAgent ? ' agent-row' : ' shell-row'}${focused ? ' focused' : ''}`}
+    title={`${pane.pane_id} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}`}
     onFocus={onFocus}
     onClick={onOpen}
     onKeyDown={onKeyDown}
   >
     <span className={`status-dot ${statusClass(pane.herdr_status)}`} aria-label={`Herdr ${pane.herdr_status}`} />
     <span className="tree-name">{name}</span>
-    <span className="tree-tool">{hasAgent ? pane.tool : 'shell'}</span>
-    <span className="bus-status">{pane.bus_status !== '-' ? pane.bus_status : 'no bus'}</span>
-    {pane.gap !== '-' && <span className="gap-badge">{pane.gap}</span>}
+    {signal && <span className="bus-status">{signal}</span>}
+    {hasAgent && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}
   </div>
 }
 
-function FleetSidebar({ board, problems, activeAgent, onOpenAgent }: {
+function FleetSidebar({ board, activeAgent, onOpenAgent }: {
   board: Board | null
-  problems: Record<string, string>
   activeAgent?: string
   onOpenAgent: (name: string) => void
 }) {
@@ -681,12 +681,12 @@ function FleetSidebar({ board, problems, activeAgent, onOpenAgent }: {
         onKeyDown={keyDown(item)}
       >
         <span className="disclosure" aria-hidden="true">{expanded[item.id] ? '▾' : '▸'}</span>
-        <span className="tree-name">{workspace.label || workspace.workspace_id}</span>
+        <span className="tree-name" title={workspace.label || workspace.workspace_id}>{workspaceName(workspace.label, workspace.workspace_id)}</span>
         <span className="count-badge">{workspace.pane_count}</span>
       </div>
       {expanded[item.id] && <div role="group">
         {workspace.tabs.map((tab: Tab) => <div className="tab-tree-group" key={tab.tab_id}>
-          <div className="tree-tab-separator" role="presentation"><span>{tab.label || `Tab ${tab.number}`}</span></div>
+          <div className="tree-tab-separator" role="presentation"><span>tab {tab.label || tab.number}</span></div>
           {tab.panes.map((pane) => {
             const paneItem: TreeItem = { id: `pane:${pane.pane_id}`, kind: 'pane', parent: item.id, agent: pane.agent !== '-' ? pane.agent : undefined }
             return <PaneTreeRow
@@ -707,8 +707,7 @@ function FleetSidebar({ board, problems, activeAgent, onOpenAgent }: {
 
   const unplacedItem: TreeItem = { id: 'unplaced', kind: 'unplaced' }
   return <aside className="fleet-sidebar" aria-label="Fleet sidebar">
-    <div className="sidebar-heading"><p className="eyebrow">Live substrate</p><h2>Fleet</h2></div>
-    {Object.entries(problems).map(([source, detail]) => <div className="sidebar-banner" role="alert" key={source}><strong>{source}</strong><span>{detail}</span></div>)}
+    <div className="sidebar-heading"><span className="status-dot working" /><strong>Fleet</strong><span>herdr truth</span></div>
     {!board ? <p className="sidebar-loading">Waiting for fleet…</p> : <div className="fleet-tree" role="tree" aria-label="Workspaces and panes">
       {board.workspaces.map(workspaceNode)}
       <div className="unplaced-tree" role="none">
@@ -754,8 +753,9 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const [tabs, setTabs] = useState(initial.tabs)
   const [activeTab, setActiveTab] = useState(initial.activeTab)
   const [sidebarWidth, setSidebarWidth] = useState(initial.sidebarWidth)
+  const [viewer, setViewer] = useState('unresolved')
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
-  const { board, problems, messages, setLifecycleBanner } = useFleet()
+  const { board, problems, messages, lastEvent, setLifecycleBanner } = useFleet()
   const active = tabs.find((tab) => tab.id === activeTab) ?? boardTab
 
   const activate = (tab: ShellTab, push = true) => {
@@ -809,7 +809,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
 
   return <div className="app-shell">
     <div className="sidebar-region" style={{ width: sidebarWidth }}>
-      <FleetSidebar board={board} problems={problems} activeAgent={active.kind === 'agent' ? active.name : undefined} onOpenAgent={(name) => activate(agentTab(name))} />
+      <FleetSidebar board={board} activeAgent={active.kind === 'agent' ? active.name : undefined} onOpenAgent={(name) => activate(agentTab(name))} />
     </div>
     <div
       className="sidebar-resizer"
@@ -849,18 +849,28 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
               requestAnimationFrame(() => tabRefs.current.get(tabs[target].id)?.focus())
               event.preventDefault()
             }}
-          >{tab.label}</button>
+          >{tab.kind === 'board' ? '⌗ Board' : tab.label}</button>
           {tab.kind === 'agent' && <button className="close-tab" aria-label={`Close ${tab.label}`} onClick={() => close(tab.id)}>×</button>}
         </div>)}
+        <button className="new-tab" type="button" title="Open agents from the fleet sidebar" aria-label="Open an agent from the fleet sidebar">+</button>
+        <span className="tab-strip-spacer" />
+        <span className={`stream-chip${problems.stream ? ' fault' : ''}`}>{problems.stream ? 'SSE: reconnecting' : 'SSE: connected'}</span>
+        <span className="layout-chip">layout: this browser</span>
       </div>
       <div className="shell-banners">{Object.entries(problems).map(([source, detail]) => <Banner source={source} detail={detail} key={source} />)}</div>
       <div className="panel-host">
         {tabs.map((tab, index) => <div id={`shell-panel-${index}`} role="tabpanel" aria-labelledby={`shell-tab-${index}`} hidden={tab.id !== activeTab} className="hosted-panel" key={tab.id}>
           {tab.kind === 'board'
-            ? <BoardPanel board={board} messages={messages} onBanner={setLifecycleBanner} />
-            : <AgentPanel name={tab.name} />}
+            ? <BoardPanel board={board} onBanner={setLifecycleBanner} />
+            : <AgentPanel name={tab.name} onViewer={setViewer} />}
         </div>)}
       </div>
+      <footer className="status-bar">
+        <span>substrate: herdr {board ? '✓' : '…'} · hcom {problems.hcom ? '×' : '✓'}</span>
+        <span className={problems.stream ? 'fault' : ''}>SSE: {problems.stream ? 'reconnecting' : 'connected'}</span>
+        <span>viewer: {viewer}</span><span>{viewer === 'unresolved' ? 'attribution resolves on send' : 'attributed'}</span>
+        <span className="status-spacer" /><span>{messages} messages</span><span>last event: {lastEvent ? lastEvent.toLocaleTimeString() : '—'}</span>
+      </footer>
     </section>
   </div>
 }
@@ -868,5 +878,5 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
 export default function App() {
   const route = currentRoute()
   if (route.page !== 'missing') return <Shell initialRoute={route} />
-  return <main className="agent-page"><AppLink to="/" className="back-link">← Fleet board</AppLink><section className="not-found"><p className="eyebrow">404</p><h1>Page not found</h1></section></main>
+  return <main className="agent-page"><AppLink to="/" className="back-link">← Fleet board</AppLink><section className="not-found"><strong>404 · Page not found</strong></section></main>
 }
