@@ -15,8 +15,11 @@ usage() {
   cat >&2 <<'EOF'
 usage: spawn.sh <claude|codex> [--model MODEL] --tag TAG
                 (--workspace ID | --worktree-branch NAME --repo PATH |
-                 --pane ID | --split-from PANE_ID)
-                [--prompt TEXT]
+                 --pane ID | --split-from PANE_ID|self)
+                [--split-direction right|down] [--prompt TEXT]
+
+--split-from self splits beside the caller's own pane (herdr pane current).
+--split-direction defaults to right.
 EOF
   exit "$rc"
 }
@@ -33,6 +36,7 @@ worktree_branch=
 repo=
 pane=
 split_from=
+split_direction=
 prompt=
 
 while (($# > 0)); do
@@ -72,6 +76,11 @@ while (($# > 0)); do
       split_from=$2
       shift 2
       ;;
+    --split-direction)
+      [[ $# -ge 2 ]] || usage
+      split_direction=$2
+      shift 2
+      ;;
     --prompt)
       [[ $# -ge 2 ]] || usage
       prompt=$2
@@ -97,6 +106,10 @@ placements=0
 ((placements == 1)) || die "choose exactly one placement: --workspace, --worktree-branch with --repo, --pane, or --split-from"
 if [[ -n $worktree_branch || -n $repo ]]; then
   [[ -n $worktree_branch && -n $repo ]] || die "--worktree-branch and --repo must be used together"
+fi
+if [[ -n $split_direction ]]; then
+  [[ -n $split_from ]] || die "--split-direction only applies with --split-from"
+  [[ $split_direction == right || $split_direction == down ]] || die "--split-direction must be right or down"
 fi
 
 command -v jq >/dev/null || die "jq is required"
@@ -128,10 +141,15 @@ elif [[ -n $worktree_branch ]]; then
     || die "worktree create returned no checkout path ($placement_detail, pane=$pane_id left for explicit cleanup)"
 else
   if [[ -n $split_from ]]; then
-    source_output=$(herdr pane get "$split_from") || die "pane does not exist: $split_from"
-    source_pane=$(jq -er '.result.pane.pane_id | select(length > 0)' <<<"$source_output") || die "pane get returned no pane id"
+    if [[ $split_from == self ]]; then
+      source_output=$(herdr pane current) || die "cannot resolve own pane (herdr pane current failed; not running inside a herdr pane?)"
+      source_pane=$(jq -er '.result.pane.pane_id | select(length > 0)' <<<"$source_output") || die "pane current returned no pane id"
+    else
+      source_output=$(herdr pane get "$split_from") || die "pane does not exist: $split_from"
+      source_pane=$(jq -er '.result.pane.pane_id | select(length > 0)' <<<"$source_output") || die "pane get returned no pane id"
+    fi
     # herdr 0.8 requires --direction; without it pane split exits 2 with usage.
-    split_output=$(herdr pane split --pane "$source_pane" --direction down --no-focus) || die "herdr pane split failed for pane $source_pane"
+    split_output=$(herdr pane split --pane "$source_pane" --direction "${split_direction:-right}" --no-focus) || die "herdr pane split failed for pane $source_pane"
     pane=$(jq -er '.result.pane.pane_id // .result.pane_id | select(length > 0)' <<<"$split_output") \
       || die "pane split returned no pane id (source pane=$source_pane left unchanged; split placement may need explicit cleanup)"
     placement_kind=split-pane

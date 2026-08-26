@@ -92,6 +92,9 @@ case "$1 $2" in
   'pane split')
     printf '%s\n' '{"result":{"pane":{"pane_id":"p-split","cwd":"/tmp"}}}'
     ;;
+  'pane current')
+    printf '%s\n' '{"result":{"pane":{"pane_id":"p-self","cwd":"/tmp"}}}'
+    ;;
   'pane process-info')
     if [[ ${FLEET_TEST_PROCESS_SHAPE:-} == no-shell-pid ]]; then
       printf '%s\n' '{"result":{"process_info":{"foreground_processes":[{"pid":42,"name":"bash"}]}}}'
@@ -183,10 +186,30 @@ pass "spawn pins placement, cwd, readiness, and Codex autonomy"
 : >"$FLEET_TEST_CALLS"
 PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --split-from p-source --prompt hello >"$TEST_ROOT/split.out"
 grep -F 'herdr pane get p-source' "$FLEET_TEST_CALLS" >/dev/null || fail "split spawn did not validate its source pane"
-grep -F 'herdr pane split --pane p-source --direction down --no-focus' "$FLEET_TEST_CALLS" >/dev/null || fail "split spawn did not invoke herdr pane split with a direction (required by herdr 0.8)"
+grep -F 'herdr pane split --pane p-source --direction right --no-focus' "$FLEET_TEST_CALLS" >/dev/null || fail "split spawn did not split rightward by default (herdr 0.8 requires an explicit direction)"
 grep -F 'FLEET_PANE=p-split HCOM_TERMINAL=fleet' "$FLEET_TEST_CALLS" >/dev/null || fail "split spawn did not launch into the fresh pane"
 grep -Fx 'pane=p-split' "$TEST_ROOT/split.out" >/dev/null || fail "split spawn did not report the fresh pane"
 pass "spawn splits beside a validated source and launches into the fresh pane"
+
+: >"$FLEET_TEST_CALLS"
+PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --split-from self --split-direction down --prompt hello >"$TEST_ROOT/split-self.out"
+grep -F 'herdr pane current' "$FLEET_TEST_CALLS" >/dev/null || fail "split-from self did not resolve the caller's own pane"
+grep -F 'herdr pane split --pane p-self --direction down --no-focus' "$FLEET_TEST_CALLS" >/dev/null || fail "split-from self did not split from the resolved pane with the requested direction"
+pass "spawn splits beside the caller's own pane with a chosen direction"
+
+if PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --split-from p-source --split-direction sideways \
+  >/dev/null 2>"$TEST_ROOT/split-baddir.err"; then
+  fail "split spawn accepted an invalid direction"
+fi
+grep -F -- '--split-direction must be right or down' "$TEST_ROOT/split-baddir.err" >/dev/null \
+  || fail "invalid direction refusal was not actionable"
+if PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test --split-direction down \
+  >/dev/null 2>"$TEST_ROOT/split-nodir.err"; then
+  fail "split direction was accepted without a split placement"
+fi
+grep -F -- '--split-direction only applies with --split-from' "$TEST_ROOT/split-nodir.err" >/dev/null \
+  || fail "direction-without-split refusal was not actionable"
+pass "spawn validates split direction and its pairing"
 
 if FLEET_TEST_UNKNOWN_SPLIT=1 PATH="$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" codex --tag gate --split-from p-source >"$TEST_ROOT/split-missing.out" 2>"$TEST_ROOT/split-missing.err"; then
