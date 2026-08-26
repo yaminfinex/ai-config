@@ -66,13 +66,16 @@ if [ "${1:-}" = f ] && [ "${2:-}" = mavu ]; then
 fi
 if [ "${1:-}" = transcript ]; then
   printf '%s\n' "$*" >>"$WEB_TRANSCRIPT_LOG"
-  if [[ "${3:-}" =~ ^([0-9]+)-([0-9]+)$ ]] && [ "${4:-}" = --json ]; then
+  if [[ "${3:-}" =~ ^([0-9]+)-([0-9]+)$ ]] &&
+    { [ "${4:-}" = --json ] || { [ "${4:-}" = --detailed ] && [ "${5:-}" = --json ]; }; }; then
     start="${BASH_REMATCH[1]}"
     end="${BASH_REMATCH[2]}"
+    detail=''
+    [ "${4:-}" != --detailed ] || detail=',"tools":["read"]'
     printf '['
     separator=''
     for ((position=start; position<=end; position++)); do
-      printf '%s{"position":%d,"user":"stream %d","action":"reply %d"}' "$separator" "$position" "$position" "$position"
+      printf '%s{"position":%d,"user":"stream %d","action":"reply %d"%s}' "$separator" "$position" "$position" "$position" "$detail"
       separator=','
     done
     printf ']\n'
@@ -88,12 +91,14 @@ if [ "${1:-}" = transcript ]; then
     *" transcript mavu 1-2 --json "*)
       printf '%s\n' '[{"position":1,"user":"one","action":"reply one"},{"position":2,"user":"two","action":"reply two"}]'
       exit 0 ;;
-    *" transcript mavu --last 1 --json "*)
+    *" transcript mavu --last 1 --json "*|*" transcript mavu --last 1 --detailed --json "*)
       count=0
       [ ! -f "$WEB_STREAM_STATE" ] || count="$(/bin/cat "$WEB_STREAM_STATE")"
       position=$((4 + count))
       printf '%s\n' "$((count + 1))" >"$WEB_STREAM_STATE"
-      printf '[{"position":%d,"user":"stream %d","action":"reply %d"}]\n' "$position" "$position" "$position"
+      detail=''
+      [[ " $* " != *" --detailed "* ]] || detail=',"tools":["read"]'
+      printf '[{"position":%d,"user":"stream %d","action":"reply %d"%s}]\n' "$position" "$position" "$position" "$detail"
       exit 0 ;;
   esac
 fi
@@ -232,7 +237,9 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   asset="$(sed -n 's|.*src="\(/assets/[^\"]*\.js\)".*|\1|p' "$ROOT/index.html")" &&
   [ -n "$asset" ] && curl -fsS "http://127.0.0.1:$port$asset" >"$ROOT/app.js" &&
   grep -qF '/api/events' "$ROOT/app.js" &&
-  grep -qF '/transcript/stream' "$ROOT/app.js" &&
+  grep -qF 'exchange:' "$ROOT/app.js" &&
+  grep -qF 'Live stream timed out' "$ROOT/app.js" &&
+  ! grep -qF '/transcript/stream' "$ROOT/app.js" &&
   grep -qF '/message' "$ROOT/app.js" &&
   grep -qF '/api/spawn' "$ROOT/app.js" &&
   grep -qF '/fork' "$ROOT/app.js" &&
@@ -415,12 +422,13 @@ else
   pass "transcript substrate reads stay bounded; no whole-session invocation occurs"
 fi
 
-events="$(curl --max-time 3 -Ns "http://127.0.0.1:$port/api/events" 2>"$ROOT/events.err" | awk '
+events="$(curl --max-time 5 -Ns "http://127.0.0.1:$port/api/events?agents=mavu" 2>"$ROOT/events.err" | awk '
   /^event:/ { print }
-  /^data:/ { print; seen++; if (seen == 2) exit }
+  /^data:/ { print; seen++; if (seen == 3) exit }
 ')"
-if grep -qF 'event: fleet' <<<"$events" && grep -qF 'event: message' <<<"$events" && grep -qF '"text":"fixture message"' <<<"$events"; then
-  pass "events SSE begins with fleet snapshot then carries an hcom message"
+if grep -qF 'event: fleet' <<<"$events" && grep -qF 'event: message' <<<"$events" && grep -qF '"text":"fixture message"' <<<"$events" &&
+  grep -qF 'event: exchange:mavu' <<<"$events" && grep -qF '"position":' <<<"$events"; then
+  pass "multiplexed events SSE carries fleet, hcom message, and subscribed transcript exchange"
 else
   bad "events SSE frames" "frames=$events stderr=$(cat "$ROOT/events.err")"
 fi

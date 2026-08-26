@@ -190,44 +190,21 @@ function Rows({ rows, spawning = false, onBanner = () => {} }: { rows: Array<Row
   ))}</tbody></table></div>
 }
 
-function useFleet() {
+function useFleet(agentNames: string[]) {
   const [board, setBoard] = useState<Board | null>(null)
   const [problems, setProblems] = useState<Record<string, string>>({ stream: 'Connecting to live fleet…' })
   const [messages, setMessages] = useState(0)
   const [lastEvent, setLastEvent] = useState<Date | null>(null)
+  const [streamGeneration, setStreamGeneration] = useState(0)
+  const [transcriptEvents, setTranscriptEvents] = useState<Record<string, TranscriptExchange[]>>({})
+  const [transcriptResets, setTranscriptResets] = useState<Record<string, number>>({})
+  const subscription = [...new Set(agentNames)].sort().join(',')
   const setLifecycleBanner = (key: string, detail: string) => setProblems((current) => detail
     ? { ...current, [key]: detail }
     : without(current, key))
 
   useEffect(() => {
     let active = true
-    let events: EventSource | null = null
-    const connect = () => {
-      if (!active) return
-      events = new EventSource('/api/events')
-      events.onopen = () => {
-        setLastEvent(new Date())
-        setProblems((current) => without(current, 'stream'))
-      }
-      events.onerror = () => setProblems((current) => ({ ...current, stream: 'Live stream disconnected; reconnecting…' }))
-      events.addEventListener('fleet', (event) => {
-        setLastEvent(new Date())
-        setBoard(JSON.parse(event.data) as Board)
-        setProblems((current) => without(current, 'fleet'))
-      })
-      events.addEventListener('substrate', (event) => {
-        setLastEvent(new Date())
-        const state = JSON.parse(event.data) as SubstrateEvent
-        setProblems((current) => {
-          if (state.status === 'recovered') return without(current, state.source)
-          return { ...current, [state.source]: state.detail ?? `${state.source} is unreachable` }
-        })
-      })
-      events.addEventListener('message', () => {
-        setLastEvent(new Date())
-        setMessages((count) => count + 1)
-      })
-    }
     const firstPaint = async () => {
       try {
         const response = await fetch('/api/fleet')
@@ -236,18 +213,111 @@ function useFleet() {
         if (active) setBoard(snapshot)
       } catch (error: unknown) {
         if (active) setProblems((current) => ({ ...current, fleet: error instanceof Error ? error.message : String(error) }))
-      } finally {
-        connect()
       }
     }
     void firstPaint()
     return () => {
       active = false
-      events?.close()
     }
   }, [])
 
-  return { board, problems, messages, lastEvent, setLifecycleBanner }
+  useEffect(() => {
+    let active = true
+    let events: EventSource | null = null
+    let reconnectTimer: number | null = null
+    let watchdog: number | null = null
+    let backoff = 500
+    let lastActivity = Date.now()
+    const names = subscription ? subscription.split(',') : []
+    const subscribed = new Set(names)
+    setTranscriptEvents((current) => Object.fromEntries(Object.entries(current).filter(([name]) => subscribed.has(name))))
+    setTranscriptResets((current) => Object.fromEntries(Object.entries(current).filter(([name]) => subscribed.has(name))))
+    const touch = (visible = true) => {
+      lastActivity = Date.now()
+      if (visible) setLastEvent(new Date())
+    }
+    const scheduleReconnect = (detail: string) => {
+      if (!active || reconnectTimer !== null) return
+      events?.close()
+      events = null
+      setProblems((current) => ({ ...current, stream: detail }))
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null
+        connect()
+      }, backoff)
+      backoff = Math.min(backoff * 2, 10_000)
+    }
+    const connect = () => {
+      if (!active) return
+      lastActivity = Date.now()
+      const params = new URLSearchParams()
+      if (subscription) params.set('agents', subscription)
+      const url = `/api/events${params.size ? `?${params.toString()}` : ''}`
+      setProblems((current) => ({ ...current, stream: 'Connecting to live fleet…' }))
+      try {
+        events = new EventSource(url)
+      } catch {
+        scheduleReconnect('Live stream disconnected; reconnecting…')
+        return
+      }
+      events.onopen = () => {
+        touch()
+        backoff = 500
+        setStreamGeneration((generation) => generation + 1)
+        setProblems((current) => without(current, 'stream'))
+      }
+      events.onerror = () => scheduleReconnect('Live stream disconnected; reconnecting…')
+      events.addEventListener('ping', () => touch(false))
+      events.addEventListener('fleet', (event) => {
+        touch()
+        setBoard(JSON.parse(event.data) as Board)
+        setProblems((current) => without(current, 'fleet'))
+      })
+      events.addEventListener('substrate', (event) => {
+        touch()
+        const state = JSON.parse(event.data) as SubstrateEvent
+        setProblems((current) => {
+          if (state.status === 'recovered') return without(current, state.source)
+          return { ...current, [state.source]: state.detail ?? `${state.source} is unreachable` }
+        })
+      })
+      events.addEventListener('message', () => {
+        touch()
+        setMessages((count) => count + 1)
+      })
+      events.addEventListener('rewindow', (event) => {
+        touch()
+        const reset = JSON.parse(event.data) as { agent: string }
+        setTranscriptEvents((current) => {
+          const next = { ...current }
+          delete next[reset.agent]
+          return next
+        })
+        setTranscriptResets((current) => ({ ...current, [reset.agent]: (current[reset.agent] ?? 0) + 1 }))
+      })
+      names.forEach((name) => events?.addEventListener(`exchange:${name}`, (event) => {
+        touch()
+        const incoming = JSON.parse(event.data) as TranscriptExchange
+        setTranscriptEvents((current) => {
+          const existing = current[name] ?? []
+          if (existing.some((item) => item.position === incoming.position)) return current
+          return { ...current, [name]: [...existing, incoming] }
+        })
+      }))
+    }
+    connect()
+    watchdog = window.setInterval(() => {
+      if (Date.now() - lastActivity > 45_000) scheduleReconnect('Live stream timed out; reconnecting…')
+    }, 5_000)
+    return () => {
+      active = false
+      events?.close()
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+      if (watchdog !== null) window.clearInterval(watchdog)
+    }
+  }, [subscription])
+
+  return { board, problems, messages, lastEvent, setLifecycleBanner, streamGeneration, transcriptEvents, transcriptResets }
 }
 
 function workspaceName(label: string, id: string) {
@@ -298,7 +368,7 @@ function valueText(value: unknown): string | null {
   return null
 }
 
-function Exchange({ exchange }: { exchange: TranscriptExchange }) {
+function Exchange({ exchange, detail }: { exchange: TranscriptExchange, detail: 'exchanges' | 'full' }) {
   const prompt = valueText(exchange.user ?? exchange.prompt ?? exchange.request)
   const reply = valueText(exchange.action ?? exchange.reply ?? exchange.response)
   const known = new Set(['position', 'user', 'prompt', 'request', 'action', 'reply', 'response'])
@@ -309,7 +379,7 @@ function Exchange({ exchange }: { exchange: TranscriptExchange }) {
       {prompt && <div className="turn prompt"><span>You</span><p>{prompt}</p></div>}
       {reply && <div className="turn reply"><span>Agent</span><p>{reply}</p></div>}
       {!prompt && !reply && <pre>{JSON.stringify(exchange, null, 2)}</pre>}
-      {Object.keys(extra).length > 0 && <details><summary>Tool-level detail</summary><pre>{JSON.stringify(extra, null, 2)}</pre></details>}
+      {detail === 'full' && Object.keys(extra).length > 0 && <details><summary>Tool-level detail</summary><pre>{JSON.stringify(extra, null, 2)}</pre></details>}
     </article>
   )
 }
@@ -366,13 +436,19 @@ function ForkControl({ name, onBanner }: { name: string, onBanner: (key: string,
   )
 }
 
-function AgentPanel({ name, onViewer }: { name: string, onViewer: (viewer: string) => void }) {
+function AgentPanel({ name, onViewer, streamed, streamGeneration, resetGeneration }: {
+  name: string
+  onViewer: (viewer: string) => void
+  streamed: TranscriptExchange[]
+  streamGeneration: number
+  resetGeneration: number
+}) {
   const [agent, setAgent] = useState<AgentDetail | null>(null)
   const [exchanges, setExchanges] = useState<TranscriptExchange[]>([])
   const [cursor, setCursor] = useState('')
   const [hasOlder, setHasOlder] = useState(true)
   const [detail, setDetail] = useState<'exchanges' | 'full'>('exchanges')
-  const [problems, setProblems] = useState<Record<string, string>>({ stream: 'Connecting to live transcript…' })
+  const [problems, setProblems] = useState<Record<string, string>>({})
   const [notFound, setNotFound] = useState<Refusal | null>(null)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [message, setMessage] = useState('')
@@ -388,16 +464,15 @@ function AgentPanel({ name, onViewer }: { name: string, onViewer: (viewer: strin
 
   useEffect(() => {
     let active = true
-    let events: EventSource | null = null
     setAgent(null)
     setExchanges([])
     setCursor('')
     setHasOlder(true)
     setLoadingOlder(false)
     setNotFound(null)
-    setProblems({ stream: 'Connecting to live transcript…' })
+    setProblems({})
 
-    const load = async () => {
+    const loadAgent = async () => {
       try {
         const agentResponse = await fetch(`/api/agents/${encodeURIComponent(name)}`)
         if (!agentResponse.ok) {
@@ -409,28 +484,47 @@ function AgentPanel({ name, onViewer }: { name: string, onViewer: (viewer: strin
         const agentDetail = await agentResponse.json() as AgentDetail
         if (!active) return
         setAgent(agentDetail)
+      } catch (error: unknown) {
+        if (active) setProblems((current) => ({ ...current, transcript: error instanceof Error ? error.message : String(error) }))
+      }
+    }
+    void loadAgent()
+    return () => {
+      active = false
+    }
+  }, [name, detail])
 
-        // Establish the tail before reading the newest window. Anything that
-        // lands during initial paint is then present in either the window or
-        // the stream, and position de-duplication handles the overlap.
-        events = new EventSource(`/api/agents/${encodeURIComponent(name)}/transcript/stream?detail=${detail}`)
-        events.onopen = () => setProblems((current) => without(current, 'stream'))
-        events.onerror = () => setProblems((current) => ({ ...current, stream: 'Live transcript disconnected; reconnecting…' }))
-        events.addEventListener('exchange', (event) => {
-          const incoming = JSON.parse(event.data) as TranscriptExchange
-          setExchanges((current) => current.some((item) => item.position === incoming.position)
-            ? current
-            : [...current, incoming].sort((a, b) => a.position - b.position))
-        })
+  useEffect(() => {
+    if (streamed.length === 0) return
+    setExchanges((current) => {
+      const merged = new Map(current.map((item) => [item.position, item]))
+      streamed.forEach((item) => merged.set(item.position, item))
+      return [...merged.values()].sort((a, b) => a.position - b.position)
+    })
+  }, [streamed])
 
-        const transcriptResponse = await fetch(`/api/agents/${encodeURIComponent(name)}/transcript?limit=20&detail=${detail}`)
-        if (!transcriptResponse.ok) throw new Error((await refusal(transcriptResponse)).detail)
-        const page = await transcriptResponse.json() as TranscriptPage
+  const seenReset = useRef(resetGeneration)
+  useEffect(() => {
+    if (seenReset.current === resetGeneration) return
+    seenReset.current = resetGeneration
+    setExchanges([])
+    setCursor('')
+    setHasOlder(true)
+  }, [resetGeneration])
+
+  useEffect(() => {
+    if (streamGeneration === 0) return
+    let active = true
+    const loadWindow = async () => {
+      try {
+        const response = await fetch(`/api/agents/${encodeURIComponent(name)}/transcript?limit=20&detail=${detail}`)
+        if (!response.ok) throw new Error((await refusal(response)).detail)
+        const page = await response.json() as TranscriptPage
         if (!active) return
         setExchanges((current) => {
-          const streamed = new Map(current.map((item) => [item.position, item]))
-          page.exchanges.forEach((item) => streamed.set(item.position, item))
-          return [...streamed.values()].sort((a, b) => a.position - b.position)
+          const merged = new Map(current.map((item) => [item.position, item]))
+          page.exchanges.forEach((item) => merged.set(item.position, item))
+          return [...merged.values()].sort((a, b) => a.position - b.position)
         })
         setCursor(page.cursor)
         setHasOlder(page.exchanges.length > 0)
@@ -439,12 +533,9 @@ function AgentPanel({ name, onViewer }: { name: string, onViewer: (viewer: strin
         if (active) setProblems((current) => ({ ...current, transcript: error instanceof Error ? error.message : String(error) }))
       }
     }
-    void load()
-    return () => {
-      active = false
-      events?.close()
-    }
-  }, [name, detail])
+    void loadWindow()
+    return () => { active = false }
+  }, [name, detail, streamGeneration, resetGeneration])
 
   const loadOlder = async () => {
     if (!cursor || loadingOlder) return
@@ -533,7 +624,7 @@ function AgentPanel({ name, onViewer }: { name: string, onViewer: (viewer: strin
             : <span>Start of transcript</span>}
         </div>
         {exchanges.length === 0 && agent && <p className="empty">No exchanges in this window.</p>}
-        {exchanges.map((exchange) => <Exchange exchange={exchange} key={exchange.position} />)}
+        {exchanges.map((exchange) => <Exchange exchange={exchange} detail={detail} key={exchange.position} />)}
       </section>
       {agent && <form className="send-box" onSubmit={(event) => void send(event)}>
         {readOnly && <div className="read-only" role="alert"><strong>Read-only</strong><span>{readOnly}</span></div>}
@@ -753,7 +844,11 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const [sidebarWidth, setSidebarWidth] = useState(initial.sidebarWidth)
   const [viewer, setViewer] = useState('unresolved')
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
-  const { board, problems, messages, lastEvent, setLifecycleBanner } = useFleet()
+  const agentNames = tabs.flatMap((tab) => tab.kind === 'agent' ? [tab.name] : [])
+  const {
+    board, problems, messages, lastEvent, setLifecycleBanner,
+    streamGeneration, transcriptEvents, transcriptResets,
+  } = useFleet(agentNames)
   const active = tabs.find((tab) => tab.id === activeTab) ?? boardTab
 
   const activate = (tab: ShellTab, push = true) => {
@@ -860,7 +955,13 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
         {tabs.map((tab, index) => <div id={`shell-panel-${index}`} role="tabpanel" aria-labelledby={`shell-tab-${index}`} hidden={tab.id !== activeTab} className="hosted-panel" key={tab.id}>
           {tab.kind === 'board'
             ? <BoardPanel board={board} onBanner={setLifecycleBanner} />
-            : <AgentPanel name={tab.name} onViewer={setViewer} />}
+            : <AgentPanel
+              name={tab.name}
+              onViewer={setViewer}
+              streamed={transcriptEvents[tab.name] ?? []}
+              streamGeneration={streamGeneration}
+              resetGeneration={transcriptResets[tab.name] ?? 0}
+            />}
         </div>)}
       </div>
       <footer className="status-bar">

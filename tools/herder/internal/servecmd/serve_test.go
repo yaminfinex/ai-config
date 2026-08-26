@@ -60,8 +60,9 @@ func fixtureDeps() dependencies {
 		spawn: func(context.Context, []string) (webaction.Result, error) {
 			return webaction.Result{Name: "new-vava", Pane: "p-new"}, nil
 		},
-		fork: func(context.Context, string, string, bool) (string, error) { return "fork-vava", nil },
-		poll: 10 * time.Millisecond,
+		fork:      func(context.Context, string, string, bool) (string, error) { return "fork-vava", nil },
+		poll:      10 * time.Millisecond,
+		heartbeat: time.Second,
 	}
 }
 
@@ -227,6 +228,40 @@ func TestTranscriptStreamResumesAfterLastEventID(t *testing.T) {
 	event, data := readEvent(t, bufio.NewReader(response.Body))
 	if response.StatusCode != http.StatusOK || event != "exchange" || !strings.Contains(data, `"position":3`) || rangeStart != 3 || rangeEnd != 5 || latestDetail != hcomtranscript.Exchanges || rangeDetail != hcomtranscript.Exchanges {
 		t.Fatalf("resume = status=%d event=%q data=%s range=%d-%d latest=%q range-detail=%q", response.StatusCode, event, data, rangeStart, rangeEnd, latestDetail, rangeDetail)
+	}
+}
+
+func TestTranscriptStreamRewindowsStaleSessionCursorWith200(t *testing.T) {
+	deps := fixtureDeps()
+	deps.heartbeat = 10 * time.Millisecond
+	deps.latest = func(_ context.Context, _ string, _ hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error) {
+		return fixtureExchanges(5)[0], true, nil
+	}
+	var rangeCalls atomic.Int32
+	deps.rangeRead = func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
+		rangeCalls.Add(1)
+		return nil, errors.New("stale cursor must not replay the old session")
+	}
+	staleID := encodeTranscriptCursor(transcriptCursor{
+		Version: 1, Kind: "stream", Agent: "dore", Session: "older-session", Detail: hcomtranscript.Exchanges, Position: 2,
+	})
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+	request, err := http.NewRequest(http.MethodGet, server.URL+"/api/agents/dore/transcript/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Last-Event-ID", staleID)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("stale-session resume status = %d, want 200", response.StatusCode)
+	}
+	if line := readSSELine(t, bufio.NewReader(response.Body), ": ping"); line != ": ping" || rangeCalls.Load() != 0 {
+		t.Fatalf("stale-session resume line=%q range calls=%d", line, rangeCalls.Load())
 	}
 }
 
@@ -778,6 +813,90 @@ func TestEventsSendsFleetThenMessage(t *testing.T) {
 	}
 }
 
+func TestEventsMultiplexesOnlySubscribedAgentTranscripts(t *testing.T) {
+	deps := fixtureDeps()
+	baseRoster := deps.roster
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		rows, _ := baseRoster()
+		return append(rows,
+			hcomidentity.Row{Name: "kumo", Tool: "claude", Status: "active", SessionID: "session-kumo"},
+			hcomidentity.Row{Name: "veno", Tool: "codex", Status: "active", SessionID: "session-veno"},
+		), nil
+	}
+	calls := map[string]int{}
+	deps.latest = func(_ context.Context, name string, detail hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error) {
+		if detail != hcomtranscript.Full {
+			t.Fatalf("multiplex detail = %q, want full", detail)
+		}
+		calls[name]++
+		position := 1
+		if calls[name] > 1 {
+			position = 2
+		}
+		return fixtureExchanges(position)[0], true, nil
+	}
+	deps.rangeRead = func(_ context.Context, name string, start, end int, detail hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
+		if (name != "dore" && name != "kumo") || start != 2 || end != 2 || detail != hcomtranscript.Full {
+			t.Fatalf("range = %s %d-%d %q", name, start, end, detail)
+		}
+		return fixtureExchanges(2), nil
+	}
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+	response, err := http.Get(server.URL + "/api/events?agents=dore,kumo,dore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	if event, _ := readEvent(t, reader); event != "fleet" {
+		t.Fatalf("first event = %q", event)
+	}
+	seen := map[string]bool{}
+	for len(seen) < 2 {
+		event, data := readEvent(t, reader)
+		if event == "exchange:dore" || event == "exchange:kumo" {
+			seen[event] = strings.Contains(data, `"position":2`)
+		}
+	}
+	if !seen["exchange:dore"] || !seen["exchange:kumo"] || calls["veno"] != 0 {
+		t.Fatalf("seen=%v latest calls=%v", seen, calls)
+	}
+}
+
+func TestAllEventStreamsEmitHeartbeatComments(t *testing.T) {
+	if HeartbeatCadence != 15*time.Second {
+		t.Fatalf("heartbeat cadence = %s, want 15s", HeartbeatCadence)
+	}
+	deps := fixtureDeps()
+	deps.poll = time.Hour
+	deps.heartbeat = 10 * time.Millisecond
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+
+	eventsResponse, err := http.Get(server.URL + "/api/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventsReader := bufio.NewReader(eventsResponse.Body)
+	if event, _ := readEvent(t, eventsReader); event != "fleet" {
+		t.Fatalf("first events frame = %q", event)
+	}
+	if line := readSSELine(t, eventsReader, ": ping"); line != ": ping" {
+		t.Fatalf("events heartbeat = %q", line)
+	}
+	eventsResponse.Body.Close()
+
+	transcriptResponse, err := http.Get(server.URL + "/api/agents/dore/transcript/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transcriptResponse.Body.Close()
+	if line := readSSELine(t, bufio.NewReader(transcriptResponse.Body), ": ping"); line != ": ping" {
+		t.Fatalf("transcript heartbeat = %q", line)
+	}
+}
+
 func TestEventsReportsUnreachableAndRecoveredWithoutEmptyFleet(t *testing.T) {
 	deps := fixtureDeps()
 	goodSnapshot := deps.snapshot
@@ -890,5 +1009,31 @@ func readEvent(t *testing.T, reader *bufio.Reader) (string, string) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out reading SSE event")
 		return "", ""
+	}
+}
+
+func readSSELine(t *testing.T, reader *bufio.Reader, want string) string {
+	t.Helper()
+	done := make(chan string, 1)
+	go func() {
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				done <- ""
+				return
+			}
+			line = strings.TrimSpace(line)
+			if line == want {
+				done <- line
+				return
+			}
+		}
+	}()
+	select {
+	case line := <-done:
+		return line
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for SSE line %q", want)
+		return ""
 	}
 }

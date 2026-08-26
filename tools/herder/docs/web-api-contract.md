@@ -102,30 +102,46 @@ GET `/api/agents/{bus-name}/transcript?before={cursor}&limit=N`
   a query param, not a rebuild.
 
 GET `/api/agents/{bus-name}/transcript/stream` (SSE, per-agent)
-  The tail. Opened when an agent page is open, closed on navigate
-  away — a PER-AGENT subscription so the main `/api/events` stream
-  never becomes an all-agents transcript firehose. Emits `exchange`
-  events (same shape as the windowed read) as new transcript content
-  lands, incrementally from the connection's start cursor; supports
-  `Last-Event-ID` reconnect resume so a dropped tab picks up where
-  it left off instead of rehydrating. Takes the same `detail` query
-  knob as the windowed read (`exchanges` default | `full`; added at
-  implementation review 2026-08-25 — without it, full-detail pages
-  received plain-exchange tails). Resume cursors bind detail exactly
-  like page cursors: cross-detail replay refuses 400.
+  The legacy single-agent tail for curl and other direct API users.
+  The web shell does not open these streams. Emits `exchange` events
+  (same shape as the windowed read) as new transcript content lands,
+  incrementally from the connection's start cursor; supports
+  `Last-Event-ID` reconnect resume. A cursor from an older agent
+  session is routine after resume/fork, so it is treated as absent:
+  the request stays 200 and starts at the current tail. Malformed,
+  cross-agent, or cross-detail cursors still refuse 400. Takes the
+  same `detail` query knob as the windowed read (`exchanges` default |
+  `full`). Emits an SSE comment heartbeat (`: ping`) every 15s while
+  otherwise idle.
 
-GET `/api/events` (SSE)
-  One stream, three event types:
+GET `/api/events?agents={comma-separated-bus-names}` (SSE)
+  The web shell's ONE multiplexed stream per page. `agents` is the
+  de-duplicated set of open agent tabs (at most 100); changing the set
+  rebuilds this one stream. An absent set subscribes only to fleet and
+  bus events. Event types:
   - `fleet`: a full board snapshot (sent on connect, then on any
     placement/status change — snapshot-not-delta keeps clients
     stateless; revisit only if size ever bites);
   - `message`: one bus message involving any agent (id, from, to,
     thread, text);
+  - `exchange:{bus-name}`: one new full-detail transcript exchange for
+    a subscribed agent. The shell suppresses tool-level fields while
+    that panel is in `exchanges` mode;
+  - `rewindow`: `{"agent":"<bus-name>"}` when that subscribed agent's
+    session or transcript position resets; the shell discards the old
+    window and fetches the current one;
   - `substrate`: a named source went unreachable/recovered (the UI
     must render this as a banner, not an empty board — the honesty
-    rule in stream form).
+    rule in stream form);
+  - `ping`: an empty client-visible heartbeat paired with the required
+    SSE comment heartbeat (`: ping`) every 15s.
   Sourced from hcom's event subscription plus herdr snapshot polling
-  (proposed: 2s) diffed server-side.
+  (proposed: 2s) and one transcript poller set per subscribed page-set,
+  diffed server-side. The shell owns reconnect: it closes any errored
+  EventSource, rebuilds with bounded backoff and no stale cursor, and
+  rebuilds if neither data nor heartbeat arrives for 45s. Its
+  `reconnecting` indicator is present only while a rebuild is scheduled
+  or in flight.
 
 ## Writes (plain HTTP POST — ruled: no WebSocket in v1)
 
