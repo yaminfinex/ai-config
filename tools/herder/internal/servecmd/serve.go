@@ -32,8 +32,9 @@ import (
 )
 
 const (
-	DefaultPort = 4400
-	PollCadence = 2 * time.Second
+	DefaultPort      = 4400
+	PollCadence      = 2 * time.Second
+	HeartbeatCadence = 15 * time.Second
 )
 
 type dependencies struct {
@@ -48,6 +49,7 @@ type dependencies struct {
 	spawn      func(context.Context, []string) (webaction.Result, error)
 	fork       func(context.Context, string, string, bool) (string, error)
 	poll       time.Duration
+	heartbeat  time.Duration
 	listeners  func(int) ([]net.Listener, []string, error)
 }
 
@@ -63,6 +65,7 @@ var liveDependencies = dependencies{
 	spawn:      webaction.Spawn,
 	fork:       webaction.Fork,
 	poll:       PollCadence,
+	heartbeat:  HeartbeatCadence,
 	listeners:  liveListeners,
 }
 
@@ -114,6 +117,16 @@ type transcriptCursor struct {
 	Session  string                `json:"session,omitempty"`
 	Detail   hcomtranscript.Detail `json:"detail"`
 	Position int                   `json:"position"`
+}
+
+type transcriptReset struct {
+	Agent string `json:"agent"`
+}
+
+type eventTranscript struct {
+	initialized bool
+	session     string
+	position    int
 }
 
 type messageRequest struct {
@@ -498,12 +511,20 @@ func encodeTranscriptCursor(cursor transcriptCursor) string {
 }
 
 func decodeTranscriptCursor(raw, kind, agent, session string, detail hcomtranscript.Detail) (transcriptCursor, error) {
+	cursor, err := decodeTranscriptCursorShape(raw, kind, agent, detail)
+	if err != nil || cursor.Session != session {
+		return transcriptCursor{}, errors.New("invalid transcript cursor")
+	}
+	return cursor, nil
+}
+
+func decodeTranscriptCursorShape(raw, kind, agent string, detail hcomtranscript.Detail) (transcriptCursor, error) {
 	decoded, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
 		return transcriptCursor{}, errors.New("invalid transcript cursor")
 	}
 	var cursor transcriptCursor
-	if err := json.Unmarshal(decoded, &cursor); err != nil || cursor.Version != 1 || cursor.Kind != kind || cursor.Agent != agent || cursor.Session != session || cursor.Detail != detail || cursor.Position < 0 {
+	if err := json.Unmarshal(decoded, &cursor); err != nil || cursor.Version != 1 || cursor.Kind != kind || cursor.Agent != agent || cursor.Detail != detail || cursor.Position < 0 {
 		return transcriptCursor{}, errors.New("invalid transcript cursor")
 	}
 	return cursor, nil
@@ -523,13 +544,18 @@ func serveTranscriptStream(w http.ResponseWriter, r *http.Request, deps dependen
 	position := 0
 	resuming := false
 	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
-		cursor, err := decodeTranscriptCursor(raw, "stream", name, agent.SessionID, detail)
+		cursor, err := decodeTranscriptCursorShape(raw, "stream", name, detail)
 		if err != nil {
 			refuse(w, http.StatusBadRequest, "bad request", err.Error())
 			return
 		}
-		position = cursor.Position
-		resuming = true
+		// A session change invalidates the old position but is routine during a
+		// resume or fork. Re-window at the current tail instead of fatally
+		// closing the EventSource with a 400.
+		if cursor.Session == agent.SessionID {
+			position = cursor.Position
+			resuming = true
+		}
 	}
 	latest, ok, err := deps.latest(r.Context(), name, detail)
 	if err != nil {
@@ -581,10 +607,17 @@ func serveTranscriptStream(w http.ResponseWriter, r *http.Request, deps dependen
 	}
 	ticker := time.NewTicker(deps.poll)
 	defer ticker.Stop()
+	heartbeat := time.NewTicker(deps.heartbeat)
+	defer heartbeat.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-heartbeat.C:
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
 		case <-ticker.C:
 			latest, exists, latestErr := deps.latest(r.Context(), name, detail)
 			if latestErr != nil {
@@ -864,7 +897,34 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
+func eventAgents(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	seen := make(map[string]bool)
+	agents := make([]string, 0)
+	for _, name := range strings.Split(raw, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" || strings.ContainsAny(name, "\r\n") {
+			return nil, errors.New("agents must be a comma-separated list of bus names")
+		}
+		if !seen[name] {
+			seen[name] = true
+			agents = append(agents, name)
+		}
+		if len(agents) > 100 {
+			return nil, errors.New("agents accepts at most 100 bus names")
+		}
+	}
+	return agents, nil
+}
+
 func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
+	agents, err := eventAgents(r.URL.Query().Get("agents"))
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		refuse(w, http.StatusInternalServerError, "stream unavailable", "response writer does not support flushing")
@@ -874,9 +934,12 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
 
 	unreachable := make(map[string]bool)
+	transcripts := make(map[string]*eventTranscript, len(agents))
+	for _, name := range agents {
+		transcripts[name] = &eventTranscript{}
+	}
 	hcomRosterDown := false
 	hcomEventsDown := false
 	messageCh := make(chan hcomevents.Message)
@@ -943,7 +1006,117 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		unreachable[source] = true
 		return emit("substrate", substrate{Source: source, Status: "unreachable", Detail: err.Error()})
 	}
-	board, err := readBoard(deps)
+	emitTranscriptFailure := func(name string, err error) bool {
+		source := "transcript:" + name
+		if unreachable[source] {
+			return true
+		}
+		unreachable[source] = true
+		return emit("substrate", substrate{Source: source, Status: "unreachable", Detail: err.Error()})
+	}
+	syncTranscripts := func(roster []hcomidentity.Row, initial bool) bool {
+		pendingFailures := make([]substrate, 0)
+		sessions := make(map[string]string, len(roster))
+		for _, row := range roster {
+			sessions[row.Name] = row.SessionID
+		}
+		for _, name := range agents {
+			state := transcripts[name]
+			session, exists := sessions[name]
+			if !exists {
+				err := fmt.Errorf("agent %q is not on the hcom bus", name)
+				if initial {
+					source := "transcript:" + name
+					unreachable[source] = true
+					pendingFailures = append(pendingFailures, substrate{Source: source, Status: "unreachable", Detail: err.Error()})
+				} else if !emitTranscriptFailure(name, err) {
+					return false
+				}
+				continue
+			}
+			latest, hasLatest, latestErr := deps.latest(ctx, name, hcomtranscript.Full)
+			if latestErr != nil {
+				if initial {
+					source := "transcript:" + name
+					unreachable[source] = true
+					pendingFailures = append(pendingFailures, substrate{Source: source, Status: "unreachable", Detail: latestErr.Error()})
+				} else if !emitTranscriptFailure(name, latestErr) {
+					return false
+				}
+				continue
+			}
+			source := "transcript:" + name
+			if unreachable[source] {
+				unreachable[source] = false
+				if !emit("substrate", substrate{Source: source, Status: "recovered"}) {
+					return false
+				}
+			}
+			position := 0
+			if hasLatest {
+				position = latest.Position
+			}
+			if initial {
+				state.initialized = true
+				state.session = session
+				state.position = position
+				continue
+			}
+			if !state.initialized {
+				state.initialized = true
+				state.session = session
+				state.position = position
+				if !emit("rewindow", transcriptReset{Agent: name}) {
+					return false
+				}
+				continue
+			}
+			if state.session != session || position < state.position {
+				state.session = session
+				state.position = position
+				if !emit("rewindow", transcriptReset{Agent: name}) {
+					return false
+				}
+				continue
+			}
+			for state.position < position {
+				end := state.position + 100
+				if end > position {
+					end = position
+				}
+				exchanges, rangeErr := deps.rangeRead(ctx, name, state.position+1, end, hcomtranscript.Full)
+				if rangeErr != nil || len(exchanges) == 0 {
+					if rangeErr == nil {
+						rangeErr = errors.New("transcript range returned no exchanges")
+					}
+					if !emitTranscriptFailure(name, rangeErr) {
+						return false
+					}
+					break
+				}
+				for _, exchange := range exchanges {
+					if !emit("exchange:"+name, exchange) {
+						return false
+					}
+					state.position = exchange.Position
+				}
+			}
+		}
+		for _, failure := range pendingFailures {
+			if !emit("substrate", failure) {
+				return false
+			}
+		}
+		return true
+	}
+	readEventBoard := func() (fleetview.Board, []hcomidentity.Row, error) {
+		snapshot, roster, readErr := readFleetInputs(deps)
+		if readErr != nil {
+			return fleetview.Board{}, nil, readErr
+		}
+		return fleetview.Build(snapshot, roster), roster, nil
+	}
+	board, roster, err := readEventBoard()
 	if err != nil {
 		var sourced sourceError
 		if errors.As(err, &sourced) && sourced.source == "hcom" {
@@ -954,6 +1127,9 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		}
 	} else {
 		previous, _ = json.Marshal(board)
+		if !syncTranscripts(roster, true) {
+			return
+		}
 		if !emit("fleet", board) {
 			return
 		}
@@ -961,6 +1137,8 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 
 	ticker := time.NewTicker(deps.poll)
 	defer ticker.Stop()
+	heartbeat := time.NewTicker(deps.heartbeat)
+	defer heartbeat.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -984,8 +1162,13 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 					return
 				}
 			}
+		case <-heartbeat.C:
+			if _, err := fmt.Fprint(w, ": ping\nevent: ping\ndata: {}\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
 		case <-ticker.C:
-			board, boardErr := readBoard(deps)
+			board, roster, boardErr := readEventBoard()
 			if boardErr != nil {
 				var sourced sourceError
 				source := "unknown"
@@ -1018,6 +1201,9 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 				if !emit("fleet", board) {
 					return
 				}
+			}
+			if !syncTranscripts(roster, false) {
+				return
 			}
 		}
 	}
