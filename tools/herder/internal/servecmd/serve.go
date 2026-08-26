@@ -36,6 +36,8 @@ const (
 	DefaultPort      = 4400
 	PollCadence      = 2 * time.Second
 	HeartbeatCadence = 15 * time.Second
+	webNoteStart     = "[HERDER_WEB_OPERATOR_NOTE_BEGIN]"
+	webNoteEnd       = "[HERDER_WEB_OPERATOR_NOTE_END]"
 )
 
 type dependencies struct {
@@ -167,7 +169,7 @@ var (
 )
 
 func webMessage(sender, text string) string {
-	note := fmt.Sprintf("[This message came from a web operator named %s via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]", sender)
+	note := fmt.Sprintf("%s\n[This message came from a web operator named %s via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]\n%s", webNoteStart, sender, webNoteEnd)
 	return note + "\n\n" + text
 }
 

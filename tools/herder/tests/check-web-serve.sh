@@ -33,6 +33,7 @@ if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
   # source and direct dist tampering without silently repairing either one.
   if npm --prefix "$WEB_ROOT" ci &&
     npm --prefix "$WEB_ROOT" run lint &&
+    npm --prefix "$WEB_ROOT" run test &&
     npm --prefix "$WEB_ROOT" run typecheck &&
     npm --prefix "$WEB_ROOT" run build:check -- --outDir "$ROOT/web-dist" --emptyOutDir &&
     diff -qr "$ROOT/web-dist" "$HERDER_ROOT/internal/webui/dist"; then
@@ -387,7 +388,7 @@ if curl -fsS -X POST -H 'Content-Type: application/json' --data "$message_body" 
 import sys
 
 log_path, original = sys.argv[1:]
-note = "[This message came from a web operator named web-alice-example-com via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]"
+note = "[HERDER_WEB_OPERATOR_NOTE_BEGIN]\n[This message came from a web operator named web-alice-example-com via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]\n[HERDER_WEB_OPERATOR_NOTE_END]"
 expected = ["send", "@mavu", "--intent", "request", "--from", "web-alice-example-com", "--", note + "\n\n" + original]
 raw = open(log_path).read()
 actual = []
