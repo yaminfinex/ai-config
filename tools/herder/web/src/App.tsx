@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { hotkeysCoreFeature, selectionFeature, syncDataLoaderFeature } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
 import ReactMarkdown from 'react-markdown'
@@ -606,7 +606,7 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
   if (entry.kind === 'turn_duration') return <div className="turn-footer">turn · {formatDuration(Number(payload.durationMs))}{payload.messageCount != null ? ` · ${Number(payload.messageCount)} messages` : ''} · <Timestamp timestamp={entry.timestamp} now={now} /></div>
   if (entry.kind === 'task_notification' || entry.kind === 'injected_system') return <details className="system-chip"><summary>{entry.kind === 'task_notification' ? 'background task finished' : 'injected system prompt'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><div>{content || JSON.stringify(payload)}</div></details>
   if (entry.kind === 'system_chip') {
-    if (!showSystem) return null
+    if (!showSystem && payload.subtype !== 'scheduled_task_fire') return null
     return <details className="system-chip"><summary>{valueText(payload.subtype) || 'system entry'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{JSON.stringify(payload, null, 2)}</pre></details>
   }
   if (!showSystem) return null
@@ -691,6 +691,7 @@ function AgentPanel({ name, onViewer, liveWake, streamGeneration, resetGeneratio
   const [readOnly, setReadOnly] = useState('')
   const transcriptRef = useRef<HTMLElement>(null)
   const followingRef = useRef(true)
+  const reanchorAfterAppendRef = useRef(true)
   const setLifecycleBanner = (key: string, problemDetail: string) => setProblems((current) => problemDetail
     ? { ...current, [key]: problemDetail }
     : without(current, key))
@@ -738,6 +739,7 @@ function AgentPanel({ name, onViewer, liveWake, streamGeneration, resetGeneratio
         setSessionId(page.sessionId)
         setNextOffset(page.nextOffset ?? null)
         followingRef.current = true
+        reanchorAfterAppendRef.current = true
         setFollowing(true)
         setNewEntryCount(0)
         setAppendGeneration((generation) => generation + 1)
@@ -772,11 +774,13 @@ function AgentPanel({ name, onViewer, liveWake, streamGeneration, resetGeneratio
           }
           const incoming = page.entries ?? []
           if (incoming.length > 0) {
+            const wasAtBottom = followingRef.current
+            reanchorAfterAppendRef.current = wasAtBottom
             setEntries((current) => {
               const seen = new Set(current.map((entry) => entry.uuid || `offset:${entry.byteOffset}`))
               return [...current, ...incoming.filter((entry) => !seen.has(entry.uuid || `offset:${entry.byteOffset}`))].slice(-entryWindowLimit)
             })
-            if (!followingRef.current) setNewEntryCount((count) => count + incoming.length)
+            if (!wasAtBottom) setNewEntryCount((count) => count + incoming.length)
             setAppendGeneration((generation) => generation + 1)
           }
           const advanced = page.nextOffset ?? offset
@@ -799,13 +803,14 @@ function AgentPanel({ name, onViewer, liveWake, streamGeneration, resetGeneratio
     return () => window.clearInterval(timer)
   }, [])
 
-  useEffect(() => {
-    if (followingRef.current) {
-      requestAnimationFrame(() => {
-        const transcript = transcriptRef.current
-        if (transcript) transcript.scrollTop = transcript.scrollHeight
-      })
-    }
+  useLayoutEffect(() => {
+    if (!reanchorAfterAppendRef.current) return
+    const transcript = transcriptRef.current
+    if (transcript) transcript.scrollTop = transcript.scrollHeight
+    followingRef.current = true
+    reanchorAfterAppendRef.current = false
+    setFollowing(true)
+    setNewEntryCount(0)
   }, [appendGeneration])
 
   const relationships = useMemo(() => relateEntries(entries), [entries])
