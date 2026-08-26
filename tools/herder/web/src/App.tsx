@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentDetail,
   Board,
@@ -7,9 +7,41 @@ import type {
   Refusal,
   Row,
   SubstrateEvent,
+  Tab,
   TranscriptExchange,
   TranscriptPage,
 } from './types'
+
+const layoutKey = 'herder.web.layout.v1'
+const boardTab = { id: 'board', kind: 'board' as const, label: 'Board' }
+const defaultSidebarWidth = 250
+
+type ShellTab = typeof boardTab | { id: string, kind: 'agent', label: string, name: string }
+type StoredLayout = { openTabs: string[], activeTab: string, sidebarWidth: number }
+
+function agentTab(name: string): ShellTab {
+  return { id: `agent:${name}`, kind: 'agent', label: name, name }
+}
+
+function clampSidebarWidth(width: number) {
+  return Math.min(440, Math.max(200, width))
+}
+
+function readLayout(): { tabs: ShellTab[], activeTab: string, sidebarWidth: number } {
+  try {
+    const stored = JSON.parse(localStorage.getItem(layoutKey) ?? '') as Partial<StoredLayout>
+    if (!Array.isArray(stored.openTabs) || stored.openTabs.some((name) => typeof name !== 'string' || !name) ||
+      typeof stored.activeTab !== 'string' || typeof stored.sidebarWidth !== 'number' || !Number.isFinite(stored.sidebarWidth)) throw new Error('invalid layout')
+    const names = [...new Set(stored.openTabs)]
+    const tabs = [boardTab, ...names.map(agentTab)]
+    if (!tabs.some((tab) => tab.id === stored.activeTab)) throw new Error('invalid active tab')
+    const activeTab = stored.activeTab
+    const sidebarWidth = clampSidebarWidth(stored.sidebarWidth)
+    return { tabs, activeTab, sidebarWidth }
+  } catch {
+    return { tabs: [boardTab], activeTab: boardTab.id, sidebarWidth: defaultSidebarWidth }
+  }
+}
 
 const columns: Array<[keyof Row, string]> = [
   ['pane_id', 'Pane'],
@@ -163,7 +195,7 @@ function Rows({ rows, spawning = false, onBanner = () => {} }: { rows: Array<Row
   )
 }
 
-function BoardPage() {
+function useFleet() {
   const [board, setBoard] = useState<Board | null>(null)
   const [problems, setProblems] = useState<Record<string, string>>({ stream: 'Connecting to live fleet…' })
   const [messages, setMessages] = useState(0)
@@ -211,15 +243,16 @@ function BoardPage() {
     }
   }, [])
 
+  return { board, problems, messages, setLifecycleBanner }
+}
+
+function BoardPanel({ board, messages, onBanner }: { board: Board | null, messages: number, onBanner: (key: string, detail: string) => void }) {
   return (
-    <main>
+    <main className="panel-scroll board-panel">
       <header>
         <div><p className="eyebrow">Live substrate</p><h1>Herder fleet</h1></div>
         <div className="ticker" aria-label="Messages seen">{messages} messages seen</div>
       </header>
-      {Object.entries(problems).map(([source, detail]) => (
-        <Banner source={source} detail={detail} key={source} />
-      ))}
       {!board ? <p className="loading">Waiting for the first fleet snapshot…</p> : (
         <>
           <section className="fleet" aria-label="Workspaces">
@@ -232,7 +265,7 @@ function BoardPage() {
                 {workspace.tabs.map((tab) => (
                   <section className="tab" key={tab.tab_id}>
                     <h3>Tab {tab.number}: {tab.label || tab.tab_id} {tab.focused && <span className="focused">focused</span>}</h3>
-                    <Rows rows={tab.panes} spawning onBanner={setLifecycleBanner} />
+                    <Rows rows={tab.panes} spawning onBanner={onBanner} />
                   </section>
                 ))}
               </article>
@@ -326,7 +359,7 @@ function ForkControl({ name, onBanner }: { name: string, onBanner: (key: string,
   )
 }
 
-function AgentPage({ name }: { name: string }) {
+function AgentPanel({ name }: { name: string }) {
   const [agent, setAgent] = useState<AgentDetail | null>(null)
   const [exchanges, setExchanges] = useState<TranscriptExchange[]>([])
   const [cursor, setCursor] = useState('')
@@ -469,15 +502,13 @@ function AgentPage({ name }: { name: string }) {
   }
 
   if (notFound) return (
-    <main className="agent-page">
-      <AppLink to="/" className="back-link">← Fleet board</AppLink>
+    <main className="panel-scroll agent-page">
       <section className="not-found" role="alert"><p className="eyebrow">404 · {notFound.error}</p><h1>Agent not found</h1><p>{notFound.detail}</p></section>
     </main>
   )
 
   return (
-    <main className="agent-page">
-      <AppLink to="/" className="back-link">← Fleet board</AppLink>
+    <main className="panel-scroll agent-page">
       <header className="agent-header">
         <div><p className="eyebrow">Agent transcript</p><h1>{name}</h1></div>
         <div className="detail-toggle" aria-label="Transcript detail">
@@ -518,7 +549,9 @@ function AgentPage({ name }: { name: string }) {
   )
 }
 
-function currentRoute(): { page: 'board' } | { page: 'agent', name: string } | { page: 'missing' } {
+type Route = { page: 'board' } | { page: 'agent', name: string } | { page: 'missing' }
+
+function currentRoute(): Route {
   const match = window.location.pathname.match(/^\/agents\/([^/]+)\/?$/)
   if (match) {
     try {
@@ -530,14 +563,310 @@ function currentRoute(): { page: 'board' } | { page: 'agent', name: string } | {
   return window.location.pathname === '/' ? { page: 'board' } : { page: 'missing' }
 }
 
-export default function App() {
-  const [route, setRoute] = useState(currentRoute)
+type TreeItem = { id: string, kind: 'workspace' | 'pane' | 'unplaced', parent?: string, agent?: string }
+
+function statusClass(status: string) {
+  if (status === 'working' || status === 'active') return 'working'
+  if (status === 'idle' || status === 'listening') return 'idle'
+  if (status === 'dead') return 'dead'
+  return 'unknown'
+}
+
+function PaneTreeRow({ pane, focused, selected, setRef, onFocus, onOpen, onKeyDown }: {
+  pane: Pane | Row
+  focused: boolean
+  selected: boolean
+  setRef: (node: HTMLDivElement | null) => void
+  onFocus: () => void
+  onOpen: () => void
+  onKeyDown: (event: React.KeyboardEvent) => void
+}) {
+  const hasAgent = pane.agent !== '-'
+  const name = hasAgent ? pane.agent : ('label' in pane && pane.label) || pane.pane_id
+  return <div
+    ref={setRef}
+    role="treeitem"
+    aria-level={2}
+    aria-selected={hasAgent && selected}
+    tabIndex={focused ? 0 : -1}
+    className={`tree-row pane-row${hasAgent ? ' agent-row' : ' shell-row'}${focused ? ' focused' : ''}`}
+    onFocus={onFocus}
+    onClick={onOpen}
+    onKeyDown={onKeyDown}
+  >
+    <span className={`status-dot ${statusClass(pane.herdr_status)}`} aria-label={`Herdr ${pane.herdr_status}`} />
+    <span className="tree-name">{name}</span>
+    <span className="tree-tool">{hasAgent ? pane.tool : 'shell'}</span>
+    <span className="bus-status">{pane.bus_status !== '-' ? pane.bus_status : 'no bus'}</span>
+    {pane.gap !== '-' && <span className="gap-badge">{pane.gap}</span>}
+  </div>
+}
+
+function FleetSidebar({ board, problems, activeAgent, onOpenAgent }: {
+  board: Board | null
+  problems: Record<string, string>
+  activeAgent?: string
+  onOpenAgent: (name: string) => void
+}) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({ unplaced: true })
+  const [focusID, setFocusID] = useState('')
+  const refs = useRef(new Map<string, HTMLDivElement>())
+
   useEffect(() => {
-    const update = () => setRoute(currentRoute())
+    if (!board) return
+    setExpanded((current) => {
+      const next = { ...current }
+      board.workspaces.forEach((workspace) => {
+        if (!(workspace.workspace_id in next)) next[workspace.workspace_id] = true
+      })
+      return next
+    })
+    setFocusID((current) => current || board.workspaces[0]?.workspace_id || 'unplaced')
+  }, [board])
+
+  const items = useMemo(() => {
+    const visible: TreeItem[] = []
+    board?.workspaces.forEach((workspace) => {
+      visible.push({ id: workspace.workspace_id, kind: 'workspace' })
+      if (expanded[workspace.workspace_id]) {
+        workspace.tabs.forEach((tab) => tab.panes.forEach((pane) => visible.push({
+          id: `pane:${pane.pane_id}`,
+          kind: 'pane',
+          parent: workspace.workspace_id,
+          agent: pane.agent !== '-' ? pane.agent : undefined,
+        })))
+      }
+    })
+    visible.push({ id: 'unplaced', kind: 'unplaced' })
+    if (expanded.unplaced) board?.unplaced.forEach((row) => visible.push({ id: `unplaced:${row.agent}`, kind: 'pane', parent: 'unplaced', agent: row.agent }))
+    return visible
+  }, [board, expanded])
+
+  const focus = (id: string) => {
+    setFocusID(id)
+    requestAnimationFrame(() => refs.current.get(id)?.focus())
+  }
+  const toggle = (id: string) => setExpanded((current) => ({ ...current, [id]: !current[id] }))
+  const keyDown = (item: TreeItem) => (event: React.KeyboardEvent) => {
+    const index = items.findIndex((candidate) => candidate.id === item.id)
+    if (event.key === 'ArrowDown' && index < items.length - 1) focus(items[index + 1].id)
+    else if (event.key === 'ArrowUp' && index > 0) focus(items[index - 1].id)
+    else if (event.key === 'Home') focus(items[0].id)
+    else if (event.key === 'End') focus(items[items.length - 1].id)
+    else if (event.key === 'ArrowRight' && (item.kind === 'workspace' || item.kind === 'unplaced')) {
+      if (!expanded[item.id]) toggle(item.id)
+      else if (items[index + 1]?.parent === item.id) focus(items[index + 1].id)
+    } else if (event.key === 'ArrowLeft') {
+      if ((item.kind === 'workspace' || item.kind === 'unplaced') && expanded[item.id]) toggle(item.id)
+      else if (item.parent) focus(item.parent)
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      if (item.kind === 'workspace' || item.kind === 'unplaced') toggle(item.id)
+      else if (item.agent) onOpenAgent(item.agent)
+    } else return
+    event.preventDefault()
+  }
+
+  const workspaceNode = (workspace: Board['workspaces'][number]) => {
+    const item: TreeItem = { id: workspace.workspace_id, kind: 'workspace' }
+    return <div className="workspace-tree" role="none" key={workspace.workspace_id}>
+      <div
+        ref={(node) => { if (node) refs.current.set(item.id, node); else refs.current.delete(item.id) }}
+        role="treeitem"
+        aria-level={1}
+        aria-expanded={Boolean(expanded[item.id])}
+        tabIndex={focusID === item.id ? 0 : -1}
+        className={`tree-row workspace-row${focusID === item.id ? ' focused' : ''}`}
+        onFocus={() => setFocusID(item.id)}
+        onClick={() => toggle(item.id)}
+        onKeyDown={keyDown(item)}
+      >
+        <span className="disclosure" aria-hidden="true">{expanded[item.id] ? '▾' : '▸'}</span>
+        <span className="tree-name">{workspace.label || workspace.workspace_id}</span>
+        <span className="count-badge">{workspace.pane_count}</span>
+      </div>
+      {expanded[item.id] && <div role="group">
+        {workspace.tabs.map((tab: Tab) => <div className="tab-tree-group" key={tab.tab_id}>
+          <div className="tree-tab-separator" role="presentation"><span>{tab.label || `Tab ${tab.number}`}</span></div>
+          {tab.panes.map((pane) => {
+            const paneItem: TreeItem = { id: `pane:${pane.pane_id}`, kind: 'pane', parent: item.id, agent: pane.agent !== '-' ? pane.agent : undefined }
+            return <PaneTreeRow
+              key={pane.pane_id}
+              pane={pane}
+              focused={focusID === paneItem.id}
+              selected={activeAgent === paneItem.agent}
+              setRef={(node) => { if (node) refs.current.set(paneItem.id, node); else refs.current.delete(paneItem.id) }}
+              onFocus={() => setFocusID(paneItem.id)}
+              onOpen={() => { setFocusID(paneItem.id); if (paneItem.agent) onOpenAgent(paneItem.agent) }}
+              onKeyDown={keyDown(paneItem)}
+            />
+          })}
+        </div>)}
+      </div>}
+    </div>
+  }
+
+  const unplacedItem: TreeItem = { id: 'unplaced', kind: 'unplaced' }
+  return <aside className="fleet-sidebar" aria-label="Fleet sidebar">
+    <div className="sidebar-heading"><p className="eyebrow">Live substrate</p><h2>Fleet</h2></div>
+    {Object.entries(problems).map(([source, detail]) => <div className="sidebar-banner" role="alert" key={source}><strong>{source}</strong><span>{detail}</span></div>)}
+    {!board ? <p className="sidebar-loading">Waiting for fleet…</p> : <div className="fleet-tree" role="tree" aria-label="Workspaces and panes">
+      {board.workspaces.map(workspaceNode)}
+      <div className="unplaced-tree" role="none">
+        <div
+          ref={(node) => { if (node) refs.current.set('unplaced', node); else refs.current.delete('unplaced') }}
+          role="treeitem"
+          aria-level={1}
+          aria-expanded={Boolean(expanded.unplaced)}
+          tabIndex={focusID === 'unplaced' ? 0 : -1}
+          className={`tree-row workspace-row unplaced-row${focusID === 'unplaced' ? ' focused' : ''}`}
+          onFocus={() => setFocusID('unplaced')}
+          onClick={() => toggle('unplaced')}
+          onKeyDown={keyDown(unplacedItem)}
+        ><span className="disclosure" aria-hidden="true">{expanded.unplaced ? '▾' : '▸'}</span><span className="tree-name">Unplaced</span><span className="count-badge">{board.unplaced.length}</span></div>
+        {expanded.unplaced && <div role="group">{board.unplaced.map((row) => {
+          const item: TreeItem = { id: `unplaced:${row.agent}`, kind: 'pane', parent: 'unplaced', agent: row.agent }
+          return <PaneTreeRow
+            key={row.agent}
+            pane={row}
+            focused={focusID === item.id}
+            selected={activeAgent === row.agent}
+            setRef={(node) => { if (node) refs.current.set(item.id, node); else refs.current.delete(item.id) }}
+            onFocus={() => setFocusID(item.id)}
+            onOpen={() => { setFocusID(item.id); onOpenAgent(row.agent) }}
+            onKeyDown={keyDown(item)}
+          />
+        })}</div>}
+      </div>
+    </div>}
+  </aside>
+}
+
+function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing' }> }) {
+  const [initial] = useState(() => {
+    const layout = readLayout()
+    if (initialRoute.page === 'agent') {
+      const tab = agentTab(initialRoute.name)
+      if (!layout.tabs.some((item) => item.id === tab.id)) layout.tabs.push(tab)
+      layout.activeTab = tab.id
+    } else layout.activeTab = boardTab.id
+    return layout
+  })
+  const [tabs, setTabs] = useState(initial.tabs)
+  const [activeTab, setActiveTab] = useState(initial.activeTab)
+  const [sidebarWidth, setSidebarWidth] = useState(initial.sidebarWidth)
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>())
+  const { board, problems, messages, setLifecycleBanner } = useFleet()
+  const active = tabs.find((tab) => tab.id === activeTab) ?? boardTab
+
+  const activate = (tab: ShellTab, push = true) => {
+    setTabs((current) => current.some((item) => item.id === tab.id) ? current : [...current, tab])
+    setActiveTab(tab.id)
+    const path = tab.kind === 'board' ? '/' : `/agents/${encodeURIComponent(tab.name)}`
+    if (push && window.location.pathname !== path) window.history.pushState({}, '', path)
+  }
+
+  useEffect(() => {
+    const update = () => {
+      const route = currentRoute()
+      if (route.page === 'board') activate(boardTab, false)
+      else if (route.page === 'agent') activate(agentTab(route.name), false)
+    }
     window.addEventListener('popstate', update)
     return () => window.removeEventListener('popstate', update)
-  }, [])
-  if (route.page === 'board') return <BoardPage />
-  if (route.page === 'agent') return <AgentPage name={route.name} />
+  })
+
+  useEffect(() => {
+    const value: StoredLayout = {
+      openTabs: tabs.flatMap((tab) => tab.kind === 'agent' ? [tab.name] : []),
+      activeTab,
+      sidebarWidth,
+    }
+    try {
+      localStorage.setItem(layoutKey, JSON.stringify(value))
+    } catch {
+      // Viewer persistence is best-effort; the live shell remains usable when
+      // browser storage is unavailable or full.
+    }
+  }, [tabs, activeTab, sidebarWidth])
+
+  const close = (id: string) => {
+    const index = tabs.findIndex((tab) => tab.id === id)
+    const nextTabs = tabs.filter((tab) => tab.id !== id)
+    setTabs(nextTabs)
+    if (activeTab === id) activate(nextTabs[Math.max(0, index - 1)] ?? boardTab)
+  }
+  const startResize = (event: React.PointerEvent) => {
+    const startX = event.clientX
+    const startWidth = sidebarWidth
+    const move = (moveEvent: PointerEvent) => setSidebarWidth(clampSidebarWidth(startWidth + moveEvent.clientX - startX))
+    const stop = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', stop)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', stop)
+  }
+
+  return <div className="app-shell">
+    <div className="sidebar-region" style={{ width: sidebarWidth }}>
+      <FleetSidebar board={board} problems={problems} activeAgent={active.kind === 'agent' ? active.name : undefined} onOpenAgent={(name) => activate(agentTab(name))} />
+    </div>
+    <div
+      className="sidebar-resizer"
+      role="separator"
+      aria-label="Resize fleet sidebar"
+      aria-orientation="vertical"
+      aria-valuemin={200}
+      aria-valuemax={440}
+      aria-valuenow={sidebarWidth}
+      tabIndex={0}
+      onPointerDown={startResize}
+      onKeyDown={(event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+        setSidebarWidth((width) => clampSidebarWidth(width + (event.key === 'ArrowRight' ? 10 : -10)))
+        event.preventDefault()
+      }}
+    />
+    <section className="shell-main">
+      <div className="tab-strip" role="tablist" aria-label="Open panels">
+        {tabs.map((tab, index) => <div role="presentation" className={`shell-tab${tab.id === activeTab ? ' active' : ''}`} key={tab.id}>
+          <button
+            ref={(node) => { if (node) tabRefs.current.set(tab.id, node); else tabRefs.current.delete(tab.id) }}
+            id={`shell-tab-${index}`}
+            aria-controls={`shell-panel-${index}`}
+            role="tab"
+            aria-selected={tab.id === activeTab}
+            tabIndex={tab.id === activeTab ? 0 : -1}
+            onClick={() => activate(tab)}
+            onKeyDown={(event) => {
+              let target = index
+              if (event.key === 'ArrowLeft') target = (index - 1 + tabs.length) % tabs.length
+              else if (event.key === 'ArrowRight') target = (index + 1) % tabs.length
+              else if (event.key === 'Home') target = 0
+              else if (event.key === 'End') target = tabs.length - 1
+              else return
+              activate(tabs[target])
+              requestAnimationFrame(() => tabRefs.current.get(tabs[target].id)?.focus())
+              event.preventDefault()
+            }}
+          >{tab.label}</button>
+          {tab.kind === 'agent' && <button className="close-tab" aria-label={`Close ${tab.label}`} onClick={() => close(tab.id)}>×</button>}
+        </div>)}
+      </div>
+      <div className="shell-banners">{Object.entries(problems).map(([source, detail]) => <Banner source={source} detail={detail} key={source} />)}</div>
+      <div className="panel-host">
+        {tabs.map((tab, index) => <div id={`shell-panel-${index}`} role="tabpanel" aria-labelledby={`shell-tab-${index}`} hidden={tab.id !== activeTab} className="hosted-panel" key={tab.id}>
+          {tab.kind === 'board'
+            ? <BoardPanel board={board} messages={messages} onBanner={setLifecycleBanner} />
+            : <AgentPanel name={tab.name} />}
+        </div>)}
+      </div>
+    </section>
+  </div>
+}
+
+export default function App() {
+  const route = currentRoute()
+  if (route.page !== 'missing') return <Shell initialRoute={route} />
   return <main className="agent-page"><AppLink to="/" className="back-link">← Fleet board</AppLink><section className="not-found"><p className="eyebrow">404</p><h1>Page not found</h1></section></main>
 }
