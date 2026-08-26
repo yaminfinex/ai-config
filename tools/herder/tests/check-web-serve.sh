@@ -172,7 +172,8 @@ jq 'map(if .name == "vile" then .session_id = "73100000-0000-4000-8000-000000000
   "$FIXTURE/roster.json" >"$ROOT/roster.json"
 cp "$FIXTURE/snapshot.json" "$ROOT/snapshot.json"
 mkdir -p "$ROOT/home/.claude/projects/-invented-violet"
-cat >"$ROOT/home/.claude/projects/-invented-violet/73100000-0000-4000-8000-000000000731.jsonl" <<'SESSION'
+session_path="$ROOT/home/.claude/projects/-invented-violet/73100000-0000-4000-8000-000000000731.jsonl"
+cat >"$session_path" <<'SESSION'
 {"type":"user","uuid":"invented-web-human","timestamp":"2026-01-02T03:04:05.000Z","origin":{"kind":"human"},"promptSource":"typed","message":{"role":"user","content":"Invented web endpoint prompt."}}
 {"type":"assistant","uuid":"invented-web-answer","timestamp":"2026-01-02T03:04:06.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Invented web endpoint answer."}]}}
 SESSION
@@ -248,7 +249,13 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   asset="$(sed -n 's|.*src="\(/assets/[^\"]*\.js\)".*|\1|p' "$ROOT/index.html")" &&
   [ -n "$asset" ] && curl -fsS "http://127.0.0.1:$port$asset" >"$ROOT/app.js" &&
   grep -qF '/api/events' "$ROOT/app.js" &&
-  grep -qF 'exchange:' "$ROOT/app.js" &&
+  grep -qF 'entry:' "$ROOT/app.js" &&
+  ! grep -qF 'exchange:' "$ROOT/app.js" &&
+  grep -qF '/entries' "$ROOT/app.js" &&
+  grep -qF 'nextOffset' "$ROOT/app.js" &&
+  grep -qF 'show system entries' "$ROOT/app.js" &&
+  grep -qF 'react-markdown' "$WEB_ROOT/package-lock.json" &&
+  grep -qF 'remark-gfm' "$WEB_ROOT/package-lock.json" &&
   grep -qF 'Live stream timed out' "$ROOT/app.js" &&
   ! grep -qF '/transcript/stream' "$ROOT/app.js" &&
   grep -qF '/message' "$ROOT/app.js" &&
@@ -442,13 +449,23 @@ else
   pass "transcript substrate reads stay bounded; no whole-session invocation occurs"
 fi
 
-events="$(curl --max-time 5 -Ns "http://127.0.0.1:$port/api/events?agents=mavu" 2>"$ROOT/events.err" | awk '
-  /^event:/ { print }
-  /^data:/ { print; seen++; if (seen == 3) exit }
-')"
+curl --max-time 6 -Ns "http://127.0.0.1:$port/api/events?agents=vile" >"$ROOT/events.out" 2>"$ROOT/events.err" &
+events_pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  grep -qF 'event: fleet' "$ROOT/events.out" 2>/dev/null && break
+  sleep 0.05
+done
+printf '%s\n' '{"type":"assistant","uuid":"invented-live-answer","timestamp":"2026-01-02T03:04:07.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Invented live endpoint answer."}]}}' >>"$session_path"
+for _ in {1..80}; do
+  grep -qF 'event: entry:vile' "$ROOT/events.out" 2>/dev/null && break
+  sleep 0.05
+done
+kill "$events_pid" 2>/dev/null || true
+wait "$events_pid" 2>/dev/null || true
+events="$(cat "$ROOT/events.out")"
 if grep -qF 'event: fleet' <<<"$events" && grep -qF '"worktree_of":"w1"' <<<"$events" && grep -qF 'event: message' <<<"$events" && grep -qF '"text":"fixture message"' <<<"$events" &&
-  grep -qF 'event: exchange:mavu' <<<"$events" && grep -qF '"position":' <<<"$events"; then
-  pass "multiplexed events SSE carries worktree-enriched fleet, hcom message, and subscribed transcript exchange"
+  grep -qF 'event: entry:vile' <<<"$events" && grep -qF '"uuid":"invented-live-answer"' <<<"$events" && grep -qF '"byteOffset":' <<<"$events" && grep -qF '"kind":"assistant_text"' <<<"$events"; then
+  pass "multiplexed events SSE live-tails an endpoint-shaped immutable entry beside fleet and hcom events"
 else
   bad "events SSE frames" "frames=$events stderr=$(cat "$ROOT/events.err")"
 fi

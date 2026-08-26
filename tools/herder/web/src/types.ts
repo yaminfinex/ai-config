@@ -68,12 +68,42 @@ export interface AgentDetail {
   launch_context: Record<string, unknown>
 }
 
-export interface TranscriptExchange {
-  position: number
-  [key: string]: unknown
+export type EntryKind =
+  | 'human_prompt'
+  | 'hcom_delivery_stub'
+  | 'hcom_delivery'
+  | 'task_notification'
+  | 'injected_system'
+  | 'command_stdout'
+  | 'compact_divider'
+  | 'assistant_text'
+  | 'thinking'
+  | 'tool_use'
+  | 'tool_result'
+  | 'turn_duration'
+  | 'system_chip'
+  | 'unknown'
+
+export interface TranscriptEntry {
+  uuid?: string
+  line: number
+  byteOffset: number
+  timestamp?: string
+  kind: EntryKind
+  payload: unknown
+  quarantine?: { reason: string }
 }
 
-export interface TranscriptPage {
-  exchanges: TranscriptExchange[]
-  cursor: string
+export interface EntriesPage {
+  sessionId: string
+  window: { mode: 'from' | 'tail', from: number, limit: number }
+  entries?: TranscriptEntry[]
+  nextOffset?: number
+  reset?: {
+    reason: 'truncated' | 'session_changed'
+    previous_session_id?: string
+    session_id: string
+    previous_offset: number
+  }
+  stats?: { sidechainSkipped: number }
 }

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"ai-config/tools/herder/internal/claudesession"
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/hcommessage"
@@ -55,6 +56,10 @@ func fixtureDeps() dependencies {
 				positions = append(positions, position)
 			}
 			return fixtureExchanges(positions...), nil
+		},
+		entryEnd: func(hcomidentity.Row) (int64, error) { return 0, nil },
+		entryTail: func(row hcomidentity.Row, cursor claudesession.Cursor, _ int) (claudesession.TailResult, error) {
+			return claudesession.TailResult{Cursor: claudesession.Cursor{SessionID: row.SessionID, Offset: cursor.Offset}}, nil
 		},
 		sender: func(context.Context, string) (string, error) { return "web-alice-example-com", nil },
 		send:   func(context.Context, string, string, string) error { return nil },
@@ -828,22 +833,19 @@ func TestEventsMultiplexesOnlySubscribedAgentTranscripts(t *testing.T) {
 		), nil
 	}
 	calls := map[string]int{}
-	deps.latest = func(_ context.Context, name string, detail hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error) {
-		if detail != hcomtranscript.Full {
-			t.Fatalf("multiplex detail = %q, want full", detail)
-		}
+	deps.entryEnd = func(hcomidentity.Row) (int64, error) { return 0, nil }
+	deps.entryTail = func(row hcomidentity.Row, cursor claudesession.Cursor, _ int) (claudesession.TailResult, error) {
+		name := row.Name
 		calls[name]++
-		position := 1
+		result := claudesession.TailResult{Cursor: claudesession.Cursor{SessionID: row.SessionID, Offset: cursor.Offset}}
 		if calls[name] > 1 {
-			position = 2
+			result.Read = claudesession.ReadResult{
+				Entries:    []claudesession.Entry{{UUID: "invented-" + name, Line: 1, ByteOffset: 0, Timestamp: "2026-01-02T03:04:05Z", Kind: claudesession.KindAssistantText, Payload: json.RawMessage(`{"invented":true}`)}},
+				NextOffset: 73,
+			}
+			result.Cursor.Offset = 73
 		}
-		return fixtureExchanges(position)[0], true, nil
-	}
-	deps.rangeRead = func(_ context.Context, name string, start, end int, detail hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
-		if (name != "dore" && name != "kumo") || start != 2 || end != 2 || detail != hcomtranscript.Full {
-			t.Fatalf("range = %s %d-%d %q", name, start, end, detail)
-		}
-		return fixtureExchanges(2), nil
+		return result, nil
 	}
 	server := httptest.NewServer(newHandler(deps))
 	defer server.Close()
@@ -859,12 +861,56 @@ func TestEventsMultiplexesOnlySubscribedAgentTranscripts(t *testing.T) {
 	seen := map[string]bool{}
 	for len(seen) < 2 {
 		event, data := readEvent(t, reader)
-		if event == "exchange:dore" || event == "exchange:kumo" {
-			seen[event] = strings.Contains(data, `"position":2`)
+		if event == "entry:dore" || event == "entry:kumo" {
+			seen[event] = strings.Contains(data, `"kind":"assistant_text"`) && strings.Contains(data, `"byteOffset":0`)
 		}
 	}
-	if !seen["exchange:dore"] || !seen["exchange:kumo"] || calls["veno"] != 0 {
+	if !seen["entry:dore"] || !seen["entry:kumo"] || calls["veno"] != 0 {
 		t.Fatalf("seen=%v latest calls=%v", seen, calls)
+	}
+}
+
+func TestEventsRewindowsWhenEntryTailResets(t *testing.T) {
+	deps := fixtureDeps()
+	endCalls := 0
+	deps.entryEnd = func(hcomidentity.Row) (int64, error) {
+		endCalls++
+		if endCalls > 1 {
+			return 25, nil
+		}
+		return 0, nil
+	}
+	tailCalls := 0
+	deps.entryTail = func(row hcomidentity.Row, cursor claudesession.Cursor, _ int) (claudesession.TailResult, error) {
+		tailCalls++
+		if tailCalls > 1 {
+			return claudesession.TailResult{
+				Cursor: claudesession.Cursor{SessionID: row.SessionID},
+				Reset:  &claudesession.Reset{Reason: claudesession.ResetTruncated, SessionID: row.SessionID, PreviousOffset: cursor.Offset},
+			}, nil
+		}
+		return claudesession.TailResult{Cursor: claudesession.Cursor{SessionID: row.SessionID, Offset: cursor.Offset}}, nil
+	}
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+	response, err := http.Get(server.URL + "/api/events?agents=dore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	if event, _ := readEvent(t, reader); event != "fleet" {
+		t.Fatalf("first event = %q", event)
+	}
+	for {
+		event, data := readEvent(t, reader)
+		if event != "rewindow" {
+			continue
+		}
+		if data != `{"agent":"dore"}` || endCalls < 2 {
+			t.Fatalf("rewindow = %s end calls=%d", data, endCalls)
+		}
+		break
 	}
 }
 

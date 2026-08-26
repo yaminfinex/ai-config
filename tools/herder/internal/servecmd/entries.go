@@ -103,20 +103,27 @@ func serveEntries(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 		}
 	}
 
-	entries := make([]entryResponse, len(read.Entries))
-	for i, entry := range read.Entries {
-		entries[i] = entryResponse{
-			UUID: entry.UUID, Line: entry.Line, ByteOffset: entry.ByteOffset,
-			Timestamp: entry.Timestamp, Kind: entry.Kind, Payload: entry.Payload,
-			Quarantine: entry.Quarantine,
-		}
-	}
+	entries := serializeEntries(read.Entries)
 	next := read.NextOffset
 	stats := entriesStats{SidechainSkipped: read.Stats.SidechainSkipped}
 	writeJSON(w, http.StatusOK, entriesResponse{
 		SessionID: row.SessionID, Window: window, Entries: &entries,
 		NextOffset: &next, Stats: &stats,
 	})
+}
+
+// serializeEntries is the single wire projection shared by entry windows and
+// multiplexed entry frames. Those two surfaces must never drift in shape.
+func serializeEntries(entries []claudesession.Entry) []entryResponse {
+	serialized := make([]entryResponse, len(entries))
+	for i, entry := range entries {
+		serialized[i] = entryResponse{
+			UUID: entry.UUID, Line: entry.Line, ByteOffset: entry.ByteOffset,
+			Timestamp: entry.Timestamp, Kind: entry.Kind, Payload: entry.Payload,
+			Quarantine: entry.Quarantine,
+		}
+	}
+	return serialized
 }
 
 func entryLimit(r *http.Request) (int, error) {
@@ -157,4 +164,29 @@ func entryAgent(deps dependencies, name string) (hcomidentity.Row, error) {
 		}
 	}
 	return hcomidentity.Row{}, fmt.Errorf("%w: agent %q is not on the hcom bus", errUnknownAgent, name)
+}
+
+func entryTailEnd(row hcomidentity.Row) (int64, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0, err
+	}
+	path, err := claudesession.Resolve(home, row)
+	if err != nil {
+		return 0, err
+	}
+	read, _, err := claudesession.ReadTail(path, 1)
+	return read.NextOffset, err
+}
+
+func entryTail(row hcomidentity.Row, cursor claudesession.Cursor, limit int) (claudesession.TailResult, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return claudesession.TailResult{}, err
+	}
+	path, err := claudesession.Resolve(home, row)
+	if err != nil {
+		return claudesession.TailResult{}, err
+	}
+	return claudesession.TailWindow(path, row.SessionID, cursor, limit)
 }
