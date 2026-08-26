@@ -21,6 +21,23 @@ owner ruling.
   404 unknown agent/pane, 409 refused by substrate).
 - Unversioned paths in v1; this contract file is the version.
 
+### AMENDMENT (conductor, 2026-08-26) — opt-in serve auto-reload
+
+The owner asked on 2026-08-26 for relief from manually restarting
+`herder serve` after every merge. `herder serve --watch` therefore watches the
+actual deployment plane and re-execs the same command-line arguments and
+environment after a change remains stable across two consecutive lazy polls.
+The normal `herder serve` behavior is unchanged.
+
+The repository launcher deploys content-addressed cache binaries, so a serve
+started through `bin/herder` watches that launcher's source-hash inputs and
+re-enters the launcher; a directly invoked binary instead watches its resolved
+executable target for literal replacement. Re-entering the launcher preserves
+its last-good contract: if changed sources do not build, the serve comes back
+on the checkout's last successfully built binary rather than dying. Re-exec
+drops in-flight SSE connections; clients already reconnect and re-window from
+the endpoint as source of truth.
+
 ## Visibility and scope (ruled)
 
 - **Total transparency within the served scope.** Every attributed

@@ -6,6 +6,24 @@ export AI_CONFIG_ROOT
 
 src_dir="$AI_CONFIG_ROOT/tools/herder"
 
+# `herder serve --watch` cannot watch the content-addressed binary this wrapper
+# execs: merges replace these sources, then the next wrapper invocation builds
+# a new immutable cache entry. Give only that opt-in serve process both halves
+# of the real deployment plane. Clearing inherited values keeps launch/spawn
+# children and directly invoked binaries from accidentally watching this tree.
+unset HERDER_WATCH_SOURCE_DIR HERDER_WATCH_LAUNCHER
+if [ "${1:-}" = serve ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      --watch|--watch=*)
+        export HERDER_WATCH_SOURCE_DIR="$src_dir"
+        export HERDER_WATCH_LAUNCHER="$AI_CONFIG_ROOT/bin/herder"
+        break
+        ;;
+    esac
+  done
+fi
+
 hash_cmd=()
 if command -v sha256sum >/dev/null 2>&1; then
   hash_cmd=(sha256sum)
