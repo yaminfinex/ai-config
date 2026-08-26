@@ -3,6 +3,7 @@ import { hotkeysCoreFeature, selectionFeature, syncDataLoaderFeature } from '@he
 import { useTree } from '@headless-tree/react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { duplicateHcomDeliveryIndices, stripWebOperatorNote } from './messagePolish'
 import type {
   AgentDetail,
   Board,
@@ -507,6 +508,7 @@ type EntryRelationships = {
   pairedDeliveries: Set<number>
   commandOutputs: Map<number, TranscriptEntry>
   pairedCommandOutputs: Set<number>
+  duplicateHcomDeliveries: Map<number, Set<number>>
 }
 
 function relateEntries(entries: TranscriptEntry[]): EntryRelationships {
@@ -533,21 +535,33 @@ function relateEntries(entries: TranscriptEntry[]): EntryRelationships {
       pairedCommandOutputs.add(index + 1)
     }
   })
-  return { toolResults, pairedToolResults, pairedDeliveries, commandOutputs, pairedCommandOutputs }
+  return {
+    toolResults, pairedToolResults, pairedDeliveries, commandOutputs, pairedCommandOutputs,
+    duplicateHcomDeliveries: duplicateHcomDeliveryIndices(entries),
+  }
 }
 
-function HcomCards({ entry, now, showSystem }: { entry: TranscriptEntry, now: number, showSystem: boolean }) {
+function HcomCards({ entry, entryIndex, now, showSystem, relationships }: {
+  entry: TranscriptEntry
+  entryIndex: number
+  now: number
+  showSystem: boolean
+  relationships: EntryRelationships
+}) {
   const deliveries = objectValue(entry.payload).deliveries
   const values = Array.isArray(deliveries) ? deliveries : []
-  const parsed = values.some((raw) => {
+  const duplicates = relationships.duplicateHcomDeliveries.get(entryIndex)
+  const visibleValues = values.flatMap((raw, index) => duplicates?.has(index) ? [] : [{ raw, index }])
+  if (visibleValues.length === 0) return null
+  const parsed = visibleValues.some(({ raw }) => {
     const delivery = objectValue(raw)
     return Boolean(valueText(delivery.sender) && valueText(delivery.message_id))
   })
   if (!parsed) {
     if (!showSystem) return null
-    return <details className="system-chip unknown-entry"><summary>unparsed hook attachment · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{values.map((raw) => valueText(objectValue(raw).text)).filter(Boolean).join('\n')}</pre></details>
+    return <details className="system-chip unknown-entry"><summary>unparsed hook attachment · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{visibleValues.map(({ raw }) => valueText(objectValue(raw).text)).filter(Boolean).join('\n')}</pre></details>
   }
-  return <>{values.map((raw, index) => {
+  return <>{visibleValues.map(({ raw, index }) => {
     const delivery = objectValue(raw)
     return <article className="entry-card hcom-card" key={`${entry.uuid ?? entry.byteOffset}:${index}`}>
       <header><strong>{valueText(delivery.sender) || 'unknown sender'}</strong><span>→ {valueText(delivery.recipient) || 'unknown recipient'}</span>
@@ -555,7 +569,7 @@ function HcomCards({ entry, now, showSystem }: { entry: TranscriptEntry, now: nu
         {valueText(delivery.message_id) && <span className="message-id">#{valueText(delivery.message_id)}</span>}
         {valueText(delivery.thread) && <span className="thread-chip">{valueText(delivery.thread)}</span>}
         <Timestamp timestamp={entry.timestamp} now={now} />
-      </header><div>{valueText(delivery.text) || '(delivery body unavailable)'}</div>
+      </header><div>{stripWebOperatorNote(valueText(delivery.text)) || '(delivery body unavailable)'}</div>
     </article>
   })}</>
 }
@@ -574,10 +588,10 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
   if (relationships.pairedToolResults.has(index) || relationships.pairedDeliveries.has(index) || relationships.pairedCommandOutputs.has(index)) return null
   if (entry.kind === 'hcom_delivery_stub') {
     const delivery = entries[index + 1]
-    return delivery?.kind === 'hcom_delivery' ? <HcomCards entry={delivery} now={now} showSystem={showSystem} />
+    return delivery?.kind === 'hcom_delivery' ? <HcomCards entry={delivery} entryIndex={index + 1} now={now} showSystem={showSystem} relationships={relationships} />
       : <div className="system-chip">hcom delivery pending attachment · <Timestamp timestamp={entry.timestamp} now={now} /></div>
   }
-  if (entry.kind === 'hcom_delivery') return <HcomCards entry={entry} now={now} showSystem={showSystem} />
+  if (entry.kind === 'hcom_delivery') return <HcomCards entry={entry} entryIndex={index} now={now} showSystem={showSystem} relationships={relationships} />
   if (entry.kind === 'tool_use') {
     return <ToolEntry entry={entry} result={relationships.toolResults.get(valueText(payload.tool_use_id))} now={now} />
   }

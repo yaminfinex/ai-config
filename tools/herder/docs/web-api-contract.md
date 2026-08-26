@@ -182,6 +182,23 @@ POST `/api/agents/{bus-name}/message`
   agent replies to a web sender bounced): the agent's answer
   arrives on the web viewer's transcript tail, not as a bus
   message. No pane injection, ever.
+
+  **2026-08-26 operator-note amendment.** New deliveries fence that
+  agent-facing instruction block with stable, line-delimited markers; the
+  operator's text follows after one blank line:
+  ```text
+  [HERDER_WEB_OPERATOR_NOTE_BEGIN]
+  [This message came from a web operator named <web-sender> via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]
+  [HERDER_WEB_OPERATOR_NOTE_END]
+
+  <operator text>
+  ```
+  The agent receives the complete fenced instruction unchanged. Transcript
+  clients strip the fenced prefix for display because sender attribution is
+  already rendered separately. For existing session files only, clients also
+  strip the exact legacy unfenced sentence when it is the delivery-body prefix;
+  no looser prose matching is permitted.
+
   Success response (pinned at implementation review 2026-08-25):
   `{"sent": true, "to": "<agent>", "from": "<web-sender>",
   "intent": "request"}`. Refusal statuses on this path: 404 unknown

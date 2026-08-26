@@ -374,7 +374,7 @@ func TestMessageWritePinsAttributionRefusalsAndConfirmationShape(t *testing.T) {
 	confirmed := httptest.NewRecorder()
 	request = httptest.NewRequest(http.MethodPost, "/api/agents/dore/message", requestBody())
 	newHandler(deps).ServeHTTP(confirmed, request)
-	wantText := "[This message came from a web operator named web-alice-example-com via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]\n\n" + original
+	wantText := "[HERDER_WEB_OPERATOR_NOTE_BEGIN]\n[This message came from a web operator named web-alice-example-com via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]\n[HERDER_WEB_OPERATOR_NOTE_END]\n\n" + original
 	wantResponse := "{\"sent\":true,\"to\":\"dore\",\"from\":\"web-alice-example-com\",\"intent\":\"request\"}\n"
 	if confirmed.Code != http.StatusOK || sendCalls != 1 || target != "dore" || sender != "web-alice-example-com" || text != wantText || confirmed.Body.String() != wantResponse {
 		t.Fatalf("confirmed=%d %s send=(%q,%q,%q)", confirmed.Code, confirmed.Body.String(), target, sender, text)
