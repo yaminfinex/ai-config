@@ -58,6 +58,19 @@ GET `/api/fleet`
   absent when herdr does not provide a live parent relationship; clients must
   never infer it from labels or paths.
 
+  ### AMENDMENT (owner-ruled, 2026-08-26) — session identity is placement evidence
+
+  The join accepts a second key: when a roster row carries no live pane claim
+  (its spawn-time pane binding is absent or no longer matches any pane) and
+  exactly one visible pane reports a herdr-detected agent session whose tool
+  and session ID equal that row's, the row is placed in that pane. Session
+  identity is derived from the live process on both sides, so this is
+  evidence, not inference. An agent resumed in its pane therefore re-places
+  itself without a respawn. Name matching remains display-only and never
+  places; ambiguity (the same session detected in more than one pane, or two
+  rows claiming one session) keeps the gap, honestly. Applies identically to
+  `herder list` and this endpoint — one shared join package serves both.
+
 GET `/api/agents/{bus-name}`
   One agent: pane coordinate, tool, statuses, launch context, gap
   state. 404 for names not on the bus.
