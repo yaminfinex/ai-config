@@ -36,6 +36,6 @@ export function persistComposerDraft(agentName: string, text: string, storage: P
   }
 }
 
-export function isComposerSendShortcut(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey'>) {
-  return event.key === 'Enter' && (event.ctrlKey || event.metaKey)
+export function isComposerSendShortcut(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey'> & { shiftKey?: boolean }) {
+  return event.key === 'Enter' && !event.shiftKey && (event.ctrlKey || event.metaKey)
 }

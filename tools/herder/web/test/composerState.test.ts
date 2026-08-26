@@ -46,6 +46,7 @@ test('blocked browser storage degrades to a working non-persistent composer', ()
 test('only Ctrl+Enter and Cmd+Enter are send shortcuts', () => {
   assert.equal(isComposerSendShortcut({ key: 'Enter', ctrlKey: true, metaKey: false }), true)
   assert.equal(isComposerSendShortcut({ key: 'Enter', ctrlKey: false, metaKey: true }), true)
+  assert.equal(isComposerSendShortcut({ key: 'Enter', ctrlKey: true, metaKey: false, shiftKey: true }), false)
   assert.equal(isComposerSendShortcut({ key: 'Enter', ctrlKey: false, metaKey: false }), false)
   assert.equal(isComposerSendShortcut({ key: 'a', ctrlKey: true, metaKey: false }), false)
 })
