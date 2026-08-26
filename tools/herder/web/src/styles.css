@@ -35,8 +35,6 @@ h2, h3, p { margin-top: 0; }
 .workspace-row .tree-name { flex: 1; }
 .pane-row .tree-name { font: 12px var(--mono); }
 .count-badge { margin-left: auto; padding: 0 6px; border-radius: 8px; background: var(--chip); color: var(--dim); font: 10px var(--mono); }
-.tree-tab-separator { display: flex; height: 20px; align-items: center; gap: 6px; margin-left: 12px; padding: 0 7px; color: var(--dimmer); font-size: 10px; }
-.tree-tab-separator::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 .pane-row { margin-left: 24px; cursor: default; }
 .agent-row { cursor: pointer; }
 .agent-row[aria-selected='true'] { background: var(--accent-dim); }
