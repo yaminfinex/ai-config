@@ -75,6 +75,81 @@ func TestBuildDoesNotInferPlacementFromMatchingName(t *testing.T) {
 	}
 }
 
+func TestBuildHealsMissingPaneClaimFromUniqueToolAndSession(t *testing.T) {
+	for name, claim := range map[string]string{"absent claim": "", "stale claim": "gone"} {
+		t.Run(name, func(t *testing.T) {
+			snapshot := sessionSnapshot(
+				herdrcli.Pane{PaneID: "p1", Agent: "codex", AgentSession: "session-dore"},
+			)
+			roster := []hcomidentity.Row{{
+				Name: "dore", Tool: "codex", SessionID: "session-dore", Status: "active",
+				LaunchContext: hcomidentity.LaunchContext{PaneID: claim},
+			}}
+
+			board := Build(snapshot, roster)
+			pane := board.Workspaces[0].Tabs[0].Panes[0]
+			if pane.Agent != "dore" || pane.BusStatus != "active" || pane.Gap != "-" || len(board.Unplaced) != 0 {
+				t.Fatalf("session-healed board = %#v", board)
+			}
+		})
+	}
+}
+
+func TestBuildKeepsGapWhenSessionIdentityIsAmbiguous(t *testing.T) {
+	t.Run("same session in multiple panes", func(t *testing.T) {
+		snapshot := sessionSnapshot(
+			herdrcli.Pane{PaneID: "p1", Agent: "codex", AgentSession: "shared"},
+			herdrcli.Pane{PaneID: "p2", Agent: "codex", AgentSession: "shared"},
+		)
+		board := Build(snapshot, []hcomidentity.Row{{Name: "dore", Tool: "codex", SessionID: "shared"}})
+		if len(board.Unplaced) != 1 || board.Unplaced[0].Agent != "dore" {
+			t.Fatalf("ambiguous panes placed a row: %#v", board)
+		}
+	})
+	t.Run("multiple rows match one pane", func(t *testing.T) {
+		snapshot := sessionSnapshot(
+			herdrcli.Pane{PaneID: "p1", Agent: "codex", AgentSession: "shared"},
+		)
+		roster := []hcomidentity.Row{
+			{Name: "dore", Tool: "codex", SessionID: "shared"},
+			{Name: "kumo", Tool: "codex", SessionID: "shared"},
+		}
+		board := Build(snapshot, roster)
+		if len(board.Unplaced) != 2 || board.Workspaces[0].Tabs[0].Panes[0].BusStatus != "-" {
+			t.Fatalf("ambiguous rows placed a row: %#v", board)
+		}
+	})
+}
+
+func TestBuildNeverUsesSessionFallbackForLivePaneClaim(t *testing.T) {
+	snapshot := sessionSnapshot(
+		herdrcli.Pane{PaneID: "p1", Agent: "codex", AgentSession: "session-dore"},
+		herdrcli.Pane{PaneID: "p2"},
+	)
+	snapshot.Panes[1].AgentStatus = ""
+	roster := []hcomidentity.Row{{
+		Name: "dore", Tool: "codex", SessionID: "session-dore",
+		LaunchContext: hcomidentity.LaunchContext{PaneID: "p2"},
+	}}
+	board := Build(snapshot, roster)
+	if len(board.Unplaced) != 1 || board.Unplaced[0].Agent != "dore" || board.Workspaces[0].Tabs[0].Panes[0].BusStatus != "-" || board.Workspaces[0].Tabs[0].Panes[1].Agent != "-" {
+		t.Fatalf("live pane claim used session fallback: %#v", board)
+	}
+}
+
+func sessionSnapshot(panes ...herdrcli.Pane) herdrcli.Snapshot {
+	for i := range panes {
+		panes[i].WorkspaceID = "w1"
+		panes[i].TabID = "t1"
+		panes[i].AgentStatus = first(panes[i].AgentStatus, "working")
+	}
+	return herdrcli.Snapshot{
+		Workspaces: []herdrcli.Workspace{{WorkspaceID: "w1", TabCount: 1, PaneCount: len(panes)}},
+		Tabs:       []herdrcli.Tab{{TabID: "t1", WorkspaceID: "w1", PaneCount: len(panes)}},
+		Panes:      panes,
+	}
+}
+
 func TestValidateSnapshotRejectsHierarchyGaps(t *testing.T) {
 	for name, snapshot := range map[string]herdrcli.Snapshot{
 		"missing tab":       {Panes: []herdrcli.Pane{{PaneID: "p1", WorkspaceID: "w1", TabID: "missing"}}},

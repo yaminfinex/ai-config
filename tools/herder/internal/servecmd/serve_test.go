@@ -66,7 +66,6 @@ func fixtureDeps() dependencies {
 		spawn: func(context.Context, []string) (webaction.Result, error) {
 			return webaction.Result{Name: "new-vava", Pane: "p-new"}, nil
 		},
-		fork:      func(context.Context, string, string, bool) (string, error) { return "fork-vava", nil },
 		poll:      10 * time.Millisecond,
 		heartbeat: time.Second,
 	}
@@ -139,6 +138,26 @@ func TestAgentEndpointReturnsJoinedDetailAnd404sUnknownBusName(t *testing.T) {
 	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/missing", nil))
 	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"error":"unknown agent"`) {
 		t.Fatalf("unknown response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAgentEndpointUsesSessionHealedPane(t *testing.T) {
+	deps := fixtureDeps()
+	baseRoster := deps.roster
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		rows, err := baseRoster()
+		rows[0].SessionID = "s1"
+		rows[0].LaunchContext.PaneID = "stale"
+		return rows, err
+	}
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/dore", nil))
+	var detail agentDetail
+	if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || detail.Pane == nil || detail.Pane.PaneID != "p1" || detail.Gap != "-" || detail.LaunchContext.PaneID != "stale" {
+		t.Fatalf("session-healed detail = %d %#v", response.Code, detail)
 	}
 }
 
@@ -574,101 +593,6 @@ func TestSpawnPinsAttributionAndSubstrateRefusals(t *testing.T) {
 				t.Fatalf("response=%d %s", response.Code, response.Body.String())
 			}
 		})
-	}
-}
-
-func TestForkPinsTargetPromptAttributionAndPlacement(t *testing.T) {
-	deps := fixtureDeps()
-	baseSnapshot := deps.snapshot
-	deps.snapshot = func() (herdrcli.Snapshot, error) {
-		snapshot, _ := baseSnapshot()
-		snapshot.Panes = append(snapshot.Panes, herdrcli.Pane{PaneID: "p2", WorkspaceID: "w1", TabID: "t1"})
-		return snapshot, nil
-	}
-	baseRoster := deps.roster
-	deps.roster = func() ([]hcomidentity.Row, error) {
-		rows, _ := baseRoster()
-		return append(rows, hcomidentity.Row{Name: "fork-vava", LaunchContext: hcomidentity.LaunchContext{PaneID: "p2"}}), nil
-	}
-	var target, prompt string
-	var hasPrompt bool
-	deps.fork = func(_ context.Context, gotTarget, gotPrompt string, gotHas bool) (string, error) {
-		target, prompt, hasPrompt = gotTarget, gotPrompt, gotHas
-		return "fork-vava", nil
-	}
-	response := httptest.NewRecorder()
-	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/agents/dore/fork", bytes.NewBufferString(`{"prompt":"continue"}`)))
-	if response.Code != http.StatusOK || target != "dore" || prompt != "continue" || !hasPrompt || !strings.Contains(response.Body.String(), `"pane":"p2"`) {
-		t.Fatalf("response=%d %s call=(%q,%q,%t)", response.Code, response.Body.String(), target, prompt, hasPrompt)
-	}
-
-	missing := httptest.NewRecorder()
-	newHandler(fixtureDeps()).ServeHTTP(missing, httptest.NewRequest(http.MethodPost, "/api/agents/missing/fork", nil))
-	if missing.Code != http.StatusNotFound {
-		t.Fatalf("missing=%d %s", missing.Code, missing.Body.String())
-	}
-	blockedDeps := fixtureDeps()
-	blockedDeps.sender = func(context.Context, string) (string, error) { return "", errors.New("peer not found") }
-	blocked := httptest.NewRecorder()
-	newHandler(blockedDeps).ServeHTTP(blocked, httptest.NewRequest(http.MethodPost, "/api/agents/dore/fork", nil))
-	if blocked.Code != http.StatusConflict || !strings.Contains(blocked.Body.String(), `"error":"attribution required"`) {
-		t.Fatalf("blocked=%d %s", blocked.Code, blocked.Body.String())
-	}
-	for _, body := range []string{"null", "[]", `{"extra":true}`} {
-		invalid := httptest.NewRecorder()
-		newHandler(fixtureDeps()).ServeHTTP(invalid, httptest.NewRequest(http.MethodPost, "/api/agents/dore/fork", bytes.NewBufferString(body)))
-		if invalid.Code != http.StatusBadRequest {
-			t.Fatalf("invalid body %q = %d %s", body, invalid.Code, invalid.Body.String())
-		}
-	}
-}
-
-func TestForkMapsSemanticAndInfrastructureFailures(t *testing.T) {
-	for name, test := range map[string]struct {
-		err    error
-		status int
-		detail string
-	}{
-		"refusal":     {errors.New("hcom: source session cannot fork"), http.StatusConflict, "source session cannot fork"},
-		"unavailable": {fmt.Errorf("%w: hcom missing", webaction.ErrUnavailable), http.StatusBadGateway, "hcom missing"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			deps := fixtureDeps()
-			deps.fork = func(context.Context, string, string, bool) (string, error) { return "", test.err }
-			response := httptest.NewRecorder()
-			newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/agents/dore/fork", nil))
-			if response.Code != test.status || !strings.Contains(response.Body.String(), test.detail) {
-				t.Fatalf("response=%d %s", response.Code, response.Body.String())
-			}
-		})
-	}
-}
-
-func TestForkSuccessWithPlacementPendingReturnsNameAndEmptyPane(t *testing.T) {
-	deps := fixtureDeps()
-	deps.poll = time.Millisecond
-	response := httptest.NewRecorder()
-	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/agents/dore/fork", nil))
-	if response.Code != http.StatusOK || response.Body.String() != "{\"name\":\"fork-vava\",\"pane\":\"\"}\n" {
-		t.Fatalf("response=%d %s", response.Code, response.Body.String())
-	}
-}
-
-func TestForkSuccessSurvivesPlacementPollSubstrateFailure(t *testing.T) {
-	deps := fixtureDeps()
-	deps.poll = time.Millisecond
-	baseSnapshot := deps.snapshot
-	var calls atomic.Int32
-	deps.snapshot = func() (herdrcli.Snapshot, error) {
-		if calls.Add(1) > 1 {
-			return herdrcli.Snapshot{}, errors.New("socket failed during placement poll")
-		}
-		return baseSnapshot()
-	}
-	response := httptest.NewRecorder()
-	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/agents/dore/fork", nil))
-	if response.Code != http.StatusOK || response.Body.String() != "{\"name\":\"fork-vava\",\"pane\":\"\"}\n" {
-		t.Fatalf("response=%d %s", response.Code, response.Body.String())
 	}
 }
 

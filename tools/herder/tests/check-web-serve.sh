@@ -56,15 +56,6 @@ cat >"$ROOT/bin/hcom" <<'HCOM'
 if [ "${1:-}" = list ] && [ "${2:-}" = --json ]; then
   exec /bin/cat "$WEB_SERVE_ROSTER"
 fi
-if [ "${1:-}" = f ] && [ "${2:-}" = mavu ]; then
-  for arg in "$@"; do printf '<%s>\n' "$arg"; done >"$WEB_FORK_LOG"
-  jq '. + [{"name":"fork-vava","base_name":"fork-vava","tool":"codex","status":"listening","joined":true,"session_id":"session-fork","launch_context":{"pane_id":"w1:p8"}}]' "$WEB_SERVE_ROSTER" >"$WEB_SERVE_ROSTER.tmp"
-  mv "$WEB_SERVE_ROSTER.tmp" "$WEB_SERVE_ROSTER"
-  jq '.panes += [{"pane_id":"w1:p8","workspace_id":"w1","tab_id":"t1","agent":"codex","agent_status":"active","agent_session":"session-fork"}]' "$WEB_SERVE_SNAPSHOT" >"$WEB_SERVE_SNAPSHOT.tmp"
-  mv "$WEB_SERVE_SNAPSHOT.tmp" "$WEB_SERVE_SNAPSHOT"
-  printf '%s\n' 'Started the fork process for 1 Codex agent' 'Names: fork-vava' 'Batch id: batch-fork'
-  exit 0
-fi
 if [ "${1:-}" = transcript ]; then
   printf '%s\n' "$*" >>"$WEB_TRANSCRIPT_LOG"
   if [[ "${3:-}" =~ ^([0-9]+)-([0-9]+)$ ]] &&
@@ -222,7 +213,6 @@ WEB_STREAM_STATE="$ROOT/stream.state" \
 WEB_SEND_LOG="$ROOT/send.log" \
 WEB_SEND_CALLS="$ROOT/send.calls" \
 WEB_SPAWN_LOG="$ROOT/spawn.log" \
-WEB_FORK_LOG="$ROOT/fork.log" \
 WEB_SERVE_SNAPSHOT="$ROOT/snapshot.json" \
 WEB_WHOIS_MODE="$ROOT/whois.mode" \
 AI_CONFIG_ROOT="$ROOT/action-root" \
@@ -261,7 +251,8 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   ! grep -qF '/transcript/stream' "$ROOT/app.js" &&
   grep -qF '/message' "$ROOT/app.js" &&
   grep -qF '/api/spawn' "$ROOT/app.js" &&
-  grep -qF '/fork' "$ROOT/app.js" &&
+  ! grep -qF '/fork' "$ROOT/app.js" &&
+  ! grep -qF 'Fork agent' "$ROOT/app.js" &&
   grep -qF 'placement pending' "$ROOT/app.js" &&
   grep -qF '/agents/' "$ROOT/app.js" &&
   grep -qF 'herder.web.layout.v1' "$ROOT/app.js" &&
@@ -425,14 +416,12 @@ else
   bad "contextual spawn" "body=$(cat "$ROOT/spawn.json" 2>/dev/null || true) args=$(cat "$ROOT/spawn.log" 2>/dev/null || true)"
 fi
 
-if curl -fsS -X POST -H 'Content-Type: application/json' --data '{"prompt":"continue safely"}' \
-  "http://127.0.0.1:$port/api/agents/mavu/fork" >"$ROOT/fork.json" &&
-  jq -e '. == {name:"fork-vava",pane:"w1:p8"}' "$ROOT/fork.json" >/dev/null &&
-  grep -qxF '<f>' "$ROOT/fork.log" && grep -qxF '<mavu>' "$ROOT/fork.log" && grep -qxF '<--hcom-prompt>' "$ROOT/fork.log" &&
-  curl -fsS "http://127.0.0.1:$port/api/fleet" | jq -e '.workspaces[].tabs[].panes[] | select(.pane_id == "w1:p8" and .agent == "fork-vava")' >/dev/null; then
-  pass "fork wraps hcom with prompt and returns live placement visible in fleet"
+if [ "$(curl -sS -o "$ROOT/fork-removed.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"prompt":"continue safely"}' \
+  "http://127.0.0.1:$port/api/agents/mavu/fork")" = 404 ] &&
+  jq -e '.error == "not found" and .detail == "unknown endpoint"' "$ROOT/fork-removed.json" >/dev/null; then
+  pass "removed fork endpoint fails closed as an unknown endpoint"
 else
-  bad "fork" "body=$(cat "$ROOT/fork.json" 2>/dev/null || true) args=$(cat "$ROOT/fork.log" 2>/dev/null || true)"
+  bad "fork removal" "body=$(cat "$ROOT/fork-removed.json" 2>/dev/null || true)"
 fi
 
 printf '%s\n' unresolved >"$ROOT/whois.mode"

@@ -56,35 +56,6 @@ func Spawn(ctx context.Context, args []string) (Result, error) {
 	return result, nil
 }
 
-func Fork(ctx context.Context, target, prompt string, hasPrompt bool) (string, error) {
-	commandCtx, cancel := context.WithTimeout(ctx, commandTimeout)
-	defer cancel()
-	args := []string{"f", target}
-	if hasPrompt {
-		args = append(args, "--hcom-prompt", prompt)
-	}
-	args = append(args, "--go")
-	cmd := hcomcli.CommandContext(commandCtx, args...)
-	cmd.WaitDelay = time.Second
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if commandCtx.Err() != nil {
-		return "", fmt.Errorf("%w: hcom fork timed out after %s", ErrUnavailable, commandTimeout)
-	}
-	if err != nil {
-		if unavailable(err) {
-			return "", fmt.Errorf("%w: run hcom fork: %v", ErrUnavailable, err)
-		}
-		return "", errors.New(detail(out, stderr.Bytes(), err))
-	}
-	name, err := parseNames(out)
-	if err != nil {
-		return "", fmt.Errorf("%w: %v; output: %s", ErrUnavailable, err, strings.TrimSpace(string(out)))
-	}
-	return name, nil
-}
-
 func parseSpawn(out []byte) (Result, error) {
 	var result Result
 	var names, panes int
@@ -106,19 +77,6 @@ func parseSpawn(out []byte) (Result, error) {
 		return Result{}, errors.New("fleet spawn output must contain exactly one name and at most one nonempty pane")
 	}
 	return result, nil
-}
-
-func parseNames(out []byte) (string, error) {
-	for _, line := range strings.Split(string(out), "\n") {
-		if names, ok := strings.CutPrefix(strings.TrimSpace(line), "Names:"); ok {
-			fields := strings.Fields(names)
-			if len(fields) == 1 {
-				return fields[0], nil
-			}
-			return "", errors.New("hcom fork did not report exactly one launched name")
-		}
-	}
-	return "", errors.New("hcom fork output omitted Names")
 }
 
 func unavailable(err error) bool {

@@ -274,18 +274,22 @@ POST `/api/spawn`
   (unknown pane, workspace without a repo for worktree shape) are
   409s quoting the substrate.
 
-POST `/api/agents/{bus-name}/fork`
-  Body: `{"prompt": "..."}` (optional). Wraps hcom fork; response =
-  new agent name + placement.
-
-Both lifecycle responses (pinned at implementation review
+The spawn lifecycle response (pinned at implementation review
 2026-08-25): HTTP 200 `{"name": "<bus-name>", "pane": "<pane-id>"}`.
-Substrate success IS success: when the fork/spawn succeeded but
+Substrate success IS success: when the spawn succeeded but
 placement is not yet visible to the board poll, `pane` is empty and
 the agent appears on `/api/fleet` within a poll tick — never a 5xx
-for a session that exists (a false 502 invites double-forks).
+for a session that exists (a false 502 invites duplicate spawns).
 Attribution, statuses, and infrastructure-vs-refusal classification
 follow the message write's rules exactly.
+
+### AMENDMENT (owner-ruled, 2026-08-26) — web fork removed
+
+The owner ruled that the web fork control does not work and breaks sessions.
+The client control and `POST /api/agents/{bus-name}/fork` endpoint are removed;
+the path now receives the standard 404 unknown-endpoint refusal. This removes
+only web fork. Contextual spawn remains available, and lifecycle operations
+outside this web API are unchanged.
 
 ## Web-peer attribution (ruled — tailscale identities, flat authority)
 
@@ -318,7 +322,7 @@ follow the message write's rules exactly.
 
 ## Explicitly absent (ruled)
 
-No WebSocket. No pane injection. No cull/kill. No resume, no dead
+No WebSocket. No pane injection. No cull/kill. No resume or fork, no dead
 sessions, no sesh. No blank-form/global spawn, no new-workspace
 creation. No auth beyond the tailnet boundary. No server-side state.
 No screen view for AGENT sessions — the tailed transcript is the
@@ -337,6 +341,6 @@ v1 commitment.
 1. `/api/fleet` + `/api/events` + board UI (read-only heart).
 2. `/api/agents/*` + transcript view (windowed + per-agent tail) +
    message write.
-3. Contextual spawn + fork (may slip without killing v1 value).
+3. Contextual spawn (web fork removed by the 2026-08-26 owner ruling).
 Each step merges green behind the dark `serve` flag; UI ships
 embedded (React + Vite, go:embed) per the web-lane plan.

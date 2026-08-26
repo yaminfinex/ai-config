@@ -628,58 +628,6 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
   return <details className="system-chip unknown-entry"><summary>{entry.quarantine ? `quarantined entry · ${entry.quarantine.reason}` : `unknown entry · ${entry.kind}`} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{JSON.stringify(entry.payload, null, 2)}</pre></details>
 }
 
-function ForkControl({ name, onBanner }: { name: string, onBanner: (key: string, detail: string) => void }) {
-  const [open, setOpen] = useState(false)
-  const [prompt, setPrompt] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [inlineProblem, setInlineProblem] = useState('')
-  const [readOnly, setReadOnly] = useState('')
-  const [notice, setNotice] = useState('')
-  const problemKey = 'fork'
-
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault()
-    if (submitting || readOnly) return
-    setSubmitting(true)
-    setInlineProblem('')
-    setNotice('')
-    onBanner(problemKey, '')
-    try {
-      const response = await fetch(`/api/agents/${encodeURIComponent(name)}/fork`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(prompt ? { prompt } : {}),
-      })
-      if (!response.ok) {
-        const problem = await lifecycleProblem(response)
-        if (problem.readOnly) setReadOnly(problem.readOnly)
-        if (problem.inline) setInlineProblem(problem.inline)
-        if (problem.banner) onBanner(problemKey, problem.banner)
-        return
-      }
-      const result = await response.json() as LifecycleResult
-      setNotice(placementNotice('Forked', result))
-    } catch (error: unknown) {
-      onBanner(problemKey, error instanceof Error ? error.message : String(error))
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  if (!open) return <button type="button" onClick={() => setOpen(true)}>Fork agent</button>
-  return (
-    <form className="lifecycle-form fork-form" onSubmit={(event) => void submit(event)}>
-      <div className="lifecycle-heading"><strong>Fork {name}</strong><button type="button" className="compact" disabled={submitting} onClick={() => setOpen(false)}>Close</button></div>
-      {readOnly && <div className="read-only" role="alert"><strong>Read-only</strong><span>{readOnly}</span></div>}
-      <label>Opening prompt <span className="optional">optional</span><textarea rows={3} value={prompt} disabled={submitting || Boolean(readOnly)} onChange={(event) => setPrompt(event.target.value)} /></label>
-      <div className="send-footer">
-        <div>{inlineProblem && <p className="inline-error" role="alert">{inlineProblem}</p>}{notice && <p className="send-notice">{notice}</p>}</div>
-        <button type="submit" disabled={submitting || Boolean(readOnly)}>{submitting ? 'Forking… this can take up to 150s' : 'Fork agent'}</button>
-      </div>
-    </form>
-  )
-}
-
 function AgentPanel({ name, onViewer, identityReadOnly, liveWake, streamGeneration, resetGeneration }: {
   name: string
   onViewer: (viewer: string) => void
@@ -710,9 +658,6 @@ function AgentPanel({ name, onViewer, identityReadOnly, liveWake, streamGenerati
   const followingRef = useRef(true)
   const reanchorAfterAppendRef = useRef(true)
   const effectiveReadOnly = identityReadOnly || readOnly
-  const setLifecycleBanner = (key: string, problemDetail: string) => setProblems((current) => problemDetail
-    ? { ...current, [key]: problemDetail }
-    : without(current, key))
 
   useEffect(() => {
     let active = true
@@ -893,7 +838,7 @@ function AgentPanel({ name, onViewer, identityReadOnly, liveWake, streamGenerati
       <header className="agent-header">
         <strong className="agent-name">{name}</strong>
         {agent && <><span className="pane-chip">{agent.pane?.pane_id ?? 'unplaced'}</span><span className="agent-status">{agent.herdr_status} · {agent.bus_status}</span>{agent.gap !== '-' && <span className="gap-badge">{gapLabel(agent.gap)}</span>}<span className="tool-chip">{agent.tool}</span></>}
-        <div className="agent-actions"><label className="system-toggle"><input type="checkbox" checked={showSystem} onChange={(event) => setShowSystem(event.target.checked)} /> show system entries</label><span className={`follow-chip${following ? '' : ' paused'}`}>{following ? 'follow ✓' : 'follow paused'}</span>{agent && <ForkControl name={name} onBanner={setLifecycleBanner} />}</div>
+        <div className="agent-actions"><label className="system-toggle"><input type="checkbox" checked={showSystem} onChange={(event) => setShowSystem(event.target.checked)} /> show system entries</label><span className={`follow-chip${following ? '' : ' paused'}`}>{following ? 'follow ✓' : 'follow paused'}</span></div>
       </header>
       {Object.entries(problems).map(([source, problemDetail]) => <Banner source={source} detail={problemDetail} key={source} />)}
       <section className="transcript" aria-label="Transcript" ref={transcriptRef} onScroll={(event) => {
