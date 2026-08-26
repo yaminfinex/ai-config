@@ -197,7 +197,11 @@ POST `/api/agents/{bus-name}/message`
   clients strip the fenced prefix for display because sender attribution is
   already rendered separately. For existing session files only, clients also
   strip the exact legacy unfenced sentence when it is the delivery-body prefix;
-  no looser prose matching is permitted.
+  no looser prose matching is permitted. (2026-08-26, post-review: clients also
+  strip the short-lived pre-release `<<<HERDER_WEB_OPERATOR_NOTE>>>` /
+  `<<<END_HERDER_WEB_OPERATOR_NOTE>>>` marker spelling — exact-marker prefix
+  only — solely for compatibility with deliveries already persisted in existing
+  session files; new deliveries never use it.)
 
   Success response (pinned at implementation review 2026-08-25):
   `{"sent": true, "to": "<agent>", "from": "<web-sender>",
