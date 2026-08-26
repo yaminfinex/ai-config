@@ -1,4 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { hotkeysCoreFeature, selectionFeature, syncDataLoaderFeature } from '@headless-tree/core'
+import { useTree } from '@headless-tree/react'
 import type {
   AgentDetail,
   Board,
@@ -14,9 +16,16 @@ import type {
 const layoutKey = 'herder.web.layout.v1'
 const boardTab = { id: 'board', kind: 'board' as const, label: 'Board' }
 const defaultSidebarWidth = 250
+const emptyExpandedItems: string[] = []
 
 type ShellTab = typeof boardTab | { id: string, kind: 'agent', label: string, name: string }
-type StoredLayout = { openTabs: string[], activeTab: string, sidebarWidth: number }
+type StoredLayout = {
+  openTabs: string[]
+  activeTab: string
+  sidebarWidth: number
+  expandedItems?: string[]
+  knownWorkspaceItems?: string[]
+}
 
 function agentTab(name: string): ShellTab {
   return { id: `agent:${name}`, kind: 'agent', label: name, name }
@@ -26,7 +35,13 @@ function clampSidebarWidth(width: number) {
   return Math.min(440, Math.max(200, width))
 }
 
-function readLayout(): { tabs: ShellTab[], activeTab: string, sidebarWidth: number } {
+function readLayout(): {
+  tabs: ShellTab[]
+  activeTab: string
+  sidebarWidth: number
+  expandedItems: string[] | null
+  knownWorkspaceItems: string[] | null
+} {
   try {
     const stored = JSON.parse(localStorage.getItem(layoutKey) ?? '') as Partial<StoredLayout>
     if (!Array.isArray(stored.openTabs) || stored.openTabs.some((name) => typeof name !== 'string' || !name) ||
@@ -36,9 +51,25 @@ function readLayout(): { tabs: ShellTab[], activeTab: string, sidebarWidth: numb
     if (!tabs.some((tab) => tab.id === stored.activeTab)) throw new Error('invalid active tab')
     const activeTab = stored.activeTab
     const sidebarWidth = clampSidebarWidth(stored.sidebarWidth)
-    return { tabs, activeTab, sidebarWidth }
+    const expandedItems = stored.expandedItems === undefined
+      ? null
+      : Array.isArray(stored.expandedItems) && stored.expandedItems.every((id) => typeof id === 'string')
+        ? [...new Set(stored.expandedItems)]
+        : null
+    const knownWorkspaceItems = stored.knownWorkspaceItems === undefined
+      ? null
+      : Array.isArray(stored.knownWorkspaceItems) && stored.knownWorkspaceItems.every((id) => typeof id === 'string')
+        ? [...new Set(stored.knownWorkspaceItems)]
+        : null
+    return { tabs, activeTab, sidebarWidth, expandedItems, knownWorkspaceItems }
   } catch {
-    return { tabs: [boardTab], activeTab: boardTab.id, sidebarWidth: defaultSidebarWidth }
+    return {
+      tabs: [boardTab],
+      activeTab: boardTab.id,
+      sidebarWidth: defaultSidebarWidth,
+      expandedItems: null,
+      knownWorkspaceItems: null,
+    }
   }
 }
 
@@ -653,8 +684,6 @@ function currentRoute(): Route {
   return window.location.pathname === '/' ? { page: 'board' } : { page: 'missing' }
 }
 
-type TreeItem = { id: string, kind: 'workspace' | 'pane' | 'unplaced', parent?: string, agent?: string }
-
 function statusClass(status: string) {
   if (status === 'working' || status === 'active') return 'working'
   if (status === 'idle' || status === 'listening') return 'idle'
@@ -662,169 +691,177 @@ function statusClass(status: string) {
   return 'unknown'
 }
 
-function PaneTreeRow({ pane, tabLabel, focused, selected, setRef, onFocus, onOpen, onKeyDown }: {
-  pane: Pane | Row
+type SidebarNode = {
+  id: string
+  kind: 'root' | 'workspace' | 'pane' | 'unplaced'
+  name: string
+  children: string[]
+  count?: number
+  pane?: Pane | Row
   tabLabel?: string
-  focused: boolean
-  selected: boolean
-  setRef: (node: HTMLDivElement | null) => void
-  onFocus: () => void
-  onOpen: () => void
-  onKeyDown: (event: React.KeyboardEvent) => void
-}) {
-  const hasAgent = pane.agent !== '-'
-  const name = hasAgent ? pane.agent : ('label' in pane && pane.label) || pane.pane_id
-  const signal = hasAgent && pane.bus_status !== '-' ? pane.bus_status : ''
-  return <div
-    ref={setRef}
-    role="treeitem"
-    aria-level={2}
-    aria-selected={hasAgent && selected}
-    tabIndex={focused ? 0 : -1}
-    className={`tree-row pane-row${hasAgent ? ' agent-row' : ' shell-row'}${focused ? ' focused' : ''}`}
-    title={`${pane.pane_id}${tabLabel ? ` · ${tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}`}
-    onFocus={onFocus}
-    onClick={onOpen}
-    onKeyDown={onKeyDown}
-  >
-    <span className={`status-dot ${statusClass(pane.herdr_status)}`} aria-label={`Herdr ${pane.herdr_status}`} />
-    <span className="tree-name">{name}</span>
-    {signal && <span className="bus-status">{signal}</span>}
-    {hasAgent && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}
-  </div>
 }
 
-function FleetSidebar({ board, activeAgent, onOpenAgent }: {
+function FleetSidebar({ board, activeAgent, onOpenAgent, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems }: {
   board: Board | null
   activeAgent?: string
   onOpenAgent: (name: string) => void
+  expandedItems: string[] | null
+  onExpandedItems: (items: string[]) => void
+  knownWorkspaceItems: string[] | null
+  onKnownWorkspaceItems: (items: string[]) => void
 }) {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({ unplaced: true })
-  const [focusID, setFocusID] = useState('')
-  const refs = useRef(new Map<string, HTMLDivElement>())
+  const [selectedItems, setSelectedItems] = useState<string[]>([])
+
+  const nodes = useMemo(() => {
+    const result = new Map<string, SidebarNode>()
+    const root: SidebarNode = { id: 'tree-root', kind: 'root', name: 'Fleet', children: [] }
+    result.set(root.id, root)
+    if (!board) return result
+
+    const workspaces = new Map(board.workspaces.map((workspace) => [workspace.workspace_id, workspace]))
+    const workspaceChildren = new Map<string, string[]>()
+    board.workspaces.forEach((workspace) => workspaceChildren.set(workspace.workspace_id, []))
+    board.workspaces.forEach((workspace) => {
+      const id = `workspace:${workspace.workspace_id}`
+      if (workspace.worktree_of && workspaces.has(workspace.worktree_of)) {
+        workspaceChildren.get(workspace.worktree_of)?.push(id)
+      } else {
+        root.children.push(id)
+      }
+    })
+    board.workspaces.forEach((workspace) => {
+      const id = `workspace:${workspace.workspace_id}`
+      const children: string[] = []
+      workspace.tabs.forEach((tab) => tab.panes.forEach((pane) => {
+        const paneID = `pane:${pane.pane_id}`
+        children.push(paneID)
+        result.set(paneID, {
+          id: paneID,
+          kind: 'pane',
+          name: pane.agent !== '-' ? pane.agent : pane.label || pane.pane_id,
+          children: [],
+          pane,
+          tabLabel: `tab ${tab.number}: ${tab.label || tab.tab_id}`,
+        })
+      }))
+      children.push(...(workspaceChildren.get(workspace.workspace_id) ?? []))
+      result.set(id, {
+        id,
+        kind: 'workspace',
+        name: workspaceName(workspace.label, workspace.workspace_id),
+        children,
+        count: workspace.pane_count,
+      })
+    })
+    const unplaced: SidebarNode = { id: 'unplaced', kind: 'unplaced', name: 'Unplaced', children: [], count: board.unplaced.length }
+    board.unplaced.forEach((row) => {
+      const id = `unplaced:${row.agent}`
+      unplaced.children.push(id)
+      result.set(id, { id, kind: 'pane', name: row.agent, children: [], pane: row })
+    })
+    root.children.push(unplaced.id)
+    result.set(unplaced.id, unplaced)
+    return result
+  }, [board])
 
   useEffect(() => {
     if (!board) return
-    setExpanded((current) => {
-      const next = { ...current }
-      board.workspaces.forEach((workspace) => {
-        if (!(workspace.workspace_id in next)) next[workspace.workspace_id] = true
-      })
-      return next
-    })
-    setFocusID((current) => current || board.workspaces[0]?.workspace_id || 'unplaced')
-  }, [board])
+    const workspaceItems = [...nodes.values()].filter((node) => node.kind === 'workspace').map((node) => node.id)
+    if (expandedItems === null) {
+      onExpandedItems([...nodes.values()].filter((node) => node.kind === 'workspace' || node.kind === 'unplaced').map((node) => node.id))
+      onKnownWorkspaceItems(workspaceItems)
+      return
+    }
+    if (knownWorkspaceItems === null) {
+      // Layouts saved before knownWorkspaceItems existed keep their explicit
+      // expansion state; subsequent workspace arrivals can then default open.
+      onKnownWorkspaceItems(workspaceItems)
+      return
+    }
+    const known = new Set(knownWorkspaceItems)
+    const unseen = workspaceItems.filter((id) => !known.has(id))
+    if (unseen.length === 0) return
+    onExpandedItems([...new Set([...expandedItems, ...unseen])])
+    onKnownWorkspaceItems([...new Set([...knownWorkspaceItems, ...workspaceItems])])
+  }, [board, expandedItems, knownWorkspaceItems, nodes, onExpandedItems, onKnownWorkspaceItems])
 
-  const items = useMemo(() => {
-    const visible: TreeItem[] = []
-    board?.workspaces.forEach((workspace) => {
-      visible.push({ id: workspace.workspace_id, kind: 'workspace' })
-      if (expanded[workspace.workspace_id]) {
-        workspace.tabs.forEach((tab) => tab.panes.forEach((pane) => visible.push({
-          id: `pane:${pane.pane_id}`,
-          kind: 'pane',
-          parent: workspace.workspace_id,
-          agent: pane.agent !== '-' ? pane.agent : undefined,
-        })))
-      }
-    })
-    visible.push({ id: 'unplaced', kind: 'unplaced' })
-    if (expanded.unplaced) board?.unplaced.forEach((row) => visible.push({ id: `unplaced:${row.agent}`, kind: 'pane', parent: 'unplaced', agent: row.agent }))
-    return visible
-  }, [board, expanded])
+  useEffect(() => {
+    if (!activeAgent) {
+      setSelectedItems([])
+      return
+    }
+    const match = [...nodes.values()].find((node) => node.kind === 'pane' && node.pane?.agent === activeAgent)
+    setSelectedItems(match ? [match.id] : [])
+  }, [activeAgent, nodes])
 
-  const focus = (id: string) => {
-    setFocusID(id)
-    requestAnimationFrame(() => refs.current.get(id)?.focus())
-  }
-  const toggle = (id: string) => setExpanded((current) => ({ ...current, [id]: !current[id] }))
-  const keyDown = (item: TreeItem) => (event: React.KeyboardEvent) => {
-    const index = items.findIndex((candidate) => candidate.id === item.id)
-    if (event.key === 'ArrowDown' && index < items.length - 1) focus(items[index + 1].id)
-    else if (event.key === 'ArrowUp' && index > 0) focus(items[index - 1].id)
-    else if (event.key === 'Home') focus(items[0].id)
-    else if (event.key === 'End') focus(items[items.length - 1].id)
-    else if (event.key === 'ArrowRight' && (item.kind === 'workspace' || item.kind === 'unplaced')) {
-      if (!expanded[item.id]) toggle(item.id)
-      else if (items[index + 1]?.parent === item.id) focus(items[index + 1].id)
-    } else if (event.key === 'ArrowLeft') {
-      if ((item.kind === 'workspace' || item.kind === 'unplaced') && expanded[item.id]) toggle(item.id)
-      else if (item.parent) focus(item.parent)
-    } else if (event.key === 'Enter' || event.key === ' ') {
-      if (item.kind === 'workspace' || item.kind === 'unplaced') toggle(item.id)
-      else if (item.agent) onOpenAgent(item.agent)
-    } else return
-    event.preventDefault()
-  }
+  const tree = useTree<SidebarNode>({
+    rootItemId: 'tree-root',
+    getItemName: (item) => item.getItemData().name,
+    isItemFolder: (item) => item.getItemData().children.length > 0,
+    dataLoader: {
+      getItem: (id) => nodes.get(id) ?? nodes.get('tree-root')!,
+      getChildren: (id) => nodes.get(id)?.children ?? [],
+    },
+    state: { expandedItems: expandedItems ?? emptyExpandedItems, selectedItems },
+    setExpandedItems: (update) => onExpandedItems(typeof update === 'function' ? update(expandedItems ?? emptyExpandedItems) : update),
+    setSelectedItems: (update) => setSelectedItems((current) => typeof update === 'function' ? update(current) : update),
+    onPrimaryAction: (item) => {
+      const node = item.getItemData()
+      if (node.pane?.agent && node.pane.agent !== '-') onOpenAgent(node.pane.agent)
+    },
+    hotkeys: {
+      customPrimaryActionEnter: {
+        hotkey: 'Enter',
+        preventDefault: true,
+        handler: (_event, currentTree) => currentTree.getFocusedItem()?.primaryAction(),
+      },
+      customPrimaryActionSpace: {
+        hotkey: 'Space',
+        preventDefault: true,
+        handler: (_event, currentTree) => currentTree.getFocusedItem()?.primaryAction(),
+      },
+    },
+    features: [syncDataLoaderFeature, selectionFeature, hotkeysCoreFeature],
+  })
 
-  const workspaceNode = (workspace: Board['workspaces'][number]) => {
-    const item: TreeItem = { id: workspace.workspace_id, kind: 'workspace' }
-    return <div className="workspace-tree" role="none" key={workspace.workspace_id}>
-      <div
-        ref={(node) => { if (node) refs.current.set(item.id, node); else refs.current.delete(item.id) }}
-        role="treeitem"
-        aria-level={1}
-        aria-expanded={Boolean(expanded[item.id])}
-        tabIndex={focusID === item.id ? 0 : -1}
-        className={`tree-row workspace-row${focusID === item.id ? ' focused' : ''}`}
-        onFocus={() => setFocusID(item.id)}
-        onClick={() => toggle(item.id)}
-        onKeyDown={keyDown(item)}
-      >
-        <span className="disclosure" aria-hidden="true">{expanded[item.id] ? '▾' : '▸'}</span>
-        <span className="tree-name" title={workspace.label || workspace.workspace_id}>{workspaceName(workspace.label, workspace.workspace_id)}</span>
-        <span className="count-badge">{workspace.pane_count}</span>
-      </div>
-      {expanded[item.id] && <div role="group">
-        {workspace.tabs.flatMap((tab) => tab.panes.map((pane) => {
-            const paneItem: TreeItem = { id: `pane:${pane.pane_id}`, kind: 'pane', parent: item.id, agent: pane.agent !== '-' ? pane.agent : undefined }
-            return <PaneTreeRow
-              key={pane.pane_id}
-              pane={pane}
-              tabLabel={`tab ${tab.number}: ${tab.label || tab.tab_id}`}
-              focused={focusID === paneItem.id}
-              selected={activeAgent === paneItem.agent}
-              setRef={(node) => { if (node) refs.current.set(paneItem.id, node); else refs.current.delete(paneItem.id) }}
-              onFocus={() => setFocusID(paneItem.id)}
-              onOpen={() => { setFocusID(paneItem.id); if (paneItem.agent) onOpenAgent(paneItem.agent) }}
-              onKeyDown={keyDown(paneItem)}
-            />
-          }))}
-      </div>}
-    </div>
-  }
+  useEffect(() => {
+    tree.rebuildTree()
+  }, [nodes, tree])
 
-  const unplacedItem: TreeItem = { id: 'unplaced', kind: 'unplaced' }
   return <aside className="fleet-sidebar" aria-label="Fleet sidebar">
     <div className="sidebar-heading"><span className="status-dot working" /><strong>Fleet</strong><span>herdr truth</span></div>
-    {!board ? <p className="sidebar-loading">Waiting for fleet…</p> : <div className="fleet-tree" role="tree" aria-label="Workspaces and panes">
-      {board.workspaces.map(workspaceNode)}
-      <div className="unplaced-tree" role="none">
-        <div
-          ref={(node) => { if (node) refs.current.set('unplaced', node); else refs.current.delete('unplaced') }}
-          role="treeitem"
-          aria-level={1}
-          aria-expanded={Boolean(expanded.unplaced)}
-          tabIndex={focusID === 'unplaced' ? 0 : -1}
-          className={`tree-row workspace-row unplaced-row${focusID === 'unplaced' ? ' focused' : ''}`}
-          onFocus={() => setFocusID('unplaced')}
-          onClick={() => toggle('unplaced')}
-          onKeyDown={keyDown(unplacedItem)}
-        ><span className="disclosure" aria-hidden="true">{expanded.unplaced ? '▾' : '▸'}</span><span className="tree-name">Unplaced</span><span className="count-badge">{board.unplaced.length}</span></div>
-        {expanded.unplaced && <div role="group">{board.unplaced.map((row) => {
-          const item: TreeItem = { id: `unplaced:${row.agent}`, kind: 'pane', parent: 'unplaced', agent: row.agent }
-          return <PaneTreeRow
-            key={row.agent}
-            pane={row}
-            focused={focusID === item.id}
-            selected={activeAgent === row.agent}
-            setRef={(node) => { if (node) refs.current.set(item.id, node); else refs.current.delete(item.id) }}
-            onFocus={() => setFocusID(item.id)}
-            onOpen={() => { setFocusID(item.id); onOpenAgent(row.agent) }}
-            onKeyDown={keyDown(item)}
-          />
-        })}</div>}
-      </div>
+    {!board ? <p className="sidebar-loading">Waiting for fleet…</p> : <div {...tree.getContainerProps('Workspaces and agents')} className="fleet-tree">
+      {tree.getItems().map((item) => {
+        const node = item.getItemData()
+        const pane = node.pane
+        const signal = pane && pane.agent !== '-' && pane.bus_status !== '-' ? pane.bus_status : ''
+        const folder = item.isFolder()
+        return <div
+          {...item.getProps()}
+          key={item.getId()}
+          className={`tree-row ${node.kind === 'pane' ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' ? ' unplaced-row' : ''}${item.isFocused() ? ' tree-focused' : ''}${item.isSelected() ? ' selected' : ''}`}
+          style={{ paddingLeft: `${item.getItemMeta().level * 16 + 5}px` }}
+          title={pane ? `${pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}` : node.name}
+          onFocus={() => item.setFocused()}
+        >
+          {folder ? <button
+            className={`disclosure${item.isExpanded() ? ' expanded' : ''}`}
+            type="button"
+            aria-label={`${item.isExpanded() ? 'Collapse' : 'Expand'} ${node.name}`}
+            title={`${item.isExpanded() ? 'Collapse' : 'Expand'} ${node.name}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              if (item.isExpanded()) item.collapse()
+              else item.expand()
+            }}
+          ><span aria-hidden="true">›</span></button> : <span className="disclosure-spacer" />}
+          {pane && <span className={`status-dot ${statusClass(pane.herdr_status)}`} aria-label={`Herdr ${pane.herdr_status}`} />}
+          <span className="tree-name">{node.name}</span>
+          {folder && <span className="count-badge">{node.count ?? node.children.length}</span>}
+          {signal && <span className="bus-status">{signal}</span>}
+          {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}
+        </div>
+      })}
     </div>}
   </aside>
 }
@@ -842,6 +879,8 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const [tabs, setTabs] = useState(initial.tabs)
   const [activeTab, setActiveTab] = useState(initial.activeTab)
   const [sidebarWidth, setSidebarWidth] = useState(initial.sidebarWidth)
+  const [expandedItems, setExpandedItems] = useState<string[] | null>(initial.expandedItems)
+  const [knownWorkspaceItems, setKnownWorkspaceItems] = useState<string[] | null>(initial.knownWorkspaceItems)
   const [viewer, setViewer] = useState('unresolved')
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
   const agentNames = tabs.flatMap((tab) => tab.kind === 'agent' ? [tab.name] : [])
@@ -874,13 +913,15 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       activeTab,
       sidebarWidth,
     }
+    if (expandedItems !== null) value.expandedItems = expandedItems
+    if (knownWorkspaceItems !== null) value.knownWorkspaceItems = knownWorkspaceItems
     try {
       localStorage.setItem(layoutKey, JSON.stringify(value))
     } catch {
       // Viewer persistence is best-effort; the live shell remains usable when
       // browser storage is unavailable or full.
     }
-  }, [tabs, activeTab, sidebarWidth])
+  }, [tabs, activeTab, sidebarWidth, expandedItems, knownWorkspaceItems])
 
   const close = (id: string) => {
     const index = tabs.findIndex((tab) => tab.id === id)
@@ -888,6 +929,26 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     setTabs(nextTabs)
     if (activeTab === id) activate(nextTabs[Math.max(0, index - 1)] ?? boardTab)
   }
+
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      const command = event.ctrlKey || event.metaKey
+      if (command && event.key.toLowerCase() === 'w' && active.kind === 'agent') {
+        close(active.id)
+      } else if (command && (event.key === 'PageDown' || event.key === 'PageUp')) {
+        const index = tabs.findIndex((tab) => tab.id === active.id)
+        const delta = event.key === 'PageDown' ? 1 : -1
+        activate(tabs[(index + delta + tabs.length) % tabs.length])
+      } else if (event.altKey && event.key === '1') {
+        document.querySelector<HTMLElement>('.fleet-tree [role="treeitem"]')?.focus()
+      } else if (event.altKey && event.key === '2') {
+        document.querySelector<HTMLTextAreaElement>('.hosted-panel:not([hidden]) #message')?.focus()
+      } else return
+      event.preventDefault()
+    }
+    window.addEventListener('keydown', shortcut)
+    return () => window.removeEventListener('keydown', shortcut)
+  })
   const startResize = (event: React.PointerEvent) => {
     const startX = event.clientX
     const startWidth = sidebarWidth
@@ -902,7 +963,15 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
 
   return <div className="app-shell">
     <div className="sidebar-region" style={{ width: sidebarWidth }}>
-      <FleetSidebar board={board} activeAgent={active.kind === 'agent' ? active.name : undefined} onOpenAgent={(name) => activate(agentTab(name))} />
+      <FleetSidebar
+        board={board}
+        activeAgent={active.kind === 'agent' ? active.name : undefined}
+        onOpenAgent={(name) => activate(agentTab(name))}
+        expandedItems={expandedItems}
+        onExpandedItems={setExpandedItems}
+        knownWorkspaceItems={knownWorkspaceItems}
+        onKnownWorkspaceItems={setKnownWorkspaceItems}
+      />
     </div>
     <div
       className="sidebar-resizer"
@@ -922,7 +991,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     />
     <section className="shell-main">
       <div className="tab-strip" role="tablist" aria-label="Open panels">
-        {tabs.map((tab, index) => <div role="presentation" className={`shell-tab${tab.id === activeTab ? ' active' : ''}`} key={tab.id}>
+        {tabs.map((tab, index) => <div role="presentation" className={`shell-tab${tab.id === activeTab ? ' active' : ''}`} key={tab.id} onAuxClick={(event) => { if (event.button === 1 && tab.kind === 'agent') close(tab.id) }}>
           <button
             ref={(node) => { if (node) tabRefs.current.set(tab.id, node); else tabRefs.current.delete(tab.id) }}
             id={`shell-tab-${index}`}
@@ -948,7 +1017,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
         <button className="new-tab" type="button" title="Open agents from the fleet sidebar" aria-label="Open an agent from the fleet sidebar">+</button>
         <span className="tab-strip-spacer" />
         <span className={`stream-chip${problems.stream ? ' fault' : ''}`}>{problems.stream ? 'SSE: reconnecting' : 'SSE: connected'}</span>
-        <span className="layout-chip">layout: this browser</span>
+        <span className="layout-chip" title="Shortcuts: Ctrl/Cmd+W close tab · Ctrl/Cmd+PageUp/PageDown previous/next tab · Alt+1 focus sidebar · Alt+2 focus composer">layout: this browser</span>
       </div>
       <div className="shell-banners">{Object.entries(problems).map(([source, detail]) => <Banner source={source} detail={detail} key={source} />)}</div>
       <div className="panel-host">

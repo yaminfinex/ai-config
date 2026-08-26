@@ -35,6 +35,7 @@ func fixtureDeps() dependencies {
 				Agents:     []herdrcli.Agent{{PaneID: "p1", Name: "dore", Agent: "codex", Status: "working"}},
 			}, nil
 		},
+		worktrees: func([]herdrcli.Workspace) (map[string]string, error) { return map[string]string{}, nil },
 		roster: func() ([]hcomidentity.Row, error) {
 			return []hcomidentity.Row{{Name: "dore", Tool: "codex", Status: "active", SessionID: "session-dore", LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}}}, nil
 		},
@@ -98,6 +99,9 @@ func TestFleetEndpointPinsPathAndBoardJSONShape(t *testing.T) {
 		t.Fatalf("workspaces = %#v", body["workspaces"])
 	}
 	workspace := workspaces[0].(map[string]any)
+	if _, present := workspace["worktree_of"]; present {
+		t.Fatalf("root workspace unexpectedly has worktree_of: %#v", workspace)
+	}
 	tabs := workspace["tabs"].([]any)
 	panes := tabs[0].(map[string]any)["panes"].([]any)
 	pane := panes[0].(map[string]any)

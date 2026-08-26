@@ -39,6 +39,7 @@ const (
 
 type dependencies struct {
 	snapshot   func() (herdrcli.Snapshot, error)
+	worktrees  func([]herdrcli.Workspace) (map[string]string, error)
 	roster     func() ([]hcomidentity.Row, error)
 	messages   func(context.Context, *hcomevents.Cursor, func(hcomevents.Message) error, func() error) error
 	transcript func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error)
@@ -55,6 +56,7 @@ type dependencies struct {
 
 var liveDependencies = dependencies{
 	snapshot:   herdrcli.LiveSnapshot,
+	worktrees:  herdrcli.WorktreeParents,
 	roster:     hcomidentity.List,
 	messages:   hcomevents.Subscribe,
 	transcript: hcomtranscript.Window,
@@ -387,7 +389,11 @@ func readBoard(deps dependencies) (fleetview.Board, error) {
 	if err != nil {
 		return fleetview.Board{}, err
 	}
-	return fleetview.Build(snapshot, roster), nil
+	parents, err := deps.worktrees(snapshot.Workspaces)
+	if err != nil {
+		return fleetview.Board{}, sourceError{"herdr", err}
+	}
+	return fleetview.Build(snapshot, roster, parents), nil
 }
 
 func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, error) {
@@ -1121,7 +1127,11 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		if readErr != nil {
 			return fleetview.Board{}, nil, readErr
 		}
-		return fleetview.Build(snapshot, roster), roster, nil
+		parents, readErr := deps.worktrees(snapshot.Workspaces)
+		if readErr != nil {
+			return fleetview.Board{}, nil, sourceError{"herdr", readErr}
+		}
+		return fleetview.Build(snapshot, roster, parents), roster, nil
 	}
 	board, roster, err := readEventBoard()
 	if err != nil {

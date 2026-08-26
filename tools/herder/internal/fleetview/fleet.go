@@ -28,6 +28,7 @@ type Board struct {
 
 type Workspace struct {
 	WorkspaceID string `json:"workspace_id"`
+	WorktreeOf  string `json:"worktree_of,omitempty"`
 	Number      int    `json:"number"`
 	Label       string `json:"label"`
 	Focused     bool   `json:"focused"`
@@ -178,7 +179,7 @@ func JoinRows(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) []Row {
 
 // Build preserves the herdr workspace/tab/pane hierarchy and enriches agent
 // panes with the exact-pane-ID join. Bus-only rows remain top-level gaps.
-func Build(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) Board {
+func Build(snapshot herdrcli.Snapshot, roster []hcomidentity.Row, worktreeParents ...map[string]string) Board {
 	rows := JoinRows(snapshot, roster)
 	byPane := make(map[string]Row)
 	board := Board{Workspaces: []Workspace{}, Unplaced: []Row{}}
@@ -222,9 +223,14 @@ func Build(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) Board {
 		if tabs == nil {
 			tabs = []Tab{}
 		}
+		worktreeOf := ""
+		if len(worktreeParents) > 0 {
+			worktreeOf = worktreeParents[0][source.WorkspaceID]
+		}
 		board.Workspaces = append(board.Workspaces, Workspace{
 			WorkspaceID: source.WorkspaceID, Number: source.Number, Label: source.Label, Focused: source.Focused,
-			PaneCount: source.PaneCount, TabCount: source.TabCount, ActiveTabID: source.ActiveTabID,
+			WorktreeOf: worktreeOf,
+			PaneCount:  source.PaneCount, TabCount: source.TabCount, ActiveTabID: source.ActiveTabID,
 			AgentStatus: source.AgentStatus, Tabs: tabs,
 		})
 	}

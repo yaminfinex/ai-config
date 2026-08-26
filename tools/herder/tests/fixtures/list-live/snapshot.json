@@ -7,10 +7,30 @@
       "number": 1,
       "label": "ai-config",
       "focused": true,
-      "pane_count": 3,
+      "pane_count": 2,
       "tab_count": 1,
       "active_tab_id": "t1",
-      "agent_status": "working"
+      "agent_status": "working",
+      "worktree": {
+        "repo_root": "/repo",
+        "checkout_path": "/repo",
+        "is_linked_worktree": false
+      }
+    },
+    {
+      "workspace_id": "w2",
+      "number": 2,
+      "label": "ai-config-feature",
+      "focused": false,
+      "pane_count": 1,
+      "tab_count": 1,
+      "active_tab_id": "t2",
+      "agent_status": "idle",
+      "worktree": {
+        "repo_root": "/repo",
+        "checkout_path": "/repo-feature",
+        "is_linked_worktree": true
+      }
     }
   ],
   "tabs": [
@@ -20,8 +40,17 @@
       "number": 1,
       "label": "agents",
       "focused": true,
-      "pane_count": 3,
+      "pane_count": 2,
       "agent_status": "working"
+    },
+    {
+      "tab_id": "t2",
+      "workspace_id": "w2",
+      "number": 1,
+      "label": "agents",
+      "focused": false,
+      "pane_count": 1,
+      "agent_status": "idle"
     }
   ],
   "panes": [
@@ -34,9 +63,9 @@
       "agent_session": "session-mavu"
     },
     {
-      "pane_id": "w1:p2",
-      "workspace_id": "w1",
-      "tab_id": "t1",
+      "pane_id": "w2:p1",
+      "workspace_id": "w2",
+      "tab_id": "t2",
       "agent": "claude",
       "agent_status": "idle",
       "agent_session": "session-zira"
@@ -55,7 +84,7 @@
       "agent_status": "active"
     },
     {
-      "pane_id": "w1:p2",
+      "pane_id": "w2:p1",
       "name": "zira",
       "agent": "claude",
       "agent_status": "idle"
