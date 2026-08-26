@@ -113,7 +113,7 @@ func LiveSnapshot() (Snapshot, error) {
 		if err != nil {
 			return Snapshot{}, err
 		}
-		if status.protocol != supportedProtocol || !status.compatible {
+		if !supportsServerProtocol(status) {
 			return Snapshot{}, fmt.Errorf("herdr protocol incompatible: list supports %d, server reported %d (compatible=%t)", supportedProtocol, status.protocol, status.compatible)
 		}
 		socket = status.socket
@@ -128,6 +128,13 @@ type serverStatus struct {
 	socket     string
 	protocol   int
 	compatible bool
+}
+
+// A newer server may extend the protocol without breaking older clients. Herdr
+// reports that relationship explicitly; older servers cannot satisfy fields a
+// client built for this protocol may require.
+func supportsServerProtocol(status serverStatus) bool {
+	return status.compatible && status.protocol >= supportedProtocol
 }
 
 func parseServerStatus(out []byte) (serverStatus, error) {

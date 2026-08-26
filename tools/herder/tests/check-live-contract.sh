@@ -280,8 +280,8 @@ except json.JSONDecodeError:
                 pass
         elif key.strip() == "compatible":
             compatible = value.strip().lower()
-if protocol != 19:
-    print(f"herdr status server reported protocol {protocol!r}, expected 19", file=sys.stderr)
+if not isinstance(protocol, int) or protocol < 19:
+    print(f"herdr status server reported protocol {protocol!r}, older than supported protocol 19", file=sys.stderr)
     sys.exit(2)
 if compatible not in (True, "yes"):
     print(f"herdr status server reported incompatible status {compatible!r}", file=sys.stderr)

@@ -51,6 +51,38 @@ func TestParseServerStatusJSONAndText(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("socket only", func(t *testing.T) {
+		status, err := parseServerStatus([]byte(`{"result":{"socket":"/tmp/herdr.sock"}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.socket != "/tmp/herdr.sock" || status.protocol != 0 || status.compatible {
+			t.Fatalf("status = %#v", status)
+		}
+	})
+}
+
+func TestSupportsServerProtocol(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		protocol   int
+		compatible bool
+		want       bool
+	}{
+		{name: "current compatible", protocol: 19, compatible: true, want: true},
+		{name: "newer compatible", protocol: 20, compatible: true, want: true},
+		{name: "newer incompatible", protocol: 20, compatible: false, want: false},
+		{name: "older compatible", protocol: 18, compatible: true, want: false},
+		{name: "absent status fields", protocol: 0, compatible: false, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := supportsServerProtocol(serverStatus{protocol: test.protocol, compatible: test.compatible})
+			if got != test.want {
+				t.Fatalf("supportsServerProtocol(protocol=%d, compatible=%t) = %t, want %t", test.protocol, test.compatible, got, test.want)
+			}
+		})
+	}
 }
 
 func TestPaneRejectsMalformedAgentSession(t *testing.T) {
