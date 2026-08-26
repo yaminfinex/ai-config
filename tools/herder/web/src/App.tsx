@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { apiProblem, getFleet, getViewer, queryKeys } from './api/client'
+import { apiProblem, getFleet, queryKeys } from './api/client'
+import { viewerQueryOptions } from './api/queries'
 import { BoardPanel } from './features/board/BoardPanel'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
 import { AgentPanel } from './features/transcript/AgentPanel'
@@ -72,7 +73,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const queryClient = useQueryClient()
   const agentNames = tabs.flatMap((tab) => tab.kind === 'agent' ? [tab.name] : [])
   const boardQuery = useQuery({ queryKey: queryKeys.fleet, queryFn: () => getFleet(), staleTime: Infinity, retry: false })
-  const viewerQuery = useQuery({ queryKey: queryKeys.viewer, queryFn: () => getViewer(), staleTime: Infinity, retry: false })
+  const viewerQuery = useQuery(viewerQueryOptions())
   const stream = useFleetStream(agentNames)
   const active = tabs.find((tab) => tab.id === activeTab) ?? boardTab
   const viewerFailure = viewerQuery.error ? apiProblem(viewerQuery.error) : null
