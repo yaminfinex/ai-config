@@ -41,3 +41,6 @@ vendor/*/coverage/
 .agents/plugins/
 .agents/projects/
 .agents/*.json
+.agents/scheduled_tasks.lock
+
+.mission
