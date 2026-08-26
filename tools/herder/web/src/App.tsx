@@ -7,7 +7,6 @@ import type {
   Refusal,
   Row,
   SubstrateEvent,
-  Tab,
   TranscriptExchange,
   TranscriptPage,
 } from './types'
@@ -572,8 +571,9 @@ function statusClass(status: string) {
   return 'unknown'
 }
 
-function PaneTreeRow({ pane, focused, selected, setRef, onFocus, onOpen, onKeyDown }: {
+function PaneTreeRow({ pane, tabLabel, focused, selected, setRef, onFocus, onOpen, onKeyDown }: {
   pane: Pane | Row
+  tabLabel?: string
   focused: boolean
   selected: boolean
   setRef: (node: HTMLDivElement | null) => void
@@ -591,7 +591,7 @@ function PaneTreeRow({ pane, focused, selected, setRef, onFocus, onOpen, onKeyDo
     aria-selected={hasAgent && selected}
     tabIndex={focused ? 0 : -1}
     className={`tree-row pane-row${hasAgent ? ' agent-row' : ' shell-row'}${focused ? ' focused' : ''}`}
-    title={`${pane.pane_id} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}`}
+    title={`${pane.pane_id}${tabLabel ? ` · ${tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}`}
     onFocus={onFocus}
     onClick={onOpen}
     onKeyDown={onKeyDown}
@@ -685,13 +685,12 @@ function FleetSidebar({ board, activeAgent, onOpenAgent }: {
         <span className="count-badge">{workspace.pane_count}</span>
       </div>
       {expanded[item.id] && <div role="group">
-        {workspace.tabs.map((tab: Tab) => <div className="tab-tree-group" key={tab.tab_id}>
-          <div className="tree-tab-separator" role="presentation"><span>tab {tab.label || tab.number}</span></div>
-          {tab.panes.map((pane) => {
+        {workspace.tabs.flatMap((tab) => tab.panes.map((pane) => {
             const paneItem: TreeItem = { id: `pane:${pane.pane_id}`, kind: 'pane', parent: item.id, agent: pane.agent !== '-' ? pane.agent : undefined }
             return <PaneTreeRow
               key={pane.pane_id}
               pane={pane}
+              tabLabel={`tab ${tab.number}: ${tab.label || tab.tab_id}`}
               focused={focusID === paneItem.id}
               selected={activeAgent === paneItem.agent}
               setRef={(node) => { if (node) refs.current.set(paneItem.id, node); else refs.current.delete(paneItem.id) }}
@@ -699,8 +698,7 @@ function FleetSidebar({ board, activeAgent, onOpenAgent }: {
               onOpen={() => { setFocusID(paneItem.id); if (paneItem.agent) onOpenAgent(paneItem.agent) }}
               onKeyDown={keyDown(paneItem)}
             />
-          })}
-        </div>)}
+          }))}
       </div>}
     </div>
   }
