@@ -41,6 +41,18 @@ func TestBuildPreservesHierarchyAndBothGapDirections(t *testing.T) {
 	}
 }
 
+func TestBuildCarriesOnlySuppliedWorktreeParent(t *testing.T) {
+	snapshot := herdrcli.Snapshot{Workspaces: []herdrcli.Workspace{
+		{WorkspaceID: "root", Label: "repo"},
+		{WorkspaceID: "linked", Label: "feature"},
+		{WorkspaceID: "orphan", Label: "other"},
+	}}
+	board := Build(snapshot, nil, map[string]string{"linked": "root"})
+	if board.Workspaces[0].WorktreeOf != "" || board.Workspaces[1].WorktreeOf != "root" || board.Workspaces[2].WorktreeOf != "" {
+		t.Fatalf("worktree parents = %#v", board.Workspaces)
+	}
+}
+
 func TestBuildDoesNotInferPlacementFromMatchingName(t *testing.T) {
 	snapshot := herdrcli.Snapshot{
 		Workspaces: []herdrcli.Workspace{{WorkspaceID: "w1", TabCount: 1, PaneCount: 1}},

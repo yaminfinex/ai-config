@@ -24,6 +24,7 @@ export interface Tab {
 
 export interface Workspace {
   workspace_id: string
+  worktree_of?: string
   number: number
   label: string
   focused: boolean

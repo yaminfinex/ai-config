@@ -56,8 +56,9 @@ type Workspace struct {
 }
 
 type WorkspaceWorktree struct {
-	RepoRoot     string `json:"repo_root"`
-	CheckoutPath string `json:"checkout_path"`
+	RepoRoot         string `json:"repo_root"`
+	CheckoutPath     string `json:"checkout_path"`
+	IsLinkedWorktree bool   `json:"is_linked_worktree"`
 }
 
 // UnmarshalJSON accepts both herdr agent_session shapes: a bare session ID or

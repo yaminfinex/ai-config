@@ -53,6 +53,10 @@ GET `/api/fleet`
   a top-level `unplaced` list — the same two-way gap honesty as
   `herder list`, structured. This endpoint IS the list join; one
   shared Go package serves both.
+  A workspace that herdr explicitly reports as an open linked worktree
+  additionally carries `worktree_of: "<root-workspace-id>"`. The field is
+  absent when herdr does not provide a live parent relationship; clients must
+  never infer it from labels or paths.
 
 GET `/api/agents/{bus-name}`
   One agent: pane coordinate, tool, statuses, launch context, gap

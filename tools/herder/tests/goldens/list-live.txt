@@ -1,4 +1,4 @@
 PANE   AGENT  TOOL    HERDR   BUS        GAP
 -      vile   claude  -       active     no visible pane
 w1:p1  mavu   codex   active  listening  -
-w1:p2  zira   claude  idle    -          no bus row
+w2:p1  zira   claude  idle    -          no bus row

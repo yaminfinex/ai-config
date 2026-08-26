@@ -125,6 +125,17 @@ exit 2
 HCOM
 chmod +x "$ROOT/bin/hcom"
 
+cat >"$ROOT/bin/herdr" <<'HERDR'
+#!/usr/bin/env bash
+if [ "$*" = "worktree list --workspace w2" ]; then
+  printf '%s\n' '{"result":{"source":{"source_workspace_id":"w1"},"type":"worktree_list","worktrees":[{"is_linked_worktree":false,"open_workspace_id":"w1"},{"is_linked_worktree":true,"open_workspace_id":"w2"}]}}'
+  exit 0
+fi
+printf 'unexpected herdr args: %s\n' "$*" >&2
+exit 2
+HERDR
+chmod +x "$ROOT/bin/herdr"
+
 mkdir -p "$ROOT/action-root/tools/fleet"
 cat >"$ROOT/action-root/tools/fleet/spawn.sh" <<'SPAWN'
 #!/usr/bin/env bash
@@ -247,11 +258,17 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF '/agents/' "$ROOT/app.js" &&
   grep -qF 'herder.web.layout.v1' "$ROOT/app.js" &&
   grep -qF 'Fleet sidebar' "$ROOT/app.js" &&
+  grep -qF '@headless-tree/react' "$WEB_ROOT/package-lock.json" &&
+  grep -qF 'customPrimaryActionEnter' "$ROOT/app.js" &&
+  grep -qF 'customPrimaryActionSpace' "$ROOT/app.js" &&
+  grep -qF 'knownWorkspaceItems' "$ROOT/app.js" &&
+  grep -qF 'Shortcuts: Ctrl/Cmd+W close tab' "$ROOT/app.js" &&
+  grep -qF 'Collapse' "$ROOT/app.js" &&
   grep -qF 'aria-level' "$ROOT/app.js" &&
   grep -qF 'aria-expanded' "$ROOT/app.js" &&
   ! grep -qF 'tree-tab-separator' "$ROOT/app.js" &&
   curl -fsS "http://127.0.0.1:$port/agents/mavu" | grep -qF '<title>Herder fleet</title>'; then
-  pass "serve delivers built shell/sidebar without tab rows, valid tree levels, viewer layout persistence, board/agent routes, and direct SPA navigation"
+  pass "serve delivers built shell/sidebar with keyboard activation, unseen-workspace expansion, viewer layout persistence, valid tree levels, board/agent routes, and direct SPA navigation"
 else
   bad "embedded UI" "index=$(cat "$ROOT/index.html" 2>/dev/null || true)"
 fi
@@ -264,10 +281,13 @@ assert pane["pane_id"] == "w1:p1"
 assert pane["agent"] == "mavu"
 assert pane["tool"] == "codex"
 assert pane["gap"] == "-"
+assert "worktree_of" not in board["workspaces"][0]
+assert board["workspaces"][1]["worktree_of"] == "w1"
+assert board["workspaces"][1]["tabs"][0]["panes"][0]["agent"] == "zira"
 assert board["unplaced"][0]["agent"] == "vile"
 PY
 then
-  pass "fleet JSON preserves hierarchy, exact-pane join, and unplaced gaps"
+  pass "fleet JSON preserves hierarchy, explicit worktree parent, exact-pane join, and unplaced gaps"
 else
   bad "fleet JSON contract" "body=$(cat "$ROOT/fleet.json")"
 fi
@@ -426,9 +446,9 @@ events="$(curl --max-time 5 -Ns "http://127.0.0.1:$port/api/events?agents=mavu" 
   /^event:/ { print }
   /^data:/ { print; seen++; if (seen == 3) exit }
 ')"
-if grep -qF 'event: fleet' <<<"$events" && grep -qF 'event: message' <<<"$events" && grep -qF '"text":"fixture message"' <<<"$events" &&
+if grep -qF 'event: fleet' <<<"$events" && grep -qF '"worktree_of":"w1"' <<<"$events" && grep -qF 'event: message' <<<"$events" && grep -qF '"text":"fixture message"' <<<"$events" &&
   grep -qF 'event: exchange:mavu' <<<"$events" && grep -qF '"position":' <<<"$events"; then
-  pass "multiplexed events SSE carries fleet, hcom message, and subscribed transcript exchange"
+  pass "multiplexed events SSE carries worktree-enriched fleet, hcom message, and subscribed transcript exchange"
 else
   bad "events SSE frames" "frames=$events stderr=$(cat "$ROOT/events.err")"
 fi
