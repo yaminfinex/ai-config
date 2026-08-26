@@ -128,9 +128,11 @@ GET `/api/events?agents={comma-separated-bus-names}` (SSE)
     stateless; revisit only if size ever bites);
   - `message`: one bus message involving any agent (id, from, to,
     thread, text);
-  - `exchange:{bus-name}`: one new full-detail transcript exchange for
-    a subscribed agent. The shell suppresses tool-level fields while
-    that panel is in `exchanges` mode;
+  - `entry:{bus-name}`: one immutable classified entry for a subscribed
+    agent. Its payload is byte-for-byte the same JSON projection as one
+    item in the entries endpoint's `entries` array (including quarantine
+    metadata when present). The frame wakes a `nextOffset` catch-up read;
+    the entries endpoint remains the source of truth;
   - `rewindow`: `{"agent":"<bus-name>"}` when that subscribed agent's
     session or transcript position resets; the shell discards the old
     window and fetches the current one;
@@ -140,12 +142,30 @@ GET `/api/events?agents={comma-separated-bus-names}` (SSE)
   - `ping`: an empty client-visible heartbeat paired with the required
     SSE comment heartbeat (`: ping`) every 15s.
   Sourced from hcom's event subscription plus herdr snapshot polling
-  (proposed: 2s) and one transcript poller set per subscribed page-set,
-  diffed server-side. The shell owns reconnect: it closes any errored
+  (proposed: 2s) and one Claude-session entry tailer set per subscribed
+  page-set. The shell owns reconnect: it closes any errored
   EventSource, rebuilds with bounded backoff and no stale cursor, and
   rebuilds if neither data nor heartbeat arrives for 45s. Its
   `reconnecting` indicator is present only while a rebuild is scheduled
   or in flight.
+
+### AMENDMENT (conductor, 2026-08-26) — multiplexed transcript frames are entries
+
+The original v1 text specified `exchange:{bus-name}` frames on the
+multiplexed stream. That is struck and replaced by the `entry:{bus-name}`
+shape above. Exchange positions advance only when a new exchange begins;
+assistant text, thinking, tool calls, and tool results can append to the
+same position and therefore produced no wake-up. That made correct live
+follow impossible even after the entries endpoint became canonical.
+
+The stream now tails the same immutable `claudesession` entries served by
+the windowed endpoint. It emits only content appended after subscription;
+reconnect catch-up always reads from the endpoint using `sessionId` plus
+`nextOffset`. Session replacement or truncation still emits `rewindow`,
+and the client discards its window and refetches. There is still exactly
+one multiplexed EventSource per page. The legacy per-agent
+`/transcript/stream` endpoint remains exchange-shaped for direct API
+consumers and is not used by the web shell.
 
 ## Writes (plain HTTP POST — ruled: no WebSocket in v1)
 

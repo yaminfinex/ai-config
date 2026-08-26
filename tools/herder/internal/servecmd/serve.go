@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"ai-config/tools/herder/internal/claudesession"
 	"ai-config/tools/herder/internal/fleetview"
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
@@ -45,6 +46,8 @@ type dependencies struct {
 	transcript func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error)
 	latest     func(context.Context, string, hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error)
 	rangeRead  func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error)
+	entryEnd   func(hcomidentity.Row) (int64, error)
+	entryTail  func(hcomidentity.Row, claudesession.Cursor, int) (claudesession.TailResult, error)
 	sender     func(context.Context, string) (string, error)
 	send       func(context.Context, string, string, string) error
 	spawn      func(context.Context, []string) (webaction.Result, error)
@@ -62,6 +65,8 @@ var liveDependencies = dependencies{
 	transcript: hcomtranscript.Window,
 	latest:     hcomtranscript.Latest,
 	rangeRead:  hcomtranscript.Range,
+	entryEnd:   entryTailEnd,
+	entryTail:  entryTail,
 	sender:     webidentity.Sender,
 	send:       hcommessage.SendRequest,
 	spawn:      webaction.Spawn,
@@ -128,7 +133,7 @@ type transcriptReset struct {
 type eventTranscript struct {
 	initialized bool
 	session     string
-	position    int
+	offset      int64
 }
 
 type messageRequest struct {
@@ -1029,13 +1034,13 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	}
 	syncTranscripts := func(roster []hcomidentity.Row, initial bool) bool {
 		pendingFailures := make([]substrate, 0)
-		sessions := make(map[string]string, len(roster))
+		rows := make(map[string]hcomidentity.Row, len(roster))
 		for _, row := range roster {
-			sessions[row.Name] = row.SessionID
+			rows[row.Name] = row
 		}
 		for _, name := range agents {
 			state := transcripts[name]
-			session, exists := sessions[name]
+			row, exists := rows[name]
 			if !exists {
 				err := fmt.Errorf("agent %q is not on the hcom bus", name)
 				if initial {
@@ -1047,13 +1052,32 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 				}
 				continue
 			}
-			latest, hasLatest, latestErr := deps.latest(ctx, name, hcomtranscript.Full)
-			if latestErr != nil {
+			if !state.initialized || state.session != row.SessionID {
+				end, endErr := deps.entryEnd(row)
+				if endErr != nil {
+					if initial {
+						source := "transcript:" + name
+						unreachable[source] = true
+						pendingFailures = append(pendingFailures, substrate{Source: source, Status: "unreachable", Detail: endErr.Error()})
+					} else if !emitTranscriptFailure(name, endErr) {
+						return false
+					}
+					continue
+				}
+				state.initialized = true
+				state.session = row.SessionID
+				state.offset = end
+				if !initial && !emit("rewindow", transcriptReset{Agent: name}) {
+					return false
+				}
+			}
+			tail, tailErr := deps.entryTail(row, claudesession.Cursor{SessionID: state.session, Offset: state.offset}, maxEntryWindow)
+			if tailErr != nil {
 				if initial {
 					source := "transcript:" + name
 					unreachable[source] = true
-					pendingFailures = append(pendingFailures, substrate{Source: source, Status: "unreachable", Detail: latestErr.Error()})
-				} else if !emitTranscriptFailure(name, latestErr) {
+					pendingFailures = append(pendingFailures, substrate{Source: source, Status: "unreachable", Detail: tailErr.Error()})
+				} else if !emitTranscriptFailure(name, tailErr) {
 					return false
 				}
 				continue
@@ -1065,55 +1089,27 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 					return false
 				}
 			}
-			position := 0
-			if hasLatest {
-				position = latest.Position
-			}
-			if initial {
-				state.initialized = true
-				state.session = session
-				state.position = position
-				continue
-			}
-			if !state.initialized {
-				state.initialized = true
-				state.session = session
-				state.position = position
+			if tail.Reset != nil {
+				end, endErr := deps.entryEnd(row)
+				if endErr != nil {
+					if !emitTranscriptFailure(name, endErr) {
+						return false
+					}
+					continue
+				}
+				state.session = row.SessionID
+				state.offset = end
 				if !emit("rewindow", transcriptReset{Agent: name}) {
 					return false
 				}
 				continue
 			}
-			if state.session != session || position < state.position {
-				state.session = session
-				state.position = position
-				if !emit("rewindow", transcriptReset{Agent: name}) {
+			for _, entry := range serializeEntries(tail.Read.Entries) {
+				if !emit("entry:"+name, entry) {
 					return false
 				}
-				continue
 			}
-			for state.position < position {
-				end := state.position + 100
-				if end > position {
-					end = position
-				}
-				exchanges, rangeErr := deps.rangeRead(ctx, name, state.position+1, end, hcomtranscript.Full)
-				if rangeErr != nil || len(exchanges) == 0 {
-					if rangeErr == nil {
-						rangeErr = errors.New("transcript range returned no exchanges")
-					}
-					if !emitTranscriptFailure(name, rangeErr) {
-						return false
-					}
-					break
-				}
-				for _, exchange := range exchanges {
-					if !emit("exchange:"+name, exchange) {
-						return false
-					}
-					state.position = exchange.Position
-				}
-			}
+			state.offset = tail.Cursor.Offset
 		}
 		for _, failure := range pendingFailures {
 			if !emit("substrate", failure) {

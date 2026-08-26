@@ -76,6 +76,19 @@ func TestEntriesEndpointReadsCompleteClassifiedWindows(t *testing.T) {
 	}
 }
 
+func TestEntriesEndpointFromWithoutSessionIDReturnsCurrentSessionID(t *testing.T) {
+	home, _ := writeEntrySession(t, sessionLines(
+		`{"type":"assistant","uuid":"invented-current","timestamp":"2026-01-02T03:04:06Z","message":{"content":[{"type":"text","text":"Invented current-session answer."}]}}`,
+	))
+	t.Setenv("HOME", home)
+
+	response := requestEntries(t, entryFixtureDeps(), "/api/agents/dore/entries?from=0&limit=1")
+	page := decodeEntriesResponse(t, response)
+	if response.Code != http.StatusOK || page.SessionID != fixtureSessionID {
+		t.Fatalf("from-without-sessionId = %d sessionId %q body=%s", response.Code, page.SessionID, response.Body.String())
+	}
+}
+
 func TestEntriesEndpointPassesThroughToolOutputTruncation(t *testing.T) {
 	output := strings.Repeat("v", 16*1024+731)
 	line := `{"type":"user","uuid":"invented-result","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_invented","is_error":false,"content":` + mustEntryString(output) + `}]}}`

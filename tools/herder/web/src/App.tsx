@@ -1,21 +1,24 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { hotkeysCoreFeature, selectionFeature, syncDataLoaderFeature } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type {
   AgentDetail,
   Board,
+  EntriesPage,
   LifecycleResult,
   Pane,
   Refusal,
   Row,
   SubstrateEvent,
-  TranscriptExchange,
-  TranscriptPage,
+  TranscriptEntry,
 } from './types'
 
 const layoutKey = 'herder.web.layout.v1'
 const boardTab = { id: 'board', kind: 'board' as const, label: 'Board' }
 const defaultSidebarWidth = 250
+const entryWindowLimit = 500
 const emptyExpandedItems: string[] = []
 
 type ShellTab = typeof boardTab | { id: string, kind: 'agent', label: string, name: string }
@@ -227,7 +230,7 @@ function useFleet(agentNames: string[]) {
   const [messages, setMessages] = useState(0)
   const [lastEvent, setLastEvent] = useState<Date | null>(null)
   const [streamGeneration, setStreamGeneration] = useState(0)
-  const [transcriptEvents, setTranscriptEvents] = useState<Record<string, TranscriptExchange[]>>({})
+  const [transcriptEvents, setTranscriptEvents] = useState<Record<string, number>>({})
   const [transcriptResets, setTranscriptResets] = useState<Record<string, number>>({})
   const subscription = [...new Set(agentNames)].sort().join(',')
   const setLifecycleBanner = (key: string, detail: string) => setProblems((current) => detail
@@ -326,14 +329,11 @@ function useFleet(agentNames: string[]) {
         })
         setTranscriptResets((current) => ({ ...current, [reset.agent]: (current[reset.agent] ?? 0) + 1 }))
       })
-      names.forEach((name) => events?.addEventListener(`exchange:${name}`, (event) => {
+      // Entry frames wake a bounded nextOffset read. The endpoint remains the
+      // source of truth, so reconnect and a burst of frames share one path.
+      names.forEach((name) => events?.addEventListener(`entry:${name}`, () => {
         touch()
-        const incoming = JSON.parse(event.data) as TranscriptExchange
-        setTranscriptEvents((current) => {
-          const existing = current[name] ?? []
-          if (existing.some((item) => item.position === incoming.position)) return current
-          return { ...current, [name]: [...existing, incoming] }
-        })
+        setTranscriptEvents((current) => ({ ...current, [name]: (current[name] ?? 0) + 1 }))
       }))
     }
     connect()
@@ -393,26 +393,224 @@ function Banner({ source, detail }: { source: string, detail: string }) {
   return <div className="banner" role="alert"><strong>{source}</strong><span>{detail}</span></div>
 }
 
-function valueText(value: unknown): string | null {
-  if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  return null
+type ObjectValue = Record<string, unknown>
+
+function objectValue(value: unknown): ObjectValue {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {}
 }
 
-function Exchange({ exchange, detail }: { exchange: TranscriptExchange, detail: 'exchanges' | 'full' }) {
-  const prompt = valueText(exchange.user ?? exchange.prompt ?? exchange.request)
-  const reply = valueText(exchange.action ?? exchange.reply ?? exchange.response)
-  const known = new Set(['position', 'user', 'prompt', 'request', 'action', 'reply', 'response'])
-  const extra = Object.fromEntries(Object.entries(exchange).filter(([key]) => !known.has(key)))
-  return (
-    <article className="exchange">
-      <div className="exchange-number">Exchange {exchange.position}</div>
-      {prompt && <div className="turn prompt"><span>You</span><p>{prompt}</p></div>}
-      {reply && <div className="turn reply"><span>Agent</span><p>{reply}</p></div>}
-      {!prompt && !reply && <pre>{JSON.stringify(exchange, null, 2)}</pre>}
-      {detail === 'full' && Object.keys(extra).length > 0 && <details><summary>Tool-level detail</summary><pre>{JSON.stringify(extra, null, 2)}</pre></details>}
+function valueText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return ''
+}
+
+function messageText(payload: unknown): string {
+  const content = objectValue(objectValue(payload).message).content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content.map((block) => {
+    const part = objectValue(block)
+    return valueText(part.text ?? part.thinking)
+  }).filter(Boolean).join('\n')
+}
+
+function formatDuration(milliseconds: number) {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return '—'
+  if (milliseconds < 1000) return `${Math.round(milliseconds)}ms`
+  if (milliseconds < 60_000) return `${(milliseconds / 1000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`
+  return `${Math.floor(milliseconds / 60_000)}m ${Math.round(milliseconds % 60_000 / 1000)}s`
+}
+
+function relativeTime(timestamp: string | undefined, now: number) {
+  if (!timestamp) return 'time unknown'
+  const delta = now - Date.parse(timestamp)
+  if (!Number.isFinite(delta)) return timestamp
+  const future = delta < 0
+  const elapsed = Math.abs(delta)
+  const amount = elapsed < 60_000 ? Math.max(1, Math.round(elapsed / 1000))
+    : elapsed < 3_600_000 ? Math.round(elapsed / 60_000)
+      : elapsed < 86_400_000 ? Math.round(elapsed / 3_600_000)
+        : Math.round(elapsed / 86_400_000)
+  const unit = elapsed < 60_000 ? 's' : elapsed < 3_600_000 ? 'm' : elapsed < 86_400_000 ? 'h' : 'd'
+  return future ? `in ${amount}${unit}` : `${amount}${unit} ago`
+}
+
+function Timestamp({ timestamp, now, absolute = false }: { timestamp?: string, now: number, absolute?: boolean }) {
+  if (!timestamp) return <span className="entry-time" title="Timestamp unavailable">time unknown</span>
+  const absoluteText = new Date(timestamp).toLocaleString()
+  return <time className="entry-time" dateTime={timestamp} title={absoluteText}>{absolute ? `${absoluteText} · ` : ''}{relativeTime(timestamp, now)}</time>
+}
+
+function toolSummary(name: string, input: ObjectValue) {
+  const preferred = name === 'Bash' ? input.command
+    : ['Edit', 'Write', 'Read'].includes(name) ? (input.file_path ?? input.path ?? input.file)
+      : undefined
+  if (valueText(preferred)) return valueText(preferred).replace(/\s+/g, ' ')
+  for (const value of Object.values(input)) {
+    const text = valueText(value).replace(/\s+/g, ' ')
+    if (text) return text
+  }
+  return 'no input summary'
+}
+
+function resultText(content: unknown) {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return content == null ? '' : JSON.stringify(content, null, 2)
+  return content.map((block) => {
+    const item = objectValue(block)
+    if (item.type === 'image') return '[image result]'
+    return valueText(item.text ?? item.raw)
+  }).filter(Boolean).join('\n')
+}
+
+function structuredPatch(result: ObjectValue) {
+  const toolUseResult = objectValue(result.toolUseResult)
+  const patches = Array.isArray(toolUseResult.structuredPatch) ? toolUseResult.structuredPatch : []
+  return patches.flatMap((patch) => {
+    const lines = objectValue(patch).lines
+    return Array.isArray(lines) ? lines.filter((line): line is string => typeof line === 'string') : []
+  })
+}
+
+function ToolEntry({ entry, result, now }: { entry: TranscriptEntry, result?: TranscriptEntry, now: number }) {
+  const call = objectValue(entry.payload)
+  const outcome = objectValue(result?.payload)
+  const name = valueText(call.name) || 'unknown tool'
+  const input = objectValue(call.input)
+  const callTime = entry.timestamp ? Date.parse(entry.timestamp) : NaN
+  const resultTime = result?.timestamp ? Date.parse(result.timestamp) : NaN
+  const duration = result ? formatDuration(resultTime - callTime) : 'running · no result yet'
+  const patch = structuredPatch(outcome)
+  const output = resultText(outcome.content)
+  const imageCount = Number(outcome.image_count ?? 0)
+  return <details className="entry-expander tool-entry">
+    <summary>
+      <span className={`tool-status ${result ? outcome.is_error === true ? 'error' : 'success' : 'running'}`} />
+      <strong>{name}</strong><span className="tool-summary">{toolSummary(name, input)}</span>
+      <span className="tool-duration">{duration}</span><Timestamp timestamp={result?.timestamp ?? entry.timestamp} now={now} />
+    </summary>
+    <div className="entry-detail">
+      <h4>Input</h4><pre>{JSON.stringify(input, null, 2)}</pre>
+      {result && <><h4>Output</h4>{output && <pre>{output}</pre>}
+        {imageCount > 0 && <div className="image-placeholder">▧ {imageCount} image result{imageCount === 1 ? '' : 's'} present (not served)</div>}
+        {outcome.truncated === true && <div className="truncation-banner">Output capped at 16 KiB — {Number(outcome.total_bytes).toLocaleString()} bytes total.</div>}
+        {patch.length > 0 && <><h4>Structured patch</h4><pre className="diff-output">{patch.map((line, index) => <span className={line.startsWith('+') ? 'diff-add' : line.startsWith('-') ? 'diff-delete' : ''} key={`${index}:${line}`}>{line}{'\n'}</span>)}</pre></>}
+      </>}
+    </div>
+  </details>
+}
+
+type EntryRelationships = {
+  toolResults: Map<string, TranscriptEntry>
+  pairedToolResults: Set<number>
+  pairedDeliveries: Set<number>
+  commandOutputs: Map<number, TranscriptEntry>
+  pairedCommandOutputs: Set<number>
+}
+
+function relateEntries(entries: TranscriptEntry[]): EntryRelationships {
+  const toolResults = new Map<string, TranscriptEntry>()
+  const toolUses = new Set<string>()
+  entries.forEach((entry) => {
+    const id = valueText(objectValue(entry.payload).tool_use_id)
+    if (entry.kind === 'tool_result' && id) toolResults.set(id, entry)
+    if (entry.kind === 'tool_use' && id) toolUses.add(id)
+  })
+  const pairedToolResults = new Set(entries.flatMap((entry, index) =>
+    entry.kind === 'tool_result' && toolUses.has(valueText(objectValue(entry.payload).tool_use_id)) ? [index] : []))
+  const pairedDeliveries = new Set<number>()
+  entries.forEach((entry, index) => {
+    if (entry.kind === 'hcom_delivery_stub' && entries[index + 1]?.kind === 'hcom_delivery') pairedDeliveries.add(index + 1)
+  })
+  const commandOutputs = new Map<number, TranscriptEntry>()
+  const pairedCommandOutputs = new Set<number>()
+  entries.forEach((entry, index) => {
+    const next = entries[index + 1]
+    if (entry.kind === 'command_stdout' && messageText(entry.payload).includes('<command-name>') &&
+      next?.kind === 'command_stdout' && messageText(next.payload).includes('<local-command-stdout>')) {
+      commandOutputs.set(index, next)
+      pairedCommandOutputs.add(index + 1)
+    }
+  })
+  return { toolResults, pairedToolResults, pairedDeliveries, commandOutputs, pairedCommandOutputs }
+}
+
+function HcomCards({ entry, now, showSystem }: { entry: TranscriptEntry, now: number, showSystem: boolean }) {
+  const deliveries = objectValue(entry.payload).deliveries
+  const values = Array.isArray(deliveries) ? deliveries : []
+  const parsed = values.some((raw) => {
+    const delivery = objectValue(raw)
+    return Boolean(valueText(delivery.sender) && valueText(delivery.message_id))
+  })
+  if (!parsed) {
+    if (!showSystem) return null
+    return <details className="system-chip unknown-entry"><summary>unparsed hook attachment · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{values.map((raw) => valueText(objectValue(raw).text)).filter(Boolean).join('\n')}</pre></details>
+  }
+  return <>{values.map((raw, index) => {
+    const delivery = objectValue(raw)
+    return <article className="entry-card hcom-card" key={`${entry.uuid ?? entry.byteOffset}:${index}`}>
+      <header><strong>{valueText(delivery.sender) || 'unknown sender'}</strong><span>→ {valueText(delivery.recipient) || 'unknown recipient'}</span>
+        {valueText(delivery.intent) && <span className={`intent-badge ${valueText(delivery.intent)}`}>{valueText(delivery.intent)}</span>}
+        {valueText(delivery.message_id) && <span className="message-id">#{valueText(delivery.message_id)}</span>}
+        {valueText(delivery.thread) && <span className="thread-chip">{valueText(delivery.thread)}</span>}
+        <Timestamp timestamp={entry.timestamp} now={now} />
+      </header><div>{valueText(delivery.text) || '(delivery body unavailable)'}</div>
     </article>
-  )
+  })}</>
+}
+
+function EntryView({ entry, index, entries, relationships, agentName, now, showSystem }: {
+  entry: TranscriptEntry
+  index: number
+  entries: TranscriptEntry[]
+  relationships: EntryRelationships
+  agentName: string
+  now: number
+  showSystem: boolean
+}) {
+  const payload = objectValue(entry.payload)
+  const content = messageText(entry.payload)
+  if (relationships.pairedToolResults.has(index) || relationships.pairedDeliveries.has(index) || relationships.pairedCommandOutputs.has(index)) return null
+  if (entry.kind === 'hcom_delivery_stub') {
+    const delivery = entries[index + 1]
+    return delivery?.kind === 'hcom_delivery' ? <HcomCards entry={delivery} now={now} showSystem={showSystem} />
+      : <div className="system-chip">hcom delivery pending attachment · <Timestamp timestamp={entry.timestamp} now={now} /></div>
+  }
+  if (entry.kind === 'hcom_delivery') return <HcomCards entry={entry} now={now} showSystem={showSystem} />
+  if (entry.kind === 'tool_use') {
+    return <ToolEntry entry={entry} result={relationships.toolResults.get(valueText(payload.tool_use_id))} now={now} />
+  }
+  if (entry.kind === 'tool_result') {
+    return <details className="entry-expander tool-entry"><summary><span className={`tool-status ${payload.is_error === true ? 'error' : 'success'}`} /><strong>unpaired tool result</strong><Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail"><pre>{resultText(payload.content)}</pre></div></details>
+  }
+  if (entry.kind === 'assistant_text') return <article className="assistant-entry"><header><strong>{agentName}</strong><Timestamp timestamp={entry.timestamp} now={now} /></header><div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown></div></article>
+  if (entry.kind === 'thinking') {
+    const nextTime = entries.slice(index + 1).find((candidate) => candidate.timestamp)?.timestamp
+    const duration = nextTime && entry.timestamp ? formatDuration(Date.parse(nextTime) - Date.parse(entry.timestamp)) : 'duration unknown'
+    return <details className="entry-expander thinking-entry"><summary>thinking · {duration}<Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail">{content || 'Thinking content unavailable.'}</div></details>
+  }
+  if (entry.kind === 'human_prompt') return <article className="entry-card human-entry"><header><strong>owner (terminal)</strong><Timestamp timestamp={entry.timestamp} now={now} absolute /></header><div>{content || 'Prompt body unavailable.'}</div></article>
+  if (entry.kind === 'command_stdout') {
+    const command = content.match(/<command-name>([\s\S]*?)<\/command-name>/)?.[1] ?? 'slash command'
+    const args = content.match(/<command-args>([\s\S]*?)<\/command-args>/)?.[1] ?? ''
+    const outputContent = messageText(relationships.commandOutputs.get(index)?.payload) || content
+    const output = outputContent.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/)?.[1] ?? ''
+    return <details className="entry-expander command-entry"><summary><span className="command-chip">{command}</span>{args && <span className="tool-summary">{args}</span>}<Timestamp timestamp={relationships.commandOutputs.get(index)?.timestamp ?? entry.timestamp} now={now} /></summary>{(args || output) && <div className="entry-detail">{args && <><h4>Arguments</h4><pre>{args}</pre></>}{output && <><h4>Output</h4><pre>{output}</pre></>}</div>}</details>
+  }
+  if (entry.kind === 'compact_divider') {
+    const metadata = objectValue(payload.compactMetadata)
+    if (Object.keys(metadata).length > 0) return <div className="compaction-divider"><span>context compacted ({valueText(metadata.trigger) || 'unknown'}, {Number(metadata.preTokens).toLocaleString()} → {Number(metadata.postTokens).toLocaleString()} tokens)</span><Timestamp timestamp={entry.timestamp} now={now} /></div>
+    return <details className="entry-expander compact-summary"><summary>compaction summary<Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{content || valueText(payload.content)}</ReactMarkdown></div></details>
+  }
+  if (entry.kind === 'turn_duration') return <div className="turn-footer">turn · {formatDuration(Number(payload.durationMs))}{payload.messageCount != null ? ` · ${Number(payload.messageCount)} messages` : ''} · <Timestamp timestamp={entry.timestamp} now={now} /></div>
+  if (entry.kind === 'task_notification' || entry.kind === 'injected_system') return <details className="system-chip"><summary>{entry.kind === 'task_notification' ? 'background task finished' : 'injected system prompt'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><div>{content || JSON.stringify(payload)}</div></details>
+  if (entry.kind === 'system_chip') {
+    if (!showSystem && payload.subtype !== 'scheduled_task_fire') return null
+    return <details className="system-chip"><summary>{valueText(payload.subtype) || 'system entry'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{JSON.stringify(payload, null, 2)}</pre></details>
+  }
+  if (!showSystem) return null
+  return <details className="system-chip unknown-entry"><summary>{entry.quarantine ? `quarantined entry · ${entry.quarantine.reason}` : `unknown entry · ${entry.kind}`} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{JSON.stringify(entry.payload, null, 2)}</pre></details>
 }
 
 function ForkControl({ name, onBanner }: { name: string, onBanner: (key: string, detail: string) => void }) {
@@ -467,28 +665,33 @@ function ForkControl({ name, onBanner }: { name: string, onBanner: (key: string,
   )
 }
 
-function AgentPanel({ name, onViewer, streamed, streamGeneration, resetGeneration }: {
+function AgentPanel({ name, onViewer, liveWake, streamGeneration, resetGeneration }: {
   name: string
   onViewer: (viewer: string) => void
-  streamed: TranscriptExchange[]
+  liveWake: number
   streamGeneration: number
   resetGeneration: number
 }) {
   const [agent, setAgent] = useState<AgentDetail | null>(null)
-  const [exchanges, setExchanges] = useState<TranscriptExchange[]>([])
-  const [cursor, setCursor] = useState('')
-  const [hasOlder, setHasOlder] = useState(true)
-  const [detail, setDetail] = useState<'exchanges' | 'full'>('exchanges')
+  const [entries, setEntries] = useState<TranscriptEntry[]>([])
+  const [sessionId, setSessionId] = useState('')
+  const [nextOffset, setNextOffset] = useState<number | null>(null)
+  const [showSystem, setShowSystem] = useState(false)
   const [problems, setProblems] = useState<Record<string, string>>({})
   const [notFound, setNotFound] = useState<Refusal | null>(null)
-  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [now, setNow] = useState(Date.now())
+  const [following, setFollowing] = useState(true)
+  const [newEntryCount, setNewEntryCount] = useState(0)
+  const [reloadGeneration, setReloadGeneration] = useState(0)
+  const [appendGeneration, setAppendGeneration] = useState(0)
   const [message, setMessage] = useState('')
   const [sendProblem, setSendProblem] = useState('')
   const [sendNotice, setSendNotice] = useState('')
   const [sending, setSending] = useState(false)
   const [readOnly, setReadOnly] = useState('')
-  const currentView = useRef({ name, detail })
-  currentView.current = { name, detail }
+  const transcriptRef = useRef<HTMLElement>(null)
+  const followingRef = useRef(true)
+  const reanchorAfterAppendRef = useRef(true)
   const setLifecycleBanner = (key: string, problemDetail: string) => setProblems((current) => problemDetail
     ? { ...current, [key]: problemDetail }
     : without(current, key))
@@ -496,10 +699,9 @@ function AgentPanel({ name, onViewer, streamed, streamGeneration, resetGeneratio
   useEffect(() => {
     let active = true
     setAgent(null)
-    setExchanges([])
-    setCursor('')
-    setHasOlder(true)
-    setLoadingOlder(false)
+    setEntries([])
+    setSessionId('')
+    setNextOffset(null)
     setNotFound(null)
     setProblems({})
 
@@ -523,42 +725,24 @@ function AgentPanel({ name, onViewer, streamed, streamGeneration, resetGeneratio
     return () => {
       active = false
     }
-  }, [name, detail])
+  }, [name])
 
   useEffect(() => {
-    if (streamed.length === 0) return
-    setExchanges((current) => {
-      const merged = new Map(current.map((item) => [item.position, item]))
-      streamed.forEach((item) => merged.set(item.position, item))
-      return [...merged.values()].sort((a, b) => a.position - b.position)
-    })
-  }, [streamed])
-
-  const seenReset = useRef(resetGeneration)
-  useEffect(() => {
-    if (seenReset.current === resetGeneration) return
-    seenReset.current = resetGeneration
-    setExchanges([])
-    setCursor('')
-    setHasOlder(true)
-  }, [resetGeneration])
-
-  useEffect(() => {
-    if (streamGeneration === 0) return
     let active = true
     const loadWindow = async () => {
       try {
-        const response = await fetch(`/api/agents/${encodeURIComponent(name)}/transcript?limit=20&detail=${detail}`)
+        const response = await fetch(`/api/agents/${encodeURIComponent(name)}/entries?limit=${entryWindowLimit}`)
         if (!response.ok) throw new Error((await refusal(response)).detail)
-        const page = await response.json() as TranscriptPage
+        const page = await response.json() as EntriesPage
         if (!active) return
-        setExchanges((current) => {
-          const merged = new Map(current.map((item) => [item.position, item]))
-          page.exchanges.forEach((item) => merged.set(item.position, item))
-          return [...merged.values()].sort((a, b) => a.position - b.position)
-        })
-        setCursor(page.cursor)
-        setHasOlder(page.exchanges.length > 0)
+        setEntries(page.entries ?? [])
+        setSessionId(page.sessionId)
+        setNextOffset(page.nextOffset ?? null)
+        followingRef.current = true
+        reanchorAfterAppendRef.current = true
+        setFollowing(true)
+        setNewEntryCount(0)
+        setAppendGeneration((generation) => generation + 1)
         setProblems((current) => without(current, 'transcript'))
       } catch (error: unknown) {
         if (active) setProblems((current) => ({ ...current, transcript: error instanceof Error ? error.message : String(error) }))
@@ -566,35 +750,70 @@ function AgentPanel({ name, onViewer, streamed, streamGeneration, resetGeneratio
     }
     void loadWindow()
     return () => { active = false }
-  }, [name, detail, streamGeneration, resetGeneration])
+  }, [name, resetGeneration, reloadGeneration])
 
-  const loadOlder = async () => {
-    if (!cursor || loadingOlder) return
-    const requestView = { name, detail }
-    const requestIsCurrent = () => currentView.current.name === requestView.name && currentView.current.detail === requestView.detail
-    setLoadingOlder(true)
-    try {
-      const response = await fetch(`/api/agents/${encodeURIComponent(name)}/transcript?limit=20&detail=${detail}&before=${encodeURIComponent(cursor)}`)
-      if (!requestIsCurrent()) return
-      if (!response.ok) throw new Error((await refusal(response)).detail)
-      const page = await response.json() as TranscriptPage
-      if (!requestIsCurrent()) return
-      setCursor(page.cursor)
-      setHasOlder(page.exchanges.length > 0)
-      setExchanges((current) => {
-        const positions = new Set(current.map((item) => item.position))
-        return [...page.exchanges.filter((item) => !positions.has(item.position)), ...current]
-      })
-    } catch (error: unknown) {
-      if (requestIsCurrent()) {
-        setProblems((current) => ({ ...current, transcript: error instanceof Error ? error.message : String(error) }))
-      }
-    } finally {
-      if (requestIsCurrent()) {
-        setLoadingOlder(false)
+  useEffect(() => {
+    if (!sessionId || nextOffset === null || streamGeneration === 0) return
+    let active = true
+    const follow = async () => {
+      let offset = nextOffset
+      try {
+        for (;;) {
+          const query = new URLSearchParams({ from: String(offset), limit: String(entryWindowLimit), sessionId })
+          const response = await fetch(`/api/agents/${encodeURIComponent(name)}/entries?${query}`)
+          if (!response.ok) throw new Error((await refusal(response)).detail)
+          const page = await response.json() as EntriesPage
+          if (!active) return
+          if (page.reset) {
+            setSessionId('')
+            setNextOffset(null)
+            setEntries([])
+            setProblems((current) => ({ ...current, transcript: `Transcript reset: ${page.reset?.reason}. Reloading the current session…` }))
+            setReloadGeneration((generation) => generation + 1)
+            return
+          }
+          const incoming = page.entries ?? []
+          if (incoming.length > 0) {
+            const wasAtBottom = followingRef.current
+            reanchorAfterAppendRef.current = wasAtBottom
+            setEntries((current) => {
+              const seen = new Set(current.map((entry) => entry.uuid || `offset:${entry.byteOffset}`))
+              return [...current, ...incoming.filter((entry) => !seen.has(entry.uuid || `offset:${entry.byteOffset}`))].slice(-entryWindowLimit)
+            })
+            if (!wasAtBottom) setNewEntryCount((count) => count + incoming.length)
+            setAppendGeneration((generation) => generation + 1)
+          }
+          const advanced = page.nextOffset ?? offset
+          setNextOffset(advanced)
+          setProblems((current) => without(current, 'transcript'))
+          if (incoming.length < entryWindowLimit || advanced === offset) break
+          offset = advanced
+        }
+      } catch (error: unknown) {
+        if (active) setProblems((current) => ({ ...current, transcript: error instanceof Error ? error.message : String(error) }))
       }
     }
-  }
+    void follow()
+    return () => { active = false }
+    // liveWake is the append signal; reconnect also catches anything missed.
+  }, [name, sessionId, liveWake, streamGeneration, resetGeneration])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!reanchorAfterAppendRef.current) return
+    const transcript = transcriptRef.current
+    if (transcript) transcript.scrollTop = transcript.scrollHeight
+    followingRef.current = true
+    reanchorAfterAppendRef.current = false
+    setFollowing(true)
+    setNewEntryCount(0)
+  }, [appendGeneration])
+
+  const relationships = useMemo(() => relateEntries(entries), [entries])
 
   const send = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -642,20 +861,26 @@ function AgentPanel({ name, onViewer, streamed, streamGeneration, resetGeneratio
       <header className="agent-header">
         <strong className="agent-name">{name}</strong>
         {agent && <><span className="pane-chip">{agent.pane?.pane_id ?? 'unplaced'}</span><span className="agent-status">{agent.herdr_status} · {agent.bus_status}</span>{agent.gap !== '-' && <span className="gap-badge">{gapLabel(agent.gap)}</span>}<span className="tool-chip">{agent.tool}</span></>}
-        <div className="agent-actions"><div className="detail-toggle" aria-label="Transcript detail">
-          <button className={detail === 'exchanges' ? 'active' : ''} onClick={() => setDetail('exchanges')}>Exchanges</button>
-          <button className={detail === 'full' ? 'active' : ''} onClick={() => setDetail('full')}>Full</button>
-        </div>{agent && <ForkControl name={name} onBanner={setLifecycleBanner} />}</div>
+        <div className="agent-actions"><label className="system-toggle"><input type="checkbox" checked={showSystem} onChange={(event) => setShowSystem(event.target.checked)} /> show system entries</label><span className={`follow-chip${following ? '' : ' paused'}`}>{following ? 'follow ✓' : 'follow paused'}</span>{agent && <ForkControl name={name} onBanner={setLifecycleBanner} />}</div>
       </header>
       {Object.entries(problems).map(([source, problemDetail]) => <Banner source={source} detail={problemDetail} key={source} />)}
-      <section className="transcript" aria-label="Transcript">
-        <div className="older">
-          {hasOlder
-            ? <button disabled={!cursor || loadingOlder} onClick={() => void loadOlder()}>{loadingOlder ? 'Loading…' : 'Load older'}</button>
-            : <span>Start of transcript</span>}
-        </div>
-        {exchanges.length === 0 && agent && <p className="empty">No exchanges in this window.</p>}
-        {exchanges.map((exchange) => <Exchange exchange={exchange} detail={detail} key={exchange.position} />)}
+      <section className="transcript" aria-label="Transcript" ref={transcriptRef} onScroll={(event) => {
+        const node = event.currentTarget
+        const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 48
+        followingRef.current = atBottom
+        setFollowing(atBottom)
+        if (atBottom) setNewEntryCount(0)
+      }}>
+        <div className="window-note">Showing the latest {entries.length} classified entries · live from byte {nextOffset ?? '…'}</div>
+        {entries.length === 0 && agent && <p className="empty">No renderable entries in this window.</p>}
+        {entries.map((entry, index) => <EntryView entry={entry} index={index} entries={entries} relationships={relationships} agentName={name} now={now} showSystem={showSystem} key={entry.uuid || `${entry.byteOffset}:${entry.line}`} />)}
+        {newEntryCount > 0 && <button className="jump-latest" onClick={() => {
+          const transcript = transcriptRef.current
+          if (transcript) transcript.scrollTop = transcript.scrollHeight
+          followingRef.current = true
+          setFollowing(true)
+          setNewEntryCount(0)
+        }}>↓ {newEntryCount} new</button>}
       </section>
       {agent && <form className="send-box" onSubmit={(event) => void send(event)}>
         {readOnly && <div className="read-only" role="alert"><strong>Read-only</strong><span>{readOnly}</span></div>}
@@ -1027,7 +1252,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
             : <AgentPanel
               name={tab.name}
               onViewer={setViewer}
-              streamed={transcriptEvents[tab.name] ?? []}
+              liveWake={transcriptEvents[tab.name] ?? 0}
               streamGeneration={streamGeneration}
               resetGeneration={transcriptResets[tab.name] ?? 0}
             />}
