@@ -13,10 +13,11 @@ test('queued messages disappear as soon as an entry carries the same delivery id
     kind: 'hcom_delivery', line: 1, byteOffset: 0,
     payload: { subtype: 'developer_message', deliveries: [{ message_id: '731', sender: 'web-owner', recipient: 'dore', text: 'operator question' }] },
   }]
-  assert.deepEqual(visibleQueuedMessages(queued, entries).map((message) => message.id), [732])
+  assert.deepEqual(visibleQueuedMessages([queued[0]], entries).map((message) => message.id), [])
 })
 
 test('operator emphasis is based on server-proven envelope attribution', () => {
   assert.equal(queued[0].operator, true)
   assert.equal(queued[1].operator, undefined)
+  assert.deepEqual(visibleQueuedMessages([queued[0]], []).map((message) => message.id), [731])
 })

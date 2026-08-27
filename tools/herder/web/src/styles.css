@@ -127,6 +127,9 @@ tbody tr:last-child td { border-bottom: 0; }
 .transcript { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; padding: 8px 14px 14px; }
 .transcript > * { max-width: 900px; }
 .window-note { margin: 2px 0 10px; color: var(--dimmer); font: 9px var(--mono); text-align: center; }
+.queued-dock { flex: 0 0 auto; padding: 0 14px; background: var(--bg); }
+.queued-dock:empty { display: none; }
+.queued-dock .queued-messages { max-width: 900px; margin-bottom: 7px; }
 .queued-messages { margin: 0 0 12px; padding: 7px; border: 1px solid #5c4716; border-radius: 7px; background: #211d13; font: 10px var(--mono); }
 .queued-messages > header { display: flex; align-items: baseline; gap: 8px; padding: 0 3px 5px; color: var(--amber); }
 .queued-messages > header strong { letter-spacing: .08em; text-transform: uppercase; }
@@ -175,6 +178,14 @@ tbody tr:last-child td { border-bottom: 0; }
 .entry-expander[open] > summary::before { transform: rotate(90deg); }
 .entry-expander > summary:hover, .entry-expander[open] > summary { border-color: var(--border); background: var(--bg2); }
 .entry-expander[open] > summary { border-radius: 6px 6px 0 0; }
+.activity-strip { margin: 5px 0; }
+.activity-strip > summary { display: flex; min-height: 24px; align-items: center; gap: 5px; overflow-x: auto; padding: 2px 5px; list-style: none; border: 1px solid transparent; border-radius: 6px; }
+.activity-strip > summary::-webkit-details-marker { display: none; }
+.activity-strip > summary::before { content: '›'; flex: 0 0 auto; color: var(--dimmer); font-size: 14px; line-height: 1; transition: transform 100ms ease; }
+.activity-strip[open] > summary::before { transform: rotate(90deg); }
+.activity-strip > summary:hover, .activity-strip[open] > summary { border-color: var(--border); background: var(--bg2); }
+.activity-pill { flex: 0 0 auto; padding: 1px 7px; border: 1px solid var(--border); border-radius: 10px; background: var(--chip); color: var(--dim); font: 9px var(--mono); white-space: nowrap; }
+.activity-run-detail { padding: 2px 8px 4px 14px; border-left: 1px solid var(--border); }
 .entry-detail { padding: 8px 12px; border: 1px solid var(--border); border-top: 0; border-radius: 0 0 6px 6px; background: #15161a; color: #b6bcc8; }
 .entry-detail h4 { margin: 8px 0 3px; color: var(--dim); font: 9px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
 .entry-detail h4:first-child { margin-top: 0; }

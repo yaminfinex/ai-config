@@ -50,7 +50,7 @@ type dependencies struct {
 	recentMessages       func(context.Context, int) ([]hcomevents.Message, error)
 	entryEnd             func(hcomidentity.Row) (int64, error)
 	entryTail            func(hcomidentity.Row, claudesession.Cursor, int) (claudesession.TailResult, error)
-	agentQueueExclusions func(hcomidentity.Row, map[string]string) (map[string]bool, error)
+	agentQueueExclusions func(hcomidentity.Row, map[string]queueCandidate) (map[string]bool, error)
 	agentVitals          func(hcomidentity.Row) (claudesession.Vitals, error)
 	sender               func(context.Context, string) (string, error)
 	send                 func(context.Context, string, string, string) error
@@ -485,9 +485,9 @@ func readAgent(ctx context.Context, deps dependencies, name string) (agentDetail
 	// Queued is an optional proven fact. A bus/session read failure must not
 	// degrade the otherwise useful detail response or invent delivery state.
 	if messages, messageErr := deps.recentMessages(ctx, 500); messageErr == nil {
-		candidates := candidateMessageTimes(name, messages)
+		candidates := operatorQueueCandidates(name, bus.BaseName, messages, roster)
 		if excluded, entryErr := deps.agentQueueExclusions(*bus, candidates); entryErr == nil {
-			result.Queued = diffQueuedMessages(name, messages, excluded)
+			result.Queued = diffQueuedMessages(messages, candidates, excluded)
 		}
 	}
 	resolvedPane := ""

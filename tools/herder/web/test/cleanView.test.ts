@@ -2,11 +2,15 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  aggregateActivityPills,
   cleanViewDisposition,
   cleanViewPreferenceKey,
   isCleanConversationDelivery,
   persistCleanView,
+  persistShowSystem,
   readCleanView,
+  readShowSystem,
+  showSystemPreferenceKey,
 } from '../src/features/transcript/cleanView.ts'
 
 function memoryStorage() {
@@ -23,17 +27,17 @@ test('fixture law classifies every transcript kind explicitly', () => {
     human_prompt: 'show',
     hcom_delivery_stub: 'delivery',
     hcom_delivery: 'delivery',
-    task_notification: 'hide',
-    injected_system: 'hide',
-    command_stdout: 'hide',
+    task_notification: 'activity',
+    injected_system: 'system',
+    command_stdout: 'activity',
     compact_divider: 'show',
     assistant_text: 'show',
-    thinking: 'hide',
-    tool_use: 'hide',
-    tool_result: 'hide',
+    thinking: 'activity',
+    tool_use: 'activity',
+    tool_result: 'activity',
     turn_duration: 'hide',
-    system_chip: 'hide',
-    unknown: 'hide',
+    system_chip: 'system',
+    unknown: 'activity',
   })
 })
 
@@ -67,4 +71,30 @@ test('blocked browser storage degrades to clean view off', () => {
   }
   assert.equal(readCleanView('agent', blocked), false)
   assert.doesNotThrow(() => persistCleanView('agent', true, blocked))
+})
+
+test('system entry preference uses the same per-agent v1 persistence pattern', () => {
+  const storage = memoryStorage()
+  assert.equal(readShowSystem('agent one', storage), false)
+  persistShowSystem('agent one', true, storage)
+  assert.equal(readShowSystem('agent one', storage), true)
+  assert.equal(readShowSystem('agent two', storage), false)
+  assert.notEqual(showSystemPreferenceKey('agent one'), cleanViewPreferenceKey('agent one'))
+  persistShowSystem('agent one', false, storage)
+  assert.equal(readShowSystem('agent one', storage), false)
+})
+
+test('pill aggregation combines only consecutive repeatable activities', () => {
+  assert.deepEqual(aggregateActivityPills([
+    { key: 'read-1', label: 'Read', kind: 'tool_use' },
+    { key: 'read-2', label: 'Read', kind: 'tool_use' },
+    { key: 'message-1', label: '✉ nero', kind: 'message' },
+    { key: 'message-2', label: '✉ nero', kind: 'message' },
+    { key: 'read-3', label: 'Read', kind: 'tool_use' },
+  ], (activity) => activity.kind === 'tool_use'), [
+    { key: 'read-1', label: 'Read', count: 2 },
+    { key: 'message-1', label: '✉ nero', count: 1 },
+    { key: 'message-2', label: '✉ nero', count: 1 },
+    { key: 'read-3', label: 'Read', count: 1 },
+  ])
 })

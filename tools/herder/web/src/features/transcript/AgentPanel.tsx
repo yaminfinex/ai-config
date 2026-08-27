@@ -6,7 +6,7 @@ import { entriesQueryOptions } from '../../api/queries'
 import { Banner, gapLabel } from '../../shared/presentation'
 import { agentVitalsPresentation } from '../../shared/agentVitals'
 import { Composer } from '../composer/Composer'
-import { persistCleanView, readCleanView } from './cleanView'
+import { persistCleanView, persistShowSystem, readCleanView, readShowSystem } from './cleanView'
 import { QueuedMessages } from './QueuedMessages'
 import { visibleQueuedMessages } from './queuedMessages'
 import { TranscriptEntries } from './TranscriptEntries'
@@ -15,7 +15,7 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
-  const [showSystem, setShowSystem] = useState(false)
+  const [showSystem, setShowSystem] = useState(() => readShowSystem(name))
   const [cleanView, setCleanView] = useState(() => readCleanView(name))
   const [now, setNow] = useState(Date.now())
   const [following, setFollowing] = useState(true)
@@ -57,7 +57,7 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
       {agent && <><span className="pane-chip">{agent.pane?.pane_id ?? 'unplaced'}</span><span className="agent-status">{agent.herdr_status} · {liveStatus !== '-' ? liveStatus : agent.bus_status}</span>{agent.gap !== '-' && <span className="gap-badge">{gapLabel(agent.gap)}</span>}<span className="tool-chip">{agent.tool}</span>{vitals.length > 0 && <span className="agent-vitals">{vitals.map((vital, index) => <span key={`${index}:${vital}`}>{vital}</span>)}</span>}</>}
       <div className="agent-actions">
         <label className="system-toggle"><Checkbox.Root checked={cleanView} onCheckedChange={(checked) => { setCleanView(checked); persistCleanView(name, checked) }}><Checkbox.Indicator>✓</Checkbox.Indicator></Checkbox.Root> clean view</label>
-        <label className={`system-toggle${cleanView ? ' disabled' : ''}`} title={cleanView ? 'Clean view hides system entries' : undefined}><Checkbox.Root checked={showSystem} disabled={cleanView} onCheckedChange={setShowSystem}><Checkbox.Indicator>✓</Checkbox.Indicator></Checkbox.Root> show system entries</label>
+        <label className={`system-toggle${cleanView ? ' disabled' : ''}`} title={cleanView ? 'Clean view hides system entries' : undefined}><Checkbox.Root checked={showSystem} disabled={cleanView} onCheckedChange={(checked) => { setShowSystem(checked); persistShowSystem(name, checked) }}><Checkbox.Indicator>✓</Checkbox.Indicator></Checkbox.Root> show system entries</label>
         <span className={`follow-chip${following ? '' : ' paused'}`}>{following ? 'follow ✓' : 'follow paused'}</span>
       </div>
     </header>
@@ -72,7 +72,6 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
       if (atBottom) setNewEntryCount(0)
     }}>
       <div className="window-note">Showing the latest {entries.length} classified entries · live from byte {entriesQuery.data?.nextOffset ?? '…'}</div>
-      <QueuedMessages messages={queued} now={now} />
       {entries.length === 0 && agent && <p className="empty">No renderable entries in this window.</p>}
       <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={cleanView ? false : showSystem} cleanView={cleanView} />
       {newEntryCount > 0 && <button className="jump-latest" onClick={() => {
@@ -83,6 +82,7 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
         setNewEntryCount(0)
       }}>↓ {newEntryCount} new</button>}
     </section>
+    <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>
     {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={identityReadOnly} onProblem={setSendProblem} onSend={onSend} />}
   </main>
 }

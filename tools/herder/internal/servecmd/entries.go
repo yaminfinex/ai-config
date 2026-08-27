@@ -237,7 +237,7 @@ func readAgentVitals(row hcomidentity.Row) (claudesession.Vitals, error) {
 // full transcript. Delivered IDs are excluded for every supported tool;
 // pre-compaction candidates are also excluded for Claude, whose compaction can
 // erase their structural delivery evidence. Codex rollouts remain append-only.
-func readQueueExclusions(row hcomidentity.Row, candidates map[string]string) (map[string]bool, error) {
+func readQueueExclusions(row hcomidentity.Row, candidates map[string]queueCandidate) (map[string]bool, error) {
 	proof := newQueueProof(row.Tool == "claude")
 	if len(candidates) == 0 {
 		return proof.exclusions(candidates)

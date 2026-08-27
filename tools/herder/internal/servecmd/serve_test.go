@@ -49,10 +49,12 @@ func fixtureDeps() dependencies {
 		entryTail: func(row hcomidentity.Row, cursor claudesession.Cursor, _ int) (claudesession.TailResult, error) {
 			return claudesession.TailResult{Cursor: claudesession.Cursor{SessionID: row.SessionID, Offset: cursor.Offset}}, nil
 		},
-		agentQueueExclusions: func(hcomidentity.Row, map[string]string) (map[string]bool, error) { return map[string]bool{}, nil },
-		agentVitals:          func(hcomidentity.Row) (claudesession.Vitals, error) { return claudesession.Vitals{}, nil },
-		sender:               func(context.Context, string) (string, error) { return "web-alice-example-com", nil },
-		send:                 func(context.Context, string, string, string) error { return nil },
+		agentQueueExclusions: func(hcomidentity.Row, map[string]queueCandidate) (map[string]bool, error) {
+			return map[string]bool{}, nil
+		},
+		agentVitals: func(hcomidentity.Row) (claudesession.Vitals, error) { return claudesession.Vitals{}, nil },
+		sender:      func(context.Context, string) (string, error) { return "web-alice-example-com", nil },
+		send:        func(context.Context, string, string, string) error { return nil },
 		spawn: func(context.Context, []string) (webaction.Result, error) {
 			return webaction.Result{Name: "new-vava", Pane: "p-new"}, nil
 		},
@@ -146,11 +148,15 @@ func TestAgentDetailShowsBusMessageUntilTranscriptProvesDelivery(t *testing.T) {
 	deps.recentMessages = func(context.Context, int) ([]hcomevents.Message, error) {
 		return []hcomevents.Message{
 			{ID: 731, From: "web-owner", To: []string{"dore"}, Intent: "request", Text: webMessage("web-owner", "operator question"), SentAt: "2026-08-27T04:00:00Z"},
+			{ID: 733, From: "vile", To: []string{"dore"}, Intent: "request", Text: "agent question", SentAt: "2026-08-27T04:00:01Z"},
 			{ID: 732, From: "vile", To: []string{"someone-else"}, Intent: "inform", Text: "not for dore", SentAt: "2026-08-27T04:00:01Z"},
 		}, nil
 	}
 	delivered := false
-	deps.agentQueueExclusions = func(hcomidentity.Row, map[string]string) (map[string]bool, error) {
+	deps.agentQueueExclusions = func(_ hcomidentity.Row, candidates map[string]queueCandidate) (map[string]bool, error) {
+		if len(candidates) != 1 || candidates["731"].Sender != "web-owner" {
+			t.Fatalf("operator candidates = %#v", candidates)
+		}
 		if !delivered {
 			return map[string]bool{}, nil
 		}
@@ -187,19 +193,66 @@ func TestQueuedOperatorAttributionRequiresExactEnvelope(t *testing.T) {
 	}
 }
 
+func TestOperatorQueueCandidatesResolveBusBaseNameToFullAgentRecipient(t *testing.T) {
+	messages := []hcomevents.Message{{
+		ID: 731, From: "web-owner", To: []string{"bulo"}, Intent: "request", Thread: "violet",
+		Text: webMessage("web-owner", "operator question"), SentAt: "2026-08-27T04:00:00Z",
+	}}
+	candidates := operatorQueueCandidates("qlive-bulo", "bulo", messages, nil)
+	if len(candidates) != 1 || candidates["731"].Recipient != "qlive-bulo" {
+		t.Fatalf("tagged agent candidates = %#v", candidates)
+	}
+}
+
+func TestOperatorQueueCandidatesResolveUniqueSenderBaseName(t *testing.T) {
+	messages := []hcomevents.Message{{
+		ID: 731, From: "nero", To: []string{"bulo"}, Intent: "request",
+		Text: webMessage("web-owner", "operator question"),
+	}}
+	roster := []hcomidentity.Row{{Name: "impl-nero", BaseName: "nero"}, {Name: "qlive-bulo", BaseName: "bulo"}}
+	candidates := operatorQueueCandidates("qlive-bulo", "bulo", messages, roster)
+	if candidates["731"].Sender != "impl-nero" {
+		t.Fatalf("resolved sender = %#v", candidates["731"])
+	}
+}
+
+func TestQueueProofRequiresBusMetadataAgreement(t *testing.T) {
+	candidates := map[string]queueCandidate{
+		"731": {Sender: "web-owner", Recipient: "dore", Intent: "request", Thread: "violet"},
+	}
+	proof := newQueueProof(false)
+	for _, payload := range []string{
+		`{"deliveries":[{"message_id":"731","sender":"attacker","recipient":"dore","intent":"request","thread":"violet"}]}`,
+		`{"deliveries":[{"message_id":"731","sender":"web-owner","recipient":"other","intent":"request","thread":"violet"}]}`,
+		`{"deliveries":[{"message_id":"731","sender":"web-owner","recipient":"dore","intent":"inform","thread":"violet"}]}`,
+		`{"deliveries":[{"message_id":"731","sender":"web-owner","recipient":"dore","intent":"request","thread":"other"}]}`,
+	} {
+		if err := proof.observe([]claudesession.Entry{{Kind: claudesession.KindHcomDelivery, Payload: json.RawMessage(payload)}}, candidates); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if proof.excluded["731"] {
+		t.Fatal("mismatched transcript metadata forged queue exclusion")
+	}
+	matching := claudesession.Entry{Kind: claudesession.KindHcomDelivery, Payload: json.RawMessage(`{"deliveries":[{"message_id":"731","sender":"web-owner","recipient":"dore","intent":"request","thread":"violet"}]}`)}
+	if err := proof.observe([]claudesession.Entry{matching}, candidates); err != nil || !proof.excluded["731"] {
+		t.Fatalf("matching delivery not proven: excluded=%#v err=%v", proof.excluded, err)
+	}
+}
+
 func TestQueueProofOmitsPreCompactionCandidatesButKeepsNewer(t *testing.T) {
 	entries := []claudesession.Entry{
 		{
 			Kind:      claudesession.KindHcomDelivery,
 			Timestamp: "2026-08-26T08:07:00Z",
-			Payload:   json.RawMessage(`{"deliveries":[{"message_id":"731"}]}`),
+			Payload:   json.RawMessage(`{"deliveries":[{"message_id":"731","sender":"web-owner","recipient":"dore","intent":"request","thread":"violet"}]}`),
 		},
 		{Kind: claudesession.KindCompactDivider, Timestamp: "2026-08-26T08:14:50Z"},
 	}
-	candidates := map[string]string{
-		"730": "2026-08-26T08:06:58Z",
-		"731": "2026-08-26T08:07:00Z",
-		"732": "2026-08-26T08:15:00Z",
+	candidates := map[string]queueCandidate{
+		"730": {SentAt: "2026-08-26T08:06:58Z", Sender: "web-owner", Recipient: "dore", Intent: "request", Thread: "violet"},
+		"731": {SentAt: "2026-08-26T08:07:00Z", Sender: "web-owner", Recipient: "dore", Intent: "request", Thread: "violet"},
+		"732": {SentAt: "2026-08-26T08:15:00Z", Sender: "web-owner", Recipient: "dore", Intent: "request", Thread: "violet", Preview: "newer"},
 	}
 	proof := newQueueProof(true)
 	if err := proof.observe(entries, candidates); err != nil {
@@ -210,11 +263,11 @@ func TestQueueProofOmitsPreCompactionCandidatesButKeepsNewer(t *testing.T) {
 		t.Fatal(err)
 	}
 	messages := []hcomevents.Message{
-		{ID: 730, To: []string{"dore"}, SentAt: candidates["730"]},
-		{ID: 731, To: []string{"dore"}, SentAt: candidates["731"]},
-		{ID: 732, To: []string{"dore"}, SentAt: candidates["732"]},
+		{ID: 730, From: "web-owner", To: []string{"dore"}, Intent: "request", Thread: "violet", SentAt: candidates["730"].SentAt},
+		{ID: 731, From: "web-owner", To: []string{"dore"}, Intent: "request", Thread: "violet", SentAt: candidates["731"].SentAt},
+		{ID: 732, From: "web-owner", To: []string{"dore"}, Intent: "request", Thread: "violet", SentAt: candidates["732"].SentAt},
 	}
-	queued := diffQueuedMessages("dore", messages, excluded)
+	queued := diffQueuedMessages(messages, candidates, excluded)
 	if len(queued) != 1 || queued[0].ID != 732 {
 		t.Fatalf("queued across compaction = %#v", queued)
 	}
@@ -226,7 +279,7 @@ func TestAgentDetailOmitsQueuedWhenDiffCannotBeProven(t *testing.T) {
 			deps.recentMessages = func(context.Context, int) ([]hcomevents.Message, error) { return nil, errors.New("bus unreadable") }
 		},
 		func(deps *dependencies) {
-			deps.agentQueueExclusions = func(hcomidentity.Row, map[string]string) (map[string]bool, error) {
+			deps.agentQueueExclusions = func(hcomidentity.Row, map[string]queueCandidate) (map[string]bool, error) {
 				return nil, errors.New("session unreadable")
 			}
 		},
@@ -235,7 +288,9 @@ func TestAgentDetailOmitsQueuedWhenDiffCannotBeProven(t *testing.T) {
 		deps.recentMessages = func(context.Context, int) ([]hcomevents.Message, error) {
 			return []hcomevents.Message{{ID: 731, From: "web-owner", To: []string{"dore"}, Text: "question"}}, nil
 		}
-		deps.agentQueueExclusions = func(hcomidentity.Row, map[string]string) (map[string]bool, error) { return map[string]bool{}, nil }
+		deps.agentQueueExclusions = func(hcomidentity.Row, map[string]queueCandidate) (map[string]bool, error) {
+			return map[string]bool{}, nil
+		}
 		mutate(&deps)
 		response := httptest.NewRecorder()
 		newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/dore", nil))

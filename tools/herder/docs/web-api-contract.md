@@ -161,6 +161,40 @@ GET `/api/agents/{bus-name}`
   added. This amendment answers the owner's 2026-08-27 request to make web
   operator sends visible while they wait for the agent's next injection turn.
 
+  ### AMENDMENT (owner-asked, conductor-acked, 2026-08-27) — queued truth is operator-only and PostToolUse-aware
+
+  `queued` is intentionally scoped to web-operator messages: the server admits
+  only candidates whose text carries the exact fenced operator envelope. Other
+  bus traffic remains available in the transcript and bus stream, but is never
+  presented by this endpoint as operator input awaiting delivery.
+
+  Claude delivery proof additionally recognizes the model-visible
+  `hook_additional_context` attachment emitted by `PostToolUse`. Recognition
+  requires `hookEvent:"PostToolUse"`, a matching `PostToolUse` hook name, and
+  exactly one string containing an exact `<hcom>...</hcom>` envelope. Only its
+  anchored leading delivery header, or an exactly counted hcom batch, supplies
+  normalized delivery metadata. The duplicate `hook_system_message` record and
+  nested `hook_success.stdout` text are not delivery sources. A normalized ID
+  excludes a queued candidate only when ID, sender, recipient, intent, and
+  thread also match that real bus candidate addressed to the agent. Free-form
+  body text therefore cannot forge delivery proof. When hcom event rows carry
+  base names but transcript headers carry full tagged names, the server uses an
+  exact unique roster base-name match to compare the same sender identity;
+  missing or ambiguous roster evidence remains unmatched. UserPromptSubmit deliveries
+  retain the same exact additional-context envelope path, producing one
+  normalized card rather than duplicate attachment cards.
+
+  The web pins the operator-only queued block immediately above the composer,
+  outside the scrolling transcript, so it remains visible during live follow.
+  In clean view, consecutive machinery entries collapse into one expandable
+  horizontal pill strip. Consecutive uses of the same tool aggregate their
+  count; non-operator conversation deliveries join the strip as individually
+  sender-labeled message pills, while exact web-operator deliveries remain full
+  cards and launcher/ack traffic remains hidden. Expanding a strip renders its
+  source entries with the normal entry renderer. Clean-view and show-system
+  preferences are both stored per agent in browser localStorage under separate
+  `herder.web.*.v1:` keys; this is client-only state.
+
 GET `/api/viewer`
   Resolves the current connection through the same tailscale identity and
   sender-collision checks used by every write, without performing a write or
