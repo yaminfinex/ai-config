@@ -128,9 +128,14 @@ GET `/api/agents/{bus-name}`
   operator envelope; a sender name beginning with `web-` is not proof.
   Message IDs are the shared proof key: an item remains queued while its bus ID
   is absent from normalized `hcom_delivery` entries and disappears once that ID
-  occurs in the transcript. No timestamp or roster-cursor inference counts as
-  delivery. If the bus history or current Claude/Codex session cannot be read,
-  `queued` is absent rather than guessed. The existing multiplexed `message`
+  occurs in the transcript. For Claude, a candidate sent before the most recent
+  normalized `compact_divider` is unprovable because compaction may have erased
+  its delivery entry, so it is also omitted rather than shown as queued. This
+  boundary does not count as delivery. Codex rollout files are append-only and
+  retain earlier delivery records across compaction, so Codex compact markers
+  do not suppress candidates. If the bus history or current Claude/Codex
+  session cannot be read, `queued` is absent rather than guessed.
+  The existing multiplexed `message`
   frame invalidates addressed agent-detail rows, and the existing
   `entry:{bus-name}` frame invalidates both detail and entries; no stream is
   added. This amendment answers the owner's 2026-08-27 request to make web

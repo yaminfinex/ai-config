@@ -2,9 +2,11 @@ package servecmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"ai-config/tools/herder/internal/claudesession"
@@ -13,20 +15,20 @@ import (
 
 const queuedPreviewRunes = 240
 
-func candidateMessageIDs(agent string, messages []hcomevents.Message) map[string]struct{} {
-	ids := make(map[string]struct{})
+func candidateMessageTimes(agent string, messages []hcomevents.Message) map[string]string {
+	candidates := make(map[string]string)
 	for _, message := range messages {
 		if slices.Contains(message.To, agent) {
-			ids[strconv.FormatInt(message.ID, 10)] = struct{}{}
+			candidates[strconv.FormatInt(message.ID, 10)] = message.SentAt
 		}
 	}
-	return ids
+	return candidates
 }
 
-func diffQueuedMessages(agent string, messages []hcomevents.Message, delivered map[string]bool) []queuedMessage {
+func diffQueuedMessages(agent string, messages []hcomevents.Message, excluded map[string]bool) []queuedMessage {
 	queued := make([]queuedMessage, 0)
 	for _, message := range messages {
-		if !slices.Contains(message.To, agent) || delivered[strconv.FormatInt(message.ID, 10)] {
+		if !slices.Contains(message.To, agent) || excluded[strconv.FormatInt(message.ID, 10)] {
 			continue
 		}
 		preview, operator := queuedPresentation(message.Text)
@@ -38,27 +40,69 @@ func diffQueuedMessages(agent string, messages []hcomevents.Message, delivered m
 	return queued
 }
 
-func deliveredMessageIDs(entries []claudesession.Entry) map[string]bool {
-	delivered := make(map[string]bool)
+type queueProof struct {
+	excluded             map[string]bool
+	honorCompactBoundary bool
+	latestCompact        time.Time
+}
+
+func newQueueProof(honorCompactBoundary bool) *queueProof {
+	return &queueProof{
+		excluded:             make(map[string]bool),
+		honorCompactBoundary: honorCompactBoundary,
+	}
+}
+
+func (proof *queueProof) observe(entries []claudesession.Entry, candidates map[string]string) error {
 	for _, entry := range entries {
-		if entry.Kind != claudesession.KindHcomDelivery {
-			continue
-		}
-		var payload struct {
-			Deliveries []struct {
-				MessageID string `json:"message_id"`
-			} `json:"deliveries"`
-		}
-		if json.Unmarshal(entry.Payload, &payload) != nil {
-			continue
-		}
-		for _, delivery := range payload.Deliveries {
-			if delivery.MessageID != "" {
-				delivered[delivery.MessageID] = true
+		switch entry.Kind {
+		case claudesession.KindHcomDelivery:
+			var payload struct {
+				Deliveries []struct {
+					MessageID string `json:"message_id"`
+				} `json:"deliveries"`
+			}
+			if json.Unmarshal(entry.Payload, &payload) != nil {
+				continue
+			}
+			for _, delivery := range payload.Deliveries {
+				if _, wanted := candidates[delivery.MessageID]; wanted {
+					proof.excluded[delivery.MessageID] = true
+				}
+			}
+		case claudesession.KindCompactDivider:
+			if !proof.honorCompactBoundary {
+				continue
+			}
+			boundary, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
+			if err != nil {
+				return fmt.Errorf("invalid compact boundary timestamp %q: %w", entry.Timestamp, err)
+			}
+			if boundary.After(proof.latestCompact) {
+				proof.latestCompact = boundary
 			}
 		}
 	}
-	return delivered
+	return nil
+}
+
+func (proof *queueProof) exclusions(candidates map[string]string) (map[string]bool, error) {
+	if proof.latestCompact.IsZero() {
+		return proof.excluded, nil
+	}
+	for id, rawSentAt := range candidates {
+		if proof.excluded[id] {
+			continue
+		}
+		sentAt, err := time.Parse(time.RFC3339Nano, rawSentAt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid queued message timestamp %q: %w", rawSentAt, err)
+		}
+		if sentAt.Before(proof.latestCompact) {
+			proof.excluded[id] = true
+		}
+	}
+	return proof.excluded, nil
 }
 
 func queuedPresentation(text string) (string, bool) {

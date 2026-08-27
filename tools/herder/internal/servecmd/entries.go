@@ -224,12 +224,14 @@ func readAgentVitals(row hcomidentity.Row) (claudesession.Vitals, error) {
 	return claudesession.ReadVitals(path)
 }
 
-// readDeliveredMessageIDs scans normalized session windows without retaining
-// the full transcript. It stops as soon as every recent candidate is proven.
-func readDeliveredMessageIDs(row hcomidentity.Row, candidates map[string]struct{}) (map[string]bool, error) {
-	delivered := make(map[string]bool)
+// readQueueExclusions scans normalized session windows without retaining the
+// full transcript. Delivered IDs are excluded for every supported tool;
+// pre-compaction candidates are also excluded for Claude, whose compaction can
+// erase their structural delivery evidence. Codex rollouts remain append-only.
+func readQueueExclusions(row hcomidentity.Row, candidates map[string]string) (map[string]bool, error) {
+	proof := newQueueProof(row.Tool == "claude")
 	if len(candidates) == 0 {
-		return delivered, nil
+		return proof.exclusions(candidates)
 	}
 	if row.Tool != "claude" && row.Tool != "codex" {
 		return nil, fmt.Errorf("unsupported session tool %q", row.Tool)
@@ -253,13 +255,14 @@ func readDeliveredMessageIDs(row hcomidentity.Row, candidates map[string]struct{
 		if err != nil {
 			return nil, err
 		}
-		for id := range deliveredMessageIDs(read.Entries) {
-			if _, wanted := candidates[id]; wanted {
-				delivered[id] = true
-			}
+		if err := proof.observe(read.Entries, candidates); err != nil {
+			return nil, err
 		}
-		if len(delivered) == len(candidates) || read.NextOffset == offset {
-			return delivered, nil
+		if len(proof.excluded) == len(candidates) {
+			return proof.exclusions(candidates)
+		}
+		if read.NextOffset == offset {
+			return proof.exclusions(candidates)
 		}
 		offset = read.NextOffset
 	}
