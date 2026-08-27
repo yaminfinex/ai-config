@@ -3,11 +3,12 @@ import { useMutation } from '@tanstack/react-query'
 import { apiProblem, sendMessage, viewerReadOnlyMessage } from '../../api/client'
 import { composerFieldId, isComposerSendShortcut, persistComposerDraft, readComposerDraft } from '../../composerState'
 
-export function Composer({ name, identityReadOnly, onViewer, onProblem }: {
+export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }: {
   name: string
   identityReadOnly: string
   onViewer: (viewer: string) => void
   onProblem: (detail: string) => void
+  onSend: () => void
 }) {
   const [message, setMessage] = useState(() => readComposerDraft(name))
   const [sendProblem, setSendProblem] = useState('')
@@ -31,6 +32,7 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem }: {
   const send = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!message.trim() || mutation.isPending || effectiveReadOnly) return
+    onSend()
     setSendProblem('')
     setSendNotice('')
     try {

@@ -8,7 +8,7 @@ import { agentVitalsPresentation } from '../../shared/agentVitals'
 import { Composer } from '../composer/Composer'
 import { TranscriptEntries } from './TranscriptEntries'
 
-export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly }: { name: string, liveStatus: string, onViewer: (viewer: string) => void, identityReadOnly: string }) {
+export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSend }: { name: string, liveStatus: string, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -73,6 +73,6 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly }: { n
         setNewEntryCount(0)
       }}>↓ {newEntryCount} new</button>}
     </section>
-    {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={identityReadOnly} onProblem={setSendProblem} />}
+    {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={identityReadOnly} onProblem={setSendProblem} onSend={onSend} />}
   </main>
 }

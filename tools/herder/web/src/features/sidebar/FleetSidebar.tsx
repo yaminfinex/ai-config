@@ -16,10 +16,11 @@ type SidebarNode = {
   tabLabel?: string
 }
 
-export function FleetSidebar({ board, activeAgent, onOpenAgent, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems }: {
+export function FleetSidebar({ board, activeAgent, onPreviewAgent, onPinAgent, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems }: {
   board: Board | undefined
   activeAgent?: string
-  onOpenAgent: (name: string) => void
+  onPreviewAgent: (name: string) => void
+  onPinAgent: (name: string) => void
   expandedItems: string[] | null
   onExpandedItems: (items: string[]) => void
   knownWorkspaceItems: string[] | null
@@ -110,7 +111,7 @@ export function FleetSidebar({ board, activeAgent, onOpenAgent, expandedItems, o
     setSelectedItems: (update) => setSelectedItems((current) => typeof update === 'function' ? update(current) : update),
     onPrimaryAction: (item) => {
       const node = item.getItemData()
-      if (node.pane?.agent && node.pane.agent !== '-') onOpenAgent(node.pane.agent)
+      if (node.pane?.agent && node.pane.agent !== '-') onPreviewAgent(node.pane.agent)
     },
     hotkeys: {
       customPrimaryActionEnter: { hotkey: 'Enter', preventDefault: true, handler: (_event, currentTree) => currentTree.getFocusedItem()?.primaryAction() },
@@ -136,6 +137,7 @@ export function FleetSidebar({ board, activeAgent, onOpenAgent, expandedItems, o
           style={{ paddingLeft: `${item.getItemMeta().level * 16 + 5}px` }}
           title={pane ? `${pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}` : node.name}
           onFocus={() => item.setFocused()}
+          onDoubleClick={() => { if (pane?.agent && pane.agent !== '-') onPinAgent(pane.agent) }}
         >
           {folder ? <button
             className={`disclosure${item.isExpanded() ? ' expanded' : ''}`}
