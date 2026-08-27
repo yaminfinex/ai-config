@@ -46,7 +46,7 @@ func (e *ResolveError) Is(target error) bool {
 }
 
 var sessionIDPattern = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
-var subagentIDPattern = regexp.MustCompile(`^(?:[0-9a-f]{7}|[0-9a-f]{17})$`)
+var subagentIDPattern = regexp.MustCompile(`^[0-9a-f]{17}$`)
 
 // Slug encodes a working directory using Claude Code's project-directory
 // convention: every non-ASCII-alphanumeric byte becomes '-', with a leading

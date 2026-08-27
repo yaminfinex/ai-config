@@ -121,11 +121,13 @@ func TestResolveSubagentUsesProvenParentAndRejectsHostileAgentID(t *testing.T) {
 	if got, err := ResolveSubagent(home, row); err != nil || got != childPath {
 		t.Fatalf("ResolveSubagent() = %q, %v", got, err)
 	}
-	row.AgentID = "../../hostile"
-	_, err := ResolveSubagent(home, row)
-	var typed *ResolveError
-	if !errors.As(err, &typed) || typed.Reason != ResolveInvalidAgentID {
-		t.Fatalf("hostile agent ID error = %#v", err)
+	for _, invalidID := range []string{"deadbee", "../../hostile"} {
+		row.AgentID = invalidID
+		_, err := ResolveSubagent(home, row)
+		var typed *ResolveError
+		if !errors.As(err, &typed) || typed.Reason != ResolveInvalidAgentID {
+			t.Errorf("invalid agent ID %q error = %#v", invalidID, err)
+		}
 	}
 }
 
