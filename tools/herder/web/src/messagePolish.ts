@@ -34,6 +34,16 @@ function stripFencedPrefix(text: string, start: string, end: string): string | n
   return removeFollowingBlankLine(text.slice(blockEnd + end.length + 1))
 }
 
+export function isWebOperatorMessage(text: string): boolean {
+  if (stripFencedPrefix(text, webOperatorNoteStart, webOperatorNoteEnd) !== null) return true
+  if (stripFencedPrefix(text, prereleaseWebOperatorStart, prereleaseWebOperatorEnd) !== null) return true
+  if (!text.startsWith(legacyWebOperatorStart)) return false
+  const noteEnd = text.indexOf(legacyWebOperatorEnd, legacyWebOperatorStart.length)
+  if (noteEnd === -1) return false
+  const sender = text.slice(legacyWebOperatorStart.length, noteEnd)
+  return Boolean(sender && !sender.includes('\n') && !sender.includes('\r'))
+}
+
 // stripWebOperatorNote recognizes only exact known prefixes: the current
 // fenced block, its pre-release marker spelling, and the legacy sentence
 // already stored in session files. Similar prose elsewhere remains untouched.
@@ -48,6 +58,11 @@ export function stripWebOperatorNote(text: string): string {
   const sender = text.slice(legacyWebOperatorStart.length, noteEnd)
   if (!sender || sender.includes('\n') || sender.includes('\r')) return text
   return removeFollowingBlankLine(text.slice(noteEnd + legacyWebOperatorEnd.length))
+}
+
+export function polishHcomDeliveryText(text: string): string {
+  const body = stripWebOperatorNote(text)
+  return body.endsWith(' |') ? body.slice(0, -2) : body
 }
 
 function deliveries(entry: HcomEntry): unknown[] {

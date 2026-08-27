@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { hotkeysCoreFeature, selectionFeature, syncDataLoaderFeature } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
-import { gapLabel, statusClass, workspaceName } from '../../shared/presentation'
+import { AgentStatusDot, gapLabel, workspaceName } from '../../shared/presentation'
 import type { Board, Pane, Row } from '../../types'
 
 const emptyExpandedItems: string[] = []
@@ -122,7 +122,7 @@ export function FleetSidebar({ board, activeAgent, onOpenAgent, expandedItems, o
   useEffect(() => { tree.rebuildTree() }, [nodes, tree])
 
   return <aside className="fleet-sidebar" aria-label="Fleet sidebar">
-    <div className="sidebar-heading"><span className="status-dot working" /><strong>Fleet</strong><span>herdr truth</span></div>
+    <div className="sidebar-heading"><span className="status-dot listening" /><strong>Fleet</strong><span>herdr truth</span></div>
     {!board ? <p className="sidebar-loading">Waiting for fleet…</p> : <div {...tree.getContainerProps('Workspaces and agents')} className="fleet-tree">
       {tree.getItems().map((item) => {
         const node = item.getItemData()
@@ -144,7 +144,7 @@ export function FleetSidebar({ board, activeAgent, onOpenAgent, expandedItems, o
             title={`${item.isExpanded() ? 'Collapse' : 'Expand'} ${node.name}`}
             onClick={(event) => { event.stopPropagation(); if (item.isExpanded()) item.collapse(); else item.expand() }}
           ><span aria-hidden="true">›</span></button> : <span className="disclosure-spacer" />}
-          {pane && <span className={`status-dot ${statusClass(pane.herdr_status)}`} aria-label={`Herdr ${pane.herdr_status}`} />}
+          {pane?.agent && pane.agent !== '-' && <AgentStatusDot status={pane.bus_status} />}
           <span className="tree-name">{node.name}</span>
           {folder && <span className="count-badge">{node.count ?? node.children.length}</span>}
           {signal && <span className="bus-status">{signal}</span>}
