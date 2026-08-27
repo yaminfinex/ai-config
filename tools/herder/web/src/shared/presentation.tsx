@@ -1,8 +1,9 @@
-export function statusClass(status: string) {
-  if (status === 'working' || status === 'active') return 'working'
-  if (status === 'idle' || status === 'listening') return 'idle'
-  if (status === 'dead') return 'dead'
-  return 'unknown'
+import { agentStatusPresentation } from './agentStatus.ts'
+
+export function AgentStatusDot({ status }: { status: string }) {
+  const presentation = agentStatusPresentation(status)
+  const description = `${presentation.label}: ${presentation.meaning}`
+  return <span className={`status-dot ${presentation.className}`} title={description} aria-label={description} />
 }
 
 export function gapLabel(gap: string) {

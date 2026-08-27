@@ -45,9 +45,10 @@ h2, h3, p { margin-top: 0; }
 .agent-row[aria-selected='true'] { background: var(--accent-dim); }
 .shell-row { color: var(--dimmer); font-style: italic; }
 .status-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #565a66; }
-.status-dot.working { background: var(--green); box-shadow: 0 0 4px rgba(63,185,80,.5); }
-.status-dot.idle { background: var(--amber); }
-.status-dot.dead { background: var(--red); }
+.status-dot.active { background: var(--accent); box-shadow: 0 0 5px rgba(88,166,255,.55); }
+.status-dot.listening { background: var(--green); }
+.status-dot.blocked { background: var(--red); }
+.status-dot.unknown { background: #565a66; }
 .bus-status { margin-left: auto; color: var(--dimmer); font-size: 10px; }
 .gap-badge, .pane-chip, .tool-chip { padding: 0 5px; border: 1px solid var(--border2); border-radius: 4px; background: var(--chip); color: var(--dim); font: 10px var(--mono); white-space: nowrap; }
 .unplaced-tree { margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--border); }
