@@ -1,9 +1,3 @@
-export function without(problem: Record<string, string>, key: string) {
-  const next = { ...problem }
-  delete next[key]
-  return next
-}
-
 export function statusClass(status: string) {
   if (status === 'working' || status === 'active') return 'working'
   if (status === 'idle' || status === 'listening') return 'idle'
