@@ -272,11 +272,16 @@ func classifyMessage(base Entry, item responsePayload) (Entry, bool) {
 		return base, true
 	case "developer":
 		trimmed := strings.TrimSpace(text)
-		if !strings.HasPrefix(trimmed, "<hcom>") || !strings.HasSuffix(trimmed, "</hcom>") {
+		if strings.HasPrefix(trimmed, "<hcom>") && strings.HasSuffix(trimmed, "</hcom>") {
+			base.Kind = KindHcomDelivery
+			base.Payload = normalizeHcomDelivery(trimmed)
+			return base, true
+		}
+		if text == "" {
 			return Entry{}, false
 		}
-		base.Kind = KindHcomDelivery
-		base.Payload = normalizeHcomDelivery(trimmed)
+		base.Kind = KindInjectedSystem
+		base.Payload = messagePayload("text", text, nil)
 		return base, true
 	default:
 		// User response items mirror event_msg/user_message, which is the

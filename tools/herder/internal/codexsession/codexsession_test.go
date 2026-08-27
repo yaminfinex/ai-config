@@ -74,7 +74,8 @@ func TestTaxonomyFixtureAndDuplicateSuppression(t *testing.T) {
 	want := []Kind{
 		KindHumanPrompt, KindAssistantText, KindThinking, KindToolUse,
 		KindToolResult, KindToolUse, KindToolResult, KindHcomStub,
-		KindHcomDelivery, KindTurnDuration, KindCompactDivider, KindUnknown,
+		KindHcomDelivery, KindInjectedSystem, KindTurnDuration,
+		KindCompactDivider, KindUnknown,
 	}
 	if len(result.Entries) != len(want) {
 		t.Fatalf("got %d entries, want %d: %#v", len(result.Entries), len(want), result.Entries)
@@ -89,9 +90,12 @@ func TestTaxonomyFixtureAndDuplicateSuppression(t *testing.T) {
 	}
 	assertPayloadField(t, result.Entries[4].Payload, "is_error", true)
 	assertPayloadField(t, result.Entries[6].Payload, "image_count", float64(1))
-	assertPayloadField(t, result.Entries[9].Payload, "durationMs", float64(7310))
+	assertPayloadField(t, result.Entries[10].Payload, "durationMs", float64(7310))
 	if !strings.Contains(string(result.Entries[0].Payload), "Invented prompt") || !strings.Contains(string(result.Entries[1].Payload), "Invented answer") {
 		t.Fatal("normalized message payloads lost visible text")
+	}
+	if !strings.Contains(string(result.Entries[9].Payload), "Invented system injection.") {
+		t.Fatal("developer injection lost visible text")
 	}
 
 	var hcom struct {

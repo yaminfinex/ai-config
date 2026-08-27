@@ -242,6 +242,13 @@ Codex hcom developer deliveries use the tool-neutral payload subtype
 entry `kind` remains `hcom_delivery` and the normalized deliveries shape is
 unchanged.
 
+### AMENDMENT (conductor, 2026-08-27) — Codex developer injections are visible
+
+A Codex developer-role message that is not an hcom delivery is served as an
+`injected_system` entry with the same normalized message-content shape used by
+the shared renderer. Empty developer messages remain non-renderable. This
+brings the Codex transcript into parity with Claude's injected-system entries.
+
 ## Writes (plain HTTP POST — ruled: no WebSocket in v1)
 
 POST `/api/agents/{bus-name}/message`
