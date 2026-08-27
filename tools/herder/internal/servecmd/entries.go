@@ -201,6 +201,29 @@ func entryTail(row hcomidentity.Row, cursor claudesession.Cursor, limit int) (cl
 	return claudesession.TailWindow(path, row.SessionID, cursor, limit)
 }
 
+func readAgentVitals(row hcomidentity.Row) (claudesession.Vitals, error) {
+	if row.Tool != "claude" && row.Tool != "codex" {
+		return claudesession.Vitals{}, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return claudesession.Vitals{}, err
+	}
+	path, err := resolveEntryPath(home, row)
+	if err != nil {
+		var claudeResolve *claudesession.ResolveError
+		var codexResolve *codexsession.ResolveError
+		if errors.As(err, &claudeResolve) || errors.As(err, &codexResolve) {
+			return claudesession.Vitals{}, nil
+		}
+		return claudesession.Vitals{}, err
+	}
+	if row.Tool == "codex" {
+		return codexsession.ReadVitals(path)
+	}
+	return claudesession.ReadVitals(path)
+}
+
 func resolveEntryPath(home string, row hcomidentity.Row) (string, error) {
 	switch row.Tool {
 	case "claude":

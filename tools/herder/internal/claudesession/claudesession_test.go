@@ -179,6 +179,26 @@ func TestTaxonomyFixture(t *testing.T) {
 	}
 }
 
+func TestReadVitalsUsesLatestClaudeAssistantFacts(t *testing.T) {
+	t.Parallel()
+	vitals, err := ReadVitals(filepath.Join("testdata", "vitals.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Vitals{
+		Model: "invented-claude-latest",
+		ContextUsage: &ContextUsage{
+			UsedTokens: 1121, InputTokens: 11, CacheCreationInputTokens: int64Ref(101),
+			CacheReadInputTokens: int64Ref(1009), OutputTokens: int64Ref(19),
+		},
+	}
+	if !reflect.DeepEqual(vitals, want) {
+		t.Fatalf("ReadVitals() = %#v, want %#v", vitals, want)
+	}
+}
+
+func int64Ref(value int64) *int64 { return &value }
+
 func TestBookkeepingAllowlistIsExact(t *testing.T) {
 	t.Parallel()
 	want := map[string]struct{}{

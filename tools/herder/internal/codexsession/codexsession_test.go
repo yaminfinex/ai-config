@@ -125,6 +125,27 @@ func TestTaxonomyFixtureAndDuplicateSuppression(t *testing.T) {
 	}
 }
 
+func TestReadVitalsUsesLatestCodexTurnAndTokenFacts(t *testing.T) {
+	t.Parallel()
+	vitals, err := ReadVitals(filepath.Join("testdata", "vitals.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPercent := float64(1009) * 100 / 7310
+	want := Vitals{
+		Model: "invented-codex-latest",
+		ContextUsage: &ContextUsage{
+			UsedTokens: 1009, InputTokens: 1009, CachedInputTokens: int64Ref(900),
+			OutputTokens: int64Ref(19), WindowTokens: int64Ref(7310), UsedPercent: &wantPercent,
+		},
+	}
+	if !reflect.DeepEqual(vitals, want) {
+		t.Fatalf("ReadVitals() = %#v, want %#v", vitals, want)
+	}
+}
+
+func int64Ref(value int64) *int64 { return &value }
+
 func TestCompleteLinesQuarantineAndTail(t *testing.T) {
 	t.Parallel()
 	complete := "{invented corrupt\n" + `{"timestamp":"2026-01-02T03:04:05Z","type":"event_msg","payload":{"type":"user_message","message":"one"}}` + "\n"

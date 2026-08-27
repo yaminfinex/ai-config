@@ -48,8 +48,9 @@ func fixtureDeps() dependencies {
 		entryTail: func(row hcomidentity.Row, cursor claudesession.Cursor, _ int) (claudesession.TailResult, error) {
 			return claudesession.TailResult{Cursor: claudesession.Cursor{SessionID: row.SessionID, Offset: cursor.Offset}}, nil
 		},
-		sender: func(context.Context, string) (string, error) { return "web-alice-example-com", nil },
-		send:   func(context.Context, string, string, string) error { return nil },
+		agentVitals: func(hcomidentity.Row) (claudesession.Vitals, error) { return claudesession.Vitals{}, nil },
+		sender:      func(context.Context, string) (string, error) { return "web-alice-example-com", nil },
+		send:        func(context.Context, string, string, string) error { return nil },
 		spawn: func(context.Context, []string) (webaction.Result, error) {
 			return webaction.Result{Name: "new-vava", Pane: "p-new"}, nil
 		},
@@ -92,6 +93,13 @@ func TestFleetEndpointPinsPathAndBoardJSONShape(t *testing.T) {
 
 func TestAgentEndpointReturnsJoinedDetailAnd404sUnknownBusName(t *testing.T) {
 	deps := fixtureDeps()
+	usedPercent := 43.75
+	deps.agentVitals = func(hcomidentity.Row) (claudesession.Vitals, error) {
+		return claudesession.Vitals{Model: "invented-codex-model", ContextUsage: &claudesession.ContextUsage{
+			UsedTokens: 112000, InputTokens: 112000, CachedInputTokens: int64Pointer(101000),
+			OutputTokens: int64Pointer(731), WindowTokens: int64Pointer(256000), UsedPercent: &usedPercent,
+		}}, nil
+	}
 	response := httptest.NewRecorder()
 	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/dore", nil))
 	if response.Code != http.StatusOK {
@@ -101,7 +109,7 @@ func TestAgentEndpointReturnsJoinedDetailAnd404sUnknownBusName(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
 		t.Fatal(err)
 	}
-	if detail.Name != "dore" || detail.Tool != "codex" || detail.HerdrStatus != "working" || detail.BusStatus != "active" || detail.Gap != "-" || detail.Pane == nil || detail.Pane.PaneID != "p1" || detail.LaunchContext.PaneID != "p1" {
+	if detail.Name != "dore" || detail.Tool != "codex" || detail.HerdrStatus != "working" || detail.BusStatus != "active" || detail.Gap != "-" || detail.Pane == nil || detail.Pane.PaneID != "p1" || detail.LaunchContext.PaneID != "p1" || detail.Model != "invented-codex-model" || detail.ContextUsage == nil || detail.ContextUsage.UsedTokens != 112000 {
 		t.Fatalf("agent detail = %#v", detail)
 	}
 
@@ -111,6 +119,8 @@ func TestAgentEndpointReturnsJoinedDetailAnd404sUnknownBusName(t *testing.T) {
 		t.Fatalf("unknown response = %d %s", response.Code, response.Body.String())
 	}
 }
+
+func int64Pointer(value int64) *int64 { return &value }
 
 func TestAgentEndpointUsesSessionHealedPane(t *testing.T) {
 	deps := fixtureDeps()

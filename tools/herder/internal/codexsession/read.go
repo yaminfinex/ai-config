@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"ai-config/tools/herder/internal/sessionjsonl"
 )
 
 const maxToolOutputBytes = 16 * 1024
@@ -141,6 +143,68 @@ func read(path string, offset int64, limit int, keepTail bool) (ReadResult, erro
 		result.Entries = ordered
 	}
 	return result, nil
+}
+
+// ReadVitals scans complete rollout records and returns the latest entry that
+// carries each fact. Codex supplies its context-window denominator directly in
+// token_count.info.model_context_window.
+func ReadVitals(path string) (Vitals, error) {
+	var vitals Vitals
+	err := sessionjsonl.ScanCompleteReverse(path, func(raw []byte) bool {
+		var facts Vitals
+		observeVitals(raw, &facts)
+		if vitals.Model == "" {
+			vitals.Model = facts.Model
+		}
+		if vitals.ContextUsage == nil {
+			vitals.ContextUsage = facts.ContextUsage
+		}
+		return vitals.Model == "" || vitals.ContextUsage == nil
+	})
+	return vitals, err
+}
+
+func observeVitals(raw []byte, vitals *Vitals) {
+	var env rolloutEnvelope
+	if json.Unmarshal(raw, &env) != nil {
+		return
+	}
+	switch env.Type {
+	case "turn_context":
+		var payload struct {
+			Model string `json:"model"`
+		}
+		if json.Unmarshal(env.Payload, &payload) == nil && payload.Model != "" {
+			vitals.Model = payload.Model
+		}
+	case "event_msg":
+		var payload struct {
+			Type string `json:"type"`
+			Info *struct {
+				LastTokenUsage struct {
+					InputTokens       *int64 `json:"input_tokens"`
+					CachedInputTokens *int64 `json:"cached_input_tokens"`
+					OutputTokens      *int64 `json:"output_tokens"`
+				} `json:"last_token_usage"`
+				ModelContextWindow *int64 `json:"model_context_window"`
+			} `json:"info"`
+		}
+		if json.Unmarshal(env.Payload, &payload) != nil || payload.Type != "token_count" || payload.Info == nil || payload.Info.LastTokenUsage.InputTokens == nil {
+			return
+		}
+		input := *payload.Info.LastTokenUsage.InputTokens
+		context := &ContextUsage{
+			UsedTokens: input, InputTokens: input,
+			CachedInputTokens: payload.Info.LastTokenUsage.CachedInputTokens,
+			OutputTokens:      payload.Info.LastTokenUsage.OutputTokens,
+			WindowTokens:      payload.Info.ModelContextWindow,
+		}
+		if payload.Info.ModelContextWindow != nil && *payload.Info.ModelContextWindow > 0 {
+			percent := float64(input) * 100 / float64(*payload.Info.ModelContextWindow)
+			context.UsedPercent = &percent
+		}
+		vitals.ContextUsage = context
+	}
 }
 
 // ReadTail returns the last limit renderable complete entries without keeping

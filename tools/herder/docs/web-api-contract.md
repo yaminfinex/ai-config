@@ -92,6 +92,32 @@ GET `/api/agents/{bus-name}`
   One agent: pane coordinate, tool, statuses, launch context, gap
   state. 404 for names not on the bus.
 
+  ### AMENDMENT (owner priority ruling, 2026-08-27) — agent model and context vitals
+
+  The detail payload additionally carries the latest session-observed `model`
+  and `context_usage`; either field is absent when its fact is unavailable.
+  `context_usage` contains `used_tokens`, `input_tokens`, and only the raw
+  source fields actually reported: `cached_input_tokens`,
+  `cache_creation_input_tokens`, `cache_read_input_tokens`, `output_tokens`,
+  `window_tokens`, and `used_percent`.
+
+  Claude facts come from the latest complete `assistant` JSONL record carrying
+  `message.model` or `message.usage`. Its `used_tokens` is the current input
+  context (`input_tokens + cache_creation_input_tokens +
+  cache_read_input_tokens`). Claude session records do not carry a context
+  window size, so `window_tokens` and `used_percent` are absent. Codex model
+  comes from the latest complete `turn_context`; usage comes from the latest
+  `event_msg/token_count.info`, with `used_tokens` equal to
+  `last_token_usage.input_tokens`. Codex `window_tokens` is the emitted
+  `model_context_window`, and only that explicit denominator authorizes
+  `used_percent`. No model-to-window lookup or guessed denominator is allowed.
+
+  Example known-window fragment:
+  `{"model":"invented-codex-model","context_usage":{"used_tokens":112600,"input_tokens":112600,"cached_input_tokens":101120,"output_tokens":266,"window_tokens":258400,"used_percent":43.57585139318885}}`.
+  The multiplexed entry frame remains a wake signal and the detail endpoint
+  remains truth: clients invalidate both entry and agent-detail TanStack cache
+  rows on the existing `entry:{bus-name}` cadence. No additional stream exists.
+
 GET `/api/viewer`
   Resolves the current connection through the same tailscale identity and
   sender-collision checks used by every write, without performing a write or

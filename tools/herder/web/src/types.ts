@@ -66,6 +66,17 @@ export interface AgentDetail {
   directory?: string
   session_id?: string
   launch_context: Record<string, unknown>
+  model?: string
+  context_usage?: {
+    used_tokens: number
+    input_tokens: number
+    cached_input_tokens?: number
+    cache_creation_input_tokens?: number
+    cache_read_input_tokens?: number
+    output_tokens?: number
+    window_tokens?: number
+    used_percent?: number
+  }
 }
 
 export type EntryKind =
