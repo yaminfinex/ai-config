@@ -44,13 +44,15 @@ func fixtureDeps() dependencies {
 			<-ctx.Done()
 			return nil
 		},
-		entryEnd: func(hcomidentity.Row) (int64, error) { return 0, nil },
+		recentMessages: func(context.Context, int) ([]hcomevents.Message, error) { return []hcomevents.Message{}, nil },
+		entryEnd:       func(hcomidentity.Row) (int64, error) { return 0, nil },
 		entryTail: func(row hcomidentity.Row, cursor claudesession.Cursor, _ int) (claudesession.TailResult, error) {
 			return claudesession.TailResult{Cursor: claudesession.Cursor{SessionID: row.SessionID, Offset: cursor.Offset}}, nil
 		},
-		agentVitals: func(hcomidentity.Row) (claudesession.Vitals, error) { return claudesession.Vitals{}, nil },
-		sender:      func(context.Context, string) (string, error) { return "web-alice-example-com", nil },
-		send:        func(context.Context, string, string, string) error { return nil },
+		agentQueueExclusions: func(hcomidentity.Row, map[string]string) (map[string]bool, error) { return map[string]bool{}, nil },
+		agentVitals:          func(hcomidentity.Row) (claudesession.Vitals, error) { return claudesession.Vitals{}, nil },
+		sender:               func(context.Context, string) (string, error) { return "web-alice-example-com", nil },
+		send:                 func(context.Context, string, string, string) error { return nil },
 		spawn: func(context.Context, []string) (webaction.Result, error) {
 			return webaction.Result{Name: "new-vava", Pane: "p-new"}, nil
 		},
@@ -117,6 +119,117 @@ func TestAgentEndpointReturnsJoinedDetailAnd404sUnknownBusName(t *testing.T) {
 	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/missing", nil))
 	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"error":"unknown agent"`) {
 		t.Fatalf("unknown response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAgentDetailShowsBusMessageUntilTranscriptProvesDelivery(t *testing.T) {
+	deps := fixtureDeps()
+	deps.recentMessages = func(context.Context, int) ([]hcomevents.Message, error) {
+		return []hcomevents.Message{
+			{ID: 731, From: "web-owner", To: []string{"dore"}, Intent: "request", Text: webMessage("web-owner", "operator question"), SentAt: "2026-08-27T04:00:00Z"},
+			{ID: 732, From: "vile", To: []string{"someone-else"}, Intent: "inform", Text: "not for dore", SentAt: "2026-08-27T04:00:01Z"},
+		}, nil
+	}
+	delivered := false
+	deps.agentQueueExclusions = func(hcomidentity.Row, map[string]string) (map[string]bool, error) {
+		if !delivered {
+			return map[string]bool{}, nil
+		}
+		return map[string]bool{"731": true}, nil
+	}
+
+	read := func() agentDetail {
+		response := httptest.NewRecorder()
+		newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/dore", nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("detail response = %d %s", response.Code, response.Body.String())
+		}
+		var detail agentDetail
+		if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
+			t.Fatal(err)
+		}
+		return detail
+	}
+
+	queued := read().Queued
+	if len(queued) != 1 || queued[0].ID != 731 || queued[0].Sender != "web-owner" || queued[0].Intent != "request" || queued[0].Preview != "operator question" || queued[0].SentAt != "2026-08-27T04:00:00Z" || !queued[0].Operator {
+		t.Fatalf("queued before injection = %#v", queued)
+	}
+	delivered = true
+	if queued = read().Queued; len(queued) != 0 {
+		t.Fatalf("queued after transcript delivery = %#v", queued)
+	}
+}
+
+func TestQueuedOperatorAttributionRequiresExactEnvelope(t *testing.T) {
+	preview, operator := queuedPresentation("plain message from a web-looking sender")
+	if preview != "plain message from a web-looking sender" || operator {
+		t.Fatalf("plain queued presentation = %q, operator=%v", preview, operator)
+	}
+}
+
+func TestQueueProofOmitsPreCompactionCandidatesButKeepsNewer(t *testing.T) {
+	entries := []claudesession.Entry{
+		{
+			Kind:      claudesession.KindHcomDelivery,
+			Timestamp: "2026-08-26T08:07:00Z",
+			Payload:   json.RawMessage(`{"deliveries":[{"message_id":"731"}]}`),
+		},
+		{Kind: claudesession.KindCompactDivider, Timestamp: "2026-08-26T08:14:50Z"},
+	}
+	candidates := map[string]string{
+		"730": "2026-08-26T08:06:58Z",
+		"731": "2026-08-26T08:07:00Z",
+		"732": "2026-08-26T08:15:00Z",
+	}
+	proof := newQueueProof(true)
+	if err := proof.observe(entries, candidates); err != nil {
+		t.Fatal(err)
+	}
+	excluded, err := proof.exclusions(candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := []hcomevents.Message{
+		{ID: 730, To: []string{"dore"}, SentAt: candidates["730"]},
+		{ID: 731, To: []string{"dore"}, SentAt: candidates["731"]},
+		{ID: 732, To: []string{"dore"}, SentAt: candidates["732"]},
+	}
+	queued := diffQueuedMessages("dore", messages, excluded)
+	if len(queued) != 1 || queued[0].ID != 732 {
+		t.Fatalf("queued across compaction = %#v", queued)
+	}
+}
+
+func TestAgentDetailOmitsQueuedWhenDiffCannotBeProven(t *testing.T) {
+	for _, mutate := range []func(*dependencies){
+		func(deps *dependencies) {
+			deps.recentMessages = func(context.Context, int) ([]hcomevents.Message, error) { return nil, errors.New("bus unreadable") }
+		},
+		func(deps *dependencies) {
+			deps.agentQueueExclusions = func(hcomidentity.Row, map[string]string) (map[string]bool, error) {
+				return nil, errors.New("session unreadable")
+			}
+		},
+	} {
+		deps := fixtureDeps()
+		deps.recentMessages = func(context.Context, int) ([]hcomevents.Message, error) {
+			return []hcomevents.Message{{ID: 731, From: "web-owner", To: []string{"dore"}, Text: "question"}}, nil
+		}
+		deps.agentQueueExclusions = func(hcomidentity.Row, map[string]string) (map[string]bool, error) { return map[string]bool{}, nil }
+		mutate(&deps)
+		response := httptest.NewRecorder()
+		newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/dore", nil))
+		var body map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusOK {
+			t.Fatalf("honest omission response = %d %s", response.Code, response.Body.String())
+		}
+		if _, present := body["queued"]; present {
+			t.Fatalf("unprovable queued field present: %#v", body["queued"])
+		}
 	}
 }
 

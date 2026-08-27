@@ -224,6 +224,50 @@ func readAgentVitals(row hcomidentity.Row) (claudesession.Vitals, error) {
 	return claudesession.ReadVitals(path)
 }
 
+// readQueueExclusions scans normalized session windows without retaining the
+// full transcript. Delivered IDs are excluded for every supported tool;
+// pre-compaction candidates are also excluded for Claude, whose compaction can
+// erase their structural delivery evidence. Codex rollouts remain append-only.
+func readQueueExclusions(row hcomidentity.Row, candidates map[string]string) (map[string]bool, error) {
+	proof := newQueueProof(row.Tool == "claude")
+	if len(candidates) == 0 {
+		return proof.exclusions(candidates)
+	}
+	if row.Tool != "claude" && row.Tool != "codex" {
+		return nil, fmt.Errorf("unsupported session tool %q", row.Tool)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	path, err := resolveEntryPath(home, row)
+	if err != nil {
+		return nil, err
+	}
+	var offset int64
+	for {
+		var read claudesession.ReadResult
+		if row.Tool == "codex" {
+			read, err = codexsession.ReadWindow(path, offset, maxEntryWindow)
+		} else {
+			read, err = claudesession.ReadWindow(path, offset, maxEntryWindow)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := proof.observe(read.Entries, candidates); err != nil {
+			return nil, err
+		}
+		if len(proof.excluded) == len(candidates) {
+			return proof.exclusions(candidates)
+		}
+		if read.NextOffset == offset {
+			return proof.exclusions(candidates)
+		}
+		offset = read.NextOffset
+	}
+}
+
 func resolveEntryPath(home string, row hcomidentity.Row) (string, error) {
 	switch row.Tool {
 	case "claude":

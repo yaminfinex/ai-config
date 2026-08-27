@@ -123,6 +123,16 @@ tbody tr:last-child td { border-bottom: 0; }
 .transcript { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; padding: 8px 14px 14px; }
 .transcript > * { max-width: 900px; }
 .window-note { margin: 2px 0 10px; color: var(--dimmer); font: 9px var(--mono); text-align: center; }
+.queued-messages { margin: 0 0 12px; padding: 7px; border: 1px solid #5c4716; border-radius: 7px; background: #211d13; font: 10px var(--mono); }
+.queued-messages > header { display: flex; align-items: baseline; gap: 8px; padding: 0 3px 5px; color: var(--amber); }
+.queued-messages > header strong { letter-spacing: .08em; text-transform: uppercase; }
+.queued-messages > header span { color: #b7a678; }
+.queued-message { padding: 6px 8px; border-top: 1px solid #443819; background: rgba(0,0,0,.08); }
+.queued-message.operator-queued { border-left: 3px solid var(--green); background: #18231b; }
+.queued-meta { display: flex; align-items: center; gap: 7px; color: var(--dim); }
+.queued-meta > strong { color: var(--text); }
+.queued-meta time { margin-left: auto; color: var(--dimmer); }
+.queued-preview { margin-top: 3px; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .system-toggle { display: flex; align-items: center; gap: 5px; color: var(--dim); font-size: 10px; white-space: nowrap; }
 .system-toggle [role='checkbox'] { display: grid; width: 13px; height: 13px; flex: 0 0 13px; place-items: center; padding: 0; border: 1px solid var(--border2); border-radius: 3px; background: var(--bg); color: #fff; font: 10px/1 var(--mono); }
 .system-toggle [role='checkbox'][aria-checked='true'] { border-color: var(--accent); background: var(--accent); }

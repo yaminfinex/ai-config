@@ -63,6 +63,12 @@ if [ "${1:-}" = send ]; then
 fi
 if [ "${1:-}" = events ]; then
   case " $* " in
+    *" events --last 500 --full --type message "*)
+      printf '%s\n' \
+        '{"id":97,"ts":"2099-01-01T00:00:00.000001+00:00","type":"message","data":{"from":"web-owner","delivered_to":["vile"],"intent":"request","text":"[HERDER_WEB_OPERATOR_NOTE_BEGIN]\n[This message came from a web operator named web-owner via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]\n[HERDER_WEB_OPERATOR_NOTE_END]\n\noperator question"}}' \
+        '{"id":98,"ts":"2099-01-01T00:00:00.000002+00:00","type":"message","data":{"from":"vile","delivered_to":["vile"],"intent":"inform","text":"idle agent note"}}'
+      exit 0
+      ;;
     *" events --last 1 --full --type message "*) exit 0 ;;
     *" events --wait 30 --full --type message --sql id > 0 "*|*" events --last 10000 --full --type message --sql id > 0 "*)
       printf '%s\n' '{"id":99,"ts":"2099-01-01T00:00:00.000001+00:00","type":"message","data":{"from":"vile","delivered_to":["dore"],"thread":"web-serve","text":"fixture message"}}'
@@ -205,6 +211,8 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF '/entries' "$ROOT/app.js" &&
   grep -qF 'nextOffset' "$ROOT/app.js" &&
   grep -qF '% left' "$ROOT/app.js" &&
+  grep -qF 'waiting for the agent’s next turn' "$ROOT/app.js" &&
+  grep -qF 'queued-messages' "$ROOT/app.js" &&
   grep -qF 'clean view' "$ROOT/app.js" &&
   grep -qF 'herder.web.cleanView.v1:' "$ROOT/app.js" &&
   grep -qF 'show system entries' "$ROOT/app.js" &&
@@ -313,6 +321,38 @@ then
   pass "entries route serves a classified tail window with a session-bound byte cursor"
 else
   bad "entries route" "body=$(cat "$ROOT/entries.json" 2>/dev/null || true)"
+fi
+
+if curl -fsS "http://127.0.0.1:$port/api/agents/vile" >"$ROOT/queued-before.json" && python3 - "$ROOT/queued-before.json" <<'PY'
+import json, sys
+agent = json.load(open(sys.argv[1]))
+queued = agent["queued"]
+assert [item["id"] for item in queued] == [97, 98]
+assert queued[0] == {
+    "id": 97,
+    "sender": "web-owner",
+    "intent": "request",
+    "preview": "operator question",
+    "sent_at": "2099-01-01T00:00:00.000001+00:00",
+    "operator": True,
+}
+PY
+then
+  pass "agent detail proves sent-but-not-injected operator and idle messages from bus IDs"
+else
+  bad "queued detail before injection" "body=$(cat "$ROOT/queued-before.json" 2>/dev/null || true)"
+fi
+
+printf '%s\n' '{"type":"attachment","attachment":{"type":"hook_system_message","content":"[request #97] web-owner → vile: operator question"},"uuid":"invented-queued-delivery","timestamp":"2026-01-02T03:04:06.500Z"}' >>"$session_path"
+if curl -fsS "http://127.0.0.1:$port/api/agents/vile" >"$ROOT/queued-after.json" && python3 - "$ROOT/queued-after.json" <<'PY'
+import json, sys
+agent = json.load(open(sys.argv[1]))
+assert [item["id"] for item in agent["queued"]] == [98]
+PY
+then
+  pass "matching transcript delivery ID removes the injected message while an idle message stays queued"
+else
+  bad "queued detail after injection" "body=$(cat "$ROOT/queued-after.json" 2>/dev/null || true)"
 fi
 
 curl -sS -o "$ROOT/unknown-agent.json" -w '%{http_code}' "http://127.0.0.1:$port/api/agents/missing" >"$ROOT/unknown-agent.status"
@@ -462,7 +502,7 @@ else
   bad "server shutdown" "rc=$serve_rc"
 fi
 
-printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((19 - fail))" "$fail"
+printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((21 - fail))" "$fail"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi

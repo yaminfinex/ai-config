@@ -7,6 +7,27 @@ import (
 	"testing"
 )
 
+func TestRecentReturnsRealMessageEventShapeNewestFirst(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "hcom")
+	script := `#!/usr/bin/env bash
+printf '%s\n' \
+  '{"id":731,"ts":"2099-01-01T00:00:00.000001+00:00","type":"message","data":{"from":"web-owner","delivered_to":["dore"],"intent":"request","thread":"queued-messages","text":"operator question"}}' \
+  '{"id":732,"ts":"2099-01-01T00:00:00.000002+00:00","type":"message","data":{"from":"vile","delivered_to":["dore"],"intent":"inform","text":"agent note"}}'
+`
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	messages, err := Recent(context.Background(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 || messages[0].ID != 731 || messages[0].SentAt != "2099-01-01T00:00:00.000001+00:00" || messages[0].Intent != "request" || messages[1].ID != 732 {
+		t.Fatalf("messages = %#v", messages)
+	}
+}
+
 func TestSubscribeShellsThroughHcomEventWait(t *testing.T) {
 	dir := t.TempDir()
 	stub := filepath.Join(dir, "hcom")

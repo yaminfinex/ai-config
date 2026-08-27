@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
-import { apiProblem, sendMessage, viewerReadOnlyMessage } from '../../api/client'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { apiProblem, queryKeys, sendMessage, viewerReadOnlyMessage } from '../../api/client'
 import { composerFieldId, isComposerSendShortcut, persistComposerDraft, readComposerDraft } from '../../composerState'
 
 export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }: {
@@ -14,6 +14,7 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
   const [sendProblem, setSendProblem] = useState('')
   const [sendNotice, setSendNotice] = useState('')
   const [readOnly, setReadOnly] = useState('')
+  const queryClient = useQueryClient()
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const mutation = useMutation({ mutationFn: (text: string) => sendMessage(name, text) })
   const effectiveReadOnly = identityReadOnly || readOnly
@@ -41,6 +42,7 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
       persistComposerDraft(name, '')
       setMessage('')
       setSendNotice(`Sent to ${result.to} as ${result.from}. Waiting for the live reply…`)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
       onProblem('')
     } catch (error: unknown) {
       const { response, problem } = apiProblem(error)

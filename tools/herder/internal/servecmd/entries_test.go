@@ -125,6 +125,47 @@ func TestEntriesEndpointDispatchesCodexRollout(t *testing.T) {
 	}
 }
 
+func TestReadQueueExclusionsUsesToolSpecificCompactBoundaryPolicy(t *testing.T) {
+	for _, fixture := range []struct {
+		name              string
+		path              string
+		row               hcomidentity.Row
+		put               func(*testing.T, string) (string, string)
+		wantOlderExcluded bool
+	}{
+		{
+			name: "claude", path: "../claudesession/testdata/taxonomy.jsonl",
+			row:               hcomidentity.Row{Tool: "claude", SessionID: fixtureSessionID, Directory: "/invented/violet"},
+			put:               writeEntrySession,
+			wantOlderExcluded: true,
+		},
+		{
+			name: "codex", path: "../codexsession/testdata/taxonomy.jsonl",
+			row: hcomidentity.Row{Tool: "codex", SessionID: fixtureSessionID},
+			put: writeCodexEntrySession,
+		},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			content, err := os.ReadFile(fixture.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			home, _ := fixture.put(t, string(content))
+			t.Setenv("HOME", home)
+			excluded, err := readQueueExclusions(fixture.row, map[string]string{
+				"730": "2026-01-02T03:04:04Z",
+				"733": "2026-01-02T03:04:18Z",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if excluded["730"] != fixture.wantOlderExcluded || excluded["733"] {
+				t.Fatalf("compact-boundary exclusions = %#v", excluded)
+			}
+		})
+	}
+}
+
 func TestEntriesEndpointPassesThroughToolOutputTruncation(t *testing.T) {
 	output := strings.Repeat("v", 16*1024+731)
 	line := `{"type":"user","uuid":"invented-result","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_invented","is_error":false,"content":` + mustEntryString(output) + `}]}}`

@@ -77,6 +77,16 @@ export interface AgentDetail {
     window_tokens?: number
     used_percent?: number
   }
+  queued?: QueuedMessage[]
+}
+
+export interface QueuedMessage {
+  id: number
+  sender: string
+  intent?: string
+  preview: string
+  sent_at: string
+  operator?: boolean
 }
 
 export type EntryKind =

@@ -42,36 +42,40 @@ const (
 )
 
 type dependencies struct {
-	buildIdentity string
-	snapshot      func() (herdrcli.Snapshot, error)
-	worktrees     func([]herdrcli.Workspace) (map[string]string, error)
-	roster        func() ([]hcomidentity.Row, error)
-	messages      func(context.Context, *hcomevents.Cursor, func(hcomevents.Message) error, func() error) error
-	entryEnd      func(hcomidentity.Row) (int64, error)
-	entryTail     func(hcomidentity.Row, claudesession.Cursor, int) (claudesession.TailResult, error)
-	agentVitals   func(hcomidentity.Row) (claudesession.Vitals, error)
-	sender        func(context.Context, string) (string, error)
-	send          func(context.Context, string, string, string) error
-	spawn         func(context.Context, []string) (webaction.Result, error)
-	poll          time.Duration
-	heartbeat     time.Duration
-	listeners     func(int) ([]net.Listener, []string, error)
+	buildIdentity        string
+	snapshot             func() (herdrcli.Snapshot, error)
+	worktrees            func([]herdrcli.Workspace) (map[string]string, error)
+	roster               func() ([]hcomidentity.Row, error)
+	messages             func(context.Context, *hcomevents.Cursor, func(hcomevents.Message) error, func() error) error
+	recentMessages       func(context.Context, int) ([]hcomevents.Message, error)
+	entryEnd             func(hcomidentity.Row) (int64, error)
+	entryTail            func(hcomidentity.Row, claudesession.Cursor, int) (claudesession.TailResult, error)
+	agentQueueExclusions func(hcomidentity.Row, map[string]string) (map[string]bool, error)
+	agentVitals          func(hcomidentity.Row) (claudesession.Vitals, error)
+	sender               func(context.Context, string) (string, error)
+	send                 func(context.Context, string, string, string) error
+	spawn                func(context.Context, []string) (webaction.Result, error)
+	poll                 time.Duration
+	heartbeat            time.Duration
+	listeners            func(int) ([]net.Listener, []string, error)
 }
 
 var liveDependencies = dependencies{
-	snapshot:    herdrcli.LiveSnapshot,
-	worktrees:   herdrcli.WorktreeParents,
-	roster:      hcomidentity.List,
-	messages:    hcomevents.Subscribe,
-	entryEnd:    entryTailEnd,
-	entryTail:   entryTail,
-	agentVitals: readAgentVitals,
-	sender:      webidentity.Sender,
-	send:        hcommessage.SendRequest,
-	spawn:       webaction.Spawn,
-	poll:        PollCadence,
-	heartbeat:   HeartbeatCadence,
-	listeners:   liveListeners,
+	snapshot:             herdrcli.LiveSnapshot,
+	worktrees:            herdrcli.WorktreeParents,
+	roster:               hcomidentity.List,
+	messages:             hcomevents.Subscribe,
+	recentMessages:       hcomevents.Recent,
+	entryEnd:             entryTailEnd,
+	entryTail:            entryTail,
+	agentQueueExclusions: readQueueExclusions,
+	agentVitals:          readAgentVitals,
+	sender:               webidentity.Sender,
+	send:                 hcommessage.SendRequest,
+	spawn:                webaction.Spawn,
+	poll:                 PollCadence,
+	heartbeat:            HeartbeatCadence,
+	listeners:            liveListeners,
 }
 
 type refusal struct {
@@ -114,6 +118,16 @@ type agentDetail struct {
 	LaunchContext hcomidentity.LaunchContext  `json:"launch_context"`
 	Model         string                      `json:"model,omitempty"`
 	ContextUsage  *claudesession.ContextUsage `json:"context_usage,omitempty"`
+	Queued        []queuedMessage             `json:"queued,omitempty"`
+}
+
+type queuedMessage struct {
+	ID       int64  `json:"id"`
+	Sender   string `json:"sender"`
+	Intent   string `json:"intent,omitempty"`
+	Preview  string `json:"preview"`
+	SentAt   string `json:"sent_at"`
+	Operator bool   `json:"operator,omitempty"`
 }
 
 type transcriptReset struct {
@@ -352,7 +366,7 @@ func newHandler(deps dependencies) http.Handler {
 			refuse(w, http.StatusBadRequest, "bad request", "GET required")
 			return
 		}
-		detail, err := readAgent(deps, r.PathValue("busName"))
+		detail, err := readAgent(r.Context(), deps, r.PathValue("busName"))
 		if err != nil {
 			serveAgentReadError(w, err)
 			return
@@ -440,7 +454,7 @@ func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, 
 
 var errUnknownAgent = errors.New("unknown agent")
 
-func readAgent(deps dependencies, name string) (agentDetail, error) {
+func readAgent(ctx context.Context, deps dependencies, name string) (agentDetail, error) {
 	snapshot, roster, err := readFleetInputs(deps)
 	if err != nil {
 		return agentDetail{}, err
@@ -466,6 +480,14 @@ func readAgent(deps dependencies, name string) (agentDetail, error) {
 	}
 	result.Model = vitals.Model
 	result.ContextUsage = vitals.ContextUsage
+	// Queued is an optional proven fact. A bus/session read failure must not
+	// degrade the otherwise useful detail response or invent delivery state.
+	if messages, messageErr := deps.recentMessages(ctx, 500); messageErr == nil {
+		candidates := candidateMessageTimes(name, messages)
+		if excluded, entryErr := deps.agentQueueExclusions(*bus, candidates); entryErr == nil {
+			result.Queued = diffQueuedMessages(name, messages, excluded)
+		}
+	}
 	resolvedPane := ""
 	for _, row := range fleetview.JoinRows(snapshot, roster) {
 		if row.Agent == name && row.BusStatus != "-" {
