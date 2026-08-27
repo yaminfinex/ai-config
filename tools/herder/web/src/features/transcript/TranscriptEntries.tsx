@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { duplicateHcomDeliveryIndices, isWebOperatorMessage, polishHcomDeliveryText } from '../../messagePolish'
 import type { TranscriptEntry } from '../../types'
+import { cleanViewDisposition, isCleanConversationDelivery } from './cleanView'
 
 type ObjectValue = Record<string, unknown>
 const objectValue = (value: unknown): ObjectValue => value && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {}
@@ -128,11 +129,11 @@ function relateEntries(entries: TranscriptEntry[]): EntryRelationships {
   return { toolResults, pairedToolResults, pairedDeliveries, commandOutputs, pairedCommandOutputs, duplicateHcomDeliveries: duplicateHcomDeliveryIndices(entries) }
 }
 
-function HcomCards({ entry, entryIndex, now, showSystem, relationships }: { entry: TranscriptEntry, entryIndex: number, now: number, showSystem: boolean, relationships: EntryRelationships }) {
+function HcomCards({ entry, entryIndex, now, showSystem, cleanView, relationships }: { entry: TranscriptEntry, entryIndex: number, now: number, showSystem: boolean, cleanView: boolean, relationships: EntryRelationships }) {
   const deliveries = objectValue(entry.payload).deliveries
   const values = Array.isArray(deliveries) ? deliveries : []
   const duplicates = relationships.duplicateHcomDeliveries.get(entryIndex)
-  const visibleValues = values.flatMap((raw, index) => duplicates?.has(index) ? [] : [{ raw, index }])
+  const visibleValues = values.flatMap((raw, index) => duplicates?.has(index) || cleanView && !isCleanConversationDelivery(objectValue(raw)) ? [] : [{ raw, index }])
   if (visibleValues.length === 0) return null
   const parsed = visibleValues.some(({ raw }) => Boolean(valueText(objectValue(raw).sender) && valueText(objectValue(raw).message_id)))
   if (!parsed) return showSystem ? <details className="system-chip unknown-entry"><summary>unparsed hook attachment · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{visibleValues.map(({ raw }) => valueText(objectValue(raw).text)).filter(Boolean).join('\n')}</pre></details> : null
@@ -151,15 +152,16 @@ function HcomCards({ entry, entryIndex, now, showSystem, relationships }: { entr
   })}</>
 }
 
-function EntryView({ entry, index, entries, relationships, agentName, now, showSystem }: { entry: TranscriptEntry, index: number, entries: TranscriptEntry[], relationships: EntryRelationships, agentName: string, now: number, showSystem: boolean }) {
+function EntryView({ entry, index, entries, relationships, agentName, now, showSystem, cleanView }: { entry: TranscriptEntry, index: number, entries: TranscriptEntry[], relationships: EntryRelationships, agentName: string, now: number, showSystem: boolean, cleanView: boolean }) {
   const payload = objectValue(entry.payload)
   const content = messageText(entry.payload)
   if (relationships.pairedToolResults.has(index) || relationships.pairedDeliveries.has(index) || relationships.pairedCommandOutputs.has(index)) return null
+  if (cleanView && cleanViewDisposition[entry.kind] === 'hide') return null
   if (entry.kind === 'hcom_delivery_stub') {
     const delivery = entries[index + 1]
-    return delivery?.kind === 'hcom_delivery' ? <HcomCards entry={delivery} entryIndex={index + 1} now={now} showSystem={showSystem} relationships={relationships} /> : <div className="system-chip">hcom delivery pending attachment · <Timestamp timestamp={entry.timestamp} now={now} /></div>
+    return delivery?.kind === 'hcom_delivery' ? <HcomCards entry={delivery} entryIndex={index + 1} now={now} showSystem={showSystem} cleanView={cleanView} relationships={relationships} /> : cleanView ? null : <div className="system-chip">hcom delivery pending attachment · <Timestamp timestamp={entry.timestamp} now={now} /></div>
   }
-  if (entry.kind === 'hcom_delivery') return <HcomCards entry={entry} entryIndex={index} now={now} showSystem={showSystem} relationships={relationships} />
+  if (entry.kind === 'hcom_delivery') return <HcomCards entry={entry} entryIndex={index} now={now} showSystem={showSystem} cleanView={cleanView} relationships={relationships} />
   if (entry.kind === 'tool_use') return <ToolEntry entry={entry} result={relationships.toolResults.get(valueText(payload.tool_use_id))} now={now} />
   if (entry.kind === 'tool_result') return <details className="entry-expander tool-entry"><summary><span className={`tool-status ${payload.is_error === true ? 'error' : 'success'}`} /><strong>unpaired tool result</strong><Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail"><pre>{resultText(payload.content)}</pre></div></details>
   if (entry.kind === 'assistant_text') return <article className="assistant-entry"><header><strong>{agentName}</strong><Timestamp timestamp={entry.timestamp} now={now} /></header><div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown></div></article>
@@ -188,7 +190,7 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
   return <details className="system-chip unknown-entry"><summary>{entry.quarantine ? `quarantined entry · ${entry.quarantine.reason}` : `unknown entry · ${entry.kind}`} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{JSON.stringify(entry.payload, null, 2)}</pre></details>
 }
 
-export function TranscriptEntries({ entries, agentName, now, showSystem }: { entries: TranscriptEntry[], agentName: string, now: number, showSystem: boolean }) {
+export function TranscriptEntries({ entries, agentName, now, showSystem, cleanView }: { entries: TranscriptEntry[], agentName: string, now: number, showSystem: boolean, cleanView: boolean }) {
   const relationships = useMemo(() => relateEntries(entries), [entries])
-  return <>{entries.map((entry, index) => <EntryView entry={entry} index={index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} key={entry.uuid || `${entry.byteOffset}:${entry.line}`} />)}</>
+  return <>{entries.map((entry, index) => <EntryView entry={entry} index={index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView={cleanView} key={entry.uuid || `${entry.byteOffset}:${entry.line}`} />)}</>
 }
