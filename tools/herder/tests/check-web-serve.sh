@@ -205,6 +205,8 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF '/entries' "$ROOT/app.js" &&
   grep -qF 'nextOffset' "$ROOT/app.js" &&
   grep -qF '% left' "$ROOT/app.js" &&
+  grep -qF 'clean view' "$ROOT/app.js" &&
+  grep -qF 'herder.web.cleanView.v1:' "$ROOT/app.js" &&
   grep -qF 'show system entries' "$ROOT/app.js" &&
   grep -qF 'react-markdown' "$WEB_ROOT/package-lock.json" &&
   grep -qF 'remark-gfm' "$WEB_ROOT/package-lock.json" &&
