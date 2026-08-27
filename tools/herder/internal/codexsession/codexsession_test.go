@@ -95,6 +95,7 @@ func TestTaxonomyFixtureAndDuplicateSuppression(t *testing.T) {
 	}
 
 	var hcom struct {
+		Subtype    string `json:"subtype"`
 		Deliveries []struct {
 			Intent    string `json:"intent"`
 			Thread    string `json:"thread"`
@@ -107,8 +108,8 @@ func TestTaxonomyFixtureAndDuplicateSuppression(t *testing.T) {
 	if err := json.Unmarshal(result.Entries[8].Payload, &hcom); err != nil {
 		t.Fatal(err)
 	}
-	if len(hcom.Deliveries) != 1 || hcom.Deliveries[0].Intent != "request" || hcom.Deliveries[0].Thread != "violet-grid" || hcom.Deliveries[0].MessageID != "731" || hcom.Deliveries[0].Text != "Inspect the invented violet fixture." {
-		t.Fatalf("hcom delivery = %+v", hcom.Deliveries)
+	if hcom.Subtype != "developer_message" || len(hcom.Deliveries) != 1 || hcom.Deliveries[0].Intent != "request" || hcom.Deliveries[0].Thread != "violet-grid" || hcom.Deliveries[0].MessageID != "731" || hcom.Deliveries[0].Text != "Inspect the invented violet fixture." {
+		t.Fatalf("hcom delivery = %+v", hcom)
 	}
 
 	pairs := Pair(result.Entries)

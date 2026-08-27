@@ -349,7 +349,7 @@ func normalizeHcomDelivery(text string) json.RawMessage {
 	if len(deliveries) == 0 {
 		deliveries = append(deliveries, map[string]any{"text": body})
 	}
-	return mustJSON(map[string]any{"subtype": "codex_developer_message", "deliveries": deliveries})
+	return mustJSON(map[string]any{"subtype": "developer_message", "deliveries": deliveries})
 }
 
 func normalizeToolResult(callID string, raw json.RawMessage, custom bool) json.RawMessage {

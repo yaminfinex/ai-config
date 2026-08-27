@@ -235,6 +235,13 @@ as quarantined `unknown` entries, and partial trailing lines are held back.
 Tools with neither a Claude nor Codex session file keep their prior refusal
 and stream-failure behavior.
 
+### AMENDMENT (conductor, 2026-08-27) — tool-neutral developer-delivery subtype
+
+Codex hcom developer deliveries use the tool-neutral payload subtype
+`developer_message`. The former `codex_developer_message` wire name is struck;
+entry `kind` remains `hcom_delivery` and the normalized deliveries shape is
+unchanged.
+
 ## Writes (plain HTTP POST — ruled: no WebSocket in v1)
 
 POST `/api/agents/{bus-name}/message`
