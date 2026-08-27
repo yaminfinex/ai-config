@@ -179,7 +179,7 @@ export FLEET_TEST_CALLS=$TEST_ROOT/calls
 PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test --prompt hello >"$TEST_ROOT/spawn.out"
 grep -Fx 'name=gate-vava' "$TEST_ROOT/spawn.out" >/dev/null || fail "spawn did not print full hcom name"
 grep -F 'FLEET_PANE=p-test HCOM_TERMINAL=fleet' "$FLEET_TEST_CALLS" >/dev/null || fail "spawn omitted fleet env contract"
-grep -E 'hcom .* 1 codex .*--dir /tmp.*--hcom-prompt hello.*--sandbox danger-full-access.*--go' "$FLEET_TEST_CALLS" >/dev/null \
+grep -E 'hcom .* 1 codex .*--dir /tmp.*--hcom-prompt hello.*--dangerously-bypass-approvals-and-sandbox.*--go' "$FLEET_TEST_CALLS" >/dev/null \
   || fail "codex launch omitted a required flag"
 pass "spawn pins placement, cwd, readiness, and Codex autonomy"
 

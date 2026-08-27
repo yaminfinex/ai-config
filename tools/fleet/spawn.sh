@@ -189,7 +189,7 @@ launch=(hcom 1 "$tool" --tag "$tag" --dir "$cwd")
 if [[ $tool == claude ]]; then
   launch+=(--dangerously-skip-permissions)
 else
-  launch+=(--sandbox danger-full-access)
+  launch+=(--dangerously-bypass-approvals-and-sandbox)
 fi
 launch+=(--go)
 
