@@ -14,6 +14,10 @@ export function composerDraftKey(agentName: string) {
   return `${composerDraftPrefix}${encodeURIComponent(agentName)}`
 }
 
+export function composerFieldId(agentName: string) {
+  return `message-${encodeURIComponent(agentName)}`
+}
+
 export function readComposerDraft(agentName: string, storage: Pick<ComposerStorage, 'getItem'> | null = resolveComposerStorage()) {
   try {
     return storage?.getItem(composerDraftKey(agentName)) ?? ''
@@ -32,6 +36,6 @@ export function persistComposerDraft(agentName: string, text: string, storage: P
   }
 }
 
-export function isComposerSendShortcut(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey'>) {
-  return event.key === 'Enter' && (event.ctrlKey || event.metaKey)
+export function isComposerSendShortcut(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey'> & { shiftKey?: boolean }) {
+  return event.key === 'Enter' && !event.shiftKey && (event.ctrlKey || event.metaKey)
 }
