@@ -60,9 +60,10 @@ h2, h3, p { margin-top: 0; }
 .tab-strip { display: flex; flex: 0 0 32px; min-width: 0; align-items: center; overflow-x: auto; border-bottom: 1px solid var(--border); background: var(--bg2); user-select: none; }
 .shell-tab { display: flex; align-self: stretch; min-width: 0; border-right: 1px solid var(--border); color: var(--dim); }
 .shell-tab.active { box-shadow: inset 0 2px var(--accent); background: var(--bg); color: var(--text); }
-.shell-tab > button { overflow: hidden; padding: 0 12px; border: 0; border-radius: 0; background: transparent; color: inherit; font: 12px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.shell-tab > button { display: flex; min-width: 0; align-items: center; gap: 8px; overflow: hidden; padding: 0 12px; border: 0; border-radius: 0; background: transparent; color: inherit; font: 12px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .shell-tab > button:hover:not(:disabled) { color: var(--text); }
 .shell-tab .close-tab { width: 25px; padding: 0 7px 1px 0; color: var(--dimmer); font-size: 15px; }
+.tab-agent-status { display: flex; align-items: center; gap: 4px; color: var(--dimmer); font-size: 9px; }
 .new-tab { height: 100%; padding: 0 10px; border: 0; border-radius: 0; background: transparent; color: var(--dimmer); font-size: 16px; }
 .tab-strip-spacer, .status-spacer { flex: 1; }
 .stream-chip, .layout-chip { margin-right: 6px; padding: 1px 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--chip); color: var(--dimmer); font: 10px var(--mono); white-space: nowrap; }
