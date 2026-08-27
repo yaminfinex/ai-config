@@ -3,10 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
     <title>Herder fleet</title>
-    <script type="module" crossorigin src="/assets/index-COlcJiSf.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-D8dtXlwh.css">
+    <script>
+      (() => {
+        const key = 'herder.web.theme.v1'
+        let preference = 'system'
+        try {
+          const stored = localStorage.getItem(key)
+          if (stored === 'light' || stored === 'dark') preference = stored
+        } catch { /* Browser storage is optional. */ }
+        const theme = preference === 'system'
+          ? matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+          : preference
+        document.documentElement.dataset.theme = theme
+      })()
+    </script>
+    <script type="module" crossorigin src="/assets/index-1cHDJ0bs.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Der2RmYs.css">
   </head>
   <body>
     <div id="root"></div>

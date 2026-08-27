@@ -70,7 +70,6 @@ export function subscribeToFleet(
   let lastActivity = Date.now()
   const names = [...new Set(agentNames)].sort()
   const panes = [...new Set(screenPaneIDs)].sort()
-  panes.forEach((paneID) => queryClient.removeQueries({ queryKey: queryKeys.screen(paneID), exact: true }))
   const update = (change: (current: StreamState) => StreamState) => {
     queryClient.setQueryData<StreamState>(queryKeys.stream, (current) => change(current ?? initialStreamState))
   }
@@ -93,7 +92,7 @@ export function subscribeToFleet(
   const connect = () => {
     if (!active) return
     lastActivity = Date.now()
-    update((current) => ({ ...current, problems: { ...current.problems, stream: 'Connecting to live fleet…' } }))
+    update((current) => current.loadedBuild ? current : { ...current, problems: { ...current.problems, stream: 'Connecting to live fleet…' } })
     try {
       events = createEventSource(eventStreamURL(names, panes))
     } catch {

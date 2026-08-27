@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getAgent, queryKeys } from '../../api/client'
 import { entriesQueryOptions } from '../../api/queries'
 import { Banner, gapLabel } from '../../shared/presentation'
+import { transcriptNotice } from '../../shared/loadingPresentation'
 import { agentVitalsPresentation } from '../../shared/agentVitals'
 import { Composer } from '../composer/Composer'
 import { persistCleanView, persistShowSystem, readCleanView, readShowSystem } from './cleanView'
@@ -26,6 +27,7 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
   const previousEntryCount = useRef(0)
   const entries = entriesQuery.data?.entries ?? []
   const queued = visibleQueuedMessages(agentQuery.data?.queued ?? [], entries)
+  const entriesNotice = transcriptNotice(entriesQuery.isPending, entriesQuery.error?.message ?? '')
 
   useEffect(() => {
     if (agentQuery.data) onStatus(name, agentQuery.data.bus_status)
@@ -68,7 +70,7 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
       </div>
     </header>
     {agentQuery.error && <Banner source="agent" detail={agentQuery.error.message} />}
-    {entriesQuery.error && <Banner source="transcript" detail={entriesQuery.error.message} />}
+    {entriesNotice && <Banner source="transcript" detail={entriesNotice.detail} tone={entriesNotice.tone} />}
     {sendProblem && <Banner source="send" detail={sendProblem} />}
     <section className="transcript" aria-label="Transcript" ref={transcriptRef} onScroll={(event) => {
       const node = event.currentTarget
